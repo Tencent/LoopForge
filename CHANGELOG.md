@@ -1,22 +1,24 @@
 # Changelog
 
+English | [简体中文](CHANGELOG.zh-CN.md)
+
 ## 0.1.0
 
-- 重写中英文 README，突出项目价值、快速开始、工作流和 Edition 选择。
-- 将首个公开版本升级为稳定版，并统一 npm、Python、CLI 和发布验证版本。
-- Classic small 流程改为只创建 solo-developer 并由其直接完成最终汇总。
-- 测试阶段改为根据目标项目现有体系选择单元、集成/API 或 E2E 测试。
-- 发布 CodeBuddy、Codex 和跨宿主 DevFlow Skills。
-- 移除组织内部运维、部署和 MCP 配置，保留原工作流权限语义并说明风险。
-- 增加安全策略、贡献指南、第三方声明与自动验证。
-- 保留 Superpowers 的原生文档路径，并为 DevFlow 模式提供独立产物覆盖规则。
-- 增加 Cursor、Claude Code 仓库级投影、共享执行器事实源和 CI drift 检测。
-- 支持可追踪的 Skill 复制安装与安全刷新，补齐 Cursor/Claude 安装冒烟测试。
-- 明确区分 Classic 与 Portable 两个 edition，新增完整 Classic Cursor/Claude 宿主包。
-- 增加可通过 pipx 安装的统一 `loopforge` CLI，支持四宿主的安装、状态、更新、卸载和诊断。
-- 增加与原 Python CLI 共用安装核心的 npm/npx 入口，支持临时执行和 npm 全局安装。
-- 增加统一 edition 注册表以及只读的 `loopforge editions`、`loopforge plan`，使两套事实源、入口和安装内容可发现并可校验。
-- `loopforge install <host>` 默认安装 Classic，Portable 使用易识别的 `loopforge skills install <host>` 命令组。
-- 增加显式 `--force` 覆盖安装，默认仍在用户文件或软链接冲突时停止。
-- `install --force` 支持在同一宿主上直接切换 Classic 与 Portable edition。
-- CodeBuddy Portable 的阶段执行器与调研助手统一启用自动运行和 `bypassPermissions`。
+- Rewrote English and Chinese READMEs to highlight project value, quick start, workflow, and edition selection.
+- Promoted the first public release to a stable version and unified npm, Python, CLI, and release validation versions.
+- Classic small flow now only creates solo-developer, which directly completes the final summary.
+- Test stage now selects unit, integration/API, or E2E tests based on the target project's existing test layers.
+- Released CodeBuddy, Codex, and cross-host DevFlow Skills.
+- Removed internal operational, deployment, and MCP configurations while keeping the original workflow permission semantics and documenting risks.
+- Added security policy, contribution guide, third-party notices, and automated validation.
+- Retained Superpowers native document paths and provided independent artefact override rules for DevFlow mode.
+- Added Cursor and Claude Code repository-level projections, a shared executor source of truth, and CI drift detection.
+- Supported traceable Skill copy installation and safe refresh, with Cursor/Claude installation smoke tests.
+- Clarified the distinction between Classic and Portable editions and added complete Classic Cursor/Claude host packages.
+- Added a unified `loopforge` CLI installable via pipx, supporting install, status, update, uninstall, and diagnostics for four hosts.
+- Added an npm/npx entry that shares the installation core with the original Python CLI, supporting one-off execution and npm global install.
+- Added a unified edition registry and read-only `loopforge editions` / `loopforge plan` to make the two sources of truth, entry points, and installation contents discoverable and verifiable.
+- `loopforge install <host>` defaults to Classic; Portable uses the distinct `loopforge skills install <host>` command group.
+- Added explicit `--force` to overwrite installation; by default it still stops on user file or symlink conflicts.
+- `install --force` supports switching between Classic and Portable editions on the same host.
+- CodeBuddy Portable stage executors and research assistants uniformly enable auto-run and `bypassPermissions`.

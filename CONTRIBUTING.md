@@ -1,22 +1,23 @@
 # Contributing
 
-感谢参与 LoopForge。
+English | [简体中文](CONTRIBUTING.zh-CN.md)
 
-## 开发流程
+Thanks for contributing to LoopForge.
 
-1. 从功能分支开始修改。
-2. 保持模板通用，不引入特定组织、仓库或云资源信息。
-3. 不提交任何凭据、本地权限配置或生产数据。
-4. 先标明改动属于 Classic、Portable 或共享行为合同。Portable 只修改 `skills/`；
-   Classic 的 `.cursor/.claude` 不直接修改，运行 `build-classic-hosts.py --write`。
-5. 修改共享工作流契约时分别说明两个 edition 的影响；不要在二者之间复制运行文件。
-6. 提交前运行 `bash scripts/validate.sh` 和 `bash scripts/smoke-install.sh`。
+## Development workflow
 
-## Pull Request 要求
+1. Start changes from a feature branch.
+2. Keep templates generic; do not introduce organisation-, repository-, or cloud-specific information.
+3. Do not commit credentials, local permission configurations, or production data.
+4. First indicate whether a change belongs to Classic, Portable, or shared behaviour contracts. Portable only modifies `skills/`; Classic `.cursor/.claude` files are not edited directly — run `build-classic-hosts.py --write`.
+5. When modifying shared workflow contracts, describe the impact on both editions separately; do not copy runtime files between them.
+6. Run `bash scripts/validate.sh` and `bash scripts/smoke-install.sh` before submitting.
 
-- 说明改动解决的问题和适用运行时。
-- 列出行为变化、兼容性影响和验证结果。
-- 新增第三方内容时补充来源、许可证和修改说明。
-- 不要把内部部署或运维能力放进核心模板；使用单独的私有扩展。
+## Pull request requirements
 
-提交信息建议遵循 Conventional Commits，例如 `feat: add workflow checkpoint validation`。
+- Describe the problem the change solves and the applicable runtime.
+- List behaviour changes, compatibility impact, and verification results.
+- When adding third-party content, include source, licence, and modification notes.
+- Do not put internal deployment or operational capabilities into core templates; use a separate private extension.
+
+Commit messages should follow Conventional Commits, e.g. `feat: add workflow checkpoint validation`.
