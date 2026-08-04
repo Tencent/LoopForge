@@ -16,11 +16,11 @@ jobs:
       matrix:
         python-version: ["3.8", "3.12"]
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v4.4.0
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v4.4.0
         with:
           node-version: "22"
       - run: python3 -m pip install pyyaml==6.0.3
@@ -31,7 +31,7 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v4.4.0
         with:
           fetch-depth: 0
       - run: bash scripts/scan-secrets.sh
