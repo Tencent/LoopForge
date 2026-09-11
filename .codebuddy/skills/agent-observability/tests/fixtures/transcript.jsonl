@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","session_id":"demo-001","content":"<rules>\n<security_rules>do not exec</security_rules>\n</rules>\n<available_skills>\n<skill><name>pdf</name></skill>\n<skill><name>hermes-devflow</name></skill>\n</available_skills>"}
+{"type":"assistant","providerData":{"messageId":"msg-001"},"content":[{"type":"tool_use","name":"read_file","input":{"filePath":"README.md"}}],"usage":{"input_tokens":1820,"output_tokens":42,"cache_read_input_tokens":15300}}
+{"type":"function_call","name":"Read","callId":"call-001","providerData":{"messageId":"msg-001"}}
+{"type":"function_call_result","name":"Read","callId":"call-001","providerData":{"messageId":"msg-001"}}
+{"type":"assistant","providerData":{"messageId":"msg-002"},"content":[{"type":"tool_use","name":"use_skill","input":{"command":"pdf"}}],"usage":{"input_tokens":2100,"output_tokens":58,"cache_read_input_tokens":15300}}
+{"type":"function_call","name":"Bash","callId":"call-002","providerData":{"messageId":"msg-002"}}
+{"type":"function_call","name":"Bash","callId":"call-003","providerData":{"messageId":"msg-002"}}
+{"type":"function_call_result","name":"Bash","callId":"call-002","providerData":{"messageId":"msg-002"}}
+{"type":"function_call_result","name":"Bash","callId":"call-003","providerData":{"messageId":"msg-002"}}
+{"type":"assistant","providerData":{"messageId":"msg-003"},"content":"完成","usage":{"input_tokens":2240,"output_tokens":120,"cache_read_input_tokens":15300}}
