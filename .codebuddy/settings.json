@@ -34,7 +34,7 @@
         ]
       },
       {
-        "matcher": "send_message",
+        "matcher": "SendMessage",
         "hooks": [
           {
             "type": "command",
