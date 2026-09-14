@@ -9,6 +9,10 @@
 
 用法：
     python3 build_dashboard_data.py --project-root <项目根目录> --out dashboard/dashboard-data.json
+    python3 build_dashboard_data.py --metrics-path ~/other/metrics.ndjson --state-path ~/other/.state.json
+
+不传 --metrics-path / --state-path 时，仍从 <skill_root>/logs/ 下的默认文件读取；
+两者均支持 ~ 展开，输出 source 会如实反映实际读取路径。
 
 没有任何真实数据时（hook 刚接上、还没跑过 session），会输出一份全空但结构合法的快照，
 不会报错、也不会伪造数据。
@@ -48,7 +52,9 @@ STAGE_META: dict[str, tuple[str, str]] = {
 }
 # 两套 schema 各自的阶段顺序，用来按正确顺序渲染 stepper（不能直接遍历 dict，顺序不保证）。
 CLASSIC_ORDER = ["PHASE-0", "TASK-01", "TASK-02", "TASK-03", "CODE-REVIEW", "TASK-04", "TASK-05"]
-CLASSIC_SOLO_ORDER = ["PHASE-0", "SOLO"]
+# SOLO 完成后，small 任务会由 solo-developer 合并执行 TASK-05 知识沉淀（真实运行验证过，
+# 不是理论上可选的分支）；stepper 顺序必须把它列进去，否则会把已完成的阶段悄悄漏掉。
+CLASSIC_SOLO_ORDER = ["PHASE-0", "SOLO", "TASK-05"]
 PORTABLE_ORDER = ["PHASE-0", "REQUIREMENT", "DESIGN", "IMPLEMENT", "REVIEW", "TEST", "KNOWLEDGE", "SUMMARY"]
 PORTABLE_SOLO_ORDER = ["PHASE-0", "SOLO", "SUMMARY"]
 
@@ -87,6 +93,12 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
     by_day: dict[str, dict[str, Any]] = {}
     by_sid: dict[str, dict[str, Any]] = {}
     by_sid_turn: dict[tuple[str, str], dict[str, Any]] = {}
+    # AgentLens（写 state.current_turn 的那套 tracing）默认关闭时，tool/usage 事件
+    # 自身的 turn_id 永远是 None——但 user_prompt_submit 事件不依赖 AgentLens，
+    # 始终携带真实 turn_id（见 emitter.build_prompt_submit_event）。按 ts 排序后，
+    # 把它当作 turn 边界，让后续没有自带 turn_id 的 tool/usage 事件归入"当前 sid
+    # 最近一次打开的 turn"，而不是全部塌缩进同一个 "?" 占位桶。
+    current_turn_by_sid: dict[str, str] = {}
 
     def day_bucket(iso: str) -> dict[str, Any]:
         return by_day.setdefault(iso, {
@@ -102,7 +114,7 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
             "status": "ok", "timeline": {},
         })
 
-    for rec in events:
+    for rec in sorted(events, key=lambda r: r.get("ts") if isinstance(r.get("ts"), (int, float)) else 0):
         event = rec.get("event")
         sid = str(rec.get("sid") or "")
         ts = rec.get("ts")
@@ -119,7 +131,10 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
         agent = rec.get("agent")
         if agent:
             sess["agents"].add(str(agent))
-        turn_id = rec.get("turn_id")
+        raw_turn_id = rec.get("turn_id")
+        if event == "user_prompt_submit" and raw_turn_id:
+            current_turn_by_sid[sid] = str(raw_turn_id)
+        turn_id = raw_turn_id or current_turn_by_sid.get(sid)
         if turn_id:
             sess["turns"].add(str(turn_id))
 
@@ -334,10 +349,17 @@ def build_devflow_runs(project_root: Path, cost_by_slug: dict[str, float] | None
             order = CLASSIC_SOLO_ORDER if is_solo else CLASSIC_ORDER
         stages_out = []
         total_cost = cost_by_slug.get(child.name, 0.0)
-        total_duration = 0
+        run_start = None
+        run_end = None
         overall = "completed"
         for key in order:
-            info = snap["stages"].get(key) or {"status": "pending", "retry_count": 0, "executor": None}
+            info = snap["stages"].get(key)
+            if info is None:
+                # PHASE-0 在两套 schema 里都不会出现在 stages{} 里（它是隐式完成的：
+                # workflow-state.json 一旦存在，就说明 Phase 0 已经跑完了），
+                # 不能用"没有条目"直接兜底成 pending，那样会把已完成的阶段显示错。
+                info = {"status": "completed", "retry_count": 0, "executor": None} if key == "PHASE-0" \
+                    else {"status": "pending", "retry_count": 0, "executor": None}
             label, name = STAGE_META.get(key, (key[:4], key))
             status = str(info.get("status") or "pending")
             retry_count = int(info.get("retry_count") or 0)
@@ -352,9 +374,12 @@ def build_devflow_runs(project_root: Path, cost_by_slug: dict[str, float] | None
                         t0 = datetime.fromisoformat(started.replace("Z", "+00:00"))
                         t1 = datetime.fromisoformat(completed.replace("Z", "+00:00"))
                         duration = max(0, int((t1 - t0).total_seconds()))
+                        if run_start is None or t0 < run_start:
+                            run_start = t0
+                        if run_end is None or t1 > run_end:
+                            run_end = t1
                     except Exception:
                         duration = 0
-            total_duration += duration
             if status == "failed":
                 overall = "paused"
             elif status == "in_progress" and overall != "paused":
@@ -364,6 +389,10 @@ def build_devflow_runs(project_root: Path, cost_by_slug: dict[str, float] | None
                 "exec": info.get("executor") or "-", "status": status,
                 "retry_count": retry_count, "duration": duration,
             })
+        # 按真实起止时间跨度算总时长（而不是逐阶段 duration 相加）——阶段之间可能
+        # 有重叠（比如 TASK-05 的 started_at 早于 SOLO 的 completed_at），相加会
+        # 把重叠部分重复计入，虚高于源数据本身反映的运行时长。
+        total_duration = int((run_end - run_start).total_seconds()) if run_start and run_end else 0
         runs.append({
             "slug": child.name, "size": size_class, "stages": stages_out,
             "cost": round(total_cost, 4), "duration": total_duration, "overall": overall,
@@ -372,16 +401,43 @@ def build_devflow_runs(project_root: Path, cost_by_slug: dict[str, float] | None
     return runs
 
 
+def resolve_input_paths(
+    skill_root: Path,
+    metrics_path: str | None = None,
+    state_path: str | None = None,
+) -> tuple[Path, Path]:
+    """解析 metrics.ndjson 与 .state.json 的实际读取路径。
+
+    任一参数为 None 时回退到 ``<skill_root>/logs/`` 下的默认路径，保证未传参时
+    行为与旧版本完全一致（向后兼容，不会破坏现有看板数据源）。
+
+    非 None 时按用户给定路径（支持 ``~`` 展开）取绝对路径，便于看板从非默认
+    位置（如其它会话/项目的日志目录）聚合数据。
+    """
+    default_metrics = skill_root / "logs" / "metrics.ndjson"
+    default_state = skill_root / "logs" / ".state.json"
+    if metrics_path:
+        metrics = Path(metrics_path).expanduser().absolute()
+    else:
+        metrics = default_metrics
+    if state_path:
+        state = Path(state_path).expanduser().absolute()
+    else:
+        state = default_state
+    return metrics, state
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", default=".", help="devflow 项目根目录（含 .codebuddy/ 和 artifacts/）")
     parser.add_argument("--out", default=None, help="输出路径，默认 <skill_root>/scripts/dashboard/dashboard-data.json")
+    parser.add_argument("--metrics-path", default=None, help="覆盖 metrics.ndjson 的读取路径（默认 <skill_root>/logs/metrics.ndjson，支持 ~ 展开）")
+    parser.add_argument("--state-path", default=None, help="覆盖 .state.json 的读取路径（默认 <skill_root>/logs/.state.json，支持 ~ 展开）")
     args = parser.parse_args()
 
     project_root = Path(args.project_root).expanduser().resolve()
     skill_root = SCRIPTS_DIR.parent
-    log_path = skill_root / "logs" / "metrics.ndjson"
-    state_path = skill_root / "logs" / ".state.json"
+    log_path, state_path = resolve_input_paths(skill_root, args.metrics_path, args.state_path)
 
     events = read_ndjson(log_path)
     state = safe_load_json(state_path) or {}

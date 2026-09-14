@@ -99,10 +99,35 @@ class ResolveAndDiffTests(unittest.TestCase):
             state_path = Path(td) / ".state.json"
             result = devflow.resolve_and_diff(state_path, "sid-1", "/tmp/some-project")
             self.assertIsNone(result)
-            # 结论（"不是 devflow"）应该被缓存，第二次调用不再重新探测。
             state = st.load_state(state_path)
-            self.assertTrue(state["sid-1"]["_devflow"]["checked"])
             self.assertIsNone(state["sid-1"]["_devflow"]["context"])
+
+    def test_late_appearing_devflow_run_is_discovered_on_a_later_call(self):
+        """真实 bug 回归测试：同一个长生命周期 sid，会话开始时探测不到 devflow
+        （此时既没有 team 目录也没有 artifacts/），之后才真正跑起 devflow
+        （比如通过 Agent 工具后台 spawn，而不是从一开始就是独立 team 成员 sid）。
+        早期的"没找到"不能被永久缓存，必须在 artifacts/ 出现之后的下一次调用里发现它。"""
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td) / "project"
+            project_dir.mkdir()
+            state_path = project_dir / ".codebuddy" / "skills" / "agent-observability" / "logs" / ".state.json"
+            sid = "sid-long-lived"
+
+            # 会话早期：还没有任何 devflow 痕迹。
+            first = devflow.resolve_and_diff(state_path, sid, str(project_dir))
+            self.assertIsNone(first)
+
+            # 同一个 sid，会话中途才出现 devflow 产物（没有 team 目录，走 artifacts 扫描兜底）。
+            artifacts_dir = project_dir / "artifacts" / "late-appearing-task_20260914_1200"
+            artifacts_dir.mkdir(parents=True)
+            (artifacts_dir / "workflow-state.json").write_text(json.dumps({
+                "version": "1.3", "current_stage": "SOLO", "size_class": "small",
+                "stages": {"SOLO": {"status": "completed", "executor": "solo-developer", "retry_count": 0}},
+            }), encoding="utf-8")
+
+            second = devflow.resolve_and_diff(state_path, sid, str(project_dir))
+            self.assertIsNotNone(second)
+            self.assertEqual(second["task_slug"], "late-appearing-task_20260914_1200")
 
     def test_end_to_end_with_fake_team_and_workflow_state(self):
         with tempfile.TemporaryDirectory() as td:
@@ -238,6 +263,80 @@ class ArtifactsScanFallbackTests(unittest.TestCase):
             self.assertIsNotNone(result)
             self.assertEqual(result["task_slug"], "active-task_20260911_1000")
             self.assertIsNone(result["team_dir"])
+
+    def test_finished_detection_works_for_classic_schema_without_top_level_status(self):
+        """Classic（v1.3）没有顶层 status 字段，"跑完没跑完"只能看 last_event。"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            artifacts = root / "artifacts"
+
+            done_dir = artifacts / "classic-done_20260910_0900"
+            done_dir.mkdir(parents=True)
+            (done_dir / "workflow-state.json").write_text(json.dumps({
+                "version": "1.3", "last_event": "workflow_completed",
+                "stages": {"SOLO": {"status": "completed"}},
+            }), encoding="utf-8")
+
+            active_dir = artifacts / "classic-active_20260911_1000"
+            active_dir.mkdir(parents=True)
+            (active_dir / "workflow-state.json").write_text(json.dumps({
+                "version": "1.3", "last_event": "TASK-02_completed",
+                "stages": {"TASK-02": {"status": "completed"}, "TASK-03": {"status": "in_progress"}},
+            }), encoding="utf-8")
+
+            result = devflow._scan_artifacts_for_active_run(str(root))
+            self.assertIsNotNone(result)
+            self.assertEqual(result["task_slug"], "classic-active_20260911_1000")
+
+    def test_resolve_and_diff_switches_task_slug_when_a_newer_run_appears(self):
+        """真实 bug 回归测试：同一个长生命周期 sid 先后归属两次不同的 devflow 运行
+        （没有真正 team_create 时的降级场景——第二次 `/start-devflow` 复用了同一个
+        session）。第一次探测缓存下的 task_slug 不能在第二次运行开始后继续沿用；
+        必须切换到新的那个，而且两个 task_slug 各自的 diff 历史不能互相污染。"""
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td) / "project"
+            state_path = project_dir / ".codebuddy" / "skills" / "agent-observability" / "logs" / ".state.json"
+            sid = "sid-reused-across-two-runs"
+
+            first_dir = project_dir / "artifacts" / "first-task_20260914_0900"
+            first_dir.mkdir(parents=True)
+            (first_dir / "workflow-state.json").write_text(json.dumps({
+                "version": "1.3", "last_event": "workflow_completed", "current_stage": "SOLO",
+                "stages": {"SOLO": {"status": "completed", "retry_count": 0}},
+            }), encoding="utf-8")
+
+            first = devflow.resolve_and_diff(state_path, sid, str(project_dir))
+            self.assertEqual(first["task_slug"], "first-task_20260914_0900")
+
+            # 同一个 sid，第二次运行出现，且比第一次更新（mtime 更新）。
+            import time
+            time.sleep(0.01)
+            second_dir = project_dir / "artifacts" / "second-task_20260914_1100"
+            second_dir.mkdir(parents=True)
+            (second_dir / "workflow-state.json").write_text(json.dumps({
+                "version": "1.3", "last_event": "workflow_completed", "current_stage": "SOLO",
+                "stages": {"SOLO": {"status": "completed", "retry_count": 1}},
+            }), encoding="utf-8")
+
+            second = devflow.resolve_and_diff(state_path, sid, str(project_dir))
+            self.assertEqual(second["task_slug"], "second-task_20260914_1100")
+            self.assertEqual(second["changes"], [])  # 对 second 是首次观测，不产出变更
+
+            # 第一个 task_slug 的历史没有被污染：如果它重新变成"最新"（比如被再次修改），
+            # 应该正确切回，并且不会把 second 的历史错当成 first 的基线。
+            (first_dir / "workflow-state.json").write_text(json.dumps({
+                "version": "1.3", "last_event": "workflow_completed", "current_stage": "SOLO",
+                "stages": {"SOLO": {"status": "completed", "retry_count": 1}},
+            }), encoding="utf-8")
+            time.sleep(0.01)
+            first_dir.joinpath("workflow-state.json").touch()
+
+            third = devflow.resolve_and_diff(state_path, sid, str(project_dir))
+            self.assertEqual(third["task_slug"], "first-task_20260914_0900")
+            # first 上一次被观测到时 retry_count 还是 0，现在变成 1——应该被识别为变化，
+            # 而不是被 second 的快照历史污染成"首次观测"或者对不上的 diff。
+            self.assertEqual(len(third["changes"]), 1)
+            self.assertEqual(third["changes"][0]["retry_count"], 1)
 
     def test_resolve_and_diff_end_to_end_via_artifacts_scan_no_team(self):
         with tempfile.TemporaryDirectory() as td:

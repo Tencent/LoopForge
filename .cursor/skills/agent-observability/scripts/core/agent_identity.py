@@ -444,7 +444,11 @@ class AgentIdentityResolver:
 
     def _extract_from_task(self, tool_input: dict) -> Optional[str]:
         sub = (
-            tool_input.get("subagent_name")
+            # Claude Code 的 Agent 工具（非 CodeBuddy 原生 Task/team_create）用的是
+            # subagent_type 字段，不是 subagent_name——不认这个字段会导致 dispatch
+            # 统计漏掉所有走 Agent 工具派发的场景。
+            tool_input.get("subagent_type")
+            or tool_input.get("subagent_name")
             or tool_input.get("name")
             or tool_input.get("agent")
             or tool_input.get("role")

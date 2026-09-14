@@ -60,10 +60,13 @@ def resolve_devflow_context(cwd: str, sid: str, cached_team_dir: str | None = No
 def _scan_artifacts_for_active_run(cwd: str) -> dict[str, Any] | None:
     """没有 team 目录时的兜底发现：直接扫 `{cwd}/artifacts/*/workflow-state.json`。
 
-    用于 `topology: spawn` 的宿主（没有 `.codebuddy/teams/` 这类目录可以反查）。
-    这是启发式，不是精确匹配：多个 task_slug 同时在跑时，优先选 `status="in_progress"`
-    的那个；都不是或都是时选文件 mtime 最新的一个。项目里如果同时有多个真正并发的
-    devflow 运行，这个兜底可能选错——已知限制，不在这次范围内解决。
+    用于 `topology: spawn` 的宿主（没有 `.codebuddy/teams/` 这类目录可以反查），以及
+    Classic 没有真正暴露 `team_create` 时的降级场景。这是启发式，不是精确匹配：
+    多个 task_slug 存在时，优先选"还没跑完"的那个；都跑完或都没跑完时选
+    `workflow-state.json` 文件 mtime 最新的一个。"跑完"的判定要兼容两套 schema——
+    Classic（v1.3）没有顶层 `status` 字段，看 `last_event == "workflow_completed"`；
+    Portable（v2.0）看顶层 `status in {"completed", "failed"}`。项目里如果同时有多个
+    真正并发、都还没跑完的 devflow 运行，这个兜底可能选错——已知限制，不在这次范围内解决。
     """
     artifacts_root = Path(cwd).expanduser() / "artifacts"
     if not artifacts_root.is_dir():
@@ -84,8 +87,12 @@ def _scan_artifacts_for_active_run(cwd: str) -> dict[str, Any] | None:
             mtime = state_path.stat().st_mtime
         except Exception:
             mtime = 0.0
-        in_progress = 1 if str(state.get("status") or "") == "in_progress" else 0
-        candidates.append(((in_progress, mtime), child.name, state_path))
+        finished = (
+            str(state.get("last_event") or "") == "workflow_completed"
+            or str(state.get("status") or "") in {"completed", "failed"}
+        )
+        not_finished = 0 if finished else 1
+        candidates.append(((not_finished, mtime), child.name, state_path))
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
@@ -176,36 +183,45 @@ def diff_stage_changes(prev: dict[str, Any] | None, curr: dict[str, Any]) -> lis
 
 
 def resolve_and_diff(state_path: Path, sid: str, cwd: str) -> dict[str, Any] | None:
-    """解析（并缓存）当前 session 的 devflow 上下文，返回上下文 + 本次观测到的 stage 变更。
+    """解析当前 session 归属的 devflow 上下文，返回上下文 + 本次观测到的 stage 变更。
 
-    缓存策略：
-    - 非 devflow session：每个 session 只做一次 team 目录探测，结果（包括"不是
-      devflow"这个结论本身）都会缓存，后续调用直接返回，不会反复扫描
-      `.codebuddy/teams/`。
-    - devflow session：每次调用都会重新读一遍 workflow-state.json（文件很小，
-      且只在阶段边界被角色写入），与上次快照 diff。
+    **不缓存"当前归属哪个 task_slug"这个结论本身**——同一个 sid 在其生命周期内可能
+    先后归属不同的 devflow 运行。这不是理论场景：当运行时没有暴露真正的
+    `team_create`/`send_message`（因此没有独立的 team 成员 sid），devflow 会退化成
+    在同一个长生命周期 session 里，先后跑好几次 `/start-devflow`；每次都必须重新判定
+    "现在最合适的 task_slug 是哪个"，而不能沿用第一次探测到的那个——沿用旧结论会把
+    第二次运行的所有事件都错误地归到第一次的 task_slug 下。
 
-    返回 None 表示这不是一次 devflow session；否则返回
+    重新判定的代价很低：`resolve_devflow_context` 对团队目录的探测会用上一次找到的
+    `team_dir` 做快速校验（只在真正失效时才重新扫描 `.codebuddy/teams/`）；
+    `artifacts/` 兜底扫描也只是一次浅层 `iterdir()`，不是全量遍历。
+
+    真正跨调用持久化的只有**按 task_slug 分别保存的 stage 快照历史**——切换到另一个
+    task_slug 不会污染对方的 diff 基线，也不会因为切回旧 task_slug 而把它已经观测过的
+    历史重新当成"首次观测"。
+
+    返回 None 表示这次调用没有探测到任何 devflow 上下文；否则返回
     `{task_slug, artifacts_dir, workflow_state_path, current_stage, size_class, changes}`。
     """
 
     def _update(state: dict[str, Any]) -> dict[str, Any] | None:
         dv = st.get_devflow_state(state, sid)
-
-        if not dv.get("checked"):
-            context = resolve_devflow_context(cwd, sid, None)
-            st.set_devflow_state(state, sid, {"checked": True, "context": context, "last_snapshot": None})
-            dv = st.get_devflow_state(state, sid)
-
-        context = dv.get("context")
+        cached_team_dir = (dv.get("context") or {}).get("team_dir") if isinstance(dv.get("context"), dict) else None
+        context = resolve_devflow_context(cwd, sid, cached_team_dir)
         if not isinstance(context, dict):
+            st.set_devflow_state(state, sid, {"context": None})
             return None
 
+        task_slug = str(context.get("task_slug") or "")
         workflow_state = read_workflow_state(context.get("workflow_state_path", ""))
         curr = stage_snapshot(workflow_state)
-        prev = dv.get("last_snapshot")
+        snapshots = dv.get("snapshots")
+        if not isinstance(snapshots, dict):
+            snapshots = {}
+        prev = snapshots.get(task_slug)
         changes = diff_stage_changes(prev if isinstance(prev, dict) else None, curr)
-        st.set_devflow_state(state, sid, {"last_snapshot": curr})
+        snapshots[task_slug] = curr
+        st.set_devflow_state(state, sid, {"context": context, "snapshots": snapshots})
 
         result = dict(context)
         result["current_stage"] = curr.get("current_stage")

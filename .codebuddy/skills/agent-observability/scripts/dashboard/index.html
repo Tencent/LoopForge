@@ -154,7 +154,7 @@ td.strong{color:var(--text-primary); font-weight:600;}
 .timeline-turn-count{font-size:11px; color:var(--text-muted); white-space:nowrap;}
 .timeline-scroll{overflow-x:auto; padding-bottom:3px;}
 .timeline-track{display:flex; gap:2px; align-items:stretch; height:26px; width:max-content; min-width:100%;}
-.timeline-seg{flex:0 0 auto; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:10.5px; color:#fff; font-family:"IBM Plex Mono",monospace; white-space:nowrap; padding:0 6px;}
+.timeline-seg{flex:0 0 auto; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:10.5px; color:#fff; font-family:"IBM Plex Mono",monospace; white-space:nowrap; padding:0 6px; overflow:hidden; text-overflow:ellipsis;}
 .timeline-seg.ok{background:var(--series-blue);}
 .timeline-seg.err{background:var(--status-critical);}
 .timeline-seg.usage{background:var(--series-aqua);}
@@ -726,17 +726,20 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
         // 调用数再多，也只是这一行变宽可横向滚动，不会撑破卡片或挤压其它内容。
         var segs = segsData.map(function(seg){
           if(seg.kind==="tool"){
-            var w = Math.max(10, Math.min(140, seg.ms*0.05));
             var cls = seg.err ? "err" : (seg.count>1 ? "merged" : "ok");
             var label = seg.count>1 ? (seg.tool+' ×'+seg.count) : seg.tool;
             var titleText = seg.tool + (seg.count>1 ? (' × '+seg.count+' 次，合计 '+seg.ms+'ms') : (' · '+seg.ms+'ms'));
-            // 段太窄时不塞文字进去（不裁切、不挤变形），细节完全交给 title 悬浮提示承载。
-            var showText = w >= 30;
-            return '<div class="timeline-seg '+cls+'" style="width:'+w+'px" title="'+titleText+'">'+(showText?label:'')+'</div>';
+            // 段宽取"按耗时算出的宽度"和"能放下标签文字的最小宽度"两者较大值——
+            // 本地工具调用常常只有几百 ms，纯按 ms*0.05 算出来的宽度几乎总是不到
+            // 文字下限，标签会被整段隐藏，只能靠悬浮 title 才看得到工具名。
+            var labelW = Math.min(140, label.length*6.5+14);
+            var w = Math.max(labelW, Math.min(140, seg.ms*0.05));
+            return '<div class="timeline-seg '+cls+'" style="width:'+w+'px" title="'+titleText+'">'+label+'</div>';
           }
-          var w = Math.max(10, Math.min(130, seg.tokens*0.008));
-          var showText = w >= 30;
-          return '<div class="timeline-seg usage" style="width:'+w+'px" title="usage · '+seg.tokens+' tok">'+(showText?(seg.tokens+' tok'):'')+'</div>';
+          var label = seg.tokens+' tok';
+          var labelW = Math.min(130, label.length*6.5+14);
+          var w = Math.max(labelW, Math.min(130, seg.tokens*0.008));
+          return '<div class="timeline-seg usage" style="width:'+w+'px" title="usage · '+seg.tokens+' tok">'+label+'</div>';
         }).join("");
         var countNote = (toolMerged!==toolRaw)
           ? ('共 '+toolRaw+' 次工具调用 · 合并连续重复为 '+toolMerged+' 段')
@@ -883,7 +886,7 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
       head.innerHTML =
         '<div class="run-title">'+run.slug+'</div>'+
         '<div class="run-meta"><span class="size-chip">'+run.size+'</span>'+statusChip+
-        '<span class="tab-nums">'+fmtUSD(run.cost)+'</span><span class="tab-nums">'+fmtDur(run.duration)+'</span></div>';
+        '<span class="tab-nums">'+fmtUSD(run.cost)+'</span><span class="tab-nums" title="按真实起止跨度（最早 started_at 到最晚 completed_at）计算；阶段之间有重叠时，会小于各阶段耗时直接相加">'+fmtDur(run.duration)+'</span></div>';
       card.appendChild(head);
 
       var stepper = document.createElement("div");

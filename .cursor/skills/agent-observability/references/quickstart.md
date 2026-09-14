@@ -12,6 +12,25 @@
 - `.cursor/skills/agent-observability/logs/metrics.ndjson`
 - `.cursor/skills/agent-observability/logs/.state.json`
 
+### 指定数据源路径（可选）
+
+`build_dashboard_data.py` 默认从 `<skill_root>/logs/metrics.ndjson` 与 `<skill_root>/logs/.state.json` 读取，**不传参数时行为完全不变**。
+
+如需从其它位置读取，可用 `--metrics-path` / `--state-path` 覆盖：
+
+```bash
+python3 scripts/build_dashboard_data.py \
+  --metrics-path ~/Downloads/metrics.ndjson \
+  --state-path  ~/Downloads/.state.json \
+  --out dashboard/dashboard-data.json
+```
+
+注意：
+
+- 两个参数都留空（或省略）时回退到 `<skill_root>/logs/` 下的默认文件。
+- 路径支持 `~` 展开（如上例的 `~/Downloads/...`）。
+- 输出 `dashboard-data.json` 的 `source.metrics_ndjson` / `source.state_json` 会**如实反映实际读取到的路径**，覆盖后自然指向你给定的文件，便于核对数据来源。
+
 重点字段：
 - `event=tool`：工具耗时、`skill`、`rule`
 - `event=usage`：`tokens`、`model`、`cost_usd`
