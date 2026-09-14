@@ -10,9 +10,13 @@
 用法：
     python3 build_dashboard_data.py --project-root <项目根目录> --out dashboard/dashboard-data.json
     python3 build_dashboard_data.py --metrics-path ~/other/metrics.ndjson --state-path ~/other/.state.json
+    python3 build_dashboard_data.py --top-slow 5
 
 不传 --metrics-path / --state-path 时，仍从 <skill_root>/logs/ 下的默认文件读取；
 两者均支持 ~ 展开，输出 source 会如实反映实际读取路径。
+
+--top-slow N 默认不开启，开启后只在终端额外打印耗时最长的 N 次 tool 事件，
+不写入 dashboard-data.json（输出结构与不开时完全一致）。
 
 没有任何真实数据时（hook 刚接上、还没跑过 session），会输出一份全空但结构合法的快照，
 不会报错、也不会伪造数据。
@@ -31,6 +35,11 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from core import devflow as dv  # type: ignore
+
+try:  # emitter 只在"未定价模型"统计里用到，导入失败只让这一项退化为 []
+    from core import emitter as em  # type: ignore
+except Exception:  # pragma: no cover - 目标机缺依赖时的兜底
+    em = None  # type: ignore
 
 # devflow 两套 schema 的 stage 名 -> 展示用 (label, name)。取不到的 stage 用 key 本身兜底。
 STAGE_META: dict[str, tuple[str, str]] = {
@@ -89,6 +98,30 @@ def day_of(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def tool_call_failed(raw_response: Any) -> bool:
+    """判断一次工具调用是否失败。
+
+    真实 CodeBuddy CLI 的 transcript（`function_call_result.providerData.toolResult.
+    rawResponse`）里从来没有 `is_error` 这个布尔字段——实际信号是 `exitCode`（非 0
+    即失败）和/或 `tool_error_code`（非 "0"/空即失败）。之前只认 `is_error`，导致
+    失败统计在这个宿主上永远是 0，不管命令是否真的失败（复合命令比如
+    `cmd; echo ...` 会把失败进一步掩盖成 exitCode=0，那种情况下这里也如实判定为
+    未失败——判断整条工具调用本身有没有失败，不追究命令内部的子步骤）。
+    仍然保留 `is_error` 判断，兼容其它可能真的写这个字段的宿主。
+    """
+    if not isinstance(raw_response, dict):
+        return False
+    if raw_response.get("is_error"):
+        return True
+    exit_code = raw_response.get("exitCode")
+    if isinstance(exit_code, (int, float)) and exit_code != 0:
+        return True
+    tool_error_code = raw_response.get("tool_error_code")
+    if isinstance(tool_error_code, str) and tool_error_code.strip() not in ("", "0"):
+        return True
+    return False
+
+
 def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     by_day: dict[str, dict[str, Any]] = {}
     by_sid: dict[str, dict[str, Any]] = {}
@@ -123,6 +156,12 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
         iso = day_of(ts)
         sess = sess_bucket(sid)
         sess["_seen_day"] = iso
+        # 不管事件类型，只要这天有这个 sid 的任何事件就算一次"当日活跃会话"。
+        # 之前只在 tool/usage 分支里 add，纯对话（只有 user_prompt_submit，没有
+        # 触发任何工具调用也没有 usage）的会话永远不会被计入任何一天的
+        # sessionCount——总览页的"会话数"会比"会话浏览"tab 里实际展开的会话数少
+        # （真实数据复现过：5 个 session 只统计出 4 个 sessionCount）。
+        day_bucket(iso)["_sids"].add(sid)
         if sess["first_ts"] is None or ts < sess["first_ts"]:
             sess["first_ts"] = ts
             sess["date"] = iso
@@ -134,20 +173,26 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
         raw_turn_id = rec.get("turn_id")
         if event == "user_prompt_submit" and raw_turn_id:
             current_turn_by_sid[sid] = str(raw_turn_id)
+            # 提前建桶——纯对话轮次（没有触发任何工具调用，只有 usage 都没有）
+            # 之前只在 tool/usage 分支里 setdefault，这种轮次永远不会出现在
+            # timeline 里，导致 turns 计数和时间线展开的分组数对不上。
+            by_sid_turn.setdefault(
+                (sid, str(raw_turn_id)),
+                {"turn": raw_turn_id, "agent": agent or "main", "events": []},
+            )
         turn_id = raw_turn_id or current_turn_by_sid.get(sid)
         if turn_id:
             sess["turns"].add(str(turn_id))
 
         if event == "tool":
             day = day_bucket(iso)
-            day["_sids"].add(sid)
             day["toolCalls"] += 1
             sess["toolCalls"] += 1
             for s in rec.get("skill") or []:
                 day["skillHits"][str(s)] += 1
             tool_details = rec.get("tool_details") or {}
             raw_response = tool_details.get("raw_response") if isinstance(tool_details, dict) else None
-            is_err = bool(isinstance(raw_response, dict) and raw_response.get("is_error"))
+            is_err = tool_call_failed(raw_response)
             if is_err:
                 day["failures"] += 1
                 sess["status"] = "error"
@@ -157,10 +202,10 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
                 "kind": "tool", "tool": rec.get("tool"),
                 "ms": rec.get("ms") if isinstance(rec.get("ms"), (int, float)) else 0,
                 "err": is_err,
+                "agent": str(agent) if agent else "main",
             })
         elif event == "usage":
             day = day_bucket(iso)
-            day["_sids"].add(sid)
             tokens = rec.get("tokens") or {}
             day["input"] += int(tokens.get("input") or 0)
             day["output"] += int(tokens.get("output") or 0)
@@ -176,7 +221,10 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
                 sess["models"][str(model)] += 1
             key = (sid, str(turn_id or "?"))
             turn = by_sid_turn.setdefault(key, {"turn": turn_id or "?", "agent": agent or "main", "events": []})
-            turn["events"].append({"kind": "usage", "tokens": total_tok})
+            turn["events"].append({
+                "kind": "usage", "tokens": total_tok,
+                "agent": str(agent) if agent else "main",
+            })
         elif event == "error":
             sess["status"] = "error"
 
@@ -226,6 +274,36 @@ def build_model_costs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def build_unpriced_models(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """聚合"完全没命中价格表"的模型（D4：`emitter.is_unpriced(model)` 为 True）。
+
+    只**统计**不重算：`cost_usd` 在 hook 期就写进事件了，这里不会（也不该）回头
+    按新价格补算历史事件（D3：覆盖只对新事件生效）。判定入口复用 emitter，
+    不在本文件里重写一套模型名匹配逻辑，避免与 hook 期的口径分叉。
+
+    模型名缺失/为空的 usage 事件无法归因到某个模型，直接跳过不计数。
+    """
+    if em is None:
+        return []
+    counts: dict[str, int] = defaultdict(int)
+    for rec in events:
+        if rec.get("event") != "usage":
+            continue
+        model = rec.get("model")
+        if not model or not str(model).strip():
+            continue
+        name = str(model)
+        try:
+            if em.is_unpriced(name):
+                counts[name] += 1
+        except Exception:
+            continue
+    rows = [{"name": name, "usageEvents": count} for name, count in counts.items()]
+    # 按 (-事件数, 名字) 排序：避免看板顺序抖动，两次生成的快照可直接逐字节比对。
+    rows.sort(key=lambda r: (-r["usageEvents"], r["name"]))
+    return rows
+
+
 def build_failures(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     agg: dict[tuple[str, str], dict[str, Any]] = {}
     for rec in events:
@@ -233,7 +311,7 @@ def build_failures(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         tool_details = rec.get("tool_details") or {}
         raw_response = tool_details.get("raw_response") if isinstance(tool_details, dict) else None
-        if not isinstance(raw_response, dict) or not raw_response.get("is_error"):
+        if not tool_call_failed(raw_response):
             continue
         tool = str(rec.get("tool") or "unknown")
         code = str(raw_response.get("tool_error_code") or raw_response.get("exitCode") or "error")
@@ -249,6 +327,39 @@ def build_failures(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row.pop("_last_ts", None)
     rows.sort(key=lambda r: r["count"], reverse=True)
     return rows
+
+
+def build_top_slow(events: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+    """取耗时最长的 N 次 tool 事件，按 ms 降序。
+
+    只做"读"：不改动 events，也不参与 dashboard-data.json 的任何字段——调用方拿
+    结果去打印即可。`ms` 的兜底口径与 build_daily_and_sessions 保持一致（缺失或
+    非数字按 0 计），否则同一份日志会得出两个互相矛盾的工具耗时视图。
+    """
+    if not isinstance(limit, int) or limit <= 0:
+        return []
+    rows: list[dict[str, Any]] = []
+    for rec in events:
+        if rec.get("event") != "tool":
+            continue
+        rows.append({
+            "tool": str(rec.get("tool") or "unknown"),
+            "ms": rec.get("ms") if isinstance(rec.get("ms"), (int, float)) else 0,
+        })
+    rows.sort(key=lambda r: r["ms"], reverse=True)
+    return rows[:limit]
+
+
+def format_top_slow(rows: list[dict[str, Any]]) -> str:
+    """把 top-slow 结果渲染成终端文本；没有可展示的行时返回空串（由调用方决定
+    是否打印，避免没有任何 tool 事件时空打一个表头）。"""
+    if not rows:
+        return ""
+    width = max(len(str(r["tool"])) for r in rows)
+    lines = [f"top-slow {len(rows)} tool calls (by ms):"]
+    for idx, row in enumerate(rows, start=1):
+        lines.append(f"  {idx}. {str(row['tool']):<{width}}  {row['ms']}ms")
+    return "\n".join(lines)
 
 
 def build_skills(state: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -273,6 +384,13 @@ def build_skills(state: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict
     return skill_rows, sorted(never_used.values(), key=lambda r: r["name"])
 
 
+
+# "team-lead" 是 CodeBuddy 原生 team 基础设施里 lead/orchestrator session 自己的
+# mailbox 名字，语义上就是 main（core/agent_identity.py::normalize_role_name 把它
+# 和 "main" 归为同一类）；不是一个真实存在的子 agent，不应出现在"派发目标"里。
+_DISPATCH_EXCLUDE_AGENTS = {"main", "team-lead"}
+
+
 def build_dispatch(state: dict[str, Any]) -> list[dict[str, Any]]:
     totals: dict[str, int] = defaultdict(int)
     for sid, sess in state.items():
@@ -283,7 +401,15 @@ def build_dispatch(state: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             evidence = str(entry.get("evidence") or "")
             agent = entry.get("agent")
-            if agent and agent != "main" and (evidence.startswith("dispatch") or evidence.startswith("inbox")):
+            if not agent or agent in _DISPATCH_EXCLUDE_AGENTS:
+                continue
+            # 只统计真正代表"新派发"的证据：工具调用直接触发的 dispatch@，
+            # 或 inbox 扫描独立确认的 "main 派给了谁"（inbox@dispatch:*）。
+            # 排除 inbox@report:*／inbox@handoff:*——那是子 agent 上报/移交，
+            # 不是 main 发起的新派发，计进来会把"派发次数"虚高（同一次真实
+            # 派发经常先触发 dispatch@，随后又在 inbox 里被自己的上报回声一次）。
+            is_dispatch = evidence.startswith("dispatch@") or evidence.startswith("inbox@dispatch:")
+            if is_dispatch:
                 totals[str(agent)] += 1
     rows = [{"agent": agent, "count": count} for agent, count in totals.items()]
     rows.sort(key=lambda r: r["count"], reverse=True)
@@ -433,11 +559,20 @@ def main() -> int:
     parser.add_argument("--out", default=None, help="输出路径，默认 <skill_root>/scripts/dashboard/dashboard-data.json")
     parser.add_argument("--metrics-path", default=None, help="覆盖 metrics.ndjson 的读取路径（默认 <skill_root>/logs/metrics.ndjson，支持 ~ 展开）")
     parser.add_argument("--state-path", default=None, help="覆盖 .state.json 的读取路径（默认 <skill_root>/logs/.state.json，支持 ~ 展开）")
+    parser.add_argument("--top-slow", type=int, default=None, help="额外在终端打印耗时最长的 N 次 tool 事件（工具名 + 耗时 ms），默认不打印；只打印不写入 dashboard-data.json")
     args = parser.parse_args()
 
     project_root = Path(args.project_root).expanduser().resolve()
     skill_root = SCRIPTS_DIR.parent
     log_path, state_path = resolve_input_paths(skill_root, args.metrics_path, args.state_path)
+
+    # 价格表带 lru_cache：本脚本可能长期驻留（配合文件监听器），单测也会同进程多次
+    # 调 main()，每次都先清一次缓存，保证覆盖文件的改动当场生效。
+    if em is not None:
+        try:
+            em.clear_price_cache()
+        except Exception:
+            pass
 
     events = read_ndjson(log_path)
     state = safe_load_json(state_path) or {}
@@ -446,6 +581,7 @@ def main() -> int:
 
     daily, sessions = build_daily_and_sessions(events)
     model_costs = build_model_costs(events)
+    unpriced = build_unpriced_models(events)
     failures = build_failures(events)
     skills, never_used = build_skills(state)
     dispatch = build_dispatch(state)
@@ -460,7 +596,8 @@ def main() -> int:
             "metrics_ndjson": str(log_path), "state_json": str(state_path),
             "project_root": str(project_root), "event_count": len(events),
         },
-        "daily": daily, "sessions": sessions, "modelCosts": model_costs, "failures": failures,
+        "daily": daily, "sessions": sessions, "modelCosts": model_costs, "unpricedModels": unpriced,
+        "failures": failures,
         "skills": skills, "neverUsed": never_used, "dispatch": dispatch,
         "autoDispatchStats": auto_dispatch_stats, "devflowRuns": devflow_runs,
     }
@@ -469,6 +606,10 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out_data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"wrote {out_path} ({len(events)} events, {len(sessions)} sessions, {len(devflow_runs)} devflow runs)")
+    # top-slow 放在原输出之后：先保证不传参时的终端输出与 JSON 行为完全不变。
+    top_slow_block = format_top_slow(build_top_slow(events, args.top_slow))
+    if top_slow_block:
+        print(top_slow_block)
     return 0
 
 

@@ -47,7 +47,7 @@ devflow 项目完全不受影响：
 - `tool.tool_details`: 仅当 transcript 中能还原出更细工具上下文时出现
 - `usage.message_id`: 仅当 usage 对应的 transcript message 可识别时出现
 - `usage.model`: transcript 中能识别模型名时出现
-- `usage.cost_usd`: 只有模型价格命中 `config/pricing.json` 时才会出现
+- `usage.cost_usd`: 只有模型价格命中价格表时才会出现。价格表 = 内置 `config/pricing.json` 与用户覆盖文件（默认 `<project_root>/.claude/agent-observability/pricing.overrides.json`，可用 `AOBS_PRICING_OVERRIDES_PATH` 指定）的字段级合并结果；覆盖只对该文件写入**之后**产生的新事件生效，不回溯重算历史成本（见 `quickstart.md` 的「自定义模型定价覆盖」）
 - `stop.cost_usd`: 只有当前 stop 事件对应 usage 能估算成本时才会出现
 - `stop.cost_session_usd`: 只有 stop 汇总阶段能反算出整个 session 成本时才会出现
 

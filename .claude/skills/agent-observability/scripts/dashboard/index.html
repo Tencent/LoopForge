@@ -154,11 +154,15 @@ td.strong{color:var(--text-primary); font-weight:600;}
 .timeline-turn-count{font-size:11px; color:var(--text-muted); white-space:nowrap;}
 .timeline-scroll{overflow-x:auto; padding-bottom:3px;}
 .timeline-track{display:flex; gap:2px; align-items:stretch; height:26px; width:max-content; min-width:100%;}
-.timeline-seg{flex:0 0 auto; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:10.5px; color:#fff; font-family:"IBM Plex Mono",monospace; white-space:nowrap; padding:0 6px; overflow:hidden; text-overflow:ellipsis;}
+.timeline-seg{flex:0 0 auto; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:10.5px; color:#fff; font-family:"IBM Plex Mono",monospace; white-space:nowrap; padding:0 6px; overflow:hidden; text-overflow:ellipsis; box-sizing:border-box;}
 .timeline-seg.ok{background:var(--series-blue);}
 .timeline-seg.err{background:var(--status-critical);}
 .timeline-seg.usage{background:var(--series-aqua);}
 .timeline-seg.merged{background:var(--seq-350);}
+/* 派发给非 main 的 agent（比如 solo-developer、architect）执行的调用，顶部加一条
+   高亮边框——同一个 turn 里经常混着 main 自己做的调用和转派出去的调用，光看
+   颜色（ok/err/merged）分不出"这段到底是谁做的"。*/
+.timeline-seg.subagent{border-top:3px solid var(--series-yellow);}
 
 /* skill list */
 .bar-list{display:flex; flex-direction:column; gap:10px;}
@@ -359,7 +363,7 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
 
   /* ---------- state populated by loadData() from ./dashboard-data.json (real data, no mock) ---------- */
   var daily = [], sessions = [], dispatch = [], failures = [];
-  var SKILLS = [], NEVER_USED = [], modelCosts = [];
+  var SKILLS = [], NEVER_USED = [], modelCosts = [], unpricedModels = [];
   var devflowRuns = [], autoDispatchStats = {auto_dispatch:0, fallback_to_main:0, passthrough:0};
   var currentRange = 90;
 
@@ -416,6 +420,11 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
   }
 
   /* ================= Reminders ================= */
+  /* 模型名来自日志（模型名是外部输入），插入 innerHTML 前必须转义。 */
+  function esc(s){
+    return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
   function renderReminders(){
     var d = sliced();
     var totalCost = d.reduce(function(a,x){return a+x.cost;},0);
@@ -441,6 +450,22 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
       level: unusedCount>0 ? "warn" : "good",
       label: "Skill 维护",
       text: unusedCount>0 ? ("有 <b>"+unusedCount+"</b> 个 skill/rule 在范围内从未被命中，建议检查 description 或 globs。") : "所有已扫描的 skill/rule 近期均被命中过。"
+    });
+    /* 第 4 条：模型定价。unpricedModels 由 build_dashboard_data.py 聚合，
+       只列"完全没命中价格表"的模型（模糊命中的不算，见 emitter.is_unpriced）。 */
+    var unpricedCount = (unpricedModels||[]).length;
+    var unpricedEvents = (unpricedModels||[]).reduce(function(a,x){return a+(x.usageEvents||0);},0);
+    var unpricedNames = (unpricedModels||[]).slice(0,3).map(function(x){return esc(x.name);}).join("、");
+    items.push({
+      level: unpricedCount>0 ? "warn" : "good",
+      label: "模型定价",
+      text: unpricedCount>0
+        ? ("有 <b>"+unpricedCount+"</b> 个模型未命中价格表（<b>"+unpricedEvents+"</b> 条 usage 事件缺少成本）："
+            +unpricedNames+(unpricedCount>3 ? " 等 "+unpricedCount+" 个" : "")
+            +"。可写入 <code>.codebuddy/agent-observability/pricing.overrides.json</code>，"
+            +"或用 <code>AOBS_PRICING_OVERRIDES_PATH</code> 指定覆盖文件补充单价；"
+            +"补充后只影响之后的新事件，不回溯已落盘的历史成本。")
+        : "所有出现的模型都已命中价格表，成本估算完整。"
     });
     items.forEach(function(it){
       var card = document.createElement("div");
@@ -708,12 +733,16 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
         var merged = [];
         events.forEach(function(ev){
           var last = merged[merged.length-1];
-          if(ev.kind==="tool" && last && last.kind==="tool" && last.tool===ev.tool){
+          var agent = ev.agent || "main";
+          // 只合并连续且 agent 也相同的调用——否则 main 调 Bash、转派给
+          // solo-developer 又调一次 Bash，会被错误地合并成一段"Bash ×2"，
+          // 看不出中间其实发生了一次 agent 切换。
+          if(ev.kind==="tool" && last && last.kind==="tool" && last.tool===ev.tool && last.agent===agent){
             last.ms += ev.ms; last.count += 1; last.err = last.err || ev.err;
           } else if(ev.kind==="tool"){
-            merged.push({kind:"tool", tool:ev.tool, ms:ev.ms, count:1, err:ev.err});
+            merged.push({kind:"tool", tool:ev.tool, ms:ev.ms, count:1, err:ev.err, agent:agent});
           } else {
-            merged.push({kind:"usage", tokens:ev.tokens});
+            merged.push({kind:"usage", tokens:ev.tokens, agent:agent});
           }
         });
         return merged;
@@ -725,10 +754,11 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
         // 段宽是真实像素（不是 flex-grow 权重），行外层带 overflow-x:auto——
         // 调用数再多，也只是这一行变宽可横向滚动，不会撑破卡片或挤压其它内容。
         var segs = segsData.map(function(seg){
+          var isSubagent = seg.agent && seg.agent !== "main";
           if(seg.kind==="tool"){
-            var cls = seg.err ? "err" : (seg.count>1 ? "merged" : "ok");
+            var cls = (seg.err ? "err" : (seg.count>1 ? "merged" : "ok")) + (isSubagent ? " subagent" : "");
             var label = seg.count>1 ? (seg.tool+' ×'+seg.count) : seg.tool;
-            var titleText = seg.tool + (seg.count>1 ? (' × '+seg.count+' 次，合计 '+seg.ms+'ms') : (' · '+seg.ms+'ms'));
+            var titleText = seg.tool + (seg.count>1 ? (' × '+seg.count+' 次，合计 '+seg.ms+'ms') : (' · '+seg.ms+'ms')) + ' · agent='+(seg.agent||"main");
             // 段宽取"按耗时算出的宽度"和"能放下标签文字的最小宽度"两者较大值——
             // 本地工具调用常常只有几百 ms，纯按 ms*0.05 算出来的宽度几乎总是不到
             // 文字下限，标签会被整段隐藏，只能靠悬浮 title 才看得到工具名。
@@ -739,7 +769,8 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
           var label = seg.tokens+' tok';
           var labelW = Math.min(130, label.length*6.5+14);
           var w = Math.max(labelW, Math.min(130, seg.tokens*0.008));
-          return '<div class="timeline-seg usage" style="width:'+w+'px" title="usage · '+seg.tokens+' tok">'+label+'</div>';
+          var usageCls = "usage"+(isSubagent ? " subagent" : "");
+          return '<div class="timeline-seg '+usageCls+'" style="width:'+w+'px" title="usage · '+seg.tokens+' tok · agent='+(seg.agent||"main")+'">'+label+'</div>';
         }).join("");
         var countNote = (toolMerged!==toolRaw)
           ? ('共 '+toolRaw+' 次工具调用 · 合并连续重复为 '+toolMerged+' 段')
@@ -946,6 +977,7 @@ footer.note code{font-family:"IBM Plex Mono",monospace; background:var(--surface
         SKILLS = (data.skills||[]).map(function(s){return s.name;});
         NEVER_USED = data.neverUsed||[];
         modelCosts = data.modelCosts||[];
+        unpricedModels = data.unpricedModels||[];
         devflowRuns = data.devflowRuns||[];
         autoDispatchStats = data.autoDispatchStats||{auto_dispatch:0, fallback_to_main:0, passthrough:0};
 

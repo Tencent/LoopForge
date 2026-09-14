@@ -9,6 +9,10 @@
 - error: event, sid, ts, phase, error
 
 历史 x_* 扩展字段、stop skill/rule 汇总、schema 版本号等都不再生成。
+
+`cost_usd` 的价格表 = 内置 `config/pricing.json` 与用户覆盖文件（默认
+`<project_root>/.codebuddy/agent-observability/pricing.overrides.json`，可用
+`AOBS_PRICING_OVERRIDES_PATH` 改路径）的字段级合并结果，详见 `load_prices()`。
 """
 from __future__ import annotations
 
@@ -24,6 +28,25 @@ from . import state as st
 
 DEFAULT_PRICES_PATH = Path(__file__).resolve().parents[2] / "config" / "pricing.json"
 DEFAULT_DATA_SOURCE = "codebuddy-cli"
+
+
+def _default_overrides_path() -> Path | None:
+    """用户定价覆盖文件的默认位置：`<project_root>/.codebuddy/agent-observability/pricing.overrides.json`。
+
+    刻意放在 `skills/` 树**外**：`scripts/build-classic-hosts.py` 会整棵同步
+    `.codebuddy/skills`，放树内会 (a) 每次改动都产生 `--check` drift，(b) 把用户的
+    自定义价格复制进 `.claude`/`.cursor` 宿主包；放树外则既不参与同步，也不会被
+    `config/pricing.json` 的后续更新冲掉。
+    """
+    try:
+        project_root = Path(__file__).resolve().parents[5]
+    except IndexError:
+        return None
+    return project_root / ".codebuddy" / "agent-observability" / "pricing.overrides.json"
+
+
+# None 表示"拿不到项目根"，此时等同于"没有覆盖文件"（纯内置价格表）。
+DEFAULT_OVERRIDES_PATH: Path | None = _default_overrides_path()
 
 
 def get_log_path(base_dir: Path) -> Path:
@@ -339,9 +362,86 @@ def build_stage_transition_event(
     return record
 
 
-@lru_cache(maxsize=1)
-def load_prices() -> dict[str, dict[str, float]]:
-    """从 `config/pricing.json` 中一次性加载模型价格配置。"""
+def resolve_overrides_path() -> Path | None:
+    """返回当前生效的覆盖文件路径：`AOBS_PRICING_OVERRIDES_PATH` 优先，否则默认路径。
+
+    返回 `None` 表示"不加载任何覆盖"（纯内置价格表）。支持 `~` 展开。
+    """
+    raw = os.environ.get("AOBS_PRICING_OVERRIDES_PATH", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return DEFAULT_OVERRIDES_PATH
+
+
+def _coerce_price_table(data: Any) -> dict[str, dict[str, float]]:
+    """把任意 JSON 结果规整成 `{model: {field: float}}`，坏数据按字段/按模型跳过。
+
+    与内置表加载的差别只有一处：内置表遇到非数字会整体抛错降级，这里逐字段跳过——
+    用户的补丁文件里写错一个字段不应该把其余正确的覆盖一起丢掉，更不应该让 hook 挂掉。
+    """
+    if not isinstance(data, dict):
+        return {}
+    table: dict[str, dict[str, float]] = {}
+    for raw_key, raw_value in data.items():
+        if not isinstance(raw_value, dict):
+            continue
+        key = str(raw_key).strip().lower()
+        if not key:
+            continue
+        row: dict[str, float] = {}
+        for price_key, price_value in raw_value.items():
+            # bool 是 int 的子类，True 会被 float() 变成 1.0，这里按"不是价格"处理。
+            if price_value is None or isinstance(price_value, bool):
+                continue
+            try:
+                row[str(price_key).strip().lower()] = float(price_value)
+            except (TypeError, ValueError):
+                continue
+        # 全是坏字段的模型不落表：否则它会被 `lookup_price` 命中成 {}，
+        # 既算不出成本又不算"未定价"，看板上会变成一个查不到原因的空洞。
+        if row:
+            table[key] = row
+    return table
+
+
+def load_price_overrides(path: Path | None = None) -> dict[str, dict[str, float]]:
+    """加载用户定价覆盖文件；任何异常都静默降级为空覆盖（纯内置价格表）。
+
+    静默是刻意的：这个文件是给人手写的常驻配置，hook 每次都是新进程，
+    一旦因格式问题抛异常/打印，会让整条 hook 链路变得不可用。
+    """
+    try:
+        target = path if path is not None else resolve_overrides_path()
+        if not target:
+            return {}
+        with Path(target).expanduser().open("r", encoding="utf-8") as fp:
+            data = json.load(fp)
+    except Exception:
+        return {}
+    return _coerce_price_table(data)
+
+
+def merge_prices(
+    base: dict[str, dict[str, float]] | None,
+    overrides: dict[str, dict[str, float]] | None,
+) -> dict[str, dict[str, float]]:
+    """字段级合并价格表：覆盖里写出的字段替换内置值，没写的字段沿用内置值。
+
+    可以新增内置表里不存在的模型；**不支持删除**内置模型或字段（合并只能加不能减）。
+    """
+    merged: dict[str, dict[str, float]] = {}
+    for model, row in (base or {}).items():
+        if isinstance(row, dict):
+            merged[model] = dict(row)
+    for model, patch in (overrides or {}).items():
+        if not isinstance(patch, dict):
+            continue
+        merged.setdefault(model, {}).update(patch)
+    return merged
+
+
+def _load_builtin_prices() -> dict[str, dict[str, float]]:
+    """从 `config/pricing.json` 中一次性加载内置模型价格配置（不含用户覆盖）。"""
     path = os.environ.get("AOBS_PRICES_PATH", "").strip()
     prices_path = Path(path).expanduser() if path else DEFAULT_PRICES_PATH
     try:
@@ -356,6 +456,21 @@ def load_prices() -> dict[str, dict[str, float]]:
         for key, value in data.items()
         if isinstance(value, dict)
     }
+
+
+@lru_cache(maxsize=1)
+def load_prices() -> dict[str, dict[str, float]]:
+    """内置价格表 + 用户覆盖文件的合并结果（字段级）。
+
+    结果带 `lru_cache`：hook 是短命进程，一次会话里只该读一次盘；长驻进程或单测里
+    改了覆盖文件/环境变量后，调 `clear_price_cache()` 让下一次调用重新加载。
+    """
+    return merge_prices(_load_builtin_prices(), load_price_overrides())
+
+
+def clear_price_cache() -> None:
+    """丢弃 `load_prices()` 的缓存，让下一次调用重读磁盘与环境变量。"""
+    load_prices.cache_clear()
 
 
 def lookup_price(model: str | None) -> dict[str, float] | None:
@@ -375,6 +490,15 @@ def lookup_price(model: str | None) -> dict[str, float] | None:
     if best_key is None:
         return None
     return prices[best_key]
+
+
+def is_unpriced(model: str | None) -> bool:
+    """模型是否完全没命中价格表（含模糊匹配）。
+
+    "未定价"的唯一口径就是 `lookup_price(...) is None`（D4）：模糊（最长子串）命中的
+    模型能算出成本，就不该出现在看板的"建议补价"提示里。
+    """
+    return lookup_price(model) is None
 
 
 def estimate_cost(tokens: dict | None, model: str | None) -> dict[str, Any] | None:
