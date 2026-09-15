@@ -206,9 +206,15 @@ def write_host(host: str) -> None:
 def check_host(host: str) -> list:
     target = ROOT / f".{host}"
     wanted = expected(host)
+    # __pycache__/*.pyc 是运行 Python 工具（比如 validate.sh 里的 py_compile）时的
+    # 正常副作用，不是宿主包内容本身；add_tree() 生成期望清单时已经排除了同样的
+    # 东西（见上面 134 行），这里扫描"实际有什么"必须用一样的排除规则，否则任何
+    # 在 .claude/.cursor 下跑过一次 Python 语法检查就会把这些缓存文件误判成
+    # "unmanaged extra"。
     actual = {
         str(path.relative_to(target)): path.read_bytes()
-        for path in target.rglob("*") if path.is_file()
+        for path in target.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
     } if target.is_dir() else {}
     errors = []
     for name in sorted(set(wanted) | set(actual)):

@@ -118,6 +118,8 @@ failed → in_progress（重试）
 
 **Leader 汇总时**：`summary.status="completed"` + `summary.report_path` + `summary.completed_at=now`
 
+**任一角色判定自身失败时** ⭐：`status="failed"` + `stages[当前阶段].retry_count = (原值 or 0) + 1` + `last_error=<失败原因>` + `completed_at=now` + `last_event="TASK-XX_failed"`。`retry_count` 只能由失败角色自己在这一步递增，不得由 Main Agent 代写；Main Agent 在调度自检时只读取该值判断重试或暂停（见"调度自检"章节），不修改它。
+
 ## 初始化协议
 
 Main Agent 从模板创建 → 填充 `task_id`/`task_slug`/`run_mode`/`runtime_mode`/`project_config` → Phase 0 3 维度打分写入 `size_class` → `current_stage="PHASE-0"` → `last_event="workflow_initialized"`

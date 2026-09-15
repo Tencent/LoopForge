@@ -1,0 +1,62 @@
+{
+  "_comment": "将本文件合并到 ~/.claude/settings.json 或 <project>/.claude/settings.json",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CODEBUDDY_PROJECT_DIR\"/.claude/skills/agent-observability/scripts/run_hook.sh session-start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CODEBUDDY_PROJECT_DIR\"/.claude/skills/agent-observability/scripts/run_hook.sh user-prompt-submit",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CODEBUDDY_PROJECT_DIR\"/.claude/skills/agent-observability/scripts/run_hook.sh pre",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CODEBUDDY_PROJECT_DIR\"/.claude/skills/agent-observability/scripts/run_hook.sh post",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CODEBUDDY_PROJECT_DIR\"/.claude/skills/agent-observability/scripts/run_hook.sh stop",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
