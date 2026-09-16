@@ -36,8 +36,8 @@ cd web && npm run dev       # UI :5173，代理 /api
 LoopForge 打 `vX.Y.Z` tag 发版时，会把本镜像推到 GHCR（版本号与 CLI 相同）：
 
 ```bash
-docker pull ghcr.io/tencent/loopforge-tcmcp:0.2.0
-docker run --rm -p 127.0.0.1:8088:8088 ghcr.io/tencent/loopforge-tcmcp:0.2.0
+docker pull ghcr.io/tencent/loopforge-tcmcp:0.2.1
+docker run --rm -p 127.0.0.1:8088:8088 ghcr.io/tencent/loopforge-tcmcp:0.2.1
 ```
 
 在本目录本地构建（Node 打前端，Python 跑 API 并托管 `web/dist`）：

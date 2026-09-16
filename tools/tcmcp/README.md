@@ -36,8 +36,8 @@ cd web && npm run dev       # UI :5173, proxies /api
 LoopForge `vX.Y.Z` releases also publish this image to GHCR (same version as the CLI):
 
 ```bash
-docker pull ghcr.io/tencent/loopforge-tcmcp:0.2.0
-docker run --rm -p 127.0.0.1:8088:8088 ghcr.io/tencent/loopforge-tcmcp:0.2.0
+docker pull ghcr.io/tencent/loopforge-tcmcp:0.2.1
+docker run --rm -p 127.0.0.1:8088:8088 ghcr.io/tencent/loopforge-tcmcp:0.2.1
 ```
 
 Build from this directory (Node builds the UI; Python serves the API and `web/dist`):

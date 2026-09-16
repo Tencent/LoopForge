@@ -2,7 +2,7 @@
 
 [English](CHANGELOG.md) | 简体中文
 
-## Unreleased
+## 0.2.1
 
 - 新增 `tools/tcmcp`：腾讯云只读 MCP Initializr，与 `loopforge install` 分开文档化与运行。LoopForge 版本 tag 同时发布 `ghcr.io/tencent/loopforge-tcmcp`。
 
