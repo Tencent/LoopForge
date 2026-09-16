@@ -2,7 +2,7 @@
 
 [English](CHANGELOG.md) | 简体中文
 
-## Unreleased
+## 0.2.2
 
 - 安装 Classic 宿主文件时保留可执行权限，避免 `run_hook.sh` 装完无法执行，导致 Agent Observability 采不到数。
 

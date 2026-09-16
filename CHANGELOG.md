@@ -2,7 +2,7 @@
 
 English | [简体中文](CHANGELOG.zh-CN.md)
 
-## Unreleased
+## 0.2.2
 
 - Keep executable bits when installing Classic host files so `run_hook.sh` can run after `npx loopforge-cli install`, restoring Agent Observability collection.
 
