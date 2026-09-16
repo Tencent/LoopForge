@@ -2,6 +2,10 @@
 
 [English](CHANGELOG.md) | 简体中文
 
+## Unreleased
+
+- 安装 Classic 宿主文件时保留可执行权限，避免 `run_hook.sh` 装完无法执行，导致 Agent Observability 采不到数。
+
 ## 0.2.1
 
 - 新增 `tools/tcmcp`：腾讯云只读 MCP Initializr，与 `loopforge install` 分开文档化与运行。LoopForge 版本 tag 同时发布 `ghcr.io/tencent/loopforge-tcmcp`。

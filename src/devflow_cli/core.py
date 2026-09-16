@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,25 @@ class DevFlowError(RuntimeError):
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def file_mode(path: Path) -> int:
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if path.suffix == ".sh":
+        mode |= 0o111
+    return mode
+
+
+def apply_mode(path: Path, mode: int) -> None:
+    mode = stat.S_IMODE(mode)
+    if path.suffix == ".sh":
+        mode |= 0o111
+    path.chmod(mode)
+
+
+def write_payload(path: Path, data: bytes, mode: int) -> None:
+    path.write_bytes(data)
+    apply_mode(path, mode)
 
 
 def asset_root() -> Path:
@@ -59,7 +79,7 @@ def save_state(project: Path, state: dict) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def snapshot(root: Path) -> Dict[str, bytes]:
+def snapshot(root: Path) -> Dict[str, Tuple[bytes, int]]:
     result = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
@@ -67,7 +87,7 @@ def snapshot(root: Path) -> Dict[str, bytes]:
         relative = str(path.relative_to(root))
         if relative.endswith(".devflow-managed-skills.json"):
             continue
-        result[relative] = path.read_bytes()
+        result[relative] = (path.read_bytes(), file_mode(path))
     return result
 
 
@@ -135,7 +155,7 @@ def materialize_classic(host: str, stage: Path) -> None:
             copy_skill(source_dir, links / name)
 
 
-def build_plan(host: str, edition: str) -> Dict[str, bytes]:
+def build_plan(host: str, edition: str) -> Dict[str, Tuple[bytes, int]]:
     from .targets import load
 
     with tempfile.TemporaryDirectory(prefix="devflow-install-") as temporary:
@@ -224,7 +244,7 @@ def apply_install(
         raise DevFlowError(f"尚未安装 {edition}/{host}")
     old_files = {item["path"]: item for item in (previous or {}).get("files", [])}
     conflicts = []
-    for relative, data in plan.items():
+    for relative, (data, _mode) in plan.items():
         destination = project / relative
         parent_conflict = blocking_parent(project, destination)
         if parent_conflict is not None:
@@ -270,7 +290,7 @@ def apply_install(
             remove_path(destination)
         elif destination.is_file() and not destination.is_symlink() and digest(destination.read_bytes()) == old["sha256"]:
             destination.unlink()
-    for relative, data in sorted(plan.items()):
+    for relative, (data, mode) in sorted(plan.items()):
         destination = project / relative
         if (
             blocking_parent(project, destination) is None
@@ -278,13 +298,14 @@ def apply_install(
             and not destination.is_symlink()
             and destination.read_bytes() == data
         ):
+            apply_mode(destination, mode)
             unchanged += 1
         else:
             if force:
                 prepare_forced_destination(project, destination)
             else:
                 destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(data)
+            write_payload(destination, data, mode)
             installed += 1
         records.append({"path": relative, "sha256": digest(data)})
     state["installations"][key] = {

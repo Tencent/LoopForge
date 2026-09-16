@@ -1,4 +1,5 @@
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -261,6 +262,31 @@ class InstallerTests(unittest.TestCase):
                 text = (project / ".codebuddy/agents" / name).read_text(encoding="utf-8")
                 self.assertIn("permissionMode: bypassPermissions", text)
                 self.assertIn("enabledAutoRun: true", text)
+
+    def test_classic_install_makes_observability_hook_executable(self):
+        hooks = (
+            ("codebuddy", ".codebuddy/skills/agent-observability/scripts/run_hook.sh"),
+            ("cursor", ".cursor/skills/agent-observability/scripts/run_hook.sh"),
+            ("claude", ".claude/skills/agent-observability/scripts/run_hook.sh"),
+        )
+        for host, relative in hooks:
+            with self.subTest(host=host), tempfile.TemporaryDirectory() as temporary:
+                project = self.project(temporary)
+                apply_install(project, host, "classic")
+                hook = project / relative
+                self.assertTrue(hook.is_file(), relative)
+                self.assertTrue(hook.stat().st_mode & stat.S_IXUSR, relative)
+
+    def test_update_restores_missing_executable_bit_on_hook(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "codebuddy", "classic")
+            hook = project / ".codebuddy/skills/agent-observability/scripts/run_hook.sh"
+            hook.chmod(0o644)
+            written, unchanged = apply_install(project, "codebuddy", "classic", update_only=True)
+            self.assertEqual(0, written)
+            self.assertGreater(unchanged, 0)
+            self.assertTrue(hook.stat().st_mode & stat.S_IXUSR)
 
 
 if __name__ == "__main__":
