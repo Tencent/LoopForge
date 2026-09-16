@@ -2,6 +2,15 @@
 
 [English](CHANGELOG.md) | 简体中文
 
+## 0.2.0
+
+- 为 CodeBuddy、Cursor 和 Claude Code 的 Classic DevFlow 流程新增可选的本地可观测性看板。
+- 新增工具耗时、transcript token 用量、会话成本、Agent 归属和 DevFlow 阶段进度等本地指标。
+- 支持为内置价格表未覆盖的模型配置自定义定价。
+- 修正轮次与耗时聚合、派发归属、会话计数以及中大型流程分类等看板统计口径。
+- 修正 Classic 生成包校验，避免将 Python 缓存文件误报为未托管内容。
+- 支持基于已有版本 tag 重新触发发布工作流。
+
 ## 0.1.0
 
 - 重写中英文 README，突出项目价值、快速开始、工作流和 Edition 选择。

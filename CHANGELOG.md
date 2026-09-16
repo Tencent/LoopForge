@@ -2,6 +2,15 @@
 
 English | [简体中文](CHANGELOG.zh-CN.md)
 
+## 0.2.0
+
+- Added an opt-in local observability dashboard for Classic DevFlow runs on CodeBuddy, Cursor, and Claude Code.
+- Added local metrics for tool latency, transcript token usage, session cost, agent attribution, and DevFlow stage progress.
+- Added per-model pricing overrides for models that are not covered by the built-in price table.
+- Improved dashboard accuracy for turn and duration aggregation, dispatch attribution, session counting, and medium/large workflow classification.
+- Fixed generated Classic bundle validation so Python cache files are not reported as unmanaged content.
+- Made release workflows retryable from an existing version tag.
+
 ## 0.1.0
 
 - Rewrote English and Chinese READMEs to highlight project value, quick start, workflow, and edition selection.
