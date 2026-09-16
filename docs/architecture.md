@@ -31,7 +31,11 @@ Portable 安装到目标项目时才生成 `.cursor/.claude/.agents/.codebuddy` 
 是 Classic；`loopforge install <host>` 安装完整宿主包，Portable 通过
 `loopforge skills install <host>` 安装。安装器不改变两套工作流的内部状态机。
 
-## 私有扩展
+## 可选工具与私有扩展
 
-CI/CD、工单、企业代码托管、知识库、聊天通知和云运维应保存在部署方的
-私有仓库，通过本地配置或受控安装叠加，不应反向提交到公共核心。
+`tools/` 存放不进入 Classic/Portable 安装包和 `loopforge-cli` npm 包的配套工具。
+当前 `tools/tcmcp` 是腾讯云只读 MCP Initializr，由克隆仓库或 GHCR 镜像单独运行。
+
+CI/CD、工单、企业代码托管、知识库、聊天通知，以及未开源的云运维能力，应保存在部署方的
+私有仓库，通过本地配置或受控安装叠加。不要把 CAM 策略、内网域名或运维 MCP 写进
+Classic/Portable 工作流模板。

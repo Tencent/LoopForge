@@ -28,6 +28,26 @@ jobs:
       - run: bash scripts/smoke-install.sh
       - run: bash scripts/smoke-npm.sh
 
+  tcmcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "22"
+      - name: Test tcmcp
+        working-directory: tools/tcmcp
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -e '.[dev]'
+          .venv/bin/python -m pytest
+      - name: Build frontend
+        working-directory: tools/tcmcp/web
+        run: npm ci && npm run build
+
   secrets:
     runs-on: ubuntu-latest
     steps:

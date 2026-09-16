@@ -14,6 +14,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -55,6 +56,19 @@ jobs:
           echo "name=${package_name}" >> "$GITHUB_OUTPUT"
           echo "version=${package_version}" >> "$GITHUB_OUTPUT"
           echo "tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/loopforge-tcmcp"
+          sha="$(git rev-parse --short HEAD)"
+          tags="${image}:${package_version}"$'\n'"${image}:sha-${sha}"
+          if [[ "${package_version}" != *-* ]]; then
+            tags+=$'\n'"${image}:${package_version%.*}"
+            tags+=$'\n'"${image}:latest"
+          fi
+          {
+            echo "image_tags<<EOF"
+            printf '%s\n' "$tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install validation dependencies
         run: python3 -m pip install pyyaml==6.0.3
@@ -67,6 +81,23 @@ jobs:
           bash scripts/smoke-npm.sh
           bash scripts/smoke-curl-install.sh
           bash scripts/scan-secrets.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push tcmcp image
+        uses: docker/build-push-action@v6
+        with:
+          context: tools/tcmcp
+          push: true
+          tags: ${{ steps.package.outputs.image_tags }}
 
       - name: Build GitHub Release assets
         run: bash scripts/build-release-archive.sh

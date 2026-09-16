@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+*.egg-info/
+.pytest_cache/
+web/node_modules/
+web/dist/
+.DS_Store
+conf/
+config.yaml
+.env
+.cursor/

@@ -245,6 +245,16 @@ If you have cloned this repository, install the LoopForge CLI from the current s
 pipx install .
 ```
 
+## Optional tools
+
+`tools/tcmcp` is a Tencent Cloud read-only MCP Initializr (Redis, CDB, TDSQL-C, TKE, CLS, COS). It is not part of `loopforge install` or the npm CLI package. From a clone:
+
+```bash
+cd tools/tcmcp
+```
+
+Then follow [`tools/tcmcp/README.md`](tools/tcmcp/README.md). Cloud API keys are not written into generated zips or the container image; they stay on the machine that lists resources or installs the MCP client. LoopForge `vX.Y.Z` releases publish `ghcr.io/tencent/loopforge-tcmcp:<version>`.
+
 ## Permissions and security
 
 Some Classic host configurations enable automatic execution or high-permission agent modes. Use LoopForge only in trusted projects. Before installation, inspect planned files with `loopforge plan codebuddy`, `loopforge plan codex`, `loopforge plan cursor`, or `loopforge plan claude`. Do not put credentials, private endpoints, or production operations configuration in workflow templates.

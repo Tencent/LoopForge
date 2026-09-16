@@ -21,16 +21,45 @@ if rg --hidden -n -i \
   echo "Credential-like content found." >&2
   exit 1
 fi
+if rg --hidden -n -i \
+  -e 'woa\.com' \
+  -e '(^|[^[:alnum:]])oa\.com' \
+  -e 'git\.woa' \
+  -e 'iwiki' \
+  -e 'tapd' \
+  -e 'internal\.tencentcloudapi' \
+  -e 'cls\.internal\.tencentcloudapi\.com' \
+  -e 'AKID[A-Za-z0-9]{16,}' \
+  -g '!.git/**' \
+  -g '!.venv/**' \
+  -g '!node_modules/**' \
+  "$ROOT_DIR/tools/tcmcp"; then
+  echo "Internal or credential-like content found under tools/tcmcp." >&2
+  exit 1
+fi
+
+FIND_PRUNE=(
+  -not -path '*/.git/*'
+  -not -path '*/node_modules/*'
+  -not -path '*/.venv/*'
+  -not -path '*/web/dist/*'
+)
 
 echo "[2/6] Checking shell syntax"
 while IFS= read -r -d '' file; do bash -n "$file"; done \
-  < <(find "$ROOT_DIR" -type f -name '*.sh' -not -path '*/.git/*' -print0)
+  < <(find "$ROOT_DIR" -type f -name '*.sh' "${FIND_PRUNE[@]}" -print0)
 
 echo "[3/6] Checking JavaScript and Python syntax"
 while IFS= read -r -d '' file; do node --check "$file" >/dev/null; done \
-  < <(find "$ROOT_DIR" -type f \( -name '*.js' -o -name '*.cjs' -o -name '*.mjs' \) -not -path '*/.git/*' -print0)
+  < <(find "$ROOT_DIR" -type f \( -name '*.js' -o -name '*.cjs' -o -name '*.mjs' \) "${FIND_PRUNE[@]}" -print0)
+
+PY_FIND=( "${FIND_PRUNE[@]}" )
+python_minor="$(python3 -c 'import sys; print(sys.version_info.minor)')"
+if (( python_minor < 10 )); then
+  PY_FIND+=( -not -path '*/tools/tcmcp/*' )
+fi
 while IFS= read -r -d '' file; do python3 -m py_compile "$file"; done \
-  < <(find "$ROOT_DIR" -type f -name '*.py' -not -path '*/.git/*' -print0)
+  < <(find "$ROOT_DIR" -type f -name '*.py' "${PY_FIND[@]}" -print0)
 
 echo "[4/6] Checking JSON, YAML, Markdown links, and Skill metadata"
 python3 - "$ROOT_DIR" <<'PY'
@@ -46,17 +75,24 @@ sys.path.insert(0, str(root / "src"))
 from devflow_cli import __version__
 from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, source_for
 
+SKIP_PARTS = {".git", "node_modules", ".venv", "dist"}
+
+def skip(path: pathlib.Path) -> bool:
+    return bool(SKIP_PARTS.intersection(path.parts))
+
 for path in root.rglob("*.json"):
-    if ".git" not in path.parts:
-        json.loads(path.read_text(encoding="utf-8"))
+    if skip(path):
+        continue
+    json.loads(path.read_text(encoding="utf-8"))
 for pattern in ("*.yaml", "*.yml"):
     for path in root.rglob(pattern):
-        if ".git" not in path.parts:
-            yaml.safe_load(path.read_text(encoding="utf-8"))
+        if skip(path):
+            continue
+        yaml.safe_load(path.read_text(encoding="utf-8"))
 
 missing = []
 for path in root.rglob("*.md"):
-    if ".git" in path.parts:
+    if skip(path):
         continue
     for target in re.findall(r"\[[^]]*\]\(([^)]+)\)", path.read_text(encoding="utf-8")):
         target = target.split("#", 1)[0]
@@ -136,7 +172,9 @@ for path in README.md LICENSE SECURITY.md CONTRIBUTING.md THIRD_PARTY_NOTICES.md
   scripts/scan-secrets.sh scripts/smoke-install.sh scripts/smoke-npm.sh \
   scripts/smoke-curl-install.sh scripts/build-release-archive.sh \
   scripts/build-classic-hosts.py \
-  src/devflow_cli/cli.py src/devflow_cli/core.py; do
+  src/devflow_cli/cli.py src/devflow_cli/core.py \
+  tools/tcmcp/README.md tools/tcmcp/README.zh-CN.md \
+  tools/tcmcp/pyproject.toml tools/tcmcp/app/main.py tools/tcmcp/Dockerfile; do
   test -f "$ROOT_DIR/$path"
 done
 

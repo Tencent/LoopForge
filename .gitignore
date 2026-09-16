@@ -26,3 +26,6 @@ build/
 dist/
 *.egg-info/
 *.tgz
+node_modules/
+tools/tcmcp/.venv/
+tools/tcmcp/web/dist/

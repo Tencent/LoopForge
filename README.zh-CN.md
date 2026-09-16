@@ -244,6 +244,16 @@ loopforge skills uninstall claude
 pipx install .
 ```
 
+## 可选工具
+
+`tools/tcmcp` 是腾讯云只读 MCP Initializr（Redis、CDB、TDSQL-C、TKE、CLS、COS）。它不包含在 `loopforge install` 或 npm CLI 包中。克隆仓库后：
+
+```bash
+cd tools/tcmcp
+```
+
+再按 [`tools/tcmcp/README.md`](tools/tcmcp/README.md) 启动。云 API 密钥不会写入生成的 zip 或容器镜像，只留在拉取资源或安装 MCP 客户端的本机。LoopForge 打 `vX.Y.Z` tag 发版时会发布 `ghcr.io/tencent/loopforge-tcmcp:<version>`。
+
 ## 权限与安全
 
 部分宿主的 Classic 配置会启用自动执行或高权限 Agent 模式。请只在可信项目中使用；安装前可以通过 `loopforge plan codebuddy`、`loopforge plan codex`、`loopforge plan cursor` 或 `loopforge plan claude` 检查将写入的文件。不要把凭据、私有地址或生产运维配置写入工作流模板。
