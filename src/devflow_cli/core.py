@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from . import __version__
-from .editions import EDITIONS, HOSTS, source_for
+from .editions import EDITIONS, HOSTS, hosts_for, source_for
 
 
 STATE_VERSION = 1
@@ -134,6 +134,14 @@ def materialize_portable(host: str, stage: Path) -> None:
         for name in manifest["skill_sets"]["portable"]:
             copy_skill(skills_root / name, target / name)
         return
+    if host == "pi":
+        target = stage / ".pi/skills"
+        target.mkdir(parents=True, exist_ok=True)
+        manifest = json.loads((skills_root / "manifest.json").read_text(encoding="utf-8"))
+        copy_skills_manifest(skills_root, target)
+        for name in manifest["skill_sets"]["portable"]:
+            copy_skill(skills_root / name, target / name)
+        return
     raise DevFlowError(f"不支持的宿主: {host}")
 
 
@@ -173,6 +181,10 @@ def validate_choice(host: str, edition: str) -> None:
         raise DevFlowError(f"未知宿主 {host}；可选: {', '.join(HOSTS)}")
     if edition not in EDITIONS:
         raise DevFlowError(f"未知 edition {edition}；可选: {', '.join(EDITIONS)}")
+    if host not in hosts_for(edition):
+        raise DevFlowError(
+            f"{edition} edition 不支持宿主 {host}；可选: {', '.join(hosts_for(edition))}"
+        )
 
 
 def path_present(path: Path) -> bool:

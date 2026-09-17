@@ -179,6 +179,19 @@ Then start a workflow:
 /devflow "add status filtering to the order list and cover the API with tests"
 ```
 
+### Pi
+
+```bash
+npx -y loopforge-cli@latest skills install pi
+pi install npm:pi-subagents
+```
+
+Then start a workflow:
+
+```text
+/skill:devflow "add status filtering to the order list and cover the API with tests"
+```
+
 See [`EDITIONS.md`](EDITIONS.md) for the complete boundaries and directory layout.
 
 ## Update and uninstall
@@ -235,6 +248,11 @@ loopforge skills uninstall cursor
 loopforge skills update claude
 loopforge skills status claude
 loopforge skills uninstall claude
+
+# Pi
+loopforge skills update pi
+loopforge skills status pi
+loopforge skills uninstall pi
 ```
 
 Installation state is stored in `.devflow/install-state.json`. An update stops instead of overwriting user-modified or conflicting files. Use `--force` only when you intend to replace conflicts or switch editions, preferably after inspecting `loopforge plan`.

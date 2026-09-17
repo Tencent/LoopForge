@@ -8,6 +8,7 @@
 | Codex | `.codex/` + `.agents/skills` | `.agents/skills/devflow` |
 | Cursor | `.cursor/` 完整包 | `.cursor/skills` + 两个执行器 |
 | Claude Code | `.claude/` 完整包 | `.claude/skills` + 两个执行器 |
+| Pi | 无（Portable only） | `.pi/skills` + `subagent` adapter（需 `npm:pi-subagents`） |
 
 Classic 的 Cursor/Claude 目录是生成产物；Portable 的事实只保存在 `skills/`。
 两者只共享显式行为合同和测试，不共享宿主运行文件。
@@ -16,7 +17,7 @@ Classic 的 Cursor/Claude 目录是生成产物；Portable 的事实只保存在
 
 1. **结构门禁**：校验 JSON/YAML、Skill frontmatter、manifest 引用和链接。
 2. **漂移门禁**：`build-classic-hosts.py --check` 逐字比较 Classic 生成包。
-3. **安装门禁**：统一 CLI 覆盖 4 宿主 × 2 edition，并验证重复安装、更新、卸载、
+3. **安装门禁**：统一 CLI 覆盖 5 宿主 × 2 edition（pi 仅 Portable），并验证重复安装、更新、卸载、
    mixed-edition 拒绝和用户文件保护。
 4. **流程回归**：标准库单测和 CLI E2E 验证状态机、门禁、产物与恢复协议。
 5. **真实宿主 canary**：发布前或宿主大版本升级后，在隔离 fixture 仓库用真实

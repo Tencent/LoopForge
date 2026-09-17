@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .core import DevFlowError, apply_install, build_plan, doctor, status_rows, uninstall
+from .core import DevFlowError, apply_install, build_plan, doctor, status_rows, uninstall, validate_choice
 from .editions import DEFAULT_EDITION, EDITIONS, HOSTS, entrypoint_for, host_label, source_for, spec
 from .targets import load
 
@@ -107,6 +107,7 @@ def main(argv=None) -> int:
                     ))
             return 0
         if args.command == "plan":
+            validate_choice(args.host, args.edition)
             files = sorted(build_plan(args.host, args.edition))
             row = {
                 "edition": args.edition,
@@ -143,6 +144,8 @@ def main(argv=None) -> int:
                 f"Next: reopen {host_label(args.host)} and run "
                 f"{entrypoint_for(args.edition, args.host)} <你的需求>"
             )
+            if args.host == "pi" and args.edition == "portable":
+                print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
             return 0
         if args.command == "skills":
             if args.skills_command in {"install", "update"}:
@@ -163,6 +166,8 @@ def main(argv=None) -> int:
                     f"Next: reopen {host_label(args.host)} and run "
                     f"{entrypoint_for('portable', args.host)} <你的需求>"
                 )
+                if args.host == "pi":
+                    print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
                 return 0
             if args.skills_command == "status":
                 rows = [

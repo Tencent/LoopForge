@@ -129,12 +129,13 @@ if set(portable) != set(discovered):
 if DEFAULT_EDITION != "classic" or tuple(EDITION_SPECS) != ("portable", "classic"):
     raise SystemExit("Edition registry must keep Classic as the explicit default")
 for edition, metadata in EDITION_SPECS.items():
-    if set(metadata.get("entrypoints", {})) != set(HOSTS):
+    hosts = metadata.get("hosts", HOSTS)
+    if set(metadata.get("entrypoints", {})) != set(hosts):
         raise SystemExit(f"Edition entrypoint drift: {edition}")
     for source in metadata.get("source_roots", ()):
         if not (root / source).is_dir():
             raise SystemExit(f"Edition source does not exist: {edition}: {source}")
-    for host in HOSTS:
+    for host in hosts:
         source = source_for(edition, host)
         if not (root / source).is_dir():
             raise SystemExit(f"Edition host source does not exist: {edition}/{host}: {source}")

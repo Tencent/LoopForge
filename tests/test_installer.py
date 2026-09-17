@@ -154,9 +154,25 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual("classic", DEFAULT_EDITION)
         self.assertEqual(("portable", "classic"), tuple(EDITION_SPECS))
         for edition, metadata in EDITION_SPECS.items():
-            self.assertEqual(set(HOSTS), set(metadata["entrypoints"]))
-            for host in HOSTS:
+            hosts = metadata.get("hosts", HOSTS)
+            self.assertEqual(set(hosts), set(metadata["entrypoints"]))
+            for host in hosts:
                 self.assertTrue((ROOT / source_for(edition, host)).is_dir())
+
+    def test_pi_is_portable_only(self):
+        self.assertIn("pi", EDITION_SPECS["portable"]["hosts"])
+        self.assertNotIn("pi", EDITION_SPECS["classic"]["hosts"])
+        self.assertEqual("/skill:devflow", EDITION_SPECS["portable"]["entrypoints"]["pi"])
+
+    def test_pi_installs_portable_skills_and_rejects_classic(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            installed, _unchanged = apply_install(project, "pi", "portable")
+            self.assertGreater(installed, 0)
+            self.assertTrue((project / ".pi/skills/devflow/SKILL.md").is_file())
+            self.assertTrue((project / ".pi/skills/manifest.json").is_file())
+            with self.assertRaises(DevFlowError):
+                apply_install(project, "pi", "classic")
 
     def test_editions_and_plan_make_the_split_visible_without_writing(self):
         output = StringIO()
