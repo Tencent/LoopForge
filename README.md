@@ -279,6 +279,12 @@ Some Classic host configurations enable automatic execution or high-permission a
 
 See [`SECURITY.md`](SECURITY.md) and report vulnerabilities privately through GitHub Security Advisories.
 
+## Community
+
+Scan the WeCom QR code below to join the LoopForge community group.
+
+<img src="docs/community-wecom-qr.png" alt="LoopForge WeCom community group QR code" width="220" />
+
 ## Contributing
 
 Issues and pull requests are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and the repository `AGENTS.md` before changing workflow behavior. See [`CHANGELOG.md`](CHANGELOG.md) for release history.
