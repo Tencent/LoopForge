@@ -14,8 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from opentelemetry import trace as _otel_trace
-
 from .. import state as st
 from .bootstrap import (
     debug_write_span as _debug_write_span,
@@ -45,6 +43,20 @@ from .tracing import (
     span_context_ids as _span_context_ids,
     traceparent_parts as _traceparent_parts,
 )
+
+
+def _current_span() -> Any | None:
+    """返回当前 OpenTelemetry span，依赖缺失时返回 ``None``。
+
+    ``opentelemetry`` 只是 AgentLens 的可选依赖（见 ``bootstrap.load_runtime``）。
+    这里延迟导入，保证没有安装观测依赖时 hook 主链路仍能正常加载，而不是在
+    模块导入阶段直接抛出 ``ModuleNotFoundError``。
+    """
+    try:
+        from opentelemetry import trace as otel_trace
+    except Exception:
+        return None
+    return otel_trace.get_current_span()
 
 
 def emit_session_start(
@@ -498,7 +510,7 @@ def emit_post_step(
                         # track_llm_call 已经设置了 gen_ai.span.kind/system/operation.name。
                         # 下方 _annotate 会通过 handle_llm_response 设置 gen_ai.usage.*。
                         # LLMSpan 包装层没有 set_attribute，所以这里改用原生 span 写 ID。
-                        _native_span = _otel_trace.get_current_span()
+                        _native_span = _current_span()
                         _set_agent_aggregate_on_span(_native_span, _current_agg)
                         span_ids = _span_context_ids(_native_span)
                         parent_parts = _traceparent_parts(event_parent_carrier)
@@ -699,7 +711,7 @@ def emit_session_stop(
                         # track_llm_call 已经设置了 gen_ai.span.kind/system/operation.name。
                         # 下方 _annotate 会通过 handle_llm_response 设置 gen_ai.usage.*。
                         # LLMSpan 包装层没有 set_attribute，所以这里改用原生 span 写 ID。
-                        _native_span = _otel_trace.get_current_span()
+                        _native_span = _current_span()
                         _set_agent_aggregate_on_span(_native_span, _current_agg)
                         span_ids = _span_context_ids(_native_span)
                         parent_parts = _traceparent_parts(event_parent_carrier)

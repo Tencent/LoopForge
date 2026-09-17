@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import builtins
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,3 +74,33 @@ class RuntimeFlowTests(unittest.TestCase):
             rc = runtime.main(["post"])
         self.assertEqual(rc, 0)
         handle_post.assert_called_once()
+
+    def test_import_runtime_survives_missing_opentelemetry(self):
+        """opentelemetry 是可选依赖，缺失时不能在导入阶段直接崩溃。"""
+        code = (
+            "import sys\n"
+            "sys.modules['opentelemetry'] = None\n"
+            f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+            "from core import runtime\n"
+            "from core.agentlens import runtime as agentlens_runtime\n"
+            "assert agentlens_runtime._current_span() is None\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_current_span_returns_none_when_import_fails(self):
+        from core.agentlens import runtime as agentlens_runtime  # type: ignore
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "opentelemetry" or name.startswith("opentelemetry."):
+                raise ModuleNotFoundError("No module named 'opentelemetry'")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch.object(builtins, "__import__", side_effect=fake_import):
+            self.assertIsNone(agentlens_runtime._current_span())
