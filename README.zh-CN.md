@@ -278,6 +278,12 @@ cd tools/tcmcp
 
 安全问题请参阅 [`SECURITY.md`](SECURITY.md)，并通过 GitHub Security Advisory 私密报告。
 
+## 交流群
+
+扫描下方企业微信二维码加入 LoopForge 交流群。
+
+<img src="docs/community-wecom-qr.png" alt="LoopForge 交流群二维码" width="220" />
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request。修改工作流前请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和仓库中的 `AGENTS.md`。版本变化见 [`CHANGELOG.md`](CHANGELOG.md)。

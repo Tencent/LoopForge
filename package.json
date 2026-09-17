@@ -34,6 +34,7 @@
     ".claude/",
     "README.md",
     "README.zh-CN.md",
+    "docs/community-wecom-qr.png",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "!skills/**/tests/**",
