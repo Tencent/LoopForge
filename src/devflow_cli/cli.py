@@ -1,18 +1,48 @@
 import argparse
+import difflib
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Dict, List
 
-from . import __version__
-from .core import DevFlowError, apply_install, build_plan, doctor, status_rows, uninstall
+from . import __version__, launch
+from .core import (
+    STATE_PATH, DevFlowError, apply_install, build_plan, doctor, status_rows, uninstall,
+)
 from .editions import DEFAULT_EDITION, EDITIONS, HOSTS, entrypoint_for, host_label, source_for, spec
 from .targets import load
 
 
+PROGRAMS = ("loopforge", "lf")
+COMMANDS = (
+    "install", "update", "skills", "editions", "plan", "status", "uninstall", "doctor", "run",
+)
+
+
+def program_name() -> str:
+    """控制台脚本名，`lf` 与 `loopforge` 共用同一入口。"""
+    name = Path(sys.argv[0]).name
+    return name if name in PROGRAMS else "loopforge"
+
+
+def normalize_argv(argv: List[str]) -> List[str]:
+    """`lf "需求"` 等价于 `lf run "需求"`。"""
+    if not argv or argv[0] in COMMANDS or argv[0].startswith("-"):
+        return argv
+    close = difflib.get_close_matches(argv[0], COMMANDS, n=1, cutoff=0.7)
+    if close:
+        raise DevFlowError(
+            f"未知子命令 {argv[0]!r}；是否想运行 `{program_name()} {close[0]}`？"
+        )
+    print(f"[{program_name()}] 未匹配到子命令，按 `run <需求>` 处理", file=sys.stderr)
+    return ["run", *argv]
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
-        prog="loopforge",
+        prog=program_name(),
         description="安装和维护 DevFlow Classic / Portable 工作流",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -78,12 +108,152 @@ def parser() -> argparse.ArgumentParser:
     item.add_argument("--project-root", type=Path, default=Path.cwd())
     item = sub.add_parser("doctor")
     item.add_argument("--project-root", type=Path, default=Path.cwd())
+    item = sub.add_parser(
+        "run",
+        help="探测本机 Agent CLI 并带着工作流入口提示词在终端启动它",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    item.add_argument("requirement", nargs="*", help="需求描述；省略时只发送工作流入口")
+    item.add_argument("--host", choices=HOSTS, help="指定宿主，跳过探测与选择")
+    item.add_argument("--project-root", type=Path, default=Path.cwd())
+    item.add_argument("--dry-run", action="store_true", help="只打印将执行的命令，不启动")
+    item.add_argument("--json", action="store_true")
     return result
 
 
+def not_installed_message(available: Dict[str, str]) -> str:
+    lines = [f"当前项目尚未安装 LoopForge 工作流（未找到 {STATE_PATH}）"]
+    if available:
+        lines.append("本机检测到可用 Agent CLI: " + ", ".join(available))
+        lines.append(f"请先运行: {program_name()} install {next(iter(available))}")
+    else:
+        lines.append("本机未检测到受支持的 Agent CLI；可选宿主: " + ", ".join(HOSTS))
+        lines.append(f"请先运行: {program_name()} install <宿主>")
+    return "\n".join(lines)
+
+
+def missing_cli_message(hosts: List[str]) -> str:
+    details = "；".join(
+        f"{host} 尝试过 {', '.join(launch.tried_names(host))}"
+        f"（可用 {launch.override_variable(host)} 指定）"
+        for host in hosts
+    )
+    return (
+        f"已安装工作流，但未检测到对应的终端 CLI。{details}。"
+        "也可以直接打开对应宿主，在聊天框里发送工作流入口提示词。"
+    )
+
+
+def ambiguous_message(candidates: List[launch.Candidate]) -> str:
+    listing = ", ".join(item.host for item in candidates)
+    return (
+        f"检测到多个可用宿主（{listing}），当前不是交互终端无法选择；"
+        f"请用 {program_name()} run --host <宿主> 指定"
+    )
+
+
+def print_plan(candidates: List[launch.Candidate], requirement: str, args) -> None:
+    rows = [
+        {
+            "host": item.host,
+            "edition": item.edition,
+            "cli": item.cli,
+            "prompt": launch.build_prompt(item, requirement),
+            "argv": launch.build_argv(item, requirement),
+            "command": shlex.join(launch.build_argv(item, requirement)),
+        }
+        for item in candidates
+    ]
+    if args.json:
+        print(json.dumps(
+            {"selected": rows[0] if len(rows) == 1 else None, "candidates": rows},
+            ensure_ascii=False, indent=2,
+        ))
+        return
+    for index, row in enumerate(rows, start=1):
+        prefix = "" if len(rows) == 1 else f"[{index}] "
+        print(f"{prefix}host={row['host']} edition={row['edition']} cli={row['cli']}")
+        print(f"{prefix}prompt={row['prompt']}")
+        print(f"{prefix}command={row['command']}")
+    if len(rows) > 1:
+        print(f"将提示选择要启动的宿主，也可用 {program_name()} run --host <宿主> 指定。")
+
+
+def select_host(
+    host: str, rows: List[dict], candidates: List[launch.Candidate],
+) -> launch.Candidate:
+    installed = next((row for row in rows if row["host"] == host), None)
+    if installed is None:
+        known = ", ".join(sorted(row["host"] for row in rows))
+        raise DevFlowError(
+            f"项目未安装 {host} 工作流（已安装: {known}）；"
+            f"请先运行 {program_name()} install {host}"
+        )
+    candidate = next((item for item in candidates if item.host == host), None)
+    if candidate is None:
+        raise DevFlowError(missing_cli_message([host]))
+    return candidate
+
+
+def choose_host(candidates: List[launch.Candidate]) -> launch.Candidate:
+    print("检测到多个可用宿主，请选择要启动的宿主：")
+    for index, item in enumerate(candidates, start=1):
+        print(
+            f"  {index}) {host_label(item.host)} ({item.host}) edition={item.edition} "
+            f"入口={launch.build_prompt(item)} cli={item.cli}"
+        )
+    while True:
+        answer = input(f"请输入序号 [1-{len(candidates)}]（回车默认 1）: ").strip()
+        if not answer:
+            return candidates[0]
+        if answer.isdigit() and 1 <= int(answer) <= len(candidates):
+            return candidates[int(answer) - 1]
+        print(f"请输入 1 到 {len(candidates)} 之间的序号。")
+
+
+def run_command(args) -> int:
+    project = args.project_root.resolve()
+    requirement = " ".join(args.requirement).strip()
+    rows = status_rows(project)
+    if not rows:
+        raise DevFlowError(not_installed_message(launch.detected_hosts()))
+    candidates = launch.candidates(project)
+    missing = [row["host"] for row in rows if not launch.resolve_cli(row["host"])]
+
+    if args.host is not None:
+        candidate = select_host(args.host, rows, candidates)
+    elif not candidates:
+        raise DevFlowError(missing_cli_message(missing))
+    elif len(candidates) == 1:
+        candidate = candidates[0]
+    elif args.dry_run or args.json:
+        print_plan(candidates, requirement, args)
+        return 0
+    elif not sys.stdin.isatty():
+        raise DevFlowError(ambiguous_message(candidates))
+    else:
+        candidate = choose_host(candidates)
+
+    row = next(item for item in rows if item["host"] == candidate.host)
+    if row["changed"] or row["missing"]:
+        print(
+            f"提示: {candidate.host} 的工作流文件有改动或缺失 "
+            f"(changed={row['changed']} missing={row['missing']})，"
+            f"可用 {program_name()} status {candidate.host} 查看",
+            file=sys.stderr,
+        )
+    if args.dry_run or args.json:
+        print_plan([candidate], requirement, args)
+        return 0
+    return launch.launch(launch.build_argv(candidate, requirement))
+
+
 def main(argv=None) -> int:
-    args = parser().parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
     try:
+        args = parser().parse_args(normalize_argv(argv))
+        if args.command == "run":
+            return run_command(args)
         if args.command == "editions":
             rows = []
             for edition in EDITIONS:

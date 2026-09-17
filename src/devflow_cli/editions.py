@@ -11,6 +11,13 @@ HOST_LABELS = {
     "cursor": "Cursor",
     "claude": "Claude Code",
 }
+HOST_PRIORITY: Tuple[str, ...] = ("claude", "codex", "cursor", "codebuddy")
+
+# 入口提示词与需求之间需要额外关键字的宿主；Codex 用
+# `$devflow-codex start|status|resume|abort` 区分动作，启动必须带 start。
+LAUNCH_SUBCOMMANDS: Dict[Tuple[str, str], Tuple[str, ...]] = {
+    ("classic", "codex"): ("start",),
+}
 
 EDITION_SPECS: Dict[str, dict] = {
     "portable": {
@@ -50,6 +57,11 @@ def source_for(edition: str, host: str) -> str:
 
 def entrypoint_for(edition: str, host: str) -> str:
     return str(spec(edition)["entrypoints"][host])
+
+
+def launch_args(edition: str, host: str) -> Tuple[str, ...]:
+    """入口提示词之后、需求之前需要插入的关键字。"""
+    return LAUNCH_SUBCOMMANDS.get((edition, host), ())
 
 
 def host_label(host: str) -> str:

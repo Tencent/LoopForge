@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import subprocess
@@ -7,8 +8,9 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest import mock
 
-from devflow_cli.cli import main
+from devflow_cli.cli import main, program_name
 from devflow_cli.core import DevFlowError, apply_install, doctor, status_rows, uninstall
 from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, source_for
 
@@ -157,6 +159,27 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(set(HOSTS), set(metadata["entrypoints"]))
             for host in HOSTS:
                 self.assertTrue((ROOT / source_for(edition, host)).is_dir())
+
+    def test_short_alias_is_wired_for_npm_and_python(self):
+        npm = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(npm["bin"]["loopforge"], npm["bin"].get("lf"))
+        self.assertTrue((ROOT / npm["bin"]["lf"]).is_file())
+
+        section = None
+        scripts = {}
+        for line in (ROOT / "pyproject.toml").read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("["):
+                section = stripped
+            elif section == "[project.scripts]" and "=" in stripped:
+                name, _, value = stripped.partition("=")
+                scripts[name.strip()] = value.strip().strip("\"'")
+        self.assertEqual("devflow_cli.cli:main", scripts.get("loopforge"))
+        self.assertEqual(scripts["loopforge"], scripts.get("lf"))
+
+        self.assertEqual("loopforge", program_name())
+        with mock.patch.object(sys, "argv", ["/usr/local/bin/lf"]):
+            self.assertEqual("lf", program_name())
 
     def test_editions_and_plan_make_the_split_visible_without_writing(self):
         output = StringIO()

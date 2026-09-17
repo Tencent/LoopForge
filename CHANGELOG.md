@@ -2,6 +2,11 @@
 
 English | [简体中文](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- Added `lf` as a short alias for `loopforge`, wired through the npm bin entry and the Python console script.
+- Added `lf run <request>` (and the `lf "<request>"` shorthand) to detect the host agent CLI on `PATH` and launch it from the terminal with the workflow entry prompt for the installed edition. Use `--host` to pick a host, `--dry-run` to preview the command, and `LOOPFORGE_CLI_<HOST>` to point at a non-standard CLI name.
+
 ## 0.2.2
 
 - Keep executable bits when installing Classic host files so `run_hook.sh` can run after `npx loopforge-cli install`, restoring Agent Observability collection.

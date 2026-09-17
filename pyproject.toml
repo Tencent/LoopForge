@@ -23,6 +23,7 @@ Changelog = "https://github.com/Tencent/LoopForge/blob/master/CHANGELOG.md"
 
 [project.scripts]
 loopforge = "devflow_cli.cli:main"
+lf = "devflow_cli.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

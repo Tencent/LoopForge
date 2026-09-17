@@ -2,6 +2,11 @@
 
 [English](CHANGELOG.md) | 简体中文
 
+## Unreleased
+
+- 新增 `lf` 作为 `loopforge` 的短别名，npm bin 与 Python console script 均已接入。
+- 新增 `lf run <需求>`（以及简写 `lf "<需求>"`）：探测 `PATH` 上的宿主 Agent CLI，在终端里用所装 edition 对应的工作流入口提示词把它启动起来。可用 `--host` 指定宿主、`--dry-run` 预览命令、`LOOPFORGE_CLI_<宿主大写>` 指向非标准命令名。
+
 ## 0.2.2
 
 - 安装 Classic 宿主文件时保留可执行权限，避免 `run_hook.sh` 装完无法执行，导致 Agent Observability 采不到数。

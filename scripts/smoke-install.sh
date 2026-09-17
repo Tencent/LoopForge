@@ -53,6 +53,7 @@ python3 -m pip wheel "$ROOT_DIR" --no-deps -w "$WHEEL_DIR" >/dev/null
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install "$WHEEL_DIR"/*.whl >/dev/null
 test -x "$VENV_DIR/bin/loopforge"
+test -x "$VENV_DIR/bin/lf"
 test ! -e "$VENV_DIR/bin/devflow"
 test -f "$VENV_DIR/share/devflow/THIRD_PARTY_NOTICES.md"
 test ! -e "$VENV_DIR/share/devflow/skills/devflow/tests"

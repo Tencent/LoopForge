@@ -22,7 +22,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "loopforge": "bin/loopforge.mjs"
+    "loopforge": "bin/loopforge.mjs",
+    "lf": "bin/loopforge.mjs"
   },
   "files": [
     "bin/",

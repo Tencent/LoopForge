@@ -93,6 +93,33 @@ If installation or execution fails, diagnose the environment:
 npx -y loopforge-cli@latest doctor
 ```
 
+## Start from the terminal
+
+The steps above install the workflow first, then ask you to open the host and type the entry command into its chat box. With the CLI installed globally you can skip that round trip and use the short `lf` alias:
+
+```bash
+npm install --global loopforge-cli   # or: pipx install .
+lf install claude                    # once per project
+lf run "add status filtering to the order list and cover the API with tests"
+```
+
+`lf` is exactly `loopforge`, only shorter. `lf run` reads `.devflow/install-state.json` to see which hosts the project has installed, probes `PATH` for the matching agent CLI (`claude`, `codex`, `cursor-agent`, `codebuddy`), and launches it with the entry prompt for that host and edition — `/start-devflow <request>` for Claude Code, `$devflow-codex start <request>` for Codex.
+
+```bash
+lf run "add status filtering"    # full form
+lf "add status filtering"        # equivalent shorthand
+lf run --dry-run "request"       # print the command without launching
+lf run --host codex "request"    # pick a host when several are installed
+```
+
+When several installed hosts have a CLI on `PATH`, `lf run` lists them and asks you to choose; outside an interactive terminal (CI, for example) it asks you to pass `--host`. If a host CLI is missing from `PATH` or named differently, point at it with `LOOPFORGE_CLI_<HOST>`:
+
+```bash
+LOOPFORGE_CLI_CURSOR=/opt/cursor/bin/cursor-agent lf run "request"
+```
+
+If the project has no workflow installed, `lf run` reports the install command to run and writes nothing into the project.
+
 ## What you get
 
 At the end of a task, you get the code changes together with the confirmed requirement, technical design, independent review findings, test results, and delivery summary. LoopForge saves this history under `artifacts/{task_slug}/` by default for inspection, handoff, and retrospectives.

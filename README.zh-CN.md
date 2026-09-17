@@ -92,6 +92,33 @@ npx -y loopforge-cli@latest status claude
 npx -y loopforge-cli@latest doctor
 ```
 
+## 从终端启动
+
+上面的步骤是「先安装工作流，再打开宿主，在聊天框里手敲入口命令」。全局安装 CLI 后可以省掉这次切换，直接用短别名 `lf`：
+
+```bash
+npm install --global loopforge-cli   # 或：pipx install .
+lf install claude                    # 每个项目执行一次
+lf run "为订单列表增加状态筛选，并补充接口测试"
+```
+
+`lf` 与 `loopforge` 完全等价，只是更短。`lf run` 会读取 `.devflow/install-state.json` 确认项目装了哪些宿主，探测 `PATH` 上对应的 Agent CLI（`claude`、`codex`、`cursor-agent`、`codebuddy`），再用该宿主该 edition 的入口提示词把它启动起来 —— Claude Code 是 `/start-devflow <需求>`，Codex 是 `$devflow-codex start <需求>`。
+
+```bash
+lf run "为订单列表增加状态筛选"    # 完整写法
+lf "为订单列表增加状态筛选"        # 等价简写
+lf run --dry-run "需求"           # 只打印将要执行的命令，不启动
+lf run --host codex "需求"        # 项目装了多个宿主时显式指定
+```
+
+项目装了多个宿主、且它们的 CLI 都在 `PATH` 上时，`lf run` 会列出候选项让你选择；不在交互终端里（例如 CI）则会要求用 `--host` 指定。如果宿主 CLI 不在 `PATH` 上或命令名不同，用 `LOOPFORGE_CLI_<宿主大写>` 指过去：
+
+```bash
+LOOPFORGE_CLI_CURSOR=/opt/cursor/bin/cursor-agent lf run "需求"
+```
+
+项目还没装工作流时，`lf run` 会报错并给出该执行的安装命令，不会往项目里写入任何文件。
+
 ## 你会得到什么
 
 一次任务结束后，你会同时得到代码变更、已确认的需求、技术方案、独立审查意见、测试结果和交付总结。这些过程与结果默认保存在 `artifacts/{task_slug}/`，方便检查、复盘和交接。

@@ -73,7 +73,7 @@ import yaml
 root = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(root / "src"))
 from devflow_cli import __version__
-from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, source_for
+from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, HOST_PRIORITY, source_for
 
 SKIP_PARTS = {".git", "node_modules", ".venv", "dist"}
 
@@ -128,6 +128,8 @@ if set(portable) != set(discovered):
 
 if DEFAULT_EDITION != "classic" or tuple(EDITION_SPECS) != ("portable", "classic"):
     raise SystemExit("Edition registry must keep Classic as the explicit default")
+if set(HOST_PRIORITY) != set(HOSTS) or len(HOST_PRIORITY) != len(HOSTS):
+    raise SystemExit("Host priority drift: HOST_PRIORITY must list every host exactly once")
 for edition, metadata in EDITION_SPECS.items():
     if set(metadata.get("entrypoints", {})) != set(HOSTS):
         raise SystemExit(f"Edition entrypoint drift: {edition}")
@@ -144,6 +146,10 @@ if npm_version != __version__:
     raise SystemExit(
         f"Package version drift: npm={npm_version} python={__version__}"
     )
+
+npm_bin = json.loads((root / "package.json").read_text(encoding="utf-8"))["bin"]
+if npm_bin.get("lf") != npm_bin.get("loopforge"):
+    raise SystemExit("Short alias drift: package.json bin.lf must point at bin.loopforge")
 
 codex_readme = (root / ".codex/README.md").read_text(encoding="utf-8")
 if "SOLO -> leader" in codex_readme:
