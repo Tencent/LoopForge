@@ -114,6 +114,30 @@ workflow-summary.md
 
 Classic 工作流中断后，CodeBuddy、Cursor 和 Claude Code 使用 `/resume-devflow {task_slug}` 恢复，Codex 使用 `$devflow-codex resume {task_slug}`。状态查看、终止和单阶段命令见安装后对应宿主目录中的 README。
 
+## 看见 Agent 如何完成工作
+
+CodeBuddy 的 Classic Edition 内置本地可观测看板。它把落盘的流程证据变成可视化视图，集中呈现会话活动、Token 与成本趋势、Skill/Rule 使用情况、多 Agent 派发，以及 Devflow 阶段归因，方便定位高成本运行、确认自动化是否真正生效，并复盘任务如何在不同 Agent 之间流转。
+
+![使用演示数据的 LoopForge 本地 Agent 可观测看板](docs/assets/agent-observability-dashboard.png)
+
+_看板示例使用合成演示数据。_
+
+看板的数据聚合和页面服务都在本机完成，不依赖外部遥测服务。运行日志可能包含工具参数和输出片段，因此 LoopForge 默认将它们排除在 Git 之外；未经检查不应对外分享原始日志。
+
+<details>
+<summary>打开本地看板</summary>
+
+在项目根目录至少运行一次 CodeBuddy 会话后执行：
+
+```bash
+python3 .codebuddy/skills/agent-observability/scripts/build_dashboard_data.py --project-root .
+python3 -m http.server 8765 --directory .codebuddy/skills/agent-observability/scripts/dashboard
+```
+
+浏览器打开 `http://localhost:8765`。数据源、自定义模型定价和故障排查见[可观测性快速上手](.codebuddy/skills/agent-observability/references/quickstart.md)。
+
+</details>
+
 ## 什么时候适合使用
 
 LoopForge 尤其适合这些任务：

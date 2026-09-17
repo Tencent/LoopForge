@@ -115,6 +115,30 @@ workflow-summary.md
 
 Resume an interrupted Classic workflow with `/resume-devflow {task_slug}` on CodeBuddy, Cursor, or Claude Code, and with `$devflow-codex resume {task_slug}` on Codex. Each installed host bundle documents its status, abort, and individual-stage commands.
 
+## See how agents work
+
+The Classic Edition for CodeBuddy includes a local observability dashboard. It turns the workflow evidence into a view of session activity, Token and cost trends, Skill/Rule usage, multi-agent dispatch, and Devflow stage attribution—useful for finding expensive runs, checking whether automation is actually being used, and reviewing how work moved between agents.
+
+![LoopForge local agent observability dashboard with demonstration data](docs/assets/agent-observability-dashboard.png)
+
+_Dashboard example using synthetic demonstration data._
+
+The dashboard is generated and served locally; it does not require an external telemetry service. Runtime logs can contain tool arguments and output excerpts, so LoopForge excludes them from Git by default and they should not be shared without review.
+
+<details>
+<summary>Open the local dashboard</summary>
+
+After running at least one CodeBuddy session from the project root:
+
+```bash
+python3 .codebuddy/skills/agent-observability/scripts/build_dashboard_data.py --project-root .
+python3 -m http.server 8765 --directory .codebuddy/skills/agent-observability/scripts/dashboard
+```
+
+Open `http://localhost:8765`. See the [observability quickstart](.codebuddy/skills/agent-observability/references/quickstart.md) for data sources, custom pricing, and troubleshooting.
+
+</details>
+
 ## When LoopForge is useful
 
 LoopForge is especially useful when:
