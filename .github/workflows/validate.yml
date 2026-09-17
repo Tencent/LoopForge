@@ -16,7 +16,7 @@ jobs:
       matrix:
         python-version: ["3.8", "3.12"]
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
@@ -51,7 +51,7 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - run: bash scripts/scan-secrets.sh
