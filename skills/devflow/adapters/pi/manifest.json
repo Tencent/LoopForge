@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "id": "pi",
+  "compatibility": {
+    "verified_on": "2026-09-17",
+    "documentation": "https://github.com/nicobailon/pi-subagents"
+  },
+  "dispatch_tool": "subagent",
+  "topology": "spawn",
+  "stage_executor": "dynamic",
+  "research_executor": "dynamic",
+  "required_tools": ["subagent"]
+}
