@@ -182,9 +182,13 @@ def validate_choice(host: str, edition: str) -> None:
     if edition not in EDITIONS:
         raise DevFlowError(f"未知 edition {edition}；可选: {', '.join(EDITIONS)}")
     if host not in hosts_for(edition):
-        raise DevFlowError(
-            f"{edition} edition 不支持宿主 {host}；可选: {', '.join(hosts_for(edition))}"
+        available = [item for item in EDITIONS if host in hosts_for(item)]
+        hint = (
+            f"；Pi 只有 Portable，请运行: loopforge skills install {host}"
+            if host == "pi" and "portable" in available
+            else f"；{host} 可用 edition: {', '.join(available)}"
         )
+        raise DevFlowError(f"{edition} edition 不支持宿主 {host}{hint}")
 
 
 def path_present(path: Path) -> bool:
