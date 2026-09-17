@@ -14,7 +14,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from opentelemetry import trace as _otel_trace
+try:
+    from opentelemetry import trace as _otel_trace
+except Exception:  # pragma: no cover - 可选依赖缺失时优雅降级
+    _otel_trace = None
 
 from .. import state as st
 from .bootstrap import (
