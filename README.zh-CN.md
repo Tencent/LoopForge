@@ -178,6 +178,19 @@ npx -y loopforge-cli@latest skills install claude
 /devflow "为订单列表增加状态筛选，并补充接口测试"
 ```
 
+### Pi
+
+```bash
+npx -y loopforge-cli@latest skills install pi
+pi install npm:pi-subagents
+```
+
+安装后使用：
+
+```text
+/skill:devflow "为订单列表增加状态筛选，并补充接口测试"
+```
+
 完整边界和目录说明见 [`EDITIONS.md`](EDITIONS.md)。
 
 ## 更新与卸载
@@ -234,6 +247,11 @@ loopforge skills uninstall cursor
 loopforge skills update claude
 loopforge skills status claude
 loopforge skills uninstall claude
+
+# Pi
+loopforge skills update pi
+loopforge skills status pi
+loopforge skills uninstall pi
 ```
 
 安装状态保存在 `.devflow/install-state.json`。检测到用户修改或文件冲突时，更新会停止而不是覆盖。只有在确认要替换冲突文件或切换 Edition 时才使用 `--force`，建议先运行 `loopforge plan` 检查变更。

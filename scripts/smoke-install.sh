@@ -68,6 +68,12 @@ DOWNSTREAM_PROJECT="$TMP_DIR/downstream-project"
 mkdir -p "$CODEBUDDY_PROJECT" "$DOWNSTREAM_PROJECT"
 "$VENV_DIR/bin/loopforge" skills install codebuddy --project-root "$CODEBUDDY_PROJECT"
 test -f "$CODEBUDDY_PROJECT/.codebuddy/skills/manifest.json"
+
+PI_PROJECT="$TMP_DIR/pi-project"
+mkdir -p "$PI_PROJECT"
+"$VENV_DIR/bin/loopforge" skills install pi --project-root "$PI_PROJECT"
+test -f "$PI_PROJECT/.pi/skills/manifest.json"
+test -f "$PI_PROJECT/.pi/skills/devflow/SKILL.md"
 "$VENV_DIR/bin/python" \
   "$CODEBUDDY_PROJECT/.codebuddy/skills/devflow/scripts/install_adapter.py" \
   --adapter claude --project-root "$DOWNSTREAM_PROJECT" --copy-skills --refresh-managed
