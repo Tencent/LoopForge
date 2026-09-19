@@ -76,6 +76,16 @@ def load_adapters() -> Dict[str, dict]:
                     raise ValueError(f"Claude Agent frontmatter 无效: {agent['id']}")
                 if agent["access"] == "read" and frontmatter.get("permissionMode") != "plan":
                     raise ValueError(f"Claude 只读 Agent 必须使用 plan: {agent['id']}")
+        if adapter_id == "opencode":
+            for agent in data["host_agents"]:
+                frontmatter = agent.get("frontmatter", {})
+                if frontmatter.get("mode") != "subagent":
+                    raise ValueError(f"OpenCode Agent 必须使用 subagent: {agent['id']}")
+                permission = frontmatter.get("permission", {})
+                if not isinstance(permission, dict):
+                    raise ValueError(f"OpenCode Agent permission 无效: {agent['id']}")
+                if agent["access"] == "read" and permission.get("edit") != "deny":
+                    raise ValueError(f"OpenCode 只读 Agent 必须禁止 edit: {agent['id']}")
         result[adapter_id] = data
     if not result:
         raise ValueError("没有可用适配器")

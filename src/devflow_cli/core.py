@@ -103,7 +103,7 @@ def copy_skills_manifest(skills_root: Path, destination: Path) -> None:
 def materialize_portable(host: str, stage: Path) -> None:
     assets = asset_root()
     skills_root = assets / source_for("portable", host)
-    if host in {"cursor", "claude"}:
+    if host in {"cursor", "claude", "opencode"}:
         installer = skills_root / "devflow/scripts/install_adapter.py"
         command = [
             sys.executable, str(installer), "--adapter", host,

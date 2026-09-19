@@ -216,6 +216,18 @@ Then start a workflow:
 /skill:devflow "add status filtering to the order list and cover the API with tests"
 ```
 
+### OpenCode
+
+```bash
+npx -y loopforge-cli@latest skills install opencode
+```
+
+Start a new OpenCode session, then ask it to use the `devflow` skill:
+
+```text
+Use the devflow skill to add status filtering to the order list and cover the API with tests.
+```
+
 See [`EDITIONS.md`](EDITIONS.md) for the complete boundaries and directory layout.
 
 ## Update and uninstall
@@ -277,6 +289,11 @@ loopforge skills uninstall claude
 loopforge skills update pi
 loopforge skills status pi
 loopforge skills uninstall pi
+
+# OpenCode
+loopforge skills update opencode
+loopforge skills status opencode
+loopforge skills uninstall opencode
 ```
 
 Installation state is stored in `.devflow/install-state.json`. An update stops instead of overwriting user-modified or conflicting files. Use `--force` only when you intend to replace conflicts or switch editions, preferably after inspecting `loopforge plan`.

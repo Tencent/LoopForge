@@ -174,6 +174,25 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(DevFlowError):
                 apply_install(project, "pi", "classic")
 
+    def test_opencode_installs_portable_skills_and_agents_and_rejects_classic(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            installed, _unchanged = apply_install(project, "opencode", "portable")
+            self.assertGreater(installed, 0)
+            self.assertTrue((project / ".opencode/skills/devflow/SKILL.md").is_file())
+            self.assertTrue((project / ".opencode/skills/manifest.json").is_file())
+            stage = (project / ".opencode/agents/devflow-stage-executor.md").read_text(
+                encoding="utf-8"
+            )
+            helper = (project / ".opencode/agents/devflow-research-helper.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn('mode: "subagent"', stage)
+            self.assertIn('permission: {"edit": "allow"}', stage)
+            self.assertIn('permission: {"edit": "deny"}', helper)
+            with self.assertRaises(DevFlowError):
+                apply_install(project, "opencode", "classic")
+
     def test_editions_and_plan_make_the_split_visible_without_writing(self):
         output = StringIO()
         with redirect_stdout(output):
@@ -237,6 +256,7 @@ class InstallerTests(unittest.TestCase):
             "codex": ".agents/skills",
             "cursor": ".cursor/skills",
             "claude": ".claude/skills",
+            "opencode": ".opencode/skills",
         }
         for host, relative in skill_roots.items():
             with self.subTest(host=host), tempfile.TemporaryDirectory() as temporary:

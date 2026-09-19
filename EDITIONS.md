@@ -6,7 +6,7 @@ DevFlow 有两套独立维护的实现。为避免同一宿主同时加载两套
 
 | Edition | 仓库事实源 | 入口 | 维护方式 |
 | --- | --- | --- | --- |
-| Portable | `skills/` | CodeBuddy/Cursor/Claude 使用 `/devflow`，Codex 使用 `$devflow`，Pi 使用 `/skill:devflow` | 修改 canonical Skill 和 adapter manifest |
+| Portable | `skills/` | CodeBuddy/Cursor/Claude 使用 `/devflow`，Codex 使用 `$devflow`，Pi 使用 `/skill:devflow`，OpenCode 要求使用 `devflow` Skill | 修改 canonical Skill 和 adapter manifest |
 | Classic（默认） | `.codebuddy/`、`.codex/`、`.cursor/`、`.claude/` | CodeBuddy/Cursor/Claude 使用 `/start-devflow`，Codex 使用 `$devflow-codex` | 以 `.codebuddy` 为参考行为；Cursor/Claude 由生成器产生 |
 
 保留这些顶层目录是有意为之：`.xxx/` 是各宿主的原生项目目录，`skills/` 是
@@ -27,3 +27,5 @@ loopforge skills install claude
 
 Portable 的 Pi 适配是声明型的：`skills install pi` 只安装 `.pi/skills/`，isolated
 （medium/large）模式还需要公开扩展 `pi install npm:pi-subagents` 提供 `subagent` 工具。
+OpenCode 也是 Portable-only：`skills install opencode` 安装 `.opencode/skills/` 和两个
+项目级 subagent，isolated 模式要求当前会话提供 `task` 工具。
