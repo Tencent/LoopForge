@@ -30,7 +30,7 @@
       "file": "research-helper.md",
       "body": "../shared/agents/research-helper.md",
       "description": "仅在 DevFlow 明确派发有边界的代码或知识检索时使用，不执行代码审查",
-      "frontmatter": {"mode": "subagent", "permission": {"edit": "deny"}},
+      "frontmatter": {"mode": "subagent", "permission": {"edit": "deny", "bash": "deny"}},
       "access": "read"
     }
   ]

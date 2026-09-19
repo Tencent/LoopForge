@@ -189,7 +189,7 @@ class InstallerTests(unittest.TestCase):
             )
             self.assertIn('mode: "subagent"', stage)
             self.assertIn('permission: {"edit": "allow"}', stage)
-            self.assertIn('permission: {"edit": "deny"}', helper)
+            self.assertIn('permission: {"edit": "deny", "bash": "deny"}', helper)
             with self.assertRaises(DevFlowError):
                 apply_install(project, "opencode", "classic")
 

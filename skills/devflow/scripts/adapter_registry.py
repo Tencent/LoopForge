@@ -86,6 +86,8 @@ def load_adapters() -> Dict[str, dict]:
                     raise ValueError(f"OpenCode Agent permission 无效: {agent['id']}")
                 if agent["access"] == "read" and permission.get("edit") != "deny":
                     raise ValueError(f"OpenCode 只读 Agent 必须禁止 edit: {agent['id']}")
+                if agent["access"] == "read" and permission.get("bash") != "deny":
+                    raise ValueError(f"OpenCode 只读 Agent 必须禁止 bash: {agent['id']}")
         result[adapter_id] = data
     if not result:
         raise ValueError("没有可用适配器")
