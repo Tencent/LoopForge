@@ -215,6 +215,18 @@ pi install npm:pi-subagents
 /skill:devflow "为订单列表增加状态筛选，并补充接口测试"
 ```
 
+### OpenCode
+
+```bash
+npx -y loopforge-cli@latest skills install opencode
+```
+
+新建 OpenCode 会话后，要求它使用 `devflow` Skill：
+
+```text
+使用 devflow Skill 为订单列表增加状态筛选，并补充接口测试。
+```
+
 完整边界和目录说明见 [`EDITIONS.md`](EDITIONS.md)。
 
 ## 更新与卸载
@@ -276,6 +288,11 @@ loopforge skills uninstall claude
 loopforge skills update pi
 loopforge skills status pi
 loopforge skills uninstall pi
+
+# OpenCode
+loopforge skills update opencode
+loopforge skills status opencode
+loopforge skills uninstall opencode
 ```
 
 安装状态保存在 `.devflow/install-state.json`。检测到用户修改或文件冲突时，更新会停止而不是覆盖。只有在确认要替换冲突文件或切换 Edition 时才使用 `--force`，建议先运行 `loopforge plan` 检查变更。
