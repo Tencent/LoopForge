@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import subprocess
@@ -303,6 +304,45 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(0, written)
             self.assertGreater(unchanged, 0)
             self.assertTrue(hook.stat().st_mode & stat.S_IXUSR)
+
+    def _craft_state_pointing_outside_project(self, project: Path, record_path: str) -> Path:
+        state_path = project / ".devflow/install-state.json"
+        if not state_path.exists():
+            apply_install(project, "claude", "classic")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        key = next(iter(state["installations"]))
+        state["installations"][key]["files"] = [{"path": record_path, "sha256": "0" * 64}]
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        return state_path
+
+    def test_force_update_rejects_state_paths_outside_project(self):
+        # .devflow/ 没有被 gitignore，install-state.json 可能随克隆的仓库进入项目；
+        # 其中的 path 记录会被 update --force / uninstall 当作删除目标，必须拒绝逃逸路径。
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            victim = Path(temporary) / "victim.txt"
+            victim.write_text("keep me\n", encoding="utf-8")
+            self._craft_state_pointing_outside_project(project, "../victim.txt")
+
+            with self.assertRaises(DevFlowError):
+                apply_install(project, "claude", "classic", update_only=True, force=True)
+            self.assertEqual("keep me\n", victim.read_text(encoding="utf-8"))
+
+            with self.assertRaises(DevFlowError):
+                uninstall(project, "claude")
+            self.assertEqual("keep me\n", victim.read_text(encoding="utf-8"))
+
+    def test_state_rejects_absolute_and_drive_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            victim = Path(temporary) / "victim.txt"
+            victim.write_text("keep me\n", encoding="utf-8")
+            for record_path in (str(victim), "C:\\victim.txt"):
+                with self.subTest(record_path=record_path):
+                    self._craft_state_pointing_outside_project(project, record_path)
+                    with self.assertRaises(DevFlowError):
+                        status_rows(project)
+                    self.assertEqual("keep me\n", victim.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
