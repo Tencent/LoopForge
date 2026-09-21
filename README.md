@@ -222,6 +222,10 @@ Then start a workflow:
 npx -y loopforge-cli@latest skills install opencode
 ```
 
+Small workflows can use the `devflow` skill directly. Medium and large isolated
+workflows require the current OpenCode session to expose `task`. Validated with
+OpenCode 1.18.31; this is a tested version, not a compatibility range.
+
 Start a new OpenCode session, then ask it to use the `devflow` skill:
 
 ```text

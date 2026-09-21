@@ -221,6 +221,9 @@ pi install npm:pi-subagents
 npx -y loopforge-cli@latest skills install opencode
 ```
 
+small 任务可直接使用 `devflow` Skill。medium/large 的 isolated 流程要求当前 OpenCode
+会话提供 `task`。已使用 OpenCode 1.18.31 验证；这是已测试版本，不代表兼容性范围。
+
 新建 OpenCode 会话后，要求它使用 `devflow` Skill：
 
 ```text
