@@ -188,8 +188,8 @@ class InstallerTests(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn('mode: "subagent"', stage)
-            self.assertIn('permission: {"edit": "allow"}', stage)
-            self.assertIn('permission: {"edit": "deny", "bash": "deny"}', helper)
+            self.assertIn('permission: {"edit": "allow", "bash": "allow", "task": "deny"}', stage)
+            self.assertIn('permission: {"edit": "deny", "bash": "deny", "task": "deny"}', helper)
             with self.assertRaises(DevFlowError):
                 apply_install(project, "opencode", "classic")
 
@@ -249,6 +249,19 @@ class InstallerTests(unittest.TestCase):
                     "skills", "uninstall", "codex", "--project-root", str(project),
                 ]))
             self.assertIn("OK: skills uninstall host=codex", output.getvalue())
+
+    def test_opencode_install_output_uses_skill_token_and_task_note(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(0, main([
+                    "skills", "install", "opencode", "--project-root", str(project),
+                ]))
+            text = output.getvalue()
+            self.assertIn("Next: reopen OpenCode and ask it to use the devflow skill", text)
+            self.assertIn("require the current session to expose task", text)
+            self.assertNotIn("run devflow", text)
 
     def test_portable_install_keeps_skill_manifest_with_copied_skills(self):
         skill_roots = {

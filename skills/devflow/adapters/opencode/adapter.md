@@ -9,11 +9,13 @@
 3. REQUIREMENT 执行 `prepare --emit-prompt → start`，由主 Agent 调用
    `devflow-clarify-requirements` 并填写需求报告，再 `finish`；禁止启动需求分析 subagent。
 4. route 中其他 Agent 阶段用 `prepare --emit-prompt` 生成提示后，以
-   `task(subagent_type="devflow-stage-executor", prompt=<完整提示>)` 创建新的 subagent。
+   `task(subagent_type="devflow-stage-executor", description="Run <阶段> stage", prompt=<完整提示>)`
+   创建新的 subagent。
    从返回的 `<task id="...">` 记录真实 task ID，并用
    `assign --executor-type devflow-stage-executor --dispatch-tool task` 登记；收到完成结果后
    才能 `finish`。
-5. 只读调研使用 `task(subagent_type="devflow-research-helper", prompt=<完整提示>)`，以
+5. 只读调研使用
+   `task(subagent_type="devflow-research-helper", description="Research <目的>", prompt=<完整提示>)`，以
    `helper --executor-type devflow-research-helper --dispatch-tool task` 登记。SUMMARY 由主
    Agent 执行，不创建 subagent。
 

@@ -84,6 +84,12 @@ def load_adapters() -> Dict[str, dict]:
                 permission = frontmatter.get("permission", {})
                 if not isinstance(permission, dict):
                     raise ValueError(f"OpenCode Agent permission 无效: {agent['id']}")
+                if agent["access"] == "write" and permission.get("edit") != "allow":
+                    raise ValueError(f"OpenCode 写入 Agent 必须允许 edit: {agent['id']}")
+                if agent["access"] == "write" and permission.get("bash") != "allow":
+                    raise ValueError(f"OpenCode 写入 Agent 必须允许 bash: {agent['id']}")
+                if permission.get("task") != "deny":
+                    raise ValueError(f"OpenCode Agent 必须禁止 task: {agent['id']}")
                 if agent["access"] == "read" and permission.get("edit") != "deny":
                     raise ValueError(f"OpenCode 只读 Agent 必须禁止 edit: {agent['id']}")
                 if agent["access"] == "read" and permission.get("bash") != "deny":

@@ -25,7 +25,7 @@ EDITION_SPECS: Dict[str, dict] = {
             "cursor": "/devflow",
             "claude": "/devflow",
             "pi": "/skill:devflow",
-            "opencode": "Use the devflow skill to",
+            "opencode": "devflow",
         },
     },
     "classic": {

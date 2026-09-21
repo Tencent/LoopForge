@@ -81,6 +81,19 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def print_next_step(host: str, edition: str) -> None:
+    if host == "opencode":
+        print("Next: reopen OpenCode and ask it to use the devflow skill for <你的需求>")
+        print("Note: medium/large isolated workflows require the current session to expose task.")
+        return
+    print(
+        f"Next: reopen {host_label(host)} and run "
+        f"{entrypoint_for(edition, host)} <你的需求>"
+    )
+    if host == "pi" and edition == "portable":
+        print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
+
+
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     try:
@@ -140,12 +153,7 @@ def main(argv=None) -> int:
                 f"OK: {args.command} edition={args.edition} host={args.host} "
                 f"project={project_root} written={installed} unchanged={unchanged}"
             )
-            print(
-                f"Next: reopen {host_label(args.host)} and run "
-                f"{entrypoint_for(args.edition, args.host)} <你的需求>"
-            )
-            if args.host == "pi" and args.edition == "portable":
-                print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
+            print_next_step(args.host, args.edition)
             return 0
         if args.command == "skills":
             if args.skills_command in {"install", "update"}:
@@ -162,12 +170,7 @@ def main(argv=None) -> int:
                     f"OK: skills {args.skills_command} host={args.host} "
                     f"project={project_root} written={installed} unchanged={unchanged}"
                 )
-                print(
-                    f"Next: reopen {host_label(args.host)} and run "
-                    f"{entrypoint_for('portable', args.host)} <你的需求>"
-                )
-                if args.host == "pi":
-                    print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
+                print_next_step(args.host, "portable")
                 return 0
             if args.skills_command == "status":
                 rows = [
