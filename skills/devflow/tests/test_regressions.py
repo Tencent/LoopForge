@@ -368,6 +368,28 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("cleanup_team.py", adapter)
         self.assertIn("不得读取 Team 配置、成员、inbox 或状态", adapter)
 
+    def test_opencode_isolated_state_uses_task_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = Path(run_script(
+                "workflow_state.py", "init", "--project-root", root,
+                "--slug", "opencode-run", "--size", "medium", "--mode", "auto",
+                "--execution-mode", "isolated", "--host-adapter", "opencode",
+                "--coordinator-id", "main",
+            ).stdout.strip())
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual("spawn", state["executor_topology"])
+            state["stages"]["REQUIREMENT"].update(
+                status="completed", artifacts=["01-requirement/requirement-report.md"]
+            )
+            state.update(current_stage="REQUIREMENT", next_stage="DESIGN")
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            run_script("workflow_state.py", "prepare", "--state", state_path, "--stage", "DESIGN")
+            action = json.loads(run_script("workflow_state.py", "resume", "--state", state_path).stdout)
+            self.assertEqual("spawn-and-assign", action["action"])
+            self.assertEqual("task", action["dispatch_tool"])
+            self.assertEqual("devflow-stage-executor", action["executor_type"])
+
     def fill_stage_artifacts(self, state_path, stage):
         state = json.loads(state_path.read_text(encoding="utf-8"))
         artifact_root = Path(state["artifacts_dir"])

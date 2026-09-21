@@ -174,6 +174,25 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(DevFlowError):
                 apply_install(project, "pi", "classic")
 
+    def test_opencode_installs_portable_skills_and_agents_and_rejects_classic(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            installed, _unchanged = apply_install(project, "opencode", "portable")
+            self.assertGreater(installed, 0)
+            self.assertTrue((project / ".opencode/skills/devflow/SKILL.md").is_file())
+            self.assertTrue((project / ".opencode/skills/manifest.json").is_file())
+            stage = (project / ".opencode/agents/devflow-stage-executor.md").read_text(
+                encoding="utf-8"
+            )
+            helper = (project / ".opencode/agents/devflow-research-helper.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn('mode: "subagent"', stage)
+            self.assertIn('permission: {"edit": "allow", "bash": "allow", "task": "deny"}', stage)
+            self.assertIn('permission: {"edit": "deny", "bash": "deny", "task": "deny"}', helper)
+            with self.assertRaises(DevFlowError):
+                apply_install(project, "opencode", "classic")
+
     def test_editions_and_plan_make_the_split_visible_without_writing(self):
         output = StringIO()
         with redirect_stdout(output):
@@ -231,12 +250,26 @@ class InstallerTests(unittest.TestCase):
                 ]))
             self.assertIn("OK: skills uninstall host=codex", output.getvalue())
 
+    def test_opencode_install_output_uses_skill_token_and_task_note(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(0, main([
+                    "skills", "install", "opencode", "--project-root", str(project),
+                ]))
+            text = output.getvalue()
+            self.assertIn("Next: reopen OpenCode and ask it to use the devflow skill", text)
+            self.assertIn("require the current session to expose task", text)
+            self.assertNotIn("run devflow", text)
+
     def test_portable_install_keeps_skill_manifest_with_copied_skills(self):
         skill_roots = {
             "codebuddy": ".codebuddy/skills",
             "codex": ".agents/skills",
             "cursor": ".cursor/skills",
             "claude": ".claude/skills",
+            "opencode": ".opencode/skills",
         }
         for host, relative in skill_roots.items():
             with self.subTest(host=host), tempfile.TemporaryDirectory() as temporary:

@@ -18,6 +18,8 @@ def yaml_value(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
     return json.dumps(str(value), ensure_ascii=False)
 
 

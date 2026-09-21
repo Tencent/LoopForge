@@ -20,7 +20,7 @@ test -f "$ROOT_DIR/.codex/skills/devflow-codex/SKILL.md"
 test -f "$ROOT_DIR/skills/devflow/SKILL.md"
 test -f "$ROOT_DIR/skills/devflow-clarify-requirements/SKILL.md"
 
-for adapter in cursor claude; do
+for adapter in cursor claude opencode; do
   ADAPTER_PROJECT="$TMP_DIR/${adapter}-project"
   mkdir -p "$ADAPTER_PROJECT"
   python3 "$ROOT_DIR/skills/devflow/scripts/install_adapter.py" \
@@ -74,6 +74,13 @@ mkdir -p "$PI_PROJECT"
 "$VENV_DIR/bin/loopforge" skills install pi --project-root "$PI_PROJECT"
 test -f "$PI_PROJECT/.pi/skills/manifest.json"
 test -f "$PI_PROJECT/.pi/skills/devflow/SKILL.md"
+
+OPENCODE_CLI_PROJECT="$TMP_DIR/opencode-cli-project"
+mkdir -p "$OPENCODE_CLI_PROJECT"
+"$VENV_DIR/bin/loopforge" skills install opencode --project-root "$OPENCODE_CLI_PROJECT"
+test -f "$OPENCODE_CLI_PROJECT/.opencode/skills/manifest.json"
+test -f "$OPENCODE_CLI_PROJECT/.opencode/skills/devflow/SKILL.md"
+test -f "$OPENCODE_CLI_PROJECT/.opencode/agents/devflow-stage-executor.md"
 "$VENV_DIR/bin/python" \
   "$CODEBUDDY_PROJECT/.codebuddy/skills/devflow/scripts/install_adapter.py" \
   --adapter claude --project-root "$DOWNSTREAM_PROJECT" --copy-skills --refresh-managed
