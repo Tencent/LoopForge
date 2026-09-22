@@ -2,11 +2,29 @@
 
 English | [简体中文](README.zh-CN.md)
 
-**Make coding agents deliver through a workflow you can confirm, review, and resume—not just produce code.**
+**Turn Codex, Claude Code, Cursor, and CodeBuddy into a resumable AI development team.**
 
-Giving a coding agent a request is easy. The hard part is making sure it understands the goal before coding, stays within scope during implementation, and completes independent review and testing before it stops. Longer tasks also lose context, get interrupted, and leave behind a diff with little explanation of how it was produced.
+Plan → Build → Review → Test. LoopForge gives coding agents a delivery workflow you can confirm, inspect, and resume—not just another prompt.
 
-LoopForge turns those concerns into a complete software delivery workflow. You describe the problem to solve; LoopForge chooses a path based on task complexity and guides agents through requirement clarification, solution design, implementation, independent review, and testing while preserving the important decisions and verification results.
+![LoopForge local dashboard showing agent activity, token cost, tool usage, and workflow stages](docs/assets/agent-observability-dashboard.png)
+
+_Dashboard example using synthetic demonstration data._
+
+<p align="center">
+  <strong>Local-first</strong> · <strong>Vendor-neutral</strong> · <strong>Resumable</strong> · <strong>Evidence-driven</strong>
+</p>
+
+## Why LoopForge
+
+Long coding tasks fail in predictable ways: agents start before the goal is clear, drift outside the requested scope, review their own work, lose context between sessions, and stop with a diff but no evidence that it works.
+
+LoopForge turns one request into an inspectable delivery record:
+
+- **Confirm before coding** — clarify the goal, scope, exclusions, and acceptance criteria.
+- **Separate responsibilities** — use independent roles for design, implementation, review, and testing.
+- **Resume after interruption** — persist workflow state and continue from the first unfinished stage.
+- **Keep the evidence** — save requirements, decisions, review findings, test results, and the final summary.
+- **See how agents worked** — inspect local session activity, Token/cost trends, tools, Skills, Rules, and stage attribution.
 
 ## From one request to a verifiable result
 
@@ -33,65 +51,34 @@ Your request
 
 Requires Node.js 20+ and Python 3.8+.
 
-The commands below install the default Classic Edition. Choose this edition if you are unsure.
-
-### CodeBuddy
-
-```bash
-npx -y loopforge-cli@latest install codebuddy
-npx -y loopforge-cli@latest status codebuddy
-```
-
-Then start a workflow:
-
-```text
-/start-devflow "add status filtering to the order list and cover the API with tests"
-```
-
-### Codex
+Install the default Classic workflow in your repository. This example uses Codex; `claude`, `cursor`, and `codebuddy` are also supported:
 
 ```bash
 npx -y loopforge-cli@latest install codex
-npx -y loopforge-cli@latest status codex
 ```
 
-Then start a workflow:
+Start the workflow from your coding agent:
 
-```text
-$devflow-codex "add status filtering to the order list and cover the API with tests"
-```
-
-### Cursor
-
-```bash
-npx -y loopforge-cli@latest install cursor
-npx -y loopforge-cli@latest status cursor
-```
-
-Then start a workflow:
-
-```text
-/start-devflow "add status filtering to the order list and cover the API with tests"
-```
-
-### Claude Code
-
-```bash
-npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
-```
-
-Then start a workflow:
-
-```text
-/start-devflow "add status filtering to the order list and cover the API with tests"
-```
+| Host | Start | Resume |
+|---|---|---|
+| Codex | `$devflow-codex "your task"` | `$devflow-codex resume <task_slug>` |
+| Claude Code | `/start-devflow "your task"` | `/resume-devflow <task_slug>` |
+| Cursor | `/start-devflow "your task"` | `/resume-devflow <task_slug>` |
+| CodeBuddy | `/start-devflow "your task"` | `/resume-devflow <task_slug>` |
 
 If installation or execution fails, diagnose the environment:
 
 ```bash
 npx -y loopforge-cli@latest doctor
 ```
+
+After a CodeBuddy Classic run, open the local observability dashboard with one command:
+
+```bash
+npx -y loopforge-cli@latest dashboard
+```
+
+LoopForge binds the dashboard to `127.0.0.1`, keeps telemetry local, and opens it in your browser. Use `--no-open`, `--port`, or `--build-only` when scripting.
 
 ## What you get
 
@@ -117,25 +104,20 @@ Resume an interrupted Classic workflow with `/resume-devflow {task_slug}` on Cod
 
 ## See how agents work
 
-The Classic Edition for CodeBuddy includes a local observability dashboard. It turns the workflow evidence into a view of session activity, Token and cost trends, Skill/Rule usage, multi-agent dispatch, and Devflow stage attribution—useful for finding expensive runs, checking whether automation is actually being used, and reviewing how work moved between agents.
-
-![LoopForge local agent observability dashboard with demonstration data](docs/assets/agent-observability-dashboard.png)
-
-_Dashboard example using synthetic demonstration data._
+The Classic Edition for CodeBuddy includes a local observability dashboard. It turns workflow evidence into a view of session activity, Token and cost trends, Skill/Rule usage, multi-agent dispatch, and Devflow stage attribution—useful for finding expensive runs, checking whether automation is actually being used, and reviewing how work moved between agents.
 
 The dashboard is generated and served locally; it does not require an external telemetry service. Runtime logs can contain tool arguments and output excerpts, so LoopForge excludes them from Git by default and they should not be shared without review.
 
 <details>
 <summary>Open the local dashboard</summary>
 
-After running at least one CodeBuddy session from the project root:
+After running at least one CodeBuddy Classic session from the project root:
 
 ```bash
-python3 .codebuddy/skills/agent-observability/scripts/build_dashboard_data.py --project-root .
-python3 -m http.server 8765 --directory .codebuddy/skills/agent-observability/scripts/dashboard
+npx -y loopforge-cli@latest dashboard
 ```
 
-Open `http://localhost:8765`. See the [observability quickstart](.codebuddy/skills/agent-observability/references/quickstart.md) for data sources, custom pricing, and troubleshooting.
+See the [observability quickstart](.codebuddy/skills/agent-observability/references/quickstart.md) for data sources, custom pricing, and troubleshooting.
 
 </details>
 
@@ -311,7 +293,7 @@ Scan the WeCom QR code below to join the LoopForge community group.
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and the repository `AGENTS.md` before changing workflow behavior. See [`CHANGELOG.md`](CHANGELOG.md) for release history.
+Issues and pull requests are welcome. See the public [`ROADMAP.md`](ROADMAP.md), read [`CONTRIBUTING.md`](CONTRIBUTING.md), and review the repository `AGENTS.md` before changing workflow behavior. See [`CHANGELOG.md`](CHANGELOG.md) for release history.
 
 ## License
 

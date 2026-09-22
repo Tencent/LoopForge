@@ -2,6 +2,11 @@
 
 English | [简体中文](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- Added `loopforge dashboard` to build and serve the local observability dashboard for Classic CodeBuddy installations.
+- Simplified the README quick start, moved the dashboard preview above the fold, and added a public roadmap.
+
 ## 0.2.2
 
 - Keep executable bits when installing Classic host files so `run_hook.sh` can run after `npx loopforge-cli install`, restoring Agent Observability collection.

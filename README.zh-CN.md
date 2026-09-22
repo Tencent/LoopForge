@@ -2,11 +2,29 @@
 
 [English](README.md) | 简体中文
 
-**让编码 Agent 不只“写出代码”，而是按一套可确认、可审查、可恢复的流程完成交付。**
+**把 Codex、Claude Code、Cursor 和 CodeBuddy 变成一支可恢复的 AI 开发团队。**
 
-把一个需求交给编码 Agent 很容易，难的是让它在动手前理解目标，在实现中不偏离范围，并在结束前完成独立审查和测试。任务一旦变长，还会遇到上下文丢失、执行中断，以及最终只剩一份难以追溯的代码变更。
+规划 → 实现 → 审查 → 测试。LoopForge 为 Coding Agent 提供一套可确认、可检查、可恢复的交付流程，而不只是另一段提示词。
 
-LoopForge 把这些步骤组织成一条完整的软件交付流程。你只需要描述要解决的问题；LoopForge 会根据任务复杂度选择执行方式，推动 Agent 完成需求澄清、方案设计、代码实现、独立审查和测试，并把关键决策与验证结果保存下来。
+![LoopForge 本地观测面板，展示 Agent 活动、Token 成本、工具使用和工作流阶段](docs/assets/agent-observability-dashboard.png)
+
+_看板示例使用合成演示数据。_
+
+<p align="center">
+  <strong>本地优先</strong> · <strong>厂商中立</strong> · <strong>可恢复</strong> · <strong>以证据交付</strong>
+</p>
+
+## 为什么使用 LoopForge
+
+长任务往往以相似的方式失败：目标还没澄清就开始编码、修改超出范围、Agent 自己审查自己、跨会话丢失上下文，或者只留下代码差异，却没有证据说明它真的可用。
+
+LoopForge 把一句需求变成可检查的交付记录：
+
+- **编码前确认**：澄清目标、范围、排除项和验收标准；
+- **职责分离**：设计、实现、审查和测试由独立角色承担；
+- **中断后继续**：持久化工作流状态，从第一个未完成阶段恢复；
+- **保留证据**：保存需求、决策、审查发现、测试结果和交付总结；
+- **看见 Agent 的工作过程**：本地查看会话、Token/成本、工具、Skills、Rules 和阶段归因。
 
 ## 从一句需求到可验收结果
 
@@ -32,65 +50,34 @@ LoopForge 把这些步骤组织成一条完整的软件交付流程。你只需�
 
 要求 Node.js 20+ 和 Python 3.8+。
 
-以下命令安装默认的 Classic Edition。不确定选哪一种时，直接使用这一版。
-
-### CodeBuddy
-
-```bash
-npx -y loopforge-cli@latest install codebuddy
-npx -y loopforge-cli@latest status codebuddy
-```
-
-安装后启动：
-
-```text
-/start-devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Codex
+在项目中安装默认的 Classic 工作流。下面以 Codex 为例，也可以使用 `claude`、`cursor` 或 `codebuddy`：
 
 ```bash
 npx -y loopforge-cli@latest install codex
-npx -y loopforge-cli@latest status codex
 ```
 
-安装后启动：
+然后在对应 Coding Agent 中启动：
 
-```text
-$devflow-codex "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Cursor
-
-```bash
-npx -y loopforge-cli@latest install cursor
-npx -y loopforge-cli@latest status cursor
-```
-
-安装后启动：
-
-```text
-/start-devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Claude Code
-
-```bash
-npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
-```
-
-安装后启动：
-
-```text
-/start-devflow "为订单列表增加状态筛选，并补充接口测试"
-```
+| 宿主 | 启动 | 恢复 |
+|---|---|---|
+| Codex | `$devflow-codex "你的需求"` | `$devflow-codex resume <task_slug>` |
+| Claude Code | `/start-devflow "你的需求"` | `/resume-devflow <task_slug>` |
+| Cursor | `/start-devflow "你的需求"` | `/resume-devflow <task_slug>` |
+| CodeBuddy | `/start-devflow "你的需求"` | `/resume-devflow <task_slug>` |
 
 如果安装或运行遇到问题，执行环境诊断：
 
 ```bash
 npx -y loopforge-cli@latest doctor
 ```
+
+完成一次 CodeBuddy Classic 运行后，一条命令打开本地观测面板：
+
+```bash
+npx -y loopforge-cli@latest dashboard
+```
+
+LoopForge 仅监听 `127.0.0.1`，观测数据保留在本地，并自动在浏览器打开。脚本场景可使用 `--no-open`、`--port` 或 `--build-only`。
 
 ## 你会得到什么
 
@@ -118,23 +105,18 @@ Classic 工作流中断后，CodeBuddy、Cursor 和 Claude Code 使用 `/resume-
 
 CodeBuddy 的 Classic Edition 内置本地可观测看板。它把落盘的流程证据变成可视化视图，集中呈现会话活动、Token 与成本趋势、Skill/Rule 使用情况、多 Agent 派发，以及 Devflow 阶段归因，方便定位高成本运行、确认自动化是否真正生效，并复盘任务如何在不同 Agent 之间流转。
 
-![使用演示数据的 LoopForge 本地 Agent 可观测看板](docs/assets/agent-observability-dashboard.png)
-
-_看板示例使用合成演示数据。_
-
 看板的数据聚合和页面服务都在本机完成，不依赖外部遥测服务。运行日志可能包含工具参数和输出片段，因此 LoopForge 默认将它们排除在 Git 之外；未经检查不应对外分享原始日志。
 
 <details>
 <summary>打开本地看板</summary>
 
-在项目根目录至少运行一次 CodeBuddy 会话后执行：
+在项目根目录至少运行一次 CodeBuddy Classic 会话后执行：
 
 ```bash
-python3 .codebuddy/skills/agent-observability/scripts/build_dashboard_data.py --project-root .
-python3 -m http.server 8765 --directory .codebuddy/skills/agent-observability/scripts/dashboard
+npx -y loopforge-cli@latest dashboard
 ```
 
-浏览器打开 `http://localhost:8765`。数据源、自定义模型定价和故障排查见[可观测性快速上手](.codebuddy/skills/agent-observability/references/quickstart.md)。
+数据源、自定义模型定价和故障排查见[可观测性快速上手](.codebuddy/skills/agent-observability/references/quickstart.md)。
 
 </details>
 
@@ -310,7 +292,7 @@ cd tools/tcmcp
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request。修改工作流前请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和仓库中的 `AGENTS.md`。版本变化见 [`CHANGELOG.md`](CHANGELOG.md)。
+欢迎提交 Issue 和 Pull Request。请先查看公开的 [`ROADMAP.md`](ROADMAP.md)；修改工作流前请阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和仓库中的 `AGENTS.md`。版本变化见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 许可证
 

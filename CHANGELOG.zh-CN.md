@@ -2,6 +2,11 @@
 
 [English](CHANGELOG.md) | 简体中文
 
+## 未发布
+
+- 新增 `loopforge dashboard`，为 Classic CodeBuddy 安装生成并启动本地观测看板。
+- 简化 README 快速开始，将看板预览前置，并增加公开 Roadmap。
+
 ## 0.2.2
 
 - 安装 Classic 宿主文件时保留可执行权限，避免 `run_hook.sh` 装完无法执行，导致 Agent Observability 采不到数。

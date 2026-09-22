@@ -1,11 +1,23 @@
 import argparse
+import functools
+import http.server
 import json
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 
 from . import __version__
-from .core import DevFlowError, apply_install, build_plan, doctor, status_rows, uninstall, validate_choice
+from .core import (
+    DevFlowError,
+    apply_install,
+    build_dashboard,
+    build_plan,
+    doctor,
+    status_rows,
+    uninstall,
+    validate_choice,
+)
 from .editions import DEFAULT_EDITION, EDITIONS, HOSTS, entrypoint_for, host_label, source_for, spec
 from .targets import load
 
@@ -78,6 +90,15 @@ def parser() -> argparse.ArgumentParser:
     item.add_argument("--project-root", type=Path, default=Path.cwd())
     item = sub.add_parser("doctor")
     item.add_argument("--project-root", type=Path, default=Path.cwd())
+    item = sub.add_parser(
+        "dashboard",
+        help="生成并打开本地 Agent observability dashboard",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    item.add_argument("--project-root", type=Path, default=Path.cwd())
+    item.add_argument("--port", type=int, default=8765)
+    item.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
+    item.add_argument("--build-only", action="store_true", help="只生成 dashboard 数据，不启动服务")
     return result
 
 
@@ -211,6 +232,35 @@ def main(argv=None) -> int:
             print(f"OK: uninstall host={args.host} removed={removed} preserved={len(preserved)}")
             if preserved:
                 print("Preserved user-modified files: " + ", ".join(preserved))
+            return 0
+        if args.command == "dashboard":
+            if not 1 <= args.port <= 65535:
+                raise DevFlowError("dashboard 端口必须在 1 到 65535 之间")
+            selected_host, dashboard = build_dashboard(args.project_root)
+            if args.build_only:
+                print(f"OK: dashboard built host={selected_host} directory={dashboard}")
+                return 0
+            handler = functools.partial(
+                http.server.SimpleHTTPRequestHandler,
+                directory=str(dashboard),
+            )
+            try:
+                server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler)
+            except OSError as exc:
+                raise DevFlowError(
+                    f"无法在 127.0.0.1:{args.port} 启动 dashboard: {exc}"
+                ) from exc
+            url = f"http://127.0.0.1:{server.server_port}"
+            print(f"LoopForge dashboard ({selected_host}): {url}")
+            print("Press Ctrl-C to stop.")
+            if not args.no_open:
+                webbrowser.open(url)
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                print("\nDashboard stopped.")
+            finally:
+                server.server_close()
             return 0
         problems = doctor(args.project_root)
         if problems:

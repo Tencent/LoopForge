@@ -15,10 +15,61 @@ from .editions import EDITIONS, HOSTS, hosts_for, source_for
 
 STATE_VERSION = 1
 STATE_PATH = Path(".devflow/install-state.json")
+OBSERVABILITY_HOSTS = ("codebuddy",)
 
 
 class DevFlowError(RuntimeError):
     pass
+
+
+def observability_root(project: Path, host: Optional[str] = None) -> Tuple[str, Path]:
+    """Return the installed Classic observability skill for a project.
+
+    The dashboard is intentionally discovered from the target project instead
+    of the LoopForge package. This keeps reports tied to the exact workflow
+    version that produced the local telemetry.
+    """
+    project = project.resolve()
+    if not project.is_dir():
+        raise DevFlowError(f"项目目录不存在: {project}")
+    if host is not None and host not in OBSERVABILITY_HOSTS:
+        raise DevFlowError(
+            f"{host} 暂不支持本地 observability dashboard；"
+            f"当前支持: {', '.join(OBSERVABILITY_HOSTS)}"
+        )
+    hosts = (host,) if host else OBSERVABILITY_HOSTS
+    matches = []
+    for candidate in hosts:
+        root = project / f".{candidate}/skills/agent-observability"
+        if (root / "scripts/build_dashboard_data.py").is_file():
+            matches.append((candidate, root))
+    if not matches:
+        hint = f" {host}" if host else " codebuddy"
+        raise DevFlowError(
+            "未找到已安装的 observability dashboard；请先运行 "
+            f"loopforge install{hint}"
+        )
+    return matches[0]
+
+
+def build_dashboard(project: Path, host: Optional[str] = None) -> Tuple[str, Path]:
+    """Build dashboard data and return ``(host, dashboard_directory)``."""
+    selected_host, root = observability_root(project, host)
+    script = root / "scripts/build_dashboard_data.py"
+    dashboard = root / "scripts/dashboard"
+    output = dashboard / "dashboard-data.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--project-root",
+            str(project.resolve()),
+            "--out",
+            str(output),
+        ],
+        check=True,
+    )
+    return selected_host, dashboard
 
 
 def digest(data: bytes) -> str:

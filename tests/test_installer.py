@@ -9,7 +9,15 @@ from io import StringIO
 from pathlib import Path
 
 from devflow_cli.cli import main
-from devflow_cli.core import DevFlowError, apply_install, doctor, status_rows, uninstall
+from devflow_cli.core import (
+    DevFlowError,
+    apply_install,
+    build_dashboard,
+    doctor,
+    observability_root,
+    status_rows,
+    uninstall,
+)
 from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, source_for
 
 
@@ -303,6 +311,38 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(0, written)
             self.assertGreater(unchanged, 0)
             self.assertTrue(hook.stat().st_mode & stat.S_IXUSR)
+
+    def test_dashboard_builds_from_installed_classic_observability(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "codebuddy", "classic")
+
+            selected, root = observability_root(project)
+            self.assertEqual("codebuddy", selected)
+            self.assertTrue((root / "scripts/build_dashboard_data.py").is_file())
+
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(0, main([
+                    "dashboard",
+                    "--project-root", str(project),
+                    "--build-only",
+                ]))
+            self.assertIn("OK: dashboard built host=codebuddy", output.getvalue())
+            self.assertTrue((
+                project
+                / ".codebuddy/skills/agent-observability/scripts/dashboard/dashboard-data.json"
+            ).is_file())
+
+    def test_dashboard_requires_supported_classic_installation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            with self.assertRaises(DevFlowError):
+                build_dashboard(project)
+
+            apply_install(project, "claude", "classic")
+            with self.assertRaises(DevFlowError):
+                build_dashboard(project)
 
 
 if __name__ == "__main__":
