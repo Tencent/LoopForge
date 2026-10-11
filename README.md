@@ -10,8 +10,6 @@ LoopForge installs into the coding agent you already use: CodeBuddy, Codex, Curs
   <a href="docs/assets/loopforge-promo.mp4?raw=true">
     <img src="docs/assets/loopforge-promo-preview.webp" alt="LoopForge in 13 seconds: one request goes through the leader, developer, code-reviewer, and test-engineer roles inside the agent you already use." width="720" />
   </a>
-  <br />
-  <sub>Watch with sound: <a href="docs/assets/loopforge-promo.mp4?raw=true">MP4, 13 s, 2.8 MB</a></sub>
 </p>
 
 ## Quick start

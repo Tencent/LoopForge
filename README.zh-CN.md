@@ -10,8 +10,6 @@ LoopForge 安装到你正在用的编码 Agent 里，支持 CodeBuddy、Codex、
   <a href="docs/assets/loopforge-promo.mp4?raw=true">
     <img src="docs/assets/loopforge-promo-preview.webp" alt="13 秒了解 LoopForge：一个需求在你已有的 Agent 里依次经过 leader、developer、code-reviewer、test-engineer 四个角色。" width="720" />
   </a>
-  <br />
-  <sub>带声音的完整版：<a href="docs/assets/loopforge-promo.mp4?raw=true">MP4，13 秒，2.8 MB</a></sub>
 </p>
 
 ## 快速开始
