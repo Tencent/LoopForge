@@ -21,6 +21,7 @@ List commands that were actually run and mark anything blocked or not run.
 ```text
 bash scripts/validate.sh
 bash scripts/smoke-install.sh
+bash scripts/e2e.sh
 bash scripts/scan-secrets.sh
 ```
 

@@ -80,6 +80,7 @@ jobs:
           bash scripts/smoke-install.sh
           bash scripts/smoke-npm.sh
           bash scripts/smoke-curl-install.sh
+          bash scripts/e2e.sh
           bash scripts/scan-secrets.sh
 
       - name: Log in to GHCR

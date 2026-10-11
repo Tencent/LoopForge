@@ -1,0 +1,48 @@
+name: e2e
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.12"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+      - run: python3 -m pip install pyyaml==6.0.3
+      - name: Run E2E suite (packaged CLI, fake host Agent, no API keys)
+        run: bash scripts/e2e.sh
+
+  e2e-gate:
+    # Single stable check name to mark as required in branch protection.
+    name: e2e-required
+    if: always()
+    needs: [e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every E2E job to pass
+        run: |
+          if [[ "${{ needs.e2e.result }}" != "success" ]]; then
+            echo "E2E result: ${{ needs.e2e.result }}" >&2
+            exit 1
+          fi

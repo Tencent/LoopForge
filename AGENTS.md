@@ -18,6 +18,7 @@ Run these commands before reporting a workflow change complete:
 python3 scripts/build-classic-hosts.py --check
 bash scripts/validate.sh
 bash scripts/smoke-install.sh
+bash scripts/e2e.sh
 bash scripts/scan-secrets.sh
 ```
 

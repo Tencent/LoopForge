@@ -11,7 +11,7 @@ Thanks for contributing to LoopForge.
 3. Do not commit credentials, local permission configurations, or production data.
 4. First indicate whether a change belongs to Classic, Portable, or shared behaviour contracts. Portable only modifies `skills/`; Classic `.cursor/.claude` files are not edited directly — run `build-classic-hosts.py --write`.
 5. When modifying shared workflow contracts, describe the impact on both editions separately; do not copy runtime files between them.
-6. Run `bash scripts/validate.sh` and `bash scripts/smoke-install.sh` before submitting.
+6. Run `bash scripts/validate.sh`, `bash scripts/smoke-install.sh` and `bash scripts/e2e.sh` before submitting. The E2E suite drives the installed workflow with a fake host Agent and recorded stage outputs, so it needs no API key; see [tests/e2e/README.md](tests/e2e/README.md).
 
 ## Pull request requirements
 

@@ -1,0 +1,32 @@
+{
+  "description": "Recorded stage outputs for a medium task: fix slugify() in the sample project. Each stage executor fills the real templates produced by `workflow_state.py prepare` with this evidence.",
+  "request": "修复 slugify：空格转连字符、去掉符号，并补充验收测试",
+  "knowledge_decision": {"decision": "skip", "reason": "只有常规变更和测试结果，没有新增可复用约束"},
+  "overrides": {
+    "{{说明当前实现、关键模块、仓库相对路径、约束和非目标}}": "当前实现位于 `slugify.py`，仅修改该文件；验收用例在 `check_slugify.py`。",
+    "{{动作导向的任务名}}": "修复 slugify 规范化逻辑",
+    "{{无，或任务 ID}}": "无",
+    "{{仓库相对路径}}": "slugify.py",
+    "{{工作目录}}": ".",
+    "{{项目原生验证命令}}": "python3 -m unittest check_slugify",
+    "{{明确写“通过”或“不通过”；只有无阻断问题时才能写“通过”}}": "通过，无阻断问题。",
+    "{{无接口变动时写“无接口变动”；有新增、修改或删除时生成文档并写“已生成：`03-code/api-docs.md`”}}": "无接口变动",
+    "{{无接口变动时写“无接口变动”；有新增、修改或删除时生成文档并写“已生成：`01-solo/api-docs.md`”}}": "无接口变动",
+    "{{列出仓库实际已有的测试层级及证据路径/配置/命令；若已有 E2E，明确其覆盖边界；若没有，不要为流程强行引入新框架}}": "现有 unittest 验收用例 `check_slugify.py`；没有浏览器 E2E 框架。",
+    "{{逐项记录“验收标准或风险 | 项目已有的合适测试层级 | 用例或命令 | 结果”；项目已有 E2E 且本次行为属于其覆盖边界时，必须包含相应 E2E 用例}}": "空格转连字符、去掉符号 | unit | `python3 -m unittest check_slugify` | 通过"
+  },
+  "stages": {
+    "REQUIREMENT": "目标：`slugify()` 把空格转成连字符并去掉符号；验收：`python3 -m unittest check_slugify` 通过。",
+    "DESIGN": "用正则提取 `[a-z0-9]+` 片段后以连字符连接，只改 `slugify.py`，回滚即恢复原文件。",
+    "IMPLEMENT": "已修改 `slugify.py`；运行 `python3 -m unittest check_slugify`，结果 passed。",
+    "REVIEW": "审查 `slugify.py` 的 diff，未发现阻断问题。",
+    "REVIEW_REJECTED": "不通过：`slugify.py` 未处理符号，阻断级别，建议改为按字母数字切分。",
+    "TEST": "运行 `python3 -m unittest check_slugify`，2 个用例全部通过。",
+    "KNOWLEDGE": "无新增经验。",
+    "SUMMARY": "交付完成；`python3 -m unittest check_slugify` 已通过，无剩余风险。"
+  },
+  "code_changes": {
+    "IMPLEMENT": {"slugify.py": "patches/slugify.py"}
+  },
+  "verify_command": ["-m", "unittest", "check_slugify"]
+}
