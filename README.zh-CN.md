@@ -4,19 +4,55 @@
 
 **让编码 Agent 不只“写出代码”，而是按一套可确认、可审查、可恢复的流程完成交付。**
 
-把一个需求交给编码 Agent 很容易，难的是让它在动手前理解目标，在实现中不偏离范围，并在结束前完成独立审查和测试。任务一旦变长，还会遇到上下文丢失、执行中断，以及最终只剩一份难以追溯的代码变更。
+LoopForge 安装到你正在用的编码 Agent 里，支持 CodeBuddy、Codex、Cursor、Claude Code 和 Pi。它在这个 Agent 内部运行一套按角色分工的交付流程：先澄清并确认需求，再依次完成设计、实现、由另一个角色做独立 Code Review，最后测试。各阶段按顺序推进，每个阶段由对应的角色负责，不需要同时开多个 Agent。关键决策、审查意见和测试结果都会落盘，方便检查，中断后也能接着做。
 
-LoopForge 把这些步骤组织成一条完整的软件交付流程。你只需要描述要解决的问题；LoopForge 会根据任务复杂度选择执行方式，推动 Agent 完成需求澄清、方案设计、代码实现、独立审查和测试，并把关键决策与验证结果保存下来。
+<p align="center">
+  <a href="docs/assets/loopforge-promo.mp4?raw=true">
+    <img src="docs/assets/loopforge-promo-preview.webp" alt="13 秒了解 LoopForge：一个需求在你已有的 Agent 里依次经过 leader、developer、code-reviewer、test-engineer 四个角色。" width="720" />
+  </a>
+  <br />
+  <sub>带声音的完整版：<a href="docs/assets/loopforge-promo.mp4?raw=true">MP4，13 秒，2.8 MB</a></sub>
+</p>
 
-## 从一句需求到可验收结果
+## 快速开始
+
+要求 Node.js 20+ 和 Python 3.8+。以下命令安装默认的 Classic Edition，不确定选哪一种时直接用这一版。
+
+| Agent | 安装 | 启动工作流 |
+| --- | --- | --- |
+| CodeBuddy | `npx -y loopforge-cli@latest install codebuddy` | `/start-devflow "<需求>"` |
+| Codex | `npx -y loopforge-cli@latest install codex` | `$devflow-codex "<需求>"` |
+| Cursor | `npx -y loopforge-cli@latest install cursor` | `/start-devflow "<需求>"` |
+| Claude Code | `npx -y loopforge-cli@latest install claude` | `/start-devflow "<需求>"` |
+
+以 Claude Code 为例：
+
+```bash
+npx -y loopforge-cli@latest install claude
+npx -y loopforge-cli@latest status claude
+```
+
+```text
+/start-devflow "为订单列表增加状态筛选，并补充接口测试"
+```
+
+任何宿主都可以用 `npx -y loopforge-cli@latest status <agent>` 检查安装状态。如果安装或运行遇到问题，执行环境诊断：
+
+```bash
+npx -y loopforge-cli@latest doctor
+```
+
+Pi 通过 [Portable Edition](#portable-edition) 支持。
+
+## 工作方式
 
 1. **先理解问题**：Agent 调研现有项目，澄清目标、范围和验收标准，而不是立即开始写代码。
 2. **确认边界后再实施**：中大型任务会在你确认目标、范围、排除项、关键决策和验收标准后，再进入设计与实现。
-3. **分工完成交付**：设计、实现、审查和测试由职责独立的 Agent 分阶段完成，减少同一上下文中的自审偏差。
+3. **分工完成交付**：设计、实现、审查和测试由职责独立的角色分阶段完成，减少同一上下文中的自审偏差。
 4. **用证据说明结果**：需求、方案、代码变更、审查意见和测试结果都会落盘，方便检查、复盘和交接。
 5. **中断后继续执行**：流程状态会被保存，下次可以从未完成的阶段继续，不必重新来过。
 
-小改动会走精简的单 Agent 路径，避免为简单任务引入额外流程；中大型任务才会启用完整的多 Agent 协作。
+LoopForge 会根据任务复杂度选择路径：小改动走精简的单角色路径，避免为简单任务引入额外流程；中大型任务才启用完整的角色分工流程。
 
 ```text
 你的需求
@@ -28,69 +64,17 @@ LoopForge 把这些步骤组织成一条完整的软件交付流程。你只需�
                               └── 全程保存状态和产物，可随时恢复
 ```
 
-## 快速开始
+## 支持的 Agent
 
-要求 Node.js 20+ 和 Python 3.8+。
+| Agent | Classic Edition（默认） | Portable Edition |
+| --- | --- | --- |
+| CodeBuddy | ✓ | ✓ |
+| Codex | ✓ | ✓ |
+| Cursor | ✓ | ✓ |
+| Claude Code | ✓ | ✓ |
+| Pi | — | ✓ |
 
-以下命令安装默认的 Classic Edition。不确定选哪一种时，直接使用这一版。
-
-### CodeBuddy
-
-```bash
-npx -y loopforge-cli@latest install codebuddy
-npx -y loopforge-cli@latest status codebuddy
-```
-
-安装后启动：
-
-```text
-/start-devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Codex
-
-```bash
-npx -y loopforge-cli@latest install codex
-npx -y loopforge-cli@latest status codex
-```
-
-安装后启动：
-
-```text
-$devflow-codex "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Cursor
-
-```bash
-npx -y loopforge-cli@latest install cursor
-npx -y loopforge-cli@latest status cursor
-```
-
-安装后启动：
-
-```text
-/start-devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Claude Code
-
-```bash
-npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
-```
-
-安装后启动：
-
-```text
-/start-devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-如果安装或运行遇到问题，执行环境诊断：
-
-```bash
-npx -y loopforge-cli@latest doctor
-```
+同一项目中，每个编码 Agent 只能启用一种 Edition。两者的区别和目录说明见 [`EDITIONS.md`](EDITIONS.md)。
 
 ## 你会得到什么
 
@@ -116,7 +100,7 @@ Classic 工作流中断后，CodeBuddy、Cursor 和 Claude Code 使用 `/resume-
 
 ## 看见 Agent 如何完成工作
 
-CodeBuddy 的 Classic Edition 内置本地可观测看板。它把落盘的流程证据变成可视化视图，集中呈现会话活动、Token 与成本趋势、Skill/Rule 使用情况、多 Agent 派发，以及 Devflow 阶段归因，方便定位高成本运行、确认自动化是否真正生效，并复盘任务如何在不同 Agent 之间流转。
+CodeBuddy 的 Classic Edition 内置本地可观测看板。它把落盘的流程证据变成可视化视图，集中呈现会话活动、Token 与成本趋势、Skill/Rule 使用情况、角色派发，以及 Devflow 阶段归因，方便定位高成本运行、确认自动化是否真正生效，并复盘任务如何在不同角色之间流转。
 
 ![使用演示数据的 LoopForge 本地 Agent 可观测看板](docs/assets/agent-observability-dashboard.png)
 
@@ -150,70 +134,17 @@ LoopForge 尤其适合这些任务：
 
 如果只是一次性的代码补全或非常明确的微小修改，直接使用编码 Agent 通常已经足够；LoopForge 会为进入其工作流的简单任务选择精简路径。
 
-## 使用 Portable Edition
+## Portable Edition
 
-上面的“快速开始”安装的是默认的 Classic Edition，适合大多数用户。如果只希望安装基于 Agent Skills 的可移植工作流，请根据使用的 Coding Agent 选择下面的命令。为避免同一个 Coding Agent 同时加载两套工作流，以及状态和产物相互冲突，LoopForge 在每个项目中只允许为同一 Coding Agent 启用一种 Edition。如需切换，可重新安装并添加 `--force`。
+“快速开始”安装的 Classic Edition 适合大多数用户。如果只希望安装基于 Agent Skills 的可移植工作流，可以使用 Portable Edition。为避免同一个 Coding Agent 同时加载两套工作流，以及状态和产物相互冲突，LoopForge 在每个项目中只允许为同一 Coding Agent 启用一种 Edition。如需切换，可重新安装并添加 `--force`。
 
-### CodeBuddy
-
-```bash
-npx -y loopforge-cli@latest skills install codebuddy
-```
-
-安装后使用：
-
-```text
-/devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Codex
-
-```bash
-npx -y loopforge-cli@latest skills install codex
-```
-
-安装后使用：
-
-```text
-$devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Cursor
-
-```bash
-npx -y loopforge-cli@latest skills install cursor
-```
-
-安装后使用：
-
-```text
-/devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Claude Code
-
-```bash
-npx -y loopforge-cli@latest skills install claude
-```
-
-安装后使用：
-
-```text
-/devflow "为订单列表增加状态筛选，并补充接口测试"
-```
-
-### Pi
-
-```bash
-npx -y loopforge-cli@latest skills install pi
-pi install npm:pi-subagents
-```
-
-安装后使用：
-
-```text
-/skill:devflow "为订单列表增加状态筛选，并补充接口测试"
-```
+| Agent | 安装 | 启动工作流 |
+| --- | --- | --- |
+| CodeBuddy | `npx -y loopforge-cli@latest skills install codebuddy` | `/devflow "<需求>"` |
+| Codex | `npx -y loopforge-cli@latest skills install codex` | `$devflow "<需求>"` |
+| Cursor | `npx -y loopforge-cli@latest skills install cursor` | `/devflow "<需求>"` |
+| Claude Code | `npx -y loopforge-cli@latest skills install claude` | `/devflow "<需求>"` |
+| Pi | `npx -y loopforge-cli@latest skills install pi`，然后 `pi install npm:pi-subagents` | `/skill:devflow "<需求>"` |
 
 完整边界和目录说明见 [`EDITIONS.md`](EDITIONS.md)。
 
@@ -225,57 +156,18 @@ pi install npm:pi-subagents
 npm install --global loopforge-cli
 ```
 
-默认 Classic Edition 的维护命令：
+之后用上面的宿主名（`codebuddy`、`codex`、`cursor`、`claude`，Portable Edition 另有 `pi`）维护安装：
 
 ```bash
-# CodeBuddy
-loopforge update codebuddy
-loopforge status codebuddy
-loopforge uninstall codebuddy
+# Classic Edition
+loopforge update <agent>
+loopforge status <agent>
+loopforge uninstall <agent>
 
-# Codex
-loopforge update codex
-loopforge status codex
-loopforge uninstall codex
-
-# Cursor
-loopforge update cursor
-loopforge status cursor
-loopforge uninstall cursor
-
-# Claude Code
-loopforge update claude
-loopforge status claude
-loopforge uninstall claude
-```
-
-Portable Edition 的维护命令：
-
-```bash
-# CodeBuddy
-loopforge skills update codebuddy
-loopforge skills status codebuddy
-loopforge skills uninstall codebuddy
-
-# Codex
-loopforge skills update codex
-loopforge skills status codex
-loopforge skills uninstall codex
-
-# Cursor
-loopforge skills update cursor
-loopforge skills status cursor
-loopforge skills uninstall cursor
-
-# Claude Code
-loopforge skills update claude
-loopforge skills status claude
-loopforge skills uninstall claude
-
-# Pi
-loopforge skills update pi
-loopforge skills status pi
-loopforge skills uninstall pi
+# Portable Edition
+loopforge skills update <agent>
+loopforge skills status <agent>
+loopforge skills uninstall <agent>
 ```
 
 安装状态保存在 `.devflow/install-state.json`。检测到用户修改或文件冲突时，更新会停止而不是覆盖。只有在确认要替换冲突文件或切换 Edition 时才使用 `--force`，建议先运行 `loopforge plan` 检查变更。

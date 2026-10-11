@@ -4,19 +4,55 @@ English | [简体中文](README.zh-CN.md)
 
 **Make coding agents deliver through a workflow you can confirm, review, and resume—not just produce code.**
 
-Giving a coding agent a request is easy. The hard part is making sure it understands the goal before coding, stays within scope during implementation, and completes independent review and testing before it stops. Longer tasks also lose context, get interrupted, and leave behind a diff with little explanation of how it was produced.
+LoopForge installs into the coding agent you already use: CodeBuddy, Codex, Cursor, Claude Code, or Pi. Inside that agent it runs a role-based delivery workflow. The requirement is clarified and confirmed first, then the work is designed, implemented, reviewed by a different role from the one that wrote the code, and tested. Stages run one after another, each handled by its own role. You don't run several agents side by side. Decisions, review findings, and test results are saved along the way, so you can inspect the work and pick it up again after an interruption.
 
-LoopForge turns those concerns into a complete software delivery workflow. You describe the problem to solve; LoopForge chooses a path based on task complexity and guides agents through requirement clarification, solution design, implementation, independent review, and testing while preserving the important decisions and verification results.
+<p align="center">
+  <a href="docs/assets/loopforge-promo.mp4?raw=true">
+    <img src="docs/assets/loopforge-promo-preview.webp" alt="LoopForge in 13 seconds: one request goes through the leader, developer, code-reviewer, and test-engineer roles inside the agent you already use." width="720" />
+  </a>
+  <br />
+  <sub>Watch with sound: <a href="docs/assets/loopforge-promo.mp4?raw=true">MP4, 13 s, 2.8 MB</a></sub>
+</p>
 
-## From one request to a verifiable result
+## Quick start
+
+Requires Node.js 20+ and Python 3.8+. The commands below install the default Classic Edition; choose it if you are unsure.
+
+| Agent | Install | Start a workflow |
+| --- | --- | --- |
+| CodeBuddy | `npx -y loopforge-cli@latest install codebuddy` | `/start-devflow "<request>"` |
+| Codex | `npx -y loopforge-cli@latest install codex` | `$devflow-codex "<request>"` |
+| Cursor | `npx -y loopforge-cli@latest install cursor` | `/start-devflow "<request>"` |
+| Claude Code | `npx -y loopforge-cli@latest install claude` | `/start-devflow "<request>"` |
+
+For example, with Claude Code:
+
+```bash
+npx -y loopforge-cli@latest install claude
+npx -y loopforge-cli@latest status claude
+```
+
+```text
+/start-devflow "add status filtering to the order list and cover the API with tests"
+```
+
+Check any installation with `npx -y loopforge-cli@latest status <agent>`. If installation or execution fails, diagnose the environment:
+
+```bash
+npx -y loopforge-cli@latest doctor
+```
+
+Pi is supported through the [Portable Edition](#portable-edition).
+
+## How it works
 
 1. **Understand the problem first**: the agent inspects the project and clarifies the goal, scope, and acceptance criteria instead of immediately writing code.
 2. **Confirm the boundaries before implementation**: medium and large tasks move into design and implementation only after you confirm the goal, scope, exclusions, key decisions, and acceptance criteria.
-3. **Separate delivery responsibilities**: design, implementation, review, and testing are performed in stages by agents with independent responsibilities, reducing self-review bias in a single context.
+3. **Separate responsibilities**: design, implementation, review, and testing are handled stage by stage by roles with independent responsibilities, which reduces self-review bias in a single context.
 4. **Show evidence, not just a diff**: requirements, plans, changes, review findings, and test results are saved for inspection, handoff, and retrospectives.
 5. **Continue after interruption**: workflow state is persisted so the next session can resume at the unfinished stage instead of starting over.
 
-Small changes take a streamlined single-agent path. The full multi-agent workflow is reserved for medium and large tasks that benefit from it.
+LoopForge picks the path by task complexity. Small changes take a streamlined single-role path; the full role-based workflow is reserved for medium and large tasks that benefit from it.
 
 ```text
 Your request
@@ -29,69 +65,17 @@ Your request
                               └── State and artifacts are saved throughout
 ```
 
-## Quick start
+## Supported agents
 
-Requires Node.js 20+ and Python 3.8+.
+| Agent | Classic Edition (default) | Portable Edition |
+| --- | --- | --- |
+| CodeBuddy | ✓ | ✓ |
+| Codex | ✓ | ✓ |
+| Cursor | ✓ | ✓ |
+| Claude Code | ✓ | ✓ |
+| Pi | — | ✓ |
 
-The commands below install the default Classic Edition. Choose this edition if you are unsure.
-
-### CodeBuddy
-
-```bash
-npx -y loopforge-cli@latest install codebuddy
-npx -y loopforge-cli@latest status codebuddy
-```
-
-Then start a workflow:
-
-```text
-/start-devflow "add status filtering to the order list and cover the API with tests"
-```
-
-### Codex
-
-```bash
-npx -y loopforge-cli@latest install codex
-npx -y loopforge-cli@latest status codex
-```
-
-Then start a workflow:
-
-```text
-$devflow-codex "add status filtering to the order list and cover the API with tests"
-```
-
-### Cursor
-
-```bash
-npx -y loopforge-cli@latest install cursor
-npx -y loopforge-cli@latest status cursor
-```
-
-Then start a workflow:
-
-```text
-/start-devflow "add status filtering to the order list and cover the API with tests"
-```
-
-### Claude Code
-
-```bash
-npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
-```
-
-Then start a workflow:
-
-```text
-/start-devflow "add status filtering to the order list and cover the API with tests"
-```
-
-If installation or execution fails, diagnose the environment:
-
-```bash
-npx -y loopforge-cli@latest doctor
-```
+LoopForge enables only one edition per coding agent in each project. See [`EDITIONS.md`](EDITIONS.md) for the differences and directory layout.
 
 ## What you get
 
@@ -117,7 +101,7 @@ Resume an interrupted Classic workflow with `/resume-devflow {task_slug}` on Cod
 
 ## See how agents work
 
-The Classic Edition for CodeBuddy includes a local observability dashboard. It turns the workflow evidence into a view of session activity, Token and cost trends, Skill/Rule usage, multi-agent dispatch, and Devflow stage attribution—useful for finding expensive runs, checking whether automation is actually being used, and reviewing how work moved between agents.
+The Classic Edition for CodeBuddy includes a local observability dashboard. It turns the workflow evidence into a view of session activity, Token and cost trends, Skill/Rule usage, role dispatch, and Devflow stage attribution—useful for finding expensive runs, checking whether automation is actually being used, and reviewing how work moved between roles.
 
 ![LoopForge local agent observability dashboard with demonstration data](docs/assets/agent-observability-dashboard.png)
 
@@ -151,70 +135,17 @@ LoopForge is especially useful when:
 
 For one-off code completion or a tiny, fully specified edit, using a coding agent directly is often enough. Simple tasks that do enter LoopForge use its streamlined path.
 
-## Use the Portable Edition
+## Portable Edition
 
-The quick start above installs the default Classic Edition, which is the right choice for most users. If you only want the portable Agent Skills workflow, choose the command for your coding agent below. To prevent one coding agent from loading two workflows and mixing their state or artifacts, LoopForge enables only one edition per coding agent in each project. To switch editions, run the new install command with `--force`.
+The Classic Edition from the quick start is the right choice for most users. If you only want the portable Agent Skills workflow, use the Portable Edition. To prevent one coding agent from loading two workflows and mixing their state or artifacts, LoopForge enables only one edition per coding agent in each project. To switch editions, run the new install command with `--force`.
 
-### CodeBuddy
-
-```bash
-npx -y loopforge-cli@latest skills install codebuddy
-```
-
-Then start a workflow:
-
-```text
-/devflow "add status filtering to the order list and cover the API with tests"
-```
-
-### Codex
-
-```bash
-npx -y loopforge-cli@latest skills install codex
-```
-
-Then start a workflow:
-
-```text
-$devflow "add status filtering to the order list and cover the API with tests"
-```
-
-### Cursor
-
-```bash
-npx -y loopforge-cli@latest skills install cursor
-```
-
-Then start a workflow:
-
-```text
-/devflow "add status filtering to the order list and cover the API with tests"
-```
-
-### Claude Code
-
-```bash
-npx -y loopforge-cli@latest skills install claude
-```
-
-Then start a workflow:
-
-```text
-/devflow "add status filtering to the order list and cover the API with tests"
-```
-
-### Pi
-
-```bash
-npx -y loopforge-cli@latest skills install pi
-pi install npm:pi-subagents
-```
-
-Then start a workflow:
-
-```text
-/skill:devflow "add status filtering to the order list and cover the API with tests"
-```
+| Agent | Install | Start a workflow |
+| --- | --- | --- |
+| CodeBuddy | `npx -y loopforge-cli@latest skills install codebuddy` | `/devflow "<request>"` |
+| Codex | `npx -y loopforge-cli@latest skills install codex` | `$devflow "<request>"` |
+| Cursor | `npx -y loopforge-cli@latest skills install cursor` | `/devflow "<request>"` |
+| Claude Code | `npx -y loopforge-cli@latest skills install claude` | `/devflow "<request>"` |
+| Pi | `npx -y loopforge-cli@latest skills install pi`, then `pi install npm:pi-subagents` | `/skill:devflow "<request>"` |
 
 See [`EDITIONS.md`](EDITIONS.md) for the complete boundaries and directory layout.
 
@@ -226,57 +157,18 @@ For ongoing use, install the CLI globally:
 npm install --global loopforge-cli
 ```
 
-Maintenance commands for the default Classic Edition:
+Then maintain an installation with the same agent names as above (`codebuddy`, `codex`, `cursor`, `claude`, and `pi` for the Portable Edition):
 
 ```bash
-# CodeBuddy
-loopforge update codebuddy
-loopforge status codebuddy
-loopforge uninstall codebuddy
+# Classic Edition
+loopforge update <agent>
+loopforge status <agent>
+loopforge uninstall <agent>
 
-# Codex
-loopforge update codex
-loopforge status codex
-loopforge uninstall codex
-
-# Cursor
-loopforge update cursor
-loopforge status cursor
-loopforge uninstall cursor
-
-# Claude Code
-loopforge update claude
-loopforge status claude
-loopforge uninstall claude
-```
-
-Maintenance commands for the Portable Edition:
-
-```bash
-# CodeBuddy
-loopforge skills update codebuddy
-loopforge skills status codebuddy
-loopforge skills uninstall codebuddy
-
-# Codex
-loopforge skills update codex
-loopforge skills status codex
-loopforge skills uninstall codex
-
-# Cursor
-loopforge skills update cursor
-loopforge skills status cursor
-loopforge skills uninstall cursor
-
-# Claude Code
-loopforge skills update claude
-loopforge skills status claude
-loopforge skills uninstall claude
-
-# Pi
-loopforge skills update pi
-loopforge skills status pi
-loopforge skills uninstall pi
+# Portable Edition
+loopforge skills update <agent>
+loopforge skills status <agent>
+loopforge skills uninstall <agent>
 ```
 
 Installation state is stored in `.devflow/install-state.json`. An update stops instead of overwriting user-modified or conflicting files. Use `--force` only when you intend to replace conflicts or switch editions, preferably after inspecting `loopforge plan`.
