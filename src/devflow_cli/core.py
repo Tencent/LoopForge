@@ -21,6 +21,21 @@ class DevFlowError(RuntimeError):
     pass
 
 
+def is_runtime_artifact(relative: Path) -> bool:
+    """Local run output (logs, caches) that must never be installed or packaged.
+
+    agent-observability writes metrics, state and debug logs under its ``logs/``
+    directory; only the ``.gitkeep`` placeholder belongs to the asset bundle.
+    """
+    parts = Path(relative).parts
+    if "__pycache__" in parts or Path(relative).suffix in {".pyc", ".pyo"}:
+        return True
+    for index in range(len(parts) - 2):
+        if parts[index:index + 2] == ("agent-observability", "logs"):
+            return parts[-1] != ".gitkeep"
+    return False
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -82,7 +97,7 @@ def save_state(project: Path, state: dict) -> None:
 def snapshot(root: Path) -> Dict[str, Tuple[bytes, int]]:
     result = {}
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+        if not path.is_file() or is_runtime_artifact(path.relative_to(root)):
             continue
         relative = str(path.relative_to(root))
         if relative.endswith(".devflow-managed-skills.json"):

@@ -162,7 +162,8 @@ def infer_identity_from_messages(messages: list[dict[str, Any]]) -> tuple[Option
         next_target = _extract_next_target(payload)
 
         if from_role == "main" and mailbox_role and mailbox_role != "main":
-            if not msg.get("is_shutdown"):
+            # A standby assignment only creates the member; it is not active yet.
+            if not msg.get("is_shutdown") and not msg.get("is_standby"):
                 current = mailbox_role
                 dispatched = mailbox_role
                 evidence = f"dispatch:{mailbox_name}"
@@ -521,6 +522,7 @@ def _normalize_message(item: Any, mailbox_name: str, mailbox_role: str | None, i
         "ts": ts,
         "index": index,
         "is_shutdown": _is_shutdown_message(payload, summary, text),
+        "is_standby": _is_standby_message(payload, text),
     }
 
 
@@ -559,6 +561,14 @@ def _is_shutdown_message(payload: dict[str, Any] | None, summary: str, text: Any
     summary_low = summary.lower() if isinstance(summary, str) else ""
     text_low = text.lower() if isinstance(text, str) else ""
     return "shutdown" in summary_low or "shutdown request" in text_low
+
+
+def _is_standby_message(payload: dict[str, Any] | None, text: Any) -> bool:
+    """识别“先创建成员、待命等待唤醒”的消息；这类消息不代表成员已开始工作。"""
+    if isinstance(payload, dict) and (payload.get("event") or payload.get("dispatch_prompt")):
+        return False
+    text_low = text.lower() if isinstance(text, str) else ""
+    return "待命" in text_low or "standby" in text_low or "stand by" in text_low
 
 
 def _parse_timestamp(value: Any) -> float:

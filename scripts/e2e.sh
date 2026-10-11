@@ -8,5 +8,5 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONDONTWRITEBYTECODE=1
 
-python3 -m unittest discover -s "$ROOT_DIR/tests/e2e" -t "$ROOT_DIR/tests/e2e" -p 'test_e2e_*.py' -v "$@"
+python3 -m unittest discover -s "$ROOT_DIR/tests/e2e" -t "$ROOT_DIR/tests/e2e" -p 'test_e2e_*.py' -v ${@+"$@"}
 echo "E2E tests passed."

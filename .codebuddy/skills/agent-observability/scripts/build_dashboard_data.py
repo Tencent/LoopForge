@@ -522,6 +522,12 @@ def build_devflow_runs(project_root: Path, cost_by_slug: dict[str, float] | None
                 "exec": info.get("executor") or "-", "status": status,
                 "retry_count": retry_count, "duration": duration,
             })
+        # 只有所有阶段都已完成或跳过时才算“已完成”；停在两个阶段之间（等待审批、
+        # 下一阶段尚未派发）的运行仍是进行中，不能因为没有 in_progress 就显示完成。
+        if overall == "completed" and any(
+            stage["status"] not in {"completed", "skipped"} for stage in stages_out
+        ):
+            overall = "running"
         # 按真实起止时间跨度算总时长（而不是逐阶段 duration 相加）——阶段之间可能
         # 有重叠（比如 TASK-05 的 started_at 早于 SOLO 的 completed_at），相加会
         # 把重叠部分重复计入，虚高于源数据本身反映的运行时长。

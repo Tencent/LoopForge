@@ -25,6 +25,7 @@ jobs:
           node-version: "22"
       - run: python3 -m pip install pyyaml==6.0.3
       - run: bash scripts/validate.sh
+      - run: bash scripts/test-observability.sh
       - run: bash scripts/smoke-install.sh
       - run: bash scripts/smoke-npm.sh
 

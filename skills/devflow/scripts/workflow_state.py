@@ -698,7 +698,9 @@ def command_finish(args: argparse.Namespace) -> int:
                     executor_topology=None, team_name=None, dispatch_tool=None,
                 )
             data["stages"][stage_name].update(reset)
-        data.update(status="in_progress", next_stage="REQUIREMENT", current_stage="SOLO")
+        # SOLO is no longer part of the medium route; park current_stage on the
+        # PHASE-0 sentinel so the escalated state stays valid for resume/prepare.
+        data.update(status="in_progress", next_stage="REQUIREMENT", current_stage="PHASE-0")
     elif args.result == "completed":
         artifact_root = Path(data["artifacts_dir"])
         required = required_artifacts(

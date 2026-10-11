@@ -141,3 +141,87 @@ def loopforge_validate(project, slug="e2e-task", host_skills=None):
             state = project / "artifacts" / slug / "workflow-state.json"
             return run([sys.executable, script, "validate", "--state", state]).stdout
     raise AssertionError("no installed workflow_state.py found")
+
+
+def classic_hook_env(project):
+    """Environment the CodeBuddy host gives its hooks; CLS mirroring stays off."""
+    env = dict(os.environ, CODEBUDDY_PROJECT_DIR=str(project), PYTHONDONTWRITEBYTECODE="1")
+    for key in list(env):
+        if key.startswith(("CLS_", "TENCENTCLOUD_", "TC_")):
+            del env[key]
+    return env
+
+
+def run_hook(project, command, payload):
+    result = subprocess.run(
+        [str(item) for item in command], input=json.dumps(payload), cwd=str(project),
+        env=classic_hook_env(project), capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        raise AssertionError("hook {} failed: {}".format(command, result.stderr))
+    return result.stdout
+
+
+def send_dispatch(project, sender, event, target, state_path):
+    payload = {"event": event, "dispatch_prompt": "continue as " + target,
+               "next_target": {"subagent_name": target},
+               "workflow_state_path": str(state_path)}
+    output = run_hook(
+        project, [sys.executable, Path(project) / ".codebuddy/hooks/devflow-auto-dispatch.py"],
+        {"tool_name": "SendMessage", "tool_input": {
+            "type": "message", "from": sender, "recipient": "main",
+            "content": json.dumps(payload)}},
+    )
+    return json.loads(output)
+
+
+def seed_classic_run(project, slug="e2e-classic"):
+    """A Classic workflow-state.json as the leader writes it at Phase 0."""
+    state_path = Path(project) / "artifacts" / slug / "workflow-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(str(Path(project) / ".codebuddy/assets/workflow-state-template.json"), str(state_path))
+    return state_path
+
+
+def record_classic_session(project, state_path, session_id="e2e-session"):
+    """Replay one recorded CodeBuddy session through the observability hooks."""
+    project = Path(project)
+    skill = project / ".codebuddy/skills/agent-observability"
+    transcript = project / "session.jsonl"
+    shutil.copy(str(REPO / ".codebuddy/skills/agent-observability/tests/fixtures/transcript.jsonl"),
+                str(transcript))
+    base = {"session_id": session_id, "cwd": str(project), "transcript_path": str(transcript)}
+    tool = dict(base, tool_name="Bash", tool_input={"command": "ls"}, tool_use_id="call-002")
+    hook = [skill / "scripts/run_hook.sh"]
+    run_hook(project, hook + ["session-start"], base)
+    run_hook(project, hook + ["user-prompt-submit"], dict(base, prompt="/start-devflow fix slugify"))
+    run_hook(project, hook + ["pre"], tool)
+    run_hook(project, hook + ["post"], dict(tool, tool_response={"stdout": "ok"}))
+    send_dispatch(project, "requirement-owner", "TASK-01_completed", "architect", state_path)
+    run_hook(project, hook + ["stop"], base)
+
+
+def build_dashboard(project):
+    skill = Path(project) / ".codebuddy/skills/agent-observability"
+    output = run([sys.executable, skill / "scripts/build_dashboard_data.py", "--project-root", project],
+                 cwd=project, env=classic_hook_env(project)).stdout
+    return output, skill / "scripts/dashboard"
+
+
+class StaticServer(object):
+    """Serve a directory on a random 127.0.0.1 port for the duration of a test."""
+
+    def __init__(self, test_case, directory):
+        import functools
+        import threading
+        from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+        class Quiet(SimpleHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(directory)))
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        test_case.addCleanup(self.server.server_close)
+        test_case.addCleanup(self.server.shutdown)
+        self.url = "http://127.0.0.1:{}/".format(self.server.server_address[1])

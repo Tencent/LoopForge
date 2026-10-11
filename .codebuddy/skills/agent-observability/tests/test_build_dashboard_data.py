@@ -395,6 +395,36 @@ class BuildDevflowRunsClassicSoloTests(unittest.TestCase):
             self.assertNotIn("TASK-01", stage_by_key)  # SOLO 路径不该混进 medium/large 的阶段
 
 
+class BuildDevflowRunsOverallStatusTests(unittest.TestCase):
+    """E2E 发现：刚开始或停在两个阶段之间的运行（没有 in_progress、也没有 failed）
+    曾被显示为“已完成”。"""
+
+    def _overall(self, stages):
+        with tempfile.TemporaryDirectory() as td:
+            project_root = Path(td)
+            run_dir = project_root / "artifacts" / "between-stages"
+            run_dir.mkdir(parents=True)
+            (run_dir / "workflow-state.json").write_text(json.dumps({
+                "version": "1.3", "task_slug": "between-stages", "size_class": "medium",
+                "current_stage": "TASK-02", "stages": stages,
+            }), encoding="utf-8")
+            return bdd.build_devflow_runs(project_root)[0]["overall"]
+
+    def test_run_waiting_between_stages_is_not_completed(self):
+        stages = {
+            "TASK-01": {"status": "completed", "executor": "main", "retry_count": 0},
+            "TASK-02": {"status": "completed", "executor": "architect", "retry_count": 0},
+            "TASK-03": {"status": "pending", "executor": "developer", "retry_count": 0},
+        }
+        self.assertEqual(self._overall(stages), "running")
+
+    def test_fully_finished_run_is_completed(self):
+        names = ("TASK-01", "TASK-02", "TASK-03", "CODE-REVIEW", "TASK-04", "TASK-05")
+        stages = {name: {"status": "completed", "executor": "x", "retry_count": 0} for name in names}
+        stages["TASK-05"]["status"] = "skipped"
+        self.assertEqual(self._overall(stages), "completed")
+
+
 class BuildDevflowRunsMediumWithLingeringSoloKeyTests(unittest.TestCase):
     """用户反馈复现：workflow-state.json 模板固定给每次运行都写一份 SOLO stage
     （见 assets/workflow-state-template.json 里 SOLO.description 的说明：

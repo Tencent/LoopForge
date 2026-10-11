@@ -77,6 +77,7 @@ jobs:
         run: |
           python3 scripts/build-classic-hosts.py --check
           bash scripts/validate.sh
+          bash scripts/test-observability.sh
           bash scripts/smoke-install.sh
           bash scripts/smoke-npm.sh
           bash scripts/smoke-curl-install.sh

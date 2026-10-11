@@ -40,7 +40,13 @@
     "!skills/**/tests/**",
     "!**/__pycache__/**",
     "!**/*.pyc",
-    "!**/*.pyo"
+    "!**/*.pyo",
+    "!.codebuddy/skills/agent-observability/logs/**",
+    ".codebuddy/skills/agent-observability/logs/.gitkeep",
+    "!.cursor/skills/agent-observability/logs/**",
+    ".cursor/skills/agent-observability/logs/.gitkeep",
+    "!.claude/skills/agent-observability/logs/**",
+    ".claude/skills/agent-observability/logs/.gitkeep"
   ],
   "engines": {
     "node": ">=20"

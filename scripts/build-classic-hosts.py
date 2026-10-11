@@ -17,6 +17,17 @@ ROLES = (
 HOSTS = ("cursor", "claude")
 
 
+def is_runtime_artifact(relative: Path) -> bool:
+    """Same rule as devflow_cli.core.is_runtime_artifact (kept stdlib-only here)."""
+    parts = relative.parts
+    if "__pycache__" in parts or relative.suffix in {".pyc", ".pyo"}:
+        return True
+    for index in range(len(parts) - 2):
+        if parts[index:index + 2] == ("agent-observability", "logs"):
+            return parts[-1] != ".gitkeep"
+    return False
+
+
 def strip_frontmatter(text: str) -> str:
     if text.startswith("---\n"):
         end = text.find("\n---\n", 4)
@@ -133,7 +144,7 @@ def render_agent(role: str, host: str) -> str:
 
 def add_tree(files: Dict[str, bytes], source: Path, target_prefix: str, host: str) -> None:
     for path in sorted(source.rglob("*")):
-        if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+        if not path.is_file() or is_runtime_artifact(path.relative_to(source)):
             continue
         relative = path.relative_to(source)
         target = str(Path(target_prefix) / relative)
@@ -214,7 +225,7 @@ def check_host(host: str) -> list:
     actual = {
         str(path.relative_to(target)): path.read_bytes()
         for path in target.rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+        if path.is_file() and not is_runtime_artifact(path.relative_to(target))
     } if target.is_dir() else {}
     errors = []
     for name in sorted(set(wanted) | set(actual)):

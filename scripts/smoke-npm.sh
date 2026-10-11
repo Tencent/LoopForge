@@ -34,7 +34,8 @@ for (const item of files) {
     item.includes("__pycache__") ||
     item.endsWith(".pyc") ||
     item.startsWith("build/") ||
-    /^skills\/.+\/tests\//.test(item)
+    /^skills\/.+\/tests\//.test(item) ||
+    (/\/agent-observability\/logs\//.test(item) && !item.endsWith("/.gitkeep"))
   ) {
     throw new Error(`npm package contains generated file ${item}`)
   }

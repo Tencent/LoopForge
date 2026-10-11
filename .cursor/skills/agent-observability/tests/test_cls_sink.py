@@ -17,6 +17,22 @@ from core import cls_sink, emitter  # type: ignore
 
 
 class CLSSinkTests(unittest.TestCase):
+    def setUp(self):
+        # Keep the suite hermetic: never write debug logs into the source tree and
+        # do not depend on the optional Node SDK being checked out next to the repo.
+        sandbox = tempfile.TemporaryDirectory()
+        self.addCleanup(sandbox.cleanup)
+        sdk_entry = Path(sandbox.name) / "tencentcloud-cls-sdk-js" / "dist" / "index.js"
+        sdk_entry.parent.mkdir(parents=True)
+        sdk_entry.write_text("module.exports = {};\n", encoding="utf-8")
+        for name, value in (
+            ("sdk_entry_path", sdk_entry),
+            ("debug_log_path", Path(sandbox.name) / "cls-push-debug.ndjson"),
+        ):
+            patcher = mock.patch.object(cls_sink, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def _write_cls_env(self, root: Path, *extra_lines: str) -> None:
         lines = [
             "CLS_TOPIC_ID=test-topic-id",
@@ -170,6 +186,18 @@ class CLSSinkTests(unittest.TestCase):
         self.assertEqual(entries[0]["stage"], "uploader_start")
         self.assertEqual(entries[-1]["stage"], "uploader_ok")
         self.assertEqual(entries[-1]["method"], "python_api_v3")
+
+    def test_unconfigured_cls_stays_silent(self):
+        with tempfile.TemporaryDirectory() as td:
+            debug_path = Path(td) / "debug.ndjson"
+            with mock.patch.object(cls_sink, "debug_log_path", return_value=debug_path), \
+                 mock.patch.object(cls_sink.subprocess, "run") as run, \
+                 mock.patch.dict(os.environ, {}, clear=True):
+                ok = cls_sink.mirror_record({"event": "start", "sid": "s-off"}, cwd=td)
+
+            self.assertFalse(ok)
+            run.assert_not_called()
+            self.assertFalse(debug_path.exists())
 
     def test_emit_keeps_local_log_when_cls_push_raises(self):
         with tempfile.TemporaryDirectory() as td:

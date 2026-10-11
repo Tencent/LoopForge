@@ -1,7 +1,10 @@
 {
-  "description": "Recorded stage outputs for a medium task: fix slugify() in the sample project. Each stage executor fills the real templates produced by `workflow_state.py prepare` with this evidence.",
+  "description": "Recorded stage outputs for a task that fixes slugify() in the sample project. Each stage executor fills the real templates produced by `workflow_state.py prepare` with this evidence.",
   "request": "修复 slugify：空格转连字符、去掉符号，并补充验收测试",
-  "knowledge_decision": {"decision": "skip", "reason": "只有常规变更和测试结果，没有新增可复用约束"},
+  "knowledge_decision": {
+    "decision": "skip",
+    "reason": "只有常规变更和测试结果，没有新增可复用约束"
+  },
   "overrides": {
     "{{说明当前实现、关键模块、仓库相对路径、约束和非目标}}": "当前实现位于 `slugify.py`，仅修改该文件；验收用例在 `check_slugify.py`。",
     "{{动作导向的任务名}}": "修复 slugify 规范化逻辑",
@@ -22,11 +25,25 @@
     "REVIEW": "审查 `slugify.py` 的 diff，未发现阻断问题。",
     "REVIEW_REJECTED": "不通过：`slugify.py` 未处理符号，阻断级别，建议改为按字母数字切分。",
     "TEST": "运行 `python3 -m unittest check_slugify`，2 个用例全部通过。",
-    "KNOWLEDGE": "无新增经验。",
-    "SUMMARY": "交付完成；`python3 -m unittest check_slugify` 已通过，无剩余风险。"
+    "KNOWLEDGE": "可复用约束：slug 只保留 `[a-z0-9]+` 片段，见 `slugify.py`。",
+    "SUMMARY": "交付完成；`python3 -m unittest check_slugify` 已通过，无剩余风险。",
+    "SOLO": "已修改 `slugify.py` 并运行 `python3 -m unittest check_slugify`，结果 passed；任务仍符合 small 标准。"
   },
   "code_changes": {
-    "IMPLEMENT": {"slugify.py": "patches/slugify.py"}
+    "IMPLEMENT": {
+      "slugify.py": "patches/slugify.py"
+    },
+    "SOLO": {
+      "slugify.py": "patches/slugify.py"
+    }
   },
-  "verify_command": ["-m", "unittest", "check_slugify"]
+  "verify_command": [
+    "-m",
+    "unittest",
+    "check_slugify"
+  ],
+  "knowledge_run": {
+    "decision": "run",
+    "reason": "审查发现可复用约束：`slugify.py` 只保留 `[a-z0-9]+` 片段，调用方不得依赖原始大小写"
+  }
 }

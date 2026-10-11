@@ -18,6 +18,8 @@ cp "$ROOT_DIR/package.json" "$ROOT_DIR/LICENSE" \
 find "$PAYLOAD_DIR/skills" -type d -name tests -prune -exec rm -rf {} +
 find "$PAYLOAD_DIR" -type d -name __pycache__ -prune -exec rm -rf {} +
 find "$PAYLOAD_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+# agent-observability run output (metrics, state, debug logs) is local-only.
+find "$PAYLOAD_DIR" -path '*/agent-observability/logs/*' -type f ! -name .gitkeep -delete
 
 tar -czf "$OUTPUT_DIR/$ASSET_NAME" -C "$TMP_DIR" loopforge-workflow
 if command -v sha256sum >/dev/null 2>&1; then

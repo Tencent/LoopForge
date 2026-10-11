@@ -14,13 +14,17 @@ concurrency:
 
 jobs:
   e2e:
-    name: e2e (python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: e2e (${{ matrix.os }}, python ${{ matrix.python-version }}, node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.12"]
+        include:
+          - {os: ubuntu-latest, python-version: "3.8", node-version: "22"}
+          - {os: ubuntu-latest, python-version: "3.12", node-version: "22"}
+          - {os: ubuntu-latest, python-version: "3.12", node-version: "20"}
+          - {os: macos-latest, python-version: "3.12", node-version: "22"}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v5.6.0
@@ -28,21 +32,50 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - uses: actions/setup-node@v7.0.0
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node-version }}
       - run: python3 -m pip install pyyaml==6.0.3
       - name: Run E2E suite (packaged CLI, fake host Agent, no API keys)
         run: bash scripts/e2e.sh
+
+  e2e-browser:
+    name: e2e-browser (dashboard in Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: |
+          python3 -m pip install pyyaml==6.0.3 playwright==1.63.0
+          python3 -m playwright install --with-deps chromium
+      - name: Render the observability dashboard
+        env:
+          LOOPFORGE_E2E_BROWSER: "1"
+          LOOPFORGE_E2E_ARTIFACTS: ${{ runner.temp }}/dashboard-screenshots
+        run: bash scripts/e2e.sh -k DashboardBrowserE2E
+      - name: Upload dashboard screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-screenshots
+          path: ${{ runner.temp }}/dashboard-screenshots
+          if-no-files-found: ignore
 
   e2e-gate:
     # Single stable check name to mark as required in branch protection.
     name: e2e-required
     if: always()
-    needs: [e2e]
+    needs: [e2e, e2e-browser]
     runs-on: ubuntu-latest
     steps:
       - name: Require every E2E job to pass
         run: |
-          if [[ "${{ needs.e2e.result }}" != "success" ]]; then
-            echo "E2E result: ${{ needs.e2e.result }}" >&2
+          if [[ "${{ needs.e2e.result }}" != "success" || "${{ needs.e2e-browser.result }}" != "success" ]]; then
+            echo "e2e=${{ needs.e2e.result }} e2e-browser=${{ needs.e2e-browser.result }}" >&2
             exit 1
           fi

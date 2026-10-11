@@ -19,6 +19,7 @@ python3 scripts/build-classic-hosts.py --check
 bash scripts/validate.sh
 bash scripts/smoke-install.sh
 bash scripts/e2e.sh
+bash scripts/test-observability.sh
 bash scripts/scan-secrets.sh
 ```
 

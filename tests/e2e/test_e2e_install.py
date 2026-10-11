@@ -1,6 +1,7 @@
 """E2E: install the packaged CLI into a user project for every supported host."""
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -48,11 +49,32 @@ class InstallMatrixE2E(unittest.TestCase):
                     self.assertEqual((edition, 0, 0), (rows[0]["edition"], rows[0]["missing"], rows[0]["changed"]))
                     self.assertIn("healthy", h.loopforge("doctor", "--project-root", project).stdout)
 
+                    self.assert_no_runtime_logs(project)
+                    self.assert_markdown_links_resolve(project)
+
                     update = h.loopforge(*install_args(edition, host, "update"), "--project-root", project).stdout
                     self.assertIn("written=0", update)
 
                     h.loopforge(*install_args(edition, host, "uninstall"), "--project-root", project)
                     self.assertEqual(before, h.files_under(project))
+
+    def assert_no_runtime_logs(self, project):
+        """Only the logs/.gitkeep placeholder may ship; run output stays local."""
+        for logs in project.glob(".*/skills/agent-observability/logs"):
+            self.assertEqual([".gitkeep"], sorted(p.name for p in logs.iterdir()), str(logs))
+
+    def assert_markdown_links_resolve(self, project):
+        """Every relative Markdown link the host Agent may follow must be installed."""
+        broken = []
+        for path in project.rglob("*.md"):
+            if ".git" in path.relative_to(project).parts:
+                continue
+            for target in re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", path.read_text(encoding="utf-8")):
+                target = target.split("#", 1)[0]
+                if target and "://" not in target and not target.startswith("mailto:"):
+                    if not (path.parent / target).exists():
+                        broken.append("{} -> {}".format(path.relative_to(project), target))
+        self.assertEqual([], broken)
 
     def test_classic_is_rejected_for_portable_only_host(self):
         project = h.new_project(self, with_sample=False)

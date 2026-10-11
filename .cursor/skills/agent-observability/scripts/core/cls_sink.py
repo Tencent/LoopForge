@@ -338,6 +338,10 @@ def load_config(cwd: str | None = None) -> CLSConfig:
 
 def mirror_record(record: dict[str, Any], *, cwd: str | None = None) -> bool:
     config = load_config(cwd)
+    if not (config.endpoint or config.topic_id):
+        # CLS mirroring was never configured: stay silent instead of writing a
+        # debug line into the skill directory for every local event.
+        return False
     if not config.ready:
         _debug_write(
             {

@@ -23,7 +23,9 @@ import re
 import shutil
 import subprocess
 import sys
+import struct
 import uuid
+import zlib
 from pathlib import Path
 
 HOST_SKILL_DIRS = {
@@ -56,6 +58,7 @@ class FakeAgent:
         self.review_rejections_left = args.review_reject
         self.failures_left = dict(args.fail_stage)
         self.fresh_team = bool(args.resume and args.host == "codebuddy")
+        self.overflowed = False
         self.rounds = {}
 
     # -- helpers ---------------------------------------------------------
@@ -107,8 +110,9 @@ class FakeAgent:
     def init(self):
         output = self.run(
             "init", "--project-root", self.root, "--slug", self.args.slug,
-            "--size", "medium", "--mode", "auto", "--execution-mode", "isolated",
+            "--size", self.args.size, "--mode", self.args.mode, "--execution-mode", "isolated",
             "--host-adapter", self.host, "--coordinator-id", "fake-main",
+            *(["--require-design-artifacts"] if self.args.require_design_artifacts else []),
         ).stdout.strip()
         self.log("init", state=output)
 
@@ -130,20 +134,25 @@ class FakeAgent:
             if kind == "blocked":
                 return EXIT_BLOCKED
             if kind == "approve":
-                if action.get("requires_user_confirmation") and not self.args.user_confirms:
+                held = action["stage"] in self.args.hold_gate
+                if held or (action.get("requires_user_confirmation") and not self.args.user_confirms):
                     self.log("waiting-for-user", stage=action["stage"])
                     return EXIT_WAITING
                 extra = ["--user-confirmed"] if action.get("requires_user_confirmation") else []
                 self.run("approve", "--state", self.state_path(), "--stage", action["stage"], *extra)
+                self.log("approved", stage=action["stage"], user_confirmed=bool(extra))
             elif kind == "rotate-team":
                 rotated = json.loads(self.run("rotate-team", "--state", self.state_path()).stdout)
                 self.log("team-rotated", old=rotated["old_team_name"], new=rotated["team_name"])
             elif kind == "assess-knowledge":
-                decision = self.scenario["knowledge_decision"]
+                decision = dict(self.scenario["knowledge_decision"])
+                if self.args.knowledge == "run":
+                    decision = dict(self.scenario["knowledge_run"])
                 self.run(
                     "decide-knowledge", "--state", self.state_path(),
                     "--decision", decision["decision"], "--reason", decision["reason"],
                 )
+                self.log("knowledge-decided", decision=decision["decision"])
             elif kind == "prepare":
                 prompt = self.run(
                     "prepare", "--state", self.state_path(), "--stage", action["stage"],
@@ -196,9 +205,18 @@ class FakeAgent:
         if self.failures_left.get(stage, 0) > 0:
             self.failures_left[stage] -= 1
             result = "failed"
+        if stage == "SOLO" and self.args.solo_overflow and not self.overflowed:
+            # The single agent discovers the task is bigger than "small" and escalates.
+            self.overflowed = True
+            self.run("finish", "--state", self.state_path(), "--stage", "SOLO",
+                     "--result", "overflow", "--host-adapter", self.host)
+            self.log("finish", stage=stage, result="overflow", rc=0, error=None)
+            return
         for relative, source in self.scenario.get("code_changes", {}).get(stage, {}).items():
             shutil.copyfile(str(FIXTURES / source), str(self.root / relative))
-        if stage == "TEST":
+        if stage == "DESIGN" and self.state().get("requires_design_artifacts"):
+            self.write_design_context(evidence)
+        if stage in ("TEST", "SOLO"):
             verify = subprocess.run(
                 [sys.executable] + self.scenario["verify_command"], cwd=str(self.root),
                 text=True, capture_output=True,
@@ -235,6 +253,16 @@ class FakeAgent:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
 
+    def write_design_context(self, evidence):
+        """Design-implementation tasks also need sections and visual evidence."""
+        root = self.state_path().parent / "02-design" / "design-context"
+        template = (self.skill_root / "templates" / "design-context-section.md").read_text(encoding="utf-8")
+        section = re.sub(r"\{\{[^{}]+\}\}", evidence, template)
+        (root / "sections").mkdir(parents=True, exist_ok=True)
+        (root / "sections" / "result-list.md").write_text(section, encoding="utf-8")
+        (root / "evidence").mkdir(parents=True, exist_ok=True)
+        (root / "evidence" / "mockup.png").write_bytes(tiny_png())
+
     def required_artifacts(self, stage):
         sys.path.insert(0, str(self.skill_root / "scripts"))
         try:
@@ -257,14 +285,31 @@ class FakeAgent:
         return code
 
 
+def tiny_png():
+    """A valid 1x1 PNG, generated so the fixture set has no binary files."""
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff")) + chunk(b"IEND", b""))
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--host", choices=sorted(HOST_SKILL_DIRS), required=True)
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--slug", default="e2e-task")
-    parser.add_argument("--scenario", type=Path, default=FIXTURES / "scenario-medium.json")
+    parser.add_argument("--scenario", type=Path, default=FIXTURES / "scenario-slugify.json")
     parser.add_argument("--resume", action="store_true", help="new session; do not init")
+    parser.add_argument("--size", choices=("small", "medium", "large"), default="medium")
+    parser.add_argument("--mode", choices=("auto", "manual"), default="auto")
+    parser.add_argument("--require-design-artifacts", action="store_true")
+    parser.add_argument("--solo-overflow", action="store_true", help="SOLO escalates to medium")
+    parser.add_argument("--knowledge", choices=("skip", "run"), default="skip")
     parser.add_argument("--no-user-confirmation", dest="user_confirms", action="store_false")
+    parser.add_argument("--hold-gate", action="append", default=[],
+                        help="the user does not answer this approval gate (session ends)")
     parser.add_argument("--stop-after", type=int, default=0, help="interrupt after N actions")
     parser.add_argument("--crash-in", help="die right after starting this stage")
     parser.add_argument("--review-reject", type=int, default=0, help="reject REVIEW N times")

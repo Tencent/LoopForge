@@ -19,6 +19,11 @@ def data_files():
                 or "tests" in relative.parts
                 or "__pycache__" in relative.parts
                 or path.suffix == ".pyc"
+                or (
+                    "logs" in relative.parts
+                    and "agent-observability" in relative.parts
+                    and path.name != ".gitkeep"
+                )
             ):
                 continue
             target = Path("share/devflow") / path.parent.relative_to(ROOT)

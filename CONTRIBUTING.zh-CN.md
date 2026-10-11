@@ -11,7 +11,7 @@
 3. 不提交任何凭据、本地权限配置或生产数据。
 4. 先标明改动属于 Classic、Portable 或共享行为合同。Portable 只修改 `skills/`；Classic 的 `.cursor/.claude` 不直接修改，运行 `build-classic-hosts.py --write`。
 5. 修改共享工作流契约时分别说明两个 edition 的影响；不要在二者之间复制运行文件。
-6. 提交前运行 `bash scripts/validate.sh`、`bash scripts/smoke-install.sh` 和 `bash scripts/e2e.sh`。E2E 用假宿主 Agent 和录制的阶段产物驱动已安装的工作流，不需要 API Key，说明见 [tests/e2e/README.md](tests/e2e/README.md)。
+6. 提交前运行 `bash scripts/validate.sh`、`bash scripts/smoke-install.sh`、`bash scripts/e2e.sh`；修改 agent-observability 时再运行 `bash scripts/test-observability.sh`。E2E 用假宿主 Agent 和录制的阶段产物驱动已安装的工作流，不需要 API Key，说明见 [tests/e2e/README.md](tests/e2e/README.md)。
 
 ## Pull Request 要求
 

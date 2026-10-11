@@ -505,6 +505,35 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual("main-1", state["stages"]["SUMMARY"]["executor_id"])
             self.assertEqual("coordinator", state["stages"]["SUMMARY"]["executor_type"])
 
+    def test_solo_overflow_leaves_a_resumable_medium_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = Path(run_script(
+                "workflow_state.py", "init", "--project-root", root,
+                "--slug", "overflow", "--size", "small", "--mode", "auto",
+                "--execution-mode", "isolated", "--host-adapter", "claude",
+                "--coordinator-id", "main",
+            ).stdout.strip())
+            run_script("workflow_state.py", "prepare", "--state", state_path, "--stage", "SOLO")
+            run_script(
+                "workflow_state.py", "assign", "--state", state_path, "--stage", "SOLO",
+                "--role", STAGE_ROLES["SOLO"], "--executor-type", "devflow-stage-executor",
+                "--executor-id", "solo-1", "--dispatch-tool", "agent",
+            )
+            run_script("workflow_state.py", "start", "--state", state_path, "--stage", "SOLO")
+            run_script(
+                "workflow_state.py", "finish", "--state", state_path, "--stage", "SOLO",
+                "--result", "overflow",
+            )
+            run_script("workflow_state.py", "validate", "--state", state_path)
+            resume = json.loads(run_script(
+                "workflow_state.py", "resume", "--state", state_path
+            ).stdout)
+            self.assertEqual(("prepare", "REQUIREMENT"), (resume["action"], resume["stage"]))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual("medium", state["size_class"])
+            self.assertEqual("skipped", state["stages"]["SOLO"]["status"])
+
     def test_large_keeps_knowledge_and_legacy_medium_route_remains_valid(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
