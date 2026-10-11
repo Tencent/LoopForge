@@ -1,6 +1,30 @@
-# LoopForge
+<p align="center">
+  <img src="docs/assets/readme/hero-zh.png" alt="LoopForge，腾讯开源：编码 Agent 会写代码，LoopForge 让它按流程交付。装进你正在用的编码 Agent，按角色分工推进交付：先确认需求，再设计、实现、Code Review、测试，一步一步来。" width="100%">
+</p>
 
-[English](README.md) | 简体中文
+<p align="center">
+  <a href="https://github.com/Tencent/LoopForge/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Tencent/LoopForge?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/loopforge-cli"><img alt="npm loopforge-cli" src="https://img.shields.io/npm/v/loopforge-cli?label=npm&labelColor=16161A&color=FF5A1F&style=flat-square"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-FF5A1F?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
+  <a href="https://github.com/Tencent/LoopForge/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Tencent/LoopForge?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
+  <br/>
+  <a href="https://github.com/Tencent/LoopForge/actions/workflows/validate.yml"><img alt="validate" src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/validate.yml?branch=main&label=validate&labelColor=16161A&style=flat-square"></a>
+  <a href="https://github.com/Tencent/LoopForge/actions/workflows/e2e.yml"><img alt="e2e" src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/e2e.yml?branch=main&label=e2e&labelColor=16161A&style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="./README.md">English</a> · <b>简体中文</b>
+</p>
+
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#工作方式">工作方式</a> ·
+  <a href="#支持的-agent">支持的 Agent</a> ·
+  <a href="#你会得到什么">你会得到什么</a> ·
+  <a href="#看见-agent-如何完成工作">观测面板</a> ·
+  <a href="#portable-edition">Portable Edition</a> ·
+  <a href="#贡献">贡献</a>
+</p>
 
 **让编码 Agent 不只“写出代码”，而是按一套可确认、可审查、可恢复的流程完成交付。**
 

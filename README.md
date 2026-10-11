@@ -1,6 +1,30 @@
-# LoopForge
+<p align="center">
+  <img src="docs/assets/readme/hero-en.png" alt="LoopForge, Tencent open source: your coding agent writes code, LoopForge makes it deliver. A role-based delivery workflow that runs inside the agent you already use: confirm the requirement, then design, build, review and test, one stage at a time." width="100%">
+</p>
 
-English | [简体中文](README.zh-CN.md)
+<p align="center">
+  <a href="https://github.com/Tencent/LoopForge/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Tencent/LoopForge?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/loopforge-cli"><img alt="npm loopforge-cli" src="https://img.shields.io/npm/v/loopforge-cli?label=npm&labelColor=16161A&color=FF5A1F&style=flat-square"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-FF5A1F?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
+  <a href="https://github.com/Tencent/LoopForge/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Tencent/LoopForge?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
+  <br/>
+  <a href="https://github.com/Tencent/LoopForge/actions/workflows/validate.yml"><img alt="validate" src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/validate.yml?branch=main&label=validate&labelColor=16161A&style=flat-square"></a>
+  <a href="https://github.com/Tencent/LoopForge/actions/workflows/e2e.yml"><img alt="e2e" src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/e2e.yml?branch=main&label=e2e&labelColor=16161A&style=flat-square"></a>
+</p>
+
+<p align="center">
+  <b>English</b> · <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#supported-agents">Supported agents</a> ·
+  <a href="#what-you-get">What you get</a> ·
+  <a href="#see-how-agents-work">Dashboard</a> ·
+  <a href="#portable-edition">Portable Edition</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
 
 **Make coding agents deliver through a workflow you can confirm, review, and resume—not just produce code.**
 
