@@ -131,16 +131,30 @@ def files_under(root):
     )
 
 
-def loopforge_validate(project, slug="e2e-task", host_skills=None):
-    """Run the installed ``workflow_state.py validate`` for a finished task."""
+def installed_workflow(project):
+    """Path to the ``workflow_state.py`` installed in a throw-away project."""
     from fake_agent import HOST_SKILL_DIRS
     project = Path(project)
     for skills in HOST_SKILL_DIRS.values():
         script = project / skills / "devflow/scripts/workflow_state.py"
         if script.is_file():
-            state = project / "artifacts" / slug / "workflow-state.json"
-            return run([sys.executable, script, "validate", "--state", state]).stdout
+            return script
     raise AssertionError("no installed workflow_state.py found")
+
+
+def run_workflow(project, *args, check=True):
+    """Drive the installed ``workflow_state.py`` CLI directly (bypassing fake_agent)."""
+    return run(
+        [sys.executable, str(installed_workflow(project))] + [str(item) for item in args],
+        cwd=project, check=check,
+    )
+
+
+def loopforge_validate(project, slug="e2e-task", host_skills=None):
+    """Run the installed ``workflow_state.py validate`` for a finished task."""
+    project = Path(project)
+    state = project / "artifacts" / slug / "workflow-state.json"
+    return run([sys.executable, str(installed_workflow(project)), "validate", "--state", state]).stdout
 
 
 def classic_hook_env(project):

@@ -121,6 +121,25 @@ class PortableWorkflowE2E(unittest.TestCase):
         self.assertIsNone(state["stages"]["DESIGN"]["prepared_at"])
         self.assertFalse(events(project, "spawned"), "no DESIGN executor before approval")
 
+        # The gate must be enforced by the CLI itself, not only by the Agent loop.
+        state_path = project / "artifacts/e2e-task/workflow-state.json"
+        premature = h.run_workflow(
+            project, "prepare", "--state", state_path, "--stage", "DESIGN", check=False
+        )
+        self.assertNotEqual(0, premature.returncode)
+        self.assertIn("approval required for REQUIREMENT", premature.stderr)
+
+        unconfirmed = h.run_workflow(
+            project, "approve", "--state", state_path, "--stage", "REQUIREMENT", check=False
+        )
+        self.assertNotEqual(0, unconfirmed.returncode)
+        self.assertIn("requires explicit user confirmation", unconfirmed.stderr)
+
+        resume = json.loads(h.run_workflow(project, "resume", "--state", state_path).stdout)
+        self.assertEqual("approve", resume["action"])
+        self.assertTrue(resume["requires_user_confirmation"])
+        self.assertIn("--user-confirmed", resume["command"])
+
         h.fake_agent("cursor", project, "--resume", check_rc=0)
         self.assert_delivered(project)
 
