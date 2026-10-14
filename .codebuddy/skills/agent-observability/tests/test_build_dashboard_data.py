@@ -63,6 +63,37 @@ class ToolCallFailedTests(unittest.TestCase):
         self.assertEqual(sessions[0]["status"], "error")
 
 
+class StopEventCostTests(unittest.TestCase):
+    """session 结束时 flush 的 stop 事件携带最后一条（或延迟刷新的）assistant 消息的
+    tokens/cost_usd（core/runtime.py::handle_stop -> emit_transcript_events(event_kind="stop")）。
+    它与 usage 事件共享幂等键空间（collector.build_transcript_event_key 忽略 kind），
+    同一条消息只会以其中一种事件出现，所以聚合两类事件不会重复计数；只认 usage 会把
+    每个 session 的最后一条消息从当天成本、会话 tokens 和模型成本里整段丢掉。"""
+
+    def _events(self):
+        return [
+            {"event": "usage", "sid": "s1", "ts": 1.0, "agent": "main", "model": "m1",
+             "tokens": {"input": 100, "output": 10, "cache_read": 0}, "cost_usd": 0.001},
+            {"event": "stop", "sid": "s1", "ts": 2.0, "agent": "main", "model": "m1",
+             "tokens": {"input": 5000, "output": 900, "cache_read": 0}, "cost_usd": 0.05,
+             "cost_session_usd": 0.051},
+        ]
+
+    def test_stop_events_count_toward_daily_and_session_totals(self):
+        daily, sessions = bdd.build_daily_and_sessions(self._events())
+        self.assertEqual(daily[0]["input"], 5100)
+        self.assertEqual(daily[0]["output"], 910)
+        # cost_session_usd 是整个 session 的合计，只是搭在 stop 事件上，不能加进聚合。
+        self.assertAlmostEqual(daily[0]["cost"], 0.051)
+        sess = sessions[0]
+        self.assertEqual(sess["tokens"], 6010)
+        self.assertAlmostEqual(sess["cost"], 0.051)
+
+    def test_stop_events_count_toward_model_costs(self):
+        rows = bdd.build_model_costs(self._events())
+        self.assertEqual(rows, [{"name": "m1", "cost": 0.051}])
+
+
 class ResolveInputPathsTests(unittest.TestCase):
     def setUp(self):
         self.skill_root = Path("/tmp/fake-skill-root")

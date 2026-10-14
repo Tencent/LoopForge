@@ -41,6 +41,13 @@ try:  # emitter 只在"未定价模型"统计里用到，导入失败只让这�
 except Exception:  # pragma: no cover - 目标机缺依赖时的兜底
     em = None  # type: ignore
 
+# 携带 token/成本数据的事件类型。assistant 消息的 usage 通常在会话进行中以 usage
+# 事件发出，但最后一条（或延迟刷新的）消息只在会话结束时由 stop 事件携带
+# （core/runtime.py::handle_stop 的 emit_transcript_events(event_kind="stop")）。
+# 二者的幂等键共享同一空间（collector.build_transcript_event_key 忽略 kind），
+# 同一条消息只会以其中一种事件出现，所以聚合时必须同时统计两类，不会重复计数。
+COST_EVENT_KINDS = frozenset({"usage", "stop"})
+
 # devflow 两套 schema 的 stage 名 -> 展示用 (label, name)。取不到的 stage 用 key 本身兜底。
 STAGE_META: dict[str, tuple[str, str]] = {
     "PHASE-0": ("P0", "初始化 + 判定大小"),
@@ -204,7 +211,7 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
                 "err": is_err,
                 "agent": str(agent) if agent else "main",
             })
-        elif event == "usage":
+        elif event in COST_EVENT_KINDS:
             day = day_bucket(iso)
             tokens = rec.get("tokens") or {}
             day["input"] += int(tokens.get("input") or 0)
@@ -263,7 +270,7 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
 def build_model_costs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     totals: dict[str, float] = defaultdict(float)
     for rec in events:
-        if rec.get("event") != "usage":
+        if rec.get("event") not in COST_EVENT_KINDS:
             continue
         model = rec.get("model")
         cost = rec.get("cost_usd")
@@ -281,13 +288,13 @@ def build_unpriced_models(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     按新价格补算历史事件（D3：覆盖只对新事件生效）。判定入口复用 emitter，
     不在本文件里重写一套模型名匹配逻辑，避免与 hook 期的口径分叉。
 
-    模型名缺失/为空的 usage 事件无法归因到某个模型，直接跳过不计数。
+    模型名缺失/为空的 usage/stop 事件无法归因到某个模型，直接跳过不计数。
     """
     if em is None:
         return []
     counts: dict[str, int] = defaultdict(int)
     for rec in events:
-        if rec.get("event") != "usage":
+        if rec.get("event") not in COST_EVENT_KINDS:
             continue
         model = rec.get("model")
         if not model or not str(model).strip():
@@ -446,7 +453,7 @@ def build_cost_by_task_slug(events: list[dict[str, Any]]) -> dict[str, float]:
     见 core/runtime.py 的 devflow 接入）。"""
     totals: dict[str, float] = defaultdict(float)
     for rec in events:
-        if rec.get("event") not in {"usage", "stop"}:
+        if rec.get("event") not in COST_EVENT_KINDS:
             continue
         task_slug = rec.get("task_slug")
         cost = rec.get("cost_usd")
