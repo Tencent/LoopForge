@@ -18,6 +18,12 @@ The owner requested a final source review and public PR submission. The candidat
 
 These ignored logs and credentials are local evidence and are excluded from the PR. GitHub-hosted CI is a separate gate on the submitted commit. The review submits source for trusted-team self-hosting; it does not merge the PR or publish a release, package or image. See [release-readiness.md](release-readiness.md#existing-pull-requests) for the disposition of PRs #46 and #47.
 
+### Before/after verification requested by the owner
+
+Read-only Go overlays supplied the original recorded source for comparison without replacing checkout files. The original runner failed its real exit-status regression **5 of 10** repetitions with `waitid: no child processes`; the corrected cancellation/early-failure subset passed **3 repetitions with `-race`**. The original preview-cleanup test failed **2 of 150** repetitions; the corrected test passed **150 of 150**. This confirms a process-wait defect and a separate asynchronous test race. Evidence is retained in ignored `.local/change-proof/{runner-before,runner-after,preview-before,preview-after}.log`.
+
+The review's production-code change is confined to `internal/runner/exec.go`, with regression tests in `internal/runner/exec_cancel_test.go`. The preview correction changes only `internal/engine/preview_finalizer_test.go`. Formatting-only changes to `.gitattributes` and the preview design proposal were restored to their exact pre-review hashes. Audit/documentation changes record these results. The owner explicitly retired PR #47's separate redesign/room-crew proposal; PRs #46 and #47 were closed, with #48 retained as the replacement platform submission.
+
 ## Fresh installations and resumed acceptance — 2026-10-16
 
 Two independent installations were created with `scripts/install.sh`: port 8095 for acceptance and port 8096 for owner experience, with separate Compose projects and databases. The existing port 8091 environment was retained. The experience installation was left at first-account setup by the morning task; subsequent owner activity is not reset by acceptance.

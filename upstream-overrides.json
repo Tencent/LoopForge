@@ -3,8 +3,8 @@
   "policy": "Shared core remains upstream-derived; every public-specific change is explicit. No private source history is imported.",
   "files": {
     "docs/proposals/frontend-preview-delivery-lifecycle.md": {
-      "sha256": "80dceb5e68e6db401ab3121fc8be4ff9b03b7dbd6f20e72d3ad367ad48cd9b64",
-      "reason": "Replace private deployment host and DNS assumptions with generic public examples; normalize Markdown trailing whitespace."
+      "sha256": "132e8761968fb54e368955d0a0ecd7c1fa8896ad0298a8c9831ecf8a7c3e5945",
+      "reason": "Replace private deployment host and DNS assumptions with generic public examples."
     },
     "internal/engine/recovery_test.go": {
       "sha256": "9d82cfbfb6fb66f568d8f6f7738d1483859c2e793f488439f4cc035acf1be827",
@@ -15,8 +15,8 @@
       "reason": "Use reserved example domains in preview navigation fixtures instead of private infrastructure."
     },
     ".gitattributes": {
-      "sha256": "7a5f827b901653cea2f876ee7747cb31fb81b62ef82159fd5e7f177894c2f3e5",
-      "reason": "Preserve original vendored editor and dependency notice bytes while excluding their upstream whitespace conventions from diff warnings."
+      "sha256": "43c2da912509f60be5fb5307eb6187d131525de403d14ffdba8ebe6a833a9672",
+      "reason": "Preserve vendored editor bytes while excluding their upstream whitespace conventions from diff warnings."
     },
     "AGENTS.md": {
       "sha256": "c3362684e4ad4096fab1b862ff6fe2fa8179cc963d2fd3df8acfa69a87b2ed23",

@@ -1,3 +1,2 @@
 web/monaco/** linguist-vendored -whitespace
 web/vscode-web/** linguist-vendored -whitespace
-third_party/go/THIRD_PARTY_NOTICES.txt -whitespace

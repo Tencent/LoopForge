@@ -1,8 +1,8 @@
 # AgentFlow 前端预览与交付物生命周期方案
 
-> 状态：待评审
-> 基线：`master@4ee2db5`（2026-09-19）
-> 目标读者：负责 Engine、Runner、HTTP API、Studio 和基础设施的开发 Agent
+> 状态：待评审  
+> 基线：`master@4ee2db5`（2026-09-19）  
+> 目标读者：负责 Engine、Runner、HTTP API、Studio 和基础设施的开发 Agent  
 > 核心原则：**Workspace 是生产过程，Preview 是交付资产。**
 
 ## 1. 背景
@@ -778,3 +778,4 @@ internal/runner/preview_archive.go
 5. 实现 Runner 流式 archive/upload，禁止走现有 1MB artifact JSON。
 6. 增加 GC、配额和重启恢复。
 7. 静态链路稳定后再设计 service preview tunnel；不要在 MVP 中混入动态端口扫描和 Docker 运行时代理。
+
