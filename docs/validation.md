@@ -2,6 +2,12 @@
 
 Review resumed on 2026-10-16 against recorded upstream baseline `3a8cb2420904e3ee8ab1b39c48f54b372a9e3e04`. Source and running-preview freshness are checked independently. External-service coverage is kept separate from local protocol/adapter tests. The older results below retain their original scope.
 
+## Hosted CI follow-up — 2026-10-16
+
+The first hosted runs exposed three differences from the local review environment: the no-checkout E2E gate inherited a nonexistent `local/` working directory, Node 22 resolved the API directory as a module rather than discovering its test files, and Git 2.55 rejected tracked-file staging with no eligible index entries. The gate now runs in the runner's temporary directory while preserving its failure checks; API launchers name `*.test.mjs` explicitly; staging skips the update only when no eligible tracked entries exist, retaining exclusions and normal error handling. A regression covers empty/excluded-only checkouts and source additions, updates and deletions.
+
+Node 22 API acceptance passed **100 tests, 13 skipped, 0 failed**. With Git 2.55 built locally, the original implementation reproduced the hosted pathspec failure; the corrected Git tests and five repetitions of `TestGateExecutionScopeIsExplicit` passed. The hosted fresh-install job had already passed independently. Local evidence is in ignored `.local/ci-node22-api.log`, `.local/ci-git-before.log` and `.local/ci-git255-full-go.log`. These results supplement the earlier submission checks; the current hosted commit must still pass its own jobs.
+
 ## Final PR submission checks — 2026-10-16
 
 The owner requested a final source review and public PR submission. The candidate was checked again, with these results:

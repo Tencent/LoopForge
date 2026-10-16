@@ -14,7 +14,7 @@ status=0
 export AGENTFLOW_E2E_RUN_TAG="${AGENTFLOW_E2E_RUN_TAG:-$(date -u +%y%m%d%H%M%S)-$$}"
 
 if [ "$what" = all ] || [ "$what" = api ]; then
-  node --test --test-concurrency=1 --test-reporter=spec api/ || status=1
+  node --test --test-concurrency=1 --test-reporter=spec api/*.test.mjs || status=1
 fi
 if [ "$what" = all ] || [ "$what" = ui ]; then
   npx playwright test || status=1

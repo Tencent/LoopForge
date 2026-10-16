@@ -80,5 +80,5 @@ export AGENTFLOW_E2E_TOKEN_FILE="$TASK_DIR/api-token"
 export AGENTFLOW_E2E_MODEL=0
 export AGENTFLOW_E2E_DOCKER=0
 node e2e/setup-auth.mjs
-node --test --test-concurrency=1 --test-reporter=spec e2e/api/
+node --test --test-concurrency=1 --test-reporter=spec e2e/api/*.test.mjs
 npx --prefix e2e playwright test --config e2e/playwright.config.mjs

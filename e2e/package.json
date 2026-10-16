@@ -5,7 +5,7 @@
   "description": "Live end-to-end suite that exercises a real AgentFlow deployment (default: the test environment). See README.md.",
   "scripts": {
     "test": "bash ./run.sh",
-    "test:api": "node --test --test-concurrency=1 --test-reporter=spec api/",
+    "test:api": "node --test --test-concurrency=1 --test-reporter=spec api/*.test.mjs",
     "test:ui": "playwright test",
     "cleanup": "node ./cleanup.mjs"
   },

@@ -78,6 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Require every E2E job to pass
+        working-directory: ${{ runner.temp }}
         run: |
           if [[ "${{ needs.e2e.result }}" != "success" || "${{ needs.e2e-browser.result }}" != "success" ]]; then
             echo "e2e=${{ needs.e2e.result }} e2e-browser=${{ needs.e2e-browser.result }}" >&2

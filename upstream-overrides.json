@@ -975,8 +975,8 @@
       "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
     },
     "e2e/run.sh": {
-      "sha256": "3ed7a5341a31e32c57c4bb0710dbe0da94e670d17f952fd21452f6b8d0f90597",
-      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+      "sha256": "7a3cc47d3e7870aae5fdde2192708b3461b0cd08db8dfcdd0cac96ba65a2b46d",
+      "reason": "Public live E2E launcher with explicit API test globs for Node 22 compatibility."
     },
     "internal/gitwork/git.go": {
       "sha256": "7ab2fb7926c1b6a2e1396a65b1e8515a90c4cf303d26bc51f0c1f90326a499cb",
@@ -1009,6 +1009,14 @@
     "internal/engine/preview_finalizer_test.go": {
       "sha256": "e01346c524de05dcbbb1a7990d6f1b63443464b7dc198b1e8c5785ad6bddd756",
       "reason": "Wait for asynchronous preview workspace release, including directory removal, before ending the readiness test; removes a finalizer/store-close race observed during full-suite verification and verified in 40 repetitions."
+    },
+    "e2e/package.json": {
+      "sha256": "d52da96fcc767e4f714db772593b9497291b011bc37235c18ce7e20988055b15",
+      "reason": "Name API test files explicitly so Node 22 runs the suite instead of resolving its directory as a module."
+    },
+    "internal/gitwork/workbranch.go": {
+      "sha256": "0e7745c66247c4a9db5cbc949731a7ef945552889b07be0b23687cd23885a36a",
+      "reason": "Treat an empty eligible Git index as a no-op before add -u, preserving excluded paths and staging errors; fixes Git 2.55 rejection of unmatched pathspecs."
     }
   },
   "added": {
@@ -1243,6 +1251,10 @@
     "internal/runner/exec_cancel_test.go": {
       "sha256": "5c4fd945d4cb3630c67836930f0ae56aac531dfc606d129bcf68272b391daf0f",
       "reason": "Regression tests for preserving the real process exit status and prompt runner cancellation."
+    },
+    "internal/gitwork/workbranch_test.go": {
+      "sha256": "1f3d8317a34e688a5b4606a1a82a62d74d6ac96a81becfc9134f1986b12e7835",
+      "reason": "Exercise empty and excluded-only checkouts plus ordinary source additions, updates and deletions on Git 2.55."
     }
   }
 }

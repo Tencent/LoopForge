@@ -139,6 +139,17 @@ func StageChanges(workspace string) error {
 	if err := StageUntracked(workspace); err != nil {
 		return err
 	}
+	// Git 2.55 rejects add -u with pathspecs that match no index entries.
+	// An empty checkout (or one containing only excluded files) has nothing
+	// eligible to update. Keep exclusions intact instead of ignoring add errors.
+	trackedArgs := append([]string{"-C", workspace, "ls-files", "--cached", "-z", "--", "."}, ExcludePathspecs...)
+	tracked, err := exec.Command("git", trackedArgs...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("list work branch tracked files: %w: %s", err, strings.TrimSpace(string(tracked)))
+	}
+	if len(tracked) == 0 {
+		return nil
+	}
 	args := append([]string{"-C", workspace, "add", "-u", "--", "."}, ExcludePathspecs...)
 	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("stage work branch changes: %w: %s", err, strings.TrimSpace(string(out)))

@@ -69,7 +69,7 @@ jobs:
           set +a
           .local/bin/loopforge-account -user e2e-no-key < .local/no-key-password
       - run: node e2e/setup-auth.mjs
-      - run: node --test --test-concurrency=1 --test-reporter=spec e2e/api/
+      - run: node --test --test-concurrency=1 --test-reporter=spec e2e/api/*.test.mjs
       - run: npx playwright test --config playwright.config.mjs
         working-directory: e2e
       - run: npx playwright test --config public/playwright.config.mjs
