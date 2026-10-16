@@ -80,13 +80,13 @@ func TestPoolRequiredRunWaitsForPoolRunner(t *testing.T) {
 	if final.Status != "succeeded" || final.ExecutionContext.ExecutionRunnerID != runner.ID {
 		t.Fatalf("status = %s on %q, implement error = %q", final.Status, final.ExecutionContext.ExecutionRunnerID, final.Nodes["implement"].Error)
 	}
-	if files := runGitT(t, remote, "ls-tree", "-r", "--name-only", "refs/heads/fix/pool"); !strings.Contains(files, "feature.txt") {
-		t.Fatalf("work branch misses the node change: %s", files)
+	if refs := runGitT(t, remote, "for-each-ref", "refs/heads/fix/pool"); refs != "" {
+		t.Fatalf("a node must not push the work branch: %s", refs)
 	}
 }
 
-// 云端执行机器掉线后，run 换到另一台云端执行机器，从已推送的工作分支继续。
-func TestPoolRunMovesToAnotherRunnerWhenItsRunnerGoesOffline(t *testing.T) {
+// 云端执行机器掉线时，之前节点的代码改动只在那台机器上：不换机，直接失败并提示重跑。
+func TestPoolRunFailsWhenItsRunnerGoesOfflineAfterCodeChanges(t *testing.T) {
 	server, s, e := newDaemonTestServer(t)
 	e.ConfigureCloudRunnerPool(engine.CloudRunnerPool{Label: "pool=cloud", Projects: []string{"*"}, Required: true})
 	remote := bareRemoteWithBaseline(t)
@@ -126,20 +126,19 @@ func TestPoolRunMovesToAnotherRunnerWhenItsRunnerGoesOffline(t *testing.T) {
 		}
 		return r.Status != domain.RunnerStatusOnline
 	})
-	second, _ := startPoolRunner(t, s, server.URL, "builtin-b")
+	startPoolRunner(t, s, server.URL, "builtin-b")
 	if err := e.Approve(run.ID, "gate", ""); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 30*time.Second, "run after takeover", func() bool {
+	waitFor(t, 30*time.Second, "run after runner loss", func() bool {
 		current, _ := s.Run(run.ID)
 		return current.Status == "succeeded" || current.Status == "failed"
 	})
 	final, _ := s.Run(run.ID)
-	if final.Status != "succeeded" || final.ExecutionContext.ExecutionRunnerID != second.ID {
+	if final.Status != "failed" || final.ExecutionContext.ExecutionRunnerID != first.ID || !strings.Contains(final.Nodes["verify"].Error, "builtin-a 已离线") {
 		t.Fatalf("status = %s on %q, verify error = %q", final.Status, final.ExecutionContext.ExecutionRunnerID, final.Nodes["verify"].Error)
 	}
-	head := runGitT(t, remote, "show", "refs/heads/fix/takeover:feature.txt")
-	if head != "from a\nfrom b" {
-		t.Fatalf("work branch feature.txt = %q", head)
+	if refs := runGitT(t, remote, "for-each-ref", "refs/heads/fix/takeover"); refs != "" {
+		t.Fatalf("a node must not push the work branch: %s", refs)
 	}
 }

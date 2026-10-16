@@ -14,8 +14,8 @@ import (
 
 // executeWorkBranchSync pulls or pushes the work branch of every repository
 // the control plane flagged SyncWorkBranch, in the run's shared checkout on
-// this machine. The engine queues it at the same points the cloud path syncs:
-// pull before a node, push after the node's outcome is committed.
+// this machine. These explicit actions remain supported for compatibility;
+// ordinary workflow nodes keep their changes local until delivery.
 func (d *Daemon) executeWorkBranchSync(ctx context.Context, task domain.RunnerTask) execResult {
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("start: %v", err)}

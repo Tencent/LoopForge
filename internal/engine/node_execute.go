@@ -478,10 +478,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(err, nodeRejects(node))
 		return
 	}
-	if err := e.pullGroupOrSOPWorkBranches(ctx, runID, node, sb.Workspace(), current); err != nil {
-		failNode(fmt.Errorf("同步工作分支失败: %w", err), false)
-		return
-	}
+	// Ordinary nodes keep checkout changes local. Delivery is what publishes
+	// the work branch; pulling here would also discard that unpushed work.
 	// An execution machine that reports its outputs receives the inputs and
 	// human context with each task and returns the files the engine needs;
 	// the control-plane workspace is then not read for this node.
@@ -967,10 +965,6 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		return
 	}
 	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true) {
-		return
-	}
-	if err := e.syncWorkBranches(ctx, runID, effectiveNode, sb.Workspace(), current); err != nil {
-		failNode(fmt.Errorf("推送工作分支失败: %w", err), false)
 		return
 	}
 	e.updateRun(runID, func(r *domain.Run) {

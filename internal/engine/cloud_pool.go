@@ -135,18 +135,35 @@ func isPoolRun(run domain.Run) bool {
 // bindPoolRunner makes sure a pool run is bound to an online pool runner
 // before a node starts: the first node of a run started while the pool was
 // empty, a cloud-mode run of a project that now requires the pool, and a run
-// whose runner went offline. A new runner continues from the work branch the
-// previous nodes pushed. Runs on a user's own machine are left alone.
+// whose runner went offline before any node changed its checkout. Once code
+// changes exist they live only in that checkout, so the run stays where it
+// is (or fails when that machine is gone). Runs on a user's own machine are
+// left alone.
 func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID string) (domain.Run, error) {
 	ec := run.ExecutionContext
 	convert := ec.ExecutionMode == domain.ExecutionModeCloud && e.cloudPoolRequired(ec.ProjectID)
+	if convert && hasCodeWorkspace(run) && hasWorkspaceProgress(run, nodeID) {
+		// The control-plane checkout already holds this run's changes.
+		convert = false
+	}
 	if !isPoolRun(run) && !convert {
 		return run, nil
 	}
 	previous := strings.TrimSpace(ec.ExecutionRunnerID)
 	if previous != "" && !convert {
-		if runner, ok := e.repo.Runner(previous); ok && runner.Status == domain.RunnerStatusOnline {
+		runner, ok := e.repo.Runner(previous)
+		if ok && runner.Status == domain.RunnerStatusOnline {
 			return run, nil
+		}
+		// The checkout lives only on that machine: nodes do not push
+		// intermediate commits, so another machine would continue without
+		// the earlier nodes' code changes.
+		if hasCodeWorkspace(run) && hasWorkspaceProgress(run, nodeID) {
+			name := previous
+			if ok && strings.TrimSpace(runner.Name) != "" {
+				name = runner.Name
+			}
+			return run, fmt.Errorf("执行机器 %s 已离线，工作区和之前节点的代码改动都在该机器上，无法换机继续；请等该机器恢复后重试，或从头重跑", name)
 		}
 	}
 	label := e.cloudPoolLabel()
@@ -187,7 +204,7 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 			if old, ok := e.repo.Runner(previous); ok && strings.TrimSpace(old.Name) != "" {
 				name = old.Name
 			}
-			msg = fmt.Sprintf("执行机器 %s 不可用，已切换到云端执行机器 %s，从最近推送的工作分支继续", name, runner.Name)
+			msg = fmt.Sprintf("执行机器 %s 不可用，已切换到云端执行机器 %s 重新拉取代码", name, runner.Name)
 		}
 		e.event(c, nodeID, "execution.bound", msg)
 	})
@@ -196,4 +213,26 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 		return run, errors.New("run not found")
 	}
 	return bound, nil
+}
+
+// hasCodeWorkspace reports whether losing this run's checkout loses code:
+// the run is bound to a repository.
+func hasCodeWorkspace(r domain.Run) bool {
+	for _, rc := range r.RepositoryContexts() {
+		if strings.TrimSpace(rc.RepositoryID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWorkspaceProgress reports whether nodes other than nodeID already
+// changed the workspace, so continuing on a fresh checkout would drop their work.
+func hasWorkspaceProgress(r domain.Run, nodeID string) bool {
+	for id, nr := range r.Nodes {
+		if id != nodeID && nr != nil && nr.Status == "succeeded" {
+			return true
+		}
+	}
+	return false
 }

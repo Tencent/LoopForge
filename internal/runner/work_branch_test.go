@@ -41,8 +41,8 @@ func bareRemoteWithBaseline(t *testing.T) string {
 	return bare
 }
 
-// 执行机器上跑完的节点，改动要推到远程工作分支，控制面和其他机器才能接着用。
-func TestRunnerModeNodePushesWorkBranch(t *testing.T) {
+// 执行机器上跑完的节点不提交、不推送：改动留在本机工作区给下个节点用，远程工作分支只由交付步骤写入。
+func TestRunnerModeNodeKeepsChangesLocal(t *testing.T) {
 	server, s, e := newDaemonTestServer(t)
 	remote := bareRemoteWithBaseline(t)
 	daemon, err := New(Config{
@@ -63,9 +63,6 @@ func TestRunnerModeNodePushesWorkBranch(t *testing.T) {
 	go func() { _ = daemon.Run(ctx) }()
 	waitFor(t, 5*time.Second, "runner registration", func() bool { return len(s.Runners()) == 1 })
 	runner := s.Runners()[0]
-	if !runner.SupportsWorkBranchSync() {
-		t.Fatalf("runner version %q does not advertise work-branch sync", runner.RunnerVersion)
-	}
 	runner.OwnerUserID = 42
 	if err := s.PutRunner(runner); err != nil {
 		t.Fatal(err)
@@ -77,7 +74,7 @@ func TestRunnerModeNodePushesWorkBranch(t *testing.T) {
 		ID: "runner-work-branch", Name: "Runner work branch", SandboxProfileID: "local",
 		Nodes: []domain.WorkflowNode{
 			{ID: "implement", Name: "实现", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf 'fixed\\n' > feature.txt && mkdir -p node_modules/x && printf 'dep\\n' > node_modules/x/index.js", MaxAttempts: 1},
-			{ID: "verify", Name: "验证", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "test \"$(git status --porcelain -- feature.txt)\" = '' && echo committed", MaxAttempts: 1},
+			{ID: "verify", Name: "验证", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "test \"$(cat feature.txt)\" = fixed && test -n \"$(git status --porcelain -- feature.txt)\" && echo uncommitted", MaxAttempts: 1},
 		},
 		Edges: []domain.WorkflowEdge{{ID: "implement-verify", Source: "implement", Target: "verify", When: "success"}},
 	}
@@ -96,25 +93,13 @@ func TestRunnerModeNodePushesWorkBranch(t *testing.T) {
 	if final.Status != "succeeded" {
 		t.Fatalf("status = %s, implement error = %q, verify error = %q", final.Status, final.Nodes["implement"].Error, final.Nodes["verify"].Error)
 	}
-	head := runGitT(t, remote, "rev-parse", "refs/heads/fix/runner-push")
-	files := runGitT(t, remote, "show", "--name-only", "--format=%s", head)
-	if !strings.Contains(files, "feature.txt") || !strings.Contains(files, "agentflow: 实现 ("+run.ID+")") {
-		t.Fatalf("remote work branch misses the node commit: %s", files)
+	if refs := runGitT(t, remote, "for-each-ref", "refs/heads/fix/runner-push"); refs != "" {
+		t.Fatalf("a node pushed the work branch: %s", refs)
 	}
-	if strings.Contains(files, "node_modules") {
-		t.Fatalf("dependency tree was pushed: %s", files)
-	}
-	var pushTasks int
 	for _, task := range s.RunnerTasks() {
-		if task.RunID == run.ID && task.Action == domain.RunnerTaskActionPushWorkBranch {
-			pushTasks++
-			if task.Status != domain.RunnerTaskSuccess {
-				t.Fatalf("push task %s ended %s: %s", task.ID, task.Status, task.Error)
-			}
+		if task.RunID == run.ID && (task.Action == domain.RunnerTaskActionPushWorkBranch || task.Action == domain.RunnerTaskActionPullWorkBranch) {
+			t.Fatalf("work-branch sync task queued: %s %s", task.ID, task.Action)
 		}
-	}
-	if pushTasks != 2 {
-		t.Fatalf("push tasks = %d, want one per succeeded node", pushTasks)
 	}
 }
 

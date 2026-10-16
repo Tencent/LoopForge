@@ -186,6 +186,10 @@
       "sha256": "44f6aac18f286086c9b94e92ce02ec2cf90ed99d74ab27ae5e299072d7254301",
       "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
     },
+    "internal/engine/cloud_pool.go": {
+      "sha256": "8cf0786b750bc3971a0b8cc0ed9f7eab103b36cd87476022fea51adbb4499c5a",
+      "reason": "After code changes exist only in the bound checkout, an offline pool runner fails the run instead of continuing on another machine. Ported from internal preview babb8e1e; the rest of that branch is not imported."
+    },
     "internal/engine/delivery_mr_test.go": {
       "sha256": "4b4a5339392244261343c8f7ebb2ab0fd9466c3943ed36f4b07522488a9ecb72",
       "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
@@ -199,8 +203,8 @@
       "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
     },
     "internal/engine/node_execute.go": {
-      "sha256": "9071ea632e795a4971623ba37e4ae6f933a3a40a71ddacdf7694adf6a9f58c4f",
-      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+      "sha256": "abaf09358f80e6d5c13da2808da7c8cb9825ce0877f19cbd14c0a5245c77f5cc",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Ordinary nodes no longer pull or push the work branch; delivery publishes it. Ported from internal preview babb8e1e; the rest of that branch is not imported."
     },
     "internal/engine/prompt.go": {
       "sha256": "b8bb45f4adfc149edbb27ba7b50541eb32013da132cf6c56e86f05253dfa0cdf",
@@ -469,6 +473,18 @@
     "internal/runner/daemon_test.go": {
       "sha256": "7bb9f01120209565a831b12740c66bcb9990966a7660103b7651d58e6b14acad",
       "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runner/pool_test.go": {
+      "sha256": "618b5cbc53fabee4e0403a9f733c0c6a860eda69b548d2206579d0131e02e146",
+      "reason": "Pool runs no longer expect a remote work-branch commit after each node, and an offline runner fails once code changes exist. Ported from internal preview babb8e1e; the rest of that branch is not imported."
+    },
+    "internal/runner/work_branch.go": {
+      "sha256": "f4a2a1dcd7c7c60850cf1159baa93b106c65457304f04bab76203231aeab3820",
+      "reason": "Document that explicit work-branch sync remains available while ordinary nodes keep changes local until delivery. Ported from internal preview babb8e1e; the rest of that branch is not imported."
+    },
+    "internal/runner/work_branch_test.go": {
+      "sha256": "dff71011fa1e099a526a9b59df03f5c435025c61c5f21c42e192da24e2a878dc",
+      "reason": "Runner-mode nodes must leave changes uncommitted in the local checkout and must not queue a work-branch pull or push. Ported from internal preview babb8e1e; the rest of that branch is not imported."
     },
     "internal/runtime/command_binding.go": {
       "sha256": "519e8d49ce5eaa1a2aac5695074b6bcc6351e78f3e317507ac07972e0e9c3b91",
