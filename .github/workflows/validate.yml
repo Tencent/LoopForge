@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    working-directory: local
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -40,13 +44,13 @@ jobs:
         with:
           node-version: "22"
       - name: Test tcmcp
-        working-directory: tools/tcmcp
+        working-directory: local/tools/tcmcp
         run: |
           python3 -m venv .venv
           .venv/bin/pip install -e '.[dev]'
           .venv/bin/python -m pytest
       - name: Build frontend
-        working-directory: tools/tcmcp/web
+        working-directory: local/tools/tcmcp/web
         run: npm ci && npm run build
 
   secrets:

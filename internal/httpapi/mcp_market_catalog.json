@@ -1,0 +1,25 @@
+{
+  "source": "loopforge-public",
+  "tag": "public",
+  "items": [
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "GitHub remote MCP server. Configure your personal GitHub token when installing.",
+      "category": "development",
+      "tags": [
+        "git",
+        "code"
+      ],
+      "url": "https://api.githubcopilot.com/mcp/",
+      "transport": "http",
+      "authType": "github-token",
+      "official": true,
+      "detailUrl": "https://github.com/github/github-mcp-server",
+      "aliases": [
+        "github"
+      ],
+      "iconUrl": "/mcp-icons/github.svg"
+    }
+  ]
+}

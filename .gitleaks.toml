@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Recorded SHA-256 manifests and unchanged upstream editor distributions (telemetry IDs and minified identifier false positives)"
+paths = [
+  '''(^|/)upstream(-overrides)?\.json$''',
+  '''(^|/)web/monaco/''',
+  '''(^|/)web/vscode-web/''',
+]

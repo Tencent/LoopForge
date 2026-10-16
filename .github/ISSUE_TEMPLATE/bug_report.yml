@@ -10,13 +10,16 @@ body:
   - type: dropdown
     id: host
     attributes:
-      label: Host
+      label: Component / host
       options:
-        - CodeBuddy
-        - Codex
-        - Cursor
-        - Claude Code
-        - Installer / CLI
+        - Platform — web / API
+        - Platform — runner / sandbox
+        - Platform — deployment
+        - Local — CodeBuddy
+        - Local — Codex
+        - Local — Cursor
+        - Local — Claude Code
+        - Local — installer / CLI
     validations:
       required: true
   - type: dropdown
@@ -24,8 +27,9 @@ body:
     attributes:
       label: Edition
       options:
-        - Classic
-        - Portable
+        - Platform
+        - Local Classic
+        - Local Portable
         - Not sure
     validations:
       required: true
@@ -33,7 +37,7 @@ body:
     id: version
     attributes:
       label: LoopForge version
-      placeholder: "0.1.0"
+      placeholder: "Platform commit SHA or Local package version"
     validations:
       required: true
   - type: textarea
@@ -58,7 +62,7 @@ body:
     id: diagnostics
     attributes:
       label: Sanitized diagnostics
-      description: Include relevant `loopforge doctor` output and errors after removing sensitive data.
+      description: Include browser errors, deployment steps, or Local `loopforge doctor` output, with secrets removed.
       render: shell
   - type: checkboxes
     id: checks

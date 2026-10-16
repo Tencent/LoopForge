@@ -1,0 +1,14 @@
+/* 资产选择与资产表单 —— 深色 */
+.asset-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;padding:9px;border:1px solid var(--line-strong);border-radius:9px;background:var(--bg-soft);max-height:160px;overflow:auto}
+.asset-check{display:flex!important;align-items:flex-start;gap:7px;margin:0!important;padding:7px;border-radius:7px;background:var(--panel);border:1px solid var(--line);font-weight:500!important}
+.asset-check input{width:auto;margin:2px 0 0}
+.asset-check span,.asset-check small{display:block}
+.asset-check small{color:var(--muted-2);font-weight:400;margin-top:1px}
+.asset-tabs{display:flex;gap:7px;max-width:1380px;margin:0 auto 16px}
+.asset-tab{border:1px solid var(--line-strong);background:var(--panel);color:var(--muted);border-radius:20px;padding:6px 14px;cursor:pointer;font-size:11px;transition:all .14s}
+.asset-tab:hover{color:var(--text)}
+.asset-tab.active{background:var(--blue-soft);border-color:rgba(91,140,255,.45);color:var(--blue);font-weight:700}
+.json-help{font-size:11px;color:var(--muted-2);background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:9px;margin-top:8px}
+.gate-editor{border:1px solid var(--line);border-radius:9px;padding:12px;margin-top:10px;background:var(--bg-soft)}
+.gate-row{display:grid;grid-template-columns:1fr 130px;gap:10px}
+.danger-text{color:var(--red)!important}

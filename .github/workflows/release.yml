@@ -20,6 +20,10 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    working-directory: local
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -97,7 +101,7 @@ jobs:
       - name: Build and push tcmcp image
         uses: docker/build-push-action@v6
         with:
-          context: tools/tcmcp
+          context: local/tools/tcmcp
           push: true
           tags: ${{ steps.package.outputs.image_tags }}
 

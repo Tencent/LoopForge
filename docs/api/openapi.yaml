@@ -1,0 +1,4633 @@
+openapi: 3.1.0
+info:
+  title: AgentFlow Platform REST API
+  version: 1.0.0
+  description: |
+    Public control-plane API exposed by AgentFlow Studio. Signed login cookies and
+    user-owned Bearer tokens authenticate Studio, REST API, and MCP access. Legacy
+    deployment-level Basic authentication remains available. Worker signals,
+    OTLP ingestion, run leases, and sandbox-reclamation endpoints are intentionally
+    excluded because they are internal implementation contracts.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+  - basicAuth: []
+tags:
+  - name: System
+  - name: Assistant
+  - name: Projects
+  - name: BusinessDomains
+  - name: Repositories
+  - name: Issues
+  - name: Tasks
+  - name: Assets
+  - name: Workflows
+  - name: Runs
+  - name: Sync
+  - name: Scheduling
+  - name: Analytics
+paths:
+  /api/task-groups:
+    post:
+      tags: [Runs]
+      operationId: startTaskGroup
+      summary: startTaskGroup
+      description: Requires project membership. Creates durable independent Agent tasks in a shared workspace; existing changes are not rolled back.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflowId, projectId, input]
+              properties:
+                workflowId: {type: string}
+                projectId: {type: string}
+                input: {type: string}
+      responses:
+        "201":
+          description: Created
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Task unavailable or conflicting requestId
+  /api/runs/{id}/group/tasks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Runs]
+      operationId: dispatchGroupTask
+      summary: dispatchGroupTask
+      description: Requires project membership. Creates durable independent Agent tasks in a shared workspace; existing changes are not rolled back.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId, prompt, requestId]
+              properties:
+                agentId: {type: string}
+                prompt: {type: string}
+                requestId: {type: string}
+                files:
+                  type: array
+                  items: {type: string}
+                  maxItems: 20
+      responses:
+        "201":
+          description: Created
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Task unavailable or conflicting requestId
+  /api/runs/{id}/group/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Runs]
+      operationId: inviteGroupMember
+      summary: inviteGroupMember
+      description: Requires project membership. Invites an available project role to the group without starting execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId]
+              properties:
+                agentId: {type: string}
+      responses:
+        "200":
+          description: Joined
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Task unavailable or conflicting requestId
+  /api/health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      summary: Check service health
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/assistant/chat:
+    post:
+      tags: [Assistant]
+      operationId: chatAssistant
+      summary: Ask the Studio AI assistant or generate platform resource drafts
+      description: |
+        Uses the signed-in user's personal CodeBuddy API key. The model can
+        request bounded source lookups and project HTTP MCP calls (`mcpCalls`).
+        The CLI itself cannot call MCP, modify the source snapshot, push, or
+        deploy. The server invokes TAPD/Gongfeng-style HTTP MCP that the user
+        can already see in the current project, using the user's credentials,
+        and redacts secrets from results. Drafts may use any public MCP write
+        tool (agents, workflows including script nodes, sandboxes, Dockerfiles,
+        schedule jobs, publish, start run, and so on) plus assistant_tasks_save.
+        The browser applies those drafts with a separate MCP tools/call after
+        the user confirms. Assistant scheduled prompts are saved with
+        PUT /api/assistant/tasks and are isolated per project. Send
+        `Accept: text/event-stream` to receive thought events and a final
+        result event; otherwise the response is a single JSON object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                projectId: {type: string}
+                sessionId: {type: string}
+                model: {type: string}
+                updatedAt: {type: string, format: date-time}
+                messages:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role: {type: string, enum: [user, assistant]}
+                      content: {type: string}
+                      authorId: {type: integer}
+                      authorName: {type: string}
+                      speakerAgentId: {type: string}
+                      speakerName: {type: string}
+      responses:
+        "200":
+          description: Assistant reply, optional source citations, and unsaved drafts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, drafts]
+                properties:
+                  message: {type: string}
+                  sessionId: {type: string}
+                  drafts:
+                    type: array
+                    maxItems: 12
+                    items:
+                      type: object
+                      required: [tool]
+                      properties:
+                        tool: {type: string, description: Public MCP write tool or assistant_tasks_save}
+                        path:
+                          type: object
+                          additionalProperties: true
+                        query:
+                          type: object
+                          additionalProperties: true
+                        body: {type: object}
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: {type: string}
+                        line: {type: integer}
+                        text: {type: string}
+                  mcpCalls:
+                    type: array
+                    maxItems: 3
+                    description: Internal follow-up requests; the HTTP response is the final answer after the server executes them.
+                    items:
+                      type: object
+                      required: [server]
+                      properties:
+                        server: {type: string}
+                        tool: {type: string}
+                        arguments:
+                          type: object
+                          additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: The user already has a generation in progress
+        "502":
+          description: The model failed or returned an invalid draft
+        "504":
+          description: Generation cancelled or timed out
+  /api/assistant/models:
+    get:
+      tags: [Assistant]
+      operationId: listAssistantModels
+      summary: List CodeBuddy models available to the Studio assistant
+      description: |
+        Hardcoded iOA assistant catalog with display names and credit
+        multipliers. Defaults to default.
+      responses:
+        "200":
+          description: Model catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [default, models]
+                properties:
+                  default: {type: string}
+                  models:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, family, credits]
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        family: {type: string}
+                        credits: {type: string, example: x0.79}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/assistant/sessions:
+    get:
+      tags: [Assistant]
+      operationId: listAssistantSessions
+      summary: List personal conversations and authorized shared SOP discussions
+      description: Conversations persist in MySQL `assistant_sessions`. Personal conversations belong to the caller; shared SOP conversations belong to a run and require project access.
+      responses:
+        "200":
+          description: Recent conversations without message bodies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: {type: string}
+                    title: {type: string}
+                    projectId: {type: string}
+                    model: {type: string}
+                    shared: {type: boolean}
+                    runId: {type: string}
+                    generationStatus: {type: string}
+                    updatedAt: {type: string, format: date-time}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/runs/{id}/conversation:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Assistant]
+      operationId: getRunConversation
+      summary: Open the shared conversation for one SOP run
+      description: Requires project access. Every authorized member receives the same session, including user authorId/authorName and role speakerAgentId/speakerName. First open preserves existing run discussions. Model/tool calls use the caller's own credentials.
+      responses:
+        "200":
+          description: Shared conversation with messages and updatedAt
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/assistant/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Assistant]
+      operationId: getAssistantSession
+      summary: Load one assistant conversation
+      responses:
+        "200":
+          description: Conversation including messages
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Assistant]
+      operationId: putAssistantSession
+      summary: Update one assistant conversation
+      description: Persists draft execution receipts. Shared sessions require the last updatedAt, preserve existing message bodies and attribution, and reject edits during generation. Stored in MySQL `assistant_sessions`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: {type: string}
+                title: {type: string}
+                projectId: {type: string}
+                model: {type: string}
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      role: {type: string}
+                      content: {type: string}
+      responses:
+        "200":
+          description: Conversation saved
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Assistant]
+      operationId: deleteAssistantSession
+      summary: Delete one assistant conversation
+      description: Also removes the matching CodeBuddy CLI transcript under the user's private HOME.
+      responses:
+        "200":
+          description: Conversation and CLI transcript deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/assistant/sessions/{id}/fork:
+    post:
+      tags: [Assistant]
+      operationId: forkAssistantSession
+      summary: Edit a user message and create a conversation branch
+      description: Preserves the original conversation and all previously executed changes. Shared SOP branches remain visible to project members. Inherited drafts are read-only history. Stop an active generation before branching.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messageIndex, content, updatedAt]
+              properties:
+                messageIndex:
+                  type: integer
+                  minimum: 0
+                content:
+                  type: string
+                updatedAt:
+                  type: string
+                  format: date-time
+      responses:
+        "201":
+          description: Created branch with parentSessionId, rootSessionId and forkMessageIndex
+        "400":
+          description: Invalid message or attachment
+        "403":
+          description: Conversation or project access denied
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Source conversation changed or generation still active
+  /api/assistant/tasks:
+    get:
+      tags: [Assistant]
+      operationId: listAssistantTasks
+      summary: List the current user's assistant scheduled prompts
+      description: |
+        These tasks make the Studio assistant run a user-written prompt on an
+        interval, scoped to one Studio project. They persist in MySQL
+        `assistant_tasks` and are not TAPD/Gongfeng SOP schedule jobs. Each run
+        starts a fresh CodeBuddy session and does not resume the previous run.
+        During execution the server may invoke that project's HTTP MCP servers
+        (for example TAPD) on the model's `mcpCalls`.
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema: {type: string}
+          description: When set, only tasks belonging to this project are returned.
+      responses:
+        "200":
+          description: Assistant-owned scheduled prompts
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Assistant]
+      operationId: saveAssistantTask
+      summary: Create or update an assistant scheduled prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, prompt, projectId]
+              properties:
+                id: {type: string}
+                name: {type: string}
+                prompt: {type: string}
+                notifications: {type: array, maxItems: 3, items: {$ref: "#/components/schemas/NotificationBinding"}}
+                intervalSec: {type: integer, minimum: 60, description: Used when cron is empty. Minimum 60 seconds.}
+                cron: {type: string, description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.}
+                enabled: {type: boolean}
+                model: {type: string, description: CodeBuddy model id used when the task runs}
+                projectId: {type: string, description: Studio project that owns this assistant task}
+      responses:
+        "200":
+          description: Saved task
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/assistant/tasks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    delete:
+      tags: [Assistant]
+      operationId: deleteAssistantTask
+      summary: Delete an assistant scheduled prompt
+      responses:
+        "200":
+          description: Task deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/assistant/tasks/{id}/run:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Assistant]
+      operationId: runAssistantTask
+      summary: Run an assistant scheduled prompt immediately
+      responses:
+        "202":
+          description: Execution started
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: The user already has a generation in progress
+  /api/capabilities:
+    get:
+      tags: [System]
+      operationId: getCapabilities
+      summary: List public REST and MCP operations
+      responses:
+        "200":
+          description: Public operation manifest and MCP transports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operations, mcp]
+                properties:
+                  operations:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, description, method, path, readOnly]
+                      properties:
+                        name: {type: string}
+                        description: {type: string}
+                        method: {type: string}
+                        path: {type: string}
+                        readOnly: {type: boolean}
+                  mcp:
+                    type: object
+                    properties:
+                      streamableHttp: {type: string}
+                      stdioCommand: {type: string}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/openapi.yaml:
+    get:
+      tags: [System]
+      operationId: getOpenAPI
+      summary: Read this OpenAPI 3.1 contract
+      responses:
+        "200":
+          description: OpenAPI YAML
+          content:
+            application/yaml:
+              schema: {type: string}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/auth/photo/{spec}/{username}:
+    get:
+      tags: [System]
+      operationId: getEmployeePhoto
+      summary: Fetch employee avatar photo from TOF authentication service
+      parameters:
+        - name: spec
+          in: path
+          required: true
+          description: Photo dimension (48, 100, 150, 500)
+          schema: {type: integer, enum: [48, 100, 150, 500]}
+        - name: username
+          in: path
+          required: true
+          description: Employee English login name (with or without .png)
+          schema: {type: string}
+      responses:
+        "200":
+          description: Avatar image binary
+          headers:
+            Cache-Control:
+              schema: {type: string, example: "public, max-age=86400"}
+          content:
+            image/png:
+              schema: {type: string, format: binary}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: TOF photo gateway error
+  /api/auth/tokens:
+    get:
+      tags: [System]
+      operationId: listPersonalTokens
+      summary: List tokens owned by the logged-in user
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Token metadata; plaintext and hashes are never returned
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/APIToken"}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [System]
+      operationId: createPersonalToken
+      summary: Create a personal REST API and MCP token
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, maxLength: 128}
+                expiresInDays: {type: integer, minimum: 1, maximum: 365, default: 90}
+      responses:
+        "201":
+          description: Plaintext token is returned once in this response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: {type: string}
+                  metadata: {$ref: "#/components/schemas/APIToken"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/auth/tokens/{tokenId}:
+    delete:
+      tags: [System]
+      operationId: revokePersonalToken
+      summary: Revoke one token owned by the logged-in user
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Token revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/bootstrap:
+    get:
+      tags: [System]
+      operationId: getBootstrap
+      summary: Load the complete Studio bootstrap catalog
+      responses:
+        "200":
+          description: Bootstrap state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bootstrap"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /api/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List users with credential values redacted
+      responses:
+        "200":
+          description: User directory
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+  /api/users/{id}/credentials:
+    put:
+      tags: [Users]
+      operationId: updateOwnCredentials
+      summary: Update credentials for the current authenticated user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                taihuPat: {type: string, writeOnly: true, description: "Taihu personal access token. Blank preserves the stored token."}
+                taihuPatClear: {type: boolean}
+                gitToken: {type: string, writeOnly: true}
+                gitTokenClear: {type: boolean}
+                codeBuddyApiKey: {type: string, writeOnly: true}
+                codeBuddyApiKeyClear: {type: boolean}
+                codeBuddyInternetEnvironment: {type: string}
+                codexApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
+                codexApiKeyClear: {type: boolean}
+                codexBaseUrl: {type: string, description: "HTTP(S) Responses API base URL. Omitted preserves the value; empty uses the official endpoint."}
+                claudeCodeApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
+                claudeCodeApiKeyClear: {type: boolean}
+                claudeCodeBaseUrl: {type: string, description: "HTTP(S) Anthropic-compatible service URL. Omitted preserves the value; empty uses the official endpoint."}
+      responses:
+        "200":
+          description: Redacted saved user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "403":
+          $ref: "#/components/responses/Unauthorized"
+  /api/business-domains:
+    get:
+      tags: [BusinessDomains]
+      operationId: listBusinessDomains
+      responses:
+        "200":
+          description: Domain catalog, per-domain canManage/canView, canAdmin and userId
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        domain: {$ref: "#/components/schemas/BusinessDomain"}
+                        canManage: {type: boolean}
+                        canView: {type: boolean}
+                  canAdmin: {type: boolean}
+                  userId: {type: integer, format: int64}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    put:
+      tags: [BusinessDomains]
+      operationId: saveBusinessDomain
+      parameters:
+        - name: createOnly
+          in: query
+          description: Reject an existing ID with 409 instead of updating it.
+          schema: {type: boolean, default: false}
+      description: Platform admins create and enable/disable domains and assign managers. Domain managers may edit names, descriptions and viewers. Duplicate names or concurrent updates return 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BusinessDomain"}
+      responses:
+        "200":
+          description: Saved domain
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BusinessDomain"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {description: Caller cannot manage this domain or change protected grants}
+        "409": {description: Duplicate name or concurrent update}
+  /api/business-domain-report:
+    get:
+      tags: [BusinessDomains]
+      operationId: getBusinessDomainReport
+      description: Aggregate only. Queries always resolve current project attribution; historical runs follow the current domain. All means the caller's authorized reporting scope. Unclassified projects are visible to their owners and platform admins.
+      parameters:
+        - name: businessDomainId
+          in: query
+          schema: {type: string, default: all}
+          description: Domain ID, all, or unclassified
+        - name: from
+          in: query
+          schema: {type: string, format: date-time}
+        - name: to
+          in: query
+          schema: {type: string, format: date-time}
+        - name: grain
+          in: query
+          schema: {type: string, enum: [day, week, month], default: day}
+      responses:
+        "200":
+          description: Current-attribution summary, delivery summary, trend, project contributions and business-domain distribution; excludes run, user and log details
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BusinessDomainReport"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {description: Domain aggregate access not granted}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/projects/{projectId}/business-domain:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: {type: string}
+    put:
+      tags: [BusinessDomains]
+      operationId: assignProjectBusinessDomain
+      description: Owners can assign an unclassified project. Platform admins can transfer or clear an assignment. Target must be active. Compare-and-swap protects against concurrent reassignment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [businessDomainId, expectedDomainId]
+              properties:
+                businessDomainId: {type: string, description: 'Empty string clears the assignment'}
+                expectedDomainId: {type: string, description: 'Previously observed assignment; empty for unclassified'}
+                reason: {type: string, maxLength: 500}
+      responses:
+        "200": {$ref: "#/components/responses/Project"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {description: Owner or platform admin access required}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Project assignment changed; refresh before retrying}
+  /api/projects/{projectId}/business-domain/history:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [BusinessDomains]
+      operationId: getProjectBusinessDomainHistory
+      responses:
+        "200":
+          description: Last 100 assignment changes, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/BusinessDomainAssignment"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {description: Project owner or platform admin access required}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      responses:
+        "200":
+          $ref: "#/components/responses/ProjectList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Projects]
+      operationId: createProject
+      requestBody:
+        $ref: "#/components/requestBodies/Project"
+      responses:
+        "200":
+          $ref: "#/components/responses/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Projects]
+      operationId: upsertProject
+      requestBody:
+        $ref: "#/components/requestBodies/Project"
+      responses:
+        "200":
+          $ref: "#/components/responses/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/projects/{projectId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Projects]
+      operationId: getProject
+      responses:
+        "200":
+          $ref: "#/components/responses/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/repositories:
+    get:
+      tags: [Repositories]
+      operationId: listRepositories
+      responses:
+        "200":
+          description: Repository list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Repository"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Repositories]
+      operationId: createRepository
+      requestBody:
+        $ref: "#/components/requestBodies/Repository"
+      responses:
+        "200":
+          $ref: "#/components/responses/Repository"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Repositories]
+      operationId: upsertRepository
+      requestBody:
+        $ref: "#/components/requestBodies/Repository"
+      responses:
+        "200":
+          $ref: "#/components/responses/Repository"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Repositories]
+      operationId: deleteRepository
+      parameters:
+        - $ref: "#/components/parameters/RepositoryIdQuery"
+      responses:
+        "200":
+          $ref: "#/components/responses/Status"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/repositories/{repositoryId}:
+    parameters:
+      - name: repositoryId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Repositories]
+      operationId: getRepository
+      responses:
+        "200":
+          $ref: "#/components/responses/Repository"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues:
+    get:
+      tags: [Issues]
+      operationId: listIssues
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema: {type: string}
+          description: When set, only issues belonging to this project are returned.
+        - name: status
+          in: query
+          required: false
+          schema: {type: string}
+          description: Filter by issue status. Comma-separated values are OR-matched.
+        - name: source
+          in: query
+          required: false
+          schema: {type: string}
+          description: Filter by source (local, gongfeng, tapd). Comma-separated values are OR-matched.
+        - name: q
+          in: query
+          required: false
+          schema: {type: string}
+          description: Case-insensitive match against title, id, number, or external id.
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 200}
+          description: When omitted, the response is Issue[]. When set, the response is a page object and limit is capped at 200.
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer, minimum: 0}
+      responses:
+        "200":
+          description: Issue list, or a page when limit is set
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/Issue"
+                  - $ref: "#/components/schemas/IssueListPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Issues]
+      operationId: createIssue
+      requestBody:
+        $ref: "#/components/requestBodies/Issue"
+      responses:
+        "200":
+          $ref: "#/components/responses/Issue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Issues]
+      operationId: upsertIssue
+      requestBody:
+        $ref: "#/components/requestBodies/Issue"
+      responses:
+        "200":
+          $ref: "#/components/responses/Issue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/issues/import-tapd:
+    post:
+      tags: [Issues]
+      operationId: importTAPDIssue
+      summary: Import one TAPD story from a pasted URL
+      description: Scores the imported title and description against the project's clarification policy. Below-threshold requirements are marked needs_user and cannot be dispatched until they pass.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, url]
+              properties:
+                projectId: {type: string}
+                url: {type: string, description: TAPD story detail URL}
+                workflowId: {type: string, description: SOP to bind on import; omitted uses the project default requirement workflow}
+                repositoryId: {type: string, description: Primary repository; at least one of repositoryId or repositoryIds is required}
+                repositoryIds:
+                  type: array
+                  items: {type: string}
+                  description: Repositories to bind; import is rejected if none are selected
+      responses:
+        "200":
+          $ref: "#/components/responses/Issue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/issues/{issueId}/resync-tapd:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues]
+      operationId: resyncTAPDIssue
+      summary: Re-sync one TAPD-sourced issue from TAPD
+      description: Pulls the linked TAPD story/bug again and refreshes the local issue content (title/description/status/priority). Local assignee, clarification state and repository bindings are preserved. Only issues with source=tapd are accepted.
+      responses:
+        "200":
+          $ref: "#/components/responses/Issue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues/{issueId}:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    get:
+      tags: [Issues]
+      operationId: getIssue
+      responses:
+        "200":
+          description: Issue and comments
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issue, comments]
+                properties:
+                  issue:
+                    $ref: "#/components/schemas/Issue"
+                  comments:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IssueComment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Issues]
+      operationId: deleteIssue
+      summary: Delete a local requirement
+      description: Deletes the issue, clarification, comments and failed/cancelled tasks, runs, logs, artifacts, previews and execution environments. Successful or active executions prevent deletion. The external tracker record is retained and sync may import the issue again.
+      responses:
+        "204":
+          description: Local issue deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Issue has successful execution history or is clarifying or executing a SOP
+  /api/issues/{issueId}/comments:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues]
+      operationId: createIssueComment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueComment"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues/{issueId}/runs:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    get:
+      tags: [Issues, Runs]
+      operationId: listIssueRuns
+      responses:
+        "200":
+          $ref: "#/components/responses/RunList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues/{issueId}/clarify:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues]
+      operationId: assessIssueClarification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                answers:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        "200":
+          description: Clarification assessment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClarificationAssessment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues/{issueId}/chat-clarify:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    get:
+      tags: [Issues]
+      operationId: attachIssueClarify
+      description: Attach to an in-flight server-side clarification job and replay thought events over SSE.
+      responses:
+        "200":
+          description: Server-Sent Events stream
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Issues]
+      operationId: chatClarifyIssue
+      description: Starts a server-side clarification job that keeps running after the client disconnects. Returns JSON normally, or an SSE stream when Accept is text/event-stream.
+      requestBody:
+        $ref: "#/components/requestBodies/ChatClarify"
+      responses:
+        "200":
+          $ref: "#/components/responses/ClarifyResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+  /api/issues/{issueId}/chat-clarify/cancel:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues]
+      operationId: cancelIssueClarify
+      description: Cancel one issue's in-flight server-side clarification job.
+      responses:
+        "200":
+          description: Cancellation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cancelled:
+                    type: boolean
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues/{issueId}/clarification:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues]
+      operationId: saveIssueClarification
+      description: Persists one work item's multi-turn clarification. When ready, appends the summary to its linked Gongfeng Issue or TAPD story as a comment without starting its SOP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                summary:
+                  type: string
+                ready:
+                  type: boolean
+                history:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ClarificationMessage"
+                questions:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ClarificationQuestion"
+                dimensions:
+                  type: object
+                  description: Per-dimension completeness ratings (0-100), folded into score with the project policy weights. For requirements this score gates SOP dispatch.
+                  additionalProperties:
+                    type: integer
+                    minimum: 0
+                    maximum: 100
+                missing:
+                  type: array
+                  description: Key information still unconfirmed after clarification.
+                  items:
+                    type: string
+                retry:
+                  type: boolean
+      responses:
+        "200":
+          $ref: "#/components/responses/Issue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues/{issueId}/reopen:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues]
+      operationId: reopenIssue
+      responses:
+        "200":
+          $ref: "#/components/responses/Issue"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/issues/{issueId}/dispatch:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues, Tasks]
+      operationId: dispatchIssue
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rerun:
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/chat-clarify:
+    post:
+      tags: [Issues]
+      operationId: chatClarifyDraft
+      description: Clarify an unsaved issue; supports JSON or SSE based on Accept.
+      requestBody:
+        $ref: "#/components/requestBodies/ChatClarify"
+      responses:
+        "200":
+          $ref: "#/components/responses/ClarifyResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+  /api/chat-clarify/cancel:
+    post:
+      tags: [Issues]
+      operationId: cancelChatClarification
+      responses:
+        "200":
+          description: Cancellation result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cancelled]
+                properties:
+                  cancelled:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/tasks:
+    get:
+      tags: [Tasks]
+      operationId: listTasks
+      responses:
+        "200":
+          description: Task list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Task"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/tasks/{taskId}:
+    parameters:
+      - name: taskId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Tasks]
+      operationId: getTask
+      responses:
+        "200":
+          description: Task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/agents:
+    get:
+      tags: [Assets]
+      operationId: listAgents
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Return roles owned by this project plus roles explicitly shared by other projects.
+      responses:
+        "200":
+          description: Agent definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentDefinition"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Assets]
+      operationId: upsertAgent
+      requestBody:
+        $ref: "#/components/requestBodies/Agent"
+      responses:
+        "200":
+          description: Stored agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentDefinition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/agents/{agentId}:
+    parameters:
+      - $ref: "#/components/parameters/AgentId"
+    get:
+      tags: [Assets]
+      operationId: getAgent
+      responses:
+        "200":
+          description: Agent definition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentDefinition"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Assets]
+      operationId: deleteAgent
+      summary: Delete an Agent definition that is not shared and not referenced by any workflow
+      responses:
+        "204":
+          description: Agent deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/agents/{agentId}/revisions:
+    parameters:
+      - $ref: "#/components/parameters/AgentId"
+    get:
+      tags: [Assets]
+      operationId: listAgentRevisions
+      responses:
+        "200":
+          $ref: "#/components/responses/RevisionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/agents/{agentId}/revisions/{revisionId}:
+    parameters:
+      - $ref: "#/components/parameters/AgentId"
+      - $ref: "#/components/parameters/RevisionId"
+    get:
+      tags: [Assets]
+      operationId: getAgentRevision
+      responses:
+        "200":
+          description: Agent definition revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DefinitionRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/agents/{agentId}/revisions/{revisionId}/restore:
+    parameters:
+      - $ref: "#/components/parameters/AgentId"
+      - $ref: "#/components/parameters/RevisionId"
+    post:
+      tags: [Assets]
+      operationId: restoreAgentRevision
+      responses:
+        "200":
+          description: Restored agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentDefinition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/rules:
+    get:
+      tags: [Assets]
+      operationId: listRules
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Assets]
+      operationId: upsertRule
+      requestBody:
+        $ref: "#/components/requestBodies/Asset"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Assets]
+      operationId: deleteRule
+      summary: Delete a Rule that is not shared and not referenced by any agent
+      parameters:
+        - $ref: "#/components/parameters/AssetIdQuery"
+      responses:
+        "204":
+          description: Rule deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/skills:
+    get:
+      tags: [Assets]
+      operationId: listSkills
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Assets]
+      operationId: upsertSkill
+      requestBody:
+        $ref: "#/components/requestBodies/Asset"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Assets]
+      operationId: deleteSkill
+      summary: Delete a Skill that is not shared and not referenced by any agent
+      parameters:
+        - $ref: "#/components/parameters/AssetIdQuery"
+      responses:
+        "204":
+          description: Skill deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/mcp-servers:
+    get:
+      tags: [Assets]
+      operationId: listMcpServers
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Assets]
+      operationId: upsertMcpServer
+      requestBody:
+        $ref: "#/components/requestBodies/Asset"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/mcp-servers/import:
+    post:
+      tags: [Assets]
+      operationId: importMcpServers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              description: MCP object, array, keyed map, or mcpServers/servers envelope.
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imported, servers]
+                properties:
+                  imported:
+                    type: integer
+                  servers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OpenObject"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/mcp-servers/{id}/files:
+    post:
+      tags: [Assets]
+      operationId: uploadMcpFiles
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items: {type: string, format: binary}
+                paths:
+                  type: array
+                  items: {type: string}
+      responses:
+        "200": {description: Updated MCP definition}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/mcp-servers/{id}/files/{path}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: path
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Assets]
+      operationId: downloadMcpFile
+      responses:
+        "200": {description: MCP file content}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      tags: [Assets]
+      operationId: deleteMcpFile
+      responses:
+        "200": {description: Updated MCP definition}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/executors:
+    get:
+      tags: [Assets]
+      operationId: listExecutors
+      description: Returns the fixed CodeBuddy, Codex, and Claude Code CLI catalog. Executors are not user-configurable.
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/dockerfiles:
+    get:
+      tags: [Assets]
+      operationId: listDockerfiles
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Assets]
+      operationId: upsertDockerfile
+      requestBody:
+        $ref: "#/components/requestBodies/Asset"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Assets]
+      operationId: deleteDockerfile
+      summary: Delete a Dockerfile that is not shared and not referenced by any sandbox
+      parameters:
+        - $ref: "#/components/parameters/AssetIdQuery"
+      responses:
+        "204":
+          description: Dockerfile deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/environments:
+    get:
+      tags: [Assets]
+      operationId: listEnvironments
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Assets]
+      operationId: upsertEnvironment
+      requestBody:
+        $ref: "#/components/requestBodies/Asset"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Assets]
+      operationId: deleteEnvironment
+      summary: Delete an environment install script that is not shared and not referenced by any sandbox
+      parameters:
+        - $ref: "#/components/parameters/AssetIdQuery"
+      responses:
+        "204":
+          description: Environment deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/sandboxes:
+    get:
+      tags: [Assets]
+      operationId: listSandboxProfiles
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Assets]
+      operationId: upsertSandboxProfile
+      requestBody:
+        $ref: "#/components/requestBodies/Asset"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Assets]
+      operationId: deleteSandbox
+      summary: Delete a sandbox profile that is not shared and not referenced by any workflow
+      parameters:
+        - $ref: "#/components/parameters/AssetIdQuery"
+      responses:
+        "204":
+          description: Sandbox profile deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/workflows:
+    get:
+      tags: [Workflows]
+      operationId: listWorkflows
+      responses:
+        "200":
+          $ref: "#/components/responses/WorkflowList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Workflows]
+      operationId: upsertWorkflow
+      requestBody:
+        $ref: "#/components/requestBodies/Workflow"
+      responses:
+        "200":
+          $ref: "#/components/responses/Workflow"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/workflows/{workflowId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+    get:
+      tags: [Workflows]
+      operationId: getWorkflow
+      responses:
+        "200":
+          $ref: "#/components/responses/Workflow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Workflows]
+      operationId: deleteWorkflow
+      responses:
+        "204":
+          description: Workflow deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/workflows/{workflowId}/revisions:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+    get:
+      tags: [Workflows]
+      operationId: listWorkflowRevisions
+      responses:
+        "200":
+          $ref: "#/components/responses/RevisionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/workflows/{workflowId}/revisions/{revisionId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+      - $ref: "#/components/parameters/RevisionId"
+    get:
+      tags: [Workflows]
+      operationId: getWorkflowRevision
+      responses:
+        "200":
+          description: Workflow revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DefinitionRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/workflows/{workflowId}/revisions/{revisionId}/restore:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+      - $ref: "#/components/parameters/RevisionId"
+    post:
+      tags: [Workflows]
+      operationId: restoreWorkflowRevision
+      responses:
+        "200":
+          $ref: "#/components/responses/Workflow"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/workflows/{workflowId}/publish:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+    post:
+      tags: [Workflows]
+      operationId: publishWorkflow
+      responses:
+        "200":
+          $ref: "#/components/responses/Workflow"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/workflows/{workflowId}/clone:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+    post:
+      tags: [Workflows]
+      operationId: cloneWorkflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name]
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+                owner:
+                  type: string
+      responses:
+        "201":
+          $ref: "#/components/responses/Workflow"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/workflow-metrics:
+    get:
+      tags: [Analytics]
+      operationId: listWorkflowMetrics
+      responses:
+        "200":
+          description: Workflow metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkflowMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/analytics:
+    get:
+      tags: [Analytics]
+      operationId: getAnalytics
+      parameters:
+        - name: projectId
+          in: query
+          schema:
+            type: string
+        - name: workflowId
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Analytics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsSnapshot"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/observability/spec:
+    get:
+      tags: [Analytics]
+      operationId: getObservabilitySpec
+      responses:
+        "200":
+          description: Public observability vocabulary and adapters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenObject"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/deployment-metrics:
+    get:
+      tags: [Analytics]
+      operationId: getDeploymentMetrics
+      summary: Query SkillHub test-environment deployment duration
+      description: Uses Zhiyan project 20732, pipeline 11867454, and the signed-in user's Taihu credential. Loads all branches by default; branch is an optional filter. Other repositories are rejected.
+      parameters:
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+        - {name: repositoryId, in: query, required: true, schema: {type: string}}
+        - {name: branch, in: query, required: false, description: Optional branch filter; omit to load all branches, schema: {type: string}}
+        - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        "200":
+          description: Normalized deployment metrics and build records
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projectId, repositoryId, branch, pipelineProjectId, pipelineId, queriedAt, summary, records]
+                properties:
+                  projectId: {type: string}
+                  repositoryId: {type: string}
+                  repositoryName: {type: string}
+                  branch: {type: string}
+                  pipelineProjectId: {type: integer}
+                  pipelineId: {type: integer}
+                  pipelineUrl: {type: string, format: uri}
+                  queriedAt: {type: string, format: date-time}
+                  summary:
+                    type: object
+                    properties:
+                      total: {type: integer}
+                      succeeded: {type: integer}
+                      failed: {type: integer}
+                      running: {type: integer}
+                      successRate: {type: number}
+                      deployments7d: {type: integer}
+                      average7dDurationMs: {type: integer, format: int64}
+                      averageDurationMs: {type: integer, format: int64}
+                      p50DurationMs: {type: integer, format: int64}
+                      p90DurationMs: {type: integer, format: int64}
+                      latestDurationMs: {type: integer, format: int64}
+                  records:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        runNumber: {type: integer, format: int64}
+                        status: {type: integer}
+                        statusLabel: {type: string}
+                        branch: {type: string}
+                        revision: {type: string}
+                        starter: {type: string}
+                        triggerType: {type: string}
+                        comment: {type: string}
+                        startedAt: {type: string, format: date-time}
+                        finishedAt: {type: string, format: date-time}
+                        durationMs: {type: integer, format: int64}
+                        url: {type: string, format: uri}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "412":
+          description: QCI MCP or personal credential is not configured
+        "422":
+          description: The selected repository is not the SkillHub repository
+        "502":
+          description: CodingCI query failed or returned an unsupported payload
+  /api/runs:
+    get:
+      tags: [Runs]
+      operationId: listRuns
+      responses:
+        "200":
+          $ref: "#/components/responses/RunList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Runs]
+      operationId: startRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflowId]
+              properties:
+                workflowId:
+                  type: string
+                input:
+                  type: string
+                projectId:
+                  type: string
+      responses:
+        "201":
+          $ref: "#/components/responses/Run"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/runs/{runId}:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: getRun
+      responses:
+        "200":
+          $ref: "#/components/responses/Run"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Runs]
+      operationId: deleteRun
+      responses:
+        "200":
+          $ref: "#/components/responses/Status"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/telemetry:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs, Analytics]
+      operationId: listRunTelemetry
+      parameters:
+        - $ref: "#/components/parameters/NodeIdQuery"
+        - name: adapter
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/After"
+        - $ref: "#/components/parameters/Before"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Cursor-paged telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/logs:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: listRunLogs
+      parameters:
+        - $ref: "#/components/parameters/NodeIdQuery"
+        - $ref: "#/components/parameters/After"
+        - $ref: "#/components/parameters/Before"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Cursor-paged logs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/logs.txt:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: downloadRunLogs
+      parameters:
+        - $ref: "#/components/parameters/NodeIdQuery"
+      responses:
+        "200":
+          description: Plain-text worker log export
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/workspace/terminal:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: controlRunWorkspaceTerminal
+      summary: Open, poll, type into, resize or close a workspace PTY
+      description: Requires project write membership and an active human editor lease. Shells run on the workspace owner with a sanitized environment; a disconnected client is reclaimed after 15 seconds. Terminal data is transient and output is base64 encoded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operation]
+              properties:
+                operation: {type: string, enum: [open, read, input, resize, close]}
+                id: {type: string}
+                data: {type: string, maxLength: 32768}
+                cols: {type: integer}
+                rows: {type: integer}
+      responses:
+        "200":
+          description: Terminal identifier and new output
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string}
+                  data: {type: string, format: byte}
+                  exited: {type: boolean}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {description: Execution not stopped, editor lease expired, foreign terminal, or workspace unavailable}
+  /api/runs/{runId}/workspace:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: getRunWorkspace
+      summary: Inspect availability and Git changes for the read-only Run workspace
+      responses:
+        "200":
+          description: Workspace availability and change summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunWorkspace"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/workspace/tree:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: listRunWorkspaceTree
+      summary: List safe, non-sensitive files in a Run workspace
+      parameters:
+        - name: path
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Flat workspace tree, capped at 4000 entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, truncated]
+                properties:
+                  entries:
+                    type: array
+                    items: {$ref: "#/components/schemas/WorkspaceEntry"}
+                  truncated: {type: boolean}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Workspace is unavailable because its owner instance or remote Runner cannot currently be reached}
+        "410": {description: Workspace is no longer available}
+  /api/runs/{runId}/workspace/file:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: getRunWorkspaceFile
+      summary: Preview one text file from a Run workspace
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Text file content, limited to 1 MiB
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, content, size]
+                properties:
+                  path: {type: string}
+                  content: {type: string}
+                  size: {type: integer, format: int64}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Workspace is unavailable because its owner instance or remote Runner cannot currently be reached}
+        "410": {description: Workspace is no longer available}
+  /api/runs/{runId}/workspace/diff:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: getRunWorkspaceDiff
+      summary: Read the working-tree diff against HEAD
+      parameters:
+        - name: path
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Git diff plus base and working-tree content for a file, capped at 1 MiB
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [diff, truncated]
+                properties:
+                  diff: {type: string}
+                  original: {type: string, description: File content at HEAD when path is provided}
+                  modified: {type: string, description: Current workspace content when path is provided}
+                  truncated: {type: boolean}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Workspace is unavailable because its owner instance or remote Runner cannot currently be reached}
+        "410": {description: Workspace is no longer available}
+  /api/runs/{runId}/workspace/search:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: searchRunWorkspace
+      summary: Search text content in safe, bounded workspace files
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: {type: string, minLength: 2}
+      responses:
+        "200":
+          description: Up to 100 matching lines from at most 20 MiB of text files
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results, truncated]
+                properties:
+                  results:
+                    type: array
+                    items: {$ref: "#/components/schemas/WorkspaceSearchResult"}
+                  truncated: {type: boolean}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: Workspace is unavailable because its owner instance or remote Runner cannot currently be reached}
+        "410": {description: Workspace is no longer available}
+  /api/runs/{runId}/stream:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: streamRun
+      parameters:
+        - $ref: "#/components/parameters/After"
+        - name: logsAfter
+          in: query
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: SSE run updates with run, telemetryDelta, and logDelta payloads
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /api/runs/{runId}/artifacts/{artifactId}:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+      - $ref: "#/components/parameters/ArtifactId"
+    get:
+      tags: [Runs]
+      operationId: getRunArtifact
+      responses:
+        "200":
+          description: Artifact content using its stored media type
+          content:
+            text/plain:
+              schema:
+                type: string
+            text/markdown:
+              schema:
+                type: string
+            application/json:
+              schema: {}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/approve:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: approveRunNode
+      requestBody:
+        $ref: "#/components/requestBodies/NodeAction"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/runs/{runId}/pass:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: passFailedRunNode
+      summary: Pass a failed script node
+      description: Marks a failed script or command node as succeeded and continues downstream without re-executing it. Agent nodes must use retry with optional human context instead.
+      requestBody:
+        $ref: "#/components/requestBodies/NodeAction"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/runs/{runId}/reject:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: rejectRunNode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nodeId, reason]
+              properties:
+                nodeId:
+                  type: string
+                targetId:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/runs/{runId}/retry:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: retryRunNode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nodeId]
+              properties:
+                nodeId:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/runs/{runId}/decline-retry:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: declineRunRetry
+      requestBody:
+        $ref: "#/components/requestBodies/NodeAction"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/runs/{runId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: cancelRun
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/runs/{runId}/pause:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: pauseRun
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/runs/{runId}/resume:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: resumePausedRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/runs/{runId}/refresh-sop:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: refreshPausedRunSOP
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/runs/{runId}/eval:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: getRunEval
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Runs]
+      operationId: startRunEval
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+      responses:
+        "202":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/runs/{runId}/evals:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: listRunEvals
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/eval/stream:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: streamRunEval
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/eval/apply:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: applyRunEval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                evalId:
+                  type: string
+                recommendationIds:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/sync/config:
+    get:
+      tags: [Sync]
+      operationId: getSyncConfig
+      responses:
+        "200":
+          $ref: "#/components/responses/SyncConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Sync]
+      operationId: createSyncConfig
+      requestBody:
+        $ref: "#/components/requestBodies/SyncConfig"
+      responses:
+        "200":
+          $ref: "#/components/responses/SyncConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Sync]
+      operationId: updateSyncConfig
+      requestBody:
+        $ref: "#/components/requestBodies/SyncConfig"
+      responses:
+        "200":
+          $ref: "#/components/responses/SyncConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/sync/now:
+    post:
+      tags: [Sync]
+      operationId: startSync
+      responses:
+        "200":
+          description: Sync accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, syncing]
+                properties:
+                  status:
+                    type: string
+                  syncing:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/sync/logs:
+    get:
+      tags: [Sync]
+      operationId: listSyncLogs
+      responses:
+        "200":
+          description: Sync logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SyncLog"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/sync/status:
+    get:
+      tags: [Sync]
+      operationId: getSyncStatus
+      responses:
+        "200":
+          description: Sync status, config, and recent logs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [syncing, config, logs]
+                properties:
+                  syncing:
+                    type: boolean
+                  config:
+                    $ref: "#/components/schemas/SyncConfig"
+                  logs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SyncLog"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/sync/create:
+    post:
+      tags: [Sync, Issues]
+      operationId: createExternalIssue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issueId, target]
+              properties:
+                issueId:
+                  type: string
+                target:
+                  type: string
+                  enum: [gongfeng, tapd]
+      responses:
+        "200":
+          $ref: "#/components/responses/Issue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/notification-bots:
+    get:
+      summary: List configured project notification Bots and bound chats
+      operationId: listNotificationBots
+      parameters:
+        - name: projectId
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Public Bot records, without credentials
+          content:
+            application/json:
+              schema: {type: array, items: {type: object}}
+        "403":
+          description: Project membership required
+  /api/notification-bots/{id}/interactions:
+    get:
+      summary: Inspect Bot connection and recent chat interactions
+      operationId: inspectBotInteractions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Connection status, recent conversations and messages; credentials excluded
+        "403":
+          description: Bot management permission required
+  /api/bot-bindings:
+    get:
+      summary: List the logged-in user's WeCom identity bindings
+      operationId: listBotUserBindings
+      responses:
+        "200":
+          description: Bindings belonging to the interactive browser user
+        "401":
+          description: Interactive browser login required
+  /api/bot-bindings/{id}:
+    delete:
+      summary: Revoke the logged-in user's WeCom identity binding
+      operationId: revokeBotUserBinding
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Revoked; outstanding challenges invalidated
+        "401":
+          description: Interactive browser login required
+        "403":
+          description: Same-origin browser request required
+        "404":
+          description: Binding does not belong to the current user
+  /api/bot-bindings/claim:
+    post:
+      summary: Nominate the logged-in account; original WeCom sender must confirm
+      operationId: claimBotUserBinding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string, minLength: 64, maxLength: 64}
+      responses:
+        "200":
+          description: Login name, status and browser-only confirmation command
+        "400":
+          description: Expired, invalid or already claimed challenge
+        "401":
+          description: Interactive browser login required; Bearer tokens rejected
+        "403":
+          description: Same-origin browser request required
+  /api/bot-bindings/status:
+    post:
+      summary: Read identity challenge status without logging its token in the URL
+      operationId: botUserBindingStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string, minLength: 64, maxLength: 64}
+      responses:
+        "200":
+          description: Current challenge status and login name; no confirmation code
+        "400":
+          description: Expired, invalid or claimed by another account
+        "401":
+          description: Interactive browser login required
+  /api/notification-preview:
+    post:
+      summary: Preview a notification using sample context without sending or calling AI
+      operationId: previewNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, binding]
+              properties:
+                projectId: {type: string}
+                binding: {$ref: "#/components/schemas/NotificationBinding"}
+                sourceType: {type: string, enum: [run, schedule_job, assistant_task]}
+      responses:
+        "200":
+          description: Preview content and its source
+        "400":
+          description: Invalid template
+  /api/schedule-jobs:
+    get:
+      tags: [Scheduling]
+      operationId: listScheduleJobs
+      responses:
+        "200":
+          $ref: "#/components/responses/ScheduleJobList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Scheduling]
+      operationId: createScheduleJob
+      requestBody:
+        $ref: "#/components/requestBodies/ScheduleJob"
+      responses:
+        "200":
+          $ref: "#/components/responses/ScheduleJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Scheduling]
+      operationId: upsertScheduleJob
+      requestBody:
+        $ref: "#/components/requestBodies/ScheduleJob"
+      responses:
+        "200":
+          $ref: "#/components/responses/ScheduleJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/schedule-jobs/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    delete:
+      tags: [Scheduling]
+      operationId: deleteScheduleJob
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/schedule-jobs/{jobId}/run:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [Scheduling]
+      operationId: runScheduleJob
+      description: |
+        Starts the job on the server and returns 202 with lastStatus=running.
+        Closing the client does not cancel the run. Poll GET /api/schedule-jobs
+        until lastStatus is success, failed, or waiting.
+      responses:
+        "202":
+          $ref: "#/components/responses/ScheduleJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: agentflow_user
+    basicAuth:
+      type: http
+      scheme: basic
+  parameters:
+    IssueId:
+      name: issueId
+      in: path
+      required: true
+      schema:
+        type: string
+    AgentId:
+      name: agentId
+      in: path
+      required: true
+      schema:
+        type: string
+    AssetIdQuery:
+      name: id
+      in: query
+      required: true
+      schema:
+        type: string
+    WorkflowId:
+      name: workflowId
+      in: path
+      required: true
+      schema:
+        type: string
+    RevisionId:
+      name: revisionId
+      in: path
+      required: true
+      schema:
+        type: string
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+    ArtifactId:
+      name: artifactId
+      in: path
+      required: true
+      schema:
+        type: string
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+    RepositoryIdQuery:
+      name: id
+      in: query
+      required: true
+      schema:
+        type: string
+    NodeIdQuery:
+      name: nodeId
+      in: query
+      schema:
+        type: string
+    After:
+      name: after
+      in: query
+      schema:
+        type: integer
+        format: int64
+    Before:
+      name: before
+      in: query
+      schema:
+        type: integer
+        format: int64
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+  requestBodies:
+    Project:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Project"
+              - type: object
+                properties:
+                  tapdClear:
+                    type: boolean
+    Repository:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RepositoryInput"
+    Issue:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Issue"
+              - type: object
+                properties:
+                  syncTarget:
+                    type: string
+                    enum: [gongfeng, tapd]
+    ChatClarify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChatClarifyRequest"
+    Agent:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentDefinition"
+    Asset:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenObject"
+    Workflow:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WorkflowDefinition"
+    NodeAction:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [nodeId]
+            properties:
+              nodeId:
+                type: string
+    SyncConfig:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SyncConfig"
+    ScheduleJob:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ScheduleJob"
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Basic authentication required
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Operation is disabled or forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Resource state conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    GatewayTimeout:
+      description: Upstream analysis timed out
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Ok:
+      description: Operation succeeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Ok"
+    Status:
+      description: Status result
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Status"
+    Project:
+      description: Project
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Project"
+    ProjectList:
+      description: Project list
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/Project"
+    Repository:
+      description: Repository
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Repository"
+    Issue:
+      description: Issue
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Issue"
+    Workflow:
+      description: Workflow definition
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WorkflowDefinition"
+    WorkflowList:
+      description: Workflow definitions
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/WorkflowDefinition"
+    Run:
+      description: Run
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Run"
+    RunList:
+      description: Run summaries
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/Run"
+    RevisionList:
+      description: Definition revisions
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/DefinitionRevision"
+    AssetList:
+      description: Asset definitions
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/OpenObject"
+    ClarifyResult:
+      description: JSON clarification result or SSE event stream
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ClarifyResult"
+        text/event-stream:
+          schema:
+            type: string
+    SyncConfig:
+      description: Sync configuration
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SyncConfig"
+    ScheduleJob:
+      description: Schedule job
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ScheduleJob"
+    ScheduleJobList:
+      description: Schedule jobs
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/ScheduleJob"
+  schemas:
+    OpenObject:
+      type: object
+      additionalProperties: true
+    APIToken:
+      type: object
+      required: [id, userId, name, prefix, createdAt]
+      properties:
+        id: {type: string}
+        userId: {type: integer, format: int64}
+        name: {type: string}
+        prefix: {type: string, description: Non-secret display prefix}
+        lastUsedAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
+        revokedAt: {type: string, format: date-time}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    BusinessDomain:
+      type: object
+      required: [id, name, active, managerIds, viewerIds]
+      properties:
+        id: {type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$', description: 'Stable ID; all and unclassified are reserved'}
+        name: {type: string, minLength: 1, maxLength: 100}
+        description: {type: string, maxLength: 2000}
+        active: {type: boolean}
+        managerIds: {type: array, uniqueItems: true, items: {type: integer, format: int64}}
+        viewerIds: {type: array, uniqueItems: true, items: {type: integer, format: int64}}
+        createdAt: {type: string, format: date-time, readOnly: true}
+        updatedAt: {type: string, format: date-time, readOnly: true}
+    BusinessDomainAssignment:
+      type: object
+      properties:
+        id: {type: integer, format: int64}
+        projectId: {type: string}
+        fromDomainId: {type: string}
+        toDomainId: {type: string}
+        actorId: {type: integer, format: int64}
+        reason: {type: string}
+        createdAt: {type: string, format: date-time}
+    BusinessDomainReport:
+      type: object
+      properties:
+        attribution: {type: string, const: current}
+        generatedAt: {type: string, format: date-time}
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        summary: {type: object, description: 'Existing AnalyticsSummary with recomputed rates and percentiles'}
+        delivery: {type: object, description: 'Existing AnalyticsDeliverySummary'}
+        trend: {type: array, items: {type: object}}
+        projects: {type: array, items: {type: object}, description: 'Project ID, name, businessDomainId and AnalyticsProjectUsage'}
+        businessDomains: {type: array, items: {type: object}, description: 'ID, name, active, projectCount, runs, success, failed, tokens, costUsd, costKnown, uniqueIssues and delivered'}
+    Project:
+      type: object
+      required: [id, name]
+      properties:
+        businessDomainId:
+          type: string
+          readOnly: true
+          description: Current main business domain. Use the dedicated assignment endpoint to change it.
+        id:
+          type: string
+        key:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
+        workflowId:
+          type: string
+        defaultRepositoryId:
+          type: string
+        ownerId:
+          type: integer
+          format: int64
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMember"
+        clarification:
+          $ref: "#/components/schemas/ClarificationPolicy"
+        tapdWorkspaceId:
+          type: string
+        tapdIterationId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+    ProjectMember:
+      type: object
+      required: [userId, role]
+      properties:
+        userId:
+          type: integer
+          format: int64
+        role:
+          type: string
+          enum: [maintainer, member, viewer]
+    User:
+      type: object
+      required: [id, loginName]
+      properties:
+        id: {type: integer, format: int64}
+        staffId: {type: integer}
+        loginName: {type: string}
+        chineseName: {type: string}
+        deptId: {type: integer}
+        deptName: {type: string}
+        avatarUrl: {type: string}
+        taihuPatConfigured: {type: boolean, readOnly: true}
+        gitTokenConfigured: {type: boolean, readOnly: true}
+        codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
+        codexApiKeyConfigured: {type: boolean, readOnly: true}
+        codexBaseUrl: {type: string}
+        claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}
+        claudeCodeBaseUrl: {type: string}
+        codeBuddyInternetEnvironment: {type: string}
+    ClarificationPolicy:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        skillId:
+          type: string
+        threshold:
+          type: integer
+          minimum: 0
+          maximum: 100
+        dimensions:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              question:
+                type: string
+              weight:
+                type: integer
+              minLength:
+                type: integer
+    RepositoryInput:
+      type: object
+      required: [projectId]
+      anyOf:
+        - required: [repoUrl]
+        - required: [url]
+        - required: [webUrl]
+        - required: [cloneUrl]
+        - required: [gongfengProjectId]
+      properties:
+        id: {type: string}
+        projectId: {type: string}
+        name: {type: string}
+        repoUrl: {type: string, description: GitHub web/SSH/clone URL; derives name and repository identity}
+        url: {type: string, description: Alias of repoUrl}
+        webUrl: {type: string}
+        cloneUrl: {type: string}
+        gongfengProjectId: {type: string, description: Legacy wire field for repository identity; GitHub uses github:owner/repo. Prefer repoUrl.}
+        defaultBranch: {type: string}
+        integrateBranch: {type: string}
+        provider: {type: string, description: GitHub is inferred from repoUrl; legacy provider values remain compatible, example: github}
+        pipelineProjectId: {type: integer}
+        pipelineDefId: {type: integer}
+    Repository:
+      type: object
+      required: [projectId, name, gongfengProjectId]
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        provider:
+          type: string
+          description: GitHub for public repositories; inferred from the repository URL
+          example: github
+        name:
+          type: string
+        gongfengProjectId:
+          type: string
+        webUrl:
+          type: string
+          format: uri
+        cloneUrl:
+          type: string
+        defaultBranch:
+          type: string
+        localPath:
+          type: string
+        gitToken:
+          type: string
+          writeOnly: true
+        gitTokenConfigured:
+          type: boolean
+          readOnly: true
+        pipelineProjectId:
+          type: integer
+        pipelineDefId:
+          type: integer
+        pipelineUrlPattern:
+          type: string
+        integrateBranch:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+    IssueListPage:
+      type: object
+      required: [items, total, offset, limit, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Issue"
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+        hasMore:
+          type: boolean
+    Issue:
+      type: object
+      required: [projectId, title]
+      properties:
+        closureAllowed:
+          type: boolean
+          readOnly: true
+          description: Whether manual closure is permitted; active clarification, tasks or runs prevent closure.
+        deletionAllowed:
+          type: boolean
+          readOnly: true
+          description: Whether deletion is currently permitted, computed from complete task and run history on list and detail responses.
+        id:
+          type: string
+        projectId:
+          type: string
+        number:
+          type: integer
+          readOnly: true
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [backlog, todo, in_progress, in_review, done, blocked, cancelled, closed]
+        priority:
+          type: string
+        assigneeType:
+          type: string
+          enum: [member, agent]
+        assigneeId:
+          type: string
+        assigneeUserId:
+          type: integer
+          format: int64
+        workflowId:
+          type: string
+        repositoryId:
+          type: string
+        baseBranch:
+          type: string
+        latestTaskId:
+          type: string
+        automationState:
+          type: string
+        deliveryState:
+          type: string
+        deliveryMrUrl:
+          type: string
+        deliveryMrState:
+          type: string
+          description: 所有交付 MR 的聚合状态（merged / integrated / opened / closed / unknown）
+        deliveryMrs:
+          type: array
+          description: 每个交付仓库一个 MR；deliveryMrUrl 为第一项
+          items:
+            type: object
+            properties:
+              repositoryId:
+                type: string
+              repository:
+                type: string
+              project:
+                type: string
+              iid:
+                type: integer
+              url:
+                type: string
+              state:
+                type: string
+              targetBranch:
+                type: string
+        deliveryUpdatedAt:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum: [requirement, issue]
+        clarification:
+          $ref: "#/components/schemas/ClarificationAssessment"
+        source:
+          type: string
+          enum: [local, gongfeng, tapd]
+        externalRef:
+          $ref: "#/components/schemas/ExternalRef"
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+    ClarificationAssessment:
+      type: object
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        passed:
+          type: boolean
+        answers:
+          type: object
+          additionalProperties:
+            type: string
+        dimensions:
+          type: object
+          additionalProperties:
+            type: integer
+        missing:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+        status:
+          type: string
+          enum: [in_progress, ready, needs_user]
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClarificationMessage"
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClarificationQuestion"
+        writeBackStatus:
+          type: string
+          enum: [pending, succeeded, failed, skipped]
+        writeBackError:
+          type: string
+        writeBackFingerprint:
+          type: string
+        writeBackAt:
+          type: string
+          format: date-time
+        assessedAt:
+          type: string
+          format: date-time
+    ClarificationMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+    ClarificationQuestion:
+      type: object
+      required: [id, question]
+      properties:
+        id:
+          type: string
+        question:
+          type: string
+        options:
+          type: array
+          items:
+            type: string
+        multiSelect:
+          type: boolean
+    ExternalRef:
+      type: object
+      properties:
+        source:
+          type: string
+        externalId:
+          type: string
+        externalIid:
+          type: integer
+        externalUrl:
+          type: string
+        externalState:
+          type: string
+        externalType:
+          type: string
+        syncedAt:
+          type: string
+          format: date-time
+    IssueComment:
+      type: object
+      properties:
+        id:
+          type: string
+          readOnly: true
+        issueId:
+          type: string
+          readOnly: true
+        authorType:
+          type: string
+        authorId:
+          type: string
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+    Task:
+      type: object
+      required: [id, issueId, workflowId, status]
+      properties:
+        id:
+          type: string
+        issueId:
+          type: string
+        agentId:
+          type: string
+        workflowId:
+          type: string
+        runId:
+          type: string
+        status:
+          type: string
+          enum: [queued, dispatched, running, completed, failed, cancelled]
+        dispatchMode:
+          type: string
+          enum: [primary, scheduled, rerun]
+        scheduleJobId:
+          type: string
+        triggerOrigin:
+          type: string
+        repository:
+          $ref: "#/components/schemas/RepositoryContext"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RepositoryContext:
+      type: object
+      additionalProperties: true
+      properties:
+        repositoryId:
+          type: string
+        provider:
+          type: string
+        name:
+          type: string
+        baseBranch:
+          type: string
+        workBranch:
+          type: string
+        integrateBranch:
+          type: string
+    AgentDefinition:
+      type: object
+      required: [id, name]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+        description:
+          type: string
+        instructions:
+          type: string
+        rules:
+          type: array
+          items:
+            type: string
+        skills:
+          type: array
+          items:
+            type: string
+        mcpServers:
+          type: array
+          items:
+            type: string
+        hooks:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentHook"
+        executorId:
+          type: string
+        model:
+          type: string
+        loop:
+          $ref: "#/components/schemas/OpenObject"
+        updatedAt:
+          type: string
+          format: date-time
+    AgentHook:
+      type: object
+      required: [id, name, event, language, script]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        event:
+          type: string
+          enum: [SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop]
+        matcher:
+          type: string
+        language:
+          type: string
+          enum: [shell, python]
+        script:
+          type: string
+        timeoutSec:
+          type: integer
+          minimum: 1
+          maximum: 600
+        executionScope:
+          type: string
+          enum: [run, repositories]
+          description: Run once in the task workspace or once per repository checkout.
+    WorkflowDefinition:
+      type: object
+      required: [id, name, sandboxProfileId, nodes, edges]
+      additionalProperties: true
+      properties:
+        notifications: {type: array, maxItems: 1, items: {$ref: "#/components/schemas/NotificationBinding"}, description: Single SOP Bot; all nodes automatically notify waiting/failed and SOP completion. Template and AI instruction customize completion only}
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+        revision:
+          type: integer
+        status:
+          type: string
+          enum: [draft, published, archived]
+        owner:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+        sandboxProfileId:
+          type: string
+        generic:
+          type: boolean
+          description: >-
+            Platform-provided, project-independent template. Generic templates are served from the
+            platform catalog. They can run directly by reference in a project, or be cloned
+            for project-specific editing. Platform administrators can edit catalog templates;
+            other users cannot. Repository binding is optional: without a repository, tasks run
+            in their own workspace and deliver artifacts; creating a PR requires a target repository
+            and credentials. Cloning also creates the referenced roles in the target project.
+        requirements:
+          type: array
+          description: >-
+            External capabilities the SOP needs at run time (for example a GitHub token or a
+            project-scoped GitHub MCP). Studio renders them as a preflight checklist so users learn
+            about the dependency before the first run.
+          items:
+            $ref: "#/components/schemas/WorkflowRequirement"
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowEdge"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    WorkflowRequirement:
+      type: object
+      required: [key, label]
+      additionalProperties: true
+      properties:
+        key:
+          type: string
+          description: Stable id the client maps to a live check.
+        nodeId:
+          type: string
+          description: Node that depends on the capability (for example a code delivery node).
+        label:
+          type: string
+        hint:
+          type: string
+        setup:
+          type: string
+          description: Where the user fixes the dependency.
+          enum: [settings, mcp]
+    NotificationBinding:
+      type: object
+      required: [botId, events]
+      properties:
+        botId: {type: string, description: Platform Bot reference from notification_bots_list}
+        events: {type: array, maxItems: 3, items: {type: string, enum: [succeeded, failed, waiting]}}
+        scope: {type: string, enum: [node, run], description: Run scope supports succeeded and failed only. Scheduled tasks use no scope.}
+        template: {type: string, maxLength: 12000, description: Free Markdown with business/output/AI variables}
+        waitingPolicy: {type: string, enum: [actionable, event], description: Waiting reminders cancel if resolved before sending by default; event records are sent even after resolution.}
+        contentMode: {type: string, enum: [template, ai]}
+        aiInstruction: {type: string, maxLength: 4000, description: Writing instructions for the independent SOP report or the existing scheduled task model call}
+    WorkflowNode:
+      type: object
+      required: [id, name, type]
+      additionalProperties: true
+      properties:
+        notifications: {type: array, maxItems: 3, items: {$ref: "#/components/schemas/NotificationBinding"}}
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [agent, script, command, approval, sop]
+        agentId:
+          type: string
+        executorId:
+          type: string
+        scriptLanguage:
+          type: string
+          enum: [shell, python]
+        script:
+          type: string
+        command:
+          type: string
+          deprecated: true
+          description: Legacy shell-command field; normalized to a shell script node when saved.
+        maxAttempts:
+          type: integer
+        maxReworks:
+          type: integer
+        position:
+          $ref: "#/components/schemas/OpenObject"
+    WorkflowEdge:
+      type: object
+      required: [id, source, target]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+        when:
+          type: string
+    DefinitionRevision:
+      type: object
+      required: [id, kind, entityId, version, revision, name, payload, createdAt]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [workflow, agent]
+        entityId:
+          type: string
+        version:
+          type: integer
+        revision:
+          type: integer
+        name:
+          type: string
+        summary:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+    Run:
+      type: object
+      required: [id, workflowId, status]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        workflowId:
+          type: string
+        workflowSnapshot:
+          $ref: "#/components/schemas/WorkflowDefinition"
+        status:
+          type: string
+          enum: [queued, running, waiting, succeeded, failed, cancelled]
+        admissionState:
+          type: string
+          enum: [queued, held, unstarted, released]
+          readOnly: true
+          description: Server-managed admission state; failed, paused, and cancelled runs that already started retain their concurrency slot.
+        queueEnteredAt:
+          type: string
+          format: date-time
+          readOnly: true
+        concurrencyExempt:
+          type: boolean
+          readOnly: true
+          description: Personal-runner executions do not consume project concurrency slots.
+        input:
+          type: string
+        repository:
+          $ref: "#/components/schemas/RepositoryContext"
+        executionContext:
+          $ref: "#/components/schemas/OpenObject"
+        nodes:
+          type: object
+          additionalProperties:
+            oneOf:
+              - $ref: "#/components/schemas/NodeRun"
+              - type: "null"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        usage:
+          $ref: "#/components/schemas/TokenUsage"
+        toolCalls:
+          type: integer
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Artifact"
+        artifactCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        revision:
+          type: integer
+    RunWorkspace:
+      type: object
+      required: [available, readOnly, runStatus]
+      properties:
+        available: {type: boolean}
+        readOnly: {type: boolean, enum: [true]}
+        runStatus: {type: string}
+        reason: {type: string}
+        warning: {type: string}
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceChange"
+    WorkspaceChange:
+      type: object
+      required: [path, index, worktree]
+      properties:
+        path: {type: string}
+        repository: {type: string}
+        index: {type: string, minLength: 1, maxLength: 1}
+        worktree: {type: string, minLength: 1, maxLength: 1}
+    WorkspaceEntry:
+      type: object
+      required: [path, name, type]
+      properties:
+        path: {type: string}
+        name: {type: string}
+        type: {type: string, enum: [file, directory]}
+        size: {type: integer, format: int64}
+        modifiedAt: {type: string, format: date-time}
+    WorkspaceSearchResult:
+      type: object
+      required: [path, line, preview]
+      properties:
+        path: {type: string}
+        line: {type: integer, minimum: 1}
+        preview: {type: string}
+    NodeRun:
+      type: object
+      additionalProperties: true
+      properties:
+        nodeId:
+          type: string
+        status:
+          type: string
+        attempt:
+          type: integer
+        reworkCount:
+          type: integer
+        output:
+          type: string
+        error:
+          type: string
+        activity:
+          type: string
+        feedback:
+          type: string
+        usage:
+          $ref: "#/components/schemas/TokenUsage"
+        toolCalls:
+          type: integer
+    TokenUsage:
+      type: object
+      properties:
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        cacheReadTokens:
+          type: integer
+          format: int64
+        cacheWriteTokens:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+        costUsd:
+          type: number
+    Artifact:
+      type: object
+      required: [id, runId, nodeId, attempt, name, mediaType, size, sha256]
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        nodeId:
+          type: string
+        attempt:
+          type: integer
+        name:
+          type: string
+        path:
+          type: string
+        mediaType:
+          type: string
+        size:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    TelemetryPage:
+      type: object
+      required: [runId, sequence, events, hasMore]
+      properties:
+        runId:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TelemetryEvent"
+        nextAfter:
+          type: integer
+          format: int64
+        nextBefore:
+          type: integer
+          format: int64
+        hasMore:
+          type: boolean
+    TelemetryEvent:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        nodeId:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          format: date-time
+        category:
+          type: string
+        name:
+          type: string
+        phase:
+          type: string
+        level:
+          type: string
+        message:
+          type: string
+    LogPage:
+      type: object
+      required: [runId, sequence, logs, hasMore]
+      properties:
+        runId:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogRecord"
+        nextAfter:
+          type: integer
+          format: int64
+        nextBefore:
+          type: integer
+          format: int64
+        hasMore:
+          type: boolean
+    LogRecord:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          format: date-time
+        level:
+          type: string
+        stream:
+          type: string
+          enum: [stdout, stderr, worker, platform]
+        body:
+          type: string
+    ChatClarifyRequest:
+      type: object
+      required: [projectId]
+      properties:
+        projectId:
+          type: string
+        repositoryId:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        message:
+          type: string
+        history:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role:
+                type: string
+              content:
+                type: string
+    ClarifyResult:
+      type: object
+      required: [result, parsed, repository]
+      properties:
+        result:
+          type: string
+        parsed:
+          $ref: "#/components/schemas/OpenObject"
+        repository:
+          $ref: "#/components/schemas/OpenObject"
+    SyncConfig:
+      type: object
+      properties:
+        playbookSeedRev:
+          type: integer
+        gongfengProjectId:
+          type: string
+        gongfengMcpUrl:
+          type: string
+        tapdWorkspaceId:
+          type: string
+        tapdIterationId:
+          type: string
+        tapdMcpUrl:
+          type: string
+        autoSyncEnabled:
+          type: boolean
+        autoSyncIntervalSec:
+          type: integer
+        lastSyncAt:
+          type: string
+          format: date-time
+          readOnly: true
+        lastSyncStatus:
+          type: string
+          readOnly: true
+        lastSyncError:
+          type: string
+          readOnly: true
+    SyncLog:
+      type: object
+      properties:
+        id:
+          type: string
+        direction:
+          type: string
+          enum: [pull, push]
+        source:
+          type: string
+          enum: [gongfeng, tapd]
+        action:
+          type: string
+        status:
+          type: string
+          enum: [success, failed]
+        count:
+          type: integer
+        message:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+    ScheduleJob:
+      type: object
+      required: [name]
+      properties:
+        notifications: {type: array, maxItems: 3, items: {$ref: "#/components/schemas/NotificationBinding"}, description: Optional Bot notifications for execution success/failure}
+        id:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        projectId:
+          type: string
+        source:
+          type: string
+          enum: [gongfeng, tapd]
+          description: Compatibility field; jobs no longer pull TAPD/Gongfeng themselves.
+        tapdWorkspaceId:
+          type: string
+        tapdIterationId:
+          type: string
+        workflowId:
+          type: string
+          description: Required for trigger jobs. Ignored when skipDispatch is true.
+        useIssueWorkflow:
+          type: boolean
+          description: When true, prefer the issue's bound SOP and fall back to workflowId.
+        skipDispatch:
+          type: boolean
+          description: "When true, this is an AI scheduled job: run assistantPrompt only. When false, this is a trigger job that scans issues and dispatches SOP. The two kinds are exclusive."
+        intervalSec:
+          type: integer
+          minimum: 0
+          description: Used when cron is empty. Common values are 300, 900, 3600, 86400.
+        cron:
+          type: string
+          description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.
+        assistantPrompt:
+          type: string
+          description: User-written CodeBuddy prompt executed at schedule time. Required for AI jobs (skipDispatch=true); cleared on trigger jobs.
+        assistantModel:
+          type: string
+          description: CodeBuddy model id from GET /api/assistant/models.
+        ownerUserId:
+          type: integer
+          format: int64
+          description: Project owner whose CodeBuddy key runs assistantPrompt
+        lastRunAt:
+          type: string
+          format: date-time
+          readOnly: true
+        lastStatus:
+          type: string
+          enum: [running, success, failed, waiting]
+          description: running means this instance is still executing the job (closing Studio does not cancel it).
+          readOnly: true
+        lastError:
+          type: string
+          readOnly: true
+        lastPulled:
+          type: integer
+          description: Candidate issues scanned in the project
+          readOnly: true
+        lastDispatched:
+          type: integer
+          readOnly: true
+        lastAssistantMessage:
+          type: string
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+    WorkflowMetrics:
+      type: object
+      additionalProperties: true
+      properties:
+        workflowId:
+          type: string
+        totalRuns:
+          type: integer
+        activeRuns:
+          type: integer
+        waitingRuns:
+          type: integer
+        succeededRuns:
+          type: integer
+        failedRuns:
+          type: integer
+        closureRate:
+          type: number
+        successRate:
+          type: number
+        averageDurationMs:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+    AnalyticsSnapshot:
+      type: object
+      additionalProperties: true
+      required: [filter, summary, trend, workflows, agents, executors, models, nodes, failures, coverage, delivery, demo]
+      properties:
+        filter:
+          $ref: "#/components/schemas/OpenObject"
+        summary:
+          $ref: "#/components/schemas/OpenObject"
+        trend:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        workflows:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        executors:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        failures:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        coverage:
+          $ref: "#/components/schemas/OpenObject"
+        deliveries:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        delivery:
+          $ref: "#/components/schemas/OpenObject"
+        demo:
+          $ref: "#/components/schemas/OpenObject"
+        runTraces:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+    Bootstrap:
+      type: object
+      additionalProperties: true
+      required:
+        - projects
+        - repositories
+        - users
+        - agents
+        - rules
+        - skills
+        - mcpServers
+        - executors
+        - dockerfiles
+        - environments
+        - sandboxes
+        - workflows
+        - syncConfig
+        - scheduleJobs
+        - schedulerEnabled
+        - storage
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+        repositories:
+          type: array
+          items:
+            $ref: "#/components/schemas/Repository"
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentDefinition"
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        mcpServers:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        executors:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        dockerfiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        environments:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        sandboxes:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenObject"
+        workflows:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowDefinition"
+        syncConfig:
+          $ref: "#/components/schemas/SyncConfig"
+        scheduleJobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleJob"
+        schedulerEnabled:
+          type: boolean
+        storage:
+          $ref: "#/components/schemas/OpenObject"

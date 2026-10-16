@@ -1,0 +1,109 @@
+/* SOP 流程库 —— 深色 */
+
+.sop-page{width:100%;display:flex;flex-direction:column;gap:12px}
+.sop-stats{margin:0}
+.sop-overview{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;width:100%;margin:0}
+.overview-metric{position:relative;overflow:hidden;padding:14px 15px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(135deg,var(--panel) 0%,var(--bg-soft) 100%)}
+.overview-metric:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--muted-2)}
+.overview-metric.primary:before{background:var(--blue)}
+.overview-metric.success:before{background:var(--green)}
+.overview-metric.live:before{background:var(--purple)}
+.overview-metric.danger:before{background:var(--red)}
+.overview-metric span,.overview-metric small{display:block;color:var(--muted-2);font-size:10px}
+.overview-metric b{display:block;margin:3px 0;font-size:23px;color:var(--text)}
+.overview-metric small{font-size:9px}
+
+.sop-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin:0;padding:0;background:transparent;border:0;min-height:0}
+.sop-toolbar .sop-stats{margin:0}
+.sop-toolbar-filters{display:flex;gap:8px;margin-left:auto}
+.sop-toolbar .select{width:auto;min-width:145px;padding:7px 9px;font-size:11px}
+
+.sop-catalog{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));justify-content:stretch;gap:16px;width:100%;margin:0}
+.sop-card{min-height:320px;max-width:none;padding:20px 20px 18px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:0 1px 2px rgba(15,23,42,.05);cursor:pointer;transition:transform .14s,border-color .14s,box-shadow .14s;color:var(--text)}
+.sop-card.health-blocked{border-color:rgba(248,113,113,.4)}
+.sop-card.health-active{border-color:rgba(139,92,246,.4)}
+.sop-card.health-closed{border-color:rgba(52,211,153,.4)}
+.sop-card:hover{transform:translateY(-2px);border-color:rgba(91,140,255,.45);box-shadow:var(--shadow)}
+.sop-card-head,.sop-card-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;color:var(--muted);font-size:10px}
+.sop-card-head>div{display:flex;align-items:center;gap:8px;min-width:0}
+.sop-card-head>div small{display:block;font-size:10px;color:var(--muted-2);line-height:1.35}
+.health-dot-card{width:8px;height:8px;border-radius:50%;background:var(--muted-2);flex-shrink:0}
+.health-dot-card.active{background:var(--purple);box-shadow:0 0 0 4px rgba(139,92,246,.16)}
+.health-dot-card.closed{background:var(--green)}
+.health-dot-card.blocked{background:var(--red)}
+.health-dot-card.never{background:var(--muted-2)}
+.sop-card h3{margin:14px 0 10px;font-size:17px;letter-spacing:-.02em;line-height:1.35}
+.sop-card p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.65;overflow:hidden;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;flex:1;min-height:6.5em}
+.sop-card .chips{min-height:24px;margin-top:auto;padding-top:16px}
+.sop-kpis{display:flex;flex-wrap:wrap;gap:8px 14px;margin:16px 0 0;padding:12px 14px;border-radius:10px;background:var(--panel-2);width:100%;box-sizing:border-box}
+.sop-kpis span{display:inline-flex;align-items:baseline;gap:4px;color:var(--muted-2);font-size:11px}
+.sop-kpis b{font-size:13px;color:var(--text)}
+.sop-card-foot{border-top:1px solid var(--line);margin-top:16px;padding-top:14px;color:var(--muted-2);flex-wrap:wrap}
+.sop-card-foot time{color:var(--muted-2)}
+.sop-status{border-radius:10px;padding:3px 7px;font-weight:700;font-size:9px}
+.sop-status.published{color:var(--green);background:rgba(52,211,153,.15)}
+.sop-status.draft{color:var(--amber);background:rgba(251,191,36,.16)}
+.sop-status.archived{color:var(--muted-2);background:var(--panel-2)}
+
+/* SOP 创建向导起点选择 */
+.template-choice-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.template-choice{display:flex;align-items:center;gap:11px;padding:12px;border:1px solid var(--line-strong);border-radius:11px;cursor:pointer;transition:all .14s ease;background:var(--bg-soft)}
+.template-choice:hover{border-color:rgba(91,140,255,.4)}
+.template-choice.active{border-color:var(--blue);background:var(--blue-soft)}
+.template-choice input{display:none}
+.template-icon{width:34px;height:34px;display:grid;place-items:center;border-radius:9px;background:var(--panel-2);color:var(--muted);font-size:15px;flex-shrink:0}
+.template-choice.active .template-icon{background:var(--accent-gradient);color:#fff}
+.template-icon.blank{font-weight:800}
+.template-choice b,.template-choice p,.template-choice small{display:block}
+.template-choice b{font-size:12px;color:var(--text)}
+.template-choice p{margin:2px 0 0;color:var(--muted);font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
+.template-choice small{margin-top:2px;color:var(--muted-2);font-size:8.5px}
+.create-summary{display:grid;gap:2px}
+.create-summary>div{display:flex;justify-content:space-between;padding:8px 10px;border-bottom:1px dashed var(--line);font-size:11.5px}
+.create-summary span{color:var(--muted-2)}
+.create-summary b{color:var(--text)}
+
+@media(max-width:1050px){.sop-overview{grid-template-columns:repeat(3,minmax(0,1fr))}.sop-catalog{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}.sop-card{max-width:none}}
+@media(max-width:720px){.sop-overview{grid-template-columns:1fr 1fr}.sop-toolbar{align-items:flex-start;gap:10px;flex-direction:column}.sop-toolbar-filters{width:100%;margin-left:0}.sop-toolbar .select{min-width:0;flex:1}}
+
+/* 通用模板：平台提供的只读 SOP 蓝图 */
+.sop-card.generic{border-color:color-mix(in srgb,var(--blue) 26%,var(--line));background:linear-gradient(180deg,color-mix(in srgb,var(--blue) 4%,var(--panel)),var(--panel) 46%)}
+.sop-status.generic{color:var(--blue);background:var(--blue-soft)}
+.sop-card .sop-requirements{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.req-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);font-size:10px;font-weight:700;white-space:nowrap}
+.req-chip.ok{border-color:color-mix(in srgb,var(--green) 34%,var(--line));background:color-mix(in srgb,var(--green) 10%,var(--panel));color:color-mix(in srgb,var(--green) 72%,var(--text))}
+.req-chip.missing{border-color:color-mix(in srgb,var(--amber) 40%,var(--line));background:color-mix(in srgb,var(--amber) 12%,var(--panel));color:color-mix(in srgb,var(--amber) 74%,var(--text))}
+.scope-share.adopt-action{height:30px;padding:0 12px;border-radius:8px;border-color:color-mix(in srgb,var(--blue) 32%,var(--line));background:color-mix(in srgb,var(--blue) 8%,var(--panel));color:var(--blue);font-size:11px;letter-spacing:0}
+.scope-share.adopt-action:hover{border-color:var(--blue);background:var(--blue-soft)}
+
+/* 通用模板复制弹窗：依赖预检 */
+.generic-template-card{max-width:620px}
+.generic-structure{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 4px}
+.generic-structure span{padding:4px 9px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted);font-size:10.5px;font-weight:700}
+.generic-structure span.highlight{border-color:color-mix(in srgb,var(--blue) 34%,var(--line));background:var(--blue-soft);color:var(--blue)}
+.generic-requirement-head{display:flex;flex-direction:column;gap:3px;margin:16px 0 8px}
+.generic-requirement-head b{font-size:12px;color:var(--text)}
+.generic-requirement-head span{font-size:10.5px;color:var(--muted-2);line-height:1.5}
+.generic-requirements{display:grid;gap:8px}
+.req-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:var(--bg-soft)}
+.req-row.missing{border-color:color-mix(in srgb,var(--amber) 34%,var(--line))}
+.req-row .req-mark{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;border-radius:50%;font-size:11px;font-weight:800;background:var(--panel-2);color:var(--muted)}
+.req-row.ok .req-mark{background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)}
+.req-row.missing .req-mark{background:color-mix(in srgb,var(--amber) 18%,transparent);color:color-mix(in srgb,var(--amber) 80%,var(--text))}
+.req-row>div{flex:1;min-width:0}
+.req-row b{display:block;font-size:12px;color:var(--text)}
+.req-row p{margin:2px 0 0;font-size:10.5px;color:var(--muted-2);line-height:1.5}
+.req-row .req-state{font-size:10px;font-weight:750;color:var(--muted-2);white-space:nowrap}
+.req-row.ok .req-state{color:var(--green)}
+.req-row.missing .req-state{color:color-mix(in srgb,var(--amber) 78%,var(--text))}
+
+.sop-playbooks{width:100%;max-width:840px;display:flex;flex-direction:column;gap:12px;padding:0 0 24px}
+.sop-playbook-list{display:flex;flex-direction:column;gap:10px}
+.sop-playbook-card{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:16px 18px;cursor:pointer}
+.sop-playbook-card.is-open{border-color:var(--line-strong);box-shadow:0 0 0 1px color-mix(in srgb,var(--line-strong) 50%,transparent)}
+.sop-playbook-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.sop-playbook-head b{font-size:14px;color:var(--text)}
+.sop-playbook-head em{margin-left:8px;font-style:normal;font-size:10px;font-weight:700;color:var(--blue);background:color-mix(in srgb,var(--blue) 14%,transparent);padding:2px 6px;border-radius:999px;vertical-align:middle}
+.sop-playbook-head small{display:block;margin-top:4px;font-size:12px;color:var(--muted-2);line-height:1.45}
+.sop-playbook-acts{display:flex;gap:4px;flex:none;flex-wrap:wrap;justify-content:flex-end}
+.sop-playbook-body{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}

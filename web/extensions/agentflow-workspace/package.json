@@ -1,0 +1,49 @@
+{
+  "name": "workspace",
+  "displayName": "AgentFlow Run Workspace",
+  "description": "SOP run workspace with explicit human takeover for VS Code for the Web",
+  "version": "1.5.0",
+  "publisher": "agentflow",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "activationEvents": [
+    "onFileSystem:agentflow",
+    "onStartupFinished"
+  ],
+  "browser": "./extension.js",
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "enabledApiProposals": [
+    "fileSearchProvider",
+    "textSearchProvider",
+    "scmHistoryProvider"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentflow.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentflow.newTerminal",
+        "title": "新建任务终端",
+        "icon": "$(terminal)"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "agentflow.refresh",
+          "group": "navigation@99",
+          "when": "view == workbench.scm"
+        }
+      ]
+    }
+  }
+}

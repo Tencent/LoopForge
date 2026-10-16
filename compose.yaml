@@ -1,0 +1,56 @@
+name: loopforge
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: loopforge
+      MYSQL_USER: loopforge
+      MYSQL_PASSWORD: ${LOOPFORGE_DB_PASSWORD:?Run scripts/configure.sh first}
+      MYSQL_ROOT_PASSWORD: ${LOOPFORGE_DB_ROOT_PASSWORD:?Run scripts/configure.sh first}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    ports:
+      - "127.0.0.1:${LOOPFORGE_MYSQL_PORT:-33315}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysqladmin ping -h 127.0.0.1 -u loopforge --silent"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  platform:
+    profiles: [platform]
+    build: .
+    ports:
+      - "${LOOPFORGE_BIND:-127.0.0.1}:${AGENTFLOW_HTTP_PORT:-8090}:8080"
+    environment:
+      AGENTFLOW_HTTP_PORT: 8080
+      AGENTFLOW_MYSQL_DSN: loopforge:${LOOPFORGE_DB_PASSWORD}@tcp(mysql:3306)/loopforge
+      AGENTFLOW_SESSION_SECRET: ${AGENTFLOW_SESSION_SECRET:?Run scripts/configure.sh first}
+      AGENTFLOW_AUTH_REQUIRED: "true"
+      AGENTFLOW_ALLOW_SIGNUP: ${AGENTFLOW_ALLOW_SIGNUP:-true}
+      AGENTFLOW_SECURE_COOKIES: ${AGENTFLOW_SECURE_COOKIES:-false}
+      AGENTFLOW_ASSISTANT_SESSION_DIR: /data/assistant
+      AGENTFLOW_CLARIFY_SESSION_DIR: /data/clarify
+      AGENTFLOW_ASSISTANT_MODEL: ${AGENTFLOW_ASSISTANT_MODEL:-}
+      AGENTFLOW_ASSISTANT_MODELS: ${AGENTFLOW_ASSISTANT_MODELS:-}
+      AGENTFLOW_PREVIEW_PUBLIC_URL: ${AGENTFLOW_PREVIEW_PUBLIC_URL:-}
+      AGENTFLOW_PLATFORM_MCP_URL: ${AGENTFLOW_PLATFORM_MCP_URL:-http://platform:8080}
+      AGENTFLOW_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-loopforge}_default
+      AGENTFLOW_LOCAL_SANDBOX: docker
+      HOME: ${LOOPFORGE_DATA_DIR:?Run scripts/configure.sh first}/home
+      AGENTFLOW_RUNNER_BINARY: /app/bin/agentflow-runner-{os}-{arch}
+      AGENTFLOW_GATE_MCP_BINARY: /app/bin/agentflow-gate-mcp-{os}-{arch}
+    command: ["-workspaces", "${LOOPFORGE_DATA_DIR}/workspaces"]
+    volumes:
+      - platform-data:/data
+      # Docker sandboxes bind workspace paths on the host, so the data
+      # directory keeps the same absolute path inside the container.
+      - ${LOOPFORGE_DATA_DIR}:${LOOPFORGE_DATA_DIR}
+      - ${LOOPFORGE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  mysql-data:
+  platform-data:

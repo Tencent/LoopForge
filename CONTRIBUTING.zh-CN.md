@@ -1,23 +1,36 @@
-# Contributing
+# 参与贡献
 
-[English](CONTRIBUTING.md) | 简体中文
+平台代码位于仓库根目录，原本地工作流版本位于 `local/`。开始修改前请阅读对应的 `AGENTS.md`。
 
-感谢参与 LoopForge。
+平台改动应保留上游 engine、repo 与 handler 的分层；身份、外部提供商和部署差异应通过明确适配实现。修复行为问题时附带回归测试，说明 schema 与 runner 协议兼容性。
 
-## 开发流程
+```bash
+go test -p=2 ./... -count=1 -timeout=180s
+go vet ./...
+python3 scripts/check-public.py
+python3 scripts/check-upstream.py
+bash scripts/scan-secrets.sh
+```
 
-1. 从功能分支开始修改。
-2. Classic/Portable 工作流模板保持通用，不要在其中写入特定组织、仓库或云资源信息。`tools/` 下的产品工具（如 `tools/tcmcp`）可以面向公有云产品，但不得包含内网域名、真实资源 ID 或凭据。
-3. 不提交任何凭据、本地权限配置或生产数据。
-4. 先标明改动属于 Classic、Portable 或共享行为合同。Portable 只修改 `skills/`；Classic 的 `.cursor/.claude` 不直接修改，运行 `build-classic-hosts.py --write`。
-5. 修改共享工作流契约时分别说明两个 edition 的影响；不要在二者之间复制运行文件。
-6. 提交前运行 `bash scripts/validate.sh`、`bash scripts/smoke-install.sh`、`bash scripts/e2e.sh`；修改 agent-observability 时再运行 `bash scripts/test-observability.sh`。E2E 用假宿主 Agent 和录制的阶段产物驱动已安装的工作流，不需要 API Key，说明见 [tests/e2e/README.md](tests/e2e/README.md)。
+有意修改上游适配文件时，评审后更新 `upstream-overrides.json` 中的哈希和原因。禁止只改来源 SHA 而没有导入相应代码。长期流程见[同步方案](docs/upstream-sync.md)。
 
-## Pull Request 要求
+登录、语言/主题或执行链路的改动需要跑[公共浏览器验收](e2e/public/README.md)。真实模型与外部知识库测试需显式配置；请区分通过、失败、跳过与未运行。
 
-- 说明改动解决的问题和适用运行时。
-- 列出行为变化、兼容性影响和验证结果。
-- 新增第三方内容时补充来源、许可证和修改说明。
-- 不要把内部部署或运维能力放进 Classic/Portable 模板；未开源的运维能力使用单独的私有扩展。面向公开用户的可选工具放在 `tools/`，不要打进宿主工作流包。
+LoopForge Local 请在 `local/` 内修改，遵循[本地开发约定](local/AGENTS.md)。先明确改动属于 Classic、Portable 或共享行为合同；三者与平台运行资产保持清晰边界。Portable 修改 `local/skills/`；Classic 的 Cursor/Claude 包在 `local/` 内运行 `python3 scripts/build-classic-hosts.py --write` 生成。工作流模板保持通用，可选工具放在 `local/tools/`，单独分发。
 
-提交信息建议遵循 Conventional Commits，例如 `feat: add workflow checkpoint validation`。
+在 `local/` 内执行本地版检查：
+
+```bash
+python3 scripts/build-classic-hosts.py --check
+bash scripts/validate.sh
+bash scripts/smoke-install.sh
+bash scripts/smoke-npm.sh
+bash scripts/smoke-curl-install.sh
+bash scripts/e2e.sh
+bash scripts/test-observability.sh
+bash scripts/scan-secrets.sh
+```
+
+[本地 E2E](local/tests/e2e/README.md) 使用模拟宿主与录制产物，无需模型凭据。分别说明对各工作流的影响，保留既有权限语义和用户文件保护；提交信息遵循 Conventional Commits。
+
+PR 不应包含凭据、内部基础设施、员工权限默认值或生产数据。保留用户文件和第三方许可，并记录贡献来源。PR 说明应写清问题、最终行为和实际验证结果。

@@ -1,16 +1,26 @@
 # Changelog
 
-English | [简体中文](CHANGELOG.zh-CN.md)
+## Unreleased — platform edition
 
-## 0.2.2
+- Import the platform implementation from the master commit recorded in `upstream.json`, including Main Bot workspace editing, durable workspace checkpoints, idle reclamation, and task-group SOP completion/reopening.
+- Add public password accounts, explicit catalog installation, GitHub issue/PR adapters, actor-scoped GitHub MCP credentials, language and theme preferences, local deployment and public acceptance checks.
+- Integrate the original workflows as LoopForge Local under `local/`, with unified documentation, project policies and release history.
+
+This is a local review candidate; no platform release has been published.
+
+## Local workflow release history
+
+The following releases predate the platform edition.
+
+### 0.2.2
 
 - Keep executable bits when installing Classic host files so `run_hook.sh` can run after `npx loopforge-cli install`, restoring Agent Observability collection.
 
-## 0.2.1
+### 0.2.1
 
 - Added `tools/tcmcp`, a Tencent Cloud read-only MCP Initializr that is documented and run separately from `loopforge install`. LoopForge version tags also publish `ghcr.io/tencent/loopforge-tcmcp`.
 
-## 0.2.0
+### 0.2.0
 
 - Added an opt-in local observability dashboard for Classic DevFlow runs on CodeBuddy, Cursor, and Claude Code.
 - Added local metrics for tool latency, transcript token usage, session cost, agent attribution, and DevFlow stage progress.
@@ -19,7 +29,7 @@ English | [简体中文](CHANGELOG.zh-CN.md)
 - Fixed generated Classic bundle validation so Python cache files are not reported as unmanaged content.
 - Made release workflows retryable from an existing version tag.
 
-## 0.1.0
+### 0.1.0
 
 - Rewrote English and Chinese READMEs to highlight project value, quick start, workflow, and edition selection.
 - Promoted the first public release to a stable version and unified npm, Python, CLI, and release validation versions.

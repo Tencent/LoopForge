@@ -4,6 +4,8 @@ Describe the user problem and the resulting behavior.
 
 ## Scope
 
+- [ ] Platform core / API / runner
+- [ ] Public adapter / deployment
 - [ ] Classic
 - [ ] Portable
 - [ ] Shared behavior contract
@@ -19,9 +21,13 @@ List affected hosts and any migration or backward-compatibility impact.
 List commands that were actually run and mark anything blocked or not run.
 
 ```text
-bash scripts/validate.sh
-bash scripts/smoke-install.sh
-bash scripts/e2e.sh
+go test -p=2 ./... -count=1 -timeout=180s
+go vet ./...
+python3 scripts/check-public.py
+python3 scripts/check-upstream.py
+bash local/scripts/validate.sh
+bash local/scripts/smoke-install.sh
+bash local/scripts/e2e.sh
 bash scripts/scan-secrets.sh
 ```
 

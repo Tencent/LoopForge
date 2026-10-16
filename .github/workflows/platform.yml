@@ -1,0 +1,134 @@
+name: platform
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - run: go test -p=2 ./... -count=1 -timeout=180s
+      - name: Install pinned CLIs for local protocol acceptance
+        run: npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
+      - name: Check real CLI credentials, MCP, stream parsing and native-tool restrictions
+        env:
+          AGENTFLOW_TEST_NATIVE_PROVIDERS: '1'
+        run: go test -p=2 ./internal/httpapi ./internal/runtime -run 'TestAssistantNativeProviderGateway|TestNativeProviderCustomGateway' -count=1 -v
+      - run: go vet ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - run: python3 scripts/collect-go-notices.py
+      - run: python3 scripts/check-public.py
+      - run: python3 scripts/check-upstream.py
+      - run: bash scripts/scan-secrets.sh
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AGENTFLOW_E2E_TOKEN_FILE: ${{ github.workspace }}/e2e/.auth/api-token
+      AGENTFLOW_E2E_DOCKER: '1'
+      LOOPFORGE_UNCONFIGURED_USER: e2e-no-key
+      LOOPFORGE_UNCONFIGURED_PASSWORD_FILE: ${{ github.workspace }}/.local/no-key-password
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: e2e
+      - run: npm audit --audit-level=high
+        working-directory: e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - name: Start clean local installation
+        run: |
+          bash scripts/dev.sh > /tmp/loopforge.log 2>&1 &
+          for attempt in $(seq 1 300); do
+            if curl -fsS http://127.0.0.1:8090/api/health; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/loopforge.log
+          exit 1
+      - name: Provision account without model credentials
+        run: |
+          python3 -c 'import pathlib,secrets; p=pathlib.Path(".local/no-key-password"); p.write_text(secrets.token_urlsafe(20)); p.chmod(0o600)'
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const base=process.env.AGENTFLOW_E2E_BASE || 'http://127.0.0.1:8090';
+          const password=fs.readFileSync(process.env.LOOPFORGE_UNCONFIGURED_PASSWORD_FILE,'utf8').trim();
+          const response=await fetch(base+'/api/auth/register',{
+            method:'POST',headers:{Origin:base,'Content-Type':'application/json'},
+            body:JSON.stringify({login:process.env.LOOPFORGE_UNCONFIGURED_USER,password}),
+          });
+          if(!response.ok)throw new Error('Acceptance signup: HTTP '+response.status);
+          const {user,admin}=await response.json();
+          if(admin)throw new Error('Acceptance account must be an ordinary member');
+          const cookie=response.headers.get('set-cookie').split(';')[0];
+          const project=await fetch(base+'/api/projects/welcome',{headers:{Cookie:cookie}}).then(r=>r.json());
+          if(!project.members?.some(member=>member.userId===user.id))throw new Error('Acceptance account did not join the welcome project');
+          JS
+      - run: node e2e/setup-auth.mjs
+      - run: node --test --test-concurrency=1 --test-reporter=spec e2e/api/*.test.mjs
+      - run: npx playwright test --config playwright.config.mjs
+        working-directory: e2e
+      - run: npx playwright test --config public/playwright.config.mjs
+        env:
+          LOOPFORGE_UNCONFIGURED_USER: e2e-no-key
+          LOOPFORGE_UNCONFIGURED_PASSWORD_FILE: ${{ github.workspace }}/.local/no-key-password
+        working-directory: e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: platform-browser-results
+          path: e2e/test-results/
+          if-no-files-found: ignore
+  first-run:
+    # The path a new user takes: one-command install, then accounts created in the browser.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LOOPFORGE_TEST_URL: http://127.0.0.1:8090
+      LOOPFORGE_UNCONFIGURED_USER: e2e-no-key
+      LOOPFORGE_UNCONFIGURED_PASSWORD_FILE: ${{ github.workspace }}/.local/no-key-password
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - run: bash scripts/install.sh
+      - name: Generate test passwords
+        run: |
+          mkdir -p .local
+          python3 -c 'import pathlib,secrets
+          for n in ("admin-password","no-key-password"):
+              p=pathlib.Path(".local")/n; p.write_text(secrets.token_urlsafe(20)); p.chmod(0o600)'
+      - run: npx playwright test --config public/playwright.config.mjs 00-first-run
+        env:
+          LOOPFORGE_FRESH_INSTALL: '1'
+        working-directory: e2e
+      - run: npx playwright test --config public/playwright.config.mjs
+        working-directory: e2e
+      - if: failure()
+        run: docker compose logs platform | tail -200
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: first-run-results
+          path: e2e/test-results/
+          if-no-files-found: ignore
