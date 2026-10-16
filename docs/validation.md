@@ -10,6 +10,8 @@ Node 22 API acceptance passed **100 tests, 13 skipped, 0 failed**. With Git 2.55
 
 After those fixes, hosted `core`, E2E (including its required gate) and fresh-install checks passed. The API suite then reached a previously blocked Docker case: the non-root host service owned a `0700` workspace, while the root image with all capabilities dropped could not enter it. Default/root images now use the native service UID/GID when that service is non-root; explicit non-root image users are retained. A real Docker regression as UID 1001 reproduced the original `cd /workspace` failure and passed after the fix for both normal commands and isolated scripts, checking host-readable output, unchanged `0700` permissions, zero effective capabilities and `NoNewPrivs=1`. Evidence: ignored `.local/ci-docker-owner/before.log` and `after.log`. Runtime/script-view package tests and runtime vet also passed. No sandbox test was disabled.
 
+With the Docker fix, hosted API and broad UI checks passed. Public UI checks then exposed a fixture difference: the native job's administratively provisioned no-key user lacked welcome-project membership, unlike a self-registered user. CI now provisions that account through the normal signup endpoint and verifies both ordinary-user status and welcome membership. The exact workflow signup code and five affected reference/demo browser cases passed against a fresh acceptance account. This changes test setup only; project authorization remains enforced. Evidence: ignored `.local/ci-signup-browser.log`.
+
 ## Final PR submission checks — 2026-10-16
 
 The owner requested a final source review and public PR submission. The candidate was checked again, with these results:
