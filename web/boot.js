@@ -1,4 +1,6 @@
 // Apply preferences before paint, using the same keys as the runtime controls.
+// i18n.js replaces this. Boot must still render if that script fails to load.
+window.lfT = window.lfT || ((zh) => zh);
 (() => {
   const root = document.documentElement;
   let theme = 'light', lang = 'zh';

@@ -1,18 +1,14 @@
 import {test,expect} from '@playwright/test';
-import fs from 'node:fs';
-import {password as adminPassword} from './helpers.mjs';
+import {password as adminPassword, signInUnconfigured} from './helpers.mjs';
 
 // Credential UI must never enter a Playwright trace or screenshot artifact.
 test.use({trace:'off',screenshot:'off'});
 
 test('a user without model credentials can draft, configure credentials and return without losing text',async({page})=>{
-  test.skip(!process.env.LOOPFORGE_UNCONFIGURED_USER,'Provision a password account without model credentials for this regression');
-  const password=process.env.LOOPFORGE_UNCONFIGURED_PASSWORD || fs.readFileSync(process.env.LOOPFORGE_UNCONFIGURED_PASSWORD_FILE,'utf8').trim();
-  await page.goto('/login.html');
-  await page.locator('[name="login"]').fill(process.env.LOOPFORGE_UNCONFIGURED_USER);
-  await page.locator('[name="password"]').fill(password);
-  await page.locator('button[type="submit"]').click();
-  await expect(page.locator('#projectSwitcher')).toBeVisible();
+  await signInUnconfigured(page);
+  // #projectSwitcher is static HTML and appears before scripts finish. Wait for
+  // the assistant itself so a second navigation cannot abort boot mid-parse.
+  await expect(page.locator('#aiAssistant .ai-compose-input')).toBeEnabled();
   await page.goto('/#/collaboration');
   const current=await page.request.get('/api/auth/current').then(r=>r.json());
   const path=`/api/users/${current.user.id}/credentials`;

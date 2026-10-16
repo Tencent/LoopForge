@@ -1073,7 +1073,7 @@
       "reason": "Document real public browser acceptance, credential-free draft regression, opt-in model chat and isolated container checks. Document fresh-install acceptance, pinned native-provider protocol tests and scoped cleanup."
     },
     "e2e/public/composer.spec.mjs": {
-      "sha256": "379af9487ee86b327205dc43442a4005fd44a0f683a12a2338a38b6f36452baa",
+      "sha256": "1df3a510bf9b5f10bed6489856e61da658e8138cf725cb0db05164d402dbbd01",
       "reason": "Real browser regressions for pre-credential drafts, settings activation, actual model replies and persisted conversations without credential traces."
     },
     "e2e/public/helpers.mjs": {
@@ -1193,7 +1193,7 @@
       "reason": "Onboarding demo run and run detail tour."
     },
     "web/boot.js": {
-      "sha256": "40b043a02d7a2ce9fc1cbc38b7daad64a275ddb5d00585d7e7dc3764ecd007b9",
+      "sha256": "50a28080637e1133e806360ac360c87f67f0b52e765a73d7de8688e4c6d6769c",
       "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
     },
     "web/i18n-en.js": {
