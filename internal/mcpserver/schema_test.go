@@ -39,3 +39,21 @@ func TestDraftContractRejectsMissingImportURLAndAcceptsRepositoryPaste(t *testin
 		t.Fatal("repository without identity accepted")
 	}
 }
+
+func TestPublicRepositoryToolSupportsGitHub(t *testing.T) {
+	for _, op := range application.PublicOperations() {
+		if op.Name != "repositories_save" {
+			continue
+		}
+		if !strings.Contains(op.Description, "GitHub") || strings.Contains(op.Description, "Gongfeng") {
+			t.Fatalf("misleading public tool description: %s", op.Description)
+		}
+		if err := ValidateToolInput(op, map[string]any{"body": map[string]any{
+			"projectId": "p", "repoUrl": "https://github.com/Tencent/LoopForge", "provider": "github",
+		}}); err != nil {
+			t.Fatalf("public GitHub tool call rejected: %v", err)
+		}
+		return
+	}
+	t.Fatal("repositories_save is missing")
+}

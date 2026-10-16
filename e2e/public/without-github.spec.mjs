@@ -35,7 +35,15 @@ async function removeRun(page,id){
     await page.request.post(`/api/runs/${id}/cancel`,{data:{}});
     await expect.poll(async()=>(await readRun(page,id)).status,{timeout:15_000}).toMatch(/^(succeeded|failed|cancelled|rejected)$/);
   }
-  const removed=await page.request.delete(`/api/runs/${id}`);expect(removed.ok()).toBe(true);
+  // Terminal workspace cleanup may overlap the delete request; wait for
+  // the real deletion to succeed rather than failing on that short race.
+  await expect.poll(async()=>{
+    const removed=await page.request.delete(`/api/runs/${id}`);
+    if(removed.ok())return true;
+    const detail=await removed.text();
+    if(removed.status()===400&&/no such file|directory not empty|工作区正在使用或保存/.test(detail))return false;
+    throw new Error(`Run cleanup failed: HTTP ${removed.status()} ${detail}`);
+  },{timeout:10_000}).toBe(true);
 }
 
 test('a script and human approval run without a model key, GitHub repository or Git token',async({page})=>{
@@ -49,10 +57,38 @@ test('a script and human approval run without a model key, GitHub repository or 
     expect(run.artifacts.some(a=>a.name==='welcome')).toBe(true);
     const approved=await page.request.post(`/api/runs/${runId}/approve`,{data:{nodeId:'approve'}});expect(approved.ok()).toBe(true);
     await expect.poll(async()=>(await readRun(page,runId)).status,{timeout:30_000}).toBe('succeeded');
-    // Repository-dependent delivery remains explicitly gated.
-    const delivery=await page.request.post('/api/runs',{data:{projectId,workflowId:'generic-backend-delivery',input:'Check preconditions only'}});
-    expect(delivery.status()).toBe(409);expect((await delivery.json()).code).toBe('repository_required');
+
   }finally{await removeRun(page,runId)}
+});
+
+test('all generic SOPs can start without a GitHub repository or token',async({page})=>{
+  const {projectId}=await setup(page);
+  const workflowId=`e2e-product-documents-${Date.now().toString(36)}`;
+  let runId='',copied=false;
+  try{
+    await page.reload();
+    await page.locator('#projectSwitcher').selectOption(projectId);
+    await page.locator('.nav[data-view="sops"]').click();
+    await page.locator('[data-scope-for="sop"] [data-scope="generic"]').click();
+    for(const id of ['generic-product-delivery','generic-backend-delivery','generic-frontend-delivery','issue-fix-production']){
+      const card=page.locator(`article.sop-card[data-adopt-generic="${id}"]`);
+      await expect(card).toBeVisible();
+      await expect(card.locator('.req-chip').filter({hasText:'GitHub'})).toHaveCount(0);
+    }
+    const clone=await page.request.post('/api/workflows/generic-product-delivery/clone',{data:{id:workflowId,name:'E2E product documents',projectId}});
+    expect(clone.ok()).toBe(true);copied=true;
+    // Missing model credentials may fail execution, but must never block
+    // admission with repository_required or attach a Git repository.
+    for(const id of ['generic-product-delivery','generic-backend-delivery','generic-frontend-delivery','issue-fix-production',workflowId]){
+      const created=await page.request.post('/api/runs',{data:{projectId,workflowId:id,input:'Check repository-free admission only'}});
+      expect(created.status()).toBe(201);
+      const run=await created.json();runId=run.id;expect(run.repositories||[]).toEqual([]);
+      await removeRun(page,runId);runId='';
+    }
+  }finally{
+    await removeRun(page,runId);
+    if(copied)expect((await page.request.delete(`/api/workflows/${workflowId}`)).ok()).toBe(true);
+  }
 });
 
 test('a real Agent generates a document with a model key and no GitHub repository or token',async({page})=>{

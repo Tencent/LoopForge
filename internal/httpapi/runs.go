@@ -105,12 +105,8 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			return
 		}
 		var repositories []domain.RepositoryContext
-		if wf, ok := h.repo.Workflow(req.WorkflowID); ok && wf.Generic {
+		if wf, ok := h.repo.Workflow(req.WorkflowID); ok && wf.Generic && strings.TrimSpace(project.DefaultRepositoryID) != "" {
 			repositoryID := strings.TrimSpace(project.DefaultRepositoryID)
-			if repositoryID == "" {
-				c.JSON(http.StatusConflict, map[string]string{"error": "这个 SOP 需要代码仓库，请先为项目绑定默认 GitHub 仓库", "code": "repository_required"})
-				return
-			}
 			repoDef, found := h.repo.Repository(repositoryID)
 			if !found || repoDef.ProjectID != req.ProjectID {
 				c.JSON(http.StatusConflict, map[string]string{"error": "项目默认代码仓库无效，请重新绑定", "code": "repository_required"})

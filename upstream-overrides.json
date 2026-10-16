@@ -39,8 +39,8 @@
       "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
     },
     "docs/api/openapi.yaml": {
-      "sha256": "ac7972c5d49535414351626b205b6c206e72da9e4e97661210d105d390f877fc",
-      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+      "sha256": "d8ff36ffc44e0ad977bc95eaa23970be299eece3e3e833b3bde6a2a666e8cd43",
+      "reason": "Describe GitHub repository inputs truthfully and document direct, repository-optional generic SOP execution for assistant tool schemas."
     },
     "docs/api/orchestration.md": {
       "sha256": "92d205b0f2a0cac565c656e58aabd2cfb7e7110837098006fd68fb8b6676fb5c",
@@ -67,8 +67,8 @@
       "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
     },
     "e2e/api/30-runs.test.mjs": {
-      "sha256": "4fe5cdd7ab74a4e622bdf9eca6baf275618f16ac422c1b02f32b4f8a9218dfb8",
-      "reason": "Expect the repository_required error code."
+      "sha256": "75cdfe363bd3af10bc1bbebdf24fc9e16a81dee95a72ec2d4b4508830a9b800f",
+      "reason": "Keep invalid workflow/project checks and verify repository-free generic SOP admission instead of the obsolete blanket repository rejection."
     },
     "e2e/api/36-cloud-pool.test.mjs": {
       "sha256": "266fb0b7fffe5f6bc132694440351aa7ac5ebe92ee7bb16292b54aa44be371b9",
@@ -111,8 +111,8 @@
       "reason": "Dependency security updates for the public release."
     },
     "internal/application/operations.go": {
-      "sha256": "9165095bbbfeca5316aca1f767e39fc970a3b868c10f888da6510785e94a6e24",
-      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+      "sha256": "89dac478228d7a411d7adcaca929eb19ced5280c7d65282c5752f64fac90fa74",
+      "reason": "Use public GitHub capability descriptions and runtime-dependent repository guidance; remove private-service assumptions from assistant defaults and repository errors."
     },
     "internal/auth/client.go": {
       "sha256": "9f1b67ccdb2878003a5166837683830b47fb220e15d1be84e38b3c61a6fccdbc",
@@ -239,8 +239,8 @@
       "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
     },
     "internal/httpapi/assistant.go": {
-      "sha256": "df846ca4a49fe5f67fb043124ea4d0ffe26aca0d5818bfd5ae691b9f83ac062a",
-      "reason": "Public deployment/default configuration and removal of organization-specific fixture data. Persist the assistant process; recommend SOPs in ordinary chat. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+      "sha256": "557cf8c5cdbc5542268543e9e9d47568d5e2fd750c94f254f832e7e7e66d3ec7",
+      "reason": "Use public GitHub capability descriptions and runtime-dependent repository guidance; remove private-service assumptions from assistant defaults and repository errors."
     },
     "internal/httpapi/assistant_acceptance.go": {
       "sha256": "79c2653277dc0c71d01adc4890e065ecfb9d675e04c79cce9dac7a6c77acc278",
@@ -255,8 +255,8 @@
       "reason": "Pin the model list used by the preemption test."
     },
     "internal/httpapi/assistant_mcp.go": {
-      "sha256": "7c430809a256b37941a03c0e4f0a081eae8665dc9d88e12f2d71876a193daeed",
-      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+      "sha256": "2723dcee14b55f2c22c8ed478c824d491f4ebdd6209a561ae3dc98ba7f0ca362",
+      "reason": "Use public GitHub capability descriptions and runtime-dependent repository guidance; remove private-service assumptions from assistant defaults and repository errors."
     },
     "internal/httpapi/assistant_models.go": {
       "sha256": "c7ae94bdafed588cac098ff5d3c7b7c11729edce475b2d8be48e5ee11890efdb",
@@ -283,8 +283,8 @@
       "reason": "Public password/session authentication; explicit user administration and regression coverage."
     },
     "internal/httpapi/catalog.go": {
-      "sha256": "ed69f42035a962dcd6d7198fa4cdba82bb3a3c438ed78a4aa4d081460ebfd114",
-      "reason": "Public deployment/default configuration and removal of organization-specific fixture data; restrict repository writes to the project owner or a platform administrator (public self sign-up). Repository host source paths are admin-only; project-scoped repository permissions. Requirement, role, SOP and run writes require project membership."
+      "sha256": "82418d8153cf878351b0f208aa9f1ad11440b72689fb25c92aa47e30ae46c779",
+      "reason": "Use public GitHub capability descriptions and runtime-dependent repository guidance; remove private-service assumptions from assistant defaults and repository errors."
     },
     "internal/httpapi/catalog_test.go": {
       "sha256": "ce753665736de890286ebd93ba071418377f6f00d4267ab42a573c257fc0f42a",
@@ -323,8 +323,8 @@
       "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
     },
     "internal/httpapi/generic_workflows_test.go": {
-      "sha256": "2edef4b260caa3903d9ae672c88b9e931d40c7ccd00537dd2d731cc8e1ae8433",
-      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+      "sha256": "17af7ac70cf46957cbc948e7a31077f0efe0462a19cdbd1b25082eff0944ab8b",
+      "reason": "Verify generic SOPs and project copies execute scripts and archive artifacts without repository or Git credentials; retain coverage of configured repository snapshots."
     },
     "internal/httpapi/git_token_verify.go": {
       "sha256": "aba35ec2d06ad9825944d116cab04ed7f239f41185a37993cf9865d27fa8684d",
@@ -375,8 +375,8 @@
       "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
     },
     "internal/httpapi/runs.go": {
-      "sha256": "a2c7c1c21e492e22673842c48ed907fd61b7f3dd4e5b8fac3fa30258bd0c76fb",
-      "reason": "Public deployment/default configuration and removal of organization-specific fixture data. Machine-readable repository_required error. Requirement, role, SOP and run writes require project membership."
+      "sha256": "3a73d6569c4f8c4c9244ab2167ec3fa1b0e78a3a687b491f178ff4694e4e79e4",
+      "reason": "Allow generic SOPs to run in their task workspace without a repository; retain project membership, responsible-user checks and validation of configured default repositories."
     },
     "internal/httpapi/schedule_test.go": {
       "sha256": "24add9a0924a4a2edc2e0cab82f860f6c59d7d28fbc62cae50af142a97ad0af7",
@@ -407,8 +407,8 @@
       "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
     },
     "internal/mcpserver/schema_test.go": {
-      "sha256": "306d34efce13bc9a1c455c14075c13ade5667dfb97d874c14b15fa4d028ccb85",
-      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+      "sha256": "37a9789475661715299baf25337d6d26a516859a00fb6454481edf486c2577cb",
+      "reason": "Verify the public repository tool accepts a real GitHub URL and github provider through its generated input schema."
     },
     "internal/preview/config.go": {
       "sha256": "f7964d08dce00907edeb540031eb03442c44c6df37608126e8a9151cf23d46f6",
@@ -615,8 +615,8 @@
       "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
     },
     "web/app/sops.js": {
-      "sha256": "811a8381d37375b3524a0f6ffb0643c4c497dcfab0afa984df7083a6ad16a4f4",
-      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data. Show run requirements (API key, repository, Docker) on SOP cards. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+      "sha256": "33b7cb4bffdce51e416395aefe2f726e1b9b20dcb1fb647106e262da8441e35c",
+      "reason": "Show a repository only when bound; do not treat optional repository binding or Git credentials as a universal SOP prerequisite."
     },
     "web/app/sync-schedule.js": {
       "sha256": "20ff3b1e1488bc244a2401ce15ee589d57bd941078633c9dff6573d3c4a430f8",
@@ -1017,6 +1017,18 @@
     "internal/gitwork/workbranch.go": {
       "sha256": "0e7745c66247c4a9db5cbc949731a7ef945552889b07be0b23687cd23885a36a",
       "reason": "Treat an empty eligible Git index as a no-op before add -u, preserving excluded paths and staging errors; fixes Git 2.55 rejection of unmatched pathspecs."
+    },
+    "internal/engine/run_start.go": {
+      "sha256": "79391f77ec47de26344e4e50f8bacb617fb9e0479cdaf2bc066b69e27a4c278f",
+      "reason": "Remove the blanket generic-template repository prerequisite while retaining project validation and repository-specific execution checks."
+    },
+    "internal/httpapi/agent_tool_mcp.go": {
+      "sha256": "8a02646f2a2cebf0cd7f80a62aad189163c5d8224352676854f67729bc72c8f3",
+      "reason": "Use public GitHub capability descriptions and runtime-dependent repository guidance; remove private-service assumptions from assistant defaults and repository errors."
+    },
+    "internal/httpapi/rooms_test.go": {
+      "sha256": "8a83bb8fa2e4a0aa34076d7b63296f4da3106be1af913aa94045174c2a2fa9a6",
+      "reason": "Update existing generic-dispatch regression to verify successful repository-free issue dispatch."
     }
   },
   "added": {
@@ -1165,8 +1177,8 @@
       "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
     },
     "migrations/seed/001_public_catalog.sql": {
-      "sha256": "139f39773848336cd755fbb0114445e6476107f978c1a68d8d3664a5e85e13be",
-      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+      "sha256": "10dc5d5f43ee360820e953d8bdbf0bc53f426ce15671a5c8903395a4232c3db8",
+      "reason": "Public starter catalog with document-specific product prompts, optional workspace code delivery, explicit missing-source limits for bug fixes and conditional PR creation. Pass run input through explicit taskbooks; preserve any existing operator taskbook."
     },
     "migrations/seed/002_welcome_project.sql": {
       "sha256": "4d0e132985aad092a62a02a6bd7d004778c023f47056d550d1414f9a9e606a54",
@@ -1229,8 +1241,8 @@
       "reason": "Real browser/API regressions for viewport-contained reference menus on desktop, laptop, short windows and English/dark mobile; cover workbench scrolling, search/selection, resize, toolbar entry and Escape without model calls or writes."
     },
     "e2e/public/without-github.spec.mjs": {
-      "sha256": "1f56e158b6b46d00ba502e5179c7099c966009decd750bb64e09d0a09ce2990e",
-      "reason": "Real no-repository/no-Git-token acceptance: script and approval without model credentials, optional document-writing Agent with only a temporary model key, and continued gating of repository-dependent code delivery; cleans up runs, definitions and key."
+      "sha256": "af9c0a3877dab17f9f509b256fa418d7709c551b63fc6b5b54c64f2a63c34b42",
+      "reason": "Verify all four real generic templates and a product copy start without repository or Git token; check UI preconditions and wait for terminal workspace cleanup."
     },
     "internal/httpapi/assistant_provider.go": {
       "sha256": "298928bfce6f221f53e2316b315544f6d0005a92021c015ec274a8e6031d3a33",
@@ -1259,6 +1271,14 @@
     "internal/runtime/sandbox_owner_linux_test.go": {
       "sha256": "5d4dcadaa102e76ac86004edbfed4c4a6be567275242cb0ef33df6224c5124dc",
       "reason": "Real Docker regression run as a non-root native service user; verify private workspace access, script identity, output ownership, zero capabilities and no-new-privileges."
+    },
+    "migrations/016_public_optional_repositories.sql": {
+      "sha256": "49b8507bb6746f367a09b1c017d012c4d6e653b24bf4a3b943286e3d9ccc9cd7",
+      "reason": "Explicit repeatable SQL updates only original public SOP instruction fields; preserves operator edits and existing project copies. Pass run input through explicit taskbooks; preserve any existing operator taskbook."
+    },
+    "internal/repo/public_catalog_test.go": {
+      "reason": "Verify every public template passes the user run input to its execution roles.",
+      "sha256": "0a39c3427fd7dbaf2aa10ba4d3ff2766c8894bd1fc63d187d927bb9ca66ab2c2"
     }
   }
 }

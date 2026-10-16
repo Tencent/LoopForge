@@ -120,7 +120,7 @@ func agentToolInstructions(mode AgentToolMode) string {
 	case AgentToolReport:
 		return "只能基于提供的资料汇总本次 SOP，完成后调用 submit_notification_report。普通文本不算提交。"
 	case AgentToolClarify:
-		return "只读查询 TAPD/工蜂/iWiki/AgentFlow。本轮结束时调用 submit_clarification。"
+		return "只读查询 LoopForge 及当前项目已安装的外部 MCP。本轮结束时调用 submit_clarification。"
 	case AgentToolAssistant:
 		return "只读查询平台和外部 MCP。写入放进 submit_assistant_reply 的草稿，用户确认后才保存。普通问答和只读查询直接用自然语言回复，无需调用提交工具。"
 	case AgentToolScheduled:

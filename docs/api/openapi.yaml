@@ -3506,14 +3506,14 @@ components:
         id: {type: string}
         projectId: {type: string}
         name: {type: string}
-        repoUrl: {type: string, description: Gongfeng web or clone URL; derives name and project path}
+        repoUrl: {type: string, description: GitHub web/SSH/clone URL; derives name and repository identity}
         url: {type: string, description: Alias of repoUrl}
         webUrl: {type: string}
         cloneUrl: {type: string}
-        gongfengProjectId: {type: string, description: Gongfeng group/repository path}
+        gongfengProjectId: {type: string, description: Legacy wire field for repository identity; GitHub uses github:owner/repo. Prefer repoUrl.}
         defaultBranch: {type: string}
         integrateBranch: {type: string}
-        provider: {type: string, enum: [gongfeng]}
+        provider: {type: string, description: GitHub is inferred from repoUrl; legacy provider values remain compatible, example: github}
         pipelineProjectId: {type: integer}
         pipelineDefId: {type: integer}
     Repository:
@@ -3526,7 +3526,8 @@ components:
           type: string
         provider:
           type: string
-          enum: [gongfeng]
+          description: GitHub for public repositories; inferred from the repository URL
+          example: github
         name:
           type: string
         gongfengProjectId:
@@ -3925,14 +3926,16 @@ components:
           type: boolean
           description: >-
             Platform-provided, project-independent template. Generic templates are served from the
-            built-in catalog instead of the project database, are read-only (PUT/DELETE return 409),
-            and must be cloned into a project before they can be edited or run. Cloning one also
-            creates the roles it references in the target project.
+            platform catalog. They can run directly by reference in a project, or be cloned
+            for project-specific editing. Platform administrators can edit catalog templates;
+            other users cannot. Repository binding is optional: without a repository, tasks run
+            in their own workspace and deliver artifacts; creating a PR requires a target repository
+            and credentials. Cloning also creates the referenced roles in the target project.
         requirements:
           type: array
           description: >-
-            External capabilities the SOP needs at run time (for example a 工蜂 Git Token or a
-            project-scoped 工蜂 MCP). Studio renders them as a preflight checklist so users learn
+            External capabilities the SOP needs at run time (for example a GitHub token or a
+            project-scoped GitHub MCP). Studio renders them as a preflight checklist so users learn
             about the dependency before the first run.
           items:
             $ref: "#/components/schemas/WorkflowRequirement"
@@ -3958,10 +3961,9 @@ components:
         key:
           type: string
           description: Stable id the client maps to a live check.
-          enum: [gongfeng-git-token, gongfeng-mcp, taihu-pat]
         nodeId:
           type: string
-          description: Node that depends on the capability (for example the 发起 MR node).
+          description: Node that depends on the capability (for example a code delivery node).
         label:
           type: string
         hint:

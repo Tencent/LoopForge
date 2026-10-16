@@ -106,7 +106,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.LocalPath = existing.LocalPath
 		}
 	}
-	// One pasted Gongfeng reference (web / SSH / clone / git clone / group/repo)
+	// One pasted repository reference (web / SSH / clone / git clone / group/repo)
 	// is enough. Prefer repoUrl so an SSH paste keeps an SSH clone URL.
 	var parsed domain.GongfengRepoInfo
 	var parsedOK bool
@@ -147,7 +147,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		if info, ok := domain.ParseRepositoryURL(v.GongfengProjectID); ok {
 			v.GongfengProjectID = info.Project
 		} else if !strings.HasPrefix(v.GongfengProjectID, "github:") && !domain.IsSafeGongfengProjectID(v.GongfengProjectID) {
-			c.JSON(400, map[string]string{"error": "工蜂仓库链接无法识别：请粘贴 git.example.com 的仓库链接，或直接填写 group/repository 项目路径"})
+			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供有效的 GitHub 仓库地址"})
 			return
 		}
 	}
@@ -177,7 +177,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		}
 	}
 	if v.ProjectID == "" || v.Name == "" || v.GongfengProjectID == "" {
-		c.JSON(400, map[string]string{"error": "projectId、name、gongfengProjectId 必填；也可以只粘贴工蜂仓库链接自动识别"})
+		c.JSON(400, map[string]string{"error": "请提供 projectId 和 GitHub 仓库地址 repoUrl，名称和仓库标识会自动识别"})
 		return
 	}
 	if _, ok := h.repo.Project(v.ProjectID); !ok {

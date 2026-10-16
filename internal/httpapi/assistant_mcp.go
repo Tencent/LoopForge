@@ -268,7 +268,7 @@ func (h *assistantHandlers) callAssistantMCP(user domain.User, projectID string,
 		transport = "http"
 	}
 	if transport != "http" && transport != "sse" {
-		return "", fmt.Errorf("%s 是 %s MCP，助手只代调当前项目的 HTTP MCP（如 TAPD/工蜂），不能启动 stdio 命令", server.Name, transport)
+		return "", fmt.Errorf("%s 是 %s MCP，助手只代调当前项目的 HTTP MCP（如项目安装的 GitHub HTTP MCP），不能启动 stdio 命令", server.Name, transport)
 	}
 	bound, err := bindAssistantMCP(server, user)
 	if err != nil {

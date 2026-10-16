@@ -3,7 +3,6 @@ package httpapi
 import (
 	"net/http"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -42,9 +41,10 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	if got.Issue.WorkflowID != "room-generic" || got.Message.WorkflowID != "room-generic" {
 		t.Fatalf("generic template should be accepted as the dispatch target: %+v", got)
 	}
-	if !strings.Contains(got.DispatchError, "代码仓库") {
-		t.Fatalf("without a bound repository the engine's reason should surface on the card: %+v", got)
+	if got.DispatchError != "" || got.Message.RunID == "" {
+		t.Fatalf("generic dispatch without a repository should start: %+v", got)
 	}
+	_ = e.Cancel(got.Message.RunID)
 }
 
 func TestRoomCreatesIssueAndDispatchesSOPOrRole(t *testing.T) {

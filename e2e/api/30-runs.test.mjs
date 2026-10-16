@@ -196,8 +196,9 @@ test('starting a run validates its input', async () => {
   await api('POST', '/api/runs', { workflowId: 'generic-backend-delivery', projectId: 'e2e-no-such-project' }, { expect: [400, 404, 409, 500] });
   const project = await get(`/api/projects/${cfg.projectId}`);
   if (!project.defaultRepositoryId) {
-    const res = await api('POST', '/api/runs', { workflowId: 'generic-backend-delivery', projectId: cfg.projectId }, { expect: 409 });
-    assert.match(JSON.stringify(res), /repository_required/);
+    const run = await startRun('generic-backend-delivery', 'Check repository-free admission');
+    assert.deepEqual(run.repositories || [], []);
+    await post(`/api/runs/${run.id}/cancel`, {});
   }
 });
 

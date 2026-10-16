@@ -56,9 +56,6 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 		if _, found := e.repo.Project(executionContext.ProjectID); !found {
 			return domain.Run{}, fmt.Errorf("项目 %q 不存在，请刷新后重试", executionContext.ProjectID)
 		}
-		if len(repositories) == 0 {
-			return domain.Run{}, fmt.Errorf("直接运行通用交付模板需要先绑定项目代码仓库")
-		}
 	}
 	wf = defaultWorkflowSandboxProfile(wf)
 	wf, err := domain.AttachPreviewBuild(wf)

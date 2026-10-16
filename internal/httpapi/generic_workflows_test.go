@@ -465,11 +465,57 @@ func TestGenericTemplateRunsDirectlyByReference(t *testing.T) {
 	}
 }
 
-func TestGenericTemplateDirectRunRejectsMissingDefaultRepository(t *testing.T) {
-	h, _ := newGenericTemplateServer(t)
-	requestJSON[map[string]string](t, h, http.MethodPost, "/api/runs",
-		map[string]any{"workflowId": repo.GenericBackendDeliveryWorkflowID, "input": "x", "projectId": "alpha"},
-		http.StatusConflict)
+// Repository-free admission applies to every generic template and its copies.
+func TestGenericTemplatesAndCopiesRunWithoutRepository(t *testing.T) {
+	for _, id := range []string{repo.GenericProductDeliveryWorkflowID, repo.GenericBackendDeliveryWorkflowID, repo.GenericFrontendDeliveryWorkflowID} {
+		for _, clone := range []bool{false, true} {
+			name := id
+			if clone {
+				name += "/copy"
+			}
+			t.Run(name, func(t *testing.T) {
+				h, s := newGenericTemplateServer(t)
+				project, _ := s.Project("alpha")
+				project.OwnerID = 1
+				if err := s.PutProject(project); err != nil {
+					t.Fatal(err)
+				}
+				template, _ := s.GenericTemplateByWorkflow(id)
+				// A real script verifies workspace execution and artifact delivery
+				// without a model key, Git credentials, or a Docker daemon.
+				template.Workflow.SandboxProfileID = "local"
+				template.Workflow.Nodes = []domain.WorkflowNode{{ID: "deliver", Type: "script", Name: "Deliver", ScriptLanguage: "shell", Script: "printf '# Delivered\\n' > delivery.md", MaxAttempts: 1, ArtifactOutputs: []domain.ArtifactContract{{Name: "delivery", Path: "delivery.md", Required: true}}}}
+				template.Workflow.Edges = nil
+				if err := s.PutGenericTemplate(template); err != nil {
+					t.Fatal(err)
+				}
+				workflowID := id
+				if clone {
+					copied := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPost, "/api/workflows/"+id+"/clone", map[string]any{"id": "alpha-copy", "name": "Copy", "projectId": "alpha"}, http.StatusCreated)
+					workflowID = copied.ID
+				}
+				run := requestJSON[domain.Run](t, h, http.MethodPost, "/api/runs", map[string]any{"workflowId": workflowID, "input": "Run without a repository", "projectId": "alpha"}, http.StatusCreated)
+				if len(run.Repositories) != 0 || run.Repository.RepositoryID != "" {
+					t.Fatalf("unexpected Git context: %+v", run)
+				}
+				deadline := time.Now().Add(10 * time.Second)
+				for time.Now().Before(deadline) {
+					current, _ := s.Run(run.ID)
+					if current.Status == "succeeded" {
+						if len(current.Artifacts) == 0 {
+							t.Fatal("workspace delivery was not archived")
+						}
+						return
+					}
+					if current.Status == "failed" {
+						t.Fatalf("repository-free script failed: %+v", current)
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+				t.Fatal("repository-free delivery did not finish")
+			})
+		}
+	}
 }
 
 // First adoption binds the platform default Gongfeng MCP. Re-adopting must

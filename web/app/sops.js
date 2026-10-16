@@ -92,7 +92,7 @@ function sopRunRequirements(w){
   const nodes=w?.nodes||[],user=userById(state.currentUser?.id)||{};
   const project=(state.data?.projects||[]).find(p=>p.id===(w?.projectId||state.projectFilter))||(state.data?.projects||[]).find(p=>p.id===state.projectFilter);
   const driver=((state.data?.sandboxes||[]).find(sb=>sb.id===w?.sandboxProfileId)||{}).driver||(/docker/i.test(w?.sandboxProfileId||'')?'docker':'');
-  const needsRepo=catalogGeneric(w)||(w?.tags||[]).some(t=>String(t).startsWith('generic-source:'));
+  const usesRepo=(catalogGeneric(w)||(w?.tags||[]).some(t=>String(t).startsWith('generic-source:')))&&!!project?.defaultRepositoryId;
   const rows=[];
   const providers=new Set();
   for(const node of nodes.filter(n=>n.type==='agent')){
@@ -105,7 +105,7 @@ function sopRunRequirements(w){
     const [label,field,flag]={codebuddy:['CodeBuddy','codeBuddyApiKey','codeBuddyApiKeyConfigured'],codex:['Codex','codexApiKey','codexApiKeyConfigured'],'claude-code':['Claude Code','claudeCodeApiKey','claudeCodeApiKeyConfigured']}[kind];
     rows.push({key:'run-key-'+kind,field,fix:'settings',fixLabel:'去个人设置配置',label:label+' API Key',ok:!!user[flag],hint:lfT('Agent 节点使用 '+label+'，请在个人设置里配置对应 API Key。','Agent nodes use '+label+'. Configure its API key in Settings.')});
   }
-  if(needsRepo)rows.push({key:'run-repo',fix:project?.defaultRepositoryId?'settings':'repository',fixLabel:project?.defaultRepositoryId?'去配置 GitHub Token':'绑定仓库',label:'GitHub 仓库',ok:!!project?.defaultRepositoryId&&!!user.gitTokenConfigured,hint:'需要为项目绑定默认 GitHub 仓库，并在个人设置里配置 GitHub Token。'});
+  if(usesRepo)rows.push({key:'run-repo',fix:'',label:'GitHub 仓库（已绑定）',ok:true,hint:'使用项目已绑定的仓库。访问私有仓库或推送代码时需要在个人设置中配置 GitHub Token；未绑定仓库时可在任务工作区直接运行。'});
   if(driver==='docker')rows.push({key:'run-docker',label:'Docker',ok:state.data?.capabilities?.docker!==false,hint:state.data?.capabilities?.docker===false?'平台连不上 Docker，这个 SOP 现在跑不了。重新运行 scripts/install.sh 会自动安装并挂载 Docker。':'在隔离的 Docker 沙箱里运行，首次运行会构建镜像，需要几分钟。'});
   return rows;
 }

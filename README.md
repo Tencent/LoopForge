@@ -52,7 +52,7 @@ The installer builds the image, starts MySQL and the platform, and installs the 
 2. The sample SOP generates a report with a script. A short tour points out the step graph, the artifacts and the approval.
 3. Approve the human gate, then watch the SOP continue and save its final artifact.
 
-GitHub is optional. Chat and document-generation tasks that do not depend on a repository only need model credentials; script-only and human-approval workflows need neither a model key nor GitHub. Connect a repository and configure the responsible user’s GitHub token when using built-in code-delivery SOPs, analyzing repository code, or submitting PRs.
+GitHub is optional. Chat and document-generation tasks that do not depend on a repository only need model credentials; script-only and human-approval workflows need neither a model key nor GitHub. All built-in generic SOPs can run without a repository: product work delivers documents, and new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when working on existing repository code or submitting PRs; configure a GitHub token for private access or writes.
 
 | Your first task | What to configure |
 | --- | --- |
@@ -63,7 +63,7 @@ GitHub is optional. Chat and document-generation tasks that do not depend on a r
 **When you need to deliver repository code, connect GitHub:**
 
 1. Add a GitHub repository. Configure your Git token and executor credentials in personal settings, or bind a local execution machine.
-2. Open **SOPs → Built-in** and pick one. Each card shows what it needs to run (API key, GitHub repository, Docker). Copy it into your project when you want to customize it.
+2. Open **SOPs → Built-in** and pick one. Each card shows its runtime requirements (API key, Docker, and any bound GitHub repository). Copy it into your project when you want to customize it.
 3. Create a requirement, select its SOP, and start. Follow execution, approvals, and delivery from the workspace.
 
 Choose **CodeBuddy, Codex, or Claude Code** beside the home composer, then select the model. Each executor uses its own credentials from personal settings. SOP roles can choose their executor independently. Built-in SOP roles default to CodeBuddy and can be changed. Requirement clarification, scheduled assistant tasks, and AI notification summaries currently use CodeBuddy. The Docker image includes all three CLIs; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
