@@ -1,0 +1,139 @@
+# AgentFlow MCP — 安装 / 初始化 / 验证
+
+接入指南：<https://loopforge.example.com/#/guide>
+
+**适用范围**：Cursor、Claude Code、CodeBuddy、Codex。请根据当前运行的 Agent 自动选择对应配置，不要反问用户使用哪个客户端。
+
+**目标**：把 AgentFlow 作为名为 `agentflow` 的 Streamable HTTP MCP 服务接入当前客户端，并确认能正常返回工具清单。
+
+**安全原则**：
+
+- 用户提示词已经提供 ENDPOINT 和 API_TOKEN，直接使用，不要要求用户再次粘贴。
+- 先读取并备份现有配置，只新增或更新 `agentflow`，不得覆盖其他设置或 MCP 服务。
+- API_TOKEN 只能写入用户级 MCP 配置，不得写入项目仓库、日志或最终回复。
+- 修改完成后检查配置，不能遗留 `<API_TOKEN>`、`<ENDPOINT>` 等占位符。
+
+## 变量（只改这里）
+
+| 变量 | 值 |
+|------|----|
+| `API_TOKEN` | `<API_TOKEN>` |
+| `ENDPOINT` | `<ENDPOINT>` |
+
+## 安装与初始化
+
+先识别当前客户端，再执行对应小节。路径中的 `~` 在 Windows 上表示 `%USERPROFILE%`。
+
+### Cursor
+
+配置文件：`~/.cursor/mcp.json`
+
+1. 文件存在时先创建带时间戳的备份。
+2. 保留原 JSON 中的全部字段，将下面的 `agentflow` 合并进 `mcpServers`：
+
+```json
+{
+  "mcpServers": {
+    "agentflow": {
+      "type": "streamable-http",
+      "url": "<ENDPOINT>",
+      "headers": {
+        "Authorization": "Bearer <API_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+3. 校验 JSON 语法，在 Cursor 的 MCP 管理页确认 `agentflow` 已启用。
+
+### Claude Code
+
+优先使用官方 CLI，不要手工覆盖 `~/.claude.json`：
+
+```bash
+claude mcp add --transport http --scope user agentflow "<ENDPOINT>" \
+  --header "Authorization: Bearer <API_TOKEN>"
+```
+
+如果已存在同名服务，先读取当前配置，再仅更新 `agentflow`。完成后执行：
+
+```bash
+claude mcp get agentflow
+claude mcp list
+```
+
+### CodeBuddy
+
+配置文件：`~/.codebuddy/mcp.json`
+
+1. 文件存在时先创建带时间戳的备份。
+2. 保留原 JSON 中的全部字段，将下面的 `agentflow` 合并进 `mcpServers`：
+
+```json
+{
+  "mcpServers": {
+    "agentflow": {
+      "type": "streamable-http",
+      "url": "<ENDPOINT>",
+      "headers": {
+        "Authorization": "Bearer <API_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+3. 校验 JSON 语法，在 CodeBuddy 的 MCP 管理页确认 `agentflow` 已启用。
+
+### Codex
+
+配置文件：`~/.codex/config.toml`
+
+1. 文件存在时先创建带时间戳的备份。
+2. 保留现有 TOML 配置和其他 MCP 服务，只新增或更新以下段落：
+
+```toml
+[mcp_servers.agentflow]
+url = "<ENDPOINT>"
+http_headers = { Authorization = "Bearer <API_TOKEN>" }
+```
+
+3. 校验 TOML 语法并执行：
+
+```bash
+codex mcp list
+```
+
+## 通用连通验证
+
+客户端配置完成后，使用下面的请求验证 AgentFlow 能返回 MCP 工具清单：
+
+```bash
+API_TOKEN="<API_TOKEN>"
+ENDPOINT="<ENDPOINT>"
+
+curl -sS "$ENDPOINT" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+返回结果包含非空 `tools` 列表才算接入成功。如果客户端正在运行，重启或重新加载 MCP 后再确认工具列表。
+
+## 失败排查
+
+- **401 / token invalid**：确认 Authorization 格式为 `Bearer <API_TOKEN>`，Token 没有多余引号、空格或换行；仍失败则在接入指南的「我的 Token」撤销并重新生成。
+- **404 / 无法连接**：确认 ENDPOINT 是完整 `/mcp` 地址，不要重复拼接 `/mcp`。
+- **客户端没有工具**：检查配置文件语法、配置作用域和服务名；重启客户端后重试。
+- **已有配置丢失**：立即从时间戳备份恢复，再重新执行“只合并 agentflow”步骤。
+- **命令不存在**：先确认对应客户端已经安装，再使用该客户端的官方安装方式处理；不要擅自安装无关软件。
+
+## 汇报
+
+执行完成后只向用户报告：
+
+> 客户端 | 修改的配置文件或 CLI 作用域 | 是否保留原配置 | tools/list 是否成功 | 是否需要重启
+
+Token 必须脱敏，不得在最终回复中输出完整值。

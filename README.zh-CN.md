@@ -1,231 +1,144 @@
 <p align="center">
-  <img src="docs/assets/readme/hero-zh.png" alt="LoopForge，腾讯开源：编码 Agent 会写代码，LoopForge 让它按流程交付。装进你正在用的编码 Agent，按角色分工推进交付：先确认需求，再设计、实现、Code Review、测试，一步一步来。" width="100%">
+  <img src="docs/assets/readme/hero-zh.svg" alt="LoopForge — 让 Agent 按你的流程，把需求推进到交付。" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://github.com/Tencent/LoopForge/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Tencent/LoopForge?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
-  <a href="https://www.npmjs.com/package/loopforge-cli"><img alt="npm loopforge-cli" src="https://img.shields.io/npm/v/loopforge-cli?label=npm&labelColor=16161A&color=FF5A1F&style=flat-square"></a>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-FF5A1F?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
-  <a href="https://github.com/Tencent/LoopForge/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Tencent/LoopForge?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
-  <br/>
-  <a href="https://github.com/Tencent/LoopForge/actions/workflows/validate.yml"><img alt="validate" src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/validate.yml?branch=main&label=validate&labelColor=16161A&style=flat-square"></a>
-  <a href="https://github.com/Tencent/LoopForge/actions/workflows/e2e.yml"><img alt="e2e" src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/e2e.yml?branch=main&label=e2e&labelColor=16161A&style=flat-square"></a>
+  <a href="README.md">English</a> · <b>简体中文</b>
 </p>
 
 <p align="center">
-  <a href="./README.md">English</a> · <b>简体中文</b>
+  <a href="#快速开始">快速开始</a> · <a href="#搭建你的交付闭环">交付闭环</a> · <a href="#loopforge-local">本地工作流</a> · <a href="#文档与贡献">文档与贡献</a>
 </p>
 
 <p align="center">
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#工作方式">工作方式</a> ·
-  <a href="#支持的-agent">支持的 Agent</a> ·
-  <a href="#你会得到什么">你会得到什么</a> ·
-  <a href="#看见-agent-如何完成工作">观测面板</a> ·
-  <a href="#portable-edition">Portable Edition</a> ·
-  <a href="#贡献">贡献</a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-6366f1" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/部署-Self--hosted-2563eb" alt="Self-hosted">
+  <img src="https://img.shields.io/badge/界面-中文%20%2F%20English-0f766e" alt="中文 / English">
 </p>
 
-**让编码 Agent 不只“写出代码”，而是按一套可确认、可审查、可恢复的流程完成交付。**
+**让 Agent 接住需求，也接住团队的交付方法。**
 
-LoopForge 安装到你正在用的编码 Agent 里，支持 CodeBuddy、Codex、Cursor、Claude Code 和 Pi。它在这个 Agent 内部运行一套按角色分工的交付流程：先澄清并确认需求，再依次完成设计、实现、由另一个角色做独立 Code Review，最后测试。各阶段按顺序推进，每个阶段由对应的角色负责，不需要同时开多个 Agent。关键决策、审查意见和测试结果都会落盘，方便检查，中断后也能接着做。
+LoopForge 将 **编程 Agent、脚本和人工决策放进同一条交付流程**。描述需求，为每个角色明确分工，跟进从方案到产物的全过程。把跑通的方法存成 SOP，下一个任务继续复用。
+
+- **流程由你设计。** 在可视化画布中编排实现、独立评审、测试等角色，接入团队已有的规则和工具。
+- **关键节点由你把关。** 查看产物后审批，失败时重试指定步骤，需要时打回返工。
+- **工具和环境由你选择。** CodeBuddy、Codex、Claude Code、GitHub、Skills、MCP；自主部署，**MIT 开源**。
 
 <p align="center">
-  <a href="docs/assets/loopforge-promo.mp4?raw=true">
-    <img src="docs/assets/loopforge-promo-preview.webp" alt="13 秒了解 LoopForge：一个需求在你已有的 Agent 里依次经过 leader、developer、code-reviewer、test-engineer 四个角色。" width="720" />
-  </a>
+  <img src="docs/assets/readme/workflow-zh.png" alt="LoopForge 真实界面：编排生成报告、人工验收与完成验收三个节点" width="100%">
 </p>
+
+<p align="center"><sub>真实流程设计器：用脚本生成报告，经人工确认后继续执行。Agent 节点也可从左侧加入流程。</sub></p>
 
 ## 快速开始
 
-要求 Node.js 20+ 和 Python 3.8+。以下命令安装默认的 Classic Edition，不确定选哪一种时直接用这一版。
-
-| Agent | 安装 | 启动工作流 |
-| --- | --- | --- |
-| CodeBuddy | `npx -y loopforge-cli@latest install codebuddy` | `/start-devflow "<需求>"` |
-| Codex | `npx -y loopforge-cli@latest install codex` | `$devflow-codex "<需求>"` |
-| Cursor | `npx -y loopforge-cli@latest install cursor` | `/start-devflow "<需求>"` |
-| Claude Code | `npx -y loopforge-cli@latest install claude` | `/start-devflow "<需求>"` |
-
-以 Claude Code 为例：
+需要 **Docker（含 Compose）和 Python 3**。没装 Docker 时，安装脚本会询问并帮你安装（Linux 用 get.docker.com，macOS 用 Homebrew）。在终端执行：
 
 ```bash
+git clone https://github.com/Tencent/LoopForge.git
+cd LoopForge
+bash scripts/install.sh
+```
+
+打开 **[http://localhost:8090](http://localhost:8090)** 创建账号，第一个账号自动成为管理员。团队成员可以在同一页面自助注册（如需关闭，在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false`）。进入首页后，新手引导会带你配置模型 Key 并跑通第一条 SOP。
+
+安装脚本会构建镜像、启动 MySQL 和平台，并初始化内置 SOP 和体验项目。AI SOP 在 Docker 沙箱容器里运行，由平台通过宿主机的 Docker socket 启动；首次启动后平台会在后台构建沙箱镜像（需要几分钟）。重复执行安装脚本会保留已有数据。如果要参与 LoopForge 本身的开发，可以用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.9+）。远程访问、HTTPS 和独立 Worker 配置见[部署指南](docs/deployment.md)。
+
+默认仅监听本机，适合可信团队自托管。已登录用户可以读取实例内各项目的数据；对团队以外开放访问前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
+
+**先体验完整的一次运行，无需模型密钥：**
+
+1. 在首页「快速上手」清单里点第 4 步的 **一键体验**。新注册的账号会自动加入 **LoopForge 体验项目**。
+2. 示例 SOP 先用脚本生成报告，页面上的引导气泡会依次指出节点图、产物和审批。
+3. 在人工审批节点确认报告，再观察流程继续执行和最终产物。
+
+GitHub 接入是可选的。聊天和不依赖仓库的文档生成任务只需要模型凭据；纯脚本和人工审批流程可以连模型 Key 都不配置。使用内置代码交付 SOP、分析仓库代码或提交 PR 时，再绑定仓库并配置责任人的 GitHub Token。
+
+| 想先做什么 | 需要准备什么 |
+| --- | --- |
+| 跑通脚本与人工审批体验 | 无需模型 Key，也无需仓库。 |
+| 对话、了解能力、生成文档 | 所选执行器的 API Key。 |
+| 分析私有代码、修改仓库、提交 PR | 模型凭据、GitHub 仓库，以及任务责任人的 Git Token。 |
+
+**需要交付仓库代码时，再接入 GitHub：**
+
+1. 添加 GitHub 仓库，在个人设置中配置 Git Token 和所需执行器的凭据，或绑定本机执行机器。
+2. 打开 **SOP 流程 → 内置**，选一条 SOP。每张卡片都标出了运行条件（API Key、GitHub 仓库、Docker）；需要定制时复制到项目中调整。
+3. 创建需求、选择 SOP 并启动，在工作台跟进执行、审批和交付。
+
+在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。SOP 角色也可以独立选择执行器。内置 SOP 角色默认使用 CodeBuddy，可以自行修改；需求澄清、定时助手任务和通知 AI 汇总目前使用 CodeBuddy。Docker 镜像包含三个 CLI；[原生部署](docs/deployment.md#workers-and-runners)需要安装所选执行器对应的 CLI。
+
+## 搭建你的交付闭环
+
+| 你要做的事 | 把它变成可以反复执行的流程 |
+| --- | --- |
+| **交付一个功能** | 明确验收标准、设计方案、完成实现，再交给独立角色评审。 |
+| **修复一个 Bug** | 先复现、再修复、跑真实测试，把验证证据与结果一起留下。 |
+| **沉淀团队方法** | 将评审规则、Skills、脚本和人工验收编排成 SOP，供下一个需求复用。 |
+
+SOP 就是每次交付遵循的工作流程。Agent、确定性脚本和人工决策，都在同一次运行中衔接：
+
+```mermaid
+flowchart LR
+  A[澄清需求] --> B[设计方案]
+  B --> C[开发实现]
+  C --> D[独立评审]
+  D --> E[测试验证]
+  E --> F{人工验收}
+  F -->|通过| G[交付汇总]
+  F -->|返工| C
+```
+
+从内置的后端、前端、缺陷修复或产品 SOP 开始，按项目需要调整角色、节点、规则和运行环境。
+
+| 你要做的事 | LoopForge 如何支持 |
+| --- | --- |
+| **让 Agent 各司其职** | 定义角色的职责、执行器、规则、Skills 与 MCP 工具，分别承担设计、实现、评审等工作。 |
+| **复用一套交付方法** | 在可视化画布中编排 Agent、脚本和审批节点，配置产物与节点依赖，保存和发布流程版本。 |
+| **随时掌握执行进展** | 从需求查看对应运行，沿节点检查状态、输出、工具轨迹和日志，定位卡点；支持暂停、重试和从指定节点重跑。 |
+| **在关键步骤做决定** | 设置人工审批，检查报告与交付物，通过后继续；需要返工时回到指定环节。 |
+| **使用自己的执行环境** | 按需使用平台 Worker、Docker 沙箱，或绑定本机 CLI 执行机器，接入已有工具与仓库。 |
+| **把结果留给团队** | 按节点保留交付物快照，查看工作区文件与预览，结合可选外部知识服务、运行记录和用量分析持续改进流程。 |
+
+## 看见过程，也检查结果
+
+运行记录将节点状态、执行日志和产物放在一起。你可以查看报告后再审批，也可以在失败节点检查原因、补充信息并重试。
+
+<p align="center">
+  <img src="docs/assets/readme/execution-zh.png" alt="LoopForge 真实运行详情：脚本节点已经完成，产物已保存，流程等待人工验收" width="100%">
+</p>
+
+<p align="center"><sub>无模型密钥体验流程：真实脚本执行 → 保存报告 → 等待人工审批 → 继续执行。</sub></p>
+
+界面支持 **中英切换与浅色／深色主题**。模型与工具凭据由部署方配置；平台不附带模型额度。
+
+**我们实际跑过的一次交付：** 四个 CodeBuddy 角色依次完成 Python 修复的规划、实现、独立评审和交付汇总；三个真实测试通过，运行等待人工批准，批准后再次验证代码与验收时的哈希一致。这条链路已沉淀为[可复用验收用例](e2e/api/45-delivery-model.test.mjs)。完整覆盖范围和未联调项见[实测记录](docs/validation.md)。
+
+## LoopForge Local
+
+希望直接在已有编程助手中使用本地开发工作流，可以选择 **LoopForge Local**，无需启动平台：
+
+```bash
+# 在你的目标项目目录中安装，例如 Claude Code
 npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
 ```
 
-```text
-/start-devflow "为订单列表增加状态筛选，并补充接口测试"
-```
+在 Claude Code 中运行 `/start-devflow "<你的需求>"`。也支持 CodeBuddy、Codex、Cursor，以及 Portable 模式下的 Pi；各宿主入口见[本地使用指南](docs/local/usage.zh-CN.md)。
 
-任何宿主都可以用 `npx -y loopforge-cli@latest status <agent>` 检查安装状态。如果安装或运行遇到问题，执行环境诊断：
+源码位于 [`local/`](local/)，保留已有安装命令和包名。Local 当前运行内置工作流；**平台 SOP 导出后在本地独立执行**是后续方向，尚未实现。
 
-```bash
-npx -y loopforge-cli@latest doctor
-```
+## 文档与贡献
 
-Pi 通过 [Portable Edition](#portable-edition) 支持。
+| 我想了解 | 从这里开始 |
+| --- | --- |
+| 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.md) |
+| 本地工作流的安装、使用与版本选择 | [LoopForge Local](docs/local/usage.zh-CN.md) |
+| 扩展平台或接入 API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) |
+| 提交功能或修复问题 | [贡献指南](CONTRIBUTING.zh-CN.md) · [验收记录](docs/validation.md) |
+| 了解来源与长期维护方式 | [开源范围](docs/open-source-scope.md) · [上游同步策略](docs/upstream-sync.md) |
 
-## 工作方式
-
-1. **先理解问题**：Agent 调研现有项目，澄清目标、范围和验收标准，而不是立即开始写代码。
-2. **确认边界后再实施**：中大型任务会在你确认目标、范围、排除项、关键决策和验收标准后，再进入设计与实现。
-3. **分工完成交付**：设计、实现、审查和测试由职责独立的角色分阶段完成，减少同一上下文中的自审偏差。
-4. **用证据说明结果**：需求、方案、代码变更、审查意见和测试结果都会落盘，方便检查、复盘和交接。
-5. **中断后继续执行**：流程状态会被保存，下次可以从未完成的阶段继续，不必重新来过。
-
-LoopForge 会根据任务复杂度选择路径：小改动走精简的单角色路径，避免为简单任务引入额外流程；中大型任务才启用完整的角色分工流程。
-
-```text
-你的需求
-   │
-   ├─ 小改动 ───────> 理解 → 实现 → 自检 → 交付
-   │
-   └─ 中大型任务 ───> 澄清并确认 → 设计 → 实现 → 独立审查 → 测试 → 交付
-                              │
-                              └── 全程保存状态和产物，可随时恢复
-```
-
-## 支持的 Agent
-
-| Agent | Classic Edition（默认） | Portable Edition |
-| --- | --- | --- |
-| CodeBuddy | ✓ | ✓ |
-| Codex | ✓ | ✓ |
-| Cursor | ✓ | ✓ |
-| Claude Code | ✓ | ✓ |
-| Pi | — | ✓ |
-
-同一项目中，每个编码 Agent 只能启用一种 Edition。两者的区别和目录说明见 [`EDITIONS.md`](EDITIONS.md)。
-
-## 你会得到什么
-
-一次任务结束后，你会同时得到代码变更、已确认的需求、技术方案、独立审查意见、测试结果和交付总结。这些过程与结果默认保存在 `artifacts/{task_slug}/`，方便检查、复盘和交接。
-
-<details>
-<summary>查看默认产物目录</summary>
-
-不同 Edition 的个别目录名称可能略有差异。
-
-```text
-01-requirement/   已确认的目标、范围与验收标准
-02-design/        技术方案与执行计划
-03-code/          代码变更与独立审查报告
-04-e2e/           测试结果
-05-knowledge/     可复用的项目知识
-workflow-summary.md
-```
-
-</details>
-
-Classic 工作流中断后，CodeBuddy、Cursor 和 Claude Code 使用 `/resume-devflow {task_slug}` 恢复，Codex 使用 `$devflow-codex resume {task_slug}`。状态查看、终止和单阶段命令见安装后对应宿主目录中的 README。
-
-## 看见 Agent 如何完成工作
-
-CodeBuddy 的 Classic Edition 内置本地可观测看板。它把落盘的流程证据变成可视化视图，集中呈现会话活动、Token 与成本趋势、Skill/Rule 使用情况、角色派发，以及 Devflow 阶段归因，方便定位高成本运行、确认自动化是否真正生效，并复盘任务如何在不同角色之间流转。
-
-![使用演示数据的 LoopForge 本地 Agent 可观测看板](docs/assets/agent-observability-dashboard.png)
-
-_看板示例使用合成演示数据。_
-
-看板的数据聚合和页面服务都在本机完成，不依赖外部遥测服务。运行日志可能包含工具参数和输出片段，因此 LoopForge 默认将它们排除在 Git 之外；未经检查不应对外分享原始日志。
-
-<details>
-<summary>打开本地看板</summary>
-
-在项目根目录至少运行一次 CodeBuddy 会话后执行：
-
-```bash
-python3 .codebuddy/skills/agent-observability/scripts/build_dashboard_data.py --project-root .
-python3 -m http.server 8765 --directory .codebuddy/skills/agent-observability/scripts/dashboard
-```
-
-浏览器打开 `http://localhost:8765`。数据源、自定义模型定价和故障排查见[可观测性快速上手](.codebuddy/skills/agent-observability/references/quickstart.md)。
-
-</details>
-
-## 什么时候适合使用
-
-LoopForge 尤其适合这些任务：
-
-- 需求还比较模糊，需要先把目标和边界讨论清楚；
-- 改动涉及多个模块，希望先形成方案再实施；
-- 需要把实现、审查和测试交给不同角色完成；
-- 任务可能跨越多个会话，需要保留状态并断点续跑；
-- 团队希望留下可检查、可复盘的交付记录。
-
-如果只是一次性的代码补全或非常明确的微小修改，直接使用编码 Agent 通常已经足够；LoopForge 会为进入其工作流的简单任务选择精简路径。
-
-## Portable Edition
-
-“快速开始”安装的 Classic Edition 适合大多数用户。如果只希望安装基于 Agent Skills 的可移植工作流，可以使用 Portable Edition。为避免同一个 Coding Agent 同时加载两套工作流，以及状态和产物相互冲突，LoopForge 在每个项目中只允许为同一 Coding Agent 启用一种 Edition。如需切换，可重新安装并添加 `--force`。
-
-| Agent | 安装 | 启动工作流 |
-| --- | --- | --- |
-| CodeBuddy | `npx -y loopforge-cli@latest skills install codebuddy` | `/devflow "<需求>"` |
-| Codex | `npx -y loopforge-cli@latest skills install codex` | `$devflow "<需求>"` |
-| Cursor | `npx -y loopforge-cli@latest skills install cursor` | `/devflow "<需求>"` |
-| Claude Code | `npx -y loopforge-cli@latest skills install claude` | `/devflow "<需求>"` |
-| Pi | `npx -y loopforge-cli@latest skills install pi`，然后 `pi install npm:pi-subagents` | `/skill:devflow "<需求>"` |
-
-完整边界和目录说明见 [`EDITIONS.md`](EDITIONS.md)。
-
-## 更新与卸载
-
-如果希望长期使用，可以全局安装 CLI：
-
-```bash
-npm install --global loopforge-cli
-```
-
-之后用上面的宿主名（`codebuddy`、`codex`、`cursor`、`claude`，Portable Edition 另有 `pi`）维护安装：
-
-```bash
-# Classic Edition
-loopforge update <agent>
-loopforge status <agent>
-loopforge uninstall <agent>
-
-# Portable Edition
-loopforge skills update <agent>
-loopforge skills status <agent>
-loopforge skills uninstall <agent>
-```
-
-安装状态保存在 `.devflow/install-state.json`。检测到用户修改或文件冲突时，更新会停止而不是覆盖。只有在确认要替换冲突文件或切换 Edition 时才使用 `--force`，建议先运行 `loopforge plan` 检查变更。
-
-如果已经克隆本仓库，也可以在仓库根目录从当前源码安装：
-
-```bash
-pipx install .
-```
-
-## 可选工具
-
-`tools/tcmcp` 是腾讯云只读 MCP Initializr（Redis、CDB、TDSQL-C、TKE、CLS、COS）。它不包含在 `loopforge install` 或 npm CLI 包中。克隆仓库后：
-
-```bash
-cd tools/tcmcp
-```
-
-再按 [`tools/tcmcp/README.md`](tools/tcmcp/README.md) 启动。云 API 密钥不会写入生成的 zip 或容器镜像，只留在拉取资源或安装 MCP 客户端的本机。LoopForge 打 `vX.Y.Z` tag 发版时会发布 `ghcr.io/tencent/loopforge-tcmcp:<version>`。
-
-## 权限与安全
-
-部分宿主的 Classic 配置会启用自动执行或高权限 Agent 模式。请只在可信项目中使用；安装前可以通过 `loopforge plan codebuddy`、`loopforge plan codex`、`loopforge plan cursor` 或 `loopforge plan claude` 检查将写入的文件。不要把凭据、私有地址或生产运维配置写入工作流模板。
-
-安全问题请参阅 [`SECURITY.md`](SECURITY.md)，并通过 GitHub Security Advisory 私密报告。
-
-## 交流群
-
-扫描下方企业微信二维码加入 LoopForge 交流群。
-
-<img src="docs/community-wecom-qr.png" alt="LoopForge 交流群二维码" width="220" />
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request。修改工作流前请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和仓库中的 `AGENTS.md`。版本变化见 [`CHANGELOG.md`](CHANGELOG.md)。
+欢迎通过 [Issues](https://github.com/Tencent/LoopForge/issues) 分享使用场景、报告问题，或提交 PR 改进流程、工具适配和平台体验。安全问题请按[安全政策](SECURITY.zh-CN.md)私密报告。
 
 ## 许可证
 
-本项目使用 MIT License。第三方内容见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+[MIT](LICENSE)。第三方组件保留各自许可证与版权声明，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

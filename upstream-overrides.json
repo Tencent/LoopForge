@@ -1,0 +1,1248 @@
+{
+  "baseline": "3a8cb2420904e3ee8ab1b39c48f54b372a9e3e04",
+  "policy": "Shared core remains upstream-derived; every public-specific change is explicit. No private source history is imported.",
+  "files": {
+    "docs/proposals/frontend-preview-delivery-lifecycle.md": {
+      "sha256": "80dceb5e68e6db401ab3121fc8be4ff9b03b7dbd6f20e72d3ad367ad48cd9b64",
+      "reason": "Replace private deployment host and DNS assumptions with generic public examples; normalize Markdown trailing whitespace."
+    },
+    "internal/engine/recovery_test.go": {
+      "sha256": "9d82cfbfb6fb66f568d8f6f7738d1483859c2e793f488439f4cc035acf1be827",
+      "reason": "Use an explicit workflow and hold the execution lock while inspecting resumed state to eliminate a scheduler race; verified with 30 repetitions and the full Go suite."
+    },
+    "internal/preview/gateway_test.go": {
+      "sha256": "0ac65d3f209716d70a9b410a307e4e9a3ef6ce393112e48b71f81e2a79ff7f5e",
+      "reason": "Use reserved example domains in preview navigation fixtures instead of private infrastructure."
+    },
+    ".gitattributes": {
+      "sha256": "7a5f827b901653cea2f876ee7747cb31fb81b62ef82159fd5e7f177894c2f3e5",
+      "reason": "Preserve original vendored editor and dependency notice bytes while excluding their upstream whitespace conventions from diff warnings."
+    },
+    "AGENTS.md": {
+      "sha256": "c3362684e4ad4096fab1b862ff6fe2fa8179cc963d2fd3df8acfa69a87b2ed23",
+      "reason": "Document platform source/export boundary and the LoopForge Local component under local/."
+    },
+    "Makefile": {
+      "sha256": "b40f7004524ad8377b41ec95395793a74f94a26dcbb076a7cfd3343472ad6222",
+      "reason": "Public build, test and container targets."
+    },
+    "cmd/agentflow/main.go": {
+      "sha256": "88a2a292569b1156c8ac86f3a75f879855b7225c00a4e21efbdf83733ae017da",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data. Prebuild the shared Docker sandbox image at startup on container installs."
+    },
+    "deploy/codebuddy-models.json": {
+      "sha256": null,
+      "reason": "Exclude private deployment model configuration and credentials."
+    },
+    "docs/api/README.md": {
+      "sha256": "61e7efec21db344d652146ae49ed09e3f57e3aab33f1a0baa21b6680f7e7aeae",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+    },
+    "docs/api/openapi.yaml": {
+      "sha256": "ac7972c5d49535414351626b205b6c206e72da9e4e97661210d105d390f877fc",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+    },
+    "docs/api/orchestration.md": {
+      "sha256": "92d205b0f2a0cac565c656e58aabd2cfb7e7110837098006fd68fb8b6676fb5c",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+    },
+    "e2e/.gitignore": {
+      "sha256": "ef33900d6024b9e54b95a9dc7d2be9c1936cc2567a33c8d22852559917c43284",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+    },
+    "e2e/README.md": {
+      "sha256": "4e492cc2b49911ad5b5bf89d45f09d26dce50869820f743019f02586328347cb",
+      "reason": "Document public deployment acceptance commands, opt-in model/integration boundaries and durable group-to-SOP handoff regression. Document fresh-install acceptance, pinned native-provider protocol tests and scoped cleanup."
+    },
+    "e2e/api/00-smoke.test.mjs": {
+      "sha256": "16f4996fe121ad739ae250a854510f9d9ffed232da75866f1974bdced96c611b",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+    },
+    "e2e/api/10-catalog.test.mjs": {
+      "sha256": "f0e677dc6cdf3ece9f072b70344887e1ec8c4d93ab225bf3cc91cc605d4d010a",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations. Keep custom MCP fixture names within invocation cleanup scope, including hashed long IDs."
+    },
+    "e2e/api/20-issues.test.mjs": {
+      "sha256": "a0a870dd58a3b02ac131b95c979a6ae5e1f1358d837ff48cdd7fbd022a523888",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+    },
+    "e2e/api/30-runs.test.mjs": {
+      "sha256": "4fe5cdd7ab74a4e622bdf9eca6baf275618f16ac422c1b02f32b4f8a9218dfb8",
+      "reason": "Expect the repository_required error code."
+    },
+    "e2e/api/36-cloud-pool.test.mjs": {
+      "sha256": "266fb0b7fffe5f6bc132694440351aa7ac5ebe92ee7bb16292b54aa44be371b9",
+      "reason": "Public sandbox defaults for the shared-sandbox case."
+    },
+    "e2e/api/50-platform.test.mjs": {
+      "sha256": "d3e667b898e285c35d40be4c1db13d1177bdd51b5ffe19da97e6d05d1038086f",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+    },
+    "e2e/lib/env.mjs": {
+      "sha256": "00dead2b53f0e80a9032c8fa16d424bdd159b18b609220b8a082fc6f478ca4e6",
+      "reason": "Public local acceptance defaults with explicit API token and paid-model/model-ID configuration."
+    },
+    "e2e/lib/fixtures.mjs": {
+      "sha256": "7501320ed4a0bfd2f23694aa24bccd10640d4999bcd2fc87209a5d1eb4d41bcc",
+      "reason": "Reusable acceptance fixtures select the requested real model without embedding credentials."
+    },
+    "e2e/playwright.config.mjs": {
+      "sha256": "a22d96432fa05eba53d886cac6e94cb0c16b25b6b187249a23ddac5514cbd32a",
+      "reason": "Use a real password session from global setup instead of a mocked current-user endpoint."
+    },
+    "e2e/ui/01-views.spec.mjs": {
+      "sha256": "847fd24340b4d1606d4aa8cbf7e9e3ebcdbc5d05b92df19e6b85e67bec0f3cf5",
+      "reason": "Exercise current upstream workbench routes in welcome and isolated test projects with real browser sessions. SOP page title renamed to \"SOP 流程\"."
+    },
+    "e2e/ui/fixtures.mjs": {
+      "sha256": "559c2849fc7ffddfeedbd8bffe20b32195ace62d9120c191bc35f0ed19b35a26",
+      "reason": "Remove simulated browser identity and retain runtime error monitoring and project setup."
+    },
+    "e2e/ui/global-setup.mjs": {
+      "sha256": "4d59d91d96dcd3a0aeaa938fe648327b1568e4d43d910655852f3edeec71fead",
+      "reason": "Provision a real browser password session; require matching API and browser identities and keep state local. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "go.mod": {
+      "sha256": "cd6f6d692d323bca356324181eefc8606180f57ded9e5d73b5e90bf55ff4b9b0",
+      "reason": "Dependency security updates for the public release."
+    },
+    "go.sum": {
+      "sha256": "c47f57f439e9a4f800d615fa28e07a886ebe186b1b4aace79d608b4cce7b0e59",
+      "reason": "Dependency security updates for the public release."
+    },
+    "internal/application/operations.go": {
+      "sha256": "9165095bbbfeca5316aca1f767e39fc970a3b868c10f888da6510785e94a6e24",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/auth/client.go": {
+      "sha256": "9f1b67ccdb2878003a5166837683830b47fb220e15d1be84e38b3c61a6fccdbc",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/auth/client_test.go": {
+      "sha256": "e433282b8872ac0fff341b65ff862e9af0dbb865e56e0d2088877be021c4c74b",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/botinteraction/cards_test.go": {
+      "sha256": "b1189046a4fd3376820a6d4d90d9f354db67836cfa34817cde87daf68db55b16",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/domain/assets.go": {
+      "sha256": "2ffe72a34c275753c1d57f7c5d4d047378b33892cf27ec11ac33e1dfed15a9e3",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/assistant.go": {
+      "sha256": "f7c48a73a3716a183ecddf6eb18857d7c3ac951a2088f7910983da991c625521",
+      "reason": "Persist a bounded, display-only thinking/tool process on assistant messages. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/domain/delivery_mr.go": {
+      "sha256": "cb3c295ea0bba78c300034c243de47eddad1823178812cd3c0312b620f09c005",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/delivery_mr_test.go": {
+      "sha256": "b5a83d8e98b395897d906c679c194256e3cfc7caa9c872bb269269b88dfd7326",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/issue.go": {
+      "sha256": "fa9ac160f5ea82a0f93d2de5d2b577001b88da8122d71b354fc2ca234f807156",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/issue_identity_test.go": {
+      "sha256": "6ffdbbc3c87a45a46de400dd0487e612af70f1c68c825b44d44300f44078baa0",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/issue_test.go": {
+      "sha256": "af45a838e31d7f6a55302af59c33a0c7e7ca17ea4b1fa020f4243445a586b21e",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/mcp_test.go": {
+      "sha256": "5864d3d26e68f51741dce4ba96be8a5ad3b1828964a371fa8621235d02a10851",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/domain/mr.go": {
+      "sha256": "946319d1095443dbbcbc8cb5019e1981e960f7634d12c84fb4bc4ae80f1c5a1f",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/mr_test.go": {
+      "sha256": "0522c35247d677688e7e6ae9227749b80832f1d50b006e691e0e5292187e8a5e",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/notification.go": {
+      "sha256": "84d12ea766ec8fd9538e26705b44c6b085358776a7ed76c109783306564c4f09",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/preview.go": {
+      "sha256": "b4e827af02d74c6ca9920335ebe37da39139b2b5feb4262b0d05c6a5e024b240",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/project.go": {
+      "sha256": "a2c90c4cdf5d30c5d2ed3465f6f466b6ceb1b2a55258d06437dd45d50cecb62c",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/project_test.go": {
+      "sha256": "489a57b65b71f6962a913d68dc85876ca104c8d0af7abcefa8200c6910a89658",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/domain/sync.go": {
+      "sha256": "44f6aac18f286086c9b94e92ce02ec2cf90ed99d74ab27ae5e299072d7254301",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/engine/delivery_mr_test.go": {
+      "sha256": "4b4a5339392244261343c8f7ebb2ab0fd9466c3943ed36f4b07522488a9ecb72",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/engine/engine_test.go": {
+      "sha256": "edf2be39e5e342d0052368090b7b11b0258ce598161b42fe3f00cf03172fe4da",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/engine/git_auth_test.go": {
+      "sha256": "dd60e5dd6d6807df96d392e52af3d81a17bc13aa13780120d6af4f64fa1cb6ec",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/engine/node_execute.go": {
+      "sha256": "9071ea632e795a4971623ba37e4ae6f933a3a40a71ddacdf7694adf6a9f58c4f",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/engine/prompt.go": {
+      "sha256": "b8bb45f4adfc149edbb27ba7b50541eb32013da132cf6c56e86f05253dfa0cdf",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/engine/run_environment.go": {
+      "sha256": "51be273fbee0e5bfabca7478cfe5aecb40a4b25c1b6088b719dd98bc5ed109b8",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/engine/run_environment_test.go": {
+      "sha256": "4b1e63302c014b9e51b0ca18b09de1892e34ac254b8c6b6ce03662859a28c73d",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/engine/runner_dispatch_test.go": {
+      "sha256": "bc0136352c3a53d8ee40e478d618e7ef8621c19ec2fae8639b2e3b91d75d17a2",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/engine/runner_sandbox_test.go": {
+      "sha256": "6492d2ad08aa16645846dd73b351cc949637e46c174c3d59d2dbc2932e687d6c",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/engine/work_branch_sync_test.go": {
+      "sha256": "a47982cd1a8507735f8880c62740e1d9fdd193c1f2a6ec96ad48e40285a01203",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/gitwork/auth.go": {
+      "sha256": "0e976244cf18bdee472df9dfc08715f88c71bd019ebf3e5557da3ed425cb3b13",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/gitwork/auth_test.go": {
+      "sha256": "f309cc697059a7747f98e9b8848f744782a2033dfb7bb2afcc83cf4dc4a559af",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/httpapi/agent_tool_mcp_test.go": {
+      "sha256": "bacb606930e2d992e4f7ef69b62ed897b950ca7bcd1c21377e270d4fdab6d9df",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/httpapi/assistant.go": {
+      "sha256": "df846ca4a49fe5f67fb043124ea4d0ffe26aca0d5818bfd5ae691b9f83ac062a",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data. Persist the assistant process; recommend SOPs in ordinary chat. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/httpapi/assistant_acceptance.go": {
+      "sha256": "79c2653277dc0c71d01adc4890e065ecfb9d675e04c79cce9dac7a6c77acc278",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/assistant_generation.go": {
+      "sha256": "61e8c4d4ffdad9e270335d35c14591fe0dd5ad165d27471a32bb2490abec3370",
+      "reason": "Sanitize persisted assistant process. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/httpapi/assistant_group_followup_test.go": {
+      "sha256": "fb6b9d6a9c563193cc7d284e1a1254809a86deceefbb1ce559a7ba5d5d3ba4ef",
+      "reason": "Pin the model list used by the preemption test."
+    },
+    "internal/httpapi/assistant_mcp.go": {
+      "sha256": "7c430809a256b37941a03c0e4f0a081eae8665dc9d88e12f2d71876a193daeed",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/httpapi/assistant_models.go": {
+      "sha256": "c7ae94bdafed588cac098ff5d3c7b7c11729edce475b2d8be48e5ee11890efdb",
+      "reason": "Public operator-configured model catalog; display the actual selected model when explicitly configured. Discover CodeBuddy models per network environment; localized CLI default label. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/httpapi/assistant_test.go": {
+      "sha256": "10cf3d42a0dcf59478ae82598f293a2098af90abafb179172e98bd0f6c05aa08",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/auth.go": {
+      "sha256": "0c7cb3e8e17d7eafb3e2d7c85814a464e0cb8e3daf54a53f7a2601b4eef11d2a",
+      "reason": "Local initials avatar when no corporate photo service is configured."
+    },
+    "internal/httpapi/auth_session_expiry_test.go": {
+      "sha256": "f3820ed35f0ce19eb6827a31e4910ac584690a6e6f83e7dc3d1348c89cde7f66",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/httpapi/auth_test.go": {
+      "sha256": "bafa96beba88f14f5d183d85839c6382dc524a569a1a971b7300e513fa444865",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/httpapi/auth_tokens.go": {
+      "sha256": "0f64574e90c1250d12ff792aa93b8da19e316b80b727d574fdb8d2a7e10973b1",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/httpapi/catalog.go": {
+      "sha256": "ed69f42035a962dcd6d7198fa4cdba82bb3a3c438ed78a4aa4d081460ebfd114",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data; restrict repository writes to the project owner or a platform administrator (public self sign-up). Repository host source paths are admin-only; project-scoped repository permissions. Requirement, role, SOP and run writes require project membership."
+    },
+    "internal/httpapi/catalog_test.go": {
+      "sha256": "ce753665736de890286ebd93ba071418377f6f00d4267ab42a573c257fc0f42a",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/clarify_mcp.go": {
+      "sha256": "eb0849c9c894c59a0d5e656af0c64e4ce1c6fd43fc5f8484bc6919bbe6b1939d",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts. Use the discovered model catalog."
+    },
+    "internal/httpapi/clarify_mcp_test.go": {
+      "sha256": "3440a2da8577f1a4afc8004a2fce2208807bf2ca76218cb210577142991044a9",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/httpapi/clarify_parse_test.go": {
+      "sha256": "e5d3cc8db99fc08c170cabff16e5e3ad46d0c699f2700bd2d50de23107f74ad3",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/clarify_session_test.go": {
+      "sha256": "7cf1a20005ad3c3d9beb372cf5f94e8c2ea29579ec14b3165c3babdc6385470e",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/deployment_metrics.go": {
+      "sha256": "feb04edf7b391f2fa45c0142c9462cb319c4d84ae444b05191bf678262afe2e1",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/deployment_metrics_test.go": {
+      "sha256": "75765f33edf9ad7d1d5f46ef98f118af431cb3ef8cbaacb5c01174ddde35e66d",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/executor_models.go": {
+      "sha256": "11c23f0e2db81525deafff993788c107e7c8c0f326eac99a73a848b3d64b0e25",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data. Use the discovered model catalog."
+    },
+    "internal/httpapi/generic_workflows.go": {
+      "sha256": "b7b77085205fada1e76e5bd1e1b86073996d619df90baae1b4c5cb3d2830df78",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/generic_workflows_test.go": {
+      "sha256": "2edef4b260caa3903d9ae672c88b9e931d40c7ccd00537dd2d731cc8e1ae8433",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/git_token_verify.go": {
+      "sha256": "aba35ec2d06ad9825944d116cab04ed7f239f41185a37993cf9865d27fa8684d",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/issues.go": {
+      "sha256": "8c253edb582bdf5bc15c84f212e4e1021b336308f7805065dc5e9f9aca4ca966",
+      "reason": "Requirement, role, SOP and run writes require project membership."
+    },
+    "internal/httpapi/issues_test.go": {
+      "sha256": "ef139564a0054fe4542e91db00500b30629272b2e31897d1584c036ee05283f0",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/mcp.go": {
+      "sha256": "b00a0b6aeabd1aa0ad04ddb337766030aba69e274e214efca4e27d889194fde8",
+      "reason": "Writes require project membership; platform-wide changes require an administrator."
+    },
+    "internal/httpapi/mcp_market.go": {
+      "sha256": "11b7b9fd503011ec1bbe1cf103c66342c6f7fcaed98f6c06a6a4012f3a3bd504",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts. Bound scoped MCP installation IDs to 64 bytes, and constrain composer dropdowns to the visible workspace; regression coverage for mobile/short windows."
+    },
+    "internal/httpapi/mcp_market_catalog.json": {
+      "sha256": "86129ca5e6f2149964769bf79441a0c540db8845384be4a21fa8b2567ac31dac",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/httpapi/mcp_market_test.go": {
+      "sha256": "136becf36d2030426ca0d37fe27675e159bf953a37634f43957abd25a8b6810c",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts. Bound scoped MCP installation IDs to 64 bytes, and constrain composer dropdowns to the visible workspace; regression coverage for mobile/short windows."
+    },
+    "internal/httpapi/mcp_test.go": {
+      "sha256": "4b745d1e461028ffa5de1481b3d0639fe4c7faf86315921620472501c2469e37",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/httpapi/notifications.go": {
+      "sha256": "e1b1fd3e8bff88e0019e03ab77cbb832ecff460ffdb0fd064012c9558184befc",
+      "reason": "Use the discovered model catalog."
+    },
+    "internal/httpapi/notifications_test.go": {
+      "sha256": "cb79a9b38095ad2899627dfa0dc1fbc52a280f4a985d4495d6f7a0498fee8ff1",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/run_eval_test.go": {
+      "sha256": "0ea237924aa4ffdfaeaf39cb15a4dff4ff90f9faa7cfc5397cc761902d4cc184",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/runners_test.go": {
+      "sha256": "ccd9c694ac58478796fe0053fc27f66fa6ab6807822abb3d64a2ee3b7345e9fe",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/runs.go": {
+      "sha256": "a2c7c1c21e492e22673842c48ed907fd61b7f3dd4e5b8fac3fa30258bd0c76fb",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data. Machine-readable repository_required error. Requirement, role, SOP and run writes require project membership."
+    },
+    "internal/httpapi/schedule_test.go": {
+      "sha256": "24add9a0924a4a2edc2e0cab82f860f6c59d7d28fbc62cae50af142a97ad0af7",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/server.go": {
+      "sha256": "adca4c1378fecb73234b69b5ff5a836caaee18fcd52081aadeb8a8f710cd5e09",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data. Report Docker availability to the UI. Requirement, role, SOP and run writes require project membership."
+    },
+    "internal/httpapi/skillhub_efficiency_test.go": {
+      "sha256": null,
+      "reason": "Exclude organization-specific benchmark data, handler and snapshot tests."
+    },
+    "internal/httpapi/stream.go": {
+      "sha256": "7c3cb5208b4f010a71707440cb5d12b87080e53c5a79d8f74c302d0428d98c3a",
+      "reason": "Writes require project membership; platform-wide changes require an administrator."
+    },
+    "internal/httpapi/studio_test.go": {
+      "sha256": "78b41adf4f5aa606d3a9fb13b59edcacdb7066a3a05140bc5d6d48e3ee7696e1",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/tapd_import_live_test.go": {
+      "sha256": "0942d7d5317aefc287690829bfe1f5aa32e4734a1d49a320a105b7324caaea7f",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/httpapi/task_group_test.go": {
+      "sha256": "8322486896baa34aa2946c86f0ba4d00929dcf13d0032ae84bed80f42c54ec67",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/mcpserver/schema_test.go": {
+      "sha256": "306d34efce13bc9a1c455c14075c13ade5667dfb97d874c14b15fa4d028ccb85",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/preview/config.go": {
+      "sha256": "f7964d08dce00907edeb540031eb03442c44c6df37608126e8a9151cf23d46f6",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/repo/analytics_test.go": {
+      "sha256": "8a0ebfd7f5263b6a8d901f7ea5536fe6b2b36b57f9afa9d4fde0505140031a22",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/repo/assistant_test.go": {
+      "sha256": "0675102a090a23b9cd46dfff375008539cdcbdb60159b7227c3702bbfc138273",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/repo/catalog.go": {
+      "sha256": "e5c6dd0b4c87a14a7038503041a1d6e17904a32c7f4e993ed378396fb39781ea",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/repo/issues_test.go": {
+      "sha256": "3cdad2906f8b7bbaeafdb24ae0c9ddb35edc36c725d5a62383ee70f96edda42f",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/repo/models.go": {
+      "sha256": "daaac6e98086cb568f46917545c8860ebdcf3735897ce2d5a0266975eed9f8e7",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/repo/mr_delivery_memory_test.go": {
+      "sha256": "f0b1283218950cdc92cfe46688e58b0e1c64fd31c7ecd00b3203e091a6a6da11",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/repo/opentest.go": {
+      "sha256": "bfc14401522814d0973bcf720756a22bdb42a41374e7d1410f87e140110aae99",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "internal/repo/platform_admin.go": {
+      "sha256": "ab603fc3fb3e83194a98325869d10fb2ac1d5e14edac0b04b2bc363cf0c75096",
+      "reason": "Remove embedded employee privileges; use explicit roles and configured admins."
+    },
+    "internal/repo/platform_admin_test.go": {
+      "sha256": "a1c4746454ca102d77e0919544d2d5c72fc553493ffb0b0a2b3cb0c03d11fbc1",
+      "reason": "Remove embedded employee privileges; use explicit roles and configured admins."
+    },
+    "internal/repo/skillhub_efficiency.go": {
+      "sha256": null,
+      "reason": "Exclude organization-specific benchmark data, handler and snapshot tests."
+    },
+    "internal/repo/skillhub_efficiency.json": {
+      "sha256": null,
+      "reason": "Exclude organization-specific benchmark data, handler and snapshot tests."
+    },
+    "internal/repo/skillhub_efficiency_test.go": {
+      "sha256": null,
+      "reason": "Exclude organization-specific benchmark data, handler and snapshot tests."
+    },
+    "internal/runner/daemon.go": {
+      "sha256": "ecda26143b066160397b571ca49725e34a5f9a37533008820e29a6daed04ff52",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/runner/daemon_test.go": {
+      "sha256": "7bb9f01120209565a831b12740c66bcb9990966a7660103b7651d58e6b14acad",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runtime/command_binding.go": {
+      "sha256": "519e8d49ce5eaa1a2aac5695074b6bcc6351e78f3e317507ac07972e0e9c3b91",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/runtime/mcp_call_test.go": {
+      "sha256": "38017f1cc68d2b3620e76935f7b7e670468d9e33d1c98d691c43b67fbf779522",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runtime/mcp_credentials_test.go": {
+      "sha256": "8a3775b8a729a9f3e9c2e377107fababc74bceb60fd7031c7daab7aae66e60ed",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/runtime/mcp_live_test.go": {
+      "sha256": "213b85c0da286dc078e8613515ea38e1e9bf47bcbc042c68213365bff60db8e7",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/runtime/platform_mcp.go": {
+      "sha256": "4a018f55136b58c8f6cf78efd62a9564343cf9662a8c55410f99b70a27dee536",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/runtime/provider.go": {
+      "sha256": "00bb5a8c82fbf3d23e2c244e7d2381466947cb457ae4ae86eed2ae5cd9382860",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults."
+    },
+    "internal/runtime/runtime_test.go": {
+      "sha256": "93bcec23896399d03cdc8e3c6b2b710853d408d43da8a73e3a279c561c38682a",
+      "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runtime/sandbox_docker.go": {
+      "sha256": "347582e63fc7f15fbefc5794a5a66f2d3d5555ce0013a1614594ac365beb03c7",
+      "reason": "Compose network, local-driver isolation, Docker readiness and image prebuild."
+    },
+    "internal/runtime/sandbox_manager.go": {
+      "sha256": "59f27ad34423ed51c0ec78e0008b1dd7889ef7251fbae084d369a5669b68bac7",
+      "reason": "Run local-driver profiles in Docker on container installs."
+    },
+    "internal/tracker/catalog_test.go": {
+      "sha256": "7ef451907f37c7ad6aec0a5fa3c95a00bead1a4bc5e1bcc704bad212268e47da",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/merge_mr.go": {
+      "sha256": "ae8335ea197187368650558fd306cc660efdff042486eeb913631e7adea54dfc",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/mr_delivery_sync.go": {
+      "sha256": "101e961a6441ea933f7ce11191b346ebdc7dd3af0f6429bf5d943d76aa6a1d9f",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/mr_delivery_sync_test.go": {
+      "sha256": "ed724f91c2b4cffcf65bc4626048f699952d6aa0eddc79ec915adbc324e91b29",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/service.go": {
+      "sha256": "dd103518cf21f200bce5138d376c3bff68bf7806af26c9ec3af7892659b67558",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/service_test.go": {
+      "sha256": "6a01d997b52cb1842824b8f7038e1c407de9e830cc44b90e97d9d5952c7d3f15",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/tapd_bug_sync_test.go": {
+      "sha256": "13b594b4e58600815e28f07ee5863d4d94b95009d775855e6fa97650b06b1958",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/tapd_import_test.go": {
+      "sha256": "6c95ab825f1cb8770b660d52ef684769fcdbfdd67fc4dc08f63dc0568e28f69e",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/tapd_resync_test.go": {
+      "sha256": "851a709ab9f7a7be9a7eb01ea8515162181caae2bfe8ad521508b7ea0a4530f0",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/tapd_url.go": {
+      "sha256": "47ed4b5e96b696b2f7c83acc2fd5fa236e0491c2c945d00308f745f8d5e22106",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "web/app.js": {
+      "sha256": "7ed9fe835a91cc486d0b1032d39f70b5a0da049a898b266741c019edaf1ae3e8",
+      "reason": "Bind Bot refresh through external JavaScript so it works under the public Content Security Policy; bind the repository modal submit handler used by onboarding. Repository action toasts; default to a project the user belongs to; SOP naming."
+    },
+    "web/app/access.js": {
+      "sha256": "d3fa472faf2b0427c5c1689b78604276035446ce70d184cfbaf42cbe453c2d4e",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data. SOP naming; built-in SOPs use CodeBuddy."
+    },
+    "web/app/agents.js": {
+      "sha256": "a1f2dc8bee10ab036bf441577e1a24ce24ceb0fef9b5674717307fafded4d544",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/approvals.js": {
+      "sha256": "2a22cf2ac877d7ea867376a2411eae1ec2c9d6961a5b2e4a955a469c67130b3c",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data. Public placeholder copy; bilingual send-back label."
+    },
+    "web/app/assets.js": {
+      "sha256": "c1508958ac72a9143758fa1c134ba06e1661d9b915b7475148a5a0be3d2ba06c",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/bots.js": {
+      "sha256": "a4a7ed1188dcf6a7dc093bc33faac2b1fd3bf4c8068e1e7a33f420718c43a65e",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/composer.js": {
+      "sha256": "232df08beb2ce3f9a4283cd38e903b9996ac9b794f014a228c92c4b245cee5c0",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data; hide internal TAPD/Gongfeng wording in issue creation."
+    },
+    "web/app/dashboards.js": {
+      "sha256": "ceb09da593f07ccaedb495a5d0441fc2b065b2679f0217d9407e6c153de2de74",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/flows.js": {
+      "sha256": "63c41bb904c118d807a05b0bc86f8dc736f3791a4e52275d8ea5781b75361508",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/issue-drawer.js": {
+      "sha256": "91e88482975706db38a12fd3bab5bcbb4ff969d1f46abee7c740c358359ac4d6",
+      "reason": "Remove TAPD statistics fact."
+    },
+    "web/app/issue-model.js": {
+      "sha256": "1659f02e65e59951b31036047b281d117e5080a44e782cec8b9669eb9f535751",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/issues.js": {
+      "sha256": "e4e352defb7b182f6f5c8d716e5cb0d2f858f3afefbeaf1bcf162a3da128a3fd",
+      "reason": "Public GitHub repository URL support, explicit token/assignee guidance with credential setup link, and clear save-without-token status; preserve upstream issue, group and SOP behavior."
+    },
+    "web/app/mcp.js": {
+      "sha256": "befed20746473e0c80abb7908f8bf00090d91ff5b3755dfe128ae77c8d871e1c",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/observability.js": {
+      "sha256": "6b48465be9be2e31c79d56fa09475d5bb331def095d5b0cb5fac3ab74237fa68",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/projects.js": {
+      "sha256": "e0fc2d29cb5bb0ab3dc84d32f0f981b546df3d2e4e7f01158df75c914e02695f",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/revisions.js": {
+      "sha256": "2119f2659ad1fb2c3e6ae459a9e7c60093e72f9a491c030fac546a24c31bbc51",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/runs.js": {
+      "sha256": "724dd42bd5aaa2da0b0291383cd2550e27a900298942d6f10d40200be19af604",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/sops.js": {
+      "sha256": "811a8381d37375b3524a0f6ffb0643c4c497dcfab0afa984df7083a6ad16a4f4",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data. Show run requirements (API key, repository, Docker) on SOP cards. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "web/app/sync-schedule.js": {
+      "sha256": "20ff3b1e1488bc244a2401ce15ee589d57bd941078633c9dff6573d3c4a430f8",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/app/workbench.js": {
+      "sha256": "af2a9c99be1749eebf39c9fb00b27784a41922e2164930b218843574290ed579",
+      "reason": "Preserve upstream settings and avatars; use CSP-compatible image fallback, explain CodeBuddy environments and refresh composer credential state after saving. SOP naming."
+    },
+    "web/assistant.js": {
+      "sha256": "1fa0dcd99cce9cfe4280b23df569a198202f4317e621789336b8b59259665fa2",
+      "reason": "Public credentials and always-expanded getting-started steps above the composer; GitHub is optional and excluded from core progress. Preserve direct capability questions, draft protection, orange missing-key guidance and upstream handoff, ownership and conversation behavior. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance. Bound scoped MCP installation IDs to 64 bytes, and constrain composer dropdowns to the visible workspace; regression coverage for mobile/short windows."
+    },
+    "web/embed.go": {
+      "sha256": "d36a74d15198b989834aa35e6f88eb9d7d8082761f952f7f836f120bd6a267d5",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/index.html": {
+      "sha256": "55f85a977e3df2bbfe6c6230c2eeea5a05271e073c0f15aa64f11d1d08badb32",
+      "reason": "Public branding/sign-in/preferences; bind Bot refresh without an inline CSP-blocked event handler; hide internal TAPD/Gongfeng wording in issue creation. Public assets, SOP naming and onboarding tour script."
+    },
+    "web/mcp-icons/10021.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/10682.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/10715.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/10873.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/10877.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/11427.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/122.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/12601.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/13460.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/13479.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/13653.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/14001.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/14327.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/14993.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/15088.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/15268.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/15791.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/1619.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/16191.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/1621.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/16745.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/16806.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/17178.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/17321.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/17352.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/17480.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/2136.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/2143.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/2214.jpg": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/272.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/2842.jpg": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/3142.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/3144.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/3252.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/3766.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/4297.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/4376.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/453.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/4809.jpg": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/5669.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/5684.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/5744.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/5757.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/5758.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/58.svg": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/5958.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/61.svg": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/6130.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/62.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/6251.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/6668.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/6893.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/70.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/7123.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/7166.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/7424.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/7447.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/7578.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/7646.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/7897.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/7921.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/8360.jpg": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/8679.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/87.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/89.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/8968.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/9731.jpg": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/9885.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-icons/9957.png": {
+      "sha256": null,
+      "reason": "Exclude enterprise-only marketplace icons."
+    },
+    "web/mcp-setup.txt": {
+      "sha256": "5e03ec314891cdb351715aa87a6574b05071a6c0540e821d5d567cb3726a72b9",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/orchestrate.js": {
+      "sha256": "3a9e5f23b579be36c586db7416b4f51cb01cb881d2c39719e4c68710ed7bcb46",
+      "reason": "Public wording: GitHub pull request (PR) instead of merge request (MR) in displayed text."
+    },
+    "web/rooms.js": {
+      "sha256": "95c4c432148c858021f93f2e0a817b22beaf3186e716b5da345489995ecf729e",
+      "reason": "SOP naming."
+    },
+    "web/syntax_test.go": {
+      "sha256": "71a0c9f5a933d12276f39d37d11270eaaf7f0727227063eabe3d4bb38510f23a",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "internal/httpapi/task_group.go": {
+      "sha256": "c433863d0b6874d250ba58fe3fe6be2f61665bfed0545ec4feeab3aceb28be97",
+      "reason": "Preserve current upstream group and durable handoff behavior; require project-writer permission on mutating group requests while retaining viewer read access."
+    },
+    "internal/httpapi/assistant_workbench.go": {
+      "sha256": "fbf1f700fd26d78b4db5fd06012fdbd118eb770edc71310f470ee2f63c1301db",
+      "reason": "Public project context handling and explicit viewer denial before creating a run-bound agent execution context."
+    },
+    "internal/httpapi/assistant_workbench_test.go": {
+      "sha256": "69d15291fe15edc0eb9f8501ed4f9684d3baea85bfd6bde13259aed6c61de380",
+      "reason": "Verify viewers retain project read access but cannot obtain a run-bound agent execution context; owners retain access."
+    },
+    "web/platform.css": {
+      "sha256": "58f09e891e1ebf17ff5db9ac78313173e16b3b6069323e6c9e4b35f1dd86d7dd",
+      "reason": "Fix repository modal checkbox alignment: checkbox inputs keep their intrinsic size and labels use a shared flex row instead of full-width text-field layout."
+    },
+    "internal/engine/clarify_workspace.go": {
+      "sha256": "d5fe26eb56aef5a35a93111aad147ced7d62fb8e88f054543235a82f5ef68ccf",
+      "reason": "Keep missing responsible-user Git Token validation; use a provider-neutral credential error suitable for the public GitHub deployment."
+    },
+    "web/collaboration.js": {
+      "sha256": "3070c29b6cbcf08a028cc9203df670d75d60c9810862e0c71062d4f922ef5526",
+      "reason": "Keep upstream collaboration and durable handoff behavior; constrain reference popups to the visible workbench/visual viewport on open, scroll, resize and content changes, and preserve reference names when translating the interface."
+    },
+    "web/collaboration.css": {
+      "sha256": "153a5cd3e8154c8d35a48f3431b9f20603ba3c250537b2809395652f008f6bce",
+      "reason": "Keep upstream collaboration layout; make the constrained reference popup use border-box sizing, contained scrolling and a sticky search header. Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/httpapi/assistant_session.go": {
+      "sha256": "4b7f55502ac04533b94347f2d49a606ce87da1bf135fbf59206664ae48a0fd6c",
+      "reason": " Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/runtime/runtime.go": {
+      "sha256": "1608b006ddc034983672b77533f9f113f16e6daa0efe711ad822c37512da2ac4",
+      "reason": " Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/httpapi/assistant_group_followup.go": {
+      "sha256": "5b45f862b0079dc23916cdc5cb9b67b80ad238a86e5be737068f8422f6e9ed82",
+      "reason": " Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "e2e/cleanup.mjs": {
+      "sha256": "34e411959cdd33d42900cd2145286cad47a8bcdec050d727f56568ee09370c50",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "e2e/run.sh": {
+      "sha256": "3ed7a5341a31e32c57c4bb0710dbe0da94e670d17f952fd21452f6b8d0f90597",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/gitwork/git.go": {
+      "sha256": "7ab2fb7926c1b6a2e1396a65b1e8515a90c4cf303d26bc51f0c1f90326a499cb",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runtime/mcp_call.go": {
+      "sha256": "477ee7220160747259d41bfd2ad9d599a0541e53c1d693a1c2e3011ddc77e753",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runtime/provider_codex.go": {
+      "sha256": "4553301283a5188a201a429cf9abcd26ac1d98496423e445da1db3b7e9c9d513",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runtime/runner.go": {
+      "sha256": "7e75a2ff443ec07253e27959d92b56d9274e5a2f7e788a2d9f9676041ec24aa1",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runtime/sandbox_local.go": {
+      "sha256": "1e383b44eee3e5725e545a4ae5640c09a50a598e9715f3c4f92b596ac3de6cdc",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/engine/git_auth.go": {
+      "sha256": "ccd3e9af433106c2345dff5d9a70666724f31a9e30e5abfc76dc4ca45a598a88",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runner/exec.go": {
+      "sha256": "91f3a5f20fdfe2cbf5cc03ff5b91b247073de9952f472d7f41d9c26a3b819ce8",
+      "reason": "Fix cancellation busy loops, keep a single command Wait owner after draining streams, and reap processes on early control failures; regression and race tests cover cancellation and managed CLI cleanup."
+    },
+    "internal/engine/preview_finalizer_test.go": {
+      "sha256": "e01346c524de05dcbbb1a7990d6f1b63443464b7dc198b1e8c5785ad6bddd756",
+      "reason": "Wait for asynchronous preview workspace release, including directory removal, before ending the readiness test; removes a finalizer/store-close race observed during full-suite verification and verified in 40 repetitions."
+    }
+  },
+  "added": {
+    "cmd/loopforge-account/main.go": {
+      "sha256": "edac83d4a3ae91af7fa7fb08bbc8b4fbc17453f15091cb6117ac1517ebc9c540",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "e2e/api/45-delivery-model.test.mjs": {
+      "sha256": "bae7bb5b082a93cce442442b954b47f1795aca32bf72396fdf2bd32adf160b13",
+      "reason": "Opt-in real model delivery across planning, code changes, independent review, actual tests, human approval and immutable delivery evidence."
+    },
+    "e2e/api/55-workspace.test.mjs": {
+      "sha256": "67b2523c81a7158c6a40d006ff19dc7d997dd8e6f681b52b922875e00dd58068",
+      "reason": "Workspace acceptance: git history, protected files, conflicts, shell."
+    },
+    "e2e/api/56-sandbox-preview.test.mjs": {
+      "sha256": "184aa3d82374e9e25b21d783e029e8660aa2711c7ab56e91ae18588210f35037",
+      "reason": "Docker sandbox and static preview acceptance, including browser history, root navigation and revocation. Native HTTP preserves navigation metadata that Node fetch overrides."
+    },
+    "e2e/api/58-permissions.test.mjs": {
+      "sha256": "2eb12830cdbe505ce486d678b92962e0c2c725d42d2b9bf918a6e54a72c1fd9c",
+      "reason": "Real two-account acceptance of non-member and viewer restrictions on credentials, workspaces, task-group creation/control and handoff retry; restore membership after testing. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "e2e/api/60-assistant-lifecycle.test.mjs": {
+      "sha256": "f47b2730ee6be77dca2fd271496760e09d4c7a101b90462b1b32f744d464a9c7",
+      "reason": "Main Bot sessions, attachments and scheduled prompts acceptance."
+    },
+    "e2e/api/65-task-groups.test.mjs": {
+      "sha256": "f766c6344d2a2b34ce2cb6f3123bca85a15f5eb042d8c3f4f5fc09a2d47ed122",
+      "reason": "Task group collaboration acceptance."
+    },
+    "e2e/container-persistence.mjs": {
+      "sha256": "c2b27066d023ec44851c366abcfe9bd89a05c10a4c79b907ddd86f5ecf91df3a",
+      "reason": "Data survives container recreation."
+    },
+    "e2e/public/00-first-run.spec.mjs": {
+      "sha256": "e8e9177796db4a0464197cc9bf9f85ec242c6722596d03abf11a58e8cb60b1ee",
+      "reason": "New-user journey on a fresh installation."
+    },
+    "e2e/public/README.md": {
+      "sha256": "8c936934d65b08ca6d571c6ebb82ad33253ef9b48d520b668c685d757a2aad03",
+      "reason": "Document real public browser acceptance, credential-free draft regression, opt-in model chat and isolated container checks. Document fresh-install acceptance, pinned native-provider protocol tests and scoped cleanup."
+    },
+    "e2e/public/composer.spec.mjs": {
+      "sha256": "379af9487ee86b327205dc43442a4005fd44a0f683a12a2338a38b6f36452baa",
+      "reason": "Real browser regressions for pre-credential drafts, settings activation, actual model replies and persisted conversations without credential traces."
+    },
+    "e2e/public/helpers.mjs": {
+      "sha256": "f247a3fa02b9e76f379a4d79ea3124d1d064ef23d1badf7efdaac2d97d68394b",
+      "reason": "Resolve local test credentials independently of the calling working directory. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "e2e/public/platform.spec.mjs": {
+      "sha256": "e015121d63e2f40df921a20cb3a7c4d8682faf55cd9f1dee5b26ca48b79e02c8",
+      "reason": "Real public authentication/preferences/artifacts/approval acceptance with MySQL telemetry filtering and portable credential lookup."
+    },
+    "e2e/public/playwright.config.mjs": {
+      "sha256": "ade5fe078361ac2a626a9b53e8b1bff2d04c7b30bd93d7fd238dba74ece9bce1",
+      "reason": "Public API contract, safe local acceptance defaults, optional external integrations, and current interface expectations."
+    },
+    "e2e/setup-auth.mjs": {
+      "sha256": "c3a56288a4f547669b2f17051e91b1d5751450adc2255800b7807b98c362e93b",
+      "reason": "Creates the API token used by the public acceptance suites."
+    },
+    "e2e/ui/03-workspace.spec.mjs": {
+      "sha256": "abe8308b2eae6952f320c0138c0f737308f73e4622dae940eabf9ec3e00e6861",
+      "reason": "Bundled IDE acceptance."
+    },
+    "internal/domain/assistant_process_test.go": {
+      "sha256": "cda071b438b48143e5bc34b0874d52e7c7d62b4419bc4c613aebf670ab855d30",
+      "reason": "Assistant process test."
+    },
+    "internal/domain/public_repository.go": {
+      "sha256": "72544478778189e2a7eb9660c34b72fcbd3eee029473518edd5a00c91c3e1812",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/domain/public_repository_test.go": {
+      "sha256": "4f6952f0ad7296bb5c98870208685e88b5ced0fc27e07d2bba92e43f7fb4950c",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/httpapi/assistant_models_test.go": {
+      "sha256": "c659b71919c5e914cc5c845c744f9589c8dfadf44f72ba3fea25061105f7d700",
+      "reason": "Model discovery test."
+    },
+    "internal/httpapi/auth_avatar.go": {
+      "sha256": "385903a466e991b89a930ce1c8486cf36ac02b5f4b050b1ec5d3832c3bddd15a",
+      "reason": "Local initials avatar for deployments without a photo service."
+    },
+    "internal/httpapi/auth_interactive.go": {
+      "sha256": "8d44c75779e40e6ff7fd9376c43419c750e888b8deb6a592378524ab568e5ab8",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/httpapi/auth_password.go": {
+      "sha256": "9c63a0d4c4db0611db38d0798adfc2e64d322058c5e6b37ec97cd083d9ecea47",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/httpapi/auth_password_test.go": {
+      "sha256": "89d300a884a08c158d04dfd3de5a625484100688a074335cd1a7faae587b90cd",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/httpapi/auth_register.go": {
+      "sha256": "acfd531261726d8c77e8b3139022a1d0a67e597c96bb1a88d4b3d90d2a2ddb83",
+      "reason": "Browser setup of the first administrator and optional self sign-up."
+    },
+    "internal/httpapi/auth_register_test.go": {
+      "sha256": "6598454d033bc495640354c4e81ccf3fc8acd08aaacf94ec0f8c8b6a316dea6c",
+      "reason": "First administrator, sign-up switch and local avatar tests."
+    },
+    "internal/httpapi/project_write_access.go": {
+      "sha256": "cb8a82916d75cccb9a2a9d999260804027d04b18f182570e38dc6e235f63ac01",
+      "reason": "Shared project-writer predicate; enforce read-only membership for group writes and run-bound assistant execution as well as catalog/run controls."
+    },
+    "internal/httpapi/project_write_access_test.go": {
+      "sha256": "a2913fc9a760c8dd21c8517bc677dcabb0f0a1005fad309cac166cf210da1193",
+      "reason": "Regress project membership and viewer/non-member denial across catalog, run, group creation/control and durable handoff retry routes."
+    },
+    "internal/httpapi/repository_authz_test.go": {
+      "sha256": "8bdf6049c836562c09ff2642706e3340c2c5e97ca8c27e50f423f92fc06ffc32",
+      "reason": "Public authorization regression test for repository writes."
+    },
+    "internal/repo/local_accounts.go": {
+      "sha256": "60b0ac6202c12fecafa3125158d24ec1772d28b2b6998fa52478b368797fa99d",
+      "reason": "Public password/session authentication; explicit user administration and regression coverage."
+    },
+    "internal/runtime/github_mcp.go": {
+      "sha256": "fc06e025d778e52db6bb135b4aebbdf8489f6e765739d22a60f3ccd3b1c9d75d",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/runtime/github_mcp_test.go": {
+      "sha256": "66bc28fadf2b5d500828268467c953024278443cbab7d441a3064cf617a6ff4e",
+      "reason": "Explicit public marketplace and actor-scoped GitHub MCP credentials; retain opt-in adapter contracts."
+    },
+    "internal/runtime/sandbox_isolation_test.go": {
+      "sha256": "1328c5676fa3fc2cf58d291a351fb1b571f95c1b144f16208b1cd368a120c989",
+      "reason": "Local-driver isolation test."
+    },
+    "internal/tracker/github.go": {
+      "sha256": "fca7a3f6c8ba53a3575dcaefdd69456650dc276066de2ea46228c3852213706b",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "internal/tracker/github_live_test.go": {
+      "sha256": "c75d9de1f2662054fc31249b3cf9876812ea4caf7b3e7fe5c9f156c53e768f69",
+      "reason": "Opt-in live GitHub adapter checks."
+    },
+    "internal/tracker/github_test.go": {
+      "sha256": "40b49872ff5314b77970b4bda357745a48f2a7c7c2b397a277c1faed5708bb8e",
+      "reason": "Add public GitHub repository/issue/PR adapters and de-identify protocol fixtures."
+    },
+    "migrations/seed/001_public_catalog.sql": {
+      "sha256": "139f39773848336cd755fbb0114445e6476107f978c1a68d8d3664a5e85e13be",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "migrations/seed/002_welcome_project.sql": {
+      "sha256": "4d0e132985aad092a62a02a6bd7d004778c023f47056d550d1414f9a9e606a54",
+      "reason": "Public deployment/default configuration and removal of organization-specific fixture data."
+    },
+    "scripts/install-observability-schema.sh": {
+      "sha256": "9b23137f2710fdc6f18b18ef1e95eb69c38827208b0ae198f69f2423240f8d2f",
+      "reason": "Explicit Compose installation of missing upstream observability generated columns; never run from application startup."
+    },
+    "web/app/tour.js": {
+      "sha256": "a35121c4ac9353f43bfa12281961e925cf863e492d39afe9cd7bc54aae5be3d9",
+      "reason": "Onboarding demo run and run detail tour."
+    },
+    "web/boot.js": {
+      "sha256": "40b043a02d7a2ce9fc1cbc38b7daad64a275ddb5d00585d7e7dc3764ecd007b9",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/i18n-en.js": {
+      "sha256": "adf98a7e0d43cc1e80fc439a768143dd121961148930f733d426b3a43a0cc513",
+      "reason": "Language resources with public credential setup and environment guidance."
+    },
+    "web/i18n.js": {
+      "sha256": "03f03cd1c1c0caf9c79f1bc3bd4878d749aedc6a47ad98b1a5e84f451972cb24",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/login.html": {
+      "sha256": "7e358eed54fe64527ddb80d6c74eeeb742cc5b726653815bed47f6bc73d0d1e4",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/login.js": {
+      "sha256": "fe050d2429f924bd042b8b773df524ea0607c221ab58c7fb657051a170dedad1",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/mcp-icons/github.svg": {
+      "sha256": "f877bed6733f057cdb16abb713e167e7f90575b4be3e94ad55968944f6f2641d",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/preferences.css": {
+      "sha256": "09718d18266e3243c0e74c28979bf5f5d4fb75cd6e59f11269ec9c6c7eaa69c7",
+      "reason": "Public preference styling and a compact model-credential setup hint."
+    },
+    "web/vscode-web/LICENSE.txt": {
+      "sha256": "9480271317925265e806a9a196aaa33410a962fa9d4d1e248a4a5187bc8c9df9",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "web/vscode-web/ThirdPartyNotices.txt": {
+      "sha256": "0041f8686485db24c44ec38602df287860f20638fe6dbc807060f21283e957bb",
+      "reason": "Preserve upstream workspace; adapt public credentials/GitHub and setup guidance, add language/theme preferences, and remove embedded employee/customer data."
+    },
+    "e2e/api/66-sop-handoff.test.mjs": {
+      "sha256": "088060961f96aed040ca6e61bbc5dfcc04c5187b6ab9bf3c73fd4c588938ec93",
+      "reason": "Opt-in real-model/MySQL acceptance of durable group-to-SOP handoff, preserved user constraints, idempotent submission, archived summary and explicit approval."
+    },
+    "e2e/public/welcome.spec.mjs": {
+      "sha256": "73a0c42cf41d58ee7dcbd5654a51c223cd2561917ac6d3ca44274bc386cc502a",
+      "reason": "Real browser coverage of compact desktop/mobile welcome, missing-key and real-model capability questions, existing drafts and dismissal, real script demo approval, plus repository save without a token, checkbox layout and credential links."
+    },
+    "e2e/public/references.spec.mjs": {
+      "sha256": "5421c480d9aa40bfde31e05756717fab29b604630900df0f8fd3383538cd5fbf",
+      "reason": "Real browser/API regressions for viewport-contained reference menus on desktop, laptop, short windows and English/dark mobile; cover workbench scrolling, search/selection, resize, toolbar entry and Escape without model calls or writes."
+    },
+    "e2e/public/without-github.spec.mjs": {
+      "sha256": "1f56e158b6b46d00ba502e5179c7099c966009decd750bb64e09d0a09ce2990e",
+      "reason": "Real no-repository/no-Git-token acceptance: script and approval without model credentials, optional document-writing Agent with only a temporary model key, and continued gating of repository-dependent code delivery; cleans up runs, definitions and key."
+    },
+    "internal/httpapi/assistant_provider.go": {
+      "sha256": "298928bfce6f221f53e2316b315544f6d0005a92021c015ec274a8e6031d3a33",
+      "reason": " Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance."
+    },
+    "internal/httpapi/assistant_provider_test.go": {
+      "sha256": "b289b4282491fb969428546450e4f76b75d21973c971d63e41637e672d40377c",
+      "reason": "Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "e2e/public/executors.spec.mjs": {
+      "sha256": "cd0e298302ba3237a333a42c3d669468a35da05cb3bac44b43d9a75bfdea23a7",
+      "reason": "Main Bot executor selection: actor credentials, private CLI state, restricted native tools, provider model catalogs and reusable CLI/browser acceptance. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup. Bound scoped MCP installation IDs to 64 bytes, and constrain composer dropdowns to the visible workspace; regression coverage for mobile/short windows."
+    },
+    "e2e/api/05-cleanup-scope.test.mjs": {
+      "sha256": "595cd3596d872836d0436cf15b1685e69cab084968b643b52dcc04c9854a272c",
+      "reason": "Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
+    },
+    "internal/runner/exec_cancel_test.go": {
+      "sha256": "5c4fd945d4cb3630c67836930f0ae56aac531dfc606d129bcf68272b391daf0f",
+      "reason": "Regression tests for preserving the real process exit status and prompt runner cancellation."
+    }
+  }
+}
