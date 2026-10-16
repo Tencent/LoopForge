@@ -499,8 +499,8 @@
       "reason": "Public provider credential binding/defaults and additive GitHub metadata; remove private fixture endpoints and identity defaults. Reviewed public provider/credential readiness, isolated Git discovery and neutral author identity, real CLI regression or scoped E2E cleanup."
     },
     "internal/runtime/sandbox_docker.go": {
-      "sha256": "347582e63fc7f15fbefc5794a5a66f2d3d5555ce0013a1614594ac365beb03c7",
-      "reason": "Compose network, local-driver isolation, Docker readiness and image prebuild."
+      "sha256": "d9c40e0dfb13f89b6d9db9ecde422e7b1691e67410b813b9d7bf8192235b0c4a",
+      "reason": "Compose network, local-driver isolation, Docker readiness and image prebuild. Map default/root images to the non-root native service UID/GID so 0700 workspaces remain accessible with all container capabilities dropped."
     },
     "internal/runtime/sandbox_manager.go": {
       "sha256": "59f27ad34423ed51c0ec78e0008b1dd7889ef7251fbae084d369a5669b68bac7",
@@ -1255,6 +1255,10 @@
     "internal/gitwork/workbranch_test.go": {
       "sha256": "1f3d8317a34e688a5b4606a1a82a62d74d6ac96a81becfc9134f1986b12e7835",
       "reason": "Exercise empty and excluded-only checkouts plus ordinary source additions, updates and deletions on Git 2.55."
+    },
+    "internal/runtime/sandbox_owner_linux_test.go": {
+      "sha256": "5d4dcadaa102e76ac86004edbfed4c4a6be567275242cb0ef33df6224c5124dc",
+      "reason": "Real Docker regression run as a non-root native service user; verify private workspace access, script identity, output ownership, zero capabilities and no-new-privileges."
     }
   }
 }
