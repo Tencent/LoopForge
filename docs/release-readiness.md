@@ -1,6 +1,6 @@
 # Release review
 
-Review resumed on 2026-10-16 against recorded upstream baseline `3a8cb2420904e3ee8ab1b39c48f54b372a9e3e04`. See the [verification record](validation.md#fresh-installations-and-resumed-acceptance--2026-10-16) and [acceptance matrix](testing/acceptance-matrix.md) for current results, corrected failure history and untested external-service boundaries. Historical audit counts below describe the earlier review, not the updated export.
+This document records the historical 2026-10-16 review. See the [verification record](validation.md#fresh-installations-and-resumed-acceptance--2026-10-16) and [acceptance matrix](testing/acceptance-matrix.md) for the original scope, corrected failures and untested external-service boundaries. Historical counts and results below do not certify later commits; check CI on the exact public revision before merging or publishing.
 
 ## Conclusion
 

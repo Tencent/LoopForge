@@ -8,11 +8,10 @@ For platform changes, preserve upstream engine, repository and handler boundarie
 go test -p=2 ./... -count=1 -timeout=180s
 go vet ./...
 python3 scripts/check-public.py
-python3 scripts/check-upstream.py
 bash scripts/scan-secrets.sh
 ```
 
-When intentionally changing an adapted upstream file, review the change and update its hash/reason in `upstream-overrides.json`. Do not update the baseline SHA without importing the corresponding upstream changes. See [the synchronization policy](docs/upstream-sync.md).
+Community contributions do not require private source manifests or hash updates. Maintainers keep source synchronization records locally, separate from the public CI checks. See [the maintenance policy](docs/upstream-sync.md).
 
 Run the [public browser acceptance suite](e2e/public/README.md) for authentication, preferences or execution changes. Paid model and external knowledge tests require explicit operator configuration; state passed, failed, skipped and not-run checks accurately.
 

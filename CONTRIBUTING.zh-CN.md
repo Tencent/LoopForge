@@ -8,11 +8,10 @@
 go test -p=2 ./... -count=1 -timeout=180s
 go vet ./...
 python3 scripts/check-public.py
-python3 scripts/check-upstream.py
 bash scripts/scan-secrets.sh
 ```
 
-有意修改上游适配文件时，评审后更新 `upstream-overrides.json` 中的哈希和原因。禁止只改来源 SHA 而没有导入相应代码。长期流程见[同步方案](docs/upstream-sync.md)。
+社区贡献不需要私有来源清单，也不需要更新文件哈希。维护者在本地保存来源与同步审计记录，公共 CI 不依赖这些资料。长期流程见[维护策略](docs/upstream-sync.md)。
 
 登录、语言/主题或执行链路的改动需要跑[公共浏览器验收](e2e/public/README.md)。真实模型与外部知识库测试需显式配置；请区分通过、失败、跳过与未运行。
 

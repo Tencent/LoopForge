@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 .local/
+/upstream.json
+/upstream-overrides.json
+/scripts/check-upstream.py
 .data/
 workspaces/
 bin/

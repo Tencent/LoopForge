@@ -24,7 +24,6 @@ List commands that were actually run and mark anything blocked or not run.
 go test -p=2 ./... -count=1 -timeout=180s
 go vet ./...
 python3 scripts/check-public.py
-python3 scripts/check-upstream.py
 bash local/scripts/validate.sh
 bash local/scripts/smoke-install.sh
 bash local/scripts/e2e.sh

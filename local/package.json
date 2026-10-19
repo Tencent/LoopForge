@@ -1,7 +1,7 @@
 {
   "name": "loopforge-cli",
   "version": "0.2.2",
-  "description": "LoopForge Local workflows for CodeBuddy, Codex, Cursor, and Claude Code",
+  "description": "LoopForge Local development workflows for CodeBuddy, Codex, Cursor, Claude Code and Pi (Portable)",
   "keywords": [
     "ai-agents",
     "multi-agent",
@@ -13,7 +13,8 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Tencent/LoopForge.git"
+    "url": "git+https://github.com/Tencent/LoopForge.git",
+    "directory": "local"
   },
   "bugs": {
     "url": "https://github.com/Tencent/LoopForge/issues"
@@ -36,6 +37,12 @@
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "!skills/**/tests/**",
+    "!.codebuddy/**/tests/**",
+    "!.codex/**/tests/**",
+    "!.cursor/**/tests/**",
+    "!.claude/**/tests/**",
+    "!**/.env",
+    "!**/.env.*",
     "!**/__pycache__/**",
     "!**/*.pyc",
     "!**/*.pyo",

@@ -1,6 +1,6 @@
 # LoopForge platform
 
-The platform is based on the recorded upstream master in `upstream.json`. Preserve upstream architecture; keep public-specific adapters isolated. The original local workflow runtime lives in `local/`; follow `local/AGENTS.md` there. Never copy private deployment files, credentials, staff data, or internal infrastructure into this repository.
+Preserve the platform architecture; keep deployment-specific adapters isolated. Detailed source synchronization records are maintained locally and are not required for community changes. The original local workflow runtime lives in `local/`; follow `local/AGENTS.md` there. Never copy private deployment files, credentials, staff data, or internal infrastructure into this repository.
 
 # AGENTS.md
 

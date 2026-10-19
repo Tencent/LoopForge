@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $CODEBUDDY_PROJECT_DIR/.codebuddy/hooks/approve-safe-commands.py",
+            "command": "python3 \"$CODEBUDDY_PROJECT_DIR/.codebuddy/hooks/approve-safe-commands.py\"",
             "timeout": 5
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $CODEBUDDY_PROJECT_DIR/.codebuddy/hooks/devflow-auto-dispatch.py",
+            "command": "python3 \"$CODEBUDDY_PROJECT_DIR/.codebuddy/hooks/devflow-auto-dispatch.py\"",
             "timeout": 10
           }
         ]

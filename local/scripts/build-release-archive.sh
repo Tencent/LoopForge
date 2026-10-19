@@ -10,13 +10,15 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 PAYLOAD_DIR="$TMP_DIR/loopforge-workflow"
 mkdir -p "$PAYLOAD_DIR" "$OUTPUT_DIR"
 
-for path in src skills .codebuddy .codex .cursor .claude; do
+for path in bin src skills .codebuddy .codex .cursor .claude; do
   cp -R "$ROOT_DIR/$path" "$PAYLOAD_DIR/$path"
 done
 python3 "$ROOT_DIR/scripts/prepare-notices.py"
-cp "$ROOT_DIR/package.json" "$ROOT_DIR/LICENSE" \
+cp "$ROOT_DIR/package.json" "$ROOT_DIR/LICENSE" "$ROOT_DIR/README.md" \
   "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$PAYLOAD_DIR/"
-find "$PAYLOAD_DIR/skills" -type d -name tests -prune -exec rm -rf {} +
+mkdir -p "$PAYLOAD_DIR/scripts"
+cp "$ROOT_DIR/scripts/prepare-notices.py" "$PAYLOAD_DIR/scripts/"
+find "$PAYLOAD_DIR" -type d -name tests -prune -exec rm -rf {} +
 find "$PAYLOAD_DIR" -type d -name __pycache__ -prune -exec rm -rf {} +
 find "$PAYLOAD_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 # agent-observability run output (metrics, state, debug logs) is local-only.

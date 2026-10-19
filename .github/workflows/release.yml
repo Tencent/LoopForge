@@ -45,17 +45,32 @@ jobs:
       - name: Verify tag and package version
         id: package
         shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           package_name="$(node -p 'require("./package.json").name')"
           package_version="$(node -p 'require("./package.json").version')"
           release_tag="v${package_version}"
           requested_ref="${GITHUB_REF_NAME}"
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            requested_ref="${{ inputs.source_ref }}"
+            requested_ref="${SOURCE_REF}"
           fi
           if [[ "${requested_ref}" != "${release_tag}" ]]; then
             echo "Release ref ${requested_ref} does not match package version ${package_version}" >&2
             exit 1
+          fi
+          tag_commit="$(git rev-parse --verify "refs/tags/${release_tag}^{commit}")"
+          if [[ "$(git rev-parse HEAD)" != "${tag_commit}" ]]; then
+            echo "Checkout does not match the release tag commit" >&2
+            exit 1
+          fi
+          if [[ "${package_version}" != *-* ]]; then
+            latest_version="$(npm view "$package_name" dist-tags.latest)"
+            newest_version="$(printf '%s\n' "$package_version" "$latest_version" | sort -V | tail -n 1)"
+            if [[ "$newest_version" != "$package_version" ]]; then
+              echo "Refusing to roll latest back from $latest_version to $package_version" >&2
+              exit 1
+            fi
           fi
           echo "name=${package_name}" >> "$GITHUB_OUTPUT"
           echo "version=${package_version}" >> "$GITHUB_OUTPUT"
@@ -111,12 +126,24 @@ jobs:
       - name: Check whether npm version already exists
         id: npm
         shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.package.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
         run: |
-          if npm view "${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }}" version >/dev/null 2>&1; then
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-          fi
+          node <<'NODE'
+          const {execFileSync} = require('node:child_process');
+          const {appendFileSync} = require('node:fs');
+          let published = false;
+          try {
+            execFileSync('npm', ['view', `${process.env.PACKAGE_NAME}@${process.env.PACKAGE_VERSION}`, 'version', '--json'], {stdio: ['ignore', 'pipe', 'pipe']});
+            published = true;
+          } catch (error) {
+            let result;
+            try { result = JSON.parse(String(error.stdout)); } catch {}
+            if (result?.error?.code !== 'E404') throw error;
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `published=${published}\n`);
+          NODE
 
       - name: Publish npm package
         if: steps.npm.outputs.published != 'true'
@@ -137,7 +164,7 @@ jobs:
           VERSION: ${{ steps.package.outputs.version }}
           TAG: ${{ steps.package.outputs.tag }}
         run: |
-          release_args=(--title "LoopForge v${VERSION}" --generate-notes)
+          release_args=(--title "LoopForge Local v${VERSION}" --generate-notes)
           if [[ "$VERSION" == *-* ]]; then
             release_args+=(--prerelease)
           fi

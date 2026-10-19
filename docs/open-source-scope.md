@@ -1,6 +1,6 @@
 # Public adaptation scope
 
-Source: the `master` commit recorded in `upstream.json`. This is a source export, not a merge of PR #47. Private Git history, CI, deployment environments, certificates, employee defaults, marketplace snapshots and customer efficiency snapshots are excluded.
+This repository contains the self-hosted platform and LoopForge Local. Detailed source synchronization records are maintained privately by the maintainers, not distributed with the public source. Deployment secrets, production data and private infrastructure are excluded.
 
 | Area | Public behavior |
 | --- | --- |
@@ -13,7 +13,7 @@ Source: the `master` commit recorded in `upstream.json`. This is a source export
 | Catalog | Public backend/frontend/product/bug-fix definitions; real script approval demo |
 | Model defaults | CLI default and operator-configured model list; CodeBuddy/Codex/Claude selection in Main Bot and SOP roles, actor-scoped credentials |
 | Git author identity | Local account name and a non-deliverable LoopForge email; no inferred corporate affiliation |
-| Language | PR #47 translation mechanism/dictionary with new public UI copy; Chinese/English preference |
+| Language | Translation mechanism/dictionary with public UI copy; Chinese/English preference |
 | Theme | Upstream light/dark styles; preference applied before first paint and persisted |
 | LoopForge Local | Built-in workflows, host integrations, installers and tests under `local/`; guides under `docs/local/`; project policies and history at the repository root |
 

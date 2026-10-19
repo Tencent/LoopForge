@@ -2,11 +2,19 @@
 
 ## Unreleased — platform edition
 
-- Import the platform implementation from the master commit recorded in `upstream.json`, including Main Bot workspace editing, durable workspace checkpoints, idle reclamation, and task-group SOP completion/reopening.
+- Add the self-hosted platform implementation, including Main Bot workspace editing, durable workspace checkpoints, idle reclamation, and task-group SOP completion/reopening.
 - Add public password accounts, explicit catalog installation, GitHub issue/PR adapters, actor-scoped GitHub MCP credentials, language and theme preferences, local deployment and public acceptance checks.
 - Integrate the original workflows as LoopForge Local under `local/`, with unified documentation, project policies and release history.
 
-This is a local review candidate; no platform release has been published.
+Platform source and Local package releases are separate; merging the platform does not publish a platform image or a new npm version.
+
+## Unreleased — Local packaging
+
+- Document Node.js / Python requirements and the npm package's Local-only scope.
+- Record the `local/` package directory and exclude host tests, caches, credentials and runtime logs from npm artifacts.
+- Include the CLI entry point, README and notices preparation script in release archives.
+- Quote hook paths for projects containing spaces; validate npm/npx installation in a space-containing project path.
+- Harden release tag verification and npm registry error handling.
 
 ## Local workflow release history
 

@@ -4,6 +4,14 @@ LoopForge 的本地工作流组件，在 CodeBuddy、Codex、Cursor、Claude Cod
 
 Local workflows for LoopForge, running inside an existing coding assistant without the platform server.
 
+Requires **Node.js 20+ and Python 3.8+**, plus a supported coding assistant. This npm package installs Local workflows, not the Docker platform.
+
+需要 **Node.js 20+、Python 3.8+** 和受支持的编程助手。此 npm 包安装本地工作流，不安装 Docker 平台。
+
+Classic workflows configure agent execution permissions and hooks. Review the generated configuration before use; only install into projects you trust and back up existing settings. See the [security policy](https://github.com/Tencent/LoopForge/blob/main/SECURITY.md).
+
+Classic 工作流会配置 Agent 执行权限与 Hook。使用前请检查安装配置，仅安装到可信项目，并备份已有设置；权限边界见[安全政策](https://github.com/Tencent/LoopForge/blob/main/SECURITY.zh-CN.md)。
+
 ```bash
 # Run in the project where you want to install the workflow.
 # 在需要使用工作流的目标项目中运行。

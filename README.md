@@ -47,7 +47,7 @@ Ask a coding agent to "fix this bug" and the outcome depends on the run. It migh
 LoopForge makes the process the fixed part and lets the AI be the flexible part:
 
 - **Repeatable** — Same SOP, same stages, same checks, every requirement. Built-in backend, frontend, bug-fix and product SOPs to start from.
-- **Separated roles** — Implementation, review and testing are different agents with their own instructions, rules, Skills and MCP tools. The reviewer is never the author.
+- **Separated roles** — Built-in delivery SOPs assign implementation, review and testing to different roles, each with its own instructions, rules, Skills and MCP tools. Customize the roles and review gates for your team.
 - **Human in the loop** — Approval gates where it matters. Read the report, approve, or send the work back to a chosen stage.
 - **Observable & resumable** — Node status, tool traces, logs and artifacts in one place. Pause, retry a failed step, or rerun from any node.
 - **Bring your own stack** — CodeBuddy, Codex and Claude Code as executors; GitHub, Skills and MCP as tools; Docker sandboxes or your own machine as the runtime. MIT licensed.
@@ -64,7 +64,9 @@ bash scripts/install.sh
 
 Open **<http://localhost:8090>** and create your account — the first one becomes the administrator. The home page walks you through adding a model key and running your first SOP.
 
-### Try a full run in 60 seconds — no API key, no repository
+### Try a complete demo — no API key, no repository
+
+Once installation and sandbox image preparation are complete, the script-and-approval demo usually takes about a minute. Cold-start build time depends on your machine and network.
 
 1. On the home page, click **Try it now** (step 4 of the getting-started list). New accounts join the **LoopForge demo project** automatically.
 2. The sample SOP runs a real script and saves its report. A short tour points out the step graph, the artifacts and the approval.
@@ -86,7 +88,7 @@ Open **<http://localhost:8090>** and create your account — the first one becom
 - **Executors.** Pick **CodeBuddy, Codex or Claude Code** beside the home composer, then a model. Each executor uses its own credentials from personal settings, and every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, scheduled assistant tasks and AI notification summaries currently use CodeBuddy. The Docker image ships all three CLIs; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
 - **Delivering to a repository.** Add a GitHub repository, set your Git token and executor credentials in personal settings (or bind a local execution machine), open **SOPs → Built-in**, copy one into your project, create a requirement and start.
-- **Sandboxes.** AI SOPs run in Docker sandbox containers started through the host Docker socket. The sandbox image builds in the background after the first start (a few minutes). Re-running the installer keeps your data.
+- **Sandboxes.** In the default Compose installation, SOP tasks use Docker sandbox containers started through the host Docker socket. The sandbox image builds in the background after the first start (a few minutes). Docker socket access grants control of the host daemon: this is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
 - **Accounts and access.** The default deployment listens on localhost and is designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
 - **Remote access, HTTPS, separate workers** — see [Deployment](docs/deployment.md).
 - **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.9+).
@@ -122,7 +124,7 @@ flowchart LR
 | **Human gate** | Pauses the run until someone inspects the artifacts and approves — or sends the work back to a stage. |
 | **SOP** | Reuses another SOP as a sub-workflow. |
 
-Each node declares its artifacts and dependencies; ready steps run in parallel. Publish versions of an SOP, start from a built-in one, and adapt its roles, rules and execution environment to your project.
+Each node declares its artifacts and dependencies; the engine advances steps as their dependencies complete. Publish versions of an SOP, start from a built-in one, and adapt its roles, rules and execution environment to your project.
 
 ## Features
 

@@ -1,6 +1,6 @@
 # Verification record
 
-Review resumed on 2026-10-16 against recorded upstream baseline `3a8cb2420904e3ee8ab1b39c48f54b372a9e3e04`. Source and running-preview freshness are checked independently. External-service coverage is kept separate from local protocol/adapter tests. The older results below retain their original scope.
+The results below describe historical review candidates from 2026-10-16. Source and running-preview freshness are checked independently; external-service coverage is separate from local protocol/adapter tests. Historical results are not certification of later revisions. Use the checks on the exact public commit for current CI status. Detailed source manifests remain local to the maintainers.
 
 ## Hosted CI follow-up — 2026-10-16
 

@@ -1,6 +1,9 @@
 .git
 .env*
 .local
+upstream.json
+upstream-overrides.json
+scripts/check-upstream.py
 .data
 local
 node_modules
