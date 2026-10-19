@@ -12,7 +12,7 @@ require (
 	github.com/klauspost/compress v1.18.7
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.60.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.2
 )
