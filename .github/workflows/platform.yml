@@ -87,7 +87,7 @@ jobs:
           LOOPFORGE_UNCONFIGURED_USER: e2e-no-key
           LOOPFORGE_UNCONFIGURED_PASSWORD_FILE: ${{ github.workspace }}/.local/no-key-password
         working-directory: e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: platform-browser-results
@@ -125,7 +125,7 @@ jobs:
         working-directory: e2e
       - if: failure()
         run: docker compose logs platform | tail -200
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: first-run-results
