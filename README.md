@@ -31,10 +31,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/readme/workflow-en.png" alt="The LoopForge workflow designer: a report script, a human approval gate and a completion step on a visual canvas" width="100%">
+  <a href="docs/assets/readme/demo-en.mp4"><img src="docs/assets/readme/demo-en.gif" alt="LoopForge demo: start a no-key SOP, approve the human gate and open the workflow designer" width="100%"></a>
 </p>
 
-<p align="center"><sub>The real workflow designer. Drag Agent, Script, Human gate and sub-SOP nodes onto the canvas, wire them up, publish a version.</sub></p>
+<p align="center"><sub>Recorded on a real install with no API key (1.6× speed): one click starts the demo SOP → a script writes a report → a human approves → the run finishes → the same SOP in the designer. <a href="docs/assets/readme/demo-en.mp4">Watch the full-quality MP4</a>.</sub></p>
 
 **LoopForge** is a self-hosted platform that puts **coding agents, deterministic scripts and human decisions into one delivery workflow (SOP)**. Give each agent a role, connect the steps on a visual canvas, and follow every requirement from the first plan to the final artifact. When the process works, keep it — the next requirement runs the same way.
 
@@ -108,6 +108,12 @@ flowchart LR
   F -->|Approve| G([Delivery summary])
   F -->|Rework| C
 ```
+
+<p align="center">
+  <img src="docs/assets/readme/workflow-en.png" alt="The LoopForge workflow designer: a report script, a human approval gate and a completion step on a visual canvas" width="100%">
+</p>
+
+<p align="center"><sub>The workflow designer. Drag Agent, Script, Human gate and sub-SOP nodes onto the canvas, wire them up, publish a version.</sub></p>
 
 | Node | What it does |
 | --- | --- |

@@ -31,10 +31,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/readme/workflow-zh.png" alt="LoopForge 流程设计器：在画布上编排生成报告、人工验收与完成验收三个节点" width="100%">
+  <a href="docs/assets/readme/demo-zh.mp4"><img src="docs/assets/readme/demo-zh.gif" alt="LoopForge 演示：一键启动免 Key 的 SOP、完成人工审批并打开流程设计器" width="100%"></a>
 </p>
 
-<p align="center"><sub>真实的流程设计器：把 Agent、脚本、人工审批和子 SOP 节点拖到画布上连线，保存并发布版本。</sub></p>
+<p align="center"><sub>真实环境录屏（1.6 倍速），全程无需 API Key：一键启动示例 SOP → 脚本生成报告 → 人工审批 → 运行完成 → 在设计器中查看同一条 SOP。<a href="docs/assets/readme/demo-zh.mp4">查看高清 MP4</a>。</sub></p>
 
 **LoopForge** 是一个可自主部署的平台，把 **编程 Agent、确定性脚本和人工决策放进同一条交付流程（SOP）**。为每个 Agent 分配角色，在可视化画布上连接步骤，跟进每个需求从方案到最终产物的全过程。跑通的方法存成 SOP，下一个需求按同样的方式交付。
 
@@ -108,6 +108,12 @@ flowchart LR
   F -->|通过| G([交付汇总])
   F -->|返工| C
 ```
+
+<p align="center">
+  <img src="docs/assets/readme/workflow-zh.png" alt="LoopForge 流程设计器：在画布上编排生成报告、人工验收与完成验收三个节点" width="100%">
+</p>
+
+<p align="center"><sub>流程设计器：把 Agent、脚本、人工审批和子 SOP 节点拖到画布上连线，保存并发布版本。</sub></p>
 
 | 节点 | 作用 |
 | --- | --- |
