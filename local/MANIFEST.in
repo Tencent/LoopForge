@@ -1,0 +1,2 @@
+include scripts/prepare-notices.py
+include THIRD_PARTY_NOTICES.md

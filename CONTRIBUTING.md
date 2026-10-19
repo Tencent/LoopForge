@@ -1,23 +1,36 @@
 # Contributing
 
-English | [简体中文](CONTRIBUTING.zh-CN.md)
+LoopForge has a platform at the repository root and a complementary local workflow edition in `local/`. Read the applicable `AGENTS.md` before changing either.
 
-Thanks for contributing to LoopForge.
+For platform changes, preserve upstream engine, repository and handler boundaries. Keep identity, provider and deployment adaptations explicit. Add a regression test for a behavioral fix and document schema or runner-protocol compatibility changes.
 
-## Development workflow
+```bash
+go test -p=2 ./... -count=1 -timeout=180s
+go vet ./...
+python3 scripts/check-public.py
+python3 scripts/check-upstream.py
+bash scripts/scan-secrets.sh
+```
 
-1. Start changes from a feature branch.
-2. Keep Classic/Portable workflow templates generic; do not introduce organisation-, repository-, or cloud-specific information there. Product tools under `tools/` (such as `tools/tcmcp`) may target a public cloud product, but must not include private domains, real resource IDs, or credentials.
-3. Do not commit credentials, local permission configurations, or production data.
-4. First indicate whether a change belongs to Classic, Portable, or shared behaviour contracts. Portable only modifies `skills/`; Classic `.cursor/.claude` files are not edited directly — run `build-classic-hosts.py --write`.
-5. When modifying shared workflow contracts, describe the impact on both editions separately; do not copy runtime files between them.
-6. Run `bash scripts/validate.sh`, `bash scripts/smoke-install.sh` and `bash scripts/e2e.sh` before submitting, plus `bash scripts/test-observability.sh` when you change agent-observability. The E2E suite drives the installed workflow with a fake host Agent and recorded stage outputs, so it needs no API key; see [tests/e2e/README.md](tests/e2e/README.md).
+When intentionally changing an adapted upstream file, review the change and update its hash/reason in `upstream-overrides.json`. Do not update the baseline SHA without importing the corresponding upstream changes. See [the synchronization policy](docs/upstream-sync.md).
 
-## Pull request requirements
+Run the [public browser acceptance suite](e2e/public/README.md) for authentication, preferences or execution changes. Paid model and external knowledge tests require explicit operator configuration; state passed, failed, skipped and not-run checks accurately.
 
-- Describe the problem the change solves and the applicable runtime.
-- List behaviour changes, compatibility impact, and verification results.
-- When adding third-party content, include source, licence, and modification notes.
-- Do not put internal deployment or operational capabilities into Classic/Portable templates; keep unpublished ops in a private extension. Optional public tools belong in `tools/`, not in host workflow packs.
+For LoopForge Local, work inside `local/` and follow [local agent instructions](local/AGENTS.md). Identify whether a change affects Classic, Portable or shared behavior contracts. Keep these workflow assets independent from the platform and each other. Change Portable assets in `local/skills/`; rebuild generated Classic Cursor/Claude bundles with `python3 scripts/build-classic-hosts.py --write` from `local/`. Keep workflow templates generic; optional tools under `local/tools/` are distributed separately.
 
-Commit messages should follow Conventional Commits, e.g. `feat: add workflow checkpoint validation`.
+Run local checks from `local/`:
+
+```bash
+python3 scripts/build-classic-hosts.py --check
+bash scripts/validate.sh
+bash scripts/smoke-install.sh
+bash scripts/smoke-npm.sh
+bash scripts/smoke-curl-install.sh
+bash scripts/e2e.sh
+bash scripts/test-observability.sh
+bash scripts/scan-secrets.sh
+```
+
+The [local E2E suite](local/tests/e2e/README.md) uses a fake host and recorded outputs, without model credentials. Describe the impact on each affected edition. Preserve existing permission behavior and user-file protection. Commit messages should follow Conventional Commits.
+
+Public pull requests must not contain credentials, private infrastructure, employee access defaults or production datasets. Preserve existing user files. Keep source attribution and third-party licenses. Describe the problem, resulting behavior and the validation actually performed in the PR.

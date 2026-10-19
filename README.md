@@ -1,232 +1,209 @@
 <p align="center">
-  <img src="docs/assets/readme/hero-en.png" alt="LoopForge, Tencent open source: your coding agent writes code, LoopForge makes it deliver. A role-based delivery workflow that runs inside the agent you already use: confirm the requirement, then design, build, review and test, one stage at a time." width="100%">
+  <img src="docs/assets/readme/hero-en.svg" alt="LoopForge — Give your agents a delivery process." width="100%">
+</p>
+
+<h3 align="center">Turn the way your team ships into a workflow coding agents can run.</h3>
+
+<p align="center">
+  Plan → implement → independent review → real tests → human sign-off — every time, not just when the agent feels like it.
 </p>
 
 <p align="center">
-  <a href="https://github.com/Tencent/LoopForge/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Tencent/LoopForge?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
-  <a href="https://www.npmjs.com/package/loopforge-cli"><img alt="npm loopforge-cli" src="https://img.shields.io/npm/v/loopforge-cli?label=npm&labelColor=16161A&color=FF5A1F&style=flat-square"></a>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-FF5A1F?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
-  <a href="https://github.com/Tencent/LoopForge/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Tencent/LoopForge?labelColor=16161A&color=FF5A1F&style=flat-square"></a>
-  <br/>
-  <a href="https://github.com/Tencent/LoopForge/actions/workflows/validate.yml"><img alt="validate" src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/validate.yml?branch=main&label=validate&labelColor=16161A&style=flat-square"></a>
-  <a href="https://github.com/Tencent/LoopForge/actions/workflows/e2e.yml"><img alt="e2e" src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/e2e.yml?branch=main&label=e2e&labelColor=16161A&style=flat-square"></a>
+  <a href="https://github.com/Tencent/LoopForge/actions/workflows/platform.yml"><img src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/platform.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/loopforge-cli"><img src="https://img.shields.io/npm/v/loopforge-cli?label=loopforge-cli&color=7c5cff&style=flat-square" alt="npm loopforge-cli"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6366f1?style=flat-square" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/self--hosted-Docker-2563eb?style=flat-square&logo=docker&logoColor=white" alt="Self-hosted with Docker">
+  <a href="https://github.com/Tencent/LoopForge/stargazers"><img src="https://img.shields.io/github/stars/Tencent/LoopForge?style=flat-square&color=f59e0b" alt="GitHub stars"></a>
 </p>
 
 <p align="center">
-  <b>English</b> · <a href="./README.zh-CN.md">简体中文</a>
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
+  <a href="#why-loopforge">Why</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-it-works">How it works</a> ·
-  <a href="#supported-agents">Supported agents</a> ·
-  <a href="#what-you-get">What you get</a> ·
-  <a href="#see-how-agents-work">Dashboard</a> ·
-  <a href="#portable-edition">Portable Edition</a> ·
-  <a href="#contributing">Contributing</a>
+  <a href="#features">Features</a> ·
+  <a href="#loopforge-local">Local</a> ·
+  <a href="#faq">FAQ</a> ·
+  <a href="#documentation">Docs</a>
 </p>
-
-**Make coding agents deliver through a workflow you can confirm, review, and resume—not just produce code.**
-
-LoopForge installs into the coding agent you already use: CodeBuddy, Codex, Cursor, Claude Code, or Pi. Inside that agent it runs a role-based delivery workflow. The requirement is clarified and confirmed first, then the work is designed, implemented, reviewed by a different role from the one that wrote the code, and tested. Stages run one after another, each handled by its own role. You don't run several agents side by side. Decisions, review findings, and test results are saved along the way, so you can inspect the work and pick it up again after an interruption.
 
 <p align="center">
-  <a href="docs/assets/loopforge-promo.mp4?raw=true">
-    <img src="docs/assets/loopforge-promo-preview.webp" alt="LoopForge in 13 seconds: one request goes through the leader, developer, code-reviewer, and test-engineer roles inside the agent you already use." width="720" />
-  </a>
+  <img src="docs/assets/readme/workflow-en.png" alt="The LoopForge workflow designer: a report script, a human approval gate and a completion step on a visual canvas" width="100%">
 </p>
+
+<p align="center"><sub>The real workflow designer. Drag Agent, Script, Human gate and sub-SOP nodes onto the canvas, wire them up, publish a version.</sub></p>
+
+**LoopForge** is a self-hosted platform that puts **coding agents, deterministic scripts and human decisions into one delivery workflow (SOP)**. Give each agent a role, connect the steps on a visual canvas, and follow every requirement from the first plan to the final artifact. When the process works, keep it — the next requirement runs the same way.
+
+> Think **GitHub Actions for agent-driven delivery**: your process is the workflow, the agents fill in the intelligence at each step, and you stay in control of the gates.
+
+## Why LoopForge
+
+Ask a coding agent to "fix this bug" and the outcome depends on the run. It might skip the plan, forget the tests, review its own code, or stop halfway with nobody noticing. That is fine for a demo; it is not how a team ships.
+
+LoopForge makes the process the fixed part and lets the AI be the flexible part:
+
+- **Repeatable** — Same SOP, same stages, same checks, every requirement. Built-in backend, frontend, bug-fix and product SOPs to start from.
+- **Separated roles** — Implementation, review and testing are different agents with their own instructions, rules, Skills and MCP tools. The reviewer is never the author.
+- **Human in the loop** — Approval gates where it matters. Read the report, approve, or send the work back to a chosen stage.
+- **Observable & resumable** — Node status, tool traces, logs and artifacts in one place. Pause, retry a failed step, or rerun from any node.
+- **Bring your own stack** — CodeBuddy, Codex and Claude Code as executors; GitHub, Skills and MCP as tools; Docker sandboxes or your own machine as the runtime. MIT licensed.
 
 ## Quick start
 
-Requires Node.js 20+ and Python 3.8+. The commands below install the default Classic Edition; choose it if you are unsure.
-
-| Agent | Install | Start a workflow |
-| --- | --- | --- |
-| CodeBuddy | `npx -y loopforge-cli@latest install codebuddy` | `/start-devflow "<request>"` |
-| Codex | `npx -y loopforge-cli@latest install codex` | `$devflow-codex "<request>"` |
-| Cursor | `npx -y loopforge-cli@latest install cursor` | `/start-devflow "<request>"` |
-| Claude Code | `npx -y loopforge-cli@latest install claude` | `/start-devflow "<request>"` |
-
-For example, with Claude Code:
+Requires **Docker (with Compose)** and **Python 3**. The installer offers to install Docker if it is missing.
 
 ```bash
-npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
+git clone https://github.com/Tencent/LoopForge.git
+cd LoopForge
+bash scripts/install.sh
 ```
 
-```text
-/start-devflow "add status filtering to the order list and cover the API with tests"
-```
+Open **<http://localhost:8090>** and create your account — the first one becomes the administrator. The home page walks you through adding a model key and running your first SOP.
 
-Check any installation with `npx -y loopforge-cli@latest status <agent>`. If installation or execution fails, diagnose the environment:
+### Try a full run in 60 seconds — no API key, no repository
 
-```bash
-npx -y loopforge-cli@latest doctor
-```
+1. On the home page, click **Try it now** (step 4 of the getting-started list). New accounts join the **LoopForge demo project** automatically.
+2. The sample SOP runs a real script and saves its report. A short tour points out the step graph, the artifacts and the approval.
+3. Approve the human gate and watch the SOP continue to its final artifact.
 
-Pi is supported through the [Portable Edition](#portable-edition).
+### What you need for your first real task
+
+| I want to… | You need |
+| --- | --- |
+| Run the script + approval demo | Nothing |
+| Chat, explore capabilities, generate a document or a new project | An API key for the selected executor |
+| Work on an existing repository or open a PR | Model credentials + a GitHub repository + your Git token |
+
+<details>
+<summary><b>More setup details</b> — executors, GitHub, sandboxes, access model</summary>
+
+<br>
+
+- **Executors.** Pick **CodeBuddy, Codex or Claude Code** beside the home composer, then a model. Each executor uses its own credentials from personal settings, and every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, scheduled assistant tasks and AI notification summaries currently use CodeBuddy. The Docker image ships all three CLIs; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
+- **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
+- **Delivering to a repository.** Add a GitHub repository, set your Git token and executor credentials in personal settings (or bind a local execution machine), open **SOPs → Built-in**, copy one into your project, create a requirement and start.
+- **Sandboxes.** AI SOPs run in Docker sandbox containers started through the host Docker socket. The sandbox image builds in the background after the first start (a few minutes). Re-running the installer keeps your data.
+- **Accounts and access.** The default deployment listens on localhost and is designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
+- **Remote access, HTTPS, separate workers** — see [Deployment](docs/deployment.md).
+- **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.9+).
+
+</details>
 
 ## How it works
 
-1. **Understand the problem first**: the agent inspects the project and clarifies the goal, scope, and acceptance criteria instead of immediately writing code.
-2. **Confirm the boundaries before implementation**: medium and large tasks move into design and implementation only after you confirm the goal, scope, exclusions, key decisions, and acceptance criteria.
-3. **Separate responsibilities**: design, implementation, review, and testing are handled stage by stage by roles with independent responsibilities, which reduces self-review bias in a single context.
-4. **Show evidence, not just a diff**: requirements, plans, changes, review findings, and test results are saved for inspection, handoff, and retrospectives.
-5. **Continue after interruption**: workflow state is persisted so the next session can resume at the unfinished stage instead of starting over.
+An **SOP** is the workflow each delivery follows. Agents, scripts and people share the same run:
 
-LoopForge picks the path by task complexity. Small changes take a streamlined single-role path; the full role-based workflow is reserved for medium and large tasks that benefit from it.
-
-```text
-Your request
-   │
-   ├─ Small change ───────> Understand → implement → verify → deliver
-   │
-   └─ Medium/large task ──> Clarify and confirm → design → implement
-                                                   → independent review → test → deliver
-                              │
-                              └── State and artifacts are saved throughout
+```mermaid
+flowchart LR
+  R([Requirement]) --> A[Clarify]
+  A --> B[Design]
+  B --> C[Implement]
+  C --> D[Independent review]
+  D --> E[Run tests]
+  E --> F{Human acceptance}
+  F -->|Approve| G([Delivery summary])
+  F -->|Rework| C
 ```
 
-## Supported agents
+| Node | What it does |
+| --- | --- |
+| **Agent** | A role (instructions + executor + rules + Skills + MCP tools) that designs, implements, reviews or tests. |
+| **Script** | A deterministic shell step: build, test, lint, generate a report. No AI where AI is not needed. |
+| **Human gate** | Pauses the run until someone inspects the artifacts and approves — or sends the work back to a stage. |
+| **SOP** | Reuses another SOP as a sub-workflow. |
 
-| Agent | Classic Edition (default) | Portable Edition |
+Each node declares its artifacts and dependencies; ready steps run in parallel. Publish versions of an SOP, start from a built-in one, and adapt its roles, rules and execution environment to your project.
+
+## Features
+
+| | |
+| --- | --- |
+| **Visual SOP designer** | Build workflows on a canvas with Agent, Script, Human gate and sub-SOP nodes. Rework-on-failure edges, version history and publishing. |
+| **Roles for agents** | Define who does what — instructions, executor, model, rules, Skills and MCP tools per role. |
+| **Requirement → run** | Create a requirement, pick an SOP, start. Clarification, execution, approvals and delivery all live in the workspace. |
+| **Run details** | Node status, outputs, tool traces and logs side by side. Pause, retry, add context, or rerun from a chosen node. |
+| **Artifacts & evidence** | Per-node artifact snapshots, workspace file browser and previews, so the evidence stays next to the result. |
+| **Execution environments** | Platform workers, Docker sandboxes, or a connected local CLI execution machine using your own tools and repositories. |
+| **GitHub integration** | Repository binding, issue/PR adapters and actor-scoped Git credentials for real delivery. |
+| **Insights** | Engineering metrics, run history and usage analysis to improve the process over time. |
+| **Team-ready** | Password accounts, projects and members, English/Chinese UI, light and dark themes, an OpenAPI-described HTTP API. |
+
+## See it run
+
+<p align="center">
+  <img src="docs/assets/readme/execution-en.png" alt="LoopForge run details: a script has completed, its report is saved, and the run waits for human acceptance" width="100%">
+</p>
+
+<p align="center"><sub>The no-key demo: run a real script → save its report → wait for human approval → continue.</sub></p>
+
+**A delivery we actually ran:** four CodeBuddy roles planned a Python fix, implemented it, reviewed it independently and summarized the delivery. Three real tests passed; the run waited for human approval, then verified the accepted code had not changed. The [reusable acceptance case](e2e/api/45-delivery-model.test.mjs) checks the files and results — see the [validation record](docs/validation.md) for scope and known gaps.
+
+## LoopForge Local
+
+Don't want to run a server? **LoopForge Local** brings the built-in delivery workflows straight into the coding assistant you already use:
+
+```bash
+# Run inside your target project, e.g. for Claude Code
+npx -y loopforge-cli@latest install claude
+```
+
+Then run `/start-devflow "<your request>"` in Claude Code.
+
+| Host | Supported |
+| --- | --- |
+| Claude Code · CodeBuddy · Codex · Cursor | Classic (default) and Portable editions |
+| Pi | Portable edition |
+
+See the [local guide](docs/local/usage.md) for each host's entry point. Source lives in [`local/`](local/). Local runs the built-in workflows today; exporting a platform SOP for standalone local execution is planned.
+
+| | Platform | Local |
 | --- | --- | --- |
-| CodeBuddy | ✓ | ✓ |
-| Codex | ✓ | ✓ |
-| Cursor | ✓ | ✓ |
-| Claude Code | ✓ | ✓ |
-| Pi | — | ✓ |
+| Best for | Teams sharing SOPs, approvals and history | One developer inside an IDE / CLI |
+| Needs | Docker + Python 3 | Node.js 20+ + Python 3.8+ + a coding assistant |
+| Workflows | Custom SOPs on a visual canvas | Built-in Classic / Portable workflows |
+| Evidence | Shared run details, approvals and metrics in the web workspace | Artifacts under `artifacts/{task_slug}/` + optional local dashboard |
 
-LoopForge enables only one edition per coding agent in each project. See [`EDITIONS.md`](EDITIONS.md) for the differences and directory layout.
+## FAQ
 
-## What you get
+**Do I need an API key to try it?**
+No. The welcome SOP uses a script and a human gate only. You need a key for the executor you pick once agent steps are involved. Model usage is not included — you bring your own credentials.
 
-At the end of a task, you get the code changes together with the confirmed requirement, technical design, independent review findings, test results, and delivery summary. LoopForge saves this history under `artifacts/{task_slug}/` by default for inspection, handoff, and retrospectives.
+**Do I need GitHub?**
+No. Chat, documents and new projects run in the task workspace. Connect GitHub when you want to change an existing repository or open PRs.
 
-<details>
-<summary>View the default artifact layout</summary>
+**How is this different from Dify, n8n or Flowise?**
+Those are general-purpose AI / automation workflow builders. LoopForge is built for **software delivery with coding agents**: roles like implementer and reviewer, Docker sandboxes and code workspaces, GitHub delivery, human acceptance gates and run evidence.
 
-Some directory names differ between editions.
+**How is this different from just using Claude Code / Codex / CodeBuddy?**
+LoopForge doesn't replace them — it orchestrates them. Each agent step runs one of those CLIs; LoopForge adds the process around it: who does what, in which order, with which checks, and who signs off.
 
-```text
-01-requirement/   Confirmed goals, scope, and acceptance criteria
-02-design/        Technical design and execution plan
-03-code/          Code changes and independent review report
-04-e2e/           Test results
-05-knowledge/     Reusable project knowledge
-workflow-summary.md
-```
+**Is it safe to expose on the internet?**
+The default listens on localhost and targets a trusted team. Read the [account and access model](docs/deployment.md#accounts) and set up HTTPS before opening it up. Report vulnerabilities privately via the [security policy](SECURITY.md).
 
-</details>
+## Documentation
 
-Resume an interrupted Classic workflow with `/resume-devflow {task_slug}` on CodeBuddy, Cursor, or Claude Code, and with `$devflow-codex resume {task_slug}` on Codex. Each installed host bundle documents its status, abort, and individual-stage commands.
-
-## See how agents work
-
-The Classic Edition for CodeBuddy includes a local observability dashboard. It turns the workflow evidence into a view of session activity, Token and cost trends, Skill/Rule usage, role dispatch, and Devflow stage attribution—useful for finding expensive runs, checking whether automation is actually being used, and reviewing how work moved between roles.
-
-![LoopForge local agent observability dashboard with demonstration data](docs/assets/agent-observability-dashboard.png)
-
-_Dashboard example using synthetic demonstration data._
-
-The dashboard is generated and served locally; it does not require an external telemetry service. Runtime logs can contain tool arguments and output excerpts, so LoopForge excludes them from Git by default and they should not be shared without review.
-
-<details>
-<summary>Open the local dashboard</summary>
-
-After running at least one CodeBuddy session from the project root:
-
-```bash
-python3 .codebuddy/skills/agent-observability/scripts/build_dashboard_data.py --project-root .
-python3 -m http.server 8765 --directory .codebuddy/skills/agent-observability/scripts/dashboard
-```
-
-Open `http://localhost:8765`. See the [observability quickstart](.codebuddy/skills/agent-observability/references/quickstart.md) for data sources, custom pricing, and troubleshooting.
-
-</details>
-
-## When LoopForge is useful
-
-LoopForge is especially useful when:
-
-- the request is still ambiguous and the goal or boundaries need clarification;
-- a change crosses multiple modules and should be designed before implementation;
-- implementation, review, and testing should be performed by separate roles;
-- work may span multiple sessions and needs resumable state;
-- the team wants an inspectable delivery record for handoff or retrospectives.
-
-For one-off code completion or a tiny, fully specified edit, using a coding agent directly is often enough. Simple tasks that do enter LoopForge use its streamlined path.
-
-## Portable Edition
-
-The Classic Edition from the quick start is the right choice for most users. If you only want the portable Agent Skills workflow, use the Portable Edition. To prevent one coding agent from loading two workflows and mixing their state or artifacts, LoopForge enables only one edition per coding agent in each project. To switch editions, run the new install command with `--force`.
-
-| Agent | Install | Start a workflow |
-| --- | --- | --- |
-| CodeBuddy | `npx -y loopforge-cli@latest skills install codebuddy` | `/devflow "<request>"` |
-| Codex | `npx -y loopforge-cli@latest skills install codex` | `$devflow "<request>"` |
-| Cursor | `npx -y loopforge-cli@latest skills install cursor` | `/devflow "<request>"` |
-| Claude Code | `npx -y loopforge-cli@latest skills install claude` | `/devflow "<request>"` |
-| Pi | `npx -y loopforge-cli@latest skills install pi`, then `pi install npm:pi-subagents` | `/skill:devflow "<request>"` |
-
-See [`EDITIONS.md`](EDITIONS.md) for the complete boundaries and directory layout.
-
-## Update and uninstall
-
-For ongoing use, install the CLI globally:
-
-```bash
-npm install --global loopforge-cli
-```
-
-Then maintain an installation with the same agent names as above (`codebuddy`, `codex`, `cursor`, `claude`, and `pi` for the Portable Edition):
-
-```bash
-# Classic Edition
-loopforge update <agent>
-loopforge status <agent>
-loopforge uninstall <agent>
-
-# Portable Edition
-loopforge skills update <agent>
-loopforge skills status <agent>
-loopforge skills uninstall <agent>
-```
-
-Installation state is stored in `.devflow/install-state.json`. An update stops instead of overwriting user-modified or conflicting files. Use `--force` only when you intend to replace conflicts or switch editions, preferably after inspecting `loopforge plan`.
-
-If you have cloned this repository, install the LoopForge CLI from the current source tree by running this in the repository root:
-
-```bash
-pipx install .
-```
-
-## Optional tools
-
-`tools/tcmcp` is a Tencent Cloud read-only MCP Initializr (Redis, CDB, TDSQL-C, TKE, CLS, COS). It is not part of `loopforge install` or the npm CLI package. From a clone:
-
-```bash
-cd tools/tcmcp
-```
-
-Then follow [`tools/tcmcp/README.md`](tools/tcmcp/README.md). Cloud API keys are not written into generated zips or the container image; they stay on the machine that lists resources or installs the MCP client. LoopForge `vX.Y.Z` releases publish `ghcr.io/tencent/loopforge-tcmcp:<version>`.
-
-## Permissions and security
-
-Some Classic host configurations enable automatic execution or high-permission agent modes. Use LoopForge only in trusted projects. Before installation, inspect planned files with `loopforge plan codebuddy`, `loopforge plan codex`, `loopforge plan cursor`, or `loopforge plan claude`. Do not put credentials, private endpoints, or production operations configuration in workflow templates.
-
-See [`SECURITY.md`](SECURITY.md) and report vulnerabilities privately through GitHub Security Advisories.
-
-## Community
-
-Scan the WeCom QR code below to join the LoopForge community group.
-
-<img src="docs/community-wecom-qr.png" alt="LoopForge WeCom community group QR code" width="220" />
+| I want to… | Start here |
+| --- | --- |
+| Deploy, manage accounts, connect execution machines | [Deployment](docs/deployment.md) |
+| Install local workflows or choose an edition | [LoopForge Local](docs/local/usage.md) |
+| Extend the platform or use the API | [Architecture](docs/architecture.md) · [API reference](docs/api/README.md) |
+| Check functional coverage and release readiness | [Validation record](docs/validation.md) · [Acceptance matrix](docs/testing/acceptance-matrix.md) · [Release review](docs/release-readiness.md) |
+| Understand source provenance and maintenance | [Public scope](docs/open-source-scope.md) · [Upstream synchronization](docs/upstream-sync.md) |
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and the repository `AGENTS.md` before changing workflow behavior. See [`CHANGELOG.md`](CHANGELOG.md) for release history.
+Issues and PRs are welcome — share a use case, report a bug, or improve workflows, integrations and the platform experience. Start with the [contributing guide](CONTRIBUTING.md). Security issues go through the [security policy](SECURITY.md).
+
+If LoopForge is useful to you, a star helps others find it.
+
+<a href="https://star-history.com/#Tencent/LoopForge&Date">
+  <img src="https://api.star-history.com/svg?repos=Tencent/LoopForge&type=Date" alt="Star history" width="600">
+</a>
 
 ## License
 
-MIT. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for third-party notices.
+[MIT](LICENSE). Third-party components keep their own licenses and notices; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

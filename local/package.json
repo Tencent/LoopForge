@@ -1,0 +1,61 @@
+{
+  "name": "loopforge-cli",
+  "version": "0.2.2",
+  "description": "LoopForge Local workflows for CodeBuddy, Codex, Cursor, and Claude Code",
+  "keywords": [
+    "ai-agents",
+    "multi-agent",
+    "coding-agent",
+    "codex",
+    "claude-code",
+    "cursor",
+    "codebuddy"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tencent/LoopForge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Tencent/LoopForge/issues"
+  },
+  "homepage": "https://github.com/Tencent/LoopForge#readme",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "loopforge": "bin/loopforge.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/devflow_cli/",
+    "skills/",
+    ".codebuddy/",
+    ".codex/",
+    ".cursor/",
+    ".claude/",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "!skills/**/tests/**",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
+    "!**/*.pyo",
+    "!.codebuddy/skills/agent-observability/logs/**",
+    ".codebuddy/skills/agent-observability/logs/.gitkeep",
+    "!.cursor/skills/agent-observability/logs/**",
+    ".cursor/skills/agent-observability/logs/.gitkeep",
+    "!.claude/skills/agent-observability/logs/**",
+    ".claude/skills/agent-observability/logs/.gitkeep",
+    "scripts/prepare-notices.py"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "bash scripts/smoke-npm.sh",
+    "pack:check": "npm pack --dry-run",
+    "prepack": "python3 scripts/prepare-notices.py"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
