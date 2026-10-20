@@ -36,6 +36,10 @@
 
 <p align="center"><sub>Recorded on a real install with no API key (1.6× speed): one click starts the demo SOP → a script writes a report → a human approves → the run finishes → the same SOP in the designer. <a href="docs/assets/readme/demo-en.mp4">Watch the full-quality MP4</a>.</sub></p>
 
+**Watch the full-resolution demo (1080p, normal speed):**
+
+https://github.com/user-attachments/assets/c9cc72fd-1df3-4ae3-9fe6-71d3e8770b65
+
 **LoopForge** is a self-hosted platform that puts **coding agents, deterministic scripts and human decisions into one delivery workflow (SOP)**. Give each agent a role, connect the steps on a visual canvas, and follow every requirement from the first plan to the final artifact. When the process works, keep it — the next requirement runs the same way.
 
 > Think **GitHub Actions for agent-driven delivery**: your process is the workflow, the agents fill in the intelligence at each step, and you stay in control of the gates.
@@ -201,6 +205,12 @@ The default listens on localhost and targets a trusted team. Read the [account a
 | Extend the platform or use the API | [Architecture](docs/architecture.md) · [API reference](docs/api/README.md) |
 | Check functional coverage and release readiness | [Validation record](docs/validation.md) · [Acceptance matrix](docs/testing/acceptance-matrix.md) · [Release review](docs/release-readiness.md) |
 | Understand source provenance and maintenance | [Public scope](docs/open-source-scope.md) · [Upstream synchronization](docs/upstream-sync.md) |
+
+## Community
+
+Scan the QR code below to join the LoopForge community group.
+
+<img src="docs/community-wecom-qr.png" alt="LoopForge community group QR code" width="220" />
 
 ## Contributing
 

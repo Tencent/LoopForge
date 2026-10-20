@@ -36,6 +36,10 @@
 
 <p align="center"><sub>真实环境录屏（1.6 倍速），全程无需 API Key：一键启动示例 SOP → 脚本生成报告 → 人工审批 → 运行完成 → 在设计器中查看同一条 SOP。<a href="docs/assets/readme/demo-zh.mp4">查看高清 MP4</a>。</sub></p>
 
+**观看高清演示（1080p，正常速度）：**
+
+https://github.com/user-attachments/assets/3c08e6fd-3163-4f91-b17d-ea593340feb2
+
 **LoopForge** 是一个可自主部署的平台，把 **编程 Agent、确定性脚本和人工决策放进同一条交付流程（SOP）**。为每个 Agent 分配角色，在可视化画布上连接步骤，跟进每个需求从方案到最终产物的全过程。跑通的方法存成 SOP，下一个需求按同样的方式交付。
 
 > 可以把它理解为 **面向 Agent 交付的 GitHub Actions**：流程由你定义，Agent 在每一步发挥智能，关键关口始终由你把控。
@@ -201,6 +205,12 @@ LoopForge 不替代它们，而是编排它们。每个 Agent 步骤都运行这
 | 扩展平台或接入 API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) |
 | 功能覆盖与发布就绪情况 | [实测记录](docs/validation.md) · [验收矩阵](docs/testing/acceptance-matrix.md) · [发布评审](docs/release-readiness.md) |
 | 来源与长期维护方式 | [开源范围](docs/open-source-scope.md) · [上游同步策略](docs/upstream-sync.md) |
+
+## 交流群
+
+扫描下方二维码加入 LoopForge 交流群。
+
+<img src="docs/community-wecom-qr.png" alt="LoopForge 交流群二维码" width="220" />
 
 ## 参与贡献
 
