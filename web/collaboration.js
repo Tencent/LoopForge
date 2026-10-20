@@ -254,7 +254,7 @@
     const dialog=document.createElement('dialog');dialog.className='collab-group-dialog';const form=document.createElement('form'),heading=document.createElement('h2');heading.textContent='邀请角色加入协作';form.append(heading);const select=document.createElement('select');select.setAttribute('aria-label','选择邀请角色');for(const a of choices){const opt=document.createElement('option');opt.value=a.id;opt.textContent=a.name;select.append(opt)}form.append(select);const note=document.createElement('p');note.textContent=choices.length?'加入后可以 @ 和派发任务，邀请本身不会开始执行。':'所有可用角色都已加入。';form.append(note);const footer=document.createElement('footer'),cancel=document.createElement('button'),submit=document.createElement('button');cancel.type='button';cancel.className='button ghost';cancel.textContent='取消';cancel.onclick=()=>dialog.close();submit.type='submit';submit.className='button';submit.textContent='邀请加入';submit.disabled=!choices.length;footer.append(cancel,submit);form.append(footer);dialog.append(form);document.body.append(dialog);dismissDialog(dialog);const id=currentRun;form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{await api('/api/runs/'+encodeURIComponent(id)+'/group/members',{method:'POST',body:JSON.stringify({agentId:select.value})});dialog.close();await refresh()}catch(err){note.textContent=err.message;submit.disabled=false}};dialog.showModal();
   }
   function dismissDialog(dialog){dialog.addEventListener('close',()=>dialog.remove());dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close()}})}
-  function paintModeButton(){groupPause.hidden=true;groupPause.textContent=run?.pauseRequested?'继续协作':'暂停协作';modeButton.hidden=!isGroup();modeButton.textContent='切回 SOP';modeButton.disabled=sopReturnPending();modeButton.onclick=restoreSOPDialog}
+  function paintModeButton(){groupPause.hidden=true;groupPause.textContent=run?.pauseRequested?'继续协作':'暂停协作';modeButton.hidden=!isGroup()||['succeeded','cancelled'].includes(run?.status);modeButton.textContent=run?.workflowSnapshot?.sopCheckpoint?.workflow?.nodes?.length===0?'标记完成':'切回 SOP';modeButton.disabled=sopReturnPending();modeButton.onclick=restoreSOPDialog}
   function cacheSOPHandoff(id,job){
     const previous=sopReturns.get(id);if(job)sopReturns.set(id,job);else if(previous?.id||previous?.status!=='failed')sopReturns.delete(id);
     if(currentRun===id&&job?.status==='succeeded'&&(handoffActive(previous)||previous?.status==='failed'&&previous?.phase==='starting')){nodeId='';assistant.leaveNode()}
@@ -306,10 +306,10 @@
     if(Object.values(run.nodes||{}).some(n=>n.status==='running')||run.status==='running')return toast('请先停止当前角色任务，再切回 SOP');
     const original=run.workflowSnapshot.sopCheckpoint?.workflow||run.workflowSnapshot,nodes=original.nodes.filter(n=>!n.requestId);
     const dialog=document.createElement('dialog');dialog.className='collab-group-dialog';
-    const form=document.createElement('form'),heading=document.createElement('h2');heading.textContent='切回 SOP';form.append(heading);
+    const form=document.createElement('form'),heading=document.createElement('h2');heading.textContent=nodes.length?'切回 SOP':'完成协作任务';form.append(heading);
     const actionLabel=document.createElement('label');actionLabel.textContent='切回后如何处理';
     const action=document.createElement('select');action.setAttribute('aria-label','SOP 恢复方式');
-    for(const [value,text] of [['restart','从节点重新开始'],['complete','直接标记完成']]){const option=document.createElement('option');option.value=value;option.textContent=text;action.append(option)}actionLabel.append(action);form.append(actionLabel);
+    for(const [value,text] of [...(nodes.length?[['restart','从节点重新开始']]:[]),['complete','直接标记完成']]){const option=document.createElement('option');option.value=value;option.textContent=text;action.append(option)}actionLabel.append(action);actionLabel.hidden=!nodes.length;form.append(actionLabel);
     const label=document.createElement('label');label.textContent='从哪个节点继续';const select=document.createElement('select');select.setAttribute('aria-label','SOP 继续节点');
     for(const n of nodes){const o=document.createElement('option');o.value=n.id;o.textContent=n.name||n.id;select.append(o)}
     const checkpoint=run.workflowSnapshot.sopCheckpoint?.nodes||run.nodes;
@@ -352,7 +352,7 @@
     for(const a of message.attachments||[]){const link=document.createElement('a');link.className='collab-chip';link.href='/api/assistant/attachments/'+encodeURIComponent(a.id)+'?'+new URLSearchParams({sessionId:assistant.sessionId()});link.textContent='📎 '+a.name;link.target='_blank';link.rel='noopener';if(/^image\/(png|jpeg|gif|webp)$/.test(a.mimeType)){const img=document.createElement('img');img.src=link.href;img.alt=a.name;img.loading='lazy';link.prepend(img)}bar.append(link)}
     if(bar.childNodes.length)bubble.append(bar);
   }
-  let taskRows=[],taskLimit=30;
+  let taskRows=[],taskLimit=30,taskRefreshGeneration=0;
   const sessionMenu=document.createElement('div');sessionMenu.className='collab-session-menu';sessionMenu.hidden=true;sessionMenu.setAttribute('role','menu');document.body.append(sessionMenu);
   function closeSessionMenu(){sessionMenu.hidden=true}
   document.addEventListener('click',e=>{if(!sessionMenu.contains(e.target))closeSessionMenu()});window.addEventListener('resize',closeSessionMenu);document.addEventListener('scroll',closeSessionMenu,true);
@@ -370,35 +370,90 @@
     if(!rows.length)paintSidebarEmpty(host,archived?'没有已归档会话':'开始对话后会保存在这里');
   }
   function paintSidebarEmpty(host,text){const note=document.createElement('p');note.className='collab-sidebar-empty';note.textContent=text;host.append(note)}
+  const taskTones={running:'running',queued:'queued',pending:'queued',waiting:'attention',waiting_approval:'attention',waiting_retry:'attention',paused:'attention',failed:'failed',succeeded:'done',cancelled:'muted',skipped:'muted'};
+  const taskGroups=[['active','进行中'],['recent','最近结束'],['earlier','更早']],collapsedTaskGroups=new Set(['earlier']);
+  function taskStatus(r){
+    const job=sopReturns.get(r.id);
+    if(job&&job.status!=='succeeded'){const p=handoffPresentation(job);return {tone:p.tone==='failed'?'failed':'running',text:p.label}}
+    if(r.status==='waiting'&&r.pauseRequested)return {tone:'attention',text:'已暂停'};
+    return {tone:taskTones[r.status]||'queued',text:label(r.status)};
+  }
+  function taskTime(r){const ms=Date.parse(r.updatedAt||r.createdAt||'');return Number.isFinite(ms)?ms:0}
+  function taskClock(ms){
+    if(!ms)return '';const diff=Date.now()-ms;if(diff<60e3)return '刚刚';if(diff<3600e3)return Math.floor(diff/60e3)+' 分钟前';
+    const d=new Date(ms),now=new Date(),hm=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+    const days=Math.round((new Date(now.getFullYear(),now.getMonth(),now.getDate())-new Date(d.getFullYear(),d.getMonth(),d.getDate()))/864e5);
+    return days===0?hm:days===1?'昨天 '+hm:d.getFullYear()===now.getFullYear()?(d.getMonth()+1)+'月'+d.getDate()+'日':d.getFullYear()+'/'+(d.getMonth()+1)+'/'+d.getDate();
+  }
+  function taskElapsed(r){
+    const ms=r.timing?.wallMs||Date.now()-(Date.parse(r.createdAt||'')||Date.now()),m=Math.floor(ms/60e3);
+    if(m<1)return '刚开始';if(m<60)return m+' 分钟';const h=Math.floor(m/60);return h<24?h+' 小时':Math.floor(h/24)+' 天';
+  }
+  function taskGroup(r,tone){
+    if(['running','queued','attention'].includes(tone))return 'active';
+    return Date.now()-taskTime(r)<864e5?'recent':'earlier';
+  }
+  function taskItem(r,st){
+    const b=document.createElement('button');b.type='button';b.className='collab-list-item collab-task-item'+(currentRun===r.id?' active':'');
+    const workflowName=r.workflowSnapshot?.name||state.data?.workflows?.find(w=>w.id===r.workflowId)?.name||r.workflowId||'';
+    const issue=state.data?.issues?.find(i=>i.id===(r.issueId||r.executionContext?.issueId));
+    const full=r.workflowSnapshot?.taskTitle||issue?.title||String(r.input||'').trim().split('\n')[0]||workflowName;
+    const tagged=full.match(/^\s*(?:\[([^[\]【】]{1,12})\]|【([^[\]【】]{1,12})】)\s*/),text=tagged&&full.length>tagged[0].length?full.slice(tagged[0].length):full;
+    const dot=document.createElement('span');dot.className='collab-task-dot '+st.tone;dot.setAttribute('aria-hidden','true');
+    const body=document.createElement('span');body.className='collab-task-body';
+    const name=document.createElement('b');if(tagged&&text!==full){const tag=document.createElement('span');tag.className='collab-task-tag';tag.textContent=tagged[1]||tagged[2];name.append(tag)}name.append(document.createTextNode(text.slice(0,120)));
+    const meta=document.createElement('small'),stateLabel=document.createElement('span'),flow=document.createElement('span'),time=document.createElement('time');
+    stateLabel.className='collab-task-state '+st.tone;stateLabel.textContent=st.text;flow.className='collab-task-workflow';flow.textContent=workflowName?'· '+workflowName:'';
+    time.className='collab-task-time';const ms=taskTime(r);if(ms)time.dateTime=new Date(ms).toISOString();time.textContent=st.tone==='running'?taskElapsed(r):taskClock(ms);
+    meta.append(stateLabel,flow,time);body.append(name,meta);b.append(dot,body);
+    b.title=[full,workflowName&&'流程：'+workflowName,'状态：'+st.text,r.createdAt&&'创建：'+new Date(r.createdAt).toLocaleString(),'ID：'+r.id].filter(Boolean).join('\n');
+    b.onclick=()=>selectRun(r.id);return b;
+  }
   function paintTasks(){
     const host=$id('collabTasks');host.replaceChildren();const query=$id('collabTaskSearch').value.trim().toLowerCase(),filter=$id('collabTaskFilter').value;
-    const rows=taskRows.filter(r=>{const name=r.workflowSnapshot?.name||state.data?.workflows?.find(w=>w.id===r.workflowId)?.name||r.workflowId||'';const text=[name,r.id,r.input,label(r.status)].join(' ').toLowerCase();return (!query||text.includes(query))&&(filter==='all'||filter==='active'&&!['succeeded','failed','cancelled'].includes(r.status)||filter==='waiting'&&['waiting','waiting_approval','waiting_retry','paused'].includes(r.status)||r.status===filter)});
-    for(const r of rows.slice(0,taskLimit)){const b=document.createElement('button');b.type='button';b.className='collab-list-item'+(currentRun===r.id?' active':'');const name=document.createElement('b');const workflowName=r.workflowSnapshot?.name||r.workflowId;const issue=state.data?.issues?.find(i=>i.id===(r.issueId||r.executionContext?.issueId));const title=r.workflowSnapshot?.taskTitle||issue?.title||String(r.input||'').trim().split('\n')[0];name.textContent=title?title.slice(0,70):workflowName;name.title=title||workflowName;const status=document.createElement('small');status.textContent=(sopReturns.get(r.id)&&sopReturns.get(r.id).status!=='succeeded'?handoffPresentation(sopReturns.get(r.id)).label:r.status==='waiting'&&r.pauseRequested?'已暂停':label(r.status))+' · '+workflowName+' · '+r.id.slice(-8);b.append(name,status);b.onclick=()=>selectRun(r.id);host.append(b)}
+    const rows=taskRows.filter(r=>{const name=r.workflowSnapshot?.name||state.data?.workflows?.find(w=>w.id===r.workflowId)?.name||r.workflowId||'';const text=[name,r.id,r.input,r.workflowSnapshot?.taskTitle,label(r.status)].join(' ').toLowerCase();return (!query||text.includes(query))&&(filter==='all'||filter==='active'&&!['succeeded','failed','cancelled'].includes(r.status)||filter==='waiting'&&['waiting','waiting_approval','waiting_retry','paused'].includes(r.status)||r.status===filter)});
+    const buckets=new Map(taskGroups.map(([key])=>[key,[]]));
+    for(const r of rows){const st=taskStatus(r);buckets.get(taskGroup(r,st.tone)).push({r,st})}
+    for(const [key,list] of buckets)if(key!=='active')list.sort((a,b)=>taskTime(b.r)-taskTime(a.r));
+    let budget=taskLimit;
+    for(const [key,title] of taskGroups){
+      const list=buckets.get(key);if(!list.length||budget<=0)continue;
+      const collapsed=!query&&collapsedTaskGroups.has(key),head=document.createElement('button');head.type='button';head.className='collab-task-group';head.setAttribute('aria-expanded',String(!collapsed));
+      head.append(icon('chevron'),document.createTextNode(title));const count=document.createElement('em');count.textContent=String(list.length);head.append(count);
+      const failed=list.filter(x=>x.st.tone==='failed').length;if(failed){const alert=document.createElement('span');alert.className='collab-task-group-failed';alert.textContent='· '+failed+' 失败';head.append(alert)}
+      head.onclick=()=>{collapsed?collapsedTaskGroups.delete(key):collapsedTaskGroups.add(key);paintTasks()};host.append(head);
+      if(collapsed)continue;
+      for(const {r,st} of list.slice(0,budget))host.append(taskItem(r,st));budget-=list.length;
+    }
     if(rows.length>taskLimit){const more=document.createElement('button');more.type='button';more.className='collab-load-more';more.textContent='加载更多（'+rows.length+' 个匹配任务）';more.onclick=()=>{taskLimit+=30;paintTasks()};host.append(more)}
-    if(!rows.length)paintSidebarEmpty(host,query||filter!=='all'?'没有匹配的任务':project()?'还没有任务运行':'选择项目后查看任务');
+    if(!rows.length)paintSidebarEmpty(host,query||filter!=='all'||$id('collabTaskResponsible').value==='me'?'没有匹配的任务':project()?'还没有任务运行':'选择项目后查看任务');
   }
   $id('collabSessionFilter').onchange=()=>{closeSessionMenu();paintSessions()};
   $id('collabTaskSearch').oninput=$id('collabTaskFilter').onchange=()=>{taskLimit=30;paintTasks()};
+  $id('collabTaskResponsible').onchange=()=>{taskLimit=30;taskRows=[];paintTasks();void refresh()};
   const newGroup=document.createElement('button');newGroup.type='button';newGroup.title='新建协作任务';newGroup.setAttribute('aria-label','新建协作任务');newGroup.textContent='+';newGroup.onclick=()=>project()?groupDialog(true):toast('请先选择项目');$id('collabSearchToggle').before(newGroup);
   $id('collabRefresh').append(icon('refresh'));
   $id('collabSearchToggle').append(icon('search'));
   function toggleTaskSearch(open){
     $id('collabTaskFilters').hidden=!open;$id('collabSearchToggle').setAttribute('aria-expanded',String(open));
-    if(open)$id('collabTaskSearch').focus();else{$id('collabTaskSearch').value='';$id('collabTaskFilter').value='all';taskLimit=30;paintTasks()}
+    if(open)$id('collabTaskSearch').focus();else{const filtered=$id('collabTaskResponsible').value==='me';$id('collabTaskSearch').value='';$id('collabTaskFilter').value='all';$id('collabTaskResponsible').value='all';taskLimit=30;if(filtered){taskRows=[];void refresh()}paintTasks()}
   }
   $id('collabSearchToggle').onclick=()=>toggleTaskSearch($id('collabTaskFilters').hidden);
   $id('collabTaskFilters').onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();toggleTaskSearch(false);$id('collabSearchToggle').focus()}};
   async function refresh(){
-    const scope=project();
+    const scope=project(),generation=++taskRefreshGeneration,params=new URLSearchParams({projectId:scope});
+    if($id('collabTaskResponsible').value==='me')params.set('responsible','me');
+    const stale=()=>scope!==project()||generation!==taskRefreshGeneration;
     try{
-      const [history,allRuns]=await Promise.all([api('/api/assistant/sessions',{silent:true}),api('/api/runs?'+new URLSearchParams({projectId:scope}),{silent:true})]);
-      if(scope!==project())return;
+      const [history,allRuns]=await Promise.all([api('/api/assistant/sessions',{silent:true}),api('/api/runs?'+params,{silent:true})]);
+      if(stale())return;
       sessions=history.filter(s=>(s.projectId||'')===scope);
-      await Promise.all(sessions.filter(s=>!s.generationStatus).map(async s=>{try{const res=await fetch('/api/assistant/sessions/'+encodeURIComponent(s.id)+'/generation');if(res.ok){const g=await res.json();localSessionStates.set(s.id,g.status)}}catch{}}));if(scope!==project())return;
+      await Promise.all(sessions.filter(s=>!s.generationStatus).map(async s=>{try{const res=await fetch('/api/assistant/sessions/'+encodeURIComponent(s.id)+'/generation');if(res.ok){const g=await res.json();localSessionStates.set(s.id,g.status)}}catch{}}));if(stale())return;
       paintSessions();await assistant.refreshShared();
-      taskRows=allRuns.filter(r=>(r.executionContext?.projectId||'')===scope);await refreshSOPHandoffs();if(scope!==project())return;paintTasks();
-      if(currentRun){const id=currentRun;const before=JSON.stringify(run?.nodes?.[nodeId]);const detail=await api('/api/runs/'+encodeURIComponent(id),{silent:true});if(id===currentRun&&scope===project()){run=detail;renderPipeline();scheduleGroupState();if(nodeId&&before!==JSON.stringify(run?.nodes?.[nodeId]))paintNode()}}
-    }catch(err){if(active)error(err)}
+      if(stale())return;
+      taskRows=allRuns.filter(r=>(r.executionContext?.projectId||'')===scope);await refreshSOPHandoffs();if(stale())return;paintTasks();
+      if(currentRun){const id=currentRun;const before=JSON.stringify(run?.nodes?.[nodeId]);const detail=await api('/api/runs/'+encodeURIComponent(id),{silent:true});if(id===currentRun&&!stale()){run=detail;renderPipeline();scheduleGroupState();if(nodeId&&before!==JSON.stringify(run?.nodes?.[nodeId]))paintNode()}}
+    }catch(err){if(active&&!stale())error(err)}
   }
   function label(status){return ({waiting:'等待处理',running:'执行中',queued:'排队中',paused:'已暂停',pending:'未开始',succeeded:'已完成',failed:'失败',cancelled:'已取消',waiting_approval:'待确认',waiting_retry:'待重试',skipped:'已跳过'})[status]||status||'未开始'}
   function isGroup(){return run?.workflowSnapshot?.collaborationMode==='group'}
@@ -529,15 +584,31 @@
     const checks=receipt.verification?.checks||[];if(checks.length){const detail=document.createElement('details');detail.className='collab-receipt-checks';const summary=document.createElement('summary');summary.textContent='查看 '+checks.length+' 项实际检查';detail.append(summary);for(const check of checks){const line=document.createElement('div');const mark=document.createElement('span');mark.textContent=check.status==='passed'?'✓':check.status==='failed'?'!':'·';line.append(mark,document.createTextNode(check.name||check.gateId||'命令检查'));if(check.historical){const old=document.createElement('small');old.textContent='历史结果';line.append(old)}detail.append(line)}card.append(detail)}
   }
   function groupDialog(create){
-    const dialog=document.createElement('dialog');dialog.className='collab-group-dialog';const form=document.createElement('form');form.method='dialog';const heading=document.createElement('h2');heading.textContent=create?'新建协作任务':'派发角色任务';const intro=document.createElement('p');intro.textContent=create?'选择环境与角色模板，后续由 Main Bot 按需协调。':'角色将真实执行任务，可以与其他 Agent 并行修改共享工作区。';form.append(heading,intro);
-    const field=(text,control)=>{const label=document.createElement('label');label.textContent=text;label.append(control);form.append(label)};
-    const select=document.createElement('select');select.required=true;const items=create?(state.data?.workflows||[]).filter(w=>w.projectId===project()||w.shared||w.generic):(state.data?.agents||[]).filter(a=>a.projectId===project()||a.shared);
-    for(const item of items){const opt=document.createElement('option');opt.value=item.id;opt.textContent=item.name;select.append(opt)}field(create?'角色与环境模板':'执行角色',select);
+    const scope=project();
+    const dialog=document.createElement('dialog');dialog.className='collab-group-dialog';const form=document.createElement('form');form.method='dialog';const heading=document.createElement('h2');heading.textContent=create?'新建协作任务':'派发角色任务';const intro=document.createElement('p');intro.textContent=create?'默认自由协作。选择本次涉及的仓库，由 Main Bot 按需协调，也可以随时邀请角色加入。':'角色将真实执行任务，可以与其他 Agent 并行修改共享工作区。';form.append(heading,intro);
+    const field=(text,control,host=form)=>{const label=document.createElement('label');label.textContent=text;label.append(control);host.append(label);return label};
+    const select=document.createElement('select');select.required=!create;select.setAttribute('aria-label',create?'角色与环境模板（可选）':'执行角色');const items=create?(state.data?.workflows||[]).filter(w=>w.projectId===scope||w.shared||w.generic):(state.data?.agents||[]).filter(a=>a.projectId===scope||a.shared);
+    if(create){const opt=document.createElement('option');opt.value='';opt.textContent='自由协作（不使用 SOP 模板）';select.append(opt)}
+    for(const item of items){const opt=document.createElement('option');opt.value=item.id;opt.textContent=item.name;select.append(opt)}if(!create)field('执行角色',select);
     const prompt=document.createElement('textarea');prompt.required=true;prompt.rows=5;prompt.placeholder=create?'描述这个任务的目标…':'具体需要完成什么，如何验证…';field(create?'任务目标':'工作说明',prompt);
+    const repositoryChecks=[],sandbox=document.createElement('select');
+    if(create){
+      const repositories=(state.data?.repositories||[]).filter(r=>r.projectId===scope),defaultRepository=state.data?.projects?.find(p=>p.id===scope)?.defaultRepositoryId;
+      const group=document.createElement('fieldset');group.className='collab-repository-picker';const legend=document.createElement('legend');legend.textContent='涉及仓库（可多选）';group.append(legend);
+      const choices=document.createElement('div');choices.className='collab-repository-choices';
+      for(const repository of repositories){const check=document.createElement('input');check.type='checkbox';check.value=repository.id;check.checked=repository.id===defaultRepository||repositories.length===1;repositoryChecks.push(check);const row=document.createElement('label'),text=document.createElement('span'),name=document.createElement('b'),branch=document.createElement('small');name.textContent=repository.name||repository.id;branch.textContent='基于 '+(repository.defaultBranch||'默认分支');text.append(name,branch);row.append(check,text);choices.append(row)}
+      const summary=document.createElement('small');summary.className='collab-repository-summary';const paintSelection=()=>{summary.textContent=repositories.length?'已选择 '+repositoryChecks.filter(c=>c.checked).length+' / '+repositories.length+' 个仓库；不选仓库可进行讨论和非代码任务。':'当前项目尚未配置仓库，可先创建讨论任务。'};choices.onchange=paintSelection;paintSelection();group.append(choices,summary);form.append(group);
+      const settings=document.createElement('details');settings.className='collab-group-settings';const title=document.createElement('summary');title.textContent='运行环境与角色模板';settings.append(title);field('角色与环境模板（可选）',select,settings);
+      const environments=(state.data?.sandboxes||[]).filter(s=>s.projectId===scope||s.shared).sort((a,b)=>Number(b.projectId===scope)-Number(a.projectId===scope));
+      for(const item of environments){const option=document.createElement('option');option.value=item.id;option.textContent=item.name||item.id;sandbox.append(option)}
+      sandbox.setAttribute('aria-label','运行环境');const sandboxLabel=field('运行环境',sandbox,settings);
+      const environmentNote=document.createElement('p');environmentNote.className='collab-dialog-note';settings.append(environmentNote);
+      const paintEnvironment=()=>{sandboxLabel.hidden=!!select.value;sandbox.disabled=!!select.value;sandbox.required=!select.value&&environments.length>0;environmentNote.textContent=select.value?'仅沿用模板的角色和运行环境，任务仍按自由协作推进。':environments.length?'使用「'+(environments.find(s=>s.id===sandbox.value)?.name||sandbox.value)+'」，可展开调整。':'当前项目没有可用运行环境，请先配置或选择模板。'};select.onchange=sandbox.onchange=paintEnvironment;paintEnvironment();if(!environments.length)settings.open=true;form.append(environmentNote,settings);
+    }
     const files=document.createElement('input');files.placeholder='例如 web/login.js, server/auth.go';if(!create)field('涉及文件（可选，用逗号分隔）',files);
-    const note=document.createElement('p');note.className='collab-dialog-note';note.textContent='已有变更不会回退；角色通过群消息对齐文件修改，文件范围作为分工说明。';form.append(note);
+    const note=document.createElement('p');note.className='collab-dialog-note';note.textContent=create?'所选仓库共用任务工作区，创建后通过群聊协作。':'已有变更不会回退；角色通过群消息对齐文件修改，文件范围作为分工说明。';form.append(note);
     const err=document.createElement('p');err.className='collab-dialog-error';err.setAttribute('role','alert');form.append(err);const footer=document.createElement('footer'),cancel=document.createElement('button'),submit=document.createElement('button');cancel.type='button';cancel.className='button ghost';cancel.textContent='取消';cancel.onclick=()=>dialog.close();submit.type='submit';submit.className='button';submit.textContent=create?'创建任务':'派发任务';footer.append(cancel,submit);form.append(footer);dialog.append(form);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close()}});
-    const requestId=crypto.randomUUID();form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;err.textContent='';try{if(create){const data=await api('/api/task-groups',{method:'POST',body:JSON.stringify({workflowId:select.value,projectId:project(),input:prompt.value})});dialog.close();await selectRun(data.id)}else{await api('/api/runs/'+encodeURIComponent(currentRun)+'/group/tasks',{method:'POST',body:JSON.stringify({agentId:select.value,prompt:prompt.value,requestId,files:files.value.split(',').map(f=>f.trim()).filter(Boolean)})});dialog.close();await returnToPM();await refresh()}}catch(error){err.textContent=error.message}finally{submit.disabled=false}};dialog.showModal();prompt.focus();
+    const requestId=crypto.randomUUID();form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;err.textContent='';try{if(scope!==project())throw new Error('当前项目已切换，请重新打开任务窗口');if(create){if(!select.value&&!sandbox.value)throw new Error('请先配置可用的运行环境或选择模板');const data=await api('/api/task-groups',{method:'POST',body:JSON.stringify({workflowId:select.value,projectId:scope,input:prompt.value,repositoryIds:repositoryChecks.filter(c=>c.checked).map(c=>c.value),...(!select.value?{sandboxProfileId:sandbox.value}:{})})});dialog.close();await selectRun(data.id)}else{await api('/api/runs/'+encodeURIComponent(currentRun)+'/group/tasks',{method:'POST',body:JSON.stringify({agentId:select.value,prompt:prompt.value,requestId,files:files.value.split(',').map(f=>f.trim()).filter(Boolean)})});dialog.close();await returnToPM();await refresh()}}catch(error){err.textContent=error.message}finally{submit.disabled=false}};dialog.showModal();prompt.focus();
   }
   async function selectRun(id){
     if(busy())return toast('请先停止当前回复或等待附件上传完成');

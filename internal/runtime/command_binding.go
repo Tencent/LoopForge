@@ -179,7 +179,7 @@ func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[strin
 	// rewrites git@ to https://git.example.com/ without credentials. insteadOf does
 	// not chain; GIT_ASKPASS answers the resulting username/password prompt.
 	askpassHost := filepath.Join(workspace, ".agentflow", "runtime", "git-askpass")
-	if err := writeGitAskPass(askpassHost); err != nil {
+	if err := writeGitAskPass(workspace, askpassHost); err != nil {
 		return err
 	}
 	askpass := askpassHost
@@ -200,15 +200,12 @@ case "$1" in
 esac
 `
 
-func writeGitAskPass(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+func writeGitAskPass(workspace, path string) error {
+	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
 		return fmt.Errorf("create git askpass dir: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(gitAskPassScript), 0o700); err != nil {
+	if err := writeManagedFile(workspace, path, []byte(gitAskPassScript), 0o700); err != nil {
 		return fmt.Errorf("write git askpass: %w", err)
-	}
-	if err := os.Chmod(path, 0o700); err != nil {
-		return fmt.Errorf("chmod git askpass: %w", err)
 	}
 	return nil
 }

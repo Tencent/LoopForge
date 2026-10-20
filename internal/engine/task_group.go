@@ -32,8 +32,21 @@ func truncateGroupText(s string, n int) string {
 }
 
 func (e *Engine) StartTaskGroup(workflowID, input string, repos []domain.RepositoryContext, actor domain.TelemetryContext) (domain.Run, error) {
+	return e.StartTaskGroupWithSandbox(workflowID, input, repos, actor, "")
+}
+
+// An empty workflow starts a free collaboration with no SOP or initial roles.
+// The sandbox is frozen just like a template-backed run; roles can be invited later.
+func (e *Engine) StartTaskGroupWithSandbox(workflowID, input string, repos []domain.RepositoryContext, actor domain.TelemetryContext, sandboxID string) (domain.Run, error) {
 	if strings.TrimSpace(actor.ProjectID) == "" || strings.TrimSpace(input) == "" {
 		return domain.Run{}, fmt.Errorf("请选择项目并填写任务目标")
+	}
+	if strings.TrimSpace(workflowID) == "" {
+		if _, ok := e.repo.Project(actor.ProjectID); !ok {
+			return domain.Run{}, fmt.Errorf("项目不存在")
+		}
+		wf := domain.WorkflowDefinition{ID: "free-collaboration", Name: "自由协作", Version: 1, ProjectID: actor.ProjectID, SandboxProfileID: sandboxID, Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{}}
+		return e.startWorkflowDefinition(wf, input, repos, actor, true)
 	}
 	return e.startWorkflow(workflowID, input, repos, actor, true)
 }
@@ -432,6 +445,23 @@ func (e *Engine) restoreGroupSOPWithContext(id, nodeID string, complete bool, ha
 	checkpoint, err := e.groupSOPCheckpoint(r)
 	if err != nil {
 		return err
+	}
+	if complete && len(checkpoint.Workflow.Nodes) == 0 {
+		// A task created without a SOP stays a group, including its real task
+		// outputs and membership, so it can be reopened for another round.
+		r.Status, r.PauseRequested, r.CancelRequested = "succeeded", false, false
+		for _, nr := range r.Nodes {
+			if nr.Status == "pending" || nr.Status == "waiting_approval" || nr.Status == "waiting_retry" {
+				nr.Status = "skipped"
+				nr.Activity = "自由协作已标记完成，未继续执行"
+			}
+		}
+		e.event(&r, "", "group.completed", "用户标记自由协作完成，保留执行记录")
+		if err := e.repo.RestoreRunSOP(r, r.Revision, true); err != nil {
+			return err
+		}
+		e.publish(id)
+		return nil
 	}
 	restored := r
 	restored.WorkflowSnapshot = checkpoint.Workflow

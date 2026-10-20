@@ -90,7 +90,7 @@ func TestImportAndResyncTAPDTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.ID != issue.ID || updated.Title != "更新的任务标题" || updated.Status != "in_progress" || updated.ExternalRef.ExternalType != "task" || updated.ExternalRef.ExternalURL != testTAPDTaskURL {
+	if updated.ID != issue.ID || updated.Title != "更新的任务标题" || updated.Status != "todo" || updated.ExternalRef.ExternalState != "progressing" || updated.ExternalRef.ExternalType != "task" || updated.ExternalRef.ExternalURL != testTAPDTaskURL {
 		t.Fatalf("unexpected refreshed task: %+v", updated)
 	}
 	if updated.BaseBranch != issue.BaseBranch || updated.RepositoryID != issue.RepositoryID || updated.Clarification.Summary != "已澄清" || !updated.ExternalRef.Imported {

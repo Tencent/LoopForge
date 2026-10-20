@@ -29,6 +29,17 @@ func (e *Engine) StartWithRepositoriesContext(workflowID, input string, reposito
 }
 
 func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, group bool) (domain.Run, error) {
+	wf, ok := e.repo.Workflow(workflowID)
+	if !ok {
+		return domain.Run{}, fmt.Errorf("workflow not found")
+	}
+	return e.startWorkflowDefinition(wf, input, repositories, executionContext, group)
+}
+
+// startWorkflowDefinition also accepts a run-only free collaboration definition.
+// It never writes a template to the catalog.
+func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, group bool) (domain.Run, error) {
+	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	domain.AssignRepositoryDirs(repositories)
 	e.mu.Lock()
@@ -38,11 +49,6 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 	if draining {
 		return domain.Run{}, ErrExecutionDisabled
 	}
-	stored, ok := e.repo.Workflow(workflowID)
-	if !ok {
-		return domain.Run{}, fmt.Errorf("workflow not found")
-	}
-	wf := stored
 	wf.CollaborationMode = ""
 	wf.TaskTitle = ""
 	wf.GroupMembers = nil

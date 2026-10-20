@@ -1183,6 +1183,23 @@ function bind(){
 
   // --- 工作台 / 待办验收 / 可观测与分析 / Issue 详情抽屉 ---
   $('.platform-sidebar .brand').onclick=()=>switchView('collaboration');
+  (function bindSidebarResize(){
+    const KEY='agentflow.sidebarWidth',MIN=220,MAX=420,wide=matchMedia('(min-width:1001px)'),sidebar=$('.platform-sidebar');
+    const handle=document.createElement('button');handle.type='button';handle.className='sidebar-resize';handle.title='拖动调整侧栏宽度，双击恢复默认';handle.setAttribute('aria-label','调整侧栏宽度');sidebar.append(handle);
+    const clamp=px=>Math.round(Math.min(MAX,Math.max(MIN,px)));
+    const apply=()=>{const saved=Number(localStorage.getItem(KEY));if(wide.matches&&saved)document.documentElement.style.setProperty('--sidebar-w',clamp(saved)+'px');else document.documentElement.style.removeProperty('--sidebar-w')};
+    const save=px=>{localStorage.setItem(KEY,String(clamp(px)));apply()};
+    apply();wide.addEventListener('change',apply);
+    handle.onpointerdown=ev=>{
+      if(ev.button!==0)return;ev.preventDefault();
+      const startX=ev.clientX,startW=sidebar.getBoundingClientRect().width;
+      handle.setPointerCapture(ev.pointerId);document.body.classList.add('sidebar-resizing');
+      handle.onpointermove=move=>document.documentElement.style.setProperty('--sidebar-w',clamp(startW+move.clientX-startX)+'px');
+      handle.onpointerup=handle.onpointercancel=()=>{handle.onpointermove=handle.onpointerup=handle.onpointercancel=null;document.body.classList.remove('sidebar-resizing');save(sidebar.getBoundingClientRect().width)};
+    };
+    handle.ondblclick=()=>{localStorage.removeItem(KEY);apply()};
+    handle.onkeydown=ev=>{const cur=sidebar.getBoundingClientRect().width;if(ev.key==='ArrowRight'){ev.preventDefault();save(cur+16)}if(ev.key==='ArrowLeft'){ev.preventDefault();save(cur-16)}};
+  })();
   $('#dashImportTAPD')&&($('#dashImportTAPD').onclick=openImportTAPDModal);
   $('#dashNewRequirement').onclick=openRequirementWizard;
   $('#dashNewRun').onclick=()=>switchView('issues');

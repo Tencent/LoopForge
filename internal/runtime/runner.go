@@ -221,7 +221,7 @@ func writeTaskPromptFile(workspace, runtimeRel, prompt string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
-	if err := writeManagedFile(path, []byte(prompt), 0o600); err != nil {
+	if err := writeManagedFile(workspace, path, []byte(prompt), 0o600); err != nil {
 		return "", err
 	}
 	return rel, nil

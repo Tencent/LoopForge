@@ -19,7 +19,7 @@ func TestGateMCPSubmitWritesStructuredResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	resultPath := ".agentflow/gate-results/review/attempt-1.json"
-	server, err := materializeGateMCP(configRoot, ".agentflow/config/reviewer/gate-mcp", resultPath, "local")
+	server, err := materializeGateMCP(workspace, configRoot, ".agentflow/config/reviewer/gate-mcp", resultPath, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestMaterializeGateMCPSelectsLinuxForDocker(t *testing.T) {
 	if err := os.MkdirAll(configRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := materializeGateMCP(configRoot, ".agentflow/config/reviewer/gate-mcp", "result.json", "docker"); err != nil {
+	if _, err := materializeGateMCP(dir, configRoot, ".agentflow/config/reviewer/gate-mcp", "result.json", "docker"); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(configRoot, "gate-mcp"))

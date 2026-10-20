@@ -189,9 +189,12 @@ func ProvisionMCPAssets(ctx context.Context, sandbox Sandbox, workspace string, 
 }
 
 func prepareMCPProcessRuntime(workspace string, server domain.MCPServerDefinition) error {
-	root := filepath.Join(workspace, filepath.FromSlash(mcpRuntimeRootRel(server)))
+	root, err := EnsureControlDirectory(workspace, "mcp-runtime", safeID(server.ID))
+	if err != nil {
+		return err
+	}
 	for _, dir := range []string{"bin", "home", "tmp", "cache", "config", "data"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+		if _, err := EnsureControlDirectory(workspace, "mcp-runtime", safeID(server.ID), dir); err != nil {
 			return err
 		}
 	}
@@ -217,45 +220,60 @@ func prepareMCPProcessRuntime(workspace string, server domain.MCPServerDefinitio
 		b.WriteString(" " + shellSingleQuote(arg))
 	}
 	b.WriteString("\n")
-	return writeManagedFile(filepath.Join(root, "launch"), []byte(b.String()), 0o700)
+	return writeManagedFile(workspace, filepath.Join(root, "launch"), []byte(b.String()), 0o700)
 }
 
 func materializeMCPFiles(workspace string, server domain.MCPServerDefinition, serverID string, files map[string][]byte, hash string) error {
 	if len(server.FileRefs) == 0 {
 		return nil
 	}
-	root := filepath.Join(workspace, ".agentflow", "mcp", serverID)
-	stateDir := filepath.Join(workspace, ".agentflow", "runtime", "mcp-sources")
-	state := filepath.Join(stateDir, serverID+".sha256")
-	if raw, err := os.ReadFile(state); err == nil && strings.TrimSpace(string(raw)) == hash {
-		return nil
-	}
-	if err := os.RemoveAll(root); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return err
+	if serverID == "" || safeID(serverID) != serverID {
+		return fmt.Errorf("invalid MCP runtime id %q", serverID)
 	}
 	for _, ref := range server.FileRefs {
 		if err := domain.ValidateRelativeFilePath(ref.Path); err != nil {
 			return err
 		}
-		data, ok := files[ref.Path]
-		if !ok {
+		if _, ok := files[ref.Path]; !ok {
 			return fmt.Errorf("MCP %s missing uploaded file %s", server.ID, ref.Path)
 		}
-		target := filepath.Join(root, filepath.FromSlash(ref.Path))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, data, os.FileMode(domain.NormalizeSkillFileMode(ref.Mode))); err != nil {
-			return err
-		}
 	}
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+	target := filepath.Join(workspace, ".agentflow", "mcp", serverID)
+	base, root, err := openWorkspacePath(workspace, target)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(state, []byte(hash+"\n"), 0o600)
+	defer base.Close()
+	state := filepath.Join(".agentflow", "runtime", "mcp-sources", serverID+".sha256")
+	if err := rejectWorkspaceSymlinks(base, state); err != nil {
+		return err
+	}
+	raw, err := base.ReadFile(state)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil && strings.TrimSpace(string(raw)) == hash {
+		return nil
+	}
+	if err := base.RemoveAll(root); err != nil {
+		return err
+	}
+	if err := base.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	for _, ref := range server.FileRefs {
+		name := filepath.Join(root, filepath.FromSlash(ref.Path))
+		if err := base.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+			return err
+		}
+		if err := writeManagedFile(workspace, filepath.Join(workspace, name), files[ref.Path], os.FileMode(domain.NormalizeSkillFileMode(ref.Mode))); err != nil {
+			return err
+		}
+	}
+	if err := base.MkdirAll(filepath.Dir(state), 0o700); err != nil {
+		return err
+	}
+	return writeManagedFile(workspace, filepath.Join(workspace, state), []byte(hash+"\n"), 0o600)
 }
 
 func mcpProvisionHash(server domain.MCPServerDefinition, files map[string][]byte) string {

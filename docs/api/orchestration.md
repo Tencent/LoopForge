@@ -83,6 +83,18 @@ run 状态通常为 `running|waiting|succeeded|failed|cancelled`。响应中的 
 
 返回全部 run 摘要数组，`200`，不分页。摘要省略 artifacts 内容、遥测、日志、事件和 workflow snapshot，截断 input/错误，并省略已完成节点的大输出。
 
+可传 `projectId` 限定项目，`responsible=me` 只返回当前登录用户负责执行或关联需求责任人为当前用户的任务；`responsible=me` 未登录时返回 `401`。两项筛选可以组合。
+
+### `POST /api/task-groups`
+
+创建自由协作任务，`201` 返回 Run。必填 `projectId`、`input`；不传 `workflowId` 时无需 SOP 模板，Main Bot 可直接协作，角色在创建后按需邀请。可传 `sandboxProfileId` 选择本项目或共享运行环境（省略时使用 `local`）。传 `workflowId` 时仅继承可访问模板的角色与环境，不自动执行 SOP，不能同时覆盖 `sandboxProfileId`。
+
+`repositoryIds` 可指定本项目的一个或多个仓库，按配置主分支创建任务工作分支；不属于本项目或不存在的仓库会拒绝整个请求。显式 `[]` 表示不使用代码仓库；省略或 `null` 保持旧接口选择项目全部仓库的行为。
+
+```json
+{"projectId":"platform","input":"协作优化前后端接口","sandboxProfileId":"project-sandbox","repositoryIds":["frontend","backend"]}
+```
+
 ### `POST /api/runs`
 
 直接启动 SOP：

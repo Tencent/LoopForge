@@ -26,12 +26,26 @@ func BaselinePath(workspace string) string {
 // against this frozen checkout rather than the moving HEAD. An existing
 // record is kept.
 func RecordBaseline(workspace, baseBranch string) error {
-	path := BaselinePath(workspace)
-	if _, err := os.Stat(path); err == nil {
+	root, err := os.OpenRoot(workspace)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	const path = ".git/agentflow-baseline"
+	if info, err := root.Lstat(".git"); err != nil {
+		return err
+	} else if !info.IsDir() {
+		return fmt.Errorf("repository .git is not a real directory")
+	}
+	if info, err := root.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("repository baseline is not a regular file")
+		}
 		return nil
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	var sha []byte
-	var err error
 	if ref := strings.TrimSpace(baseBranch); ref != "" {
 		sha, err = exec.Command("git", "-C", workspace, "rev-parse", "origin/"+ref).Output()
 	}
@@ -47,8 +61,22 @@ func RecordBaseline(workspace, baseBranch string) error {
 	if err != nil {
 		return fmt.Errorf("resolve repository baseline: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(strings.TrimSpace(string(sha))), 0o600); err != nil {
+	file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		if info, statErr := root.Lstat(path); statErr == nil && info.Mode().IsRegular() {
+			return nil
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("record repository baseline: %w", err)
+	}
+	_, err = file.WriteString(strings.TrimSpace(string(sha)))
+	closeErr := file.Close()
+	if err != nil {
+		return fmt.Errorf("record repository baseline: %w", err)
+	}
+	if closeErr != nil {
+		return closeErr
 	}
 	return nil
 }

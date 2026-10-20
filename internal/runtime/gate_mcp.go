@@ -18,7 +18,7 @@ const gateMCPServerID = "agentflow-gate"
 
 var gateMCPBuildMu sync.Mutex
 
-func materializeGateMCP(configRoot, binaryRel, resultPath, driver string) (domain.MCPServerDefinition, error) {
+func materializeGateMCP(workspace, configRoot, binaryRel, resultPath, driver string) (domain.MCPServerDefinition, error) {
 	resultPath = filepath.ToSlash(filepath.Clean(strings.TrimSpace(resultPath)))
 	if resultPath == "." || filepath.IsAbs(resultPath) || resultPath == ".." || strings.HasPrefix(resultPath, "../") {
 		return domain.MCPServerDefinition{}, fmt.Errorf("invalid gate result path %q", resultPath)
@@ -36,7 +36,7 @@ func materializeGateMCP(configRoot, binaryRel, resultPath, driver string) (domai
 		return domain.MCPServerDefinition{}, fmt.Errorf("read gate MCP binary: %w", err)
 	}
 	binaryPath := filepath.Join(configRoot, "gate-mcp")
-	if err := writeManagedFile(binaryPath, raw, 0o700); err != nil {
+	if err := writeManagedFile(workspace, binaryPath, raw, 0o700); err != nil {
 		return domain.MCPServerDefinition{}, err
 	}
 	return domain.MCPServerDefinition{

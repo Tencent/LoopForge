@@ -88,7 +88,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	if err != nil {
 		return compiled, err
 	}
-	compiled.Hooks, err = materializeAgentHooks(configRoot, agentRel, ex.Kind, effectiveHookDefinitions)
+	compiled.Hooks, err = materializeAgentHooks(workspace, configRoot, agentRel, ex.Kind, effectiveHookDefinitions)
 	if err != nil {
 		return compiled, err
 	}
@@ -112,7 +112,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 			return compiled, fmt.Errorf("rule id is required")
 		}
 		ruleFile := filepath.Join(workspace, ".agentflow", "rules", ruleID+".md")
-		if err := writeManagedFile(ruleFile, []byte(v.Content), 0o600); err != nil {
+		if err := writeManagedFile(workspace, ruleFile, []byte(v.Content), 0o600); err != nil {
 			return compiled, err
 		}
 		if err := replaceRelativeSymlink(filepath.Join(bindingRoot, "rules", ruleID+".md"), filepath.Join("..", "..", "..", "rules", ruleID+".md")); err != nil {
@@ -204,7 +204,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	// Agent definition is the sole allowlist for tools in unattended runs.
 	mergedMCP := mergeMCPServers(assets.MCPServers, nil)
 	if strings.TrimSpace(options.GateResultPath) != "" {
-		gateServer, err := materializeGateMCP(configRoot, filepath.Join(".agentflow", "config", agentID, "gate-mcp"), options.GateResultPath, driver)
+		gateServer, err := materializeGateMCP(workspace, configRoot, filepath.Join(".agentflow", "config", agentID, "gate-mcp"), options.GateResultPath, driver)
 		if err != nil {
 			return compiled, err
 		}
@@ -223,7 +223,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 			return compiled, fmt.Errorf("MCP server id is required")
 		}
 		definition, _ := json.MarshalIndent(server, "", "  ")
-		if err := writeManagedFile(filepath.Join(workspace, ".agentflow", "mcp", serverID+".json"), definition, 0o600); err != nil {
+		if err := writeManagedFile(workspace, filepath.Join(workspace, ".agentflow", "mcp", serverID+".json"), definition, 0o600); err != nil {
 			return compiled, err
 		}
 		if err := replaceRelativeSymlink(filepath.Join(bindingRoot, "mcp", serverID+".json"), filepath.Join("..", "..", "..", "mcp", serverID+".json")); err != nil {
@@ -287,31 +287,25 @@ func resetControlDirectory(workspace string, elements ...string) (string, error)
 		return "", fmt.Errorf("invalid AgentFlow control path segment %q", name)
 	}
 	target := filepath.Join(parent, name)
-	if info, err := os.Lstat(target); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+	root, rel, err := openWorkspacePath(workspace, target)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	if info, err := root.Lstat(rel); err == nil {
+		if !info.IsDir() {
 			return "", fmt.Errorf("managed path is not a real directory: %s", target)
 		}
-		if err := os.RemoveAll(target); err != nil {
+		if err := root.RemoveAll(rel); err != nil {
 			return "", err
 		}
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	if err := os.Mkdir(target, 0o700); err != nil {
+	if err := root.Mkdir(rel, 0o700); err != nil {
 		return "", err
 	}
 	return target, nil
-}
-
-func writeManagedFile(path string, content []byte, mode os.FileMode) error {
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return fmt.Errorf("managed path is not a regular file: %s", path)
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return os.WriteFile(path, content, mode)
 }
 
 func replaceRelativeSymlink(path, target string) error {
@@ -334,33 +328,68 @@ func replaceRelativeSymlink(path, target string) error {
 // EnsureControlRoot validates the only repository-adjacent directory the
 // control plane writes before the sandboxed executor starts.
 func EnsureControlRoot(workspace string) error {
-	workspace, err := filepath.Abs(workspace)
+	root, err := os.OpenRoot(workspace)
 	if err != nil {
 		return err
 	}
-	if err := ensureDirectoryNoSymlink(filepath.Join(workspace, ".agentflow"), 0o700); err != nil {
+	defer root.Close()
+	if err := ensureRootDirectory(root, ".agentflow"); err != nil {
 		return err
 	}
 	return EnsureAgentFlowGitExcludes(workspace)
 }
 
-// EnsureControlDirectory creates a directory below .agentflow while rejecting
-// symlinks in every control-plane-owned path component.
-func EnsureControlDirectory(workspace string, elements ...string) (string, error) {
-	if err := EnsureControlRoot(workspace); err != nil {
-		return "", err
+func ensureRootDirectory(root *os.Root, rel string) error {
+	info, err := root.Lstat(rel)
+	if os.IsNotExist(err) {
+		err = root.Mkdir(rel, 0o700)
+		if err == nil {
+			return nil
+		}
+		if !os.IsExist(err) {
+			return err
+		}
+		// Another worker may have created it after Lstat. Revalidate the winner;
+		// an existing symlink or non-directory must still fail closed.
+		info, err = root.Lstat(rel)
 	}
-	current := filepath.Join(workspace, ".agentflow")
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("runtime path is not a real directory: %s", rel)
+	}
+	return nil
+}
+
+// EnsureControlDirectory creates a directory below .agentflow while rejecting
+// symlinks in every control-plane-owned path component. os.Root confines mkdir
+// even if a sandbox replaces a checked ancestor before it is used.
+func EnsureControlDirectory(workspace string, elements ...string) (string, error) {
 	for _, element := range elements {
 		if element == "" || element == "." || element == ".." || filepath.Base(element) != element {
 			return "", fmt.Errorf("invalid AgentFlow control path segment %q", element)
 		}
+	}
+	if err := EnsureControlRoot(workspace); err != nil {
+		return "", err
+	}
+	root, err := os.OpenRoot(workspace)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	current := ".agentflow"
+	if err := ensureRootDirectory(root, current); err != nil {
+		return "", err
+	}
+	for _, element := range elements {
 		current = filepath.Join(current, element)
-		if err := ensureDirectoryNoSymlink(current, 0o700); err != nil {
+		if err := ensureRootDirectory(root, current); err != nil {
 			return "", err
 		}
 	}
-	return current, nil
+	return filepath.Join(workspace, current), nil
 }
 
 func prepareRuntimeRoot(workspace, invocationID string) (string, error) {

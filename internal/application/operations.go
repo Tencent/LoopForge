@@ -90,7 +90,7 @@ func PublicOperations() []Operation {
 		{Name: "deployment_metrics_get", Description: "Query optional configured deployment duration metrics", Method: "GET", Path: "/api/deployment-metrics", ReadOnly: true},
 		{Name: "observability_spec_get", Description: "Get the AgentFlow observability contract", Method: "GET", Path: "/api/observability/spec", ReadOnly: true},
 		{Name: "runs_list", Description: "List lightweight Run summaries", Method: "GET", Path: "/api/runs", ReadOnly: true},
-		{Name: "task_groups_start", Description: "Create a shared free collaboration task. Body: {workflowId, projectId, input}; workflow only provides environment and initial roles, no automatic SOP sequence.", Method: "POST", Path: "/api/task-groups"},
+		{Name: "task_groups_start", Description: "Create a shared free collaboration task. Body requires {projectId, input}; optional repositoryIds selects project repositories ([] means none, omitted means all), sandboxProfileId selects the environment. Optional workflowId supplies environment and initial roles instead of sandboxProfileId; no automatic SOP sequence.", Method: "POST", Path: "/api/task-groups"},
 		{Name: "runs_group_invite", Description: "Invite a project or shared role to the current free collaboration group. Body: {agentId}. Joining does not start work.", Method: "POST", Path: "/api/runs/{id}/group/members"},
 		{Name: "runs_group_dispatch", Description: "Dispatch an independent Agent task in a free collaboration group. Body: {agentId, prompt, requestId, files?}. Can run concurrently in the shared workspace; requestId is required for idempotency.", Method: "POST", Path: "/api/runs/{id}/group/tasks"},
 		{Name: "runs_start", Description: "Start an SOP Run", Method: "POST", Path: "/api/runs"},

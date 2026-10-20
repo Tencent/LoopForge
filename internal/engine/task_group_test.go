@@ -81,6 +81,55 @@ func TestGroupDispatchDurableScopedAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestNativeTaskGroupLifecyclePreservesRolesAndOutputs(t *testing.T) {
+	e, s := newRecoveryEngine(t)
+	e.ConfigureExecution("test", "test", time.Minute, false)
+	if err := s.PutProject(domain.Project{ID: "native-group", Name: "自由协作"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutAgent(domain.AgentDefinition{ID: "native-dev", ProjectID: "native-group", Name: "开发", ExecutorID: "mock"}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(s.Workflows())
+	r, err := e.StartTaskGroup("", "跨仓库协作", []domain.RepositoryContext{{RepositoryID: "a", CloneURL: "https://example.invalid/a.git"}, {RepositoryID: "b", CloneURL: "https://example.invalid/b.git"}}, domain.TelemetryContext{ProjectID: "native-group", ResponsibleUserID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Workflows()) != before || r.Status != "waiting" || r.WorkflowSnapshot.CollaborationMode != "group" || len(r.WorkflowSnapshot.Nodes) != 0 || len(r.WorkflowSnapshot.GroupMembers) != 0 || len(r.Repositories) != 2 {
+		t.Fatalf("native group: %+v", r)
+	}
+	if err := e.InviteGroupMember(r.ID, "native-dev"); err != nil {
+		t.Fatal(err)
+	}
+	n, err := e.DispatchGroupTask(r.ID, "", GroupTaskRequest{AgentID: "native-dev", Prompt: "实现功能", RequestID: "native-task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.RunState(r.ID)
+	r.Status = "waiting"
+	r.Nodes[n.ID].Status, r.Nodes[n.ID].Output, r.Nodes[n.ID].Attempt = "succeeded", "实现与验证已完成", 1
+	if err := s.PutRun(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.CompleteGroupSOP(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.RunState(r.ID)
+	if r.Status != "succeeded" || r.WorkflowSnapshot.CollaborationMode != "group" || r.Nodes[n.ID].Output != "实现与验证已完成" || !r.WorkflowSnapshot.HasGroupMember("native-dev") {
+		t.Fatalf("completion lost history: %+v", r)
+	}
+	if err := e.EnableTaskGroup(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.RunState(r.ID)
+	if r.Status != "waiting" || r.Nodes[n.ID].Output != "实现与验证已完成" {
+		t.Fatalf("reopen lost history: %+v", r)
+	}
+	if _, err := e.DispatchGroupTask(r.ID, "", GroupTaskRequest{AgentID: "native-dev", Prompt: "继续改进", RequestID: "native-next"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Both scripts wait for the other's write: serialization cannot pass this test.
 func TestGroupWorkersOverlapAndAcceptNewWorkAfterIdle(t *testing.T) {
 	e, s := newRecoveryEngine(t)

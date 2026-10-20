@@ -233,7 +233,24 @@ func removeTerminalHome(home string) error {
 		defer root.Close()
 		return root.RemoveAll(filepath.Join(".agentflow", "private-home", filepath.Base(home)))
 	}
-	return os.RemoveAll(home)
+	// The legacy local terminal creates homes only with this prefix in TempDir.
+	tempRoot, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return err
+	}
+	absolute, err := filepath.Abs(home)
+	if err != nil {
+		return err
+	}
+	if filepath.Dir(absolute) != tempRoot || !strings.HasPrefix(filepath.Base(absolute), "agentflow-terminal-home-") {
+		return fmt.Errorf("invalid terminal home %q", home)
+	}
+	root, err := os.OpenRoot(tempRoot)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.RemoveAll(filepath.Base(absolute))
 }
 
 // Local tool installs may persist on disk, but background services die when

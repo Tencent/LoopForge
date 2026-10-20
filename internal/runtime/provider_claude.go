@@ -24,7 +24,7 @@ func (claudeProvider) Materialize(ctx *providerMaterializeContext) error {
 	)
 	if len(ctx.Compiled.Hooks) > 0 {
 		settingsPath := filepath.Join(ctx.ConfigRoot, "claude-settings.json")
-		if err := writeHookSettings(settingsPath, ctx.Compiled.Hooks); err != nil {
+		if err := writeHookSettings(ctx.Workspace, settingsPath, ctx.Compiled.Hooks); err != nil {
 			return err
 		}
 		ctx.Compiled.Args = append(ctx.Compiled.Args, "--settings", filepath.ToSlash(filepath.Join(".agentflow", "config", ctx.AgentID, "claude-settings.json")))

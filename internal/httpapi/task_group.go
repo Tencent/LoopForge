@@ -30,9 +30,11 @@ func (h *runsHandlers) groupUser(c *gin.Context, project string) (int64, bool) {
 }
 func (h *runsHandlers) taskGroups(c *gin.Context) {
 	var req struct {
-		WorkflowID string `json:"workflowId"`
-		Input      string `json:"input"`
-		ProjectID  string `json:"projectId"`
+		WorkflowID       string   `json:"workflowId"`
+		Input            string   `json:"input"`
+		ProjectID        string   `json:"projectId"`
+		RepositoryIDs    []string `json:"repositoryIds"`
+		SandboxProfileID string   `json:"sandboxProfileId"`
 	}
 	if !decode(c, &req) {
 		return
@@ -41,19 +43,50 @@ func (h *runsHandlers) taskGroups(c *gin.Context) {
 	if !ok {
 		return
 	}
-	wf, ok := h.repo.Workflow(req.WorkflowID)
-	if !ok || !(wf.ProjectID == req.ProjectID || wf.Shared || wf.Generic) {
-		c.JSON(403, gin.H{"error": "请选择当前项目可用的流程作为角色与环境模板"})
+	req.WorkflowID = strings.TrimSpace(req.WorkflowID)
+	if strings.TrimSpace(req.Input) == "" {
+		c.JSON(400, gin.H{"error": "请填写任务目标"})
 		return
 	}
-	// Freeze project repositories exactly as a normal run, without editing catalog definitions.
-	repos := []domain.RepositoryContext{}
-	for _, r := range h.repo.Repositories() {
-		if r.ProjectID == req.ProjectID {
-			repos = append(repos, domain.RepositoryContext{RepositoryID: r.ID, Provider: r.Provider, Name: r.Name, GongfengProjectID: r.GongfengProjectID, WebURL: r.WebURL, CloneURL: r.CloneURL, BaseBranch: r.DefaultBranch, DefaultBranch: r.DefaultBranch, LocalPath: r.LocalPath})
+	if req.WorkflowID != "" {
+		wf, ok := h.repo.Workflow(req.WorkflowID)
+		if !ok || !(wf.ProjectID == req.ProjectID || wf.Shared || wf.Generic) {
+			c.JSON(403, gin.H{"error": "请选择当前项目可用的流程作为角色与环境模板"})
+			return
+		}
+		if req.SandboxProfileID != "" {
+			c.JSON(400, gin.H{"error": "使用模板时由模板提供运行环境"})
+			return
+		}
+	} else {
+		req.SandboxProfileID = strings.TrimSpace(req.SandboxProfileID)
+		if req.SandboxProfileID == "" {
+			req.SandboxProfileID = "local"
+		}
+		sandbox, ok := h.repo.Sandbox(req.SandboxProfileID)
+		if !ok || !(sandbox.ProjectID == req.ProjectID || sandbox.Shared) {
+			c.JSON(403, gin.H{"error": "请选择当前项目可用的运行环境"})
+			return
 		}
 	}
-	r, err := h.engine.StartTaskGroup(req.WorkflowID, req.Input, repos, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: uid})
+	// nil preserves the old API's all-project-repositories default. An explicit
+	// empty list means no code repository; a nonempty list must be project scoped.
+	selected := map[string]bool{}
+	for _, id := range req.RepositoryIDs {
+		selected[id] = true
+	}
+	repos := []domain.RepositoryContext{}
+	for _, r := range h.repo.Repositories() {
+		if r.ProjectID == req.ProjectID && (req.RepositoryIDs == nil || selected[r.ID]) {
+			repos = append(repos, domain.RepositoryContext{RepositoryID: r.ID, Provider: r.Provider, Name: r.Name, GongfengProjectID: r.GongfengProjectID, WebURL: r.WebURL, CloneURL: r.CloneURL, BaseBranch: r.DefaultBranch, DefaultBranch: r.DefaultBranch, LocalPath: r.LocalPath, PipelineProjectID: r.PipelineProjectID, PipelineDefID: r.PipelineDefID, PipelineURLPattern: r.PipelineURLPattern})
+			delete(selected, r.ID)
+		}
+	}
+	if len(selected) > 0 {
+		c.JSON(400, gin.H{"error": "所选仓库不存在或不属于当前项目，请刷新后重试"})
+		return
+	}
+	r, err := h.engine.StartTaskGroupWithSandbox(req.WorkflowID, req.Input, repos, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: uid}, req.SandboxProfileID)
 	if err != nil {
 		respond(c, err)
 		return

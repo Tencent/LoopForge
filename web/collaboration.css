@@ -201,6 +201,36 @@ html[data-theme="light"]{--bg:#ffffff;--bg-soft:#ffffff;--panel:#ffffff;--panel-
 
 .collab-handoff-receipt .collab-handoff-preview{white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;color:var(--text)}
 .collab-loop-ribbon[role=status]{margin-bottom:12px}.collab-loop-copy{overflow-wrap:anywhere}.collab-loop-actions .button{white-space:nowrap}
+.collab-group-dialog{max-height:calc(100dvh - 48px);overflow:auto;box-sizing:border-box}.collab-repository-picker{min-width:0;margin:16px 0;padding:0;border:0}.collab-repository-picker legend{font-size:12px;margin-bottom:8px}.collab-repository-choices{max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px}.collab-repository-choices:empty{display:none}.collab-repository-choices label{flex-direction:row;align-items:center;gap:10px;margin:0;padding:9px 12px;cursor:pointer}.collab-repository-choices label+label{border-top:1px solid var(--line)}.collab-repository-choices label:hover{background:var(--hover)}.collab-repository-choices input[type=checkbox]{flex:0 0 auto;width:15px;height:15px;padding:0;accent-color:var(--blue)}.collab-repository-choices span{min-width:0;display:flex;flex-direction:column;gap:3px}.collab-repository-choices b{font-weight:500;overflow-wrap:anywhere}.collab-repository-choices small,.collab-repository-summary{font-size:11px;color:var(--muted)}.collab-repository-summary{display:block;line-height:1.6;margin-top:7px}.collab-group-settings{border-top:1px solid var(--line);padding-top:12px;font-size:12px}.collab-group-settings summary{cursor:pointer;color:var(--muted)}
+
+.sidebar-conversations #collabTasks{overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;scrollbar-width:thin}
+.collab-task-group{display:flex;align-items:center;gap:4px;width:100%;margin:6px 0 2px;padding:4px 6px;border:0;border-radius:6px;background:transparent;color:var(--muted);font:inherit;font-size:11px;font-weight:500;text-align:left;cursor:pointer}
+.collab-task-group:first-child{margin-top:0}.collab-task-group:hover{color:var(--text)}.collab-task-group:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+.collab-task-group svg{width:12px;height:12px;flex:none;transform:rotate(90deg);transition:transform .15s}.collab-task-group[aria-expanded=false] svg{transform:none}
+.collab-task-group em{margin-left:2px;font-style:normal;font-weight:400;opacity:.75;font-variant-numeric:tabular-nums}
+.collab-task-group-failed{color:var(--red);font-weight:400;font-variant-numeric:tabular-nums}
+.collaboration-tasks .collab-task-item{flex-direction:row;align-items:flex-start;gap:9px;min-width:0;padding:8px 8px 8px 10px}
+.collab-task-dot{flex:none;width:7px;height:7px;margin-top:6px;border-radius:50%;background:#a4a8b0}
+.collab-task-dot.running{background:var(--blue);animation:collab-task-pulse 1.6s ease-out infinite}.collab-task-dot.queued{background:transparent;box-shadow:inset 0 0 0 1.5px var(--blue)}
+.collab-task-dot.attention{background:var(--amber)}.collab-task-dot.failed{background:var(--red)}.collab-task-dot.done{background:#22a06b;opacity:.6}.collab-task-dot.muted{background:transparent;box-shadow:inset 0 0 0 1.5px #a4a8b0}
+@keyframes collab-task-pulse{0%{box-shadow:0 0 0 0 rgba(59,110,245,.45)}100%{box-shadow:0 0 0 6px rgba(59,110,245,0)}}
+.collab-task-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.collaboration-tasks .collab-task-item b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow:hidden;overflow-wrap:anywhere;line-height:1.45;font-weight:500}
+.collaboration-tasks .collab-task-item.active b{font-weight:600}
+.collab-task-tag{display:inline-block;margin-right:5px;padding:0 5px;border-radius:4px;background:var(--hover);color:var(--muted);font-size:10px;font-weight:500;line-height:16px;vertical-align:1px}
+.collab-task-item.active .collab-task-tag,.collab-task-item:hover .collab-task-tag{background:var(--panel)}
+.collaboration-tasks .collab-task-item small{display:flex;align-items:center;gap:4px;min-width:0;white-space:nowrap;overflow:hidden}
+.collab-task-state{flex:none}.collab-task-state.running,.collab-task-state.queued{color:var(--blue)}.collab-task-state.attention{color:var(--amber)}.collab-task-state.failed{color:var(--red)}
+.collab-task-workflow{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.collab-task-time{flex:none;margin-left:auto;padding-left:6px;font-variant-numeric:tabular-nums}
+@media(prefers-reduced-motion:reduce){.collab-task-dot.running{animation:none}.collab-task-group svg{transition:none}}
+
+:root{--sidebar-w:272px}
+@media(max-width:1280px) and (min-width:1001px){:root{--sidebar-w:240px}.app-shell{grid-template-columns:var(--sidebar-w) minmax(0,1fr)!important}body.ai-assistant-open .app-shell{grid-template-columns:var(--sidebar-w) minmax(0,1fr) var(--ai-panel-w,380px)!important}.platform-sidebar{width:100%!important;max-width:var(--sidebar-w)!important}}
+.sidebar-resize{position:absolute;top:0;bottom:0;right:0;z-index:30;width:6px;min-width:0;padding:0;margin:0;border:0;appearance:none;background:transparent;cursor:col-resize;touch-action:none}
+.sidebar-resize:hover,.sidebar-resize:focus-visible,.sidebar-resizing .sidebar-resize{background:color-mix(in srgb,var(--blue) 45%,transparent)}
+.sidebar-resizing .app-shell{transition:none!important}.sidebar-resizing{cursor:col-resize;user-select:none}
+@media(max-width:1000px){.sidebar-resize{display:none}}
 
 /* Executor and model are independent choices; keep both beside the draft. */
 .ai-compose-model{display:flex;align-items:center;gap:4px;position:relative;min-width:0}

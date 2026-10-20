@@ -316,7 +316,7 @@ html[data-theme="dark"] .issue-progress-cell.warn b{color:var(--amber)}
 .issue-key-num{min-width:2.25ch;text-align:left;color:var(--text);font-weight:720}
 .issue-title-cell{display:flex;align-items:center;gap:7px;min-width:0}
 .issue-title-cell b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;font-weight:640;letter-spacing:-.01em;transition:color .12s;display:block}
-.issue-title-tag{flex:0 0 auto;max-width:7.5em;height:22px;padding:0 8px;display:inline-flex;align-items:center;border-radius:999px;border:1px solid transparent;font-size:10.5px;font-weight:700;letter-spacing:.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.issue-title-tag{flex:0 1 auto;min-width:3em;max-width:12em;height:22px;line-height:20px;padding:0 8px;display:inline-block;box-sizing:border-box;border-radius:999px;border:1px solid transparent;font-size:10.5px;font-weight:700;letter-spacing:.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .issue-title-tag.tone-danger{background:rgba(198,60,75,.12);color:#c63c4b}
 .issue-title-tag.tone-warn{background:rgba(251,191,36,.16);color:#b45309}
 .issue-title-tag.tone-accent{background:rgba(139,92,246,.14);color:#6d28d9}

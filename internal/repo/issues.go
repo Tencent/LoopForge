@@ -159,6 +159,15 @@ func (r *IssuesRepo) PutIssue(v domain.Issue) error {
 	return r.putIssueLocked(v)
 }
 
+// PutSyncedIssue refreshes tracker data without changing an existing issue's
+// local lifecycle. Reload under the write lock so an edit made after the
+// tracker snapshot was read is preserved too.
+func (r *IssuesRepo) PutSyncedIssue(v domain.Issue) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.saveIssueLocked(v, true)
+}
+
 // PatchIssue loads the current row, applies fn, and writes it back under the
 // same lock as PutIssue so a clarification job cannot clobber a concurrent save.
 func (r *IssuesRepo) PatchIssue(id string, fn func(*domain.Issue) error) (domain.Issue, error) {
@@ -189,9 +198,19 @@ func (r *IssuesRepo) PatchIssue(id string, fn func(*domain.Issue) error) (domain
 }
 
 func (r *IssuesRepo) putIssueLocked(v domain.Issue) error {
+	return r.saveIssueLocked(v, false)
+}
+
+func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync bool) error {
 	now := time.Now().UTC()
 	old, ok := r.Issue(v.ID)
+	preserveStatus := fromSync && ok
 	if ok {
+		if preserveStatus {
+			v.Status = old.Status
+			v.CloseSource = old.CloseSource
+			v.AutomationState = old.AutomationState
+		}
 		v.CreatedAt = old.CreatedAt
 		if v.Number == 0 {
 			v.Number = old.Number
@@ -219,28 +238,30 @@ func (r *IssuesRepo) putIssueLocked(v domain.Issue) error {
 			}
 		}
 	}
-	if v.TrackerClosed() && v.Status != "closed" {
-		v.Status = "closed"
-		v.CloseSource = "external"
-	}
-	if v.Status == "closed" {
-		if v.CloseSource == "" {
-			if ok && old.Status == "closed" {
-				v.CloseSource = old.CloseSource
-				if v.CloseSource == "" {
-					v.CloseSource = "manual" // pre-CloseSource manual close
-				}
-			} else if v.TrackerClosed() {
-				v.CloseSource = "external"
-			} else {
-				v.CloseSource = "manual"
-			}
+	if !preserveStatus {
+		if v.TrackerClosed() && v.Status != "closed" {
+			v.Status = "closed"
+			v.CloseSource = "external"
 		}
-	} else {
-		v.CloseSource = ""
-	}
-	if v.Status == "done" || v.Status == "closed" || v.Status == "cancelled" || v.GongfengClosed() {
-		v.AutomationState = "ignored"
+		if v.Status == "closed" {
+			if v.CloseSource == "" {
+				if ok && old.Status == "closed" {
+					v.CloseSource = old.CloseSource
+					if v.CloseSource == "" {
+						v.CloseSource = "manual" // pre-CloseSource manual close
+					}
+				} else if v.TrackerClosed() {
+					v.CloseSource = "external"
+				} else {
+					v.CloseSource = "manual"
+				}
+			}
+		} else {
+			v.CloseSource = ""
+		}
+		if v.Status == "done" || v.Status == "closed" || v.Status == "cancelled" || v.GongfengClosed() {
+			v.AutomationState = "ignored"
+		}
 	}
 	if v.AssigneeUserID == 0 {
 		if project, found := r.projects.Project(v.ProjectID); found {
@@ -268,7 +289,6 @@ func (r *IssuesRepo) writeIssue(v domain.Issue) error {
 		"created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
 	})
 }
-
 
 // ResponsibleUser resolves the explicit issue responsibility first and falls
 // back to the project's separately configured owner.

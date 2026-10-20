@@ -253,7 +253,7 @@ func TestHookScriptCanCallMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	hook := domain.AgentHook{ID: "audit", Event: "Stop", Language: "shell", Script: "agentflow mcp list > hook-mcp.json\n"}
-	compiled, err := materializeAgentHooks(configRoot, ".agentflow/reviewer", "codebuddy", []domain.AgentHook{hook})
+	compiled, err := materializeAgentHooks(workspace, configRoot, ".agentflow/reviewer", "codebuddy", []domain.AgentHook{hook})
 	if err != nil || len(compiled) != 1 {
 		t.Fatalf("compile hook: %v %#v", err, compiled)
 	}

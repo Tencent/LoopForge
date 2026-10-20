@@ -256,11 +256,11 @@ function issueTagTone(tag){
 function issueTitleMarkup(title){
   const tags=[];
   let rest=String(title||'');
-  const re=/^\[([^\[\]]{1,24})\]\s*/;
+  const re=/^\s*(?:\[([^[\]【】]{1,24})\]|【([^[\]【】]{1,24})】)\s*/;
   let m;
-  while((m=rest.match(re))){tags.push(m[1]);rest=rest.slice(m[0].length)}
+  while((m=rest.match(re))){tags.push(m[1]||m[2]);rest=rest.slice(m[0].length)}
   rest=rest.trim()||title||'';
-  const pills=tags.map(t=>`<span class="issue-title-tag tone-${issueTagTone(t)}">${escapeHTML(t)}</span>`).join('');
+  const pills=tags.map(t=>`<span class="issue-title-tag tone-${issueTagTone(t)}" title="${escapeHTML(t)}">${escapeHTML(t)}</span>`).join('');
   return `${pills}<b title="${escapeHTML(title||'')}">${escapeHTML(rest)}</b>`;
 }
 function issueListProgress(i,run,w){

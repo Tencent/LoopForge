@@ -229,6 +229,14 @@ func (m *memIssueStore) PutIssue(v domain.Issue) error {
 	m.issues[v.ID] = v
 	return nil
 }
+func (m *memIssueStore) PutSyncedIssue(v domain.Issue) error {
+	if old, ok := m.Issue(v.ID); ok {
+		v.Status = old.Status
+		v.CloseSource = old.CloseSource
+		v.AutomationState = old.AutomationState
+	}
+	return m.PutIssue(v)
+}
 func (m *memIssueStore) DeleteIssue(id string) error {
 	delete(m.issues, id)
 	return nil
@@ -326,21 +334,6 @@ type assertError string
 
 func (e assertError) Error() string { return string(e) }
 
-func TestKeepLocalExecutionStatusPreservesDeliveredAndReopened(t *testing.T) {
-	closed := domain.Issue{Status: "closed"}
-	if !keepLocalExecutionStatus(closed, "in_progress") {
-		t.Fatal("manual close should remain authoritative during tracker sync")
-	}
-	delivered := domain.Issue{Status: "done", DeliveryState: "merged"}
-	if !keepLocalExecutionStatus(delivered, "in_progress") {
-		t.Fatal("locked delivery should keep local done")
-	}
-	reopened := domain.Issue{Status: "todo", DeliveryState: "reopened"}
-	if !keepLocalExecutionStatus(reopened, "done") {
-		t.Fatal("reopened issue should keep local todo")
-	}
-}
-
 func TestTrackerClosedStatusMapping(t *testing.T) {
 	if got := gongfengStateToStatus("closed"); got != "closed" {
 		t.Fatalf("Gongfeng closed = %q", got)
@@ -362,17 +355,22 @@ func TestApplyExistingIssueExternalCloseAndReopen(t *testing.T) {
 	existing := domain.Issue{ID: "gf-1", Source: "gongfeng", Status: "in_progress", AutomationState: "eligible", ExternalRef: &domain.ExternalRef{ExternalState: "opened"}}
 	closed := domain.Issue{Source: "gongfeng", Status: "closed", CloseSource: "external", ExternalRef: &domain.ExternalRef{ExternalState: "closed"}}
 	applyExistingIssue(&closed, existing)
-	if closed.Status != "closed" || closed.CloseSource != "external" {
-		t.Fatalf("external closure must override local execution: %+v", closed)
+	if closed.Status != existing.Status || closed.CloseSource != existing.CloseSource || !closed.TrackerClosed() {
+		t.Fatalf("external closure must refresh metadata and preserve local status: %+v", closed)
 	}
-	closed.AutomationState = "ignored" // PutIssue marks terminal statuses ignored.
 	reopened := domain.Issue{Status: "todo", ExternalRef: &domain.ExternalRef{ExternalState: "opened"}}
 	applyExistingIssue(&reopened, closed)
-	if reopened.Status != "todo" || reopened.CloseSource != "" || reopened.AutomationState != "eligible" {
-		t.Fatalf("external reopen must restore local eligibility: %+v", reopened)
+	if reopened.Status != existing.Status || reopened.CloseSource != "" || reopened.AutomationState != "eligible" {
+		t.Fatalf("external reopen must preserve local lifecycle: %+v", reopened)
+	}
+	previouslyClosed := domain.Issue{Status: "closed", CloseSource: "external", AutomationState: "ignored"}
+	applyExistingIssue(&reopened, previouslyClosed)
+	if reopened.Status != "closed" || reopened.CloseSource != "external" || reopened.AutomationState != "ignored" {
+		t.Fatalf("external reopen must not reopen a locally closed issue: %+v", reopened)
 	}
 
 	manual := closed
+	manual.Status = "closed"
 	manual.CloseSource = "manual"
 	remoteReopened := domain.Issue{Status: "todo", ExternalRef: &domain.ExternalRef{ExternalState: "opened"}}
 	applyExistingIssue(&remoteReopened, manual)
@@ -381,6 +379,8 @@ func TestApplyExistingIssueExternalCloseAndReopen(t *testing.T) {
 	}
 
 	delivered := closed
+	delivered.Status = "done"
+	delivered.AutomationState = "ignored"
 	delivered.DeliveryState = "merged"
 	reopenedAfterDelivery := domain.Issue{Status: "todo", ExternalRef: &domain.ExternalRef{ExternalState: "opened"}}
 	applyExistingIssue(&reopenedAfterDelivery, delivered)

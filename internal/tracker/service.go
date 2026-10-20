@@ -66,6 +66,7 @@ type IssueStoreAdapter interface {
 	Projects() []domain.Project
 	Project(id string) (domain.Project, bool)
 	PutIssue(v domain.Issue) error
+	PutSyncedIssue(v domain.Issue) error
 	DeleteIssue(id string) error
 	PutSyncConfig(cfg domain.SyncConfig) error
 	SyncConfig() domain.SyncConfig
@@ -79,12 +80,6 @@ type ProjectAuthStore interface {
 	Repositories() []domain.Repository
 	User(id int64) (domain.User, bool)
 	MCPServers() []domain.MCPServerDefinition
-}
-
-// DeliveryReconcileStore backfills delivery lock fields after external sync.
-type DeliveryReconcileStore interface {
-	ReconcileMergedMRDeliveries() error
-	ReconcileDeliveryMRStates() error
 }
 
 func NewService() *Service {
@@ -349,12 +344,8 @@ func (s *Service) PullAll(store IssueStoreAdapter) error {
 	syncCount += n
 
 	pruneDuplicateExternalIssues(store)
-	if rs, ok := store.(DeliveryReconcileStore); ok {
-		if err := rs.ReconcileMergedMRDeliveries(); err != nil && lastErr == nil {
-			lastErr = fmt.Errorf("delivery reconcile: %w", err)
-		}
-		_ = rs.ReconcileDeliveryMRStates()
-	}
+	// Delivery transitions belong to the independent MR state sync. A tracker
+	// pull must not change local lifecycle via post-pull reconciliation either.
 
 	cfg = s.cfg.Get()
 	cfg.LastSyncAt = time.Now().UTC()
@@ -518,7 +509,7 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 			issue.CreatedAt = parseTime(gi.CreatedAt)
 		}
 		issue.UpdatedAt = time.Now().UTC()
-		if err := store.PutIssue(issue); err != nil {
+		if err := store.PutSyncedIssue(issue); err != nil {
 			log.Printf("sync gongfeng issue %d: %v", gi.IID, err)
 			continue
 		}
@@ -1019,8 +1010,8 @@ func (s *Service) ImportTAPDStory(store IssueStoreAdapter, projectID, rawURL str
 }
 
 // ResyncTAPDIssue re-pulls one TAPD story/bug/task identified by the issue's
-// external reference and refreshes the local copy (title/description/status/
-// priority). Local assignee, clarification state and repository bindings are
+// external reference and refreshes tracker content, priority and raw state.
+// Local lifecycle, assignee, clarification state and repository bindings are
 // preserved by applyExistingIssue; a manual resync never re-enters the
 // clarification gate.
 func (s *Service) ResyncTAPDIssue(store IssueStoreAdapter, issue domain.Issue) (domain.Issue, error) {
@@ -1213,7 +1204,7 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 		scoreStoredRequirement(store, &issue)
 	}
 	issue.UpdatedAt = time.Now().UTC()
-	if err := store.PutIssue(issue); err != nil {
+	if err := store.PutSyncedIssue(issue); err != nil {
 		return domain.Issue{}, err
 	}
 	stored, ok := store.Issue(issue.ID)
@@ -1876,8 +1867,10 @@ func findTAPDRecord(store IssueStoreAdapter, recordID, kind, workspaceID string)
 }
 
 func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
-	previousExternalClosed := existing.TrackerClosed()
-	remoteClosed := dst.Status == "closed"
+	// Tracker state is metadata after intake. Local status belongs to the
+	// platform and must survive scheduled pulls, imports and manual refreshes.
+	dst.Status = existing.Status
+	dst.CloseSource = existing.CloseSource
 	dst.ID = existing.ID
 	dst.CreatedAt = existing.CreatedAt
 	if existing.Number > 0 {
@@ -1889,12 +1882,6 @@ func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
 	dst.WorkflowID = existing.WorkflowID
 	dst.LatestTaskID = existing.LatestTaskID
 	dst.AutomationState = existing.AutomationState
-	if existing.ManuallyClosed() {
-		dst.CloseSource = "manual"
-	} else if previousExternalClosed && !remoteClosed && !existing.DeliveryLocked() {
-		// The external work item reopened; scheduled execution may resume.
-		dst.AutomationState = "eligible"
-	}
 	dst.DeliveryState = existing.DeliveryState
 	dst.DeliveryMRURL = existing.DeliveryMRURL
 	dst.DeliveryMRState = existing.DeliveryMRState
@@ -1929,36 +1916,6 @@ func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
 	if existing.BaseBranch != "" {
 		dst.BaseBranch = existing.BaseBranch
 	}
-	if keepLocalExecutionStatus(existing, dst.Status) {
-		dst.Status = existing.Status
-	} else if existing.CloseSource == "external" && !remoteClosed && existing.DeliveryLocked() {
-		// A completed local delivery remains done after the tracker reopens.
-		dst.Status = "done"
-	}
-	if dst.Status != "closed" {
-		dst.CloseSource = ""
-	}
-}
-
-func keepLocalExecutionStatus(existing domain.Issue, remote string) bool {
-	if existing.ManuallyClosed() {
-		return true
-	}
-	if remote == "closed" || existing.CloseSource == "external" {
-		return false
-	}
-	if existing.DeliveryLocked() {
-		return true
-	}
-	if strings.EqualFold(strings.TrimSpace(existing.DeliveryState), "reopened") {
-		return true
-	}
-	switch existing.Status {
-	case "in_progress", "blocked", "in_review":
-		return remote != "done" && remote != "cancelled"
-	default:
-		return false
-	}
 }
 
 func pruneDuplicateExternalIssues(store IssueStoreAdapter) {
@@ -1982,7 +1939,7 @@ func pruneDuplicateExternalIssues(store IssueStoreAdapter) {
 			keeper = mergeIssueKeep(keeper, extra)
 			_ = store.DeleteIssue(extra.ID)
 		}
-		_ = store.PutIssue(keeper)
+		_ = store.PutSyncedIssue(keeper)
 	}
 }
 

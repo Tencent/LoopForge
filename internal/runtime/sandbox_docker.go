@@ -686,7 +686,7 @@ func prepareDockerfileBuildContext(workspace string, dockerfile domain.Dockerfil
 	if err != nil {
 		return "", err
 	}
-	if err := writeManagedFile(filepath.Join(root, "Dockerfile"), []byte(dockerfile.Content), 0o600); err != nil {
+	if err := writeManagedFile(workspace, filepath.Join(root, "Dockerfile"), []byte(dockerfile.Content), 0o600); err != nil {
 		return "", err
 	}
 	for name, data := range dockerfile.Files {
@@ -704,7 +704,7 @@ func prepareDockerfileBuildContext(workspace string, dockerfile domain.Dockerfil
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return "", err
 		}
-		if err := writeManagedFile(target, []byte(data), 0o644); err != nil {
+		if err := writeManagedFile(workspace, target, []byte(data), 0o644); err != nil {
 			return "", err
 		}
 	}

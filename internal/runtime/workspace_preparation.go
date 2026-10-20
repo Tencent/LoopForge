@@ -41,7 +41,7 @@ type WorkspacePreparationStatus struct {
 
 func ReadWorkspacePreparationStatus(root string) WorkspacePreparationStatus {
 	state := WorkspacePreparationStatus{Status: "unprepared", Steps: []WorkspacePreparationStep{}}
-	raw, err := os.ReadFile(filepath.Join(root, ".agentflow", "workspace-preparation", "state.json"))
+	raw, err := readWorkspaceFile(root, filepath.Join(root, ".agentflow", "workspace-preparation", "state.json"))
 	if err == nil {
 		_ = json.Unmarshal(raw, &state)
 	}

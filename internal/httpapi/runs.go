@@ -60,7 +60,16 @@ func (h *runsHandlers) workflowMetrics(c *gin.Context) {
 func (h *runsHandlers) runs(c *gin.Context) {
 	r := c.Request
 	if r.Method == http.MethodGet {
-		runs, err := h.repo.RunSummariesFor(domain.AnalyticsFilter{ProjectID: c.Query("projectId")}, "")
+		filter := domain.AnalyticsFilter{ProjectID: c.Query("projectId")}
+		if c.Query("responsible") == "me" {
+			user, ok := h.requestUser(r, true)
+			if !ok {
+				c.JSON(401, gin.H{"error": "请先登录"})
+				return
+			}
+			filter.UserID = fmt.Sprint(user.ID)
+		}
+		runs, err := h.repo.RunSummariesFor(filter, "")
 		if err != nil {
 			respond(c, err)
 			return
