@@ -109,10 +109,25 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	}
 	// One pasted repository reference (web / SSH / clone / git clone / group/repo)
 	// is enough. Prefer repoUrl so an SSH paste keeps an SSH clone URL.
+	gitLabBase := ""
+	if project, found := h.repo.Project(v.ProjectID); found {
+		if owner, found := h.repo.User(project.OwnerID); found {
+			gitLabBase = owner.GitLabBaseURL
+		}
+	}
+	parseRepository := func(raw string) (domain.GongfengRepoInfo, bool) {
+		if info, ok := domain.ParseRepositoryURL(raw); ok {
+			return info, true
+		}
+		if gitLabBase != "" {
+			return domain.ParseGitLabRepositoryURL(raw, gitLabBase)
+		}
+		return domain.GongfengRepoInfo{}, false
+	}
 	var parsed domain.GongfengRepoInfo
 	var parsedOK bool
 	for _, candidate := range []string{strings.TrimSpace(body.RepoURL), strings.TrimSpace(body.URL), v.CloneURL, v.WebURL, v.GongfengProjectID} {
-		if info, ok := domain.ParseRepositoryURL(candidate); ok {
+		if info, ok := parseRepository(candidate); ok {
 			parsed, parsedOK = info, true
 			break
 		}
@@ -124,13 +139,13 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		primary = strings.TrimSpace(body.URL)
 	}
 	if primary != "" {
-		info, ok := domain.ParseRepositoryURL(primary)
+		info, ok := parseRepository(primary)
 		if !ok {
 			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供有效的 GitHub 仓库地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {
-			other, ok := domain.ParseRepositoryURL(body.URL)
+			other, ok := parseRepository(body.URL)
 			if !ok || other.Project != info.Project {
 				c.JSON(400, gin.H{"error": "repoUrl 与 url 指向不同仓库"})
 				return
@@ -145,7 +160,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	// is rejected loudly: storing it as a project path would silently break
 	// sync, branching and MR calls. Bare paths and numeric ids stay compatible.
 	if v.GongfengProjectID != "" {
-		if info, ok := domain.ParseRepositoryURL(v.GongfengProjectID); ok {
+		if info, ok := parseRepository(v.GongfengProjectID); ok {
 			v.GongfengProjectID = info.Project
 		} else if !strings.HasPrefix(v.GongfengProjectID, "github:") && !domain.IsSafeGongfengProjectID(v.GongfengProjectID) {
 			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供有效的 GitHub 仓库地址"})
@@ -191,11 +206,14 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.DefaultBranch = "main"
 		}
 	}
+	if strings.HasPrefix(v.GongfengProjectID, "gitlab:") {
+		v.Provider = "gitlab"
+	}
 	if v.Provider == "" {
 		v.Provider = "gongfeng"
 	}
-	if v.Provider != "gongfeng" && v.Provider != "github" {
-		c.JSON(400, map[string]string{"error": "provider must be github or gongfeng"})
+	if v.Provider != "gongfeng" && v.Provider != "github" && v.Provider != "gitlab" {
+		c.JSON(400, map[string]string{"error": "provider must be github, gitlab or gongfeng"})
 		return
 	}
 	if v.DefaultBranch == "" {

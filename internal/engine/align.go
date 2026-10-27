@@ -3,11 +3,13 @@ package engine
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 // BaselineAlignWorkflowID is the built-in SOP that resolves default→integrate
@@ -129,6 +131,13 @@ func AlignIntegrateBaseline(repository domain.RepositoryContext, gitToken string
 	work.IntegrateBranch = domain.NormalizeIntegrateBranch(repository.IntegrateBranch)
 	work.BaseBranch = work.IntegrateBranch
 	ctx := withGitToken(context.Background(), gitToken)
+	if repository.Provider == "gitlab" {
+		u, err := url.Parse(repository.CloneURL)
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("GitLab 仓库地址无效")
+		}
+		ctx = gitwork.WithHostCredential(ctx, u.Scheme+"://"+u.Host, gitToken)
+	}
 	if err := prepareRepository(ctx, dir, work); err != nil {
 		return err
 	}

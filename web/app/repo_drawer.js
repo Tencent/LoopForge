@@ -10,7 +10,7 @@ function repoDrawerError(show){
 }
 function syncRepoDrawerDetect(){
   const f=$('#repoDrawerForm');if(!f)return;
-  const info=parseGongfengRepoURL(f.elements.repoUrl.value),box=$('#repoDrawerDetect');
+  const info=parseGongfengRepoURL(f.elements.repoUrl.value,repoDrawerState.projectId),box=$('#repoDrawerDetect');
   if(!info){box.hidden=true;return}
   repoDrawerError(false);
   if(!repoDrawerState.nameTouched)f.elements.name.value=info.name;
@@ -26,7 +26,7 @@ function openRepoDrawer(repoId=''){
   if(repoId&&!repo)return toast('仓库不存在或已被删除','err');
   const f=$('#repoDrawerForm');if(!f)return;
   const hasDefault=!projectNeedsDefaultRepository(project);
-  const parsedName=parseGongfengRepoURL(repo?.webUrl||repo?.cloneUrl||repo?.gongfengProjectId||'')?.name||'';
+  const parsedName=parseGongfengRepoURL(repo?.webUrl||repo?.cloneUrl||repo?.gongfengProjectId||'',project)?.name||'';
   Object.assign(repoDrawerState,{projectId,repoId:repo?.id||'',nameTouched:!!repo&&!!repo.name&&repo.name!==parsedName,saving:false,returnFocus:document.activeElement});
   f.elements.id.value=repo?.id||'';
   f.elements.repoUrl.value=repo?(repo.webUrl||repo.cloneUrl||repo.gongfengProjectId||''):'';
@@ -77,7 +77,7 @@ async function saveProjectDefaultRepository(project,repoId){
 async function saveRepoDrawer(e){
   e.preventDefault();
   if(repoDrawerState.saving)return;
-  const f=e.currentTarget,info=parseGongfengRepoURL(f.elements.repoUrl.value);
+  const f=e.currentTarget,info=parseGongfengRepoURL(f.elements.repoUrl.value,repoDrawerState.projectId);
   if(!info){repoDrawerError(true);f.elements.repoUrl.focus();return}
   const projectId=repoDrawerState.projectId,project=(state.data.projects||[]).find(p=>p.id===projectId);
   if(!project)return toast('请先保存项目','warn');

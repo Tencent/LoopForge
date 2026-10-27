@@ -789,21 +789,21 @@ eval(code.slice(code.indexOf('const CREDENTIAL_GROUPS='), code.indexOf('// 谁�
   ';globalThis.cred={CREDENTIAL_KINDS,CREDENTIAL_GROUPS,kind:credentialKind,get wizard(){return credentialWizard},set wizard(v){credentialWizard=v}};');
 const count = (html, needle) => html.split(needle).length - 1;
 
-// Two groups list all four kinds in a fixed order.
+// Two groups list all credential kinds in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitLabToken']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 11 已配置'));
+assert.ok(html.includes('<b>2</b> / 12 已配置'));
 assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 1') && html.includes('1 / 10'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>9</span>'));
-assert.equal(count(html, 'data-credential-row='), 11);
+assert.ok(html.includes('1 / 2') && html.includes('1 / 10'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>10</span>'));
+assert.equal(count(html, 'data-credential-row='), 12);
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 9);
+assert.equal(count(html, 'data-credential-act="setup"'), 10);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
 for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
@@ -818,6 +818,11 @@ assert.ok(credentialRowHTML(cred.kind('gitToken'), user).includes('git-token-ver
 assert.ok(credentialPanelHTML({...user, codeBuddyApiKeyConfigured: true}).includes('推荐凭证已全部就绪'));
 assert.equal(credentialNextKind({}).key, 'gitToken');
 
+// GitLab is independent of GitHub and requires its instance URL.
+assert.deepEqual(credentialSavePayload(cred.kind('gitLabToken'), {secret: ' inert ', extra: 'https://gitlab.example.com'}), {gitLabToken:'inert',gitLabBaseUrl:'https://gitlab.example.com'});
+assert.deepEqual(credentialClearPayload(cred.kind('gitLabToken')), {gitLabTokenClear:true,gitLabBaseUrl:''});
+assert.ok(credentialExtraError(cred.kind('gitLabToken'), ''));
+assert.ok(credentialRowHTML(cred.kind('gitLabToken'), {gitLabTokenConfigured:true}).includes('data-credential-act="verify"'));
 // Each kind saves and deletes only its own fields.
 assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '}), {gitToken: 'ghp_1'});
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'ioa'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'ioa'});
@@ -1225,7 +1230,7 @@ func TestRepositoryFormUsesSingleURL(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-eval(code.slice(code.indexOf('function parseGongfengRepoURL(raw){'), code.indexOf('function fillRepositoryFromLink(')));
+eval(code.slice(code.indexOf('function parseGongfengRepoURL(raw,project){'), code.indexOf('function fillRepositoryFromLink(')));
 const web = parseGongfengRepoURL('https://git.example.com/example/agent-flow');
 assert.equal(web.project, 'example/agent-flow');
 assert.equal(web.cloneUrl, 'https://git.example.com/example/agent-flow.git');

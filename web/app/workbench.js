@@ -62,6 +62,13 @@ const CREDENTIAL_KINDS=[
     guide:[['打开 GitHub「Settings → Developer settings → Personal access tokens」','https://github.com/settings/tokens','前往 GitHub 申请个人访问令牌'],['新建令牌，为目标仓库授予 <code>Contents</code> 和 <code>Pull requests</code> 的读写权限'],['复制令牌粘贴到下方，保存前会自动校验权限']],
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
     impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
+  {key:'gitLabToken',group:'platform',get name(){return typeof lfT==='function'?lfT('GitLab 自建','Self-managed GitLab'):'GitLab 自建'},short:'GitLab Token',logo:'gitlab',
+    use:'克隆 GitLab 仓库及交付合并请求',
+    description:'配置 GitLab 地址与个人访问令牌。HTTP 会明文传输令牌。身份校验不会检查仓库权限。',
+    guide:[['在自建 GitLab 中创建个人访问令牌，授予所需的 API 与仓库权限'],['填写 GitLab 地址及令牌；HTTP 会明文传输令牌'],['保存后可单独校验身份，仓库权限仍需另行确认']],
+    placeholder:'请输入 GitLab 个人访问令牌（PAT）',
+    extra:{name:'gitLabBaseUrl',label:'GitLab URL',placeholder:'https://gitlab.example.com',url:true,required:()=>true,clearWithKey:true},
+    impact:'依赖 GitLab 的 SOP 将无法克隆或推送仓库，GitLab 地址一并清空。'},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
     use:'AI 对话与 SOP 的 CodeBuddy 执行器',
     description:'AI 对话（含 Claude、GPT 等模型）和 SOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',
@@ -134,7 +141,7 @@ function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
 function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon harness-icon${cls?' '+cls:''}" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
 function credentialSpinner(size=14){return credentialGlyph('arc-spinner',size,'credential-spin')}
-function credentialLogo(kind,cls=''){return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}"><img src="/images/credentials/${kind.logo}.svg" alt=""></span>`}
+function credentialLogo(kind,cls=''){if(kind.key==='gitLabToken')return `<span class="credential-logo${cls?' '+cls:''}">${credentialGlyph('git-branch',24)}</span>`;return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}"><img src="/images/credentials/${kind.logo}.svg" alt=""></span>`}
 function hydrateCredentialIcons(root){if(root)window.AgentFlowHarnessIcons?.hydrate?.(root)}
 function credentialNextKind(user){return CREDENTIAL_RECOMMENDED.map(credentialKind).find(kind=>!credentialConfigured(kind,user))||null}
 function credentialSecretError(kind,value){
@@ -229,6 +236,10 @@ function credentialSubline(kind,user){
     if(!result.valid)return source+dot+`<span class="is-err">缺少权限 ${escapeHTML((result.missing||[]).join('、'))}</span>`;
     return source+dot+'<span class="is-ok">令牌有效</span>'+(result.scopes?.length?dot+`<span class="credential-mono">${escapeHTML(result.scopes.join(' · '))}</span>`:'');
   }
+  if(kind.key==='gitLabToken'){
+    const verify=state.gitLabTokenVerify,result=Number(verify?.userId)===Number(state.currentUser?.id)?verify?.result:null;
+    if(result)return use+dot+`<span data-gitlab-verify-status>${escapeHTML(result.valid?result.login+lfT('：身份验证通过；仓库权限尚未验证',': identity verified; repository permissions have not been checked'):(result.error||lfT('校验失败','Verification failed')))}</span>`;
+  }
   if(kind.key==='codeBuddyApiKey'){
     const raw=String(user.codeBuddyInternetEnvironment||'').trim(),env=codeBuddyEnvironment(raw);
     return `<span>网络环境</span>${env?`<span class="credential-mono">${escapeHTML(env.label)}</span>`:`<span class="is-err">「${escapeHTML(raw)}」无法识别，按国际站连接</span>`}${dot}${use}`;
@@ -303,7 +314,7 @@ function credentialEditorHTML(kind,user){
 function credentialRowMainHTML(kind,user){
   const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
   const end=on
-    ?`${credentialBadgeHTML(status)}${kind.key==='gitToken'?`<span class="credential-tip" data-tip="重新校验"><button type="button" class="credential-btn ghost icon credential-ink git-token-verify" data-credential-act="verify" aria-label="重新校验"${status==='busy'?' disabled':''}>${credentialGlyph('refresh',15)}</button></span>`:''}<span class="credential-chevron">${credentialGlyph('chevron-down',16)}</span>`
+    ?`${credentialBadgeHTML(status)}${['gitToken','gitLabToken'].includes(kind.key)?`<span class="credential-tip" data-tip="重新校验"><button type="button" class="credential-btn ghost icon credential-ink git-token-verify" data-credential-act="verify" aria-label="重新校验"${status==='busy'?' disabled':''}>${credentialGlyph('refresh',15)}</button></span>`:''}<span class="credential-chevron">${credentialGlyph('chevron-down',16)}</span>`
     :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup">去配置<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
   return `<div class="credential-row-main credential-ink" role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
 }
@@ -429,6 +440,7 @@ async function saveCredential(key,values={},options={}){
   const user=state.currentUser,kind=credentialKind(key);
   const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialSavePayload(kind,values))});
   if(key==='gitToken'&&!options.verified)state.gitTokenVerify=null;
+  if(key==='gitLabToken')state.gitLabTokenVerify=null;
   storeCredentialUser(saved);
   notifyCredentialsChanged();
   return saved;
@@ -437,6 +449,7 @@ async function deleteCredential(key){
   const user=state.currentUser,kind=credentialKind(key);
   const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialClearPayload(kind))});
   if(key==='gitToken')state.gitTokenVerify=null;
+  if(key==='gitLabToken')state.gitLabTokenVerify=null;
   storeCredentialUser(saved);
   notifyCredentialsChanged();
   return saved;
@@ -449,6 +462,15 @@ async function verifyAndSaveGitToken(token){
   const saved=await saveCredential('gitToken',{secret:token},{verified:true});
   state.gitTokenVerify={userId:user.id,result,checkedAt:Date.now()};
   return {saved:true,result,user:saved};
+}
+async function refreshGitLabTokenStatus(){
+  const user=state.currentUser;if(!user||user.isGuest)return;
+  let result;
+  try{result=await api(`/api/users/${user.id}/gitlab-token/verify`,{silent:true})}
+  catch(err){result={valid:false,error:err.message}}
+  if(Number(state.currentUser?.id)!==Number(user.id))return;
+  state.gitLabTokenVerify={userId:user.id,result};
+  repaintCredentialRow('gitLabToken');
 }
 async function refreshGitTokenStatus(options={}){
   const user=state.currentUser;if(!user||user.isGuest)return null;
@@ -513,7 +535,7 @@ function toggleCredentialSecret(button){
 function credentialRowAction(action,row,button){
   const key=row.dataset.credentialRow;
   if(action==='setup')return openCredentialWizard(key);
-  if(action==='verify')return refreshGitTokenStatus({announce:true});
+  if(action==='verify')return key==='gitLabToken'?refreshGitLabTokenStatus():refreshGitTokenStatus({announce:true});
   const gongfeng=key==='gitToken';
   if(action==='replace')return showCredentialPane(row,'form');
   if(action==='cancel'){

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -23,6 +24,9 @@ func (e *Engine) AlignBaseline(repository domain.RepositoryContext, gitToken str
 	runner, ok := e.alignRunner(repository)
 	if !ok {
 		return AlignIntegrateBaseline(repository, gitToken, e.repo)
+	}
+	if err := e.requireExistingWorkBranchRunner(runner.ID, []domain.RepositoryContext{repository}); err != nil {
+		return err
 	}
 	unlock, err := lockIntegration(e.repo, repository.RepositoryID)
 	if err != nil {
@@ -47,6 +51,13 @@ func (e *Engine) AlignBaseline(repository domain.RepositoryContext, gitToken str
 			IntegrateBranch: integrate,
 			DefaultBranch:   strings.TrimSpace(repository.DefaultBranch),
 		}}},
+	}
+	if repository.Provider == "gitlab" {
+		u, err := url.Parse(repository.CloneURL)
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("GitLab 仓库地址无效")
+		}
+		task.Invocation.Repositories[0].GitAuthBaseURL = u.Scheme + "://" + u.Host
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return err
