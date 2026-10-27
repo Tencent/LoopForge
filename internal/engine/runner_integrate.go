@@ -20,9 +20,14 @@ const integrationTaskNode = "_integrate"
 // pushIntegrate the runner also pushes the merged result to the integration
 // branch. It returns the conflicted files, if any.
 func (e *Engine) integrateOnRunner(ctx context.Context, runner domain.Runner, run domain.Run, rc domain.RepositoryContext, pushIntegrate bool) ([]string, error) {
+	if err := e.requireExistingWorkBranchRunner(runner.ID, run.RepositoryContexts()); err != nil {
+		return nil, err
+	}
 	invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: integrationTaskNode}
 	identity := gitIdentityFrom(ctx)
 	bindRunnerRepositories(invocation, run, gitTokenFrom(ctx), identity.name, identity.email)
+	cred, _ := ctx.Value(gitLabCredentialsKey{}).(gitLabCredentials)
+	bindRunnerGitLabCredentials(invocation, run, cred.base, cred.token)
 	invocation.Repository = nil
 	var target *domain.RunnerRepository
 	for i := range invocation.Repositories {

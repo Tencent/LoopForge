@@ -68,7 +68,7 @@ func (e *Engine) syncWorkBranches(ctx context.Context, runID string, node domain
 		return e.runnerWorkBranchSync(ctx, runnerID, run, node, domain.RunnerTaskActionPushWorkBranch, message)
 	}
 	for _, rc := range run.RepositoryContexts() {
-		head, err := syncWorkBranch(ctx, repositoryWorkspacePath(workspace, rc), rc, message)
+		head, err := syncWorkBranch(gitContextForRepository(ctx, rc), repositoryWorkspacePath(workspace, rc), rc, message)
 		if err != nil {
 			return fmt.Errorf("%s: %w", rc.Name, err)
 		}
@@ -86,7 +86,7 @@ func (e *Engine) pullWorkBranches(ctx context.Context, runID string, node domain
 		return e.runnerWorkBranchSync(ctx, runnerID, run, node, domain.RunnerTaskActionPullWorkBranch, "")
 	}
 	for _, rc := range run.RepositoryContexts() {
-		head, err := pullWorkBranch(ctx, repositoryWorkspacePath(workspace, rc), rc)
+		head, err := pullWorkBranch(gitContextForRepository(ctx, rc), repositoryWorkspacePath(workspace, rc), rc)
 		if err != nil {
 			return fmt.Errorf("%s: %w", rc.Name, err)
 		}
@@ -102,6 +102,9 @@ func (e *Engine) pullWorkBranches(ctx context.Context, runID string, node domain
 // RunnerVersionWorkBranchSync keep the previous behaviour (no sync) so an
 // outdated binary is never handed an action it would misinterpret.
 func (e *Engine) runnerWorkBranchSync(ctx context.Context, runnerID string, run domain.Run, node domain.WorkflowNode, action, message string) error {
+	if err := e.requireExistingWorkBranchRunner(runnerID, run.RepositoryContexts()); err != nil {
+		return err
+	}
 	runner, ok := e.repo.Runner(runnerID)
 	if !ok {
 		return fmt.Errorf("执行机器 %s 不存在", runnerID)
@@ -109,6 +112,8 @@ func (e *Engine) runnerWorkBranchSync(ctx context.Context, runnerID string, run 
 	invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: node.ID}
 	identity := gitIdentityFrom(ctx)
 	bindRunnerRepositories(invocation, run, gitTokenFrom(ctx), identity.name, identity.email)
+	cred, _ := ctx.Value(gitLabCredentialsKey{}).(gitLabCredentials)
+	bindRunnerGitLabCredentials(invocation, run, cred.base, cred.token)
 	syncable := false
 	for _, repository := range invocation.Repositories {
 		syncable = syncable || repository.SyncWorkBranch

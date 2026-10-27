@@ -737,6 +737,9 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
 		}
+		if err := bindInvocationGitLab(gitEnv, task.Invocation); err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+		}
 		command = runtime.WithCommandEnvironment(command, gitEnv)
 	}
 	var result execResult
@@ -866,6 +869,9 @@ func (d *Daemon) executePreparedInvocation(ctx context.Context, task domain.Runn
 		gitEnv, gitErr := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(inv))
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
+		}
+		if err := bindInvocationGitLab(gitEnv, inv); err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 		}
 		for key, value := range gitEnv {
 			commandEnv[key] = value
@@ -1064,11 +1070,11 @@ func invocationGitToken(inv *domain.RunnerInvocation) string {
 		return ""
 	}
 	for _, repo := range inv.Repositories {
-		if token := strings.TrimSpace(repo.GitToken); token != "" {
+		if token := strings.TrimSpace(repo.GitToken); repo.GitAuthBaseURL == "" && token != "" {
 			return token
 		}
 	}
-	if inv.Repository != nil {
+	if inv.Repository != nil && inv.Repository.GitAuthBaseURL == "" {
 		return strings.TrimSpace(inv.Repository.GitToken)
 	}
 	return ""
@@ -1182,16 +1188,22 @@ func checkoutRepository(ctx context.Context, workspace string, repo *domain.Runn
 	url := strings.TrimSpace(repo.CloneURL)
 	// `-c` auth is scoped to this command, so origin stays the clean URL and
 	// the token never lands in .git/config.
-	args := append(gitwork.AuthConfigArgs(repo.GitToken), "clone", "--quiet")
+	args := []string{"clone", "--quiet"}
 	if ref := strings.TrimSpace(repo.Ref); ref != "" {
 		args = append(args, "--branch", ref)
 	}
 	args = append(args, url, ".")
-	cmd := exec.CommandContext(cloneCtx, "git", args...)
-	cmd.Dir = workspace
-	cmd.Env = gitwork.Env(repo.GitToken)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git clone %s: %v (%s)", repo.CloneURL, err, cloneOutput(out, repo.GitToken))
+	if repo.GitAuthBaseURL != "" {
+		if _, err := gitwork.Run(gitContextForRunnerRepository(cloneCtx, repo), workspace, args...); err != nil {
+			return fmt.Errorf("git clone %s: %w", repo.CloneURL, err)
+		}
+	} else {
+		cmd := exec.CommandContext(cloneCtx, "git", append(gitwork.AuthConfigArgs(repo.GitToken), args...)...)
+		cmd.Dir = workspace
+		cmd.Env = gitwork.Env(repo.GitToken)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git clone %s: %v (%s)", repo.CloneURL, err, cloneOutput(out, repo.GitToken))
+		}
 	}
 	if repo.RequireExistingWorkBranch {
 		return checkoutExistingRepositoryBranch(cloneCtx, workspace, repo)
@@ -1217,7 +1229,7 @@ func checkoutExistingRepositoryBranch(ctx context.Context, workspace string, rep
 	if branch == "" {
 		return fmt.Errorf("继续已有分支时必须指定工作分支")
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := gitContextForRunnerRepository(ctx, repo)
 	trackingRef := "refs/remotes/origin/" + branch
 	if _, err := gitwork.C(repoCtx, workspace, "fetch", "--no-tags", "origin", "+refs/heads/"+branch+":"+trackingRef); err != nil {
 		return fmt.Errorf("无法读取已有远端分支 %s，请确认分支存在且有访问权限: %w", branch, err)
@@ -1281,7 +1293,37 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = "0.7.0"
+var runnerVersion = "0.8.0"
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }
+
+func gitContextForRunnerRepository(ctx context.Context, r *domain.RunnerRepository) context.Context {
+	if r.GitAuthBaseURL != "" {
+		if _, ok := domain.ParseGitLabRepositoryURL(r.CloneURL, r.GitAuthBaseURL); !ok {
+			return gitwork.WithHostCredential(ctx, "", "")
+		}
+		return gitwork.WithHostCredential(ctx, r.GitAuthBaseURL, r.GitToken)
+	}
+	return gitwork.WithToken(ctx, r.GitToken)
+}
+
+func bindInvocationGitLab(env map[string]string, inv *domain.RunnerInvocation) error {
+	if inv == nil {
+		return nil
+	}
+	var base, token string
+	for _, r := range inv.Repositories {
+		if r.GitAuthBaseURL == "" {
+			continue
+		}
+		if base != "" && (base != r.GitAuthBaseURL || token != r.GitToken) {
+			return fmt.Errorf("单个任务暂不支持多个 GitLab 凭据")
+		}
+		base, token = r.GitAuthBaseURL, r.GitToken
+	}
+	if base == "" && inv.Repository != nil {
+		base, token = inv.Repository.GitAuthBaseURL, inv.Repository.GitToken
+	}
+	return runtime.BindGitLabEnvironment(env, base, token)
+}

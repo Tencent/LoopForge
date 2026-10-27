@@ -227,6 +227,15 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	credentials.GitUserEmail = identity.email
 	if user, ok := e.repo.User(userID); ok {
 		credentials.TaihuPAT = user.TaihuPAT
+		for _, rc := range run.RepositoryContexts() {
+			if rc.Provider == "gitlab" {
+				if _, ok := domain.ParseGitLabRepositoryURL(rc.CloneURL, user.GitLabBaseURL); ok {
+					credentials.GitLabToken = user.GitLabToken
+					credentials.GitLabBaseURL = user.GitLabBaseURL
+				}
+				break
+			}
+		}
 		credentials.Codex = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
 		credentials.ClaudeCode = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
 	}

@@ -36,6 +36,8 @@ type userConfigRow struct {
 	UserID                       int64      `gorm:"column:user_id;primaryKey"`
 	TaihuPAT                     *string    `gorm:"column:taihu_pat;type:text"`
 	GitToken                     *string    `gorm:"column:git_token;type:text"`
+	GitLabToken                  *string    `gorm:"column:gitlab_token;type:text"`
+	GitLabBaseURL                *string    `gorm:"column:gitlab_base_url;type:text"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key;type:text"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment;size:64"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key;type:text"`

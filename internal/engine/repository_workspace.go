@@ -57,7 +57,7 @@ func prepareRepositories(ctx context.Context, workspace string, repositories []d
 		return nil
 	}
 	for _, rc := range repositories {
-		if err := prepareRepository(ctx, repositoryWorkspacePath(workspace, rc), rc); err != nil {
+		if err := prepareRepository(gitContextForRepository(ctx, rc), repositoryWorkspacePath(workspace, rc), rc); err != nil {
 			return fmt.Errorf("repository %s: %w", rc.Name, err)
 		}
 	}
@@ -160,7 +160,11 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		}
 		// Clone into the existing directory (`.`) so git cannot unlink and
 		// recreate `workspace`. That inode is the Docker bind-mount source.
-		args = append(args, gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
+		if _, gitLab := gitwork.HostCredentialFrom(ctx); gitLab {
+			args = append(args, remote, ".")
+		} else {
+			args = append(args, gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
+		}
 		if _, err := runGit(ctx, workspace, args...); err != nil {
 			return fmt.Errorf("git clone: %w", err)
 		}

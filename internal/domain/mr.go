@@ -12,6 +12,8 @@ import (
 // either scheme and store the canonical https URL.
 var githubPRURL = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)`)
 
+var gitLabMRURL = regexp.MustCompile(`https?://[A-Za-z0-9.\-]+(?::[0-9]+)?/(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+/-/merge_requests/[0-9]+`)
+
 var gongfengMRURL = regexp.MustCompile(`https?://git\.example\.com/([^\s"'<>#]+)/merge_requests/(\d+)`)
 
 // GongfengMRRef is one merge request URL extracted from free text.
@@ -36,9 +38,6 @@ func ParseGongfengMRs(text string) []GongfengMRRef {
 		text = strings.ReplaceAll(text, match[0], "https://git.example.com/github:"+match[1]+"/merge_requests/"+match[2])
 	}
 	matches := gongfengMRURL.FindAllStringSubmatch(text, -1)
-	if len(matches) == 0 {
-		return nil
-	}
 	out := make([]GongfengMRRef, 0, len(matches))
 	seen := map[string]struct{}{}
 	for _, match := range matches {
@@ -53,6 +52,23 @@ func ParseGongfengMRs(text string) []GongfengMRRef {
 		}
 		seen[key] = struct{}{}
 		out = append(out, GongfengMRRef{Project: project, IID: iid, URL: GongfengMRURL(project, iid)})
+	}
+	for _, value := range gitLabMRURL.FindAllString(text, -1) {
+		repo, number, ok := strings.Cut(value, "/-/merge_requests/")
+		if !ok || strings.HasPrefix(repo, "https://git.example.com/") || strings.HasPrefix(repo, "http://git.example.com/") {
+			continue
+		}
+		iid, err := strconv.Atoi(number)
+		if err != nil || iid <= 0 {
+			continue
+		}
+		project := "gitlab:" + repo
+		key := strings.ToLower(project) + "#" + number
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, GongfengMRRef{Project: project, IID: iid, URL: value})
 	}
 	return out
 }

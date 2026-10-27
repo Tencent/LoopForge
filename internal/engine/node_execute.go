@@ -442,6 +442,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	current, _ = e.repo.RunState(runID)
 	gitTok := sb.credentialSnapshot().GitToken
 	ctx = withGitToken(ctx, gitTok)
+	ctx = withGitLabCredentials(ctx, sb.credentialSnapshot().GitLabBaseURL, sb.credentialSnapshot().GitLabToken)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	// Repository checkout and Agent-configuration index isolation belong to the
 	// run environment, not to each node. The same checkout and .git/index are

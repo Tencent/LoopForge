@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,13 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 		}
 	}
 	ctx = withGitToken(ctx, token)
+	if repo.Provider == "gitlab" {
+		parsed, err := url.Parse(cloneURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return "", fmt.Errorf("GitLab 仓库地址无效")
+		}
+		ctx = gitwork.WithHostCredential(ctx, parsed.Scheme+"://"+parsed.Host, token)
+	}
 
 	if _, err := os.Stat(filepath.Join(cacheDir, ".git")); err == nil {
 		// Existing checkout: refresh to the latest base branch.
@@ -68,10 +76,14 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 	// Clear any stale non-git leftovers before cloning.
 	_ = os.RemoveAll(cacheDir)
 
+	remote := cloneURL
+	if repo.Provider != "gitlab" {
+		remote = gitwork.RewriteRemoteForToken(cloneURL, token)
+	}
 	args := []string{
 		"clone", "--no-hardlinks", "--single-branch", "--depth", "1",
 		"--branch", baseBranch,
-		gitwork.RewriteRemoteForToken(cloneURL, token), cacheDir,
+		remote, cacheDir,
 	}
 	if _, err := runGit(ctx, cacheDir, args...); err != nil {
 		_ = os.RemoveAll(cacheDir)
@@ -117,4 +129,22 @@ func refreshClarifyWorkspace(ctx context.Context, cacheDir, cloneURL, baseBranch
 // ResolveClarifyGitToken resolves the token for the responsible user.
 func ResolveClarifyGitToken(s *repo.Store, responsibleUserID int64) string {
 	return resolveGitToken(s, responsibleUserID)
+}
+
+// ResolveClarifyGitTokenForRepository selects credentials only for their configured host.
+func ResolveClarifyGitTokenForRepository(s *repo.Store, userID int64, repository domain.Repository) string {
+	if repository.Provider != "gitlab" {
+		return resolveGitToken(s, userID)
+	}
+	if s == nil {
+		return ""
+	}
+	user, ok := s.User(userID)
+	if !ok {
+		return ""
+	}
+	if _, ok := domain.ParseGitLabRepositoryURL(repository.CloneURL, user.GitLabBaseURL); !ok {
+		return ""
+	}
+	return strings.TrimSpace(user.GitLabToken)
 }

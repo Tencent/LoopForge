@@ -13,9 +13,16 @@ import (
 func Run(ctx context.Context, workspace string, args ...string) (string, error) {
 	token := TokenFrom(ctx)
 	dir := CommandDir(workspace)
-	cmd := exec.CommandContext(ctx, "git", append(AuthConfigArgs(token), args...)...)
+	authArgs := AuthConfigArgs(token)
+	env := Env(token)
+	if hostCredential, ok := HostCredentialFrom(ctx); ok {
+		authArgs = hostAuthConfigArgs(hostCredential)
+		env = hostEnv(hostCredential)
+		token = hostCredential.Token
+	}
+	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir
-	cmd.Env = WithEnvValue(Env(token), "PWD", dir)
+	cmd.Env = WithEnvValue(env, "PWD", dir)
 	// A run without a checkout must not discover the platform's own .git
 	// when the operator keeps workspaces below a source checkout.
 	if absolute, err := filepath.Abs(dir); err == nil {

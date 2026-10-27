@@ -116,6 +116,14 @@ func (s *Service) syncMRDeliveryStates(store MRDeliveryStore) {
 	now := time.Now().UTC()
 	updated := 0
 	for _, row := range pending {
+		if strings.HasPrefix(row.MRProject, "gitlab:") {
+			if err := s.refreshGitLabDelivery(store, row.MRProject, row.MRIID); err != nil {
+				log.Printf("GitLab delivery refresh: %v", err)
+			} else {
+				updated++
+			}
+			continue
+		}
 		if strings.HasPrefix(row.MRProject, "github:") {
 			if err := s.refreshGitHubDelivery(store, row.MRProject, row.MRIID); err != nil {
 				log.Printf("GitHub delivery refresh: %v", err)
@@ -152,7 +160,7 @@ func (s *Service) discoverPromoteMRs(store MRDeliveryStore) {
 	now := time.Now().UTC()
 	for _, repo := range store.Repositories() {
 		project := strings.TrimSpace(repo.GongfengProjectID)
-		if strings.HasPrefix(project, "github:") {
+		if strings.HasPrefix(project, "github:") || strings.HasPrefix(project, "gitlab:") {
 			continue
 		}
 		def := strings.TrimSpace(repo.DefaultBranch)
@@ -221,7 +229,7 @@ func (s *Service) syncWorkCommitsOnDefaultBranch(store MRDeliveryStore) {
 	}
 	for _, repo := range store.Repositories() {
 		project := strings.TrimSpace(repo.GongfengProjectID)
-		if strings.HasPrefix(project, "github:") {
+		if strings.HasPrefix(project, "github:") || strings.HasPrefix(project, "gitlab:") {
 			continue
 		}
 		def := strings.TrimSpace(repo.DefaultBranch)

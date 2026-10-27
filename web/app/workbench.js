@@ -64,6 +64,13 @@ async function renderPersonalSettings(){
           <a class="credential-help-link" href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer">前往GitHub 申请个人访问令牌 ↗</a>
           <div class="git-token-verify-row"><button type="button" class="button ghost small" id="verifyGitToken">校验 Token 有效性</button><span id="gitTokenVerifyStatus" class="git-token-verify-status"></span></div>
         </fieldset>
+        <fieldset class="provider-credentials"><legend><span>${lfT('代码仓库','Code repositories')}<small>${lfT('GitLab 自建','Self-managed GitLab')}</small></span>${credentialBadge(storedUser.gitLabTokenConfigured)}</legend>
+          <p class="credential-description">${lfT('配置公司 GitLab 地址与个人访问令牌。HTTP 地址会明文传输 Token。','Configure your GitLab URL and personal access token. HTTP transmits the token without encryption.')}</p>
+          <label>${lfT('GitLab 地址','GitLab URL')}<input name="gitLabBaseUrl" type="url" value="${escapeHTML(storedUser.gitLabBaseUrl||'')}" placeholder="https://gitlab.example.com"></label>
+          <label>GitLab Token<input name="gitLabToken" type="password" autocomplete="new-password" placeholder="${storedUser.gitLabTokenConfigured?lfT('已配置，留空则不改','Configured; leave blank to keep'):lfT('请输入个人访问令牌（PAT）','Enter a personal access token (PAT)')}"></label>
+          ${credentialClearAction('gitLabToken',storedUser.gitLabTokenConfigured,'GitLab Token')}
+          <div class="git-token-verify-row"><button type="button" class="button ghost small" id="verifyGitLabToken">${lfT('校验 Token 有效性','Verify token')}</button><span id="gitLabTokenVerifyStatus"></span></div>
+        </fieldset>
         <fieldset class="provider-credentials"><legend><span class="credential-card-logo"><img src="/images/credentials/codebuddy.svg" alt=""></span><span>CodeBuddy<small>模型与执行</small></span>${credentialBadge(storedUser.codeBuddyApiKeyConfigured)}</legend>
           <p class="credential-description">用于调用 CodeBuddy 执行 Agent 任务；网络环境按账号所在环境配置。</p>
           <label>CodeBuddy API Key<input name="codeBuddyApiKey" type="password" autocomplete="new-password" placeholder="${storedUser.codeBuddyApiKeyConfigured?'已配置，留空则不改':'请输入个人 ck_ key'}"></label>
@@ -90,6 +97,8 @@ async function renderPersonalSettings(){
         <footer class="credential-savebar"><div><b>保存后对下一次任务生效</b><span>留空不会覆盖已经配置的密钥。</span></div><button class="button primary" type="submit">保存个人凭证</button></footer>
       </form></section><section class="personal-settings-card" data-personal-bot-bindings><h2>企业微信账号</h2><p>关联后，Bot 使用你的平台身份和个人凭据执行指令。请在企业微信向 Bot 发送“绑定账号”开始关联。</p><div data-wecom-bindings>正在读取绑定…</div></section>`;
   bindCredentialClearButtons(host.querySelector('#userCredentialForm'));
+  const gitLabVerifyBtn=host.querySelector('#verifyGitLabToken');
+  if(gitLabVerifyBtn)gitLabVerifyBtn.onclick=async()=>{const status=host.querySelector('#gitLabTokenVerifyStatus'); status.textContent='正在校验…'; try{const r=await api(`/api/users/${user.id}/gitlab-token/verify`);status.textContent=r.valid?`✓ ${r.login}${lfT('，身份验证通过；仓库权限尚未验证',': identity verified; repository permissions have not been checked')}`:`✗ ${r.error||'校验失败'}`}catch(err){status.textContent=`✗ ${err.message}`}};
   const verifyBtn=host.querySelector('#verifyGitToken');
   // 状态文案节点每次重渲染后都会重建，统一现查现用，避免写入游离 DOM。
   const setStatus=text=>{const el=$('#gitTokenVerifyStatus');if(el)el.textContent=text};
@@ -117,7 +126,7 @@ async function renderPersonalSettings(){
   }
   host.querySelector('#userCredentialForm').onsubmit=async e=>{
     e.preventDefault();const f=e.currentTarget,button=f.querySelector('button[type="submit"]');button.disabled=true;
-    const payload={gitToken:f.elements.gitToken.value.trim(),gitTokenClear:credentialClearPending(f,'gitToken'),codeBuddyApiKey:f.elements.codeBuddyApiKey.value.trim(),codeBuddyApiKeyClear:credentialClearPending(f,'codeBuddyApiKey'),codeBuddyInternetEnvironment:f.elements.codeBuddyInternetEnvironment.value.trim(),codexApiKey:f.elements.codexApiKey.value.trim(),codexApiKeyClear:credentialClearPending(f,'codexApiKey'),codexBaseUrl:f.elements.codexBaseUrl.value.trim(),claudeCodeApiKey:f.elements.claudeCodeApiKey.value.trim(),claudeCodeApiKeyClear:credentialClearPending(f,'claudeCodeApiKey'),claudeCodeBaseUrl:f.elements.claudeCodeBaseUrl.value.trim()};
+    const payload={gitLabBaseUrl:f.elements.gitLabBaseUrl.value.trim(),gitLabToken:f.elements.gitLabToken.value.trim(),gitLabTokenClear:credentialClearPending(f,'gitLabToken'),gitToken:f.elements.gitToken.value.trim(),gitTokenClear:credentialClearPending(f,'gitToken'),codeBuddyApiKey:f.elements.codeBuddyApiKey.value.trim(),codeBuddyApiKeyClear:credentialClearPending(f,'codeBuddyApiKey'),codeBuddyInternetEnvironment:f.elements.codeBuddyInternetEnvironment.value.trim(),codexApiKey:f.elements.codexApiKey.value.trim(),codexApiKeyClear:credentialClearPending(f,'codexApiKey'),codexBaseUrl:f.elements.codexBaseUrl.value.trim(),claudeCodeApiKey:f.elements.claudeCodeApiKey.value.trim(),claudeCodeApiKeyClear:credentialClearPending(f,'claudeCodeApiKey'),claudeCodeBaseUrl:f.elements.claudeCodeBaseUrl.value.trim()};
     try{if(payload.gitToken||payload.gitTokenClear)state.gitTokenVerify=null;if(payload.gitToken)state.gitTokenAnnounceVerify=true;const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(payload)}),index=state.data.users.findIndex(u=>Number(u.id)===Number(saved.id));if(index>=0)state.data.users[index]=saved;else state.data.users.push(saved);renderPersonalSettings();window.AgentFlowAssistant?.sync();toast('个人凭据已保存')}
     catch(err){toast(err.message);button.disabled=false}
   };

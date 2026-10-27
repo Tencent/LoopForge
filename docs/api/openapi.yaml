@@ -694,6 +694,9 @@ paths:
                 taihuPatClear: {type: boolean}
                 gitToken: {type: string, writeOnly: true}
                 gitTokenClear: {type: boolean}
+                gitLabToken: {type: string, writeOnly: true, description: "Personal access token for the configured GitLab instance. Blank preserves the stored token."}
+                gitLabTokenClear: {type: boolean}
+                gitLabBaseUrl: {type: string, description: "HTTP(S) GitLab instance URL. Changing it requires replacing or clearing the stored GitLab token."}
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
                 codeBuddyInternetEnvironment: {type: string}
@@ -710,6 +713,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        "403":
+          $ref: "#/components/responses/Unauthorized"
+  /api/users/{id}/gitlab-token/verify:
+    get:
+      tags: [Users]
+      operationId: verifyOwnGitLabToken
+      summary: Verify the current user's saved GitLab identity
+      description: Checks the configured GitLab instance's /api/v4/user endpoint. Repository permissions are not checked.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Identity verification result; token values are never returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: {type: boolean}
+                  login: {type: string}
+                  error: {type: string}
         "403":
           $ref: "#/components/responses/Unauthorized"
   /api/business-domains:
@@ -3462,6 +3489,8 @@ components:
         avatarUrl: {type: string}
         taihuPatConfigured: {type: boolean, readOnly: true}
         gitTokenConfigured: {type: boolean, readOnly: true}
+        gitLabTokenConfigured: {type: boolean, readOnly: true}
+        gitLabBaseUrl: {type: string}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}

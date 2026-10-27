@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -175,4 +176,54 @@ func missingGitTokenScopes(scopes, required []string) []string {
 		}
 	}
 	return missing
+}
+
+// verifyGitLabToken validates the configured user's identity on their instance.
+func (h *usersHandlers) verifyGitLabToken(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gitTokenVerifyResult{Error: "valid user id is required"})
+		return
+	}
+	current, ok := h.requestUser(c.Request, false)
+	if !ok || current.ID != id {
+		c.JSON(http.StatusForbidden, gitTokenVerifyResult{Error: "只能校验当前登录用户的凭据"})
+		return
+	}
+	if h.repo == nil {
+		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "存储不可用"})
+		return
+	}
+	user, ok := h.repo.User(id)
+	if !ok || user.GitLabToken == "" || user.GitLabBaseURL == "" {
+		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "请先保存 GitLab 地址和 Token"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(user.GitLabBaseURL, "/")+"/api/v4/user", nil)
+	if err != nil {
+		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "GitLab 地址无效"})
+		return
+	}
+	req.Header.Set("PRIVATE-TOKEN", user.GitLabToken)
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "无法连接 GitLab"})
+		return
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: fmt.Sprintf("GitLab 返回 HTTP %d，请检查 Token", res.StatusCode)})
+		return
+	}
+	var identity struct {
+		Username string `json:"username"`
+	}
+	if json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&identity) != nil || identity.Username == "" {
+		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "GitLab 响应无效"})
+		return
+	}
+	c.JSON(http.StatusOK, gitTokenVerifyResult{Valid: true, Login: identity.Username})
 }

@@ -21,6 +21,8 @@ type userWithConfig struct {
 	PlatformRole                 string     `gorm:"column:platform_role"`
 	TaihuPAT                     *string    `gorm:"column:taihu_pat"`
 	GitToken                     *string    `gorm:"column:git_token"`
+	GitLabToken                  *string    `gorm:"column:gitlab_token"`
+	GitLabBaseURL                *string    `gorm:"column:gitlab_base_url"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
@@ -33,7 +35,7 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.taihu_pat, c.git_token, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.taihu_pat, c.git_token, c.gitlab_token, c.gitlab_base_url, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.claude_code_api_key, c.claude_code_base_url,
 	u.created_at, u.updated_at`
 
@@ -48,6 +50,12 @@ func (r userWithConfig) toDomain() domain.User {
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
+	}
+	if r.GitLabToken != nil {
+		u.GitLabToken = *r.GitLabToken
+	}
+	if r.GitLabBaseURL != nil {
+		u.GitLabBaseURL = *r.GitLabBaseURL
 	}
 	if r.CodeBuddyAPIKey != nil {
 		u.CodeBuddyAPIKey = *r.CodeBuddyAPIKey
@@ -135,6 +143,7 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		// through UpdateUserCredentials and must survive every login refresh.
 		v.TaihuPAT = old.TaihuPAT
 		v.GitToken = old.GitToken
+		v.GitLabToken, v.GitLabBaseURL = old.GitLabToken, old.GitLabBaseURL
 		v.CodexAPIKey, v.CodexBaseURL = old.CodexAPIKey, old.CodexBaseURL
 		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
@@ -203,7 +212,7 @@ func (r *UsersRepo) writeUser(v domain.User) (domain.User, error) {
 
 func userHasConfig(user domain.User) bool {
 	return user.TaihuPAT != "" ||
-		user.GitToken != "" ||
+		user.GitToken != "" || user.GitLabToken != "" || user.GitLabBaseURL != "" ||
 		user.CodeBuddyAPIKey != "" ||
 		user.CodeBuddyInternetEnvironment != "" ||
 		user.CodexAPIKey != "" ||
@@ -217,6 +226,9 @@ type UserCredentialUpdate struct {
 	TaihuPATClear                bool    `json:"taihuPatClear"`
 	GitToken                     string  `json:"gitToken"`
 	GitTokenClear                bool    `json:"gitTokenClear"`
+	GitLabToken                  string  `json:"gitLabToken"`
+	GitLabTokenClear             bool    `json:"gitLabTokenClear"`
+	GitLabBaseURL                *string `json:"gitLabBaseUrl"`
 	CodeBuddyAPIKey              string  `json:"codeBuddyApiKey"`
 	CodeBuddyAPIKeyClear         bool    `json:"codeBuddyApiKeyClear"`
 	CodeBuddyInternetEnvironment *string `json:"codeBuddyInternetEnvironment"`
@@ -248,6 +260,18 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 		user.GitToken = ""
 	} else if value := strings.TrimSpace(update.GitToken); value != "" {
 		user.GitToken = value
+	}
+	if update.GitLabTokenClear {
+		user.GitLabToken = ""
+	} else if value := strings.TrimSpace(update.GitLabToken); value != "" {
+		user.GitLabToken = value
+	}
+	if update.GitLabBaseURL != nil {
+		newURL := strings.TrimRight(strings.TrimSpace(*update.GitLabBaseURL), "/")
+		if newURL != user.GitLabBaseURL && user.GitLabToken != "" && strings.TrimSpace(update.GitLabToken) == "" && !update.GitLabTokenClear {
+			return domain.User{}, errors.New("更换 GitLab 地址时请重新输入或清除 Token")
+		}
+		user.GitLabBaseURL = newURL
 	}
 	if update.CodeBuddyAPIKeyClear {
 		user.CodeBuddyAPIKey = ""
@@ -284,6 +308,7 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 	return upsert(r.DB, "user_configs", map[string]any{
 		"user_id":   v.ID,
 		"taihu_pat": nullableString(v.TaihuPAT), "git_token": nullableString(v.GitToken),
+		"gitlab_token": nullableString(v.GitLabToken), "gitlab_base_url": nullableString(v.GitLabBaseURL),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
 		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL),

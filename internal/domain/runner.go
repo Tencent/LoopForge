@@ -73,6 +73,9 @@ const RunnerVersionWorkspacePreparation = "0.6.0"
 // a missing branch when the caller explicitly continues an existing branch.
 const RunnerVersionExistingWorkBranch = "0.7.0"
 
+// RunnerVersionGitLabCredentials is the first runner with host-bound GitLab authentication.
+const RunnerVersionGitLabCredentials = "0.8.0"
+
 type Runner struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
@@ -114,6 +117,10 @@ func PublicRunners(items []Runner) []Runner {
 
 // SupportsExistingWorkBranch guards strict checkout and synchronization;
 // older daemons silently create a new branch when the remote head is missing.
+func (r Runner) SupportsGitLabCredentials() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitLabCredentials)
+}
+
 func (r Runner) SupportsExistingWorkBranch() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionExistingWorkBranch)
 }
@@ -415,12 +422,13 @@ type RunnerInvocation struct {
 // GitToken is only set for private remotes and is cleared from the stored
 // payload once the task completes.
 type RunnerRepository struct {
-	RepositoryID string `json:"repositoryId,omitempty"`
-	Name         string `json:"name,omitempty"`
-	CloneURL     string `json:"cloneUrl,omitempty"`
-	Ref          string `json:"ref,omitempty"`
-	WorkBranch   string `json:"workBranch,omitempty"`
-	GitToken     string `json:"gitToken,omitempty"`
+	RepositoryID   string `json:"repositoryId,omitempty"`
+	Name           string `json:"name,omitempty"`
+	CloneURL       string `json:"cloneUrl,omitempty"`
+	Ref            string `json:"ref,omitempty"`
+	WorkBranch     string `json:"workBranch,omitempty"`
+	GitToken       string `json:"gitToken,omitempty"`
+	GitAuthBaseURL string `json:"gitAuthBaseUrl,omitempty"`
 	// RequireExistingWorkBranch keeps explicit continuation on an existing
 	// remote head. Missing/deleted heads are errors, never branch creation.
 	RequireExistingWorkBranch bool `json:"requireExistingWorkBranch,omitempty"`

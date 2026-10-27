@@ -215,3 +215,30 @@ func Redact(s string, tokens ...string) string {
 	}
 	return s
 }
+
+// HostCredential binds an HTTP credential to one explicitly configured origin.
+type HostCredential struct{ BaseURL, Token string }
+type hostCredentialKey struct{}
+
+func WithHostCredential(ctx context.Context, baseURL, token string) context.Context {
+	return context.WithValue(ctx, hostCredentialKey{}, HostCredential{BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), Token: strings.TrimSpace(token)})
+}
+func HostCredentialFrom(ctx context.Context) (HostCredential, bool) {
+	if ctx == nil {
+		return HostCredential{}, false
+	}
+	v, ok := ctx.Value(hostCredentialKey{}).(HostCredential)
+	return v, ok
+}
+func hostAuthConfigArgs(c HostCredential) []string {
+	if c.BaseURL == "" || c.Token == "" {
+		return []string{"-c", "credential.helper=", "-c", "core.askPass="}
+	}
+	return []string{"-c", "credential.helper=", "-c", "credential." + c.BaseURL + ".helper=" + credentialHelper(), "-c", "http." + c.BaseURL + ".followRedirects=false"}
+}
+func hostEnv(c HostCredential) []string {
+	env := Env("")
+	env = WithEnvValue(env, gitHTTPUserEnv, "oauth2")
+	env = WithEnvValue(env, gitHTTPPassEnv, c.Token)
+	return env
+}

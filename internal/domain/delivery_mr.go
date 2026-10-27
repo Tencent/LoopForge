@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -27,6 +28,14 @@ func GongfengMRURL(project string, iid int) string {
 	project = strings.Trim(strings.TrimSpace(project), "/")
 	if project == "" || iid <= 0 {
 		return ""
+	}
+	if strings.HasPrefix(project, "gitlab:") {
+		raw := strings.TrimPrefix(project, "gitlab:")
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return ""
+		}
+		return fmt.Sprintf("%s/-/merge_requests/%d", strings.TrimRight(raw, "/"), iid)
 	}
 	if strings.HasPrefix(project, "github:") {
 		return fmt.Sprintf("https://github.com/%s/pull/%d", strings.TrimPrefix(project, "github:"), iid)

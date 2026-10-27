@@ -26,6 +26,9 @@ type User struct {
 	PlatformRole                 string    `json:"platformRole,omitempty"`
 	GitToken                     string    `json:"gitToken,omitempty"`
 	GitTokenConfigured           bool      `json:"gitTokenConfigured,omitempty"`
+	GitLabToken                  string    `json:"gitLabToken,omitempty"`
+	GitLabTokenConfigured        bool      `json:"gitLabTokenConfigured,omitempty"`
+	GitLabBaseURL                string    `json:"gitLabBaseUrl,omitempty"`
 	CodeBuddyAPIKey              string    `json:"codeBuddyApiKey,omitempty"`
 	CodeBuddyAPIKeyConfigured    bool      `json:"codeBuddyApiKeyConfigured,omitempty"`
 	CodeBuddyInternetEnvironment string    `json:"codeBuddyInternetEnvironment,omitempty"`
@@ -50,6 +53,8 @@ func PublicUser(u User) User {
 	u.ClaudeCodeAPIKey = ""
 	u.GitTokenConfigured = strings.TrimSpace(u.GitToken) != ""
 	u.GitToken = ""
+	u.GitLabTokenConfigured = strings.TrimSpace(u.GitLabToken) != ""
+	u.GitLabToken = ""
 	u.CodeBuddyAPIKeyConfigured = strings.TrimSpace(u.CodeBuddyAPIKey) != ""
 	u.CodeBuddyAPIKey = ""
 	return u

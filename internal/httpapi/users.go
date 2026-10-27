@@ -39,7 +39,7 @@ func (h *usersHandlers) user(c *gin.Context) {
 	if !decode(c, &body) {
 		return
 	}
-	for _, raw := range []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL} {
+	for _, raw := range []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL, body.GitLabBaseURL} {
 		if raw == nil || strings.TrimSpace(*raw) == "" {
 			continue
 		}

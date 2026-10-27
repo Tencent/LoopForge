@@ -118,15 +118,14 @@ func (e *Engine) requireExistingWorkBranchRunner(runnerID string, repositories [
 	if runnerID == "" {
 		return nil
 	}
+	runner, found := e.repo.Runner(runnerID)
 	for _, repository := range repositories {
-		if !repository.RequireExistingWorkBranch {
-			continue
+		if repository.Provider == "gitlab" && (!found || !runner.SupportsGitLabCredentials()) {
+			return fmt.Errorf("GitLab 任务需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitLabCredentials)
 		}
-		runner, ok := e.repo.Runner(runnerID)
-		if !ok || !runner.SupportsExistingWorkBranch() {
+		if repository.RequireExistingWorkBranch && (!found || !runner.SupportsExistingWorkBranch()) {
 			return fmt.Errorf("继续已有分支需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionExistingWorkBranch)
 		}
-		break
 	}
 	return nil
 }
@@ -214,6 +213,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		}
 	}
 	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
+	bindRunnerGitLabCredentials(invocation, run, sb.credentialSnapshot().GitLabBaseURL, sb.credentialSnapshot().GitLabToken)
 	reported := sb.reportedOutputs(node.ID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -350,6 +350,32 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 	}
 }
 
+func bindRunnerGitLabCredentials(inv *domain.RunnerInvocation, run domain.Run, base, token string) {
+	if inv == nil {
+		return
+	}
+	apply := func(item *domain.RunnerRepository) {
+		if item == nil {
+			return
+		}
+		for _, rc := range run.RepositoryContexts() {
+			if rc.RepositoryID != item.RepositoryID || rc.Provider != "gitlab" {
+				continue
+			}
+			item.GitToken = ""
+			item.GitAuthBaseURL = base
+			if _, ok := domain.ParseGitLabRepositoryURL(rc.CloneURL, base); ok {
+				item.GitToken = token
+			}
+			return
+		}
+	}
+	apply(inv.Repository)
+	for i := range inv.Repositories {
+		apply(&inv.Repositories[i])
+	}
+}
+
 func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
@@ -373,6 +399,7 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
 		Concurrent:    run.WorkflowSnapshot.CollaborationMode == "group", RunID: run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, TaihuPAT: taihuPAT, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
 	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
+	bindRunnerGitLabCredentials(invocation, run, sb.credentialSnapshot().GitLabBaseURL, sb.credentialSnapshot().GitLabToken)
 	reported := sb.reportedOutputs(nodeID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -643,6 +670,8 @@ func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.Ru
 	}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
 	bindRunnerRepositories(invocation, run, resolveGitToken(e.repo, run.ExecutionContext.ResponsibleUserID), identity.name, identity.email)
+	cred := e.resolveRunCredentials(run)
+	bindRunnerGitLabCredentials(invocation, run, cred.GitLabBaseURL, cred.GitLabToken)
 	return invocation
 }
 

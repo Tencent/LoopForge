@@ -56,7 +56,7 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		if rel := safeRunnerRepoDir(repo.Dir); rel != "" {
 			dir = filepath.Join(workspace, rel)
 		}
-		repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+		repoCtx := gitContextForRunnerRepository(ctx, &repo)
 		var head string
 		var err error
 		if repo.RequireExistingWorkBranch {

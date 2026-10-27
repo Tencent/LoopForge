@@ -66,6 +66,7 @@ func (e *Engine) integrateScheduledRun(id string) (bool, error) {
 		return false, fmt.Errorf("run sandbox missing")
 	}
 	ctx := withGitIdentity(withGitToken(context.Background(), env.credentialSnapshot().GitToken), env.credentialSnapshot().GitUserName, env.credentialSnapshot().GitUserEmail)
+	ctx = withGitLabCredentials(ctx, env.credentialSnapshot().GitLabBaseURL, env.credentialSnapshot().GitLabToken)
 	runner, onRunner, err := e.integrationRunner(r)
 	if err != nil {
 		return false, err
@@ -95,10 +96,11 @@ func (e *Engine) integrateScheduledRun(id string) (bool, error) {
 				return err
 			}
 		} else {
+			repoCtx := gitContextForRepository(ctx, rc)
 			workspace := repositoryWorkspacePath(env.Workspace(), rc)
-			conflicts, err = integrateLocally(ctx, r, workspace, rc)
+			conflicts, err = integrateLocally(repoCtx, r, workspace, rc)
 			pushDirect = func() error {
-				_, err := gitC(ctx, workspace, "push", "origin", "HEAD:refs/heads/"+b)
+				_, err := gitC(repoCtx, workspace, "push", "origin", "HEAD:refs/heads/"+b)
 				return err
 			}
 		}

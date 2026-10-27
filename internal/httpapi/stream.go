@@ -323,7 +323,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 		return cacheDir, true, ""
 	}
 
-	token := engine.ResolveClarifyGitToken(h.repo, responsibleUserID)
+	token := engine.ResolveClarifyGitTokenForRepository(h.repo, responsibleUserID, repo)
 	prepCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 

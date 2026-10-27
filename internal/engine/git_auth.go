@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 )
@@ -117,4 +118,21 @@ func applyWorkspaceGitAuth(ctx context.Context, workspace string) error {
 		}
 	}
 	return nil
+}
+
+type gitLabCredentialsKey struct{}
+type gitLabCredentials struct{ base, token string }
+
+func withGitLabCredentials(ctx context.Context, base, token string) context.Context {
+	return context.WithValue(ctx, gitLabCredentialsKey{}, gitLabCredentials{base, token})
+}
+func gitContextForRepository(ctx context.Context, rc domain.RepositoryContext) context.Context {
+	if rc.Provider != "gitlab" {
+		return ctx
+	}
+	cred, _ := ctx.Value(gitLabCredentialsKey{}).(gitLabCredentials)
+	if _, ok := domain.ParseGitLabRepositoryURL(rc.CloneURL, cred.base); !ok {
+		return gitwork.WithHostCredential(ctx, "", "")
+	}
+	return gitwork.WithHostCredential(ctx, cred.base, cred.token)
 }

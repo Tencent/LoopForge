@@ -86,3 +86,49 @@ func TestProviderUserCredentials(t *testing.T) {
 		})
 	}
 }
+
+func TestGitLabCredentialsKeepHostsBound(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.PutUser(domain.User{LoginName: "gitlab-user"}); err != nil {
+		t.Fatal(err)
+	}
+	u, ok := st.UserByLoginName("gitlab-user")
+	if !ok {
+		t.Fatal("missing user")
+	}
+	base := "http://git.example.invalid:9530"
+	if _, err := st.UpdateUserCredentials(u.ID, UserCredentialUpdate{GitToken: "github-secret", GitLabToken: "gitlab-secret", GitLabBaseURL: &base}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutUser(domain.User{ID: u.ID, LoginName: u.LoginName}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.User(u.ID)
+	if got.GitToken != "github-secret" || got.GitLabToken != "gitlab-secret" || got.GitLabBaseURL != base {
+		t.Fatal("credential not preserved")
+	}
+	pub := domain.PublicUser(got)
+	b, _ := json.Marshal(pub)
+	if strings.Contains(string(b), "secret") || !pub.GitLabTokenConfigured {
+		t.Fatal("credential exposed")
+	}
+	other := "http://other.example.invalid"
+	if _, err := st.UpdateUserCredentials(u.ID, UserCredentialUpdate{GitLabBaseURL: &other}); err == nil {
+		t.Fatal("changing host without replacing or clearing token should fail")
+	}
+	got, _ = st.User(u.ID)
+	if got.GitLabBaseURL != base {
+		t.Fatal("host changed despite rejection")
+	}
+	if _, err := st.UpdateUserCredentials(u.ID, UserCredentialUpdate{GitLabBaseURL: &other, GitLabTokenClear: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.User(u.ID)
+	if got.GitLabBaseURL != other || got.GitLabToken != "" || got.GitToken != "github-secret" {
+		t.Fatal("clear changed unrelated credential")
+	}
+}

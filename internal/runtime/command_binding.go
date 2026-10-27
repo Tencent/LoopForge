@@ -41,6 +41,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	bound.environment["CODEBUDDY_API_KEY"] = ""
 	bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = ""
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
+	bound.environment["AGENTFLOW_GITLAB_TOKEN"] = ""
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
 	}
@@ -56,6 +57,9 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 		case BindGit:
 			if err := bindGitEnvironment(sandbox, workspace, bound.environment, credentials.GitToken); err != nil {
+				return CommandSpec{}, err
+			}
+			if err := BindGitLabEnvironment(bound.environment, credentials.GitLabBaseURL, credentials.GitLabToken); err != nil {
 				return CommandSpec{}, err
 			}
 		case BindMCP:
@@ -207,5 +211,32 @@ func writeGitAskPass(workspace, path string) error {
 	if err := writeManagedFile(workspace, path, []byte(gitAskPassScript), 0o700); err != nil {
 		return fmt.Errorf("write git askpass: %w", err)
 	}
+	return nil
+}
+
+// BindGitLabEnvironment configures a helper scoped to one GitLab origin; the token remains in the process environment.
+func BindGitLabEnvironment(env map[string]string, base, token string) error {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	token = strings.TrimSpace(token)
+	if base == "" {
+		return nil
+	}
+	if token == "" {
+		return fmt.Errorf("需求责任人未配置该 GitLab 的 Token")
+	}
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("GitLab 地址无效")
+	}
+	n, _ := strconv.Atoi(env["GIT_CONFIG_COUNT"])
+	helper := `!f() { test "$1" = get || exit 0; printf 'username=oauth2\npassword=%s\n' "$AGENTFLOW_GITLAB_TOKEN"; }; f`
+	env[fmt.Sprintf("GIT_CONFIG_KEY_%d", n)] = "credential." + base + ".helper"
+	env[fmt.Sprintf("GIT_CONFIG_VALUE_%d", n)] = helper
+	n++
+	env[fmt.Sprintf("GIT_CONFIG_KEY_%d", n)] = "http." + base + ".followRedirects"
+	env[fmt.Sprintf("GIT_CONFIG_VALUE_%d", n)] = "false"
+	n++
+	env["GIT_CONFIG_COUNT"] = strconv.Itoa(n)
+	env["AGENTFLOW_GITLAB_TOKEN"] = token
 	return nil
 }

@@ -152,6 +152,13 @@ func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandb
 	inv := request.PreparationInvocation
 	if inv != nil {
 		credentials.GitToken = invocationGitToken(inv)
+		for _, r := range inv.Repositories {
+			if r.GitAuthBaseURL != "" {
+				credentials.GitLabBaseURL = r.GitAuthBaseURL
+				credentials.GitLabToken = r.GitToken
+				break
+			}
+		}
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
 		credentials.TaihuPAT = inv.TaihuPAT
@@ -226,6 +233,13 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 	credentials := runtime.RunCredentials{}
 	if inv := request.PreparationInvocation; inv != nil {
 		credentials.GitToken = invocationGitToken(inv)
+		for _, r := range inv.Repositories {
+			if r.GitAuthBaseURL != "" {
+				credentials.GitLabBaseURL = r.GitAuthBaseURL
+				credentials.GitLabToken = r.GitToken
+				break
+			}
+		}
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
 	}
