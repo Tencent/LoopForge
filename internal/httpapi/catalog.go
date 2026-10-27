@@ -141,7 +141,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if primary != "" {
 		info, ok := parseRepository(primary)
 		if !ok {
-			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供有效的 GitHub 仓库地址"})
+			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供 GitHub 地址或项目 Owner 已配置的 GitLab 实例中的仓库地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {
@@ -163,7 +163,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		if info, ok := parseRepository(v.GongfengProjectID); ok {
 			v.GongfengProjectID = info.Project
 		} else if !strings.HasPrefix(v.GongfengProjectID, "github:") && !domain.IsSafeGongfengProjectID(v.GongfengProjectID) {
-			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供有效的 GitHub 仓库地址"})
+			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供 GitHub 地址或项目 Owner 已配置的 GitLab 仓库地址"})
 			return
 		}
 	}
@@ -193,7 +193,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		}
 	}
 	if v.ProjectID == "" || v.Name == "" || v.GongfengProjectID == "" {
-		c.JSON(400, map[string]string{"error": "请提供 projectId 和 GitHub 仓库地址 repoUrl，名称和仓库标识会自动识别"})
+		c.JSON(400, map[string]string{"error": "请提供 projectId 和 GitHub / GitLab 仓库地址 repoUrl，名称和仓库标识会自动识别"})
 		return
 	}
 	if _, ok := h.repo.Project(v.ProjectID); !ok {
