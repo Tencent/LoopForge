@@ -132,3 +132,38 @@ test('conversation workspaces are listed by requirement or goal, never as 自由
   const found = app.evaluate(`state.runQuery='对话改代码';renderRuns();document.querySelectorAll('#runList .run-card').length`);
   assert.equal(found, 3);
 });
+
+test('run detail topology shows each stage time window beside its stage label', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const workflow = app.evaluate('structuredClone(state.data.workflows[0])');
+  const nodes = Object.fromEntries((workflow.nodes || []).map((node, i) => [node.id, {
+    status: 'succeeded', attempt: 1,
+    startedAt: `2026-10-21T10:0${i}:00Z`, finishedAt: `2026-10-21T10:0${i + 3}:00Z`,
+  }]));
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'), status: 'succeeded',
+    finishedAt: '2026-10-21T10:09:00Z', workflowSnapshot: workflow, nodes,
+  };
+  app.router.get('/api/runs/run-1', run);
+  app.evaluate(`state.data.runs=[${JSON.stringify(run)}];state.selectedRun='run-1';state.activeRun=state.data.runs[0]`);
+  app.evaluate(`switchView('runs');showRunDetail('run-1')`);
+  await settle(6);
+
+  const labels = [...app.document.querySelectorAll('#runsView .graph-stage-label')];
+  const stageIds = app.evaluate(`workflowStages(${JSON.stringify(workflow)}).map(stage=>stage.map(node=>node.id))`);
+  assert.equal(labels.length, stageIds.length, 'every stage should keep its label');
+  stageIds.forEach((ids, index) => {
+    const label = labels[index];
+    assert.match(label.querySelector('.graph-stage-name').textContent, /^\u9636\u6bb5 \d/);
+    const starts = ids.map((id) => new Date(nodes[id].startedAt).getTime());
+    const ends = ids.map((id) => new Date(nodes[id].finishedAt).getTime());
+    const expected = `${new Date(Math.min(...starts)).toLocaleTimeString()} \u2192 ${new Date(Math.max(...ends)).toLocaleTimeString()}`;
+    assert.equal(label.querySelector('.graph-stage-time').textContent, expected,
+      'stage label should show the stage start and finish time');
+  });
+
+  const runtime = app.document.querySelector('#runsView .node-inspector .runtime-details');
+  assert.ok(runtime, 'node inspector should keep the runtime details row');
+  assert.doesNotMatch(runtime.textContent, /\u2192/, 'time window is no longer repeated under the node output');
+});
