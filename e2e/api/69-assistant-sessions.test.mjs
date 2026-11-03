@@ -111,14 +111,13 @@ test('generation endpoints answer for an idle conversation', async () => {
   await api('POST', `${S}/${session.id}/generation/cancel`, {}, { expect: [404, 409] });
 });
 
-test('project conversations: non-members get nothing, members write but cannot delete or rewrite others', { skip: tokenBSkip }, async () => {
+test('project conversations: non-members read only, members share full access', { skip: tokenBSkip }, async () => {
   const userB = await tokenOwner(cfg.tokenB);
   await withProjectMember(userB.id, null);
   const B = (method, path, body, expect) => api(method, path, body, asB({ expect }));
 
-  // Anyone can register, so a link alone must not open a project conversation.
-  await B('GET', `${S}/${session.id}`, undefined, 403);
-  await B('GET', `${S}/${session.id}/generation`, undefined, 403);
+  const view = await B('GET', `${S}/${session.id}`, undefined, 200);
+  assert.equal(view.readOnly, true, 'a non-member sees the conversation read-only');
   await B('PUT', `${S}/${session.id}`, { ...session, title: 'hijacked' }, 403);
   await B('POST', `${S}/${session.id}/fork`, { messageIndex: 0, content: 'x', updatedAt: session.updatedAt }, 403);
   await B('DELETE', `${S}/${session.id}`, undefined, 403);
@@ -128,14 +127,17 @@ test('project conversations: non-members get nothing, members write but cannot d
   const asMember = await B('GET', `${S}/${session.id}`, undefined, 200);
   assert.ok(!asMember.readOnly);
   assert.ok(list(await B('GET', S, undefined, 200)).some(s => s.id === session.id), 'members see project conversations');
-  await B('POST', `${S}/${session.id}/edit`, { messageIndex: 0, content: 'B 改写', updatedAt: asMember.updatedAt }, 403);
-  await B('POST', `${S}/${session.id}/archive`, { archived: true }, 403);
-  await B('DELETE', `${S}/${session.id}`, undefined, 403);
-  const branch = await B('POST', `${S}/${session.id}/fork`, { messageIndex: 0, content: 'B 的分支', updatedAt: asMember.updatedAt }, 201);
+  const edited = await B('POST', `${S}/${session.id}/edit`, { messageIndex: 0, content: 'B 改写', updatedAt: asMember.updatedAt }, 200);
+  assert.equal(edited.messages[0].content, 'B 改写');
+  assert.equal(edited.messages[0].authorId, userB.id, 'a member may rewrite any turn and becomes its author');
+  await B('POST', `${S}/${session.id}/archive`, { archived: true }, 200);
+  await B('POST', `${S}/${session.id}/archive`, { archived: false }, 200);
+  const current = await B('GET', `${S}/${session.id}`, undefined, 200);
+  const branch = await B('POST', `${S}/${session.id}/fork`, { messageIndex: 0, content: 'B 的分支', updatedAt: current.updatedAt }, 201);
   assert.equal(branch.messages[0].authorId, userB.id);
   await B('DELETE', `${S}/${branch.id}`, undefined, 200);
   await restore();
-  assert.equal((await get(`${S}/${session.id}`)).messages[0].content, '第一问（改）');
+  assert.equal((await get(`${S}/${session.id}`)).messages[0].content, 'B 改写');
 });
 
 test('delete removes the conversation', async () => {

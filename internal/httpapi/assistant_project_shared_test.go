@@ -36,8 +36,8 @@ func TestProjectConversationsAreSharedWithMembers(t *testing.T) {
 	if code := get(b, project.ID); code != 200 {
 		t.Fatalf("member cannot open project conversation: %d", code)
 	}
-	if code := get(out, project.ID); code != 403 {
-		t.Fatalf("non-member read project conversation: %d", code)
+	if code := get(out, project.ID); code != 200 {
+		t.Fatalf("non-member cannot read project conversation: %d", code)
 	}
 	if code := get(b, private.ID); code != 404 {
 		t.Fatalf("unbound conversation leaked: %d", code)
@@ -169,9 +169,9 @@ func TestProjectConversationsAreSharedWithMembers(t *testing.T) {
 	}
 }
 
-// Accounts are self-registered, so a link alone never opens a project
-// conversation: non-members can neither read nor change it.
-func TestProjectConversationsArePrivateToMembers(t *testing.T) {
+// Anyone signed in may read a project conversation by link; only project
+// members may continue it or change it.
+func TestProjectConversationsAreReadOnlyForNonMembers(t *testing.T) {
 	h, a, b, out, _ := sharedWorkbenchFixture(t)
 	var data bytes.Buffer
 	if err := png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
@@ -202,47 +202,43 @@ func TestProjectConversationsArePrivateToMembers(t *testing.T) {
 		return w
 	}
 
-	// Members read the full transcript; outsiders get nothing.
-	for _, u := range []domain.User{a, b} {
-		w := call(u, "GET", h.session, nil, "")
+	// Reading: transcript, readOnly marker, attachments that belong to the transcript.
+	for _, tc := range []struct {
+		user     domain.User
+		readOnly bool
+	}{{a, false}, {b, false}, {out, true}} {
+		w := call(tc.user, "GET", h.session, nil, "")
 		var got struct {
-			ReadOnly bool                      `json:"readOnly"`
-			Messages []domain.AssistantMessage `json:"messages"`
+			ReadOnly    bool                      `json:"readOnly"`
+			ProjectName string                    `json:"projectName"`
+			Messages    []domain.AssistantMessage `json:"messages"`
 		}
 		json.Unmarshal(w.Body.Bytes(), &got)
-		if w.Code != 200 || got.ReadOnly || len(got.Messages) != 2 {
-			t.Fatalf("%s read: %d readOnly=%v %s", u.LoginName, w.Code, got.ReadOnly, w.Body.String())
+		if w.Code != 200 || got.ReadOnly != tc.readOnly || len(got.Messages) != 2 || tc.readOnly && got.ProjectName == "" {
+			t.Fatalf("%s read: %d readOnly=%v %s", tc.user.LoginName, w.Code, got.ReadOnly, w.Body.String())
 		}
 	}
-	if w := call(out, "GET", h.session, nil, ""); w.Code != 403 || strings.Contains(w.Body.String(), "回答") || !strings.Contains(w.Body.String(), "加入项目") {
-		t.Fatalf("outsider read: %d %s", w.Code, w.Body.String())
-	}
-	download := func(u domain.User, id string) int {
-		c, w := workbenchContext(u, "GET", "/?sessionId="+session.ID, bytes.NewBuffer(nil))
+	download := func(id string) int {
+		c, w := workbenchContext(out, "GET", "/?sessionId="+session.ID, bytes.NewBuffer(nil))
 		c.Params = gin.Params{{Key: "id", Value: id}}
 		h.downloadAttachment(c)
 		return w.Code
 	}
-	if code := download(b, inside.ID); code != 200 {
-		t.Fatalf("member cannot open transcript image: %d", code)
+	if code := download(inside.ID); code != 200 {
+		t.Fatalf("viewer cannot open transcript image: %d", code)
 	}
-	for _, id := range []string{inside.ID, outside.ID} {
-		if code := download(out, id); code != 403 {
-			t.Fatalf("outsider fetched attachment %s: %d", id, code)
-		}
+	if code := download(outside.ID); code != 404 {
+		t.Fatalf("viewer fetched a file outside the transcript: %d", code)
 	}
 
-	// Generation progress is neither readable nor stoppable from outside.
+	// Generation progress is readable; stopping it is not.
 	pending := stored
 	pending.Messages = append(append([]domain.AssistantMessage{}, stored.Messages...), domain.AssistantMessage{Role: "user", Content: "继续", AuthorID: a.ID})
 	if err := h.repo.BeginAssistantGeneration(domain.AssistantGeneration{ID: "gen-readonly", SessionID: session.ID, UserID: a.ID, ActorID: a.ID, ProjectID: "workbench", Status: "running", StartedAt: now}, pending); err != nil {
 		t.Fatal(err)
 	}
-	if w := call(b, "GET", h.generation, nil, ""); w.Code != 200 {
-		t.Fatalf("member cannot follow generation: %d %s", w.Code, w.Body.String())
-	}
-	if w := call(out, "GET", h.generation, nil, ""); w.Code != 403 {
-		t.Fatalf("outsider followed generation: %d %s", w.Code, w.Body.String())
+	if w := call(out, "GET", h.generation, nil, ""); w.Code != 200 {
+		t.Fatalf("viewer cannot follow generation: %d %s", w.Code, w.Body.String())
 	}
 	if w := call(out, "POST", h.generation, map[string]any{}, "generationId=gen-readonly"); w.Code != 403 {
 		t.Fatalf("viewer stopped generation: %d", w.Code)
@@ -282,7 +278,7 @@ func TestProjectConversationsArePrivateToMembers(t *testing.T) {
 		t.Fatalf("viewer changed the conversation: %+v", after)
 	}
 
-	// Other projects' conversations never show up in one's list.
+	// Viewing by link does not add other projects' conversations to one's list.
 	c, w := workbenchContext(out, "GET", "/", bytes.NewBuffer(nil))
 	h.listSessions(c)
 	if strings.Contains(w.Body.String(), session.ID) {

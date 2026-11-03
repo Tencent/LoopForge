@@ -49,14 +49,20 @@ func (h *assistantHandlers) conversationScope(c *gin.Context, id, runID, project
 	return userID, false, nil
 }
 
-var errProjectConversationReadOnly = fmt.Errorf("你不是该项目的成员，加入项目后才能查看和继续这个会话")
+var errProjectConversationReadOnly = fmt.Errorf("你不是该项目的成员，只能查看这个会话；加入项目后才能继续聊")
 
-// conversationReadScope is the viewing scope. Anyone may register an account,
-// so a project conversation is readable only by project members, the same set
-// conversationScope allows; readOnly is therefore never set here.
+// conversationReadScope extends conversationScope for viewing: any signed-in
+// user may read an ordinary project conversation by link. Writing, continuing,
+// branching and attachments outside the transcript still use conversationScope.
 func (h *assistantHandlers) conversationReadScope(c *gin.Context, id string, userID int64) (owner int64, shared, readOnly bool, err error) {
 	owner, shared, err = h.conversationScope(c, id, "", "", userID)
-	return owner, shared, false, err
+	if err == nil {
+		return owner, shared, false, nil
+	}
+	if s, ok := h.repo.ProjectAssistantSession(id); ok {
+		return s.UserID, true, true, nil
+	}
+	return 0, false, false, err
 }
 func (h *assistantHandlers) runConversation(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)

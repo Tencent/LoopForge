@@ -46,12 +46,22 @@ func RecordBaseline(workspace, baseBranch string) error {
 		return err
 	}
 	var sha []byte
+	// The ref travels on stdin so a branch name never reaches git's argument list.
 	resolve := func(ref string) ([]byte, error) {
-		out, err := exec.Command("git", "-C", workspace, "rev-parse", "--verify", ref+"^{commit}").CombinedOutput()
+		if strings.ContainsAny(ref, "\r\n") {
+			return nil, fmt.Errorf("invalid ref %q", ref)
+		}
+		cmd := exec.Command("git", "-C", workspace, "cat-file", "--batch-check=%(objectname)")
+		cmd.Stdin = strings.NewReader(ref + "^{commit}\n")
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 		}
-		return out, nil
+		sha := strings.TrimSpace(string(out))
+		if !isObjectID(sha) {
+			return nil, fmt.Errorf("resolve %s: %s", ref, sha)
+		}
+		return []byte(sha), nil
 	}
 	if ref := strings.TrimSpace(baseBranch); ref != "" {
 		sha, err = resolve("origin/" + ref)
@@ -315,4 +325,16 @@ func ParseNameStatusNumstat(nameStatus, numstat []byte) []PatchFileSummary {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+func isObjectID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
 }
