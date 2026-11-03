@@ -204,7 +204,7 @@ func TestHydrateClarifyIssueFromDraftText(t *testing.T) {
 	}
 }
 
-func TestClarifyMCPInstructionsRequireTAPDCommentsAndIWiki(t *testing.T) {
+func TestClarifyMCPInstructionsRequireTAPDComments(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -217,20 +217,23 @@ func TestClarifyMCPInstructionsRequireTAPDCommentsAndIWiki(t *testing.T) {
 	if err := st.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: "https://example.test/tapd"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-58-project-platform", Name: "iWiki", ProjectID: "platform", MarketID: "58", Scope: "project", Transport: "http", URL: "https://example.test/iwiki"}); err != nil {
+	if err := st.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-wiki-project-platform", Name: "Wiki", ProjectID: "platform", MarketID: "58", Scope: "project", Transport: "http", URL: "https://example.test/wiki"}); err != nil {
 		t.Fatal(err)
 	}
 	h := &streamHandlers{deps: &deps{repo: st}}
 	issue := domain.Issue{
 		ProjectID: "platform", Source: "tapd", Title: "读评论",
-		Description: "方案见 https://iwiki.example.com/pages/viewpage.action?pageId=999001",
+		Description: "方案见 https://wiki.example.com/pages/viewpage.action?pageId=999001",
 		ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "1010000000100000555", ExternalType: "story", ExternalURL: "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100000555"},
 	}
 	prompt := h.clarifyMCPInstructions(issue, user, false)
-	for _, want := range []string{"submit_clarification", "tapd__proxy_execute_tool", "comments_get", "stories_get", "getDocument", "docid=999001"} {
+	for _, want := range []string{"submit_clarification", "tapd__proxy_execute_tool", "comments_get", "stories_get", "Wiki（id=mcp-wiki-project-platform", "其他已安装的 HTTP MCP"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
+	}
+	if strings.Contains(prompt, "getDocument") || strings.Contains(prompt, "docid=") {
+		t.Fatalf("a generic wiki MCP must not get vendor-specific document instructions:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "mcpCalls") {
 		t.Fatalf("clarify instructions still mention mcpCalls:\n%s", prompt)

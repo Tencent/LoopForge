@@ -37,9 +37,9 @@ func installTestTrackerMCPs(t *testing.T, st *repo.Store, projectID string) {
 }
 
 func TestMCPInstallIDSeparatesScopeAndOwner(t *testing.T) {
-	project := mcpInstallID("iwiki", "project", "platform")
-	personal := mcpInstallID("iwiki", "personal", "2")
-	if project == personal || project != "mcp-iwiki-project-platform" || personal != "mcp-iwiki-personal-2" {
+	project := mcpInstallID("wiki", "project", "platform")
+	personal := mcpInstallID("wiki", "personal", "2")
+	if project == personal || project != "mcp-wiki-project-platform" || personal != "mcp-wiki-personal-2" {
 		t.Fatalf("unexpected install ids: project=%q personal=%q", project, personal)
 	}
 }
@@ -63,7 +63,7 @@ func TestMCPMarketCatalogContainsOnlyPublicServices(t *testing.T) {
 	if !ok || item.URL != "https://api.githubcopilot.com/mcp/" || item.AuthType != "github-token" {
 		t.Fatalf("GitHub: %+v", item)
 	}
-	if _, ok := marketItem("iwiki"); ok {
+	if _, ok := marketItem("58"); ok {
 		t.Fatal("enterprise catalog must not ship by default")
 	}
 }
@@ -91,7 +91,7 @@ func TestMCPMarketSearch(t *testing.T) {
 		t.Fatalf("catalog meta = %+v", payload)
 	}
 	if len(payload.Items) == 0 {
-		t.Fatal("expected search hits for iwiki")
+		t.Fatal("expected search hits for github")
 	}
 	found := false
 	for _, item := range payload.Items {
@@ -101,7 +101,7 @@ func TestMCPMarketSearch(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("search iwiki missed id 58: %+v", payload.Items)
+		t.Fatalf("search github missed id github: %+v", payload.Items)
 	}
 
 	all := httptest.NewRecorder()

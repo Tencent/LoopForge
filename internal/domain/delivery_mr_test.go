@@ -93,19 +93,19 @@ func TestResolveRunDeliveryMRsPerRepository(t *testing.T) {
 func TestResolveRunDeliveryMRsAcceptsHTTPArtifactURL(t *testing.T) {
 	run := Run{
 		Repositories: []RepositoryContext{{
-			RepositoryID: "vpcdns", Name: "vpcdns_oss", GongfengProjectID: "dnspod/vpcdns/vpcdns_oss",
+			RepositoryID: "demodns", Name: "dns-service", GongfengProjectID: "example/dns/dns-service",
 			WorkBranch: "feature/story-1",
 		}},
 		Artifacts: []Artifact{{
 			NodeID: "mr", Name: "mr-body",
-			Content: "MR: http://git.example.com/dnspod/vpcdns/vpcdns_oss/merge_requests/558",
+			Content: "MR: http://git.example.com/example/dns/dns-service/merge_requests/558",
 		}},
 	}
 	got := ResolveRunDeliveryMRs(run, func(RepositoryContext) (DeliveryMR, bool) { return DeliveryMR{}, false })
-	if len(got) != 1 || got[0].IID != 558 || got[0].RepositoryID != "vpcdns" {
+	if len(got) != 1 || got[0].IID != 558 || got[0].RepositoryID != "demodns" {
 		t.Fatalf("http artifact MR not recovered: %+v", got)
 	}
-	if got[0].URL != "https://git.example.com/dnspod/vpcdns/vpcdns_oss/-/merge_requests/558" {
+	if got[0].URL != "https://git.example.com/example/dns/dns-service/-/merge_requests/558" {
 		t.Fatalf("url = %s", got[0].URL)
 	}
 }

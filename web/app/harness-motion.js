@@ -1151,7 +1151,7 @@
     settings: "settings", bots: "robot", projects: "users", flow: "workflow",
     agents: "user", mcp: "connector", rules: "doc", skills: "skills",
     dockerfiles: "layers", environments: "terminal", sandboxes: "server",
-    knowledge: "brain", metrics: "chart", deployments: "clock",
+    knowledge: "brain", metrics: "chart",
     businessDomains: "layers", businessDomainManagement: "layers",
     observability: "token", guide: "doc", platform: "gate",
   };

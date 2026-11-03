@@ -22,15 +22,15 @@ func TestMCPServerCredentialsAreMaskedAndSurviveEdits(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	server := domain.MCPServerDefinition{
-		ID: "knot", Name: "Knot", Transport: "http", URL: "https://knot.example/mcp", TimeoutSec: 60,
-		Headers: map[string]string{"X-Knot-Api-Token": "knot-secret", "X-Env": "prod", "Authorization": "Bearer ${secret:KNOT}"},
+		ID: "gateway", Name: "Gateway", Transport: "http", URL: "https://gateway.example/mcp", TimeoutSec: 60,
+		Headers: map[string]string{"X-Gateway-Api-Token": "gateway-secret", "X-Env": "prod", "Authorization": "Bearer ${secret:GATEWAY}"},
 	}
 	rec := requestWithHeaders(t, h, http.MethodPut, "/api/mcp-servers", server, nil)
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "knot-secret") {
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "gateway-secret") {
 		t.Fatalf("PUT = %d %s", rec.Code, rec.Body.String())
 	}
 	for _, path := range []string{"/api/mcp-servers", "/api/bootstrap"} {
-		if body := requestWithHeaders(t, h, http.MethodGet, path, nil, nil).Body.String(); strings.Contains(body, "knot-secret") {
+		if body := requestWithHeaders(t, h, http.MethodGet, path, nil, nil).Body.String(); strings.Contains(body, "gateway-secret") {
 			t.Fatalf("GET %s leaked header: %s", path, body)
 		}
 	}
@@ -40,11 +40,11 @@ func TestMCPServerCredentialsAreMaskedAndSurviveEdits(t *testing.T) {
 	}
 	var edited domain.MCPServerDefinition
 	for _, item := range listed {
-		if item.ID == "knot" {
+		if item.ID == "gateway" {
 			edited = item
 		}
 	}
-	if edited.Headers["X-Knot-Api-Token"] != domain.MaskedSecretValue || edited.Headers["Authorization"] != "Bearer ${secret:KNOT}" {
+	if edited.Headers["X-Gateway-Api-Token"] != domain.MaskedSecretValue || edited.Headers["Authorization"] != "Bearer ${secret:GATEWAY}" {
 		t.Fatalf("listed headers = %v", edited.Headers)
 	}
 	edited.Description = "改了描述"
@@ -52,8 +52,8 @@ func TestMCPServerCredentialsAreMaskedAndSurviveEdits(t *testing.T) {
 	if rec := requestWithHeaders(t, h, http.MethodPut, "/api/mcp-servers", edited, nil); rec.Code != http.StatusOK {
 		t.Fatalf("re-save = %d %s", rec.Code, rec.Body.String())
 	}
-	stored, _ := s.MCPServer("knot")
-	want := map[string]string{"X-Knot-Api-Token": "knot-secret", "X-Env": "prod", "Authorization": "Bearer ${secret:KNOT}"}
+	stored, _ := s.MCPServer("gateway")
+	want := map[string]string{"X-Gateway-Api-Token": "gateway-secret", "X-Env": "prod", "Authorization": "Bearer ${secret:GATEWAY}"}
 	if len(stored.Headers) != len(want) {
 		t.Fatalf("stored headers = %v", stored.Headers)
 	}
@@ -62,9 +62,9 @@ func TestMCPServerCredentialsAreMaskedAndSurviveEdits(t *testing.T) {
 			t.Fatalf("stored headers = %v", stored.Headers)
 		}
 	}
-	edited.Headers["X-Knot-Api-Token"] = "rotated"
+	edited.Headers["X-Gateway-Api-Token"] = "rotated"
 	requestWithHeaders(t, h, http.MethodPut, "/api/mcp-servers", edited, nil)
-	if stored, _ := s.MCPServer("knot"); stored.Headers["X-Knot-Api-Token"] != "rotated" {
+	if stored, _ := s.MCPServer("gateway"); stored.Headers["X-Gateway-Api-Token"] != "rotated" {
 		t.Fatalf("token rotation not saved: %v", stored.Headers)
 	}
 }

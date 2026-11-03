@@ -431,9 +431,6 @@ func mcpAliases(m domain.MCPServerDefinition) []string {
 	}
 	key := strings.ToLower(m.ID + " " + m.URL)
 	var out []string
-	if m.ID == "zhiyan-pipeline" || strings.Contains(key, "zhiyan") || strings.Contains(key, "/qci") {
-		out = append(out, "coding-mcp")
-	}
 	if m.ID == "gongfeng-delivery" || strings.Contains(key, "gongfeng") {
 		out = append(out, "gongfeng")
 	}
@@ -508,7 +505,7 @@ func headerLookup(headers map[string]string, name string) (string, bool) {
 
 func mcpUsageHint(servers []domain.MCPServerDefinition) string {
 	var ids []string
-	hasQCI, hasGongfeng := false, false
+	hasGongfeng := false
 	for _, m := range servers {
 		if strings.TrimSpace(m.ID) != "" {
 			ids = append(ids, m.ID)
@@ -517,9 +514,6 @@ func mcpUsageHint(servers []domain.MCPServerDefinition) string {
 			continue
 		}
 		key := strings.ToLower(m.ID + " " + m.URL)
-		if m.ID == "coding-mcp" || m.ID == "zhiyan-pipeline" || strings.Contains(key, "zhiyan") || strings.Contains(key, "/qci") {
-			hasQCI = true
-		}
 		if m.ID == "gongfeng" || m.ID == "gongfeng-delivery" || strings.Contains(key, "gongfeng") {
 			hasGongfeng = true
 		}
@@ -531,8 +525,8 @@ func mcpUsageHint(servers []domain.MCPServerDefinition) string {
 	b.WriteString("## MCP 怎么用\n\n")
 	b.WriteString("本节点的平台 MCP 配置已按 Agent allowlist 严格注入：")
 	b.WriteString(strings.Join(ids, "、"))
-	b.WriteString("。别名：zhiyan-pipeline=coding-mcp，gongfeng-delivery=gongfeng。\n")
-	b.WriteString("这些 MCP 已写入 `--mcp-config .agentflow/config/<agent>/mcp.json`，会以原生工具出现（名称常为 mcp__<server>__*）。直接调原生工具。HTTP MCP 禁止用 curl 打网关，禁止 Bash mcporter：JSON body 容易丢，QueryErrorLog 会变成 taskId=0，报 query old totalresult 0 failed。\n")
+	b.WriteString("。别名：gongfeng-delivery=gongfeng。\n")
+	b.WriteString("这些 MCP 已写入 `--mcp-config .agentflow/config/<agent>/mcp.json`，会以原生工具出现（名称常为 mcp__<server>__*）。直接调原生工具。HTTP MCP 禁止用 curl 打网关，禁止 Bash mcporter：JSON body 容易丢，参数会被静默截断。\n")
 	if hasGongfeng {
 		b.WriteString("\n### 工蜂：看 MR / Checkers\n")
 		b.WriteString("真值是 commit status，不是审查报告是否 SUCCESS。\n")
@@ -540,15 +534,6 @@ func mcpUsageHint(servers []domain.MCPServerDefinition) string {
 		b.WriteString("2. 原生 `get_commit_combined_status`（sha=当前 HEAD）。这是 Checkers 列表。轮询最多 20 轮、间隔 90s，直到应等项终态。\n")
 		b.WriteString("3. 失败项再 `search_merge_request_notes` 翻页对齐建议；`get_review_intelligent_result` 只表示审查意见，**不等于** MR审查 pipeline 绿。\n")
 		b.WriteString("4. 创建 MR 用 `create_merge_request`；更新已有本轮 MR 才 `update_merge_request`；讨论区回评用 `create_merge_request_note`。\n")
-	}
-	if hasQCI {
-		b.WriteString("\n### 智研 QCI：看流水线失败原因\n")
-		b.WriteString("从 check 的 target_url 抽出 pipeline_id 和 build_id。近 30 天构建用原生 **coding_mcp**：\n")
-		b.WriteString("`GET /pipeline/{pipeline_id}/totalresult/{build_id}`\n")
-		b.WriteString("**禁止** `/pipeline/{id}/oldtotalresult`（冷库，会 0 条，不是「MCP 没数据」）。\n")
-		b.WriteString("从 totalresult 取失败 task 的真实 taskId（数字，禁止 0）。拉错误日志只能用原生 **coding_skill**（不要 coding_mcp，那条路径 404）：\n")
-		b.WriteString("`POST /QueryErrorLog` body=`{\"pipelineId\":...,\"buildId\":...,\"taskId\":<上一步的id>}` 三个字段都必填。\n")
-		b.WriteString("若返回 `query old totalresult 0 failed`：MCP 是通的，是 ID 丢了。用 totalresult 里的数字重试。\n")
 		b.WriteString("自动代码审查类检查失败若是 401 / no permission 等鉴权错误且没有代码审查结论，记 SKIP_INFRA，不要当成业务缺陷打回。\n")
 	}
 	return b.String()

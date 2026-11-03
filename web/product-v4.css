@@ -3505,7 +3505,7 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 }
 
 /* 列表页：数据少或为空时主列表卡片与空状态填满视图剩余高度；内容超出一屏时视图自然撑高，仍由 main 滚动。 */
-:is(#issuesView,#approvalsView,#sopsView,#agentsView,#assetsView,#botsView,#deploymentsView,#runnersView,#guideView).page-view.active{display:flex;flex-direction:column}
+:is(#issuesView,#approvalsView,#sopsView,#agentsView,#assetsView,#botsView,#runnersView,#guideView).page-view.active{display:flex;flex-direction:column}
 #approvalsView .approval-list:has(>.approval-empty){flex:1 1 auto}
 #approvalsView .approval-list>.approval-empty{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center}
 #sopsView .sop-page:has(>#sopCatalog>.empty-properties){flex:1 1 auto}
@@ -3516,7 +3516,6 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 #botsView #botsContent{flex:1 1 auto}
 #botsView #botsContent>.bot-panel{flex:1 1 auto}
 #botsView #botsContent>.bot-panel:has(>.bot-guide:only-child){display:flex;flex-direction:column;justify-content:center}
-#deploymentsView #deploymentBody:has(>:is(.deployment-empty,.deployment-error):only-child){flex:1 1 auto;padding-bottom:0}
 #guideView #accessBody{flex:1 1 auto;display:flex;flex-direction:column}
 #guideView #accessBody>:is(.quick-wrap:has(>.access-tokens:only-child),.access-tokens,.access-grid){flex:1 1 auto}
 #guideView #accessBody>.quick-wrap:has(>.access-tokens:only-child),

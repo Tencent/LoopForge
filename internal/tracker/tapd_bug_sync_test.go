@@ -76,7 +76,7 @@ func TestTapdBugStatusToStatus(t *testing.T) {
 
 func TestUpsertTAPDBug(t *testing.T) {
 	svc := NewService()
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DNSPod"}}}
+	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DemoDNS"}}}
 	issue, err := svc.upsertTAPDBug(store, "dp", "10000000", tapdStory{
 		ID: "1010000000100002109", Name: "国际站dnssec调用digns服务失败",
 		Description: "## 问题描述\n连接异常", Status: "new", Priority: "low",

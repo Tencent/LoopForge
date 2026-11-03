@@ -499,7 +499,7 @@ paths:
     get:
       tags: [System]
       operationId: getEmployeePhoto
-      summary: Fetch employee avatar photo from TOF authentication service
+      summary: Fetch a user avatar from the configured SSO photo service
       parameters:
         - name: spec
           in: path
@@ -509,7 +509,7 @@ paths:
         - name: username
           in: path
           required: true
-          description: Employee English login name (with or without .png)
+          description: User login name (with or without .png)
           schema: {type: string}
       responses:
         "200":
@@ -525,7 +525,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "502":
-          description: TOF photo gateway error
+          description: SSO photo service error
   /api/auth/tokens:
     get:
       tags: [System]
@@ -2173,76 +2173,6 @@ paths:
                 $ref: "#/components/schemas/OpenObject"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/deployment-metrics:
-    get:
-      tags: [Analytics]
-      operationId: getDeploymentMetrics
-      summary: Query test-environment deployment duration (optional legacy integration)
-      description: Optional legacy CI integration that is not configured in the public edition. Uses a fixed pipeline and the signed-in user's platform credential. Loads all branches by default; branch is an optional filter. Other repositories are rejected.
-      parameters:
-        - {name: projectId, in: query, required: true, schema: {type: string}}
-        - {name: repositoryId, in: query, required: true, schema: {type: string}}
-        - {name: branch, in: query, required: false, description: Optional branch filter; omit to load all branches, schema: {type: string}}
-        - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
-      responses:
-        "200":
-          description: Normalized deployment metrics and build records
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [projectId, repositoryId, branch, pipelineProjectId, pipelineId, queriedAt, summary, records]
-                properties:
-                  projectId: {type: string}
-                  repositoryId: {type: string}
-                  repositoryName: {type: string}
-                  branch: {type: string}
-                  pipelineProjectId: {type: integer}
-                  pipelineId: {type: integer}
-                  pipelineUrl: {type: string, format: uri}
-                  queriedAt: {type: string, format: date-time}
-                  summary:
-                    type: object
-                    properties:
-                      total: {type: integer}
-                      succeeded: {type: integer}
-                      failed: {type: integer}
-                      running: {type: integer}
-                      successRate: {type: number}
-                      deployments7d: {type: integer}
-                      average7dDurationMs: {type: integer, format: int64}
-                      averageDurationMs: {type: integer, format: int64}
-                      p50DurationMs: {type: integer, format: int64}
-                      p90DurationMs: {type: integer, format: int64}
-                      latestDurationMs: {type: integer, format: int64}
-                  records:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id: {type: string}
-                        runNumber: {type: integer, format: int64}
-                        status: {type: integer}
-                        statusLabel: {type: string}
-                        branch: {type: string}
-                        revision: {type: string}
-                        starter: {type: string}
-                        triggerType: {type: string}
-                        comment: {type: string}
-                        startedAt: {type: string, format: date-time}
-                        finishedAt: {type: string, format: date-time}
-                        durationMs: {type: integer, format: int64}
-                        url: {type: string, format: uri}
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "412":
-          description: QCI MCP or personal credential is not configured
-        "422":
-          description: The selected repository is not the configured pipeline repository
-        "502":
-          description: CodingCI query failed or returned an unsupported payload
   /api/runs:
     get:
       tags: [Runs]

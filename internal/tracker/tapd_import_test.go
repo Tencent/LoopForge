@@ -18,7 +18,7 @@ func TestImportTAPDStoryFromDetailURL(t *testing.T) {
 
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DNSPod"}}}
+	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DemoDNS"}}}
 	issue, err := svc.ImportTAPDStory(store, "dp", "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100000555", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func TestImportTAPDStoryScoresCompleteDescription(t *testing.T) {
 	defer gateway.Close()
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DNSPod"}}}
+	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DemoDNS"}}}
 	issue, err := svc.ImportTAPDStory(store, "dp", "https://tapd.example.com/tapd_fe/10000000/story/detail/1002", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +250,7 @@ func TestSyncTAPDStoryDoesNotScoreOrGate(t *testing.T) {
 	defer gateway.Close()
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DNSPod"}}}
+	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DemoDNS"}}}
 	issue, err := svc.upsertTAPDStory(store, "dp", "10000000", tapdStory{ID: "3001", Name: "【国内站】mq_flush_dns命令CMQ SDK连接异常", Status: "open"}, 0, false)
 	if err != nil {
 		t.Fatal(err)

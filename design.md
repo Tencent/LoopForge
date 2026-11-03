@@ -108,7 +108,7 @@
 | 状态色 info / success / error / warn / neutral | `#597dcc` `#338768` `#c15161` `#b7791f` `#6b6b76` | `#8aa8ee` `#34d399` `#f0899a` `#f2c46d` `#a1a1ac` |
 | 阴影 | `--hui-panel-shadow`（面板、卡片）与 `--hui-popover-shadow`（菜单、下拉、浮层）分开使用 | 同名 |
 
-设置区里尚未改写的旧页面（个人配置、项目配置、执行机器、角色定义、研发效能、部署耗时、业务领域、接入指南、平台管理、领域管理）在各自视图作用域内把旧基础令牌（`--text`、`--muted`、`--line`、`--panel`、`--blue`、`--v3-*` 等）映射到 `--hui-*`，只改颜色，不动尺寸。
+设置区里尚未改写的旧页面（个人配置、项目配置、执行机器、角色定义、研发效能、业务领域、接入指南、平台管理、领域管理）在各自视图作用域内把旧基础令牌（`--text`、`--muted`、`--line`、`--panel`、`--blue`、`--v3-*` 等）映射到 `--hui-*`，只改颜色，不动尺寸。
 
 ### 组件外观
 
@@ -124,7 +124,7 @@
 
 ### 启用视图与设置区容器
 
-按钮、页头、输入的映射只对登记视图生效：`#issuesView`、`#approvalsView`、`#assetsView`、`#mcpView`、`#botsView`、`#knowledgeView` 以及设置区各视图（`#settingsView`、`#projectsView`、`#runnersView`、`#agentsView`、`#metricsView`、`#deploymentsView`、`#businessDomainsView`、`#guideView`、`#platformView`、`#businessDomainManagementView`），外加挂到 `<body>` 的 `#agentModal`、`#customMcpModal`、`.pw-root`、`#kbDrawer`。
+按钮、页头、输入的映射只对登记视图生效：`#issuesView`、`#approvalsView`、`#assetsView`、`#mcpView`、`#botsView`、`#knowledgeView` 以及设置区各视图（`#settingsView`、`#projectsView`、`#runnersView`、`#agentsView`、`#metricsView`、`#businessDomainsView`、`#guideView`、`#platformView`、`#businessDomainManagementView`），外加挂到 `<body>` 的 `#agentModal`、`#customMcpModal`、`.pw-root`、`#kbDrawer`。
 
 设置区视图的外层内容统一居中、最大宽 1200px（`.page-view.active` 的直接子元素），页面不再各自限宽。流程设计（`#flowView`）、工作区页面、图标栏、侧栏与顶栏不受影响。
 

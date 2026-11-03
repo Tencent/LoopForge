@@ -71,21 +71,20 @@ type Server struct {
 	projects        *projectsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
-	catalog         *catalogHandlers           // catalog.go
-	mcp             *mcpHandlers               // mcp.go
-	market          *marketHandlers            // mcp_market.go
-	skillhub        *skillhubHandlers          // skillhub_market.go
-	issues          *issuesHandlers            // issues.go（依赖 tasks/stream）
-	tasks           *tasksHandlers             // tasks.go
-	runs            *runsHandlers              // runs.go
-	previews        *previewsHandlers          // run_preview.go
-	browser         *browserHandlers           // browser.go
-	stream          *streamHandlers            // stream.go
-	runners         *runnersHandlers           // runners.go
-	schedule        *scheduleHandlers          // schedule.go（align.go 并入）
-	tokens          *tokenHandlers             // auth_tokens.go
-	syncAPI         *syncHandlers              // tracker.go
-	deploy          *deploymentMetricsHandlers // deployment_metrics.go
+	catalog         *catalogHandlers  // catalog.go
+	mcp             *mcpHandlers      // mcp.go
+	market          *marketHandlers   // mcp_market.go
+	skillhub        *skillhubHandlers // skillhub_market.go
+	issues          *issuesHandlers   // issues.go（依赖 tasks/stream）
+	tasks           *tasksHandlers    // tasks.go
+	runs            *runsHandlers     // runs.go
+	previews        *previewsHandlers // run_preview.go
+	browser         *browserHandlers  // browser.go
+	stream          *streamHandlers   // stream.go
+	runners         *runnersHandlers  // runners.go
+	schedule        *scheduleHandlers // schedule.go（align.go 并入）
+	tokens          *tokenHandlers    // auth_tokens.go
+	syncAPI         *syncHandlers     // tracker.go
 	notifications   *notificationHandlers
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
@@ -163,7 +162,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		deploy:          &deploymentMetricsHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
 		feedback:        &feedbackHandlers{deps: d},
 	}
@@ -453,7 +451,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/insights/v1/sources/:id", api.insights.revokeSource)
 	g.GET("/api/analytics", api.runs.analytics)
 	g.GET("/api/observability/spec", api.observabilitySpec)
-	g.GET("/api/deployment-metrics", api.deploy.deploymentMetrics)
 	g.POST("/api/otel/*path", api.otel)
 
 	// --- page feedback (standalone, no project) ---

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .agentlens import bootstrap
+from . import envfile
 
 
 
@@ -278,9 +278,9 @@ def _int_value(
 
 
 def load_config(cwd: str | None = None) -> CLSConfig:
-    project_root = bootstrap.project_root(cwd)
-    env_file = bootstrap.read_env_file(project_root / ".env")
-    env_local = bootstrap.read_env_file(project_root / ".env.local")
+    project_root = envfile.project_root(cwd)
+    env_file = envfile.read_env_file(project_root / ".env")
+    env_local = envfile.read_env_file(project_root / ".env.local")
     return CLSConfig(
         enabled=_enabled_flag(env_local=env_local, env_file=env_file),
         endpoint=_value(

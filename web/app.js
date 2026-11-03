@@ -21,8 +21,7 @@ const state = {
   accessTab:localStorage.getItem('agentflow.accessTab')||'setup', accessClient:'cursor',
   accessCapabilities:null, accessCapabilitiesStatus:'idle', accessCapabilitiesError:'',
   accessTokens:[], accessTokensStatus:'idle', accessTokensError:'', revealedToken:'',
-  deploymentData:null, deploymentError:'', deploymentLoading:false, deploymentRepositoryId:'', deploymentBranch:'',
-  metricsRange:['7d','30d','90d','365d','custom'].includes(localStorage.getItem('agentflow.metricsRange'))?localStorage.getItem('agentflow.metricsRange'):'30d', metricsDateFrom:localStorage.getItem('agentflow.metricsDateFrom')||'', metricsDateTo:localStorage.getItem('agentflow.metricsDateTo')||'', metricsData:null, metricsIssues:[], metricsBenchmark:null, metricsLoading:false, metricsError:'', metricsTrendMetric:localStorage.getItem('agentflow.metricsTrendMetric')||'deliveries', metricsDeploymentData:null, metricsDeploymentError:'', metricsDeploymentLoading:false,
+  metricsRange:['7d','30d','90d','365d','custom'].includes(localStorage.getItem('agentflow.metricsRange'))?localStorage.getItem('agentflow.metricsRange'):'30d', metricsDateFrom:localStorage.getItem('agentflow.metricsDateFrom')||'', metricsDateTo:localStorage.getItem('agentflow.metricsDateTo')||'', metricsData:null, metricsIssues:[], metricsLoading:false, metricsError:'', metricsTrendMetric:localStorage.getItem('agentflow.metricsTrendMetric')||'deliveries',
   issueSelectionMode:false, issueSelection:new Set(), issueSelectionScope:'', issueBulkDeleting:false, issueBulkDeleteProgress:null, issueBulkDeleteResult:null,
   listPages:{}
 };
@@ -1352,7 +1351,6 @@ function bind(){
   $('#refreshApprovals').onclick=()=>renderApprovals(false);
   $('#refreshObs').onclick=refreshObs;
   $('#refreshMetrics').onclick=()=>refreshMetrics(true);
-  $('#refreshDeployments').onclick=()=>refreshDeployments(true);
   $('#exportObsReport').onclick=exportObsReport;
   $$('.obs-tab').forEach(btn=>btn.onclick=()=>switchObsTab(btn.dataset.obsTab));
   $$('.drawer-tab').forEach(btn=>btn.onclick=()=>{state.issueDetailTab=btn.dataset.dtab;$$('.drawer-tab').forEach(x=>x.classList.toggle('active',x===btn));renderIssueDetailTab()});
@@ -1377,10 +1375,6 @@ function bind(){
     if($('#observabilityView').classList.contains('active'))refreshObs();
     if($('#knowledgeView')?.classList.contains('active')&&typeof renderKnowledgeView==='function')renderKnowledgeView();
     if($('#metricsView').classList.contains('active'))refreshMetrics();
-    if($('#deploymentsView').classList.contains('active')){
-      if(!canShowSkillhubEfficiency()){switchView('dashboard')}
-      else{state.deploymentData=null;state.deploymentError='';state.deploymentRepositoryId='';state.deploymentBranch='';renderDeploymentDashboard();refreshDeployments()}
-    }
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
@@ -1581,7 +1575,7 @@ function settingsSidebarExpanded(){
 }
 let settingsSidebarEntryFrame=0;
 let settingsSidebarWasManaged=false;
-const settingsManagementViews=['settings','runners','bots','projects','flow','agents','mcp','rules','skills','dockerfiles','environments','sandboxes','knowledge','metrics','deployments','businessDomains','guide','platform','businessDomainManagement'];
+const settingsManagementViews=['settings','runners','bots','projects','flow','agents','mcp','rules','skills','dockerfiles','environments','sandboxes','knowledge','metrics','businessDomains','guide','platform','businessDomainManagement'];
 const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let settingsRouteTransition=null;
 let settingsRouteApplying=false;
@@ -1753,7 +1747,7 @@ function setSettingsSidebarExpanded(expanded){
     });
   }
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',bots:'Bot 管理',runs:'运行记录',metrics:'研发效能',deployments:'部署耗时',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'MCP 管理',rules:'规则管理',skills:'技能管理',dockerfiles:'Dockerfile',environments:'环境安装脚本',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',businessDomains:'业务领域',platform:'平台管理',businessDomainManagement:'领域管理',runners:'执行机器',settings:'个人配置',access:'接入方式',guide:'接入指南',knowledge:'知识中心'}}
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',bots:'Bot 管理',runs:'运行记录',metrics:'研发效能',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'MCP 管理',rules:'规则管理',skills:'技能管理',dockerfiles:'Dockerfile',environments:'环境安装脚本',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',businessDomains:'业务领域',platform:'平台管理',businessDomainManagement:'领域管理',runners:'执行机器',settings:'个人配置',access:'接入方式',guide:'接入指南',knowledge:'知识中心'}}
 function activeViewName(){if(state.currentView)return state.currentView;const el=document.querySelector('.view.active');return el?el.id.replace(/View$/,''):''}
 function setCapabilityNavExpanded(expanded){const toggle=$('#capabilityNavToggle'),group=$('#capabilityNavGroup');if(!toggle||!group)return;toggle.setAttribute('aria-expanded',String(expanded));group.hidden=!expanded;localStorage.setItem('agentflow.capabilityNavExpanded',String(expanded))}
 function setEnvironmentNavExpanded(expanded){const toggle=$('#environmentNavToggle'),group=$('#environmentNavGroup');if(!toggle||!group)return;toggle.setAttribute('aria-expanded',String(expanded));group.hidden=!expanded;localStorage.setItem('agentflow.environmentNavExpanded',String(expanded))}
@@ -1896,7 +1890,6 @@ function switchView(name){
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   if(name==='businessDomainManagement'&&!canAccessPlatformManagement())name='collaboration';
-  if(name==='deployments'&&!canShowSkillhubEfficiency())name='collaboration';
   const previous=activeViewName();
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
@@ -1973,7 +1966,6 @@ function switchView(name){
   if(name==='metrics'){const key=metricsQueryKey();if(state.metricsDataKey!==key&&metricsPendingKey!==key)refreshMetrics();else renderMetricsDashboard()}
   if(name==='approvals')renderApprovals(false)
   if(name==='observability')refreshObs()
-  if(name==='deployments'){renderDeploymentDashboard();if(!state.deploymentData&&!state.deploymentLoading&&!state.deploymentError)refreshDeployments()}
   if(name==='agents'){api('/api/agents',{silent:true}).then(agents=>{state.data.agents=agents;renderAgents()}).catch(e=>toast(e.message));renderAgents();applyAgentRoute()}
   if(name==='settings')renderPersonalSettings();
   if(name==='platform')renderPlatformAdminPanel();
@@ -1993,4 +1985,4 @@ function switchView(name){
   if(name==='guide')renderGuide();
   if(name==='flow'){if(!state.workflow?.nodes?.some(n=>n.id===state.selectedNode))state.selectedNode=null;renderWorkflowMeta();renderCanvas();renderProperties();setFlowView('canvas');refreshGenericWorkflowRoles()}
 }
-function renderAll(){renderUserBadge();renderPlatformNav();renderObsTabs();renderProjectSwitcher();renderIssues();renderSOPCatalog();renderWorkflowMeta();renderCanvas();renderProperties();renderAgents();renderAssets();renderMCPManagement();renderRuns();renderSync();renderProjectAdmin();renderDashboard();renderDeploymentDashboard();renderGuide();updateApprovalBadge();showDirectRunButton($('#flowView').classList.contains('active'))}
+function renderAll(){renderUserBadge();renderPlatformNav();renderObsTabs();renderProjectSwitcher();renderIssues();renderSOPCatalog();renderWorkflowMeta();renderCanvas();renderProperties();renderAgents();renderAssets();renderMCPManagement();renderRuns();renderSync();renderProjectAdmin();renderDashboard();renderGuide();updateApprovalBadge();showDirectRunButton($('#flowView').classList.contains('active'))}

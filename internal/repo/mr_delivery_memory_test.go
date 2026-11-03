@@ -461,12 +461,12 @@ func TestReconcileDeliveryMRStatesRecoversHTTPArtifactLink(t *testing.T) {
 		ID: "run-http", Status: "succeeded", UpdatedAt: time.Now().UTC(),
 		ExecutionContext: domain.TelemetryContext{IssueID: issue.ID},
 		Repositories: []domain.RepositoryContext{{
-			RepositoryID: "vpcdns", Name: "vpcdns_oss", GongfengProjectID: "dnspod/vpcdns/vpcdns_oss",
+			RepositoryID: "demodns", Name: "dns-service", GongfengProjectID: "example/dns/dns-service",
 			WorkBranch: "feature/story-1",
 		}},
 		Artifacts: []domain.Artifact{{
 			NodeID: "mr", Name: "mr-body",
-			Content: "http://git.example.com/dnspod/vpcdns/vpcdns_oss/merge_requests/558",
+			Content: "http://git.example.com/example/dns/dns-service/merge_requests/558",
 		}},
 	}
 	if err := s.PutRun(run); err != nil {
@@ -476,7 +476,7 @@ func TestReconcileDeliveryMRStatesRecoversHTTPArtifactLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := s.Issue(issue.ID)
-	want := "https://git.example.com/dnspod/vpcdns/vpcdns_oss/-/merge_requests/558"
+	want := "https://git.example.com/example/dns/dns-service/-/merge_requests/558"
 	if len(got.DeliveryMRs) != 1 || got.DeliveryMRURL != want || got.DeliveryMRs[0].IID != 558 {
 		t.Fatalf("locked issue did not recover http MR: %+v", got)
 	}

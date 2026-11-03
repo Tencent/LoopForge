@@ -32,7 +32,7 @@ devflow 项目完全不受影响：
 | event | 实际顶层字段 | 说明 |
 |---|---|---|
 | `start` | `event`, `sid`, `agent`, `ts` | 会话开始 |
-| `user_prompt_submit` | `event`, `sid`, `agent`, `turn_id`, `prompt_len`, `ts` | 新 turn 边界；AgentLens 侧按 `1 Trace = 1 Turn` 生成 trace |
+| `user_prompt_submit` | `event`, `sid`, `agent`, `turn_id`, `prompt_len`, `ts` | 新 turn 边界；之后没有自带 `turn_id` 的事件归入该 turn |
 | `tool` | `event`, `sid`, `agent`, `tool`, `ms`, `transcript_path`, `turn_id`, `ts`, `skill`, `rule`, `cwd`, `call_id`, `message_id`, `tool_details`, `task_slug`?, `stage`?, `pt_id`? | 工具调用与耗时 |
 | `usage` | `event`, `sid`, `agent`, `tool`, `tokens`, `model`, `transcript_path`, `source_offset`, `turn_id`, `message_id`, `ts`, `task_slug`?, `stage`? | transcript 增量 token / 模型 / 消息归属 |
 | `stop` | `event`, `sid`, `agent`, `tokens`, `model`, `transcript_path`, `source_offset`, `turn_id`, `message_id`, `ts`, `task_slug`?, `stage`? | 会话尾部 flush |
@@ -253,18 +253,6 @@ devflow 项目完全不受影响：
   "arguments_display_text": "path/to/file"
 }
 ```
-
-### AgentLens sidecar
-
-`.state.json[sid]._agentlens` 只作为内部状态使用，核心字段：
-
-- `enabled`: AgentLens 上报是否可用
-- `last_error`: 最近一次降级原因
-- `current_turn.carrier.traceparent`: 当前 turn 的 trace context
-- `current_turn.subagent_spans`: 同一 turn 下的子 agent span carrier
-- `current_turn.agent_spans`: 同一 turn 下按 agent 聚合的 span carrier 与累计统计
-- `current_turn.step_spans`: `(agent, message_id)` 级 step span registry
-- `turn_history`: 已结束 turn 的摘要
 
 ### Hook 接入
 

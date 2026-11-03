@@ -126,9 +126,8 @@ def build_daily_and_sessions(events: list[dict[str, Any]]) -> tuple[list[dict[st
     by_day: dict[str, dict[str, Any]] = {}
     by_sid: dict[str, dict[str, Any]] = {}
     by_sid_turn: dict[tuple[str, str], dict[str, Any]] = {}
-    # AgentLens（写 state.current_turn 的那套 tracing）默认关闭时，tool/usage 事件
-    # 自身的 turn_id 永远是 None——但 user_prompt_submit 事件不依赖 AgentLens，
-    # 始终携带真实 turn_id（见 emitter.build_prompt_submit_event）。按 ts 排序后，
+    # tool/usage 事件自身不带 turn_id，只有 user_prompt_submit 事件
+    # 携带真实 turn_id（见 emitter.build_prompt_submit_event）。按 ts 排序后，
     # 把它当作 turn 边界，让后续没有自带 turn_id 的 tool/usage 事件归入"当前 sid
     # 最近一次打开的 turn"，而不是全部塌缩进同一个 "?" 占位桶。
     current_turn_by_sid: dict[str, str] = {}

@@ -45,8 +45,7 @@ async function createQuickAccessPrompt(button){
     renderGuide();
   }catch(err){button.disabled=false;button.textContent=original;toast(err.message||'创建 Token 失败','err')}
 }
-// 对外展示的固定接入地址：devcloud 等环境经 https 访问不稳定（网关 443 链路问题），
-// 接入配置统一展示并使用 http 域名，优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
+// 对外展示的固定接入地址：优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
 function getPublicBaseURL(){
   const domain = (typeof window !== 'undefined' && (window.__AGENTFLOW_APP_DOMAIN__ || window.__AGENTFLOW_PUBLIC_BASE_URL__))
     || (typeof state !== 'undefined' && state?.appDomain ? state.appDomain : '')
@@ -312,7 +311,7 @@ async function revokePersonalToken(id){
 
 let commandMatches=[],commandSelectedIndex=0;
 function commandCatalog(){
-  const pages=[['dashboard','工作总览','看失败、待确认和进行中的需求'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['sops','流程模板','Issue 修复与需求开发'],['runs','运行记录','查看节点日志和产物'],['metrics','研发效能','产能、效率、质量、成本与自动化看板'],['deployments','部署耗时','按分支查看测试环境流水线耗时'],['agents','角色定义','管理角色和能力资产'],['mcp','MCP 管理','添加项目级或个人自定义 MCP'],['rules','规则管理','当前项目的行为与执行约束'],['skills','技能管理','当前项目的技能和附加文件'],['dockerfiles','Dockerfile','管理项目容器构建定义'],['environments','环境安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','沙箱管理','管理项目运行隔离策略'],['observability','统计','用量分析 · Token 与质量'],['businessDomains','业务领域','分类管理与跨项目汇报'],['projects','项目配置','项目、成员和仓库'],['guide','接入指南','最小接入配置、MCP 或 REST API 接入']].filter(([view])=>view!=='deployments'||canShowSkillhubEfficiency()).map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
+  const pages=[['dashboard','工作总览','看失败、待确认和进行中的需求'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['sops','流程模板','Issue 修复与需求开发'],['runs','运行记录','查看节点日志和产物'],['metrics','研发效能','产能、效率、质量、成本与自动化看板'],['agents','角色定义','管理角色和能力资产'],['mcp','MCP 管理','添加项目级或个人自定义 MCP'],['rules','规则管理','当前项目的行为与执行约束'],['skills','技能管理','当前项目的技能和附加文件'],['dockerfiles','Dockerfile','管理项目容器构建定义'],['environments','环境安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','沙箱管理','管理项目运行隔离策略'],['observability','统计','用量分析 · Token 与质量'],['businessDomains','业务领域','分类管理与跨项目汇报'],['projects','项目配置','项目、成员和仓库'],['guide','接入指南','最小接入配置、MCP 或 REST API 接入']].map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
   const issues=(state.data.issues||[]).map(i=>({kind:'需求',title:i.title,meta:`${i.priority||'—'} · ${issueStatusLabel(i.status)}`,action:()=>openIssueDetail(i.id)}));
   const runs=(state.data.runs||[]).map(r=>({kind:'运行',title:runIssueTitle(r),meta:`${runDisplayStatus(r)} · ${r.workflowSnapshot?.name||r.workflowId}`,action:()=>openRunFromId(r.id)}));
   const sops=catalogWorkflows().map(w=>({kind:'SOP',title:w.name,meta:`${w.status==='published'?'已发布':'草稿'} · ${w.nodes?.length||0} 个节点`,action:()=>{state.workflow=clone(w);state.selectedNode=null;switchView('flow')}}));

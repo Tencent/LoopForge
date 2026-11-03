@@ -490,7 +490,7 @@ func TestPromptObservabilityAlignAndResumeRemainingBranches(t *testing.T) {
 	}
 	run.Repository.PipelineURLPattern = ""
 	run.Repository.PipelineProjectID, run.Repository.PipelineDefID = 12, 34
-	if prompt = applyPromptPlaceholders(nil, domain.WorkflowDefinition{}, node, nil, nil, run); !strings.Contains(prompt, "/12/") {
+	if prompt = applyPromptPlaceholders(nil, domain.WorkflowDefinition{}, node, nil, nil, run); !strings.Contains(prompt, "未配置 Pipeline") {
 		t.Fatalf("pipeline prompt=%q", prompt)
 	}
 	continued := domain.Run{

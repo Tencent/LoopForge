@@ -1895,10 +1895,10 @@ func TestIssuesSaveDoesNotGateSyncedTAPDRequirement(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "dnspod-issue-fix", Name: "Issue fix", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "Fix", Type: "agent"}}}); err != nil {
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "demodns-issue-fix", Name: "Issue fix", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "Fix", Type: "agent"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutRepository(domain.Repository{ID: "repo-new-dnspod", ProjectID: "platform", Name: "new_dnspod", GongfengProjectID: "dnspod/new_dnspod", DefaultBranch: "master"}); err != nil {
+	if err := s.PutRepository(domain.Repository{ID: "repo-new-demodns", ProjectID: "platform", Name: "dns-console", GongfengProjectID: "example/dns-console", DefaultBranch: "master"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutIssue(domain.Issue{
@@ -1919,11 +1919,11 @@ func TestIssuesSaveDoesNotGateSyncedTAPDRequirement(t *testing.T) {
 		"title":         "mq_flush_dns CMQ SDK",
 		"kind":          "requirement",
 		"source":        "tapd",
-		"workflowId":    "dnspod-issue-fix",
-		"repositoryId":  "repo-new-dnspod",
-		"repositoryIds": []string{"repo-new-dnspod"},
+		"workflowId":    "demodns-issue-fix",
+		"repositoryId":  "repo-new-demodns",
+		"repositoryIds": []string{"repo-new-demodns"},
 	}, http.StatusOK)
-	if saved.WorkflowID != "dnspod-issue-fix" || saved.RepositoryID != "repo-new-dnspod" {
+	if saved.WorkflowID != "demodns-issue-fix" || saved.RepositoryID != "repo-new-demodns" {
 		t.Fatalf("binding not saved: workflow=%q repo=%q", saved.WorkflowID, saved.RepositoryID)
 	}
 	if saved.Clarification.Gated || saved.Clarification.Score != 0 || saved.Clarification.Status != "" {
@@ -1989,17 +1989,17 @@ func TestImportTAPDIssueBindsSelectedWorkflow(t *testing.T) {
 			t.Fatal("import without a repository must not persist the TAPD story")
 		}
 	}
-	if err := s.PutRepository(domain.Repository{ID: "repo-import-dnspod", ProjectID: "platform", Name: "new_dnspod", GongfengProjectID: "dnspod/new_dnspod", DefaultBranch: "master"}); err != nil {
+	if err := s.PutRepository(domain.Repository{ID: "repo-import-demodns", ProjectID: "platform", Name: "dns-console", GongfengProjectID: "example/dns-console", DefaultBranch: "master"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutRepository(domain.Repository{ID: "repo-import-com", ProjectID: "platform", Name: "new_dnspod.com", GongfengProjectID: "dnspod/new_dnspod.com", DefaultBranch: "master"}); err != nil {
+	if err := s.PutRepository(domain.Repository{ID: "repo-import-com", ProjectID: "platform", Name: "dns-console.com", GongfengProjectID: "example/dns-console.com", DefaultBranch: "master"}); err != nil {
 		t.Fatal(err)
 	}
 	imported := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/import-tapd", map[string]any{
 		"projectId":     "platform",
 		"url":           "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001221",
 		"workflowId":    wf.ID,
-		"repositoryIds": []string{"repo-import-dnspod"},
+		"repositoryIds": []string{"repo-import-demodns"},
 	}, http.StatusOK)
 	if imported.WorkflowID != wf.ID {
 		t.Fatalf("workflowId=%q want %q", imported.WorkflowID, wf.ID)
@@ -2008,9 +2008,9 @@ func TestImportTAPDIssueBindsSelectedWorkflow(t *testing.T) {
 		"projectId":     "platform",
 		"url":           "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001221",
 		"workflowId":    wf.ID,
-		"repositoryIds": []string{"repo-import-dnspod", "repo-import-com"},
+		"repositoryIds": []string{"repo-import-demodns", "repo-import-com"},
 	}, http.StatusOK)
-	if bound.RepositoryID != "repo-import-dnspod" {
+	if bound.RepositoryID != "repo-import-demodns" {
 		t.Fatalf("repositoryId=%q", bound.RepositoryID)
 	}
 	if len(bound.RepositoryIDs) != 2 || bound.RepositoryIDs[1] != "repo-import-com" {
@@ -2025,7 +2025,7 @@ func TestImportTAPDIssueBindsSelectedWorkflow(t *testing.T) {
 		"projectId":    "platform",
 		"url":          "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001221",
 		"workflowId":   "missing-sop",
-		"repositoryId": "repo-import-dnspod",
+		"repositoryId": "repo-import-demodns",
 	}, http.StatusBadRequest)
 }
 
