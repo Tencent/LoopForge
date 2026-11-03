@@ -44,7 +44,17 @@ func TestExecuteRefreshFailsClosedOrCompletes(t *testing.T) {
 	}
 }
 
+// The helper runs as root inside sandboxes; these cases touch /workspace and
+// capabilities the same way, so an unprivileged test process cannot run them.
+func requireRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+}
+
 func TestApplyMaskValidationAndFilesystemBranches(t *testing.T) {
+	requireRoot(t)
 	const workspace = "/workspace"
 	createdWorkspace := false
 	if _, err := os.Stat(workspace); os.IsNotExist(err) {
@@ -115,6 +125,7 @@ func TestApplyMaskValidationAndFilesystemBranches(t *testing.T) {
 }
 
 func TestRemoveMasksRejectsWritableSources(t *testing.T) {
+	requireRoot(t)
 	rootDir := "/workspace/cvs-scriptview-remove"
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -130,6 +141,7 @@ func TestRemoveMasksRejectsWritableSources(t *testing.T) {
 // process capability-free. Keeping the current UID/GID avoids changing file
 // ownership while exercising the same final privilege drop as the helper.
 func TestZDropPrivilegesForDisposableTestProcess(t *testing.T) {
+	requireRoot(t)
 	groups, err := os.Getgroups()
 	if err != nil {
 		t.Fatal(err)

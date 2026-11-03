@@ -204,7 +204,9 @@ func TestControlPlaneCancelRequestsRunningWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := leaseEngine(t, s, "worker")
-	worker.ConfigureExecution("worker", "host", time.Second, true)
+	// The worker stops renewing once it sees the cancel and must still own the
+	// run when it settles it; a one-second lease expires first on slow runners.
+	worker.ConfigureExecution("worker", "host", 5*time.Second, true)
 	if claimed := worker.ResumeInterruptedRuns(); len(claimed) != 1 {
 		t.Fatalf("claimed %v", claimed)
 	}

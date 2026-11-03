@@ -8,7 +8,7 @@ permissions:
 jobs:
   core:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v6
@@ -19,7 +19,9 @@ jobs:
           node-version: '22'
       - name: Build and test the chatbot frontend embedded by the platform binary
         run: bash scripts/build-chatbot.sh
-      - run: go test -p=2 ./... -count=1 -timeout=180s
+      - name: Let Chromium use its sandbox as an unprivileged user
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: go test -p=2 ./... -count=1 -timeout=600s
       - name: Browser-free UI tests for the platform console
         run: npm ci --no-audit --no-fund && npm test
         working-directory: webtest

@@ -261,6 +261,7 @@ case " $* " in
 esac
 case "$*" in
   "image inspect --format {{.Architecture}} "*) echo amd64; exit 0 ;;
+  "image inspect --format {{.Config.User}} "*) exit 0 ;;
   "image inspect "*) exit 1 ;;
   "images --format {{.Repository}} --filter reference=agentflow-img-*"*) printf 'agentflow-img-a:latest\nagentflow-img-b\nagentflow-img-a\n'; exit 0 ;;
   "ps -a --format {{.Image}}"*) echo agentflow-img-b; exit 0 ;;
