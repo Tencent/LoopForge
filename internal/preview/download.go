@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"agentflow/internal/domain"
 	"github.com/klauspost/compress/zstd"
@@ -42,11 +43,16 @@ func (s *Service) OpenDownload(ctx context.Context, p domain.RunPreview) (io.Rea
 	if obj.Size > limits.MaxCompressed {
 		return nil, ErrLimitExceeded
 	}
-	file, err := os.CreateTemp("", "agentflow-preview-download-*.zip")
+	tmp, err := os.OpenRoot(os.TempDir())
 	if err != nil {
 		return nil, err
 	}
-	download := &previewDownload{File: file}
+	file, err := os.CreateTemp("", "agentflow-preview-download-*.zip")
+	if err != nil {
+		_ = tmp.Close()
+		return nil, err
+	}
+	download := &previewDownload{File: file, dir: tmp, name: filepath.Base(file.Name())}
 	ok := false
 	defer func() {
 		if !ok {
@@ -64,10 +70,16 @@ func (s *Service) OpenDownload(ctx context.Context, p domain.RunPreview) (io.Rea
 	return download, nil
 }
 
-type previewDownload struct{ *os.File }
+// previewDownload removes its file through a root on the temp directory, so
+// removal can never leave that directory.
+type previewDownload struct {
+	*os.File
+	dir  *os.Root
+	name string
+}
 
 func (f *previewDownload) Close() error {
-	return errors.Join(f.File.Close(), os.Remove(f.Name()))
+	return errors.Join(f.File.Close(), f.dir.Remove(f.name), f.dir.Close())
 }
 
 // writeDownloadZIP preserves original build files, including their relative

@@ -51,7 +51,8 @@ func RecordBaseline(workspace, baseBranch string) error {
 		if strings.ContainsAny(ref, "\r\n") {
 			return nil, fmt.Errorf("invalid ref %q", ref)
 		}
-		cmd := exec.Command("git", "-C", workspace, "cat-file", "--batch-check=%(objectname)")
+		cmd := exec.Command("git", "cat-file", "--batch-check=%(objectname)")
+		cmd.Dir = workspace
 		cmd.Stdin = strings.NewReader(ref + "^{commit}\n")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
