@@ -28,7 +28,7 @@ test('separate account cannot access private conversations, edit workspaces or i
   // omitted members field intentionally means 'keep existing' in the API).
   await put('/api/projects',{...initial,members:(initial.members||[]).filter(m=>m.userId!==identity.id)});
   const id=uid('private-conversation');
-  await put(`/api/assistant/sessions/${id}`,{title:'E2E private',projectId:cfg.projectId,messages:[{role:'user',content:'Private acceptance fixture'}]});
+  await put(`/api/assistant/sessions/${id}`,{title:'E2E private',messages:[{role:'user',content:'Private acceptance fixture'}]});
   track('private session',()=>del(`/api/assistant/sessions/${id}`));
   await second('GET',`/api/assistant/sessions/${id}`,undefined,[403,404]);
   await second('PUT',`/api/users/${owner.id}/credentials`,{gitTokenClear:true},403);
