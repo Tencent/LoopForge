@@ -108,8 +108,11 @@ func TestAssistantCredentialProblemMatchesGitToken(t *testing.T) {
 	if fix == nil || fix.Field != "gitToken" || fix.Owner != "alice" || fix.HelpURL != "https://github.com/settings/tokens" {
 		t.Fatalf("fix = %+v", fix)
 	}
-	if fix := assistantCredentialProblem("当前责任人未配置太湖个人令牌", ""); fix != nil {
-		t.Fatalf("legacy Taihu errors must not point at a hidden credential: %+v", fix)
+	if fix := assistantCredentialProblem("当前责任人未配置个人令牌", ""); fix != nil {
+		t.Fatalf("unknown credential errors must not point at a hidden credential: %+v", fix)
+	}
+	if fix := assistantCredentialProblem("MCP GitHub 需要 GitHub Git Token：请先在个人凭证中配置", ""); fix == nil || fix.Field != "gitToken" {
+		t.Fatalf("MCP GitHub token errors must point at the Git token: %+v", fix)
 	}
 	if assistantCredentialProblem("单元测试失败：expected 1 got 2", "") != nil {
 		t.Fatal("ordinary failures must not suggest credentials")

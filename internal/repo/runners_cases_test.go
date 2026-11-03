@@ -127,7 +127,7 @@ func TestRunnerTaskLeaseEventsExpiryCancellationAndDeregister(t *testing.T) {
 	task := domain.RunnerTask{
 		ID: "cve-task", RunnerID: runner.ID, Provider: "codex", RunID: "run-one", MaxAttempts: 2,
 		Invocation: &domain.RunnerInvocation{
-			CodexAPIKey: "secret", TaihuPAT: "pat",
+			CodexAPIKey:  "secret",
 			Repository:   &domain.RunnerRepository{GitToken: "git"},
 			Repositories: []domain.RunnerRepository{{GitToken: "git-two"}},
 		},

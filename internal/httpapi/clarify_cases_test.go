@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 func TestClarifyHubLifecycleAndPersistence(t *testing.T) {
@@ -175,8 +176,11 @@ func TestClarifyComposerAndHTTPBranches(t *testing.T) {
 
 func TestClarifyMCPInstructionsAndOwnership(t *testing.T) {
 	st := cvAStore(t)
-	_ = st.PutUser(domain.User{LoginName: "cva-mcp-owner", TaihuPAT: "tai_pat_owner"})
+	_ = st.PutUser(domain.User{LoginName: "cva-mcp-owner"})
 	owner, _ := st.UserByLoginName("cva-mcp-owner")
+	if _, err := st.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{GitToken: "git-owner"}); err != nil {
+		t.Fatal(err)
+	}
 	_ = st.PutUser(domain.User{LoginName: "cva-mcp-worker"})
 	worker, _ := st.UserByLoginName("cva-mcp-worker")
 	projectID := "cva-mcp-p"

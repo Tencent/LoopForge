@@ -80,7 +80,7 @@ func TestRunnerScriptAndCommandTerminalResults(t *testing.T) {
 			e, _ := cvETerminalEngine(t, status, "script-output", "", nil)
 			sb := &runEnvironment{sandbox: &cvESandbox{id: "sb", workspace: t.TempDir()}}
 			run := cvERunnerRun("script-"+status, "runner-terminal")
-			got, err := e.dispatchRunnerScript(context.Background(), "runner-terminal", run, "node", sb.Workspace(), "python", "print(1)", "", nil, sb, "", "", "", "", domain.AgentAssetBundle{}, func(domain.TelemetryEvent) {})
+			got, err := e.dispatchRunnerScript(context.Background(), "runner-terminal", run, "node", sb.Workspace(), "python", "print(1)", "", nil, sb, "", "", "", domain.AgentAssetBundle{}, func(domain.TelemetryEvent) {})
 			if status == domain.RunnerTaskSuccess {
 				if err != nil || got != "script-output" {
 					t.Fatalf("result=%q err=%v", got, err)

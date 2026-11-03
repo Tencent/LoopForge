@@ -1687,12 +1687,8 @@ func TestPushLocalIssueToTAPDKeepsDescription(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	owner, ok := s.User(1)
-	if !ok {
+	if _, ok := s.User(1); !ok {
 		t.Fatal("seed owner missing")
-	}
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_push"}); err != nil {
-		t.Fatal(err)
 	}
 	h := newTAPDImportHandler(t, s, root, `{"id":"1010000000888888888","name":"本地推送","status":"open"}`)
 	local := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
@@ -1731,9 +1727,6 @@ func TestImportTAPDIssueFromURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ := s.UserByLoginName("tapd-owner")
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_import"}); err != nil {
-		t.Fatal(err)
-	}
 	project, _ := s.Project("platform")
 	project.OwnerID = owner.ID
 	if err := s.PutProject(project); err != nil {
@@ -1763,7 +1756,7 @@ func TestImportTAPDIssueFromURL(t *testing.T) {
 		}
 	}))
 	t.Cleanup(gateway.Close)
-	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: gateway.URL, AuthType: "taihu-pat", TimeoutSec: 30}); err != nil {
+	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: gateway.URL, Headers: map[string]string{"Authorization": "Bearer tapd-token"}, TimeoutSec: 30}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutSyncConfig(domain.SyncConfig{TAPDMCPURL: gateway.URL, AutoSyncIntervalSec: 300}); err != nil {
@@ -1802,9 +1795,6 @@ func TestImportTAPDIssueSaveKeepsExternalBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ := s.UserByLoginName("tapd-owner")
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_import"}); err != nil {
-		t.Fatal(err)
-	}
 	project, _ := s.Project("platform")
 	project.OwnerID = owner.ID
 	if err := s.PutProject(project); err != nil {
@@ -1979,9 +1969,6 @@ func TestImportTAPDIssueBindsSelectedWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ := s.UserByLoginName("tapd-owner")
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_import"}); err != nil {
-		t.Fatal(err)
-	}
 	project, _ := s.Project("platform")
 	project.OwnerID = owner.ID
 	if err := s.PutProject(project); err != nil {
@@ -2062,9 +2049,6 @@ func TestImportTAPDIssueUsesHandlerThenImporter(t *testing.T) {
 	owner, _ := s.UserByLoginName("tapd-owner")
 	importer, _ := s.UserByLoginName("importer")
 	handler, _ := s.UserByLoginName("example-maintainer")
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_import"}); err != nil {
-		t.Fatal(err)
-	}
 	project, _ := s.Project("platform")
 	project.OwnerID = owner.ID
 	if err := s.PutProject(project); err != nil {
@@ -2116,7 +2100,7 @@ func newTAPDImportHandler(t *testing.T, s *repo.Store, root, payload string) htt
 		}
 	}))
 	t.Cleanup(gateway.Close)
-	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: gateway.URL, AuthType: "taihu-pat", TimeoutSec: 30}); err != nil {
+	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: gateway.URL, Headers: map[string]string{"Authorization": "Bearer tapd-token"}, TimeoutSec: 30}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutSyncConfig(domain.SyncConfig{TAPDMCPURL: gateway.URL, AutoSyncIntervalSec: 300}); err != nil {

@@ -86,7 +86,7 @@ function projectTAPDReady(project){
   return (state.data.mcpServers||[]).some(s=>{
     if(s.scope==='project'&&s.projectId&&s.projectId!==project.id)return false;
     const market=String(s.marketId||'');
-    if(market==='70'||market==='tapd'||market==='tapd_taihu')return true;
+    if(market==='70'||market==='tapd')return true;
     return /tapd/i.test(`${s.id||''} ${s.name||''} ${s.url||''}`);
   });
 }

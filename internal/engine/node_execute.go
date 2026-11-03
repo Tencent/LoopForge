@@ -547,7 +547,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				scriptAssets := e.resolveScriptMCPAssets(current.ExecutionContext.ProjectID, current.ExecutionContext.ResponsibleUserID)
 				if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 					workspace := runnerWorkspaceRel(current, node.ID)
-					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), effectiveNode.ArtifactOutputs, sb, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, sb.credentialSnapshot().TaihuPAT, scriptAssets, targetSink)
+					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), effectiveNode.ArtifactOutputs, sb, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
 				}
 				if err := runtime.ProvisionMCPAssets(ctx, sb, sb.Workspace(), scriptAssets, targetSink); err != nil {
 					return "", err
@@ -681,7 +681,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 				return result, dispatchErr
 			}
-			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{TaihuPAT: sb.credentialSnapshot().TaihuPAT, GitToken: sb.credentialSnapshot().GitToken, RequireTaihuPAT: true})
+			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{GitToken: sb.credentialSnapshot().GitToken, RequireCredentials: true})
 			for _, warning := range skipped {
 				warnMCPSkipped(warning)
 			}

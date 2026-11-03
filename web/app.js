@@ -850,7 +850,7 @@ function isOAHost(hostname){
   if(typeof window!=='undefined' && window.__AGENTFLOW_APP_DOMAIN__ && hostname===window.__AGENTFLOW_APP_DOMAIN__)return true;
   return false;
 }
-function shouldAutoPassportRedirect({isGuest, hostname, bypassAutoAuth, authErr, loginUrl}){
+function shouldAutoSSORedirect({isGuest, hostname, bypassAutoAuth, authErr, loginUrl}){
   return !!(isGuest && isOAHost(hostname) && !bypassAutoAuth && !authErr && loginUrl);
 }
 
@@ -858,7 +858,7 @@ async function boot(){
   state.data = {runs:[],issues:[],tasks:[],workflowMetrics:[],syncLogs:[],agents:[],workflows:[],projects:[],repositories:[],users:[],rules:[],skills:[],mcpServers:[],executors:[],dockerfiles:[],environments:[],sandboxes:[]};
   bind(); renderProjectSwitcher(); updateApprovalBadge();
 
-  // 1. 检查 URL 中是否有太湖/TAI 回调的 code
+  // 1. 检查 URL 中是否有 SSO 回调的 code
   const urlParams = new URLSearchParams(window.location.search);
   const authCode = urlParams.get('code');
   if (authCode) {
@@ -897,12 +897,12 @@ async function boot(){
     }
   }
 
-  // 3. 自动拉起认证：只在公司 OA 域名下把访客送到 Passport。localhost / 127.0.0.1 即使开启 AUTH_REQUIRED 也不跳 iOA，改走本地验收登录。
+  // 3. 自动拉起认证：只在配置的应用域名下把访客送到 SSO 登录页。localhost / 127.0.0.1 即使开启 AUTH_REQUIRED 也不跳转，改走本地验收登录。
   const isGuest = !state.currentUser || state.currentUser.isGuest;
   const bypassAutoAuth = new URLSearchParams(window.location.search).has('guest');
   const authErr = sessionStorage.getItem('agentflow_auth_err');
 
-  if (shouldAutoPassportRedirect({isGuest, hostname: window.location.hostname, bypassAutoAuth, authErr, loginUrl: state.loginUrl})) {
+  if (shouldAutoSSORedirect({isGuest, hostname: window.location.hostname, bypassAutoAuth, authErr, loginUrl: state.loginUrl})) {
     window.location.href = state.loginUrl;
     return;
   }

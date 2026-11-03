@@ -40,7 +40,7 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
     nodes: [{ id: 'mr', name: '发起 MR', type: 'agent' }, { id: 'gate', name: '验收', type: 'approval' }],
     requirements: [
       { key: 'gongfeng-git-token', nodeId: 'mr' },
-      { key: 'taihu-pat', nodeId: 'mr' },
+      { key: 'tapd-mcp', nodeId: 'mr' },
       { key: 'gongfeng-mcp', nodeId: 'mr' },
     ],
   };
@@ -49,7 +49,7 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
   }));
   app.evaluate(`
     state.currentUser={id:1,loginName:'owner',isPlatformAdmin:false};
-    state.data.users=[{id:1,loginName:'owner',gitTokenConfigured:true,taihuPatConfigured:false}];
+    state.data.users=[{id:1,loginName:'owner',gitTokenConfigured:true}];
     state.mcpMarket=[{id:'market-gf',name:'Gongfeng',aliases:['gongfeng'],url:'https://gongfeng'}];
     state.data.mcpServers=[{id:'gf',scope:'project',projectId:'project-1',marketId:'market-gf'}];
     state.data.workflows=[${JSON.stringify(generic)}];
@@ -58,7 +58,7 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
   `);
   const rows = app.document.querySelector('#genericTemplateRequirements').textContent;
   assert.match(rows, /工蜂 Git Token.*已配置/s);
-  assert.match(rows, /太湖个人令牌.*未配置/s);
+  assert.match(rows, /TAPD MCP.*未配置/s);
   assert.match(rows, /工蜂 MCP.*已配置/s);
   const sopHTML = app.evaluate(`({
     card:genericSOPCard(state.data.workflows[0]),
@@ -69,7 +69,7 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
   })`);
   assert.match(sopHTML.card, /平台维护/);
   assert.match(sopHTML.chips, /sop-badge tone-success[^>]*>.*工蜂 Git Token/);
-  assert.match(sopHTML.chips, /sop-badge tone-warn[^>]*>.*太湖个人令牌/);
+  assert.match(sopHTML.chips, /sop-badge tone-warn[^>]*>.*TAPD MCP/);
   assert.equal(sopHTML.gongfeng, true);
   assert.equal(sopHTML.tapd, false);
   assert.equal(sopHTML.node, '发起 MR');

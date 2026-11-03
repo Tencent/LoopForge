@@ -89,7 +89,7 @@ type MCPServerDefinition struct {
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	PathEntries      []string          `json:"pathEntries,omitempty"`
 	FileRefs         []MCPFileRef      `json:"fileRefs,omitempty"`
-	AuthType         string            `json:"authType,omitempty"` // empty, taihu-pat
+	AuthType         string            `json:"authType,omitempty"` // empty, github-token
 	TimeoutSec       int               `json:"timeoutSec"`
 	UpdatedAt        time.Time         `json:"updatedAt"`
 }
@@ -318,17 +318,17 @@ func ValidateMCPServer(v MCPServerDefinition) error {
 		return fmt.Errorf("scope 只能为空、project 或 personal")
 	}
 	switch strings.TrimSpace(v.AuthType) {
-	case "", "taihu-pat", "github-token":
+	case "", "github-token":
 	default:
-		return fmt.Errorf("authType must be empty, taihu-pat, or github-token")
+		return fmt.Errorf("authType must be empty or github-token")
 	}
-	if (strings.TrimSpace(v.AuthType) == "taihu-pat" || v.AuthType == "github-token") && strings.TrimSpace(v.Transport) != "http" {
-		return fmt.Errorf("太湖个人令牌认证仅支持 HTTP MCP")
+	if v.AuthType == "github-token" && strings.TrimSpace(v.Transport) != "http" {
+		return fmt.Errorf("GitHub 令牌认证仅支持 HTTP MCP")
 	}
-	if strings.TrimSpace(v.AuthType) == "taihu-pat" || v.AuthType == "github-token" {
+	if v.AuthType == "github-token" {
 		for key := range v.Headers {
 			if strings.EqualFold(strings.TrimSpace(key), "authorization") {
-				return fmt.Errorf("太湖个人令牌认证不允许在资产 Headers 中保存 Authorization")
+				return fmt.Errorf("GitHub 令牌认证不允许在资产 Headers 中保存 Authorization")
 			}
 		}
 	}

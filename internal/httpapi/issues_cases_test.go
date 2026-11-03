@@ -431,9 +431,6 @@ func TestIssuesMoreRouteBranches(t *testing.T) {
 
 func TestIssuesMoreTrackerCreateAndResync(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
-	if _, err := f.s.UpdateUserCredentials(f.user.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_cvb_more"}); err != nil {
-		t.Fatal(err)
-	}
 	f.h = newTAPDImportHandler(t, f.s, t.TempDir(), `{"id":"1010000000777777777","name":"coverage tracker issue","status":"open","data":[{"id":"1010000000777777777","name":"coverage tracker issue","status":"open"}]}`)
 	rec := cvBRequest(t, f, http.MethodPost, "/api/issues", map[string]any{
 		"projectId": "platform", "title": "tracker create", "description": "description",

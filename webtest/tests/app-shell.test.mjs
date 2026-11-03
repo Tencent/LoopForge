@@ -33,7 +33,7 @@ test('list paging, catalog visibility, URL safety, and workflow helpers return c
       urls:[safeURL('https://example.com/a'),safeURL('javascript:alert(1)')],
       colors:[safeColor('#abc'),safeColor('red')],
       unconfigured:(state.appDomain='',isOAHost('loopforge.example.com')),
-      hosts:[isLoopbackHost('127.0.0.1'),(state.appDomain='loopforge.example.com',isOAHost('loopforge.example.com')),shouldAutoPassportRedirect({isGuest:true,hostname:'loopforge.example.com',bypassAutoAuth:false,authErr:'',loginUrl:'https://login'})]
+      hosts:[isLoopbackHost('127.0.0.1'),(state.appDomain='loopforge.example.com',isOAHost('loopforge.example.com')),shouldAutoSSORedirect({isGuest:true,hostname:'loopforge.example.com',bypassAutoAuth:false,authErr:'',loginUrl:'https://login'})]
     };
   })()`);
   assert.equal(JSON.stringify(result.page), JSON.stringify([1, 3, 0, 20, 1]));

@@ -19,7 +19,6 @@ type userWithConfig struct {
 	DeptID                       int        `gorm:"column:dept_id"`
 	DeptName                     string     `gorm:"column:dept_name"`
 	PlatformRole                 string     `gorm:"column:platform_role"`
-	TaihuPAT                     *string    `gorm:"column:taihu_pat"`
 	GitToken                     *string    `gorm:"column:git_token"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
@@ -35,7 +34,7 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.taihu_pat, c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.claude_code_api_key, c.claude_code_base_url,
 	u.created_at, u.updated_at`
 
@@ -44,9 +43,6 @@ func (r userWithConfig) toDomain() domain.User {
 		ID: r.ID, StaffID: r.StaffID, LoginName: r.LoginName, ChineseName: r.ChineseName,
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
 		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment,
-	}
-	if r.TaihuPAT != nil {
-		u.TaihuPAT = *r.TaihuPAT
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
@@ -141,7 +137,6 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		v.CreatedAt = old.CreatedAt
 		// Authentication refreshes identity fields only. Credentials are managed
 		// through UpdateUserCredentials and must survive every login refresh.
-		v.TaihuPAT = old.TaihuPAT
 		v.GitToken = old.GitToken
 		v.GongfengRefreshToken = old.GongfengRefreshToken
 		v.GongfengTokenExpiresAt = old.GongfengTokenExpiresAt
@@ -212,8 +207,7 @@ func (r *UsersRepo) writeUser(v domain.User) (domain.User, error) {
 }
 
 func userHasConfig(user domain.User) bool {
-	return user.TaihuPAT != "" ||
-		user.GitToken != "" ||
+	return user.GitToken != "" ||
 		user.GongfengRefreshToken != "" ||
 		user.CodeBuddyAPIKey != "" ||
 		user.CodeBuddyInternetEnvironment != "" ||
@@ -224,8 +218,6 @@ func userHasConfig(user domain.User) bool {
 }
 
 type UserCredentialUpdate struct {
-	TaihuPAT                     string  `json:"taihuPat"`
-	TaihuPATClear                bool    `json:"taihuPatClear"`
 	GitToken                     string  `json:"gitToken"`
 	GitTokenClear                bool    `json:"gitTokenClear"`
 	CodeBuddyAPIKey              string  `json:"codeBuddyApiKey"`
@@ -243,17 +235,6 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	user, ok := r.User(id)
 	if !ok {
 		return domain.User{}, errors.New("user not found")
-	}
-	if update.TaihuPATClear {
-		user.TaihuPAT = ""
-	} else if value := strings.TrimSpace(update.TaihuPAT); value != "" {
-		if len(value) >= 7 && strings.EqualFold(value[:7], "Bearer ") {
-			value = strings.TrimSpace(value[7:])
-		}
-		if !strings.HasPrefix(value, "tai_pat_") {
-			return domain.User{}, errors.New("太湖个人令牌格式无效，应以 tai_pat_ 开头")
-		}
-		user.TaihuPAT = value
 	}
 	if update.GitTokenClear {
 		user.GitToken = ""
@@ -316,8 +297,8 @@ func (r *UsersRepo) SaveGongfengOAuth(id int64, accessToken, refreshToken string
 
 func (r *UsersRepo) writeUserConfig(v domain.User) error {
 	return upsert(r.DB, "user_configs", map[string]any{
-		"user_id":   v.ID,
-		"taihu_pat": nullableString(v.TaihuPAT), "git_token": nullableString(v.GitToken),
+		"user_id":                v.ID,
+		"git_token":              nullableString(v.GitToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,

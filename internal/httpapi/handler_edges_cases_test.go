@@ -445,13 +445,13 @@ func TestAssistantApprovalDraftAndReviewHelpers(t *testing.T) {
 }
 
 func TestMarketAndWorkspaceMRHelpers(t *testing.T) {
-	if len(taihuMCPMarket) == 0 {
+	if len(mcpMarketItems) == 0 {
 		t.Fatal("empty MCP market")
 	}
-	item := taihuMCPMarket[0]
+	item := mcpMarketItems[0]
 	if !strings.Contains(mcpMarketSearchText(item), strings.ToLower(item.Name)) ||
-		len(filterMCPMarket(taihuMCPMarket, item.ID)) == 0 ||
-		len(filterMCPMarket(taihuMCPMarket, "definitely-no-match")) != 0 {
+		len(filterMCPMarket(mcpMarketItems, item.ID)) == 0 ||
+		len(filterMCPMarket(mcpMarketItems, "definitely-no-match")) != 0 {
 		t.Fatal("market search")
 	}
 	if _, ok := marketItem("missing"); ok || !sameMarketItem(item.ID, item.ID) {

@@ -1119,7 +1119,7 @@ func stripAssistantSecretValue(value any) {
 	case map[string]any:
 		for key, nested := range item {
 			lower := strings.ToLower(strings.TrimSpace(key))
-			if lower == "gittoken" || lower == "git_token" || strings.Contains(lower, "apikey") || strings.Contains(lower, "api_key") || lower == "token" || lower == "secret" || lower == "password" || lower == "authorization" || lower == "taihupat" || lower == "taihu_pat" {
+			if lower == "gittoken" || lower == "git_token" || strings.Contains(lower, "apikey") || strings.Contains(lower, "api_key") || lower == "token" || lower == "secret" || lower == "password" || lower == "authorization" {
 				delete(item, key)
 				continue
 			}

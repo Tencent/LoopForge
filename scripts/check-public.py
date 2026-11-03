@@ -33,6 +33,10 @@ blocked_word_digests = {
     "39bc5d6cbaf0191504a022489a7182327f02e78d1704626d24b2be7ae8b2d189",
     "361c3bb7ef5caa3cf00bee22c7d232969677daa9a288cc9258ea0d6de8914673",
     "cbda26ecd6a0a9455c8ee73edbe819692c68cbc4dbb059e07c9a020030ceeb00",
+    "6162bb7113ee198197f77b11979504ce85c8ced9b5c0230d2aff648f67202a36",
+    "f798533f224be82e4b330e5359083c90003e8938ec99c44c149044e50dcac3a7",
+    "5ccc8b45a1879d03f8ec36866f77dd4614d118b5604f084bd4936d39b3aa03d5",
+    "e34be4a2143785f351febc3cff274028f5ea90adc720d303c3b9e301656de8e9",
 }
 word = re.compile(r"[A-Za-z0-9_]{5,24}")
 # MIT requires keeping upstream copyright lines verbatim; only those lines, and

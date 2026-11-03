@@ -184,12 +184,6 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	if strings.TrimSpace(options.GateResultPath) != "" {
 		invocation.Artifacts = append(invocation.Artifacts, gateResultContract(options.GateResultPath))
 	}
-	if runtime.RequiresTaihuPAT(assets) {
-		if strings.TrimSpace(sb.credentialSnapshot().TaihuPAT) == "" {
-			return "", errors.New("当前责任人未配置太湖个人令牌：请先在个人凭证中配置")
-		}
-		invocation.TaihuPAT = sb.credentialSnapshot().TaihuPAT
-	}
 	if authMode == domain.RuntimeAuthPersonal {
 		switch ex.Kind {
 		case "codex":
@@ -225,9 +219,6 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		invocation.RecoverOutputs = normalizeExecutionScope(node.ExecutionScope) != domain.ExecutionScopeRepositories
 	}
 	invocation.MCPCallServers = e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID).MCPServers
-	if strings.TrimSpace(invocation.TaihuPAT) == "" {
-		invocation.TaihuPAT = sb.credentialSnapshot().TaihuPAT
-	}
 	task := domain.RunnerTask{
 		ID:          fmt.Sprintf("rt-%d-%s", time.Now().UnixNano(), safeRunnerPath(node.ID)),
 		RunnerID:    runnerID,
@@ -356,7 +347,7 @@ func shellSingleQuote(value string) string {
 // execution machine. Repository metadata is included so a script can also be
 // the first node; subsequent shared-layout nodes reuse the same checkout and
 // its workspace-local Git index flags.
-func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run domain.Run, nodeID, workspace, language, script, artifactDirectory string, artifacts []domain.ArtifactContract, sb *runEnvironment, gitToken, gitUserName, gitUserEmail, taihuPAT string, assets domain.AgentAssetBundle, sink runtime.EventSink) (string, error) {
+func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run domain.Run, nodeID, workspace, language, script, artifactDirectory string, artifacts []domain.ArtifactContract, sb *runEnvironment, gitToken, gitUserName, gitUserEmail string, assets domain.AgentAssetBundle, sink runtime.EventSink) (string, error) {
 	if err := e.requireExistingWorkBranchRunner(runnerID, run.RepositoryContexts()); err != nil {
 		return "", err
 	}
@@ -369,7 +360,7 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	}
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
-		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, TaihuPAT: taihuPAT, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
+		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
 	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
 	reported := sb.reportedOutputs(nodeID)
 	if reported != nil {
@@ -636,9 +627,6 @@ func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.Ru
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation := &domain.RunnerInvocation{
 		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
-	if user, ok := e.repo.User(run.ExecutionContext.ResponsibleUserID); ok {
-		invocation.TaihuPAT = user.TaihuPAT
-	}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
 	bindRunnerRepositories(invocation, run, resolveGitToken(e.repo, run.ExecutionContext.ResponsibleUserID), identity.name, identity.email)
 	return invocation

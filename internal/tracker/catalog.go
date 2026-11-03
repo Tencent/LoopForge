@@ -24,7 +24,7 @@ func bindTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServ
 	needles := []string{"gongfeng"}
 	if kind == "tapd" {
 		cfgURL = strings.TrimSpace(cfg.TAPDMCPURL)
-		exact = []string{"tapd-delivery", "tapd_taihu", "tapd"}
+		exact = []string{"tapd-delivery", "tapd"}
 		needles = []string{"tapd"}
 	}
 
@@ -73,10 +73,9 @@ func bindTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServ
 	return out
 }
 
-// bindProjectOwnerTrackerMCP resolves only assets owned by projectID and uses
-// that project's owner's Taihu PAT for the tracker request. Taihu credentials
-// are injected into the in-memory binding and are never persisted on the MCP
-// asset itself.
+// bindProjectOwnerTrackerMCP resolves only assets owned by projectID and
+// calls it as that project's owner. The MCP asset carries its own
+// Authorization header.
 func bindProjectOwnerTrackerMCP(kind string, cfg domain.SyncConfig, servers []domain.MCPServerDefinition, projectID string, owner domain.User) (mcpBinding, error) {
 	binding, err := bindProjectUserTrackerMCP(kind, cfg, servers, projectID, owner, "Owner")
 	if err != nil {
@@ -102,17 +101,10 @@ func bindProjectUserTrackerMCP(kind string, cfg domain.SyncConfig, servers []dom
 	if strings.TrimSpace(binding.URL) == "" {
 		return binding, fmt.Errorf("项目 %s 未配置 %s MCP 地址", projectID, trackerDisplayName(kind))
 	}
-	token := strings.TrimSpace(user.TaihuPAT)
-	if token == "" {
-		return binding, fmt.Errorf("项目 %s 的 %s %s 未配置太湖个人令牌", projectID, role, strings.TrimSpace(user.LoginName))
+	if !hasAuthorizationHeader(binding.Headers) {
+		return binding, fmt.Errorf("项目 %s 的 %s MCP 未配置认证：请在 MCP Headers 中提供 Authorization（%s %s）", projectID, trackerDisplayName(kind), role, strings.TrimSpace(user.LoginName))
 	}
 	binding.Headers = maps.Clone(binding.Headers)
-	for key := range binding.Headers {
-		if strings.EqualFold(strings.TrimSpace(key), "authorization") {
-			delete(binding.Headers, key)
-		}
-	}
-	binding.Headers["Authorization"] = bearerHeader(token)
 	binding.Source = "project-user:" + strings.TrimSpace(user.LoginName)
 	return binding, nil
 }
@@ -126,7 +118,7 @@ func projectTrackerKindMatch(kind string, server domain.MCPServerDefinition) boo
 	if market == kind || market == kind+"-delivery" {
 		return true
 	}
-	if kind == "tapd" && (market == "70" || market == "tapd_taihu") {
+	if kind == "tapd" && market == "70" {
 		return true
 	}
 	if kind == "gongfeng" && (market == "61" || market == "gongfeng-delivery") {
@@ -220,4 +212,13 @@ func sameMCPHost(a, b string) bool {
 		return false
 	}
 	return strings.EqualFold(ua.Host, ub.Host)
+}
+
+func hasAuthorizationHeader(headers map[string]string) bool {
+	for key, value := range headers {
+		if strings.EqualFold(strings.TrimSpace(key), "authorization") && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }

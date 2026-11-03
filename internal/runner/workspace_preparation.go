@@ -156,12 +156,11 @@ func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandb
 		credentials.GitToken = invocationGitToken(inv)
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
-		credentials.TaihuPAT = inv.TaihuPAT
 		servers := inv.MCPCallServers
 		if len(servers) == 0 {
 			servers = inv.Assets.MCPServers
 		}
-		assets, _, err := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers, MCPFiles: inv.Assets.MCPFiles}, d.mcpTarget(inv.TaihuPAT, false))
+		assets, _, err := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers, MCPFiles: inv.Assets.MCPFiles}, d.mcpTarget(false))
 		if err != nil {
 			return nil, fmt.Errorf("prepare workspace MCP: %w", err)
 		}

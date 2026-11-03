@@ -118,9 +118,6 @@ func TestMySQLImportTAPDRepositoryBranches(t *testing.T) {
 func testImportTAPDRepositoryBranches(t *testing.T, st *repo.Store) {
 	t.Helper()
 	ids := putIssueBranchRepositories(t, st)
-	if _, err := st.UpdateUserCredentials(1, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_mock_import"}); err != nil {
-		t.Fatal(err)
-	}
 	storyID := fmt.Sprint(time.Now().UnixNano())
 	t.Cleanup(func() { _ = st.DeleteIssue("tapd-" + storyID) })
 	h := newTAPDImportHandler(t, st, t.TempDir(), fmt.Sprintf(`{"data":[{"id":%q,"name":"多仓库需求","status":"open"}]}`, storyID))

@@ -7,8 +7,6 @@ import (
 
 // User 表示系统注册或登录的员工实体，用于后续资源归属与权限隔离。
 type User struct {
-	TaihuPAT                   string `json:"taihuPat,omitempty"`
-	TaihuPATConfigured         bool   `json:"taihuPatConfigured,omitempty"`
 	CodexAPIKey                string `json:"codexApiKey,omitempty"`
 	CodexAPIKeyConfigured      bool   `json:"codexApiKeyConfigured,omitempty"`
 	CodexBaseURL               string `json:"codexBaseUrl,omitempty"`
@@ -45,8 +43,6 @@ func IsPlatformAdmin(u User) bool {
 
 // PublicUser returns user directory information without exposing credentials.
 func PublicUser(u User) User {
-	u.TaihuPATConfigured = strings.TrimSpace(u.TaihuPAT) != ""
-	u.TaihuPAT = ""
 	u.CodexAPIKeyConfigured = strings.TrimSpace(u.CodexAPIKey) != ""
 	u.CodexAPIKey = ""
 	u.ClaudeCodeAPIKeyConfigured = strings.TrimSpace(u.ClaudeCodeAPIKey) != ""

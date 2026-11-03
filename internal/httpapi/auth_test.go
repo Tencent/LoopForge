@@ -83,8 +83,8 @@ func TestAuthExchange_MissingCode(t *testing.T) {
 }
 
 func TestAuthFlow_Success(t *testing.T) {
-	// Mock TOF backend
-	mockTOF := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Mock SSO backend
+	mockSSO := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := auth.IOAAuthResponse{
 			Ret: 0,
 			Data: &auth.IOAAuthData{
@@ -96,17 +96,17 @@ func TestAuthFlow_Success(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
-	defer mockTOF.Close()
+	defer mockSSO.Close()
 
 	authClient := auth.NewClient(auth.Config{
 		PaaSID:        "test_paas",
 		AppToken:      "test_token",
-		AuthHost:      mockTOF.URL,
-		AuthURI:       "/ebus/tof4/api/v1/passport/AccessToken",
+		AuthHost:      mockSSO.URL,
+		AuthURI:       "/sso/access-token",
 		AppDomain:     "loopforge.example.com",
 		SessionSecret: "secret123",
 	})
-	authClient.SetHTTPClient(mockTOF.Client())
+	authClient.SetHTTPClient(mockSSO.Client())
 
 	handler, st := newTestAuthServer(t, authClient)
 
@@ -249,7 +249,7 @@ func TestAuthCurrent_GatewayHeader(t *testing.T) {
 	})
 	handler, st := newTestAuthServer(t, authClient)
 
-	// 1. 模拟太湖 / AIO-Forward 网关透传 Staffname 和 Staffid 请求头
+	// 1. 模拟认证网关透传 Staffname 和 Staffid 请求头
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/current", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("Staffname", "example-maintainer")
@@ -388,10 +388,7 @@ func TestAuthCurrent_FallbackWithLoginURL(t *testing.T) {
 		t.Errorf("expected non-empty loginUrl")
 	}
 	if body.LoginURL != "/login.html" {
-		t.Errorf("expected passport.example.com in loginUrl, got %s", body.LoginURL)
-	}
-	if body.LoginURL != "/login.html" {
-		t.Errorf("expected paasID in loginUrl, got %s", body.LoginURL)
+		t.Errorf("unconfigured SSO must fall back to the local login page, got %s", body.LoginURL)
 	}
 }
 
@@ -461,12 +458,12 @@ func TestAuthCurrent_CookieUserMissingInStore_AutoPersist(t *testing.T) {
 
 func TestAuthPhoto_Success(t *testing.T) {
 	fakePNG := []byte("\x89PNG\r\n\x1a\nphoto_data_123")
-	mockTOF := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ebus/rhrc/photo/100/nonexistent.png" {
+	mockSSO := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sso/photo/100/nonexistent.png" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if r.URL.Path != "/ebus/rhrc/photo/100/zhangsan.png" {
+		if r.URL.Path != "/sso/photo/100/zhangsan.png" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -478,14 +475,15 @@ func TestAuthPhoto_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(fakePNG)
 	}))
-	defer mockTOF.Close()
+	defer mockSSO.Close()
 
 	authClient := auth.NewClient(auth.Config{
 		PaaSID:   "test_paas",
 		AppToken: "test_token",
-		AuthHost: mockTOF.URL,
+		AuthHost: mockSSO.URL,
+		PhotoURI: "/sso/photo",
 	})
-	authClient.SetHTTPClient(mockTOF.Client())
+	authClient.SetHTTPClient(mockSSO.Client())
 
 	handler, _ := newTestAuthServer(t, authClient)
 

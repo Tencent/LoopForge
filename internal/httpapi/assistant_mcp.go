@@ -370,15 +370,6 @@ func bindAssistantMCP(server domain.MCPServerDefinition, user domain.User) (doma
 		return domain.MCPServerDefinition{}, githubErr
 	}
 	server = bundle.MCPServers[0]
-	if strings.TrimSpace(server.AuthType) == runtime.MCPAuthTaihuPAT {
-		bound, err := runtime.BindPersonalMCPHeaders(bundle, user.TaihuPAT)
-		if err != nil {
-			return domain.MCPServerDefinition{}, err
-		}
-		server = bound.MCPServers[0]
-	} else {
-		server = runtime.BindPersonalMCPHeadersOptional(bundle, user.TaihuPAT).MCPServers[0]
-	}
 	headers, err := runtime.ResolveMCPHeaders(server)
 	if err != nil {
 		return domain.MCPServerDefinition{}, err
@@ -388,7 +379,7 @@ func bindAssistantMCP(server domain.MCPServerDefinition, user domain.User) (doma
 }
 
 func redactAssistantSecrets(text string, user domain.User) string {
-	for _, secret := range []string{user.CodeBuddyAPIKey, user.CodexAPIKey, user.ClaudeCodeAPIKey, user.TaihuPAT, user.GitToken} {
+	for _, secret := range []string{user.CodeBuddyAPIKey, user.CodexAPIKey, user.ClaudeCodeAPIKey, user.GitToken} {
 		secret = strings.TrimSpace(secret)
 		if secret != "" {
 			text = strings.ReplaceAll(text, secret, "[redacted]")

@@ -43,7 +43,7 @@ type TaskPromptSpec struct {
 // project adopts a template, so a missing Git Token or tracker MCP config
 // surfaces before the first run instead of failing in the middle of a pipeline.
 type WorkflowRequirement struct {
-	Key    string `json:"key"`              // stable id: gongfeng-git-token, gongfeng-mcp, taihu-pat
+	Key    string `json:"key"`              // stable id: gongfeng-git-token, gongfeng-mcp
 	NodeID string `json:"nodeId,omitempty"` // node that depends on the capability
 	Label  string `json:"label"`
 	Hint   string `json:"hint,omitempty"`

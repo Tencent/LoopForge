@@ -639,8 +639,6 @@ paths:
             schema:
               type: object
               properties:
-                taihuPat: {type: string, writeOnly: true, description: "Taihu personal access token. Blank preserves the stored token."}
-                taihuPatClear: {type: boolean}
                 gitToken: {type: string, writeOnly: true}
                 gitTokenClear: {type: boolean}
                 codeBuddyApiKey: {type: string, writeOnly: true}
@@ -3988,7 +3986,6 @@ components:
         deptId: {type: integer}
         deptName: {type: string}
         avatarUrl: {type: string}
-        taihuPatConfigured: {type: boolean, readOnly: true}
         gitTokenConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codexApiKeyConfigured: {type: boolean, readOnly: true}

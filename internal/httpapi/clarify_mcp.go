@@ -546,7 +546,7 @@ func (h *streamHandlers) clarifyMCPUser(issue domain.Issue, responsible domain.U
 		return responsible
 	}
 	owner, ok := h.repo.User(project.OwnerID)
-	if !ok || strings.TrimSpace(owner.TaihuPAT) == "" {
+	if !ok || strings.TrimSpace(owner.GitToken) == "" {
 		return responsible
 	}
 	return owner

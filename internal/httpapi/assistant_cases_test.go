@@ -212,9 +212,9 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 		t.Fatal("incomplete identity accepted")
 	}
 	seeded, err := SeedAssistantAcceptance(st, AssistantAcceptanceIdentity{
-		LoginName: "accept-user", CodeBuddyAPIKey: "cb", TaihuPAT: "tai_pat_test", GitToken: "git",
+		LoginName: "accept-user", CodeBuddyAPIKey: "cb", GitToken: "git",
 	})
-	if err != nil || seeded.ChineseName != "accept-user" || seeded.TaihuPAT != "tai_pat_test" {
+	if err != nil || seeded.ChineseName != "accept-user" || seeded.GitToken != "git" {
 		t.Fatalf("seeded = %+v, %v", seeded, err)
 	}
 	if _, ok := st.Project(assistantAcceptanceProjectID); !ok {

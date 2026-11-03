@@ -88,7 +88,7 @@ func TestMCPValidationBranches(t *testing.T) {
 		cvSMCP(base, func(v *MCPServerDefinition) { v.Scope = "personal" }),
 		cvSMCP(base, func(v *MCPServerDefinition) { v.Scope = "weird" }),
 		cvSMCP(base, func(v *MCPServerDefinition) { v.AuthType = "bad" }),
-		cvSMCP(base, func(v *MCPServerDefinition) { v.AuthType = "taihu-pat" }),
+		cvSMCP(base, func(v *MCPServerDefinition) { v.AuthType = "github-token" }),
 		cvSMCP(base, func(v *MCPServerDefinition) { v.PathEntries = []string{"../x"} }),
 	}
 	for i, item := range bad {
@@ -96,7 +96,7 @@ func TestMCPValidationBranches(t *testing.T) {
 			t.Fatalf("bad MCP %d accepted: %#v", i, item)
 		}
 	}
-	httpMCP := MCPServerDefinition{ID: "m", Name: "m", Transport: "http", URL: "https://x", Scope: "project", ProjectID: "p", AuthType: "taihu-pat", Headers: map[string]string{"Authorization": "secret"}}
+	httpMCP := MCPServerDefinition{ID: "m", Name: "m", Transport: "http", URL: "https://x", Scope: "project", ProjectID: "p", AuthType: "github-token", Headers: map[string]string{"Authorization": "secret"}}
 	if ValidateMCPServer(httpMCP) == nil {
 		t.Fatal("persisted auth accepted")
 	}

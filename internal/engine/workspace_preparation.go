@@ -129,7 +129,6 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers
-	invocation.TaihuPAT = credentials.TaihuPAT
 	request.PreparationInvocation = invocation
 	request.RunStatus = run.Status
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout

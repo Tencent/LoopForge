@@ -55,7 +55,7 @@ const PROJECT_ADMIN_TABS=[{id:'basic',label:'基本信息'},{id:'repos',label:'�
 function tapdIntegrationAvailable(project){
   if(project&&(String(project.tapdWorkspaceId||'').trim()||String(project.tapdIterationId||'').trim()))return true;
   if(String(state.data?.syncConfig?.tapdMcpUrl||'').trim())return true;
-  return (state.data?.mcpServers||[]).some(s=>['70','tapd','tapd_taihu'].includes(String(s.marketId||'')));
+  return (state.data?.mcpServers||[]).some(s=>['70','tapd'].includes(String(s.marketId||'')));
 }
 const PROJECT_SWATCHES=['#536dfe','#5b8cff','#7c3aed','#0ea5e9','#10b981','#f59e0b','#ef4444','#ec4899'];
 const PA_ICON_PATHS={

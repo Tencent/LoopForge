@@ -100,7 +100,7 @@ func (s *Service) Configure(cfg domain.SyncConfig) {
 func (s *Service) ConfigureWithCatalog(cfg domain.SyncConfig, servers []domain.MCPServerDefinition) {
 	s.cfg.Set(cfg)
 	gf := bindTrackerMCP("gongfeng", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("gongfeng"))
-	tapd := bindTrackerMCP("tapd", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("tapd_taihu"))
+	tapd := bindTrackerMCP("tapd", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("tapd"))
 	s.gfSource, s.tapdSource = gf.Source, tapd.Source
 	if gf.URL != "" {
 		s.gongfeng = NewMCPClient(gf.URL, gf.Headers)
@@ -115,7 +115,7 @@ func (s *Service) ConfigureWithCatalog(cfg domain.SyncConfig, servers []domain.M
 }
 
 // ConfigureWithStore enables project-aware authentication. Tracker calls then
-// resolve the target project's MCP asset and inject its Owner's Taihu PAT.
+// resolve the target project's MCP asset and call it as its Owner.
 func (s *Service) ConfigureWithStore(cfg domain.SyncConfig, store ProjectAuthStore) {
 	s.projectAuth = store
 	servers := []domain.MCPServerDefinition(nil)

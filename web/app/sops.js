@@ -38,11 +38,10 @@ async function toggleShare(kind,id){
 }
 // --- 通用模板：依赖预检与复制 -------------------------------------------------
 // Generic templates are platform blueprints. Their 发起 MR node needs a 工蜂 Git
-// Token to push and a 工蜂 MCP (+ 太湖 personal token) to create the merge
+// Token to push and a 工蜂 MCP to create the merge
 // request, so the catalog surfaces that dependency before adoption.
 const GENERIC_REQUIREMENT_CHECKS={
   'gongfeng-git-token':{label:'工蜂 Git Token',hint:'推送工作分支到工蜂。',fix:'settings',fixLabel:'去个人配置配置',check:()=>!!(userById(state.currentUser?.id)||{}).gitTokenConfigured},
-  'taihu-pat':{label:'太湖个人令牌',hint:'工蜂 MCP 走太湖统一认证。',fix:'settings',fixLabel:'去个人配置配置',check:()=>!!(userById(state.currentUser?.id)||{}).taihuPatConfigured},
   'gongfeng-mcp':{label:'工蜂 MCP',hint:'调用工蜂接口创建 MR；未安装时复制出的 SOP 需安装后为「交付工程师」角色绑定。',fix:'mcp',fixLabel:'去 MCP 市场安装',check:()=>gongfengMCPInstalled()},
   'tapd-mcp':{label:'TAPD MCP',hint:'把验收结论回写 TAPD；未安装时只产出待人工粘贴的说明。',fix:'mcp',fixLabel:'去 MCP 市场安装',check:()=>tapdMCPInstalled()}
 };
@@ -428,7 +427,7 @@ function openGenericRequirementTarget(key){
     state.mcpScope='project';state.mcpTab='market';state.mcpQuery=query;
     const input=$('#mcpMarketSearch');if(input)input.value=query;
     switchView('mcp');
-    toast(query==='tapd'?'在 MCP 市场安装 TAPD MCP（太湖认证），安装后回到通用模板查看状态':'在 MCP 市场安装 Gongfeng MCP（太湖认证），安装后回到通用模板查看状态');
+    toast(query==='tapd'?'在 MCP 市场安装 TAPD MCP，安装后回到通用模板查看状态':'在 MCP 市场安装 Gongfeng MCP，安装后回到通用模板查看状态');
     return;
   }
   switchView('settings');

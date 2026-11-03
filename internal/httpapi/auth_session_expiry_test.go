@@ -13,7 +13,7 @@ import (
 )
 
 // 回归用例：浏览器会话的 AuthTime 超过 authSessionTTL 后，/api/auth/current 必须
-// 回落到访客身份并清掉过期 Cookie，让前端把用户重新送到 Passport。
+// 回落到访客身份并清掉过期 Cookie，让前端把用户重新送到 SSO 登录页。
 // 修复前这里会用原始 AuthTime 重新签发 Cookie，形成"Cookie 一直续期、AuthTime
 // 早已过期"的半失效状态：/api/auth/current 报告已登录，受保护接口却一律 401，
 // 用户永久卡在「启动失败：authentication required」页面且无法自愈。
@@ -55,7 +55,7 @@ func TestAuthCurrent_ExpiredSessionFallsBackToGuest(t *testing.T) {
 		t.Fatalf("expected expired session to be reported as guest, got %+v", body.User)
 	}
 	if body.LoginURL == "" {
-		t.Errorf("expected loginUrl so the Studio can bounce the user back to Passport")
+		t.Errorf("expected loginUrl so the Studio can bounce the user back to the SSO login page")
 	}
 
 	// 必须清掉过期 Cookie，否则浏览器会一直带着它重试，永远走不到访客分支。

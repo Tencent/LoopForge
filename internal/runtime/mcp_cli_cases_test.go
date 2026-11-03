@@ -28,7 +28,7 @@ esac
 	cfgPath := filepath.Join(root, "mcp.json")
 	cfg := mcpCallConfigFile{Servers: []mcpCallServer{
 		{ID: "mcp-local-id", Name: "Local Server", MarketID: "market", Command: server, Transport: "stdio", Aliases: []string{"local"}, Environment: map[string]string{"CVR": "1"}},
-		{ID: "http-one", Name: "Remote", URL: "http://127.0.0.1:1", Transport: "http", AuthType: MCPAuthTaihuPAT},
+		{ID: "http-one", Name: "Remote", URL: "http://127.0.0.1:1", Transport: "http", AuthType: "github-token"},
 	}}
 	raw, _ := json.Marshal(cfg)
 	if err := os.WriteFile(cfgPath, raw, 0o600); err != nil {

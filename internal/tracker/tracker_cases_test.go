@@ -447,13 +447,14 @@ func TestCatalogBindingHelpers(t *testing.T) {
 		t.Fatalf("binding = %#v", binding)
 	}
 	if _, err := bindProjectUserTrackerMCP("tapd", domain.SyncConfig{}, servers, "p", domain.User{}, ""); err == nil {
-		t.Fatal("missing PAT accepted")
+		t.Fatal("project MCP without Authorization accepted")
 	}
-	got, err := bindProjectUserTrackerMCP("tapd", domain.SyncConfig{}, servers, "p", domain.User{LoginName: "u", TaihuPAT: "pat"}, "Owner")
-	if err != nil || got.Headers["Authorization"] != "Bearer pat" {
+	servers[0].Headers = map[string]string{"Authorization": "Bearer pat"}
+	got, err := bindProjectUserTrackerMCP("tapd", domain.SyncConfig{}, servers, "p", domain.User{LoginName: "u"}, "Owner")
+	if err != nil || got.Headers["Authorization"] != "Bearer pat" || got.Source != "project-user:u" {
 		t.Fatalf("project binding = %#v, %v", got, err)
 	}
-	for _, market := range []string{"tapd", "tapd-delivery", "70", "tapd_taihu"} {
+	for _, market := range []string{"tapd", "tapd-delivery", "70"} {
 		if !projectTrackerKindMatch("tapd", domain.MCPServerDefinition{MarketID: market}) {
 			t.Fatalf("market %s", market)
 		}

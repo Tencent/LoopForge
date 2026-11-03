@@ -113,7 +113,7 @@ func TestExchangeCode_Success(t *testing.T) {
 		PaaSID:   "my_paas",
 		AppToken: "my_token",
 		AuthHost: mockServer.URL,
-		AuthURI:  "/ebus/tof4/api/v1/passport/AccessToken",
+		AuthURI:  "/sso/access-token",
 	})
 	client.SetHTTPClient(mockServer.Client())
 
@@ -207,4 +207,28 @@ func TestExchangeCode_Degradation(t *testing.T) {
 			t.Errorf("expected guest fallback, got %+v", user)
 		}
 	})
+}
+
+func TestLoginURLUsesConfiguredSSOPage(t *testing.T) {
+	if got := NewClient(Config{PaaSID: "app", AppToken: "token"}).LoginURL("https://lf.example.com/"); got != "/login.html" {
+		t.Fatalf("unconfigured SSO login URL = %q", got)
+	}
+	if got := NewClient(Config{PaaSID: "app", LoginURL: "https://sso.example.com/signin"}).LoginURL("https://lf.example.com/"); got != "/login.html" {
+		t.Fatalf("SSO without app token login URL = %q", got)
+	}
+	got := NewClient(Config{PaaSID: "app id", AppToken: "token", LoginURL: "https://sso.example.com/signin"}).LoginURL("https://lf.example.com/#/x")
+	if got != "https://sso.example.com/signin?oauth=true&appkey=app+id&url=https%3A%2F%2Flf.example.com%2F%23%2Fx" {
+		t.Fatalf("login URL = %q", got)
+	}
+	got = NewClient(Config{PaaSID: "app", AppToken: "token", LoginURL: "https://sso.example.com/signin?tenant=a"}).LoginURL("https://lf.example.com/")
+	if !strings.HasPrefix(got, "https://sso.example.com/signin?tenant=a&oauth=true&appkey=app&url=") {
+		t.Fatalf("login URL with query = %q", got)
+	}
+}
+
+func TestExchangeCodeRequiresConfiguredGateway(t *testing.T) {
+	user, err := NewClient(Config{PaaSID: "app", AppToken: "token", AuthHost: "http://127.0.0.1:1"}).ExchangeCode(context.Background(), "code")
+	if err != nil || user == nil || !user.IsGuest {
+		t.Fatalf("missing auth URI must fall back to guest: %+v %v", user, err)
+	}
 }

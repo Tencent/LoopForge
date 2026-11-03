@@ -374,15 +374,15 @@ func TestGenericMRRoleResolvesGongfengMarketAlias(t *testing.T) {
 	}
 	gongfeng := domain.MCPServerDefinition{
 		ID: "mcp-61-project-alpha", Name: "Gongfeng MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng", AuthType: "taihu-pat",
+		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng",
 	}
 	tapd := domain.MCPServerDefinition{
 		ID: "mcp-70-project-alpha", Name: "TAPD MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "70", Transport: "http", URL: "https://mcpgw.knot.example.com/tapd", AuthType: "taihu-pat",
+		MarketID: "70", Transport: "http", URL: "https://mcpgw.knot.example.com/tapd",
 	}
 	other := domain.MCPServerDefinition{
 		ID: "mcp-61-project-beta", Name: "Gongfeng MCP", Scope: "project", ProjectID: "beta",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng", AuthType: "taihu-pat",
+		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng",
 	}
 	for _, server := range []domain.MCPServerDefinition{gongfeng, tapd, other} {
 		if err := st.PutMCPServer(server); err != nil {
@@ -512,12 +512,13 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "dns", Name: "DNS"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutUser(domain.User{ID: 9, LoginName: "owner", TaihuPAT: "tai_pat_secret"}); err != nil {
+	if err := s.PutUser(domain.User{ID: 9, LoginName: "owner"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214",
-		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow", AuthType: runtime.MCPAuthTaihuPAT,
+		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow",
+		Headers: map[string]string{"Authorization": "Bearer mcp_secret"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +549,7 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 	if !strings.Contains(body, "2214") || !strings.Contains(body, "rainbow") {
 		t.Fatalf("mcp list artifact = %q", body)
 	}
-	if strings.Contains(body, "tai_pat_secret") || strings.Contains(strings.ToLower(body), "bearer") {
+	if strings.Contains(body, "mcp_secret") || strings.Contains(strings.ToLower(body), "bearer") {
 		t.Fatalf("mcp list leaked credentials: %q", body)
 	}
 }
@@ -563,12 +564,13 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "dns", Name: "DNS"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutUser(domain.User{ID: 9, LoginName: "owner", TaihuPAT: "tai_pat_secret"}); err != nil {
+	if err := s.PutUser(domain.User{ID: 9, LoginName: "owner"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214",
-		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow", AuthType: runtime.MCPAuthTaihuPAT,
+		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow",
+		Headers: map[string]string{"Authorization": "Bearer mcp_secret"},
 	}); err != nil {
 		t.Fatal(err)
 	}

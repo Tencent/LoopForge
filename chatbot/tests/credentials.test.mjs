@@ -59,12 +59,12 @@ test("credential errors from the platform link to the right setting", () => {
   }
 });
 
-test("legacy Taihu errors do not point at a hidden credential", () => {
-  for (const message of [
-    "当前责任人未配置太湖个人令牌：请先在个人凭证中配置",
-    "MCP gongfeng 需要太湖个人令牌：请先在个人凭证中配置",
-  ])
-    assert.equal(credentialHint(message)?.field === "taihuPat", false, message);
+test("unknown credential errors do not point at a hidden credential", () => {
+  assert.equal(credentialHint("当前责任人未配置个人令牌：请先在个人凭证中配置"), null);
+});
+
+test("MCP calls missing a GitHub token point at the Git token", () => {
+  assert.equal(credentialHint("MCP GitHub 需要 GitHub Git Token：请先在个人凭证中配置")?.field, "gitToken");
 });
 
 test("the Git token guide points at GitHub", () => {

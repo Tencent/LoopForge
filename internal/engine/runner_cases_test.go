@@ -254,7 +254,7 @@ func TestRunnerDispatchEarlyAndCanceledPaths(t *testing.T) {
 	}
 	ctx, cancel = context.WithCancel(context.Background())
 	cancel()
-	if _, err := e.dispatchRunnerScript(ctx, r.ID, run, "script", "workspace", "python", "print('x')", "", nil, sb, "", "", "", "", domain.AgentAssetBundle{}, func(domain.TelemetryEvent) {}); !errors.Is(err, context.Canceled) {
+	if _, err := e.dispatchRunnerScript(ctx, r.ID, run, "script", "workspace", "python", "print('x')", "", nil, sb, "", "", "", domain.AgentAssetBundle{}, func(domain.TelemetryEvent) {}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("script cancel = %v", err)
 	}
 	if err := e.repo.PutRun(run); err != nil {

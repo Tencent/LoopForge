@@ -33,7 +33,7 @@ func (h *assistantHandlers) assistantSponsor() (domain.User, bool) {
 // assistantChatUser returns the identity a chat turn runs as. Users with
 // their own key are returned unchanged. Otherwise the sponsor's key and
 // network environment are substituted and sponsored is true; everything else
-// (ID, permissions, Git / Taihu credentials) stays the caller's own.
+// (ID, permissions, Git credentials) stays the caller's own.
 func (h *assistantHandlers) assistantChatUser(user domain.User) (chatUser domain.User, sponsored, ok bool) {
 	if strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
 		return user, false, true

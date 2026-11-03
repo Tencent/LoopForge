@@ -17,19 +17,19 @@ func TestValidateMCPServer(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "url") {
 		t.Fatalf("http without http(s) url should fail, got %v", err)
 	}
-	if err := ValidateMCPServer(MCPServerDefinition{ID: "taihu", Name: "Taihu", Transport: "http", URL: "https://prod.mcp.it.example.com/app/mcp", AuthType: "taihu-pat"}); err != nil {
-		t.Fatalf("taihu HTTP MCP should pass: %v", err)
+	if err := ValidateMCPServer(MCPServerDefinition{ID: "github", Name: "GitHub", Transport: "http", URL: "https://api.githubcopilot.com/mcp/", AuthType: "github-token"}); err != nil {
+		t.Fatalf("github-token HTTP MCP should pass: %v", err)
 	}
-	if err := ValidateMCPServer(MCPServerDefinition{ID: "bad-auth", Name: "Bad", Command: "npx", AuthType: "taihu-pat"}); err == nil {
-		t.Fatal("stdio MCP must not accept taihu-pat auth")
+	if err := ValidateMCPServer(MCPServerDefinition{ID: "bad-auth", Name: "Bad", Command: "npx", AuthType: "github-token"}); err == nil {
+		t.Fatal("stdio MCP must not accept github-token auth")
 	}
-	if err := ValidateMCPServer(MCPServerDefinition{ID: "static-auth", Name: "Static", Transport: "http", URL: "https://example.com", AuthType: "taihu-pat", Headers: map[string]string{"authorization": "Bearer secret"}}); err == nil {
-		t.Fatal("taihu-pat MCP must not store an Authorization header")
+	if err := ValidateMCPServer(MCPServerDefinition{ID: "static-auth", Name: "Static", Transport: "http", URL: "https://example.com", AuthType: "github-token", Headers: map[string]string{"authorization": "Bearer secret"}}); err == nil {
+		t.Fatal("github-token MCP must not store an Authorization header")
 	}
 }
 
 func TestValidateMCPServerScope(t *testing.T) {
-	base := MCPServerDefinition{ID: "iwiki", Name: "iWiki", Transport: "http", URL: "https://example.com/mcp", AuthType: "taihu-pat"}
+	base := MCPServerDefinition{ID: "iwiki", Name: "iWiki", Transport: "http", URL: "https://example.com/mcp"}
 	project := base
 	project.Scope, project.ProjectID = "project", "p1"
 	if err := ValidateMCPServer(project); err != nil {

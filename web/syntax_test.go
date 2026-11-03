@@ -702,7 +702,7 @@ renderUserBadge();
 	}
 }
 
-func TestLocalhostDoesNotAutoPassportRedirect(t *testing.T) {
+func TestLocalhostDoesNotAutoSSORedirect(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not installed; skipping check")
@@ -714,7 +714,7 @@ const start = appCode.indexOf("function isLoopbackHost(");
 const end = appCode.indexOf("async function boot()");
 if (start < 0 || end < 0) process.exit(2);
 eval(appCode.slice(start, end));
-const loginUrl = "https://passport.example.com/modules/passport/signin.ashx";
+const loginUrl = "https://sso.example.com/signin";
 const cases = [
   [{isGuest:true, hostname:"localhost", loginUrl}, false],
   [{isGuest:true, hostname:"127.0.0.1", loginUrl}, false],
@@ -726,7 +726,7 @@ const cases = [
   [{isGuest:false, hostname:"loopforge.example.com", loginUrl}, false],
 ];
 for (const [input, want] of cases) {
-  const got = shouldAutoPassportRedirect(input);
+  const got = shouldAutoSSORedirect(input);
   if (got !== want) {
     console.error(JSON.stringify(input), "got", got, "want", want);
     process.exit(1);
@@ -735,7 +735,7 @@ for (const [input, want] of cases) {
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
-		t.Fatalf("localhost passport redirect check failed: %v\n%s", err, out)
+		t.Fatalf("localhost SSO redirect check failed: %v\n%s", err, out)
 	}
 }
 
@@ -803,7 +803,6 @@ assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step f
 assert.ok(html.includes('1 / 1') && html.includes('1 / 3'));
 assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>2</span>'));
 assert.equal(count(html, 'data-credential-row='), 4);
-assert.ok(!html.includes('taihuPat') && !html.includes('太湖'), 'Taihu is not offered');
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
 assert.equal(count(html, 'data-credential-act="setup"'), 2);
@@ -853,7 +852,6 @@ assert.equal(calls.length, 0);
   const one = credentialWizardStepOneHTML(user);
   assert.ok(one.includes('data-wizard-kind="gitToken" disabled') && one.includes('data-wizard-kind="codexApiKey" disabled'));
   assert.ok(!one.includes('data-wizard-kind="codeBuddyApiKey" disabled'));
-  assert.ok(!one.includes('data-wizard-kind="taihuPat"'));
   assert.ok(credentialWizardFootHTML().includes('data-wizard-next disabled'));
   // Going back to step 1 and picking another kind drops what was typed for the previous one.
   cred.wizard = {step: 1, kind: 'codeBuddyApiKey', direct: false, secret: 'cb_CARRY', extra: '', guide: {0: true}, error: 'x'};
@@ -981,7 +979,7 @@ assert.equal(opened.length, 3);
 }
 
 // Generic templates must tell users up front that the 发起 MR node needs a 工蜂
-// Git Token and a project-scoped 工蜂 MCP (+ 太湖 personal token).
+// Git Token and a project-scoped 工蜂 MCP.
 func TestGenericTemplateRequirementPreflight(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -994,13 +992,13 @@ global.escapeHTML = value => String(value);
 global.state = {
   currentUser: {id: 7}, projectFilter: 'alpha',
   mcpMarket: [{id: '61', aliases: ['gongfeng'], url: 'https://mcpgw.knot.example.com/gongfeng'}],
-  data: {users: [{id: 7, gitTokenConfigured: true, taihuPatConfigured: false}], mcpServers: []}
+  data: {users: [{id: 7, gitTokenConfigured: true}], mcpServers: []}
 };
 global.userById = id => state.data.users.find(u => Number(u.id) === Number(id));
 eval(code.slice(code.indexOf('const GENERIC_REQUIREMENT_CHECKS='), code.indexOf('function genericRequirementChips(')));
 const workflow = {requirements: [
   {key: 'gongfeng-git-token', nodeId: 'mr', label: '工蜂 Git Token', hint: '推送分支'},
-  {key: 'taihu-pat', nodeId: 'mr', label: '太湖个人令牌', hint: '太湖认证'},
+  {key: 'tapd-mcp', nodeId: 'mr', label: 'TAPD MCP', hint: '回写 TAPD'},
   {key: 'gongfeng-mcp', nodeId: 'mr', label: '工蜂 MCP', hint: '创建 MR'}
 ]};
 let rows = genericRequirementRows(workflow);

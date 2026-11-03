@@ -731,7 +731,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if len(servers) == 0 {
 			servers = task.Invocation.Assets.MCPServers
 		}
-		bound, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers, MCPFiles: task.Invocation.Assets.MCPFiles}, d.mcpTarget(task.Invocation.TaihuPAT, false, invocationGitToken(task.Invocation)))
+		bound, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers, MCPFiles: task.Invocation.Assets.MCPFiles}, d.mcpTarget(false, invocationGitToken(task.Invocation)))
 		if err := runtime.ProvisionMCPAssets(ctx, sandbox, workspace, bound, nil); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("provision MCP: %v", err)}
 		}
@@ -759,12 +759,12 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 
 // mcpTarget addresses platform-served MCP servers through this runner's own
 // server URL, the one platform address known to be reachable from here.
-func (d *Daemon) mcpTarget(taihuPAT string, requireTaihuPAT bool, gitTokens ...string) runtime.MCPTarget {
+func (d *Daemon) mcpTarget(requireCredentials bool, gitTokens ...string) runtime.MCPTarget {
 	var gitToken string
 	if len(gitTokens) > 0 {
 		gitToken = gitTokens[0]
 	}
-	return runtime.MCPTarget{ServerURL: d.cfg.ServerURL, TaihuPAT: taihuPAT, GitToken: gitToken, RequireTaihuPAT: requireTaihuPAT}
+	return runtime.MCPTarget{ServerURL: d.cfg.ServerURL, GitToken: gitToken, RequireCredentials: requireCredentials}
 }
 
 // executeInvocation runs a workflow Agent node locally: it materializes the
@@ -801,7 +801,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		}
 		defer release()
 	}
-	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, d.mcpTarget(inv.TaihuPAT, true, invocationGitToken(inv)))
+	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, d.mcpTarget(true, invocationGitToken(inv)))
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("bind MCP credentials: %v", err)}, nil
 	}
@@ -871,7 +871,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		if len(servers) == 0 {
 			servers = boundAssets.MCPServers
 		} else {
-			gateAssets, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers}, d.mcpTarget(inv.TaihuPAT, false, invocationGitToken(inv)))
+			gateAssets, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers}, d.mcpTarget(false, invocationGitToken(inv)))
 			servers = gateAssets.MCPServers
 		}
 		mcpEnv, mcpErr := runtime.ScriptMCPEnvironment(sandbox, workspace, servers)

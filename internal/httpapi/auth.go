@@ -121,7 +121,7 @@ func (h *authHandlers) getReturnURL(r *http.Request) string {
 func (h *authHandlers) authCurrent(c *gin.Context) {
 	r := c.Request
 
-	// 1. 优先检查太湖 / AIO-Forward 网关透传的员工身份 Header
+	// 1. 优先检查认证网关透传的员工身份 Header
 	staffName := gatewayLoginName(r)
 	if staffName != "" {
 		staffID, _ := strconv.Atoi(strings.TrimSpace(getHeaderCaseInsensitive(r, "Staffid")))

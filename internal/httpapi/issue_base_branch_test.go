@@ -123,9 +123,6 @@ func TestImportTAPDBaseBranchSelectionAndReimport(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ := st.UserByLoginName("branch-importer")
-	if _, err := st.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_mock_import"}); err != nil {
-		t.Fatal(err)
-	}
 	project, _ := st.Project("platform")
 	project.OwnerID = owner.ID
 	if err := st.PutProject(project); err != nil {

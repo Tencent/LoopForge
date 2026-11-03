@@ -28,7 +28,7 @@
 
 返回全部 `WorkflowDefinition[]`，`200`，不分页。
 
-返回值包含两类 SOP：项目里存储的 SOP，以及 `generic_templates` 表中的**通用模板**（payload 带 `generic: true`，`projectId` 为空）。通用模板与项目无关，所有项目都能看到；普通用户只读，复制到项目后才能编辑。运行时按和自定义 SOP 相同的流程解析节点与角色。通用模板通过 `requirements` 声明运行依赖（例如 `gongfeng-git-token`、`gongfeng-mcp`、`taihu-pat`），Studio 会在复制前做依赖预检。需要人工把关时可在复制后自行添加审批节点。
+返回值包含两类 SOP：项目里存储的 SOP，以及 `generic_templates` 表中的**通用模板**（payload 带 `generic: true`，`projectId` 为空）。通用模板与项目无关，所有项目都能看到；普通用户只读，复制到项目后才能编辑。运行时按和自定义 SOP 相同的流程解析节点与角色。通用模板通过 `requirements` 声明运行依赖（例如 `gongfeng-git-token`、`gongfeng-mcp`、`tapd-mcp`），Studio 会在复制前做依赖预检。需要人工把关时可在复制后自行添加审批节点。
 
 ### `PUT /api/workflows`
 
@@ -71,7 +71,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 `id`、`name` 必填。副本固定为 `draft`、`version=1`、`revision=0`，成功 `201`；字段/存储错误 `400`，源 SOP 不存在 `404`。
 
-源 SOP 是通用模板时，复制会同时把模板引用的角色创建到 `projectId` 指定的项目（已存在的同名角色直接复用），并把节点上的 `agentId` 重写到本项目角色，因此复制出的 SOP 可直接运行；此时 `projectId` 必填，缺失返回 `400`。模板声明的 `requirements` 会保留在副本上，Studio 继续据此提示依赖（例如发起 MR 节点需要工蜂 Git Token / 工蜂 MCP + 太湖个人令牌）。
+源 SOP 是通用模板时，复制会同时把模板引用的角色创建到 `projectId` 指定的项目（已存在的同名角色直接复用），并把节点上的 `agentId` 重写到本项目角色，因此复制出的 SOP 可直接运行；此时 `projectId` 必填，缺失返回 `400`。模板声明的 `requirements` 会保留在副本上，Studio 继续据此提示依赖（例如发起 MR 节点需要工蜂 Git Token / 工蜂 MCP）。
 
 ## 运行
 

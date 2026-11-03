@@ -351,7 +351,6 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.CodexBaseURL = ""
 	copyInvocation.ClaudeCodeAPIKey = ""
 	copyInvocation.ClaudeCodeBaseURL = ""
-	copyInvocation.TaihuPAT = ""
 	if copyInvocation.Repository != nil {
 		copyRepository := *copyInvocation.Repository
 		copyRepository.GitToken = ""
@@ -408,10 +407,10 @@ type RunnerInvocation struct {
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
 	ClaudeCodeAPIKey             string   `json:"claudeCodeApiKey,omitempty"`
 	ClaudeCodeBaseURL            string   `json:"claudeCodeBaseUrl,omitempty"`
-	TaihuPAT                     string   `json:"taihuPat,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
-	// in scripts, verification gates, and Agent hooks. It is unbound; TaihuPAT
-	// is applied in memory on the runner. Agent Assets stay allowlist-scoped.
+	// in scripts, verification gates, and Agent hooks. It is unbound; personal
+	// credentials are applied in memory on the runner. Agent Assets stay
+	// allowlist-scoped.
 	MCPCallServers []MCPServerDefinition `json:"mcpCallServers,omitempty"`
 	// GitUserName and GitUserEmail are the frozen requirement owner's commit
 	// identity. The runner applies them to each checkout with --local scope.
