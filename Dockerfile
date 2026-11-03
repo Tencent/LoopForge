@@ -5,7 +5,7 @@ RUN npm --prefix chatbot ci --include=dev --no-audit --no-fund
 COPY chatbot/ chatbot/
 COPY web/app/ web/app/
 RUN npm --prefix chatbot run build && test -f web/native-chat/index.html
-FROM golang:1.26.9-bookworm AS build
+FROM golang:1.26.10-bookworm AS build
 WORKDIR /src
 ENV GOMAXPROCS=2 GOFLAGS=-p=2
 COPY go.mod go.sum ./

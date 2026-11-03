@@ -95,7 +95,7 @@ Once installation and sandbox image preparation are complete, the script-and-app
 - **Sandboxes.** In the default Compose installation, SOP tasks use Docker sandbox containers started through the host Docker socket. The sandbox image builds in the background after the first start (a few minutes). Docker socket access grants control of the host daemon: this is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
 - **Accounts and access.** The default deployment listens on localhost and is designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
 - **Remote access, HTTPS, separate workers** — see [Deployment](docs/deployment.md).
-- **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.9+).
+- **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.10+).
 
 </details>
 

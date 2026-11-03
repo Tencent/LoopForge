@@ -1,7 +1,7 @@
 .PHONY: run test test-mysql clean-mysql build build-chatbot build-gate-mcp coverage coverage-go coverage-chatbot coverage-web coverage-e2e
 
 GOCACHE ?= /tmp/agentflow-gocache
-# Use the local toolchain; go.mod requires go >= 1.26.9.
+# Use the local toolchain; go.mod requires go >= 1.26.10.
 
 run:
 	GOCACHE=$(GOCACHE) go run ./cmd/agentflow
