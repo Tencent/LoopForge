@@ -33,6 +33,7 @@ func putGateTestAgent(t *testing.T, s *repo.Store, id string, gates []domain.Ver
 }
 
 func TestCommittedWorkerChangesRemainInFrozenPatch(t *testing.T) {
+	t.Parallel()
 	source := filepath.Join(t.TempDir(), "source")
 	if err := os.MkdirAll(source, 0o700); err != nil {
 		t.Fatal(err)
@@ -79,6 +80,7 @@ func TestCommittedWorkerChangesRemainInFrozenPatch(t *testing.T) {
 }
 
 func TestResolveAssetsLoadsSkillBinaryFiles(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +104,35 @@ func TestResolveAssetsLoadsSkillBinaryFiles(t *testing.T) {
 	}
 }
 
+// SkillHub installs are plain project skills with a source record, so a bound
+// role gets their snapshot files exactly like an uploaded skill.
+func TestResolveAssetsLoadsSkillhubSnapshot(t *testing.T) {
+	t.Parallel()
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	now := time.Now().UTC()
+	skill := domain.SkillDefinition{ID: "find-skill", Name: "find skill", ProjectID: "p1", UpdatedAt: now,
+		Source: &domain.SkillSource{Provider: domain.SkillSourceSkillHub, Namespace: "team", Slug: "find-skill", Version: "1.0.1", InstalledAt: now, UpdatedAt: now}}
+	if err := st.PutSkillSnapshot(skill, []repo.SkillFileInput{
+		{Path: "SKILL.md", Content: []byte("---\nname: find-skill\n---\n# find"), Mode: 0o644},
+		{Path: "_meta.json", Content: []byte(`{"slug":"find-skill"}`), Mode: 0o644},
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	assets := (&Engine{repo: st}).resolveAssets(domain.AgentDefinition{Skills: []string{"find-skill"}}, "p1", "", 1)
+	if len(assets.Skills) != 1 || assets.Skills[0].Source == nil || assets.Skills[0].Source.Version != "1.0.1" || len(assets.Skills[0].FileRefs) != 2 {
+		t.Fatalf("SkillHub skill not resolved with its source and files: %#v", assets.Skills)
+	}
+	if got := string(assets.SkillFiles["find-skill"]["SKILL.md"]); !strings.Contains(got, "# find") {
+		t.Fatalf("SKILL.md snapshot not loaded into bundle: %q", got)
+	}
+}
+
 func TestResolveAssetsEnforcesProjectAndPersonalScope(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +196,7 @@ func TestResolveAssetsEnforcesProjectAndPersonalScope(t *testing.T) {
 }
 
 func TestResolveAssetsBindsPlatformMCP(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +233,7 @@ func TestResolveAssetsBindsPlatformMCP(t *testing.T) {
 }
 
 func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -246,6 +278,7 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 }
 
 func TestKnowledgeMCPWithoutPlatformBase(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -274,6 +307,7 @@ func TestKnowledgeMCPWithoutPlatformBase(t *testing.T) {
 }
 
 func TestGlobalRuleInjectsIntoEveryNodeOfBoundWorkflow(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -329,6 +363,7 @@ func TestGlobalRuleInjectsIntoEveryNodeOfBoundWorkflow(t *testing.T) {
 }
 
 func TestGenericMRRoleResolvesGongfengMarketAlias(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -339,15 +374,15 @@ func TestGenericMRRoleResolvesGongfengMarketAlias(t *testing.T) {
 	}
 	gongfeng := domain.MCPServerDefinition{
 		ID: "mcp-61-project-alpha", Name: "Gongfeng MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng", AuthType: "taihu-pat",
+		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng",
 	}
 	tapd := domain.MCPServerDefinition{
 		ID: "mcp-70-project-alpha", Name: "TAPD MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "70", Transport: "http", URL: "https://mcpgw.knot.example.com/tapd", AuthType: "taihu-pat",
+		MarketID: "70", Transport: "http", URL: "https://mcpgw.knot.example.com/tapd",
 	}
 	other := domain.MCPServerDefinition{
 		ID: "mcp-61-project-beta", Name: "Gongfeng MCP", Scope: "project", ProjectID: "beta",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng", AuthType: "taihu-pat",
+		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng",
 	}
 	for _, server := range []domain.MCPServerDefinition{gongfeng, tapd, other} {
 		if err := st.PutMCPServer(server); err != nil {
@@ -376,6 +411,7 @@ func TestGenericMRRoleResolvesGongfengMarketAlias(t *testing.T) {
 }
 
 func TestGenericCatalogAssetsIgnoreStoredCrossProjectCollisions(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -410,6 +446,7 @@ func TestGenericCatalogAssetsIgnoreStoredCrossProjectCollisions(t *testing.T) {
 }
 
 func TestProjectSandboxNeverCrossesProjectBoundary(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -430,6 +467,7 @@ func TestProjectSandboxNeverCrossesProjectBoundary(t *testing.T) {
 }
 
 func TestShellAndPythonScriptNodesExecuteInOrder(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -465,6 +503,7 @@ func TestShellAndPythonScriptNodesExecuteInOrder(t *testing.T) {
 }
 
 func TestScriptNodeCanCallProjectMCP(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -473,12 +512,13 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "dns", Name: "DNS"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutUser(domain.User{ID: 9, LoginName: "owner", TaihuPAT: "tai_pat_secret"}); err != nil {
+	if err := s.PutUser(domain.User{ID: 9, LoginName: "owner"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214",
-		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow", AuthType: runtime.MCPAuthTaihuPAT,
+		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow",
+		Headers: map[string]string{"Authorization": "Bearer mcp_secret"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -509,12 +549,13 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 	if !strings.Contains(body, "2214") || !strings.Contains(body, "rainbow") {
 		t.Fatalf("mcp list artifact = %q", body)
 	}
-	if strings.Contains(body, "tai_pat_secret") || strings.Contains(strings.ToLower(body), "bearer") {
+	if strings.Contains(body, "mcp_secret") || strings.Contains(strings.ToLower(body), "bearer") {
 		t.Fatalf("mcp list leaked credentials: %q", body)
 	}
 }
 
 func TestVerificationGateCanCallProjectMCP(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -523,12 +564,13 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "dns", Name: "DNS"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutUser(domain.User{ID: 9, LoginName: "owner", TaihuPAT: "tai_pat_secret"}); err != nil {
+	if err := s.PutUser(domain.User{ID: 9, LoginName: "owner"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214",
-		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow", AuthType: runtime.MCPAuthTaihuPAT,
+		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow",
+		Headers: map[string]string{"Authorization": "Bearer mcp_secret"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -568,6 +610,7 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 }
 
 func TestCollectRepositoryPatchIncludesUntrackedE2EAndOmitsDeliverables(t *testing.T) {
+	t.Parallel()
 	source := filepath.Join(t.TempDir(), "source")
 	if err := os.MkdirAll(source, 0o700); err != nil {
 		t.Fatal(err)
@@ -620,6 +663,7 @@ func TestCollectRepositoryPatchIncludesUntrackedE2EAndOmitsDeliverables(t *testi
 }
 
 func TestMaterializeInputsMountsAncestorE2ECases(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	wf := domain.WorkflowDefinition{ID: "wf", Edges: []domain.WorkflowEdge{
 		{Source: "test", Target: "mr"},
@@ -650,6 +694,7 @@ func TestMaterializeInputsMountsAncestorE2ECases(t *testing.T) {
 }
 
 func TestMaterializeInputsRejectsSymlinkedControlDirectory(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	outside := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, ".agentflow"), 0o700); err != nil {
@@ -669,6 +714,7 @@ func TestMaterializeInputsRejectsSymlinkedControlDirectory(t *testing.T) {
 }
 
 func TestMaterializeInputsMountsCloseDeliveryArtifacts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	wf := domain.WorkflowDefinition{ID: "wf", Edges: []domain.WorkflowEdge{
 		{Source: "test", Target: "mr"},
@@ -705,6 +751,7 @@ func TestMaterializeInputsMountsCloseDeliveryArtifacts(t *testing.T) {
 }
 
 func TestMergeArtifactContractsLetsNodeRefineAgentContract(t *testing.T) {
+	t.Parallel()
 	agent := []domain.ArtifactContract{{Name: "report", Path: "result.md", MediaType: "text/markdown", Required: true}, {Name: "patch", Path: "changes.patch", Required: false}}
 	node := []domain.ArtifactContract{{Name: "report", Path: "review.md", MediaType: "text/markdown", Required: true}}
 	merged := mergeArtifactContracts(agent, node)
@@ -714,6 +761,7 @@ func TestMergeArtifactContractsLetsNodeRefineAgentContract(t *testing.T) {
 }
 
 func TestPrepareRepositoryRefreshesBaseThenCreatesWorkBranch(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	remote := filepath.Join(root, "remote.git")
@@ -752,6 +800,7 @@ func TestPrepareRepositoryRefreshesBaseThenCreatesWorkBranch(t *testing.T) {
 }
 
 func TestPrepareRepositoryAppliesResponsibleUserGitIdentityOnCloneAndResume(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	remote := filepath.Join(root, "remote.git")
@@ -805,6 +854,7 @@ func TestPrepareRepositoryAppliesResponsibleUserGitIdentityOnCloneAndResume(t *t
 }
 
 func TestPrepareRepositoryIgnoresMissingLocalPathWhenCloneURLExists(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	remote := filepath.Join(root, "remote.git")
@@ -845,6 +895,7 @@ func TestPrepareRepositoryIgnoresMissingLocalPathWhenCloneURLExists(t *testing.T
 }
 
 func TestPrepareRepositoryResumeKeepsLocalCommits(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	remote := filepath.Join(root, "remote.git")
@@ -894,6 +945,7 @@ func TestPrepareRepositoryResumeKeepsLocalCommits(t *testing.T) {
 }
 
 func TestPrepareRepositoryChecksOutExistingRemoteWorkBranch(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote, workspace := filepath.Join(root, "source"), filepath.Join(root, "remote.git"), filepath.Join(root, "workspace")
 	writeGitRepoWithWorkBranch(t, source, remote, "feature/fix-issue-18")
@@ -905,6 +957,7 @@ func TestPrepareRepositoryChecksOutExistingRemoteWorkBranch(t *testing.T) {
 }
 
 func TestPrepareRepositoryResumeResetsNamesakeWorkBranch(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote, workspace := filepath.Join(root, "source"), filepath.Join(root, "remote.git"), filepath.Join(root, "workspace")
 	writeGitRepoWithWorkBranch(t, source, remote, "feature/fix-issue-18")
@@ -929,6 +982,7 @@ func TestPrepareRepositoryResumeResetsNamesakeWorkBranch(t *testing.T) {
 }
 
 func TestPrepareRepositoryResumeKeepsLocalCommitsWhenRemoteWorkBranchExists(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote, workspace := filepath.Join(root, "source"), filepath.Join(root, "remote.git"), filepath.Join(root, "workspace")
 	writeGitRepoWithWorkBranch(t, source, remote, "feature/fix-issue-18")
@@ -1015,6 +1069,7 @@ func assertCheckedOutWorkBranch(t *testing.T, workspace, workBranch, wantContent
 }
 
 func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1043,6 +1098,7 @@ func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
 }
 
 func TestFinishSucceededDeletesPersistentSandboxImmediately(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1077,6 +1133,7 @@ func TestFinishSucceededDeletesPersistentSandboxImmediately(t *testing.T) {
 }
 
 func TestFinishFailedKeepsPersistentSandbox(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1107,6 +1164,7 @@ func TestFinishFailedKeepsPersistentSandbox(t *testing.T) {
 }
 
 func TestDefaultWorkBranchIncludesHourMinute(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 8, 17, 22, 54, 0, 0, time.Local)
 	got := domain.DefaultWorkBranch(domain.Issue{ID: "gf-5", Source: "gongfeng", Kind: "issue", Number: 5}, now)
 	if got != "feature/fix-issue-5-20260817-2254" {
@@ -1115,6 +1173,7 @@ func TestDefaultWorkBranchIncludesHourMinute(t *testing.T) {
 }
 
 func TestPrepareRepositoryKeepsExistingWorkspaceDirectory(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	workspace := filepath.Join(root, "workspace")
@@ -1161,6 +1220,7 @@ func TestPrepareRepositoryKeepsExistingWorkspaceDirectory(t *testing.T) {
 }
 
 func TestResetCloneDestinationCreatesMissingDirectory(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "gone")
 	if err := resetCloneDestination(missing); err != nil {
 		t.Fatal(err)
@@ -1172,6 +1232,7 @@ func TestResetCloneDestinationCreatesMissingDirectory(t *testing.T) {
 }
 
 func TestPrepareRepositoryRetryKeepsExistingWorkspaceDirectory(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	remote := filepath.Join(root, "remote.git")
@@ -1227,6 +1288,7 @@ func TestPrepareRepositoryRetryKeepsExistingWorkspaceDirectory(t *testing.T) {
 }
 
 func TestPrepareRepositoryUsesRemoteMasterNotStaleLocalPath(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
 	local := filepath.Join(root, "local")
@@ -1280,6 +1342,7 @@ func TestPrepareRepositoryUsesRemoteMasterNotStaleLocalPath(t *testing.T) {
 }
 
 func TestPrepareRepositoryWithTokenKeepsCleanOrigin(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	remote := filepath.Join(root, "remote.git")
@@ -1327,6 +1390,7 @@ func TestPrepareRepositoryWithTokenKeepsCleanOrigin(t *testing.T) {
 }
 
 func TestRunWaitsForGateAndCompletes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1351,6 +1415,7 @@ func TestRunWaitsForGateAndCompletes(t *testing.T) {
 }
 
 func TestHumanGateFailureWaitsForApprove(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1382,6 +1447,7 @@ func TestHumanGateFailureWaitsForApprove(t *testing.T) {
 }
 
 func TestSubmitReworkWithoutRejectToDegradesToFail(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1418,6 +1484,7 @@ func TestSubmitReworkWithoutRejectToDegradesToFail(t *testing.T) {
 }
 
 func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1459,6 +1526,7 @@ func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
 }
 
 func TestSubmitReworkBudgetExhaustedWaitsForHuman(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1503,6 +1571,7 @@ func TestSubmitReworkBudgetExhaustedWaitsForHuman(t *testing.T) {
 }
 
 func TestSubmitTerminalDecisionSkipsGatesTelemetry(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1552,6 +1621,7 @@ func TestSubmitTerminalDecisionSkipsGatesTelemetry(t *testing.T) {
 }
 
 func TestSubmitGateResumesSessionWhenResultIsMissing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1594,7 +1664,52 @@ func TestSubmitGateResumesSessionWhenResultIsMissing(t *testing.T) {
 	}
 }
 
+func TestLostCLISessionRestartsInsteadOfWaiting(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if err := s.PutAgent(domain.AgentDefinition{ID: "lost-session-agent", Name: "lost-session-agent", ExecutorID: "mock", Instructions: "[[mock:session=lost]]"}); err != nil {
+		t.Fatal(err)
+	}
+	wf := domain.WorkflowDefinition{
+		ID: "lost-session-lab", Name: "lost session lab", SandboxProfileID: "local",
+		Nodes: []domain.WorkflowNode{{
+			ID: "fix", Name: "fix", Type: "agent", AgentID: "lost-session-agent", ExecutorID: "mock", MaxAttempts: 1,
+		}},
+	}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
+	run, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, run.ID, "succeeded")
+	current, _ := s.Run(run.ID)
+	if current.Nodes["fix"].Status != "succeeded" {
+		t.Fatalf("status=%s error=%s", current.Nodes["fix"].Status, current.Nodes["fix"].Error)
+	}
+	dropped := false
+	for _, event := range current.Events {
+		if event.Type == "agent.session.dropped" {
+			dropped = true
+		}
+		if event.Type == "gate.waiting" {
+			t.Fatalf("lost session became a human gate: %s", event.Message)
+		}
+	}
+	if !dropped {
+		t.Fatal("missing CLI session was not dropped")
+	}
+}
+
 func TestHumanGateFailureRetryRerunsNode(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1625,6 +1740,7 @@ func TestHumanGateFailureRetryRerunsNode(t *testing.T) {
 }
 
 func TestCancelMarksActiveNodeCancelled(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1642,7 +1758,7 @@ func TestCancelMarksActiveNodeCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	running := false
 	for time.Now().Before(deadline) {
 		current, _ := s.Run(r.ID)
@@ -1666,6 +1782,7 @@ func TestCancelMarksActiveNodeCancelled(t *testing.T) {
 }
 
 func TestRetryCancelledRunFromNodeAfterImmediateCleanup(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1684,7 +1801,7 @@ func TestRetryCancelledRunFromNodeAfterImmediateCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		current, _ := s.Run(r.ID)
 		if current.Nodes["analyze"].Status == "succeeded" && current.Nodes["fix"].Status == "running" {
@@ -1715,6 +1832,7 @@ func TestRetryCancelledRunFromNodeAfterImmediateCleanup(t *testing.T) {
 }
 
 func TestRetrySucceededRunFromNodeAfterCleanup(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1755,6 +1873,7 @@ func TestRetrySucceededRunFromNodeAfterCleanup(t *testing.T) {
 }
 
 func TestRetryLegacySucceededRunAfterMainBotMissingSnapshot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1813,6 +1932,7 @@ func TestRetryLegacySucceededRunAfterMainBotMissingSnapshot(t *testing.T) {
 }
 
 func TestRejectResetsTargetAndDescendants(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1843,6 +1963,7 @@ func TestRejectResetsTargetAndDescendants(t *testing.T) {
 }
 
 func TestRenderPromptAppendsIssueIdentityFromStore(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1872,6 +1993,7 @@ func TestRenderPromptAppendsIssueIdentityFromStore(t *testing.T) {
 }
 
 func TestRenderPromptIncludesInputUpstreamAndFeedback(t *testing.T) {
+	t.Parallel()
 	wf := domain.WorkflowDefinition{Edges: []domain.WorkflowEdge{{Source: "plan", Target: "build"}}}
 	node := domain.WorkflowNode{ID: "build"}
 	run := domain.Run{Input: "request", Nodes: map[string]*domain.NodeRun{"plan": {NodeID: "plan", Output: "approved plan"}, "build": {NodeID: "build", Feedback: "add tests"}}}
@@ -1884,6 +2006,7 @@ func TestRenderPromptIncludesInputUpstreamAndFeedback(t *testing.T) {
 }
 
 func TestGenericRequirementPlaybookIncludesIssueInput(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -1913,6 +2036,7 @@ func TestGenericRequirementPlaybookIncludesIssueInput(t *testing.T) {
 }
 
 func TestRenderPromptSubstitutesRejectToAndSubject(t *testing.T) {
+	t.Parallel()
 	wf := domain.WorkflowDefinition{ID: "issue-fix-production"}
 	node := domain.WorkflowNode{ID: "review", RejectTo: "fix"}
 	got := renderPromptSpec(wf, node, domain.TaskPromptSpec{Objective: "失败打回 {{rejectTo}}；主题={{subject}}"}, domain.Run{})
@@ -1926,6 +2050,7 @@ func TestRenderPromptSubstitutesRejectToAndSubject(t *testing.T) {
 }
 
 func TestCompileTaskPromptFillsDeliverablesFromNodeContracts(t *testing.T) {
+	t.Parallel()
 	node := domain.WorkflowNode{
 		ID:              "fix",
 		ArtifactOutputs: []domain.ArtifactContract{{Name: "fix-report", Path: "fix-report.md"}},
@@ -1938,6 +2063,7 @@ func TestCompileTaskPromptFillsDeliverablesFromNodeContracts(t *testing.T) {
 }
 
 func TestParallelNodesDoNotOverwriteEachOther(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2008,6 +2134,7 @@ func putTestDeliveryWorkflow(t *testing.T, s *repo.Store) {
 }
 
 func TestStructuredTaskPromptCompilesTaskbook(t *testing.T) {
+	t.Parallel()
 	node := domain.WorkflowNode{ID: "build", RetryStrategy: "targeted_fix", CarryOver: []string{"failed_checks", "last_error"}}
 	spec := domain.TaskPromptSpec{
 		Role: "开发工程师", Objective: "实现登录限流", Context: "仓库：{{repository}}",
@@ -2024,6 +2151,7 @@ func TestStructuredTaskPromptCompilesTaskbook(t *testing.T) {
 }
 
 func TestNodeFailureAutomaticallyRejectsToConfiguredTarget(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2059,6 +2187,7 @@ func TestNodeFailureAutomaticallyRejectsToConfiguredTarget(t *testing.T) {
 }
 
 func TestPassFailedScriptContinuesDownstream(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2103,6 +2232,7 @@ func TestPassFailedScriptContinuesDownstream(t *testing.T) {
 }
 
 func TestPassAfterReworkLimitReached(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2141,6 +2271,7 @@ func TestPassAfterReworkLimitReached(t *testing.T) {
 }
 
 func TestPassRejectsAgentNode(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2165,6 +2296,7 @@ func TestPassRejectsAgentNode(t *testing.T) {
 }
 
 func TestPassRejectsActiveRun(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2183,6 +2315,7 @@ func TestPassRejectsActiveRun(t *testing.T) {
 }
 
 func TestArtifactsAreVersionedAndMaterializedForDownstreamNode(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2218,6 +2351,7 @@ func TestArtifactsAreVersionedAndMaterializedForDownstreamNode(t *testing.T) {
 }
 
 func TestRepositoryPatchIsFrozenAndAppliedToDownstreamSandbox(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	source := filepath.Join(dir, "source")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -2263,6 +2397,7 @@ func TestRepositoryPatchIsFrozenAndAppliedToDownstreamSandbox(t *testing.T) {
 }
 
 func TestSingleRepositoryKeepsDeliverablesAtRunRoot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	source := filepath.Join(dir, "source")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -2325,6 +2460,7 @@ func TestSingleRepositoryKeepsDeliverablesAtRunRoot(t *testing.T) {
 }
 
 func TestAutomaticGatesAndArtifactsCompleteBeforeManualApproval(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2381,6 +2517,7 @@ func TestAutomaticGatesAndArtifactsCompleteBeforeManualApproval(t *testing.T) {
 }
 
 func TestArtifactContractIsValidatedBeforeAutomaticGate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	gateMarker := filepath.Join(dir, "gate-ran")
 	s, err := repo.OpenTest()
@@ -2424,6 +2561,7 @@ func TestArtifactContractIsValidatedBeforeAutomaticGate(t *testing.T) {
 // "if ...; then" line on its own); the gate must instead join them back into
 // one script before executing.
 func TestVerificationGateRunsMultiLineCommandsAsOneScript(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2463,6 +2601,7 @@ func TestVerificationGateRunsMultiLineCommandsAsOneScript(t *testing.T) {
 }
 
 func TestRunUsesFrozenWorkflowSnapshotDuringConcurrentEdits(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2499,6 +2638,7 @@ func TestRunUsesFrozenWorkflowSnapshotDuringConcurrentEdits(t *testing.T) {
 }
 
 func TestRetryLegacyRunDefaultsEmptySandboxProfileToLocal(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2543,6 +2683,7 @@ func TestRetryLegacyRunDefaultsEmptySandboxProfileToLocal(t *testing.T) {
 }
 
 func TestStartDefaultsEmptySandboxProfileToLocal(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -2569,6 +2710,7 @@ func TestStartDefaultsEmptySandboxProfileToLocal(t *testing.T) {
 }
 
 func TestParallelProgressTelemetryCoalescesPerNode(t *testing.T) {
+	t.Parallel()
 	base := time.Now().UTC()
 	events := []domain.TelemetryEvent{}
 	for sequence := int64(1); sequence <= 100; sequence++ {
@@ -2593,7 +2735,9 @@ func TestParallelProgressTelemetryCoalescesPerNode(t *testing.T) {
 
 func waitFor(t *testing.T, s *repo.Store, id, want string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	// Parallel tests share the machine, so a command node can stay running
+	// well past the old five-second bound without being stuck.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		r, _ := s.Run(id)
 		if r.Status == want {
@@ -2611,7 +2755,7 @@ func waitFor(t *testing.T, s *repo.Store, id, want string) {
 
 func waitForWorkspaceCleanup(t *testing.T, s *repo.Store, id string) domain.Run {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		r, _ := s.Run(id)
 		if !r.WorkspaceCleanedAt.IsZero() {
@@ -2625,6 +2769,7 @@ func waitForWorkspaceCleanup(t *testing.T, s *repo.Store, id string) domain.Run 
 }
 
 func TestRecoverMisplacedArtifactsCopiesHostLeakIntoSandbox(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	host := filepath.Join(root, "skillhub")
 	workspace := filepath.Join(root, "sandbox")
@@ -2658,6 +2803,7 @@ func TestRecoverMisplacedArtifactsCopiesHostLeakIntoSandbox(t *testing.T) {
 }
 
 func TestResolveNodeExecutorPrefersAgentModel(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2699,6 +2845,7 @@ func TestResolveNodeExecutorPrefersAgentModel(t *testing.T) {
 }
 
 func TestResolveSandboxResourcesRequiresDockerfileForDocker(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2738,6 +2885,7 @@ func TestResolveSandboxResourcesRequiresDockerfileForDocker(t *testing.T) {
 }
 
 func TestOverlayLatestNodeBindingsRefreshesArtifactContracts(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2767,6 +2915,7 @@ func TestOverlayLatestNodeBindingsRefreshesArtifactContracts(t *testing.T) {
 }
 
 func TestOverlayLatestNodeBindingsReadsGenericTemplate(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -2802,6 +2951,7 @@ func TestOverlayLatestNodeBindingsReadsGenericTemplate(t *testing.T) {
 }
 
 func TestShouldRecordLogSkipsModelGeneration(t *testing.T) {
+	t.Parallel()
 	if shouldRecordLog(domain.TelemetryEvent{Category: "model", Name: "model.request", Message: "model generation started"}) {
 		t.Fatal("model generation should stay in telemetry, not worker logs")
 	}
@@ -2823,6 +2973,7 @@ func TestShouldRecordLogSkipsModelGeneration(t *testing.T) {
 }
 
 func TestDockerImageBuildNotice(t *testing.T) {
+	t.Parallel()
 	if dockerImageBuildLabel(nil) != "沙箱镜像" {
 		t.Fatalf("empty snap label = %q", dockerImageBuildLabel(nil))
 	}
@@ -2845,6 +2996,7 @@ func TestDockerImageBuildNotice(t *testing.T) {
 }
 
 func TestRepositoryPatchHandoffIsFilenameSummary(t *testing.T) {
+	t.Parallel()
 	diff := []byte("diff --git a/app.go b/app.go\n--- a/app.go\n+++ b/app.go\n@@ -1,2 +1,3 @@\n package app\n+func Added() {}\n")
 	summary := summarizeRepositoryPatch(diff)
 	if !strings.Contains(summary, "app.go") || !strings.Contains(summary, "files 1") {
@@ -2873,6 +3025,7 @@ func TestRepositoryPatchHandoffIsFilenameSummary(t *testing.T) {
 }
 
 func TestCollectArtifactsBestEffortKeepsWrittenReport(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "comments-report.md"), []byte("# comments\nUNRESOLVED=1\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -2889,6 +3042,7 @@ func TestCollectArtifactsBestEffortKeepsWrittenReport(t *testing.T) {
 }
 
 func TestCollectRepositoryPatchSkipsQuotedAgentflowModuleCache(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	for _, args := range [][]string{{"init", "-b", "master"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}} {
 		if output, err := exec.Command("git", append([]string{"-C", workspace}, args...)...).CombinedOutput(); err != nil {
@@ -2935,6 +3089,7 @@ func TestCollectRepositoryPatchSkipsQuotedAgentflowModuleCache(t *testing.T) {
 }
 
 func TestCollectRepositoryPatchUsesNearerUpstreamAfterMerge(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote, work := filepath.Join(root, "source"), filepath.Join(root, "remote.git"), filepath.Join(root, "work")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -3022,6 +3177,7 @@ func TestCollectRepositoryPatchUsesNearerUpstreamAfterMerge(t *testing.T) {
 }
 
 func TestUnquoteGitLsFilesPathDecodesOctalChineseName(t *testing.T) {
+	t.Parallel()
 	want := ".agentflow/private-home/codebuddy/go/pkg/mod/github.com/tjfoc/gmsm@v1.4.1/API使用说明.md"
 	raw := quoteGitCStyle(want)
 	got := gitwork.UnquoteLsFilesPath(raw)
@@ -3034,6 +3190,7 @@ func TestUnquoteGitLsFilesPathDecodesOctalChineseName(t *testing.T) {
 }
 
 func TestExcludeFromRepositoryPatchDependencies(t *testing.T) {
+	t.Parallel()
 	excluded := []string{
 		// Go
 		"vendor/github.com/gin-gonic/gin/context.go",
@@ -3181,6 +3338,7 @@ func TestExcludeFromRepositoryPatchDependencies(t *testing.T) {
 }
 
 func TestCollectRepositoryPatchExcludesMultiLanguageDependencies(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	for _, args := range [][]string{{"init", "-b", "master"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}} {
 		if output, err := exec.Command("git", append([]string{"-C", workspace}, args...)...).CombinedOutput(); err != nil {
@@ -3333,6 +3491,7 @@ func TestCollectRepositoryPatchExcludesMultiLanguageDependencies(t *testing.T) {
 }
 
 func TestSOPRunHandoffE2EWithExcludedDependencies(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	source := filepath.Join(t.TempDir(), "source")
 	if err := os.MkdirAll(source, 0o755); err != nil {
@@ -3511,6 +3670,7 @@ func TestSOPRunHandoffE2EWithExcludedDependencies(t *testing.T) {
 }
 
 func TestIsTestArtifactOrCachePath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		path string
 		want bool
@@ -3605,6 +3765,7 @@ func quoteGitCStyle(rel string) string {
 }
 
 func TestBuildLoopRetroDoesNotBlameMaxTurnsOnMissingResult(t *testing.T) {
+	t.Parallel()
 	body := buildLoopRetro(domain.Run{}, "comments", 1, fmt.Errorf("executor exited without a terminal result"), "")
 	if strings.Contains(body, "检查 `--max-turns`") {
 		t.Fatalf("loop retro still blamed max-turns:\n%s", body)
@@ -3615,6 +3776,7 @@ func TestBuildLoopRetroDoesNotBlameMaxTurnsOnMissingResult(t *testing.T) {
 }
 
 func TestBindGrepToArtifacts(t *testing.T) {
+	t.Parallel()
 	arts := []domain.ArtifactContract{{Name: "checkers-report", Path: "checkers-report.md", Required: true}}
 	bare := `grep -Eqi 'ALL_GREEN[[:space:]]*=[[:space:]]*true'`
 	got := bindGrepToArtifacts(bare, arts)
@@ -3631,7 +3793,34 @@ func TestBindGrepToArtifacts(t *testing.T) {
 	}
 }
 
+func TestVerdictGrepIgnoresMentionAndMatchesConclusionLine(t *testing.T) {
+	t.Parallel()
+	cmd := bindVerificationCommand(`! grep -Eqi 'NEED_HUMAN[[:space:]]*=[[:space:]]*true' checkers-report.md`, nil)
+	if !strings.Contains(cmd, "^[[:space:]]*NEED_HUMAN") {
+		t.Fatalf("verdict grep was not anchored: %s", cmd)
+	}
+	dir := t.TempDir()
+	report := "说明里写了 `NEED_HUMAN = true` 均不适用。\nALL_GREEN = true\n"
+	if err := os.WriteFile(filepath.Join(dir, "checkers-report.md"), []byte(report), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mention := exec.Command("sh", "-c", cmd)
+	mention.Dir = dir
+	if err := mention.Run(); err != nil {
+		t.Fatal("an explanation that quotes NEED_HUMAN=true must not fail the inverted gate")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "checkers-report.md"), []byte("NEED_HUMAN = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conclusion := exec.Command("sh", "-c", cmd)
+	conclusion.Dir = dir
+	if err := conclusion.Run(); err == nil {
+		t.Fatal("a conclusion line NEED_HUMAN = true must fail the inverted gate")
+	}
+}
+
 func TestBindGitDiffQuietExcludesDeliverables(t *testing.T) {
+	t.Parallel()
 	arts := []domain.ArtifactContract{{Name: "fix-plan", Path: "fix-plan.md", Required: true}}
 	got := bindVerificationCommand("git diff --quiet", arts)
 	if !strings.Contains(got, ":(exclude)fix-plan.md") || !strings.Contains(got, ":(exclude)checkers-report.md") {
@@ -3651,6 +3840,7 @@ func TestBindGitDiffQuietExcludesDeliverables(t *testing.T) {
 }
 
 func TestRecordHumanContextPersistsForRetryAndPrompt(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -3708,6 +3898,7 @@ func TestRecordHumanContextPersistsForRetryAndPrompt(t *testing.T) {
 }
 
 func TestApproveWithHumanContextReachesDownstream(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -3742,6 +3933,7 @@ func TestApproveWithHumanContextReachesDownstream(t *testing.T) {
 }
 
 func TestGateOnFailureIsConfiguredNotInferred(t *testing.T) {
+	t.Parallel()
 	if resolveGateOnFailure("loop", "reject") != "loop" {
 		t.Fatal("gate onFailure must win over node default")
 	}
@@ -3780,6 +3972,7 @@ func TestGateOnFailureIsConfiguredNotInferred(t *testing.T) {
 }
 
 func TestApplyUsageAccumulatesIndependentSessions(t *testing.T) {
+	t.Parallel()
 	run := domain.Run{}
 	nr := domain.NodeRun{}
 	applyUsage(&run, &nr, "s1", domain.TokenUsage{InputTokens: 100, OutputTokens: 10, CacheReadTokens: 80})
@@ -3794,6 +3987,7 @@ func TestApplyUsageAccumulatesIndependentSessions(t *testing.T) {
 }
 
 func TestApplyUsagePropagatesCostStatus(t *testing.T) {
+	t.Parallel()
 	run := domain.Run{}
 	nr := domain.NodeRun{}
 	// 真实零成本：适配器显式上报 0 且标记 reported，不应被当成"未识别"。
@@ -3822,6 +4016,7 @@ func TestApplyUsagePropagatesCostStatus(t *testing.T) {
 }
 
 func TestExistingMRBlurbDoesNotReusePreviousSOP(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -3838,6 +4033,7 @@ func TestExistingMRBlurbDoesNotReusePreviousSOP(t *testing.T) {
 }
 
 func TestAlignOnlyApprovalDoesNotWait(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {

@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -47,26 +49,123 @@ type AgentTerminalResult struct {
 // model request. The token is CSPRNG random and is never logged or returned to
 // the browser.
 type AgentToolSession struct {
-	Token            string
-	UserID           int64
-	ProjectID        string
-	Mode             AgentToolMode
-	IssueID          string
-	WorkspaceToken   string
-	RunID            string
+	Token          string
+	UserID         int64
+	ProjectID      string
+	Mode           AgentToolMode
+	IssueID        string
+	WorkspaceToken string
+	RunID          string
+	// ChatSessionID/ChatOwnerID identify the ordinary conversation this turn
+	// belongs to, so Main Bot can open and bind a temporary workspace there.
+	ChatSessionID    string
+	ChatOwnerID      int64
+	SandboxProfileID string
+	// workspaceRunID is the one workspace an ordinary conversation is bound
+	// to: one it opened itself, or the SOP run of an issue.
+	workspaceRunID   string
+	workspaceMu      sync.Mutex
+	workspaceTurn    *assistantWorkspaceTurn
+	SpaceID          string
+	ControlScope     assistantControlScope
 	ExpiresAt        time.Time
 	MCPServers       []domain.MCPServerDefinition
 	User             domain.User
 	AttachmentIDs    map[string]bool
 	AttachmentOwners map[string]int64
 	ExecMode         assistantExecMode
+	approvalReviewer assistantApprovalReviewer
 	Final            chan AgentTerminalResult
 
 	mu           sync.Mutex
 	catalog      []agentToolDescriptor
 	terminalOnly bool
-	closed       atomic.Bool
-	CancelModel  context.CancelFunc
+	runIDs       []string
+	assets       []domain.AssistantAssetRef
+	// replyFiles are what Main Bot handed the user this turn: browser
+	// screenshots and workspace files it attached. Tool results never reach
+	// the transcript, so the turn stores these as attachments of its reply.
+	replyFiles    []agentReplyFile
+	screenshotSeq int
+	closed        atomic.Bool
+	CancelModel   context.CancelFunc
+}
+
+type agentReplyFile struct {
+	Name       string
+	MimeType   string
+	Data       []byte
+	Screenshot bool
+}
+
+const (
+	agentReplyScreenshotLimit = 4
+	agentReplyFileLimit       = 4
+)
+
+// addReplyScreenshot keeps the latest screenshots of the turn. An unchanged
+// frame is skipped so checking the same page twice does not repeat it.
+func (s *AgentToolSession) addReplyScreenshot(mimeType string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, f := range s.replyFiles {
+		if !f.Screenshot {
+			continue
+		}
+		if bytes.Equal(f.Data, data) {
+			return
+		}
+		count++
+	}
+	if count >= agentReplyScreenshotLimit {
+		for i, f := range s.replyFiles {
+			if f.Screenshot {
+				s.replyFiles = append(s.replyFiles[:i:i], s.replyFiles[i+1:]...)
+				break
+			}
+		}
+	}
+	s.screenshotSeq++
+	ext := map[string]string{"image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}[mimeType]
+	if ext == "" {
+		ext = ".jpg"
+	}
+	s.replyFiles = append(s.replyFiles, agentReplyFile{Name: fmt.Sprintf("browser-screenshot-%d%s", s.screenshotSeq, ext), MimeType: mimeType, Data: data, Screenshot: true})
+}
+
+// attachReplyFile adds a file to the reply; attaching the same name again
+// replaces it, so a demo revised during the turn is delivered once, current.
+func (s *AgentToolSession) attachReplyFile(name, mimeType string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	files := 0
+	for i, f := range s.replyFiles {
+		if f.Screenshot {
+			continue
+		}
+		if f.Name == name {
+			s.replyFiles[i] = agentReplyFile{Name: name, MimeType: mimeType, Data: data}
+			return nil
+		}
+		files++
+	}
+	if files >= agentReplyFileLimit {
+		return fmt.Errorf("每轮最多附 %d 个文件", agentReplyFileLimit)
+	}
+	s.replyFiles = append(s.replyFiles, agentReplyFile{Name: name, MimeType: mimeType, Data: data})
+	return nil
+}
+
+func (s *AgentToolSession) takeReplyFiles() []agentReplyFile {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.replyFiles
+	s.replyFiles = nil
+	return out
 }
 
 // SetTerminalOnly drops read/query tools so a retry turn can only submit.

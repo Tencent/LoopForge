@@ -306,6 +306,8 @@ function issueExternallyDone(i){
   return ['done','已完成','完成','合入','已合入'].includes(issueExternalState(i));
 }
 function deliveryMRLinked(i){return deliveryMRList(i).length>0}
+// 待处理 MR：已创建但还没合入的 MR（opened/reopened）。状态未知的历史 MR 不计入，避免数字虚高。
+function pendingDeliveryMRCount(i){return deliveryMRList(i).filter(m=>['opened','reopened'].includes(String(m.state||'').toLowerCase())).length}
 // 多仓库交付每个仓库一个 MR；旧数据只有 deliveryMrUrl。
 function deliveryMRList(i){
   const withRef=m=>{const hit=String(m.url).match(/git\.example\.com\/(.+?)(?:\/-)?\/merge_requests\/(\d+)/);return{...m,project:m.project||hit?.[1]||'',iid:m.iid||Number(hit?.[2])||0}};
@@ -380,7 +382,7 @@ function triggerSOPButton(issue,{ghost=false,cls='button primary small',text='�
 }
 function issueActionButtons(i){
   const {task,run}=issueExecution(i),stage=issueCurrentStage(i),health=issueRunHealth(i);
-  const more=`<button type="button" class="issue-act-more" data-issue-menu="${escapeHTML(i.id)}" title="更多操作">⋯</button>`;
+  const more=`<button type="button" class="issue-act-more" data-issue-menu="${escapeHTML(i.id)}" title="更多操作" aria-label="更多操作"><svg class="agent-icon harness-icon" data-icon="more-horizontal" width="16" height="16" aria-hidden="true" focusable="false"></svg></button>`;
   if(issueManuallyClosed(i)||deliveryLocked(i)||issueTrackerClosed(i))return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
   if(issueClarifying(i.id))return `<button type="button" class="issue-act" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">查看分析</button>${more}`;
   if(clarificationNeedsConfirm(i))return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">确认结论</button>${more}`;
@@ -437,10 +439,11 @@ function showIssueActionMenu(e,issueId){
   const menu=ensureIssueMenuPopover();
   const isClosed=issue.status==='done'||issueManuallyClosed(issue)||deliveryLocked(issue);
   menu.innerHTML=`
-    <button type="button" class="issue-popover-item" data-action="edit"><span class="popover-icon">✎</span>编辑需求</button>
-    ${issueTrackerClosed(issue)||(!isClosed&&!issueCanClose(issue))?'':!isClosed?`<button type="button" class="issue-popover-item danger" data-action="close"><span class="popover-icon">✕</span>关闭需求</button>`:`<button type="button" class="issue-popover-item" data-action="reopen"><span class="popover-icon">↺</span>重新打开</button>`}
-    ${issueCanDelete(issue)?'<button type="button" class="issue-popover-item danger" data-action="delete"><span class="popover-icon">⌫</span>删除需求</button>':''}
+    <button type="button" class="issue-popover-item" data-action="edit">${huiIcon('edit','popover-icon')}编辑需求</button>
+    ${issueTrackerClosed(issue)||(!isClosed&&!issueCanClose(issue))?'':!isClosed?`<button type="button" class="issue-popover-item danger" data-action="close">${huiIcon('close','popover-icon')}关闭需求</button>`:`<button type="button" class="issue-popover-item" data-action="reopen">${huiIcon('undo','popover-icon')}重新打开</button>`}
+    ${issueCanDelete(issue)?`<button type="button" class="issue-popover-item danger" data-action="delete">${huiIcon('trash','popover-icon')}删除需求</button>`:''}
   `;
+  window.AgentFlowHarnessIcons?.hydrate?.(menu);
   menu.querySelector('[data-action="edit"]').onclick=ev=>{
     ev.stopPropagation();
     hideIssueActionMenu();

@@ -90,7 +90,7 @@ func TestDeploymentMetricsAutoLoadsAllBranches(t *testing.T) {
 	if err := st.PutRepository(domain.Repository{ID: "repo-deploy", ProjectID: "deploy", Name: "skillhub", GongfengProjectID: skillHubGongfengProjectID, DefaultBranch: "master", PipelineProjectID: 5410, PipelineDefID: 3021248}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutUser(domain.User{LoginName: "deployment-user", TaihuPAT: "taihu-secret"}); err != nil {
+	if err := st.PutUser(domain.User{LoginName: "deployment-user"}); err != nil {
 		t.Fatal(err)
 	}
 	user, _ := st.UserByLoginName("deployment-user")

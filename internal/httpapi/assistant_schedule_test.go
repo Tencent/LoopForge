@@ -65,7 +65,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 			called := false
 			h.generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
 				called = true
-				if !strings.Contains(prompt, "当前审批模式为「自动执行」") {
+				if !strings.Contains(prompt, "当前审批模式为「完全权限」") {
 					t.Fatal("scheduled prompt must explicitly enable auto execution")
 				}
 				for _, forbidden := range []string{"当前审批模式为「每次确认」", "平台写入工具不可直接调用", "供用户确认", "每轮 1 个"} {

@@ -190,7 +190,7 @@ func (h *deploymentMetricsHandlers) lookupQCIProjectMCP(projectID string, userID
 	}
 	// The SkillHub dashboard has one fixed, read-only QCI integration. Reuse the
 	// official market definition even when the project has not explicitly added
-	// it yet; personal Taihu credentials are still required and bound per call.
+	// it yet; personal credentials are still required and bound per call.
 	if item, ok := marketItem("zhiyan-pipeline"); ok {
 		return domain.MCPServerDefinition{
 			ID: "skillhub-deployment-qci", Name: item.Name, ProjectID: projectID,

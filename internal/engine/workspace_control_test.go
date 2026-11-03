@@ -16,6 +16,7 @@ import (
 )
 
 func TestWorkspaceControlWorkerForwardsThroughInternalAPI(t *testing.T) {
+	t.Parallel()
 	// Worker has no Runner WebSocket hub; the API owns the outbound connection.
 	worker, st := newRecoveryEngine(t)
 	api := New(st, runtime.NewManager(t.TempDir()))
@@ -53,6 +54,7 @@ func TestWorkspaceControlWorkerForwardsThroughInternalAPI(t *testing.T) {
 }
 
 func TestWorkspaceControlConfigurationErrorsAreSpecific(t *testing.T) {
+	t.Parallel()
 	e, _ := newRecoveryEngine(t)
 	run := domain.Run{ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "runner"}}
 	for _, tc := range []struct{ name, base, token, operation, want string }{
@@ -92,6 +94,7 @@ func TestWorkspaceControlConfigurationErrorsAreSpecific(t *testing.T) {
 }
 
 func TestWorkspaceControlFailureDoesNotRetryOrRejectUpstream(t *testing.T) {
+	t.Parallel()
 	e, st := newRecoveryEngine(t)
 	node := domain.WorkflowNode{ID: "design", MaxAttempts: 8, RejectTo: "env", MaxReworks: 3}
 	run := domain.Run{ID: "control-failed", Status: "running", Generation: 1, WorkflowSnapshot: domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "env"}, node}}, Nodes: map[string]*domain.NodeRun{"env": {NodeID: "env", Status: "succeeded", Attempt: 1}, "design": {NodeID: "design", Status: "running", Attempt: 1, StartedAt: time.Now()}}}

@@ -77,11 +77,11 @@ func (e *Engine) cancelRunnerTasksForRun(runID string) error {
 // that layout was introduced keep their per-node path so an in-place retry
 // continues from the directory where it originally failed.
 func runnerWorkspaceRel(run domain.Run, nodeID string) string {
-	base := filepath.Join("runs", safeRunnerPath(run.ID))
 	if run.ExecutionContext.RunnerWorkspaceLayout == domain.RunnerWorkspaceLayoutShared {
-		return filepath.ToSlash(filepath.Join(base, "workspace"))
+		// A child SOP shares the checkout of the run owning its workspace.
+		return filepath.ToSlash(filepath.Join("runs", safeRunnerPath(workspaceRunID(run)), "workspace"))
 	}
-	return filepath.ToSlash(filepath.Join(base, safeRunnerPath(nodeID)))
+	return filepath.ToSlash(filepath.Join("runs", safeRunnerPath(run.ID), safeRunnerPath(nodeID)))
 }
 
 // runnerPreviewWorkspaceRel is the directory a preview SourcePath is
@@ -169,7 +169,6 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles:    e.legacyArchivedWorkspaceFiles(run, node.ID),
-		Concurrent:       options.Concurrent,
 		RunID:            run.ID,
 		NodeID:           node.ID,
 		InvocationID:     invocationID,
@@ -185,29 +184,23 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	if strings.TrimSpace(options.GateResultPath) != "" {
 		invocation.Artifacts = append(invocation.Artifacts, gateResultContract(options.GateResultPath))
 	}
-	if runtime.RequiresTaihuPAT(assets) {
-		if strings.TrimSpace(sb.credentialSnapshot().TaihuPAT) == "" {
-			return "", errors.New("当前责任人未配置太湖个人令牌：请先在个人凭证中配置")
-		}
-		invocation.TaihuPAT = sb.credentialSnapshot().TaihuPAT
-	}
 	if authMode == domain.RuntimeAuthPersonal {
 		switch ex.Kind {
 		case "codex":
 			if strings.TrimSpace(sb.credentialSnapshot().Codex.APIKey) == "" {
-				return "", errors.New("当前责任人未配置 Codex API Key：请先在个人设置中配置，或将执行机器认证方式切回本机登录")
+				return "", errors.New("当前责任人未配置 Codex API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.CodexAPIKey = sb.credentialSnapshot().Codex.APIKey
 			invocation.CodexBaseURL = sb.credentialSnapshot().Codex.BaseURL
 		case "claude-code":
 			if strings.TrimSpace(sb.credentialSnapshot().ClaudeCode.APIKey) == "" {
-				return "", errors.New("当前责任人未配置 Claude Code API Key：请先在个人设置中配置，或将执行机器认证方式切回本机登录")
+				return "", errors.New("当前责任人未配置 Claude Code API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.ClaudeCodeAPIKey = sb.credentialSnapshot().ClaudeCode.APIKey
 			invocation.ClaudeCodeBaseURL = sb.credentialSnapshot().ClaudeCode.BaseURL
 		case "codebuddy":
 			if strings.TrimSpace(sb.credentialSnapshot().CodeBuddy.APIKey) == "" {
-				return "", errors.New("当前责任人未配置 CodeBuddy API Key：请先在个人设置中配置")
+				return "", errors.New("当前责任人未配置 CodeBuddy API Key：请先在个人配置中配置")
 			}
 			invocation.CodeBuddyAPIKey = sb.credentialSnapshot().CodeBuddy.APIKey
 			invocation.CodeBuddyInternetEnvironment = sb.credentialSnapshot().CodeBuddy.InternetEnvironment
@@ -226,9 +219,6 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		invocation.RecoverOutputs = normalizeExecutionScope(node.ExecutionScope) != domain.ExecutionScopeRepositories
 	}
 	invocation.MCPCallServers = e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID).MCPServers
-	if strings.TrimSpace(invocation.TaihuPAT) == "" {
-		invocation.TaihuPAT = sb.credentialSnapshot().TaihuPAT
-	}
 	task := domain.RunnerTask{
 		ID:          fmt.Sprintf("rt-%d-%s", time.Now().UnixNano(), safeRunnerPath(node.ID)),
 		RunnerID:    runnerID,
@@ -291,7 +281,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		if final.ExitCode != nil {
 			msg = fmt.Sprintf("%s (exit %d)", msg, *final.ExitCode)
 		}
-		return "", errors.New(msg)
+		return "", explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitToken) != "")
 	case domain.RunnerTaskCanceled:
 		return "", errors.New("runner task canceled")
 	default:
@@ -345,7 +335,6 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
 			GitToken:                  gitToken,
 			Dir:                       rc.WorkspaceDir,
-			SyncWorkBranch:            workBranchSyncable(rc),
 		})
 	}
 }
@@ -358,7 +347,7 @@ func shellSingleQuote(value string) string {
 // execution machine. Repository metadata is included so a script can also be
 // the first node; subsequent shared-layout nodes reuse the same checkout and
 // its workspace-local Git index flags.
-func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run domain.Run, nodeID, workspace, language, script, artifactDirectory string, artifacts []domain.ArtifactContract, sb *runEnvironment, gitToken, gitUserName, gitUserEmail, taihuPAT string, assets domain.AgentAssetBundle, sink runtime.EventSink) (string, error) {
+func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run domain.Run, nodeID, workspace, language, script, artifactDirectory string, artifacts []domain.ArtifactContract, sb *runEnvironment, gitToken, gitUserName, gitUserEmail string, assets domain.AgentAssetBundle, sink runtime.EventSink) (string, error) {
 	if err := e.requireExistingWorkBranchRunner(runnerID, run.RepositoryContexts()); err != nil {
 		return "", err
 	}
@@ -371,7 +360,7 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	}
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
-		Concurrent:    run.WorkflowSnapshot.CollaborationMode == "group", RunID: run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, TaihuPAT: taihuPAT, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
+		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
 	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
 	reported := sb.reportedOutputs(nodeID)
 	if reported != nil {
@@ -637,10 +626,7 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.RunnerInvocation {
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation := &domain.RunnerInvocation{
-		Concurrent: run.WorkflowSnapshot.CollaborationMode == "group", RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
-	if user, ok := e.repo.User(run.ExecutionContext.ResponsibleUserID); ok {
-		invocation.TaihuPAT = user.TaihuPAT
-	}
+		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
 	bindRunnerRepositories(invocation, run, resolveGitToken(e.repo, run.ExecutionContext.ResponsibleUserID), identity.name, identity.email)
 	return invocation

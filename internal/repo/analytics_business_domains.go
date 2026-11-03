@@ -2,12 +2,16 @@ package repo
 
 import (
 	"agentflow/internal/domain"
+	"errors"
 )
 
 // BusinessDomainReport reuses the underlying samples for rates and percentiles.
 // It returns aggregates only; domain access does not grant run/log/user detail access.
 func (r *AnalyticsRepo) BusinessDomainReport(filter domain.AnalyticsFilter, projects []domain.Project, domains []domain.BusinessDomain) (domain.BusinessDomainReport, error) {
 	snap := r.Analytics(filter)
+	if len(snap.DataErrors) > 0 {
+		return domain.BusinessDomainReport{}, errors.New(snap.DataErrors[0])
+	}
 	out := domain.BusinessDomainReport{Attribution: "current", GeneratedAt: snap.Summary.GeneratedAt, From: filter.From, To: filter.To, Summary: snap.Summary, Delivery: snap.Delivery, Trend: snap.Trend, Projects: []domain.BusinessDomainProjectUsage{}, BusinessDomains: []domain.BusinessDomainUsage{}}
 	groups := map[string]*domain.BusinessDomainUsage{}
 	order := []string{}
@@ -42,6 +46,7 @@ func (r *AnalyticsRepo) BusinessDomainReport(filter domain.AnalyticsFilter, proj
 		g.Failed += u.Failed
 		g.Tokens += u.Tokens
 		g.CostUSD += u.CostUSD
+		g.CostCNY += u.CostCNY
 		g.UniqueIssues += u.UniqueIssues
 		g.CostKnown = g.CostKnown && u.CostKnown
 	}
@@ -53,6 +58,9 @@ func (r *AnalyticsRepo) BusinessDomainReport(filter domain.AnalyticsFilter, proj
 		if g.ProjectCount > 0 {
 			out.BusinessDomains = append(out.BusinessDomains, *g)
 		}
+	}
+	if err := r.populateBusinessDeliveryMetrics(&out, filter); err != nil {
+		return domain.BusinessDomainReport{}, err
 	}
 	return out, nil
 }

@@ -72,6 +72,17 @@ func LoadEndpoints(role, addrFlag string) (Endpoints, error) {
 	return ep, nil
 }
 
+// WithPrivateAgentToolGateway points native agent-tool callbacks at base, the
+// process's own loopback listener: tool sessions live in process memory, so
+// after a handover a CLI must keep calling the process that started it.
+// AGENTFLOW_AGENT_TOOL_GATEWAY_URL still takes precedence.
+func (ep Endpoints) WithPrivateAgentToolGateway(base string) Endpoints {
+	if env("AGENTFLOW_AGENT_TOOL_GATEWAY_URL") == "" && trimURL(base) != "" {
+		ep.AgentToolGateway = trimURL(base)
+	}
+	return ep
+}
+
 // LoopbackURL turns a listen address into a same-host http URL, mapping
 // wildcard hosts to 127.0.0.1. It returns "" for unparseable addresses.
 func LoopbackURL(listenAddr string) string {

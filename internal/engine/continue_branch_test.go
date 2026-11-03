@@ -49,6 +49,7 @@ func TestContinueExistingBranchKeepsNameAndUnpublishedWork(t *testing.T) {
 }
 
 func TestContinueExistingBranchRejectsMissingOrTagOnlyRef(t *testing.T) {
+	t.Parallel()
 	source, remote := selectedBranchTestRemote(t)
 	mustGit(t, source, "tag", "release-tag")
 	mustGit(t, source, "push", remote, "refs/tags/release-tag")
@@ -61,6 +62,7 @@ func TestContinueExistingBranchRejectsMissingOrTagOnlyRef(t *testing.T) {
 }
 
 func TestContinueExistingBranchResumePreservesDirtyNamesakeCheckout(t *testing.T) {
+	t.Parallel()
 	source, remote := selectedBranchTestRemote(t)
 	mustGit(t, source, "branch", "-f", "feature/continue", "master")
 	mustGit(t, source, "push", "--force", remote, "feature/continue")
@@ -85,6 +87,7 @@ func TestContinueExistingBranchResumePreservesDirtyNamesakeCheckout(t *testing.T
 }
 
 func TestContinueExistingBranchMRUsesSameSourceAndConfiguredTarget(t *testing.T) {
+	t.Parallel()
 	run := domain.Run{Repositories: []domain.RepositoryContext{{RepositoryID: "repo", Name: "Service", BaseBranch: "release/main", WorkBranch: "feature/continue", RequireExistingWorkBranch: true}}}
 	hint := existingMRBlurb(nil, run)
 	for _, want := range []string{"不新建", "已有 MR", "feature/continue", "release/main"} {
@@ -95,6 +98,7 @@ func TestContinueExistingBranchMRUsesSameSourceAndConfiguredTarget(t *testing.T)
 }
 
 func TestContinueExistingBranchRequiresCompatibleRunner(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)

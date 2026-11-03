@@ -42,8 +42,7 @@ func TestProviderCredentialAPIAuthorizationAndURLs(t *testing.T) {
 		{"invalid", "provider-alice", "{\"codexApiKey\":\"secret\",\"codexBaseUrl\":\"file:///tmp/x\"}", 400},
 		{"url-secret", "provider-alice", "{\"claudeCodeBaseUrl\":\"https://user:secret@example.com\"}", 400},
 		{"query", "provider-alice", "{\"codexBaseUrl\":\"https://example.com?key=secret\"}", 400},
-		{"invalid-taihu", "provider-alice", "{\"taihuPat\":\"not-a-pat\"}", 400},
-		{"valid", "provider-alice", "{\"taihuPat\":\"Bearer tai_pat_test-secret\",\"codexApiKey\":\"codex-test-secret\",\"codexBaseUrl\":\"http://localhost:9999/v1\",\"claudeCodeApiKey\":\"claude-test-secret\",\"claudeCodeBaseUrl\":\"https://example.com/anthropic\"}", 200},
+		{"valid", "provider-alice", "{\"codexApiKey\":\"codex-test-secret\",\"codexBaseUrl\":\"http://localhost:9999/v1\",\"claudeCodeApiKey\":\"claude-test-secret\",\"claudeCodeBaseUrl\":\"https://example.com/anthropic\"}", 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/users/%d/credentials", alice.ID), strings.NewReader(tc.body))
@@ -71,12 +70,12 @@ func TestProviderCredentialAPIAuthorizationAndURLs(t *testing.T) {
 				if err := json.Unmarshal(rec.Body.Bytes(), &public); err != nil {
 					t.Fatal(err)
 				}
-				if !public.TaihuPATConfigured || !public.CodexAPIKeyConfigured || !public.ClaudeCodeAPIKeyConfigured {
+				if !public.CodexAPIKeyConfigured || !public.ClaudeCodeAPIKeyConfigured {
 					t.Fatal("configured state missing")
 				}
 				stored, _ := st.User(alice.ID)
-				if stored.TaihuPAT != "tai_pat_test-secret" {
-					t.Fatalf("Taihu PAT was not normalized: %q", stored.TaihuPAT)
+				if stored.CodexAPIKey != "codex-test-secret" || stored.ClaudeCodeAPIKey != "claude-test-secret" {
+					t.Fatalf("provider keys were not stored: %+v", stored)
 				}
 			}
 		})

@@ -92,7 +92,6 @@ func testBackendGenericTemplate() GenericTemplate {
 			Requirements: []domain.WorkflowRequirement{
 				{Key: RequirementGongfengGitToken, NodeID: "mr", Label: "工蜂 Git Token", Hint: "push 需要 Git Token", Setup: "settings"},
 				{Key: RequirementGongfengMCP, NodeID: "mr", Label: "工蜂 MCP", Hint: "创建 MR 需要工蜂 MCP", Setup: "mcp"},
-				{Key: RequirementTaihuPAT, NodeID: "mr", Label: "太湖个人令牌", Hint: "工蜂 MCP 走太湖认证", Setup: "settings"},
 			},
 			Nodes: nodes,
 			Edges: []domain.WorkflowEdge{

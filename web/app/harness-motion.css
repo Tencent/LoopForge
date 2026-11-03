@@ -1,0 +1,69 @@
+/* Controls stay in place; Harness glyphs animate their internal SVG artwork. */
+:root {
+  --harness-flow: cubic-bezier(.16, 1, .3, 1);
+}
+body :is(.button, .icon-button, .theme-toggle, .command-trigger, .nav,
+  .collab-new-chat, .user-badge, .rail-brand) {
+  transition: background-color 200ms ease, color 200ms ease,
+    border-color 200ms ease, box-shadow 200ms ease,
+    opacity 180ms ease !important;
+}
+body :is(.button, .icon-button, .theme-toggle, .command-trigger, .collab-new-chat,
+  .user-badge, .rail-brand):is(:hover, :active) {
+  transform: none;
+}
+body :is(.button, .icon-button, .theme-toggle, .command-trigger, .nav,
+  .user-badge, .rail-brand):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--blue) 70%, transparent);
+  outline-offset: 3px;
+}
+@media (hover: hover) {
+  body :is(.button, .icon-button, .theme-toggle, .command-trigger, .collab-new-chat):not(:disabled):not([aria-disabled="true"]):not([aria-readonly="true"]):hover {
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--text) 8%, transparent);
+  }
+}
+body .platform-rail .rail-btn {
+  transition: background-color 200ms ease, color 200ms ease,
+    box-shadow 200ms ease !important;
+}
+body .platform-rail .rail-btn:is(:hover, :active) {
+  transform: none;
+}
+/* Preserve upstream transparent SVG geometry; the legacy rail filled every circle. */
+.platform-rail .rail-btn.active svg.agent-icon circle { fill: none; }
+.platform-rail .rail-btn.active svg.agent-icon circle[fill="currentColor"] { fill: currentColor; }
+.platform-sidebar .nav-group-chevron.agent-icon { transform: none; }
+.platform-sidebar .nav-group-toggle[aria-expanded="false"] .nav-group-chevron.agent-icon { transform: rotate(-90deg); }
+.platform-sidebar .nav-group-chevron.agent-icon { transition: none; }
+body .page-view.active:not(#collaborationView) { animation: harness-page-in 300ms var(--harness-flow) backwards; }
+body :is(.user-profile-popover.open, .command-palette:not([hidden]) .command-dialog,
+  .modal.open .modal-card) { animation: harness-surface-in 220ms var(--harness-flow) backwards; }
+@keyframes harness-page-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes harness-surface-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+body :is([disabled], [aria-disabled="true"], [aria-readonly="true"], [inert]) .harness-icon,
+body :is([disabled], [aria-disabled="true"], [aria-readonly="true"], [inert]) .harness-icon * {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  body :is(.button, .icon-button, .theme-toggle, .command-trigger, .nav,
+    .collab-new-chat, .user-badge, .rail-brand,
+    .nav-group-chevron, .page-view, .modal-card, .command-dialog, .user-profile-popover) {
+    animation: none !important;
+    transition: none !important;
+  }
+  body :is(.button, .icon-button, .theme-toggle, .command-trigger, .nav,
+    .collab-new-chat, .user-badge, .rail-brand):is(:hover, :active) { transform: none !important; }
+  body .platform-rail .rail-btn,
+  body .platform-rail .rail-btn:is(:hover, :active) {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}

@@ -49,12 +49,12 @@ func (r *RunsRepo) WithWorkspaceEditor(runID string, userID int64, fn func(domai
 	return r.withWorkspaceWriter(runID, userID, false, fn)
 }
 
-// Main Bot may collaborate with group members in the shared workspace. SOP
+// Main Bot may edit its idle conversation workspace. SOP
 // execution still requires a stopped run, just like the IDE.
 func (r *RunsRepo) WithMainBotWorkspace(runID string, userID int64, fn func(domain.Run) error) error {
 	return r.withWorkspaceWriter(runID, userID, true, fn)
 }
-func (r *RunsRepo) withWorkspaceWriter(runID string, userID int64, group bool, fn func(domain.Run) error) error {
+func (r *RunsRepo) withWorkspaceWriter(runID string, userID int64, mainBot bool, fn func(domain.Run) error) error {
 	if userID <= 0 {
 		return fmt.Errorf("请先登录")
 	}
@@ -64,8 +64,8 @@ func (r *RunsRepo) withWorkspaceWriter(runID string, userID int64, group bool, f
 			return err
 		}
 		run := runFromRow(row)
-		collaborating := group && run.WorkflowSnapshot.CollaborationMode == "group" && !run.CancelRequested && row.WorkspaceCleaned == nil && (run.Status == "running" || run.Status == "waiting")
-		if !workspacePaused(row) && !collaborating {
+		workspaceWrite := mainBot && run.IsWorkspace() && !run.CancelRequested && row.WorkspaceCleaned == nil && (run.Status == "running" || run.Status == "waiting")
+		if !workspacePaused(row) && !workspaceWrite {
 			return fmt.Errorf("请先停止 SOP 执行后再编辑工作区")
 		}
 		return fn(run)

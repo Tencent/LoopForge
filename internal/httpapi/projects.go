@@ -8,7 +8,9 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type projectsHandlers struct{ *deps }
@@ -40,6 +42,11 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		if exists {
 			v.BusinessDomainID = existing.BusinessDomainID
 		}
+		if exists && existing.ArchivedAt != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "项目「" + existing.Name + "」已删除，标识 " + existing.ID + " 仍被占用；请换一个标识，或先恢复该项目"})
+			return
+		}
+		v.ArchivedAt, v.ArchivedBy = nil, 0
 		if authRequired() {
 			user, ok := h.requestUser(r, true)
 			if !ok {
@@ -200,6 +207,95 @@ func (h *projectsHandlers) project(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, domain.PublicProject(project))
+}
+
+// deleteProject hides a project (soft delete). Requirements, runs, settings
+// and members are kept so restoreProject can bring it back. Running work and
+// enabled schedules must be stopped first so nothing keeps acting on a
+// project nobody can see.
+func (h *projectsHandlers) deleteProject(c *gin.Context) {
+	p, uid, ok := h.projectForArchive(c)
+	if !ok {
+		return
+	}
+	if p.ArchivedAt != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在或已删除"})
+		return
+	}
+	if blockers := h.projectDeleteBlockers(p.ID); len(blockers) > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "项目「" + p.Name + "」还有" + strings.Join(blockers, "、") + "，请先停止后再删除"})
+		return
+	}
+	now := time.Now().UTC()
+	if err := h.repo.SetProjectArchived(p.ID, &now, uid); err != nil {
+		respond(c, err)
+		return
+	}
+	stored, _ := h.repo.Project(p.ID)
+	c.JSON(http.StatusOK, domain.PublicProject(stored))
+}
+
+func (h *projectsHandlers) restoreProject(c *gin.Context) {
+	p, _, ok := h.projectForArchive(c)
+	if !ok {
+		return
+	}
+	if p.ArchivedAt != nil {
+		if err := h.repo.SetProjectArchived(p.ID, nil, 0); err != nil {
+			respond(c, err)
+			return
+		}
+	}
+	stored, _ := h.repo.Project(p.ID)
+	c.JSON(http.StatusOK, domain.PublicProject(stored))
+}
+
+func (h *projectsHandlers) projectForArchive(c *gin.Context) (domain.Project, int64, bool) {
+	p, ok := h.repo.Project(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
+		return domain.Project{}, 0, false
+	}
+	if !authRequired() {
+		return p, 0, true
+	}
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+		return domain.Project{}, 0, false
+	}
+	if p.OwnerID != user.ID && !h.isPlatformAdmin(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有项目 Owner 或平台管理员可以删除或恢复项目"})
+		return domain.Project{}, 0, false
+	}
+	return p, user.ID, true
+}
+
+func (h *projectsHandlers) projectDeleteBlockers(projectID string) []string {
+	var out []string
+	runs, err := h.repo.RunSummariesFor(domain.AnalyticsFilter{ProjectIDs: []string{projectID}}, "")
+	if err != nil {
+		return []string{"运行记录无法读取"}
+	}
+	active := 0
+	for _, run := range h.repo.FilterRunsByProject(runs, projectID) {
+		if !domain.TerminalRunStatus(run.Status) {
+			active++
+		}
+	}
+	if active > 0 {
+		out = append(out, strconv.Itoa(active)+" 个未结束的运行")
+	}
+	var jobs []string
+	for _, job := range h.repo.ScheduleJobs() {
+		if job.Enabled && job.ProjectID == projectID {
+			jobs = append(jobs, "「"+job.Name+"」")
+		}
+	}
+	if len(jobs) > 0 {
+		out = append(out, "启用中的定时任务"+strings.Join(jobs, ""))
+	}
+	return out
 }
 
 func (h *projectsHandlers) businessDomainAssignment(c *gin.Context) {

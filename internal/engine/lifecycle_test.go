@@ -12,6 +12,7 @@ import (
 )
 
 func TestContinuingInterruptedAttempt(t *testing.T) {
+	t.Parallel()
 	if continuingInterruptedAttempt(nil) {
 		t.Fatal("nil node")
 	}
@@ -34,6 +35,7 @@ func TestContinuingInterruptedAttempt(t *testing.T) {
 }
 
 func TestObserveIgnoredAfterTerminalStatus(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	now := time.Now().UTC()
 	run := domain.Run{
@@ -51,6 +53,7 @@ func TestObserveIgnoredAfterTerminalStatus(t *testing.T) {
 }
 
 func TestObserveConsumesPendingSessionResume(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	run := domain.Run{
 		ID: "run-resume-session", WorkflowID: "wf", Status: "running",
@@ -68,6 +71,7 @@ func TestObserveConsumesPendingSessionResume(t *testing.T) {
 }
 
 func TestObserveFlushWritesQueuedTelemetry(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	run := domain.Run{
 		ID: "run-obs-batch", WorkflowID: "wf", Status: "running",
@@ -90,6 +94,7 @@ func TestObserveFlushWritesQueuedTelemetry(t *testing.T) {
 }
 
 func TestObservePreservesAndDeduplicatesProducerEventID(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	run := domain.Run{
 		ID: "run-event-id", WorkflowID: "wf", Status: "running",
@@ -118,6 +123,7 @@ func TestObservePreservesAndDeduplicatesProducerEventID(t *testing.T) {
 }
 
 func TestCancelGhostRunWithRunningNode(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	now := time.Now().UTC()
 	if err := s.PutRun(domain.Run{
@@ -139,6 +145,7 @@ func TestCancelGhostRunWithRunningNode(t *testing.T) {
 }
 
 func TestCancelWaitingRunWithoutScheduler(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	now := time.Now().UTC()
 	if err := s.PutRun(domain.Run{
@@ -157,6 +164,7 @@ func TestCancelWaitingRunWithoutScheduler(t *testing.T) {
 }
 
 func TestFinishStopsScheduler(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -174,7 +182,7 @@ func TestFinishStopsScheduler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		current, _ := s.Run(r.ID)
 		if current.Nodes["wait"].Status == "running" {
@@ -183,7 +191,7 @@ func TestFinishStopsScheduler(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	e.finish(r.ID, "failed", "forced stop")
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if e.ActiveRunCount() == 0 {
 			return
@@ -194,6 +202,7 @@ func TestFinishStopsScheduler(t *testing.T) {
 }
 
 func TestResumePausedResumesAgentSessionAndRestartsScriptWithoutContext(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("test", "test", time.Second, false)
 	wf := domain.WorkflowDefinition{ID: "pause-resume", Name: "pause resume", Nodes: []domain.WorkflowNode{
@@ -226,6 +235,7 @@ func TestResumePausedResumesAgentSessionAndRestartsScriptWithoutContext(t *testi
 }
 
 func TestResumePausedScriptIgnoresSubmittedContext(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("test", "test", time.Second, false)
 	wf := domain.WorkflowDefinition{ID: "script-pause", Nodes: []domain.WorkflowNode{{ID: "script", Type: "command"}}}
@@ -245,6 +255,7 @@ func TestResumePausedScriptIgnoresSubmittedContext(t *testing.T) {
 }
 
 func TestPassPausedScriptContinuesDownstream(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -296,6 +307,7 @@ func TestPassPausedScriptContinuesDownstream(t *testing.T) {
 }
 
 func TestPassRejectsPausedAgentNode(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -320,6 +332,7 @@ func TestPassRejectsPausedAgentNode(t *testing.T) {
 }
 
 func TestRefreshRunSOPPreservesCompletedNodesAndAddsLatestNodes(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	old := domain.WorkflowDefinition{ID: "refresh-paused", Name: "old", Version: 1, Revision: 2, SandboxProfileID: "frozen", Nodes: []domain.WorkflowNode{{ID: "done", Name: "done"}, {ID: "work", Name: "work"}}}
 	latest := domain.WorkflowDefinition{ID: old.ID, Name: "latest", Version: 2, Revision: 1, SandboxProfileID: "new-environment", Nodes: []domain.WorkflowNode{{ID: "done", Name: "done latest"}, {ID: "work", Name: "work latest"}, {ID: "verify", Name: "verify"}}, Edges: []domain.WorkflowEdge{{ID: "e", Source: "work", Target: "verify", When: "success"}}}
@@ -354,6 +367,7 @@ func TestRefreshRunSOPPreservesCompletedNodesAndAddsLatestNodes(t *testing.T) {
 }
 
 func TestRefreshRunSOPTakesOverExpiredLease(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("replacement-instance", "", 30*time.Second, true)
 	old := domain.WorkflowDefinition{ID: "refresh-expired-lease", Name: "refresh expired lease", Version: 1, Revision: 1, Nodes: []domain.WorkflowNode{{ID: "first"}}}
@@ -378,6 +392,7 @@ func TestRefreshRunSOPTakesOverExpiredLease(t *testing.T) {
 }
 
 func TestRefreshWorkflowForStoppedRunStatuses(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, status, workStatus string
 		wantError                bool
@@ -422,6 +437,7 @@ func TestRefreshWorkflowForStoppedRunStatuses(t *testing.T) {
 }
 
 func TestRetryFromChosenNodeInStoppedRun(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, status, downstreamStatus string
 		cleaned                        bool
@@ -469,6 +485,7 @@ func TestRetryFromChosenNodeInStoppedRun(t *testing.T) {
 }
 
 func TestRetryRejectsNodeWithUnfinishedUpstream(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, runStatus, firstStatus string }{
 		{"failed first node", "failed", "failed"},
 		{"paused first node", "waiting", "waiting_approval"},
@@ -499,6 +516,7 @@ func TestRetryRejectsNodeWithUnfinishedUpstream(t *testing.T) {
 }
 
 func TestFailedRunCanRefreshSOPThenReplayWithContext(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.executeRuns = false
 	old := domain.WorkflowDefinition{ID: "repair-failed-sop", Name: "repair", Version: 1, Revision: 1, Nodes: []domain.WorkflowNode{{ID: "done"}, {ID: "broken", Script: "exit 1"}}, Edges: []domain.WorkflowEdge{{ID: "a-b", Source: "done", Target: "broken", When: "success"}}}
@@ -522,5 +540,37 @@ func TestFailedRunCanRefreshSOPThenReplayWithContext(t *testing.T) {
 	got, _ := s.Run(run.ID)
 	if got.Status != "running" || got.WorkflowSnapshot.Version != 2 || got.Nodes["done"].Status != "succeeded" || got.Nodes["broken"].Status != "pending" || got.Nodes["added"].Status != "pending" || !strings.Contains(got.Nodes["broken"].Feedback, "按新检查步骤执行") {
 		t.Fatalf("refreshed replay = %+v", got)
+	}
+}
+
+func TestResumePausedAfterLastStepWithoutInterruptedNode(t *testing.T) {
+	t.Parallel()
+	e, s := newRecoveryEngine(t)
+	e.executeRuns = false
+	sop := domain.WorkflowDefinition{ID: "sop", Nodes: []domain.WorkflowNode{{ID: "close", Name: "交付收尾", Type: "agent"}}}
+	finished := domain.Run{ID: "run-sop-finished-paused", WorkflowID: sop.ID, WorkflowSnapshot: sop, Status: "waiting", PauseRequested: true, Nodes: map[string]*domain.NodeRun{
+		"close": {NodeID: "close", Status: "succeeded"},
+	}}
+	if err := s.PutRun(finished); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ResumePaused(finished.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Run(finished.ID)
+	if got.PauseRequested || got.Status != "running" || got.Nodes["close"].Status != "succeeded" {
+		t.Fatalf("finished SOP was not handed back: status=%s pause=%v", got.Status, got.PauseRequested)
+	}
+
+	gated := finished
+	gated.ID = "run-gate-paused"
+	gated.Status = "waiting"
+	gated.PauseRequested = true
+	gated.Nodes = map[string]*domain.NodeRun{"close": {NodeID: "close", Status: "waiting_approval", Activity: "等待人工确认"}}
+	if err := s.PutRun(gated); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ResumePaused(gated.ID, ""); err == nil || !strings.Contains(err.Error(), "paused node not found") {
+		t.Fatalf("human gate resume err = %v", err)
 	}
 }

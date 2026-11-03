@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import fs from 'node:fs';
-import {password} from './helpers.mjs';
+import {password, appReady, chat, composer, openHome} from './helpers.mjs';
 
 // A brand-new installation, seen by someone who has never used LoopForge:
 // first visit creates the administrator, the home page explains what to do
@@ -19,7 +19,7 @@ async function createAccount(page,login,secret){
   await page.locator('[name="password"]').fill(secret);
   await page.locator('[name="confirm"]').fill(secret);
   await page.locator('#loginSubmit').click();
-  await expect(page.locator('#projectSwitcher')).toBeVisible();
+  await appReady(page);
 }
 
 test('the first visitor creates the administrator from the browser',async({page,request},info)=>{
@@ -51,26 +51,19 @@ test('the home page guides a new account and explains the missing model key',asy
   await page.locator('[name="login"]').fill(admin);
   await page.locator('[name="password"]').fill(password());
   await page.locator('#loginSubmit').click();
-  await expect(page.locator('#projectSwitcher')).toBeVisible();
-  await page.goto('/#/collaboration');
-  await page.evaluate(()=>localStorage.removeItem('loopforge.onboarding.dismissed'));
-  await page.reload();
-  const guide=page.locator('.ai-onboarding');
-  await expect(guide).toBeVisible();
-  await expect(guide.locator('li[data-step="key"]')).toHaveClass(/is-next/);
-  await expect(guide.locator('li[data-step="project"]')).toHaveClass(/is-done/);
+  await appReady(page);
   await expect(page.locator('#projectSwitcher option[value="welcome"]')).toHaveCount(1);
-  await expect(page.locator('[data-compose-hint]')).toBeVisible();
-  await expect(page.locator('#aiAssistant button[type="submit"]')).toBeDisabled();
-  await guide.locator('[data-onboarding-step="chat"]').click();
-  await expect(page.locator('#aiAssistant .ai-compose-input')).not.toHaveValue('');
-  await expect(page.locator('#userCredentialForm [name="codeBuddyApiKey"]')).toBeFocused();
-  await page.goto('/#/collaboration');
-  await page.locator('[data-onboarding-dismiss]').click();
-  await expect(guide).toHaveCount(0);
-  await page.reload();
-  await expect(page.locator('.ai-welcome')).toBeVisible();
-  await expect(guide).toHaveCount(0);
+  const input=await openHome(page);
+  const frame=chat(page);
+  await expect(frame.locator('.home-starter')).toHaveCount(3);
+  const notice=frame.locator('.credential-notice');
+  await expect(notice).toContainText('CodeBuddy API Key');
+  await input.fill('First question after installing');
+  await notice.getByRole('button',{name:'去配置'}).click();
+  await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(await openHome(page)).toHaveValue('First question after installing');
+  await composer(page).fill('');
   expect(errors).toEqual([]);
   expect(failed).toEqual([]);
 });
@@ -83,8 +76,10 @@ test('a teammate signs up without administrator rights',async({page,request})=>{
   const current=await page.request.get('/api/auth/current').then(r=>r.json());
   expect(current.user.loginName).toBe(member);
   expect(await page.request.get('/api/platform/admins').then(r=>r.status())).toBe(403);
-  await expect(page.locator('.ai-onboarding')).toBeVisible();
-  await expect(page.locator('.ai-onboarding li[data-step="project"]')).toHaveClass(/is-done/);
+  const welcome=await page.request.get('/api/projects/welcome').then(r=>r.json());
+  expect(welcome.members.some(m=>m.userId===current.user.id)).toBe(true);
+  await openHome(page);
+  await expect(chat(page).locator('.credential-notice')).toBeVisible();
   const again=await request.post('/api/auth/register',{headers:{Origin:new URL(page.url()).origin},data:{login:member,password:memberPassword()}});
   expect(again.status()).toBe(409);
 });

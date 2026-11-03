@@ -14,17 +14,17 @@ import (
 )
 
 var (
-	// ErrPhotoNotFound 表示未在 TOF 系统中找到该员工的头像图片。
+	// ErrPhotoNotFound 表示 SSO 头像服务中没有该员工的头像图片。
 	ErrPhotoNotFound = errors.New("photo not found")
 
 	// ErrInvalidUsername 表示员工英文名为空或包含非法字符。
 	ErrInvalidUsername = errors.New("invalid username")
 
 	// ErrCredentialsNotConfigured 表示 PaaSID 或 AppToken 未配置。
-	ErrCredentialsNotConfigured = errors.New("tai credentials not configured")
+	ErrCredentialsNotConfigured = errors.New("sso credentials not configured")
 )
 
-// NormalizePhotoSpec 将任意尺寸归一化为 TOF 头像服务支持的四种规格之一：48, 100, 150, 500。
+// NormalizePhotoSpec 将任意尺寸归一化为头像服务支持的四种规格之一：48, 100, 150, 500。
 // 缺省或 0 值默认归一化为 100。
 func NormalizePhotoSpec(spec int) int {
 	switch {
@@ -181,7 +181,7 @@ func (c *Client) ClearPhotoCache() {
 	}
 }
 
-// FetchPhoto 请求太湖 / TOF 认证服务的员工头像接口（GET /ebus/rhrc/photo/{spec}/{username}.png）。
+// FetchPhoto 请求 SSO 头像服务（GET {PhotoURI}/{spec}/{username}.png）。
 // 返回头像二进制字节流、HTTP Content-Type（如 image/png）及可能的错误。
 func (c *Client) FetchPhoto(ctx context.Context, rawUsername string, rawSpec int) ([]byte, string, error) {
 	username, err := SanitizeUsername(rawUsername)
@@ -195,14 +195,10 @@ func (c *Client) FetchPhoto(ctx context.Context, rawUsername string, rawSpec int
 		return data, ct, nil
 	}
 
-	if c.cfg.PaaSID == "" || c.cfg.AppToken == "" {
-		log.Printf("[auth] PaaSID or AppToken is not configured, cannot fetch photo for %s", username)
-		return nil, "", ErrCredentialsNotConfigured
-	}
-
 	photoPath := c.cfg.PhotoURI
-	if photoPath == "" {
-		photoPath = DefaultPhotoURI
+	if c.cfg.PaaSID == "" || c.cfg.AppToken == "" || c.cfg.AuthHost == "" || photoPath == "" {
+		log.Printf("[auth] SSO photo service is not configured, cannot fetch photo for %s", username)
+		return nil, "", ErrCredentialsNotConfigured
 	}
 	reqURL := fmt.Sprintf("%s%s/%d/%s.png", c.cfg.AuthHost, photoPath, spec, url.PathEscape(username))
 
@@ -218,7 +214,7 @@ func (c *Client) FetchPhoto(ctx context.Context, rawUsername string, rawSpec int
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("request TOF photo failed: %w", err)
+		return nil, "", fmt.Errorf("request SSO photo failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -227,7 +223,7 @@ func (c *Client) FetchPhoto(ctx context.Context, rawUsername string, rawSpec int
 	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, "", fmt.Errorf("unexpected status %d from TOF photo: %s", resp.StatusCode, string(respBody))
+		return nil, "", fmt.Errorf("unexpected status %d from SSO photo: %s", resp.StatusCode, string(respBody))
 	}
 
 	// 限制头像读取大小最大 5MB

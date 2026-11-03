@@ -128,7 +128,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 ## MCP Server
 
-`MCPServerDefinition` 字段为 `id`、`name`、`description`、`transport`、`command`、`args`、`workingDirectory`、`installScript`、`fileRefs`、`url`、`environment`、`headers`、`authType`、`timeoutSec`、`updatedAt`。`authType=taihu-pat` 表示运行时注入需求责任人的太湖个人令牌，资产本身不得保存个人 Token。stdio 上传文件的内容保存在 `mcp_files`，payload 只保存 `fileRefs` 清单。
+`MCPServerDefinition` 字段为 `id`、`name`、`description`、`transport`、`command`、`args`、`workingDirectory`、`installScript`、`fileRefs`、`url`、`environment`、`headers`、`authType`、`timeoutSec`、`updatedAt`。`authType=github-token` 表示运行时为 GitHub 官方 MCP 注入需求责任人的 GitHub Token，资产本身不得保存个人 Token。stdio 上传文件的内容保存在 `mcp_files`，payload 只保存 `fileRefs` 清单。
 
 ### `GET /api/mcp-servers`
 

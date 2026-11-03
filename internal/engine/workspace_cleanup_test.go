@@ -12,6 +12,7 @@ import (
 )
 
 func TestSucceededRunnerWorkspaceQueuesImmediateDurableCleanup(t *testing.T) {
+	t.Parallel()
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +49,7 @@ func TestSucceededRunnerWorkspaceQueuesImmediateDurableCleanup(t *testing.T) {
 }
 
 func TestRetryCancelsQueuedRunnerCleanupAndAllowsLaterCleanup(t *testing.T) {
+	t.Parallel()
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +105,7 @@ func TestRetryCancelsQueuedRunnerCleanupAndAllowsLaterCleanup(t *testing.T) {
 }
 
 func TestFailedWorkspaceIsNeverCleanedAutomatically(t *testing.T) {
+	t.Parallel()
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -123,6 +126,7 @@ func TestFailedWorkspaceIsNeverCleanedAutomatically(t *testing.T) {
 }
 
 func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	r := domain.Run{ID: "conversation-workspace", Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{}}
 	if err := s.PutRun(r); err != nil {

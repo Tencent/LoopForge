@@ -119,6 +119,94 @@ func TestStudioIndexInjectsAppDomain(t *testing.T) {
 	}
 }
 
+// The OAuth callback lands here in a separate tab; the page must render under
+// the global CSP, so its script is external and nothing secret is on it.
+func TestStudioServesGongfengOAuthDonePage(t *testing.T) {
+	root := t.TempDir()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	get := func(path string) (*httptest.ResponseRecorder, string) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		body, _ := io.ReadAll(rec.Body)
+		return rec, string(body)
+	}
+	rec, page := get("/gongfeng-oauth-done.html")
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("GET done page: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Fatalf("done page must stay under the global CSP, got %q", rec.Header().Get("Content-Security-Policy"))
+	}
+	if strings.Contains(page, "<script>") || !strings.Contains(page, `<script src="/gongfeng-oauth-done.js" defer></script>`) {
+		t.Fatalf("done page must load only its same-origin script: %s", snippet(page, "<script"))
+	}
+	for _, want := range []string{"工蜂授权已完成", "可以关闭此页面回到原页面继续", `id="closePage"`, "关闭页面", `href="/"`, "打开平台"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("done page misses %q", want)
+		}
+	}
+	rec, script := get("/gongfeng-oauth-done.js")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "javascript") {
+		t.Fatalf("GET done script: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	for _, want := range []string{"new BroadcastChannel('agentflow-gongfeng-oauth')", "postMessage({type:'gongfeng-oauth-completed'})", "window.close()", "setTimeout(showManual,500)"} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("done script misses %q", want)
+		}
+	}
+	for _, leak := range []string{"location.search", "location.hash", "code", "state", "token"} {
+		if strings.Contains(script, leak) {
+			t.Fatalf("done script must not touch %q", leak)
+		}
+	}
+}
+
+func TestStudioServesSiteIcons(t *testing.T) {
+	root := t.TempDir()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	icons := map[string]string{
+		"/favicon.svg":          "image/svg+xml",
+		"/favicon.png":          "image/png",
+		"/favicon.ico":          "image/",
+		"/apple-touch-icon.png": "image/png",
+	}
+	for path, wantType := range icons {
+		req := httptest.NewRequest(http.MethodGet, path+"?v=2", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+			t.Fatalf("GET %s: %d (%d bytes); is it in web/embed.go?", path, rec.Code, rec.Body.Len())
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, wantType) {
+			t.Fatalf("GET %s: Content-Type %q, want %s*", path, got, wantType)
+		}
+	}
+	for _, page := range []string{"/", "/vscode.html"} {
+		req := httptest.NewRequest(http.MethodGet, page, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		html := rec.Body.String()
+		for _, link := range []string{
+			`<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=`,
+			`<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=`,
+		} {
+			if !strings.Contains(html, link) {
+				t.Fatalf("%s head missing %s", page, link)
+			}
+		}
+	}
+}
+
 func snippet(s, needle string) string {
 	i := strings.Index(s, needle)
 	if i < 0 {

@@ -8,15 +8,21 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+
+	"agentflow/internal/gitwork"
 
 	"github.com/gin-gonic/gin"
 )
 
-// 工蜂（TGit）当前提供 GitLab v3 兼容 API（v4 路径不存在，实测返回 404）。
+// 工蜂（TGit）当前提供 GitLab v3 兼容 API（v4 路径不存在）。
 // 校验目标是用户在工蜂「个人访问令牌」页申请的 PAT，而不是私有令牌；
 // 仓库克隆 / 推送要求 read_repository 与 write_repository 两个权限范围。
-const gongfengAPIBase = "https://git.example.com/api/v3"
+// 不带令牌访问 /personal_access_tokens/self 返回 401，说明端点存在。
+// 工蜂对能用的个人访问令牌也会在这个端点返回 404，不能据此判定令牌类型。
+// 只有 /user 里的 private_token 与所填令牌相同，才是不能克隆仓库的私人令牌。
+var gongfengAPIBase = "https://git.example.com/api/v3"
 
 var requiredGitTokenScopes = []string{"read_repository", "write_repository"}
 
@@ -28,7 +34,9 @@ type gitTokenVerifyResult struct {
 	Error   string   `json:"error,omitempty"`
 }
 
-// verifyGitToken 校验当前登录用户已保存的工蜂 Git Token 是否生效。
+// verifyGitToken 校验当前登录用户的 GitHub Git Token 是否生效。
+// GET 校验已保存的令牌；POST 可在 body.token 里带上尚未保存的令牌，
+// 让用户填完后直接点校验。令牌只发往固定的 GitHub API 地址，不落库。
 // 始终返回 200 + 结构化结果，前端据此展示校验结论。
 func (h *usersHandlers) verifyGitToken(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -41,22 +49,36 @@ func (h *usersHandlers) verifyGitToken(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gitTokenVerifyResult{Error: "只能校验当前登录用户的凭据"})
 		return
 	}
-	if h.repo == nil {
-		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "存储不可用"})
-		return
+	token := ""
+	if c.Request.Method == http.MethodPost {
+		var req struct {
+			Token string `json:"token"`
+		}
+		if !decode(c, &req) {
+			return
+		}
+		token = strings.TrimSpace(req.Token)
 	}
-	user, ok := h.repo.User(id)
-	if !ok {
-		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "用户不存在"})
-		return
+	if token == "" {
+		if h.repo == nil {
+			c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "存储不可用"})
+			return
+		}
+		user, ok := h.repo.User(id)
+		if !ok {
+			c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "用户不存在"})
+			return
+		}
+		_, token = gitwork.SplitToken(h.repo.GitCredential(c.Request.Context(), user.ID))
 	}
-	if user.GitToken == "" {
-		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "尚未配置 Git Token，请先在个人设置中填写"})
+	_, token = gitwork.SplitToken(token)
+	if token == "" {
+		c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "尚未配置 Git Token，请先在个人配置中填写"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	c.JSON(http.StatusOK, verifyGitHubToken(ctx, user.GitToken))
+	c.JSON(http.StatusOK, verifyGitHubToken(ctx, token))
 }
 
 func verifyGitHubToken(ctx context.Context, token string) gitTokenVerifyResult {
@@ -95,16 +117,12 @@ func verifyGongfengToken(ctx context.Context, token string) gitTokenVerifyResult
 	return gitTokenVerifyResult{Valid: len(missing) == 0, Login: login, Scopes: scopes, Missing: missing}
 }
 
-// gongfengTokenSelf 通过 /personal_access_tokens/self 反查令牌状态与权限范围。
-// 工蜂旧版本不支持该端点时退回 /user，仅确认令牌有效、无法读取权限范围。
+// gongfengTokenSelf 优先用 /personal_access_tokens/self 读取权限范围。
+// 该端点对有效个人访问令牌也会返回 404。这时退回 /user：私人令牌会原样出现在
+// private_token 字段里，应拒绝；其余能通过 /user 的令牌按 master 一样视为有效。
 func gongfengTokenSelf(ctx context.Context, token string) ([]string, string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gongfengAPIBase+"/personal_access_tokens/self", nil)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	resp, err := client.Do(req)
+	resp, err := gongfengDo(ctx, client, gongfengAPIBase+"/personal_access_tokens/self", token)
 	if err != nil {
 		return nil, "", fmt.Errorf("无法连接工蜂（git.example.com）：%v", err)
 	}
@@ -118,11 +136,11 @@ func gongfengTokenSelf(ctx context.Context, token string) ([]string, string, err
 		} `json:"user"`
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		// 旧版工蜂没有 self 端点：退回 /user 只验证令牌有效性。
-		if err := gongfengTokenUser(ctx, client, token); err != nil {
+		login, err := gongfengTokenUser(ctx, client, token)
+		if err != nil {
 			return nil, "", err
 		}
-		return nil, "", nil
+		return nil, login, nil
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return nil, "", errors.New("令牌无效或已过期：请确认填写的是工蜂「个人访问令牌」")
@@ -139,29 +157,59 @@ func gongfengTokenSelf(ctx context.Context, token string) ([]string, string, err
 	return info.Scopes, info.User.Username, nil
 }
 
-func gongfengTokenUser(ctx context.Context, client *http.Client, token string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gongfengAPIBase+"/user", nil)
+func gongfengTokenUser(ctx context.Context, client *http.Client, token string) (string, error) {
+	resp, err := gongfengDo(ctx, client, gongfengAPIBase+"/user", token)
 	if err != nil {
-		return err
-	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("无法连接工蜂（git.example.com）：%v", err)
+		return "", fmt.Errorf("无法连接工蜂（git.example.com）：%v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return errors.New("令牌无效或已过期：请确认填写的是工蜂「个人访问令牌」")
+		return "", errors.New("令牌无效或已过期：请确认填写的是工蜂「个人访问令牌」")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("工蜂返回 HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("工蜂返回 HTTP %d", resp.StatusCode)
 	}
-	return nil
+	var user struct {
+		Username     string `json:"username"`
+		PrivateToken string `json:"private_token"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&user); err != nil {
+		return "", errors.New("工蜂返回的用户信息无法解析，请稍后重试校验")
+	}
+	if user.PrivateToken != "" && user.PrivateToken == token {
+		return "", errors.New("当前配置的是工蜂「私人令牌」，只能用于 API，不能克隆或推送仓库。请在工蜂「个人配置 → 帐号」中创建「个人访问令牌」，勾选 read_repository、write_repository 权限，然后替换并保存")
+	}
+	return user.Username, nil
+}
+
+// gongfengDo sends the token as a private token, then retries with a bearer
+// header. Personal access tokens use the first form. OAuth access tokens are
+// rejected as PRIVATE-TOKEN and accepted as Authorization: Bearer.
+func gongfengDo(ctx context.Context, client *http.Client, rawURL, token string) (*http.Response, error) {
+	resp, err := gongfengDoOnce(ctx, client, rawURL, token, false)
+	if err != nil || (resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden) {
+		return resp, err
+	}
+	resp.Body.Close()
+	return gongfengDoOnce(ctx, client, rawURL, token, true)
+}
+
+func gongfengDoOnce(ctx context.Context, client *http.Client, rawURL, token string, bearer bool) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if bearer {
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else {
+		req.Header.Set("PRIVATE-TOKEN", token)
+	}
+	return client.Do(req)
 }
 
 func missingGitTokenScopes(scopes, required []string) []string {
 	if len(scopes) == 0 {
-		// 无法读取权限范围（旧版工蜂 fallback）：不误报，交给前端提示无法确认范围。
+		// self 端点没有返回范围时，不能把「读不到」报成「缺少权限」。
 		return nil
 	}
 	set := make(map[string]bool, len(scopes))

@@ -8,6 +8,7 @@ import (
 )
 
 func TestReportedOutputsValidateRepositoryScopedContracts(t *testing.T) {
+	t.Parallel()
 	run := domain.Run{ID: "run-1", Repositories: []domain.RepositoryContext{
 		{RepositoryID: "a", Name: "a", WorkspaceDir: "svc-a"},
 		{RepositoryID: "b", Name: "b", WorkspaceDir: "svc-b"},
@@ -48,6 +49,7 @@ func TestReportedOutputsValidateRepositoryScopedContracts(t *testing.T) {
 }
 
 func TestReadGateResultFromReportedOutputs(t *testing.T) {
+	t.Parallel()
 	path := gateResultPath("review", 1)
 	reported := newReportedOutputs(nil)
 	if result, err := readGateResultFrom(reported, path); err != nil || result != nil {
@@ -61,6 +63,7 @@ func TestReadGateResultFromReportedOutputs(t *testing.T) {
 }
 
 func TestRunnerArtifactInputsMatchWorkspaceMount(t *testing.T) {
+	t.Parallel()
 	wf := domain.WorkflowDefinition{Edges: []domain.WorkflowEdge{{Source: "impl", Target: "review"}}}
 	run := domain.Run{Artifacts: []domain.Artifact{
 		{NodeID: "impl", Attempt: 1, Name: "notes", MediaType: "text/markdown", RepositoryDir: "svc-a", Content: "A"},

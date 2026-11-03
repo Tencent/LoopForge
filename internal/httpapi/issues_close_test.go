@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -173,5 +174,69 @@ func TestCloseIssueRejectsActiveWork(t *testing.T) {
 				t.Fatal("settled issue not closed")
 			}
 		})
+	}
+}
+
+// A run that just succeeded leaves its Task "running" until the next sync, and
+// the list endpoint may have used the 2s sync window moments earlier. Closing
+// must still see the settled run instead of answering 409.
+func TestCloseIssueSeesRunThatJustSucceeded(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	issue := domain.Issue{ID: "close-after-run", ProjectID: "platform", Title: "close after run", Status: "in_progress"}
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutRun(domain.Run{ID: "close-after-run-run", Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutTask(domain.Task{ID: "close-after-run-task", IssueID: issue.ID, RunID: "close-after-run-run", Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "ws"))), tracker.NewService(), "", "")
+	requestJSON[[]any](t, h, http.MethodGet, "/api/issues?projectId=platform", nil, http.StatusOK)
+	if err := st.PutRun(domain.Run{ID: "close-after-run-run", Status: "succeeded"}); err != nil {
+		t.Fatal(err)
+	}
+	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues/close-after-run/close", map[string]any{}, http.StatusOK)
+	if saved, _ := st.Issue(issue.ID); saved.Status != "closed" {
+		t.Fatalf("issue status = %q, want closed", saved.Status)
+	}
+}
+
+// Deleting right after the run was cancelled must not wait for a list call to
+// sync the Task: the run is settled, so the requirement is deletable.
+func TestDeleteIssueSeesRunThatWasJustCancelled(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	issue := domain.Issue{ID: "delete-after-cancel", ProjectID: "platform", Title: "delete after cancel", Status: "in_progress"}
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutRun(domain.Run{ID: "delete-after-cancel-run", Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutTask(domain.Task{ID: "delete-after-cancel-task", IssueID: issue.ID, RunID: "delete-after-cancel-run", Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "ws"))), tracker.NewService(), "", "")
+	requestJSON[[]any](t, h, http.MethodGet, "/api/issues?projectId=platform", nil, http.StatusOK)
+	if err := st.PutRun(domain.Run{ID: "delete-after-cancel-run", Status: "cancelled"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/issues/delete-after-cancel", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete right after cancel: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := st.Issue(issue.ID); ok {
+		t.Fatal("issue still stored")
 	}
 }

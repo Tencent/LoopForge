@@ -1,0 +1,84 @@
+.session-context-menu {
+  position: fixed;
+  z-index: 1200;
+  display: flex;
+  width: 176px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 5px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow:
+    0 10px 30px rgb(0 0 0 / 8%),
+    0 2px 6px rgb(0 0 0 / 3%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+.session-context-menu[data-visible="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.session-context-menu > button {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  flex: none;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: left;
+  white-space: nowrap;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+.session-context-menu > button > svg {
+  flex: none;
+  color: var(--muted);
+}
+.session-context-menu > button:hover,
+.session-context-menu > button:focus-visible {
+  outline: none;
+  background: rgb(24 24 27 / 4%);
+}
+.session-context-menu > button.danger {
+  color: #d04444;
+}
+.session-context-menu > button.danger > svg {
+  color: inherit;
+}
+.session-context-menu > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.chat-shell .session-link {
+  -webkit-touch-callout: none;
+  touch-action: pan-y;
+  user-select: none;
+}
+html[data-theme="dark"] .session-context-menu > button:hover,
+html[data-theme="dark"] .session-context-menu > button:focus-visible {
+  background: rgb(237 237 240 / 4%);
+}
+@media (max-width: 767px) {
+  .session-context-menu > button {
+    min-height: 40px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-context-menu,
+  .session-context-menu > button {
+    transition: none;
+  }
+}

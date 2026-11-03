@@ -36,6 +36,11 @@ type Project struct {
 	TAPDIterationID              string    `json:"tapdIterationId,omitempty"`
 	CreatedAt                    time.Time `json:"createdAt"`
 	UpdatedAt                    time.Time `json:"updatedAt"`
+	// ArchivedAt marks a deleted project. It is hidden from project lists and
+	// syncs but its requirements, runs and settings are kept so it can be
+	// restored; the id stays taken.
+	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+	ArchivedBy int64      `json:"archivedBy,omitempty"`
 }
 
 func PublicProject(p Project) Project {

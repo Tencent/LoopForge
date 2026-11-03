@@ -85,6 +85,18 @@ func (d *Daemon) closeRunSandboxes(ctx context.Context, runID string) {
 	d.closeSharedSandboxes(ctx, func(entry *runSandbox) bool { return entry.runID == runID })
 }
 
+// touchRunSandboxes counts operating the panel browser as use, so the idle
+// reaper does not close a sandbox whose browser a person is driving.
+func (d *Daemon) touchRunSandboxes(runID string) {
+	d.runSandboxMu.Lock()
+	defer d.runSandboxMu.Unlock()
+	for _, entry := range d.runSandboxes {
+		if entry.runID == runID && !entry.lastUsed.IsZero() {
+			entry.lastUsed = time.Now()
+		}
+	}
+}
+
 // reapIdleRunSandboxes closes shared sandboxes unused for longer than idle.
 func (d *Daemon) reapIdleRunSandboxes(ctx context.Context, idle time.Duration) {
 	cutoff := time.Now().Add(-idle)
@@ -121,13 +133,14 @@ func (d *Daemon) closeSharedSandboxes(ctx context.Context, match func(*runSandbo
 	}
 }
 
-// runSandboxKey identifies the shared sandbox of a task that runs in its
-// run's shared checkout (runs/<run>/workspace). The id doubles as the
-// container name suffix, so it keeps the runner-owned "rt-" prefix that
-// cleanup_run enumerates.
+// runSandboxKey identifies the shared sandbox of a task that runs in a
+// shared checkout (runs/<run>/workspace). A child SOP works in its parent's
+// checkout but keeps a sandbox of its own. The id doubles as the container
+// name suffix, so it keeps the runner-owned "rt-" prefix that cleanup_run
+// enumerates.
 func runSandboxKey(task domain.RunnerTask, requirements runtime.SandboxRequirements, resources runtime.SandboxResources) (string, string, bool) {
 	runID := strings.TrimSpace(task.RunID)
-	if runID == "" || task.Sandbox == nil || path.Clean(task.Workspace) != path.Join("runs", runID, "workspace") {
+	if runID == "" || task.Sandbox == nil || !sharedRunWorkspace(task.Workspace) {
 		return "", "", false
 	}
 	spec, err := json.Marshal(struct {
@@ -141,6 +154,13 @@ func runSandboxKey(task domain.RunnerTask, requirements runtime.SandboxRequireme
 	sum := sha256.Sum256(spec)
 	fingerprint := hex.EncodeToString(sum[:])[:12]
 	return runID + "|" + fingerprint, "rt-run-" + containerSafe(runID) + "-" + fingerprint, true
+}
+
+// sharedRunWorkspace reports whether workspace is a run's shared checkout,
+// runs/<run>/workspace.
+func sharedRunWorkspace(workspace string) bool {
+	parts := strings.Split(path.Clean(workspace), "/")
+	return len(parts) == 3 && parts[0] == "runs" && parts[1] != "" && parts[1] != "." && parts[1] != ".." && parts[2] == "workspace"
 }
 
 func containerSafe(v string) string {

@@ -72,7 +72,7 @@ func makeCheckpoint(t *testing.T, headers ...*tar.Header) []byte {
 	return b.Bytes()
 }
 func TestWorkspaceCheckpointRejectsUnsafeAndCorruptArchivesAtomically(t *testing.T) {
-	cases := map[string][]byte{"traversal": makeCheckpoint(t, &tar.Header{Name: "../escape", Mode: 0600, Typeflag: tar.TypeReg}), "absolute": makeCheckpoint(t, &tar.Header{Name: "/escape", Mode: 0600, Typeflag: tar.TypeReg}), "symlink": makeCheckpoint(t, &tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../escape"}), "secret": makeCheckpoint(t, &tar.Header{Name: ".agentflow/token", Typeflag: tar.TypeReg}), "duplicate": makeCheckpoint(t, &tar.Header{Name: "file", Typeflag: tar.TypeReg}, &tar.Header{Name: "file", Typeflag: tar.TypeReg}), "hardlink": makeCheckpoint(t, &tar.Header{Name: "link", Typeflag: tar.TypeLink, Linkname: "escape"})}
+	cases := map[string][]byte{"traversal": makeCheckpoint(t, &tar.Header{Name: "../escape", Mode: 0600, Typeflag: tar.TypeReg}), "absolute": makeCheckpoint(t, &tar.Header{Name: "/escape", Mode: 0600, Typeflag: tar.TypeReg}), "symlink-parent": makeCheckpoint(t, &tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../escape"}, &tar.Header{Name: "link/pwned", Mode: 0600, Typeflag: tar.TypeReg}), "secret": makeCheckpoint(t, &tar.Header{Name: ".agentflow/token", Typeflag: tar.TypeReg}), "duplicate": makeCheckpoint(t, &tar.Header{Name: "file", Typeflag: tar.TypeReg}, &tar.Header{Name: "file", Typeflag: tar.TypeReg}), "hardlink": makeCheckpoint(t, &tar.Header{Name: "link", Typeflag: tar.TypeLink, Linkname: "escape"})}
 	good := EmptyWorkspaceCheckpoint()
 	cases["truncated"] = good[:len(good)-4]
 	bad := append([]byte{}, good...)
@@ -94,11 +94,73 @@ func TestWorkspaceCheckpointRejectsUnsafeAndCorruptArchivesAtomically(t *testing
 			}
 		})
 	}
+}
+
+// Repositories may commit absolute or dangling links (for example an editor
+// skills directory pointing at a developer's home). They must not block the
+// save that authorizes reclamation, and restore must reproduce them exactly.
+func TestWorkspaceCheckpointPreservesExternalSymlinks(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Symlink("../escape", filepath.Join(root, "link")); err != nil {
+	links := map[string]string{"server/.claude/skills": "/workdir/Users/dev/skills", "tools/run/app": "../../../outside/app", "local": "server"}
+	for name, target := range links {
+		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(name)), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive, err := CreateWorkspaceCheckpoint(root)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateWorkspaceCheckpoint(root); err == nil {
-		t.Fatal("external link captured")
+	if err = ValidateWorkspaceCheckpoint(archive); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "restored")
+	if err = RestoreWorkspaceCheckpoint(dest, archive); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range links {
+		if got, err := os.Readlink(filepath.Join(dest, name)); err != nil || got != target {
+			t.Fatalf("%s: %q %v", name, got, err)
+		}
+	}
+}
+
+// Restoring an external link is safe only because nothing is ever written
+// through it: a later entry below the link must fail atomically.
+func TestWorkspaceCheckpointRestoreNeverWritesThroughExternalSymlinks(t *testing.T) {
+	for name, target := range map[string]func(outside string) string{
+		"absolute": func(outside string) string { return outside },
+		"relative": func(string) string { return "../outside" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			parent := t.TempDir()
+			outside := filepath.Join(parent, "outside")
+			if err := os.Mkdir(outside, 0700); err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range []*tar.Header{
+				{Name: "pwned", Mode: 0600, Typeflag: tar.TypeReg},
+				{Name: "sub/pwned", Mode: 0600, Typeflag: tar.TypeReg},
+				{Name: "sub", Mode: 0700, Typeflag: tar.TypeDir},
+			} {
+				data := makeCheckpoint(t, &tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: target(outside)}, &tar.Header{Name: "link/" + entry.Name, Mode: entry.Mode, Typeflag: entry.Typeflag})
+				dest := filepath.Join(parent, "workspace")
+				if err := RestoreWorkspaceCheckpoint(dest, data); err == nil {
+					t.Fatalf("%s written through external link", entry.Name)
+				}
+				if _, err := os.Lstat(dest); !os.IsNotExist(err) {
+					t.Fatal("partial workspace exposed")
+				}
+				if escaped, _ := os.ReadDir(outside); len(escaped) != 0 {
+					t.Fatalf("restore escaped workspace: %v", escaped)
+				}
+				if entries, _ := os.ReadDir(parent); len(entries) != 1 {
+					t.Fatal("staging files leaked")
+				}
+			}
+		})
 	}
 }

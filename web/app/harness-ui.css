@@ -1,0 +1,484 @@
+/* Harness 设计规范 · 全产品唯一来源（MIT，见 harness-ui-LICENSE.txt）。
+ * 1. --hui-* 令牌只在这里声明（:root 与暗色主题），挂到 <body> 的浮层、抽屉、弹窗直接继承。
+ * 2. 组件只定义外观（颜色、边框、圆角、阴影、字号、组件内间距），不定义页面布局。
+ * 3. 加载顺序：旧基础样式（styles / platform / product-v3 / product-v4）之后、各页面 Harness 文件之前；
+ *    页面文件只写布局与本页独有的差异。
+ */
+:root {
+  --hui-accent: #7b61ff;
+  --hui-accent-hover: #684ce9;
+  --hui-accent-soft: #f0edff;
+  --hui-text: #252529;
+  --hui-muted: #6f6f79;
+  --hui-secondary: #62626c;
+  --hui-tertiary: #9a9aa4;
+  --hui-border: #eae9ee;
+  --hui-border-soft: #f1f0f4;
+  --hui-border-strong: #dcdbe3;
+  --hui-canvas: #fafafb;
+  --hui-soft: #f5f6f7;
+  --hui-surface: #fff;
+  --hui-stage: #f4f3f8;
+  --hui-on-accent: #fff;
+  --hui-panel-shadow: 0 1px 2px #0000000a, 0 2px 8px #00000004;
+  --hui-card-shadow: 0 6px 20px rgba(0, 0, 0, .05);
+  --hui-popover-shadow: 0 8px 28px rgba(0, 0, 0, .07), 0 2px 8px rgba(0, 0, 0, .024);
+  --hui-ind-shadow: 0 1px 3px rgba(24, 24, 27, .04), 0 2px 5px rgba(24, 24, 27, .024);
+  --hui-focus-ring: color-mix(in srgb, var(--hui-accent) 55%, transparent);
+  --hui-info: #597dcc;
+  --hui-success: #338768;
+  --hui-error: #c15161;
+  --hui-warn: #b7791f;
+  --hui-neutral: #6b6b76;
+  --hui-ease-flow: cubic-bezier(.16, 1, .3, 1);
+  --hui-sans: Inter, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", ui-sans-serif, sans-serif;
+  --hui-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --hui-tip: #252529;
+  --hui-tip-text: #fff;
+  --hui-scrim: rgba(15, 15, 20, .32);
+  --hui-z-popover: 9999;
+  --hui-z-tooltip: 10050;
+}
+html[data-theme="dark"] {
+  --hui-accent: #a08aff;
+  --hui-accent-hover: #b2a0ff;
+  --hui-accent-soft: #242033;
+  --hui-text: #ededf0;
+  --hui-muted: #a1a1ac;
+  --hui-secondary: #b1b1ba;
+  --hui-tertiary: #6e6e78;
+  --hui-border: #26262b;
+  --hui-border-soft: #1f1f24;
+  --hui-border-strong: #393940;
+  --hui-canvas: #111114;
+  --hui-soft: #1c1c21;
+  --hui-surface: #141417;
+  --hui-stage: #18181c;
+  --hui-on-accent: #141417;
+  --hui-panel-shadow: 0 1px 2px #0000002e;
+  --hui-card-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+  --hui-popover-shadow: 0 16px 44px rgba(0, 0, 0, .32), 0 3px 10px rgba(0, 0, 0, .12);
+  --hui-ind-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  --hui-info: #8aa8ee;
+  --hui-success: #34d399;
+  --hui-error: #f0899a;
+  --hui-warn: #f2c46d;
+  --hui-neutral: #a1a1ac;
+  --hui-tip: #ededf0;
+  --hui-tip-text: #141417;
+  --hui-scrim: rgba(0, 0, 0, .5);
+}
+
+/* ---------- Harness 视图 ----------
+ * 原生 Harness 页面：#issuesView #runsView #assetsView #approvalsView #observabilityView #mcpView #botsView #knowledgeView
+ * 设置区视图（1200px 居中容器、页头与按钮映射）：
+ *   #settingsView #botsView #projectsView #runnersView #agentsView #mcpView #assetsView #knowledgeView
+ *   #metricsView #deploymentsView #businessDomainsView #guideView #platformView #businessDomainManagementView
+ * 弹窗：#agentModal #customMcpModal #requirementModal（新建需求向导，布局见 requirement-wizard.css）
+ * #flowView 与工作区其他页面不在列表内。
+ */
+:is(#issuesView, #assetsView, #approvalsView, #observabilityView, #obsExpand, .obs-source-dialog, #mcpView, #botsView, #knowledgeView, #kbDrawer, #requirementModal, .hui-select-panel, .issue-action-popover) {
+  font-family: var(--hui-sans);
+  color: var(--hui-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 设置区旧页面：旧基础令牌（styles / product-v3 / collaboration）在这些作用域内改为引用 --hui-*，
+ * 只改变颜色，不改变任何尺寸与布局。 */
+:is(#settingsView, #projectsView, #repoDrawer, .pw-root, #runnersView, #agentsView, #agentModal, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) {
+  --text: var(--hui-text);
+  --text-strong: var(--hui-text);
+  --muted: var(--hui-muted);
+  --muted-2: var(--hui-tertiary);
+  --line: var(--hui-border);
+  --line-strong: var(--hui-border-strong);
+  --border: var(--hui-border);
+  --border-strong: var(--hui-border-strong);
+  --panel: var(--hui-surface);
+  --panel-2: var(--hui-canvas);
+  --panel-3: var(--hui-soft);
+  --bg-soft: var(--hui-canvas);
+  --hover: var(--hui-soft);
+  --primary: var(--hui-accent);
+  --blue: var(--hui-accent);
+  --blue-dim: var(--hui-accent);
+  --blue-soft: var(--hui-accent-soft);
+  --glow-blue: 0 0 0 3px var(--hui-accent-soft);
+  --accent-gradient: var(--hui-accent);
+  --shadow-sm: var(--hui-panel-shadow);
+  --v3-surface: var(--hui-surface);
+  --v3-soft: var(--hui-canvas);
+  --v3-ink: var(--hui-text);
+  --v3-ink-2: var(--hui-secondary);
+  --v3-ink-3: var(--hui-tertiary);
+  --v3-line: var(--hui-border);
+  --v3-line-2: var(--hui-border-strong);
+  --v3-accent: var(--hui-accent);
+  --v3-accent-soft: var(--hui-accent-soft);
+  --v3-accent-ink: var(--hui-accent);
+}
+/* 上面把 --blue 映射为强调色后，旧规则里以 --blue 为实心底的白字在暗色下对比不足，统一改用 --hui-on-accent */
+:is(#settingsView, #projectsView, #repoDrawer, .pw-root, #runnersView, #agentsView, #agentModal, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) :is(.member-avatar.owner, .pager-page.active, .access-recommended) {
+  color: var(--hui-on-accent);
+}
+
+/* 设置区：页头与内容外层容器居中、最大 1200px；页面内部布局不变。
+ * product-v4.css 用 !important 清掉了这些元素的 max-width / margin，这里同样需要 !important。 */
+:is(#settingsView, #botsView, #projectsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView).page-view.active > :not(.agent-row-menu) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1200px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* 设置区页头：H1 22px/600，说明 13px 次级色 */
+:is(#settingsView, #botsView, #projectsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) :is(.page-heading, .pa-ph, .kb-head) h1 {
+  color: var(--hui-text);
+  font: 600 22px/1.25 var(--hui-sans);
+  letter-spacing: -.02em;
+}
+:is(#settingsView, #botsView, #projectsView, #runnersView, #agentsView, #mcpView, #assetsView, #knowledgeView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) :is(.page-heading, .pa-ph) h1 + p,
+:is(#settingsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView) .page-heading > div > p:last-child,
+#knowledgeView .kb-head-desc {
+  color: var(--hui-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------- 按钮：实心强调 / 白底强边框 / quiet，另有淡紫行内主操作与图标按钮 ----------
+ * 原生 Harness 页面使用完整规格（页面级 32px、行内 28px）；
+ * 其他设置页只映射外观，尺寸沿用原元素。 */
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView) .button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  white-space: nowrap;
+  font: 500 13px/1 var(--hui-sans);
+  letter-spacing: 0;
+  text-decoration: none;
+  cursor: pointer;
+}
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView) .button.small { height: 28px; min-height: 28px; padding: 0 10px; font-size: 12.5px; }
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView) .button.hui-icon-button { width: 32px; padding: 0; }
+
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button,
+:is(#knowledgeView, #kbDrawer) .kb-btn {
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 7px;
+  background: var(--hui-surface);
+  color: var(--hui-secondary);
+  box-shadow: none;
+  font-weight: 500;
+  transform: none;
+  transition: background-color .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow), border-color .18s var(--hui-ease-flow);
+}
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button:hover:not(:disabled),
+:is(#knowledgeView, #kbDrawer) .kb-btn:hover:not(:disabled) {
+  border-color: var(--hui-border-strong);
+  background: var(--hui-canvas);
+  color: var(--hui-text);
+  box-shadow: none;
+  transform: none;
+}
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button:focus-visible,
+:is(#knowledgeView, #kbDrawer) .kb-btn:focus-visible,
+.credential-btn:focus-visible {
+  outline: 2px solid var(--hui-focus-ring);
+  outline-offset: 1px;
+}
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button:disabled,
+:is(#knowledgeView, #kbDrawer) .kb-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 实心强调：每页只有一个页面级主操作（弹窗/抽屉内另计） */
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) :is(.button.primary, .button.dark),
+:is(#knowledgeView, #kbDrawer) .kb-btn.primary,
+#issuesView #newIssue,
+.credential-btn.primary {
+  border-color: var(--hui-accent);
+  background: var(--hui-accent);
+  color: var(--hui-on-accent);
+}
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) :is(.button.primary, .button.dark):hover:not(:disabled),
+:is(#knowledgeView, #kbDrawer) .kb-btn.primary:hover:not(:disabled),
+#issuesView #newIssue:hover,
+.credential-btn.primary:hover:not(:disabled) {
+  border-color: var(--hui-accent-hover);
+  background: var(--hui-accent-hover);
+  color: var(--hui-on-accent);
+}
+
+/* 淡紫行内主操作 */
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #requirementModal) .button.hui-btn-soft {
+  border-color: transparent;
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+}
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #requirementModal) .button.hui-btn-soft:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--hui-accent) 16%, var(--hui-surface));
+  color: var(--hui-accent-hover);
+}
+
+/* 删除类：描边 */
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button.danger-outline {
+  border-color: color-mix(in srgb, var(--hui-error) 30%, var(--hui-border));
+  background: var(--hui-surface);
+  color: var(--hui-error);
+}
+:is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button.danger-outline:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hui-error) 30%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface));
+  color: var(--hui-error);
+}
+
+/* 图标按钮（quiet） */
+.hui-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hui-muted);
+  cursor: pointer;
+  transition: background-color .16s ease, color .16s ease;
+}
+.hui-icon-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--hui-text) 5%, transparent); color: var(--hui-text); }
+.hui-icon-btn.is-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--hui-error) 8%, transparent); color: var(--hui-error); }
+.hui-icon-btn:focus-visible { outline: 2px solid var(--hui-focus-ring); outline-offset: -1px; }
+.hui-icon-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- 状态徽标（Harness StatusBadge）：胶囊，状态色 23% 描边 + 8% 底色，可带呼吸点或图标 ----------
+ * data-tone: neutral | info | success | error | warn | accent；data-size="sm" 用于表格行与卡片。 */
+.hui-badge {
+  --hui-tone: var(--hui-neutral);
+  box-sizing: border-box;
+  max-width: 100%;
+  height: 26px;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--hui-tone) 23%, transparent);
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--hui-tone) 8%, var(--hui-surface));
+  color: var(--hui-tone);
+  font: 400 12.5px/1 var(--hui-sans);
+  letter-spacing: 0;
+  white-space: nowrap;
+  vertical-align: middle;
+  overflow: hidden;
+  transition: color .24s ease, background-color .24s ease, border-color .24s ease;
+}
+.hui-badge[data-size="sm"] { height: 24px; gap: 5px; padding: 0 8px; font-size: 12px; }
+.hui-badge[data-tone="info"] { --hui-tone: var(--hui-info); }
+.hui-badge[data-tone="success"] { --hui-tone: var(--hui-success); }
+.hui-badge[data-tone="error"] { --hui-tone: var(--hui-error); }
+.hui-badge[data-tone="warn"] { --hui-tone: var(--hui-warn); }
+.hui-badge[data-tone="accent"] { --hui-tone: var(--hui-accent); }
+.hui-badge[data-tone="muted"] { --hui-tone: var(--hui-tertiary); color: var(--hui-muted); }
+.hui-badge :is(.harness-icon, .hui-badge-glyph svg) { flex: none; width: 13px; height: 13px; stroke-width: 1.6; }
+.hui-badge[data-size="sm"] :is(.harness-icon, .hui-badge-glyph svg) { width: 12px; height: 12px; }
+.hui-badge-glyph { display: inline-flex; flex: none; line-height: 0; }
+.hui-badge-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hui-lamp { position: relative; flex: none; width: 7px; height: 7px; }
+.hui-lamp i { position: absolute; inset: 0; border-radius: 50%; background: currentColor; }
+.hui-lamp::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; background: currentColor; opacity: .25; animation: huiBreath 1.8s var(--hui-ease-flow) infinite; }
+.hui-lamp.is-hollow i { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+.hui-lamp.is-hollow::after,
+.hui-lamp.is-still::after { content: none; }
+@keyframes huiBreath { 0% { transform: scale(.5); opacity: .35; } 70%, 100% { transform: scale(1.4); opacity: 0; } }
+
+/* ---------- 面板 / 卡片：圆角 14px、细边框、极浅阴影 ---------- */
+.hui-panel,
+#botsView .bot-panel,
+#runsView .run-panel,
+#knowledgeView :is(.kb-panel, .kb-metric) {
+  border: 1px solid var(--hui-border);
+  border-radius: 14px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-panel-shadow);
+}
+
+/* ---------- 输入框 / 搜索框 / 下拉 / 开关：强边框，聚焦强调色边框 + 淡紫外圈 ---------- */
+.hui-input,
+#botsContent :is(.input, .select),
+:is(#knowledgeView, #kbDrawer) .kb-input,
+:is(#settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #requirementModal, .pw-root, .credential-scrim) :is(.input, .select, .textarea) {
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background-color: var(--hui-surface);
+  color: var(--hui-text);
+  box-shadow: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+:is(.hui-input, #botsContent .input, :is(#knowledgeView, #kbDrawer) .kb-input, :is(#settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #requirementModal, .pw-root, .credential-scrim) :is(.input, .select, .textarea))::placeholder { color: var(--hui-tertiary); }
+.hui-input:focus,
+#botsContent :is(.input, .select):focus,
+:is(#knowledgeView, #kbDrawer) .kb-input:focus,
+:is(#settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #deploymentsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #requirementModal, .pw-root, .credential-scrim) :is(.input, .select, .textarea):focus {
+  outline: 0;
+  border-color: var(--hui-accent);
+  box-shadow: 0 0 0 3px var(--hui-accent-soft);
+}
+.hui-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 99px;
+  background: var(--hui-border-strong);
+  cursor: pointer;
+  transition: background-color .24s ease;
+}
+.hui-switch::before { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #0003; transition: transform .26s var(--hui-ease-flow); }
+.hui-switch:is(:checked, [aria-checked="true"]) { background: var(--hui-accent); }
+.hui-switch:is(:checked, [aria-checked="true"])::before { transform: translateX(12px); }
+.hui-switch:focus-visible { outline: 2px solid var(--hui-focus-ring); outline-offset: 2px; }
+.hui-switch:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- 表格：表头 12px 三级色，行分隔细线 ---------- */
+.hui-table { width: 100%; border-collapse: collapse; color: var(--hui-text); font-size: 13px; }
+.hui-table th { height: 36px; padding: 0 12px; border-bottom: 1px solid var(--hui-border-soft); background: transparent; color: var(--hui-tertiary); font-size: 12px; font-weight: 400; text-align: left; white-space: nowrap; }
+.hui-table td { padding: 10px 12px; border-bottom: 1px solid var(--hui-border-soft); vertical-align: middle; }
+.hui-table tbody tr:last-child td { border-bottom: 0; }
+
+/* ---------- Selector（hui-select.js） ---------- */
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-native { display: none !important; }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-trigger {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 132px;
+  max-width: 200px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font: 400 13px/1 var(--hui-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s var(--hui-ease-flow), background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow);
+}
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-trigger:hover { border-color: var(--hui-border-strong); }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-trigger:focus-visible { outline: 2px solid var(--hui-focus-ring); outline-offset: 1px; }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-trigger[aria-expanded="true"] { border-color: var(--hui-accent); }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-trigger.is-filtered { border-color: color-mix(in srgb, var(--hui-accent) 40%, var(--hui-border)); background: var(--hui-accent-soft); color: var(--hui-accent); }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) :is(.hui-select-lead, .hui-select-chevron) { color: var(--hui-tertiary); }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-chevron { margin-left: auto; transition: transform .2s var(--hui-ease-flow); }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-trigger.is-filtered :is(.hui-select-lead, .hui-select-chevron) { color: currentColor; }
+:is(#issuesView, #mcpView, #observabilityView, .obs-source-dialog) .hui-select-trigger[aria-expanded="true"] .hui-select-chevron { transform: rotate(180deg); }
+
+/* ---------- 浮层面板：Selector 面板、更多菜单、行内 ⋯ 菜单 ---------- */
+:is(#issuesView, #assetsView) .hui-menu,
+.hui-select-panel,
+.issue-action-popover {
+  box-sizing: border-box;
+  padding: 4px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-popover-shadow);
+  color: var(--hui-text);
+}
+:is(#issuesView, #assetsView) .hui-menu,
+.hui-select-panel {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity .18s var(--hui-ease-flow), transform .18s var(--hui-ease-flow), visibility 0s linear .18s;
+}
+.hui-select-panel[data-placement="top"] { transform: translateY(4px); }
+:is(#issuesView, #assetsView) .hui-menu.is-open,
+.hui-select-panel.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity .18s var(--hui-ease-flow), transform .18s var(--hui-ease-flow), visibility 0s;
+}
+:is(#issuesView, #assetsView) .hui-menu { position: absolute; z-index: 60; top: calc(100% + 6px); right: 0; min-width: 240px; }
+:is(#issuesView, #assetsView) .hui-menu-item,
+.hui-select-option,
+.issue-action-popover .issue-popover-item {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hui-text);
+  font: 400 13.5px/1 var(--hui-sans);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow);
+}
+:is(#issuesView, #assetsView) .hui-menu-item:not(:disabled):is(:hover, :focus-visible),
+.hui-select-option:is(:hover, :focus-visible),
+.issue-action-popover .issue-popover-item:is(:hover, :focus-visible) { background: var(--hui-canvas); color: var(--hui-text); outline: 0; }
+:is(#issuesView, #assetsView) .hui-menu-item > .harness-icon,
+.issue-action-popover .issue-popover-item .harness-icon { color: var(--hui-muted); }
+:is(#issuesView, #assetsView) .hui-menu-item:disabled { opacity: .45; cursor: not-allowed; }
+:is(#issuesView, #assetsView) .hui-menu-item.is-danger,
+:is(#issuesView, #assetsView) .hui-menu-item.is-danger > .harness-icon,
+.issue-action-popover .issue-popover-item.danger,
+.issue-action-popover .issue-popover-item.danger .harness-icon { color: var(--hui-error); }
+:is(#issuesView, #assetsView) .hui-menu-item.is-danger:not(:disabled):is(:hover, :focus-visible),
+.issue-action-popover .issue-popover-item.danger:hover { background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface)); color: var(--hui-error); }
+:is(#issuesView, #assetsView) .hui-menu-label { flex: 1; }
+:is(#issuesView, #assetsView) .hui-menu-meta { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--hui-tertiary); font-size: 12px; }
+:is(#issuesView, #assetsView) .hui-menu-sep { display: block; height: 1px; margin: 4px -4px; background: var(--hui-border); }
+
+.hui-select-panel { position: fixed; z-index: 9999; display: flex; flex-direction: column; min-width: 240px; overflow: hidden; }
+.hui-select-search { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; margin: -4px -4px 4px; padding: 0 10px; border-bottom: 1px solid var(--hui-border); color: var(--hui-tertiary); }
+.hui-select-search[hidden] { display: none; }
+.hui-select-search input { width: 100%; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--hui-text); font: 400 13px/1 var(--hui-sans); }
+.hui-select-search input::placeholder { color: var(--hui-tertiary); }
+.hui-select-search input::-webkit-search-cancel-button { display: none; }
+.hui-select-options { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.hui-select-option[hidden] { display: none; }
+.hui-select-option:disabled { opacity: .45; cursor: not-allowed; }
+.hui-select-option.is-selected { background: var(--hui-accent-soft); }
+.hui-select-option.is-selected:hover { background: var(--hui-accent-soft); }
+.hui-select-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hui-select-option-meta { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--hui-tertiary); font-size: 12px; }
+.hui-select-check { color: var(--hui-accent); }
+.hui-select-empty { padding: 14px 10px; color: var(--hui-tertiary); font-size: 12.5px; text-align: center; }
+.hui-select-empty[hidden] { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hui-badge,
+  .hui-lamp::after,
+  .hui-select-panel,
+  .hui-select-panel *,
+  :is(#issuesView, #assetsView) .hui-menu,
+  .issue-action-popover,
+  .hui-switch,
+  .hui-switch::before { transition: none !important; animation: none !important; }
+}

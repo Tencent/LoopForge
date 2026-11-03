@@ -118,7 +118,7 @@ func prepareAlternateAssistantCommand(req assistantCLIRequest, dir string) (runt
 		}
 		args = append(args, "-c", "features.hooks=true", "--dangerously-bypass-hook-trust", "-c", "hooks.PreToolUse=[{hooks=[{type=\"command\",command="+strconv.Quote("python3 '"+strings.ReplaceAll(guard, "'", "'\\''")+"'")+",timeout=5}]}]")
 	} else {
-		args = []string{"-p", "--bare", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--max-turns", nativeAssistantMaxTurns, "--system-prompt", sys, "--tools", "", "--mcp-config", req.MCPConfig, "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk", "--allowedTools", "mcp__agentflow_session__*", "--no-session-persistence"}
+		args = []string{"-p", "--bare", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", sys, "--tools", "", "--mcp-config", req.MCPConfig, "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk", "--allowedTools", "mcp__agentflow_session__*", "--no-session-persistence"}
 	}
 	if req.Model != "" && req.Model != "default" {
 		args = append(args, "--model", req.Model)

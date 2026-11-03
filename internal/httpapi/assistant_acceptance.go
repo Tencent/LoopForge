@@ -21,7 +21,7 @@ const (
 )
 
 // AssistantAcceptanceIdentity is the local copy of a production user's
-// CodeBuddy and Taihu credentials used only in disposable acceptance databases.
+// CodeBuddy and Git credentials used only in disposable acceptance databases.
 type AssistantAcceptanceIdentity struct {
 	LoginName                    string
 	StaffID                      int
@@ -30,7 +30,6 @@ type AssistantAcceptanceIdentity struct {
 	DeptName                     string
 	CodeBuddyAPIKey              string
 	CodeBuddyInternetEnvironment string
-	TaihuPAT                     string
 	GitToken                     string
 }
 
@@ -85,14 +84,13 @@ func LookupCodeBuddyCredentialReadOnly(ctx context.Context, dsn, login string) (
 SELECT COALESCE(u.staff_id, 0), COALESCE(u.chinese_name, ''), COALESCE(u.dept_id, 0), COALESCE(u.dept_name, ''),
        COALESCE(c.codebuddy_api_key, ''),
        COALESCE(c.codebuddy_internet_environment, ''),
-       COALESCE(c.taihu_pat, ''),
        COALESCE(c.git_token, '')
   FROM users u
   LEFT JOIN user_configs c ON c.user_id = u.id
  WHERE u.login_name = ?
  LIMIT 1`, login).Scan(
 		&ident.StaffID, &ident.ChineseName, &ident.DeptID, &ident.DeptName,
-		&ident.CodeBuddyAPIKey, &ident.CodeBuddyInternetEnvironment, &ident.TaihuPAT, &ident.GitToken,
+		&ident.CodeBuddyAPIKey, &ident.CodeBuddyInternetEnvironment, &ident.GitToken,
 	)
 	if err == sql.ErrNoRows {
 		return AssistantAcceptanceIdentity{}, fmt.Errorf("user %s not found", login)
@@ -100,13 +98,9 @@ SELECT COALESCE(u.staff_id, 0), COALESCE(u.chinese_name, ''), COALESCE(u.dept_id
 	if err != nil {
 		return AssistantAcceptanceIdentity{}, fmt.Errorf("lookup %s: %w", login, err)
 	}
-	ident.TaihuPAT = strings.TrimSpace(ident.TaihuPAT)
 	ident.GitToken = strings.TrimSpace(ident.GitToken)
 	if strings.TrimSpace(ident.CodeBuddyAPIKey) == "" {
 		return AssistantAcceptanceIdentity{}, fmt.Errorf("user %s has no CodeBuddy API Key", login)
-	}
-	if strings.TrimSpace(ident.TaihuPAT) == "" {
-		return AssistantAcceptanceIdentity{}, fmt.Errorf("user %s has no Taihu PAT", login)
 	}
 	if ident.CodeBuddyInternetEnvironment == "" {
 		ident.CodeBuddyInternetEnvironment = "ioa"
@@ -141,7 +135,6 @@ func SeedAssistantAcceptance(st *repo.Store, ident AssistantAcceptanceIdentity) 
 	if _, err := st.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{
 		CodeBuddyAPIKey:              ident.CodeBuddyAPIKey,
 		CodeBuddyInternetEnvironment: &env,
-		TaihuPAT:                     ident.TaihuPAT,
 		GitToken:                     ident.GitToken,
 	}); err != nil {
 		return domain.User{}, err
@@ -149,9 +142,6 @@ func SeedAssistantAcceptance(st *repo.Store, ident AssistantAcceptanceIdentity) 
 	user, ok = st.UserByLoginName(ident.LoginName)
 	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
 		return domain.User{}, errors.New("acceptance credential was not stored")
-	}
-	if strings.TrimSpace(ident.TaihuPAT) != "" && strings.TrimSpace(user.TaihuPAT) == "" {
-		return domain.User{}, errors.New("acceptance Taihu PAT was not stored")
 	}
 	if err := st.PutProject(domain.Project{
 		ID:          assistantAcceptanceProjectID,

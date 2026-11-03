@@ -26,15 +26,23 @@ func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bo
 		c.JSON(401, gin.H{"error": "请先登录"})
 		return run, 0, false
 	}
-	project, ok := h.repo.Project(run.ExecutionContext.ProjectID)
-	allowed := h.isPlatformAdmin(c.Request) || ok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
-	for _, member := range project.Members {
-		if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
-			allowed = true
+	// Conversation tools inherit project access from their authenticated entry
+	// point; the separate task-panel editor policy does not apply to them.
+	if mainBotWorkspaceRun(c.Request.Context()) != run.ID {
+		project, ok := h.repo.Project(run.ExecutionContext.ProjectID)
+		allowed := h.isPlatformAdmin(c.Request) || ok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
+		for _, member := range project.Members {
+			if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
+				allowed = true
+			}
+		}
+		if !allowed {
+			c.JSON(403, gin.H{"error": "无权编辑该任务工作区"})
+			return run, 0, false
 		}
 	}
-	if !allowed {
-		c.JSON(403, gin.H{"error": "无权编辑该任务工作区"})
+	if engine.WorkspaceRunID(run) != run.ID {
+		c.JSON(409, gin.H{"error": "子 SOP 共享父任务工作区，请从父任务操作"})
 		return run, 0, false
 	}
 	// Parent/child workspace ownership needs a separate coordinated lease.
@@ -104,7 +112,7 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 			}
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 			defer cancel()
-			response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: locked.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, CollaborationMode: mainBotWorkspaceMode(c, locked), Operation: domain.RunnerWorkspaceOperationWrite, Path: req.Path, Content: req.Content, ExpectedSHA256: req.ExpectedSHA, TerminalOwner: user})
+			response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: runnerWorkspaceRunID(locked), RunStatus: locked.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, RunKind: mainBotWorkspaceMode(c, locked), Operation: domain.RunnerWorkspaceOperationWrite, Path: req.Path, Content: req.Content, ExpectedSHA256: req.ExpectedSHA, TerminalOwner: user})
 			if err != nil {
 				return fmt.Errorf("执行端写入失败：%w", err)
 			}
@@ -140,12 +148,15 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 
 func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 	// Read-only probe: never write HTTP errors here (browse handlers still return the payload).
+	if engine.WorkspaceRunID(run) != run.ID {
+		return false
+	}
 	user, ok := h.requestUser(c.Request, true)
 	if !ok {
 		return false
 	}
 	project, pok := h.repo.Project(run.ExecutionContext.ProjectID)
-	allowed := h.isPlatformAdmin(c.Request) || pok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
+	allowed := mainBotWorkspaceRun(c.Request.Context()) == run.ID || h.isPlatformAdmin(c.Request) || pok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
 	for _, member := range project.Members {
 		if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
 			allowed = true
@@ -179,6 +190,10 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 	launch := func() error {
 		return h.withWorkspaceWriter(c, run.ID, user, func(locked domain.Run) error {
 			req.ExpiresAt = locked.WorkspaceEditUntil
+			trustedRequest.RunID = runnerWorkspaceRunID(locked)
+			trustedRequest.RunStatus = locked.Status
+			trustedRequest.WorkspaceLayout = locked.ExecutionContext.RunnerWorkspaceLayout
+			trustedRequest.RunKind = mainBotWorkspaceMode(c, locked)
 			if runnerID != "" {
 				if h.runnerControls == nil {
 					return fmt.Errorf("执行端未连接")
@@ -242,7 +257,7 @@ func (h *runsHandlers) closeWorkspaceTerminals(ctx context.Context, run domain.R
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		req := domain.WorkspaceTerminalRequest{Operation: "close-all"}
-		response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationTerminal, Terminal: &req, TerminalOwner: user})
+		response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: runnerWorkspaceRunID(run), RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationTerminal, Terminal: &req, TerminalOwner: user})
 		if err != nil {
 			return err
 		}
@@ -280,7 +295,7 @@ func (h *runsHandlers) withWorkspaceWriter(c *gin.Context, runID string, user in
 }
 func mainBotWorkspaceMode(c *gin.Context, run domain.Run) string {
 	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
-		return run.WorkflowSnapshot.CollaborationMode
+		return run.Kind
 	}
 	return ""
 }

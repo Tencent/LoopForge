@@ -93,20 +93,20 @@ func TestBindTrackerMCPFallsBackWhenCatalogMissing(t *testing.T) {
 	}
 }
 
-func TestBindProjectOwnerTrackerMCPUsesOnlyTargetProjectAndOwnerPAT(t *testing.T) {
+func TestBindProjectOwnerTrackerMCPUsesOnlyTargetProjectCredential(t *testing.T) {
 	cfg := domain.SyncConfig{GongfengMCPURL: "https://fallback.example/gongfeng"}
 	servers := []domain.MCPServerDefinition{
-		{ID: "mcp-gongfeng-project-a", MarketID: "gongfeng", ProjectID: "a", Scope: "project", Transport: "http", URL: "https://a.example/gongfeng", AuthType: "taihu-pat"},
-		{ID: "mcp-gongfeng-project-b", MarketID: "gongfeng", ProjectID: "b", Scope: "project", Transport: "http", URL: "https://b.example/gongfeng", AuthType: "taihu-pat"},
+		{ID: "mcp-gongfeng-project-a", MarketID: "gongfeng", ProjectID: "a", Scope: "project", Transport: "http", URL: "https://a.example/gongfeng", Headers: map[string]string{"Authorization": "Bearer token-a"}},
+		{ID: "mcp-gongfeng-project-b", MarketID: "gongfeng", ProjectID: "b", Scope: "project", Transport: "http", URL: "https://b.example/gongfeng", Headers: map[string]string{"Authorization": "Bearer token-b"}},
 	}
-	got, err := bindProjectOwnerTrackerMCP("gongfeng", cfg, servers, "b", domain.User{LoginName: "owner-b", TaihuPAT: "tai_pat_b"})
+	got, err := bindProjectOwnerTrackerMCP("gongfeng", cfg, servers, "b", domain.User{LoginName: "owner-b"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.URL != "https://b.example/gongfeng" {
 		t.Fatalf("url=%q", got.URL)
 	}
-	if got.Headers["Authorization"] != "Bearer tai_pat_b" {
+	if got.Headers["Authorization"] != "Bearer token-b" {
 		t.Fatalf("authorization=%q", got.Headers["Authorization"])
 	}
 	if got.Source != "project-owner:owner-b" {
@@ -114,13 +114,13 @@ func TestBindProjectOwnerTrackerMCPUsesOnlyTargetProjectAndOwnerPAT(t *testing.T
 	}
 }
 
-func TestBindProjectOwnerTrackerMCPUsesConfiguredURLWhenTAPDAssetMissing(t *testing.T) {
-	cfg := domain.SyncConfig{TAPDMCPURL: "https://mcpgw.knot.example.com/tapd/"}
-	got, err := bindProjectOwnerTrackerMCP("tapd", cfg, nil, "dns", domain.User{LoginName: "owner", TaihuPAT: "Bearer tai_pat_owner"})
-	if err != nil {
-		t.Fatal(err)
+func TestBindProjectOwnerTrackerMCPRejectsConfiguredURLWithoutCredential(t *testing.T) {
+	cfg := domain.SyncConfig{TAPDMCPURL: "https://mcp.example.com/tapd/"}
+	got, err := bindProjectOwnerTrackerMCP("tapd", cfg, nil, "dns", domain.User{LoginName: "owner"})
+	if err == nil || !strings.Contains(err.Error(), "TAPD MCP 未配置认证") {
+		t.Fatalf("err=%v", err)
 	}
-	if got.URL != cfg.TAPDMCPURL || got.Headers["Authorization"] != "Bearer tai_pat_owner" {
+	if got.URL != cfg.TAPDMCPURL {
 		t.Fatalf("got %+v", got)
 	}
 }
@@ -129,37 +129,42 @@ func TestBindProjectOwnerTrackerMCPUsesMarketNumericID(t *testing.T) {
 	cfg := domain.SyncConfig{TAPDMCPURL: "https://fallback.example/tapd"}
 	got, err := bindProjectOwnerTrackerMCP("tapd", cfg, []domain.MCPServerDefinition{{
 		ID: "mcp-70-project-dns", MarketID: "70", Name: "TAPD MCP", ProjectID: "dns", Scope: "project",
-		Transport: "http", URL: "https://mcpgw.knot.example.com/tapd/", AuthType: "taihu-pat",
-	}}, "dns", domain.User{LoginName: "owner", TaihuPAT: "tai_pat_owner"})
+		Transport: "http", URL: "https://mcp.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer tapd-token"},
+	}}, "dns", domain.User{LoginName: "owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.URL != "https://mcpgw.knot.example.com/tapd/" || got.Headers["Authorization"] != "Bearer tai_pat_owner" {
+	if got.URL != "https://mcp.example.com/tapd/" || got.Headers["Authorization"] != "Bearer tapd-token" {
 		t.Fatalf("got %+v", got)
 	}
 }
 
-func TestBindProjectOwnerTrackerMCPRequiresOwnerPAT(t *testing.T) {
-	cfg := domain.SyncConfig{GongfengMCPURL: "https://mcpgw.knot.example.com/gongfeng"}
-	_, err := bindProjectOwnerTrackerMCP("gongfeng", cfg, nil, "dns", domain.User{LoginName: "owner"})
-	if err == nil || !strings.Contains(err.Error(), "Owner owner 未配置太湖个人令牌") {
+func TestBindProjectOwnerTrackerMCPRequiresProjectCredential(t *testing.T) {
+	_, err := bindProjectOwnerTrackerMCP("gongfeng", domain.SyncConfig{}, []domain.MCPServerDefinition{{
+		ID: "mcp-61-project-dns", MarketID: "61", ProjectID: "dns", Scope: "project", Transport: "http", URL: "https://mcp.example.com/gongfeng",
+	}}, "dns", domain.User{LoginName: "owner"})
+	if err == nil || !strings.Contains(err.Error(), "工蜂 MCP 未配置认证") || !strings.Contains(err.Error(), "Owner owner") {
 		t.Fatalf("err=%v", err)
 	}
 }
 
-func TestServiceResolvesDifferentOwnerPATPerProject(t *testing.T) {
+func TestServiceResolvesDifferentCredentialPerProject(t *testing.T) {
 	fixture := projectAuthFixture{
 		projects: map[string]domain.Project{
 			"a": {ID: "a", OwnerID: 1},
 			"b": {ID: "b", OwnerID: 2},
 		},
 		users: map[int64]domain.User{
-			1: {ID: 1, LoginName: "owner-a", TaihuPAT: "tai_pat_a"},
-			2: {ID: 2, LoginName: "owner-b", TaihuPAT: "tai_pat_b"},
+			1: {ID: 1, LoginName: "owner-a"},
+			2: {ID: 2, LoginName: "owner-b"},
+		},
+		servers: []domain.MCPServerDefinition{
+			{ID: "mcp-61-project-a", MarketID: "61", ProjectID: "a", Scope: "project", Transport: "http", URL: "https://mcp.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer token-a"}},
+			{ID: "mcp-61-project-b", MarketID: "61", ProjectID: "b", Scope: "project", Transport: "http", URL: "https://mcp.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer token-b"}},
 		},
 	}
 	svc := NewService()
-	svc.ConfigureWithStore(domain.SyncConfig{GongfengMCPURL: "https://mcpgw.knot.example.com/gongfeng"}, fixture)
+	svc.ConfigureWithStore(domain.SyncConfig{GongfengMCPURL: "https://mcp.example.com/gongfeng"}, fixture)
 	clientA, _, err := svc.trackerClientForProject("gongfeng", "a")
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +173,7 @@ func TestServiceResolvesDifferentOwnerPATPerProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if clientA.Header("Authorization") != "Bearer tai_pat_a" || clientB.Header("Authorization") != "Bearer tai_pat_b" {
+	if clientA.Header("Authorization") != "Bearer token-a" || clientB.Header("Authorization") != "Bearer token-b" {
 		t.Fatalf("unexpected project auth: a=%q b=%q", clientA.Header("Authorization"), clientB.Header("Authorization"))
 	}
 }

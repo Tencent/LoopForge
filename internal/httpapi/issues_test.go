@@ -743,6 +743,24 @@ func TestSecurityHeadersAndSameOriginCORS(t *testing.T) {
 	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "worker-src 'self' blob:") {
 		t.Fatalf("workspace editor workers are not allowed by CSP: %q", rec.Header().Get("Content-Security-Policy"))
 	}
+	next := httptest.NewRecorder()
+	h.ServeHTTP(next, httptest.NewRequest(http.MethodGet, "http://agentflow.example/next/", nil))
+	if next.Header().Get("X-Frame-Options") != "DENY" || !strings.Contains(next.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+		t.Fatalf("/next/ is not a framed workbench: %v", next.Header())
+	}
+
+	for _, path := range []string{"/chatbot/", "/chatbot/preview.html"} {
+		preview := httptest.NewRecorder()
+		h.ServeHTTP(preview, httptest.NewRequest(http.MethodGet, "http://agentflow.example"+path, nil))
+		policy := preview.Header().Get("Content-Security-Policy")
+		if path == "/chatbot/preview.html" {
+			if !strings.Contains(policy, "sandbox allow-scripts;") || strings.Contains(policy, "allow-same-origin") || !strings.Contains(policy, "connect-src 'none'") || !strings.Contains(policy, "script-src 'unsafe-inline'") {
+				t.Fatalf("HTML preview must execute scripts in an isolated origin: %s", policy)
+			}
+		} else if !strings.Contains(policy, "script-src 'self';") {
+			t.Fatalf("chat application must retain its strict script policy: %s", policy)
+		}
+	}
 
 	foreign := httptest.NewRequest(http.MethodOptions, "http://agentflow.example/api/issues", nil)
 	foreign.Header.Set("Origin", "https://evil.example")
@@ -788,10 +806,18 @@ func TestRunSummaryOmitsHeavyAndSensitiveBodies(t *testing.T) {
 		Events:    []domain.RunEvent{{ID: "event"}},
 		Telemetry: []domain.TelemetryEvent{{ID: "telemetry"}},
 		Artifacts: []domain.Artifact{{ID: "artifact", Content: "private artifact body", Size: 21}},
+		WorkflowSnapshot: domain.WorkflowDefinition{
+			ID: "free-collaboration", Name: "自由协作", CollaborationMode: "group",
+			Nodes: []domain.WorkflowNode{{ID: "heavy"}},
+		},
 	}
 	summary := runSummaries([]domain.Run{run})[0]
 	if len(summary.Events) != 0 || len(summary.Telemetry) != 0 || len(summary.Artifacts) != 0 || summary.ArtifactCount != 1 {
 		t.Fatalf("run summary still contains heavy bodies: %+v", summary)
+	}
+	// 待我确认 and status badges tell idle free collaboration apart from a real gate.
+	if snap := summary.WorkflowSnapshot; snap.ID != "free-collaboration" || snap.Name != "自由协作" || snap.CollaborationMode != "group" || len(snap.Nodes) != 0 {
+		t.Fatalf("run summary snapshot = %+v, want id/name/collaborationMode only", snap)
 	}
 	if run.Artifacts[0].Content == "" {
 		t.Fatal("summary mutated the source run")
@@ -1661,12 +1687,8 @@ func TestPushLocalIssueToTAPDKeepsDescription(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	owner, ok := s.User(1)
-	if !ok {
+	if _, ok := s.User(1); !ok {
 		t.Fatal("seed owner missing")
-	}
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_push"}); err != nil {
-		t.Fatal(err)
 	}
 	h := newTAPDImportHandler(t, s, root, `{"id":"1010000000888888888","name":"本地推送","status":"open"}`)
 	local := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
@@ -1705,9 +1727,6 @@ func TestImportTAPDIssueFromURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ := s.UserByLoginName("tapd-owner")
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_import"}); err != nil {
-		t.Fatal(err)
-	}
 	project, _ := s.Project("platform")
 	project.OwnerID = owner.ID
 	if err := s.PutProject(project); err != nil {
@@ -1737,7 +1756,7 @@ func TestImportTAPDIssueFromURL(t *testing.T) {
 		}
 	}))
 	t.Cleanup(gateway.Close)
-	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: gateway.URL, AuthType: "taihu-pat", TimeoutSec: 30}); err != nil {
+	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: gateway.URL, Headers: map[string]string{"Authorization": "Bearer tapd-token"}, TimeoutSec: 30}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutSyncConfig(domain.SyncConfig{TAPDMCPURL: gateway.URL, AutoSyncIntervalSec: 300}); err != nil {
@@ -1776,9 +1795,6 @@ func TestImportTAPDIssueSaveKeepsExternalBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ := s.UserByLoginName("tapd-owner")
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_import"}); err != nil {
-		t.Fatal(err)
-	}
 	project, _ := s.Project("platform")
 	project.OwnerID = owner.ID
 	if err := s.PutProject(project); err != nil {
@@ -1953,9 +1969,6 @@ func TestImportTAPDIssueBindsSelectedWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ := s.UserByLoginName("tapd-owner")
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_import"}); err != nil {
-		t.Fatal(err)
-	}
 	project, _ := s.Project("platform")
 	project.OwnerID = owner.ID
 	if err := s.PutProject(project); err != nil {
@@ -2016,7 +2029,7 @@ func TestImportTAPDIssueBindsSelectedWorkflow(t *testing.T) {
 	}, http.StatusBadRequest)
 }
 
-func TestImportTAPDIssueUsesCreatorThenImporter(t *testing.T) {
+func TestImportTAPDIssueUsesHandlerThenImporter(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "tapd-import-test-session-secret")
 	root := t.TempDir()
 	s, err := repo.OpenTest()
@@ -2027,7 +2040,7 @@ func TestImportTAPDIssueUsesCreatorThenImporter(t *testing.T) {
 	for _, user := range []domain.User{
 		{StaffID: 3101, LoginName: "tapd-owner", ChineseName: "项目负责人"},
 		{StaffID: 3102, LoginName: "importer", ChineseName: "导入人"},
-		{StaffID: 3103, LoginName: "example-maintainer", ChineseName: "胡锦康"},
+		{StaffID: 3103, LoginName: "example-maintainer", ChineseName: "示例用户"},
 	} {
 		if err := s.PutUser(user); err != nil {
 			t.Fatal(err)
@@ -2035,34 +2048,31 @@ func TestImportTAPDIssueUsesCreatorThenImporter(t *testing.T) {
 	}
 	owner, _ := s.UserByLoginName("tapd-owner")
 	importer, _ := s.UserByLoginName("importer")
-	creator, _ := s.UserByLoginName("example-maintainer")
-	if _, err := s.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{TaihuPAT: "tai_pat_import"}); err != nil {
-		t.Fatal(err)
-	}
+	handler, _ := s.UserByLoginName("example-maintainer")
 	project, _ := s.Project("platform")
 	project.OwnerID = owner.ID
 	if err := s.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
 	repoID := putPlatformImportRepo(t, s)
-	h := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100000666","name":"多处理人需求","status":"open","creator":"胡锦康","owner":"张三;"}]}`)
+	h := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100000666","name":"多处理人需求","status":"open","creator":"tapd-owner","owner":"示例用户;导入人;"}]}`)
 	imported := requestJSONAuthed[domain.Issue](t, h, importer, http.MethodPost, "/api/issues/import-tapd", map[string]any{
 		"projectId":    "platform",
 		"url":          "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100000666",
 		"repositoryId": repoID,
 	}, http.StatusOK)
-	if imported.AssigneeUserID != creator.ID {
-		t.Fatalf("assignee=%d want TAPD creator %d", imported.AssigneeUserID, creator.ID)
+	if imported.AssigneeUserID != handler.ID {
+		t.Fatalf("assignee=%d want first TAPD handler %d", imported.AssigneeUserID, handler.ID)
 	}
 
-	unknown := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100000777","name":"未知处理人","status":"open","creator":"ghost","owner":"胡锦康;"}]}`)
+	unknown := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100000777","name":"未知处理人","status":"open","creator":"示例用户","owner":"ghost;"}]}`)
 	fallback := requestJSONAuthed[domain.Issue](t, unknown, importer, http.MethodPost, "/api/issues/import-tapd", map[string]any{
 		"projectId":    "platform",
 		"url":          "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100000777",
 		"repositoryId": repoID,
 	}, http.StatusOK)
 	if fallback.AssigneeUserID != importer.ID {
-		t.Fatalf("assignee=%d want importer %d, not the TAPD handler", fallback.AssigneeUserID, importer.ID)
+		t.Fatalf("assignee=%d want importer %d", fallback.AssigneeUserID, importer.ID)
 	}
 }
 
@@ -2090,7 +2100,7 @@ func newTAPDImportHandler(t *testing.T, s *repo.Store, root, payload string) htt
 		}
 	}))
 	t.Cleanup(gateway.Close)
-	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: gateway.URL, AuthType: "taihu-pat", TimeoutSec: 30}); err != nil {
+	if err := s.PutMCPServer(domain.MCPServerDefinition{ID: "mcp-70-project-platform", Name: "TAPD MCP", ProjectID: "platform", MarketID: "70", Scope: "project", Transport: "http", URL: gateway.URL, Headers: map[string]string{"Authorization": "Bearer tapd-token"}, TimeoutSec: 30}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutSyncConfig(domain.SyncConfig{TAPDMCPURL: gateway.URL, AutoSyncIntervalSec: 300}); err != nil {
@@ -2121,6 +2131,7 @@ func requestJSONAuthed[T any](t *testing.T, h http.Handler, user domain.User, me
 		t.Fatal(err)
 	}
 	req.AddCookie(&http.Cookie{Name: authCookieName, Value: token})
+	req.Header.Set("Origin", "http://"+req.Host)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != wantStatus {

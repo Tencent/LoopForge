@@ -60,6 +60,9 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 		if len(pending) > 0 {
 			next := pending[0]
 			old := decodeAssistantSession(session)
+			if next.IssueID != old.IssueID {
+				return fmt.Errorf("关联需求已更新，请重新发送")
+			}
 			if len(next.Messages) < len(old.Messages) {
 				return fmt.Errorf("会话已更新，请重新打开后发送")
 			}

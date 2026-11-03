@@ -56,8 +56,8 @@ func TestMCPInstallIDBoundsLongNamesAndOwners(t *testing.T) {
 }
 
 func TestMCPMarketCatalogContainsOnlyPublicServices(t *testing.T) {
-	if len(taihuMCPMarket) != 1 {
-		t.Fatalf("catalog: %+v", taihuMCPMarket)
+	if len(mcpMarketItems) != 1 {
+		t.Fatalf("catalog: %+v", mcpMarketItems)
 	}
 	item, ok := marketItem("github")
 	if !ok || item.URL != "https://api.githubcopilot.com/mcp/" || item.AuthType != "github-token" {
@@ -87,7 +87,7 @@ func TestMCPMarketSearch(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Source != "loopforge-public" || payload.Total != len(taihuMCPMarket) {
+	if payload.Source != "loopforge-public" || payload.Total != len(mcpMarketItems) {
 		t.Fatalf("catalog meta = %+v", payload)
 	}
 	if len(payload.Items) == 0 {
@@ -114,8 +114,8 @@ func TestMCPMarketSearch(t *testing.T) {
 	if err := json.Unmarshal(all.Body.Bytes(), &allPayload); err != nil {
 		t.Fatal(err)
 	}
-	if len(allPayload.Items) != len(taihuMCPMarket) {
-		t.Fatalf("unfiltered items=%d catalog=%d", len(allPayload.Items), len(taihuMCPMarket))
+	if len(allPayload.Items) != len(mcpMarketItems) {
+		t.Fatalf("unfiltered items=%d catalog=%d", len(allPayload.Items), len(mcpMarketItems))
 	}
 }
 
@@ -275,7 +275,7 @@ func TestMCPMarketIconsAreLocalAndEmbedded(t *testing.T) {
 		t.Fatal(err)
 	}
 	var withIcon int
-	for _, item := range taihuMCPMarket {
+	for _, item := range mcpMarketItems {
 		if strings.TrimSpace(item.IconURL) == "" {
 			continue
 		}

@@ -9,10 +9,20 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
 )
+
+// readOnlyConversation marks a project conversation opened by a non-member,
+// so the client hides the composer and other write actions. ProjectName is
+// included because the viewer's project list does not contain the project.
+type readOnlyConversation struct {
+	domain.AssistantSession
+	ReadOnly    bool   `json:"readOnly"`
+	ProjectName string `json:"projectName,omitempty"`
+}
 
 func (h *assistantHandlers) listSessions(c *gin.Context) {
 	current, ok := h.requestUser(c.Request, true)
@@ -25,21 +35,64 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "读取对话失败"})
 		return
 	}
+	shared, projectChats := h.repo.ListCrossUserAssistantSessions(current.ID)
+	sharedIDs := make(map[string]bool, len(shared))
+	runIDs, projectIDs := []string{}, []string{}
+	seenRuns, seenProjects := map[string]bool{}, map[string]bool{}
+	addProject := func(id string) {
+		if id != "" && !seenProjects[id] {
+			seenProjects[id] = true
+			projectIDs = append(projectIDs, id)
+		}
+	}
+	for _, item := range shared {
+		sharedIDs[item.ID] = true
+		if !seenRuns[item.RunID] {
+			seenRuns[item.RunID] = true
+			runIDs = append(runIDs, item.RunID)
+		}
+		addProject(item.ProjectID)
+	}
+	for _, item := range projectChats {
+		addProject(item.ProjectID)
+	}
+	runProjects, err := h.repo.RunProjectIDs(runIDs)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "读取对话失败"})
+		return
+	}
+	projects, err := h.repo.ProjectMemberships(projectIDs)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "读取对话失败"})
+		return
+	}
+	allowedProjects := make(map[string]bool, len(projects))
+	if len(projects) > 0 {
+		platformAdmin := h.isPlatformAdmin(c.Request)
+		for id, project := range projects {
+			allowedProjects[id] = workbenchProjectAllowsUser(project, current.ID, platformAdmin)
+		}
+	}
 	seen := map[string]bool{}
 	out := make([]assistantConversation, 0, len(items))
-	for _, item := range append(items, h.repo.ListSharedAssistantSessions()...) {
+	for _, item := range append(append(items, shared...), projectChats...) {
 		if seen[item.ID] {
 			continue
 		}
 		seen[item.ID] = true
 		if item.Shared {
-			if _, _, err := h.conversationScope(c, item.ID, "", "", current.ID); err != nil {
+			// As in conversationScope, only valid shared records use project
+			// authorization; other owned rows retain the private-session fallback.
+			if sharedIDs[item.ID] && (item.ProjectID == "" || runProjects[item.RunID] != item.ProjectID || !allowedProjects[item.ProjectID]) {
 				continue
 			}
 		} else if item.RunID != "" {
-			if _, ok := h.repo.SharedAssistantSession(repo.RunAssistantSessionID(item.RunID)); ok {
+			if sharedIDs[repo.RunAssistantSessionID(item.RunID)] {
 				continue
 			}
+		} else if item.UserID != current.ID && !allowedProjects[item.ProjectID] {
+			// Other members' project conversations require current membership.
+			continue
 		}
 		item.GenerationStatus = "idle"
 		out = append(out, item)
@@ -54,14 +107,34 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 			out[i].GenerationStatus = status
 		}
 	}
+	if issueID := c.GetString("assistantIssueID"); issueID != "" {
+		filtered := make([]assistantConversation, 0)
+		for _, item := range out {
+			linked := item.IssueID == issueID
+			if item.Shared && item.RunID != "" {
+				if run, ok := h.repo.RunState(item.RunID); ok {
+					linked = run.ExecutionContext.IssueID == issueID
+				}
+			}
+			if linked {
+				filtered = append(filtered, item)
+			}
+		}
+		out = filtered
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
-	c.JSON(200, out)
+	c.JSON(200, decorateRunSessions(h.repo, out))
 }
 
 func (h *assistantHandlers) archiveSession(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
 	if !ok {
 		c.JSON(401, gin.H{"error": "请先登录"})
+		return
+	}
+	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", user.ID)
+	if err != nil {
+		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
 	if _, ok := h.repo.SharedAssistantSession(c.Param("id")); ok {
@@ -78,7 +151,7 @@ func (h *assistantHandlers) archiveSession(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请提供归档状态"})
 		return
 	}
-	if err := h.repo.SetAssistantSessionArchived(user.ID, c.Param("id"), *body.Archived); err != nil {
+	if err := h.repo.SetAssistantSessionArchived(ownerID, c.Param("id"), *body.Archived); err != nil {
 		c.JSON(404, gin.H{"error": err.Error()})
 		return
 	}
@@ -92,7 +165,14 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		return
 	}
 	id := strings.TrimSpace(c.Param("id"))
-	ownerID, shared, err := h.conversationScope(c, id, "", "", current.ID)
+	var ownerID int64
+	var shared, readOnly bool
+	var err error
+	if c.Request.Method == "GET" {
+		ownerID, shared, readOnly, err = h.conversationReadScope(c, id, current.ID)
+	} else {
+		ownerID, shared, err = h.conversationScope(c, id, "", "", current.ID)
+	}
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
@@ -104,19 +184,73 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "对话不存在"})
 			return
 		}
-		c.JSON(200, item)
+		if readOnly {
+			project, _ := h.repo.Project(item.ProjectID)
+			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
+			return
+		}
+		if !item.Shared && !readOnly {
+			if job, ok := h.repo.AssistantGeneration(ownerID, id); !ok || job.Status != "running" {
+				if materializeWorkspaceImages(ownerID, &item) {
+					if err := saveAssistantConversation(h.repo, ownerID, item); err == nil {
+						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
+							item = stored
+						}
+					}
+				}
+			}
+		}
+		if shared {
+			if run, ok := h.repo.RunState(item.RunID); ok {
+				item.IssueID = run.ExecutionContext.IssueID
+			}
+		}
+		c.JSON(200, decorateRunSessionView(h.repo, item))
 	case "PUT":
 		if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "生成期间不能改写会话"})
 			return
 		}
 		existing, _ := loadAssistantConversation(h.repo, ownerID, id)
-		var conv assistantConversation
-		if !decode(c, &conv) {
+		var body struct {
+			assistantConversation
+			Effort *string `json:"effort"`
+		}
+		if !decode(c, &body) {
 			return
 		}
+		conv := body.assistantConversation
+		// Bindings and existing environment choices are server-owned. This general
+		// transcript endpoint cannot swap a workspace or bypass the sandbox setter.
+		conv.WorkspaceRunID = existing.WorkspaceRunID
+		if existing.ID != "" {
+			conv.SandboxProfileID = existing.SandboxProfileID
+		}
+		if existing.ID == "" && conv.SandboxProfileID != "" {
+			if _, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		conv.Effort = existing.Effort
+		if body.Effort != nil {
+			conv.Effort = *body.Effort
+		}
+		if existing.ID != "" && conv.Title != "" && conv.Title != existing.Title {
+			conv.TitleEdited = true
+		}
 		conv.ID = assistantRecordID(id)
-		conv.Shared = shared
+		conv.Shared = existing.Shared
+		if !existing.Shared && conv.ProjectID != "" {
+			if !h.workbenchProjectAllowed(c, conv.ProjectID, current.ID) {
+				c.JSON(403, gin.H{"error": "无权绑定此项目"})
+				return
+			}
+			if existing.ProjectID != "" && existing.ProjectID != conv.ProjectID {
+				c.JSON(409, gin.H{"error": "会话已绑定其他项目，请新建会话或创建分支"})
+				return
+			}
+		}
 		if shared {
 			if err := sharedReceiptUpdate(existing, conv, current.ID, current.LoginName); err != nil {
 				c.JSON(409, gin.H{"error": err.Error()})
@@ -124,7 +258,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			}
 			conv.RunID = existing.RunID
 			conv.ProjectID = existing.ProjectID
-			conv.Title = existing.Title
+			if existing.Shared {
+				conv.Title = existing.Title
+			}
 			conv.UpdatedAt = time.Time{}
 		}
 		conv.UpdatedAt = time.Time{}
@@ -140,8 +276,29 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Executor == "" {
 			conv.Executor = existing.Executor
 		}
+		if existing.ID != "" {
+			conv.IssueID = existing.IssueID
+		}
+		if err := h.validateSessionIssue(c, conv.ProjectID, conv.IssueID, current.ID); err != nil {
+			c.JSON(403, gin.H{"error": err.Error()})
+			return
+		}
+		// Existing author identities are immutable on receipt/title updates.
+		for i := range conv.Messages {
+			if i < len(existing.Messages) {
+				conv.Messages[i].AuthorID = existing.Messages[i].AuthorID
+				conv.Messages[i].AuthorName = existing.Messages[i].AuthorName
+			} else if conv.Messages[i].Role == "user" {
+				conv.Messages[i].AuthorID = current.ID
+				conv.Messages[i].AuthorName = current.LoginName
+			}
+		}
 		if conv.Model == "" {
 			conv.Model = existing.Model
+		}
+		if err := validateAssistantEffort(conv.Model, conv.Effort); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
 		}
 		var saveErr error
 		if shared {
@@ -161,16 +318,26 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		c.JSON(200, stored)
 	case "DELETE":
 		if shared {
-			c.JSON(403, gin.H{"error": "共享 SOP 会话随运行保留，不能个人删除"})
-			return
+			_, project := h.repo.ProjectAssistantSession(id)
+			if !project {
+				c.JSON(403, gin.H{"error": "共享 SOP 会话随运行保留，不能个人删除"})
+				return
+			}
 		}
 		if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "请先停止生成后删除会话"})
 			return
 		}
+		var workspaceRunIDs []string
+		if conv, ok := h.repo.AssistantSession(ownerID, id); ok {
+			workspaceRunIDs = ownWorkspaceRunIDs(conv)
+		}
 		if err := deleteAssistantConversation(h.repo, ownerID, id); err != nil {
 			c.JSON(404, gin.H{"error": "对话不存在"})
 			return
+		}
+		for _, runID := range workspaceRunIDs {
+			h.discardConversationWorkspace(runID)
 		}
 		c.JSON(200, gin.H{"ok": true})
 	default:

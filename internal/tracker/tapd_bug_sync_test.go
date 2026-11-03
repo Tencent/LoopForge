@@ -37,7 +37,7 @@ func TestParseTAPDStoryURLKindDefaultsToStory(t *testing.T) {
 
 func TestParseTAPDBugs(t *testing.T) {
 	payload := `{"count":2,"data":[
-		{"id":"1010000000100002109","title":"国际站dnssec调用digns服务失败","description":"## 问题描述\n连接异常","status":"new","current_owner":"jerryyaohu","priority":"low","iteration_id":"1010000000100000333","created":"2026-09-10 10:11:11","modified":"2026-09-10 10:11:11"},
+		{"id":"1010000000100002109","title":"国际站dnssec调用digns服务失败","description":"## 问题描述\n连接异常","status":"new","current_owner":"example-qa","priority":"low","iteration_id":"1010000000100000333","created":"2026-09-10 10:11:11","modified":"2026-09-10 10:11:11"},
 		{"id":"1010000000100001998","title":"国际站Batch.Search报错","description":"","status":"resolved","current_owner":"","priority":"middle","created":"2026-09-10 10:10:59","modified":"2026-09-10 10:10:59"}
 	]}`
 	bugs, err := parseTAPDBugs(payload)
@@ -50,7 +50,7 @@ func TestParseTAPDBugs(t *testing.T) {
 	if bugs[0].Name != "国际站dnssec调用digns服务失败" {
 		t.Fatalf("name=%q want title fallback", bugs[0].Name)
 	}
-	if bugs[0].Description == "" || bugs[0].CurrentOwner != "jerryyaohu" {
+	if bugs[0].Description == "" || bugs[0].CurrentOwner != "example-qa" {
 		t.Fatalf("bug fields not mapped: %+v", bugs[0])
 	}
 }
@@ -80,7 +80,7 @@ func TestUpsertTAPDBug(t *testing.T) {
 	issue, err := svc.upsertTAPDBug(store, "dp", "10000000", tapdStory{
 		ID: "1010000000100002109", Name: "国际站dnssec调用digns服务失败",
 		Description: "## 问题描述\n连接异常", Status: "new", Priority: "low",
-		CurrentOwner: "jerryyaohu",
+		CurrentOwner: "example-qa",
 	}, 0, false)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func mockTAPDMultiGateway(t *testing.T, storiesPayload, bugsPayload string, call
 }
 
 func TestPullTAPDPoolPullsStoriesAndBugs(t *testing.T) {
-	storiesPayload := `{"count":1,"data":[{"id":"1001","name":"需求A","description":"需求正文","status":"planned","owner":"zhangsan(low)","priority":"middle","iteration_id":"it1","created":"2026-09-10 10:00:00","modified":"2026-09-10 10:00:00"}]}`
+	storiesPayload := `{"count":1,"data":[{"id":"1001","name":"需求A","description":"需求正文","status":"planned","creator":"example-pm","owner":"zhangsan(low)","priority":"middle","iteration_id":"it1","created":"2026-09-10 10:00:00","modified":"2026-09-10 10:00:00"}]}`
 	bugsPayload := `{"count":1,"data":[{"id":"2001","title":"缺陷B","description":"缺陷正文","status":"new","current_owner":"lisi","severity":"normal","priority":"low","iteration_id":"it1","created":"2026-09-10 10:00:00","modified":"2026-09-10 10:00:00"}]}`
 	var calls atomic.Int32
 	var lastArgs map[string]any
@@ -163,7 +163,14 @@ func TestPullTAPDPoolPullsStoriesAndBugs(t *testing.T) {
 
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DNSPod", TAPDWorkspaceID: "10000000", TAPDIterationID: "it1"}}}
+	store := &memIssueStore{
+		projects: map[string]domain.Project{"dp": {ID: "dp", Name: "Payments", TAPDWorkspaceID: "10000000", TAPDIterationID: "it1"}},
+		users: []domain.User{
+			{ID: 7, LoginName: "example-pm"},
+			{ID: 8, LoginName: "zhangsan"},
+			{ID: 9, LoginName: "lisi"},
+		},
+	}
 	client, _, err := svc.trackerClientForProject("tapd", "dp")
 	if err != nil {
 		t.Fatal(err)
@@ -192,9 +199,15 @@ func TestPullTAPDPoolPullsStoriesAndBugs(t *testing.T) {
 	if !ok || story.Kind != "requirement" || story.Description != "需求正文" {
 		t.Fatalf("story issue=%+v ok=%v", story, ok)
 	}
+	if story.AssigneeUserID != 8 {
+		t.Fatalf("story assignee=%d want TAPD handler 8", story.AssigneeUserID)
+	}
 	bug, ok := store.Issue("tapd-2001")
 	if !ok || bug.Kind != "bug" || bug.Description != "缺陷正文" {
 		t.Fatalf("bug issue=%+v ok=%v", bug, ok)
+	}
+	if bug.AssigneeUserID != 9 {
+		t.Fatalf("bug assignee=%d want TAPD current_owner 9", bug.AssigneeUserID)
 	}
 	if bug.Status != "todo" {
 		t.Fatalf("bug status=%q want todo", bug.Status)

@@ -41,7 +41,7 @@ type Invoker interface {
 
 // incomingAuth carries browser Cookie / Authorization from the outer /mcp
 // request onto LocalInvoker synthetic API calls. Without this, login-gated
-// endpoints (e.g. runs_group_invite → POST /api/runs/:id/group/members) see
+// endpoints (e.g. runs_cancel → POST /api/runs/:id/cancel) see
 // an anonymous request and return 请先登录 even when the user is signed in.
 type incomingAuthKey struct{}
 

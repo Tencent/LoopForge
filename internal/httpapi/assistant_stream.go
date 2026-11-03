@@ -1,21 +1,12 @@
 package httpapi
 
 import (
+	"agentflow/internal/domain"
 	"encoding/json"
 	"strings"
 )
 
-type assistantStreamEvent struct {
-	Kind   string `json:"kind"`
-	Text   string `json:"text,omitempty"`
-	Tool   string `json:"tool,omitempty"`
-	Detail string `json:"detail,omitempty"`
-	ID     string `json:"id,omitempty"`
-	Failed bool   `json:"failed,omitempty"`
-	// Full 标记该文本是整段回复文本块（assistant 事件），而非增量 delta；
-	// 用于过滤 include-partial-messages 模式下的重复文本。
-	Full bool `json:"full,omitempty"`
-}
+type assistantStreamEvent = domain.AssistantActivityEvent
 
 type assistantStreamFilter struct {
 	// inReply is true while the model streams submit_assistant_reply input,
@@ -24,7 +15,7 @@ type assistantStreamFilter struct {
 	lastStatus string
 	lastTool   string
 	lastDetail string
-	seenTools  map[string]struct{}
+	seenTools  map[string]string
 	answer     string
 	thinking   string
 }
@@ -63,12 +54,14 @@ func (f *assistantStreamFilter) accept(ev assistantStreamEvent) bool {
 		}
 		if ev.ID != "" {
 			if f.seenTools == nil {
-				f.seenTools = map[string]struct{}{}
+				f.seenTools = map[string]string{}
 			}
-			if _, ok := f.seenTools[ev.ID]; ok {
-				return false
+			if detail, ok := f.seenTools[ev.ID]; ok {
+				if ev.Detail == "" || ev.Detail == detail {
+					return false
+				}
 			}
-			f.seenTools[ev.ID] = struct{}{}
+			f.seenTools[ev.ID] = ev.Detail
 			f.lastTool, f.lastDetail = ev.Tool, ev.Detail
 			return true
 		}
@@ -252,6 +245,11 @@ func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
 		return ""
 	}
 	switch name {
+	case "workbench_publish_artifact":
+		if title := str("title"); title != "" {
+			return "发布产物", title
+		}
+		return "发布产物", ""
 	case "DeferExecuteTool", "MCP":
 		inner := strings.TrimPrefix(str("toolName", "tool", "tool_name", "name", "mcp_tool"), "mcp__agentflow_session__")
 		if inner == "" || inner == name {
@@ -268,7 +266,7 @@ func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
 				params = raw
 			}
 		}
-		return inner, clarifyToolDetail(inner, params)
+		return assistantToolDisplay(inner, params)
 	case "ToolSearch":
 		if detail := str("query", "q", "search", "pattern"); detail != "" {
 			return name, detail
@@ -287,5 +285,23 @@ func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
 			}
 		}
 	}
-	return name, clarifyToolDetail(name, input)
+	if strings.Contains(strings.ToLower(name), "command") || strings.EqualFold(name, "bash") || strings.EqualFold(name, "shell") || strings.EqualFold(name, "exec") {
+		if command := str("command", "cmd", "script"); command != "" {
+			return name, truncateRunes(command, 4000)
+		}
+		if body, ok := m["body"]; ok {
+			if raw, err := json.Marshal(body); err == nil {
+				return assistantToolDisplay(name, raw)
+			}
+		}
+	}
+	if detail := clarifyToolDetail(name, input); detail != "" {
+		return name, detail
+	}
+	if path, ok := m["path"].(map[string]any); ok {
+		if id, ok := path["id"].(string); ok {
+			return name, truncateRunes(id, 300)
+		}
+	}
+	return name, ""
 }

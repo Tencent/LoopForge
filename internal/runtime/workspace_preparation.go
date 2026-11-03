@@ -39,16 +39,34 @@ type WorkspacePreparationStatus struct {
 	ReplayBlocked bool                       `json:"replayBlocked,omitempty"`
 }
 
-func ReadWorkspacePreparationStatus(root string) WorkspacePreparationStatus {
+// ReadWorkspacePreparationStatus reads one sandbox's preparation receipt. Shared
+// parent/child checkouts have independent execution environments, so production
+// callers must pass the exact Sandbox.ID. Omitting scope reads only the legacy
+// unscoped receipt; a scoped read never falls back to that or another sandbox.
+func ReadWorkspacePreparationStatus(root string, scope ...string) WorkspacePreparationStatus {
 	state := WorkspacePreparationStatus{Status: "unprepared", Steps: []WorkspacePreparationStep{}}
-	raw, err := readWorkspaceFile(root, filepath.Join(root, ".agentflow", "workspace-preparation", "state.json"))
+	elements := append([]string{root, ".agentflow"}, preparationScopeElements(scope...)...)
+	elements = append(elements, "state.json")
+	raw, err := readWorkspaceFile(root, filepath.Join(elements...))
 	if err == nil {
 		_ = json.Unmarshal(raw, &state)
 	}
 	return state
 }
-func saveWorkspacePreparationStatus(root string, state WorkspacePreparationStatus) error {
-	dir, err := EnsureControlDirectory(root, "workspace-preparation")
+
+// The scope is a hash rather than a path component supplied by a run or CLI.
+// All receipts remain under workspace-preparation, which snapshots exclude.
+func preparationScopeElements(scope ...string) []string {
+	elements := []string{"workspace-preparation"}
+	if len(scope) > 0 && scope[0] != "" {
+		sum := sha256.Sum256([]byte(scope[0]))
+		elements = append(elements, hex.EncodeToString(sum[:]))
+	}
+	return elements
+}
+
+func saveWorkspacePreparationStatus(root string, state WorkspacePreparationStatus, scope ...string) error {
+	dir, err := EnsureControlDirectory(root, preparationScopeElements(scope...)...)
 	if err != nil {
 		return err
 	}
@@ -157,7 +175,7 @@ func redactPreparationOutput(sb Sandbox, output string) string {
 		managed.credentialsMu.RLock()
 		credentials := managed.credentials
 		managed.credentialsMu.RUnlock()
-		secrets = append(secrets, credentials.GitToken, credentials.TaihuPAT, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		secrets = append(secrets, credentials.GitToken, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
 		for _, server := range credentials.MCPServers {
 			for _, value := range server.Headers {
 				secrets = append(secrets, value)
@@ -260,7 +278,7 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	if err != nil {
 		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
 	}
-	old := ReadWorkspacePreparationStatus(sb.Workspace())
+	old := ReadWorkspacePreparationStatus(sb.Workspace(), sb.ID())
 	prior := map[string]WorkspacePreparationStep{}
 	if old.Environment == epoch {
 		for _, step := range old.Steps {
@@ -286,7 +304,7 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 		state.Status = "failed"
 		state.Error = err.Error()
 		state.UpdatedAt = time.Now().UTC()
-		_ = saveWorkspacePreparationStatus(sb.Workspace(), state)
+		_ = saveWorkspacePreparationStatus(sb.Workspace(), state, sb.ID())
 		return state, err
 	}
 	emit := func(node domain.WorkflowNode, status, message string) {
@@ -314,7 +332,7 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 		at := setStep(step)
 		state.StepName = node.Name
 		state.UpdatedAt = time.Now().UTC()
-		if err = saveWorkspacePreparationStatus(sb.Workspace(), state); err != nil {
+		if err = saveWorkspacePreparationStatus(sb.Workspace(), state, sb.ID()); err != nil {
 			return fail(err)
 		}
 		emit(node, "started", "正在恢复工作区环境："+node.Name)
@@ -363,7 +381,7 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	state.Status = "ready"
 	state.StepName = ""
 	state.UpdatedAt = time.Now().UTC()
-	if err = saveWorkspacePreparationStatus(sb.Workspace(), state); err != nil {
+	if err = saveWorkspacePreparationStatus(sb.Workspace(), state, sb.ID()); err != nil {
 		return fail(err)
 	}
 	return state, nil
@@ -391,7 +409,7 @@ func RecordWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	if err != nil {
 		return WorkspacePreparationStatus{}, err
 	}
-	state := ReadWorkspacePreparationStatus(sb.Workspace())
+	state := ReadWorkspacePreparationStatus(sb.Workspace(), sb.ID())
 	if state.Environment != epoch {
 		state = WorkspacePreparationStatus{Steps: []WorkspacePreparationStep{}, Environment: epoch}
 	}
@@ -415,7 +433,7 @@ func RecordWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	state.Error = ""
 	state.ReplayBlocked = false
 	state.UpdatedAt = time.Now().UTC()
-	if err = saveWorkspacePreparationStatus(sb.Workspace(), state); err != nil {
+	if err = saveWorkspacePreparationStatus(sb.Workspace(), state, sb.ID()); err != nil {
 		return state, err
 	}
 	return state, nil

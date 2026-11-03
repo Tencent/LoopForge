@@ -176,8 +176,9 @@ function renderIssueDetailTab(){
   const clarifyKey=state.issueDetailTab==='clarify'?issueClarifyViewKey(issue,project):'';
   if(clarifyKey&&clarifyKey===renderedIssueClarifyKey&&host.querySelector?.('.clarify-workspace'))return;
   const clarifyDraft=clarifyKey?captureIssueClarifyDraft(host):null;
-  const panes={overview:overviewPane(issue,data),operations:operationsPane(issue),clarify:clarifyPane(issue,project),sop:sopPane(issue,data),artifacts:artifactsPane(data),delivery:deliveryPane(issue,data),acceptance:acceptancePane(issue,data),activity:activityPane(issue,data)};
+  const panes={conversations:'<div class="detail-empty">正在加载关联会话…</div>',overview:overviewPane(issue,data),operations:operationsPane(issue),clarify:clarifyPane(issue,project),sop:sopPane(issue,data),artifacts:artifactsPane(data),delivery:deliveryPane(issue,data),acceptance:acceptancePane(issue,data),activity:activityPane(issue,data)};
   host.innerHTML=panes[state.issueDetailTab]||'<div class="detail-empty">暂无内容</div>';
+  if(state.issueDetailTab==='conversations')void renderIssueConversations(issue,host);
   renderedIssueClarifyKey=clarifyKey;
   host.querySelectorAll('[data-edit-issue]').forEach(b=>b.onclick=()=>{closeIssueDrawer();openIssue(issue)});
   host.querySelectorAll('[data-dispatch-issue]').forEach(b=>b.onclick=()=>triggerIssue(b.dataset.dispatchIssue,b.dataset.workflow));
@@ -851,6 +852,7 @@ function activityPane(issue,data){
 
 
 async function deleteIssueById(issueId){
+  if(state.issueBulkDeleting)return toast('正在批量删除需求，请稍候','info');
   const issue=(state.data.issues||[]).find(i=>i.id===issueId)||state.issueDetailData?.issue;
   if(!issue||issue.id!==issueId)return toast('未找到需求单');
   if(issueClarifying(issueId))return toast('需求正在澄清，请先停止后再删除','err');
@@ -859,10 +861,27 @@ async function deleteIssueById(issueId){
   try{
     await api(`/api/issues/${encodeURIComponent(issueId)}`,{method:'DELETE'});
     state.data.issues=(state.data.issues||[]).filter(i=>i.id!==issueId);
+    state.issueSelection?.delete(issueId);
     if(state.issueDetailData?.issue?.id===issueId){closeIssueDrawer();state.issueDetailData=null;state.selectedIssue=null;}
     state.data.tasks=(state.data.tasks||[]).filter(t=>t.issueId!==issueId);
     await refreshRuns();
     renderIssues();
     toast('需求已删除','ok');
   }catch(err){toast(err.message,'err')}
+}
+
+// Association does not expose private conversations to other project members.
+async function renderIssueConversations(issue,host){
+  const key=issue.id;host.dataset.conversationIssue=key;
+  const link=(session)=>{const url=new URL('/',location.origin);url.searchParams.set('projectId',issue.projectId);if(session)url.searchParams.set('chatSession',session);else url.searchParams.set('chatIssue',issue.id);url.hash='/collaboration';return url.href};
+  host.innerHTML='<div class="detail-empty">正在加载关联会话…</div>';
+  try{
+    const rows=await api('/api/issues/'+encodeURIComponent(key)+'/conversations',{silent:true});
+    if(state.issueDetailData?.issue?.id!==key||state.issueDetailTab!=='conversations')return;
+    host.replaceChildren();
+    const intro=document.createElement('p');intro.className='muted';intro.textContent='仅展示你有权限访问的会话。私人会话仍仅自己可见。';host.append(intro);
+    const start=document.createElement('a');start.className='btn btn-primary';start.href=link('');start.target='_blank';start.rel='noopener';start.textContent='围绕此需求新建会话';host.append(start);
+    if(!rows.length){const empty=document.createElement('p');empty.className='detail-empty';empty.textContent='还没有可见的关联会话';host.append(empty)}
+    rows.forEach(s=>{const a=document.createElement('a');a.href=link(s.id);a.target='_blank';a.rel='noopener';a.className='issue-conversation-link';a.style.cssText='display:block;padding:12px 0;border-bottom:1px solid var(--border,#eee)';const name=document.createElement('strong');name.textContent=s.title||'新对话';const meta=document.createElement('small');meta.style.cssText='display:block;color:var(--muted)';meta.textContent=(s.shared?'共享运行会话':'私人会话')+' · '+(s.participants||[]).length+' 人发过言';a.append(name,meta);host.append(a)});
+  }catch(e){if(state.issueDetailData?.issue?.id===key&&state.issueDetailTab==='conversations')host.textContent='加载关联会话失败：'+e.message}
 }

@@ -59,5 +59,5 @@ func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob) (do
 	if user, ok := try(job.OwnerUserID); ok {
 		return user, nil
 	}
-	return domain.User{}, fmt.Errorf("执行提示词需要项目 Owner 的 CodeBuddy API Key：请在该账号的个人设置中配置")
+	return domain.User{}, fmt.Errorf("执行提示词需要项目 Owner 的 CodeBuddy API Key：请在该账号的个人配置中配置")
 }

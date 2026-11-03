@@ -14,8 +14,6 @@ import (
 	"agentflow/internal/runtime"
 )
 
-const clarifyJSONMaxRetries = 2
-
 func clarifySessionBase() string {
 	if override := strings.TrimSpace(os.Getenv("AGENTFLOW_CLARIFY_SESSION_DIR")); override != "" {
 		return override
@@ -238,6 +236,9 @@ func prepareClarifyCommandWith(opts clarifyCommandOpts) (runtime.CommandSpec, er
 	command.Argv = applyNativeToolSafety(command.Argv, AgentToolClarify)
 	if opts.SubmitOnly {
 		command.Argv = appendDisallowedTools(command.Argv, "Read,Grep,Glob")
+	}
+	if strings.TrimSpace(opts.MCPConfig) != "" {
+		command = command.WithMCPStartupWait(agentToolSessionMCPStartupWait)
 	}
 	return command, nil
 }

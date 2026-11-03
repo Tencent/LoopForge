@@ -51,7 +51,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			// not inherit either variable from the AgentFlow host process.
 			bound.environment["CODEBUDDY_API_KEY"] = strings.TrimSpace(credentials.CodeBuddy.APIKey)
 			if bound.environment["CODEBUDDY_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 CodeBuddy API Key，请在个人设置中配置")
+				return CommandSpec{}, fmt.Errorf("需求责任人未配置 CodeBuddy API Key，请在个人配置中配置")
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 		case BindGit:
@@ -66,7 +66,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		case BindCodex:
 			bound.environment["CODEX_API_KEY"] = strings.TrimSpace(credentials.Codex.APIKey)
 			if bound.environment["CODEX_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key，请在个人设置中配置")
+				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key，请在个人配置中配置")
 			}
 			baseURL := strings.TrimSpace(credentials.Codex.BaseURL)
 			if baseURL == "" {
@@ -91,7 +91,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		case BindClaudeCode:
 			bound.environment["ANTHROPIC_API_KEY"] = strings.TrimSpace(credentials.ClaudeCode.APIKey)
 			if bound.environment["ANTHROPIC_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人设置中配置")
+				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
 			}
 			baseURL := strings.TrimSpace(credentials.ClaudeCode.BaseURL)
 			if baseURL == "" {
@@ -167,7 +167,17 @@ func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[strin
 	if token == "" {
 		return nil
 	}
-	const user = "private"
+	user := "private"
+	if strings.HasPrefix(strings.ToLower(token), "oauth2:") {
+		if stripped := strings.TrimSpace(token[len("oauth2:"):]); stripped != "" {
+			user = "oauth2"
+			token = stripped
+		}
+	} else if strings.HasPrefix(strings.ToLower(token), "private:") {
+		if stripped := strings.TrimSpace(token[len("private:"):]); stripped != "" {
+			token = stripped
+		}
+	}
 	prefixes := []string{"git@git.example.com:", "ssh://git@git.example.com/", "https://git.example.com/", "http://git.example.com/"}
 	authed := "https://" + url.UserPassword(user, token).String() + "@git.example.com/"
 	environment["GIT_CONFIG_COUNT"] = strconv.Itoa(len(prefixes))

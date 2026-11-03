@@ -47,9 +47,6 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	if err != nil {
 		return compiledConfig{}, err
 	}
-	if options.Concurrent {
-		agentID += "-" + invocationID
-	}
 	agentRel := filepath.Join(".agentflow", agentID)
 	runtimeRel := filepath.Join(".agentflow", "runtime", invocationID)
 	compiled := compiledConfig{AgentRoot: filepath.ToSlash(agentRel), RuntimeRoot: filepath.ToSlash(runtimeRel), HasSkills: len(assets.Skills) > 0}
@@ -210,9 +207,12 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 		}
 		mergedMCP = append(mergedMCP, gateServer)
 	}
+	if options.BrowserMCP != nil {
+		mergedMCP = append(mergedMCP, *options.BrowserMCP)
+	}
 	compiled.HasMCP = len(mergedMCP) > 0
 	if hint := mcpUsageHint(mergedMCP); hint != "" {
-		content = append(content, []byte("\n"+hint)...)
+		content = append(content, []byte("\n"+hint+browserUsageHint(mergedMCP))...)
 		if err := os.WriteFile(agentSystemPath, content, 0o600); err != nil {
 			return compiled, err
 		}

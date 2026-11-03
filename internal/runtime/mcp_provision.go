@@ -129,6 +129,28 @@ func prepareMCPServersForDriver(servers []domain.MCPServerDefinition, driver str
 	return out
 }
 
+// WithoutUnprovisionableMCP drops stdio MCP servers whose install script the
+// sandbox may not run (install scripts need docker, bwrap or seatbelt). Callers
+// that only offer optional tools, such as a workspace terminal, use it to keep
+// the workspace usable; workflow nodes keep failing loudly instead.
+func WithoutUnprovisionableMCP(sandbox Sandbox, assets domain.AgentAssetBundle) (domain.AgentAssetBundle, []string) {
+	if sandbox != nil && sandboxDriver(sandbox) != "local" {
+		return assets, nil
+	}
+	var skipped []string
+	kept := make([]domain.MCPServerDefinition, 0, len(assets.MCPServers))
+	for _, server := range assets.MCPServers {
+		stdio := strings.EqualFold(strings.TrimSpace(server.Transport), "stdio") || strings.TrimSpace(server.Transport) == ""
+		if stdio && strings.TrimSpace(server.InstallScript) != "" {
+			skipped = append(skipped, server.Name)
+			continue
+		}
+		kept = append(kept, server)
+	}
+	assets.MCPServers = kept
+	return assets, skipped
+}
+
 // ProvisionMCPAssets materializes uploaded programs and executes install
 // scripts inside the selected sandbox. The completion marker is sandbox-bound:
 // a reused Run container installs once, while a fresh runner task container

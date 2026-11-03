@@ -95,7 +95,7 @@ bash scripts/install.sh
 - **沙箱。** 默认 Compose 安装中，SOP 任务使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；首次启动后平台会在后台构建沙箱镜像（需要几分钟）。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
 - **账号与访问。** 默认仅监听本机，面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
 - **远程访问、HTTPS、独立 Worker** —— 见[部署指南](docs/deployment.md)。
-- **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.9+）。
+- **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.10+）。
 
 </details>
 

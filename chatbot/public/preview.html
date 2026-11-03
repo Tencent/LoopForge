@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>网页预览</title></head>
+<body><script>
+  // This document has its own CSP and an opaque sandbox origin. Generated code
+  // can run here without granting inline scripts access to the platform page.
+  window.addEventListener('message', function receive(event) {
+    if (event.source !== parent || event.data?.type !== 'agentflow-html-preview' || typeof event.data.source !== 'string') return;
+    window.removeEventListener('message', receive);
+    document.open();
+    document.write(event.data.source);
+    document.close();
+  });
+</script></body></html>

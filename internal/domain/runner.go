@@ -69,6 +69,16 @@ const RunnerVersionAlignBaseline = "0.5.0"
 // workspaces and binds interactive terminals to the frozen run sandbox.
 const RunnerVersionWorkspacePreparation = "0.6.0"
 
+// RunnerVersionWorkspaceOwnerPreparation supports a child run's prepared
+// sandbox in its parent's checkout and keeps readiness receipts run-scoped.
+const RunnerVersionWorkspaceOwnerPreparation = "0.7.1"
+
+const RunnerVersionConversationWorkspace = "0.8.0"
+
+func (r Runner) SupportsConversationWorkspace() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
+}
+
 // RunnerVersionExistingWorkBranch is the first runner that refuses to create
 // a missing branch when the caller explicitly continues an existing branch.
 const RunnerVersionExistingWorkBranch = "0.7.0"
@@ -122,6 +132,12 @@ func (r Runner) SupportsExistingWorkBranch() bool {
 // daemons ignore the sandbox fields and must never receive a terminal open.
 func (r Runner) SupportsWorkspacePreparation() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionWorkspacePreparation)
+}
+
+// SupportsWorkspaceOwnerPreparation prevents older runners from ignoring the
+// checkout owner and preparing a child run in the wrong directory.
+func (r Runner) SupportsWorkspaceOwnerPreparation() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionWorkspaceOwnerPreparation)
 }
 
 // SupportsAlignBaseline reports whether the runner executes align_baseline.
@@ -335,7 +351,6 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.CodexBaseURL = ""
 	copyInvocation.ClaudeCodeAPIKey = ""
 	copyInvocation.ClaudeCodeBaseURL = ""
-	copyInvocation.TaihuPAT = ""
 	if copyInvocation.Repository != nil {
 		copyRepository := *copyInvocation.Repository
 		copyRepository.GitToken = ""
@@ -359,7 +374,6 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 // and are scrubbed from durable storage when the task finishes.
 type RunnerInvocation struct {
 	ArchivedFiles   []WorkspaceArtifactFile `json:"archivedFiles,omitempty"`
-	Concurrent      bool                    `json:"concurrent,omitempty"`
 	RunID           string                  `json:"runId,omitempty"`
 	NodeID          string                  `json:"nodeId,omitempty"`
 	InvocationID    string                  `json:"invocationId,omitempty"`
@@ -393,10 +407,10 @@ type RunnerInvocation struct {
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
 	ClaudeCodeAPIKey             string   `json:"claudeCodeApiKey,omitempty"`
 	ClaudeCodeBaseURL            string   `json:"claudeCodeBaseUrl,omitempty"`
-	TaihuPAT                     string   `json:"taihuPat,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
-	// in scripts, verification gates, and Agent hooks. It is unbound; TaihuPAT
-	// is applied in memory on the runner. Agent Assets stay allowlist-scoped.
+	// in scripts, verification gates, and Agent hooks. It is unbound; personal
+	// credentials are applied in memory on the runner. Agent Assets stay
+	// allowlist-scoped.
 	MCPCallServers []MCPServerDefinition `json:"mcpCallServers,omitempty"`
 	// GitUserName and GitUserEmail are the frozen requirement owner's commit
 	// identity. The runner applies them to each checkout with --local scope.

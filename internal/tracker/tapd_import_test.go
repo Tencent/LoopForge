@@ -109,8 +109,8 @@ func TestFirstTAPDOwnerSelectsFirstHandler(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"胡锦康;", "胡锦康"},
-		{"胡锦康;张三;", "胡锦康"},
+		{"示例用户;", "示例用户"},
+		{"示例用户;张三;", "示例用户"},
 		{" example-maintainer ", "example-maintainer"},
 		{"; ;alice;bob", "alice"},
 		{"", ""},
@@ -123,55 +123,55 @@ func TestFirstTAPDOwnerSelectsFirstHandler(t *testing.T) {
 	}
 }
 
-func TestImportTAPDStoryAssignsCreatorNotHandler(t *testing.T) {
-	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2001","name":"handler story","status":"open","creator":"胡锦康","owner":"张三;"}]}`)
+func TestImportTAPDStoryAssignsHandlerNotCreator(t *testing.T) {
+	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"1010000000138984079","name":"handler story","status":"open","creator":"example-pm","owner":"example-dev;"}]}`)
 	defer gateway.Close()
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
 	store := &memIssueStore{
 		projects: map[string]domain.Project{"dp": {ID: "dp", OwnerID: 42}},
 		users: []domain.User{
-			{ID: 7, LoginName: "example-maintainer", ChineseName: "胡锦康"},
-			{ID: 8, LoginName: "zhangsan", ChineseName: "张三"},
+			{ID: 7, LoginName: "example-pm"},
+			{ID: 8, LoginName: "example-dev"},
 			{ID: 42, LoginName: "owner", ChineseName: "项目负责人"},
 		},
 	}
-	issue, err := svc.ImportTAPDStory(store, "dp", "https://tapd.example.com/tapd_fe/10000000/story/detail/2001", 99)
+	issue, err := svc.ImportTAPDStory(store, "dp", "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000138984079", 99)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issue.AssigneeUserID != 7 {
-		t.Fatalf("assignee=%d want TAPD creator 7, not handler 8", issue.AssigneeUserID)
+	if issue.AssigneeUserID != 8 {
+		t.Fatalf("assignee=%d want TAPD handler 8", issue.AssigneeUserID)
 	}
 }
 
 func TestImportTAPDStoryMatchesHandlerLoginInParentheses(t *testing.T) {
-	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2002","name":"login story","status":"open","creator":"胡锦康(example-maintainer)","owner":"alice;"}]}`)
+	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2002","name":"login story","status":"open","creator":"alice","owner":"示例用户(example-maintainer);"}]}`)
 	defer gateway.Close()
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
 	store := &memIssueStore{
 		projects: map[string]domain.Project{"dp": {ID: "dp", OwnerID: 42}},
-		users:    []domain.User{{ID: 7, LoginName: "example-maintainer", ChineseName: "胡锦康"}},
+		users:    []domain.User{{ID: 7, LoginName: "example-maintainer", ChineseName: "示例用户"}},
 	}
 	issue, err := svc.ImportTAPDStory(store, "dp", "https://tapd.example.com/tapd_fe/10000000/story/detail/2002", 99)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if issue.AssigneeUserID != 7 {
-		t.Fatalf("assignee=%d want login matched creator 7", issue.AssigneeUserID)
+		t.Fatalf("assignee=%d want login matched handler 7", issue.AssigneeUserID)
 	}
 }
 
 func TestImportTAPDStoryFallsBackToImporterWhenHandlerMissing(t *testing.T) {
-	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2003","name":"unknown handler","status":"open","creator":"ghost","owner":"胡锦康;"}]}`)
+	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2003","name":"unknown handler","status":"open","creator":"示例用户","owner":"ghost;"}]}`)
 	defer gateway.Close()
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
 	store := &memIssueStore{
 		projects: map[string]domain.Project{"dp": {ID: "dp", OwnerID: 42}},
 		users: []domain.User{
-			{ID: 7, LoginName: "example-maintainer", ChineseName: "胡锦康"},
+			{ID: 7, LoginName: "example-maintainer", ChineseName: "示例用户"},
 			{ID: 42, LoginName: "owner", ChineseName: "项目负责人"},
 		},
 	}
@@ -180,19 +180,19 @@ func TestImportTAPDStoryFallsBackToImporterWhenHandlerMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if issue.AssigneeUserID != 99 {
-		t.Fatalf("assignee=%d want importer fallback 99, not the TAPD handler", issue.AssigneeUserID)
+		t.Fatalf("assignee=%d want importer fallback 99", issue.AssigneeUserID)
 	}
 }
 
 func TestSyncTAPDStoryFallsBackToProjectOwnerWhenHandlerMissing(t *testing.T) {
-	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2004","name":"sync unknown","status":"open","creator":"ghost","owner":"胡锦康;"}]}`)
+	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2004","name":"sync unknown","status":"open","creator":"示例用户","owner":""}]}`)
 	defer gateway.Close()
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
 	store := &memIssueStore{
 		projects: map[string]domain.Project{"dp": {ID: "dp", OwnerID: 42}},
 		users: []domain.User{
-			{ID: 7, LoginName: "example-maintainer", ChineseName: "胡锦康"},
+			{ID: 7, LoginName: "example-maintainer", ChineseName: "示例用户"},
 			{ID: 42, LoginName: "owner", ChineseName: "项目负责人"},
 		},
 	}
@@ -201,18 +201,18 @@ func TestSyncTAPDStoryFallsBackToProjectOwnerWhenHandlerMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if issue.AssigneeUserID != 42 {
-		t.Fatalf("assignee=%d want project owner 42, not the TAPD handler", issue.AssigneeUserID)
+		t.Fatalf("assignee=%d want project owner 42", issue.AssigneeUserID)
 	}
 }
 
 func TestImportTAPDStoryKeepsExistingAssignee(t *testing.T) {
-	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2005","name":"updated","status":"open","creator":"胡锦康","owner":"张三;"}]}`)
+	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"2005","name":"updated","status":"open","creator":"示例用户","owner":"张三;"}]}`)
 	defer gateway.Close()
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
 	store := &memIssueStore{
 		projects: map[string]domain.Project{"dp": {ID: "dp", OwnerID: 42}},
-		users:    []domain.User{{ID: 7, LoginName: "example-maintainer", ChineseName: "胡锦康"}},
+		users:    []domain.User{{ID: 8, LoginName: "zhangsan", ChineseName: "张三"}},
 		issues: map[string]domain.Issue{
 			"tapd-2005": {ID: "tapd-2005", ProjectID: "dp", Title: "old", Source: "tapd", AssigneeUserID: 5, ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "2005"}},
 		},

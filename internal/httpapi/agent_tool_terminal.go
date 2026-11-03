@@ -61,17 +61,19 @@ func terminalToolDescriptors(mode AgentToolMode, exec assistantExecMode) []agent
 }
 
 // submitAssistantReplyDescription 按会话执行模式描述 drafts 的用途：
-// confirm 全部走草稿；assisted 仅危险写入转草稿；auto 完全不用草稿。
+// confirm 全部走草稿；assisted 审查未通过时转草稿；auto 完全不用草稿。
 // 工具描述是模型选择直连写入还是提交草稿的关键信号，必须与网关的
 // 写入拦截策略一致。
 func submitAssistantReplyDescription(exec assistantExecMode) string {
 	switch {
+	case exec.ReviewWrites:
+		return "仅用本工具提交需要用户确认的写入草稿，成功后本轮结束。当前为帮我批准模式：直接调用平台写入工具，独立 AI 审查具体操作和对话授权，通过后执行；未批准或审查不可用时才放入 drafts（每轮最多 1 个，含完整参数）供用户确认。不要绕过审查，不接受空 drafts 或进度占位回复。"
 	case exec.AutoWrite && !exec.ConfirmDangerous:
-		return "调用本工具提交本轮助手回复。message 是给用户看的 Markdown，汇总本轮每一步实际执行结果。平台写入工具已授权直接调用执行，不要把写入放入 drafts。drafts 始终为空列表。普通问答和只读查询直接用自然语言回复，无需调用本工具。"
+		return "本工具仅用于提交待确认写入草稿，成功后立即结束本轮。当前为完全权限模式，平台写入工具已授权直接调用执行；完成全部操作后用自然语言汇总实际结果，不要调用本工具，不接受空 drafts 或进度占位回复。"
 	case exec.AutoWrite && exec.ConfirmDangerous:
-		return "调用本工具提交本轮助手回复。message 是给用户看的 Markdown，汇总本轮每一步实际执行结果。保存类平台写入工具直接调用即生效；只有被平台拦截的危险写入（删除/发布/派发/启动）才放入 drafts（每轮最多 1 个，附完整参数，删除类需先自查引用并携带目标 id）供用户确认。其余情况 drafts 为空列表。普通问答和只读查询直接用自然语言回复，无需调用本工具。"
+		return "仅用本工具提交待确认写入草稿，成功后立即结束本轮。保存类平台写入工具直接调用即生效；只有被平台拦截的危险写入（删除/发布/派发/启动）才放入 drafts（每轮最多 1 个，附完整参数，删除类需先自查引用并携带目标 id）供用户确认。message 汇总实际结果和待确认操作。不接受空 drafts 或进度占位回复；其余情况用自然语言回复并继续完成用户请求。"
 	default:
-		return "调用本工具提交本轮助手回复。message 是给用户看的 Markdown；需要写入平台时把操作放入 drafts（每轮最多 1 个草稿，提交删除类操作前先用只读工具检查引用依赖），用户确认后才会执行。普通问答和只读查询直接用自然语言回复，无需调用本工具。提交草稿前用 workbench_tool_schema 查询该操作的准确参数，并提供 body/path/query 包装。"
+		return "仅用本工具提交待确认写入草稿，成功后立即结束本轮。需要写入平台时把操作放入 drafts（每轮最多 1 个草稿，提交删除类操作前先用只读工具检查引用依赖），用户确认后才会执行。message 说明实际查询结果和待确认操作。不接受空 drafts 或进度占位回复；普通问答和只读查询用自然语言回复。提交草稿前用 workbench_tool_schema 查询该操作的准确参数，并提供 body/path/query 包装。"
 	}
 }
 
@@ -113,7 +115,7 @@ func submitClarificationSchema() map[string]any {
 
 func submitAssistantReplySchema() map[string]any {
 	names := assistantWriteToolNameList()
-	toolSchema := map[string]any{"type": "string"}
+	toolSchema := map[string]any{"type": "string", "description": "必填：本草稿要执行的写入工具名称，如 issues_save、issues_dispatch；不要省略，不带 mcp__ 前缀"}
 	if len(names) > 0 {
 		enum := make([]any, 0, len(names)+1)
 		for _, name := range names {
@@ -130,6 +132,7 @@ func submitAssistantReplySchema() map[string]any {
 			"message": map[string]any{"type": "string", "description": "展示给用户的 Markdown 文本"},
 			"drafts": map[string]any{
 				"type":     "array",
+				"minItems": 1,
 				"maxItems": agentToolMaxDrafts,
 				"items": map[string]any{
 					"type":                 "object",

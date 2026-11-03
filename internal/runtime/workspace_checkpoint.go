@@ -15,9 +15,25 @@ import (
 // Checkpoints exclude execution credentials and reproducible dependency caches.
 // A bounded archive that cannot be saved must never authorize workspace deletion.
 const WorkspaceCheckpointMaxBytes = 12 << 20
-const workspaceCheckpointExpandedMax = 256 << 20
+
+// Inline RPCs retain their original bound. Large archives use bounded chunks
+// and disk-backed streams, never one large JSON value or database cell.
+const WorkspaceCheckpointArchiveMaxBytes = 512 << 20
+const WorkspaceCheckpointChunkBytes = 4 << 20
+const workspaceCheckpointExpandedMax = 2 << 30
 
 func checkpointExcluded(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".agentflow" || part == "node_modules" || part == ".cache" || part == "__pycache__" || part == ".zvec-grep" {
+			return true
+		}
+	}
+	return false
+}
+
+// Older valid archives can contain .zvec-grep. Excluding it from new captures
+// must not make those existing snapshots unrestorable.
+func checkpointRestoreExcluded(path string) bool {
 	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
 		if part == ".agentflow" || part == "node_modules" || part == ".cache" || part == "__pycache__" {
 			return true
@@ -33,20 +49,31 @@ func checkpointPath(path string) (string, error) {
 	return clean, nil
 }
 func CreateWorkspaceCheckpoint(root string) ([]byte, error) {
-	info, err := os.Lstat(root)
+	var buffer bytes.Buffer
+	err := CreateWorkspaceCheckpointTo(root, &checkpointBoundedWriter{writer: &buffer, left: WorkspaceCheckpointMaxBytes})
 	if err != nil {
 		return nil, err
 	}
+	return buffer.Bytes(), err
+}
+
+func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("workspace is not a directory")
+		return fmt.Errorf("workspace is not a directory")
 	}
 	base, err := os.OpenRoot(root)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer base.Close()
-	var buffer bytes.Buffer
-	zipped := gzip.NewWriter(&checkpointBoundedWriter{writer: &buffer, left: WorkspaceCheckpointMaxBytes})
+	zipped, err := gzip.NewWriterLevel(&checkpointBoundedWriter{writer: destination, left: WorkspaceCheckpointArchiveMaxBytes}, gzip.BestSpeed)
+	if err != nil {
+		return err
+	}
 	writer := tar.NewWriter(&checkpointBoundedWriter{writer: zipped, left: workspaceCheckpointExpandedMax})
 	var expanded int64
 	entries := 0
@@ -73,15 +100,12 @@ func CreateWorkspaceCheckpoint(root string) ([]byte, error) {
 		}
 		link := ""
 		if info.Mode()&os.ModeSymlink != 0 {
+			// Links are archived verbatim, including absolute or external targets
+			// that a repository checkout can legitimately contain. Rejecting them
+			// left such workspaces unsaved and therefore never reclaimed.
 			link, err = base.Readlink(path)
 			if err != nil {
 				return err
-			}
-			if filepath.IsAbs(link) {
-				return fmt.Errorf("checkpoint symlink escapes workspace: %s", path)
-			}
-			if _, err = checkpointPath(filepath.Join(filepath.Dir(path), link)); err != nil {
-				return fmt.Errorf("checkpoint symlink escapes workspace: %s", path)
 			}
 		} else if !info.IsDir() && !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported checkpoint file: %s", path)
@@ -119,31 +143,29 @@ func CreateWorkspaceCheckpoint(root string) ([]byte, error) {
 				return closeErr
 			}
 		}
-		if buffer.Len() > WorkspaceCheckpointMaxBytes {
-			return fmt.Errorf("workspace checkpoint exceeds 12 MB; keep original workspace")
-		}
 		return nil
 	})
 	closeTar := writer.Close()
 	closeZip := zipped.Close()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if closeTar != nil {
-		return nil, closeTar
+		return closeTar
 	}
 	if closeZip != nil {
-		return nil, closeZip
+		return closeZip
 	}
-	if buffer.Len() > WorkspaceCheckpointMaxBytes {
-		return nil, fmt.Errorf("workspace checkpoint exceeds 12 MB; keep original workspace")
-	}
-	return buffer.Bytes(), nil
+	return nil
 }
 func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 	if len(content) == 0 || len(content) > WorkspaceCheckpointMaxBytes {
 		return fmt.Errorf("invalid workspace checkpoint size")
 	}
+	return RestoreWorkspaceCheckpointFrom(root, bytes.NewReader(content))
+}
+
+func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
 	if _, err := os.Lstat(root); err == nil {
 		return fmt.Errorf("workspace already exists; refusing to overwrite")
 	} else if !os.IsNotExist(err) {
@@ -162,7 +184,8 @@ func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 		return err
 	}
 	defer base.Close()
-	zipped, err := gzip.NewReader(bytes.NewReader(content))
+	compressed := &io.LimitedReader{R: source, N: WorkspaceCheckpointArchiveMaxBytes + 1}
+	zipped, err := gzip.NewReader(compressed)
 	if err != nil {
 		return err
 	}
@@ -183,7 +206,7 @@ func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 		if err != nil {
 			return err
 		}
-		if checkpointExcluded(path) || seen[path] {
+		if checkpointRestoreExcluded(path) || seen[path] {
 			return fmt.Errorf("invalid checkpoint entry: %s", path)
 		}
 		if len(seen) >= 100000 {
@@ -214,12 +237,9 @@ func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 				}
 			}
 		case tar.TypeSymlink:
-			if filepath.IsAbs(header.Linkname) {
-				return fmt.Errorf("checkpoint symlink escapes workspace")
-			}
-			if _, err = checkpointPath(filepath.Join(filepath.Dir(path), header.Linkname)); err != nil {
-				return err
-			}
+			// The target is restored as inert data, exactly like git checkout
+			// does. os.Root refuses to traverse any link leaving the staging
+			// root, so later entries can never be written through it.
 			err = base.Symlink(header.Linkname, path)
 		default:
 			return fmt.Errorf("unsupported checkpoint entry")
@@ -232,7 +252,7 @@ func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 	if _, err = io.Copy(io.Discard, limited); err != nil {
 		return err
 	}
-	if limited.N == 0 {
+	if limited.N == 0 || compressed.N == 0 {
 		return fmt.Errorf("checkpoint expanded size exceeds limit")
 	}
 	return os.Rename(stage, root)
@@ -248,12 +268,18 @@ func EmptyWorkspaceCheckpoint() []byte {
 }
 
 func ValidateWorkspaceCheckpoint(content []byte) error {
+	if len(content) == 0 || len(content) > WorkspaceCheckpointMaxBytes {
+		return fmt.Errorf("invalid workspace checkpoint size")
+	}
+	return ValidateWorkspaceCheckpointFrom(bytes.NewReader(content))
+}
+func ValidateWorkspaceCheckpointFrom(source io.Reader) error {
 	temp, err := os.MkdirTemp("", "workspace-checkpoint-validate-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(temp)
-	return RestoreWorkspaceCheckpoint(filepath.Join(temp, "files"), content)
+	return RestoreWorkspaceCheckpointFrom(filepath.Join(temp, "files"), source)
 }
 
 // Bound both compressed bytes in memory and the complete tar stream, including

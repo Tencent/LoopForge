@@ -6,6 +6,11 @@ cd "$(dirname "$0")/.."
 output="${1:-$PWD/.local/bin}"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
+# The platform binary embeds web/native-chat; Docker builds it in its own stage.
+if [[ ! -f web/native-chat/index.html ]]; then
+  npm --prefix chatbot ci --include=dev --no-audit --no-fund
+  npm --prefix chatbot run build
+fi
 export CGO_ENABLED=0
 export GOMAXPROCS="${GOMAXPROCS:-2}"
 for command in agentflow agentflow-mcp loopforge-account; do

@@ -57,7 +57,7 @@ func (s *DBStore) Open(ctx context.Context, key string) (io.ReadSeekCloser, Obje
 	}
 	data, size, ok := s.repo.PreviewBlob(ContentKey(key))
 	if !ok {
-		return nil, Object{}, fmt.Errorf("preview blob %s not found", key)
+		return nil, Object{}, fmt.Errorf("%w: blob %s", ErrPreviewNotFound, key)
 	}
 	return memBlob{bytes.NewReader(data)}, Object{Key: key, SHA256: ContentKey(key), Size: size}, nil
 }

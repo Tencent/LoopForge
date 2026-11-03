@@ -1,0 +1,350 @@
+/* 流程模板列表页（项目 / 共享 / 通用模板）· Harness UI 设计语言
+ * （MIT，见 harness-ui-LICENSE.txt）。Loaded after issues-list.css, whose
+ * --hui-* token block (including the dark variant) also covers #sopsView.
+ * Every rule stays inside #sopsView. Colour is reserved for the health dots,
+ * failure counts and the single 新建 SOP primary button.
+ * Fonts are set with font-family/font-size/font-weight: an `inherit` inside the
+ * `font` shorthand invalidates the whole declaration.
+ */
+#sopsView.page-view.active { background: var(--hui-surface); color: var(--hui-text); font-family: var(--hui-sans); }
+
+/* ---------- Buttons ---------- */
+#sopsView .button {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  gap: 6px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 7px;
+  background: var(--hui-surface);
+  color: var(--hui-secondary);
+  box-shadow: none;
+  font-family: var(--hui-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  transform: none;
+  cursor: pointer;
+  transition: background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow), border-color .18s var(--hui-ease-flow);
+}
+#sopsView .button:hover { transform: none; box-shadow: none; background: var(--hui-canvas); border-color: var(--hui-border-strong); color: var(--hui-text); }
+#sopsView .button:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+#sopsView .button.primary { background: var(--hui-accent); border-color: var(--hui-accent); color: var(--hui-surface); box-shadow: none; }
+#sopsView .button.primary:hover { background: var(--hui-accent-hover); border-color: var(--hui-accent-hover); color: var(--hui-surface); }
+#sopsView .button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---------- Heading ---------- */
+#sopsView .page-heading {
+  display: flex;
+  flex-wrap: nowrap !important;
+  align-items: flex-end !important;
+  justify-content: space-between;
+  gap: 24px !important;
+  margin: 0 0 18px;
+}
+#sopsView .page-heading > div:first-child { flex: 1 1 auto; min-width: 0; max-width: none !important; }
+#sopsView .page-heading h1 { margin: 0 0 6px; color: var(--hui-text); font-family: var(--hui-sans); font-size: 24px; font-weight: 600; line-height: 1.2; letter-spacing: -.02em; }
+#sopsView .page-heading h1 + p { max-width: 780px; margin: 0; color: var(--hui-muted); font-size: 13px; line-height: 1.5; }
+#sopsView .page-heading > .heading-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: nowrap !important;
+  align-items: center;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  width: auto !important;
+}
+
+/* ---------- Scope switch (项目 / 共享 / 通用) ---------- */
+#sopsView .scope-switch {
+  --sliding-surface: var(--hui-surface);
+  --sliding-text: var(--hui-text);
+  --sliding-muted: var(--hui-muted);
+  gap: 2px;
+  margin: 0 0 14px;
+  padding: 3px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--hui-soft);
+}
+#sopsView .scope-switch.sliding-tabs[data-sliding-tabs] { border-radius: 9px !important; background: var(--hui-soft) !important; }
+#sopsView .scope-switch.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] { border: 0; border-radius: 7px; background: var(--hui-surface); box-shadow: var(--hui-ind-shadow); }
+#sopsView .scope-switch button {
+  height: 30px;
+  padding: 0 12px;
+  gap: 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--hui-muted);
+  font-family: var(--hui-sans);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+#sopsView .scope-switch button.on { background: var(--hui-surface); box-shadow: var(--hui-ind-shadow); color: var(--hui-text); }
+#sopsView .scope-switch.sliding-tabs[data-sliding-tabs] > button.on { background: transparent !important; box-shadow: none !important; color: var(--hui-text) !important; }
+#sopsView .scope-switch button span,
+#sopsView .scope-switch button.on span {
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--hui-tertiary);
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Overview metrics ---------- */
+#sopsView .sop-overview { gap: 12px; margin: 0; }
+#sopsView .overview-metric {
+  min-height: 0;
+  padding: 15px 16px;
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  background: var(--hui-surface);
+  box-shadow: none;
+  transform: none;
+}
+#sopsView .overview-metric:hover { transform: none; border-color: var(--hui-border); box-shadow: none; }
+#sopsView .overview-metric::before { display: none; }
+#sopsView .overview-metric span { display: block; color: var(--hui-muted); font-size: 12px; }
+#sopsView .overview-metric b { display: block; margin: 6px 0 2px; color: var(--hui-text); font-size: 26px; font-weight: 600; line-height: 1.2; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+#sopsView .overview-metric small { display: block; color: var(--hui-tertiary); font-size: 11.5px; }
+#sopsView .overview-metric.is-bad b { color: var(--hui-error); }
+
+/* ---------- Toolbar ---------- */
+#sopsView .sop-stats { display: flex; gap: 6px; }
+#sopsView .sop-stats .issue-stat {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--hui-border);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--hui-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+#sopsView .sop-toolbar .select {
+  box-sizing: border-box;
+  width: auto;
+  min-width: 140px;
+  height: 32px;
+  padding: 0 30px 0 11px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 7px;
+  background-color: var(--hui-surface);
+  background-image: linear-gradient(45deg, transparent 50%, var(--hui-tertiary) 50%), linear-gradient(135deg, var(--hui-tertiary) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 14px, calc(100% - 11px) 14px;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  box-shadow: none;
+  color: var(--hui-secondary);
+  font-family: var(--hui-sans);
+  font-size: 13px;
+  appearance: none;
+  cursor: pointer;
+}
+#sopsView .sop-toolbar .select:hover { border-color: var(--hui-border-strong); color: var(--hui-text); }
+#sopsView .sop-toolbar .select:focus { outline: 0; border-color: var(--hui-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--hui-accent) 14%, transparent); }
+
+/* ---------- Cards ---------- */
+#sopsView .sop-catalog { gap: 14px; }
+#sopsView .sop-card,
+#sopsView .sop-card.health-active,
+#sopsView .sop-card.health-blocked,
+#sopsView .sop-card.health-closed,
+#sopsView .sop-card.health-never,
+#sopsView .sop-card.generic {
+  min-height: 272px;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+  box-shadow: none;
+  color: var(--hui-text);
+  transform: none;
+  transition: border-color .18s var(--hui-ease-flow);
+}
+#sopsView .sop-card:hover { border-color: var(--hui-border-strong); box-shadow: none; transform: none; }
+#sopsView .sop-card::before { display: none; }
+#sopsView .sop-card-head { align-items: center; gap: 10px; color: var(--hui-secondary); font-size: 12px; }
+#sopsView .sop-card-head > div { gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; }
+#sopsView .sop-card-head > div b { flex: none; color: var(--hui-secondary); font-weight: 500; }
+#sopsView .sop-card-head > div small { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--hui-tertiary); font-size: 12px; line-height: 1.4; }
+
+#sopsView .health-dot-card { position: relative; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--hui-tertiary); box-shadow: none; }
+#sopsView .health-dot-card.closed { background: var(--hui-success); }
+#sopsView .health-dot-card.blocked { background: var(--hui-error); }
+#sopsView .health-dot-card.never { background: var(--hui-tertiary); }
+#sopsView .health-dot-card.active { background: var(--hui-accent); box-shadow: none; }
+#sopsView .health-dot-card.active::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; background: var(--hui-accent); opacity: .25; animation: sopDotBreath 1.8s var(--hui-ease-flow) infinite; }
+@keyframes sopDotBreath { 0% { transform: scale(.5); opacity: .35; } 70%, 100% { transform: scale(1.4); opacity: 0; } }
+
+#sopsView .sop-status,
+#sopsView .sop-status.published,
+#sopsView .sop-status.draft,
+#sopsView .sop-status.archived,
+#sopsView .sop-status.generic {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--hui-border);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--hui-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+#sopsView .sop-card h3 { margin: 14px 0 6px; color: var(--hui-text); font-size: 15px; font-weight: 600; line-height: 1.4; letter-spacing: -.01em; }
+#sopsView .sop-card p { color: var(--hui-muted); font-size: 12.5px; line-height: 1.6; -webkit-line-clamp: 4; min-height: 0; }
+
+#sopsView .sop-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 14px 0 0;
+  padding: 12px 0 0;
+  border: 0;
+  border-top: 1px solid var(--hui-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+#sopsView .sop-kpis span { gap: 3px; color: var(--hui-tertiary); font-size: 12px; white-space: nowrap; }
+#sopsView .sop-kpis b { color: var(--hui-text); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+#sopsView .sop-kpis .is-bad b { color: var(--hui-error); }
+
+#sopsView .sop-requirements { gap: 6px; margin-top: 10px; }
+#sopsView .req-chip,
+#sopsView .req-chip.ok,
+#sopsView .req-chip.missing {
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--hui-border);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--hui-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+#sopsView .req-chip.missing { color: var(--hui-warn); }
+
+/* ---------- Card footer ---------- */
+#sopsView .sop-card-foot {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hui-border-soft);
+  color: var(--hui-tertiary);
+  font-size: 12px;
+}
+#sopsView .sop-card-foot > span:first-child { flex: 1 1 auto; min-width: 0; margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sopsView .sop-card-foot time { flex: 1 0 100%; color: var(--hui-tertiary); font-size: 11.5px; }
+
+#sopsView .sop-card-foot .button.small,
+#sopsView .scope-share,
+#sopsView .scope-share.share-action,
+#sopsView .scope-share.share-action.is-shared,
+#sopsView .scope-share.adopt-action,
+#sopsView .scope-share.delete-action,
+#sopsView .scope-share.danger {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 7px;
+  background: var(--hui-surface);
+  box-shadow: none;
+  color: var(--hui-secondary);
+  font-family: var(--hui-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  transform: none;
+  cursor: pointer;
+  transition: background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow), border-color .18s var(--hui-ease-flow);
+}
+#sopsView .sop-card-foot .button.small:hover,
+#sopsView .scope-share:hover,
+#sopsView .scope-share.share-action:hover,
+#sopsView .scope-share.share-action.is-shared:hover,
+#sopsView .scope-share.adopt-action:hover {
+  border-color: var(--hui-border-strong);
+  background: var(--hui-canvas);
+  box-shadow: none;
+  color: var(--hui-text);
+  transform: none;
+}
+#sopsView .scope-share.danger:hover,
+#sopsView .scope-share.delete-action:hover:not(:disabled) {
+  border-color: var(--hui-error);
+  background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface));
+  color: var(--hui-error);
+}
+#sopsView .scope-share:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+#sopsView .scope-share:disabled { opacity: .45; cursor: not-allowed; }
+
+#sopsView .scope-tag {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 99px;
+  background: var(--hui-soft);
+  color: var(--hui-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ---------- Empty state ---------- */
+#sopsView #sopCatalog > .empty-properties { align-items: center; padding: 70px 20px; background: transparent; color: var(--hui-tertiary); font-size: 12.5px; text-align: center; }
+#sopsView #sopCatalog > .empty-properties b { max-width: 520px; color: var(--hui-text); font-size: 14px; font-weight: 500; line-height: 1.6; }
+
+@media (max-width: 1050px) {
+  #sopsView .sop-overview { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  #sopsView .page-heading { flex-direction: column; align-items: flex-start !important; gap: 14px !important; }
+  #sopsView .page-heading > div:first-child { flex: none; width: 100%; }
+  #sopsView .page-heading > .heading-actions { justify-content: flex-start !important; }
+  #sopsView .sop-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #sopsView .sop-toolbar { flex-direction: column; align-items: stretch; }
+  #sopsView .sop-toolbar-filters { width: 100%; margin-left: 0; }
+  #sopsView .sop-toolbar .select { flex: 1; min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #sopsView .health-dot-card.active::after { animation: none; }
+}

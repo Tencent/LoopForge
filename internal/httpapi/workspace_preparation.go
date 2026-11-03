@@ -49,7 +49,7 @@ func (h *runsHandlers) workspacePreparation(c *gin.Context) {
 		return
 	}
 	if c.Request.Method == "GET" {
-		if _, ok := h.groupUser(c, run.ExecutionContext.ProjectID); !ok {
+		if _, ok := h.projectRunUser(c, run.ExecutionContext.ProjectID); !ok {
 			return
 		}
 		state, err := h.engine.WorkspacePreparationStatus(c.Request.Context(), run.ID)
@@ -63,7 +63,7 @@ func (h *runsHandlers) workspacePreparation(c *gin.Context) {
 	if _, _, ok := h.workspaceEditActor(c); !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
 	c.Request = c.Request.WithContext(ctx)
 	var state runtime.WorkspacePreparationStatus

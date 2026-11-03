@@ -43,32 +43,6 @@ type mcpCallServer struct {
 	Aliases     []string          `json:"aliases,omitempty"`
 }
 
-// BindPersonalMCPHeadersOptional injects the responsible user's Taihu PAT into
-// Taihu-authenticated MCPs when a token is present. Unlike BindPersonalMCPHeaders
-// it does not fail the whole node when the token is missing; the helper errors
-// later if a script actually calls that MCP.
-func BindPersonalMCPHeadersOptional(assets domain.AgentAssetBundle, taihuPAT string) domain.AgentAssetBundle {
-	out := assets
-	out.MCPServers = append([]domain.MCPServerDefinition(nil), assets.MCPServers...)
-	token := strings.TrimSpace(taihuPAT)
-	for i := range out.MCPServers {
-		m := &out.MCPServers[i]
-		if strings.TrimSpace(m.AuthType) != MCPAuthTaihuPAT {
-			continue
-		}
-		m.Headers = cloneHeaders(m.Headers)
-		for key := range m.Headers {
-			if strings.EqualFold(strings.TrimSpace(key), "authorization") {
-				delete(m.Headers, key)
-			}
-		}
-		if token != "" {
-			m.Headers["Authorization"] = "Bearer " + token
-		}
-	}
-	return out
-}
-
 func mcpCallHostDir(workspace string) string {
 	return filepath.Join(workspace, ".agentflow", "runtime")
 }
@@ -451,8 +425,8 @@ func mcpCallInvoke(args []string) error {
 	if err != nil {
 		return err
 	}
-	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthTaihuPAT) && authorizationHeader(server.Headers) == "" {
-		return fmt.Errorf("MCP %s 需要太湖个人令牌：请先在个人凭证中配置", server.Name)
+	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	tool := strings.TrimSpace(args[1])
 	if tool == "" {
@@ -524,8 +498,8 @@ func mcpCallTools(args []string) error {
 	if err != nil {
 		return err
 	}
-	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthTaihuPAT) && authorizationHeader(server.Headers) == "" {
-		return fmt.Errorf("MCP %s 需要太湖个人令牌：请先在个人凭证中配置", server.Name)
+	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	var names []string
 	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") {

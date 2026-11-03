@@ -1,18 +1,11 @@
 import {test,expect} from '@playwright/test';
-import {signInUnconfigured} from './helpers.mjs';
+import {signInUnconfigured, appReady, switchProject, chat, openHome, fitsFrame} from './helpers.mjs';
 
 // Default journeys use an account with no model key, joined to the welcome
 // project. New self-registered accounts join it automatically. The real-model
-// capability question requires explicit AGENTFLOW_E2E_MODEL=1.
+// question requires explicit AGENTFLOW_E2E_MODEL=1.
 // Do not record the authentication request or settings form in trace artifacts.
 test.use({trace:'off',screenshot:'off'});
-
-async function signIn(page){
-  await signInUnconfigured(page);
-  await page.locator('#projectSwitcher').selectOption('welcome');
-  await page.goto('/#/collaboration');
-  await expect(page.locator('.ai-welcome h1')).toBeVisible();
-}
 
 for(const variant of [
   {name:'desktop',width:1600,height:1000,lang:'zh',theme:'light'},
@@ -20,108 +13,69 @@ for(const variant of [
   {name:'mobile-English-dark',width:390,height:844,lang:'en',theme:'dark'},
   {name:'small-mobile',width:320,height:700,lang:'zh',theme:'light'},
 ]){
-  test(`welcome shows all setup steps and keeps the draft reachable: ${variant.name}`,async({page},info)=>{
+  test(`home explains the missing key, offers starters and keeps the composer reachable: ${variant.name}`,async({page},info)=>{
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     await page.setViewportSize({width:variant.width,height:variant.height});
     await page.addInitScript(({lang,theme})=>{
       localStorage.setItem('loopforge.lang',lang);
-      localStorage.setItem('loopforge.theme.v3',theme);
+      localStorage.setItem('agentflow.theme.v3',theme);
     },variant);
-    await signIn(page);
-    const input=page.locator('#aiAssistant .ai-compose-input');
-    const guide=page.locator('.ai-onboarding');
-    await expect(input).toBeEnabled();
-    await expect(page.locator('.ai-explainer')).toHaveCount(0);
-    await expect(page.locator('[data-compose-hint]')).toBeVisible();
-    await expect(guide.locator('details, summary')).toHaveCount(0);
-    await expect(guide.locator('li')).toHaveCount(5);
-    await expect(guide.locator('.ai-onboarding-count')).toContainText('/ 4');
-    await expect(guide.locator('[data-step="repo"]')).toHaveAttribute('data-optional','true');
-    // Expanded onboarding must not push the first interaction down the page.
-    const heading=await page.locator('.ai-welcome h1').boundingBox();
-    const topbar=await page.locator('.topbar').boundingBox();
-    expect(heading.y-topbar.y-topbar.height).toBeLessThanOrEqual(48);
-    if(variant.width>=1280){
-      const composer=await page.locator('.ai-compose-box').boundingBox();
-      expect(composer.y+composer.height).toBeLessThanOrEqual(variant.height);
-    }
-    for(const step of ['key','project','chat','run','repo']){
-      const row=guide.locator(`[data-step="${step}"]`);
-      await row.scrollIntoViewIfNeeded();await expect(row).toBeInViewport();
-    }
-    await page.locator('.ai-compose-box').scrollIntoViewIfNeeded();
-    for(const selector of ['.ai-compose-box','[data-compose-hint]']){
-      const box=await page.locator(selector).boundingBox();
-      expect(box.y,selector).toBeGreaterThanOrEqual(56);
-      expect(box.y+box.height,selector).toBeLessThanOrEqual(variant.height);
-      expect(box.x,selector).toBeGreaterThanOrEqual(0);
-      expect(box.x+box.width,selector).toBeLessThanOrEqual(variant.width);
-    }
+    await signInUnconfigured(page);
+    const input=await openHome(page);
+    const frame=chat(page);
+    await expect(page.locator('html')).toHaveAttribute('data-theme',variant.theme);
+    await expect(frame.locator('html')).toHaveAttribute('data-theme',variant.theme);
+    const notice=frame.locator('.credential-notice');
+    await expect(notice).toBeVisible();
+    await expect(notice.getByRole('button')).toBeVisible();
+    const box=frame.locator('.composer-column');
+    await box.scrollIntoViewIfNeeded();
+    await expect.poll(()=>fitsFrame(box)).toBe(true);
+    await expect.poll(()=>fitsFrame(notice)).toBe(true);
+    // Every composer control, the send button last, stays on screen at phone widths.
+    for(const control of await frame.locator('.composer-toolbar > :not(input):not(.toolbar-spacer)').all())await expect.poll(()=>fitsFrame(control)).toBe(true);
+    // A first conversation is personal until a project is picked.
+    await expect(frame.locator('.project-picker')).toHaveClass(/is-unset/);
+    const starters=frame.locator('.home-starter');
+    await expect(starters).toHaveCount(3);
+    for(let i=0;i<3;i++){await starters.nth(i).scrollIntoViewIfNeeded();await expect(starters.nth(i)).toBeInViewport()}
+    expect(await frame.locator('html').evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-    const guideBox=await guide.boundingBox(),composeBox=await page.locator('.ai-compose-box').boundingBox();
-    expect(guideBox.y+guideBox.height).toBeLessThanOrEqual(composeBox.y);
-    await expect(page.locator('.ai-compose-box [data-compose-hint]')).toBeVisible();
-    const warning=await page.locator('[data-compose-hint]').evaluate(el=>{
-      const style=getComputedStyle(el);return {color:style.color,background:style.backgroundColor};
-    });
-    expect(warning.background).not.toBe('rgba(0, 0, 0, 0)');
-    expect(warning.color).not.toBe(await page.locator('.ai-welcome>p').evaluate(el=>getComputedStyle(el).color));
-    if(variant.lang==='en'){
-      await expect(guide.locator('header')).not.toContainText(/[\u3400-\u9fff]/);
-      await expect(page.locator('[data-compose-hint]')).not.toContainText(/[\u3400-\u9fff]/);
-    }
-    await page.screenshot({path:info.outputPath(`welcome-${variant.name}.png`)});
+    await page.screenshot({path:info.outputPath(`home-${variant.name}.png`)});
     await input.fill('Draft a small tool');
-    await expect(page.locator('#aiAssistant button[type="submit"]')).toBeDisabled();
-    // The capability question remains available after a previous chat.
-    await page.evaluate(()=>{localStorage.setItem('loopforge.onboarding.chatted','1');window.AgentFlowAssistant.sync()});
-    const expanded=await guide.boundingBox(),composer=await page.locator('.ai-compose-box').boundingBox();
-    expect(expanded.y+expanded.height).toBeLessThanOrEqual(composer.y);
-    await expect(guide.locator('[data-onboarding-step="chat"]')).toBeVisible();
-    await guide.locator('[data-onboarding-step="chat"]').click();
-    await expect(input).toHaveValue('Draft a small tool');
-    await expect(input).toBeFocused();
-    await expect(guide.locator('details, summary')).toHaveCount(0);
-    await page.locator('[data-onboarding-dismiss]').click();
-    await expect(guide).toHaveCount(0);
     await page.reload();
-    await expect(guide).toHaveCount(0);
-    await expect(input).toBeEnabled();
+    await expect(composer()).toHaveValue('Draft a small tool');
+    await composer().fill('');
     expect(errors).toEqual([]);
+    function composer(){return chat(page).locator('.composer-column textarea')}
   });
 }
 
-test('the checklist no-key demo starts a real SOP and waits for human approval',async({page})=>{
+test('the welcome SOP needs no key, runs a real script and waits for approval in the run view',async({page})=>{
   test.setTimeout(120_000);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await signIn(page);
-  let runId='',issueId='';
+  await signInUnconfigured(page);
+  await switchProject(page,'welcome');
+  await page.locator('.nav[data-view="sops"]').click();
+  const card=page.locator('article.sop-card[data-sop="welcome-workflow"]');
+  await expect(card).toBeVisible();
+  await expect(card.locator('.sop-requirements .sop-badge')).toHaveCount(1);
+  await expect(card.locator('.sop-requirements .sop-badge')).toHaveClass(/tone-success/);
+  let runId='';
   try{
-    const creation=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/api/issues');
-    await page.locator('[data-onboarding-step="run"]').click();
-    const response=await creation;
-    expect(response.ok()).toBe(true);
-    issueId=(await response.json()).id;
-    await expect.poll(async()=>{
-      const r=await page.request.get(`/api/issues/${issueId}/runs`);
-      expect(r.ok()).toBe(true);
-      const data=await r.json(),runs=Array.isArray(data)?data:(data?.items||[]);
-      runId=runs[0]?.id||runs[0]?.runId||'';
-      return runId;
-    },{timeout:60_000}).not.toBe('');
-    const read=async()=>{
-      const response=await page.request.get(`/api/runs/${runId}`);
-      expect(response.ok()).toBe(true);
-      return response.json();
-    };
+    const created=await page.request.post('/api/runs',{data:{workflowId:'welcome-workflow',projectId:'welcome',input:'Browser acceptance: approve from the run view'}});
+    expect(created.ok()).toBe(true);runId=(await created.json()).id;
+    const read=async()=>{const r=await page.request.get(`/api/runs/${runId}`);expect(r.ok()).toBe(true);return r.json()};
     await expect.poll(async()=>(await read()).status,{timeout:60_000}).toBe('waiting');
-    const run=await read();issueId=run.issueId;
+    const run=await read();
     expect(run.nodes.prepare.status).toBe('succeeded');
     expect(run.nodes.approve.status).not.toBe('succeeded');
     expect(run.artifacts.some(a=>a.name==='welcome')).toBe(true);
-    await expect(page.locator('[data-approve="approve"]').first()).toBeVisible({timeout:15_000});
-    await page.evaluate(()=>window.LoopForgeTour.closeRunTour());
-    await page.locator('[data-approve="approve"]').first().click();
+    await page.goto(`/#/runs/${encodeURIComponent(runId)}`);
+    await page.locator('[data-run-node="approve"]').click();
+    const approve=page.locator('[data-approve="approve"]').first();
+    await expect(approve).toBeVisible({timeout:15_000});
+    await approve.click();
     await expect.poll(async()=>(await read()).status,{timeout:30_000}).toBe('succeeded');
     expect(errors).toEqual([]);
   }finally{
@@ -129,23 +83,47 @@ test('the checklist no-key demo starts a real SOP and waits for human approval',
       await page.request.post(`/api/runs/${runId}/cancel`,{data:{}}).catch(()=>{});
       await page.request.delete(`/api/runs/${runId}`).catch(()=>{});
     }
-    if(issueId)await page.request.delete(`/api/issues/${issueId}`).catch(()=>{});
   }
 });
 
-test('asking about capabilities without a model key opens setup and preserves the prepared question',async({page})=>{
+test('home starters prepare a question or open quick access without calling a model',async({page})=>{
   let generations=0;
   page.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/assistant/generations')generations++});
-  await signIn(page);
-  await page.locator('[data-onboarding-step="chat"]').click();
-  await expect(page.locator('#userCredentialForm [name="codeBuddyApiKey"]')).toBeFocused();
-  await page.locator('.brand[data-view="collaboration"]').click();
-  await expect(page.locator('#aiAssistant .ai-compose-input')).toHaveValue(/LoopForge/);
-  await expect(page.locator('#aiAssistant button[type="submit"]')).toBeDisabled();
+  await signInUnconfigured(page);
+  const input=await openHome(page);
+  const frame=chat(page);
+  await frame.locator('.home-starter').filter({hasText:'选用 SOP 与角色'}).click();
+  await expect(input).toHaveValue(/SOP/);
+  await expect(input).toBeFocused();
+  await input.fill('');
+  await frame.locator('.home-starter').filter({hasText:'快速接入'}).click();
+  const wizard=frame.getByRole('dialog',{name:'快速接入'});
+  await expect(wizard).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(wizard).toBeHidden();
   expect(generations).toBe(0);
 });
 
-test('the checklist asks a real model about capabilities with one click',async({page})=>{
+test('sending without a model key is refused before any request, with a way to configure it',async({page})=>{
+  let writes=0;
+  page.on('request',r=>{if(r.method()!=='GET'&&new URL(r.url()).pathname.startsWith('/api/assistant/'))writes++});
+  await signInUnconfigured(page);
+  const input=await openHome(page);
+  const frame=chat(page);
+  const text='No key yet: this must be refused before any model runs.';
+  await input.fill(text);
+  await frame.locator('.send-button').click();
+  const configure=frame.getByRole('button',{name:'去配置 CodeBuddy API Key'});
+  await expect(configure).toBeVisible();
+  await expect(input).toHaveValue(text);
+  expect(writes).toBe(0);
+  await configure.click();
+  await expect(page).toHaveURL(/#\/settings/);
+  await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  await page.keyboard.press('Escape');
+});
+
+test('the home composer asks a real model with one click',async({page})=>{
   test.skip(process.env.AGENTFLOW_E2E_MODEL!=='1','Requires a configured model key and AGENTFLOW_E2E_MODEL=1');
   test.setTimeout(300_000);
   const {password}=await import('./helpers.mjs');
@@ -153,21 +131,21 @@ test('the checklist asks a real model about capabilities with one click',async({
   await page.locator('[name="login"]').fill(process.env.LOOPFORGE_TEST_USER||'admin');
   await page.locator('[name="password"]').fill(password());
   await page.locator('#loginSubmit').click();
-  await expect(page.locator('#projectSwitcher')).toBeVisible();
-  await page.locator('#projectSwitcher').selectOption('welcome');
-  await page.goto('/#/collaboration');
-  let sessionId='';
+  await appReady(page);
+  await switchProject(page,'welcome');
+  const input=await openHome(page);
+  const frame=chat(page);
+  const sessionId=()=>new URL(page.frames().find(f=>f.url().includes('/chatbot/'))?.url()||'http://x/').searchParams.get('session')||'';
   try{
-    await page.locator('[data-onboarding-step="chat"]').click();
-    await expect(page.locator('#aiAssistant .ai-role-user').last()).toContainText('LoopForge');
-    const reply=page.locator('#aiAssistant .ai-role-assistant').last();
-    await expect(reply.locator('.ai-message-actions.is-complete')).toBeVisible({timeout:240_000});
-    expect((await reply.innerText()).length).toBeGreaterThan(30);
-    sessionId=await page.evaluate(()=>window.AgentFlowAssistant.sessionId());
-    expect(sessionId).not.toBe('');
+    await frame.locator('.home-starter').filter({hasText:'选用 SOP 与角色'}).click();
+    await input.press('End');await input.pressSequentially('只介绍，不要创建或修改任何数据。');
+    await frame.locator('.send-button').click();
+    await expect(frame.locator('.message.user').last()).toContainText('SOP');
+    const reply=frame.locator('.message.assistant').last();
+    await expect.poll(async()=>(await reply.innerText()).length,{timeout:240_000}).toBeGreaterThan(30);
+    await expect.poll(sessionId).not.toBe('');
   }finally{
-    sessionId=sessionId||await page.evaluate(()=>window.AgentFlowAssistant.sessionId());
-    if(sessionId)await page.request.delete(`/api/assistant/sessions/${sessionId}`);
+    if(sessionId())await page.request.delete(`/api/assistant/sessions/${sessionId()}`);
   }
 });
 
@@ -178,9 +156,9 @@ for(const variant of [
   test(`repository setup explains the missing token and aligns its checkbox: ${variant.name}`,async({page},info)=>{
     await page.setViewportSize({width:variant.width,height:variant.height});
     await page.addInitScript(({lang,theme})=>{
-      localStorage.setItem('loopforge.lang',lang);localStorage.setItem('loopforge.theme.v3',theme);
+      localStorage.setItem('loopforge.lang',lang);localStorage.setItem('agentflow.theme.v3',theme);
     },variant);
-    await signIn(page);
+    await signInUnconfigured(page);
     const identity=(await page.request.get('/api/auth/current').then(r=>r.json())).user;
     // Projects have no delete endpoint. Reuse one dedicated acceptance fixture;
     // every repository created below is removed and its settings are restored.
@@ -195,9 +173,9 @@ for(const variant of [
     let repositoryId='';
     try{
       await page.reload();
-      await page.locator('#projectSwitcher').selectOption(projectId);
-      await expect(page.locator('.ai-onboarding')).toBeVisible();
-      await page.locator('[data-onboarding-step="repo"]').click();
+      await switchProject(page,projectId);
+      await page.locator('.nav[data-view="issues"]').click();
+      await page.evaluate(()=>openRepositoryModal());
       const modal=page.locator('#repositoryModal');
       await expect(modal).toHaveClass(/open/);
       const checkbox=modal.locator('[name="makeDefault"]');
@@ -210,23 +188,20 @@ for(const variant of [
       await expect(modal.locator('#repositoryCredentialHint')).toHaveAttribute('data-configured','false');
       if(variant.lang==='en')await expect(modal.locator('#repositoryCredentialHint')).not.toContainText(/[\u3400-\u9fff]/);
       await page.screenshot({path:info.outputPath(`repository-${variant.name}.png`)});
-      await modal.locator('[name="repoUrl"]').fill('https://github.com/Robert0622/agentflow-e2e-0930');
+      await modal.locator('[name="repoUrl"]').fill('https://github.com/example/loopforge-e2e-fixture');
       const saved=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/api/repositories');
       await modal.locator('button[type="submit"]').click();
       const response=await saved;expect(response.ok()).toBe(true);repositoryId=(await response.json()).id;
       await expect.poll(async()=>(await page.request.get(`/api/projects/${projectId}`).then(r=>r.json())).defaultRepositoryId).toBe(repositoryId);
       await expect(modal.locator('#repositoryCredentialHint')).toHaveAttribute('data-configured','false');
-      await modal.locator('.repository-close').first().click();
-      const step=page.locator('.ai-onboarding [data-step="repo"]');
-      await expect(step).not.toHaveClass(/is-done/);
-      await step.locator('[data-onboarding-step="repo"]').click();
-      await expect(page.locator('#userCredentialForm [name="gitToken"]')).toBeFocused();
-      // The same direct setup link also works inside the repository modal.
-      await page.goto('/#/collaboration');
-      await page.evaluate(()=>openRepositoryModal());
-      await page.locator('[data-repository-configure-token]').click();
-      await expect(page.locator('#repositoryModal')).not.toHaveClass(/open/);
-      await expect(page.locator('#userCredentialForm [name="gitToken"]')).toBeFocused();
+      // The token link leaves the modal for the GitHub token step of the credential wizard.
+      await modal.locator('[data-repository-configure-token]').click();
+      await expect(modal).not.toHaveClass(/open/);
+      await expect(page).toHaveURL(/#\/settings/);
+      const wizard=page.locator('#credentialWizard');
+      await expect(wizard.locator('.credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+      await expect(wizard).toContainText('GitHub');
+      await page.keyboard.press('Escape');
     }finally{
       const restore=await page.request.put('/api/projects',{data:project});expect(restore.ok()).toBe(true);
       if(repositoryId){const deleted=await page.request.delete(`/api/repositories?id=${encodeURIComponent(repositoryId)}`);expect(deleted.ok()).toBe(true)}

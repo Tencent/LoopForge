@@ -10,6 +10,7 @@ import (
 
 func TestSharedConversationForkPreservesOriginalAndVisibility(t *testing.T) {
 	h, a, b, out, s := sharedWorkbenchFixture(t)
+	s.Model, s.Effort = assistantChatDefaultModel, "max"
 	s.Messages = append(s.Messages, domain.AssistantMessage{Role: "assistant", Content: `{"message":"草稿","drafts":[{"tool":"issues_save","body":{"title":"旧"}}]}`}, domain.AssistantMessage{Role: "user", Content: "原消息"})
 	if err := h.repo.PutAssistantSession(a.ID, s); err != nil {
 		t.Fatal(err)
@@ -26,7 +27,7 @@ func TestSharedConversationForkPreservesOriginalAndVisibility(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &branch); err != nil {
 		t.Fatal(err)
 	}
-	if !branch.Shared || branch.ParentSessionID != s.ID || branch.UserID != b.ID || len(branch.Messages) != 3 || branch.Messages[2].AuthorID != b.ID || branch.Messages[2].Content != "修改后\n继续" {
+	if !branch.Shared || branch.ParentSessionID != s.ID || branch.UserID != b.ID || len(branch.Messages) != 3 || branch.Messages[2].AuthorID != b.ID || branch.Messages[2].Content != "修改后\n继续" || branch.Effort != "max" {
 		t.Fatal("invalid branch", branch)
 	}
 	var draft map[string]any

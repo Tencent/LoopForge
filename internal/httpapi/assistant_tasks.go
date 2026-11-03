@@ -124,7 +124,7 @@ func (h *assistantHandlers) runTaskNow(c *gin.Context) {
 	}
 	user, ok := h.repo.User(current.ID)
 	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		c.JSON(400, gin.H{"error": "请先在个人设置中配置自己的 CodeBuddy API Key"})
+		c.JSON(400, gin.H{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
 		return
 	}
 	task, err := loadAssistantTask(h.repo, current.ID, c.Param("id"))
@@ -167,6 +167,7 @@ func (h *assistantHandlers) tickAssistantTasks() {
 }
 
 func (h *assistantHandlers) runStoredAssistantTask(user domain.User, task assistantTask) {
+	defer inflightTasks.Add()()
 	ctx, cancel := context.WithTimeout(context.Background(), assistantChatTimeout)
 	defer cancel()
 	if err := h.executeAssistantTask(ctx, user, &task); err != nil {

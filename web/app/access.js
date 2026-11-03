@@ -94,26 +94,67 @@ function renderGuideSetup(){
   }
   renderGuideSetupBody(body,user,isGuest);
 }
+let credentialFocusRequest=0;
 function gotoCredential(name){
+  const request=++credentialFocusRequest;
+  if(!CREDENTIAL_FIELDS[name]){switchView('settings');return}
   switchView('settings');
-  setTimeout(()=>{
-    const el=document.querySelector(`#personalSettingsContent input[name="${name}"]`);
-    if(!el)return;
-    el.scrollIntoView({block:'center',behavior:'smooth'});
-    const card=el.closest('fieldset');if(!card)return;
-    card.classList.add('credential-highlight');
-    setTimeout(()=>card.classList.remove('credential-highlight'),2400);
-    el.focus({preventScroll:true});
-  },150);
+  const requestedRoute=settingsRouteTransition;
+  const focusAfter=performance.now()+150;
+  const focusCredential=()=>{
+    const transition=settingsRouteTransition;
+    if(request!==credentialFocusRequest||(transition&&transition!==requestedRoute))return;
+    if(transition&&transition.target!=='settings')return;
+    if(activeViewName()!=='settings'){
+      // The outgoing workspace drawer closes before settings is mounted.
+      // A different route cancels this request instead of stealing focus later.
+      if(transition===requestedRoute&&transition?.phase==='closing')requestAnimationFrame(focusCredential);
+      return;
+    }
+    if(performance.now()<focusAfter){requestAnimationFrame(focusCredential);return}
+    const panel=document.querySelector('#personalSettingsContent #credentialPanel'),row=panel?.querySelector(`[data-credential-row="${name}"]`);
+    if(!row||!panel.getClientRects().length)return;
+    // Missing credentials open the wizard on its fill-in step; configured ones expand in place.
+    if(row.classList.contains('is-configured'))revealCredentialRow(name);
+    else openCredentialWizard(name);
+  };
+  requestAnimationFrame(focusCredential);
 }
+// Personal credential fields and the errors they cause. Keep the rules in
+// sync with chatbot/src/credentials.js.
+const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token'};
+const CREDENTIAL_RULES=[
+  ['codexApiKey',/Codex[^。\n]{0,16}API Key/i],
+  ['claudeCodeApiKey',/Claude Code[^。\n]{0,16}API Key/i],
+  ['codeBuddyApiKey',/CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key/i],
+  ['gitToken',/Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i],
+];
+function credentialHint(text){
+  const message=String(text||'');
+  if(!message)return null;
+  const rule=CREDENTIAL_RULES.find(([,re])=>re.test(message));
+  return rule?{field:rule[0],label:CREDENTIAL_FIELDS[rule[0]],owner:/责任人|Owner|该账号/i.test(message)}:null;
+}
+function credentialActionHTML(text){
+  const hint=credentialHint(text);
+  if(!hint)return '';
+  return `<div class="credential-action"><button type="button" class="button ghost small" data-goto-credential="${hint.field}">去配置 ${escapeHTML(hint.label)} →</button>${hint.owner?'<small>需由责任人本人在个人配置中配置</small>':''}</div>`;
+}
+document.addEventListener('click',e=>{
+  const button=e.target.closest?.('[data-goto-credential]');
+  if(button)gotoCredential(button.dataset.gotoCredential);
+});
 function renderGuideSetupBody(body,user,isGuest){
   if(isGuest){
-    body.innerHTML=`<div class="quick-wrap"><div class="access-card access-tokens"><div class="token-empty"><b>请先登录</b><p>最小接入配置需要绑定到你的账号：执行器 API Key 和 GitHub Git Token 保存在个人设置里；也可以绑定本机 CLI。</p><button type="button" class="button primary" id="setupLogin">登录后配置</button></div></div></div>`;
+    body.innerHTML=`<div class="quick-wrap"><div class="access-card access-tokens"><div class="token-empty"><b>请先登录</b><p>最小接入配置需要绑定到你的账号：执行器 API Key 和 GitHub Git Token 保存在个人配置里；也可以绑定本机 CLI。</p><button type="button" class="button primary" id="setupLogin">登录后配置</button></div></div></div>`;
     body.querySelector('#setupLogin').onclick=()=>{if(state.loginUrl)location.href=state.loginUrl};
     return;
   }
   const stored=userById(user.id)||{};
-  const cbReady=!!stored.codeBuddyApiKeyConfigured,gfReady=!!stored.gitTokenConfigured,thReady=!!stored.taihuPatConfigured;
+  const cbOwn=!!stored.codeBuddyApiKeyConfigured,gfReady=!!stored.gitTokenConfigured;
+  // 未配置个人 CodeBuddy Key 时，对话和 SOP 都可以用平台共享模型（只限这一个模型）。
+  const cbShared=!cbOwn&&!!state.data?.sponsoredModel;
+  const cbReady=cbOwn||cbShared;
   const modelReady=cbReady||!!stored.codexApiKeyConfigured||!!stored.claudeCodeApiKeyConfigured||!!state.defaultRunnerId;
   const credReady=modelReady&&gfReady;
   // 第 2 步：就绪度按「用户所属项目」计算（负责人或成员包含自己）。
@@ -125,21 +166,22 @@ function renderGuideSetupBody(body,user,isGuest){
   const selMine=myProjects.find(p=>p.id===state.projectFilter);
   const sopScope=selMine?[selMine]:myProjects;
   const mySops=(state.data.workflows||[]).filter(w=>!catalogGeneric(w)&&sopScope.some(p=>w.projectId===p.id));
-  const sopReady=mySops.length>0;
+  const hasDefaultGeneric=sopScope.some(p=>p.workflowId&&(state.data.workflows||[]).some(w=>w.id===p.workflowId&&catalogGeneric(w)));
+  const sopReady=mySops.length>0||hasDefaultGeneric;
   const allReady=credReady&&projReady&&sopReady;
   const credDone=[modelReady,gfReady].filter(Boolean).length;
   const badge=ready=>`<span class="setup-status ${ready?'ready':'missing'}">${ready?'✓ 已就绪':'未完成'}</span>`;
   const subItem=(name,label,ready,applyUrl,hint)=>`<div class="setup-sub ${ready?'is-ready':''}"><div class="setup-sub-info"><b>${label}</b>${hint?`<small>${hint}</small>`:''}</div>${ready?'':`<a class="setup-mini" href="${applyUrl}" target="_blank" rel="noopener noreferrer">申请 ↗</a>`}<button type="button" class="setup-mini" data-setup-cred="${name}">${ready?'查看':'去填写'} →</button></div>`;
   // 第 1 步：三张个人凭据一次性配齐
-  const credCard=`<div class="setup-card ${credReady?'is-ready':''}"><div class="setup-card-head"><b>① 配个人凭据</b><small>个人设置 · 一次配齐</small>${badge(credReady)}</div>
-    <p>${lfT('在<b>个人设置</b>中配置 CodeBuddy API Key 与 GitHub Token，或绑定本机 CLI。Main Bot 和内置 SOP 默认都使用 CodeBuddy。','Configure your CodeBuddy API key and GitHub token in <b>Settings</b>, or connect a local CLI. Main Bot and the built-in SOPs use CodeBuddy by default.')}</p>
+  const credCard=`<div class="setup-card ${credReady?'is-ready':''}"><div class="setup-card-head"><b>① 配个人凭据</b><small>个人配置 · 一次配齐</small>${badge(credReady)}</div>
+    <p>${lfT('在<b>个人配置</b>中配置 CodeBuddy API Key 与 GitHub Token，或绑定本机 CLI。Main Bot 和内置 SOP 默认都使用 CodeBuddy。','Configure your CodeBuddy API key and GitHub token in <b>Settings</b>, or connect a local CLI. Main Bot and the built-in SOPs use CodeBuddy by default.')}</p>
     <div class="setup-steps">
-      ${subItem('codeBuddyApiKey','CodeBuddy API Key',cbReady,'https://www.codebuddy.ai/','Agent 调模型执行任务')}
+      ${subItem('codeBuddyApiKey','CodeBuddy API Key',cbOwn,'https://www.codebuddy.ai/',cbShared?'未配置时对话和 SOP 都用平台共享模型 Deepseek-V4.1-Flash；配置后可使用其他模型':'Agent 调模型执行任务')}
       ${subItem('codexApiKey','Codex API Key',!!stored.codexApiKeyConfigured,'https://platform.openai.com/api-keys','公共 SOP 默认执行器')}
       ${subItem('claudeCodeApiKey','Claude Code API Key',!!stored.claudeCodeApiKeyConfigured,'https://console.anthropic.com/','可按角色选择的执行器')}
       ${subItem('gitToken','GitHub Git Token',gfReady,'https://github.com/settings/tokens','目标仓库需要 Contents 和 Pull requests 读写权限')}
     </div>
-    <button type="button" class="button primary small" data-setup-cred="codeBuddyApiKey" style="margin-top:12px">打开个人设置 →</button></div>`;
+    <button type="button" class="button primary small" data-setup-cred="gitToken" style="margin-top:12px">打开个人配置 →</button></div>`;
   // 第 2 步：加入已有项目或新建项目
   const projDesc=!projects.length
     ?'平台还没有项目：点「新建项目」，填标识 / Key / 名称，粘贴 GitHub 仓库地址，默认 SOP 保持「通用后端交付 SOP」，保存。'
@@ -270,7 +312,7 @@ async function revokePersonalToken(id){
 
 let commandMatches=[],commandSelectedIndex=0;
 function commandCatalog(){
-  const pages=[['dashboard','工作总览','看失败、待确认和进行中的需求'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['sops','SOP 流程','可复用的 AI 协作流程'],['runs','运行记录','查看节点日志和产物'],['metrics','研发效能','产能、效率、质量、成本与自动化看板'],['deployments','部署耗时','按分支查看测试环境流水线耗时'],['agents','角色定义','管理角色和能力资产'],['mcp','MCP 管理','添加项目级或个人自定义 MCP'],['rules','规则管理','当前项目的行为与执行约束'],['skills','技能管理','当前项目的技能和附加文件'],['dockerfiles','Dockerfile','管理项目容器构建定义'],['environments','环境安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','沙箱管理','管理项目运行隔离策略'],['observability','用量分析','Token 与质量'],['businessDomains','业务领域','分类管理与跨项目汇报'],['projects','项目配置','项目、成员和仓库'],['guide','接入指南','最小接入配置、MCP 或 REST API 接入']].filter(([view])=>view!=='deployments'||canShowSkillhubEfficiency()).map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
+  const pages=[['dashboard','工作总览','看失败、待确认和进行中的需求'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['sops','流程模板','Issue 修复与需求开发'],['runs','运行记录','查看节点日志和产物'],['metrics','研发效能','产能、效率、质量、成本与自动化看板'],['deployments','部署耗时','按分支查看测试环境流水线耗时'],['agents','角色定义','管理角色和能力资产'],['mcp','MCP 管理','添加项目级或个人自定义 MCP'],['rules','规则管理','当前项目的行为与执行约束'],['skills','技能管理','当前项目的技能和附加文件'],['dockerfiles','Dockerfile','管理项目容器构建定义'],['environments','环境安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','沙箱管理','管理项目运行隔离策略'],['observability','统计','用量分析 · Token 与质量'],['businessDomains','业务领域','分类管理与跨项目汇报'],['projects','项目配置','项目、成员和仓库'],['guide','接入指南','最小接入配置、MCP 或 REST API 接入']].filter(([view])=>view!=='deployments'||canShowSkillhubEfficiency()).map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
   const issues=(state.data.issues||[]).map(i=>({kind:'需求',title:i.title,meta:`${i.priority||'—'} · ${issueStatusLabel(i.status)}`,action:()=>openIssueDetail(i.id)}));
   const runs=(state.data.runs||[]).map(r=>({kind:'运行',title:runIssueTitle(r),meta:`${runDisplayStatus(r)} · ${r.workflowSnapshot?.name||r.workflowId}`,action:()=>openRunFromId(r.id)}));
   const sops=catalogWorkflows().map(w=>({kind:'SOP',title:w.name,meta:`${w.status==='published'?'已发布':'草稿'} · ${w.nodes?.length||0} 个节点`,action:()=>{state.workflow=clone(w);state.selectedNode=null;switchView('flow')}}));

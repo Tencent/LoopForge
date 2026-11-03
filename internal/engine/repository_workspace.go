@@ -5,10 +5,13 @@ import (
 	"agentflow/internal/gitwork"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -180,25 +183,30 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 			return clearErr
 		}
 		if retryErr := clone(baseBranch, false); retryErr != nil {
-			if !shouldSeedIntegrateBranch(repository, baseBranch) {
-				return err
-			}
-			if mk := reset(workspace); mk != nil {
-				return mk
-			}
-			seed := strings.TrimSpace(repository.DefaultBranch)
-			if seed == "" {
-				seed = "master"
-			}
-			if seedErr := clone(seed, false); seedErr != nil {
-				return err
-			}
-			if pub := publishIntegrateBranch(ctx, workspace, baseBranch); pub != nil {
-				if clearErr := reset(workspace); clearErr != nil {
-					return clearErr
+			if seeded, seedErr := seedEmptyRepository(ctx, workspace, gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), repository.DefaultBranch, baseBranch, reset); seeded {
+				if seedErr != nil {
+					return seedErr
 				}
-				if retry := clone(baseBranch, false); retry != nil {
-					return fmt.Errorf("create integration branch %s: %w", baseBranch, pub)
+			} else if !shouldSeedIntegrateBranch(repository, baseBranch) {
+				return err
+			} else {
+				if mk := reset(workspace); mk != nil {
+					return mk
+				}
+				seed := strings.TrimSpace(repository.DefaultBranch)
+				if seed == "" {
+					seed = "master"
+				}
+				if seedErr := clone(seed, false); seedErr != nil {
+					return err
+				}
+				if pub := publishIntegrateBranch(ctx, workspace, baseBranch); pub != nil {
+					if clearErr := reset(workspace); clearErr != nil {
+						return clearErr
+					}
+					if retry := clone(baseBranch, false); retry != nil {
+						return fmt.Errorf("create integration branch %s: %w", baseBranch, pub)
+					}
 				}
 			}
 		}
@@ -237,6 +245,53 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		}
 	}
 	return recordRepositoryBaseline(workspace, baseBranch)
+}
+
+// seedEmptyRepository handles a freshly created Gongfeng repository with no
+// commits: clone has no branch to check out, so neither an assistant
+// workspace nor an SOP run could write the first file (the owner had to make an
+// initial commit by hand). It publishes the base branch
+// (and the default branch first, when the base is an integration branch) with
+// one empty commit and leaves workspace on it. seeded is false when the
+// remote is unreachable or has branches; the clone error then stands.
+func seedEmptyRepository(ctx context.Context, workspace, remote, defaultBranch, baseBranch string, reset func(string) error) (seeded bool, err error) {
+	heads, lsErr := runGit(ctx, workspace, "ls-remote", "--heads", remote)
+	if lsErr != nil || strings.TrimSpace(heads) != "" {
+		return false, nil
+	}
+	if err := reset(workspace); err != nil {
+		return true, err
+	}
+	first := strings.TrimSpace(defaultBranch)
+	if first == "" {
+		first = "master"
+	}
+	for _, args := range [][]string{
+		{"init", "-q", "."},
+		{"symbolic-ref", "HEAD", "refs/heads/" + first},
+		{"remote", "add", "origin", remote},
+	} {
+		if _, err := runGit(ctx, workspace, args...); err != nil {
+			return true, fmt.Errorf("initialize empty repository: %w", err)
+		}
+	}
+	ensureGitIdentity(ctx, workspace)
+	if _, err := gitC(ctx, workspace, "commit", "-q", "--allow-empty", "-m", "Initialize repository"); err != nil {
+		return true, fmt.Errorf("initialize empty repository: %w", err)
+	}
+	branches := []string{first}
+	if baseBranch != first {
+		if _, err := gitC(ctx, workspace, "branch", baseBranch); err != nil {
+			return true, fmt.Errorf("initialize empty repository: %w", err)
+		}
+		branches = append(branches, baseBranch)
+	}
+	for _, branch := range branches {
+		if _, err := gitC(ctx, workspace, "push", "-u", "origin", branch); err != nil {
+			return true, fmt.Errorf("publish %s to the empty repository: %w", branch, err)
+		}
+	}
+	return true, nil
 }
 
 func liveDockerSandbox(workspace string) bool {
@@ -479,7 +534,22 @@ func defaultWorkBranch(issueNumber int, issueID string, now time.Time) string {
 	} else if issueID != "" {
 		branchOwner = "fix-" + safeGitRefSegment(issueID)
 	}
-	return "feature/" + branchOwner + "-" + now.In(time.Local).Format("20060102-1504")
+	branch := "feature/" + branchOwner + "-" + now.In(time.Local).Format("20060102-1504")
+	if issueNumber <= 0 && issueID == "" {
+		// Nothing ties these runs together (chat workspaces, free
+		// collaboration), so two started in the same minute must not share
+		// a branch: they would push into each other's commits and MR.
+		branch += "-" + workBranchNonce()
+	}
+	return branch
+}
+
+func workBranchNonce() string {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano()%(1<<24), 36)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func safeGitRefSegment(value string) string {

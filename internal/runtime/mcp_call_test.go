@@ -21,20 +21,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestBindPersonalMCPHeadersOptionalSkipsMissingPAT(t *testing.T) {
-	assets := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{
-		{ID: "iwiki", Name: "iWiki", Transport: "http", URL: "https://example.com", AuthType: MCPAuthTaihuPAT},
-	}}
-	bound := BindPersonalMCPHeadersOptional(assets, "")
-	if _, ok := bound.MCPServers[0].Headers["Authorization"]; ok {
-		t.Fatal("missing PAT should not invent an Authorization header")
-	}
-	bound = BindPersonalMCPHeadersOptional(assets, "tok")
-	if bound.MCPServers[0].Headers["Authorization"] != "Bearer tok" {
-		t.Fatalf("authorization = %q", bound.MCPServers[0].Headers["Authorization"])
-	}
-}
-
 func TestMCPCallAliasesMatchURLAndInstallID(t *testing.T) {
 	server := mcpCallServer{
 		ID:       "mcp-2214-project-dns",
@@ -57,7 +43,7 @@ func TestMCPCallAliasesMatchURLAndInstallID(t *testing.T) {
 
 func TestMCPCallCLIInvokesBoundHTTPServer(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer tai_pat" {
+		if r.Header.Get("Authorization") != "Bearer mcp-token" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -84,10 +70,10 @@ func TestMCPCallCLIInvokesBoundHTTPServer(t *testing.T) {
 
 	workspace := t.TempDir()
 	sb := &localSandbox{workspace: workspace}
-	assets := BindPersonalMCPHeadersOptional(domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{
+	assets := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{
 		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214", Transport: "http",
-		URL: gateway.URL, AuthType: MCPAuthTaihuPAT,
-	}}}, "tai_pat")
+		URL: gateway.URL, Headers: map[string]string{"Authorization": "Bearer mcp-token"},
+	}}}
 	env, err := ScriptMCPEnvironment(sb, workspace, assets.MCPServers)
 	if err != nil {
 		t.Fatal(err)
@@ -104,12 +90,15 @@ func TestMCPCallCLIInvokesBoundHTTPServer(t *testing.T) {
 	}
 }
 
-func TestMCPCallRequiresTaihuPATAtCallTime(t *testing.T) {
+func TestMCPCallRequiresPersonalCredentialAtCallTime(t *testing.T) {
 	workspace := t.TempDir()
 	sb := &localSandbox{workspace: workspace}
-	assets := BindPersonalMCPHeadersOptional(domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{
-		ID: "iwiki", Name: "iWiki", Transport: "http", URL: "https://example.com/mcp", AuthType: MCPAuthTaihuPAT,
-	}}}, "")
+	assets, err := BindGitHubMCPHeaders(domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{
+		ID: "github", Name: "GitHub", Transport: "http", URL: "https://api.githubcopilot.com/mcp/", AuthType: "github-token",
+	}}}, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	env, err := ScriptMCPEnvironment(sb, workspace, assets.MCPServers)
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +106,8 @@ func TestMCPCallRequiresTaihuPATAtCallTime(t *testing.T) {
 	for key, value := range env {
 		t.Setenv(key, value)
 	}
-	_, stderr, code := captureMCPCall(t, []string{"call", "iwiki", "search"})
-	if code != 1 || !strings.Contains(stderr, "太湖个人令牌") {
+	_, stderr, code := captureMCPCall(t, []string{"call", "github", "search"})
+	if code != 1 || !strings.Contains(stderr, "需要 GitHub Git Token") {
 		t.Fatalf("exit %d stderr = %q", code, stderr)
 	}
 }
@@ -154,7 +143,7 @@ func TestBindMCPWritesWorkspaceBinWithoutPATH(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "Authorization") && strings.Contains(string(raw), "Bearer") {
-		t.Fatal("unbound custom MCP should not carry a Taihu bearer")
+		t.Fatal("unbound custom MCP should not carry a personal bearer")
 	}
 }
 
