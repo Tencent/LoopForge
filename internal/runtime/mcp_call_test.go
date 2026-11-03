@@ -24,16 +24,16 @@ func TestMain(m *testing.M) {
 func TestMCPCallAliasesMatchURLAndInstallID(t *testing.T) {
 	server := mcpCallServer{
 		ID:       "mcp-2214-project-dns",
-		Name:     "七彩石（Rainbow） MCP",
+		Name:     "Config Center MCP",
 		MarketID: "2214",
-		URL:      "https://mcpgw.knot.example.com/rainbow",
+		URL:      "https://mcp-gateway.example.com/configcenter",
 		Aliases: mcpCallAliases(domain.MCPServerDefinition{
-			ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214", URL: "https://mcpgw.knot.example.com/rainbow",
+			ID: "mcp-2214-project-dns", Name: "Config Center MCP", MarketID: "2214", URL: "https://mcp-gateway.example.com/configcenter",
 		}),
 	}
-	got, err := matchMCPCallServer([]mcpCallServer{server}, "rainbow")
+	got, err := matchMCPCallServer([]mcpCallServer{server}, "configcenter")
 	if err != nil || got.ID != server.ID {
-		t.Fatalf("rainbow = %+v err=%v aliases=%v", got, err, server.Aliases)
+		t.Fatalf("configcenter = %+v err=%v aliases=%v", got, err, server.Aliases)
 	}
 	got, err = matchMCPCallServer([]mcpCallServer{server}, "2214")
 	if err != nil || got.ID != server.ID {
@@ -71,7 +71,7 @@ func TestMCPCallCLIInvokesBoundHTTPServer(t *testing.T) {
 	workspace := t.TempDir()
 	sb := &localSandbox{workspace: workspace}
 	assets := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{
-		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214", Transport: "http",
+		ID: "mcp-2214-project-dns", Name: "Config Center MCP", MarketID: "2214", Transport: "http",
 		URL: gateway.URL, Headers: map[string]string{"Authorization": "Bearer mcp-token"},
 	}}}
 	env, err := ScriptMCPEnvironment(sb, workspace, assets.MCPServers)
@@ -81,7 +81,7 @@ func TestMCPCallCLIInvokesBoundHTTPServer(t *testing.T) {
 	for key, value := range env {
 		t.Setenv(key, value)
 	}
-	stdout, stderr, code := captureMCPCall(t, []string{"call", "2214", "get_config", `{"group":"dnspod_intl.dnspod_api"}`})
+	stdout, stderr, code := captureMCPCall(t, []string{"call", "2214", "get_config", `{"group":"demodns_intl.demodns_api"}`})
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%q stdout=%q", code, stderr, stdout)
 	}

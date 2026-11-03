@@ -146,7 +146,7 @@ func TestGenericTemplateCloneCreatesProjectRolesAndRemapsNodes(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	gongfeng := domain.MCPServerDefinition{
 		ID: "mcp-61-project-alpha", Name: "Gongfeng MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer tapd-token"},
+		MarketID: "61", Transport: "http", URL: "https://mcp-gateway.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer tapd-token"},
 	}
 	if err := s.PutMCPServer(gongfeng); err != nil {
 		t.Fatal(err)

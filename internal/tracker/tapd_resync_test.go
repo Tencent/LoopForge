@@ -14,7 +14,7 @@ func TestResyncTAPDIssueRefreshesStoryContent(t *testing.T) {
 
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DNSPod", TAPDWorkspaceID: "10000000"}}}
+	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DemoDNS", TAPDWorkspaceID: "10000000"}}}
 
 	seed, err := svc.upsertTAPDStory(store, "dp", "10000000", tapdStory{
 		ID: "1001", Name: "旧标题", Description: "旧正文", Status: "planned",
@@ -63,7 +63,7 @@ func TestResyncTAPDIssueRefreshesBugContent(t *testing.T) {
 
 	svc := NewService()
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DNSPod", TAPDWorkspaceID: "10000000"}}}
+	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DemoDNS", TAPDWorkspaceID: "10000000"}}}
 
 	seed, err := svc.upsertTAPDBug(store, "dp", "10000000", tapdStory{
 		ID: "2001", Name: "缺陷B旧标题", Description: "缺陷旧正文", Status: "new",
@@ -88,7 +88,7 @@ func TestResyncTAPDIssueRefreshesBugContent(t *testing.T) {
 
 func TestResyncTAPDIssueRejectsNonTAPDSource(t *testing.T) {
 	svc := NewService()
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DNSPod"}}}
+	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DemoDNS"}}}
 	if _, err := svc.ResyncTAPDIssue(store, domain.Issue{ID: "local-1", ProjectID: "dp", Source: "local"}); err == nil {
 		t.Fatal("expected error for non-tapd issue")
 	}

@@ -85,7 +85,7 @@ func TestMaterializeUploadedSkillMdGetsFrontmatterWhenMissing(t *testing.T) {
 			ID: "sop", Name: "SOP", Description: "Issue 修复 SOP", Content: "payload should not win",
 			FileRefs: []domain.SkillFileRef{{Path: "SKILL.md", Size: 12, Mode: 0o644}},
 		}},
-		SkillFiles: map[string]map[string][]byte{"sop": {"SKILL.md": []byte("# DNSPod Issue 修复\n")}},
+		SkillFiles: map[string]map[string][]byte{"sop": {"SKILL.md": []byte("# DemoDNS Issue 修复\n")}},
 	}
 	agent := domain.AgentDefinition{ID: "tester", Name: "Tester"}
 	if _, err := materialize(workspace, "invoke-sop", domain.ExecutorDefinition{Kind: "codex"}, agent, assets); err != nil {
@@ -96,7 +96,7 @@ func TestMaterializeUploadedSkillMdGetsFrontmatterWhenMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(content)
-	if !strings.HasPrefix(strings.TrimSpace(text), "---") || !strings.Contains(text, "name: sop") || !strings.Contains(text, "# DNSPod Issue 修复") {
+	if !strings.HasPrefix(strings.TrimSpace(text), "---") || !strings.Contains(text, "name: sop") || !strings.Contains(text, "# DemoDNS Issue 修复") {
 		t.Fatalf("missing frontmatter on uploaded SKILL.md: %q", text)
 	}
 }
@@ -106,17 +106,17 @@ func TestMaterializeSelectedSkillsListsInvocationNameAndRoot(t *testing.T) {
 	assets := domain.AgentAssetBundle{
 		Skills: []domain.SkillDefinition{
 			{ID: "unit-test-gen", Name: "单元测试生成", Description: "单元测试生成", Content: "unused"},
-			{ID: "dnspod-issue-fix", Name: "Issue 修复", Description: "SOP overview", Content: "# SOP\n"},
+			{ID: "demodns-issue-fix", Name: "Issue 修复", Description: "SOP overview", Content: "# SOP\n"},
 		},
 		SkillFiles: map[string]map[string][]byte{
 			"unit-test-gen": {"SKILL.md": []byte("---\nname: unit-test\ndescription: 单测治理总线（迁移增强版）\n---\n\n# Unit Test\n")},
 		},
 	}
-	agent := domain.AgentDefinition{ID: "dnspod-unit-test-engineer", Name: "DNSPod 单元测试工程师", Instructions: "写增量单测。"}
+	agent := domain.AgentDefinition{ID: "demodns-unit-test-engineer", Name: "DemoDNS 单元测试工程师", Instructions: "写增量单测。"}
 	if _, err := materialize(workspace, "invoke-skills", domain.ExecutorDefinition{Kind: "codebuddy"}, agent, assets); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(workspace, ".agentflow", "dnspod-unit-test-engineer", "agent-system.md"))
+	raw, err := os.ReadFile(filepath.Join(workspace, ".agentflow", "demodns-unit-test-engineer", "agent-system.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,9 +126,9 @@ func TestMaterializeSelectedSkillsListsInvocationNameAndRoot(t *testing.T) {
 		"Otherwise read SKILL.md, then follow it using the skill root",
 		"name: `unit-test-gen` (id: unit-test-gen)",
 		"description: 单测治理总线（迁移增强版）",
-		"root: `.agentflow/dnspod-unit-test-engineer/skills/unit-test-gen`",
-		"name: `dnspod-issue-fix` (id: dnspod-issue-fix)",
-		"root: `.agentflow/dnspod-unit-test-engineer/skills/dnspod-issue-fix`",
+		"root: `.agentflow/demodns-unit-test-engineer/skills/unit-test-gen`",
+		"name: `demodns-issue-fix` (id: demodns-issue-fix)",
+		"root: `.agentflow/demodns-unit-test-engineer/skills/demodns-issue-fix`",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("agent-system.md missing %q:\n%s", needle, text)

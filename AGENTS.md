@@ -63,7 +63,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    `catalogHandlers`、`issuesHandlers`、`tasksHandlers`、`runsHandlers`、
    `previewsHandlers`、`streamHandlers`、`runnersHandlers`、
    `scheduleHandlers`、`tokenHandlers`、`syncHandlers`、
-   `deploymentMetricsHandlers`、`assistantHandlers`、`mcpHandlers`、
+   `assistantHandlers`、`mcpHandlers`、
    `marketHandlers`、`feedbackHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
 2. **新领域必须新建自己的 handler struct**，不要把方法挂到现有领域 handler
    或 `Server` 上。

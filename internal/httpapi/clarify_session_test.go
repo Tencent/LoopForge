@@ -14,8 +14,8 @@ import (
 
 func TestMaterializeClarifyRepoCreatesRealTree(t *testing.T) {
 	root := t.TempDir()
-	src := filepath.Join(root, "cache", "new_dnspod")
-	dest := filepath.Join(root, "ws", "new_dnspod")
+	src := filepath.Join(root, "cache", "dns-console")
+	dest := filepath.Join(root, "ws", "dns-console")
 	mustWriteClarifyFile(t, filepath.Join(src, "TagService.php"), "function processMsg() {}\n")
 	mustWriteClarifyFile(t, filepath.Join(src, ".git", "HEAD"), "ref: refs/heads/master\n")
 

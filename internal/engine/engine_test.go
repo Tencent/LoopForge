@@ -374,15 +374,15 @@ func TestGenericMRRoleResolvesGongfengMarketAlias(t *testing.T) {
 	}
 	gongfeng := domain.MCPServerDefinition{
 		ID: "mcp-61-project-alpha", Name: "Gongfeng MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng",
+		MarketID: "61", Transport: "http", URL: "https://mcp-gateway.example.com/gongfeng",
 	}
 	tapd := domain.MCPServerDefinition{
 		ID: "mcp-70-project-alpha", Name: "TAPD MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "70", Transport: "http", URL: "https://mcpgw.knot.example.com/tapd",
+		MarketID: "70", Transport: "http", URL: "https://mcp-gateway.example.com/tapd",
 	}
 	other := domain.MCPServerDefinition{
 		ID: "mcp-61-project-beta", Name: "Gongfeng MCP", Scope: "project", ProjectID: "beta",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng",
+		MarketID: "61", Transport: "http", URL: "https://mcp-gateway.example.com/gongfeng",
 	}
 	for _, server := range []domain.MCPServerDefinition{gongfeng, tapd, other} {
 		if err := st.PutMCPServer(server); err != nil {
@@ -516,8 +516,8 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.PutMCPServer(domain.MCPServerDefinition{
-		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214",
-		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow",
+		ID: "mcp-2214-project-dns", Name: "Config Center MCP", MarketID: "2214",
+		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcp-gateway.example.com/configcenter",
 		Headers: map[string]string{"Authorization": "Bearer mcp_secret"},
 	}); err != nil {
 		t.Fatal(err)
@@ -546,7 +546,7 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 			body = artifact.Content
 		}
 	}
-	if !strings.Contains(body, "2214") || !strings.Contains(body, "rainbow") {
+	if !strings.Contains(body, "2214") || !strings.Contains(body, "configcenter") {
 		t.Fatalf("mcp list artifact = %q", body)
 	}
 	if strings.Contains(body, "mcp_secret") || strings.Contains(strings.ToLower(body), "bearer") {
@@ -568,8 +568,8 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.PutMCPServer(domain.MCPServerDefinition{
-		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214",
-		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow",
+		ID: "mcp-2214-project-dns", Name: "Config Center MCP", MarketID: "2214",
+		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcp-gateway.example.com/configcenter",
 		Headers: map[string]string{"Authorization": "Bearer mcp_secret"},
 	}); err != nil {
 		t.Fatal(err)
@@ -604,7 +604,7 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 			body = artifact.Content
 		}
 	}
-	if !strings.Contains(body, "2214") || !strings.Contains(body, "rainbow") {
+	if !strings.Contains(body, "2214") || !strings.Contains(body, "configcenter") {
 		t.Fatalf("gate mcp list artifact = %q status=%s node=%+v", body, finished.Status, finished.Nodes["prep"])
 	}
 }
@@ -726,7 +726,7 @@ func TestMaterializeInputsMountsCloseDeliveryArtifacts(t *testing.T) {
 		{NodeID: "test", Attempt: 1, Name: "test-report", Path: "test-report.md", MediaType: "text/markdown", SHA256: "a", Content: "coverage 81%"},
 		{NodeID: "test", Attempt: 1, Name: "e2e-cases", Path: "e2e-cases.md", MediaType: "text/markdown", SHA256: "b", Content: "go test ./tests/integration"},
 		{NodeID: "mr", Attempt: 1, Name: "mr-body", Path: "mr-body.md", MediaType: "text/markdown", SHA256: "c", Content: "https://git.example.com/x/y/merge_requests/1"},
-		{NodeID: "verify", Attempt: 1, Name: "e2e-report", Path: "e2e-report.md", MediaType: "text/markdown", SHA256: "d", Content: "pipeline https://zhiyan.example.com/qci/1"},
+		{NodeID: "verify", Attempt: 1, Name: "e2e-report", Path: "e2e-report.md", MediaType: "text/markdown", SHA256: "d", Content: "pipeline https://ci.example.com/build/1"},
 		{NodeID: "checkers", Attempt: 1, Name: "checkers-report", Path: "checkers-report.md", MediaType: "text/markdown", SHA256: "e", Content: "all green"},
 	}}
 	manifest, err := materializeInputs(dir, wf, domain.WorkflowNode{ID: "close"}, run)
@@ -745,7 +745,7 @@ func TestMaterializeInputsMountsCloseDeliveryArtifacts(t *testing.T) {
 	if !strings.Contains(manifest, "verify / e2e-report") || !strings.Contains(manifest, "test / test-report") {
 		t.Fatalf("manifest missing close delivery artifacts: %s", manifest)
 	}
-	if strings.Contains(manifest, "coverage 81%") || strings.Contains(manifest, "pipeline https://zhiyan.example.com") {
+	if strings.Contains(manifest, "coverage 81%") || strings.Contains(manifest, "pipeline https://ci.example.com") {
 		t.Fatalf("prompt catalog must not inline artifact bodies: %s", manifest)
 	}
 }

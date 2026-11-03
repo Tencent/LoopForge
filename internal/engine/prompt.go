@@ -45,9 +45,6 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	pipelineURL := "未配置 Pipeline"
 	if run.Repository.PipelineURLPattern != "" {
 		pipelineURL = strings.ReplaceAll(run.Repository.PipelineURLPattern, "{build_id}", "current")
-	} else if run.Repository.PipelineProjectID > 0 && run.Repository.PipelineDefID > 0 {
-		pipelineURL = fmt.Sprintf("https://zhiyan.example.com/qci/%d/pipeline/#/pipeline/detail/%d/build/current",
-			run.Repository.PipelineProjectID, run.Repository.PipelineDefID)
 	}
 	prompt = strings.ReplaceAll(prompt, "{{pipelineUrl}}", pipelineURL)
 	prompt = strings.ReplaceAll(prompt, "{{existingMR}}", existingMRBlurb(st, run))

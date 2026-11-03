@@ -81,7 +81,7 @@ func sanitizeAgentToolNamespace(id, name string) string {
 		out = strings.ReplaceAll(out, "__", "_")
 	}
 	switch out {
-	case "", "tapd", "gongfeng", "iwiki", "agentflow":
+	case "", "tapd", "gongfeng", "agentflow":
 		return "mcp"
 	default:
 		return out
@@ -143,12 +143,6 @@ func agentToolKindAllowlistNames(mode AgentToolMode, kind string) []string {
 			)
 		}
 		return names
-	case "iwiki":
-		names := []string{"getDocument"}
-		if agentToolAllowsAssistantReads(mode) {
-			names = append(names, "getSpacePageTree", "searchDocument", "searchWeDoc", "getSpaceInfo", "getMySpaces", "aiSearchDocument", "listImages", "getComments", "glossaryTermSearch")
-		}
-		return names
 	case "agentflow":
 		if mode == AgentToolClarify {
 			return []string{"issues_get", "issues_list", "repositories_get", "projects_get"}
@@ -167,7 +161,7 @@ func agentToolKindAllowlistNames(mode AgentToolMode, kind string) []string {
 
 func agentflowNoisyTool(name string) bool {
 	switch name {
-	case "health_get", "capabilities_get", "openapi_get", "bootstrap_get", "observability_spec_get", "analytics_get", "analytics_skillhub_get", "deployment_metrics_get", "workflow_metrics_get":
+	case "health_get", "capabilities_get", "openapi_get", "bootstrap_get", "observability_spec_get", "analytics_get", "workflow_metrics_get":
 		return true
 	default:
 		return false

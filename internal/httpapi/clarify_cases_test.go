@@ -189,7 +189,7 @@ func TestClarifyMCPInstructionsAndOwnership(t *testing.T) {
 	for _, server := range []domain.MCPServerDefinition{
 		{ID: "cva-tapd", Name: "TAPD", ProjectID: projectID, Scope: "project", MarketID: "70", Transport: "http", URL: "https://example.test/tapd"},
 		{ID: "cva-gf", Name: "Gongfeng", ProjectID: projectID, Scope: "project", MarketID: "61", Transport: "http", URL: "https://example.test/gf"},
-		{ID: "cva-iwiki", Name: "iWiki", ProjectID: projectID, Scope: "project", MarketID: "58", Transport: "http", URL: "https://example.test/iwiki"},
+		{ID: "cva-wiki", Name: "Wiki", ProjectID: projectID, Scope: "project", MarketID: "58", Transport: "http", URL: "https://example.test/wiki"},
 		{ID: "cva-other", Name: "Other", ProjectID: projectID, Scope: "project", Transport: "http", URL: "https://example.test/other"},
 		{ID: "cva-stdio", Name: "stdio", ProjectID: projectID, Scope: "project", Transport: "stdio", Command: "x"},
 	} {
@@ -198,9 +198,9 @@ func TestClarifyMCPInstructionsAndOwnership(t *testing.T) {
 		}
 	}
 	h := &streamHandlers{deps: &deps{repo: st}}
-	tapd := domain.Issue{ID: "tapd-i", ProjectID: projectID, Source: "tapd", Description: "https://iwiki.example.com/pages/12345", ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "9", ExternalType: "bug", ExternalURL: "https://tapd.example.com/ws/bugtrace/bugs/view?bug_id=9"}}
+	tapd := domain.Issue{ID: "tapd-i", ProjectID: projectID, Source: "tapd", Description: "https://wiki.example.com/pages/12345", ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "9", ExternalType: "bug", ExternalURL: "https://tapd.example.com/ws/bugtrace/bugs/view?bug_id=9"}}
 	text := h.clarifyMCPInstructionsFor(tapd, worker, false)
-	if !strings.Contains(text, "bugs_get") || !strings.Contains(text, "docid=12345") || !strings.Contains(text, "其他已安装") {
+	if !strings.Contains(text, "bugs_get") || strings.Contains(text, "docid=") || !strings.Contains(text, "其他已安装") {
 		t.Fatalf("tapd instructions=%s", text)
 	}
 	if resumed := h.clarifyMCPInstructionsFor(tapd, worker, true); !strings.Contains(resumed, "不要再重拉") {

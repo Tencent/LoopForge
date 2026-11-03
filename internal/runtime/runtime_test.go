@@ -98,7 +98,7 @@ func TestMaterializeExpandsMCPBearerSecret(t *testing.T) {
 	_, err := materialize(dir, "secret-ok", domain.ExecutorDefinition{Kind: "codebuddy"}, domain.AgentDefinition{ID: "checker", Name: "Checker"}, domain.AgentAssetBundle{
 		MCPServers: []domain.MCPServerDefinition{{
 			ID: "gongfeng-delivery", Name: "工蜂", Transport: "http",
-			URL:     "https://mcpgw.knot.example.com/gongfeng",
+			URL:     "https://mcp-gateway.example.com/gongfeng",
 			Headers: map[string]string{"Authorization": "Bearer ${secret:AGENTFLOW_MCP_TOKEN}"},
 		}},
 	})
@@ -124,7 +124,7 @@ func TestMaterializeFailsWhenMCPSecretMissing(t *testing.T) {
 	_, err := materialize(dir, "secret-missing", domain.ExecutorDefinition{Kind: "codebuddy"}, domain.AgentDefinition{ID: "checker", Name: "Checker"}, domain.AgentAssetBundle{
 		MCPServers: []domain.MCPServerDefinition{{
 			ID: "gongfeng-delivery", Name: "工蜂", Transport: "http",
-			URL:     "https://mcpgw.knot.example.com/gongfeng",
+			URL:     "https://mcp-gateway.example.com/gongfeng",
 			Headers: map[string]string{"Authorization": "Bearer ${secret:AGENTFLOW_MCP_TOKEN}"},
 		}},
 	})
@@ -142,7 +142,7 @@ func TestMaterializeUsesPlainMCPHeaders(t *testing.T) {
 	_, err := materialize(dir, "plain-headers", domain.ExecutorDefinition{Kind: "codebuddy"}, domain.AgentDefinition{ID: "checker", Name: "Checker"}, domain.AgentAssetBundle{
 		MCPServers: []domain.MCPServerDefinition{{
 			ID: "gongfeng-delivery", Name: "工蜂", Transport: "http",
-			URL:     "https://mcpgw.knot.example.com/gongfeng",
+			URL:     "https://mcp-gateway.example.com/gongfeng",
 			Headers: map[string]string{"Authorization": "Bearer tai_plain_in_mcp"},
 		}},
 	})
@@ -309,7 +309,7 @@ func TestPrepareDockerfileBuildContextWritesRecipeAndFiles(t *testing.T) {
 
 func TestCachedDockerImageNameIgnoresCatalogMetadata(t *testing.T) {
 	a := domain.DockerfileDefinition{
-		ID:      "dnspod-php-backend",
+		ID:      "demodns-php-backend",
 		Name:    "PHP",
 		Content: "FROM node:22-bookworm-slim\n",
 		Files:   map[string]string{"conf/php.ini": "memory_limit=1G\n", "conf/www.conf": "user=nobody\n"},
@@ -1949,8 +1949,8 @@ func TestMaterializeInjectsHTTPMCPAliases(t *testing.T) {
 	t.Setenv("AGENTFLOW_MCP_USERNAME", "example-admin")
 	assets := domain.AgentAssetBundle{
 		MCPServers: []domain.MCPServerDefinition{
-			{ID: "zhiyan-pipeline", Name: "智研", Transport: "http", URL: "https://mcpgw.knot.example.com/zhiyan/qci", Headers: map[string]string{"Authorization": "Bearer test-token"}},
-			{ID: "gongfeng-delivery", Name: "工蜂", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer test-token"}},
+			{ID: "ci-pipeline", Name: "CI", Transport: "http", URL: "https://mcp.example.com/ci", Headers: map[string]string{"Authorization": "Bearer test-token"}},
+			{ID: "gongfeng-delivery", Name: "工蜂", Transport: "http", URL: "https://mcp.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer test-token"}},
 		},
 	}
 	_, err := materialize(dir, "invoke-1", domain.ExecutorDefinition{Kind: "codebuddy"}, domain.AgentDefinition{ID: "checker", Name: "Checker"}, assets)
@@ -1962,18 +1962,23 @@ func TestMaterializeInjectsHTTPMCPAliases(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, needle := range []string{`"zhiyan-pipeline"`, `"coding-mcp"`, `"gongfeng-delivery"`, `"gongfeng"`, `"X-Username": "example-admin"`, "mcpgw.knot.example.com/zhiyan/qci"} {
+	for _, needle := range []string{`"ci-pipeline"`, `"gongfeng-delivery"`, `"gongfeng"`, `"X-Username": "example-admin"`, "mcp.example.com/ci"} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("mcp.json missing %s:\n%s", needle, text)
 		}
+	}
+	if strings.Contains(text, `"coding-mcp"`) {
+		t.Fatalf("a generic HTTP MCP must not get a vendor alias:\n%s", text)
 	}
 	sys, err := os.ReadFile(filepath.Join(dir, ".agentflow", "checker", "agent-system.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	hint := string(sys)
-	if !strings.Contains(hint, "totalresult") || !strings.Contains(hint, "oldtotalresult") || !strings.Contains(hint, "QueryErrorLog") || !strings.Contains(hint, "taskId") || !strings.Contains(hint, "get_commit_combined_status") || !strings.Contains(hint, "coding_skill") {
-		t.Fatalf("system prompt missing QCI/MR API rules:\n%s", hint)
+	for _, want := range []string{"ci-pipeline", "get_commit_combined_status", "SKIP_INFRA", "别名：gongfeng-delivery=gongfeng"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("system prompt missing MCP rule %q:\n%s", want, hint)
+		}
 	}
 }
 
@@ -2092,7 +2097,7 @@ func TestCodeBuddyDropsToolsAllowlistWhenHTTPMCPPresent(t *testing.T) {
 	}
 	assets := domain.AgentAssetBundle{
 		MCPServers: []domain.MCPServerDefinition{
-			{ID: "gongfeng-delivery", Name: "工蜂", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer test-token"}},
+			{ID: "gongfeng-delivery", Name: "工蜂", Transport: "http", URL: "https://mcp-gateway.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer test-token"}},
 		},
 	}
 	if _, err := NewExecutorRunner().Run(context.Background(), sb, "invoke-mcp", ex, domain.AgentDefinition{ID: "closer", Name: "Closer"}, assets, "probe", InvocationOptions{}, nil); err != nil {

@@ -2,55 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 
-const skillhub = {
-  snapshotAt: '2026-10-30T08:00:00Z',
-  gongfeng: {
-    mergedMonths: { '2026-09': 4, '2026-10': 9 },
-    monthlyLegacy: { '2026-09': 3, '2026-10': 2 },
-    monthlyMonorepo: { '2026-09': 1, '2026-10': 7 },
-    weeklyMerged: { '2026-W40': 2, '2026-W41': 3, '2026-W42': 4 },
-    weeklyLegacy: { '2026-W40': 1 }, weeklyMonorepo: { '2026-W40': 1, '2026-W41': 3, '2026-W42': 4 },
-    repos: [{ name: 'skillhub', path: 'ai/skillhub', created: 10, merged: 8, opened: 2, lastAt: '2026-10-29', url: 'https://git.example/skillhub' }],
-    authors: [{ username: 'alice', mrs: 8 }],
-  },
-  qci: {
-    projectId: 10001, countedPipelines: 3,
-    backend: { runNum: 10, recent30d: 5 }, frontend: { runNum: 8, recent30d: 4 },
-    e2e: { runNum: 6, url: 'https://qci.example/e2e' },
-    deploy: { url: 'https://qci.example/deploy' },
-    pipelines: [{ id: 10000002, name: 'Web', kind: '前端', era: '当前', runNum: 8, recent30d: 4, url: 'https://qci.example/web' }],
-    dailySample: { labels: ['10/28', '10/29'], backend: [2, 3], frontend: [1, 2], e2e: [1, 1] },
-  },
-  localWorkflows: { backendUnique: 3, backendStageHits: { '01-requirement': 3, '02-design': 2, '03-code': 3, '04-e2e': 1 }, frontendWorkflows: 2, backendKnowledgeDocs: 4, backendE2eFiles: 1 },
-  loop: { issues: 5, doneIssues: 4, totalRuns: 7 },
-  evidence: [{ label: '验收证据', url: 'https://example.com/evidence' }],
-  insights: [{ title: '吞吐提升', body: '近四周保持增长。' }],
-};
-
-test('SkillHub observability renders KPI, charts, deployment evidence, and detail tables', async (t) => {
+test('observability tabs only expose usage and delivery views', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`
-    state.skillhubEfficiency=${JSON.stringify(skillhub)};
-    state.skillhubDeployError='实时部署接口暂不可达';
     state.obsTab='skillhub';
     obsEChartsFailed=true;
-    renderObservability();
+    renderAll();
   `);
   await settle(3);
-  const text = app.document.querySelector('#obsBody').textContent;
   assert.equal(app.evaluate(`state.obsTab`), 'overview');
-  assert.equal(app.document.querySelector('#obsSkillhubTab')?.hidden ?? true, true);
-  assert.doesNotMatch(text, /测试环境部署|后端测试环境/);
-  assert.match(app.evaluate(`obsSkillhubDeployCard()`), /后端测试环境|实时接口：实时部署接口暂不可达/);
-  const groups = app.evaluate(`obsSkillhubDetailGroups().map(g=>({group:g.group,items:g.items.filter(Boolean).map(i=>i.title)}))`);
-  assert.equal(groups.length, 4);
-  assert.match(JSON.stringify(groups), /仓库|流水线|Loop 运行|数据来源|结论/);
-  const legacy = app.evaluate(`obsSkillhubCharts(state.skillhubEfficiency)`);
-  assert.match(legacy, /每月已合入|近 12 周|sh-bars/);
-  assert.match(app.evaluate(`obsSkillhubDeployCharts(state.skillhubEfficiency.qci)`), /每天部署次数|后端|E2E/);
-  assert.match(app.evaluate(`obsSkillhubInsights(state.skillhubEfficiency.insights)`), /吞吐提升|近四周保持增长/);
-  assert.match(app.evaluate(`obsSkillhubLoopCard(state.skillhubEfficiency.loop)`), /平台需求|已闭环|SOP 运行/);
+  assert.equal(app.evaluate(`obsNormalizeTab('delivery')`), 'delivery');
+  assert.equal(app.evaluate(`obsNormalizeTab('anything-else')`), 'overview');
+  assert.deepEqual([...app.document.querySelectorAll('[data-obs-tab]')].map(b => b.dataset.obsTab), ['overview', 'delivery']);
+  assert.equal(app.evaluate(`obsDetailScope()`), 'overview');
+  assert.equal(app.evaluate(`typeof refreshSkillhubEfficiency`), 'undefined');
 });
 
 test('observability period, scope, query, user, and filtering helpers preserve their business semantics', async (t) => {
@@ -100,9 +66,7 @@ test('period-scoped analytics and external source dialog expose trace metrics an
   t.after(app.close);
   app.router.get('/api/insights/v1/sources?projectId=project-1', [{ id: 'src-1', name: 'Review CI', tokenPrefix: 'af_x', expiresAt: '2027-01-01T00:00:00Z' }]);
   app.router.post('/api/insights/v1/sources', call => ({ ...call.body, id: 'src-2', token: 'secret-token' }));
-  app.router.get(/^\/api\/analytics\?/, call => call.search.includes('skillhub') ? skillhub : { summary: {}, trend: [], runTraces: [] });
-  app.router.get('/api/analytics/skillhub', skillhub);
-  app.router.get(/^\/api\/deployment-metrics\?/, { records: [], summary: {} });
+  app.router.get(/^\/api\/analytics\?/, { summary: {}, trend: [], runTraces: [] });
   app.evaluate(`
     state.currentUser={id:1,isGuest:false,isPlatformAdmin:true};
     state.data.users=[{id:1,loginName:'alice'}];
@@ -132,7 +96,7 @@ test('period-scoped analytics and external source dialog expose trace metrics an
   assert.equal(app.evaluate(`obsCacheStats(obsScopedView()).rate`), 100 / 3);
   assert.equal(app.evaluate(`obsRunMatchesUser({executionContext:{responsibleUserId:1}},1)`), true);
   app.evaluate(`
-    state.data.repositories[0].name='skillhub';
+    state.data.repositories[0].name='team-service';
     state.data.repositories[0].gongfengProjectId='example/team-project';
     state.obsScope='user';state.obsUserFilter='1';state.obsOriginFilter='internal';state.obsSourceFilter='tapd';
     setObsScope('project');
@@ -141,9 +105,7 @@ test('period-scoped analytics and external source dialog expose trace metrics an
   await settle(5);
   assert.equal(app.evaluate(`state.obsScope`), 'project');
   assert.equal(app.evaluate(`state.obsOriginFilter`), '');
-  await app.evaluate(`refreshSkillhubEfficiency()`);
-  assert.equal(app.evaluate(`state.skillhubEfficiency`), null);
-  assert.ok(!app.router.calls.some(c => c.path === '/api/analytics/skillhub'));
+  assert.ok(!app.router.calls.some(c => c.path.startsWith('/api/analytics/') || c.path.startsWith('/api/deployment')));
 
   await app.evaluate(`openObsSources()`);
   await settle(3);

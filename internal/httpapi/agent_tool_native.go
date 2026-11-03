@@ -21,7 +21,7 @@ const (
 	nativeAssistantUnlimitedTurns = "9007199254740991"
 	nativeTerminalMaxRetries      = 2
 	agentToolSessionMCPServerID   = "agentflow_session"
-	// The session gateway lists upstream TAPD/工蜂/iWiki tools before it
+	// The session gateway lists upstream TAPD/工蜂 tools before it
 	// answers tools/list, which can exceed CodeBuddy's ~2s headless MCP wait.
 	// The tools pinned with defer_loading=false below would then be absent
 	// from the first model request and, being non-deferred, unreachable via

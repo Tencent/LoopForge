@@ -113,7 +113,7 @@ func TestClarifyMCPAndTerminalValidation(t *testing.T) {
 	}{
 		{domain.MCPServerDefinition{MarketID: "70"}, "tapd"},
 		{domain.MCPServerDefinition{Name: "工蜂"}, "gongfeng"},
-		{domain.MCPServerDefinition{ID: "iwiki-doc"}, "iwiki"},
+		{domain.MCPServerDefinition{ID: "wiki-doc", MarketID: "58"}, "other"},
 		{domain.MCPServerDefinition{Name: "other"}, "other"},
 	} {
 		if got := classifyClarifyMCP(tc.item); got != tc.want {
@@ -124,16 +124,13 @@ func TestClarifyMCPAndTerminalValidation(t *testing.T) {
 	if gongfengProjectPathFromClarifyURL(gf) != "group/proj" || gongfengIssueIIDFromURL(gf) != 42 {
 		t.Fatal("gongfeng URL parsing")
 	}
-	if gongfengIssueIIDFromURL("bad") != 0 || iwikiDocIDFromURL("https://iwiki.example.com/pages/12345") != "12345" {
+	if gongfengIssueIIDFromURL("bad") != 0 {
 		t.Fatal("URL fallback parsing")
 	}
 	issue := domain.Issue{Title: "see " + gf}
 	hydrateClarifyIssueFromText(&issue)
 	if issue.Source != "gongfeng" || issue.ExternalRef == nil || issue.ExternalRef.ExternalIID != 42 {
 		t.Fatalf("hydrated=%+v", issue)
-	}
-	if urls := extractIWikiURLs("https://iwiki.example.com/p/12345.", "https://iwiki.example.com/p/12345"); len(urls) != 1 {
-		t.Fatalf("iwiki urls=%v", urls)
 	}
 	call := assistantMCPCall{Tool: "comments_list", Arguments: map[string]any{"workspace_id": float64(3), "entry_id": 4}}
 	wrapped := wrapClarifyTAPDCall(call)

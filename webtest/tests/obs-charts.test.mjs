@@ -18,8 +18,6 @@ test('observability chart options expose meaningful series, labels, tooltips, an
     const heat=obsHeatOption([{weekday:1,hour:9,runs:2,tokens:90},{weekday:1,hour:9,runs:1,tokens:10},{weekday:9,hour:30,runs:8}], 'runs', opts);
     const funnel=obsFunnelOption([{name:'需求',value:10},{name:'运行',value:8},{name:'交付',value:3}],{...opts,active:2});
     const owners=obsOwnersOption([{name:'Alice',delivered:3,active:2,undelivered:1,durationLabel:'2h',tokens:400}],opts);
-    const stack=obsStackBarOption(['9月','10月'],[{name:'老库',color:theme.c4,values:[1,2]},{name:'大仓',color:theme.c1,values:[3,5]}],opts,{showTotal:true,markFrom:1});
-    const skill={gongfeng:{mergedMonths:{'2026-09':4,'2026-10':7},monthlyLegacy:{'2026-09':1},monthlyMonorepo:{'2026-09':3,'2026-10':7},weeklyMerged:{'2026-W39':2},weeklyLegacy:{'2026-W39':1},weeklyMonorepo:{'2026-W39':1}},dailySample:{labels:['10/1'],backend:[2],frontend:[1],e2e:[3]}};
     return {
       trendSeries:trend.map(x=>x.series.length),
       trendTip:trend[0].tooltip.formatter([{dataIndex:1}]),
@@ -33,10 +31,6 @@ test('observability chart options expose meaningful series, labels, tooltips, an
       funnel:obsFunnelStats([{name:'需求',value:10},{name:'运行',value:8},{name:'交付',value:3}]),
       funnelLabel:funnel.series[0].label.formatter({dataIndex:2}),
       ownerTip:owners.tooltip.formatter([{dataIndex:0}]),
-      stackTotal:stack.series[1].label.formatter({dataIndex:1}),
-      monthly:obsSkillhubMonthlyOption(skill,opts).series.length,
-      weekly:obsSkillhubWeeklyOption(skill,opts).series.length,
-      deploy:obsSkillhubDeployOption(skill,opts).series.length,
       escaped:obsEsc('<x>'),
       theme:obsEChartsTheme('light').mode
     };
@@ -55,10 +49,6 @@ test('observability chart options expose meaningful series, labels, tooltips, an
   assert.equal(result.funnel.worst, 2);
   assert.match(result.funnelLabel, /最大流失/);
   assert.match(result.ownerTip, /Alice|400 tok/);
-  assert.equal(result.stackTotal, 7);
-  assert.equal(result.monthly, 2);
-  assert.equal(result.weekly, 2);
-  assert.equal(result.deploy, 3);
   assert.equal(result.escaped, '&lt;x&gt;');
   assert.equal(result.theme, 'light');
 });

@@ -29,7 +29,7 @@ func TestValidateMCPServer(t *testing.T) {
 }
 
 func TestValidateMCPServerScope(t *testing.T) {
-	base := MCPServerDefinition{ID: "iwiki", Name: "iWiki", Transport: "http", URL: "https://example.com/mcp"}
+	base := MCPServerDefinition{ID: "wiki", Name: "Wiki", Transport: "http", URL: "https://example.com/mcp"}
 	project := base
 	project.Scope, project.ProjectID = "project", "p1"
 	if err := ValidateMCPServer(project); err != nil {
@@ -44,7 +44,7 @@ func TestValidateMCPServerScope(t *testing.T) {
 	if err := ValidateMCPServer(personal); err == nil {
 		t.Fatal("personal MCP without owner should be rejected")
 	}
-	personal.OwnerUserID, personal.MarketID = 2, "iwiki"
+	personal.OwnerUserID, personal.MarketID = 2, "wiki"
 	if err := ValidateMCPServer(personal); err == nil {
 		t.Fatal("personal market MCP should be rejected")
 	}
@@ -69,8 +69,8 @@ func TestParseMCPImportShapes(t *testing.T) {
 }
 
 func TestPublicMCPServerMasksCredentialEnvironmentOnly(t *testing.T) {
-	got := PublicMCPServer(MCPServerDefinition{Environment: map[string]string{"KNOT_API_TOKEN": "x", "DB_PASSWORD": "y", "PATH": "/usr/bin", "LOG_LEVEL": "debug", "GH_TOKEN": "${secret:GH}"}})
-	if got.Environment["KNOT_API_TOKEN"] != MaskedSecretValue || got.Environment["DB_PASSWORD"] != MaskedSecretValue {
+	got := PublicMCPServer(MCPServerDefinition{Environment: map[string]string{"GATEWAY_API_TOKEN": "x", "DB_PASSWORD": "y", "PATH": "/usr/bin", "LOG_LEVEL": "debug", "GH_TOKEN": "${secret:GH}"}})
+	if got.Environment["GATEWAY_API_TOKEN"] != MaskedSecretValue || got.Environment["DB_PASSWORD"] != MaskedSecretValue {
 		t.Fatalf("credentials not masked: %v", got.Environment)
 	}
 	if got.Environment["PATH"] != "/usr/bin" || got.Environment["LOG_LEVEL"] != "debug" || got.Environment["GH_TOKEN"] != "${secret:GH}" {

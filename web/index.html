@@ -22,7 +22,6 @@
   <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
   <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
   <link rel="stylesheet" href="/assistant-models.css">
-  <link rel="stylesheet" href="/deployment-dashboard.css?v=20260920r2">
   <link rel="stylesheet" href="/metrics-dashboard.css?v=20261030obs1">
   <link rel="stylesheet" href="/knowledge.css?v=20261030r2">
   <link rel="stylesheet" href="/business-domains.css">
@@ -169,7 +168,6 @@
 
       <p>数据洞察</p>
       <button class="nav" data-view="metrics"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="chart" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V9"/><path d="M12 17V7"/><path d="M16 17v-5"/></svg></span><span class="nav-label">研发效能</span></button>
-      <button class="nav" data-view="deployments" hidden><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="clock" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="nav-label">部署耗时</span></button>
       <button class="nav" data-view="businessDomains"><span class="nav-icon"><svg class="agent-icon harness-icon " data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="motion"><rect class="p0" x="4" y="4" width="14" height="14" rx="2"/><path class="p1" d="m7 20 10.5-.1A2.5 2.5 0 0 0 20 17.4V8" pathLength="100"/></g></svg></span><span class="nav-label">业务领域</span></button>
       <p>开放能力</p>
       <button class="nav" data-view="guide"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="doc" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path pathLength="1" d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path pathLength="1" d="M14 3v5h5"/><path pathLength="1" d="M9 13h6"/><path pathLength="1" d="M9 17h6"/></svg></span><span class="nav-label">接入指南</span></button>
@@ -324,15 +322,6 @@
       <div id="runsDetailSection" class="runs-detail-section" hidden>
         <div id="runDetail" class="panel run-detail"><div class="empty-properties"><div>◷</div><b>选择一条记录</b><p>日志、产物和节点细节会显示在这里。</p></div></div>
       </div>
-    </section>
-
-    <!-- 测试环境部署耗时 -->
-    <section id="deploymentsView" class="view page-view">
-      <div class="page-heading deployment-heading">
-        <div><p class="eyebrow">测试环境</p><h1>部署耗时</h1><p>自动展示 SkillHub 最近 7 天部署耗时、正在部署的流水线和 30 天趋势。</p></div>
-        <div class="heading-actions"><span id="deploymentLiveState" class="live-state"><i></i> 自动加载中</span><button id="refreshDeployments" class="button ghost" type="button">↻ 刷新</button></div>
-      </div>
-      <div id="deploymentBody" class="deployment-body"></div>
     </section>
 
     <!-- 待我处理 -->
@@ -646,7 +635,6 @@
           <div class="obs-tabs" id="obsTabs" role="tablist" aria-label="统计分类">
             <button class="obs-tab active" role="tab" data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量</button>
             <button class="obs-tab" role="tab" data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付<i id="obsDeliveryCount" hidden></i></button>
-            <button class="obs-tab" data-obs-tab="skillhub" id="obsSkillhubTab" role="tab" hidden><svg class="agent-icon harness-icon" data-icon="sparkles" width="14" height="14" aria-hidden="true"></svg>提效</button>
           </div>
         </div>
         <div class="heading-actions">

@@ -257,40 +257,6 @@ function obsOwnersOption(rows,opts){
   });
 }
 
-// ---------- SkillHub 提效 ----------
-function obsStackBarOption(labels,stacks,opts,extra){
-  const o=obsChartOpts(opts),t=o.theme;
-  extra=extra||{};
-  const totals=labels.map((_,i)=>stacks.reduce((n,s)=>n+(Number(s.values[i])||0),0));
-  const series=stacks.map((s,si)=>({name:s.name,type:'bar',stack:'total',barMaxWidth:extra.barMaxWidth||36,itemStyle:{color:s.color,borderRadius:si===stacks.length-1?[2,2,0,0]:0},data:labels.map((_,i)=>Number(s.values[i])||0),animationDelay:obsBarDelay(o,extra.delayStep||35),
-    label:extra.showTotal&&si===stacks.length-1?{show:true,position:'top',color:t.text,fontWeight:600,fontSize:11,formatter:p=>totals[p.dataIndex]||''}:undefined}));
-  if(extra.markFrom!=null&&extra.markFrom>=0&&labels.length){
-    series[0].markArea={silent:true,itemStyle:{color:t.text,opacity:.05},data:[[{xAxis:labels[Math.min(extra.markFrom,labels.length-1)]},{xAxis:labels[labels.length-1]}]]};
-  }
-  return obsChartBase(o,{
-    grid:{left:6,right:8,top:extra.showTotal?22:12,bottom:4,containLabel:true},
-    tooltip:{...obsTooltipBase(t),trigger:'axis',axisPointer:{type:'shadow',shadowStyle:{color:t.text,opacity:.04}},formatter:params=>{const idx=params[0]?.dataIndex;return obsTooltipRows(labels[idx],[...stacks.map(s=>[s.name,String(Number(s.values[idx])||0)]),['合计',String(totals[idx]||0)]])}},
-    xAxis:obsCategoryAxis(t,labels,extra.xInterval!=null?{axisLabel:{color:t.muted2,fontSize:10.5,interval:extra.xInterval}}:{}),
-    yAxis:obsValueAxis(t,v=>String(v)),
-    series,
-  });
-}
-function obsSkillhubMonthlyOption(d,opts){
-  const o=obsChartOpts(opts),t=o.theme,gf=d?.gongfeng||{};
-  const months=Object.keys(gf.mergedMonths||{}).sort();
-  return obsStackBarOption(months.map(m=>Number(m.slice(5))+'月'),[{name:'老库',color:t.c4,values:months.map(m=>gf.monthlyLegacy?.[m]||0)},{name:'大仓',color:t.c1,values:months.map(m=>gf.monthlyMonorepo?.[m]||0)}],opts,{showTotal:true});
-}
-function obsSkillhubWeeklyOption(d,opts){
-  const o=obsChartOpts(opts),t=o.theme,gf=d?.gongfeng||{};
-  const keys=Object.keys(gf.weeklyMerged||{}).sort().slice(-12);
-  return obsStackBarOption(keys.map(k=>'W'+k.slice(-2)),[{name:'老库',color:t.c4,values:keys.map(k=>gf.weeklyLegacy?.[k]||0)},{name:'大仓',color:t.c1,values:keys.map(k=>gf.weeklyMonorepo?.[k]||0)}],opts,{markFrom:Math.max(0,keys.length-4),barMaxWidth:28});
-}
-function obsSkillhubDeployOption(snap,opts){
-  const o=obsChartOpts(opts),t=o.theme,daily=snap?.dailySample||{};
-  const labels=daily.labels||[];
-  return obsStackBarOption(labels,[{name:'后端',color:t.c1,values:daily.backend||[]},{name:'前端',color:t.c2,values:daily.frontend||[]},{name:'E2E',color:t.c3,values:daily.e2e||[]}],opts,{xInterval:4,delayStep:12,barMaxWidth:18});
-}
-
 // ---------- 研发效能 ----------
 const OBS_PHASES=[['clarification','澄清','c1'],['development','研发','c2'],['testing','测试','c3']];
 const OBS_PHASE_TOP_LABEL_MAX=45;

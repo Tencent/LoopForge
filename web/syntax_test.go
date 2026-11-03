@@ -182,9 +182,9 @@ const deliveries = [
   {issueId:'issue-1',lastRunAt:now,firstRunAt:now,clarificationDurationMs:600000,developmentDurationMs:1200000,testDurationMs:1800000,cycleDurationMs:7200000,phaseSamples:{clarification:1,development:1,testing:1}},
   {issueId:'issue-2',lastRunAt:now,firstRunAt:now,clarificationDurationMs:2400000,developmentDurationMs:3000000,cycleDurationMs:18000000,phaseSamples:{clarification:1,development:1,testing:0}},
 ];
-const state = {metricsRange:'7d',metricsData:{deliveries,runTraces:[],nodes:[],summary:{}},metricsIssues:issues,metricsDeploymentData:null};
+const state = {metricsRange:'7d',metricsData:{deliveries,runTraces:[],nodes:[],summary:{}},metricsIssues:issues};
 function currentProject(){return {id:'project'}}
-eval(code.slice(code.indexOf('function metricsWindow('), code.indexOf('function metricsSnapshotTrend(')));
+eval(code.slice(code.indexOf('function metricsWindow('), code.indexOf('function metricsMs(')));
 const model = metricsDashboardModel();
 assert.equal(model.delivered, 2);
 assert.deepEqual(model.phaseTotalValues, [3600000,5400000]);
@@ -213,7 +213,7 @@ const METRICS_WINDOWS={};
 const state={metricsRange:'custom',metricsDateFrom:'2026-10-20',metricsDateTo:'2026-10-21',metricsIssues:[],metricsData:{summary:{mergedMrs:2,mergedMrsMissingTime:3},deliveries:[],mrMerges:[
   {mrProject:'org/frontend',mrIid:1,mrUrl:'https://git.example.com/org/frontend/merge_requests/1',targetBranch:'agentflow/integration',issueId:'old-requirement',title:'Earlier delivery',mergedAt:'2026-10-19T16:30:00Z'},
   {mrProject:'org/backend',mrIid:1,mrUrl:'https://git.example.com/org/backend/merge_requests/1',targetBranch:'master',issueId:'old-requirement',title:'Earlier delivery',mergedAt:'2026-10-20T16:30:00Z'},
-]},metricsBenchmark:{projectId:'project',gongfeng:{weeklyMerged:{'2026-W43':999}}}};
+]}};
 function currentProject(){return {id:'project'}}
 function metricsProjectId(){return 'project'}
 function obsCategoryLabel(value){return value}
@@ -229,7 +229,7 @@ assert.equal(metricsBucketKey('2026-10-18T16:30:00Z','week'),'2026-W43','local M
 assert.equal(metricsBucketKey('2026-10-18T15:30:00Z','week'),'2026-W42','local Sunday stays in the previous week');
 assert.equal(metricsBucketKey('2026-10-31T16:30:00Z','month'),'2026-11');
 const display=metricsDisplayModel(model);
-assert.equal(display.mergedMRs,2,'a benchmark snapshot must not substitute its merge totals');
+assert.equal(display.mergedMRs,2);
 assert.equal(display.mrMergeTrend,model.mrMergeTrend);
 eval(code.slice(code.indexOf('function metricsMRMergeTable('),code.indexOf('function metricsSectionHead(')));
 eval(code.slice(code.indexOf('function formatTimestamp('),code.indexOf('function duration(')));
@@ -245,7 +245,7 @@ assert.ok(metricsMRMergeTable([]).includes('当前日期范围暂无已合入 MR
 	}
 }
 
-func TestMetricsSnapshotAndCachedDataStayWithinSelectedProject(t *testing.T) {
+func TestMetricsCachedDataStaysWithinSelectedProject(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not installed")
@@ -254,9 +254,8 @@ func TestMetricsSnapshotAndCachedDataStayWithinSelectedProject(t *testing.T) {
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
 const state = {
-  projectFilter:'lightvela', metricsRange:'30d', metricsData:{deliveries:[]},
-  metricsDataKey:'skillhub|30d||', metricsLoading:false, metricsError:'',
-  metricsBenchmark:{projectId:'skillhub',gongfeng:{weeklyMerged:{'2026-W40':425},totals:{merged:425}},loop:{totalRuns:10,firstPassRate:64,issues:10,uniqueIssues:8,completedIssues:5,totalTokens:500}},
+  projectFilter:'project-b', metricsRange:'30d', metricsData:{deliveries:[]},
+  metricsDataKey:'project-a|30d||', metricsLoading:false, metricsError:'',
 };
 function metricsProjectId(){return state.projectFilter}
 function metricsQueryKey(){return [state.projectFilter,state.metricsRange,'',''].join('|')}
@@ -266,19 +265,15 @@ function obsCategoryLabel(value){return value}
 const body={innerHTML:''},live={innerHTML:''};
 function $(selector){return selector==='#metricsBody'?body:selector==='#metricsLiveState'?live:null}
 function metricsDashboardModel(){throw new Error('stale data must not be rendered')}
-eval(code.slice(code.indexOf('function metricsSnapshotTrend('),code.indexOf('function metricsMs(')));
-const empty={delivered:0,requirementIssues:[],aiIssueIds:new Set(),trend:[],completed:[],firstPass:[],terminal:0,deployment:{samples:0},averagePhaseTotalMs:null,firstPassRate:0,runSuccessRate:0,coverageRate:0,averageTokens:0,reworkRate:0,data:{categories:[]}};
-const lightvela=metricsDisplayModel(empty);
-assert.equal(lightvela.isSnapshot,false);
-assert.equal(lightvela.deliveryCount,0);
-assert.equal(lightvela.firstPassRate,null);
-assert.equal(lightvela.coverageRate,null);
-assert.equal(lightvela.averageTokens,null);
-state.projectFilter='skillhub';
-const skillhub=metricsDisplayModel(empty);
-assert.equal(skillhub.isSnapshot,true);
-assert.equal(skillhub.deliveryCount,425);
-state.projectFilter='lightvela';
+eval(code.slice(code.indexOf('function metricsDisplayModel('),code.indexOf('function metricsMs(')));
+const empty={delivered:0,requirementIssues:[],aiIssueIds:new Set(),trend:[],completed:[],firstPass:[],terminal:0,averagePhaseTotalMs:null,firstPassRate:0,runSuccessRate:0,coverageRate:0,averageTokens:0,reworkRate:0,data:{categories:[]}};
+const display=metricsDisplayModel(empty);
+assert.equal(display.deliveryCount,0);
+assert.equal(display.firstPassRate,null);
+assert.equal(display.coverageRate,null);
+assert.equal(display.averageTokens,null);
+assert.equal(display.qualityTitle,'交付质量');
+assert.match(display.storyFoot,/当前项目/);
 eval(code.slice(code.indexOf('function renderMetricsDashboard('),code.indexOf('let metricsRequestSeq=')));
 renderMetricsDashboard();
 assert.match(body.innerHTML,/正在切换到当前项目的数据/);
@@ -300,27 +295,25 @@ func TestMetricsRefreshIgnoresPreviousProjectResponse(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-const state={projectFilter:'lightvela',metricsRange:'30d',metricsDateFrom:'',metricsDateTo:'',metricsData:null,metricsIssues:[],metricsBenchmark:null,metricsLoading:false,metricsError:'',metricsDeploymentData:null,metricsDeploymentLoading:false};
+const state={projectFilter:'project-a',metricsRange:'30d',metricsDateFrom:'',metricsDateTo:'',metricsData:null,metricsIssues:[],metricsLoading:false,metricsError:''};
 function currentProject(){return {id:state.projectFilter}}
 function metricsWindow(){return {from:new Date('2026-09-01T00:00:00Z'),to:new Date('2026-10-01T00:00:00Z'),grain:'day'}}
 function renderMetricsDashboard(){}
 function metricsDemoEnabled(){return false}
-function canShowSkillhubEfficiency(){return true}
-function deploymentRepositories(){return []}
 const calls=[];let resolveOld;
-function api(path){calls.push(path);if(path.startsWith('/api/analytics?')&&path.includes('projectId=lightvela'))return new Promise(resolve=>{resolveOld=resolve});if(path.startsWith('/api/analytics?'))return Promise.resolve({deliveries:[]});if(path.startsWith('/api/issues?'))return Promise.resolve([]);return Promise.resolve({projectId:'skillhub',gongfeng:{weeklyMerged:{'2026-W40':425}}})}
+function api(path){calls.push(path);if(path.startsWith('/api/analytics?')&&path.includes('projectId=project-a'))return new Promise(resolve=>{resolveOld=resolve});if(path.startsWith('/api/analytics?'))return Promise.resolve({deliveries:[{issueId:'new-project'}]});if(path.startsWith('/api/issues?'))return Promise.resolve([]);throw new Error('unexpected request '+path)}
 eval(code.slice(code.indexOf('let metricsRequestSeq='),code.indexOf('function metricHealth(')));
 async function check(){
   const old=refreshMetrics();
-  assert.equal(calls.some(path=>path.startsWith('/api/analytics/skillhub')),false);
-  state.projectFilter='skillhub';invalidateMetricsForProjectChange();
+  state.projectFilter='project-b';invalidateMetricsForProjectChange();
   resolveOld({deliveries:[{issueId:'old-project'}]});
   await old;
   assert.equal(state.metricsData,null);
   await refreshMetrics();
-  assert.equal(state.metricsBenchmark.projectId,'skillhub');
-  state.projectFilter='lightvela';invalidateMetricsForProjectChange();
-  assert.equal(state.metricsBenchmark,null);
+  assert.equal(state.metricsData.deliveries[0].issueId,'new-project');
+  assert.equal(state.metricsDataKey,'project-b|30d||');
+  assert.deepEqual(calls.map(path=>path.split('?')[0]),['/api/analytics','/api/issues','/api/analytics','/api/issues']);
+  state.projectFilter='project-a';invalidateMetricsForProjectChange();
   assert.equal(state.metricsData,null);
 }
 check().catch(error=>{console.error(error);process.exitCode=1});
@@ -485,9 +478,9 @@ assert.equal(http[0].timeoutSec, 30);
 const direct = mcpImportCandidates({id:'nested',name:'Nested',transport:'stdio',stdio:{command:'node',args:['server.js'],environment:{PORT:3000}}});
 assert.equal(direct[0].command, 'node');
 assert.deepEqual(direct[0].environment, {PORT:'3000'});
-const fragment = '"knot": {\u00a0"url": "[http://mcp.example.com/open/mcp](http://mcp.example.com/open/mcp)", "headers": {"x-api-token": "secret"}}';
+const fragment = '"gateway": {\u00a0"url": "[http://mcp.example.com/open/mcp](http://mcp.example.com/open/mcp)", "headers": {"x-api-token": "secret"}}';
 const pasted = mcpImportCandidates(mcpParseJSONText(fragment));
-assert.equal(pasted[0].id, 'knot');
+assert.equal(pasted[0].id, 'gateway');
 assert.equal(pasted[0].transport, 'http');
 assert.equal(pasted[0].url, 'http://mcp.example.com/open/mcp');
 assert.deepEqual(pasted[0].headers, {'x-api-token':'secret'});
@@ -822,7 +815,7 @@ assert.equal(credentialNextKind({}).key, 'gitToken');
 
 // Each kind saves and deletes only its own fields.
 assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '}), {gitToken: 'ghp_1'});
-assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'devcloud'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'devcloud'});
+assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'ioa'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'ioa'});
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: ''}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: ''});
 assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: 'sk-1'}), {codexApiKey: 'sk-1'});
 assert.deepEqual(credentialClearPayload(cred.kind('codexApiKey')), {codexApiKeyClear: true, codexBaseUrl: ''});
@@ -991,7 +984,7 @@ const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8')
 global.escapeHTML = value => String(value);
 global.state = {
   currentUser: {id: 7}, projectFilter: 'alpha',
-  mcpMarket: [{id: '61', aliases: ['gongfeng'], url: 'https://mcpgw.knot.example.com/gongfeng'}],
+  mcpMarket: [{id: '61', aliases: ['gongfeng'], url: 'https://mcp-gateway.example.com/gongfeng'}],
   data: {users: [{id: 7, gitTokenConfigured: true}], mcpServers: []}
 };
 global.userById = id => state.data.users.find(u => Number(u.id) === Number(id));
@@ -1014,7 +1007,7 @@ state.data.mcpServers = [{scope: 'project', projectId: 'beta', marketId: '61'}];
 assert.equal(genericRequirementRows(workflow)[2].ok, false);
 // Without market metadata the name/url fallback still recognises 工蜂.
 state.mcpMarket = [];
-state.data.mcpServers = [{scope: 'project', projectId: 'alpha', name: 'Gongfeng MCP', url: 'https://mcpgw.knot.example.com/gongfeng'}];
+state.data.mcpServers = [{scope: 'project', projectId: 'alpha', name: 'Gongfeng MCP', url: 'https://mcp-gateway.example.com/gongfeng'}];
 assert.equal(genericRequirementRows(workflow)[2].ok, true);
 assert.ok(code.includes('通用模板为只读'));
 assert.ok(code.includes('data-adopt-generic'));
@@ -1125,10 +1118,10 @@ global.state = {
   data: {
     issues: [{id:'iss-afp', projectId:'platform'}],
     tasks: [{runId:'run-afp', issueId:'iss-afp'}],
-    repositories: [{id:'repo-skillhub', projectId:'platform'}],
+    repositories: [{id:'repo-platform', projectId:'platform'}],
     runs: [
       {id:'run-afp', status:'waiting', executionContext:{responsibleUserId:7}},
-      {id:'run-align', status:'waiting', workflowId:'scheduled-baseline-align', executionContext:{projectId:'platform', responsibleUserId:7}, repository:{name:'SkillHub', repositoryId:'repo-skillhub'}},
+      {id:'run-align', status:'waiting', workflowId:'scheduled-baseline-align', executionContext:{projectId:'platform', responsibleUserId:7}, repository:{name:'SkillHub', repositoryId:'repo-platform'}},
       {id:'run-gslb', status:'waiting', executionContext:{projectId:'gslb', responsibleUserId:7}},
       {id:'run-other-user', status:'waiting', executionContext:{projectId:'gslb', responsibleUserId:99}},
     ]
@@ -1318,7 +1311,7 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	}
 }
 
-func TestDeploymentDurationDashboardIsEmbedded(t *testing.T) {
+func TestDeploymentDurationDashboardIsNotShipped(t *testing.T) {
 	html, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -1327,22 +1320,18 @@ func TestDeploymentDurationDashboardIsEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	css, err := os.ReadFile("deployment-dashboard.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`data-view="deployments" hidden`, `id="deploymentsView"`, `/deployment-dashboard.css?v=20260920r2`, `自动展示 SkillHub 最近 7 天部署耗时`} {
-		if !strings.Contains(string(html), want) {
-			t.Fatalf("deployment dashboard markup is missing %q", want)
+	for _, unwanted := range []string{`data-view="deployments"`, `id="deploymentsView"`, `/deployment-dashboard.css`, `data-obs-tab="skillhub"`} {
+		if strings.Contains(string(html), unwanted) {
+			t.Fatalf("index.html still ships removed dashboard markup %q", unwanted)
 		}
 	}
-	for _, want := range []string{"renderDeploymentDashboard", "/api/deployment-metrics?", "10000001", "deploymentChartSVG", "if(branch)q.set('branch',branch)", "最近 7 天与正在部署"} {
-		if !strings.Contains(string(app), want) {
-			t.Fatalf("deployment dashboard behavior is missing %q", want)
+	for _, unwanted := range []string{"renderDeploymentDashboard", "/api/deployment-metrics", "refreshSkillhubEfficiency"} {
+		if strings.Contains(string(app), unwanted) {
+			t.Fatalf("app bundle still ships removed dashboard behavior %q", unwanted)
 		}
 	}
-	if !strings.Contains(string(css), ".deployment-kpis") || !strings.Contains(string(css), ".deployment-chart") {
-		t.Fatal("deployment dashboard styles are incomplete")
+	if _, err := os.Stat("deployment-dashboard.css"); err == nil {
+		t.Fatal("deployment-dashboard.css should not be shipped")
 	}
 }
 
@@ -1480,7 +1469,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `data-obs-tab="skillhub"`, `id="exportObsReport"`} {
+	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `id="exportObsReport"`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("usage analysis UI missing %q", want)
 		}
@@ -1495,7 +1484,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{"ensureObsUserFilter", "obsRunMatchesUser", "exportObsReport", "buildObsReportHTML", "userDisplay(user)", "assigneeUserId", "各模型用量", "每人每日用量", "成员汇总", "data-obs-scope", "setObsScope", "需求类型分布", "SOP 版本对比", "节点质量明细", "setObsTrendGrain", "obsTrendChart", "该责任人在各项目", "data-obs-grain", "grain=", "全部", "obsApiGrain", "obsRangeCaption", "obsPeriodPicker", "setObsPeriod", "obsScopedView", "data-obs-period", "不含暂停/恢复", "Loop 指标", "workflow_task_id", "averageTokensPerRun", "toolSuccessRate", "runTraces", "obs-traces", "isSkillHubProject", "canShowSkillhubEfficiency", "isPreviewHost", "showDirectRunButton", "obsSkillhub", "obsSkillhubInsights", "obsSkillhubChart", "obsSkillhubCharts", "weeklyLegacy", "sh-chart-hero", "obsSkillhubDeployCard", "obsSkillhubDeployCharts", "dailySample", "countedPipelines", "前端测试环境", "AI 分析", "weeklyMerged", `nav[data-view="deployments"]`, "/api/analytics/skillhub", "/api/deployment-metrics"} {
+	for _, want := range []string{"ensureObsUserFilter", "obsRunMatchesUser", "exportObsReport", "buildObsReportHTML", "userDisplay(user)", "assigneeUserId", "各模型用量", "每人每日用量", "成员汇总", "data-obs-scope", "setObsScope", "需求类型分布", "SOP 版本对比", "节点质量明细", "setObsTrendGrain", "obsTrendChart", "该责任人在各项目", "data-obs-grain", "grain=", "全部", "obsApiGrain", "obsRangeCaption", "obsPeriodPicker", "setObsPeriod", "obsScopedView", "data-obs-period", "不含暂停/恢复", "Loop 指标", "workflow_task_id", "averageTokensPerRun", "toolSuccessRate", "runTraces", "obs-traces", "isPreviewHost", "showDirectRunButton"} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("app.js is missing %q", want)
 		}
@@ -1656,13 +1645,13 @@ func TestIssueTitleFuzzySearch(t *testing.T) {
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
 eval(code.slice(code.indexOf('function normalizeIssueTitleSearch('), code.indexOf('function filteredIssues(')));
-const issue = {number: 42, title: '全量 PHPUnit-回归', description: '覆盖 DNSPod 主流程', externalRef: {externalId: 'TAPD-100'}};
+const issue = {number: 42, title: '全量 PHPUnit-回归', description: '覆盖 DemoDNS 主流程', externalRef: {externalId: 'TAPD-100'}};
 const project = {key: 'DP'};
 assert.equal(issueMatchesQuery(issue, project, 'php unit'), true);
 assert.equal(issueMatchesQuery(issue, project, '回归 php'), true);
 assert.equal(issueMatchesQuery(issue, project, 'PHPUNIT回归'), true);
 assert.equal(issueMatchesQuery(issue, project, 'DP-42'), true);
-assert.equal(issueMatchesQuery(issue, project, 'DNSPod'), true);
+assert.equal(issueMatchesQuery(issue, project, 'DemoDNS'), true);
 assert.equal(issueMatchesQuery(issue, project, '不存在的标题'), false);
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
@@ -1750,7 +1739,7 @@ assert.equal(rootGit.length, 1);
 assert.equal(rootGit[0].name, 'workspace');
 assert.equal(sourceControlRootPath('workspace'), '/');
 assert.equal(sourceControlRootPath('.'), '/');
-assert.equal(sourceControlRootPath('dnspod-web'), '/dnspod-web');
+assert.equal(sourceControlRootPath('demodns-web'), '/demodns-web');
 eval(extension.slice(extension.indexOf('function changesForRepo('), extension.indexOf('function changesSignature(')));
 assert.equal(changesForRepo([{path:'e2e-cases.md'}, {path:'a/main.go', repository:'a'}], 'workspace').length, 1);
 assert.equal(changesForRepo([{path:'e2e-cases.md'}, {path:'a/main.go', repository:'a'}], 'a').length, 1);
@@ -2409,7 +2398,7 @@ func TestResearchEfficiencyDashboardUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{"renderMetricsDashboard", "refreshMetrics", "metricsDisplayModel", "metricsTrendSVG", "metricsPhaseTrendSVG", "metricsRequirementTable", "metricsDonut", "metricsDemoEnabled", "metricsDemoSnapshot", "演示数据", "/api/analytics/skillhub", "当前项目暂无完整需求闭环", "交付数（含 Issue）", "平均已采集耗时", "已采集耗时", "每条需求 / Issue 耗时明细", "平均澄清耗时", "平均研发耗时", "平均测试耗时", "测试环境部署耗时", "AI 工作项覆盖率", "Run 成功率"} {
+	for _, want := range []string{"renderMetricsDashboard", "refreshMetrics", "metricsDisplayModel", "metricsTrendSVG", "metricsPhaseTrendSVG", "metricsRequirementTable", "metricsDonut", "metricsDemoEnabled", "metricsDemoSnapshot", "演示数据", "交付数（含 Issue）", "平均已采集耗时", "已采集耗时", "每条需求 / Issue 耗时明细", "平均澄清耗时", "平均研发耗时", "平均测试耗时", "AI 工作项覆盖率", "Run 成功率"} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("研发效能看板脚本缺少 %q", want)
 		}
@@ -2577,7 +2566,7 @@ func TestRunElapsedShowsExecutionTimeNotWallClock(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-eval(code.slice(code.indexOf('function duration('), code.indexOf('function isSkillHubDeploymentRepository(')));
+eval(code.slice(code.indexOf('function duration('), code.indexOf('function metricsDemoEnabled(')));
 eval(code.slice(code.indexOf('function runFinishedAt('), code.indexOf('function relativeTime(')));
 const hour = 3600000, created = new Date(Date.now() - 45 * hour).toISOString();
 const settled = {status:'succeeded', createdAt:created, timing:{executionMs:5*hour, wallMs:45*hour, waitingMs:40*hour, asOf:new Date(Date.now()-hour).toISOString()}};

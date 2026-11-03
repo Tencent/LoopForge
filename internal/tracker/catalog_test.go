@@ -38,13 +38,13 @@ func (f projectAuthFixture) MCPServers() []domain.MCPServerDefinition { return f
 
 func TestBindTrackerMCPPrefersCatalogHeadersOverEnvToken(t *testing.T) {
 	cfg := domain.SyncConfig{
-		GongfengMCPURL: "https://mcpgw.knot.example.com/gongfeng",
-		TAPDMCPURL:     "https://mcpgw.knot.example.com/tapd/",
+		GongfengMCPURL: "https://mcp-gateway.example.com/gongfeng",
+		TAPDMCPURL:     "https://mcp-gateway.example.com/tapd/",
 	}
 	servers := []domain.MCPServerDefinition{{
 		ID:        "gongfeng-delivery",
 		Transport: "http",
-		URL:       "https://mcpgw.knot.example.com/gongfeng",
+		URL:       "https://mcp-gateway.example.com/gongfeng",
 		Headers:   map[string]string{"Authorization": "Bearer catalog-pat"},
 	}}
 	gf := bindTrackerMCP("gongfeng", cfg, servers, "expired-env-token", "Bearer expired-oauth")
@@ -67,10 +67,10 @@ func TestBindTrackerMCPPrefersCatalogHeadersOverEnvToken(t *testing.T) {
 }
 
 func TestBindTrackerMCPUsesDedicatedTAPDCatalog(t *testing.T) {
-	cfg := domain.SyncConfig{TAPDMCPURL: "https://mcpgw.knot.example.com/tapd/"}
+	cfg := domain.SyncConfig{TAPDMCPURL: "https://mcp-gateway.example.com/tapd/"}
 	servers := []domain.MCPServerDefinition{
-		{ID: "gongfeng-delivery", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer gf"}},
-		{ID: "tapd-delivery", Transport: "http", URL: "https://mcpgw.knot.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer tapd"}},
+		{ID: "gongfeng-delivery", Transport: "http", URL: "https://mcp-gateway.example.com/gongfeng", Headers: map[string]string{"Authorization": "Bearer gf"}},
+		{ID: "tapd-delivery", Transport: "http", URL: "https://mcp-gateway.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer tapd"}},
 	}
 	got := bindTrackerMCP("tapd", cfg, servers, "env", "")
 	if got.Source != "catalog:tapd-delivery" || got.Headers["Authorization"] != "Bearer tapd" {
@@ -79,7 +79,7 @@ func TestBindTrackerMCPUsesDedicatedTAPDCatalog(t *testing.T) {
 }
 
 func TestBindTrackerMCPFallsBackWhenCatalogMissing(t *testing.T) {
-	cfg := domain.SyncConfig{GongfengMCPURL: "https://mcpgw.knot.example.com/gongfeng"}
+	cfg := domain.SyncConfig{GongfengMCPURL: "https://mcp-gateway.example.com/gongfeng"}
 	got := bindTrackerMCP("gongfeng", cfg, nil, "env-token", "")
 	if got.Source != "env:AGENTFLOW_MCP_TOKEN" {
 		t.Fatalf("source=%q", got.Source)

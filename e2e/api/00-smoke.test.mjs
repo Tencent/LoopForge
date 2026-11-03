@@ -88,14 +88,8 @@ test('GET /api/knowledge/sources answers 503 with a reason when the knowledge ba
   else assert.ok(res.data);
 });
 
-test('GET /api/deployment-metrics for a real repository', async () => {
-  await api('GET', '/api/deployment-metrics', undefined, { expect: 400 });
-  // The dashboard only supports SkillHub repositories and answers 422 for others.
-  for (const repo of list(await get('/api/repositories'))) {
-    const q = `projectId=${encodeURIComponent(repo.projectId)}&repositoryId=${encodeURIComponent(repo.id)}`;
-    const d = await api('GET', `/api/deployment-metrics?${q}`, undefined, { expect: [200, 422] });
-    assert.ok(d && typeof d === 'object');
-  }
+test('GET /api/deployment-metrics is not served', async () => {
+  await api('GET', '/api/deployment-metrics', undefined, { expect: 404 });
 });
 
 test('current user resolves through the token and model credentials are explicit', async () => {

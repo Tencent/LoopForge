@@ -125,7 +125,7 @@ func TestHarnessStylesheetLoadOrder(t *testing.T) {
 	if base := slices.Index(links, "/product-v4.css"); shared < 0 || base < 0 || shared < base {
 		t.Fatalf("/%s must load after /product-v4.css, got %v", harnessUICSS, links)
 	}
-	for _, page := range []string{"/bots.css", "/knowledge.css", "/metrics-dashboard.css", "/deployment-dashboard.css", "/business-domains.css", "/app/mcp.css", "/app/issues-list.css", "/app/assets-harness.css", "/app/observability-harness.css", "/app/approvals-harness.css"} {
+	for _, page := range []string{"/bots.css", "/knowledge.css", "/metrics-dashboard.css", "/business-domains.css", "/app/mcp.css", "/app/issues-list.css", "/app/assets-harness.css", "/app/observability-harness.css", "/app/approvals-harness.css"} {
 		if at := slices.Index(links, page); at < 0 || at < shared {
 			t.Errorf("%s must load after /%s, got %v", page, harnessUICSS, links)
 		}
@@ -139,7 +139,7 @@ func TestSettingsAreaUsesOneCenteredContainer(t *testing.T) {
 		t.Fatalf("%s is missing the settings container rule", harnessUICSS)
 	}
 	views := container[1]
-	for _, view := range []string{"#settingsView", "#botsView", "#projectsView", "#runnersView", "#agentsView", "#mcpView", "#assetsView", "#knowledgeView", "#metricsView", "#deploymentsView", "#businessDomainsView", "#guideView", "#platformView", "#businessDomainManagementView"} {
+	for _, view := range []string{"#settingsView", "#botsView", "#projectsView", "#runnersView", "#agentsView", "#mcpView", "#assetsView", "#knowledgeView", "#metricsView", "#businessDomainsView", "#guideView", "#platformView", "#businessDomainManagementView"} {
 		if !strings.Contains(views, view) {
 			t.Errorf("settings container must include %s", view)
 		}
