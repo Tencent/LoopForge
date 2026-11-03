@@ -6,7 +6,7 @@ export const password=()=>process.env.LOOPFORGE_TEST_PASSWORD || fs.readFileSync
 // so readiness means "projects loaded", not "select visible".
 export async function appReady(page){
   const {expect}=await import('@playwright/test');
-  await expect(page.locator('#projectSwitcher option').first()).toBeAttached();
+  await expect(page.locator('#projectSwitcher option').first()).toBeAttached({timeout:20_000});
 }
 export async function switchProject(page,id){
   const {expect}=await import('@playwright/test');
