@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"agentflow/internal/domain"
 )
@@ -35,15 +34,15 @@ func diagnosisTestRun() domain.Run {
 	}
 }
 
-func TestAssistantRunDetailKeepsDiagnosisWithinToolBudget(t *testing.T) {
+func TestAssistantRunDetailKeepsDiagnosis(t *testing.T) {
 	run := diagnosisTestRun()
 	raw, _ := json.Marshal(run)
-	if strings.Index(string(raw), "could not read Username") < assistantMCPResultLimit {
-		t.Fatalf("fixture must reproduce the truncation: raw error sits within the first %d chars", assistantMCPResultLimit)
+	if !strings.Contains(string(raw), "could not read Username") {
+		t.Fatal("fixture missing git error")
 	}
 	out := string((&assistantHandlers{}).assistantRunResult("runs_get", raw))
-	if n := utf8.RuneCountInString(out); n > assistantMCPResultLimit {
-		t.Fatalf("diagnosis view is %d runes, over the %d budget", n, assistantMCPResultLimit)
+	if len(out) >= len(raw) || !strings.Contains(out, "could not read Username") {
+		t.Fatal("diagnosis view must drop the bulky snapshot and keep the git error")
 	}
 	var view assistantRunView
 	if err := json.Unmarshal([]byte(out), &view); err != nil {

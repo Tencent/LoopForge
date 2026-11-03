@@ -57,7 +57,10 @@ func borrowedSOPNotice(run domain.Run) string {
 }
 
 func (h *agentToolGateway) controlConversationSOP(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
+	releaseTurn := s.workspaceTurn.lockOperation()
+	defer releaseTurn()
 	runID := s.workspaceRun()
+	ctx = s.workspaceTurn.withLease(ctx, runID)
 	run, ok := h.repo.RunState(runID)
 	if s.RunID != "" || runID == "" || !ok || !borrowableSOPRun(run, s.ProjectID) || s.User.ID != s.UserID {
 		return "", fmt.Errorf("本对话当前绑定的不是 SOP 的工作区：先用 workbench_workspace_open 传 issueId 切到该需求的 SOP 工作区")

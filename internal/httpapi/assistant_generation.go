@@ -284,6 +284,8 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			}
 		case "result":
 			g.Reply = raw
+		case "workspace_warning":
+			g.WorkspaceWarning = fmt.Sprint(value)
 		case "error":
 			var e struct {
 				Error string `json:"error"`

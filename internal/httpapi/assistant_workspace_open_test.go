@@ -351,7 +351,7 @@ func TestDeletingConversationRemovesItsWorkspace(t *testing.T) {
 		t.Fatalf("workspace run status = %s, want an idle free collaboration", run.Status)
 	}
 	again := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: owner.ID, User: owner, ChatSessionID: "chat-idle", ChatOwnerID: owner.ID, workspaceRunID: idle}
-	second, err := gateway.bindConversationWorkspace(again, workspaceOpenChoice{Goal: "另一个需求", New: true})
+	second, err := gateway.bindConversationWorkspace(context.Background(), again, workspaceOpenChoice{Goal: "另一个需求", New: true})
 	if err != nil || second.Previous != idle {
 		t.Fatalf("second workspace = %+v %v", second, err)
 	}
@@ -388,7 +388,7 @@ func TestConversationWorkspaceFallsBackToGenericDocker(t *testing.T) {
 	h.deps.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
 	gateway := &agentToolGateway{deps: h.deps}
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: owner.ID, User: owner, ChatSessionID: "chat-docker", ChatOwnerID: owner.ID}
-	bound, err := gateway.bindConversationWorkspace(s, workspaceOpenChoice{Goal: "改 README"})
+	bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "改 README"})
 	run := bound.Run
 	if err != nil {
 		t.Fatal(err)

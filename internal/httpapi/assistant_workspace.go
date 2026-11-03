@@ -92,7 +92,12 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	if name == "workbench_workspace_sop" {
 		return h.controlConversationSOP(ctx, s, args)
 	}
+	releaseTurn := s.workspaceTurn.lockOperation()
+	defer releaseTurn()
 	runID := s.workspaceRun()
+	if expected := mainBotWorkspaceRun(ctx); expected != "" && expected != runID {
+		return "", fmt.Errorf("工作区已切换，请重新调用工具")
+	}
 	if runID == "" {
 		return "", fmt.Errorf("本对话还没有工作区：先调用 workbench_workspace_open 为要改的仓库开一个临时工作区")
 	}
@@ -177,13 +182,20 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	return "", errAgentToolUnknown
 }
 
-// mainBotWorkspaceLease attaches the conversation workspace lease, taking a
-// short one when the generation holds none, and restores a reclaimed
-// workspace. Marking the use keeps the idle sweep's one-hour clock honest.
+// mainBotWorkspaceLease reuses the turn's lease and restores a reclaimed
+// workspace. Callers outside a conversation turn own a short operation lease.
 func (h *agentToolGateway) mainBotWorkspaceLease(ctx context.Context, s *AgentToolSession, runID string) (context.Context, []string, func(), error) {
 	release := func() {}
 	if h.engine == nil {
 		return ctx, nil, release, nil
+	}
+	if s.workspaceTurn != nil {
+		ctx, err := s.workspaceTurn.lease(ctx, runID)
+		if err != nil {
+			return ctx, nil, release, err
+		}
+		restored, err := h.engine.PrepareConversationWorkspace(ctx, runID, engine.ConversationWorkspaceToken(ctx, runID))
+		return ctx, restored, release, err
 	}
 	if err := h.engine.MaterializeConversationWorkspace(ctx, runID); err != nil {
 		return ctx, nil, release, fmt.Errorf("准备工作区失败：%w", err)

@@ -460,7 +460,7 @@ func lookupAgentTool(catalog []agentToolDescriptor, name string) (agentToolDescr
 }
 
 func redactAgentToolResult(text string, user domain.User) string {
-	text = redactAssistantSecrets(truncateRunes(text, assistantMCPResultLimit), user)
+	text = redactAssistantSecrets(strings.TrimSpace(text), user)
 	return redactAuthorizationValues(text)
 }
 

@@ -65,6 +65,7 @@ type AgentToolSession struct {
 	// to: one it opened itself, or the SOP run of an issue.
 	workspaceRunID   string
 	workspaceMu      sync.Mutex
+	workspaceTurn    *assistantWorkspaceTurn
 	SpaceID          string
 	ControlScope     assistantControlScope
 	ExpiresAt        time.Time

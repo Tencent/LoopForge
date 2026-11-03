@@ -315,6 +315,11 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		if session.WorkspaceToken != "" && session.RunID != "" && strings.HasPrefix(tool.UpstreamName, "runs_") && assistantToolInput(call).Path["id"] == session.RunID {
 			ctx = engine.WithConversationWorkspaceToken(ctx, session.WorkspaceToken, session.RunID)
 		}
+		if session.workspaceTurn != nil && strings.HasPrefix(tool.UpstreamName, "runs_") {
+			releaseTurn := session.workspaceTurn.lockOperation()
+			defer releaseTurn()
+			ctx = session.workspaceTurn.withLease(ctx, assistantToolInput(call).Path["id"])
+		}
 		asst := h.assistant()
 		text, err := asst.callAssistantPlatform(ctx, session.User, session.ProjectID, call)
 		if err != nil {

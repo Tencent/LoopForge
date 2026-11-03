@@ -47,7 +47,7 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 	h, user, s := chatSandboxFixture(t)
 	gateway := agentToolGateway{deps: h.deps}
 	open := func(sandbox string) (domain.Run, bool, error) {
-		bound, err := gateway.bindConversationWorkspace(s, workspaceOpenChoice{Goal: "fix code", SandboxID: sandbox})
+		bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "fix code", SandboxID: sandbox})
 		return bound.Run, bound.Reused, err
 	}
 	if _, _, err := open("private"); err == nil || len(h.repo.Runs()) != 0 {
@@ -255,7 +255,7 @@ func TestMainBotSwitchesConversationWorkspaces(t *testing.T) {
 	}
 	bind := func(choice workspaceOpenChoice) conversationWorkspaceBinding {
 		t.Helper()
-		bound, err := gateway.bindConversationWorkspace(s, choice)
+		bound, err := gateway.bindConversationWorkspace(context.Background(), s, choice)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -297,7 +297,7 @@ func TestMainBotSwitchesConversationWorkspaces(t *testing.T) {
 		t.Fatalf("next turn workspace = %q", s.workspaceRun())
 	}
 
-	if _, err := gateway.bindConversationWorkspace(s, workspaceOpenChoice{Goal: "x", IssueID: "idle-issue"}); err == nil || !strings.Contains(err.Error(), "还没跑过 SOP") {
+	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "x", IssueID: "idle-issue"}); err == nil || !strings.Contains(err.Error(), "还没跑过 SOP") {
 		t.Fatalf("an issue that never ran lent a workspace: %v", err)
 	}
 
@@ -326,7 +326,7 @@ func TestMainBotSwitchesConversationWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: user.ID, User: user, ChatSessionID: "other-chat", ChatOwnerID: user.ID}
-	if _, err := gateway.bindConversationWorkspace(other, workspaceOpenChoice{Goal: "x", WorkspaceRunID: first.Run.ID}); err == nil {
+	if _, err := gateway.bindConversationWorkspace(context.Background(), other, workspaceOpenChoice{Goal: "x", WorkspaceRunID: first.Run.ID}); err == nil {
 		t.Fatal("bound another conversation's workspace")
 	}
 	if _, err := parseWorkspaceOpenChoice(map[string]any{"goal": "x", "issueId": "chat-issue", "new": true}); err == nil {
@@ -384,11 +384,11 @@ func TestTurnContextOffersWorkspacesAndLinksIssue(t *testing.T) {
 	if strings.Contains(note, "当前绑定") {
 		t.Fatalf("an unbound conversation reported a workspace: %s", note)
 	}
-	own, err := gateway.bindConversationWorkspace(s, workspaceOpenChoice{Goal: "改按钮"})
+	own, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "改按钮"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.bindConversationWorkspace(s, workspaceOpenChoice{Goal: "看运行", IssueID: "old-running"}); err != nil {
+	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "看运行", IssueID: "old-running"}); err != nil {
 		t.Fatal(err)
 	}
 	note = h.workspaceTurnContext(&assistantRequest{ProjectID: "workbench", SessionID: "sandbox-chat", Messages: []assistantMessage{{Role: "user"}}}, user)
@@ -467,7 +467,7 @@ func TestMainBotPausesAndTakesOverIssueSOP(t *testing.T) {
 	if want := []string{"POST /api/runs/borrowed-sop/pause", "POST /api/runs/borrowed-sop/cancel"}; strings.Join(calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("run control calls = %v", calls)
 	}
-	if bound, err := gateway.bindConversationWorkspace(s, workspaceOpenChoice{Goal: "接着改"}); err != nil || !bound.Reused || bound.Run.ID != sop.ID || len(h.repo.Runs()) != 1 {
+	if bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "接着改"}); err != nil || !bound.Reused || bound.Run.ID != sop.ID || len(h.repo.Runs()) != 1 {
 		t.Fatalf("taken-over SOP workspace not kept: %+v %v", bound, err)
 	}
 	if _, err := gateway.workspaceSubmitMR(ctx, s, map[string]any{"title": "fix"}); err == nil || !strings.Contains(err.Error(), "Git Token") {

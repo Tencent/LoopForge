@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -192,7 +193,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	if err != nil {
 		return "", err
 	}
-	bound, err := h.bindConversationWorkspace(s, choice)
+	bound, err := h.bindConversationWorkspace(ctx, s, choice)
 	if err != nil {
 		return "", err
 	}
@@ -246,11 +247,16 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	if previous, ok := h.repo.RunState(bound.Previous); ok {
 		out["previousRunId"] = previous.ID
 		fmt.Fprintf(&notice, "之前绑定的工作区 %s 已解绑，空闲时保存快照并回收，切回时恢复。", previous.ID)
+		if bound.CheckpointError != "" {
+			out["previousCheckpointError"] = bound.CheckpointError
+			notice.WriteString("切换前保存它的快照没有成功，它的文件仍原样保留，回收前会再次保存，保存成功之前不会回收。")
+		}
 		if !previous.IsWorkspace() && !domain.TerminalRunStatus(previous.Status) && previous.PauseRequested {
 			notice.WriteString("它所属的 SOP 运行仍处于暂停状态，要让它继续，先切回去再调用 workbench_workspace_sop resume。")
 		}
 	}
-	tree, err := h.callMainBotWorkspace(ctx, s, "workbench_workspace_tree", map[string]any{})
+	treeCtx := context.WithValue(ctx, mainBotWorkspaceKey{}, run.ID)
+	tree, err := h.callMainBotWorkspace(treeCtx, s, "workbench_workspace_tree", map[string]any{})
 	if err != nil {
 		return "", fmt.Errorf("工作区已绑定（%s），但准备代码时失败：%v", run.ID, err)
 	}
@@ -268,13 +274,23 @@ type conversationWorkspaceBinding struct {
 	Created bool
 	// Previous is the workspace this call switched away from.
 	Previous string
+	// CheckpointError is why saving Previous before the switch failed.
+	CheckpointError string
 }
 
 // bindConversationWorkspace binds the workspace the choice picks: an issue's
 // SOP run, a workspace the conversation opened earlier, the bound one, or a
 // new one in the user's fixed sandbox, else the model's choice, else
 // generic-docker. The workspace it switches away from is released.
-func (h *agentToolGateway) bindConversationWorkspace(s *AgentToolSession, choice workspaceOpenChoice) (conversationWorkspaceBinding, error) {
+func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *AgentToolSession, choice workspaceOpenChoice) (conversationWorkspaceBinding, error) {
+	if s.workspaceTurn != nil {
+		s.workspaceTurn.operations.Lock()
+		defer s.workspaceTurn.operations.Unlock()
+		// Refuse before a new workspace run is created that nothing would bind.
+		if err := s.workspaceTurn.usable(); err != nil {
+			return conversationWorkspaceBinding{}, err
+		}
+	}
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
 	project, ok := h.repo.Project(s.ProjectID)
@@ -314,6 +330,21 @@ func (h *agentToolGateway) bindConversationWorkspace(s *AgentToolSession, choice
 	if binding.Run.ID == s.workspaceRunID {
 		binding.Reused = true
 		return binding, nil
+	}
+	if s.workspaceTurn != nil {
+		// A failed save only defers reclamation: the idle sweep saves a released
+		// workspace again before reclaiming it and keeps its files if that save
+		// fails too. Blocking the switch would strand the turn on a workspace that
+		// cannot be saved (too large, or slower than the save timeout).
+		if err := s.workspaceTurn.checkpoint(ctx); errors.Is(err, errAssistantTurnClosed) {
+			if binding.Created {
+				_ = h.engine.ReleaseConversationWorkspace(binding.Run.ID)
+			}
+			return conversationWorkspaceBinding{}, err
+		} else if err != nil {
+			binding.CheckpointError = err.Error()
+			log.Printf("checkpoint conversation workspace before switch session=%s: %v", s.ChatSessionID, err)
+		}
 	}
 	binding.Previous = s.workspaceRunID
 	s.workspaceRunID = binding.Run.ID

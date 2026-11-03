@@ -16,8 +16,6 @@ import (
 	"agentflow/internal/runtime"
 )
 
-const assistantMCPResultLimit = 12000
-
 type assistantAssetObserverKey struct{}
 
 type assistantMCPCall struct {
@@ -220,7 +218,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 			}
 		}
 	}
-	return redactAssistantSecrets(truncateRunes(text, assistantMCPResultLimit), user), nil
+	return redactAssistantSecrets(text, user), nil
 }
 
 func assistantMCPCallArguments(call assistantMCPCall) map[string]any {
@@ -348,7 +346,7 @@ func (h *assistantHandlers) callAssistantMCP(user domain.User, projectID string,
 	if err != nil {
 		return "", err
 	}
-	return redactAssistantSecrets(truncateRunes(text, assistantMCPResultLimit), user), nil
+	return redactAssistantSecrets(strings.TrimSpace(text), user), nil
 }
 
 func (h *assistantHandlers) lookupAssistantMCP(projectID string, userID int64, ref string) (domain.MCPServerDefinition, bool) {

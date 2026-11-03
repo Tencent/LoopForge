@@ -146,11 +146,11 @@ func TestProjectParticipantOpensAndSwitchesSharedWorkspace(t *testing.T) {
 	}
 	session.UserID, session.User = peer.ID, peer
 	gateway := &agentToolGateway{deps: h.deps}
-	first, err := gateway.bindConversationWorkspace(session, workspaceOpenChoice{Goal: "first shared workspace"})
+	first, err := gateway.bindConversationWorkspace(context.Background(), session, workspaceOpenChoice{Goal: "first shared workspace"})
 	if err != nil || !first.Created || first.Run.ExecutionContext.ResponsibleUserID != peer.ID {
 		t.Fatalf("participant cannot open workspace with its own execution identity: %+v %v", first, err)
 	}
-	second, err := gateway.bindConversationWorkspace(session, workspaceOpenChoice{Goal: "second shared workspace", New: true})
+	second, err := gateway.bindConversationWorkspace(context.Background(), session, workspaceOpenChoice{Goal: "second shared workspace", New: true})
 	if err != nil || !second.Created || second.Previous != first.Run.ID {
 		t.Fatalf("participant cannot switch workspace: %+v %v", second, err)
 	}

@@ -108,6 +108,8 @@ func mainBotBrowserRequest(name string, args map[string]any) (domain.BrowserRequ
 }
 
 func (h *agentToolGateway) callMainBotBrowser(ctx context.Context, s *AgentToolSession, name string, args map[string]any) (map[string]any, error) {
+	releaseTurn := s.workspaceTurn.lockOperation()
+	defer releaseTurn()
 	runID, runErr := mainBotBrowserRun(s)
 	if runErr != nil {
 		if errors.Is(runErr, errMainBotBrowserNoWorkspace) {
