@@ -9,6 +9,8 @@ jobs:
   core:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      REAL_BROWSER_TESTS: '^(TestMainBotBrowserStartsAndDrivesRunBrowser|TestBrowserStreamPushesFramesAndRunsCommands|TestRunnerStartsPanelBrowserInRunSandbox|TestBrowserAgentOperationsDriveRealChromium)$'
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v6
@@ -21,7 +23,10 @@ jobs:
         run: bash scripts/build-chatbot.sh
       - name: Let Chromium use its sandbox as an unprivileged user
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: go test -p=2 ./... -count=1 -timeout=600s
+      # Real-Chromium tests run on their own: alongside the rest of the suite
+      # the browser can miss its DevTools liveness check on a loaded runner.
+      - run: go test -p=2 ./... -count=1 -timeout=600s -skip "$REAL_BROWSER_TESTS"
+      - run: go test -p=1 ./internal/httpapi ./internal/runner ./internal/runtime -count=1 -timeout=300s -run "$REAL_BROWSER_TESTS" -v
       - name: Browser-free UI tests for the platform console
         run: npm ci --no-audit --no-fund && npm test
         working-directory: webtest

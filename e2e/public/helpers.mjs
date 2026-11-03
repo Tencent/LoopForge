@@ -4,9 +4,25 @@ export const password=()=>process.env.LOOPFORGE_TEST_PASSWORD || fs.readFileSync
 // The global #projectSwitcher <select> owns the active project, but it is
 // drawn as a Harness trigger and the whole top bar is hidden on the chat home,
 // so readiness means "projects loaded", not "select visible".
+// A page whose console never booted is reported (scripts still loading, page
+// errors) and reloaded once, so a stalled load on a busy runner is diagnosable
+// without failing the journey that follows.
 export async function appReady(page){
   const {expect}=await import('@playwright/test');
-  await expect(page.locator('#projectSwitcher option').first()).toBeAttached({timeout:20_000});
+  const option=page.locator('#projectSwitcher option').first();
+  try{
+    await expect(option).toBeAttached({timeout:20_000});
+    return;
+  }catch(err){
+    const state=await page.evaluate(()=>{
+      const loaded=new Set(performance.getEntriesByType('resource').filter(e=>e.responseEnd>0).map(e=>e.name));
+      return {url:location.pathname+location.hash,readyState:document.readyState,
+        pendingScripts:[...document.scripts].filter(s=>s.src&&!loaded.has(s.src)).map(s=>new URL(s.src).pathname)};
+    }).catch(e=>({error:e.message}));
+    console.warn(`[appReady] console did not boot, reloading once: ${JSON.stringify(state)}`);
+  }
+  await page.reload();
+  await expect(option).toBeAttached({timeout:20_000});
 }
 export async function switchProject(page,id){
   const {expect}=await import('@playwright/test');
