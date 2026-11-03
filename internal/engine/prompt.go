@@ -7,10 +7,6 @@ import (
 	"strings"
 )
 
-func renderPrompt(wf domain.WorkflowDefinition, node domain.WorkflowNode, run domain.Run) string {
-	return renderPromptWithStore(nil, wf, node, run)
-}
-
 func renderPromptSpec(wf domain.WorkflowDefinition, node domain.WorkflowNode, spec domain.TaskPromptSpec, run domain.Run) string {
 	return applyPromptPlaceholders(nil, wf, node, &spec, nil, run)
 }
@@ -31,6 +27,14 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	prompt := ""
 	if spec != nil {
 		prompt = compileTaskPrompt(node, *spec, gates)
+	}
+	if task := strings.TrimSpace(node.TaskPrompt); task != "" {
+		prompt += "\n\n## 本节点任务\n\n" + task
+	}
+	// Roles created through chat may only define instructions, without a
+	// structured taskbook. Never silently drop their node task or run input.
+	if strings.TrimSpace(run.Input) != "" && !strings.Contains(prompt, "{{input}}") {
+		prompt += "\n\n## 本次运行输入\n\n{{input}}"
 	}
 	prompt = strings.ReplaceAll(prompt, "{{input}}", run.Input)
 	repository := "未绑定代码仓库"
@@ -86,6 +90,9 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 				upstream = append(upstream, fmt.Sprintf("[%s]\n%s", edge.Source, source.Output))
 			}
 		}
+	}
+	if len(upstream) > 0 && !strings.Contains(prompt, "{{upstream}}") {
+		prompt += "\n\n## 上游节点输出\n\n{{upstream}}"
 	}
 	prompt = strings.ReplaceAll(prompt, "{{upstream}}", strings.Join(upstream, "\n\n"))
 	for id, nodeRun := range run.Nodes {
@@ -225,7 +232,7 @@ func appendArtifactContract(prompt string, node domain.WorkflowNode, repositorie
 	if len(node.ArtifactOutputs) == 0 {
 		return b.String()
 	}
-	b.WriteString("\n\n# Required artifact contract\n\nBefore finishing, create these files as **relative paths at the run workspace root** (the current working directory for run-scoped nodes). Do not write them inside a repository subdirectory. Never write them to a host absolute path, `localPath`, or `/data/workspace/...`.\n")
+	b.WriteString("\n\n# Required artifact contract\n\nBefore finishing, create these files as **relative paths at the run workspace root** (the current working directory for run-scoped nodes). Do not write them inside a repository subdirectory. Never write them to a host absolute path, `localPath`, or `/srv/...`.\n")
 	for _, contract := range node.ArtifactOutputs {
 		required := "optional"
 		if contract.Required {

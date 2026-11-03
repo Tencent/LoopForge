@@ -196,7 +196,7 @@ function setAIOrchestratorOpen(open) {
   const panel = $('#aiOrchestrator');
   if (!panel) return;
   panel.hidden = !open;
-  panel.closest('.flow-workbench')?.classList.toggle('ai-open', open);
+  if (typeof syncFlowDrawerLayout === 'function') syncFlowDrawerLayout();
   const input = $('#aiOrchestratorInput');
   if (input && !input.value) {
     input.placeholder = (state.workflow?.nodes || []).length
@@ -326,9 +326,7 @@ function aiSleep(ms) {
 }
 
 function aiCanvasFollow(x, y) {
-  const canvas = $('#canvas');
-  if (!canvas) return;
-  canvas.scrollTo({left: Math.max(0, x - canvas.clientWidth / 2 + 114), top: Math.max(0, y - canvas.clientHeight / 2 + 46), behavior: 'smooth'});
+  flowViewport.centerOn(x + 122, y + 60, {smooth: true});
 }
 
 function aiProvisionalPosition(index) {
@@ -378,7 +376,7 @@ async function startAIBuild(raw, opts = {}) {
   renderProperties();
   openAIOrchestrator();
   $('#canvas')?.classList.add('ai-building');
-  $('#canvas')?.scrollTo({left: 0, top: 0});
+  flowViewport.reset();
   return aiBuild;
 }
 
@@ -490,34 +488,11 @@ async function aiRelayout(build) {
   renderCanvas();
 }
 
-// Briefly zoom the node/edge layers out so the whole flow is visible, then settle back.
+// Fit the whole flow into view once it has been built.
 async function aiOverview() {
-  const canvas = $('#canvas');
-  const layers = [$('#nodes'), $('#edges')].filter(Boolean);
-  const nodes = state.workflow?.nodes || [];
-  if (!canvas || !layers.length || !nodes.length) return;
-  const width = Math.max(...nodes.map(n => (n.position?.x || 0) + 300));
-  const height = Math.max(...nodes.map(n => (n.position?.y || 0) + 130));
-  const scale = Math.min(1, (canvas.clientWidth - 40) / width, (canvas.clientHeight - 40) / height);
-  if (scale > 0.95) return;
-  canvas.scrollTo({left: 0, top: 0});
-  const apply = value => layers.forEach(el => {
-    el.style.transformOrigin = '0 0';
-    el.style.transition = 'transform .55s cubic-bezier(.2,.8,.2,1)';
-    el.style.transform = value;
-  });
-  let restored = false;
-  const restore = () => {
-    if (restored) return;
-    restored = true;
-    canvas.removeEventListener('pointerdown', restore, true);
-    apply('');
-    setTimeout(() => layers.forEach(el => { el.style.transition = ''; el.style.transformOrigin = ''; }), 600);
-  };
-  canvas.addEventListener('pointerdown', restore, true);
-  apply('scale(' + Math.max(0.3, scale).toFixed(3) + ')');
-  await aiSleep(2200);
-  restore();
+  if (!(state.workflow?.nodes || []).length) return;
+  flowViewport.fit({smooth: true});
+  await aiSleep(600);
 }
 
 function finishAIBuildVisuals() {
@@ -554,7 +529,6 @@ async function completeAIBuild(build, finalRaw) {
   setAIBuildStatus('整理布局…');
   await aiRelayout(build);
   const canvas = $('#canvas');
-  canvas?.scrollTo({left: 0, top: 0, behavior: 'smooth'});
   finishAIBuildVisuals();
   canvas?.classList.add('ai-done');
   setTimeout(() => canvas?.classList.remove('ai-done'), 1600);

@@ -18,6 +18,9 @@ func (r mrDeliveryStateRow) toDomain() domain.MRDeliveryState {
 		MRProject: r.MRProject, MRIID: r.MRIID, MRURL: r.MRURL, State: r.State,
 		TargetBranch: r.TargetBranch, IssueID: r.IssueID,
 	}
+	if r.MergedAt != nil {
+		item.MergedAt = r.MergedAt.UTC()
+	}
 	if r.CheckedAt != nil {
 		item.CheckedAt = r.CheckedAt.UTC()
 	}
@@ -35,7 +38,7 @@ func mrDeliveryRowValues(item domain.MRDeliveryState, now time.Time) map[string]
 	return map[string]any{
 		"mr_project": item.MRProject, "mr_iid": item.MRIID, "mr_url": item.MRURL,
 		"state": item.State, "target_branch": domain.NormalizeBranchName(item.TargetBranch),
-		"issue_id": item.IssueID, "checked_at": checked,
+		"issue_id": item.IssueID, "merged_at": timePtr(item.MergedAt), "checked_at": checked,
 		"created_at": timePtr(item.CreatedAt), "updated_at": timePtr(now),
 	}
 }
@@ -88,7 +91,7 @@ func (r *DeliveryRepo) EnsureMRDeliveryState(project string, iid int, url, issue
 	})
 }
 
-func (r *DeliveryRepo) UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, checkedAt time.Time) error {
+func (r *DeliveryRepo) UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, mergedAt, checkedAt time.Time) error {
 	if project == "" || iid <= 0 {
 		return nil
 	}
@@ -100,7 +103,7 @@ func (r *DeliveryRepo) UpdateMRDeliveryState(project string, iid int, state stri
 	if checkedAt.IsZero() {
 		checkedAt = time.Now().UTC()
 	}
-	if err := r.recordMRState(project, iid, state, targetBranch, checkedAt); err != nil {
+	if err := r.recordMRState(project, iid, state, targetBranch, mergedAt, checkedAt); err != nil {
 		return err
 	}
 	classified := r.classifyMRDelivery(domain.MRDeliveryState{
@@ -131,10 +134,17 @@ func (r *DeliveryRepo) UpdateMRDeliveryState(project string, iid int, state stri
 }
 
 // recordMRState stores a looked-up Gongfeng state without touching issues.
-func (r *DeliveryRepo) recordMRState(project string, iid int, state, targetBranch string, checkedAt time.Time) error {
+func (r *DeliveryRepo) recordMRState(project string, iid int, state, targetBranch string, mergedAt, checkedAt time.Time) error {
+	values := map[string]any{"state": state, "target_branch": domain.NormalizeBranchName(targetBranch), "checked_at": checkedAt.UTC(), "updated_at": time.Now().UTC()}
+	if state != "merged" {
+		values["merged_at"] = nil
+	} else if !mergedAt.IsZero() {
+		// A response without a timestamp must not erase an authoritative time.
+		values["merged_at"] = mergedAt.UTC()
+	}
 	return r.DB.Model(&mrDeliveryStateRow{}).
 		Where("mr_project = ? AND mr_iid = ?", project, iid).
-		Updates(map[string]any{"state": state, "target_branch": domain.NormalizeBranchName(targetBranch), "checked_at": checkedAt.UTC(), "updated_at": time.Now().UTC()}).Error
+		Updates(values).Error
 }
 
 // MarkIssueDelivered locks a work item from MR polling / reconcile. mrURL must
@@ -182,7 +192,7 @@ func (r *DeliveryRepo) registerDeliveryMR(issueID string, mr domain.DeliveryMR, 
 	}
 	_ = r.EnsureMRDeliveryState(project, iid, mr.URL, issueID)
 	if st := strings.TrimSpace(mr.GongfengState); st != "" {
-		_ = r.recordMRState(project, iid, st, mr.TargetBranch, at)
+		_ = r.recordMRState(project, iid, st, mr.TargetBranch, time.Time{}, at)
 	}
 	return r.lookupMRDeliveryState(mr.URL)
 }
@@ -679,7 +689,7 @@ func (r *DeliveryRepo) MRDeliveryStatesMap(keys []domain.MRDeliveryKey) map[doma
 func (r *DeliveryRepo) MRDeliveryStatesNeedingRefresh(staleBefore time.Time) ([]domain.MRDeliveryState, error) {
 	var rows []mrDeliveryStateRow
 	if err := r.DB.
-		Where("(state NOT IN ('merged', 'closed') OR (state='merged' AND target_branch='')) AND (checked_at IS NULL OR checked_at < ?)", staleBefore.UTC()).
+		Where("(state NOT IN ('merged', 'closed') OR (state='merged' AND (target_branch='' OR merged_at IS NULL))) AND (checked_at IS NULL OR checked_at < ?)", staleBefore.UTC()).
 		Order("checked_at IS NULL DESC, checked_at ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err
@@ -782,7 +792,7 @@ type deliveryAcc struct {
 	reworks      int
 	firstRunAt   time.Time
 	lastRunAt    time.Time
-	// costKnown 只要有一次执行的成本被识别即为 true，用于区分"未识别"与"零成本"。
+	// costKnown requires every included attempt to have a recognized cost.
 	costKnown              bool
 	runs                   []domain.Run
 	clarificationDuration  int64
@@ -965,6 +975,47 @@ func deliveryGroupKey(issueID string, issue domain.Issue, run domain.Run) string
 	return "issue\x00" + issueID
 }
 
+// deliveryRunIssueID returns the run's requirement ID when the run counts
+// toward deliveries under filter; buildDeliveries and countDeliveryGroups
+// must share this so the overview badge matches the delivery tab.
+func deliveryRunIssueID(filter domain.AnalyticsFilter, run domain.Run, issues map[string]domain.Issue) (string, bool) {
+	issueID := strings.TrimSpace(run.ExecutionContext.IssueID)
+	if issueID == "" {
+		return "", false
+	}
+	if filter.WorkflowID != "" && run.WorkflowID != filter.WorkflowID {
+		return "", false
+	}
+	if !analyticsRunInWindow(run, filter) {
+		return "", false
+	}
+	issue := issues[issueID]
+	if filter.UserID != "" && !analyticsRunMatchesUser(run, filter.UserID, issue) {
+		return "", false
+	}
+	if filter.IssueSource != "" && !analyticsIssueMatchesSource(issue, filter.IssueSource) {
+		return "", false
+	}
+	if filter.RequirementsOnly && !analyticsIsRequirementIssue(issue) {
+		return "", false
+	}
+	return issueID, true
+}
+
+// countDeliveryGroups is the overview counterpart of len(buildDeliveries):
+// same run filter and grouping, without MR lookups or phase accounting.
+func countDeliveryGroups(filter domain.AnalyticsFilter, runs []domain.Run, issues map[string]domain.Issue) int {
+	groups := map[string]struct{}{}
+	for _, run := range runs {
+		issueID, ok := deliveryRunIssueID(filter, run, issues)
+		if !ok {
+			continue
+		}
+		groups[deliveryGroupKey(issueID, issues[issueID], run)] = struct{}{}
+	}
+	return len(groups)
+}
+
 // buildDeliveries 按需求聚合全部关联执行。issues 允许传入已加载的需求快照，
 // 传 nil 时内部自行加载，避免同一次分析重复查询。
 func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.Time, runs []domain.Run, workflowDefs map[string]domain.WorkflowDefinition, issues map[string]domain.Issue) []domain.AnalyticsDelivery {
@@ -986,40 +1037,22 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 			clarificationByGroup[key] = started
 		}
 	}
-	runIDs := make([]string, 0, len(runs))
+	mrRuns := make([]domain.Run, 0, len(runs))
 	for _, run := range runs {
-		issueID := strings.TrimSpace(run.ExecutionContext.IssueID)
-		if issueID != "" &&
-			(filter.WorkflowID == "" || run.WorkflowID == filter.WorkflowID) && analyticsRunInWindow(run, filter) &&
-			(filter.UserID == "" || analyticsRunMatchesUser(run, filter.UserID, issues[issueID])) {
-			runIDs = append(runIDs, run.ID)
+		if _, ok := deliveryRunIssueID(filter, run, issues); ok {
+			mrRuns = append(mrRuns, run)
 		}
 	}
-	mrText := r.mrTextsByRun(runIDs)
+	mrText := r.mrTextsByRun(mrRuns)
 	for _, run := range runs {
-		issueID := strings.TrimSpace(run.ExecutionContext.IssueID)
-		if issueID == "" {
-			continue
-		}
-		if filter.WorkflowID != "" && run.WorkflowID != filter.WorkflowID {
-			continue
-		}
-		if !analyticsRunInWindow(run, filter) {
-			continue
-		}
-		if filter.UserID != "" && !analyticsRunMatchesUser(run, filter.UserID, issues[issueID]) {
-			continue
-		}
-		if filter.IssueSource != "" && !analyticsIssueMatchesSource(issues[issueID], filter.IssueSource) {
-			continue
-		}
-		if filter.RequirementsOnly && !analyticsIsRequirementIssue(issues[issueID]) {
+		issueID, ok := deliveryRunIssueID(filter, run, issues)
+		if !ok {
 			continue
 		}
 		groupKey := deliveryGroupKey(issueID, issues[issueID], run)
 		acc := byIssue[groupKey]
 		if acc == nil {
-			acc = &deliveryAcc{item: domain.AnalyticsDelivery{IssueID: issueID, MRState: "none"}}
+			acc = &deliveryAcc{item: domain.AnalyticsDelivery{IssueID: issueID, MRState: "none"}, costKnown: true}
 			if started := clarificationByGroup[groupKey]; !started.IsZero() {
 				acc.clarificationStart, acc.clarificationSource = started, "recorded"
 			}
@@ -1028,11 +1061,25 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 		// 需求维度的 Token/成本累计其全部关联执行，包含失败与返工。
 		acc.item.Tokens += run.Usage.TotalTokens
 		acc.item.CostUSD += run.Usage.CostUSD
-		if usageCostKnown(run.Usage) {
-			acc.costKnown = true
-		}
+		acc.costKnown = acc.costKnown && usageCostKnown(run.Usage)
 		// A child SOP run lies inside its parent's SOP node: its usage, phases
 		// and reworks count, but not as another run or another stretch of time.
+		if run.IsWorkspace() {
+			// A conversation workspace has no SOP graph: only its usage and
+			// active period count, never as an SOP run or phase sample.
+			if acc.firstRunAt.IsZero() || run.CreatedAt.Before(acc.firstRunAt) {
+				acc.firstRunAt = run.CreatedAt
+			}
+			if ended := run.UpdatedAt; ended.After(acc.lastRunAt) {
+				acc.lastRunAt = ended
+			}
+			if acc.latestRun.ID == "" || acc.latestRun.IsWorkspace() && run.CreatedAt.After(acc.latest) {
+				acc.latest = run.CreatedAt
+				acc.latestRun = run
+				acc.item.IssueID = issueID
+			}
+			continue
+		}
 		nested := strings.TrimSpace(run.ExecutionContext.ParentRunID) != ""
 		if !nested {
 			acc.execDuration += runExecutionDuration(run)
@@ -1070,7 +1117,7 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 		}
 		latestNested := strings.TrimSpace(acc.latestRun.ExecutionContext.ParentRunID) != ""
 		newer := acc.latest.IsZero() || run.CreatedAt.After(acc.latest)
-		if acc.latestRun.ID == "" || (!nested && (latestNested || newer)) || (nested && latestNested && newer) {
+		if acc.latestRun.ID == "" || acc.latestRun.IsWorkspace() || (!nested && (latestNested || newer)) || (nested && latestNested && newer) {
 			acc.latest = run.CreatedAt
 			acc.latestRun = run
 			acc.item.IssueID = issueID
@@ -1087,13 +1134,16 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 	projectCache := map[string]domain.Project{}
 	for _, acc := range byIssue {
 		issueID := acc.item.IssueID
-		mrsByIssue[issueID] = acc.mrs
 		run := acc.latestRun
 		acc.item.RunID = run.ID
 		acc.item.RunStatus = run.Status
-		acc.item.SOPSucceeded = run.Status == "succeeded"
+		acc.item.SOPSucceeded = !run.IsWorkspace() && run.Status == "succeeded"
+		acc.item.DirectDelivery = run.IsWorkspace()
 		acc.item.WorkflowID = run.WorkflowID
 		acc.item.WorkflowName = run.WorkflowSnapshot.Name
+		if run.IsWorkspace() {
+			acc.item.WorkflowName = "对话改代码"
+		}
 		if acc.item.WorkflowName == "" {
 			acc.item.WorkflowName = workflowDefs[run.WorkflowID].Name
 		}
@@ -1101,6 +1151,9 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 			acc.item.WorkflowName = run.WorkflowID
 		}
 		duration, _ := analyticsRunDuration(run, now)
+		if run.IsWorkspace() {
+			duration = 0
+		}
 		acc.item.DurationMs = duration
 		acc.item.RunCount = acc.runCount
 		acc.item.FailedRuns = acc.failedRuns
@@ -1131,7 +1184,7 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 		}
 		acc.item.UserID = analyticsRunUserID(run, issues[issueID])
 		acc.item.Category = analyticsWorkflowCategory(run.WorkflowSnapshot, workflowDefs[run.WorkflowID])
-		acc.item.CostKnown = acc.costKnown || acc.item.CostUSD > 0
+		acc.item.CostKnown = acc.costKnown
 		var project domain.Project
 		if issue, ok := issues[issueID]; ok && r.catalog != nil && r.catalog.projects != nil {
 			cached, seen := projectCache[issue.ProjectID]
@@ -1163,6 +1216,8 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 		if acc.item.MRURL == "" {
 			acc.item.MRState = "none"
 		}
+		// Include MR links held on the issue even when its Runs have no artifacts.
+		mrsByIssue[issueID] = acc.mrs
 		out = append(out, acc.item)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1240,12 +1295,35 @@ func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, m
 		}
 		var best *mrRef
 		bestState := ""
+		items[i].MRs = nil
+		seen := map[domain.MRDeliveryKey]bool{}
 		for j := range mrsByIssue[items[i].IssueID] {
 			ref := mrsByIssue[items[i].IssueID][j]
 			if ref.project == "" || ref.iid <= 0 {
 				continue
 			}
 			st, ok := states[domain.MRDeliveryKey{Project: ref.project, IID: ref.iid}]
+			mr := domain.DeliveryMR{Project: ref.project, IID: ref.iid, URL: ref.url, State: "unknown", TargetBranch: st.TargetBranch}
+			if ok {
+				mr.State = classify(st)
+			}
+			for _, own := range issues[items[i].IssueID].DeliveryMRList() {
+				if domain.SameGongfengMR(own.URL, mr.URL) {
+					if mr.State == "" || mr.State == "unknown" {
+						if own.State != "" {
+							mr.State = own.State
+						}
+					} else {
+						mr.State = domain.EffectiveAnalyticsMRState(mr.State, own.State)
+					}
+					break
+				}
+			}
+			key := domain.MRDeliveryKey{Project: strings.ToLower(ref.project), IID: ref.iid}
+			if !seen[key] {
+				items[i].MRs = append(items[i].MRs, mr)
+				seen[key] = true
+			}
 			if !ok {
 				continue
 			}
@@ -1300,79 +1378,44 @@ func betterAnalyticsMR(preferProject string, preferIID int, best mrRef, bestStat
 }
 
 func runMRText(run domain.Run) string {
-	bestPri := 0
-	best := ""
-	for _, art := range run.Artifacts {
-		if strings.TrimSpace(art.Content) == "" {
-			continue
-		}
-		pri := domain.MRArtifactPriority(art.Name, art.Path, art.NodeID)
-		if pri <= 0 {
-			continue
-		}
-		if pri > bestPri || (pri == bestPri && (best == "" || len(art.Content) < len(best))) {
-			bestPri = pri
-			best = art.Content
-		}
+	urls := []string{}
+	for _, mr := range domain.ResolveRunDeliveryMRs(run, nil) {
+		urls = append(urls, mr.URL)
 	}
-	if best != "" {
-		return best
-	}
-	var b strings.Builder
-	for _, event := range run.Telemetry {
-		if event.Attributes == nil {
-			continue
-		}
-		if url, ok := event.Attributes["url"].(string); ok {
-			b.WriteString(url)
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
+	return strings.Join(urls, "\n")
 }
 
-func (r *DeliveryRepo) mrTextsByRun(runIDs []string) map[string]string {
+func (r *DeliveryRepo) mrTextsByRun(runs []domain.Run) map[string]string {
 	out := map[string]string{}
-	if len(runIDs) == 0 {
+	if len(runs) == 0 {
 		return out
 	}
-	if len(runIDs) > 500 {
-		for start := 0; start < len(runIDs); start += 500 {
-			for id, value := range r.mrTextsByRun(runIDs[start:min(start+500, len(runIDs))]) {
+	if len(runs) > 500 {
+		for start := 0; start < len(runs); start += 500 {
+			for id, value := range r.mrTextsByRun(runs[start:min(start+500, len(runs))]) {
 				out[id] = value
 			}
 		}
 		return out
 	}
-	var rows []struct {
-		RunID   string `gorm:"column:run_id"`
-		Name    string `gorm:"column:name"`
-		NodeID  string `gorm:"column:node_id"`
-		Content string `gorm:"column:content"`
+	ids := make([]string, 0, len(runs))
+	byID := map[string]domain.Run{}
+	for _, run := range runs {
+		ids = append(ids, run.ID)
+		byID[run.ID] = run
 	}
-	if err := r.DB.Table("run_artifacts").Where("run_id IN ?", runIDs).
-		Where("content LIKE ? AND (name IN ('mr-body','e2e-report','closeout') OR node_id='mr' OR name LIKE '%mr%') AND name NOT LIKE '%patch%' AND name NOT LIKE '%diff%'", "%merge_requests/%").
-		Select("run_id, name, node_id, content").
-		Find(&rows).Error; err != nil {
+	var rows []runArtifactRow
+	if err := r.DB.Where("run_id IN ? AND content LIKE ? AND name NOT LIKE ? AND name NOT LIKE ?", ids, "%merge_requests/%", "%patch%", "%diff%").
+		Select("run_id", "name", "path", "node_id", "content").Order("created_at, id").Find(&rows).Error; err != nil {
 		return out
 	}
-	type scored struct {
-		pri     int
-		content string
-	}
-	best := map[string]scored{}
 	for _, row := range rows {
-		pri := domain.MRArtifactPriority(row.Name, "", row.NodeID)
-		if pri <= 0 {
-			continue
-		}
-		cur, ok := best[row.RunID]
-		if !ok || pri > cur.pri || (pri == cur.pri && len(row.Content) < len(cur.content)) {
-			best[row.RunID] = scored{pri: pri, content: row.Content}
-		}
+		run := byID[row.RunID]
+		run.Artifacts = append(run.Artifacts, domain.Artifact{Name: row.Name, Path: row.Path, NodeID: row.NodeID, Content: row.Content})
+		byID[row.RunID] = run
 	}
-	for runID, item := range best {
-		out[runID] = item.content
+	for id, run := range byID {
+		out[id] = runMRText(run)
 	}
 	return out
 }

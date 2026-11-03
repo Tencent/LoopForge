@@ -14,7 +14,7 @@ import (
 
 func (e *Engine) execute(ctx context.Context, runID string) {
 	r, ok := e.repo.RunState(runID)
-	if !ok || r.Status == "queued" || r.AdmissionState == "unstarted" {
+	if !ok || r.IsWorkspace() || r.HistoricalGroup() || r.Status == "queued" || r.AdmissionState == "unstarted" {
 		e.clearRunning(runID)
 		return
 	}
@@ -61,10 +61,6 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		delete(e.running, runID)
 		e.mu.Unlock()
 	}()
-	var groupWorkers sync.WaitGroup
-	defer func() { cancel(); groupWorkers.Wait() }()
-	launched := map[string]bool{}
-	groupDone := make(chan string, 8)
 	for {
 		select {
 		case <-ctx.Done():
@@ -73,7 +69,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		default:
 		}
 		r, ok := e.repo.RunState(runID)
-		if !ok || isTerminalRunStatus(r.Status) {
+		if !ok || isTerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
 			return
 		}
 		if r.CancelRequested {
@@ -89,46 +85,6 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		wf := workflowForRun(e.repo, r)
 		ready := readyNodes(wf, r)
-		if wf.CollaborationMode == "group" {
-		drainDone:
-			for {
-				select {
-				case id := <-groupDone:
-					delete(launched, id)
-				default:
-					break drainDone
-				}
-			}
-			if len(ready) == 0 && !hasRunningNode(r) {
-				idle := false
-				e.updateRun(runID, func(current *domain.Run) {
-					if len(readyNodes(current.WorkflowSnapshot, *current)) == 0 && !hasRunningNode(*current) {
-						current.Status = "waiting"
-						idle = true
-					}
-				})
-				if idle {
-					return
-				}
-			}
-			for _, n := range ready {
-				if launched[n.ID] {
-					continue
-				}
-				launched[n.ID] = true
-				groupWorkers.Add(1)
-				go func(node domain.WorkflowNode) {
-					defer groupWorkers.Done()
-					e.executeNode(ctx, runID, wf, node)
-					select {
-					case groupDone <- node.ID:
-					case <-ctx.Done():
-					}
-				}(n)
-			}
-			time.Sleep(80 * time.Millisecond)
-			continue
-		}
 		if len(ready) == 0 {
 			if allSucceeded(wf, r) {
 				rework, err := e.integrateScheduledRun(runID)
@@ -303,10 +259,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if !ok || !e.ownsRun(currentLease) {
 		return
 	}
-	if wf.CollaborationMode != "group" {
-		unlock := e.lockRunExec(runID)
-		defer unlock()
-	}
+	unlock := e.lockRunExec(runID)
+	defer unlock()
 	executionGeneration := currentLease.Generation
 	executionAttempt := 0
 	started := false
@@ -369,7 +323,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if auto {
 			return
 		}
-		e.waitApproval(runID, node, "等待人工批准")
+		reason := "等待人工批准"
+		if r, ok := e.repo.RunState(runID); ok {
+			if why := domain.ApprovalWaitReason(r, node.ID); why != "" {
+				reason += "：" + why
+			}
+		}
+		e.waitApproval(runID, node, reason)
 		return
 	}
 	current, _ := e.repo.RunState(runID)
@@ -465,7 +425,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 		}
 		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
-			return fmt.Errorf("repository checkout: %w", err)
+			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "")
 		}
 		for _, dir := range repoWorkspaces {
 			if err := runtime.ProtectProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {
@@ -480,8 +440,6 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(err, nodeRejects(node))
 		return
 	}
-	// Ordinary nodes keep checkout changes local. Delivery is what publishes
-	// the work branch; pulling here would also discard that unpushed work.
 	// An execution machine that reports its outputs receives the inputs and
 	// human context with each task and returns the files the engine needs;
 	// the control-plane workspace is then not read for this node.
@@ -552,12 +510,6 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(preparationErr, nodeRejects(node))
 		return
 	}
-	if wf.CollaborationMode == "group" {
-		sb.activeExecutions.Add(1)
-		defer sb.activeExecutions.Add(-1)
-		sb.nodeMu.Unlock()
-		preparing = false
-	}
 	var output string
 	defaultFailure := "fail"
 	if nodeRejects(node) {
@@ -600,7 +552,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				if err := runtime.ProvisionMCPAssets(ctx, sb, sb.Workspace(), scriptAssets, targetSink); err != nil {
 					return "", err
 				}
-				return sb.Exec(ctx, runtime.CommandSpec{Concurrent: wf.CollaborationMode == "group", Argv: []string{"sh", "-lc", bound}, Provider: "script", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, targetSink)
+				return sb.Exec(ctx, runtime.CommandSpec{Argv: []string{"sh", "-lc", bound}, Provider: "script", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, targetSink)
 			})
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				workspace := runnerWorkspaceRel(current, node.ID)
@@ -629,6 +581,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return rawOutput, runErr
 		}
 	default:
+		// SOP agents submit a terminal decision for routing.
 		requiresSubmit = true
 		agent, found := workflowAgent(e.repo, wf, node.AgentID)
 		if !found {
@@ -698,19 +651,19 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
 			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
-			if wf.CollaborationMode == "group" {
-				assets.MCPServers = append(assets.MCPServers, e.groupMCPServer(current, node, attempt))
-				prompt += e.groupTaskContext(current, node)
-			}
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
 			}
 			if warning := knowledgeSkippedWarning(agent, assets); warning != "" {
 				warnMCPSkipped(warning)
 			}
-			options := runtime.InvocationOptions{Concurrent: wf.CollaborationMode == "group", RunID: runID, NodeID: node.ID, ResumeSessionID: resumeSessionID, Repositories: current.RepositoryContexts()}
+			options := runtime.InvocationOptions{RunID: runID, NodeID: node.ID, ResumeSessionID: resumeSessionID, Repositories: current.RepositoryContexts()}
 			if requiresSubmit {
 				options.GateResultPath = gateResultPath(node.ID, attempt)
+			}
+			ex := ex
+			if ex.Kind == "codebuddy" && sb.credentialSnapshot().CodeBuddy.Sponsored {
+				ex = e.sponsoredExecutor(runID, ex, sink)
 			}
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				// 执行机器 mode (bind-cli): the responsible user selected a default
@@ -766,6 +719,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 		}
 		output, err = runOnce(loopFeedback)
+		if e.dropLostCLISession(runID, node.ID, output, err) {
+			output, err = runOnce("")
+		}
 		if err != nil && strings.Contains(err.Error(), "without a terminal result") {
 			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "agent.loop", Phase: "finish", Message: "执行器未返回 result，按工作区产物继续门禁，不再重跑 Agent", Attributes: map[string]any{"iteration": iteration}})
 			err = nil
@@ -792,6 +748,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				} else {
 					e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.submit.missing", Phase: "progress", Level: "warn", Message: firstProblem + "，恢复同一 CLI session 要求重新提交", Attributes: map[string]any{"iteration": iteration, "sessionId": sessionID}})
 					output, err = runOnce(gateMissingRetryMarker)
+					if e.dropLostCLISession(runID, node.ID, output, err) {
+						output, err = runOnce("")
+					}
 					if err == nil {
 						submitted, err = readGateResultFrom(outputs, submitPath)
 					}
@@ -934,6 +893,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				message := "Agent 请求人工确认"
 				if nr.GateResult != nil && strings.TrimSpace(nr.GateResult.ActionRequired) != "" {
 					message += "：" + nr.GateResult.ActionRequired
+				} else if detail := strings.TrimSpace(nr.Error); detail != "" {
+					message += "：" + clipHumanGateDetail(detail)
 				}
 				e.event(r, node.ID, "gate.waiting", message)
 			})
@@ -1049,6 +1010,55 @@ func scriptLanguageLabel(language string) string {
 		return "Python"
 	}
 	return "Shell"
+}
+
+// dropLostCLISession forgets a resume target the executor can no longer
+// open. Deploy and a move onto another machine both leave the previous
+// session id behind. The CLI then exits with "No conversation found", which
+// has no terminal result, and the missing submit_gate_result path would
+// otherwise park the node on an empty human confirmation.
+func (e *Engine) dropLostCLISession(runID, nodeID, output string, err error) bool {
+	if !lostCLISession(output, err) {
+		return false
+	}
+	dropped := false
+	e.updateRun(runID, func(r *domain.Run) {
+		nr := r.Nodes[nodeID]
+		if nr == nil || (strings.TrimSpace(nr.SessionID) == "" && strings.TrimSpace(nr.ResumeSessionID) == "") {
+			return
+		}
+		nr.SessionID = ""
+		nr.ResumeSessionID = ""
+		dropped = true
+		e.event(r, nodeID, "agent.session.dropped", "原来的 CLI 会话已不在这台执行机器上，本节点将重新开始")
+	})
+	if dropped {
+		e.observe(runID, nodeID, domain.TelemetryEvent{
+			Category: "lifecycle", Name: "agent.session.dropped", Phase: "progress", Level: "warn",
+			Message: "CLI 会话不存在，已放弃续跑并重新开始本节点",
+		})
+	}
+	return dropped
+}
+
+func lostCLISession(output string, err error) bool {
+	msg := strings.ToLower(output)
+	if err != nil {
+		msg += "\n" + strings.ToLower(err.Error())
+	}
+	return strings.Contains(msg, "no conversation found") ||
+		strings.Contains(msg, "session not found") ||
+		strings.Contains(msg, "no such session") ||
+		strings.Contains(msg, "conversation does not exist")
+}
+
+func clipHumanGateDetail(detail string) string {
+	detail = strings.Join(strings.Fields(detail), " ")
+	const limit = 300
+	if len(detail) <= limit {
+		return detail
+	}
+	return detail[:limit] + "…"
 }
 
 // joinGateCommands binds each configured gate command against the node's

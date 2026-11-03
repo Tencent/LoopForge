@@ -28,97 +28,23 @@ tags:
   - name: Sync
   - name: Scheduling
   - name: Analytics
+  - name: Feedback
 paths:
-  /api/task-groups:
-    post:
-      tags: [Runs]
-      operationId: startTaskGroup
-      summary: startTaskGroup
-      description: Requires project membership. Creates durable independent Agent tasks in a shared workspace; existing changes are not rolled back.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [workflowId, projectId, input]
-              properties:
-                workflowId: {type: string}
-                projectId: {type: string}
-                input: {type: string}
-      responses:
-        "201":
-          description: Created
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "409":
-          description: Task unavailable or conflicting requestId
-  /api/runs/{id}/group/tasks:
+  /api/runs/{id}/control:
     parameters:
-      - name: id
-        in: path
-        required: true
-        schema: {type: string}
-    post:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
       tags: [Runs]
-      operationId: dispatchGroupTask
-      summary: dispatchGroupTask
-      description: Requires project membership. Creates durable independent Agent tasks in a shared workspace; existing changes are not rolled back.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [agentId, prompt, requestId]
-              properties:
-                agentId: {type: string}
-                prompt: {type: string}
-                requestId: {type: string}
-                files:
-                  type: array
-                  items: {type: string}
-                  maxItems: 20
-      responses:
-        "201":
-          description: Created
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "409":
-          description: Task unavailable or conflicting requestId
-  /api/runs/{id}/group/members:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: {type: string}
-    post:
-      tags: [Runs]
-      operationId: inviteGroupMember
-      summary: inviteGroupMember
-      description: Requires project membership. Invites an available project role to the group without starting execution.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [agentId]
-              properties:
-                agentId: {type: string}
+      operationId: getRunControl
+      summary: Read run mode and valid next actions
+      description: Requires project membership. Separates execution progress, verification results and explicit delivery acceptance. Returns mode (sop or workspace), status, waitingReason, allowedActions and acceptance evidence. Workspaces and historical role-group records allow no SOP actions.
       responses:
         "200":
-          description: Joined
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: Current control state
         "403":
           $ref: "#/components/responses/Forbidden"
-        "409":
-          description: Task unavailable or conflicting requestId
+        "404":
+          description: Run not found
   /api/health:
     get:
       tags: [System]
@@ -344,6 +270,7 @@ paths:
                 id: {type: string}
                 title: {type: string}
                 projectId: {type: string}
+                sandboxProfileId: {type: string, description: Initial Docker sandbox choice; empty follows project default}
                 model: {type: string}
                 messages:
                   type: array
@@ -371,6 +298,28 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/assistant/sessions/{id}/sandbox:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    put:
+      tags: [Assistant]
+      operationId: setAssistantSessionSandbox
+      summary: Select the Docker sandbox of an ordinary conversation
+      description: The conversation owner must have project edit access. Select a project-owned or shared Docker sandbox; empty lets Main Bot choose when it opens the workspace, falling back to the platform generic-docker sandbox; never a host shell. A non-empty selection overrides Main Bot's choice. Generation in progress or a bound workspace returns 409. Existing workspace snapshots are immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sandboxProfileId]
+              properties:
+                sandboxProfileId: {type: string}
+      responses:
+        "200": {description: Updated conversation}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {description: Generation active or workspace environment already frozen}
   /api/assistant/sessions/{id}/fork:
     post:
       tags: [Assistant]
@@ -778,6 +727,10 @@ paths:
         - name: grain
           in: query
           schema: {type: string, enum: [day, week, month], default: day}
+        - name: timeZone
+          in: query
+          schema: {type: string, default: UTC}
+          description: IANA timezone for delivery and MR trend buckets, for example Asia/Shanghai. Run usage trends retain their existing UTC buckets.
       responses:
         "200":
           description: Current-attribution summary, delivery summary, trend, project contributions and business-domain distribution; excludes run, user and log details
@@ -883,6 +836,44 @@ paths:
           $ref: "#/components/responses/Project"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Projects]
+      operationId: deleteProject
+      description: >-
+        Delete (archive) a project; owner or platform admin. The project leaves
+        project lists and syncs, its requirements, runs and settings are kept
+        and the id stays taken. 409 while it has unfinished runs or enabled
+        schedule jobs.
+      responses:
+        "200":
+          $ref: "#/components/responses/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/projects/{projectId}/restore:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Projects]
+      operationId: restoreProject
+      description: Restore a deleted project; owner or platform admin.
+      responses:
+        "200":
+          $ref: "#/components/responses/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
   /api/repositories:
@@ -1042,6 +1033,10 @@ paths:
                 projectId: {type: string}
                 url: {type: string, description: TAPD story/bug/task detail URL or shared title and link; multiple different work items are rejected}
                 baseBranch: {type: string, description: Existing work branch to continue directly for a single repository; empty creates a new work branch from its configured main branch; omitted preserves the selection when reimporting with the same repositories}
+                repositoryBranches:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: Existing work branches keyed by bound repository ID; overrides baseBranch. Empty or unlisted branches create new work branches from each repository's configured main branch. Omitted preserves selections for retained repositories on reimport; an empty object clears all selections.
                 workflowId: {type: string, description: SOP to bind on import; omitted uses the project default requirement workflow}
                 repositoryId: {type: string, description: Primary repository; at least one of repositoryId or repositoryIds is required}
                 repositoryIds:
@@ -1585,6 +1580,172 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/skillhub/skills:
+    get:
+      tags: [Assets]
+      operationId: listSkillhubSkills
+      summary: Search public SkillHub skills through the platform proxy
+      description: Only whitelisted query parameters are forwarded. SkillHub failures map to 429 (rate limited), 502 (unavailable) or 504 (timeout).
+      parameters:
+        - {name: keyword, in: query, schema: {type: string, maxLength: 100}}
+        - {name: category, in: query, schema: {type: string}}
+        - {name: sortBy, in: query, schema: {type: string, enum: [downloads, score, updated_at], default: downloads}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 24}}
+      responses:
+        "200":
+          description: "{total, page, pageSize, items:[{slug, namespace, name, description, iconUrl, category, version, ownerName, homepage, downloads, stars, labels, verified, updatedAt}]}"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/SkillhubUnavailable"
+        "502":
+          $ref: "#/components/responses/SkillhubUnavailable"
+        "504":
+          $ref: "#/components/responses/SkillhubUnavailable"
+  /api/skillhub/categories:
+    get:
+      tags: [Assets]
+      operationId: listSkillhubCategories
+      summary: Active SkillHub top-level categories, cached for 10 minutes
+      responses:
+        "200":
+          description: "{items:[{key, name}]}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/SkillhubUnavailable"
+  /api/skillhub/skills/{slug}:
+    parameters:
+      - $ref: "#/components/parameters/SkillhubSlug"
+      - $ref: "#/components/parameters/SkillhubNamespace"
+    get:
+      tags: [Assets]
+      operationId: getSkillhubSkill
+      responses:
+        "200":
+          description: "{skill, latestVersion, owner, securityReports}"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/SkillhubUnavailable"
+  /api/skillhub/skills/{slug}/versions:
+    parameters:
+      - $ref: "#/components/parameters/SkillhubSlug"
+      - $ref: "#/components/parameters/SkillhubNamespace"
+    get:
+      tags: [Assets]
+      operationId: listSkillhubSkillVersions
+      responses:
+        "200":
+          description: "{versions:[{version, changelog, createdAt, securityReports?:{<vendor>:{status, statusText, reportUrl, safe}}}]}"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/skillhub/skills/{slug}/files:
+    parameters:
+      - $ref: "#/components/parameters/SkillhubSlug"
+      - $ref: "#/components/parameters/SkillhubNamespace"
+      - $ref: "#/components/parameters/SkillhubVersion"
+    get:
+      tags: [Assets]
+      operationId: listSkillhubSkillFiles
+      responses:
+        "200":
+          description: "{version, files:[{path, size, sha256}]}"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/skillhub/skills/{slug}/file:
+    parameters:
+      - $ref: "#/components/parameters/SkillhubSlug"
+      - $ref: "#/components/parameters/SkillhubNamespace"
+      - $ref: "#/components/parameters/SkillhubVersion"
+      - {name: path, in: query, required: true, schema: {type: string}}
+    get:
+      tags: [Assets]
+      operationId: previewSkillhubSkillFile
+      summary: Text preview of one package file
+      description: The server follows the signed download redirect itself; signed storage URLs are never returned. Files over 1MB or non UTF-8 content return previewable=false.
+      responses:
+        "200":
+          description: "{path, size, previewable:true, content} or {path, previewable:false, reason}"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/skillhub/skills/{slug}/evaluation:
+    parameters:
+      - $ref: "#/components/parameters/SkillhubSlug"
+      - $ref: "#/components/parameters/SkillhubNamespace"
+    get:
+      tags: [Assets]
+      operationId: getSkillhubSkillEvaluation
+      responses:
+        "200":
+          description: "{available:true, dimensions, summary, userSummary, updatedAt} or {available:false} when SkillHub has no evaluation"
+  /api/skillhub/install:
+    post:
+      tags: [Assets]
+      operationId: installSkillhubSkill
+      summary: Download a SkillHub package and store it as a project skill
+      description: Files and the skill row are written in one transaction; any failure leaves no partial skill. The new skill records source {provider, namespace, slug, version, homepage, installedAt, updatedAt} and its files are read-only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, projectId]
+              properties:
+                slug: {type: string}
+                namespace: {type: string}
+                version: {type: string, description: Defaults to the latest version}
+                projectId: {type: string}
+                id: {type: string, description: Defaults to slug}
+                name: {type: string}
+      responses:
+        "201":
+          description: Installed SkillDefinition
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/SkillhubUnavailable"
+        "502":
+          $ref: "#/components/responses/SkillhubUnavailable"
+        "504":
+          $ref: "#/components/responses/SkillhubUnavailable"
+  /api/skillhub/update:
+    post:
+      tags: [Assets]
+      operationId: updateSkillhubSkill
+      summary: Replace a SkillHub-sourced skill's files with another version
+      description: Keeps id, name, description, sharing and agent bindings; a failure leaves the existing files untouched.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [skillId]
+              properties:
+                skillId: {type: string}
+                version: {type: string, description: Defaults to the latest version}
+      responses:
+        "200":
+          description: Updated SkillDefinition
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/SkillhubUnavailable"
+        "502":
+          $ref: "#/components/responses/SkillhubUnavailable"
   /api/mcp-servers:
     get:
       tags: [Assets]
@@ -1940,6 +2101,9 @@ paths:
                   type: string
                 owner:
                   type: string
+                projectId:
+                  type: string
+                  description: Target project. Empty or omitted retains the source project; generic templates require a target project.
       responses:
         "201":
           $ref: "#/components/responses/Workflow"
@@ -2141,6 +2305,34 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/preview/download:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: downloadRunPreview
+      description: Download the archived static build as a ZIP with original files and relative paths. Available after workspace cleanup and until preview expiry; does not require a preview session. Supports HTTP Range requests.
+      responses:
+        "200":
+          description: Complete static site ZIP attachment
+          content:
+            application/zip:
+              schema: {type: string, format: binary}
+        "206":
+          description: Requested range of the ZIP attachment
+          content:
+            application/zip:
+              schema: {type: string, format: binary}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Preview has not finished archiving
+        "410":
+          description: Preview has expired or been deleted
+        "500":
+          $ref: "#/components/responses/ServerError"
   /api/runs/{runId}/telemetry:
     parameters:
       - $ref: "#/components/parameters/RunId"
@@ -2267,6 +2459,38 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/runs/{runId}/workspace/restore:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: getRunWorkspaceRestoreStatus
+      summary: Inspect background workspace restoration independently of SOP execution
+      responses:
+        "200":
+          description: Restore status (idle, restoring, ready or failed), optional startedAt and error
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Runs]
+      operationId: restoreRunWorkspace
+      parameters:
+        - in: header
+          name: Prefer
+          schema:
+            type: string
+            example: respond-async
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "202":
+          description: Background restoration accepted; poll GET on this path
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/runs/{runId}/workspace/tree:
     parameters:
       - $ref: "#/components/parameters/RunId"
@@ -2504,6 +2728,13 @@ paths:
     post:
       tags: [Runs]
       operationId: retryRunNode
+      description: With Prefer respond-async, a reclaimed workspace returns 202 workspaceRestore while restoring. Poll GET /api/runs/{runId}/workspace/restore, then repeat the decision when ready. Only 200 confirms the retry started.
+      parameters:
+        - in: header
+          name: Prefer
+          schema:
+            type: string
+            example: respond-async
       requestBody:
         required: true
         content:
@@ -2519,6 +2750,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Ok"
+        "202":
+          description: Workspace restoration accepted (Prefer respond-async); poll restore status before repeating the decision
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -2572,6 +2805,13 @@ paths:
     post:
       tags: [Runs]
       operationId: resumePausedRun
+      description: Prefer respond-async separates background workspace restoration from resuming execution, using the same polling flow as retry.
+      parameters:
+        - in: header
+          name: Prefer
+          schema:
+            type: string
+            example: respond-async
       requestBody:
         required: true
         content:
@@ -2584,6 +2824,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Ok"
+        "202":
+          description: Workspace restoration accepted; poll restore status before resuming
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -2996,6 +3238,143 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/page-feedback:
+    post:
+      tags: [Feedback]
+      operationId: submitPageFeedback
+      description: |
+        Submits a report from the floating page feedback widget. The report is
+        stored in its own table and is not linked to any project or issue.
+        Only a signed-in, non-guest browser session may submit: guests, expired
+        sessions and anonymous callers get 401 {"error":"请先登录"}; requests
+        carrying an Authorization Bearer header (personal API token) are
+        refused with 401 as well. The submitter (userId, loginName = RTX, chineseName snapshot falling back to
+        loginName) is always taken from the session; submitter fields in the
+        payload are ignored. Images are sniffed by content and must be PNG,
+        JPEG, GIF or WebP; at most 5 images of 5MB each, 27MB request body.
+        Sensitive query parameters (token, code, ticket, session, key, secret,
+        password…) are removed from url and frameUrl before storage.
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload:
+                  type: string
+                  description: JSON-encoded PageFeedbackPayload
+                images:
+                  type: array
+                  maxItems: 5
+                  items: {type: string, format: binary}
+            encoding:
+              payload:
+                contentType: application/json
+      responses:
+        "201":
+          description: Stored feedback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageFeedback"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          description: Request body exceeds 27MB
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      tags: [Feedback]
+      operationId: listPageFeedback
+      description: |
+        Lists every report newest first. Any signed-in employee may read all
+        reports, using the browser session or a personal API token (Bearer).
+        Guests get 401. Images carry metadata and a download url only.
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: offset
+          in: query
+          schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        "200":
+          description: Page of feedback
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, offset, limit, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PageFeedback"
+                  total: {type: integer, format: int64}
+                  offset: {type: integer}
+                  limit: {type: integer}
+                  hasMore: {type: boolean}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/page-feedback/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Feedback]
+      operationId: getPageFeedback
+      description: One report with its submitter. Session cookie or personal API token; guests get 401.
+      responses:
+        "200":
+          description: Feedback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageFeedback"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/page-feedback/{id}/images/{imageId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: imageId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Feedback]
+      operationId: getPageFeedbackImage
+      description: |
+        Image bytes served inline with the stored content type,
+        X-Content-Type-Options nosniff and Content-Security-Policy
+        default-src 'none'. 404 when the image does not belong to the report.
+        Session cookie or personal API token; guests get 401.
+      responses:
+        "200":
+          description: Image
+          content:
+            image/png: {}
+            image/jpeg: {}
+            image/gif: {}
+            image/webp: {}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   securitySchemes:
     bearerAuth:
@@ -3009,6 +3388,25 @@ components:
       type: http
       scheme: basic
   parameters:
+    SkillhubSlug:
+      name: slug
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    SkillhubNamespace:
+      name: namespace
+      in: query
+      description: SkillHub publisher handle; slugs are only unique within a namespace
+      schema:
+        type: string
+    SkillhubVersion:
+      name: version
+      in: query
+      description: Defaults to the latest version
+      schema:
+        type: string
     IssueId:
       name: issueId
       in: path
@@ -3197,6 +3595,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    SkillhubUnavailable:
+      description: SkillHub rejected the package (422), rate limited (429), is unavailable (502) or timed out (504)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     ServerError:
       description: Internal server error
       content:
@@ -3336,6 +3740,91 @@ components:
         expiresAt: {type: string, format: date-time}
         createdAt: {type: string, format: date-time}
         revokedAt: {type: string, format: date-time}
+    PageFeedbackPayload:
+      type: object
+      description: Unknown fields, including any submitter fields, are ignored.
+      required: [title]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 120, description: First line of the user's text}
+        description: {type: string, maxLength: 5000, description: Full text}
+        url: {type: string, maxLength: 2048}
+        route: {type: string, description: Hash route}
+        view: {type: string}
+        frameUrl: {type: string, maxLength: 2048, description: Workbench iframe location}
+        context:
+          $ref: "#/components/schemas/PageFeedbackContext"
+        element:
+          $ref: "#/components/schemas/PageFeedbackElement"
+    PageFeedbackContext:
+      type: object
+      properties:
+        scroll: {$ref: "#/components/schemas/PageFeedbackPoint"}
+        viewport:
+          type: object
+          properties:
+            width: {type: number}
+            height: {type: number}
+        dpr: {type: number}
+        userAgent: {type: string}
+        language: {type: string}
+        theme: {type: string}
+        capturedAt: {type: string}
+    PageFeedbackPoint:
+      type: object
+      properties:
+        x: {type: number}
+        y: {type: number}
+    PageFeedbackRect:
+      type: object
+      properties:
+        x: {type: number}
+        y: {type: number}
+        width: {type: number}
+        height: {type: number}
+    PageFeedbackElement:
+      type: object
+      properties:
+        selector: {type: string}
+        tag: {type: string}
+        text: {type: string, maxLength: 200}
+        rect: {$ref: "#/components/schemas/PageFeedbackRect"}
+        pageRect: {$ref: "#/components/schemas/PageFeedbackRect"}
+        point: {$ref: "#/components/schemas/PageFeedbackPoint"}
+        inFrame: {type: boolean}
+    PageFeedback:
+      type: object
+      required: [id, title, url, route, context, submitter, images, createdAt]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        description: {type: string}
+        url: {type: string}
+        route: {type: string}
+        view: {type: string}
+        frameUrl: {type: string}
+        context: {$ref: "#/components/schemas/PageFeedbackContext"}
+        element: {$ref: "#/components/schemas/PageFeedbackElement"}
+        submitter:
+          type: object
+          required: [userId, loginName, chineseName]
+          properties:
+            userId: {type: integer, format: int64}
+            loginName: {type: string, description: Employee RTX}
+            chineseName: {type: string, description: Snapshot at submit time; RTX when empty}
+        images:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              position: {type: integer}
+              fileName: {type: string}
+              mimeType: {type: string}
+              size: {type: integer, format: int64}
+              sha256: {type: string}
+              url: {type: string}
+              createdAt: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
     Error:
       type: object
       required: [error]
@@ -3391,11 +3880,50 @@ components:
         generatedAt: {type: string, format: date-time}
         from: {type: string, format: date-time}
         to: {type: string, format: date-time}
-        summary: {type: object, description: 'Existing AnalyticsSummary with recomputed rates and percentiles'}
+        summary: {$ref: "#/components/schemas/AnalyticsCostSummary"}
         delivery: {type: object, description: 'Existing AnalyticsDeliverySummary'}
         trend: {type: array, items: {type: object}}
         projects: {type: array, items: {type: object}, description: 'Project ID, name, businessDomainId and AnalyticsProjectUsage'}
-        businessDomains: {type: array, items: {type: object}, description: 'ID, name, active, projectCount, runs, success, failed, tokens, costUsd, costKnown, uniqueIssues and delivered'}
+        businessDomains: {type: array, items: {type: object}, description: 'ID, name, active, projectCount, runs, success, failed, tokens, costCny, legacy USD equivalent costUsd, costKnown, uniqueIssues and delivered'}
+        deliveryMetrics: {$ref: "#/components/schemas/BusinessDeliveryMetrics"}
+        deliveryTrend:
+          type: array
+          items:
+            type: object
+            properties:
+              date: {type: string, description: 'Day, ISO week or month in the reporting timezone'}
+              completedIssues: {type: integer}
+              mergedMrs: {type: integer}
+              cycleSamples: {type: integer}
+              averageCycleDurationMs: {type: integer, format: int64}
+              executionSamples: {type: integer}
+              averageExecutionDurationMs: {type: integer, format: int64, description: Average completion duration excluding waits; requires executionSamples greater than zero}
+        timeZone: {type: string}
+        grain: {type: string, enum: [day, week, month]}
+    BusinessDeliveryMetrics:
+      type: object
+      description: 'Also included as deliveryMetrics on each project and business domain. Completion, merge and Run creation windows are independent. No individual issue or Run details are returned.'
+      properties:
+        completionToMergeSamples: {type: integer, description: 'One sample per unique repository and MR IID, filtered by its own merge time'}
+        averageCompletionToMergeMs: {type: integer, format: int64, description: 'Mean of the latest matched successful completion to each individual MR actual merge; multiple MRs for one issue are separate samples'}
+        completionToMergeMissingIssues: {type: integer, description: 'Merged items without matched completion events or complete delivery MR evidence'}
+        completionToMergeMissingMrs: {type: integer, description: 'Merged MRs missing completion events or matching delivery evidence'}
+        mergedBeforeCompletionMrs: {type: integer, description: 'MRs merged before matching flow completion, excluded from latency averages'}
+        mergedBeforeCompletionIssues: {type: integer, description: 'Items merged before their flow finished; excluded from the latency average'}
+        completedIssues: {type: integer, description: 'Current done/closed/completed work items whose completion time falls in the requested window; includes Issues'}
+        mergedMrs: {type: integer, description: 'Unique work MRs by actual merged_at, including integration branches, excluding baseline promotion MRs'}
+        mergedMrsMissingTime: {type: integer, description: 'Merged MRs in scope with no merge timestamp, excluded from dated counts'}
+        completionTimeMissingIssues: {type: integer, description: 'Currently completed historical items with no usable time, excluded from dated completion counts'}
+        estimatedCompletionIssues: {type: integer, description: 'Included historical items whose time is inferred from their latest successful top-level Run'}
+        cycleSamples: {type: integer}
+        averageCycleDurationMs: {type: integer, format: int64, description: Completion elapsed time including waits; averaged over cycleSamples}
+        executionSamples: {type: integer, description: Completed items with node execution events for every related attempt and child SOP}
+        averageExecutionDurationMs: {type: integer, format: int64, description: Union of actual node execution intervals per item; excludes waits and double counting of parallel or nested execution; averaged over executionSamples}
+        p50CycleDurationMs: {type: integer, format: int64, deprecated: true}
+        p95CycleDurationMs: {type: integer, format: int64, deprecated: true, description: 'Nearest-rank percentile over individual work items, never an average of project percentiles'}
+        completedTokens: {type: integer, format: int64}
+        averageTokensPerCompletedIssue: {type: integer, format: int64}
+        latestCompletedAt: {type: string, format: date-time}
     Project:
       type: object
       required: [id, name]
@@ -3588,6 +4116,11 @@ components:
           type: boolean
           readOnly: true
           description: Whether manual closure is permitted; active clarification, tasks or runs prevent closure.
+        completedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Observed transition to a completed state. Preserved on edits and tracker polling, cleared on reopen; historical unknown timestamps remain unknown.
         deletionAllowed:
           type: boolean
           readOnly: true
@@ -3623,6 +4156,13 @@ components:
         baseBranch:
           type: string
           description: Existing work branch to continue directly for a single repository; empty creates a new work branch from the configured main branch; an omitted field preserves the selection on edits
+        repositoryIds:
+          type: array
+          items: {type: string}
+        repositoryBranches:
+          type: object
+          additionalProperties: {type: string}
+          description: Existing work branches keyed by bound repository ID; overrides baseBranch. Empty or unlisted branches create new branches. Omitted preserves selections for retained repositories on edits; an empty object clears all selections.
         latestTaskId:
           type: string
         automationState:
@@ -4068,6 +4608,10 @@ components:
           type: string
         workflowId:
           type: string
+        kind:
+          type: string
+          readOnly: true
+          description: workspace identifies an idle conversation workspace; absent for SOP runs and historical role-group records.
         workflowSnapshot:
           $ref: "#/components/schemas/WorkflowDefinition"
         status:
@@ -4330,6 +4874,10 @@ components:
         baseBranch:
           type: string
           description: Existing work branch to analyze and continue directly for a single repository; empty analyzes the configured main branch before creating a new work branch
+        repositoryBranches:
+          type: object
+          additionalProperties: {type: string}
+          description: Existing work branches to analyze keyed by bound repository ID; overrides baseBranch. Empty or unlisted branches analyze each repository's configured main branch.
         title:
           type: string
         description:
@@ -4514,6 +5062,46 @@ components:
         totalTokens:
           type: integer
           format: int64
+    AnalyticsCostSummary:
+      type: object
+      additionalProperties: true
+      description: 'Operational summary. Costs are public standard token estimates except HY reported charges; raw billing facts are unchanged. All analytics breakdowns, trends, traces and delivery rows additionally expose costCny; legacy costUsd fields are USD equivalents of the CNY statistic.'
+      properties:
+        costCurrency: {type: string, const: CNY}
+        usdToCny: {type: number, const: 7}
+        costPricingVersion: {type: string}
+        totalCostCny: {type: number}
+        costReportedCny: {type: number, description: 'Recognized amount, including recognized parts of incompletely priced runs'}
+        costCoveragePct: {type: number}
+        costUnknownRuns: {type: integer}
+    AnalyticsDeliveryMR:
+      type: object
+      additionalProperties: true
+      properties:
+        project: {type: string}
+        iid: {type: integer}
+        url: {type: string}
+        state: {type: string, description: 'State of this individual MR, including merged or integrated'}
+        targetBranch: {type: string}
+    AnalyticsDelivery:
+      type: object
+      additionalProperties: true
+      properties:
+        mrs:
+          type: array
+          description: 'All associated MRs; singular mrUrl, mrIid and mrState remain primary-link compatibility fields'
+          items:
+            $ref: "#/components/schemas/AnalyticsDeliveryMR"
+    AnalyticsDeliverySummary:
+      type: object
+      additionalProperties: true
+      properties:
+        issues: {type: integer}
+        withMr: {type: integer, description: 'Requirements with an MR, used by the requirement funnel'}
+        totalMrs: {type: integer, description: 'Unique repository and MR IID pairs'}
+        mrMerged: {type: integer, description: 'Individual MRs landed on mainline'}
+        mrIntegrated: {type: integer, description: 'Individual MRs landed on an integration branch'}
+        issuesWithMergedMr: {type: integer, description: 'Requirements with a mainline MR, used by the requirement funnel'}
     AnalyticsSnapshot:
       type: object
       additionalProperties: true
@@ -4522,7 +5110,7 @@ components:
         filter:
           $ref: "#/components/schemas/OpenObject"
         summary:
-          $ref: "#/components/schemas/OpenObject"
+          $ref: "#/components/schemas/AnalyticsCostSummary"
         trend:
           type: array
           items:
@@ -4556,9 +5144,9 @@ components:
         deliveries:
           type: array
           items:
-            $ref: "#/components/schemas/OpenObject"
+            $ref: "#/components/schemas/AnalyticsDelivery"
         delivery:
-          $ref: "#/components/schemas/OpenObject"
+          $ref: "#/components/schemas/AnalyticsDeliverySummary"
         demo:
           $ref: "#/components/schemas/OpenObject"
         runTraces:

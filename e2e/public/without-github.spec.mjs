@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import fs from 'node:fs';
-import {signInUnconfigured} from './helpers.mjs';
+import {signInUnconfigured, switchProject} from './helpers.mjs';
 
 // Acceptance uses a dedicated account without Git credentials. The optional
 // model case reads a protected local key file; never capture request bodies.
@@ -67,13 +67,14 @@ test('all generic SOPs can start without a GitHub repository or token',async({pa
   let runId='',copied=false;
   try{
     await page.reload();
-    await page.locator('#projectSwitcher').selectOption(projectId);
+    await switchProject(page,projectId);
     await page.locator('.nav[data-view="sops"]').click();
     await page.locator('[data-scope-for="sop"] [data-scope="generic"]').click();
     for(const id of ['generic-product-delivery','generic-backend-delivery','generic-frontend-delivery','issue-fix-production']){
-      const card=page.locator(`article.sop-card[data-adopt-generic="${id}"]`);
+      const card=page.locator(`article.sop-card[data-generic-id="${id}"]`);
       await expect(card).toBeVisible();
-      await expect(card.locator('.req-chip').filter({hasText:'GitHub'})).toHaveCount(0);
+      await expect(card.locator('.sop-requirements .sop-badge')).not.toHaveCount(0);
+      await expect(card.locator('.sop-requirements .sop-badge').filter({hasText:/GitHub|Git Token/})).toHaveCount(0);
     }
     const clone=await page.request.post('/api/workflows/generic-product-delivery/clone',{data:{id:workflowId,name:'E2E product documents',projectId}});
     expect(clone.ok()).toBe(true);copied=true;

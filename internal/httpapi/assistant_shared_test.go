@@ -112,7 +112,7 @@ func TestSharedRunConversationVisibilityAndAttribution(t *testing.T) {
 		t.Fatal("shared archive allowed")
 	}
 }
-func TestSharedGenerationUsesOneSlotAndOnlyActorCanCancel(t *testing.T) {
+func TestSharedGenerationUsesOneSlotAndMembersCanCancel(t *testing.T) {
 	h, a, b, out, s := sharedWorkbenchFixture(t)
 	g := domain.AssistantGeneration{ID: "job", SessionID: s.ID, UserID: a.ID, ActorID: b.ID, ProjectID: s.ProjectID, Status: "running"}
 	if err := h.repo.BeginAssistantGeneration(g); err != nil {
@@ -125,7 +125,7 @@ func TestSharedGenerationUsesOneSlotAndOnlyActorCanCancel(t *testing.T) {
 		u      domain.User
 		method string
 		code   int
-	}{{a, "GET", 200}, {out, "GET", 403}, {a, "POST", 403}, {b, "POST", 200}} {
+	}{{a, "GET", 200}, {out, "GET", 403}, {out, "POST", 403}, {a, "POST", 200}, {b, "POST", 200}} {
 		c, w := workbenchContext(tc.u, tc.method, "/?generationId=job", bytes.NewBuffer(nil))
 		c.Params = gin.Params{{Key: "id", Value: s.ID}}
 		h.generation(c)
@@ -268,5 +268,37 @@ func TestTaskReferenceSearchAndSubmissionScope(t *testing.T) {
 	req.SessionID = ""
 	if err := h.prepareWorkbenchContext(c, &req, a); err != nil {
 		t.Fatal("ordinary conversation lost unrestricted reference search", err)
+	}
+}
+
+// A just-sent message renders its attachments while the generation request that
+// stores the transcript is still in flight, so the uploader must be able to
+// fetch the file before the transcript lists it. Everyone else still needs the
+// recorded reference.
+func TestSharedAttachmentUploaderReadsBeforeTranscriptIsStored(t *testing.T) {
+	h, a, b, out, s := sharedWorkbenchFixture(t)
+	id := strings.Repeat("c", 32)
+	dir := workbenchAttachmentDir(a.ID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	record := workbenchAttachmentRecord{ProjectID: s.ProjectID, AssistantAttachment: domain.AssistantAttachment{ID: id, Name: "shot.png", MimeType: "image/png", Size: 5}}
+	raw, _ := json.Marshal(record)
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".bin"), []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		u    domain.User
+		code int
+	}{{a, 200}, {b, 404}, {out, 403}} {
+		c, w := workbenchContext(tc.u, "GET", "/?sessionId="+s.ID, bytes.NewBuffer(nil))
+		c.Params = gin.Params{{Key: "id", Value: id}}
+		h.downloadAttachment(c)
+		if w.Code != tc.code {
+			t.Fatalf("user %d status %d body %q; want %d", tc.u.ID, w.Code, w.Body.String(), tc.code)
+		}
 	}
 }

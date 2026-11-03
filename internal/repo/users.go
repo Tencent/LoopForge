@@ -21,6 +21,8 @@ type userWithConfig struct {
 	PlatformRole                 string     `gorm:"column:platform_role"`
 	TaihuPAT                     *string    `gorm:"column:taihu_pat"`
 	GitToken                     *string    `gorm:"column:git_token"`
+	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
+	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
@@ -33,7 +35,7 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.taihu_pat, c.git_token, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.taihu_pat, c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.claude_code_api_key, c.claude_code_base_url,
 	u.created_at, u.updated_at`
 
@@ -48,6 +50,12 @@ func (r userWithConfig) toDomain() domain.User {
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
+	}
+	if r.GongfengRefreshToken != nil {
+		u.GongfengRefreshToken = *r.GongfengRefreshToken
+	}
+	if r.GongfengTokenExpiresAt != nil {
+		u.GongfengTokenExpiresAt = *r.GongfengTokenExpiresAt
 	}
 	if r.CodeBuddyAPIKey != nil {
 		u.CodeBuddyAPIKey = *r.CodeBuddyAPIKey
@@ -135,6 +143,8 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		// through UpdateUserCredentials and must survive every login refresh.
 		v.TaihuPAT = old.TaihuPAT
 		v.GitToken = old.GitToken
+		v.GongfengRefreshToken = old.GongfengRefreshToken
+		v.GongfengTokenExpiresAt = old.GongfengTokenExpiresAt
 		v.CodexAPIKey, v.CodexBaseURL = old.CodexAPIKey, old.CodexBaseURL
 		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
@@ -204,6 +214,7 @@ func (r *UsersRepo) writeUser(v domain.User) (domain.User, error) {
 func userHasConfig(user domain.User) bool {
 	return user.TaihuPAT != "" ||
 		user.GitToken != "" ||
+		user.GongfengRefreshToken != "" ||
 		user.CodeBuddyAPIKey != "" ||
 		user.CodeBuddyInternetEnvironment != "" ||
 		user.CodexAPIKey != "" ||
@@ -246,8 +257,14 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	}
 	if update.GitTokenClear {
 		user.GitToken = ""
+		user.GongfengRefreshToken = ""
+		user.GongfengTokenExpiresAt = time.Time{}
 	} else if value := strings.TrimSpace(update.GitToken); value != "" {
 		user.GitToken = value
+		// A pasted personal access token replaces an OAuth grant. Leaving the
+		// refresh token in place would overwrite the paste on the next use.
+		user.GongfengRefreshToken = ""
+		user.GongfengTokenExpiresAt = time.Time{}
 	}
 	if update.CodeBuddyAPIKeyClear {
 		user.CodeBuddyAPIKey = ""
@@ -280,10 +297,28 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	return user, nil
 }
 
+// SaveGongfengOAuth stores an OAuth access token in the git credential slot
+// and keeps the refresh token so a later use can renew it.
+func (r *UsersRepo) SaveGongfengOAuth(id int64, accessToken, refreshToken string, expiresAt time.Time) (domain.User, error) {
+	user, ok := r.User(id)
+	if !ok {
+		return domain.User{}, errors.New("user not found")
+	}
+	user.GitToken = strings.TrimSpace(accessToken)
+	user.GongfengRefreshToken = strings.TrimSpace(refreshToken)
+	user.GongfengTokenExpiresAt = expiresAt.UTC()
+	user.UpdatedAt = time.Now().UTC()
+	if err := r.writeUserConfig(user); err != nil {
+		return domain.User{}, err
+	}
+	return user, nil
+}
+
 func (r *UsersRepo) writeUserConfig(v domain.User) error {
 	return upsert(r.DB, "user_configs", map[string]any{
 		"user_id":   v.ID,
 		"taihu_pat": nullableString(v.TaihuPAT), "git_token": nullableString(v.GitToken),
+		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
 		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL),

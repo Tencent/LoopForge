@@ -51,19 +51,25 @@ func TestParseGongfengTimeNumericOffset(t *testing.T) {
 	}
 }
 
-func TestPromoteMRCheckedAtUsesResolvedAtNotNow(t *testing.T) {
-	now := time.Date(2026, 10, 13, 6, 59, 0, 0, time.UTC)
-	mr := gongfengListedMR{ResolvedAt: "2026-10-12T03:08:59+0000", UpdatedAt: "2026-10-12T03:08:58+0000"}
-	got, ok := promoteMRCheckedAt(mr, "merged", now)
-	if !ok {
-		t.Fatal("resolved_at should be a merge time")
-	}
-	want := time.Date(2026, 10, 12, 3, 8, 59, 0, time.UTC)
-	if !got.Equal(want) {
-		t.Fatalf("checked %s, want %s", got, want)
-	}
-	if _, ok := promoteMRCheckedAt(gongfengListedMR{}, "merged", now); ok {
-		t.Fatal("merged promote MR without a timestamp must not use now")
+func TestGongfengMRMergeTime(t *testing.T) {
+	for _, tc := range []struct{ name, payload, want string }{
+		{"resolved at", `{"data":[{"iid":422,"state":"merged","target_branch":"master","resolved_at":"2026-10-20T08:20:18+0000","updated_at":"2026-10-21T03:00:00+0000"}]}`, "2026-10-20T08:20:18Z"},
+		{"merged at wins", `{"items":[{"iid":422,"state":"merged","merged_at":"2026-10-19T23:30:00+08:00","resolved_at":"2026-10-20T08:20:18+0000"}]}`, "2026-10-19T15:30:00Z"},
+		{"invalid merged at", `{"iid":422,"state":"merged","merged_at":"invalid","resolved_at":"2026-10-20T08:20:18+0000"}`, "2026-10-20T08:20:18Z"},
+		{"updated at is not merge time", `[{"iid":422,"state":"merged","updated_at":"2026-10-20T08:20:18+0000"}]`, ""},
+		{"closed is not merged", `{"data":{"iid":422,"state":"closed","resolved_at":"2026-10-20T08:20:18+0000"}}`, ""},
+		{"different iid", `[{"iid":421,"state":"merged","resolved_at":"2026-10-20T08:20:18+0000"}]`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, got := parseGongfengMRDetails(tc.payload, 422)
+			if tc.want == "" {
+				if !got.IsZero() {
+					t.Fatalf("unexpected merge time %s", got)
+				}
+			} else if got.Format(time.RFC3339) != tc.want {
+				t.Fatalf("merged at %s, want %s", got, tc.want)
+			}
+		})
 	}
 }
 

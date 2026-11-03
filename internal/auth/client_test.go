@@ -99,7 +99,7 @@ func TestExchangeCode_Success(t *testing.T) {
 			Data: &IOAAuthData{
 				StaffId:     12345,
 				LoginName:   "example-maintainer",
-				ChineseName: "胡克强",
+				ChineseName: "示例丙",
 				DeptId:      678,
 				DeptName:    "技术工程事业群",
 			},
@@ -125,7 +125,7 @@ func TestExchangeCode_Success(t *testing.T) {
 	if user.IsGuest {
 		t.Errorf("expected non-guest user, got guest")
 	}
-	if user.StaffID != 12345 || user.LoginName != "example-maintainer" || user.ChineseName != "胡克强" {
+	if user.StaffID != 12345 || user.LoginName != "example-maintainer" || user.ChineseName != "示例丙" {
 		t.Errorf("user mismatch: %+v", user)
 	}
 }

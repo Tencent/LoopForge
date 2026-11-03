@@ -1,0 +1,39 @@
+/* Shared model selectors used by SOP, role, Bot and schedule settings. */
+.ai-model-toggle{
+  display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;
+  height:28px;padding:0 6px;border:0;border-radius:8px;
+  background:transparent;color:var(--text);cursor:pointer;font-size:12.5px;font-weight:600;
+}
+.ai-model-toggle:hover,.ai-model-toggle[aria-expanded=true]{background:var(--hover);color:var(--text)}
+.ai-model-toggle[data-model-label],.ai-model-toggle [data-model-label]{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-model-caret{
+  width:0;height:0;margin-left:2px;flex-shrink:0;
+  border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--muted);
+}
+.ai-model-icon{
+  width:18px;height:18px;border-radius:5px;flex-shrink:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:9px;font-weight:800;color:#fff;letter-spacing:0;overflow:hidden;
+}
+.ai-model-icon img{width:18px;height:18px;display:block;object-fit:contain;background:transparent}
+.ai-model-icon[data-family=claude],.ai-model-icon[data-family=gpt],.ai-model-icon[data-family=gemini],.ai-model-icon[data-family=deepseek],.ai-model-icon[data-family=minimax]{background:#fff}
+.ai-model-icon[data-family=glm]{background:#3859FF}
+.ai-model-icon[data-family=kimi]{background:#111827}
+.ai-model-icon[data-family=hunyuan]{background:#0F766E}
+.ai-model-icon[data-family=echo],.ai-model-icon[data-family=other]{background:#64748b}
+.ai-model-menu{
+  position:absolute;z-index:5;max-height:min(52vh,380px);overflow:auto;
+  border:1px solid var(--line);border-radius:10px;background:var(--panel);
+  box-shadow:0 10px 30px color-mix(in srgb,var(--text) 12%,transparent);
+}
+.ai-model-menu{left:0;right:0;bottom:calc(100% + 6px);top:auto}
+.ai-model-option{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  border:0;background:transparent;color:var(--text);cursor:pointer;font-size:12px;
+}
+.ai-model-option{padding:8px 10px;gap:8px}
+.ai-model-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-model-credits{flex-shrink:0;color:var(--muted-2);font-size:11px;font-variant-numeric:tabular-nums;font-weight:500}
+.ai-model-option.is-active{background:var(--blue-soft);color:var(--blue)}
+.ai-model-option:hover{background:var(--hover)}
+.ai-mode-option .ai-model-name{font-weight:640}

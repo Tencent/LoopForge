@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -223,5 +224,44 @@ func TestWorkbenchRunContextIsNotChangedByMention(t *testing.T) {
 	saved, err := loadAssistantConversation(h.repo, u.ID, "bound")
 	if err != nil || saved.RunID != "one" || len(saved.Messages[0].References) != 1 {
 		t.Fatalf("context not persisted: %v %v", saved, err)
+	}
+}
+
+func TestPPTXBecomesInChatSlides(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	write := func(name, body string) {
+		t.Helper()
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("ppt/slides/slide2.xml", `<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>第二页</a:t></a:r></a:p><a:p><a:r><a:t>要点</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`)
+	write("ppt/slides/slide1.xml", `<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>封面</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`)
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	slides := pptxSlides(buf.Bytes())
+	if slides != "封面\n---\n第二页\n要点" {
+		t.Fatalf("slides = %q", slides)
+	}
+	got := previewSlidesMessage("PPT 已上传到你的资料库：[点击打开](https://www.workbuddy.cn/space/d/abc)", slides)
+	if strings.Contains(got, "workbuddy") || !strings.Contains(got, "```slides") || !strings.Contains(got, "封面") {
+		t.Fatalf("preview = %q", got)
+	}
+}
+
+func TestStripLocalMediaPathsKeepsTheSentence(t *testing.T) {
+	in := "图片已经好了。\n**文件位置**：`/root/.agentflow/assistant/9101/ws/generated-images/A_modern_personal_website_home_2026-10-26T06-54-47.png`\n需要我改配色吗？"
+	got := stripLocalMediaPaths(in)
+	if strings.Contains(got, "/root/") || strings.Contains(got, "文件位置") || !strings.Contains(got, "需要我改配色吗") {
+		t.Fatalf("path still visible: %q", got)
+	}
+	if strings.Contains(stripLocalMediaPaths("看这张 https://cdn.example.com/a.png"), "https") == false {
+		t.Fatal("remote image url was removed")
 	}
 }

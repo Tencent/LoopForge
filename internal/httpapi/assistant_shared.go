@@ -2,14 +2,13 @@ package httpapi
 
 import (
 	"agentflow/internal/domain"
-	"agentflow/internal/engine"
+
 	"agentflow/internal/repo"
 	"bytes"
-	"crypto/sha256"
+
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"strings"
 )
 
 // Storage retains a stable slot; authorization and tool credentials always use
@@ -18,8 +17,15 @@ func assistantStorageOwner(st *repo.Store, id string, fallback int64) int64 {
 	if s, ok := st.SharedAssistantSession(id); ok {
 		return s.UserID
 	}
+	if s, ok := st.ProjectAssistantSession(id); ok {
+		return s.UserID
+	}
 	return fallback
 }
+
+// conversationScope returns the storage owner and whether the conversation is
+// multi-user. SOP run sessions and every conversation bound to a project are
+// shared with that project's members; only unbound conversations are private.
 func (h *assistantHandlers) conversationScope(c *gin.Context, id, runID, projectID string, userID int64) (int64, bool, error) {
 	if s, ok := h.repo.SharedAssistantSession(id); ok {
 		r, exists := h.repo.RunState(s.RunID)
@@ -34,7 +40,23 @@ func (h *assistantHandlers) conversationScope(c *gin.Context, id, runID, project
 	if runID != "" {
 		return 0, false, fmt.Errorf("请从任务运行打开共享 SOP 会话")
 	}
+	if s, ok := h.repo.ProjectAssistantSession(id); ok {
+		if !h.workbenchProjectAllowed(c, s.ProjectID, userID) {
+			return 0, false, errProjectConversationReadOnly
+		}
+		return s.UserID, true, nil
+	}
 	return userID, false, nil
+}
+
+var errProjectConversationReadOnly = fmt.Errorf("你不是该项目的成员，加入项目后才能查看和继续这个会话")
+
+// conversationReadScope is the viewing scope. Anyone may register an account,
+// so a project conversation is readable only by project members, the same set
+// conversationScope allows; readOnly is therefore never set here.
+func (h *assistantHandlers) conversationReadScope(c *gin.Context, id string, userID int64) (owner int64, shared, readOnly bool, err error) {
+	owner, shared, err = h.conversationScope(c, id, "", "", userID)
+	return owner, shared, false, err
 }
 func (h *assistantHandlers) runConversation(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -66,6 +88,7 @@ func (h *assistantHandlers) runConversation(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
+	session.IssueID = r.ExecutionContext.IssueID
 	c.JSON(200, session)
 }
 func sharedTranscriptPrefix(old []assistantMessage, next []assistantMessage) bool {
@@ -82,61 +105,19 @@ func sharedTranscriptPrefix(old []assistantMessage, next []assistantMessage) boo
 	return true
 }
 func assistantRequestApprovalMode(req assistantRequest) string {
-	if req.groupMode {
-		return AssistantApprovalAuto
-	}
 	if req.consultation {
 		return AssistantApprovalConfirm
 	}
 	return normalizeAssistantApprovalMode(req.ApprovalMode)
 }
-func groupMentionRecipients(req assistantRequest) []domain.AssistantReference {
-	if req.followUp != nil || !req.groupMode || len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
-		return nil
-	}
-	out := []domain.AssistantReference{}
-	seen := map[string]bool{}
-	for _, ref := range req.Messages[len(req.Messages)-1].References {
-		if ref.Type == "agent" && !seen[ref.ID] {
-			seen[ref.ID] = true
-			out = append(out, ref)
-		}
-	}
-	return out
-}
-
-func (h *assistantHandlers) dispatchGroupMentions(req assistantRequest) (string, error) {
-	if !req.groupMode || len(groupMentionRecipients(req)) == 0 {
-		return "", fmt.Errorf("当前消息没有群成员接收人")
-	}
-	if h.engine == nil {
-		return "", fmt.Errorf("群协作执行服务不可用")
-	}
-	names := []string{}
-	for _, ref := range groupMentionRecipients(req) {
-		sum := sha256.Sum256([]byte(fmt.Sprintf("%s/%d/%s/%s", req.SessionID, len(req.Messages), ref.ID, lastAssistantUserContent(req.Messages))))
-		task := "群成员 @你：请以自己的身份直接回应并处理这条消息，不要替其他成员发言。\n" + lastAssistantUserContent(req.Messages)
-		if _, err := h.engine.DispatchGroupTask(req.RunID, "", engine.GroupTaskRequest{AgentID: ref.ID, Prompt: task, RequestID: fmt.Sprintf("chat-%x", sum[:20])}); err != nil {
-			return "", err
-		}
-		names = append(names, ref.Name)
-	}
-	return jsonObject(gin.H{"message": "已通知 " + strings.Join(names, "、") + "。", "drafts": []assistantDraft{}}), nil
-}
 
 func assistantSystemPromptForRequest(req assistantRequest, mode string) string {
-	if req.groupMode {
-		return assistantSystemPromptForMode(AssistantApprovalAuto) + "\n你是这个共享群聊的 Main Bot。用户已授权自由协作直接执行：不要提交待确认草稿，不要请求批准。不要向用户解释审批档位或权限设置。像 IM 群聊简短接话，不写阶段计划表、派发报告、工具参数或重复转述成员的发言。邀请和分工直接调用工具，成员自己通过 group_message 发言；小改动由你直接通过 workbench_workspace_tree/read/write/command 完成并验证；较大任务再交给成员。你也负责需要协调的事情。用户 @成员时由真实角色实例回应，不能假扮其他成员或编造他们的回复。需要成员帮助时用 runs_group_invite / runs_group_dispatch；请求属于当前群与项目，不涉及冷冻 SOP。"
-	}
 
 	if req.consultationRole == nil {
-		return assistantSystemPromptForMode(mode)
+		return withSpaceDeliverable(req, assistantSystemPromptForMode(mode))
 	}
 	role := req.consultationRole
-	if req.groupMode {
-		return assistantSystemPromptForMode(mode) + "\n你是自由协作群里的 " + role.Name + "。职责：" + role.Instructions + "\n这是群聊，不是 SOP。需要动手时用 runs_group_dispatch 派发给真实角色实例（包括你自己）；用群消息和任务输出了解别人在做什么，没有执行记录就不要声称改过文件。"
-	}
-	return "你是 " + role.Name + "，这是该角色的独立只读咨询实例。按以下角色职责回答用户，不冒充 Main Bot，不声称实际 SOP 节点做过记录中不存在的操作。你可以查询平台和运行过程；禁止写入、派发、审批或提交写入草稿。需要修改时提出返工建议，由 Main Bot 和现有 SOP 引擎交接执行。\n角色定义：\n" + role.Instructions + "\n职责说明：\n" + role.Description
+	return withSpaceDeliverable(req, "你是 "+role.Name+"，这是该角色的独立只读咨询实例。按以下角色职责回答用户，不冒充 Main Bot，不声称实际 SOP 节点做过记录中不存在的操作。你可以查询平台和运行过程；禁止写入、派发、审批或提交写入草稿。需要修改时提出返工建议，由 Main Bot 和现有 SOP 引擎交接执行。\n角色定义：\n"+role.Instructions+"\n职责说明：\n"+role.Description)
 }
 
 // Only approval receipts may update a shared transcript. Existing messages and
@@ -192,6 +173,28 @@ func sharedReceiptUpdate(old, next domain.AssistantSession, userID int64, name s
 		m.AuthorName = name
 		m.SpeakerName = ""
 		m.SpeakerAgentID = ""
+		m.Model = ""
+		m.Usage = nil
+	}
+	return nil
+}
+
+// Messages carrying a system trigger (retired role follow-ups) may only be
+// resent unchanged at their stored position; new turns cannot carry one.
+func (h *assistantHandlers) validateAssistantTriggerHistory(ownerID int64, req assistantRequest) error {
+	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
+	for i, message := range req.Messages {
+		if message.Trigger == "" && message.TriggerID == "" {
+			continue
+		}
+		if i >= len(old.Messages) {
+			return fmt.Errorf("不能伪造系统触发标记")
+		}
+		a, _ := json.Marshal(message)
+		b, _ := json.Marshal(old.Messages[i])
+		if string(a) != string(b) {
+			return fmt.Errorf("不能改写系统触发标记")
+		}
 	}
 	return nil
 }

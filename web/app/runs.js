@@ -62,10 +62,12 @@ function startLiveRun(id){
       applyRunPayload(run,{list:false});
       const list=$('#runList')?.querySelector(`[data-id="${CSS.escape(id)}"]`);
       if(list){
-        const st=list.querySelector('.status');
-        if(st){st.className=`status ${runDisplayStatusClass(run)}`;st.textContent=runDisplayStatus(run)}
+        const st=list.querySelector('.hui-badge');
+        if(st){st.outerHTML=runStatusBadgeHTML(run);hydrateRunIcons(list)}
         const p=runProgress(run),bar=list.querySelector('.run-progress i');
-        if(bar)bar.style.width=p.pct+'%';
+        if(bar){bar.style.width=p.pct+'%';bar.parentElement.className=`run-progress tone-${runStatusTone(run)}`}
+        const text=list.querySelector('.run-progress-text');
+        if(text)text.textContent=`${p.done}/${p.total}`;
       }
     }
     if(state.drawerOpen&&state.issueDetailData?.run?.id===id){
@@ -131,7 +133,7 @@ function syncQueuedRunRefresh(){
 }
 document.addEventListener('visibilitychange',()=>{syncQueuedRunRefresh();if(queuedRunRefreshNeeded())refreshRuns(true,true)});
 let refreshRunsPending=null;
-async function refreshRuns(background=false,runsView=false){if(refreshRunsPending)return refreshRunsPending;refreshRunsPending=(async()=>{try{const opt=background?{silent:true}:{};const runs=await api('/api/runs',opt);const list=sortRunsDescending(runs);state.data.runs=list;renderRuns();if(runsView){const [tasks,issues]=await Promise.all([api('/api/tasks',{silent:true}),api('/api/issues',{silent:true})]);state.data.tasks=tasks;state.data.issues=issues;if(activeViewName()==='runs')renderRuns()}else if(!background){const [tasks,issues]=await Promise.all([api('/api/tasks',opt),api('/api/issues',opt)]);state.data.tasks=tasks;state.data.issues=issues;renderRuns()}if(!state.selectedRun)return;const summary=list.find(x=>x.id===state.selectedRun);if(!summary){if($('#runsDetailSection')?.hidden===false)return;state.selectedRun=null;state.activeRun=null;renderRunDetail(null);return}if(background)return;if($('#runsDetailSection')?.hidden===false)return;selectRun(state.selectedRun,true)}catch(e){if(!background)toast(e.message)}finally{refreshRunsPending=null}})();return refreshRunsPending}
+async function refreshRuns(background=false,runsView=false){if(refreshRunsPending)return refreshRunsPending;refreshRunsPending=(async()=>{try{const opt=background?{silent:true}:{};const runs=await api('/api/runs',opt);const list=sortRunsDescending(runs);state.data.runs=list;updateApprovalBadge();renderRuns();if(runsView){const [tasks,issues]=await Promise.all([api('/api/tasks',{silent:true}),api('/api/issues',{silent:true})]);state.data.tasks=tasks;state.data.issues=issues;if(activeViewName()==='runs')renderRuns()}else if(!background){const [tasks,issues]=await Promise.all([api('/api/tasks',opt),api('/api/issues',opt)]);state.data.tasks=tasks;state.data.issues=issues;renderRuns()}if(!state.selectedRun)return;const summary=list.find(x=>x.id===state.selectedRun);if(!summary){if($('#runsDetailSection')?.hidden===false)return;state.selectedRun=null;state.activeRun=null;renderRunDetail(null);return}if(background)return;if($('#runsDetailSection')?.hidden===false)return;selectRun(state.selectedRun,true)}catch(e){if(!background)toast(e.message)}finally{refreshRunsPending=null}})();return refreshRunsPending}
 function runProgress(r){const nodes=Object.values(r.nodes||{}).filter(Boolean),done=nodes.filter(n=>['succeeded','failed','cancelled'].includes(n.status)).length,total=Math.max(nodes.length,done);return {done:Math.min(done,total),total,pct:total?Math.round(Math.min(done,total)*100/total):0}}
 function workflowStages(workflow){const nodes=workflow?.nodes||[],edges=workflow?.edges||[],byId=new Map(nodes.map(n=>[n.id,n])),indegree=new Map(nodes.map(n=>[n.id,0]));for(const edge of edges)if(indegree.has(edge.target)&&byId.has(edge.source))indegree.set(edge.target,indegree.get(edge.target)+1);let ready=nodes.filter(n=>indegree.get(n.id)===0).map(n=>n.id),seen=new Set(),stages=[];while(ready.length){const ids=ready,stage=ids.map(id=>byId.get(id)).filter(Boolean);stages.push(stage);ready=[];for(const id of ids){seen.add(id);for(const edge of edges.filter(e=>e.source===id)){if(!indegree.has(edge.target))continue;indegree.set(edge.target,indegree.get(edge.target)-1);if(indegree.get(edge.target)===0)ready.push(edge.target)}}}const remaining=nodes.filter(n=>!seen.has(n.id));if(remaining.length)stages.push(remaining);return stages}
 function runFinishedAt(r){
@@ -175,35 +177,96 @@ function taskTriggerInfo(task){
 }
 function taskTriggerBadge(task){const info=taskTriggerInfo(task);return `<span class="run-trigger ${info.kind}" title="${escapeHTML(info.title||'触发来源')}">${escapeHTML(info.label)}</span>`}
 function renderRunOverview(){
-  const live=liveRuns(),runs=scopedRuns(state.data.runs||[]),active=live.filter(r=>r.status==='running'&&!r.pauseRequested).length,paused=runs.filter(r=>r.pauseRequested||r.status==='paused').length,waiting=live.filter(r=>r.status==='waiting'&&!r.pauseRequested).length,queued=runs.filter(r=>r.status==='queued').length,failed=runs.filter(r=>r.status==='failed').length,cancelled=runs.filter(r=>r.status==='cancelled').length,finished=runs.filter(r=>r.status==='succeeded'),successBase=finished.length+failed,rate=successBase?Math.round(finished.length*100/successBase):0,totalTokens=runs.reduce((n,r)=>n+Number(r.usage?.totalTokens||0),0);
-  $('#runOverview').innerHTML=`<div class="run-kpi"><span>进行中</span><b>${active}</b></div><div class="run-kpi"><span>排队中</span><b>${queued}</b></div><div class="run-kpi ${paused?'warning':''}"><span>已暂停</span><b>${paused}</b></div><div class="run-kpi"><span>待确认</span><b>${waiting}</b></div><div class="run-kpi"><span>已完成</span><b>${finished.length}</b></div><div class="run-kpi ${failed?'danger':''}"><span>失败</span><b>${failed}</b></div><div class="run-kpi"><span>已取消</span><b>${cancelled}</b></div><div class="run-kpi"><span>成功率</span><b>${rate}%</b><small>${successBase} 次已结束</small></div><div class="run-kpi"><span>累计 Token</span><b>${formatTokens(totalTokens)}</b><small>${runs.length} 次</small></div>`;
-  $('#runsLiveState').classList.toggle('active',active+waiting+queued>0)
+  const live=liveRuns(),runs=scopedRuns(state.data.runs||[]),active=live.filter(r=>r.status==='running'&&!r.pauseRequested).length,waiting=live.filter(runAwaitsConfirmation).length,queued=runs.filter(r=>r.status==='queued').length,failed=runs.filter(r=>r.status==='failed').length,finished=runs.filter(r=>r.status==='succeeded'),successBase=finished.length+failed,rate=successBase?Math.round(finished.length*100/successBase):0,totalTokens=runs.reduce((n,r)=>n+Number(r.usage?.totalTokens||0),0);
+  $('#runOverview').innerHTML=`<span class="run-kpi" title="成功率 = 已完成 ÷（已完成 + 失败）"><span>成功率</span><b>${rate}%</b><small>${successBase} 次已结束</small></span><span class="run-kpi"><span>累计 Token</span><b>${formatTokens(totalTokens)}</b><small>${runs.length} 次</small></span>`;
+  const liveState=$('#runsLiveState'),on=active+waiting+queued>0;
+  liveState.classList.toggle('active',on);
+  const text=liveState.querySelector('[data-live-text]');if(text)text.textContent=on?'实时更新中':'暂无进行中的运行';
+}
+const RUN_FILTER_KEYS=['all','active','queued','paused','waiting','succeeded','failed','cancelled'];
+function runMatchesFilter(r,key){
+  if(key==='all')return true;
+  if(key==='active')return r.status==='running'&&!r.pauseRequested;
+  if(key==='paused')return Boolean(r.pauseRequested||r.status==='paused');
+  if(key==='waiting')return runAwaitsConfirmation(r);
+  return r.status===key;
+}
+function hydrateRunIcons(root){
+  const icons=window.AgentFlowHarnessIcons;if(!root||!icons)return;
+  root.querySelectorAll('[data-run-icon]').forEach(host=>{if(!host.querySelector('svg.agent-icon'))icons.render(host,host.dataset.runIcon)});
+}
+function runIconSlot(name,size,cls=''){return `<span class="${cls}" data-run-icon="${name}" aria-hidden="true"><svg width="${size}" height="${size}"></svg></span>`}
+function runIdleCollaboration(r){return (r?.kind==='workspace'||runIsGroupMode(r))&&r?.status==='waiting'&&!r?.pauseRequested&&!runAwaitsConfirmation(r)}
+function runStatusTone(r){
+  if(r?.pauseRequested||r?.status==='paused')return 'warn';
+  if(runIdleCollaboration(r))return 'neutral';
+  return ({running:'info',waiting:'warn',succeeded:'ok',failed:'err'}[r?.status])||'neutral';
+}
+const RUN_BADGE_TONES={info:'info',ok:'success',err:'error',warn:'warn',neutral:'neutral'};
+function runStatusBadgeHTML(r){
+  const paused=Boolean(r?.pauseRequested||r?.status==='paused');
+  const [label,icon]=paused?['已暂停','pause']:runIdleCollaboration(r)?(r.kind==='workspace'?(runWorkspaceReclaimed(r)?['已回收','folder']:['工作区在线','chat']):['待指令','chat']):({queued:['排队中','clock'],running:['进行中',''],waiting:['待确认','user-hold'],succeeded:['已完成','check'],failed:['失败','alert'],cancelled:['已取消','close']}[r?.status])||[runStatus(r?.status),'circle'];
+  const mark=icon?runIconSlot(icon,12,'hui-badge-glyph'):'<span class="hui-lamp" aria-hidden="true"><i></i></span>';
+  return `<span class="hui-badge" data-size="sm" data-tone="${RUN_BADGE_TONES[runStatusTone(r)]}" data-status="${escapeHTML(runDisplayStatusClass(r))}" title="${escapeHTML(runDisplayStatus(r))}">${mark}${escapeHTML(label)}</span>`;
+}
+function runTriggerChip(task){const info=taskTriggerInfo(task);return `<span class="run-chip" title="${escapeHTML(info.title||'触发来源')}">${escapeHTML(info.label)}</span>`}
+// A conversation workspace is named after its requirement, else the goal
+// Main Bot opened it for; it is never an SOP and has no trigger task.
+function runWorkspaceReclaimed(r){const at=String(r?.workspaceCleanedAt||'');return Boolean(at)&&!at.startsWith('0001-')}
+function runWorkspaceGoal(r){return String(r?.input||'').replace(/^对话改代码[:：]\s*/,'').trim()}
+function runRowHTML(r,workflows){
+  if(r.kind==='workspace')return runWorkspaceRowHTML(r);
+  const p=runProgress(r),ctx=runContext(r),group=runIsGroupMode(r),sop=r.workflowSnapshot?.name||workflows.find(w=>w.id===r.workflowId)?.name||r.workflowId,title=ctx.issue?.title||sop||'自由协作';
+  const isPaused=Boolean(r.pauseRequested||r.status==='paused');
+  const isDeletable=r.status!=='queued'&&(!['running','waiting'].includes(r.status)||isPaused);
+  const sep='<span class="run-sep">·</span>';
+  const meta=group?`<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`:`${ctx.issue?`<span class="run-ref">${escapeHTML(ctx.project?.key||'ISS')}-${escapeHTML(ctx.issue.number)}</span>${sep}`:''}<span class="run-meta-sop">${escapeHTML(sop)}</span>${sep}<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`;
+  const progress=group?'<div class="run-row-progress is-empty">—</div>':`<div class="run-row-progress"><span class="run-progress-text">${p.done}/${p.total}</span><div class="run-progress tone-${runStatusTone(r)}"><i style="width:${p.pct}%"></i></div></div>`;
+  const time=group?'<span class="run-row-time"></span>':`<span class="run-row-time" title="${escapeHTML(runTimingTitle(r))}">${runElapsed(r)}</span>`;
+  const actions=`<button type="button" class="run-row-action run-view-btn" data-view-run="${escapeHTML(r.id)}" aria-label="查看详情" title="查看详情">${runIconSlot('eye',15)}</button>${isDeletable?`<button type="button" class="run-row-action run-del-btn" data-delete-run="${escapeHTML(r.id)}" aria-label="删除记录" title="删除记录">${runIconSlot('trash',15)}</button>`:''}`;
+  return `<div class="run-card run-row ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}" role="listitem" tabindex="0">${runIconSlot(group?'chat':'workflow',15,'run-glyph')}<div class="run-row-main"><b class="run-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</b><div class="run-row-meta">${r.workflowSnapshot?.generic?'<span class="run-chip">通用</span>':''}${meta}</div></div><span class="run-row-status">${runStatusBadgeHTML(r)}</span>${progress}${time}<div class="run-row-actions">${actions}</div></div>`;
+}
+function runWorkspaceRowHTML(r){
+  const ctx=runContext(r),title=ctx.issue?.title||runWorkspaceGoal(r)||'对话工作区',sep='<span class="run-sep">·</span>';
+  const isDeletable=!['running','waiting','queued'].includes(r.status);
+  const ref=ctx.issue?`<span class="run-ref">${escapeHTML(ctx.project?.key||'ISS')}-${escapeHTML(ctx.issue.number)}</span>${sep}`:'';
+  const meta=`${ref}<span class="run-meta-sop">对话改代码</span>${sep}<span>${relativeTime(r.createdAt)}</span><span class="run-chip" title="${escapeHTML(ctx.issue?'对话中直接改代码，已关联需求':'对话中直接改代码，未关联需求（只读评审、排查等）')}">${ctx.issue?'已关联需求':'未关联需求'}</span>`;
+  const actions=`<button type="button" class="run-row-action run-view-btn" data-view-run="${escapeHTML(r.id)}" aria-label="查看详情" title="查看详情">${runIconSlot('eye',15)}</button>${isDeletable?`<button type="button" class="run-row-action run-del-btn" data-delete-run="${escapeHTML(r.id)}" aria-label="删除记录" title="删除记录">${runIconSlot('trash',15)}</button>`:''}`;
+  return `<div class="run-card run-row ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}" role="listitem" tabindex="0">${runIconSlot('chat',15,'run-glyph')}<div class="run-row-main"><b class="run-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</b><div class="run-row-meta">${meta}</div></div><span class="run-row-status">${runStatusBadgeHTML(r)}</span><div class="run-row-progress is-empty">—</div><span class="run-row-time"></span><div class="run-row-actions">${actions}</div></div>`;
+}
+function renderRunFilterCounts(base){
+  const counts=Object.fromEntries(RUN_FILTER_KEYS.map(k=>[k,0]));
+  for(const r of base)for(const k of RUN_FILTER_KEYS)if(runMatchesFilter(r,k))counts[k]++;
+  $$('#runFilters [data-run-filter]').forEach(btn=>{
+    const key=btn.dataset.runFilter,n=counts[key]||0,count=btn.querySelector('.sliding-tab-count');
+    if(count&&count.textContent!==String(n))count.textContent=String(n);
+    btn.classList.toggle('is-zero',!n);
+    btn.classList.toggle('is-warn',n>0&&(key==='paused'||key==='waiting'));
+    btn.classList.toggle('is-danger',n>0&&key==='failed');
+  });
 }
 function renderRuns(){
   renderRunOverview();const workflows=catalogWorkflows();$('#runWorkflowFilter').innerHTML='<option value="">全部 SOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
-  let runs=sortRunsDescending(scopedRuns(state.data.runs||[]));
-  if(state.runFilter==='active')runs=runs.filter(r=>r.status==='running'&&!r.pauseRequested);
-  else if(state.runFilter==='paused')runs=runs.filter(r=>r.pauseRequested||r.status==='paused');
-  else if(state.runFilter==='waiting')runs=runs.filter(r=>r.status==='waiting'&&!r.pauseRequested);
-  else if(state.runFilter==='succeeded')runs=runs.filter(r=>r.status==='succeeded');
-  else if(state.runFilter==='failed')runs=runs.filter(r=>r.status==='failed');
-  else if(state.runFilter==='cancelled')runs=runs.filter(r=>r.status==='cancelled');
-  else if(state.runFilter!=='all')runs=runs.filter(r=>r.status===state.runFilter);
-  if(state.runWorkflowFilter)runs=runs.filter(r=>r.workflowId===state.runWorkflowFilter);
-  if(state.runQuery)runs=runs.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''}`.toLowerCase().includes(state.runQuery)});
+  let base=sortRunsDescending(scopedRuns(state.data.runs||[]));
+  if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
+  if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''} ${r.kind==='workspace'?'对话改代码':''}`.toLowerCase().includes(state.runQuery)});
+  renderRunFilterCounts(base);
+  const runs=base.filter(r=>runMatchesFilter(r,state.runFilter||'all'));
   $('#runListCount')&&($('#runListCount').textContent=`${runs.length} 条`);const list=$('#runList');
+  const focusedRow=document.activeElement?.closest?.('#runList .run-card'),focusedPart=focusedRow&&['.run-view-btn','.run-del-btn'].find(s=>document.activeElement.matches(s));
   const pagedRuns=paginateList('runs', runs);
-  list.innerHTML=pagedRuns.items.map(r=>{
-    const p=runProgress(r),ctx=runContext(r),sop=r.workflowSnapshot?.name||workflows.find(w=>w.id===r.workflowId)?.name||r.workflowId,title=ctx.issue?.title||sop;
-    const isPaused=Boolean(r.pauseRequested||r.status==='paused');
-    const isDeletable=r.status!=='queued'&&(!['running','waiting'].includes(r.status)||isPaused);
-    return `<div class="run-card ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}"><div class="run-card-top"><span class="run-workflow-icon">${escapeHTML((ctx.project?.key||sop)).slice(0,1)}</span><div class="run-card-title"><h3>${escapeHTML(title)}${r.workflowSnapshot?.generic?' <span class="sop-status generic">通用</span>':''}</h3><small>${ctx.issue?`${escapeHTML(ctx.project?.key||'ISS')}-${ctx.issue.number} · `:''}${escapeHTML(sop)} · ${relativeTime(r.createdAt)} ${taskTriggerBadge(ctx.task)}</small></div><div class="run-card-right"><span class="run-meta-step">${p.done}/${p.total} 步</span><span class="run-meta-time" title="${escapeHTML(runTimingTitle(r))}">${runElapsed(r)}</span><span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span><button class="button ghost run-view-btn" data-view-run="${escapeHTML(r.id)}">查看</button>${isDeletable?`<button class="button ghost run-del-btn" data-delete-run="${escapeHTML(r.id)}" title="删除该运行记录">删除</button>`:'<span class="run-del-btn run-del-placeholder" aria-hidden="true">删除</span>'}</div></div><div class="run-progress"><i style="width:${p.pct}%"></i></div></div>`
-  }).join('')||'<div class="run-list-empty"><span>⌕</span><b>没有匹配的运行</b><p>可到需求列表查看对应需求的执行结果。</p></div>';
-  list.insertAdjacentHTML('beforeend', pagerHTML('runs', pagedRuns));
-  list.querySelectorAll('.run-card').forEach(el=>el.onclick=(e)=>{if(e.target.closest('.run-view-btn,.run-del-btn,.pager'))return;showRunDetail(el.dataset.id)});
+  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>没有匹配的运行</b><p>换个关键词，或到需求列表查看对应需求的执行结果。</p></div>`;
+  const pager=$('#runPager');
+  pager.innerHTML=`<span class="run-total">共 ${runs.length} 条</span>${pagerHTML('runs', pagedRuns)}`;
+  hydrateRunIcons($('#runsView'));
+  list.querySelectorAll('.run-card').forEach(el=>{
+    el.onclick=(e)=>{if(e.target.closest('.run-view-btn,.run-del-btn'))return;showRunDetail(el.dataset.id)};
+    el.onkeydown=(e)=>{if(e.key==='Enter'&&e.target===el){e.preventDefault();showRunDetail(el.dataset.id)}};
+  });
   list.querySelectorAll('.run-view-btn').forEach(btn=>btn.onclick=(e)=>{e.stopPropagation();showRunDetail(btn.dataset.viewRun)});
   list.querySelectorAll('.run-del-btn').forEach(btn=>btn.onclick=(e)=>{e.stopPropagation();deleteRun(btn.dataset.deleteRun)});
-  bindPager(list);
+  bindPager(pager);
+  if(focusedRow){const row=list.querySelector(`[data-id="${CSS.escape(focusedRow.dataset.id)}"]`);(focusedPart?row?.querySelector(focusedPart):row)?.focus({preventScroll:true})}
   syncQueuedRunRefresh();
 }
 function showRunDetail(id){
@@ -213,7 +276,7 @@ function showRunDetail(id){
   state.selectedRun=id;
   syncRunHash(id);
   $('#runsView')?.classList.add('detail-open');
-  document.querySelector('#runsView .run-toolbar')?.setAttribute('hidden','');
+  document.querySelector('#runsView .run-panel')?.setAttribute('hidden','');
   $('#runsListSection').hidden=true;
   $('#runsDetailSection').hidden=false;
   const summary=(state.data.runs||[]).find(x=>x.id===id);
@@ -225,6 +288,7 @@ function showRunDetail(id){
     if(state.selectedRun!==id)return;
     state.activeRun=r;
     if(shouldPatchRunLive(r))patchRunLive(r);else renderRunDetail(r);
+    if(r.workspaceCleanedAt&&!String(r.workspaceCleanedAt).startsWith('0001-'))observeRunWorkspaceRestore(id);
     if(['queued','running','waiting'].includes(r.status))startLiveRun(r.id);else stopLiveRun();
   }).catch(e=>toast(e.message,'err'));
 }
@@ -234,7 +298,7 @@ function showRunList(){
   state.selectedRun=null;
   syncRunHash('');
   $('#runsView')?.classList.remove('detail-open');
-  document.querySelector('#runsView .run-toolbar')?.removeAttribute('hidden');
+  document.querySelector('#runsView .run-panel')?.removeAttribute('hidden');
   $('#runsListSection').hidden=false;
   $('#runsDetailSection').hidden=true;
   renderRuns();
@@ -271,7 +335,9 @@ async function syncRunControlState(runId){
   paintRunControl(runId);
   return run;
 }
-function runDisplayStatus(r){return (r?.pauseRequested||r?.status==='paused')?'已暂停':runStatus(r?.status)}
+function runDisplayStatus(r){return (r?.pauseRequested||r?.status==='paused')?'已暂停':r?.kind==='workspace'?'对话工作区':runStatus(r?.status)}
+// Only SOP waiting states require confirmation; workspaces and retired groups do not.
+function runAwaitsConfirmation(r){return r?.kind!=='workspace'&&!runIsGroupMode(r)&&r?.status==='waiting'&&!r?.pauseRequested}
 function runDisplayStatusClass(r){return (r?.pauseRequested||r?.status==='paused')?'paused':(r?.status||'')}
 function formatTokens(n){n=Number(n||0);if(n>=1000000)return `${(n/1000000).toFixed(n<10000000?1:0)}M`;return n>999?`${(n/1000).toFixed(n>9999?0:1)}k`:String(n)}
 function compactTelemetry(events){const out=[];for(const e of events||[]){const last=out[out.length-1];if(last&&last.nodeId===e.nodeId&&last.category===e.category&&last.name===e.name&&['reasoning','output'].includes(e.category)){last.message=(last.message||'')+(e.message||'');last.sequence=e.sequence;last.timestamp=e.timestamp}else out.push({...e})}return out}
@@ -405,9 +471,9 @@ function gateResultCardHTML(nr){
     const agentOwnsFailure=gate.decision==='fail'||gate.decision==='rework';
     const reason=agentOwnsFailure?(gate.reason||nr.error||'未提供'):(nr.error||'未提供');
     const terminalNote=agentOwnsFailure?'':`<strong>Agent 终态</strong><p>${gate.decision==='pass'?'pass：Agent 认为任务已完成，但节点客观校验未通过':'Agent 提交了 '+escapeHTML(gate.decision||'未知终态')+'，节点随后失败'}</p>`;
-    return `<div class="node-error"><b>执行失败</b><div class="node-error-detail"><strong>失败原因</strong><p>${escapeHTML(reason)}</p>${terminalNote}${gate.summary?`<strong>摘要</strong><p>${escapeHTML(gate.summary)}</p>`:''}${findings?`<ul>${findings}</ul>`:''}</div></div>`;
+    return `<div class="node-error"><b>执行失败</b><div class="node-error-detail"><strong>失败原因</strong><p>${escapeHTML(reason)}</p>${credentialActionHTML(reason)}${terminalNote}${gate.summary?`<strong>摘要</strong><p>${escapeHTML(gate.summary)}</p>`:''}${findings?`<ul>${findings}</ul>`:''}</div></div>`;
   }
-  return nr?.error&&nr.status==='failed'?`<div class="node-error"><b>执行失败</b><pre>${escapeHTML(nr.error)}</pre></div>`:'';
+  return nr?.error&&nr.status==='failed'?`<div class="node-error"><b>执行失败</b><pre>${escapeHTML(nr.error)}</pre>${credentialActionHTML(nr.error)}</div>`:'';
 }
 function unescapeJSONString(body){
   const attempt=value=>{try{return JSON.parse('"'+value+'"')}catch{return null}};
@@ -681,7 +747,7 @@ function previewPaneHTML(run){
   const backendLabel=backend?`<code title="${escapeHTML(backend)}">${escapeHTML(backend)}</code>`:'<em>未设置</em>';
   const backendAction=backend?'更改':'设置';
   const frameUrl=window.location.protocol==='https:'?previewCandidateHttpsURL(session.url):session.url;
-  return `<section class="run-preview-pane"><div class="run-preview-toolbar"><span>预览 · ${escapeHTML(info.entryFile||'index.html')} · ${info.fileCount||0} 个文件</span><div class="run-preview-backend"><small>当前后端</small>${backendLabel}<button type="button" class="button ghost small" data-preview-backend-edit>${backendAction}</button></div><div><button class="button ghost small" data-preview-refresh>刷新</button><button class="button ghost small" data-preview-copy>复制地址</button><button class="button ghost small" data-preview-open>独立窗口</button></div></div><iframe data-preview-frame data-run-id="${escapeHTML(run.id)}" title="前端预览" src="${escapeHTML(frameUrl)}" sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-same-origin" referrerpolicy="no-referrer"></iframe></section>`;
+  return `<section class="run-preview-pane"><div class="run-preview-toolbar"><span>预览 · ${escapeHTML(info.entryFile||'index.html')} · ${info.fileCount||0} 个文件</span><div class="run-preview-backend"><small>当前后端</small>${backendLabel}<button type="button" class="button ghost small" data-preview-backend-edit>${backendAction}</button></div><div><button type="button" class="button ghost small" data-preview-download title="下载完整静态站点 ZIP 包">下载静态文件</button><button class="button ghost small" data-preview-refresh>刷新</button><button class="button ghost small" data-preview-copy>复制地址</button><button class="button ghost small" data-preview-open>独立窗口</button></div></div><iframe data-preview-frame data-run-id="${escapeHTML(run.id)}" title="前端预览" src="${escapeHTML(frameUrl)}" sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-same-origin" referrerpolicy="no-referrer"></iframe></section>`;
 }
 function stopPreviewPoll(){
   if(state.previewPoll){clearTimeout(state.previewPoll);state.previewPoll=null}
@@ -766,10 +832,36 @@ function renderPreviewPane(run){
 }
 function bindPreviewPane(run,pane){
   if(!pane)return;
+  pane.querySelector('[data-preview-download]')?.addEventListener('click',event=>downloadRunPreview(run.id,event.currentTarget));
   pane.querySelector('[data-preview-refresh]')?.addEventListener('click',()=>{stopPreviewPoll();state.runPreview=null;loadRunPreview(run.id)});
   pane.querySelector('[data-preview-copy]')?.addEventListener('click',()=>{const url=state.runPreview?.session?.url;if(url)copyText(url,'预览地址已复制')});
   pane.querySelector('[data-preview-open]')?.addEventListener('click',()=>{const url=state.runPreview?.session?.url;if(url)window.open(url,'_blank','noopener')});
   pane.querySelector('[data-preview-backend-edit]')?.addEventListener('click',()=>editPreviewBackend(run));
+}
+async function downloadRunPreview(runId,button){
+  if(button?.disabled)return;
+  const label=button?.textContent;
+  if(button){button.disabled=true;button.textContent='正在打包…'}
+  try{
+    const res=await fetch(`/api/runs/${encodeURIComponent(runId)}/preview/download`);
+    if(!res.ok){
+      const body=await res.json().catch(()=>({}));
+      throw new Error(body.error||`HTTP ${res.status}`);
+    }
+    if(!res.headers.get('Content-Type')?.startsWith('application/zip'))throw new Error('下载失败，请刷新页面后重试');
+    const blob=await res.blob();
+    const url=URL.createObjectURL(blob);
+    try{
+      const a=document.createElement('a');
+      a.href=url;
+      a.download=`preview-${runId}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast('已开始下载静态文件','ok');
+    }finally{setTimeout(()=>URL.revokeObjectURL(url),60000)}
+  }catch(err){toast(err.message,'err')}
+  finally{if(button){button.disabled=false;button.textContent=label}}
 }
 async function editPreviewBackend(run){
   const current=String(state.runPreview?.session?.backendUrl||state.runPreview?.backendUrl||state.runPreview?.info?.backendUrl||readPreviewBackend(run.id)||'').trim();
@@ -892,6 +984,11 @@ function graphNodeView(r,nodeId){
   }
   return view;
 }
+function runNodeIcon(kind){
+  const types=typeof FLOW_NODE_TYPES==='object'&&FLOW_NODE_TYPES?FLOW_NODE_TYPES:{};
+  const name=types[kind]?.icon||'bot';
+  return typeof flowPalette!=='undefined'?flowPalette.icon(name,16):'';
+}
 function refreshChildRuns(r){
   state.childRuns=state.childRuns||{};
   const ids=[...new Set(Object.values(r?.nodes||{}).map(n=>n?.childRunId).filter(Boolean))];
@@ -963,20 +1060,23 @@ function bindChildSOPActions(host,r,pg){
   watchChildRuns(r);
 }
 
-function runIsGroupMode(r){return r?.workflowSnapshot?.collaborationMode==='group'}
+function runIsGroupMode(r){return r?.kind!=='workspace'&&r?.workflowSnapshot?.collaborationMode==='group'}
 function runFrozenSopNodes(r,wf){
   const frozen=wf?.sopCheckpoint?.workflow||wf;
   return (frozen.nodes||[]).filter(n=>!n.requestId);
 }
 function runProgressCellHTML(r,wf,progress,graphNodes){
+  if(wf.groupCompletion){
+    return `<div class="run-progress-cell"><span>交付状态</span><b>用户已验收 · 交付闭环</b><small class="run-progress-pct">${progress.done} / ${progress.total} 节点已结束 · 执行进度不代表测试通过</small></div>`;
+  }
   if(!runIsGroupMode(r)){
     return `<div class="run-progress-cell"><span>执行进度</span><b>${progress.done} / ${progress.total} 节点已结束</b><div class="run-progress large"><i style="width:${progress.pct}%"></i></div><small class="run-progress-pct">${progress.pct}% 已完成</small></div>`;
   }
   const live=(wf.nodes||[]).filter(n=>n.requestId).length;
-  return `<div class="run-progress-cell"><span>协作模式</span><b>自由协作中</b><small class="run-progress-pct">SOP 主干已冷冻 · ${graphNodes.length} 步可展开 · 群内任务 ${live} 个</small></div>`;
+  return `<div class="run-progress-cell"><span>协作模式</span><b>历史协作记录</b><small class="run-progress-pct">SOP 主干已冷冻 · ${graphNodes.length} 步可展开 · 群内任务 ${live} 个</small></div>`;
 }
-function runModeChipHTML(r,wf){
-  if(runIsGroupMode(r))return `<span class="run-meta-chip">自由协作</span><span class="run-meta-chip">冷冻 SOP v${wf.sopCheckpoint?.workflow?.version||wf.version||1}</span>`;
+function runModeChipHTML(r,wf){if(r?.kind==='workspace')return '<span class="run-meta-chip">对话工作区</span>';
+  if(runIsGroupMode(r))return `<span class="run-meta-chip">历史协作记录</span><span class="run-meta-chip">冷冻 SOP v${wf.sopCheckpoint?.workflow?.version||wf.version||1}</span>`;
   return `<span class="run-meta-chip">SOP v${wf.version||1}</span>`;
 }
 
@@ -1003,10 +1103,15 @@ function renderRunDetail(r){
   const runTabs=['overview:概览','trace:实时轨迹','logs:Worker日志','workspace:工作区'];
   if(previewEnabled)runTabs.push('preview:前端预览');
   runTabs.push('eval:智能评测');
-  host.innerHTML=`<div class="run-detail-main"><header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 SOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2>${escapeHTML(ctx.issue?.title||wf.name)}</h2><p>${escapeHTML(r.input||'无运行输入')}</p></div><div class="run-status-wrap"><span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 SOP 快照</b><span>自由协作中不按主干推进 · ${graphNodes.length} 个节点可展开审计 / 切回</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待审批</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${meta.icon}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status ${nr.status||'pending'}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre>${escapeHTML(displayNodeOutput(nr.output))}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span><span>${nr.startedAt?`${new Date(nr.startedAt).toLocaleTimeString()} → ${nr.finishedAt?new Date(nr.finishedAt).toLocaleTimeString():'现在'}`:'尚未调度'}</span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div></div>`;  host.querySelector('.run-detail-main')?.insertAdjacentHTML('beforeend',`<div class="run-pane" data-run-pane="workspace" ${runDetailTab==='workspace'?'':'hidden'}>${workspacePaneHTML(r)}</div>${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
+  host.innerHTML=`<div class="run-detail-main"><header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 SOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2>${escapeHTML(ctx.issue?.title||wf.name)}</h2><p>${escapeHTML(r.input||'无运行输入')}</p></div><div class="run-status-wrap"><span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 SOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待审批</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status ${nr.status||'pending'}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre>${escapeHTML(displayNodeOutput(nr.output))}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span><span>${nr.startedAt?`${new Date(nr.startedAt).toLocaleTimeString()} → ${nr.finishedAt?new Date(nr.finishedAt).toLocaleTimeString():'现在'}`:'尚未调度'}</span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div></div>`;  host.querySelector('.run-detail-main')?.insertAdjacentHTML('beforeend',`<div class="run-pane" data-run-pane="workspace" ${runDetailTab==='workspace'?'':'hidden'}>${workspacePaneHTML(r)}</div>${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
   if(keepFrame){const fresh=host.querySelector('iframe[data-vscode-frame]');if(fresh)fresh.replaceWith(existingFrame);}
   if(keepPreview){const fresh=host.querySelector('iframe[data-preview-frame]');if(fresh)fresh.replaceWith(existingPreviewFrame);}
   const headerActions=host.querySelector('.run-header-actions');if(r.status==='running'&&headerActions)headerActions.querySelector('[data-cancel-run]')?.insertAdjacentHTML('beforebegin','<button class="button ghost small" data-pause-run>暂停运行</button>');
+  const nonSOP=r.kind==='workspace'||runIsGroupMode(r);
+  if(nonSOP){
+    host.querySelectorAll('[data-open-flow],[data-pause-run],[data-resume-run],[data-refresh-run-sop],[data-rerun-from-here],[data-pass-node],[data-approve],[data-reject],[data-retry-node],[data-decline-retry]').forEach(el=>el.remove());
+    if(runIsGroupMode(r))host.querySelector('[data-cancel-run]')?.remove();
+  }
   const waitId=waitingNodeId(r);
   const failId=failedNodeId(r);
   const focusNode=waitId?nodes.find(n=>n.id===waitId):(r.status==='failed'&&failId?nodes.find(n=>n.id===failId):selected);
@@ -1014,11 +1119,11 @@ function renderRunDetail(r){
   if(r.status==='queued'){
     host.querySelector('[data-cancel-run]')?.replaceChildren(document.createTextNode('取消排队'));
     host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend','<div class="approval-callout queued-run-callout"><b>排队中，获得项目名额后自动启动</b><p>每个项目最多同时占用 10 条顶层 SOP，子 SOP 共享父级名额；未获准入和成功运行不占名额；一旦获准入即占用，失败、待确认、暂停及获准入后取消仍占用名额。可取消排队后删除记录。</p></div>');
-  }else if(r.pauseRequested){
+  }else if(!nonSOP&&r.pauseRequested){
     const header=host.querySelector('.run-detail-header');header?.insertAdjacentHTML('afterend',pausedRunPanelHTML(r));
     host.querySelector('.node-inspector .approval-callout')?.remove();
     const status=host.querySelector('.run-header-main .status');if(status){status.textContent='已暂停';status.className='status paused'}
-  }else if(focusNode&&focusNr&&(focusNr.status==='waiting_approval'||(r.status==='failed'&&focusNr.status==='failed'&&focusNode.type!=='sop'))){
+  }else if(!nonSOP&&focusNode&&focusNr&&(focusNr.status==='waiting_approval'||(r.status==='failed'&&focusNr.status==='failed'&&focusNode.type!=='sop'))){
     const header=host.querySelector('.run-detail-header');
     const callout=focusNr.status==='waiting_approval'?approvalCalloutHTML(focusNode,focusNr,nodes):failedNodeRecoveryCalloutHTML(r.id,focusNode,focusNr);
     header?.insertAdjacentHTML('afterend',callout);
@@ -1028,12 +1133,13 @@ function renderRunDetail(r){
   if(pg.child){const note=`<p class="child-sop-trace-note">这是 SOP 节点，下面显示的是子 SOP 运行 <code>${escapeHTML(pg.runId.slice(-12))}</code> 全部节点的内容。</p>`;host.querySelectorAll('.trace-section>.section-heading,.worker-log-section>.section-heading').forEach(h=>h.insertAdjacentHTML('afterend',note))}
   const runMeta=host.querySelector('.run-header-meta');if(runMeta)runMeta.insertAdjacentHTML('beforeend',`${taskTriggerBadge(ctx.task)}<span class="run-meta-chip">Sandbox <code>${escapeHTML(r.sandboxId||'—')}</code></span>`);
   const nodeSandbox=host.querySelector('.runtime-details span:first-child');if(nodeSandbox)nodeSandbox.remove();
-  const graph=host.querySelector('.run-graph');if(graph){graph.querySelectorAll('.graph-arrow').forEach(arrow=>arrow.remove());for(const node of workflowStages(runIsGroupMode(r)?{...wf,nodes:graphNodes}:wf).flat()){const button=graph.querySelector(`[data-run-node="${CSS.escape(node.id)}"]`),parents=(wf.edges||[]).filter(edge=>edge.target===node.id).map(edge=>nodes.find(item=>item.id===edge.source)?.name).filter(Boolean);if(!button)continue;if(parents.length)button.querySelector('small').append(` · 上游 ${parents.join('、')}`);graph.append(button)}}
+  const graph=host.querySelector('.run-graph');if(graph){graph.querySelectorAll('.graph-arrow').forEach(arrow=>arrow.remove());const stages=workflowStages(runIsGroupMode(r)?{...wf,nodes:graphNodes}:wf);graph.classList.add('is-staged');stages.forEach((stage,index)=>{const column=document.createElement('div');column.className='graph-stage'+(stage.length>1?' is-parallel':'');const caption=document.createElement('span');caption.className='graph-stage-label';caption.textContent=`阶段 ${index+1}${stage.length>1?` · 并行 ${stage.length}`:''}`;column.append(caption);for(const node of stage){const button=graph.querySelector(`[data-run-node="${CSS.escape(node.id)}"]`),parents=(wf.edges||[]).filter(edge=>edge.target===node.id).map(edge=>nodes.find(item=>item.id===edge.source)?.name).filter(Boolean);if(!button)continue;if(parents.length)button.querySelector('small').append(` · 上游 ${parents.join('、')}`);column.append(button)}if(column.children.length>1)graph.append(column)})}
   host.querySelector('[data-run-back]')?.addEventListener('click',()=>showRunList());
   host.querySelectorAll('[data-run-tab]').forEach(b=>b.onclick=()=>{const key=b.dataset.runTab;if((state.runDetailTab||'overview')===key)return;state.runDetailTab=key;host.querySelectorAll('[data-run-tab]').forEach(x=>x.classList.toggle('active',x.dataset.runTab===key));host.querySelectorAll('[data-run-pane]').forEach(p=>p.hidden=p.dataset.runPane!==key);if(key==='workspace')loadRunWorkspace(r.id);if(key==='preview')loadRunPreview(r.id);else stopPreviewPoll();if(key==='eval')loadRunEval(r.id)});
   host.querySelectorAll('[data-run-node]').forEach(b=>b.onclick=()=>selectRunNode(b.dataset.runNode));host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
   host.querySelector('[data-pause-run]')?.addEventListener('click',()=>pauseRun(r.id));bindPausedResumeActions(host);host.querySelectorAll('[data-refresh-run-sop]').forEach(b=>b.onclick=()=>refreshRunSOP(b.dataset.refreshRunSop));
   host.dataset.runId=r.id;host.dataset.nodeId=state.selectedRunNode||'';host.dataset.controlSignature=runControlSignature(r);
+  paintRunActivationProgress(r.id);
   bindWorkspacePane(r,host.querySelector('[data-run-pane="workspace"]'));
   if(runDetailTab==='workspace')loadRunWorkspace(r.id);
   if(previewEnabled){
@@ -1123,7 +1229,7 @@ function runEvalPaneHTML(run){
   }
 
   if(rec?.status==='failed'){
-    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查个人设置中的 CodeBuddy API Key 配置或网络状态后重新评测。</p></div></section>`;
+    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查个人配置中的 CodeBuddy API Key 配置或网络状态后重新评测。</p></div></section>`;
   }
 
   if(!rec||!rec.status){
@@ -1193,7 +1299,7 @@ async function loadRunEval(runId,background){
 }
 async function startRunEval(run){
   if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
-  if(!runEvalHasKey()){toast('请先在个人设置中配置自己的 CodeBuddy API Key','err');switchView('settings');return}
+  if(!runEvalHasKey()){toast('请先在个人配置中配置自己的 CodeBuddy API Key','err');switchView('settings');return}
   state.runEvalBusy=true;state.runEvalThoughts=['正在提交评测…'];
   const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
   if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}
@@ -1319,7 +1425,8 @@ async function previewArtifact(run,artifactId){
 async function runAction(id,action,body){
   if(action!=='cancel'&&queuedRunActionBlocked(id))return;
   try{
-    await api(`/api/runs/${encodeURIComponent(id)}/${action}`,{method:'POST',body:JSON.stringify(body)});
+    if(action==='retry'||action==='resume')await requestRunActivation(id,action,body);
+    else await api(`/api/runs/${encodeURIComponent(id)}/${action}`,{method:'POST',body:JSON.stringify(body)});
     const run=await syncRunControlState(id);
     await refreshRuns(true);
     toast(action==='cancel'&&run.status==='cancelled'?(run.admissionState==='unstarted'?'已取消排队':'运行已取消'):runControlToast(run,action==='approve'?'已批准，流程继续':action==='reject'?'已打回，开始返工':action==='retry'?'已从中断处继续':'已选择不重试'));

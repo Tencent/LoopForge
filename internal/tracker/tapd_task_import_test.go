@@ -67,13 +67,16 @@ func TestImportAndResyncTAPDTask(t *testing.T) {
 	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
 	store := &memIssueStore{
 		projects: map[string]domain.Project{"dp": {ID: "dp"}},
-		users:    []domain.User{{ID: 7, LoginName: "alice"}},
+		users: []domain.User{
+			{ID: 7, LoginName: "example-maintainer"},
+			{ID: 8, LoginName: "someone_else"},
+		},
 	}
 	issue, err := svc.ImportTAPDStory(store, "dp", "复制的标题\n"+testTAPDTaskURL, 99)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issue.Kind != "requirement" || issue.Title != "TAPD 任务标题" || issue.Description != "任务正文" || issue.Status != "todo" || issue.Priority != "high" || issue.AssigneeUserID != 7 {
+	if issue.Kind != "requirement" || issue.Title != "TAPD 任务标题" || issue.Description != "任务正文" || issue.Status != "todo" || issue.Priority != "high" || issue.AssigneeUserID != 8 {
 		t.Fatalf("unexpected imported task: %+v", issue)
 	}
 	if issue.ExternalRef == nil || issue.ExternalRef.ExternalType != "task" || issue.ExternalRef.ExternalURL != testTAPDTaskURL || !issue.ExternalRef.Imported {

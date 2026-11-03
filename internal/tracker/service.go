@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/url"
 	"sort"
 	"strconv"
@@ -693,7 +694,6 @@ type tapdStory struct {
 	PriorityLabel string `json:"priority_label"`
 	StoryID       string `json:"story_id"`
 	Owner         string `json:"owner"`
-	Creator       string `json:"creator"`
 	IterationID   string `json:"iteration_id"`
 	Created       string `json:"created"`
 	Modified      string `json:"modified"`
@@ -709,11 +709,11 @@ type tapdStory struct {
 // empty issue bodies. Note: TAPD prunes strictly to the requested list, so
 // "name"/"title" must be included or collectTAPDStories cannot match records.
 const (
-	// creator is required: a story's platform assignee is the TAPD creator,
-	// not the handler in owner. TAPD omits any field that is not requested.
-	tapdStoryFields = "id,name,description,status,owner,creator,priority,iteration_id,created,modified"
+	// owner is required: stories and tasks use the TAPD handler as the platform
+	// assignee. TAPD omits any field that is not requested.
+	tapdStoryFields = "id,name,description,status,owner,priority,iteration_id,created,modified"
 	tapdBugFields   = "id,title,description,status,current_owner,severity,priority,iteration_id,created,modified"
-	tapdTaskFields  = "id,name,description,status,owner,creator,priority_label,story_id,iteration_id,created,modified"
+	tapdTaskFields  = "id,name,description,status,owner,priority_label,story_id,iteration_id,created,modified"
 )
 
 // tapdPool identifies one TAPD requirement pool (workspace + iteration) and the
@@ -951,7 +951,7 @@ func (s *Service) pullTAPDBugs(client *MCPClient, store IssueStoreAdapter, pool 
 // ImportTAPDStory fetches one TAPD story, bug or task by pasted web URL and upserts it into
 // the given AgentFlow project. The story does not need to belong to the
 // project's configured iteration pool. fallbackUserID is used as the issue
-// responsible user when the TAPD creator cannot be matched to a platform user.
+// responsible user when the TAPD handler cannot be matched to a platform user.
 func (s *Service) ImportTAPDStory(store IssueStoreAdapter, projectID, rawURL string, fallbackUserID int64) (domain.Issue, error) {
 	started := time.Now().UTC()
 	projectID = strings.TrimSpace(projectID)
@@ -1139,9 +1139,8 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 	if kind == "task" {
 		issueKind = "requirement"
 	}
-	// Stories: the person who created the TAPD ticket is the platform assignee.
-	// Bugs have no equivalent creator field here; their handler is current_owner.
-	assignee := st.Creator
+	// TAPD handlers are stored in owner for stories/tasks and current_owner for bugs.
+	assignee := st.Owner
 	if kind == "bug" {
 		assignee = st.CurrentOwner
 	}
@@ -1916,6 +1915,7 @@ func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
 	if existing.BaseBranch != "" {
 		dst.BaseBranch = existing.BaseBranch
 	}
+	dst.RepositoryBranches = maps.Clone(existing.RepositoryBranches)
 }
 
 func pruneDuplicateExternalIssues(store IssueStoreAdapter) {

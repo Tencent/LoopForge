@@ -3,8 +3,18 @@ package gitwork
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestRecordBaselineReportsGitDiagnostic(t *testing.T) {
+	workspace := t.TempDir()
+	workBranchGit(t, workspace, "init", "-q", "-b", "master")
+	err := RecordBaseline(workspace, "master")
+	if err == nil || !strings.Contains(err.Error(), "fatal:") {
+		t.Fatalf("missing Git diagnostic: %v", err)
+	}
+}
 
 func TestRecordBaselineRejectsSymlinks(t *testing.T) {
 	for _, rel := range []string{".git", ".git/agentflow-baseline"} {

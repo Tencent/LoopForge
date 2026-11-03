@@ -256,6 +256,19 @@ func parseGongfengTime(raw string) time.Time {
 	return time.Time{}
 }
 
+// Gongfeng returns resolved_at for merged MRs; some versions use merged_at.
+// updated_at can change after a merge, so it cannot place a merge in a bucket.
+func gongfengMRMergedAt(mr gongfengListedMR) time.Time {
+	if normalizeMRState(mr.State) == "merged" {
+		for _, raw := range []string{mr.MergedAt, mr.ResolvedAt} {
+			if at := parseGongfengTime(raw); !at.IsZero() {
+				return at
+			}
+		}
+	}
+	return time.Time{}
+}
+
 func parseGongfengOpenMR(raw, wantTarget string) (globalID, iid int, ok bool) {
 	first := func(items []gongfengListedMR) (int, int, bool) {
 		want := strings.TrimSpace(wantTarget)

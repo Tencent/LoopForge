@@ -108,7 +108,7 @@ func TestPreparationFailureRemainsVisibleAndFilesRemainReadable(t *testing.T) {
 	if _, err = os.ReadFile(filepath.Join(sb.Workspace(), "source.txt")); err != nil {
 		t.Fatal(err)
 	}
-	stored := ReadWorkspacePreparationStatus(sb.Workspace())
+	stored := ReadWorkspacePreparationStatus(sb.Workspace(), sb.ID())
 	if stored.Status != "failed" {
 		t.Fatal(stored)
 	}
@@ -258,5 +258,109 @@ func TestPreparationMissingSameEnvironmentReceiptBlocksWithoutReplaying(t *testi
 	}
 	if _, err := os.Stat(filepath.Join(sb.Workspace(), "source.txt")); !os.IsNotExist(err) {
 		t.Fatal("missing proof caused duplicate script execution")
+	}
+}
+
+func TestPreparationSharedWorkspaceScopesStayIndependent(t *testing.T) {
+	root := t.TempDir()
+	// Same local driver and overlay deliberately give the two handles the same
+	// environment epoch. Their run-owned receipts must still remain separate.
+	parent := &localSandbox{id: "parent", workspace: root}
+	child := &localSandbox{id: "child", workspace: root}
+	parentWorkflow := domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "setup", Name: "Parent setup", Type: "script", RunOnWorkspaceRebuild: true, Script: "printf x >> parent-count; printf parent-ready"}}}
+	childWorkflow := domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "setup", Name: "Child setup", Type: "script", RunOnWorkspaceRebuild: true, Script: "printf x >> child-count; printf child-ready"}}}
+	ctx := context.Background()
+	if _, err := EnsureWorkspacePreparation(ctx, parent, parentWorkflow, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if state := ReadWorkspacePreparationStatus(root, child.ID()); state.Status != "unprepared" || len(state.Steps) != 0 {
+		t.Fatalf("child inherited parent receipt: %+v", state)
+	}
+	if _, err := EnsureWorkspacePreparation(ctx, child, childWorkflow, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureWorkspacePreparation(ctx, parent, parentWorkflow, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureWorkspacePreparation(ctx, child, childWorkflow, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"parent", "child"} {
+		if body, err := os.ReadFile(filepath.Join(root, name+"-count")); err != nil || string(body) != "x" {
+			t.Fatalf("warm %s setup repeated: %q %v", name, body, err)
+		}
+		state := ReadWorkspacePreparationStatus(root, name)
+		if state.Status != "ready" || len(state.Steps) != 1 || !strings.Contains(state.Steps[0].Output, name+"-ready") {
+			t.Fatalf("wrong %s namespace: %+v", name, state)
+		}
+	}
+}
+
+func TestPreparationRecordDoesNotOverwriteOrGrantSiblingScope(t *testing.T) {
+	root := t.TempDir()
+	parent := &localSandbox{id: "parent", workspace: root}
+	child := &localSandbox{id: "child", workspace: root}
+	wf := domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "setup", Name: "Shared setup definition", Type: "script", RunOnWorkspaceRebuild: true, Script: "printf x >> count"}}}
+	ctx := context.Background()
+	if _, err := parent.Exec(ctx, CommandSpec{Argv: []string{"sh", "-c", wf.Nodes[0].Script}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecordWorkspacePreparation(ctx, parent, wf, nil, "setup", "parent normal execution"); err != nil {
+		t.Fatal(err)
+	}
+	if state := ReadWorkspacePreparationStatus(root, child.ID()); state.Status != "unprepared" {
+		t.Fatal("parent stamp granted child readiness", state)
+	}
+	if _, err := EnsureWorkspacePreparation(ctx, child, wf, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecordWorkspacePreparation(ctx, child, wf, nil, "setup", "child normal execution"); err != nil {
+		t.Fatal(err)
+	}
+	if state := ReadWorkspacePreparationStatus(root, parent.ID()); len(state.Steps) != 1 || state.Steps[0].Output != "parent normal execution" {
+		t.Fatal("child record overwrote parent", state)
+	}
+	if state := ReadWorkspacePreparationStatus(root, child.ID()); len(state.Steps) != 1 || state.Steps[0].Output != "child normal execution" {
+		t.Fatal("child record missing", state)
+	}
+	if _, err := EnsureWorkspacePreparation(ctx, parent, wf, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(root, "count")); err != nil || string(body) != "xx" {
+		t.Fatalf("sandbox receipts shared or warm parent repeated: %q %v", body, err)
+	}
+}
+
+func TestPreparationScopedReadNeverFallsBackToLegacyOrUnsafeScopePath(t *testing.T) {
+	root := t.TempDir()
+	legacy := WorkspacePreparationStatus{Status: "ready", Steps: []WorkspacePreparationStep{{NodeID: "owner"}}}
+	if err := saveWorkspacePreparationStatus(root, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if state := ReadWorkspacePreparationStatus(root); state.Status != "ready" {
+		t.Fatal("legacy reader lost compatibility", state)
+	}
+	scope := "../../sibling/unsafe:child"
+	if state := ReadWorkspacePreparationStatus(root, scope); state.Status != "unprepared" {
+		t.Fatal("child accepted old owner receipt", state)
+	}
+	scoped := WorkspacePreparationStatus{Status: "failed", Error: "scoped only"}
+	if err := saveWorkspacePreparationStatus(root, scoped, scope); err != nil {
+		t.Fatal(err)
+	}
+	if state := ReadWorkspacePreparationStatus(root, scope); state.Status != "failed" || state.Error != "scoped only" {
+		t.Fatal(state)
+	}
+	if state := ReadWorkspacePreparationStatus(root); state.Status != "ready" {
+		t.Fatal("scoped write changed legacy owner receipt", state)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".agentflow", "workspace-preparation"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && len(entry.Name()) != 64 {
+			t.Fatalf("scope not safely hashed: %q", entry.Name())
+		}
 	}
 }

@@ -40,7 +40,6 @@ test('separate account cannot access private conversations, edit workspaces or i
   await second('POST',`/api/runs/${run.id}/workspace/takeover`,{},403);
   await second('PUT',`/api/runs/${run.id}/workspace/file`,{path:'note.txt',content:'wrong actor'},403);
   await second('GET',`/api/runs/${run.id}/conversation`,undefined,403);
-  await second('POST',`/api/runs/${run.id}/group/mode`,{},403);
   assert.equal((await get(`/api/runs/${run.id}/workspace/file?path=note.txt`)).content,'isolated\n');
   const snapshot=await get(`/api/projects/${cfg.projectId}`);
   const original={...snapshot,members:snapshot.members||[]};
@@ -49,10 +48,6 @@ test('separate account cannot access private conversations, edit workspaces or i
   try {
     // Read-only membership must not become agent execution permission.
     await second('GET',`/api/runs/${run.id}/conversation`,undefined,200);
-    await second('POST','/api/task-groups',{projectId:cfg.projectId,workflowId:wf},403);
-    for(const path of ['mode','members','tasks','sop','sop/handoff/retry']){
-      await second('POST',`/api/runs/${run.id}/group/${path}`,{},403);
-    }
     await second('PUT',`/api/runs/${run.id}/workspace/file`,{path:'note.txt',content:'viewer write'},403);
     assert.equal((await get(`/api/runs/${run.id}/workspace/file?path=note.txt`)).content,'isolated\n');
   } finally {await put('/api/projects',original)}

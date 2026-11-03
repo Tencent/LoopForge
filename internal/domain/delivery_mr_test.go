@@ -127,3 +127,16 @@ func TestResolveRunDeliveryMRsWithoutGongfengRepository(t *testing.T) {
 		t.Fatalf("want telemetry fallback, got %+v", got)
 	}
 }
+
+func TestResolveRunDeliveryMRsLegacyMultiRepository(t *testing.T) {
+	run := Run{Artifacts: []Artifact{
+		{Name: "mr-body", Content: GongfengMRURL("team/frontend", 1)},
+		{Name: "mr-body", Content: GongfengMRURL("team/backend", 1)},
+		{Name: "closeout", Content: GongfengMRURL("team/frontend", 2)},
+		{Name: "repository-patch", Content: GongfengMRURL("unrelated/repo", 99)},
+	}}
+	got := ResolveRunDeliveryMRs(run, nil)
+	if len(got) != 2 || got[0].IID != 1 || got[1].IID != 1 || got[0].Project == got[1].Project {
+		t.Fatalf("legacy runs must retain the best MR for each repository: %+v", got)
+	}
+}

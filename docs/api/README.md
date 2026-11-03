@@ -136,6 +136,7 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `POST` | `/api/runs/{runId}/pass` |
 | `POST` | `/api/runs/{runId}/reject` |
 | `POST` | `/api/runs/{runId}/retry` |
+| `GET`, `POST` | `/api/runs/{runId}/workspace/restore` |
 | `POST` | `/api/runs/{runId}/decline-retry` |
 | `POST` | `/api/runs/{runId}/cancel` |
 | `GET`, `POST`, `PUT` | `/api/schedule-jobs` |

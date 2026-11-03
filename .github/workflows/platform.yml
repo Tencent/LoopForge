@@ -17,7 +17,12 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
+      - name: Build and test the chatbot frontend embedded by the platform binary
+        run: bash scripts/build-chatbot.sh
       - run: go test -p=2 ./... -count=1 -timeout=180s
+      - name: Browser-free UI tests for the platform console
+        run: npm ci --no-audit --no-fund && npm test
+        working-directory: webtest
       - name: Install pinned CLIs for local protocol acceptance
         run: npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
       - name: Check real CLI credentials, MCP, stream parsing and native-tool restrictions

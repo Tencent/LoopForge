@@ -258,3 +258,67 @@ func TestScheduledTaskKeepsPlaintextAndDoesNotParseJSON(t *testing.T) {
 		t.Fatalf("native scheduled must not apply JSON drafts: %+v", got)
 	}
 }
+
+func TestAssistantPlatformReadsSessionByLink(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	user, ok := st.UserByLoginName("demo-owner")
+	if !ok {
+		t.Fatal("seed user")
+	}
+	if err := st.PutProject(domain.Project{ID: "other", Name: "Other"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutAssistantSession(user.ID, domain.AssistantSession{
+		ID:        "chat-link",
+		UserID:    user.ID,
+		Title:     "跨项目对话",
+		ProjectID: "other",
+		Messages:  []domain.AssistantMessage{{Role: "user", Content: "帮我看看构建失败的原因"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
+	got, err := h.callAssistantPlatform(context.Background(), user, "platform", assistantMCPCall{Server: "agentflow", Tool: "assistant_sessions_get", Arguments: map[string]any{"path": map[string]any{"id": "chat-link"}}})
+	if err != nil || !strings.Contains(got, "帮我看看构建失败的原因") {
+		t.Fatalf("assistant_sessions_get: %s %v", got, err)
+	}
+	listed, err := h.callAssistantPlatform(context.Background(), user, "platform", assistantMCPCall{Server: "agentflow", Tool: "assistant_sessions_list"})
+	if err != nil || !strings.Contains(listed, "跨项目对话") {
+		t.Fatalf("assistant_sessions_list: %s %v", listed, err)
+	}
+
+	// The tools read as the conversation's user, so a personal conversation
+	// (no project) of someone else stays unreadable even with its exact ID.
+	if err := st.PutAssistantSession(user.ID, domain.AssistantSession{
+		ID:       "chat-private",
+		UserID:   user.ID,
+		Title:    "私人对话",
+		Messages: []domain.AssistantMessage{{Role: "user", Content: "只给自己看的内容"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutUser(domain.User{LoginName: "session-stranger"}); err != nil {
+		t.Fatal(err)
+	}
+	stranger, ok := st.UserByLoginName("session-stranger")
+	if !ok {
+		t.Fatal("stranger user")
+	}
+	leaked, err := h.callAssistantPlatform(context.Background(), stranger, "platform", assistantMCPCall{Server: "agentflow", Tool: "assistant_sessions_get", Arguments: map[string]any{"path": map[string]any{"id": "chat-private"}}})
+	if err == nil || strings.Contains(leaked, "只给自己看的内容") {
+		t.Fatalf("stranger must not read another user's personal conversation: %s %v", leaked, err)
+	}
+	strangerList, err := h.callAssistantPlatform(context.Background(), stranger, "platform", assistantMCPCall{Server: "agentflow", Tool: "assistant_sessions_list"})
+	if err != nil || strings.Contains(strangerList, "私人对话") {
+		t.Fatalf("stranger list must not include another user's personal conversation: %s %v", strangerList, err)
+	}
+	own, err := h.callAssistantPlatform(context.Background(), user, "platform", assistantMCPCall{Server: "agentflow", Tool: "assistant_sessions_get", Arguments: map[string]any{"path": map[string]any{"id": "chat-private"}}})
+	if err != nil || !strings.Contains(own, "只给自己看的内容") {
+		t.Fatalf("owner reads own personal conversation: %s %v", own, err)
+	}
+}

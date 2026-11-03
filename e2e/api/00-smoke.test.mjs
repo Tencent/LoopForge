@@ -45,7 +45,9 @@ const readOnly = [
   ['/api/users', d => assert.ok(list(d).length > 0)],
   ['/api/platform/admins', d => assert.ok(list(d).length > 0)],
   ['/api/projects', d => assert.ok(list(d).length > 0)],
-  ['/api/workflows', d => assert.ok(list(d).length > 0)],
+  // A fresh deployment (local.sh) has no templates yet; 10-catalog proves
+  // they can be created and listed.
+  ['/api/workflows', d => assert.ok(Array.isArray(list(d)))],
   ['/api/agents', d => assert.ok(Array.isArray(list(d)))],
   ['/api/rules', d => assert.ok(Array.isArray(list(d)))],
   ['/api/skills', d => assert.ok(Array.isArray(list(d)))],
@@ -79,6 +81,12 @@ for (const [path, check] of readOnly) {
     check(await get(path));
   });
 }
+
+test('GET /api/knowledge/sources answers 503 with a reason when the knowledge base is not connected', async () => {
+  const res = await api('GET', '/api/knowledge/sources', undefined, { expect: [200, 503], raw: true });
+  if (res.status === 503) assert.match(res.data.error, /知识库/);
+  else assert.ok(res.data);
+});
 
 test('GET /api/deployment-metrics for a real repository', async () => {
   await api('GET', '/api/deployment-metrics', undefined, { expect: 400 });

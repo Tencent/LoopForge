@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"agentflow/internal/gitwork"
@@ -80,11 +81,33 @@ func applyWorkspaceGitIdentity(ctx context.Context, workspace string) error {
 
 func resolveGitToken(s *repo.Store, userID int64) string {
 	if s != nil && userID > 0 {
-		if user, ok := s.User(userID); ok {
-			return strings.TrimSpace(user.GitToken)
-		}
+		return s.GitCredential(context.Background(), userID)
 	}
 	return ""
+}
+
+var (
+	gitCommandFailure = regexp.MustCompile(`(?i)repository checkout|git (clone|fetch|pull|push|ls-remote)`)
+	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password`)
+)
+
+const gitTokenFixHint = "请责任人到「个人配置 → GitHub Git Token」配置：打开 https://github.com/settings/tokens 新建令牌，为目标仓库授予 Contents 和 Pull requests 的读写权限，复制后粘贴并点校验，然后重试本节点"
+
+// explainGitAuthFailure says what to fix when git rejects the clone or push.
+// SOP runs use the responsible user's Git Token, which git's own
+// "could not read Username" never mentions. The raw error stays appended.
+func explainGitAuthFailure(err error, tokenConfigured bool) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "Git Token") || !gitCommandFailure.MatchString(msg) || !gitAuthFailure.MatchString(msg) {
+		return err
+	}
+	if !tokenConfigured {
+		return fmt.Errorf("运行责任人未配置 Git Token，无法拉取仓库。%s。原始错误：%w", gitTokenFixHint, err)
+	}
+	return fmt.Errorf("运行责任人的 Git Token 无效、已过期或权限不足，无法拉取仓库。%s；并确认责任人对该仓库有权限。原始错误：%w", gitTokenFixHint, err)
 }
 
 const gitAuthIncludeFile = "agentflow.auth"

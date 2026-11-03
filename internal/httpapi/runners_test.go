@@ -262,16 +262,6 @@ func TestRunnerDisconnectKeepsRegistrationAndSession(t *testing.T) {
 	}
 }
 
-func currentTestRunnerID(t *testing.T, h http.Handler, auth map[string]string) string {
-	t.Helper()
-	rec := requestWithHeaders(t, h, http.MethodGet, "/api/runners", nil, auth)
-	var runners []domain.Runner
-	if err := json.Unmarshal(rec.Body.Bytes(), &runners); err != nil || len(runners) != 1 {
-		t.Fatalf("runner list: %s", rec.Body.String())
-	}
-	return runners[0].ID
-}
-
 func TestRunnerRegisterRejectsBadBootstrapToken(t *testing.T) {
 	h := newRunnerTestServer(t)
 	t.Setenv("AGENTFLOW_RUNNER_BOOTSTRAP_TOKEN", "boot-secret")

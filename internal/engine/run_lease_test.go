@@ -64,6 +64,7 @@ func heartbeatHost(t *testing.T, s *repo.Store, instanceID, host string) {
 }
 
 func TestNonOwnerExecuteNodeDoesNotMutateRun(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	a, b := leaseEngine(t, s, "a"), leaseEngine(t, s, "b")
@@ -79,6 +80,7 @@ func TestNonOwnerExecuteNodeDoesNotMutateRun(t *testing.T) {
 }
 
 func TestStaleOwnerCannotFailAfterGenerationTakeover(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	a := leaseEngine(t, s, "a")
@@ -102,6 +104,7 @@ func TestStaleOwnerCannotFailAfterGenerationTakeover(t *testing.T) {
 }
 
 func TestFinishFailedIgnoredWhileNodeActive(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "owner")
@@ -117,6 +120,7 @@ func TestFinishFailedIgnoredWhileNodeActive(t *testing.T) {
 }
 
 func TestExecuteNodeRestoresRunStatusToRunning(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "owner")
@@ -132,6 +136,7 @@ func TestExecuteNodeRestoresRunStatusToRunning(t *testing.T) {
 }
 
 func TestStaleAttemptFailureIsIgnored(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "owner")
@@ -152,6 +157,7 @@ func TestStaleAttemptFailureIsIgnored(t *testing.T) {
 }
 
 func TestControlPlaneEnqueuesWithoutExecute(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "enqueue-only", Name: "enqueue", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -182,6 +188,7 @@ func TestControlPlaneEnqueuesWithoutExecute(t *testing.T) {
 }
 
 func TestControlPlaneCancelRequestsRunningWorker(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "cancel-handoff", Name: "cancel", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -201,7 +208,7 @@ func TestControlPlaneCancelRequestsRunningWorker(t *testing.T) {
 	if claimed := worker.ResumeInterruptedRuns(); len(claimed) != 1 {
 		t.Fatalf("claimed %v", claimed)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := s.RunState(run.ID)
 		if got.OwnerInstanceID == "worker" {
@@ -216,7 +223,7 @@ func TestControlPlaneCancelRequestsRunningWorker(t *testing.T) {
 	if !got.CancelRequested {
 		t.Fatalf("cancel was not handed to the worker: %+v", got)
 	}
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ = s.RunState(run.ID)
 		if got.Status == "cancelled" {
@@ -228,6 +235,7 @@ func TestControlPlaneCancelRequestsRunningWorker(t *testing.T) {
 }
 
 func TestControlPlaneCancelNotifiesWorkerOverHTTP(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "cancel-fast", Name: "cancel", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -252,7 +260,7 @@ func TestControlPlaneCancelNotifiesWorkerOverHTTP(t *testing.T) {
 	if claimed := worker.ResumeInterruptedRuns(); len(claimed) != 1 {
 		t.Fatalf("claimed %v", claimed)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := s.RunState(run.ID)
 		if got.OwnerInstanceID == "worker" && worker.ActiveRunCount() > 0 {
@@ -264,7 +272,7 @@ func TestControlPlaneCancelNotifiesWorkerOverHTTP(t *testing.T) {
 	if err := api.Cancel(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := s.RunState(run.ID)
 		if got.Status == "cancelled" {
@@ -280,6 +288,7 @@ func TestControlPlaneCancelNotifiesWorkerOverHTTP(t *testing.T) {
 }
 
 func TestInterruptRequiresDurableControlFlag(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "interrupt-guard", Name: "guard", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -293,7 +302,7 @@ func TestInterruptRequiresDurableControlFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if worker.ActiveRunCount() > 0 {
 			break
@@ -328,6 +337,7 @@ func interruptServer(t *testing.T, worker *Engine, hits *atomic.Int32) *httptest
 }
 
 func TestControlPlaneCancelRoutesToOwningWorker(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "cancel-owner", Name: "cancel", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -360,7 +370,7 @@ func TestControlPlaneCancelRoutesToOwningWorker(t *testing.T) {
 	if claimed := workerA.ResumeInterruptedRuns(); len(claimed) != 1 {
 		t.Fatalf("worker-a claimed %v", claimed)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := s.RunState(run.ID)
 		if got.OwnerInstanceID == "worker-a" && workerA.ActiveRunCount() > 0 {
@@ -373,7 +383,7 @@ func TestControlPlaneCancelRoutesToOwningWorker(t *testing.T) {
 	if err := api.Cancel(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := s.RunState(run.ID)
 		if got.Status == "cancelled" {
@@ -395,6 +405,7 @@ func TestControlPlaneCancelRoutesToOwningWorker(t *testing.T) {
 }
 
 func TestInterruptRejectsBadControlToken(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	worker := leaseEngine(t, s, "worker")
@@ -440,6 +451,7 @@ func waitRun(t *testing.T, s *repo.Store, runID string, timeout time.Duration, o
 }
 
 func TestAPIResumePausedIsClaimedOnlyByBoundWorker(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "pause-sticky", Name: "pause", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -495,6 +507,7 @@ func TestAPIResumePausedIsClaimedOnlyByBoundWorker(t *testing.T) {
 }
 
 func TestAPIRetryIsClaimedOnlyByBoundWorker(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "retry-sticky", Name: "retry", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -543,6 +556,7 @@ func TestAPIRetryIsClaimedOnlyByBoundWorker(t *testing.T) {
 }
 
 func TestStartInsertsLeasedRunAndBlocksOtherResume(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "lease-start", Name: "lease start", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -578,6 +592,7 @@ func TestStartInsertsLeasedRunAndBlocksOtherResume(t *testing.T) {
 // 回归：run 绑在已下线的 host 上时，worker 仍然要认取消请求。API 进程执行被
 // 关闭，Engine.Cancel 拿不到租约只能静默返回，没人结算 run 就永远是 running。
 func TestResumeSettlesCancelForRetiredWorkspaceBind(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "worker")
@@ -597,6 +612,7 @@ func TestResumeSettlesCancelForRetiredWorkspaceBind(t *testing.T) {
 
 // 没有取消/暂停请求时，绑定 host 仍有存活 worker 的 run 不能被接管执行。
 func TestResumeStillSkipsLiveForeignWorkspaceBindWithoutRequest(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "worker")
@@ -612,6 +628,7 @@ func TestResumeStillSkipsLiveForeignWorkspaceBindWithoutRequest(t *testing.T) {
 }
 
 func TestSameInstanceResumeDoesNotStartSecondExecute(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "lease-same", Name: "lease same", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -642,6 +659,7 @@ func TestSameInstanceResumeDoesNotStartSecondExecute(t *testing.T) {
 }
 
 func TestShouldCommitNodeOutcome(t *testing.T) {
+	t.Parallel()
 	r := domain.Run{Generation: 1}
 	running := &domain.NodeRun{Status: "running", Attempt: 8}
 	if !shouldCommitNodeOutcome(r, running, 1, 1, true) {
@@ -666,6 +684,7 @@ func TestShouldCommitNodeOutcome(t *testing.T) {
 }
 
 func TestNodeFailedDoesNotOverwriteSucceeded(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "owner")
@@ -686,6 +705,7 @@ func TestNodeFailedDoesNotOverwriteSucceeded(t *testing.T) {
 }
 
 func TestFinishInterruptedParksUnlessUserCancel(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "owner")
@@ -731,6 +751,7 @@ func TestFinishInterruptedParksUnlessUserCancel(t *testing.T) {
 }
 
 func TestSandboxInterruptRequeuesNodeWithoutFailing(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "owner")
@@ -756,6 +777,7 @@ func TestSandboxInterruptRequeuesNodeWithoutFailing(t *testing.T) {
 }
 
 func TestRenewRunLeaseStopsOnLost(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	e := leaseEngine(t, s, "owner")
@@ -773,6 +795,7 @@ func TestRenewRunLeaseStopsOnLost(t *testing.T) {
 }
 
 func TestDrainParksRunningRunForResume(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "drain-park", Name: "drain park", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
@@ -788,7 +811,7 @@ func TestDrainParksRunningRunForResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := s.RunState(run.ID)
 		if nr := got.Nodes["wait"]; nr != nil && nr.Status == "running" && nr.Attempt == 1 {
@@ -820,8 +843,15 @@ func TestDrainParksRunningRunForResume(t *testing.T) {
 	if len(claimed) != 1 {
 		t.Fatalf("claimed %v status=%s owner=%s host=%s root=%s bind=%q", claimed, got.Status, got.OwnerInstanceID, got.WorkspaceHost, got.WorkspaceRoot, b.sandboxes.Root())
 	}
-	t.Cleanup(func() { _ = b.Cancel(run.ID) })
-	deadline = time.Now().Add(2 * time.Second)
+	// Wait for the cancelled run to stop writing under root before TempDir
+	// removes it; otherwise cleanup races the runtime ("directory not empty").
+	t.Cleanup(func() {
+		_ = b.Cancel(run.ID)
+		for stop := time.Now().Add(10 * time.Second); b.ActiveRunCount() > 0 && time.Now().Before(stop); {
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ = s.RunState(run.ID)
 		if got.Nodes["wait"].Status == "running" {

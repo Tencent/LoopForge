@@ -29,6 +29,21 @@ func TestDecodeAssistantCLIResult(t *testing.T) {
 	}
 }
 
+func TestIsCredentialRejection(t *testing.T) {
+	for text, want := range map[string]bool{
+		"401 Unauthorized": true,
+		" 403 Forbidden\n": true,
+		"401":              true,
+		"接口返回 401 时前端要跳登录页":                     false,
+		"4010 items processed":                  false,
+		strings.Repeat("401 Unauthorized ", 20): false,
+	} {
+		if got := isCredentialRejection(text); got != want {
+			t.Errorf("isCredentialRejection(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
 func TestAssistantDraftBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, project string
@@ -188,8 +203,8 @@ func TestAssistantCLIHasNoWriteOrDeploymentCapabilities(t *testing.T) {
 	if v, ok := flag("--tools"); ok && v != "" && v != "default" {
 		t.Fatalf("--tools %q hides MCP", v)
 	}
-	if v, _ := flag("--max-turns"); v != nativeAssistantMaxTurns {
-		t.Fatalf("assistant CLI max-turns should allow native MCP turns, got %q", v)
+	if v, _ := flag("--max-turns"); v != nativeAssistantUnlimitedTurns {
+		t.Fatalf("assistant CLI must use the CLI's unlimited turn value, got %q", v)
 	}
 	if v, _ := flag("--setting-sources"); v != "none" {
 		t.Fatal("host/project settings must not be loaded")
@@ -291,6 +306,32 @@ func TestAssistantResumeTurnOmitsHistoryAndSystemPrompt(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "继续刚才的需求") || !strings.Contains(prompt, `"projectId":"p"`) {
 		t.Fatalf("resume -p should keep project and latest user text: %s", prompt)
+	}
+}
+
+func TestAssistantResumeTurnKeepsCurrentAttachments(t *testing.T) {
+	h := &assistantHandlers{}
+	prompt := h.turnPrompt(assistantRequest{
+		ProjectID: "p",
+		Messages: []assistantMessage{
+			{Role: "user", Content: "第一轮问题", Attachments: []domain.AssistantAttachment{{ID: "old-file", Name: "old.txt", MimeType: "text/plain"}}},
+			{Role: "assistant", Content: `{"message":"好"}`},
+			{Role: "user", Content: "这里丑，给几个 demo", Attachments: []domain.AssistantAttachment{{ID: "shot-1", Name: "Clipboard_Screenshot.png", MimeType: "image/png", Size: 12}}},
+		},
+	}, "", true)
+	if strings.Contains(prompt, "第一轮问题") || strings.Contains(prompt, "old-file") {
+		t.Fatalf("resume prompt leaked earlier turns: %s", prompt)
+	}
+	for _, want := range []string{"这里丑，给几个 demo", "shot-1", "Clipboard_Screenshot.png", "image/png", "workbench_attachment_read"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("resume prompt missing %q: %s", want, prompt)
+		}
+	}
+	first := h.turnPrompt(assistantRequest{
+		Messages: []assistantMessage{{Role: "user", Content: "看这张图", Attachments: []domain.AssistantAttachment{{ID: "shot-1", Name: "a.png", MimeType: "image/png"}}}},
+	}, "", false)
+	if !strings.Contains(first, "workbench_attachment_read") || !strings.Contains(first, "shot-1") {
+		t.Fatalf("first turn dropped attachment instruction: %s", first)
 	}
 }
 
@@ -470,9 +511,21 @@ func TestAssistantStreamEventsDedupRepeatedToolUse(t *testing.T) {
 	}
 }
 
-func TestAssistantChatTimeoutIsHalfHour(t *testing.T) {
-	if assistantChatTimeout != 30*time.Minute {
+func TestAssistantChatTimeoutAllowsLongCodeTurns(t *testing.T) {
+	if assistantChatTimeout != 60*time.Minute {
 		t.Fatalf("assistant chat timeout %s", assistantChatTimeout)
+	}
+	t.Setenv("AGENTFLOW_ASSISTANT_CHAT_TIMEOUT", "90m")
+	if got := assistantTurnTimeout(); got != 90*time.Minute {
+		t.Fatalf("configured timeout %s", got)
+	}
+	t.Setenv("AGENTFLOW_ASSISTANT_CHAT_TIMEOUT", "not-a-duration")
+	if got := assistantTurnTimeout(); got != 60*time.Minute {
+		t.Fatalf("invalid timeout should fall back, got %s", got)
+	}
+	t.Setenv("AGENTFLOW_ASSISTANT_CHAT_TIMEOUT", "30s")
+	if got := assistantTurnTimeout(); got != 60*time.Minute {
+		t.Fatalf("out-of-range timeout should fall back, got %s", got)
 	}
 }
 

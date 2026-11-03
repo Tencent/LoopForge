@@ -65,7 +65,8 @@
 .schedule-job-row{display:flex;align-items:center;gap:7px;padding:7px;border:1px solid var(--line);border-radius:7px;background:var(--bg-soft)}
 .schedule-job-main{min-width:0;flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;border:0;background:transparent;color:var(--text);text-align:left;cursor:pointer}
 .schedule-job-main b{font-size:11.5px;display:inline-flex;align-items:center;gap:6px}.schedule-job-main>span,.schedule-job-main small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-2);font-size:10px}
-.schedule-job-form{flex:0 1 auto;min-height:0;display:flex;flex-direction:column;padding:14px 14px 0;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.015);overflow:visible}
+/* The section owns scrolling; the form must retain its full content height. */
+.schedule-job-form{flex:0 0 auto;display:flex;flex-direction:column;padding:14px 14px 0;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.015);overflow:visible}
 .schedule-job-form [hidden]{display:none!important}
 .schedule-job-form .input,.schedule-job-form .select,.schedule-job-form textarea{width:100%;box-sizing:border-box}
 .schedule-job-form input[type=checkbox]{width:auto;flex:0 0 auto;margin:0}

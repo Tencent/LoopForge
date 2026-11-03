@@ -239,6 +239,11 @@ func (h issuesHandlers) reopenIssue(c *gin.Context, issue domain.Issue) {
 
 func (h issuesHandlers) closeIssue(c *gin.Context, issue domain.Issue) {
 	alreadyClosed := issue.ManuallyClosed()
+	// The busy guard reads Task status, which trails a finished Run until the
+	// next sync; without this a just-succeeded requirement answers 409.
+	if h.tasks != nil {
+		h.tasks.settleIssueTasks(issue.ID)
+	}
 	closed, err := h.repo.CloseIssue(issue.ID)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -361,6 +366,7 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 		respond(c, err)
 		return
 	}
+	linkDispatchingConversation(h.deps, c.Request, triggerUserID, issue)
 	detail := "触发 SOP"
 	if request.Rerun {
 		detail = "重新运行 SOP"
@@ -371,6 +377,11 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 
 // deleteIssue checks the complete history before cleaning failed/cancelled runs.
 func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
+	// Same as close: Task status trails a just-cancelled Run until the next
+	// sync, which would answer 409 "正在执行 SOP" for a stopped requirement.
+	if h.tasks != nil {
+		h.tasks.settleIssueTasks(issue.ID)
+	}
 	ids, err := h.repo.IssueDeletionRuns(issue.ID)
 	if err == nil {
 		for _, id := range ids {

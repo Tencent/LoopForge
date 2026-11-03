@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -151,7 +152,7 @@ func sandboxResourcesFromSnapshot(snapshot *domain.RunnerSandboxSpec) runtime.Sa
 
 func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, profile domain.SandboxProfile, requirements runtime.SandboxRequirements, onWorkspaceBusy ...func()) (*runEnvironment, bool, error) {
 	needsRestore := !run.WorkspaceCleanedAt.IsZero()
-	if !needsRestore && e.defaultExecutionRunner(run) == "" {
+	if !needsRestore && !sharesWorkspace(run) && e.defaultExecutionRunner(run) == "" {
 		if _, saved := e.repo.WorkspaceCheckpoint(run.ID); saved {
 			_, err := os.Stat(e.sandboxes.RunWorkspace(run.ID))
 			needsRestore = os.IsNotExist(err)
@@ -192,7 +193,7 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 			return nil, false, err
 		}
 	}
-	sandbox, err := e.sandboxes.AcquireRun(ctx, run.ID, profile, requirements, credentials, resources)
+	sandbox, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(current), profile, requirements, credentials, resources)
 	if err != nil {
 		return nil, false, err
 	}
@@ -252,10 +253,11 @@ func (env *runEnvironment) setCredentials(credentials runtime.RunCredentials) {
 	}
 }
 
-// adoptForeignWorkspace moves the workspace bind of a run whose bound host is
-// gone to this instance. Whatever this host still has under the run ID is a
-// leftover of an earlier stay and is discarded, so the checkout is rebuilt
-// from the remote work branch.
+// adoptForeignWorkspace handles a run whose bound host is gone. A workspace
+// without code changes is simply moved to this instance. One that held code
+// changes lost them with the host: the bind is still moved so a rerun starts
+// from a fresh checkout here, but the current attempt fails instead of
+// silently continuing without the earlier nodes' work.
 func (e *Engine) adoptForeignWorkspace(run domain.Run) error {
 	if !e.foreignWorkspaceBind(run) {
 		return nil
@@ -263,13 +265,36 @@ func (e *Engine) adoptForeignWorkspace(run domain.Run) error {
 	if e.workspaceBlocked(run) {
 		return repo.ErrRunWorkspaceBound
 	}
+	lost := hasCodeWorkspace(run)
+	message := e.workspaceLostMessage(run)
+	if sharesWorkspace(run) {
+		// The checkout belongs to the parent; only its rerun may rebuild it.
+		return errors.New(message)
+	}
+	if err := e.rebindWorkspaceHere(run, lost); err != nil {
+		return err
+	}
+	if lost {
+		return errors.New(message)
+	}
+	return nil
+}
+
+// rebindWorkspaceHere moves a run's workspace bind from a host that is gone
+// to this instance. Whatever this host still has under the run ID is a
+// leftover of an earlier stay and is discarded, so the next node starts from
+// a fresh checkout.
+func (e *Engine) rebindWorkspaceHere(run domain.Run, lost bool) error {
 	if err := e.releaseRunEnvironment(run.ID, true); err != nil {
 		return fmt.Errorf("discard stale local workspace: %w", err)
 	}
 	if err := e.repo.RebindRunWorkspace(run.ID, e.instanceID, run.Generation, e.workspaceHost, e.sandboxes.Root()); err != nil {
 		return err
 	}
-	message := fmt.Sprintf("工作区原绑定 %s:%s 已离线，改由 %s 从远程工作分支重建工作区", run.WorkspaceHost, run.WorkspaceRoot, e.workspaceHost)
+	message := fmt.Sprintf("工作区原绑定 %s:%s 已离线，改由 %s 重新拉取代码", run.WorkspaceHost, run.WorkspaceRoot, e.workspaceHost)
+	if lost {
+		message += "；之前节点的代码改动未推送到远端，已随原机器丢失"
+	}
 	e.updateRun(run.ID, func(r *domain.Run) {
 		r.WorkspaceHost, r.WorkspaceRoot = e.workspaceHost, e.sandboxes.Root()
 		e.event(r, "", "workspace.rebound", message)
@@ -333,7 +358,7 @@ func (e *Engine) LocalRunWorkspace(run domain.Run) (string, string) {
 	if e.foreignWorkspaceBind(run) {
 		return "", "工作区绑定在其他 AgentFlow 实例"
 	}
-	workspace := e.sandboxes.RunWorkspace(run.ID)
+	workspace := e.sandboxes.RunWorkspace(workspaceRunID(run))
 	if strings.TrimSpace(workspace) == "" {
 		return "", "当前实例未配置工作区目录"
 	}

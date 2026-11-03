@@ -5,12 +5,11 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
-	"encoding/json"
+
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func preparationWorkflow() domain.WorkflowDefinition {
@@ -31,6 +30,7 @@ func completedPreparationRun(t *testing.T, e *Engine, id string) domain.Run {
 	return run
 }
 func TestWorkspacePreparationNormalOrderAndFlaggedRetryAlwaysExecutes(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +74,7 @@ func TestWorkspacePreparationNormalOrderAndFlaggedRetryAlwaysExecutes(t *testing
 	_ = e.Cancel(run.ID)
 }
 func TestWorkspacePreparationDoesNotAdvanceFutureScriptPastBusinessNode(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +102,7 @@ func TestWorkspacePreparationDoesNotAdvanceFutureScriptPastBusinessNode(t *testi
 	_ = e.Cancel(run.ID)
 }
 func TestWorkspacePreparationRebuildPreservesHistoryAndWarmEditsDoNotReplay(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	completedPreparationRun(t, e, id)
 	state, err := e.EnsureWorkspaceReady(context.Background(), id)
@@ -130,6 +132,7 @@ func TestWorkspacePreparationRebuildPreservesHistoryAndWarmEditsDoNotReplay(t *t
 	}
 }
 func TestWorkspacePreparationPlanExcludesPendingCurrentAndUncheckedScripts(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	run := completedPreparationRun(t, e, id)
 	run.Nodes["index"].Status = "pending"
@@ -147,29 +150,8 @@ func TestWorkspacePreparationPlanExcludesPendingCurrentAndUncheckedScripts(t *te
 		t.Fatal("unselected script replayed")
 	}
 }
-func TestWorkspacePreparationGroupUsesSucceededFrozenSOPState(t *testing.T) {
-	e, id := checkpointFixture(t)
-	run := completedPreparationRun(t, e, id)
-	original := run.WorkflowSnapshot
-	states := run.Nodes
-	run.WorkflowSnapshot.CollaborationMode = "group"
-	run.WorkflowSnapshot.SOPCheckpoint = &domain.SOPCheckpoint{Workflow: original, Nodes: states}
-	run.WorkflowSnapshot.Edges = nil
-	run.Nodes = map[string]*domain.NodeRun{}
-	if err := e.repo.PutRun(run); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.EnsureWorkspaceReady(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"env", "index"} {
-		raw, _ := os.ReadFile(filepath.Join(e.RunWorkspace(id), ".agentflow", name+"-count"))
-		if string(raw) != "run\n" {
-			t.Fatal("frozen completed script missing", name, string(raw))
-		}
-	}
-}
 func TestWorkspacePreparationFailedLeavesFilesReadable(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	run := completedPreparationRun(t, e, id)
 	run.WorkflowSnapshot.Nodes[0].Script = "exit 17"
@@ -189,9 +171,10 @@ func TestWorkspacePreparationFailedLeavesFilesReadable(t *testing.T) {
 	}
 }
 func TestWorkspacePreparationActiveGroupReusesWithoutMutatingSource(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	run := completedPreparationRun(t, e, id)
-	run.WorkflowSnapshot.CollaborationMode = "group"
+	run.Kind = domain.RunKindWorkspace
 	if err := e.repo.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -217,46 +200,8 @@ func TestWorkspacePreparationActiveGroupReusesWithoutMutatingSource(t *testing.T
 		t.Fatal("active scripts replayed")
 	}
 }
-func TestWorkspacePreparationRemoteContinuousWaveReusesAfterEarlierMemberFinishes(t *testing.T) {
-	e, id := checkpointFixture(t)
-	run := completedPreparationRun(t, e, id)
-	run.WorkflowSnapshot.CollaborationMode = "group"
-	run.Status = "running"
-	start := time.Now().UTC().Add(-time.Minute)
-	for _, state := range run.Nodes {
-		state.StartedAt = start.Add(-time.Hour)
-		state.FinishedAt = start.Add(-time.Hour + time.Second)
-	}
-	for _, nodeID := range []string{"A", "B", "C"} {
-		run.WorkflowSnapshot.Nodes = append(run.WorkflowSnapshot.Nodes, domain.WorkflowNode{ID: nodeID, Type: "agent", AgentID: nodeID})
-	}
-	run.Nodes["A"] = &domain.NodeRun{NodeID: "A", Status: "succeeded", Attempt: 1, StartedAt: start, FinishedAt: start.Add(3 * time.Second)}
-	run.Nodes["B"] = &domain.NodeRun{NodeID: "B", Status: "running", Attempt: 1, StartedAt: start.Add(2 * time.Second)}
-	run.Nodes["C"] = &domain.NodeRun{NodeID: "C", Status: "running", Attempt: 1, StartedAt: start.Add(4 * time.Second)}
-	run.ExecutionContext.ExecutionMode = domain.ExecutionModeRunner
-	run.ExecutionContext.ExecutionRunnerID = "workspace-runner"
-	run.ExecutionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
-	if err := e.repo.PutRunner(domain.Runner{ID: "workspace-runner", RunnerVersion: domain.RunnerVersionWorkspacePreparation, Status: domain.RunnerStatusOnline}); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.repo.PutRun(run); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	e.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
-		calls++
-		if request.Operation != domain.RunnerWorkspaceOperationPreparationStatus {
-			t.Fatalf("reprepared active group: %s", request.Operation)
-		}
-		raw, _ := json.Marshal(runtime.WorkspacePreparationStatus{Status: "ready", UpdatedAt: start.Add(time.Second), Steps: []runtime.WorkspacePreparationStep{}})
-		return domain.RunnerWorkspaceResponse{Payload: raw}, nil
-	}
-	state, err := e.PrepareNodeWorkspace(context.Background(), run, nil)
-	if err != nil || state.Status != "ready" || calls != 1 {
-		t.Fatal(state, err, calls)
-	}
-}
 func TestWorkspacePreparationStatusAfterHandleLossDoesNotClaimReady(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	completedPreparationRun(t, e, id)
 	if _, err := e.EnsureWorkspaceReady(context.Background(), id); err != nil {
@@ -278,6 +223,7 @@ func TestWorkspacePreparationStatusAfterHandleLossDoesNotClaimReady(t *testing.T
 }
 
 func TestWorkspacePreparationRecordFailureDoesNotRetrySuccessfulBusinessScript(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -313,17 +259,16 @@ func TestWorkspacePreparationRecordFailureDoesNotRetrySuccessfulBusinessScript(t
 	_ = e.Cancel(run.ID)
 }
 
-func TestWorkspacePreparationTrustedRequestKeepsGroupModeOutsideFilteredPlan(t *testing.T) {
+func TestWorkspacePreparationTrustedRequestCarriesWorkspaceKind(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	run := completedPreparationRun(t, e, id)
-	original := run.WorkflowSnapshot
-	run.WorkflowSnapshot.CollaborationMode = "group"
-	run.WorkflowSnapshot.SOPCheckpoint = &domain.SOPCheckpoint{Workflow: original, Nodes: run.Nodes}
+	run.Kind = domain.RunKindWorkspace
 	request, err := e.preparedWorkspaceRequest(run, domain.RunnerWorkspaceRequest{RunID: id, Operation: domain.RunnerWorkspaceOperationPrepare})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.CollaborationMode != "group" || request.Workflow == nil || request.Workflow.CollaborationMode != "" || request.Workflow.SOPCheckpoint != nil {
+	if request.RunKind != domain.RunKindWorkspace || request.Workflow == nil || request.Workflow.CollaborationMode != "" || request.Workflow.SOPCheckpoint != nil {
 		t.Fatal("group mode lost during filtered plan projection", request)
 	}
 }

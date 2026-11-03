@@ -16,6 +16,7 @@ import (
 // upstream artifacts (e.g. SOP e2e scripts) would silently vanish from the
 // delivered MR (issue: e2e-issue-29.sh lost across two instances).
 func TestResumeInterruptedRunsSkipsForeignWorkspaceBind(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("instance-a", "host-a", 10*time.Millisecond, true)
 	now := time.Now().UTC()
@@ -50,6 +51,7 @@ func TestResumeInterruptedRunsSkipsForeignWorkspaceBind(t *testing.T) {
 // Human gates must reject foreign-bound runs before acquiring the lease so the
 // original owner keeps its workspace and in-flight state.
 func TestApproveRejectsForeignWorkspaceBind(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	now := time.Now().UTC()
 	r := domain.Run{ID: "run-gate", WorkflowID: "wf", Status: "waiting", CreatedAt: now, UpdatedAt: now,
@@ -81,6 +83,7 @@ func TestApproveRejectsForeignWorkspaceBind(t *testing.T) {
 }
 
 func TestPatchNewFiles(t *testing.T) {
+	t.Parallel()
 	diff := strings.Join([]string{
 		"diff --git a/client.go b/client.go",
 		"index aaa..bbb 100644",
@@ -150,6 +153,7 @@ func gitCommitFile(t *testing.T, workspace, path, content string) {
 }
 
 func TestVerifyDeliveryCompleteness(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	gitInit(t, ws)
 	e, _ := newRecoveryEngine(t)
@@ -177,6 +181,7 @@ func TestVerifyDeliveryCompleteness(t *testing.T) {
 }
 
 func TestVerifyDeliveryCompletenessPrefersMRPatch(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	gitInit(t, ws)
 	e, _ := newRecoveryEngine(t)

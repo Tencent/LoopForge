@@ -1,9 +1,17 @@
+FROM node:22-bookworm-slim AS chatbot
+WORKDIR /src
+COPY chatbot/package.json chatbot/package-lock.json chatbot/
+RUN npm --prefix chatbot ci --include=dev --no-audit --no-fund
+COPY chatbot/ chatbot/
+COPY web/app/ web/app/
+RUN npm --prefix chatbot run build && test -f web/native-chat/index.html
 FROM golang:1.26.9-bookworm AS build
 WORKDIR /src
 ENV GOMAXPROCS=2 GOFLAGS=-p=2
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=chatbot /src/web/native-chat/ web/native-chat/
 RUN --mount=type=cache,target=/root/.cache/go-build bash scripts/build-binaries.sh /out
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git bash curl python3 ripgrep \

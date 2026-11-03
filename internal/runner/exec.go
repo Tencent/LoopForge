@@ -108,6 +108,9 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 		case <-flushTicker.C:
 			batcher.flush(ctx)
 		case <-renewTicker.C:
+			if taskLeaseManaged(ctx) {
+				continue
+			}
 			renewCtx, renewCancel := context.WithTimeout(ctx, 20*time.Second)
 			resp, renewErr := d.client.RenewLease(renewCtx, task.ID)
 			renewCancel()
@@ -379,6 +382,9 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 		case <-flushTicker.C:
 			batcher.flush(ctx)
 		case <-renewTicker.C:
+			if taskLeaseManaged(ctx) {
+				continue
+			}
 			renewCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			resp, renewErr := d.client.RenewLease(renewCtx, task.ID)
 			cancel()

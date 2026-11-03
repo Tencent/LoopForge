@@ -145,6 +145,14 @@ func (h *businessDomainsHandlers) report(c *gin.Context) {
 		}
 	}
 	filter := domain.AnalyticsFilter{ProjectIDs: []string{}, Grain: strings.TrimSpace(c.Query("grain"))}
+	filter.TimeZone = strings.TrimSpace(c.Query("timeZone"))
+	if filter.TimeZone == "" {
+		filter.TimeZone = "UTC"
+	}
+	if _, err := time.LoadLocation(filter.TimeZone); err != nil || filter.TimeZone == "Local" {
+		c.JSON(400, gin.H{"error": "timeZone 须为有效的 IANA 时区"})
+		return
+	}
 	if filter.Grain == "" {
 		filter.Grain = "day"
 	}

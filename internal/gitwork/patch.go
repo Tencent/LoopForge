@@ -46,17 +46,24 @@ func RecordBaseline(workspace, baseBranch string) error {
 		return err
 	}
 	var sha []byte
+	resolve := func(ref string) ([]byte, error) {
+		out, err := exec.Command("git", "-C", workspace, "rev-parse", "--verify", ref+"^{commit}").CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return out, nil
+	}
 	if ref := strings.TrimSpace(baseBranch); ref != "" {
-		sha, err = exec.Command("git", "-C", workspace, "rev-parse", "origin/"+ref).Output()
+		sha, err = resolve("origin/" + ref)
 	}
 	if err != nil || len(bytes.TrimSpace(sha)) == 0 {
-		sha, err = exec.Command("git", "-C", workspace, "rev-parse", "origin/master").Output()
+		sha, err = resolve("origin/master")
 	}
 	if err != nil {
-		sha, err = exec.Command("git", "-C", workspace, "rev-parse", "origin/main").Output()
+		sha, err = resolve("origin/main")
 	}
 	if err != nil {
-		sha, err = exec.Command("git", "-C", workspace, "rev-parse", "HEAD").Output()
+		sha, err = resolve("HEAD")
 	}
 	if err != nil {
 		return fmt.Errorf("resolve repository baseline: %w", err)

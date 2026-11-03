@@ -188,10 +188,13 @@ type processSandbox struct {
 	binary        string
 }
 
-func (s *processSandbox) ID() string                  { return s.id }
-func (s *processSandbox) Workspace() string           { return s.workspace }
-func (s *processSandbox) Driver() string              { return s.driver }
-func (s *processSandbox) Close(context.Context) error { return nil }
+func (s *processSandbox) ID() string        { return s.id }
+func (s *processSandbox) Workspace() string { return s.workspace }
+func (s *processSandbox) Driver() string    { return s.driver }
+func (s *processSandbox) Close(context.Context) error {
+	stopHostBrowsers(s.workspace)
+	return nil
+}
 
 func createSeatbelt(id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
 	if goruntime.GOOS != "darwin" {

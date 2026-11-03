@@ -19,7 +19,7 @@
   // User-authored text only gets whole-string dictionary hits, never fragment
   // rewrites, so a sentence typed by a person is not turned into mixed prose.
   const DATA_SEL = '[data-i18n-data],.ai-user-bubble,.ai-think-body,.collab-process-body,.collab-list-item,.issue-title-cell b,#issueDetailTitle,.detail-desc,.comment-row p';
-  const ATTRS = ['placeholder', 'title', 'aria-label', 'data-tip'];
+  const ATTRS = ['placeholder', 'title', 'aria-label', 'data-tip', 'data-tooltip'];
   const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const fragments = Object.keys(dict).filter(k => k.length > 1).sort((a, b) => b.length - a.length);
   const fragmentRE = fragments.length ? new RegExp('(?<![\\u3400-\\u9fff])(?:' + fragments.map(escape).join('|') + ')(?![\\u3400-\\u9fff])', 'g') : null;

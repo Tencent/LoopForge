@@ -44,6 +44,9 @@ func TestScheduleJobCRUD(t *testing.T) {
 	if created.Source != "" {
 		t.Fatalf("default source = %q", created.Source)
 	}
+	if created.MaxDispatch != 0 || created.DispatchLimit() != 10 {
+		t.Fatalf("unconfigured dispatch limit = %+v", created)
+	}
 	gongfengOnly := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
 		"name": "只跑工蜂", "projectId": "platform", "workflowId": "scheduled-wf",
 		"source": "gongfeng", "intervalSec": 3600, "enabled": true,
@@ -56,21 +59,45 @@ func TestScheduleJobCRUD(t *testing.T) {
 	}, http.StatusBadRequest)
 	custom := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
 		"name": "只扫进行中", "projectId": "platform", "workflowId": "scheduled-wf",
-		"issueStatuses": []string{"in_progress", "done", "todo"}, "intervalSec": 300, "enabled": true,
+		"issueStatuses": []string{"in_progress", "done", "todo"}, "maxDispatch": 3, "intervalSec": 300, "enabled": true,
 	}, http.StatusOK)
+	if custom.MaxDispatch != 3 {
+		t.Fatalf("custom dispatch limit = %d", custom.MaxDispatch)
+	}
 	if got := strings.Join(custom.IssueStatuses, ","); got != "todo,in_progress" {
 		t.Fatalf("normalized issue statuses = %q", got)
 	}
 	promptOnly := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
 		"name": "工作日巡检", "projectId": "platform", "skipDispatch": true,
 		"cron": "0 9 * * 1-5", "assistantPrompt": "列出未完成事项", "enabled": true,
-		"issueStatuses": []string{"todo"},
+		"issueStatuses": []string{"todo"}, "maxDispatch": 3,
 	}, http.StatusOK)
 	if promptOnly.ID == "" || promptOnly.Cron != "0 9 * * 1-5" || promptOnly.IntervalSec != 0 || !promptOnly.SkipDispatch {
 		t.Fatalf("unexpected prompt-only job: %+v", promptOnly)
 	}
 	if len(promptOnly.IssueStatuses) != 0 {
 		t.Fatalf("AI job must not keep issue statuses: %+v", promptOnly.IssueStatuses)
+	}
+	if promptOnly.MaxDispatch != 0 {
+		t.Fatalf("AI job must not keep maxDispatch: %+v", promptOnly)
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		for _, invalid := range []any{-1, 11, 1.5, "3"} {
+			requestJSON[map[string]string](t, h, method, "/api/schedule-jobs", map[string]any{
+				"id": custom.ID, "name": custom.Name, "workflowId": custom.WorkflowID, "maxDispatch": invalid,
+			}, http.StatusBadRequest)
+		}
+	}
+	for _, limit := range []int{1, 10, 0} {
+		body := map[string]any{"id": custom.ID, "name": custom.Name, "workflowId": custom.WorkflowID}
+		if limit != 0 {
+			body["maxDispatch"] = limit
+		}
+		updated := requestJSON[domain.ScheduleJob](t, h, http.MethodPut, "/api/schedule-jobs", body, http.StatusOK)
+		stored, _ := st.ScheduleJob(custom.ID)
+		if updated.MaxDispatch != limit || stored.MaxDispatch != limit {
+			t.Fatalf("maxDispatch update: response=%d stored=%d want=%d", updated.MaxDispatch, stored.MaxDispatch, limit)
+		}
 	}
 	jobs := requestJSON[[]domain.ScheduleJob](t, h, http.MethodGet, "/api/schedule-jobs", nil, http.StatusOK)
 	if len(jobs) != 4 {
@@ -395,6 +422,13 @@ func TestEnsureBaselineAlignWorkflowUpgradesExistingRevision(t *testing.T) {
 	}
 	if len(wf.Nodes) != 2 || wf.Nodes[0].ID != "resolve" || wf.Nodes[1].ID != "verify" {
 		t.Fatalf("upgraded nodes = %+v", wf.Nodes)
+	}
+	verify := wf.Nodes[1].Script
+	if !strings.Contains(verify, "leftover conflict marker") {
+		t.Fatalf("verify script must fail only on leftover conflict markers: %s", verify)
+	}
+	if strings.Contains(verify, "git diff --check HEAD^ HEAD | grep -q .") {
+		t.Fatal("verify script must not treat every diff --check line as a conflict marker")
 	}
 	if !alignWorkflowUsesPlatformAgent(wf) {
 		t.Fatalf("resolve agent = %+v, want %s", wf.Nodes, engine.BaselineAlignAgentID)

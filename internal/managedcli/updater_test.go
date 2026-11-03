@@ -248,7 +248,14 @@ func TestUpdateFailuresAndCandidateReuse(t *testing.T) {
 				must(t, err)
 				defer lease.Close()
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			// Maintenance blocks on the claim lock until this context ends.
+			// The other cases fail on their own; a 200ms budget cancelled
+			// healthy providers when the machine was busy running other packages.
+			limit := 10 * time.Second
+			if mode == "maintenance" {
+				limit = 2 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), limit)
 			defer cancel()
 			if _, err := f.manager.Update(ctx); err == nil {
 				t.Fatal("expected update failure")

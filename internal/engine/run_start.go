@@ -28,17 +28,17 @@ func (e *Engine) StartWithRepositoriesContext(workflowID, input string, reposito
 	return e.startWorkflow(workflowID, input, repositories, executionContext, false)
 }
 
-func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, group bool) (domain.Run, error) {
+func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
 	wf, ok := e.repo.Workflow(workflowID)
 	if !ok {
 		return domain.Run{}, fmt.Errorf("workflow not found")
 	}
-	return e.startWorkflowDefinition(wf, input, repositories, executionContext, group)
+	return e.startWorkflowDefinition(wf, input, repositories, executionContext, workspace)
 }
 
-// startWorkflowDefinition also accepts a run-only free collaboration definition.
+// startWorkflowDefinition also accepts a run-only conversation workspace definition.
 // It never writes a template to the catalog.
-func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, group bool) (domain.Run, error) {
+func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	domain.AssignRepositoryDirs(repositories)
@@ -75,6 +75,9 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if !ok {
 		return domain.Run{}, fmt.Errorf("sandbox profile %q not found", wf.SandboxProfileID)
 	}
+	if workspace && (profile.Driver != "docker" || profile.DockerfileID == "" || !(profile.ProjectID == executionContext.ProjectID || profile.Shared)) {
+		return domain.Run{}, fmt.Errorf("对话工作区必须选择本项目或共享的 Docker 沙箱")
+	}
 	resources, err := resolveSandboxResources(e.repo, profile)
 	if err != nil {
 		return domain.Run{}, err
@@ -110,6 +113,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
 	if executionContext.ParentRunID == "" {
 		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
+		executionContext.WorkspaceRunID = ""
 	}
 	if executionContext.ExecutionRunnerID == "" {
 		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
@@ -150,20 +154,16 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 			return domain.Run{}, err
 		}
 	}
-	if group {
-		freezeSOPCheckpoint(&r)
-		r.WorkflowSnapshot.CollaborationMode = "group"
-		r.WorkflowSnapshot.TaskTitle = truncateGroupText(input, 100)
-		r.WorkflowSnapshot.Edges = nil
-		r.WorkflowSnapshot.Preview = nil
-		r.WorkflowSnapshot.Notifications = nil
-		for _, n := range r.Nodes {
-			n.Status = "skipped"
-		}
+	if workspace {
+		r.Kind = domain.RunKindWorkspace
 		r.Status = "waiting"
 	}
-	e.event(&r, "", "run.started", "流水线开始执行")
-	if executeRuns && !group {
+	if workspace {
+		e.event(&r, "", "workspace.created", "对话工作区已创建")
+	} else {
+		e.event(&r, "", "run.started", "流水线开始执行")
+	}
+	if executeRuns && !workspace {
 		if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
 			return domain.Run{}, ErrExecutionDisabled
 		}
@@ -179,7 +179,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		r = current
 	}
 	e.publish(r.ID)
-	if !executeRuns || r.Status == "queued" || group {
+	if !executeRuns || r.Status == "queued" || workspace {
 		return r, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())

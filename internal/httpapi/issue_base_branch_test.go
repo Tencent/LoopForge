@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -390,5 +391,58 @@ func TestDispatchLegacyDefaultBranchCreatesNewWorkBranchWithoutChangingRecord(t 
 	stored, _ := st.Issue(issue.ID)
 	if stored.BaseBranch != issue.BaseBranch {
 		t.Fatalf("dispatch must interpret legacy values without rewriting the record: %+v", stored)
+	}
+}
+
+func TestIssueSaveEchoingLegacySharedBranchNormalizes(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	repository := domain.Repository{ID: "echo-shared-repo", ProjectID: "platform", Name: "Repo", DefaultBranch: "develop"}
+	if err := st.PutRepository(repository); err != nil {
+		t.Fatal(err)
+	}
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	for _, legacyBranch := range []string{"develop", "master"} {
+		legacy := domain.Issue{ID: "echo-legacy-" + legacyBranch, ProjectID: "platform", Title: "旧记录", RepositoryID: repository.ID, BaseBranch: legacyBranch}
+		if err := st.PutIssue(legacy); err != nil {
+			t.Fatal(err)
+		}
+		updated := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
+			"id": legacy.ID, "projectId": "platform", "title": "AI 更新标题", "repositoryId": repository.ID, "baseBranch": legacyBranch,
+		}, http.StatusOK)
+		if updated.BaseBranch != "" || updated.Title != "AI 更新标题" {
+			t.Fatalf("echoing the stored legacy branch %q must normalize instead of failing: %+v", legacyBranch, updated)
+		}
+	}
+	feature := domain.Issue{ID: "echo-feature", ProjectID: "platform", Title: "功能分支", RepositoryID: repository.ID, BaseBranch: "feature/keep"}
+	if err := st.PutIssue(feature); err != nil {
+		t.Fatal(err)
+	}
+	kept := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{"id": feature.ID, "title": "改标题", "baseBranch": "feature/keep"}, http.StatusOK)
+	if kept.BaseBranch != "feature/keep" {
+		t.Fatalf("echoing a valid work branch must keep it: %+v", kept)
+	}
+	requestJSON[map[string]string](t, h, http.MethodPut, "/api/issues", map[string]any{"id": feature.ID, "baseBranch": "master"}, http.StatusBadRequest)
+}
+
+func TestAssistantIssueDraftRewritesGenericMainBranch(t *testing.T) {
+	draft := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"projectId":"platform","title":"新需求","repositoryIds":["a","b"],"baseBranch":"master","repositoryBranches":{"a":"main","b":"feature/keep"}}`)}
+	if err := validateAssistantDraft(&draft, "platform"); err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(draft.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	branches, _ := body["repositoryBranches"].(map[string]any)
+	if body["baseBranch"] != "" || len(branches) != 1 || branches["b"] != "feature/keep" {
+		t.Fatalf("generic main branch names must mean auto-create from configured main: %s", draft.Body)
+	}
+	other := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"projectId":"platform","title":"继续","baseBranch":"feature/x"}`)}
+	if err := validateAssistantDraft(&other, "platform"); err != nil || !strings.Contains(string(other.Body), "feature/x") {
+		t.Fatalf("feature branches must be untouched: %s %v", other.Body, err)
 	}
 }

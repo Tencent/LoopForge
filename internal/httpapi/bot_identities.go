@@ -89,7 +89,7 @@ func (h *botIdentityHandlers) remove(c *gin.Context) {
 		return
 	}
 	if !botBindingSameOrigin(c) {
-		c.JSON(403, gin.H{"error": "请从个人设置解除绑定"})
+		c.JSON(403, gin.H{"error": "请从个人配置解除绑定"})
 		return
 	}
 	if err := h.repo.RevokeBotUserBinding(c.Param("id"), user.ID, time.Now().UTC()); err != nil {
@@ -133,14 +133,14 @@ func (h *botIdentityHandlers) message(bot domain.NotificationBot, item domain.Bo
 		}
 		user, ok := h.repo.User(binding.UserID)
 		if !ok {
-			return true, "平台账号不存在，请在个人设置解除后重新绑定。", nil
+			return true, "平台账号不存在，请在个人配置解除后重新绑定。", nil
 		}
 		return true, "已绑定平台账号「" + user.LoginName + "」。后续操作将使用你的身份、个人凭据和项目权限。请重新发送刚才的请求。", nil
 	}
 	if text == "绑定账号" || text == "/bind" {
 		if binding, err := h.repo.BotUserBinding(bot.BotID, item.SenderID); err == nil {
 			if user, ok := h.repo.User(binding.UserID); ok {
-				return true, "当前已绑定「" + user.LoginName + "」。发送 /unbind 或在平台个人设置中解除绑定。", nil
+				return true, "当前已绑定「" + user.LoginName + "」。发送 /unbind 或在平台个人配置中解除绑定。", nil
 			}
 		}
 	}

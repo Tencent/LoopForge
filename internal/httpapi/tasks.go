@@ -34,6 +34,27 @@ func (h *tasksHandlers) task(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
+// settleIssueTasks moves one issue's Tasks onto runs that already finished.
+// The periodic sync is throttled, so a close right after a run settles would
+// otherwise still read the Task as running. Issue status is left to syncTasks.
+func (h *tasksHandlers) settleIssueTasks(issueID string) {
+	for _, task := range h.repo.Tasks() {
+		if task.IssueID != issueID || strings.TrimSpace(task.RunID) == "" {
+			continue
+		}
+		run, ok := h.repo.RunView(task.RunID)
+		if !ok || runHasActiveNode(run) {
+			continue
+		}
+		status := taskStatusFromRun(run.Status)
+		if (status != "completed" && status != "failed" && status != "cancelled") || status == task.Status {
+			continue
+		}
+		task.Status = status
+		_ = h.repo.PutTask(task)
+	}
+}
+
 // syncTasks 由 issues/tasks 两个领域共同触发，2 秒内只跑一轮。
 func (h *tasksHandlers) syncTasks() {
 	h.syncTasksMu.Lock()

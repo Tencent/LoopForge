@@ -15,10 +15,18 @@ import (
 )
 
 const (
-	nativeDisallowedTools       = "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,KillShell,CronCreate,CronList,CronDelete"
-	nativeAssistantMaxTurns     = "30"
-	nativeTerminalMaxRetries    = 2
-	agentToolSessionMCPServerID = "agentflow_session"
+	nativeDisallowedTools = "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,KillShell,CronCreate,CronList,CronDelete"
+	// Match CodeBuddy's interactive unlimited value (Number.MAX_SAFE_INTEGER).
+	// Omitting --max-turns falls back to the CLI's finite headless default.
+	nativeAssistantUnlimitedTurns = "9007199254740991"
+	nativeTerminalMaxRetries      = 2
+	agentToolSessionMCPServerID   = "agentflow_session"
+	// The session gateway lists upstream TAPD/工蜂/iWiki tools before it
+	// answers tools/list, which can exceed CodeBuddy's ~2s headless MCP wait.
+	// The tools pinned with defer_loading=false below would then be absent
+	// from the first model request and, being non-deferred, unreachable via
+	// ToolSearch/DeferExecuteTool. Use CodeBuddy's interactive 30s wait.
+	agentToolSessionMCPStartupWait = 30 * time.Second
 )
 
 type agentToolFiles struct {
@@ -73,9 +81,10 @@ func writeAgentToolFiles(parentDir, token string) (agentToolFiles, error) {
 			agentToolSessionMCPServerID: map[string]any{
 				"type": "http",
 				"url":  agentToolMCPURL(token),
-				// Terminal submissions must be callable without ToolSearch.
+				// Submission and draft schema lookup must not depend on ToolSearch.
 				// Business tools keep CodeBuddy's normal deferred loading.
 				"tools": map[string]any{
+					"workbench_tool_schema":      map[string]bool{"defer_loading": false},
 					submitAssistantReplyTool:     map[string]bool{"defer_loading": false},
 					submitClarificationTool:      map[string]bool{"defer_loading": false},
 					submitNotificationReportTool: map[string]bool{"defer_loading": false},
@@ -117,12 +126,25 @@ func applyNativeToolSafety(argv []string, mode AgentToolMode) []string {
 	// so listing Read/Grep/Glob or mcp__* globs hides submit_* and TAPD/工蜂.
 	argv = dropNativeArg(argv, "--tools")
 	if !argvHasFlag(argv, "--disallowedTools") {
-		argv = append(argv, "--disallowedTools", nativeDisallowedTools)
+		argv = appendNativeArgs(argv, "--disallowedTools", nativeDisallowedTools)
 	}
 	if !argvHasFlag(argv, "--strict-mcp-config") {
-		argv = append(argv, "--strict-mcp-config")
+		argv = appendNativeArgs(argv, "--strict-mcp-config")
 	}
 	return argv
+}
+
+// Provider commands terminate options with -- before the positional prompt.
+// Flags added by control-plane callers must stay before that delimiter.
+func appendNativeArgs(argv []string, args ...string) []string {
+	for i, arg := range argv {
+		if arg == "--" {
+			out := append([]string(nil), argv[:i]...)
+			out = append(out, args...)
+			return append(out, argv[i:]...)
+		}
+	}
+	return append(argv, args...)
 }
 
 func dropNativeArg(argv []string, flag string) []string {
@@ -163,7 +185,7 @@ func replaceArgValue(argv []string, flag, value string) []string {
 		out = append(out, argv[i])
 	}
 	if !replaced {
-		out = append(out, flag, value)
+		out = appendNativeArgs(out, flag, value)
 	}
 	return out
 }
@@ -201,16 +223,17 @@ func nativeCommandContainsSecret(command runtime.CommandSpec, files agentToolFil
 
 func startAgentToolSession(ctx context.Context, user domain.User, projectID string, mode AgentToolMode, exec assistantExecMode, issueID string, servers []domain.MCPServerDefinition, cancel context.CancelFunc, parent string) (*AgentToolSession, agentToolFiles, error) {
 	session := &AgentToolSession{
-		UserID:      user.ID,
-		ProjectID:   projectID,
-		Mode:        mode,
-		IssueID:     issueID,
-		ExpiresAt:   time.Now().Add(agentToolSessionTTL(ctx)),
-		MCPServers:  servers,
-		User:        user,
-		ExecMode:    exec,
-		Final:       make(chan AgentTerminalResult, 1),
-		CancelModel: cancel,
+		ControlScope: assistantControlScopeFrom(ctx),
+		UserID:       user.ID,
+		ProjectID:    projectID,
+		Mode:         mode,
+		IssueID:      issueID,
+		ExpiresAt:    time.Now().Add(agentToolSessionTTL(ctx)),
+		MCPServers:   servers,
+		User:         user,
+		ExecMode:     exec,
+		Final:        make(chan AgentTerminalResult, 1),
+		CancelModel:  cancel,
 	}
 	if err := agentToolSessions.create(session); err != nil {
 		return nil, agentToolFiles{}, err

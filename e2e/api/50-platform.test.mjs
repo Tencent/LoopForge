@@ -40,8 +40,10 @@ test('knowledge: review queue create, edit, reject, delete (no write-back)', asy
   assert.ok(pending.some(s => s.id === item.id));
   const settings = await get('/api/knowledge/settings');
   if (!settings.writeEnabled) {
-    // Publishing is the write-back path; with writes disabled it must refuse.
-    await api('POST', `/api/knowledge/submissions/${item.id}/publish`, {}, { expect: settings.enabled && settings.ready ? [400,403,409] : 503 });
+    // Publishing is the write-back path; with writes disabled it must refuse
+    // (503 when no knowledge base is connected at all, e.g. local.sh).
+    const connected = settings.enabled && settings.ready;
+    await api('POST', `/api/knowledge/submissions/${item.id}/publish`, {}, { expect: connected ? [400, 403, 409] : [503] });
   }
   const rejected = await post(`/api/knowledge/submissions/${item.id}/reject`, { reviewNote: 'e2e 驳回' });
   assert.equal(rejected.status, 'rejected');

@@ -187,6 +187,12 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 			return d.requirePlatformAdmin(c)
 		}
 		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
+	case "/api/knowledge/submissions":
+		var body struct {
+			ProjectID string `json:"projectId"`
+		}
+		peekJSON(c, &body)
+		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
 	case "/api/knowledge/submissions/:id", "/api/knowledge/submissions/:id/publish", "/api/knowledge/submissions/:id/reject":
 		project, _, _ := d.assetOwner("knowledge", c.Param("id"))
 		return d.requireProjectWriter(c, project)

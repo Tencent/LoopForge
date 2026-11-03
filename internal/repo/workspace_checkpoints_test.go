@@ -54,7 +54,13 @@ func TestWorkspaceCheckpointLeaseCASAndDurableIdleDeadline(t *testing.T) {
 	if err = s.SaveWorkspaceCheckpoint(r.ID, token, now, []byte{}); err == nil {
 		t.Fatal("empty snapshot accepted")
 	}
-	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(r.ID, token, r.Revision, now.Add(time.Minute)); err != nil || !claimed {
+	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(r.ID, token, r.Revision, now.Add(time.Minute)); err != nil || claimed {
+		t.Fatal("recent activity reclaimed", err)
+	}
+	if err = s.RenewWorkspaceUse(r.ID, token, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := s.ClaimCheckpointWorkspaceCleanup(r.ID, token, r.Revision, now.Add(time.Hour)); err != nil || !claimed {
 		t.Fatal("saved idle files not reclaimed", err)
 	}
 	if err = s.RestoreCheckpointWorkspaceBinding(r.ID, token, "host", "root", now.Add(time.Minute)); err != nil {

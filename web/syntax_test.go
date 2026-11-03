@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -144,12 +145,15 @@ const rows = [
 assert.deepEqual(metricsPhaseAverage(rows, 'testing'), {value:30000,samples:2});
 assert.deepEqual(metricsPhaseAverage(rows.slice(0,1), 'testing'), {value:null,samples:0});
 const missingStage=metricsDeliveryPhases({clarificationDurationMs:3600000,developmentDurationMs:1200000,cycleDurationMs:9000000,phaseSamples:{clarification:1,development:1}});
-assert.deepEqual(missingStage.samples, {clarification:1,development:1,testing:0,total:0});
-assert.equal(missingStage.total, null);
+assert.deepEqual(missingStage.samples, {clarification:1,development:1,testing:0,total:1});
+assert.equal(missingStage.total, 4800000);
 const complete=metricsDeliveryPhases({clarificationDurationMs:3600000,developmentDurationMs:1200000,testDurationMs:600000,cycleDurationMs:9000000,phaseSamples:{clarification:1,development:1,testing:1}});
 assert.equal(complete.total, complete.clarification+complete.development+complete.testing);
 assert.equal(complete.total, 5400000);
-assert.deepEqual(metricsPhaseAverage([{phases:missingStage},{phases:complete}], 'total'), {value:5400000,samples:1});
+assert.deepEqual(metricsPhaseAverage([{phases:missingStage},{phases:complete}], 'total'), {value:5100000,samples:2});
+const unmeasured=metricsDeliveryPhases({cycleDurationMs:9000000,phaseSamples:{}});
+assert.equal(unmeasured.total, null);
+assert.equal(unmeasured.samples.total, 0);
 const observedZero=metricsDeliveryPhases({phaseSamples:{clarification:1,development:1,testing:1}});
 assert.equal(observedZero.total, 0);
 assert.equal(metricsPhaseAverage([{phases:observedZero}], 'total').value, 0);
@@ -160,7 +164,7 @@ assert.equal(metricsPhaseAverage([{phases:observedZero}], 'total').value, 0);
 	}
 }
 
-func TestMetricsDashboardTotalUsesCompletePhaseSamples(t *testing.T) {
+func TestMetricsDashboardIncludesIssuesAndPartialPhases(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not installed")
@@ -170,7 +174,10 @@ const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
 const METRICS_WINDOWS = {'7d':{days:7,label:'近 7 天',grain:'day'}};
 const now = new Date().toISOString();
-const issues = [1,2].map(n=>({id:'issue-'+n,projectId:'project',source:'local',kind:'requirement',status:'done',createdAt:now,updatedAt:now}));
+const issues = [
+  {id:'issue-1',projectId:'project',source:'local',kind:'requirement',status:'done',createdAt:now,updatedAt:now},
+  {id:'issue-2',projectId:'project',source:'gongfeng',kind:'issue',status:'closed',createdAt:now,updatedAt:now},
+];
 const deliveries = [
   {issueId:'issue-1',lastRunAt:now,firstRunAt:now,clarificationDurationMs:600000,developmentDurationMs:1200000,testDurationMs:1800000,cycleDurationMs:7200000,phaseSamples:{clarification:1,development:1,testing:1}},
   {issueId:'issue-2',lastRunAt:now,firstRunAt:now,clarificationDurationMs:2400000,developmentDurationMs:3000000,cycleDurationMs:18000000,phaseSamples:{clarification:1,development:1,testing:0}},
@@ -180,16 +187,61 @@ function currentProject(){return {id:'project'}}
 eval(code.slice(code.indexOf('function metricsWindow('), code.indexOf('function metricsSnapshotTrend(')));
 const model = metricsDashboardModel();
 assert.equal(model.delivered, 2);
-assert.deepEqual(model.phaseTotalValues, [3600000]);
-assert.equal(model.averagePhaseTotalMs, 3600000);
-assert.deepEqual(model.phaseAverages.total, {value:3600000,samples:1});
-assert.equal(model.phaseAverages.total.value, model.phaseAverages.clarification.value+model.phaseAverages.development.value+model.phaseAverages.testing.value);
-assert.equal(model.requirements.find(item=>item.issueId==='issue-2').phases.total, null);
-assert.equal(model.phaseTrend.at(-1).total, 3600000);
+assert.deepEqual(model.phaseTotalValues, [3600000,5400000]);
+assert.equal(model.averagePhaseTotalMs, 4500000);
+assert.deepEqual(model.phaseAverages.total, {value:4500000,samples:2});
+assert.deepEqual(model.phaseAverages.testing, {value:1800000,samples:1});
+assert.equal(model.requirements.find(item=>item.issueId==='issue-2').phases.total, 5400000);
+assert.equal(model.phaseTrend.at(-1).total, 4500000);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("dashboard phase total check failed: %v\n%s", err, out)
+	}
+}
+
+func TestMetricsMergesUseLocalMergeDayIndependentlyOfDeliveries(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	script := `
+process.env.TZ='Asia/Shanghai';
+const assert=require('node:assert/strict');
+const code=require('node:fs').readFileSync('` + appBundlePath(t) + `','utf8');
+const METRICS_WINDOWS={};
+const state={metricsRange:'custom',metricsDateFrom:'2026-10-20',metricsDateTo:'2026-10-21',metricsIssues:[],metricsData:{summary:{mergedMrs:2,mergedMrsMissingTime:3},deliveries:[],mrMerges:[
+  {mrProject:'org/frontend',mrIid:1,mrUrl:'https://git.example.com/org/frontend/merge_requests/1',targetBranch:'agentflow/integration',issueId:'old-requirement',title:'Earlier delivery',mergedAt:'2026-10-19T16:30:00Z'},
+  {mrProject:'org/backend',mrIid:1,mrUrl:'https://git.example.com/org/backend/merge_requests/1',targetBranch:'master',issueId:'old-requirement',title:'Earlier delivery',mergedAt:'2026-10-20T16:30:00Z'},
+]},metricsBenchmark:{projectId:'project',gongfeng:{weeklyMerged:{'2026-W43':999}}}};
+function currentProject(){return {id:'project'}}
+function metricsProjectId(){return 'project'}
+function obsCategoryLabel(value){return value}
+const escapeHTML=value=>String(value);
+const safeURL=value=>value;
+eval(code.slice(code.indexOf('function metricsWindow('),code.indexOf('function metricsMs(')));
+const model=metricsDashboardModel();
+assert.equal(model.delivered,0);
+assert.equal(model.mergedMRs,2);
+assert.equal(model.mergedMRsMissingTime,3);
+assert.deepEqual(model.mrMergeTrend.map(x=>[x.key,x.mergedMrs]),[['2026-10-20',1],['2026-10-21',1]]);
+assert.equal(metricsBucketKey('2026-10-18T16:30:00Z','week'),'2026-W43','local Monday belongs to its new week');
+assert.equal(metricsBucketKey('2026-10-18T15:30:00Z','week'),'2026-W42','local Sunday stays in the previous week');
+assert.equal(metricsBucketKey('2026-10-31T16:30:00Z','month'),'2026-11');
+const display=metricsDisplayModel(model);
+assert.equal(display.mergedMRs,2,'a benchmark snapshot must not substitute its merge totals');
+assert.equal(display.mrMergeTrend,model.mrMergeTrend);
+eval(code.slice(code.indexOf('function metricsMRMergeTable('),code.indexOf('function metricsSectionHead(')));
+eval(code.slice(code.indexOf('function formatTimestamp('),code.indexOf('function duration(')));
+const table=metricsMRMergeTable(model.mrMerges);
+assert.ok(table.includes('合入时间'));
+assert.ok(table.includes('org/frontend !1'));
+assert.ok(table.includes(new Date('2026-10-19T16:30:00Z').toLocaleString()));
+assert.ok(metricsMRMergeTable([]).includes('当前日期范围暂无已合入 MR'));
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("MR merge dashboard failed: %v\n%s", err, out)
 	}
 }
 
@@ -214,7 +266,7 @@ function obsCategoryLabel(value){return value}
 const body={innerHTML:''},live={innerHTML:''};
 function $(selector){return selector==='#metricsBody'?body:selector==='#metricsLiveState'?live:null}
 function metricsDashboardModel(){throw new Error('stale data must not be rendered')}
-eval(code.slice(code.indexOf('function metricsSnapshotTrend('),code.indexOf('function metricsPrimaryKPI(')));
+eval(code.slice(code.indexOf('function metricsSnapshotTrend('),code.indexOf('function metricsMs(')));
 const empty={delivered:0,requirementIssues:[],aiIssueIds:new Set(),trend:[],completed:[],firstPass:[],terminal:0,deployment:{samples:0},averagePhaseTotalMs:null,firstPassRate:0,runSuccessRate:0,coverageRate:0,averageTokens:0,reworkRate:0,data:{categories:[]}};
 const lightvela=metricsDisplayModel(empty);
 assert.equal(lightvela.isSnapshot,false);
@@ -294,7 +346,8 @@ const synced = {id:'tapd-1',projectId:'p',source:'tapd',kind:'requirement',exter
 assert.equal(metricsRequirementIssue(unbound), true);
 assert.equal(metricsRequirementKey(unbound), 'issue:local-1');
 assert.equal(metricsRequirementKey(bound), metricsRequirementKey(synced));
-assert.equal(metricsRequirementIssue({id:'bug',source:'gongfeng',kind:'issue'}), false);
+assert.equal(metricsRequirementIssue({id:'bug',source:'gongfeng',kind:'issue'}), true);
+assert.equal(metricsRequirementKey({id:'bug',source:'gongfeng',kind:'issue',tapdId:'1001'}), 'issue:bug');
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
@@ -337,50 +390,6 @@ assert.ok(!code.includes('node?.verification'));
 	}
 }
 
-func TestAssistantJSParses(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed; skipping assistant.js parse check")
-	}
-	out, err := exec.Command(node, "--check", "assistant.js").CombinedOutput()
-	if err != nil {
-		t.Fatalf("assistant.js failed to parse: %v\n%s", err, out)
-	}
-}
-
-func TestAssistantSidebarResize(t *testing.T) {
-	js, err := os.ReadFile("assistant.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css, err := os.ReadFile("assistant.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		`class="ai-resize"`,
-		`agentflow.assistantWidth`,
-		`setPointerCapture`,
-		`--ai-panel-w`,
-		`collapseThinking`,
-		`pushThought`,
-	} {
-		if !strings.Contains(string(js), want) {
-			t.Fatalf("assistant.js missing %q", want)
-		}
-	}
-	for _, want := range []string{
-		`.ai-resize`,
-		`cursor:col-resize`,
-		`body.ai-assistant-resizing`,
-		`var(--ai-panel-w)`,
-	} {
-		if !strings.Contains(string(css), want) {
-			t.Fatalf("assistant.css missing %q", want)
-		}
-	}
-}
-
 func TestRuleGlobalSOPPicker(t *testing.T) {
 	app, err := readAppBundle()
 	if err != nil {
@@ -397,12 +406,13 @@ func TestRuleGlobalSOPPicker(t *testing.T) {
 		"selectedRuleWorkflowIds",
 		"该 SOP 的每个节点执行时都会带上这条规则",
 		"workflowIds:global?selectedRuleWorkflowIds():[]",
+		`class="rule-global-input" role="switch"`,
 	} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("rule global picker is missing %q", want)
 		}
 	}
-	for _, want := range []string{".rule-global-block", ".rule-global-input:checked", ".rule-global-sops"} {
+	for _, want := range []string{".rule-global-block", ".rule-global-sops"} {
 		if !strings.Contains(string(css), want) {
 			t.Fatalf("rule global picker style is missing %q", want)
 		}
@@ -709,11 +719,11 @@ const cases = [
   [{isGuest:true, hostname:"localhost", loginUrl}, false],
   [{isGuest:true, hostname:"127.0.0.1", loginUrl}, false],
   [{isGuest:true, hostname:"[::1]", loginUrl}, false],
-  [{isGuest:true, hostname:"dns-afp.example.com", loginUrl}, false],
   [{isGuest:true, hostname:"loopforge.example.com", loginUrl}, false],
-  [{isGuest:true, hostname:"dns-afp.example.com", loginUrl, bypassAutoAuth:true}, false],
-  [{isGuest:true, hostname:"dns-afp.example.com", loginUrl, authErr:"exchange_failed"}, false],
-  [{isGuest:false, hostname:"dns-afp.example.com", loginUrl}, false],
+  [{isGuest:true, hostname:"loopforge.example.com", loginUrl}, false],
+  [{isGuest:true, hostname:"loopforge.example.com", loginUrl, bypassAutoAuth:true}, false],
+  [{isGuest:true, hostname:"loopforge.example.com", loginUrl, authErr:"exchange_failed"}, false],
+  [{isGuest:false, hostname:"loopforge.example.com", loginUrl}, false],
 ];
 for (const [input, want] of cases) {
   const got = shouldAutoPassportRedirect(input);
@@ -729,7 +739,36 @@ for (const [input, want] of cases) {
 	}
 }
 
-func TestCredentialClearButtons(t *testing.T) {
+func TestCredentialWizardCSSKeepsToastsAnimating(t *testing.T) {
+	cssBytes, err := os.ReadFile("platform.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssBytes)
+	if strings.Contains(css, "body.credential-wizard-open") {
+		t.Fatal("wizard pause must not hang off body: it restyles the whole page (and freezes toasts) on open")
+	}
+	if !strings.Contains(css, ".credential-wizard-open .hui-lamp::after,.credential-wizard-open .credential-spin{animation-play-state:paused}") {
+		t.Fatal("wizard should pause only the looping credential animations under #personalSettingsContent")
+	}
+	code, err := os.ReadFile("app/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(code), "$('#personalSettingsContent')?.classList.add('credential-wizard-open')") {
+		t.Fatal("openCredentialWizard should put the pause class on #personalSettingsContent")
+	}
+	parts := strings.SplitN(css, ".credential-scrim::before{", 2)
+	if len(parts) < 2 {
+		t.Fatal("missing .credential-scrim::before rule")
+	}
+	before := strings.SplitN(parts[1], "}", 2)[0]
+	if strings.Contains(before, "transition") {
+		t.Fatal(".credential-scrim::before should not fade; a full-viewport opacity transition drops the entrance frame rate")
+	}
+}
+
+func TestCredentialListAndWizard(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not installed; skipping credential UI check")
@@ -737,51 +776,207 @@ func TestCredentialClearButtons(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-eval(code.slice(code.indexOf('function credentialClearAction('), code.indexOf('async function renderPersonalSettings(')));
-for (const name of ['taihuPat', 'gitToken', 'codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey']) {
-  for (const configured of [false, true]) {
-    const html = credentialClearAction(name, configured);
-    assert.ok(html.includes('type="button"'));
-    assert.ok(!html.includes('checkbox'));
-    const input = {value: 'unsaved-draft', disabled: false};
-    const status = {dataset: {configured: String(configured)}, textContent: ''};
-    const button = {
-      dataset: {clearCredential: name, clearLabel: 'API Key', pendingClear: 'false'}
-    };
-    const submit = {disabled: false};
-    const form = {
-      elements: {[name]: input},
-      querySelectorAll() { return [button]; },
-      querySelector(selector) {
-        if (selector === 'button[type="submit"]') return submit;
-        return selector.includes('data-credential-status') ? status : button;
-      }
-    };
-    bindCredentialClearButtons(form);
-    assert.equal(credentialClearPending(form, name), false);
-    button.onclick();
-    assert.equal(credentialClearPending(form, name), true);
-    assert.equal(input.disabled, true);
-    assert.equal(status.textContent, '待清除，保存后生效');
-    assert.equal(button.textContent, '撤销清除');
-    submit.disabled = true;
-    button.onclick();
-    assert.equal(credentialClearPending(form, name), true, 'save in progress must freeze clear state');
-    submit.disabled = false;
-    button.onclick();
-    assert.equal(credentialClearPending(form, name), false);
-    assert.equal(input.disabled, false);
-    assert.equal(input.value, 'unsaved-draft', 'undo must preserve the draft');
-    assert.equal(status.textContent, configured ? '当前已配置' : '尚未配置');
-    assert.equal(button.textContent, '清除 API Key');
-  }
+const user = {id: 1, gitTokenConfigured: true, codexApiKeyConfigured: true, codexBaseUrl: 'https://proxy.example.com/v1'};
+const state = {currentUser: {id: 1}, data: {users: [user]}};
+const userById = id => state.data.users.find(u => u.id === id);
+const escapeHTML = v => String(v), toast = () => {};
+const calls = [];
+const api = async (path, options = {}) => {
+  calls.push({path, method: options.method || 'GET', body: options.body && JSON.parse(options.body)});
+  return path.endsWith('/credentials') ? {...user, ...state.nextUser} : {valid: false, error: '令牌无效或已过期'};
+};
+const $ = () => null, setTimeout = () => {}, location = {origin: 'http://localhost'};
+const document = {activeElement: null, querySelectorAll: () => []};
+eval(code.slice(code.indexOf('const CREDENTIAL_GROUPS='), code.indexOf('// 谁能改通用模板')) +
+  ';globalThis.cred={CREDENTIAL_KINDS,CREDENTIAL_GROUPS,kind:credentialKind,get wizard(){return credentialWizard},set wizard(v){credentialWizard=v}};');
+const count = (html, needle) => html.split(needle).length - 1;
+
+// Two groups list all four kinds in a fixed order.
+assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey']);
+
+// Progress, next-step hint, filter counts and per-group counts.
+const html = credentialPanelHTML(user);
+assert.ok(html.includes('<b>2</b> / 4 已配置'));
+assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
+assert.ok(html.includes('1 / 1') && html.includes('1 / 3'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>2</span>'));
+assert.equal(count(html, 'data-credential-row='), 4);
+assert.ok(!html.includes('taihuPat') && !html.includes('太湖'), 'Taihu is not offered');
+assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
+// Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
+assert.equal(count(html, 'data-credential-act="setup"'), 2);
+assert.equal(count(html, 'credential-editor-form'), 2);
+assert.equal(count(html, 'data-credential-act="delete"'), 2);
+for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
+  const row = credentialRowHTML(cred.kind(key), user);
+  assert.ok(row.includes('去配置') && !row.includes('credential-editor-form') && !row.includes('is-configured'), key);
+  // The whole row is a hoverable button that opens the wizard; it has nothing to expand.
+  assert.ok(row.includes('class="credential-row-main credential-ink" role="button" tabindex="0">'), key);
 }
-assert.ok(!code.includes('通常包含 /v1'));
-assert.ok(!code.includes('不含 /v1/messages'));
+assert.ok(credentialRowHTML(cred.kind('gitToken'), user).includes('class="credential-row-main credential-ink" role="button" tabindex="0" aria-expanded="false"'));
+assert.ok(!html.includes('点击任意行配置或编辑') && !html.includes('点击已配置的行展开编辑'));
+assert.ok(credentialRowHTML(cred.kind('gitToken'), user).includes('git-token-verify'), 'Git row keeps 重新校验');
+assert.ok(credentialPanelHTML({...user, codeBuddyApiKeyConfigured: true}).includes('推荐凭证已全部就绪'));
+assert.equal(credentialNextKind({}).key, 'gitToken');
+
+// Each kind saves and deletes only its own fields.
+assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '}), {gitToken: 'ghp_1'});
+assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'devcloud'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'devcloud'});
+assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: ''}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: ''});
+assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: 'sk-1'}), {codexApiKey: 'sk-1'});
+assert.deepEqual(credentialClearPayload(cred.kind('codexApiKey')), {codexApiKeyClear: true, codexBaseUrl: ''});
+assert.deepEqual(credentialClearPayload(cred.kind('claudeCodeApiKey')), {claudeCodeApiKeyClear: true, claudeCodeBaseUrl: ''});
+assert.deepEqual(credentialClearPayload(cred.kind('codeBuddyApiKey')), {codeBuddyApiKeyClear: true});
+assert.deepEqual(credentialClearPayload(cred.kind('gitToken')), {gitTokenClear: true});
+assert.equal(credentialSecretError(cred.kind('gitToken'), 'github_pat_1'), '');
+assert.ok(credentialExtraError(cred.kind('codexApiKey'), 'ftp://proxy'));
+assert.equal(credentialExtraError(cred.kind('codexApiKey'), ''), '');
+
+// Delete swaps the action bar for the confirm bar without sending anything.
+const pane = () => ({classList: {on: new Set(), toggle(name, on) { on ? this.on.add(name) : this.on.delete(name) }}});
+const foot = pane(), confirm = pane();
+const row = {dataset: {credentialRow: 'codexApiKey'}, querySelector: s => s.includes('foot') ? foot : s.includes('confirm') ? confirm : null};
+credentialRowAction('delete', row);
+assert.ok(foot.classList.on.has('is-off') && !confirm.classList.on.has('is-off') && foot.inert === true);
+credentialRowAction('undelete', row);
+assert.ok(!foot.classList.on.has('is-off') && confirm.classList.on.has('is-off'));
+assert.equal(calls.length, 0);
+
+(async () => {
+  await deleteCredential('codexApiKey');
+  assert.deepEqual(calls.at(-1).body, {codexApiKeyClear: true, codexBaseUrl: ''});
+
+  // 添加凭证 starts at step 1 with configured kinds disabled.
+  cred.wizard = {step: 1, kind: null, direct: false, secret: '', extra: '', guide: {}, error: ''};
+  const one = credentialWizardStepOneHTML(user);
+  assert.ok(one.includes('data-wizard-kind="gitToken" disabled') && one.includes('data-wizard-kind="codexApiKey" disabled'));
+  assert.ok(!one.includes('data-wizard-kind="codeBuddyApiKey" disabled'));
+  assert.ok(!one.includes('data-wizard-kind="taihuPat"'));
+  assert.ok(credentialWizardFootHTML().includes('data-wizard-next disabled'));
+  // Going back to step 1 and picking another kind drops what was typed for the previous one.
+  cred.wizard = {step: 1, kind: 'codeBuddyApiKey', direct: false, secret: 'cb_CARRY', extra: '', guide: {0: true}, error: 'x'};
+  selectCredentialWizardKind('claudeCodeApiKey');
+  assert.deepEqual([cred.wizard.kind, cred.wizard.secret, cred.wizard.guide, cred.wizard.error], ['claudeCodeApiKey', '', {}, '']);
+  cred.wizard.secret = 'sk-KEEP';
+  selectCredentialWizardKind('claudeCodeApiKey');
+  assert.equal(cred.wizard.secret, 'sk-KEEP', 're-selecting the same kind keeps the input');
+  assert.ok(!credentialFieldHTML({label: 'k', name: 'secret', value: 'sk-LEAK'}).includes('sk-LEAK'), 'secrets are never written into markup');
+  assert.ok(credentialFieldHTML({label: 'u', name: 'extra', type: 'url', value: 'https://p.example'}).includes('value="https://p.example"'));
+  // 去配置 jumps straight to step 2 with no back button.
+  cred.wizard = {step: 2, kind: 'codeBuddyApiKey', direct: true, secret: '', extra: '', guide: {}, error: ''};
+  assert.ok(credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey')).includes('credential-description'));
+  assert.ok(!credentialWizardFootHTML().includes('data-wizard-back'));
+  assert.ok(credentialWizardFootHTML().includes('data-wizard-next disabled'), 'an empty key blocks next');
+  cred.wizard.direct = false;
+  assert.ok(credentialWizardFootHTML().includes('data-wizard-back'));
+  // Step 3 never echoes the secret.
+  cred.wizard = {step: 3, kind: 'codeBuddyApiKey', direct: true, secret: 'cb_SECRET', extra: '', guide: {}, error: ''};
+  assert.ok(!credentialWizardStepThreeHTML(cred.kind('codeBuddyApiKey')).includes('SECRET'));
+  await advanceCredentialWizard();
+  assert.deepEqual(calls.at(-1), {path: '/api/users/1/credentials', method: 'PUT', body: {codeBuddyApiKey: 'cb_SECRET', codeBuddyInternetEnvironment: ''}});
+  assert.ok(cred.wizard.done && cred.wizard.secret === '');
+  // A failed Git token verification in the wizard saves nothing.
+  const before = calls.filter(c => c.method === 'PUT').length;
+  cred.wizard = {step: 3, kind: 'gitToken', direct: true, secret: 'bad', extra: '', guide: {}, error: ''};
+  await advanceCredentialWizard();
+  assert.equal(calls.filter(c => c.method === 'PUT').length, before);
+  assert.ok(cred.wizard.error.includes('令牌无效或已过期') && cred.wizard.error.includes('未保存'));
+  assert.ok(!cred.wizard.done);
+  assert.ok(!code.includes('通常包含 /v1'));
+  assert.ok(!code.includes('不含 /v1/messages'));
+})().catch(error => { console.error(error); process.exit(1); });
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
-		t.Fatalf("credential clear buttons failed: %v\n%s", err, out)
+		t.Fatalf("credential list and wizard failed: %v\n%s", err, out)
+	}
+}
+
+func TestGotoCredentialBranches(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; skipping credential navigation check")
+	}
+	script := `
+const assert = require('node:assert/strict');
+const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+let view = 'settings', now = 0, settingsRouteTransition = null;
+const switchView = () => {}, activeViewName = () => view;
+const performance = {now: () => (now += 100)};
+const requestAnimationFrame = fn => fn();
+let configured = {gitToken: true}, visible = true;
+const panel = {
+  getClientRects: () => visible ? [{}] : [],
+  querySelector(selector) {
+    const name = /data-credential-row="(\w+)"/.exec(selector)[1];
+    return {classList: {contains: cls => cls === 'is-configured' && !!configured[name]}};
+  }
+};
+const document = {querySelector: selector => selector === '#personalSettingsContent #credentialPanel' ? panel : null};
+const opened = [], revealed = [];
+const openCredentialWizard = key => opened.push(key), revealCredentialRow = key => revealed.push(key);
+eval(code.slice(code.indexOf('let credentialFocusRequest=0;'), code.indexOf('const CREDENTIAL_RULES=')));
+gotoCredential('gitToken');
+assert.deepEqual(revealed, ['gitToken'], 'configured credentials expand in place');
+gotoCredential('codeBuddyApiKey');
+assert.deepEqual(opened, ['codeBuddyApiKey'], 'missing credentials open the wizard on step 2');
+visible = false;
+gotoCredential('codexApiKey');
+view = 'issues'; visible = true;
+gotoCredential('codexApiKey');
+assert.deepEqual(opened, ['codeBuddyApiKey'], 'hidden panel or a different route does nothing');
+assert.deepEqual(revealed, ['gitToken']);
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gotoCredential branches failed: %v\n%s", err, out)
+	}
+}
+
+func TestCredentialRowActivation(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; skipping credential row activation check")
+	}
+	script := `
+const assert = require('node:assert/strict');
+const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+const opened = [], toggled = [], acted = [];
+const openCredentialWizard = key => opened.push(key), toggleCredentialRow = key => toggled.push(key);
+const credentialRowAction = act => acted.push(act);
+eval(code.slice(code.indexOf('function activateCredentialRow('), code.indexOf('// gotoCredential lands here')));
+const panel = {};
+bindCredentialPanel(panel);
+const el = matches => ({closest: s => matches[s] ?? null});
+const rowOf = (key, configured) => ({dataset: {credentialRow: key}, classList: {contains: c => c === 'is-configured' && configured}});
+const main = row => {
+  const node = {closest: s => s === '[data-credential-row]' ? row : s === '.credential-row-main' || s === '.credential-row-main[role="button"]' ? node : null};
+  return node;
+};
+const click = target => panel.onclick({target, stopPropagation() {}});
+const key = (target, k) => { let prevented = false; panel.onkeydown({target, key: k, preventDefault() { prevented = true }}); return prevented; };
+
+const empty = rowOf('codeBuddyApiKey', false), done = rowOf('gitToken', true);
+click(main(empty));
+assert.deepEqual(opened, ['codeBuddyApiKey'], 'clicking an unconfigured row opens the wizard');
+click(main(done));
+assert.deepEqual(toggled, ['gitToken'], 'clicking a configured row toggles its editor');
+const emptyMain = main(empty);
+assert.ok(key(emptyMain, 'Enter') && key(emptyMain, ' '));
+assert.deepEqual(opened, ['codeBuddyApiKey', 'codeBuddyApiKey', 'codeBuddyApiKey'], 'Enter and Space open the wizard too');
+key(main(done), 'Enter');
+assert.deepEqual(toggled, ['gitToken', 'gitToken']);
+// 去配置 runs its own action once and never falls through to the row.
+const setup = {disabled: false, dataset: {credentialAct: 'setup'}};
+click(el({'[data-credential-row]': empty, '[data-credential-act]': setup, '.credential-row-main': {}}));
+assert.deepEqual(acted, ['setup']);
+assert.equal(opened.length, 3);
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("credential row activation failed: %v\n%s", err, out)
 	}
 }
 
@@ -1002,33 +1197,22 @@ const http = parseGongfengRepoURL('http://git.example.com/example/agent-flow.git
 assert.equal(http.project, 'example/agent-flow');
 assert.equal(http.name, 'agent-flow');
 assert.equal(ssh.name, 'agent-flow');
-assert.ok(code.includes("integrateBranch:''"));
-assert.ok(code.includes('集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突'));
+const html = require('node:fs').readFileSync('index.html', 'utf8');
+assert.ok(html.includes('集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突'));
+assert.ok(/<input[^>]*name="integrateBranch"[^>]*>/.test(html));
+assert.ok(!/<input[^>]*name="integrateBranch"[^>]*value="agentflow\/integration"/.test(html));
 assert.ok(!code.includes("integrateBranch:'agentflow/integration'"));
 assert.ok(code.includes('项目名称'));
-assert.ok(code.includes('data-edit-repo'));
-assert.ok(code.includes('repo-cell-link'));
+assert.ok(code.includes('data-repo-edit'));
+assert.ok(code.includes('data-repo-delete'));
 assert.ok(code.includes('target="_blank"'));
-assert.ok(code.includes('repoRowWebHref'));
 assert.ok(!code.includes('data-edit-col'));
 assert.ok(!code.includes('data-save-col'));
-assert.ok(code.includes('repoAdminRowHTML'));
-assert.ok(code.includes('savedRepoOptions=repoRows.filter(r=>r.id)'));
 assert.ok(!code.includes('（待保存）'));
-assert.ok(code.includes("if(!row.querySelector('[data-r]'))"));
-eval(code.slice(code.indexOf('function repoDisplayURL(r){'), code.indexOf('function repoPayloadFromRow(')));
-var state = {data:{repositories:[{id:'skillhub',name:'skillhub',gongfengProjectId:'example/team-project',webUrl:'https://git.example.com/example/team-project',cloneUrl:'git@git.example.com:example/team-project.git',defaultBranch:'master',integrateBranch:'agentflow/integration'}]}};
-const displayRow = {
-  dataset:{repoRow:'0',repoId:'skillhub'},
-  querySelector(sel){return sel==='[data-r]'||sel==='[data-r="repoUrl"]'?null:null},
-  querySelectorAll(){return []}
-};
-const draft = {};
-captureRepoRows({querySelectorAll(sel){return sel==='[data-repo-row]'?[displayRow]:[]}}, draft);
-assert.equal(draft.repoRows[0].id, 'skillhub');
-assert.equal(draft.repoRows[0].gongfengProjectId, 'example/team-project');
-assert.equal(draft.repoRows[0].webUrl, 'https://git.example.com/example/team-project');
-assert.ok(String(draft.repoRows[0].repoUrl||'').includes('team-project'));
+assert.ok(!code.includes('function repoAdminRowHTML('));
+assert.ok(!code.includes('function captureRepoRows('));
+assert.ok(!code.includes('function persistRepoRow('));
+assert.ok(code.includes("integrateBranch:f.elements.integrateBranch.value.trim()"));
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
@@ -1042,16 +1226,6 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{`id="chatCreateDirect"`, `直接创建`, `id="chatCreateLocal"`, `平台需求`, `id="chatSend"`, `id="reqWorkflow"`, `SOP 流程`} {
-		if !strings.Contains(page, want) {
-			t.Fatalf("requirement composer UI is missing %q", want)
-		}
-	}
-	sendIdx := strings.Index(page, `id="chatSend"`)
-	directIdx := strings.Index(page, `id="chatCreateDirect"`)
-	if sendIdx < 0 || directIdx < 0 || sendIdx > directIdx {
-		t.Fatal("直接创建 must sit to the right of 开始分析")
-	}
 	if !strings.Contains(page, `nav-label">项目配置`) {
 		t.Fatal("sidebar must label the projects page 项目配置")
 	}
@@ -1061,31 +1235,37 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	if !strings.Contains(page, `data-add="sop"`) {
 		t.Fatal("flow designer must offer SOP as a node type")
 	}
-	if !strings.Contains(page, `class="req-composer-actions"`) {
-		t.Fatal("composer actions must be grouped so 直接创建 cannot wrap under the hint")
-	}
-	if strings.Contains(page, `id="chatCreateGongfeng"`) {
-		t.Fatal("requirement composer must not offer 工蜂 as a create destination")
+	if !strings.Contains(page, `href="/app/requirement-wizard.css`) {
+		t.Fatal("index.html must load the requirement wizard stylesheet")
 	}
 	reqStart := strings.Index(page, `id="requirementModal"`)
 	reqEnd := strings.Index(page, `id="importTAPDModal"`)
-	if reqStart >= 0 && reqEnd > reqStart {
-		composer := page[reqStart:reqEnd]
-		if strings.Contains(composer, `需求套餐`) {
-			t.Fatal("create requirement modal must not show 需求套餐")
-		}
-		if !strings.Contains(composer, `id="reqWorkflow"`) || !strings.Contains(composer, `SOP 流程`) {
-			t.Fatal("create requirement must show a visible SOP 流程 select")
-		}
-		if strings.Contains(composer, `id="reqSopRow"`) || strings.Contains(composer, `id="reqPlaybooks"`) || strings.Contains(composer, `hidden></select>`) {
-			t.Fatal("create requirement must not hide SOP behind playbook chips")
+	if reqStart < 0 || reqEnd < reqStart {
+		t.Fatal("requirement modal must sit before the TAPD import modal")
+	}
+	composer := page[reqStart:reqEnd]
+	for _, want := range []string{
+		`id="reqSteps"`, `data-req-step="1"`, `data-req-step="2"`, `data-req-step="3"`, `>描述<`, `>澄清<`, `>确认<`, `id="reqStepSkipTag"`,
+		`id="reqStepDescribe"`, `id="reqStepClarify"`, `id="reqStepConfirm"`, `id="reqFooter"`,
+		`id="chatInput"`, `placeholder="要做什么？例如：`, `id="reqRepoChip"`, `id="reqRepoPopover"`, `id="reqRepository"`, `id="reqBaseBranch"`, `id="reqClarifyModelPicker"`,
+		`id="reqThinking"`, `id="reqTraceToggle"`, `已用 0 个工具`, `id="reqClarifyPanel"`, `id="reqAnswerHistory"`,
+		`id="reqTitle"`, `id="reqSummary"`, `id="reqConfirmRepoSlot"`, `id="reqWorkflow"`, `SOP 流程`, `id="reqTarget"`, `data-req-target="local"`, `data-req-target="tapd"`, `id="reqOutcome"`,
+		`id="reqRepoChangedAlert"`, `id="reqReclarify"`,
+		`id="reqBack"`, `id="chatStop"`, `id="reqSkip"`, `跳过澄清`, `id="reqNext"`, `开始澄清`, `id="reqGoCreate"`, `直接去创建`, `id="reqCreate"`, `先写一句需求`,
+	} {
+		if !strings.Contains(composer, want) {
+			t.Fatalf("requirement wizard UI is missing %q", want)
 		}
 	}
-	if !strings.Contains(page, `问清再建单`) {
-		t.Fatal("placeholder must say 问清再建单")
+	for _, gone := range []string{`id="chatSend"`, `id="chatCreateDirect"`, `id="chatCreateLocal"`, `id="chatCreateTAPD"`, `id="reqDestinations"`, `id="reqSetupRow"`, `id="reqContextLine"`, `id="chatCreateGongfeng"`, `需求套餐`, `id="reqSopRow"`, `id="reqPlaybooks"`, `问清再建单`, `再建模`, `已全部选择`} {
+		if strings.Contains(composer, gone) {
+			t.Fatalf("requirement wizard must not keep %q", gone)
+		}
 	}
-	if strings.Contains(page, "再建模") {
-		t.Fatal("placeholder must not say 再建模")
+	skipIdx := strings.Index(composer, `id="reqSkip"`)
+	nextIdx := strings.Index(composer, `id="reqNext"`)
+	if skipIdx < 0 || nextIdx < 0 || skipIdx > nextIdx {
+		t.Fatal("跳过澄清 must sit to the left of the primary 开始澄清")
 	}
 	js, err := readAppBundle()
 	if err != nil {
@@ -1104,10 +1284,36 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	if !strings.Contains(code, "function runRetryNeedsContext(run)") {
 		t.Fatal("script retry must skip the context prompt")
 	}
-	for _, want := range []string{`state.reqCreateMode='direct'`, `reqCreateDirect`, `不会立刻启动`, `persistRequirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`, `resumeChatClarify`, `jobId:chatClarifyJobId`, `正在接上分析`, `从空白开始`, `stripClarifyReason`, `renderClarifyPanel(JSON.parse(lastAssistant.content))`, `assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `workflowId:selectedReqWorkflowId()`, `composerProgressHTML`, `继续分析`, `先建单，详情里继续澄清`, `跳过分析直接建单`, `按当前结论建单`, `分析还没完成，仍要建单`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`} {
+	for _, want := range []string{
+		`function goReqStep(`, `function renderReqSteps(`, `function renderReqFooter(`, `function renderReqConfirm(`, `function renderReqRepoChip(`, `function pickReqOption(`, `function submitReqAnswers(`, `function reclarifyRequirement(`,
+		`reqCreateDirect`, `reqCreateAccepted`, `不会立刻启动`, `persistRequirementComposer`, `agentflow.requirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`,
+		`resumeChatClarify`, `jobId:chatClarifyJobId`, `正在接上分析`, `从空白开始`, `stripClarifyReason`, `renderClarifyPanel(JSON.parse(lastAssistant.content))`,
+		`assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `workflowId:selectedReqWorkflowId()`, `composerProgressHTML`,
+		`已问清，可以创建`, `查看完整度详情`, `至少回答一题，或点「直接去创建」`, `提交回答`, `跳过此题`, `上一题`, `你的回答`, `全部用推荐答案`, `下一步：确认创建`, `澄清基于原仓库`, `重新澄清`, `· 已跳过`,
+		`questionIndex:`, `answers:`, `repoSnapshot:`, `target:`, `step:`,
+	} {
 		if !strings.Contains(code, want) {
-			t.Fatalf("direct-create dest picker is missing %q", want)
+			t.Fatalf("requirement wizard behavior is missing %q", want)
 		}
+	}
+	for _, gone := range []string{`invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`} {
+		if strings.Contains(code, gone) {
+			t.Fatalf("requirement wizard must not keep %q", gone)
+		}
+	}
+	createStart := strings.Index(code, "async function createIssueFromChat(")
+	if createStart < 0 {
+		t.Fatal("createIssueFromChat must exist")
+	}
+	createEnd := strings.Index(code[createStart+1:], "\nasync function ")
+	if next := strings.Index(code[createStart+1:], "\nfunction "); next >= 0 && (createEnd < 0 || next < createEnd) {
+		createEnd = next
+	}
+	if createEnd < 0 {
+		t.Fatal("createIssueFromChat must be followed by another function")
+	}
+	if strings.Contains(code[createStart:createStart+1+createEnd], "afConfirm") {
+		t.Fatal("creating a requirement must be one click, without afConfirm")
 	}
 	if strings.Contains(code, `renderClarifyPanel(JSON.parse(lastAssistant.content), reconnect?'':interruptHint)`) {
 		t.Fatal("restored analysis must not treat the interrupt hint as a render error")
@@ -1174,7 +1380,7 @@ func TestTAPDImportUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{`/api/issues/import-tapd`, `openImportTAPDModal`, `fillImportTAPDWorkflow`, `fillImportTAPDRepository`, `selectedImportTAPDRepositoryIds`, `renderImportTAPDRepositoryPicker`, `repositoryIds`, `请至少选择一个代码仓库`, `importTAPDStory`, `requirementNeedsClarification`, `clarificationNeedsConfirm`, `data-dtab="clarify"`, `确认结论`, `clarification?.gated`, `autoStartClarify`, `issueClarifyJobs`, `attachIssueClarifyStream`, `关闭网页也不会中断`, `clarifyOptionLabel`, `clarifyQuestionOptions`, `createIssueDirect`, `projectTAPDReady`, `chatCreateDirect`, `chatCreateLocal`, `pushIssueToTAPDFromDetail`, `dashImportTAPD`, `run-id-copy`, `data-export-logs`, `从这里重跑`, `重新触发`, `data-retrigger-issue`, `data-rerun-from-here`, `canRetriggerIssue`, `openRerunFromNode`, `executionContext?.issueId`, `run?.status==='succeeded'`, `/api/issues/${encodeURIComponent(issueId)}/requirement`, `inferSOPLane`, `req-lane-card`, `issueLaneDots`, `.filter(l=>!l.orphan)`, `lanes.length<2`, `collapseSingleSOPLane`, `issueSOPLabel`, `actionWorkflow`, `data-workflow`, `workflowSOPLane`, `需求开发`, `saveIssueSOPS`, `/sops`, `effectiveIssueSOPBindings`, `projectSOPBindings`, `fillReqWorkflow`, `plannedSOPNodes`, `sopWorkflowId`, `sopWorkflowChoices`, `syncReqComposerLayout`} {
+	for _, want := range []string{`/api/issues/import-tapd`, `openImportTAPDModal`, `fillImportTAPDWorkflow`, `fillImportTAPDRepository`, `selectedImportTAPDRepositoryIds`, `renderImportTAPDRepositoryPicker`, `repositoryIds`, `请至少选择一个代码仓库`, `importTAPDStory`, `requirementNeedsClarification`, `clarificationNeedsConfirm`, `data-dtab="clarify"`, `确认结论`, `clarification?.gated`, `autoStartClarify`, `issueClarifyJobs`, `attachIssueClarifyStream`, `关闭网页也不会中断`, `clarifyOptionLabel`, `clarifyQuestionOptions`, `createIssueFromChat`, `projectTAPDReady`, `reqCreate`, `setReqTarget`, `pushIssueToTAPDFromDetail`, `dashImportTAPD`, `run-id-copy`, `data-export-logs`, `从这里重跑`, `重新触发`, `data-retrigger-issue`, `data-rerun-from-here`, `canRetriggerIssue`, `openRerunFromNode`, `executionContext?.issueId`, `run?.status==='succeeded'`, `/api/issues/${encodeURIComponent(issueId)}/requirement`, `inferSOPLane`, `req-lane-card`, `issueLaneDots`, `.filter(l=>!l.orphan)`, `lanes.length<2`, `collapseSingleSOPLane`, `issueSOPLabel`, `actionWorkflow`, `data-workflow`, `workflowSOPLane`, `需求开发`, `saveIssueSOPS`, `/sops`, `effectiveIssueSOPBindings`, `projectSOPBindings`, `fillReqWorkflow`, `plannedSOPNodes`, `sopWorkflowId`, `sopWorkflowChoices`, `renderReqConfirm`} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("app.js is missing %q", want)
 		}
@@ -1247,13 +1453,36 @@ func TestPlaybooksPageRemoved(t *testing.T) {
 	}
 }
 
+func TestObsDeliveryBadgeShowsWithoutFullScan(t *testing.T) {
+	src, err := os.ReadFile("app/observability.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := string(src)
+	start := strings.Index(code, "const badge=$('#obsDeliveryCount');")
+	if start < 0 {
+		t.Fatal("delivery badge render missing")
+	}
+	end := strings.Index(code[start:], "\n  const reopen=")
+	if end < 0 {
+		t.Fatal("delivery badge render block not found")
+	}
+	block := code[start : start+end]
+	if strings.Contains(block, "obsAnalyticsFull") {
+		t.Fatalf("delivery badge must not wait for the full delivery scan: %s", block)
+	}
+	if !strings.Contains(block, "state.analytics?.delivery?.issues") || !strings.Contains(block, "badge.hidden=!n") {
+		t.Fatalf("delivery badge should read overview delivery count and hide at zero: %s", block)
+	}
+}
+
 func TestUsageAnalysisUI(t *testing.T) {
 	html, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{`data-obs-tab="overview">用量`, `data-obs-tab="delivery">交付`, `data-obs-tab="skillhub"`, `id="exportObsReport"`} {
+	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `data-obs-tab="skillhub"`, `id="exportObsReport"`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("usage analysis UI missing %q", want)
 		}
@@ -1629,7 +1858,10 @@ const mockEl = () => ({
   querySelectorAll: () => []
 });
 global.window = global;
-global.location = { origin: 'http://localhost' };
+global.addEventListener = () => {};
+global.removeEventListener = () => {};
+global.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+global.location = { origin: 'http://localhost', hash: '', href: 'http://localhost/', search: '' };
 global.document = {
   hidden: false,
   addEventListener: () => {},
@@ -1641,7 +1873,7 @@ global.document = {
 };
 global.$ = () => mockEl();
 global.$$ = () => [];
-global.localStorage = { getItem: () => null, setItem: () => {} };
+global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 global.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
 eval(code + '; global.state = state; global.renderIssues = renderIssues; global.issueMatchesStatusFilter = issueMatchesStatusFilter; global.issueFinished = issueFinished; global.issueRunHealth = issueRunHealth; global.issueStatusBucket = issueStatusBucket; global.deliveryLockedLabel = deliveryLockedLabel; global.reopenDeliveredButton = reopenDeliveredButton; global.canRetriggerIssue = canRetriggerIssue; global.issueOutcome = issueOutcome; global.issueCurrentStage = issueCurrentStage; global.issueListProgress = issueListProgress;');
 state.data = { issues: [], projects: [], repositories: [], workflows: [], runs: [], tasks: [] };
@@ -1812,6 +2044,7 @@ global.window = {
   innerWidth: 1200,
   innerHeight: 800
 };
+global.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 global.document = {
   hidden: false,
   addEventListener: () => {},
@@ -1823,7 +2056,7 @@ global.document = {
 };
 global.$ = () => mockEl();
 global.$$ = () => [];
-global.localStorage = { getItem: () => null, setItem: () => {} };
+global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 eval(code + '; global.issueRow = issueRow; global.clarifyPane = clarifyPane; global.state = state;');
 
 // 1. Issue with pending confirm
@@ -1942,6 +2175,74 @@ func TestGenericTemplateEditorUsesBundledRoles(t *testing.T) {
 	}
 	if !strings.Contains(string(htmlBytes), `id="platformAdminPanel"`) {
 		t.Fatal("index.html is missing the generic-template platform admin panel")
+	}
+}
+
+func TestAgentPageListAndTabbedModal(t *testing.T) {
+	appBytes, err := readAppBundle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := string(appBytes)
+	for _, want := range []string{
+		"function agentConfigSummary(",
+		"function openAgentRowMenu(",
+		"function agentSlugFromName(",
+		"function setAgentTab(",
+		"function setAgentCreateStep(",
+		"function syncTabIndicator(",
+		"function persistAgent(",
+		"function openAgentWizard(agent=null,initialStep=1)",
+		"state.genericTemplateAgents",
+		"openAgentWizard(agent,2)",
+	} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("app bundle is missing agent page wiring %q", want)
+		}
+	}
+	if strings.Contains(app, "agent-row-avatar") {
+		t.Fatal("agent list rows should not render a text avatar")
+	}
+	htmlBytes, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBytes)
+	for _, want := range []string{
+		`id="agentList" class="agent-list-table"`,
+		`class="agent-tabs" data-scope-for="agent"`,
+		`data-scope-count="agent-project"`,
+		`data-wizard-steps="agent-create"`,
+		`data-wizard-steps="agent"`,
+		`data-agent-tab="task"`,
+		`data-agent-tab="gov"`,
+		`id="agentGovCount"`,
+		`id="agentAssetsCount"`,
+		`id="agentIdPreview"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("index.html is missing agent page markup %q", want)
+		}
+	}
+	cssBytes, err := os.ReadFile("product-v4.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssBytes)
+	start := strings.Index(css, "#agentsView .agent-tabs")
+	if start < 0 {
+		t.Fatal("product-v4.css is missing the agent tab strip styles")
+	}
+	for _, want := range []string{"#agentsView .agent-row", "#agentModal .agent-tab-ind", ":focus-visible"} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("product-v4.css is missing agent page style %q", want)
+		}
+	}
+	if strings.Contains(css, ".agent-row-avatar") {
+		t.Fatal("product-v4.css still styles the removed agent row avatar")
+	}
+	if !strings.Contains(css, "#agentsView .agent-row-model.none{color:var(--hu-faint)}") {
+		t.Fatal("unselected agent model should use --hu-faint like other empty states")
 	}
 }
 
@@ -2110,13 +2411,38 @@ func TestResearchEfficiencyDashboardUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{"renderMetricsDashboard", "refreshMetrics", "metricsDisplayModel", "metricsTrendSVG", "metricsPhaseTrendSVG", "metricsRequirementTable", "metricsDonut", "metricsDemoEnabled", "metricsDemoSnapshot", "演示数据", "/api/analytics/skillhub", "当前项目暂无完整需求闭环", "需求交付数", "平均需求耗时", "总耗时", "每条需求耗时明细", "平均澄清耗时", "平均研发耗时", "平均测试耗时", "测试环境部署耗时", "AI 需求覆盖率", "Run 成功率"} {
+	for _, want := range []string{"renderMetricsDashboard", "refreshMetrics", "metricsDisplayModel", "metricsTrendSVG", "metricsPhaseTrendSVG", "metricsRequirementTable", "metricsDonut", "metricsDemoEnabled", "metricsDemoSnapshot", "演示数据", "/api/analytics/skillhub", "当前项目暂无完整需求闭环", "交付数（含 Issue）", "平均已采集耗时", "已采集耗时", "每条需求 / Issue 耗时明细", "平均澄清耗时", "平均研发耗时", "平均测试耗时", "测试环境部署耗时", "AI 工作项覆盖率", "Run 成功率"} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("研发效能看板脚本缺少 %q", want)
 		}
 	}
 	if strings.Contains(code, "第一阶段指标口径") {
 		t.Fatal("研发效能看板不应展示指标口径表")
+	}
+	for _, want := range []string{`id="metricsExpand"`, `class="obs-seg metrics-period"`, "口径说明"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("研发效能页头缺少 %q", want)
+		}
+	}
+	start := strings.Index(code, "function renderMetricsDashboard(")
+	end := strings.Index(code, "let metricsRequestSeq=")
+	if start < 0 || end <= start {
+		t.Fatal("找不到 renderMetricsDashboard")
+	}
+	render := code[start:end]
+	for _, want := range []string{"metricsReleaseCharts(body)", "obsMountCharts(body)", "obsPhaseStackOption", "metricsInsights(m,win)", "obsKpiGroup("} {
+		if !strings.Contains(render, want) {
+			t.Fatalf("renderMetricsDashboard 缺少 %q", want)
+		}
+	}
+	keys := regexp.MustCompile(`(?:obsChartSlot|obsCard|metricsTrendCard|metricsDonutBlock)\('([^']+)'`).FindAllStringSubmatch(render, -1)
+	if len(keys) < 8 {
+		t.Fatalf("研发效能图表卡片数量异常: %d", len(keys))
+	}
+	for _, key := range keys {
+		if !strings.HasPrefix(key[1], "metrics-") {
+			t.Fatalf("研发效能图表键 %q 需要 metrics- 前缀，避免与统计页冲突", key[1])
+		}
 	}
 }
 
@@ -2135,12 +2461,14 @@ func TestClarifyOptionToggleLogic(t *testing.T) {
 		t.Fatal("issue clarify option does not conditionally add selected")
 	}
 
-	// Verify req clarify panel option unselect on second click
-	if !strings.Contains(source, "const wasSelected=btn.classList.contains('selected');") {
-		t.Fatal("req clarify panel option does not track wasSelected to toggle off on repeat click")
-	}
-	if !strings.Contains(source, "if(!wasSelected)btn.classList.add('selected');") {
-		t.Fatal("req clarify panel option does not conditionally add selected")
+	// Verify the requirement wizard question card toggles an option off on repeat click
+	for _, want := range []string{
+		"if(q.multiSelect)selected=selected.includes(option)?selected.filter(x=>x!==option):[...selected,option];",
+		"else selected=selected.includes(option)?[]:[option];",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("req question option does not toggle off on repeat click: missing %q", want)
+		}
 	}
 
 	// Verify CSS distinguishes hover from selected so cancellation is visually obvious
@@ -2213,93 +2541,6 @@ func TestPlatformAdminEnhancedUI(t *testing.T) {
 	}
 	if !strings.Contains(string(v4css), ".platform-admin-panel") || !strings.Contains(string(v4css), ".platform-admin-layout") {
 		t.Fatal("product-v4.css must include platform-admin-panel and platform-admin-layout in full-width adaptive rules")
-	}
-}
-
-func TestCollabSurfacesParse(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed; skipping collab parse check")
-	}
-	for _, name := range []string{"collaboration.js", "assistant.js", "orchestrate.js"} {
-		out, err := exec.Command(node, "--check", name).CombinedOutput()
-		if err != nil {
-			t.Fatalf("%s failed to parse: %v\n%s", name, err, out)
-		}
-	}
-	app, err := readAppBundle()
-	if err != nil {
-		t.Fatal(err)
-	}
-	html, err := os.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(html), `id="roomsView"`) || strings.Contains(string(html), `data-view="rooms"`) || strings.Contains(string(html), `/rooms.js`) || strings.Contains(string(html), `id="roomComposer"`) || strings.Contains(string(html), `class="rooms-chat-pane"`) {
-		t.Fatal("obsolete group chat is still exposed")
-	}
-	orch, err := os.ReadFile("orchestrate.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`collaboration:'AI 工作台'`} {
-		if !strings.Contains(string(app), want) {
-			t.Fatalf("app.js missing %q", want)
-		}
-	}
-	for _, want := range []string{"collaborationView", "aiOrchestrator", "playWorkflowOnCanvas"} {
-		if !strings.Contains(string(html), want) && !strings.Contains(string(orch), want) {
-			t.Fatalf("collab UI missing %q", want)
-		}
-	}
-	if !strings.Contains(string(orch), "ai-just-built") || !strings.Contains(string(orch), "ai-just-wired") {
-		t.Fatal("canvas playback does not mark nodes and edges as they are built")
-	}
-	script := `
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const code = fs.readFileSync('orchestrate.js','utf8');
-const start = code.indexOf('function layoutAIGraph');
-const end = code.indexOf('function normalizeAIWorkflow');
-eval(code.slice(start, end));
-const nodes = [{id:'a',name:'澄清'},{id:'b',name:'实现'},{id:'c',name:'评审'}];
-const edges = [{source:'a',target:'b'},{source:'b',target:'c'}];
-layoutAIGraph(nodes, edges);
-assert.ok(nodes[0].position.x < nodes[1].position.x);
-assert.ok(nodes[1].position.x < nodes[2].position.x);
-assert.equal(nodes[0].position.y, nodes[1].position.y);
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("layout check failed: %v\n%s", err, out)
-	}
-	editScript := `
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const code = fs.readFileSync('orchestrate.js','utf8');
-const cut = (from, to) => code.slice(code.indexOf(from), code.indexOf(to));
-function uid(prefix){ return prefix + '-new'; }
-eval(cut('function normalizeAINode', 'function aiDecodePartialString'));
-eval(cut('function aiClone', 'function aiOrchestratePrompt'));
-assert.equal(aiWantsFreshWorkflow('清空当前画布，重新搭一条'), true);
-assert.equal(aiWantsFreshWorkflow('补上构建静态站点，其它不要动'), false);
-assert.equal(aiWantsPreviewRemoved('去掉构建静态站点'), true);
-assert.equal(aiWantsPreviewRemoved('怎么没有构建静态站点节点'), false);
-assert.equal(aiWantsPreviewRemoved('补上构建静态站点，其它不要动'), false);
-const base = {id:'sop-1', name:'产品交付', nodes:[
-  {id:'design', name:'方案', type:'agent', script:'keep-me'},
-  {id:'af-preview-build', name:'构建静态站点', type:'agent', agentId:'af-preview-builder'}
-], edges:[{id:'e1', source:'design', target:'af-preview-build', when:'success'}], preview:{enabled:true}};
-const merged = mergeAIEdit(base, {name:'产品交付', nodes:[{id:'design', name:'方案设计', type:'agent'}], edges:[]}, '把方案改个名字', []);
-assert.equal(merged.nodes.find(n => n.id==='design').name, '方案设计');
-assert.equal(merged.nodes.find(n => n.id==='design').script, 'keep-me');
-assert.ok(merged.nodes.some(n => n.id==='af-preview-build'));
-assert.ok(merged.edges.some(e => e.target==='af-preview-build'));
-assert.equal(merged.preview.enabled, true);
-`
-	out, err = exec.Command(node, "-e", editScript).CombinedOutput()
-	if err != nil {
-		t.Fatalf("orchestrator edit check failed: %v\n%s", err, out)
 	}
 }
 
@@ -2407,6 +2648,108 @@ assert.match(bare, /门禁未通过。请看产物和日志后决定。/);
 	}
 }
 
+func TestApprovalCardLayout(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	script := `
+const assert = require('node:assert/strict');
+const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+const escapeHTML = value => String(value??'').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const isScriptWorkflowNode = node => node?.type==='script'||node?.type==='command';
+const relativeTime = () => '8 小时';
+const runs = {};
+const cachedRun = id => runs[id]||null;
+const state = {data:{tasks:[{runId:'run-1',issueId:'iss-1'}], issues:[{id:'iss-1',title:'移除多余分组标题',projectId:'p1',number:31}], projects:[{id:'p1',key:'AF'}], workflows:[]}};
+eval(code.slice(code.indexOf('function huiIcon('), code.indexOf('// stage.key alone is not enough')));
+eval(code.slice(code.indexOf('function waitingNodeId('), code.indexOf('function failedNodeId(')));
+eval(code.slice(code.indexOf('function restoredSOPResumeNode('), code.indexOf('function approvalCalloutHTML(')));
+eval(code.slice(code.indexOf('function approvalStatusBadgeHTML('), code.indexOf('function closeApprovalMoreMenus(')));
+const between = (html, from, to) => html.slice(html.indexOf(from), html.indexOf(to, html.indexOf(from)));
+const node = {id:'gate', name:'confirm-brief', type:'agent'};
+const waiting = {id:'run-1', status:'waiting', workflowSnapshot:{nodes:[node]}, nodes:{gate:{status:'waiting_approval'}}};
+runs['run-1'] = waiting;
+const html = approvalCardHTML(waiting);
+const head = between(html, 'class="ap-card-head"', 'class="ap-body"');
+const side = between(html, 'class="ap-side"', 'class="ap-body"');
+const body = html.slice(html.indexOf('class="ap-body"'));
+assert.match(side, /data-open-issue="iss-1"/);
+assert.match(side, /class="ap-more-menu" role="menu" hidden/);
+assert.match(between(side, 'class="ap-more-menu"', '</div>'), /data-cancel-run="run-1"/);
+assert.match(side, /data-ap-more[^>]*aria-haspopup="menu" aria-expanded="false"/);
+assert.ok(!body.includes('data-cancel-run'), 'cancel lives in the ⋯ menu, not the body');
+assert.match(body, /data-approve="run-1"/);
+assert.ok(!head.includes('data-approve'), 'decision buttons stay in the body');
+assert.match(head, /class="hui-badge" data-tone="warn"/);
+assert.match(head, /data-icon="pending-review"/);
+assert.match(head, /<code class="ap-key">AF-31<\/code>/);
+assert.match(head, /卡在「confirm-brief」/);
+const paused = {id:'run-2', status:'waiting', pauseRequested:true, workflowSnapshot:{nodes:[node]}, nodes:{gate:{status:'waiting_approval', activity:'用户暂停'}}};
+runs['run-2'] = paused;
+const pausedHTML = approvalCardHTML(paused);
+assert.match(pausedHTML, /class="hui-badge" data-tone="neutral"[^>]*><svg[^>]*data-icon="pause"/);
+assert.match(pausedHTML, /已暂停/);
+assert.match(pausedHTML, /data-open-logs="run-2"/);
+assert.match(pausedHTML, /class="ap-body"><div class="approval-callout paused-run-callout"/);
+const queued = {id:'run-3', status:'queued', workflowSnapshot:{nodes:[node]}, nodes:{}};
+runs['run-3'] = queued;
+const queuedHTML = approvalCardHTML(queued);
+assert.ok(!queuedHTML.includes('ap-body'), 'queued runs have no decision body');
+assert.match(queuedHTML, /data-cancel-run="run-3"/);
+state.approvalItems=[waiting,{id:'run-4',status:'waiting',workflowSnapshot:{nodes:[node]},nodes:{gate:{status:'waiting_approval'}}}];
+assert.match(approvalCardHTML(waiting), /data-ap-select="run-1"/);
+assert.ok(!pausedHTML.includes('data-ap-select'), 'paused runs are not batch-selectable');
+const batchBar=approvalBatchBarHTML(state.approvalItems);
+assert.match(batchBar, /data-ap-select-all/);
+assert.match(batchBar, /批量通过/);
+assert.match(batchBar, /data-ap-batch-approve disabled/);
+approvalSelection().add(approvalKey('run-1','gate'));
+const selectedBar=approvalBatchBarHTML(state.approvalItems);
+assert.match(selectedBar, /已选 1 条/);
+assert.match(selectedBar, /data-ap-batch-approve>/);
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("approval card layout failed: %v\n%s", err, out)
+	}
+}
+
+func TestApprovalsStylesheetStaysScopedToHarnessTokens(t *testing.T) {
+	html, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := regexp.MustCompile(`<link rel="stylesheet" href="([^"?]+)`).FindAllStringSubmatch(string(html), -1)
+	if len(links) == 0 || links[len(links)-1][1] != "/app/approvals-harness.css" {
+		t.Fatalf("/app/approvals-harness.css must load after every other stylesheet, got %v", links)
+	}
+	css, err := os.ReadFile("app/approvals-harness.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(css), "\n") {
+		selector := strings.TrimSpace(line)
+		if !strings.HasSuffix(selector, "{") || strings.HasPrefix(selector, "@") || strings.HasPrefix(selector, "from") || strings.HasPrefix(selector, "to") || strings.Contains(selector, "%") {
+			continue
+		}
+		for _, part := range splitSelectorList(strings.TrimSuffix(selector, "{")) {
+			if part != "" && !strings.HasPrefix(part, "#approvalsView") && !strings.HasPrefix(part, `html[data-theme="dark"] #approvalsView`) {
+				t.Fatalf("approvals-harness.css rule %q escapes #approvalsView", part)
+			}
+		}
+	}
+	body := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(css), "")
+	if hex := regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b`).FindString(body); hex != "" {
+		t.Fatalf("approvals-harness.css hard-codes %s; use --hui-* tokens", hex)
+	}
+	for _, want := range []string{"#approvalsView .ap-buttons .button.primary { order: 1; }", "justify-content: flex-end", "@media (max-width: 960px)", "prefers-reduced-motion"} {
+		if !strings.Contains(string(css), want) {
+			t.Fatalf("approvals-harness.css is missing %q", want)
+		}
+	}
+}
+
 func TestNotificationEditorsSeparateNodeRemindersAndSOPReports(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -2436,5 +2779,168 @@ func TestNotificationEditorsSeparateNodeRemindersAndSOPReports(t *testing.T) {
  `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, out)
+	}
+}
+
+func TestCodexStyleLeftMiniRailLayout(t *testing.T) {
+	pageBytes, err := Files.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(pageBytes)
+
+	// 1. 验证左侧小栏 platformRail 存在，且位于 app-shell 第一项
+	railIdx := strings.Index(page, `id="platformRail"`)
+	sidebarIdx := strings.Index(page, `class="platform-sidebar"`)
+	if railIdx < 0 {
+		t.Fatal("index.html must have #platformRail as left mini sidebar")
+	}
+	if sidebarIdx < 0 || railIdx > sidebarIdx {
+		t.Fatal("#platformRail must sit before .platform-sidebar in DOM")
+	}
+
+	// 2. 左侧小栏保留日常工作入口；设置打开侧栏，执行机器在设置导航里。
+	for _, view := range []string{"collaboration", "observability", "issues", "approvals", "sops", "runs", "settings"} {
+		needle := `data-view="` + view + `"`
+		sub := page[railIdx:sidebarIdx]
+		if !strings.Contains(sub, needle) {
+			t.Fatalf("#platformRail must contain %s nav button", needle)
+		}
+	}
+	// 图标栏第 2 位仍是统计；需求列表紧跟其后，两者都是日常工作入口。
+	railNav := page[railIdx:sidebarIdx]
+	if !strings.Contains(railNav, `data-view="issues" data-tooltip="需求列表" aria-label="需求列表"`) {
+		t.Fatal("#platformRail must contain the issues entry labelled 需求列表")
+	}
+	if !strings.Contains(railNav, `data-view="observability" data-tooltip="统计" aria-label="统计"`) {
+		t.Fatal("#platformRail observability button must be labelled 统计")
+	}
+	if strings.Index(railNav, `data-view="observability"`) > strings.Index(railNav, `data-view="issues"`) {
+		t.Fatal("统计 must stay before 需求列表 in #platformRail")
+	}
+	if strings.Index(railNav, `data-view="issues"`) > strings.Index(railNav, `data-view="approvals"`) {
+		t.Fatal("需求列表 must sit before 待我确认 in #platformRail")
+	}
+	if strings.Index(railNav, `data-view="observability"`) > strings.Index(railNav, `data-view="approvals"`) {
+		t.Fatal("统计 must sit before 待我确认 in #platformRail")
+	}
+	if strings.Contains(page[sidebarIdx:], `data-view="observability"`) {
+		t.Fatal("settings navigation must not duplicate the 统计 entry")
+	}
+	if !strings.Contains(page[sidebarIdx:], `data-view="runners"`) {
+		t.Fatal("settings navigation must contain the runners entry")
+	}
+
+	// 3. 待我确认按钮包含审批徽标，且底部包含完整个人信息与弹窗入口
+	railContent := page[railIdx:sidebarIdx]
+	if !strings.Contains(railContent, `id="approvalNavBadge"`) {
+		t.Fatal("#platformRail approvals button must contain #approvalNavBadge")
+	}
+	if !strings.Contains(railContent, `id="userProfileWrap"`) || !strings.Contains(railContent, `id="userProfilePopover"`) {
+		t.Fatal("#platformRail must host #userProfileWrap and #userProfilePopover at bottom")
+	}
+
+	// 4. 验证 CSS 定义了 --rail-w 且 app-shell 拥有三列布局
+	cssBytes, err := Files.ReadFile("product-v4.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssBytes)
+	if !strings.Contains(css, "--rail-w") {
+		t.Fatal("product-v4.css must define --rail-w")
+	}
+	if !strings.Contains(css, "grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr)") {
+		t.Fatal("product-v4.css .app-shell must start with var(--rail-w)")
+	}
+	if !strings.Contains(css, ".platform-rail") {
+		t.Fatal("product-v4.css must contain .platform-rail styles")
+	}
+
+	// 5. 验证已移除冗余的配置与管理 overview 页面与中间栏按钮，以及设置/执行机器的无侧栏模式
+	if strings.Contains(page, `id="managementView"`) {
+		t.Fatal("index.html must not contain #managementView overview page")
+	}
+	middleSidebarContent := page[sidebarIdx:]
+	mainIdx := strings.Index(middleSidebarContent, `<main>`)
+	if mainIdx > 0 && strings.Contains(middleSidebarContent[:mainIdx], `data-view="management"`) {
+		t.Fatal(".platform-sidebar must not contain data-view=\"management\" entry")
+	}
+	if !strings.Contains(css, "body.no-sidebar .platform-sidebar") {
+		t.Fatal("product-v4.css must support body.no-sidebar to hide platform-sidebar in settings/runners")
+	}
+
+	// 6. 验证个人信息弹窗已精简：仅保留退出登录按钮
+	workbenchBytes, err := Files.ReadFile("app/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wb := string(workbenchBytes)
+	if strings.Contains(wb, "openPersonalSettings") {
+		t.Fatal("user profile popover should not have redundant openPersonalSettings button")
+	}
+	if strings.Contains(wb, "uppReAuthBtn") {
+		t.Fatal("user profile popover should not have redundant uppReAuthBtn button")
+	}
+	if !strings.Contains(wb, "uppLogoutBtn") {
+		t.Fatal("user profile popover must retain uppLogoutBtn")
+	}
+
+	// 7. 验证中间侧边栏移除了与左上角重复的 Logo，且 app.js 在需求列表与运行记录等视图中自动隐藏对话侧栏
+	if strings.Contains(middleSidebarContent[:mainIdx], `class="brand"`) {
+		t.Fatal(".platform-sidebar must not contain .brand (duplicated with mini rail logo)")
+	}
+	appJsBytes, err := Files.ReadFile("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appJs := string(appJsBytes)
+	if !strings.Contains(appJs, "'issues', 'runs'") && !strings.Contains(appJs, "'issues','runs'") {
+		t.Fatal("app.js must include issues and runs in noSidebarViews")
+	}
+	if !strings.Contains(appJs, "const noSidebarViews = ['issues', 'runs', 'approvals', 'sops', 'observability'];") {
+		t.Fatal("app.js must hide the sidebar on the 统计 page")
+	}
+	managed := appJs[strings.Index(appJs, "const settingsManagementViews="):]
+	managed = managed[:strings.Index(managed, "\n")]
+	if strings.Contains(managed, "'observability'") {
+		t.Fatal("统计 must not enter settings management mode")
+	}
+	if !strings.Contains(appJs, "observability:'统计'") {
+		t.Fatal("viewTitles.observability must be 统计")
+	}
+	accessBytes, err := Files.ReadFile("app/access.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := string(accessBytes)
+	for _, want := range []string{"['observability','统计','用量分析 · Token 与质量']", "['issues','需求列表'"} {
+		if !strings.Contains(access, want) {
+			t.Fatalf("command palette is missing %q", want)
+		}
+	}
+}
+
+func TestApprovalBadgeRefreshesOutsideApprovals(t *testing.T) {
+	read := func(name string) string {
+		data, err := Files.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if !strings.Contains(read("app.js"), "switchView(view);\n  settleBootLoader();\n  if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();") {
+		t.Fatal("boot must preload the approval badge when the first view does not fetch runs")
+	}
+	if !strings.Contains(read("app/approvals.js"), "async function preloadApprovalBadge(){try{const runs=await api('/api/runs',{silent:true});") {
+		t.Fatal("preloadApprovalBadge must fetch /api/runs silently")
+	}
+	for file, want := range map[string]string{
+		"app/issues.js": "state.data.runs=runs;updateApprovalBadge();renderIssues();",
+		"app/runs.js":   "state.data.runs=list;updateApprovalBadge();renderRuns();",
+		"app/sops.js":   "state.data.runs=runs;updateApprovalBadge();renderSOPCatalog()",
+	} {
+		if !strings.Contains(read(file), want) {
+			t.Fatalf("%s must refresh the approval badge after loading runs: missing %q", file, want)
+		}
 	}
 }

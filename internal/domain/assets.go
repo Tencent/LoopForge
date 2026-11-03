@@ -35,8 +35,27 @@ type SkillDefinition struct {
 	// FileRefs is the manifest of binary assets stored in the skill_files
 	// table (one row per file). Only metadata travels in the payload; the
 	// content is loaded on demand when a run is dispatched.
-	FileRefs  []SkillFileRef `json:"fileRefs,omitempty"`
-	UpdatedAt time.Time      `json:"updatedAt"`
+	FileRefs []SkillFileRef `json:"fileRefs,omitempty"`
+	// Source records where an installed skill came from. A non-nil source
+	// marks the files as a read-only snapshot that only the market update
+	// flow may replace.
+	Source    *SkillSource `json:"source,omitempty"`
+	UpdatedAt time.Time    `json:"updatedAt"`
+}
+
+// SkillSourceSkillHub is the provider of skills installed from skillhub.cn.
+const SkillSourceSkillHub = "skillhub"
+
+// SkillSource identifies the market version a skill snapshot was taken from.
+// SkillHub slugs are only unique per publisher namespace, so both are kept.
+type SkillSource struct {
+	Provider    string    `json:"provider"`
+	Namespace   string    `json:"namespace,omitempty"`
+	Slug        string    `json:"slug"`
+	Version     string    `json:"version"`
+	Homepage    string    `json:"homepage,omitempty"`
+	InstalledAt time.Time `json:"installedAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // SkillFileRef describes one binary file of a skill. Path is relative to the

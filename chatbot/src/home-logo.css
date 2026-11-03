@@ -1,0 +1,115 @@
+/* The introduction shares the wordmark's tempo; only its ink and light move. */
+.home-logo {
+  --home-logo-cyan: #008dcc;
+  --home-logo-blue: #526ce8;
+  --home-logo-violet: #8a4ed9;
+  --home-logo-highlight: #a8efff;
+  --home-logo-head-core: #fff;
+  --home-logo-ripple-opacity: .28;
+  display: block;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+[data-theme="dark"] .home-logo {
+  --home-logo-cyan: #5bd9ff;
+  --home-logo-blue: #94a5ff;
+  --home-logo-violet: #c29aff;
+  --home-logo-highlight: #f0fbff;
+  --home-logo-ripple-opacity: .32;
+}
+.home-logo > .home-logo-glyph {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.home-logo-stroke,
+.home-logo-aura {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation:
+    home-logo-ring-draw calc(1000ms * var(--home-intro-tempo, .45)) linear both,
+    home-logo-ring-to-mark calc(500ms * var(--home-intro-tempo, .45)) calc(1000ms * var(--home-intro-tempo, .45)) cubic-bezier(.4, 0, .2, 1) both;
+}
+.home-logo-aura {
+  opacity: .08;
+  animation:
+    home-logo-ring-draw calc(1000ms * var(--home-intro-tempo, .45)) linear both,
+    home-logo-ring-to-mark calc(500ms * var(--home-intro-tempo, .45)) calc(1000ms * var(--home-intro-tempo, .45)) cubic-bezier(.4, 0, .2, 1) both,
+    home-logo-aura-settle calc(1800ms * var(--home-intro-tempo, .45)) ease both;
+}
+.home-logo-tracer {
+  opacity: 0;
+  stroke-dasharray: .085 2;
+  stroke-dashoffset: -.915;
+  animation: home-logo-trace calc(1000ms * var(--home-intro-tempo, .45)) linear both;
+}
+.home-logo-head {
+  opacity: 0;
+  offset-distance: 100%;
+  offset-rotate: 0deg;
+  animation: home-logo-head calc(1000ms * var(--home-intro-tempo, .45)) linear both;
+}
+.home-logo-ring {
+  stroke-width: 1.1;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: home-logo-ripple calc(900ms * var(--home-intro-tempo, .45)) calc(2850ms * var(--home-intro-tempo, .45)) ease-out both;
+}
+.home-logo-ring-second {
+  animation-delay: calc(3050ms * var(--home-intro-tempo, .45));
+}
+@keyframes home-logo-ring-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes home-logo-ring-to-mark {
+  from {
+    d: path("M24 56 C24 38.327 38.327 24 56 24 C73.673 24 88 38.327 88 56 C88 73.673 73.673 88 56 88 C38.327 88 24 73.673 24 56 C24 56 24 56 24 56 C24 56 24 56 24 56 C24 56 24 56 24 56 C24 56 24 56 24 56");
+  }
+  to {
+    d: path("M53 72 C53 59 63 52.5 73 52.5 C83 52.5 93 59 93 72 C93 85 83 91.5 73 91.5 C63 91.5 53 85 53 72 C53 66.667 53 61.333 53 56 C53 50.667 53 45.333 53 40 C53 27 44.5 20.5 36 20.5 C27.5 20.5 19 27 19 40");
+  }
+}
+@keyframes home-logo-aura-settle {
+  0% { opacity: .08; }
+  45% { opacity: .3; }
+  65% { opacity: .42; }
+  100% { opacity: .08; }
+}
+@keyframes home-logo-trace {
+  0% { stroke-dashoffset: 1; opacity: 0; }
+  7% { opacity: .95; }
+  88% { opacity: .9; }
+  100% { stroke-dashoffset: -.915; opacity: 0; }
+}
+@keyframes home-logo-head {
+  0% { offset-distance: 0%; opacity: 0; }
+  5% { opacity: 1; }
+  94% { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+@keyframes home-logo-ripple {
+  0% { opacity: 0; transform: scale(.8); }
+  18% { opacity: var(--home-logo-ripple-opacity); }
+  100% { opacity: 0; transform: scale(1.9); }
+}
+@media (max-width: 560px), (max-height: 760px) {
+  .home-logo { width: 52px; height: 52px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-logo .home-logo-stroke,
+  .home-logo .home-logo-aura,
+  .home-logo .home-logo-tracer,
+  .home-logo .home-logo-head,
+  .home-logo .home-logo-ring { animation: none; }
+}

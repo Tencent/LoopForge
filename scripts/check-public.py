@@ -35,6 +35,10 @@ blocked_word_digests = {
     "cbda26ecd6a0a9455c8ee73edbe819692c68cbc4dbb059e07c9a020030ceeb00",
 }
 word = re.compile(r"[A-Za-z0-9_]{5,24}")
+# MIT requires keeping upstream copyright lines verbatim; only those lines, and
+# only inside files that carry the MIT permission notice, skip the word check.
+mit_notice = "Permission is hereby granted, free of charge"
+mit_copyright = re.compile(r"^[\s*/!#-]*Copyright \(c\) \d{4} [A-Za-z0-9_-]+\.?\s*$", re.M)
 errors = []
 for name in sorted(set(paths)):
     p = ROOT / name
@@ -50,7 +54,8 @@ for name in sorted(set(paths)):
     for label, pattern in patterns.items():
         if pattern.search(content):
             errors.append(f"{name}: {label}")
-    if any(hashlib.sha256(w.lower().encode()).hexdigest() in blocked_word_digests for w in set(word.findall(content))):
+    words_text = mit_copyright.sub("", content) if mit_notice in content else content
+    if any(hashlib.sha256(w.lower().encode()).hexdigest() in blocked_word_digests for w in set(word.findall(words_text))):
         errors.append(f"{name}: internal identifier")
     if p.name.endswith((".pem", ".key")):
         errors.append(f"{name}: deployment key/certificate must not be published")

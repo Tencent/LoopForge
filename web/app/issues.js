@@ -5,6 +5,55 @@ function setIssueView(view, rerender=true){
   if(rerender&&state.data)renderIssues();
 }
 
+function enhanceIssueFilters(){
+  ['#issueStatusFilter','#issueAssigneeFilter','#issueRunFilter','#sourceFilter'].forEach(sel=>window.enhanceSelect?.($(sel)));
+}
+
+// Items keep the click handlers app.js assigns; the menu only adds open/close
+// and keyboard behaviour around them.
+function bindIssueHeadingMenu(){
+  const trigger=$('#issueHeadingMore'),menu=$('#issueHeadingMenu');
+  if(!trigger||!menu||trigger.dataset.menuBound)return;
+  trigger.dataset.menuBound='1';
+  const items=()=>[...menu.querySelectorAll('[role="menuitem"]')].filter(el=>!el.hidden&&!el.disabled);
+  let open=false;
+  const close=focusTrigger=>{
+    if(!open)return;
+    open=false;
+    window.HuiSelect?.release(close);
+    menu.classList.remove('is-open');
+    menu.inert=true;
+    trigger.setAttribute('aria-expanded','false');
+    if(focusTrigger)trigger.focus();
+  };
+  const show=(focusLast=false)=>{
+    if(open)return;
+    window.HuiSelect?.claim(close);
+    open=true;
+    menu.inert=false;
+    menu.classList.add('is-open');
+    trigger.setAttribute('aria-expanded','true');
+    const list=items();
+    (focusLast?list[list.length-1]:list[0])?.focus();
+  };
+  trigger.addEventListener('click',e=>{e.stopPropagation();open?close(true):show()});
+  trigger.addEventListener('keydown',e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();show(e.key==='ArrowUp')}
+  });
+  menu.addEventListener('keydown',e=>{
+    const list=items(),at=list.indexOf(document.activeElement);
+    if(e.key==='Escape'){e.preventDefault();close(true)}
+    else if(e.key==='Tab')close(false);
+    else if(e.key==='ArrowDown'){e.preventDefault();list[(at+1)%list.length]?.focus()}
+    else if(e.key==='ArrowUp'){e.preventDefault();list[(at-1+list.length)%list.length]?.focus()}
+    else if(e.key==='Home'){e.preventDefault();list[0]?.focus()}
+    else if(e.key==='End'){e.preventDefault();list[list.length-1]?.focus()}
+  });
+  menu.addEventListener('click',e=>{if(e.target.closest('[role="menuitem"]'))close(false)});
+  document.addEventListener('pointerdown',e=>{if(open&&!trigger.contains(e.target)&&!menu.contains(e.target))close(false)});
+  window.addEventListener('resize',()=>close(false),{passive:true});
+}
+
 function renderIssueAssigneeFilter(projectIssues=[]){
   const sel=$('#issueAssigneeFilter');if(!sel)return;
   const current=state.issueAssigneeFilter||'';
@@ -37,9 +86,12 @@ function renderIssueAssigneeFilter(projectIssues=[]){
       userMap.set(key, u?userDisplay(u):`用户 ${key}`);
     });
   });
-  let html=`<option value="">全部责任人</option><option value="unassigned"${current==='unassigned'?' selected':''}>未指定责任人</option>`;
+  const owns=(i,id)=>String(i.assigneeUserId)===id||String(i.assigneeId)===id||(i.sopBindings||[]).some(b=>String(b.assigneeUserId)===id);
+  const meta=n=>n?` data-meta="${n} 条"`:'';
+  const unassigned=projectIssues.filter(i=>!i.assigneeUserId&&!i.assigneeId&&!(i.sopBindings||[]).some(b=>b.assigneeUserId)).length;
+  let html=`<option value="">全部责任人</option><option value="unassigned"${meta(unassigned)}${current==='unassigned'?' selected':''}>未指定责任人</option>`;
   for(const [id, label] of userMap.entries()){
-    html+=`<option value="${escapeHTML(id)}"${current===id?' selected':''}>${escapeHTML(label)}</option>`;
+    html+=`<option value="${escapeHTML(id)}"${meta(projectIssues.filter(i=>owns(i,id)).length)}${current===id?' selected':''}>${escapeHTML(label)}</option>`;
   }
   sel.innerHTML=html;
   sel.value=current;
@@ -72,7 +124,8 @@ function filteredIssues(){
       issues=issues.filter(i=>String(i.assigneeUserId)===state.issueAssigneeFilter||String(i.assigneeId)===state.issueAssigneeFilter||(i.sopBindings||[]).some(b=>String(b.assigneeUserId)===state.issueAssigneeFilter));
     }
   }
-  if(state.issueRunFilter)issues=issues.filter(i=>issueRunHealth(i)===state.issueRunFilter);
+  if(state.issueRunFilter==='mr')issues=issues.filter(i=>pendingDeliveryMRCount(i)>0);
+  else if(state.issueRunFilter)issues=issues.filter(i=>issueRunHealth(i)===state.issueRunFilter);
   if(state.issueQuery){
     issues=issues.filter(i=>issueMatchesQuery(i,projects.find(x=>x.id===i.projectId),state.issueQuery));
   }
@@ -88,22 +141,28 @@ function renderIssues(){
   renderIssueAssigneeFilter(projectIssues);
   const statusSel=$('#issueStatusFilter');if(statusSel&&statusSel.value!==state.issueStatusFilter)statusSel.value=state.issueStatusFilter||'';
   const issues=filteredIssues();
+  syncIssueSelection(issues);
+  const paged=state.issueView==='kanban'?null:paginateList('issues',issues);
+  const visibleIssues=paged?paged.items:issues;
+  renderIssueBulkActions(visibleIssues);
   $$('[data-issue-view]').forEach(b=>b.classList.toggle('active',b.dataset.issueView===state.issueView));
   const board=$('#issueBoard');
   board.classList.toggle('kanban-mode',state.issueView==='kanban');
   if(state.issueView==='kanban'){
     board.innerHTML=renderIssueKanban(issues);
     bindIssueKanban();
+    bindIssueSelection(visibleIssues);
     return;
   }
-  const emptyTitle=state.issueRunFilter==='attention'?'没有需要介入的工作项':'当前项目没有匹配的工作项';
-  const emptyHint=state.issueRunFilter==='attention'?'澄清未达标、门禁失败、运行失败或已中断的工作项会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
-  const paged=paginateList('issues', issues);
+  const emptyTitle=state.issueRunFilter==='attention'?'没有需要介入的工作项':state.issueRunFilter==='mr'?'没有待处理 MR 的需求':'当前项目没有匹配的工作项';
+  const emptyHint=state.issueRunFilter==='attention'?'澄清未达标、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
   const keyWidth=issueKeyColumnWidth(paged.items);
-  board.innerHTML=`<div class="issue-table" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row"><span>编号</span><span>标题</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 SOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty"><span>⌕</span><b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div>${pagerHTML('issues',paged)}`;
+  const pager=pagerHTML('issues',paged)||(paged.total?`<nav class="pager pager-summary" aria-label="分页"><span class="pager-meta">共 ${paged.total} 条</span></nav>`:'');
+  board.innerHTML=`<div class="issue-table-card"><div class="issue-table-scroll"><div class="issue-table${state.issueSelectionMode?' issue-table-selectable':''}" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectAllCheckbox('全选本页可删除的需求')}</div>`:''}<span>编号</span><span>标题</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 SOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div></div>${pager}</div>`;
   $$('.issue-table-row[data-id]').forEach(el=>el.onclick=()=>openIssueDetail(el.dataset.id));
   bindIssueRowActions(board);
   bindPager(board);
+  bindIssueSelection(visibleIssues);
 }
 
 let clarifyPoll=null;
@@ -122,13 +181,13 @@ function issueKanbanCard(i){
   const needsConfirm=clarificationNeedsConfirm(i);
   const cardTone=needsConfirm?' needs-confirm':(isFailed?' needs-attention':'');
   return `<article class="kanban-card${cardTone}" draggable="true" data-id="${escapeHTML(i.id)}">
-    <div class="kanban-card-top"><b>${escapeHTML(key)}</b></div>
+    <div class="kanban-card-top"><b>${escapeHTML(key)}</b>${issueSelectionCheckbox(i)}</div>
     <h4 title="${escapeHTML(i.title)}">${issueTitleMarkup(i.title)}</h4>
     <div class="kanban-card-meta">
-      <span class="priority-label ${escapeHTML(i.priority||'')}"><i class="priority ${escapeHTML(i.priority||'')}"></i>${issuePriorityLabel(i.priority)}</span>
-      <span class="kanban-stage ${stage.key}">${escapeHTML(stage.label)}</span>
+      ${issuePriorityMarkup(i.priority)}
+      <span class="kanban-stage ${stage.key}" title="${escapeHTML(stage.hint||'')}">${issueStageBadge(stage)}</span>
     </div>
-    <div class="kanban-card-progress"><span>${progress.done}/${progress.total||'—'} · ${progress.pct}%</span><div class="issue-progress-track"><i style="width:${progress.pct}%"></i></div></div>
+    <div class="kanban-card-progress${progress.pct>=100&&!isFailed?' done':''}"><span>${progress.done}/${progress.total||'—'} · ${progress.pct}%</span><div class="issue-progress-track"><i style="width:${progress.pct}%"></i></div></div>
     <div class="kanban-card-actions">${issueActionButtons(i)}</div>
   </article>`;
 }
@@ -137,8 +196,8 @@ function renderIssueKanban(issues){
   return `<div class="kanban-board">${issueStatuses.map(([status])=>{
     const col=issues.filter(i=>(i.status||'backlog')===status);
     return `<section class="kanban-column" data-status="${status}">
-      <header><b>${issueStatusLabel(status)}</b><span>${col.length}</span></header>
-      <div class="kanban-column-body">${col.map(issueKanbanCard).join('')||'<div class="kanban-empty">暂无卡片</div>'}</div>
+      <header>${huiIcon(issueStatusIcon(status))}<b>${issueStatusLabel(status)}</b><span>${col.length}</span></header>
+      <div class="kanban-column-body">${col.map(issueKanbanCard).join('')||`<div class="kanban-empty">${huiIcon('check')}暂无卡片</div>`}</div>
     </section>`;
   }).join('')}</div>`;
 }
@@ -182,6 +241,36 @@ function bindIssueKanban(){
   });
 }
 function issueStatusLabel(value){return ({backlog:'待规划',todo:'待处理',in_progress:'进行中',in_review:'评审中',done:'已完成',blocked:'已阻塞',cancelled:'已取消',closed:'已关闭'}[value]||value||'—')}
+function issueStatusIcon(value){return ({backlog:'circle',todo:'clock',in_progress:'user-hold',in_review:'pending-review',done:'check',closed:'close',blocked:'alert',cancelled:'close'}[value]||'circle')}
+function huiIcon(name,cls=''){return `<svg class="agent-icon harness-icon${cls?` ${cls}`:''}" data-icon="${escapeHTML(name)}" width="14" height="14" aria-hidden="true" focusable="false"></svg>`}
+// stage.key alone is not enough: 「待澄清」 shares attention with failures and
+// 「已关闭」 shares closed with merged deliveries.
+function issueStageTone(stage){
+  const key=stage?.key||'',label=String(stage?.label||'');
+  if(key==='active')return /排队/.test(label)?{tone:'info',icon:'clock'}:{tone:'info',icon:'lamp'};
+  if(key==='waiting')return {tone:'warn',icon:'user-hold'};
+  if(key==='confirm')return {tone:'warn',icon:'pending-review'};
+  if(key==='attention')return label.startsWith('待澄清')?{tone:'warn',icon:'user-hold'}:{tone:'error',icon:'alert'};
+  if(key==='closed')return ['已完成','交付闭环','MR 已合入','已合入基线'].includes(label)?{tone:'success',icon:'check'}:{tone:'neutral',icon:'close'};
+  return {tone:'neutral',icon:'circle'};
+}
+function issueStageBadge(stage){
+  const {tone,icon}=issueStageTone(stage);
+  const mark=icon==='lamp'?'<span class="hui-lamp" aria-hidden="true"><i></i></span>':huiIcon(icon);
+  return `<span class="hui-badge" data-tone="${tone}" data-stage-icon="${icon}">${mark}<span class="hui-badge-label">${escapeHTML(stage?.label||'')}</span></span>`;
+}
+function issuePriorityMarkup(value){
+  const pri=value||'medium';
+  const icon={urgent:'priority-bolt',high:'priority-high',medium:'priority-medium',low:'priority-low'}[pri]||'priority-medium';
+  return `<span class="issue-priority ${escapeHTML(pri)}">${huiIcon(icon)}<span>${issuePriorityLabel(pri)}</span></span>`;
+}
+function issueOwnerAvatar(i){
+  if(!i.assigneeUserId&&i.assigneeId&&i.assigneeType==='agent')return `<span class="hui-avatar is-agent" aria-hidden="true">${huiIcon('robot')}</span>`;
+  const name=issueAssigneeName(i);
+  if(!name)return `<span class="hui-avatar is-empty" aria-hidden="true">${huiIcon('user')}</span>`;
+  const display=(name.match(/\(([^()]+)\)\s*$/)||[])[1]||name;
+  return `<span class="hui-avatar" aria-hidden="true">${escapeHTML(([...display.trim()][0]||'?').toUpperCase())}</span>`;
+}
 function issueStatusText(issue){
   return issueStatusLabel(issueStatusBucket(issue));
 }
@@ -240,7 +329,6 @@ function issueKeyColumnWidth(issues){
     const len=String(issueKeyLabel(i)||'').length;
     if(len>maxLen)maxLen=len;
   }
-  if(maxLen>=16)return '168px';
   if(maxLen>=10)return '120px';
   if(maxLen>=7)return '96px';
   return '76px';
@@ -298,15 +386,17 @@ function issueRow(i){
     progressCls=' warn';
     trackWidth=0;
     progressTitle=`信息完整度 ${i.clarification?.score||0} 分，未达准入线，需先澄清`;
+  }else if(progress.pct>=100){
+    progressCls=' done';
   }
   const rowTone=needsConfirm?' needs-confirm':(isFailed?' needs-attention':'');
   const owner=issueOwnerSummary(i);
   const pri=i.priority||'medium';
-  return `<div class="issue-table-row${rowTone}" role="row" data-id="${escapeHTML(i.id)}"><div class="issue-key-cell" title="${escapeHTML(String(issueKeyLabel(i)||''))}">${issueKeyMarkup(i)}</div><div class="issue-title-cell">${issueTitleMarkup(i.title)}</div><div class="issue-assignee-cell" title="${escapeHTML(owner)}">${escapeHTML(owner)}</div><div class="issue-repository-cell" title="${escapeHTML(issueRepos.map(r=>r.name).join('、')||'未绑定')} · ${escapeHTML(i.baseBranch||repo?.defaultBranch||'')}">${escapeHTML(repoLabel)}</div><div class="issue-priority-cell"><span class="issue-priority ${escapeHTML(pri)}">${issuePriorityLabel(pri)}</span></div><div class="issue-workflow-cell" title="${escapeHTML(sop)}">${escapeHTML(sop)}${laneDots}</div><div class="issue-stage-cell ${stage.key}" title="${escapeHTML(stage.hint)}"><span class="issue-stage-pill">${escapeHTML(stage.label)}</span></div><div class="issue-progress-cell${progressCls}" title="${escapeHTML(progressTitle)}"><b>${escapeHTML(progressText)}</b><span class="issue-progress-track"><i style="width:${trackWidth}%"></i></span></div><div class="issue-actions-cell">${issueActionButtons(i)}</div></div>`;
+  return `<div class="issue-table-row${rowTone}" role="row" data-id="${escapeHTML(i.id)}">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectionCheckbox(i)}</div>`:''}<div class="issue-key-cell" title="${escapeHTML(String(issueKeyLabel(i)||''))}">${issueKeyMarkup(i)}</div><div class="issue-title-cell">${issueTitleMarkup(i.title)}</div><div class="issue-assignee-cell" title="${escapeHTML(owner)}">${issueOwnerAvatar(i)}<span class="issue-assignee-name">${escapeHTML(owner)}</span></div><div class="issue-repository-cell" title="${escapeHTML(issueRepos.map(r=>r.name).join('、')||'未绑定')} · ${escapeHTML(i.baseBranch||repo?.defaultBranch||'')}">${escapeHTML(repoLabel)}</div><div class="issue-priority-cell">${issuePriorityMarkup(pri)}</div><div class="issue-workflow-cell" title="${escapeHTML(sop)}">${escapeHTML(sop)}${laneDots}</div><div class="issue-stage-cell ${stage.key}" title="${escapeHTML(stage.hint)}">${issueStageBadge(stage)}</div><div class="issue-progress-cell${progressCls}" title="${escapeHTML(progressTitle)}"><b>${escapeHTML(progressText)}</b><span class="issue-progress-track"><i style="width:${trackWidth}%"></i></span></div><div class="issue-actions-cell">${issueActionButtons(i)}</div></div>`;
 }
 
 let refreshIssuesPending=null;
-async function refreshIssues(){if(refreshIssuesPending)return refreshIssuesPending;refreshIssuesPending=(async()=>{try{const opt={silent:true};const [issues,tasks,runs]=await Promise.all([api('/api/issues',opt),api('/api/tasks',opt),api('/api/runs',opt)]);state.data.issues=issues;state.data.tasks=tasks;state.data.runs=runs;renderIssues();if(state.drawerOpen&&state.issueDetailData?.issue?.id){const curId=state.issueDetailData.issue.id,updatedIssue=issues.find(i=>i.id===curId);if(updatedIssue){const curTask=latestIssueTask(updatedIssue),curRunId=curTask?.runId||latestIssueRun(updatedIssue,curTask)?.id,curRun=curRunId?(runs||[]).find(r=>r.id===curRunId):null;const keepClarifyStream=state.issueDetailTab==='clarify'&&(state.issueDetailData.issue.clarification?.status||'')==='analyzing'&&(updatedIssue.clarification?.status||'')==='analyzing';state.issueDetailData.issue=updatedIssue;state.issueDetailData.task=curTask;if(curRun){const previous=state.issueDetailData.run;state.issueDetailData.run=previous?.id===curRun.id&&previous.workflowSnapshot?.nodes?.length?{...previous,...curRun,workflowSnapshot:previous.workflowSnapshot}:curRun;}try{const snap=await api(`/api/issues/${encodeURIComponent(curId)}/requirement`,opt);if(snap)state.issueDetailData.requirement=snap}catch(e){}if(!keepClarifyStream)renderIssueDetailTab()}}}catch(e){toast(e.message)}finally{refreshIssuesPending=null}})();return refreshIssuesPending}
+async function refreshIssues(){if(refreshIssuesPending)return refreshIssuesPending;refreshIssuesPending=(async()=>{try{const opt={silent:true};const [issues,tasks,runs]=await Promise.all([api('/api/issues',opt),api('/api/tasks',opt),api('/api/runs',opt)]);state.data.issues=issues;state.data.tasks=tasks;state.data.runs=runs;updateApprovalBadge();renderIssues();if(state.drawerOpen&&state.issueDetailData?.issue?.id){const curId=state.issueDetailData.issue.id,updatedIssue=issues.find(i=>i.id===curId);if(updatedIssue){const curTask=latestIssueTask(updatedIssue),curRunId=curTask?.runId||latestIssueRun(updatedIssue,curTask)?.id,curRun=curRunId?(runs||[]).find(r=>r.id===curRunId):null;const keepClarifyStream=state.issueDetailTab==='clarify'&&(state.issueDetailData.issue.clarification?.status||'')==='analyzing'&&(updatedIssue.clarification?.status||'')==='analyzing';state.issueDetailData.issue=updatedIssue;state.issueDetailData.task=curTask;if(curRun){const previous=state.issueDetailData.run;state.issueDetailData.run=previous?.id===curRun.id&&previous.workflowSnapshot?.nodes?.length?{...previous,...curRun,workflowSnapshot:previous.workflowSnapshot}:curRun;}try{const snap=await api(`/api/issues/${encodeURIComponent(curId)}/requirement`,opt);if(snap)state.issueDetailData.requirement=snap}catch(e){}if(!keepClarifyStream)renderIssueDetailTab()}}}catch(e){toast(e.message)}finally{refreshIssuesPending=null}})();return refreshIssuesPending}
 function fillIssueRepositories(projectId,selected){
   const f=$('#issueForm'),project=(state.data.projects||[]).find(p=>p.id===projectId),repos=(state.data.repositories||[]).filter(r=>r.projectId===projectId),box=$('#issueRepoChecks');
   if(!box)return;
@@ -328,6 +418,7 @@ function storedIssueWorkBranch(issue){
   if(!ids.length&&project?.defaultRepositoryId)ids.push(project.defaultRepositoryId);
   if(ids.length!==1)return '';
   const repo=(state.data.repositories||[]).find(r=>r.id===ids[0]);
+  if(issue.repositoryBranches)return String(issue.repositoryBranches[ids[0]]||'').trim();
   const branch=String(issue.baseBranch||'').trim();
   return branch===String(repo?.defaultBranch||'').trim()?'':branch;
 }
@@ -343,7 +434,25 @@ function updateIssueBaseBranchInput(input,hint,repositoryIds){
   if(hint)hint.textContent=repos.length!==1?'指定继续开发分支时请选择一个仓库；留空从各仓库配置的主分支分别新建工作分支。':'留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。';
 }
 function refreshIssueBaseBranchInput(){
-  updateIssueBaseBranchInput($('#issueForm')?.elements.baseBranch,$('#issueBaseBranchHint'),selectedIssueRepositoryIds());
+  renderIssueRepositoryBranchInputs($('#issueForm')?.elements.baseBranch,$('#issueBaseBranchHint'),$('#issueRepositoryBranches'),selectedIssueRepositoryIds());
+}
+function selectedIssueRepositoryBranches(input,host){
+  const branches={};
+  let ids=[];try{ids=JSON.parse(input?.dataset.repositoryIds||'[]')}catch{}
+  if(ids.length===1)branches[ids[0]]=input.value.trim();
+  host?.querySelectorAll('[data-repository-branch]').forEach(el=>{branches[el.dataset.repositoryBranch]=el.value.trim()});
+  return branches;
+}
+function renderIssueRepositoryBranchInputs(input,hint,host,repositoryIds,branches){
+  if(!input||!host)return;
+  branches=branches||selectedIssueRepositoryBranches(input,host);
+  const repos=repositoryIds.map(id=>(state.data.repositories||[]).find(r=>r.id===id)).filter(Boolean);
+  updateIssueBaseBranchInput(input,hint,repositoryIds);
+  input.hidden=repos.length>1;
+  if(repos.length===1)input.value=branches[repos[0].id]||'';
+  host.hidden=repos.length<2;
+  host.innerHTML=repos.length<2?'':repos.map(repo=>`<label class="repository-branch-row"><span>${escapeHTML(repo.name)}</span><input class="input" data-repository-branch="${escapeHTML(repo.id)}" aria-label="${escapeHTML(repo.name)} 的继续开发分支" value="${escapeHTML(branches[repo.id]||'')}" placeholder="${escapeHTML(repo.defaultBranch?`留空从主分支 ${repo.defaultBranch} 新建`:'留空从配置主分支新建')}" autocomplete="off"></label>`).join('');
+  if(repos.length>1&&hint)hint.textContent='分别填写各仓库的已有功能分支，直接继续开发；留空的仓库从各自配置的主分支新建工作分支。';
 }
 function fillIssueAssignees(projectId,value=''){
   const f=$('#issueForm'),picker=$('#issueAssigneePicker');if(!f||!picker)return;
@@ -367,8 +476,8 @@ function openIssue(issue=null){
   let workflowTouched=Boolean(v.workflowId);
   f.elements.workflowId.onchange=()=>{workflowTouched=true};
   delete f.elements.baseBranch.dataset.repositoryIds;
-  refreshIssueBaseBranchInput();
-  f.elements.projectId.onchange=()=>{fillIssueRepositories(f.elements.projectId.value);fillIssueAssignees(f.elements.projectId.value,'');f.elements.baseBranch.value='';refreshIssueBaseBranchInput()};
+  renderIssueRepositoryBranchInputs(f.elements.baseBranch,$('#issueBaseBranchHint'),$('#issueRepositoryBranches'),selectedIssueRepositoryIds(),v.repositoryBranches||{[v.repositoryId]:storedIssueWorkBranch(v)});
+  f.elements.projectId.onchange=()=>{fillIssueRepositories(f.elements.projectId.value);fillIssueAssignees(f.elements.projectId.value,'');renderIssueRepositoryBranchInputs(f.elements.baseBranch,$('#issueBaseBranchHint'),$('#issueRepositoryBranches'),selectedIssueRepositoryIds(),{})};
   $('#issueRepoChecks').onchange=refreshIssueBaseBranchInput;
   $('#issueModalTitle').textContent=issue?`${(projects.find(p=>p.id===v.projectId)?.key||'ISS')}-${v.number} ${v.title}`:'新建工作项';
   const task=(state.data.tasks||[]).find(t=>t.id===v.latestTaskId);
@@ -409,12 +518,15 @@ function issueFromForm(){
   const workflowId=f.elements.workflowId.value||defaultSOPForIssue({...old,source});
   const repositoryIds=selectedIssueRepositoryIds(),status=f.elements.status.value;
   const closeSource=status==='closed'?(old.status==='closed'?old.closeSource||'manual':'manual'):'';
-  return {...old,id,projectId:f.elements.projectId.value,title:f.elements.title.value.trim(),description:f.elements.description.value,priority:f.elements.priority.value,status,closeSource,automationState:f.elements.automationIgnored.checked?'ignored':'eligible',source,workflowId,repositoryId:repositoryIds[0]||'',repositoryIds,baseBranch:f.elements.baseBranch.value.trim(),assigneeUserId,tapdId:source==='local'?f.elements.tapdId.value.trim():'',externalRef:trackerRefOf(old)||old.externalRef||undefined};
+  return {...old,id,projectId:f.elements.projectId.value,title:f.elements.title.value.trim(),description:f.elements.description.value,priority:f.elements.priority.value,status,closeSource,automationState:f.elements.automationIgnored.checked?'ignored':'eligible',source,workflowId,repositoryId:repositoryIds[0]||'',repositoryIds,baseBranch:f.elements.baseBranch.value.trim(),repositoryBranches:selectedIssueRepositoryBranches(f.elements.baseBranch,$('#issueRepositoryBranches')),assigneeUserId,tapdId:source==='local'?f.elements.tapdId.value.trim():'',externalRef:trackerRefOf(old)||old.externalRef||undefined};
 }
 
 // ParseGongfengRepoURL 与后端 domain.ParseGongfengRepoURL 保持一致：把粘贴的
 // 工蜂链接（web / ssh / scp / 纯项目路径）解析成统一的仓库信息，让"粘一个链接"
 // 就能完成仓库配置。
+// repoDisplayPath shows host/path for a parsed repository, e.g. github.com/owner/name.
+function repoDisplayPath(info,fallback=''){return info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
+function repoProviderLabel(info){return info?.provider==='github'?'GitHub':'工蜂'}
 function parseGongfengRepoURL(raw){
   let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^git@github.com:/,'https://github.com/');
   if(publicURL.startsWith('github.com/'))publicURL='https://'+publicURL;
@@ -468,9 +580,7 @@ function renderRepositoryCredentialHint(){
   host.dataset.configured=String(configured);
   host.innerHTML=`<div><b>${escapeHTML(title)}</b><p>${escapeHTML(message)}</p></div><button type="button" class="button ghost small" data-repository-configure-token>${configured?'个人设置':'配置 GitHub Token'}</button>`;
   host.querySelector('[data-repository-configure-token]').onclick=()=>{
-    $('#repositoryModal').classList.remove('open');switchView('settings');
-    const field=document.querySelector('#userCredentialForm [name="gitToken"]');
-    field?.focus();field?.scrollIntoView({block:'center'});
+    $('#repositoryModal').classList.remove('open');gotoCredential('gitToken');
   };
 }
 function renderRepositoryList(){renderRepositoryCredentialHint();const project=(state.data.projects||[]).find(p=>p.id===state.projectFilter),repos=(state.data.repositories||[]).filter(r=>r.projectId===state.projectFilter);$('#repositoryProjectHint').textContent=`当前项目：${project?.name||'—'}。粘贴任意一种 GitHub 地址即可；集成分支用于检查多个 SOP 执行后是否存在合并冲突，可留空。`;$('#repositoryList').innerHTML=repos.map(r=>`<button type="button" data-edit-repo="${escapeHTML(r.id)}"><b>${escapeHTML(r.name)}</b><span>${escapeHTML(r.gongfengProjectId)} · 主分支 ${escapeHTML(r.defaultBranch||'master')} · 集成分支 ${escapeHTML(r.integrateBranch||'未配置')}</span><em>${project?.defaultRepositoryId===r.id?'默认仓库':'编辑'}</em></button>`).join('')||'<p>当前项目还没有绑定代码仓库。</p>';$('#repositoryList').querySelectorAll('[data-edit-repo]').forEach(b=>b.onclick=()=>fillRepositoryForm((state.data.repositories||[]).find(r=>r.id===b.dataset.editRepo)))}
@@ -490,6 +600,7 @@ function fillImportTAPDRepository(){
   const host=$('#importTAPDRepository');
   if(!host)return;
   host.dataset.ids='[]';
+  const branches=$('#importTAPDRepositoryBranches');if(branches)branches.innerHTML='';
   renderImportTAPDRepositoryPicker();
 }
 function selectedImportTAPDRepositoryIds(){
@@ -520,7 +631,7 @@ function renderImportTAPDRepositoryPicker(){
   host.querySelectorAll('[data-remove-repo]').forEach(b=>b.onclick=()=>setImportTAPDRepositoryIds(selected.filter(id=>id!==b.dataset.removeRepo)));
   const sel=host.querySelector('select');
   if(sel)sel.onchange=()=>{if(!sel.value)return;setImportTAPDRepositoryIds([...selected,sel.value])};
-  updateIssueBaseBranchInput($('#importTAPDBaseBranch'),$('#importTAPDBaseBranchHint'),selected);
+  renderIssueRepositoryBranchInputs($('#importTAPDBaseBranch'),$('#importTAPDBaseBranchHint'),$('#importTAPDRepositoryBranches'),selected);
 }
 function openImportTAPDModal(){
   if(!state.projectFilter)return toast('请先在顶部选择一个项目');
@@ -543,7 +654,8 @@ async function importTAPDStory(e){
     if(button){button.disabled=true;button.textContent='正在导入…'}
     const workflowId=$('#importTAPDWorkflow')?.value.trim();
     const baseBranch=$('#importTAPDBaseBranch')?.value.trim()||'';
-    const issue=await api('/api/issues/import-tapd',{method:'POST',body:JSON.stringify({projectId:state.projectFilter,url,workflowId:workflowId||undefined,repositoryIds,repositoryId:repositoryIds[0],baseBranch})});
+    const repositoryBranches=selectedIssueRepositoryBranches($('#importTAPDBaseBranch'),$('#importTAPDRepositoryBranches'));
+    const issue=await api('/api/issues/import-tapd',{method:'POST',body:JSON.stringify({projectId:state.projectFilter,url,workflowId:workflowId||undefined,repositoryIds,repositoryId:repositoryIds[0],baseBranch,repositoryBranches})});
     const idx=(state.data.issues||[]).findIndex(i=>i.id===issue.id);
     if(idx>=0)state.data.issues[idx]=issue;else (state.data.issues||(state.data.issues=[])).unshift(issue);
     $('#importTAPDModal').classList.remove('open');
@@ -630,7 +742,7 @@ async function resumeRun(runId,fromEl){
     context=typed.trim();
   }
   try{
-    await api(`/api/runs/${encodeURIComponent(runId)}/retry`,{method:'POST',body:JSON.stringify(withHumanContext({reason:'从中断处继续',context}))});
+    await requestRunActivation(runId,'retry',withHumanContext({reason:'从中断处继续',context}));
     const current=await syncRunControlState(runId);
     toast(runControlToast(current,'已从失败节点继续，已完成的步骤不会重跑'));
     Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});
@@ -779,39 +891,32 @@ function runNodeChoices(r){
 }
 function runNodeAllowsContext(node){return !!node?.type&&!isScriptWorkflowNode(node)}
 function afRerunFromNode(run,nodeId){
-  return new Promise((resolve)=>{
-    const modal=$('#confirmModal');
-    const fields=$('#rerunFromNodeFields');
-    const context=$('#rerunFromNodeContext');
-    const contextFields=$('#rerunFromNodeContextFields');
-    const hint=$('#rerunFromNodeHint');
-    if(!modal||!fields||!context||!contextFields||!hint)return resolve(null);
-    const node=runNodeChoices(run).find(n=>n.id===nodeId);
-    if(!node){toast('这个节点现在不能从这里重跑');return resolve(null)}
+  const fields=$('#rerunFromNodeFields');
+  const context=$('#rerunFromNodeContext');
+  const contextFields=$('#rerunFromNodeContextFields');
+  const hint=$('#rerunFromNodeHint');
+  if(!$('#confirmModal')||!fields||!context||!contextFields||!hint)return Promise.resolve(null);
+  const node=runNodeChoices(run).find(n=>n.id===nodeId);
+  if(!node){toast('这个节点现在不能从这里重跑');return Promise.resolve(null)}
+  return afOpenDialog(()=>{
     $('#confirmTitle').textContent='从这里重跑';
     $('#confirmMessage').textContent=`从「${node.name}」及其下游重跑，上游已完成的步骤会保留。${run.workspaceCleanedAt&&!String(run.workspaceCleanedAt).startsWith('0001-')?'工作区已回收：优先恢复已有快照；没有快照时重新准备仓库和已归档的上游产物，未保存的历史文件无法恢复。':''}`;
-    $('#confirmPromptWrap').hidden=true;
     fields.hidden=false;
     context.value='';
     const allowsContext=runNodeAllowsContext(node);
     contextFields.hidden=!allowsContext;
     hint.textContent=allowsContext?'补充说明会写进这次执行的上下文。':'脚本节点不接收补充上下文。';
     const okBtn=$('#confirmOkBtn');
-    const cancelBtn=$('#confirmCancelBtn');
     okBtn.textContent='开始重跑';
     okBtn.className='button primary';
-    cancelBtn.textContent='取消';
-    cancelBtn.hidden=false;
-    $('#confirmIconWrap').className='confirm-icon-wrap info';
-    $('#confirmIcon').textContent='↻';
-    modal.classList.add('open');
-    if(allowsContext)context.focus();else okBtn.focus();
-    confirmPromiseResolve=(isOk)=>{
-      const payload=isOk?{nodeId,context:allowsContext?context.value.trim():''}:null;
-      modal.classList.remove('open');
-      fields.hidden=true;
-      confirmPromiseResolve=null;
-      resolve(payload);
+    $('#confirmCancelBtn').textContent='取消';
+    setConfirmIcon('info','refresh');
+    return {
+      focus:allowsContext?context:okBtn,
+      value:isOk=>{
+        fields.hidden=true;
+        return isOk?{nodeId,context:allowsContext?context.value.trim():''}:null;
+      },
     };
   });
 }
@@ -826,7 +931,7 @@ async function openRerunFromNode(run,nodeId){
   if(issueManuallyClosed(issue))return toast('请先重新打开该需求，再从这里重跑');
   try{
     if(deliveryLocked(issue))await reopenDeliveredIssueSilent(issue.id);
-    await api(`/api/runs/${encodeURIComponent(run.id)}/retry`,{method:'POST',body:JSON.stringify({nodeId:choice.nodeId,reason:'从指定节点重跑',context:choice.context||''})});
+    await requestRunActivation(run.id,'retry',{nodeId:choice.nodeId,reason:'从指定节点重跑',context:choice.context||''});
     const next=await syncRunControlState(run.id);
     toast(runControlToast(next,'已从该节点重跑，上游完成步骤会保留'));
     Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});

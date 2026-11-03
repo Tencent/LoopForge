@@ -80,7 +80,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 - `id`、`projectId`、`number`、`title`、`description`
 - `status`：`backlog|todo|in_progress|in_review|done|blocked|cancelled`
 - `priority`、`kind`（`requirement|issue`）、`assigneeType`、`assigneeId`
-- `workflowId`、`repositoryId`、`baseBranch`、`latestTaskId`
+- `workflowId`、`repositoryId`、`repositoryIds`、`baseBranch`、`repositoryBranches`、`latestTaskId`
 - `source`（`local|gongfeng|tapd`）、`externalRef`
 - `clarification`：`score`、`passed`、`answers`、`dimensions`、`missing`、`status`（`in_progress|ready|needs_user`）、`assessedAt`。导入 TAPD 需求时立刻按标题+描述打分；`needs_user` 表示未达项目准入线，手动派发 SOP 会被 409。
 - 交付字段 `deliveryState`、`deliveryMrUrl`、`deliveryMrState`、`deliveryMrs`、`deliveryUpdatedAt`。`deliveryMrs` 每个仓库一项（`repositoryId`、`repository`、`project`、`iid`、`url`、`state`、`targetBranch`），由 SOP 成功时按仓库工作分支向工蜂查询 MR 得出，查不到才回退到 MR 类产物里同项目的链接；`deliveryMrUrl` 为第一项，`deliveryMrState` 为聚合状态（全部合入默认分支才是 `merged`）。
@@ -113,7 +113,9 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 }
 ```
 
-`projectId`、`title` 必填且项目必须存在。`status` 默认 `backlog`，`priority` 默认 `medium`；未指定仓库时继承项目默认仓库，指定仓库必须属于项目，`baseBranch` 默认仓库默认分支。
+`projectId`、`title` 必填且项目必须存在。`status` 默认 `backlog`，`priority` 默认 `medium`；未指定仓库时继承项目默认仓库，指定仓库必须属于项目。单仓库可通过 `baseBranch` 继续已有功能分支；留空则从配置主分支新建工作分支。
+
+多仓库用 `repositoryBranches` 按仓库 ID 分别指定已有功能分支，例如 `{"repositoryIds":["api","web"],"repositoryBranches":{"api":"feature/api","web":"feature/web"}}`。该映射优先于 `baseBranch`；未指定或留空的仓库从各自配置的主分支新建工作分支。继续已有分支时，MR 仍以该仓库配置的主分支为目标。映射中的仓库必须已绑定，且不能直接在主分支或集成分支上开发。更新或重新导入 TAPD 时省略映射会保留仍绑定仓库的分支，显式 `{}` 清空全部选择；修改任一仓库分支会重置代码澄清会话并保留业务回答。
 
 新 Issue 必须绑定外部 tracker：若请求未带有效 `source/externalRef`，`syncTarget` 必须为 `gongfeng` 或 `tapd`，服务会同步创建后保存；工蜂还要求仓库。更新时多个空字段会继承原值。成功 `200` 返回 Issue；校验/同步错误通常为 `400`。
 

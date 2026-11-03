@@ -57,6 +57,10 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 			dir = filepath.Join(workspace, rel)
 		}
 		repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+		// A continued branch must still exist remotely even when nothing changed.
+		if push && !repo.RequireExistingWorkBranch && !gitwork.HasWork(repoCtx, dir, repo.Ref) {
+			continue
+		}
 		var head string
 		var err error
 		if repo.RequireExistingWorkBranch {
@@ -72,6 +76,9 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		}
 		if err != nil {
 			return heads, fmt.Errorf("%s: %w", repo.Name, err)
+		}
+		if head == "" && push {
+			head, _ = gitwork.RevParse(repoCtx, dir, "HEAD")
 		}
 		if head != "" {
 			heads = append(heads, domain.RunnerWorkBranchHead{RepositoryID: repo.RepositoryID, Name: repo.Name, WorkBranch: repo.WorkBranch, Head: head})

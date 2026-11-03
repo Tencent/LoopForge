@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"sort"
@@ -40,12 +41,13 @@ type issuesHandlers struct {
 
 func (h issuesHandlers) importTAPD(c *gin.Context) {
 	var req struct {
-		ProjectID     string   `json:"projectId"`
-		URL           string   `json:"url"`
-		WorkflowID    string   `json:"workflowId"`
-		RepositoryID  string   `json:"repositoryId"`
-		RepositoryIDs []string `json:"repositoryIds"`
-		BaseBranch    *string  `json:"baseBranch"`
+		ProjectID          string            `json:"projectId"`
+		URL                string            `json:"url"`
+		WorkflowID         string            `json:"workflowId"`
+		RepositoryID       string            `json:"repositoryId"`
+		RepositoryIDs      []string          `json:"repositoryIds"`
+		BaseBranch         *string           `json:"baseBranch"`
+		RepositoryBranches map[string]string `json:"repositoryBranches"`
 	}
 	if !decode(c, &req) {
 		return
@@ -79,7 +81,7 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "请至少选择一个代码仓库"})
 		return
 	}
-	probe := domain.Issue{ProjectID: req.ProjectID, RepositoryIDs: ids, RepositoryID: ids[0]}
+	probe := domain.Issue{ProjectID: req.ProjectID, RepositoryIDs: ids, RepositoryID: ids[0], RepositoryBranches: req.RepositoryBranches}
 	if req.BaseBranch != nil {
 		probe.BaseBranch = *req.BaseBranch
 	}
@@ -107,12 +109,15 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		return
 	}
 	h.bindRequirementPlaybook(&issue)
-	if req.BaseBranch != nil || issue.RepositoryID != probe.RepositoryID {
+	if req.BaseBranch != nil || req.RepositoryBranches != nil || issue.RepositoryID != probe.RepositoryID {
 		issue.BaseBranch = probe.BaseBranch
 	}
 	issue.RepositoryIDs = probe.RepositoryIDs
 	issue.RepositoryID = probe.RepositoryID
-	if req.BaseBranch == nil {
+	if req.RepositoryBranches != nil || req.BaseBranch != nil {
+		issue.RepositoryBranches = probe.RepositoryBranches
+	} else {
+		h.inheritIssueRepositoryBranches(&issue, previous)
 		h.normalizeLegacyIssueBaseBranch(&issue)
 	}
 	if err := h.bindIssueRepositories(&issue); err != nil {
@@ -201,6 +206,7 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			return
 		}
 		v := req.Issue
+		branchesProvided := v.RepositoryBranches != nil
 		existing, found := h.repo.Issue(v.ID)
 		if !v.Clarification.StartedAt.IsZero() && v.Clarification.StartedAt.After(time.Now().UTC().Add(time.Minute)) {
 			c.JSON(http.StatusBadRequest, map[string]string{"error": "澄清开始时间不能晚于当前时间"})
@@ -219,10 +225,22 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		} else if !h.requireProjectWriter(c, v.ProjectID) {
 			return
 		}
+		// Clients such as the AI assistant echo a fetched issue back. Resending
+		// the stored branch is not a new selection, so legacy records holding a
+		// shared branch normalize below instead of failing validation.
+		if found && req.BaseBranch != nil && strings.TrimSpace(*req.BaseBranch) != "" && strings.TrimSpace(*req.BaseBranch) == strings.TrimSpace(existing.BaseBranch) {
+			req.BaseBranch = nil
+		}
 		// An explicit empty branch restores automatic branch creation; an omitted
 		// field preserves the selection on edits made by older clients.
 		if req.BaseBranch != nil {
 			v.BaseBranch = *req.BaseBranch
+			if !branchesProvided {
+				v.RepositoryBranches = nil
+			}
+		}
+		if found && req.BaseBranch == nil && !branchesProvided {
+			h.inheritIssueRepositoryBranches(&v, existing)
 		}
 		if found && req.BaseBranch == nil {
 			h.normalizeLegacyIssueBaseBranch(&v)
@@ -535,6 +553,9 @@ func issueChangeDetail(before, after domain.Issue) string {
 			parts = append(parts, "继续已有工作分支 "+after.BaseBranch)
 		}
 	}
+	if !maps.Equal(before.RepositoryBranches, after.RepositoryBranches) {
+		parts = append(parts, "各仓库继续开发分支")
+	}
 	if before.Priority != after.Priority && after.Priority != "" {
 		parts = append(parts, "优先级")
 	}
@@ -582,11 +603,6 @@ func assessClarification(policy domain.ClarificationPolicy, answers map[string]s
 }
 
 func (h issuesHandlers) bindIssueRepositories(v *domain.Issue) error {
-	branch, err := normalizeIssueBaseBranch(v.BaseBranch)
-	if err != nil {
-		return err
-	}
-	v.BaseBranch = branch
 	ids := v.EffectiveRepositoryIDs()
 	if len(ids) == 0 {
 		if project, ok := h.repo.Project(v.ProjectID); ok && strings.TrimSpace(project.DefaultRepositoryID) != "" {
@@ -601,7 +617,7 @@ func (h issuesHandlers) bindIssueRepositories(v *domain.Issue) error {
 		}
 		repositories = append(repositories, repository)
 	}
-	if err := validateIssueBaseBranchRepositories(branch, repositories); err != nil {
+	if err := normalizeIssueRepositoryBranches(v, repositories); err != nil {
 		return err
 	}
 	if len(ids) > 0 {

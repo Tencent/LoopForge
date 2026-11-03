@@ -1,0 +1,290 @@
+/* 流程模板页 SOP 卡片 · Harness UI 设计语言（MIT，见 harness-ui-LICENSE.txt）。
+ * Motion, Status Badge and hover-ink follow harness-ui src/styles/motion.css,
+ * StatusBadge.vue and hover-ink.css (MIT, see harness-ui-LICENSE.txt).
+ * --hui-* tokens come from issues-list.css; every rule stays inside #sopsView
+ * or the ⋯ popover it appends to <body>.
+ */
+#sopsView {
+  --sop-ease-spring: cubic-bezier(.22, 1.25, .36, 1);
+  --sop-hover-shadow: 0 12px 28px -16px rgb(108 82 172 / .33);
+  /* The shared token block also sets type and colour; the heading, metrics and toolbar keep theirs. */
+  font-family: inherit;
+  color: inherit;
+}
+html[data-theme="dark"] #sopsView {
+  --sop-hover-shadow: 0 14px 30px -16px rgb(0 0 0 / .8);
+}
+
+/* ---------- Grid ---------- */
+#sopsView .sop-catalog {
+  position: relative;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 16px;
+  font-family: var(--hui-sans);
+  color: var(--hui-text);
+}
+
+/* ---------- Card ---------- */
+#sopsView .sop-card,
+#sopsView .sop-card.generic,
+#sopsView .sop-card:is(.health-active, .health-closed, .health-blocked, .health-never) {
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 286px;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 14px;
+  border: 1px solid var(--hui-border);
+  border-radius: 14px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-ind-shadow);
+  color: var(--hui-text);
+  cursor: pointer;
+  outline: 0;
+  transform: none;
+  transition: box-shadow .4s var(--hui-ease-flow), border-color .3s var(--hui-ease-flow);
+}
+#sopsView .sop-card::before { display: none; }
+#sopsView .sop-card:hover {
+  transform: none;
+  border-color: var(--hui-border-strong);
+  box-shadow: var(--sop-hover-shadow);
+}
+#sopsView .sop-card:focus-visible {
+  border-color: var(--hui-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hui-accent) 22%, transparent);
+}
+
+#sopsView .sop-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--hui-tertiary);
+  font-size: 12px;
+}
+#sopsView .sop-card-head > div { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#sopsView .sop-card-hint { min-width: 0; overflow: hidden; color: var(--hui-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+
+#sopsView .sop-card-title { display: flex; align-items: center; gap: 10px; min-width: 0; margin: 14px 0 8px; }
+#sopsView .sop-card-tile {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--hui-soft);
+  color: var(--hui-muted);
+}
+#sopsView .sop-card.generic .sop-card-tile { background: var(--hui-accent-soft); color: var(--hui-accent); }
+#sopsView .sop-card-tile .harness-icon { width: 16px; height: 16px; }
+#sopsView .sop-card h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--hui-text);
+  font: 600 16px/1.35 var(--hui-sans);
+  letter-spacing: -.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#sopsView .sop-card p {
+  flex: none;
+  min-height: 4.8em;
+  margin: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  color: var(--hui-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#sopsView .sop-card .sop-requirements { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+#sopsView .sop-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin: auto 0 0;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--hui-soft);
+}
+#sopsView .sop-requirements + .sop-kpis { margin-top: 12px; }
+#sopsView .sop-kpis span { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; color: var(--hui-tertiary); font-size: 11.5px; }
+#sopsView .sop-kpis b { color: var(--hui-text); font: 600 15px/1.3 var(--hui-mono); font-variant-numeric: tabular-nums; }
+#sopsView .sop-kpis .is-bad b { color: var(--hui-error); }
+
+#sopsView .sop-card-foot {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hui-border-soft);
+}
+#sopsView .sop-card-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hui-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#sopsView .sop-card-tag { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 5px; background: var(--hui-soft); color: var(--hui-muted); }
+
+/* ---------- Actions ---------- */
+#sopsView .sop-card-primary,
+#sopsView .sop-card-more {
+  --hover-ink-color: var(--hui-soft);
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  overflow: clip;
+  isolation: isolate;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: 500 12.5px/1 var(--hui-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow), border-color .18s var(--hui-ease-flow);
+}
+#sopsView .sop-card-primary {
+  --hover-ink-color: color-mix(in srgb, var(--hui-accent) 14%, transparent);
+  padding: 0 10px;
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+}
+#sopsView .sop-card-primary:hover { color: var(--hui-accent-hover); }
+#sopsView .sop-card-primary .harness-icon { width: 14px; height: 14px; }
+#sopsView .sop-card-more { width: 28px; padding: 0; background: transparent; color: var(--hui-muted); }
+#sopsView .sop-card-more:hover,
+#sopsView .sop-card-more[aria-expanded="true"] { color: var(--hui-text); }
+#sopsView .sop-card-more[aria-expanded="true"] { background: var(--hui-soft); }
+#sopsView .sop-card-more .harness-icon { width: 16px; height: 16px; }
+#sopsView :is(.sop-card-primary, .sop-card-more):focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+
+/* Hover ink (hover-ink.js drives --ink-x/--ink-y/--ink-d and data-hover-ink). */
+#sopsView :is(button, a)[data-hover-ink-control]::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: var(--ink-x, 50%);
+  top: var(--ink-y, 50%);
+  width: var(--ink-d, 0px);
+  height: var(--ink-d, 0px);
+  border-radius: 50%;
+  background: var(--hover-ink-color);
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 350ms var(--hui-ease-flow);
+}
+#sopsView :is(button, a)[data-hover-ink-control][data-hover-ink="hover"]::after { transform: translate(-50%, -50%) scale(1); }
+#sopsView :is(button, a)[data-hover-ink-control]:is([data-hover-ink="suppressed"], :disabled, [aria-disabled="true"])::after { visibility: hidden; transition: none; transform: translate(-50%, -50%) scale(0); }
+
+/* ---------- Status Badge ---------- */
+#sopsView .sop-badge {
+  --sop-tone: var(--hui-neutral);
+  flex: none;
+  box-sizing: border-box;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--sop-tone) 23%, transparent);
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--sop-tone) 8%, var(--hui-surface));
+  color: var(--sop-tone);
+  font: 400 12px/18px var(--hui-sans);
+  white-space: nowrap;
+}
+#sopsView .sop-badge.tone-info { --sop-tone: var(--hui-info); }
+#sopsView .sop-badge.tone-success { --sop-tone: var(--hui-success); }
+#sopsView .sop-badge.tone-error { --sop-tone: var(--hui-error); }
+#sopsView .sop-badge.tone-warn { --sop-tone: var(--hui-warn); }
+#sopsView .sop-badge.tone-accent { --sop-tone: var(--hui-accent); }
+#sopsView .sop-badge .harness-icon { flex: none; width: 12px; height: 12px; stroke-width: 1.8; }
+#sopsView .sop-badge-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#sopsView .sop-lamp { position: relative; flex: none; width: 6px; height: 6px; margin: 0 2px; }
+#sopsView .sop-lamp i { position: absolute; inset: 0; border-radius: 50%; background: currentColor; }
+#sopsView .sop-lamp::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; background: currentColor; opacity: .25; animation: sopLampBreath 1.8s var(--hui-ease-flow) infinite; }
+@keyframes sopLampBreath { 0% { transform: scale(.5); opacity: .35; } 70%, 100% { transform: scale(1.4); opacity: 0; } }
+
+/* ---------- Empty state ---------- */
+#sopsView #sopCatalog > .sop-empty {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 16px;
+  border: 1px dashed var(--hui-border-strong);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--hui-muted);
+  font-size: 13px;
+  text-align: center;
+}
+#sopsView .sop-empty b { max-width: 520px; color: var(--hui-muted); font-weight: 500; line-height: 1.6; }
+#sopsView .sop-empty .harness-icon { width: 28px; height: 28px; color: var(--hui-tertiary); }
+
+/* ---------- Motion ---------- */
+#sopsView .sop-card.is-entering {
+  animation: sopCardIn .55s var(--sop-ease-spring) both;
+  animation-delay: calc(min(var(--card-index, 0), 10) * 30ms);
+}
+#sopsView .sop-card.is-leaving {
+  position: absolute;
+  z-index: 0;
+  margin: 0;
+  pointer-events: none;
+  animation: sopCardOut .18s ease forwards;
+}
+@keyframes sopCardIn {
+  from { opacity: 0; transform: translateY(22px) scale(.97); filter: blur(3px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes sopCardOut {
+  to { opacity: 0; transform: translateY(5px) scale(.96); filter: blur(3px); }
+}
+
+/* ---------- ⋯ popover (appended to <body>) ---------- */
+.sop-action-popover { position: fixed; z-index: 9999; min-width: 188px; }
+.sop-action-popover .sop-popover-sep { display: block; height: 1px; margin: 4px -4px; background: var(--hui-border); }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1050px) {
+  #sopsView .sop-catalog { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+}
+@media (max-width: 720px) {
+  #sopsView .sop-catalog { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #sopsView .sop-card,
+  #sopsView .sop-card *,
+  #sopsView .sop-card *::after,
+  .sop-action-popover {
+    animation: none !important;
+    transition: none !important;
+  }
+  #sopsView .sop-card.is-leaving { display: none; }
+}

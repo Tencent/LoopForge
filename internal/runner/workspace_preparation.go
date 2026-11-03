@@ -3,8 +3,10 @@ package runner
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +45,7 @@ func onceRelease(callbacks ...func()) func() {
 	}
 }
 
-const runnerWorkspacePreparationTimeout = 3 * time.Minute
+const runnerWorkspacePreparationTimeout = 15 * time.Minute
 
 func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
 	ctx, cancel := context.WithTimeout(ctx, runnerWorkspacePreparationTimeout)
@@ -54,7 +56,7 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	}
 	gate := d.workspaceGate(request.RunID)
 	if !gate.TryLock() {
-		if request.CollaborationMode == "group" && gate.TryRLock() {
+		if request.RunKind == domain.RunKindWorkspace && gate.TryRLock() {
 			state := d.runnerWorkspacePreparationStatus(ctx, root, request)
 			gate.RUnlock()
 			if state.Status == "ready" {
@@ -69,7 +71,7 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return runnerWorkspaceError(err)
 	}
-	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, runnerTaskSandboxDriver(task)); err != nil {
+	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, runnerTaskSandboxDriver(task), request.RefreshCleanRepositories); err != nil {
 		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
 	}
 	sb, release, err := d.acquireTaskSandbox(ctx, task)
@@ -163,6 +165,13 @@ func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandb
 		if err != nil {
 			return nil, fmt.Errorf("prepare workspace MCP: %w", err)
 		}
+		// The terminal only offers MCP as optional tools. An MCP whose install
+		// script needs an isolated sandbox is left out instead of making the
+		// whole workspace unusable in a local sandbox.
+		assets, skipped := runtime.WithoutUnprovisionableMCP(sb, assets)
+		if len(skipped) > 0 {
+			log.Printf("workspace %s: skipped MCP %s (install script needs docker, bwrap or seatbelt)", request.RunID, strings.Join(skipped, ", "))
+		}
 		if err = runtime.ProvisionMCPAssets(ctx, sb, sb.Workspace(), assets, nil); err != nil {
 			return nil, fmt.Errorf("provision workspace MCP: %w", err)
 		}
@@ -175,7 +184,19 @@ func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandb
 // members may be changing. A successful prior check is reusable within the
 // current wave only while its exact sandbox generation is still alive.
 func (d *Daemon) runnerWorkspacePreparationStatus(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) runtime.WorkspacePreparationStatus {
-	state := runtime.ReadWorkspacePreparationStatus(root)
+	state := runtime.WorkspacePreparationStatus{Status: "unprepared", Steps: []runtime.WorkspacePreparationStep{}}
+	task, err := d.workspaceSandboxTask(root, request)
+	if err != nil {
+		state.Error = err.Error()
+		return state
+	}
+	sb, release := d.acquireExistingTaskSandbox(task)
+	if sb == nil {
+		state.Error = "工作区执行环境需要重新准备"
+		return state
+	}
+	defer release()
+	state = runtime.ReadWorkspacePreparationStatus(root, sb.ID())
 	if _, active := d.workspacePreparing.Load(request.RunID); state.Status == "preparing" && !active {
 		state.Status = "unprepared"
 		state.Error = "上次工作区准备已中断，请重新准备"
@@ -183,19 +204,6 @@ func (d *Daemon) runnerWorkspacePreparationStatus(ctx context.Context, root stri
 	if state.Status != "ready" {
 		return state
 	}
-	task, err := d.workspaceSandboxTask(root, request)
-	if err != nil {
-		state.Status = "unprepared"
-		state.Error = err.Error()
-		return state
-	}
-	sb, release := d.acquireExistingTaskSandbox(task)
-	if sb == nil {
-		state.Status = "unprepared"
-		state.Error = "工作区执行环境需要重新准备"
-		return state
-	}
-	defer release()
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
 	if err != nil || !runtime.WorkspacePreparationReusable(state, *request.Workflow, request.Repositories, epoch) {
 		state.Status = "unprepared"
@@ -217,7 +225,7 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 		return runtime.TerminalResult{}, fmt.Errorf("workspace environment is not prepared")
 	}
 	release := onceRelease(releaseSandbox, gate.RUnlock)
-	state := runtime.ReadWorkspacePreparationStatus(root)
+	state := runtime.ReadWorkspacePreparationStatus(root, sb.ID())
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
 	if err != nil || !runtime.WorkspacePreparationReusable(state, *request.Workflow, request.Repositories, epoch) {
 		release()

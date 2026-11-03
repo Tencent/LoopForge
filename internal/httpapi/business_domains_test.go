@@ -109,6 +109,9 @@ func TestBusinessDomainsPermissionsAndCurrentAttribution(t *testing.T) {
 	if got.Summary.TotalRuns != 3 || got.Summary.TotalTokens != 60 || got.Summary.UniqueIssues != 3 || got.Summary.SuccessRate < 66 || got.Summary.SuccessRate > 67 {
 		t.Fatalf("bad unified aggregates: %+v", got)
 	}
+	if got.DeliveryMetrics.CompletedIssues != 0 || got.TimeZone != "UTC" {
+		t.Fatalf("successful Runs must not imply completed requirements: %+v", got.DeliveryMetrics)
+	}
 	requestJSONAuthed[map[string]any](t, h, outsider, http.MethodGet, "/api/business-domain-report?businessDomainId="+a.ID, nil, 403)
 	requestJSONAuthed[map[string]any](t, h, viewer, http.MethodGet, "/api/business-domain-report?businessDomainId="+b.ID, nil, 403)
 	if got := report(admin, empty.ID); got.Summary.TotalRuns != 0 || len(got.Projects) != 0 {
@@ -155,6 +158,8 @@ func TestBusinessDomainsPermissionsAndCurrentAttribution(t *testing.T) {
 	}
 	requestJSONAuthed[map[string]any](t, h, admin, http.MethodGet, "/api/business-domain-report?from=2025-12-01T00:00:00Z&to=2025-01-01T00:00:00Z", nil, 400)
 	requestJSONAuthed[map[string]any](t, h, admin, http.MethodGet, "/api/business-domain-report?grain=invalid", nil, 400)
+	requestJSONAuthed[map[string]any](t, h, admin, http.MethodGet, "/api/business-domain-report?timeZone=invalid", nil, 400)
+	requestJSONAuthed[map[string]any](t, h, admin, http.MethodGet, "/api/business-domain-report?timeZone=Local", nil, 400)
 	assign(admin, "business-p2", a.ID, "", 200)
 	if got := report(owner, "unclassified"); got.Summary.TotalRuns != 1 {
 		t.Fatal("unclassified owner scope missing")

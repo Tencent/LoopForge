@@ -49,7 +49,7 @@ func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.
 		return nil, err
 	}
 	credentials := e.resolveRunCredentials(run)
-	sb, err := e.sandboxes.AcquireRun(ctx, run.ID, profile, requirements, credentials, resources)
+	sb, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(run), profile, requirements, credentials, resources)
 	if err != nil {
 		return nil, err
 	}
@@ -87,14 +87,24 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 			return request, fmt.Errorf("此历史运行使用逐节点工作区，不能自动重建共享环境；请重新发起一次运行")
 		}
 		runner, ok := e.repo.Runner(runnerID)
+		if run.IsWorkspace() && (!ok || !runner.SupportsConversationWorkspace()) {
+			return request, fmt.Errorf("对话工作区需要执行机器升级至 %s", domain.RunnerVersionConversationWorkspace)
+		}
 		if !ok || !runner.SupportsWorkspacePreparation() {
 			return request, fmt.Errorf("执行机器需升级至 %s 才能准备环境或打开沙箱终端", domain.RunnerVersionWorkspacePreparation)
+		}
+		if sharesWorkspace(run) && !runner.SupportsWorkspaceOwnerPreparation() {
+			return request, fmt.Errorf("执行机器需升级至 %s 才能操作共享父工作区中的子 SOP 环境", domain.RunnerVersionWorkspaceOwnerPreparation)
 		}
 	}
 	spec, err := e.runnerSandboxSpec(run)
 	if err != nil {
 		return request, err
 	}
+	request.RunID = run.ID
+	request.RunKind = run.Kind
+	request.WorkspaceRunID = workspaceRunID(run)
+	request.RefreshCleanRepositories = request.Operation == domain.RunnerWorkspaceOperationPrepare && workspaceCanRefreshRepositories(run)
 	request.Sandbox = spec
 	// Requests are constructed from the persisted frozen run, never client JSON.
 	wf := workspacePreparationPlan(run)
@@ -122,9 +132,24 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	invocation.TaihuPAT = credentials.TaihuPAT
 	request.PreparationInvocation = invocation
 	request.RunStatus = run.Status
-	request.CollaborationMode = run.WorkflowSnapshot.CollaborationMode
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
 	return request, nil
+}
+
+func workspaceCanRefreshRepositories(run domain.Run) bool {
+	if sharesWorkspace(run) {
+		return false
+	}
+	preparation := map[string]bool{}
+	for _, node := range runtime.PreparationNodes(runtime.WorkspacePreparationWorkflow(run.WorkflowSnapshot)) {
+		preparation[node.ID] = true
+	}
+	for id, node := range run.Nodes {
+		if node != nil && node.Attempt > 0 && !preparation[id] {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Engine) remoteWorkspacePreparation(ctx context.Context, run domain.Run, operation string) (runtime.WorkspacePreparationStatus, error) {
@@ -167,7 +192,13 @@ func (e *Engine) WorkspacePreparationStatus(ctx context.Context, id string) (run
 	if reason != "" {
 		return runtime.WorkspacePreparationStatus{Status: "unprepared", Steps: []runtime.WorkspacePreparationStep{}}, nil
 	}
-	state := runtime.ReadWorkspacePreparationStatus(root)
+	e.runEnvMu.Lock()
+	scopeEnv := e.runEnvs[id]
+	e.runEnvMu.Unlock()
+	if scopeEnv == nil {
+		return runtime.WorkspacePreparationStatus{Status: "unprepared", Error: "执行环境尚未检查；文件仍可浏览", Steps: []runtime.WorkspacePreparationStep{}}, nil
+	}
+	state := runtime.ReadWorkspacePreparationStatus(root, scopeEnv.ID())
 	if state.Status == "preparing" {
 		e.runEnvMu.Lock()
 		env := e.runEnvs[id]
@@ -224,9 +255,9 @@ func (e *Engine) EnsureWorkspaceReady(ctx context.Context, id string) (runtime.W
 		run = current
 	}
 	if hasRunningNode(run) || env.activeExecutions.Load() > 0 || e.workspaceTerminals.HasRunScope(id) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
-		state := runtime.ReadWorkspacePreparationStatus(env.Workspace())
+		state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 		epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
-		if run.WorkflowSnapshot.CollaborationMode == "group" && err == nil && runtime.WorkspacePreparationReusable(state, workspacePreparationPlan(run), run.RepositoryContexts(), epoch) {
+		if run.IsWorkspace() && err == nil && runtime.WorkspacePreparationReusable(state, workspacePreparationPlan(run), run.RepositoryContexts(), epoch) {
 			return state, nil
 		}
 		return runtime.WorkspacePreparationStatus{Status: "unprepared", Error: "成员或终端正在使用工作区，请结束当前操作后重新准备", Steps: []runtime.WorkspacePreparationStep{}}, fmt.Errorf("成员或终端正在使用工作区，请结束当前操作后重新准备")
@@ -239,7 +270,7 @@ func (e *Engine) PrepareNodeWorkspace(ctx context.Context, run domain.Run, env *
 		return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}}, nil
 	}
 	if e.defaultExecutionRunner(run) != "" {
-		if run.WorkflowSnapshot.CollaborationMode == "group" {
+		if run.IsWorkspace() {
 			if current, ok := e.repo.RunState(run.ID); ok {
 				run = current
 			}
@@ -250,8 +281,8 @@ func (e *Engine) PrepareNodeWorkspace(ctx context.Context, run domain.Run, env *
 		}
 		return e.remoteWorkspacePreparation(ctx, run, domain.RunnerWorkspaceOperationPrepare)
 	}
-	if run.WorkflowSnapshot.CollaborationMode == "group" && env.activeExecutions.Load() > 0 {
-		state := runtime.ReadWorkspacePreparationStatus(env.Workspace())
+	if run.IsWorkspace() && env.activeExecutions.Load() > 0 {
+		state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 		epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
 		if err == nil && runtime.WorkspacePreparationReusable(state, workspacePreparationPlan(run), run.RepositoryContexts(), epoch) {
 			return state, nil
@@ -283,7 +314,7 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, id string,
 		return runtime.TerminalResult{}, fmt.Errorf("工作区环境尚未准备，请重新打开终端")
 	}
 
-	state := runtime.ReadWorkspacePreparationStatus(env.Workspace())
+	state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
 	if err != nil || state.Status != "ready" || state.Environment != epoch {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区执行环境已变化，请重新准备后打开终端")
@@ -346,9 +377,6 @@ func workspacePreparationPlan(run domain.Run) domain.WorkflowDefinition {
 	wf := runtime.WorkspacePreparationWorkflow(run.WorkflowSnapshot)
 	wf.Nodes = append([]domain.WorkflowNode(nil), wf.Nodes...)
 	states := run.Nodes
-	if run.WorkflowSnapshot.CollaborationMode == "group" && run.WorkflowSnapshot.SOPCheckpoint != nil {
-		states = run.WorkflowSnapshot.SOPCheckpoint.Nodes
-	}
 	for i := range wf.Nodes {
 		if !wf.Nodes[i].RunOnWorkspaceRebuild {
 			continue
@@ -384,7 +412,7 @@ func (e *Engine) recordNodeWorkspacePreparation(ctx context.Context, run domain.
 		}
 		return nil
 	}
-	if run.WorkflowSnapshot.CollaborationMode == "group" {
+	if run.IsWorkspace() {
 		env.nodeMu.Lock()
 		defer env.nodeMu.Unlock()
 	}

@@ -169,7 +169,7 @@ func TestRunnerPreparationCreatesCheckoutAndPreservesDirtyFiles(t *testing.T) {
 	d.closeAllRunSandboxes(context.Background())
 }
 
-func TestRunnerGroupWaveReusesReadinessWithoutPreparingDuringActiveExecution(t *testing.T) {
+func TestRunnerConversationWorkspaceWaveReusesReadinessWithoutPreparingDuringActiveExecution(t *testing.T) {
 	d, request, root := runnerPreparationFixture(t)
 	defer d.closeAllRunSandboxes(context.Background())
 	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
@@ -196,7 +196,7 @@ func TestRunnerGroupWaveReusesReadinessWithoutPreparingDuringActiveExecution(t *
 	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 409 {
 		t.Fatal("SOP concurrent task allowed preflight scripts", result)
 	}
-	request.CollaborationMode = "group"
+	request.RunKind = domain.RunKindWorkspace
 	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
 		t.Fatal("healthy group preparation failed to reuse active wave", result)
 	}
@@ -222,7 +222,7 @@ func TestRunnerGroupWaveReusesReadinessWithoutPreparingDuringActiveExecution(t *
 	}
 }
 
-func TestRunnerGroupTerminalJoinsPreparedActiveWave(t *testing.T) {
+func TestRunnerConversationWorkspaceTerminalJoinsPreparedActiveWave(t *testing.T) {
 	d, request, root := runnerPreparationFixture(t)
 	defer d.closeAllRunSandboxes(context.Background())
 	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
@@ -232,7 +232,7 @@ func TestRunnerGroupTerminalJoinsPreparedActiveWave(t *testing.T) {
 	gate.RLock()
 	defer gate.RUnlock()
 	request.Operation = domain.RunnerWorkspaceOperationTerminal
-	request.CollaborationMode = "group"
+	request.RunKind = domain.RunKindWorkspace
 	request.RunStatus = "running"
 	request.TerminalOwner = 7
 	request.Terminal = &domain.WorkspaceTerminalRequest{Operation: "open", ExpiresAt: time.Now().Add(time.Minute)}
@@ -333,7 +333,7 @@ func TestRunnerPreparationRecordsMergeWhileFinishingWorkersHoldReadFences(t *tes
 	defer d.closeAllRunSandboxes(context.Background())
 	request.Workflow.Nodes = append(request.Workflow.Nodes, domain.WorkflowNode{ID: "second", Name: "Second", Type: "script", RunOnWorkspaceRebuild: true, Script: "printf second"})
 	task := domain.RunnerTask{ID: "finishing", RunID: request.RunID, Workspace: "runs/prepared/workspace", Provider: "terminal", Sandbox: request.Sandbox}
-	_, release, err := d.acquireTaskSandbox(context.Background(), task)
+	sb, release, err := d.acquireTaskSandbox(context.Background(), task)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestRunnerPreparationRecordsMergeWhileFinishingWorkersHoldReadFences(t *tes
 			t.Fatalf("finishing worker blocked record: %+v", result)
 		}
 	}
-	state := runtime.ReadWorkspacePreparationStatus(root)
+	state := runtime.ReadWorkspacePreparationStatus(root, sb.ID())
 	found := map[string]bool{}
 	for _, step := range state.Steps {
 		found[step.NodeID] = true
@@ -396,5 +396,163 @@ func TestRunnerLegacyWorkspaceRejectsPreparationRecordAndTerminalWithoutSideEffe
 	request.Operation = domain.RunnerWorkspaceOperationTree
 	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
 		t.Fatalf("legacy file browsing was blocked: %+v", result)
+	}
+}
+
+func TestChildWorkspacePreparationUsesParentCheckoutAndIsolatedReceipts(t *testing.T) {
+	d, parent, root := runnerPreparationFixture(t)
+	defer d.closeAllRunSandboxes(context.Background())
+	if err := os.WriteFile(filepath.Join(root, "parent-source.txt"), []byte("parent checkout"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	parent.Workflow.Nodes[0].Script = "test \"$(cat parent-source.txt)\" = 'parent checkout'; printf x >> preparation-count"
+	if result := d.readRunnerWorkspace(context.Background(), parent); result.Status != 200 {
+		t.Fatalf("parent prepare: %+v", result)
+	}
+	child := parent
+	child.RunID = "child-run"
+	child.WorkspaceRunID = parent.RunID
+	child.Operation = domain.RunnerWorkspaceOperationPreparationStatus
+	checkStatus := func(request domain.RunnerWorkspaceRequest, want string) {
+		t.Helper()
+		response := d.readRunnerWorkspace(context.Background(), request)
+		var state runtime.WorkspacePreparationStatus
+		if err := json.Unmarshal(response.Payload, &state); err != nil || response.Status != 200 || state.Status != want {
+			t.Fatalf("status %s want %s: %+v %v", request.RunID, want, response, err)
+		}
+	}
+	checkStatus(child, "unprepared")
+	task := domain.RunnerTask{ID: "child-script", RunID: child.RunID, Workspace: "runs/" + parent.RunID + "/workspace", Provider: "terminal", Sandbox: child.Sandbox}
+	sb, release, err := d.acquireTaskSandbox(context.Background(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sb.Workspace() != root {
+		release()
+		t.Fatalf("child sandbox = %s, want parent %s", sb.Workspace(), root)
+	}
+	checkStatus(child, "unprepared")
+	if _, err := sb.Exec(context.Background(), runtime.CommandSpec{Argv: []string{"sh", "-lc", child.Workflow.Nodes[0].Script}, Provider: "script"}, nil); err != nil {
+		release()
+		t.Fatal(err)
+	}
+	release()
+	child.Operation = domain.RunnerWorkspaceOperationPreparationRecord
+	child.PreparationNodeID = "prepare"
+	child.PreparationOutput = "child completed in parent checkout"
+	if result := d.readRunnerWorkspace(context.Background(), child); result.Status != 200 {
+		t.Fatalf("child record: %+v", result)
+	}
+	child.Operation = domain.RunnerWorkspaceOperationPreparationStatus
+	checkStatus(child, "ready")
+	parent.Operation = domain.RunnerWorkspaceOperationPreparationStatus
+	checkStatus(parent, "ready")
+	child.Operation = domain.RunnerWorkspaceOperationPrepare
+	if result := d.readRunnerWorkspace(context.Background(), child); result.Status != 200 {
+		t.Fatalf("child warm prepare: %+v", result)
+	}
+	again, releaseAgain, err := d.acquireTaskSandbox(context.Background(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != sb || again.Workspace() != root {
+		releaseAgain()
+		t.Fatal("child follow-up task reused a different checkout or sandbox")
+	}
+	releaseAgain()
+	if raw, err := os.ReadFile(filepath.Join(root, "preparation-count")); err != nil || string(raw) != "xx" {
+		t.Fatalf("child script was skipped or replayed: %q %v", raw, err)
+	}
+	if _, err := os.Stat(filepath.Join(d.cfg.DefaultWorkspaceRoot, "runs", child.RunID)); !os.IsNotExist(err) {
+		t.Fatalf("child preparation created its own checkout: %v", err)
+	}
+	d.closeRunSandboxes(context.Background(), child.RunID)
+	child.Operation = domain.RunnerWorkspaceOperationPreparationStatus
+	checkStatus(child, "unprepared")
+	checkStatus(parent, "ready")
+}
+
+func TestRunnerWorkspaceOwnerRejectsUnsafePathsBeforePreparing(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	for _, owner := range []string{"../parent", ".", "..", "/absolute", "one/two", " ", "unsafe\x00"} {
+		request.WorkspaceRunID = owner
+		response := d.readRunnerWorkspace(context.Background(), request)
+		if response.Status == 200 || !strings.Contains(response.Error, "invalid workspace owner run id") {
+			t.Fatalf("owner %q accepted: %+v", owner, response)
+		}
+	}
+	if len(d.runSandboxes) != 0 {
+		t.Fatal("unsafe owner created an environment")
+	}
+	if _, err := os.Stat(filepath.Join(root, "preparation-count")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe owner executed a script: %v", err)
+	}
+}
+
+// A chat workspace on a cloud runner has no checkout until the platform asks
+// for one. Drive the whole path: engine -> control websocket -> real daemon
+// -> git clone, then make sure asking again never resets the user's edits.
+func TestConversationWorkspaceMaterializesOnConnectedRunner(t *testing.T) {
+	server, s, e := newDaemonTestServer(t)
+	remote := bareRemoteWithBaseline(t)
+	workspaceRoot := filepath.Join(t.TempDir(), "runner-workspace")
+	daemon, err := New(Config{
+		ServerURL:            server.URL,
+		BootstrapToken:       "boot-secret",
+		StatePath:            filepath.Join(t.TempDir(), "state.json"),
+		Name:                 "chat-runner",
+		MaxConcurrency:       1,
+		HeartbeatInterval:    time.Second,
+		LongPollTimeout:      2 * time.Second,
+		DefaultWorkspaceRoot: workspaceRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = daemon.Run(ctx) }()
+	waitFor(t, 5*time.Second, "runner registration", func() bool { return len(s.Runners()) == 1 })
+	runnerID := s.Runners()[0].ID
+	run := domain.Run{
+		ID: "chat-materialize", Kind: domain.RunKindWorkspace, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runnerID, RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared},
+		Repositories:     []domain.RepositoryContext{{RepositoryID: "web", Name: "web", CloneURL: remote, BaseBranch: "master", WorkBranch: "feature/chat", WorkspaceDir: "web"}},
+	}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(workspaceRoot, "runs", run.ID, "workspace", "web")
+	if _, err := os.Stat(checkout); !os.IsNotExist(err) {
+		t.Fatalf("checkout exists before the first open: %v", err)
+	}
+	var lastErr error
+	waitFor(t, 15*time.Second, "checkout through the runner control channel", func() bool {
+		lastErr = e.MaterializeConversationWorkspace(ctx, run.ID)
+		return lastErr == nil
+	})
+	if raw, err := os.ReadFile(filepath.Join(checkout, "README.md")); err != nil || string(raw) != "baseline\n" {
+		t.Fatalf("checkout = %q, %v (last error %v)", raw, err, lastErr)
+	}
+	if branch := runGitT(t, checkout, "rev-parse", "--abbrev-ref", "HEAD"); branch != "feature/chat" {
+		t.Fatalf("checked out %q, want the work branch", branch)
+	}
+	head := runGitT(t, checkout, "rev-parse", "HEAD")
+
+	// Opening again (a later turn, or a retry) must keep local edits even if
+	// the base branch moved: this request never refreshes a checkout.
+	if err := os.WriteFile(filepath.Join(checkout, "README.md"), []byte("edited in chat\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	advanceCheckoutRemote(t, remote)
+	if err := e.MaterializeConversationWorkspace(ctx, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(checkout, "README.md")); string(raw) != "edited in chat\n" {
+		t.Fatalf("second open replaced the user's edit: %q", raw)
+	}
+	if got := runGitT(t, checkout, "rev-parse", "HEAD"); got != head {
+		t.Fatal("second open moved the checkout")
 	}
 }

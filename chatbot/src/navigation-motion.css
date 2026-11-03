@@ -1,0 +1,193 @@
+/* Keep the grid topology stable while either conversation drawer changes size.
+   Fixed-width sidebar contents are revealed by a clip, so labels never squeeze. */
+.chat-shell {
+  --sidebar-track-width: var(--sidebar-width);
+  --artifact-sash-track: 0px;
+  --artifact-panel-track: 0px;
+  --navigation-motion-duration: 220ms;
+  --navigation-motion-ease: cubic-bezier(.22, 1, .36, 1);
+  --drawer-track-duration: 0s;
+}
+
+.chat-shell,
+.chat-shell.with-panel,
+.chat-shell.sidebar-hidden,
+.chat-shell.sidebar-hidden.with-panel,
+.chat-shell.with-panel.artifact-compact,
+.chat-shell.sidebar-hidden.with-panel.artifact-compact {
+  grid-template-columns:
+    var(--sidebar-track-width)
+    minmax(0, 1fr)
+    var(--artifact-sash-track)
+    var(--artifact-panel-track);
+  transition-property: grid-template-columns;
+  transition-duration: var(--drawer-track-duration);
+  transition-timing-function: var(--navigation-motion-ease);
+}
+
+.chat-shell.sidebar-hidden,
+.chat-shell.sidebar-entering {
+  --sidebar-track-width: 0px;
+}
+
+.chat-shell:is(.sidebar-transitioning, .artifact-transitioning) {
+  --drawer-track-duration: var(--navigation-motion-duration);
+}
+
+.chat-shell:is(.artifact-resizing, .sidebar-resizing) {
+  --drawer-track-duration: 0s;
+}
+
+.chat-shell > .conversation-header,
+.chat-shell.sidebar-hidden > .conversation-header {
+  grid-column: 2 / -1;
+}
+
+.chat-shell > .conversation-main,
+.chat-shell.sidebar-hidden > .conversation-main {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.chat-shell > .conversation-sidebar {
+  position: relative;
+  grid-area: 2 / 1 / 3 / 2;
+  width: min(var(--sidebar-width), 100vw);
+  min-width: 0;
+  opacity: 1;
+  clip-path: inset(0);
+  transition:
+    clip-path var(--navigation-motion-duration) var(--navigation-motion-ease),
+    opacity 160ms ease;
+}
+
+/* The card and its rail backing survive the closing transition as well. */
+.chat-shell::before,
+.chat-shell::after {
+  content: "";
+  box-sizing: border-box;
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 0;
+  width: min(var(--sidebar-width), 100%);
+  opacity: 1;
+  clip-path: inset(0);
+  pointer-events: none;
+  transition:
+    clip-path var(--navigation-motion-duration) var(--navigation-motion-ease),
+    opacity 160ms ease;
+}
+
+.chat-shell::before {
+  z-index: 1;
+  border: 1px solid var(--navigation-border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px #00000006;
+}
+
+.chat-shell::after {
+  z-index: 0;
+  border-radius: 0 16px 16px 0;
+  background: var(--navigation-rail);
+}
+
+.chat-shell:is(.sidebar-hidden, .sidebar-entering) > .conversation-sidebar,
+.chat-shell:is(.sidebar-hidden, .sidebar-entering)::before,
+.chat-shell:is(.sidebar-hidden, .sidebar-entering)::after {
+  opacity: 0;
+  clip-path: inset(0 100% 0 0);
+  pointer-events: none;
+}
+
+/* Keep one toggle mounted; it travels with the shrinking header rather than
+   disappearing and remounting at the other end of the animation. */
+.chat-shell > .brand,
+.chat-shell:not(.sidebar-hidden) > .brand {
+  position: absolute;
+  left: 0;
+  top: 14px;
+  z-index: 11;
+  width: min(var(--sidebar-width), 100vw);
+  height: calc(var(--navigation-header-height) - 14px);
+  margin-top: 0;
+  padding: 0 16px 0 18px;
+  border: 0;
+  background: transparent;
+  transition-property: width, top, height;
+  transition-duration: 0s;
+  transition-timing-function: var(--navigation-motion-ease);
+}
+
+.chat-shell > .brand > .brand-home,
+.chat-shell.sidebar-hidden > .brand > .brand-home {
+  display: flex;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: calc(var(--sidebar-width) - 100px);
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 1;
+  transition:
+    max-width var(--navigation-motion-duration) var(--navigation-motion-ease),
+    opacity 160ms ease;
+}
+
+.chat-shell .brand-home .brand-icon {
+  flex-shrink: 0;
+}
+
+.chat-shell:is(.sidebar-hidden, .sidebar-entering) > .brand {
+  top: 0;
+  width: 62px;
+  height: var(--navigation-header-height);
+}
+
+.chat-shell:is(.sidebar-hidden, .sidebar-entering) > .brand > .brand-home {
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chat-shell.sidebar-transitioning > .brand {
+  transition-duration: var(--navigation-motion-duration);
+}
+
+.chat-shell.sidebar-transitioning > .conversation-header {
+  transition: padding-left var(--navigation-motion-duration) var(--navigation-motion-ease);
+}
+
+@media (max-width: 850px) {
+  /* Mobile keeps the conversation still and reveals the drawer above it. */
+  .chat-shell {
+    --sidebar-track-width: 0px;
+  }
+
+  .chat-shell > .conversation-sidebar {
+    position: absolute;
+    grid-area: 1 / 1 / -1 / -1;
+    top: var(--navigation-header-height);
+    bottom: 14px;
+    left: 0;
+    margin-bottom: 0;
+  }
+
+  .chat-shell::before { z-index: 9; }
+  .chat-shell::after { z-index: 8; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell,
+  .chat-shell:is(.sidebar-transitioning, .artifact-transitioning),
+  .chat-shell > .conversation-sidebar,
+  .chat-shell::before,
+  .chat-shell::after,
+  .chat-shell > .brand,
+  .chat-shell > .brand > .brand-home,
+  .chat-shell.sidebar-transitioning > .brand,
+  .chat-shell.sidebar-transitioning > .conversation-header {
+    --drawer-track-duration: 0s;
+    transition-duration: 0s;
+  }
+}

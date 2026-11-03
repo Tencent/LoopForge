@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { api, get, post, put, list, cleanup, ensureProject, waitFor, waitRun, nodeStatus } from '../lib/api.mjs';
 import { cfg, uid } from '../lib/env.mjs';
-import { createWorkflow, script, startRun } from '../lib/fixtures.mjs';
+import { createWorkflow, script, startRun, repoSkip, childSOPHandoffScenario } from '../lib/fixtures.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'e2e-runner-'));
 let proc;
@@ -111,4 +111,12 @@ test('runner mode: a missing required artifact fails the node with a contract er
   const { id } = await startRun(wf, 'e2e 执行机器产物契约');
   const run = await waitRun(id, r => r.status === 'failed', { label: 'contract failure' });
   assert.match(String(run.nodes?.forgetful?.error || ''), /artifact contract|report/);
+});
+
+// 执行机器上子 SOP 用父流程的检出目录：改动双向可见，执行机器不推工作分支。
+test('runner mode: repository-bound child SOP works in the parent checkout', { skip: repoSkip, timeout: 700_000 }, async () => {
+  const { run, child } = await childSOPHandoffScenario({ label: 'runner-repo-sop', extra: { sandboxProfileId }, waitRun });
+  assert.equal(run.executionContext?.executionMode, 'runner');
+  assert.equal(run.executionContext?.executionRunnerId, runnerId);
+  assert.equal(child.executionContext?.executionRunnerId, runnerId, 'child must run on the machine holding the checkout');
 });

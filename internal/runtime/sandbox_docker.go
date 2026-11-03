@@ -24,6 +24,7 @@ type dockerSandbox struct {
 	dockerfile          domain.DockerfileDefinition
 	builtImage          string
 	mu                  sync.Mutex
+	browserMu           sync.Mutex
 	started             bool
 }
 
@@ -63,6 +64,7 @@ func removeDockerSandbox(ctx context.Context, container, image string) {
 	defer cancel()
 	if strings.TrimSpace(container) != "" {
 		_ = exec.CommandContext(ctx, "docker", "rm", "-f", dockerScriptContainerName(container)).Run()
+		removeDockerBrowser(ctx, container)
 		_ = exec.CommandContext(ctx, "docker", "rm", "-f", container).Run()
 	}
 	if ephemeralDockerImage(image) {
@@ -197,6 +199,7 @@ func (s *dockerSandbox) Recreate(ctx context.Context) error {
 	name := s.name
 	s.mu.Unlock()
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", dockerScriptContainerName(name)).Run()
+	removeDockerBrowser(ctx, name)
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
 	return s.ensureStarted(ctx)
 }

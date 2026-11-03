@@ -19,7 +19,7 @@ import (
 // 用户永久卡在「启动失败：authentication required」页面且无法自愈。
 func TestAuthCurrent_ExpiredSessionFallsBackToGuest(t *testing.T) {
 	authClient := auth.NewClient(auth.Config{
-		AppDomain:     "dns-afp.example.com",
+		AppDomain:     "loopforge.example.com",
 		SessionSecret: "secret-session-expiry",
 	})
 	handler, _ := newTestAuthServer(t, authClient)
@@ -76,7 +76,7 @@ func TestAuthCurrent_ExpiredSessionFallsBackToGuest(t *testing.T) {
 // 有效会话必须照旧保持登录，并续签 Cookie（防止修复把正常会话也踢成访客）。
 func TestAuthCurrent_FreshSessionStaysAuthenticated(t *testing.T) {
 	authClient := auth.NewClient(auth.Config{
-		AppDomain:     "dns-afp.example.com",
+		AppDomain:     "loopforge.example.com",
 		SessionSecret: "secret-session-expiry",
 	})
 	handler, st := newTestAuthServer(t, authClient)

@@ -106,6 +106,28 @@ func pushWorkBranch(ctx context.Context, workspace, branch, message string, requ
 	return head, nil
 }
 
+// HasWork reports whether a checkout differs from its base branch: uncommitted
+// changes outside the excluded paths, or commits the base does not have. An
+// unresolvable base counts as work so callers never drop changes they cannot
+// compare.
+func HasWork(ctx context.Context, workspace, base string) bool {
+	args := append([]string{"status", "--porcelain", "--", "."}, ExcludePathspecs...)
+	if out, err := C(ctx, workspace, args...); err != nil || strings.TrimSpace(out) != "" {
+		return true
+	}
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return true
+	}
+	for _, ref := range []string{"refs/remotes/origin/" + base, base} {
+		if _, ok := RevParse(ctx, workspace, ref); ok {
+			out, err := C(ctx, workspace, "rev-list", "--count", ref+"..HEAD")
+			return err != nil || strings.TrimSpace(out) != "0"
+		}
+	}
+	return true
+}
+
 // PullWorkBranch brings a reused checkout up to the remote work branch.
 // Another run may have pushed to the same branch since this checkout was
 // made, e.g. a child SOP. Local-only commits (a rejected push) are rebased

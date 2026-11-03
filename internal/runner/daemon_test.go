@@ -437,6 +437,45 @@ func TestDaemonExecutesMockTaskEndToEnd(t *testing.T) {
 	cancel()
 }
 
+func TestDaemonRestartImmediatelyRestoresPresence(t *testing.T) {
+	server, s, _ := newDaemonTestServer(t)
+	cfg := Config{
+		ServerURL: server.URL, BootstrapToken: "boot-secret",
+		StatePath:         filepath.Join(t.TempDir(), "state.json"),
+		HeartbeatInterval: time.Hour,
+	}
+	first, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.ensureRegistered(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	first.disconnect(context.Background())
+	before, _ := s.Runner(first.runnerID())
+	if before.Status != domain.RunnerStatusOffline {
+		t.Fatal("daemon shutdown did not mark runner offline")
+	}
+	restarted, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.ensureRegistered(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); restarted.heartbeatLoop(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	waitFor(t, 2*time.Second, "immediate restart heartbeat", func() bool {
+		current, _ := s.Runner(first.runnerID())
+		return current.Status == domain.RunnerStatusOnline
+	})
+	if restarted.runnerID() != first.runnerID() || restarted.clientSession() != first.clientSession() || len(s.Runners()) != 1 {
+		t.Fatal("restart must retain the runner identity and session")
+	}
+}
+
 func TestDaemonExecuteProcessRunsRealCommand(t *testing.T) {
 	server, s, _ := newDaemonTestServer(t)
 	_ = server

@@ -56,8 +56,13 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			job.WorkflowID = ""
 			job.UseIssueWorkflow = false
 			job.IssueStatuses = nil
+			job.MaxDispatch = 0
 			job.Source = ""
 		} else {
+			if job.MaxDispatch < 0 || job.MaxDispatch > domain.MaxScheduleDispatch {
+				c.JSON(400, map[string]string{"error": "单次最多触发需求数必须为 1–10，不配置时默认为 10"})
+				return
+			}
 			if job.WorkflowID == "" {
 				c.JSON(400, map[string]string{"error": "触发任务必须选择默认 SOP"})
 				return
@@ -345,7 +350,7 @@ func (h *scheduleHandlers) startBaselineAlignRun(job domain.ScheduleJob, repo do
 	return run.ID, nil
 }
 
-const baselineAlignWorkflowVersion = 4
+const baselineAlignWorkflowVersion = 7
 
 func alignWorkflowUsesPlatformAgent(wf domain.WorkflowDefinition) bool {
 	for _, n := range wf.Nodes {
@@ -360,11 +365,23 @@ func alignWorkflowUsesPlatformAgent(wf domain.WorkflowDefinition) bool {
 // only finishes (and the platform pushes the baseline) when a real merge
 // commit exists and no unresolved conflicts / markers remain. Plan-only
 // output is rejected back to the resolve node automatically.
+// git diff --check also reports trailing whitespace; only leftover conflict
+// markers fail the gate, so a whitespace-only warning cannot stall the schedule.
 const baselineAlignVerifyScript = `set -e
 if git diff --name-only --diff-filter=U | grep -q .; then echo "仍有未解决冲突（git status 显示 unmerged）"; exit 1; fi
 p=$(git log -1 --format=%P 2>/dev/null || true)
 case "$p" in *\ *) ;; *) echo "HEAD 不是合并提交：尚未实际执行 git merge，只输出了计划"; exit 1;; esac
-if git diff --check HEAD^ HEAD | grep -q .; then echo "提交中残留冲突标记，请逐块解决后再提交"; exit 1; fi
+check=$(git diff --check HEAD^ HEAD || true)
+markers=$(printf '%s\n' "$check" | grep 'leftover conflict marker' || true)
+if [ -n "$markers" ]; then
+  echo "提交中残留冲突标记，请逐块解决后再提交"
+  printf '%s\n' "$check"
+  exit 1
+fi
+if [ -n "$check" ]; then
+  echo "提示：合并提交含空白类 diff --check 告警，不阻断基线合入"
+  printf '%s\n' "$check"
+fi
 echo "校验通过：HEAD 为合并提交，无未解决冲突与残留标记"`
 
 func (h *scheduleHandlers) ensureBaselineAlignAgent() bool {

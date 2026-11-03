@@ -213,6 +213,17 @@ func (h *authHandlers) authCurrent(c *gin.Context) {
 		}
 	}
 
+	// Preview-only: this process is explicitly opted in, auth is off, and a
+	// local acceptance user is configured. Sign that user in so the IP preview
+	// does not sit on the guest session and nag the assistant.
+	if user, ok := h.previewLocalAuthUser(); ok {
+		if token, signErr := h.getAuthClient().SignUser(user); signErr == nil && token != "" {
+			h.setAuthCookie(c.Writer, c.Request, token)
+		}
+		c.JSON(http.StatusOK, map[string]any{"user": h.annotateUser(user), "authRequired": false, "appDomain": h.getAuthClient().Config().AppDomain})
+		return
+	}
+
 	// 3. 兜底为访客身份，附带登录跳转链接 loginUrl
 	returnURL := h.getReturnURL(r)
 	loginURL := h.getAuthClient().LoginURL(returnURL)

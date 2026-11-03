@@ -1,6 +1,36 @@
 import fs from 'node:fs';
 export const password=()=>process.env.LOOPFORGE_TEST_PASSWORD || fs.readFileSync(process.env.LOOPFORGE_TEST_PASSWORD_FILE||new URL('../../.local/admin-password',import.meta.url),'utf8').trim();
 
+// The global #projectSwitcher <select> owns the active project, but it is
+// drawn as a Harness trigger and the whole top bar is hidden on the chat home,
+// so readiness means "projects loaded", not "select visible".
+export async function appReady(page){
+  const {expect}=await import('@playwright/test');
+  await expect(page.locator('#projectSwitcher option').first()).toBeAttached();
+}
+export async function switchProject(page,id){
+  const {expect}=await import('@playwright/test');
+  await expect(page.locator(`#projectSwitcher option[value="${id}"]`)).toHaveCount(1);
+  await page.locator('#projectSwitcher').selectOption(id,{force:true});
+}
+
+// The home page embeds the chat app in an iframe; its composer is the entry point.
+export const chat=page=>page.frameLocator('iframe[src*="/chatbot/"]');
+export const composer=page=>chat(page).locator('.composer-column textarea');
+export async function openHome(page){
+  const {expect}=await import('@playwright/test');
+  await page.goto('/#/collaboration');
+  await expect(composer(page)).toBeEditable();
+  // The saved draft is restored once the signed-in user loads; typing earlier is overwritten.
+  await page.waitForLoadState('networkidle');
+  return composer(page);
+}
+// A menu or dialog inside the chat frame must fit the frame's viewport.
+export const fitsFrame=locator=>locator.evaluate(el=>{
+  const r=el.getBoundingClientRect();
+  return r.width>0&&r.top>=0&&r.left>=0&&r.bottom<=innerHeight+1&&r.right<=innerWidth+1;
+});
+
 // Reuse a real password session within this worker so layout/API journeys do
 // not exhaust the production login rate limit. Cookies stay only in memory.
 let unconfiguredCookies=[];
@@ -23,8 +53,8 @@ export async function signInUnconfigured(page){
       await page.locator('[name="password"]').fill('');
       throw new Error(`Acceptance account login failed: HTTP ${response.status()}`);
     }
-    await expect(page.locator('#projectSwitcher')).toBeVisible();
+    await appReady(page);
     unconfiguredCookies=(await page.context().cookies()).filter(c=>c.name==='agentflow_user');
   }
-  await expect(page.locator('#projectSwitcher')).toBeVisible();
+  await appReady(page);
 }

@@ -1,0 +1,637 @@
+/* 新建需求三步向导（#requirementModal）。按钮、输入、徽标、Selector 外观来自 harness-ui.css / hui-controls.css；
+ * 这里只写弹窗布局与向导独有的组件：步骤条、Chat Composer、ghost 选择器、问题卡片、回执、确认表单。 */
+#requirementModal.modal { background: var(--hui-scrim); backdrop-filter: blur(1px); }
+#requirementModal.modal.open { display: block; }
+#requirementModal [hidden] { display: none !important; }
+
+#requirementModal .req-wizard {
+  position: fixed;
+  left: 50%;
+  top: max(56px, 9vh);
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - max(56px, 9vh) - 24px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hui-border);
+  border-radius: 16px;
+  background: var(--hui-surface);
+  box-shadow: 0 24px 64px rgba(15, 15, 20, .16), 0 4px 14px rgba(15, 15, 20, .06);
+  color: var(--hui-text);
+  font: 13px/1.5 var(--hui-sans);
+}
+/* 弹出层（仓库、模型）需要越过滚动容器 */
+#requirementModal .req-wizard:has(.req-ghost-sel.is-open, .ai-model-menu:not([hidden])),
+#requirementModal .req-wizard:has(.req-ghost-sel.is-open, .ai-model-menu:not([hidden])) .req-wizard-body { overflow: visible; }
+
+/* ---------- 头部 + Sliding Tabs 步骤条 ---------- */
+#requirementModal .req-wizard-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 16px 14px 22px;
+  border-bottom: 1px solid var(--hui-border-soft);
+}
+#requirementModal .req-wizard-head h2 {
+  flex: 1;
+  margin: 0;
+  color: var(--hui-text);
+  font: 600 16px/1.3 var(--hui-sans);
+  letter-spacing: -.01em;
+  white-space: nowrap;
+}
+#requirementModal .req-steps {
+  --sliding-surface: var(--hui-surface);
+  --sliding-text: var(--hui-text);
+  --sliding-muted: var(--hui-muted);
+  position: relative;
+  display: flex;
+  width: 340px;
+  max-width: 100%;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--hui-text) 5%, var(--hui-surface));
+}
+#requirementModal .req-steps.sliding-tabs[data-sliding-tabs] { height: 36px !important; min-height: 36px !important; padding: 3px !important; border-radius: 10px !important; }
+#requirementModal .req-steps > button,
+#requirementModal .req-steps.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
+  flex: 1 1 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 6px !important;
+  border: 0;
+  border-radius: 7px !important;
+  background: transparent;
+  color: var(--hui-muted);
+  font-size: 12.5px !important;
+  line-height: 30px !important;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#requirementModal .req-steps > button[aria-selected="true"] { color: var(--hui-text); font-weight: 500; }
+#requirementModal .req-steps > button:disabled { opacity: .38; cursor: not-allowed; }
+#requirementModal .req-step-n {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--hui-text) 8%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+#requirementModal .req-steps > button[aria-selected="true"] .req-step-n { background: var(--hui-accent); color: var(--hui-on-accent); }
+#requirementModal .req-step-n.is-done { background: color-mix(in srgb, var(--hui-accent) 14%, transparent); color: var(--hui-accent); }
+#requirementModal .req-step-more { margin-left: -6px; }
+#requirementModal .req-step-skip { margin-left: -4px; color: var(--hui-tertiary); font-size: 11px; font-weight: 400; }
+
+/* ---------- 正文与底部操作栏 ---------- */
+#requirementModal .req-wizard-body {
+  flex: 1;
+  min-height: min(300px, 40vh);
+  overflow: auto;
+  padding: 20px 22px;
+}
+#requirementModal .req-wizard-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 12px 22px;
+  border-top: 1px solid var(--hui-border-soft);
+  background: var(--hui-surface);
+}
+#requirementModal .req-foot-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hui-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#requirementModal .req-wizard-foot .button,
+#requirementModal .req-wizard-body .button {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font: 500 13px/1 var(--hui-sans);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+#requirementModal .button.small { height: 28px; min-height: 28px; padding: 0 10px; font-size: 12.5px; }
+#requirementModal .button.quiet { border-color: transparent; background: transparent; color: var(--hui-muted); }
+#requirementModal .button.quiet:hover:not(:disabled) { border-color: transparent; background: color-mix(in srgb, var(--hui-text) 5%, transparent); color: var(--hui-text); }
+/* 禁用态是中性灰，不用浅色主色 */
+#requirementModal .button:disabled,
+#requirementModal .button.primary:disabled {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--hui-border) 65%, transparent);
+  background: color-mix(in srgb, var(--hui-soft) 80%, transparent);
+  color: color-mix(in srgb, var(--hui-muted) 65%, transparent);
+  cursor: not-allowed;
+}
+#requirementModal .button.quiet:disabled { border-color: transparent; background: transparent; }
+#requirementModal .req-spin {
+  width: 13px;
+  height: 13px;
+  border: 1.6px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: reqSpin .7s linear infinite;
+}
+@keyframes reqSpin { to { transform: rotate(360deg); } }
+
+/* ---------- ① Chat Composer ---------- */
+#requirementModal .req-chat-composer {
+  border: 1px solid color-mix(in srgb, var(--hui-border-strong) 70%, transparent);
+  border-radius: 20px;
+  background: var(--hui-surface);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--hui-text) 2.5%, transparent);
+  transition: border-color .16s, box-shadow .16s;
+}
+#requirementModal .req-chat-composer:focus-within {
+  border-color: color-mix(in srgb, var(--hui-accent) 45%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hui-accent) 6%, transparent);
+}
+#requirementModal .req-chat-composer textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 148px;
+  max-height: 260px;
+  margin: 0;
+  padding: 16px 18px 6px;
+  border: 0;
+  border-radius: 20px 20px 0 0;
+  outline: 0;
+  box-shadow: none;
+  resize: none;
+  background: transparent;
+  color: var(--hui-text);
+  font: 15px/1.75 var(--hui-sans);
+  caret-color: var(--hui-accent);
+}
+#requirementModal .req-chat-composer textarea::placeholder { color: color-mix(in srgb, var(--hui-muted) 80%, transparent); }
+#requirementModal .req-chat-composer.is-compact textarea { min-height: 64px; padding: 12px 14px 4px; font-size: 14px; }
+#requirementModal .req-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 8px 8px;
+  color: var(--hui-muted);
+  font-size: 12px;
+}
+#requirementModal .req-toolbar-sp { flex: 1; }
+#requirementModal .req-count { padding-right: 6px; color: var(--hui-tertiary); font-variant-numeric: tabular-nums; }
+
+/* ghost 选择器：外层容器无边框，只有触发按钮在悬浮/展开时带一层框 */
+#requirementModal .req-ghost-sel { position: relative; min-width: 0; border: 0; background: transparent; }
+#requirementModal .req-ghost-trigger,
+#requirementModal .req-composer-toolbar .clarify-model-field .ai-model-toggle {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  width: auto !important;
+  max-width: 320px !important;
+  height: 30px !important;
+  padding: 0 8px !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: var(--hui-muted) !important;
+  font: 400 12px/1 var(--hui-sans) !important;
+  cursor: pointer;
+  transition: border-color .16s, background-color .16s, color .16s;
+}
+#requirementModal .req-composer-toolbar .clarify-model-field .ai-model-toggle { color: var(--hui-text) !important; font-weight: 500 !important; }
+#requirementModal .req-ghost-trigger:hover,
+#requirementModal .req-composer-toolbar .clarify-model-field .ai-model-toggle:hover {
+  border-color: var(--hui-border) !important;
+  background: color-mix(in srgb, var(--hui-text) 4%, var(--hui-surface)) !important;
+  color: var(--hui-text) !important;
+}
+#requirementModal .req-ghost-sel.is-open > .req-ghost-trigger,
+#requirementModal .req-composer-toolbar .clarify-model-field .ai-model-toggle[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--hui-accent) 35%, transparent) !important;
+  background: color-mix(in srgb, var(--hui-accent) 4%, var(--hui-surface)) !important;
+  color: var(--hui-text) !important;
+}
+#requirementModal .req-ghost-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#requirementModal .req-ghost-value b { color: var(--hui-text); font-weight: 500; }
+#requirementModal .req-chev { color: var(--hui-muted); transition: transform .22s var(--hui-ease-flow); }
+#requirementModal .req-ghost-sel.is-open .req-chev { transform: rotate(180deg); }
+#requirementModal .req-composer-toolbar .clarify-model-field {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+#requirementModal .req-composer-toolbar .clarify-model-field:hover { border: 0 !important; background: transparent !important; }
+#requirementModal .req-composer-toolbar .clarify-model-field .ai-model-menu {
+  top: calc(100% + 6px) !important;
+  bottom: auto !important;
+  min-width: 300px !important;
+  border-color: var(--hui-border) !important;
+  background: var(--hui-surface) !important;
+  box-shadow: var(--hui-popover-shadow) !important;
+}
+#requirementModal .req-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  box-sizing: border-box;
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-popover-shadow);
+  animation: reqPop .22s var(--hui-ease-flow);
+}
+@keyframes reqPop { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+#requirementModal .req-popover .req-repo-fields { display: grid; }
+#requirementModal .req-popover .req-field { padding: 10px 12px; }
+#requirementModal .req-popover .req-field + .req-field { border-top: 1px solid var(--hui-border-soft); }
+
+/* ---------- 表单通用 ---------- */
+#requirementModal .req-field { min-width: 0; }
+#requirementModal .req-f-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--hui-text);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+#requirementModal .req-f-label .harness-icon { color: var(--hui-muted); }
+#requirementModal .req-opt-tag { color: var(--hui-tertiary); font-weight: 400; }
+#requirementModal .req-help { margin: 6px 0 0; color: var(--hui-muted); font-size: 11.5px; line-height: 1.5; }
+#requirementModal .input,
+#requirementModal .select {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  font: 13px var(--hui-sans);
+}
+#requirementModal .select { padding-right: 30px; }
+#requirementModal .input:disabled { background: var(--hui-soft); color: var(--hui-tertiary); }
+#requirementModal .hui-select-trigger { width: 100%; max-width: none; height: 36px; }
+
+/* 仓库标签：已选可移除；有剩余仓库时才出现「＋ 添加仓库」 */
+#requirementModal .repo-picker-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+}
+#requirementModal .repo-picker-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hui-soft);
+  color: var(--hui-text);
+  font-size: 12px;
+}
+#requirementModal .repo-picker-tag.is-single { padding-right: 8px; }
+#requirementModal .repo-picker-tag button {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--hui-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+#requirementModal .repo-picker-tag button:hover { background: color-mix(in srgb, var(--hui-text) 8%, transparent); color: var(--hui-text); }
+#requirementModal .req-chip-def { color: var(--hui-tertiary); }
+#requirementModal .repo-picker-select {
+  width: auto;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0 26px 0 8px !important;
+  border: 1px dashed var(--hui-border-strong);
+  border-radius: 6px;
+  background-color: transparent;
+  background-position: right 6px center !important;
+  background-size: 12px 12px !important;
+  color: var(--hui-muted);
+  font-size: 12px;
+}
+#requirementModal .repo-picker-select:hover { border-color: color-mix(in srgb, var(--hui-accent) 45%, transparent); color: var(--hui-accent); }
+#requirementModal .repo-picker-field .req-help { margin: 0 4px; }
+
+/* ---------- ② 澄清 ---------- */
+#requirementModal .req-thinking { margin-bottom: 8px; }
+#requirementModal .req-thinking-line { display: flex; align-items: center; gap: 9px; min-width: 0; color: var(--hui-muted); font-size: 13.5px; }
+#requirementModal .req-thinking-lamp { position: relative; flex: none; width: 12px; height: 12px; color: var(--hui-accent); }
+#requirementModal .req-thinking-lamp i { position: absolute; left: 4px; top: 4px; width: 4px; height: 4px; border-radius: 50%; }
+#requirementModal .req-thinking-lamp i:first-child { background: currentColor; animation: reqCore .8s ease-in-out infinite; }
+#requirementModal .req-thinking-lamp i:last-child { border: 1px solid currentColor; box-sizing: border-box; animation: reqHalo .8s ease-out infinite; }
+@keyframes reqCore { 0%, 100% { opacity: .6; } 45% { opacity: 1; box-shadow: 0 0 2px currentColor; } }
+@keyframes reqHalo { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(2.2); opacity: 0; } }
+#requirementModal .req-thinking-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: linear-gradient(100deg, currentColor 0%, currentColor 42%, color-mix(in srgb, var(--hui-text) 70%, var(--hui-surface)) 50%, currentColor 58%, currentColor 100%) 120% 50% / 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: reqSheen 1s linear infinite;
+}
+@keyframes reqSheen { to { background-position: -20% 50%; } }
+#requirementModal .req-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--hui-muted);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+#requirementModal .req-fold::-webkit-details-marker { display: none; }
+#requirementModal .req-fold:hover { color: var(--hui-text); }
+#requirementModal .req-fold .harness-icon { transition: transform .3s var(--hui-ease-flow); }
+#requirementModal .req-fold[aria-expanded="true"] .harness-icon,
+#requirementModal details[open] > .req-fold .harness-icon { transform: rotate(180deg); }
+#requirementModal .req-trace { margin-top: 8px; padding: 2px 0 2px 14px; border-left: 1px solid var(--hui-border); }
+#requirementModal .req-trace-row { display: flex; align-items: center; gap: 8px; min-height: 26px; color: var(--hui-muted); font-size: 12px; }
+#requirementModal .req-trace-row .harness-icon { flex: none; color: var(--hui-tertiary); }
+#requirementModal .req-trace-row code { overflow: hidden; color: var(--hui-secondary); font: 11.5px var(--hui-mono); text-overflow: ellipsis; white-space: nowrap; }
+#requirementModal .req-trace-row.is-warn,
+#requirementModal .req-trace-row.is-warn .harness-icon { color: var(--hui-warn); }
+
+#requirementModal .req-history { margin-bottom: 16px; }
+#requirementModal .req-receipt {
+  width: fit-content;
+  max-width: 88%;
+  margin: 0 0 12px auto;
+  padding: 10px 14px;
+  border-radius: 16px 16px 6px 16px;
+  background: color-mix(in srgb, var(--hui-soft) 85%, transparent);
+  font-size: 12.5px;
+}
+#requirementModal .req-receipt-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--hui-muted); font-size: 11.5px; font-weight: 500; }
+#requirementModal .req-receipt-item + .req-receipt-item { margin-top: 6px; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--hui-border) 70%, transparent); }
+#requirementModal .req-receipt-q { color: var(--hui-muted); font-size: 11.5px; }
+#requirementModal .req-receipt-v { color: var(--hui-text); font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+
+#requirementModal .req-cl-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+#requirementModal .req-understand {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--hui-border-soft);
+  border-radius: 10px;
+  background: var(--hui-canvas);
+  color: var(--hui-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+#requirementModal .req-understand b { margin-right: 10px; color: var(--hui-text); font-weight: 500; }
+#requirementModal .req-clarify-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  color: var(--hui-secondary);
+  font-size: 12.5px;
+}
+#requirementModal .req-clarify-note span { flex: 1; }
+#requirementModal .req-clarify-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#requirementModal .req-clarify-error .req-error { flex: 1; min-width: 200px; color: var(--hui-error); font-size: 13px; }
+
+#requirementModal .req-q-card { padding: 2px 0 2px 16px; border-left: 1px solid color-mix(in srgb, var(--hui-border-strong) 80%, transparent); }
+#requirementModal .req-q-progress { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; color: var(--hui-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+#requirementModal .req-q-dots { display: flex; align-items: center; gap: 4px; }
+#requirementModal .req-q-dots span { width: 6px; height: 6px; border-radius: 99px; background: var(--hui-border-strong); transition: width .16s, background .16s; }
+#requirementModal .req-q-dots span.is-answered { background: color-mix(in srgb, var(--hui-accent) 40%, transparent); }
+#requirementModal .req-q-dots span.is-current { width: 16px; background: var(--hui-accent); }
+#requirementModal .req-q-head {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 4px;
+  margin-bottom: 14px;
+  color: var(--hui-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+#requirementModal .req-q-head .harness-icon { margin-top: 3px; color: var(--hui-muted); }
+#requirementModal .req-q-kind { grid-column: 2; color: var(--hui-muted); font-size: 11.5px; font-weight: 400; }
+#requirementModal .req-q-options { display: grid; gap: 6px; }
+#requirementModal .req-q-option,
+#requirementModal .req-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-secondary);
+  font: 13px/1.5 var(--hui-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .16s, background .16s, color .16s;
+}
+#requirementModal :is(.req-q-option, .req-choice):hover:not(:disabled) {
+  border-color: var(--hui-border-strong);
+  background: color-mix(in srgb, var(--hui-soft) 55%, var(--hui-surface));
+  color: var(--hui-text);
+}
+#requirementModal :is(.req-q-option, .req-choice).is-on {
+  border-color: color-mix(in srgb, var(--hui-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--hui-accent) 4.5%, transparent);
+  color: var(--hui-text);
+}
+#requirementModal :is(.req-q-option, .req-choice):disabled { opacity: .5; cursor: not-allowed; }
+#requirementModal :is(.req-q-ind, .req-choice-ind) {
+  display: grid;
+  place-items: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 50%;
+  color: #fff;
+}
+#requirementModal .req-q-ind.is-multi { border-radius: 4px; }
+#requirementModal :is(.req-q-option, .req-choice).is-on :is(.req-q-ind, .req-choice-ind) { border-color: var(--hui-accent); background: var(--hui-accent); }
+#requirementModal .req-q-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#requirementModal .req-rec { flex: none; padding: 2px 7px; border-radius: 99px; background: var(--hui-accent-soft); color: var(--hui-accent); font-size: 10.5px; font-weight: 500; }
+#requirementModal .req-q-other { margin-top: 8px; }
+#requirementModal .req-q-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+#requirementModal .req-prev {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 32px;
+  padding: 4px 8px 4px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hui-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+#requirementModal .req-prev:hover:not(:disabled) { color: var(--hui-text); }
+#requirementModal .req-prev:disabled { opacity: .35; cursor: not-allowed; }
+#requirementModal .req-hint-inline { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--hui-warn); font-size: 12px; }
+
+#requirementModal .req-ready-card {
+  overflow: hidden;
+  border: 1px solid var(--hui-border);
+  border-radius: 14px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-panel-shadow);
+}
+#requirementModal .req-ready-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--hui-border-soft); font-weight: 500; }
+#requirementModal .req-ready-head .harness-icon { color: var(--hui-success); }
+#requirementModal .req-ready-body { padding: 12px 14px; color: var(--hui-secondary); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+#requirementModal .req-score-details { padding: 0 14px 8px; border-top: 1px solid var(--hui-border-soft); }
+#requirementModal .req-score-wrap .req-score-details { margin-top: 16px; padding: 0; border-top: 0; }
+#requirementModal .req-score-body { padding: 6px 0 4px; }
+#requirementModal .req-dim { display: grid; grid-template-columns: 96px 1fr 34px; align-items: center; gap: 10px; padding: 4px 0; color: var(--hui-muted); font-size: 12px; }
+#requirementModal .req-dim b { color: var(--hui-text); font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+#requirementModal .req-meter { position: relative; height: 4px; overflow: hidden; border-radius: 2px; background: var(--hui-soft); }
+#requirementModal .req-meter i { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: color-mix(in srgb, var(--hui-accent) 70%, transparent); }
+#requirementModal .req-dim-total { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--hui-border-soft); color: var(--hui-text); }
+#requirementModal .req-dim-line { color: var(--hui-tertiary); font-size: 11.5px; }
+#requirementModal .req-dim-missing { padding-top: 4px; color: var(--hui-muted); font-size: 12px; }
+#requirementModal .req-supplement { margin-top: 14px; }
+#requirementModal .req-supplement-label { margin-bottom: 6px; color: var(--hui-muted); font-size: 12px; }
+
+#requirementModal .req-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--hui-warn) 25%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--hui-warn) 7%, var(--hui-surface));
+  color: var(--hui-text);
+  font-size: 12.5px;
+}
+#requirementModal .req-alert-icon { color: var(--hui-warn); line-height: 0; }
+#requirementModal .req-alert-body { flex: 1; min-width: 0; }
+#requirementModal .req-alert-title { color: var(--hui-text); font-weight: 500; }
+#requirementModal .req-alert-desc { color: var(--hui-muted); }
+
+/* ---------- ③ 确认并创建 ---------- */
+#requirementModal .req-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+#requirementModal .req-wide { grid-column: 1 / -1; }
+#requirementModal .req-repo-slot { display: contents; }
+#requirementModal .req-repo-slot .req-repo-fields { display: contents; }
+#requirementModal .req-repo-slot .req-help:empty { display: none; }
+#requirementModal .req-summary-box {
+  max-height: 88px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--hui-border-soft);
+  border-radius: 8px;
+  background: var(--hui-canvas);
+  color: var(--hui-secondary);
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+#requirementModal .req-dest { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#requirementModal .req-choice { min-height: 56px; align-items: flex-start; }
+#requirementModal .req-choice-ind { margin-top: 2px; }
+#requirementModal .req-choice-body b { display: block; color: var(--hui-text); font-weight: 500; }
+#requirementModal .req-choice-body span { display: block; color: var(--hui-muted); font-size: 12px; }
+#requirementModal .req-choice.is-unavailable .req-choice-body span { color: var(--hui-tertiary); }
+#requirementModal .req-warn-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--hui-warn) 25%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--hui-warn) 7%, var(--hui-surface));
+  color: var(--hui-text);
+  font-size: 12.5px;
+}
+#requirementModal .req-warn-bar > .harness-icon { flex: none; color: var(--hui-warn); }
+#requirementModal .req-warn-text { flex: 1; min-width: 0; }
+#requirementModal .req-warn-text small { color: var(--hui-muted); font-size: 12px; }
+#requirementModal .req-outcome {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hui-border-soft);
+  border-radius: 10px;
+  background: var(--hui-canvas);
+  color: var(--hui-secondary);
+  font-size: 12.5px;
+}
+#requirementModal .req-outcome .harness-icon { flex: none; margin-top: 2px; color: var(--hui-accent); }
+#requirementModal .req-outcome.is-muted .harness-icon { color: var(--hui-tertiary); }
+
+@media (max-width: 760px) {
+  #requirementModal .req-wizard { top: 56px; max-height: calc(100vh - 66px); }
+  #requirementModal .req-wizard-head { flex-wrap: wrap; }
+  #requirementModal .req-steps { order: 3; width: 100%; }
+  #requirementModal .req-step-more { display: none; }
+  #requirementModal .req-form,
+  #requirementModal .req-dest { grid-template-columns: 1fr; }
+  #requirementModal .req-foot-note { display: none; }
+  #requirementModal .req-wizard-foot { justify-content: flex-end; }
+  #requirementModal #reqBack { margin-right: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #requirementModal * { animation: none !important; transition: none !important; }
+}

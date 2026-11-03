@@ -1,0 +1,177 @@
+/* Shared control feedback; glyph keyframes stay in harness-icons.css. */
+.chat-shell {
+  --control-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --control-ring: color-mix(
+    in srgb,
+    var(--home-blue, #5273dc) 68%,
+    transparent
+  );
+}
+
+:where(.chat-shell) button {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    opacity 160ms ease,
+    outline-color 180ms ease;
+}
+
+.chat-shell
+  button:is(
+    .icon-button,
+    .new-chat-button,
+    .context-pill,
+    .model-picker,
+    .permission-selector,
+    .send-button,
+    .panel-toggle,
+    .quiet-button,
+    .primary-button,
+    .danger-button
+  ) {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    opacity 160ms ease,
+    filter 180ms ease,
+    outline-color 180ms ease;
+}
+
+.chat-shell button:focus-visible {
+  outline: 2px solid var(--control-ring);
+  outline-offset: 3px;
+}
+
+.chat-shell
+  button:is(
+    .context-pill,
+    .model-picker,
+    .permission-selector
+  )[aria-expanded="true"],
+.chat-shell .icon-button[aria-expanded="true"] {
+  background-color: var(--hover);
+  color: var(--text);
+}
+
+.chat-shell button > .harness-icon[data-icon="chevron-down"] {
+  rotate: 0deg;
+}
+
+.chat-shell
+  button[aria-expanded="true"]
+  > .harness-icon[data-icon="chevron-down"] {
+  rotate: 180deg;
+}
+
+.chat-shell .menu,
+.chat-shell .mention-picker {
+  animation: control-menu-enter 180ms var(--control-ease) both;
+}
+
+.chat-shell .menu button {
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    outline-color 180ms ease;
+}
+
+.chat-shell .dialog-backdrop {
+  animation: control-backdrop-enter 180ms ease both;
+}
+
+.chat-shell .dialog {
+  animation: control-dialog-enter 220ms var(--control-ease) both;
+}
+
+@keyframes control-menu-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes control-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes control-dialog-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* These controls enter when a conversation starts or navigation is toggled.
+   Only opacity changes; hover feedback stays on the ink and SVG internals. */
+.chat-shell .panel-toggle {
+  animation: control-appear 220ms var(--control-ease);
+}
+
+.chat-shell.sidebar-hidden .sidebar-toggle {
+  animation: navigation-reopen-appear 220ms var(--control-ease);
+}
+
+.chat-shell:not(.sidebar-hidden) .sidebar-toggle {
+  animation: control-appear 220ms var(--control-ease);
+}
+
+@keyframes control-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes navigation-reopen-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell button,
+  .chat-shell button > .harness-icon,
+  .chat-shell .menu,
+  .chat-shell .mention-picker,
+  .chat-shell .dialog,
+  .chat-shell .dialog-backdrop,
+  .chat-shell .panel-toggle,
+  .chat-shell .sidebar-toggle,
+  .chat-shell .reference-glyph,
+  .select-menu,
+  .select-menu .select-highlight,
+  .select-menu .menu-option,
+  .select-menu .menu-option > svg {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .chat-shell
+    button:is(
+      .icon-button,
+      .new-chat-button,
+      .context-pill,
+      .model-picker,
+      .permission-selector,
+      .send-button,
+      .panel-toggle,
+      .quiet-button,
+      .primary-button,
+      .danger-button
+    ),
+  .chat-shell .menu button,
+  .chat-shell .reference-glyph {
+    transform: none !important;
+    translate: none !important;
+  }
+}

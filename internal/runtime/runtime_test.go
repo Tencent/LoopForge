@@ -2331,3 +2331,28 @@ func TestToolCallWaitsForInputJSONDelta(t *testing.T) {
 		t.Fatalf("telemetry still needs a tool finish event, got empty message")
 	}
 }
+
+func TestMCPStartupWaitReachesCodeBuddyProcess(t *testing.T) {
+	probe := []string{"sh", "-c", `printf '%s|%s' "$CODEBUDDY_FIRST_RUN_MCP_PREWAIT_TIMEOUT_MS" "$HOME"`}
+	// An ephemeral private HOME must not discard the requested wait.
+	ephemeral := CommandSpec{Argv: probe, Provider: "codebuddy", PrivateHome: true}.WithMCPStartupWait(30 * time.Second)
+	durable := CommandSpec{Argv: probe, Provider: "codebuddy"}.WithMCPStartupWait(30 * time.Second).WithPrivateHomeDir(t.TempDir())
+	for name, command := range map[string]CommandSpec{"ephemeral": ephemeral, "durable": durable} {
+		output, err := ExecuteLocalCommand(context.Background(), t.TempDir(), command, RunCredentials{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wait, home, _ := strings.Cut(strings.TrimSpace(output), "|")
+		if wait != "30000" || home == "" {
+			t.Fatalf("%s: CodeBuddy MCP startup wait not applied: %q", name, output)
+		}
+	}
+	for _, command := range []CommandSpec{
+		CommandSpec{Provider: "codex"}.WithMCPStartupWait(time.Second),
+		CommandSpec{Provider: "codebuddy"}.WithMCPStartupWait(0),
+	} {
+		if _, ok := command.environment[codeBuddyMCPStartupWaitEnv]; ok {
+			t.Fatalf("unexpected MCP startup wait for %+v", command)
+		}
+	}
+}

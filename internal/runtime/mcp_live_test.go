@@ -32,7 +32,7 @@ func TestLiveTaihuMCPConnectivity(t *testing.T) {
 		if strings.TrimSpace(user.TaihuPAT) == "" {
 			continue
 		}
-		if user.ChineseName == "胡锦康" || strings.EqualFold(user.LoginName, "example-maintainer") || strings.Contains(strings.ToLower(user.LoginName), "crispin") {
+		if user.ChineseName == "示例用户" || strings.EqualFold(user.LoginName, "example-maintainer") || strings.Contains(strings.ToLower(user.LoginName), "example-main") {
 			login, pat = user.LoginName, user.TaihuPAT
 			break
 		}

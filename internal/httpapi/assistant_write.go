@@ -14,9 +14,9 @@ type assistantExecModeKey struct{}
 // assistantExecMode changes how platform write tools behave.
 // Chat confirm mode leaves AutoWrite false (writes are blocked and the model
 // must submit drafts). Scheduled runs and the assistant auto/assisted approval
-// modes set AutoWrite so native platform MCP writes execute immediately.
-// ConfirmDangerous additionally blocks delete/publish/dispatch/start tools in
-// assisted mode so those still go through user-confirmed drafts.
+// modes set AutoWrite. Assisted mode additionally sets ReviewWrites, so every
+// concrete write must pass an independent model review before execution.
+// ConfirmDangerous retains the legacy explicit dangerous-tool restriction.
 // DeferSOP blocks dispatch/start/run tools so AI scheduled jobs cannot start
 // SOP; trigger jobs do that instead.
 type assistantExecMode struct {
@@ -24,6 +24,7 @@ type assistantExecMode struct {
 	AutoWrite        bool
 	DeferSOP         bool
 	ConfirmDangerous bool
+	ReviewWrites     bool
 }
 
 // assistantExecModeForApproval maps the assistant approval mode to the
@@ -34,7 +35,7 @@ func assistantExecModeForApproval(mode string) assistantExecMode {
 	case AssistantApprovalAuto:
 		return assistantExecMode{AutoWrite: true}
 	case AssistantApprovalAssisted:
-		return assistantExecMode{AutoWrite: true, ConfirmDangerous: true}
+		return assistantExecMode{AutoWrite: true, ReviewWrites: true}
 	default:
 		return assistantExecMode{}
 	}

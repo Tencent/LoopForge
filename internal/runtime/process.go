@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const processWaitDelay = time.Second
+
 func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	var buf bytes.Buffer
 	var mu sync.Mutex
@@ -22,8 +24,10 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	// When hooks spawn detached children that inherit stdout/stderr, bound how
 	// long os/exec waits for those inherited descriptors after the direct child
-	// exits. Ordinary output is copied completely before Run returns.
-	cmd.WaitDelay = 100 * time.Millisecond
+	// exits. The same timer also cuts off output still buffered in the pipe:
+	// at 100ms a busy host (CI running Go and JS tests together) dropped the
+	// tail of a 50KB failure log, which is the part users need.
+	cmd.WaitDelay = processWaitDelay
 	err := cmd.Run()
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil

@@ -87,11 +87,5 @@ func serveGateMCPBinary(c *gin.Context) {
 }
 
 func serveGateMCPFile(c *gin.Context, path string) {
-	if c.Query("metadata") == "1" {
-		serveBinaryMetadata(c, path)
-		return
-	}
-	c.Header("Content-Type", "application/octet-stream")
-	c.Header("Content-Disposition", `attachment; filename="agentflow-gate-mcp"`)
-	http.ServeFile(c.Writer, c.Request, path)
+	serveBinaryArtifact(c, path, "agentflow-gate-mcp")
 }

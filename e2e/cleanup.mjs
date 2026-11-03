@@ -31,9 +31,9 @@ async function sweep(label, items, remove) {
   }
 }
 
-async function sweepCollection(label, path, filter = ours) {
+async function sweepCollection(label, path, filter = ours, deletePath = item => `${path}/${encodeURIComponent(item.id)}`) {
   const items = list(await get(path)).filter(item => item && !item.builtin && filter(item));
-  await sweep(label, items, item => del(`${path}/${encodeURIComponent(item.id)}`));
+  await sweep(label, items, item => del(deletePath(item)));
 }
 
 const LIVE = new Set(['queued', 'pending', 'running', 'waiting', 'waiting_approval']);
@@ -60,7 +60,8 @@ await sweepCollection('mcp server', '/api/mcp-servers', item => ours(item) && !i
 await sweepCollection('sandbox', '/api/sandboxes');
 await sweepCollection('environment', '/api/environments');
 await sweepCollection('dockerfile', '/api/dockerfiles');
-await sweepCollection('repository', '/api/repositories');
+// Repositories are deleted by query (DELETE /api/repositories?id=…).
+await sweepCollection('repository', '/api/repositories', ours, item => `/api/repositories?id=${encodeURIComponent(item.id)}`);
 // Runner-mode scenarios bind throwaway machines; a killed daemon cannot
 // deregister itself, so its offline record is removed here.
 const staleRunners = list(await get('/api/runners?mine=1')).filter(r => ours(r) && r.status !== 'online');
