@@ -85,7 +85,7 @@ func PreviewBuildAgent(contract *PreviewContract) AgentDefinition {
 		Description:     "系统步骤：用 CodeBuddy 产出可托管的静态站点，再由预览收尾归档。",
 		ExecutorID:      PreviewBuildExecutor,
 		Model:           contract.ModelOrDefault(),
-		TaskPrompt:      PreviewBuildTaskPrompt(contract),
+		Prompt:          PreviewBuildPrompt(contract),
 		ArtifactOutputs: []ArtifactContract{PreviewBuildArtifact(contract)},
 		Loop: AgentLoopPolicy{
 			Enabled:       true,
@@ -104,43 +104,28 @@ func PreviewBuildArtifact(contract *PreviewContract) ArtifactContract {
 	}
 }
 
-func PreviewBuildTaskPrompt(contract *PreviewContract) *TaskPromptSpec {
+func PreviewBuildPrompt(contract *PreviewContract) string {
 	source := contract.SourceOrDist()
 	index := contract.Index()
 	entry := contract.EntryRel()
-	return &TaskPromptSpec{
-		Role:      "前端构建工程师",
-		Objective: "把当前工作区里的前端应用打成可独立托管的静态站点，不要让用户再手写构建脚本。",
-		Context:   "这是 AgentFlow 在 SOP 勾选「前端预览」后自动追加的 CodeBuddy 步骤。工作区可能包含一个或多个代码仓库子目录。构建完成后平台会打包静态目录并删除工作区。",
-		Inputs: []string{
-			"工作区根目录及其中的仓库检出",
-			"上游节点已经完成的实现与测试结果",
-		},
-		Actions: []string{
-			"识别前端工程（package.json、vite、webpack、rspack、next 静态导出等）",
-			"若工作区没有前端工程（无 Vite/webpack/Next 等配置、无前端依赖的 package.json、无 index.html），不要另起项目或手写预览页，不要创建 `" + source + "/" + index + "`，直接说明原因并结束",
-			"安装依赖并执行生产构建，不要启动开发服务器",
-			"生产构建必须使用相对资源根：Vite 设 `base: './'`，webpack/rspack 设 `publicPath: 'auto'` 或 `'./'`，禁止 `base: '/'` 或把资源写死成网站根路径",
-			"不要依赖开发服务器；预览打开时用户可配置后端地址，网关会拦截 fetch/XHR 转到该地址，不要为了预览另写一套绝对 API",
-			"把最终可浏览的静态文件放到工作区根目录 `" + source + "/`，入口文件必须是 `" + index + "`",
-			"若产物落在仓库子目录内，复制或同步到工作区根的 `" + source + "/`",
-			"不要修改 git remote，不要提交无关文件；构建失败时根据日志修正后重试",
-		},
-		Deliverables: []string{
-			"静态站点入口 `" + entry + "` 必须存在，且同目录包含页面引用的 JS/CSS/资源",
-		},
-		AcceptanceCriteria: []string{
-			"`" + entry + "` 可被直接打开",
-			"入口和 chunk 的资源地址必须是相对路径（`./assets/...`），不能依赖网站根 `/assets/`",
-			"不要留下需要 `npm run dev` 才能访问的开发服务器",
-		},
-		Constraints: []string{
-			"只使用现有仓库，不要另起无关项目",
-			"禁止在非前端仓库里编造静态站点来满足产物契约",
-			"不要把源码、node_modules 或 .git 拷进 " + source,
-		},
-		RetryInstructions: "只修复构建失败项，确保 `" + entry + "` 最终可访问。",
-	}
+	return "把当前工作区里的前端应用打成可独立托管的静态站点，不要让用户再手写构建脚本。\n\n" +
+		"这是 AgentFlow 在 SOP 勾选「前端预览」后自动追加的 CodeBuddy 步骤。工作区可能包含一个或多个代码仓库子目录，上游节点已经完成实现与测试。构建完成后平台会打包静态目录并删除工作区。\n\n" +
+		"### 步骤\n\n" +
+		"1. 识别前端工程（package.json、vite、webpack、rspack、next 静态导出等）。\n" +
+		"2. 若工作区没有前端工程（无 Vite/webpack/Next 等配置、无前端依赖的 package.json、无 index.html），不要另起项目或手写预览页，不要创建 `" + source + "/" + index + "`，直接说明原因并结束。\n" +
+		"3. 安装依赖并执行生产构建，不要启动开发服务器。\n" +
+		"4. 生产构建必须使用相对资源根：Vite 设 `base: './'`，webpack/rspack 设 `publicPath: 'auto'` 或 `'./'`，禁止 `base: '/'` 或把资源写死成网站根路径。\n" +
+		"5. 不要依赖开发服务器；预览打开时用户可配置后端地址，网关会拦截 fetch/XHR 转到该地址，不要为了预览另写一套绝对 API。\n" +
+		"6. 把最终可浏览的静态文件放到工作区根目录 `" + source + "/`，入口文件必须是 `" + index + "`；若产物落在仓库子目录内，复制或同步到工作区根的 `" + source + "/`。\n" +
+		"7. 不要修改 git remote，不要提交无关文件；构建失败时根据日志只修复失败项后重试。\n\n" +
+		"### 完成标准\n\n" +
+		"- 静态站点入口 `" + entry + "` 必须存在、可被直接打开，且同目录包含页面引用的 JS/CSS/资源。\n" +
+		"- 入口和 chunk 的资源地址必须是相对路径（`./assets/...`），不能依赖网站根 `/assets/`。\n" +
+		"- 不要留下需要 `npm run dev` 才能访问的开发服务器。\n\n" +
+		"### 禁止\n\n" +
+		"- 只使用现有仓库，不要另起无关项目。\n" +
+		"- 禁止在非前端仓库里编造静态站点来满足产物契约。\n" +
+		"- 不要把源码、node_modules 或 .git 拷进 " + source + "。\n"
 }
 
 func previewSuccessSinks(wf WorkflowDefinition) []string {

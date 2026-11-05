@@ -420,7 +420,7 @@ describe("content and panels", () => {
       kind: "role",
       draft: {
         tool: "agents_save",
-        body: { id: "role1", name: "评审角色", description: "负责评审", instructions: "认真检查" },
+        body: { id: "role1", name: "评审角色", description: "负责评审", prompt: "认真检查" },
       },
     };
     const { rerender } = render(

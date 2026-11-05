@@ -37,11 +37,11 @@ export async function createWorkflow(label, nodes, extra = {}) {
   return id;
 }
 
-export async function createAgent(label, instructions, extra = {}) {
+export async function createAgent(label, prompt, extra = {}) {
   const id = uid(label);
   track(`agent ${id}`, () => del(`/api/agents/${id}`));
   await put('/api/agents', {
-    id, name: `E2E ${label}`, projectId: cfg.projectId, description: 'e2e', executorId: cfg.executor, instructions, ...(cfg.modelID ? {model:cfg.modelID} : {}), ...extra,
+    id, name: `E2E ${label}`, projectId: cfg.projectId, description: 'e2e', executorId: cfg.executor, prompt, ...(cfg.modelID ? {model:cfg.modelID} : {}), ...extra,
   });
   return id;
 }

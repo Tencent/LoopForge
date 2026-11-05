@@ -120,6 +120,7 @@ func TestWorkspaceSubmitMRGuards(t *testing.T) {
 	for _, run := range []domain.Run{
 		{ID: "run-sop", Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf"}, ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{}},
 		{ID: "run-group", Kind: domain.RunKindWorkspace, Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID}, ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{}},
+		{ID: "run-repos", Kind: domain.RunKindWorkspace, Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID}, ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Repositories: []domain.RepositoryContext{{RepositoryID: "repo-1", Name: "app", BaseBranch: "master"}}, Nodes: map[string]*domain.NodeRun{}},
 	} {
 		if err := st.PutRun(run); err != nil {
 			t.Fatal(err)
@@ -138,9 +139,27 @@ func TestWorkspaceSubmitMRGuards(t *testing.T) {
 	if _, err := h.workspaceSubmitMR(context.Background(), session("run-group"), map[string]any{"title": "x", "targetBranch": "--upload-pack=x"}); err == nil || !strings.Contains(err.Error(), "合法的分支名") {
 		t.Fatalf("bad target branch: %v", err)
 	}
+	if _, err := h.workspaceSubmitMR(context.Background(), session("run-group"), map[string]any{"title": "x", "mode": "direct"}); err == nil || !strings.Contains(err.Error(), "targetBranch 必填") {
+		t.Fatalf("direct mode needs a target branch: %v", err)
+	}
+	if _, err := h.workspaceSubmitMR(context.Background(), session("run-group"), map[string]any{"title": "x", "mode": "rebase"}); err == nil || !strings.Contains(err.Error(), "mr 或 direct") {
+		t.Fatalf("unknown mode must be refused: %v", err)
+	}
+	if _, err := h.workspaceSubmitMR(context.Background(), session("run-repos"), map[string]any{"title": "x", "mode": "direct", "targetBranch": "master"}); err == nil || !strings.Contains(err.Error(), "不能直推基线分支") {
+		t.Fatalf("the base branch must never be direct pushed: %v", err)
+	}
 	found := false
 	for _, d := range mainBotWorkspaceTools(session("run-group")) {
-		found = found || d.Name == "workbench_workspace_submit_mr"
+		if d.Name != "workbench_workspace_submit_mr" {
+			continue
+		}
+		found = true
+		if !strings.Contains(d.Description, "mode=direct") {
+			t.Fatalf("tool description must teach when to use mode=direct: %s", d.Description)
+		}
+		if schema := string(d.InputSchema); !strings.Contains(schema, "\"mode\"") || !strings.Contains(schema, "direct") {
+			t.Fatalf("tool schema must expose mode: %s", schema)
+		}
 	}
 	if !found {
 		t.Fatal("Main Bot must see workbench_workspace_submit_mr")

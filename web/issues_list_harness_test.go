@@ -45,6 +45,13 @@ func TestIssueHeadingMenuKeepsLegacyControls(t *testing.T) {
 		t.Fatal("the TAPD import item must stay hidden behind the legacy tracker flag")
 	}
 
+	if strings.Contains(menu, `schedule-job-count">0</span> 个`) {
+		t.Fatal("the trigger configuration item shows a state, not a job count")
+	}
+	if got := strings.Count(page, `id="importTAPDIssue"`); got != 1 {
+		t.Fatalf("the TAPD import must exist once, as the hidden legacy menu item; got %d", got)
+	}
+
 	outside := strings.Replace(actions, menu, "", 1)
 	for _, want := range []string{`id="refreshIssues"`, `id="issueHeadingMore"`, `aria-haspopup="menu"`, `id="newIssue"`} {
 		if !strings.Contains(outside, want) {
@@ -119,6 +126,41 @@ func TestIssueTableFitsLaptopWidth(t *testing.T) {
 		if maxKeyWidth+offset > scrollWidthAt1280 {
 			t.Fatalf("issue table%s min-width key+%dpx overflows a 1280px viewport (limit %dpx)", rule[1], offset, scrollWidthAt1280-maxKeyWidth)
 		}
+	}
+}
+
+func TestIssueSourceFilterOffersPlatformOption(t *testing.T) {
+	html, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(html)
+	start := strings.Index(page, `id="sourceFilter"`)
+	if start < 0 {
+		t.Fatal("index.html is missing #sourceFilter")
+	}
+	sel := page[start:]
+	sel = sel[:strings.Index(sel, "</select>")]
+	for _, want := range []string{`value=""`, `value="github">GitHub`, `value="local">平台新建`} {
+		if !strings.Contains(sel, want) {
+			t.Fatalf("#sourceFilter is missing %s: %s", want, sel)
+		}
+	}
+}
+
+func TestIssueTableShowsSourceColumn(t *testing.T) {
+	js, err := os.ReadFile("app/issues.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := string(js)
+	head := `<span>编号</span><span>标题</span><span>来源</span><span>责任人</span>`
+	if !strings.Contains(code, head) {
+		t.Fatal("issue table head must list 来源 between 标题 and 责任人")
+	}
+	row := `<div class="issue-title-cell">${issueTitleMarkup(i.title)}</div><div class="issue-source-cell">${issueSourceMarkup(i)}</div><div class="issue-assignee-cell"`
+	if !strings.Contains(code, row) {
+		t.Fatal("issue row must render the 来源 cell between 标题 and 责任人")
 	}
 }
 

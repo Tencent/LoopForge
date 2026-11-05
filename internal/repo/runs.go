@@ -122,8 +122,21 @@ func (r *RunsRepo) RunSummaries() ([]domain.Run, error) {
 // RunSummariesFor filters headers before loading child rows. Project fallback
 // uses the same Go normalization as legacy runs, without hydrating issue payloads.
 func (r *RunsRepo) RunSummariesFor(filter domain.AnalyticsFilter, issueID string) ([]domain.Run, error) {
+	runs, _, err := r.runSummariesFor(filter, issueID)
+	return runs, err
+}
+
+// RunSummariesWithEventsFor returns list-safe summaries together with the timing
+// events already read to compute each Run.Timing. Callers that need both (the
+// business-domain report) can therefore scan runs, run_nodes and run_events once
+// instead of twice; the rows and projections are identical to RunSummariesFor.
+func (r *RunsRepo) RunSummariesWithEventsFor(filter domain.AnalyticsFilter, issueID string) ([]domain.Run, map[string][]domain.RunEvent, error) {
+	return r.runSummariesFor(filter, issueID)
+}
+
+func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string) ([]domain.Run, map[string][]domain.RunEvent, error) {
 	if filter.ProjectIDs != nil && len(filter.ProjectIDs) == 0 {
-		return []domain.Run{}, nil
+		return []domain.Run{}, nil, nil
 	}
 	q := r.DB
 	if filter.ProjectIDs != nil {
@@ -172,7 +185,7 @@ func (r *RunsRepo) RunSummariesFor(filter domain.AnalyticsFilter, issueID string
 	if err := q.Select("id", "kind", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
 		Order("created_at DESC, id DESC").
 		Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	candidates := make([]domain.Run, 0, len(rows))
 	for _, row := range rows {
@@ -201,21 +214,21 @@ func (r *RunsRepo) RunSummariesFor(filter domain.AnalyticsFilter, issueID string
 	}
 	if len(ids) == 0 {
 		if strings.TrimSpace(filter.ProjectID) != "" {
-			return []domain.Run{}, nil
+			return []domain.Run{}, nil, nil
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 	nodes, err := r.runNodeSummaries(ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	artifactCounts, err := r.artifactCounts(ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	timingEvents, err := r.runTimingEvents(ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	now := time.Now().UTC()
 	out := make([]domain.Run, 0, len(candidates))
@@ -244,9 +257,9 @@ func (r *RunsRepo) RunSummariesFor(filter domain.AnalyticsFilter, issueID string
 	if len(out) == 0 {
 		// 与 master 的 database/sql 实现保持同一 wire 行为：空结果序列化为
 		// null 而非 []（nil slice 语义）。
-		return nil, nil
+		return nil, nil, nil
 	}
-	return out, nil
+	return out, timingEvents, nil
 }
 
 // RunStatuses returns only the fields needed to reconcile task state. It keeps

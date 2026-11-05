@@ -30,20 +30,39 @@ export function idleRunConversation(session) {
   return emptyRunConversation(session) && FINISHED_RUN.has(session.runStatus);
 }
 
+// A scheduled task conversation, marked by the backend source or, for rows
+// written before the marker existed, by its historical title prefix.
+export function scheduledSession(session) {
+  if (session?.source) return session.source === "scheduled";
+  return !session?.shared && /^定时 · /.test(String(session?.title || ""));
+}
+
+// Project groups keep one fixed order, the order the project list itself comes
+// in: 个人对话 first, projects next, leftover IDs (a project the reader can no
+// longer see) last. Opening a conversation, or a reply finishing in it, must
+// not move a project up the sidebar, so nothing here looks at recency.
+function compareProjectGroups(a, b, rank) {
+  return (
+    Number(!b.projectId) - Number(!a.projectId) ||
+    rank(a.projectId) - rank(b.projectId) ||
+    a.projectId.localeCompare(b.projectId)
+  );
+}
+
 export function groupSessionHistory(
   sessions,
   projects,
-  {
-    archived = null,
-    query = "",
-    pinned = [],
-    currentProjectId = "",
-  } = {},
+  { archived = null, query = "", pinned = [] } = {},
 ) {
   const groups = new Map();
   const needle = query.trim().toLocaleLowerCase();
   const pinIds = new Set(pinned);
   const updated = (session) => Date.parse(session.updatedAt) || 0;
+  const known = new Map((projects || []).map((project, index) => [project.id, index]));
+  const rank = (projectId) => {
+    const index = known.get(projectId);
+    return index === undefined ? Number.MAX_SAFE_INTEGER : index;
+  };
   for (const session of sessions) {
     if (archived !== null && !!session.archived !== archived) continue;
     const projectId = session.projectId || "";
@@ -55,11 +74,8 @@ export function groupSessionHistory(
         projectId,
         name,
         sessions: [],
-        updatedAt: 0,
       });
-    const group = groups.get(projectId);
-    group.sessions.push(session);
-    group.updatedAt = Math.max(group.updatedAt, updated(session));
+    groups.get(projectId).sessions.push(session);
   }
   for (const group of groups.values()) {
     group.sessions.sort(
@@ -68,12 +84,5 @@ export function groupSessionHistory(
         updated(b) - updated(a),
     );
   }
-  return [...groups.values()].sort(
-    (a, b) =>
-      Number(b.projectId === currentProjectId) -
-        Number(a.projectId === currentProjectId) ||
-      Number(!a.projectId) - Number(!b.projectId) ||
-      b.updatedAt - a.updatedAt ||
-      a.projectId.localeCompare(b.projectId),
-  );
+  return [...groups.values()].sort((a, b) => compareProjectGroups(a, b, rank));
 }

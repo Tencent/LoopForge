@@ -224,6 +224,16 @@ type scheduleJobRow struct {
 
 func (scheduleJobRow) TableName() string { return "schedule_jobs" }
 
+type sharedScheduleVersionRow struct {
+	ID           string     `gorm:"column:id;primaryKey;size:64"`
+	SharedTaskID string     `gorm:"column:shared_task_id;size:64;uniqueIndex:idx_shared_schedule_version"`
+	Version      int        `gorm:"column:version;uniqueIndex:idx_shared_schedule_version"`
+	Payload      []byte     `gorm:"column:payload;type:json"`
+	Created      *time.Time `gorm:"column:created_at"`
+}
+
+func (sharedScheduleVersionRow) TableName() string { return "shared_schedule_versions" }
+
 type issueRow struct {
 	ID             string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID      string     `gorm:"column:project_id;index:idx_issues_project_status;size:64"`
@@ -516,6 +526,8 @@ type assistantSessionRow struct {
 	ProjectID string     `gorm:"column:project_id;size:64"`
 	Title     string     `gorm:"column:title;size:128"`
 	Model     string     `gorm:"column:model;size:128"`
+	Source    string     `gorm:"column:source;size:32;index:idx_assistant_sessions_source"`
+	TaskID    string     `gorm:"column:task_id;size:64"`
 	Payload   []byte     `gorm:"column:payload;type:json"`
 	Created   *time.Time `gorm:"column:created_at"`
 	Updated   *time.Time `gorm:"column:updated_at;index:idx_assistant_sessions_user_updated,priority:2"`
@@ -668,7 +680,7 @@ func allModels() []any {
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		dockerfileRow{}, environmentRow{}, sandboxRow{},
-		workflowRow{}, syncConfigRow{}, scheduleJobRow{},
+		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},

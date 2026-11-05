@@ -17,10 +17,9 @@ type assistantExecModeKey struct{}
 // modes set AutoWrite. Assisted mode additionally sets ReviewWrites, so every
 // concrete write must pass an independent model review before execution.
 // ConfirmDangerous retains the legacy explicit dangerous-tool restriction.
-// DeferSOP blocks dispatch/start/run tools so AI scheduled jobs cannot start
-// SOP; trigger jobs do that instead.
+// DeferSOP supports callers that explicitly defer dispatch/start/run tools.
+// AI scheduled tasks use the ordinary full-access policy without this flag.
 type assistantExecMode struct {
-	Consultation     bool
 	AutoWrite        bool
 	DeferSOP         bool
 	ConfirmDangerous bool
@@ -73,7 +72,7 @@ func assistantScheduledSystemPromptText(mode assistantExecMode) string {
 	if mode.DeferSOP {
 		extra += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"
 	}
-	return extra + "\n可调用的平台写入工具：" + assistantWriteToolNames()
+	return assistantSystemPromptForMode(AssistantApprovalAuto) + "\n" + extra
 }
 
 func (h *assistantHandlers) mergeIssueSaveBody(body any, path map[string]string) any {

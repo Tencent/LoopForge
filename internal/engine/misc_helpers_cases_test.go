@@ -484,13 +484,13 @@ func TestPromptObservabilityAlignAndResumeRemainingBranches(t *testing.T) {
 		},
 		Nodes: map[string]*domain.NodeRun{"review": {Feedback: "fix"}},
 	}
-	prompt := applyPromptPlaceholders(nil, domain.WorkflowDefinition{ID: "issue-flow"}, node, nil, nil, run)
+	prompt := applyPromptPlaceholders(nil, domain.WorkflowDefinition{ID: "issue-flow"}, node, nil, run)
 	if !strings.Contains(prompt, "https://ci/current") || !strings.Contains(prompt, "人工补充上下文") {
 		t.Fatalf("prompt=%q", prompt)
 	}
 	run.Repository.PipelineURLPattern = ""
 	run.Repository.PipelineProjectID, run.Repository.PipelineDefID = 12, 34
-	if prompt = applyPromptPlaceholders(nil, domain.WorkflowDefinition{}, node, nil, nil, run); !strings.Contains(prompt, "未配置 Pipeline") {
+	if prompt = applyPromptPlaceholders(nil, domain.WorkflowDefinition{}, node, nil, run); !strings.Contains(prompt, "未配置 Pipeline") {
 		t.Fatalf("pipeline prompt=%q", prompt)
 	}
 	continued := domain.Run{

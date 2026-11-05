@@ -14,6 +14,7 @@ import "./mention-context.css";
 
 const icons = {
   agent: "user",
+  skill: "skills",
   issue: "doc",
   sop: "branch",
   run: "play",
@@ -65,7 +66,9 @@ export default forwardRef(function MentionPicker(
         "/api/assistant/references?" +
           new URLSearchParams({
             projectId,
-            scope: "all",
+            // A project conversation only references its own project's
+            // objects (plus shared ones); a personal one searches them all.
+            ...(projectId ? {} : { scope: "all" }),
             type,
             q: query.trim(),
             offset: String(offset),

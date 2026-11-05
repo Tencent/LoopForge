@@ -1719,7 +1719,7 @@ func TestMaterializeProviderAssets(t *testing.T) {
 		Skills:     []domain.SkillDefinition{{ID: "review", Name: "Review", Description: "Review code", Content: "# Review\nCheck behavior.", Files: map[string]string{"references/checks.md": "evidence"}}},
 		MCPServers: []domain.MCPServerDefinition{{ID: "tools", Name: "Tools", Transport: "stdio", Command: "tool-server", Args: []string{"serve"}, TimeoutSec: 30}},
 	}
-	agent := domain.AgentDefinition{ID: "reviewer", Name: "Reviewer", Instructions: "Review the change."}
+	agent := domain.AgentDefinition{ID: "reviewer", Name: "Reviewer", Prompt: "Review the change."}
 	for _, kind := range []string{"claude-code", "codex", "codebuddy"} {
 		dir := filepath.Join(t.TempDir(), kind)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -1858,7 +1858,7 @@ func TestMaterializedCodexArgumentsAreAcceptedByInstalledCLI(t *testing.T) {
 		t.Skip("codex CLI is not installed")
 	}
 	dir := t.TempDir()
-	cfg, err := materialize(dir, "config-probe", domain.ExecutorDefinition{Kind: "codex"}, domain.AgentDefinition{ID: "probe", Name: "Probe", Instructions: "Stay scoped."}, domain.AgentAssetBundle{
+	cfg, err := materialize(dir, "config-probe", domain.ExecutorDefinition{Kind: "codex"}, domain.AgentDefinition{ID: "probe", Name: "Probe", Prompt: "Stay scoped."}, domain.AgentAssetBundle{
 		Skills: []domain.SkillDefinition{{ID: "probe", Description: "Config parsing probe", Content: "# Probe\n"}},
 	})
 	if err != nil {
@@ -1885,7 +1885,7 @@ func TestMaterializeCodeBuddyDoesNotOverwriteRepositoryInstructions(t *testing.T
 	if err := os.Symlink("AGENTS.md", codebuddy); err != nil {
 		t.Fatal(err)
 	}
-	_, err := materialize(dir, "invoke-1", domain.ExecutorDefinition{Kind: "codebuddy"}, domain.AgentDefinition{ID: "fixer", Name: "Fixer", Instructions: "agent policy"}, domain.AgentAssetBundle{})
+	_, err := materialize(dir, "invoke-1", domain.ExecutorDefinition{Kind: "codebuddy"}, domain.AgentDefinition{ID: "fixer", Name: "Fixer", Prompt: "agent policy"}, domain.AgentAssetBundle{})
 	if err != nil {
 		t.Fatal(err)
 	}

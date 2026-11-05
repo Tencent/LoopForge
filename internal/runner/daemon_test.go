@@ -118,7 +118,7 @@ func putMockDeveloperPlaybook(t *testing.T, s *repo.Store) {
 		t.Fatal("developer role missing")
 	}
 	agent.ExecutorID = "mock"
-	agent.TaskPrompt = &domain.TaskPromptSpec{Objective: "{{input}}"}
+	agent.Prompt = "{{input}}"
 	if err := s.PutAgent(agent); err != nil {
 		t.Fatal(err)
 	}

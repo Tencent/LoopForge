@@ -129,7 +129,7 @@ func checkBusinessDeliveryMetrics(t *testing.T, s *Store) {
 		return domain.BusinessDomainReport{Projects: append([]domain.BusinessDomainProjectUsage(nil), projects...), BusinessDomains: []domain.BusinessDomainUsage{{ID: prefix}}}
 	}
 	out := makeReport()
-	if err := s.populateBusinessDeliveryMetrics(&out, filter); err != nil {
+	if err := s.populateBusinessDeliveryMetrics(&out, filter, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	m := out.DeliveryMetrics
@@ -165,15 +165,38 @@ func checkBusinessDeliveryMetrics(t *testing.T, s *Store) {
 		t.Fatalf("trend must use reporting timezone: %+v", out.DeliveryTrend)
 	}
 	empty := domain.BusinessDomainReport{}
-	if err := s.populateBusinessDeliveryMetrics(&empty, filter); err != nil || empty.DeliveryMetrics.CompletedIssues != 0 || len(empty.DeliveryTrend) != 0 {
+	if err := s.populateBusinessDeliveryMetrics(&empty, filter, nil, nil); err != nil || empty.DeliveryMetrics.CompletedIssues != 0 || len(empty.DeliveryTrend) != 0 {
 		t.Fatalf("empty authorized scope leaked data: %+v, %v", empty, err)
 	}
 	for grain, want := range map[string]string{"week": "2026-W43", "month": "2026-10"} {
 		filter.Grain = grain
 		out = makeReport()
-		if err := s.populateBusinessDeliveryMetrics(&out, filter); err != nil || len(out.DeliveryTrend) != 1 || out.DeliveryTrend[0].Date != want {
+		if err := s.populateBusinessDeliveryMetrics(&out, filter, nil, nil); err != nil || len(out.DeliveryTrend) != 1 || out.DeliveryTrend[0].Date != want {
 			t.Fatalf("%s buckets: %+v, %v", grain, out.DeliveryTrend, err)
 		}
+	}
+
+	// 报表路径把同一批 run 摘要同时喂给概览与交付指标。复用这份预取数据
+	//（含时间窗外的历史 run）必须一个数字都不变。
+	filter.Grain = "day"
+	prefetchedRuns, prefetchedEvents, err := s.RunsRepo.RunSummariesWithEventsFor(domain.AnalyticsFilter{ProjectIDs: []string{projects[0].ProjectID, projects[1].ProjectID}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prefetchedRuns) == 0 || len(prefetchedEvents) == 0 {
+		t.Fatalf("prefetch returned no run evidence: runs=%d events=%d", len(prefetchedRuns), len(prefetchedEvents))
+	}
+	reused := makeReport()
+	if err := s.populateBusinessDeliveryMetrics(&reused, filter, prefetchedRuns, prefetchedEvents); err != nil {
+		t.Fatal(err)
+	}
+	wantMetrics, gotMetrics := m, reused.DeliveryMetrics
+	wantMetrics.LatestCompletedAt, gotMetrics.LatestCompletedAt = nil, nil
+	if wantMetrics != gotMetrics {
+		t.Fatalf("prefetched run scan changed delivery metrics: got %+v want %+v", gotMetrics, wantMetrics)
+	}
+	if len(reused.DeliveryTrend) != 2 || reused.DeliveryTrend[1].MergedMRs != 3 {
+		t.Fatalf("prefetched run scan changed trend: %+v", reused.DeliveryTrend)
 	}
 }
 

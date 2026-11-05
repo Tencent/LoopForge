@@ -79,6 +79,15 @@ func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
 }
 
+// RunnerVersionSharedPush is the first runner that merges the work branch into
+// an existing shared branch (preview/test) in a throwaway worktree and pushes
+// it directly, without a Gongfeng MR.
+const RunnerVersionSharedPush = "0.9.0"
+
+func (r Runner) SupportsSharedPush() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
+}
+
 // RunnerVersionExistingWorkBranch is the first runner that refuses to create
 // a missing branch when the caller explicitly continues an existing branch.
 const RunnerVersionExistingWorkBranch = "0.7.0"
@@ -450,6 +459,10 @@ type RunnerRepository struct {
 	// pushes the merged result to it (no Gongfeng MR is used).
 	IntegrateBranch string `json:"integrateBranch,omitempty"`
 	PushIntegrate   bool   `json:"pushIntegrate,omitempty"`
+	// SharedPushTarget is set on a work-branch push action when the caller asked
+	// to merge the work branch into that existing shared branch and push it
+	// directly (no Gongfeng MR). It is empty for ordinary pushes.
+	SharedPushTarget string `json:"sharedPushTarget,omitempty"`
 	// DefaultBranch is set only on align_baseline: the branch merged into
 	// IntegrateBranch.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -510,6 +523,11 @@ type RunnerWorkBranchHead struct {
 	Name         string `json:"name,omitempty"`
 	WorkBranch   string `json:"workBranch"`
 	Head         string `json:"head"`
+	// SharedBranch and SharedHead report an extra direct push of the work
+	// branch into a shared branch; an empty SharedHead means the shared
+	// branch already contained the work branch.
+	SharedBranch string `json:"sharedBranch,omitempty"`
+	SharedHead   string `json:"sharedHead,omitempty"`
 }
 
 // RunnerTaskEvent is one batched output record reported by the runner. Seq is

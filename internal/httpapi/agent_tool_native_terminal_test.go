@@ -149,7 +149,7 @@ func TestAssistantPromptsNameCallableMCPSubmissionTool(t *testing.T) {
 }
 
 func TestAssistantDeferredWorkCannotDependOnSessionCron(t *testing.T) {
-	for _, tool := range []string{"CronCreate", "CronList", "CronDelete"} {
+	for _, tool := range []string{"CronCreate", "CronList", "CronDelete", "Monitor"} {
 		if !strings.Contains(nativeDisallowedTools, tool) {
 			t.Fatalf("ephemeral tool %s remains enabled", tool)
 		}

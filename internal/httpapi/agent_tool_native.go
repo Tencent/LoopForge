@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	nativeDisallowedTools = "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,KillShell,CronCreate,CronList,CronDelete"
+	// Monitor and PowerShell run shell commands on the control plane like Bash.
+	nativeDisallowedTools = "Bash,PowerShell,Monitor,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,KillShell,CronCreate,CronList,CronDelete"
 	// Match CodeBuddy's interactive unlimited value (Number.MAX_SAFE_INTEGER).
 	// Omitting --max-turns falls back to the CLI's finite headless default.
 	nativeAssistantUnlimitedTurns = "9007199254740991"

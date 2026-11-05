@@ -208,6 +208,13 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		v := req.Issue
 		branchesProvided := v.RepositoryBranches != nil
 		existing, found := h.repo.Issue(v.ID)
+		// Only a conversation workspace records which conversation created a
+		// requirement, and deleting that conversation may delete the
+		// requirement with it, so a client cannot set or move it.
+		v.ConversationSessionID = ""
+		if found {
+			v.ConversationSessionID = existing.ConversationSessionID
+		}
 		if !v.Clarification.StartedAt.IsZero() && v.Clarification.StartedAt.After(time.Now().UTC().Add(time.Minute)) {
 			c.JSON(http.StatusBadRequest, map[string]string{"error": "澄清开始时间不能晚于当前时间"})
 			return

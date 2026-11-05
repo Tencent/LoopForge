@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -82,7 +84,7 @@ func TestSharedRunConversationVisibilityAndAttribution(t *testing.T) {
 		}
 		return "角色回复", nil
 	}
-	h.repo.PutAgent(domain.AgentDefinition{ID: "dev", ProjectID: "workbench", Name: "实现工程师", Instructions: "分析开发方案"})
+	h.repo.PutAgent(domain.AgentDefinition{ID: "dev", ProjectID: "workbench", Name: "实现工程师", Prompt: "分析开发方案"})
 	messages := append(s.Messages, assistantMessage{Role: "user", Content: "你做了什么", AuthorID: a.ID, AuthorName: "forged", References: []domain.AssistantReference{{Type: "agent", ID: "dev"}}})
 	body, _ := json.Marshal(assistantRequest{ProjectID: "workbench", RunID: "shared-run", SessionID: s.ID, Messages: messages})
 	c, w = workbenchContext(b, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
@@ -93,7 +95,7 @@ func TestSharedRunConversationVisibilityAndAttribution(t *testing.T) {
 	saved, _ := h.repo.AssistantSession(a.ID, s.ID)
 	last := saved.Messages[len(saved.Messages)-2]
 	reply := saved.Messages[len(saved.Messages)-1]
-	if actor != b.ID || last.AuthorID != b.ID || last.AuthorName != b.LoginName || reply.SpeakerName != "实现工程师" {
+	if actor != b.ID || last.AuthorID != b.ID || last.AuthorName != b.LoginName || reply.SpeakerName != "" || reply.SpeakerAgentID != "" {
 		t.Fatalf("wrong actor/reply: %+v %+v", last, reply)
 	}
 	for _, method := range []string{"DELETE", "PUT"} {
@@ -137,17 +139,38 @@ func TestSharedGenerationUsesOneSlotAndMembersCanCancel(t *testing.T) {
 		t.Fatal("private SOP slot accepted")
 	}
 }
-func TestRoleConsultationHasIndependentPromptAndReadOnlyTools(t *testing.T) {
-	req := assistantRequest{consultationRole: &domain.AgentDefinition{ID: "dev", Name: "实现工程师", Instructions: "分析代码设计"}}
-	prompt := assistantSystemPromptForRequest(req, AssistantApprovalAuto)
-	if !bytes.Contains([]byte(prompt), []byte("分析代码设计")) || bytes.Contains([]byte(prompt), []byte("你是 AgentFlow")) || !bytes.Contains([]byte(prompt), []byte("禁止写入")) {
-		t.Fatal("role invocation does not have independent instructions")
+func TestRoleAgentFile(t *testing.T) {
+	file := roleAgentFile(roleSubagent{
+		Role:   domain.AgentDefinition{ID: "Unit_Test", Name: "单元测试工程师", Description: "生成增量单测: 只改测试", Prompt: "覆盖 {{input}}"},
+		Rules:  []domain.RuleDefinition{{Name: "低优先", Content: "LOW", Priority: 1}, {Name: "高优先", Content: "HIGH", Priority: 9}},
+		Skills: []domain.SkillDefinition{{ID: "Unit_Test_Gen"}},
+	})
+	for _, want := range []string{"---\nname: role-unit-test\n", `description: "角色「单元测试工程师」：生成增量单测: 只改测试"`, "skills:\n  - unittestgen\n---\n", "覆盖 （运行时提供）", "## Rules"} {
+		if !strings.Contains(file, want) {
+			t.Fatalf("missing %q in\n%s", want, file)
+		}
+	}
+	if high, low := strings.Index(file, "HIGH"), strings.Index(file, "LOW"); high < 0 || low < high {
+		t.Fatalf("rules not ordered by priority:\n%s", file)
 	}
 }
 
-func TestSharedRoleConsultationRunsFreshCLI(t *testing.T) {
-	h, a, b, _, session := sharedWorkbenchFixture(t)
-	role := domain.AgentDefinition{ID: "real-dev", ProjectID: "workbench", Name: "实现工程师", Instructions: "先分析开发方案，再给出测试依据"}
+func TestRoleMentionKeepsMainBotSession(t *testing.T) {
+	h, _, b, _, session := sharedWorkbenchFixture(t)
+	h.engine = engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	for _, skill := range []domain.SkillDefinition{
+		{ID: "project-skill", Name: "project-skill", ProjectID: "workbench", Content: "项目技能", Files: map[string]string{"scripts/run.sh": "echo project"}},
+		{ID: "role-skill", Name: "role-skill", ProjectID: "workbench", Content: "角色技能"},
+		{ID: "foreign-skill", Name: "foreign-skill", ProjectID: "elsewhere", Content: "别的项目"},
+	} {
+		if err := h.repo.PutSkill(skill); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.repo.PutRule(domain.RuleDefinition{ID: "dev-rule", Name: "提交规则", ProjectID: "workbench", Content: "只改测试文件"}); err != nil {
+		t.Fatal(err)
+	}
+	role := domain.AgentDefinition{ID: "real-dev", ProjectID: "workbench", Name: "实现工程师", Prompt: "先分析开发方案，再给出测试依据", Rules: []string{"dev-rule"}, Skills: []string{"role-skill"}}
 	if err := h.repo.PutAgent(role); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +184,7 @@ func TestSharedRoleConsultationRunsFreshCLI(t *testing.T) {
 	argsFile := filepath.Join(root, "args")
 	script := `#!/bin/sh
 for arg in "$@"; do printf '%s\n' "$arg"; done > '` + argsFile + `'
-printf '%s\n' '{"type":"result","result":"工程师咨询回复"}'
+printf '%s\n' '{"type":"result","result":"已派发实现工程师"}'
 `
 	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
 		t.Fatal(err)
@@ -185,18 +208,25 @@ printf '%s\n' '{"type":"result","result":"工程师咨询回复"}'
 			values[v] = lines[i+1]
 		}
 	}
-	if !strings.Contains(values["--system-prompt"], "你是 实现工程师") || !strings.Contains(string(args), role.Instructions) || strings.Contains(string(args), "\n--resume\n") {
-		t.Fatal("consultation reused PM invocation")
+	home := filepath.Join(assistantSharedSessionRoot(session.ID), "home", ".codebuddy")
+	agent, err := os.ReadFile(filepath.Join(home, "agents", "role-real-dev.md"))
+	if err != nil || strings.Contains(values["--system-prompt"], "你是 实现工程师") || !strings.Contains(string(agent), role.Prompt) {
+		t.Fatal("role must be a subagent, not replace Main Bot", err)
 	}
-	if values["--session-id"] == session.ID {
-		t.Fatal("consultation shares writer CLI session")
+	if !strings.Contains(string(agent), "只改测试文件") || !strings.Contains(string(agent), "skills:\n  - role-skill\n") {
+		t.Fatalf("role rules or skills missing:\n%s", agent)
 	}
-	if !strings.Contains(string(args), "Bash,Write,Edit") {
-		t.Fatal("builtin writers not fenced")
+	if !strings.Contains(values["--disallowedTools"], "Bash,PowerShell,Monitor,Write,Edit") {
+		t.Fatalf("disallowed=%q", values["--disallowedTools"])
 	}
-	saved, _ := h.repo.AssistantSession(a.ID, session.ID)
-	if saved.Messages[len(saved.Messages)-1].SpeakerAgentID != role.ID {
-		t.Fatal("role response not attributed")
+	skills := filepath.Join(home, "skills")
+	for _, path := range []string{"project-skill/SKILL.md", "project-skill/scripts/run.sh", "role-skill/SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(skills, path)); err != nil {
+			t.Fatalf("skill file %s missing: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(skills, "foreign-skill")); !os.IsNotExist(err) {
+		t.Fatal("another project's skill leaked into the conversation")
 	}
 }
 

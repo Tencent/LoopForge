@@ -28,8 +28,8 @@ type Dispatcher func(domain.ScheduleJob, domain.Issue, string) error
 // that skips every issue bound to that repository.
 type BaselineGuard func(job domain.ScheduleJob, issues []domain.Issue) (blocked map[string]domain.ScheduleJobBlocker, err error)
 
-// AssistantPrep runs an AI job's user-written prompt. Trigger jobs leave
-// AssistantPrompt empty; TAPD/Gongfeng pull stays on the project sync job.
+// AssistantPrep resolves a pinned shared version or runs an independent AI prompt.
+// TAPD/Gongfeng pull stays on the project sync job.
 type AssistantPrep func(job domain.ScheduleJob) (message string, err error)
 
 type Service struct {
@@ -247,7 +247,7 @@ func (s *Service) release() {
 }
 
 func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.ScheduleJob, error) {
-	if s.assistant != nil && strings.TrimSpace(job.AssistantPrompt) != "" {
+	if s.assistant != nil && (strings.TrimSpace(job.AssistantPrompt) != "" || job.SharedTaskID != "") {
 		msg, prepErr := s.assistant(job)
 		job.NotificationResult = domain.NotificationText(msg, 18000)
 		_, plain, _ := domain.ParseNotificationResult(msg)

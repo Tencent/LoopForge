@@ -1,14 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
-  attentionMeta,
   previewSessions,
-  relativeTime,
   splitSidebarSections,
 } from "../src/session-sections.js";
 
 const NOW = Date.parse("2026-11-02T12:00:00+08:00");
 const minutes = (n) => new Date(NOW - n * 60000).toISOString();
-const days = (n) => new Date(NOW - n * 24 * 60 * 60000).toISOString();
 
 const projects = [
   { id: "agentflow", name: "AgentFlow" },
@@ -24,99 +21,54 @@ const session = (id, extra = {}) => ({
 });
 
 const split = (sessions, options = {}) =>
-  splitSidebarSections(sessions, projects, { now: NOW, ...options });
+  splitSidebarSections(sessions, projects, options);
 
 describe("splitSidebarSections", () => {
-  test("running sessions surface with their project and skip the project tree", () => {
+  test("a running reply stays in its own project group", () => {
     const running = session("run", {
       projectId: "dp",
       generationStatus: "running",
       updatedAt: minutes(12),
     });
-    const { attention, groups } = split([running]);
+    const { groups } = split([running]);
 
-    expect(attention).toHaveLength(1);
-    expect(attention[0].status.state).toBe("running");
-    expect(attention[0].projectName).toBe("Payments");
-    expect(groups).toHaveLength(0);
+    expect(groups.map((group) => group.projectId)).toEqual(["dp"]);
+    expect(groups[0].sessions.map((row) => row.id)).toEqual(["run"]);
   });
 
-  test("finished replies stay in the section until the user opens them", () => {
-    const unread = session("unread", { generationStatus: "completed" });
-    const read = session("read", { generationStatus: "completed" });
-    const { attention } = split([unread, read], {
-      seen: { read: unread.updatedAt },
-    });
+  test("a just finished reply stays in its project group as well", () => {
+    const done = session("done", { generationStatus: "completed", updatedAt: minutes(1) });
 
-    expect(attention.map((entry) => entry.session.id)).toEqual(["unread"]);
-  });
-
-  test("a read record older than the last reply still counts as unread", () => {
-    const updated = session("again", {
-      generationStatus: "failed",
-      updatedAt: minutes(2),
-    });
-    const { attention } = split([updated], { seen: { again: minutes(30) } });
-
-    expect(attention).toHaveLength(1);
-    expect(attention[0].status.state).toBe("failed");
-  });
-
-  test("unread replies older than the window drop out", () => {
-    const fresh = session("fresh", {
-      generationStatus: "completed",
-      updatedAt: days(6),
-    });
-    const stale = session("stale", {
-      generationStatus: "completed",
-      updatedAt: days(8),
-    });
-    const { attention } = split([fresh, stale]);
-
-    expect(attention.map((entry) => entry.session.id)).toEqual(["fresh"]);
+    expect(split([done]).groups.map((group) => group.projectId)).toEqual([
+      "agentflow",
+    ]);
   });
 
   test("pinned sessions get their own block and never repeat below", () => {
     const pinned = session("pinned");
     const other = session("other");
-    const { pinnedSessions, attention, groups } = split([pinned, other], {
+    const { pinnedSessions, groups } = split([pinned, other], {
       pinned: ["pinned"],
     });
 
     expect(pinnedSessions.map((entry) => entry.id)).toEqual(["pinned"]);
-    expect(attention).toHaveLength(0);
     expect(groups.flatMap((group) => group.sessions.map((s) => s.id))).toEqual([
       "other",
     ]);
   });
 
-  test("running replies sort before finished ones", () => {
-    const done = session("done", {
-      generationStatus: "completed",
+  test("project groups keep the project list order whatever ran last", () => {
+    const busy = session("busy", {
+      projectId: "dp",
+      generationStatus: "running",
       updatedAt: minutes(1),
     });
-    const running = session("running", {
-      generationStatus: "running",
-      updatedAt: minutes(40),
-    });
-    const { attention } = split([done, running]);
+    const quiet = session("quiet", { updatedAt: minutes(90) });
 
-    expect(attention.map((entry) => entry.session.id)).toEqual([
-      "running",
-      "done",
+    expect(split([busy, quiet]).groups.map((group) => group.projectId)).toEqual([
+      "agentflow",
+      "dp",
     ]);
-  });
-
-  test("limits the section and reports how many are hidden", () => {
-    const sessions = Array.from({ length: 8 }, (_, index) =>
-      session(`s${index}`, { generationStatus: "completed" }),
-    );
-    const { attention, attentionHidden } = split(sessions, {
-      attentionLimit: 5,
-    });
-
-    expect(attention).toHaveLength(8);
-    expect(attentionHidden).toBe(3);
   });
 
   test("search matches the project name, not only the title", () => {
@@ -136,28 +88,7 @@ describe("splitSidebarSections", () => {
     const old = session("old", { archived: true, generationStatus: "completed" });
 
     expect(split([old]).groups).toHaveLength(0);
-    expect(split([old]).attention).toHaveLength(0);
     expect(split([old], { archived: true }).groups).toHaveLength(1);
-  });
-});
-
-describe("attention labels", () => {
-  test("relative times read naturally in Chinese", () => {
-    expect(relativeTime(minutes(0), NOW)).toBe("刚刚");
-    expect(relativeTime(minutes(12), NOW)).toBe("12 分钟前");
-    expect(relativeTime(days(2), NOW)).toBe("2 天前");
-  });
-
-  test("each reply state gets its own suffix", () => {
-    const entry = (state) => ({
-      session: { updatedAt: minutes(4) },
-      status: { state },
-    });
-
-    expect(attentionMeta(entry("running"), NOW)).toBe("执行中 · 4 分钟前");
-    expect(attentionMeta(entry("completed"), NOW)).toBe("4 分钟前完成");
-    expect(attentionMeta(entry("failed"), NOW)).toBe("4 分钟前失败");
-    expect(attentionMeta(entry("interrupted"), NOW)).toBe("4 分钟前中断");
   });
 });
 
@@ -216,19 +147,6 @@ describe("splitSidebarSections with SOP run conversations", () => {
   });
 });
 
-describe("first visit baseline", () => {
-  test("replies that finished before the read record existed are not new", () => {
-    const before = session("before", { generationStatus: "completed", updatedAt: minutes(40) });
-    const after = session("after", { generationStatus: "completed", updatedAt: minutes(5) });
-    const running = session("busy", { generationStatus: "running", updatedAt: minutes(60) });
-    const { attention, groups } = split([before, after, running], {
-      seen: { __since: minutes(20) },
-    });
-    expect(attention.map((entry) => entry.session.id)).toEqual(["busy", "after"]);
-    expect(groups.flatMap((g) => g.sessions.map((s) => s.id))).toEqual(["before"]);
-  });
-});
-
 describe("previewSessions", () => {
   const list = Array.from({ length: 9 }, (_, i) => session(`s${i}`));
   test("keeps the open conversation visible beyond the limit", () => {
@@ -236,5 +154,38 @@ describe("previewSessions", () => {
     expect(previewSessions(list, 6, "s2").map((s) => s.id)).toEqual(["s0", "s1", "s2", "s3", "s4", "s5"]);
     expect(previewSessions(list, 6, "").length).toBe(6);
     expect(previewSessions(list.slice(0, 3), 6, "s8").length).toBe(3);
+  });
+});
+
+describe("仅我参与的对话 filter", () => {
+  const idsOf = (sections) =>
+    sections.groups.flatMap((group) => group.sessions.map((s) => s.id)).sort();
+  const shared = (id, participants) => session(id, { shared: true, participants });
+
+  test("keeps the conversations whose participants list the reader", () => {
+    const mine = shared("mine", [
+      { id: 1, name: "我" },
+      { id: 2, name: "同事" },
+    ]);
+    const theirs = shared("theirs", [{ id: 2, name: "同事" }]);
+
+    expect(idsOf(split([mine, theirs], { mineOnly: true, currentUserId: 1 }))).toEqual(["mine"]);
+    expect(idsOf(split([mine, theirs], { mineOnly: true, currentUserId: 2 }))).toEqual([
+      "mine",
+      "theirs",
+    ]);
+  });
+
+  test("keeps the reader's own conversation before anyone has written in it", () => {
+    const draft = session("draft", { userId: 7 });
+    const others = session("others", { userId: 8 });
+
+    expect(idsOf(split([draft, others], { mineOnly: true, currentUserId: 7 }))).toEqual([
+      "draft",
+    ]);
+  });
+
+  test("lists nothing when no reader is signed in", () => {
+    expect(split([session("a")], { mineOnly: true }).groups).toHaveLength(0);
   });
 });

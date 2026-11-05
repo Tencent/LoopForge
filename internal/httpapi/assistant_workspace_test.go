@@ -117,14 +117,6 @@ func TestMainBotWorkspaceWritesAndCommandsUseTaskFiles(t *testing.T) {
 		t.Fatal("not every concrete workspace write was reviewed", reviews)
 	}
 	s.ExecMode = assistantExecMode{}
-	s.ExecMode.Consultation = true
-	if len(mainBotWorkspaceTools(s)) != 0 {
-		t.Fatal("consultation received write tools")
-	}
-	if _, err = call("read", map[string]any{"path": "note.txt"}); err == nil {
-		t.Fatal("consultation accessed main tools")
-	}
-	s.ExecMode.Consultation = false
 	s.ProjectID = "foreign"
 	if _, err = call("read", map[string]any{"path": "note.txt"}); err == nil {
 		t.Fatal("foreign run accepted")

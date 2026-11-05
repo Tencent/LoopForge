@@ -158,7 +158,7 @@ function renderIssues(){
   const emptyHint=state.issueRunFilter==='attention'?'澄清未达标、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
   const keyWidth=issueKeyColumnWidth(paged.items);
   const pager=pagerHTML('issues',paged)||(paged.total?`<nav class="pager pager-summary" aria-label="分页"><span class="pager-meta">共 ${paged.total} 条</span></nav>`:'');
-  board.innerHTML=`<div class="issue-table-card"><div class="issue-table-scroll"><div class="issue-table${state.issueSelectionMode?' issue-table-selectable':''}" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectAllCheckbox('全选本页可删除的需求')}</div>`:''}<span>编号</span><span>标题</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 SOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div></div>${pager}</div>`;
+  board.innerHTML=`<div class="issue-table-card"><div class="issue-table-scroll"><div class="issue-table${state.issueSelectionMode?' issue-table-selectable':''}" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectAllCheckbox('全选本页可删除的需求')}</div>`:''}<span>编号</span><span>标题</span><span>来源</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 SOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div></div>${pager}</div>`;
   $$('.issue-table-row[data-id]').forEach(el=>el.onclick=()=>openIssueDetail(el.dataset.id));
   bindIssueRowActions(board);
   bindPager(board);
@@ -177,7 +177,9 @@ function issueKanbanCard(i){
   const stage=issueCurrentStage(i);
   const progress=issueListProgress(i,run,w);
   const key=issueKeyLabel(i);
-  const isFailed=Boolean(run&&(['failed','cancelled'].includes(run.status)||issueHasFailedNode(run)));
+  const convo=conversationIssueProgress(i,run);
+  // 对话工作区在会话删除后会被取消，那不是失败。
+  const isFailed=!conversationWorkspaceIssue(i,run)&&Boolean(run&&(['failed','cancelled'].includes(run.status)||issueHasFailedNode(run)));
   const needsConfirm=clarificationNeedsConfirm(i);
   const cardTone=needsConfirm?' needs-confirm':(isFailed?' needs-attention':'');
   return `<article class="kanban-card${cardTone}" draggable="true" data-id="${escapeHTML(i.id)}">
@@ -187,7 +189,7 @@ function issueKanbanCard(i){
       ${issuePriorityMarkup(i.priority)}
       <span class="kanban-stage ${stage.key}" title="${escapeHTML(stage.hint||'')}">${issueStageBadge(stage)}</span>
     </div>
-    <div class="kanban-card-progress${progress.pct>=100&&!isFailed?' done':''}"><span>${progress.done}/${progress.total||'—'} · ${progress.pct}%</span><div class="issue-progress-track"><i style="width:${progress.pct}%"></i></div></div>
+    ${convo?`<div class="kanban-card-progress${convo.done?' done':convo.ended?' ended':''}" title="${escapeHTML(convo.title)}"><span>${escapeHTML(convo.text)}</span><div class="issue-progress-track"><i style="width:${convo.width}%"></i></div></div>`:`<div class="kanban-card-progress${progress.pct>=100&&!isFailed?' done':''}"><span>${progress.done}/${progress.total||'—'} · ${progress.pct}%</span><div class="issue-progress-track"><i style="width:${progress.pct}%"></i></div></div>`}
     <div class="kanban-card-actions">${issueActionButtons(i)}</div>
   </article>`;
 }
@@ -264,12 +266,28 @@ function issuePriorityMarkup(value){
   const icon={urgent:'priority-bolt',high:'priority-high',medium:'priority-medium',low:'priority-low'}[pri]||'priority-medium';
   return `<span class="issue-priority ${escapeHTML(pri)}">${huiIcon(icon)}<span>${issuePriorityLabel(pri)}</span></span>`;
 }
+// 来源：GitHub、工蜂与 TAPD 由外部同步，其余都算平台新建；取值与来源筛选器保持一致。
+function issueSourceLabel(i){
+  const s=metricsIssueSource(i);
+  if(s==='github')return 'GitHub';
+  if(s==='gongfeng')return '工蜂';
+  if(s==='tapd')return 'TAPD';
+  return '平台新建';
+}
+function issueSourceMarkup(i){
+  const s=metricsIssueSource(i)||'local';
+  const tone=s==='github'?'github':s==='gongfeng'?'gongfeng':s==='tapd'?'tapd':'local';
+  const label=issueSourceLabel(i);
+  return `<span class="issue-source-chip tone-${tone}" title="需求来源：${escapeHTML(label)}">${escapeHTML(label)}</span>`;
+}
+// 与顶栏、项目成员保持一致：复用统一头像组件（真实头像 + 首字回退），不再自绘姓氏。
 function issueOwnerAvatar(i){
   if(!i.assigneeUserId&&i.assigneeId&&i.assigneeType==='agent')return `<span class="hui-avatar is-agent" aria-hidden="true">${huiIcon('robot')}</span>`;
-  const name=issueAssigneeName(i);
-  if(!name)return `<span class="hui-avatar is-empty" aria-hidden="true">${huiIcon('user')}</span>`;
-  const display=(name.match(/\(([^()]+)\)\s*$/)||[])[1]||name;
-  return `<span class="hui-avatar" aria-hidden="true">${escapeHTML(([...display.trim()][0]||'?').toUpperCase())}</span>`;
+  // 未指定责任人时只留「未指定」文字，不再额外画一个占位头像框。
+  if(!i.assigneeUserId&&!i.assigneeId)return '';
+  const user=i.assigneeUserId?userById(i.assigneeUserId):null;
+  if(!user)return `<span class="hui-avatar is-empty" aria-hidden="true">${huiIcon('user')}</span>`;
+  return `<span class="issue-assignee-avatar">${userAvatarHTML(user,48)}</span>`;
 }
 function issueStatusText(issue){
   return issueStatusLabel(issueStatusBucket(issue));
@@ -364,14 +382,20 @@ function issueRow(i){
   const {project:p,run,workflow:w}=issueExecution(i),boundRepos=(state.data.repositories||[]).filter(x=>(i.repositoryIds||[]).includes(x.id)||x.id===i.repositoryId||(!((i.repositoryIds||[]).length||i.repositoryId)&&x.id===p?.defaultRepositoryId)),issueRepos=[boundRepos.find(x=>x.id===i.repositoryId),...boundRepos.filter(x=>x.id!==i.repositoryId)].filter(Boolean),repo=issueRepos[0],repoLabel=issueRepos.length>1?`${repo?.name||'未绑定'} 等${issueRepos.length}个`:repo?.name||'未绑定',health=issueRunHealth(i),stage=issueCurrentStage(i),progress=issueListProgress(i,run,w);
   const sop=issueSOPLabel(i);
   const laneDots=issueLaneDots(i);
-  const isFailed=Boolean(run&&(['failed','cancelled'].includes(run.status)||issueHasFailedNode(run)));
+  const convo=conversationIssueProgress(i,run);
+  const isFailed=!conversationWorkspaceIssue(i,run)&&Boolean(run&&(['failed','cancelled'].includes(run.status)||issueHasFailedNode(run)));
   const needsConfirm=clarificationNeedsConfirm(i);
   const needsClarify=requirementNeedsClarification(i);
   let progressText=`${progress.pct}%`;
   let progressCls='';
   let progressTitle=`${progress.done}/${progress.total||0} 节点`;
   let trackWidth=progress.pct;
-  if(isFailed){
+  if(convo){
+    progressText=convo.text;
+    progressCls=convo.done?' done':convo.ended?' ended':'';
+    trackWidth=convo.width;
+    progressTitle=convo.title;
+  }else if(isFailed){
     progressText='失败';
     progressCls=' fail';
     trackWidth=0;
@@ -392,7 +416,7 @@ function issueRow(i){
   const rowTone=needsConfirm?' needs-confirm':(isFailed?' needs-attention':'');
   const owner=issueOwnerSummary(i);
   const pri=i.priority||'medium';
-  return `<div class="issue-table-row${rowTone}" role="row" data-id="${escapeHTML(i.id)}">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectionCheckbox(i)}</div>`:''}<div class="issue-key-cell" title="${escapeHTML(String(issueKeyLabel(i)||''))}">${issueKeyMarkup(i)}</div><div class="issue-title-cell">${issueTitleMarkup(i.title)}</div><div class="issue-assignee-cell" title="${escapeHTML(owner)}">${issueOwnerAvatar(i)}<span class="issue-assignee-name">${escapeHTML(owner)}</span></div><div class="issue-repository-cell" title="${escapeHTML(issueRepos.map(r=>r.name).join('、')||'未绑定')} · ${escapeHTML(i.baseBranch||repo?.defaultBranch||'')}">${escapeHTML(repoLabel)}</div><div class="issue-priority-cell">${issuePriorityMarkup(pri)}</div><div class="issue-workflow-cell" title="${escapeHTML(sop)}">${escapeHTML(sop)}${laneDots}</div><div class="issue-stage-cell ${stage.key}" title="${escapeHTML(stage.hint)}">${issueStageBadge(stage)}</div><div class="issue-progress-cell${progressCls}" title="${escapeHTML(progressTitle)}"><b>${escapeHTML(progressText)}</b><span class="issue-progress-track"><i style="width:${trackWidth}%"></i></span></div><div class="issue-actions-cell">${issueActionButtons(i)}</div></div>`;
+  return `<div class="issue-table-row${rowTone}" role="row" data-id="${escapeHTML(i.id)}">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectionCheckbox(i)}</div>`:''}<div class="issue-key-cell" title="${escapeHTML(String(issueKeyLabel(i)||''))}">${issueKeyMarkup(i)}</div><div class="issue-title-cell">${issueTitleMarkup(i.title)}</div><div class="issue-source-cell">${issueSourceMarkup(i)}</div><div class="issue-assignee-cell" title="${escapeHTML(owner)}">${issueOwnerAvatar(i)}<span class="issue-assignee-name">${escapeHTML(owner)}</span></div><div class="issue-repository-cell" title="${escapeHTML(issueRepos.map(r=>r.name).join('、')||'未绑定')} · ${escapeHTML(i.baseBranch||repo?.defaultBranch||'')}">${escapeHTML(repoLabel)}</div><div class="issue-priority-cell">${issuePriorityMarkup(pri)}</div><div class="issue-workflow-cell" title="${escapeHTML(sop)}">${escapeHTML(sop)}${laneDots}</div><div class="issue-stage-cell ${stage.key}" title="${escapeHTML(stage.hint)}">${issueStageBadge(stage)}</div><div class="issue-progress-cell${progressCls}" title="${escapeHTML(progressTitle)}"><b>${escapeHTML(progressText)}</b><span class="issue-progress-track"><i style="width:${trackWidth}%"></i></span></div><div class="issue-actions-cell">${issueActionButtons(i)}</div></div>`;
 }
 
 let refreshIssuesPending=null;

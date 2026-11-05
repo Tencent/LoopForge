@@ -8,7 +8,19 @@ import (
 // BusinessDomainReport reuses the underlying samples for rates and percentiles.
 // It returns aggregates only; domain access does not grant run/log/user detail access.
 func (r *AnalyticsRepo) BusinessDomainReport(filter domain.AnalyticsFilter, projects []domain.Project, domains []domain.BusinessDomain) (domain.BusinessDomainReport, error) {
-	snap := r.Analytics(filter)
+	// 概览聚合与交付指标都基于同一批 run/issue。这里只取一次全量 run 摘要
+	//（不按时间窗裁剪），交给下面两条路径共用，避免同一份数据被完整扫描两遍。
+	// 时间窗仍由各路径在 Go 侧过滤，口径与各自取数时完全一致。
+	var prefetchedRuns []domain.Run
+	var prefetchedEvents map[string][]domain.RunEvent
+	if len(filter.ProjectIDs) > 0 && filter.ProjectID == "" && filter.WorkflowID == "" {
+		runs, events, err := r.runs.RunSummariesWithEventsFor(domain.AnalyticsFilter{ProjectIDs: filter.ProjectIDs}, "")
+		if err != nil {
+			return domain.BusinessDomainReport{}, err
+		}
+		prefetchedRuns, prefetchedEvents = runs, events
+	}
+	snap := r.analyticsWithRuns(filter, prefetchedRuns)
 	if len(snap.DataErrors) > 0 {
 		return domain.BusinessDomainReport{}, errors.New(snap.DataErrors[0])
 	}
@@ -59,7 +71,7 @@ func (r *AnalyticsRepo) BusinessDomainReport(filter domain.AnalyticsFilter, proj
 			out.BusinessDomains = append(out.BusinessDomains, *g)
 		}
 	}
-	if err := r.populateBusinessDeliveryMetrics(&out, filter); err != nil {
+	if err := r.populateBusinessDeliveryMetrics(&out, filter, prefetchedRuns, prefetchedEvents); err != nil {
 		return domain.BusinessDomainReport{}, err
 	}
 	return out, nil

@@ -2,6 +2,15 @@ package domain
 
 import "time"
 
+const (
+	// AssistantSourceChat is an ordinary conversation.
+	AssistantSourceChat = "chat"
+	// AssistantSourceSOP is a shared conversation owned by a SOP run.
+	AssistantSourceSOP = "sop"
+	// AssistantSourceScheduled is a conversation produced by a scheduled task.
+	AssistantSourceScheduled = "scheduled"
+)
+
 // AssistantActivityEvent contains only the user-visible execution stream, not
 // raw tool arguments/results. It travels with its reply so later turns cannot
 // overwrite the execution history.
@@ -14,6 +23,19 @@ type AssistantActivityEvent struct {
 	Failed bool       `json:"failed,omitempty"`
 	Full   bool       `json:"full,omitempty"`
 	At     *time.Time `json:"at,omitempty"`
+	// Parent is the tool call ID of the Agent dispatch that produced this
+	// event; it is empty for Main Bot's own steps.
+	Parent string `json:"parent,omitempty"`
+	// Subagent is the dispatched agent type on an Agent tool event and Role
+	// the role it runs as; AgentID is the CLI agent ID reported on its
+	// completion, which a later dispatch passes as resume to reuse it.
+	Subagent string `json:"subagent,omitempty"`
+	Role     string `json:"role,omitempty"`
+	AgentID  string `json:"agentId,omitempty"`
+	// Input is the task an Agent dispatch hands the subagent and Output the
+	// report it returns; the side panel shows them like an SOP node session.
+	Input  string `json:"input,omitempty"`
+	Output string `json:"output,omitempty"`
 }
 
 type AssistantMessage struct {
@@ -34,6 +56,9 @@ type AssistantMessage struct {
 	Content        string                   `json:"content"`
 	References     []AssistantReference     `json:"references,omitempty"`
 	Attachments    []AssistantAttachment    `json:"attachments,omitempty"`
+	// Unfinished names why a reply stopped early (stopped, failed, timed out
+	// or interrupted). The reply keeps its partial answer and activity.
+	Unfinished string `json:"unfinished,omitempty"`
 }
 
 type AssistantAssetRef struct {
@@ -66,6 +91,12 @@ type AssistantParticipant struct {
 }
 
 type AssistantSession struct {
+	// Source separates ordinary chats, SOP run conversations and scheduled
+	// task runs. Legacy rows leave it empty and are inferred when read.
+	// TaskID is the scheduled job or assistant task that produced the session,
+	// so repeated runs of one task keep a single conversation.
+	Source              string                 `json:"source,omitempty"`
+	TaskID              string                 `json:"taskId,omitempty"`
 	IssueID             string                 `json:"issueId,omitempty"`
 	Participants        []AssistantParticipant `json:"participants"`
 	ParticipantsVersion int                    `json:"participantsVersion,omitempty"`
@@ -83,11 +114,14 @@ type AssistantSession struct {
 	UserID           int64  `json:"userId,omitempty"`
 	Title            string `json:"title"`
 	TitleEdited      bool   `json:"titleEdited,omitempty"`
-	ProjectID        string `json:"projectId,omitempty"`
-	Model            string `json:"model,omitempty"`
-	Effort           string `json:"effort,omitempty"`
-	Executor         string `json:"executor,omitempty"`
-	RunID            string `json:"runId,omitempty"`
+	// TitleGenerated is set when a background model replaced the first-prompt
+	// title. It is not a user rename: later turns keep it, and a real rename clears it.
+	TitleGenerated bool   `json:"titleGenerated,omitempty"`
+	ProjectID      string `json:"projectId,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	Executor       string `json:"executor,omitempty"`
+	RunID          string `json:"runId,omitempty"`
 	// WorkspaceRunID is the one workspace Main Bot has bound to an ordinary
 	// conversation: one the conversation opened, or the SOP run of an issue.
 	// Unlike RunID it does not make the session a shared run conversation.

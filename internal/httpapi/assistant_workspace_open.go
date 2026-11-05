@@ -217,7 +217,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	}
 	notice.WriteString("每个仓库检出在 repositories[].dir 目录下，文件路径和命令都相对工作区根目录（例如 cd <dir> && go test ./...）。")
 	if run.IsWorkspace() {
-		notice.WriteString("改完先用 workbench_workspace_command 跑相关测试；用户要求提交时调用 workbench_workspace_submit_mr。不要在终端里 git push。")
+		notice.WriteString("改完先用 workbench_workspace_command 跑相关测试；用户要求提交时调用 workbench_workspace_submit_mr（默认开 MR；用户要把改动合并进 preview/test 这类共享分支并直接推送、不要 MR 时传 mode=direct + targetBranch）。不要在终端里 git push。")
 	} else {
 		notice.WriteString(borrowedSOPNotice(run))
 	}
@@ -386,39 +386,6 @@ func truncateJSONForTool(raw string, limit int) string {
 	}
 	data, _ := json.Marshal(map[string]any{"truncated": true, "preview": truncateRunes(raw, limit)})
 	return string(data)
-}
-
-// discardConversationWorkspace removes a workspace a deleted conversation
-// opened. Only that conversation could reach it (forks do not inherit
-// it), so keeping it would leave an idle workspace run in the run
-// list for every deleted chat. Something still running in it, or a paused or
-// queued run, is left for the run page instead of being cut off.
-func (h *assistantHandlers) discardConversationWorkspace(runID string) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" || h.engine == nil {
-		return
-	}
-	run, ok := h.repo.RunState(runID)
-	if !ok || !run.IsWorkspace() || run.PauseRequested {
-		return
-	}
-	if !domain.TerminalRunStatus(run.Status) {
-		busy := run.Status != "waiting"
-		for _, node := range run.Nodes {
-			busy = busy || node != nil && (node.Status == "running" || node.Status == "waiting_approval")
-		}
-		if busy {
-			log.Printf("keep workspace run=%s of a deleted conversation: it is %s or has work in progress", runID, run.Status)
-			return
-		}
-		if err := h.engine.Cancel(runID); err != nil {
-			log.Printf("end workspace run=%s of a deleted conversation: %v", runID, err)
-			return
-		}
-	}
-	if err := h.engine.DeleteRun(runID); err != nil {
-		log.Printf("delete workspace run=%s of a deleted conversation: %v", runID, err)
-	}
 }
 
 func repositoryRunContext(r domain.Repository) domain.RepositoryContext {

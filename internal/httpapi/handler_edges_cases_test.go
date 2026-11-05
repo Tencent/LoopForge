@@ -178,7 +178,7 @@ func TestWorkbenchReferencesAndUploads(t *testing.T) {
 	projectID := "cva-wb-p"
 	_ = st.PutProject(domain.Project{ID: projectID, Name: "Workbench P", OwnerID: owner.ID, Members: []domain.ProjectMember{{UserID: viewer.ID, Role: "viewer"}}})
 	_ = st.PutIssue(domain.Issue{ID: "cva-wb-i", ProjectID: projectID, Title: "Issue", Description: "D"})
-	_ = st.PutAgent(domain.AgentDefinition{ID: "cva-wb-a", ProjectID: projectID, Name: "Agent", Instructions: "Do"})
+	_ = st.PutAgent(domain.AgentDefinition{ID: "cva-wb-a", ProjectID: projectID, Name: "Agent", Prompt: "Do"})
 	_ = st.PutWorkflow(domain.WorkflowDefinition{ID: "cva-wb-w", ProjectID: projectID, Name: "Workflow", Status: "published"})
 	_ = st.PutRepository(domain.Repository{ID: "cva-wb-r", ProjectID: projectID, Name: "Repo"})
 	run := domain.Run{
@@ -272,7 +272,7 @@ func TestWorkbenchReferencesAndUploads(t *testing.T) {
 		}, Attachments: []domain.AssistantAttachment{saved}}},
 	}
 	c, _ = cvAContext(t, http.MethodPost, "/", "", &owner)
-	if err := h.prepareWorkbenchContext(c, &req, owner); err != nil || !req.consultation || req.contextText == "" || !req.attachmentIDs[saved.ID] {
+	if err := h.prepareWorkbenchContext(c, &req, owner); err != nil || len(req.roles) != 1 || req.contextText == "" || !req.attachmentIDs[saved.ID] {
 		t.Fatalf("prepared request=%+v err=%v", req, err)
 	}
 	runReq := assistantRequest{
@@ -334,11 +334,6 @@ func TestAgentToolRPCAndTerminalBranches(t *testing.T) {
 	result, err = gateway.callTerminal(assistant, submitAssistantReplyTool, json.RawMessage(`{"message":"progress","drafts":[]}`))
 	if err != nil || result["isError"] != true {
 		t.Fatalf("empty draft terminal=%v %v", result, err)
-	}
-	assistant.ExecMode.Consultation = true
-	result, err = gateway.callTerminal(assistant, submitAssistantReplyTool, json.RawMessage(`{"message":"draft","drafts":[{"tool":"issues_save","body":{"id":"i","title":"I","projectId":"p"}}]}`))
-	if err != nil || result["isError"] != true {
-		t.Fatalf("consultation terminal=%v %v", result, err)
 	}
 	if _, err := gateway.callTerminal(assistant, submitNotificationReportTool, json.RawMessage(`{}`)); err == nil {
 		t.Fatal("wrong terminal allowed")

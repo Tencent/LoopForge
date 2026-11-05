@@ -670,12 +670,7 @@ async function provisionFallbackProjectSOP(projectId, workflowId, owner) {
         version: 1,
         executorId: "codebuddy",
         description: role.objective,
-        instructions: role.instructions,
-        taskPrompt: {
-          role: role.name,
-          objective: role.objective,
-          inputs: ["任务输入：{{input}}"],
-        },
+        prompt: `${role.instructions}\n\n任务输入：{{input}}`,
         artifactOutputs: [
           {
             name: role.artifactId,
@@ -2146,12 +2141,8 @@ export default function QuickAccessWizard({
                               >
                                 <i>{(role.name || "角").slice(0, 1)}</i>
                                 <b>{role.name}</b>
-                                {role.TaskPrompt?.Objective ||
-                                role.objective ? (
-                                  <small>
-                                    {role.TaskPrompt?.Objective ||
-                                      role.objective}
-                                  </small>
+                                {role.objective ? (
+                                  <small>{role.objective}</small>
                                 ) : null}
                               </span>
                             ))}

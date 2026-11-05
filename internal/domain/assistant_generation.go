@@ -22,8 +22,26 @@ type AssistantGeneration struct {
 	Events           []AssistantGenerationEvent `json:"events"`
 	Stream           *AssistantStreamSnapshot   `json:"stream,omitempty"`
 	Reply            json.RawMessage            `json:"reply,omitempty"`
-	UpdatedAt        time.Time                  `json:"updatedAt"`
-	CancelRequested  bool                       `json:"-"`
+	// Steer is a user message sent while this turn is still running. The
+	// turn keeps what it already wrote, then continues from that point.
+	Steer           *AssistantSteer `json:"steer,omitempty"`
+	UpdatedAt       time.Time       `json:"updatedAt"`
+	CancelRequested bool            `json:"-"`
+	// MessageCount is the transcript length this turn answers; an interrupted
+	// reply is appended only while the transcript still ends there.
+	MessageCount int `json:"messageCount,omitempty"`
+}
+
+// AssistantSteer redirects a running reply without discarding it first.
+type AssistantSteer struct {
+	Content      string                `json:"content"`
+	Attachments  []AssistantAttachment `json:"attachments,omitempty"`
+	References   []AssistantReference  `json:"references,omitempty"`
+	Model        string                `json:"model,omitempty"`
+	Effort       string                `json:"effort,omitempty"`
+	ApprovalMode string                `json:"approvalMode,omitempty"`
+	ActorID      int64                 `json:"actorId,omitempty"`
+	ActorName    string                `json:"actorName,omitempty"`
 }
 
 // A bounded projection survives eviction of old token events and reconnects.

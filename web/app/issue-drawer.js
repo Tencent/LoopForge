@@ -528,11 +528,14 @@ function issueProgressActionsHTML(issue,run,{includeIssueActions=false}={}){
 }
 function overviewPane(issue,data){
   const project=(state.data.projects||[]).find(p=>p.id===issue.projectId),workflow=(state.data.workflows||[]).find(w=>w.id===(issue.workflowId||project?.workflowId)),repo=(state.data.repositories||[]).find(r=>r.id===(issue.repositoryId||project?.defaultRepositoryId));
-  const run=data.run,out=issueOutcome(issue),stage=issueCurrentStage(issue),task=data.task;
+  // 对话工作区不是 SOP 运行：不提供运行、日志和 SOP 操作入口。
+  const convo=conversationWorkspaceIssue(issue,data.run);
+  const run=convo?null:data.run,out=issueOutcome(issue),stage=issueCurrentStage(issue),task=data.task;
   const waitingId=run&&waitingNodeId(run);
   const isRunning=(run&&['queued','running','waiting'].includes(run.status))||(task&&['queued','dispatched','running'].includes(task.status));
   let actions='';
-  if(issueManuallyClosed(issue)||deliveryLocked(issue))actions=reopenDeliveredButton(issue)+deliveryMRButtons(issue);
+  if(convo)actions=conversationSessionButton(issue,data)+deliveryMRButtons(issue)+reopenDeliveredButton(issue,{cls:'button ghost small'});
+  else if(issueManuallyClosed(issue)||deliveryLocked(issue))actions=reopenDeliveredButton(issue)+deliveryMRButtons(issue);
   else if(out.key==='waiting'&&run&&waitingId&&!gongfengIssueClosed(issue))actions=run.pauseRequested?pausedRunPanelHTML(run):humanDecisionPanelHTML(run.id,waitingId,run.nodes?.[waitingId],run.workflowSnapshot?.nodes?.find(n=>n.id===waitingId),run.workflowSnapshot?.nodes||[]);
   else if(run?.status==='failed')actions=issueExecutionBlocked(issue)?triggerSOPButton(issue):failedResumePanelHTML(run);
   else if(run?.status==='cancelled')actions=triggerSOPButton(issue);
@@ -541,8 +544,10 @@ function overviewPane(issue,data){
   if(run?.status==='running')actions+=`<button class="button ghost small" data-pause-run="${escapeHTML(run.id)}">暂停运行</button>`;
   actions+=issueProgressActionsHTML(issue,run,{includeIssueActions:true});
 
-  const banner=`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
-  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issue.source==='gongfeng'?'工蜂':issue.source==='tapd'?'TAPD':'平台')}${drawerFact('触发方式',escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',workflow?.name||'未关联')}${drawerFact('代码仓库',repo?.name||'未绑定')}${drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
+  const ch=convo?conversationHeadState(issue):null;
+  const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
+    :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
+  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':escapeHTML(workflow?.name||'未关联'))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
   return `<div class="detail-section">${banner}${facts}${issue.description?`<div class="detail-desc" style="margin-top:12px">${escapeHTML(issue.description)}</div>`:''}${clarificationOverviewCard(issue)}</div>`;
 }
 // Bug-style items are rated on reproduction quality; requirements use the
@@ -696,7 +701,111 @@ function plannedSOPNodes(lane,wf){
   if(lane?.stages?.length)return lane.stages;
   return (wf?.nodes||[]).map(n=>({nodeId:n.id,name:n.name||n.id,status:'pending'}));
 }
+// 对话需求的「打开会话」：对有权限的项目成员都显示（非创建者只读打开），会话删除后置灰。
+function conversationSessionButton(issue,data){
+  const conv=data?.requirement?.conversation;
+  const id=String(conv?.sessionId||issue.conversationSessionId||'').trim();
+  if(!id)return '';
+  if(conv?.sessionId&&conv.available===false)return '<button type="button" class="button ghost small" disabled title="创建这个需求的对话已删除">对话已删除</button>';
+  return `<a class="button primary small" href="${escapeHTML(issueConversationURL(issue,id))}" target="_blank" rel="noopener" title="不是你创建的对话以只读方式打开">打开会话 ↗</a>`;
+}
+// 需求快照没加载到时，从运行列表里的对话工作区取仓库与工作分支。
+function conversationWorkspaceBranches(issue){
+  const seen=new Set(),out=[];
+  (state.data.runs||[]).filter(r=>r.kind==='workspace'&&r.executionContext?.issueId===issue.id).forEach(r=>{
+    (r.repositories?.length?r.repositories:(r.repository?.name?[r.repository]:[])).forEach(rc=>{
+      const key=`${rc.name}\u0000${rc.workBranch||''}`;
+      if(!rc.name||seen.has(key))return;
+      seen.add(key);out.push({repository:rc.name,webUrl:rc.webUrl,baseBranch:rc.baseBranch,workBranch:rc.workBranch});
+    });
+  });
+  return out;
+}
+function conversationBranchList(issue,data){
+  const conv=data?.requirement?.conversation;
+  return conv?.branches?.length?conv.branches:conversationWorkspaceBranches(issue);
+}
+function conversationWorkBranchNames(issue,data){
+  return [...new Set(conversationBranchList(issue,data).map(b=>b.workBranch).filter(Boolean))].join('、');
+}
+// 分支名保留斜杠（与 GitHub、工蜂自己的链接一致），其他字符照常编码。
+function gongfengRefPath(ref){return encodeURIComponent(String(ref||'')).replace(/%2F/gi,'/')}
+function conversationRepoIsGitHub(webUrl){try{return new URL(String(webUrl||'')).hostname.toLowerCase()==='github.com'}catch{return false}}
+function conversationRepoPlatform(webUrl){return conversationRepoIsGitHub(webUrl)?'GitHub':'工蜂'}
+// 仓库网页地址 + 分支 → 分支页；有基线分支时链到对比页，直接看这次改了什么。
+function gongfengBranchLinks(webUrl,work,base){
+  const root=String(webUrl||'').trim().replace(/\.git$/,'').replace(/\/+$/,'');
+  if(!root||!work||safeURL(root)==='#')return{tree:'',compare:''};
+  const sep=conversationRepoIsGitHub(root)?'':'/-';
+  return{tree:`${root}${sep}/tree/${gongfengRefPath(work)}`,compare:base&&base!==work?`${root}${sep}/compare/${gongfengRefPath(base)}...${gongfengRefPath(work)}`:''};
+}
+const conversationMRBadgeTone={merged:'success',integrated:'success',opened:'info',reopened:'info',closed:'neutral'};
+// 对话需求按仓库汇总：工作分支 → 目标分支、PR/MR 与状态放在同一张卡片里，分支和 PR/MR 都能直接跳到代码平台。
+function conversationRepoCards(issue,data){
+  const branches=conversationBranchList(issue,data);
+  const mrs=deliveryMRList(issue);
+  const pathOf=url=>{try{return new URL(url).pathname.replace(/^\/+|\/+$/g,'').replace(/\.git$/,'')}catch{return ''}};
+  const lower=s=>String(s||'').toLowerCase();
+  const cards=branches.map(b=>({name:b.repository||'仓库',path:pathOf(b.webUrl),webUrl:b.webUrl,work:b.workBranch,base:b.baseBranch,mrs:[]}));
+  mrs.forEach(mr=>{
+    const project=String(mr.project||''),repo=lower(mr.repository||project.split('/').pop());
+    let card=cards.find(c=>(project&&lower(c.path)===lower(project))||lower(c.name)===repo);
+    if(!card){card={name:mr.repository||project.split('/').pop()||'仓库',path:project,webUrl:'',work:'',base:'',mrs:[]};cards.push(card)}
+    const mrRoot=String(mr.url||'').match(/^(https?:\/\/.+?)\/(?:(?:-\/)?merge_requests|pull)\//)?.[1];
+    if(!card.webUrl&&mrRoot)card.webUrl=mrRoot;
+    if(!card.path)card.path=project;
+    card.mrs.push(mr);
+  });
+  if(!cards.length)return '<div class="detail-empty compact">工作区记录已清理，没有仓库和分支信息</div>';
+  const directPush=String(issue.status||'').toLowerCase()==='in_review';
+  const newTab='target="_blank" rel="noopener noreferrer"';
+  return `<div class="conv-repos">${cards.map(c=>{
+    const mr=c.mrs[c.mrs.length-1],state=String(mr?.state||'').toLowerCase();
+    const target=mr?.targetBranch||c.base||'';
+    const links=gongfengBranchLinks(c.webUrl,c.work,target);
+    const platform=conversationRepoPlatform(c.webUrl),mrWord=platform==='GitHub'?'PR':'MR';
+    const root=safeURL(String(c.webUrl||'').trim().replace(/\.git$/,'').replace(/\/+$/,''));
+    const ns=c.path&&lower(c.path).endsWith(`/${lower(c.name)}`)?c.path.slice(0,-c.name.length):'';
+    const nameHTML=`${ns?`<span>${escapeHTML(ns)}</span>`:''}<b>${escapeHTML(c.name)}</b>`;
+    const name=root&&root!=='#'?`<a class="conv-repo-name" href="${escapeHTML(root)}" ${newTab} title="在${platform}打开仓库 ${escapeHTML(c.path||c.name)}">${nameHTML}</a>`:`<div class="conv-repo-name">${nameHTML}</div>`;
+    const badge=mr?`<span class="hui-badge" data-size="sm" data-tone="${conversationMRBadgeTone[state]||'neutral'}"><span class="hui-badge-label">${mrWord} ${escapeHTML(deliveryMRStateText[state]||'状态未知')}</span></span>`
+      :`<span class="hui-badge" data-size="sm" data-tone="${directPush?'info':'muted'}"><span class="hui-badge-label">${directPush?'已直推':`未提交 ${mrWord}`}</span></span>`;
+    const work=c.work?(links.tree?`<a class="conv-branch" href="${escapeHTML(safeURL(links.tree))}" ${newTab} title="在${platform}打开分支 ${escapeHTML(c.work)}">${escapeHTML(c.work)}</a>`:`<span class="conv-branch">${escapeHTML(c.work)}</span>`):'<span class="conv-branch is-empty">没有工作分支记录</span>';
+    const tail=!target?'':target===c.work?'<span class="conv-flow-note">直接提交在这个分支上</span>':`<span class="conv-arrow" aria-hidden="true">→</span><span class="conv-branch is-base" title="目标分支">${escapeHTML(target)}</span>`;
+    const flow=`<div class="conv-repo-flow">${work}${tail}</div>`;
+    const acts=[
+      ...c.mrs.map(m=>{const pr=/\/pull\/\d+/.test(String(m.url||'')),iid=m.iid||String(m.url).match(/(?:merge_requests|pull)\/(\d+)/)?.[1]||'';return `<a class="button ghost small" href="${escapeHTML(safeURL(m.url))}" ${newTab}>${escapeHTML(iid?(pr?`PR #${iid}`:`MR !${iid}`):(pr?'打开 PR':'打开 MR'))} ↗</a>`}),
+      links.compare?`<a class="button ghost small" href="${escapeHTML(safeURL(links.compare))}" ${newTab} title="${escapeHTML(target)}...${escapeHTML(c.work)}">查看改动 ↗</a>`:''
+    ].filter(Boolean).join('');
+    return `<div class="conv-repo"><div class="conv-repo-head">${name}${badge}</div>${flow}${acts?`<div class="conv-repo-actions">${acts}</div>`:''}</div>`;
+  }).join('')}</div>`;
+}
+// 对话需求的阶段卡片：合入为绿、进行中为蓝；没合入就关闭的保持中性，不当成交付成功。
+function conversationHeadState(issue){
+  const st=issueCurrentStage(issue);
+  if(issueManuallyClosed(issue))return{tone:'',label:'需求已关闭',hint:'需求已在 AgentFlow 中手动关闭，需要继续时先重新打开'};
+  if(issueTrackerClosed(issue)&&!issueMergedDelivery(issue))return{tone:'',label:st.label,hint:'外部工作项已关闭'};
+  if(deliveryLocked(issue)){
+    const merged=issueMergedDelivery(issue);
+    return{tone:merged?'closed':'',label:st.label,hint:st.label==='已合入基线'?'对话提交的 MR 已合入集成分支，尚未进默认分支':merged?'对话提交的 MR 已合入，需求已交付':'需求已结束，需要继续时先重新打开'};
+  }
+  const c=conversationIssueStage(issue);
+  return{tone:c.ended?'':c.key,label:c.label,hint:c.hint};
+}
+// 对话里直接改代码的需求没有 SOP 节点，执行进展展示对话交付：阶段、会话入口、各仓库的分支与 MR。
+function conversationDeliveryHTML(issue,data){
+  const head0=conversationHeadState(issue);
+  const actions=[conversationSessionButton(issue,data),reopenDeliveredButton(issue,{cls:'button ghost small'})].join('');
+  const head=`<div class="issue-outcome conv-outcome ${escapeHTML(head0.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(head0.label)}</b><p>${escapeHTML(head0.hint||'')}</p>${actions?`<div class="issue-outcome-actions">${actions}</div>`:''}</div>`;
+  return `<div class="detail-section">${head}</div><div class="detail-section"><h3>代码交付<span class="sub">对话工作区直接改代码，没有 SOP 运行</span></h3>${conversationRepoCards(issue,data)}</div>`;
+}
+// 对话需求的代码交付：与执行进展同一套仓库卡片，交付方式指向会话，不链到没有节点的工作区运行。
+function deliveryPane(issue,data){
+  if(!conversationWorkspaceIssue(issue,data.run))return sopDeliveryPane(issue,data);
+  return `<div class="detail-section"><h3>代码仓库与分支<span class="sub">对话工作区检出的仓库</span></h3>${conversationRepoCards(issue,data)}</div><div class="detail-section"><h3>交付方式<span class="sub">在对话工作区里直接改代码，没有 SOP 运行</span></h3><div class="issue-outcome-actions">${conversationSessionButton(issue,data)||'<span class="muted">没有关联的会话</span>'}</div></div>`;
+}
 function sopPane(issue,data){
+  if(conversationWorkspaceIssue(issue,data.run))return conversationDeliveryHTML(issue,data);
   const snap=data.requirement||{};
   const lanes=snap.lanes||clientIssueLanes(issue);
   const overall=snap.overall||{};
@@ -747,6 +856,7 @@ function sopPane(issue,data){
 }
 function artifactsPane(data){
   const run=data.run;
+  if((!run||!run.artifacts?.length)&&data.issue&&conversationWorkspaceIssue(data.issue,run))return '<div class="detail-empty">对话需求在会话里直接改代码，不产出 SOP 节点产物。<br>改动见「代码交付」，过程见会话记录。</div>';
   if(!run||!run.artifacts?.length)return '<div class="detail-empty">该需求尚未产生交付物。执行 SOP 后，节点按产物契约冻结不可变快照。</div>';
   const grouped={};run.artifacts.forEach(a=>{(grouped[a.nodeId]=grouped[a.nodeId]||[]).push(a)});
   const wf=run.workflowSnapshot;
@@ -772,7 +882,8 @@ function deliveryRepoFacts(issue,repos){
     return multi?`<div class="delivery-repo"><div class="delivery-repo-name">${escapeHTML(r.name)}</div>${grid}</div>`:grid;
   }).join('');
 }
-function deliveryPane(issue,data){
+// SOP 需求的代码交付。
+function sopDeliveryPane(issue,data){
   const run=data.run,repos=deliveryRepositories(issue,run),frozen=run?.repositories?.length?run.repositories:(run?.repository?.name?[run.repository]:[]);
   const repoFacts=deliveryRepoFacts(issue,repos);
   const frozenBranches=[...new Set(frozen.map(r=>r.baseBranch).filter(Boolean))];
@@ -782,6 +893,10 @@ function deliveryPane(issue,data){
 }
 function acceptancePane(issue,data){
   const run=data.run;
+  if(conversationWorkspaceIssue(issue,run)){
+    const mrs=deliveryMRButtons(issue);
+    return `<div class="detail-section"><h3>验收方式<span class="sub">对话需求没有 SOP 验收门禁</span></h3><div class="detail-desc">${mrs?'在 MR 里评审，合入默认分支后需求自动完成。':String(issue.status||'').toLowerCase()==='in_review'?'改动已直推到共享分支，确认没问题后关闭需求即完成验收。':'在对话里提交 MR 后，评审合入即完成验收。'}</div>${mrs?`<div class="issue-outcome-actions">${mrs}</div>`:''}</div>`;
+  }
   if(!run)return '<div class="detail-empty">尚未执行，暂无验收信息。</div>';
   const wf=run.workflowSnapshot||(state.data.workflows||[]).find(w=>w.id===run.workflowId);
   const nodes=wf?.nodes||[];
@@ -847,7 +962,8 @@ function activityPane(issue,data){
     const detail=e.detail.length>180?e.detail.slice(0,180)+'…':e.detail;
     return `<div class="activity-row${fail?' fail':''}"><time>${formatActivityTime(e.t)}</time><b>${escapeHTML(e.label)}</b><p title="${escapeHTML(e.detail)}">${escapeHTML(detail)}</p></div>`;
   }).join('');
-  return `<div class="detail-section"><h3>讨论与评论</h3>${commentHtml}</div><div class="detail-section"><h3>任务与运行轨迹</h3>${rows?`<div class="activity-list">${rows}</div>`:'<div class="detail-empty compact">尚未创建执行任务</div>'}</div>`;
+  const empty=conversationWorkspaceIssue(issue,run)?'对话需求没有 SOP 任务，执行过程见会话记录':'尚未创建执行任务';
+  return `<div class="detail-section"><h3>讨论与评论</h3>${commentHtml}</div><div class="detail-section"><h3>任务与运行轨迹</h3>${rows?`<div class="activity-list">${rows}</div>`:`<div class="detail-empty compact">${empty}</div>`}</div>`;
 }
 
 
@@ -873,7 +989,7 @@ async function deleteIssueById(issueId){
 // Association does not expose private conversations to other project members.
 async function renderIssueConversations(issue,host){
   const key=issue.id;host.dataset.conversationIssue=key;
-  const link=(session)=>{const url=new URL('/',location.origin);url.searchParams.set('projectId',issue.projectId);if(session)url.searchParams.set('chatSession',session);else url.searchParams.set('chatIssue',issue.id);url.hash='/collaboration';return url.href};
+  const link=(session)=>issueConversationURL(issue,session);
   host.innerHTML='<div class="detail-empty">正在加载关联会话…</div>';
   try{
     const rows=await api('/api/issues/'+encodeURIComponent(key)+'/conversations',{silent:true});

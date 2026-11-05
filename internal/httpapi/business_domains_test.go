@@ -11,9 +11,119 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestBusinessReportCacheKeyAndCalls(t *testing.T) {
+	filter := domain.AnalyticsFilter{ProjectIDs: []string{"b", "a"}, Grain: "day", TimeZone: "UTC"}
+	domains := []domain.BusinessDomain{{ID: "pay", Name: "Payments", Active: true}}
+	projects := []domain.Project{{ID: "a", Name: "A", BusinessDomainID: "pay"}, {ID: "b", Name: "B"}, {ID: "other", Name: "O"}}
+	base := businessReportCacheKey("all", filter, projects, domains)
+	if got := businessReportCacheKey("all", domain.AnalyticsFilter{ProjectIDs: []string{"a", "b"}, Grain: "day", TimeZone: "UTC"}, projects, domains); got != base {
+		t.Fatal("project order must not change the key")
+	}
+	unrelated := append([]domain.Project(nil), projects...)
+	unrelated[2].Name = "renamed"
+	if businessReportCacheKey("all", filter, unrelated, domains) != base {
+		t.Fatal("a project outside the report must not change the key")
+	}
+	moved := append([]domain.Project(nil), projects...)
+	moved[1].BusinessDomainID = "pay"
+	renamed := []domain.BusinessDomain{{ID: "pay", Name: "Payments 新", Active: true}}
+	stopped := []domain.BusinessDomain{{ID: "pay", Name: "Payments", Active: false}}
+	for name, key := range map[string]string{
+		"assignment": businessReportCacheKey("all", filter, moved, domains),
+		"domain":     businessReportCacheKey("all", filter, projects, renamed),
+		"active":     businessReportCacheKey("all", filter, projects, stopped),
+		"scope":      businessReportCacheKey("pay", filter, projects, domains),
+		"grain":      businessReportCacheKey("all", domain.AnalyticsFilter{ProjectIDs: filter.ProjectIDs, Grain: "week", TimeZone: "UTC"}, projects, domains),
+	} {
+		if key == base {
+			t.Fatalf("%s change must miss the cache", name)
+		}
+	}
+
+	h := &businessDomainsHandlers{}
+	var builds atomic.Int32
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			report, err := h.cachedBusinessReport("k", func() (domain.BusinessDomainReport, error) {
+				builds.Add(1)
+				<-release
+				return domain.BusinessDomainReport{Grain: "day"}, nil
+			})
+			if err != nil || report.Grain != "day" {
+				t.Errorf("shared call = %+v, %v", report, err)
+			}
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if n := builds.Load(); n != 1 {
+		t.Fatalf("concurrent identical requests built %d times, want 1", n)
+	}
+	if _, _ = h.cachedBusinessReport("k", func() (domain.BusinessDomainReport, error) {
+		builds.Add(1)
+		return domain.BusinessDomainReport{}, nil
+	}); builds.Load() != 1 {
+		t.Fatal("a fresh result must be served from cache")
+	}
+	h.reports.mu.Lock()
+	entry := h.reports.entries["k"]
+	entry.at = time.Now().Add(-businessReportCacheTTL)
+	h.reports.entries["k"] = entry
+	h.reports.mu.Unlock()
+	if _, _ = h.cachedBusinessReport("k", func() (domain.BusinessDomainReport, error) {
+		builds.Add(1)
+		return domain.BusinessDomainReport{}, nil
+	}); builds.Load() != 2 {
+		t.Fatal("an expired result must be rebuilt")
+	}
+
+	failing := func() (domain.BusinessDomainReport, error) { return domain.BusinessDomainReport{}, os.ErrPermission }
+	if _, err := h.cachedBusinessReport("err", failing); err == nil {
+		t.Fatal("error must be returned")
+	}
+	if _, err := h.cachedBusinessReport("err", func() (domain.BusinessDomainReport, error) { return domain.BusinessDomainReport{Grain: "ok"}, nil }); err != nil {
+		t.Fatal("a failure must not be cached")
+	}
+
+	// A panicking build releases waiters and frees the key.
+	started := make(chan struct{})
+	waiter := make(chan error, 1)
+	go func() {
+		defer func() { _ = recover() }()
+		_, _ = h.cachedBusinessReport("panic", func() (domain.BusinessDomainReport, error) {
+			close(started)
+			time.Sleep(300 * time.Millisecond)
+			panic("boom")
+		})
+	}()
+	<-started
+	go func() {
+		_, err := h.cachedBusinessReport("panic", func() (domain.BusinessDomainReport, error) { return domain.BusinessDomainReport{}, nil })
+		waiter <- err
+	}()
+	select {
+	case err := <-waiter:
+		if err == nil {
+			t.Fatal("a waiter on a panicked build must get an error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter blocked after the build panicked")
+	}
+	if _, err := h.cachedBusinessReport("panic", func() (domain.BusinessDomainReport, error) { return domain.BusinessDomainReport{}, nil }); err != nil {
+		t.Fatalf("key stayed stuck after panic: %v", err)
+	}
+}
 
 func TestBusinessDomainsPermissionsAndCurrentAttribution(t *testing.T) {
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")

@@ -75,11 +75,22 @@ func TestBackgroundGenerationIsTrackedUntilItFinishes(t *testing.T) {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
 	<-entered
-	if got := inflightTasks.Count(); got != before+1 {
-		t.Fatalf("generation not tracked: before=%d now=%d", before, got)
+	// A new session also tracks a short-lived title summary. The generation
+	// itself must still be the one task left after that summary finishes.
+	deadline := time.Now().Add(2 * time.Second)
+	var got int
+	for {
+		got = inflightTasks.Count()
+		if got == before+1 {
+			break
+		}
+		if got < before+1 || time.Now().After(deadline) {
+			t.Fatalf("generation not tracked: before=%d now=%d", before, got)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	close(release)
-	deadline := time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(5 * time.Second)
 	for inflightTasks.Count() != before {
 		if time.Now().After(deadline) {
 			t.Fatal("generation never left the tracker")

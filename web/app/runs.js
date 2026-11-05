@@ -124,7 +124,7 @@ function sortRunsDescending(runs){
 }
 let queuedRunRefreshTimer=null;
 function queuedRunListVisible(){return !document.hidden&&activeViewName()==='runs'&&$('#runsListSection')?.hidden===false}
-function queuedRunRefreshNeeded(){return queuedRunListVisible()&&scopedRuns(state.data.runs||[]).some(r=>r.status==='queued')}
+function queuedRunRefreshNeeded(){return queuedRunListVisible()&&scopedRuns(sopRuns(state.data.runs)).some(r=>r.status==='queued')}
 function stopQueuedRunRefresh(){clearInterval(queuedRunRefreshTimer);queuedRunRefreshTimer=null}
 function syncQueuedRunRefresh(){
   if(!queuedRunRefreshNeeded()){stopQueuedRunRefresh();return}
@@ -177,7 +177,7 @@ function taskTriggerInfo(task){
 }
 function taskTriggerBadge(task){const info=taskTriggerInfo(task);return `<span class="run-trigger ${info.kind}" title="${escapeHTML(info.title||'触发来源')}">${escapeHTML(info.label)}</span>`}
 function renderRunOverview(){
-  const live=liveRuns(),runs=scopedRuns(state.data.runs||[]),active=live.filter(r=>r.status==='running'&&!r.pauseRequested).length,waiting=live.filter(runAwaitsConfirmation).length,queued=runs.filter(r=>r.status==='queued').length,failed=runs.filter(r=>r.status==='failed').length,finished=runs.filter(r=>r.status==='succeeded'),successBase=finished.length+failed,rate=successBase?Math.round(finished.length*100/successBase):0,totalTokens=runs.reduce((n,r)=>n+Number(r.usage?.totalTokens||0),0);
+  const live=liveRuns(),runs=scopedRuns(sopRuns(state.data.runs)),active=live.filter(r=>r.status==='running'&&!r.pauseRequested).length,waiting=live.filter(runAwaitsConfirmation).length,queued=runs.filter(r=>r.status==='queued').length,failed=runs.filter(r=>r.status==='failed').length,finished=runs.filter(r=>r.status==='succeeded'),successBase=finished.length+failed,rate=successBase?Math.round(finished.length*100/successBase):0,totalTokens=runs.reduce((n,r)=>n+Number(r.usage?.totalTokens||0),0);
   $('#runOverview').innerHTML=`<span class="run-kpi" title="成功率 = 已完成 ÷（已完成 + 失败）"><span>成功率</span><b>${rate}%</b><small>${successBase} 次已结束</small></span><span class="run-kpi"><span>累计 Token</span><b>${formatTokens(totalTokens)}</b><small>${runs.length} 次</small></span>`;
   const liveState=$('#runsLiveState'),on=active+waiting+queued>0;
   liveState.classList.toggle('active',on);
@@ -210,12 +210,8 @@ function runStatusBadgeHTML(r){
   return `<span class="hui-badge" data-size="sm" data-tone="${RUN_BADGE_TONES[runStatusTone(r)]}" data-status="${escapeHTML(runDisplayStatusClass(r))}" title="${escapeHTML(runDisplayStatus(r))}">${mark}${escapeHTML(label)}</span>`;
 }
 function runTriggerChip(task){const info=taskTriggerInfo(task);return `<span class="run-chip" title="${escapeHTML(info.title||'触发来源')}">${escapeHTML(info.label)}</span>`}
-// A conversation workspace is named after its requirement, else the goal
-// Main Bot opened it for; it is never an SOP and has no trigger task.
 function runWorkspaceReclaimed(r){const at=String(r?.workspaceCleanedAt||'');return Boolean(at)&&!at.startsWith('0001-')}
-function runWorkspaceGoal(r){return String(r?.input||'').replace(/^对话改代码[:：]\s*/,'').trim()}
 function runRowHTML(r,workflows){
-  if(r.kind==='workspace')return runWorkspaceRowHTML(r);
   const p=runProgress(r),ctx=runContext(r),group=runIsGroupMode(r),sop=r.workflowSnapshot?.name||workflows.find(w=>w.id===r.workflowId)?.name||r.workflowId,title=ctx.issue?.title||sop||'自由协作';
   const isPaused=Boolean(r.pauseRequested||r.status==='paused');
   const isDeletable=r.status!=='queued'&&(!['running','waiting'].includes(r.status)||isPaused);
@@ -225,14 +221,6 @@ function runRowHTML(r,workflows){
   const time=group?'<span class="run-row-time"></span>':`<span class="run-row-time" title="${escapeHTML(runTimingTitle(r))}">${runElapsed(r)}</span>`;
   const actions=`<button type="button" class="run-row-action run-view-btn" data-view-run="${escapeHTML(r.id)}" aria-label="查看详情" title="查看详情">${runIconSlot('eye',15)}</button>${isDeletable?`<button type="button" class="run-row-action run-del-btn" data-delete-run="${escapeHTML(r.id)}" aria-label="删除记录" title="删除记录">${runIconSlot('trash',15)}</button>`:''}`;
   return `<div class="run-card run-row ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}" role="listitem" tabindex="0">${runIconSlot(group?'chat':'workflow',15,'run-glyph')}<div class="run-row-main"><b class="run-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</b><div class="run-row-meta">${r.workflowSnapshot?.generic?'<span class="run-chip">通用</span>':''}${meta}</div></div><span class="run-row-status">${runStatusBadgeHTML(r)}</span>${progress}${time}<div class="run-row-actions">${actions}</div></div>`;
-}
-function runWorkspaceRowHTML(r){
-  const ctx=runContext(r),title=ctx.issue?.title||runWorkspaceGoal(r)||'对话工作区',sep='<span class="run-sep">·</span>';
-  const isDeletable=!['running','waiting','queued'].includes(r.status);
-  const ref=ctx.issue?`<span class="run-ref">${escapeHTML(ctx.project?.key||'ISS')}-${escapeHTML(ctx.issue.number)}</span>${sep}`:'';
-  const meta=`${ref}<span class="run-meta-sop">对话改代码</span>${sep}<span>${relativeTime(r.createdAt)}</span><span class="run-chip" title="${escapeHTML(ctx.issue?'对话中直接改代码，已关联需求':'对话中直接改代码，未关联需求（只读评审、排查等）')}">${ctx.issue?'已关联需求':'未关联需求'}</span>`;
-  const actions=`<button type="button" class="run-row-action run-view-btn" data-view-run="${escapeHTML(r.id)}" aria-label="查看详情" title="查看详情">${runIconSlot('eye',15)}</button>${isDeletable?`<button type="button" class="run-row-action run-del-btn" data-delete-run="${escapeHTML(r.id)}" aria-label="删除记录" title="删除记录">${runIconSlot('trash',15)}</button>`:''}`;
-  return `<div class="run-card run-row ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}" role="listitem" tabindex="0">${runIconSlot('chat',15,'run-glyph')}<div class="run-row-main"><b class="run-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</b><div class="run-row-meta">${meta}</div></div><span class="run-row-status">${runStatusBadgeHTML(r)}</span><div class="run-row-progress is-empty">—</div><span class="run-row-time"></span><div class="run-row-actions">${actions}</div></div>`;
 }
 function renderRunFilterCounts(base){
   const counts=Object.fromEntries(RUN_FILTER_KEYS.map(k=>[k,0]));
@@ -247,9 +235,9 @@ function renderRunFilterCounts(base){
 }
 function renderRuns(){
   renderRunOverview();const workflows=catalogWorkflows();$('#runWorkflowFilter').innerHTML='<option value="">全部 SOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
-  let base=sortRunsDescending(scopedRuns(state.data.runs||[]));
+  let base=sortRunsDescending(scopedRuns(sopRuns(state.data.runs)));
   if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
-  if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''} ${r.kind==='workspace'?'对话改代码':''}`.toLowerCase().includes(state.runQuery)});
+  if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''}`.toLowerCase().includes(state.runQuery)});
   renderRunFilterCounts(base);
   const runs=base.filter(r=>runMatchesFilter(r,state.runFilter||'all'));
   $('#runListCount')&&($('#runListCount').textContent=`${runs.length} 条`);const list=$('#runList');

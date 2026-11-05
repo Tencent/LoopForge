@@ -6,6 +6,8 @@ import { DraftCard } from "./SidePanel";
 import SopRunPanel, { runStatus } from "./SopRunPanel";
 import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
+import { SubagentSession, subagentName, subagentStatus } from "./SubagentSession";
+import { collectSubagents } from "./activity";
 import { IconButton } from "./ui";
 import { definitionTarget, actionName } from "./platform.js";
 import { useArtifactPanelLayout } from "./useArtifactPanelLayout";
@@ -52,7 +54,7 @@ function DefinitionPreview({ artifact }) {
     if (
       result?.id ||
       artifact.draft?.body?.nodes ||
-      artifact.draft?.body?.instructions
+      artifact.draft?.body?.prompt
     ) {
       setData(result || artifact.draft.body);
       return;
@@ -147,7 +149,7 @@ function DefinitionPreview({ artifact }) {
         <>
           <h3>工作说明</h3>
           <RichContent
-            message={data.instructions || data.description || "暂无说明"}
+            message={data.prompt || data.description || "暂无说明"}
           />
           {data.model ? (
             <small className="muted">模型 · {data.model}</small>
@@ -197,12 +199,29 @@ export default function ArtifactPanel({
   const [search, setSearch] = useState("");
   const browsing = view === "browser";
   const listView = view !== "changes" && !browsing;
+  const live = !!chat?.busy;
+  const subagents = collectSubagents(
+    chat?.session?.messages || [],
+    live ? chat?.live?.activity || [] : [],
+  );
+  // A new subagent is keyed by its dispatch until its agent ID arrives, so
+  // an opened one is found by either.
+  const selectedAgent =
+    selected?.kind === "subagent"
+      ? subagents.find(
+          (agent) =>
+            agent.key === selected.agentKey ||
+            agent.dispatches.some((step) => step.id === selected.dispatchId),
+        )
+      : null;
   // The browser shows a desktop-width page, so it widens the pane like an
   // opened SOP node and restores the width afterwards.
   const layout = useArtifactPanelLayout(
     root,
     onClose,
-    nodeId || (browsing && workspaceRunId ? "agent-browser" : null),
+    nodeId ||
+      (selectedAgent ? `subagent-${selectedAgent.key}` : null) ||
+      (browsing && workspaceRunId ? "agent-browser" : null),
     open,
   );
   useEffect(
@@ -246,7 +265,8 @@ export default function ArtifactPanel({
     definitions.length +
     operations.length +
     mergeRequests.length +
-    runs.length;
+    runs.length +
+    subagents.length;
   const query = search.trim().toLocaleLowerCase();
   const matches = (...values) =>
     !query ||
@@ -287,12 +307,23 @@ export default function ArtifactPanel({
       "SOP 运行",
     ),
   );
+  const visibleSubagents = subagents.filter((agent) =>
+    matches(
+      subagentName(agent),
+      agent.subagent,
+      agent.agentId,
+      subagentStatus(agent, live).label,
+      ...agent.dispatches.map((step) => step.detail),
+      "子 Agent",
+    ),
+  );
   const matchCount =
     visibleItems.length +
     visibleDefinitions.length +
     visibleOperations.length +
     visibleMergeRequests.length +
-    visibleRuns.length;
+    visibleRuns.length +
+    visibleSubagents.length;
   const row = (artifact) => {
     const Icon = artifactIcon(artifact);
     const target = definitionTarget(artifact, projectId);
@@ -448,6 +479,14 @@ export default function ArtifactPanel({
               <span>{nodeId ? "返回流程节点" : "返回产物列表"}</span>
             </button>
             {nodeId ? <span className="artifact-node-title">{nodeDefinition?.name || nodeId}</span> : null}
+            {selectedAgent ? (
+              <>
+                <span className="artifact-node-title">{subagentName(selectedAgent)}</span>
+                <small className="node-header-meta" title={[selectedAgent.subagent, selectedAgent.agentId].filter(Boolean).join(" · ")}>
+                  {subagentStatus(selectedAgent, live).label}
+                </small>
+              </>
+            ) : null}
             {nodeId ? (
               <small
                 className="node-header-meta"
@@ -530,6 +569,18 @@ export default function ArtifactPanel({
               onSelectNode={setNodeId}
               onClose={() => setSelected(null)}
             />
+          ) : selectedAgent ? (
+            <SubagentSession
+              agent={selectedAgent}
+              live={live}
+              artifacts={artifacts}
+              onOpenArtifact={setSelected}
+            />
+          ) : selected?.kind === "subagent" ? (
+            <div className="artifact-panel-empty" role="status">
+              <HarnessIcon name="user" size={28} />
+              <p>这个子 Agent 的记录已不在当前对话里。</p>
+            </div>
           ) : selected ? (
             <div className="artifact-panel-preview">
               {["sop", "role"].includes(selected.kind) ? (
@@ -617,6 +668,51 @@ export default function ArtifactPanel({
                       <ChevronRight className="artifact-row-action" size={13} />
                     </button>
                   ))}
+                </section>
+              ) : null}
+              {visibleSubagents.length ? (
+                <section className="artifact-section">
+                  <h3>子 Agent</h3>
+                  {visibleSubagents.map((agent) => {
+                    const status = subagentStatus(agent, live);
+                    const count = agent.dispatches.length;
+                    return (
+                      <button
+                        type="button"
+                        className="artifact-row artifact-run-row"
+                        key={agent.key}
+                        onClick={() =>
+                          setSelected({
+                            kind: "subagent",
+                            id: `subagent-${agent.key}`,
+                            agentKey: agent.key,
+                            dispatchId: agent.dispatches[0]?.id,
+                            name: subagentName(agent),
+                          })
+                        }
+                      >
+                        <span className="artifact-file-icon">
+                          <HarnessIcon
+                            name={status.tone === "running" ? "spinner" : "user"}
+                            motion={status.tone === "running" ? "busy" : "idle"}
+                            size={16}
+                          />
+                        </span>
+                        <span className="artifact-file-copy">
+                          <strong>{subagentName(agent)}</strong>
+                          <small>
+                            <i className={`artifact-run-dot status-${{ done: "succeeded", running: "running", failed: "failed" }[status.tone] || "canceled"}`} />
+                            {status.label}
+                            {count > 1 ? ` · 派发 ${count} 次` : ""}
+                            {agent.dispatches.at(-1)?.detail
+                              ? ` · ${agent.dispatches.at(-1).detail}`
+                              : ""}
+                          </small>
+                        </span>
+                        <ChevronRight className="artifact-row-action" size={13} />
+                      </button>
+                    );
+                  })}
                 </section>
               ) : null}
               {visibleOperations.length ? (

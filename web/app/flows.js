@@ -8,10 +8,10 @@ const PREVIEW_MODEL_FALLBACK=[
   {id:'glm-5.3-ioa',name:'GLM-5.3'},
   {id:'gpt-5.6-terra',name:'GPT-5.6-Terra'},
   {id:'gpt-5.6-luna',name:'GPT-5.6-Luna'},
-  {id:'gpt-5.4',name:'GPT-5.4'},
+  {id:'gpt-6-sol',name:'GPT-6-Sol'},
   {id:'claude-sonnet-4.6',name:'Claude-Sonnet-4.6'},
-  {id:'kimi-k2.7-ioa',name:'Kimi-K2.7-Code'},
-  {id:'deepseek-v4.1-flash',name:'Deepseek-V4.1-Flash'}
+  {id:'kimi-k3-ioa',name:'Kimi-K3'},
+  {id:'deepseek-v4.1-flash',name:'DeepSeek-V4.1-Flash'}
 ];
 function isPreviewBuildNode(id){return id===PREVIEW_BUILD_NODE_ID}
 function workflowPreviewModel(wf){
@@ -107,6 +107,7 @@ function renderFlowHeader(){
   const wf=state.workflow;
   const title=$('#flowCommandTitle');
   if(title){title.textContent=wf?(wf.name||'未命名流程'):'选择或新建 SOP';title.title=wf?.name||''}
+  const copyName=$('#copyWorkflowName');if(copyName)copyName.hidden=!wf
   const meta=$('#workflowMeta');
   if(meta){
     if(!wf)meta.innerHTML='<span>还没有打开流程</span>';
@@ -678,7 +679,7 @@ function bindListEditor(host, selector, getItems, setItems, placeholder){
 }
 function ensureAgentDraft(a){
   if(!state.agentDraft||state.agentDraft.id!==a.id)state.agentDraft=JSON.parse(JSON.stringify(a||{}));
-  state.agentDraft.taskPrompt=state.agentDraft.taskPrompt||{};
+  state.agentDraft.prompt=state.agentDraft.prompt||'';
   state.agentDraft.artifactOutputs=state.agentDraft.artifactOutputs||[];
   state.agentDraft.verification=(state.agentDraft.verification||[]).filter(x=>x.mode!=='manual'&&x.mode!=='submit');
   state.agentDraft.loop=state.agentDraft.loop||{enabled:false,maxIterations:3,onExhausted:'fail'};
@@ -709,48 +710,50 @@ function renderAgentPresets(){
   host.dataset.ready='1';
   const current=state.agentCreatePreset||'blank';
   const card=(id,icon,name,desc)=>`<button type="button" class="as-preset ${id===current?'active':''}" data-agent-preset="${id}" aria-pressed="${id===current?'true':'false'}"><span class="as-preset-icon">${icon}</span><b>${name}</b><small>${desc}</small></button>`;
-  host.innerHTML=`<div class="as-presets agent-start-grid">${card('blank','空','空白','只填名称和模型，其余创建后再补')}${agentPresets.map(p=>card(p.id,p.id==='developer'?'码':p.id==='reviewer'?'审':p.id==='tester'?'测':'交',p.name,p.desc)).join('')}</div>`;
+  const presetIcon=p=>({'developer':'码','reviewer':'审','tester':'测','coordinator':'交'})[p.id]||'角';
+  host.innerHTML=`<div class="as-presets agent-start-grid">${card('blank','空','空白','只填名称和模型，其余创建后再补')}${agentPresets.map(p=>card(p.id,presetIcon(p),p.name,p.desc)).join('')}</div>`;
   host.querySelectorAll('[data-agent-preset]').forEach(button=>button.onclick=()=>applyAgentPreset(button.dataset.agentPreset));
 }
 function insertAgentPlaceholder(host, token){
-  const el=host._tpFocus||host.querySelector('[data-tp="objective"]')||host.querySelector('[data-tp]');
-  if(!el||el.tagName!=='TEXTAREA'&&el.tagName!=='INPUT')return;
+  const el=host.querySelector('[data-tp="prompt"]');
+  if(!el)return;
+  // Assigning el.value moves the caret to the end and scrolls the textarea to
+  // the bottom; setRangeText edits in place, and the scroll offset is kept.
+  const top=el.scrollTop;
   const start=el.selectionStart??el.value.length, end=el.selectionEnd??start;
-  el.value=el.value.slice(0,start)+token+el.value.slice(end);
-  el.focus();
-  const caret=start+token.length;
-  try{el.setSelectionRange(caret,caret)}catch(_){}
+  el.focus({preventScroll:true});
+  el.setRangeText(token,start,end,'end');
+  el.scrollTop=top;
   el.dispatchEvent(new Event('input',{bubbles:true}));
 }
+// Placeholders the engine replaces when it renders a node's task brief
+// (internal/engine/prompt.go applyPromptPlaceholders, node_execute.go).
+const AGENT_PROMPT_PLACEHOLDERS=[
+  {t:'{{input}}',l:'任务输入',d:'本次运行的输入；不写时自动附在末尾'},
+  {t:'{{artifacts}}',l:'上游产物',d:'上游节点交付的产物清单；不写时自动附在末尾'},
+  {t:'{{upstream}}',l:'上游结论',d:'直接上游节点的输出；不写时自动附在末尾'},
+  {t:'{{feedback}}',l:'打回反馈',d:'本节点上一轮被打回或门禁失败的原因，首轮为空'},
+  {t:'{{rejectTo}}',l:'打回节点',d:'失败时打回的节点，未配置时为「上游实现节点」'},
+  {t:'{{repository}}',l:'仓库',d:'仓库名、工蜂项目、基线与本次工作分支'},
+  {t:'{{existingMR}}',l:'已有 MR',d:'本轮是否沿用已有分支与 MR 的说明'},
+  {t:'{{pipelineUrl}}',l:'流水线',d:'仓库绑定的流水线地址'},
+];
 function renderAgentTaskBook(a){
   const host=$('#agentTaskBookPanel');if(!host)return;
-  const d=ensureAgentDraft(a),tp=d.taskPrompt;
-  const block=(key,title,hint,example,items)=>`<section class="as-task-card" data-tp-list="${key}"><div class="as-task-card-head"><div><b>${title}</b><small>${hint}</small></div><em>${(items||[]).filter(Boolean).length}</em></div>${agentListEditorHTML(items,example)}<button type="button" class="as-add" data-list-add>+ 再加一条</button></section>`;
-  const ph=[{t:'{{input}}',l:'任务输入'},{t:'{{artifacts}}',l:'上游产物'},{t:'{{feedback}}',l:'失败原因'},{t:'{{repository}}',l:'仓库'},{t:'{{upstream}}',l:'上游结论'}];
-  host.innerHTML=`<p class="as-lead-line">用几句话写清「做成什么样」。下面的步骤和禁区会编进 Agent 的任务书，不用写 prompt 语法。</p>
-    <label class="as-field as-hero"><span>做成什么样</span><textarea data-tp="objective" rows="4" placeholder="例如：读 Issue 和相关源码，把根因写到具体文件和函数。不要改业务代码，也不要跑测试。">${escapeHTML(tp.objective||'')}</textarea></label>
-    <div class="as-ph-bar"><span>点一下插入到光标处</span>${ph.map(x=>`<button type="button" data-insert-ph="${x.t}" title="${x.l}">${x.l}</button>`).join('')}</div>
-    <label class="as-field as-role-field"><span>对 Agent 怎么称呼</span><input data-tp="role" value="${escapeHTML(tp.role||a.name||'')}" placeholder="例如：Issue 根因分析师"></label>
-    <div class="as-task-grid">
-      ${block('actions','按这个顺序做','每条一句，运行时会按顺序写进任务书','读 Issue，再搜索相关源码，定位到文件与行',tp.actions)}
-      ${block('constraints','这些事不要做','安全边界和职责外的事','不得改业务源码、不得跑测试、不得提交密钥',tp.constraints)}
+  const d=ensureAgentDraft(a);
+  host.innerHTML=`<div class="as-prompt-box">
+      <div class="as-ph-bar" role="toolbar" aria-label="插入运行时变量"><span>插入</span>${AGENT_PROMPT_PLACEHOLDERS.map(x=>`<button type="button" data-insert-ph="${x.t}" data-tip="${escapeHTML(`${x.t} · ${x.d}`)}">${x.l}</button>`).join('')}</div>
+      <textarea data-tp="prompt" aria-label="角色 prompt" placeholder="写清它是谁、做什么、按什么顺序、哪些事不能做。&#10;&#10;例如：你是 Issue 根因分析师，只分析不修改。读 Issue 和相关源码，把根因定位到具体文件和函数，写进 fix-plan.md。先复现，再缩小范围，最后给出修复步骤。不要改业务代码，也不要跑测试。">${escapeHTML(d.prompt||'')}</textarea>
     </div>
-    <div class="as-task-grid">
-      ${block('deliverables','要交什么文件','和「产物与门禁」里的路径对应起来','fix-plan.md：根因、影响面和修复步骤',tp.deliverables)}
-      ${block('acceptanceCriteria','怎样算做完','这里写人话；真正拦运行的命令在下一步','fix-plan.md 写清根因，并点到具体文件',tp.acceptanceCriteria)}
-    </div>
-    <details class="as-fold as-fold-muted"><summary>更多可选说明<em>输入变量、工作区、失败后怎么改</em></summary><div class="as-fold-body as-task-more">
-      <div data-tp-list="inputs"><p class="as-fold-hint">运行时会替换的变量，可点上方按钮插入</p>${agentListEditorHTML(tp.inputs,'任务输入：{{input}}')}<button type="button" class="as-add" data-list-add>+ 添加</button></div>
-      <label class="as-field"><span>工作区里有什么</span><textarea data-tp="context" rows="3" placeholder="当前目录已经是检出好的 git 工作区，直接改相对路径。">${escapeHTML(tp.context||'')}</textarea></label>
-      <label class="as-field"><span>失败或被打回时</span><textarea data-tp="retryInstructions" rows="3" placeholder="先读 failed_checks，只修失败项，不要重做已经通过的部分。">${escapeHTML(tp.retryInstructions||'')}</textarea></label>
-    </div></details>`;
-  const touch=()=>renderAgentSummary();
-  host.onfocusin=e=>{const t=e.target;if(t&&(t.tagName==='TEXTAREA'||(t.tagName==='INPUT'&&t.type!=='checkbox'&&t.type!=='search')))host._tpFocus=t};
-  host.querySelectorAll('[data-tp]').forEach(el=>{
-    el.oninput=()=>{tp[el.dataset.tp]=el.value;touch();dirty()};
+    <p class="as-prompt-note" id="agentPromptNote"></p>`;
+  const el=host.querySelector('[data-tp="prompt"]');
+  el.oninput=()=>{d.prompt=el.value;renderAgentSummary();dirty()};
+  host.querySelectorAll('[data-insert-ph]').forEach(btn=>{
+    // Keep focus (and the caret) in the textarea while clicking a chip.
+    btn.onmousedown=e=>e.preventDefault();
+    btn.onclick=()=>insertAgentPlaceholder(host,btn.dataset.insertPh);
   });
-  host.querySelectorAll('[data-insert-ph]').forEach(btn=>btn.onclick=()=>insertAgentPlaceholder(host,btn.dataset.insertPh));
-  ['inputs','actions','deliverables','acceptanceCriteria','constraints'].forEach(key=>bindAgentListEditor(host,`[data-tp-list="${key}"]`,()=>tp[key]||[],items=>{tp[key]=items},'',touch));
+  renderAgentSummary();
 }
 function renderAgentGovernance(a){
   const host=$('#agentGovPanel');if(!host)return;
@@ -759,11 +762,10 @@ function renderAgentGovernance(a){
   const after=(d.interventions||[]).some(x=>x.stage==='after_execution');
   const publish=(d.interventions||[]).some(x=>x.stage==='before_publish');
   host.innerHTML=`<div class="as-section-stack">
-    <p class="as-lead-line">运行时会先校验必需产物是否存在且符合契约，通过后才触发门禁命令。任一步失败都不会继续交付。</p>
-    <section class="as-section-block as-loop-card"><div class="as-section-head"><b>做不对应再试一次</b><small>同一沙箱里重跑，适合测试失败后只修失败项</small></div><label class="as-toggle"><input name="loopEnabled" type="checkbox" ${loop.enabled?'checked':''}><div><b>启用自动重试</b><small>门禁失败后进入下一轮，直到通过或达到次数上限</small></div></label><div class="as-grid as-grid-tight"><label class="as-field"><span>最多试几轮</span><input name="loopMaxIterations" type="number" min="1" max="12" value="${loop.maxIterations||3}"></label><label class="as-field"><span>试完仍失败</span><select name="loopOnExhausted" class="select"><option value="fail" ${loop.onExhausted!=='human'?'selected':''}>标记失败并停下</option><option value="human" ${loop.onExhausted==='human'?'selected':''}>交给人工处理</option></select></label><label class="as-field wide"><span>下一轮怎么提醒它</span><textarea name="loopFeedbackPrompt" rows="2" placeholder="读 {{feedback}}，只修失败项，不要重做已经通过的部分">${escapeHTML(loop.feedbackPrompt||'')}</textarea></label></div></section>
+    <section class="as-section-block as-loop-card"><div class="as-section-head"><b>做不对应再试一次</b><small>同一沙箱里重跑，适合测试失败后只修失败项</small></div><label class="as-switch-row"><span><b>启用自动重试</b><small>门禁失败后进入下一轮，直到通过或达到次数上限</small></span><input name="loopEnabled" type="checkbox" ${loop.enabled?'checked':''} role="switch"></label><div class="as-grid as-grid-tight"><label class="as-field"><span>最多试几轮</span><input name="loopMaxIterations" type="number" min="1" max="12" value="${loop.maxIterations||3}"></label><label class="as-field"><span>试完仍失败</span><select name="loopOnExhausted" class="select"><option value="fail" ${loop.onExhausted!=='human'?'selected':''}>标记失败并停下</option><option value="human" ${loop.onExhausted==='human'?'selected':''}>交给人工处理</option></select></label><label class="as-field wide"><span>下一轮怎么提醒它</span><textarea name="loopFeedbackPrompt" rows="2" placeholder="读 {{feedback}}，只修失败项，不要重做已经通过的部分">${escapeHTML(loop.feedbackPrompt||'')}</textarea></label></div></section>
     <section class="as-section-block"><div class="as-section-head"><b>要交的文件</b><small>写相对工作区的路径，例如 <code>fix-plan.md</code></small></div><div id="agentArtifactPanel"></div></section>
     <section class="as-section-block"><div class="as-section-head"><b>产物通过后的门禁命令</b><small>必需产物先校验；通过后才按顺序执行这些命令</small></div><div id="agentGatePanel"></div></section>
-    <section class="as-section-block"><div class="as-section-head"><b>要不要人看一眼</b><small>勾选后，运行会停在「待我确认」</small></div><div class="as-toggle-grid"><label class="as-toggle"><input name="interventionAfter" type="checkbox" ${after?'checked':''}><div><b>做完后先复核</b><small>Agent 写完结论，人批准再往下走</small></div></label><label class="as-toggle"><input name="interventionPublish" type="checkbox" ${publish?'checked':''}><div><b>交文件前先确认</b><small>磁盘产物落盘前停一下</small></div></label></div></section>
+    <section class="as-section-block"><div class="as-section-head"><b>要不要人看一眼</b><small>打开后，运行会停在「待我确认」</small></div><div class="as-toggle-grid"><label class="as-switch-row"><span><b>做完后先复核</b><small>Agent 写完结论，人批准再往下走</small></span><input name="interventionAfter" type="checkbox" ${after?'checked':''} role="switch"></label><label class="as-switch-row"><span><b>交文件前先确认</b><small>磁盘产物落盘前停一下</small></span><input name="interventionPublish" type="checkbox" ${publish?'checked':''} role="switch"></label></div></section>
   </div>`;
   renderAgentArtifactEditors(d);
   renderAgentGateEditors(d);
@@ -856,7 +858,7 @@ function renderAgentAssetsPanel(a){
   const d=ensureAgentDraft(a);
   const generic=catalogGeneric(state.workflow);
   const col=(title,sub,name,items,selected)=>{const vis=name==='mcpServers'?(generic?(items||[]):visibleMCPAssets(items)):(name==='rules'||name==='skills'?(items||[]).filter(item=>catalogVisible(item.projectId,item.shared)):visibleAssets(items));const picked=vis.filter(item=>name==='mcpServers'&&generic?genericMCPChecked(item.id,selected):(selected||[]).includes(item.id)).length;const empty=name==='mcpServers'?(generic?'通用模板绑定市场别名（如 github），运行时落到当前项目已安装的 MCP':'这个项目或你的个人范围还没有 MCP，先到「MCP 管理」里添加'):name==='rules'?'这个项目还没有可用规则，先到「规则管理」里添加或共享':name==='skills'?'这个项目还没有可用技能，先到「技能管理」里添加或共享':'这个项目还没有此类配置，先到「环境资产」里添加';return `<div class="as-asset-col"><div class="as-asset-col-head"><b>${title}</b><span>${sub}${picked?` · 已选 ${picked}`:''}</span></div><div class="as-asset-search"><span>⌕</span><input type="search" data-asset-filter="${name}" placeholder="搜索名称…"></div><div class="as-asset-list" data-asset-list="${name}">${vis.map(x=>`<label class="as-asset-item"><input type="checkbox" name="${name}" value="${escapeHTML(x.id)}" ${(name==='mcpServers'&&generic?genericMCPChecked(x.id,selected):(selected||[]).includes(x.id))?'checked':''}><div><b>${escapeHTML(x.name)}</b><small>${escapeHTML(x.description||x.id)}${x.shared&&x.projectId!==state.projectFilter?' · 共享':''}</small></div></label>`).join('')||`<div class="as-empty">${empty}</div>`}</div></div>`};
-  host.innerHTML=`<p class="as-lead-line">勾选这个角色能用的规则、技能和外部工具。Hook 只在这个角色跑的时候生效。</p><section class="as-section-block as-platform-mcp-section"><div class="as-section-head"><b>平台能力</b><small>独立开关，不占用 MCP 列表</small></div><label class="as-toggle"><input type="checkbox" name="platformMcp" ${d.platformMcp?'checked':''}><div><b>接入平台 MCP（AgentFlow）</b><small>开启后，这个角色运行时通过平台 MCP（agentflow-platform）直接调用平台侧功能：需求、任务、运行、项目等平台操作。</small></div></label><label class="as-toggle"><input type="checkbox" name="knowledgeBase" ${d.knowledgeBase?'checked':''}><div><b>接入团队知识库</b><small>开启后，这个角色运行时可只读检索团队知识库（agentflow-knowledge），并自动附带「知识库使用规范」规则；产出的 knowledge.md 会进入知识沉淀审核队列。</small></div></label></section><div class="as-assets">${col('必须遵守','规则','rules',state.data.rules,d.rules)}${col('怎么干活','技能','skills',state.data.skills,d.skills)}${col('外部工具','MCP','mcpServers',generic?genericTemplateMCPOptions(d.mcpServers):state.data.mcpServers,d.mcpServers)}</div><section class="as-section-block as-hook-section"><div class="as-section-head"><b>运行时 Hook</b><small>在工具调用前后插一段脚本，比如拦危险命令。一般可以先不配。</small></div><div id="agentHookPanel"></div></section>`;
+  host.innerHTML=`<section class="as-section-block as-platform-mcp-section"><div class="as-section-head"><b>平台能力</b><small>独立开关，不占用 MCP 列表</small></div><label class="as-switch-row"><span><b>接入平台 MCP（AgentFlow）</b><small>开启后，这个角色运行时通过平台 MCP（agentflow-platform）直接调用平台侧功能：需求、任务、运行、项目等平台操作。</small></span><input type="checkbox" name="platformMcp" ${d.platformMcp?'checked':''} role="switch"></label><label class="as-switch-row"><span><b>接入团队知识库</b><small>开启后，这个角色运行时可只读检索团队知识库（agentflow-knowledge），并自动附带「知识库使用规范」规则；产出的 knowledge.md 会进入知识沉淀审核队列。</small></span><input type="checkbox" name="knowledgeBase" ${d.knowledgeBase?'checked':''} role="switch"></label></section><div class="as-assets">${col('必须遵守','规则','rules',state.data.rules,d.rules)}${col('怎么干活','技能','skills',state.data.skills,d.skills)}${col('外部工具','MCP','mcpServers',generic?genericTemplateMCPOptions(d.mcpServers):state.data.mcpServers,d.mcpServers)}</div><section class="as-section-block as-hook-section"><div class="as-section-head"><b>运行时 Hook</b><small>在工具调用前后插一段脚本，比如拦危险命令。一般可以先不配。</small></div><div id="agentHookPanel"></div></section>`;
   host.querySelectorAll('[data-asset-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.closest('.as-asset-col').querySelectorAll('.as-asset-item').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))});
   host.querySelectorAll('input[type=checkbox]').forEach(el=>el.onchange=()=>{renderAgentSummary();dirty()});
   const platformToggle=host.querySelector('input[name="platformMcp"]');
@@ -905,17 +907,27 @@ function renderAgentHookEditors(d){
   });
 }
 function renderAgentSummary(){
-  const host=$('#agentSummaryBar');if(!host)return;
   const f=$('#agentForm'),d=state.agentDraft||{};
   const exec=(state.data.executors||[]).find(x=>x.id===(f?.elements?.executorId?.value||d.executorId));
-  const model=agentEffectiveModel(f)||d.model||exec?.model||exec?.name||'未选模型';
+  const chosen=agentEffectiveModel(f),model=chosen||(exec?.model?`${exec.model}（默认）`:'默认模型');
   const effort=(f?.elements?.effort?.value||'').trim();
+  const meta=$('#agentRuntimeMeta');
+  if(meta)meta.textContent=[exec?.name,effort?`${model} · ${effort}`:model].filter(Boolean).join(' · ');
   const arts=(d.artifactOutputs||[]).filter(x=>x.name||x.path).length;
   const gates=(d.verification||[]).filter(x=>x.name||(x.commands||[]).length).length;
   const loopOn=f?.elements?.loopEnabled?.checked??d.loop?.enabled;
-  host.innerHTML=`<span class="as-chip">${escapeHTML(effort?`${model} · ${effort}`:model)}</span>${d.platformMcp?'<span class="as-chip on">平台 MCP</span>':''}${d.knowledgeBase?'<span class="as-chip on">知识库</span>':''}<span class="as-chip ${loopOn?'on':''}">${loopOn?`${f?.elements?.loopMaxIterations?.value||d.loop?.maxIterations||3} 轮 Loop`:'单轮'}</span><span class="as-chip">${arts} 产物</span><span class="as-chip">${gates} 门禁</span><span class="as-chip">${(d.hooks||[]).length} Hook</span>`;
+  const note=$('#agentPromptNote');
+  if(note){
+    const parts=['角色名'];
+    if(arts)parts.push(`${arts} 个产物`);
+    if(gates)parts.push(`${gates} 条门禁`);
+    parts.push(loopOn?`最多 ${f?.elements?.loopMaxIterations?.value||d.loop?.maxIterations||3} 轮重试`:'重试策略');
+    note.textContent=`运行时自动附上：${parts.join('、')}`;
+  }
+  const desc=f?.elements?.description,count=$('#agentDescCount');
+  if(desc&&count)count.textContent=`${desc.value.length}/${desc.maxLength>0?desc.maxLength:160}`;
   const picked=name=>f?f.querySelectorAll(`input[name="${name}"]:checked`).length:0;
-  const setCount=(sel,n)=>{const el=$(sel);if(el&&el.textContent!==String(n)){el.textContent=String(n);syncTabIndicator(el.closest('.agent-tabs'))}};
+  const setCount=(sel,n)=>{const el=$(sel);if(el&&el.textContent!==String(n)){el.textContent=String(n);el.hidden=!n;syncTabIndicator(el.closest('.agent-tabs'))}else if(el)el.hidden=!n};
   setCount('#agentGovCount',arts+gates);
   setCount('#agentAssetsCount',picked('rules')+picked('skills')+picked('mcpServers')+(d.hooks||[]).length);
 }
@@ -924,9 +936,7 @@ function renderAgentPreview(a){
 }
 function readAgentDraft(f){
   const d=state.agentDraft||{};
-  const tp=d.taskPrompt||{};
-  const hasTaskBook=[tp.role,tp.objective,tp.context,tp.retryInstructions,...(tp.inputs||[]),...(tp.actions||[]),...(tp.deliverables||[]),...(tp.acceptanceCriteria||[]),...(tp.constraints||[])].some(v=>String(v||'').trim());
-  return {taskPrompt:hasTaskBook?tp:null,artifactOutputs:d.artifactOutputs||[],verification:d.verification||[],hooks:d.hooks||[]};
+  return {prompt:String(d.prompt||'').trim()?d.prompt:'',artifactOutputs:d.artifactOutputs||[],verification:d.verification||[],hooks:d.hooks||[]};
 }
 function sectionHead(title,hint,count,unit){
   const label=count==null?'':`${count} ${unit||'条'}`;
@@ -947,10 +957,10 @@ function agentBindCard(n){
   const hint=generic?'这些角色打包在通用模板里，和当前项目目录无关。改任务书只影响平台模板，所有项目下次运行生效。':`本项目 ${owned.length} 个 · 共享 ${shared.length} 个；其他项目私有角色已隐藏。`;
   if(!agent)return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p><p class="prop-hint">先选一个已定义的角色。画布只编排顺序和打回，不改编排角色内部的任务。</p></div>`;
   const arts=effectiveNodeArtifacts(n,agent),gates=roleGates(agent);
-  const taskHint=agent.taskPrompt?.objective?`任务：${agent.taskPrompt.objective.slice(0,48)}…`:'任务书在角色定义第 2 步';
+  const duty=String(agent.description||'').trim(),taskHint=duty?(duty.length>48?`${duty.slice(0,48)}…`:duty):'还没写职责，可在角色定义里补';
   const model=agent.model||exec?.model||exec?.name||'未选模型';
   return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p></div>
-    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span><button type="button" class="fd-btn ghost sm" id="openBoundAgent">编辑任务书</button></div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
+    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span><button type="button" class="fd-btn ghost sm" id="openBoundAgent">编辑角色 prompt</button></div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
 }
 function flowDrawerHead(n,kind,label){
   const agent=kind==='agent'?workflowAgent(n.agentId):null;

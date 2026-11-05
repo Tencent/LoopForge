@@ -100,14 +100,39 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 	})
 }
 func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration) error {
-	res := r.DB.Model(&assistantGenerationRow{}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Updates(map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": time.Now().UTC()})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected != 1 {
-		return fmt.Errorf("生成状态已变化")
-	}
-	return nil
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row assistantGenerationRow
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Take(&row).Error
+		if err != nil {
+			return fmt.Errorf("生成状态已变化")
+		}
+		var current domain.AssistantGeneration
+		_ = json.Unmarshal(row.Payload, &current)
+		if g.Steer == nil && current.Steer != nil {
+			g.Steer = current.Steer
+		}
+		res := tx.Model(&row).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": time.Now().UTC()})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("生成状态已变化")
+		}
+		return nil
+	})
+}
+
+func (r *AssistantRepo) SteerAssistantGeneration(userID int64, sessionID, id string, steer domain.AssistantSteer) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row assistantGenerationRow
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, id, "running").Take(&row).Error
+		if err != nil {
+			return fmt.Errorf("生成已结束或不存在")
+		}
+		g := decodeGeneration(row)
+		g.Steer = &steer
+		return tx.Model(&row).Updates(map[string]any{"cancel_requested": true, "payload": mustJSON(g), "updated_at": time.Now().UTC()}).Error
+	})
 }
 func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id string) error {
 	res := r.DB.Model(&assistantGenerationRow{}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, id, "running").Update("cancel_requested", true)

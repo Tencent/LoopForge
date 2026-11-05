@@ -20,6 +20,7 @@ type AgentToolMode string
 const (
 	AgentToolClarify   AgentToolMode = "clarify"
 	AgentToolAssistant AgentToolMode = "assistant"
+	// Legacy gateway mode; AI scheduled tasks use AgentToolAssistant in full access.
 	AgentToolScheduled AgentToolMode = "scheduled"
 	AgentToolReport    AgentToolMode = "report"
 )
@@ -87,8 +88,11 @@ type AgentToolSession struct {
 	// the transcript, so the turn stores these as attachments of its reply.
 	replyFiles    []agentReplyFile
 	screenshotSeq int
-	closed        atomic.Bool
-	CancelModel   context.CancelFunc
+	// dispatches are the Agent calls still running this turn. A subagent
+	// works in the bound workspace, so it is not switched under it.
+	dispatches  map[string]bool
+	closed      atomic.Bool
+	CancelModel context.CancelFunc
 }
 
 type agentReplyFile struct {
@@ -402,4 +406,32 @@ func (s *AgentToolSession) terminalToolsOnly() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.terminalOnly
+}
+
+// trackDispatch follows Main Bot's Agent calls from the CLI stream: a call
+// starts running when it is announced and stops when its result arrives.
+func (s *AgentToolSession) trackDispatch(event assistantStreamEvent) {
+	if s == nil || event.ID == "" || event.Parent != "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case event.Kind == "tool" && (event.Tool == "Agent" || event.Tool == "Task"):
+		if s.dispatches == nil {
+			s.dispatches = map[string]bool{}
+		}
+		s.dispatches[event.ID] = true
+	case event.Kind == "toolDone":
+		delete(s.dispatches, event.ID)
+	}
+}
+
+func (s *AgentToolSession) dispatchRunning() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.dispatches) > 0
 }

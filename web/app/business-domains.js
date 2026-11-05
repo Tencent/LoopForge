@@ -8,12 +8,17 @@ function businessUserOptions(ids){return(state.data?.users||[]).map(u=>`<option 
 async function loadBusinessDomains(){
   if(!businessState.from&&!businessState.to&&!businessState.initialized){const to=new Date(),from=new Date(to);from.setDate(from.getDate()-29);businessState.from=businessDate(from);businessState.to=businessDate(to);businessState.initialized=true}
   businessState.loading=true;businessState.error='';renderBusinessDomains();
+  // 报表接口不依赖权限/项目列表的返回，先并发发出，避免多一个串行往返。
+  const pendingReport=refreshBusinessReport();
   try{
     const [access,projects]=await Promise.all([api('/api/business-domains',{silent:true}),api('/api/projects',{silent:true})]);
     businessState.items=access.items;state.data.businessDomains=access.items.map(x=>x.domain);businessState.canAdmin=access.canAdmin;businessState.userId=access.userId;state.data.projects=projects;renderProjectSwitcher();
-    if(businessState.scope!=='all'&&businessState.scope!=='unclassified'&&!access.items.some(x=>x.domain.id===businessState.scope&&x.canView))businessState.scope='all';
-    await refreshBusinessReport();
-  }catch(e){businessState.error=e.message;businessState.loading=false;businessState.report=null;renderBusinessDomains()}
+    if(businessState.scope!=='all'&&businessState.scope!=='unclassified'&&!access.items.some(x=>x.domain.id===businessState.scope&&x.canView)){businessState.scope='all';await refreshBusinessReport();return}
+    await pendingReport;
+    // 报表可能先于业务域列表返回（命中缓存时尤其如此），已按旧列表渲染；
+    // 这里补渲染一次，让业务域下拉、名称和管理权限用上刚拿到的列表。
+    renderBusinessDomains();
+  }catch(e){businessState.seq++;businessState.error=e.message;businessState.loading=false;businessState.report=null;renderBusinessDomains()}
 }
 async function refreshBusinessReport(){
   const seq=++businessState.seq;businessState.loading=true;businessState.error='';businessState.report=null;renderBusinessDomains();

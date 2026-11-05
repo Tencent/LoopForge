@@ -1855,6 +1855,18 @@ paths:
           $ref: "#/components/responses/AssetList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/executor-models:
+    get:
+      tags: [Assets]
+      operationId: listExecutorModels
+      description: Returns, per built-in CLI (codebuddy, codex, claude), the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
+      responses:
+        "200":
+          description: Model catalog keyed by CLI id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenObject"
   /api/dockerfiles:
     get:
       tags: [Assets]
@@ -3303,6 +3315,63 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/shared-schedule-tasks:
+    get:
+      tags: [Scheduling]
+      operationId: listSharedScheduleTasks
+      summary: List latest published shared AI task versions
+      responses:
+        "200":
+          description: Latest immutable definition for each shared task, without credentials or project notifications
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SharedScheduleVersion"}}
+  /api/shared-schedule-tasks/{id}/versions:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Scheduling]
+      operationId: listSharedScheduleVersions
+      summary: List immutable versions in descending order
+      responses:
+        "200":
+          description: Published versions, retained while subscriptions can reference them
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SharedScheduleVersion"}}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/schedule-jobs/{id}/publish:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Scheduling]
+      operationId: publishSharedScheduleVersion
+      summary: Publish a credential-free version from an independent AI task
+      description: Requires source project write access. Trigger configs and subscriptions cannot be republished. Publishing never changes existing subscriptions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseVersion]
+              properties:
+                name: {type: string, maxLength: 255}
+                description: {type: string, maxLength: 2000}
+                prompt: {type: string, description: 'Template with {{params.name}} placeholders; defaults to source task prompt'}
+                parameters: {type: array, maxItems: 20, items: {$ref: "#/components/schemas/ScheduleParameter"}}
+                changeNote: {type: string, maxLength: 1000}
+                baseVersion: {type: integer, minimum: 0, description: '0 for first publication, otherwise the latest published version'}
+      responses:
+        "201":
+          description: Newly published immutable version
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SharedScheduleVersion"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
 components:
   securitySchemes:
     bearerAuth:
@@ -4315,8 +4384,9 @@ components:
           type: integer
         description:
           type: string
-        instructions:
+        prompt:
           type: string
+          description: The role's single free-form brief (who it is, what to do, order, limits). Runtime placeholders such as {{input}}, {{repository}}, {{artifacts}}, {{feedback}} and {{upstream}} are substituted per run; deliverable, gate and retry sections are added from artifactOutputs, verification and node policy.
         rules:
           type: array
           items:
@@ -4890,6 +4960,9 @@ components:
       type: object
       required: [name]
       properties:
+        sharedTaskId: {type: string, description: Published shared AI task id; requires skipDispatch=true and a pinned version}
+        sharedTaskVersion: {type: integer, minimum: 1, description: Explicit immutable version; changing it is a manual upgrade}
+        parameterValues: {type: object, additionalProperties: {type: string}, description: Project-local parameter values; validated against the pinned version}
         notifications: {type: array, maxItems: 3, items: {$ref: "#/components/schemas/NotificationBinding"}, description: Optional Bot notifications for execution success/failure}
         id:
           type: string
@@ -4925,7 +4998,7 @@ components:
           description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.
         assistantPrompt:
           type: string
-          description: User-written CodeBuddy prompt executed at schedule time. Required for AI jobs (skipDispatch=true); cleared on trigger jobs.
+          description: User-written CodeBuddy prompt executed at schedule time. Required for independent AI jobs; subscriptions resolve their pinned shared version instead. Cleared on trigger jobs.
         assistantModel:
           type: string
           description: CodeBuddy model id from GET /api/assistant/models.
@@ -5159,3 +5232,30 @@ components:
           type: boolean
         storage:
           $ref: "#/components/schemas/OpenObject"
+
+    ScheduleParameter:
+      type: object
+      required: [name, label, type]
+      properties:
+        name: {type: string, pattern: '^[a-zA-Z][a-zA-Z0-9_]{0,31}$'}
+        label: {type: string}
+        type: {type: string, enum: [string, integer, number, boolean]}
+        required: {type: boolean}
+        default: {type: string}
+    SharedScheduleVersion:
+      type: object
+      properties:
+        id: {type: string}
+        version: {type: integer, minimum: 1}
+        sourceProjectId: {type: string}
+        sourceProjectName: {type: string}
+        sourceJobId: {type: string}
+        name: {type: string}
+        description: {type: string}
+        prompt: {type: string}
+        model: {type: string}
+        cron: {type: string}
+        intervalSec: {type: integer}
+        parameters: {type: array, items: {$ref: "#/components/schemas/ScheduleParameter"}}
+        changeNote: {type: string}
+        createdAt: {type: string, format: date-time}

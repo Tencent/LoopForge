@@ -19,6 +19,7 @@ import (
 type scheduleHandlers struct {
 	*deps
 	notifications *notificationHandlers
+	assistant     *assistantHandlers
 }
 
 // 路由: g.GET("/api/schedule-jobs", h.scheduleJobs)
@@ -28,11 +29,33 @@ type scheduleHandlers struct {
 func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 	switch c.Request.Method {
 	case http.MethodGet:
-		c.JSON(200, h.repo.ScheduleJobs())
+		c.JSON(200, h.visibleScheduleJobs(c.Request, h.repo.ScheduleJobs()))
 	case http.MethodPut, http.MethodPost:
 		var job domain.ScheduleJob
 		if !decode(c, &job) {
 			return
+		}
+		existingJob, _ := h.repo.ScheduleJob(job.ID)
+		if job.ProjectID == "" {
+			job.ProjectID = "platform"
+		}
+		// Saving by id must not let a writer of one project take over (or move)
+		// another project's job.
+		if existingJob.ID != "" {
+			if !h.requireScheduleJob(c, existingJob, true) {
+				return
+			}
+			if existingJob.ProjectID != job.ProjectID && !h.requireScheduleProject(c, job.ProjectID, true) {
+				return
+			}
+		} else if !h.requireScheduleProject(c, job.ProjectID, true) {
+			return
+		}
+		if !h.bindSharedSchedule(c, &job, existingJob) {
+			return
+		}
+		if !job.SkipDispatch && strings.TrimSpace(job.Name) == "" {
+			job.Name = "触发配置"
 		}
 		if strings.TrimSpace(job.Name) == "" {
 			c.JSON(400, map[string]string{"error": "name is required"})
@@ -49,7 +72,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		}
 		job.Source = source
 		if job.SkipDispatch {
-			if job.AssistantPrompt == "" {
+			if job.AssistantPrompt == "" && job.SharedTaskID == "" {
 				c.JSON(400, map[string]string{"error": "AI 定时任务必须填写提示词"})
 				return
 			}
@@ -99,8 +122,12 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		if job.ProjectID == "" {
 			job.ProjectID = "platform"
 		}
+		// The job runs with its owner's key and identity; never take that from
+		// the request.
 		if project, ok := h.repo.Project(job.ProjectID); ok && project.OwnerID > 0 {
 			job.OwnerUserID = project.OwnerID
+		} else if job.SharedTaskID == "" {
+			job.OwnerUserID = existingJob.OwnerUserID
 		}
 		if job.ID == "" {
 			job.ID = "job-" + time.Now().UTC().Format("20060102150405.000000000")
@@ -116,7 +143,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			if job.CreatedAt.IsZero() {
 				job.CreatedAt = existing.CreatedAt
 			}
-			if job.OwnerUserID == 0 {
+			if job.OwnerUserID == 0 && job.SharedTaskID == "" {
 				job.OwnerUserID = existing.OwnerUserID
 			}
 			if job.Blockers == nil {
@@ -145,8 +172,18 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.LastAssistantMessage = prior.LastAssistantMessage
 		job.NotificationSnapshot = prior.NotificationSnapshot
 		job.NotificationResult = prior.NotificationResult
-		if err := h.repo.PutScheduleJob(job); err != nil {
-			respond(c, err)
+		var saveErr error
+		if job.SkipDispatch {
+			saveErr = h.repo.PutScheduleJob(job)
+		} else {
+			saveErr = h.repo.PutProjectTriggerConfig(job)
+		}
+		if errors.Is(saveErr, repo.ErrProjectTriggerConfigExists) {
+			c.JSON(http.StatusConflict, gin.H{"error": saveErr.Error()})
+			return
+		}
+		if saveErr != nil {
+			respond(c, saveErr)
 			return
 		}
 		stored, _ := h.repo.ScheduleJob(job.ID)
@@ -162,9 +199,15 @@ func (h *scheduleHandlers) scheduleJob(c *gin.Context) {
 		http.NotFound(c.Writer, c.Request)
 		return
 	}
+	if job, ok := h.repo.ScheduleJob(c.Param("id")); ok && !h.requireScheduleJob(c, job, true) {
+		return
+	}
 	if err := h.repo.DeleteScheduleJob(c.Param("id")); err != nil {
 		respond(c, err)
 		return
+	}
+	if h.assistant != nil {
+		h.assistant.deleteScheduledSessionsForTask(c.Param("id"))
 	}
 	c.JSON(200, map[string]bool{"ok": true})
 }
@@ -180,6 +223,9 @@ func (h *scheduleHandlers) scheduleJobRun(c *gin.Context) {
 	}
 	if h.schedule == nil {
 		respond(c, fmt.Errorf("scheduler is unavailable"))
+		return
+	}
+	if job, ok := h.repo.ScheduleJob(c.Param("id")); ok && !h.requireScheduleJob(c, job, true) {
 		return
 	}
 	job, err := h.schedule.StartNow(c.Param("id"))

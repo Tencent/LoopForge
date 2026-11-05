@@ -13,6 +13,16 @@ import {
 import { reviewedOperation, operationError } from "./operations.js";
 import { credentialHint } from "./credentials.js";
 import { modelEffort } from "./effort.js";
+import {
+  enqueue,
+  holdQueue,
+  nextQueued,
+  queuedMessage,
+  readQueues,
+  removeQueued,
+  restoreQueued,
+  writeQueues,
+} from "./message-queue.js";
 // Main Bot can run on any configured agent CLI; CodeBuddy stays the default.
 export const EXECUTORS = [
   { id: "codebuddy", icon: "sparkles", label: "CodeBuddy", detail: "使用 CodeBuddy 模型与个人 API Key。" },
@@ -70,7 +80,15 @@ export function useChat() {
     [live, setLive] = useState({ answer: "", thinking: "", tools: [] }),
     [error, setError] = useState(""),
     [ready, setReady] = useState(false),
-    [submitting, setSubmitting] = useState(false);
+    [submitting, setSubmitting] = useState(false),
+    // Messages sent while a reply runs, per conversation (see message-queue.js).
+    [queues, setQueues] = useState(readQueues),
+    // The generation whose final transcript has been loaded. A queued message
+    // waits for it, so it is sent after the finished (or unfinished) reply.
+    [settledId, setSettledId] = useState(null),
+    // A queued message sent with "send now": it interrupts the running reply
+    // and stays on screen until the server's follow-up turn has started.
+    [steering, setSteering] = useState(null);
   const currentId = useRef(activeId),
     sessionRef = useRef(session),
     projectRef = useRef(projectId),
@@ -78,6 +96,8 @@ export function useChat() {
     submittingRef = useRef(false),
     sandboxBusyRef = useRef(false),
     applyingRef = useRef(new Set()),
+    dispatchingRef = useRef(false),
+    steeringRef = useRef(null),
     selectRef = useRef(null),
     defaultModel = useRef("");
   currentId.current = activeId;
@@ -86,6 +106,15 @@ export function useChat() {
   const refreshSessions = useCallback(async () => {
     const rows = await api("/api/assistant/sessions");
     setSessions(rows || []);
+    const current = sessionRef.current;
+    const row = (rows || []).find((item) => item.id === current?.id);
+    if (row?.title && current && !current.titleEdited && row.title !== current.title) {
+      setSession((prev) =>
+        prev && prev.id === row.id && !prev.titleEdited
+          ? { ...prev, title: row.title, titleGenerated: !!row.titleGenerated }
+          : prev,
+      );
+    }
   }, []);
   const changeURL = useCallback((id) => {
     const url = new URL(location.href);
@@ -220,6 +249,39 @@ export function useChat() {
     );
     return () => clearInterval(timer);
   }, [ready, refreshSessions]);
+  const titlePrompt = (session?.messages || []).find((message) => message.role === "user")?.content || "";
+  useEffect(() => {
+    if (!ready || !session?.id || session.titleEdited || session.titleGenerated) return;
+    if (!titlePrompt.trim()) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const stored = await api(sessionPath(session.id));
+        if (cancelled || currentId.current !== session.id || !stored?.title) return;
+        if (stored.title === sessionRef.current?.title && !stored.titleGenerated) return;
+        setSession((prev) =>
+          prev && prev.id === stored.id && !prev.titleEdited
+            ? { ...prev, title: stored.title, titleGenerated: !!stored.titleGenerated }
+            : prev,
+        );
+        setSessions((rows) =>
+          (rows || []).map((item) =>
+            item.id === stored.id
+              ? { ...item, title: stored.title, titleGenerated: !!stored.titleGenerated }
+              : item,
+          ),
+        );
+      } catch {
+        // The next tick retries. The prompt title stays until a summary arrives.
+      }
+    }, 2000);
+    const stop = setTimeout(() => clearInterval(timer), 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      clearTimeout(stop);
+    };
+  }, [ready, session?.id, session?.title, session?.titleEdited, session?.titleGenerated, titlePrompt]);
   useEffect(() => {
     if (!ready || !activeId) return;
     let cancelled = false,
@@ -238,9 +300,21 @@ export function useChat() {
         setError((current) => (current === recovered ? "" : current));
       }
       if (genId !== g.id) {
+        const previous = genId;
         genId = g.id;
         cursor = 0;
         accumulated = { answer: "", thinking: "", tools: [] };
+        // Steering starts a new generation. The interrupted paragraphs are
+        // already saved; load them before the new turn replaces the live view.
+        if (previous) {
+          try {
+            const stored = await api(sessionPath(activeId));
+            if (cancelled) return;
+            setSession(stored);
+          } catch {
+            // The next poll retries. The live turn can still proceed.
+          }
+        }
       }
       if (g.stream) {
         accumulated = restoreStream(g.stream);
@@ -260,6 +334,7 @@ export function useChat() {
         if (cancelled) return;
         loaded = g.id;
         setSession(stored);
+        setSettledId(g.id);
         await refreshSessions();
         if (g.error && !["canceled", "cancelled"].includes(g.status))
           setError(g.error);
@@ -479,23 +554,141 @@ export function useChat() {
       window.removeEventListener("focus", refresh);
     };
   }, [ready, missingKey]);
+  useEffect(() => writeQueues(queues), [queues]);
+  useEffect(() => {
+    const s = steeringRef.current;
+    if (!s) return;
+    const done = () => {
+      steeringRef.current = null;
+      setSteering(null);
+    };
+    // Another conversation is open (the server still follows up there), or
+    // the follow-up turn has started and owns the conversation now.
+    if (s.sessionId !== activeId || (generation?.id && generation.id !== s.generationId))
+      return done();
+    if (generation?.id !== s.generationId || generation.status === "running") return;
+    if (settledId !== s.generationId) return;
+    if (!generation.steer) {
+      // The reply ended before the message was taken: send it next instead.
+      done();
+      setQueues((old) => restoreQueued(old, s.sessionId, s.item, false));
+      return;
+    }
+    s.endedAt ||= Date.now();
+    if (Date.now() - s.endedAt > 30000) {
+      done();
+      setError("插入的消息已记录，但新一轮回复没有开始，请重新发送。");
+    }
+  });
+  useEffect(() => {
+    const id = activeId;
+    const next = nextQueued(queues, id);
+    if (!next || dispatchingRef.current || submittingRef.current) return;
+    if (steeringRef.current) return;
+    if (generation?.status === "running" || sessionRef.current?.id !== id) return;
+    // Wait until the ended turn's transcript (with its reply) is loaded.
+    if (generation && settledId !== generation.id) return;
+    dispatchingRef.current = true;
+    setQueues((old) => removeQueued(old, id, next.id));
+    void send({ ...next, fromQueue: true })
+      .then((ok) => {
+        if (!ok) setQueues((old) => restoreQueued(old, id, next));
+      })
+      .catch(() => setQueues((old) => restoreQueued(old, id, next)))
+      .finally(() => {
+        dispatchingRef.current = false;
+      });
+  });
+  const removeQueuedMessage = useCallback(
+    (itemId) => setQueues((old) => removeQueued(old, currentId.current, itemId)),
+    [],
+  );
+  const resumeQueue = useCallback(() => {
+    setError("");
+    setQueues((old) => holdQueue(old, currentId.current, false));
+  }, []);
+  // "Send now" on a queued message. Like Codex, it interrupts the running
+  // reply: what that reply already wrote stays in the conversation and the
+  // assistant continues with this message. The rest of the queue keeps
+  // waiting. Without a running reply the message is simply sent first.
+  async function sendNow(itemId) {
+    const id = currentId.current;
+    const item = id ? queues[id]?.items.find((m) => m.id === itemId) : null;
+    if (!item || steeringRef.current || dispatchingRef.current) return false;
+    if (generation?.status !== "running" || !generation.id) {
+      if (submittingRef.current) return false;
+      dispatchingRef.current = true;
+      setQueues((old) => removeQueued(old, id, item.id));
+      try {
+        const ok = await send({ ...item, fromQueue: true });
+        if (!ok) setQueues((old) => restoreQueued(old, id, item));
+        return ok;
+      } catch {
+        setQueues((old) => restoreQueued(old, id, item));
+        return false;
+      } finally {
+        dispatchingRef.current = false;
+      }
+    }
+    const from = generation.id;
+    steeringRef.current = { sessionId: id, generationId: from, item };
+    setSteering({ sessionId: id, item });
+    setQueues((old) => removeQueued(old, id, item.id));
+    setError("");
+    try {
+      await write(
+        `${sessionPath(id)}/generation/steer?generationId=${encodeURIComponent(from)}`,
+        {
+          content: item.text || "请阅读本轮附件并回答。",
+          attachments: item.attachments || [],
+          references: item.references || [],
+          model: activeModel,
+          effort: activeEffort,
+          approvalMode: item.approvalMode || "confirm",
+        },
+      );
+      return true;
+    } catch (e) {
+      steeringRef.current = null;
+      setSteering(null);
+      // If the reply just ended, the message simply goes out next.
+      setQueues((old) => restoreQueued(old, id, item, false));
+      if (!/没有进行中|已经结束|已结束/.test(e.message || "")) setError(e.message);
+      return false;
+    }
+  }
   async function send({
     text,
     attachments = [],
     references = [],
     approvalMode = "confirm",
     messagesOverride = null,
+    fromQueue = false,
   }) {
     if (!text.trim() && !attachments.length) return false;
     if (currentId.current && sessionRef.current?.id !== currentId.current) {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
-    if (sandboxBusyRef.current) { setError("运行环境仍在保存，请稍后发送。"); return false; }
-    if (submittingRef.current || generation?.status === "running") {
-      setError("当前回复仍在生成，草稿已保留；可以先停止再发送。");
-      return false;
+    if (
+      submittingRef.current ||
+      generation?.status === "running" ||
+      steeringRef.current?.sessionId === currentId.current
+    ) {
+      // Like Codex, a message sent during a reply waits its turn instead of
+      // stopping the reply. Internal follow-ups (confirmed drafts) never queue.
+      if (messagesOverride || fromQueue || !currentId.current) {
+        setError("当前回复仍在生成，请稍后再试。");
+        return false;
+      }
+      const id = currentId.current;
+      setQueues((old) =>
+        enqueue(old, id, queuedMessage({ text, attachments, references, approvalMode })),
+      );
+      setError("");
+      return true;
     }
+    if (sandboxBusyRef.current) { setError("运行环境仍在保存，请稍后发送。"); return false; }
     // Without a key (and no sponsored model) the server rejects every message.
     // Say so before creating an empty conversation that would swallow the
     // typed question. Re-check first in case the key was saved elsewhere since
@@ -604,6 +797,8 @@ export function useChat() {
   }
   async function stop() {
     if (!activeId) return;
+    // Stopping means "wait for me": queued messages stay, but do not go out.
+    setQueues((old) => holdQueue(old, activeId, true));
     try {
       await write(
         `${sessionPath(activeId)}/generation/cancel?generationId=${encodeURIComponent(generation?.id || "")}`,
@@ -881,6 +1076,12 @@ export function useChat() {
     ready,
     submitting,
     busy: submitting || generation?.status === "running",
+    queue: (activeId && queues[activeId]?.items) || [],
+    queueHeld: !!(activeId && queues[activeId]?.held),
+    removeQueued: removeQueuedMessage,
+    resumeQueue,
+    sendNow,
+    steering: (steering?.sessionId === activeId && steering.item) || null,
     readOnly: !!session?.readOnly,
     setError,
     setModel: chooseModel,

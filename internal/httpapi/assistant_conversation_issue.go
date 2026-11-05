@@ -142,9 +142,15 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, results []works
 		return nil
 	}
 	mrs := []domain.DeliveryMR{}
+	direct := 0
 	for _, r := range results {
 		project, iid, _, ok := domain.ParseGongfengMR(r.MRURL)
 		if r.MRURL == "" || !ok {
+			if r.Direct {
+				// A direct push to a shared branch delivers work without an MR, so
+				// the requirement still needs review; only the MR list stays empty.
+				direct++
+			}
 			continue
 		}
 		mr := domain.DeliveryMR{Repository: r.Repository, Project: project, IID: iid, URL: r.MRURL, State: "opened", TargetBranch: r.TargetBranch}
@@ -158,7 +164,7 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, results []works
 		}
 		mrs = append(mrs, mr)
 	}
-	if len(mrs) == 0 {
+	if len(mrs) == 0 && direct == 0 {
 		return nil
 	}
 	_, err := h.repo.PatchIssue(issueID, func(issue *domain.Issue) error {
