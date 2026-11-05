@@ -266,7 +266,7 @@ func TestAssistantPromptDoesNotInjectProjectCatalog(t *testing.T) {
 	}
 	defer st.Close()
 	st.PutProject(domain.Project{ID: "p", Name: "P"})
-	st.PutAgent(domain.AgentDefinition{ID: "p-specific-role", Name: "Specific Role", ProjectID: "p", Instructions: strings.Repeat("LONG_TASK_BOOK", 4000), ExecutorID: "codebuddy"})
+	st.PutAgent(domain.AgentDefinition{ID: "p-specific-role", Name: "Specific Role", ProjectID: "p", Prompt: strings.Repeat("LONG_TASK_BOOK", 4000), ExecutorID: "codebuddy"})
 	st.PutWorkflow(domain.WorkflowDefinition{
 		ID: "p-dev-review-test", Name: "开发-评审-测试流程", ProjectID: "p", Status: "draft", Revision: 1,
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "开发实现", Type: "agent", Script: strings.Repeat("HUGE_SOP", 2000)}},

@@ -85,8 +85,8 @@ function obsPeriodKey(){
   if(obsTrendGrain()==='all')return '';
   const key=String(state.obsPeriodKey||'').trim();
   if(key)return key;
-  const trend=obsTrendWindow(state.analytics?.trend||[]);
-  return trend.length?trend[trend.length-1].date:obsDefaultPeriodKey();
+  const dates=[...(state.analytics?.trend||[]),...(state.analytics?.activityTrend||[])].map(p=>p.date).filter(Boolean).sort();
+  return dates.length?dates[dates.length-1]:obsDefaultPeriodKey();
 }
 function obsPeriodRange(key,grain){
   grain=grain||obsTrendGrain();
@@ -223,7 +223,7 @@ function obsShiftPeriod(step){
   setObsPeriod(next);
 }
 function obsPeriodChoices(){
-  const keys=new Set((state.analytics?.trend||[]).map(t=>t.date).filter(Boolean));
+  const keys=new Set([...(state.analytics?.trend||[]),...(state.analytics?.activityTrend||[])].map(t=>t.date).filter(Boolean));
   keys.add(obsPeriodKey()||obsDefaultPeriodKey());
   keys.add(obsDefaultPeriodKey());
   return [...keys].sort();
@@ -1035,11 +1035,49 @@ function obsOverview(){
   obsCardBuilders={trend:obsTrendCard,breakdown:obsBreakdownCard,quality:obsQualityCard,heat:obsHeatCard,detail:obsDetailCard};
   const heat=obsHeatCard();
   return `${obsInsights(view,'usage')}
+  ${obsActivityKpis()}
   ${obsUsageKpis(view)}
   ${obsTrendCard()}
   <div class="obs-grid2">${obsBreakdownCard()}${obsQualityCard()}</div>
   ${heat}
   ${obsDetailCard()}`;
+}
+function obsActivityView(){
+  const a=state.analytics||{};
+  if(!a.activity)return null;
+  if(obsTrendGrain()==='all')return a.activity;
+  return (a.activityTrend||[]).find(p=>p.date===obsPeriodKey())||{sessions:0,collaborativeSessions:0,requirements:0,sopRuns:0,
+    ...(a.activity.sessionUsage?{sessionUsage:{},collaborativeUsage:{}}:{})};
+}
+function obsActivityUsageCard(a,collaborative){
+  const usage=a?.[collaborative?'collaborativeUsage':'sessionUsage'];
+  const missing=Number(usage?.missingReplies||0),reported=Number(usage?.reportedReplies||0);
+  const undated=Number(usage?.undatedReplies||0);
+  return {
+    label:collaborative?'协作会话 Token':'会话 Token',
+    value:!usage?'—':(!reported&&missing?'未采集':formatTokens(usage.tokens||0)),
+    foot:!usage?'暂无用量统计':missing?`${missing} 条回复未采集 · 仅含已记录部分`:`输入 ${formatTokens(usage.inputTokens||0)} / 输出 ${formatTokens(usage.outputTokens||0)}`,
+    tip:[
+      collaborative?'当前至少两位用户实际发言的普通会话所消耗的 Token，包含在会话 Token 中，不要重复相加。':'普通会话中已保存回复的模型用量，按回复时间统计；不含 SOP 执行，分支继承的历史回复不重复计入。',
+      '总量沿用模型上报的 totalTokens，缺少总量时按输入 + 输出计算；缓存读写单独列出。个人范围展示本人创建或参与的会话整体用量。',
+      ['已记录回复',String(reported)],['未采集回复',String(missing)],
+      ['缓存读',usage?formatTokens(usage.cacheReadTokens||0):'—'],['缓存写',usage?formatTokens(usage.cacheWriteTokens||0):'—'],
+      ...(undated?[`${undated} 条回复缺少时间，仅计入累计用量。`]:[]),
+    ],
+  };
+}
+function obsActivityKpis(){
+  const a=obsActivityView();
+  const n=key=>a?String(a[key]||0):'—';
+  const sessions=a?.sessions||0,collaborative=a?.collaborativeSessions||0;
+  const rate=sessions?collaborative*100/sessions:0;
+  return obsKpiGroups([obsKpiGroup('Vibe Coding 与协作',[
+    {label:'会话数',value:n('sessions'),foot:'普通对话 · 含已归档会话',tip:['按会话 ID 去重，排除 SOP 自动讨论会话；已删除会话不计入。个人范围包含本人创建或实际参与的会话。']},
+    {label:'创建需求',value:n('requirements'),foot:'按需求 ID 去重',tip:['当前范围内创建的需求，含同步需求，不要求已启动 SOP。个人范围按需求责任人筛选；不推断需求由会话创建。']},
+    {label:'需求 SOP',value:n('sopRuns'),foot:'已发起的 SOP 执行次数',tip:['仅计关联需求的顶层 SOP 运行；重复发起分别计数，排除对话工作区和子运行。个人范围沿用运行责任人口径。']},
+    {label:'多人协作会话',value:n('collaborativeSessions'),foot:a?(sessions?`占会话 ${rate.toFixed(1)}%`:'暂无会话'):'暂无统计数据',meter:rate,tip:['同一普通会话中至少两位不同用户实际发送过消息。机器人回复、定时触发、系统回执和项目成员数不算参与人数。协作占比 = 多人协作会话 ÷ 会话数。']},
+    obsActivityUsageCard(a,false),obsActivityUsageCard(a,true),
+  ],'数量按创建时间，Token 按回复时间 · '+escapeHTML(obsRangeCaption()))]);
 }
 function obsUsageKpis(view){
   const summary=state.analytics?.summary||{};
@@ -1490,6 +1528,7 @@ async function exportObsReport(){
 }
 function buildObsReportHTML(){
   const scope=obsReportScope(),summary=state.analytics?.summary||{},d=state.analytics?.delivery||{};
+  const activity=state.analytics?.activity;
   const workflows=state.data.workflows||[];
   const stats=(state.analytics?.workflows||[]).map(w=>({...w,name:w.name||workflows.find(x=>x.id===w.key)?.name||w.key}));
   const wfRows=stats.map(w=>`<tr><td>${escapeHTML(w.name)}</td><td>${w.runs}</td><td>${percent(w.successRate)}</td><td>${w.qualityUnknownRuns===w.runs?'—':percent(w.reworkRate)}</td><td>${formatTokens(w.tokens)}</td><td>${obsPlain(costLabel(w.costCny,!w.costUnknownRuns))}</td><td>${w.averageExecutionDurationMs?duration(w.averageExecutionDurationMs):'—'}</td></tr>`).join('');
@@ -1502,6 +1541,13 @@ function buildObsReportHTML(){
   const projectRows=(state.obsCrossProject?.projectUsage||state.analytics?.projectUsage||[]).map(r=>`<tr><td>${escapeHTML(obsProjectName(r.projectId))}</td><td>${r.runs||0}</td><td>${r.uniqueIssues||0}</td><td>${formatTokens(r.tokens)}</td><td>${obsPlain(costLabel(r.costCny,r.costKnown))}</td></tr>`).join('');
   const deliveryRows=(state.analytics?.deliveries||[]).slice(0,80).map(it=>`<tr><td>${obsSourceLabel(it.source)} ${escapeHTML(String(it.externalIid?('#'+it.externalIid):(it.externalId||it.issueId)))}</td><td>${escapeHTML(it.title||it.issueId)}</td><td>${escapeHTML(it.workflowName||it.workflowId)}</td><td>${escapeHTML(obsDeliveryStatusText(it))}</td><td>${escapeHTML(obsUserName(it.userId))}</td><td>${formatTokens(it.tokens)}</td><td>${obsPlain(costLabel(it.costCny,it.costKnown))}</td><td>${obsDeliveryMRHTML(it)}</td><td>${it.delivered?'已交付':'未交付'}</td></tr>`).join('');
   const kpis=[
+    ...(activity?[
+      ['会话数',activity.sessions||0,'普通对话 · 按创建时间'],
+      ['创建需求',activity.requirements||0,'按需求 ID 去重 · 含同步需求'],
+      ['需求 SOP',activity.sopRuns||0,'顶层需求 SOP 执行次数'],
+      ['多人协作会话',activity.collaborativeSessions||0,activity.sessions?`占会话 ${(Number(activity.collaborativeSessions||0)*100/activity.sessions).toFixed(1)}% · 至少两位用户发言`:'暂无会话'],
+      ...[false,true].map(collaborative=>{const card=obsActivityUsageCard(activity,collaborative);return [card.label,card.value,card.foot]}),
+    ]:[]),
     ['运行',summary.totalRuns||0,`${summary.activeRuns||0} 进行中`],
     ['成功率',summary.totalRuns?percent(summary.successRate):'—',`${summary.succeededRuns||0} 成功 / ${summary.failedRuns||0} 失败`],
     ['一次通过',summary.totalRuns?percent(summary.firstPassRate):'—',`${summary.reworkedRuns||0} 次返工`],

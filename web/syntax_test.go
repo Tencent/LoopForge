@@ -83,6 +83,7 @@ const deliveryLocked = () => false;
 const issueClarifying = () => false;
 const clarificationNeedsConfirm = () => false;
 const requirementNeedsClarification = () => false;
+const conversationWorkspaceIssue = () => false;
 const isScriptWorkflowNode = node => node?.type==='script'||node?.type==='command';
 const cachedRun = () => null;
 eval(code.slice(code.indexOf('function canRerunFromNode('), code.indexOf('function afRerunFromNode(')));
@@ -2884,8 +2885,8 @@ func TestCodexStyleLeftMiniRailLayout(t *testing.T) {
 	if !strings.Contains(appJs, "'issues', 'runs'") && !strings.Contains(appJs, "'issues','runs'") {
 		t.Fatal("app.js must include issues and runs in noSidebarViews")
 	}
-	if !strings.Contains(appJs, "const noSidebarViews = ['issues', 'runs', 'approvals', 'sops', 'observability'];") {
-		t.Fatal("app.js must hide the sidebar on the 统计 page")
+	if !strings.Contains(appJs, "const noSidebarViews = ['issues', 'runs', 'approvals', 'sops', 'observability', 'aiSchedules'];") {
+		t.Fatal("app.js must hide the sidebar on the 统计 and AI 定时任务 pages")
 	}
 	managed := appJs[strings.Index(appJs, "const settingsManagementViews="):]
 	managed = managed[:strings.Index(managed, "\n")]

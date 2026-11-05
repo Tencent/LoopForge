@@ -29,10 +29,6 @@ func TestMainBotBrowserToolsFollowWorkspaceAccess(t *testing.T) {
 	if len(tools) != 7 || tools[0].Name != "workbench_browser_navigate" || tools[0].Kind != "browser" {
 		t.Fatalf("tools=%+v", tools)
 	}
-	s.ExecMode.Consultation = true
-	if len(mainBotBrowserTools(s)) != 0 {
-		t.Fatal("consultation received browser tools")
-	}
 }
 
 func TestMainBotBrowserRequestMapping(t *testing.T) {

@@ -12,6 +12,11 @@ import (
 
 // ---------- Projects ----------
 
+func (r *ProjectsRepo) lockProjectInTx(tx *gorm.DB, id string) error {
+	var row projectRow
+	return r.locking(tx).Select("id").Where("id = ?", id).First(&row).Error
+}
+
 // Projects lists live projects; deleted (archived) ones are left out. Project
 // still returns an archived project so its history and restore keep working.
 func (r *ProjectsRepo) Projects() []domain.Project {

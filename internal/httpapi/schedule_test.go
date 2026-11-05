@@ -32,10 +32,10 @@ func TestScheduleJobCRUD(t *testing.T) {
 	}
 	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	created := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
-		"name": "扫描需求", "projectId": "platform", "workflowId": "scheduled-wf",
+		"projectId": "platform", "workflowId": "scheduled-wf",
 		"useIssueWorkflow": true, "intervalSec": 3600, "enabled": true,
 	}, http.StatusOK)
-	if created.ID == "" || created.IntervalSec != 3600 || created.Cron != "" || !created.Enabled || created.SkipDispatch || !created.UseIssueWorkflow || created.AssistantPrompt != "" {
+	if created.ID == "" || created.Name != "触发配置" || created.IntervalSec != 3600 || created.Cron != "" || !created.Enabled || created.SkipDispatch || !created.UseIssueWorkflow || created.AssistantPrompt != "" {
 		t.Fatalf("unexpected dispatch job: %+v", created)
 	}
 	if got := strings.Join(created.IssueStatuses, ","); got != "backlog,todo" {
@@ -47,8 +47,11 @@ func TestScheduleJobCRUD(t *testing.T) {
 	if created.MaxDispatch != 0 || created.DispatchLimit() != 10 {
 		t.Fatalf("unconfigured dispatch limit = %+v", created)
 	}
+	requestJSON[map[string]string](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "重复配置", "projectId": "platform", "workflowId": "scheduled-wf",
+	}, http.StatusConflict)
 	gongfengOnly := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
-		"name": "只跑工蜂", "projectId": "platform", "workflowId": "scheduled-wf",
+		"id": created.ID, "name": "只跑工蜂", "projectId": "platform", "workflowId": "scheduled-wf",
 		"source": "gongfeng", "intervalSec": 3600, "enabled": true,
 	}, http.StatusOK)
 	if gongfengOnly.Source != "gongfeng" {
@@ -58,7 +61,7 @@ func TestScheduleJobCRUD(t *testing.T) {
 		"name": "坏来源", "projectId": "platform", "workflowId": "scheduled-wf", "source": "local",
 	}, http.StatusBadRequest)
 	custom := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
-		"name": "只扫进行中", "projectId": "platform", "workflowId": "scheduled-wf",
+		"id": created.ID, "name": "只扫进行中", "projectId": "platform", "workflowId": "scheduled-wf",
 		"issueStatuses": []string{"in_progress", "done", "todo"}, "maxDispatch": 3, "intervalSec": 300, "enabled": true,
 	}, http.StatusOK)
 	if custom.MaxDispatch != 3 {
@@ -100,7 +103,7 @@ func TestScheduleJobCRUD(t *testing.T) {
 		}
 	}
 	jobs := requestJSON[[]domain.ScheduleJob](t, h, http.MethodGet, "/api/schedule-jobs", nil, http.StatusOK)
-	if len(jobs) != 4 {
+	if len(jobs) != 2 {
 		t.Fatalf("unexpected schedule jobs: %+v", jobs)
 	}
 	requestJSON[map[string]bool](t, h, http.MethodDelete, "/api/schedule-jobs/"+created.ID, nil, http.StatusOK)

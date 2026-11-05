@@ -32,7 +32,7 @@ async function main() {
   const timers=new Map(),listeners={};let nextTimer=0,refreshes=0,view='runs';
   const section={hidden:false};
   const refresh={state:{data:{runs:[{id:'r',status:'queued'}]}},document:{hidden:false,addEventListener:(name,fn)=>listeners[name]=fn},activeViewName:()=>view,$:()=>section,scopedRuns:r=>r,clearInterval:id=>timers.delete(id),setInterval:fn=>{timers.set(++nextTimer,fn);return nextTimer;},refreshRuns:()=>refreshes++};
-  vm.createContext(refresh);
+  load(refresh,['isSOPRun','sopRuns']);
   vm.runInContext(bundle.slice(bundle.indexOf('let queuedRunRefreshTimer='),bundle.indexOf('let refreshRunsPending=')),refresh);
   refresh.syncQueuedRunRefresh();refresh.syncQueuedRunRefresh();assert.equal(timers.size,1);
   [...timers.values()][0]();assert.equal(refreshes,1);

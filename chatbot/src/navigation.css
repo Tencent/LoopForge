@@ -547,9 +547,8 @@
   }
 }
 
-/* 置顶 / 进行中 · 待查看 live above the project tree as compact cards. */
-.chat-shell .sidebar-pinned,
-.chat-shell .sidebar-attention {
+/* 置顶 lives above the project tree as a compact card. */
+.chat-shell .sidebar-pinned {
   margin: 0 0 12px;
   padding: 2px 0 4px;
   border: 1px solid var(--line);
@@ -557,43 +556,24 @@
   background: color-mix(in srgb, var(--surface) 94%, var(--subtle));
 }
 
-.chat-shell .sidebar-pinned .sidebar-section-heading,
-.chat-shell .sidebar-attention .sidebar-section-heading {
+.chat-shell .sidebar-pinned .sidebar-section-heading {
   margin: 2px 6px;
   min-height: 26px;
 }
 
-.chat-shell .sidebar-section-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  margin: 0 3px;
-  border-radius: 50%;
-  background: #5273dc;
-}
-
-.chat-shell .sidebar-attention .sidebar-section-heading > small {
-  background: #e8edfb;
-  color: #3d5fbf;
-}
-
 /* Flat list, not a project tree: no indent and no branch lines. */
-.chat-shell .sidebar-pinned .sidebar-section-items > .session-row,
-.chat-shell .sidebar-attention .sidebar-section-items > .session-row {
+.chat-shell .sidebar-pinned .sidebar-section-items > .session-row {
   min-height: 34px;
   margin-left: 6px;
   margin-right: 6px;
 }
 
 .chat-shell .sidebar-pinned .sidebar-section-items > .session-row::before,
-.chat-shell .sidebar-pinned .sidebar-section-items > .session-row::after,
-.chat-shell .sidebar-attention .sidebar-section-items > .session-row::before,
-.chat-shell .sidebar-attention .sidebar-section-items > .session-row::after {
+.chat-shell .sidebar-pinned .sidebar-section-items > .session-row::after {
   display: none;
 }
 
-.chat-shell .sidebar-pinned .sidebar-section-items > .session-row > .session-link,
-.chat-shell .sidebar-attention .sidebar-section-items > .session-row > .session-link {
+.chat-shell .sidebar-pinned .sidebar-section-items > .session-row > .session-link {
   padding-left: 8px;
 }
 
@@ -611,15 +591,18 @@
   line-height: 1.5;
 }
 
-.chat-shell .session-meta {
-  flex: none;
-  color: var(--muted);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-}
-
 [data-theme="dark"] .chat-shell .session-project-tag {
   background: #23262c;
+}
+
+.chat-shell .session-source-tag {
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+}
+
+[data-theme="dark"] .chat-shell .session-source-tag {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fbbf24;
 }
 
 .chat-shell .sidebar-more {
@@ -645,7 +628,6 @@
   color: var(--text);
 }
 
-.chat-shell .sidebar-attention .sidebar-more,
 .chat-shell .sidebar-pinned .sidebar-more {
   width: calc(100% - 28px);
   margin-left: 14px;

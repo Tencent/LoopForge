@@ -155,7 +155,7 @@ func TestWorkflowDraftNodeWarnings(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "p", Name: "P"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutAgent(domain.AgentDefinition{ID: "p-reviewer", Name: "评审", ProjectID: "p", Version: 1, Instructions: "review"}); err != nil {
+	if err := st.PutAgent(domain.AgentDefinition{ID: "p-reviewer", Name: "评审", ProjectID: "p", Version: 1, Prompt: "review"}); err != nil {
 		t.Fatal(err)
 	}
 	h := &assistantHandlers{deps: &deps{repo: st}}

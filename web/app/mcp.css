@@ -1,27 +1,27 @@
 /* MCP 管理页 · Harness UI 设计语言（令牌、按钮与 Selector 来自 app/harness-ui.css）。
- * Every rule is scoped to #mcpView: .mcp-toolbar / .mcp-scope-switch are shared
+ * Shared market components are scoped to MCP and AI schedules: .mcp-toolbar / .mcp-scope-switch are shared
  * with the environment-assets page and must keep their platform.css look there.
  * The scope selector panel is appended to <body> and styled by app/harness-ui.css.
  */
-#mcpView .harness-icon { flex: none; }
+:is(#mcpView, #aiSchedulesView) .harness-icon { flex: none; }
 
 /* ---------- Buttons: page differences on top of app/harness-ui.css ---------- */
-#mcpView .button:disabled,
-#mcpView .button:disabled:hover { opacity: 1; border-color: transparent; background: var(--hui-soft); color: var(--hui-tertiary); cursor: not-allowed; }
-#mcpView .mcp-action-buttons .button { border-color: transparent; background: transparent; }
-#mcpView .mcp-action-buttons .button:hover { background: var(--hui-soft); color: var(--hui-text); }
-#mcpView .mcp-action-buttons .button.danger:hover { background: color-mix(in srgb, var(--hui-error) 7%, var(--hui-surface)); color: var(--hui-error); }
+:is(#mcpView, #aiSchedulesView) .button:disabled,
+:is(#mcpView, #aiSchedulesView) .button:disabled:hover { opacity: 1; border-color: transparent; background: var(--hui-soft); color: var(--hui-tertiary); cursor: not-allowed; }
+:is(#mcpView, #aiSchedulesView) .mcp-action-buttons .button { border-color: transparent; background: transparent; }
+:is(#mcpView, #aiSchedulesView) .mcp-action-buttons .button:hover { background: var(--hui-soft); color: var(--hui-text); }
+:is(#mcpView, #aiSchedulesView) .mcp-action-buttons .button.danger:hover { background: color-mix(in srgb, var(--hui-error) 7%, var(--hui-surface)); color: var(--hui-error); }
 
 /* ---------- Heading ---------- */
-#mcpView .mcp-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 0 0 22px; }
-#mcpView .mcp-page-heading > div:first-child { min-width: 0; }
-#mcpView .mcp-page-heading .eyebrow { display: none; }
-#mcpView .mcp-page-heading h1 { margin: 0; }
-#mcpView .mcp-page-heading h1 + p { margin: 6px 0 0; }
-#mcpView .mcp-page-heading .heading-actions { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+:is(#mcpView, #aiSchedulesView) .mcp-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 0 0 22px; }
+:is(#mcpView, #aiSchedulesView) .mcp-page-heading > div:first-child { min-width: 0; }
+:is(#mcpView, #aiSchedulesView) .mcp-page-heading .eyebrow { display: none; }
+:is(#mcpView, #aiSchedulesView) .mcp-page-heading h1 { margin: 0; }
+:is(#mcpView, #aiSchedulesView) .mcp-page-heading h1 + p { margin: 6px 0 0; }
+:is(#mcpView, #aiSchedulesView) .mcp-page-heading .heading-actions { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 
 /* ---------- Toolbar: scope selector · view tabs · search ---------- */
-#mcpView .mcp-toolbar {
+:is(#mcpView, #aiSchedulesView) .mcp-toolbar {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -33,14 +33,14 @@
   background: transparent;
   box-shadow: none;
 }
-#mcpView .hui-select-trigger,
-#mcpView .hui-select-trigger.is-filtered { min-width: 0; max-width: none; gap: 6px; border-color: var(--hui-border); background: var(--hui-surface); color: var(--hui-text); font-weight: 500; }
-#mcpView .hui-select-trigger::before { content: "范围"; color: var(--hui-tertiary); font-weight: 400; }
-#mcpView .hui-select-chevron,
-#mcpView .hui-select-trigger.is-filtered .hui-select-chevron { margin-left: 2px; color: var(--hui-tertiary); }
+:is(#mcpView, #aiSchedulesView) .hui-select-trigger,
+:is(#mcpView, #aiSchedulesView) .hui-select-trigger.is-filtered { min-width: 0; max-width: none; gap: 6px; border-color: var(--hui-border); background: var(--hui-surface); color: var(--hui-text); font-weight: 500; }
+:is(#mcpView, #aiSchedulesView) .hui-select-trigger::before { content: "范围"; color: var(--hui-tertiary); font-weight: 400; }
+:is(#mcpView, #aiSchedulesView) .hui-select-chevron,
+:is(#mcpView, #aiSchedulesView) .hui-select-trigger.is-filtered .hui-select-chevron { margin-left: 2px; color: var(--hui-tertiary); }
 
-#mcpView .mcp-view-tabs,
-#mcpView .mcp-view-tabs.sliding-tabs[data-sliding-tabs] {
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs,
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs.sliding-tabs[data-sliding-tabs] {
   flex: none;
   height: 36px !important;
   min-height: 36px !important;
@@ -53,10 +53,10 @@
   --sliding-text: var(--hui-text);
   --sliding-muted: var(--hui-muted);
 }
-#mcpView .mcp-view-tabs[hidden] { display: none !important; }
-#mcpView .mcp-view-tabs.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] { border-radius: 8px; box-shadow: var(--hui-ind-shadow); }
-#mcpView .mcp-view-tabs > button,
-#mcpView .mcp-view-tabs.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs[hidden] { display: none !important; }
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] { border-radius: 8px; box-shadow: var(--hui-ind-shadow); }
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs > button,
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
   height: 28px !important;
   min-height: 28px !important;
   padding: 0 12px !important;
@@ -64,12 +64,12 @@
   border-radius: 7px !important;
   font: 500 13px/1 var(--hui-sans) !important;
 }
-#mcpView .mcp-view-tabs > button.active { color: var(--hui-text) !important; box-shadow: none; }
-#mcpView .mcp-view-tabs:not([data-sliding-tabs]) > button.active { background: var(--hui-surface); box-shadow: var(--hui-ind-shadow); }
-#mcpView .mcp-tab-count { color: var(--hui-tertiary); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
-#mcpView .mcp-view-tabs > button.active .mcp-tab-count { color: var(--hui-muted); }
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs > button.active { color: var(--hui-text) !important; box-shadow: none; }
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs:not([data-sliding-tabs]) > button.active { background: var(--hui-surface); box-shadow: var(--hui-ind-shadow); }
+:is(#mcpView, #aiSchedulesView) .mcp-tab-count { color: var(--hui-tertiary); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+:is(#mcpView, #aiSchedulesView) .mcp-view-tabs > button.active .mcp-tab-count { color: var(--hui-muted); }
 
-#mcpView .mcp-search {
+:is(#mcpView, #aiSchedulesView) .mcp-search {
   box-sizing: border-box;
   flex: 0 1 280px;
   min-width: 160px;
@@ -85,18 +85,18 @@
   color: var(--hui-tertiary);
   transition: border-color .18s var(--hui-ease-flow);
 }
-#mcpView .mcp-search:focus-within { border-color: var(--hui-accent); }
-#mcpView .mcp-search input { width: 100%; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; color: var(--hui-text); font: 400 13px/1 var(--hui-sans); }
-#mcpView .mcp-search input::placeholder { color: var(--hui-tertiary); }
+:is(#mcpView, #aiSchedulesView) .mcp-search:focus-within { border-color: var(--hui-accent); }
+:is(#mcpView, #aiSchedulesView) .mcp-search input { width: 100%; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; color: var(--hui-text); font: 400 13px/1 var(--hui-sans); }
+:is(#mcpView, #aiSchedulesView) .mcp-search input::placeholder { color: var(--hui-tertiary); }
 
-#mcpView .mcp-scope-hint { display: block; margin: 0 0 18px; color: var(--hui-muted); font-size: 13px; line-height: 1.6; }
-#mcpView .mcp-scope-hint b { color: var(--hui-text); font-weight: 500; }
-#mcpView .mcp-scope-hint > span::before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 8px; border-radius: 50%; background: var(--hui-tertiary); vertical-align: 3px; }
+:is(#mcpView, #aiSchedulesView) .mcp-scope-hint { display: block; margin: 0 0 18px; color: var(--hui-muted); font-size: 13px; line-height: 1.6; }
+:is(#mcpView, #aiSchedulesView) .mcp-scope-hint b { color: var(--hui-text); font-weight: 500; }
+:is(#mcpView, #aiSchedulesView) .mcp-scope-hint > span::before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 8px; border-radius: 50%; background: var(--hui-tertiary); vertical-align: 3px; }
 
 /* ---------- Cards ---------- */
-#mcpView .mcp-market-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding-bottom: 28px; }
-#mcpView .mcp-market-card,
-#mcpView .mcp-market-card.is-installed {
+:is(#mcpView, #aiSchedulesView) .mcp-market-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding-bottom: 28px; }
+:is(#mcpView, #aiSchedulesView) .mcp-market-card,
+:is(#mcpView, #aiSchedulesView) .mcp-market-card.is-installed {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -110,62 +110,62 @@
   transform: none;
   transition: border-color .18s var(--hui-ease-flow), box-shadow .18s var(--hui-ease-flow);
 }
-#mcpView .mcp-market-card:hover { border-color: var(--hui-border-strong); box-shadow: var(--hui-card-shadow); transform: none; }
-#mcpView .mcp-card-head { display: flex; align-items: flex-start; gap: 12px; }
-#mcpView .mcp-card-head > div { flex: 1; min-width: 0; }
-#mcpView .mcp-card-head h3 { margin: 0; overflow: hidden; color: var(--hui-text); font: 600 15px/1.35 var(--hui-sans); text-overflow: ellipsis; white-space: nowrap; }
-#mcpView .mcp-card-head small { display: block; margin-top: 2px; overflow: hidden; color: var(--hui-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-#mcpView .mcp-card-logo { box-sizing: border-box; flex: 0 0 36px; width: 36px; height: 36px; border: 1px solid var(--hui-border); border-radius: 9px; background: var(--hui-soft); color: var(--hui-secondary); font: 600 15px/1 var(--hui-sans); }
-#mcpView .mcp-card-logo img { width: 22px; height: 22px; }
-#mcpView .mcp-card-logo .mcp-logo-fallback { font-size: 15px; }
-#mcpView :is(.mcp-official-badge, .mcp-installed-badge) { flex: none; margin-left: 0; padding: 3px 8px; border-radius: 999px; font: 500 11px/1.4 var(--hui-sans); white-space: nowrap; }
-#mcpView .mcp-official-badge,
-#mcpView .mcp-installed-badge.is-market { color: var(--hui-info); background: color-mix(in srgb, var(--hui-info) 11%, var(--hui-surface)); }
-#mcpView .mcp-installed-badge.is-custom { color: var(--hui-success); background: color-mix(in srgb, var(--hui-success) 11%, var(--hui-surface)); }
-#mcpView .mcp-market-card > p { flex: 1; margin: 12px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--hui-muted); font-size: 13px; line-height: 1.6; }
-#mcpView :is(.mcp-card-tags, .mcp-card-meta) { gap: 6px; }
-#mcpView :is(.mcp-card-tags, .mcp-card-meta) span { padding: 2px 7px; border-radius: 6px; background: var(--hui-soft); color: var(--hui-secondary); font-size: 11.5px; line-height: 1.5; }
-#mcpView .mcp-card-actions { gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hui-border-soft); }
-#mcpView .mcp-card-actions a { color: var(--hui-muted); font-size: 12.5px; text-decoration: none; transition: color .18s var(--hui-ease-flow); }
-#mcpView .mcp-card-actions a:hover { color: var(--hui-accent); }
-#mcpView .mcp-card-actions a:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 2px; border-radius: 4px; }
-#mcpView .mcp-action-buttons { gap: 6px; margin-left: auto; }
+:is(#mcpView, #aiSchedulesView) .mcp-market-card:hover { border-color: var(--hui-border-strong); box-shadow: var(--hui-card-shadow); transform: none; }
+:is(#mcpView, #aiSchedulesView) .mcp-card-head { display: flex; align-items: flex-start; gap: 12px; }
+:is(#mcpView, #aiSchedulesView) .mcp-card-head > div { flex: 1; min-width: 0; }
+:is(#mcpView, #aiSchedulesView) .mcp-card-head h3 { margin: 0; overflow: hidden; color: var(--hui-text); font: 600 15px/1.35 var(--hui-sans); text-overflow: ellipsis; white-space: nowrap; }
+:is(#mcpView, #aiSchedulesView) .mcp-card-head small { display: block; margin-top: 2px; overflow: hidden; color: var(--hui-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+:is(#mcpView, #aiSchedulesView) .mcp-card-logo { box-sizing: border-box; flex: 0 0 36px; width: 36px; height: 36px; border: 1px solid var(--hui-border); border-radius: 9px; background: var(--hui-soft); color: var(--hui-secondary); font: 600 15px/1 var(--hui-sans); }
+:is(#mcpView, #aiSchedulesView) .mcp-card-logo img { width: 22px; height: 22px; }
+:is(#mcpView, #aiSchedulesView) .mcp-card-logo .mcp-logo-fallback { font-size: 15px; }
+:is(#mcpView, #aiSchedulesView) :is(.mcp-official-badge, .mcp-installed-badge) { flex: none; margin-left: 0; padding: 3px 8px; border-radius: 999px; font: 500 11px/1.4 var(--hui-sans); white-space: nowrap; }
+:is(#mcpView, #aiSchedulesView) .mcp-official-badge,
+:is(#mcpView, #aiSchedulesView) .mcp-installed-badge.is-market { color: var(--hui-info); background: color-mix(in srgb, var(--hui-info) 11%, var(--hui-surface)); }
+:is(#mcpView, #aiSchedulesView) .mcp-installed-badge.is-custom { color: var(--hui-success); background: color-mix(in srgb, var(--hui-success) 11%, var(--hui-surface)); }
+:is(#mcpView, #aiSchedulesView) .mcp-market-card > p { flex: 1; margin: 12px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--hui-muted); font-size: 13px; line-height: 1.6; }
+:is(#mcpView, #aiSchedulesView) :is(.mcp-card-tags, .mcp-card-meta) { gap: 6px; }
+:is(#mcpView, #aiSchedulesView) :is(.mcp-card-tags, .mcp-card-meta) span { padding: 2px 7px; border-radius: 6px; background: var(--hui-soft); color: var(--hui-secondary); font-size: 11.5px; line-height: 1.5; }
+:is(#mcpView, #aiSchedulesView) .mcp-card-actions { gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hui-border-soft); }
+:is(#mcpView, #aiSchedulesView) .mcp-card-actions a { color: var(--hui-muted); font-size: 12.5px; text-decoration: none; transition: color .18s var(--hui-ease-flow); }
+:is(#mcpView, #aiSchedulesView) .mcp-card-actions a:hover { color: var(--hui-accent); }
+:is(#mcpView, #aiSchedulesView) .mcp-card-actions a:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 2px; border-radius: 4px; }
+:is(#mcpView, #aiSchedulesView) .mcp-action-buttons { gap: 6px; margin-left: auto; }
 
 /* ---------- Empty state & pager ---------- */
-#mcpView .mcp-market-empty { grid-column: 1 / -1; padding: 56px 20px; border: 0; background: transparent; box-shadow: none; text-align: center; }
-#mcpView .mcp-market-empty b { display: block; color: var(--hui-text); font-size: 14px; font-weight: 500; }
-#mcpView .mcp-market-empty p { margin: 6px 0 0; color: var(--hui-muted); font-size: 13px; }
+:is(#mcpView, #aiSchedulesView) .mcp-market-empty { grid-column: 1 / -1; padding: 56px 20px; border: 0; background: transparent; box-shadow: none; text-align: center; }
+:is(#mcpView, #aiSchedulesView) .mcp-market-empty b { display: block; color: var(--hui-text); font-size: 14px; font-weight: 500; }
+:is(#mcpView, #aiSchedulesView) .mcp-market-empty p { margin: 6px 0 0; color: var(--hui-muted); font-size: 13px; }
 
-#mcpView .mcp-market-grid > .pager { grid-column: 1 / -1; margin: 6px 0 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-#mcpView .pager-meta { color: var(--hui-tertiary); font: 400 12.5px/1 var(--hui-sans); }
-#mcpView .pager-nav { gap: 4px; }
-#mcpView :is(.pager-btn, .pager-page) { min-width: 28px; height: 28px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--hui-muted); font: 500 12.5px/1 var(--hui-sans); }
-#mcpView :is(.pager-btn:hover:not(:disabled), .pager-page:hover) { background: var(--hui-soft); color: var(--hui-text); }
-#mcpView .pager-page.active,
-#mcpView .pager-page.active:hover { background: var(--hui-accent-soft); color: var(--hui-accent); font-weight: 600; }
-#mcpView .pager-btn:disabled { opacity: .4; }
-#mcpView .pager-ellipsis { color: var(--hui-tertiary); }
-#mcpView :is(.pager-btn, .pager-page):focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+:is(#mcpView, #aiSchedulesView) .mcp-market-grid > .pager { grid-column: 1 / -1; margin: 6px 0 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+:is(#mcpView, #aiSchedulesView) .pager-meta { color: var(--hui-tertiary); font: 400 12.5px/1 var(--hui-sans); }
+:is(#mcpView, #aiSchedulesView) .pager-nav { gap: 4px; }
+:is(#mcpView, #aiSchedulesView) :is(.pager-btn, .pager-page) { min-width: 28px; height: 28px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--hui-muted); font: 500 12.5px/1 var(--hui-sans); }
+:is(#mcpView, #aiSchedulesView) :is(.pager-btn:hover:not(:disabled), .pager-page:hover) { background: var(--hui-soft); color: var(--hui-text); }
+:is(#mcpView, #aiSchedulesView) .pager-page.active,
+:is(#mcpView, #aiSchedulesView) .pager-page.active:hover { background: var(--hui-accent-soft); color: var(--hui-accent); font-weight: 600; }
+:is(#mcpView, #aiSchedulesView) .pager-btn:disabled { opacity: .4; }
+:is(#mcpView, #aiSchedulesView) .pager-ellipsis { color: var(--hui-tertiary); }
+:is(#mcpView, #aiSchedulesView) :is(.pager-btn, .pager-page):focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
 
 /* ---------- Responsive ---------- */
 /* product-v4.css wraps every page heading below 1140px with !important. */
 @media (min-width: 961px) {
-  #mcpView .mcp-page-heading { flex-wrap: nowrap !important; align-items: center !important; gap: 20px !important; }
-  #mcpView .mcp-page-heading > div:first-child { max-width: none !important; }
-  #mcpView .mcp-page-heading .heading-actions { width: auto !important; justify-content: flex-end !important; flex-wrap: nowrap !important; gap: 8px !important; }
+  :is(#mcpView, #aiSchedulesView) .mcp-page-heading { flex-wrap: nowrap !important; align-items: center !important; gap: 20px !important; }
+  :is(#mcpView, #aiSchedulesView) .mcp-page-heading > div:first-child { max-width: none !important; }
+  :is(#mcpView, #aiSchedulesView) .mcp-page-heading .heading-actions { width: auto !important; justify-content: flex-end !important; flex-wrap: nowrap !important; gap: 8px !important; }
 }
 @media (max-width: 1100px) {
-  #mcpView .mcp-market-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  #mcpView .mcp-toolbar { flex-wrap: wrap; }
-  #mcpView .mcp-search { flex: 1 1 100%; min-width: 0; margin-left: 0; }
+  :is(#mcpView, #aiSchedulesView) .mcp-market-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(#mcpView, #aiSchedulesView) .mcp-toolbar { flex-wrap: wrap; }
+  :is(#mcpView, #aiSchedulesView) .mcp-search { flex: 1 1 100%; min-width: 0; margin-left: 0; }
 }
 @media (max-width: 960px) {
-  #mcpView .mcp-page-heading { flex-direction: column; align-items: flex-start !important; gap: 14px !important; }
+  :is(#mcpView, #aiSchedulesView) .mcp-page-heading { flex-direction: column; align-items: flex-start !important; gap: 14px !important; }
 }
 @media (max-width: 720px) {
-  #mcpView .mcp-market-grid { grid-template-columns: 1fr; }
+  :is(#mcpView, #aiSchedulesView) .mcp-market-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #mcpView *,
-  #mcpView *::before { transition: none !important; animation: none !important; }
+  :is(#mcpView, #aiSchedulesView) *,
+  :is(#mcpView, #aiSchedulesView) *::before { transition: none !important; animation: none !important; }
 }

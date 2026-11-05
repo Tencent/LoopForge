@@ -150,6 +150,17 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	if mode.AutoWrite && op.Name == "issues_save" {
 		input.Body = h.mergeIssueSaveBody(input.Body, input.Path)
 	}
+	// fields=a,b selects result fields for read tools, and ids=a,b keeps only
+	// those items of a list; handlers never see either.
+	var fields, ids []string
+	if op.ReadOnly {
+		fields = assistantResultFields(input.Query[assistantResultFieldsParam])
+		delete(input.Query, assistantResultFieldsParam)
+		if strings.HasSuffix(op.Name, "_list") {
+			ids = assistantResultFields(input.Query[assistantResultIDsParam])
+			delete(input.Query, assistantResultIDsParam)
+		}
+	}
 	if strings.HasSuffix(op.Name, "_list") && strings.TrimSpace(projectID) != "" {
 		if input.Query == nil {
 			input.Query = map[string]string{}
@@ -190,6 +201,9 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 		}
 	}
 	text = strings.TrimSpace(string(h.assistantRunResult(op.Name, result.Body)))
+	// Filter and project only after the foreign-project check above, which
+	// needs projectId.
+	text = projectAssistantResult(filterAssistantResultIDs(text, ids), fields)
 	if observer, ok := ctx.Value(assistantAssetObserverKey{}).(func(domain.AssistantAssetRef)); ok {
 		kind := ""
 		switch op.Name {

@@ -54,7 +54,7 @@ func (s *AgentToolSession) canOpenConversationWorkspace() bool {
 }
 
 func mainBotWorkspaceTools(s *AgentToolSession) []agentToolDescriptor {
-	if s.Mode != AgentToolAssistant || s.ExecMode.Consultation || (s.RunID == "" && !s.canOpenConversationWorkspace()) {
+	if s.Mode != AgentToolAssistant || (s.RunID == "" && !s.canOpenConversationWorkspace()) {
 		return nil
 	}
 	descriptors := []struct{ name, description, schema string }{
@@ -87,6 +87,11 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 		}
 	}
 	if name == "workbench_workspace_open" {
+		// Only Main Bot picks the workspace. A subagent calls through the same
+		// gateway, so while any dispatch runs the binding stays as it is.
+		if s.dispatchRunning() {
+			return "", fmt.Errorf("子 Agent 运行期间不能打开或切换工作区：子 Agent 只在当前工作区里工作。需要别的工作区时在汇报里说明，由 Main Bot 在子 Agent 结束后打开")
+		}
 		return h.openConversationWorkspace(ctx, s, args)
 	}
 	if name == "workbench_workspace_sop" {

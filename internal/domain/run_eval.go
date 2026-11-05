@@ -153,8 +153,7 @@ type RunEvalCatalogAgent struct {
 	Name         string             `json:"name"`
 	ProjectID    string             `json:"projectId,omitempty"`
 	Shared       bool               `json:"shared,omitempty"`
-	Instructions string             `json:"instructions,omitempty"`
-	Objective    string             `json:"objective,omitempty"`
+	Prompt       string             `json:"prompt,omitempty"`
 	Verification []VerificationGate `json:"verification,omitempty"`
 }
 

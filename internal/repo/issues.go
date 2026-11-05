@@ -28,24 +28,25 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 		deliveryMRExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.deliveryMrUrl'))"
 	}
 	type liteRow struct {
-		ID                     string `gorm:"column:id"`
-		ProjectID              string `gorm:"column:project_id"`
-		Title                  string `gorm:"column:title"`
-		Status                 string `gorm:"column:status"`
-		Kind                   string `gorm:"column:kind"`
-		Source                 string `gorm:"column:source"`
-		WorkflowID             string `gorm:"column:workflow_id"`
-		AssigneeUserID         *int64 `gorm:"column:assignee_user_id"`
-		ExternalID             string `gorm:"column:external_id"`
-		ExternalURL            string `gorm:"column:external_url"`
-		TapdID                 string `gorm:"column:tapd_id"`
-		ClarificationStartedAt string `gorm:"column:clarification_started_at"`
-		DeliveryState          string `gorm:"column:delivery_state"`
-		DeliveryMRURL          string `gorm:"column:delivery_mr_url"`
+		ID                     string    `gorm:"column:id"`
+		ProjectID              string    `gorm:"column:project_id"`
+		Title                  string    `gorm:"column:title"`
+		Status                 string    `gorm:"column:status"`
+		Kind                   string    `gorm:"column:kind"`
+		Source                 string    `gorm:"column:source"`
+		WorkflowID             string    `gorm:"column:workflow_id"`
+		AssigneeUserID         *int64    `gorm:"column:assignee_user_id"`
+		ExternalID             string    `gorm:"column:external_id"`
+		ExternalURL            string    `gorm:"column:external_url"`
+		TapdID                 string    `gorm:"column:tapd_id"`
+		ClarificationStartedAt string    `gorm:"column:clarification_started_at"`
+		DeliveryState          string    `gorm:"column:delivery_state"`
+		CreatedAt              time.Time `gorm:"column:created_at"`
+		DeliveryMRURL          string    `gorm:"column:delivery_mr_url"`
 	}
 	var rows []liteRow
 	if err := r.DB.Table("issues").Select(
-		"id", "project_id", "title", "status", "kind", "source", "workflow_id", "assignee_user_id", "external_id",
+		"id", "project_id", "title", "status", "kind", "source", "workflow_id", "assignee_user_id", "external_id", "created_at",
 		urlExpr+" AS external_url",
 		tapdIDExpr+" AS tapd_id",
 		clarificationStartExpr+" AS clarification_started_at",
@@ -67,6 +68,7 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 			WorkflowID:    row.WorkflowID,
 			DeliveryState: strings.TrimSpace(row.DeliveryState),
 			DeliveryMRURL: strings.TrimSpace(row.DeliveryMRURL),
+			CreatedAt:     row.CreatedAt,
 		}
 		if started, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(row.ClarificationStartedAt)); err == nil {
 			issue.Clarification.StartedAt = started

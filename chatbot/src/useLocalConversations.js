@@ -191,6 +191,8 @@ export function useLocalConversations(real) {
       generation: generations[session.id] || null,
       live: emptyLive,
       busy: generations[session.id]?.status === "running",
+      queue: [],
+      queueHeld: false,
       submitting: false,
       readOnly: false,
       error,
@@ -214,7 +216,11 @@ export function useLocalConversations(real) {
     async send(options) {
       const current = selected();
       if (!current) return isLocalConversation(localIdRef.current) ? false : real.send(options);
-      if ((!options.text.trim() && !options.attachments?.length) || generationsRef.current[current.id]?.status === "running") return false;
+      if (!options.text.trim() && !options.attachments?.length) return false;
+      if (generationsRef.current[current.id]?.status === "running") {
+        setLocalError("当前回复仍在生成，可以先停止再发送。");
+        return false;
+      }
       setLocalError("");
       const message = { role: "user", content: options.text.trim() || "请阅读本轮附件并回答。", authorId: real.user?.id, authorName: real.user?.chineseName || real.user?.loginName, createdAt: timestamp(), ...(options.attachments?.length ? { attachments: options.attachments } : {}), ...(options.references?.length ? { references: options.references } : {}) };
       const stored = update(current.id, (row) => ({ ...row, messages: [...(options.messagesOverride || row.messages), message] }));

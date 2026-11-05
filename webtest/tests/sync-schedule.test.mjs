@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp, settle } from '../lib/load-app.mjs';
+import { loadApp, settle, chooseOption } from '../lib/load-app.mjs';
 
 test('schedule helpers and job list describe timing, status, blockers, and project scope', async (t) => {
   const app = await loadApp();
@@ -16,11 +16,13 @@ test('schedule helpers and job list describe timing, status, blockers, and proje
     renderScheduleJobs();
   `);
   const text = app.document.querySelector('#scheduleJobList').textContent;
-  assert.match(text, /Hourly dispatch|每小时|只同步工蜂|待对齐基线/);
+  assert.match(text, /每小时|只同步工蜂|待对齐基线/);
   assert.match(text, /package\.json|集成分支侧|默认分支侧|一键重新对齐/);
-  assert.match(text, /Daily summary|运行中/);
+  assert.doesNotMatch(text, /Daily summary/);
+  assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /Daily summary.*运行中/s);
+  assert.doesNotMatch(app.document.querySelector('#aiScheduleJobList').textContent, /Hourly dispatch|Hidden/);
   assert.doesNotMatch(text, /Hidden/);
-  assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '2');
+  assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '已启用');
   assert.equal(app.evaluate(`scheduleIntervalLabel(172800)`), '每 2 天');
   assert.equal(app.evaluate(`scheduleIntervalLabel(120)`), '每 2 分钟');
   assert.equal(app.evaluate(`scheduleJobTimingLabel({cron:'0 8 * * *'})`), '0 8 * * *');
@@ -78,7 +80,7 @@ test('schedule form switches job kind and timing and sends validated assistant a
   assert.equal(calls[1].body.intervalSec, 3600);
   assert.deepEqual(calls[1].body.issueStatuses, ['todo']);
   assert.equal(calls[1].body.maxDispatch, 3);
-  assert.match(app.document.querySelector('#scheduleJobList').textContent, /Morning summary|Every hour/);
+  assert.match(app.document.querySelector('#scheduleJobList').textContent, /每小时/);
 });
 
 test('running a schedule job updates the UI immediately and persists the server outcome', async (t) => {
@@ -156,4 +158,179 @@ test('sync configuration and issue push persist project-scoped integration setti
   assert.equal(push.body.issueId, 'issue-1');
   assert.equal(push.body.target, 'gongfeng');
   assert.equal(app.evaluate(`state.data.issues[0].source`), 'gongfeng');
+});
+
+
+test('AI schedule navigation separates existing tasks and preserves editor kind and project scope', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const tasks = [
+    { id: 'ai-old', projectId: 'project-1', name: 'Existing AI job', skipDispatch: true, assistantPrompt: 'Review issues', intervalSec: 3600, enabled: true },
+    { id: 'trigger-old', projectId: 'project-1', name: 'Existing trigger', workflowId: 'flow-1', intervalSec: 3600, enabled: true },
+    { id: 'ai-other', projectId: 'other-project', name: 'Other AI job', skipDispatch: true, assistantPrompt: 'Other project', intervalSec: 3600 }
+  ];
+  app.router.get('/api/schedule-jobs', tasks);
+  app.document.querySelector('.rail-btn[data-view="aiSchedules"]').click();
+  await settle(4);
+  assert.equal(app.evaluate('state.currentView'), 'aiSchedules');
+  assert.equal(app.window.location.hash, '#/aiSchedules');
+  assert.equal(app.document.body.classList.contains('no-sidebar'), true);
+  assert.equal(app.document.body.classList.contains('management-mode'), false);
+  assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /Existing AI job/);
+  assert.doesNotMatch(app.document.querySelector('#aiScheduleJobList').textContent, /Existing trigger|Other AI job/);
+  assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '已启用');
+
+  app.document.querySelector('#aiScheduleJobList [data-edit-schedule="ai-old"]').focus();
+  app.document.querySelector('#aiScheduleJobList [data-edit-schedule="ai-old"]').click();
+  await settle(4);
+  const form = app.document.querySelector('#scheduleJobForm');
+  assert.equal(form.elements.id.value, 'ai-old');
+  assert.equal(form.elements.assistantPrompt.value, 'Review issues');
+  assert.equal(form.elements.jobKind.value, 'assistant');
+  assert.equal(app.document.querySelector('#scheduleModalTitle').textContent, 'AI 定时任务');
+  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /完全权限/);
+  assert.doesNotMatch(app.document.querySelector('#aiScheduleRuntimeHint').textContent, /不直接运行|不会派发/);
+  assert.equal(app.document.querySelector('#scheduleJobList').hidden, true);
+  app.evaluate('resetScheduleJobForm()');
+  assert.equal(form.elements.id.value, '');
+  assert.equal(form.elements.jobKind.value, 'assistant');
+
+  app.evaluate('renderScheduleJobs()');
+  app.window.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(app.document.activeElement.dataset.editSchedule, 'ai-old');
+  assert.equal(app.document.querySelector('#scheduleModal').classList.contains('open'), false);
+  await app.evaluate("openScheduleJobModal('dispatch')");
+  assert.equal(form.elements.jobKind.value, 'dispatch');
+  assert.equal(form.elements.workflowId.required, true);
+  assert.equal(app.document.querySelector('#scheduleJobList').hidden, false);
+  assert.equal(app.document.querySelector('#scheduleModalTitle').textContent, '触发配置');
+  assert.equal(app.document.querySelector('#scheduleKindTabs'), null);
+  assert.ok(app.document.querySelector('#issueHeadingMenu #importTAPDIssue[data-legacy-tracker][hidden]'));
+  assert.equal(app.document.querySelectorAll('#importTAPDIssue').length, 1);
+
+  app.evaluate("state.data.projects.push({id:'other-project',name:'Other',key:'OTHER'});renderProjectSwitcher()");
+  chooseOption(app.document.querySelector('#projectSwitcher'), 'other-project');
+  await settle(6);
+  assert.equal(app.document.querySelector('#scheduleModal').classList.contains('open'), false);
+  assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /Other AI job/);
+  assert.doesNotMatch(app.document.querySelector('#aiScheduleJobList').textContent, /Existing AI job/);
+  assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '未配置');
+});
+
+test('AI schedule actions retain task ids, notifications, scheduler availability and failed status', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const job = { id:'ai-1', projectId:'project-1', name:'Daily review', skipDispatch:true, assistantPrompt:'Review', intervalSec:3600, enabled:true, notifications:[] };
+  app.router.get('/api/schedule-jobs', [job]);
+  app.router.put('/api/schedule-jobs', call => ({ ...call.body }));
+  app.router.post('/api/schedule-jobs/ai-1/run', { ...job, lastStatus:'failed', lastError:'model unavailable', lastRunAt:'2026-11-04T03:00:00Z' });
+  app.router.delete('/api/schedule-jobs/ai-1', { ok:true });
+  await app.evaluate('refreshAISchedules()');
+  app.evaluate('state.data.schedulerEnabled=false;renderScheduleJobs()');
+  assert.equal(app.document.querySelector('#aiScheduleJobList [data-run-schedule]').disabled, true);
+  assert.match(app.document.querySelector('#aiScheduleRuntimeHint').textContent, /本实例不执行/);
+  app.evaluate('state.data.schedulerEnabled=true;renderScheduleJobs()');
+  app.document.querySelector('#aiScheduleJobList [data-edit-schedule]').click();
+  await settle(4);
+  const form=app.document.querySelector('#scheduleJobForm');
+  form.elements.name.value='Updated review';
+  form.dispatchEvent(new app.window.Event('submit', {bubbles:true,cancelable:true}));
+  await settle(4);
+  const saved=app.router.calls.find(c=>c.method==='PUT'&&c.path==='/api/schedule-jobs');
+  assert.equal(saved.body.id, 'ai-1');
+  assert.equal(saved.body.skipDispatch, true);
+  assert.equal(saved.body.workflowId, '');
+  assert.deepEqual(saved.body.notifications, []);
+  app.evaluate('closeScheduleJobModal()');
+  app.document.querySelector('#aiScheduleJobList [data-run-schedule]').click();
+  await settle(4);
+  assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /model unavailable/);
+  app.document.querySelector('#aiScheduleJobList [data-delete-schedule]').click();
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle(4);
+  assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /还没有 AI 定时任务/);
+  assert.equal(app.document.querySelector('#aiScheduleCount').textContent, '0 个任务');
+});
+
+test('project trigger config loads and updates the one saved configuration without a new action', async (t) => {
+  const app=await loadApp();
+  t.after(app.close);
+  const saved={id:'trigger-existing',projectId:'project-1',name:'Saved trigger',workflowId:'flow-1',cron:'0 9 * * 1-5',enabled:false,maxDispatch:3};
+  app.router.get('/api/schedule-jobs',[saved]);
+  app.router.put('/api/schedule-jobs',call=>call.body);
+  await app.evaluate("openScheduleJobModal('dispatch')");
+  const f=app.document.querySelector('#scheduleJobForm');
+  assert.equal(app.document.querySelector('#scheduleJobReset'),null);
+  assert.doesNotMatch(app.document.querySelector('#scheduleModal').textContent,/新建配置|点击「新建/);
+  assert.equal(f.elements.id.value,'trigger-existing');
+  assert.equal(f.elements.cron.value,'0 9 * * 1-5');
+  assert.equal(f.elements.enabled.checked,false);
+  assert.equal(f.elements.name.closest('[data-schedule-kind]').hidden,true);
+  assert.equal(f.elements.assistantPrompt.required,false);
+  assert.equal(f.hidden,false);
+  assert.equal(app.document.querySelector('#scheduleJobList [data-edit-schedule]'),null);
+  assert.equal(app.document.querySelector('#scheduleJobList [data-delete-schedule]'),null);
+  f.elements.maxDispatch.value='5';
+  f.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));
+  await settle(4);
+  const write=app.router.calls.find(c=>c.method==='PUT'&&c.path==='/api/schedule-jobs');
+  assert.equal(write.body.id,'trigger-existing');
+  assert.equal(write.body.maxDispatch,5);
+  assert.equal(app.router.calls.filter(c=>c.method==='POST'&&c.path==='/api/schedule-jobs').length,0);
+});
+
+test('first trigger save reuses its id on reopen while AI schedules retain independent creation', async(t)=>{
+  const app=await loadApp();
+  t.after(app.close);
+  let jobs=[];
+  app.router.get('/api/schedule-jobs',()=>jobs);
+  app.router.post('/api/schedule-jobs',call=>{const job={...call.body,id:'single-trigger'};jobs.push(job);return job});
+  await app.evaluate("openScheduleJobModal('dispatch')");
+  const f=app.document.querySelector('#scheduleJobForm');
+  assert.equal(app.document.querySelector('#scheduleJobList').innerHTML,'');
+  assert.equal(f.elements.name.value,'触发配置');
+  f.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));
+  await settle(4);
+  assert.equal(f.elements.id.value,'single-trigger');
+  app.evaluate('closeScheduleJobModal()');
+  await app.evaluate("openScheduleJobModal('dispatch')");
+  assert.equal(f.elements.id.value,'single-trigger');
+  app.evaluate('closeScheduleJobModal()');
+  await app.evaluate("openScheduleJobModal('assistant')");
+  assert.equal(f.elements.id.value,'');
+  assert.equal(f.elements.name.value,'');
+  assert.equal(f.elements.name.closest('[data-schedule-kind]').hidden,false);
+});
+
+test('save closes its own editor after success, retains input after failure and prevents duplicate submissions',async t=>{
+ const app=await loadApp();t.after(app.close);
+ let resolveSave;app.router.post('/api/schedule-jobs',call=>new Promise(resolve=>{resolveSave=()=>resolve({...call.body,id:'saved-local'})}));
+ await app.evaluate("openScheduleJobModal('assistant')");
+ const form=app.document.querySelector('#scheduleJobForm');form.elements.name.value='检查需求';form.elements.assistantPrompt.value='inspect';
+ form.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+ assert.equal(form.querySelector('[type=submit]').disabled,true);assert.equal(app.document.querySelector('#scheduleModal').classList.contains('open'),true);
+ form.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+ assert.equal(app.router.calls.filter(c=>c.path==='/api/schedule-jobs'&&c.method==='POST').length,1);
+ resolveSave();await settle(4);
+ assert.equal(app.document.querySelector('#scheduleModal').classList.contains('open'),false);
+ assert.match(app.document.querySelector('#aiScheduleJobList').textContent,/检查需求/);
+ app.router.post('/api/schedule-jobs',{status:400,body:{error:'save failed'}});
+ await app.evaluate("openScheduleJobModal('assistant')");form.elements.name.value='保留输入';form.elements.assistantPrompt.value='keep me';
+ form.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));await settle(4);
+ assert.equal(app.document.querySelector('#scheduleModal').classList.contains('open'),true);
+ assert.equal(form.elements.assistantPrompt.value,'keep me');assert.equal(form.querySelector('[type=submit]').disabled,false);
+ assert.equal(form.querySelector('[type=submit]').textContent,'保存 AI 定时任务');
+});
+
+test('late save responses cannot close a newly opened editor',async t=>{
+ const app=await loadApp();t.after(app.close);
+ let resolveSave;app.router.post('/api/schedule-jobs',call=>new Promise(resolve=>{resolveSave=()=>resolve({...call.body,id:'old-save'})}));
+ await app.evaluate("openScheduleJobModal('assistant')");
+ const form=app.document.querySelector('#scheduleJobForm');form.elements.name.value='旧任务';form.elements.assistantPrompt.value='old';
+ form.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+ app.evaluate('closeScheduleJobModal()');await app.evaluate("openScheduleJobModal('assistant')");
+ form.elements.name.value='正在编辑的新任务';form.elements.assistantPrompt.value='new';resolveSave();await settle(4);
+ assert.equal(app.document.querySelector('#scheduleModal').classList.contains('open'),true);
+ assert.equal(form.elements.name.value,'正在编辑的新任务');assert.equal(form.elements.assistantPrompt.value,'new');
+ assert.equal(form.querySelector('[type=submit]').disabled,false);
 });

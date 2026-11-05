@@ -101,7 +101,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 			return compiled, err
 		}
 	}
-	lines := []string{"# " + a.Name, "", a.Instructions, "", "## Rules"}
+	lines := []string{"# " + a.Name, "", "## Rules"}
 	sort.Slice(assets.Rules, func(i, j int) bool { return assets.Rules[i].Priority > assets.Rules[j].Priority })
 	for _, v := range assets.Rules {
 		ruleID := safeID(v.ID)
@@ -151,47 +151,8 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 			return compiled, err
 		}
 		skillPaths = append(skillPaths, item.root)
-		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), item.body, 0o644); err != nil {
+		if err := writeSkillFiles(dir, item, assets.SkillFiles[item.skill.ID]); err != nil {
 			return compiled, err
-		}
-		for name, data := range item.skill.Files {
-			if filepath.ToSlash(name) == "SKILL.md" {
-				continue
-			}
-			clean := filepath.Clean(name)
-			if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
-				return compiled, fmt.Errorf("invalid skill file path %q", name)
-			}
-			target := filepath.Join(dir, clean)
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return compiled, err
-			}
-			if err := os.WriteFile(target, []byte(data), 0o644); err != nil {
-				return compiled, err
-			}
-		}
-		// Binary skill files from the skill_files table; the manifest mode
-		// keeps executable scripts runnable in the sandbox. SKILL.md is
-		// already written above so frontmatter stays intact.
-		for _, ref := range item.skill.FileRefs {
-			if filepath.ToSlash(ref.Path) == "SKILL.md" {
-				continue
-			}
-			data, ok := assets.SkillFiles[item.skill.ID][ref.Path]
-			if !ok {
-				continue
-			}
-			clean := filepath.Clean(ref.Path)
-			if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
-				return compiled, fmt.Errorf("invalid skill file path %q", ref.Path)
-			}
-			target := filepath.Join(dir, clean)
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return compiled, err
-			}
-			if err := os.WriteFile(target, data, os.FileMode(domain.NormalizeSkillFileMode(ref.Mode))); err != nil {
-				return compiled, err
-			}
 		}
 		if err := replaceRelativeSymlink(filepath.Join(bindingRoot, "skills", item.id), filepath.Join("..", "..", "..", "skills", item.id)); err != nil {
 			return compiled, err

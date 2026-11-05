@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { confirmationCaption } from "./api";
+const MAX_FACES = 3;
 export function authorFor(message, session, users = []) {
   const id = message.authorId || (!session?.shared ? session?.userId : 0);
   const user = users.find((u) => u.id === id);
@@ -17,9 +18,12 @@ export function authorFor(message, session, users = []) {
       (id ? `用户 ${id}` : "历史发言人未记录"),
   };
 }
-export function Avatar({ person }) {
+export function Avatar({ person, className = "" }) {
   return (
-    <span className="human-avatar" aria-hidden="true">
+    <span
+      className={`human-avatar${className ? ` ${className}` : ""}`}
+      aria-hidden="true"
+    >
       <span>{person.name?.[0]?.toUpperCase() || "?"}</span>
       {person.loginName ? (
         <img
@@ -95,13 +99,22 @@ export default function Participants({ session, users, compact = false }) {
   }, [compact, session?.id, hasPeople]);
   if (!hasPeople) return null;
   const label = `${people.length} 人发过言${unknown ? "，部分历史发言人未记录" : ""}`;
+  const shown = people.length
+    ? people.slice(0, MAX_FACES)
+    : [{ id: 0, name: "?" }];
+  const hidden = Math.max(0, people.length - shown.length);
   const faces = (
     <>
-      <Avatar person={people[0] || { name: "?" }} />
-      <span className="participant-count">
-        {people.length || "?"}
-        {unknown && people.length ? "+" : ""}
-      </span>
+      {shown.map((p, index) => (
+        <Avatar
+          key={p.id ?? `face-${index}`}
+          person={p}
+          className={index ? "is-stacked" : ""}
+        />
+      ))}
+      {hidden || unknown ? (
+        <span className="participant-count">+{hidden || "?"}</span>
+      ) : null}
     </>
   );
   if (compact)

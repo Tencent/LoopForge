@@ -113,6 +113,7 @@ func (b *Background) gate() <-chan struct{} {
 func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, opts BackgroundOptions) (*gin.Engine, *Background) {
 	bg := &Background{recoveryGate: opts.RecoveryGate}
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
+		h.startSessionJanitor(ctx)
 	})
 	return router, bg
 }
@@ -266,6 +267,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
 	asst := &assistantHandlers{deps: d, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
 	api.runs.assistant = asst
+	api.schedule.assistant = asst
 	api.notifications.service.GenerateReport = asst.generateSOPReport
 	if api.notifications.service.Interactions != nil {
 		api.notifications.service.Interactions.Generate = asst.generateBotReply
@@ -281,6 +283,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/generations", asst.startGeneration)
 	g.GET("/api/assistant/sessions/:id/generation", asst.generation)
 	g.POST("/api/assistant/sessions/:id/generation/cancel", asst.generation)
+	g.POST("/api/assistant/sessions/:id/generation/steer", asst.steerGeneration)
 	g.GET("/api/assistant/models", asst.models)
 	g.POST("/api/assistant/attachments", asst.uploadAttachment)
 	g.GET("/api/assistant/attachments/:id", asst.downloadAttachment)
@@ -534,6 +537,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/sync/logs", api.syncAPI.syncLogs)
 	g.GET("/api/sync/status", api.syncAPI.syncStatus)
 	g.POST("/api/sync/create", api.syncAPI.syncCreate)
+	g.GET("/api/shared-schedule-tasks", api.schedule.sharedScheduleTasks)
+	g.GET("/api/shared-schedule-tasks/:id/versions", api.schedule.sharedScheduleVersions)
+	g.POST("/api/schedule-jobs/:id/publish", api.schedule.publishSharedSchedule)
 	g.GET("/api/schedule-jobs", api.schedule.scheduleJobs)
 	g.PUT("/api/schedule-jobs", api.schedule.scheduleJobs)
 	g.POST("/api/schedule-jobs", api.schedule.scheduleJobs)
@@ -699,7 +705,10 @@ func (s *Server) bootstrap(c *gin.Context) {
 	go func() { defer load.Done(); sandboxes = s.repo.Sandboxes() }()
 	go func() { defer load.Done(); workflows = s.repo.Workflows() }()
 	go func() { defer load.Done(); syncConfig = s.repo.SyncConfig() }()
-	go func() { defer load.Done(); scheduleJobs = s.repo.ScheduleJobs() }()
+	go func() {
+		defer load.Done()
+		scheduleJobs = s.schedule.visibleScheduleJobs(c.Request, s.repo.ScheduleJobs())
+	}()
 	go func() { defer load.Done(); users = s.repo.Users() }()
 	load.Wait()
 	businessDomains, err := s.repo.BusinessDomains()

@@ -31,7 +31,7 @@ func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string
 		return item, nil
 	}
 	now := time.Now().UTC()
-	item := domain.AssistantSession{ID: id, RunID: runID, ProjectID: projectID, Title: title, UserID: userID, Shared: true, CreatedAt: now, UpdatedAt: now}
+	item := domain.AssistantSession{ID: id, RunID: runID, ProjectID: projectID, Title: title, UserID: userID, Shared: true, Source: domain.AssistantSourceSOP, CreatedAt: now, UpdatedAt: now}
 	// Existing task discussions become the initial shared transcript, preserving authors.
 	var rows []assistantSessionRow
 	if err := r.DB.Where("project_id = ?", projectID).Where(r.sqlJSONText("$.runId")+" = ?", "$.runId", runID).Order("created_at ASC").Find(&rows).Error; err != nil {
@@ -54,7 +54,7 @@ func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string
 		}
 	}
 	deriveAssistantParticipants(&item, item.Messages)
-	row := assistantSessionRow{ID: id, UserID: userID, ProjectID: projectID, Title: title, Payload: mustJSON(item), Created: &now, Updated: &now}
+	row := assistantSessionRow{ID: id, UserID: userID, ProjectID: projectID, Title: title, Source: item.Source, TaskID: item.TaskID, Payload: mustJSON(item), Created: &now, Updated: &now}
 	if err := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return item, err
 	}
@@ -145,7 +145,7 @@ func ProjectSharedAssistantSession(s domain.AssistantSession) bool {
 	return !s.Shared && s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && !strings.HasPrefix(s.ID, "sop-")
 }
 
-const assistantSessionMetadataColumns = "id, user_id, project_id, title, model, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload"
+const assistantSessionMetadataColumns = "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload"
 
 // ProjectAssistantSession returns the metadata of a project-shared
 // conversation regardless of who created it. Callers must authorize the

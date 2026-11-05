@@ -93,3 +93,40 @@ func TestAssistantSessionListBackfillsBlankTitles(t *testing.T) {
 		t.Fatalf("listed %d of %d sessions", seen, len(cases))
 	}
 }
+
+func TestGeneratedTitleSurvivesPromptRewrite(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	const owner = int64(93)
+	id := fmt.Sprintf("generated-title-%d", time.Now().UnixNano())
+	prompt := strings.Repeat("需", 20)
+	if err := st.PutAssistantSession(owner, domain.AssistantSession{ID: id, Title: prompt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAssistantSessionGeneratedTitle(owner, id, "积分商城梳理"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutAssistantSession(owner, domain.AssistantSession{ID: id, Title: prompt, Messages: []domain.AssistantMessage{{Role: "user", Content: prompt + "，请按模块列出缺口"}}}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := st.AssistantSession(owner, id)
+	if !ok || got.Title != "积分商城梳理" || !got.TitleGenerated || got.TitleEdited {
+		t.Fatalf("summary lost: %+v ok=%v", got, ok)
+	}
+	edited := got
+	edited.Title = "我的标题"
+	edited.TitleEdited = true
+	if err := st.PutAssistantSession(owner, edited); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAssistantSessionGeneratedTitle(owner, id, "另一个摘要"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.AssistantSession(owner, id)
+	if got.Title != "我的标题" || !got.TitleEdited || got.TitleGenerated {
+		t.Fatalf("rename lost: %+v", got)
+	}
+}

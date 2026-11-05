@@ -333,4 +333,30 @@ describe("conversation hooks", () => {
     unmount();
     delete globalThis.EventSource;
   });
+
+  test("replaces a new prompt title with the background summary without touching messages", async () => {
+    const prompt = "请帮我把积分商城的需求、缺口和验收标准整理出来";
+    const original = apiMock.getMockImplementation();
+    let summarized = false;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/sessions/s1") {
+        const messages = [{ role: "user", content: prompt }];
+        if (!summarized) return { id: "s1", title: prompt.slice(0, 36), projectId: "p1", model: "m1", messages };
+        return { id: "s1", title: "积分商城梳理", titleGenerated: true, messages: [] };
+      }
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=s1");
+      const { result, unmount } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.session?.title).toBe(prompt.slice(0, 36)));
+      summarized = true;
+      await waitFor(() => expect(result.current.session?.title).toBe("积分商城梳理"), { timeout: 5000 });
+      expect(result.current.session.titleGenerated).toBe(true);
+      expect(result.current.session.messages).toEqual([{ role: "user", content: prompt }]);
+      unmount();
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
 });

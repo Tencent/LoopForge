@@ -16,7 +16,7 @@
   font-size:9px;font-weight:800;color:#fff;letter-spacing:0;overflow:hidden;
 }
 .ai-model-icon img{width:18px;height:18px;display:block;object-fit:contain;background:transparent}
-.ai-model-icon[data-family=claude],.ai-model-icon[data-family=gpt],.ai-model-icon[data-family=gemini],.ai-model-icon[data-family=deepseek],.ai-model-icon[data-family=minimax]{background:#fff}
+.ai-model-icon[data-family=claude],.ai-model-icon[data-family=gpt],.ai-model-icon[data-family=gemini],.ai-model-icon[data-family=deepseek],.ai-model-icon[data-family=minimax],.ai-model-icon[data-family=mimo]{background:#fff}
 .ai-model-icon[data-family=glm]{background:#3859FF}
 .ai-model-icon[data-family=kimi]{background:#111827}
 .ai-model-icon[data-family=hunyuan]{background:#0F766E}
@@ -34,6 +34,7 @@
 .ai-model-option{padding:8px 10px;gap:8px}
 .ai-model-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ai-model-credits{flex-shrink:0;color:var(--muted-2);font-size:11px;font-variant-numeric:tabular-nums;font-weight:500}
+.ai-model-credits:empty{display:none!important}
 .ai-model-option.is-active{background:var(--blue-soft);color:var(--blue)}
 .ai-model-option:hover{background:var(--hover)}
 .ai-mode-option .ai-model-name{font-weight:640}

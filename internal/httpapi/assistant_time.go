@@ -35,12 +35,14 @@ func beijingTimestamps(text string) string {
 
 // assistantPlatformResultForModel prepares a platform tool result for the
 // model. Artifact bodies are documents the model may quote or edit verbatim,
-// so their text is left untouched.
+// so their text is left untouched. Oversized list results keep their leading
+// items with a notice instead of overflowing into a file the model cannot
+// parse.
 func assistantPlatformResultForModel(tool, text string) string {
 	if tool == "runs_artifact_get" {
 		return text
 	}
-	return beijingTimestamps(text)
+	return fitAssistantToolResult(tool, beijingTimestamps(text))
 }
 
 var assistantWeekdays = [...]string{"日", "一", "二", "三", "四", "五", "六"}

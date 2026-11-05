@@ -7,32 +7,30 @@ import (
 	"strings"
 )
 
-func renderPromptSpec(wf domain.WorkflowDefinition, node domain.WorkflowNode, spec domain.TaskPromptSpec, run domain.Run) string {
-	return applyPromptPlaceholders(nil, wf, node, &spec, nil, run)
+func renderPromptSpec(wf domain.WorkflowDefinition, node domain.WorkflowNode, rolePrompt string, run domain.Run) string {
+	return applyPromptPlaceholders(nil, wf, node, &domain.AgentDefinition{Prompt: rolePrompt}, run)
 }
 
 func renderPromptWithStore(st *repo.Store, wf domain.WorkflowDefinition, node domain.WorkflowNode, run domain.Run) string {
-	var spec *domain.TaskPromptSpec
-	var gates []domain.VerificationGate
+	var role *domain.AgentDefinition
 	if st != nil {
 		if agent, ok := workflowAgent(st, wf, node.AgentID); ok {
-			gates = agent.Verification
-			spec = agent.TaskPrompt
+			role = &agent
 		}
 	}
-	return applyPromptPlaceholders(st, wf, node, spec, gates, run)
+	return applyPromptPlaceholders(st, wf, node, role, run)
 }
 
-func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node domain.WorkflowNode, spec *domain.TaskPromptSpec, gates []domain.VerificationGate, run domain.Run) string {
+func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node domain.WorkflowNode, role *domain.AgentDefinition, run domain.Run) string {
 	prompt := ""
-	if spec != nil {
-		prompt = compileTaskPrompt(node, *spec, gates)
+	if role != nil && strings.TrimSpace(role.Prompt) != "" {
+		prompt = compileTaskPrompt(node, role.Name, role.Prompt, role.Verification)
 	}
 	if task := strings.TrimSpace(node.TaskPrompt); task != "" {
 		prompt += "\n\n## 本节点任务\n\n" + task
 	}
-	// Roles created through chat may only define instructions, without a
-	// structured taskbook. Never silently drop their node task or run input.
+	// Roles may only define instructions, without a task prompt. Never
+	// silently drop their node task or run input.
 	if strings.TrimSpace(run.Input) != "" && !strings.Contains(prompt, "{{input}}") {
 		prompt += "\n\n## 本次运行输入\n\n{{input}}"
 	}
@@ -148,29 +146,21 @@ func latestNamedArtifact(run domain.Run, nodeID, name string) (domain.Artifact, 
 	return best, found
 }
 
-func compileTaskPrompt(node domain.WorkflowNode, spec domain.TaskPromptSpec, gates []domain.VerificationGate) string {
+func compileTaskPrompt(node domain.WorkflowNode, roleName, rolePrompt string, gates []domain.VerificationGate) string {
 	var b strings.Builder
 	b.WriteString("# 节点任务书\n\n")
-	writePromptSection(&b, "执行角色", spec.Role)
-	writePromptSection(&b, "任务目标", spec.Objective)
-	writePromptSection(&b, "工作上下文", spec.Context)
-	writePromptList(&b, "输入", spec.Inputs)
-	writePromptList(&b, "执行动作", spec.Actions)
-	deliverables := spec.Deliverables
-	if len(deliverables) == 0 {
-		for _, artifact := range node.ArtifactOutputs {
-			deliverables = append(deliverables, artifact.Name+"：在工作区创建 `"+artifact.Path+"`")
-		}
+	writePromptSection(&b, "执行角色", roleName)
+	writePromptSection(&b, "任务说明", strings.TrimSpace(rolePrompt))
+	var deliverables []string
+	for _, artifact := range node.ArtifactOutputs {
+		deliverables = append(deliverables, artifact.Name+"：在工作区创建 `"+artifact.Path+"`")
 	}
-	criteria := spec.AcceptanceCriteria
-	if len(criteria) == 0 {
-		for _, gate := range gates {
-			criteria = append(criteria, gate.Name+"必须通过，并保留真实命令证据")
-		}
+	var criteria []string
+	for _, gate := range gates {
+		criteria = append(criteria, gate.Name+"必须通过，并保留真实命令证据")
 	}
 	writePromptList(&b, "交付物", deliverables)
 	writePromptList(&b, "完成条件与门禁证据", criteria)
-	writePromptList(&b, "约束", spec.Constraints)
 	b.WriteString("## 失败反馈与重试\n\n")
 	strategy := map[string]string{"full_redo": "完整重做", "targeted_fix": "仅修复失败项"}[node.RetryStrategy]
 	if strategy == "" {
@@ -179,9 +169,6 @@ func compileTaskPrompt(node domain.WorkflowNode, spec domain.TaskPromptSpec, gat
 	fmt.Fprintf(&b, "- 策略：%s\n", strategy)
 	if len(node.CarryOver) > 0 {
 		fmt.Fprintf(&b, "- 继承上下文：%s\n", strings.Join(node.CarryOver, "、"))
-	}
-	if spec.RetryInstructions != "" {
-		fmt.Fprintf(&b, "- 重试要求：%s\n", spec.RetryInstructions)
 	}
 	b.WriteString("- 上一轮反馈：{{feedback}}\n")
 	return b.String()

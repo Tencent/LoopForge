@@ -17,6 +17,15 @@ test("a finished reply does not claim that a task is finished or infer approval 
   assert.equal(sessionReplyStatus({ id: "three" }).state, "idle");
 });
 
+test("a manually stopped reply leaves no stop mark in the session list", () => {
+  const stopped = sessionReplyStatus({ id: "stopped", generationStatus: "cancelled" });
+  assert.equal(stopped.state, "cancelled");
+  assert.equal(stopped.icon, undefined);
+  // 停止之后才需要人看一眼的异常状态仍然带图标。
+  assert.equal(sessionReplyStatus({ id: "failed", generationStatus: "failed" }).icon, "alert");
+  assert.equal(sessionReplyStatus({ id: "cut", generationStatus: "interrupted" }).icon, "warning");
+});
+
 test("the initial browser-local conversations contain finished messages rather than fictitious active generations", () => {
   const rows = createLocalConversations({ id: 7, loginName: "local" }, "model-original");
   assert.ok(rows.length > 1);

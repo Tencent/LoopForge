@@ -480,4 +480,177 @@ describe("App", () => {
       else delete globalThis.URL.revokeObjectURL;
     }
   });
+
+  const artifactSessions = (messages) => ({
+    id: "session-artifacts",
+    title: "产物会话",
+    projectId: "p1",
+    messages,
+  });
+
+  test("reveals the artifact drawer when a reply generates an artifact", async () => {
+    const previous = { ...chat };
+    Object.assign(chat, {
+      local: false,
+      projectId: "p1",
+      activeId: "session-artifacts",
+      readOnly: false,
+      sessions: [],
+      busy: false,
+      generation: null,
+      live: { answer: "", thinking: "", tools: [], activity: [] },
+      session: artifactSessions([
+        { id: "msg-1", role: "assistant", content: "先看一下现状" },
+      ]),
+    });
+    const view = render(<App />);
+    expect(document.getElementById("conversation-artifacts")).toBeNull();
+
+    Object.assign(chat, {
+      session: artifactSessions([
+        { id: "msg-1", role: "assistant", content: "先看一下现状" },
+        {
+          id: "msg-2",
+          role: "assistant",
+          content: "脚本已经生成",
+          attachments: [
+            { id: "att-1", name: "代码-1.bash", mimeType: "text/x-shellscript", size: 32 },
+          ],
+        },
+      ]),
+    });
+    view.rerender(<App />);
+    await waitFor(() =>
+      expect(document.getElementById("conversation-artifacts")).toBeTruthy(),
+    );
+    expect(
+      document.getElementById("conversation-artifacts").getAttribute("aria-hidden"),
+    ).toBeNull();
+    view.unmount();
+    Object.assign(chat, previous);
+  });
+
+  test("keeps the artifact drawer closed for a restored conversation without new artifacts", async () => {
+    const previous = { ...chat };
+    Object.assign(chat, {
+      local: false,
+      projectId: "p1",
+      activeId: "session-artifacts",
+      readOnly: false,
+      sessions: [],
+      busy: false,
+      generation: null,
+      live: { answer: "", thinking: "", tools: [], activity: [] },
+      session: artifactSessions([
+        {
+          id: "msg-1",
+          role: "assistant",
+          content: "上次生成的脚本",
+          attachments: [
+            { id: "att-1", name: "代码-1.bash", mimeType: "text/x-shellscript", size: 32 },
+          ],
+        },
+      ]),
+    });
+    const view = render(<App />);
+    expect(screen.getByLabelText("查看会话产物")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    expect(document.getElementById("conversation-artifacts")).toBeNull();
+    view.unmount();
+    Object.assign(chat, previous);
+  });
+
+  test("keeps the artifact drawer closed when the user attaches a file", async () => {
+    const previous = { ...chat };
+    Object.assign(chat, {
+      local: false,
+      projectId: "p1",
+      activeId: "session-artifacts",
+      readOnly: false,
+      sessions: [],
+      busy: false,
+      generation: null,
+      live: { answer: "", thinking: "", tools: [], activity: [] },
+      session: artifactSessions([
+        { id: "msg-1", role: "user", content: "看下这个文件" },
+      ]),
+    });
+    const view = render(<App />);
+
+    Object.assign(chat, {
+      session: artifactSessions([
+        {
+          id: "msg-1",
+          role: "user",
+          content: "看下这个文件",
+          attachments: [
+            { id: "att-upload", name: "截图.png", mimeType: "image/png", size: 64 },
+          ],
+        },
+      ]),
+    });
+    view.rerender(<App />);
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    expect(document.getElementById("conversation-artifacts")).toBeNull();
+    view.unmount();
+    Object.assign(chat, previous);
+  });
+});
+
+describe("sidebar conversation filter", () => {
+  test("only lists conversations the reader took part in", async () => {
+    const user = userEvent.setup();
+    const previous = { ...chat };
+    const now = new Date().toISOString();
+    Object.assign(chat, {
+      activeId: null,
+      session: null,
+      projectId: "p1",
+      sessions: [
+        {
+          id: "mine",
+          title: "我参与的项目会话",
+          projectId: "p1",
+          shared: true,
+          participants: [
+            { id: "u1", name: "tester" },
+            { id: "u2", name: "同事" },
+          ],
+          updatedAt: now,
+          messages: [],
+        },
+        {
+          id: "theirs",
+          title: "同事独自发起的会话",
+          projectId: "p1",
+          shared: true,
+          participants: [{ id: "u2", name: "同事" }],
+          updatedAt: now,
+          messages: [],
+        },
+      ],
+    });
+    const view = render(<App />);
+    try {
+      const showSidebar = screen.queryByLabelText("显示会话侧边栏");
+      if (showSidebar) await user.click(showSidebar);
+      expect(screen.getAllByText("同事独自发起的会话").length).toBeGreaterThan(0);
+
+      await user.click(screen.getByLabelText("筛选会话"));
+      await user.click(screen.getByText("仅我参与的对话"));
+
+      expect(screen.queryByText("同事独自发起的会话")).not.toBeInTheDocument();
+      expect(screen.getAllByText("我参与的项目会话").length).toBeGreaterThan(0);
+
+      await user.click(screen.getByLabelText("筛选会话"));
+      expect(
+        screen.getByText("仅我参与的对话").closest("[role=menuitemradio]"),
+      ).toHaveAttribute("aria-checked", "true");
+      await user.click(screen.getByText("最近的会话"));
+      expect(screen.getAllByText("同事独自发起的会话").length).toBeGreaterThan(0);
+    } finally {
+      view.unmount();
+      Object.assign(chat, previous);
+    }
+  });
 });

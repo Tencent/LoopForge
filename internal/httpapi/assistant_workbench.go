@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,13 +33,6 @@ const workbenchAttachmentCount = 8
 type workbenchAttachmentRecord struct {
 	domain.AssistantAttachment
 	ProjectID string `json:"projectId"`
-}
-
-func workbenchExecMode(mode string, consultation bool) assistantExecMode {
-	if consultation {
-		return assistantExecMode{Consultation: true}
-	}
-	return assistantExecModeForApproval(mode)
 }
 
 // Open legacy projects retain the room membership policy. Private projects
@@ -89,7 +84,14 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			break
 		}
 		ref.Name = v.Name
-		data = gin.H{"id": v.ID, "name": v.Name, "description": v.Description, "instructions": v.Instructions}
+		data = gin.H{"id": v.ID, "name": v.Name, "description": v.Description, "prompt": v.Prompt}
+	case "skill":
+		v, ok := h.repo.Skill(ref.ID)
+		if !ok || !allowed(v.ProjectID, v.Shared) {
+			break
+		}
+		ref.Name = v.Name
+		data = gin.H{"id": v.ID, "name": v.Name, "description": v.Description, "skill": runtime.SkillName(v.ID)}
 	case "repository":
 		v, ok := h.repo.Repository(ref.ID)
 		if !ok || v.ProjectID != project || project == "" {
@@ -141,6 +143,10 @@ func (h *assistantHandlers) accessibleWorkbenchReference(c *gin.Context, userID 
 		if v, ok := h.repo.Agent(ref.ID); ok {
 			project, shared = v.ProjectID, v.Shared
 		}
+	case "skill":
+		if v, ok := h.repo.Skill(ref.ID); ok {
+			project, shared = v.ProjectID, v.Shared
+		}
 	case "sop":
 		if v, ok := h.repo.Workflow(ref.ID); ok {
 			project, shared = v.ProjectID, v.Shared || v.Generic
@@ -148,6 +154,11 @@ func (h *assistantHandlers) accessibleWorkbenchReference(c *gin.Context, userID 
 	}
 	if !shared && !h.workbenchProjectAllowed(c, project, userID) {
 		return ref, "", fmt.Errorf("无权访问引用对象")
+	}
+	// A project conversation only sees its own project's objects plus shared
+	// roles and SOPs; a personal conversation keeps cross-project references.
+	if currentProject != "" && !shared && project != currentProject {
+		return ref, "", errForeignReference
 	}
 	resolveProject := project
 	if shared {
@@ -166,6 +177,8 @@ func (h *assistantHandlers) accessibleWorkbenchReference(c *gin.Context, userID 
 	}
 	return canonical, data, err
 }
+
+var errForeignReference = fmt.Errorf("只能引用当前项目的需求、角色、技能、SOP、仓库和运行；其他项目的对象请到对应项目的对话里引用")
 
 var errNotProjectMember = fmt.Errorf("你还不是这个项目的成员，不能在项目里对话。可以把项目切换为「个人对话」直接聊，或请项目 Owner 把你加入项目")
 
@@ -204,7 +217,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 		}
 		context.WriteString("当前会话关联的主需求（每轮从平台读取的最新数据）：" + data + "\n这是持续的需求上下文；其他 @需求只供本条消息参考。关联不会自动创建或派发运行，也不会改变会话可见范围。\n")
 	}
-	context.WriteString("当前任务以 runId 为准；普通会话引用只提供上下文。@角色用于只读咨询，不会派发任务。\n")
+	context.WriteString("当前任务以 runId 为准；普通会话引用只提供上下文。@角色表示让该角色作为子 Agent 来做这件事。\n")
 	if branch, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && branch.ParentSessionID != "" {
 		context.WriteString("这是编辑消息后的讨论分支。原会话后续执行过的文件修改和平台变更不会回退，可能已经存在；写入前先读取真实状态，避免重复导入、创建或派发。历史 inherited 草稿仅供参考，不可认为它们在当前分支重新执行。\n")
 	}
@@ -217,21 +230,58 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 		if !h.projectWriterAllowed(c, domain.RunProjectID(r, ""), user.ID) {
 			return fmt.Errorf("只读成员不能在任务会话中执行 Agent 或修改工作区")
 		}
-		context.WriteString("当前 SOP 运行：" + text + "\n被 @角色时仅提供独立咨询；SOP 推进沿用既有暂停、审批、拒绝和重试接口。工作区工具用于停止后的修改与验证。\n")
+		context.WriteString("当前 SOP 运行：" + text + "\nSOP 推进沿用既有暂停、审批、拒绝和重试接口。工作区工具用于停止后的修改与验证。\n")
+	}
+	var mentioned []domain.AgentDefinition
+	var mentionedSkills []domain.SkillDefinition
+	addSkill := func(skill domain.SkillDefinition) {
+		for _, known := range req.skills {
+			if known.ID == skill.ID {
+				return
+			}
+		}
+		req.skills = append(req.skills, skill)
+	}
+	addRole := func(role domain.AgentDefinition) {
+		for _, known := range req.roles {
+			if known.Role.ID == role.ID {
+				return
+			}
+		}
+		req.roles = append(req.roles, h.resolveRoleSubagent(role, req.ProjectID, user.ID))
+	}
+	// Every project role is a subagent Main Bot may dispatch on its own
+	// judgment; shared roles join once mentioned.
+	if req.ProjectID != "" {
+		for _, role := range h.repo.Agents() {
+			if role.ProjectID == req.ProjectID {
+				addRole(role)
+			}
+		}
 	}
 	for i := range req.Messages {
 		m := &req.Messages[i]
 		if len(m.References) > 12 || len(m.Attachments) > workbenchAttachmentCount {
 			return fmt.Errorf("单条消息最多引用 12 个对象、附加 8 个文件")
 		}
-		agents := 0
 		for j, ref := range m.References {
 			if i != len(req.Messages)-1 {
+				// Shared roles and skills mentioned earlier stay available for follow-ups.
+				if ref.Type == "agent" {
+					if role, ok := h.repo.Agent(ref.ID); ok && req.ProjectID != "" && (role.ProjectID == req.ProjectID || role.Shared) {
+						addRole(role)
+					}
+				}
+				if ref.Type == "skill" {
+					if skill, ok := h.repo.Skill(ref.ID); ok && (req.ProjectID == "" || skill.ProjectID == req.ProjectID || skill.Shared) {
+						addSkill(skill)
+					}
+				}
 				continue
 			}
 			if req.RunID != "" {
 				r, ok := h.repo.RunState(req.RunID)
-				if !ok || !taskWorkbenchReferenceAllowed(r, ref.Type, ref.ID) {
+				if !ok || !h.taskReferenceAllowed(r, ref.Type, ref.ID) {
 					return fmt.Errorf("只能引用当前任务的角色、需求、SOP 和仓库")
 				}
 			}
@@ -240,20 +290,19 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 				return err
 			}
 			m.References[j] = canonical
-			// Only the current user turn can select a role; historical mentions remain data.
-			if i == len(req.Messages)-1 {
-				context.WriteString("引用（数据）：" + text + "\n")
-				if ref.Type == "agent" {
-					agents++
-					req.consultation = true
-					if role, ok := h.repo.Agent(ref.ID); ok {
-						req.consultationRole = &role
-					}
+			context.WriteString("引用（数据）：" + text + "\n")
+			if ref.Type == "agent" {
+				if role, ok := h.repo.Agent(ref.ID); ok {
+					addRole(role)
+					mentioned = append(mentioned, role)
 				}
 			}
-		}
-		if agents > 1 {
-			return fmt.Errorf("一次咨询一个角色，请拆分发送")
+			if ref.Type == "skill" {
+				if skill, ok := h.repo.Skill(ref.ID); ok {
+					addSkill(skill)
+					mentionedSkills = append(mentionedSkills, skill)
+				}
+			}
 		}
 		for j, a := range m.Attachments {
 			attachmentOwner := user.ID
@@ -272,7 +321,39 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 			req.attachmentOwners[a.ID] = attachmentOwner
 		}
 	}
-	if req.RunID == "" && !req.consultation {
+	if len(req.roles) > 0 {
+		context.WriteString("本项目的角色已作为子 Agent 提供（Agent 工具的 subagent_type=role-<角色ID>），各自带着角色的 prompt、规则和技能。任务明显属于某个角色的职责、或需要它的规则和技能时，可以自行派给它；简单问题自己处理。子 Agent 看不到本对话，派发的 prompt 要写清背景、要做什么、工作区里相关的仓库和文件路径。同一角色在本对话里已经派过（前几轮，或本轮早先 Agent 结果里的 Agent ID），默认传 resume=<agent ID> 复用那个子 Agent，让它带着之前的上下文继续；只有用户要求新开、新任务与它之前做的事无关、或要与它并行时才不传 resume。resume 失败时直接新开。\n")
+	}
+	if len(req.roles) > 0 {
+		if stored, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok {
+			ids := roleAgentIDs(stored.Messages)
+			var reuse strings.Builder
+			for _, role := range req.roles {
+				name := roleSubagentName(role.Role.ID)
+				if id := ids[name]; id != "" {
+					reuse.WriteString("「" + role.Role.Name + "」subagent_type=" + name + " → agent ID " + id + "；")
+				}
+			}
+			if reuse.Len() > 0 {
+				context.WriteString("这些角色在本对话里已有子 Agent：" + reuse.String() + "再派给这些角色时按上面的规则默认传 resume 复用。\n")
+			}
+		}
+	}
+	if len(mentioned) > 0 {
+		var dispatch strings.Builder
+		for _, role := range mentioned {
+			dispatch.WriteString("「" + role.Name + "」→ subagent_type=" + roleSubagentName(role.ID) + "；")
+		}
+		context.WriteString("用户本轮 @ 了角色：" + dispatch.String() + "用 Agent 工具把用户要做的事派发给对应子 Agent 执行，prompt 写清任务、仓库/工作区和期望产物；多个角色互不依赖时可并行派发。子 Agent 返回后，由你核对结果并向用户汇报。\n")
+	}
+	if len(mentionedSkills) > 0 {
+		var use strings.Builder
+		for _, skill := range mentionedSkills {
+			use.WriteString("「" + skill.Name + "」→ skill=" + runtime.SkillName(skill.ID) + "；")
+		}
+		context.WriteString("用户本轮 @ 了技能：" + use.String() + "用 Skill 工具按名称调用并照它的说明完成用户要做的事；如果把这件事派给子 Agent，在派发的 prompt 里写明要用这个技能。\n")
+	}
+	if req.RunID == "" {
 		if note := h.linkMentionedIssue(req, user); note != "" {
 			context.WriteString(note + "\n")
 		}
@@ -280,28 +361,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 			context.WriteString(note + "\n")
 		}
 	}
-	if req.consultationRole != nil && req.RunID != "" {
-		if r, ok := h.repo.RunState(req.RunID); ok {
-			for _, node := range r.WorkflowSnapshot.Nodes {
-				if node.AgentID != req.consultationRole.ID {
-					continue
-				}
-				page, err := h.repo.QueryRunTelemetry(r.ID, node.ID, "", 0, 0, false, false, 20)
-				if err == nil {
-					facts := []gin.H{}
-					for _, event := range page.Events {
-						facts = append(facts, gin.H{"time": event.Timestamp, "category": event.Category, "message": truncateRunes(event.Message, 1500)})
-					}
-					raw, _ := json.Marshal(facts)
-					context.WriteString("该角色节点执行记录（事实数据）：" + string(raw) + "\n")
-				}
-			}
-		}
-	}
-	if req.consultation {
-		context.WriteString("本轮调用被 @角色的独立咨询实例，载入该角色 instructions 和运行记录；不是 Main Bot 代答。不执行、不派发、不提交写入草稿。需要改代码时向 Main Bot 建议暂停并返工，等待既有引擎交接控制权。\n")
-	}
-	if req.RunID != "" && !req.consultation {
+	if req.RunID != "" {
 		context.WriteString("你是 Main Bot。你具备当前任务工作区写权限：使用 workbench_workspace_tree/read 查看真实文件，使用 workbench_workspace_write（携带读取获得的 expectedSha256，新文件用 missing）修改文件，使用 workbench_workspace_command 执行命令验证。不要声称你只能读或只能派发；不得在本地控制平面工作目录里写任务文件。工作区不可用时如实说明，不要假装修改成功。\n")
 		context.WriteString("当前任务有一个真实 Chromium（Agent 浏览器），用户在任务面板实时看到并可接管，阶段 Agent 也用同一个浏览器：workbench_browser_navigate 打开网页，workbench_browser_snapshot 读取页面文本和带 ref 的可交互元素，workbench_browser_click/type/press 操作，workbench_browser_screenshot 查看画面，workbench_browser_tabs 管理标签页。用户让你打开或操作网页时直接使用它们，不要声称没有浏览器，也不要用 curl 抓取代替；页面被用户改动时以最新快照为准。\n")
 	}
@@ -341,7 +401,7 @@ func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
 	}
 	add := func(kind, id, name, objectProject string, shared bool) {
 
-		if task != nil && !taskWorkbenchReferenceAllowed(*task, kind, id) {
+		if task != nil && !h.taskReferenceAllowed(*task, kind, id) {
 			return
 		}
 		if kindFilter != "" && kind != kindFilter {
@@ -364,6 +424,9 @@ func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
 	}
 	for _, v := range h.repo.Workflows() {
 		add("sop", v.ID, v.Name, v.ProjectID, v.Shared || v.Generic)
+	}
+	for _, v := range h.repo.Skills() {
+		add("skill", v.ID, v.Name, v.ProjectID, v.Shared)
 	}
 	for _, v := range h.repo.Issues() {
 		add("issue", v.ID, v.Title, v.ProjectID, false)
@@ -1095,6 +1158,20 @@ func workbenchAttachmentOwner(session *AgentToolSession, id string) int64 {
 	return session.UserID
 }
 
+// taskReferenceAllowed extends taskWorkbenchReferenceAllowed to skills: a
+// task discussion may only name skills bound to the task's roles.
+func (h *assistantHandlers) taskReferenceAllowed(r domain.Run, kind, id string) bool {
+	if kind != "skill" {
+		return taskWorkbenchReferenceAllowed(r, kind, id)
+	}
+	for _, n := range r.WorkflowSnapshot.Nodes {
+		if role, ok := h.repo.Agent(n.AgentID); ok && n.AgentID != "" && slices.Contains(role.Skills, id) {
+			return true
+		}
+	}
+	return false
+}
+
 // A task discussion cannot recruit roles or context from unrelated workflows.
 func taskWorkbenchReferenceAllowed(r domain.Run, kind, id string) bool {
 	switch kind {
@@ -1188,7 +1265,7 @@ func describeConversationWorkspace(run domain.Run) string {
 	if !run.WorkspaceCleanedAt.IsZero() {
 		state = "已回收，切回时恢复快照"
 	}
-	return fmt.Sprintf("对话工作区 %s「%s」（环境 %s，仓库 %s，%s）", run.ID, truncateRunes(strings.TrimPrefix(run.Input, "对话改代码："), 60), run.WorkflowSnapshot.SandboxProfileID, strings.Join(repos, "、"), state)
+	return fmt.Sprintf("对话工作区 %s「%s」（「」里是开区时的目标，只用来识别这个工作区，不代表还有待办任务；环境 %s，仓库 %s，%s）", run.ID, truncateRunes(strings.TrimPrefix(run.Input, "对话改代码："), 60), run.WorkflowSnapshot.SandboxProfileID, strings.Join(repos, "、"), state)
 }
 
 // linkMentionedIssue links an ordinary project conversation without a

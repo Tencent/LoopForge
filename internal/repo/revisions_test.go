@@ -44,11 +44,11 @@ func TestAgentRevisionRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	agent := domain.AgentDefinition{ID: "rev-agent", Name: "Rev Agent", Instructions: "v1", ExecutorID: "mock"}
+	agent := domain.AgentDefinition{ID: "rev-agent", Name: "Rev Agent", Prompt: "v1", ExecutorID: "mock"}
 	if err := s.PutAgent(agent); err != nil {
 		t.Fatal(err)
 	}
-	agent.Instructions = "v2"
+	agent.Prompt = "v2"
 	agent.Version = 2
 	if err := s.PutAgent(agent); err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestAgentRevisionRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Instructions != "v1" {
-		t.Fatalf("restore instructions = %q", restored.Instructions)
+	if restored.Prompt != "v1" {
+		t.Fatalf("restore instructions = %q", restored.Prompt)
 	}
 }

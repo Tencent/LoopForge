@@ -61,12 +61,38 @@ for (const [pri, icon] of [['urgent', 'priority-bolt'], ['high', 'priority-high'
   assert.ok(html.includes(`data-icon="${icon}"`), html);
 }
 
-assert.ok(ctx.issueOwnerAvatar({ name: 'example-maintainer(示例用户)' }).includes('>示</span>'));
-assert.ok(ctx.issueOwnerAvatar({ name: 'river' }).includes('>R</span>'));
-assert.ok(ctx.issueOwnerAvatar({ name: '<x>' }).includes('>&lt;</span>'));
+// 责任人头像统一走平台头像组件（真实头像 + 首字回退），不再自绘姓氏。
+ctx.userById = id => (Number(id) === 7 ? { id: 7, loginName: 'example-maintainer', chineseName: '示例用户' } : null);
+ctx.userAvatarHTML = (user, spec = 100) => {
+  const loginName = user && typeof user === 'object' ? user.loginName : String(user ?? '');
+  const initial = ((user && user.chineseName) || loginName || '用')[0] || '访';
+  return `<img class="user-avatar-img" src="/api/auth/photo/${Number(spec) || 100}/${encodeURIComponent(loginName)}.png" alt=""><span class="user-avatar-text">${ctx.escapeHTML(initial)}</span>`;
+};
+const ownerAvatar = ctx.issueOwnerAvatar({ assigneeUserId: 7, name: 'example-maintainer(示例用户)' });
+assert.ok(ownerAvatar.includes('class="issue-assignee-avatar"'), ownerAvatar);
+assert.ok(ownerAvatar.includes('user-avatar-img'), ownerAvatar);
+assert.ok(ownerAvatar.includes('/api/auth/photo/48/example-maintainer.png'), ownerAvatar);
+assert.ok(ownerAvatar.includes('>示</span>'), ownerAvatar);
+assert.ok(ctx.issueOwnerAvatar({ assigneeUserId: 404 }).includes('hui-avatar is-empty'));
 assert.ok(ctx.issueOwnerAvatar({ assigneeId: 'a1', assigneeType: 'agent' }).includes('hui-avatar is-agent'));
 assert.ok(ctx.issueOwnerAvatar({ assigneeId: 'a1', assigneeType: 'agent' }).includes('data-icon="robot"'));
-assert.ok(ctx.issueOwnerAvatar({}).includes('hui-avatar is-empty'));
+// 未指定责任人：只给文字，不画占位头像框。
+assert.strictEqual(ctx.issueOwnerAvatar({}), '');
+
+// 来源标记：区分工蜂 / TAPD / 平台新建，取值与来源筛选器一致。
+ctx.metricsIssueSource = issue => String(issue?.source || issue?.externalRef?.source || '').toLowerCase();
+for (const [issue, label, tone] of [
+  [{ source: 'gongfeng' }, '工蜂', 'gongfeng'],
+  [{ source: 'tapd' }, 'TAPD', 'tapd'],
+  [{ source: 'local' }, '平台新建', 'local'],
+  [{}, '平台新建', 'local'],
+  [{ externalRef: { source: 'tapd' } }, 'TAPD', 'tapd'],
+]) {
+  assert.strictEqual(ctx.issueSourceLabel(issue), label, JSON.stringify(issue));
+  const chip = ctx.issueSourceMarkup(issue);
+  assert.ok(chip.includes(`class="issue-source-chip tone-${tone}"`), chip);
+  assert.ok(chip.includes(`>${label}</span>`), chip);
+}
 
 assert.strictEqual(ctx.issueKeyColumnWidth([{ key: 'AF-36' }]), '76px');
 assert.strictEqual(ctx.issueKeyColumnWidth([{ key: 'AF-1036' }]), '96px');

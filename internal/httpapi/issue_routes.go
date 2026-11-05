@@ -293,6 +293,12 @@ func (h issuesHandlers) issueRequirement(c *gin.Context, issue domain.Issue) {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "issue not found"})
 		return
 	}
+	if conv := snap.Conversation; conv != nil && conv.SessionID != "" {
+		// Project members may open the conversation read-only, so this only
+		// tells whether it still exists.
+		session, ok := h.repo.ProjectAssistantSession(conv.SessionID)
+		conv.Available = ok && session.ProjectID == issue.ProjectID
+	}
 	c.JSON(http.StatusOK, snap)
 }
 

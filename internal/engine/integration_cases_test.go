@@ -31,21 +31,21 @@ func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
 	if _, err := e.integrateOnRunner(ctx, runner, run, run.Repositories[0], false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("integrate cancel = %v", err)
 	}
-	if _, err := e.pushConversationOnRunner(ctx, runner.ID, run, run.Repositories, "token", "name", "mail", "message"); !errors.Is(err, context.Canceled) {
+	if _, err := e.pushConversationOnRunner(ctx, runner.ID, run, run.Repositories, "token", "name", "mail", "message", ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("push cancel = %v", err)
 	}
 	legacy := run
 	legacy.ExecutionContext.RunnerWorkspaceLayout = ""
-	if _, err := e.pushConversationOnRunner(context.Background(), runner.ID, legacy, legacy.Repositories, "token", "", "", "message"); err == nil {
+	if _, err := e.pushConversationOnRunner(context.Background(), runner.ID, legacy, legacy.Repositories, "token", "", "", "message", ""); err == nil {
 		t.Fatal("legacy runner layout pushed")
 	}
-	if _, err := e.pushConversationOnRunner(context.Background(), "missing", run, run.Repositories, "token", "", "", "message"); err == nil {
+	if _, err := e.pushConversationOnRunner(context.Background(), "missing", run, run.Repositories, "token", "", "", "message", ""); err == nil {
 		t.Fatal("missing runner pushed")
 	}
-	if _, err := e.PushConversationWorkspace(context.Background(), "missing", "token", "", "", ""); err == nil {
+	if _, err := e.PushConversationWorkspace(context.Background(), "missing", "token", "", "", "", ""); err == nil {
 		t.Fatal("missing run pushed")
 	}
-	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, "", "", "", ""); err == nil {
+	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, "", "", "", "", ""); err == nil {
 		t.Fatal("missing token pushed")
 	}
 	noRepos := run
@@ -55,7 +55,7 @@ func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
 	if err := st.PutRun(noRepos); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.PushConversationWorkspace(context.Background(), noRepos.ID, "token", "", "", ""); err == nil {
+	if _, err := e.PushConversationWorkspace(context.Background(), noRepos.ID, "token", "", "", "", ""); err == nil {
 		t.Fatal("repository-less run pushed")
 	}
 	if got := truncateCommitMessage(strings.Repeat("界", 2100)); len([]rune(got)) != 2000 {

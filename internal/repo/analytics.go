@@ -57,7 +57,15 @@ type analyticsRunSignals struct {
 }
 
 // Analytics returns a read-only, vendor-neutral operational view across runs.
-func (r *AnalyticsRepo) Analytics(filter domain.AnalyticsFilter) (out domain.AnalyticsSnapshot) {
+func (r *AnalyticsRepo) Analytics(filter domain.AnalyticsFilter) domain.AnalyticsSnapshot {
+	return r.analyticsWithRuns(filter, nil)
+}
+
+// analyticsWithRuns is Analytics with an optional pre-fetched run list. Prefetched
+// runs must cover filter.ProjectIDs without a created_at window; the time window is
+// still applied in Go by the same predicates, so every aggregate is identical to
+// the self-fetching path. Nil keeps the original behavior.
+func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetched []domain.Run) (out domain.AnalyticsSnapshot) {
 	overview := filter.Scope == "overview"
 	now := time.Now().UTC()
 	out = domain.AnalyticsSnapshot{
@@ -102,7 +110,17 @@ func (r *AnalyticsRepo) Analytics(filter domain.AnalyticsFilter) (out domain.Ana
 			func() error { executorList = r.catalog.Executors(); return nil },
 			func() error { workflowList = r.catalog.Workflows(); return nil },
 			func() error { issueList = r.issues.Issues(); return nil },
-			func() error { r, _ := r.runs.RunSummariesFor(filter, ""); runList = r; return nil },
+			func() error {
+				if prefetched != nil {
+					// Runs are priced and given snapshots in place below; copy so a
+					// list shared across several reports is not modified.
+					runList = append([]domain.Run(nil), prefetched...)
+					return nil
+				}
+				r, _ := r.runs.RunSummariesFor(filter, "")
+				runList = r
+				return nil
+			},
 		)
 	}
 
@@ -156,6 +174,10 @@ func (r *AnalyticsRepo) Analytics(filter domain.AnalyticsFilter) (out domain.Ana
 		runList[i] = analyticsPricedRun(runList[i])
 	}
 	platformRuns := runList
+	if err := r.analyticsActivity(filter, issueList, platformRuns, &out); err != nil {
+		out.DataErrors = []string{"会话统计读取失败"}
+		return out
+	}
 	if filter.Origin == "external" {
 		runList = nil
 		platformRuns = nil

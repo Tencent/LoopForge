@@ -208,7 +208,7 @@ func assistantPlatformToolAllowed(exec assistantExecMode, name string) bool {
 	if op.ReadOnly {
 		return true
 	}
-	if exec.Consultation || !exec.AutoWrite {
+	if !exec.AutoWrite {
 		return false
 	}
 	return !exec.ConfirmDangerous || !assistantRiskyToolName(name)
@@ -237,7 +237,9 @@ func agentToolNameAllowed(mode AgentToolMode, kind, tool string) bool {
 	if tool == "" {
 		return false
 	}
-	if mode == AgentToolScheduled && kind != "agentflow" {
+	// Conversations and scheduled tasks see every tool of the project's MCPs;
+	// a write follows the conversation's approval mode at call time.
+	if (mode == AgentToolScheduled || mode == AgentToolAssistant) && kind != "agentflow" {
 		return true
 	}
 	if allowed := agentToolKindAllowlist(mode, kind); len(allowed) > 0 {
@@ -254,7 +256,7 @@ func tapdInnerToolAllowed(mode AgentToolMode, name string) bool {
 	if name == "" || name == "proxy_execute_tool" {
 		return false
 	}
-	if mode == AgentToolScheduled {
+	if mode == AgentToolScheduled || mode == AgentToolAssistant {
 		return true
 	}
 	if !agentToolNameAllowed(mode, "tapd", name) {

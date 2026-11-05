@@ -658,7 +658,7 @@ func TestGenericTemplateAgentsAreNotTheCurrentProjectCatalog(t *testing.T) {
 	}
 	if err := s.PutAgent(domain.AgentDefinition{
 		ID: repo.GenericAgentReview, Name: "SkillHub 独立评审", ProjectID: "alpha",
-		Instructions: "this is the project copy", Version: 3,
+		Prompt: "this is the project copy", Version: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -670,21 +670,18 @@ func TestGenericTemplateAgentsAreNotTheCurrentProjectCatalog(t *testing.T) {
 			review = &listed[index]
 		}
 	}
-	if review == nil || review.ProjectID != "" || review.Name == "SkillHub 独立评审" || review.Instructions == "this is the project copy" {
+	if review == nil || review.ProjectID != "" || review.Name == "SkillHub 独立评审" || review.Prompt == "this is the project copy" {
 		t.Fatalf("editor must load the bundled template role, not the project catalog: %+v", listed)
 	}
 	admin, _ := s.UserByLoginName("example-admin")
-	review.Instructions = "platform-only review brief"
-	if review.TaskPrompt != nil {
-		review.TaskPrompt.Objective = "keep editing the LoopForge role"
-	}
+	review.Prompt = "platform-only review brief"
 	saved := requestJSONAuthed[domain.AgentDefinition](t, h, admin, http.MethodPut,
 		"/api/workflows/"+repo.GenericBackendDeliveryWorkflowID+"/agents", *review, http.StatusOK)
-	if saved.Instructions != "platform-only review brief" || saved.ProjectID != "" {
+	if saved.Prompt != "platform-only review brief" || saved.ProjectID != "" {
 		t.Fatalf("admin role save = %+v", saved)
 	}
 	projectCopy, _ := s.Agent(repo.GenericAgentReview)
-	if projectCopy.Instructions != "this is the project copy" {
+	if projectCopy.Prompt != "this is the project copy" {
 		t.Fatalf("saving the template role overwrote the project catalog: %+v", projectCopy)
 	}
 	if err := s.PutUser(domain.User{LoginName: "alice", ChineseName: "爱丽丝"}); err != nil {

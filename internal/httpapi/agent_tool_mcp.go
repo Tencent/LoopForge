@@ -248,9 +248,6 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 			logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
 			return mcpToolTextResult("草稿参数校验失败，本轮继续；请按以下错误修正后重新提交，不代表工具不可用："+err.Error(), true), nil
 		}
-		if session.ExecMode.Consultation && len(reply.Drafts) > 0 {
-			return mcpToolTextResult("角色咨询只能回答和建议返工，不能提交写入草稿；请向 PM 提出建议。", true), nil
-		}
 		if len(reply.Drafts) == 0 {
 			// This tool ends the model process. Accepting a progress message here
 			// used to kill sibling read calls before a requested SOP was prepared.
@@ -347,7 +344,21 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if !agentToolNameAllowed(session.Mode, kind, tool.UpstreamName) && !(kind == "tapd" && tool.UpstreamName == "proxy_execute_tool") {
 		return "", errAgentToolForbidden
 	}
-	if session.Mode != AgentToolScheduled && clarifyMCPCallWrite(kind, call) {
+	if session.Mode == AgentToolAssistant && mcpCallMayWrite(kind, call) {
+		// A write to an external MCP follows the conversation's approval
+		// mode like a platform write. It has no draft to confirm, so the
+		// confirm mode cannot run it.
+		name := mcpCallName(kind, call)
+		if !session.ExecMode.AutoWrite {
+			return "", fmt.Errorf("%s 会写入外部系统，当前审批模式需要逐项确认，而外部 MCP 写入没有待确认草稿。请让用户把审批模式切到「自动」或「辅助」后再试，或告诉用户要做的改动由其手动完成", name)
+		}
+		if session.ExecMode.ReviewWrites {
+			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
+			if !review.allows() {
+				return "", assistantReviewRefusal(name, review)
+			}
+		}
+	} else if session.Mode != AgentToolScheduled && clarifyMCPCallWrite(kind, call) {
 		name := strings.TrimSpace(call.Tool)
 		if kind == "tapd" {
 			if inner := strings.TrimSpace(fmt.Sprint(assistantMCPCallArguments(call)["tool_name"])); inner != "" {
@@ -397,4 +408,44 @@ func (h *agentToolGateway) assistant() *assistantHandlers {
 
 func (h *agentToolGateway) clarifyMCPUser(issue domain.Issue, user domain.User) domain.User {
 	return (&streamHandlers{deps: h.deps}).clarifyMCPUser(issue, user)
+}
+
+func mcpServerName(h *agentToolGateway, session *AgentToolSession, ref string) string {
+	if item, ok := h.lookupServer(session, ref); ok && strings.TrimSpace(item.Name) != "" {
+		return item.Name
+	}
+	return ref
+}
+
+// mcpCallName is the tool a call runs; for TAPD it is the inner tool.
+func mcpCallName(kind string, call assistantMCPCall) string {
+	if kind == "tapd" {
+		if inner := strings.TrimSpace(fmt.Sprint(assistantMCPCallArguments(call)["tool_name"])); inner != "" && inner != "<nil>" {
+			return inner
+		}
+	}
+	return strings.TrimSpace(call.Tool)
+}
+
+// mcpCallMayWrite treats a call as a write unless its name reads as a read.
+// The approval review is the safety net, so an unknown name such as
+// merge_merge_request is reviewed instead of passing as a read.
+func mcpCallMayWrite(kind string, call assistantMCPCall) bool {
+	name := strings.ToLower(mcpCallName(kind, call))
+	if name == "" || clarifyMCPWriteName(name) {
+		return name != ""
+	}
+	for _, word := range []string{"add", "merge", "upload", "transition", "close", "reopen", "approve", "assign", "set", "remove", "publish", "send", "post", "submit", "comment"} {
+		for _, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' }) {
+			if part == word {
+				return true
+			}
+		}
+	}
+	for _, word := range []string{"get", "list", "search", "query", "count", "lookup", "read", "fetch", "describe", "show", "info", "detail", "tree", "blame", "compare", "schema", "reference", "find", "view"} {
+		if strings.Contains(name, word) {
+			return false
+		}
+	}
+	return true
 }

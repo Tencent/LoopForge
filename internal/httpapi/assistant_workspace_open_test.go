@@ -57,7 +57,6 @@ func TestConversationWorkspaceToolsForAllProjectParticipants(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*AgentToolSession){
 		"no project":    func(s *AgentToolSession) { s.ProjectID = "" },
-		"consultation":  func(s *AgentToolSession) { s.ExecMode.Consultation = true },
 		"no session id": func(s *AgentToolSession) { s.ChatSessionID = "" },
 	} {
 		c := &AgentToolSession{Mode: s.Mode, ProjectID: s.ProjectID, UserID: s.UserID, ChatSessionID: s.ChatSessionID, ChatOwnerID: s.ChatOwnerID}

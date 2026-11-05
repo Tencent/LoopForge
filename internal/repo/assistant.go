@@ -62,7 +62,7 @@ func (r *AssistantRepo) assistantSessionSummaries() *gorm.DB {
 	if r.DB.Dialector.Name() != "sqlite" {
 		summary = "CAST((" + r.assistantParticipantSummarySQL() + ") AS JSON)"
 	}
-	return r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.participantSummaryMessages', " + summary + ") AS payload")
+	return r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.participantSummaryMessages', " + summary + ") AS payload")
 }
 
 // noSummaryProjection is process-wide: production has a single datasource.
@@ -95,7 +95,7 @@ func (r *AssistantRepo) findAssistantSessionSummaries(where string, args ...any)
 	var err error
 	fallback := func() ([]assistantSessionRow, error) {
 		var out []assistantSessionRow
-		err := r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload").Where(where, args...).Find(&out).Error
+		err := r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload").Where(where, args...).Find(&out).Error
 		sortAssistantSessionRows(out)
 		return out, err
 	}
@@ -230,6 +230,41 @@ func (r *AssistantRepo) PutAssistantSession(userID int64, v domain.AssistantSess
 		return scoped.putAssistantSession(userID, v)
 	})
 }
+
+// SetAssistantSessionGeneratedTitle replaces a new session's prompt title
+// with a model summary. A user rename, a fork, or an earlier summary wins.
+func (r *AssistantRepo) SetAssistantSessionGeneratedTitle(userID int64, id, title string) error {
+	title = strings.TrimSpace(title)
+	id = assistantRecordID(id)
+	if userID <= 0 || id == "" {
+		return errors.New("assistant session id is required")
+	}
+	if runes := []rune(title); len(runes) == 0 || len(runes) > 36 {
+		return errors.New("assistant title is invalid")
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row assistantSessionRow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).Take(&row).Error; err != nil {
+			return err
+		}
+		if row.UserID != userID {
+			return errors.New("assistant session belongs to another user")
+		}
+		item := decodeAssistantSession(row)
+		if item.TitleEdited || item.TitleGenerated || item.ParentSessionID != "" {
+			return nil
+		}
+		item.Title = title
+		item.TitleGenerated = true
+		item.UpdatedAt = time.Time{}
+		scoped := *r
+		base := *r.deps
+		base.DB = tx
+		scoped.deps = &base
+		return scoped.putAssistantSession(userID, item)
+	})
+}
+
 func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSession) error {
 	if userID <= 0 {
 		return errors.New("assistant session user is required")
@@ -252,7 +287,17 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		if (old.TitleEdited && !v.TitleEdited) || strings.TrimSpace(v.Title) == "" {
 			v.Title = old.Title
 		}
+		// A background summary is not a user rename. Later saves that still
+		// carry the original prompt must not put that prompt back.
+		if old.TitleGenerated && !v.TitleGenerated && !v.TitleEdited {
+			v.Title = old.Title
+		}
 		v.TitleEdited = old.TitleEdited || v.TitleEdited
+		if v.TitleEdited {
+			v.TitleGenerated = false
+		} else {
+			v.TitleGenerated = old.TitleGenerated || v.TitleGenerated
+		}
 		v.HistoryRevision = old.HistoryRevision
 		v.ParentSessionID = old.ParentSessionID
 		v.RootSessionID = old.RootSessionID
@@ -269,10 +314,23 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 			v.WorkspaceRunID = old.WorkspaceRunID
 		}
 		v.OwnWorkspaceRunIDs = old.OwnWorkspaceRunIDs
+		if v.Source == "" {
+			v.Source = old.Source
+			if v.Source == "" {
+				v.Source = inferredAssistantSessionSource(old)
+			}
+		}
+		if v.TaskID == "" {
+			v.TaskID = old.TaskID
+		}
 		if old.Shared {
 			v.RunID = old.RunID
 			v.ProjectID = old.ProjectID
-			v.Title = old.Title
+			// The first generated title may replace a shared SOP label.
+			// Every other write keeps the title already stored.
+			if !(v.TitleGenerated && !old.TitleGenerated && !old.TitleEdited) {
+				v.Title = old.Title
+			}
 		}
 	} else {
 		v.OwnWorkspaceRunIDs = nil
@@ -283,6 +341,13 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 	if v.UpdatedAt.IsZero() {
 		v.UpdatedAt = now
 	}
+	if v.Source == "" {
+		if v.Shared && v.RunID != "" {
+			v.Source = domain.AssistantSourceSOP
+		} else {
+			v.Source = domain.AssistantSourceChat
+		}
+	}
 	v.UserID = userID
 	deriveAssistantParticipants(&v, v.Messages)
 	return upsert(r.DB, "assistant_sessions", map[string]any{
@@ -291,6 +356,8 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		"project_id": strings.TrimSpace(v.ProjectID),
 		"title":      strings.TrimSpace(v.Title),
 		"model":      strings.TrimSpace(v.Model),
+		"source":     strings.TrimSpace(v.Source),
+		"task_id":    strings.TrimSpace(v.TaskID),
 		"payload":    mustJSON(v),
 		"created_at": timePtr(v.CreatedAt),
 		"updated_at": timePtr(v.UpdatedAt),
@@ -512,6 +579,12 @@ func decodeAssistantSession(row assistantSessionRow) domain.AssistantSession {
 	}
 	if item.Model == "" {
 		item.Model = row.Model
+	}
+	if item.Source == "" {
+		item.Source = row.Source
+	}
+	if item.TaskID == "" {
+		item.TaskID = row.TaskID
 	}
 	if item.CreatedAt.IsZero() && row.Created != nil {
 		item.CreatedAt = row.Created.UTC()

@@ -45,7 +45,7 @@ func TestRunEvalScoresAndAppliesNodePatch(t *testing.T) {
 	if err := store.PutWorkflow(domain.WorkflowDefinition{ID: "wf-eval", Name: "评测SOP", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "修复", Type: "agent", AgentID: "fixer", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutAgent(domain.AgentDefinition{ID: "fixer", Name: "修复者", ProjectID: "platform", Instructions: "修 bug"}); err != nil {
+	if err := store.PutAgent(domain.AgentDefinition{ID: "fixer", Name: "修复者", ProjectID: "platform", Prompt: "修 bug"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.PutRun(domain.Run{

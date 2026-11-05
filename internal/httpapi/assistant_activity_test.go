@@ -37,7 +37,7 @@ func TestAssistantActivityPreservesVisibleStreamWithoutModelPromptOrSecrets(t *t
 	}
 	events := log.forUser(user)
 	raw, _ := json.Marshal(events)
-	if len(events) != 4 || strings.Contains(string(raw), user.CodeBuddyAPIKey) || strings.Contains(string(raw), "private draft") || strings.Contains(string(raw), "final answer") {
+	if len(events) != 5 || events[4].Kind != "text" || events[4].Text != "final answer" || strings.Contains(string(raw), user.CodeBuddyAPIKey) || strings.Contains(string(raw), "private draft") {
 		t.Fatalf("invalid public transcript: %s", raw)
 	}
 	if events[0].Text != "读取项目信息：[redacted]" || events[0].At == nil || !events[2].Failed || events[0].ID == events[3].ID {

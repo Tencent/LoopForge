@@ -111,19 +111,11 @@ func sharedTranscriptPrefix(old []assistantMessage, next []assistantMessage) boo
 	return true
 }
 func assistantRequestApprovalMode(req assistantRequest) string {
-	if req.consultation {
-		return AssistantApprovalConfirm
-	}
 	return normalizeAssistantApprovalMode(req.ApprovalMode)
 }
 
 func assistantSystemPromptForRequest(req assistantRequest, mode string) string {
-
-	if req.consultationRole == nil {
-		return withSpaceDeliverable(req, assistantSystemPromptForMode(mode))
-	}
-	role := req.consultationRole
-	return withSpaceDeliverable(req, "你是 "+role.Name+"，这是该角色的独立只读咨询实例。按以下角色职责回答用户，不冒充 Main Bot，不声称实际 SOP 节点做过记录中不存在的操作。你可以查询平台和运行过程；禁止写入、派发、审批或提交写入草稿。需要修改时提出返工建议，由 Main Bot 和现有 SOP 引擎交接执行。\n角色定义：\n"+role.Instructions+"\n职责说明：\n"+role.Description)
+	return withSpaceDeliverable(req, assistantSystemPromptForMode(mode))
 }
 
 // Only approval receipts may update a shared transcript. Existing messages and

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -220,6 +222,10 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		conv := body.assistantConversation
+		// Origin markers are server-owned: a transcript update cannot relabel a
+		// scheduled conversation as chat (or the other way around).
+		conv.Source = existing.Source
+		conv.TaskID = existing.TaskID
 		// Bindings and existing environment choices are server-owned. This general
 		// transcript endpoint cannot swap a workspace or bypass the sandbox setter.
 		conv.WorkspaceRunID = existing.WorkspaceRunID
@@ -237,7 +243,14 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.Effort = *body.Effort
 		}
 		if existing.ID != "" && conv.Title != "" && conv.Title != existing.Title {
-			conv.TitleEdited = true
+			// A client that still has the first-prompt title must not undo the
+			// summary or mark the session as renamed by the user.
+			if existing.TitleGenerated && assistantPromptTitleMatches(existing, conv.Title) {
+				conv.Title = existing.Title
+				conv.TitleGenerated = true
+			} else {
+				conv.TitleEdited = true
+			}
 		}
 		conv.ID = assistantRecordID(id)
 		conv.Shared = existing.Shared
@@ -328,16 +341,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "请先停止生成后删除会话"})
 			return
 		}
-		var workspaceRunIDs []string
-		if conv, ok := h.repo.AssistantSession(ownerID, id); ok {
-			workspaceRunIDs = ownWorkspaceRunIDs(conv)
-		}
-		if err := deleteAssistantConversation(h.repo, ownerID, id); err != nil {
+		if err := h.deleteConversation(ownerID, id); err != nil {
 			c.JSON(404, gin.H{"error": "对话不存在"})
 			return
-		}
-		for _, runID := range workspaceRunIDs {
-			h.discardConversationWorkspace(runID)
 		}
 		c.JSON(200, gin.H{"ok": true})
 	default:
@@ -358,6 +364,14 @@ func assistantSessionBase() string {
 
 func assistantSessionRoot(userID int64) string {
 	return filepath.Join(assistantSessionBase(), strconv.FormatInt(userID, 10))
+}
+
+// assistantConversationRoot is the CLI root (home and ws) of one personal
+// conversation. It is keyed by owner and session, so a reused session ID can
+// never reach another user's native state.
+func assistantConversationRoot(userID int64, sessionID string) string {
+	sum := sha256.Sum256([]byte(strconv.FormatInt(userID, 10) + "/" + sessionID))
+	return filepath.Join(assistantSessionBase(), "conversations", hex.EncodeToString(sum[:]))
 }
 
 func assistantCLIHome(userID int64) string {
@@ -448,6 +462,7 @@ func deleteAssistantCLISession(userID int64, id string) {
 	if id == "" || id == "." || id == ".." {
 		return
 	}
+	_ = os.RemoveAll(assistantConversationRoot(userID, id))
 	for _, root := range []string{
 		filepath.Join(assistantCLIHome(userID), ".codebuddy", "projects"),
 		filepath.Join(assistantCLIHome(userID), ".codebuddy", "sessions"),
