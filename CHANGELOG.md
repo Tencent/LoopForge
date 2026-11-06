@@ -2,6 +2,13 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## 0.3.3 — Codex and Claude Code roles in Docker sandboxes
+
+- Codex SOP roles in Docker sandboxes run with `--sandbox danger-full-access`: the container is the isolation boundary, and Codex's own bubblewrap sandbox cannot create namespaces inside it, so every shell command, file write and `submit_gate_result` call failed.
+- Claude Code SOP roles run with `--permission-mode bypassPermissions` (as CodeBuddy roles already did) instead of `dontAsk`, which denied every file write, shell command and the gate tool. Docker sandboxes set `IS_SANDBOX=1`, without which Claude Code refuses that mode as root.
+- The installer labels the addresses it prints (public, LAN, this machine) and reads the public IP from the cloud provider's link-local metadata service, so a cloud host behind NAT no longer shows only its private address.
+- The 0.3.0 and 0.3.1 images were republished without Claude Code.
+
 ## 0.3.2 — Claude Code installed on first use
 
 - Published images no longer bundle Claude Code, which is proprietary. The first Main Bot conversation or SOP role that selects it installs the pinned `@anthropic-ai/claude-code@2.1.300` from npm into `$LOOPFORGE_DATA_DIR/cli`; Docker sandboxes from the platform image read it through a read-only mount. That first use waits for the download (about a minute); later runs reuse it. Codex and CodeBuddy remain bundled.

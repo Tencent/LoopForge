@@ -2037,6 +2037,44 @@ func TestIsolateClaudeFlagsUsesHostUserSettings(t *testing.T) {
 	}
 }
 
+func TestCodexInDockerUsesTheContainerAsItsSandbox(t *testing.T) {
+	for driver, want := range map[string]string{"docker": "danger-full-access", "bwrap": "workspace-write", "local": "workspace-write"} {
+		ex := domain.ExecutorDefinition{Kind: "codex", Binary: "codex", Args: []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"}}
+		command, err := PrepareProviderCommand(ex, "probe", driver, InvocationOptions{ResumeSessionID: "thread-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sandboxes := 0
+		for _, arg := range command.Argv {
+			if arg == "--sandbox" {
+				sandboxes++
+			}
+		}
+		if sandboxes != 1 || !containsArgPair(command.Argv, "--sandbox", want) {
+			t.Fatalf("%s: want a single --sandbox %s: %v", driver, want, command.Argv)
+		}
+		if n := len(command.Argv); n < 3 || command.Argv[n-3] != "resume" || command.Argv[n-1] != "probe" {
+			t.Fatalf("%s: resume and prompt must stay last: %v", driver, command.Argv)
+		}
+	}
+}
+
+func TestClaudeNodesCanUseToolsUnattended(t *testing.T) {
+	for _, driver := range []string{"docker", "bwrap", "local"} {
+		ex := domain.ExecutorDefinition{Kind: "claude-code", Binary: "claude", Args: []string{"-p", "--output-format", "stream-json", "--permission-mode", "dontAsk"}}
+		command, err := PrepareProviderCommand(ex, "probe", driver, InvocationOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if containsArg(command.Argv, "dontAsk") || !containsArgPair(command.Argv, "--permission-mode", "bypassPermissions") {
+			t.Fatalf("%s: want bypassPermissions only: %v", driver, command.Argv)
+		}
+		if got, want := command.environment["IS_SANDBOX"], map[bool]string{true: "1"}[driver == "docker"]; got != want {
+			t.Fatalf("%s: IS_SANDBOX=%q, want %q", driver, got, want)
+		}
+	}
+}
+
 func TestExecutorRunnerAppliesDriverSpecificUserConfigPolicy(t *testing.T) {
 	tests := []struct {
 		name   string
