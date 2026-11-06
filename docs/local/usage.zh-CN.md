@@ -176,7 +176,7 @@ pipx install ./local
 cd local/tools/tcmcp
 ```
 
-再按 [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md) 启动。云 API 密钥不会写入生成的 zip 或容器镜像，只留在拉取资源或安装 MCP 客户端的本机。LoopForge 打 `vX.Y.Z` tag 发版时会发布 `ghcr.io/tencent/loopforge-tcmcp:<version>`。
+再按 [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md) 启动。云 API 密钥不会写入生成的 zip 或容器镜像，只留在拉取资源或安装 MCP 客户端的本机。LoopForge Local 以 `local-vX.Y.Z` tag 发版时会发布 `ghcr.io/tencent/loopforge-tcmcp:<version>`。
 
 ## 权限与安全
 
