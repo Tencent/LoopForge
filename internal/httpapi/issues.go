@@ -578,16 +578,24 @@ func promoteClarifiedIssueTodo(issue *domain.Issue) {
 	}
 }
 
+const (
+	clarificationHeading       = "## LoopForge 澄清结论"
+	legacyClarificationHeading = "## AgentFlow 澄清结论"
+)
+
 func appendClarificationDescription(description, summary string) string {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
 		return description
 	}
-	const heading = "## AgentFlow 澄清结论"
-	block := heading + "\n\n" + summary
+	block := clarificationHeading + "\n\n" + summary
 	desc := strings.TrimRight(description, " \t\n")
-	if i := strings.Index(desc, heading); i >= 0 {
-		desc = strings.TrimRight(desc[:i], " \t\n")
+	// Descriptions written before the rename still carry the old heading; replace
+	// that block too so a re-clarified issue keeps a single conclusion.
+	for _, heading := range []string{clarificationHeading, legacyClarificationHeading} {
+		if i := strings.Index(desc, heading); i >= 0 {
+			desc = strings.TrimRight(desc[:i], " \t\n")
+		}
 	}
 	if desc == "" {
 		return block
@@ -602,7 +610,7 @@ func clarificationComment(issue domain.Issue, summary string) string {
 	} else if issue.Source == "tapd" {
 		source = "TAPD 需求"
 	}
-	return fmt.Sprintf("## AgentFlow 澄清结论\n\n%s\n\n---\n来源：%s `%s`，由 AgentFlow 基于当前描述和用户回答生成。", strings.TrimSpace(summary), source, issue.ID)
+	return fmt.Sprintf("%s\n\n%s\n\n---\n来源：%s `%s`，由 LoopForge 基于当前描述和用户回答生成。", clarificationHeading, strings.TrimSpace(summary), source, issue.ID)
 }
 
 func assessClarification(policy domain.ClarificationPolicy, answers map[string]string) domain.ClarificationAssessment {

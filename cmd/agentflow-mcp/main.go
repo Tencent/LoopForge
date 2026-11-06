@@ -21,6 +21,6 @@ func main() {
 
 func init() {
 	if os.Getenv("AGENTFLOW_API_URL") == "" {
-		fmt.Fprintln(os.Stderr, "agentflow-mcp: set AGENTFLOW_API_URL to the running AgentFlow server")
+		fmt.Fprintln(os.Stderr, "agentflow-mcp: set AGENTFLOW_API_URL to the running LoopForge server")
 	}
 }

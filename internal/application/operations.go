@@ -16,9 +16,9 @@ type Operation struct {
 // excluded.
 func PublicOperations() []Operation {
 	return []Operation{
-		{Name: "health_get", Description: "Check AgentFlow service health", Method: "GET", Path: "/api/health", ReadOnly: true},
+		{Name: "health_get", Description: "Check LoopForge service health", Method: "GET", Path: "/api/health", ReadOnly: true},
 		{Name: "capabilities_get", Description: "List public API and MCP operations", Method: "GET", Path: "/api/capabilities", ReadOnly: true},
-		{Name: "openapi_get", Description: "Read the AgentFlow OpenAPI 3.1 contract", Method: "GET", Path: "/api/openapi.yaml", ReadOnly: true},
+		{Name: "openapi_get", Description: "Read the LoopForge OpenAPI 3.1 contract", Method: "GET", Path: "/api/openapi.yaml", ReadOnly: true},
 		{Name: "bootstrap_get", Description: "Get the Studio bootstrap catalog", Method: "GET", Path: "/api/bootstrap", ReadOnly: true},
 		{Name: "business_domains_list", Description: "List managed business domains with the caller's permissions", Method: "GET", Path: "/api/business-domains", ReadOnly: true},
 		{Name: "business_domains_save", Description: "Manage a business domain. Platform admins control lifecycle and managers; domain managers control information and viewers.", Method: "PUT", Path: "/api/business-domains"},
@@ -90,7 +90,7 @@ func PublicOperations() []Operation {
 		{Name: "workflows_clone", Description: "Clone an SOP workflow", Method: "POST", Path: "/api/workflows/{id}/clone"},
 		{Name: "workflow_metrics_get", Description: "Get SOP workflow operating metrics", Method: "GET", Path: "/api/workflow-metrics", ReadOnly: true},
 		{Name: "analytics_get", Description: "Get usage and delivery analytics", Method: "GET", Path: "/api/analytics", ReadOnly: true},
-		{Name: "observability_spec_get", Description: "Get the AgentFlow observability contract", Method: "GET", Path: "/api/observability/spec", ReadOnly: true},
+		{Name: "observability_spec_get", Description: "Get the LoopForge observability contract", Method: "GET", Path: "/api/observability/spec", ReadOnly: true},
 		{Name: "runs_list", Description: "List lightweight Run summaries", Method: "GET", Path: "/api/runs", ReadOnly: true},
 		{Name: "runs_control_get", Description: "Read the run mode (sop or workspace), waiting reason, allowed control actions and delivery acceptance. Node execution progress is separate from test results and user acceptance. Read this before changing a run's state.", Method: "GET", Path: "/api/runs/{id}/control", ReadOnly: true},
 		{Name: "runs_start", Description: "Start an SOP Run", Method: "POST", Path: "/api/runs"},
