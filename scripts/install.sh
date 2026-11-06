@@ -40,6 +40,31 @@ wait_for_docker() {
   return 1
 }
 
+# Prebuild the public SOP image under the runtime cache tag. The tag is
+# agentflow-img- plus the first 16 hex chars of SHA-256(dockerfile + NUL),
+# matching internal/runtime.cachedDockerImageName.
+prebuild_sandbox_image() {
+  local dockerfile='internal/runtime/sandbox.Dockerfile'
+  [[ -f "$dockerfile" ]] || fail "Sandbox Dockerfile not found: $dockerfile"
+  local content sum
+  content="$(cat "$dockerfile")"$'\n'
+  if command -v sha256sum >/dev/null; then
+    sum=$(printf '%s\0' "$content" | sha256sum | awk '{print $1}')
+  else
+    sum=$(printf '%s\0' "$content" | shasum -a 256 | awk '{print $1}')
+  fi
+  local tag="agentflow-img-${sum:0:16}"
+  if docker image inspect "$tag" >/dev/null 2>&1; then
+    printf '  Sandbox image %s is already present.\n' "$tag"
+    return 0
+  fi
+  local dir
+  dir=$(mktemp -d)
+  cp "$dockerfile" "$dir/Dockerfile"
+  docker build -t "$tag" "$dir"
+  rm -rf "$dir"
+}
+
 step 'Checking prerequisites'
 command -v docker >/dev/null || install_docker
 if ! docker info >/dev/null 2>&1; then
@@ -61,6 +86,9 @@ if ! docker compose ps --status running --services 2>/dev/null | grep -qx platfo
     fail "Port $port is already in use. Set AGENTFLOW_HTTP_PORT in .env to a free port and run again."
   fi
 fi
+
+step 'Building the SOP sandbox image'
+prebuild_sandbox_image
 
 step 'Building and starting LoopForge (the first build takes a few minutes)'
 docker compose --profile platform up -d --build --wait
@@ -89,5 +117,5 @@ if [[ "${users//[^0-9]/}" == 0 ]]; then
 else
   printf '  Open it in your browser and sign in.\n'
 fi
-printf '  AI SOPs run in Docker sandboxes; the sandbox image is building in the background (a few minutes on first install).\n'
+printf '  AI SOPs run in Docker sandboxes. The sandbox image is already built.\n'
 printf '  Stop: docker compose --profile platform stop   ·   Logs: docker compose logs -f platform\n'
