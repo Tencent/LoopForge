@@ -33,8 +33,8 @@ CodeBuddy, Codex and Claude Code do the work. LoopForge adds the roles, sandboxe
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.webp">
-    <img src="docs/assets/readme/chat-home.webp" alt="The LoopForge chat workbench: a request is typed into the composer and the @ picker offers roles, skills, requirements and SOPs" width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.svg">
+    <img src="docs/assets/readme/chat-home.svg" alt="The LoopForge chat workbench: a request is typed into the composer and the @ picker offers roles, skills, requirements and SOPs" width="100%">
   </picture>
 </p>
 
@@ -108,20 +108,15 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 
 An **SOP** is the workflow a delivery follows. Agents, scripts and people take part in the same run:
 
-```mermaid
-flowchart LR
-  R([Requirement]) --> A[Clarify]
-  A --> B[Design]
-  B --> C[Implement]
-  C --> D[Independent review]
-  D --> E[Run tests]
-  E --> F{Human acceptance}
-  F -->|Approve| G([Delivery summary])
-  F -->|Rework| C
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/sop-flow-en-dark.svg">
+    <img src="docs/assets/readme/sop-flow-en.svg" alt="The SOP flow: Requirement, then Clarify, Design, Implement, Review (agents), Test (script) and Accept (human gate), then Delivery; acceptance can send work back to Implement" width="100%">
+  </picture>
+</p>
 
 <p align="center">
-  <img src="docs/assets/readme/designer-en.webp" alt="The LoopForge SOP designer showing the built-in bug-fix SOP, with the Independent review step selected and its role, executor and failure policy in the inspector" width="100%">
+  <img src="docs/assets/readme/designer-en.svg" alt="The LoopForge SOP designer showing the built-in bug-fix SOP, with the Independent review step selected and its role, executor and failure policy in the inspector" width="100%">
 </p>
 
 <p align="center"><sub>The SOP designer with the built-in bug-fix SOP. Each step picks a role; failed checks can send the work back to an earlier step.</sub></p>
@@ -137,7 +132,7 @@ flowchart LR
 Each node declares its artifacts and dependencies, and the engine starts each step once its dependencies complete. Start from a built-in SOP, adapt its roles, rules and environment to your project, and publish versions as it evolves.
 
 <p align="center">
-  <img src="docs/assets/readme/run-approval-en.webp" alt="LoopForge run details: the report script has finished and the run waits at the human gate with approve, add-context and send-back actions" width="100%">
+  <img src="docs/assets/readme/run-approval-en.svg" alt="LoopForge run details: the report script has finished and the run waits at the human gate with approve, add-context and send-back actions" width="100%">
 </p>
 
 <p align="center"><sub>A run waiting at a human gate: approve and continue, add context and rerun the step, or send the work back upstream.</sub></p>
@@ -160,7 +155,7 @@ Each node declares its artifacts and dependencies, and the engine starts each st
 | **Team-ready** | Password accounts, projects and members, light/dark/system themes, an OpenAPI-described HTTP and MCP API. Management pages are in English and Chinese; the chat workbench is Chinese for now. |
 
 <p align="center">
-  <img src="docs/assets/readme/sops-en.webp" alt="The Templates page listing the four built-in SOPs: backend delivery, frontend delivery, product proposal and bug fix" width="100%">
+  <img src="docs/assets/readme/sops-en.svg" alt="The Templates page listing the four built-in SOPs: backend delivery, frontend delivery, product proposal and bug fix" width="100%">
 </p>
 
 <p align="center"><sub>Built-in SOPs are read-only blueprints; copy one into your project to run and edit it.</sub></p>

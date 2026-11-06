@@ -33,8 +33,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.webp">
-    <img src="docs/assets/readme/chat-home.webp" alt="LoopForge 对话工作台：在输入框中描述需求，@ 面板列出角色、技能、需求和 SOP" width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.svg">
+    <img src="docs/assets/readme/chat-home.svg" alt="LoopForge 对话工作台：在输入框中描述需求，@ 面板列出角色、技能、需求和 SOP" width="100%">
   </picture>
 </p>
 
@@ -108,20 +108,15 @@ bash scripts/install.sh
 
 **SOP** 就是每次交付遵循的工作流程。Agent、脚本和人在同一次运行中衔接：
 
-```mermaid
-flowchart LR
-  R([需求]) --> A[澄清需求]
-  A --> B[设计方案]
-  B --> C[开发实现]
-  C --> D[独立评审]
-  D --> E[运行测试]
-  E --> F{人工验收}
-  F -->|通过| G([交付总结])
-  F -->|返工| C
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/sop-flow-zh-dark.svg">
+    <img src="docs/assets/readme/sop-flow-zh.svg" alt="SOP 流程：需求 → 澄清需求、设计方案、开发实现、独立评审（Agent）→ 运行测试（脚本）→ 人工验收（人工关口）→ 交付；验收不通过可打回开发实现返工" width="100%">
+  </picture>
+</p>
 
 <p align="center">
-  <img src="docs/assets/readme/designer-zh.webp" alt="LoopForge 流程设计器：内置缺陷修复 SOP，选中「独立评审」节点，右侧检查器显示角色、执行器与失败策略" width="100%">
+  <img src="docs/assets/readme/designer-zh.svg" alt="LoopForge 流程设计器：内置缺陷修复 SOP，选中「独立评审」节点，右侧检查器显示角色、执行器与失败策略" width="100%">
 </p>
 
 <p align="center"><sub>流程设计器中的内置缺陷修复 SOP。每个步骤选择一个角色；检查失败时可以打回到前面的步骤。</sub></p>
@@ -137,7 +132,7 @@ flowchart LR
 每个节点声明自己的产物和依赖，依赖完成后引擎自动推进下一步。从内置 SOP 起步，按项目调整角色、规则和执行环境，随着流程演进发布新版本。
 
 <p align="center">
-  <img src="docs/assets/readme/run-approval-zh.webp" alt="LoopForge 运行详情：报告脚本已完成，流程停在人工关口，提供确认通过、补充信息重跑、退回上游三种操作" width="100%">
+  <img src="docs/assets/readme/run-approval-zh.svg" alt="LoopForge 运行详情：报告脚本已完成，流程停在人工关口，提供确认通过、补充信息重跑、退回上游三种操作" width="100%">
 </p>
 
 <p align="center"><sub>停在人工关口的运行：确认通过继续下游、补充信息重跑当前节点，或退回上游重做。</sub></p>
@@ -160,7 +155,7 @@ flowchart LR
 | **团队协作** | 密码账号、项目与成员、浅色 / 深色 / 跟随系统主题，以及有 OpenAPI 描述的 HTTP 与 MCP API。管理页面支持中英文，对话工作台目前为中文界面。 |
 
 <p align="center">
-  <img src="docs/assets/readme/sops-zh.webp" alt="流程模板页的「内置」标签：通用后端交付、通用前端交付、通用产品方案和通用缺陷修复四条 SOP" width="100%">
+  <img src="docs/assets/readme/sops-zh.svg" alt="流程模板页的「内置」标签：通用后端交付、通用前端交付、通用产品方案和通用缺陷修复四条 SOP" width="100%">
 </p>
 
 <p align="center"><sub>内置 SOP 是平台维护的只读蓝图，复制到本项目后即可运行和修改。</sub></p>
