@@ -26,6 +26,7 @@ class InstallerTests(unittest.TestCase):
         (self.root / 'migrations/seed').mkdir(parents=True)
         for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-observability-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
+        shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         (self.root / 'migrations/seed/001_test.sql').write_text('SELECT 1;\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
@@ -52,7 +53,7 @@ export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
         self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED'):
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED'):
             self.environ.pop(name, None)
 
     def executable(self, name, contents):
@@ -94,10 +95,42 @@ exec "$@"
         self.assertFalse((self.root / '.env').exists())
 
     def test_expired_sudo_after_build_has_actionable_error(self):
-        result = self.install(MOCK_USER='1000', MOCK_EXPIRE_AFTER_BUILD='1', MOCK_SUDO_EXPIRED_FILE=str(self.root / 'sudo-expired'))
+        result = self.install(MOCK_USER='1000', LOOPFORGE_BUILD_FROM_SOURCE='1', MOCK_EXPIRE_AFTER_BUILD='1', MOCK_SUDO_EXPIRED_FILE=str(self.root / 'sudo-expired'))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('sudo -v', result.stderr)
         self.assertNotIn('up -d --no-build', (self.root / 'docker.log').read_text())
+
+    def test_default_install_pulls_pinned_release(self):
+        self.assert_success(self.install())
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertNotIn('build platform', log)
+        self.assertIn("LOOPFORGE_IMAGE=''", (self.root / '.env').read_text())
+
+    def test_source_build_persists_dev_compose_file(self):
+        self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1'))
+        self.assertIn('build platform', (self.root / 'docker.log').read_text())
+        config = (self.root / '.env').read_text()
+        self.assertEqual(config.count('COMPOSE_FILE='), 1)
+        self.assertIn('COMPOSE_FILE=compose.yaml:compose.dev.yaml', config)
+        (self.root / 'docker.log').unlink()
+        self.assert_success(self.install())
+        self.assertIn('build platform', (self.root / 'docker.log').read_text())
+
+    def test_start_switches_source_build_back_to_release(self):
+        self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1'))
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'release'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assert_success(result)
+        self.assertNotIn('COMPOSE_FILE=', (self.root / '.env').read_text())
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertNotIn('build platform', log)
+
+    def test_start_refuses_local_build(self):
+        result = subprocess.run(['bash', 'start.sh', 'build'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('./start.sh dev', result.stderr)
 
     def test_prebuilt_image_skips_build(self):
         self.assert_success(self.install(LOOPFORGE_IMAGE='registry.example.test/loopforge:tested'))
@@ -109,17 +142,17 @@ exec "$@"
     def test_invalid_public_url_fails_before_build(self):
         result = self.install(LOOPFORGE_PUBLIC_URL='javascript:alert(1)')
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn('build platform', (self.root / 'docker.log').read_text())
+        self.assertNotIn('up -d', (self.root / 'docker.log').read_text())
 
     def test_invalid_public_port_fails_before_build(self):
         result = self.install(LOOPFORGE_PUBLIC_URL='https://team.example.test:invalid')
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn('build platform', (self.root / 'docker.log').read_text())
+        self.assertNotIn('up -d', (self.root / 'docker.log').read_text())
 
     def test_public_url_with_unsupported_subpath_fails_before_build(self):
         result = self.install(LOOPFORGE_PUBLIC_URL='https://team.example.test/loopforge')
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn('build platform', (self.root / 'docker.log').read_text())
+        self.assertNotIn('up -d', (self.root / 'docker.log').read_text())
 
     def test_configuration_quotes_paths_without_shell_execution(self):
         data = str(self.root / 'spaces $(touch should-not-exist)')
@@ -175,14 +208,14 @@ exec "$@"
             with self.subTest(url=url):
                 result = self.install(LOOPFORGE_PUBLIC_URL=url)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertNotIn('build platform', (self.root / 'docker.log').read_text())
+                self.assertNotIn('up -d', (self.root / 'docker.log').read_text())
 
     def test_unknown_container_url_fails_before_build(self):
         result = self.install(LOOPFORGE_PUBLIC_URL='', LOOPFORGE_YES='1')
         if address.container_host():
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('LOOPFORGE_PUBLIC_URL', result.stderr)
-            self.assertNotIn('build platform', (self.root / 'docker.log').read_text())
+            self.assertNotIn('up -d', (self.root / 'docker.log').read_text())
 
 
 class AddressTests(unittest.TestCase):
