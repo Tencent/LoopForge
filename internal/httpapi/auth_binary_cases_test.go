@@ -248,14 +248,19 @@ func TestAuthCurrentGatewayAndPreviewBranches(t *testing.T) {
 		t.Fatalf("preview current = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/auth?return_url=https://return.test/path", nil)
-	if got := h.getReturnURL(request); got != "https://return.test/path" {
+	request := httptest.NewRequest(http.MethodGet, "/auth?return_url=https://example.com/path", nil)
+	if got := h.getReturnURL(request); got != "https://example.com/path" {
 		t.Fatalf("return URL = %q", got)
 	}
 	request = httptest.NewRequest(http.MethodGet, "/auth", nil)
-	request.Header.Set("Referer", "https://referer.test/")
-	if got := h.getReturnURL(request); got != "https://referer.test/" {
+	request.Header.Set("Referer", "https://example.com/ref")
+	if got := h.getReturnURL(request); got != "https://example.com/ref" {
 		t.Fatalf("referer URL = %q", got)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/auth?return_url=https://return.test/path", nil)
+	request.Header.Set("Referer", "https://referer.test/")
+	if got := h.getReturnURL(request); got != "http://example.com/" {
+		t.Fatalf("foreign return URL must fall back to site root, got %q", got)
 	}
 }
 
