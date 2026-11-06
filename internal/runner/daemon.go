@@ -1174,13 +1174,16 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	cloneCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	url := strings.TrimSpace(repo.CloneURL)
+	if err := gitwork.ValidateRemoteURL(url, true); err != nil {
+		return fmt.Errorf("git clone: %w", err)
+	}
 	// `-c` auth is scoped to this command, so origin stays the clean URL and
 	// the token never lands in .git/config.
 	args := append(gitwork.AuthConfigArgs(repo.GitToken), "clone", "--quiet")
 	if ref := strings.TrimSpace(repo.Ref); ref != "" {
 		args = append(args, "--branch", ref)
 	}
-	args = append(args, url, ".")
+	args = append(args, "--", url, ".")
 	cmd := exec.CommandContext(cloneCtx, "git", args...)
 	cmd.Dir = workspace
 	cmd.Env = gitwork.Env(repo.GitToken)
