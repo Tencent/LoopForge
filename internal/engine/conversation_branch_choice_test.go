@@ -114,14 +114,14 @@ func TestPushConversationWorkspaceRefusesAnotherCheckedOutBranch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(checkout, "app.txt"), []byte("changed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, "token", "alice", "alice@tencent.com", "msg", ""); err == nil || !strings.Contains(err.Error(), "feature/manual") || !strings.Contains(err.Error(), "feature/recorded") {
+	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, "token", "alice", "alice@example.com", "msg", ""); err == nil || !strings.Contains(err.Error(), "feature/manual") || !strings.Contains(err.Error(), "feature/recorded") {
 		t.Fatalf("push from another branch must be refused: %v", err)
 	}
 	if out, _ := exec.Command("git", "-C", remote, "branch", "--list", "feature/*").CombinedOutput(); strings.TrimSpace(string(out)) != "" {
 		t.Fatalf("nothing may be pushed from a drifted checkout: %s", out)
 	}
 	testGit(t, checkout, "checkout", "feature/recorded")
-	heads, err := e.PushConversationWorkspace(context.Background(), run.ID, "token", "alice", "alice@tencent.com", "msg", "")
+	heads, err := e.PushConversationWorkspace(context.Background(), run.ID, "token", "alice", "alice@example.com", "msg", "")
 	if err != nil || len(heads) != 1 || heads[0].WorkBranch != "feature/recorded" {
 		t.Fatalf("back on the recorded branch the push goes through, read-only repositories stay out: %+v %v", heads, err)
 	}
