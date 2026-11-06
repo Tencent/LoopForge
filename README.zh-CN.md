@@ -27,18 +27,15 @@
   <a href="#文档">文档</a>
 </p>
 
+<p align="center">
+  <a href="docs/assets/readme/loopforge-promo.mp4"><img src="docs/assets/readme/promo-poster-zh.svg" alt="播放 LoopForge 产品视频（80 秒，1080p）" width="100%"></a>
+</p>
+
+<p align="center"><sub>80 秒产品演示（1080p，有声），点击播放。</sub></p>
+
 **LoopForge** 是一个可自主部署的团队工作台，让你和编程 Agent 一起交付软件。在对话里把需求告诉 **Main Bot**：它会按需打开 Docker 沙箱、检出项目仓库、把任务分派给项目角色，最后提交 PR。某种做法被验证有效后，把它存成 **SOP**（由 Agent、脚本和人工关口组成的标准交付流程），下一个需求就按同样的方式交付，评审和验收都在流程里。
 
 干活的是 CodeBuddy、Codex 和 Claude Code；LoopForge 负责它们外面的角色、沙箱、检查点和留痕，全部运行在你自己的环境里，MIT 开源。
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.svg">
-    <img src="docs/assets/readme/chat-home.svg" alt="LoopForge 对话工作台：在输入框中描述需求，@ 面板列出角色、技能、需求和 SOP" width="100%">
-  </picture>
-</p>
-
-<p align="center"><sub>对话首页：描述需求，用 <code>@</code> 引用角色、技能、需求、SOP 或仓库；每个会话可单独选择执行器、模型和确认模式。</sub></p>
 
 ## 两种工作方式
 
@@ -50,6 +47,15 @@
 | 交付物 | PR/MR，或直推合入共享分支（`mode=direct`） | 文档、代码或 PR，以及每个节点的产物和日志 |
 
 两种方式都挂在同一套**需求**上：无论改动来自对话还是 SOP，都能追溯到原始需求，并计入交付与成本统计。
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.svg">
+    <img src="docs/assets/readme/chat-home.svg" alt="LoopForge 对话工作台：在输入框中描述需求，@ 面板列出角色、技能、需求和 SOP" width="100%">
+  </picture>
+</p>
+
+<p align="center"><sub>对话首页：描述需求，用 <code>@</code> 引用角色、技能、需求、SOP 或仓库；每个会话可单独选择执行器、模型和确认模式。</sub></p>
 
 ## 为什么需要 LoopForge
 

@@ -27,18 +27,15 @@
   <a href="#documentation">Docs</a>
 </p>
 
+<p align="center">
+  <a href="docs/assets/readme/loopforge-promo.mp4"><img src="docs/assets/readme/promo-poster-en.svg" alt="Play the LoopForge product video (80 seconds, 1080p)" width="100%"></a>
+</p>
+
+<p align="center"><sub>80-second product tour (1080p, with sound; UI and captions in Chinese). Click to play.</sub></p>
+
 **LoopForge** is a self-hosted workspace where your team ships software with coding agents. Describe what you need to **Main Bot** in chat: it opens a Docker sandbox, checks out your repositories, delegates to project roles, and opens the PR. When a way of working proves itself, save it as an **SOP** (a standard workflow of agents, scripts and human gates) so the next requirement is delivered the same way, with review and approval built in.
 
 CodeBuddy, Codex and Claude Code do the work. LoopForge adds the roles, sandboxes, checkpoints and history around them, all on your own infrastructure under the MIT license.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.svg">
-    <img src="docs/assets/readme/chat-home.svg" alt="The LoopForge chat workbench: a request is typed into the composer and the @ picker offers roles, skills, requirements and SOPs" width="100%">
-  </picture>
-</p>
-
-<p align="center"><sub>The chat home. Type a request, <code>@</code> a role, skill, requirement, SOP or repository, and pick the executor, model and permission mode per conversation.</sub></p>
 
 ## Two ways to work
 
@@ -50,6 +47,15 @@ CodeBuddy, Codex and Claude Code do the work. LoopForge adds the roles, sandboxe
 | Delivers | A PR/MR, or a direct merge into a shared branch (`mode=direct`) | Documents, code or a PR, plus per-node artifacts and logs |
 
 Both paths track the same **requirements**, so every change, whether made in chat or by an SOP, links back to what was asked for and counts toward delivery and cost reports.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.svg">
+    <img src="docs/assets/readme/chat-home.svg" alt="The LoopForge chat workbench: a request is typed into the composer and the @ picker offers roles, skills, requirements and SOPs" width="100%">
+  </picture>
+</p>
+
+<p align="center"><sub>The chat home. Type a request, <code>@</code> a role, skill, requirement, SOP or repository, and pick the executor, model and permission mode per conversation.</sub></p>
 
 ## Why LoopForge
 
