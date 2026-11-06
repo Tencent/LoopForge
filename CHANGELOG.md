@@ -8,7 +8,7 @@
 
 Platform source and Local package releases are separate; merging the platform does not publish a platform image or a new npm version.
 
-## Unreleased — Local packaging
+## 0.2.3 — Local packaging
 
 - Document Node.js / Python requirements and the npm package's Local-only scope.
 - Record the `local/` package directory and exclude host tests, caches, credentials and runtime logs from npm artifacts.
