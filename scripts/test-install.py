@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -187,20 +188,45 @@ exec "$@"
 class AddressTests(unittest.TestCase):
     def test_public_url_and_loopback_proxy(self):
         urls, note = address.access_addresses('8090', {'LOOPFORGE_BIND': '127.0.0.1', 'LOOPFORGE_PUBLIC_URL': 'https://team.example.test/'})
-        self.assertEqual(urls, ['https://team.example.test'])
+        self.assertEqual(urls, [('Access', 'https://team.example.test')])
         self.assertIn('reverse proxy', note)
 
     def test_ipv6_and_local_mode(self):
-        self.assertEqual(address.access_addresses('8090', {'LOOPFORGE_BIND': '2001:db8::1'})[0], ['http://[2001:db8::1]:8090'])
-        urls, note = address.access_addresses('8090', {'LOOPFORGE_BIND': '127.0.0.1'})
-        self.assertEqual(urls, ['http://127.0.0.1:8090'])
+        with patch.object(address, 'container_host', return_value=False):
+            self.assertEqual(address.access_addresses('8090', {'LOOPFORGE_BIND': '2001:db8::1'})[0], [('LAN', 'http://[2001:db8::1]:8090')])
+            urls, note = address.access_addresses('8090', {'LOOPFORGE_BIND': '127.0.0.1'})
+        self.assertEqual(urls, [('This machine', 'http://127.0.0.1:8090')])
         self.assertIn('Local access only', note)
 
-    def test_cloud_address_is_not_claimed_to_be_public(self):
-        with patch.object(address, 'container_host', return_value=False), patch.object(address.socket, 'socket', side_effect=OSError), patch.object(address.socket, 'gethostbyname_ex', return_value=('host', [], ['127.0.0.1', '192.168.1.2'])):
+    def interfaces(self, *hosts):
+        return patch.object(address.socket, 'gethostbyname_ex', return_value=('host', [], ['127.0.0.1', *hosts]))
+
+    def test_private_address_is_labelled_lan_without_a_detected_public_ip(self):
+        with patch.object(address, 'container_host', return_value=False), patch.object(address.socket, 'socket', side_effect=OSError), self.interfaces('10.0.0.126'):
             urls, note = address.access_addresses('8090', {})
-        self.assertEqual(urls, ['http://192.168.1.2:8090'])
-        self.assertIn('NAT', note)
+        self.assertEqual(urls, [('LAN', 'http://10.0.0.126:8090'), ('This machine', 'http://localhost:8090')])
+        self.assertIn('No public IP detected', note)
+
+    def test_detected_public_ip_comes_first(self):
+        with patch.object(address, 'container_host', return_value=False), patch.object(address.socket, 'socket', side_effect=OSError), self.interfaces('10.0.0.126'):
+            urls, note = address.access_addresses('8090', {}, public_ip='43.160.231.118')
+        self.assertEqual(urls, [('Public', 'http://43.160.231.118:8090'), ('LAN', 'http://10.0.0.126:8090'), ('This machine', 'http://localhost:8090')])
+        self.assertIn('security group', note)
+
+    def test_metadata_answers_must_be_global_ipv4(self):
+        self.assertEqual(address.global_ipv4(' 43.160.231.118\n'), '43.160.231.118')
+        for answer in ('10.0.0.126', '<html>404</html>', '', '2001:4860::1'):
+            self.assertEqual(address.global_ipv4(answer), '')
+
+    def test_public_ip_detection_is_bounded(self):
+        def hang(url, headers):
+            threading.Event().wait(5)
+        with patch.object(address, 'metadata_public_ipv4', side_effect=hang):
+            started = time.monotonic()
+            self.assertEqual(address.detect_public_ipv4(timeout=0.2), '')
+        self.assertLess(time.monotonic() - started, 1)
+        with patch.object(address, 'metadata_public_ipv4', side_effect=lambda url, headers: '43.160.231.118' if '169.254.0.23' in url else ''):
+            self.assertEqual(address.detect_public_ipv4(), '43.160.231.118')
 
     def test_container_does_not_publish_its_bridge_address(self):
         with patch.object(address, 'container_host', return_value=True):
