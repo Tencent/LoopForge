@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 COPY --from=chatbot /src/web/native-chat/ web/native-chat/
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build bash scripts/build-binaries.sh /out
-FROM node:22-bookworm-slim
+FROM node:22-bookworm
 RUN --mount=type=cache,target=/root/.npm apt-get update && apt-get install -y --no-install-recommends ca-certificates git bash curl python3 ripgrep \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300 @tencent-ai/codebuddy-code@2.167.0

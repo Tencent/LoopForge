@@ -30,6 +30,8 @@ type githubGrant struct {
 	busy          bool
 }
 
+const defaultGitHubClientID = "Ov23liPWCuv7rBK2X6H0"
+
 type githubHandlers struct {
 	*deps
 	client *http.Client
@@ -79,7 +81,7 @@ func (h *githubHandlers) clientID() (string, error) {
 	if clientID := strings.TrimSpace(os.Getenv("AGENTFLOW_GITHUB_CLIENT_ID")); clientID != "" {
 		return clientID, nil
 	}
-	return h.repo.UsersRepo.GitHubClientID()
+	return h.repo.UsersRepo.GitHubClientID(defaultGitHubClientID)
 }
 
 func (h *githubHandlers) configure(c *gin.Context) {

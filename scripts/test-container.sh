@@ -57,7 +57,7 @@ LOOPFORGE_FRESH_INSTALL=1 npx --prefix e2e playwright test --config e2e/public/p
 "${COMPOSE[@]}" exec -T platform test -s /app/LICENSE
 "${COMPOSE[@]}" exec -T platform test -s /app/THIRD_PARTY_NOTICES.md
 "${COMPOSE[@]}" exec -T platform test -s /app/third_party/go/THIRD_PARTY_NOTICES.txt
-"${COMPOSE[@]}" exec -T platform sh -c 'codebuddy --version && codex --version && claude --version'
+bash scripts/test-runtime-image.sh "$("${COMPOSE[@]}" images -q platform)"
 for task_os in linux darwin; do
   for task_arch in amd64 arm64; do
     "${COMPOSE[@]}" exec -T platform test -x "/app/bin/agentflow-runner-$task_os-$task_arch"

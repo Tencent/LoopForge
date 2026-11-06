@@ -58,6 +58,33 @@ func githubTestResponse(body string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}
 }
 
+func TestGitHubDefaultApplicationAndExplicitOverrides(t *testing.T) {
+	handler, userID := githubTestHandler(t)
+	t.Setenv("AGENTFLOW_GITHUB_CLIENT_ID", "")
+	clientID, err := handler.clientID()
+	if err != nil || clientID != defaultGitHubClientID {
+		t.Fatalf("fresh installation: %q %v", clientID, err)
+	}
+	current, recorder := githubTestContext(userID, http.MethodGet, "/api/auth/github", "")
+	handler.status(current)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"enabled":true`) || strings.Contains(recorder.Body.String(), "clientId") {
+		t.Fatalf("default capability: %d %s", recorder.Code, recorder.Body)
+	}
+	for _, configured := range []string{"Iv1.custom-application", ""} {
+		if err := handler.repo.UsersRepo.SetGitHubClientID(configured); err != nil {
+			t.Fatal(err)
+		}
+		clientID, err := handler.clientID()
+		if err != nil || clientID != configured {
+			t.Fatalf("explicit configuration %q: %q %v", configured, clientID, err)
+		}
+	}
+	t.Setenv("AGENTFLOW_GITHUB_CLIENT_ID", "environment-client")
+	if clientID, err := handler.clientID(); err != nil || clientID != "environment-client" {
+		t.Fatalf("environment override: %q %v", clientID, err)
+	}
+}
+
 func TestGitHubApplicationConfiguration(t *testing.T) {
 	handler, userID := githubTestHandler(t)
 	t.Setenv("AGENTFLOW_GITHUB_CLIENT_ID", "")

@@ -2326,12 +2326,6 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .github-connect-status:empty{display:none}
 .github-connect-status .button{margin:8px 6px 0 0}
 .github-device-code{display:block;font:600 26px/1.8 monospace;letter-spacing:3px;color:var(--cr-text)}
-.github-admin{margin-top:16px;border-top:1px solid var(--cr-line);padding-top:14px;font-size:12px;line-height:1.8}
-.github-admin summary{cursor:pointer;color:var(--cr-text)}
-.github-admin ol{padding-left:20px;margin:12px 0}
-.github-admin .credential-field{margin:12px 0}
-.github-admin a{color:var(--cr-accent)}
-.github-admin [data-github-config-status]{color:var(--cr-muted);overflow-wrap:anywhere}
 .github-private-note{font-size:12px;color:var(--cr-muted)}
 .credential-oauth small{color:var(--cr-muted);font-size:11.5px}
 .credential-note{display:flex;gap:8px;padding:9px 11px;border:1px solid var(--cr-line);border-radius:8px;background:var(--cr-canvas);color:var(--cr-muted);font-size:12px;line-height:1.6}

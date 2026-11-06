@@ -9,9 +9,12 @@ type authIntegrationRow struct {
 
 func (authIntegrationRow) TableName() string { return "auth_integrations" }
 
-func (r *UsersRepo) GitHubClientID() (string, error) {
+func (r *UsersRepo) GitHubClientID(fallback string) (string, error) {
 	var config authIntegrationRow
 	result := r.DB.Where("provider = ?", "github").Limit(1).Find(&config)
+	if result.Error == nil && result.RowsAffected == 0 {
+		return fallback, nil
+	}
 	return config.ClientID, result.Error
 }
 

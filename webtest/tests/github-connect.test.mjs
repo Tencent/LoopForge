@@ -58,11 +58,10 @@ test('GitHub repository picker loads pages, filters names, and fills the actual 
   assert.equal(host.querySelector('[data-github-more]'), null);
 });
 
-test('GitHub setup reports missing administrator configuration and preserves the manual entry', async (t) => {
+test('GitHub setup keeps deployment configuration out of personal authorization', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get('/api/auth/github', { enabled: false, canConfigure: true });
-  app.router.put('/api/auth/github/config', { enabled: true, canConfigure: true, clientId: 'configured-client' });
+  app.router.get('/api/auth/github', { enabled: true, canConfigure: true, clientId: 'configured-client' });
   app.evaluate(`
     state.currentUser={id:1,loginName:'owner'};
     const host=document.createElement('div');host.id='github-error-test';host.innerHTML=githubConnectHTML();document.body.append(host);
@@ -70,16 +69,12 @@ test('GitHub setup reports missing administrator configuration and preserves the
   const host = app.document.querySelector('#github-error-test');
   await app.evaluate('hydrateGitHubConnections(document)');
   await settle(5);
-  assert.match(host.textContent, /管理员设置/);
-  assert.equal(host.querySelector('[data-github-start]').disabled, true);
-  assert.equal(host.querySelector('[data-github-start]').hidden, true);
-  assert.equal(app.router.calls.some(call=>call.path==='/api/auth/github/device'), false);
-  host.querySelector('[data-github-client]').value='configured-client';
-  app.router.get('/api/auth/github', { enabled: true, canConfigure: true, clientId: 'configured-client' });
-  host.querySelector('[data-github-save]').click();
-  await settle(6);
+  assert.doesNotMatch(host.textContent, /管理员|Client ID|configured-client/);
+  assert.equal(host.querySelector('[data-github-client]'), null);
   assert.equal(host.querySelector('[data-github-start]').disabled, false);
-  assert.deepEqual(app.router.calls.find(call=>call.path==='/api/auth/github/config').body, {clientId:'configured-client'});
+  assert.equal(host.querySelector('[data-github-start]').hidden, false);
+  assert.equal(app.router.calls.some(call=>call.path==='/api/auth/github/device'), false);
+  assert.equal(app.router.calls.some(call=>call.path==='/api/auth/github/config'), false);
 });
 
 test('GitHub settings has a single row and separates authorization from manual secrets', async (t) => {
@@ -90,7 +85,8 @@ test('GitHub settings has a single row and separates authorization from manual s
   assert.equal(app.document.querySelector('#personalSettingsContent > .personal-settings-card'),null);
   const wizard=app.document.querySelector('#credentialWizard');
   assert.equal(wizard.querySelector('input[name="secret"]'),null);
-  assert.match(wizard.textContent,/联系平台管理员/);
+  assert.match(wizard.textContent,/已停用/);
+  assert.equal(wizard.querySelector('[data-github-start]').hidden,true);
   wizard.querySelector('[data-github-method="manual"]').click();
   assert.ok(wizard.querySelector('input[name="secret"]'));
   assert.equal(wizard.querySelector('[data-github-connect]'),null);
