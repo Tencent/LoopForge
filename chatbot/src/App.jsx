@@ -1684,10 +1684,10 @@ export default function App() {
                 <div className="composer-context">
                   <span
                     className="context-pill host-status"
-                    title="对话在 AgentFlow 云端运行"
+                    title="对话在 LoopForge 云端运行"
                   >
                     <HarnessIcon name="server" size={13} interactive={false} />
-                    <span>AgentFlow 云端</span>
+                    <span>LoopForge 云端</span>
                     <i
                       className={`connection-dot ${chat.ready ? "online" : ""}`}
                     />

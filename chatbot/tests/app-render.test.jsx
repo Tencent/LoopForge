@@ -70,6 +70,15 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
+  test("labels the conversation host as LoopForge cloud in text and hover hint", () => {
+    const view = render(<App />);
+    const host = view.container.querySelector(".composer-context .host-status");
+    expect(host).toHaveTextContent("LoopForge 云端");
+    expect(host).toHaveAttribute("title", "对话在 LoopForge 云端运行");
+    expect(view.container.querySelector(".composer-context")).not.toHaveTextContent("AgentFlow");
+    view.unmount();
+  });
+
   test("hides environments by default and remembers each user's advanced preference", async () => {
     const previous = { ...chat };
     const selectSandbox = vi.fn();

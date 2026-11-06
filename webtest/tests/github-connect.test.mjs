@@ -29,6 +29,69 @@ test('GitHub connection displays a PIN, honors slow polling, and stores the conn
   assert.deepEqual(call.body, { flowId: 'opaque-flow' });
 });
 
+async function openDeviceCode(t, { secure, execResult = true }) {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/auth/github', { enabled: true });
+  app.router.post('/api/auth/github/device', { flowId: 'opaque-flow', userCode: 'ABCD-EFGH', expiresIn: 900, interval: 5 });
+  Object.defineProperty(app.window, 'isSecureContext', { configurable: true, value: secure });
+  const clipboardWrites = [], execCalls = [];
+  Object.defineProperty(app.window.navigator, 'clipboard', { configurable: true, value: { writeText: async (value) => { clipboardWrites.push(value); } } });
+  app.document.execCommand = (command) => {
+    const active = app.document.activeElement;
+    execCalls.push({ command, value: active?.value, selected: active?.value?.slice(active.selectionStart, active.selectionEnd), inStatus: !!active?.closest?.('[data-github-status]') });
+    return execResult;
+  };
+  app.evaluate(`
+    state.currentUser={id:1,loginName:'owner'};
+    const host=document.createElement('div');host.id='github-copy-test';host.innerHTML=githubConnectHTML();document.body.append(host);
+    window.setTimeout=()=>0;
+  `);
+  const host = app.document.querySelector('#github-copy-test');
+  await app.evaluate('hydrateGitHubConnections(document)');
+  host.querySelector('[data-github-start]').click();
+  await settle(5);
+  const copy = [...host.querySelectorAll('button')].find((button) => button.textContent === '复制授权码');
+  const link = host.querySelector('a[href="https://github.com/login/device"]');
+  link.addEventListener('click', (event) => event.preventDefault());
+  return { app, host, copy, link, clipboardWrites, execCalls };
+}
+
+test('GitHub device code copies over plain HTTP where the Clipboard API is unavailable', async (t) => {
+  const { app, host, copy, link, clipboardWrites, execCalls } = await openDeviceCode(t, { secure: false });
+  copy.click();
+  await settle(3);
+  assert.equal(copy.textContent, '已复制');
+  assert.deepEqual(execCalls, [{ command: 'copy', value: 'ABCD-EFGH', selected: 'ABCD-EFGH', inStatus: true }]);
+  assert.deepEqual(clipboardWrites, []);
+  assert.equal(host.querySelector('textarea'), null);
+  assert.equal(app.document.activeElement, copy);
+  copy.textContent = '复制授权码';
+  link.click();
+  await settle(3);
+  assert.equal(execCalls.length, 2);
+  assert.equal(execCalls[1].value, 'ABCD-EFGH');
+  assert.equal(copy.textContent, '已复制');
+});
+
+test('GitHub device code is selected for manual copy when the browser refuses to copy', async (t) => {
+  const { app, copy, execCalls } = await openDeviceCode(t, { secure: false, execResult: false });
+  copy.click();
+  await settle(3);
+  assert.equal(execCalls.length, 1);
+  assert.match(copy.textContent, /已选中/);
+  assert.equal(app.window.getSelection().toString(), 'ABCD-EFGH');
+});
+
+test('GitHub device code uses the Clipboard API in secure contexts', async (t) => {
+  const { copy, clipboardWrites, execCalls } = await openDeviceCode(t, { secure: true });
+  copy.click();
+  await settle(3);
+  assert.equal(copy.textContent, '已复制');
+  assert.deepEqual(clipboardWrites, ['ABCD-EFGH']);
+  assert.deepEqual(execCalls, []);
+});
+
 test('GitHub repository picker loads pages, filters names, and fills the actual default branch', async (t) => {
   const app = await loadApp();
   t.after(app.close);

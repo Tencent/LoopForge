@@ -23,7 +23,7 @@ function accessMcpClientSpec(client,base,token){
 }
 function accessMcpAgentPrompt(spec,base,token){
   if(!token||token==='<YOUR_PERSONAL_TOKEN>')return '';
-  return `按照这个流程安装、初始化并验证好 AgentFlow MCP：\n\n1. 使用 curl 下载 安装流程文件, 禁止使用 fetch：${base}/mcp-setup.txt\n2. 两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
+  return `按照这个流程安装、初始化并验证好 LoopForge MCP：\n\n1. 使用 curl 下载 安装流程文件, 禁止使用 fetch：${base}/mcp-setup.txt\n2. 两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
 }
 function accessAgentSetup(prompt){
   const attr=prompt?`data-copy-agent-prompt="${encodeURIComponent(prompt)}"`:'data-create-token-first';
@@ -79,7 +79,7 @@ function renderAccessGuide(){
   const body=$('#accessBody'),base=getPublicBaseURL(),token=state.revealedToken||'<YOUR_PERSONAL_TOKEN>';
   const mainCode=`export AGENTFLOW_URL=${base}\nexport AGENTFLOW_TOKEN='${token}'\n\ncurl -sS -H \"Authorization: Bearer $AGENTFLOW_TOKEN\" \\\n  \"$AGENTFLOW_URL/api/issues\"`;
   const checkCode=`curl -sS -H \"Authorization: Bearer $AGENTFLOW_TOKEN\" \\\n  \"$AGENTFLOW_URL/api/health\"`;
-  body.innerHTML=`<div class=\"access-grid\"><div class=\"access-card\"><div class=\"access-card-title\"><i>API</i>通过 REST API 调用 AgentFlow</div><div class=\"access-step\"><span>1</span><b>设置地址和个人 Token</b></div>${accessCode('Shell',mainCode)}<div class=\"access-step\"><span>2</span><b>验证连通</b><small>返回 JSON 即接入成功</small></div>${accessCode('连通性自检',checkCode)}<div class=\"access-note\"><b>Token 不要提交到代码仓库。</b>建议通过 CI Secret 或环境变量保存。</div></div><div class=\"access-card\"><div class=\"access-card-title\"><i>↗</i>接口契约</div><div class=\"access-note\" style=\"margin-top:0\">REST API 与 MCP 使用同一个个人 Token。完整请求结构以 OpenAPI 契约为准。</div><a class=\"button ghost small\" href=\"/api/openapi.yaml\" target=\"_blank\" rel=\"noopener\">打开 OpenAPI 契约 →</a></div></div>`;
+  body.innerHTML=`<div class=\"access-grid\"><div class=\"access-card\"><div class=\"access-card-title\"><i>API</i>通过 REST API 调用 LoopForge</div><div class=\"access-step\"><span>1</span><b>设置地址和个人 Token</b></div>${accessCode('Shell',mainCode)}<div class=\"access-step\"><span>2</span><b>验证连通</b><small>返回 JSON 即接入成功</small></div>${accessCode('连通性自检',checkCode)}<div class=\"access-note\"><b>Token 不要提交到代码仓库。</b>建议通过 CI Secret 或环境变量保存。</div></div><div class=\"access-card\"><div class=\"access-card-title\"><i>↗</i>接口契约</div><div class=\"access-note\" style=\"margin-top:0\">REST API 与 MCP 使用同一个个人 Token。完整请求结构以 OpenAPI 契约为准。</div><a class=\"button ghost small\" href=\"/api/openapi.yaml\" target=\"_blank\" rel=\"noopener\">打开 OpenAPI 契约 →</a></div></div>`;
   body.querySelectorAll('[data-copy-access]').forEach(b=>b.onclick=()=>copyText(decodeURIComponent(b.dataset.copyAccess),'配置已复制'));
 }
 // 最小接入配置：引导配好 CodeBuddy API Key 与工蜂 Git Token，配好即可运行。
