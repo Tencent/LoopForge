@@ -125,7 +125,7 @@ jobs:
           \`\`\`bash
           git clone --branch ${TAG} https://github.com/${GITHUB_REPOSITORY}.git
           cd ${GITHUB_REPOSITORY#*/}
-          LOOPFORGE_PUBLIC_URL=https://loopforge.example.com ./start.sh
+          ./start.sh
           \`\`\`
 
           Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).

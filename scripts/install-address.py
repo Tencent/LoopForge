@@ -39,7 +39,7 @@ def access_addresses(port, environ=os.environ):
         host = f'[{bind}]' if ':' in bind else bind
         return [f'http://{host}:{port}'], 'Local access only. Set LOOPFORGE_BIND=0.0.0.0 and LOOPFORGE_PUBLIC_URL in .env for team access.'
     if container_host():
-        return [], 'Installation is inside a container. Its IP/port are not the host access address. Set LOOPFORGE_PUBLIC_URL to the host IP/domain and published port.'
+        return [], 'Installation is inside a container; open the host IP and published port.'
     if bind not in ('0.0.0.0', '::', '[::]'):
         hosts = [bind.strip('[]')]
     else:
@@ -56,25 +56,12 @@ def access_addresses(port, environ=os.environ):
             pass
         hosts = list(dict.fromkeys(host for host in hosts if not ipaddress.ip_address(host).is_loopback and not ipaddress.ip_address(host).is_unspecified and not ipaddress.ip_address(host).is_link_local))
     addresses = [f'http://[{host}]:{port}' if ':' in host else f'http://{host}:{port}' for host in hosts]
-    return addresses, 'Cloud NAT public addresses cannot be inferred reliably. Set LOOPFORGE_PUBLIC_URL to your public IP/domain and allow the service port in the security group/firewall.'
+    return addresses, 'On cloud hosts behind NAT, open the public IP instead and allow the port in the security group/firewall.'
 
 
 def prepare_address(port, environ=os.environ):
-    addresses, note = access_addresses(port, environ)
+    access_addresses(port, environ)
     public = environ.get('LOOPFORGE_PUBLIC_URL', '').rstrip('/')
-    local = environ.get('LOOPFORGE_BIND') in ('127.0.0.1', 'localhost', '::1')
-    if not public and not local:
-        if sys.stdin.isatty() and environ.get('LOOPFORGE_YES') != '1':
-            suggestion = addresses[0] if addresses else ''
-            print('\nTeam access: use the IP/domain and port that teammates actually visit.')
-            print('For cloud NAT, use the public IP/domain from your cloud console. For containers, use the host published port.')
-            public = input(f'Team URL [{suggestion}]: ').strip() or suggestion
-        elif addresses:
-            # The first address is the one carrying the default route.
-            public = addresses[0]
-        if not public:
-            raise ValueError('No host access URL can be inferred safely. Set LOOPFORGE_PUBLIC_URL=http://SERVER_IP:PUBLISHED_PORT and rerun; no images have been built. '+note)
-        access_addresses(port, dict(environ, LOOPFORGE_PUBLIC_URL=public))
     if public:
         config = Path('.env')
         lines = config.read_text().splitlines()
@@ -99,5 +86,5 @@ if __name__ == '__main__':
     for address in addresses:
         print(f'  {"Access" if os.environ.get("LOOPFORGE_PUBLIC_URL") else "Server address (may be LAN-only)"}: {address}')
     if not addresses:
-        print('  Set LOOPFORGE_PUBLIC_URL in .env to your reachable server IP/domain.')
+        print(f'  Listening on {os.environ.get("LOOPFORGE_BIND", "0.0.0.0")}:{sys.argv[1]}; open http://SERVER_IP:{sys.argv[1]}.')
     print(f'  {note}')
