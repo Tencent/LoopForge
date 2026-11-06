@@ -69,6 +69,11 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		if push && !repo.RequireExistingWorkBranch && !gitwork.HasWork(repoCtx, dir, repo.Ref) {
 			continue
 		}
+		if push {
+			if err := gitwork.RequireOnWorkBranch(repoCtx, dir, repo.WorkBranch); err != nil {
+				return heads, fmt.Errorf("%s: %w", repo.Name, err)
+			}
+		}
 		var head string
 		var err error
 		if repo.RequireExistingWorkBranch {

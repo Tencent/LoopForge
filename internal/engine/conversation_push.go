@@ -65,6 +65,9 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 		if !gitwork.HasWork(ctx, dir, repositoryBaseBranch(rc)) {
 			continue
 		}
+		if err := gitwork.RequireOnWorkBranch(ctx, dir, rc.WorkBranch); err != nil {
+			return heads, fmt.Errorf("%s: %w", rc.Name, err)
+		}
 		if err := applyWorkspaceGitAuth(ctx, dir); err != nil {
 			return heads, err
 		}

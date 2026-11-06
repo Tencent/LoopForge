@@ -192,7 +192,6 @@ function NodeConversation({ run, node, definition, onPreview }) {
     }),
     { live: ["running", "queued"].includes(node.status) },
   );
-  const task = definition?.taskPrompt || definition?.prompt || "";
   const sourceIDs = new Set(
     (run.workflowSnapshot?.edges || [])
       .filter((edge) => edge.target === node.nodeId)
@@ -203,9 +202,7 @@ function NodeConversation({ run, node, definition, onPreview }) {
       (source) => sourceIDs.has(source.id) && run.nodes?.[source.id]?.output,
     )
     .map((source) => ({ ...source, output: run.nodes[source.id].output }));
-  const opening = [task, run.input !== task ? run.input : ""]
-    .filter(Boolean)
-    .join("\n\n");
+  const opening = run.input || "";
   return (
     <div className="node-conversation">
       {opening || handoffs.length ? (
