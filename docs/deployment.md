@@ -22,7 +22,8 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ## Container installation
 
 ```bash
-./start.sh             # install or start in the background (runs scripts/install.sh)
+bash scripts/install.sh  # install or start in the background
+./start.sh             # the same installer, plus the management commands below
 ./start.sh logs        # follow platform logs
 ./start.sh stop        # stop; ./start.sh down removes containers but keeps data volumes
 ./start.sh restart     # restart the platform container
