@@ -30,6 +30,7 @@ func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	if len(in.Compiled.Hooks) > 0 && !hasArg(argv, "--dangerously-bypass-hook-trust") {
 		argv = append(argv, "--dangerously-bypass-hook-trust")
 	}
+	argv = codexUnattendedArgs(argv)
 	if in.Driver == "local" {
 		for _, flag := range []string{"--ignore-user-config", "--ignore-rules"} {
 			if !hasArg(argv, flag) {
@@ -42,6 +43,30 @@ func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 		argv = append(argv, "resume", sessionID)
 	}
 	return CommandSpec{Argv: append(argv, positionalPrompt(in)), Provider: "codex", CredentialBindings: []CredentialBinding{BindCodex, BindGit, BindMCP}, PrivateHome: true}, nil
+}
+
+// codexUnattendedArgs runs Codex without its own sandbox or approvals on
+// every driver, aligned with CodeBuddy's -y and Claude Code's
+// bypassPermissions: nobody can answer an approval in exec mode (the gate MCP
+// call itself was rejected), and its Linux sandbox (bwrap / user namespaces)
+// cannot start in an unprivileged container. Isolation is the platform
+// sandbox profile's job.
+func codexUnattendedArgs(argv []string) []string {
+	const bypass = "--dangerously-bypass-approvals-and-sandbox"
+	out := make([]string, 0, len(argv)+1)
+	for i := 0; i < len(argv); i++ {
+		switch arg := argv[i]; {
+		case arg == "--sandbox" || arg == "-s" || arg == "--ask-for-approval" || arg == "-a":
+			i++ // drop the flag and its value
+		case strings.HasPrefix(arg, "--sandbox=") || strings.HasPrefix(arg, "--ask-for-approval=") || arg == "--full-auto":
+		default:
+			out = append(out, arg)
+		}
+	}
+	if !hasArg(out, bypass) && !hasArg(out, "--yolo") {
+		out = append(out, bypass)
+	}
+	return out
 }
 
 func dropCodexResumeArgs(argv []string) []string {

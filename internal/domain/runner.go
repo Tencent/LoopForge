@@ -231,9 +231,15 @@ func (r Runner) SupportsProvider(provider string) bool {
 }
 
 // RuntimeAuthMode returns the configured credential source for a provider.
-// CodeBuddy has no reusable local-login flow, so its default is the
-// responsible user's personal credential; other CLIs default to local login.
+// Platform runners (no owner: the builtin cloud pool) always use the
+// responsible user's personal credential, matching in-process cloud
+// execution: nobody logs the CLIs in on that host and nobody can switch it.
+// On a user's own machine CodeBuddy has no reusable local-login flow, so its
+// default is personal; other CLIs default to local login.
 func (r Runner) RuntimeAuthMode(provider string) string {
+	if r.OwnerUserID == 0 {
+		return RuntimeAuthPersonal
+	}
 	provider = strings.TrimSpace(provider)
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) {

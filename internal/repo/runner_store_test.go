@@ -62,7 +62,7 @@ func TestRunnerTaskClaimIsExclusive(t *testing.T) {
 func TestRunnerHeartbeatPreservesRuntimeAuthMode(t *testing.T) {
 	s := newTestRunner(t)
 	now := time.Now().UTC()
-	if err := s.PutRunner(domain.Runner{ID: "runner-auth", Status: domain.RunnerStatusOnline, RunnerVersion: "0.1.0", Runtimes: []domain.RunnerRuntime{{Provider: "codex", Status: domain.RuntimeStatusOnline}}}); err != nil {
+	if err := s.PutRunner(domain.Runner{ID: "runner-auth", OwnerUserID: 7, Status: domain.RunnerStatusOnline, RunnerVersion: "0.1.0", Runtimes: []domain.RunnerRuntime{{Provider: "codex", Status: domain.RuntimeStatusOnline}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetRunnerRuntimeAuthMode("runner-auth", "codex", domain.RuntimeAuthPersonal, now); err != nil {
@@ -83,6 +83,35 @@ func TestRunnerHeartbeatPreservesRuntimeAuthMode(t *testing.T) {
 	}
 	if err := s.SetRunnerRuntimeAuthMode("runner-auth", "codebuddy", domain.RuntimeAuthLocal, now); err == nil {
 		t.Fatal("CodeBuddy local auth should be rejected")
+	}
+}
+
+func TestPlatformRunnerAlwaysUsesPersonalCredentials(t *testing.T) {
+	s := newTestRunner(t)
+	now := time.Now().UTC()
+	runtimes := []domain.RunnerRuntime{{Provider: "codex", Status: domain.RuntimeStatusOnline}, {Provider: "claude-code", Status: domain.RuntimeStatusOnline}}
+	if err := s.PutRunner(domain.Runner{ID: "runner-builtin", Labels: []string{"pool=cloud"}, Status: domain.RunnerStatusOnline, Runtimes: runtimes}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutRunner(domain.Runner{ID: "runner-mine", OwnerUserID: 7, Status: domain.RunnerStatusOnline, Runtimes: runtimes}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"runner-builtin", "runner-mine"} {
+		if err := s.RunnerHeartbeat(id, runtimes, "", now, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builtin, _ := s.Runner("runner-builtin")
+	for _, rt := range builtin.Runtimes {
+		if rt.AuthMode != domain.RuntimeAuthPersonal || builtin.RuntimeAuthMode(rt.Provider) != domain.RuntimeAuthPersonal {
+			t.Fatalf("platform runner %s auth = %q/%q, want personal", rt.Provider, rt.AuthMode, builtin.RuntimeAuthMode(rt.Provider))
+		}
+	}
+	mine, _ := s.Runner("runner-mine")
+	for _, rt := range mine.Runtimes {
+		if rt.AuthMode != domain.RuntimeAuthLocal || mine.RuntimeAuthMode(rt.Provider) != domain.RuntimeAuthLocal {
+			t.Fatalf("owned runner %s auth = %q/%q, want local default", rt.Provider, rt.AuthMode, mine.RuntimeAuthMode(rt.Provider))
+		}
 	}
 }
 

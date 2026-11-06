@@ -209,6 +209,23 @@ func usageMetrics(usage domain.TokenUsage) []domain.MetricPoint {
 	return out
 }
 
+// reportClaudeMCPServers surfaces MCP servers that did not connect at
+// startup. Claude Code drops an invalid or failed server without failing the
+// run, so the node would otherwise silently lack those tools.
+func (a *protocolAdapter) reportClaudeMCPServers(value any, sessionID string) {
+	var failed []string
+	for _, item := range sliceValue(value) {
+		server, _ := item.(map[string]any)
+		name, status := stringValue(server["name"]), stringValue(server["status"])
+		if name != "" && status != "connected" {
+			failed = append(failed, name+"("+status+")")
+		}
+	}
+	if len(failed) > 0 {
+		a.emit(domain.TelemetryEvent{Category: "mcp", Name: "mcp.unavailable", Phase: "start", Level: "warn", Message: "MCP 服务器未连接，节点将缺少其工具：" + strings.Join(failed, "、"), SessionID: sessionID})
+	}
+}
+
 func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 	typ := stringValue(raw["type"])
 	sessionID := stringValue(raw["session_id"])
@@ -218,6 +235,7 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 			return
 		}
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.initialized", Phase: "start", Message: "agent session initialized", Model: stringValue(raw["model"]), SessionID: sessionID, Attributes: map[string]any{"permissionMode": raw["permissionMode"]}})
+		a.reportClaudeMCPServers(raw["mcp_servers"], sessionID)
 	case "stream_event":
 		inner, _ := raw["event"].(map[string]any)
 		a.handleAnthropicEvent(inner, sessionID, stringValue(raw["parent_tool_use_id"]))

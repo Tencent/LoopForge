@@ -59,7 +59,7 @@ func TestFixedProvidersAndSafetyBounds(t *testing.T) {
 	want := map[string]providerSpec{
 		"codex": {
 			Package: "@openai/codex", Binary: "codex", Help: []string{"exec", "--help"},
-			Flags: []string{"--json", "--sandbox", "--skip-git-repo-check", "--model"},
+			Flags: []string{"--json", "--sandbox", "--skip-git-repo-check", "--model", "--dangerously-bypass-approvals-and-sandbox"},
 		},
 		"codebuddy": {
 			Package: "@tencent-ai/codebuddy-code", Binary: "codebuddy", Help: []string{"--help"},

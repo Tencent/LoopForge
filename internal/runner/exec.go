@@ -168,6 +168,11 @@ func (b *eventBatcher) addLine(typ, line string) {
 	if line == "" {
 		return
 	}
+	if typ == "stderr" && flowruntime.IsCodexStreamOrderNoise(line) {
+		// Codex repeats this once per streamed delta; the sandbox writer
+		// already reported it once.
+		return
+	}
 	b.add(typ, line)
 	if b.observer != nil && (typ == "stdout" || typ == "stderr") {
 		level := "info"

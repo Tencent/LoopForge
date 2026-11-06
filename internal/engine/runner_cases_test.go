@@ -18,7 +18,7 @@ import (
 
 func cvERunner(t *testing.T, e *Engine, id string, status string, providers ...string) domain.Runner {
 	t.Helper()
-	r := domain.Runner{ID: id, Name: id, Status: status, RunnerVersion: domain.RunnerVersionWorkspaceOwnerPreparation}
+	r := domain.Runner{ID: id, Name: id, Status: status, RunnerVersion: domain.RunnerVersionWorkspaceOwnerPreparation, OwnerUserID: 1}
 	for _, provider := range providers {
 		r.Runtimes = append(r.Runtimes, domain.RunnerRuntime{Provider: provider, Status: "ready", AuthMode: domain.RuntimeAuthLocal})
 	}

@@ -668,10 +668,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				// 执行机器 mode (bind-cli): the responsible user selected a default
 				// execution machine, so the compiled task book, asset bundle, and
-				// repository checkout are dispatched there; Codex / Claude Code use
-				// that machine's own CLI login, CodeBuddy uses the responsible
-				// user's platform API key. Gates follow on the same machine and
-				// workspace. An empty selection keeps the cloud mode below.
+				// repository checkout are dispatched there. Cloud runs land here
+				// too via the platform runner pool. Credentials follow
+				// Runner.RuntimeAuthMode: platform runners always use the
+				// responsible user's saved keys; a user's own machine picks local
+				// CLI login or personal keys per CLI. Gates follow on the same
+				// machine and workspace. An empty selection keeps the in-process
+				// cloud mode below.
 				workspace := runnerWorkspaceRel(current, node.ID)
 				result, dispatchErr := e.dispatchRunnerTask(ctx, execMachine, current, effectiveNode, sb, workspace, ex, agent, assets, prompt, invocationID, options, sink)
 				if dispatchErr == nil {

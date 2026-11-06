@@ -326,7 +326,8 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 		return fmt.Errorf("sandbox environment: %w", err)
 	}
 	switch strings.TrimSpace(v.Driver) {
-	case "local", "seatbelt", "bwrap", "docker":
+	case domain.SandboxDriverLocal, domain.SandboxDriverNative, domain.SandboxDriverDocker,
+		domain.SandboxDriverSeatbelt, domain.SandboxDriverBwrap:
 	default:
 		return fmt.Errorf("unsupported sandbox driver %q", v.Driver)
 	}
@@ -761,13 +762,16 @@ func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfil
 	profile.DockerfileID = strings.TrimSpace(profile.DockerfileID)
 	profile.EnvironmentID = strings.TrimSpace(profile.EnvironmentID)
 	switch profile.Driver {
-	case "local":
+	case domain.SandboxDriverSeatbelt, domain.SandboxDriverBwrap:
+		// seatbelt and bwrap are one option: the executing machine picks
+		// the one its OS supports (domain.ResolveSandboxDriver).
+		profile.Driver = domain.SandboxDriverNative
+	}
+	switch profile.Driver {
+	case domain.SandboxDriverLocal, domain.SandboxDriverNative:
 		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
-	case "seatbelt", "bwrap":
-		profile.DockerfileID = ""
-		profile.ReadOnlyRootFS = false
-	case "docker":
+	case domain.SandboxDriverDocker:
 		profile.EnvironmentID = ""
 	}
 	return profile

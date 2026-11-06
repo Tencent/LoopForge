@@ -66,6 +66,7 @@ func (claudeProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	if (hasArg(argv, "-p") || hasArg(argv, "--print")) && !hasArg(argv, "--verbose") {
 		argv = append(argv, "--verbose")
 	}
+	argv, env := claudeUnattendedArgs(argv)
 	if in.Driver == "local" && !hasArg(argv, "--strict-mcp-config") {
 		argv = append(argv, "--strict-mcp-config")
 	}
@@ -75,7 +76,25 @@ func (claudeProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {
 		argv = append(argv, "--resume", sessionID)
 	}
-	return CommandSpec{Argv: append(argv, positionalPrompt(in)), Provider: "claude-code", CredentialBindings: []CredentialBinding{BindClaudeCode, BindGit, BindMCP}, PrivateHome: true}, nil
+	return CommandSpec{Argv: append(argv, positionalPrompt(in)), Provider: "claude-code", CredentialBindings: []CredentialBinding{BindClaudeCode, BindGit, BindMCP}, PrivateHome: true, environment: env}, nil
+}
+
+// claudeUnattendedArgs bypasses Claude Code permissions on every driver,
+// aligned with CodeBuddy's -y and Codex's bypass. dontAsk denies every tool no
+// permission rule pre-approves, and the platform ships no rules, so Write,
+// Bash and MCP calls all fail. Isolation is the platform sandbox profile's
+// job; IS_SANDBOX=1 lets Claude Code accept bypass when running as root.
+func claudeUnattendedArgs(argv []string) ([]string, map[string]string) {
+	out := dropArgWithValue(argv, "--permission-mode")
+	kept := out[:0]
+	for _, arg := range out {
+		if strings.HasPrefix(arg, "--permission-mode=") || arg == "--dangerously-skip-permissions" {
+			continue
+		}
+		kept = append(kept, arg)
+	}
+	kept = append(kept, "--permission-mode", "bypassPermissions")
+	return kept, map[string]string{"IS_SANDBOX": "1"}
 }
 
 func (claudeProvider) Protocol(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {

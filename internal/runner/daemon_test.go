@@ -39,10 +39,10 @@ func TestBindInvocationCredentials(t *testing.T) {
 			t.Fatalf("argv=%v env=%v", argv, env)
 		}
 	})
-	t.Run("personal claude injects key and base URL", func(t *testing.T) {
-		inv := &domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthPersonal, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: "https://claude.example"}
+	t.Run("personal claude gateway injects bearer token and base URL", func(t *testing.T) {
+		inv := &domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthPersonal, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: "http://127.0.0.1:9"}
 		_, env, err := bindInvocationCredentials(inv, []runtime.CredentialBinding{runtime.BindClaudeCode}, []string{"claude", "-p", "prompt"})
-		if err != nil || env["ANTHROPIC_API_KEY"] != "claude-secret" || env["ANTHROPIC_BASE_URL"] != "https://claude.example" {
+		if err != nil || env["ANTHROPIC_AUTH_TOKEN"] != "claude-secret" || env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:9" {
 			t.Fatalf("env=%v err=%v", env, err)
 		}
 	})

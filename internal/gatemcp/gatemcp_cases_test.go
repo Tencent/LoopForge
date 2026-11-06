@@ -25,6 +25,9 @@ func TestGateMCPRunProtocol(t *testing.T) {
 	if err := Run(strings.NewReader(strings.Join(lines, "\n")), &out, path); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(out.String(), `"anthropic/alwaysLoad":true`) {
+		t.Fatalf("submit_gate_result must stay out of Claude Code ToolSearch deferral: %s", out.String())
+	}
 	if !strings.Contains(out.String(), "already submitted") || !strings.Contains(out.String(), "method not found") {
 		t.Fatalf("output = %s", out.String())
 	}

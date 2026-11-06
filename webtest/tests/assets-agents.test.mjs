@@ -93,3 +93,11 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   await app.evaluate(`deleteAgent('agent-copy')`);
   assert.equal(app.evaluate(`state.data.agents.some(a=>a.id==='agent-copy')`), false);
 });
+
+// Profiles saved before seatbelt / bwrap merged into native still show as native.
+test('sandbox driver picker maps the per-OS drivers to native', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const options = JSON.parse(app.evaluate(`JSON.stringify(['seatbelt','bwrap','native','docker','local','',undefined].map(sandboxDriverOption))`));
+  assert.deepEqual(options, ['native', 'native', 'native', 'docker', 'local', 'local', 'local']);
+});

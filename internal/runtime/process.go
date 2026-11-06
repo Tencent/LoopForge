@@ -51,6 +51,19 @@ type processWriter struct {
 	name    string
 	level   string
 	pending bytes.Buffer
+	// codexNoise is set once the first Codex stream-order warning was
+	// replaced by a single notice.
+	codexNoise bool
+}
+
+// codexStreamNoticeLine replaces the per-delta stream-order warnings Codex
+// prints for gateways whose Responses stream omits output_item.added.
+const codexStreamNoticeLine = "模型网关的 Responses 流缺少 output_item.added，Codex 每个增量都会报 \"without active item\"；输出不受影响，后续同类告警已忽略"
+
+// IsCodexStreamOrderNoise matches Codex's per-delta stderr warning, e.g.
+// "ERROR codex_core::util: OutputTextDelta without active item".
+func IsCodexStreamOrderNoise(line string) bool {
+	return strings.Contains(line, "codex_core::util:") && strings.HasSuffix(strings.TrimSpace(line), "without active item")
 }
 
 func (w *processWriter) Write(p []byte) (int, error) {
@@ -86,6 +99,13 @@ func (w *processWriter) emitLines(includePartial bool) {
 }
 
 func (w *processWriter) emit(line string) {
+	if w.name == "process.stderr" && IsCodexStreamOrderNoise(line) {
+		if w.codexNoise {
+			return
+		}
+		w.codexNoise = true
+		line = codexStreamNoticeLine
+	}
 	w.output.WriteString(line)
 	w.output.WriteByte('\n')
 	if w.sink != nil {

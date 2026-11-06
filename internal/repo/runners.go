@@ -243,6 +243,13 @@ func runnerFromRow(row runnerRow) domain.Runner {
 	if len(row.Runtimes) > 0 {
 		_ = json.Unmarshal(row.Runtimes, &v.Runtimes)
 	}
+	if v.OwnerUserID == 0 {
+		// Platform runners have a fixed credential source; report it so the
+		// stored heartbeat default never shows a mode dispatch ignores.
+		for i := range v.Runtimes {
+			v.Runtimes[i].AuthMode = domain.RuntimeAuthPersonal
+		}
+	}
 	if row.SessionExpiresAt != nil {
 		t := *row.SessionExpiresAt
 		v.SessionExpiresAt = &t

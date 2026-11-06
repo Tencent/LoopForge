@@ -108,6 +108,9 @@ func handleRequest(encoder *json.Encoder, req request, resultPath string) error 
 			"name":        "submit_gate_result",
 			"description": "Submit exactly one terminal node decision. reason explains why. human also requires actionRequired to state exactly what a person must confirm.",
 			"inputSchema": inputSchema,
+			// Claude Code defers MCP tools behind ToolSearch; a model that never
+			// searches cannot finish the node. Keep this one tool always loaded.
+			"_meta": map[string]any{"anthropic/alwaysLoad": true},
 		}}}, "")
 	case "tools/call":
 		var params struct {

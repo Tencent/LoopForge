@@ -1045,12 +1045,9 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 			if key == "" {
 				return nil, nil, errors.New("Claude Code 个人 API Key 未配置")
 			}
-			env["ANTHROPIC_API_KEY"] = key
-			baseURL := strings.TrimSpace(inv.ClaudeCodeBaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.anthropic.com"
+			for name, value := range runtime.ClaudeCodeCredentialEnvironment(key, inv.ClaudeCodeBaseURL) {
+				env[name] = value
 			}
-			env["ANTHROPIC_BASE_URL"] = baseURL
 		case runtime.BindGit, runtime.BindMCP:
 			continue
 		}

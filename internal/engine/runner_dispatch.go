@@ -197,13 +197,13 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		switch ex.Kind {
 		case "codex":
 			if strings.TrimSpace(sb.credentialSnapshot().Codex.APIKey) == "" {
-				return "", errors.New("当前责任人未配置 Codex API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
+				return "", missingPersonalKeyError("Codex", runner)
 			}
 			invocation.CodexAPIKey = sb.credentialSnapshot().Codex.APIKey
 			invocation.CodexBaseURL = sb.credentialSnapshot().Codex.BaseURL
 		case "claude-code":
 			if strings.TrimSpace(sb.credentialSnapshot().ClaudeCode.APIKey) == "" {
-				return "", errors.New("当前责任人未配置 Claude Code API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
+				return "", missingPersonalKeyError("Claude Code", runner)
 			}
 			invocation.ClaudeCodeAPIKey = sb.credentialSnapshot().ClaudeCode.APIKey
 			invocation.ClaudeCodeBaseURL = sb.credentialSnapshot().ClaudeCode.BaseURL
@@ -449,6 +449,15 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 
 // defaultExecutionRunner resolves the responsible user's default execution
 // machine (执行机器). Empty means the cloud mode.
+// missingPersonalKeyError explains a missing provider key. Only a user's own
+// machine can switch back to local CLI login; platform runners cannot.
+func missingPersonalKeyError(cli string, runner domain.Runner) error {
+	if runner.OwnerUserID == 0 {
+		return fmt.Errorf("当前责任人未配置 %s API Key：云端执行使用个人配置中的 API Key 与 Base URL，请先在个人配置中配置", cli)
+	}
+	return fmt.Errorf("当前责任人未配置 %s API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录", cli)
+}
+
 func (e *Engine) defaultExecutionRunner(run domain.Run) string {
 	switch run.ExecutionContext.ExecutionMode {
 	case domain.ExecutionModeCloud:

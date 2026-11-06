@@ -74,6 +74,43 @@ func TestRunnerTerminalDispatchResults(t *testing.T) {
 	}
 }
 
+func TestPoolRunnerDispatchUsesPersonalCredentials(t *testing.T) {
+	e, _ := cvEEngine(t)
+	var captured *domain.RunnerInvocation
+	e.SetRunnerDispatchNotify(func(string) {
+		if tasks := e.repo.RunnerTasks(); len(tasks) > 0 {
+			captured = tasks[0].Invocation
+		}
+		cvEFinishQueuedTask(t, e, domain.RunnerTaskSuccess, "finished", "", nil)
+	})
+	runner := cvERunner(t, e, "runner-pool", domain.RunnerStatusOnline, "codex", "claude-code")
+	runner.OwnerUserID = 0 // builtin cloud pool runner, stored heartbeat default is local
+	if err := e.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	run := cvERunnerRun("pool-personal", runner.ID)
+	run.ExecutionContext.ExecutionPool = domain.ExecutionModeCloud
+	node := domain.WorkflowNode{ID: "node", Type: "agent"}
+	sb := &runEnvironment{sandbox: &cvESandbox{id: "sb", workspace: t.TempDir()}}
+	dispatch := func(kind string) error {
+		_, err := e.dispatchRunnerTask(context.Background(), runner.ID, run, node, sb, sb.Workspace(), domain.ExecutorDefinition{ID: kind, Kind: kind}, domain.AgentDefinition{}, domain.AgentAssetBundle{}, "prompt", "inv-"+kind, runtime.InvocationOptions{}, func(domain.TelemetryEvent) {})
+		return err
+	}
+	for _, kind := range []string{"codex", "claude-code"} {
+		if err := dispatch(kind); err == nil || !strings.Contains(err.Error(), "API Key") {
+			t.Fatalf("%s on pool runner without personal key: err=%v", kind, err)
+		}
+	}
+	sb.credentials.Codex.APIKey = "codex-key"
+	sb.credentials.Codex.BaseURL = "https://models.example/v1"
+	if err := dispatch("codex"); err != nil {
+		t.Fatal(err)
+	}
+	if captured == nil || captured.CredentialSource != domain.RuntimeAuthPersonal || captured.CodexAPIKey != "codex-key" || captured.CodexBaseURL != "https://models.example/v1" {
+		t.Fatalf("pool invocation did not carry personal credentials: %+v", captured)
+	}
+}
+
 func TestRunnerScriptAndCommandTerminalResults(t *testing.T) {
 	for _, status := range []string{domain.RunnerTaskSuccess, domain.RunnerTaskFailed, domain.RunnerTaskCanceled} {
 		t.Run("script-"+status, func(t *testing.T) {
@@ -168,6 +205,7 @@ func TestRunnerAlignTerminalResults(t *testing.T) {
 				t.Fatal("runner missing")
 			}
 			runner.Labels = []string{"align-pool"}
+			runner.OwnerUserID = 0 // pool runners are platform runners
 			runner.RunnerVersion = domain.RunnerVersionWorkspaceOwnerPreparation
 			if err := e.repo.PutRunner(runner); err != nil {
 				t.Fatal(err)

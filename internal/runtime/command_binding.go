@@ -89,15 +89,12 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			args = append(args, config...)
 			bound.Argv = append(args, bound.Argv[len(bound.Argv)-1])
 		case BindClaudeCode:
-			bound.environment["ANTHROPIC_API_KEY"] = strings.TrimSpace(credentials.ClaudeCode.APIKey)
-			if bound.environment["ANTHROPIC_API_KEY"] == "" {
+			if strings.TrimSpace(credentials.ClaudeCode.APIKey) == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
 			}
-			baseURL := strings.TrimSpace(credentials.ClaudeCode.BaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.anthropic.com"
+			for key, value := range ClaudeCodeCredentialEnvironment(credentials.ClaudeCode.APIKey, credentials.ClaudeCode.BaseURL) {
+				bound.environment[key] = value
 			}
-			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
 		default:
 			return CommandSpec{}, fmt.Errorf("unsupported credential binding %q", binding)
 		}

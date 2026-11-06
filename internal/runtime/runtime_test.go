@@ -692,12 +692,13 @@ func TestBwrapProvidesWritableRuntimeInfrastructure(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	bunfs := stubBunFSMountPoint(t, filepath.Join(t.TempDir(), "$bunfs"))
 	args, err := bwrapArgsRequirements(workspace, ProviderRequirements("codebuddy"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := strings.Join(args, " ")
-	for _, needle := range []string{"--die-with-parent", "--tmpfs /tmp", "--dev-bind /dev /dev", "--proc /proc", "--tmpfs /$bunfs"} {
+	for _, needle := range []string{"--die-with-parent", "--tmpfs /tmp", "--dev-bind /dev /dev", "--proc /proc", "--tmpfs " + bunfs} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("bwrap args missing %q: %v", needle, args)
 		}

@@ -843,7 +843,7 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			c.JSON(http.StatusOK, map[string]bool{"taskAvailable": true})
 			return
 		}
-		c.JSON(http.StatusOK, map[string]any{"task": task})
+		c.JSON(http.StatusOK, map[string]any{"task": resolveRunnerTaskSandbox(task, runner.OS)})
 	}
 	deadline := time.Now().Add(runnerLongPollTimeout())
 	for {
@@ -921,7 +921,26 @@ func (h *runnersHandlers) runnerTaskGet(c *gin.Context) {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	c.JSON(http.StatusOK, domain.PublicRunnerTask(task))
+	c.JSON(http.StatusOK, domain.PublicRunnerTask(resolveRunnerTaskSandbox(task, runner.OS)))
+}
+
+// resolveRunnerTaskSandbox hands the runner a concrete sandbox driver: the
+// native option becomes seatbelt or bwrap by the OS the runner reported, so
+// runner builds that predate native keep working. A runner on an
+// unsupported OS keeps native and reports the error when it opens the
+// sandbox.
+func resolveRunnerTaskSandbox(task domain.RunnerTask, runnerOS string) domain.RunnerTask {
+	if task.Sandbox == nil {
+		return task
+	}
+	driver, err := domain.ResolveSandboxDriver(task.Sandbox.Profile.Driver, runnerOS)
+	if err != nil || driver == task.Sandbox.Profile.Driver {
+		return task
+	}
+	spec := *task.Sandbox
+	spec.Profile.Driver = driver
+	task.Sandbox = &spec
+	return task
 }
 
 // runnerMaySeeTask limits task reads to the runner it is targeted at or
