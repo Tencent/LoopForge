@@ -15,8 +15,23 @@ import (
 	"time"
 )
 
+// resetPasswordAttempts gives the test a fresh process-wide sign-in rate
+// limit and clears it again afterwards, so the registrations here cannot
+// push later tests sharing the httptest address into 429.
+func resetPasswordAttempts(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		passwordAttempts.Lock()
+		passwordAttempts.entries = map[string]loginAttempts{}
+		passwordAttempts.Unlock()
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
 func selfJoinFixture(t *testing.T) (*repo.Store, http.Handler, map[string]domain.User) {
 	t.Helper()
+	resetPasswordAttempts(t)
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "self-join-test-secret")
 	t.Setenv("AGENTFLOW_SCHEDULER_ENABLED", "false")
@@ -106,9 +121,8 @@ func TestSignupListsAndJoinsSelfJoinProjects(t *testing.T) {
 
 	t.Setenv("AGENTFLOW_ALLOW_SIGNUP", "false")
 	w = call("GET", "/api/auth/setup", "")
-	setup.JoinableProjects = nil
-	if json.Unmarshal(w.Body.Bytes(), &setup) != nil || len(setup.JoinableProjects) != 0 {
-		t.Fatalf("closed sign-up must not list projects: %s", w.Body.String())
+	if w.Code != 200 || w.Body.String() != `{"needsSetup":false,"signupEnabled":false}` {
+		t.Fatalf("closed sign-up must keep the original setup shape: %d %s", w.Code, w.Body.String())
 	}
 }
 

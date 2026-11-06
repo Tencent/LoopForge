@@ -31,14 +31,17 @@ func signupEnabled() bool {
 }
 
 // authSetup tells the login page which mode to show. While sign-up is open it
-// also lists the projects a new account may pick to join.
+// also lists the projects a new account may pick to join; the field is left
+// out when there are none so the response keeps its original shape.
 func (h *authHandlers) authSetup(c *gin.Context) {
 	needsSetup := h.repo != nil && h.repo.LocalAccountCount() == 0
-	joinable := []joinableProject{}
+	out := gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled()}
 	if h.repo != nil && !needsSetup && signupEnabled() {
-		joinable = joinableProjectSummaries(h.repo.Projects())
+		if joinable := joinableProjectSummaries(h.repo.Projects()); len(joinable) > 0 {
+			out["joinableProjects"] = joinable
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled(), "joinableProjects": joinable})
+	c.JSON(http.StatusOK, out)
 }
 
 const welcomeProjectID = "welcome"
