@@ -58,7 +58,9 @@ LoopForge 把流程固定下来，把灵活的部分留给 AI：
 
 ## 快速开始
 
-需要 **Docker（含 Compose）** 和 **Python 3**。没装 Docker 时，安装脚本会询问并帮你安装。
+需要 **Git、curl、Docker（含 Compose）** 和 **Python 3**。全新 Ubuntu 可先运行 `sudo apt-get update && sudo apt-get install -y git curl python3`。没装 Docker 时，安装脚本会询问并帮你安装。
+
+支持普通用户运行；需要时会使用 sudo 操作 Docker。云端部署可在首次执行前设置 `LOOPFORGE_PUBLIC_URL=https://你的域名`，新安装默认监听所有网卡，需放通云安全组端口或配置 HTTPS 反向代理。已有安装可在 `.env` 中修改 `LOOPFORGE_BIND` 和访问地址。管理员发布好平台镜像后，设置 `LOOPFORGE_IMAGE` 即可跳过源码编译，详见[部署文档](docs/deployment.md)。
 
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
@@ -66,13 +68,15 @@ cd LoopForge
 bash scripts/install.sh
 ```
 
-打开 **<http://localhost:8090>** 创建账号，第一个账号自动成为管理员。进入首页后，新手引导会带你配置模型 Key 并跑通第一条 SOP。
+打开安装脚本输出的访问链接创建账号，第一个账号自动成为管理员。进入首页后，新手引导会带你配置模型 Key 并跑通第一条 SOP。
+
+首次设置时，先将安全组或防火墙限制为仅你的 IP 可访问；管理员账号创建完成后，再向可信团队开放。
 
 ### 跑通完整示例 —— 无需 API Key，无需仓库
 
-安装完成、沙箱镜像就绪后，脚本与人工审批示例通常约一分钟即可体验。首次构建耗时取决于机器性能与网络。
+安装完成即可运行脚本与人工审批示例；默认沙箱复用已安装的运行镜像，无需再下载和安装一遍 AI CLI。首次源码构建耗时取决于机器性能与网络。
 
-1. 在首页「快速上手」清单里点第 4 步的 **一键体验**。新注册的账号会自动加入 **LoopForge 体验项目**。
+1. 在首页点击 **一键体验** 卡片。新注册的账号会自动加入 **LoopForge 体验项目**。
 2. 示例 SOP 执行真实脚本并保存报告，页面上的引导气泡会依次指出节点图、产物和审批。
 3. 在人工审批节点确认报告，观察流程继续执行并产出最终产物。
 
@@ -91,9 +95,9 @@ bash scripts/install.sh
 
 - **执行器。** 在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清、定时助手任务和通知 AI 汇总目前使用 CodeBuddy。Docker 镜像内置三个 CLI；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
-- **交付到仓库。** 添加 GitHub 仓库，在个人设置中配置 Git Token 和执行器凭据（或绑定本机执行机器），打开 **SOP 流程 → 内置**，复制一条到项目中，创建需求并启动。
-- **沙箱。** 默认 Compose 安装中，SOP 任务使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；首次启动后平台会在后台构建沙箱镜像（需要几分钟）。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
-- **账号与访问。** 默认仅监听本机，面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
+- **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库，配置执行器凭据（或绑定本机执行机器），打开 **SOP 流程 → 内置**，复制一条到项目中，创建需求并启动。管理员需一次性配置 GitHub OAuth App；仍支持手动填写 PAT。
+- **沙箱。** 默认 Compose 安装中，SOP 任务使用独立 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
+- **账号与访问。** 新安装默认监听所有网卡，已有安装保留原配置；面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
 - **远程访问、HTTPS、独立 Worker** —— 见[部署指南](docs/deployment.md)。
 - **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.10+）。
 
@@ -194,7 +198,7 @@ npx -y loopforge-cli@latest install claude
 LoopForge 不替代它们，而是编排它们。每个 Agent 步骤都运行这些 CLI 之一；LoopForge 补上外面的流程：谁来做、按什么顺序、经过哪些检查、由谁签字。
 
 **可以直接暴露到公网吗？**
-默认只监听本机，面向可信团队。开放前请阅读[账号与访问边界](docs/deployment.md#accounts)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
+新安装默认监听所有网卡，但只面向可信团队。开放前请阅读[账号与访问边界](docs/deployment.md#accounts)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
 
 ## 文档
 

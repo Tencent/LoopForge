@@ -55,7 +55,7 @@ test('the home page guides a new account and explains the missing model key',asy
   await expect(page.locator('#projectSwitcher option[value="welcome"]')).toHaveCount(1);
   const input=await openHome(page);
   const frame=chat(page);
-  await expect(frame.locator('.home-starter')).toHaveCount(3);
+  await expect(frame.locator('.home-starter')).toHaveCount(4);
   const notice=frame.locator('.credential-notice');
   await expect(notice).toContainText('CodeBuddy API Key');
   await input.fill('First question after installing');

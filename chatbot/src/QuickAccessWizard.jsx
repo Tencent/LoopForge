@@ -12,6 +12,7 @@ import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { api, canChatInProject, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
+import { openCredentialSettings } from "./credentials";
 import "./quick-access-wizard.css";
 
 const DEFAULT_SOP_ID = "generic-backend-delivery";
@@ -1045,7 +1046,14 @@ export default function QuickAccessWizard({
         .catch(() => {});
     };
     window.addEventListener("focus", refreshUser);
-    return () => window.removeEventListener("focus", refreshUser);
+    const credentialsChanged = (event) => {
+      if (event.origin === location.origin && event.source === window.parent && event.data?.type === "agentflow-credentials-changed") refreshUser();
+    };
+    window.addEventListener("message", credentialsChanged);
+    return () => {
+      window.removeEventListener("focus", refreshUser);
+      window.removeEventListener("message", credentialsChanged);
+    };
   }, [open, user?.id, verifyStoredGitToken]);
 
   useEffect(() => {
@@ -1710,6 +1718,12 @@ export default function QuickAccessWizard({
                           <StatusPill ok={gitReady} />
                         </header>
                         <div className="qa-cred-body">
+                          <button type="button" className="qa-btn qa-btn-primary qa-btn-sm" onClick={() => openCredentialSettings("gitToken")}>
+                            {storedUser?.gitTokenConfigured ? "管理 GitHub 授权" : "连接 GitHub"}
+                          </button>
+                          <p className="qa-hint">在个人配置中完成授权，返回后继续；无需手动复制令牌。</p>
+                          <details>
+                            <summary>使用访问令牌（高级）</summary>
                           <div className="qa-input-row">
                             <input
                               type="password"
@@ -1758,6 +1772,7 @@ export default function QuickAccessWizard({
                               okText={`令牌有效${gitVerify.login ? `（${gitVerify.login}）` : ""}`}
                             />
                           ) : null}
+                          </details>
                         </div>
                       </section>
 

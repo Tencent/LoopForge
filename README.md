@@ -58,7 +58,7 @@ LoopForge makes the process the fixed part and lets the AI be the flexible part:
 
 ## Quick start
 
-Requires **Docker (with Compose)** and **Python 3**. The installer offers to install Docker if it is missing.
+Requires **Git, curl, Docker (with Compose)** and **Python 3**. On a fresh Ubuntu host, start with `sudo apt-get update && sudo apt-get install -y git curl python3`. The installer offers to install Docker if it is missing.
 
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
@@ -66,13 +66,15 @@ cd LoopForge
 bash scripts/install.sh
 ```
 
-Open **<http://localhost:8090>** and create your account — the first one becomes the administrator. The home page walks you through adding a model key and running your first SOP.
+Open the URL printed by the installer and create your account — the first one becomes the administrator. For a cloud deployment, set `LOOPFORGE_PUBLIC_URL=https://your-domain` before the first run and allow the service port in your cloud security group, or configure an HTTPS reverse proxy. New installations bind to all interfaces. Ordinary Linux users are supported through Docker access or sudo. Set `LOOPFORGE_IMAGE` to an administrator-published image to skip source compilation; see [deployment](docs/deployment.md).
+
+Restrict initial setup access to your own IP until you have created the administrator account; then grant access to your trusted team.
 
 ### Try a complete demo — no API key, no repository
 
-Once installation and sandbox image preparation are complete, the script-and-approval demo usually takes about a minute. Cold-start build time depends on your machine and network.
+Once installation completes, the script-and-approval demo can run immediately. Default sandboxes reuse the installed runtime image instead of downloading and installing the AI CLIs again. Cold source-build time depends on your machine and network.
 
-1. On the home page, click **Try it now** (step 4 of the getting-started list). New accounts join the **LoopForge demo project** automatically.
+1. On the home page, click the **一键体验** (Try it now) card. New accounts join the **LoopForge demo project** automatically.
 2. The sample SOP runs a real script and saves its report. A short tour points out the step graph, the artifacts and the approval.
 3. Approve the human gate and watch the SOP continue to its final artifact.
 
@@ -91,9 +93,9 @@ Once installation and sandbox image preparation are complete, the script-and-app
 
 - **Executors.** Pick **CodeBuddy, Codex or Claude Code** beside the home composer, then a model. Each executor uses its own credentials from personal settings, and every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, scheduled assistant tasks and AI notification summaries currently use CodeBuddy. The Docker image ships all three CLIs; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
-- **Delivering to a repository.** Add a GitHub repository, set your Git token and executor credentials in personal settings (or bind a local execution machine), open **SOPs → Built-in**, copy one into your project, create a requirement and start.
-- **Sandboxes.** In the default Compose installation, SOP tasks use Docker sandbox containers started through the host Docker socket. The sandbox image builds in the background after the first start (a few minutes). Docker socket access grants control of the host daemon: this is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
-- **Accounts and access.** The default deployment listens on localhost and is designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
+- **Delivering to a repository.** Choose **Connect GitHub** in personal settings, approve the device code on GitHub and select your repository. An administrator configures the OAuth App once; manual PAT entry remains available. Configure executor credentials (or bind a local execution machine), open **SOPs → Built-in**, copy one into your project, create a requirement and start.
+- **Sandboxes.** In the default Compose installation, SOP tasks use separate Docker containers through the host Docker socket, reusing the installed runtime image. Custom Dockerfiles still build their own images. Docker socket access grants control of the host daemon: this is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
+- **Accounts and access.** New installations listen on all interfaces for team access; existing bind settings are preserved. The platform is designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
 - **Remote access, HTTPS, separate workers** — see [Deployment](docs/deployment.md).
 - **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.10+).
 
@@ -194,7 +196,7 @@ Those are general-purpose AI / automation workflow builders. LoopForge is built 
 LoopForge doesn't replace them — it orchestrates them. Each agent step runs one of those CLIs; LoopForge adds the process around it: who does what, in which order, with which checks, and who signs off.
 
 **Is it safe to expose on the internet?**
-The default listens on localhost and targets a trusted team. Read the [account and access model](docs/deployment.md#accounts) and set up HTTPS before opening it up. Report vulnerabilities privately via the [security policy](SECURITY.md).
+New installations listen on all interfaces and target a trusted team. Read the [account and access model](docs/deployment.md#accounts) and set up HTTPS before opening it up. Report vulnerabilities privately via the [security policy](SECURITY.md).
 
 ## Documentation
 

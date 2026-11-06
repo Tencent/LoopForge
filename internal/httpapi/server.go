@@ -66,7 +66,8 @@ func (d deps) getAuthClient() *auth.Client {
 // 对所有领域可见；需要跨领域协作的领域（issues → tasks/stream）显式注入。
 type Server struct {
 	*deps
-	auth            *authHandlers  // auth.go
+	auth            *authHandlers // auth.go
+	github          *githubHandlers
 	users           *usersHandlers // users.go
 	projects        *projectsHandlers
 	insights        *insightsHandlers
@@ -145,6 +146,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
 		auth:            &authHandlers{deps: d},
+		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
@@ -237,6 +239,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/auth/gongfeng", api.auth.gongfengOAuthStatus)
 	g.GET("/api/auth/gongfeng/start", api.auth.gongfengOAuthStart)
 	g.GET("/api/auth/gongfeng/callback", api.auth.gongfengOAuthCallback)
+	g.GET("/api/auth/github", api.github.status)
+	g.PUT("/api/auth/github/config", api.github.configure)
+	g.POST("/api/auth/github/device", api.github.start)
+	g.POST("/api/auth/github/poll", api.github.poll)
+	g.GET("/api/auth/github/repositories", api.github.repositories)
 	g.GET("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/logout", api.auth.authLogout)

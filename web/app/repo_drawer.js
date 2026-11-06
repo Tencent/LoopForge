@@ -43,6 +43,11 @@ function openRepoDrawer(repoId=''){
   const drawer=$('#repoDrawer');
   drawer.inert=false;drawer.setAttribute('aria-hidden','false');
   drawer.classList.add('open');$('#repoDrawerScrim').classList.add('open');
+  if(typeof mountGitHubRepoPicker==='function')mountGitHubRepoPicker(drawer.querySelector('[data-github-repositories]'),repository=>{
+    f.elements.repoUrl.value=repository.html_url;
+    f.elements.defaultBranch.value=repository.default_branch||'main';
+    syncRepoDrawerDetect();
+  });
   setTimeout(()=>f.elements.repoUrl.focus(),120);
 }
 function closeRepoDrawer(opt){

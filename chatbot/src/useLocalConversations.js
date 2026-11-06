@@ -34,7 +34,8 @@ export function useLocalConversations(real) {
   const [generations, setGenerations] = useState({});
   const generationsRef = useRef(generations);
   const timers = useRef(new Map());
-  const available = real.ready && !real.activeId && !real.sessions.length;
+  const previewEnabled = new URLSearchParams(location.search).get("localPreview") === "1";
+  const available = previewEnabled && real.ready && !real.activeId && !real.sessions.length;
   const availableRef = useRef(available);
   availableRef.current = available;
   localIdRef.current = localId;
@@ -76,7 +77,7 @@ export function useLocalConversations(real) {
       const saved = JSON.parse(localStorage.getItem(key));
       if (Array.isArray(saved) && saved.every((row) => isLocalConversation(row?.id) && Array.isArray(row.messages))) sessions = saved;
     } catch {}
-    sessions ||= createLocalConversations(real.user, real.model);
+    sessions ||= previewEnabled ? createLocalConversations(real.user, real.model) : [];
     // Browser-local replies run in this page. A persisted running row has no
     // surviving timer after reload, so it must not keep advertising activity.
     sessions = sessions.map((row) => row.generationStatus === "running"
@@ -99,7 +100,7 @@ export function useLocalConversations(real) {
         }
       } catch {}
     }
-  }, [real.ready, real.user?.id, key, real.model, available, selectLocal]);
+  }, [real.ready, real.user?.id, key, real.model, available, previewEnabled, selectLocal]);
 
   useEffect(() => {
     if (!available) selectLocal(null);
