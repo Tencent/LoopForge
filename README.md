@@ -77,7 +77,7 @@ cd LoopForge
 
 This pulls the GHCR release image pinned in `compose.yaml` without building locally. Use `./start.sh logs`, `stop`, `restart` or `pull` to manage it, and `./start.sh dev` to build the checkout from source.
 
-Open the URL printed by the installer and create your account; the first one becomes the administrator. For a cloud deployment, set `LOOPFORGE_PUBLIC_URL=https://your-domain` before the first run and allow the service port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
+Open the URL printed by the installer and create your account; the first one becomes the administrator. The service listens on `0.0.0.0:8090` by default; on a cloud host open `http://<public IP>:8090` after allowing the port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
 
 ### Try it without an API key
 

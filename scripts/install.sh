@@ -68,7 +68,7 @@ requested_public_url="${LOOPFORGE_PUBLIC_URL:-}"
 bash scripts/configure.sh
 [[ -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
 set -a; source .env; set +a
-export LOOPFORGE_BIND="${LOOPFORGE_BIND:-127.0.0.1}"
+export LOOPFORGE_BIND="${LOOPFORGE_BIND:-0.0.0.0}"
 if [[ -n "$requested_public_url" ]]; then export LOOPFORGE_PUBLIC_URL="$requested_public_url"; fi
 python3 scripts/install-address.py --prepare "${AGENTFLOW_HTTP_PORT:-8090}"
 set -a; source .env; set +a

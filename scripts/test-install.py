@@ -160,40 +160,14 @@ exec "$@"
         self.assertTrue(Path(data, 'home').is_dir())
         self.assertFalse((self.root / 'should-not-exist').exists())
 
-    def test_interactive_install_persists_team_url(self):
-        master, slave = pty.openpty()
-        process = subprocess.Popen(['bash', 'scripts/install.sh'], cwd=self.root,
-            env=dict(self.environ, LOOPFORGE_PUBLIC_URL='', LOOPFORGE_YES='', MOCK_USER='1000', MOCK_DIRECT='1'),
-            stdin=slave, stdout=slave, stderr=slave)
-        os.close(slave)
-        output, answered = b'', False
-        try:
-            deadline = time.monotonic() + 15
-            while time.monotonic() < deadline:
-                readable, _, _ = select.select([master], [], [], 0.2)
-                if readable:
-                    try:
-                        chunk = os.read(master, 65536)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    output += chunk
-                    if b'Team URL [' in output and not answered:
-                        os.write(master, b'https://team.example.test\n')
-                        answered = True
-                elif process.poll() is not None:
-                    break
-            process.wait(timeout=2)
-            self.assertEqual(process.returncode, 0, output.decode())
-            self.assertTrue(answered)
-            self.assertIn(b'Access: https://team.example.test', output)
-            self.assertIn('LOOPFORGE_PUBLIC_URL=https://team.example.test', (self.root / '.env').read_text())
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.wait()
-            os.close(master)
+    def test_install_without_public_url_binds_all_interfaces_without_prompting(self):
+        self.environ.pop('LOOPFORGE_BIND')
+        result = self.install(LOOPFORGE_PUBLIC_URL='')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('Team URL', result.stdout)
+        config = (self.root / '.env').read_text()
+        self.assertIn('LOOPFORGE_BIND=0.0.0.0', config)
+        self.assertIn("LOOPFORGE_PUBLIC_URL=''", config)
 
     def test_existing_empty_url_can_be_set_without_rotating_secrets(self):
         self.assert_success(self.install())
@@ -209,14 +183,6 @@ exec "$@"
                 result = self.install(LOOPFORGE_PUBLIC_URL=url)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('up -d', (self.root / 'docker.log').read_text())
-
-    def test_unknown_container_url_fails_before_build(self):
-        result = self.install(LOOPFORGE_PUBLIC_URL='', LOOPFORGE_YES='1')
-        if address.container_host():
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('LOOPFORGE_PUBLIC_URL', result.stderr)
-            self.assertNotIn('up -d', (self.root / 'docker.log').read_text())
-
 
 class AddressTests(unittest.TestCase):
     def test_public_url_and_loopback_proxy(self):
