@@ -24,6 +24,19 @@ html[data-lang="en"] .topbar-project-label { white-space:nowrap }
 .login-card .login-rule { margin:-12px 0 0;font-size:12px;color:var(--muted) }
 .login-link { border:0;background:none;padding:0;color:var(--blue);font:inherit;cursor:pointer }
 .login-link:hover { text-decoration:underline }
+.login-card .login-projects { margin:20px 0 0;padding:0;border:0;min-width:0 }
+.login-card .login-projects legend { padding:0;font-size:14px }
+.login-card .login-projects .login-rule { margin:4px 0 10px }
+.login-project-list { display:grid;gap:6px;max-height:220px;overflow-y:auto;padding:2px }
+.login-card label.login-project { display:flex;align-items:center;gap:10px;margin:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);cursor:pointer;transition:border-color .15s,background-color .15s }
+.login-card label.login-project:hover { border-color:color-mix(in srgb,var(--blue) 45%,var(--line)) }
+.login-card label.login-project:has(input:checked) { border-color:var(--blue);background:color-mix(in srgb,var(--blue) 8%,var(--panel-2)) }
+.login-card .login-project input { width:16px;height:16px;flex:none;margin:0;padding:0;accent-color:var(--blue) }
+.login-project-mark { display:grid;place-items:center;flex:none;width:26px;height:26px;border-radius:7px;background:var(--blue);color:#fff;font-size:11px;font-weight:600 }
+.login-project-text { display:grid;min-width:0 }
+.login-project-text b { font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+.login-project-text small { font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+@media (prefers-reduced-motion:reduce){.login-card label.login-project{transition:none}}
 @media(max-width:800px){html[data-lang="en"] .platform-sidebar{width:100%}}
 
 @media(max-width:600px){.topbar .page-context{display:none}}

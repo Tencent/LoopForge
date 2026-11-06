@@ -122,6 +122,24 @@ func (r *ProjectsRepo) projectMembers(projectID string) []domain.ProjectMember {
 	return members
 }
 
+// AddProjectMember adds a single member without rewriting the member list,
+// so concurrent joins cannot drop each other. An existing membership keeps
+// its role.
+func (r *ProjectsRepo) AddProjectMember(projectID string, userID int64, role string) error {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = "member"
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := r.lockProjectInTx(tx, projectID); err != nil {
+			return err
+		}
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&projectMemberRow{
+			ProjectID: projectID, UserID: userID, Role: role, Created: timePtr(time.Now().UTC()),
+		}).Error
+	})
+}
+
 // SetProjectArchived deletes (at != nil) or restores (at == nil) a project
 // without touching its settings, members or requirements.
 func (r *ProjectsRepo) SetProjectArchived(id string, at *time.Time, by int64) error {

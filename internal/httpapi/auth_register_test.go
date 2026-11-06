@@ -46,6 +46,10 @@ func TestRegisterFirstAccountBecomesAdminAndSignupToggle(t *testing.T) {
 	if needs, _ := setup(); !needs {
 		t.Fatal("empty deployment must ask for setup")
 	}
+	// e2e/public/00-first-run.spec.mjs asserts this exact body.
+	if w := call("GET", "/api/auth/setup", "", ""); w.Body.String() != `{"needsSetup":true,"signupEnabled":true}` {
+		t.Fatalf("first-run setup shape: %s", w.Body.String())
+	}
 	if w := call("POST", "/api/auth/register", "https://attacker.invalid", `{"login":"owner","password":"a-long-enough-password"}`); w.Code != 403 {
 		t.Fatalf("cross origin register: %d", w.Code)
 	}

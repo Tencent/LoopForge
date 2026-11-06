@@ -874,6 +874,28 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/projects/{projectId}/join:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Projects]
+      operationId: joinProject
+      description: >-
+        Join a project opened for self-service joining (selfJoin) as a member.
+        The owner and existing members get the project back unchanged; 403
+        when the project is not open to joining.
+      responses:
+        "200":
+          $ref: "#/components/responses/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/repositories:
     get:
       tags: [Repositories]
@@ -3950,6 +3972,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMember"
+        selfJoin:
+          type: boolean
+          description: >-
+            Open to self-service joining. Any signed-in account may join as a
+            member, at sign-up or through POST /api/projects/{projectId}/join.
+            Only the owner or a platform admin can change it.
         clarification:
           $ref: "#/components/schemas/ClarificationPolicy"
         tapdWorkspaceId:

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"errors"
 	"fmt"
@@ -31,9 +30,18 @@ func signupEnabled() bool {
 	return true
 }
 
+// authSetup tells the login page which mode to show. While sign-up is open it
+// also lists the projects a new account may pick to join; the field is left
+// out when there are none so the response keeps its original shape.
 func (h *authHandlers) authSetup(c *gin.Context) {
 	needsSetup := h.repo != nil && h.repo.LocalAccountCount() == 0
-	c.JSON(http.StatusOK, gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled()})
+	out := gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled()}
+	if h.repo != nil && !needsSetup && signupEnabled() {
+		if joinable := joinableProjectSummaries(h.repo.Projects()); len(joinable) > 0 {
+			out["joinableProjects"] = joinable
+		}
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 const welcomeProjectID = "welcome"
@@ -41,19 +49,28 @@ const welcomeProjectID = "welcome"
 // joinWelcomeProject makes the seeded demo project usable by new accounts so
 // the onboarding path works before they create a project of their own.
 func (h *authHandlers) joinWelcomeProject(userID int64) {
-	project, ok := h.repo.Project(welcomeProjectID)
-	if !ok {
+	if _, ok := h.repo.Project(welcomeProjectID); !ok {
 		return
 	}
-	for _, m := range project.Members {
-		if m.UserID == userID {
-			return
-		}
-	}
-	project.Members = append(project.Members, domain.ProjectMember{UserID: userID, Role: "member"})
-	if err := h.repo.PutProject(project); err != nil {
+	if err := h.repo.AddProjectMember(welcomeProjectID, userID, "member"); err != nil {
 		log.Printf("join welcome project: %v", err)
 	}
+}
+
+// signupProjects validates the projects picked on the sign-up form. Every
+// pick must be open to self-service joining.
+func (h *authHandlers) signupProjects(ids []string) ([]string, bool) {
+	ids = normalizeProjectIDs(ids)
+	if len(ids) > maxSignupProjects {
+		return nil, false
+	}
+	for _, id := range ids {
+		p, ok := h.repo.Project(id)
+		if !ok || !projectSelfJoinable(p) {
+			return nil, false
+		}
+	}
+	return ids, true
 }
 
 func (h *authHandlers) authRegister(c *gin.Context) {
@@ -68,8 +85,9 @@ func (h *authHandlers) authRegister(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 	var input struct {
-		Login    string `json:"login"`
-		Password string `json:"password"`
+		Login      string   `json:"login"`
+		Password   string   `json:"password"`
+		ProjectIDs []string `json:"projectIds"`
 	}
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid registration request"})
@@ -91,9 +109,22 @@ func (h *authHandlers) authRegister(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "自助注册已关闭，请联系管理员创建账号"})
 		return
 	}
+	projectIDs, ok := h.signupProjects(input.ProjectIDs)
+	if !ok {
+		registerMu.Unlock()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "所选项目不存在或未开放自助加入，请刷新页面后重新选择"})
+		return
+	}
 	u, err := h.repo.CreateLocalAccount(input.Login, input.Password, first)
-	if err == nil && !first {
-		h.joinWelcomeProject(u.ID)
+	if err == nil {
+		if !first {
+			h.joinWelcomeProject(u.ID)
+		}
+		for _, id := range projectIDs {
+			if err := h.repo.AddProjectMember(id, u.ID, "member"); err != nil {
+				log.Printf("join project %s at sign-up: %v", id, err)
+			}
+		}
 	}
 	registerMu.Unlock()
 	if errors.Is(err, repo.ErrLoginTaken) {

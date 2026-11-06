@@ -5,6 +5,7 @@
 - Add the self-hosted platform implementation, including Main Bot workspace editing, durable workspace checkpoints, idle reclamation, and task-group SOP completion/reopening.
 - Add public password accounts, explicit catalog installation, GitHub issue/PR adapters, actor-scoped GitHub MCP credentials, language and theme preferences, local deployment and public acceptance checks.
 - Integrate the original workflows as LoopForge Local under `local/`, with unified documentation, project policies and release history.
+- Let new users pick projects to join while signing up, and join them later from the Projects page. Owners and platform admins choose which projects allow self-service joining.
 
 Platform source and Local package releases are separate; merging the platform does not publish a platform image or a new npm version.
 
