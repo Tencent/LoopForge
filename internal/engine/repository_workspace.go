@@ -97,6 +97,14 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	if repository.RequireExistingWorkBranch && !existingDevelopmentBranch(repository) {
 		return fmt.Errorf("continuing an existing branch requires a development branch distinct from the main and integration branches")
 	}
+	if repository.CreateNewWorkBranch {
+		if repository.RequireExistingWorkBranch {
+			return fmt.Errorf("a work branch cannot both continue an existing branch and be newly created")
+		}
+		if !existingDevelopmentBranch(repository) {
+			return fmt.Errorf("creating a work branch requires a development branch name distinct from the main and integration branches")
+		}
+	}
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return fmt.Errorf("create repository directory: %w", err)
 	}
@@ -242,6 +250,11 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		checkout := func() error { return checkoutWorkBranch(ctx, workspace, repository.WorkBranch, baseBranch, true) }
 		if repository.RequireExistingWorkBranch {
 			checkout = func() error { return checkoutContinuedWorkBranch(ctx, workspace, repository.WorkBranch) }
+		}
+		if repository.CreateNewWorkBranch {
+			// A freshly cloned workspace is where a named branch is created, so this
+			// is the one place that must refuse an already existing remote branch.
+			checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
 		}
 		if err := checkout(); err != nil {
 			return err
@@ -411,6 +424,30 @@ func checkoutContinuedWorkBranch(ctx context.Context, workspace, branch string) 
 	// available for the normal synchronization or repair step.
 	_, _ = gitC(ctx, workspace, "merge", "--ff-only", remoteRef)
 	return nil
+}
+
+// checkoutNewWorkBranch creates the caller-named work branch. The caller asked
+// for a new branch, so a same-named remote (or leftover local) branch is an
+// error: silently checking it out would put the run on other people's work.
+func checkoutNewWorkBranch(ctx context.Context, workspace, workBranch string) error {
+	workBranch = strings.TrimSpace(workBranch)
+	if workBranch == "" {
+		return fmt.Errorf("creating a work branch requires its name")
+	}
+	if _, ok := gitRevParse(ctx, workspace, "refs/heads/"+workBranch); ok {
+		return fmt.Errorf("本地已存在分支 %s，不能按新建分支处理", workBranch)
+	}
+	out, err := gitC(ctx, workspace, "ls-remote", "--heads", "origin", "refs/heads/"+workBranch)
+	if err != nil {
+		return fmt.Errorf("无法确认远端分支 %s 是否存在：%w", workBranch, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		_, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if ok && ref == "refs/heads/"+workBranch {
+			return fmt.Errorf("远端已存在分支 %s，不能按新建分支处理；继续该分支请用 branchMode=continue", workBranch)
+		}
+	}
+	return createWorkBranchFromBase(ctx, workspace, workBranch)
 }
 
 func fetchRepositoryWorkBranch(ctx context.Context, workspace string, repository domain.RepositoryContext) error {

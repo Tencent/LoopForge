@@ -235,6 +235,35 @@ func onWorkBranch(ctx context.Context, workspace, branch string) bool {
 	return err == nil
 }
 
+// RequireOnWorkBranch refuses to deliver a checkout that is not plainly on
+// branch. PushWorkBranch treats another checked-out branch as nothing to push,
+// so a delivery that must not silently skip work checks this first: a manual
+// `git checkout` would otherwise report the recorded branch as pushed.
+func RequireOnWorkBranch(ctx context.Context, workspace, branch string) error {
+	branch = strings.TrimSpace(branch)
+	for marker, operation := range map[string]string{"MERGE_HEAD": "merge", "REBASE_HEAD": "rebase", "CHERRY_PICK_HEAD": "cherry-pick"} {
+		if _, err := os.Stat(filepath.Join(workspace, ".git", marker)); err == nil {
+			return fmt.Errorf("有未完成的 %s，先解决冲突并完成（或 abort）后再提交", operation)
+		}
+	}
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		if _, err := os.Stat(filepath.Join(workspace, ".git", dir)); err == nil {
+			return fmt.Errorf("有未完成的 rebase，先完成或 git rebase --abort 后再提交")
+		}
+	}
+	current, err := C(ctx, workspace, "branch", "--show-current")
+	if err != nil {
+		return fmt.Errorf("无法确认当前分支：%w", err)
+	}
+	if current = strings.TrimSpace(current); current != branch {
+		if current == "" {
+			current = "detached HEAD"
+		}
+		return fmt.Errorf("当前检出的是 %s，不是工作区记录的工作分支 %s，改动没有提交也没有推送；切回 %s（git checkout %s）后再提交，或新开一个工作区使用别的分支", current, branch, branch, branch)
+	}
+	return nil
+}
+
 // StageChanges stages tracked changes and untracked sources, minus Excluded
 // paths: secrets, AgentFlow control files, SOP deliverables and
 // dependency/cache trees.

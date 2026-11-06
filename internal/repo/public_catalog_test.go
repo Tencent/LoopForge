@@ -9,7 +9,7 @@ import (
 )
 
 // The production catalog must pass the user's task to every executable role.
-// Legacy instructions and taskPrompt fields fold into the single role prompt.
+// Each public role stores that brief in prompt, including {{input}}.
 func TestPublicCatalogPassesRunInputToEveryRole(t *testing.T) {
 	raw, err := os.ReadFile("../../migrations/seed/001_public_catalog.sql")
 	if err != nil {

@@ -238,9 +238,59 @@ func (h *agentToolGateway) invokeMainBotWorkspace(ctx context.Context, s *AgentT
 		return "", err
 	}
 	if result.Status < 200 || result.Status >= 300 {
-		return "", fmt.Errorf("%s", string(result.Body))
+		return "", &mainBotWorkspaceError{status: result.Status, body: string(result.Body)}
 	}
 	return redactAgentToolResult(string(result.Body), s.User), nil
+}
+
+// mainBotWorkspaceError keeps the HTTP answer of a workspace endpoint; its text
+// is the response body, as Main Bot has always seen it.
+type mainBotWorkspaceError struct {
+	status int
+	body   string
+}
+
+func (e *mainBotWorkspaceError) Error() string { return e.body }
+
+// mainBotWorkspaceBusy reports an answer that is safe to retry: the endpoint
+// refused before touching the PTY because another holder (a parallel role's
+// command preparing the environment, a snapshot save) owns the workspace.
+func mainBotWorkspaceBusy(err error) bool {
+	var failure *mainBotWorkspaceError
+	if !errors.As(err, &failure) || failure.status != 409 {
+		return false
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	return json.Unmarshal([]byte(failure.body), &body) == nil && body.Code == "workspace_busy"
+}
+
+// mainBotTerminalBusyWait bounds how long a command waits for parallel roles
+// before its own timeout starts; it is long enough for one environment setup.
+var mainBotTerminalBusyWait = 90 * time.Second
+
+func openMainBotTerminal(ctx context.Context, open func(context.Context) (runtime.TerminalResult, error)) (runtime.TerminalResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, mainBotTerminalBusyWait)
+	defer cancel()
+	delay := 300 * time.Millisecond
+	for {
+		opened, err := open(ctx)
+		if err == nil || !mainBotWorkspaceBusy(err) {
+			return opened, err
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return opened, fmt.Errorf("等待其他角色释放工作区超时（%s）：%w", mainBotTerminalBusyWait, err)
+			}
+			return opened, ctx.Err()
+		case <-time.After(delay):
+		}
+		if delay *= 2; delay > 3*time.Second {
+			delay = 3 * time.Second
+		}
+	}
 }
 
 var workspaceAttachmentTypes = map[string]string{
@@ -284,7 +334,8 @@ func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentTool
 	}
 	// Same redaction as any tool result, without its length cap.
 	content := redactAuthorizationValues(redactAssistantSecrets(file.Content, s.User))
-	if err := s.attachReplyFile(name, mimeType, []byte(content)); err != nil {
+	_, deliverable := ctx.Value(roleDeliverableKey{}).(bool)
+	if err := s.addReplyFile(name, mimeType, []byte(content), !deliverable); err != nil {
 		return "", err
 	}
 	out, _ := json.Marshal(map[string]any{"attached": name, "notice": "已附在本轮回复里，用户可在对话和产物栏打开；回复里提文件名即可，不要再给路径。"})
@@ -305,8 +356,6 @@ func (h *agentToolGateway) mainBotWorkspaceCommand(ctx context.Context, s *Agent
 		seconds = n
 	}
 	parent := ctx
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
-	defer cancel()
 	terminal := func(ctx context.Context, operation, id, data string) (runtime.TerminalResult, error) {
 		raw, err := h.invokeMainBotWorkspace(ctx, s, "POST", "terminal", map[string]any{"operation": operation, "id": id, "data": data}, nil)
 		var result runtime.TerminalResult
@@ -315,10 +364,17 @@ func (h *agentToolGateway) mainBotWorkspaceCommand(ctx context.Context, s *Agent
 		}
 		return result, err
 	}
-	opened, err := terminal(ctx, "open", "", "")
+	// Roles dispatched in parallel share this workspace. One may be preparing
+	// its environment right now; wait for it instead of failing this command.
+	// The wait does not count against the command's own timeout.
+	opened, err := openMainBotTerminal(parent, func(ctx context.Context) (runtime.TerminalResult, error) {
+		return terminal(ctx, "open", "", "")
+	})
 	if err != nil {
 		return "", err
 	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(seconds)*time.Second)
+	defer cancel()
 	defer func() {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()

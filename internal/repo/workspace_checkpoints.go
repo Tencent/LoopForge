@@ -130,15 +130,10 @@ func (r *RunsRepo) RenewWorkspaceUse(runID, token string, now time.Time) error {
 			}
 			return err
 		}
+		// The row is locked through the run and was just read with this token;
+		// an unchanged lease_until (same-millisecond renewal) is still a renewal.
 		until := now.Add(15 * time.Minute)
-		res := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, token).Update("lease_until", until)
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return ErrWorkspaceInUse
-		}
-		return nil
+		return tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, token).Update("lease_until", until).Error
 	})
 }
 
@@ -271,12 +266,28 @@ func (r *RunsRepo) SaveWorkspaceCheckpoint(runID, token string, now time.Time, a
 	})
 }
 
+// MarkWorkspaceFollowUp validates the lease by a read, never by RowsAffected:
+// MySQL reports changed rows, so two tools of one turn touching the workspace
+// within the same millisecond (DATETIME(3)) would otherwise look like a lost
+// lease and fail one of them with ErrWorkspaceInUse.
 func (r *RunsRepo) MarkWorkspaceFollowUp(runID, token string, now time.Time) error {
-	result := r.DB.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, token).Updates(map[string]any{"follow_up": true, "last_used_at": now})
-	if result.Error != nil {
-		return result.Error
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := holdsWorkspaceLease(tx, runID, token); err != nil {
+			return err
+		}
+		return tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, token).Updates(map[string]any{"follow_up": true, "last_used_at": now}).Error
+	})
+}
+
+func holdsWorkspaceLease(tx *gorm.DB, runID, token string) error {
+	if token == "" {
+		return ErrWorkspaceInUse
 	}
-	if result.RowsAffected != 1 {
+	var count int64
+	if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, token).Count(&count).Error; err != nil {
+		return err
+	}
+	if count != 1 {
 		return ErrWorkspaceInUse
 	}
 	return nil

@@ -1,9 +1,13 @@
 package httpapi
 
 import (
+	"agentflow/internal/engine"
+	"agentflow/internal/runtime"
+	"agentflow/internal/tracker"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -331,5 +335,73 @@ func TestWorkspaceStaysWhileADispatchRuns(t *testing.T) {
 	}
 	if file := roleAgentFile(roleSubagent{Role: domain.AgentDefinition{ID: "x", Name: "X", Prompt: "p"}}); !strings.Contains(file, "  - mcp__agentflow_session__workbench_workspace_open\n") {
 		t.Fatalf("role file must block workspace_open:\n%s", file)
+	}
+}
+
+// A finished role dispatch is collected like an SOP node: the files its
+// artifactOutputs name are attached to the reply, past the per-turn cap, and
+// a required one that is missing becomes a failed step under the dispatch.
+func TestRoleDeliverablesAreCollectedWhenTheDispatchEnds(t *testing.T) {
+	hostConversationWorkspace(t)
+	h, owner := workbenchFixture(t)
+	configureConversationSandbox(t, h)
+	if err := h.repo.PutRepository(domain.Repository{ID: "repo-web", ProjectID: "workbench", Name: "web", LocalPath: gitRepo(t), DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{ID: "chat-d", ProjectID: "workbench", Messages: []domain.AssistantMessage{{Role: "user", Content: "归档"}}}); err != nil {
+		t.Fatal(err)
+	}
+	en := engine.New(h.repo, runtime.NewManager(t.TempDir()))
+	h.deps.engine = en
+	gateway := &agentToolGateway{deps: h.deps}
+	gateway.api = New(h.repo, en, tracker.NewService(), "", "")
+	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: owner.ID, User: owner, ChatSessionID: "chat-d", ChatOwnerID: owner.ID}
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{"goal": "归档"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_write", map[string]any{"path": "archive.md", "content": "# 归档\n", "expectedSha256": "missing"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < agentReplyFileLimit; i++ {
+		if err := s.attachReplyFile(fmt.Sprintf("main-%d.md", i), "text/markdown", []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	roles := []roleSubagent{{Role: domain.AgentDefinition{ID: "archiver", Name: "归档", ArtifactOutputs: []domain.ArtifactContract{
+		{Name: "archive", Path: "archive.md", Required: true},
+		{Name: "plan", Path: "plan.md"},
+		{Name: "review", Path: "review.md", Required: true},
+		{Name: "escape", Path: "../secret.md", Required: true},
+	}}}}
+
+	// Only a dispatch the stream saw finish is collected.
+	s.trackDispatch(assistantStreamEvent{Kind: "tool", Tool: "Agent", ID: "call-a", Subagent: "role-archiver"})
+	finished := s.trackDispatch(assistantStreamEvent{Kind: "toolDone", ID: "call-a"})
+	events := h.collectRoleDeliverables(context.Background(), s, "call-a", finished, roles)
+
+	var steps []string
+	for _, ev := range events {
+		if ev.Parent != "call-a" {
+			t.Fatalf("deliverable step outside its dispatch: %+v", ev)
+		}
+		if ev.Kind == "tool" {
+			steps = append(steps, ev.Text)
+		}
+	}
+	if strings.Join(steps, "|") != "已收集交付物 · archive.md|缺少必需交付物 · review.md" {
+		t.Fatalf("steps=%v", steps)
+	}
+	if events[len(events)-1].Kind != "toolDone" || !events[len(events)-1].Failed {
+		t.Fatalf("missing required file must fail: %+v", events[len(events)-1])
+	}
+	var archived bool
+	for _, f := range s.takeReplyFiles() {
+		archived = archived || (f.Name == "archive.md" && string(f.Data) == "# 归档\n")
+	}
+	if !archived {
+		t.Fatal("archive.md was not attached past the per-turn cap")
+	}
+	if got := h.collectRoleDeliverables(context.Background(), s, "call-b", "general-purpose", roles); got != nil {
+		t.Fatalf("non-role dispatch collected: %+v", got)
 	}
 }

@@ -100,7 +100,7 @@ func TestSelectConversationRepositories(t *testing.T) {
 		{ID: "r2", ProjectID: "p", Name: "api", GongfengProjectID: "team/api-server"},
 		{ID: "other", ProjectID: "q", Name: "web"},
 	}
-	if _, err := selectConversationRepositories(domain.Project{ID: "none"}, all, nil); err == nil || !strings.Contains(err.Error(), "还没有配置代码仓库") {
+	if _, err := selectConversationRepositories(domain.Project{ID: "none"}, all, nil, false); err == nil || !strings.Contains(err.Error(), "还没有配置代码仓库") {
 		t.Fatalf("no repository: %v", err)
 	}
 	ids := func(rcs []domain.RepositoryContext) string {
@@ -110,15 +110,15 @@ func TestSelectConversationRepositories(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	if got, err := selectConversationRepositories(project, all, nil); err != nil || ids(got) != "r2,r1" {
+	if got, err := selectConversationRepositories(project, all, nil, false); err != nil || ids(got) != "r2,r1" {
 		t.Fatalf("all repositories, default first: %s %v", ids(got), err)
 	}
 	for want, id := range map[string]string{"WEB": "r1", "r2": "r2", "team/api-server": "r2", "api-server": "r2"} {
-		if got, err := selectConversationRepositories(project, all, []string{want}); err != nil || ids(got) != id {
+		if got, err := selectConversationRepositories(project, all, []string{want}, false); err != nil || ids(got) != id {
 			t.Fatalf("%q => %s %v", want, ids(got), err)
 		}
 	}
-	if _, err := selectConversationRepositories(project, all, []string{"web", "missing"}); err == nil || !strings.Contains(err.Error(), "可选：web、api") {
+	if _, err := selectConversationRepositories(project, all, []string{"web", "missing"}, false); err == nil || !strings.Contains(err.Error(), "可选：web、api") {
 		t.Fatalf("unknown repository: %v", err)
 	}
 	run := domain.Run{Repositories: []domain.RepositoryContext{{RepositoryID: "r1", Name: "web"}}}

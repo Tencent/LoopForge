@@ -72,7 +72,7 @@ func workspaceCheckpointResponseError(response domain.RunnerWorkspaceResponse) e
 		return nil
 	}
 	// Older runners have no code field. Preserve their execution fence too.
-	if response.Code == domain.WorkspaceErrorBusy || response.Error == "workspace is still in use" || response.Error == "workspace terminal is still active" {
+	if runnerWorkspaceBusy(response) || response.Code == domain.WorkspaceErrorTerminalActive || response.Error == "workspace terminal is still active" {
 		return repo.ErrWorkspaceInUse
 	}
 	if response.Code == domain.WorkspaceErrorMissing || response.Status == 404 {

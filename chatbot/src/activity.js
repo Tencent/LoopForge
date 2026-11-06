@@ -104,8 +104,9 @@ export function mergeActivity(previous = [], events = []) {
         if (event.subagent) existing.subagent = event.subagent;
         if (event.role) existing.role = event.role;
         if (event.input) existing.input = event.input;
-        // A resumed dispatch names its agent before it finishes.
-        if (event.agentId) existing.agentId = event.agentId;
+        // A resumed dispatch names its agent before it finishes. Keep the
+        // target apart: the CLI may still finish it under a new agent.
+        if (event.agentId) existing.agentId = existing.resumed = event.agentId;
       } else
         steps.push({
           id,
@@ -117,7 +118,7 @@ export function mergeActivity(previous = [], events = []) {
           ...(event.subagent ? { subagent: event.subagent } : {}),
           ...(event.role ? { role: event.role } : {}),
           ...(event.input ? { input: event.input } : {}),
-          ...(event.agentId ? { agentId: event.agentId } : {}),
+          ...(event.agentId ? { agentId: event.agentId, resumed: event.agentId } : {}),
         });
     }
     if (event.kind === "toolDone") {
@@ -268,12 +269,18 @@ export function processBlocks(steps = [], { live = false } = {}) {
 }
 export const isDispatch = (step) =>
   step?.kind === "tool" && /^(task|agent)$/i.test(step.tool || "");
+// A resume that did not take: the CLI finished the dispatch under another
+// agent than the one Main Bot asked to continue.
+export const resumeMissed = (step) =>
+  !!(step.resumed && step.finishedAt && step.agentId && step.agentId !== step.resumed);
 // collectSubagents lists every subagent of a conversation, newest last. A
 // dispatch that resumed an earlier agent joins it, so one entry holds every
 // task that agent was given.
 export function collectSubagents(messages = [], liveSteps = []) {
   const agents = [];
-  const add = (step) => {
+  // messageIndex is the saved reply that holds the dispatch; a live one has
+  // none yet, and its collected files are not attachments until it is saved.
+  const add = (step, messageIndex = null) => {
     const key = step.agentId || step.id;
     let agent = agents.find((item) => item.key === key || (step.agentId && item.agentId === step.agentId));
     if (!agent) {
@@ -284,16 +291,27 @@ export function collectSubagents(messages = [], liveSteps = []) {
     agent.role = step.role || agent.role;
     agent.subagent = step.subagent || agent.subagent;
     agent.dispatches.push(step);
-    // What it published, by title; the panel links each to the artifact.
-    for (const child of step.children || [])
-      if (child.kind === "tool" && child.tool === "发布产物" && child.detail && !child.failed)
-        agent.published.push(child.detail);
+    // What it published, and the role deliverables the platform collected
+    // when it finished (a required one it did not write is marked missing).
+    // A later dispatch that delivers the same file replaces the earlier row.
+    for (const child of step.children || []) {
+      if (child.kind !== "tool" || !child.detail) continue;
+      let item = null;
+      if (child.tool === "发布产物" && !child.failed) item = { title: child.detail, source: "已发布" };
+      if (child.tool === "交付物")
+        item = { title: child.detail, source: "交付物", missing: !!child.failed, messageIndex };
+      if (!item) continue;
+      agent.published = agent.published.filter((old) => old.source !== item.source || old.title !== item.title);
+      agent.published.push(item);
+    }
   };
-  for (const message of messages) {
-    if (message.role !== "assistant") continue;
-    savedActivity(message).filter(isDispatch).forEach(add);
-  }
-  liveSteps.filter(isDispatch).forEach(add);
+  messages.forEach((message, index) => {
+    if (message.role !== "assistant") return;
+    savedActivity(message)
+      .filter(isDispatch)
+      .forEach((step) => add(step, index));
+  });
+  liveSteps.filter(isDispatch).forEach((step) => add(step));
   return agents;
 }
 // While streaming, the latest paragraph is the answer only once nothing has

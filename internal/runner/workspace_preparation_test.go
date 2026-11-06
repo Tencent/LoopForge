@@ -112,8 +112,8 @@ func TestRunnerWorkspacePreparationFailsClosedAndFencesActiveTasks(t *testing.T)
 	gate.RLock()
 	result = d.readRunnerWorkspace(context.Background(), req)
 	gate.RUnlock()
-	if result.Status != 409 {
-		t.Fatalf("active task not fenced: %+v", result)
+	if result.Status != 409 || result.Code != domain.WorkspaceErrorBusy {
+		t.Fatalf("active task not fenced as a retryable conflict: %+v", result)
 	}
 	if _, err := os.Stat(filepath.Join(root, "preparation-count")); !os.IsNotExist(err) {
 		t.Fatalf("script ran during task: %v", err)
@@ -193,8 +193,10 @@ func TestRunnerConversationWorkspaceWaveReusesReadinessWithoutPreparingDuringAct
 		t.Fatalf("active wave readiness: %s %v", result.Payload, err)
 	}
 	request.Operation = domain.RunnerWorkspaceOperationPrepare
-	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 409 {
-		t.Fatal("SOP concurrent task allowed preflight scripts", result)
+	// A parallel SOP branch starting next to a running sibling reuses the live
+	// stamp exactly like a group role; neither reruns preflight scripts.
+	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
+		t.Fatal("parallel SOP branch failed to reuse active wave", result)
 	}
 	request.RunKind = domain.RunKindWorkspace
 	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {

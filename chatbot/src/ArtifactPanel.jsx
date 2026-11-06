@@ -7,7 +7,7 @@ import SopRunPanel, { runStatus } from "./SopRunPanel";
 import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
 import { SubagentSession, subagentName, subagentStatus } from "./SubagentSession";
-import { collectSubagents } from "./activity";
+import { collectSubagents, resumeMissed } from "./activity";
 import { IconButton } from "./ui";
 import { definitionTarget, actionName } from "./platform.js";
 import { useArtifactPanelLayout } from "./useArtifactPanelLayout";
@@ -135,10 +135,10 @@ function DefinitionPreview({ artifact }) {
                       ? "脚本"
                       : "角色执行"}
                 </small>
-                {node.taskPrompt || node.prompt ? (
+                {node.type === "approval" && node.taskPrompt ? (
                   <details>
-                    <summary>节点任务</summary>
-                    <RichContent message={node.taskPrompt || node.prompt} />
+                    <summary>确认要求</summary>
+                    <RichContent message={node.taskPrompt} />
                   </details>
                 ) : null}
               </div>
@@ -214,6 +214,34 @@ export default function ArtifactPanel({
             agent.dispatches.some((step) => step.id === selected.dispatchId),
         )
       : null;
+  // A dispatch shown on the open subagent can finish under another agent when
+  // its resume did not take. Follow it there instead of staying on the old
+  // page, where it would just disappear. Dispatches stay remembered while the
+  // finished reply is still loading and the dispatch is briefly nowhere.
+  const watched = useRef({ key: null, ids: [] });
+  useEffect(() => {
+    if (!selectedAgent) return;
+    const seen = watched.current;
+    if (seen.key !== selectedAgent.key) {
+      seen.key = selectedAgent.key;
+      seen.ids = [];
+    }
+    for (const step of selectedAgent.dispatches)
+      if (!seen.ids.includes(step.id)) seen.ids.push(step.id);
+    for (const agent of subagents) {
+      if (agent.key === selectedAgent.key) continue;
+      const moved = agent.dispatches.find((step) => seen.ids.includes(step.id) && resumeMissed(step));
+      if (!moved) continue;
+      setSelected({
+        kind: "subagent",
+        id: `subagent-${agent.key}`,
+        agentKey: agent.key,
+        dispatchId: moved.id,
+        name: subagentName(agent),
+      });
+      return;
+    }
+  });
   // The browser shows a desktop-width page, so it widens the pane like an
   // opened SOP node and restores the width afterwards.
   const layout = useArtifactPanelLayout(
