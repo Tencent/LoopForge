@@ -12,12 +12,12 @@ export const CREDENTIALS = {
 // assistantCredentialRules in internal/httpapi/assistant_run_view.go.
 export const CREDENTIAL_GUIDES = {
   gitToken: {
-    url: "https://github.com/settings/tokens",
-    link: "打开 GitHub 申请令牌",
+    url: "/#/settings",
+    link: "连接 GitHub",
     steps: [
-      "打开 GitHub「Settings → Developer settings → Personal access tokens」新建令牌",
-      "为目标仓库授予 Contents 和 Pull requests 的读写权限，创建后立即复制 token",
-      "到「个人配置 → GitHub Git Token」粘贴，点「校验并保存」",
+      "到「个人配置」点击「连接 GitHub」，复制设备码后前往 GitHub 授权",
+      "添加仓库时点击「选择我的 GitHub 仓库」，选择仓库与主分支",
+      "管理员尚未配置 GitHub 授权时，也可以手动填写有 Contents 和 Pull requests 读写权限的 PAT",
       "回到这里点「重试节点」",
     ],
   },

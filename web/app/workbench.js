@@ -33,7 +33,7 @@ const CREDENTIAL_GROUPS=[
   {id:'model',name:'模型与执行',sub:'AI 对话与编码 CLI',icon:'sparkles'},
 ];
 const CREDENTIAL_KINDS=[
-  {key:'gitToken',group:'platform',name:'代码仓库',short:'GitHub Git Token',logo:'gongfeng',
+  {key:'gitToken',group:'platform',name:'GitHub',short:'仓库授权',logo:'github',monochrome:true,
     use:'克隆私有仓库、创建任务分支、推送交付产物',
     description:'用于克隆私有仓库、创建任务分支及推送交付产物。',
     guide:[['打开 GitHub「Settings → Developer settings → Personal access tokens」','https://github.com/settings/tokens','前往 GitHub 申请个人访问令牌'],['新建令牌，为目标仓库授予 <code>Contents</code> 和 <code>Pull requests</code> 的读写权限'],['复制令牌粘贴到下方，保存前会自动校验权限']],
@@ -134,7 +134,7 @@ function credentialFieldHTML({label,note='',name,type='password',value='',placeh
   return `<label class="credential-field"><span>${escapeHTML(label)}${note?`<em>${escapeHTML(note)}</em>`:''}</span><div class="credential-input${secret?'':' is-plain'}"><input${id?` id="${id}"`:''} name="${name}" type="${type}" ${secret?'autocomplete="new-password"':'autocomplete="off" spellcheck="false"'}${secret?'':` value="${escapeHTML(value)}"`} placeholder="${escapeHTML(placeholder)}">${secret?`<button type="button" class="credential-eye" data-credential-eye aria-label="显示">${credentialGlyph('eye',15)}</button>`:''}</div>${hint!==null?`<small data-credential-hint="${name}">${escapeHTML(hint)}</small>`:''}</label>`;
 }
 function credentialOAuthHTML(label,note){
-  return `<div class="credential-oauth" data-gongfeng-oauth${state.gongfengOAuthEnabled?'':' hidden'}><a class="credential-btn secondary credential-ink" href="/api/auth/gongfeng/start" target="_blank" rel="noopener noreferrer">${credentialLogo(credentialKind('gitToken'),'is-mini')}<span>${label}</span></a><small>${note}</small></div>`;
+  return (typeof githubConnectHTML==='function'?githubConnectHTML():'')+`<div class="credential-oauth" data-gongfeng-oauth${state.gongfengOAuthEnabled?'':' hidden'}><a class="credential-btn secondary credential-ink" href="/api/auth/gongfeng/start" target="_blank" rel="noopener noreferrer">${credentialLogo(credentialKind('gitToken'),'is-mini')}<span>${label}</span></a><small>${note}</small></div>`;
 }
 function credentialPatWarningHTML(show){return `<div class="credential-note is-warn git-token-pat-warning"${show?'':' hidden'}>${credentialGlyph('alert',14)}<span>${CREDENTIAL_PAT_WARNING}</span></div>`}
 const GIT_TOKEN_REPLACE_HINT='保存后替换当前的令牌，对下一次任务生效';
@@ -155,7 +155,7 @@ function gitTokenDetailHTML(kind,user){
     :result.error?`<span class="is-err">${escapeHTML(result.error)}</span>${ago}`
     :!result.valid?`<span class="is-err">令牌有效但缺少权限 ${escapeHTML(missing.join('、'))}</span>${ago}`
     :`<span class="is-ok">令牌有效</span>${ago}`;
-  return `<dl class="credential-kv" data-git-detail><dt>来源</dt><dd>${user.gitTokenOAuth?'工蜂授权 · 到期自动续期':'个人访问令牌'}</dd><dt>权限</dt><dd>${scopes||'<span class="is-muted">校验后显示</span>'}</dd><dt>最近校验</dt><dd>${checked}</dd><dt>用于</dt><dd>${escapeHTML(kind.description)}</dd></dl>`;
+  return `<dl class="credential-kv" data-git-detail><dt>来源</dt><dd>${user.gitTokenOAuth?'工蜂授权 · 到期自动续期':'GitHub 授权 / 个人访问令牌'}</dd><dt>权限</dt><dd>${scopes||'<span class="is-muted">校验后显示</span>'}</dd><dt>最近校验</dt><dd>${checked}</dd><dt>用于</dt><dd>${escapeHTML(kind.description)}</dd></dl>`;
 }
 function gitTokenEditorHTML(kind,user){
   const failure=gitTokenFailure(gitTokenVerifyFor({id:state.currentUser?.id})?.result);
@@ -231,6 +231,7 @@ function renderCredentialPanel(){
   const panel=$('#credentialPanel');if(!panel)return;
   const user=credentialUser();
   panel.innerHTML=credentialPanelHTML(user);
+  if(typeof hydrateGitHubConnections==='function')hydrateGitHubConnections(panel);
   applyCredentialFilter(panel,user);
   hydrateCredentialIcons(panel);
 }
@@ -526,11 +527,14 @@ function credentialWizardStepOneHTML(user){
 function credentialWizardStepTwoHTML(kind){
   const wizard=credentialWizard;
   const guide=kind.guide.map(([text,href,label],index)=>`<li class="${wizard.guide[index]?'is-done':''}" data-wizard-guide="${index}"><span class="credential-guide-no">${wizard.guide[index]?credentialGlyph('check-draw',10):index+1}</span><span>${text}${href?`<a href="${href}" target="_blank" rel="noopener noreferrer" data-wizard-link="${index}">${escapeHTML(label)} ↗</a>`:''}</span></li>`).join('');
-  const gongfeng=kind.key==='gitToken'?`${credentialOAuthHTML('一键用工蜂授权','推荐 · 授权后自动续期')}${state.gongfengOAuthEnabled?'<div class="credential-or">或手动填写个人访问令牌</div>':''}${credentialPatWarningHTML(true)}`:'';
+  const github=kind.key==='gitToken';
+  const manual=wizard.githubMethod==='manual';
+  const methods=github?`<div class="github-methods" role="tablist" aria-label="GitHub 连接方式"><button type="button" role="tab" data-github-method="oauth" aria-selected="${!manual}">GitHub 授权</button><button type="button" role="tab" data-github-method="manual" aria-selected="${manual}">访问令牌</button></div>`:'';
+  if(github&&!manual)return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>连接 GitHub</span><small class="credential-description">连接后可选择仓库，用于克隆代码、创建分支和推送交付产物。</small></div>${methods}${credentialOAuthHTML('用工蜂授权','')}`;
   const validity=credentialWizardValid();
   const secretHint=validity.error&&credentialSecretError(kind,wizard.secret)?validity.error:validity.ok?'格式正确':(kind.hint||'只在你负责的任务运行时注入，保存后不再明文展示');
-  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>配置 ${escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${gongfeng}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
-    ${credentialFieldHTML({label:kind.short,name:'secret',id:'credentialWizardSecret',placeholder:kind.placeholder,hint:secretHint})}
+  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
+    ${credentialFieldHTML({label:github?'个人访问令牌（PAT）':kind.short,name:'secret',id:'credentialWizardSecret',placeholder:kind.placeholder,hint:secretHint})}
     ${kind.extra?credentialFieldHTML({label:kind.extra.label,note:kind.extra.url?'可选 · 留空使用官方地址':'',name:'extra',type:kind.extra.url?'url':'text',value:wizard.extra,placeholder:kind.extra.placeholder,hint:''}):''}
   </div>`;
 }
@@ -545,6 +549,7 @@ function credentialWizardStepThreeHTML(kind){
 }
 function credentialWizardFootHTML(){
   const wizard=credentialWizard;
+  if(wizard.step===2&&wizard.kind==='gitToken'&&wizard.githubMethod!=='manual')return '<span class="credential-kbd"><kbd>Esc</kbd> 关闭</span><span class="github-private-note">仅为当前账号授权</span>';
   if(wizard.done)return `<span></span><button type="button" class="credential-btn primary credential-ink" data-wizard-done>完成</button>`;
   const back=wizard.step===1||(wizard.direct&&wizard.step===2)
     ?'<span class="credential-kbd"><kbd>Esc</kbd> 关闭</span>'
@@ -578,6 +583,8 @@ function paintCredentialWizard(direction){
   scrim.querySelector('[data-wizard-close]').disabled=wizard.saving;
   scrim.querySelector('.credential-dialog-foot').innerHTML=credentialWizardFootHTML();
   hydrateCredentialIcons(scrim);
+  if(typeof hydrateGitHubConnections==='function')hydrateGitHubConnections(pane);
+  pane.querySelectorAll('[data-github-method]').forEach(button=>{button.onclick=()=>{wizard.githubMethod=button.dataset.githubMethod;paintCredentialWizard(0);focusCredentialWizard()}});
 }
 function refreshCredentialWizardFoot(){
   const scrim=$('#credentialWizard');if(!scrim||!credentialWizard)return;

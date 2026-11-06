@@ -67,10 +67,10 @@ test("MCP calls missing a GitHub token point at the Git token", () => {
   assert.equal(credentialHint("MCP GitHub 需要 GitHub Git Token：请先在个人凭证中配置")?.field, "gitToken");
 });
 
-test("the Git token guide points at GitHub", () => {
+test("the Git token guide opens the GitHub connection settings", () => {
   const hint = credentialHint("git clone: exit status 128: Authentication failed");
   assert.equal(hint.label, "GitHub Git Token");
-  assert.equal(CREDENTIAL_GUIDES.gitToken.url, "https://github.com/settings/tokens");
+  assert.equal(CREDENTIAL_GUIDES.gitToken.url, "/#/settings");
 });
 
 test("unrelated errors do not suggest personal credentials", () => {

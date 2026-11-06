@@ -479,6 +479,9 @@ func DockerImageCached(ctx context.Context, dockerfile domain.DockerfileDefiniti
 	if strings.TrimSpace(dockerfile.Content) == "" {
 		return false
 	}
+	if image := isolatedRuntimeImage(dockerfile); image != "" {
+		return dockerImageExists(ctx, image)
+	}
 	return dockerImageExists(ctx, cachedDockerImageName(dockerfile))
 }
 
@@ -629,7 +632,11 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 	if p.ReadOnlyRootFS {
 		args = append(args, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m")
 	}
-	args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
+	if image == isolatedRuntimeImage(s.dockerfile) {
+		args = append(args, "--entrypoint", "sh", image, "-lc", "trap : TERM INT; sleep infinity & wait")
+	} else {
+		args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
+	}
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		dropEphemeralDockerImage(s.builtImage)
 		s.builtImage = ""
@@ -715,6 +722,12 @@ func prepareDockerfileBuildContext(workspace string, dockerfile domain.Dockerfil
 }
 
 func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.DockerfileDefinition) (string, error) {
+	if image := isolatedRuntimeImage(dockerfile); image != "" {
+		if !dockerImageExists(ctx, image) {
+			return "", fmt.Errorf("isolated runtime image %q is not available in the sandbox Docker daemon", image)
+		}
+		return image, nil
+	}
 	image := cachedDockerImageName(dockerfile)
 	if dockerImageExists(ctx, image) {
 		return image, nil
@@ -728,6 +741,13 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		return "", fmt.Errorf("docker build: %w: %s", err, out)
 	}
 	return image, nil
+}
+
+func isolatedRuntimeImage(dockerfile domain.DockerfileDefinition) string {
+	if dockerfile.Content != IsolatedDockerfile || len(dockerfile.Files) != 0 {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv("AGENTFLOW_ISOLATED_IMAGE"))
 }
 
 // IsolatedDockerfile matches the public "generic-backend" environment so both

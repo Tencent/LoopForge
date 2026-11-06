@@ -184,6 +184,7 @@ describe("conversation hooks", () => {
   });
 
   test("provides local fixture conversations and completes a local reply", async () => {
+    history.replaceState({}, "", "/?localPreview=1");
     vi.useFakeTimers();
     const real = {
       user: { id: 1, loginName: "tester", chineseName: "测试" },
@@ -213,6 +214,16 @@ describe("conversation hooks", () => {
     await act(() => result.current.archive(forked.id, true));
     await act(() => result.current.remove(local.id));
     vi.useRealTimers();
+    history.replaceState({}, "", "/");
+  });
+
+  test("a new account has no fixture conversations unless explicitly previewing", async () => {
+    history.replaceState({}, "", "/");
+    const real = { user: { id: 99 }, ready: true, activeId: null, sessions: [], model: "m1" };
+    const { result } = renderHook(() => useLocalConversations(real));
+    await act(async () => {});
+    expect(result.current.sessions).toEqual([]);
+    expect(result.current.localSessions).toBe(false);
   });
 
   test("tracks opening and closing presence", () => {

@@ -2161,7 +2161,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .obs-card>.pager{margin:10px 0 2px;border:0;background:transparent;padding:8px 0 0}
 
 /* ================= 个人凭证（harness-ui 设计语言） ================= */
-#personalSettingsContent,.credential-scrim{
+#personalSettingsContent,.credential-scrim,.github-connect{
   --cr-accent:var(--hui-accent);--cr-accent-hover:var(--hui-accent-hover);
   --cr-surface:var(--hui-surface);--cr-canvas:var(--hui-canvas);--cr-elevated:var(--hui-soft);
   --cr-text:var(--hui-text);--cr-text-2:var(--hui-secondary);--cr-muted:var(--hui-muted);--cr-tertiary:var(--hui-tertiary);
@@ -2317,6 +2317,16 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-eye:hover{background:var(--cr-hover);color:var(--cr-text)}
 .credential-oauth{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
 .credential-oauth[hidden]{display:none}
+.github-methods{display:flex;gap:4px;padding:4px;margin:20px 0;background:var(--cr-elevated);border-radius:10px}
+.github-methods button{flex:1;padding:9px 12px;border:0;border-radius:7px;background:transparent;color:var(--cr-muted);font:inherit;cursor:pointer}
+.github-methods button[aria-selected="true"]{background:var(--cr-surface);color:var(--cr-text);box-shadow:0 1px 4px #00000012}
+.github-connect{width:100%;min-width:0}
+.github-connect-intro{font-size:13px;line-height:1.7;color:var(--cr-muted);margin:0 0 16px}
+.github-connect-status{font-size:12px;line-height:1.7;color:var(--cr-muted);margin-top:12px;overflow-wrap:anywhere}
+.github-connect-status:empty{display:none}
+.github-connect-status .button{margin:8px 6px 0 0}
+.github-device-code{display:block;font:600 26px/1.8 monospace;letter-spacing:3px;color:var(--cr-text)}
+.github-private-note{font-size:12px;color:var(--cr-muted)}
 .credential-oauth small{color:var(--cr-muted);font-size:11.5px}
 .credential-note{display:flex;gap:8px;padding:9px 11px;border:1px solid var(--cr-line);border-radius:8px;background:var(--cr-canvas);color:var(--cr-muted);font-size:12px;line-height:1.6}
 .credential-note[hidden]{display:none}

@@ -170,7 +170,7 @@ function renderGuideSetupBody(body,user,isGuest){
   const allReady=credReady&&projReady&&sopReady;
   const credDone=[modelReady,gfReady].filter(Boolean).length;
   const badge=ready=>`<span class="setup-status ${ready?'ready':'missing'}">${ready?'✓ 已就绪':'未完成'}</span>`;
-  const subItem=(name,label,ready,applyUrl,hint)=>`<div class="setup-sub ${ready?'is-ready':''}"><div class="setup-sub-info"><b>${label}</b>${hint?`<small>${hint}</small>`:''}</div>${ready?'':`<a class="setup-mini" href="${applyUrl}" target="_blank" rel="noopener noreferrer">申请 ↗</a>`}<button type="button" class="setup-mini" data-setup-cred="${name}">${ready?'查看':'去填写'} →</button></div>`;
+  const subItem=(name,label,ready,applyUrl,hint)=>`<div class="setup-sub ${ready?'is-ready':''}"><div class="setup-sub-info"><b>${label}</b>${hint?`<small>${hint}</small>`:''}</div>${ready?'':`<a class="setup-mini" href="${applyUrl}" target="_blank" rel="noopener noreferrer">${name==='gitToken'?'授权':'申请'} ↗</a>`}<button type="button" class="setup-mini" data-setup-cred="${name}">${ready?'查看':name==='gitToken'?'去连接':'去填写'} →</button></div>`;
   // 第 1 步：三张个人凭据一次性配齐
   const credCard=`<div class="setup-card ${credReady?'is-ready':''}"><div class="setup-card-head"><b>① 配个人凭据</b><small>个人配置 · 一次配齐</small>${badge(credReady)}</div>
     <p>${lfT('在<b>个人配置</b>中配置 CodeBuddy API Key 与 GitHub Token，或绑定本机 CLI。Main Bot 和内置 SOP 默认都使用 CodeBuddy。','Configure your CodeBuddy API key and GitHub token in <b>Settings</b>, or connect a local CLI. Main Bot and the built-in SOPs use CodeBuddy by default.')}</p>
@@ -178,7 +178,7 @@ function renderGuideSetupBody(body,user,isGuest){
       ${subItem('codeBuddyApiKey','CodeBuddy API Key',cbOwn,'https://www.codebuddy.ai/',cbShared?'未配置时对话和 SOP 都用平台共享模型 Deepseek-V4.1-Flash；配置后可使用其他模型':'Agent 调模型执行任务')}
       ${subItem('codexApiKey','Codex API Key',!!stored.codexApiKeyConfigured,'https://platform.openai.com/api-keys','公共 SOP 默认执行器')}
       ${subItem('claudeCodeApiKey','Claude Code API Key',!!stored.claudeCodeApiKeyConfigured,'https://console.anthropic.com/','可按角色选择的执行器')}
-      ${subItem('gitToken','GitHub Git Token',gfReady,'https://github.com/settings/tokens','目标仓库需要 Contents 和 Pull requests 读写权限')}
+      ${subItem('gitToken','GitHub Git Token',gfReady,'/#/settings','用 GitHub 设备码授权后选择仓库，也支持手动配置 PAT')}
     </div>
     <button type="button" class="button primary small" data-setup-cred="gitToken" style="margin-top:12px">打开个人配置 →</button></div>`;
   // 第 2 步：加入已有项目或新建项目

@@ -67,7 +67,7 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 ## Quick start
 
-Requires **Docker (with Compose)** and **Python 3**. The installer offers to install Docker if it is missing.
+Requires **Git, curl, Docker (with Compose)** and **Python 3**. On a fresh Ubuntu host, start with `sudo apt-get update && sudo apt-get install -y git curl python3`. The installer offers to install Docker if it is missing. Ordinary Linux users are supported through Docker group access or sudo.
 
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
@@ -75,7 +75,7 @@ cd LoopForge
 bash scripts/install.sh
 ```
 
-Open **<http://localhost:8090>** and create your account; the first one becomes the administrator. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
+Open the URL printed by the installer and create your account; the first one becomes the administrator. For a cloud deployment, set `LOOPFORGE_PUBLIC_URL=https://your-domain` before the first run and allow the service port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
 
 ### Try it without an API key
 
@@ -91,7 +91,7 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 | --- | --- |
 | Run the script + approval demo | Nothing |
 | Chat with Main Bot, generate a document or a new project | An API key for the selected executor |
-| Change an existing repository (in chat or via an SOP) and open a PR | Model credentials, a GitHub repository and your Git token |
+| Change an existing repository (in chat or via an SOP) and open a PR | Model credentials and a GitHub repository (connect GitHub in personal settings) |
 
 <details>
 <summary><b>More setup details</b>: executors, GitHub, sandboxes, access model</summary>
@@ -100,9 +100,9 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 
 - **Executors.** Pick **CodeBuddy, Codex or Claude Code** beside the home composer, then a model. Each executor uses its own credentials from personal settings, and every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, scheduled assistant tasks and AI notification summaries currently use CodeBuddy. The Docker image ships all three CLIs; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, and new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
-- **Delivering to a repository.** Add a GitHub repository, set your Git token and executor credentials in personal settings (or bind a local execution machine), then either run a project SOP or ask Main Bot to change the code and submit a PR/MR.
-- **Sandboxes.** In the default Compose installation, SOP runs and conversation workspaces both use Docker sandbox containers started through the host Docker socket. The sandbox image builds in the background after the first start (a few minutes). Docker socket access grants control of the host daemon, so this setup is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
-- **Accounts and access.** The default deployment listens on localhost and is designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
+- **Delivering to a repository.** Choose **Connect GitHub** in personal settings, approve the device code on GitHub and pick your repository (the LoopForge OAuth App is built in; no PAT required, manual PAT entry still works). Set executor credentials (or bind a local execution machine), then either run a project SOP or ask Main Bot to change the code and submit a PR/MR.
+- **Sandboxes.** In the default Compose installation, SOP runs and conversation workspaces both use Docker sandbox containers started through the host Docker socket. Default sandboxes reuse the installed runtime image, so nothing extra is built after installation; custom Dockerfiles still build their own images. Docker socket access grants control of the host daemon, so this setup is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
+- **Accounts and access.** New installations listen on all interfaces (existing bind settings are kept) and are designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
 - **Remote access, HTTPS, separate workers.** See [Deployment](docs/deployment.md).
 - **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.10+).
 
@@ -207,7 +207,7 @@ Those are general-purpose AI and automation workflow builders. LoopForge is buil
 LoopForge doesn't replace them; it orchestrates them. Each agent step and each chat turn runs one of those CLIs. LoopForge adds what surrounds it: who does what, in which sandbox, in which order, with which checks, and who signs off.
 
 **Is it safe to expose on the internet?**
-The default listens on localhost and targets a trusted team. Read the [account and access model](docs/deployment.md#accounts) and set up HTTPS before opening it up. Report vulnerabilities privately via the [security policy](SECURITY.md).
+New installations listen on all interfaces and target a trusted team. Read the [account and access model](docs/deployment.md#accounts) and set up HTTPS before opening it up. Report vulnerabilities privately via the [security policy](SECURITY.md).
 
 ## Documentation
 
