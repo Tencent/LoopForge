@@ -127,7 +127,7 @@ func agentToolInstructions(mode AgentToolMode) string {
 	case AgentToolScheduled:
 		return "使用当前项目和个人已安装的 MCP 以及 agentflow__* 直接读写，写入立即生效。完成后用自然语言汇报。"
 	default:
-		return "AgentFlow session MCP"
+		return "LoopForge session MCP"
 	}
 }
 
