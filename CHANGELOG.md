@@ -1,12 +1,18 @@
 # Changelog
 
-## Unreleased — platform edition
+Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+
+## 0.3.0 — platform edition
 
 - Add the self-hosted platform implementation, including Main Bot workspace editing, durable workspace checkpoints, idle reclamation, and task-group SOP completion/reopening.
 - Add public password accounts, explicit catalog installation, GitHub issue/PR adapters, actor-scoped GitHub MCP credentials, language and theme preferences, local deployment and public acceptance checks.
+- Connect GitHub by copying a PIN and approving the built-in LoopForge application, then pick repositories; PAT entry remains available.
+- Choose the branch mode, base branch and per-repository branches when opening a conversation workspace; role dispatches report their collected deliverables.
+- Install as an ordinary Linux user through sudo, install from a published platform image, and reuse that image for default sandboxes.
+- Validate repository remote URLs and restrict SSO return URLs to the same site.
 - Integrate the original workflows as LoopForge Local under `local/`, with unified documentation, project policies and release history.
 
-Platform source and Local package releases are separate; merging the platform does not publish a platform image or a new npm version.
+Existing installations apply `migrations/022_auth_integrations.sql` and `migrations/023_role_prompt.sql`. Creating a named workspace branch on a connected runner requires runner 0.9.1 or later.
 
 ## 0.2.3 — Local packaging
 

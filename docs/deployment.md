@@ -29,14 +29,14 @@ The installer checks Docker, Compose and Python (and offers to install Docker wh
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
-Source builds reuse npm, Go module and Go compiler caches. For the fastest first installation, use an image published by your administrator:
+Source builds reuse npm, Go module and Go compiler caches. For the fastest first installation, check out a release tag and use its published image:
 
 ```bash
-LOOPFORGE_IMAGE=ghcr.io/YOUR_OWNER/loopforge:sha-YOUR_COMMIT \
+LOOPFORGE_IMAGE=ghcr.io/tencent/loopforge:0.3.0 \
 LOOPFORGE_PUBLIC_URL=https://loopforge.example.com bash scripts/install.sh
 ```
 
-The `platform-image` workflow publishes a platform image when manually dispatched or when a `platform-v*` tag is pushed. Set the GHCR package visibility/access for your team before distributing the image. Images are pulled only when missing by default; use an immutable tag/digest, or set `LOOPFORGE_PULL_POLICY=always` when updating a mutable tag. Without `LOOPFORGE_IMAGE`, the installer builds this checkout. Existing `.env` values take precedence; change the saved image or URL there when updating an installation. Compose waits for the API's health check with a bounded timeout before installing schema extensions and seeds.
+Pushing a `vX.Y.Z` tag on `main` runs the `release` workflow once the `platform` workflow has passed on that commit. It publishes `ghcr.io/<owner>/loopforge` as `X.Y.Z`, `X.Y`, `latest` and `sha-<commit>`, and creates the GitHub Release. Forks publish under their own owner; set the GHCR package visibility/access for your team before distributing the image. Images are pulled only when missing by default; use an immutable tag/digest, or set `LOOPFORGE_PULL_POLICY=always` when updating a mutable tag. Without `LOOPFORGE_IMAGE`, the installer builds this checkout. Existing `.env` values take precedence; change the saved image or URL there when updating an installation. Compose waits for the API's health check with a bounded timeout before installing schema extensions and seeds.
 
 Open the platform and create the first account in the browser; it receives platform administration. Until that account exists the login page only offers this setup step.
 
