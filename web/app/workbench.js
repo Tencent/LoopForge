@@ -593,6 +593,8 @@ function refreshCredentialWizardFoot(){
 }
 function focusCredentialWizard(){
   const pane=$('#credentialWizard .credential-pane:not(.is-leaving)');
+  // Deferred calls must not pull focus back once the user is already in this pane, or typing lands in the wrong field.
+  if(pane?.contains(document.activeElement))return;
   (pane?.querySelector('input, .credential-opt.is-selected:not(:disabled), .credential-opt:not(:disabled)')
     ||$('#credentialWizard [data-wizard-next]:not(:disabled), #credentialWizard [data-wizard-done]')
     ||$('#credentialWizard [data-wizard-close]:not(:disabled)')
