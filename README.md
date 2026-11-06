@@ -27,11 +27,9 @@
   <a href="#documentation">Docs</a>
 </p>
 
-<p align="center">
-  <a href="docs/assets/readme/loopforge-promo.mp4"><img src="docs/assets/readme/promo-poster-en.svg" alt="Play the LoopForge product video (80 seconds, 1080p)" width="100%"></a>
-</p>
+https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
-<p align="center"><sub>80-second product tour (1080p, with sound; UI and captions in Chinese). Click to play.</sub></p>
+<p align="center"><sub>80-second product tour (1080p, with sound; UI and captions in Chinese).</sub></p>
 
 **LoopForge** is a self-hosted workspace where your team ships software with coding agents. Describe what you need to **Main Bot** in chat: it opens a Docker sandbox, checks out your repositories, delegates to project roles, and opens the PR. When a way of working proves itself, save it as an **SOP** (a standard workflow of agents, scripts and human gates) so the next requirement is delivered the same way, with review and approval built in.
 

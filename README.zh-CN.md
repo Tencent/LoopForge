@@ -27,11 +27,9 @@
   <a href="#文档">文档</a>
 </p>
 
-<p align="center">
-  <a href="docs/assets/readme/loopforge-promo.mp4"><img src="docs/assets/readme/promo-poster-zh.svg" alt="播放 LoopForge 产品视频（80 秒，1080p）" width="100%"></a>
-</p>
+https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
-<p align="center"><sub>80 秒产品演示（1080p，有声），点击播放。</sub></p>
+<p align="center"><sub>80 秒产品演示（1080p，有声）。</sub></p>
 
 **LoopForge** 是一个可自主部署的团队工作台，让你和编程 Agent 一起交付软件。在对话里把需求告诉 **Main Bot**：它会按需打开 Docker 沙箱、检出项目仓库、把任务分派给项目角色，最后提交 PR。某种做法被验证有效后，把它存成 **SOP**（由 Agent、脚本和人工关口组成的标准交付流程），下一个需求就按同样的方式交付，评审和验收都在流程里。
 
