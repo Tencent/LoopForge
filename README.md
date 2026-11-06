@@ -40,7 +40,7 @@
 
 https://github.com/user-attachments/assets/c9cc72fd-1df3-4ae3-9fe6-71d3e8770b65
 
-**LoopForge** is a self-hosted platform that puts **coding agents, deterministic scripts and human decisions into one delivery workflow (SOP)**. Give each agent a role, connect the steps on a visual canvas, and follow every requirement from the first plan to the final artifact. When the process works, keep it — the next requirement runs the same way.
+**LoopForge** is a self-hosted platform that puts **coding agents, deterministic scripts and human decisions into one delivery workflow (SOP)** — paired with **interactive conversation workspaces** when you want to iterate in chat. Give each agent a role, wire steps on a visual canvas or collaborate with Main Bot in a sandboxed repo workspace, and track every requirement from first plan to merged code. When a process works, keep it — the next requirement runs the same way.
 
 > Think **GitHub Actions for agent-driven delivery**: your process is the workflow, the agents fill in the intelligence at each step, and you stay in control of the gates.
 
@@ -51,8 +51,8 @@ Ask a coding agent to "fix this bug" and the outcome depends on the run. It migh
 LoopForge makes the process the fixed part and lets the AI be the flexible part:
 
 - **Repeatable** — Same SOP, same stages, same checks, every requirement. Built-in backend, frontend, bug-fix and product SOPs to start from.
-- **Separated roles** — Built-in delivery SOPs assign implementation, review and testing to different roles, each with its own instructions, rules, Skills and MCP tools. Customize the roles and review gates for your team.
-- **Human in the loop** — Approval gates where it matters. Read the report, approve, or send the work back to a chosen stage.
+- **Separated roles** — Assign planning, implementation, review and testing to distinct roles, each with its own prompt, executor, model, rules, Skills and MCP tools — usable both as SOP nodes and as native subagents in chat.
+- **Human in the loop** — Approval gates where it matters. Read the report, approve, send work back to a chosen stage, or pause and take over a running SOP workspace directly from chat.
 - **Observable & resumable** — Node status, tool traces, logs and artifacts in one place. Pause, retry a failed step, or rerun from any node.
 - **Bring your own stack** — CodeBuddy, Codex and Claude Code as executors; GitHub, Skills and MCP as tools; Docker sandboxes or your own machine as the runtime. MIT licensed.
 
@@ -82,7 +82,7 @@ Once installation and sandbox image preparation are complete, the script-and-app
 | --- | --- |
 | Run the script + approval demo | Nothing |
 | Chat, explore capabilities, generate a document or a new project | An API key for the selected executor |
-| Work on an existing repository or open a PR | Model credentials + a GitHub repository + your Git token |
+| Edit an existing repository (via SOP or chat workspace) or open a PR | Model credentials + a GitHub repository + your Git token |
 
 <details>
 <summary><b>More setup details</b> — executors, GitHub, sandboxes, access model</summary>
@@ -91,8 +91,8 @@ Once installation and sandbox image preparation are complete, the script-and-app
 
 - **Executors.** Pick **CodeBuddy, Codex or Claude Code** beside the home composer, then a model. Each executor uses its own credentials from personal settings, and every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, scheduled assistant tasks and AI notification summaries currently use CodeBuddy. The Docker image ships all three CLIs; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
-- **Delivering to a repository.** Add a GitHub repository, set your Git token and executor credentials in personal settings (or bind a local execution machine), open **SOPs → Built-in**, copy one into your project, create a requirement and start.
-- **Sandboxes.** In the default Compose installation, SOP tasks use Docker sandbox containers started through the host Docker socket. The sandbox image builds in the background after the first start (a few minutes). Docker socket access grants control of the host daemon: this is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
+- **Delivering to a repository.** Add a GitHub repository, set your Git token and executor credentials in personal settings (or bind a local execution machine), then either run a project SOP or ask Main Bot to open a [conversation workspace](docs/conversation-workspaces.md) and submit a PR/MR (or merge directly into a shared branch).
+- **Sandboxes.** In the default Compose installation, both SOP runs and on-demand conversation workspaces use Docker sandbox containers started through the host Docker socket. The sandbox image builds in the background after the first start (a few minutes). Docker socket access grants control of the host daemon: this is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
 - **Accounts and access.** The default deployment listens on localhost and is designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
 - **Remote access, HTTPS, separate workers** — see [Deployment](docs/deployment.md).
 - **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.10+).
@@ -123,26 +123,29 @@ flowchart LR
 
 | Node | What it does |
 | --- | --- |
-| **Agent** | A role (instructions + executor + rules + Skills + MCP tools) that designs, implements, reviews or tests. |
+| **Agent** | A role (prompt + executor + model + rules + Skills + MCP tools) that designs, implements, reviews or tests. |
 | **Script** | A deterministic shell step: build, test, lint, generate a report. No AI where AI is not needed. |
 | **Human gate** | Pauses the run until someone inspects the artifacts and approves — or sends the work back to a stage. |
 | **SOP** | Reuses another SOP as a sub-workflow. |
 
 Each node declares its artifacts and dependencies; the engine advances steps as their dependencies complete. Publish versions of an SOP, start from a built-in one, and adapt its roles, rules and execution environment to your project.
 
+Need faster interactive iteration? You can also work directly in **chat with Conversation Workspaces** — Main Bot opens a Docker sandbox on demand, checks out project repositories, delegates to project roles as subagents, or pauses/resumes/takes over a running SOP workspace, while still linking commits and PRs back to a tracked requirement.
+
 ## Features
 
-| | |
+| Capability | What it does |
 | --- | --- |
 | **Visual SOP designer** | Build workflows on a canvas with Agent, Script, Human gate and sub-SOP nodes. Rework-on-failure edges, version history and publishing. |
-| **Roles for agents** | Define who does what — instructions, executor, model, rules, Skills and MCP tools per role. |
-| **Requirement → run** | Create a requirement, pick an SOP, start. Clarification, execution, approvals and delivery all live in the workspace. |
-| **Run details** | Node status, outputs, tool traces and logs side by side. Pause, retry, add context, or rerun from a chosen node. |
-| **Artifacts & evidence** | Per-node artifact snapshots, workspace file browser and previews, so the evidence stays next to the result. |
+| **Conversation workspaces & subagents** | Chat with Main Bot to edit repositories in on-demand Docker sandboxes, invoke project roles as native subagents, `@`-reference skills/issues/SOPs/repos, queue or steer messages mid-turn, and pause, resume or take over SOP runs. |
+| **Roles for agents** | Define who does what — prompt, executor, model, rules, Skills and MCP tools per role, reusable across SOP nodes and chat subagents. |
+| **Requirement → delivery** | Track requirements end to end whether shipped through an SOP or directly from a conversation workspace, with PR/MR status and direct-branch merge support. |
+| **Scheduled AI tasks & market** | Run recurring agent tasks with full workspace, SOP and MCP access; publish versioned task templates with parameters to the shared market; or set automated requirement triggers. |
+| **Run details & artifacts** | Node status, outputs, tool traces, logs, per-node artifact snapshots and workspace previews side by side. Pause, retry, add context, or rerun from any node. |
 | **Execution environments** | Platform workers, Docker sandboxes, or a connected local CLI execution machine using your own tools and repositories. |
 | **GitHub integration** | Repository binding, issue/PR adapters and actor-scoped Git credentials for real delivery. |
-| **Insights** | Engineering metrics, run history and usage analysis to improve the process over time. |
-| **Team-ready** | Password accounts, projects and members, English/Chinese UI, light and dark themes, an OpenAPI-described HTTP API. |
+| **Insights & cost accounting** | Engineering metrics, business-domain reports (with static HTML/SVG export), and SOP + conversation token/cost analytics based on public standard pricing. |
+| **Team-ready** | Password accounts, projects and members, English/Chinese UI, light/dark/system themes, and an OpenAPI-described HTTP & MCP API. |
 
 ## See it run
 
@@ -172,11 +175,11 @@ Then run `/start-devflow "<your request>"` in Claude Code.
 
 See the [local guide](docs/local/usage.md) for each host's entry point. Source lives in [`local/`](local/). Local runs the built-in workflows today; exporting a platform SOP for standalone local execution is planned.
 
-| | Platform | Local |
+| Dimension | Platform | Local |
 | --- | --- | --- |
-| Best for | Teams sharing SOPs, approvals and history | One developer inside an IDE / CLI |
+| Best for | Teams sharing SOPs, chat workspaces, approvals and history | One developer inside an IDE / CLI |
 | Needs | Docker + Python 3 | Node.js 20+ + Python 3.8+ + a coding assistant |
-| Workflows | Custom SOPs on a visual canvas | Built-in Classic / Portable workflows |
+| Workflows | Custom SOPs on a visual canvas + conversation workspaces | Built-in Classic / Portable workflows |
 | Evidence | Shared run details, approvals and metrics in the web workspace | Artifacts under `artifacts/{task_slug}/` + optional local dashboard |
 
 ## FAQ
@@ -201,8 +204,9 @@ The default listens on localhost and targets a trusted team. Read the [account a
 | I want to… | Start here |
 | --- | --- |
 | Deploy, manage accounts, connect execution machines | [Deployment](docs/deployment.md) |
-| Install local workflows or choose an edition | [LoopForge Local](docs/local/usage.md) |
-| Extend the platform or use the API | [Architecture](docs/architecture.md) · [API reference](docs/api/README.md) |
+| Use conversation workspaces, scheduled AI tasks or token pricing | [Conversation workspaces](docs/conversation-workspaces.md) · [AI scheduled tasks](docs/ai-scheduled-task-capabilities.md) · [Token pricing](docs/token-pricing.md) |
+| Install local workflows or choose an edition | [LoopForge Local](docs/local/usage.md) · [Editions](docs/local/editions.md) |
+| Extend the platform or use the HTTP / MCP API | [Architecture](docs/architecture.md) · [API reference](docs/api/README.md) · [Shared schedules API](docs/api/shared-schedules.md) |
 | Check functional coverage and release readiness | [Validation record](docs/validation.md) · [Acceptance matrix](docs/testing/acceptance-matrix.md) · [Release review](docs/release-readiness.md) |
 | Understand source provenance and maintenance | [Public scope](docs/open-source-scope.md) · [Upstream synchronization](docs/upstream-sync.md) |
 

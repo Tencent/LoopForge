@@ -40,7 +40,7 @@
 
 https://github.com/user-attachments/assets/3c08e6fd-3163-4f91-b17d-ea593340feb2
 
-**LoopForge** 是一个可自主部署的平台，把 **编程 Agent、确定性脚本和人工决策放进同一条交付流程（SOP）**。为每个 Agent 分配角色，在可视化画布上连接步骤，跟进每个需求从方案到最终产物的全过程。跑通的方法存成 SOP，下一个需求按同样的方式交付。
+**LoopForge** 是一个可自主部署的平台，把 **编程 Agent、确定性脚本和人工决策放进同一条交付流程（SOP）**，同时支持在 **对话工作区** 中交互式编码与交付。为每个 Agent 分配角色，在可视化画布上编排步骤，或在沙箱工作区里与 Main Bot 协作，跟进每个需求从方案到代码合入的全过程。跑通的方法存成 SOP，下一个需求按同样的方式交付。
 
 > 可以把它理解为 **面向 Agent 交付的 GitHub Actions**：流程由你定义，Agent 在每一步发挥智能，关键关口始终由你把控。
 
@@ -51,8 +51,8 @@ https://github.com/user-attachments/assets/3c08e6fd-3163-4f91-b17d-ea593340feb2
 LoopForge 把流程固定下来，把灵活的部分留给 AI：
 
 - **可重复** —— 同一条 SOP、同样的阶段、同样的检查，每个需求都一样。内置后端、前端、缺陷修复、产品方案四类 SOP 可直接起步。
-- **角色分离** —— 内置交付 SOP 为实现、评审和测试配置不同角色，各自拥有指令、规则、Skills 和 MCP 工具。自定义 SOP 可按团队策略调整角色分工与评审关口。
-- **人在回路** —— 在关键节点设置人工审批：看完报告再放行，或打回到指定环节返工。
+- **角色分离** —— 为方案、实现、评审和测试配置独立角色，各自拥有角色提示词、执行器、模型、规则、Skills 和 MCP 工具 —— 既可作为 SOP 流程节点，也可在对话中作为原生子 Agent 调用。
+- **人在回路** —— 在关键节点设置人工审批：看完报告再放行，打回到指定环节返工，或在对话中直接暂停并接管正在运行的 SOP 工作区。
 - **可观测、可续跑** —— 节点状态、工具轨迹、日志和产物集中呈现；支持暂停、重试失败步骤、从任意节点重跑。
 - **用你自己的技术栈** —— 执行器支持 CodeBuddy、Codex、Claude Code；工具接入 GitHub、Skills、MCP；运行环境可选 Docker 沙箱或你自己的机器。MIT 开源。
 
@@ -82,7 +82,7 @@ bash scripts/install.sh
 | --- | --- |
 | 跑通脚本 + 人工审批体验 | 什么都不需要 |
 | 对话、了解能力、生成文档或新项目 | 所选执行器的 API Key |
-| 修改已有仓库或提交 PR | 模型凭据 + GitHub 仓库 + 你的 Git Token |
+| 修改已有仓库（通过 SOP 或对话工作区）或提交 PR | 模型凭据 + GitHub 仓库 + 你的 Git Token |
 
 <details>
 <summary><b>更多配置说明</b> —— 执行器、GitHub、沙箱、访问模型</summary>
@@ -91,8 +91,8 @@ bash scripts/install.sh
 
 - **执行器。** 在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清、定时助手任务和通知 AI 汇总目前使用 CodeBuddy。Docker 镜像内置三个 CLI；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
-- **交付到仓库。** 添加 GitHub 仓库，在个人设置中配置 Git Token 和执行器凭据（或绑定本机执行机器），打开 **SOP 流程 → 内置**，复制一条到项目中，创建需求并启动。
-- **沙箱。** 默认 Compose 安装中，SOP 任务使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；首次启动后平台会在后台构建沙箱镜像（需要几分钟）。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
+- **交付到仓库。** 添加 GitHub 仓库，在个人设置中配置 Git Token 和执行器凭据（或绑定本机执行机器），之后既可复制并启动一条项目 SOP，也可直接在首页对话中让 Main Bot 打开[对话工作区](docs/conversation-workspaces.md)修改代码并提交 PR/MR（或直推合入共享分支）。
+- **沙箱。** 默认 Compose 安装中，SOP 任务和按需创建的对话工作区均使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；首次启动后平台会在后台构建沙箱镜像（需要几分钟）。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
 - **账号与访问。** 默认仅监听本机，面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
 - **远程访问、HTTPS、独立 Worker** —— 见[部署指南](docs/deployment.md)。
 - **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.10+）。
@@ -123,26 +123,29 @@ flowchart LR
 
 | 节点 | 作用 |
 | --- | --- |
-| **Agent** | 一个角色（指令 + 执行器 + 规则 + Skills + MCP 工具），负责设计、实现、评审或测试。 |
+| **Agent** | 一个角色（提示词 + 执行器 + 模型 + 规则 + Skills + MCP 工具），负责设计、实现、评审或测试。 |
 | **脚本** | 确定性的 Shell 步骤：构建、测试、Lint、生成报告。不需要 AI 的地方就不用 AI。 |
 | **人工审批** | 暂停运行，直到有人检查产物并批准 —— 或把工作打回到指定环节。 |
 | **SOP** | 把另一条 SOP 作为子流程复用。 |
 
 每个节点声明自己的产物和依赖，引擎按依赖关系推进各步骤。SOP 支持版本发布；可以从内置 SOP 起步，再按项目调整角色、规则和运行环境。
 
+需要更快的交互式迭代？你也可以直接在首页对话中使用 **对话工作区** —— Main Bot 按需开启 Docker 沙箱、检出项目仓库、调用项目角色作为子 Agent，或暂停、恢复、接管正在运行的 SOP 工作区，并将改动通过 PR/MR 或共享分支直推关联回需求交付。
+
 ## 功能一览
 
-| | |
+| 能力 | 说明 |
 | --- | --- |
 | **可视化 SOP 设计器** | 在画布上用 Agent、脚本、人工审批和子 SOP 节点编排流程；支持失败打回连线、版本历史和发布。 |
-| **Agent 角色** | 定义谁做什么 —— 每个角色独立配置指令、执行器、模型、规则、Skills 和 MCP 工具。 |
-| **需求 → 运行** | 创建需求、选择 SOP、启动。需求澄清、执行、审批和交付都在工作台中完成。 |
-| **运行详情** | 节点状态、输出、工具轨迹和日志并排呈现；支持暂停、重试、补充上下文、从指定节点重跑。 |
-| **产物与证据** | 按节点保留产物快照，可浏览工作区文件与预览，验证证据与结果放在一起。 |
+| **对话工作区与子 Agent** | 与 Main Bot 对话并在按需开启的 Docker 沙箱中修改仓库；可将项目角色作为原生子 Agent 调用，支持 `@` 引用技能/需求/SOP/仓库、生成中消息排队与引导，以及暂停、恢复或接管 SOP 运行。 |
+| **Agent 角色** | 定义谁做什么 —— 每个角色配置角色提示词、执行器、模型、规则、Skills 和 MCP 工具，可在 SOP 节点与对话子 Agent 间复用。 |
+| **需求 → 交付闭环** | 无论通过 SOP 流程还是对话工作区直接改代码，都能全链路跟踪需求的 PR/MR 状态与共享分支直推交付。 |
+| **AI 定时任务与共享市场** | 支持具备完整工作区、SOP 与 MCP 权限的周期性 AI 任务；可将任务发布为带业务参数的版本化共享模板供各项目订阅，或配置需求自动触发。 |
+| **运行详情与产物** | 节点状态、输出、工具轨迹、日志、节点产物快照与工作区文件预览并排呈现；支持暂停、重试、补充上下文或从任意节点重跑。 |
 | **执行环境** | 平台 Worker、Docker 沙箱，或绑定本机 CLI 执行机器，使用你自己的工具和仓库。 |
 | **GitHub 集成** | 仓库绑定、Issue/PR 适配，以及按操作人隔离的 Git 凭据，用于真实交付。 |
-| **数据洞察** | 研发效能指标、运行记录和用量分析，持续改进流程。 |
-| **面向团队** | 账号密码登录、项目与成员管理、中英文界面、浅色／深色主题、带 OpenAPI 描述的 HTTP API。 |
+| **数据洞察与成本核算** | 研发效能指标、支持静态 HTML/SVG 导出的业务领域报表，以及基于公开标准价的 SOP 与对话 Token 成本统计。 |
+| **面向团队** | 账号密码登录、项目与成员管理、中英文界面、浅色／深色／跟随系统主题、带 OpenAPI 描述的 HTTP 与 MCP API。 |
 
 ## 实际运行效果
 
@@ -172,11 +175,11 @@ npx -y loopforge-cli@latest install claude
 
 各宿主的入口见[本地使用指南](docs/local/usage.zh-CN.md)，源码位于 [`local/`](local/)。Local 目前运行内置工作流；平台 SOP 导出后在本地独立执行是后续方向，尚未实现。
 
-| | 平台版 | Local |
+| 对比项 | 平台版 | Local |
 | --- | --- | --- |
-| 适合 | 团队共享 SOP、审批与运行记录 | 个人开发者在 IDE / CLI 中使用 |
+| 适合 | 团队共享 SOP、对话工作区、审批与运行记录 | 个人开发者在 IDE / CLI 中使用 |
 | 依赖 | Docker + Python 3 | Node.js 20+ + Python 3.8+ + 编程助手 |
-| 工作流 | 可视化画布自定义 SOP | 内置 Classic / Portable 工作流 |
+| 工作流 | 可视化画布自定义 SOP + 对话工作区 | 内置 Classic / Portable 工作流 |
 | 证据留存 | Web 工作台中共享运行详情、审批和指标 | `artifacts/{task_slug}/` 下的产物 + 可选本地看板 |
 
 ## 常见问题
@@ -201,8 +204,9 @@ LoopForge 不替代它们，而是编排它们。每个 Agent 步骤都运行这
 | 我想了解 | 从这里开始 |
 | --- | --- |
 | 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.md) |
-| 本地工作流的安装、使用与版本选择 | [LoopForge Local](docs/local/usage.zh-CN.md) |
-| 扩展平台或接入 API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) |
+| 对话工作区、AI 定时任务与 Token 成本口径 | [对话工作区](docs/conversation-workspaces.md) · [AI 定时任务](docs/ai-scheduled-task-capabilities.md) · [Token 成本统计](docs/token-pricing.md) |
+| 本地工作流的安装、使用与版本选择 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
+| 扩展平台或接入 HTTP / MCP API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) · [共享定时任务 API](docs/api/shared-schedules.md) |
 | 功能覆盖与发布就绪情况 | [实测记录](docs/validation.md) · [验收矩阵](docs/testing/acceptance-matrix.md) · [发布评审](docs/release-readiness.md) |
 | 来源与长期维护方式 | [开源范围](docs/open-source-scope.md) · [上游同步策略](docs/upstream-sync.md) |
 
