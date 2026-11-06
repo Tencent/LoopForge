@@ -72,8 +72,10 @@ Requires **Git, curl, Docker (with Compose)** and **Python 3**. On a fresh Ubunt
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
 cd LoopForge
-bash scripts/install.sh
+./start.sh
 ```
+
+This pulls the GHCR release image pinned in `compose.yaml` without building locally. Use `./start.sh logs`, `stop`, `restart` or `pull` to manage it, and `./start.sh dev` to build the checkout from source.
 
 Open the URL printed by the installer and create your account; the first one becomes the administrator. For a cloud deployment, set `LOOPFORGE_PUBLIC_URL=https://your-domain` before the first run and allow the service port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
 

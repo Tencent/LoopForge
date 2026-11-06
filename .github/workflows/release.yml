@@ -57,6 +57,10 @@ jobs:
             exit 1
           fi
           version="${TAG#v}"
+          if [[ "$(grep -cF "/loopforge:${version}}" compose.yaml)" != 2 ]]; then
+            echo "compose.yaml must pin loopforge:${version} (platform image and AGENTFLOW_ISOLATED_IMAGE) before tagging ${TAG}" >&2
+            exit 1
+          fi
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           prerelease=false
           [[ "${version}" == *-* ]] && prerelease=true
@@ -87,6 +91,7 @@ jobs:
             type=raw,value=latest,enable=${{ steps.release.outputs.prerelease == 'false' }}
 
       - uses: docker/build-push-action@v6
+        id: push
         with:
           context: .
           push: true
@@ -94,6 +99,16 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke-test the published image by digest
+        env:
+          LOOPFORGE_IMAGE: ${{ steps.release.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          ./start.sh -d
+          curl -fsS http://127.0.0.1:8090/api/health
+
+      - if: failure()
+        run: docker compose logs platform | tail -200
 
       - name: Create or update GitHub Release
         shell: bash
@@ -110,10 +125,10 @@ jobs:
           \`\`\`bash
           git clone --branch ${TAG} https://github.com/${GITHUB_REPOSITORY}.git
           cd ${GITHUB_REPOSITORY#*/}
-          LOOPFORGE_IMAGE=${IMAGE}:${VERSION} LOOPFORGE_PUBLIC_URL=https://loopforge.example.com bash scripts/install.sh
+          LOOPFORGE_PUBLIC_URL=https://loopforge.example.com ./start.sh
           \`\`\`
 
-          Platform image: \`${IMAGE}:${VERSION}\`. Existing installations: update \`LOOPFORGE_IMAGE\` in \`.env\`, re-run \`bash scripts/install.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
+          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
           EOF
           )"
           if gh release view "${TAG}" >/dev/null 2>&1; then

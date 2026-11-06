@@ -116,6 +116,8 @@ jobs:
           if-no-files-found: ignore
   first-run:
     # The path a new user takes: one-command install, then accounts created in the browser.
+    # Pulls the GHCR release pinned in compose.yaml; release.yml smoke-tests each newly published image.
+    # A pin bumped ahead of its tag has no image yet, so that commit is checked from source.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -131,7 +133,15 @@ jobs:
         working-directory: e2e
       - run: npx playwright install --with-deps chromium
         working-directory: e2e
-      - run: bash scripts/install.sh
+      - name: Install the pinned release, or build it while that release is not published yet
+        run: |
+          pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p' compose.yaml)
+          if docker manifest inspect "$pinned" > /dev/null 2>&1; then
+            ./start.sh -d
+          else
+            echo "::notice::$pinned is not published yet; building this checkout"
+            ./start.sh dev
+          fi
       - name: Generate test passwords
         run: |
           mkdir -p .local
