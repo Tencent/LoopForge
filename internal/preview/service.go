@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/repo"
 )
 
 // Host is the engine-facing callback surface. The preview package never
@@ -33,7 +32,7 @@ type Host interface {
 }
 
 type Service struct {
-	repo      *repo.Store
+	repo      Repository
 	store     Store
 	cfg       Config
 	host      Host
@@ -44,7 +43,7 @@ type Service struct {
 	routed    map[string]bool
 }
 
-func NewService(st *repo.Store, store Store, cfg Config) *Service {
+func NewService(st Repository, store Store, cfg Config) *Service {
 	if store == nil {
 		store = NewDBStore(st)
 	}
@@ -105,7 +104,7 @@ func (s *Service) beginFinalization(run domain.Run, fromBuild bool) bool {
 	}
 	now := s.clock()
 	preview := domain.RunPreview{
-		ID:            repo.NewPreviewID(run.ID),
+		ID:            domain.PreviewID(run.ID),
 		RunID:         run.ID,
 		ProjectID:     run.WorkflowSnapshot.ProjectID,
 		Kind:          contract.KindOrStatic(),
@@ -435,7 +434,7 @@ func (s *Service) Skip(run domain.Run, reason string) {
 		reason = "工作区没有前端工程，已跳过预览"
 	}
 	preview := domain.RunPreview{
-		ID:          repo.NewPreviewID(run.ID),
+		ID:          domain.PreviewID(run.ID),
 		RunID:       run.ID,
 		ProjectID:   run.WorkflowSnapshot.ProjectID,
 		Kind:        contract.KindOrStatic(),
@@ -492,7 +491,7 @@ func (s *Service) Fail(preview domain.RunPreview, err error) {
 
 func (s *Service) failNew(run domain.Run, contract *domain.PreviewContract, err error) {
 	preview := domain.RunPreview{
-		ID: repo.NewPreviewID(run.ID), RunID: run.ID, ProjectID: run.WorkflowSnapshot.ProjectID,
+		ID: domain.PreviewID(run.ID), RunID: run.ID, ProjectID: run.WorkflowSnapshot.ProjectID,
 		Kind: contract.KindOrStatic(), Status: domain.PreviewFailed, SourcePath: contract.SourcePath,
 		EntryFile: contract.Index(), ErrorText: clipPreviewError(err.Error()),
 		CreatedAt: s.clock(), UpdatedAt: s.clock(),

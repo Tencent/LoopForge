@@ -102,7 +102,11 @@ if [[ -n "${LOOPFORGE_IMAGE:-}" ]]; then
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
   step 'Building LoopForge from source (first install takes several minutes; frontend, Go and runtime stages build in parallel)'
+  # Download MySQL while the platform image builds instead of afterwards.
+  docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
+  mysql_pull=$!
   docker_access compose --profile platform build platform
+  wait "$mysql_pull" || true
   step 'Starting LoopForge'
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 fi
