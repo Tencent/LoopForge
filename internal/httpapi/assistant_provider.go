@@ -69,14 +69,19 @@ if not name.startswith("mcp__agentflow_session__"):
     sys.exit(2)
 `
 
-func prepareAlternateAssistantCommand(req assistantCLIRequest, dir string) (runtime.CommandSpec, error) {
-	binary, kind, binding := "claude", "claude-code", runtime.BindClaudeCode
+func prepareAlternateAssistantCommand(ctx context.Context, req assistantCLIRequest, dir string) (runtime.CommandSpec, error) {
+	kind, binding := "claude-code", runtime.BindClaudeCode
 	if req.Executor == "codex" {
-		binary, kind, binding = "codex", "codex", runtime.BindCodex
+		kind, binding = "codex", runtime.BindCodex
 	}
-	bin, err := exec.LookPath(binary)
-	if err != nil {
-		return runtime.CommandSpec{}, fmt.Errorf("%s CLI 未安装", binary)
+	var bin string
+	var err error
+	if req.Executor == "codex" {
+		if bin, err = exec.LookPath("codex"); err != nil {
+			return runtime.CommandSpec{}, fmt.Errorf("codex CLI 未安装")
+		}
+	} else if bin, err = runtime.ResolveClaudeCode(ctx); err != nil {
+		return runtime.CommandSpec{}, err
 	}
 	sys := strings.TrimSpace(req.SystemPrompt)
 	if sys == "" {
@@ -161,7 +166,7 @@ func runAlternateAssistantCLI(ctx context.Context, req assistantCLIRequest, user
 		return "", "", err
 	}
 	defer os.RemoveAll(dir)
-	command, err := prepareAlternateAssistantCommand(req, dir)
+	command, err := prepareAlternateAssistantCommand(ctx, req, dir)
 	if err != nil {
 		return "", "", err
 	}

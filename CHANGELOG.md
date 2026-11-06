@@ -2,8 +2,9 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
-## Unreleased
+## 0.3.2 — Claude Code installed on first use
 
+- Published images no longer bundle Claude Code, which is proprietary. The first Main Bot conversation or SOP role that selects it installs the pinned `@anthropic-ai/claude-code@2.1.300` from npm into `$LOOPFORGE_DATA_DIR/cli`; Docker sandboxes from the platform image read it through a read-only mount. That first use waits for the download (about a minute); later runs reuse it. Codex and CodeBuddy remain bundled.
 - Listen on `0.0.0.0` by default, including older installations without `LOOPFORGE_BIND`. The installer no longer asks for, or fails without, `LOOPFORGE_PUBLIC_URL`; it is optional and only changes the printed address.
 
 ## 0.3.1 — published-image startup
