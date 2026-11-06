@@ -261,3 +261,16 @@ func TestCanceledCloneStopsGitChildren(t *testing.T) {
 		t.Fatalf("canceled clone left a Git child running: %v", err)
 	}
 }
+
+func TestCheckoutRepositoryRejectsCommandRunningCloneURLs(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "pwned")
+	for _, cloneURL := range []string{"ext::sh -c touch% " + marker, "--upload-pack=touch " + marker} {
+		err := checkoutRepository(context.Background(), t.TempDir(), &domain.RunnerRepository{CloneURL: cloneURL, Ref: "master"})
+		if err == nil {
+			t.Fatalf("checkoutRepository(%q) succeeded", cloneURL)
+		}
+		if _, statErr := os.Stat(marker); statErr == nil {
+			t.Fatalf("checkoutRepository(%q) executed a command", cloneURL)
+		}
+	}
+}

@@ -155,6 +155,9 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	if remote == "" {
 		return fmt.Errorf("repository has neither localPath nor cloneUrl")
 	}
+	if err := gitwork.ValidateRemoteURL(remote, true); err != nil {
+		return fmt.Errorf("git clone: %w", err)
+	}
 	baseBranch := repositoryBaseBranch(repository)
 	clone := func(branch string, useReference bool) error {
 		args := []string{"clone", "--no-hardlinks", "--single-branch", "--branch", branch}
@@ -163,7 +166,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		}
 		// Clone into the existing directory (`.`) so git cannot unlink and
 		// recreate `workspace`. That inode is the Docker bind-mount source.
-		args = append(args, gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
+		args = append(args, "--", gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
 		if _, err := runGit(ctx, workspace, args...); err != nil {
 			return fmt.Errorf("git clone: %w", err)
 		}
@@ -218,7 +221,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		return err
 	}
 	if origin := strings.TrimSpace(cloneURL); origin != "" {
-		if _, err := gitC(ctx, workspace, "remote", "set-url", "origin", origin); err != nil {
+		if _, err := gitC(ctx, workspace, "remote", "set-url", "--", "origin", origin); err != nil {
 			return fmt.Errorf("set origin url: %w", err)
 		}
 	}
@@ -255,7 +258,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 // one empty commit and leaves workspace on it. seeded is false when the
 // remote is unreachable or has branches; the clone error then stands.
 func seedEmptyRepository(ctx context.Context, workspace, remote, defaultBranch, baseBranch string, reset func(string) error) (seeded bool, err error) {
-	heads, lsErr := runGit(ctx, workspace, "ls-remote", "--heads", remote)
+	heads, lsErr := runGit(ctx, workspace, "ls-remote", "--heads", "--", remote)
 	if lsErr != nil || strings.TrimSpace(heads) != "" {
 		return false, nil
 	}
@@ -269,7 +272,7 @@ func seedEmptyRepository(ctx context.Context, workspace, remote, defaultBranch, 
 	for _, args := range [][]string{
 		{"init", "-q", "."},
 		{"symbolic-ref", "HEAD", "refs/heads/" + first},
-		{"remote", "add", "origin", remote},
+		{"remote", "add", "--", "origin", remote},
 	} {
 		if _, err := runGit(ctx, workspace, args...); err != nil {
 			return true, fmt.Errorf("initialize empty repository: %w", err)
@@ -341,7 +344,10 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		return err
 	}
 	if origin := strings.TrimSpace(repository.CloneURL); origin != "" {
-		_, _ = gitC(ctx, workspace, "remote", "set-url", "origin", origin)
+		if err := gitwork.ValidateRemoteURL(origin, true); err != nil {
+			return fmt.Errorf("set origin url: %w", err)
+		}
+		_, _ = gitC(ctx, workspace, "remote", "set-url", "--", "origin", origin)
 	}
 	baseBranch := repositoryBaseBranch(repository)
 	if repository.IntegrateBranch != "" && repository.WorkBranch != "" {
