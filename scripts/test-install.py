@@ -146,7 +146,7 @@ exec "$@"
                     if not chunk:
                         break
                     output += chunk
-                    if b'Public URL (leave blank for LAN testing):' in output and not answered:
+                    if b'Team URL [' in output and not answered:
                         os.write(master, b'https://team.example.test\n')
                         answered = True
                 elif process.poll() is not None:
@@ -162,6 +162,28 @@ exec "$@"
                 process.wait()
             os.close(master)
 
+    def test_existing_empty_url_can_be_set_without_rotating_secrets(self):
+        self.assert_success(self.install())
+        config = self.root / '.env'
+        original = config.read_text()
+        config.write_text(original.replace('https://team.example.test', "''"))
+        self.assert_success(self.install())
+        self.assertEqual(config.read_text(), original)
+
+    def test_team_url_rejects_loopback_and_listening_addresses(self):
+        for url in ('http://127.0.0.1:8090', 'http://localhost:8090', 'http://0.0.0.0:8090', 'http://[::]:8090', 'http://169.254.1.2:8090'):
+            with self.subTest(url=url):
+                result = self.install(LOOPFORGE_PUBLIC_URL=url)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('build platform', (self.root / 'docker.log').read_text())
+
+    def test_unknown_container_url_fails_before_build(self):
+        result = self.install(LOOPFORGE_PUBLIC_URL='', LOOPFORGE_YES='1')
+        if address.container_host():
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('LOOPFORGE_PUBLIC_URL', result.stderr)
+            self.assertNotIn('build platform', (self.root / 'docker.log').read_text())
+
 
 class AddressTests(unittest.TestCase):
     def test_public_url_and_loopback_proxy(self):
@@ -176,10 +198,16 @@ class AddressTests(unittest.TestCase):
         self.assertIn('Local access only', note)
 
     def test_cloud_address_is_not_claimed_to_be_public(self):
-        with patch.object(address.socket, 'socket', side_effect=OSError), patch.object(address.socket, 'gethostbyname_ex', return_value=('host', [], ['127.0.0.1', '192.168.1.2'])):
+        with patch.object(address, 'container_host', return_value=False), patch.object(address.socket, 'socket', side_effect=OSError), patch.object(address.socket, 'gethostbyname_ex', return_value=('host', [], ['127.0.0.1', '192.168.1.2'])):
             urls, note = address.access_addresses('8090', {})
         self.assertEqual(urls, ['http://192.168.1.2:8090'])
         self.assertIn('NAT', note)
+
+    def test_container_does_not_publish_its_bridge_address(self):
+        with patch.object(address, 'container_host', return_value=True):
+            urls, note = address.access_addresses('8090', {})
+        self.assertEqual(urls, [])
+        self.assertIn('published port', note)
 
 
 if __name__ == '__main__':

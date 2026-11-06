@@ -62,7 +62,7 @@ async function startGitHubConnect(host){
     const code=document.createElement('strong');code.className='github-device-code';code.textContent=flow.userCode;instruction.append(code);
     const copy=document.createElement('button');copy.type='button';copy.className='button ghost small';copy.textContent='复制授权码';
     copy.onclick=async()=>{try{await navigator.clipboard.writeText(flow.userCode);copy.textContent='已复制'}catch{copy.textContent='请选中授权码复制'}};
-    const link=document.createElement('a');link.href='https://github.com/login/device';link.target='_blank';link.rel='noopener noreferrer';link.className='button primary small';link.textContent='前往 GitHub 授权';
+    const link=document.createElement('a');link.href='https://github.com/login/device';link.target='_blank';link.rel='noopener noreferrer';link.className='button primary small';link.textContent='复制并前往 GitHub 授权';link.onclick=()=>{navigator.clipboard?.writeText(flow.userCode).then(()=>{copy.textContent='已复制'},()=>{})};
     const cancel=document.createElement('button');cancel.type='button';cancel.className='button ghost small';cancel.textContent='取消';cancel.onclick=()=>{finish();status.replaceChildren()};
     status.append(instruction,copy,link,cancel);
     timer=setTimeout(poll,Math.max(5,flow.interval)*1000);

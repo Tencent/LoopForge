@@ -62,18 +62,15 @@ if ! select_docker_access; then
 fi
 docker_access compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is required (the "docker compose" command).'
 
-if [[ ! -e .env && -z "${LOOPFORGE_PUBLIC_URL:-}" && -t 0 && "${LOOPFORGE_YES:-}" != 1 ]]; then
-  printf '\nTeam access: enter the public IP/domain shown in your cloud console, including the port.\n'
-  printf 'Example: http://203.0.113.10:%s (replace the example IP). Use https://your-domain for a reverse proxy.\n' "${AGENTFLOW_HTTP_PORT:-8090}"
-  read -r -p 'Public URL (leave blank for LAN testing): ' public_url
-  export LOOPFORGE_PUBLIC_URL="$public_url"
-fi
-
+requested_public_url="${LOOPFORGE_PUBLIC_URL:-}"
 [[ ! -e .env || -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
 bash scripts/configure.sh
 [[ -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
 set -a; source .env; set +a
 export LOOPFORGE_BIND="${LOOPFORGE_BIND:-127.0.0.1}"
+if [[ -n "$requested_public_url" ]]; then export LOOPFORGE_PUBLIC_URL="$requested_public_url"; fi
+python3 scripts/install-address.py --prepare "${AGENTFLOW_HTTP_PORT:-8090}"
+set -a; source .env; set +a
 if [[ -z "${LOOPFORGE_DOCKER_SOCKET:-}" ]]; then
   docker_host="${DOCKER_HOST:-$(docker_access context inspect --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null || true)}"
   case "$docker_host" in
