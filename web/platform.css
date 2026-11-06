@@ -811,6 +811,8 @@ a.conv-branch::after{content:" ↗";opacity:.7}
 .pa-av.more{background:var(--pa-elevated);color:var(--muted)}
 .pa-stats{display:flex;align-items:center;gap:12px;margin-left:auto;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 .pa-stats b{color:var(--text);font-weight:600}
+.pa-chip.open{font-family:inherit;border-color:color-mix(in srgb,var(--pa-ok) 23%,transparent);background:var(--pa-ok-bg);color:var(--pa-ok);font-weight:600}
+.pa-card .pa-join{display:inline-flex;align-items:center;gap:4px;flex:none}
 .pa-live{display:inline-flex;align-items:center;gap:5px}
 .pa-live i{width:6px;height:6px;border-radius:50%;background:var(--pa-ok);box-shadow:0 0 0 3px var(--pa-ok-bg)}
 .pa-rc-add{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border:1px dashed var(--line-strong);border-radius:12px;background:transparent;color:var(--muted);cursor:pointer;transition:border-color .15s,color .15s,background .15s}

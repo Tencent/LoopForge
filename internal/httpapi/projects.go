@@ -250,6 +250,35 @@ func (h *projectsHandlers) restoreProject(c *gin.Context) {
 	c.JSON(http.StatusOK, domain.PublicProject(stored))
 }
 
+// joinProject adds the signed-in user to a project opened for self-service
+// joining. Owners and existing members get the project back unchanged.
+func (h *projectsHandlers) joinProject(c *gin.Context) {
+	user, ok := h.requestUser(c.Request, true)
+	if !ok || user == nil || user.ID <= 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+		return
+	}
+	p, found := h.repo.Project(c.Param("id"))
+	if !found || p.ArchivedAt != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
+		return
+	}
+	if projectHasMember(p, user.ID) {
+		c.JSON(http.StatusOK, domain.PublicProject(p))
+		return
+	}
+	if !projectSelfJoinable(p) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "该项目未开放自助加入，请联系项目 Owner 添加"})
+		return
+	}
+	if err := h.repo.AddProjectMember(p.ID, user.ID, "member"); err != nil {
+		respond(c, err)
+		return
+	}
+	stored, _ := h.repo.Project(p.ID)
+	c.JSON(http.StatusOK, domain.PublicProject(stored))
+}
+
 func (h *projectsHandlers) projectForArchive(c *gin.Context) (domain.Project, int64, bool) {
 	p, ok := h.repo.Project(c.Param("id"))
 	if !ok {

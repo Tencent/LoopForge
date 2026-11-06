@@ -43,6 +43,8 @@ Access to the Docker socket is equivalent to root on the host. Two safeguards fo
 
 The first account created in the browser becomes the platform administrator. After that, anyone who can reach the login page may sign up as a regular user while `AGENTFLOW_ALLOW_SIGNUP` is `true` (the default). Registered users can create requirements and run SOPs on your workers, so set `AGENTFLOW_ALLOW_SIGNUP=false` for any installation reachable from untrusted networks and create accounts explicitly instead.
 
+New accounts join the `welcome` project automatically. A project owner or platform administrator can also turn on **Allow self-service joining** under the project's Members tab. While sign-up is open, the sign-up form lists those projects so new users can pick the ones to join. Signed-in users can join them later with the **Join** button on the Projects page (`POST /api/projects/{id}/join`). Self-service joiners become regular members with write access to the project's requirements and runs. Leave the switch off for projects that should stay invite-only.
+
 LoopForge assumes a trusted team. Every signed-in account can list all projects, requirements and runs. Project settings and repositories can be changed only by the project owner or a platform administrator, and personal credentials only by their owner. Do not use one installation to separate untrusted tenants.
 
 For a native installation, export the `.env` values before running the explicit account command:

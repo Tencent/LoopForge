@@ -24,6 +24,11 @@
       <label>密码<input name="password" type="password" autocomplete="current-password" required minlength="6" maxlength="72"></label>
       <label id="confirmField" hidden>确认密码<input name="confirm" type="password" autocomplete="new-password" maxlength="72"></label>
       <p id="passwordRule" class="login-rule" hidden>密码至少 6 个字符</p>
+      <fieldset id="projectField" class="login-projects" hidden>
+        <legend>加入项目</legend>
+        <p class="login-rule">可多选，也可以跳过，注册后在「项目」页随时加入。</p>
+        <div id="projectOptions" class="login-project-list"></div>
+      </fieldset>
       <p id="loginError" role="alert"></p>
       <button id="loginSubmit" class="button primary" type="submit">登录</button>
     </form>

@@ -96,12 +96,16 @@ function generateProjectIdentity(name,projects=[],seed=''){
   for(let i=0;keys.has(key)&&i<676;i++)key=longKey+letter(Math.floor(i/26))+letter(i%26);
   return {id,key};
 }
+function projectHasPerson(p,userId){const uid=Number(userId)||0;return !!uid&&(Number(p?.ownerId)===uid||(p?.members||[]).some(m=>Number(m.userId)===uid))}
+// Projects opened for self-service joining that the user is not part of yet.
+function projectJoinable(p,userId){return !!p?.selfJoin&&!!Number(userId)&&!projectHasPerson(p,userId)}
 function filterAdminProjects(projects,repos,query,filter,userId){
   const q=String(query||'').trim().toLowerCase(),uid=Number(userId)||0;
   return (projects||[]).filter(p=>{
     const own=(repos||[]).filter(r=>r.projectId===p.id);
     if(filter==='setup'&&own.length)return false;
-    if(filter==='mine'&&!(uid&&(Number(p.ownerId)===uid||(p.members||[]).some(m=>Number(m.userId)===uid))))return false;
+    if(filter==='mine'&&!projectHasPerson(p,uid))return false;
+    if(filter==='joinable'&&!projectJoinable(p,uid))return false;
     if(!q)return true;
     return [p.name,p.id,p.key,...own.flatMap(r=>[r.name,r.gongfengProjectId,r.webUrl])].some(v=>String(v||'').toLowerCase().includes(q));
   });
@@ -116,10 +120,10 @@ function parseProjectAdminRoute(hash){
 function projectAdminHash(id,tab){return id?`#/projects/${encodeURIComponent(id)}${id!=='new'&&tab&&tab!=='basic'?'/'+tab:''}`:'#/projects'}
 function projectPeopleIds(p){return [...new Set([p?.ownerId,...(p?.members||[]).map(m=>m.userId)].map(Number).filter(Boolean))]}
 function blankProjectDraft(){return {id:'',key:'',name:'',description:'',color:PROJECT_SWATCHES[0],ownerId:Number(state.currentUser?.id)||'',workflowId:'generic-backend-delivery',defaultRepositoryId:'',businessDomainId:'',members:[],clarification:defaultClarification(),runEval:defaultRunEval(),tapdWorkspaceId:'',tapdIterationId:'',tapdClear:false}}
-function projectDraftFrom(project){const d=clone(project)||{};d.members=(d.members||[]).filter(m=>Number(m.userId)!==Number(d.ownerId)).map(m=>({userId:Number(m.userId)||0,role:'member'}));d.tapdClear=false;return d}
+function projectDraftFrom(project){const d=clone(project)||{};d.members=(d.members||[]).filter(m=>Number(m.userId)!==Number(d.ownerId)).map(m=>({userId:Number(m.userId)||0,role:'member'}));d.selfJoin=!!d.selfJoin;d.tapdClear=false;return d}
 function projectDraftSignature(d){
   d=d||{};
-  return JSON.stringify({id:String(d.id||''),key:String(d.key||'').trim().toUpperCase(),name:String(d.name||'').trim(),description:String(d.description||''),color:String(d.color||'').toLowerCase(),ownerId:Number(d.ownerId)||0,workflowId:String(d.workflowId||''),defaultRepositoryId:String(d.defaultRepositoryId||''),businessDomainId:String(d.businessDomainId||''),tapdWorkspaceId:String(d.tapdWorkspaceId||'').trim(),tapdIterationId:String(d.tapdIterationId||'').trim(),tapdClear:!!d.tapdClear,members:(d.members||[]).map(m=>Number(m.userId)||0)});
+  return JSON.stringify({id:String(d.id||''),key:String(d.key||'').trim().toUpperCase(),name:String(d.name||'').trim(),description:String(d.description||''),color:String(d.color||'').toLowerCase(),ownerId:Number(d.ownerId)||0,workflowId:String(d.workflowId||''),defaultRepositoryId:String(d.defaultRepositoryId||''),businessDomainId:String(d.businessDomainId||''),tapdWorkspaceId:String(d.tapdWorkspaceId||'').trim(),tapdIterationId:String(d.tapdIterationId||'').trim(),tapdClear:!!d.tapdClear,selfJoin:!!d.selfJoin,members:(d.members||[]).map(m=>Number(m.userId)||0)});
 }
 function projectDraftDirty(draft,base){return !!draft&&!!base&&projectDraftSignature(draft)!==projectDraftSignature(base)}
 function projectAdminDirty(){return !!state.projectAdminDetailId&&state.projectDraftFor===state.projectAdminDetailId&&projectDraftDirty(state.projectDraft,state.projectDraftBase)}
@@ -128,17 +132,17 @@ function projectWorkflowName(id){const w=(state.data?.workflows||[]).find(x=>x.i
 function projectCardHTML(p,ctx={}){
   const repos=(ctx.repos||[]).filter(r=>r.projectId===p.id),issues=(ctx.issues||[]).filter(i=>i.projectId===p.id);
   const active=issues.filter(i=>issueRunHealth(i)==='active').length,people=projectPeopleIds(p),def=repos.find(r=>r.id===p.defaultRepositoryId);
-  const key=String(p.key||p.name||'P');
+  const key=String(p.key||p.name||'P'),joinable=projectJoinable(p,ctx.userId);
   const repoFact=repos.length
     ?`<span class="pa-fact" title="${def?'默认仓库':'已绑定仓库，未设默认'}">${paIcon('repo',12)}<span>${escapeHTML((def||repos[0]).name||'仓库')}${repos.length>1?` +${repos.length-1}`:''}</span></span>`
     :`<span class="pa-fact warn">${paIcon('alert',12)}<span>未绑定代码仓库</span></span>`;
   const sop=ctx.workflowName?ctx.workflowName(p.workflowId):'';
   const avatars=people.slice(0,3).map(id=>{const u=userById(id);return `<span class="pa-av" title="${escapeHTML(u?userDisplay(u):String(id))}">${userAvatarHTML(u||id,48)}</span>`}).join('')+(people.length>3?`<span class="pa-av more">+${people.length-3}</span>`:'');
   return `<article class="pa-card" tabindex="0" role="link" data-project-open="${escapeHTML(p.id)}" aria-label="打开项目 ${escapeHTML(p.name||p.id)}">
-    <div class="pa-card-top"><span class="pa-mark" style="background:${safeColor(p.color)}">${escapeHTML(key.slice(0,2).toUpperCase())}</span><div class="pa-card-m"><h3><span title="${escapeHTML(p.name||'')}">${escapeHTML(p.name||p.id)}</span>${p.id===ctx.currentId?'<span class="pa-chip cur">当前</span>':''}</h3><div class="pa-card-sub" title="${escapeHTML(p.id)} · ${escapeHTML(p.key||'')}">${escapeHTML(p.id)} · ${escapeHTML(p.key||'—')}</div></div><span class="pa-go">${paIcon('arrow',16)}</span></div>
+    <div class="pa-card-top"><span class="pa-mark" style="background:${safeColor(p.color)}">${escapeHTML(key.slice(0,2).toUpperCase())}</span><div class="pa-card-m"><h3><span title="${escapeHTML(p.name||'')}">${escapeHTML(p.name||p.id)}</span>${p.id===ctx.currentId?'<span class="pa-chip cur">当前</span>':''}${p.selfJoin?'<span class="pa-chip open" title="任何已登录用户都可以自行加入">开放加入</span>':''}</h3><div class="pa-card-sub" title="${escapeHTML(p.id)} · ${escapeHTML(p.key||'')}">${escapeHTML(p.id)} · ${escapeHTML(p.key||'—')}</div></div><span class="pa-go">${paIcon('arrow',16)}</span></div>
     <p class="pa-card-desc${p.description?'':' none'}">${escapeHTML(p.description||'暂无项目说明')}</p>
     <div class="pa-facts">${repoFact}${sop?`<span class="pa-fact" title="默认 SOP">${paIcon('flow',12)}<span>${escapeHTML(sop)}</span></span>`:''}${p.tapdWorkspaceId?`<span class="pa-fact" title="TAPD Workspace ${escapeHTML(p.tapdWorkspaceId)}">${paIcon('tapd',12)}<span>TAPD</span></span>`:''}</div>
-    <div class="pa-card-foot"><div class="pa-avs">${avatars}</div><div class="pa-stats"><span><b>${issues.length}</b> 需求</span>${active?`<span class="pa-live"><i></i><b>${active}</b> 推进中</span>`:''}</div></div>
+    <div class="pa-card-foot"><div class="pa-avs">${avatars}</div><div class="pa-stats"><span><b>${issues.length}</b> 需求</span>${active?`<span class="pa-live"><i></i><b>${active}</b> 推进中</span>`:''}</div>${joinable?`<button type="button" class="button small hui-btn-soft pa-join" data-project-join="${escapeHTML(p.id)}" aria-label="加入项目 ${escapeHTML(p.name||p.id)}">${paIcon('plus',12)}加入</button>`:''}</div>
   </article>`;
 }
 function projectAdminEmptyHTML(icon,title,text,action){return `<div class="pa-empty"><div class="pa-empty-ic">${paIcon(icon,22)}</div><b>${title}</b><p>${text}</p>${action||''}</div>`}
@@ -149,13 +153,26 @@ function renderProjectList(){
   $('#projectAdminCount').textContent=projects.length;
   $$('#projectAdminFilters [data-project-filter]').forEach(b=>{const on=b.dataset.projectFilter===filter;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
   const search=$('#projectAdminSearch');if(search&&document.activeElement!==search&&search.value!==query)search.value=query;
-  const list=filterAdminProjects(projects,repos,query,filter,state.currentUser?.id);
+  const userId=state.currentUser?.isGuest?0:Number(state.currentUser?.id)||0;
+  const list=filterAdminProjects(projects,repos,query,filter,userId);
   if(!projects.length)host.innerHTML=projectAdminEmptyHTML('repo','还没有项目','项目是需求、仓库与团队的统一边界，先创建第一个项目。','<button type="button" class="button primary" data-project-new>＋ 新建项目</button>');
+  else if(!list.length&&filter==='joinable'&&!query)host.innerHTML=projectAdminEmptyHTML('user','暂时没有可加入的项目','项目 Owner 在「项目成员」中开启「开放自助加入」后，项目会出现在这里。','<button type="button" class="button ghost" data-project-clear>查看全部项目</button>');
   else if(!list.length)host.innerHTML=projectAdminEmptyHTML('search','没有匹配的项目','换个关键词试试，或者新建一个项目。','<button type="button" class="button ghost" data-project-clear>清除筛选</button>');
-  else host.innerHTML=`<div class="pa-grid">${list.map(p=>projectCardHTML(p,{repos,issues:state.data.issues||[],currentId:state.projectFilter,workflowName:projectWorkflowName})).join('')}</div>`;
-  host.querySelectorAll('[data-project-open]').forEach(card=>{card.onclick=()=>openProjectAdminDetail(card.dataset.projectOpen);card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openProjectAdminDetail(card.dataset.projectOpen)}}});
+  else host.innerHTML=`<div class="pa-grid">${list.map(p=>projectCardHTML(p,{repos,issues:state.data.issues||[],currentId:state.projectFilter,workflowName:projectWorkflowName,userId})).join('')}</div>`;
+  host.querySelectorAll('[data-project-open]').forEach(card=>{card.onclick=e=>{if(e.target.closest?.('[data-project-join]'))return;openProjectAdminDetail(card.dataset.projectOpen)};card.onkeydown=e=>{if(e.target!==card)return;if(e.key==='Enter'||e.key===' '){e.preventDefault();openProjectAdminDetail(card.dataset.projectOpen)}}});
+  host.querySelectorAll('[data-project-join]').forEach(b=>b.onclick=e=>{e.stopPropagation();joinProjectFromList(b.dataset.projectJoin,b)});
   host.querySelectorAll('[data-project-new]').forEach(b=>b.onclick=()=>openProjectWizard());
   host.querySelectorAll('[data-project-clear]').forEach(b=>b.onclick=()=>{state.projectAdminQuery='';state.projectAdminFilter='all';if(search)search.value='';renderProjectList()});
+}
+async function joinProjectFromList(projectId,button){
+  const project=(state.data.projects||[]).find(p=>p.id===projectId);if(!project)return;
+  if(button)button.disabled=true;
+  try{
+    const joined=await api('/api/projects/'+encodeURIComponent(projectId)+'/join',{method:'POST'});
+    storeSavedProject(joined,project);
+    renderAll();renderProjectList();
+    toast(`已加入项目「${project.name||project.id}」`,'ok');
+  }catch(err){toast(err.message,'err');if(button)button.disabled=false}
 }
 
 function paRow(label,desc,control,opt={}){return `<div class="pa-row${opt.stack?' stack':''}"${opt.attrs||''}><div class="pa-row-copy"><div class="pa-row-lbl">${label}${opt.required?'<em>*</em>':''}</div>${desc?`<div class="pa-row-desc"${opt.descAttr||''}>${desc}</div>`:''}</div><div class="pa-row-ctl">${control}</div></div>`}
@@ -201,7 +218,8 @@ function projectAdminFormHTML(d,ctx){
   const owner=userById(d.ownerId);
   const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><span class="member-kind">成员</span>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
   const memberPanel=paSection('负责人','Owner 是项目的默认责任人，接收需要介入的通知。',`<div class="pa-rows"><div class="member-row owner-row pa-member-row"><span class="member-avatar owner">${userAvatarHTML(owner,48)}</span><span class="member-kind owner">Owner</span>${userCombobox('ownerId',d.ownerId,'请选择项目 Owner')}<span></span></div></div>`)
-    +paSection('成员','其他成员无需设置角色，可查看和推进项目内所有需求。',`<div class="pa-rows" id="memberRows">${members||'<div class="pa-rows-empty">还没有其他成员</div>'}</div>`,'<button id="addMember" type="button" class="button ghost small">＋ 添加成员</button>');
+    +paSection('成员','其他成员无需设置角色，可查看和推进项目内所有需求。',`<div class="pa-rows" id="memberRows">${members||'<div class="pa-rows-empty">还没有其他成员</div>'}</div>`,'<button id="addMember" type="button" class="button ghost small">＋ 添加成员</button>')
+    +paSection('自助加入','',`<div class="pa-rows">${paRow('开放自助加入','开启后，新用户注册时可以勾选加入本项目，已登录用户也能在项目列表中直接加入，加入后为普通成员。',`<label class="pa-switch-wrap"><input type="checkbox" name="selfJoin" role="switch" ${d.selfJoin?'checked':''} aria-label="开放自助加入"><span class="pa-switch"></span></label>`,{attrs:' data-pa-row-inline'})}</div>`);
   const configured=!!(saved?.tapdWorkspaceId||saved?.tapdIterationId);
   const tapdPanel=(tapdIntegrationAvailable(saved)?paSection('TAPD 需求池','配置后可在需求页从 TAPD 导入需求，澄清结论会回写到 TAPD 单。',`<div class="pa-rows">
       ${paRow('Workspace ID','TAPD 项目 URL 中 /tapd_fe/ 后的数字。',`<input class="pa-input mono" name="tapdWorkspaceId" value="${escapeHTML(d.tapdWorkspaceId||'')}" placeholder="例如 20375341" spellcheck="false">`)}
@@ -281,6 +299,7 @@ function captureProjectAdminForm(){
   ['name','description','color','workflowId','defaultRepositoryId','businessDomainId','tapdWorkspaceId','tapdIterationId','key'].forEach(n=>{if(el[n])d[n]=el[n].value});
   if(state.projectAdminDetailId==='new'&&el.id)d.id=el.id.value.trim();
   if(el.tapdClear)d.tapdClear=!!el.tapdClear.checked;
+  if(el.selfJoin)d.selfJoin=!!el.selfJoin.checked;
   if(el.ownerId){
     d.ownerId=Number(el.ownerId.value)||0;
     d.members=[...form.querySelectorAll('[data-member-row]')].map(row=>({userId:Number(row.querySelector('input[type="hidden"]')?.value)||0,role:'member'}));
@@ -519,7 +538,7 @@ function applyProjectDefaultSOP(project,workflowId){
 function buildProjectPayload(base,fields={}){
   base=base||{};
   const ownerId=Number(fields.ownerId??base.ownerId)||0,id=String(fields.id??base.id??'').trim(),rawDefault=String(fields.defaultRepositoryId??base.defaultRepositoryId??'');
-  const value={...base,id,key:String(fields.key??base.key??'').trim().toUpperCase(),name:String(fields.name??base.name??'').trim(),description:fields.description??base.description??'',color:fields.color||base.color||PROJECT_SWATCHES[0],ownerId,workflowId:fields.workflowId??base.workflowId??'',defaultRepositoryId:rawDefault&&(state.data.repositories||[]).some(r=>r.id===rawDefault&&r.projectId===id)?rawDefault:'',members:(fields.members??base.members??[]).map(m=>({userId:Number(m.userId)||0,role:'member'})).filter(m=>m.userId!==ownerId),clarification:base.clarification||defaultClarification(),runEval:base.runEval,tapdWorkspaceId:String(fields.tapdWorkspaceId??base.tapdWorkspaceId??'').trim(),tapdIterationId:String(fields.tapdIterationId??base.tapdIterationId??'').trim()};
+  const value={...base,id,key:String(fields.key??base.key??'').trim().toUpperCase(),name:String(fields.name??base.name??'').trim(),description:fields.description??base.description??'',color:fields.color||base.color||PROJECT_SWATCHES[0],ownerId,workflowId:fields.workflowId??base.workflowId??'',defaultRepositoryId:rawDefault&&(state.data.repositories||[]).some(r=>r.id===rawDefault&&r.projectId===id)?rawDefault:'',members:(fields.members??base.members??[]).map(m=>({userId:Number(m.userId)||0,role:'member'})).filter(m=>m.userId!==ownerId),clarification:base.clarification||defaultClarification(),runEval:base.runEval,tapdWorkspaceId:String(fields.tapdWorkspaceId??base.tapdWorkspaceId??'').trim(),tapdIterationId:String(fields.tapdIterationId??base.tapdIterationId??'').trim(),selfJoin:!!(fields.selfJoin??base.selfJoin)};
   applyProjectDefaultSOP(value,value.workflowId);
   for(const k of ['businessDomainId','tapdClear','repoRows','repoDrafts','gitToken','codeBuddyApiKey','codeBuddyInternetEnvironment'])delete value[k];
   if(fields.tapdClear)value.tapdClear=true;
@@ -557,7 +576,7 @@ async function saveProjectAdmin(e){
   const f=e.currentTarget,el=f.elements,projects=state.data.projects||[],creating=state.projectAdminDetailId==='new';
   const projectId=String(el.id?.value||'').trim(),saved=projects.find(p=>p.id===projectId);
   const base=clone(state.projectDraft||saved||{});
-  const value=buildProjectPayload(base,{id:projectId,key:el.key?.value||'',name:el.name?.value||'',description:el.description?.value,color:el.color?.value,ownerId:el.ownerId?el.ownerId.value:undefined,workflowId:el.workflowId?.value,defaultRepositoryId:el.defaultRepositoryId?.value||'',tapdWorkspaceId:el.tapdWorkspaceId?.value,tapdIterationId:el.tapdIterationId?.value,tapdClear:!!el.tapdClear?.checked});
+  const value=buildProjectPayload(base,{id:projectId,key:el.key?.value||'',name:el.name?.value||'',description:el.description?.value,color:el.color?.value,ownerId:el.ownerId?el.ownerId.value:undefined,workflowId:el.workflowId?.value,defaultRepositoryId:el.defaultRepositoryId?.value||'',tapdWorkspaceId:el.tapdWorkspaceId?.value,tapdIterationId:el.tapdIterationId?.value,tapdClear:!!el.tapdClear?.checked,selfJoin:el.selfJoin?!!el.selfJoin.checked:undefined});
   const expectedDomainId=saved?.businessDomainId||'',targetDomainId=el.businessDomainId?.value??expectedDomainId;
   const invalid=validateProjectPayload(value,{creating,projects,workflows:state.data.workflows||[],saved});
   if(invalid)return invalid.field?projectAdminFail(f,invalid.field,invalid.message):toast(invalid.message,'err');

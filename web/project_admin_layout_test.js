@@ -98,6 +98,16 @@ same(ids(ctx.filterAdminProjects(projects,repositories,"","mine",1)),["agentflow
 same(ids(ctx.filterAdminProjects(projects,repositories,"example-maintainer/agent","all",1)),["agentflow"]);
 same(ids(ctx.filterAdminProjects(projects,repositories,"wc","all",1)),["web-console"]);
 same(ids(ctx.filterAdminProjects(projects,repositories,"nothing","all",1)),[]);
+{
+  const open=[...projects,{id:"open",key:"OP",name:"Open",ownerId:2,members:[],selfJoin:true},{id:"joined",key:"JO",name:"Joined",ownerId:2,members:[{userId:1}],selfJoin:true}];
+  same(ids(ctx.filterAdminProjects(open,repositories,"","joinable",1)),["open"],"joinable lists open projects the user is not in");
+  same(ids(ctx.filterAdminProjects(open,repositories,"","joinable",0)),[],"guests cannot join");
+  const openCard=ctx.projectCardHTML(open[3],{repos:repositories,issues,userId:1});
+  assert.match(openCard,/class="pa-chip open"/);
+  assert.match(openCard,/data-project-join="open"/);
+  assert.doesNotMatch(ctx.projectCardHTML(open[4],{repos:repositories,issues,userId:1}),/data-project-join/,"members get no join button");
+  assert.doesNotMatch(ctx.projectCardHTML(projects[1],{repos:repositories,issues,userId:1}),/data-project-join|pa-chip open/,"closed projects get no join button");
+}
 
 // Routes.
 same({...ctx.parseProjectAdminRoute("#/projects/agentflow/repos")},{id:"agentflow",tab:"repos"});
@@ -177,6 +187,8 @@ assert.match(edit,/name="tapdWorkspaceId"/,"projects already using TAPD keep its
   ctx.state.data.mcpServers=[];
 }
 assert.match(edit,/data-member-row="3"/);
+assert.match(edit,/name="selfJoin" role="switch"\s+aria-label/,"self-join switch is off by default");
+assert.match(ctx.projectAdminFormHTML(ctx.projectDraftFrom({...projects[0],selfJoin:true}),{creating:false,custom:false,repos:[],saved:projects[0]}),/name="selfJoin" role="switch" checked/);
 assert.match(edit,/data-pa-panel="repos"[^>]* hidden/);
 const fresh=ctx.projectAdminFormHTML({...ctx.blankProjectDraft(),name:"Web Console",id:"web-console",key:"WC"},{creating:true,custom:false,repos:[],saved:null});
 assert.match(fresh,/自定义/);
@@ -204,6 +216,9 @@ assert.equal(ctx.projectDraftDirty({...draft,name:"AgentFlow 2"},base),true);
 assert.equal(ctx.projectDraftDirty({...draft,members:[...draft.members,{userId:0}]},base),true);
 assert.equal(ctx.projectDraftDirty({...draft,ownerId:"1"},base),false);
 assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
+assert.equal(ctx.projectDraftDirty({...draft,selfJoin:true},base),true,"toggling self-join marks the draft dirty");
+assert.equal(ctx.buildProjectPayload({...draft,selfJoin:true},{}).selfJoin,true,"self-join survives the save payload");
+assert.equal(ctx.buildProjectPayload({...draft,selfJoin:true},{selfJoin:false}).selfJoin,false);
 
 (async()=>{
   // New project: occupied identifiers never reach POST /api/projects.
