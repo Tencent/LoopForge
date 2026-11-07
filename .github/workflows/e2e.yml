@@ -64,7 +64,7 @@ jobs:
         run: bash scripts/e2e.sh -k DashboardBrowserE2E
       - name: Upload dashboard screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dashboard-screenshots
           path: ${{ runner.temp }}/dashboard-screenshots
