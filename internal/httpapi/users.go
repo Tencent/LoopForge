@@ -39,6 +39,14 @@ func (h *usersHandlers) user(c *gin.Context) {
 	if !decode(c, &body) {
 		return
 	}
+	if raw := body.CodeBuddyInternetEnvironment; raw != nil {
+		environment, ok := domain.NormalizeCodeBuddyInternetEnvironment(*raw)
+		if !ok {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "CodeBuddy 网络环境只能是国际站（留空）、国内站（internal）或 iOA（ioa）"})
+			return
+		}
+		body.CodeBuddyInternetEnvironment = &environment
+	}
 	for _, raw := range []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL} {
 		if raw == nil || strings.TrimSpace(*raw) == "" {
 			continue

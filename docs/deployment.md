@@ -112,13 +112,15 @@ Git commits created by the platform use the responsible local account name and a
 
 ## CodeBuddy authentication environment
 
-In personal settings, choose the network environment belonging to the API key. A key from one edition may return HTTP 401 when sent to another edition. The setting is per user; public installations do not assume an enterprise environment.
+In personal settings, choose the network environment belonging to the API key; the "get API key" link opens that edition's key page. A key from one edition returns HTTP 401 when sent to another edition, and keys from third-party model providers (DeepSeek, OpenAI and similar) are not CodeBuddy keys. The setting is per user; public installations do not assume an enterprise environment.
 
-| Edition | CodeBuddy network environment |
-| --- | --- |
-| International | Leave empty |
-| China | `internal` |
-| iOA | `ioa` |
+| Edition | Stored value | Key page |
+| --- | --- | --- |
+| International | empty | https://www.codebuddy.ai/profile/keys |
+| China | `internal` | https://copilot.tencent.com/profile/ |
+| iOA | `ioa` | https://tencent.sso.copilot.tencent.com/profile/keys |
+
+`PUT /api/users/:id/credentials` accepts only these values (`public` and `China` are also understood) and rejects anything else with HTTP 400, because the CLI silently falls back to the international edition for values it does not recognize.
 
 Other dedicated/self-hosted configurations are described in the [official CodeBuddy identity documentation](https://www.codebuddy.ai/docs/cli/iam). Configure the model catalog with `AGENTFLOW_ASSISTANT_MODEL` and `AGENTFLOW_ASSISTANT_MODELS`; ordinary roles can select a model independently.
 

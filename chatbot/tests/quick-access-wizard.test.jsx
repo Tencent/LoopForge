@@ -185,7 +185,40 @@ describe("QuickAccessWizard", () => {
     await screen.findByText("项目与仓库", { selector: "h3" });
     expect(writeMock).toHaveBeenCalledWith(
       "/api/users/1/credentials",
-      { codeBuddyApiKey: "cb-key" },
+      { codeBuddyApiKey: "cb-key", codeBuddyInternetEnvironment: "" },
+      "PUT",
+    );
+    mockState.unconfigured = false;
+  });
+
+  test("saves the CodeBuddy key with the chosen network environment and links to its key page", async () => {
+    mockState.unconfigured = true;
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    render(
+      <QuickAccessWizard
+        open
+        user={{ id: 1, loginName: "tester", chineseName: "测试" }}
+        projects={[project]}
+        projectId="p1"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+        onOpenView={vi.fn()}
+      />,
+    );
+    await screen.findByRole("dialog");
+    const keyLink = screen.getByRole("link", { name: /获取 API Key/ });
+    expect(keyLink).toHaveAttribute("href", "https://www.codebuddy.ai/profile/keys");
+    await userAction.click(screen.getByLabelText("CodeBuddy 网络环境"));
+    await userAction.click(screen.getByRole("option", { name: /国内站/ }));
+    expect(keyLink).toHaveAttribute("href", "https://copilot.tencent.com/profile/");
+    await userAction.type(screen.getByPlaceholderText("粘贴 CodeBuddy API Key"), "sk-deepseek");
+    expect(screen.getByText(/第三方模型的 Key/)).toBeInTheDocument();
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("项目与仓库", { selector: "h3" });
+    expect(writeMock).toHaveBeenCalledWith(
+      "/api/users/1/credentials",
+      { codeBuddyApiKey: "sk-deepseek", codeBuddyInternetEnvironment: "internal" },
       "PUT",
     );
     mockState.unconfigured = false;

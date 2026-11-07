@@ -175,7 +175,7 @@ function renderGuideSetupBody(body,user,isGuest){
   const credCard=`<div class="setup-card ${credReady?'is-ready':''}"><div class="setup-card-head"><b>① 配个人凭据</b><small>个人配置 · 一次配齐</small>${badge(credReady)}</div>
     <p>${lfT('在<b>个人配置</b>中配置 CodeBuddy API Key 与 GitHub Token，或绑定本机 CLI。Main Bot 和内置 SOP 默认都使用 CodeBuddy。','Configure your CodeBuddy API key and GitHub token in <b>Settings</b>, or connect a local CLI. Main Bot and the built-in SOPs use CodeBuddy by default.')}</p>
     <div class="setup-steps">
-      ${subItem('codeBuddyApiKey','CodeBuddy API Key',cbOwn,'https://www.codebuddy.ai/',cbShared?'未配置时对话和 SOP 都用平台共享模型 Deepseek-V4.1-Flash；配置后可使用其他模型':'Agent 调模型执行任务')}
+      ${subItem('codeBuddyApiKey','CodeBuddy API Key',cbOwn,codeBuddyKeyURL(stored.codeBuddyInternetEnvironment),cbShared?'未配置时对话和 SOP 都用平台共享模型 Deepseek-V4.1-Flash；配置后可使用其他模型':'Agent 调模型执行任务')}
       ${subItem('codexApiKey','Codex API Key',!!stored.codexApiKeyConfigured,'https://platform.openai.com/api-keys','公共 SOP 默认执行器')}
       ${subItem('claudeCodeApiKey','Claude Code API Key',!!stored.claudeCodeApiKeyConfigured,'https://console.anthropic.com/','可按角色选择的执行器')}
       ${subItem('gitToken','GitHub Git Token',gfReady,'/#/settings','用 GitHub 设备码授权后选择仓库，也支持手动配置 PAT')}
