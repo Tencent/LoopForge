@@ -124,4 +124,17 @@ describe("pickers and activity", () => {
     fireEvent.error(document.querySelector('img[src*="tester"]'));
     expect(screen.getByText("会话项")).toBeInTheDocument();
   });
+
+  test("stacks participant avatars and folds extra speakers into a counter", () => {
+    const participants = ["甲", "乙", "丙", "丁"].map((name, index) => ({
+      id: index + 1,
+      name,
+    }));
+    const { container } = render(
+      <Participants session={{ id: "s2", participants }} users={[]} compact />,
+    );
+    expect(container.querySelectorAll(".human-avatar")).toHaveLength(3);
+    expect(container.querySelectorAll(".human-avatar.is-stacked")).toHaveLength(2);
+    expect(container.querySelector(".participant-count").textContent).toBe("+1");
+  });
 });

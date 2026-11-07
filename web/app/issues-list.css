@@ -174,16 +174,16 @@
 #issuesView .issue-table-card { border: 1px solid var(--hui-border); border-radius: 13px; background: var(--hui-surface); overflow: hidden; }
 #issuesView .issue-table-scroll { overflow-x: auto; }
 #issuesView .issue-table {
-  --issue-cols: var(--issue-col-key, 76px) minmax(180px, 1.5fr) minmax(116px, .7fr) minmax(92px, .6fr) 72px minmax(104px, .8fr) minmax(128px, 184px) 104px 140px;
-  min-width: max(100%, calc(var(--issue-col-key, 76px) + 936px));
+  --issue-cols: var(--issue-col-key, 76px) minmax(132px, 1.5fr) 88px minmax(100px, .7fr) minmax(84px, .6fr) 72px minmax(104px, .8fr) minmax(128px, 184px) 104px 140px;
+  min-width: max(100%, calc(var(--issue-col-key, 76px) + 952px));
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 #issuesView .issue-table.issue-table-selectable {
-  --issue-cols: 44px var(--issue-col-key, 76px) minmax(180px, 1.5fr) minmax(116px, .7fr) minmax(92px, .6fr) 72px minmax(104px, .8fr) minmax(128px, 184px) 104px 140px;
-  min-width: max(100%, calc(var(--issue-col-key, 76px) + 980px));
+  --issue-cols: 44px var(--issue-col-key, 76px) minmax(132px, 1.5fr) 88px minmax(100px, .7fr) minmax(84px, .6fr) 72px minmax(104px, .8fr) minmax(128px, 184px) 104px 140px;
+  min-width: max(100%, calc(var(--issue-col-key, 76px) + 996px));
 }
 #issuesView .issue-table-row > div,
 #issuesView .issue-table-head > span { padding: 0 12px; }
@@ -250,6 +250,43 @@ html[data-theme="dark"] #issuesView .issue-title-cell .issue-title-tag.tone-dang
 #issuesView .hui-avatar .harness-icon { width: 12px; height: 12px; }
 #issuesView .hui-avatar.is-agent { color: var(--hui-accent); background: var(--hui-accent-soft); border-color: transparent; }
 #issuesView .hui-avatar.is-empty { color: var(--hui-tertiary); border-style: dashed; background: transparent; }
+#issuesView .issue-source-cell { display: flex; align-items: center; min-width: 0; }
+#issuesView .issue-table-row > .issue-source-cell { padding: 0 10px; }
+#issuesView .issue-source-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--hui-border);
+  border-radius: 6px;
+  background: var(--hui-soft);
+  color: var(--hui-secondary);
+  font: 500 12px/1 var(--hui-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#issuesView .issue-source-chip.tone-tapd { border-color: transparent; background: var(--hui-accent-soft); color: var(--hui-accent); }
+#issuesView .issue-source-chip.tone-gongfeng { border-color: transparent; background: color-mix(in srgb, var(--hui-success) 10%, transparent); color: var(--hui-success); }
+#issuesView .issue-source-chip.tone-github { border-color: transparent; background: color-mix(in srgb, var(--hui-text) 8%, transparent); color: var(--hui-text); }
+/* 责任人头像复用统一头像组件：真实头像填满，未取到照片时回退首字渐变圆。 */
+#issuesView .issue-assignee-avatar {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--hui-accent), #8b5cf6);
+  color: #fff;
+  font: 600 10px/1 var(--hui-sans);
+}
+#issuesView .issue-assignee-avatar .user-avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+#issuesView .issue-assignee-avatar .user-avatar-text { font-size: 10px; font-weight: 600; color: #fff; text-transform: uppercase; }
 #issuesView :is(.issue-repository-cell, .issue-workflow-cell) { color: var(--hui-secondary); font-size: 13px; }
 
 #issuesView .issue-priority {
@@ -279,6 +316,7 @@ html[data-theme="dark"] #issuesView .issue-title-cell .issue-title-tag.tone-dang
 #issuesView .issue-progress-track { height: 4px; border-radius: 4px; background: var(--hui-soft); }
 #issuesView .issue-progress-track i { border-radius: 4px; background: var(--hui-accent); }
 #issuesView :is(.issue-progress-cell, .kanban-card-progress).done .issue-progress-track i { background: var(--hui-success); }
+#issuesView :is(.issue-progress-cell, .kanban-card-progress).ended .issue-progress-track i { background: var(--hui-border-strong); }
 #issuesView .issue-progress-cell.fail b,
 html[data-theme="dark"] #issuesView .issue-progress-cell.fail b { color: var(--hui-error); }
 #issuesView .issue-progress-cell:is(.warn, .confirm) b,

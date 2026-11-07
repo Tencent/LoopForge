@@ -38,7 +38,6 @@ func TestStaticRoutes(t *testing.T) {
 		{"/extensions/agentflow-workspace/package.json", "json", 200},
 		{"/app.js", "javascript", 200},
 		{"/app/start.js", "javascript", 200},
-		{"/deployment-dashboard.css", "text/css", 200},
 		{"/no-such-file.js", "", 404},
 		{"/no/such/dir/", "", 404},
 	} {

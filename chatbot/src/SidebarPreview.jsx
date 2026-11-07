@@ -9,7 +9,6 @@ export function SidebarSection({
   expanded,
   onToggle,
   className = "",
-  dot = false,
 }) {
   return (
     <section
@@ -22,11 +21,7 @@ export function SidebarSection({
         aria-expanded={expanded}
         onClick={onToggle}
       >
-        {dot ? (
-          <span className="sidebar-section-dot" aria-hidden="true" />
-        ) : icon ? (
-          <HarnessIcon name={icon} size={14} />
-        ) : null}
+        {icon ? <HarnessIcon name={icon} size={14} /> : null}
         <span title={title}>{title}</span>
         <HarnessIcon name={expanded ? "chevron-down" : "chevron-right"} size={12} />
         <small>{count}</small>

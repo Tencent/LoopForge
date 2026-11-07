@@ -58,6 +58,12 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-ident:hover,#flowView .fd-ident.open{background:var(--fd-hover)}
 #flowView .fd-ident-tile{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;flex:none;color:rgb(var(--fd-accent));background:rgb(var(--fd-accent) / .1)}
 #flowView .fd-ident-text{min-width:0;display:flex;flex-direction:column;gap:3px}
+#flowView .fd-name-row{display:flex;align-items:center;gap:2px;min-width:0;max-width:100%}
+#flowView .fd-name-row .fd-switch{flex:1 1 auto}
+#flowView .fd-copy-name{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:var(--fd-ink-4);cursor:pointer;flex:none;transition:background .15s,color .15s}
+#flowView .fd-copy-name:hover,#flowView .fd-copy-name:focus-visible{color:var(--fd-ink-3);background:var(--fd-hover)}
+#flowView .fd-copy-name[hidden]{display:none}
+@media (prefers-reduced-motion: reduce){#flowView .fd-copy-name{transition:none}}
 #flowView .fd-switch{display:flex;align-items:center;gap:4px;min-width:0;max-width:100%;padding:0;border:0;background:none;color:var(--fd-ink);font:600 15px/1.2 inherit;cursor:pointer}
 #flowView .fd-switch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #flowView .fd-switch .fd-chev{color:var(--fd-ink-3);transition:transform .15s}
@@ -114,7 +120,10 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-sd.ok{background:rgb(var(--fd-ok))}
 #flowView .fd-sd.draft{background:rgb(var(--fd-warn))}
 #flowView .fd-pop-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-#flowView .fd-pop-text b{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#flowView .fd-pop-title{display:flex;align-items:center;gap:2px;min-width:0}
+#flowView .fd-pop-text b{min-width:0;flex:0 1 auto;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#flowView .fd-pop-copy{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:var(--fd-ink-4);cursor:pointer;flex:none}
+#flowView .fd-pop-copy:hover,#flowView .fd-pop-copy:focus-visible{color:var(--fd-ink-3);background:var(--fd-hover)}
 #flowView .fd-pop-text small{font-size:11.5px;color:var(--fd-ink-3)}
 #flowView .fd-ck{color:rgb(var(--fd-accent))}
 #flowView .fd-pop-foot{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--fd-line);background:var(--fd-soft)}

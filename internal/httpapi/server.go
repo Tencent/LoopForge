@@ -66,26 +66,26 @@ func (d deps) getAuthClient() *auth.Client {
 // 对所有领域可见；需要跨领域协作的领域（issues → tasks/stream）显式注入。
 type Server struct {
 	*deps
-	auth            *authHandlers  // auth.go
+	auth            *authHandlers // auth.go
+	github          *githubHandlers
 	users           *usersHandlers // users.go
 	projects        *projectsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
-	catalog         *catalogHandlers           // catalog.go
-	mcp             *mcpHandlers               // mcp.go
-	market          *marketHandlers            // mcp_market.go
-	skillhub        *skillhubHandlers          // skillhub_market.go
-	issues          *issuesHandlers            // issues.go（依赖 tasks/stream）
-	tasks           *tasksHandlers             // tasks.go
-	runs            *runsHandlers              // runs.go
-	previews        *previewsHandlers          // run_preview.go
-	browser         *browserHandlers           // browser.go
-	stream          *streamHandlers            // stream.go
-	runners         *runnersHandlers           // runners.go
-	schedule        *scheduleHandlers          // schedule.go（align.go 并入）
-	tokens          *tokenHandlers             // auth_tokens.go
-	syncAPI         *syncHandlers              // tracker.go
-	deploy          *deploymentMetricsHandlers // deployment_metrics.go
+	catalog         *catalogHandlers  // catalog.go
+	mcp             *mcpHandlers      // mcp.go
+	market          *marketHandlers   // mcp_market.go
+	skillhub        *skillhubHandlers // skillhub_market.go
+	issues          *issuesHandlers   // issues.go（依赖 tasks/stream）
+	tasks           *tasksHandlers    // tasks.go
+	runs            *runsHandlers     // runs.go
+	previews        *previewsHandlers // run_preview.go
+	browser         *browserHandlers  // browser.go
+	stream          *streamHandlers   // stream.go
+	runners         *runnersHandlers  // runners.go
+	schedule        *scheduleHandlers // schedule.go（align.go 并入）
+	tokens          *tokenHandlers    // auth_tokens.go
+	syncAPI         *syncHandlers     // tracker.go
 	notifications   *notificationHandlers
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
@@ -114,6 +114,7 @@ func (b *Background) gate() <-chan struct{} {
 func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, opts BackgroundOptions) (*gin.Engine, *Background) {
 	bg := &Background{recoveryGate: opts.RecoveryGate}
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
+		h.startSessionJanitor(ctx)
 	})
 	return router, bg
 }
@@ -145,6 +146,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
 		auth:            &authHandlers{deps: d},
+		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
@@ -163,7 +165,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		deploy:          &deploymentMetricsHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
 		feedback:        &feedbackHandlers{deps: d},
 	}
@@ -238,6 +239,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/auth/gongfeng", api.auth.gongfengOAuthStatus)
 	g.GET("/api/auth/gongfeng/start", api.auth.gongfengOAuthStart)
 	g.GET("/api/auth/gongfeng/callback", api.auth.gongfengOAuthCallback)
+	g.GET("/api/auth/github", api.github.status)
+	g.PUT("/api/auth/github/config", api.github.configure)
+	g.POST("/api/auth/github/device", api.github.start)
+	g.POST("/api/auth/github/poll", api.github.poll)
+	g.GET("/api/auth/github/repositories", api.github.repositories)
 	g.GET("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/logout", api.auth.authLogout)
@@ -268,6 +274,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
 	asst := &assistantHandlers{deps: d, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
 	api.runs.assistant = asst
+	api.schedule.assistant = asst
 	api.notifications.service.GenerateReport = asst.generateSOPReport
 	if api.notifications.service.Interactions != nil {
 		api.notifications.service.Interactions.Generate = asst.generateBotReply
@@ -283,6 +290,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/generations", asst.startGeneration)
 	g.GET("/api/assistant/sessions/:id/generation", asst.generation)
 	g.POST("/api/assistant/sessions/:id/generation/cancel", asst.generation)
+	g.POST("/api/assistant/sessions/:id/generation/steer", asst.steerGeneration)
 	g.GET("/api/assistant/models", asst.models)
 	g.POST("/api/assistant/attachments", asst.uploadAttachment)
 	g.GET("/api/assistant/attachments/:id", asst.downloadAttachment)
@@ -453,7 +461,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/insights/v1/sources/:id", api.insights.revokeSource)
 	g.GET("/api/analytics", api.runs.analytics)
 	g.GET("/api/observability/spec", api.observabilitySpec)
-	g.GET("/api/deployment-metrics", api.deploy.deploymentMetrics)
 	g.POST("/api/otel/*path", api.otel)
 
 	// --- page feedback (standalone, no project) ---
@@ -537,6 +544,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/sync/logs", api.syncAPI.syncLogs)
 	g.GET("/api/sync/status", api.syncAPI.syncStatus)
 	g.POST("/api/sync/create", api.syncAPI.syncCreate)
+	g.GET("/api/shared-schedule-tasks", api.schedule.sharedScheduleTasks)
+	g.GET("/api/shared-schedule-tasks/:id/versions", api.schedule.sharedScheduleVersions)
+	g.POST("/api/schedule-jobs/:id/publish", api.schedule.publishSharedSchedule)
 	g.GET("/api/schedule-jobs", api.schedule.scheduleJobs)
 	g.PUT("/api/schedule-jobs", api.schedule.scheduleJobs)
 	g.POST("/api/schedule-jobs", api.schedule.scheduleJobs)
@@ -702,7 +712,10 @@ func (s *Server) bootstrap(c *gin.Context) {
 	go func() { defer load.Done(); sandboxes = s.repo.Sandboxes() }()
 	go func() { defer load.Done(); workflows = s.repo.Workflows() }()
 	go func() { defer load.Done(); syncConfig = s.repo.SyncConfig() }()
-	go func() { defer load.Done(); scheduleJobs = s.repo.ScheduleJobs() }()
+	go func() {
+		defer load.Done()
+		scheduleJobs = s.schedule.visibleScheduleJobs(c.Request, s.repo.ScheduleJobs())
+	}()
 	go func() { defer load.Done(); users = s.repo.Users() }()
 	load.Wait()
 	businessDomains, err := s.repo.BusinessDomains()

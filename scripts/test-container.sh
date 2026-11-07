@@ -21,10 +21,12 @@ if [[ -n "${LOOPFORGE_CONTAINER_TEST_IMAGE:-}" ]]; then
   python3 - <<'PY_IMAGE'
 import json,os,pathlib
 p=pathlib.Path(os.environ['TASK_DIR'])/'image.json'
-p.write_text(json.dumps({'services':{'platform':{'image':os.environ['LOOPFORGE_CONTAINER_TEST_IMAGE']}}}))
+image=os.environ['LOOPFORGE_CONTAINER_TEST_IMAGE']
+p.write_text(json.dumps({'services':{'platform':{'image':image,'environment':{'AGENTFLOW_ISOLATED_IMAGE':image}}}}))
 PY_IMAGE
 fi
 COMPOSE=(docker compose -f "$ROOT_DIR/compose.yaml")
+if [[ "${LOOPFORGE_CONTAINER_SKIP_BUILD:-0}" != '1' ]]; then COMPOSE+=(-f "$ROOT_DIR/compose.dev.yaml"); fi
 if [[ -f "$TASK_DIR/image.json" ]]; then COMPOSE+=(-f "$TASK_DIR/image.json"); fi
 COMPOSE+=( --env-file "$TASK_DIR/install.env" --project-name "$TASK_PROJECT")
 cleanup() {
@@ -57,7 +59,7 @@ LOOPFORGE_FRESH_INSTALL=1 npx --prefix e2e playwright test --config e2e/public/p
 "${COMPOSE[@]}" exec -T platform test -s /app/LICENSE
 "${COMPOSE[@]}" exec -T platform test -s /app/THIRD_PARTY_NOTICES.md
 "${COMPOSE[@]}" exec -T platform test -s /app/third_party/go/THIRD_PARTY_NOTICES.txt
-"${COMPOSE[@]}" exec -T platform sh -c 'codebuddy --version && codex --version && claude --version'
+bash scripts/test-runtime-image.sh "$("${COMPOSE[@]}" images -q platform)"
 for task_os in linux darwin; do
   for task_arch in amd64 arm64; do
     "${COMPOSE[@]}" exec -T platform test -x "/app/bin/agentflow-runner-$task_os-$task_arch"

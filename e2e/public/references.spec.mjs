@@ -24,7 +24,8 @@ for(const variant of [
     await input.fill('@');
     await expect(picker).toBeVisible();
     await expect.poll(()=>fitsFrame(picker)).toBe(true);
-    await expect(options).toHaveCount(5);
+    await expect(options).toHaveCount(6);
+    await expect(options.filter({hasText:'技能'})).toHaveCount(1);
     await page.screenshot({path:info.outputPath(`references-${variant.name}.png`)});
     const loading=page.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/api/assistant/references'&&u.searchParams.get('type')==='sop'&&!u.searchParams.get('q')});
     await options.filter({hasText:'SOP'}).first().click();

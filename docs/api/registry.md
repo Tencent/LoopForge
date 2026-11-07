@@ -28,7 +28,7 @@
 }
 ```
 
-项目和仓库敏感 token 已脱敏。这里的 Agent 是目录摘要：省略 instructions、taskPrompt、interventions、artifactOutputs、verification 等大字段，只保留标识、描述摘要、执行器/模型、规则/Skill/MCP 引用和简化 loop；获取完整定义请调用 Agent 详情。
+项目和仓库敏感 token 已脱敏。这里的 Agent 是目录摘要：省略 prompt、interventions、artifactOutputs、verification 等大字段，只保留标识、描述摘要、执行器/模型、规则/Skill/MCP 引用和简化 loop；获取完整定义请调用 Agent 详情。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/bootstrap"
@@ -44,8 +44,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/bootstrap"
   "name":"研发 Agent",
   "version":1,
   "description":"实现研发任务",
-  "instructions":"...",
-  "taskPrompt":{"role":"开发者","objective":"...","actions":[],"deliverables":[],"acceptanceCriteria":[]},
+  "prompt":"读任务输入 {{input}} 和相关源码，做最小且完整的修改……",
   "rules":["rule-secure"],
   "skills":["skill-go"],
   "mcpServers":["gongfeng"],

@@ -235,6 +235,11 @@ func loadAssistantModels(_ context.Context, environment string) assistantModelCa
 	return catalog
 }
 
+// assistantFixedCatalog mirrors `codebuddy --help` (CodeBuddy Code 2.180.0)
+// --model list, names/credits from the CLI's remote product catalog. Two ids
+// are kept although the CLI no longer advertises them: deepseek-v4-flash-ioa
+// is pinned by live roles (and was the old built-in executor default), and
+// hy4-preview-ioa stays alongside hy4std for existing users.
 func assistantFixedCatalog() assistantModelCatalog {
 	defaultID := strings.TrimSpace(os.Getenv("AGENTFLOW_ASSISTANT_MODEL"))
 	if defaultID == "" {
@@ -279,6 +284,8 @@ func assistantModelFamily(id string) string {
 		return "minimax"
 	case strings.HasPrefix(id, "hy") || strings.Contains(id, "hunyuan"):
 		return "hunyuan"
+	case strings.HasPrefix(id, "mimo"):
+		return "mimo"
 	default:
 		return "other"
 	}

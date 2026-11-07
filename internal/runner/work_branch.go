@@ -28,7 +28,15 @@ func (d *Daemon) executeWorkBranchSync(ctx context.Context, task domain.RunnerTa
 		if push {
 			verb = "pushed"
 		}
-		lines = append(lines, domain.RunnerTaskEvent{Seq: int64(i + 1), Type: "system", Data: fmt.Sprintf("work branch %s %s @ %s → %s", verb, head.Name, head.WorkBranch, head.Head), Ts: time.Now().UTC()})
+		data := fmt.Sprintf("work branch %s %s @ %s → %s", verb, head.Name, head.WorkBranch, head.Head)
+		if head.SharedBranch != "" {
+			shared := "已是最新"
+			if head.SharedHead != "" {
+				shared = head.SharedHead
+			}
+			data += fmt.Sprintf("; 直推 %s @ %s", head.SharedBranch, shared)
+		}
+		lines = append(lines, domain.RunnerTaskEvent{Seq: int64(i + 1), Type: "system", Data: data, Ts: time.Now().UTC()})
 	}
 	if len(lines) > 0 {
 		_ = d.client.SendEvents(ctx, task.ID, lines)
@@ -61,6 +69,11 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		if push && !repo.RequireExistingWorkBranch && !gitwork.HasWork(repoCtx, dir, repo.Ref) {
 			continue
 		}
+		if push {
+			if err := gitwork.RequireOnWorkBranch(repoCtx, dir, repo.WorkBranch); err != nil {
+				return heads, fmt.Errorf("%s: %w", repo.Name, err)
+			}
+		}
 		var head string
 		var err error
 		if repo.RequireExistingWorkBranch {
@@ -80,9 +93,21 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		if head == "" && push {
 			head, _ = gitwork.RevParse(repoCtx, dir, "HEAD")
 		}
-		if head != "" {
-			heads = append(heads, domain.RunnerWorkBranchHead{RepositoryID: repo.RepositoryID, Name: repo.Name, WorkBranch: repo.WorkBranch, Head: head})
+		if head == "" {
+			continue
 		}
+		entry := domain.RunnerWorkBranchHead{RepositoryID: repo.RepositoryID, Name: repo.Name, WorkBranch: repo.WorkBranch, Head: head}
+		if push && strings.TrimSpace(repo.SharedPushTarget) != "" {
+			merged, conflicts, mergeErr := gitwork.MergeWorkIntoSharedBranch(repoCtx, dir, repo.WorkBranch, repo.SharedPushTarget)
+			if mergeErr != nil {
+				return heads, fmt.Errorf("%s: 直推 %s: %w", repo.Name, repo.SharedPushTarget, mergeErr)
+			}
+			if len(conflicts) > 0 {
+				return heads, fmt.Errorf("%s: 合并 %s 进 %s 有冲突，没有推送：%s", repo.Name, repo.WorkBranch, repo.SharedPushTarget, strings.Join(conflicts, ", "))
+			}
+			entry.SharedBranch, entry.SharedHead = repo.SharedPushTarget, merged
+		}
+		heads = append(heads, entry)
 	}
 	return heads, nil
 }

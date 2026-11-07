@@ -14,7 +14,7 @@ test('list paging, catalog visibility, URL safety, and workflow helpers return c
     state.mcpMarket=[
       {id:'market-gh',name:'GitHub',aliases:['github'],description:'Git'},
       {id:'market-gf',name:'工蜂',aliases:['gongfeng'],description:'Git'},
-      {id:'market-wiki',name:'Wiki',aliases:['iwiki']}
+      {id:'market-wiki',name:'Wiki',aliases:['wiki-docs']}
     ];
     state.data.workflows.push({id:'generic-1',name:'Generic',generic:true,nodes:[]},{id:'shared-1',name:'Shared',projectId:'other',shared:true,nodes:[]});
     const mcp=genericTemplateMCPOptions(['gongfeng','custom']);

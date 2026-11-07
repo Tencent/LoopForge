@@ -2,41 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
-test('deployment dashboard renders SkillHub KPIs, trend, statuses, filtering, and API query', async (t) => {
+test('metrics dashboard ships without a deployment view or external pipeline requests', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.evaluate(`
-    const repo=state.data.repositories[0];
-    repo.name='skillhub';repo.gongfengProjectId='example/team-project';
-    state.deploymentData={
-      queriedAt:'2026-10-30T12:00:00Z',pipelineUrl:'https://qci.example/pipeline',
-      summary:{total:3,succeeded:1,failed:1,running:1,deployments7d:2,average7dDurationMs:90000,averageDurationMs:120000,p50DurationMs:100000,p90DurationMs:180000,successRate:50},
-      records:[
-        {id:'101',runNumber:101,status:2,statusLabel:'成功',durationMs:90000,branch:'main',startedAt:'2026-10-30T08:00:00Z',starter:'alice',revision:'abcdef123456',comment:'release',url:'https://qci.example/101'},
-        {id:'102',runNumber:102,status:3,statusLabel:'失败',durationMs:180000,branch:'feature',startedAt:'2026-10-29T08:00:00Z',starter:'bob',revision:'fedcba654321',comment:'test'},
-        {id:'103',runNumber:103,status:1,statusLabel:'运行中',durationMs:0,branch:'main',startedAt:'2026-10-31T02:00:00Z',starter:'ci',revision:'123456789012',comment:'deploy'}
-      ]
-    };
-    renderDeploymentDashboard();
-  `);
-  const body = app.document.querySelector('#deploymentBody');
-  assert.match(body.textContent, /近 7 天平均耗时|1\.5m|正在部署|近 30 天成功率|50\.0%/);
-  assert.match(body.textContent, /#101|#102|#103|release|运行中/);
-  assert.ok(body.querySelector('svg[aria-label="部署耗时趋势"]'));
-  assert.equal(app.evaluate(`deploymentStatusClass(2)`), 'succeeded');
-  assert.equal(app.evaluate(`deploymentStatusClass(8)`), 'running');
-  assert.equal(app.evaluate(`deploymentStatusClass(13)`), 'failed');
-  assert.equal(app.evaluate(`duration(3600000)`), '1.0h');
-
-  app.router.get(/^\/api\/deployment-metrics\?/, call => ({ queriedAt: '2026-10-31T03:00:00Z', branch: new URL(call.url).searchParams.get('branch'), summary: {}, records: [] }));
-  const form = body.querySelector('#deploymentQuery');
-  form.elements.branch.value = 'release/v2';
-  form.elements.branch.dispatchEvent(new app.window.Event('input', { bubbles: true }));
-  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
-  await settle(5);
-  const call = app.router.calls.find(c => c.path === '/api/deployment-metrics');
-  assert.match(call.search, /projectId=project-1|repositoryId=repo-1|branch=release%2Fv2/);
-  assert.match(body.textContent, /分支「release\/v2」最近 30 天没有流水线记录/);
+  assert.equal(app.document.querySelector('#deploymentsView'), null);
+  assert.equal(app.document.querySelector('[data-view="deployments"]'), null);
+  assert.equal(app.evaluate(`typeof renderDeploymentDashboard`), 'undefined');
+  app.router.get(/^\/api\/analytics\?/, { summary: {}, deliveries: [], trend: [] });
+  app.router.get(/^\/api\/issues\?/, []);
+  await app.evaluate(`refreshMetrics(true)`);
+  await settle(3);
+  assert.deepEqual(app.router.calls.filter(c => c.path.startsWith('/api/analytics') || c.path.startsWith('/api/deployment')).map(c => c.path), ['/api/analytics']);
+  const text = app.document.querySelector('#metricsBody').textContent;
+  assert.match(text, /交付数（含 Issue）/);
+  assert.doesNotMatch(text, /SkillHub|部署耗时|快照/);
 });
 
 test('metrics helpers calculate windows, phases, source identity, buckets, and SVG summaries', async (t) => {

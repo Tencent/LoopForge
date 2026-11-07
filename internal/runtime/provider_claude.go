@@ -60,6 +60,9 @@ func (claudeProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	argv = dropArgWithValue(argv, "--resume")
 	argv = isolateClaudeFlags(argv, filepath.ToSlash(filepath.Join(in.Compiled.AgentRoot, "agent-system.md")))
 	argv = appendEffortArgs(argv, in.Executor.Effort)
+	// An unattended node must write files and call submit_gate_result; dontAsk
+	// denies every tool that is not explicitly allowlisted.
+	argv = append(dropArgWithValue(argv, "--permission-mode"), "--permission-mode", "bypassPermissions")
 	// Current Claude Code releases require --verbose when print mode emits
 	// stream-json. It is harmless for other print-mode output formats and keeps
 	// older persisted executor definitions working after a CLI upgrade.
@@ -75,7 +78,13 @@ func (claudeProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {
 		argv = append(argv, "--resume", sessionID)
 	}
-	return CommandSpec{Argv: append(argv, positionalPrompt(in)), Provider: "claude-code", CredentialBindings: []CredentialBinding{BindClaudeCode, BindGit, BindMCP}, PrivateHome: true}, nil
+	spec := CommandSpec{Argv: append(argv, positionalPrompt(in)), Provider: "claude-code", CredentialBindings: []CredentialBinding{BindClaudeCode, BindGit, BindMCP}, PrivateHome: true}
+	if in.Driver == "docker" {
+		// Sandbox containers run as root, where Claude Code refuses
+		// bypassPermissions unless told the container is the sandbox.
+		spec.environment = map[string]string{"IS_SANDBOX": "1"}
+	}
+	return spec, nil
 }
 
 func (claudeProvider) Protocol(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {

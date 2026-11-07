@@ -285,8 +285,7 @@ class TopSlowTests(unittest.TestCase):
 
 
 class BuildDailyAndSessionsTurnAttributionTests(unittest.TestCase):
-    """真实场景复现过：AgentLens（写 state.current_turn 的那套 tracing）关闭时，
-    tool/usage 事件自己的 turn_id 永远是 None，只有 user_prompt_submit 事件带真实
+    """真实场景复现过：tool/usage 事件自己的 turn_id 永远是 None，只有 user_prompt_submit 事件带真实
     turn_id。修复前所有没有 turn_id 的事件会被塌缩进同一个 "?" 占位桶，看起来
     像"整个会话只有 1 个 turn"，哪怕实际发了好几轮 prompt。"""
 

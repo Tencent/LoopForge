@@ -255,7 +255,10 @@ func businessExecutionDuration(item businessIssueTiming, completedAt time.Time, 
 	return &value
 }
 
-func (r *AnalyticsRepo) populateBusinessDeliveryMetrics(out *domain.BusinessDomainReport, filter domain.AnalyticsFilter) error {
+// populateBusinessDeliveryMetrics 计算业务域交付指标。prefetchedRuns/prefetchedEvents
+// 可复用调用方已经取回的同一批 run 摘要与计时事件（业务域报表路径），传 nil 则
+// 自行查询，两种方式的入参与结果完全一致。
+func (r *AnalyticsRepo) populateBusinessDeliveryMetrics(out *domain.BusinessDomainReport, filter domain.AnalyticsFilter, prefetchedRuns []domain.Run, prefetchedEvents map[string][]domain.RunEvent) error {
 	location, err := time.LoadLocation(filter.TimeZone)
 	if filter.TimeZone == "" {
 		location, err = time.UTC, nil
@@ -291,18 +294,23 @@ func (r *AnalyticsRepo) populateBusinessDeliveryMetrics(out *domain.BusinessDoma
 	// The completion window must not truncate earlier attempts or their tokens.
 	// RunSummariesFor omits heavy outputs/logs and retains legacy issue -> project
 	// fallback. It also supplies terminal event timing for the historical fallback.
-	runFilter := domain.AnalyticsFilter{ProjectIDs: projectIDs}
-	runs, err := r.runs.RunSummariesFor(runFilter, "")
-	if err != nil {
-		return err
+	runs := prefetchedRuns
+	if runs == nil {
+		runs, err = r.runs.RunSummariesFor(domain.AnalyticsFilter{ProjectIDs: projectIDs}, "")
+		if err != nil {
+			return err
+		}
 	}
-	runIDs := make([]string, 0, len(runs))
-	for _, run := range runs {
-		runIDs = append(runIDs, run.ID)
-	}
-	timingEvents, err := r.runs.runTimingEvents(runIDs)
-	if err != nil {
-		return err
+	timingEvents := prefetchedEvents
+	if timingEvents == nil {
+		runIDs := make([]string, 0, len(runs))
+		for _, run := range runs {
+			runIDs = append(runIDs, run.ID)
+		}
+		timingEvents, err = r.runs.runTimingEvents(runIDs)
+		if err != nil {
+			return err
+		}
 	}
 	for _, run := range runs {
 		item := items[run.ExecutionContext.IssueID]

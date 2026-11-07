@@ -122,11 +122,11 @@ test('Dockerfile, environment and sandbox CRUD with reference protection', async
 test('agent CRUD, revisions, restore and clone', async () => {
   const id = ids.agent = uid('agent');
   track(`agent ${id}`, () => del(`/api/agents/${id}`));
-  const base = { id, name: 'E2E 角色', projectId: P, description: 'e2e', executorId: cfg.executor, instructions: 'v1', rules: [ids.rule].filter(Boolean), skills: [ids.skill].filter(Boolean) };
+  const base = { id, name: 'E2E 角色', projectId: P, description: 'e2e', executorId: cfg.executor, prompt: 'v1', rules: [ids.rule].filter(Boolean), skills: [ids.skill].filter(Boolean) };
   const v1 = await put('/api/agents', base);
-  assert.equal(v1.instructions, 'v1');
-  await put('/api/agents', { ...v1, instructions: 'v2' });
-  assert.equal((await get(`/api/agents/${id}`)).instructions, 'v2');
+  assert.equal(v1.prompt, 'v1');
+  await put('/api/agents', { ...v1, prompt: 'v2' });
+  assert.equal((await get(`/api/agents/${id}`)).prompt, 'v2');
 
   await api('PUT', '/api/agents', { ...base, id: uid('agent-bad'), executorId: 'not-a-cli' }, { expect: 400 });
   await api('PUT', '/api/agents', { ...base, id: uid('agent-bad'), projectId: 'e2e-no-such-project' }, { expect: 404 });

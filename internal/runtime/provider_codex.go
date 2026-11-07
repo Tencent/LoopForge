@@ -37,6 +37,12 @@ func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 			}
 		}
 	}
+	if in.Driver == "docker" {
+		// The container is the isolation boundary. Codex's own bubblewrap sandbox
+		// cannot create user namespaces inside it, which fails every shell command,
+		// file write and MCP call (including submit_gate_result).
+		argv = withCodexSandboxMode(argv, "danger-full-access")
+	}
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {
 		// `resume` is a subcommand of `codex exec`; all exec options must precede it.
 		argv = append(argv, "resume", sessionID)
@@ -56,6 +62,20 @@ func dropCodexResumeArgs(argv []string) []string {
 		return append(append([]string{}, argv[:i]...), argv[end:]...)
 	}
 	return argv
+}
+
+func withCodexSandboxMode(argv []string, mode string) []string {
+	out := make([]string, 0, len(argv)+2)
+	for i := 0; i < len(argv); i++ {
+		switch arg := argv[i]; {
+		case arg == "--sandbox" || arg == "-s":
+			i++
+		case strings.HasPrefix(arg, "--sandbox="):
+		default:
+			out = append(out, arg)
+		}
+	}
+	return append(out, "--sandbox", mode)
 }
 
 func codexHasReasoningEffort(argv []string) bool {

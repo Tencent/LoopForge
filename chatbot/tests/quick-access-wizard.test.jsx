@@ -150,6 +150,7 @@ describe("QuickAccessWizard", () => {
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     expect(screen.getByText(/请至少填写 GitHub Git Token 与 CodeBuddy API Key/)).toBeInTheDocument();
     expect(screen.queryByText(/工蜂/)).toBeNull();
+    await userAction.click(screen.getByText("使用访问令牌（高级）"));
     await userAction.type(
       screen.getByPlaceholderText(/GitHub personal access token/),
       "token-value",

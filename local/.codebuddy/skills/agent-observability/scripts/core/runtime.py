@@ -4,18 +4,17 @@ from __future__ import annotations
 这一层负责把外部 hook phase 分发到内部能力：
 - session-start / user-prompt-submit / pre / post / stop
 - 组装统一运行时路径
-- 串联 collector / emitter / agentlens，并承担 transcript 运行时编排
+- 串联 collector / emitter，并承担 transcript 运行时编排
 """
 
 import os
-import re
 import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import agent_identity, agentlens, collector, devflow, emitter, scanner, state as st
+from . import agent_identity, collector, devflow, emitter, scanner, state as st
 
 
 @dataclass(frozen=True)
@@ -111,44 +110,8 @@ def prompt_text_length(data: dict[str, Any]) -> int | None:
     return None
 
 
-def extract_prompt_text(data: dict[str, Any]) -> str:
-    """从 hook payload 中提取可读的 prompt 文本。"""
-    for key in ("prompt", "user_prompt", "message", "text"):
-        val = data.get(key)
-        if isinstance(val, str) and val.strip():
-            return val.strip()
-        if isinstance(val, list):
-            parts = []
-            for item in val:
-                if isinstance(item, dict):
-                    txt = item.get("text")
-                    if isinstance(txt, str):
-                        parts.append(txt)
-                elif isinstance(item, str):
-                    parts.append(item)
-            if parts:
-                return "\n".join(parts).strip()
-    return ""
-
-
-def derive_business_scenario(prompt_text: str) -> str | None:
-    """从 prompt 文本中派生一个简短业务场景标识。"""
-    if not prompt_text:
-        return None
-
-    m = re.search(r"标题[：:]\s*(.+?)(?:\s*描述[：:]|\s*$)", prompt_text, re.DOTALL)
-    if m:
-        title = m.group(1).strip()[:60]
-    else:
-        title = prompt_text[:50].strip()
-
-    sanitized = re.sub(r"[^\w\u4e00-\u9fff\-]", "-", title)
-    sanitized = re.sub(r"-{2,}", "-", sanitized).strip("-")
-    return sanitized if sanitized else None
-
-
 def handle_session_start(data: dict[str, Any]) -> None:
-    """处理 SessionStart：预热 inventory，写 start 事件，初始化 AgentLens。"""
+    """处理 SessionStart：预热 inventory，写 start 事件。"""
     current_sid = session_id_of(data)
     if not current_sid:
         return
@@ -157,32 +120,20 @@ def handle_session_start(data: dict[str, Any]) -> None:
     skills_meta, rules_meta = scanner.scan_skills_and_rules(cwd_value)
     collector.cache_inventory(paths.state_path, current_sid, skills_meta, rules_meta)
     emitter.emit(paths.log_path, emitter.build_start_event(sid=current_sid, agent="main"))
-    agentlens.emit_session_start(state_path=paths.state_path, sid=current_sid, cwd=cwd_value, agent="main")
 
 
 def handle_user_prompt_submit(data: dict[str, Any]) -> None:
-    """处理 UserPromptSubmit：建立 turn 边界，并打开 AgentLens turn。"""
+    """处理 UserPromptSubmit：建立 turn 边界。"""
     current_sid = session_id_of(data)
     if not current_sid:
         return
     paths = build_runtime_paths()
-    cwd_value = cwd(data)
     turn_id = derive_turn_id(data)
     prompt_len = prompt_text_length(data)
-    prompt_text = extract_prompt_text(data)
-    business_scenario = derive_business_scenario(prompt_text)
 
     emitter.emit(
         paths.log_path,
         emitter.build_prompt_submit_event(sid=current_sid, turn_id=turn_id, agent="main", prompt_len=prompt_len),
-    )
-    agentlens.emit_turn_start(
-        state_path=paths.state_path,
-        sid=current_sid,
-        cwd=cwd_value,
-        turn_id=turn_id,
-        prompt_meta={"prompt_len": prompt_len} if prompt_len is not None else None,
-        business_scenario=business_scenario,
     )
 
 
@@ -223,7 +174,7 @@ def handle_post(data: dict[str, Any]) -> None:
 
     tool_name = str(data.get("tool_name") or "")
     transcript_path = collector.transcript_path(data)
-    turn_id = current_turn_id(paths.state_path, current_sid)
+    turn_id = None
     event_ts = time.time()
     tool_call_id = collector.extract_tool_call_id(data)
     dv_ctx = resolve_devflow(paths.state_path, current_sid, cwd_value, paths.log_path)
@@ -297,21 +248,9 @@ def handle_post(data: dict[str, Any]) -> None:
     if duplicate_tool_context:
         if not usage_events:
             return
-        agentlens.emit_post_step(
-            state_path=paths.state_path,
-            sid=current_sid,
-            tool_event=None,
-            usage_events=usage_events,
-        )
         return
     if str(tool_event.get("message_id") or "").strip():
         emitter.emit(paths.log_path, tool_event)
-        agentlens.emit_post_step(
-            state_path=paths.state_path,
-            sid=current_sid,
-            tool_event=tool_event,
-            usage_events=usage_events,
-        )
         return
 
     fallback_usage = collector.find_fallback_usage_event(tool_event, usage_events)
@@ -319,19 +258,13 @@ def handle_post(data: dict[str, Any]) -> None:
     if fallback_usage_mid:
         tool_event["message_id"] = fallback_usage_mid
         emitter.emit(paths.log_path, tool_event)
-        agentlens.emit_post_step(
-            state_path=paths.state_path,
-            sid=current_sid,
-            tool_event=tool_event,
-            usage_events=usage_events,
-        )
         return
 
     st.append_pending_tool_emit(paths.state_path, current_sid, tool_event)
 
 
 def handle_stop(data: dict[str, Any]) -> None:
-    """处理 Stop：补发 transcript 事件、汇总 session 成本并关闭 AgentLens。"""
+    """处理 Stop：补发 transcript 事件、汇总 session 成本。"""
     current_sid = session_id_of(data)
     if not current_sid:
         return
@@ -344,11 +277,11 @@ def handle_stop(data: dict[str, Any]) -> None:
         data=data,
     )
     transcript_path = collector.transcript_path(data)
-    turn_id = current_turn_id(paths.state_path, current_sid)
+    turn_id = None
     dv_ctx = resolve_devflow(paths.state_path, current_sid, cwd_value, paths.log_path)
     task_slug = str(dv_ctx.get("task_slug") or "").strip() if dv_ctx else None
     stage = str(dv_ctx.get("current_stage") or "").strip() if dv_ctx else None
-    stop_events = emit_transcript_events(
+    emit_transcript_events(
         state_path=paths.state_path,
         log_path=paths.log_path,
         sid=current_sid,
@@ -368,14 +301,6 @@ def handle_stop(data: dict[str, Any]) -> None:
         log_path=paths.log_path,
         sid=current_sid,
         force_emit_fallback=True,
-    )
-    agentlens.emit_session_stop(
-        state_path=paths.state_path,
-        sid=current_sid,
-        cwd=cwd_value,
-        active_agent=active_agent,
-        transcript_path=transcript_path,
-        stop_events=stop_events,
     )
 
 
@@ -408,19 +333,6 @@ def resolve_devflow(state_path: Path, sid: str, cwd_value: str, log_path: Path) 
         )
         emitter.emit(log_path, event)
     return dv_ctx
-
-
-def current_turn_id(state_path: Path, sid: str) -> str | None:
-    """从 state 中读取当前 session 激活中的 turn id。"""
-    try:
-        turn = st.get_current_turn(state_path, sid)
-    except Exception:
-        turn = None
-    if isinstance(turn, dict):
-        raw = turn.get("turn_id")
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-    return None
 
 
 def flush_pending_tool_events(
@@ -471,21 +383,9 @@ def flush_pending_tool_events(
             if isinstance(tool_details, dict) and tool_details:
                 tool_event["tool_details"] = dict(tool_details)
             emitter.emit(log_path, tool_event)
-            agentlens.emit_post_step(
-                state_path=state_path,
-                sid=sid,
-                tool_event=tool_event,
-                usage_events=[],
-            )
             continue
         if force_emit_fallback:
             emitter.emit(log_path, tool_event)
-            agentlens.emit_post_step(
-                state_path=state_path,
-                sid=sid,
-                tool_event=tool_event,
-                usage_events=[],
-            )
             continue
         remaining.append(tool_event)
 

@@ -22,11 +22,6 @@ func TestMainBotBrowserUsesConversationWorkspace(t *testing.T) {
 	if runID, err := mainBotBrowserRun(task); err != nil || runID != "task-run" {
 		t.Fatalf("task conversation must keep its task run: run=%q err=%v", runID, err)
 	}
-	consult := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "p", UserID: 1, ChatSessionID: "chat", ChatOwnerID: 1, workspaceRunID: "conv-workspace"}
-	consult.ExecMode.Consultation = true
-	if _, err := mainBotBrowserRun(consult); !errors.Is(err, errAgentToolForbidden) {
-		t.Fatalf("consultation got a browser: %v", err)
-	}
 	peer := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "p", UserID: 1, ChatSessionID: "chat", ChatOwnerID: 2, workspaceRunID: "conv-workspace"}
 	if runID, err := mainBotBrowserRun(peer); err != nil || runID != "conv-workspace" {
 		t.Fatalf("project participant lost the shared browser: run=%q err=%v", runID, err)

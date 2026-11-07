@@ -374,15 +374,15 @@ func TestGenericMRRoleResolvesGongfengMarketAlias(t *testing.T) {
 	}
 	gongfeng := domain.MCPServerDefinition{
 		ID: "mcp-61-project-alpha", Name: "Gongfeng MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng",
+		MarketID: "61", Transport: "http", URL: "https://mcp-gateway.example.com/gongfeng",
 	}
 	tapd := domain.MCPServerDefinition{
 		ID: "mcp-70-project-alpha", Name: "TAPD MCP", Scope: "project", ProjectID: "alpha",
-		MarketID: "70", Transport: "http", URL: "https://mcpgw.knot.example.com/tapd",
+		MarketID: "70", Transport: "http", URL: "https://mcp-gateway.example.com/tapd",
 	}
 	other := domain.MCPServerDefinition{
 		ID: "mcp-61-project-beta", Name: "Gongfeng MCP", Scope: "project", ProjectID: "beta",
-		MarketID: "61", Transport: "http", URL: "https://mcpgw.knot.example.com/gongfeng",
+		MarketID: "61", Transport: "http", URL: "https://mcp-gateway.example.com/gongfeng",
 	}
 	for _, server := range []domain.MCPServerDefinition{gongfeng, tapd, other} {
 		if err := st.PutMCPServer(server); err != nil {
@@ -516,8 +516,8 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.PutMCPServer(domain.MCPServerDefinition{
-		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214",
-		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow",
+		ID: "mcp-2214-project-dns", Name: "Config Center MCP", MarketID: "2214",
+		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcp-gateway.example.com/configcenter",
 		Headers: map[string]string{"Authorization": "Bearer mcp_secret"},
 	}); err != nil {
 		t.Fatal(err)
@@ -546,7 +546,7 @@ func TestScriptNodeCanCallProjectMCP(t *testing.T) {
 			body = artifact.Content
 		}
 	}
-	if !strings.Contains(body, "2214") || !strings.Contains(body, "rainbow") {
+	if !strings.Contains(body, "2214") || !strings.Contains(body, "configcenter") {
 		t.Fatalf("mcp list artifact = %q", body)
 	}
 	if strings.Contains(body, "mcp_secret") || strings.Contains(strings.ToLower(body), "bearer") {
@@ -568,8 +568,8 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.PutMCPServer(domain.MCPServerDefinition{
-		ID: "mcp-2214-project-dns", Name: "七彩石（Rainbow） MCP", MarketID: "2214",
-		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcpgw.knot.example.com/rainbow",
+		ID: "mcp-2214-project-dns", Name: "Config Center MCP", MarketID: "2214",
+		Scope: "project", ProjectID: "dns", Transport: "http", URL: "https://mcp-gateway.example.com/configcenter",
 		Headers: map[string]string{"Authorization": "Bearer mcp_secret"},
 	}); err != nil {
 		t.Fatal(err)
@@ -604,7 +604,7 @@ func TestVerificationGateCanCallProjectMCP(t *testing.T) {
 			body = artifact.Content
 		}
 	}
-	if !strings.Contains(body, "2214") || !strings.Contains(body, "rainbow") {
+	if !strings.Contains(body, "2214") || !strings.Contains(body, "configcenter") {
 		t.Fatalf("gate mcp list artifact = %q status=%s node=%+v", body, finished.Status, finished.Nodes["prep"])
 	}
 }
@@ -726,7 +726,7 @@ func TestMaterializeInputsMountsCloseDeliveryArtifacts(t *testing.T) {
 		{NodeID: "test", Attempt: 1, Name: "test-report", Path: "test-report.md", MediaType: "text/markdown", SHA256: "a", Content: "coverage 81%"},
 		{NodeID: "test", Attempt: 1, Name: "e2e-cases", Path: "e2e-cases.md", MediaType: "text/markdown", SHA256: "b", Content: "go test ./tests/integration"},
 		{NodeID: "mr", Attempt: 1, Name: "mr-body", Path: "mr-body.md", MediaType: "text/markdown", SHA256: "c", Content: "https://git.example.com/x/y/merge_requests/1"},
-		{NodeID: "verify", Attempt: 1, Name: "e2e-report", Path: "e2e-report.md", MediaType: "text/markdown", SHA256: "d", Content: "pipeline https://zhiyan.example.com/qci/1"},
+		{NodeID: "verify", Attempt: 1, Name: "e2e-report", Path: "e2e-report.md", MediaType: "text/markdown", SHA256: "d", Content: "pipeline https://ci.example.com/build/1"},
 		{NodeID: "checkers", Attempt: 1, Name: "checkers-report", Path: "checkers-report.md", MediaType: "text/markdown", SHA256: "e", Content: "all green"},
 	}}
 	manifest, err := materializeInputs(dir, wf, domain.WorkflowNode{ID: "close"}, run)
@@ -745,7 +745,7 @@ func TestMaterializeInputsMountsCloseDeliveryArtifacts(t *testing.T) {
 	if !strings.Contains(manifest, "verify / e2e-report") || !strings.Contains(manifest, "test / test-report") {
 		t.Fatalf("manifest missing close delivery artifacts: %s", manifest)
 	}
-	if strings.Contains(manifest, "coverage 81%") || strings.Contains(manifest, "pipeline https://zhiyan.example.com") {
+	if strings.Contains(manifest, "coverage 81%") || strings.Contains(manifest, "pipeline https://ci.example.com") {
 		t.Fatalf("prompt catalog must not inline artifact bodies: %s", manifest)
 	}
 }
@@ -1454,7 +1454,7 @@ func TestSubmitReworkWithoutRejectToDegradesToFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-no-target-agent", Name: "rework-no-target-agent", ExecutorID: "mock", Instructions: "[[mock:gate=rework]]"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-no-target-agent", Name: "rework-no-target-agent", ExecutorID: "mock", Prompt: "[[mock:gate=rework]]"}); err != nil {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
@@ -1493,7 +1493,7 @@ func TestSubmitReworkRejectsUpstreamInsteadOfRetrying(t *testing.T) {
 	t.Cleanup(s.Close)
 	// Attempt 1 submits rework; if the node (wrongly) retries locally, attempt
 	// 2 would pass and the upstream node would never be reworked.
-	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-upstream-agent", Name: "rework-upstream-agent", ExecutorID: "mock", Instructions: "[[mock:gate=rework,pass]]"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-upstream-agent", Name: "rework-upstream-agent", ExecutorID: "mock", Prompt: "[[mock:gate=rework,pass]]"}); err != nil {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{ID: "rework-upstream", Name: "rework upstream", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
@@ -1536,7 +1536,7 @@ func TestSubmitReworkBudgetExhaustedWaitsForHuman(t *testing.T) {
 	// The agent keeps asking for rework; MaxReworks=1 allows a single reject.
 	// The second rework verdict must park the node on a human gate instead of
 	// terminating the run as failed: approve accepts the upstream output.
-	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-budget-agent", Name: "rework-budget-agent", ExecutorID: "mock", Instructions: "[[mock:gate=rework]]"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "rework-budget-agent", Name: "rework-budget-agent", ExecutorID: "mock", Prompt: "[[mock:gate=rework]]"}); err != nil {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{ID: "rework-budget", Name: "rework budget", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
@@ -1581,7 +1581,7 @@ func TestSubmitTerminalDecisionSkipsGatesTelemetry(t *testing.T) {
 	putGateTestAgent(t, s, "rework-with-gates-agent", []domain.VerificationGate{{ID: "objective", Name: "objective", Mode: "command", Required: true, Commands: []string{"true"}, OnFailure: "fail", ExecutionScope: domain.ExecutionScopeRun}})
 	// The mock agent defaults to pass; rework is forced via instructions.
 	if agent, ok := s.Agent("rework-with-gates-agent"); ok {
-		agent.Instructions = "[[mock:gate=rework]]"
+		agent.Prompt = "[[mock:gate=rework]]"
 		if err := s.PutAgent(agent); err != nil {
 			t.Fatal(err)
 		}
@@ -1672,7 +1672,7 @@ func TestLostCLISessionRestartsInsteadOfWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if err := s.PutAgent(domain.AgentDefinition{ID: "lost-session-agent", Name: "lost-session-agent", ExecutorID: "mock", Instructions: "[[mock:session=lost]]"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "lost-session-agent", Name: "lost-session-agent", ExecutorID: "mock", Prompt: "[[mock:session=lost]]"}); err != nil {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
@@ -1976,7 +1976,7 @@ func TestRenderPromptAppendsIssueIdentityFromStore(t *testing.T) {
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutAgent(domain.AgentDefinition{ID: "product-tapd", Name: "TAPD", TaskPrompt: &domain.TaskPromptSpec{Inputs: []string{"任务输入：{{input}}"}}}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "product-tapd", Name: "TAPD", Prompt: "任务输入：{{input}}"}); err != nil {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{ID: "generic-product-delivery", Nodes: []domain.WorkflowNode{{ID: "tapd", AgentID: "product-tapd"}}}
@@ -1997,7 +1997,7 @@ func TestRenderPromptIncludesInputUpstreamAndFeedback(t *testing.T) {
 	wf := domain.WorkflowDefinition{Edges: []domain.WorkflowEdge{{Source: "plan", Target: "build"}}}
 	node := domain.WorkflowNode{ID: "build"}
 	run := domain.Run{Input: "request", Nodes: map[string]*domain.NodeRun{"plan": {NodeID: "plan", Output: "approved plan"}, "build": {NodeID: "build", Feedback: "add tests"}}}
-	got := renderPromptSpec(wf, node, domain.TaskPromptSpec{Objective: "input={{input}}\nfeedback={{feedback}}\nupstream={{upstream}}\nplan={{node.plan.output}}"}, run)
+	got := renderPromptSpec(wf, node, "input={{input}}\nfeedback={{feedback}}\nupstream={{upstream}}\nplan={{node.plan.output}}", run)
 	for _, want := range []string{"input=request", "feedback=add tests", "[plan]\napproved plan", "plan=approved plan"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt %q does not contain %q", got, want)
@@ -2039,11 +2039,11 @@ func TestRenderPromptSubstitutesRejectToAndSubject(t *testing.T) {
 	t.Parallel()
 	wf := domain.WorkflowDefinition{ID: "issue-fix-production"}
 	node := domain.WorkflowNode{ID: "review", RejectTo: "fix"}
-	got := renderPromptSpec(wf, node, domain.TaskPromptSpec{Objective: "失败打回 {{rejectTo}}；主题={{subject}}"}, domain.Run{})
+	got := renderPromptSpec(wf, node, "失败打回 {{rejectTo}}；主题={{subject}}", domain.Run{})
 	if !strings.Contains(got, "失败打回 fix") || !strings.Contains(got, "主题=本次 Issue") {
 		t.Fatalf("placeholders not substituted: %s", got)
 	}
-	req := renderPromptSpec(domain.WorkflowDefinition{ID: "requirement-development-production"}, domain.WorkflowNode{RejectTo: "code"}, domain.TaskPromptSpec{Objective: "打回 {{rejectTo}} {{subject}}"}, domain.Run{})
+	req := renderPromptSpec(domain.WorkflowDefinition{ID: "requirement-development-production"}, domain.WorkflowNode{RejectTo: "code"}, "打回 {{rejectTo}} {{subject}}", domain.Run{})
 	if !strings.Contains(req, "打回 code") || !strings.Contains(req, "本次需求") {
 		t.Fatalf("requirement placeholders not substituted: %s", req)
 	}
@@ -2055,8 +2055,7 @@ func TestCompileTaskPromptFillsDeliverablesFromNodeContracts(t *testing.T) {
 		ID:              "fix",
 		ArtifactOutputs: []domain.ArtifactContract{{Name: "fix-report", Path: "fix-report.md"}},
 	}
-	spec := domain.TaskPromptSpec{Role: "修复工程师", Objective: "最小修复"}
-	got := compileTaskPrompt(node, spec, []domain.VerificationGate{{Name: "修复证据门禁"}})
+	got := compileTaskPrompt(node, "修复工程师", "最小修复", []domain.VerificationGate{{Name: "修复证据门禁"}})
 	if !strings.Contains(got, "fix-report.md") || !strings.Contains(got, "修复证据门禁") {
 		t.Fatalf("compiled taskbook missing node contracts: %s", got)
 	}
@@ -2124,7 +2123,7 @@ func putTestDeliveryWorkflow(t *testing.T, s *repo.Store) {
 	putGateTestAgent(t, s, "reviewer", []domain.VerificationGate{{ID: "human", Name: "Human", Mode: "manual", Required: true}})
 	developer, _ := s.Agent("developer")
 	developer.ExecutorID = "mock"
-	developer.TaskPrompt = &domain.TaskPromptSpec{Objective: "{{input}}"}
+	developer.Prompt = "{{input}}"
 	if err := s.PutAgent(developer); err != nil {
 		t.Fatal(err)
 	}
@@ -2133,20 +2132,23 @@ func putTestDeliveryWorkflow(t *testing.T, s *repo.Store) {
 	}
 }
 
-func TestStructuredTaskPromptCompilesTaskbook(t *testing.T) {
+func TestRolePromptCompilesTaskbook(t *testing.T) {
 	t.Parallel()
-	node := domain.WorkflowNode{ID: "build", RetryStrategy: "targeted_fix", CarryOver: []string{"failed_checks", "last_error"}}
-	spec := domain.TaskPromptSpec{
-		Role: "开发工程师", Objective: "实现登录限流", Context: "仓库：{{repository}}",
-		Inputs: []string{"需求：{{input}}", "证据：{{artifacts}}"}, Actions: []string{"修改实现", "运行测试"},
-		Deliverables: []string{"change-report.json"}, AcceptanceCriteria: []string{"测试通过"}, Constraints: []string{"不得自动合并"}, RetryInstructions: "仅处理失败项",
+	node := domain.WorkflowNode{ID: "build", RetryStrategy: "targeted_fix", CarryOver: []string{"failed_checks", "last_error"}, ArtifactOutputs: []domain.ArtifactContract{{Name: "change-report", Path: "change-report.json"}}}
+	role := &domain.AgentDefinition{
+		Name:         "开发工程师",
+		Prompt:       "实现登录限流。仓库：{{repository}}\n需求：{{input}}\n先修改实现，再运行测试。",
+		Verification: []domain.VerificationGate{{Name: "单测门禁"}},
 	}
 	run := domain.Run{Input: "每分钟最多 10 次", Repository: domain.RepositoryContext{RepositoryID: "repo", Name: "service", GongfengProjectID: "team/service", BaseBranch: "main"}, Nodes: map[string]*domain.NodeRun{"build": {Feedback: "补充边界用例"}}}
-	got := renderPromptSpec(domain.WorkflowDefinition{}, node, spec, run)
-	for _, want := range []string{"# 节点任务书", "开发工程师", "实现登录限流", "每分钟最多 10 次", "service (team/service), 最新远端基线 main, 本次工作分支", "修改实现", "change-report.json", "仅修复失败项", "补充边界用例"} {
+	got := applyPromptPlaceholders(nil, domain.WorkflowDefinition{}, node, role, run)
+	for _, want := range []string{"# 节点任务书", "## 执行角色\n\n开发工程师", "## 任务说明\n\n实现登录限流", "每分钟最多 10 次", "service (team/service), 最新远端基线 main, 本次工作分支", "先修改实现", "change-report.json", "单测门禁必须通过", "仅修复失败项", "补充边界用例"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("compiled taskbook does not contain %q:\n%s", want, got)
 		}
+	}
+	if got := applyPromptPlaceholders(nil, domain.WorkflowDefinition{}, node, &domain.AgentDefinition{Name: "开发工程师"}, run); strings.Contains(got, "# 节点任务书") {
+		t.Fatalf("a role without a prompt must not get an empty taskbook:\n%s", got)
 	}
 }
 
@@ -3013,7 +3015,7 @@ func TestRepositoryPatchHandoffIsFilenameSummary(t *testing.T) {
 	if got := artifactPromptBody(legacy); strings.Contains(got, "func Added") {
 		t.Fatalf("legacy prompt still inlined hunk: %q", got)
 	}
-	prompt := renderPromptSpec(domain.WorkflowDefinition{}, domain.WorkflowNode{}, domain.TaskPromptSpec{Objective: "see {{artifact.code.repository-patch}}"}, domain.Run{
+	prompt := renderPromptSpec(domain.WorkflowDefinition{}, domain.WorkflowNode{}, "see {{artifact.code.repository-patch}}", domain.Run{
 		Artifacts: []domain.Artifact{{NodeID: "code", Name: "repository-patch", Content: string(diff)}},
 	})
 	if strings.Contains(prompt, "func Added") || strings.Contains(prompt, "@@") {
@@ -3881,7 +3883,7 @@ func TestRecordHumanContextPersistsForRetryAndPrompt(t *testing.T) {
 	if !found {
 		t.Fatal("missing human-context artifact")
 	}
-	prompt := renderPromptSpec(wf, domain.WorkflowNode{ID: "check"}, domain.TaskPromptSpec{Objective: "do work {{feedback}}"}, current)
+	prompt := renderPromptSpec(wf, domain.WorkflowNode{ID: "check"}, "do work {{feedback}}", current)
 	if !strings.Contains(prompt, "人工补充上下文") || !strings.Contains(prompt, "TestCanonicalPayloadMarshal") {
 		t.Fatalf("prompt missing human context: %s", prompt)
 	}

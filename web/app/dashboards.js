@@ -7,60 +7,6 @@ function formatTimestamp(value){
 }
 function duration(ms){ms=Number(ms||0);if(!ms)return '—';if(ms<1000)return `${ms}ms`;if(ms<60000)return `${(ms/1000).toFixed(1)}s`;if(ms<3600000)return `${(ms/60000).toFixed(1)}m`;return `${(ms/3600000).toFixed(1)}h`}
 
-function isSkillHubDeploymentRepository(repo){const project=String(repo?.gongfengProjectId||'').trim().toLowerCase().replace(/^\/+|\/+$/g,'');if(project==='example/team-project')return true;const urls=`${repo?.webUrl||''} ${repo?.cloneUrl||''}`.toLowerCase();return String(repo?.name||'').trim().toLowerCase()==='skillhub'&&urls.includes('example/team-project')}
-function deploymentRepositories(){const project=currentProject();return (state.data?.repositories||[]).filter(r=>r.projectId===project?.id&&isSkillHubDeploymentRepository(r))}
-function deploymentSelectedRepository(){const repos=deploymentRepositories();let repo=repos.find(r=>r.id===state.deploymentRepositoryId);if(!repo){const project=currentProject();repo=repos.find(r=>r.id===project?.defaultRepositoryId)||repos[0];state.deploymentRepositoryId=repo?.id||''}return repo}
-function deploymentIsRunning(status){return[1,5,7,8,9].includes(Number(status))}
-function deploymentStatusClass(status){if(Number(status)===2)return'succeeded';if(deploymentIsRunning(status))return'running';if([3,4,6,13].includes(Number(status)))return'failed';return''}
-function deploymentQueryHTML(repo){
-  const branch=state.deploymentBranch||'';
-  return `<form id="deploymentQuery" class="deployment-query skillhub-only"><div class="deployment-fixed-source"><span>测试环境流水线</span><b>SkillHub · ${escapeHTML(repo?.name||'skillhub')}</b><small>智研项目 10001 · 流水线 10000001</small></div><label>代码分支（可选）<input name="branch" value="${escapeHTML(branch)}" placeholder="全部分支" autocomplete="off"></label><div class="deployment-query-actions"><button class="button primary" type="submit">应用筛选</button></div><div class="deployment-config-note"><span>进入页面会自动加载全部分支；分支仅用于进一步筛选。趋势统计最近 30 天，明细聚焦最近 7 天和正在部署。</span></div></form>`;
-}
-function renderDeploymentDashboard(){
-  const body=$('#deploymentBody'),live=$('#deploymentLiveState');if(!body||!state.data)return;
-  const project=currentProject(),repos=deploymentRepositories();
-  if(!project){body.innerHTML=`<div class="deployment-empty"><div><i>◇</i><h2>还没有项目</h2><p>先创建项目并绑定代码仓库，再查询测试环境部署耗时。</p><button class="button primary" type="button" data-deploy-goto-project>前往项目配置</button></div></div>`;body.querySelector('[data-deploy-goto-project]')?.addEventListener('click',()=>switchView('projects'));return}
-  if(!repos.length){body.innerHTML=`<div class="deployment-empty"><div><i>⌁</i><h2>当前项目没有绑定 SkillHub 仓库</h2><p>请先为「${escapeHTML(project.name)}」绑定工蜂仓库 example/team-project。</p><button class="button primary" type="button" data-deploy-goto-project>绑定 SkillHub 仓库</button></div></div>`;body.querySelector('[data-deploy-goto-project]')?.addEventListener('click',()=>switchView('projects'));return}
-  const repo=deploymentSelectedRepository(),query=deploymentQueryHTML(repo);
-  if(state.deploymentLoading){body.innerHTML=query+`<div class="deployment-loading" aria-label="正在查询"><i></i><i></i><i></i><i></i><i></i></div>`;if(live)live.innerHTML='<i></i> 正在查询智研';bindDeploymentDashboard(repo);return}
-  if(state.deploymentError){const credentialError=/令牌|token/i.test(state.deploymentError);body.innerHTML=query+`<div class="deployment-error"><div><i>!</i><h2>查询失败</h2><p>${escapeHTML(state.deploymentError)}</p>${credentialError?'<button class="button primary" type="button" data-open-deployment-settings>配置个人令牌</button>':'<button class="button ghost" type="button" data-deployment-retry>重新查询</button>'}</div></div>`;if(live)live.innerHTML='<i></i> 查询失败';bindDeploymentDashboard(repo);return}
-  const data=state.deploymentData;
-  if(!data){body.innerHTML=query+`<div class="deployment-empty"><div><i>↗</i><h2>正在准备部署看板</h2><p>进入页面后会自动读取 SkillHub 最近 30 天的测试环境流水线数据。</p></div></div>`;if(live)live.innerHTML='<i></i> 自动加载中';bindDeploymentDashboard(repo);return}
-  const records=Array.isArray(data.records)?data.records:[],summary=data.summary||{};
-  if(!records.length){const scope=data.branch?`分支「${escapeHTML(data.branch)}」`:'全部分支';body.innerHTML=query+`<div class="deployment-empty"><div><i>⌕</i><h2>没有找到部署记录</h2><p>${scope}最近 30 天没有流水线记录。${data.branch?'可以清空分支后查看全部部署。':'请检查流水线是否已有构建。'}</p>${data.pipelineUrl?`<a class="button ghost" href="${escapeHTML(safeURL(data.pipelineUrl))}" target="_blank" rel="noopener noreferrer">打开智研流水线 ↗</a>`:''}</div></div>`;if(live)live.innerHTML='<i></i> 暂无记录';bindDeploymentDashboard(repo);return}
-  const finished=Number(summary.succeeded||0)+Number(summary.failed||0);
-  const kpis=`<div class="deployment-kpis"><div class="deployment-kpi good"><span>近 7 天平均耗时</span><strong>${duration(summary.average7dDurationMs)}</strong><small>${summary.deployments7d||0} 次已完成部署</small></div><div class="deployment-kpi running"><span>正在部署</span><strong>${summary.running||0}</strong><small>${summary.running?'流水线仍在执行':'当前没有运行中的部署'}</small></div><div class="deployment-kpi"><span>近 30 天平均耗时</span><strong>${duration(summary.averageDurationMs)}</strong><small>${finished} 次已完成部署</small></div><div class="deployment-kpi"><span>近 30 天 P50</span><strong>${duration(summary.p50DurationMs)}</strong><small>一半部署低于此值</small></div><div class="deployment-kpi warn"><span>近 30 天 P90</span><strong>${duration(summary.p90DurationMs)}</strong><small>关注长尾部署</small></div><div class="deployment-kpi good"><span>近 30 天成功率</span><strong>${Number(summary.successRate||0).toFixed(1)}%</strong><small>${summary.succeeded||0} 成功 · ${summary.failed||0} 失败</small></div></div>`;
-  const total=Math.max(1,Number(summary.total)||records.length),bar=(label,count,kind)=>`<div class="deployment-breakdown-row ${kind}"><span>${label}</span><div class="deployment-breakdown-track"><i style="width:${Math.round(Number(count||0)*100/total)}%"></i></div><b>${count||0}</b></div>`;
-  const panels=`<div class="deployment-grid"><section class="deployment-panel"><div class="deployment-panel-head"><div><h2>近 30 天部署耗时趋势</h2><p>按自然日聚合平均耗时，空白日期表示当天没有部署</p></div>${data.pipelineUrl?`<a class="button ghost small" href="${escapeHTML(safeURL(data.pipelineUrl))}" target="_blank" rel="noopener noreferrer">智研详情 ↗</a>`:''}</div><div class="deployment-chart">${deploymentChartSVG(records)}</div></section><aside class="deployment-panel"><div class="deployment-panel-head"><div><h2>近 30 天执行结果</h2><p>当前查询共 ${summary.total||records.length} 次</p></div></div><div class="deployment-breakdown">${bar('成功',summary.succeeded,'success')}${bar('失败',summary.failed,'failed')}${bar('进行中',summary.running,'running')}</div></aside></div>`;
-  const cutoff7d=Date.now()-7*24*60*60*1000,tableRecords=records.filter(r=>deploymentIsRunning(r.status)||(new Date(r.startedAt).getTime()>=cutoff7d)).sort((a,b)=>Number(deploymentIsRunning(b.status))-Number(deploymentIsRunning(a.status))||String(b.startedAt||'').localeCompare(String(a.startedAt||'')));
-  const rows=tableRecords.map(r=>{const elapsed=deploymentIsRunning(r.status)&&!Number(r.durationMs)&&r.startedAt?Math.max(0,Date.now()-new Date(r.startedAt).getTime()):Number(r.durationMs||0),shownDuration=deploymentIsRunning(r.status)&&elapsed?`已运行 ${duration(elapsed)}`:duration(elapsed);return`<tr><td>${r.url?`<a href="${escapeHTML(safeURL(r.url))}" target="_blank" rel="noopener noreferrer">#${escapeHTML(String(r.runNumber||r.id||'—'))}</a>`:`#${escapeHTML(String(r.runNumber||r.id||'—'))}`}</td><td><span class="deployment-status ${deploymentStatusClass(r.status)}">${escapeHTML(r.statusLabel||'未知')}</span></td><td><b>${escapeHTML(shownDuration)}</b></td><td><code>${escapeHTML(r.branch||'—')}</code></td><td>${escapeHTML(formatTimestamp(r.startedAt)||'—')}</td><td>${escapeHTML(r.starter||'—')}</td><td><code>${escapeHTML(String(r.revision||'—').slice(0,10))}</code></td><td title="${escapeHTML(r.comment||'')}">${escapeHTML(r.comment||'—')}</td></tr>`}).join('');
-  const table=`<section class="deployment-table-section"><div class="deployment-panel-head"><div><h2>最近 7 天与正在部署</h2><p>正在部署的记录置顶，其余展示最近 7 天构建</p></div><b>${tableRecords.length} 条</b></div><div class="deployment-table-wrap"><table class="deployment-table"><thead><tr><th>构建</th><th>结果</th><th>耗时</th><th>分支</th><th>开始时间</th><th>启动人</th><th>Commit</th><th>备注</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="deployment-table-empty">最近 7 天没有部署，当前也没有正在运行的流水线</td></tr>'}</tbody></table></div></section>`;
-  body.innerHTML=query+kpis+panels+table;if(live)live.innerHTML=`<i></i> 更新于 ${new Date(data.queriedAt||Date.now()).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;bindDeploymentDashboard(repo);
-}
-function deploymentChartSVG(records){
-  const now=new Date(),end=new Date(now),start=new Date(now);end.setHours(23,59,59,999);start.setDate(start.getDate()-29);start.setHours(0,0,0,0);
-  const days=new Map();records.forEach(r=>{const at=new Date(r.startedAt),ms=Number(r.durationMs||0);if(!Number.isFinite(at.getTime())||at<start||at>end||ms<=0)return;const day=new Date(at);day.setHours(0,0,0,0);const key=day.getTime(),item=days.get(key)||{at:key,total:0,count:0};item.total+=ms;item.count++;days.set(key,item)});
-  const points=[...days.values()].sort((a,b)=>a.at-b.at).map(p=>({...p,durationMs:Math.round(p.total/p.count)}));if(!points.length)return`<div class="deployment-empty" style="min-height:220px;border:0"><div><p>近 30 天已查询到记录，但暂时没有完整的耗时数据。</p></div></div>`;
-  const w=760,h=220,p={l:48,r:15,t:12,b:30},max=Math.max(...points.map(r=>r.durationMs),1),plotW=w-p.l-p.r,plotH=h-p.t-p.b,range=Math.max(1,end.getTime()-start.getTime()),x=at=>p.l+((at-start.getTime())/range)*plotW,y=v=>p.t+plotH-(Number(v)/max)*plotH;
-  const coords=points.map(r=>[x(r.at),y(r.durationMs)]),line=coords.map((pt,i)=>`${i?'L':'M'}${pt[0].toFixed(1)},${pt[1].toFixed(1)}`).join(' '),area=`${line} L${coords.at(-1)[0].toFixed(1)},${p.t+plotH} L${coords[0][0].toFixed(1)},${p.t+plotH} Z`;
-  const grids=[0,.25,.5,.75,1].map(n=>{const yy=p.t+plotH*(1-n);return`<line class="grid" x1="${p.l}" y1="${yy}" x2="${w-p.r}" y2="${yy}"/><text x="${p.l-7}" y="${yy+3}" text-anchor="end">${escapeHTML(duration(max*n))}</text>`}).join('');
-  const labelDates=[start,new Date((start.getTime()+end.getTime())/2),end],labels=labelDates.map((d,i)=>`<text x="${p.l+i*plotW/2}" y="${h-5}" text-anchor="${i===0?'start':i===2?'end':'middle'}">${escapeHTML(d.toLocaleDateString([], {month:'2-digit',day:'2-digit'}))}</text>`).join('');
-  const dots=coords.map((pt,i)=>`<circle class="dot" cx="${pt[0]}" cy="${pt[1]}" r="3.5"><title>${escapeHTML(new Date(points[i].at).toLocaleDateString())} · 日均 ${escapeHTML(duration(points[i].durationMs))} · ${points[i].count} 次</title></circle>`).join('');
-  return`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="部署耗时趋势"><defs><linearGradient id="deploymentArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--hui-accent)" stop-opacity=".18"/><stop offset="1" style="stop-color:var(--hui-accent)" stop-opacity=".02"/></linearGradient></defs>${grids}<path class="area" d="${area}"/><path class="line" d="${line}"/>${dots}${labels}</svg>`;
-}
-function bindDeploymentDashboard(repo){
-  const form=$('#deploymentQuery');if(!form)return;
-  form.elements.branch.oninput=()=>{state.deploymentBranch=form.elements.branch.value};
-  form.onsubmit=e=>{e.preventDefault();refreshDeployments(true)};
-  document.querySelector('[data-open-deployment-settings]')?.addEventListener('click',()=>switchView('settings'));
-  document.querySelector('[data-deployment-retry]')?.addEventListener('click',()=>refreshDeployments(true));
-}
-async function refreshDeployments(force=false){
-  if(state.deploymentLoading)return;const form=$('#deploymentQuery'),repo=deploymentSelectedRepository();if(!form||!repo)return;
-  const branch=form.elements.branch.value.trim();state.deploymentBranch=branch;state.deploymentLoading=true;state.deploymentError='';renderDeploymentDashboard();
-  const q=new URLSearchParams({projectId:currentProject()?.id||'',repositoryId:repo.id,pageSize:'100'});if(branch)q.set('branch',branch);
-  try{state.deploymentData=await api('/api/deployment-metrics?'+q.toString(),force?{}:{silent:true})}catch(e){state.deploymentData=null;state.deploymentError=e.message||'查询失败'}finally{state.deploymentLoading=false;renderDeploymentDashboard()}
-}
 
 const METRICS_WINDOWS={
   '7d':{days:7,label:'近 7 天',grain:'day'},
@@ -123,10 +69,6 @@ function metricsNodeStageSummary(nodes,kind){
   (nodes||[]).forEach(node=>{const text=`${node.key||''} ${node.name||''}`;if(!patterns.some(pattern=>pattern.test(text)))return;const count=Number(node.nodeRuns||node.runs||0),avg=Number(node.averageExecutionDurationMs||0);if(count>0&&avg>0){samples+=count;total+=count*avg}});
   return {averageMs:samples?Math.round(total/samples):0,samples};
 }
-function metricsDeploymentSummary(){
-  const win=metricsWindow(),records=(state.metricsDeploymentData?.records||[]).filter(r=>Number(r.durationMs)>0&&metricsDateInWindow(r.startedAt,win)&&!deploymentIsRunning(r.status));
-  return {averageMs:records.length?Math.round(records.reduce((n,r)=>n+Number(r.durationMs||0),0)/records.length):0,samples:records.length};
-}
 function metricsDeliveryPhases(delivery){
   const lanes=delivery?.lanes||[],laneDuration=names=>lanes.filter(l=>names.includes(String(l.lane||'').toLowerCase())).reduce((n,l)=>n+Number(l.executionDurationMs||0),0);
   const measured=!!delivery?.phaseSamples;
@@ -155,7 +97,7 @@ function metricsDashboardModel(){
   const interventionByIssue=new Map();traces.forEach(t=>{if(t.issueId)interventionByIssue.set(t.issueId,(interventionByIssue.get(t.issueId)||0)+Number(t.humanInterventions||0))});
   const interventions=[...aiIssueIds].reduce((n,id)=>n+(interventionByIssue.get(id)||0),0),automated=completed.filter(d=>!(interventionByIssue.get(d.issueId)||0));
   const tokens=completed.reduce((n,d)=>n+Number(d.tokens||0),0),knownCosts=completed.filter(d=>d.costKnown),cost=knownCosts.reduce((n,d)=>n+Number(d.costCny||0),0);
-  const terminal=Number(data.summary?.succeededRuns||0)+Number(data.summary?.failedRuns||0),frontend=metricsNodeStageSummary(data.nodes,'frontend'),backend=metricsNodeStageSummary(data.nodes,'backend'),test=metricsNodeStageSummary(data.nodes,'test'),deployment=metricsDeploymentSummary(),win=metricsWindow();
+  const terminal=Number(data.summary?.succeededRuns||0)+Number(data.summary?.failedRuns||0),frontend=metricsNodeStageSummary(data.nodes,'frontend'),backend=metricsNodeStageSummary(data.nodes,'backend'),test=metricsNodeStageSummary(data.nodes,'test'),win=metricsWindow();
   const mrMergeTrend=metricsBuckets().map(bucket=>({...bucket,mergedMrs:0})),mrByKey=new Map(mrMergeTrend.map(x=>[x.key,x]));
   mrMerges.forEach(mr=>{const bucket=mrByKey.get(metricsBucketKey(mr.mergedAt,win.grain));if(bucket)bucket.mergedMrs++});
   const trend=metricsBuckets().map(bucket=>({...bucket,items:[],runs:null})),byKey=new Map(trend.map(x=>[x.key,x]));
@@ -167,30 +109,17 @@ function metricsDashboardModel(){
   const phaseTrend=metricsBuckets({...win,grain:'day'}).map(bucket=>({...bucket,items:[]})),phaseByKey=new Map(phaseTrend.map(x=>[x.key,x]));
   phaseCompleted.forEach(item=>{const bucket=phaseByKey.get(metricsBucketKey(item.lastRunAt||item.firstRunAt,'day'));if(bucket)bucket.items.push(item)});
   phaseTrend.forEach(point=>{point.clarification=metricsPhaseAverage(point.items,'clarification').value;point.development=metricsPhaseAverage(point.items,'development').value;point.testing=metricsPhaseAverage(point.items,'testing').value;point.total=metricsPhaseAverage(point.items,'total').value;point.deliveries=point.items.length});
-  return {data,mrMerges,mergedMRs,mergedMRsMissingTime,mrMergeTrend,issues,requirementIssues,linkedTAPD,aiIssueIds,covered,completed,firstPass,reworked,interventions,automated,phaseTotalValues,tokens,knownCosts,cost,terminal,frontend,backend,test,deployment,trend,requirements,phaseAverages,phaseTrend,
+  return {data,mrMerges,mergedMRs,mergedMRsMissingTime,mrMergeTrend,issues,requirementIssues,linkedTAPD,aiIssueIds,covered,completed,firstPass,reworked,interventions,automated,phaseTotalValues,tokens,knownCosts,cost,terminal,frontend,backend,test,trend,requirements,phaseAverages,phaseTrend,
     delivered:completed.length,averagePhaseTotalMs:phaseAverages.total.value,firstPassRate:completed.length?firstPass.length*100/completed.length:0,reworkRate:completed.length?reworked.length*100/completed.length:0,averageTokens:completed.length?tokens/completed.length:0,averageCost:knownCosts.length?cost/knownCosts.length:0,averageInterventions:aiIssueIds.size?interventions/aiIssueIds.size:0,automationRate:completed.length?automated.length*100/completed.length:0,coverageRate:requirementIssues.length?covered.length*100/requirementIssues.length:0,runSuccessRate:terminal?Number(data.summary?.succeededRuns||0)*100/terminal:0};
 }
-function metricsSnapshotTrend(snapshot){
-  const gf=snapshot?.gongfeng||{};
-  if(state.metricsRange==='365d')return Object.entries(gf.mergedMonths||{}).sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>({key,label:`${Number(key.slice(5))}月`,deliveries:Number(value||0)}));
-  const take={"7d":1,"30d":4,"90d":13}[state.metricsRange]||4;
-  return Object.entries(gf.weeklyMerged||{}).sort(([a],[b])=>a.localeCompare(b)).slice(-take).map(([key,value])=>({key,label:key.replace(/^\d{4}-/,''),deliveries:Number(value||0)}));
-}
 function metricsDisplayModel(model){
-  const benchmark=state.metricsBenchmark||{},snapshot=benchmark.projectId===metricsProjectId()?benchmark:{},gf=snapshot.gongfeng||{},qci=snapshot.qci||{},loop=snapshot.loop||{},tp=gf.throughput||{},totals=gf.totals||{};
-  const hasLive=Boolean(model.delivered||model.requirementIssues.length||model.aiIssueIds.size),hasSnapshot=Boolean(Object.keys(gf.weeklyMerged||{}).length),isSnapshot=!hasLive&&hasSnapshot;
-  const trend=isSnapshot?metricsSnapshotTrend(snapshot):model.trend,total=trend.reduce((n,x)=>n+Number(x.deliveries||0),0);
-  const firstPass=model.completed.length?model.firstPassRate:(loop.totalRuns?Number(loop.firstPassRate||0):null),runSuccess=model.terminal?model.runSuccessRate:(loop.totalRuns?Number(loop.successRate||0):null);
-  const coverage=model.requirementIssues.length?model.coverageRate:(loop.issues?Number(loop.uniqueIssues||0)*100/Number(loop.issues):null),tokens=model.completed.length?model.averageTokens:(loop.completedIssues?Number(loop.totalTokens||0)/Number(loop.completedIssues):null);
-  const deployment=model.deployment.samples?model.deployment:(isSnapshot?{averageMs:Number(qci.deploy?.avgDurationSec||0)*1000,samples:Number(qci.deploy?.sampleSize||0),snapshot:true}:model.deployment);
-  const deliveryCount=isSnapshot?total:model.delivered,phaseTotalMs=model.averagePhaseTotalMs,daily=isSnapshot&&state.metricsRange==='30d'?Number(tp.currentDaily||0):0;
-  const story=isSnapshot?`${metricsWindow().label}完成 ${deliveryCount} 个交付，近四周每个工作日稳定合入 ${Number(tp.currentDaily||0).toFixed(2)} 个。`:`${metricsWindow().label}完成 ${deliveryCount} 个需求或 Issue，${model.completed.length?`${model.firstPass.length} 个一次通过`:'等待首个完整交付闭环'}。`;
-  const storyFoot=isSnapshot?'当前项目暂无完整需求闭环，已自动展示 SkillHub 已验收快照；有实时数据后自动切换。':'指标来自当前项目的需求、Issue、Run、Trace 与部署记录。';
-  const qualitySlices=isSnapshot?[{label:'已合入',value:Number(totals.merged||0)},{label:'待合入',value:Number(totals.opened||0)},{label:'已关闭',value:Number(totals.closed||0)}]:[{label:'一次通过',value:model.firstPass.length},{label:'返工后完成',value:Math.max(0,model.completed.length-model.firstPass.length)},{label:'进行中',value:Math.max(0,model.aiIssueIds.size-model.completed.length)}];
-  const categorySlices=isSnapshot?(gf.repos||[]).map(r=>({label:r.name,value:Number(r.merged||0)})):(model.data.categories||[]).map(c=>({label:obsCategoryLabel(c.key),value:Number(c.completedIssues||0)})).filter(x=>x.value);
-  return {...model,isSnapshot,trend,deliveryCount,phaseTotalMs,deployment,firstPassRate:firstPass,reworkRate:model.completed.length?model.reworkRate:null,runSuccessRate:runSuccess,coverageRate:coverage,averageTokens:tokens,daily,story,storyFoot,qualitySlices,categorySlices,
-    qualityTitle:isSnapshot?'交付状态':'交付质量',qualityCaption:isSnapshot?'PR 全量状态构成':'一次通过、返工完成与进行中',categoryTitle:isSnapshot?'交付仓库':'需求类型',categoryCaption:isSnapshot?'三个代码仓的合入构成':'按 SOP 统计标签归类',snapshotTotal:isSnapshot?qualitySlices.reduce((n,x)=>n+x.value,0):model.aiIssueIds.size,
-    lift:isSnapshot?Number(tp.multiplier||0):0,snapshotAt:snapshot.snapshotAt||''};
+  const deliveryCount=model.delivered;
+  const story=`${metricsWindow().label}完成 ${deliveryCount} 个需求或 Issue，${model.completed.length?`${model.firstPass.length} 个一次通过`:'等待首个完整交付闭环'}。`;
+  const storyFoot='指标来自当前项目的需求、Issue、Run 与 Trace。';
+  const qualitySlices=[{label:'一次通过',value:model.firstPass.length},{label:'返工后完成',value:Math.max(0,model.completed.length-model.firstPass.length)},{label:'进行中',value:Math.max(0,model.aiIssueIds.size-model.completed.length)}];
+  const categorySlices=(model.data.categories||[]).map(c=>({label:obsCategoryLabel(c.key),value:Number(c.completedIssues||0)})).filter(x=>x.value);
+  return {...model,deliveryCount,phaseTotalMs:model.averagePhaseTotalMs,firstPassRate:model.completed.length?model.firstPassRate:null,reworkRate:model.completed.length?model.reworkRate:null,runSuccessRate:model.terminal?model.runSuccessRate:null,coverageRate:model.requirementIssues.length?model.coverageRate:null,averageTokens:model.completed.length?model.averageTokens:null,story,storyFoot,qualitySlices,categorySlices,
+    qualityTitle:'交付质量',qualityCaption:'一次通过、返工完成与进行中',categoryTitle:'需求类型',categoryCaption:'按 SOP 统计标签归类',snapshotTotal:model.aiIssueIds.size};
 }
 function metricsMs(v){return Number(v)===0?'0ms':duration(v)}
 const METRICS_SLICE_COLORS=['var(--c1)','var(--c2)','var(--c3)','var(--muted-2)','var(--c4)','var(--panel-3)'];
@@ -266,7 +195,7 @@ function renderMetricsDashboard(){
   if(state.metricsError){body.innerHTML=`<div class="metrics-empty"><div><b>看板加载失败</b><p>${escapeHTML(state.metricsError)}</p><button type="button" class="button primary" data-metrics-retry>重新加载</button></div></div>`;body.querySelector('[data-metrics-retry]').onclick=()=>refreshMetrics(true);if(live)live.innerHTML='<i></i> 加载失败';return}
   if(stale){body.innerHTML='<div class="metrics-loading"><div><i></i><p>正在切换到当前项目的数据…</p></div></div>';if(live)live.innerHTML='<i></i> 等待加载';return}
   if(!state.metricsData){body.innerHTML='<div class="metrics-empty">选择周期后查看研发效能指标</div>';return}
-  const raw=metricsDashboardModel(),m=metricsDisplayModel(raw),win=metricsWindow(),missing='待采集',phaseTotalFoot=m.phaseTotalValues.length?`${m.phaseTotalValues.length} 条完成项有阶段耗时`:'等待阶段耗时采集',source=metricsDemoEnabled()?'演示数据':m.isSnapshot?'SkillHub 快照':'项目实时';
+  const raw=metricsDashboardModel(),m=metricsDisplayModel(raw),win=metricsWindow(),missing='待采集',phaseTotalFoot=m.phaseTotalValues.length?`${m.phaseTotalValues.length} 条完成项有阶段耗时`:'等待阶段耗时采集',source=metricsDemoEnabled()?'演示数据':'项目实时';
   const grainLabel=win.grain==='day'?'按日':win.grain==='week'?'按周':'按月',known=list=>list.filter(v=>v!=null);
   const kpis=obsKpiGroups([
     obsKpiGroup('交付',[
@@ -287,11 +216,11 @@ function renderMetricsDashboard(){
   const tableCard=obsCard('metrics-requirements','每条需求 / Issue 耗时明细','研发、测试为节点执行累计；* 表示旧流程推断，悬停单元格看计时依据',`<span class="metrics-card-total">${m.requirements.length} <small>条交付项</small></span>`,metricsRequirementTable(m));
   const deliveryCard=metricsTrendCard('metrics-delivery','交付趋势',`${grainLabel}统计完成的需求与 Issue`,m.trend,{name:'交付',kind:'bar',integer:true,get:p=>Number(p.deliveries||0),format:v=>String(Math.round(v))},()=>metricsTrendSVG(m.trend,'deliveries'),{empty:!m.trend.some(p=>Number(p.deliveries)>0),emptyText:'当前日期范围暂无交付',expand:true});
   const coverage=obsKpi(metricsKpi({label:'AI 工作项覆盖率',value:m.coverageRate!=null?percent(m.coverageRate):missing,meter:m.coverageRate||0,foot:m.requirementIssues.length?`${m.covered.length} / ${m.requirementIssues.length} 个需求与 Issue · ${m.linkedTAPD} 个关联 TAPD`:'等待工作项创建'}));
-  const categoryCard=obsCard('metrics-category',m.categoryTitle,m.categoryCaption,'',metricsDonutBlock('metrics-category',m.categorySlices,m.isSnapshot?m.deliveryCount:m.completed.length,m.isSnapshot?'合入':'交付项')+`<div class="metrics-split obs-ks">${coverage}</div>`);
+  const categoryCard=obsCard('metrics-category',m.categoryTitle,m.categoryCaption,'',metricsDonutBlock('metrics-category',m.categorySlices,m.completed.length,'交付项')+`<div class="metrics-split obs-ks">${coverage}</div>`);
   const mrSub=`${grainLabel}统计需求 / Issue 关联 MR；合入目标分支即计数，包含集成分支，同一 MR 只计一次${m.mergedMRsMissingTime?`。${m.mergedMRsMissingTime} 个已合入 MR 缺少合入时间，暂未计入日期统计`:''}`;
   const mrCard=metricsTrendCard('metrics-mr','MR 合入趋势',mrSub,m.mrMergeTrend,{name:'MR 合入',kind:'bar',integer:true,get:p=>Number(p.mergedMrs||0),format:v=>String(Math.round(v))},()=>metricsTrendSVG(m.mrMergeTrend,'mergedMrs'),{empty:!m.mrMergeTrend.some(p=>Number(p.mergedMrs)>0),emptyText:'当前日期范围暂无已合入 MR',expand:true,height:200,tools:`<span class="metrics-card-total">${m.mergedMRs} <small>个 MR</small></span>`,after:`<details class="metrics-mr-details"><summary>查看合入明细${m.mrMerges.length>80?'（最近 80 条）':''}</summary>${metricsMRMergeTable(m.mrMerges)}</details>`});
   const rework=obsKpi(metricsKpi({label:'返工率（代理）',value:m.reworkRate!=null?percent(m.reworkRate):missing,meter:m.reworkRate||0,foot:m.completed.length?`${m.reworked.length} / ${m.completed.length} 条完成需求；多 Run、失败、节点返工或重开`:'等待完成需求'}));
-  const qualityCard=obsCard('metrics-quality',m.qualityTitle,m.qualityCaption,'',metricsDonutBlock('metrics-quality',m.qualitySlices,m.snapshotTotal,m.isSnapshot?'MR':'需求')+`<div class="metrics-split obs-ks">${rework}</div>`);
+  const qualityCard=obsCard('metrics-quality',m.qualityTitle,m.qualityCaption,'',metricsDonutBlock('metrics-quality',m.qualitySlices,m.snapshotTotal,'需求')+`<div class="metrics-split obs-ks">${rework}</div>`);
   const deliveredRows=p=>[['完成项',`${p.deliveries||0} 条`]];
   const firstPassCard=metricsTrendCard('metrics-firstpass','一次通过率趋势',`${grainLabel}观察交付质量变化`,m.trend,{name:'一次通过率',kind:'line',percent:true,get:p=>p.deliveries?p.firstPass:null,format:v=>percent(v),emptyLabel:'无完成项',rows:deliveredRows},()=>metricsTrendSVG(m.trend,'firstPass'),{empty:!m.completed.length,emptyText:'等待完成需求'});
   const autoKpis=obsKpiGroup('人工与稳定性',[
@@ -316,22 +245,16 @@ function metricsReleaseCharts(body){
   if(typeof obsExpandState!=='undefined'&&obsExpandState?.card?.closest?.('#metricsView'))obsCollapse({silent:true});
   if(typeof obsDisposeCharts==='function')obsDisposeCharts(body);
 }
-let metricsRequestSeq=0,metricsPendingKey='',metricsDeploymentRequestSeq=0;
+let metricsRequestSeq=0,metricsPendingKey='';
 function metricsProjectId(){return state.projectFilter||currentProject()?.id||''}
 function metricsQueryKey(){return [metricsProjectId(),state.metricsRange,state.metricsDateFrom,state.metricsDateTo].join('|')}
 function invalidateMetricsForProjectChange(){
-  metricsRequestSeq++;metricsPendingKey='';metricsDeploymentRequestSeq++;
-  state.metricsData=null;state.metricsDataKey='';state.metricsIssues=[];state.metricsBenchmark=null;state.metricsLoading=false;state.metricsError='';
-  state.metricsDeploymentData=null;state.metricsDeploymentError='';state.metricsDeploymentLoading=false;
+  metricsRequestSeq++;metricsPendingKey='';
+  state.metricsData=null;state.metricsDataKey='';state.metricsIssues=[];state.metricsLoading=false;state.metricsError='';
 }
 async function refreshMetrics(force=false){
   const seq=++metricsRequestSeq,key=metricsQueryKey();metricsPendingKey=key;const win=metricsWindow(),projectId=metricsProjectId(),q=new URLSearchParams({projectId,from:win.from.toISOString(),to:win.to.toISOString(),grain:win.grain});state.metricsLoading=true;state.metricsError='';renderMetricsDashboard();
-  if(metricsDemoEnabled()){const demo=metricsDemoSnapshot(win);state.metricsData=demo.analytics;state.metricsDataKey=key;state.metricsIssues=demo.issues;state.metricsBenchmark=null;state.metricsLoading=false;metricsPendingKey='';renderMetricsDashboard();return}
-  try{const [analytics,issues,benchmark]=await Promise.all([api('/api/analytics?'+q.toString(),force?{}:{silent:true}),api('/api/issues?projectId='+encodeURIComponent(projectId),{silent:true}),projectId==='skillhub'&&canShowSkillhubEfficiency()?api('/api/analytics/skillhub',{silent:true}).catch(()=>null):Promise.resolve(null)]);if(seq!==metricsRequestSeq||key!==metricsQueryKey())return;state.metricsData=analytics;state.metricsDataKey=key;state.metricsIssues=issues;state.metricsBenchmark=benchmark?.projectId===projectId?benchmark:null}catch(e){if(seq===metricsRequestSeq&&key===metricsQueryKey())state.metricsError=e.message||'加载失败'}finally{if(seq===metricsRequestSeq){metricsPendingKey='';state.metricsLoading=false;renderMetricsDashboard()}}
-  if(seq===metricsRequestSeq&&deploymentRepositories().length&&!state.metricsDeploymentData&&!state.metricsDeploymentLoading)refreshMetricsDeployment();
-}
-async function refreshMetricsDeployment(){
-  const repo=deploymentRepositories()[0],project=currentProject();if(!repo||!project)return;const seq=++metricsDeploymentRequestSeq;state.metricsDeploymentLoading=true;state.metricsDeploymentError='';renderMetricsDashboard();const q=new URLSearchParams({projectId:project.id,repositoryId:repo.id,pageSize:'100'});
-  try{const data=await api('/api/deployment-metrics?'+q.toString(),{silent:true});if(seq===metricsDeploymentRequestSeq&&project.id===metricsProjectId())state.metricsDeploymentData=data}catch(e){if(seq===metricsDeploymentRequestSeq&&project.id===metricsProjectId()){state.metricsDeploymentData=null;state.metricsDeploymentError=e.message||'智研流水线暂不可用'}}finally{if(seq===metricsDeploymentRequestSeq){state.metricsDeploymentLoading=false;renderMetricsDashboard()}}
+  if(metricsDemoEnabled()){const demo=metricsDemoSnapshot(win);state.metricsData=demo.analytics;state.metricsDataKey=key;state.metricsIssues=demo.issues;state.metricsLoading=false;metricsPendingKey='';renderMetricsDashboard();return}
+  try{const [analytics,issues]=await Promise.all([api('/api/analytics?'+q.toString(),force?{}:{silent:true}),api('/api/issues?projectId='+encodeURIComponent(projectId),{silent:true})]);if(seq!==metricsRequestSeq||key!==metricsQueryKey())return;state.metricsData=analytics;state.metricsDataKey=key;state.metricsIssues=issues}catch(e){if(seq===metricsRequestSeq&&key===metricsQueryKey())state.metricsError=e.message||'加载失败'}finally{if(seq===metricsRequestSeq){metricsPendingKey='';state.metricsLoading=false;renderMetricsDashboard()}}
 }
 function metricHealth(m, liveCount=0){if(liveCount)return {key:'active',label:'运行中',hint:`${liveCount} 个实例执行中`};if(!m?.totalRuns)return {key:'never',label:'从未运行',hint:'需要首次验证'};if(m.waitingRuns)return {key:'active',label:'待审批',hint:`${m.waitingRuns} 个实例等待门禁`};if(m.failedRuns&&m.lastRunStatus==='failed')return {key:'blocked',label:'有阻塞',hint:'最近运行失败'};if(m.succeededRuns)return {key:'closed',label:'已闭环',hint:`${percent(m.closureRate)} 闭环率`};return {key:'blocked',label:'未闭环',hint:'尚无成功运行'}}

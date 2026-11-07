@@ -173,30 +173,29 @@ func TestSharedNativeSessionResumesAcrossActorsAndHandlerRestart(t *testing.T) {
 	}
 }
 
-func TestSharedNativeSessionSynchronizesConsultationWithoutReplayingEarlierChat(t *testing.T) {
+func TestSharedNativeSessionOffersMentionedRolesAsSubagents(t *testing.T) {
 	h, a, b, _, session := sharedWorkbenchFixture(t)
 	_, calls := nativeCLIRecorder(t)
 	session = sendNativeTurn(t, h, a, session, "之前的主会话")
-	role := domain.AgentDefinition{ID: "dev", ProjectID: session.ProjectID, Name: "开发工程师", Instructions: "只读分析"}
+	role := domain.AgentDefinition{ID: "dev", ProjectID: session.ProjectID, Name: "开发工程师", Prompt: "按 {{input}} 实现"}
 	if err := h.repo.PutAgent(role); err != nil {
 		t.Fatal(err)
 	}
-	session = sendNativeTurn(t, h, b, session, "角色咨询的新问题", domain.AssistantReference{Type: "agent", ID: role.ID})
+	session = sendNativeTurn(t, h, b, session, "让开发做这件事", domain.AssistantReference{Type: "agent", ID: role.ID})
 	session = sendNativeTurn(t, h, a, session, "主会话继续")
 	got := calls()
 	if len(got) != 3 {
 		t.Fatalf("CLI calls %d", len(got))
 	}
-	if got[1].flag("--resume") != "" || got[1].home == got[0].home {
-		t.Fatal("consultation reused Main Bot state")
+	if got[1].flag("--resume") != got[0].flag("--session-id") || got[2].flag("--resume") != got[0].flag("--session-id") {
+		t.Fatal("a role mention must stay in the Main Bot session")
 	}
-	if got[2].flag("--resume") != got[0].flag("--session-id") {
-		t.Fatal("consultation reset Main Bot state")
+	agent, err := os.ReadFile(filepath.Join(assistantSharedSessionRoot(session.ID), "home", ".codebuddy", "agents", "role-dev.md"))
+	if err != nil || !strings.Contains(string(agent), "按 （运行时提供） 实现") {
+		t.Fatalf("role not offered as subagent: %s %v", agent, err)
 	}
-	for _, added := range []string{"角色咨询的新问题", "开发工程师", "原生回复", "主会话继续"} {
-		if !strings.Contains(got[2].prompt(), added) {
-			t.Fatalf("unseen conversation missing: %s", added)
-		}
+	if !strings.Contains(got[1].prompt(), "subagent_type=role-dev") {
+		t.Fatal("dispatch hint missing for the mentioned role")
 	}
 	if strings.Contains(got[2].prompt(), "之前的主会话") {
 		t.Fatal("earlier Main Bot messages were replayed")

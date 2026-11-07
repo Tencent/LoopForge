@@ -214,3 +214,25 @@ func TestSyncTaskExistingWorkBranchRejectsDeletedRemote(t *testing.T) {
 		t.Fatal("strict runner sync recreated a deleted remote branch")
 	}
 }
+
+// A hand-made `git checkout` must not let the push report the recorded branch
+// as delivered while nothing reached it.
+func TestSyncTaskPushRefusesAnotherCheckedOutBranch(t *testing.T) {
+	remote := bareRemoteWithBaseline(t)
+	workspace := t.TempDir()
+	repository := domain.RunnerRepository{Name: "app", CloneURL: remote, Ref: "master", WorkBranch: "feature/recorded", SyncWorkBranch: true}
+	if err := checkoutRepository(context.Background(), workspace, &repository); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, workspace, "checkout", "-q", "-b", "feature/manual")
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	invocation := &domain.RunnerInvocation{Repositories: []domain.RunnerRepository{repository}}
+	if _, err := syncTaskWorkBranches(context.Background(), workspace, invocation, true, "msg"); err == nil || !strings.Contains(err.Error(), "feature/manual") {
+		t.Fatalf("push from another branch must be refused: %v", err)
+	}
+	if got := runGitT(t, remote, "for-each-ref", "--format=%(refname)", "refs/heads/feature/"); got != "" {
+		t.Fatalf("a drifted checkout pushed %s", got)
+	}
+}

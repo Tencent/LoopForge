@@ -57,7 +57,6 @@ func TestConversationWorkspaceToolsForAllProjectParticipants(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*AgentToolSession){
 		"no project":    func(s *AgentToolSession) { s.ProjectID = "" },
-		"consultation":  func(s *AgentToolSession) { s.ExecMode.Consultation = true },
 		"no session id": func(s *AgentToolSession) { s.ChatSessionID = "" },
 	} {
 		c := &AgentToolSession{Mode: s.Mode, ProjectID: s.ProjectID, UserID: s.UserID, ChatSessionID: s.ChatSessionID, ChatOwnerID: s.ChatOwnerID}
@@ -432,5 +431,149 @@ func TestWorkspaceCommandTimeoutKeepsOutputAndHint(t *testing.T) {
 	msg = workspaceCommandTimeout(120, "", begin).Error()
 	if strings.Contains(msg, "larger timeoutSeconds") || !strings.Contains(msg, "background") || !strings.Contains(msg, "printed nothing") {
 		t.Fatalf("max timeout message: %q", msg)
+	}
+}
+
+func TestWorkspaceOpenAcceptsBranchSelection(t *testing.T) {
+	choice, err := parseWorkspaceOpenChoice(map[string]any{"goal": "g", "branch": "feature/x", "repositoryBranches": map[string]any{"api": "feature/y"}})
+	if err != nil || choice.Branch != "feature/x" || choice.RepositoryBranches["api"].Branch != "feature/y" {
+		t.Fatalf("branch selection = %+v %v", choice, err)
+	}
+	if _, err := parseWorkspaceOpenChoice(map[string]any{"goal": "g", "repositoryBranches": map[string]any{"api": 1}}); err == nil {
+		t.Fatal("non-string repositoryBranches entry must be rejected")
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(workspaceOpenDescriptor().InputSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"branch", "repositoryBranches"} {
+		if _, ok := schema.Properties[key]; !ok {
+			t.Fatalf("schema does not expose %s", key)
+		}
+	}
+}
+
+func TestWorkspaceBranchSelection(t *testing.T) {
+	repositories := []domain.RepositoryContext{
+		{RepositoryID: "repo-web", Name: "web", GongfengProjectID: "team/web", BaseBranch: "main", DefaultBranch: "main"},
+		{RepositoryID: "repo-api", Name: "api", BaseBranch: "main", DefaultBranch: "main"},
+	}
+	// branch names one branch, so it only makes sense for a single checkout.
+	if _, _, err := selectWorkspaceBranches(repositories, workspaceOpenChoice{Branch: "feature/x"}); err == nil || !strings.Contains(err.Error(), "只支持单个代码仓库") {
+		t.Fatalf("multi-repository branch must be rejected: %v", err)
+	}
+	// Baselines are never worked on directly.
+	for _, shared := range []string{"main", "master"} {
+		if _, _, err := selectWorkspaceBranches(repositories[:1], workspaceOpenChoice{Branch: shared}); err == nil || !strings.Contains(err.Error(), "共享分支") {
+			t.Fatalf("shared branch %s must be rejected: %v", shared, err)
+		}
+	}
+	// An unknown repository is a typo, not a silent new branch.
+	if _, _, err := selectWorkspaceBranches(repositories[:1], workspaceOpenChoice{RepositoryBranches: map[string]workspaceBranchChoice{"nope": {Branch: "feature/x"}}}); err == nil || !strings.Contains(err.Error(), "没有「nope」") {
+		t.Fatalf("unknown repository must be rejected: %v", err)
+	}
+	// A single repository continues the named branch instead of creating one.
+	selected, picked, err := selectWorkspaceBranches(repositories[:1], workspaceOpenChoice{Branch: "feature/existing"})
+	if err != nil || len(selected) != 1 || selected[0].WorkBranch != "feature/existing" || !selected[0].RequireExistingWorkBranch || len(picked) != 1 {
+		t.Fatalf("single branch selection = %+v %v %v", selected, picked, err)
+	}
+	// Per-repository selection leaves unlisted repositories on a new branch.
+	selected, picked, err = selectWorkspaceBranches(repositories, workspaceOpenChoice{RepositoryBranches: map[string]workspaceBranchChoice{"api": {Branch: "feature/api-fix"}}})
+	if err != nil || len(picked) != 1 || selected[1].WorkBranch != "feature/api-fix" || !selected[1].RequireExistingWorkBranch || selected[0].WorkBranch != "" || selected[0].RequireExistingWorkBranch {
+		t.Fatalf("per-repository selection = %+v %v %v", selected, picked, err)
+	}
+	if repositories[1].WorkBranch != "" {
+		t.Fatalf("selection mutated the caller's repositories: %+v", repositories[1])
+	}
+	// A branch name that is not a branch name is rejected before any checkout.
+	if _, _, err := selectWorkspaceBranches(repositories[:1], workspaceOpenChoice{Branch: "-bad..name"}); err == nil {
+		t.Fatal("invalid branch name must be rejected")
+	}
+}
+
+func TestWorkspaceOpenBranchModeMatrix(t *testing.T) {
+	parse := func(args map[string]any) (workspaceOpenChoice, error) {
+		args["goal"] = "改文案"
+		args["new"] = true
+		return parseWorkspaceOpenChoice(args)
+	}
+	cases := []struct {
+		name    string
+		args    map[string]any
+		want    string
+		wantErr string
+	}{
+		{name: "auto by default", args: map[string]any{}, want: workspaceBranchModeAuto},
+		{name: "branch keeps continue", args: map[string]any{"branch": "feature/x"}, want: workspaceBranchModeContinue},
+		{name: "explicit create", args: map[string]any{"branch": "feature/x", "branchMode": "create"}, want: workspaceBranchModeCreate},
+		{name: "explicit continue", args: map[string]any{"branch": "feature/x", "branchMode": "continue"}, want: workspaceBranchModeContinue},
+		{name: "auto with branch", args: map[string]any{"branch": "feature/x", "branchMode": "auto"}, wantErr: "不要同时传"},
+		{name: "continue without branch", args: map[string]any{"branchMode": "continue"}, wantErr: "需要同时指定分支"},
+		{name: "create without branch", args: map[string]any{"branchMode": "create"}, wantErr: "需要同时指定分支"},
+		{name: "unknown mode", args: map[string]any{"branchMode": "new"}, wantErr: "必须是 auto"},
+		{name: "non-string mode", args: map[string]any{"branchMode": true}, wantErr: "必须是 auto"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			choice, err := parse(tc.args)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || choice.BranchMode != tc.want {
+				t.Fatalf("mode = %q, err = %v, want %q", choice.BranchMode, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestWorkspaceBranchCreateSelection(t *testing.T) {
+	repositories := []domain.RepositoryContext{
+		{RepositoryID: "repo-api", Name: "api", BaseBranch: "main", DefaultBranch: "main"},
+	}
+	selected, picked, err := selectWorkspaceBranches(repositories, workspaceOpenChoice{Branch: "feature/caller", BranchMode: workspaceBranchModeCreate})
+	if err != nil || len(selected) != 1 || selected[0].WorkBranch != "feature/caller" {
+		t.Fatalf("create selection = %+v %v %v", selected, picked, err)
+	}
+	if selected[0].RequireExistingWorkBranch || !selected[0].CreateNewWorkBranch {
+		t.Fatalf("create mode flags = %+v", selected[0])
+	}
+	if len(picked) != 1 || !strings.Contains(picked[0], "新建") {
+		t.Fatalf("create notice = %v", picked)
+	}
+	// Shared baselines stay rejected in create mode too.
+	if _, _, err := selectWorkspaceBranches(repositories, workspaceOpenChoice{Branch: "main", BranchMode: workspaceBranchModeCreate}); err == nil || !strings.Contains(err.Error(), "共享分支") {
+		t.Fatalf("shared branch accepted as a new branch: %v", err)
+	}
+	// Continue mode keeps its old flags.
+	selected, _, err = selectWorkspaceBranches(repositories, workspaceOpenChoice{Branch: "feature/x", BranchMode: workspaceBranchModeContinue})
+	if err != nil || !selected[0].RequireExistingWorkBranch || selected[0].CreateNewWorkBranch {
+		t.Fatalf("continue selection = %+v %v", selected, err)
+	}
+	// Per-repository create only touches the listed repository.
+	multi := []domain.RepositoryContext{
+		{RepositoryID: "repo-web", Name: "web", BaseBranch: "main", DefaultBranch: "main"},
+		{RepositoryID: "repo-api", Name: "api", BaseBranch: "main", DefaultBranch: "main"},
+	}
+	selected, picked, err = selectWorkspaceBranches(multi, workspaceOpenChoice{BranchMode: workspaceBranchModeCreate, RepositoryBranches: map[string]workspaceBranchChoice{"api": {Branch: "feature/new"}}})
+	if err != nil || len(picked) != 1 || selected[1].WorkBranch != "feature/new" || !selected[1].CreateNewWorkBranch || selected[0].WorkBranch != "" {
+		t.Fatalf("per-repository create = %+v %v %v", selected, picked, err)
+	}
+}
+
+func TestWorkspaceOpenSchemaDescribesBranchModes(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(workspaceOpenSchema), &schema); err != nil {
+		t.Fatalf("workspace_open schema is not valid JSON: %v", err)
+	}
+	if !strings.Contains(workspaceOpenSchema, `"branchMode"`) || !strings.Contains(workspaceOpenSchema, `"create"`) {
+		t.Fatalf("schema does not expose branchMode: %s", workspaceOpenSchema)
+	}
+	if !strings.Contains(workspaceOpenDescriptor().Description, "branchMode") {
+		t.Fatal("tool description does not explain branchMode")
 	}
 }

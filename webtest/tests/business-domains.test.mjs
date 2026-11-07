@@ -68,3 +68,21 @@ test('business-domain management searches users and saves a new domain', async (
   assert.equal(call.body.name, 'New Domain');
   assert.deepEqual(call.body.managerIds, [2]);
 });
+
+test('business report rerenders with the domain list when the report answers first', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const report = { grain: 'day', summary: {}, deliveryMetrics: {}, businessDomains: [], projects: [], deliveryTrend: [] };
+  app.router.get('/api/business-domain-report', report);
+  app.router.get('/api/projects', []);
+  app.router.get('/api/business-domains', async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return { items: [{ domain: { id: 'pay', name: '支付业务', active: true }, canView: true, canManage: false }], canAdmin: false, userId: 1 };
+  });
+  app.evaluate(`businessState.items=[];businessState.scope='all';businessState.initialized=false;businessState.from='';businessState.to='';loadBusinessDomains()`);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await settle(8);
+  const scopes = [...app.document.querySelectorAll('#businessDomainsBody select[name="scope"] option')].map((o) => o.textContent);
+  assert.ok(scopes.includes('支付业务'), JSON.stringify(scopes));
+  assert.equal(app.evaluate('businessState.loading'), false);
+});

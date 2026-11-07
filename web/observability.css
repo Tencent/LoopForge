@@ -273,7 +273,9 @@ html[data-theme="light"] .worker-log-line pre,html[data-theme="dark"] .worker-lo
 .run-graph.is-staged{display:flex;align-items:stretch;gap:0 40px;overflow-x:auto;padding:6px 4px 10px}
 .graph-stage{position:relative;flex:0 0 220px;display:flex;flex-direction:column;gap:10px;padding:8px;border:1px dashed transparent;border-radius:12px;box-sizing:border-box}
 .graph-stage.is-parallel{border-color:var(--line-strong);background:color-mix(in srgb,var(--blue) 3%,transparent)}
-.graph-stage-label{font-size:10px;color:var(--muted-2);letter-spacing:.02em}
+.graph-stage-label{display:flex;align-items:baseline;justify-content:space-between;gap:6px;font-size:10px;color:var(--muted-2);letter-spacing:.02em}
+.graph-stage-name{white-space:nowrap}
+.graph-stage-time{font-style:normal;font-size:9.5px;color:var(--muted-2);font-variant-numeric:tabular-nums;white-space:nowrap}
 .graph-stage.is-parallel .graph-stage-label{color:var(--blue)}
 .graph-stage>.graph-node:nth-child(2){margin-top:auto}.graph-stage>.graph-node:last-child{margin-bottom:auto}
 .run-graph.is-staged .graph-node::after{display:none}

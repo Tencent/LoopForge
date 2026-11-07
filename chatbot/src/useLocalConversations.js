@@ -34,7 +34,8 @@ export function useLocalConversations(real) {
   const [generations, setGenerations] = useState({});
   const generationsRef = useRef(generations);
   const timers = useRef(new Map());
-  const available = real.ready && !real.activeId && !real.sessions.length;
+  const previewEnabled = new URLSearchParams(location.search).get("localPreview") === "1";
+  const available = previewEnabled && real.ready && !real.activeId && !real.sessions.length;
   const availableRef = useRef(available);
   availableRef.current = available;
   localIdRef.current = localId;
@@ -76,7 +77,7 @@ export function useLocalConversations(real) {
       const saved = JSON.parse(localStorage.getItem(key));
       if (Array.isArray(saved) && saved.every((row) => isLocalConversation(row?.id) && Array.isArray(row.messages))) sessions = saved;
     } catch {}
-    sessions ||= createLocalConversations(real.user, real.model);
+    sessions ||= previewEnabled ? createLocalConversations(real.user, real.model) : [];
     // Browser-local replies run in this page. A persisted running row has no
     // surviving timer after reload, so it must not keep advertising activity.
     sessions = sessions.map((row) => row.generationStatus === "running"
@@ -99,7 +100,7 @@ export function useLocalConversations(real) {
         }
       } catch {}
     }
-  }, [real.ready, real.user?.id, key, real.model, available, selectLocal]);
+  }, [real.ready, real.user?.id, key, real.model, available, previewEnabled, selectLocal]);
 
   useEffect(() => {
     if (!available) selectLocal(null);
@@ -191,6 +192,8 @@ export function useLocalConversations(real) {
       generation: generations[session.id] || null,
       live: emptyLive,
       busy: generations[session.id]?.status === "running",
+      queue: [],
+      queueHeld: false,
       submitting: false,
       readOnly: false,
       error,
@@ -214,7 +217,11 @@ export function useLocalConversations(real) {
     async send(options) {
       const current = selected();
       if (!current) return isLocalConversation(localIdRef.current) ? false : real.send(options);
-      if ((!options.text.trim() && !options.attachments?.length) || generationsRef.current[current.id]?.status === "running") return false;
+      if (!options.text.trim() && !options.attachments?.length) return false;
+      if (generationsRef.current[current.id]?.status === "running") {
+        setLocalError("当前回复仍在生成，可以先停止再发送。");
+        return false;
+      }
       setLocalError("");
       const message = { role: "user", content: options.text.trim() || "请阅读本轮附件并回答。", authorId: real.user?.id, authorName: real.user?.chineseName || real.user?.loginName, createdAt: timestamp(), ...(options.attachments?.length ? { attachments: options.attachments } : {}), ...(options.references?.length ? { references: options.references } : {}) };
       const stored = update(current.id, (row) => ({ ...row, messages: [...(options.messagesOverride || row.messages), message] }));

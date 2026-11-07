@@ -22,7 +22,6 @@
   <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
   <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
   <link rel="stylesheet" href="/assistant-models.css">
-  <link rel="stylesheet" href="/deployment-dashboard.css?v=20260920r2">
   <link rel="stylesheet" href="/metrics-dashboard.css?v=20261030obs1">
   <link rel="stylesheet" href="/knowledge.css?v=20261030r2">
   <link rel="stylesheet" href="/business-domains.css">
@@ -81,48 +80,64 @@
       <!-- 1. AI 工作台 (Codex 风格 Home 房子图标) -->
       <button class="rail-btn nav" data-view="collaboration" data-tooltip="AI 工作台" aria-label="AI 工作台">
         <svg class="agent-icon harness-icon" data-icon="home-start" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3.5 10 7.3-6a1.9 1.9 0 0 1 2.4 0l7.3 6"/><path d="M5.5 8.4v10.1A1.5 1.5 0 0 0 7 20h3v-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5h3a1.5 1.5 0 0 0 1.5-1.5V8.4"/></svg>
+        <span class="rail-label">AI 工作台</span>
       </button>
 
       <!-- 2. 统计 -->
       <button class="rail-btn nav" data-view="observability" data-tooltip="统计" aria-label="统计">
         <svg class="agent-icon harness-icon" data-icon="chart" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V9"/><path d="M12 17V7"/><path d="M16 17v-5"/></svg>
+        <span class="rail-label">统计</span>
       </button>
 
       <!-- 3. 需求列表 -->
       <button class="rail-btn nav" data-view="issues" data-tooltip="需求列表" aria-label="需求列表">
         <svg class="agent-icon harness-icon" data-icon="form" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8 8h8"/><path class="form-fields" d="M8 12h8M8 16h5"/></svg>
+        <span class="rail-label">需求列表</span>
       </button>
 
       <!-- 4. 待我确认 (带审批徽标) -->
       <button class="rail-btn nav" data-view="approvals" data-tooltip="待我确认" aria-label="待我确认">
         <svg class="agent-icon harness-icon" data-icon="gate" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="gate-shield" d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path class="gate-check agent-check-draw" pathLength="1" d="m9 12 2 2 4-4"/></svg>
+        <span class="rail-label">待我确认</span>
         <span id="approvalNavBadge" class="nav-badge" hidden></span>
       </button>
 
       <!-- 5. 流程模板 -->
       <button class="rail-btn nav" data-view="sops" data-tooltip="流程模板" aria-label="流程模板">
         <svg class="agent-icon harness-icon" data-icon="workflow" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="node-a" cx="6" cy="6" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-b" cx="6" cy="18" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-c" cx="18" cy="12" r="2.2" fill="currentColor" fill-opacity="0"/><path pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55"/><path class="signal" pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55" opacity="0" stroke-width="2.5"/></svg>
+        <span class="rail-label">流程模板</span>
       </button>
 
       <!-- 6. 运行记录 -->
       <button class="rail-btn nav" data-view="runs" data-tooltip="运行记录" aria-label="运行记录">
         <svg class="agent-icon harness-icon" data-icon="runs" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path class="motion-target" d="M10 9l5 3-5 3z"/></svg>
+        <span class="rail-label">运行记录</span>
+      </button>
+      <button class="rail-btn nav" data-view="aiSchedules" data-tooltip="AI 定时任务" aria-label="AI 定时任务">
+        <svg class="agent-icon harness-icon" data-icon="clock" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <span class="rail-label">AI 定时任务</span>
       </button>
     </nav>
 
     <div class="rail-bottom">
       <div class="rail-divider" role="separator"></div>
 
+      <button type="button" class="rail-btn" id="railSidebarToggle" data-tooltip="展开导航" aria-label="展开导航" aria-expanded="false" aria-controls="platformRail">
+        <svg class="agent-icon harness-icon" data-icon="panel-left" data-icon-motion="idle" width="18" height="18" aria-hidden="true" focusable="false"></svg>
+        <span class="rail-label">展开导航</span>
+      </button>
+
       <!-- 设置 -->
       <button class="rail-btn nav" id="railSettingsEntry" data-view="settings" data-tooltip="设置" aria-label="设置" aria-controls="settingsSidebar" aria-expanded="false">
         <svg class="agent-icon harness-icon" data-icon="settings" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"/><path class="gear" d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="rail-label">设置</span>
       </button>
 
       <!-- 底部用户头像（承接原本右上角的全部功能） -->
       <div class="user-profile-wrap rail-profile-wrap" id="userProfileWrap">
         <div id="userBadge" class="user-badge rail-user" tabindex="0" role="button" aria-haspopup="true" aria-expanded="false" data-tooltip="个人信息与操作" aria-label="个人信息与操作">
           <span class="user-avatar-circle rail-user-avatar" id="userAvatarText">访</span>
-          <b id="userName" style="display:none">访客</b>
+          <b id="userName" class="rail-label">访客</b>
         </div>
         <div id="userProfilePopover" class="user-profile-popover rail-profile-popover" role="dialog" aria-label="个人信息"></div>
       </div>
@@ -169,7 +184,6 @@
 
       <p>数据洞察</p>
       <button class="nav" data-view="metrics"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="chart" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V9"/><path d="M12 17V7"/><path d="M16 17v-5"/></svg></span><span class="nav-label">研发效能</span></button>
-      <button class="nav" data-view="deployments" hidden><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="clock" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="nav-label">部署耗时</span></button>
       <button class="nav" data-view="businessDomains"><span class="nav-icon"><svg class="agent-icon harness-icon " data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="motion"><rect class="p0" x="4" y="4" width="14" height="14" rx="2"/><path class="p1" d="m7 20 10.5-.1A2.5 2.5 0 0 0 20 17.4V8" pathLength="100"/></g></svg></span><span class="nav-label">业务领域</span></button>
       <p>开放能力</p>
       <button class="nav" data-view="guide"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="doc" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path pathLength="1" d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path pathLength="1" d="M14 3v5h5"/><path pathLength="1" d="M9 13h6"/><path pathLength="1" d="M9 17h6"/></svg></span><span class="nav-label">接入指南</span></button>
@@ -252,6 +266,33 @@
       </div>
     </section>
 
+    <section id="aiSchedulesView" class="view page-view">
+      <div class="page-heading">
+        <div><h1>AI 定时任务</h1><p>按计划执行提示词，自动整理需求、巡检项目或汇总进展。</p></div>
+        <div class="heading-actions">
+          <button id="refreshAISchedules" class="button ghost hui-icon-button" type="button" aria-label="刷新 AI 定时任务" title="刷新"><svg class="agent-icon harness-icon" data-icon="refresh" width="16" height="16" aria-hidden="true" focusable="false"></svg></button>
+          <button id="newAISchedule" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>新建 AI 定时任务</button>
+        </div>
+      </div>
+      <div class="mcp-toolbar ai-schedule-toolbar">
+        <div class="mcp-view-tabs" role="tablist" aria-label="AI 定时任务视图">
+          <button id="aiScheduleProjectTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="aiScheduleProjectPanel" data-ai-schedule-tab="project">本项目任务<span id="aiScheduleProjectCount" class="mcp-tab-count">0</span></button>
+          <button id="aiScheduleMarketTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleMarketPanel" data-ai-schedule-tab="market">共享任务市场<span id="sharedScheduleMarketCount" class="mcp-tab-count">0</span></button>
+        </div>
+        <label id="sharedScheduleSearchField" class="mcp-search" hidden><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="sharedScheduleSearch" type="search" aria-label="搜索共享任务" placeholder="搜索名称、用途或来源项目"></label>
+      </div>
+      <div id="aiScheduleProjectPanel" class="ai-schedule-panel" role="tabpanel" aria-labelledby="aiScheduleProjectTab">
+        <div class="ai-schedule-panel-head"><b id="aiScheduleProjectName">当前项目</b><span id="aiScheduleCount" class="muted"></span></div>
+        <p id="aiScheduleRuntimeHint" class="schedule-field-hint" role="status"></p>
+        <div id="aiScheduleJobList" class="schedule-job-list"></div>
+      </div>
+      <section id="aiScheduleMarketPanel" role="tabpanel" aria-labelledby="aiScheduleMarketTab" hidden>
+        <p id="sharedScheduleMarketHint" class="mcp-scope-hint"></p>
+        <div id="sharedScheduleMarketStatus" role="status"></div>
+        <div id="sharedScheduleLibrary" class="mcp-market-grid" aria-live="polite"></div>
+      </section>
+    </section>
+
     <!-- 需求与 Issue -->
     <section id="issuesView" class="view page-view">
       <div class="page-heading issue-heading">
@@ -262,7 +303,7 @@
             <button id="issueHeadingMore" class="button ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="issueHeadingMenu">更多<svg class="agent-icon harness-icon hui-menu-chevron" data-icon="chevron-down" width="14" height="14" aria-hidden="true" focusable="false"></svg><i class="hui-alert-dot" aria-hidden="true"></i></button>
             <div id="issueHeadingMenu" class="hui-menu" role="menu" aria-labelledby="issueHeadingMore" inert>
               <button id="openSyncModal" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="swap" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">外部同步</span><span class="hui-menu-meta"><span id="syncBadge" class="sync-badge live">未配置</span></span></button>
-              <button id="newScheduleJob" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="clock" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">定时任务</span><span class="hui-menu-meta"><span id="scheduleJobCount" class="schedule-job-count">0</span> 个</span></button>
+              <button id="newScheduleJob" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="clock" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">触发配置</span><span class="hui-menu-meta"><span id="scheduleJobCount" class="schedule-job-count">未配置</span></span></button>
               <span class="hui-menu-sep" role="separator"></span>
               <button id="importGitHubIssues" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="download" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">同步 GitHub</span></button>
               <button id="importTAPDIssue" class="hui-menu-item" type="button" role="menuitem" tabindex="-1" data-legacy-tracker hidden><svg class="agent-icon harness-icon" data-icon="download" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">导入 TAPD</span></button>
@@ -282,7 +323,7 @@
         <select id="issueStatusFilter" class="select"><option value="">全部状态</option><option value="backlog">待规划</option><option value="todo">待处理 / 待执行</option><option value="in_progress">进行中</option><option value="in_review">评审中</option><option value="done">已完成</option><option value="closed">已关闭</option><option value="blocked">已阻塞</option><option value="cancelled">已取消</option></select>
         <select id="issueAssigneeFilter" class="select"><option value="">全部责任人</option><option value="unassigned">未指定责任人</option></select>
         <select id="issueRunFilter" class="select"><option value="">全部执行情况</option><option value="not_started">尚未执行</option><option value="active">正在推进</option><option value="attention">需要介入</option><option value="mr">待处理 PR</option><option value="closed">已闭环</option></select>
-        <select id="sourceFilter" class="select"><option value="">全部来源</option><option value="github">GitHub</option><option value="local">本地</option></select>
+        <select id="sourceFilter" class="select"><option value="">全部来源</option><option value="github">GitHub</option><option value="local">平台新建</option></select>
         <button id="startIssueSelection" class="button ghost small" type="button"><svg class="agent-icon harness-icon" data-icon="check" width="14" height="14" aria-hidden="true" focusable="false"></svg>批量操作</button>
         <div class="issue-view-toggle" role="group" aria-label="视图切换">
           <button type="button" data-issue-view="table" class="active"><svg class="agent-icon harness-icon" data-icon="menu" width="14" height="14" aria-hidden="true" focusable="false"></svg>列表</button>
@@ -324,15 +365,6 @@
       <div id="runsDetailSection" class="runs-detail-section" hidden>
         <div id="runDetail" class="panel run-detail"><div class="empty-properties"><div>◷</div><b>选择一条记录</b><p>日志、产物和节点细节会显示在这里。</p></div></div>
       </div>
-    </section>
-
-    <!-- 测试环境部署耗时 -->
-    <section id="deploymentsView" class="view page-view">
-      <div class="page-heading deployment-heading">
-        <div><p class="eyebrow">测试环境</p><h1>部署耗时</h1><p>自动展示 SkillHub 最近 7 天部署耗时、正在部署的流水线和 30 天趋势。</p></div>
-        <div class="heading-actions"><span id="deploymentLiveState" class="live-state"><i></i> 自动加载中</span><button id="refreshDeployments" class="button ghost" type="button">↻ 刷新</button></div>
-      </div>
-      <div id="deploymentBody" class="deployment-body"></div>
     </section>
 
     <!-- 待我处理 -->
@@ -380,7 +412,10 @@
         <div class="fd-ident" id="flowIdent">
           <span class="fd-ident-tile" data-fd-ic="workflow" data-s="16"></span>
           <div class="fd-ident-text">
-            <button type="button" id="flowSwitch" class="fd-switch" aria-haspopup="listbox" aria-expanded="false"><span class="fd-switch-name" id="flowCommandTitle">选择或新建 SOP</span><span class="fd-chev" data-fd-ic="chev" data-s="14"></span></button>
+            <div class="fd-name-row">
+              <button type="button" id="flowSwitch" class="fd-switch" aria-haspopup="listbox" aria-expanded="false"><span class="fd-switch-name" id="flowCommandTitle">选择或新建 SOP</span><span class="fd-chev" data-fd-ic="chev" data-s="14"></span></button>
+              <button type="button" id="copyWorkflowName" class="fd-copy-name" hidden aria-label="复制 SOP 名称" data-tip="复制 SOP 名称"><svg class="agent-icon harness-icon" data-icon="copy" data-icon-motion="idle" width="14" height="14" aria-hidden="true" focusable="false"></svg></button>
+            </div>
             <div class="fd-meta"><span id="workflowMeta" class="fd-meta-main"></span><button type="button" id="sandboxChip" class="fd-sbx" hidden data-tip="运行沙箱 · 点击修改"><span data-fd-ic="box" data-s="12"></span><span class="lbl" id="sandboxChipLabel">沙箱</span></button></div>
           </div>
         </div>
@@ -646,7 +681,6 @@
           <div class="obs-tabs" id="obsTabs" role="tablist" aria-label="统计分类">
             <button class="obs-tab active" role="tab" data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量</button>
             <button class="obs-tab" role="tab" data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付<i id="obsDeliveryCount" hidden></i></button>
-            <button class="obs-tab" data-obs-tab="skillhub" id="obsSkillhubTab" role="tab" hidden><svg class="agent-icon harness-icon" data-icon="sparkles" width="14" height="14" aria-hidden="true"></svg>提效</button>
           </div>
         </div>
         <div class="heading-actions">
@@ -843,11 +877,10 @@
       <header class="as-top">
         <div class="as-top-main">
           <h2 id="agentWizardTitle">新建角色</h2>
-          <p class="as-top-copy agent-create-only">只需名称和模型，任务书、产物与门禁、技能与工具可以创建后再补。</p>
-          <div class="agent-edit-meta agent-edit-only"><code id="agentIdLabel"></code><span aria-hidden="true">·</span><span id="agentVersion" class="as-version">v1</span><span aria-hidden="true">·</span><button id="agentHistory" class="agent-link" type="button">版本历史</button></div>
+          <p class="as-top-copy agent-create-only">只需名称和模型，角色 prompt、产物与门禁、技能与工具可以创建后再补。</p>
+          <div class="agent-edit-meta agent-edit-only"><span id="agentRuntimeMeta"></span><span aria-hidden="true">·</span><span id="agentVersion" class="as-version">v1</span><span aria-hidden="true">·</span><button id="agentHistory" class="agent-link" type="button">版本历史</button></div>
         </div>
       </header>
-      <div id="agentSummaryBar" class="as-summary-row agent-edit-only" aria-live="polite"></div>
       <nav class="agent-modal-nav">
         <div class="agent-tabs agent-create-only" data-wizard-steps="agent-create" role="tablist" aria-label="新建步骤">
           <button type="button" class="agent-tab on" role="tab" data-create-step="1"><span class="agent-tab-num">1</span>选起点</button>
@@ -868,14 +901,17 @@
           </section>
           <section class="as-pane wizard-pane active" data-step="1" data-agent-pane="identity">
             <div class="as-stack">
-              <p class="as-lead-line">名称给团队看，标识给系统和 API 用。每个角色选择一种内置 CLI。</p>
-              <label class="as-field"><span>显示名称</span><input name="name" required placeholder="例如：Issue 根因分析师"><small class="agent-field-error" id="agentNameError" hidden>请填写名称</small></label>
+              <div class="as-name-row">
+                <label class="as-field"><span>显示名称</span><input name="name" required placeholder="例如：Issue 根因分析师"><small class="agent-field-error" id="agentNameError" hidden>请填写名称</small></label>
+                <label class="as-field agent-edit-only"><span>标识 <small>创建后不可改</small></span><input id="agentIdShow" class="as-mono" readonly tabindex="-1"></label>
+              </div>
               <div class="agent-id-line agent-create-only" id="agentIdLine">标识 <code id="agentIdPreview"></code><button type="button" class="agent-link" id="agentIdEdit">修改</button></div>
               <label class="as-field agent-id-field" id="agentIdField" hidden><span>标识 <small>创建后不能改</small></span><input name="id" required placeholder="issue-root-cause-analyst"><small class="agent-field-error" id="agentIdError" hidden></small></label>
-              <label class="as-field"><span>职责 <small>一句话说明这个角色负责什么、不负责什么</small></span><textarea name="description" rows="3" placeholder="读 Issue 和源码，写出根因与修复计划。不改业务代码、不跑测试。"></textarea></label>
+              <label class="as-field"><span>职责 <small>一句话，列表和流程卡片里展示</small></span><div class="as-count-wrap"><input name="description" maxlength="160" placeholder="读 Issue 和源码，写出根因与修复计划，不改业务代码"><small class="as-count" id="agentDescCount" aria-hidden="true"></small></div></label>
+              <div class="as-section-label">运行方式</div>
               <div class="as-grid agent-runtime-grid">
                 <label class="as-field"><span>CLI</span><select name="executorId" class="select" id="agentExecutorSelect"></select></label>
-                <div class="as-field"><span>模型 <small>按所选 CLI 列出可选模型</small></span>
+                <div class="as-field"><span>模型</span>
                   <div class="clarify-model-field" id="agentModelPicker" data-clarify-model>
                     <input type="hidden" name="modelChoice">
                     <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
@@ -884,7 +920,7 @@
                     <div class="ai-model-menu" hidden role="listbox"></div>
                   </div>
                 </div>
-                <div class="as-field"><span>思考强度 <small>可选</small></span>
+                <div class="as-field"><span>思考强度</span>
                   <div class="clarify-model-field" id="agentEffortPicker" data-clarify-model>
                     <input type="hidden" name="effort" value="">
                     <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
@@ -895,19 +931,15 @@
                 </div>
               </div>
               <label class="as-field" id="agentModelCustomField" hidden><span>自定义模型 ID <small>使用自定义 Base URL 时，填服务商提供的模型名</small></span><input name="model" placeholder="例如：gpt-5.6-terra"></label>
-              <label class="as-toggle as-share-toggle agent-edit-only"><input name="shared" type="checkbox"><div><b>共享给其他项目</b><small>打开后，别的项目能在「共享角色」里看到并选用这个角色</small></div></label>
+              <label class="as-switch-row agent-edit-only"><span><b>共享给其他项目</b><small>其他项目可在「共享角色」里选用</small></span><input name="shared" type="checkbox" role="switch"></label>
             </div>
           </section>
           <section class="as-pane wizard-pane" data-agent-pane="create-review">
             <dl class="agent-review" id="agentCreateReview"></dl>
-            <p class="agent-review-tip">任务书、产物与门禁、技能与工具可以创建后再补。</p>
+            <p class="agent-review-tip">角色 prompt、产物与门禁、技能与工具可以创建后再补。</p>
           </section>
           <section class="as-pane wizard-pane" data-step="2" data-agent-pane="task">
             <div id="agentTaskBookPanel"></div>
-            <details class="as-fold as-fold-muted">
-              <summary>补充系统指令<em>可选，任务书为空时才当主 prompt</em></summary>
-              <div class="as-fold-body"><label class="as-field"><span>额外约束</span><textarea name="instructions" rows="5" placeholder="角色边界、禁止事项。有结构化任务书时，这里只作补充。"></textarea></label></div>
-            </details>
           </section>
           <section class="as-pane wizard-pane" data-step="3" data-agent-pane="gov">
             <div id="agentGovPanel"></div>
@@ -1035,6 +1067,7 @@
         <input type="hidden" name="id">
         <div class="pa-fs">
           <h5>仓库地址</h5>
+          <div data-github-repositories></div>
           <label class="pa-field"><span class="pa-field-l">GitHub 仓库地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
             <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@github.com:owner/repo.git</code><code>git clone …</code></span>
@@ -1100,28 +1133,28 @@
   </div>
 
   <div id="scheduleModal" class="modal">
-    <div class="modal-card schedule-modal-card">
-      <button type="button" class="modal-close schedule-close">×</button>
+    <div class="modal-card schedule-modal-card" role="dialog" aria-modal="true" aria-labelledby="scheduleModalTitle">
+      <button type="button" class="modal-close schedule-close" aria-label="关闭">×</button>
       <p class="eyebrow">自动化</p>
-      <h2>定时任务</h2>
-      <p class="modal-hint">触发任务到点扫描本项目勾选状态、尚未跑过 SOP 的需求，做基线门禁再派发。可以只跑某一个来源，也可以跑所有已配置来源。仓库基线冲突会先交给对齐 Agent 自动解决并合入，期间暂停派发。AI 定时任务到点用项目 Owner 的 CodeBuddy 跑提示词并立即写入，不派发 SOP。立即运行在服务端执行，关闭页面不会中断，列表会显示「正在运行」。</p>
+      <h2 id="scheduleModalTitle">触发配置</h2>
+      <p id="scheduleModalHint" class="modal-hint">按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。</p>
       <section class="schedule-section">
-        <div class="schedule-head"><div><b>当前项目的定时任务</b><small id="scheduleRuntimeHint">触发任务负责派发 SOP；AI 定时任务只跑提示词。基线冲突会对齐 Agent 自动解决并合入。</small></div><button id="scheduleJobReset" type="button" class="button ghost small">新建任务</button></div>
+        <div class="schedule-head"><small id="scheduleRuntimeHint">每个项目使用一份触发配置，修改后保存即可生效。</small></div>
         <div id="scheduleJobList" class="schedule-job-list"></div>
         <form id="scheduleJobForm" class="schedule-job-form">
           <input type="hidden" name="id">
           <input type="hidden" name="scheduleMode" value="interval">
           <input type="hidden" name="jobKind" value="dispatch">
+          <input type="hidden" name="sharedTaskId">
+          <input type="hidden" name="sharedTaskVersion">
           <input type="hidden" name="assistantModel" value="default">
-          <div id="scheduleKindTabs" class="schedule-tabs" role="tablist" aria-label="任务类型">
-            <button type="button" class="is-active" data-job-kind="dispatch" role="tab" aria-selected="true">触发任务</button>
-            <button type="button" data-job-kind="assistant" role="tab" aria-selected="false">AI 定时任务</button>
-          </div>
           <div class="schedule-fields">
-            <div>
+            <div data-schedule-kind="assistant" hidden>
               <label>任务名称</label>
               <input class="input" name="name" required placeholder="例如：工作日巡检" autocomplete="off">
             </div>
+            <section id="sharedScheduleVersionEditor" class="shared-schedule-version-editor" tabindex="-1" aria-label="订阅版本对比" hidden></section>
+            <section id="sharedScheduleBinding" class="shared-schedule-binding" hidden></section>
             <div>
               <label>调度</label>
               <div class="schedule-timing-row">
@@ -1183,16 +1216,43 @@
               </div>
               <p class="schedule-field-hint">与 AI 助手相同的 CodeBuddy 模型，用项目 Owner 的 Key 调用。</p>
             </div>
-            <div data-schedule-kind="assistant" hidden>
+            <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>
               <textarea name="assistantPrompt" class="input" rows="4" maxlength="4000" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
-              <p class="schedule-field-hint">到点用 CodeBuddy 执行这段提示词并立即写入平台。这条任务不会扫描需求、也不会派发 SOP。</p>
+              <p class="schedule-field-hint">到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 SOP、操作工作区及浏览器。</p>
             </div>
           </div>
           <div data-schedule-kind="assistant" class="schedule-notifications" hidden><h3>Bot 通知</h3><p class="schedule-field-hint">可把执行结果、AI 摘要或自定义消息发送到项目 Bot。</p><div id="scheduleNotificationEditor"></div></div>
-          <div class="schedule-form-actions"><label class="schedule-check"><input name="enabled" type="checkbox" checked> 启用</label><button type="submit" class="button dark small">保存定时任务</button></div>
+          <div class="schedule-form-actions"><label class="schedule-check"><input name="enabled" type="checkbox" checked> 启用</label><button type="submit" class="button dark small">保存触发配置</button></div>
         </form>
       </section>
+    </div>
+  </div>
+
+  <div id="sharedSchedulePublishModal" class="modal">
+    <div class="modal-card shared-schedule-card" role="dialog" aria-modal="true" aria-labelledby="sharedSchedulePublishTitle">
+      <button type="button" class="modal-close" aria-label="关闭">×</button>
+      <p class="eyebrow">自动化</p><h2 id="sharedSchedulePublishTitle">发布共享版本</h2>
+      <p class="modal-hint">把可复用的提示词发布给其他项目。来源任务和已有订阅保持各自的执行配置。</p>
+      <form id="sharedSchedulePublishForm" class="shared-schedule-form">
+        <input name="sourceJobId" type="hidden"><input name="sourceProjectId" type="hidden"><input name="baseVersion" type="hidden">
+        <label>共享名称<input class="input" name="name" required maxlength="255"></label>
+        <label>用途说明<textarea class="input" name="description" rows="2" maxlength="2000"></textarea></label>
+        <label>提示词模板<textarea class="input" name="prompt" required rows="6" maxlength="4000"></textarea></label>
+        <p class="schedule-field-hint">用 {{params.days}} 引用下方参数，例如“检查超过 {{params.days}} 天未更新的需求”。发布内容对平台登录用户可见。</p>
+        <div class="shared-schedule-section-head"><b>业务参数</b><button id="sharedScheduleAddParameter" type="button" class="button ghost small">添加参数</button></div>
+        <div id="sharedScheduleParameterRows" class="shared-schedule-parameter-rows"></div>
+        <label>版本说明<input class="input" name="changeNote" maxlength="1000" placeholder="说明本次调整，供订阅项目决定是否升级"></label>
+        <p id="sharedSchedulePublishError" class="schedule-field-hint" role="status"></p>
+        <div class="shared-schedule-actions"><button class="button primary" type="submit">发布 v1</button></div>
+      </form>
+    </div>
+  </div>
+  <div id="sharedScheduleVersionModal" class="modal">
+    <div class="modal-card shared-schedule-card" role="dialog" aria-modal="true" aria-labelledby="sharedScheduleVersionTitle">
+      <button type="button" class="modal-close" aria-label="关闭">×</button>
+      <p class="eyebrow">共享任务</p><h2 id="sharedScheduleVersionTitle">查看版本</h2>
+      <div id="sharedScheduleVersions" aria-live="polite"></div>
     </div>
   </div>
 
@@ -1282,11 +1342,13 @@
   </div>
   <div id="revisionModal" class="modal"><div class="modal-card revision-card"><button type="button" class="modal-close" id="revisionClose">×</button><div class="wizard-head"><div><p class="eyebrow">版本历史</p><h2 id="revisionTitle">版本历史</h2><p>对比上一版并回退。回退会生成新版本，不会改已经跑完的记录。</p></div></div><div id="revisionList" class="revision-list"></div><pre id="revisionDiff" class="revision-diff">选择一个历史版本查看差异。</pre><div class="wizard-actions"><button type="button" class="button ghost" id="revisionClose2">关闭</button><button type="button" class="button primary" id="revisionRestore" disabled>回退到此版本</button></div></div></div>
   <script src="/app.js"></script>
+  <script src="/app/assistant-models.js"></script>
   <script src="/app/access.js"></script>
   <script src="/app/dashboards.js"></script>
   <script src="/app/sops.js"></script>
   <script src="/app/issue-model.js"></script>
   <script src="/app/projects.js"></script>
+  <script src="/app/github-connect.js"></script>
   <script src="/app/project-wizard.js"></script>
   <script src="/app/repo_drawer.js"></script>
   <script src="/app/business-domains.js"></script>
@@ -1298,6 +1360,7 @@
   <script src="/app/issues.js"></script>
   <script src="/app/issue-bulk-delete.js"></script>
   <script src="/app/sync-schedule.js"></script>
+  <script src="/app/shared-schedules.js"></script>
   <script src="/app/notification-editor.js"></script>
   <script src="/app/bots.js"></script>
   <script src="/app/flow-history.js?v=20261030fd2"></script>

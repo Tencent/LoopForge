@@ -23,7 +23,7 @@ function accessMcpClientSpec(client,base,token){
 }
 function accessMcpAgentPrompt(spec,base,token){
   if(!token||token==='<YOUR_PERSONAL_TOKEN>')return '';
-  return `按照这个流程安装、初始化并验证好 AgentFlow MCP：\n\n1. 使用 curl 下载 安装流程文件, 禁止使用 fetch：${base}/mcp-setup.txt\n2. 两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
+  return `按照这个流程安装、初始化并验证好 LoopForge MCP：\n\n1. 使用 curl 下载 安装流程文件, 禁止使用 fetch：${base}/mcp-setup.txt\n2. 两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
 }
 function accessAgentSetup(prompt){
   const attr=prompt?`data-copy-agent-prompt="${encodeURIComponent(prompt)}"`:'data-create-token-first';
@@ -45,8 +45,7 @@ async function createQuickAccessPrompt(button){
     renderGuide();
   }catch(err){button.disabled=false;button.textContent=original;toast(err.message||'创建 Token 失败','err')}
 }
-// 对外展示的固定接入地址：devcloud 等环境经 https 访问不稳定（网关 443 链路问题），
-// 接入配置统一展示并使用 http 域名，优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
+// 对外展示的固定接入地址：优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
 function getPublicBaseURL(){
   const domain = (typeof window !== 'undefined' && (window.__AGENTFLOW_APP_DOMAIN__ || window.__AGENTFLOW_PUBLIC_BASE_URL__))
     || (typeof state !== 'undefined' && state?.appDomain ? state.appDomain : '')
@@ -80,7 +79,7 @@ function renderAccessGuide(){
   const body=$('#accessBody'),base=getPublicBaseURL(),token=state.revealedToken||'<YOUR_PERSONAL_TOKEN>';
   const mainCode=`export AGENTFLOW_URL=${base}\nexport AGENTFLOW_TOKEN='${token}'\n\ncurl -sS -H \"Authorization: Bearer $AGENTFLOW_TOKEN\" \\\n  \"$AGENTFLOW_URL/api/issues\"`;
   const checkCode=`curl -sS -H \"Authorization: Bearer $AGENTFLOW_TOKEN\" \\\n  \"$AGENTFLOW_URL/api/health\"`;
-  body.innerHTML=`<div class=\"access-grid\"><div class=\"access-card\"><div class=\"access-card-title\"><i>API</i>通过 REST API 调用 AgentFlow</div><div class=\"access-step\"><span>1</span><b>设置地址和个人 Token</b></div>${accessCode('Shell',mainCode)}<div class=\"access-step\"><span>2</span><b>验证连通</b><small>返回 JSON 即接入成功</small></div>${accessCode('连通性自检',checkCode)}<div class=\"access-note\"><b>Token 不要提交到代码仓库。</b>建议通过 CI Secret 或环境变量保存。</div></div><div class=\"access-card\"><div class=\"access-card-title\"><i>↗</i>接口契约</div><div class=\"access-note\" style=\"margin-top:0\">REST API 与 MCP 使用同一个个人 Token。完整请求结构以 OpenAPI 契约为准。</div><a class=\"button ghost small\" href=\"/api/openapi.yaml\" target=\"_blank\" rel=\"noopener\">打开 OpenAPI 契约 →</a></div></div>`;
+  body.innerHTML=`<div class=\"access-grid\"><div class=\"access-card\"><div class=\"access-card-title\"><i>API</i>通过 REST API 调用 LoopForge</div><div class=\"access-step\"><span>1</span><b>设置地址和个人 Token</b></div>${accessCode('Shell',mainCode)}<div class=\"access-step\"><span>2</span><b>验证连通</b><small>返回 JSON 即接入成功</small></div>${accessCode('连通性自检',checkCode)}<div class=\"access-note\"><b>Token 不要提交到代码仓库。</b>建议通过 CI Secret 或环境变量保存。</div></div><div class=\"access-card\"><div class=\"access-card-title\"><i>↗</i>接口契约</div><div class=\"access-note\" style=\"margin-top:0\">REST API 与 MCP 使用同一个个人 Token。完整请求结构以 OpenAPI 契约为准。</div><a class=\"button ghost small\" href=\"/api/openapi.yaml\" target=\"_blank\" rel=\"noopener\">打开 OpenAPI 契约 →</a></div></div>`;
   body.querySelectorAll('[data-copy-access]').forEach(b=>b.onclick=()=>copyText(decodeURIComponent(b.dataset.copyAccess),'配置已复制'));
 }
 // 最小接入配置：引导配好 CodeBuddy API Key 与工蜂 Git Token，配好即可运行。
@@ -171,7 +170,7 @@ function renderGuideSetupBody(body,user,isGuest){
   const allReady=credReady&&projReady&&sopReady;
   const credDone=[modelReady,gfReady].filter(Boolean).length;
   const badge=ready=>`<span class="setup-status ${ready?'ready':'missing'}">${ready?'✓ 已就绪':'未完成'}</span>`;
-  const subItem=(name,label,ready,applyUrl,hint)=>`<div class="setup-sub ${ready?'is-ready':''}"><div class="setup-sub-info"><b>${label}</b>${hint?`<small>${hint}</small>`:''}</div>${ready?'':`<a class="setup-mini" href="${applyUrl}" target="_blank" rel="noopener noreferrer">申请 ↗</a>`}<button type="button" class="setup-mini" data-setup-cred="${name}">${ready?'查看':'去填写'} →</button></div>`;
+  const subItem=(name,label,ready,applyUrl,hint)=>`<div class="setup-sub ${ready?'is-ready':''}"><div class="setup-sub-info"><b>${label}</b>${hint?`<small>${hint}</small>`:''}</div>${ready?'':`<a class="setup-mini" href="${applyUrl}" target="_blank" rel="noopener noreferrer">${name==='gitToken'?'授权':'申请'} ↗</a>`}<button type="button" class="setup-mini" data-setup-cred="${name}">${ready?'查看':name==='gitToken'?'去连接':'去填写'} →</button></div>`;
   // 第 1 步：三张个人凭据一次性配齐
   const credCard=`<div class="setup-card ${credReady?'is-ready':''}"><div class="setup-card-head"><b>① 配个人凭据</b><small>个人配置 · 一次配齐</small>${badge(credReady)}</div>
     <p>${lfT('在<b>个人配置</b>中配置 CodeBuddy API Key 与 GitHub Token，或绑定本机 CLI。Main Bot 和内置 SOP 默认都使用 CodeBuddy。','Configure your CodeBuddy API key and GitHub token in <b>Settings</b>, or connect a local CLI. Main Bot and the built-in SOPs use CodeBuddy by default.')}</p>
@@ -179,7 +178,7 @@ function renderGuideSetupBody(body,user,isGuest){
       ${subItem('codeBuddyApiKey','CodeBuddy API Key',cbOwn,'https://www.codebuddy.ai/',cbShared?'未配置时对话和 SOP 都用平台共享模型 Deepseek-V4.1-Flash；配置后可使用其他模型':'Agent 调模型执行任务')}
       ${subItem('codexApiKey','Codex API Key',!!stored.codexApiKeyConfigured,'https://platform.openai.com/api-keys','公共 SOP 默认执行器')}
       ${subItem('claudeCodeApiKey','Claude Code API Key',!!stored.claudeCodeApiKeyConfigured,'https://console.anthropic.com/','可按角色选择的执行器')}
-      ${subItem('gitToken','GitHub Git Token',gfReady,'https://github.com/settings/tokens','目标仓库需要 Contents 和 Pull requests 读写权限')}
+      ${subItem('gitToken','GitHub Git Token',gfReady,'/#/settings','用 GitHub 设备码授权后选择仓库，也支持手动配置 PAT')}
     </div>
     <button type="button" class="button primary small" data-setup-cred="gitToken" style="margin-top:12px">打开个人配置 →</button></div>`;
   // 第 2 步：加入已有项目或新建项目
@@ -312,9 +311,9 @@ async function revokePersonalToken(id){
 
 let commandMatches=[],commandSelectedIndex=0;
 function commandCatalog(){
-  const pages=[['dashboard','工作总览','看失败、待确认和进行中的需求'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['sops','流程模板','Issue 修复与需求开发'],['runs','运行记录','查看节点日志和产物'],['metrics','研发效能','产能、效率、质量、成本与自动化看板'],['deployments','部署耗时','按分支查看测试环境流水线耗时'],['agents','角色定义','管理角色和能力资产'],['mcp','MCP 管理','添加项目级或个人自定义 MCP'],['rules','规则管理','当前项目的行为与执行约束'],['skills','技能管理','当前项目的技能和附加文件'],['dockerfiles','Dockerfile','管理项目容器构建定义'],['environments','环境安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','沙箱管理','管理项目运行隔离策略'],['observability','统计','用量分析 · Token 与质量'],['businessDomains','业务领域','分类管理与跨项目汇报'],['projects','项目配置','项目、成员和仓库'],['guide','接入指南','最小接入配置、MCP 或 REST API 接入']].filter(([view])=>view!=='deployments'||canShowSkillhubEfficiency()).map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
+  const pages=[['dashboard','工作总览','看失败、待确认和进行中的需求'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['sops','流程模板','Issue 修复与需求开发'],['runs','运行记录','查看节点日志和产物'],['metrics','研发效能','产能、效率、质量、成本与自动化看板'],['agents','角色定义','管理角色和能力资产'],['mcp','MCP 管理','添加项目级或个人自定义 MCP'],['rules','规则管理','当前项目的行为与执行约束'],['skills','技能管理','当前项目的技能和附加文件'],['dockerfiles','Dockerfile','管理项目容器构建定义'],['environments','环境安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','沙箱管理','管理项目运行隔离策略'],['observability','统计','用量分析 · Token 与质量'],['businessDomains','业务领域','分类管理与跨项目汇报'],['projects','项目配置','项目、成员和仓库'],['guide','接入指南','最小接入配置、MCP 或 REST API 接入']].map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
   const issues=(state.data.issues||[]).map(i=>({kind:'需求',title:i.title,meta:`${i.priority||'—'} · ${issueStatusLabel(i.status)}`,action:()=>openIssueDetail(i.id)}));
-  const runs=(state.data.runs||[]).map(r=>({kind:'运行',title:runIssueTitle(r),meta:`${runDisplayStatus(r)} · ${r.workflowSnapshot?.name||r.workflowId}`,action:()=>openRunFromId(r.id)}));
+  const runs=sopRuns(state.data.runs).map(r=>({kind:'运行',title:runIssueTitle(r),meta:`${runDisplayStatus(r)} · ${r.workflowSnapshot?.name||r.workflowId}`,action:()=>openRunFromId(r.id)}));
   const sops=catalogWorkflows().map(w=>({kind:'SOP',title:w.name,meta:`${w.status==='published'?'已发布':'草稿'} · ${w.nodes?.length||0} 个节点`,action:()=>{state.workflow=clone(w);state.selectedNode=null;switchView('flow')}}));
   const agents=(state.data.agents||[]).map(a=>({kind:'Agent',title:a.name,meta:a.description||a.id,action:()=>{switchView('agents');openAgentWizard(a)}}));
   const actions=[{kind:'操作',title:'新建 SOP',meta:'创建流程草稿',action:openSOPWizard}];

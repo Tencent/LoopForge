@@ -8,6 +8,14 @@ import {
   activityForReply,
   activityTarget,
   thoughtLine,
+  hasTextSegments,
+  replyBlocks,
+  trailingReply,
+  finalReply,
+  traceBlocks,
+  activityGroupSummary,
+  activityGroupKind,
+  streamingAnswerOpen,
 } from "../src/activity.js";
 const event = (sequence, data) => ({ sequence, data });
 test("ordered thoughts, tool updates and completion survive incremental batches without mutating prior state", () => {
@@ -150,6 +158,80 @@ test("successful hidden terminal completions stay hidden and failed commands ret
   assert.equal(steps[0].failed, true);
 });
 
+test("paragraphs stay between the tool calls that separate them", () => {
+  const steps = mergeActivity(
+    [],
+    [
+      event(1, { kind: "answer", text: "第 1 段" }),
+      event(2, { kind: "tool", id: "a", tool: "issues_list" }),
+      event(3, { kind: "toolDone", id: "a" }),
+      event(4, { kind: "answer", text: "第 2 段" }),
+    ],
+  );
+  assert.deepEqual(
+    steps.map((step) => step.kind),
+    ["text", "tool", "text"],
+  );
+  assert.equal(hasTextSegments(steps), true);
+  assert.deepEqual(
+    replyBlocks(steps).map((block) => block.type),
+    ["text", "activity", "text"],
+  );
+  assert.equal(replyBlocks(steps)[0].text, "第 1 段");
+  assert.equal(replyBlocks(steps)[2].text, "第 2 段");
+  const replayed = mergeActivity(steps, [
+    event(7, { kind: "answer", text: "第 1 段", full: true }),
+  ]);
+  assert.equal(replayed.filter((step) => step.kind === "text").length, 2);
+  assert.equal(trailingReply("第 1 段\n\n第 2 段", steps), "");
+  assert.equal(trailingReply("第 1 段\n\n第 2 段\n\n补充", steps), "补充");
+  assert.equal(finalReply("第 1 段\n\n第 2 段\n\n补充", steps), "第 2 段\n\n补充");
+  assert.equal(finalReply("第 1 段第 2 段", steps), "第 2 段");
+  assert.equal(finalReply("第 2 段\n\n第 2 段", steps), "第 2 段");
+  const repeated = [{ kind: "text", id: "a", text: "收到，这是一个新测试对话。" }];
+  assert.equal(
+    finalReply("收到，这是一个新测试对话。\n\n收到，这是一个新测试对话。", repeated),
+    "收到，这是一个新测试对话。",
+  );
+  assert.equal(
+    finalReply("## 合入结果\n| 项 | 值 |\n|---|---|", [
+      { kind: "text", id: "a", text: "##合入结果|项 |值 |\n|---|---|" },
+    ]),
+    "## 合入结果\n| 项 | 值 |\n|---|---|",
+  );
+  assert.equal(
+    finalReply("第一段。\n\n## 合入结果\n| 项 |", [
+      { kind: "text", id: "a", text: "第一段。" },
+      { kind: "tool", id: "t", tool: "Bash" },
+      { kind: "text", id: "b", text: "##合入结果|项 |" },
+    ]),
+    "## 合入结果\n| 项 |",
+  );
+  assert.deepEqual(
+    traceBlocks([
+      { kind: "text", id: "a", text: "收到，这是一个新测试对话。" },
+      { kind: "tool", id: "t", tool: "Bash" },
+      { kind: "text", id: "b", text: "收到，这是一个新测试对话。" },
+    ]).map((block) => block.type),
+    ["activity"],
+  );
+  assert.deepEqual(
+    traceBlocks(steps).map((block) => block.type),
+    ["text", "activity"],
+  );
+  assert.equal(traceBlocks(steps)[0].text, "第 1 段");
+  assert.equal(traceBlocks(steps)[1].steps[0].kind, "tool");
+  const reset = mergeActivity(steps, [
+    event(5, { kind: "answerReset" }),
+    event(6, { kind: "answer", text: "重写" }),
+  ]);
+  assert.deepEqual(
+    reset.filter((step) => step.kind === "text").map((step) => step.text),
+    ["重写"],
+  );
+  assert.equal(reset.filter((step) => step.kind === "tool").length, 1);
+});
+
 test("thinking rows show a one-line headline like Codex", () => {
   assert.equal(thoughtLine("**Inspecting SOP**\n细节", true), "Inspecting SOP");
   assert.equal(thoughtLine("先读取 SOP 列表\n再确认节点", false), "先读取 SOP 列表");
@@ -192,4 +274,41 @@ test("SOP node events fold into one Codex-style trace per turn", async () => {
   assert.equal(last.live, true);
   assert.equal(last.steps[0].finishedAt, null);
   assert.equal(activityFace(last.steps[0]).busy, "正在更新计划");
+});
+
+test("tool rounds fold into one summary and only the trailing round stays active", () => {
+  const steps = [
+    { id: "t1", kind: "text", text: "先查前端代码" },
+    { id: "th", kind: "thinking", text: "看看组件", finishedAt: "done" },
+    { id: "a", kind: "tool", tool: "Bash", detail: "grep -rn x", finishedAt: "done" },
+    { id: "b", kind: "tool", tool: "Bash", detail: "sed -n 1,9p a.js", finishedAt: "done" },
+    { id: "c", kind: "tool", tool: "Read", detail: "src/a.js", finishedAt: "done" },
+  ];
+  const running = traceBlocks(steps, { live: true });
+  assert.deepEqual(running.map((block) => block.type), ["text", "activity"]);
+  assert.equal(streamingAnswerOpen(steps), false);
+  assert.equal(running[1].active, true);
+  assert.equal(running[1].steps.length, 4);
+  assert.equal(activityGroupSummary(running[1].steps), "已运行命令、读取文件");
+  assert.equal(
+    activityGroupSummary(running[1].steps, { active: true }),
+    "正在运行命令、读取文件",
+  );
+  assert.equal(activityGroupKind(running[1].steps), "command");
+  // A new paragraph after the round closes it.
+  const moved = traceBlocks([...steps, { id: "t2", kind: "text", text: "找到了" }], {
+    live: true,
+  });
+  assert.equal(moved[1].active, false);
+  assert.equal(traceBlocks(steps)[0].active, false);
+  assert.equal(activityGroupSummary([steps[1]]), "已思考");
+  const many = ["Bash", "Read", "Grep", "Edit", "WebFetch"].map((tool, i) => ({
+    id: `m${i}`,
+    kind: "tool",
+    tool,
+  }));
+  assert.equal(
+    activityGroupSummary(many),
+    "已运行命令、读取文件、搜索代码等",
+  );
 });

@@ -109,10 +109,16 @@ func (h *assistantHandlers) deleteTask(c *gin.Context) {
 		c.JSON(401, gin.H{"error": "请先登录后使用 AI 助手"})
 		return
 	}
-	if err := deleteAssistantTask(h.repo, current.ID, c.Param("id")); err != nil {
+	id := c.Param("id")
+	task, _ := h.repo.AssistantTask(current.ID, id)
+	if err := deleteAssistantTask(h.repo, current.ID, id); err != nil {
 		c.JSON(404, gin.H{"error": "定时任务不存在"})
 		return
 	}
+	if strings.TrimSpace(task.SessionID) != "" {
+		_ = h.deleteConversation(current.ID, task.SessionID)
+	}
+	h.deleteScheduledSessionsForTask(id)
 	c.JSON(200, gin.H{"ok": true})
 }
 
@@ -170,6 +176,7 @@ func (h *assistantHandlers) runStoredAssistantTask(user domain.User, task assist
 	defer inflightTasks.Add()()
 	ctx, cancel := context.WithTimeout(context.Background(), assistantChatTimeout)
 	defer cancel()
+	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, task.ID)
 	if err := h.executeAssistantTask(ctx, user, &task); err != nil {
 		if errors.Is(err, errAssistantBusy) {
 			return
@@ -184,10 +191,15 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		return errAssistantBusy
 	}
 	defer h.active.Delete(user.ID)
-	if _, ok := ctx.Value(assistantExecModeKey{}).(assistantExecMode); !ok {
-		ctx = withAssistantExecMode(ctx, assistantExecMode{AutoWrite: true})
-	}
+	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
 	mode := assistantExecModeFrom(ctx)
+	origin := assistantSessionOriginFrom(ctx)
+	if origin.Source == "" {
+		origin.Source = domain.AssistantSourceScheduled
+	}
+	if origin.TaskID == "" {
+		origin.TaskID = strings.TrimSpace(task.ID)
+	}
 
 	task.NotificationResult = ""
 	task.LastStatus = "running"
@@ -209,21 +221,6 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	sourceRoot := h.resolvedSourceRoot()
 	modelCtx, cancelModel := context.WithCancel(ctx)
 	defer cancelModel()
-	var toolFiles agentToolFiles
-	if h.generate == nil {
-		sess, files, err := h.openScheduledToolSession(modelCtx, user, task.ProjectID, mode, cancelModel)
-		if err != nil {
-			logAgentToolEvent("session-fallback", "mode=scheduled", "err="+truncateRunes(err.Error(), 160))
-			task.LastStatus = "error"
-			task.LastError = "无法启动工具会话"
-			return err
-		}
-		toolFiles = files
-		defer sess.Close()
-		defer files.Cleanup()
-	}
-	// Scheduled runs are unattended. Keep the turn reminder aligned with
-	// the auto-write gateway and scheduled system prompt.
 	req := assistantRequest{
 		ApprovalMode: AssistantApprovalAuto,
 		ProjectID:    task.ProjectID,
@@ -231,6 +228,51 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		Model:        model,
 		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode)}},
 	}
+	// Workspace tools persist their binding on the conversation while running.
+	// Create it before opening the gateway, including for failed generations.
+	conversation := assistantConversation{
+		ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID,
+		Model: model, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages,
+	}
+	if err := saveAssistantConversation(h.repo, user.ID, conversation); err != nil {
+		task.LastStatus, task.LastError = "error", "无法创建定时任务会话"
+		return err
+	}
+	task.SessionID = sessionID
+	resultSaved := false
+	defer func() {
+		if task.LastStatus == "error" && !resultSaved {
+			conversation.Messages = append(req.Messages, assistantMessage{Role: "assistant", Content: jsonObject(gin.H{"message": task.LastError})})
+			if err := saveAssistantConversation(h.repo, user.ID, conversation); err != nil {
+				log.Printf("assistant failed task session save task=%s: %v", origin.TaskID, err)
+			}
+		}
+	}()
+	var toolFiles agentToolFiles
+	var toolSession *AgentToolSession
+	if h.generate == nil {
+		sess, files, err := h.openScheduledToolSession(modelCtx, user, task.ProjectID, sessionID, cancelModel)
+		if err != nil {
+			logAgentToolEvent("session-fallback", "mode=scheduled", "err="+truncateRunes(err.Error(), 160))
+			task.LastStatus = "error"
+			task.LastError = "无法启动工具会话"
+			return err
+		}
+		toolFiles = files
+		toolSession = sess
+		defer sess.Close()
+		defer files.Cleanup()
+		if h.engine != nil {
+			sess.workspaceTurn = newAssistantWorkspaceTurn(h.engine, cancelModel)
+			defer func() {
+				if err := sess.workspaceTurn.close(ctx); err != nil {
+					log.Printf("scheduled assistant workspace session=%s: %v", sessionID, err)
+				}
+			}()
+		}
+	}
+	// Scheduled runs are unattended. Keep the turn reminder aligned with
+	// the auto-write gateway and scheduled system prompt.
 	fullPrompt := h.turnPrompt(req, sourceRoot, false)
 	turn := fullPrompt
 	systemPrompt := assistantScheduledSystemPromptText(mode)
@@ -263,6 +305,11 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		return ctx.Err()
 	}
 	raw, err := generate(modelCtx, turn, user)
+	if final, ok := toolSession.takeFinal(); ok && final.Assistant != nil {
+		// Terminal submission cancels the CLI after committing a valid reply.
+		reply = *final.Assistant
+		raw, err = reply.Message, nil
+	}
 	if err != nil {
 		return failGenerate(err)
 	}
@@ -277,7 +324,8 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if hasNotification && strings.TrimSpace(cleaned) != "" {
 		message = cleaned
 	}
-	reply = assistantReply{Message: message, SessionID: sessionID}
+	reply.Message, reply.SessionID = message, sessionID
+	reply.Images = append(reply.Images, saveAgentReplyFiles(user.ID, toolSession.takeReplyFiles(), task.ProjectID)...)
 	if strings.TrimSpace(reply.Message) == "" && len(reply.Drafts) == 0 {
 		if task.LastStatus == "error" {
 			return errors.New(task.LastError)
@@ -297,16 +345,25 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		}
 	}
 	stored := append([]assistantMessage{}, req.Messages...)
-	stored = append(stored, assistantMessage{Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts})})
-	_ = saveAssistantConversation(h.repo, user.ID, assistantConversation{
+	stored = append(stored, assistantMessage{Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts, "images": reply.Images})})
+	if saveErr := saveAssistantConversation(h.repo, user.ID, assistantConversation{
 		ID:        sessionID,
 		Title:     "定时 · " + task.Name,
 		ProjectID: task.ProjectID,
 		Model:     model,
+		Source:    origin.Source,
+		TaskID:    origin.TaskID,
 		Messages:  stored,
-	})
-	if prevSession != "" && prevSession != sessionID {
-		_ = deleteAssistantConversation(h.repo, user.ID, prevSession)
+	}); saveErr != nil {
+		log.Printf("assistant task session save failed task=%s: %v", origin.TaskID, saveErr)
+	} else {
+		resultSaved = true
+		if prevSession != "" && prevSession != sessionID {
+			_ = h.deleteConversation(user.ID, prevSession)
+		}
+		if origin.TaskID != "" {
+			h.deleteScheduledSessionsExcept(origin.TaskID, sessionID)
+		}
 	}
 	task.SessionID = sessionID
 	task.Model = model
@@ -327,7 +384,7 @@ func scheduledAssistantPrompt(task assistantTask, mode assistantExecMode) string
 	if mode.DeferSOP {
 		prefix += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"
 	} else {
-		prefix += " 若提示词要求开工，可以使用 issues_dispatch。需要扫描需求、基线门禁并派发 SOP 时，创建平台触发任务，不要写进 AI 定时任务。"
+		prefix += " 与主页 AI 对话的完全权限模式使用相同的工具和执行权限；按提示词调用 SOP、平台工具、工作区及浏览器工具完成任务。"
 	}
 	return prefix + " 按下面的提示词原文执行。\n" + task.Prompt + domain.NotificationAIInstructions(task.Notifications)
 }

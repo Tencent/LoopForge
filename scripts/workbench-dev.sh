@@ -28,10 +28,18 @@ AGENTFLOW_MYSQL_DSN="root:root@tcp(127.0.0.1:$MYSQL_PORT)/loopforge?parseTime=tr
 AGENTFLOW_HTTP_PORT="$PORT" AGENTFLOW_AUTH_REQUIRED=false AGENTFLOW_SCHEDULER_ENABLED=false \
 AGENTFLOW_LOCAL_LOGIN_USER="${AGENTFLOW_LOCAL_LOGIN_USER:-local}" AGENTFLOW_PREVIEW_LOCAL_LOGIN=1 \
 AGENTFLOW_MANAGED_CLI_ROOT="$STATE/cli" AGENTFLOW_SESSION_SECRET="${LF_SESSION_SECRET:-lf-workbench-preview}" \
-  setsid "$ROOT/bin/agentflow" -workspaces "$STATE/workspaces" >"$STATE/server.log" 2>&1 < /dev/null &
+  # Linux detaches the server with setsid; macOS has no setsid, where nohup
+  # plus a background job is enough to survive the parent shell.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$ROOT/bin/agentflow" -workspaces "$STATE/workspaces" >"$STATE/server.log" 2>&1 </dev/null &
+  else
+    nohup "$ROOT/bin/agentflow" -workspaces "$STATE/workspaces" >"$STATE/server.log" 2>&1 </dev/null &
+  fi
 echo $! >"$STATE/server.pid"
 for _ in $(seq 1 30); do
   curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && break
   sleep 1
 done
-echo "workbench: http://$(hostname -I | awk '{print $1}'):$PORT/#/collaboration"
+HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -n "$HOST_IP" ] || HOST_IP="$(ipconfig getifaddr en0 2>/dev/null || true)"
+echo "workbench: http://${HOST_IP:-127.0.0.1}:$PORT/#/collaboration"

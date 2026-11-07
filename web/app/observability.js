@@ -10,25 +10,8 @@ function isPreviewHost(){
   const domain=String((typeof state!=='undefined'&&state.appDomain)||(typeof window!=='undefined'&&window.__AGENTFLOW_APP_DOMAIN__)||'').toLowerCase();
   return host==='loopforge-test.example.com'||domain==='loopforge-test.example.com'||host.includes('-test.')||isLoopbackHost(host);
 }
-function isSkillHubProject(p){
-  p=p||currentProject();
-  const blob=[p?.id,p?.key,p?.name].map(x=>String(x||'').toLowerCase()).join(' ');
-  return blob.includes('skillhub');
-}
-function canShowSkillhubEfficiency(){return false}
-function renderObsTabs(){
-  const show=canShowSkillhubEfficiency();
-  const tab=$('#obsSkillhubTab');
-  if(tab)tab.hidden=!show;
-  const btn=$('.nav[data-view="deployments"]');
-  if(btn)btn.hidden=!show;
-  if(!show&&state.obsTab==='skillhub')state.obsTab='overview';
-}
-function obsNormalizeTab(tab){
-  if(tab==='delivery')return 'delivery';
-  if(tab==='skillhub'&&canShowSkillhubEfficiency())return 'skillhub';
-  return 'overview';
-}
+function renderObsTabs(){state.obsTab=obsNormalizeTab(state.obsTab)}
+function obsNormalizeTab(tab){return tab==='delivery'?'delivery':'overview'}
 function obsScope(){return state.obsScope==='project'?'project':'user'}
 function obsTrendGrain(){return ['day','week','month','all'].includes(state.obsTrendGrain)?state.obsTrendGrain:'all'}
 function obsApiGrain(){return obsTrendGrain()==='all'?'month':obsTrendGrain()}
@@ -102,8 +85,8 @@ function obsPeriodKey(){
   if(obsTrendGrain()==='all')return '';
   const key=String(state.obsPeriodKey||'').trim();
   if(key)return key;
-  const trend=obsTrendWindow(state.analytics?.trend||[]);
-  return trend.length?trend[trend.length-1].date:obsDefaultPeriodKey();
+  const dates=[...(state.analytics?.trend||[]),...(state.analytics?.activityTrend||[])].map(p=>p.date).filter(Boolean).sort();
+  return dates.length?dates[dates.length-1]:obsDefaultPeriodKey();
 }
 function obsPeriodRange(key,grain){
   grain=grain||obsTrendGrain();
@@ -240,7 +223,7 @@ function obsShiftPeriod(step){
   setObsPeriod(next);
 }
 function obsPeriodChoices(){
-  const keys=new Set((state.analytics?.trend||[]).map(t=>t.date).filter(Boolean));
+  const keys=new Set([...(state.analytics?.trend||[]),...(state.analytics?.activityTrend||[])].map(t=>t.date).filter(Boolean));
   keys.add(obsPeriodKey()||obsDefaultPeriodKey());
   keys.add(obsDefaultPeriodKey());
   return [...keys].sort();
@@ -364,11 +347,7 @@ async function switchObsTab(tab){
   tab=obsNormalizeTab(tab);
   state.obsTab=tab;
   $$('#obsTabs .obs-tab').forEach(x=>x.classList.toggle('active',x.dataset.obsTab===tab));
-  if(tab==='skillhub'){
-    const host=$('#obsBody');
-    if(host)host.innerHTML=`<div class="obs-pane active"><div class="detail-empty">正在加载 SkillHub 提效数据…</div></div>`;
-    await refreshSkillhubEfficiency();
-  }else if(tab==='delivery'&&!state.obsAnalyticsFull){
+  if(tab==='delivery'&&!state.obsAnalyticsFull){
     const host=$('#obsBody');
     if(host)host.innerHTML=`<div class="obs-pane active"><div class="detail-empty">正在加载交付数据…</div></div>`;
     try{
@@ -377,20 +356,6 @@ async function switchObsTab(tab){
     }catch(e){toast(e.message)}
   }
   renderObservability();
-}
-async function refreshSkillhubEfficiency(){
-  if(!canShowSkillhubEfficiency()){state.skillhubEfficiency=null;state.skillhubDeploy=null;state.skillhubDeployError='';return}
-  const repo=deploymentSelectedRepository();
-  const project=currentProject();
-  const q=repo?new URLSearchParams({projectId:project?.id||'',repositoryId:repo.id,pageSize:'100'}):null;
-  const [board,deploy]=await Promise.allSettled([
-    api('/api/analytics/skillhub',{silent:true}),
-    q?api('/api/deployment-metrics?'+q.toString(),{silent:true}):Promise.reject(new Error('当前项目未绑定 SkillHub 仓库，快照里的 QCI 数仍可用')),
-  ]);
-  if(board.status==='fulfilled')state.skillhubEfficiency=board.value;
-  else{state.skillhubEfficiency=null;toast(board.reason?.message||'提效数据加载失败')}
-  if(deploy.status==='fulfilled'){state.skillhubDeploy=deploy.value;state.skillhubDeployError=''}
-  else{state.skillhubDeploy=null;state.skillhubDeployError=deploy.reason?.message||'部署数据加载失败'}
 }
 async function refreshObs(){
   if(refreshObsPending)return refreshObsPending;
@@ -402,10 +367,7 @@ async function refreshObs(){
     try{
       const opt={silent:true};
       const overview=state.obsTab!=='delivery';
-      const [analytics]=await Promise.all([
-        api('/api/analytics'+analyticsQuery({overview}),opt),
-        state.obsTab==='skillhub'?refreshSkillhubEfficiency():Promise.resolve(),
-      ]);
+      const analytics=await api('/api/analytics'+analyticsQuery({overview}),opt);
       state.analytics=analytics;
       if(!overview)state.obsAnalyticsFull=true;
     }catch(e){toast(e.message)}
@@ -602,9 +564,7 @@ function renderObservability(){
   obsDisposeSelects();
   obsCardBuilders={};
   const tab=state.obsTab;
-  if(tab==='skillhub'){
-    host.innerHTML=`<div class="obs-pane active">${obsSkillhub()}</div>`;
-  }else{
+  {
     const html=tab==='delivery'?obsDelivery():obsOverview();
     host.innerHTML=`<div class="obs-pane active">${obsFilterBar()}${html}</div>`;
     state.obsSelects=obsEnhanceSelects(host);
@@ -859,8 +819,8 @@ function obsHtmlRows(list){
     return obsRow(cells,attrs.trim(),cls);
   });
 }
-function obsDetailScope(){return state.obsTab==='skillhub'?'skillhub':'overview'}
-function obsDetailGroups(){return obsDetailScope()==='skillhub'?obsSkillhubDetailGroups():obsUsageDetailGroups(obsScopedView())}
+function obsDetailScope(){return 'overview'}
+function obsDetailGroups(){return obsUsageDetailGroups(obsScopedView())}
 function obsDetailItems(groups){return (groups||obsDetailGroups()).flatMap(g=>g.items).filter(Boolean)}
 function obsDetailCurrent(groups){
   const items=obsDetailItems(groups);
@@ -1075,11 +1035,49 @@ function obsOverview(){
   obsCardBuilders={trend:obsTrendCard,breakdown:obsBreakdownCard,quality:obsQualityCard,heat:obsHeatCard,detail:obsDetailCard};
   const heat=obsHeatCard();
   return `${obsInsights(view,'usage')}
+  ${obsActivityKpis()}
   ${obsUsageKpis(view)}
   ${obsTrendCard()}
   <div class="obs-grid2">${obsBreakdownCard()}${obsQualityCard()}</div>
   ${heat}
   ${obsDetailCard()}`;
+}
+function obsActivityView(){
+  const a=state.analytics||{};
+  if(!a.activity)return null;
+  if(obsTrendGrain()==='all')return a.activity;
+  return (a.activityTrend||[]).find(p=>p.date===obsPeriodKey())||{sessions:0,collaborativeSessions:0,requirements:0,sopRuns:0,
+    ...(a.activity.sessionUsage?{sessionUsage:{},collaborativeUsage:{}}:{})};
+}
+function obsActivityUsageCard(a,collaborative){
+  const usage=a?.[collaborative?'collaborativeUsage':'sessionUsage'];
+  const missing=Number(usage?.missingReplies||0),reported=Number(usage?.reportedReplies||0);
+  const undated=Number(usage?.undatedReplies||0);
+  return {
+    label:collaborative?'协作会话 Token':'会话 Token',
+    value:!usage?'—':(!reported&&missing?'未采集':formatTokens(usage.tokens||0)),
+    foot:!usage?'暂无用量统计':missing?`${missing} 条回复未采集 · 仅含已记录部分`:`输入 ${formatTokens(usage.inputTokens||0)} / 输出 ${formatTokens(usage.outputTokens||0)}`,
+    tip:[
+      collaborative?'当前至少两位用户实际发言的普通会话所消耗的 Token，包含在会话 Token 中，不要重复相加。':'普通会话中已保存回复的模型用量，按回复时间统计；不含 SOP 执行，分支继承的历史回复不重复计入。',
+      '总量沿用模型上报的 totalTokens，缺少总量时按输入 + 输出计算；缓存读写单独列出。个人范围展示本人创建或参与的会话整体用量。',
+      ['已记录回复',String(reported)],['未采集回复',String(missing)],
+      ['缓存读',usage?formatTokens(usage.cacheReadTokens||0):'—'],['缓存写',usage?formatTokens(usage.cacheWriteTokens||0):'—'],
+      ...(undated?[`${undated} 条回复缺少时间，仅计入累计用量。`]:[]),
+    ],
+  };
+}
+function obsActivityKpis(){
+  const a=obsActivityView();
+  const n=key=>a?String(a[key]||0):'—';
+  const sessions=a?.sessions||0,collaborative=a?.collaborativeSessions||0;
+  const rate=sessions?collaborative*100/sessions:0;
+  return obsKpiGroups([obsKpiGroup('Vibe Coding 与协作',[
+    {label:'会话数',value:n('sessions'),foot:'普通对话 · 含已归档会话',tip:['按会话 ID 去重，排除 SOP 自动讨论会话；已删除会话不计入。个人范围包含本人创建或实际参与的会话。']},
+    {label:'创建需求',value:n('requirements'),foot:'按需求 ID 去重',tip:['当前范围内创建的需求，含同步需求，不要求已启动 SOP。个人范围按需求责任人筛选；不推断需求由会话创建。']},
+    {label:'需求 SOP',value:n('sopRuns'),foot:'已发起的 SOP 执行次数',tip:['仅计关联需求的顶层 SOP 运行；重复发起分别计数，排除对话工作区和子运行。个人范围沿用运行责任人口径。']},
+    {label:'多人协作会话',value:n('collaborativeSessions'),foot:a?(sessions?`占会话 ${rate.toFixed(1)}%`:'暂无会话'):'暂无统计数据',meter:rate,tip:['同一普通会话中至少两位不同用户实际发送过消息。机器人回复、定时触发、系统回执和项目成员数不算参与人数。协作占比 = 多人协作会话 ÷ 会话数。']},
+    obsActivityUsageCard(a,false),obsActivityUsageCard(a,true),
+  ],'数量按创建时间，Token 按回复时间 · '+escapeHTML(obsRangeCaption()))]);
 }
 function obsUsageKpis(view){
   const summary=state.analytics?.summary||{};
@@ -1367,186 +1365,6 @@ function obsCrossProjectTable(){
     :`该责任人目前只在当前项目有执行记录，个人与项目切换不会把其他项目加进来。`;
   return {key:'projects',title:'该责任人在各项目',sub:note,tables:[{headers:['项目','运行','需求','Tokens','成本'],rows:rows.map(r=>obsRow([`<b>${escapeHTML(obsProjectName(r.projectId))}</b>${r.projectId===current?'<span class="obs-pill">当前</span>':''}`,String(r.runs||0),String(r.uniqueIssues||0),formatTokens(r.tokens),costLabel(r.costCny,r.costKnown)],'',r.projectId===current?'obs-current-project':''))}]};
 }
-// ---------- SkillHub 提效 ----------
-function obsSkillhub(){
-  const d=state.skillhubEfficiency;
-  if(!d)return `<div class="detail-empty">正在加载 SkillHub 提效数据…</div>`;
-  obsCardBuilders={detail:obsDetailCard};
-  const qci=d.qci||{};
-  const deploy30=(qci.backend?.recent30d||0)+(qci.frontend?.recent30d||0);
-  const snap=d.snapshotAt?new Date(d.snapshotAt).toLocaleString():'—';
-  const kpis=obsKpiGroups([obsKpiGroup('提效',[
-    {label:'已合入',value:'725',foot:'大仓 210 · 老库 515'},
-    {label:'近 4 周日均',value:'6.45',foot:'129 个 / 20 个工作日'},
-    {label:'相对起步',value:'7.82',unit:'×',foot:'起步 8 周日均 0.83'},
-    {label:'测试环境部署',value:'1589',foot:`近 30 天 ${deploy30||375} · E2E 482`},
-  ],`快照 ${escapeHTML(snap)}`)]);
-  const vs=`<div class="sh-vs"><article><span>起步 · 前 8 周</span><b>0.83</b><em>每个工作日</em><p>33 个已合入 · 40 个工作日</p></article><article class="is-now"><span>近 4 周</span><b>6.45</b><em>每个工作日</em><p>129 个已合入 · 大仓 125 · 7.82 倍</p></article></div>`;
-  const legend='<div class="obs-legend"><span><i style="background:var(--c4)"></i>老库</span><span><i style="background:var(--c1)"></i>大仓</span></div>';
-  const svg=obsSkillhubCharts(d);
-  const monthly=obsChartSlot('sh-monthly',{
-    empty:!Object.keys(d.gongfeng?.mergedMonths||{}).length,
-    option:(theme,reduced)=>obsSkillhubMonthlyOption(d,obsChartFormatters(theme,reduced)),
-    fallback:()=>obsSkillhubChartSvg(svg,0)
-  },260);
-  const weekly=obsChartSlot('sh-weekly',{
-    empty:!Object.keys(d.gongfeng?.weeklyMerged||{}).length,
-    option:(theme,reduced)=>obsSkillhubWeeklyOption(d,obsChartFormatters(theme,reduced)),
-    fallback:()=>obsSkillhubChartSvg(svg,1)
-  },260);
-  return `<div class="sh-page">
-    <p class="obs-note">合入从起步每天不到 1 个，到近四周每个工作日 6.45 个。</p>
-    ${kpis}
-    ${vs}
-    <div class="obs-grid2 is-wide-left">
-      ${obsCard('sh-monthly','每月已合入','',legend,monthly,{expand:true,klass:'sh-chart-hero'})}
-      ${obsCard('sh-weekly','近 12 周','阴影为近 4 周',legend,weekly,{expand:true})}
-    </div>
-    ${obsSkillhubDeployCard()}
-    ${obsDetailCard()}
-  </div>`;
-}
-function obsSkillhubChartSvg(html,index){
-  const tpl=document.createElement('template');
-  tpl.innerHTML=html;
-  const cards=tpl.content.querySelectorAll('.sh-chart-card');
-  return cards[index]?cards[index].outerHTML:'';
-}
-function obsSkillhubDeployCard(){
-  const snap=state.skillhubEfficiency?.qci||{};
-  const deploy=snap.deploy||{},e2e=snap.e2e||{},backend=snap.backend||{},frontend=snap.frontend||{};
-  const err=state.skillhubDeployError;
-  const backendURL=safeURL(deploy.url||snap.url||'');
-  const frontendURL=safeURL((snap.pipelines||[]).find(p=>p.id===10000002)?.url||'');
-  const e2eURL=safeURL(e2e.url||'');
-  const open=url=>url?` · <a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">打开</a>`:'';
-  const chart=obsChartSlot('sh-deploy',{
-    empty:!(snap.dailySample?.labels||[]).length,emptyText:'暂无每日部署样本',
-    option:(theme,reduced)=>obsSkillhubDeployOption(snap,obsChartFormatters(theme,reduced)),
-    fallback:()=>obsSkillhubDeployCharts(snap)
-  },240);
-  const legend='<div class="obs-legend"><span><i style="background:var(--c1)"></i>后端</span><span><i style="background:var(--c2)"></i>前端</span><span><i style="background:var(--c3)"></i>E2E</span></div>';
-  const body=`<div class="obs-signal-row"><div><b data-obs-count>${backend.runNum||0}</b><span>后端测试环境${open(backendURL)}</span></div><div><b data-obs-count>${frontend.runNum||0}</b><span>前端测试环境${open(frontendURL)}</span></div><div><b data-obs-count>${e2e.runNum||0}</b><span>独立 E2E${open(e2eURL)}</span></div></div><h4 class="obs-sub-title">每天部署次数</h4>${chart}${legend}${err?`<p class="sh-note">实时接口：${escapeHTML(err)}</p>`:''}`;
-  return obsCard('sh-deploy','测试环境部署',`智研 ${snap.projectId||10001} · ${snap.countedPipelines||13} 条流水线`,'',body,{expand:true});
-}
-function obsSkillhubDetailGroups(){
-  const d=state.skillhubEfficiency||{};
-  const gf=d.gongfeng||{},local=d.localWorkflows||{},loop=d.loop||{},snap=d.qci||{};
-  const repos=(gf.repos||[]).map(r=>{
-    const url=safeURL(r.url||'');
-    const name=url?`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(r.name)}</a>`:escapeHTML(r.name);
-    return obsRow([`${name}<div class="muted">${escapeHTML(r.path||'')}</div>`,String(r.created||0),`<b>${r.merged||0}</b>`,String(r.opened||0),escapeHTML((r.lastAt||'').slice(0,10))]);
-  });
-  const authors=(gf.authors||[]).map(a=>obsRow([escapeHTML(a.username),String(a.mrs||0)]));
-  const pipes=(snap.pipelines||[]).map(p=>{
-    const url=safeURL(p.url||'');
-    const name=url?`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(p.name||'')}</a>`:escapeHTML(p.name||'');
-    return obsRow([escapeHTML(p.kind||''),`${name}<div class="muted">${escapeHTML(p.era||'')}</div>`,`<b>${p.runNum||0}</b>`,String(p.recent30d||0)]);
-  });
-  const stages=local.backendStageHits||{};
-  const stageRows=[['01-requirement','需求'],['02-design','设计'],['03-code','编码'],['04-e2e','E2E']].map(([k,l])=>obsRow([l,`${stages[k]||0} / ${local.backendUnique||0}`]));
-  const links=(d.evidence||[]).map(e=>`<a class="sh-link" href="${escapeHTML(safeURL(e.url))}" target="_blank" rel="noopener noreferrer">${escapeHTML(e.label)}</a>`).join('');
-  const hasLoop=loop.issues||loop.totalRuns||loop.doneIssues;
-  return [
-    {group:'代码仓库',items:[
-      {key:'repos',title:'仓库',tables:[{headers:['仓库','创建','已合入','打开','最近合入'],rows:repos}]},
-      {key:'authors',title:'作者 TOP',sub:'三库合计',tables:[{headers:['作者','PR / MR'],rows:authors}]},
-    ]},
-    {group:'部署',items:[
-      pipes.length?{key:'pipelines',title:'流水线',sub:`${snap.countedPipelines||pipes.length} 条计入统计`,tables:[{headers:['类型','流水线','累计','近 30 天'],rows:pipes}]}:null,
-    ]},
-    {group:'工作流',items:[
-      {key:'backend',title:'后端工作流',sub:`${local.backendUnique||0} 条`,tables:[{headers:['阶段','覆盖'],rows:stageRows}]},
-      {key:'local',title:'本地产物',count:3,html:`<div class="obs-signal-row"><div><b>${local.frontendWorkflows||0}</b><span>前端工作流</span></div><div><b>${local.backendKnowledgeDocs||0}</b><span>知识文档</span></div><div><b>${local.backendE2eFiles||0}</b><span>E2E 文档</span></div></div>`},
-      hasLoop?{key:'loop',title:'Loop 运行',count:loop.totalRuns||0,html:obsSkillhubLoopCard(loop)}:null,
-    ]},
-    {group:'说明',items:[
-      {key:'evidence',title:'数据来源',count:(d.evidence||[]).length,html:`<div class="sh-links">${links||'<span class="muted">暂无</span>'}</div>`},
-      (d.insights||[]).length?{key:'insights',title:'结论 · AI 分析',count:d.insights.length,html:obsSkillhubInsights(d.insights)}:null,
-    ]},
-  ];
-}
-function obsSkillhubCharts(d){
-  const gf=d.gongfeng||{};
-  const months=Object.keys(gf.mergedMonths||{}).sort();
-  const weekKeys=Object.keys(gf.weeklyMerged||{}).sort().slice(-12);
-  const legend=`<div class="sh-chart-legend"><span><i class="legacy"></i>老库</span><span><i class="mono"></i>大仓</span></div>`;
-  return `<div class="sh-charts">
-    ${obsSkillhubChart({title:'每月已合入',klass:'sh-chart-hero',labels:months.map(m=>Number(m.slice(5))+'月'),stacks:[{color:'var(--c4)',values:months.map(m=>gf.monthlyLegacy?.[m]||0)},{color:'var(--c1)',values:months.map(m=>gf.monthlyMonorepo?.[m]||0)}],showValue:true,legend})}
-    ${obsSkillhubChart({title:'近 12 周',labels:weekKeys.map(k=>'W'+k.slice(-2)),stacks:[{color:'var(--c4)',values:weekKeys.map(k=>gf.weeklyLegacy?.[k]||0)},{color:'var(--c1)',values:weekKeys.map(k=>gf.weeklyMonorepo?.[k]||0)}],markFrom:weekKeys.length-4,legend})}
-  </div>`;
-}
-function obsSkillhubChart({title,klass,labels,stacks,showValue,markFrom,legend,xStep}){
-  const cols=labels||[];
-  if(!cols.length||!stacks?.length)return '';
-  const w=640,h=248,l=42,r=10,t=22,b=30;
-  const plotW=w-l-r,plotH=h-t-b;
-  const totals=cols.map((_,i)=>stacks.reduce((s,st)=>s+(Number(st.values[i])||0),0));
-  const max=Math.max(1,...totals);
-  const gap=cols.length>8?6:16;
-  const barW=Math.max(8,(plotW-gap*(cols.length+1))/cols.length);
-  const step=xStep||(cols.length>10?Math.ceil(cols.length/6):1);
-  const yTicks=[0,0.5,1].map(p=>{
-    const y=t+plotH*(1-p),val=Math.round(max*p);
-    return `<line x1="${l}" y1="${y.toFixed(1)}" x2="${w-r}" y2="${y.toFixed(1)}"/><text class="obs-chart-y" x="${l-8}" y="${(y+3).toFixed(1)}" text-anchor="end">${val}</text>`;
-  }).join('');
-  let mark='';
-  if(markFrom!=null&&markFrom>=0){
-    const x1=l+gap+markFrom*(barW+gap)-gap/2;
-    const x2=l+gap+(cols.length-1)*(barW+gap)+barW+gap/2;
-    mark=`<rect x="${x1.toFixed(1)}" y="${t}" width="${Math.max(0,x2-x1).toFixed(1)}" height="${plotH}" style="fill:var(--c1);opacity:.08"></rect>`;
-  }
-  const bars=cols.map((lb,i)=>{
-    const x=l+gap+i*(barW+gap);
-    let y=t+plotH;
-    const rects=stacks.map(st=>{
-      const bh=plotH*(Number(st.values[i])||0)/max;
-      y-=bh;
-      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0,bh).toFixed(1)}" style="fill:${st.color}"></rect>`;
-    }).join('');
-    const n=totals[i];
-    const value=showValue&&n?`<text x="${(x+barW/2).toFixed(1)}" y="${Math.max(12,y-6).toFixed(1)}" text-anchor="middle" class="sh-bar-n">${n}</text>`:'';
-    const tick=i===0||i===cols.length-1||i%step===0?`<text x="${(x+barW/2).toFixed(1)}" y="${h-10}" text-anchor="middle">${escapeHTML(lb)}</text>`:'';
-    return `<g>${rects}${value}${tick}</g>`;
-  }).join('');
-  return `<div class="obs-card sh-chart-card ${klass||''}">
-    <div class="sh-chart-head"><b>${escapeHTML(title)}</b>${legend||''}</div>
-    <svg class="sh-bars" viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHTML(title)}">${yTicks}${mark}${bars}</svg>
-  </div>`;
-}
-function obsSkillhubLoopCard(loop){
-  if(!loop||!(loop.issues||loop.totalRuns||loop.doneIssues))return '';
-  return `<div class="obs-card" style="margin-bottom:14px">
-    <div class="obs-card-title">Loop 运行</div>
-    <div class="obs-signal-row">
-      <div><b>${loop.issues||0}</b><span>平台需求</span></div>
-      <div><b>${loop.doneIssues||0}</b><span>已闭环</span></div>
-      <div><b>${loop.totalRuns||0}</b><span>SOP 运行</span></div>
-    </div>
-  </div>`;
-}
-function obsSkillhubInsights(items){
-  if(!items.length)return '';
-  const rows=items.map(it=>`<details class="sh-insight"><summary>${escapeHTML(it.title||'')}</summary><p>${escapeHTML(it.body||'')}</p></details>`).join('');
-  return `<section class="sh-appendix"><div class="sh-chart-head"><b>结论</b><span class="sub">AI 分析 · 点开看</span></div><div class="sh-insights">${rows}</div></section>`;
-}
-function obsSkillhubDeployCharts(snap){
-  const daily=snap.dailySample||{};
-  const labels=daily.labels||[];
-  const countLegend=`<div class="sh-chart-legend"><span><i style="background:var(--c1)"></i>后端</span><span><i style="background:var(--c2)"></i>前端</span><span><i style="background:var(--c3)"></i>E2E</span></div>`;
-  return `<div class="sh-charts is-single" style="margin-top:12px">${obsSkillhubChart({
-    title:'每天部署次数',
-    klass:'sh-chart-hero',
-    labels,
-    stacks:[
-      {color:'var(--c1)',values:daily.backend||[]},
-      {color:'var(--c2)',values:daily.frontend||[]},
-      {color:'var(--c3)',values:daily.e2e||[]}
-    ],
-    legend:countLegend,
-    xStep:5
-  })}</div>`;
-}
 const OBS_DELIVERY_FILTERS=[['all','全部'],['delivered','已交付'],['sop','SOP 成功'],['direct','对话改代码'],['withmr','有 PR'],['mr','PR 已合入'],['baseline','已合入基线'],['github','GitHub'],['local','本地']];
 function obsDeliveryMRs(it){
   const list=it.mrs?.length?it.mrs:it.mrUrl?[{url:it.mrUrl,project:it.mrProject,iid:it.mrIid,state:it.mrState}]:[];
@@ -1676,17 +1494,6 @@ function obsDeliveriesCard(){
   const body=`<div class="obs-chips">${chips}</div>${obsDetailTable(def.tables[0],'','')}`;
   return obsCard('deliveries','需求交付明细','耗时为该需求最近一次执行的端到端时间；执行耗时 = 该需求全部执行按 SOP 节点求和；周期为首次执行到最后一次执行。「已合入 / 已交付」只统计默认分支。',`<button type="button" class="obs-btn" data-obs-export-csv="deliveries">${obsIcon('download')}CSV</button>`,body,{klass:'obs-deliveries'});
 }
-function buildSkillhubReportHTML(){
-  const d=state.skillhubEfficiency;
-  if(!d||!canShowSkillhubEfficiency())return '';
-  const gf=d.gongfeng||{},loop=d.loop||{},local=d.localWorkflows||{},tp=gf.throughput||{},totals=gf.totals||{};
-  const repoRows=(gf.repos||[]).map(r=>`<tr><td>${escapeHTML(r.name)}</td><td>${r.created||0}</td><td>${r.merged||0}</td><td>${r.opened||0}</td><td>${r.closed||0}</td></tr>`).join('');
-  const insightRows=(d.insights||[]).map(c=>`<tr><td>${escapeHTML(c.title)}</td><td>${escapeHTML(c.body||'')}</td></tr>`).join('');
-  return `<section class="block"><h2>SkillHub 提效看板</h2>
-  <p>已合入 PR ${totals.merged||0} · 近窗口日均 ${tp.currentDaily||'—'} · Loop 闭环 ${loop.doneIssues||0}/${loop.issues||0} · 本地工作流 ${local.backendUnique||0}+${local.frontendWorkflows||0}</p></section>
-  ${obsReportTable('PR / MR',['仓库','创建','已合入','打开','关闭'],repoRows)}
-  ${obsReportTable('AI 分析',['结论','依据'],insightRows)}`;
-}
 function obsPlain(v){return String(v==null?'':v).replace(/<[^>]+>/g,'')}
 function obsReportScope(){
   const project=currentProject();
@@ -1707,14 +1514,13 @@ async function exportObsReport(){
       state.analytics=await api('/api/analytics'+analyticsQuery({overview:false}),{silent:true});
       state.obsAnalyticsFull=true;
     }
-    if(canShowSkillhubEfficiency()&&!state.skillhubEfficiency)await refreshSkillhubEfficiency();
     const html=buildObsReportHTML();
     const blob=new Blob([html],{type:'text/html;charset=utf-8'});
     const a=document.createElement('a');
     const scope=obsReportScope();
     const stamp=new Date().toISOString().slice(0,10);
     a.href=URL.createObjectURL(blob);
-    a.download=`AgentFlow用量报告-${scope.project}-${scope.who}-${stamp}.html`;
+    a.download=`LoopForge用量报告-${scope.project}-${scope.who}-${stamp}.html`;
     document.body.appendChild(a);a.click();a.remove();
     setTimeout(()=>URL.revokeObjectURL(a.href),1500);
     toast('已导出 HTML 报告','ok');
@@ -1722,6 +1528,7 @@ async function exportObsReport(){
 }
 function buildObsReportHTML(){
   const scope=obsReportScope(),summary=state.analytics?.summary||{},d=state.analytics?.delivery||{};
+  const activity=state.analytics?.activity;
   const workflows=state.data.workflows||[];
   const stats=(state.analytics?.workflows||[]).map(w=>({...w,name:w.name||workflows.find(x=>x.id===w.key)?.name||w.key}));
   const wfRows=stats.map(w=>`<tr><td>${escapeHTML(w.name)}</td><td>${w.runs}</td><td>${percent(w.successRate)}</td><td>${w.qualityUnknownRuns===w.runs?'—':percent(w.reworkRate)}</td><td>${formatTokens(w.tokens)}</td><td>${obsPlain(costLabel(w.costCny,!w.costUnknownRuns))}</td><td>${w.averageExecutionDurationMs?duration(w.averageExecutionDurationMs):'—'}</td></tr>`).join('');
@@ -1734,6 +1541,13 @@ function buildObsReportHTML(){
   const projectRows=(state.obsCrossProject?.projectUsage||state.analytics?.projectUsage||[]).map(r=>`<tr><td>${escapeHTML(obsProjectName(r.projectId))}</td><td>${r.runs||0}</td><td>${r.uniqueIssues||0}</td><td>${formatTokens(r.tokens)}</td><td>${obsPlain(costLabel(r.costCny,r.costKnown))}</td></tr>`).join('');
   const deliveryRows=(state.analytics?.deliveries||[]).slice(0,80).map(it=>`<tr><td>${obsSourceLabel(it.source)} ${escapeHTML(String(it.externalIid?('#'+it.externalIid):(it.externalId||it.issueId)))}</td><td>${escapeHTML(it.title||it.issueId)}</td><td>${escapeHTML(it.workflowName||it.workflowId)}</td><td>${escapeHTML(obsDeliveryStatusText(it))}</td><td>${escapeHTML(obsUserName(it.userId))}</td><td>${formatTokens(it.tokens)}</td><td>${obsPlain(costLabel(it.costCny,it.costKnown))}</td><td>${obsDeliveryMRHTML(it)}</td><td>${it.delivered?'已交付':'未交付'}</td></tr>`).join('');
   const kpis=[
+    ...(activity?[
+      ['会话数',activity.sessions||0,'普通对话 · 按创建时间'],
+      ['创建需求',activity.requirements||0,'按需求 ID 去重 · 含同步需求'],
+      ['需求 SOP',activity.sopRuns||0,'顶层需求 SOP 执行次数'],
+      ['多人协作会话',activity.collaborativeSessions||0,activity.sessions?`占会话 ${(Number(activity.collaborativeSessions||0)*100/activity.sessions).toFixed(1)}% · 至少两位用户发言`:'暂无会话'],
+      ...[false,true].map(collaborative=>{const card=obsActivityUsageCard(activity,collaborative);return [card.label,card.value,card.foot]}),
+    ]:[]),
     ['运行',summary.totalRuns||0,`${summary.activeRuns||0} 进行中`],
     ['成功率',summary.totalRuns?percent(summary.successRate):'—',`${summary.succeededRuns||0} 成功 / ${summary.failedRuns||0} 失败`],
     ['一次通过',summary.totalRuns?percent(summary.firstPassRate):'—',`${summary.reworkedRuns||0} 次返工`],
@@ -1764,7 +1578,7 @@ th{text-align:left;color:var(--muted);font-size:11px;padding:8px;border-bottom:1
 @media print{body{background:#fff}.wrap{padding:0}.kpis article,.block{break-inside:avoid}}
 @media(max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style></head><body><div class="wrap">
-<header><p class="eyebrow">AgentFlow</p><h1>用量分析报告</h1><p>效果看成功率和一次通过，投入看 Token、成本和执行耗时。交付看 SOP 是否跑完、PR 是否合入。</p>
+<header><p class="eyebrow">LoopForge</p><h1>用量分析报告</h1><p>效果看成功率和一次通过，投入看 Token、成本和执行耗时。交付看 SOP 是否跑完、PR 是否合入。</p>
 <div class="meta"><span>项目 ${escapeHTML(scope.project)}</span><span>维度 ${escapeHTML(scope.dim)}</span><span>${obsScope()==='project'?'范围':'责任人'} ${escapeHTML(scope.who)}</span><span>来源 ${escapeHTML(scope.source)}</span><span>生成于 ${escapeHTML(scope.at)}</span></div></header>
 <section class="kpis">${kpis}</section>
 ${obsReportTable('SOP 一览',['SOP','运行','成功率','返工率','Tokens','成本','均执行'],wfRows)}
@@ -1776,8 +1590,7 @@ ${obsReportTable('SOP 版本对比',['SOP','版本','运行','成功率','Tokens
 ${obsReportTable(obsGrainCaption()+'趋势',['周期','运行','需求','成功','失败','Tokens','成本','执行耗时'],trendRows)}
 ${projectRows?obsReportTable('各项目用量',['项目','运行','需求','Tokens','成本'],projectRows):''}
 ${obsReportTable('交付明细',['单号','标题','SOP','流程','责任人','Tokens','成本','PR','交付'],deliveryRows)}
-${buildSkillhubReportHTML()}
-<footer>由 AgentFlow 用量分析导出。日志与 Trace 请在运行记录中查看。</footer>
+<footer>由 LoopForge 用量分析导出。日志与 Trace 请在运行记录中查看。</footer>
 </div></body></html>`;
 }
 

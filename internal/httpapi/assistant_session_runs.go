@@ -70,7 +70,7 @@ func decorateRunSessions(st *repo.Store, items []assistantConversation) []runSes
 // SOP: the SOP name is added first, then the start time, and runs started in
 // the same minute finally show the second.
 func disambiguateRunTitles(views []runSessionView, metas map[string]repo.SidebarRunMeta) {
-	derived := func(v runSessionView) bool { return v.DisplayTitle != "" && !v.TitleEdited }
+	derived := func(v runSessionView) bool { return v.DisplayTitle != "" && !v.TitleEdited && !v.TitleGenerated }
 	withPart := func(title, part string) string {
 		if part == "" || strings.Contains(title, part) {
 			return title
@@ -145,8 +145,8 @@ func applyRunSessionMeta(view *runSessionView, meta repo.SidebarRunMeta, issue r
 	if counted {
 		view.MessageCount = &messageCount
 	}
-	// A rename by a member always wins over the derived name.
-	if !view.TitleEdited {
+	// A member rename or a generated summary wins over the derived SOP name.
+	if !view.TitleEdited && !view.TitleGenerated {
 		if sopRun(meta) {
 			view.DisplayTitle = runSessionDisplayTitle(meta, issue)
 		} else {

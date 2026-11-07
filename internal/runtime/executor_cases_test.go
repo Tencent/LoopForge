@@ -64,7 +64,7 @@ func TestPrepareRemoteProvidersAndBuiltinGate(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workspace, gate)); err != nil {
 		t.Fatal(err)
 	}
-	lost := domain.AgentDefinition{ID: "lost", Instructions: "[[mock:session=lost]]"}
+	lost := domain.AgentDefinition{ID: "lost", Prompt: "[[mock:session=lost]]"}
 	options := InvocationOptions{GateResultPath: gate, ResumeSessionID: "session"}
 	if mockShouldSubmitGate(workspace, lost, options) {
 		t.Fatal("first lost session submitted")
@@ -118,7 +118,7 @@ func TestExecutorRunProtocolOutcomes(t *testing.T) {
 	t.Run("mock lost resumed session", func(t *testing.T) {
 		sb := &cvRProtocolSandbox{workspace: t.TempDir(), driver: "runner"}
 		got, err := runner.Run(context.Background(), sb, "inv", domain.ExecutorDefinition{Kind: "mock"},
-			domain.AgentDefinition{ID: "a", Instructions: "[[mock:session=lost]]"}, domain.AgentAssetBundle{}, "prompt",
+			domain.AgentDefinition{ID: "a", Prompt: "[[mock:session=lost]]"}, domain.AgentAssetBundle{}, "prompt",
 			InvocationOptions{ResumeSessionID: "missing"}, nil)
 		if err != nil || !strings.Contains(got, "No conversation found") {
 			t.Fatalf("got=%q err=%v", got, err)

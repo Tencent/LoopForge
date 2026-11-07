@@ -169,7 +169,7 @@ func (e *Engine) remoteWorkspacePreparation(ctx context.Context, run domain.Run,
 			state.Status = "failed"
 		}
 		state.Error = response.Error
-		return state, fmt.Errorf("%s", response.Error)
+		return state, runnerWorkspaceResponseError(response)
 	}
 	if state.Status == "" {
 		return state, fmt.Errorf("执行端尚不支持工作区准备，请更新执行器")
@@ -273,12 +273,19 @@ func (e *Engine) PrepareNodeWorkspace(ctx context.Context, run domain.Run, env *
 			if current, ok := e.repo.RunState(run.ID); ok {
 				run = current
 			}
-			state, statusErr := e.remoteWorkspacePreparation(ctx, run, domain.RunnerWorkspaceOperationPreparationStatus)
-			if statusErr == nil && state.Status == "ready" {
-				return state, nil
-			}
 		}
-		return e.remoteWorkspacePreparation(ctx, run, domain.RunnerWorkspaceOperationPrepare)
+		// A sibling branch, group role, finishing task or snapshot may hold the
+		// runner fence for a moment (or for its whole preparation). That is a
+		// reason to wait, never to fail this node.
+		return e.waitWorkspaceNotBusy(ctx, run, func(run domain.Run) (runtime.WorkspacePreparationStatus, error) {
+			if run.IsWorkspace() {
+				state, statusErr := e.remoteWorkspacePreparation(ctx, run, domain.RunnerWorkspaceOperationPreparationStatus)
+				if statusErr == nil && state.Status == "ready" {
+					return state, nil
+				}
+			}
+			return e.remoteWorkspacePreparation(ctx, run, domain.RunnerWorkspaceOperationPrepare)
+		})
 	}
 	if run.IsWorkspace() && env.activeExecutions.Load() > 0 {
 		state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())

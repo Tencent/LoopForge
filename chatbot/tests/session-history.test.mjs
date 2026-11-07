@@ -1,6 +1,6 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { emptyRunConversation, groupSessionHistory, idleRunConversation } from "../src/session-history.js";
+import { emptyRunConversation, groupSessionHistory, idleRunConversation, scheduledSession } from "../src/session-history.js";
 
 const projects = [
   { id: "mall", name: "积分商城" },
@@ -24,24 +24,50 @@ const sessions = [
   session("未载入项目的会话", "missing", 22),
 ];
 
-test("history is separated by project ID, with the current project first and personal last", () => {
+test("scheduled sessions are marked by source, with a legacy title fallback", () => {
+  assert.equal(scheduledSession({ source: "scheduled", title: "任意" }), true);
+  assert.equal(scheduledSession({ source: "chat", title: "定时 · 仓库&SOP分类" }), false);
+  assert.equal(scheduledSession({ source: "sop", title: "任意" }), false);
+  assert.equal(scheduledSession({ title: "定时 · 仓库&SOP分类" }), true);
+  assert.equal(scheduledSession({ shared: true, title: "定时 · 共享运行" }), false);
+  assert.equal(scheduledSession({ title: "普通对话" }), false);
+  assert.equal(scheduledSession(null), false);
+});
+
+test("history is separated by project ID in one fixed order", () => {
   const groups = groupSessionHistory(sessions, projects, {
     archived: false,
-    currentProjectId: "mall",
     pinned: ["商城旧会话"],
   });
+  // 个人对话 first, then the project list order, then projects not in the list.
   assert.deepEqual(
     groups.map((group) => group.projectId),
-    ["mall", "pay", "missing", "mall-copy", ""],
+    ["", "mall", "pay", "mall-copy", "missing"],
   );
   assert.deepEqual(
-    groups[0].sessions.map((row) => row.id),
+    groups[1].sessions.map((row) => row.id),
     ["商城旧会话", "商城新会话"],
   );
-  assert.equal(groups[2].name, "missing");
   assert.equal(groups[3].name, "积分商城");
-  assert.equal(groups[4].name, "个人对话");
+  assert.equal(groups[4].name, "missing");
+  assert.equal(groups[0].name, "个人对话");
   assert.equal(sessions[0].id, "商城旧会话");
+});
+
+test("project order follows the project list, not the latest reply", () => {
+  const groups = groupSessionHistory(
+    sessions,
+    [
+      { id: "pay", name: "Payments" },
+      { id: "mall", name: "积分商城" },
+    ],
+    { archived: false },
+  );
+  // 商城新会话 is the newest row but Payments still comes first.
+  assert.deepEqual(
+    groups.map((group) => group.projectId),
+    ["", "pay", "mall", "mall-copy", "missing"],
+  );
 });
 
 test("archive and search retain project boundaries and omit empty groups", () => {
@@ -67,7 +93,7 @@ test("archive and search retain project boundaries and omit empty groups", () =>
   });
   assert.deepEqual(
     byTitle.map((group) => group.projectId),
-    ["pay", "mall"],
+    ["mall", "pay"],
   );
   assert.deepEqual(
     groupSessionHistory(sessions, projects, { query: "不存在" }),
@@ -75,8 +101,8 @@ test("archive and search retain project boundaries and omit empty groups", () =>
   );
 });
 
-test("personal view promotes its own group without treating unknown projects as personal", () => {
-  const groups = groupSessionHistory(sessions, [], { currentProjectId: "" });
+test("personal view keeps its own group without treating unknown projects as personal", () => {
+  const groups = groupSessionHistory(sessions, []);
   assert.equal(groups[0].name, "个人对话");
   assert.equal(groups[0].sessions.length, 1);
   assert.equal(groups.find((group) => group.projectId === "mall").name, "mall");

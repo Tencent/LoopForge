@@ -57,6 +57,9 @@ type ScheduleJobBlocker struct {
 }
 
 type ScheduleJob struct {
+	SharedTaskID         string                `json:"sharedTaskId,omitempty"`
+	SharedTaskVersion    int                   `json:"sharedTaskVersion,omitempty"`
+	ParameterValues      map[string]string     `json:"parameterValues,omitempty"`
 	Notifications        []NotificationBinding `json:"notifications,omitempty"`
 	NotificationSnapshot []NotificationBinding `json:"notificationSnapshot,omitempty"`
 	NotificationResult   string                `json:"notificationResult,omitempty"`

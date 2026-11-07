@@ -3033,7 +3033,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
 OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
-github.com/klauspost/compress v1.18.7
+github.com/klauspost/compress v1.20.3
 
 --- LICENSE ---
 Copyright (c) 2012 The Go Authors. All rights reserved.

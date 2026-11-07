@@ -82,7 +82,7 @@ func TestMaterializeInvocationInjectsGateMCP(t *testing.T) {
 }
 
 func TestMockGateDecisionSupportsAttemptSequence(t *testing.T) {
-	agent := domain.AgentDefinition{Instructions: "demo [[mock:gate=rework,pass]]"}
+	agent := domain.AgentDefinition{Prompt: "demo [[mock:gate=rework,pass]]"}
 	if got := mockGateDecision(agent, ".agentflow/gate-results/review/attempt-1.json"); got != "rework" {
 		t.Fatalf("attempt 1 decision=%q", got)
 	}
@@ -95,7 +95,7 @@ func TestMockGateDecisionSupportsAttemptSequence(t *testing.T) {
 }
 
 func TestMockGateResultSupportsRealisticDetails(t *testing.T) {
-	agent := domain.AgentDefinition{Instructions: strings.Join([]string{
+	agent := domain.AgentDefinition{Prompt: strings.Join([]string{
 		"[[mock:gate=human]]",
 		"[[mock:reason=自动化证据无法覆盖业务例外]]",
 		"[[mock:action=请产品负责人确认是否接受该例外]]",

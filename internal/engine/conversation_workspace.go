@@ -180,8 +180,7 @@ func (e *Engine) materializeRunnerConversationWorkspace(ctx context.Context, run
 		if response.Error == "" {
 			return nil
 		}
-		busy := response.Status == 409 && strings.HasPrefix(response.Error, "workspace is in use")
-		if !busy || time.Now().After(deadline) {
+		if !runnerWorkspaceBusy(response) || time.Now().After(deadline) {
 			return explainGitAuthFailure(fmt.Errorf("%s", response.Error), strings.TrimSpace(e.resolveRunCredentials(run).GitToken) != "")
 		}
 		select {

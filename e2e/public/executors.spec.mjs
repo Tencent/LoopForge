@@ -6,6 +6,8 @@ test.use({trace:'off',screenshot:'off'});
 for(const viewport of [{width:1280,height:400},{width:390,height:600}]){
   test(`the executor and model menus stay usable at ${viewport.width}x${viewport.height}`,async({page})=>{
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
+    // appReady may reload a stalled first load; only the document under test counts.
+    page.on('request',r=>{if(r.isNavigationRequest()&&r.frame()===page.mainFrame())errors.length=0});
     await page.setViewportSize(viewport);
     await signInUnconfigured(page);
     await openHome(page);
@@ -78,7 +80,7 @@ test('SOP readiness checks each role executor rather than always requiring CodeB
   try{
     for(const executor of ['codebuddy','codex','claude']){
       const id=`e2e-provider-${executor}-${suffix}`;ids.push(id);
-      expect((await page.request.put('/api/agents',{data:{id,projectId,name:id,executorId:executor,instructions:'Only perform an explicitly assigned task.'}})).ok()).toBe(true);
+      expect((await page.request.put('/api/agents',{data:{id,projectId,name:id,executorId:executor,prompt:'Only perform an explicitly assigned task.'}})).ok()).toBe(true);
       expect((await page.request.put('/api/workflows',{data:{id,projectId,name:id,status:'draft',sandboxProfileId:'local',nodes:[{id:'work',name:'Work',type:'agent',agentId:id,executorId:'codebuddy',position:{x:100,y:100}}],edges:[]}})).ok()).toBe(true);
     }
     await page.reload();await switchProject(page,projectId);

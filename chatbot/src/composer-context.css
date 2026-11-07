@@ -35,7 +35,7 @@
   color: inherit;
 }
 
-/* Conversations only run on AgentFlow cloud, so the host is a status label. */
+/* Conversations only run on LoopForge cloud, so the host is a status label. */
 .composer-stack > .composer-context .context-pill.host-status {
   flex-shrink: 0;
   cursor: default;

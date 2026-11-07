@@ -21,6 +21,7 @@ const modelBrands = [
   [/^(?:qwen|qvq|alibaba)(?:$|[-_.\s:\d])/i, "qwen"],
   [/^(?:hunyuan|tencent)(?:$|[-_.\s:\d])|^hy(?:\d|[-_.\s:])/i, "hunyuan"],
   [/^minimax(?:$|[-_.\s:\d])/i, "minimax"],
+  [/^(?:mimo|xiaomi)(?:$|[-_.\s:\d])/i, "xiaomimimo"],
   [/^(?:grok|xai)(?:$|[-_.\s:\d])/i, "xai"],
   [/^(?:doubao|seed|seedream|bytedance)(?:$|[-_.\s:\d])/i, "doubao"],
   [/^(?:ernie|wenxin|baidu|qianfan)(?:$|[-_.\s:\d])/i, "qianfan"],

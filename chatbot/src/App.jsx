@@ -8,10 +8,16 @@ import React, {
 } from "react";
 import { useChat } from "./useChat";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
-import ActivityTrace from "./ActivityTrace";
+import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
-import { activityForReply } from "./activity";
+import {
+  activityForReply,
+  finalReply,
+  generationStored,
+  hasTextSegments,
+  streamingAnswerOpen,
+} from "./activity";
 import {
   api,
   attachmentURL,
@@ -38,25 +44,25 @@ import { localId } from "./local-id.js";
 import RunAlerts from "./RunAlerts";
 import { runProblems, useConversationRuns } from "./runs.js";
 import { reconcileOperation, visibleSidebarArtifact } from "./platform.js";
+import { isGeneratedArtifact, shouldRevealArtifactPanel } from "./artifact-autoreveal.js";
 import { IconButton, Dialog, Menu, SelectMenu, CredentialAction } from "./ui";
 import { credentialHint, openCredentialSettings } from "./credentials";
-import { groupSessionHistory, sessionProjectName } from "./session-history.js";
+import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
 import { runSessionState, sessionReplyStatus, sessionTooltip } from "./session-status.js";
 import MentionPicker from "./MentionPicker";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
 import { mentionAt, insertMention } from "./mentions.js";
 import HarnessIcon from "./HarnessIcon";
+import QueuedMessages from "./QueuedMessages";
+import "./message-queue.css";
 import ConversationStatusIcon from "./ConversationStatusIcon";
 import { SidebarSection } from "./SidebarPreview";
 import {
   splitSidebarSections,
-  attentionMeta,
-  ATTENTION_LIMIT,
   PROJECT_PREVIEW_LIMIT,
   previewSessions,
 } from "./session-sections.js";
-import { useSessionSeen } from "./useSessionSeen";
 import { useLocalConversations } from "./useLocalConversations.js";
 import SessionContextMenu from "./SessionContextMenu";
 import { usePanelPresence } from "./usePanelPresence";
@@ -135,6 +141,14 @@ function useTitleReveal(sessionId, title, revealId) {
 
 const homeStarters = [
   {
+    id: "welcome-demo",
+    icon: "workflow",
+    tone: "green",
+    title: "一键体验",
+    description: "无需 API Key 或 GitHub，运行真实脚本，体验人工审批和产物交付。",
+    steps: ["运行脚本", "人工审批", "查看产物"],
+  },
+  {
     id: "quick-access",
     icon: "sparkles",
     tone: "blue",
@@ -187,6 +201,11 @@ function MessageTime({ messages, index }) {
     </time>
   );
 }
+function copiedReply(message, generation, live) {
+  const steps = activityForReply(message, generation, live);
+  const text = parseReply(message).message;
+  return hasTextSegments(steps) ? finalReply(text, steps) : text;
+}
 function ReplyHeading({ message, steps }) {
   return (
     <div className="reply-heading">
@@ -194,29 +213,80 @@ function ReplyHeading({ message, steps }) {
         steps={steps}
         startedAt={message.startedAt}
         finishedAt={message.createdAt}
+        interrupted={!!message.unfinished}
       />
     </div>
   );
 }
+function AssistantTurn({ message, steps, assets, projectId }) {
+  const reply = parseReply(message);
+  const answer = hasTextSegments(steps)
+    ? finalReply(reply.message, steps)
+    : message;
+  return (
+    <>
+      {hasTextSegments(steps) ? (
+        <ReplyTimeline
+          steps={steps}
+          startedAt={message.startedAt}
+          finishedAt={message.createdAt}
+        />
+      ) : (
+        <ReplyHeading message={message} steps={steps} />
+      )}
+      <div className="message-body">
+        <RichContent message={answer} assets={assets} projectId={projectId} />
+      </div>
+      {message.unfinished ? (
+        <p className="reply-stopped">本轮未完成 · {message.unfinished}</p>
+      ) : reply.stopped ? (
+        <p className="reply-stopped">已停止，以上是停止前的内容。</p>
+      ) : null}
+    </>
+  );
+}
 function LiveMessage({ live, generation, finished = false }) {
+  const steps = live.activity || [];
+  const textual = hasTextSegments(steps);
+  // A streamed paragraph followed by tool calls stays in the process above;
+  // only the paragraph still being written shows as the answer.
+  const answer =
+    live.draftMessage ||
+    (textual
+      ? finished || streamingAnswerOpen(steps)
+        ? finalReply(live.answer, steps)
+        : ""
+      : live.answer);
   return (
     <div
       className={`message assistant ${finished ? "interrupted" : "live"}`}
       aria-live="polite"
     >
-      <div className="reply-heading">
-        <ActivityTrace
-          steps={live.activity || []}
+      {textual ? (
+        <ReplyTimeline
+          steps={steps}
           startedAt={generation?.startedAt}
           finishedAt={generation?.updatedAt}
           live={!finished}
           interrupted={finished}
         />
-      </div>
-      {live.answer ? <RichContent message={live.answer} /> : null}
+      ) : (
+        <div className="reply-heading">
+          <ActivityTrace
+            steps={steps}
+            startedAt={generation?.startedAt}
+            finishedAt={generation?.updatedAt}
+            live={!finished}
+            interrupted={finished}
+          />
+        </div>
+      )}
+      {answer ? <RichContent message={answer} /> : null}
       {finished ? (
-        <p className="execution-empty">
-          {generation?.error || "本轮生成已结束。"}
+        <p className="reply-stopped">
+          {generation?.status === "failed" && generation?.error
+            ? generation.error
+            : "已停止，以上是停止前的内容。"}
         </p>
       ) : null}
     </div>
@@ -234,8 +304,8 @@ export default function App() {
   );
   const [sidebar, setSidebar] = useState(
       () => sidebarViewport().matchMedia("(min-width:1001px)").matches,
-    ),
-    [panel, setPanel] = useState(false),
+    );
+  const [panel, setPanel] = useState(false),
     [panelView, setPanelView] = useState("artifacts"),
     [artifactUnread, setArtifactUnread] = useState(0),
     [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth),
@@ -246,11 +316,10 @@ export default function App() {
     [issueContextOpen, setIssueContextOpen] = useState(false),
     [query, setQuery] = useState(""),
     [archived, setArchived] = useState(false),
+    [mineOnly, setMineOnly] = useState(false),
     [collapsedProjects, setCollapsedProjects] = useState({}),
     [expandedProjects, setExpandedProjects] = useState({}),
     [pinnedOpen, setPinnedOpen] = useState(true),
-    [attentionOpen, setAttentionOpen] = useState(true),
-    [attentionExpanded, setAttentionExpanded] = useState(false),
     [pins, setPins] = useState({}),
     [text, setText] = useState(""),
     [attachments, setAttachments] = useState([]),
@@ -353,7 +422,6 @@ export default function App() {
   const pinned =
     pins[chat.user?.id] ||
     readJSON(`agentflow.native-chat.pins.${chat.user?.id}`, []);
-  const { seen, markSeen } = useSessionSeen(chat.user?.id);
   const projectName =
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
@@ -396,6 +464,14 @@ export default function App() {
     });
   }
   function handleStarter(starter) {
+    if (starter.id === "welcome-demo") {
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: "agentflow-welcome-demo" }, location.origin);
+      } else {
+        location.href = "/#/sops";
+      }
+      return;
+    }
     if (starter.id === "quick-access") {
       setQuickAccessOpen(true);
       return;
@@ -476,16 +552,49 @@ export default function App() {
     }
     if (!chat.activeId || chat.session?.id !== chat.activeId) return;
     const entries = [...sidebarArtifacts, ...conversationRuns];
-    const added = previous.baselined
-      ? entries.filter((entry) => !previous.ids.has(entry.id)).length : 0;
-    if (panel) setArtifactUnread(0);
-    else if (added) setArtifactUnread((count) => count + added);
+    const addedEntries = previous.baselined
+      ? entries.filter((entry) => !previous.ids.has(entry.id)) : [];
+    const addedArtifacts = previous.baselined
+      ? sidebarArtifacts.filter(
+          (artifact) => isGeneratedArtifact(artifact) && !previous.ids.has(artifact.id),
+        ).length
+      : 0;
     previousArtifacts.current = {
       id: chat.activeId,
       ids: new Set(entries.map((entry) => entry.id)),
       baselined: true,
     };
-  }, [chat.activeId, chat.session?.id, artifactList, conversationRuns, panel]);
+    if (panel) {
+      setArtifactUnread(0);
+      return;
+    }
+    if (addedEntries.length)
+      setArtifactUnread((count) => count + addedEntries.length);
+    // A newly generated artifact reveals the drawer by itself so the user does
+    // not have to notice the badge. Restored artifacts (the first snapshot of
+    // an existing conversation), conversations without artifacts and layouts
+    // where the drawer would cover the answer keep the drawer as it was.
+    const revealArtifacts = shouldRevealArtifactPanel({
+      addedArtifacts,
+      panelOpen: panel,
+      viewportWidth: window.innerWidth || document.documentElement.clientWidth,
+      sidebarOpen: sidebar,
+      sidebarWidth,
+    });
+    if (revealArtifacts) {
+      setArtifactUnread(0);
+      setPanelView("artifacts");
+      setPanel(true);
+    }
+  }, [
+    chat.activeId,
+    chat.session?.id,
+    artifactList,
+    conversationRuns,
+    panel,
+    sidebar,
+    sidebarWidth,
+  ]);
   useEffect(() => {
     if (follow.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
@@ -580,6 +689,20 @@ export default function App() {
       // which loads that conversation's (empty) draft. Keep what was typed.
       setText((current) => current || text);
     }
+  }
+  function editQueued(item) {
+    chat.removeQueued(item.id);
+    setText((current) =>
+      current.trim() ? `${item.text}\n${current}` : item.text,
+    );
+    setAttachments((old) => [...(item.attachments || []), ...old]);
+    setReferences((old) => [
+      ...(item.references || []).filter(
+        (ref) => !old.some((o) => o.type === ref.type && o.id === ref.id),
+      ),
+      ...old,
+    ]);
+    input.current?.focus();
   }
   function composerPreviewURL(a) {
     return (
@@ -688,13 +811,6 @@ export default function App() {
       chat.setError("每轮最多引用 12 个对象。");
       return;
     }
-    if (
-      ref.type === "agent" &&
-      references.some((x) => x.type === "agent" && x.id !== ref.id)
-    ) {
-      chat.setError("一次咨询一个角色，请先移除已选角色。");
-      return;
-    }
     const value = insertMention(text, mention, ref);
     setText(value.text);
     setReferences((old) =>
@@ -710,17 +826,16 @@ export default function App() {
   }
   const sidebarSections = splitSidebarSections(chat.sessions, chat.projects, {
     archived,
+    mineOnly,
+    currentUserId: chat.user?.id,
     query,
     pinned,
-    seen,
-    currentProjectId: chat.projectId,
     activeId: chat.activeId,
     hideIdleRuns: true,
   });
   const searchGroups = groupSessionHistory(chat.sessions, chat.projects, {
     query,
     pinned,
-    currentProjectId: chat.projectId,
   });
   useEffect(() => {
     // A search result or project switch should reveal the selected conversation.
@@ -729,12 +844,6 @@ export default function App() {
       [chat.projectId]: false,
     }));
   }, [chat.activeId, chat.projectId]);
-  useEffect(() => {
-    // Reading the open conversation clears it from 进行中 · 待查看.
-    const active = chat.sessions.find((s) => s.id === chat.activeId);
-    if (active && document.visibilityState !== "hidden")
-      markSeen(active.id, active.updatedAt);
-  }, [chat.activeId, chat.sessions, markSeen]);
   const messages = chat.session?.messages || [];
   const conversationStarted = Boolean(
     chat.activeId && chat.session?.id === chat.activeId &&
@@ -838,12 +947,16 @@ export default function App() {
           }
           setSessionContext(null);
           chat.open(s.id);
-          markSeen(s.id, s.updatedAt);
           setQuery("");
           if (innerWidth < 850) setSidebar(false);
         }}
       >
         <span>{s.displayTitle || s.title || "新对话"}</span>
+        {scheduledSession(s) ? (
+          <span className="session-project-tag session-source-tag" title="定时任务产生的会话">
+            定时
+          </span>
+        ) : null}
         {options.projectName ? (
           <span className="session-project-tag">{options.projectName}</span>
         ) : null}
@@ -856,9 +969,8 @@ export default function App() {
             {runState.label}
           </span>
         ) : null}
-        {options.meta ? <span className="session-meta">{options.meta}</span> : null}
-        {options.plain ? null : <Participants session={s} users={chat.users} compact />}
-        {!options.plain && pinned.includes(s.id) ? (
+        <Participants session={s} users={chat.users} compact />
+        {pinned.includes(s.id) ? (
           <HarnessIcon name="pin" size={12} className="pin-mark" />
         ) : null}
         {status.icon ? (
@@ -1169,25 +1281,39 @@ export default function App() {
                 <Menu label="筛选会话" className="sidebar-filter-menu" onClose={closeMenu}>
                   <button
                     role="menuitemradio"
-                    aria-checked={!archived}
+                    aria-checked={!archived && !mineOnly}
                     onClick={() => {
                       setArchived(false);
+                      setMineOnly(false);
                       closeMenu();
                     }}
                   >
                     最近的会话
-                    {!archived ? <HarnessIcon name="check" size={14} /> : null}
+                    {!archived && !mineOnly ? <HarnessIcon name="check" size={14} /> : null}
                   </button>
                   <button
                     role="menuitemradio"
                     aria-checked={archived}
                     onClick={() => {
                       setArchived(true);
+                      setMineOnly(false);
                       closeMenu();
                     }}
                   >
                     已归档
                     {archived ? <HarnessIcon name="check" size={14} /> : null}
+                  </button>
+                  <button
+                    role="menuitemradio"
+                    aria-checked={mineOnly}
+                    onClick={() => {
+                      setArchived(false);
+                      setMineOnly(true);
+                      closeMenu();
+                    }}
+                  >
+                    仅我参与的对话
+                    {mineOnly ? <HarnessIcon name="check" size={14} /> : null}
                   </button>
                 </Menu>
               ) : null}
@@ -1212,36 +1338,6 @@ export default function App() {
                     ),
                   }),
                 )}
-              </SidebarSection>
-            ) : null}
-            {!archived && sidebarSections.attention.length ? (
-              <SidebarSection
-                className="sidebar-attention"
-                title="进行中 · 待查看"
-                dot
-                count={sidebarSections.attention.length}
-                expanded={!!query || attentionOpen}
-                onToggle={() => setAttentionOpen((open) => !open)}
-              >
-                {(attentionExpanded || !!query
-                  ? sidebarSections.attention
-                  : sidebarSections.attention.slice(0, ATTENTION_LIMIT)
-                ).map((entry) =>
-                  renderSession(entry.session, {
-                    projectName: entry.projectName,
-                    meta: attentionMeta(entry),
-                    plain: true,
-                  }),
-                )}
-                {!attentionExpanded && !query && sidebarSections.attentionHidden ? (
-                  <button
-                    type="button"
-                    className="sidebar-more"
-                    onClick={() => setAttentionExpanded(true)}
-                  >
-                    查看全部 {sidebarSections.attention.length} 条
-                  </button>
-                ) : null}
               </SidebarSection>
             ) : null}
             {sidebarSections.groups.length ? (
@@ -1311,14 +1407,15 @@ export default function App() {
               </>
             ) : null}
             {!sidebarSections.pinnedSessions.length &&
-            !sidebarSections.attention.length &&
             !sidebarSections.groups.length ? (
               <div className="empty-session-list">
                 <p className="end-label">
                   {chat.ready
                     ? archived
                       ? "还没有归档会话"
-                      : "还没有会话"
+                      : mineOnly
+                        ? "还没有你参与的会话"
+                        : "还没有会话"
                     : "正在连接…"}
                 </p>
               </div>
@@ -1360,17 +1457,19 @@ export default function App() {
                     data-message-index={index}
                   >
                     {message.role === "assistant" ? (
-                      <ReplyHeading
+                      <AssistantTurn
                         message={message}
                         steps={activityForReply(
                           message,
                           chat.generation,
                           chat.live.activity,
                         )}
+                        assets={artifactList}
+                        projectId={chat.session?.projectId}
                       />
                     ) : null}
+                    {message.role === "user" ? (
                     <div className="message-body">
-                      {message.role === "user" ? (
                         <>
                           <div className="message-author">
                             <Avatar
@@ -1437,14 +1536,8 @@ export default function App() {
                             />
                           </div>
                         </>
-                      ) : (
-                        <RichContent
-                          message={message}
-                          assets={artifactList}
-                          projectId={chat.session?.projectId}
-                        />
-                      )}
                     </div>
+                    ) : null}
                     {message.attachments?.length ? (
                       <div className="message-attachments">
                         {message.attachments.map((a) => (
@@ -1475,7 +1568,11 @@ export default function App() {
                         <div className="message-actions">
                           <MessageTime messages={messages} index={index} />
                           <CopyButton
-                            value={parseReply(message).message}
+                            value={copiedReply(
+                              message,
+                              chat.generation,
+                              chat.live.activity,
+                            )}
                             label="复制回复"
                           />
                           <MessageInfo message={message} />
@@ -1490,8 +1587,10 @@ export default function App() {
               {chat.busy ? (
                 <LiveMessage live={chat.live} generation={chat.generation} />
               ) : chat.generation &&
+                !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
-                chat.live.activity?.length ? (
+                !messages.at(-1)?.unfinished &&
+                (chat.live.activity?.length || chat.live.answer) ? (
                 <LiveMessage
                   live={chat.live}
                   generation={chat.generation}
@@ -1585,10 +1684,10 @@ export default function App() {
                 <div className="composer-context">
                   <span
                     className="context-pill host-status"
-                    title="对话在 AgentFlow 云端运行"
+                    title="对话在 LoopForge 云端运行"
                   >
                     <HarnessIcon name="server" size={13} interactive={false} />
-                    <span>AgentFlow 云端</span>
+                    <span>LoopForge 云端</span>
                     <i
                       className={`connection-dot ${chat.ready ? "online" : ""}`}
                     />
@@ -1635,6 +1734,17 @@ export default function App() {
                   {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
                 </div>
                 ) : null}
+                <QueuedMessages
+                  items={chat.queue}
+                  steering={chat.steering}
+                  held={chat.queueHeld}
+                  busy={chat.busy}
+                  readOnly={chat.readOnly}
+                  onEdit={editQueued}
+                  onRemove={chat.removeQueued}
+                  onResume={chat.resumeQueue}
+                  onSendNow={chat.sendNow}
+                />
                 <div className="composer">
                   <MentionPicker
                     ref={mentionPicker}
@@ -1910,6 +2020,7 @@ export default function App() {
                       <button
                         className="send-button stop"
                         aria-label="停止生成"
+                        title="停止并保留已经生成的内容；排队的消息会暂停发送"
                         disabled={
                           chat.submitting || chat.generation?.status !== "running"
                         }
@@ -1917,12 +2028,15 @@ export default function App() {
                       >
                         <HarnessIcon name="chat-stop" size={14} />
                       </button>
-                    ) : (
+                    ) : null}
+                    {!chat.busy || text.trim() || attachments.length ? (
                       <button
                         className="send-button"
-                        aria-label="发送消息"
+                        aria-label={chat.busy ? "排队发送" : "发送消息"}
+                        title={chat.busy ? "当前回复结束后自动发送" : undefined}
                         disabled={
                           !chat.ready ||
+                          chat.submitting ||
                           (chat.activeId && chat.session?.id !== chat.activeId) ||
                           (!text.trim() && !attachments.length) ||
                           uploading
@@ -1931,7 +2045,7 @@ export default function App() {
                       >
                         <HarnessIcon name="chat-send" size={20} />
                       </button>
-                    )}
+                    ) : null}
                   </footer>
                 </div>
               </div>
@@ -2139,8 +2253,8 @@ export default function App() {
             </label>
           ) : dialog.type === "delete" ? (
             <p>
-              删除“{dialog.session.title}”的聊天记录？已保存的 SOP
-              和运行记录会保留。
+              删除“{dialog.session.title}”的聊天记录？本对话里还没提交 MR
+              的需求单会一并删除，已提交 MR 的需求和已保存的 SOP 会保留。
             </p>
           ) : dialog.type === "edit" ? (
             <>

@@ -32,7 +32,12 @@ func workbenchFixture(t *testing.T) (*assistantHandlers, domain.User) {
 	if err = st.PutProject(domain.Project{ID: "workbench", Name: "Workbench", OwnerID: u.ID}); err != nil {
 		t.Fatal(err)
 	}
-	return &assistantHandlers{deps: &deps{repo: st}}, u
+	// Title summaries run beside a new chat and would otherwise call the same
+	// CodeBuddy binary, stealing scripted replies and inflight slots.
+	h := &assistantHandlers{deps: &deps{repo: st}, titleSummary: func(context.Context, domain.User, string) (string, error) {
+		return "", context.Canceled
+	}}
+	return h, u
 }
 func workbenchContext(u domain.User, method, path string, body *bytes.Buffer) (*gin.Context, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
@@ -125,28 +130,25 @@ func TestWorkbenchPlainAnswerDoesNotRetrySubmit(t *testing.T) {
 		})
 	}
 }
-func TestWorkbenchReferencesAreScopedAndConsultationCannotWrite(t *testing.T) {
+func TestWorkbenchReferencesAreScopedAndRolesBecomeSubagents(t *testing.T) {
 	h, u := workbenchFixture(t)
-	h.repo.PutAgent(domain.AgentDefinition{ID: "dev", Name: "开发", ProjectID: "workbench", Instructions: "分析设计"})
+	h.repo.PutAgent(domain.AgentDefinition{ID: "dev", Name: "开发", ProjectID: "workbench", Prompt: "分析设计"})
+	h.repo.PutAgent(domain.AgentDefinition{ID: "qa", Name: "测试", ProjectID: "workbench", Prompt: "补测试"})
 	h.repo.PutProject(domain.Project{ID: "private", Name: "Private", OwnerID: 999})
 	h.repo.PutIssue(domain.Issue{ID: "foreign", Title: "Private", ProjectID: "private"})
 	c, _ := workbenchContext(u, "POST", "/", bytes.NewBuffer(nil))
-	req := assistantRequest{ProjectID: "workbench", ApprovalMode: "auto", Messages: []assistantMessage{{Role: "user", Content: "分析", References: []domain.AssistantReference{{Type: "agent", ID: "dev", Name: "伪造名称"}}}}}
+	req := assistantRequest{ProjectID: "workbench", ApprovalMode: "auto", Messages: []assistantMessage{
+		{Role: "user", Content: "先测", References: []domain.AssistantReference{{Type: "agent", ID: "qa"}}},
+		{Role: "assistant", Content: "好"},
+		{Role: "user", Content: "分析", References: []domain.AssistantReference{{Type: "agent", ID: "dev", Name: "伪造名称"}, {Type: "agent", ID: "qa"}}},
+	}}
 	if err := h.prepareWorkbenchContext(c, &req, u); err != nil {
 		t.Fatal(err)
 	}
-	if !req.consultation || !strings.Contains(req.contextText, "分析设计") || req.Messages[0].References[0].Name != "开发" {
-		t.Fatalf("role context missing: %+v", req)
+	if len(req.roles) != 2 || !strings.Contains(req.contextText, "subagent_type=role-dev") || !strings.Contains(req.contextText, "subagent_type=role-qa") || req.Messages[2].References[0].Name != "开发" {
+		t.Fatalf("role subagents missing: %+v", req.roles)
 	}
-	mode := workbenchExecMode("auto", req.consultation)
-	if assistantPlatformToolAllowed(mode, "issues_save") || !assistantPlatformToolAllowed(mode, "issues_list") {
-		t.Fatal("role must only have read access")
-	}
-	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", ExecMode: mode, Final: make(chan AgentTerminalResult, 1)}
-	result, err := (&agentToolGateway{deps: h.deps}).callTerminal(s, submitAssistantReplyTool, json.RawMessage(`{"message":"改需求","drafts":[{"tool":"issues_save","body":{"id":"a","title":"需求","projectId":"workbench"}}]}`))
-	if err != nil || result["isError"] != true || s.finished() {
-		t.Fatalf("consultation accepted a draft: %v %v", result, err)
-	}
+	req.Messages = req.Messages[2:]
 	req.Messages[0].References = []domain.AssistantReference{{Type: "issue", ID: "foreign"}}
 	if err := h.prepareWorkbenchContext(c, &req, u); err == nil {
 		t.Fatal("cross-project reference allowed")

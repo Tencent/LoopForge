@@ -464,21 +464,53 @@ type AnalyticsRunTrace struct {
 	FinishedAt          time.Time `json:"finishedAt,omitempty"`
 }
 
+// AnalyticsActivity counts persisted conversations, created requirements and
+// top-level requirement SOP executions independently of token/run coverage.
+type AnalyticsActivity struct {
+	Sessions              int `json:"sessions"`
+	CollaborativeSessions int `json:"collaborativeSessions"`
+	Requirements          int `json:"requirements"`
+	SOPRuns               int `json:"sopRuns"`
+	// Usage is counted by reply time, independently of session creation time.
+	SessionUsage       AnalyticsSessionUsage `json:"sessionUsage"`
+	CollaborativeUsage AnalyticsSessionUsage `json:"collaborativeUsage"`
+}
+
+// CollaborativeUsage is a subset of SessionUsage, never an additional charge.
+type AnalyticsSessionUsage struct {
+	Tokens           int64 `json:"tokens"`
+	InputTokens      int64 `json:"inputTokens"`
+	OutputTokens     int64 `json:"outputTokens"`
+	CacheReadTokens  int64 `json:"cacheReadTokens"`
+	CacheWriteTokens int64 `json:"cacheWriteTokens"`
+	ReportedReplies  int   `json:"reportedReplies"`
+	MissingReplies   int   `json:"missingReplies"`
+	// UndatedReplies only participate in cumulative usage, never date buckets.
+	UndatedReplies int `json:"undatedReplies"`
+}
+
+type AnalyticsActivityPoint struct {
+	Date string `json:"date"`
+	AnalyticsActivity
+}
+
 type AnalyticsSnapshot struct {
-	DataErrors []string                 `json:"dataErrors,omitempty"`
-	Filter     AnalyticsFilter          `json:"filter"`
-	Summary    AnalyticsSummary         `json:"summary"`
-	Trend      []AnalyticsTrendPoint    `json:"trend"`
-	Workflows  []AnalyticsBreakdown     `json:"workflows"`
-	Agents     []AnalyticsBreakdown     `json:"agents"`
-	Executors  []AnalyticsBreakdown     `json:"executors"`
-	Models     []AnalyticsBreakdown     `json:"models"`
-	Nodes      []AnalyticsBreakdown     `json:"nodes"`
-	Failures   []AnalyticsFailure       `json:"failures"`
-	Coverage   AnalyticsCoverage        `json:"coverage"`
-	Deliveries []AnalyticsDelivery      `json:"deliveries,omitempty"`
-	Delivery   AnalyticsDeliverySummary `json:"delivery"`
-	MRMerges   []AnalyticsMRMerge       `json:"mrMerges"`
+	Activity      AnalyticsActivity        `json:"activity"`
+	ActivityTrend []AnalyticsActivityPoint `json:"activityTrend"`
+	DataErrors    []string                 `json:"dataErrors,omitempty"`
+	Filter        AnalyticsFilter          `json:"filter"`
+	Summary       AnalyticsSummary         `json:"summary"`
+	Trend         []AnalyticsTrendPoint    `json:"trend"`
+	Workflows     []AnalyticsBreakdown     `json:"workflows"`
+	Agents        []AnalyticsBreakdown     `json:"agents"`
+	Executors     []AnalyticsBreakdown     `json:"executors"`
+	Models        []AnalyticsBreakdown     `json:"models"`
+	Nodes         []AnalyticsBreakdown     `json:"nodes"`
+	Failures      []AnalyticsFailure       `json:"failures"`
+	Coverage      AnalyticsCoverage        `json:"coverage"`
+	Deliveries    []AnalyticsDelivery      `json:"deliveries,omitempty"`
+	Delivery      AnalyticsDeliverySummary `json:"delivery"`
+	MRMerges      []AnalyticsMRMerge       `json:"mrMerges"`
 
 	// IssueSources 为需求类型分布（local/gongfeng/tapd）。
 	IssueSources []AnalyticsBreakdown `json:"issueSources,omitempty"`

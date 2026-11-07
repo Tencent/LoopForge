@@ -90,9 +90,10 @@ func authedBase(token string) string {
 }
 
 // SandboxEnv is the git environment for a child process: no interactive
-// prompts, plus Gongfeng URL rewrites carrying the token when one is set.
+// prompts, no command-running remote helpers, plus Gongfeng URL rewrites
+// carrying the token when one is set.
 func SandboxEnv(token string) map[string]string {
-	extra := map[string]string{"GIT_TERMINAL_PROMPT": "0"}
+	extra := map[string]string{"GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": AllowedProtocols}
 	user, secret := SplitToken(token)
 	if secret == "" {
 		return extra
@@ -121,6 +122,8 @@ func Env(token string) []string {
 			strings.HasPrefix(kv, "GIT_CONFIG_VALUE_"),
 			strings.HasPrefix(kv, "GIT_ASKPASS="),
 			strings.HasPrefix(kv, "SSH_ASKPASS="),
+			strings.HasPrefix(kv, "GIT_ALLOW_PROTOCOL="),
+			strings.HasPrefix(kv, "GIT_PROTOCOL_FROM_USER="),
 			strings.HasPrefix(kv, gitHTTPUserEnv+"="),
 			strings.HasPrefix(kv, gitHTTPPassEnv+"="):
 			continue

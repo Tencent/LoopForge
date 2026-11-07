@@ -32,6 +32,8 @@ global.renderScheduleJobs=()=>{};
 global.api=async (path,options)=>{saved=JSON.parse(options.body); return {...saved,id:'job'}};
 global.notificationPayload=()=>[];
 global.scheduleNotificationBindings=[];
+global.scheduleModalVersion=0;
+global.closeScheduleJobModal=()=>{};
 eval(code.slice(code.indexOf('async function saveScheduleJob('),code.indexOf('function scheduleJobOutcomeToast(')));
 async function submit(value) {
   saved=undefined; error=undefined; form.elements.maxDispatch.value=value;

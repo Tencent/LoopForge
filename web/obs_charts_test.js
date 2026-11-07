@@ -266,18 +266,6 @@ function fireVisible(ctx) {
 
   const owners = ctx.obsOwnersOption([{ name: 'u', delivered: 2, active: 1, undelivered: 3 }], opts);
   same(owners.series.map(s => s.data[0]), [2, 1, 3]);
-
-  const sh = { gongfeng: { mergedMonths: { '2026-01': 1, '2026-02': 1 }, monthlyLegacy: { '2026-01': 3, '2026-02': 1 }, monthlyMonorepo: { '2026-01': 1, '2026-02': 4 },
-    weeklyMerged: Object.fromEntries(Array.from({ length: 14 }, (_, i) => [`2026-W${String(i + 1).padStart(2, '0')}`, 1])), weeklyLegacy: {}, weeklyMonorepo: { '2026-W14': 6 } } };
-  const monthly = ctx.obsSkillhubMonthlyOption(sh, opts);
-  same(monthly.series.map(s => s.data), [[3, 1], [1, 4]]);
-  assert.equal(monthly.series[1].label.formatter({ dataIndex: 1 }), 5, 'bar top shows stack total');
-  const weekly = ctx.obsSkillhubWeeklyOption(sh, opts);
-  assert.equal(weekly.xAxis.data.length, 12);
-  same(weekly.series[0].markArea.data[0].map(x => x.xAxis), ['W11', 'W14']);
-  const deploy = ctx.obsSkillhubDeployOption({ dailySample: { labels: ['a', 'b'], backend: [1, 2], frontend: [0, 1], e2e: [3, 0] } }, opts);
-  assert.equal(deploy.series.length, 3);
-  assert.equal(ctx.obsSkillhubDeployOption({}, { theme, reduced: true }).animation, false);
 })();
 
 // ---------- 研发效能 option ----------

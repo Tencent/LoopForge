@@ -1,13 +1,12 @@
 package domain
 
 import (
-	"math"
 	"regexp"
 	"strings"
 )
 
 const AnalyticsUSDToCNY = 7.0
-const AnalyticsPricingVersion = "public-standard-2026-11-02"
+const AnalyticsPricingVersion = "public-standard-2026-11-05"
 
 // TokenPrice is the published standard short-context price per million tokens.
 // Currency identifies the native tariff; RMB rates are used directly rather
@@ -60,6 +59,7 @@ var publicTokenPrices = map[string]TokenPrice{
 	"glm-5.3-flash":          {"CNY", .8, 2.8, .23, .8},
 	"glm-5.3-flashx":         {"CNY", 2, 7, .57, 2},
 	"glm-5v-turbo":           {"CNY", 5, 22, 1.2, 5},
+	"kimi-k3.1-pro":          {"CNY", 13, 68, 1.3, 13},
 	"kimi-k3":                {"CNY", 20, 100, 2, 20},
 	"kimi-k2.8-preview":      {"CNY", 6.5, 27, 1.7, 6.5},
 	"kimi-k2.7-code":         {"CNY", 6.5, 27, 1.3, 6.5},
@@ -67,6 +67,7 @@ var publicTokenPrices = map[string]TokenPrice{
 	"minimax-m3":             {"CNY", 2.1, 8.4, .42, 2.1},
 	"minimax-m2.7":           {"CNY", 2.1, 8.4, .42, 2.1},
 	"minimax-m3.1-flash":     {"CNY", 1, 4, .1, 1},
+	"mimo-v2.6-pro":          {"CNY", 3, 6, .025, 3},
 	"qwen3-coder-plus":       {"CNY", 4, 16, .4, 5},
 	"qwen3-coder-flash":      {"CNY", 1, 4, .1, 1.25},
 	"qwen3.8-max":            {"CNY", 12, 36, 1.2, 15},
@@ -76,9 +77,12 @@ var publicTokenPrices = map[string]TokenPrice{
 
 var pricingSnapshotSuffix = regexp.MustCompile(`-(?:\d{8}|\d{4}-\d{2}-\d{2})$`)
 var claudeVersionDots = regexp.MustCompile(`(claude-(?:opus|sonnet|haiku|fable)-\d+)\.(\d+)`)
+var hyVersionedModel = regexp.MustCompile(`^hy\d`)
 
 func pricingModel(model string) string {
 	model = strings.ToLower(strings.TrimSpace(model))
+	// custom-local:<id> is the user's own key against the vendor's public API.
+	model = strings.TrimPrefix(model, "custom-local:")
 	model = strings.TrimSuffix(strings.TrimSuffix(model, "-internal-ioa"), "-ioa")
 	model = strings.TrimSuffix(model, "-1m")
 	model = claudeVersionDots.ReplaceAllString(model, "$1-$2")
@@ -96,7 +100,8 @@ func pricingModel(model string) string {
 
 func IsHYModel(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
-	return model == "hy" || strings.HasPrefix(model, "hy-") || strings.HasPrefix(model, "hy.") || strings.HasPrefix(model, "hunyuan")
+	// hy3-ioa / hy4std / hy4-preview-ioa are CodeBuddy's versioned Hy ids.
+	return model == "hy" || strings.HasPrefix(model, "hy-") || strings.HasPrefix(model, "hy.") || hyVersionedModel.MatchString(model) || strings.HasPrefix(model, "hunyuan")
 }
 
 // AnalyticsPricedUsage never mutates stored billing facts. CostUSD in the
@@ -106,9 +111,8 @@ func AnalyticsPricedUsage(model string, usage TokenUsage, inclusiveInput bool) T
 	out := usage
 	out.CostUSD, out.CostStatus = 0, "unknown"
 	if IsHYModel(model) {
-		if usage.CostUSD >= 0 && !math.IsNaN(usage.CostUSD) && !math.IsInf(usage.CostUSD, 0) && (usage.CostStatus == "reported" || usage.CostUSD > 0 && usage.CostStatus != "unknown") {
-			out.CostUSD, out.CostStatus = usage.CostUSD, "reported"
-		}
+		// Hy / Hunyuan models are free on the platform; adapter amounts are ignored.
+		out.CostUSD, out.CostStatus = 0, "estimated"
 		return out
 	}
 	if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 || usage.ReasoningTokens < 0 {

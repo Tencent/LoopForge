@@ -54,7 +54,7 @@ func TestLiveImportTAPDStoryWithExplicitCredentials(t *testing.T) {
 	if err := st.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-70-project-assistant-test", Name: "TAPD MCP", MarketID: "70",
 		Scope: "project", ProjectID: assistantAcceptanceProjectID, Transport: "http",
-		URL: "https://mcpgw.knot.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
+		URL: "https://mcp-gateway.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestDisposableStudioForBrowserIT(t *testing.T) {
 		if err := st.PutMCPServer(domain.MCPServerDefinition{
 			ID: "mcp-70-project-assistant-test", Name: "TAPD MCP", MarketID: "70",
 			Scope: "project", ProjectID: assistantAcceptanceProjectID, Transport: "http",
-			URL: "https://mcpgw.knot.example.com/tapd/", Headers: headers, TimeoutSec: 60,
+			URL: "https://mcp-gateway.example.com/tapd/", Headers: headers, TimeoutSec: 60,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +175,7 @@ func TestMySQLImportTAPDAndSanitizeClarifyOptions(t *testing.T) {
 	if err := st.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-70-project-" + projectID, Name: "TAPD MCP", MarketID: "70",
 		Scope: "project", ProjectID: projectID, Transport: "http",
-		URL: "https://mcpgw.knot.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
+		URL: "https://mcp-gateway.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestSeedLocalClarifyPreview(t *testing.T) {
 	}
 	user, _ = st.UserByLoginName("example-maintainer")
 	if err := st.PutProject(domain.Project{
-		ID: "dp", Key: "DP", Name: "DNSPod", Color: "#536dfe", OwnerID: user.ID,
+		ID: "dp", Key: "DP", Name: "DemoDNS", Color: "#536dfe", OwnerID: user.ID,
 		Members: []domain.ProjectMember{{UserID: user.ID, Role: "maintainer"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -281,7 +281,7 @@ func TestSeedLocalClarifyPreview(t *testing.T) {
 	if err := st.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-70-project-dp", Name: "TAPD MCP", MarketID: "70",
 		Scope: "project", ProjectID: "dp", Transport: "http",
-		URL: "https://mcpgw.knot.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
+		URL: "https://mcp-gateway.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
 	}); err != nil {
 		t.Fatal(err)
 	}

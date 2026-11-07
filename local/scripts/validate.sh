@@ -26,7 +26,7 @@ if rg --hidden -n -i \
   -e 'woa\.com' \
   -e '(^|[^[:alnum:]])oa\.com' \
   -e 'git\.woa' \
-  -e 'iwiki' \
+  -e 'i[w]iki' \
   -e 'tapd' \
   -e 'internal\.tencentcloudapi' \
   -e 'cls\.internal\.tencentcloudapi\.com' \

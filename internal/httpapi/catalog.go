@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -199,6 +200,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	}
 	if v.DefaultBranch == "" {
 		v.DefaultBranch = "master"
+	}
+	if v.CloneURL != "" {
+		if err := gitwork.ValidateRemoteURL(v.CloneURL, !authRequired() || h.isPlatformAdmin(c.Request)); err != nil {
+			c.JSON(400, map[string]string{"error": "cloneUrl 无效：" + err.Error()})
+			return
+		}
 	}
 	if err := h.repo.PutRepository(v); err != nil {
 		respond(c, err)

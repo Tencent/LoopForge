@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: AgentFlow Platform REST API
+  title: LoopForge Platform REST API
   version: 1.0.0
   description: |
-    Public control-plane API exposed by AgentFlow Studio. Signed login cookies and
+    Public control-plane API exposed by LoopForge. Signed login cookies and
     user-owned Bearer tokens authenticate Studio, REST API, and MCP access. Legacy
     deployment-level Basic authentication remains available. Worker signals,
     OTLP ingestion, run leases, and sandbox-reclamation endpoints are intentionally
@@ -499,7 +499,7 @@ paths:
     get:
       tags: [System]
       operationId: getEmployeePhoto
-      summary: Fetch employee avatar photo from TOF authentication service
+      summary: Fetch a user avatar from the configured SSO photo service
       parameters:
         - name: spec
           in: path
@@ -509,7 +509,7 @@ paths:
         - name: username
           in: path
           required: true
-          description: Employee English login name (with or without .png)
+          description: User login name (with or without .png)
           schema: {type: string}
       responses:
         "200":
@@ -525,7 +525,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "502":
-          description: TOF photo gateway error
+          description: SSO photo service error
   /api/auth/tokens:
     get:
       tags: [System]
@@ -1855,6 +1855,18 @@ paths:
           $ref: "#/components/responses/AssetList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/executor-models:
+    get:
+      tags: [Assets]
+      operationId: listExecutorModels
+      description: Returns, per built-in CLI (codebuddy, codex, claude), the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
+      responses:
+        "200":
+          description: Model catalog keyed by CLI id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenObject"
   /api/dockerfiles:
     get:
       tags: [Assets]
@@ -2173,76 +2185,6 @@ paths:
                 $ref: "#/components/schemas/OpenObject"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/deployment-metrics:
-    get:
-      tags: [Analytics]
-      operationId: getDeploymentMetrics
-      summary: Query test-environment deployment duration (optional legacy integration)
-      description: Optional legacy CI integration that is not configured in the public edition. Uses a fixed pipeline and the signed-in user's platform credential. Loads all branches by default; branch is an optional filter. Other repositories are rejected.
-      parameters:
-        - {name: projectId, in: query, required: true, schema: {type: string}}
-        - {name: repositoryId, in: query, required: true, schema: {type: string}}
-        - {name: branch, in: query, required: false, description: Optional branch filter; omit to load all branches, schema: {type: string}}
-        - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
-      responses:
-        "200":
-          description: Normalized deployment metrics and build records
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [projectId, repositoryId, branch, pipelineProjectId, pipelineId, queriedAt, summary, records]
-                properties:
-                  projectId: {type: string}
-                  repositoryId: {type: string}
-                  repositoryName: {type: string}
-                  branch: {type: string}
-                  pipelineProjectId: {type: integer}
-                  pipelineId: {type: integer}
-                  pipelineUrl: {type: string, format: uri}
-                  queriedAt: {type: string, format: date-time}
-                  summary:
-                    type: object
-                    properties:
-                      total: {type: integer}
-                      succeeded: {type: integer}
-                      failed: {type: integer}
-                      running: {type: integer}
-                      successRate: {type: number}
-                      deployments7d: {type: integer}
-                      average7dDurationMs: {type: integer, format: int64}
-                      averageDurationMs: {type: integer, format: int64}
-                      p50DurationMs: {type: integer, format: int64}
-                      p90DurationMs: {type: integer, format: int64}
-                      latestDurationMs: {type: integer, format: int64}
-                  records:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id: {type: string}
-                        runNumber: {type: integer, format: int64}
-                        status: {type: integer}
-                        statusLabel: {type: string}
-                        branch: {type: string}
-                        revision: {type: string}
-                        starter: {type: string}
-                        triggerType: {type: string}
-                        comment: {type: string}
-                        startedAt: {type: string, format: date-time}
-                        finishedAt: {type: string, format: date-time}
-                        durationMs: {type: integer, format: int64}
-                        url: {type: string, format: uri}
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "412":
-          description: QCI MCP or personal credential is not configured
-        "422":
-          description: The selected repository is not the configured pipeline repository
-        "502":
-          description: CodingCI query failed or returned an unsupported payload
   /api/runs:
     get:
       tags: [Runs]
@@ -3373,6 +3315,63 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/shared-schedule-tasks:
+    get:
+      tags: [Scheduling]
+      operationId: listSharedScheduleTasks
+      summary: List latest published shared AI task versions
+      responses:
+        "200":
+          description: Latest immutable definition for each shared task, without credentials or project notifications
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SharedScheduleVersion"}}
+  /api/shared-schedule-tasks/{id}/versions:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Scheduling]
+      operationId: listSharedScheduleVersions
+      summary: List immutable versions in descending order
+      responses:
+        "200":
+          description: Published versions, retained while subscriptions can reference them
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/SharedScheduleVersion"}}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/schedule-jobs/{id}/publish:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Scheduling]
+      operationId: publishSharedScheduleVersion
+      summary: Publish a credential-free version from an independent AI task
+      description: Requires source project write access. Trigger configs and subscriptions cannot be republished. Publishing never changes existing subscriptions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseVersion]
+              properties:
+                name: {type: string, maxLength: 255}
+                description: {type: string, maxLength: 2000}
+                prompt: {type: string, description: 'Template with {{params.name}} placeholders; defaults to source task prompt'}
+                parameters: {type: array, maxItems: 20, items: {$ref: "#/components/schemas/ScheduleParameter"}}
+                changeNote: {type: string, maxLength: 1000}
+                baseVersion: {type: integer, minimum: 0, description: '0 for first publication, otherwise the latest published version'}
+      responses:
+        "201":
+          description: Newly published immutable version
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SharedScheduleVersion"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
 components:
   securitySchemes:
     bearerAuth:
@@ -4385,8 +4384,9 @@ components:
           type: integer
         description:
           type: string
-        instructions:
+        prompt:
           type: string
+          description: The role's single free-form brief (who it is, what to do, order, limits). Runtime placeholders such as {{input}}, {{repository}}, {{artifacts}}, {{feedback}} and {{upstream}} are substituted per run; deliverable, gate and retry sections are added from artifactOutputs, verification and node policy.
         rules:
           type: array
           items:
@@ -4960,6 +4960,9 @@ components:
       type: object
       required: [name]
       properties:
+        sharedTaskId: {type: string, description: Published shared AI task id; requires skipDispatch=true and a pinned version}
+        sharedTaskVersion: {type: integer, minimum: 1, description: Explicit immutable version; changing it is a manual upgrade}
+        parameterValues: {type: object, additionalProperties: {type: string}, description: Project-local parameter values; validated against the pinned version}
         notifications: {type: array, maxItems: 3, items: {$ref: "#/components/schemas/NotificationBinding"}, description: Optional Bot notifications for execution success/failure}
         id:
           type: string
@@ -4995,7 +4998,7 @@ components:
           description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.
         assistantPrompt:
           type: string
-          description: User-written CodeBuddy prompt executed at schedule time. Required for AI jobs (skipDispatch=true); cleared on trigger jobs.
+          description: User-written CodeBuddy prompt executed at schedule time. Required for independent AI jobs; subscriptions resolve their pinned shared version instead. Cleared on trigger jobs.
         assistantModel:
           type: string
           description: CodeBuddy model id from GET /api/assistant/models.
@@ -5229,3 +5232,30 @@ components:
           type: boolean
         storage:
           $ref: "#/components/schemas/OpenObject"
+
+    ScheduleParameter:
+      type: object
+      required: [name, label, type]
+      properties:
+        name: {type: string, pattern: '^[a-zA-Z][a-zA-Z0-9_]{0,31}$'}
+        label: {type: string}
+        type: {type: string, enum: [string, integer, number, boolean]}
+        required: {type: boolean}
+        default: {type: string}
+    SharedScheduleVersion:
+      type: object
+      properties:
+        id: {type: string}
+        version: {type: integer, minimum: 1}
+        sourceProjectId: {type: string}
+        sourceProjectName: {type: string}
+        sourceJobId: {type: string}
+        name: {type: string}
+        description: {type: string}
+        prompt: {type: string}
+        model: {type: string}
+        cron: {type: string}
+        intervalSec: {type: integer}
+        parameters: {type: array, items: {$ref: "#/components/schemas/ScheduleParameter"}}
+        changeNote: {type: string}
+        createdAt: {type: string, format: date-time}

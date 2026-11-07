@@ -29,7 +29,7 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		return "", err
 	}
 	if result, handled, err := provider.RunBuiltin(ctx, agent, prompt, sink); handled {
-		if id := strings.TrimSpace(options.ResumeSessionID); id != "" && strings.Contains(agent.Instructions, "[[mock:session=lost]]") {
+		if id := strings.TrimSpace(options.ResumeSessionID); id != "" && strings.Contains(agent.Prompt, "[[mock:session=lost]]") {
 			return fmt.Sprintf("{\"type\":\"error\",\"error\":\"No conversation found with session ID: %s\"}", id), nil
 		}
 		if err == nil && mockShouldSubmitGate(sb.Workspace(), agent, options) {
@@ -215,7 +215,7 @@ func mockShouldSubmitGate(workspace string, agent domain.AgentDefinition, option
 	if strings.TrimSpace(options.GateResultPath) == "" {
 		return false
 	}
-	if strings.Contains(agent.Instructions, "[[mock:session=lost]]") {
+	if strings.Contains(agent.Prompt, "[[mock:session=lost]]") {
 		// The first call omits the gate file so the engine resumes. That
 		// resume reports the session missing. The following fresh start
 		// finds the marker and submits.

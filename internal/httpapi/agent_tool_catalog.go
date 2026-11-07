@@ -81,7 +81,7 @@ func sanitizeAgentToolNamespace(id, name string) string {
 		out = strings.ReplaceAll(out, "__", "_")
 	}
 	switch out {
-	case "", "tapd", "gongfeng", "iwiki", "agentflow":
+	case "", "tapd", "gongfeng", "agentflow":
 		return "mcp"
 	default:
 		return out
@@ -143,12 +143,6 @@ func agentToolKindAllowlistNames(mode AgentToolMode, kind string) []string {
 			)
 		}
 		return names
-	case "iwiki":
-		names := []string{"getDocument"}
-		if agentToolAllowsAssistantReads(mode) {
-			names = append(names, "getSpacePageTree", "searchDocument", "searchWeDoc", "getSpaceInfo", "getMySpaces", "aiSearchDocument", "listImages", "getComments", "glossaryTermSearch")
-		}
-		return names
 	case "agentflow":
 		if mode == AgentToolClarify {
 			return []string{"issues_get", "issues_list", "repositories_get", "projects_get"}
@@ -167,7 +161,7 @@ func agentToolKindAllowlistNames(mode AgentToolMode, kind string) []string {
 
 func agentflowNoisyTool(name string) bool {
 	switch name {
-	case "health_get", "capabilities_get", "openapi_get", "bootstrap_get", "observability_spec_get", "analytics_get", "analytics_skillhub_get", "deployment_metrics_get", "workflow_metrics_get":
+	case "health_get", "capabilities_get", "openapi_get", "bootstrap_get", "observability_spec_get", "analytics_get", "workflow_metrics_get":
 		return true
 	default:
 		return false
@@ -214,7 +208,7 @@ func assistantPlatformToolAllowed(exec assistantExecMode, name string) bool {
 	if op.ReadOnly {
 		return true
 	}
-	if exec.Consultation || !exec.AutoWrite {
+	if !exec.AutoWrite {
 		return false
 	}
 	return !exec.ConfirmDangerous || !assistantRiskyToolName(name)
@@ -243,7 +237,9 @@ func agentToolNameAllowed(mode AgentToolMode, kind, tool string) bool {
 	if tool == "" {
 		return false
 	}
-	if mode == AgentToolScheduled && kind != "agentflow" {
+	// Conversations and scheduled tasks see every tool of the project's MCPs;
+	// a write follows the conversation's approval mode at call time.
+	if (mode == AgentToolScheduled || mode == AgentToolAssistant) && kind != "agentflow" {
 		return true
 	}
 	if allowed := agentToolKindAllowlist(mode, kind); len(allowed) > 0 {
@@ -260,7 +256,7 @@ func tapdInnerToolAllowed(mode AgentToolMode, name string) bool {
 	if name == "" || name == "proxy_execute_tool" {
 		return false
 	}
-	if mode == AgentToolScheduled {
+	if mode == AgentToolScheduled || mode == AgentToolAssistant {
 		return true
 	}
 	if !agentToolNameAllowed(mode, "tapd", name) {

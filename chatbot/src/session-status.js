@@ -4,7 +4,9 @@ const states = {
   // 避免每行都挂一个表示“已回复”的对勾。
   completed: { state: "completed", label: "回复完成" },
   failed: { state: "failed", label: "回复失败", icon: "alert" },
-  cancelled: { state: "cancelled", label: "已停止回复", icon: "stop" },
+  // 手动停止和回复完成一样是结束状态：侧栏不再挂停止方块，
+  // 否则被停过的会话会一直留着一个像“还能再点一次”的停止图标。
+  cancelled: { state: "cancelled", label: "已停止回复" },
   interrupted: { state: "interrupted", label: "回复已中断", icon: "warning" },
   idle: { state: "idle", label: "当前没有生成中的回复", icon: "chat" },
 };

@@ -102,7 +102,7 @@ test('a real Agent generates a document with a model key and no GitHub repositor
   try{
     const saved=await page.request.put(credentialPath,{data:{codeBuddyApiKey:fs.readFileSync(process.env.LOOPFORGE_MODEL_KEY_FILE,'utf8').trim(),codeBuddyInternetEnvironment:process.env.LOOPFORGE_MODEL_KEY_ENVIRONMENT||''}});
     expect(saved.ok()).toBe(true);
-    const agent=await page.request.put('/api/agents',{data:{id:agentId,name:'E2E document writer without GitHub',projectId,executorId:'codebuddy',model:process.env.AGENTFLOW_E2E_MODEL_ID||process.env.LOOPFORGE_TEST_MODEL||'default',instructions:`Write report.md in the current workspace with a short three-item to-do plan and the literal marker ${marker}. Do not use Git, access the network, install dependencies or modify other files. Reply when done.`}});
+    const agent=await page.request.put('/api/agents',{data:{id:agentId,name:'E2E document writer without GitHub',projectId,executorId:'codebuddy',model:process.env.AGENTFLOW_E2E_MODEL_ID||process.env.LOOPFORGE_TEST_MODEL||'default',prompt:`Write report.md in the current workspace with a short three-item to-do plan and the literal marker ${marker}. Do not use Git, access the network, install dependencies or modify other files. Reply when done.`}});
     expect(agent.ok()).toBe(true);agentSaved=true;
     const workflow=await page.request.put('/api/workflows',{data:{id:workflowId,name:'E2E document without GitHub',projectId,status:'draft',revision:0,sandboxProfileId:'local',nodes:[
       {id:'write',name:'Write document',type:'agent',agentId,executorId:'codebuddy',maxAttempts:1,maxReworks:0,position:{x:100,y:100},artifactOutputs:[{name:'report',path:'report.md',mediaType:'text/markdown',required:true}]},

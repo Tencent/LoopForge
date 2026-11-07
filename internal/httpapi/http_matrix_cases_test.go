@@ -211,8 +211,6 @@ func TestAuthRunnerScheduleSyncValidationHTTP(t *testing.T) {
 		{http.MethodPost, "/api/runners/tasks/missing/complete", nil, false, 401},
 		{http.MethodGet, "/api/runners/tasks/missing/control", nil, false, 401},
 		{http.MethodPut, "/api/runners/runtimes", map[string]any{}, true, 400},
-		{http.MethodGet, "/api/deployment-metrics", nil, false, 401},
-		{http.MethodGet, "/api/deployment-metrics", nil, true, 400},
 		{http.MethodPost, "/api/otel/not-traces", nil, false, 404},
 	}
 	for i, tc := range cases {

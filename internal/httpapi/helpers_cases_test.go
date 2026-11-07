@@ -14,80 +14,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"agentflow/internal/domain"
 
 	"github.com/gin-gonic/gin"
 )
-
-func TestDeploymentMetricParsingBranches(t *testing.T) {
-	if positive := numericMilliseconds("1.25", 1000); positive != 1250 {
-		t.Fatalf("numeric milliseconds = %d", positive)
-	}
-	for _, bad := range []any{"bad", "-1", 0} {
-		if got := numericMilliseconds(bad, 1); got != 0 {
-			t.Fatalf("numericMilliseconds(%v) = %d", bad, got)
-		}
-	}
-	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	rows := []map[string]any{
-		{"id": "a/b", "run_num": json.Number("7"), "status_label": "成功", "cur_branch": "main", "start_time": now.Add(-time.Hour).Format(time.RFC3339), "finish_time": now.Format(time.RFC3339)},
-		{"id": "2", "runNumber": float64(8), "status": 3, "branch": "other", "duration_ms": "500"},
-		{"id": "3", "status": "执行中", "duration": "01:02:03"},
-		{"id": "4", "status": "timeout", "duration": "2.5s"},
-	}
-	raw, _ := json.Marshal(map[string]any{"data": map[string]any{"results": rows}})
-	repo := domain.Repository{PipelineURLPattern: "https://ci/build/{build_id}"}
-	records, err := normalizeDeploymentRecords("prefix\n```json\n"+string(raw)+"\n```", "", repo, 1, 2)
-	if err != nil || len(records) != 4 {
-		t.Fatalf("normalize: %v %#v", err, records)
-	}
-	if records[0].URL == "" || records[0].DurationMs == 0 {
-		t.Fatalf("record not normalized: %+v", records[0])
-	}
-	filtered, err := normalizeDeploymentRecords(string(raw), "main", repo, 1, 2)
-	if err != nil || len(filtered) != 3 {
-		t.Fatalf("branch filtering: %v %#v", err, filtered)
-	}
-	readable := "1. 构建结果ID: 55 | 运行序列号: 9 | 构建状态: 2 | 触发分支: main | 构建耗时: 3s\nbad line"
-	records, err = normalizeDeploymentRecords(readable, "", domain.Repository{}, 1, 2)
-	if err != nil || len(records) != 1 || records[0].ID != "55" {
-		t.Fatalf("readable: %v %#v", err, records)
-	}
-	for _, invalid := range []string{"plain text", "{broken"} {
-		if _, err := normalizeDeploymentRecords(invalid, "", repo, 1, 2); err == nil {
-			t.Fatalf("expected parse failure for %q", invalid)
-		}
-	}
-
-	statusCases := map[string]int{
-		"成功": 2, "测试失败": 13, "失败": 3, "超时": 6, "取消": 4,
-		"运行中": 1, "阻塞": 7, "就绪": 8, "mystery": 0,
-	}
-	for label, want := range statusCases {
-		if got := deploymentStatus(map[string]any{"status_label": label}); got != want {
-			t.Errorf("status %q = %d, want %d", label, got, want)
-		}
-	}
-	for status := 0; status <= 14; status++ {
-		if deploymentStatusLabel(status) == "" {
-			t.Errorf("empty label %d", status)
-		}
-	}
-	summary := summarizeDeploymentMetricsAt([]deploymentMetricRecord{
-		{Status: 2, DurationMs: 100, StartedAt: now.Add(-time.Hour).Format(time.RFC3339)},
-		{Status: 3, DurationMs: 300, StartedAt: now.Add(-48 * time.Hour).Format(time.RFC3339)},
-		{Status: 1, DurationMs: 900, StartedAt: now.Format(time.RFC3339)},
-		{Status: 4, DurationMs: 500, StartedAt: now.AddDate(0, 0, -10).Format(time.RFC3339)},
-	}, now)
-	if summary.Total != 4 || summary.Succeeded != 1 || summary.Failed != 2 || summary.Running != 1 || summary.P50DurationMs != 300 || summary.P90DurationMs != 500 {
-		t.Fatalf("summary: %+v", summary)
-	}
-	if percentileDuration(nil, .5) != 0 || percentileDuration([]int64{10, 20}, -1) != 10 || percentileDuration([]int64{10, 20}, 2) != 20 {
-		t.Fatal("percentile bounds")
-	}
-}
 
 func TestWorkspaceFilesystemAndGitBranches(t *testing.T) {
 	root := t.TempDir()

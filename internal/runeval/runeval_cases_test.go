@@ -44,19 +44,19 @@ func TestAgentTextAndGateBranches(t *testing.T) {
 	if err := ApplyRecommendation(appendRec, nil, &agent); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyRecommendation(appendRec, nil, &agent); err != nil || len(agent.TaskPrompt.Constraints) != 1 {
-		t.Fatalf("duplicate constraint: %#v, %v", agent.TaskPrompt, err)
+	if err := ApplyRecommendation(appendRec, nil, &agent); err != nil || agent.Prompt != "constraint" {
+		t.Fatalf("duplicate prompt append: %q, %v", agent.Prompt, err)
 	}
-	if err := appendTaskPrompt(&agent, domain.RunEvalRecommendation{}); err == nil {
+	if err := ApplyRecommendation(domain.RunEvalRecommendation{Target: "agent", Action: "append_task_prompt"}, nil, &agent); err == nil {
 		t.Fatal("empty task prompt accepted")
 	}
-	if err := appendAgentText(&agent.Instructions, domain.RunEvalRecommendation{Text: "first"}); err != nil {
+	if err := appendAgentText(&agent.Prompt, domain.RunEvalRecommendation{Text: "first"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendAgentText(&agent.Instructions, domain.RunEvalRecommendation{Text: "second"}); err != nil {
+	if err := appendAgentText(&agent.Prompt, domain.RunEvalRecommendation{Text: "second"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendAgentText(&agent.Instructions, domain.RunEvalRecommendation{Text: "second"}); err != nil || strings.Count(agent.Instructions, "second") != 1 {
+	if err := appendAgentText(&agent.Prompt, domain.RunEvalRecommendation{Text: "second"}); err != nil || strings.Count(agent.Prompt, "second") != 1 {
 		t.Fatal("instruction duplicate")
 	}
 	for _, rec := range []domain.RunEvalRecommendation{
@@ -110,7 +110,7 @@ func TestPromptParsingCatalogAndHelpers(t *testing.T) {
 		if id == "missing" {
 			return domain.AgentDefinition{}, false
 		}
-		return domain.AgentDefinition{ID: id, Name: "A", Instructions: strings.Repeat("x", 500), TaskPrompt: &domain.TaskPromptSpec{Objective: strings.Repeat("y", 300)}}, true
+		return domain.AgentDefinition{ID: id, Name: "A", Prompt: strings.Repeat("x", 500)}, true
 	})
 	if len(catalog.Nodes) != 3 || len(catalog.Agents) != 1 {
 		t.Fatalf("catalog = %#v", catalog)

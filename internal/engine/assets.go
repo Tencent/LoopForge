@@ -20,9 +20,9 @@ func (e *Engine) platformMCPServer() domain.MCPServerDefinition {
 	e.mu.Unlock()
 	def := domain.MCPServerDefinition{
 		ID:          domain.PlatformMCPServerID,
-		Name:        "AgentFlow 平台",
+		Name:        "LoopForge 平台",
 		Scope:       "project",
-		Description: "AgentFlow 平台侧能力：需求、任务、运行、项目等平台操作以 MCP 工具提供",
+		Description: "LoopForge 平台侧能力：需求、任务、运行、项目等平台操作以 MCP 工具提供",
 		Transport:   "http",
 		URL:         base + "/mcp",
 		TimeoutSec:  60,
@@ -67,6 +67,12 @@ func knowledgeSkippedWarning(agent domain.AgentDefinition, assets domain.AgentAs
 		}
 	}
 	return "角色开启了团队知识库，但未注入 " + domain.KnowledgeMCPServerID + "：知识中心未启用或未配置知识库地址/Token"
+}
+
+// RoleAssets resolves a role's assets outside any SOP run, for a chat
+// subagent: no workflow is bound, so workflow-global rules are not added.
+func (e *Engine) RoleAssets(agent domain.AgentDefinition, projectID string, userID int64) domain.AgentAssetBundle {
+	return e.resolveAssets(agent, projectID, "", userID)
 }
 
 func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflowID string, userID int64) domain.AgentAssetBundle {

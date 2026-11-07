@@ -32,10 +32,10 @@ func TestScheduleJobCRUD(t *testing.T) {
 	}
 	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	created := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
-		"name": "扫描需求", "projectId": "platform", "workflowId": "scheduled-wf",
+		"projectId": "platform", "workflowId": "scheduled-wf",
 		"useIssueWorkflow": true, "intervalSec": 3600, "enabled": true,
 	}, http.StatusOK)
-	if created.ID == "" || created.IntervalSec != 3600 || created.Cron != "" || !created.Enabled || created.SkipDispatch || !created.UseIssueWorkflow || created.AssistantPrompt != "" {
+	if created.ID == "" || created.Name != "触发配置" || created.IntervalSec != 3600 || created.Cron != "" || !created.Enabled || created.SkipDispatch || !created.UseIssueWorkflow || created.AssistantPrompt != "" {
 		t.Fatalf("unexpected dispatch job: %+v", created)
 	}
 	if got := strings.Join(created.IssueStatuses, ","); got != "backlog,todo" {
@@ -47,8 +47,11 @@ func TestScheduleJobCRUD(t *testing.T) {
 	if created.MaxDispatch != 0 || created.DispatchLimit() != 10 {
 		t.Fatalf("unconfigured dispatch limit = %+v", created)
 	}
+	requestJSON[map[string]string](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "重复配置", "projectId": "platform", "workflowId": "scheduled-wf",
+	}, http.StatusConflict)
 	gongfengOnly := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
-		"name": "只跑工蜂", "projectId": "platform", "workflowId": "scheduled-wf",
+		"id": created.ID, "name": "只跑工蜂", "projectId": "platform", "workflowId": "scheduled-wf",
 		"source": "gongfeng", "intervalSec": 3600, "enabled": true,
 	}, http.StatusOK)
 	if gongfengOnly.Source != "gongfeng" {
@@ -58,7 +61,7 @@ func TestScheduleJobCRUD(t *testing.T) {
 		"name": "坏来源", "projectId": "platform", "workflowId": "scheduled-wf", "source": "local",
 	}, http.StatusBadRequest)
 	custom := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
-		"name": "只扫进行中", "projectId": "platform", "workflowId": "scheduled-wf",
+		"id": created.ID, "name": "只扫进行中", "projectId": "platform", "workflowId": "scheduled-wf",
 		"issueStatuses": []string{"in_progress", "done", "todo"}, "maxDispatch": 3, "intervalSec": 300, "enabled": true,
 	}, http.StatusOK)
 	if custom.MaxDispatch != 3 {
@@ -100,7 +103,7 @@ func TestScheduleJobCRUD(t *testing.T) {
 		}
 	}
 	jobs := requestJSON[[]domain.ScheduleJob](t, h, http.MethodGet, "/api/schedule-jobs", nil, http.StatusOK)
-	if len(jobs) != 4 {
+	if len(jobs) != 2 {
 		t.Fatalf("unexpected schedule jobs: %+v", jobs)
 	}
 	requestJSON[map[string]bool](t, h, http.MethodDelete, "/api/schedule-jobs/"+created.ID, nil, http.StatusOK)
@@ -507,40 +510,40 @@ func TestScheduleUIDemoServer(t *testing.T) {
 	t.Cleanup(st.Close)
 	now := time.Now().UTC()
 	if err := st.PutProject(domain.Project{
-		ID: "dp", Key: "DP", Name: "DNSPod", Description: "本地预分诊验收", Color: "#3867f4",
-		WorkflowID: "dnspod-feature-dev", OwnerID: 1,
+		ID: "dp", Key: "DP", Name: "DemoDNS", Description: "本地预分诊验收", Color: "#3867f4",
+		WorkflowID: "demodns-feature-dev", OwnerID: 1,
 		Members:   []domain.ProjectMember{{UserID: 1, Role: "maintainer"}},
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	for _, wf := range []domain.WorkflowDefinition{
-		{ID: "dnspod-issue-fix", Name: "Issue 修复", ProjectID: "dp", Status: "published", SandboxProfileID: "local", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
-		{ID: "dnspod-feature-dev", Name: "功能开发", ProjectID: "dp", Status: "published", SandboxProfileID: "local", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
+		{ID: "demodns-issue-fix", Name: "Issue 修复", ProjectID: "dp", Status: "published", SandboxProfileID: "local", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
+		{ID: "demodns-feature-dev", Name: "功能开发", ProjectID: "dp", Status: "published", SandboxProfileID: "local", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
 	} {
 		if err := st.PutWorkflow(wf); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := st.PutRepository(domain.Repository{
-		ID: "repo-dnspod", ProjectID: "dp", Name: "dnspod", Provider: "gongfeng",
-		GongfengProjectID: "dnspod/dnspod", DefaultBranch: "master",
+		ID: "repo-demodns", ProjectID: "dp", Name: "demodns", Provider: "gongfeng",
+		GongfengProjectID: "demodns/demodns", DefaultBranch: "master",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	issues := []domain.Issue{
-		{ID: "iss-fix-unbound", ProjectID: "dp", Title: "dnspod 解析失败：NXDOMAIN 误报", Status: "backlog", Kind: "issue", Source: "gongfeng", WorkflowID: "dnspod-issue-fix", ExternalRef: &domain.ExternalRef{Source: "gongfeng", ExternalID: "1001", ExternalIID: 1}},
-		{ID: "iss-fix-bound", ProjectID: "dp", Title: "dnspod 缓存刷新超时", Status: "backlog", Kind: "issue", Source: "gongfeng", WorkflowID: "dnspod-issue-fix", RepositoryID: "repo-dnspod", RepositoryIDs: []string{"repo-dnspod"}, ExternalRef: &domain.ExternalRef{Source: "gongfeng", ExternalID: "1002", ExternalIID: 2}},
+		{ID: "iss-fix-unbound", ProjectID: "dp", Title: "demodns 解析失败：NXDOMAIN 误报", Status: "backlog", Kind: "issue", Source: "gongfeng", WorkflowID: "demodns-issue-fix", ExternalRef: &domain.ExternalRef{Source: "gongfeng", ExternalID: "1001", ExternalIID: 1}},
+		{ID: "iss-fix-bound", ProjectID: "dp", Title: "demodns 缓存刷新超时", Status: "backlog", Kind: "issue", Source: "gongfeng", WorkflowID: "demodns-issue-fix", RepositoryID: "repo-demodns", RepositoryIDs: []string{"repo-demodns"}, ExternalRef: &domain.ExternalRef{Source: "gongfeng", ExternalID: "1002", ExternalIID: 2}},
 		{ID: "tapd-feature", ProjectID: "dp", Title: "支持批量添加解析记录", Status: "backlog", Kind: "requirement", Source: "tapd", ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "1024", ExternalType: "story"}},
 		{ID: "tapd-low", ProjectID: "dp", Title: "下周同步一下文档", Status: "backlog", Kind: "requirement", Source: "tapd", ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "2048", ExternalType: "story"}},
-		{ID: "iss-todo", ProjectID: "dp", Title: "已在 todo 不应被 backlog 扫描", Status: "todo", Kind: "issue", Source: "gongfeng", WorkflowID: "dnspod-issue-fix", ExternalRef: &domain.ExternalRef{Source: "gongfeng", ExternalID: "1003", ExternalIID: 3}},
+		{ID: "iss-todo", ProjectID: "dp", Title: "已在 todo 不应被 backlog 扫描", Status: "todo", Kind: "issue", Source: "gongfeng", WorkflowID: "demodns-issue-fix", ExternalRef: &domain.ExternalRef{Source: "gongfeng", ExternalID: "1003", ExternalIID: 3}},
 	}
 	for _, issue := range issues {
 		if err := st.PutIssue(issue); err != nil {
 			t.Fatal(err)
 		}
 	}
-	prompt := `你是项目 DP（projectId: dp）的需求预分诊助手。调用 issues_list，query={"status":"backlog","limit":50}，按 offset 翻页直到 hasMore=false。没有 backlog 则输出“无待处理需求”。对 source=gongfeng / kind=issue：确认 workflowId=dnspod-issue-fix，仓库缺失时结合标题与 repositories_list 判断，仅高把握用 issues_save。不要 issues_dispatch。对 source=tapd：无 TAPD MCP 时跳过处理人同步，仓库与 SOP 置信度不足则跳过。写操作只允许 issues_save，每轮最多 12 个。输出 Markdown 表格：需求编号 | 标题 | 来源 | 处理动作 | 置信度 | 说明。`
+	prompt := `你是项目 DP（projectId: dp）的需求预分诊助手。调用 issues_list，query={"status":"backlog","limit":50}，按 offset 翻页直到 hasMore=false。没有 backlog 则输出“无待处理需求”。对 source=gongfeng / kind=issue：确认 workflowId=demodns-issue-fix，仓库缺失时结合标题与 repositories_list 判断，仅高把握用 issues_save。不要 issues_dispatch。对 source=tapd：无 TAPD MCP 时跳过处理人同步，仓库与 SOP 置信度不足则跳过。写操作只允许 issues_save，每轮最多 12 个。输出 Markdown 表格：需求编号 | 标题 | 来源 | 处理动作 | 置信度 | 说明。`
 	if err := st.PutScheduleJob(domain.ScheduleJob{
 		ID: "job-triage", Name: "DP backlog 需求预分诊", ProjectID: "dp", SkipDispatch: true,
 		AssistantPrompt: prompt, AssistantModel: "default", Enabled: true, IntervalSec: 3600,

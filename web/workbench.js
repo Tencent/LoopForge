@@ -290,7 +290,7 @@
     const kind = window.AgentFlowAssistant?.draftLabel?.(d.tool) || d.tool;
     const title = window.AgentFlowAssistant?.draftTitle?.(d) || d.body?.name || d.body?.title || d.tool;
     if (d.saved || d.auto) return `<section class="ai-draft ai-draft-auto"><strong>${d.saved ? '已执行' : '待执行'} · ${esc(kind)} · ${esc(title)}</strong></section>`;
-    return `<section class="ai-draft"><strong>${esc(kind)} · ${esc(title)}</strong><p>${esc(d.body?.description || d.body?.taskPrompt?.objective || '')}</p><button class="button primary small" type="button" data-draft="${index}" data-mid="${esc(messageId)}">确认执行</button></section>`;
+    return `<section class="ai-draft"><strong>${esc(kind)} · ${esc(title)}</strong><p>${esc(d.body?.description || d.body?.prompt || '')}</p><button class="button primary small" type="button" data-draft="${index}" data-mid="${esc(messageId)}">确认执行</button></section>`;
   }
 
   function paintPanel() {

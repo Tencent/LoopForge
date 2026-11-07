@@ -184,6 +184,7 @@ describe("conversation hooks", () => {
   });
 
   test("provides local fixture conversations and completes a local reply", async () => {
+    history.replaceState({}, "", "/?localPreview=1");
     vi.useFakeTimers();
     const real = {
       user: { id: 1, loginName: "tester", chineseName: "测试" },
@@ -213,6 +214,16 @@ describe("conversation hooks", () => {
     await act(() => result.current.archive(forked.id, true));
     await act(() => result.current.remove(local.id));
     vi.useRealTimers();
+    history.replaceState({}, "", "/");
+  });
+
+  test("a new account has no fixture conversations unless explicitly previewing", async () => {
+    history.replaceState({}, "", "/");
+    const real = { user: { id: 99 }, ready: true, activeId: null, sessions: [], model: "m1" };
+    const { result } = renderHook(() => useLocalConversations(real));
+    await act(async () => {});
+    expect(result.current.sessions).toEqual([]);
+    expect(result.current.localSessions).toBe(false);
   });
 
   test("tracks opening and closing presence", () => {
@@ -332,5 +343,31 @@ describe("conversation hooks", () => {
     expect(result.current.live.answer).toBe("部分完成");
     unmount();
     delete globalThis.EventSource;
+  });
+
+  test("replaces a new prompt title with the background summary without touching messages", async () => {
+    const prompt = "请帮我把积分商城的需求、缺口和验收标准整理出来";
+    const original = apiMock.getMockImplementation();
+    let summarized = false;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/sessions/s1") {
+        const messages = [{ role: "user", content: prompt }];
+        if (!summarized) return { id: "s1", title: prompt.slice(0, 36), projectId: "p1", model: "m1", messages };
+        return { id: "s1", title: "积分商城梳理", titleGenerated: true, messages: [] };
+      }
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=s1");
+      const { result, unmount } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.session?.title).toBe(prompt.slice(0, 36)));
+      summarized = true;
+      await waitFor(() => expect(result.current.session?.title).toBe("积分商城梳理"), { timeout: 5000 });
+      expect(result.current.session.titleGenerated).toBe(true);
+      expect(result.current.session.messages).toEqual([{ role: "user", content: prompt }]);
+      unmount();
+    } finally {
+      apiMock.mockImplementation(original);
+    }
   });
 });

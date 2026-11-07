@@ -12,6 +12,7 @@ import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { api, canChatInProject, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
+import { openCredentialSettings } from "./credentials";
 import "./quick-access-wizard.css";
 
 const DEFAULT_SOP_ID = "generic-backend-delivery";
@@ -43,57 +44,56 @@ const FALLBACK_ROLES = [
   {
     id: "loopforge-requirement",
     name: "需求定型",
-    objective: "澄清需求边界与验收标准",
-    instructions: "根据需求输入与代码库现状，确认目标、范围、排除项与验收标准，产出结构化需求说明与执行计划。",
+    description: "澄清需求边界与验收标准",
+    prompt: "根据需求输入与代码库现状，确认目标、范围、排除项与验收标准，产出结构化需求说明与执行计划。\n\n任务输入：{{input}}",
     artifactId: "requirement-report",
     artifactPath: "requirement-report.md",
   },
   {
     id: "loopforge-design",
     name: "方案设计",
-    objective: "产出技术方案与实现计划",
-    instructions: "分析受影响模块与调用链，设计接口、数据模型与最小改动方案，明确风险与验证范围。",
+    description: "产出技术方案与实现计划",
+    prompt: "分析受影响模块与调用链，设计接口、数据模型与最小改动方案，明确风险与验证范围。\n\n任务输入：{{input}}",
     artifactId: "tech-design",
     artifactPath: "tech-design.md",
   },
   {
     id: "loopforge-implement",
     name: "代码实现",
-    objective: "在工作分支实现并自测",
-    instructions: "按方案与计划完成代码实现，运行受影响模块的单元测试并记录变更报告。",
+    description: "在工作分支实现并自测",
+    prompt: "按方案与计划完成代码实现，运行受影响模块的单元测试并记录变更报告。\n\n任务输入：{{input}}",
     artifactId: "change-report",
     artifactPath: "change-report.md",
   },
   {
     id: "loopforge-review",
     name: "独立评审",
-    objective: "审查改动质量与规范",
-    instructions: "独立审查代码改动的正确性、回归风险、安全边界与测试证据，给出评审结论。",
+    description: "审查改动质量与规范",
+    prompt: "独立审查代码改动的正确性、回归风险、安全边界与测试证据，给出评审结论。\n\n任务输入：{{input}}",
     artifactId: "review-report",
     artifactPath: "review-report.md",
   },
   {
     id: "loopforge-test",
     name: "测试验证",
-    objective: "运行测试并给出验收结论",
-    instructions: "按验收标准执行自动化或回归测试，核对每条验收项并输出测试报告。",
+    description: "运行测试并给出验收结论",
+    prompt: "按验收标准执行自动化或回归测试，核对每条验收项并输出测试报告。\n\n任务输入：{{input}}",
     artifactId: "test-report",
     artifactPath: "test-report.md",
   },
   {
     id: "loopforge-mr",
     name: "发起 MR",
-    objective: "推送分支并创建合并请求",
-    instructions:
-      "将工作分支推送到代码仓库，创建或更新 Pull Request 并整理变更摘要。",
+    description: "推送分支并创建合并请求",
+    prompt: "将工作分支推送到代码仓库，创建或更新 Pull Request 并整理变更摘要。\n\n任务输入：{{input}}",
     artifactId: "mr-body",
     artifactPath: "mr-body.md",
   },
   {
     id: "loopforge-summary",
     name: "交付汇总",
-    objective: "汇总产物与沉淀知识",
-    instructions: "汇总本次交付的改动、验证结果与 MR 链接，提炼可复用的项目经验。",
+    description: "汇总产物与沉淀知识",
+    prompt: "汇总本次交付的改动、验证结果与 MR 链接，提炼可复用的项目经验。\n\n任务输入：{{input}}",
     artifactId: "summary-report",
     artifactPath: "summary-report.md",
   },
@@ -669,13 +669,8 @@ async function provisionFallbackProjectSOP(projectId, workflowId, owner) {
         projectId,
         version: 1,
         executorId: "codebuddy",
-        description: role.objective,
-        instructions: role.instructions,
-        taskPrompt: {
-          role: role.name,
-          objective: role.objective,
-          inputs: ["任务输入：{{input}}"],
-        },
+        description: role.description,
+        prompt: role.prompt,
         artifactOutputs: [
           {
             name: role.artifactId,
@@ -1050,7 +1045,14 @@ export default function QuickAccessWizard({
         .catch(() => {});
     };
     window.addEventListener("focus", refreshUser);
-    return () => window.removeEventListener("focus", refreshUser);
+    const credentialsChanged = (event) => {
+      if (event.origin === location.origin && event.source === window.parent && event.data?.type === "agentflow-credentials-changed") refreshUser();
+    };
+    window.addEventListener("message", credentialsChanged);
+    return () => {
+      window.removeEventListener("focus", refreshUser);
+      window.removeEventListener("message", credentialsChanged);
+    };
   }, [open, user?.id, verifyStoredGitToken]);
 
   useEffect(() => {
@@ -1715,6 +1717,12 @@ export default function QuickAccessWizard({
                           <StatusPill ok={gitReady} />
                         </header>
                         <div className="qa-cred-body">
+                          <button type="button" className="qa-btn qa-btn-primary qa-btn-sm" onClick={() => openCredentialSettings("gitToken")}>
+                            {storedUser?.gitTokenConfigured ? "管理 GitHub 授权" : "连接 GitHub"}
+                          </button>
+                          <p className="qa-hint">在个人配置中完成授权，返回后继续；无需手动复制令牌。</p>
+                          <details>
+                            <summary>使用访问令牌（高级）</summary>
                           <div className="qa-input-row">
                             <input
                               type="password"
@@ -1763,6 +1771,7 @@ export default function QuickAccessWizard({
                               okText={`令牌有效${gitVerify.login ? `（${gitVerify.login}）` : ""}`}
                             />
                           ) : null}
+                          </details>
                         </div>
                       </section>
 
@@ -2146,12 +2155,8 @@ export default function QuickAccessWizard({
                               >
                                 <i>{(role.name || "角").slice(0, 1)}</i>
                                 <b>{role.name}</b>
-                                {role.TaskPrompt?.Objective ||
-                                role.objective ? (
-                                  <small>
-                                    {role.TaskPrompt?.Objective ||
-                                      role.objective}
-                                  </small>
+                                {role.description ? (
+                                  <small>{role.description}</small>
                                 ) : null}
                               </span>
                             ))}

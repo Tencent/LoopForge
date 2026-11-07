@@ -2572,6 +2572,28 @@ a.project-entry {
 .reply-heading {
   margin: 0 0 20px;
 }
+.reply-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.reply-elapsed,
+.reply-stopped {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.reply-timeline .execution-inline {
+  margin: 0;
+}
+.execution-trace .reply-trace-text {
+  color: var(--text);
+  margin: 6px 0;
+}
+.execution-trace .reply-trace-text .markdown {
+  color: var(--text);
+}
 .reply-timing {
   color: var(--muted);
   font-size: 12px;
@@ -2665,25 +2687,42 @@ a.project-entry {
   min-width: 0;
   color: var(--activity-text);
 }
-.execution-trace > summary {
-  display: block;
-  width: 100%;
-  min-width: 0;
+/* Elapsed time heads the reply; a faint full-width line sits under it. */
+.execution-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-height: 25px;
   font-size: 12px;
   line-height: 1.6;
 }
-.execution-summary-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+.execution-trace .reply-divider {
+  margin: 6px 0 12px;
+}
+/* A finished reply folds its whole process into the elapsed-time line. */
+.execution-trace > summary {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.execution-chevron {
+  flex-shrink: 0;
+}
+.execution-trace[open] > summary svg {
+  transform: none;
+}
+.execution-trace[open] > summary .execution-chevron {
+  transform: rotate(90deg);
+}
+.execution-trace > summary .execution-summary-row {
+  display: inline-flex;
+  gap: 6px;
 }
 .execution-current {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  margin-top: 10px;
   font-size: 13px;
   line-height: 22px;
 }
@@ -2701,17 +2740,101 @@ a.project-entry {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
-.execution-chevron {
-  flex-shrink: 0;
+.execution-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 0 12px;
 }
-.execution-trace[open] > summary svg {
+/* A round of tool calls: one summary line, steps listed underneath. */
+.execution-group {
+  min-width: 0;
+}
+.execution-group-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 22px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  line-height: 22px;
+}
+.execution-group-fold > summary::-webkit-details-marker {
+  display: none;
+}
+.execution-trace .execution-group-fold > summary > svg {
+  flex-shrink: 0;
   transform: none;
 }
-.execution-trace[open] > summary .execution-chevron {
+.execution-group-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.execution-group.is-running .execution-group-label {
+  color: var(--text);
+}
+.execution-group-failed-count {
+  flex-shrink: 0;
+  color: var(--error);
+}
+.execution-group-chevron {
+  opacity: 0.7;
+  transition: transform 0.15s;
+}
+.execution-trace .execution-group-fold[open] > summary .execution-group-chevron {
   transform: rotate(90deg);
 }
-.execution-body {
-  padding: 8px 0 4px;
+.execution-group-fold > summary:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+/* Steps line up with the group line, without an indent or guide line. */
+.execution-group-body {
+  margin: 2px 0 4px;
+}
+/* Like Codex: a long round scrolls inside about nine rows, and the edge that
+   hides steps fades out. */
+.execution-scroll {
+  max-height: 216px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  --fade: 28px;
+}
+.execution-scroll.fade-top {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade));
+}
+.execution-scroll.fade-bottom {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade)), transparent 100%);
+}
+.execution-scroll.fade-top.fade-bottom {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
 }
 .execution-list {
   display: flex;
@@ -3520,11 +3643,24 @@ a.draft-title {
   display: inline-flex;
   align-items: center;
   flex: none;
-  gap: 3px;
+  gap: 0;
 }
 .session-people .human-avatar {
   width: 18px;
   height: 18px;
+}
+/* Participant faces overlap when more than one person spoke; the extra heads beyond
+   the visible stack collapse into a +N counter. The ring uses the surface color so
+   overlapping avatars stay readable on hover/active session rows. */
+.human-avatar.is-stacked {
+  margin-left: -7px;
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+.session-people .participant-count {
+  margin-left: 4px;
+}
+.conversation-people summary .participant-count {
+  margin-left: 5px;
 }
 .session-link > span:first-child {
   min-width: 0;
@@ -3555,7 +3691,7 @@ a.draft-title {
 }
 .conversation-people summary {
   display: flex;
-  gap: 5px;
+  gap: 0;
   align-items: center;
   cursor: pointer;
   list-style: none;
@@ -3808,4 +3944,13 @@ a.draft-title {
 }
 .image-lightbox-close:hover {
   background: rgba(255, 255, 255, 0.24);
+}
+
+/* A dispatched subagent's own process, nested under its dispatch step. */
+.execution-subagent {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
 }
