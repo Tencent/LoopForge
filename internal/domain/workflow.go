@@ -24,26 +24,12 @@ type Position struct {
 	Y float64 `json:"y"`
 }
 
-// TaskPromptSpec is a portable taskbook. The control plane compiles it into
-// executor-neutral Markdown before handing it to any worker implementation.
-type TaskPromptSpec struct {
-	Role               string   `json:"role,omitempty"`
-	Objective          string   `json:"objective,omitempty"`
-	Context            string   `json:"context,omitempty"`
-	Inputs             []string `json:"inputs,omitempty"`
-	Actions            []string `json:"actions,omitempty"`
-	Deliverables       []string `json:"deliverables,omitempty"`
-	AcceptanceCriteria []string `json:"acceptanceCriteria,omitempty"`
-	Constraints        []string `json:"constraints,omitempty"`
-	RetryInstructions  string   `json:"retryInstructions,omitempty"`
-}
-
 // WorkflowRequirement declares an external capability a SOP needs before it can
 // deliver end to end. Studio renders the list as a preflight checklist when a
-// project adopts a template, so a missing 工蜂 Git Token or 工蜂 MCP config
+// project adopts a template, so a missing Git Token or tracker MCP config
 // surfaces before the first run instead of failing in the middle of a pipeline.
 type WorkflowRequirement struct {
-	Key    string `json:"key"`              // stable id: gongfeng-git-token, gongfeng-mcp, taihu-pat
+	Key    string `json:"key"`              // stable id: gongfeng-git-token, gongfeng-mcp
 	NodeID string `json:"nodeId,omitempty"` // node that depends on the capability
 	Label  string `json:"label"`
 	Hint   string `json:"hint,omitempty"`
@@ -51,10 +37,14 @@ type WorkflowRequirement struct {
 }
 
 type WorkflowNode struct {
+	// TaskPrompt is what an approval node asks its approver to check
+	// (「需要确认什么」). Role nodes take their whole brief from the role's
+	// prompt; the field is not read for them.
 	TaskPrompt   string   `json:"taskPrompt,omitempty"`
 	RequestedBy  string   `json:"requestedBy,omitempty"`
 	RequestID    string   `json:"requestId,omitempty"`
 	ClaimedFiles []string `json:"claimedFiles,omitempty"`
+	PlanItemID   string   `json:"planItemId,omitempty"`
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	Type         string   `json:"type"` // agent, script, approval, sop
@@ -172,9 +162,11 @@ type GroupSOPHandoff struct {
 
 type WorkflowDefinition struct {
 	GroupSOPHandoff   *GroupSOPHandoff      `json:"groupSopHandoff,omitempty"`
+	GroupCompletion   *GroupCompletion      `json:"groupCompletion,omitempty"`
 	GroupMembers      []string              `json:"groupMembers,omitempty"`
 	SOPCheckpoint     *SOPCheckpoint        `json:"sopCheckpoint,omitempty"`
 	GroupHistory      []GroupTaskHistory    `json:"groupHistory,omitempty"`
+	GroupPlan         []GroupPlanItem       `json:"groupPlan,omitempty"`
 	CollaborationMode string                `json:"collaborationMode,omitempty"`
 	TaskTitle         string                `json:"taskTitle,omitempty"`
 	Notifications     []NotificationBinding `json:"notifications,omitempty"` // SOP completion reports

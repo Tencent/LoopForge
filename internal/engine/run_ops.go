@@ -13,13 +13,16 @@ import (
 
 func (e *Engine) persistControlDecision(runID string, r domain.Run, expected ...NodeExpectation) error {
 	if r.Status == "running" {
-		if len(expected) == 0 {
-			if err := e.repo.ClearRunControl(runID); err != nil {
-				return err
-			}
-		}
 		r.CancelRequested = false
 		r.PauseRequested = false
+	}
+	// pause_requested is not part of the run snapshot write. Clear it whenever
+	// the decision itself released the pause, including a group that stays
+	// waiting because nothing was in flight.
+	if len(expected) == 0 && !r.PauseRequested && !r.CancelRequested {
+		if err := e.repo.ClearRunControl(runID); err != nil {
+			return err
+		}
 	}
 	var err error
 	if len(expected) > 0 {
@@ -683,7 +686,7 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 	// Returning from group mode deliberately leaves a pending SOP node, rather
 	// than an interrupted worker. Recognize that explicit checkpoint, including
 	// records created before this fix, without approving ordinary human gates.
-	if len(paused) == 0 && r.WorkflowSnapshot.CollaborationMode != "group" {
+	if len(paused) == 0 && !r.IsWorkspace() {
 		for i := len(r.Events) - 1; i >= 0; i-- {
 			ev := r.Events[i]
 			if ev.Type == "group.sop_restored" {
@@ -695,7 +698,34 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 		}
 	}
 	if len(paused) == 0 {
-		return fmt.Errorf("paused node not found")
+		// Pause can land after the active step has already finished: the last
+		// node succeeded and the scheduler exited, or group collaboration was
+		// already idle. The pause flag is set, but no node is parked at
+		// waiting_approval. Continue that graph instead of failing. Ordinary
+		// human gates stay blocked — they are not a pause checkpoint.
+		resumed, err := resumeUnpausedGraph(&r)
+		if err != nil {
+			return err
+		}
+		if !resumed {
+			return fmt.Errorf("paused node not found")
+		}
+		if e.executes() && r.Status == "running" {
+			r, err = e.acquireLease(r)
+			if err != nil {
+				return err
+			}
+		}
+		message := "人工确认直接继续运行"
+		if r.IsWorkspace() && r.Status == "waiting" {
+			message = "继续自由协作"
+		}
+		e.event(&r, "", "run.resumed", message)
+		appendControlTelemetry(&r, "", "run.resumed", message)
+		if r.Status == "running" {
+			markRunRelationsRunning(e.repo, r)
+		}
+		return e.persistControlDecision(runID, r, expected...)
 	}
 	if e.executes() {
 		var err error
@@ -805,6 +835,37 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 
 func isUserPausedNode(nr *domain.NodeRun) bool {
 	return nr != nil && nr.Status == "waiting_approval" && strings.Contains(nr.Activity, "用户暂停")
+}
+
+// resumeUnpausedGraph clears a pause that did not interrupt a node.
+// A human gate still blocks: resume must not approve it. Otherwise a finished
+// SOP goes back to the scheduler so it can settle, pending work continues,
+// and an idle group returns to waiting for the next task.
+func resumeUnpausedGraph(r *domain.Run) (bool, error) {
+	if r == nil {
+		return false, fmt.Errorf("run not found")
+	}
+	wf := r.WorkflowSnapshot
+	if hasWaiting(wf, *r) {
+		return false, nil
+	}
+	for _, n := range wf.Nodes {
+		if r.Nodes[n.ID] == nil {
+			return false, nil
+		}
+	}
+	ready := readyNodes(wf, *r)
+	r.CancelRequested = false
+	r.PauseRequested = false
+	if r.IsWorkspace() && len(ready) == 0 {
+		r.Status = "waiting"
+		return true, nil
+	}
+	if len(ready) > 0 || allSucceeded(wf, *r) || hasFailed(wf, *r) {
+		r.Status = "running"
+		return true, nil
+	}
+	return false, nil
 }
 
 func isScriptNode(node domain.WorkflowNode) bool {

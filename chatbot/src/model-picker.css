@@ -1,0 +1,278 @@
+/* Compact Grasp-style model picker. Provider glyph motion stays in its icon. */
+.composer-toolbar > .model-picker-anchor {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(280px, 100%);
+  position: relative;
+}
+
+.chat-shell .model-picker.grasp-model-picker {
+  --model-trigger-hover: rgb(24 24 27 / .035);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 0 1 auto;
+  height: 32px;
+  min-height: 32px;
+  min-width: 0;
+  max-width: 100%;
+  gap: 6px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--navigation-secondary, #52525b);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.chat-shell .model-picker.grasp-model-picker:is(:hover, [aria-expanded="true"]) {
+  background: var(--model-trigger-hover);
+  color: var(--text);
+}
+
+[data-theme="dark"] .chat-shell .model-picker.grasp-model-picker {
+  --model-trigger-hover: rgb(237 237 240 / .055);
+}
+
+.chat-shell .model-picker.grasp-model-picker .model-picker-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-shell .model-picker.grasp-model-picker svg {
+  flex: none;
+  opacity: 1;
+}
+
+.chat-shell .grasp-model-picker > .harness-icon[data-icon="chevron-down"] {
+  color: var(--muted);
+  transition: rotate 160ms ease;
+}
+
+/* The menu lives in a body portal, outside the chat shell's theme scope. */
+.grasp-model-menu {
+  --model-menu-surface: #fff;
+  --model-menu-ink: #18181b;
+  --model-menu-secondary: #71717a;
+  --model-menu-placeholder: #a1a1aa;
+  --model-menu-line: #e5e5e8;
+  --model-menu-hover: rgb(24 24 27 / .035);
+  position: fixed;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 240px;
+  max-width: calc(100vw - 16px);
+  max-height: min(420px, calc(100dvh - 16px));
+  min-height: 0;
+  padding: 6px;
+  border: 1px solid var(--model-menu-line);
+  border-radius: 12px;
+  background: var(--model-menu-surface);
+  color: var(--model-menu-ink);
+  box-shadow: 0 10px 32px rgb(24 24 27 / .09), 0 2px 6px rgb(24 24 27 / .035);
+  overflow: hidden;
+  opacity: 1;
+  clip-path: inset(-40px round 11px);
+  transition: opacity 160ms ease, clip-path 160ms cubic-bezier(.22, 1, .36, 1);
+}
+
+[data-theme="dark"] .grasp-model-menu {
+  --model-menu-surface: #141417;
+  --model-menu-ink: #ededf0;
+  --model-menu-secondary: #a1a1aa;
+  --model-menu-placeholder: #71717a;
+  --model-menu-line: #36363e;
+  --model-menu-hover: rgb(237 237 240 / .055);
+  box-shadow: 0 12px 36px rgb(0 0 0 / .28), 0 2px 6px rgb(0 0 0 / .16);
+}
+
+.grasp-model-menu:is([data-phase="entering"], [data-phase="closing"]) {
+  opacity: 0;
+  clip-path: inset(7% -40px -40px round 11px);
+  pointer-events: none;
+}
+
+.grasp-model-menu[data-placement="top"]:is([data-phase="entering"], [data-phase="closing"]) {
+  clip-path: inset(-40px -40px 7% round 11px);
+}
+
+.grasp-model-menu[data-phase="entering"] {
+  transition: none;
+}
+
+.grasp-model-search {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 7px;
+  box-sizing: border-box;
+  height: 36px;
+  min-height: 36px;
+  margin: 0 0 5px;
+  padding: 0 7px;
+  border: 0;
+  border-bottom: 1px solid var(--model-menu-line);
+  color: var(--model-menu-secondary);
+}
+
+.grasp-model-search > svg {
+  flex: none;
+  opacity: 1;
+}
+
+.grasp-model-search input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--model-menu-ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.grasp-model-search input::placeholder {
+  color: var(--model-menu-placeholder);
+}
+
+.grasp-model-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.grasp-model-search .model-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--model-menu-secondary);
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.grasp-model-search .model-search-clear:hover {
+  background: var(--model-menu-hover);
+  color: var(--model-menu-ink);
+}
+
+.grasp-model-options {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--model-menu-line) transparent;
+}
+
+.grasp-model-option {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  gap: 9px;
+  margin: 0;
+  padding: 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--model-menu-ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.grasp-model-option:is(:hover, :focus-visible) {
+  background: var(--model-menu-hover);
+}
+
+.grasp-model-option:focus-visible {
+  outline: 1px solid var(--model-menu-line);
+  outline-offset: -1px;
+}
+
+.grasp-model-option > svg {
+  flex: none;
+  opacity: 1;
+}
+
+.model-option-copy {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.model-option-copy > strong,
+.model-option-copy > small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-option-copy > strong {
+  color: var(--model-menu-ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.model-option-copy > small {
+  margin-top: 1px;
+  color: var(--model-menu-secondary);
+  font-size: 10.5px;
+  line-height: 15px;
+}
+
+.model-option-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  color: var(--model-menu-ink);
+}
+
+.model-picker-empty {
+  margin: 0;
+  padding: 22px 10px;
+  color: var(--model-menu-secondary);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell .model-picker.grasp-model-picker,
+  .chat-shell .grasp-model-picker > .harness-icon,
+  .grasp-model-menu,
+  .grasp-model-option,
+  .grasp-model-search .model-search-clear {
+    transition: none;
+    animation: none;
+  }
+}

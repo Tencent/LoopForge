@@ -65,7 +65,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 			called := false
 			h.generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
 				called = true
-				if !strings.Contains(prompt, "当前审批模式为「自动执行」") {
+				if !strings.Contains(prompt, "当前审批模式为「完全权限」") {
 					t.Fatal("scheduled prompt must explicitly enable auto execution")
 				}
 				for _, forbidden := range []string{"当前审批模式为「每次确认」", "平台写入工具不可直接调用", "供用户确认", "每轮 1 个"} {
@@ -74,20 +74,20 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 					}
 				}
 				mode := assistantExecModeFrom(ctx)
-				if !mode.AutoWrite || mode.DeferSOP != scheduleJob {
+				if mode != assistantExecModeForApproval(AssistantApprovalAuto) {
 					t.Fatalf("unexpected scheduled gateway mode: %+v", mode)
 				}
-				if scheduleJob && !strings.Contains(prompt, "不要调用 issues_dispatch") {
-					t.Fatal("schedule job must keep SOP dispatch restriction")
+				if strings.Contains(prompt, "不要调用 issues_dispatch") || strings.Contains(prompt, "不要写进 AI 定时任务") {
+					t.Fatal("scheduled prompts must allow SOP execution")
 				}
 				if _, err := h.callAssistantPlatform(ctx, u, "platform", assistantMCPCall{
 					Tool: "issues_save", Body: map[string]any{"id": "scheduled-issue", "automationState": "ignored"},
 				}); err != nil {
 					t.Fatalf("scheduled write should execute immediately: %v", err)
 				}
-				if scheduleJob {
-					if _, err := h.callAssistantPlatform(ctx, u, "platform", assistantMCPCall{Tool: "issues_dispatch", Path: map[string]any{"id": "scheduled-issue"}}); err == nil {
-						t.Fatal("AI schedule job must still reject SOP dispatch")
+				for _, name := range []string{"issues_dispatch", "runs_start", "runs_retry", "workflows_publish", "schedule_jobs_save", "schedule_jobs_run", "schedule_jobs_delete"} {
+					if !assistantPlatformToolAllowed(mode, name) {
+						t.Fatalf("full-access scheduled task must allow %s", name)
 					}
 				}
 				return "已完成写入", nil

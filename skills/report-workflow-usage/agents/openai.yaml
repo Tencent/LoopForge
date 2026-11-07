@@ -1,0 +1,4 @@
+interface:
+  display_name: "外部工作流用量上报"
+  short_description: "读取外部工作流真实用量，在执行结束后幂等上报到项目用量分析"
+  default_prompt: "使用 $report-workflow-usage，校验并上报宿主指定的已结束外部工作流用量，保留原文件以便重试。"

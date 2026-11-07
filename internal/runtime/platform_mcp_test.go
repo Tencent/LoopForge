@@ -42,17 +42,17 @@ func TestPrepareMCPServersDropsUnaddressableForCloud(t *testing.T) {
 	}
 }
 
-func TestPrepareMCPServersTaihuPolicy(t *testing.T) {
-	assets := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{ID: "tapd", Name: "TAPD", AuthType: MCPAuthTaihuPAT, URL: "http://tapd/mcp"}}}
-	if _, _, err := PrepareMCPServers(assets, MCPTarget{RequireTaihuPAT: true}); err == nil {
-		t.Fatal("agent invocation without a Taihu PAT must fail")
+func TestPrepareMCPServersGitHubCredentialPolicy(t *testing.T) {
+	assets := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{ID: "github", Name: "GitHub", AuthType: "github-token", URL: "https://api.githubcopilot.com/mcp/"}}}
+	if _, _, err := PrepareMCPServers(assets, MCPTarget{RequireCredentials: true}); err == nil {
+		t.Fatal("agent invocation without a GitHub token must fail")
 	}
 	got, _, err := PrepareMCPServers(assets, MCPTarget{})
 	if err != nil || got.MCPServers[0].Headers["Authorization"] != "" {
 		t.Fatalf("optional bind without token = %#v, %v", got.MCPServers, err)
 	}
-	got, _, err = PrepareMCPServers(assets, MCPTarget{TaihuPAT: "pat", RequireTaihuPAT: true})
-	if err != nil || got.MCPServers[0].Headers["Authorization"] != "Bearer pat" {
+	got, _, err = PrepareMCPServers(assets, MCPTarget{GitToken: "ghp_test", RequireCredentials: true})
+	if err != nil || got.MCPServers[0].Headers["Authorization"] != "Bearer ghp_test" {
 		t.Fatalf("strict bind = %#v, %v", got.MCPServers, err)
 	}
 }

@@ -1,96 +1,73 @@
 package domain
 
-import (
-	"strings"
-	"time"
-)
-
-type AssistantMessage struct {
-	Trigger        string                `json:"trigger,omitempty"`
-	TriggerID      string                `json:"triggerId,omitempty"`
-	StartedAt      *time.Time            `json:"startedAt,omitempty"`
-	CreatedAt      time.Time             `json:"createdAt,omitempty"`
-	AuthorID       int64                 `json:"authorId,omitempty"`
-	AuthorName     string                `json:"authorName,omitempty"`
-	SpeakerName    string                `json:"speakerName,omitempty"`
-	SpeakerAgentID string                `json:"speakerAgentId,omitempty"`
-	Role           string                `json:"role"`
-	Content        string                `json:"content"`
-	References     []AssistantReference  `json:"references,omitempty"`
-	Attachments    []AssistantAttachment `json:"attachments,omitempty"`
-	// Process is display-only reasoning and tool activity; it is never sent back to models.
-	Process []AssistantProcessStep `json:"process,omitempty"`
-}
-
-type AssistantProcessStep struct {
-	Kind string `json:"kind"`
-	Text string `json:"text"`
-}
+import "time"
 
 const (
-	assistantProcessMaxSteps = 60
-	assistantProcessMaxChars = 24000
+	// AssistantSourceChat is an ordinary conversation.
+	AssistantSourceChat = "chat"
+	// AssistantSourceSOP is a shared conversation owned by a SOP run.
+	AssistantSourceSOP = "sop"
+	// AssistantSourceScheduled is a conversation produced by a scheduled task.
+	AssistantSourceScheduled = "scheduled"
 )
 
-// AppendAssistantProcess merges streamed thinking deltas and records tool calls
-// within fixed limits.
-func AppendAssistantProcess(steps []AssistantProcessStep, kind, text string, full bool) []AssistantProcessStep {
-	if text == "" || (kind != "thinking" && kind != "tool") {
-		return steps
-	}
-	used := 0
-	for _, step := range steps {
-		used += len(step.Text)
-	}
-	if used >= assistantProcessMaxChars {
-		return steps
-	}
-	if room := assistantProcessMaxChars - used; len(text) > room {
-		text = strings.ToValidUTF8(text[:room], "")
-	}
-	if n := len(steps); n > 0 && kind == "thinking" && steps[n-1].Kind == "thinking" {
-		if full {
-			if !strings.Contains(steps[n-1].Text, strings.TrimSpace(text)) {
-				steps[n-1].Text += "\n" + text
-			}
-			return steps
-		}
-		steps[n-1].Text += text
-		return steps
-	}
-	if len(steps) >= assistantProcessMaxSteps {
-		return steps
-	}
-	return append(steps, AssistantProcessStep{Kind: kind, Text: text})
+// AssistantActivityEvent contains only the user-visible execution stream, not
+// raw tool arguments/results. It travels with its reply so later turns cannot
+// overwrite the execution history.
+type AssistantActivityEvent struct {
+	Kind   string     `json:"kind"`
+	Text   string     `json:"text,omitempty"`
+	Tool   string     `json:"tool,omitempty"`
+	Detail string     `json:"detail,omitempty"`
+	ID     string     `json:"id,omitempty"`
+	Failed bool       `json:"failed,omitempty"`
+	Full   bool       `json:"full,omitempty"`
+	At     *time.Time `json:"at,omitempty"`
+	// Parent is the tool call ID of the Agent dispatch that produced this
+	// event; it is empty for Main Bot's own steps.
+	Parent string `json:"parent,omitempty"`
+	// Subagent is the dispatched agent type on an Agent tool event and Role
+	// the role it runs as; AgentID is the CLI agent ID reported on its
+	// completion, which a later dispatch passes as resume to reuse it.
+	Subagent string `json:"subagent,omitempty"`
+	Role     string `json:"role,omitempty"`
+	AgentID  string `json:"agentId,omitempty"`
+	// Input is the task an Agent dispatch hands the subagent and Output the
+	// report it returns; the side panel shows them like an SOP node session.
+	Input  string `json:"input,omitempty"`
+	Output string `json:"output,omitempty"`
 }
 
-// SanitizeAssistantProcess bounds client-supplied history.
-func SanitizeAssistantProcess(steps []AssistantProcessStep) []AssistantProcessStep {
-	var out []AssistantProcessStep
-	used := 0
-	for _, step := range steps {
-		if len(out) >= assistantProcessMaxSteps || used >= assistantProcessMaxChars {
-			break
-		}
-		if step.Text == "" || (step.Kind != "thinking" && step.Kind != "tool") {
-			continue
-		}
-		if room := assistantProcessMaxChars - used; len(step.Text) > room {
-			step.Text = strings.ToValidUTF8(step.Text[:room], "")
-		}
-		used += len(step.Text)
-		out = append(out, step)
-	}
-	return out
+type AssistantMessage struct {
+	Assets         []AssistantAssetRef      `json:"assets,omitempty"`
+	RunIDs         []string                 `json:"runIds,omitempty"`
+	Activity       []AssistantActivityEvent `json:"activity,omitempty"`
+	Trigger        string                   `json:"trigger,omitempty"`
+	TriggerID      string                   `json:"triggerId,omitempty"`
+	StartedAt      *time.Time               `json:"startedAt,omitempty"`
+	CreatedAt      time.Time                `json:"createdAt,omitempty"`
+	AuthorID       int64                    `json:"authorId,omitempty"`
+	AuthorName     string                   `json:"authorName,omitempty"`
+	SpeakerName    string                   `json:"speakerName,omitempty"`
+	SpeakerAgentID string                   `json:"speakerAgentId,omitempty"`
+	Model          string                   `json:"model,omitempty"`
+	Usage          *TokenUsage              `json:"usage,omitempty"`
+	Role           string                   `json:"role"`
+	Content        string                   `json:"content"`
+	References     []AssistantReference     `json:"references,omitempty"`
+	Attachments    []AssistantAttachment    `json:"attachments,omitempty"`
+	// Unfinished names why a reply stopped early (stopped, failed, timed out
+	// or interrupted). The reply keeps its partial answer and activity.
+	Unfinished string `json:"unfinished,omitempty"`
 }
 
-// WithoutAssistantProcess returns history suitable for model prompts.
-func WithoutAssistantProcess(messages []AssistantMessage) []AssistantMessage {
-	out := append([]AssistantMessage(nil), messages...)
-	for i := range out {
-		out[i].Process = nil
-	}
-	return out
+type AssistantAssetRef struct {
+	Kind      string `json:"kind"`
+	ID        string `json:"id"`
+	Name      string `json:"name,omitempty"`
+	ProjectID string `json:"projectId,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Tool      string `json:"tool,omitempty"`
 }
 
 type AssistantReference struct {
@@ -108,25 +85,54 @@ type AssistantAttachment struct {
 	Size     int64  `json:"size"`
 }
 
+type AssistantParticipant struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
 type AssistantSession struct {
+	// Source separates ordinary chats, SOP run conversations and scheduled
+	// task runs. Legacy rows leave it empty and are inferred when read.
+	// TaskID is the scheduled job or assistant task that produced the session,
+	// so repeated runs of one task keep a single conversation.
+	Source              string                 `json:"source,omitempty"`
+	TaskID              string                 `json:"taskId,omitempty"`
+	IssueID             string                 `json:"issueId,omitempty"`
+	Participants        []AssistantParticipant `json:"participants"`
+	ParticipantsVersion int                    `json:"participantsVersion,omitempty"`
+	UnknownParticipants bool                   `json:"unknownParticipants,omitempty"`
+
 	HistoryRevision  int    `json:"historyRevision,omitempty"`
 	ParentSessionID  string `json:"parentSessionId,omitempty"`
 	RootSessionID    string `json:"rootSessionId,omitempty"`
 	ForkMessageIndex int    `json:"forkMessageIndex,omitempty"`
 
-	Shared           bool               `json:"shared,omitempty"`
-	GenerationStatus string             `json:"generationStatus,omitempty"`
-	Archived         bool               `json:"archived,omitempty"`
-	ID               string             `json:"id"`
-	UserID           int64              `json:"userId,omitempty"`
-	Title            string             `json:"title"`
-	ProjectID        string             `json:"projectId,omitempty"`
-	Model            string             `json:"model,omitempty"`
-	Executor         string             `json:"executor,omitempty"`
-	RunID            string             `json:"runId,omitempty"`
-	Messages         []AssistantMessage `json:"messages,omitempty"`
-	CreatedAt        time.Time          `json:"createdAt,omitempty"`
-	UpdatedAt        time.Time          `json:"updatedAt"`
+	Shared           bool   `json:"shared,omitempty"`
+	GenerationStatus string `json:"generationStatus,omitempty"`
+	Archived         bool   `json:"archived,omitempty"`
+	ID               string `json:"id"`
+	UserID           int64  `json:"userId,omitempty"`
+	Title            string `json:"title"`
+	TitleEdited      bool   `json:"titleEdited,omitempty"`
+	// TitleGenerated is set when a background model replaced the first-prompt
+	// title. It is not a user rename: later turns keep it, and a real rename clears it.
+	TitleGenerated bool   `json:"titleGenerated,omitempty"`
+	ProjectID      string `json:"projectId,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	Executor       string `json:"executor,omitempty"`
+	RunID          string `json:"runId,omitempty"`
+	// WorkspaceRunID is the one workspace Main Bot has bound to an ordinary
+	// conversation: one the conversation opened, or the SOP run of an issue.
+	// Unlike RunID it does not make the session a shared run conversation.
+	WorkspaceRunID string `json:"workspaceRunId,omitempty"`
+	// OwnWorkspaceRunIDs are the workspaces the conversation opened itself; it
+	// may switch back to them and deletes them with the conversation.
+	OwnWorkspaceRunIDs []string           `json:"ownWorkspaceRunIds,omitempty"`
+	SandboxProfileID   string             `json:"sandboxProfileId,omitempty"`
+	Messages           []AssistantMessage `json:"messages,omitempty"`
+	CreatedAt          time.Time          `json:"createdAt,omitempty"`
+	UpdatedAt          time.Time          `json:"updatedAt"`
 }
 
 type AssistantTask struct {

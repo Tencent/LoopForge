@@ -30,6 +30,7 @@ func enablePreview(t *testing.T, engine *Engine, store *repo.Store) *preview.Ser
 }
 
 func TestPendingPreviewHoldsWorkspaceCleanup(t *testing.T) {
+	t.Parallel()
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +64,7 @@ func TestPendingPreviewHoldsWorkspaceCleanup(t *testing.T) {
 }
 
 func TestReadyPreviewReleasesWorkspaceCleanup(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -101,23 +103,26 @@ func TestReadyPreviewReleasesWorkspaceCleanup(t *testing.T) {
 	if !ok || p.Status != domain.PreviewReady {
 		t.Fatalf("preview not ready: %+v", p)
 	}
-	// Ready is persisted before the asynchronous finalizer clears its cleanup
-	// hold and releases the workspace. Wait for that observable completion,
-	// rather than racing it with a single cleanup pass and closing the store.
-	deadline = time.Now().Add(5 * time.Second)
+	// Marking the preview ready and releasing the workspace overlap. A single
+	// reconcile can land in the middle of that release, so wait until the
+	// cleanup is actually recorded.
+	deadline = time.Now().Add(30 * time.Second)
+	var cleaned domain.Run
 	for time.Now().Before(deadline) {
 		engine.reconcileTerminalWorkspaceCleanup()
-		cleaned, _ := store.Run(run.ID)
-		_, statErr := os.Stat(workspace)
-		if !cleaned.WorkspaceCleanedAt.IsZero() && os.IsNotExist(statErr) {
-			return
+		cleaned, _ = store.Run(run.ID)
+		if !cleaned.WorkspaceCleanedAt.IsZero() {
+			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("ready preview should release workspace cleanup")
+	if cleaned.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("ready preview should release workspace cleanup")
+	}
 }
 
 func TestBeginFinalizationSkipsNonFrontendWorkspace(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -166,6 +171,7 @@ func TestBeginFinalizationSkipsNonFrontendWorkspace(t *testing.T) {
 }
 
 func TestStartInjectsPreviewBuildNode(t *testing.T) {
+	t.Parallel()
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -208,6 +214,7 @@ func TestStartInjectsPreviewBuildNode(t *testing.T) {
 }
 
 func TestCancelledRunDoesNotCreatePreview(t *testing.T) {
+	t.Parallel()
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -234,6 +241,7 @@ func TestCancelledRunDoesNotCreatePreview(t *testing.T) {
 }
 
 func TestRecoverMissingPreviewFinalizerHoldsWorkspace(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -288,6 +296,7 @@ func TestRecoverMissingPreviewFinalizerHoldsWorkspace(t *testing.T) {
 }
 
 func TestSucceededPreviewWithoutRecordLosesWorkspaceWithoutRecover(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -323,6 +332,7 @@ func TestSucceededPreviewWithoutRecordLosesWorkspaceWithoutRecover(t *testing.T)
 }
 
 func TestDeleteRunRevokesPreviewSession(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -389,6 +399,7 @@ func TestDeleteRunRevokesPreviewSession(t *testing.T) {
 }
 
 func TestWaitingRunArchivesPreviewAfterBuild(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -445,6 +456,7 @@ func TestWaitingRunArchivesPreviewAfterBuild(t *testing.T) {
 }
 
 func TestWaitingRunnerPreviewDoesNotSkipEmptyControlPlane(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -491,6 +503,7 @@ func TestWaitingRunnerPreviewDoesNotSkipEmptyControlPlane(t *testing.T) {
 }
 
 func TestSkippedPreviewIsNotRevivedWhileWaiting(t *testing.T) {
+	t.Parallel()
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)

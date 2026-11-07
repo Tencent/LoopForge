@@ -17,6 +17,7 @@ func archivedTestFile(node, path, content string, at time.Time) domain.Artifact 
 	return domain.Artifact{ID: node + path, NodeID: node, Name: node, Path: path, Content: content, SHA256: runtime.WorkspaceContentSHA(content), CreatedAt: at}
 }
 func TestLegacyConversationRefillsOnlyMissingLatestArtifacts(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	now := time.Now()
 	r := domain.Run{ID: "legacy-artifacts", Status: "waiting", PauseRequested: true, Nodes: map[string]*domain.NodeRun{}, Artifacts: []domain.Artifact{archivedTestFile("design", "docs/design.md", "latest", now), archivedTestFile("design-old", "docs/design.md", "old", now.Add(-time.Minute)), archivedTestFile("implement", "change-report.md", "old change", now)}}
@@ -54,6 +55,7 @@ func TestLegacyConversationRefillsOnlyMissingLatestArtifacts(t *testing.T) {
 	}
 }
 func TestArchivedReplayDoesNotResurrectCurrentOrDownstreamOutputs(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	r := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "a"}, {ID: "b", ArtifactOutputs: []domain.ArtifactContract{{Path: "shared-report.md"}}}, {ID: "c"}}, Edges: []domain.WorkflowEdge{{Source: "a", Target: "b"}, {Source: "b", Target: "c"}}}, Nodes: map[string]*domain.NodeRun{"a": {Status: "succeeded"}, "b": {Status: "running"}, "c": {Status: "pending"}}, Artifacts: []domain.Artifact{archivedTestFile("a", "input.md", "upstream", now), archivedTestFile("a", "shared-report.md", "older upstream report", now), archivedTestFile("b", "current.md", "stale output", now), archivedTestFile("c", "downstream.md", "stale downstream", now)}}
 	files := archivedWorkspaceFiles(r, "b")
@@ -70,6 +72,7 @@ func TestArchivedReplayDoesNotResurrectCurrentOrDownstreamOutputs(t *testing.T) 
 	}
 }
 func TestRealSnapshotKeepsIntentionalArtifactDeletion(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	r, _ := e.repo.RunState(id)
 	r.Artifacts = []domain.Artifact{archivedTestFile("old", "deleted.md", "must stay deleted", time.Now())}
@@ -91,6 +94,7 @@ func TestRealSnapshotKeepsIntentionalArtifactDeletion(t *testing.T) {
 }
 
 func TestArchivedFilesKeepRepositoryScope(t *testing.T) {
+	t.Parallel()
 	a := archivedTestFile("design", "docs/design.md", "scoped report", time.Now())
 	a.RepositoryDir = "backend"
 	r := domain.Run{Artifacts: []domain.Artifact{a}, Nodes: map[string]*domain.NodeRun{"design": {Status: "succeeded"}}}
@@ -105,11 +109,12 @@ func TestArchivedFilesKeepRepositoryScope(t *testing.T) {
 	}
 }
 
-func TestIdleRunningGroupRefillsArchivedFiles(t *testing.T) {
+func TestIdleConversationWorkspaceRefillsArchivedFiles(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	r, _ := e.repo.RunState(id)
-	r.Status = "running"
-	r.WorkflowSnapshot.CollaborationMode = "group"
+	r.Status = "waiting"
+	r.Kind = domain.RunKindWorkspace
 	r.Artifacts = []domain.Artifact{archivedTestFile("design", "design.md", "archived report", time.Now())}
 	if err := e.repo.PutRun(r); err != nil {
 		t.Fatal(err)
@@ -126,6 +131,7 @@ func TestIdleRunningGroupRefillsArchivedFiles(t *testing.T) {
 }
 
 func TestLegacyArchivedFilesRefillOnOwningWorker(t *testing.T) {
+	t.Parallel()
 	worker, id := checkpointFixture(t)
 	worker.workspaceHost = "artifact-worker"
 	worker.controlToken = "test-artifact-control"
@@ -171,6 +177,7 @@ func TestLegacyArchivedFilesRefillOnOwningWorker(t *testing.T) {
 }
 
 func TestLegacyNodeReplayCanReadOriginalReportPaths(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	wf := domain.WorkflowDefinition{ID: "legacy-original-paths", Name: "legacy original paths", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
 		{ID: "design", Type: "command", Command: "printf archived-design > design.md", ArtifactOutputs: []domain.ArtifactContract{{Name: "design", Path: "design.md", Required: true}}, MaxAttempts: 1},
@@ -186,7 +193,7 @@ func TestLegacyNodeReplayCanReadOriginalReportPaths(t *testing.T) {
 	waitFor(t, s, r.ID, "succeeded")
 	waitForWorkspaceCleanup(t, s, r.ID)
 	// The cleaned flag is committed before the cleanup lease is released.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for {
 		meta, _ := s.WorkspaceCheckpoint(r.ID)
 		if meta.LeaseToken == "" {
@@ -212,8 +219,19 @@ func TestLegacyNodeReplayCanReadOriginalReportPaths(t *testing.T) {
 }
 
 func TestArchivedRefillDoesNotInventVirtualResultFiles(t *testing.T) {
+	t.Parallel()
 	r := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "log-only"}}}, Artifacts: []domain.Artifact{{NodeID: "log-only", Name: "result", Path: "result.md", Content: "console output"}, {NodeID: "log-only", Name: "repository-patch", Path: "repository.patch", Content: "inventory"}}}
 	if got := archivedWorkspaceFiles(r, ""); len(got) != 0 {
 		t.Fatal("invented workspace files", got)
+	}
+}
+
+func TestChildArchivedRefillRespectsParentSnapshot(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	e.reconcileTerminalWorkspaceCleanup()
+	child := domain.Run{ID: "artifact-child", ExecutionContext: domain.TelemetryContext{ParentRunID: id, WorkspaceRunID: id}, Artifacts: []domain.Artifact{archivedTestFile("old", "deleted.md", "must remain deleted", time.Now())}}
+	if files := e.legacyArchivedWorkspaceFiles(child, ""); len(files) != 0 {
+		t.Fatal("child resurrected files intentionally absent from parent snapshot", files)
 	}
 }

@@ -177,6 +177,12 @@ func (h *streamHandlers) ensureClarifyJob(issue domain.Issue, request chatClarif
 		h.jobs.mu.Unlock()
 		return existing, nil
 	}
+	if h.predecessorActive() {
+		if current, ok := h.repo.Issue(issue.ID); ok && current.Clarification.Status == domain.ClarificationAnalyzing {
+			h.jobs.mu.Unlock()
+			return nil, fmt.Errorf("澄清仍在进行（服务升级中），请稍后刷新查看结果")
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), clarifyJobTimeout)
 	job := &clarifyJob{
 		issueID:   issue.ID,
@@ -200,7 +206,11 @@ func (h *streamHandlers) ensureClarifyJob(issue domain.Issue, request chatClarif
 		h.jobs.mu.Unlock()
 		return nil, err
 	}
-	go h.runClarifyJob(ctx, job, issue.ID, request)
+	untrack := inflightTasks.Add()
+	go func() {
+		defer untrack()
+		h.runClarifyJob(ctx, job, issue.ID, request)
+	}()
 	return job, nil
 }
 
@@ -248,7 +258,11 @@ func (h *streamHandlers) ensureComposerJob(issue domain.Issue, request chatClari
 	}
 	h.jobs.jobs[jobID] = job
 	h.jobs.mu.Unlock()
-	go h.runComposerClarifyJob(ctx, job, issue, request)
+	untrack := inflightTasks.Add()
+	go func() {
+		defer untrack()
+		h.runComposerClarifyJob(ctx, job, issue, request)
+	}()
 	job.publish("thought", map[string]string{"kind": "status", "text": "正在准备分析…"})
 	return job, nil
 }
@@ -915,6 +929,10 @@ func (h *streamHandlers) attachIssueClarify(c *gin.Context, issue domain.Issue) 
 	job := h.jobs.jobs[issue.ID]
 	h.jobs.mu.Unlock()
 	if job == nil || job.finished() {
+		if issue.Clarification.Status == domain.ClarificationAnalyzing && h.predecessorActive() {
+			h.followPredecessorClarify(c, issue.ID)
+			return
+		}
 		if issue.Clarification.Status == domain.ClarificationAnalyzing {
 			req := chatClarifyRequest{Message: domain.ClarificationKickoff, History: historyToClarify(issue.Clarification.History)}
 			var err error
@@ -931,13 +949,80 @@ func (h *streamHandlers) attachIssueClarify(c *gin.Context, issue domain.Issue) 
 	h.subscribeClarifySSE(c, job)
 }
 
-func (h *streamHandlers) subscribeClarifySSE(c *gin.Context, job *clarifyJob) {
-	w := c.Writer
+// predecessorActive reports whether the process this one took the listener
+// over from may still be running clarifications.
+func (h *streamHandlers) predecessorActive() bool {
+	if h.predecessor == nil {
+		return false
+	}
+	select {
+	case <-h.predecessor:
+		return false
+	default:
+		return true
+	}
+}
+
+// followPredecessorClarify streams a clarification that the draining
+// predecessor is still executing, from the persisted issue state, instead of
+// starting a duplicate model turn here.
+func (h *streamHandlers) followPredecessorClarify(c *gin.Context, issueID string) {
+	writeClarifySSEHeaders(c)
+	send := func(event string, payload any) {
+		data, _ := json.Marshal(payload)
+		fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
+		c.Writer.Flush()
+	}
+	send("thought", map[string]string{"kind": "status", "text": "服务升级中，澄清仍在继续…"})
+	poll := time.NewTicker(time.Second)
+	defer poll.Stop()
+	ping := time.NewTicker(15 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-ping.C:
+			_, _ = fmt.Fprint(c.Writer, ": heartbeat\n\n")
+			c.Writer.Flush()
+			continue
+		case <-poll.C:
+		}
+		issue, ok := h.repo.Issue(issueID)
+		if !ok {
+			send("error", map[string]string{"error": "issue not found"})
+			return
+		}
+		if issue.Clarification.Status != domain.ClarificationAnalyzing {
+			send("done", map[string]any{"parsed": clarificationAPIPayload(issue.Clarification), "issue": issue})
+			return
+		}
+		h.jobs.mu.Lock()
+		job := h.jobs.jobs[issueID]
+		h.jobs.mu.Unlock()
+		if job != nil {
+			// The predecessor exited and startup recovery resumed it here.
+			h.streamClarifyJob(c, job)
+			return
+		}
+	}
+}
+
+func writeClarifySSEHeaders(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream; charset=utf-8")
 	c.Header("Cache-Control", "no-cache, no-transform")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
+}
+
+func (h *streamHandlers) subscribeClarifySSE(c *gin.Context, job *clarifyJob) {
+	writeClarifySSEHeaders(c)
+	h.streamClarifyJob(c, job)
+}
+
+func (h *streamHandlers) streamClarifyJob(c *gin.Context, job *clarifyJob) {
+	w := c.Writer
 	after, _ := strconv.Atoi(c.Query("after"))
 	ch, replay, result, errMsg, done := job.subscribe()
 	if ch != nil {

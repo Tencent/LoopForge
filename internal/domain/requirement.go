@@ -62,4 +62,27 @@ type RequirementSnapshot struct {
 	Overall RequirementOverall `json:"overall"`
 	Lanes   []RequirementLane  `json:"lanes"`
 	Stages  []RequirementStage `json:"stages"`
+	// Conversation is set for a requirement worked on in a conversation
+	// workspace instead of an SOP.
+	Conversation *RequirementConversation `json:"conversation,omitempty"`
+}
+
+// RequirementConversation is the conversation a requirement was worked on in,
+// changing code directly in a conversation workspace.
+type RequirementConversation struct {
+	// SessionID is the conversation that created the requirement; empty when
+	// the requirement came from elsewhere.
+	SessionID string `json:"sessionId,omitempty"`
+	// Available is false once that conversation was deleted.
+	Available bool `json:"available"`
+	// Branches are the work branches of its conversation workspaces.
+	Branches []RequirementBranch `json:"branches,omitempty"`
+}
+
+// RequirementBranch is a repository a conversation workspace checked out.
+type RequirementBranch struct {
+	Repository string `json:"repository"`
+	WebURL     string `json:"webUrl,omitempty"`
+	BaseBranch string `json:"baseBranch,omitempty"`
+	WorkBranch string `json:"workBranch,omitempty"`
 }

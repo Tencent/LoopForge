@@ -20,7 +20,7 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 		c.JSON(401, gin.H{"error": "请先登录"})
 		return
 	}
-	owner, shared, err := h.conversationScope(c, c.Param("id"), "", "", user.ID)
+	owner, _, err := h.conversationScope(c, c.Param("id"), "", "", user.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
@@ -28,10 +28,6 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	source, exists := h.repo.AssistantSession(owner, c.Param("id"))
 	if !exists {
 		c.JSON(404, gin.H{"error": "原会话不存在"})
-		return
-	}
-	if !h.workbenchProjectAllowed(c, source.ProjectID, user.ID) {
-		c.JSON(403, gin.H{"error": "无权访问项目"})
 		return
 	}
 	var body struct {
@@ -62,8 +58,11 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	edited.Content = strings.TrimSpace(body.Content)
 	edited.AuthorID = user.ID
 	edited.AuthorName = user.LoginName
+	edited.CreatedAt = time.Now().UTC()
 	edited.SpeakerName = ""
 	edited.SpeakerAgentID = ""
+	edited.Model = ""
+	edited.Usage = nil
 	for i, a := range edited.Attachments {
 		attachmentOwner := source.Messages[index].AuthorID
 		if attachmentOwner == 0 {
@@ -99,11 +98,11 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 			prefix[i].Content = string(raw)
 		}
 	}
-	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, Model: source.Model, Messages: append(prefix, edited), Shared: shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
+	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
 	if branch.RootSessionID == "" {
 		branch.RootSessionID = source.ID
 	}
-	if shared {
+	if source.Shared {
 		branch.ID = "sop-branch-" + branch.ID
 	}
 	if err := h.repo.CreateAssistantSessionBranch(source, branch); err != nil {
@@ -114,15 +113,14 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	c.JSON(201, saved)
 }
 func copyForkAttachment(from, to int64, id, project string) (domain.AssistantAttachment, error) {
-	record, path, err := loadWorkbenchAttachment(from, id)
-	if err != nil || record.ProjectID != project {
-		return domain.AssistantAttachment{}, os.ErrNotExist
-	}
-	file, err := os.Open(path)
+	record, file, err := openWorkbenchAttachment(from, id)
 	if err != nil {
 		return domain.AssistantAttachment{}, err
 	}
 	defer file.Close()
+	if record.ProjectID != project {
+		return domain.AssistantAttachment{}, os.ErrNotExist
+	}
 	data, err := io.ReadAll(io.LimitReader(file, workbenchAttachmentLimit+1))
 	if err != nil || len(data) > workbenchAttachmentLimit {
 		return domain.AssistantAttachment{}, os.ErrInvalid
@@ -164,10 +162,6 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	if !h.workbenchProjectAllowed(c, source.ProjectID, user.ID) {
-		c.JSON(403, gin.H{"error": "无权访问项目"})
-		return
-	}
 	var body struct {
 		MessageIndex *int      `json:"messageIndex"`
 		Content      string    `json:"content"`
@@ -189,6 +183,7 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 	edited.Content = strings.TrimSpace(body.Content)
 	edited.AuthorID = user.ID
 	edited.AuthorName = user.LoginName
+	edited.CreatedAt = time.Now().UTC()
 	edited.Attachments = append([]domain.AssistantAttachment(nil), edited.Attachments...)
 	for i, a := range edited.Attachments {
 		attachmentOwner := source.Messages[*body.MessageIndex].AuthorID

@@ -26,6 +26,8 @@ type Engine struct {
 	runEnvMu           sync.Mutex
 	runEnvs            map[string]*runEnvironment
 	workspaceTerminals runtime.TerminalPool
+
+	checkpointTransfers runtime.CheckpointTransfers
 	// workspaceFacts are the latest facts an execution machine reported
 	// per run, read where the engine used to inspect its own workspace copy.
 	workspaceFacts map[string]domain.RunnerWorkspaceFacts

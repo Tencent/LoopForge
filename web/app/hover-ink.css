@@ -1,0 +1,119 @@
+/*! Hover ink adapted from Grasp.
+ * MIT License
+ *
+ * Copyright (c) 2026 cocofhu
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+/* A negative layer in an isolated button stays behind bare text as well as SVGs.
+   The cover is a pseudo-element so React owns the complete button child tree. */
+:is(.platform-sidebar button.nav, .chat-shell button.new-chat-button, .chat-shell button.session-link, .chat-shell button.session-project-heading, .chat-shell :is(button, a)[data-hover-ink-control], .settings-navigation-toggle, .credential-ink) {
+  --hover-ink-color: rgb(24 24 27 / .04);
+  position: relative;
+  overflow: clip;
+  isolation: isolate;
+}
+
+.chat-shell button.new-chat-button {
+  --hover-ink-color: rgb(24 24 27 / .045);
+}
+
+:is(.chat-shell :is(button, a)[data-hover-ink-control], .settings-navigation-toggle, .credential-ink) {
+  --hover-ink-color: #f4f4f5;
+}
+
+[data-theme="dark"] :is(.platform-sidebar button.nav, .chat-shell button.session-link, .chat-shell button.session-project-heading, .chat-shell :is(button, a)[data-hover-ink-control], .settings-navigation-toggle, .credential-ink) {
+  --hover-ink-color: rgb(237 237 240 / .04);
+}
+
+[data-theme="dark"] .chat-shell button.new-chat-button {
+  --hover-ink-color: rgb(237 237 240 / .045);
+}
+
+[data-theme="dark"] :is(.chat-shell :is(button, a)[data-hover-ink-control], .settings-navigation-toggle, .credential-ink) {
+  --hover-ink-color: #25252b;
+}
+
+:is(.platform-sidebar button.nav, .chat-shell button.new-chat-button, .chat-shell button.session-link, .chat-shell button.session-project-heading, .chat-shell :is(button, a)[data-hover-ink-control], .settings-navigation-toggle, .credential-ink)::after {
+  content: "";
+  display: block;
+  position: absolute;
+  z-index: -1;
+  left: var(--ink-x, 50%);
+  top: var(--ink-y, 50%);
+  right: auto;
+  bottom: auto;
+  width: var(--ink-d, 0px);
+  height: var(--ink-d, 0px);
+  margin: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--hover-ink-color);
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0);
+  transform-origin: center;
+  transition: transform 350ms cubic-bezier(.16, 1, .3, 1);
+}
+
+:is(.platform-sidebar button.nav, .chat-shell button.new-chat-button, .chat-shell button.session-link, .chat-shell button.session-project-heading, .chat-shell :is(button, a)[data-hover-ink-control], .settings-navigation-toggle, .credential-ink)[data-hover-ink="hover"]::after {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+:is(.platform-sidebar button.nav, .chat-shell button.new-chat-button, .chat-shell button.session-link, .chat-shell button.session-project-heading, .chat-shell :is(button, a)[data-hover-ink-control], .settings-navigation-toggle, .credential-ink):is([data-hover-ink="suppressed"], :disabled, [aria-disabled="true"], [aria-busy="true"], [data-loading="true"], .loading, .is-loading)::after {
+  visibility: hidden;
+  transition: none;
+  transform: translate(-50%, -50%) scale(0);
+}
+
+/* The landing-point ink supplies hover paint; retain the fixed selected surface. */
+html[data-theme] .platform-sidebar button.nav:not(.active):hover,
+.chat-shell button:is(.new-chat-button, .session-project-heading):hover,
+.chat-shell .session-row:not(.active):hover,
+.chat-shell .session-row button.session-link:hover {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+.chat-shell .session-row button.session-link {
+  border-radius: inherit;
+}
+
+/* Quiet controls use the same landing-point cover as navigation rows. */
+.chat-shell .brand > .sidebar-toggle[aria-expanded],
+.chat-shell .brand > .sidebar-toggle:hover,
+.chat-shell .conversation-header .panel-toggle:not([aria-expanded="true"]):hover,
+.settings-navigation-toggle:hover {
+  background: transparent;
+}
+
+.chat-shell .session-row.active {
+  background: #e8e8ea;
+}
+
+[data-theme="dark"] .chat-shell .session-row.active {
+  background: rgb(237 237 240 / .065);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.platform-sidebar button.nav, .chat-shell button.new-chat-button, .chat-shell button.session-link, .chat-shell button.session-project-heading, .chat-shell :is(button, a)[data-hover-ink-control], .settings-navigation-toggle, .credential-ink)::after {
+    transition: none !important;
+  }
+}

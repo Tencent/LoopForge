@@ -79,20 +79,21 @@ func TestWriteBackClarificationToTAPDStory(t *testing.T) {
 	}
 }
 
-func TestWriteBackClarificationUsesAssigneePATNotOwner(t *testing.T) {
+func TestWriteBackClarificationActsAsAssigneeNotOwner(t *testing.T) {
 	svc := NewService()
 	svc.ConfigureWithStore(domain.SyncConfig{TAPDMCPURL: "https://mcpgw.example/tapd"}, projectAuthFixture{
 		projects: map[string]domain.Project{"alpha": {ID: "alpha", OwnerID: 1, TAPDWorkspaceID: "101"}},
 		users: map[int64]domain.User{
-			1: {ID: 1, LoginName: "owner", TaihuPAT: "tai_pat_owner"},
-			2: {ID: 2, LoginName: "assignee", TaihuPAT: "tai_pat_assignee"},
+			1: {ID: 1, LoginName: "owner"},
+			2: {ID: 2, LoginName: "assignee"},
 		},
+		servers: []domain.MCPServerDefinition{{ID: "mcp-70-project-alpha", MarketID: "70", ProjectID: "alpha", Scope: "project", Transport: "http", URL: "https://mcpgw.example/tapd", Headers: map[string]string{"Authorization": "Bearer tapd-token"}}},
 	})
 	client, source, err := svc.trackerClientForWriteBack("tapd", "alpha", domain.Issue{ProjectID: "alpha", AssigneeUserID: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Header("Authorization") != "Bearer tai_pat_assignee" {
+	if client.Header("Authorization") != "Bearer tapd-token" {
 		t.Fatalf("authorization=%q", client.Header("Authorization"))
 	}
 	if source != "project-user:assignee" {
@@ -105,14 +106,15 @@ func TestWriteBackClarificationFallsBackToOwnerWithoutAssignee(t *testing.T) {
 	svc.ConfigureWithStore(domain.SyncConfig{TAPDMCPURL: "https://mcpgw.example/tapd"}, projectAuthFixture{
 		projects: map[string]domain.Project{"alpha": {ID: "alpha", OwnerID: 1, TAPDWorkspaceID: "101"}},
 		users: map[int64]domain.User{
-			1: {ID: 1, LoginName: "owner", TaihuPAT: "tai_pat_owner"},
+			1: {ID: 1, LoginName: "owner"},
 		},
+		servers: []domain.MCPServerDefinition{{ID: "mcp-70-project-alpha", MarketID: "70", ProjectID: "alpha", Scope: "project", Transport: "http", URL: "https://mcpgw.example/tapd", Headers: map[string]string{"Authorization": "Bearer tapd-token"}}},
 	})
 	client, source, err := svc.trackerClientForWriteBack("tapd", "alpha", domain.Issue{ProjectID: "alpha"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Header("Authorization") != "Bearer tai_pat_owner" {
+	if client.Header("Authorization") != "Bearer tapd-token" {
 		t.Fatalf("authorization=%q", client.Header("Authorization"))
 	}
 	if source != "project-owner:owner" {

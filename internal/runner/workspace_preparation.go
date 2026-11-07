@@ -3,8 +3,10 @@ package runner
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +45,7 @@ func onceRelease(callbacks ...func()) func() {
 	}
 }
 
-const runnerWorkspacePreparationTimeout = 3 * time.Minute
+const runnerWorkspacePreparationTimeout = 15 * time.Minute
 
 func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
 	ctx, cancel := context.WithTimeout(ctx, runnerWorkspacePreparationTimeout)
@@ -52,24 +54,32 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	if err != nil {
 		return runnerWorkspaceError(err)
 	}
-	gate := d.workspaceGate(request.RunID)
+	gate := d.requestGate(request)
+	key := requestGateKey(request)
 	if !gate.TryLock() {
-		if request.CollaborationMode == "group" && gate.TryRLock() {
+		// Another task of this wave (a parallel SOP branch, a group role, a
+		// child SOP in the shared checkout) holds the read fence. Its exact
+		// live environment already carries the stamp this recipe needs; reuse
+		// it instead of rerunning scripts under running members.
+		if gate.TryRLock() {
 			state := d.runnerWorkspacePreparationStatus(ctx, root, request)
 			gate.RUnlock()
 			if state.Status == "ready" {
 				return runnerWorkspacePayload(state)
 			}
 		}
-		return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is in use; preparation waits for active execution or terminal to finish"}
+		if _, preparing := d.workspacePreparing.Load(key); !preparing && (d.workspaceTerminals.HasRunScope(request.RunID) || key != request.RunID && d.workspaceTerminals.HasRunScope(key)) {
+			return workspaceTerminalActiveResponse("workspace is in use: a workspace terminal is still open; close it before continuing")
+		}
+		return workspaceBusyResponse("workspace is in use; preparation waits for active execution or terminal to finish")
 	}
 	defer gate.Unlock()
-	d.workspacePreparing.Store(request.RunID, true)
-	defer d.workspacePreparing.Delete(request.RunID)
+	d.workspacePreparing.Store(key, true)
+	defer d.workspacePreparing.Delete(key)
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return runnerWorkspaceError(err)
 	}
-	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, runnerTaskSandboxDriver(task)); err != nil {
+	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, runnerTaskSandboxDriver(task), request.RefreshCleanRepositories); err != nil {
 		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
 	}
 	sb, release, err := d.acquireTaskSandbox(ctx, task)
@@ -101,16 +111,17 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 	if err != nil {
 		return runtime.TerminalResult{}, err
 	}
-	gate := d.workspaceGate(request.RunID)
+	gate := d.requestGate(request)
+	key := requestGateKey(request)
 	if !gate.TryLock() {
 		if concurrent {
 			return d.openBusyGroupTerminal(ctx, root, scope, request, task)
 		}
-		return runtime.TerminalResult{}, fmt.Errorf("workspace is in use; finish active execution before preparing the terminal")
+		return runtime.TerminalResult{}, newWorkspaceBusyError("workspace is in use; finish active execution before preparing the terminal")
 	}
 	unlock := onceRelease(gate.Unlock)
-	d.workspacePreparing.Store(request.RunID, true)
-	defer d.workspacePreparing.Delete(request.RunID)
+	d.workspacePreparing.Store(key, true)
+	defer d.workspacePreparing.Delete(key)
 	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, runnerTaskSandboxDriver(task)); err != nil {
 		unlock()
 		return runtime.TerminalResult{}, fmt.Errorf("prepare workspace repositories: %w", err)
@@ -154,14 +165,20 @@ func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandb
 		credentials.GitToken = invocationGitToken(inv)
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
-		credentials.TaihuPAT = inv.TaihuPAT
 		servers := inv.MCPCallServers
 		if len(servers) == 0 {
 			servers = inv.Assets.MCPServers
 		}
-		assets, _, err := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers, MCPFiles: inv.Assets.MCPFiles}, d.mcpTarget(inv.TaihuPAT, false))
+		assets, _, err := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers, MCPFiles: inv.Assets.MCPFiles}, d.mcpTarget(false))
 		if err != nil {
 			return nil, fmt.Errorf("prepare workspace MCP: %w", err)
+		}
+		// The terminal only offers MCP as optional tools. An MCP whose install
+		// script needs an isolated sandbox is left out instead of making the
+		// whole workspace unusable in a local sandbox.
+		assets, skipped := runtime.WithoutUnprovisionableMCP(sb, assets)
+		if len(skipped) > 0 {
+			log.Printf("workspace %s: skipped MCP %s (install script needs docker, bwrap or seatbelt)", request.RunID, strings.Join(skipped, ", "))
 		}
 		if err = runtime.ProvisionMCPAssets(ctx, sb, sb.Workspace(), assets, nil); err != nil {
 			return nil, fmt.Errorf("provision workspace MCP: %w", err)
@@ -175,27 +192,26 @@ func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandb
 // members may be changing. A successful prior check is reusable within the
 // current wave only while its exact sandbox generation is still alive.
 func (d *Daemon) runnerWorkspacePreparationStatus(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) runtime.WorkspacePreparationStatus {
-	state := runtime.ReadWorkspacePreparationStatus(root)
-	if _, active := d.workspacePreparing.Load(request.RunID); state.Status == "preparing" && !active {
+	state := runtime.WorkspacePreparationStatus{Status: "unprepared", Steps: []runtime.WorkspacePreparationStep{}}
+	task, err := d.workspaceSandboxTask(root, request)
+	if err != nil {
+		state.Error = err.Error()
+		return state
+	}
+	sb, release := d.acquireExistingTaskSandbox(task)
+	if sb == nil {
+		state.Error = "工作区执行环境需要重新准备"
+		return state
+	}
+	defer release()
+	state = runtime.ReadWorkspacePreparationStatus(root, sb.ID())
+	if _, active := d.workspacePreparing.Load(requestGateKey(request)); state.Status == "preparing" && !active {
 		state.Status = "unprepared"
 		state.Error = "上次工作区准备已中断，请重新准备"
 	}
 	if state.Status != "ready" {
 		return state
 	}
-	task, err := d.workspaceSandboxTask(root, request)
-	if err != nil {
-		state.Status = "unprepared"
-		state.Error = err.Error()
-		return state
-	}
-	sb, release := d.acquireExistingTaskSandbox(task)
-	if sb == nil {
-		state.Status = "unprepared"
-		state.Error = "工作区执行环境需要重新准备"
-		return state
-	}
-	defer release()
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
 	if err != nil || !runtime.WorkspacePreparationReusable(state, *request.Workflow, request.Repositories, epoch) {
 		state.Status = "unprepared"
@@ -207,9 +223,9 @@ func (d *Daemon) runnerWorkspacePreparationStatus(ctx context.Context, root stri
 // A group terminal joins an existing prepared wave. It must not rerun a recipe,
 // rehash source while members write it, or create a replacement environment.
 func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, request domain.RunnerWorkspaceRequest, task domain.RunnerTask) (runtime.TerminalResult, error) {
-	gate := d.workspaceGate(request.RunID)
+	gate := d.requestGate(request)
 	if !gate.TryRLock() {
-		return runtime.TerminalResult{}, fmt.Errorf("workspace preparation is in progress; retry after it finishes")
+		return runtime.TerminalResult{}, newWorkspaceBusyError("workspace preparation is in progress; retry after it finishes")
 	}
 	sb, releaseSandbox := d.acquireExistingTaskSandbox(task)
 	if sb == nil {
@@ -217,7 +233,7 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 		return runtime.TerminalResult{}, fmt.Errorf("workspace environment is not prepared")
 	}
 	release := onceRelease(releaseSandbox, gate.RUnlock)
-	state := runtime.ReadWorkspacePreparationStatus(root)
+	state := runtime.ReadWorkspacePreparationStatus(root, sb.ID())
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
 	if err != nil || !runtime.WorkspacePreparationReusable(state, *request.Workflow, request.Repositories, epoch) {
 		release()
@@ -243,9 +259,9 @@ func (d *Daemon) recordRunnerWorkspacePreparation(ctx context.Context, root stri
 	if err != nil {
 		return runnerWorkspaceError(err)
 	}
-	gate := d.workspaceGate(request.RunID)
+	gate := d.requestGate(request)
 	if !gate.TryRLock() {
-		return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace preparation is in progress"}
+		return workspaceBusyResponse("workspace preparation is in progress")
 	}
 	defer gate.RUnlock()
 	sb, release := d.acquireExistingTaskSandbox(task)
@@ -260,7 +276,7 @@ func (d *Daemon) recordRunnerWorkspacePreparation(ctx context.Context, root stri
 	// Multiple successful group scripts may report at once. Serialize only the
 	// stamp merge while retaining a shared workspace read fence; a finishing task
 	// may still own its read fence and must not be mistaken for a prep conflict.
-	value, _ := d.workspacePreparation.LoadOrStore(request.RunID, &sync.Mutex{})
+	value, _ := d.workspacePreparation.LoadOrStore(requestGateKey(request), &sync.Mutex{})
 	recordLock := value.(*sync.Mutex)
 	recordLock.Lock()
 	defer recordLock.Unlock()

@@ -16,6 +16,12 @@ func safeNativeAttributes(raw map[string]any) map[string]any {
 	return out
 }
 
+// ParseTokenUsage reads a provider usage object (stream-json result.usage and
+// compatible shapes) with the same field rules the runtime adapters use.
+func ParseTokenUsage(value any) domain.TokenUsage {
+	return tokenUsage(value)
+}
+
 func tokenUsage(value any) domain.TokenUsage {
 	v, _ := value.(map[string]any)
 	first := func(keys ...string) int64 {

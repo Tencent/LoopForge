@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="292" viewBox="0 0 1280 292" role="img" aria-labelledby="title">
+<title id="title">一次 SOP 运行：需求、Agent 步骤、测试、人工验收、交付</title>
+<defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.1" fill="#ecebf1"/></pattern><filter id="sh" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#1b1540" flood-opacity=".07"/></filter><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l7 4-7 4" fill="none" stroke="#b9b8c4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l7 4-7 4" fill="none" stroke="#c15161" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker><clipPath id="frame"><rect width="1280" height="292" rx="20"/></clipPath></defs>
+<g clip-path="url(#frame)"><rect width="1280" height="292" fill="#fafafb"/><rect width="1280" height="292" fill="url(#dots)"/></g>
+<rect x=".5" y=".5" width="1279" height="291" rx="19.5" fill="none" stroke="#eae9ee"/>
+<g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif">
+<g filter="url(#sh)"><rect x="58.0" y="84.0" width="104" height="52" rx="26" fill="#ffffff" stroke="#e3e2ea"/></g>
+<path d="M81.0 103.0h7l3.5 3.5V117.0h-10.5z" fill="none" stroke="#62626c" stroke-width="1.6" stroke-linejoin="round"/><path d="M83.5 110.0h5M83.5 113.2h5" stroke="#62626c" stroke-width="1.4" stroke-linecap="round"/>
+<text x="102.0" y="115.0" fill="#252529" font-size="15" font-weight="600">需求</text>
+<g filter="url(#sh)"><rect x="182.0" y="62" width="136" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="198.0" y="78" width="32" height="32" rx="9" fill="#7b61ff" fill-opacity=".09"/>
+<path d="M214.0 87l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="#7b61ff"/><circle cx="220.0" cy="88" r="1.4" fill="#7b61ff"/>
+<text x="198.0" y="132" fill="#252529" font-size="15" font-weight="600">澄清需求</text>
+<text x="198.0" y="148" fill="#9a9aa4" font-size="11.5">Agent</text>
+<g filter="url(#sh)"><rect x="338.0" y="62" width="136" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="354.0" y="78" width="32" height="32" rx="9" fill="#7b61ff" fill-opacity=".09"/>
+<path d="M370.0 87l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="#7b61ff"/><circle cx="376.0" cy="88" r="1.4" fill="#7b61ff"/>
+<text x="354.0" y="132" fill="#252529" font-size="15" font-weight="600">设计方案</text>
+<text x="354.0" y="148" fill="#9a9aa4" font-size="11.5">Agent</text>
+<g filter="url(#sh)"><rect x="494.0" y="62" width="136" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="510.0" y="78" width="32" height="32" rx="9" fill="#7b61ff" fill-opacity=".09"/>
+<path d="M526.0 87l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="#7b61ff"/><circle cx="532.0" cy="88" r="1.4" fill="#7b61ff"/>
+<text x="510.0" y="132" fill="#252529" font-size="15" font-weight="600">开发实现</text>
+<text x="510.0" y="148" fill="#9a9aa4" font-size="11.5">Agent</text>
+<g filter="url(#sh)"><rect x="650.0" y="62" width="136" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="666.0" y="78" width="32" height="32" rx="9" fill="#7b61ff" fill-opacity=".09"/>
+<path d="M682.0 87l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="#7b61ff"/><circle cx="688.0" cy="88" r="1.4" fill="#7b61ff"/>
+<text x="666.0" y="132" fill="#252529" font-size="15" font-weight="600">独立评审</text>
+<text x="666.0" y="148" fill="#9a9aa4" font-size="11.5">Agent · 独立角色</text>
+<g filter="url(#sh)"><rect x="806.0" y="62" width="136" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="822.0" y="78" width="32" height="32" rx="9" fill="#597dcc" fill-opacity=".09"/>
+<path d="M832.0 90l4 4-4 4" fill="none" stroke="#597dcc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M838.0 98h6" stroke="#597dcc" stroke-width="1.8" stroke-linecap="round"/>
+<text x="822.0" y="132" fill="#252529" font-size="15" font-weight="600">运行测试</text>
+<text x="822.0" y="148" fill="#9a9aa4" font-size="11.5">脚本</text>
+<g filter="url(#sh)"><rect x="962.0" y="62" width="136" height="96" rx="14" fill="#ffffff" stroke="#b7791f" stroke-opacity=".6" stroke-width="1.5"/></g>
+<rect x="978.0" y="78" width="32" height="32" rx="9" fill="#b7791f" fill-opacity=".09"/>
+<path d="M994.0 86l6.5 2.5v4.5c0 4-2.8 6.6-6.5 8-3.7-1.4-6.5-4-6.5-8v-4.5z" fill="none" stroke="#b7791f" stroke-width="1.7" stroke-linejoin="round"/><path d="M991.2 94.5l2 2 3.8-4" fill="none" stroke="#b7791f" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="978.0" y="132" fill="#252529" font-size="15" font-weight="600">人工验收</text>
+<text x="978.0" y="148" fill="#9a9aa4" font-size="11.5">人工关口</text>
+<rect x="994.0" y="32" width="72.0" height="22" rx="11" fill="#b7791f" fill-opacity=".09" stroke="#b7791f" stroke-opacity=".35"/>
+<circle cx="1005.0" cy="43" r="3" fill="#b7791f"/>
+<text x="1013.0" y="47" fill="#b7791f" font-size="11.5" font-weight="600">等你确认</text>
+<g filter="url(#sh)"><rect x="1118.0" y="84.0" width="104" height="52" rx="26" fill="#ffffff" stroke="#e3e2ea"/></g>
+<circle cx="1146.0" cy="110.0" r="7.5" fill="none" stroke="#338768" stroke-width="1.7"/><path d="M1142.8 110.2l2.2 2.2 4.4-4.6" fill="none" stroke="#338768" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1162.0" y="115.0" fill="#252529" font-size="15" font-weight="600">交付</text>
+<path d="M165.0 110.0H179.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M321.0 110.0H335.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M477.0 110.0H491.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M633.0 110.0H647.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M789.0 110.0H803.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M945.0 110.0H959.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M1101.0 110.0H1115.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M1030.0 162V192q0 12-12 12H574.0q-12 0-12-12V164" fill="none" stroke="#c15161" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#ar)"/>
+<rect x="718.0" y="192" width="156.0" height="24" rx="12" fill="#fafafb" stroke="#c15161" stroke-opacity=".35"/>
+<text x="730.0" y="208.2" fill="#c15161" font-size="12" font-weight="600">返工：带着意见打回重做</text>
+<text x="58.0" y="266" fill="#62626c" font-size="12.5"><tspan fill="#7b61ff" font-size="11">●</tspan><tspan dx="7">Agent 角色</tspan><tspan dx="26"> </tspan><tspan fill="#597dcc" font-size="11">●</tspan><tspan dx="7">确定性脚本</tspan><tspan dx="26"> </tspan><tspan fill="#b7791f" font-size="11">●</tspan><tspan dx="7">人工关口</tspan><tspan dx="26"> </tspan></text>
+</g></svg>

@@ -20,13 +20,13 @@ func TestParseGongfengMR(t *testing.T) {
 }
 
 func TestParseGongfengMRAcceptsHTTPAndCanonicalizes(t *testing.T) {
-	raw := "创建结果：http://git.example.com/dnspod/vpcdns/vpcdns_oss/merge_requests/557"
+	raw := "创建结果：http://git.example.com/example/dns/dns-service/merge_requests/557"
 	project, iid, url, ok := ParseGongfengMR(raw)
-	want := "https://git.example.com/dnspod/vpcdns/vpcdns_oss/-/merge_requests/557"
-	if !ok || project != "dnspod/vpcdns/vpcdns_oss" || iid != 557 || url != want {
+	want := "https://git.example.com/example/dns/dns-service/-/merge_requests/557"
+	if !ok || project != "example/dns/dns-service" || iid != 557 || url != want {
 		t.Fatalf("got project=%q iid=%d url=%q ok=%v", project, iid, url, ok)
 	}
-	if !SameGongfengMR(raw, "https://git.example.com/dnspod/vpcdns/vpcdns_oss/-/merge_requests/557") {
+	if !SameGongfengMR(raw, "https://git.example.com/example/dns/dns-service/-/merge_requests/557") {
 		t.Fatal("http and https forms of the same MR must match")
 	}
 }

@@ -41,7 +41,7 @@ func materializeGateMCP(workspace, configRoot, binaryRel, resultPath, driver str
 	}
 	return domain.MCPServerDefinition{
 		ID:        gateMCPServerID,
-		Name:      "AgentFlow Gate",
+		Name:      "LoopForge Gate",
 		Transport: "stdio",
 		Command:   filepath.ToSlash(binaryRel),
 		Environment: map[string]string{
@@ -182,9 +182,9 @@ func mockGateResult(agent domain.AgentDefinition, resultPath string) domain.Gate
 	decision := mockGateDecision(agent, resultPath)
 	result := domain.GateResult{
 		Decision:       decision,
-		Reason:         mockDirective(agent.Instructions, "reason"),
-		ActionRequired: mockDirective(agent.Instructions, "action"),
-		Summary:        mockDirective(agent.Instructions, "summary"),
+		Reason:         mockDirective(agent.Prompt, "reason"),
+		ActionRequired: mockDirective(agent.Prompt, "action"),
+		Summary:        mockDirective(agent.Prompt, "summary"),
 	}
 	if result.Reason == "" {
 		result.Reason = "mock executor called submit_gate_result with " + decision
@@ -195,7 +195,7 @@ func mockGateResult(agent domain.AgentDefinition, resultPath string) domain.Gate
 	if decision == "rework" && result.ActionRequired == "" {
 		result.ActionRequired = "请上游节点根据评审发现完成修复后重新提交"
 	}
-	for _, value := range mockDirectives(agent.Instructions, "finding") {
+	for _, value := range mockDirectives(agent.Prompt, "finding") {
 		parts := strings.SplitN(value, "|", 3)
 		finding := domain.GateFinding{Title: strings.TrimSpace(parts[0])}
 		if len(parts) > 1 {
@@ -239,7 +239,7 @@ func mockDirectives(instructions, name string) []string {
 
 func mockGateDecision(agent domain.AgentDefinition, resultPath string) string {
 	const prefix = "[[mock:gate="
-	instructions := agent.Instructions
+	instructions := agent.Prompt
 	start := strings.Index(instructions, prefix)
 	if start < 0 {
 		return "pass"

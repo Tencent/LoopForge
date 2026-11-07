@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -43,19 +44,91 @@ func validateIssueBaseBranchRepositories(branch string, repositories []domain.Re
 		return fmt.Errorf("指定已有工作分支前请先选择代码仓库")
 	}
 	if len(repositories) > 1 {
-		return fmt.Errorf("继续已有工作分支目前仅支持单个代码仓库，请只选择一个仓库或留空新建工作分支")
+		return fmt.Errorf("baseBranch 仅支持单个代码仓库；多个仓库请通过 repositoryBranches 分别指定继续开发分支")
 	}
-	for _, shared := range []string{repositories[0].DefaultBranch, repositories[0].IntegrateBranch, "master", "main"} {
-		if branch == strings.TrimSpace(shared) {
-			return fmt.Errorf("不能直接在共享分支 %s 上开发，请填写已有功能分支或留空从配置主分支新建工作分支", branch)
-		}
+	if issueSharedBranch(branch, repositories[0]) {
+		return fmt.Errorf("不能直接在共享分支 %s 上开发，请填写已有功能分支或留空从配置主分支新建工作分支", branch)
 	}
 	return nil
 }
 
-func legacyIssueDefaultBranch(branch string, repository domain.Repository) bool {
+// issueSharedBranch reports whether branch is a main or integration branch that
+// work must never be committed to directly.
+func issueSharedBranch(branch string, repository domain.Repository) bool {
 	branch = strings.TrimSpace(branch)
-	return branch != "" && branch == strings.TrimSpace(repository.DefaultBranch)
+	if branch == "" {
+		return false
+	}
+	for _, shared := range []string{repository.DefaultBranch, repository.IntegrateBranch, "master", "main"} {
+		if branch == strings.TrimSpace(shared) {
+			return true
+		}
+	}
+	return false
+}
+
+// A supplied repositoryBranches map is authoritative, including an empty map
+// that restores automatic branch creation for every bound repository.
+func normalizeIssueRepositoryBranches(issue *domain.Issue, repositories []domain.Repository) error {
+	if issue.RepositoryBranches == nil {
+		branch, err := normalizeIssueBaseBranch(issue.BaseBranch)
+		if err != nil {
+			return err
+		}
+		issue.BaseBranch = branch
+		return validateIssueBaseBranchRepositories(branch, repositories)
+	}
+	bound := make(map[string]domain.Repository, len(repositories))
+	for _, repository := range repositories {
+		bound[repository.ID] = repository
+	}
+	branches := make(map[string]string, len(issue.RepositoryBranches))
+	for id, raw := range issue.RepositoryBranches {
+		repository, ok := bound[id]
+		if !ok {
+			return fmt.Errorf("继续开发分支指定了未绑定的代码仓库 %s", id)
+		}
+		branch, err := normalizeIssueBaseBranch(raw)
+		if err == nil {
+			err = validateIssueBaseBranchRepositories(branch, []domain.Repository{repository})
+		}
+		if err != nil {
+			return fmt.Errorf("仓库 %s：%w", repository.Name, err)
+		}
+		if branch != "" {
+			branches[id] = branch
+		}
+	}
+	issue.RepositoryBranches = branches
+	issue.BaseBranch = ""
+	if len(repositories) == 1 {
+		issue.BaseBranch = branches[repositories[0].ID]
+	}
+	return nil
+}
+
+// Partial edits and reimports keep branches for repositories that remain bound.
+// Expanding a legacy single-repository issue preserves its original work branch.
+func (h issuesHandlers) inheritIssueRepositoryBranches(issue *domain.Issue, previous domain.Issue) {
+	if previous.RepositoryBranches == nil && len(issue.EffectiveRepositoryIDs()) <= 1 {
+		return
+	}
+	h.normalizeLegacyIssueBaseBranch(&previous)
+	branches := make(map[string]string)
+	for _, id := range issue.EffectiveRepositoryIDs() {
+		if branch := previous.WorkBranchForRepository(id); branch != "" {
+			branches[id] = branch
+		}
+	}
+	issue.RepositoryBranches = branches
+	issue.BaseBranch = ""
+}
+
+// A stored shared branch can never be a valid selection: older intake and
+// tracker sync populated BaseBranch with the repository default, which may have
+// been renamed since. Interpret any shared branch as blank.
+func legacyIssueDefaultBranch(branch string, repository domain.Repository) bool {
+	return issueSharedBranch(branch, repository)
 }
 
 // Older intake and tracker sync populated BaseBranch with the first repository
@@ -86,7 +159,7 @@ func (h issuesHandlers) invalidateIssueClarifySessionOnRepositoryChange(issue *d
 		}
 		return out
 	}
-	if issue.ProjectID == previous.ProjectID && strings.TrimSpace(issue.BaseBranch) == strings.TrimSpace(previous.BaseBranch) && slices.Equal(ids(*issue), ids(previous)) {
+	if issue.ProjectID == previous.ProjectID && strings.TrimSpace(issue.BaseBranch) == strings.TrimSpace(previous.BaseBranch) && maps.Equal(issue.RepositoryBranches, previous.RepositoryBranches) && slices.Equal(ids(*issue), ids(previous)) {
 		return
 	}
 	issue.Clarification.SessionID = ""

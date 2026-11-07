@@ -260,7 +260,7 @@ def build_prompt_submit_event(
 ) -> dict[str, Any]:
     """构造 `user_prompt_submit` 事件，作为 turn 边界标记。
 
-    这条记录会落到 metrics.ndjson，方便下游把 turn 和 AgentLens trace 对上。
+    这条记录会落到 metrics.ndjson，下游据此划分 turn。
     """
     record: dict[str, Any] = {
         "event": "user_prompt_submit",

@@ -13,6 +13,7 @@ import (
 )
 
 func TestPrepareClarifyWorkspaceRequiresGitToken(t *testing.T) {
+	t.Parallel()
 	_, err := PrepareClarifyWorkspace(context.Background(), t.TempDir(), domain.Repository{
 		ID: "repo", CloneURL: "https://git.example.com/a/b.git",
 	}, "")
@@ -41,6 +42,7 @@ func TestResolveGitTokenUsesResponsibleUserOnly(t *testing.T) {
 }
 
 func TestResolveGitIdentityUsesResponsibleUserLogin(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +77,7 @@ func TestProjectAndRepositoryTokensAreIgnored(t *testing.T) {
 }
 
 func TestApplyWorkspaceGitAuthRemovesPersistedCredentials(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if out, err := exec.Command("git", "init", "-b", "master", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)

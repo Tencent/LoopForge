@@ -12,6 +12,7 @@ import (
 // they share the logical name but differ by path, so the (node, name, path)
 // dedup key must not collapse them.
 func TestLatestInputArtifactsKeepsPerRepositoryPatches(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	artifacts := []domain.Artifact{
 		{ID: "a1", NodeID: "impl", Name: "repository-patch", Path: "repository-frontend.patch", RepositoryDir: "frontend", Attempt: 1, CreatedAt: base},

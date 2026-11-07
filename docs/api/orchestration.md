@@ -22,13 +22,13 @@
 }
 ```
 
-节点类型为 `agent|script|approval`。脚本节点通过 `scriptLanguage`（`shell|python`）和 `script` 配置；Agent 节点只引用角色定义，任务书写在角色的 `taskPrompt` 上。节点可配置制品契约、失败/重试策略和画布位置。角色的 CLI 仅可选择 CodeBuddy、Codex 或 Claude Code。旧的 `command` 节点在保存时会迁移为 shell 脚本节点。
+节点类型为 `agent|script|approval`。脚本节点通过 `scriptLanguage`（`shell|python`）和 `script` 配置；Agent 节点只引用角色定义，任务说明写在角色的 `prompt`（一段自由文本）上；运行时引擎用角色名称、产物契约、门禁和重试策略把它包成节点任务书。节点可配置制品契约、失败/重试策略和画布位置。角色的 CLI 仅可选择 CodeBuddy、Codex 或 Claude Code。旧的 `command` 节点在保存时会迁移为 shell 脚本节点。
 
 ### `GET /api/workflows`
 
 返回全部 `WorkflowDefinition[]`，`200`，不分页。
 
-返回值包含两类 SOP：项目里存储的 SOP，以及 `generic_templates` 表中的**通用模板**（payload 带 `generic: true`，`projectId` 为空）。通用模板与项目无关，所有项目都能看到；普通用户只读，复制到项目后才能编辑。运行时按和自定义 SOP 相同的流程解析节点与角色。通用模板通过 `requirements` 声明运行依赖（例如 `gongfeng-git-token`、`gongfeng-mcp`、`taihu-pat`），Studio 会在复制前做依赖预检。需要人工把关时可在复制后自行添加审批节点。
+返回值包含两类 SOP：项目里存储的 SOP，以及 `generic_templates` 表中的**通用模板**（payload 带 `generic: true`，`projectId` 为空）。通用模板与项目无关，所有项目都能看到；普通用户只读，复制到项目后才能编辑。运行时按和自定义 SOP 相同的流程解析节点与角色。通用模板通过 `requirements` 声明运行依赖（例如 `gongfeng-git-token`、`gongfeng-mcp`、`tapd-mcp`），Studio 会在复制前做依赖预检。需要人工把关时可在复制后自行添加审批节点。
 
 ### `PUT /api/workflows`
 
@@ -71,9 +71,11 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 `id`、`name` 必填。副本固定为 `draft`、`version=1`、`revision=0`，成功 `201`；字段/存储错误 `400`，源 SOP 不存在 `404`。
 
-源 SOP 是通用模板时，复制会同时把模板引用的角色创建到 `projectId` 指定的项目（已存在的同名角色直接复用），并把节点上的 `agentId` 重写到本项目角色，因此复制出的 SOP 可直接运行；此时 `projectId` 必填，缺失返回 `400`。模板声明的 `requirements` 会保留在副本上，Studio 继续据此提示依赖（例如发起 MR 节点需要工蜂 Git Token / 工蜂 MCP + 太湖个人令牌）。
+源 SOP 是通用模板时，复制会同时把模板引用的角色创建到 `projectId` 指定的项目（已存在的同名角色直接复用），并把节点上的 `agentId` 重写到本项目角色，因此复制出的 SOP 可直接运行；此时 `projectId` 必填，缺失返回 `400`。模板声明的 `requirements` 会保留在副本上，Studio 继续据此提示依赖（例如发起 MR 节点需要工蜂 Git Token / 工蜂 MCP）。
 
 ## 运行
+
+对话工作区使用 `kind=workspace`，仅作为沙箱与文件生命周期记录，不执行 SOP 节点，不占用 SOP 配额。环境取用户在高级设置中的选择，否则由 Main Bot 打开工作区时选择（默认 `generic-docker`），创建后冻结；详见 [对话工作区](../conversation-workspaces.md)。旧角色协作写入口已移除，历史记录可继续查看。
 
 run 状态通常为 `running|waiting|succeeded|failed|cancelled`。响应中的 `nodes` 是 node id 到 `NodeRun` 的映射；还包含 usage、toolCalls、artifact 元数据、时间和 revision。
 
@@ -84,16 +86,6 @@ run 状态通常为 `running|waiting|succeeded|failed|cancelled`。响应中的 
 返回全部 run 摘要数组，`200`，不分页。摘要省略 artifacts 内容、遥测、日志、事件和 workflow snapshot，截断 input/错误，并省略已完成节点的大输出。
 
 可传 `projectId` 限定项目，`responsible=me` 只返回当前登录用户负责执行或关联需求责任人为当前用户的任务；`responsible=me` 未登录时返回 `401`。两项筛选可以组合。
-
-### `POST /api/task-groups`
-
-创建自由协作任务，`201` 返回 Run。必填 `projectId`、`input`；不传 `workflowId` 时无需 SOP 模板，Main Bot 可直接协作，角色在创建后按需邀请。可传 `sandboxProfileId` 选择本项目或共享运行环境（省略时使用 `local`）。传 `workflowId` 时仅继承可访问模板的角色与环境，不自动执行 SOP，不能同时覆盖 `sandboxProfileId`。
-
-`repositoryIds` 可指定本项目的一个或多个仓库，按配置主分支创建任务工作分支；不属于本项目或不存在的仓库会拒绝整个请求。显式 `[]` 表示不使用代码仓库；省略或 `null` 保持旧接口选择项目全部仓库的行为。
-
-```json
-{"projectId":"platform","input":"协作优化前后端接口","sandboxProfileId":"project-sandbox","repositoryIds":["frontend","backend"]}
-```
 
 ### `POST /api/runs`
 
@@ -126,6 +118,12 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 ### `DELETE /api/runs/{runId}`
 
 成功 `200 {"status":"deleted"}`；不存在或不能删除通常 `400`。当前处理器本身不额外检查运行状态，约束由存储层决定。
+
+### `GET /api/runs/{runId}/preview/download`
+
+下载已归档的完整静态站点，返回 `200 application/zip`，文件名为 `preview-{runId}.zip`。ZIP 根目录是构建产物目录的内容，保留 HTML、JS、CSS、图片等文件及其相对路径；不包含在线预览注入的会话脚本或后端地址。工作区清理后仍可下载，不会重新构建。
+
+沿用运行 API 的认证要求，无需预览会话。不存在的运行、预览或静态包返回 `404`，尚未就绪返回 `409`，已过期或删除返回 `410`。下载不延长预览保留期限，支持 HTTP Range 请求。
 
 ## SSE 实时运行
 
@@ -247,7 +245,13 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -OJ \
 {"nodeId":"implement","reason":"修复失败测试"}
 ```
 
-重试节点。
+重试节点。网页调用时使用 `Prefer: respond-async`，把工作区恢复和节点重跑分开：
+
+- 工作区需要恢复时，返回 `202 {"workspaceRestore":{"status":"restoring","startedAt":"..."},"retryAfterMs":1000}`。恢复在后台继续，页面断开不会释放恢复任务的租约；同一 Run 的其他请求复用该恢复任务。
+- 轮询 `GET /api/runs/{runId}/workspace/restore`，返回 `idle|restoring|ready|failed`，失败时包含 `error`。该接口仅项目成员可读。
+- `ready` 后重新提交原来的重跑请求；只有 `200 {"ok":true}` 表示重跑已启动。可携带 `expected:{"status":"succeeded","attempt":11,"reworkCount":0}`，避免恢复期间节点已变化时重跑过期尝试。
+
+页面关闭后只继续已经受理的工作区恢复；再次进入页面可查看恢复状态，再明确发起节点重跑。`POST /api/runs/{runId}/resume` 和 `POST /api/runs/{runId}/workspace/restore` 同样支持 `Prefer: respond-async`。不带此请求头的调用保持同步语义。
 
 ### `POST /api/runs/{runId}/decline-retry`
 
@@ -329,6 +333,8 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 `ScheduleJob` 分两类，由 `skipDispatch` 区分，不能写在同一条任务里。
 
 触发任务（`skipDispatch=false`）字段包括 `id`、`name`、`enabled`、`projectId`、`workflowId` / `useIssueWorkflow`、`intervalSec` 或 `cron`、最近执行结果和时间戳。到点扫描本项目未运行需求，做基线门禁再派发 SOP；仓库集成分支冲突会把任务标成 `waiting` 并带上 `blockers`，暂停自动派发；对齐 Agent 会自动解决冲突并合入基线。
+
+触发任务可选 `maxDispatch`，配置每次最多成功触发的需求数，取值为 1–10；不配置（或为 0）时默认为 10，旧任务同样适用。自动执行和「立即运行」共用此上限；已有任务、基线阻塞或派发时被跳过的需求不占用名额，其余需求留待后续执行。`lastPulled` 仍记录所有匹配候选数，`lastDispatched` 记录本次实际成功触发数。AI 定时任务不使用此配置。
 
 AI 定时任务（`skipDispatch=true`）字段包括 `id`、`name`、`enabled`、`projectId`、`assistantPrompt` / `assistantModel` / `ownerUserId`、`intervalSec` 或 `cron`。到点用项目 Owner 的 CodeBuddy 按提示词原文执行并自动写入，不扫描需求、不派发 SOP。
 

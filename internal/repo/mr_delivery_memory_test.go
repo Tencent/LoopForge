@@ -348,13 +348,13 @@ func TestStaleOpenedMRDoesNotOverwriteCanonicalDelivery(t *testing.T) {
 	if err := s.EnsureMRDeliveryState("example/team-project", 248, canonical, issue.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateMRDeliveryState("example/team-project", 248, "merged", "master", time.Now().UTC().Add(-time.Hour)); err != nil {
+	if err := s.UpdateMRDeliveryState("example/team-project", 248, "merged", "master", time.Time{}, time.Now().UTC().Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.EnsureMRDeliveryState("example/team-project", 183, stale, issue.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateMRDeliveryState("example/team-project", 183, "opened", "master", time.Now().UTC()); err != nil {
+	if err := s.UpdateMRDeliveryState("example/team-project", 183, "opened", "master", time.Time{}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Issue(issue.ID)
@@ -384,7 +384,7 @@ func TestCanonicalMRPollStillUpdatesDeliveryLabel(t *testing.T) {
 	if err := s.EnsureMRDeliveryState("org/repo", 9, canonical, issue.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateMRDeliveryState("org/repo", 9, "merged", "master", time.Now().UTC()); err != nil {
+	if err := s.UpdateMRDeliveryState("org/repo", 9, "merged", "master", time.Time{}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Issue(issue.ID)
@@ -420,7 +420,7 @@ func TestMultiRepositoryDeliveryMRs(t *testing.T) {
 		t.Fatalf("per-MR states / label wrong: %+v label=%s", got.DeliveryMRs, got.DeliveryLockedLabel())
 	}
 	// Both MRs are registered for polling; the second merge lands the item.
-	if err := s.UpdateMRDeliveryState("org/b", 2, "merged", "master", time.Now().UTC()); err != nil {
+	if err := s.UpdateMRDeliveryState("org/b", 2, "merged", "master", time.Time{}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.Issue(issue.ID)
@@ -431,7 +431,7 @@ func TestMultiRepositoryDeliveryMRs(t *testing.T) {
 	if err := s.EnsureMRDeliveryState("org/a", 9, "https://git.example.com/org/a/-/merge_requests/9", issue.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateMRDeliveryState("org/a", 9, "closed", "master", time.Now().UTC()); err != nil {
+	if err := s.UpdateMRDeliveryState("org/a", 9, "closed", "master", time.Time{}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.Issue(issue.ID)
@@ -461,12 +461,12 @@ func TestReconcileDeliveryMRStatesRecoversHTTPArtifactLink(t *testing.T) {
 		ID: "run-http", Status: "succeeded", UpdatedAt: time.Now().UTC(),
 		ExecutionContext: domain.TelemetryContext{IssueID: issue.ID},
 		Repositories: []domain.RepositoryContext{{
-			RepositoryID: "vpcdns", Name: "vpcdns_oss", GongfengProjectID: "dnspod/vpcdns/vpcdns_oss",
+			RepositoryID: "demodns", Name: "dns-service", GongfengProjectID: "example/dns/dns-service",
 			WorkBranch: "feature/story-1",
 		}},
 		Artifacts: []domain.Artifact{{
 			NodeID: "mr", Name: "mr-body",
-			Content: "http://git.example.com/dnspod/vpcdns/vpcdns_oss/merge_requests/558",
+			Content: "http://git.example.com/example/dns/dns-service/merge_requests/558",
 		}},
 	}
 	if err := s.PutRun(run); err != nil {
@@ -476,7 +476,7 @@ func TestReconcileDeliveryMRStatesRecoversHTTPArtifactLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := s.Issue(issue.ID)
-	want := "https://git.example.com/dnspod/vpcdns/vpcdns_oss/-/merge_requests/558"
+	want := "https://git.example.com/example/dns/dns-service/-/merge_requests/558"
 	if len(got.DeliveryMRs) != 1 || got.DeliveryMRURL != want || got.DeliveryMRs[0].IID != 558 {
 		t.Fatalf("locked issue did not recover http MR: %+v", got)
 	}
@@ -499,7 +499,7 @@ func TestReconcileDeliveryMRStatesMigratesLegacySingleMR(t *testing.T) {
 	if err := s.EnsureMRDeliveryState("org/a", 3, url, issue.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.recordMRState("org/a", 3, "merged", "master", time.Now().UTC()); err != nil {
+	if err := s.recordMRState("org/a", 3, "merged", "master", time.Time{}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReconcileDeliveryMRStates(); err != nil {

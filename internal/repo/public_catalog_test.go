@@ -9,7 +9,7 @@ import (
 )
 
 // The production catalog must pass the user's task to every executable role.
-// Instructions alone describe a role but do not populate the node taskbook.
+// Each public role stores that brief in prompt, including {{input}}.
 func TestPublicCatalogPassesRunInputToEveryRole(t *testing.T) {
 	raw, err := os.ReadFile("../../migrations/seed/001_public_catalog.sql")
 	if err != nil {
@@ -29,7 +29,7 @@ func TestPublicCatalogPassesRunInputToEveryRole(t *testing.T) {
 		}
 		count++
 		for _, agent := range template.Agents {
-			if agent.TaskPrompt == nil || !strings.Contains(strings.Join(agent.TaskPrompt.Inputs, "\n"), "{{input}}") {
+			if !strings.Contains(agent.Prompt, "{{input}}") {
 				t.Errorf("%s role %s drops the user's run input", match[1], agent.ID)
 			}
 		}

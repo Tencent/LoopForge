@@ -47,19 +47,23 @@ type TelemetryContext struct {
 	RunID                 string `json:"runId"`
 	ParentRunID           string `json:"parentRunId,omitempty"`
 	ParentNodeID          string `json:"parentNodeId,omitempty"`
-	WorkflowID            string `json:"workflowId,omitempty"`
-	WorkflowVersion       int    `json:"workflowVersion,omitempty"`
-	NodeID                string `json:"nodeId,omitempty"`
-	MetricStage           string `json:"metricStage,omitempty"`
-	Attempt               int    `json:"attempt,omitempty"`
-	AgentID               string `json:"agentId,omitempty"`
-	AgentVersion          int    `json:"agentVersion,omitempty"`
-	ExecutorID            string `json:"executorId,omitempty"`
-	SandboxID             string `json:"sandboxId,omitempty"`
-	SessionID             string `json:"sessionId,omitempty"`
-	TraceID               string `json:"traceId"`
-	SpanID                string `json:"spanId,omitempty"`
-	ParentSpanID          string `json:"parentSpanId,omitempty"`
+	// WorkspaceRunID names the run that owns the workspace a child SOP works
+	// in: the top-level run of its SOP chain. Empty means the run owns its
+	// own workspace.
+	WorkspaceRunID  string `json:"workspaceRunId,omitempty"`
+	WorkflowID      string `json:"workflowId,omitempty"`
+	WorkflowVersion int    `json:"workflowVersion,omitempty"`
+	NodeID          string `json:"nodeId,omitempty"`
+	MetricStage     string `json:"metricStage,omitempty"`
+	Attempt         int    `json:"attempt,omitempty"`
+	AgentID         string `json:"agentId,omitempty"`
+	AgentVersion    int    `json:"agentVersion,omitempty"`
+	ExecutorID      string `json:"executorId,omitempty"`
+	SandboxID       string `json:"sandboxId,omitempty"`
+	SessionID       string `json:"sessionId,omitempty"`
+	TraceID         string `json:"traceId"`
+	SpanID          string `json:"spanId,omitempty"`
+	ParentSpanID    string `json:"parentSpanId,omitempty"`
 }
 
 type MetricPoint struct {

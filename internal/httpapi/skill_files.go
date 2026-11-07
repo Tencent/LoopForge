@@ -33,6 +33,9 @@ func (h *catalogHandlers) skillFiles(c *gin.Context) {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "skill not found"})
 		return
 	}
+	if rejectSourcedSkillWrite(c, skill) {
+		return
+	}
 
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, skillUploadBodyLimit)
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
@@ -162,7 +165,8 @@ func (h *catalogHandlers) skillFiles(c *gin.Context) {
 func (h *catalogHandlers) skillFile(c *gin.Context) {
 	skillID := strings.TrimSpace(c.Param("id"))
 	filePath := strings.TrimPrefix(c.Param("path"), "/")
-	if _, ok := h.repo.Skill(skillID); !ok {
+	skill, ok := h.repo.Skill(skillID)
+	if !ok {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "skill not found"})
 		return
 	}
@@ -180,6 +184,9 @@ func (h *catalogHandlers) skillFile(c *gin.Context) {
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", pathEscapeRFC5987(path.Base(filePath))))
 		c.Data(http.StatusOK, "application/octet-stream", content)
 	case http.MethodDelete:
+		if rejectSourcedSkillWrite(c, skill) {
+			return
+		}
 		if err := h.repo.DeleteSkillFile(skillID, filePath); err != nil {
 			respond(c, err)
 			return
@@ -189,6 +196,16 @@ func (h *catalogHandlers) skillFile(c *gin.Context) {
 	default:
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// rejectSourcedSkillWrite answers 409 when the skill files are a market
+// snapshot; those only change through POST /api/skillhub/update.
+func rejectSourcedSkillWrite(c *gin.Context, skill domain.SkillDefinition) bool {
+	if skill.Source == nil {
+		return false
+	}
+	c.JSON(http.StatusConflict, map[string]string{"error": "SkillHub 来源技能的文件只读，请使用更新"})
+	return true
 }
 
 // cleanUploadPath validates a multipart part filename as a relative skill
@@ -219,10 +236,7 @@ func readBoundedPart(header *multipart.FileHeader) ([]byte, error) {
 	return content, nil
 }
 
-// readSkillZip unpacks one .zip part into skill file inputs. It rejects path
-// traversal and non-regular entries (symlinks), strips a shared top-level
-// directory and macOS metadata noise, and enforces the size caps while
-// decompressing.
+// readSkillZip unpacks one uploaded .zip part into skill file inputs.
 func readSkillZip(header *multipart.FileHeader, seen map[string]bool) ([]repo.SkillFileInput, error) {
 	file, err := header.Open()
 	if err != nil {
@@ -233,9 +247,20 @@ func readSkillZip(header *multipart.FileHeader, seen map[string]bool) ([]repo.Sk
 	if err != nil || len(raw) == 0 {
 		return nil, fmt.Errorf("无法读取 zip %s", header.Filename)
 	}
+	return readSkillZipBytes(raw, header.Filename, seen)
+}
+
+// readSkillZipBytes unpacks a zip archive into skill file inputs. It rejects
+// path traversal and non-regular entries (symlinks), strips a shared
+// top-level directory and macOS metadata noise, and enforces the size caps
+// while decompressing. label names the archive in error messages.
+func readSkillZipBytes(raw []byte, label string, seen map[string]bool) ([]repo.SkillFileInput, error) {
+	if seen == nil {
+		seen = map[string]bool{}
+	}
 	reader, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
-		return nil, fmt.Errorf("%s 不是有效的 zip 文件", header.Filename)
+		return nil, fmt.Errorf("%s 不是有效的 zip 文件", label)
 	}
 
 	names := make([]string, 0, len(reader.File))
@@ -259,7 +284,7 @@ func readSkillZip(header *multipart.FileHeader, seen map[string]bool) ([]repo.Sk
 		files[name] = f
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("zip %s 中没有可用的文件", header.Filename)
+		return nil, fmt.Errorf("zip %s 中没有可用的文件", label)
 	}
 	// Strip a single shared top-level directory: zipping a folder produces
 	// "my-skill/..." for every entry.

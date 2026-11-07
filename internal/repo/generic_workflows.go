@@ -33,7 +33,6 @@ const (
 const (
 	RequirementGongfengGitToken = "gongfeng-git-token"
 	RequirementGongfengMCP      = "gongfeng-mcp"
-	RequirementTaihuPAT         = "taihu-pat"
 	RequirementTAPDMCP          = "tapd-mcp"
 )
 

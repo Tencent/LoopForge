@@ -26,10 +26,10 @@ func TestPutAgentKeepsExistingProjectID(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if err := s.PutAgent(domain.AgentDefinition{ID: "gslb-fix", Name: "Fix", ProjectID: "gslb", Instructions: "keep"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "gslb-fix", Name: "Fix", ProjectID: "gslb", Prompt: "keep"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutAgent(domain.AgentDefinition{ID: "gslb-fix", Name: "Fix v2", Instructions: "keep"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "gslb-fix", Name: "Fix v2", Prompt: "keep"}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Agent("gslb-fix")

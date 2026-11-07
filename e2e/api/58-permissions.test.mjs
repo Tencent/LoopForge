@@ -28,7 +28,7 @@ test('separate account cannot access private conversations, edit workspaces or i
   // omitted members field intentionally means 'keep existing' in the API).
   await put('/api/projects',{...initial,members:(initial.members||[]).filter(m=>m.userId!==identity.id)});
   const id=uid('private-conversation');
-  await put(`/api/assistant/sessions/${id}`,{title:'E2E private',projectId:cfg.projectId,messages:[{role:'user',content:'Private acceptance fixture'}]});
+  await put(`/api/assistant/sessions/${id}`,{title:'E2E private',messages:[{role:'user',content:'Private acceptance fixture'}]});
   track('private session',()=>del(`/api/assistant/sessions/${id}`));
   await second('GET',`/api/assistant/sessions/${id}`,undefined,[403,404]);
   await second('PUT',`/api/users/${owner.id}/credentials`,{gitTokenClear:true},403);
@@ -40,7 +40,6 @@ test('separate account cannot access private conversations, edit workspaces or i
   await second('POST',`/api/runs/${run.id}/workspace/takeover`,{},403);
   await second('PUT',`/api/runs/${run.id}/workspace/file`,{path:'note.txt',content:'wrong actor'},403);
   await second('GET',`/api/runs/${run.id}/conversation`,undefined,403);
-  await second('POST',`/api/runs/${run.id}/group/mode`,{},403);
   assert.equal((await get(`/api/runs/${run.id}/workspace/file?path=note.txt`)).content,'isolated\n');
   const snapshot=await get(`/api/projects/${cfg.projectId}`);
   const original={...snapshot,members:snapshot.members||[]};
@@ -49,10 +48,6 @@ test('separate account cannot access private conversations, edit workspaces or i
   try {
     // Read-only membership must not become agent execution permission.
     await second('GET',`/api/runs/${run.id}/conversation`,undefined,200);
-    await second('POST','/api/task-groups',{projectId:cfg.projectId,workflowId:wf},403);
-    for(const path of ['mode','members','tasks','sop','sop/handoff/retry']){
-      await second('POST',`/api/runs/${run.id}/group/${path}`,{},403);
-    }
     await second('PUT',`/api/runs/${run.id}/workspace/file`,{path:'note.txt',content:'viewer write'},403);
     assert.equal((await get(`/api/runs/${run.id}/workspace/file?path=note.txt`)).content,'isolated\n');
   } finally {await put('/api/projects',original)}

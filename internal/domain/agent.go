@@ -44,17 +44,20 @@ const BaselineAlignAgentID = "baseline-align-resolver"
 const PlatformMCPServerID = "agentflow-platform"
 
 type AgentDefinition struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	Version      int             `json:"version"`
-	ProjectID    string          `json:"projectId,omitempty"`
-	Shared       bool            `json:"shared,omitempty"`
-	Description  string          `json:"description"`
-	Instructions string          `json:"instructions"`
-	TaskPrompt   *TaskPromptSpec `json:"taskPrompt,omitempty"`
-	Rules        []string        `json:"rules"`
-	Skills       []string        `json:"skills"`
-	MCPServers   []string        `json:"mcpServers"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Version     int    `json:"version"`
+	ProjectID   string `json:"projectId,omitempty"`
+	Shared      bool   `json:"shared,omitempty"`
+	Description string `json:"description"`
+	// Prompt is the role's single free-form brief: identity, task, order and
+	// limits. The engine wraps it with the role name plus deliverable, gate and
+	// retry sections derived from the artifact contract, verification gates and
+	// node retry policy. Mock executors also read [[mock:...]] directives here.
+	Prompt     string   `json:"prompt,omitempty"`
+	Rules      []string `json:"rules"`
+	Skills     []string `json:"skills"`
+	MCPServers []string `json:"mcpServers"`
 	// PlatformMCP binds the reserved agentflow-platform MCP to this role as an
 	// independent toggle (not an mcpServers entry). When enabled, every run
 	// invocation of this role receives the platform's public operations

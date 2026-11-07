@@ -6,6 +6,13 @@ import (
 )
 
 const (
+	RunnerWorkspaceOperationCheckpointStatus  = "checkpoint_status"
+	RunnerWorkspaceOperationCheckpointExport  = "checkpoint_export"
+	RunnerWorkspaceOperationCheckpointRead    = "checkpoint_read"
+	RunnerWorkspaceOperationCheckpointClose   = "checkpoint_close"
+	RunnerWorkspaceOperationCheckpointUpload  = "checkpoint_upload"
+	RunnerWorkspaceOperationCheckpointAppend  = "checkpoint_append"
+	RunnerWorkspaceOperationCheckpointCommit  = "checkpoint_commit"
 	RunnerWorkspaceOperationArtifacts         = "restore_artifacts" // additive, never replaces existing files
 	RunnerWorkspaceOperationReclaim           = "reclaim"           // service-only worker reclamation
 	RunnerWorkspaceOperationCheckpoint        = "checkpoint"
@@ -22,12 +29,18 @@ const (
 	RunnerWorkspaceOperationSearch            = "search"
 	RunnerWorkspaceOperationLog               = "log"
 	RunnerWorkspaceOperationCommit            = "commit"
+	RunnerWorkspaceOperationBrowser           = "browser"
 )
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
+	RunKind            string                       `json:"runKind,omitempty"`
+	CheckpointTransfer *WorkspaceCheckpointTransfer `json:"checkpointTransfer,omitempty"`
+	// Only the control plane may allow a clean checkout to be refreshed, before
+	// any non-preparation node has run. Later nodes keep their frozen baseline.
+	RefreshCleanRepositories bool `json:"refreshCleanRepositories,omitempty"`
 	// Sandbox and Workflow are resolved exclusively from the frozen run by the
 	// control plane. A terminal must never silently substitute a host shell.
 	PreparationNodeID     string                    `json:"preparationNodeId,omitempty"`
@@ -38,25 +51,60 @@ type RunnerWorkspaceRequest struct {
 	ArtifactFiles         []WorkspaceArtifactFile   `json:"artifactFiles,omitempty"`
 	CheckpointLease       string                    `json:"checkpointLease,omitempty"`
 	Checkpoint            []byte                    `json:"checkpoint,omitempty"`
-	CollaborationMode     string                    `json:"collaborationMode,omitempty"`
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
-	RunID                 string                    `json:"runId"`
-	RunStatus             string                    `json:"runStatus,omitempty"`
-	WorkspaceLayout       string                    `json:"workspaceLayout,omitempty"`
-	Operation             string                    `json:"operation"`
-	Content               string                    `json:"content,omitempty"`
-	ExpectedSHA256        string                    `json:"expectedSha256,omitempty"`
-	Path                  string                    `json:"path,omitempty"`
-	Query                 string                    `json:"query,omitempty"`
-	Ref                   string                    `json:"ref,omitempty"`
-	Repositories          []RepositoryContext       `json:"repositories,omitempty"`
+	// WorkspaceRunID selects the shared checkout owner; RunID continues to
+	// identify this run's independent sandbox, terminal scope and locks.
+	Browser         *BrowserRequest     `json:"browser,omitempty"`
+	WorkspaceRunID  string              `json:"workspaceRunId,omitempty"`
+	RunID           string              `json:"runId"`
+	RunStatus       string              `json:"runStatus,omitempty"`
+	WorkspaceLayout string              `json:"workspaceLayout,omitempty"`
+	Operation       string              `json:"operation"`
+	Content         string              `json:"content,omitempty"`
+	ExpectedSHA256  string              `json:"expectedSha256,omitempty"`
+	Path            string              `json:"path,omitempty"`
+	Query           string              `json:"query,omitempty"`
+	Ref             string              `json:"ref,omitempty"`
+	Repositories    []RepositoryContext `json:"repositories,omitempty"`
+}
+
+type WorkspaceCheckpointTransfer struct {
+	ID     string `json:"id,omitempty"`
+	Size   int64  `json:"size,omitempty"`
+	SHA256 string `json:"sha256,omitempty"`
+	Offset int64  `json:"offset,omitempty"`
+	Data   []byte `json:"data,omitempty"`
+}
+
+func IsWorkspaceCheckpointTransferOperation(op string) bool {
+	switch op {
+	case RunnerWorkspaceOperationCheckpointExport, RunnerWorkspaceOperationCheckpointRead, RunnerWorkspaceOperationCheckpointClose, RunnerWorkspaceOperationCheckpointUpload, RunnerWorkspaceOperationCheckpointAppend, RunnerWorkspaceOperationCheckpointCommit:
+		return true
+	}
+	return false
 }
 
 type RunnerWorkspaceResponse struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 	Error   string          `json:"error,omitempty"`
+	Code    string          `json:"code,omitempty"`
 	Status  int             `json:"status,omitempty"`
+}
+
+const (
+	WorkspaceErrorBusy    = "workspace_busy"
+	WorkspaceErrorMissing = "workspace_missing"
+	// WorkspaceErrorTerminalActive: an exclusive human terminal holds the
+	// workspace; waiting does not help until the user closes it.
+	WorkspaceErrorTerminalActive = "workspace_terminal_active"
+)
+
+// WorkspaceRestoreStatus describes restoration separately from SOP execution.
+type WorkspaceRestoreStatus struct {
+	Status    string     `json:"status"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	Error     string     `json:"error,omitempty"`
 }
 
 // WorkspaceTerminalRequest carries transient PTY data, never durable chat or run logs.
@@ -67,6 +115,89 @@ type WorkspaceTerminalRequest struct {
 	Data      string    `json:"data,omitempty"`
 	Cols      int       `json:"cols,omitempty"`
 	Rows      int       `json:"rows,omitempty"`
+}
+
+// BrowserRequest drives the run's agent browser from the task panel. Frames
+// and input are transient and are never persisted.
+type BrowserRequest struct {
+	Operation string `json:"operation"`
+	After     int64  `json:"after,omitempty"`
+	WaitMs    int    `json:"waitMs,omitempty"`
+	URL       string `json:"url,omitempty"`
+	TargetID  string `json:"targetId,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	// FrameWidth caps panel frames at the device pixels the panel shows, so
+	// a wide viewport is not shipped at full size to a narrow dock.
+	FrameWidth int                 `json:"frameWidth,omitempty"`
+	Events     []BrowserInputEvent `json:"events,omitempty"`
+	// Agent-driven operations (snapshot/click/type/press) address elements by
+	// the refs returned in the latest snapshot.
+	Ref    string `json:"ref,omitempty"`
+	Text   string `json:"text,omitempty"`
+	Key    string `json:"key,omitempty"`
+	Submit bool   `json:"submit,omitempty"`
+	// WithSnapshot returns the page snapshot after a navigation settles.
+	WithSnapshot bool `json:"withSnapshot,omitempty"`
+	// Ensure starts the run browser when none is running yet.
+	Ensure bool `json:"ensure,omitempty"`
+}
+
+// BrowserInputEvent coordinates are normalized to the frame (0..1).
+type BrowserInputEvent struct {
+	Type       string  `json:"type"`
+	Action     string  `json:"action,omitempty"`
+	X          float64 `json:"x,omitempty"`
+	Y          float64 `json:"y,omitempty"`
+	Button     string  `json:"button,omitempty"`
+	Buttons    int     `json:"buttons,omitempty"`
+	ClickCount int     `json:"clickCount,omitempty"`
+	Modifiers  int     `json:"modifiers,omitempty"`
+	DeltaX     float64 `json:"deltaX,omitempty"`
+	DeltaY     float64 `json:"deltaY,omitempty"`
+	Key        string  `json:"key,omitempty"`
+	Code       string  `json:"code,omitempty"`
+	KeyCode    int     `json:"keyCode,omitempty"`
+	Text       string  `json:"text,omitempty"`
+}
+
+type BrowserTab struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
+	Active bool   `json:"active,omitempty"`
+}
+
+type BrowserState struct {
+	Available    bool             `json:"available"`
+	Reason       string           `json:"reason,omitempty"`
+	Kind         string           `json:"kind,omitempty"`
+	Seq          int64            `json:"seq"`
+	Frame        string           `json:"frame,omitempty"`
+	Width        float64          `json:"width,omitempty"`
+	Height       float64          `json:"height,omitempty"`
+	URL          string           `json:"url,omitempty"`
+	Title        string           `json:"title,omitempty"`
+	CanGoBack    bool             `json:"canGoBack,omitempty"`
+	CanGoForward bool             `json:"canGoForward,omitempty"`
+	Tabs         []BrowserTab     `json:"tabs,omitempty"`
+	Snapshot     *BrowserSnapshot `json:"snapshot,omitempty"`
+}
+
+// BrowserSnapshot is a text view of the active page for language models.
+type BrowserSnapshot struct {
+	Text      string           `json:"text"`
+	Truncated bool             `json:"truncated,omitempty"`
+	Elements  []BrowserElement `json:"elements"`
+}
+
+type BrowserElement struct {
+	Ref      string `json:"ref"`
+	Role     string `json:"role"`
+	Name     string `json:"name,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Checked  bool   `json:"checked,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
 }
 
 // WorkspaceArtifactFile is an immutable archived output, restored only if absent.

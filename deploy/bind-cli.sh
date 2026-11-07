@@ -226,6 +226,45 @@ for cli in claude codex codebuddy; do
   fi
 done
 
+# ---------- 0.5 Agent 浏览器 ----------
+# docker 沙箱自带浏览器 sidecar；本机执行（runner/local/seatbelt）需要宿主 Chromium。
+find_chromium() {
+  local name path
+  for name in chromium chromium-browser google-chrome-stable google-chrome; do
+    if path="$(command -v "$name" 2>/dev/null)"; then printf '%s\n' "$path"; return 0; fi
+  done
+  for path in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+    "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome \
+    "$HOME"/Library/Caches/ms-playwright/chromium-*/chrome-mac*/"Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"; do
+    if [[ -x "$path" ]]; then printf '%s\n' "$path"; return 0; fi
+  done
+  return 1
+}
+case "$(printf '%s' "${AGENTFLOW_BROWSER:-}" | tr '[:upper:]' '[:lower:]')" in
+  off|0|false|no)
+    info "AGENTFLOW_BROWSER=${AGENTFLOW_BROWSER}，跳过 Agent 浏览器检测"
+    ;;
+  *)
+    info "检测 Agent 浏览器..."
+    if CHROMIUM_PATH="$(find_chromium)"; then
+      info "  发现 Chromium: ${CHROMIUM_PATH}"
+    elif command -v npx >/dev/null 2>&1; then
+      info "  未找到 Chromium，安装 Playwright Chromium 到用户缓存（无需 sudo）..."
+      # A stalled download must not hang the whole bind; it only costs browser tools.
+      install_limit=""
+      if command -v timeout >/dev/null 2>&1; then install_limit="timeout 600"; fi
+      PLAYWRIGHT_DOWNLOAD_HOST="${PLAYWRIGHT_DOWNLOAD_HOST:-https://npmmirror.com/mirrors/playwright}" $install_limit npx -y playwright install chromium >/dev/null 2>&1 || true
+      if CHROMIUM_PATH="$(find_chromium)"; then
+        info "  已安装 Chromium: ${CHROMIUM_PATH}"
+      else
+        echo "[bind-cli] 提示: Chromium 安装失败，本机执行的任务将没有浏览器工具（docker 沙箱不受影响）" >&2
+      fi
+    else
+      echo "[bind-cli] 提示: 未找到 Chromium 且无 npx，本机执行的任务将没有浏览器工具；安装 Chrome 后重新执行本脚本即可" >&2
+    fi
+    ;;
+esac
+
 # ---------- 1. 安装二进制 ----------
 install_binary() {
   mkdir -p "$BIN_DIR"

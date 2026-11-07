@@ -1,6 +1,6 @@
 {
   "name": "workspace",
-  "displayName": "AgentFlow Run Workspace",
+  "displayName": "LoopForge Run Workspace",
   "description": "SOP run workspace with explicit human takeover for VS Code for the Web",
   "version": "1.5.0",
   "publisher": "agentflow",

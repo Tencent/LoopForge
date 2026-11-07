@@ -10,6 +10,7 @@ node_modules
 **/node_modules
 e2e/test-results
 bin
+web/native-chat
 *.log
 
 !web/vscode-web/**/node_modules/

@@ -106,6 +106,14 @@ func (p githubPull) delivery(project string) domain.DeliveryMR {
 	return domain.DeliveryMR{Project: project, IID: p.Number, URL: domain.GongfengMRURL(project, p.Number), State: state, GongfengState: state, TargetBranch: p.Base.Ref}
 }
 
+// mergedAt is GitHub's merged_at, never the poll time; zero until merged.
+func (p githubPull) mergedAt() time.Time {
+	if p.MergedAt == nil {
+		return time.Time{}
+	}
+	return p.MergedAt.UTC()
+}
+
 func (g *githubClient) findPull(branch, target string) (githubPull, bool, error) {
 	q := url.Values{"state": {"all"}, "head": {strings.Split(g.path, "/")[0] + ":" + branch}, "per_page": {"100"}, "sort": {"updated"}, "direction": {"desc"}}
 	if target != "" {
@@ -239,5 +247,5 @@ func (s *Service) refreshGitHubDelivery(store MRDeliveryStore, project string, n
 		return err
 	}
 	d := p.delivery(project)
-	return store.UpdateMRDeliveryState(project, number, d.GongfengState, d.TargetBranch, time.Now().UTC())
+	return store.UpdateMRDeliveryState(project, number, d.GongfengState, d.TargetBranch, p.mergedAt(), time.Now().UTC())
 }

@@ -12,6 +12,7 @@ import (
 )
 
 func TestQueuedSOPDoesNotStartAndCancelDoesNotOccupy(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +58,7 @@ func TestQueuedSOPDoesNotStartAndCancelDoesNotOccupy(t *testing.T) {
 }
 
 func TestQueuedSOPAutomaticallyStartsAfterSuccess(t *testing.T) {
+	t.Parallel()
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	wf := domain.WorkflowDefinition{ID: "queue-approval", Name: "Queue", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "gate", Name: "Gate", Type: "approval", MaxAttempts: 1}}}

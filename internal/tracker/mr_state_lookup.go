@@ -12,14 +12,15 @@ const mrStateTTL = 2 * time.Minute
 type mrCacheEntry struct {
 	state        string
 	targetBranch string
+	mergedAt     time.Time
 	at           time.Time
 }
 
-func (s *Service) lookupMRState(client *MCPClient, project string, iid int) (state, targetBranch string) {
+func (s *Service) lookupMRState(client *MCPClient, project string, iid int) (state, targetBranch string, mergedAt time.Time) {
 	cacheKey := project + "#" + strconv.Itoa(iid)
 	if raw, ok := s.mrCache.Load(cacheKey); ok {
 		if entry, ok := raw.(mrCacheEntry); ok && time.Since(entry.at) < mrStateTTL {
-			return entry.state, entry.targetBranch
+			return entry.state, entry.targetBranch, entry.mergedAt
 		}
 	}
 	state = "unknown"
@@ -33,14 +34,15 @@ func (s *Service) lookupMRState(client *MCPClient, project string, iid int) (sta
 			"per_page":   1,
 		})
 		if err == nil {
-			if parsed, target := parseGongfengMRStatus(raw, iid); parsed != "" {
+			if parsed, target, at := parseGongfengMRDetails(raw, iid); parsed != "" {
 				state = parsed
 				targetBranch = target
+				mergedAt = at
 			}
 		}
 	}
-	s.mrCache.Store(cacheKey, mrCacheEntry{state: state, targetBranch: targetBranch, at: time.Now()})
-	return state, targetBranch
+	s.mrCache.Store(cacheKey, mrCacheEntry{state: state, targetBranch: targetBranch, mergedAt: mergedAt, at: time.Now()})
+	return state, targetBranch, mergedAt
 }
 
 func parseGongfengMRState(raw string, wantIID int) string {
@@ -49,62 +51,56 @@ func parseGongfengMRState(raw string, wantIID int) string {
 }
 
 func parseGongfengMRStatus(raw string, wantIID int) (state, targetBranch string) {
-	type mr struct {
-		IID          int    `json:"iid"`
-		State        string `json:"state"`
-		TargetBranch string `json:"target_branch"`
-	}
-	try := func(items []mr) (string, string) {
+	state, targetBranch, _ = parseGongfengMRDetails(raw, wantIID)
+	return state, targetBranch
+}
+
+func parseGongfengMRDetails(raw string, wantIID int) (state, targetBranch string, mergedAt time.Time) {
+	try := func(items []gongfengListedMR) (string, string, time.Time) {
 		for _, item := range items {
 			if wantIID > 0 && item.IID != 0 && item.IID != wantIID {
 				continue
 			}
 			if parsed := normalizeMRState(item.State); parsed != "" {
-				return parsed, strings.TrimSpace(item.TargetBranch)
+				return parsed, strings.TrimSpace(item.TargetBranch), gongfengMRMergedAt(item)
 			}
 		}
-		return "", ""
+		return "", "", time.Time{}
 	}
 	var wrapped struct {
-		Data  json.RawMessage `json:"data"`
-		Items []mr            `json:"items"`
+		Data  json.RawMessage    `json:"data"`
+		Items []gongfengListedMR `json:"items"`
 	}
 	if json.Unmarshal([]byte(raw), &wrapped) == nil {
-		var list []mr
+		var list []gongfengListedMR
 		if json.Unmarshal(wrapped.Data, &list) == nil {
-			if parsed, target := try(list); parsed != "" {
-				return parsed, target
+			if parsed, target, at := try(list); parsed != "" {
+				return parsed, target, at
 			}
 		}
-		var one mr
+		var one gongfengListedMR
 		if json.Unmarshal(wrapped.Data, &one) == nil {
-			if parsed, target := try([]mr{one}); parsed != "" {
-				return parsed, target
+			if parsed, target, at := try([]gongfengListedMR{one}); parsed != "" {
+				return parsed, target, at
 			}
 		}
-		if parsed, target := try(wrapped.Items); parsed != "" {
-			return parsed, target
+		if parsed, target, at := try(wrapped.Items); parsed != "" {
+			return parsed, target, at
 		}
 	}
-	var list []mr
+	var list []gongfengListedMR
 	if json.Unmarshal([]byte(raw), &list) == nil {
-		if parsed, target := try(list); parsed != "" {
-			return parsed, target
+		if parsed, target, at := try(list); parsed != "" {
+			return parsed, target, at
 		}
 	}
-	var one mr
+	var one gongfengListedMR
 	if json.Unmarshal([]byte(raw), &one) == nil {
-		if parsed, target := try([]mr{one}); parsed != "" {
-			return parsed, target
+		if parsed, target, at := try([]gongfengListedMR{one}); parsed != "" {
+			return parsed, target, at
 		}
 	}
-	lower := strings.ToLower(raw)
-	for _, candidate := range []string{"merged", "opened", "reopened", "closed"} {
-		if strings.Contains(lower, `"state":"`+candidate+`"`) || strings.Contains(lower, `"state": "`+candidate+`"`) {
-			return candidate, ""
-		}
-	}
-	return "", ""
+	return "", "", time.Time{}
 }
 
 func parseGongfengSourceCommit(raw string, wantIID int) string {

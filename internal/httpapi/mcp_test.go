@@ -127,10 +127,10 @@ func TestAgentRevisionCanBeReadByID(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutAgent(domain.AgentDefinition{ID: "agent-1", Name: "Agent", Version: 1, Instructions: "v1"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "agent-1", Name: "Agent", Version: 1, Prompt: "v1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutAgent(domain.AgentDefinition{ID: "agent-1", Name: "Agent", Version: 2, Instructions: "v2"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "agent-1", Name: "Agent", Version: 2, Prompt: "v2"}); err != nil {
 		t.Fatal(err)
 	}
 	revisions := s.Revisions("agent", "agent-1")

@@ -8,6 +8,7 @@ import (
 )
 
 func TestDeliveryMRsFromRunFallsBackWhenLookupFails(t *testing.T) {
+	t.Parallel()
 	e := &Engine{FindBranchMR: func(project, branch string) (domain.DeliveryMR, bool, error) {
 		if project == "g/a" {
 			return domain.DeliveryMR{IID: 21, GongfengState: "opened"}, true, nil

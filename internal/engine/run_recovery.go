@@ -25,32 +25,43 @@ func (e *Engine) ownsRun(r domain.Run) bool {
 // on the remote work branch yet. See workspaceBlocked for when the bind may
 // be taken over.
 func (e *Engine) foreignWorkspaceBind(r domain.Run) bool {
-	boundRoot := strings.TrimSpace(r.WorkspaceRoot)
+	host, root := e.workspaceBind(r)
+	boundRoot := strings.TrimSpace(root)
 	if boundRoot == "" {
 		return false
 	}
-	return boundRoot != e.sandboxes.Root() || r.WorkspaceHost != e.workspaceHost
+	return boundRoot != e.sandboxes.Root() || host != e.workspaceHost
 }
 
 // workspaceBlocked reports whether a foreign bind must still be honoured: the
 // bound host is this host (another process under a different root) or some
 // live worker still advertises it. A bind to a host that is gone protects
-// nothing, so this instance may take the run over and rebuild the checkout
-// from the remote work branch, which every successful node pushes to.
+// nothing; see workspaceLost for what that means for the run.
 func (e *Engine) workspaceBlocked(r domain.Run) bool {
 	if !e.foreignWorkspaceBind(r) {
 		return false
 	}
-	if r.WorkspaceHost == e.workspaceHost || e.repo.WorkspaceHostAlive(r.WorkspaceHost) {
+	host, _ := e.workspaceBind(r)
+	if host == e.workspaceHost || e.repo.WorkspaceHostAlive(host) {
 		return true
 	}
-	// Only a run whose code lives on pushed work branches can be rebuilt elsewhere.
-	for _, rc := range r.RepositoryContexts() {
-		if rc.RepositoryID != "" && !workBranchSyncable(rc) {
-			return true
-		}
-	}
 	return e.defaultExecutionRunner(r) != ""
+}
+
+// workspaceLost reports a foreign bind to a host that is gone while the
+// workspace held code changes. Nodes never push intermediate commits, so
+// those changes went with the host: continuing elsewhere would silently drop
+// them. Runs without a repository may still be taken over.
+func (e *Engine) workspaceLost(r domain.Run) bool {
+	return e.foreignWorkspaceBind(r) && !e.workspaceBlocked(r) && hasCodeWorkspace(r)
+}
+
+func (e *Engine) workspaceLostMessage(r domain.Run) string {
+	host, root := e.workspaceBind(r)
+	if sharesWorkspace(r) {
+		return fmt.Sprintf("父流程工作区所在机器 %s:%s 已下线，之前节点的代码改动随之丢失，请从头重跑父流程", host, root)
+	}
+	return fmt.Sprintf("工作区所在机器 %s:%s 已下线，之前节点的代码改动随之丢失，请从头重跑", host, root)
 }
 
 func (e *Engine) acquireLease(r domain.Run) (domain.Run, error) {
@@ -109,6 +120,9 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 		e.publish(id)
 	}
 	for _, listed := range e.repo.Runs() {
+		if listed.IsWorkspace() || listed.HistoricalGroup() {
+			continue
+		}
 		// Approval and operator-paused Runs normally have no scheduler. A cancel
 		// request that raced with the last worker write must therefore be claimed
 		// and settled by the recovery loop instead of waiting forever.
@@ -208,6 +222,20 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 		if blocked {
 			// The control request was withdrawn between the check above and the
 			// lease. Hand the run back instead of resuming another host's bind.
+			_ = e.repo.ReleaseRunLease(r.ID, e.instanceID, acquired.Generation)
+			continue
+		}
+		if e.workspaceLost(acquired) {
+			message := e.workspaceLostMessage(acquired)
+			// Move the bind here so a rerun starts from a fresh checkout
+			// instead of failing on the dead host again. A child follows its
+			// parent's bind, which the parent's own recovery moves.
+			if !sharesWorkspace(acquired) {
+				if err := e.rebindWorkspaceHere(acquired, true); err != nil {
+					log.Printf("rebind lost workspace %s: %v", r.ID, err)
+				}
+			}
+			e.settleOrphan(r.ID, message)
 			_ = e.repo.ReleaseRunLease(r.ID, e.instanceID, acquired.Generation)
 			continue
 		}
@@ -330,7 +358,7 @@ func (e *Engine) resumeAfterSchedulerRelease(runID string) {
 			}
 			current, ok := e.repo.RunState(runID)
 			if ok && current.Status == "running" {
-				if current.WorkflowSnapshot.CollaborationMode == "group" && !e.ownsRun(current) {
+				if current.IsWorkspace() && !e.ownsRun(current) {
 					if _, err := e.acquireLease(current); err != nil {
 						return
 					}

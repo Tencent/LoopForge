@@ -19,34 +19,39 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 	tapdIDExpr := "json_extract(payload, '$.tapdId')"
 	clarificationStartExpr := "json_extract(payload, '$.clarification.startedAt')"
 	deliveryExpr := "json_extract(payload, '$.deliveryState')"
+	deliveryMRExpr := "json_extract(payload, '$.deliveryMrUrl')"
 	if r.isMySQL() {
 		urlExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.externalRef.externalUrl'))"
 		tapdIDExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.tapdId'))"
 		clarificationStartExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.clarification.startedAt'))"
 		deliveryExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.deliveryState'))"
+		deliveryMRExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.deliveryMrUrl'))"
 	}
 	type liteRow struct {
-		ID                     string `gorm:"column:id"`
-		ProjectID              string `gorm:"column:project_id"`
-		Title                  string `gorm:"column:title"`
-		Status                 string `gorm:"column:status"`
-		Kind                   string `gorm:"column:kind"`
-		Source                 string `gorm:"column:source"`
-		WorkflowID             string `gorm:"column:workflow_id"`
-		AssigneeUserID         *int64 `gorm:"column:assignee_user_id"`
-		ExternalID             string `gorm:"column:external_id"`
-		ExternalURL            string `gorm:"column:external_url"`
-		TapdID                 string `gorm:"column:tapd_id"`
-		ClarificationStartedAt string `gorm:"column:clarification_started_at"`
-		DeliveryState          string `gorm:"column:delivery_state"`
+		ID                     string    `gorm:"column:id"`
+		ProjectID              string    `gorm:"column:project_id"`
+		Title                  string    `gorm:"column:title"`
+		Status                 string    `gorm:"column:status"`
+		Kind                   string    `gorm:"column:kind"`
+		Source                 string    `gorm:"column:source"`
+		WorkflowID             string    `gorm:"column:workflow_id"`
+		AssigneeUserID         *int64    `gorm:"column:assignee_user_id"`
+		ExternalID             string    `gorm:"column:external_id"`
+		ExternalURL            string    `gorm:"column:external_url"`
+		TapdID                 string    `gorm:"column:tapd_id"`
+		ClarificationStartedAt string    `gorm:"column:clarification_started_at"`
+		DeliveryState          string    `gorm:"column:delivery_state"`
+		CreatedAt              time.Time `gorm:"column:created_at"`
+		DeliveryMRURL          string    `gorm:"column:delivery_mr_url"`
 	}
 	var rows []liteRow
 	if err := r.DB.Table("issues").Select(
-		"id", "project_id", "title", "status", "kind", "source", "workflow_id", "assignee_user_id", "external_id",
+		"id", "project_id", "title", "status", "kind", "source", "workflow_id", "assignee_user_id", "external_id", "created_at",
 		urlExpr+" AS external_url",
 		tapdIDExpr+" AS tapd_id",
 		clarificationStartExpr+" AS clarification_started_at",
 		deliveryExpr+" AS delivery_state",
+		deliveryMRExpr+" AS delivery_mr_url",
 	).Find(&rows).Error; err != nil {
 		return []domain.Issue{}
 	}
@@ -62,6 +67,8 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 			TapdID:        strings.TrimSpace(row.TapdID),
 			WorkflowID:    row.WorkflowID,
 			DeliveryState: strings.TrimSpace(row.DeliveryState),
+			DeliveryMRURL: strings.TrimSpace(row.DeliveryMRURL),
+			CreatedAt:     row.CreatedAt,
 		}
 		if started, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(row.ClarificationStartedAt)); err == nil {
 			issue.Clarification.StartedAt = started
@@ -221,6 +228,9 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync bool) error {
 		if len(v.Operations) == 0 && len(old.Operations) > 0 {
 			v.Operations = old.Operations
 		}
+		if strings.TrimSpace(v.ConversationSessionID) == "" {
+			v.ConversationSessionID = old.ConversationSessionID
+		}
 		if !old.Clarification.StartedAt.IsZero() && (v.Clarification.StartedAt.IsZero() || v.Clarification.StartedAt.After(old.Clarification.StartedAt)) {
 			v.Clarification.StartedAt = old.Clarification.StartedAt
 		}
@@ -266,6 +276,16 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync bool) error {
 	if v.AssigneeUserID == 0 {
 		if project, found := r.projects.Project(v.ProjectID); found {
 			v.AssigneeUserID = project.OwnerID
+		}
+	}
+	// Completion is a lifecycle event, not an editable client timestamp. Keep
+	// legacy unknown times unknown on ordinary edits, and clear on reopening.
+	v.CompletedAt = time.Time{}
+	if ok && v.Completed() {
+		if old.Completed() {
+			v.CompletedAt = old.CompletedAt
+		} else {
+			v.CompletedAt = now
 		}
 	}
 	bindDefaultWorkflow(&v, r.projectWorkflowID(v.ProjectID), r.projectIssueWorkflowID(v.ProjectID))

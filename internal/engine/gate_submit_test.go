@@ -10,6 +10,7 @@ import (
 )
 
 func TestApplyGateResultDistinguishesTerminalDecisions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		decision     string
 		rejectTarget string
@@ -33,6 +34,7 @@ func TestApplyGateResultDistinguishesTerminalDecisions(t *testing.T) {
 }
 
 func TestApplyGateResultDegradesReworkWithoutTarget(t *testing.T) {
+	t.Parallel()
 	err, action, rework := applyGateResult(&domain.GateResult{Decision: "rework", Reason: "upstream must fix inputs"}, "")
 	if err == nil || action != "fail" || rework {
 		t.Fatalf("rework without rejectTo must degrade to fail: err=%v action=%q rework=%v", err, action, rework)
@@ -43,6 +45,7 @@ func TestApplyGateResultDegradesReworkWithoutTarget(t *testing.T) {
 }
 
 func TestSubmitGateInstructionExplainsReworkAvailability(t *testing.T) {
+	t.Parallel()
 	withTarget := appendSubmitGateInstruction("task", "implement", false)
 	for _, want := range []string{"pass", "rework", "fail", "human", "implement"} {
 		if !strings.Contains(withTarget, want) {
@@ -56,6 +59,7 @@ func TestSubmitGateInstructionExplainsReworkAvailability(t *testing.T) {
 }
 
 func TestReadGateResultRequiresHumanAction(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	path := ".agentflow/gate-results/human/attempt-1.json"
 	target := filepath.Join(workspace, filepath.FromSlash(path))

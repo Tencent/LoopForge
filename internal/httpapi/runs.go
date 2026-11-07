@@ -25,6 +25,7 @@ type runsHandlers struct {
 
 func (h *runsHandlers) analytics(c *gin.Context) {
 	filter := domain.AnalyticsFilter{
+		Origin:           c.Query("origin"),
 		ProjectID:        c.Query("projectId"),
 		WorkflowID:       c.Query("workflowId"),
 		Scope:            strings.TrimSpace(c.Query("scope")),
@@ -32,6 +33,7 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 		IssueSource:      strings.TrimSpace(c.Query("issueSource")),
 		RequirementsOnly: c.Query("requirementsOnly") == "1",
 		Grain:            strings.TrimSpace(c.Query("grain")),
+		TimeZone:         strings.TrimSpace(c.Query("tz")),
 	}
 	if raw := c.Query("from"); raw != "" {
 		value, err := time.Parse(time.RFC3339, raw)
@@ -49,7 +51,15 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 		}
 		filter.To = value
 	}
+	if filter.Origin != "" && filter.Origin != "all" && filter.Origin != "internal" && filter.Origin != "external" {
+		c.JSON(400, gin.H{"error": "origin 必须为 all、internal 或 external"})
+		return
+	}
 	snap := h.repo.Analytics(filter)
+	if len(snap.DataErrors) > 0 {
+		c.JSON(503, gin.H{"error": snap.DataErrors[0]})
+		return
+	}
 	c.JSON(200, snap)
 }
 
@@ -140,6 +150,12 @@ func (h *runsHandlers) runs(c *gin.Context) {
 func (h *runsHandlers) run(c *gin.Context) {
 	id := c.Param("id")
 	switch c.FullPath() {
+	case "/api/runs/:id/approve", "/api/runs/:id/reject", "/api/runs/:id/retry", "/api/runs/:id/decline-retry", "/api/runs/:id/pause", "/api/runs/:id/resume", "/api/runs/:id/refresh-sop", "/api/runs/:id/pass":
+		if h.rejectNonSOPControl(c, id) {
+			return
+		}
+	}
+	switch c.FullPath() {
 	case "/api/runs/:id":
 		if c.Request.Method == http.MethodGet {
 			v, ok := h.repo.RunView(id)
@@ -171,7 +187,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 		for _, event := range page.Events {
 			safe := slimTelemetryEvent(event)
 			if c.Query("expanded") == "true" {
-				safe.Message = clipRunText(event.Message, 64<<10)
+				safe = expandedTelemetryEvent(event)
 			}
 			events = append(events, safe)
 		}
@@ -206,7 +222,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 		c.Header("Content-Type", "text/plain; charset=utf-8")
 		c.Header("Content-Disposition", `attachment; filename="`+id+`-worker-logs.txt"`)
 		c.Status(http.StatusOK)
-		fmt.Fprintf(c.Writer, "# AgentFlow worker logs\n# run=%s\n# nodes=%s\n# count=%d\n\n", id, logDumpNodeLabel(nodeID), len(recs))
+		fmt.Fprintf(c.Writer, "# LoopForge worker logs\n# run=%s\n# nodes=%s\n# count=%d\n\n", id, logDumpNodeLabel(nodeID), len(recs))
 		for _, rec := range recs {
 			stamp := rec.Timestamp.Local().Format("15:04:05")
 			node := rec.Context.NodeID
@@ -257,8 +273,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 			if rejectBlockedIssueRun(h.deps, c, id) {
 				return
 			}
-			if err := h.engine.RestoreConversationWorkspaceIfNeeded(c.Request.Context(), id); err != nil {
-				respond(c, err)
+			if h.prepareRunActivationWorkspace(c, id) {
 				return
 			}
 			respond(c, h.engine.RetryContext(c.Request.Context(), id, req.NodeID, req.Reason, req.Context, decisionExpectation(req.NodeID, req.Expected)...))
@@ -280,8 +295,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 			if rejectBlockedIssueRun(h.deps, c, id) {
 				return
 			}
-			if err := h.engine.RestoreConversationWorkspaceIfNeeded(c.Request.Context(), id); err != nil {
-				respond(c, err)
+			if h.prepareRunActivationWorkspace(c, id) {
 				return
 			}
 			respond(c, h.engine.ResumePausedContext(c.Request.Context(), id, req.Context))
@@ -358,7 +372,7 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 		run.Telemetry = nil
 		run.Events = nil
 		run.Logs = nil
-		run.WorkflowSnapshot = domain.WorkflowDefinition{ID: run.WorkflowSnapshot.ID, Name: run.WorkflowSnapshot.Name}
+		run.WorkflowSnapshot = domain.WorkflowDefinition{ID: run.WorkflowSnapshot.ID, Name: run.WorkflowSnapshot.Name, CollaborationMode: run.WorkflowSnapshot.CollaborationMode}
 		run.Input = clipRunText(run.Input, 500)
 		return run
 	}
@@ -414,6 +428,23 @@ func slimWorkflowSnapshot(wf domain.WorkflowDefinition) domain.WorkflowDefinitio
 	}
 	wf.Description = clipRunText(wf.Description, 200)
 	return wf
+}
+
+func expandedTelemetryEvent(event domain.TelemetryEvent) domain.TelemetryEvent {
+	safe := slimTelemetryEvent(event)
+	safe.Message = clipRunText(event.Message, 64<<10)
+	// The conversation needs the normalized tool identity, not arbitrary raw
+	// provider attributes. Preserve only the published file's public metadata.
+	safe.Tool = event.Tool
+	if event.Category == "artifact" && event.Name == "artifact.published" {
+		safe.Attributes = map[string]any{}
+		for _, key := range []string{"artifactId", "path", "mediaType", "size"} {
+			if value, ok := event.Attributes[key]; ok {
+				safe.Attributes[key] = value
+			}
+		}
+	}
+	return safe
 }
 
 func slimTelemetryEvent(e domain.TelemetryEvent) domain.TelemetryEvent {
