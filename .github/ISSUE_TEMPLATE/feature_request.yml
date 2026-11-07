@@ -22,9 +22,12 @@ body:
     attributes:
       label: Scope
       options:
+        - Platform — workflows / collaboration
+        - Platform — UI / integrations
+        - Platform — runtime / deployment
         - Shared behavior contract
-        - Classic edition
-        - Portable edition
+        - Local Classic edition
+        - Local Portable edition
         - Installer / CLI
         - Documentation
         - Not sure

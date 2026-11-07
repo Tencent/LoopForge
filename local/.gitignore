@@ -1,0 +1,34 @@
+.DS_Store
+.idea/
+.vscode/
+*.local
+*.log
+.env
+.env.*
+!.env.example
+artifacts/
+.openspec/
+.superpowers/
+
+*.db
+*.sqlite
+__pycache__/
+
+# agent-observability 运行时产物（本地日志、看板数据快照）：不入库，四个 host 副本都要排除
+.codebuddy/skills/agent-observability/logs/*
+.codex/skills/agent-observability/logs/*
+.cursor/skills/agent-observability/logs/*
+.claude/skills/agent-observability/logs/*
+!**/skills/agent-observability/logs/.gitkeep
+**/skills/agent-observability/scripts/dashboard/dashboard-data.json
+*.py[cod]
+build/
+dist/
+*.egg-info/
+*.tgz
+node_modules/
+tools/tcmcp/.venv/
+tools/tcmcp/web/dist/
+
+# Generated from the canonical notices at the repository root during packaging.
+/THIRD_PARTY_NOTICES.md

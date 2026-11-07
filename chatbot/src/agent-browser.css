@@ -1,0 +1,265 @@
+/* Agent browser in the conversation side panel ("浏览器" tab).
+ * Mirrors the task panel browser in web/collaboration.css with the chat tokens.
+ */
+.chat-shell .artifact-panel .agent-browser-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.agent-browser {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.agent-browser-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.agent-browser-btn {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.agent-browser-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.agent-browser-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.agent-browser-address {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 30px;
+  margin: 0 4px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--subtle);
+  color: var(--muted);
+}
+.agent-browser-address:focus-within {
+  border-color: var(--accent);
+}
+.agent-browser-address input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.agent-browser-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 6px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+}
+.agent-browser-tab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-width: 0;
+  max-width: 200px;
+  height: 26px;
+  border-radius: 7px;
+  color: var(--muted);
+}
+.agent-browser-tab > button:first-child {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 10px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.agent-browser-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.agent-browser-tab.is-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.agent-browser-tab-close {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 3px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.agent-browser-tab-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.agent-browser-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  outline: none;
+  background: var(--subtle);
+  cursor: default;
+}
+.agent-browser-stage:focus-within {
+  box-shadow: inset 0 0 0 2px rgb(91 140 255 / 0.45);
+}
+.agent-browser-screen {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.agent-browser-screen:not([src]) {
+  display: none;
+}
+.agent-browser-stage.is-offline .agent-browser-screen {
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+.agent-browser-ime {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  pointer-events: none;
+}
+.agent-browser-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+  text-align: center;
+  pointer-events: none;
+}
+.agent-browser-overlay > span {
+  display: block;
+  max-width: 420px;
+}
+.agent-browser-overlay[data-tone="error"] {
+  color: var(--error, #dc2626);
+}
+.agent-browser-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--surface);
+  font: inherit;
+  font-size: 12.5px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.agent-browser-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+.agent-browser-foot span {
+  flex: none;
+}
+.agent-browser-foot small {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-browser-foot small[data-tone="error"] {
+  color: var(--error, #dc2626);
+}
+.agent-browser-empty {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+  text-align: center;
+  justify-items: center;
+}
+
+/* Workspace and localhost addresses in replies open in the Agent browser. */
+.markdown .agent-browser-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #2958a4;
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.markdown .agent-browser-link code {
+  color: #2958a4;
+}
+.markdown .agent-browser-link .agent-browser-link-icon {
+  display: inline-block;
+  margin-left: 3px;
+  vertical-align: -1px;
+}
+[data-theme="dark"] .markdown .agent-browser-link,
+[data-theme="dark"] .markdown .agent-browser-link code {
+  color: #8ab4f8;
+}

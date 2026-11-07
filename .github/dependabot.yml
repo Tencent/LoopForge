@@ -22,7 +22,7 @@ updates:
 
   # npm dependencies — only minor and patch updates.
   - package-ecosystem: npm
-    directory: /
+    directory: /local
     schedule:
       interval: monthly
     cooldown:
@@ -44,7 +44,7 @@ updates:
 
   # pip dependencies — only minor and patch updates.
   - package-ecosystem: pip
-    directory: /
+    directory: /local
     schedule:
       interval: monthly
     cooldown:
@@ -59,3 +59,14 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /e2e
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3

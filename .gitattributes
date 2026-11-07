@@ -1,0 +1,2 @@
+web/monaco/** linguist-vendored -whitespace
+web/vscode-web/** linguist-vendored -whitespace
