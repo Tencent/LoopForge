@@ -31,6 +31,7 @@ func selectedBranchTestRemote(t *testing.T) (string, string) {
 }
 
 func TestClarifyWorkspaceUsesSelectedBranchAndRefreshesAcrossBranches(t *testing.T) {
+	t.Parallel()
 	source, remote := selectedBranchTestRemote(t)
 	cache := filepath.Join(t.TempDir(), "checkout")
 	repository := domain.Repository{ID: "repo", CloneURL: remote, DefaultBranch: "master"}
@@ -65,6 +66,7 @@ func TestClarifyWorkspaceUsesSelectedBranchAndRefreshesAcrossBranches(t *testing
 }
 
 func TestPrepareRepositoryStartsWorkFromSelectedBranch(t *testing.T) {
+	t.Parallel()
 	_, remote := selectedBranchTestRemote(t)
 	workspace := filepath.Join(t.TempDir(), "checkout")
 	repository := domain.RepositoryContext{RepositoryID: "repo", CloneURL: remote, DefaultBranch: "master", BaseBranch: "feature/continue", WorkBranch: "feature/new-requirement"}
@@ -89,6 +91,7 @@ func TestPrepareRepositoryStartsWorkFromSelectedBranch(t *testing.T) {
 }
 
 func TestClarifySelectedBranchRejectsTagOnlyRef(t *testing.T) {
+	t.Parallel()
 	source, remote := selectedBranchTestRemote(t)
 	mustGit(t, source, "tag", "release-v1")
 	mustGit(t, source, "push", remote, "refs/tags/release-v1")
@@ -99,6 +102,7 @@ func TestClarifySelectedBranchRejectsTagOnlyRef(t *testing.T) {
 }
 
 func TestPrepareRepositoryRejectsCustomBranchForNonGitSource(t *testing.T) {
+	t.Parallel()
 	repository := domain.RepositoryContext{RepositoryID: "repo", LocalPath: t.TempDir(), DefaultBranch: "master", BaseBranch: "feature/continue"}
 	if err := prepareRepository(context.Background(), t.TempDir(), repository); err == nil || !strings.Contains(err.Error(), "not a Git repository") {
 		t.Fatalf("non-Git source silently ignored custom branch: %v", err)
@@ -106,6 +110,7 @@ func TestPrepareRepositoryRejectsCustomBranchForNonGitSource(t *testing.T) {
 }
 
 func TestPrepareRepositoryUsesConfiguredDefaultWhenBaseBranchIsEmpty(t *testing.T) {
+	t.Parallel()
 	_, remote := selectedBranchTestRemote(t)
 	workspace := filepath.Join(t.TempDir(), "checkout")
 	repository := domain.RepositoryContext{RepositoryID: "repo", CloneURL: remote, DefaultBranch: "feature/continue", WorkBranch: "feature/new-requirement"}
@@ -125,5 +130,53 @@ func TestPrepareRepositoryUsesConfiguredDefaultWhenBaseBranchIsEmpty(t *testing.
 	}
 	if repositoryBaseBranch(repository) != "feature/continue" {
 		t.Fatal("resume fallback lost configured main branch")
+	}
+}
+
+// A Gongfeng repository created a minute ago has no commits. Opening a
+// workspace on it must publish the base branch instead of failing to clone,
+// so the first file can be written and delivered.
+func TestPrepareRepositorySeedsAnEmptyRemote(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, base, integrate string }{
+		{name: "default branch", base: ""},
+		{name: "integration branch", base: "develop", integrate: "develop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			remote := filepath.Join(t.TempDir(), "empty.git")
+			mustGit(t, "", "init", "--bare", "-q", remote)
+			workspace := filepath.Join(t.TempDir(), "checkout")
+			repository := domain.RepositoryContext{RepositoryID: "repo", CloneURL: remote, DefaultBranch: "master", BaseBranch: tc.base, IntegrateBranch: tc.integrate, WorkBranch: "feature/first"}
+			if err := prepareRepository(context.Background(), workspace, repository); err != nil {
+				t.Fatal(err)
+			}
+			branch, err := gitC(context.Background(), workspace, "branch", "--show-current")
+			if err != nil || strings.TrimSpace(branch) != "feature/first" {
+				t.Fatalf("work branch = %q, %v", branch, err)
+			}
+			heads, err := gitC(context.Background(), workspace, "ls-remote", "--heads", "origin")
+			if err != nil || !strings.Contains(heads, "refs/heads/master") {
+				t.Fatalf("default branch not published: %q, %v", heads, err)
+			}
+			if tc.integrate != "" && !strings.Contains(heads, "refs/heads/"+tc.integrate) {
+				t.Fatalf("integration branch not published: %q", heads)
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# OKR\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, workspace, "add", "README.md")
+			mustGit(t, workspace, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "readme")
+			mustGit(t, workspace, "push", "-q", "origin", "feature/first")
+		})
+	}
+	// A remote that has branches but not the requested one still fails.
+	remote := filepath.Join(t.TempDir(), "busy.git")
+	mustGit(t, "", "init", "--bare", "-q", remote)
+	source := t.TempDir()
+	mustGit(t, source, "init", "-q")
+	mustGit(t, source, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "x")
+	mustGit(t, source, "push", "-q", remote, "HEAD:refs/heads/main")
+	if err := prepareRepository(context.Background(), filepath.Join(t.TempDir(), "c"), domain.RepositoryContext{RepositoryID: "r", CloneURL: remote, DefaultBranch: "master", WorkBranch: "w"}); err == nil {
+		t.Fatal("a non-empty remote without the base branch was seeded")
 	}
 }

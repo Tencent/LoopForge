@@ -196,3 +196,35 @@ func TestRunnerRefillsArchivedFilesWithoutOverwritingEdits(t *testing.T) {
 		t.Fatal("task overwrote current file")
 	}
 }
+
+// Node-created files registered with `git add -N` have an empty diff base.
+func TestRunnerReadWorkspaceBaseFileForIntentToAdd(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q")
+	git("config", "user.email", "t@example.com")
+	git("config", "user.name", "t")
+	write("README.md", "baseline\n")
+	git("add", "README.md")
+	git("commit", "-qm", "init")
+	write("README.md", "baseline\nhuman\n")
+	write("node.txt", "one\n")
+	git("add", "-N", "node.txt")
+	for path, want := range map[string]string{"README.md": "baseline\n", "node.txt": ""} {
+		got, truncated, err := runnerReadWorkspaceBaseFile(context.Background(), root, nil, path)
+		if err != nil || truncated || got != want {
+			t.Fatalf("%s: base=%q truncated=%v err=%v", path, got, truncated, err)
+		}
+	}
+}

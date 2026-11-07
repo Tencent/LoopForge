@@ -101,7 +101,7 @@ func (e *Engine) restoreWorkspaceFiles(ctx context.Context, run domain.Run, file
 		return nil, nil
 	}
 	if e.defaultExecutionRunner(run) != "" || e.foreignWorkspaceBind(run) {
-		result, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: run.Status, CollaborationMode: run.WorkflowSnapshot.CollaborationMode, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationArtifacts, ArtifactFiles: files})
+		result, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: run.Status, RunKind: run.Kind, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationArtifacts, ArtifactFiles: files})
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +124,7 @@ func (e *Engine) restoreWorkspaceFiles(ctx context.Context, run domain.Run, file
 }
 
 func (e *Engine) legacyArchivedWorkspaceFiles(run domain.Run, nodeID string) []domain.WorkspaceArtifactFile {
-	if meta, ok := e.repo.WorkspaceCheckpoint(run.ID); ok && meta.SavedAt != nil {
+	if meta, ok := e.repo.WorkspaceCheckpoint(workspaceRunID(run)); ok && meta.SavedAt != nil {
 		return nil
 	}
 	return archivedWorkspaceFiles(run, nodeID)

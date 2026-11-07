@@ -1,0 +1,419 @@
+/* Harness UI 通用控件（上游 da2e476，MIT，见 harness-ui-LICENSE.txt）。
+ * Controls every view shares (tokens come from harness-ui.css): Selector panel,
+ * checkbox / radio / switch, confirm dialog, date picker, upload zone and
+ * tooltip. Loaded before the page stylesheets so views can override sizes;
+ * anything inside [data-native] keeps the browser control.
+ */
+/* ---------- Shared floating panel (Selector, date) ---------- */
+.hui-select-panel,
+.hui-date-panel {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: var(--hui-z-popover);
+  padding: 4px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-popover-shadow);
+  color: var(--hui-text);
+  font-family: var(--hui-sans);
+  -webkit-font-smoothing: antialiased;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity .18s var(--hui-ease-flow), transform .18s var(--hui-ease-flow), visibility 0s linear .18s;
+}
+:is(.hui-select-panel, .hui-date-panel)[data-placement="top"] { transform: translateY(4px); }
+:is(.hui-select-panel, .hui-date-panel).is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity .18s var(--hui-ease-flow), transform .18s var(--hui-ease-flow), visibility 0s;
+}
+
+/* ---------- Selector ---------- */
+.hui-select-panel { display: flex; flex-direction: column; min-width: 240px; overflow: hidden; }
+.hui-select-search { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; margin: -4px -4px 4px; padding: 0 10px; border-bottom: 1px solid var(--hui-border); color: var(--hui-tertiary); }
+.hui-select-search[hidden] { display: none; }
+.hui-select-search input { width: 100%; min-width: 0; height: 100%; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; color: var(--hui-text); font: 400 13px/1 var(--hui-sans); }
+.hui-select-search input:focus { box-shadow: none; }
+.hui-select-search input::placeholder { color: var(--hui-tertiary); }
+.hui-select-search input::-webkit-search-cancel-button { display: none; }
+.hui-select-options { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.hui-select-option {
+  box-sizing: border-box;
+  flex: none;
+  width: 100%;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hui-text);
+  font: 400 13.5px/1 var(--hui-sans);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow);
+}
+.hui-select-option:is(:hover, :focus-visible) { background: var(--hui-canvas); color: var(--hui-text); outline: 0; }
+.hui-select-option[hidden] { display: none; }
+.hui-select-option:disabled { opacity: .45; cursor: not-allowed; }
+.hui-select-option:disabled:hover { background: transparent; }
+.hui-select-option.is-selected,
+.hui-select-option.is-selected:hover { background: var(--hui-accent-soft); }
+.hui-select-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hui-select-option-meta { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--hui-tertiary); font-size: 12px; }
+.hui-select-check { color: var(--hui-accent); }
+.hui-select-group { flex: none; padding: 8px 10px 4px; color: var(--hui-tertiary); font: 500 11.5px/1.3 var(--hui-sans); cursor: default; user-select: none; }
+.hui-select-group[hidden] { display: none; }
+.hui-select-group ~ .hui-select-option { padding-left: 16px; }
+.hui-select-empty { padding: 14px 10px; color: var(--hui-tertiary); font-size: 12.5px; text-align: center; }
+.hui-select-empty[hidden] { display: none; }
+
+/* Trigger mode: enhanceSelect() hides the native select and draws a button. */
+.hui-select-native { display: none !important; }
+.hui-select-trigger {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  height: 34px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font: 400 13px/1 var(--hui-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s var(--hui-ease-flow), background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow);
+}
+.hui-select-trigger[hidden] { display: none; }
+.hui-select-trigger:hover { border-color: color-mix(in srgb, var(--hui-accent) 30%, var(--hui-border-strong)); }
+.hui-select-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+.hui-select-trigger[aria-expanded="true"] { border-color: var(--hui-accent); }
+.hui-select-trigger:disabled { opacity: .5; cursor: not-allowed; }
+.hui-select-trigger:disabled:hover { border-color: var(--hui-border-strong); }
+.hui-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hui-select-chevron { margin-left: auto; color: var(--hui-tertiary); transition: transform .2s var(--hui-ease-flow); }
+.hui-select-trigger[aria-expanded="true"] .hui-select-chevron { transform: rotate(180deg); }
+
+/* In-place mode: every other single select stays the trigger itself (its own
+ * width/height rules keep applying); hui-select.js swaps the native popup for
+ * the Harness panel. */
+select:not([multiple], [size]:not([size="1"]), [data-native], [data-native] *, .hui-select-native) {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 30px !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b8b95' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 10px center !important;
+  background-size: 14px 14px !important;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+:where(select:not([multiple], [size]:not([size="1"]), [data-native], [data-native] *, .hui-select-native)) {
+  padding: 6px 10px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background-color: var(--hui-surface);
+  color: var(--hui-text);
+  transition: border-color .18s var(--hui-ease-flow), box-shadow .18s var(--hui-ease-flow);
+}
+:where(select:not([multiple], [size]:not([size="1"]), [data-native], [data-native] *, .hui-select-native)):hover { border-color: color-mix(in srgb, var(--hui-accent) 30%, var(--hui-border-strong)); }
+:where(select:not([multiple], [size]:not([size="1"]), [data-native], [data-native] *, .hui-select-native)):focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+select:not([multiple], [data-native], [data-native] *)[aria-expanded="true"] { border-color: var(--hui-accent); }
+select:not([multiple], [data-native], [data-native] *):disabled { opacity: .55; cursor: not-allowed; }
+
+/* ---------- Checkbox / radio ---------- */
+input[type="checkbox"]:not([role="switch"], .hui-switch, .task-checkbox, .pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *),
+input[type="radio"]:not(.pa-sw-custom input, [data-native], [data-native] *) {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 4px;
+  background: var(--hui-surface);
+  box-shadow: none;
+  vertical-align: -3px;
+  cursor: pointer;
+  transition: background-color .14s var(--hui-ease-flow), border-color .14s var(--hui-ease-flow);
+}
+input[type="radio"]:not(.pa-sw-custom input, [data-native], [data-native] *) { border-radius: 50%; }
+input[type="checkbox"]:not([role="switch"], .hui-switch, .task-checkbox, .pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):hover:not(:disabled),
+input[type="radio"]:not(.pa-sw-custom input, [data-native], [data-native] *):hover:not(:disabled) { border-color: var(--hui-accent); }
+input[type="checkbox"]:not([role="switch"], .hui-switch, .task-checkbox, .pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):is(:checked, :indeterminate) { border-color: var(--hui-accent); background: var(--hui-accent); }
+input[type="checkbox"]:not([role="switch"], .hui-switch, .task-checkbox, .pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):checked::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  background: #fff;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.2l2.6 2.6L12 5.4' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.2l2.6 2.6L12 5.4' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
+}
+input[type="checkbox"]:not([role="switch"], .hui-switch, .task-checkbox, .pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):indeterminate::after { content: ""; position: absolute; top: 6.2px; left: 3px; right: 3px; height: 1.6px; border-radius: 2px; background: #fff; }
+input[type="radio"]:not(.pa-sw-custom input, [data-native], [data-native] *):checked { border: 5px solid var(--hui-accent); background: var(--hui-surface); }
+html[data-theme="dark"] input[type="checkbox"]:not([role="switch"], .hui-switch, .task-checkbox, .pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):is(:checked, :indeterminate)::after { background: #141417; }
+input[type="checkbox"]:not([role="switch"], .hui-switch, .task-checkbox, .pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):focus-visible,
+input[type="radio"]:not(.pa-sw-custom input, [data-native], [data-native] *):focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 2px; }
+input[type="checkbox"]:not([role="switch"], .hui-switch, .task-checkbox, .pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):disabled,
+input[type="radio"]:not(.pa-sw-custom input, [data-native], [data-native] *):disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---------- Switch: checkbox[role=switch] / .hui-switch, 34×20 ---------- */
+input[type="checkbox"]:is([role="switch"], .hui-switch):not(.pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *) {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  min-width: 34px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--hui-border-strong);
+  box-shadow: none;
+  vertical-align: middle;
+  cursor: pointer;
+  transition: background-color .18s var(--hui-ease-flow);
+}
+input[type="checkbox"]:is([role="switch"], .hui-switch):not(.pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *)::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .2);
+  transition: transform .2s var(--hui-ease-flow);
+}
+input[type="checkbox"]:is([role="switch"], .hui-switch):not(.pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *)::after { content: none; }
+input[type="checkbox"]:is([role="switch"], .hui-switch):not(.pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):checked { background: var(--hui-accent); }
+input[type="checkbox"]:is([role="switch"], .hui-switch):not(.pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):checked::before { transform: translateX(14px); }
+input[type="checkbox"]:is([role="switch"], .hui-switch):not(.pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 2px; }
+input[type="checkbox"]:is([role="switch"], .hui-switch):not(.pa-switch-wrap > input, .pa-sw-custom input, [data-native], [data-native] *):disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---------- Confirm / prompt / alert dialog (#confirmModal) ---------- */
+#confirmModal.modal { background: var(--hui-scrim); backdrop-filter: none; }
+#confirmModal.modal.open { animation: huiScrimIn .18s var(--hui-ease-flow); }
+#confirmModal .confirm-modal-card {
+  box-sizing: border-box;
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--hui-border);
+  border-radius: 14px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-popover-shadow);
+  color: var(--hui-text);
+  font-family: var(--hui-sans);
+  animation: huiDialogIn .18s var(--hui-ease-flow);
+}
+#confirmModal .confirm-modal-card.rerun-node-card { width: min(520px, calc(100vw - 32px)); }
+#confirmModal .confirm-modal-header { display: flex; align-items: flex-start; gap: 12px; }
+#confirmModal .confirm-icon-wrap { box-sizing: border-box; flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--hui-warn) 12%, transparent); color: var(--hui-warn); font-size: 0; }
+#confirmModal .confirm-icon-wrap.danger { background: color-mix(in srgb, var(--hui-error) 10%, transparent); color: var(--hui-error); }
+#confirmModal .confirm-icon-wrap.info { background: var(--hui-accent-soft); color: var(--hui-accent); }
+#confirmModal .confirm-icon-wrap.ok { background: color-mix(in srgb, var(--hui-success) 12%, transparent); color: var(--hui-success); }
+#confirmModal .confirm-icon-wrap .harness-icon { width: 17px; height: 17px; }
+#confirmModal .confirm-header-text h3 { margin: 2px 0 4px; color: var(--hui-text); font: 600 15px/1.4 var(--hui-sans); letter-spacing: 0; }
+#confirmModal .confirm-header-text p { margin: 0; color: var(--hui-muted); font-size: 13px; line-height: 1.55; white-space: pre-line; word-break: break-word; }
+#confirmModal .confirm-prompt-wrap { margin-top: 14px; }
+#confirmModal .confirm-prompt-wrap label { display: block; margin-bottom: 6px; color: var(--hui-muted); font: 500 12.5px/1.4 var(--hui-sans); }
+#confirmModal .confirm-prompt-wrap :is(input, textarea) { box-sizing: border-box; width: 100%; border: 1px solid var(--hui-border-strong); border-radius: 8px; background: var(--hui-surface); color: var(--hui-text); box-shadow: none; font: 400 13px/1.5 var(--hui-sans); outline: 0; transition: border-color .18s var(--hui-ease-flow), box-shadow .18s var(--hui-ease-flow); }
+#confirmModal .confirm-prompt-wrap input { height: 36px; padding: 0 10px; }
+#confirmModal .confirm-prompt-wrap textarea { min-height: 88px; padding: 8px 10px; resize: vertical; }
+#confirmModal .confirm-prompt-wrap :is(input, textarea):focus { border-color: var(--hui-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--hui-accent) 14%, transparent); }
+#confirmModal .confirm-prompt-wrap :is(input, textarea)::placeholder { color: var(--hui-tertiary); }
+#confirmModal .rerun-node-hint { color: var(--hui-muted); font-size: 12.5px; }
+#confirmModal .confirm-modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+#confirmModal .confirm-modal-footer .button {
+  box-sizing: border-box;
+  min-width: 72px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  box-shadow: none;
+  color: var(--hui-text);
+  font: 500 13px/1 var(--hui-sans);
+  transform: none;
+  transition: background-color .15s var(--hui-ease-flow), border-color .15s var(--hui-ease-flow), color .15s var(--hui-ease-flow);
+}
+#confirmModal .confirm-modal-footer .button:hover { background: var(--hui-canvas); transform: none; box-shadow: none; }
+#confirmModal .confirm-modal-footer .button:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 2px; }
+#confirmModal .confirm-modal-footer .button.primary { border-color: var(--hui-accent); background: var(--hui-accent); color: var(--hui-on-accent); }
+#confirmModal .confirm-modal-footer .button.primary:hover { border-color: var(--hui-accent-hover); background: var(--hui-accent-hover); }
+#confirmModal .confirm-modal-footer .button.danger-btn { border-color: var(--hui-error); background: var(--hui-error); color: #fff; }
+#confirmModal .confirm-modal-footer .button.danger-btn:hover { border-color: color-mix(in srgb, var(--hui-error) 86%, #000); background: color-mix(in srgb, var(--hui-error) 86%, #000); }
+html[data-theme="dark"] #confirmModal .confirm-modal-footer .button:is(.primary, .danger-btn) { color: #141417; }
+@keyframes huiScrimIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes huiDialogIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ---------- Date picker ---------- */
+.hui-date-native { display: none !important; }
+.hui-date-trigger {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 150px;
+  max-width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font: 400 13px/1 var(--hui-sans);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s var(--hui-ease-flow);
+}
+.hui-date-trigger[hidden] { display: none; }
+.hui-date-trigger:hover { border-color: color-mix(in srgb, var(--hui-accent) 30%, var(--hui-border-strong)); }
+.hui-date-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+.hui-date-trigger[aria-expanded="true"] { border-color: var(--hui-accent); }
+.hui-date-trigger:disabled { opacity: .5; cursor: not-allowed; }
+.hui-date-trigger > .harness-icon { flex: none; color: var(--hui-tertiary); }
+.hui-date-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hui-date-value.is-placeholder { color: var(--hui-tertiary); }
+.hui-date-panel { width: 264px; padding: 10px; }
+.hui-date-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.hui-date-title { font: 600 13px/1 var(--hui-sans); }
+.hui-date-nav { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--hui-muted); cursor: pointer; transition: background-color .15s var(--hui-ease-flow), color .15s var(--hui-ease-flow); }
+.hui-date-nav:hover { background: var(--hui-soft); color: var(--hui-text); }
+.hui-date-nav:focus-visible,
+.hui-date-day:focus-visible,
+.hui-date-action:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+.hui-date-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.hui-date-weekday { height: 26px; color: var(--hui-tertiary); font-size: 11px; line-height: 26px; }
+.hui-date-day { height: 32px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--hui-text); font: 400 12.5px/1 var(--hui-sans); font-variant-numeric: tabular-nums; cursor: pointer; transition: background-color .15s var(--hui-ease-flow), color .15s var(--hui-ease-flow); }
+.hui-date-day:hover { background: var(--hui-soft); }
+.hui-date-day.is-outside { color: var(--hui-tertiary); }
+.hui-date-day.is-today { box-shadow: inset 0 0 0 1px var(--hui-border-strong); }
+.hui-date-day.is-selected,
+.hui-date-day.is-selected:hover { background: var(--hui-accent); color: var(--hui-on-accent); }
+html[data-theme="dark"] .hui-date-day.is-selected { color: #141417; }
+.hui-date-day:disabled { opacity: .35; background: transparent; cursor: not-allowed; }
+.hui-date-foot { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--hui-border); }
+.hui-date-action { height: 26px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--hui-accent); font: 500 12.5px/1 var(--hui-sans); cursor: pointer; }
+.hui-date-action:hover { background: var(--hui-accent-soft); }
+.hui-date-action:disabled { opacity: .4; cursor: not-allowed; background: transparent; }
+
+/* ---------- Upload zone (visible input[type=file]) ---------- */
+.hui-upload-native { display: none !important; }
+.hui-upload {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 18px;
+  border: 1px dashed var(--hui-border-strong);
+  border-radius: 10px;
+  background: var(--hui-canvas);
+  color: var(--hui-muted);
+  font: 400 13px/1.5 var(--hui-sans);
+  text-align: center;
+  transition: border-color .15s var(--hui-ease-flow), background-color .15s var(--hui-ease-flow);
+}
+.hui-upload[hidden] { display: none; }
+.hui-upload.is-dragover { border-color: var(--hui-accent); background: var(--hui-accent-soft); }
+.hui-upload.is-disabled { opacity: .55; }
+.hui-upload > .harness-icon { width: 22px; height: 22px; color: var(--hui-tertiary); }
+.hui-upload-hint { color: var(--hui-tertiary); font-size: 12px; }
+.hui-upload-error { color: var(--hui-error); font-size: 12px; }
+.hui-upload-error[hidden] { display: none; }
+.hui-upload-files { box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 4px; margin: 4px 0 0; padding: 0; list-style: none; }
+.hui-upload-files[hidden] { display: none; }
+.hui-upload-files li { box-sizing: border-box; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--hui-border); border-radius: 8px; background: var(--hui-surface); color: var(--hui-text); font-size: 12.5px; text-align: left; }
+.hui-upload-files li > span:first-of-type { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hui-upload-files li > small { color: var(--hui-tertiary); font-variant-numeric: tabular-nums; }
+.hui-upload-files .harness-icon { color: var(--hui-tertiary); }
+.hui-button,
+.hui-upload-pick {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font: 500 12.5px/1 var(--hui-sans);
+  cursor: pointer;
+  transition: background-color .15s var(--hui-ease-flow), border-color .15s var(--hui-ease-flow), color .15s var(--hui-ease-flow);
+}
+:is(.hui-button, .hui-upload-pick):hover { background: var(--hui-soft); }
+:is(.hui-button, .hui-upload-pick):focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+:is(.hui-button, .hui-upload-pick):disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- Tooltip ---------- */
+.hui-tooltip {
+  box-sizing: border-box;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--hui-z-tooltip);
+  max-width: 280px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--hui-tip);
+  color: var(--hui-tip-text);
+  font: 400 12px/1.45 var(--hui-sans);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity .12s var(--hui-ease-flow), transform .12s var(--hui-ease-flow);
+}
+.hui-tooltip[data-placement="bottom"] { transform: translateY(-2px); }
+.hui-tooltip.is-visible { opacity: 1; transform: none; }
+.hui-tooltip[hidden] { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hui-select-panel,
+  .hui-select-panel *,
+  .hui-select-trigger,
+  .hui-select-chevron,
+  .hui-date-panel,
+  .hui-date-panel *,
+  .hui-date-trigger,
+  .hui-upload,
+  .hui-tooltip,
+  select,
+  input[type="checkbox"],
+  input[type="checkbox"]::before,
+  input[type="radio"],
+  #confirmModal.modal,
+  #confirmModal .confirm-modal-card,
+  #confirmModal .button { transition: none !important; animation: none !important; }
+}

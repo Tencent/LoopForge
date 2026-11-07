@@ -44,6 +44,32 @@ func TestSharedRunTasksReuseOneSandboxUntilCleanup(t *testing.T) {
 	}
 }
 
+// 子 SOP 在父流程的检出目录里跑，但沙箱是自己的，按子流程回收。
+func TestChildRunSandboxInParentCheckout(t *testing.T) {
+	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}
+	spec := &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "p", Driver: "local"}}
+	parent, releaseParent, err := d.acquireTaskSandbox(context.Background(), domain.RunnerTask{ID: "t1", RunID: "run-parent", Workspace: "runs/run-parent/workspace", Provider: "terminal", Sandbox: spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseParent()
+	child, releaseChild, err := d.acquireTaskSandbox(context.Background(), domain.RunnerTask{ID: "t2", RunID: "run-child", Workspace: "runs/run-parent/workspace", Provider: "terminal", Sandbox: spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseChild()
+	if child == parent || len(d.runSandboxes) != 2 {
+		t.Fatalf("child must keep its own shared sandbox: %d", len(d.runSandboxes))
+	}
+	d.closeRunSandboxes(context.Background(), "run-child")
+	if len(d.runSandboxes) != 1 {
+		t.Fatalf("child cleanup left %d sandboxes, want the parent's", len(d.runSandboxes))
+	}
+	if sharedRunWorkspace("runs/../workspace") || sharedRunWorkspace("runs/a/b/workspace") {
+		t.Fatal("unsafe workspace treated as shared")
+	}
+}
+
 // 失败后没人删除的运行不会收到 cleanup_run，空闲太久的共享沙箱要自动回收，正在用的不能回收。
 func TestIdleSharedRunSandboxIsReaped(t *testing.T) {
 	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}

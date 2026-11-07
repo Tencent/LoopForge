@@ -27,16 +27,12 @@ func TestAttachPreviewBuildAppendsCodeBuddyNode(t *testing.T) {
 	if last.ID != PreviewBuildNodeID || last.AgentID != PreviewBuildAgentID || last.ExecutorID != PreviewBuildExecutor {
 		t.Fatalf("injected node = %+v", last)
 	}
-	book := PreviewBuildTaskPrompt(got.Preview)
-	if book == nil || book.Objective == "" {
-		t.Fatal("preview build role must carry a task prompt")
+	prompt := PreviewBuildPrompt(got.Preview)
+	if !strings.Contains(prompt, "base: './'") || !strings.Contains(prompt, "./assets/") || !strings.Contains(prompt, "拦截 fetch/XHR") {
+		t.Fatalf("preview build prompt must force a relative asset base and gateway-intercepted backend: %s", prompt)
 	}
-	joined := strings.Join(append(append(book.Actions, book.AcceptanceCriteria...), book.Deliverables...), "\n")
-	if !strings.Contains(joined, "base: './'") || !strings.Contains(joined, "./assets/") || !strings.Contains(joined, "拦截 fetch/XHR") {
-		t.Fatalf("preview build prompt must force a relative asset base and gateway-intercepted backend: %#v", book)
-	}
-	if !strings.Contains(joined, "没有前端工程") || !strings.Contains(strings.Join(book.Constraints, "\n"), "禁止在非前端仓库里编造静态站点") {
-		t.Fatalf("preview build prompt must refuse to fabricate a site: %#v", book)
+	if !strings.Contains(prompt, "没有前端工程") || !strings.Contains(prompt, "禁止在非前端仓库里编造静态站点") {
+		t.Fatalf("preview build prompt must refuse to fabricate a site: %s", prompt)
 	}
 	if len(last.ArtifactOutputs) != 1 || last.ArtifactOutputs[0].Path != "dist/index.html" {
 		t.Fatalf("artifact = %+v", last.ArtifactOutputs)

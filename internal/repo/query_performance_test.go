@@ -63,6 +63,9 @@ func TestQuerySummaryProjectionAndScope(t *testing.T) {
 			ctx.IssueID = "other"
 		}
 		run := domain.Run{ID: id, WorkflowID: prefix, CreatedAt: now, Status: "succeeded", ExecutionContext: ctx, Nodes: map[string]*domain.NodeRun{"node": &node}, Artifacts: []domain.Artifact{{ID: id + "artifact", RunID: id, Content: strings.Repeat("artifact", 1000)}}}
+		if i == 0 {
+			run.WorkflowSnapshot = domain.WorkflowDefinition{ID: prefix, Name: "自由协作", CollaborationMode: "group", Description: strings.Repeat("graph", 1000)}
+		}
 		if err := s.PutRun(run); err != nil {
 			t.Fatal(err)
 		}
@@ -76,6 +79,9 @@ func TestQuerySummaryProjectionAndScope(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != prefix+"0" {
 		t.Fatalf("scope mismatch: %+v", got)
+	}
+	if snap := got[0].WorkflowSnapshot; snap.ID != prefix || snap.Name != "自由协作" || snap.CollaborationMode != "group" || snap.Description != "" {
+		t.Fatalf("summary snapshot must keep id, name and collaborationMode only: %+v", snap)
 	}
 	expected := summarizeNode(node, "node", "succeeded", 3)
 	if !reflect.DeepEqual(*got[0].Nodes["node"], expected) {

@@ -1,14 +1,14 @@
 import {test,expect} from '@playwright/test';
 import fs from 'node:fs';
-import {password} from './helpers.mjs';
+import {password, appReady, switchProject} from './helpers.mjs';
 
 async function signIn(page){
   await page.goto('/login.html');
   await page.locator('[name="login"]').fill(process.env.LOOPFORGE_TEST_USER || 'admin');
   await page.locator('[name="password"]').fill(password());
   await page.locator('button[type="submit"]').click();
-  await expect(page.locator('#projectSwitcher')).toBeVisible();
-  await page.locator('#projectSwitcher').selectOption('welcome');
+  await appReady(page);
+  await switchProject(page,'welcome');
 }
 
 test('password authentication loads the upstream workspace',async({page,request,baseURL})=>{
@@ -32,12 +32,16 @@ test('Chinese/English and light/dark preferences persist across reloads',async({
   await page.locator('.nav[data-view="issues"]').click();
   await expect(page.locator('html')).toHaveAttribute('lang','zh-CN');
   await page.screenshot({path:info.outputPath('light-zh.png'),fullPage:true});
-  await page.locator('#themeToggle').click();
+  await page.locator('#userBadge').click();
+  await page.locator('#userProfilePopover [data-theme-pref="dark"]').click();
   await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
-  await page.mouse.move(500,500);
+  await expect(page.locator('#userProfilePopover [data-theme-pref="dark"]')).toHaveAttribute('aria-checked','true');
+  await page.keyboard.press('Escape');
+  await page.mouse.move(800,500);
   await page.locator('#langToggle').click();
   await expect(page.locator('html')).toHaveAttribute('lang','en');
-  await expect(page.locator('.nav[data-view="issues"]')).toContainText('Requirements');
+  await expect(page.locator('.nav[data-view="issues"]')).toHaveAttribute('aria-label','Requirements');
+  await expect(page.locator('.nav[data-view="issues"]')).toHaveAttribute('data-tooltip','Requirements');
   await page.screenshot({path:info.outputPath('dark-en.png'),fullPage:true});
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme','dark');

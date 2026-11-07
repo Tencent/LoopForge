@@ -1,0 +1,119 @@
+/* Tray above the composer: inset from its edges, open at the bottom and
+   tucked under its top border, so the composer reads as sitting on it. */
+.queued-messages {
+  position: relative;
+  margin: 0 18px -14px;
+  padding: 4px 4px 18px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  background: var(--surface);
+  font-size: 12px;
+}
+.queued-messages-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 4px 0 10px;
+  color: var(--muted);
+}
+.queued-messages-note > span {
+  flex: 1;
+  min-width: 0;
+}
+.queued-messages-resume {
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 3px 8px;
+  border-radius: 7px;
+}
+.queued-messages-resume:hover {
+  background: var(--hover);
+}
+.queued-messages-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 204px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.queued-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 4px 0 10px;
+  border-radius: 9px;
+}
+.queued-message:hover {
+  background: var(--subtle);
+}
+.queued-message-icon {
+  flex: none;
+  color: var(--muted);
+}
+.queued-message-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+}
+.queued-message-extra {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+}
+.queued-message-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.queued-message-steer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.queued-message-steer:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.queued-message-steer:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.queued-message-action.icon-button {
+  width: 26px;
+  height: 26px;
+  color: var(--muted);
+}
+.queued-message-action.icon-button:hover {
+  color: var(--text);
+}
+.queued-message.is-steering .queued-message-text {
+  color: var(--muted);
+}
+.queued-message-state {
+  flex: none;
+  padding-right: 8px;
+  color: var(--muted);
+}

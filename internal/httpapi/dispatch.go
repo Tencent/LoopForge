@@ -94,10 +94,6 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 			repositoryIDs = []string{p.DefaultRepositoryID}
 		}
 	}
-	selectedWorkBranch, err := normalizeIssueBaseBranch(issue.BaseBranch)
-	if err != nil {
-		return domain.Task{}, HTTPError{http.StatusBadRequest, err.Error()}
-	}
 	var boundRepositories []domain.Repository
 	for _, id := range repositoryIDs {
 		repository, found := d.repo.Repository(id)
@@ -106,16 +102,17 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		}
 		boundRepositories = append(boundRepositories, repository)
 	}
-	if len(boundRepositories) > 0 && legacyIssueDefaultBranch(selectedWorkBranch, boundRepositories[0]) {
-		selectedWorkBranch = ""
+	branchSelection := issue
+	if len(boundRepositories) > 0 && legacyIssueDefaultBranch(branchSelection.BaseBranch, boundRepositories[0]) {
+		branchSelection.BaseBranch = ""
 	}
-	if err := validateIssueBaseBranchRepositories(selectedWorkBranch, boundRepositories); err != nil {
+	if err := normalizeIssueRepositoryBranches(&branchSelection, boundRepositories); err != nil {
 		return domain.Task{}, HTTPError{http.StatusBadRequest, err.Error()}
 	}
 	var repositories []domain.RepositoryContext
 	for _, repo := range boundRepositories {
 		rc := domain.RepositoryContext{RepositoryID: repo.ID, Provider: repo.Provider, Name: repo.Name, GongfengProjectID: repo.GongfengProjectID, WebURL: repo.WebURL, CloneURL: repo.CloneURL, BaseBranch: repo.DefaultBranch, LocalPath: repo.LocalPath, PipelineProjectID: repo.PipelineProjectID, PipelineDefID: repo.PipelineDefID, PipelineURLPattern: repo.PipelineURLPattern, DefaultBranch: repo.DefaultBranch}
-		if selectedWorkBranch != "" {
+		if selectedWorkBranch := branchSelection.WorkBranchForRepository(repo.ID); selectedWorkBranch != "" {
 			rc.WorkBranch = selectedWorkBranch
 			rc.RequireExistingWorkBranch = true
 		}

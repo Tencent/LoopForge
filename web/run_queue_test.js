@@ -32,7 +32,7 @@ async function main() {
   const timers=new Map(),listeners={};let nextTimer=0,refreshes=0,view='runs';
   const section={hidden:false};
   const refresh={state:{data:{runs:[{id:'r',status:'queued'}]}},document:{hidden:false,addEventListener:(name,fn)=>listeners[name]=fn},activeViewName:()=>view,$:()=>section,scopedRuns:r=>r,clearInterval:id=>timers.delete(id),setInterval:fn=>{timers.set(++nextTimer,fn);return nextTimer;},refreshRuns:()=>refreshes++};
-  vm.createContext(refresh);
+  load(refresh,['isSOPRun','sopRuns']);
   vm.runInContext(bundle.slice(bundle.indexOf('let queuedRunRefreshTimer='),bundle.indexOf('let refreshRunsPending=')),refresh);
   refresh.syncQueuedRunRefresh();refresh.syncQueuedRunRefresh();assert.equal(timers.size,1);
   [...timers.values()][0]();assert.equal(refreshes,1);
@@ -45,6 +45,9 @@ async function main() {
   const calls=[],messages=[],run={id:'run/1',status:'waiting',pauseRequested:true};
   const control={state:{selectedRun:run.id,activeRun:run,data:{runs:[run],issues:[]},issueDetailData:{run}},api:async(path,opts)=>{calls.push([path,opts?.method||'GET']);return{id:run.id,status:'queued',pauseRequested:false,admissionState:'queued'};},toast:m=>messages.push(m),readHumanContext:()=>'',refreshIssues:async()=>{},refreshRuns:async()=>{},startLiveRun:id=>calls.push(['stream',id]),stopLiveRun:()=>{},renderRunDetail:()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};
   load(control,['cachedRun','queuedRunActionBlocked','patchCachedRun','paintRunControl','runStatus','runDisplayStatus','runControlToast','sortRunsDescending','syncRunControlState','resumePausedRun']);
+  control.$=()=>null;
+  vm.runInContext('const runActivationRequests=new Map(); const runRestoreWatchers=new Map();',control);
+  load(control,['paintRunActivationProgress','requestRunActivation']);
   await control.resumePausedRun(run.id);
   assert.deepEqual(calls.slice(0,2),[['/api/runs/run%2F1/resume','POST'],['/api/runs/run%2F1','GET']]);
   assert.equal(control.state.activeRun.status,'queued');assert.equal(control.state.activeRun.pauseRequested,false);
@@ -103,7 +106,8 @@ async function main() {
   const limitUI=load({escapeHTML:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))},['runnerRunLimitHTML']);
   assert.equal(limitUI.runnerRunLimitHTML({id:'cloud',ownerUserId:0}),'','platform machines have no per-machine limit');
   const unlimited=limitUI.runnerRunLimitHTML({id:'m',name:'mac',ownerUserId:9});
-  assert.match(unlimited,/placeholder="不限制" value=""/);
+  assert.match(unlimited,/placeholder="不限" value=""/);
+  assert.match(unlimited,/class="runner-tip" tabindex="0"[^>]*data-tip="[^"]*不受项目 10 条限额/,'run limit rules stay in a focusable tip');
   assert.match(limitUI.runnerRunLimitHTML({id:'m',ownerUserId:9,runLimit:5}),/value="5"/);
   assert.doesNotMatch(limitUI.runnerRunLimitHTML({id:'"><img src=x onerror=alert(1)>',ownerUserId:9}),/<img/,'runner id is escaped');
 
@@ -113,7 +117,7 @@ async function main() {
   await saver.saveRunnerRunLimit('m','3');
   await saver.saveRunnerRunLimit('m','  ');
   assert.deepEqual(saves,[['/api/runners/m/run-limit','PUT',{runLimit:3}],['/api/runners/m/run-limit','PUT',{runLimit:0}]]);
-  assert.equal(saver.state.runners[0].runLimit,0);assert.match(notes[0],/3 条/);assert.match(notes[1],/不限制/);
+  assert.equal(saver.state.runners[0].runLimit,0);assert.match(notes[0],/3 条/);assert.match(notes[1],/不限/);
   for (const bad of ['0.5','-2','101','abc']) await saver.saveRunnerRunLimit('m',bad);
   assert.equal(saves.length,2,'invalid values are not sent');assert.equal(refreshed,4);
 

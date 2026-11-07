@@ -664,7 +664,6 @@ func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
 	task.Invocation.CodexBaseURL = ""
 	task.Invocation.ClaudeCodeAPIKey = ""
 	task.Invocation.ClaudeCodeBaseURL = ""
-	task.Invocation.TaihuPAT = ""
 	if task.Invocation.Repository != nil {
 		task.Invocation.Repository.GitToken = ""
 	}

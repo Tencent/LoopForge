@@ -1,6 +1,6 @@
 module agentflow
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/creack/pty v1.1.24
@@ -9,7 +9,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/goccy/go-yaml v1.19.2
 	github.com/gorilla/websocket v1.5.3
-	github.com/klauspost/compress v1.18.7
+	github.com/klauspost/compress v1.20.3
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0

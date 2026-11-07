@@ -2,7 +2,7 @@ document.getElementById('loginLang').onclick = () => window.lfSetLang(window.lfL
 document.getElementById('loginTheme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = next;
-  localStorage.setItem('loopforge.theme.v3', next);
+  localStorage.setItem('agentflow.theme.v3', next);
 };
 
 const $ = id => document.getElementById(id);
@@ -51,7 +51,6 @@ $('loginForm').onsubmit = async event => {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || t('操作失败', 'Request failed'));
-    if (creating) localStorage.removeItem('loopforge.onboarding.dismissed');
     location.replace('/');
   } catch (err) { error.textContent = err.message; button.disabled = false; }
 };

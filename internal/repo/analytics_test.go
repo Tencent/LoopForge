@@ -225,8 +225,71 @@ func TestAnalyticsOverviewScopeSkipsDeliveries(t *testing.T) {
 	if got.Summary.TotalRuns != 1 || got.Summary.SucceededRuns != 1 {
 		t.Fatalf("overview summary: %#v", got.Summary)
 	}
-	if len(got.Deliveries) != 0 || got.Delivery.Issues != 0 {
-		t.Fatalf("overview should skip deliveries: delivery=%#v deliveries=%d", got.Delivery, len(got.Deliveries))
+	if len(got.Deliveries) != 0 {
+		t.Fatalf("overview should skip delivery rows: deliveries=%d", len(got.Deliveries))
+	}
+	full := s.Analytics(domain.AnalyticsFilter{ProjectID: "alpha"})
+	if got.Delivery.Issues != 1 || got.Delivery.Issues != full.Delivery.Issues {
+		t.Fatalf("overview delivery count=%d full=%d want 1", got.Delivery.Issues, full.Delivery.Issues)
+	}
+}
+
+func TestAnalyticsOverviewDeliveryCountMatchesFullScan(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	now := time.Now().UTC().Add(-time.Hour)
+	issues := []domain.Issue{
+		{ID: "tapd-a", ProjectID: "alpha", Source: "tapd", Kind: "requirement", Title: "Story A", AssigneeUserID: 7, ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "2001"}},
+		{ID: "tapd-a-copy", ProjectID: "alpha", Source: "tapd", Kind: "requirement", Title: "Story A copy", AssigneeUserID: 7, ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "2001"}},
+		{ID: "local-b", ProjectID: "alpha", Source: "local", Kind: "requirement", Title: "Local B", AssigneeUserID: 8},
+		{ID: "gf-c", ProjectID: "alpha", Source: "gongfeng", Kind: "issue", Title: "Bug C", AssigneeUserID: 7},
+	}
+	for _, issue := range issues {
+		if err := s.PutIssue(issue); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wf := domain.WorkflowDefinition{ID: "wf", Name: "WF"}
+	for index, issue := range issues {
+		at := now.Add(time.Duration(index) * time.Minute)
+		if err := s.PutRun(domain.Run{
+			ID: "run-" + issue.ID, WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
+			ExecutionContext: domain.TelemetryContext{ProjectID: "alpha", IssueID: issue.ID},
+			CreatedAt:        at, UpdatedAt: at.Add(time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.PutRun(domain.Run{
+		ID: "run-no-issue", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "alpha"}, CreatedAt: now, UpdatedAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		filter domain.AnalyticsFilter
+		want   int
+	}{
+		{"project with TAPD merged", domain.AnalyticsFilter{ProjectID: "alpha"}, 3},
+		{"owner", domain.AnalyticsFilter{ProjectID: "alpha", UserID: "7"}, 2},
+		{"source", domain.AnalyticsFilter{ProjectID: "alpha", IssueSource: "tapd"}, 1},
+		{"requirements only", domain.AnalyticsFilter{ProjectID: "alpha", RequirementsOnly: true}, 2},
+		{"external origin", domain.AnalyticsFilter{ProjectID: "alpha", Origin: "external"}, 0},
+	} {
+		full := s.Analytics(tc.filter)
+		overviewFilter := tc.filter
+		overviewFilter.Scope = "overview"
+		overview := s.Analytics(overviewFilter)
+		if full.Delivery.Issues != tc.want || overview.Delivery.Issues != tc.want {
+			t.Fatalf("%s: overview=%d full=%d want %d", tc.name, overview.Delivery.Issues, full.Delivery.Issues, tc.want)
+		}
+		if len(overview.Deliveries) != 0 {
+			t.Fatalf("%s: overview should not build delivery rows: %d", tc.name, len(overview.Deliveries))
+		}
 	}
 }
 
@@ -455,5 +518,63 @@ func TestAnalyticsOverviewIncludesModelUsage(t *testing.T) {
 	}
 	if len(got.Models) != 1 || got.Models[0].Key != "deepseek-v3" || got.Models[0].Tokens != 40 {
 		t.Fatalf("overview models = %#v", got.Models)
+	}
+}
+
+func TestAnalyticsWeekHourBucketsByTimeZone(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	wf := domain.WorkflowDefinition{ID: "wf", Name: "WF"}
+	// Thursday 20:30 UTC is Friday 04:30 in Asia/Shanghai.
+	late := time.Date(2026, 9, 10, 20, 30, 0, 0, time.UTC)
+	// Monday 09:10 UTC is Monday 17:10 in Asia/Shanghai.
+	monday := time.Date(2026, 9, 14, 9, 10, 0, 0, time.UTC)
+	ended := func(at time.Time) map[string]*domain.NodeRun {
+		return map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "succeeded", FinishedAt: at}}
+	}
+	for _, run := range []domain.Run{
+		{ID: "wh1", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "alpha"}, Nodes: ended(late), Usage: domain.TokenUsage{TotalTokens: 100, CostUSD: 0.2}, CreatedAt: late.Add(-time.Minute), UpdatedAt: late},
+		{ID: "wh2", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "alpha"}, Nodes: ended(late), Usage: domain.TokenUsage{TotalTokens: 30, CostUSD: 0.1}, CreatedAt: late.Add(-time.Minute), UpdatedAt: late},
+		{ID: "wh3", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "alpha"}, Nodes: ended(monday), Usage: domain.TokenUsage{TotalTokens: 7}, CreatedAt: monday.Add(-time.Minute), UpdatedAt: monday},
+	} {
+		if err := s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cells := func(snap domain.AnalyticsSnapshot) map[[2]int]domain.AnalyticsWeekHourCell {
+		out := map[[2]int]domain.AnalyticsWeekHourCell{}
+		runs, tokens := 0, int64(0)
+		for _, c := range snap.WeekHour {
+			if c.Runs == 0 {
+				t.Fatalf("weekHour must only contain non-empty cells: %#v", snap.WeekHour)
+			}
+			out[[2]int{c.Weekday, c.Hour}] = c
+			runs += c.Runs
+			tokens += c.Tokens
+		}
+		if runs != snap.Summary.TotalRuns || tokens != snap.Summary.TotalTokens {
+			t.Fatalf("weekHour totals runs=%d tokens=%d, summary runs=%d tokens=%d", runs, tokens, snap.Summary.TotalRuns, snap.Summary.TotalTokens)
+		}
+		return out
+	}
+	for _, scope := range []string{"overview", ""} {
+		shanghai := cells(s.Analytics(domain.AnalyticsFilter{ProjectID: "alpha", Scope: scope}))
+		if len(shanghai) != 2 || shanghai[[2]int{4, 4}].Runs != 2 || shanghai[[2]int{4, 4}].Tokens != 130 || shanghai[[2]int{0, 17}].Runs != 1 {
+			t.Fatalf("scope %q default Asia/Shanghai buckets = %#v", scope, shanghai)
+		}
+	}
+	utc := cells(s.Analytics(domain.AnalyticsFilter{ProjectID: "alpha", Scope: "overview", TimeZone: "UTC"}))
+	if utc[[2]int{3, 20}].Runs != 2 || utc[[2]int{0, 9}].Runs != 1 {
+		t.Fatalf("UTC buckets = %#v", utc)
+	}
+	invalid := cells(s.Analytics(domain.AnalyticsFilter{ProjectID: "alpha", Scope: "overview", TimeZone: "Mars/Olympus"}))
+	if invalid[[2]int{4, 4}].Runs != 2 {
+		t.Fatalf("invalid tz must fall back to Asia/Shanghai: %#v", invalid)
+	}
+	if empty := s.Analytics(domain.AnalyticsFilter{ProjectID: "nobody", Scope: "overview"}); len(empty.WeekHour) != 0 {
+		t.Fatalf("no runs must omit weekHour: %#v", empty.WeekHour)
 	}
 }

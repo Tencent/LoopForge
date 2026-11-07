@@ -88,8 +88,8 @@ func TestFetchPhoto_SuccessAndCache(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
-		if r.URL.Path != "/ebus/rhrc/photo/100/zhangsan.png" {
-			t.Errorf("expected path /ebus/rhrc/photo/100/zhangsan.png, got %s", r.URL.Path)
+		if r.URL.Path != "/sso/photo/100/zhangsan.png" {
+			t.Errorf("expected path /sso/photo/100/zhangsan.png, got %s", r.URL.Path)
 		}
 		if r.Header.Get("x-rio-paasid") != "test_paas" {
 			t.Errorf("expected x-rio-paasid=test_paas, got %s", r.Header.Get("x-rio-paasid"))
@@ -108,6 +108,7 @@ func TestFetchPhoto_SuccessAndCache(t *testing.T) {
 		PaaSID:   "test_paas",
 		AppToken: "test_token",
 		AuthHost: server.URL,
+		PhotoURI: "/sso/photo",
 	})
 
 	ctx := context.Background()
@@ -163,6 +164,7 @@ func TestFetchPhoto_NotFound(t *testing.T) {
 		PaaSID:   "test_paas",
 		AppToken: "test_token",
 		AuthHost: server.URL,
+		PhotoURI: "/sso/photo",
 	})
 
 	_, _, err := client.FetchPhoto(context.Background(), "unknown_user", 100)
@@ -180,5 +182,10 @@ func TestFetchPhoto_NoCredentials(t *testing.T) {
 	_, _, err := client.FetchPhoto(context.Background(), "zhangsan", 100)
 	if err != ErrCredentialsNotConfigured {
 		t.Errorf("expected ErrCredentialsNotConfigured, got %v", err)
+	}
+
+	withoutPath := NewClient(Config{PaaSID: "test_paas", AppToken: "test_token", AuthHost: "http://127.0.0.1:1"})
+	if _, _, err := withoutPath.FetchPhoto(context.Background(), "zhangsan", 100); err != ErrCredentialsNotConfigured {
+		t.Errorf("missing photo path: expected ErrCredentialsNotConfigured, got %v", err)
 	}
 }

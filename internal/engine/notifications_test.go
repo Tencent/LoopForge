@@ -10,6 +10,7 @@ import (
 )
 
 func TestAgentNotificationsFollowRealGateAndApprovalEvents(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +33,7 @@ func TestAgentNotificationsFollowRealGateAndApprovalEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		current, _ := s.RunState(run.ID)
 		if current.Status == "waiting" {

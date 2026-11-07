@@ -11,11 +11,13 @@ export class HTTPError extends Error {
 
 // api performs one request against the target deployment. `expect` lists the
 // acceptable statuses; anything else throws with the response body so a
-// failing assertion explains itself.
+// failing assertion explains itself. `token` replaces the suite token (e.g.
+// cfg.tokenB for a second user); `cookie` sends a browser session instead.
 export async function api(method, path, body, opts = {}) {
-  const { expect = [200, 201, 202, 204], auth = true, headers = {}, raw = false, timeoutMs = 60_000 } = opts;
+  const { expect = [200, 201, 202, 204], auth = true, headers = {}, raw = false, timeoutMs = 60_000, token, cookie } = opts;
   const init = { method, headers: { Accept: 'application/json', ...headers }, signal: AbortSignal.timeout(timeoutMs) };
-  if (auth) init.headers.Authorization = `Bearer ${requireToken()}`;
+  if (cookie) init.headers.Cookie = cookie;
+  else if (auth) init.headers.Authorization = `Bearer ${token || requireToken()}`;
   if (body instanceof FormData) {
     init.body = body;
   } else if (body !== undefined) {
@@ -128,17 +130,54 @@ export async function ensureProject() {
 
 // tokenOwner resolves who the API token belongs to. There is no "whoami" for
 // tokens, so a knowledge review item (stamped with the caller's login) is
-// created and deleted at once; it never reaches the knowledge base.
-let owner;
-export async function tokenOwner() {
-  if (owner) return owner;
-  const probe = await post('/api/knowledge/submissions', { projectId: cfg.projectId, title: 'e2e-auto whoami', content: 'noop' });
-  await del(`/api/knowledge/submissions/${probe.id}`);
+// created and deleted at once; it never reaches the knowledge base. It has no
+// project, so tokens that cannot write the e2e project can still probe.
+const owners = new Map();
+export async function tokenOwner(token = cfg.token) {
+  if (owners.has(token)) return owners.get(token);
+  const probe = await post('/api/knowledge/submissions', { title: 'e2e-auto whoami', content: 'noop' }, { token });
+  await del(`/api/knowledge/submissions/${probe.id}`, { token });
   const user = list(await get('/api/users')).find(u => u.loginName === probe.createdBy);
   if (!user) throw new Error(`token owner ${probe.createdBy} not found in /api/users`);
   const admins = list(await get('/api/platform/admins'));
   user.isPlatformAdmin = user.platformRole === 'admin' || admins.some(a => a.loginName === user.loginName);
-  return (owner = user);
+  owners.set(token, user);
+  return user;
+}
+
+export const tokenBSkip = cfg.tokenB ? false : 'AGENTFLOW_E2E_TOKEN_B not set (a second, non-admin user)';
+export const asB = (opts = {}) => ({ ...opts, token: cfg.tokenB });
+
+// browserSession signs in through the loopback-only acceptance login and
+// returns the session cookie, or null when the deployment does not enable it
+// (only local.sh does). Session-only endpoints (personal API tokens, WeCom
+// bindings) refuse Bearer tokens, so this is the only way to reach them.
+export async function browserSession() {
+  const probe = await get('/api/auth/local', { auth: false });
+  if (!probe?.enabled) return null;
+  const res = await api('POST', '/api/auth/local', {}, { auth: false, headers: { Origin: cfg.base }, raw: true });
+  const cookie = res.headers.getSetCookie().map(c => c.split(';')[0]).join('; ');
+  if (!cookie) throw new Error('acceptance login set no cookie');
+  return cookie;
+}
+
+// withProjectMember temporarily makes user a member of the e2e project with
+// role ('viewer', 'member', 'maintainer' or null to remove) and restores the
+// original roster when the returned function runs (also on cleanup).
+export async function withProjectMember(userId, role) {
+  const original = await get(`/api/projects/${cfg.projectId}`);
+  const members = (original.members || []).filter(m => m.userId !== userId);
+  if (role) members.push({ userId, role });
+  await put('/api/projects', { ...original, members });
+  let restored = false;
+  const restore = async () => {
+    if (restored) return;
+    restored = true;
+    const now = await get(`/api/projects/${cfg.projectId}`);
+    await put('/api/projects', { ...now, members: original.members || [] });
+  };
+  track(`project members ${cfg.projectId}`, restore);
+  return restore;
 }
 
 export async function setClarification(enabled) {

@@ -22,6 +22,7 @@ import (
 // opens a listener; the runner is unreachable from the network by design.
 
 var ErrUnauthorized = errors.New("runner session rejected by server")
+var ErrTaskLeaseLost = errors.New("task lease lost")
 
 type Client struct {
 	base    string
@@ -83,6 +84,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode >= 400 {
+		var detail struct {
+			Error string `json:"error"`
+		}
+		if resp.StatusCode == http.StatusConflict && json.Unmarshal(payload, &detail) == nil && detail.Error == ErrTaskLeaseLost.Error() {
+			return ErrTaskLeaseLost
+		}
 		return fmt.Errorf("%s %s: %s", method, path, strings.TrimSpace(string(payload)))
 	}
 	if out != nil && len(payload) > 0 {

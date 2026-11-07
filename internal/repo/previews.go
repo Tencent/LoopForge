@@ -309,11 +309,7 @@ func (r *PreviewsRepo) DeletePreview(id string) error {
 }
 
 func NewPreviewID(runID string) string {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return "preview"
-	}
-	return "preview-" + runID
+	return domain.PreviewID(runID)
 }
 
 func (r *PreviewsRepo) CountReadyStorageKey(key string) (int64, error) {

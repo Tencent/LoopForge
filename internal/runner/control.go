@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -16,6 +17,12 @@ const (
 	controlReconnectMin = time.Second
 	controlReconnectMax = 30 * time.Second
 )
+
+// controlReadTimeout outlives two server ping periods (30s). Without a read
+// deadline a half-open socket keeps ReadJSON blocked forever: the daemon
+// looks connected and never reconnects. The server only sends pings, so the
+// ping handler (not a pong handler) extends the deadline.
+var controlReadTimeout = 75 * time.Second
 
 type controlMessage struct {
 	Type              string                          `json:"type"`
@@ -72,7 +79,7 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 	var requests sync.WaitGroup
 	var writeMu sync.Mutex
 	slots := make(chan struct{}, 8)
-	defer func() { cancel(); _ = conn.Close(); requests.Wait() }()
+	defer func() { cancel(); _ = conn.Close(); requests.Wait(); d.checkpointTransfers.Close() }()
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -82,11 +89,24 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 		}
 	}()
 	defer close(done)
+	_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
+	conn.SetPingHandler(func(data string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
+		err := conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(10*time.Second))
+		if err == websocket.ErrCloseSent {
+			return nil
+		}
+		if e, ok := err.(net.Error); ok && e.Timeout() {
+			return nil
+		}
+		return err
+	})
 	for {
 		var message controlMessage
 		if err := conn.ReadJSON(&message); err != nil {
 			return err
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
 		if message.Type == "task.control" {
 			d.signalTaskControl(message.TaskID, message.DesiredState)
 			continue

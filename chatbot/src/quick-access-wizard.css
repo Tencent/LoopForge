@@ -1,0 +1,1679 @@
+.qa-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(10 10 14 / 0.52);
+  backdrop-filter: blur(2px);
+  transition: opacity 240ms ease;
+}
+
+.qa-backdrop:is([data-phase="entering"], [data-phase="closing"]) {
+  opacity: 0;
+}
+
+.qa-backdrop[data-phase="closing"] {
+  pointer-events: none;
+}
+
+.qa-dialog {
+  --qa-accent: #635bff;
+  --qa-accent-hover: #534be8;
+  --qa-accent-soft: rgb(99 91 255 / 0.12);
+  --qa-ok: #16a34a;
+  --qa-ok-soft: rgb(22 163 74 / 0.12);
+  --qa-warn: #d97706;
+  --qa-warn-soft: rgb(217 119 6 / 0.12);
+  --qa-err: #dc2626;
+  --qa-surface: #ffffff;
+  --qa-elevated: #f7f7f9;
+  --qa-base: #fbfbfc;
+  --qa-line: #e5e5e8;
+  --qa-line-soft: #eeeef1;
+  --qa-line-strong: #d4d4da;
+  --qa-txt: #18181b;
+  --qa-txt2: #52525b;
+  --qa-txt3: #67676f;
+  /* Status hues stay for fills, dots and lines; small text uses these AA-safe tones. */
+  --qa-accent-fill: var(--qa-accent);
+  --qa-accent-text: #4f46e5;
+  --qa-ok-text: #166534;
+  --qa-warn-text: #92400e;
+  --qa-err-text: #b91c1c;
+  --qa-hover-line: color-mix(in srgb, var(--qa-txt) 24%, var(--qa-line));
+  --qa-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --sliding-surface: #ffffff;
+  --sliding-text: #18181b;
+  --sliding-muted: #71717a;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: min(1020px, 100%);
+  height: min(680px, 92dvh);
+  overflow: hidden;
+  border: 1px solid var(--qa-line);
+  border-radius: 18px;
+  background: var(--qa-surface);
+  color: var(--qa-txt);
+  box-shadow:
+    0 24px 64px -12px rgb(0 0 0 / 0.32),
+    0 2px 6px rgb(0 0 0 / 0.08);
+  transition:
+    opacity 220ms ease,
+    transform 300ms var(--qa-ease);
+}
+
+.qa-backdrop:is([data-phase="entering"], [data-phase="closing"]) .qa-dialog {
+  opacity: 0;
+  transform: translateY(14px) scale(0.97);
+}
+
+[data-theme="dark"] .qa-dialog {
+  --qa-accent: #7c74ff;
+  --qa-accent-hover: #5a52e0;
+  --qa-accent-soft: rgb(124 116 255 / 0.16);
+  --qa-ok: #34d399;
+  --qa-ok-soft: rgb(52 211 153 / 0.14);
+  --qa-warn: #fbbf24;
+  --qa-warn-soft: rgb(251 191 36 / 0.14);
+  --qa-err: #f87171;
+  --qa-surface: #18181c;
+  --qa-elevated: #202026;
+  --qa-base: #141417;
+  --qa-line: #2a2a32;
+  --qa-line-soft: #24242b;
+  --qa-line-strong: #3a3a44;
+  --qa-txt: #ededf0;
+  --qa-txt2: #b4b4be;
+  --qa-txt3: #8e8e99;
+  --qa-accent-fill: #625ae8;
+  --qa-accent-text: #9a94ff;
+  --qa-ok-text: #34d399;
+  --qa-warn-text: #fbbf24;
+  --qa-err-text: #f87171;
+  --sliding-surface: #18181c;
+  --sliding-text: #ededf0;
+  --sliding-muted: #8e8e99;
+}
+
+.qa-rail {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 248px;
+  border-right: 1px solid var(--qa-line);
+  background:
+    radial-gradient(120% 60% at 0% 0%, var(--qa-accent-soft), transparent 60%),
+    var(--qa-elevated);
+}
+
+.qa-rail-head {
+  padding: 24px 24px 0;
+}
+
+.qa-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: var(--qa-accent);
+  background: var(--qa-accent-soft);
+  box-shadow: inset 0 0 0 1px rgb(99 91 255 / 0.24);
+}
+
+.qa-rail-head h2 {
+  margin: 16px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--qa-txt);
+}
+
+.qa-rail-head p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--qa-txt3);
+}
+
+.qa-steps {
+  flex: 1;
+  margin: 26px 0 0;
+  padding: 0 16px;
+  list-style: none;
+}
+
+.qa-step {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 0 8px;
+  color: var(--qa-txt3);
+}
+
+/* Base line plus a fill line that grows from the top; both centred on the 26px mark. */
+.qa-step:not(:last-child)::before,
+.qa-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 20.25px;
+  top: 30px;
+  bottom: 4px;
+  width: 1.5px;
+  border-radius: 2px;
+}
+
+.qa-step:not(:last-child)::before {
+  background: var(--qa-line-strong);
+}
+
+.qa-step:not(:last-child)::after {
+  background: var(--qa-accent);
+  transform: scaleY(0);
+  transform-origin: top;
+  transition: transform 420ms var(--qa-ease);
+}
+
+.qa-step.is-done:not(:last-child)::after {
+  transform: scaleY(1);
+}
+
+.qa-step-mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--qa-line-strong);
+  background: var(--qa-surface);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color 260ms ease,
+    border-color 260ms ease,
+    color 260ms ease,
+    box-shadow 320ms var(--qa-ease);
+}
+
+.qa-step-mark > * {
+  display: grid;
+  place-items: center;
+  grid-area: 1 / 1;
+  transition:
+    opacity 180ms ease,
+    transform 260ms var(--qa-ease);
+}
+
+.qa-step-check,
+.qa-step.is-done .qa-step-no {
+  opacity: 0;
+  transform: scale(0.4);
+}
+
+.qa-step.is-done .qa-step-check {
+  opacity: 1;
+  transform: none;
+}
+
+.qa-step.is-done .qa-step-mark {
+  color: var(--qa-accent-text);
+  border-color: color-mix(in srgb, var(--qa-accent) 45%, transparent);
+  background: var(--qa-accent-soft);
+}
+
+.qa-step.is-active .qa-step-mark {
+  color: #fff;
+  border-color: var(--qa-accent-fill);
+  background: var(--qa-accent-fill);
+  box-shadow: 0 0 0 4px var(--qa-accent-soft);
+}
+
+.qa-step-copy {
+  min-width: 0;
+  padding-bottom: 20px;
+}
+
+.qa-step-title {
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: color 260ms ease;
+}
+
+.qa-step.is-done .qa-step-title {
+  color: var(--qa-txt2);
+}
+
+.qa-step.is-active .qa-step-title {
+  color: var(--qa-txt);
+}
+
+.qa-step-desc {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--qa-txt3);
+}
+
+.qa-rail-foot {
+  margin: 0;
+  padding: 0 24px 20px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--qa-txt3);
+}
+
+.qa-main {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--qa-surface);
+}
+
+/* Absolutely positioned, so it must not become a hover-ink host (ink forces position: relative). */
+.qa-main > .qa-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  left: auto;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--qa-txt3);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.qa-main > .qa-close:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--qa-txt) 5%, transparent);
+  color: var(--qa-txt);
+}
+
+.qa-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 36px 20px;
+  scrollbar-width: none;
+}
+
+.qa-body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.qa-stage.is-entering[data-direction="forward"] {
+  animation: qa-step-forward 320ms var(--qa-ease) backwards;
+}
+
+.qa-stage.is-entering[data-direction="back"] {
+  animation: qa-step-back 320ms var(--qa-ease) backwards;
+}
+
+.qa-kicker {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--qa-accent-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.qa-title {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--qa-txt);
+  outline: none;
+}
+
+.qa-lede {
+  max-width: 64ch;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--qa-txt2);
+}
+
+.qa-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.qa-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qa-fade-in {
+  animation: qa-fade 240ms var(--qa-ease) backwards;
+}
+
+.qa-msg-in {
+  animation: qa-msg 300ms var(--qa-ease) backwards;
+}
+
+.qa-stagger > * {
+  animation: qa-rise 340ms var(--qa-ease) backwards;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+/* Harness UI SlidingTabs compact refinement inside the wizard */
+.qa-dialog .qa-sliding-tabs[data-sliding-tabs] {
+  --sliding-muted: var(--qa-txt3);
+  height: 38px !important;
+  min-height: 38px !important;
+  padding: 3px !important;
+  border-radius: 10px !important;
+}
+
+/* Shared rule dims counts with opacity .65, which drops inactive tabs below 4.5:1 */
+.qa-dialog .qa-sliding-tabs[data-sliding-tabs] .sliding-tab-count {
+  opacity: 1;
+}
+
+.qa-dialog .qa-sliding-tabs.qa-sliding-tabs-inline[data-sliding-tabs] {
+  align-self: flex-start;
+  width: auto !important;
+}
+
+.qa-dialog .qa-sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 12px !important;
+  font-size: 12.5px !important;
+  line-height: 18px !important;
+  border-radius: 7px !important;
+}
+
+.qa-oauth-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--qa-base);
+  box-shadow: inset 0 0 0 1px var(--qa-line-soft);
+}
+
+.qa-oauth-copy {
+  min-width: 0;
+}
+
+.qa-oauth-copy strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qa-txt);
+}
+
+.qa-oauth-copy span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--qa-txt3);
+}
+
+.qa-oauth-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+/* Harness UI AppSelect (HarnessSelect) */
+.qa-select-root {
+  position: relative;
+  width: 100%;
+}
+
+.qa-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--qa-line);
+  border-radius: 10px;
+  background: var(--qa-surface);
+  color: var(--qa-txt);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.qa-select-trigger:hover:not(:disabled) {
+  border-color: var(--qa-hover-line);
+}
+
+.qa-select-trigger.is-open,
+.qa-select-trigger:focus-visible {
+  border-color: var(--qa-accent);
+  box-shadow: 0 0 0 3px var(--qa-accent-soft);
+  outline: none;
+}
+
+.qa-select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.qa-select-value.is-placeholder {
+  color: var(--qa-txt3);
+  font-weight: 400;
+}
+
+.qa-select-trigger-hint {
+  flex-shrink: 0;
+  color: var(--qa-txt3);
+  font-size: 11px;
+}
+
+.qa-select-chevron {
+  flex-shrink: 0;
+  color: var(--qa-txt3);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.qa-select-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.qa-select-panel {
+  --sel-surface: #ffffff;
+  --sel-elevated: #f5f5f8;
+  --sel-line: #e5e5e8;
+  --sel-txt: #18181b;
+  --sel-txt2: #52525b;
+  --sel-txt3: #67676f;
+  --sel-accent: #635bff;
+  --sel-accent-text: #4f46e5;
+  --sel-accent-dim: rgb(99 91 255 / 0.1);
+  position: fixed;
+  z-index: 160;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--sel-line);
+  border-radius: 12px;
+  background: var(--sel-surface);
+  color: var(--sel-txt);
+  box-shadow:
+    0 12px 34px rgb(24 24 27 / 0.12),
+    0 2px 6px rgb(24 24 27 / 0.04);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 150ms ease,
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-theme="dark"] .qa-select-panel {
+  --sel-surface: #18181c;
+  --sel-elevated: #222228;
+  --sel-line: #2e2e36;
+  --sel-txt: #ededf0;
+  --sel-txt2: #b4b4be;
+  --sel-txt3: #9a9aa5;
+  --sel-accent: #7c74ff;
+  --sel-accent-text: #9a94ff;
+  --sel-accent-dim: rgb(124 116 255 / 0.16);
+  box-shadow:
+    0 14px 38px rgb(0 0 0 / 0.36),
+    0 2px 6px rgb(0 0 0 / 0.18);
+}
+
+.qa-select-panel:is([data-phase="entering"], [data-phase="closing"]) {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.985);
+  pointer-events: none;
+}
+
+.qa-select-panel[data-placement="top"]:is(
+    [data-phase="entering"],
+    [data-phase="closing"]
+  ) {
+  transform: translateY(4px) scale(0.985);
+}
+
+.qa-select-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--sel-line);
+  color: var(--sel-txt3);
+}
+
+.qa-select-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--sel-txt);
+  font-size: 12.5px;
+}
+
+.qa-select-search input::placeholder {
+  color: var(--sel-txt3);
+  opacity: 1;
+}
+
+.qa-select-options {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 5px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sel-line) transparent;
+}
+
+.qa-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sel-txt2);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.qa-select-option.is-active,
+.qa-select-option:hover {
+  background: var(--sel-elevated);
+  color: var(--sel-txt);
+}
+
+.qa-select-option.is-selected {
+  color: var(--sel-accent-text);
+  font-weight: 500;
+}
+
+.qa-select-option.is-selected.is-active {
+  background: var(--sel-accent-dim);
+}
+
+.qa-select-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qa-select-option-hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--sel-txt3);
+}
+
+.qa-select-option-check {
+  flex-shrink: 0;
+  color: var(--sel-accent);
+}
+
+.qa-select-empty {
+  margin: 0;
+  padding: 16px 10px;
+  color: var(--sel-txt3);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Harness UI AppSwitch (HarnessSwitch) */
+.qa-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--qa-line-strong);
+  border-radius: 999px;
+  background: var(--qa-elevated);
+  cursor: pointer;
+  transition:
+    background-color 200ms var(--qa-ease),
+    border-color 200ms var(--qa-ease);
+}
+
+.qa-switch:not(.is-on):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--qa-txt) 32%, var(--qa-line));
+}
+
+.qa-switch.is-on {
+  border-color: var(--qa-accent-fill);
+  background: var(--qa-accent-fill);
+}
+
+.qa-switch.is-on:hover:not(:disabled) {
+  border-color: var(--qa-accent-hover);
+  background: var(--qa-accent-hover);
+}
+
+.qa-switch-thumb {
+  --switch-x: 0px;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
+  pointer-events: none;
+  transform: translateX(var(--switch-x));
+  transition:
+    transform 220ms var(--qa-ease),
+    width 160ms ease;
+}
+
+.qa-switch.is-on .qa-switch-thumb {
+  --switch-x: 18px;
+}
+
+/* Pressing stretches the thumb toward the travel direction. */
+.qa-switch:active:not(:disabled) .qa-switch-thumb {
+  width: 19px;
+}
+
+.qa-switch.is-on:active:not(:disabled) .qa-switch-thumb {
+  --switch-x: 15px;
+}
+
+.qa-cred-card {
+  border: 1px solid var(--qa-line);
+  border-radius: 14px;
+  background: var(--qa-surface);
+  overflow: hidden;
+  transition:
+    border-color 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.qa-cred-card:focus-within {
+  border-color: color-mix(in srgb, var(--qa-accent) 35%, var(--qa-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--qa-accent) 7%, transparent);
+}
+
+.qa-cred-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--qa-line-soft);
+  background: var(--qa-base);
+  transition: border-color 300ms ease;
+}
+
+.qa-cred-card.is-collapsed .qa-cred-head {
+  border-bottom-color: transparent;
+}
+
+.qa-cred-head strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--qa-txt);
+}
+
+.qa-cred-head div > span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--qa-txt3);
+}
+
+.qa-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--qa-elevated);
+  color: var(--qa-txt3);
+  font-size: 11.5px;
+  font-weight: 500;
+  transition:
+    background-color 280ms ease,
+    color 280ms ease;
+}
+
+.qa-status-pill::before {
+  content: "";
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.qa-status-pill.is-ok {
+  background: var(--qa-ok-soft);
+  color: var(--qa-ok-text);
+}
+
+.qa-status-pill.is-need {
+  background: var(--qa-warn-soft);
+  color: var(--qa-warn-text);
+}
+
+.qa-status-pill[data-pop="a"] {
+  animation: qa-pop-a 420ms var(--qa-ease);
+}
+
+.qa-status-pill[data-pop="b"] {
+  animation: qa-pop-b 420ms var(--qa-ease);
+}
+
+.qa-cred-head:hover .qa-status-pill.is-need::before {
+  animation: qa-ping 900ms ease 1;
+}
+
+.qa-cred-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+/* Height collapse for the repository body; the track animates between 0fr and 1fr. */
+.qa-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows 300ms var(--qa-ease),
+    opacity 220ms ease;
+}
+
+.qa-collapse.is-closed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.qa-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.qa-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qa-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--qa-line);
+  border-radius: 10px;
+  background: var(--qa-surface);
+  color: var(--qa-txt);
+  font-size: 13px;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.qa-input::placeholder {
+  color: var(--qa-txt3);
+  opacity: 1;
+}
+
+.qa-input:hover {
+  border-color: var(--qa-hover-line);
+}
+
+.qa-input:focus {
+  border-color: var(--qa-accent);
+  box-shadow: 0 0 0 3px var(--qa-accent-soft);
+}
+
+.qa-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.qa-link {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--qa-line);
+  border-radius: 10px;
+  background: var(--qa-surface);
+  color: var(--qa-txt2);
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.qa-link:hover {
+  border-color: var(--qa-hover-line);
+  color: var(--qa-txt);
+}
+
+/* Icon sits on the first text line; wrapped text never re-centres it. */
+.qa-verify-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.qa-verify-msg > svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.qa-verify-msg.is-ok {
+  color: var(--qa-ok-text);
+}
+
+.qa-verify-msg.is-err {
+  color: var(--qa-err-text);
+}
+
+.qa-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qa-grid-3 {
+  display: grid;
+  grid-template-columns: 1.4fr 1.2fr 0.8fr;
+  gap: 12px;
+}
+
+.qa-repo-grid {
+  display: grid;
+  grid-template-columns: 1.75fr 1fr;
+  gap: 12px;
+}
+
+.qa-field {
+  display: block;
+}
+
+.qa-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--qa-txt2);
+}
+
+.qa-label em {
+  color: var(--qa-err-text);
+  font-style: normal;
+}
+
+.qa-bound-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qa-bound-repo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--qa-line);
+  border-radius: 10px;
+  background: var(--qa-base);
+  font-size: 12.5px;
+}
+
+.qa-bound-repo code {
+  color: var(--qa-txt3);
+  font-size: 12px;
+}
+
+.qa-bound-repo small {
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--qa-elevated);
+  color: var(--qa-txt3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.qa-repo-default-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+  font-size: 12px;
+  color: var(--qa-txt2);
+}
+
+.qa-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--qa-txt3);
+}
+
+.qa-hint.is-ok {
+  color: var(--qa-ok-text);
+}
+
+.qa-hint code,
+.qa-repo-default-row code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--qa-elevated);
+  color: var(--qa-txt2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.qa-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--qa-elevated);
+  color: var(--qa-txt2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.qa-note > svg {
+  flex-shrink: 0;
+  margin-top: 2.5px;
+}
+
+.qa-note.is-err {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  background: color-mix(in srgb, var(--qa-err) 9%, transparent);
+  color: var(--qa-err-text);
+  animation: qa-err 380ms var(--qa-ease) backwards;
+}
+
+.qa-card {
+  padding: 15px 18px;
+  border: 1px solid var(--qa-line);
+  border-radius: 14px;
+  background: var(--qa-base);
+}
+
+.qa-canvas {
+  background:
+    radial-gradient(
+        circle,
+        color-mix(in srgb, var(--qa-line-strong) 55%, transparent) 1px,
+        transparent 1.2px
+      )
+      0 0 / 16px 16px,
+    var(--qa-base);
+}
+
+.qa-canvas-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.qa-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qa-txt);
+}
+
+.qa-flow-track {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  margin-top: 12px;
+  padding-bottom: 4px;
+}
+
+.qa-flow-node {
+  flex-shrink: 0;
+  min-width: 84px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--qa-accent) 45%, var(--qa-line));
+  border-radius: 9px;
+  background: var(--qa-surface);
+}
+
+.qa-flow-node.is-edge {
+  min-width: 68px;
+  border-color: var(--qa-line);
+  background: var(--qa-elevated);
+}
+
+.qa-flow-node strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--qa-txt);
+}
+
+.qa-flow-node span {
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--qa-txt3);
+}
+
+.qa-flow-arrow {
+  flex-shrink: 0;
+  color: var(--qa-txt3);
+  font-size: 12px;
+}
+
+.qa-role-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.qa-role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--qa-line);
+  border-radius: 999px;
+  background: var(--qa-surface);
+  font-size: 11.5px;
+}
+
+.qa-role-chip i {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--qa-accent-soft);
+  color: var(--qa-accent-text);
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.qa-role-chip b {
+  font-weight: 600;
+  color: var(--qa-txt);
+}
+
+.qa-role-chip small {
+  color: var(--qa-txt3);
+  font-size: 11px;
+}
+
+.qa-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 12px 0 0;
+}
+
+.qa-summary dt {
+  font-size: 11px;
+  color: var(--qa-txt3);
+}
+
+.qa-summary dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--qa-txt);
+}
+
+.qa-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--qa-txt3);
+  transition: background-color 260ms ease;
+}
+
+.qa-dot.is-ok {
+  background: var(--qa-ok);
+}
+
+/* The completion page has no kicker, so it starts a little lower. */
+.qa-success {
+  padding-top: 16px;
+}
+
+/* 52px mark spans the title (27px) + 4px gap + one lede line (20px). */
+.qa-success-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 16px;
+  align-items: center;
+}
+
+.qa-success-head .qa-title {
+  grid-column: 2;
+  margin: 0;
+}
+
+.qa-success-head .qa-lede {
+  grid-column: 2;
+  max-width: none;
+  margin-top: 4px;
+}
+
+.qa-success-mark {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+}
+
+.qa-success-mark svg {
+  display: block;
+  width: 52px;
+  height: 52px;
+}
+
+.qa-success-ring {
+  fill: var(--qa-ok-soft);
+  stroke: var(--qa-ok);
+  stroke-width: 1.5;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  animation: qa-draw 460ms var(--qa-ease) forwards;
+}
+
+.qa-success-tick {
+  fill: none;
+  stroke: var(--qa-ok);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: qa-draw 300ms var(--qa-ease) 340ms forwards;
+}
+
+.qa-success-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  pointer-events: none;
+  animation: qa-halo 700ms var(--qa-ease) 420ms backwards;
+}
+
+.qa-success-item {
+  animation: qa-rise 400ms var(--qa-ease) backwards;
+  animation-delay: calc(140ms + var(--i, 0) * 70ms);
+}
+
+.qa-success-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.qa-role-list,
+.qa-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qa-role-list li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--qa-txt);
+}
+
+.qa-role-list small {
+  margin-left: auto;
+  color: var(--qa-txt3);
+  font-size: 11px;
+}
+
+.qa-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--qa-accent-soft);
+  color: var(--qa-accent-text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.qa-avatar.is-flow {
+  background: var(--qa-ok-soft);
+  color: var(--qa-ok-text);
+}
+
+.qa-status-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--qa-txt2);
+}
+
+.qa-status-list li > svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.qa-status-list li.is-ok > svg {
+  color: var(--qa-ok);
+}
+
+.qa-status-list li.is-warn > svg {
+  color: var(--qa-warn);
+}
+
+.qa-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.qa-action {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 18px;
+  border: 1px solid var(--qa-line);
+  border-radius: 14px;
+  background: var(--qa-base);
+  color: var(--qa-txt);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.qa-action:hover {
+  border-color: var(--qa-hover-line);
+}
+
+.qa-action.is-primary {
+  border-color: var(--qa-accent-fill);
+  background: var(--qa-accent-fill);
+  color: #fff;
+}
+
+.qa-action.is-primary:hover {
+  border-color: var(--qa-accent-hover);
+  background: var(--qa-accent-hover);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--qa-accent) 22%, transparent);
+}
+
+.qa-action-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--qa-elevated);
+  color: var(--qa-txt2);
+}
+
+.qa-action.is-primary .qa-action-icon {
+  background: rgb(255 255 255 / 0.16);
+  color: #fff;
+}
+
+.qa-action-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.qa-action strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Explicit colours: the global `small { color: var(--muted) }` would otherwise win. */
+.qa-action small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--qa-txt2);
+}
+
+.qa-action.is-primary small {
+  color: #fff;
+  opacity: 1;
+}
+
+.qa-action-chevron {
+  color: var(--qa-txt3);
+  opacity: 0.55;
+  transition: opacity 200ms ease;
+}
+
+.qa-action.is-primary .qa-action-chevron {
+  color: #fff;
+  opacity: 0.8;
+}
+
+.qa-action:hover .qa-action-chevron {
+  opacity: 1;
+}
+
+.qa-footer {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--qa-line);
+  background: var(--qa-surface);
+}
+
+.qa-footer-spacer {
+  flex: 1;
+}
+
+.qa-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.qa-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.qa-btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+.qa-dialog :is(.qa-btn, .qa-link, .qa-action, .qa-switch, .qa-close):focus-visible,
+.qa-dialog .qa-sliding-tabs [data-sliding-tab]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--qa-accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.qa-btn-label {
+  display: inline-grid;
+}
+
+.qa-btn-label-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  grid-area: 1 / 1;
+}
+
+.qa-btn-label-cell[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.qa-btn-sm {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.qa-btn-sm.qa-btn-field {
+  height: 38px;
+  border-radius: 10px;
+}
+
+.qa-btn-primary {
+  background: var(--qa-accent-fill);
+  color: #fff;
+  box-shadow: 0 2px 10px rgb(99 91 255 / 0.24);
+}
+
+.qa-btn-primary:hover:not(:disabled) {
+  background: var(--qa-accent-hover);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--qa-accent) 32%, transparent);
+}
+
+/* Neutral buttons get their hover surface from the landing-point ink. */
+.qa-btn-outline {
+  border-color: var(--qa-line-strong);
+  background: var(--qa-surface);
+  color: var(--qa-txt);
+}
+
+.qa-btn-outline:hover:not(:disabled) {
+  border-color: var(--qa-hover-line);
+}
+
+.qa-btn-ghost {
+  background: transparent;
+  color: var(--qa-txt2);
+}
+
+.qa-btn-ghost:hover:not(:disabled) {
+  color: var(--qa-txt);
+}
+
+.qa-back-enter {
+  animation: qa-fade 220ms var(--qa-ease) backwards;
+}
+
+@keyframes qa-step-forward {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+
+@keyframes qa-step-back {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+}
+
+@keyframes qa-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes qa-msg {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes qa-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes qa-err {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  55% {
+    opacity: 1;
+    transform: translateX(3px);
+  }
+  78% {
+    transform: translateX(-2px);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes qa-pop-a {
+  40% {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes qa-pop-b {
+  40% {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes qa-ping {
+  40% {
+    transform: scale(1.45);
+    opacity: 0.5;
+  }
+}
+
+@keyframes qa-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes qa-halo {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--qa-ok) 28%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+
+@media (max-width: 820px) {
+  .qa-rail {
+    display: none;
+  }
+
+  .qa-body {
+    padding: 24px 20px;
+  }
+
+  .qa-grid-3,
+  .qa-repo-grid,
+  .qa-success-grid,
+  .qa-actions-grid,
+  .qa-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Universal selectors do not reach pseudo-elements, so they are listed explicitly. */
+@media (prefers-reduced-motion: reduce) {
+  .qa-backdrop,
+  .qa-backdrop *,
+  .qa-backdrop *::before,
+  .qa-backdrop *::after,
+  .qa-backdrop [data-hover-ink-control]::after,
+  .qa-backdrop .qa-status-pill::before,
+  .qa-select-panel,
+  .qa-select-panel * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .qa-success-ring,
+  .qa-success-tick {
+    stroke-dashoffset: 0;
+  }
+}

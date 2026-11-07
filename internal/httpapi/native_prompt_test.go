@@ -51,6 +51,9 @@ func TestNativePromptsAreToolFirst(t *testing.T) {
 	if !strings.Contains(assistantSystemPromptText(), "submit_assistant_reply") {
 		t.Fatal("native assistant prompt must require submit_assistant_reply")
 	}
+	if prompt := assistantSystemPromptText(); !strings.Contains(prompt, "mode=direct") || !strings.Contains(prompt, "targetBranch") {
+		t.Fatalf("native assistant prompt must teach mode=direct for shared branches:\n%s", prompt)
+	}
 	if !strings.Contains(clarifySystemPrompt("i", "m", "f", "r"), "submit_clarification") {
 		t.Fatal("native clarify prompt must require submit_clarification")
 	}

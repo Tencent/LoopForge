@@ -41,7 +41,7 @@ type Invoker interface {
 
 // incomingAuth carries browser Cookie / Authorization from the outer /mcp
 // request onto LocalInvoker synthetic API calls. Without this, login-gated
-// endpoints (e.g. runs_group_invite → POST /api/runs/:id/group/members) see
+// endpoints (e.g. runs_cancel → POST /api/runs/:id/cancel) see
 // an anonymous request and return 请先登录 even when the user is signed in.
 type incomingAuthKey struct{}
 
@@ -87,7 +87,7 @@ type LocalInvoker struct {
 
 func (i LocalInvoker) Invoke(ctx context.Context, op application.Operation, input ToolInput) (InvokeResult, error) {
 	if i.Handler == nil {
-		return InvokeResult{}, errors.New("AgentFlow API handler is unavailable")
+		return InvokeResult{}, errors.New("LoopForge API handler is unavailable")
 	}
 	path, err := buildPath(op.Path, input)
 	if err != nil {
@@ -280,7 +280,7 @@ func (s *Server) handle(ctx context.Context, request rpcRequest) *rpcResponse {
 				"resources": map[string]any{"subscribe": false, "listChanged": false},
 			},
 			"serverInfo":   map[string]string{"name": serverName, "version": serverVersion},
-			"instructions": "AgentFlow business operations. Mutating tools can start agents, change external trackers, or alter saved definitions.",
+			"instructions": "LoopForge business operations. Mutating tools can start agents, change external trackers, or alter saved definitions.",
 		}}
 	case "ping":
 		return &rpcResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{}}
@@ -447,7 +447,7 @@ func (s *Server) readResource(ctx context.Context, raw json.RawMessage) (map[str
 		return nil, err
 	}
 	if result.Status < 200 || result.Status >= 300 {
-		return nil, fmt.Errorf("AgentFlow API returned %d: %s", result.Status, strings.TrimSpace(string(result.Body)))
+		return nil, fmt.Errorf("LoopForge API returned %d: %s", result.Status, strings.TrimSpace(string(result.Body)))
 	}
 	mime := strings.TrimSpace(strings.Split(result.ContentType, ";")[0])
 	if mime == "" {

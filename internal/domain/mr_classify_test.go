@@ -112,3 +112,20 @@ func TestSummarizeDeliveriesSplitsMainlineAndBaseline(t *testing.T) {
 		t.Fatalf("summary=%+v", sum)
 	}
 }
+
+func TestSummarizeDeliveriesCountsMRsSeparatelyFromIssues(t *testing.T) {
+	a := DeliveryMR{Project: "team/frontend", IID: 1, URL: GongfengMRURL("team/frontend", 1), State: "merged"}
+	b := DeliveryMR{Project: "team/backend", IID: 1, URL: GongfengMRURL("team/backend", 1), State: "merged"}
+	alias := a
+	alias.URL = "http://git.example.com/team/frontend/merge_requests/1"
+	item := AnalyticsDelivery{IssueID: "one", SOPSucceeded: true, MRURL: a.URL, MRState: "merged", MRs: []DeliveryMR{a, alias, b}, Tokens: 100, CostUSD: .5}
+	sum := SummarizeDeliveries([]AnalyticsDelivery{item})
+	if sum.TotalMRs != 2 || sum.MRMerged != 2 || sum.WithMR != 1 || sum.IssuesWithMergedMR != 1 || sum.Issues != 1 || sum.TotalTokens != 100 || sum.TotalCostUSD != .5 {
+		t.Fatalf("two repositories must count as two MRs but one requirement: %+v", sum)
+	}
+	// Repeated references from another delivery row still count the actual MR once.
+	sum = SummarizeDeliveries([]AnalyticsDelivery{item, {IssueID: "two", MRs: []DeliveryMR{alias}}})
+	if sum.TotalMRs != 2 || sum.MRMerged != 2 {
+		t.Fatalf("duplicate MR counted twice: %+v", sum)
+	}
+}

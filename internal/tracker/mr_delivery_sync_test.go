@@ -25,6 +25,8 @@ type fakeMRDeliveryStore struct {
 		iid          int
 		state        string
 		targetBranch string
+		mergedAt     time.Time
+		checkedAt    time.Time
 	}
 }
 
@@ -36,13 +38,15 @@ func (f *fakeMRDeliveryStore) MRDeliveryStatesNeedingRefresh(_ time.Time) ([]dom
 	return f.pending, nil
 }
 
-func (f *fakeMRDeliveryStore) UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, _ time.Time) error {
+func (f *fakeMRDeliveryStore) UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, mergedAt, checkedAt time.Time) error {
 	f.updates = append(f.updates, struct {
 		project      string
 		iid          int
 		state        string
 		targetBranch string
-	}{project, iid, state, targetBranch})
+		mergedAt     time.Time
+		checkedAt    time.Time
+	}{project, iid, state, targetBranch, mergedAt, checkedAt})
 	return nil
 }
 
@@ -74,7 +78,8 @@ func TestSyncMRDeliveryStatesUpdatesPendingRows(t *testing.T) {
 	}}}
 	svc := NewService()
 	svc.gongfeng = NewMCPClient("http://invalid", nil)
-	svc.mrCache.Store("example/team-project#212", mrCacheEntry{state: "merged", at: time.Now()})
+	mergedAt := time.Date(2026, 10, 12, 3, 8, 59, 0, time.UTC)
+	svc.mrCache.Store("example/team-project#212", mrCacheEntry{state: "merged", mergedAt: mergedAt, at: time.Now()})
 
 	svc.syncMRDeliveryStates(store)
 	if len(store.updates) != 1 {
@@ -82,6 +87,20 @@ func TestSyncMRDeliveryStatesUpdatesPendingRows(t *testing.T) {
 	}
 	if store.updates[0].state != "merged" || store.updates[0].iid != 212 {
 		t.Fatalf("update=%+v", store.updates[0])
+	}
+	if !store.updates[0].mergedAt.Equal(mergedAt) || !store.updates[0].checkedAt.After(mergedAt) {
+		t.Fatalf("merge time must survive the cache and remain distinct from poll time: %+v", store.updates[0])
+	}
+}
+
+func TestSyncMRDeliveryStatesKeepsMergedRowsOnLookupFailure(t *testing.T) {
+	store := &fakeMRDeliveryStore{pending: []domain.MRDeliveryState{{MRProject: "org/repo", MRIID: 1, State: "merged"}}}
+	svc := NewService()
+	svc.gongfeng = NewMCPClient("http://invalid", nil)
+	svc.mrCache.Store("org/repo#1", mrCacheEntry{state: "unknown", at: time.Now()})
+	svc.syncMRDeliveryStates(store)
+	if len(store.updates) != 0 {
+		t.Fatalf("failed lookup overwrote a merged row: %+v", store.updates)
 	}
 }
 

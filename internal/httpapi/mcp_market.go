@@ -16,8 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Snapshot of Knot 太湖认证 MCP market (tag taihu_certified). Replaced by
-// Knot open API once an application key is available.
+// Snapshot of the bundled MCP market catalog.
 //
 //go:embed mcp_market_catalog.json
 var mcpMarketCatalogJSON []byte
@@ -46,14 +45,14 @@ type mcpMarketCatalogFile struct {
 
 var (
 	mcpMarketCatalog mcpMarketCatalogFile
-	taihuMCPMarket   []mcpMarketItem
+	mcpMarketItems   []mcpMarketItem
 )
 
 func init() {
 	if err := json.Unmarshal(mcpMarketCatalogJSON, &mcpMarketCatalog); err != nil {
 		panic("mcp market catalog: " + err.Error())
 	}
-	taihuMCPMarket = mcpMarketCatalog.Items
+	mcpMarketItems = mcpMarketCatalog.Items
 }
 
 var mcpInstallIDUnsafe = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -74,7 +73,7 @@ func mcpInstallID(marketID, scope, owner string) string {
 // can create Gongfeng MRs and sync TAPD without opening the MCP market.
 var defaultProjectMarketMCPAliases = []string{}
 
-// installMarketMCP adds one Taihu-certified market item to a project. If the
+// installMarketMCP adds one market catalog item to a project. If the
 // same catalog entry is already installed there, it returns the existing row
 // and created=false.
 func installMarketMCP(st *repo.Store, marketID, projectID string) (domain.MCPServerDefinition, bool, error) {
@@ -135,7 +134,7 @@ func marketItem(id string) (mcpMarketItem, bool) {
 	if id == "" {
 		return mcpMarketItem{}, false
 	}
-	for _, item := range taihuMCPMarket {
+	for _, item := range mcpMarketItems {
 		if item.ID == id {
 			return item, true
 		}
@@ -195,11 +194,11 @@ func filterMCPMarket(items []mcpMarketItem, q string) []mcpMarketItem {
 }
 
 func (h *marketHandlers) mcpMarket(c *gin.Context) {
-	items := filterMCPMarket(taihuMCPMarket, c.Query("q"))
+	items := filterMCPMarket(mcpMarketItems, c.Query("q"))
 	c.JSON(http.StatusOK, map[string]any{
 		"source":    mcpMarketCatalog.Source,
 		"fetchedAt": mcpMarketCatalog.FetchedAt,
-		"total":     len(taihuMCPMarket),
+		"total":     len(mcpMarketItems),
 		"items":     items,
 	})
 }

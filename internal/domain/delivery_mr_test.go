@@ -93,19 +93,19 @@ func TestResolveRunDeliveryMRsPerRepository(t *testing.T) {
 func TestResolveRunDeliveryMRsAcceptsHTTPArtifactURL(t *testing.T) {
 	run := Run{
 		Repositories: []RepositoryContext{{
-			RepositoryID: "vpcdns", Name: "vpcdns_oss", GongfengProjectID: "dnspod/vpcdns/vpcdns_oss",
+			RepositoryID: "demodns", Name: "dns-service", GongfengProjectID: "example/dns/dns-service",
 			WorkBranch: "feature/story-1",
 		}},
 		Artifacts: []Artifact{{
 			NodeID: "mr", Name: "mr-body",
-			Content: "MR: http://git.example.com/dnspod/vpcdns/vpcdns_oss/merge_requests/558",
+			Content: "MR: http://git.example.com/example/dns/dns-service/merge_requests/558",
 		}},
 	}
 	got := ResolveRunDeliveryMRs(run, func(RepositoryContext) (DeliveryMR, bool) { return DeliveryMR{}, false })
-	if len(got) != 1 || got[0].IID != 558 || got[0].RepositoryID != "vpcdns" {
+	if len(got) != 1 || got[0].IID != 558 || got[0].RepositoryID != "demodns" {
 		t.Fatalf("http artifact MR not recovered: %+v", got)
 	}
-	if got[0].URL != "https://git.example.com/dnspod/vpcdns/vpcdns_oss/-/merge_requests/558" {
+	if got[0].URL != "https://git.example.com/example/dns/dns-service/-/merge_requests/558" {
 		t.Fatalf("url = %s", got[0].URL)
 	}
 }
@@ -125,5 +125,18 @@ func TestResolveRunDeliveryMRsWithoutGongfengRepository(t *testing.T) {
 	run = Run{Telemetry: []TelemetryEvent{{Attributes: map[string]any{"url": "https://git.example.com/x/y/-/merge_requests/8"}}}}
 	if got := ResolveRunDeliveryMRs(run, nil); len(got) != 1 || got[0].IID != 8 {
 		t.Fatalf("want telemetry fallback, got %+v", got)
+	}
+}
+
+func TestResolveRunDeliveryMRsLegacyMultiRepository(t *testing.T) {
+	run := Run{Artifacts: []Artifact{
+		{Name: "mr-body", Content: GongfengMRURL("team/frontend", 1)},
+		{Name: "mr-body", Content: GongfengMRURL("team/backend", 1)},
+		{Name: "closeout", Content: GongfengMRURL("team/frontend", 2)},
+		{Name: "repository-patch", Content: GongfengMRURL("unrelated/repo", 99)},
+	}}
+	got := ResolveRunDeliveryMRs(run, nil)
+	if len(got) != 2 || got[0].IID != 1 || got[1].IID != 1 || got[0].Project == got[1].Project {
+		t.Fatalf("legacy runs must retain the best MR for each repository: %+v", got)
 	}
 }

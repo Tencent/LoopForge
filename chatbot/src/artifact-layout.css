@@ -1,0 +1,150 @@
+/* The conversation pane follows Grasp's 440px drawer and 4px sash. */
+.chat-shell .conversation-header .panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-height: 34px;
+  overflow: clip;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--navigation-secondary);
+  font-size: 12px;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.chat-shell .conversation-header .panel-toggle:hover {
+  background: rgb(24 24 27 / .05);
+  color: var(--text);
+}
+.chat-shell .conversation-header .panel-toggle[aria-expanded="true"] {
+  border-color: var(--line);
+  background: var(--subtle);
+  color: var(--text);
+}
+.chat-shell .artifact-toggle-glyph {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  overflow: visible;
+}
+.chat-shell .artifact-unread-badge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #5273dc;
+  color: #fff;
+  box-shadow: 0 0 0 1.5px var(--surface);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 12px;
+  pointer-events: none;
+  animation: artifact-unread-reveal 160ms ease;
+}
+.chat-shell .panel-toggle .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+[data-theme="dark"] .chat-shell .conversation-header .panel-toggle:hover {
+  background: rgb(237 237 240 / .05);
+}
+.chat-shell.with-panel:not(.artifact-compact) {
+  --artifact-sash-track: 4px;
+  --artifact-panel-track: var(--panel-width, 440px);
+}
+.chat-shell.with-panel:not(.artifact-compact):is(.artifact-entering, .artifact-closing) {
+  --artifact-sash-track: 0px;
+  --artifact-panel-track: 0px;
+}
+.chat-shell.with-panel:not(.artifact-compact) > .artifact-panel {
+  position: relative;
+  inset: auto;
+  grid-area: 2 / 4 / 3 / 5;
+  width: 100%;
+  min-width: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+.chat-shell .artifact-panel-sash {
+  grid-area: 2 / 3 / 3 / 4;
+  min-width: 0;
+  width: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  z-index: 2;
+}
+.chat-shell .artifact-panel-sash:is(:hover, :focus-visible),
+.chat-shell.artifact-resizing .artifact-panel-sash,
+.chat-shell.artifact-covered .artifact-panel-sash {
+  background: rgb(82 115 220 / .4);
+  outline: none;
+}
+.chat-shell.artifact-resizing {
+  user-select: none;
+}
+.chat-shell.with-panel.artifact-compact {
+  --artifact-sash-track: 0px;
+  --artifact-panel-track: 0px;
+}
+.chat-shell.with-panel.artifact-compact > .artifact-panel {
+  position: absolute;
+  grid-area: auto;
+  top: var(--navigation-header-height);
+  right: 0;
+  bottom: 0;
+  width: var(--artifact-canvas-width, 100%);
+  border-left: 0;
+  box-shadow: none;
+  z-index: 30;
+}
+.chat-shell.artifact-covered > .conversation-main {
+  visibility: hidden;
+  overflow: hidden;
+}
+.chat-shell.with-panel > .artifact-panel {
+  opacity: 1;
+  clip-path: inset(0);
+  transition:
+    opacity 220ms cubic-bezier(.22, 1, .36, 1),
+    clip-path 220ms cubic-bezier(.22, 1, .36, 1);
+}
+.chat-shell.with-panel:is(.artifact-entering, .artifact-closing) > .artifact-panel {
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-shell.with-panel.artifact-entering > .artifact-panel {
+  /* The hidden mounting frame establishes the start before the next paint. */
+  transition: none;
+}
+.chat-shell.with-panel.artifact-compact:is(.artifact-entering, .artifact-closing) > .artifact-panel {
+  clip-path: inset(0 0 0 100%);
+}
+.chat-shell:is(.artifact-entering, .artifact-closing) > .artifact-panel-sash {
+  pointer-events: none;
+}
+@keyframes artifact-unread-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell.with-panel > .artifact-panel { transition: none; }
+  .chat-shell .artifact-unread-badge { animation: none; }
+  .chat-shell .conversation-header .panel-toggle { transition: none; }
+}

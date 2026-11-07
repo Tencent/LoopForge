@@ -14,6 +14,7 @@ import (
 )
 
 func TestRepositoryScopedRoleGateAndScriptArtifacts(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	repositories := make([]domain.RepositoryContext, 0, 2)
 	for _, name := range []string{"frontend", "backend"} {
@@ -80,7 +81,7 @@ func TestRepositoryScopedRoleGateAndScriptArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		current, ok := s.Run(run.ID)
 		if ok && (current.Status == "succeeded" || current.Status == "failed") {
@@ -106,6 +107,7 @@ func TestRepositoryScopedRoleGateAndScriptArtifacts(t *testing.T) {
 }
 
 func TestRepositoryExecutionScopeRequiresRepository(t *testing.T) {
+	t.Parallel()
 	if _, err := executionTargets(domain.Run{}, domain.ExecutionScopeRepositories); err == nil {
 		t.Fatal("repository scope accepted a repository-less Run")
 	}

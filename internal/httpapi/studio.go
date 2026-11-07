@@ -44,7 +44,14 @@ func stampStudioIndex(static fs.FS, raw []byte) []byte {
 
 func studioFileServer(static fs.FS) http.Handler {
 	files := http.FileServer(http.FS(static))
+	native, _ := fs.Sub(static, "native-chat")
+	nativeFiles := http.StripPrefix("/chatbot/", http.FileServer(http.FS(native)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/chatbot/") {
+			w.Header().Set("Cache-Control", "no-store")
+			nativeFiles.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" || r.URL.Path == "/vscode.html" {
 			// 每次请求实时读取并重新计算版本哈希，
 			// 保证前端文件修改后无需重启服务即可生效。

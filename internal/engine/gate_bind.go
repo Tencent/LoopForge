@@ -9,7 +9,26 @@ import (
 )
 
 func bindVerificationCommand(cmd string, artifacts []domain.ArtifactContract) string {
-	return bindGitDiffQuietExcludes(bindGrepToArtifacts(cmd, artifacts), artifacts)
+	return bindGitDiffQuietExcludes(bindGrepToArtifacts(anchorVerdictGrep(cmd), artifacts), artifacts)
+}
+
+// anchorVerdictGrep makes ALL_GREEN / NEED_HUMAN checks match a conclusion
+// line only. Reports quote those tokens while explaining why they do not
+// apply; an unanchored grep then treats the explanation as the verdict and
+// a human gate stops the run with nothing to answer.
+func anchorVerdictGrep(cmd string) string {
+	replacements := []struct{ from, to string }{
+		{"ALL_GREEN[[:space:]]*=[[:space:]]*true", "^[[:space:]]*ALL_GREEN[[:space:]]*=[[:space:]]*true[[:space:]]*$"},
+		{"NEED_HUMAN[[:space:]]*=[[:space:]]*true", "^[[:space:]]*NEED_HUMAN[[:space:]]*=[[:space:]]*true[[:space:]]*$"},
+	}
+	out := cmd
+	for _, item := range replacements {
+		if strings.Contains(out, item.to) {
+			continue
+		}
+		out = strings.ReplaceAll(out, item.from, item.to)
+	}
+	return out
 }
 
 // bindGitDiffQuietExcludes keeps analyze-style cleanliness gates from failing

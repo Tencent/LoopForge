@@ -170,7 +170,7 @@ func (i *Issue) SetDeliveryMRState(url, state string) bool {
 // the run. byBranch is the authoritative lookup (Gongfeng MR whose source is
 // the repository work branch); MR-bearing artifacts are only a fallback and
 // must belong to the same Gongfeng project. Runs without any Gongfeng
-// repository fall back to the best MR-bearing artifact, then telemetry URLs.
+// repository fall back to the best MR per project in artifacts, then telemetry URLs.
 func ResolveRunDeliveryMRs(run Run, byBranch func(RepositoryContext) (DeliveryMR, bool)) []DeliveryMR {
 	candidates := runArtifactMRCandidates(run)
 	repos := []RepositoryContext{}
@@ -180,17 +180,29 @@ func ResolveRunDeliveryMRs(run Run, byBranch func(RepositoryContext) (DeliveryMR
 		}
 	}
 	if len(repos) == 0 {
+		out := []DeliveryMR{}
+		seen := map[string]bool{}
+		add := func(mr DeliveryMR) {
+			project := strings.ToLower(mr.Project)
+			if !seen[project] {
+				seen[project] = true
+				out = append(out, mr)
+			}
+		}
 		if len(candidates) > 0 {
-			return []DeliveryMR{candidates[0].mr}
+			for _, candidate := range candidates {
+				add(candidate.mr)
+			}
+			return out
 		}
 		for _, obs := range run.Telemetry {
 			if url, ok := obs.Attributes["url"].(string); ok {
 				if project, iid, parsed, ok := ParseGongfengMR(url); ok {
-					return []DeliveryMR{{Project: project, IID: iid, URL: parsed}}
+					add(DeliveryMR{Project: project, IID: iid, URL: parsed})
 				}
 			}
 		}
-		return nil
+		return out
 	}
 	out := []DeliveryMR{}
 	for _, rc := range repos {

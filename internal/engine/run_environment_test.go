@@ -16,6 +16,7 @@ import (
 )
 
 func TestAcquireRunEnvironmentRefreshesGitTokenWithoutReplacingWorkspace(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +80,7 @@ func TestAcquireRunEnvironmentRefreshesGitTokenWithoutReplacingWorkspace(t *test
 }
 
 func TestRunEnvironmentPreparesRepositoriesOnce(t *testing.T) {
+	t.Parallel()
 	env := &runEnvironment{}
 	calls := 0
 	prepare := func() error {
@@ -97,6 +99,7 @@ func TestRunEnvironmentPreparesRepositoriesOnce(t *testing.T) {
 }
 
 func TestRunEnvironmentRetriesRepositoryPreparationAfterFailure(t *testing.T) {
+	t.Parallel()
 	env := &runEnvironment{}
 	calls := 0
 	prepare := func() error {
@@ -118,6 +121,7 @@ func TestRunEnvironmentRetriesRepositoryPreparationAfterFailure(t *testing.T) {
 }
 
 func TestReconstructedRunEnvironmentCleansStaleAgentGitIndexLock(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	runGit := func(args ...string) string {
 		t.Helper()

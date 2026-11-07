@@ -13,6 +13,7 @@ import (
 )
 
 func TestAwaitRunnerTaskBridgesDurableEventsFromAnotherProcess(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +101,7 @@ func TestAwaitRunnerTaskBridgesDurableEventsFromAnotherProcess(t *testing.T) {
 }
 
 func TestBridgeRunnerEventsSkipsAlreadyConsumedSequences(t *testing.T) {
+	t.Parallel()
 	task := domain.RunnerTask{Provider: "codex"}
 	events := []domain.RunnerTaskEvent{
 		{Seq: 1, Type: "stdout", Data: "first"},

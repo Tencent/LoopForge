@@ -25,7 +25,7 @@ func BuildPrompt(policy domain.RunEvalPolicy, facts domain.RunEvalFacts) (system
 	b.WriteString(fmt.Sprintf("- 准入线 %d 分。dimensions 每维 0-100，必须覆盖全部维度。score 可省略，服务端会按权重重算。\n", policy.Threshold))
 	b.WriteString("- findings 用中文，指向具体 nodeId 和 digest seq / event。severity 只能是 info/warn/error。\n")
 	b.WriteString("- summary 必须包含这次 run 的质量结论，以及如果没有可应用补丁时应该怎么改。\n")
-	b.WriteString("- recommendations 可为空。可应用时 action 只能是：update_node、upsert_gate、remove_gate、append_instructions、append_task_prompt。\n")
+	b.WriteString("- recommendations 可为空。可应用时 action 只能是：update_node、upsert_gate、remove_gate、append_task_prompt（追加到角色 prompt）。\n")
 	b.WriteString("- target 为 workflow 或 agent。改节点重试用 update_node + set.maxAttempts/maxReworks/onFailure/retryStrategy。\n")
 	b.WriteString("- 门禁只属于角色；改门禁用 target=agent + upsert_gate/remove_gate，并给 gate.id 和 targetId。\n")
 	b.WriteString("- 不要整份重写 SOP 或角色，不要改边或删节点。\n")

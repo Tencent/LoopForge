@@ -141,6 +141,7 @@ type AnalyticsRepo struct {
 	issues   *IssuesRepo
 	tasks    *TasksRepo
 	projects *ProjectsRepo
+	insights *InsightsRepo
 }
 
 // Store 组合各领域 Repo。领域 Repo 以匿名指针嵌入（未导出类型）：包外仅能
@@ -159,10 +160,13 @@ type Store struct {
 	*RunnersRepo
 	*DeliveryRepo
 	*AnalyticsRepo
+	*InsightsRepo
 	*PreviewsRepo
 	*EngineInstancesRepo
 	*RoomsRepo
+	*SpacesRepo
 	*KnowledgeRepo
+	*FeedbackRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -187,11 +191,14 @@ func newStore(db *gorm.DB) *Store {
 	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, notifications: s.NotificationsRepo}
 	s.RunnersRepo = &RunnersRepo{deps: d}
 	s.DeliveryRepo = &DeliveryRepo{deps: d, issues: s.IssuesRepo, tasks: s.TasksRepo, catalog: s.CatalogRepo, runs: s.RunsRepo}
-	s.AnalyticsRepo = &AnalyticsRepo{deps: d, runs: s.RunsRepo, catalog: s.CatalogRepo, delivery: s.DeliveryRepo, issues: s.IssuesRepo, tasks: s.TasksRepo, projects: s.ProjectsRepo}
+	s.InsightsRepo = &InsightsRepo{deps: d}
+	s.AnalyticsRepo = &AnalyticsRepo{deps: d, runs: s.RunsRepo, catalog: s.CatalogRepo, delivery: s.DeliveryRepo, issues: s.IssuesRepo, tasks: s.TasksRepo, projects: s.ProjectsRepo, insights: s.InsightsRepo}
 	s.PreviewsRepo = &PreviewsRepo{deps: d}
 	s.EngineInstancesRepo = &EngineInstancesRepo{deps: d}
 	s.RoomsRepo = &RoomsRepo{deps: d}
+	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
+	s.FeedbackRepo = &FeedbackRepo{deps: d}
 	return s
 }
 

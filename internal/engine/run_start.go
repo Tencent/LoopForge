@@ -8,6 +8,32 @@ import (
 	"time"
 )
 
+// assignWorkBranches gives every repository without a branch the first
+// repository's work branch, else a generated one. A branch the caller
+// explicitly continues or creates belongs to its own repository, and a
+// read-only checkout has no work branch at all.
+func assignWorkBranches(repositories []domain.RepositoryContext, generate func() string) {
+	if len(repositories) == 0 {
+		return
+	}
+	workBranch := ""
+	if first := repositories[0]; !first.RequireExistingWorkBranch && !first.CreateNewWorkBranch && !first.ReadOnly {
+		workBranch = strings.TrimSpace(first.WorkBranch)
+	}
+	for i := range repositories {
+		if repositories[i].ReadOnly {
+			repositories[i].WorkBranch = ""
+			continue
+		}
+		if strings.TrimSpace(repositories[i].WorkBranch) == "" {
+			if workBranch == "" {
+				workBranch = generate()
+			}
+			repositories[i].WorkBranch = workBranch
+		}
+	}
+}
+
 func (e *Engine) Start(workflowID, input string) (domain.Run, error) {
 	return e.StartWithContext(workflowID, input, domain.RepositoryContext{})
 }
@@ -28,7 +54,18 @@ func (e *Engine) StartWithRepositoriesContext(workflowID, input string, reposito
 	return e.startWorkflow(workflowID, input, repositories, executionContext, false)
 }
 
-func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, group bool) (domain.Run, error) {
+func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+	wf, ok := e.repo.Workflow(workflowID)
+	if !ok {
+		return domain.Run{}, fmt.Errorf("workflow not found")
+	}
+	return e.startWorkflowDefinition(wf, input, repositories, executionContext, workspace)
+}
+
+// startWorkflowDefinition also accepts a run-only conversation workspace definition.
+// It never writes a template to the catalog.
+func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	domain.AssignRepositoryDirs(repositories)
 	e.mu.Lock()
@@ -38,11 +75,6 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 	if draining {
 		return domain.Run{}, ErrExecutionDisabled
 	}
-	stored, ok := e.repo.Workflow(workflowID)
-	if !ok {
-		return domain.Run{}, fmt.Errorf("workflow not found")
-	}
-	wf := stored
 	wf.CollaborationMode = ""
 	wf.TaskTitle = ""
 	wf.GroupMembers = nil
@@ -69,6 +101,9 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 	if !ok {
 		return domain.Run{}, fmt.Errorf("sandbox profile %q not found", wf.SandboxProfileID)
 	}
+	if workspace && (profile.Driver != "docker" || profile.DockerfileID == "" || !(profile.ProjectID == executionContext.ProjectID || profile.Shared)) {
+		return domain.Run{}, fmt.Errorf("对话工作区必须选择本项目或共享的 Docker 沙箱")
+	}
 	resources, err := resolveSandboxResources(e.repo, profile)
 	if err != nil {
 		return domain.Run{}, err
@@ -78,25 +113,15 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("run-%d", now.UnixNano())
-	workBranch := ""
-	if len(repositories) > 0 {
-		if workBranch = strings.TrimSpace(repositories[0].WorkBranch); workBranch == "" {
-			issueID := strings.TrimSpace(executionContext.IssueID)
-			if issueID != "" {
-				if issue, ok := e.repo.Issue(issueID); ok {
-					workBranch = domain.DefaultWorkBranch(issue, now)
-				}
-			}
-			if workBranch == "" {
-				workBranch = defaultWorkBranch(executionContext.IssueNumber, issueID, now)
+	assignWorkBranches(repositories, func() string {
+		issueID := strings.TrimSpace(executionContext.IssueID)
+		if issueID != "" {
+			if issue, ok := e.repo.Issue(issueID); ok {
+				return domain.DefaultWorkBranch(issue, now)
 			}
 		}
-	}
-	for i := range repositories {
-		if strings.TrimSpace(repositories[i].WorkBranch) == "" {
-			repositories[i].WorkBranch = workBranch
-		}
-	}
+		return defaultWorkBranch(executionContext.IssueNumber, issueID, now)
+	})
 	var firstRepository domain.RepositoryContext
 	if len(repositories) > 0 {
 		firstRepository = repositories[0]
@@ -104,6 +129,7 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
 	if executionContext.ParentRunID == "" {
 		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
+		executionContext.WorkspaceRunID = ""
 	}
 	if executionContext.ExecutionRunnerID == "" {
 		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
@@ -120,7 +146,7 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 	} else {
 		executionContext.ExecutionMode = domain.ExecutionModeCloud
 	}
-	if err := e.requireExistingWorkBranchRunner(executionContext.ExecutionRunnerID, repositories); err != nil {
+	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
 	wf.SandboxSnapshot = resolvedSandboxSnapshot(profile, resources)
@@ -144,20 +170,16 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 			return domain.Run{}, err
 		}
 	}
-	if group {
-		freezeSOPCheckpoint(&r)
-		r.WorkflowSnapshot.CollaborationMode = "group"
-		r.WorkflowSnapshot.TaskTitle = truncateGroupText(input, 100)
-		r.WorkflowSnapshot.Edges = nil
-		r.WorkflowSnapshot.Preview = nil
-		r.WorkflowSnapshot.Notifications = nil
-		for _, n := range r.Nodes {
-			n.Status = "skipped"
-		}
+	if workspace {
+		r.Kind = domain.RunKindWorkspace
 		r.Status = "waiting"
 	}
-	e.event(&r, "", "run.started", "流水线开始执行")
-	if executeRuns && !group {
+	if workspace {
+		e.event(&r, "", "workspace.created", "对话工作区已创建")
+	} else {
+		e.event(&r, "", "run.started", "流水线开始执行")
+	}
+	if executeRuns && !workspace {
 		if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
 			return domain.Run{}, ErrExecutionDisabled
 		}
@@ -173,7 +195,7 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 		r = current
 	}
 	e.publish(r.ID)
-	if !executeRuns || r.Status == "queued" || group {
+	if !executeRuns || r.Status == "queued" || workspace {
 		return r, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())

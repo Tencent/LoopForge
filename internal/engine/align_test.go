@@ -10,6 +10,7 @@ import (
 )
 
 func TestExtractConflictBlocks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	content := "line A\n" +
 		"<<<<<<< HEAD\n" +
@@ -46,6 +47,7 @@ func TestExtractConflictBlocks(t *testing.T) {
 }
 
 func TestParseConflictMarkersLongSideClipped(t *testing.T) {
+	t.Parallel()
 	var sb strings.Builder
 	sb.WriteString("<<<<<<< HEAD\n")
 	for i := 0; i < 100; i++ {
@@ -62,6 +64,7 @@ func TestParseConflictMarkersLongSideClipped(t *testing.T) {
 }
 
 func TestAlignConflictErrorRenderBlocks(t *testing.T) {
+	t.Parallel()
 	e := &AlignConflictError{Integrate: "agentflow/integration", Default: "master", Blocks: []domain.ConflictBlock{{File: "a.txt", Ours: "ours content", Theirs: "theirs content"}}}
 	md := e.RenderBlocks()
 	for _, want := range []string{"### 冲突文件 a.txt", "ours（集成分支 agentflow/integration）", "theirs（默认分支 master）", "ours content", "theirs content"} {
@@ -72,6 +75,7 @@ func TestAlignConflictErrorRenderBlocks(t *testing.T) {
 }
 
 func TestAlignOnlyApprovalsAutoSucceed(t *testing.T) {
+	t.Parallel()
 	run := domain.Run{
 		Repository: domain.RepositoryContext{AlignOnly: true},
 		WorkflowSnapshot: domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{
@@ -104,6 +108,7 @@ func TestAlignOnlyApprovalsAutoSucceed(t *testing.T) {
 }
 
 func TestShouldAlignIntegrate(t *testing.T) {
+	t.Parallel()
 	if ShouldAlignIntegrate(domain.RepositoryContext{DefaultBranch: "master"}) {
 		t.Fatal("empty integrate branch must skip baseline align")
 	}

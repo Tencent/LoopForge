@@ -83,8 +83,20 @@ func MRArtifactPriority(name, path, nodeID string) int {
 	return 0
 }
 
+// DeliveryMRList also accepts legacy analytics responses with one primary MR.
+func (item AnalyticsDelivery) DeliveryMRList() []DeliveryMR {
+	if len(item.MRs) > 0 {
+		return item.MRs
+	}
+	if item.MRURL == "" {
+		return nil
+	}
+	return []DeliveryMR{{Project: item.MRProject, IID: item.MRIID, URL: item.MRURL, State: item.MRState}}
+}
+
 func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 	out := AnalyticsDeliverySummary{Issues: len(items)}
+	mrs := map[string]string{}
 	var durationSum, durationN int64
 	var execSum, execN int64
 	execValues := make([]int64, 0, len(items))
@@ -108,14 +120,39 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 			execN++
 			execValues = append(execValues, item.ExecutionDurationMs)
 		}
-		if item.MRURL != "" {
+		list := item.DeliveryMRList()
+		if len(list) > 0 {
 			out.WithMR++
 		}
-		if item.MRState == "merged" {
-			out.MRMerged++
+		if item.DirectDelivery {
+			out.DirectIssues++
+			if len(list) > 0 {
+				out.DirectWithMR++
+			}
+			if item.Delivered {
+				out.DirectDelivered++
+			}
 		}
-		if item.MRState == "integrated" {
-			out.MRIntegrated++
+		merged := false
+		for _, mr := range list {
+			key := strings.TrimSpace(mr.URL)
+			project, iid := mr.Project, mr.IID
+			if p, n, _, ok := ParseGongfengMR(mr.URL); ok {
+				project, iid = p, n
+			}
+			if project != "" && iid > 0 {
+				key = strings.ToLower(project) + "#" + strconv.Itoa(iid)
+			}
+			if key == "" {
+				continue
+			}
+			if state, ok := mrs[key]; !ok || AnalyticsMRRank(mr.State) > AnalyticsMRRank(state) {
+				mrs[key] = mr.State
+			}
+			merged = merged || mr.State == "merged"
+		}
+		if merged {
+			out.IssuesWithMergedMR++
 		}
 		if item.Delivered {
 			out.Delivered++
@@ -125,6 +162,15 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 		if item.DurationMs > 0 {
 			durationSum += item.DurationMs
 			durationN++
+		}
+	}
+	out.TotalMRs = len(mrs)
+	for _, state := range mrs {
+		switch state {
+		case "merged":
+			out.MRMerged++
+		case "integrated":
+			out.MRIntegrated++
 		}
 	}
 	if durationN > 0 {
@@ -180,7 +226,7 @@ func FinalizeAnalyticsDelivery(item *AnalyticsDelivery) {
 	if item.MRURL != "" && item.MRState == "" {
 		item.MRState = "unknown"
 	}
-	item.Delivered = item.SOPSucceeded && item.MRState == "merged"
+	item.Delivered = (item.SOPSucceeded || item.DirectDelivery) && item.MRState == "merged"
 }
 
 // NormalizeBranchName strips refs/heads/ and origin/ prefixes for comparison.

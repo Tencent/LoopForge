@@ -56,7 +56,7 @@ func (s *Service) EnsureAndMergeBranchMR(project, sourceBranch, targetBranch, ti
 		}
 		createTitle := strings.TrimSpace(title)
 		if createTitle == "" {
-			createTitle = fmt.Sprintf("AgentFlow: %s → %s", src, tgt)
+			createTitle = fmt.Sprintf("LoopForge: %s → %s", src, tgt)
 		}
 		createDesc := strings.TrimSpace(description)
 		if createDesc == "" {
@@ -251,6 +251,19 @@ func parseGongfengTime(raw string) time.Time {
 	} {
 		if t, err := time.Parse(layout, raw); err == nil {
 			return t.UTC()
+		}
+	}
+	return time.Time{}
+}
+
+// Gongfeng returns resolved_at for merged MRs; some versions use merged_at.
+// updated_at can change after a merge, so it cannot place a merge in a bucket.
+func gongfengMRMergedAt(mr gongfengListedMR) time.Time {
+	if normalizeMRState(mr.State) == "merged" {
+		for _, raw := range []string{mr.MergedAt, mr.ResolvedAt} {
+			if at := parseGongfengTime(raw); !at.IsZero() {
+				return at
+			}
 		}
 	}
 	return time.Time{}

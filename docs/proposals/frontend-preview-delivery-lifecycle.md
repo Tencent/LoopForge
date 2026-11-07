@@ -536,7 +536,7 @@ Browser
 - 清洗 hop-by-hop headers、`Set-Cookie`、`Location` 和外部重定向。
 - 限制请求/响应 body、连接数、带宽和最长连接时间。
 - 默认禁用出站网络或使用预览专用 egress policy。
-- 不注入 Run 的 Git、CodeBuddy、Taihu 或 MCP 凭据。
+- 不注入 Run 的 Git、CodeBuddy 或 MCP 凭据。
 - 容器使用独立网络、非 root、drop capabilities、no-new-privileges。
 
 ## 17. Full-stack Preview Environment：Phase 3

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/url"
 	"sort"
 	"strconv"
@@ -66,6 +67,7 @@ type IssueStoreAdapter interface {
 	Projects() []domain.Project
 	Project(id string) (domain.Project, bool)
 	PutIssue(v domain.Issue) error
+	PutSyncedIssue(v domain.Issue) error
 	DeleteIssue(id string) error
 	PutSyncConfig(cfg domain.SyncConfig) error
 	SyncConfig() domain.SyncConfig
@@ -79,12 +81,6 @@ type ProjectAuthStore interface {
 	Repositories() []domain.Repository
 	User(id int64) (domain.User, bool)
 	MCPServers() []domain.MCPServerDefinition
-}
-
-// DeliveryReconcileStore backfills delivery lock fields after external sync.
-type DeliveryReconcileStore interface {
-	ReconcileMergedMRDeliveries() error
-	ReconcileDeliveryMRStates() error
 }
 
 func NewService() *Service {
@@ -104,7 +100,7 @@ func (s *Service) Configure(cfg domain.SyncConfig) {
 func (s *Service) ConfigureWithCatalog(cfg domain.SyncConfig, servers []domain.MCPServerDefinition) {
 	s.cfg.Set(cfg)
 	gf := bindTrackerMCP("gongfeng", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("gongfeng"))
-	tapd := bindTrackerMCP("tapd", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("tapd_taihu"))
+	tapd := bindTrackerMCP("tapd", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("tapd"))
 	s.gfSource, s.tapdSource = gf.Source, tapd.Source
 	if gf.URL != "" {
 		s.gongfeng = NewMCPClient(gf.URL, gf.Headers)
@@ -119,7 +115,7 @@ func (s *Service) ConfigureWithCatalog(cfg domain.SyncConfig, servers []domain.M
 }
 
 // ConfigureWithStore enables project-aware authentication. Tracker calls then
-// resolve the target project's MCP asset and inject its Owner's Taihu PAT.
+// resolve the target project's MCP asset and call it as its Owner.
 func (s *Service) ConfigureWithStore(cfg domain.SyncConfig, store ProjectAuthStore) {
 	s.projectAuth = store
 	servers := []domain.MCPServerDefinition(nil)
@@ -349,12 +345,8 @@ func (s *Service) PullAll(store IssueStoreAdapter) error {
 	syncCount += n
 
 	pruneDuplicateExternalIssues(store)
-	if rs, ok := store.(DeliveryReconcileStore); ok {
-		if err := rs.ReconcileMergedMRDeliveries(); err != nil && lastErr == nil {
-			lastErr = fmt.Errorf("delivery reconcile: %w", err)
-		}
-		_ = rs.ReconcileDeliveryMRStates()
-	}
+	// Delivery transitions belong to the independent MR state sync. A tracker
+	// pull must not change local lifecycle via post-pull reconciliation either.
 
 	cfg = s.cfg.Get()
 	cfg.LastSyncAt = time.Now().UTC()
@@ -518,7 +510,7 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 			issue.CreatedAt = parseTime(gi.CreatedAt)
 		}
 		issue.UpdatedAt = time.Now().UTC()
-		if err := store.PutIssue(issue); err != nil {
+		if err := store.PutSyncedIssue(issue); err != nil {
 			log.Printf("sync gongfeng issue %d: %v", gi.IID, err)
 			continue
 		}
@@ -702,7 +694,6 @@ type tapdStory struct {
 	PriorityLabel string `json:"priority_label"`
 	StoryID       string `json:"story_id"`
 	Owner         string `json:"owner"`
-	Creator       string `json:"creator"`
 	IterationID   string `json:"iteration_id"`
 	Created       string `json:"created"`
 	Modified      string `json:"modified"`
@@ -718,11 +709,11 @@ type tapdStory struct {
 // empty issue bodies. Note: TAPD prunes strictly to the requested list, so
 // "name"/"title" must be included or collectTAPDStories cannot match records.
 const (
-	// creator is required: a story's platform assignee is the TAPD creator,
-	// not the handler in owner. TAPD omits any field that is not requested.
-	tapdStoryFields = "id,name,description,status,owner,creator,priority,iteration_id,created,modified"
+	// owner is required: stories and tasks use the TAPD handler as the platform
+	// assignee. TAPD omits any field that is not requested.
+	tapdStoryFields = "id,name,description,status,owner,priority,iteration_id,created,modified"
 	tapdBugFields   = "id,title,description,status,current_owner,severity,priority,iteration_id,created,modified"
-	tapdTaskFields  = "id,name,description,status,owner,creator,priority_label,story_id,iteration_id,created,modified"
+	tapdTaskFields  = "id,name,description,status,owner,priority_label,story_id,iteration_id,created,modified"
 )
 
 // tapdPool identifies one TAPD requirement pool (workspace + iteration) and the
@@ -960,7 +951,7 @@ func (s *Service) pullTAPDBugs(client *MCPClient, store IssueStoreAdapter, pool 
 // ImportTAPDStory fetches one TAPD story, bug or task by pasted web URL and upserts it into
 // the given AgentFlow project. The story does not need to belong to the
 // project's configured iteration pool. fallbackUserID is used as the issue
-// responsible user when the TAPD creator cannot be matched to a platform user.
+// responsible user when the TAPD handler cannot be matched to a platform user.
 func (s *Service) ImportTAPDStory(store IssueStoreAdapter, projectID, rawURL string, fallbackUserID int64) (domain.Issue, error) {
 	started := time.Now().UTC()
 	projectID = strings.TrimSpace(projectID)
@@ -1019,8 +1010,8 @@ func (s *Service) ImportTAPDStory(store IssueStoreAdapter, projectID, rawURL str
 }
 
 // ResyncTAPDIssue re-pulls one TAPD story/bug/task identified by the issue's
-// external reference and refreshes the local copy (title/description/status/
-// priority). Local assignee, clarification state and repository bindings are
+// external reference and refreshes tracker content, priority and raw state.
+// Local lifecycle, assignee, clarification state and repository bindings are
 // preserved by applyExistingIssue; a manual resync never re-enters the
 // clarification gate.
 func (s *Service) ResyncTAPDIssue(store IssueStoreAdapter, issue domain.Issue) (domain.Issue, error) {
@@ -1148,9 +1139,8 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 	if kind == "task" {
 		issueKind = "requirement"
 	}
-	// Stories: the person who created the TAPD ticket is the platform assignee.
-	// Bugs have no equivalent creator field here; their handler is current_owner.
-	assignee := st.Creator
+	// TAPD handlers are stored in owner for stories/tasks and current_owner for bugs.
+	assignee := st.Owner
 	if kind == "bug" {
 		assignee = st.CurrentOwner
 	}
@@ -1213,7 +1203,7 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 		scoreStoredRequirement(store, &issue)
 	}
 	issue.UpdatedAt = time.Now().UTC()
-	if err := store.PutIssue(issue); err != nil {
+	if err := store.PutSyncedIssue(issue); err != nil {
 		return domain.Issue{}, err
 	}
 	stored, ok := store.Issue(issue.ID)
@@ -1876,8 +1866,10 @@ func findTAPDRecord(store IssueStoreAdapter, recordID, kind, workspaceID string)
 }
 
 func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
-	previousExternalClosed := existing.TrackerClosed()
-	remoteClosed := dst.Status == "closed"
+	// Tracker state is metadata after intake. Local status belongs to the
+	// platform and must survive scheduled pulls, imports and manual refreshes.
+	dst.Status = existing.Status
+	dst.CloseSource = existing.CloseSource
 	dst.ID = existing.ID
 	dst.CreatedAt = existing.CreatedAt
 	if existing.Number > 0 {
@@ -1889,12 +1881,6 @@ func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
 	dst.WorkflowID = existing.WorkflowID
 	dst.LatestTaskID = existing.LatestTaskID
 	dst.AutomationState = existing.AutomationState
-	if existing.ManuallyClosed() {
-		dst.CloseSource = "manual"
-	} else if previousExternalClosed && !remoteClosed && !existing.DeliveryLocked() {
-		// The external work item reopened; scheduled execution may resume.
-		dst.AutomationState = "eligible"
-	}
 	dst.DeliveryState = existing.DeliveryState
 	dst.DeliveryMRURL = existing.DeliveryMRURL
 	dst.DeliveryMRState = existing.DeliveryMRState
@@ -1929,36 +1915,7 @@ func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
 	if existing.BaseBranch != "" {
 		dst.BaseBranch = existing.BaseBranch
 	}
-	if keepLocalExecutionStatus(existing, dst.Status) {
-		dst.Status = existing.Status
-	} else if existing.CloseSource == "external" && !remoteClosed && existing.DeliveryLocked() {
-		// A completed local delivery remains done after the tracker reopens.
-		dst.Status = "done"
-	}
-	if dst.Status != "closed" {
-		dst.CloseSource = ""
-	}
-}
-
-func keepLocalExecutionStatus(existing domain.Issue, remote string) bool {
-	if existing.ManuallyClosed() {
-		return true
-	}
-	if remote == "closed" || existing.CloseSource == "external" {
-		return false
-	}
-	if existing.DeliveryLocked() {
-		return true
-	}
-	if strings.EqualFold(strings.TrimSpace(existing.DeliveryState), "reopened") {
-		return true
-	}
-	switch existing.Status {
-	case "in_progress", "blocked", "in_review":
-		return remote != "done" && remote != "cancelled"
-	default:
-		return false
-	}
+	dst.RepositoryBranches = maps.Clone(existing.RepositoryBranches)
 }
 
 func pruneDuplicateExternalIssues(store IssueStoreAdapter) {
@@ -1982,7 +1939,7 @@ func pruneDuplicateExternalIssues(store IssueStoreAdapter) {
 			keeper = mergeIssueKeep(keeper, extra)
 			_ = store.DeleteIssue(extra.ID)
 		}
-		_ = store.PutIssue(keeper)
+		_ = store.PutSyncedIssue(keeper)
 	}
 }
 
