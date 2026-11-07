@@ -101,12 +101,12 @@ var (
 	ErrSharedCodeBuddyModelsRequired = errors.New("at least one shared CodeBuddy model is required")
 )
 
-func (s *Store) platformCodeBuddyKey() (platformCodeBuddyKeyRow, bool) {
+func (r *UsersRepo) platformCodeBuddyKey() (platformCodeBuddyKeyRow, bool) {
 	var row platformCodeBuddyKeyRow
-	if s == nil || s.DB == nil {
+	if r == nil || r.deps == nil || r.DB == nil {
 		return row, false
 	}
-	result := s.DB.Where("id = ?", platformCodeBuddyKeyID).Limit(1).Find(&row)
+	result := r.DB.Where("id = ?", platformCodeBuddyKeyID).Limit(1).Find(&row)
 	return row, result.Error == nil && result.RowsAffected > 0
 }
 
@@ -120,12 +120,12 @@ func decodeSharedModels(raw string) []string {
 
 // legacyCodeBuddySponsor returns the account named by
 // AGENTFLOW_ASSISTANT_SPONSOR_LOGIN, if it exists and has a key.
-func (s *Store) legacyCodeBuddySponsor() (domain.User, bool) {
+func (r *UsersRepo) legacyCodeBuddySponsor() (domain.User, bool) {
 	login := strings.TrimSpace(os.Getenv(CodeBuddySponsorLoginEnv))
-	if login == "" || s == nil {
+	if login == "" || r == nil {
 		return domain.User{}, false
 	}
-	sponsor, ok := s.UserByLoginName(login)
+	sponsor, ok := r.UserByLoginName(login)
 	if !ok || strings.TrimSpace(sponsor.CodeBuddyAPIKey) == "" {
 		return domain.User{}, false
 	}
@@ -134,14 +134,14 @@ func (s *Store) legacyCodeBuddySponsor() (domain.User, bool) {
 
 // SharedCodeBuddyKey returns the key users without their own borrow: the one
 // configured under 平台管理, else the legacy sponsor account's.
-func (s *Store) SharedCodeBuddyKey() (SharedCodeBuddyKey, bool) {
-	if row, ok := s.platformCodeBuddyKey(); ok {
+func (r *UsersRepo) SharedCodeBuddyKey() (SharedCodeBuddyKey, bool) {
+	if row, ok := r.platformCodeBuddyKey(); ok {
 		models := decodeSharedModels(row.Models)
 		if strings.TrimSpace(row.APIKey) != "" && len(models) > 0 {
 			return SharedCodeBuddyKey{APIKey: row.APIKey, InternetEnvironment: row.InternetEnvironment, Models: models}, true
 		}
 	}
-	sponsor, ok := s.legacyCodeBuddySponsor()
+	sponsor, ok := r.legacyCodeBuddySponsor()
 	if !ok {
 		return SharedCodeBuddyKey{}, false
 	}
@@ -150,28 +150,28 @@ func (s *Store) SharedCodeBuddyKey() (SharedCodeBuddyKey, bool) {
 
 // SharedCodeBuddyModels returns the models users without their own key may
 // use, the default first, or nil when there is no shared key.
-func (s *Store) SharedCodeBuddyModels() []string {
-	if key, ok := s.SharedCodeBuddyKey(); ok {
+func (r *UsersRepo) SharedCodeBuddyModels() []string {
+	if key, ok := r.SharedCodeBuddyKey(); ok {
 		return key.Models
 	}
 	return nil
 }
 
 // PlatformCodeBuddyKeyStatus describes the shared key for administrators.
-func (s *Store) PlatformCodeBuddyKeyStatus() PlatformCodeBuddyKeyStatus {
+func (r *UsersRepo) PlatformCodeBuddyKeyStatus() PlatformCodeBuddyKeyStatus {
 	status := PlatformCodeBuddyKeyStatus{Models: []string{}}
-	if row, ok := s.platformCodeBuddyKey(); ok && strings.TrimSpace(row.APIKey) != "" {
+	if row, ok := r.platformCodeBuddyKey(); ok && strings.TrimSpace(row.APIKey) != "" {
 		status.Configured = true
 		status.InternetEnvironment = row.InternetEnvironment
 		if models := decodeSharedModels(row.Models); models != nil {
 			status.Models = models
 		}
 		status.UpdatedAt = row.Updated
-		if user, ok := s.User(row.UpdatedBy); ok {
+		if user, ok := r.User(row.UpdatedBy); ok {
 			status.UpdatedBy = user.LoginName
 		}
 	}
-	if sponsor, ok := s.legacyCodeBuddySponsor(); ok {
+	if sponsor, ok := r.legacyCodeBuddySponsor(); ok {
 		status.LegacySponsor = sponsor.LoginName
 		status.LegacySponsorModel = SponsoredCodeBuddyModel
 	}
@@ -179,11 +179,11 @@ func (s *Store) PlatformCodeBuddyKeyStatus() PlatformCodeBuddyKeyStatus {
 }
 
 // SetPlatformCodeBuddyKey saves the shared key settings.
-func (s *Store) SetPlatformCodeBuddyKey(update PlatformCodeBuddyKeyUpdate, actorID int64) error {
+func (r *UsersRepo) SetPlatformCodeBuddyKey(update PlatformCodeBuddyKeyUpdate, actorID int64) error {
 	if len(update.Models) == 0 {
 		return ErrSharedCodeBuddyModelsRequired
 	}
-	row, _ := s.platformCodeBuddyKey()
+	row, _ := r.platformCodeBuddyKey()
 	if key := strings.TrimSpace(update.APIKey); key != "" {
 		row.APIKey = key
 	}
@@ -200,7 +200,7 @@ func (s *Store) SetPlatformCodeBuddyKey(update PlatformCodeBuddyKeyUpdate, actor
 	row.Models = string(models)
 	row.UpdatedBy = actorID
 	row.Updated = &now
-	return s.DB.Clauses(clause.OnConflict{
+	return r.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"api_key", "internet_environment", "models", "updated_by", "updated_at"}),
 	}).Create(&row).Error
@@ -208,6 +208,6 @@ func (s *Store) SetPlatformCodeBuddyKey(update PlatformCodeBuddyKeyUpdate, actor
 
 // ClearPlatformCodeBuddyKey removes the shared key; users without their own
 // key need one again (or fall back to the legacy sponsor account).
-func (s *Store) ClearPlatformCodeBuddyKey() error {
-	return s.DB.Where("id = ?", platformCodeBuddyKeyID).Delete(&platformCodeBuddyKeyRow{}).Error
+func (r *UsersRepo) ClearPlatformCodeBuddyKey() error {
+	return r.DB.Where("id = ?", platformCodeBuddyKeyID).Delete(&platformCodeBuddyKeyRow{}).Error
 }
