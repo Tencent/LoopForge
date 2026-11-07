@@ -203,10 +203,12 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		refreshCLIModels(c.Request.Context(), key.InternetEnvironment, key.APIKey)
 		catalog = restrictAssistantCatalog(assistantChatCatalog(c.Request.Context(), key.InternetEnvironment, key.Models), key.Models)
 	case signedIn:
+		// A user's own key keeps their environment's models and default: the
+		// shared key's default may not exist in that environment.
 		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
-		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, key.Models)
+		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
 	default:
-		catalog = assistantChatCatalog(c.Request.Context(), "", key.Models)
+		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
 	}
 	if shared {
 		catalog.SponsoredModel, catalog.SponsoredModels = key.Models[0], key.Models
@@ -216,6 +218,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 
 // assistantChatCatalog is the catalog used by chat conversations: the same
 // models, with the shared key's models listed and its default preselected.
+// Pass shared only for turns that run on the shared key (see chatCatalog).
 func assistantChatCatalog(ctx context.Context, env string, shared []string) assistantModelCatalog {
 	catalog := loadAssistantModels(ctx, env)
 	if len(shared) == 0 {

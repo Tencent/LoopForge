@@ -64,18 +64,16 @@ func (h *assistantHandlers) usesSharedKey(user domain.User) bool {
 	return ok && strings.TrimSpace(stored.CodeBuddyAPIKey) == ""
 }
 
-// chatCatalog is the chat catalog for a chat user (see assistantChatUser):
-// shared models are listed, and a shared-key user only sees the allowed ones.
+// chatCatalog is the chat catalog for a chat user (see assistantChatUser). A
+// turn on the shared key only sees the allowed models, defaulting to the
+// first; a user with their own key keeps their environment's catalog and
+// default, which the shared key's models must not replace.
 func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) assistantModelCatalog {
 	key, shared := h.assistantSharedKey()
-	if !shared {
+	if !shared || !h.usesSharedKey(user) {
 		return assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil)
 	}
-	catalog := assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models)
-	if h.usesSharedKey(user) {
-		catalog = restrictAssistantCatalog(catalog, key.Models)
-	}
-	return catalog
+	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models), key.Models)
 }
 
 // restrictAssistantCatalog keeps the allowed models, in the allowed order.
