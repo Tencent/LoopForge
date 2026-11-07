@@ -177,6 +177,8 @@ function collapseSingleSOPLane(bindings, by, runs, out){
   return [latest];
 }
 function issueSOPLabel(issue){
+  // 对话需求没有 SOP；工作区记录清理后也不回落到建单时记下的默认 SOP。
+  if(conversationWorkspaceIssue(issue))return '对话工作区';
   const lanes=clientIssueLanes(issue).filter(l=>!l.orphan);
   if(lanes.length===1){
     const name=String(lanes[0].workflowName||lanes[0].label||'').trim();
@@ -222,6 +224,7 @@ function issueRunHealth(i){
   const {task,run}=issueExecution(i);
   if(issueExecutionBlocked(i))return'closed';
   if(issueTrackerClosed(i))return'closed';
+  if(conversationWorkspaceIssue(i,run))return deliveryLocked(i)||conversationIssueStage(i).key==='closed'?'closed':'active';
   if(run&&['queued','running','waiting'].includes(run.status))return'active';
   if(isGhostRun(run))return'active';
   if(run?.status==='succeeded')return'closed';
@@ -264,7 +267,7 @@ function issueActor(i){
 }
 function issueOutcome(i){
   const health=issueRunHealth(i),stage=issueCurrentStage(i);
-  if(issueManuallyClosed(i))return{key:'closed',short:'已关闭',title:'需求已关闭',body:'该需求已在 AgentFlow 中手动关闭。如需继续修改或执行，请先重新打开。'};
+  if(issueManuallyClosed(i))return{key:'closed',short:'已关闭',title:'需求已关闭',body:'该需求已在 LoopForge 中手动关闭。如需继续修改或执行，请先重新打开。'};
   if(issueTrackerClosed(i)&&!issueMergedDelivery(i))return{key:'closed',short:'已关闭',title:gongfengIssueClosed(i)?'工蜂已关闭':'外部工作项已关闭',body:'请先在外部系统重新打开工作项，等待状态同步后再执行。'};
   if(deliveryLocked(i)){const label=deliveryLockedLabel(i);const short=label==='MR 已合入'?'已合入':label==='已合入基线'?'已合入基线':label==='关闭'?'关闭':'已交付';return{key:'closed',short,title:label,body:label==='MR 已合入'?'关联 MR 已合入默认分支。如需继续修改，请用重新触发再开一条 SOP。':label==='已合入基线'?'关联 MR 已合入集成分支，尚未进默认分支。如需继续修改，请用重新触发再开一条 SOP。':label==='关闭'?'需求已关闭。如需继续修改或执行，请用重新触发再开一条 SOP。':'SOP 已全部通过。如需继续修改，请用重新触发再开一条 SOP。'};}
   if((i.status||'')==='done')return{key:'closed',short:stage.label==='交付闭环'?'已交付':'已完成',title:stage.label==='交付闭环'?'交付闭环':'需求已完成',body:stage.label==='交付闭环'?'SOP 已全部通过。如需继续修改，请先重新打开后再触发新的 SOP。':'需求已完成。'};
@@ -275,6 +278,7 @@ function issueOutcome(i){
     const score=i.clarification?.score||0,threshold=clarificationPolicy((state.data.projects||[]).find(p=>p.id===i.projectId)).threshold||80;
     return{key:'attention',short:'待澄清',title:'需要你补充澄清',body:`导入评分 ${score} 分，未达准入线 ${threshold} 分。请先回答澄清问题后再触发 SOP。`};
   }
+  if(conversationWorkspaceIssue(i)){const c=conversationIssueStage(i);return{key:c.ended?'idle':c.key==='closed'?'closed':'active',short:c.short,title:`对话交付 · ${c.label}`,body:c.hint};}
   if(latestIssueRun(i)?.status==='cancelled')return{key:'attention',short:'已取消',title:'运行已取消',body:'这次运行已结束且工作区已清理，不能接着原记录重试。可以重新触发整条 SOP。'};
   if(health==='attention')return{key:'attention',short:'失败',title:'运行失败',body:`停在「${stage.label}」。可从失败节点重试，或整条重新触发。`};
   if(stage.key==='waiting')return{key:'waiting',short:'待确认',title:'等待确认',body:`「${stage.label}」需要批准后才会继续。`};
@@ -306,6 +310,8 @@ function issueExternallyDone(i){
   return ['done','已完成','完成','合入','已合入'].includes(issueExternalState(i));
 }
 function deliveryMRLinked(i){return deliveryMRList(i).length>0}
+// 待处理 MR：已创建但还没合入的 MR（opened/reopened）。状态未知的历史 MR 不计入，避免数字虚高。
+function pendingDeliveryMRCount(i){return deliveryMRList(i).filter(m=>['opened','reopened'].includes(String(m.state||'').toLowerCase())).length}
 // 多仓库交付每个仓库一个 MR；旧数据只有 deliveryMrUrl。
 function deliveryMRList(i){
   const withRef=m=>{const hit=String(m.url).match(/git\.example\.com\/(.+?)(?:\/-)?\/merge_requests\/(\d+)/);return{...m,project:m.project||hit?.[1]||'',iid:m.iid||Number(hit?.[2])||0}};
@@ -342,6 +348,43 @@ function issueMergedDelivery(i){
   if(!deliveryLocked(i))return false;
   const label=deliveryLockedLabel(i);
   return label==='MR 已合入'||label==='已合入基线';
+}
+// 对话里直接改代码的需求：只在对话工作区里做，没有派发过 SOP。对话工作区没有节点，
+// 状态按 MR 交付推进；会话删除后工作区记录可能已经不在，所以也认需求上记的来源会话。
+function conversationWorkspaceIssue(i,run=issueExecution(i).run){
+  if(!i||latestIssueTask(i))return false;
+  if(run&&run.kind!=='workspace')return false;
+  const runs=(state.data.runs||[]).filter(r=>r.executionContext?.issueId===i.id&&!r.executionContext?.parentRunId);
+  if(runs.some(r=>r.kind!=='workspace'))return false;
+  return run?.kind==='workspace'||runs.length>0||!!String(i.conversationSessionId||'').trim();
+}
+function conversationIssueStage(i){
+  const states=deliveryMRList(i).map(m=>String(m.state||'').toLowerCase());
+  if(states.length){
+    if(states.every(s=>s==='merged'))return{key:'closed',label:'MR 已合入',short:'已合入',width:100,hint:'对话提交的 MR 已合入默认分支'};
+    if(states.every(s=>s==='merged'||s==='integrated'))return{key:'closed',label:'已合入基线',short:'已合入基线',width:100,hint:'对话提交的 MR 已合入集成分支，尚未进默认分支'};
+    if(states.every(s=>s==='closed'))return{key:'closed',ended:true,label:'MR 已关闭',short:'MR 已关闭',width:100,hint:'MR 没有合入就关闭了，需要继续时在对话里重新提交'};
+    return{key:'active',label:'MR 待合入',short:'待合入',width:60,hint:'对话已提交 MR，合入默认分支后需求自动完成'};
+  }
+  const status=String(i?.status||'').toLowerCase();
+  if(status==='done')return{key:'closed',label:'已完成',short:'已完成',width:100,hint:'需求已完成'};
+  if(status==='in_review')return{key:'active',label:'已直推 · 待验收',short:'待验收',width:60,hint:'改动已直接推送到共享分支，没有 MR，验收后可关闭需求'};
+  return{key:'active',label:'对话开发中',short:'开发中',width:15,hint:'在对话工作区里直接改代码，提交 MR 后进入待合入'};
+}
+// 对话需求没有 SOP 节点，进度列按交付阶段显示文字；合入或关闭后沿用原来的显示。
+// MR 没合入就关闭（ended）不算交付完成，进度条置灰而不是绿色。
+function conversationIssueProgress(i,run){
+  if(issueManuallyClosed(i)||issueTrackerClosed(i)||deliveryLocked(i)||!conversationWorkspaceIssue(i,run))return null;
+  const stage=conversationIssueStage(i);
+  return{text:stage.short,width:stage.width,title:stage.hint,done:stage.key==='closed'&&!stage.ended,ended:!!stage.ended};
+}
+// 打开需求关联的会话；项目成员看到的是只读会话，私人会话仍只对本人可见。
+function issueConversationURL(issue,session){
+  const url=new URL('/',location.origin);
+  url.searchParams.set('projectId',issue.projectId);
+  if(session)url.searchParams.set('chatSession',session);else url.searchParams.set('chatIssue',issue.id);
+  url.hash='/collaboration';
+  return url.href;
 }
 function deliveryBlockReason(i){
   if(issueManuallyClosed(i))return'工作项已关闭，请先重新打开工作项再触发 SOP';
@@ -380,7 +423,9 @@ function triggerSOPButton(issue,{ghost=false,cls='button primary small',text='�
 }
 function issueActionButtons(i){
   const {task,run}=issueExecution(i),stage=issueCurrentStage(i),health=issueRunHealth(i);
-  const more=`<button type="button" class="issue-act-more" data-issue-menu="${escapeHTML(i.id)}" title="更多操作">⋯</button>`;
+  const more=`<button type="button" class="issue-act-more" data-issue-menu="${escapeHTML(i.id)}" title="更多操作" aria-label="更多操作"><svg class="agent-icon harness-icon" data-icon="more-horizontal" width="16" height="16" aria-hidden="true" focusable="false"></svg></button>`;
+  // 对话工作区没有节点，查看打开需求详情里的对话交付，而不是空的运行页。
+  if(conversationWorkspaceIssue(i,run))return `<button type="button" class="issue-act" data-open-issue="${escapeHTML(i.id)}" data-dtab="sop">查看</button>${more}`;
   if(issueManuallyClosed(i)||deliveryLocked(i)||issueTrackerClosed(i))return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
   if(issueClarifying(i.id))return `<button type="button" class="issue-act" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">查看分析</button>${more}`;
   if(clarificationNeedsConfirm(i))return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">确认结论</button>${more}`;
@@ -437,10 +482,11 @@ function showIssueActionMenu(e,issueId){
   const menu=ensureIssueMenuPopover();
   const isClosed=issue.status==='done'||issueManuallyClosed(issue)||deliveryLocked(issue);
   menu.innerHTML=`
-    <button type="button" class="issue-popover-item" data-action="edit"><span class="popover-icon">✎</span>编辑需求</button>
-    ${issueTrackerClosed(issue)||(!isClosed&&!issueCanClose(issue))?'':!isClosed?`<button type="button" class="issue-popover-item danger" data-action="close"><span class="popover-icon">✕</span>关闭需求</button>`:`<button type="button" class="issue-popover-item" data-action="reopen"><span class="popover-icon">↺</span>重新打开</button>`}
-    ${issueCanDelete(issue)?'<button type="button" class="issue-popover-item danger" data-action="delete"><span class="popover-icon">⌫</span>删除需求</button>':''}
+    <button type="button" class="issue-popover-item" data-action="edit">${huiIcon('edit','popover-icon')}编辑需求</button>
+    ${issueTrackerClosed(issue)||(!isClosed&&!issueCanClose(issue))?'':!isClosed?`<button type="button" class="issue-popover-item danger" data-action="close">${huiIcon('close','popover-icon')}关闭需求</button>`:`<button type="button" class="issue-popover-item" data-action="reopen">${huiIcon('undo','popover-icon')}重新打开</button>`}
+    ${issueCanDelete(issue)?`<button type="button" class="issue-popover-item danger" data-action="delete">${huiIcon('trash','popover-icon')}删除需求</button>`:''}
   `;
+  window.AgentFlowHarnessIcons?.hydrate?.(menu);
   menu.querySelector('[data-action="edit"]').onclick=ev=>{
     ev.stopPropagation();
     hideIssueActionMenu();
@@ -536,6 +582,7 @@ function issueCurrentStage(i){
   if(issueManuallyClosed(i))return{key:'closed',label:'已关闭',hint:'需求已手动关闭，重新打开后才可再次触发 SOP'};
   if(issueTrackerClosed(i)&&!issueMergedDelivery(i))return{key:'closed',label:gongfengIssueClosed(i)?'工蜂已关闭':'已关闭',hint:'外部工作项已关闭'};
   if(deliveryLocked(i))return{key:'closed',label:deliveryLockedLabel(i),hint:'重新打开后才可再次触发 SOP'};
+  if(conversationWorkspaceIssue(i,run))return conversationIssueStage(i);
   if(!run){
     if(issueClarifying(i.id))return{key:'active',label:'澄清分析中',hint:'关闭网页也不会中断，完成后可回来查看'};
     if(clarificationNeedsConfirm(i)){

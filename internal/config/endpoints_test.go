@@ -80,3 +80,22 @@ func TestCurrentDefaultsAndOverride(t *testing.T) {
 		t.Fatalf("published APIBase = %q", got)
 	}
 }
+
+func TestPrivateAgentToolGatewayUnlessOverridden(t *testing.T) {
+	clearEndpointEnv(t)
+	ep, err := LoadEndpoints("api", "0.0.0.0:18090")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tool sessions live in process memory: after a handover the CLI must keep
+	// calling the process that started it, not the shared public port.
+	private := ep.WithPrivateAgentToolGateway("http://127.0.0.1:41234/")
+	if private.AgentToolGateway != "http://127.0.0.1:41234" || private.APIBase != "http://127.0.0.1:18090" {
+		t.Fatalf("private gateway = %#v", private)
+	}
+	t.Setenv("AGENTFLOW_AGENT_TOOL_GATEWAY_URL", "http://gateway.internal:9000")
+	ep, _ = LoadEndpoints("api", "0.0.0.0:18090")
+	if got := ep.WithPrivateAgentToolGateway("http://127.0.0.1:41234").AgentToolGateway; got != "http://gateway.internal:9000" {
+		t.Fatalf("explicit override lost: %s", got)
+	}
+}

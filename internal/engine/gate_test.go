@@ -14,6 +14,7 @@ import (
 )
 
 func TestAppendArtifactContractDescribesRunLayout(t *testing.T) {
+	t.Parallel()
 	got := appendArtifactContract("base", domain.WorkflowNode{
 		ArtifactOutputs: []domain.ArtifactContract{{Name: "plan", Path: "fix-plan.md", MediaType: "text/markdown", Required: true}},
 	}, []domain.RepositoryContext{{Name: "gateway", WorkspaceDir: "gateway"}})
@@ -32,6 +33,7 @@ func TestAppendArtifactContractDescribesRunLayout(t *testing.T) {
 }
 
 func TestGateExecutionScopeIsExplicit(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	if err := os.MkdirAll(source, 0o755); err != nil {
@@ -82,7 +84,7 @@ func TestGateExecutionScopeIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		current, ok := s.Run(run.ID)
 		if ok && (current.Status == "succeeded" || current.Status == "failed") {
@@ -97,6 +99,7 @@ func TestGateExecutionScopeIsExplicit(t *testing.T) {
 }
 
 func TestRunScopedGitGateDoesNotEnterCheckout(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	if err := os.MkdirAll(source, 0o755); err != nil {
@@ -139,7 +142,7 @@ func TestRunScopedGitGateDoesNotEnterCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		current, ok := s.Run(run.ID)
 		if ok && (current.Status == "succeeded" || current.Status == "failed") {

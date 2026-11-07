@@ -28,8 +28,8 @@ type Dispatcher func(domain.ScheduleJob, domain.Issue, string) error
 // that skips every issue bound to that repository.
 type BaselineGuard func(job domain.ScheduleJob, issues []domain.Issue) (blocked map[string]domain.ScheduleJobBlocker, err error)
 
-// AssistantPrep runs an AI job's user-written prompt. Trigger jobs leave
-// AssistantPrompt empty; TAPD/Gongfeng pull stays on the project sync job.
+// AssistantPrep resolves a pinned shared version or runs an independent AI prompt.
+// TAPD/Gongfeng pull stays on the project sync job.
 type AssistantPrep func(job domain.ScheduleJob) (message string, err error)
 
 type Service struct {
@@ -40,6 +40,7 @@ type Service struct {
 	assistant      AssistantPrep
 	mu             sync.Mutex
 	stopCh         chan struct{}
+	stopped        bool
 	runningJob     string
 	lastFinishedAt time.Time
 }
@@ -56,6 +57,13 @@ func (s *Service) SetAssistantPrep(fn AssistantPrep) {
 	s.assistant = fn
 }
 func (s *Service) Start() {
+	s.StartAfter(nil)
+}
+
+// StartAfter starts the ticker now but defers marking interrupted jobs as
+// failed until recoveryGate closes (nil: immediately). A successor process
+// uses it while its predecessor may still be executing a job.
+func (s *Service) StartAfter(recoveryGate <-chan struct{}) {
 	s.mu.Lock()
 	if s.stopCh != nil {
 		s.mu.Unlock()
@@ -64,7 +72,17 @@ func (s *Service) Start() {
 	s.stopCh = make(chan struct{})
 	stop := s.stopCh
 	s.mu.Unlock()
-	s.recoverInterruptedJobs()
+	if recoveryGate == nil {
+		s.recoverInterruptedJobs()
+	} else {
+		go func() {
+			select {
+			case <-recoveryGate:
+				s.recoverInterruptedJobs()
+			case <-stop:
+			}
+		}()
+	}
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
@@ -77,6 +95,17 @@ func (s *Service) Start() {
 			}
 		}
 	}()
+}
+
+// Stop ends the ticker; a job already executing runs to completion.
+func (s *Service) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopCh == nil || s.stopped {
+		return
+	}
+	s.stopped = true
+	close(s.stopCh)
 }
 
 func (s *Service) recoverInterruptedJobs() {
@@ -218,7 +247,7 @@ func (s *Service) release() {
 }
 
 func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.ScheduleJob, error) {
-	if s.assistant != nil && strings.TrimSpace(job.AssistantPrompt) != "" {
+	if s.assistant != nil && (strings.TrimSpace(job.AssistantPrompt) != "" || job.SharedTaskID != "") {
 		msg, prepErr := s.assistant(job)
 		job.NotificationResult = domain.NotificationText(msg, 18000)
 		_, plain, _ := domain.ParseNotificationResult(msg)
@@ -271,7 +300,11 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 		}
 	}
 	dispatched := 0
+	limit := job.DispatchLimit()
 	for _, issue := range eligible {
+		if dispatched >= limit {
+			break
+		}
 		// A multi-repository issue must wait when any of its repositories has
 		// an integration blocker.
 		waiting := false

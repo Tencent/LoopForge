@@ -8,7 +8,9 @@ permissions:
 jobs:
   core:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      REAL_BROWSER_TESTS: '^(TestMainBotBrowserStartsAndDrivesRunBrowser|TestBrowserStreamPushesFramesAndRunsCommands|TestRunnerStartsPanelBrowserInRunSandbox|TestBrowserAgentOperationsDriveRealChromium)$'
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v6
@@ -17,7 +19,26 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
-      - run: go test -p=2 ./... -count=1 -timeout=180s
+      - run: python3 scripts/test-install.py -v
+      - name: Build and test the chatbot frontend embedded by the platform binary
+        run: bash scripts/build-chatbot.sh
+      - name: Let Chromium use its sandbox as an unprivileged user
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Warm up Chromium so the first real-browser test does not pay the cold start
+        run: |
+          for name in chromium chromium-browser google-chrome-stable google-chrome; do
+            bin=$(command -v "$name") && break
+          done
+          echo "Chromium: $bin"
+          time timeout 120 "$bin" --headless=new --no-first-run --disable-gpu \
+            --user-data-dir="$RUNNER_TEMP/chromium-warmup" --dump-dom about:blank >/dev/null
+      # Real-Chromium tests run on their own: alongside the rest of the suite
+      # the browser can miss its DevTools liveness check on a loaded runner.
+      - run: go test -p=2 ./... -count=1 -timeout=600s -skip "$REAL_BROWSER_TESTS"
+      - run: go test -p=1 ./internal/httpapi ./internal/runner ./internal/runtime -count=1 -timeout=300s -run "$REAL_BROWSER_TESTS" -v
+      - name: Browser-free UI tests for the platform console
+        run: npm ci --no-audit --no-fund && npm test
+        working-directory: webtest
       - name: Install pinned CLIs for local protocol acceptance
         run: npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
       - name: Check real CLI credentials, MCP, stream parsing and native-tool restrictions
@@ -95,6 +116,8 @@ jobs:
           if-no-files-found: ignore
   first-run:
     # The path a new user takes: one-command install, then accounts created in the browser.
+    # Pulls the GHCR release pinned in compose.yaml; release.yml smoke-tests each newly published image.
+    # A pin bumped ahead of its tag has no image yet, so that commit is checked from source.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -110,7 +133,15 @@ jobs:
         working-directory: e2e
       - run: npx playwright install --with-deps chromium
         working-directory: e2e
-      - run: bash scripts/install.sh
+      - name: Install the pinned release, or build it while that release is not published yet
+        run: |
+          pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p' compose.yaml)
+          if docker manifest inspect "$pinned" > /dev/null 2>&1; then
+            ./start.sh -d
+          else
+            echo "::notice::$pinned is not published yet; building this checkout"
+            ./start.sh dev
+          fi
       - name: Generate test passwords
         run: |
           mkdir -p .local

@@ -18,7 +18,7 @@ const (
 type MRDeliveryStore interface {
 	DiscoverMRDeliveryStatesFromArtifacts() error
 	MRDeliveryStatesNeedingRefresh(staleBefore time.Time) ([]domain.MRDeliveryState, error)
-	UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, checkedAt time.Time) error
+	UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, mergedAt, checkedAt time.Time) error
 	ReconcileMergedMRDeliveries() error
 	ReconcileCompletedDeliveries() error
 	ReconcileUnlinkedDeliveryMRs() error
@@ -130,11 +130,13 @@ func (s *Service) syncMRDeliveryStates(store MRDeliveryStore) {
 			continue
 		}
 		client = client.Clone(5 * time.Second)
-		state, target := s.lookupMRState(client, row.MRProject, row.MRIID)
-		if state == "" {
-			state = "unknown"
+		state, target, mergedAt := s.lookupMRState(client, row.MRProject, row.MRIID)
+		if state == "" || state == "unknown" {
+			// Failed lookups must not downgrade historical merged rows while
+			// their missing timestamps are being refreshed.
+			continue
 		}
-		if err := store.UpdateMRDeliveryState(row.MRProject, row.MRIID, state, target, now); err != nil {
+		if err := store.UpdateMRDeliveryState(row.MRProject, row.MRIID, state, target, mergedAt, now); err != nil {
 			log.Printf("mr-delivery update %s!%d: %v", row.MRProject, row.MRIID, err)
 			continue
 		}
@@ -197,14 +199,8 @@ func (s *Service) discoverPromoteMRs(store MRDeliveryStore) {
 				if target == "" {
 					target = def
 				}
-				checked, ok := promoteMRCheckedAt(mr, st, now)
-				if !ok {
-					// A merged promote MR with no parseable time must not use "now".
-					// That would treat every earlier baseline merge as already on the default branch.
-					log.Printf("mr-delivery promote %s!%d: merge time unknown, skip", project, mr.IID)
-					continue
-				}
-				if err := store.UpdateMRDeliveryState(project, mr.IID, st, target, checked); err != nil {
+				mr.State = st
+				if err := store.UpdateMRDeliveryState(project, mr.IID, st, target, gongfengMRMergedAt(mr), now); err != nil {
 					log.Printf("mr-delivery update promote %s!%d: %v", project, mr.IID, err)
 				}
 			}
@@ -308,22 +304,4 @@ func workCommitOnBranch(client *MCPClient, project string, iid int, branch strin
 	}
 	// The ref list was truncated before the default branch could be ruled out.
 	return false, false
-}
-
-// promoteMRCheckedAt is when a baseline → default MR landed. Open MRs use the
-// poll time. A merged MR must use Gongfeng's own timestamp: merged_at, then
-// resolved_at, then updated_at. "now" is not a merge time.
-func promoteMRCheckedAt(mr gongfengListedMR, state string, now time.Time) (time.Time, bool) {
-	if normalizeMRState(state) != "merged" {
-		if now.IsZero() {
-			now = time.Now().UTC()
-		}
-		return now, true
-	}
-	for _, raw := range []string{mr.MergedAt, mr.ResolvedAt, mr.UpdatedAt} {
-		if parsed := parseGongfengTime(raw); !parsed.IsZero() {
-			return parsed, true
-		}
-	}
-	return time.Time{}, false
 }

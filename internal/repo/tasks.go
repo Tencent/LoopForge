@@ -66,3 +66,13 @@ func (r *TasksRepo) CreateTask(v domain.Task) (domain.Task, bool, error) {
 func (r *TasksRepo) deleteIssueTasks(tx *gorm.DB, issueID string) error {
 	return tx.Where("issue_id = ?", issueID).Delete(&taskRow{}).Error
 }
+
+// IssueHasTasks reports whether the issue was ever dispatched: every SOP
+// dispatch reserves a Task first, and nothing else creates one.
+func (r *TasksRepo) IssueHasTasks(issueID string) (bool, error) {
+	var n int64
+	if err := r.DB.Model(&taskRow{}).Where("issue_id = ?", issueID).Limit(1).Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}

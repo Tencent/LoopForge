@@ -37,9 +37,9 @@ func installTestTrackerMCPs(t *testing.T, st *repo.Store, projectID string) {
 }
 
 func TestMCPInstallIDSeparatesScopeAndOwner(t *testing.T) {
-	project := mcpInstallID("iwiki", "project", "platform")
-	personal := mcpInstallID("iwiki", "personal", "2")
-	if project == personal || project != "mcp-iwiki-project-platform" || personal != "mcp-iwiki-personal-2" {
+	project := mcpInstallID("wiki", "project", "platform")
+	personal := mcpInstallID("wiki", "personal", "2")
+	if project == personal || project != "mcp-wiki-project-platform" || personal != "mcp-wiki-personal-2" {
 		t.Fatalf("unexpected install ids: project=%q personal=%q", project, personal)
 	}
 }
@@ -56,14 +56,14 @@ func TestMCPInstallIDBoundsLongNamesAndOwners(t *testing.T) {
 }
 
 func TestMCPMarketCatalogContainsOnlyPublicServices(t *testing.T) {
-	if len(taihuMCPMarket) != 1 {
-		t.Fatalf("catalog: %+v", taihuMCPMarket)
+	if len(mcpMarketItems) != 1 {
+		t.Fatalf("catalog: %+v", mcpMarketItems)
 	}
 	item, ok := marketItem("github")
 	if !ok || item.URL != "https://api.githubcopilot.com/mcp/" || item.AuthType != "github-token" {
 		t.Fatalf("GitHub: %+v", item)
 	}
-	if _, ok := marketItem("iwiki"); ok {
+	if _, ok := marketItem("58"); ok {
 		t.Fatal("enterprise catalog must not ship by default")
 	}
 }
@@ -87,11 +87,11 @@ func TestMCPMarketSearch(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Source != "loopforge-public" || payload.Total != len(taihuMCPMarket) {
+	if payload.Source != "loopforge-public" || payload.Total != len(mcpMarketItems) {
 		t.Fatalf("catalog meta = %+v", payload)
 	}
 	if len(payload.Items) == 0 {
-		t.Fatal("expected search hits for iwiki")
+		t.Fatal("expected search hits for github")
 	}
 	found := false
 	for _, item := range payload.Items {
@@ -101,7 +101,7 @@ func TestMCPMarketSearch(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("search iwiki missed id 58: %+v", payload.Items)
+		t.Fatalf("search github missed id github: %+v", payload.Items)
 	}
 
 	all := httptest.NewRecorder()
@@ -114,8 +114,8 @@ func TestMCPMarketSearch(t *testing.T) {
 	if err := json.Unmarshal(all.Body.Bytes(), &allPayload); err != nil {
 		t.Fatal(err)
 	}
-	if len(allPayload.Items) != len(taihuMCPMarket) {
-		t.Fatalf("unfiltered items=%d catalog=%d", len(allPayload.Items), len(taihuMCPMarket))
+	if len(allPayload.Items) != len(mcpMarketItems) {
+		t.Fatalf("unfiltered items=%d catalog=%d", len(allPayload.Items), len(mcpMarketItems))
 	}
 }
 
@@ -275,7 +275,7 @@ func TestMCPMarketIconsAreLocalAndEmbedded(t *testing.T) {
 		t.Fatal(err)
 	}
 	var withIcon int
-	for _, item := range taihuMCPMarket {
+	for _, item := range mcpMarketItems {
 		if strings.TrimSpace(item.IconURL) == "" {
 			continue
 		}

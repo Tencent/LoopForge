@@ -1,0 +1,329 @@
+/* Grasp artifact directory and conversation panel proportions.
+ * Adapted from Grasp (MIT, see assets/provider-logos/LICENSE.grasp).
+ * The full MIT permission notice is retained in HARNESS-UI-LICENSE.txt.
+ */
+.chat-shell .artifact-panel {
+  --artifact-ink: 24 24 27;
+  --artifact-row-hover: rgb(var(--artifact-ink) / 0.025);
+  --artifact-row-active: rgb(var(--artifact-ink) / 0.05);
+}
+[data-theme="dark"] .chat-shell .artifact-panel {
+  --artifact-ink: 237 237 240;
+}
+.chat-shell .artifact-panel .artifact-panel-header {
+  display: flex;
+  height: 44px;
+  min-height: 44px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px 4px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+.chat-shell .artifact-panel .artifact-panel-heading {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.chat-shell .artifact-panel .artifact-panel-heading > span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.chat-shell .artifact-panel .artifact-panel-heading > small {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-shell .artifact-panel .artifact-panel-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.chat-shell .artifact-panel .artifact-panel-actions .icon-button {
+  display: inline-flex;
+  width: 30px;
+  height: 34px;
+  min-height: 34px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 0;
+  color: var(--muted);
+}
+.chat-shell .artifact-panel .artifact-panel-actions .icon-button:hover,
+.chat-shell .artifact-panel .artifact-panel-back-to-chat:hover,
+.chat-shell .artifact-panel .artifact-preview-back:hover {
+  background: rgb(var(--artifact-ink) / 0.05);
+  color: var(--text);
+}
+.chat-shell .artifact-panel .artifact-panel-back-to-chat {
+  display: inline-flex;
+  height: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 0 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .artifact-panel-back-to-chat > span {
+  font-size: 12px;
+}
+.chat-shell .artifact-panel[data-compact] .artifact-panel-header {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+}
+.chat-shell .artifact-panel .artifact-directory-tools {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+.chat-shell .artifact-panel .artifact-search {
+  display: flex;
+  height: 34px;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 9px;
+  color: var(--muted);
+  transition: border-color 160ms ease;
+}
+.chat-shell .artifact-panel .artifact-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.chat-shell .artifact-panel .artifact-search input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  box-shadow: none;
+}
+.chat-shell
+  .artifact-panel
+  .artifact-search
+  input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+.chat-shell .artifact-panel .artifact-search input::placeholder {
+  color: var(--muted);
+}
+.chat-shell .artifact-panel .artifact-search .icon-button {
+  width: 22px;
+  height: 24px;
+  min-height: 24px;
+  flex: none;
+  border-radius: 5px;
+  padding: 0;
+}
+.chat-shell .artifact-panel .artifact-search-count {
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .artifact-panel-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.chat-shell .artifact-panel .artifact-section {
+  padding: 0 8px 12px;
+}
+.chat-shell .artifact-panel .artifact-section + .artifact-section {
+  border-top: 0;
+}
+.chat-shell .artifact-panel .artifact-section > h3 {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  margin: 0;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+}
+.chat-shell .artifact-panel .artifact-row {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 54px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+  border-radius: 0;
+  padding: 9px 10px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  transition: background-color 160ms ease;
+}
+.chat-shell .artifact-panel .artifact-row:hover {
+  border-radius: 0;
+  background: var(--artifact-row-hover);
+  color: var(--text);
+  box-shadow: none;
+}
+.chat-shell .artifact-panel .artifact-row.is-selected {
+  background: var(--artifact-row-active);
+}
+.chat-shell .artifact-panel .artifact-row.is-selected::before {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 2px;
+  background: rgb(var(--artifact-ink) / 0.65);
+  content: "";
+}
+.chat-shell .artifact-panel .artifact-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -2px;
+}
+.chat-shell .artifact-panel .artifact-row > .artifact-file-icon {
+  display: flex;
+  width: 18px;
+  height: 22px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  color: var(--muted);
+}
+.chat-shell .artifact-panel .artifact-row > .artifact-file-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.chat-shell .artifact-panel .artifact-row strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .artifact-row small {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  margin-top: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .artifact-row .artifact-row-action {
+  flex: none;
+  color: var(--muted);
+  opacity: 0.6;
+}
+.chat-shell .artifact-panel > .artifact-preview-toolbar {
+  display: flex;
+  min-height: 41px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+.chat-shell .artifact-panel .artifact-preview-back {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.chat-shell .artifact-panel > .artifact-preview-toolbar .node-header-meta {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .artifact-node-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .artifact-panel-empty {
+  display: flex;
+  min-height: 200px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 0;
+  padding: 32px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+.chat-shell .artifact-panel .artifact-panel-preview:has(> .artifact-preview) {
+  padding: 0;
+}
+.chat-shell .artifact-panel .artifact-panel-empty > .harness-icon {
+  opacity: 0.5;
+}
+.chat-shell .artifact-panel .artifact-panel-empty > p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 20px;
+}
+@media (max-width: 560px) {
+  .chat-shell .artifact-panel .artifact-panel-actions > button:first-child {
+    display: inline-flex;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell .artifact-panel .artifact-row,
+  .chat-shell .artifact-panel .artifact-search,
+  .chat-shell .artifact-panel button {
+    transition: none;
+  }
+}

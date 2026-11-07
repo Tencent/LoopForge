@@ -53,8 +53,9 @@ func controlLeaseRun(t *testing.T, e *Engine, id string, saved bool) string {
 }
 
 func TestMainBotControlReusesRunWorkspaceLease(t *testing.T) {
+	t.Parallel()
 	for _, saved := range []bool{false, true} {
-		for _, op := range []string{"retry", "resume", "enable", "dispatch"} {
+		for _, op := range []string{"retry", "resume"} {
 			name := op + "/legacy"
 			if saved {
 				name = op + "/snapshot"
@@ -71,14 +72,6 @@ func TestMainBotControlReusesRunWorkspaceLease(t *testing.T) {
 					run.Nodes["step"].Status = "waiting_approval"
 					run.Nodes["step"].Activity = "已由用户暂停，继续后脚本将从头执行"
 				}
-				if op == "dispatch" {
-					run.Status = "waiting"
-					run.WorkflowSnapshot.CollaborationMode = "group"
-					run.WorkflowSnapshot.GroupMembers = []string{"dev"}
-					if err := e.repo.PutAgent(domain.AgentDefinition{ID: "dev", Name: "开发", ProjectID: "p", ExecutorID: "mock"}); err != nil {
-						t.Fatal(err)
-					}
-				}
 				if err := e.repo.PutRun(run); err != nil {
 					t.Fatal(err)
 				}
@@ -93,10 +86,7 @@ func TestMainBotControlReusesRunWorkspaceLease(t *testing.T) {
 					err = e.RetryContext(ctx, id, "step", "retry", "")
 				case "resume":
 					err = e.ResumePausedContext(ctx, id, "")
-				case "enable":
-					err = e.EnableTaskGroupContext(ctx, id)
-				case "dispatch":
-					_, err = e.DispatchGroupTaskContext(ctx, id, "", GroupTaskRequest{AgentID: "dev", Prompt: "检查文件", RequestID: "request"})
+
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -121,6 +111,7 @@ func TestMainBotControlReusesRunWorkspaceLease(t *testing.T) {
 }
 
 func TestConversationWorkspaceLeaseRequiresMatchingRunScope(t *testing.T) {
+	t.Parallel()
 	ctx := WithConversationWorkspaceToken(context.Background(), "parent-token", "parent")
 	if ConversationWorkspaceToken(ctx, "parent") != "parent-token" || ConversationWorkspaceToken(ctx, "child") != "" {
 		t.Fatal("workspace lease scope was not enforced")
@@ -131,6 +122,7 @@ func TestConversationWorkspaceLeaseRequiresMatchingRunScope(t *testing.T) {
 }
 
 func TestMainBotControlCannotBorrowAnotherRunOrWriterLease(t *testing.T) {
+	t.Parallel()
 	for _, saved := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy", true: "snapshot"}[saved], func(t *testing.T) {
 			e, _ := newRecoveryEngine(t)
@@ -158,6 +150,7 @@ func TestMainBotControlCannotBorrowAnotherRunOrWriterLease(t *testing.T) {
 }
 
 func TestResumeChildSOPDoesNotReuseParentWorkspaceLease(t *testing.T) {
+	t.Parallel()
 	e, _ := newRecoveryEngine(t)
 	e.ConfigureExecution("control", "control", time.Minute, false)
 	token := controlLeaseRun(t, e, "child", true)
@@ -189,6 +182,7 @@ func TestResumeChildSOPDoesNotReuseParentWorkspaceLease(t *testing.T) {
 }
 
 func TestMainBotRetryExecutesAfterWorkspaceOwnerReleasesLease(t *testing.T) {
+	t.Parallel()
 	for _, saved := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy", true: "snapshot"}[saved], func(t *testing.T) {
 			e, _ := newRecoveryEngine(t)
@@ -240,6 +234,7 @@ func TestMainBotRetryExecutesAfterWorkspaceOwnerReleasesLease(t *testing.T) {
 }
 
 func TestExecutionWorkspaceWaitStopsOnCancellation(t *testing.T) {
+	t.Parallel()
 	e, _ := newRecoveryEngine(t)
 	token := controlLeaseRun(t, e, "cancel-wait", false)
 	run, _ := e.repo.RunState("cancel-wait")
@@ -270,6 +265,7 @@ func TestExecutionWorkspaceWaitStopsOnCancellation(t *testing.T) {
 }
 
 func TestCancelResumedScriptWhileWorkspaceIsBusy(t *testing.T) {
+	t.Parallel()
 	e, _ := newRecoveryEngine(t)
 	token := controlLeaseRun(t, e, "cancel-running-wait", false)
 	run, _ := e.repo.RunState("cancel-running-wait")
@@ -281,7 +277,7 @@ func TestCancelResumedScriptWhileWorkspaceIsBusy(t *testing.T) {
 	if err := e.RetryContext(ctx, run.ID, "step", "retry", ""); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		current, _ := e.repo.RunState(run.ID)
 		if current.Nodes["step"].Status == "running" {
@@ -292,7 +288,7 @@ func TestCancelResumedScriptWhileWorkspaceIsBusy(t *testing.T) {
 	if err := e.Cancel(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		current, _ := e.repo.RunState(run.ID)
 		if current.Status == "cancelled" && e.ActiveRunCount() == 0 {
@@ -314,6 +310,7 @@ func TestCancelResumedScriptWhileWorkspaceIsBusy(t *testing.T) {
 }
 
 func TestMainBotResumeLegacyScriptCreatesUsableWorkspace(t *testing.T) {
+	t.Parallel()
 	e, _ := newRecoveryEngine(t)
 	token := controlLeaseRun(t, e, "actual-resume", false)
 	run, _ := e.repo.RunState("actual-resume")

@@ -100,7 +100,7 @@ func TestApplyRecommendationUpdatesAgentGateAndWorkflowAttempts(t *testing.T) {
 	if wf.Nodes[0].MaxAttempts != 3 {
 		t.Fatalf("maxAttempts=%d", wf.Nodes[0].MaxAttempts)
 	}
-	agent := domain.AgentDefinition{ID: "fixer", Instructions: "修 bug", Verification: []domain.VerificationGate{{ID: "exists", Name: "文件存在", Commands: []string{"test -f a"}}}}
+	agent := domain.AgentDefinition{ID: "fixer", Prompt: "修 bug", Verification: []domain.VerificationGate{{ID: "exists", Name: "文件存在", Commands: []string{"test -f a"}}}}
 	if err := ApplyRecommendation(domain.RunEvalRecommendation{
 		Target: "agent", Action: "upsert_gate", TargetID: "fixer",
 		Gate: &domain.VerificationGate{ID: "exists", Name: "增量测试", Commands: []string{"go test ./..."}, Required: true, OnFailure: "reject"},
@@ -113,7 +113,7 @@ func TestApplyRecommendationUpdatesAgentGateAndWorkflowAttempts(t *testing.T) {
 	if err := ApplyRecommendation(domain.RunEvalRecommendation{Target: "agent", Action: "append_instructions", Text: "不要空转 Read"}, nil, &agent); err != nil {
 		t.Fatal(err)
 	}
-	if agent.Instructions == "修 bug" {
+	if agent.Prompt == "修 bug" {
 		t.Fatal("instructions should be appended")
 	}
 }

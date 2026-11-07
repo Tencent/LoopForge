@@ -27,7 +27,7 @@ func TestLiveImportTAPDStoryWithExplicitCredentials(t *testing.T) {
 	loadAcceptanceDotEnv()
 	prodDSN := strings.TrimSpace(os.Getenv("AGENTFLOW_MYSQL_DSN"))
 	if prodDSN == "" {
-		t.Skip("AGENTFLOW_MYSQL_DSN is required to copy example-maintainer Taihu PAT")
+		t.Skip("AGENTFLOW_MYSQL_DSN is required to copy the acceptance user")
 	}
 	if loopbackMySQLDSN(prodDSN) {
 		t.Skip("AGENTFLOW_MYSQL_DSN points at loopback MySQL; live TAPD import copies from production")
@@ -47,13 +47,14 @@ func TestLiveImportTAPDStoryWithExplicitCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(user.TaihuPAT) == "" {
-		t.Fatal("seeded user is missing Taihu PAT")
+	token := strings.TrimSpace(os.Getenv("AGENTFLOW_MCP_TOKEN"))
+	if token == "" {
+		t.Skip("AGENTFLOW_MCP_TOKEN is required for the TAPD MCP")
 	}
 	if err := st.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-70-project-assistant-test", Name: "TAPD MCP", MarketID: "70",
 		Scope: "project", ProjectID: assistantAcceptanceProjectID, Transport: "http",
-		URL: "https://mcpgw.knot.example.com/tapd/", AuthType: "taihu-pat", TimeoutSec: 60,
+		URL: "https://mcp-gateway.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,10 +114,14 @@ func TestDisposableStudioForBrowserIT(t *testing.T) {
 		if _, err := SeedAssistantAcceptance(st, ident); err != nil {
 			t.Fatal(err)
 		}
+		var headers map[string]string
+		if token := strings.TrimSpace(os.Getenv("AGENTFLOW_MCP_TOKEN")); token != "" {
+			headers = map[string]string{"Authorization": "Bearer " + token}
+		}
 		if err := st.PutMCPServer(domain.MCPServerDefinition{
 			ID: "mcp-70-project-assistant-test", Name: "TAPD MCP", MarketID: "70",
 			Scope: "project", ProjectID: assistantAcceptanceProjectID, Transport: "http",
-			URL: "https://mcpgw.knot.example.com/tapd/", AuthType: "taihu-pat", TimeoutSec: 60,
+			URL: "https://mcp-gateway.example.com/tapd/", Headers: headers, TimeoutSec: 60,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -153,9 +158,6 @@ func TestMySQLImportTAPDAndSanitizeClarifyOptions(t *testing.T) {
 	if !ok {
 		t.Fatal("user missing")
 	}
-	if _, err := st.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{TaihuPAT: token}); err != nil {
-		t.Fatal(err)
-	}
 	user, _ = st.UserByLoginName(login)
 	projectID := "clarify-opt"
 	if err := st.PutProject(domain.Project{
@@ -173,7 +175,7 @@ func TestMySQLImportTAPDAndSanitizeClarifyOptions(t *testing.T) {
 	if err := st.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-70-project-" + projectID, Name: "TAPD MCP", MarketID: "70",
 		Scope: "project", ProjectID: projectID, Transport: "http",
-		URL: "https://mcpgw.knot.example.com/tapd/", AuthType: "taihu-pat", TimeoutSec: 60,
+		URL: "https://mcp-gateway.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -269,12 +271,9 @@ func TestSeedLocalClarifyPreview(t *testing.T) {
 	if !ok {
 		t.Fatal("user missing")
 	}
-	if _, err := st.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{TaihuPAT: token}); err != nil {
-		t.Fatal(err)
-	}
 	user, _ = st.UserByLoginName("example-maintainer")
 	if err := st.PutProject(domain.Project{
-		ID: "dp", Key: "DP", Name: "DNSPod", Color: "#536dfe", OwnerID: user.ID,
+		ID: "dp", Key: "DP", Name: "DemoDNS", Color: "#536dfe", OwnerID: user.ID,
 		Members: []domain.ProjectMember{{UserID: user.ID, Role: "maintainer"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -282,7 +281,7 @@ func TestSeedLocalClarifyPreview(t *testing.T) {
 	if err := st.PutMCPServer(domain.MCPServerDefinition{
 		ID: "mcp-70-project-dp", Name: "TAPD MCP", MarketID: "70",
 		Scope: "project", ProjectID: "dp", Transport: "http",
-		URL: "https://mcpgw.knot.example.com/tapd/", AuthType: "taihu-pat", TimeoutSec: 60,
+		URL: "https://mcp-gateway.example.com/tapd/", Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 60,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -25,36 +25,15 @@ func ApplyRecommendation(rec domain.RunEvalRecommendation, workflow *domain.Work
 			return fmt.Errorf("agent is required")
 		}
 		return upsertAgentGate(agent, rec, true)
-	case "agent.append_instructions":
+	case "agent.append_instructions", "agent.append_task_prompt":
+		// append_instructions predates the merged role prompt; both land there.
 		if agent == nil {
 			return fmt.Errorf("agent is required")
 		}
-		return appendAgentText(&agent.Instructions, rec)
-	case "agent.append_task_prompt":
-		if agent == nil {
-			return fmt.Errorf("agent is required")
-		}
-		return appendTaskPrompt(agent, rec)
+		return appendAgentText(&agent.Prompt, rec)
 	default:
 		return fmt.Errorf("unsupported recommendation action %q", action)
 	}
-}
-
-func appendTaskPrompt(agent *domain.AgentDefinition, rec domain.RunEvalRecommendation) error {
-	text := recommendationText(rec)
-	if text == "" {
-		return fmt.Errorf("append text is empty")
-	}
-	if agent.TaskPrompt == nil {
-		agent.TaskPrompt = &domain.TaskPromptSpec{}
-	}
-	for _, item := range agent.TaskPrompt.Constraints {
-		if item == text {
-			return nil
-		}
-	}
-	agent.TaskPrompt.Constraints = append(agent.TaskPrompt.Constraints, text)
-	return nil
 }
 
 func recommendationText(rec domain.RunEvalRecommendation) string {

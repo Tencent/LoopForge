@@ -8,6 +8,7 @@ import (
 )
 
 type Run struct {
+	Kind               string             `json:"kind,omitempty"`
 	ID                 string             `json:"id"`
 	WorkflowID         string             `json:"workflowId"`
 	WorkflowSnapshot   WorkflowDefinition `json:"workflowSnapshot"`
@@ -52,6 +53,18 @@ type Run struct {
 	CreatedAt         time.Time           `json:"createdAt"`
 	UpdatedAt         time.Time           `json:"updatedAt"`
 	Revision          int                 `json:"revision"`
+}
+
+const RunKindWorkspace = "workspace"
+const ConversationWorkspaceWorkflowID = "conversation-workspace"
+
+// IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
+func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
+
+// HistoricalGroup is a record of the retired role groups. It has no SOP graph
+// that could be resumed or retried.
+func (r Run) HistoricalGroup() bool {
+	return !r.IsWorkspace() && r.WorkflowSnapshot.CollaborationMode == "group"
 }
 
 // RepositoryContexts returns the frozen repositories of this run. New runs

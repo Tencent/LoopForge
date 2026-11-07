@@ -74,25 +74,30 @@ func EnsureAgentFlowGitExcludes(workspace string) error {
 }
 
 func appendGitExcludeBlock(workspace, block, label string) error {
-	gitDir := filepath.Join(workspace, ".git")
-	if _, err := os.Stat(gitDir); err != nil {
+	root, excludePath, err := openWorkspacePath(workspace, filepath.Join(workspace, ".git", "info", "exclude"))
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if _, err := root.Stat(".git"); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	excludePath := filepath.Join(gitDir, "info", "exclude")
-	existing, err := os.ReadFile(excludePath)
+	existing, err := root.ReadFile(excludePath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if bytes.Contains(existing, []byte(block)) {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(excludePath), 0o700); err != nil {
+	if err := root.MkdirAll(filepath.Dir(excludePath), 0o700); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(excludePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	// Keep append semantics: separate preparation paths may add different
+	// managed blocks concurrently. The held root confines the open operation.
+	file, err := root.OpenFile(excludePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}

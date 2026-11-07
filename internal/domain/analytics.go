@@ -4,6 +4,7 @@ import "time"
 
 // AnalyticsFilter scopes platform analytics without coupling the store to HTTP.
 type AnalyticsFilter struct {
+	Origin string // empty/all, internal, external
 	// ProjectIDs is a server-resolved scope; nil means unrestricted, empty means no projects.
 	ProjectIDs []string `json:"-"`
 	ProjectID  string
@@ -20,9 +21,14 @@ type AnalyticsFilter struct {
 	RequirementsOnly bool
 	// Grain buckets Trend as day (default), week, month, or all (month buckets, no window).
 	Grain string
+	// TimeZone is the IANA zone used by business-domain delivery trend buckets
+	// and by the analytics weekday × hour heatmap (default Asia/Shanghai).
+	TimeZone string
 }
 
 type AnalyticsSummary struct {
+	ExternalRuns      int       `json:"externalRuns"`
+	QualityRuns       int       `json:"qualityRuns"`
 	TotalRuns         int       `json:"totalRuns"`
 	ActiveRuns        int       `json:"activeRuns"`
 	WaitingRuns       int       `json:"waitingRuns"`
@@ -39,11 +45,32 @@ type AnalyticsSummary struct {
 	P99DurationMs     int64     `json:"p99DurationMs"`
 	TotalTokens       int64     `json:"totalTokens"`
 	TotalCostUSD      float64   `json:"totalCostUsd"`
+	TotalCostCNY      float64   `json:"totalCostCny"`
 	ToolCalls         int       `json:"toolCalls"`
 	Artifacts         int       `json:"artifacts"`
 	TelemetryEvents   int       `json:"telemetryEvents"`
 	LogRecords        int       `json:"logRecords"`
 	GeneratedAt       time.Time `json:"generatedAt"`
+
+	// Conversation* cover conversations that changed code directly in a
+	// conversation workspace, without an SOP. Their tokens are part of
+	// TotalTokens/TotalCost*, but the workspaces are not SOP runs and stay out
+	// of TotalRuns and every run status or duration metric.
+	ConversationWorkspaces int `json:"conversationWorkspaces"`
+	// ConversationLinkedWorkspaces have a requirement linked.
+	ConversationLinkedWorkspaces int `json:"conversationLinkedWorkspaces"`
+	ConversationIssues           int `json:"conversationIssues"`
+	// Of ConversationIssues, those with a submitted MR and those whose MR
+	// merged to the default branch. Unlike Delivery, also set in overview scope.
+	ConversationIssuesWithMR    int     `json:"conversationIssuesWithMr"`
+	ConversationIssuesDelivered int     `json:"conversationIssuesDelivered"`
+	ConversationTokens          int64   `json:"conversationTokens"`
+	ConversationCostUSD         float64 `json:"conversationCostUsd"`
+	ConversationCostCNY         float64 `json:"conversationCostCny"`
+
+	CostCurrency       string  `json:"costCurrency"`
+	USDToCNY           float64 `json:"usdToCny"`
+	CostPricingVersion string  `json:"costPricingVersion"`
 
 	// Token 四分项：输入/输出/缓存读/缓存写，合计不等于 TotalTokens（TotalTokens 为账单口径）。
 	InputTokens      int64 `json:"inputTokens"`
@@ -71,6 +98,7 @@ type AnalyticsSummary struct {
 	// 成本识别：costStatus=reported/estimated 视为已识别，unknown 展示为"未识别"而非 ¥0。
 	CostCoveragePct float64 `json:"costCoveragePct"`
 	CostReportedUSD float64 `json:"costReportedUsd"`
+	CostReportedCNY float64 `json:"costReportedCny"`
 	CostUnknownRuns int     `json:"costUnknownRuns"`
 
 	// 需求维度：UniqueIssues 为关联到执行的需求数（去重），后两项为单需求平均执行/失败次数。
@@ -87,17 +115,24 @@ type AnalyticsSummary struct {
 	WeeklyDeliveredIssues    int     `json:"weeklyDeliveredIssues"`
 	WeeklyActiveContributors int     `json:"weeklyActiveContributors"`
 	WeeklyThroughputPerUser  float64 `json:"weeklyThroughputPerUser"`
+
+	// MergedMRs counts unique linked work MRs by their actual merge time.
+	MergedMRs int `json:"mergedMrs"`
+	// MergedMRsMissingTime cannot be assigned to the requested date window.
+	MergedMRsMissingTime int `json:"mergedMrsMissingTime"`
 }
 
 type AnalyticsTrendPoint struct {
-	Date       string  `json:"date"`
-	Runs       int     `json:"runs"`
-	Succeeded  int     `json:"succeeded"`
-	Failed     int     `json:"failed"`
-	Reworks    int     `json:"reworks"`
-	DurationMs int64   `json:"durationMs"`
-	Tokens     int64   `json:"tokens"`
-	CostUSD    float64 `json:"costUsd"`
+	CostUnknownRuns int     `json:"costUnknownRuns"`
+	Date            string  `json:"date"`
+	Runs            int     `json:"runs"`
+	Succeeded       int     `json:"succeeded"`
+	Failed          int     `json:"failed"`
+	Reworks         int     `json:"reworks"`
+	DurationMs      int64   `json:"durationMs"`
+	Tokens          int64   `json:"tokens"`
+	CostUSD         float64 `json:"costUsd"`
+	CostCNY         float64 `json:"costCny"`
 
 	// 执行耗时（节点求和）与 Token 四分项，随趋势一并输出。
 	ExecutionDurationMs int64 `json:"executionDurationMs"`
@@ -107,22 +142,57 @@ type AnalyticsTrendPoint struct {
 	CacheWriteTokens    int64 `json:"cacheWriteTokens"`
 
 	// Issues 为当日有执行的去重需求数，供周/月需求量趋势使用。
-	Issues int `json:"issues,omitempty"`
+	Issues    int `json:"issues,omitempty"`
+	MergedMRs int `json:"mergedMrs"`
+
+	// Conversation* is the share of Tokens/Cost* used by conversation
+	// workspaces in this bucket; they are not SOP runs, and their
+	// requirements are not part of Issues.
+	ConversationWorkspaces int     `json:"conversationWorkspaces,omitempty"`
+	ConversationIssues     int     `json:"conversationIssues,omitempty"`
+	ConversationTokens     int64   `json:"conversationTokens,omitempty"`
+	ConversationCostUSD    float64 `json:"conversationCostUsd,omitempty"`
+	ConversationCostCNY    float64 `json:"conversationCostCny,omitempty"`
+}
+
+// AnalyticsWeekHourCell is one non-empty weekday × hour bucket in the requested time zone.
+type AnalyticsWeekHourCell struct {
+	// Weekday counts from Monday=0 to Sunday=6.
+	Weekday int     `json:"weekday"`
+	Hour    int     `json:"hour"`
+	Runs    int     `json:"runs"`
+	Tokens  int64   `json:"tokens"`
+	CostUSD float64 `json:"costUsd"`
+	CostCNY float64 `json:"costCny"`
+}
+
+// AnalyticsMRMerge retains the timestamp evidence used for the MR count.
+type AnalyticsMRMerge struct {
+	MRProject    string    `json:"mrProject"`
+	MRIID        int       `json:"mrIid"`
+	MRURL        string    `json:"mrUrl"`
+	TargetBranch string    `json:"targetBranch"`
+	IssueID      string    `json:"issueId"`
+	Title        string    `json:"title"`
+	MergedAt     time.Time `json:"mergedAt"`
 }
 
 type AnalyticsBreakdown struct {
-	Key               string  `json:"key"`
-	Name              string  `json:"name"`
-	Runs              int     `json:"runs"`
-	Succeeded         int     `json:"succeeded"`
-	Failed            int     `json:"failed"`
-	Active            int     `json:"active"`
-	Reworks           int     `json:"reworks"`
-	SuccessRate       float64 `json:"successRate"`
-	AverageDurationMs int64   `json:"averageDurationMs"`
-	P95DurationMs     int64   `json:"p95DurationMs"`
-	Tokens            int64   `json:"tokens"`
-	CostUSD           float64 `json:"costUsd"`
+	CostUnknownRuns    int     `json:"costUnknownRuns"`
+	QualityUnknownRuns int     `json:"qualityUnknownRuns"`
+	Key                string  `json:"key"`
+	Name               string  `json:"name"`
+	Runs               int     `json:"runs"`
+	Succeeded          int     `json:"succeeded"`
+	Failed             int     `json:"failed"`
+	Active             int     `json:"active"`
+	Reworks            int     `json:"reworks"`
+	SuccessRate        float64 `json:"successRate"`
+	AverageDurationMs  int64   `json:"averageDurationMs"`
+	P95DurationMs      int64   `json:"p95DurationMs"`
+	Tokens             int64   `json:"tokens"`
+	CostUSD            float64 `json:"costUsd"`
+	CostCNY            float64 `json:"costCny"`
 
 	Cancelled int `json:"cancelled"`
 	// CancelRate/ReworkRate 单位 %：cancelled ÷ 终态、reworks ÷ runs。
@@ -178,25 +248,31 @@ type AnalyticsCoverage struct {
 }
 
 type AnalyticsDelivery struct {
-	IssueID      string  `json:"issueId"`
-	ExternalID   string  `json:"externalId,omitempty"`
-	ExternalIID  int     `json:"externalIid,omitempty"`
-	Title        string  `json:"title"`
-	Source       string  `json:"source"`
-	IssueURL     string  `json:"issueUrl,omitempty"`
-	WorkflowID   string  `json:"workflowId"`
-	WorkflowName string  `json:"workflowName"`
-	RunID        string  `json:"runId"`
-	RunStatus    string  `json:"runStatus"`
-	SOPSucceeded bool    `json:"sopSucceeded"`
-	DurationMs   int64   `json:"durationMs"`
-	Tokens       int64   `json:"tokens"`
-	CostUSD      float64 `json:"costUsd"`
-	MRURL        string  `json:"mrUrl,omitempty"`
-	MRProject    string  `json:"mrProject,omitempty"`
-	MRIID        int     `json:"mrIid,omitempty"`
-	MRState      string  `json:"mrState,omitempty"` // merged (default branch), integrated (baseline), opened, closed, reopened, none, unknown
-	Delivered    bool    `json:"delivered"`
+	IssueID      string `json:"issueId"`
+	ExternalID   string `json:"externalId,omitempty"`
+	ExternalIID  int    `json:"externalIid,omitempty"`
+	Title        string `json:"title"`
+	Source       string `json:"source"`
+	IssueURL     string `json:"issueUrl,omitempty"`
+	WorkflowID   string `json:"workflowId"`
+	WorkflowName string `json:"workflowName"`
+	RunID        string `json:"runId"`
+	RunStatus    string `json:"runStatus"`
+	SOPSucceeded bool   `json:"sopSucceeded"`
+	// DirectDelivery marks a requirement delivered only from conversation
+	// workspaces, without an SOP run: it counts as delivered once its MR merges.
+	DirectDelivery bool    `json:"directDelivery,omitempty"`
+	DurationMs     int64   `json:"durationMs"`
+	Tokens         int64   `json:"tokens"`
+	CostUSD        float64 `json:"costUsd"`
+	CostCNY        float64 `json:"costCny"`
+	MRURL          string  `json:"mrUrl,omitempty"`
+	MRProject      string  `json:"mrProject,omitempty"`
+	MRIID          int     `json:"mrIid,omitempty"`
+	MRState        string  `json:"mrState,omitempty"` // merged (default branch), integrated (baseline), opened, closed, reopened, none, unknown
+	// MRs retains every associated MR; the singular fields are compatibility / primary-link fields.
+	MRs       []DeliveryMR `json:"mrs,omitempty"`
+	Delivered bool         `json:"delivered"`
 
 	// 该需求全部关联执行（含失败与返工）的聚合结果。
 	RunCount   int `json:"runCount"`
@@ -252,15 +328,23 @@ type AnalyticsPhaseEvidence struct {
 }
 
 type AnalyticsDeliverySummary struct {
-	Issues            int     `json:"issues"`
-	SOPSucceeded      int     `json:"sopSucceeded"`
-	WithMR            int     `json:"withMr"`
-	MRMerged          int     `json:"mrMerged"`
-	MRIntegrated      int     `json:"mrIntegrated,omitempty"`
-	Delivered         int     `json:"delivered"`
-	AverageDurationMs int64   `json:"averageDurationMs"`
-	TotalTokens       int64   `json:"totalTokens"`
-	TotalCostUSD      float64 `json:"totalCostUsd"`
+	Issues       int `json:"issues"`
+	SOPSucceeded int `json:"sopSucceeded"`
+	// DirectIssues were worked on only in conversations, without an SOP run;
+	// DirectWithMR of them have submitted an MR, DirectDelivered are delivered.
+	DirectIssues       int     `json:"directIssues"`
+	DirectWithMR       int     `json:"directWithMr"`
+	DirectDelivered    int     `json:"directDelivered"`
+	WithMR             int     `json:"withMr"`
+	TotalMRs           int     `json:"totalMrs"`
+	MRMerged           int     `json:"mrMerged"`
+	MRIntegrated       int     `json:"mrIntegrated,omitempty"`
+	IssuesWithMergedMR int     `json:"issuesWithMergedMr"`
+	Delivered          int     `json:"delivered"`
+	AverageDurationMs  int64   `json:"averageDurationMs"`
+	TotalTokens        int64   `json:"totalTokens"`
+	TotalCostUSD       float64 `json:"totalCostUsd"`
+	TotalCostCNY       float64 `json:"totalCostCny"`
 
 	// CompletedIssues 按 IssueID 去重后的成功需求数（同一需求多次成功只计一次）。
 	CompletedIssues int `json:"completedIssues"`
@@ -277,12 +361,13 @@ type AnalyticsDeliverySummary struct {
 
 // AnalyticsWorkflowVersion 对比同一 SOP 不同版本的执行效果。
 type AnalyticsWorkflowVersion struct {
-	WorkflowID string `json:"workflowId"`
-	Name       string `json:"name"`
-	Version    int    `json:"version"`
-	Runs       int    `json:"runs"`
-	Succeeded  int    `json:"succeeded"`
-	Failed     int    `json:"failed"`
+	CostUnknownRuns int    `json:"costUnknownRuns"`
+	WorkflowID      string `json:"workflowId"`
+	Name            string `json:"name"`
+	Version         int    `json:"version"`
+	Runs            int    `json:"runs"`
+	Succeeded       int    `json:"succeeded"`
+	Failed          int    `json:"failed"`
 	// 样本量不足（runs < 5）时置 true，前端标注"样本不足"。
 	InsufficientSample bool    `json:"insufficientSample"`
 	SuccessRate        float64 `json:"successRate"`
@@ -291,6 +376,7 @@ type AnalyticsWorkflowVersion struct {
 	AverageExecutionDurationMs int64   `json:"averageExecutionDurationMs"`
 	Tokens                     int64   `json:"tokens"`
 	CostUSD                    float64 `json:"costUsd"`
+	CostCNY                    float64 `json:"costCny"`
 }
 
 // AnalyticsUserUsage 为"每用户每日"用量：责任人 × 自然日。
@@ -308,6 +394,8 @@ type AnalyticsUserUsage struct {
 	CacheWriteTokens int64 `json:"cacheWriteTokens"`
 
 	CostUSD float64 `json:"costUsd"`
+
+	CostCNY float64 `json:"costCny"`
 	// CostKnown 为 false 表示当日成本未识别。
 	CostKnown bool `json:"costKnown"`
 
@@ -324,6 +412,7 @@ type AnalyticsProjectUsage struct {
 	Tokens       int64   `json:"tokens"`
 	UniqueIssues int     `json:"uniqueIssues"`
 	CostUSD      float64 `json:"costUsd"`
+	CostCNY      float64 `json:"costCny"`
 	CostKnown    bool    `json:"costKnown"`
 }
 
@@ -331,6 +420,8 @@ type AnalyticsProjectUsage struct {
 // auditable denominators. Tool success only counts finished tool observations;
 // automation means a successful run with no recorded human decision event.
 type AnalyticsDemoSummary struct {
+	CoveredRuns               int     `json:"coveredRuns"`
+	CoveredSucceededRuns      int     `json:"coveredSucceededRuns"`
 	AverageTokensPerRun       float64 `json:"averageTokensPerRun"`
 	ToolCallsObserved         int     `json:"toolCallsObserved"`
 	ToolCallsSucceeded        int     `json:"toolCallsSucceeded"`
@@ -345,42 +436,81 @@ type AnalyticsDemoSummary struct {
 // AnalyticsRunTrace is the compact TAPD -> workflow task -> Run -> trace row
 // used by the dashboard. Event details remain cursor-paged on the Run endpoint.
 type AnalyticsRunTrace struct {
-	ProjectID          string    `json:"projectId,omitempty"`
-	IssueID            string    `json:"issueId,omitempty"`
-	IssueSource        string    `json:"issueSource,omitempty"`
-	ExternalID         string    `json:"externalId,omitempty"`
-	ExternalURL        string    `json:"externalUrl,omitempty"`
-	WorkflowTaskID     string    `json:"workflowTaskId,omitempty"`
-	RunID              string    `json:"runId"`
-	TraceID            string    `json:"traceId"`
-	Status             string    `json:"status"`
-	DurationMs         int64     `json:"durationMs"`
-	Tokens             int64     `json:"tokens"`
-	CostUSD            float64   `json:"costUsd"`
-	CostKnown          bool      `json:"costKnown"`
-	ToolCalls          int       `json:"toolCalls"`
-	ToolCallsSucceeded int       `json:"toolCallsSucceeded"`
-	ToolCallsFailed    int       `json:"toolCallsFailed"`
-	HumanInterventions int       `json:"humanInterventions"`
-	ErrorNodeID        string    `json:"errorNodeId,omitempty"`
-	ErrorMessage       string    `json:"errorMessage,omitempty"`
-	CreatedAt          time.Time `json:"createdAt"`
-	FinishedAt         time.Time `json:"finishedAt,omitempty"`
+	ExecutionDurationMs *int64    `json:"executionDurationMs,omitempty"`
+	Origin              string    `json:"origin,omitempty"`
+	SourceID            string    `json:"sourceId,omitempty"`
+	WorkflowName        string    `json:"workflowName,omitempty"`
+	ProjectID           string    `json:"projectId,omitempty"`
+	IssueID             string    `json:"issueId,omitempty"`
+	IssueSource         string    `json:"issueSource,omitempty"`
+	ExternalID          string    `json:"externalId,omitempty"`
+	ExternalURL         string    `json:"externalUrl,omitempty"`
+	WorkflowTaskID      string    `json:"workflowTaskId,omitempty"`
+	RunID               string    `json:"runId"`
+	TraceID             string    `json:"traceId"`
+	Status              string    `json:"status"`
+	DurationMs          int64     `json:"durationMs"`
+	Tokens              int64     `json:"tokens"`
+	CostUSD             float64   `json:"costUsd"`
+	CostCNY             float64   `json:"costCny"`
+	CostKnown           bool      `json:"costKnown"`
+	ToolCalls           int       `json:"toolCalls"`
+	ToolCallsSucceeded  int       `json:"toolCallsSucceeded"`
+	ToolCallsFailed     int       `json:"toolCallsFailed"`
+	HumanInterventions  int       `json:"humanInterventions"`
+	ErrorNodeID         string    `json:"errorNodeId,omitempty"`
+	ErrorMessage        string    `json:"errorMessage,omitempty"`
+	CreatedAt           time.Time `json:"createdAt"`
+	FinishedAt          time.Time `json:"finishedAt,omitempty"`
+}
+
+// AnalyticsActivity counts persisted conversations, created requirements and
+// top-level requirement SOP executions independently of token/run coverage.
+type AnalyticsActivity struct {
+	Sessions              int `json:"sessions"`
+	CollaborativeSessions int `json:"collaborativeSessions"`
+	Requirements          int `json:"requirements"`
+	SOPRuns               int `json:"sopRuns"`
+	// Usage is counted by reply time, independently of session creation time.
+	SessionUsage       AnalyticsSessionUsage `json:"sessionUsage"`
+	CollaborativeUsage AnalyticsSessionUsage `json:"collaborativeUsage"`
+}
+
+// CollaborativeUsage is a subset of SessionUsage, never an additional charge.
+type AnalyticsSessionUsage struct {
+	Tokens           int64 `json:"tokens"`
+	InputTokens      int64 `json:"inputTokens"`
+	OutputTokens     int64 `json:"outputTokens"`
+	CacheReadTokens  int64 `json:"cacheReadTokens"`
+	CacheWriteTokens int64 `json:"cacheWriteTokens"`
+	ReportedReplies  int   `json:"reportedReplies"`
+	MissingReplies   int   `json:"missingReplies"`
+	// UndatedReplies only participate in cumulative usage, never date buckets.
+	UndatedReplies int `json:"undatedReplies"`
+}
+
+type AnalyticsActivityPoint struct {
+	Date string `json:"date"`
+	AnalyticsActivity
 }
 
 type AnalyticsSnapshot struct {
-	Filter     AnalyticsFilter          `json:"filter"`
-	Summary    AnalyticsSummary         `json:"summary"`
-	Trend      []AnalyticsTrendPoint    `json:"trend"`
-	Workflows  []AnalyticsBreakdown     `json:"workflows"`
-	Agents     []AnalyticsBreakdown     `json:"agents"`
-	Executors  []AnalyticsBreakdown     `json:"executors"`
-	Models     []AnalyticsBreakdown     `json:"models"`
-	Nodes      []AnalyticsBreakdown     `json:"nodes"`
-	Failures   []AnalyticsFailure       `json:"failures"`
-	Coverage   AnalyticsCoverage        `json:"coverage"`
-	Deliveries []AnalyticsDelivery      `json:"deliveries,omitempty"`
-	Delivery   AnalyticsDeliverySummary `json:"delivery"`
+	Activity      AnalyticsActivity        `json:"activity"`
+	ActivityTrend []AnalyticsActivityPoint `json:"activityTrend"`
+	DataErrors    []string                 `json:"dataErrors,omitempty"`
+	Filter        AnalyticsFilter          `json:"filter"`
+	Summary       AnalyticsSummary         `json:"summary"`
+	Trend         []AnalyticsTrendPoint    `json:"trend"`
+	Workflows     []AnalyticsBreakdown     `json:"workflows"`
+	Agents        []AnalyticsBreakdown     `json:"agents"`
+	Executors     []AnalyticsBreakdown     `json:"executors"`
+	Models        []AnalyticsBreakdown     `json:"models"`
+	Nodes         []AnalyticsBreakdown     `json:"nodes"`
+	Failures      []AnalyticsFailure       `json:"failures"`
+	Coverage      AnalyticsCoverage        `json:"coverage"`
+	Deliveries    []AnalyticsDelivery      `json:"deliveries,omitempty"`
+	Delivery      AnalyticsDeliverySummary `json:"delivery"`
+	MRMerges      []AnalyticsMRMerge       `json:"mrMerges"`
 
 	// IssueSources 为需求类型分布（local/gongfeng/tapd）。
 	IssueSources []AnalyticsBreakdown `json:"issueSources,omitempty"`
@@ -395,6 +525,8 @@ type AnalyticsSnapshot struct {
 	// Demo/RunTraces provide the minimum Loop metrics loop and its drill-down index.
 	Demo      AnalyticsDemoSummary `json:"demo"`
 	RunTraces []AnalyticsRunTrace  `json:"runTraces,omitempty"`
+	// WeekHour 按星期×小时聚合运行，时间口径与 Trend 相同，只含非零格。
+	WeekHour []AnalyticsWeekHourCell `json:"weekHour,omitempty"`
 }
 
 // MatchesProject treats a non-nil empty scope as no projects, never as all projects.

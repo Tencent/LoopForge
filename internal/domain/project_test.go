@@ -39,7 +39,7 @@ func TestParseGongfengRepoURL(t *testing.T) {
 		{name: "bare nested path", input: "tencent/infra/gateway", project: "tencent/infra/gateway", name2: "gateway", ok: true},
 		{name: "http url", input: "http://git.example.com/infra/gateway", project: "infra/gateway", name2: "gateway", ok: true},
 		{name: "wrong host", input: "https://github.com/infra/gateway", ok: false},
-		{name: "local absolute path", input: "/data/workspace/project", ok: false},
+		{name: "local absolute path", input: "/srv/project", ok: false},
 		{name: "single segment", input: "gateway", ok: false},
 		{name: "traversal", input: "infra/../etc", ok: false},
 		{name: "empty", input: "  ", ok: false},

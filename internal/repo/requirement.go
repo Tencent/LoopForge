@@ -52,11 +52,40 @@ func BuildRequirementSnapshot(issue domain.Issue, project domain.Project, runs [
 	lanes := buildRequirementLanes(issue, project, top, nested, tasks, workflows, now)
 	overall := requirementOverall(issue, lanes, top, nested, now)
 	return domain.RequirementSnapshot{
-		Issue:   issue,
-		Overall: overall,
-		Lanes:   lanes,
-		Stages:  requirementLifecycle(issue, lanes),
+		Issue:        issue,
+		Overall:      overall,
+		Lanes:        lanes,
+		Stages:       requirementLifecycle(issue, lanes),
+		Conversation: requirementConversation(issue, top),
 	}
+}
+
+// requirementConversation describes the conversation workspaces a requirement
+// was worked on in, newest first; nil when it was not worked on in one.
+// Whether the conversation still exists is up to the caller.
+func requirementConversation(issue domain.Issue, runs []domain.Run) *domain.RequirementConversation {
+	conv := domain.RequirementConversation{SessionID: strings.TrimSpace(issue.ConversationSessionID)}
+	workspaces := 0
+	seen := map[string]bool{}
+	for _, run := range runs {
+		if !run.IsWorkspace() {
+			continue
+		}
+		workspaces++
+		for _, rc := range run.RepositoryContexts() {
+			branch := domain.RequirementBranch{Repository: rc.Name, WebURL: rc.WebURL, BaseBranch: rc.BaseBranch, WorkBranch: rc.WorkBranch}
+			key := branch.Repository + "\x00" + branch.WorkBranch
+			if branch.Repository == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			conv.Branches = append(conv.Branches, branch)
+		}
+	}
+	if conv.SessionID == "" && workspaces == 0 {
+		return nil
+	}
+	return &conv
 }
 
 // splitNestedRuns separates runs started by an SOP node from top-level runs.

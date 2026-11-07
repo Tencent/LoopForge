@@ -27,6 +27,10 @@ const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(2, 14);
 export const cfg = {
   base: resolveBase(),
   token: (process.env.AGENTFLOW_E2E_TOKEN || (process.env.AGENTFLOW_E2E_TOKEN_FILE ? fs.readFileSync(process.env.AGENTFLOW_E2E_TOKEN_FILE,'utf8') : '')).trim(),
+  // A second, non-admin user's API token. Authorization scenarios (non-member,
+  // viewer, member) need a caller other than the token owner; local.sh seeds
+  // one. Unset skips those scenarios.
+  tokenB: (process.env.AGENTFLOW_E2E_TOKEN_B || '').trim(),
   // Every resource the suite creates carries this prefix so leftovers from a
   // crashed run are easy to spot and `npm run cleanup` can sweep them.
   prefix: 'e2e-auto',
@@ -38,11 +42,18 @@ export const cfg = {
   modelID: process.env.AGENTFLOW_E2E_MODEL_ID || '',
   sandbox: process.env.AGENTFLOW_E2E_SANDBOX || 'local',
   keep: flag('AGENTFLOW_E2E_KEEP', false),
+  // Repository-bound scenarios clone this repository read-only; they never
+  // push. Unset skips them. A local path works when the deployment runs on
+  // this machine (see local.sh); remote URLs use the token owner's Git token.
+  repoCloneURL: (process.env.AGENTFLOW_E2E_REPO_CLONE_URL || '').trim(),
+  repoBranch: (process.env.AGENTFLOW_E2E_REPO_BRANCH || 'main').trim(),
 };
+// Real-model scenarios need a sandbox whose image carries the executor CLI.
+cfg.modelSandbox = process.env.AGENTFLOW_E2E_MODEL_SANDBOX || cfg.sandbox;
 
 export function requireToken() {
   if (!cfg.token) {
-    throw new Error('no API token: export AGENTFLOW_E2E_TOKEN=afp_... (create one under 个人设置 → API Token)');
+    throw new Error('no API token: export AGENTFLOW_E2E_TOKEN=afp_... (create one under 个人配置 → API Token)');
   }
   return cfg.token;
 }

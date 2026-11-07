@@ -19,13 +19,13 @@ func (codeBuddyProvider) Materialize(ctx *providerMaterializeContext) error {
 	if _, err := resetControlDirectory(ctx.Workspace, "hooks", "codebuddy"); err != nil {
 		return err
 	}
-	if err := writeManagedFile(filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"), nil, 0o600); err != nil {
+	if err := writeManagedFile(ctx.Workspace, filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"), nil, 0o600); err != nil {
 		return err
 	}
 	if err := observability.WriteCodeBuddyHookBridgeAt(ctx.Workspace, filepath.Join(".agentflow", "hooks", "codebuddy")); err != nil {
 		return err
 	}
-	if err := mergeHookSettings(filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"), ctx.Compiled.Hooks); err != nil {
+	if err := mergeHookSettings(ctx.Workspace, filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"), ctx.Compiled.Hooks); err != nil {
 		return err
 	}
 	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "hooks"), filepath.Join("..", "hooks", "codebuddy")); err != nil {

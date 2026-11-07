@@ -1,0 +1,63 @@
+.chat-shell .mention-picker {
+  animation: none;
+  opacity: 1;
+  transform: translateY(0);
+  transform-origin: 50% 100%;
+  clip-path: inset(-48px round 16px);
+  transition:
+    clip-path 260ms cubic-bezier(.22, 1, .36, 1),
+    transform 260ms cubic-bezier(.22, 1, .36, 1),
+    opacity 180ms ease;
+}
+.chat-shell .mention-picker:is([data-phase="entering"], [data-phase="closing"]) {
+  opacity: 0;
+  transform: translateY(12px);
+  clip-path: inset(calc(100% + 48px) -48px -48px round 16px);
+  pointer-events: none;
+}
+.chat-shell .mention-picker[data-phase="entering"] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell .mention-picker {
+    transition: none;
+    transform: none;
+    clip-path: none;
+    animation: none;
+  }
+}
+
+.mention-picker > .mention-issue-context {
+  display: flex;
+  width: calc(100% - 16px);
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 8px 8px 0;
+  border-radius: 7px;
+  padding: 6px 8px;
+  text-align: left;
+  color: var(--text);
+  font-size: 12px;
+}
+.mention-picker > .mention-issue-context:hover:not(:disabled) {
+  background: var(--subtle);
+}
+.mention-issue-context > svg,
+.mention-issue-context > span {
+  flex: none;
+}
+.mention-issue-context > svg {
+  color: var(--muted);
+}
+.mention-issue-context > small {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -179,9 +179,12 @@ func (s *admissionScope) rowBucketKey(row runRow) (string, error) {
 // occupied counts admitted top-level runs in one bucket through
 // idx_runs_quota_bucket. Rows with a NULL bucket are legacy rows not yet
 // backfilled; they are resolved in Go so they still count.
+//
+// Conversation workspaces and retired template-free groups do not execute SOPs
+// and never reserve SOP capacity. Nested SOPs share their top-level SOP slot.
 func (s *admissionScope) occupied(key, exclude string) (int, error) {
 	var rows []runRow
-	q := s.tx.Select("id", "status", "quota_bucket", "quota_project_id", "quota_parent_run_id", "quota_exempt", "admission_state", "execution_context").
+	q := s.tx.Select("id", "kind", "workflow_id", "status", "quota_bucket", "quota_project_id", "quota_parent_run_id", "quota_exempt", "admission_state", "execution_context").
 		Where("(quota_bucket = ? OR quota_bucket IS NULL) AND status NOT IN ? AND (admission_state IS NULL OR admission_state <> ?)",
 			key, []string{"succeeded", "queued"}, "unstarted")
 	if exclude != "" {
@@ -199,6 +202,9 @@ func (s *admissionScope) occupied(key, exclude string) (int, error) {
 			parent = runFromRow(row).ExecutionContext.ParentRunID
 		}
 		if strings.TrimSpace(parent) != "" {
+			continue
+		}
+		if row.Kind == domain.RunKindWorkspace || row.WorkflowID == domain.FreeCollaborationWorkflowID {
 			continue
 		}
 		bucket, err := s.rowBucketKey(row)

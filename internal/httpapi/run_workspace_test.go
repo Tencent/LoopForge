@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -250,4 +251,97 @@ func workspaceCommitFileExists(files []workspaceCommitFile, path string) bool {
 		}
 	}
 	return false
+}
+
+// A file a node created and registered with `git add -N` is in the index but
+// not in HEAD: its diff base is empty, not "read base file: exit status 128".
+func TestReadWorkspaceBaseFileForNewAndTrackedFiles(t *testing.T) {
+	root := t.TempDir()
+	mustRunWorkspaceGit(t, root, "init", "-q")
+	mustRunWorkspaceGit(t, root, "config", "user.email", "t@example.com")
+	mustRunWorkspaceGit(t, root, "config", "user.name", "t")
+	mustWriteWorkspaceFile(t, filepath.Join(root, "README.md"), "baseline\n")
+	mustRunWorkspaceGit(t, root, "add", "README.md")
+	mustRunWorkspaceGit(t, root, "commit", "-qm", "init")
+	mustWriteWorkspaceFile(t, filepath.Join(root, "README.md"), "baseline\nhuman\n")
+	mustWriteWorkspaceFile(t, filepath.Join(root, "node.txt"), "one\n")
+	mustRunWorkspaceGit(t, root, "add", "-N", "node.txt")
+	mustWriteWorkspaceFile(t, filepath.Join(root, "untracked.txt"), "new\n")
+	for path, want := range map[string]string{"README.md": "baseline\n", "node.txt": "", "untracked.txt": ""} {
+		got, truncated, err := readWorkspaceBaseFile(context.Background(), root, domain.Run{}, path)
+		if err != nil || truncated || got != want {
+			t.Fatalf("%s: base=%q truncated=%v err=%v", path, got, truncated, err)
+		}
+	}
+}
+
+// The 「改动」view names the branch pair of the run's repositories: the
+// workspace itself only reports repository names, so the branches come from
+// the run record (and feed the 工蜂 link for committed work).
+func TestWorkspaceInfoReportsRepositoryBranches(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspaces")
+	workspace := filepath.Join(root, "run-repo")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	run := domain.Run{
+		ID: "run-repo", Status: "waiting", Nodes: map[string]*domain.NodeRun{},
+		Repositories: []domain.RepositoryContext{{
+			Name:       "agent-flow",
+			CloneURL:   "git@git.example.com:example/agent-flow.git",
+			BaseBranch: "master",
+			WorkBranch: "feature/fix-1",
+		}},
+	}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(store, engine.New(store, runtime.NewManager(root)), tracker.NewService(), "", "")
+	info := requestEmptyJSON[struct {
+		RepositoryDetails []workspaceRepositoryDetail `json:"repositoryDetails"`
+	}](t, handler, http.MethodGet, "/api/runs/run-repo/workspace", http.StatusOK)
+	if len(info.RepositoryDetails) != 1 {
+		t.Fatalf("repository details = %+v", info.RepositoryDetails)
+	}
+	detail := info.RepositoryDetails[0]
+	if detail.Name != "agent-flow" || detail.BaseBranch != "master" || detail.WorkBranch != "feature/fix-1" {
+		t.Fatalf("repository detail = %+v", detail)
+	}
+	if detail.CloneURL != "git@git.example.com:example/agent-flow.git" {
+		t.Fatalf("clone url = %q", detail.CloneURL)
+	}
+	// Once reclaimed (the usual state after the work is pushed) the panel
+	// still gets the branch, so it can point at 工蜂.
+	run.WorkspaceCleanedAt = time.Now().UTC()
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	reclaimed := requestEmptyJSON[struct {
+		Available         bool                        `json:"available"`
+		RepositoryDetails []workspaceRepositoryDetail `json:"repositoryDetails"`
+	}](t, handler, http.MethodGet, "/api/runs/run-repo/workspace", http.StatusOK)
+	if reclaimed.Available || len(reclaimed.RepositoryDetails) != 1 || reclaimed.RepositoryDetails[0].WorkBranch != "feature/fix-1" {
+		t.Fatalf("reclaimed workspace = %+v", reclaimed)
+	}
+}
+
+func TestWorkspaceRepositoryDetailsDropCloneCredentials(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://oauth2:secret-token@git.example.com/example/x.git": "https://git.example.com/example/x.git",
+		"http://user@git.example.com/example/x.git":                 "http://git.example.com/example/x.git",
+		"ssh://git:secret-token@git.example.com/example/x.git":      "ssh://git@git.example.com/example/x.git",
+		"git@git.example.com:example/x.git":                         "git@git.example.com:example/x.git",
+		"https://git.example.com/example/x.git":                     "https://git.example.com/example/x.git",
+	} {
+		run := domain.Run{Repository: domain.RepositoryContext{Name: "x", CloneURL: in, WorkBranch: "feature/a"}}
+		details := workspaceRepositoryDetails(run)
+		if len(details) != 1 || details[0].CloneURL != want || strings.Contains(details[0].CloneURL, "secret") {
+			t.Fatalf("%s -> %+v, want %s", in, details, want)
+		}
+	}
 }

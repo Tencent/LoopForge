@@ -56,6 +56,7 @@ func retryEngine(t *testing.T) (*Engine, *repo.Store) {
 // 从入口节点重跑等于整条 SOP 重来，旧容器的可写层里全是上一次的残留，
 // 而且不主动关掉的话它会一直挂到 run 最终成功为止。
 func TestRetryFromEntryNodeDiscardsSandbox(t *testing.T) {
+	t.Parallel()
 	engine, store := retryEngine(t)
 	run := retryableRun(t, store, "rerun-all")
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}
@@ -76,6 +77,7 @@ func TestRetryFromEntryNodeDiscardsSandbox(t *testing.T) {
 // 需求被重新触发（而不是点重试）时会新建一个 run，旧 run 停在 failed。
 // 失败的 run 为了重试一直留着工作区和容器，重新从头跑之后就再没人回收它了。
 func TestSupersedeIssueRunsDiscardsReplacedSandbox(t *testing.T) {
+	t.Parallel()
 	engine, store := retryEngine(t)
 	old := domain.Run{
 		ID: "run-old", Status: "failed",
@@ -105,6 +107,7 @@ func TestSupersedeIssueRunsDiscardsReplacedSandbox(t *testing.T) {
 
 // 同一需求触发另一条 SOP，不能把这条 SOP 等着重试的容器回收掉。
 func TestSupersedeIssueRunsKeepsOtherSOPRuns(t *testing.T) {
+	t.Parallel()
 	engine, store := retryEngine(t)
 	for _, run := range []domain.Run{
 		{ID: "run-backend", WorkflowID: "backend", Status: "failed", ExecutionContext: domain.TelemetryContext{IssueID: "issue-1"}, Nodes: map[string]*domain.NodeRun{}},
@@ -127,6 +130,7 @@ func TestSupersedeIssueRunsKeepsOtherSOPRuns(t *testing.T) {
 // 失败和等待中的 run 为了重试/人工决策一直保留工作区，容器也跟着常驻。
 // 闲置超过阈值后只回收容器，工作区留着，下次重试或审批时重建容器。
 func TestDiscardIdleRunContainersReleasesStaleFailedAndWaitingRuns(t *testing.T) {
+	t.Parallel()
 	engine, store := retryEngine(t)
 	runs := []domain.Run{
 		{ID: "run-failed", Status: "failed", Nodes: map[string]*domain.NodeRun{"a": {NodeID: "a", Status: "failed"}}},
@@ -162,6 +166,7 @@ func TestDiscardIdleRunContainersReleasesStaleFailedAndWaitingRuns(t *testing.T)
 }
 
 func TestDiscardIdleRunContainersWaitsForIdleThreshold(t *testing.T) {
+	t.Parallel()
 	engine, store := retryEngine(t)
 	for _, run := range []domain.Run{
 		{ID: "run-failed", Status: "failed", Nodes: map[string]*domain.NodeRun{}},
@@ -184,8 +189,28 @@ func TestDiscardIdleRunContainersWaitsForIdleThreshold(t *testing.T) {
 	}
 }
 
+func TestDiscardIdleRunContainersReleasesRunnerBoundLocalSandbox(t *testing.T) {
+	t.Parallel()
+	engine, store := retryEngine(t)
+	run := domain.Run{
+		ID: "run-moved", Status: "waiting",
+		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "builtin"},
+		Nodes:            map[string]*domain.NodeRun{"a": {NodeID: "a", Status: "waiting_approval"}},
+	}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}
+	engine.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
+
+	if n := engine.discardIdleRunContainers(context.Background(), time.Now().UTC().Add(3*time.Hour)); n != 1 || !sandbox.closed {
+		t.Fatalf("a run that moved to a runner must still release its local container (n=%d closed=%v)", n, sandbox.closed)
+	}
+}
+
 // 从中断处继续要复用同一个容器，否则每次重试都要重建镜像。
 func TestRetryFromInterruptedNodeKeepsSandbox(t *testing.T) {
+	t.Parallel()
 	engine, store := retryEngine(t)
 	run := retryableRun(t, store, "rerun-tail")
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}

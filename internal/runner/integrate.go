@@ -66,7 +66,7 @@ func integrateTaskRepositories(ctx context.Context, workspace string, inv *domai
 			return append(results, result), nil
 		}
 		if repo.RequireExistingWorkBranch {
-			if _, err := gitwork.PushExistingWorkBranch(repoCtx, dir, work, "AgentFlow: integration"); err != nil {
+			if _, err := gitwork.PushExistingWorkBranch(repoCtx, dir, work, "LoopForge: integration"); err != nil {
 				return results, fmt.Errorf("%s: push existing work branch %s: %w", repo.Name, work, err)
 			}
 		} else if _, err := gitwork.C(repoCtx, dir, "push", "origin", work); err != nil {

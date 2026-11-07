@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,10 +19,20 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
+
+// runnerWorkspaceRunID names the runner directory holding run's checkout: a
+// child SOP on the shared layout works in the checkout of its parent chain.
+func runnerWorkspaceRunID(run domain.Run) string {
+	if run.ExecutionContext.RunnerWorkspaceLayout == domain.RunnerWorkspaceLayoutShared {
+		return engine.WorkspaceRunID(run)
+	}
+	return run.ID
+}
 
 const (
 	workspaceTreeLimit = 50000
@@ -33,6 +44,53 @@ type workspaceChange struct {
 	Repository string `json:"repository,omitempty"`
 	Index      string `json:"index"`
 	Worktree   string `json:"worktree"`
+}
+
+// workspaceRepositoryDetail describes a run repository for the 「改动」view.
+// The workspace itself only reports repository names, so the branch pair the
+// panel compares against (and links to on 工蜂) comes from the run record.
+type workspaceRepositoryDetail struct {
+	Name       string `json:"name"`
+	CloneURL   string `json:"cloneUrl,omitempty"`
+	BaseBranch string `json:"baseBranch,omitempty"`
+	WorkBranch string `json:"workBranch,omitempty"`
+}
+
+func workspaceRepositoryDetails(run domain.Run) []workspaceRepositoryDetail {
+	repositories := run.RepositoryContexts()
+	details := make([]workspaceRepositoryDetail, 0, len(repositories))
+	for _, rc := range repositories {
+		details = append(details, workspaceRepositoryDetail{
+			Name:       rc.Name,
+			CloneURL:   cloneURLWithoutCredentials(rc.CloneURL),
+			BaseBranch: repositoryBaseBranchName(rc),
+			WorkBranch: rc.WorkBranch,
+		})
+	}
+	return details
+}
+
+// cloneURLWithoutCredentials keeps only what the panel needs to build a 工蜂
+// link: a remote configured as https://user:token@host/... must not hand the
+// token to the browser.
+func cloneURLWithoutCredentials(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if !strings.Contains(raw, "://") {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if u.User != nil {
+		if u.Scheme == "ssh" {
+			// ssh://git@host/... names the account, never a secret.
+			u.User = url.User(u.User.Username())
+		} else {
+			u.User = nil
+		}
+	}
+	return u.String()
 }
 
 type workspaceEntry struct {
@@ -73,7 +131,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 	if !run.WorkspaceCleanedAt.IsZero() {
 		reason := "工作区已回收；有保存的快照时可按需恢复，空闲 1 小时后再次回收"
 		if c.FullPath() == "/api/runs/:id/workspace" {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status}
+			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
 			h.workspaceLifecycleInfo(c, run, payload)
 			c.JSON(http.StatusOK, payload)
 			return
@@ -85,7 +143,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		if _, exists := h.repo.Runner(runnerID); !exists {
 			reason := "执行机器 Daemon 已卸载，工作区已随之删除；重新连接执行机器也无法恢复此工作区"
 			if c.FullPath() == "/api/runs/:id/workspace" {
-				payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status}
+				payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
 				h.workspaceLifecycleInfo(c, run, payload)
 				c.JSON(http.StatusOK, payload)
 				return
@@ -104,7 +162,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 	}
 	if reason != "" {
 		if c.FullPath() == "/api/runs/:id/workspace" {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status}
+			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
 			h.workspaceLifecycleInfo(c, run, payload)
 			c.JSON(http.StatusOK, payload)
 			return
@@ -122,6 +180,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		payload := gin.H{
 			"available": true, "readOnly": !h.workspaceWritable(c, run), "runStatus": run.Status, "pauseRequested": run.PauseRequested,
 			"changes": changes, "repositories": collectWorkspaceGitRepositories(root, run), "warning": warning,
+			"repositoryDetails": workspaceRepositoryDetails(run),
 		}
 		h.workspaceLifecycleInfo(c, run, payload)
 		c.JSON(http.StatusOK, payload)
@@ -240,7 +299,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 		ref = strings.TrimSpace(c.Query("id"))
 	}
 	request := domain.RunnerWorkspaceRequest{
-		RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: operation,
+		RunID: runnerWorkspaceRunID(run), RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: operation,
 		Path: path, Query: c.Query("q"), Ref: ref, Repositories: run.RepositoryContexts(),
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
@@ -252,7 +311,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 			reason = "远程工作区读取超时"
 		}
 		if operation == domain.RunnerWorkspaceOperationInfo {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status}
+			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
 			h.workspaceLifecycleInfo(c, run, payload)
 			c.JSON(http.StatusOK, payload)
 			return
@@ -266,7 +325,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 			status = http.StatusBadRequest
 		}
 		if operation == domain.RunnerWorkspaceOperationInfo && status == http.StatusNotFound {
-			c.JSON(http.StatusOK, gin.H{"available": false, "readOnly": true, "reason": response.Error, "runStatus": run.Status})
+			c.JSON(http.StatusOK, gin.H{"available": false, "readOnly": true, "reason": response.Error, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)})
 			return
 		}
 		c.JSON(status, map[string]string{"error": response.Error})
@@ -284,6 +343,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 		if json.Unmarshal(response.Payload, &payload) == nil {
 			payload["readOnly"] = !h.workspaceWritable(c, run)
 			payload["pauseRequested"] = run.PauseRequested
+			payload["repositoryDetails"] = workspaceRepositoryDetails(run)
 			h.workspaceLifecycleInfo(c, run, payload)
 			c.JSON(200, payload)
 			return
@@ -659,8 +719,10 @@ func readWorkspaceBaseFile(ctx context.Context, root string, run domain.Run, raw
 		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
 			continue
 		}
-		tracked := exec.CommandContext(ctx, "git", "-C", repository.path, "ls-files", "--error-unmatch", "--", filepath.FromSlash(rel))
-		if err := tracked.Run(); err != nil {
+		// The base is HEAD's blob. A path HEAD never had (untracked, or
+		// registered with `git add -N` by a node) has an empty base.
+		inHead := exec.CommandContext(ctx, "git", "-C", repository.path, "cat-file", "-e", "HEAD:"+filepath.ToSlash(rel))
+		if err := inHead.Run(); err != nil {
 			return "", false, nil
 		}
 		out, err := exec.CommandContext(ctx, "git", "-C", repository.path, "show", "HEAD:"+filepath.ToSlash(rel)).Output()

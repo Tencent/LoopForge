@@ -57,6 +57,9 @@ type ScheduleJobBlocker struct {
 }
 
 type ScheduleJob struct {
+	SharedTaskID         string                `json:"sharedTaskId,omitempty"`
+	SharedTaskVersion    int                   `json:"sharedTaskVersion,omitempty"`
+	ParameterValues      map[string]string     `json:"parameterValues,omitempty"`
 	Notifications        []NotificationBinding `json:"notifications,omitempty"`
 	NotificationSnapshot []NotificationBinding `json:"notificationSnapshot,omitempty"`
 	NotificationResult   string                `json:"notificationResult,omitempty"`
@@ -74,7 +77,9 @@ type ScheduleJob struct {
 	SkipDispatch     bool   `json:"skipDispatch,omitempty"`
 	// IssueStatuses limits trigger jobs to these local issue statuses.
 	// Empty means backlog + todo. AI jobs leave this unused.
-	IssueStatuses        []string             `json:"issueStatuses,omitempty"`
+	IssueStatuses []string `json:"issueStatuses,omitempty"`
+	// MaxDispatch caps successful SOP dispatches per execution. Zero defaults to 10.
+	MaxDispatch          int                  `json:"maxDispatch,omitempty"`
 	IntervalSec          int                  `json:"intervalSec"`
 	Cron                 string               `json:"cron,omitempty"`
 	AssistantPrompt      string               `json:"assistantPrompt,omitempty"`
@@ -106,6 +111,16 @@ func (j ScheduleJob) ResolveWorkflow(issue Issue) string {
 // AI scheduled jobs set SkipDispatch and never dispatch.
 func (j ScheduleJob) DispatchesSOP() bool {
 	return !j.SkipDispatch && strings.TrimSpace(j.WorkflowID) != ""
+}
+
+const MaxScheduleDispatch = 10
+
+// DispatchLimit also bounds legacy or externally stored configuration.
+func (j ScheduleJob) DispatchLimit() int {
+	if j.MaxDispatch < 1 || j.MaxDispatch > MaxScheduleDispatch {
+		return MaxScheduleDispatch
+	}
+	return j.MaxDispatch
 }
 
 // ScheduleIssueStatusOptions are the statuses a trigger job may scan.

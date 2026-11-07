@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="292" viewBox="0 0 1280 292" role="img" aria-labelledby="title">
+<title id="title">An SOP run: requirement, agent steps, tests, human acceptance, delivery</title>
+<defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.1" fill="#ecebf1"/></pattern><filter id="sh" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#1b1540" flood-opacity=".07"/></filter><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l7 4-7 4" fill="none" stroke="#b9b8c4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l7 4-7 4" fill="none" stroke="#c15161" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker><clipPath id="frame"><rect width="1280" height="292" rx="20"/></clipPath></defs>
+<g clip-path="url(#frame)"><rect width="1280" height="292" fill="#fafafb"/><rect width="1280" height="292" fill="url(#dots)"/></g>
+<rect x=".5" y=".5" width="1279" height="291" rx="19.5" fill="none" stroke="#eae9ee"/>
+<g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif">
+<g filter="url(#sh)"><rect x="36.0" y="84.0" width="144" height="52" rx="26" fill="#ffffff" stroke="#e3e2ea"/></g>
+<path d="M59.0 103.0h7l3.5 3.5V117.0h-10.5z" fill="none" stroke="#62626c" stroke-width="1.6" stroke-linejoin="round"/><path d="M61.5 110.0h5M61.5 113.2h5" stroke="#62626c" stroke-width="1.4" stroke-linecap="round"/>
+<text x="80.0" y="115.0" fill="#252529" font-size="15" font-weight="600">Requirement</text>
+<g filter="url(#sh)"><rect x="200.0" y="62" width="130" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="216.0" y="78" width="32" height="32" rx="9" fill="#7b61ff" fill-opacity=".09"/>
+<path d="M232.0 87l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="#7b61ff"/><circle cx="238.0" cy="88" r="1.4" fill="#7b61ff"/>
+<text x="216.0" y="132" fill="#252529" font-size="15" font-weight="600">Clarify</text>
+<text x="216.0" y="148" fill="#9a9aa4" font-size="11.5">Agent</text>
+<g filter="url(#sh)"><rect x="350.0" y="62" width="130" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="366.0" y="78" width="32" height="32" rx="9" fill="#7b61ff" fill-opacity=".09"/>
+<path d="M382.0 87l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="#7b61ff"/><circle cx="388.0" cy="88" r="1.4" fill="#7b61ff"/>
+<text x="366.0" y="132" fill="#252529" font-size="15" font-weight="600">Design</text>
+<text x="366.0" y="148" fill="#9a9aa4" font-size="11.5">Agent</text>
+<g filter="url(#sh)"><rect x="500.0" y="62" width="130" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="516.0" y="78" width="32" height="32" rx="9" fill="#7b61ff" fill-opacity=".09"/>
+<path d="M532.0 87l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="#7b61ff"/><circle cx="538.0" cy="88" r="1.4" fill="#7b61ff"/>
+<text x="516.0" y="132" fill="#252529" font-size="15" font-weight="600">Implement</text>
+<text x="516.0" y="148" fill="#9a9aa4" font-size="11.5">Agent</text>
+<g filter="url(#sh)"><rect x="650.0" y="62" width="130" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="666.0" y="78" width="32" height="32" rx="9" fill="#7b61ff" fill-opacity=".09"/>
+<path d="M682.0 87l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="#7b61ff"/><circle cx="688.0" cy="88" r="1.4" fill="#7b61ff"/>
+<text x="666.0" y="132" fill="#252529" font-size="15" font-weight="600">Review</text>
+<text x="666.0" y="148" fill="#9a9aa4" font-size="11.5">Agent · independent</text>
+<g filter="url(#sh)"><rect x="800.0" y="62" width="130" height="96" rx="14" fill="#ffffff" stroke="#e3e2ea" stroke-opacity="1" stroke-width="1"/></g>
+<rect x="816.0" y="78" width="32" height="32" rx="9" fill="#597dcc" fill-opacity=".09"/>
+<path d="M826.0 90l4 4-4 4" fill="none" stroke="#597dcc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M832.0 98h6" stroke="#597dcc" stroke-width="1.8" stroke-linecap="round"/>
+<text x="816.0" y="132" fill="#252529" font-size="15" font-weight="600">Test</text>
+<text x="816.0" y="148" fill="#9a9aa4" font-size="11.5">Script</text>
+<g filter="url(#sh)"><rect x="950.0" y="62" width="130" height="96" rx="14" fill="#ffffff" stroke="#b7791f" stroke-opacity=".6" stroke-width="1.5"/></g>
+<rect x="966.0" y="78" width="32" height="32" rx="9" fill="#b7791f" fill-opacity=".09"/>
+<path d="M982.0 86l6.5 2.5v4.5c0 4-2.8 6.6-6.5 8-3.7-1.4-6.5-4-6.5-8v-4.5z" fill="none" stroke="#b7791f" stroke-width="1.7" stroke-linejoin="round"/><path d="M979.2 94.5l2 2 3.8-4" fill="none" stroke="#b7791f" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="966.0" y="132" fill="#252529" font-size="15" font-weight="600">Accept</text>
+<text x="966.0" y="148" fill="#9a9aa4" font-size="11.5">Human gate</text>
+<rect x="962.9" y="32" width="104.2" height="22" rx="11" fill="#b7791f" fill-opacity=".09" stroke="#b7791f" stroke-opacity=".35"/>
+<circle cx="973.9" cy="43" r="3" fill="#b7791f"/>
+<text x="981.9" y="47" fill="#b7791f" font-size="11.5" font-weight="600">Waits for you</text>
+<g filter="url(#sh)"><rect x="1100.0" y="84.0" width="144" height="52" rx="26" fill="#ffffff" stroke="#e3e2ea"/></g>
+<circle cx="1128.0" cy="110.0" r="7.5" fill="none" stroke="#338768" stroke-width="1.7"/><path d="M1124.8 110.2l2.2 2.2 4.4-4.6" fill="none" stroke="#338768" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1144.0" y="115.0" fill="#252529" font-size="15" font-weight="600">Delivery</text>
+<path d="M183.0 110.0H197.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M333.0 110.0H347.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M483.0 110.0H497.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M633.0 110.0H647.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M783.0 110.0H797.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M933.0 110.0H947.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M1083.0 110.0H1097.0" stroke="#b9b8c4" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M1015.0 162V192q0 12-12 12H577.0q-12 0-12-12V164" fill="none" stroke="#c15161" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#ar)"/>
+<rect x="680.6" y="192" width="218.9" height="24" rx="12" fill="#fafafb" stroke="#c15161" stroke-opacity=".35"/>
+<text x="692.6" y="208.2" fill="#c15161" font-size="12" font-weight="600">Rework: send back with feedback</text>
+<text x="36.0" y="266" fill="#62626c" font-size="12.5"><tspan fill="#7b61ff" font-size="11">●</tspan><tspan dx="7">Agent role</tspan><tspan dx="26"> </tspan><tspan fill="#597dcc" font-size="11">●</tspan><tspan dx="7">Deterministic script</tspan><tspan dx="26"> </tspan><tspan fill="#b7791f" font-size="11">●</tspan><tspan dx="7">Human gate</tspan><tspan dx="26"> </tspan></text>
+</g></svg>

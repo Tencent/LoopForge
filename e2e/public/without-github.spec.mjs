@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import fs from 'node:fs';
-import {signInUnconfigured} from './helpers.mjs';
+import {signInUnconfigured, switchProject} from './helpers.mjs';
 
 // Acceptance uses a dedicated account without Git credentials. The optional
 // model case reads a protected local key file; never capture request bodies.
@@ -67,13 +67,14 @@ test('all generic SOPs can start without a GitHub repository or token',async({pa
   let runId='',copied=false;
   try{
     await page.reload();
-    await page.locator('#projectSwitcher').selectOption(projectId);
+    await switchProject(page,projectId);
     await page.locator('.nav[data-view="sops"]').click();
     await page.locator('[data-scope-for="sop"] [data-scope="generic"]').click();
     for(const id of ['generic-product-delivery','generic-backend-delivery','generic-frontend-delivery','issue-fix-production']){
-      const card=page.locator(`article.sop-card[data-adopt-generic="${id}"]`);
+      const card=page.locator(`article.sop-card[data-generic-id="${id}"]`);
       await expect(card).toBeVisible();
-      await expect(card.locator('.req-chip').filter({hasText:'GitHub'})).toHaveCount(0);
+      await expect(card.locator('.sop-requirements .sop-badge')).not.toHaveCount(0);
+      await expect(card.locator('.sop-requirements .sop-badge').filter({hasText:/GitHub|Git Token/})).toHaveCount(0);
     }
     const clone=await page.request.post('/api/workflows/generic-product-delivery/clone',{data:{id:workflowId,name:'E2E product documents',projectId}});
     expect(clone.ok()).toBe(true);copied=true;
@@ -101,7 +102,7 @@ test('a real Agent generates a document with a model key and no GitHub repositor
   try{
     const saved=await page.request.put(credentialPath,{data:{codeBuddyApiKey:fs.readFileSync(process.env.LOOPFORGE_MODEL_KEY_FILE,'utf8').trim(),codeBuddyInternetEnvironment:process.env.LOOPFORGE_MODEL_KEY_ENVIRONMENT||''}});
     expect(saved.ok()).toBe(true);
-    const agent=await page.request.put('/api/agents',{data:{id:agentId,name:'E2E document writer without GitHub',projectId,executorId:'codebuddy',model:process.env.AGENTFLOW_E2E_MODEL_ID||process.env.LOOPFORGE_TEST_MODEL||'default',instructions:`Write report.md in the current workspace with a short three-item to-do plan and the literal marker ${marker}. Do not use Git, access the network, install dependencies or modify other files. Reply when done.`}});
+    const agent=await page.request.put('/api/agents',{data:{id:agentId,name:'E2E document writer without GitHub',projectId,executorId:'codebuddy',model:process.env.AGENTFLOW_E2E_MODEL_ID||process.env.LOOPFORGE_TEST_MODEL||'default',prompt:`Write report.md in the current workspace with a short three-item to-do plan and the literal marker ${marker}. Do not use Git, access the network, install dependencies or modify other files. Reply when done.`}});
     expect(agent.ok()).toBe(true);agentSaved=true;
     const workflow=await page.request.put('/api/workflows',{data:{id:workflowId,name:'E2E document without GitHub',projectId,status:'draft',revision:0,sandboxProfileId:'local',nodes:[
       {id:'write',name:'Write document',type:'agent',agentId,executorId:'codebuddy',maxAttempts:1,maxReworks:0,position:{x:100,y:100},artifactOutputs:[{name:'report',path:'report.md',mediaType:'text/markdown',required:true}]},

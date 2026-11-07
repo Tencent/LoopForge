@@ -27,10 +27,12 @@ type ChatRoomView struct {
 }
 
 // ChatMessage is one group-chat turn. Kind "text" is conversation.
-// Kind "dispatch" records an issue created in the room and, when present,
-// who it was handed to. "progress" and "approval" are posted on behalf of the
-// SOP / role while the dispatched run moves; "decision" records a member
-// approving or sending back a step from the room.
+// Kind "dispatch" records an issue created in the room and the SOP it was
+// handed to. "progress" is a failure or the run's final result; finished
+// steps stay on the dispatch card. "approval" is a step waiting for a person,
+// and "decision" records a member approving or sending it back.
+// TargetType "role" / "both" and AgentID remain on older messages from when
+// a room could assign a role without starting a SOP.
 type ChatMessage struct {
 	ID            string `json:"id"`
 	RoomID        string `json:"roomId"`
@@ -72,6 +74,21 @@ type ChatMessage struct {
 	RunCurrent   []string `json:"runCurrent,omitempty"`
 	// Resolved is persisted on approval messages once the step moved on.
 	Resolved bool `json:"resolved,omitempty"`
+
+	// Requirement-space fields. ThreadID keeps side discussion out of the
+	// main timeline; AI* track an assistant reply generated for the space.
+	ThreadID        string `json:"threadId,omitempty"`
+	ToAI            bool   `json:"toAi,omitempty"`
+	AIStatus        string `json:"aiStatus,omitempty"`
+	AIError         string `json:"aiError,omitempty"`
+	AISessionID     string `json:"aiSessionId,omitempty"`
+	AIRequesterID   int64  `json:"aiRequesterId,omitempty"`
+	AIProgress      string `json:"aiProgress,omitempty"`
+	ArtifactID      string `json:"artifactId,omitempty"`
+	ArtifactVersion int    `json:"artifactVersion,omitempty"`
+	// Attachments are files the author uploaded with a text message; the
+	// blobs stay in the author's assistant attachment store.
+	Attachments []AssistantAttachment `json:"attachments,omitempty"`
 	// CanReject is view-only: the waiting step has somewhere to send work back.
 	CanReject bool `json:"canReject,omitempty"`
 

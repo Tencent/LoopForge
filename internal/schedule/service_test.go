@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,115 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/tracker"
 )
+
+func TestRunJobDispatchLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		limit int
+		want  int
+	}{
+		{"unconfigured", 0, 10},
+		{"minimum", 1, 1},
+		{"custom", 3, 3},
+		{"maximum", 10, 10},
+		{"invalidStoredAboveMaximum", 11, 10},
+		{"invalidStoredNegative", -1, 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(st.Close)
+			for i := range 15 {
+				if err := st.PutIssue(domain.Issue{ID: fmt.Sprintf("issue-%02d", i), ProjectID: "platform", Status: "todo"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			job := domain.ScheduleJob{ID: "job", ProjectID: "platform", WorkflowID: "wf", MaxDispatch: tc.limit, Enabled: true}
+			if err := st.PutScheduleJob(job); err != nil {
+				t.Fatal(err)
+			}
+			dispatched := map[string]bool{}
+			svc := New(st, tracker.NewService(), func(_ domain.ScheduleJob, issue domain.Issue, origin string) error {
+				if dispatched[issue.ID] {
+					t.Fatalf("issue %s dispatched twice", issue.ID)
+				}
+				dispatched[issue.ID] = true
+				return st.PutTask(domain.Task{ID: "task-" + issue.ID, IssueID: issue.ID, WorkflowID: "wf", Status: "queued"})
+			})
+			result, err := svc.RunJob(job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(dispatched) != tc.want || result.LastDispatched != tc.want || result.LastPulled != 15 || result.LastStatus != "success" {
+				t.Fatalf("timer dispatches=%d want=%d result=%+v", len(dispatched), tc.want, result)
+			}
+			result, err = svc.RunNow(job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			remaining := min(tc.want, 15-tc.want)
+			stored, _ := st.ScheduleJob(job.ID)
+			if len(dispatched) != tc.want+remaining || result.LastDispatched != remaining || stored.LastDispatched != remaining {
+				t.Fatalf("manual dispatches=%d result=%+v stored=%+v", len(dispatched), result, stored)
+			}
+		})
+	}
+}
+
+func TestRunJobDispatchLimitCountsOnlySuccessfulDispatches(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	for i, issue := range []domain.Issue{
+		{ID: "already-ran"},
+		{ID: "ignored", AutomationState: "ignored"},
+		{ID: "blocked", RepositoryID: "blocked-repo"},
+		{ID: "duplicate"},
+		{ID: "unclarified"},
+		{ID: "first"},
+		{ID: "second"},
+		{ID: "later"},
+	} {
+		issue.ProjectID = "platform"
+		issue.Status = "todo"
+		issue.Number = 100 - i
+		if err := st.PutIssue(issue); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PutTask(domain.Task{ID: "existing", IssueID: "already-ran", Status: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	job := domain.ScheduleJob{ID: "job", ProjectID: "platform", WorkflowID: "wf", MaxDispatch: 2}
+	if err := st.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	var dispatched []string
+	svc := New(st, tracker.NewService(), func(_ domain.ScheduleJob, issue domain.Issue, _ string) error {
+		switch issue.ID {
+		case "duplicate":
+			return errors.New("已经跑过")
+		case "unclarified":
+			return errors.New("澄清未达标")
+		}
+		dispatched = append(dispatched, issue.ID)
+		return nil
+	})
+	svc.SetBaselineGuard(func(domain.ScheduleJob, []domain.Issue) (map[string]domain.ScheduleJobBlocker, error) {
+		return map[string]domain.ScheduleJobBlocker{"blocked-repo": {RepositoryID: "blocked-repo", Reason: "基线冲突"}}, nil
+	})
+	result, err := svc.RunJob(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(dispatched, ",") != "first,second" || result.LastDispatched != 2 || result.LastStatus != "waiting" || result.LastPulled != 8 {
+		t.Fatalf("dispatched=%v result=%+v", dispatched, result)
+	}
+}
 
 func TestRunJobOnlyDispatchesEligibleUnprocessedIssues(t *testing.T) {
 	st, err := repo.OpenTest()
@@ -673,4 +783,39 @@ func TestTimerRunsAsyncAndSkipsOverlap(t *testing.T) {
 		t.Fatal("overlapping cron started another execution")
 	default:
 	}
+}
+
+func TestStartAfterDefersInterruptedJobRecoveryUntilGateCloses(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	// A predecessor process is still executing this job during a handover.
+	job := domain.ScheduleJob{ID: "job", ProjectID: "platform", Source: "gongfeng", WorkflowID: "wf", Enabled: true, LastStatus: "running"}
+	if err := st.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st, tracker.NewService(), func(domain.ScheduleJob, domain.Issue, string) error { return nil })
+	gate := make(chan struct{})
+	svc.StartAfter(gate)
+	t.Cleanup(svc.Stop)
+	time.Sleep(50 * time.Millisecond)
+	if got, _ := st.ScheduleJob(job.ID); got.LastStatus != "running" {
+		t.Fatalf("successor failed a job its predecessor is running: %+v", got)
+	}
+	close(gate)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got, _ := st.ScheduleJob(job.ID)
+		if got.LastStatus == "failed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("interrupted job not recovered after the predecessor exited: %+v", got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	svc.Stop()
+	svc.Stop()
 }

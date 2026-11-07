@@ -35,7 +35,7 @@ func TestProviderUserCredentials(t *testing.T) {
 			}
 			u, _ := st.UserByLoginName(login)
 			codexURL, claudeURL := "https://codex.example/v1", "https://claude.example"
-			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{TaihuPAT: "tai_pat_secret", CodexAPIKey: "codex-secret", CodexBaseURL: &codexURL, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: &claudeURL})
+			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKey: "codex-secret", CodexBaseURL: &codexURL, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: &claudeURL})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -48,7 +48,7 @@ func TestProviderUserCredentials(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, ok := st.User(u.ID)
-			if !ok || got.TaihuPAT != "tai_pat_secret" || got.CodexAPIKey != "codex-secret" || got.ClaudeCodeAPIKey != "claude-secret" || got.CodexBaseURL != codexURL || got.ClaudeCodeBaseURL != claudeURL {
+			if !ok || got.CodexAPIKey != "codex-secret" || got.ClaudeCodeAPIKey != "claude-secret" || got.CodexBaseURL != codexURL || got.ClaudeCodeBaseURL != claudeURL {
 				t.Fatal("credentials did not survive refresh and partial update")
 			}
 			{
@@ -71,16 +71,16 @@ func TestProviderUserCredentials(t *testing.T) {
 			}
 			public := domain.PublicUser(got)
 			raw, _ := json.Marshal(public)
-			if strings.Contains(string(raw), "secret") || !public.TaihuPATConfigured || !public.CodexAPIKeyConfigured || !public.ClaudeCodeAPIKeyConfigured {
+			if strings.Contains(string(raw), "secret") || !public.CodexAPIKeyConfigured || !public.ClaudeCodeAPIKeyConfigured {
 				t.Fatal("public user leaked credentials or lost configured state")
 			}
 			empty := ""
-			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{TaihuPATClear: true, CodexAPIKeyClear: true, ClaudeCodeAPIKeyClear: true, CodexBaseURL: &empty, ClaudeCodeBaseURL: &empty})
+			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKeyClear: true, ClaudeCodeAPIKeyClear: true, CodexBaseURL: &empty, ClaudeCodeBaseURL: &empty})
 			if err != nil {
 				t.Fatal(err)
 			}
 			cleared, _ := st.User(u.ID)
-			if cleared.TaihuPAT != "" || cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || cleared.GitToken != "git-secret" {
+			if cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || cleared.GitToken != "git-secret" {
 				t.Fatal("clear operation did not isolate providers")
 			}
 		})

@@ -14,6 +14,22 @@ import (
 	"time"
 )
 
+// helperEnv keeps a coverage-instrumented helper quiet: without GOCOVERDIR it
+// prints a warning on exit that would be captured as command output.
+func helperEnv(t *testing.T, vars ...string) []string {
+	if testing.CoverMode() == "" {
+		return vars
+	}
+	return append(vars, "GOCOVERDIR="+t.TempDir())
+}
+
+func coverEnv() []string {
+	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
+		return []string{"GOCOVERDIR=" + dir}
+	}
+	return nil
+}
+
 func TestCommandCaptureHelperProcess(t *testing.T) {
 	mode := os.Getenv("AGENTFLOW_TEST_CAPTURE_HELPER")
 	if mode == "" {
@@ -35,7 +51,7 @@ func TestCommandCaptureHelperProcess(t *testing.T) {
 	}
 	if mode == "group" {
 		child := exec.Command(os.Args[0], "-test.run=^TestCommandCaptureHelperProcess$")
-		child.Env = []string{"AGENTFLOW_TEST_CAPTURE_HELPER=group-child"}
+		child.Env = append([]string{"AGENTFLOW_TEST_CAPTURE_HELPER=group-child"}, coverEnv()...)
 		child.Stdout, child.Stderr = os.Stdout, os.Stderr
 		must(t, child.Run())
 		os.Exit(0)
@@ -57,7 +73,7 @@ func TestRegularFileCaptureAndOversizeCancellation(t *testing.T) {
 		dir := t.TempDir()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		started := time.Now()
-		data, err := executeCommand(ctx, os.Args[0], []string{"-test.run=^TestCommandCaptureHelperProcess$"}, dir, []string{"AGENTFLOW_TEST_CAPTURE_HELPER=" + mode})
+		data, err := executeCommand(ctx, os.Args[0], []string{"-test.run=^TestCommandCaptureHelperProcess$"}, dir, helperEnv(t, "AGENTFLOW_TEST_CAPTURE_HELPER="+mode))
 		cancel()
 		if mode == "normal" {
 			must(t, err)
@@ -81,7 +97,7 @@ func TestCancellationKillsRealDescendant(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := executeCommand(ctx, os.Args[0], []string{"-test.run=^TestCommandCaptureHelperProcess$"}, dir, []string{"AGENTFLOW_TEST_CAPTURE_HELPER=group"})
+		_, err := executeCommand(ctx, os.Args[0], []string{"-test.run=^TestCommandCaptureHelperProcess$"}, dir, helperEnv(t, "AGENTFLOW_TEST_CAPTURE_HELPER=group"))
 		done <- err
 	}()
 	waitUntil(t, func() bool { _, err := os.Stat(filepath.Join(dir, "child-ready")); return err == nil })

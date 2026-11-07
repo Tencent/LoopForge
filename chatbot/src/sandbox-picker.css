@@ -1,0 +1,69 @@
+.sandbox-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.sandbox-context > svg {
+  flex: none;
+}
+.sandbox-context .sandbox-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 5px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.sandbox-picker > svg {
+  flex: none;
+}
+.sandbox-picker > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sandbox-picker:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sandbox-picker:focus-visible {
+  outline: 2px solid var(--focus, #5273dc);
+  outline-offset: 1px;
+}
+.sandbox-context .sandbox-picker:hover,
+.sandbox-context .sandbox-picker[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+.sandbox-fixed > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.header-actions .sandbox-context {
+  max-width: 200px;
+  font-size: 11px;
+  margin-right: 6px;
+}
+@media (max-width: 640px) {
+  .sandbox-context {
+    max-width: 170px;
+  }
+  .header-actions .sandbox-context {
+    max-width: 130px;
+  }
+  .composer-context:has(.sandbox-context) .host-status > span {
+    display: none;
+  }
+}

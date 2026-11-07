@@ -14,6 +14,16 @@ func (h *assistantHandlers) prepareScheduleJob(job domain.ScheduleJob) (string, 
 		return "", fmt.Errorf("未连接数据源")
 	}
 	prompt := strings.TrimSpace(job.AssistantPrompt)
+	if job.SharedTaskID != "" {
+		version, err := h.repo.SharedScheduleVersion(job.SharedTaskID, job.SharedTaskVersion)
+		if err != nil {
+			return "", fmt.Errorf("读取订阅版本失败：%w", err)
+		}
+		prompt, _, err = version.Render(job.ParameterValues)
+		if err != nil {
+			return "", err
+		}
+	}
 	if prompt == "" {
 		return "", nil
 	}
@@ -30,7 +40,8 @@ func (h *assistantHandlers) prepareScheduleJob(job domain.ScheduleJob) (string, 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), assistantScheduleTimeout)
 	defer cancel()
-	ctx = withAssistantExecMode(ctx, assistantExecMode{AutoWrite: true, DeferSOP: true})
+	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
+	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, job.ID)
 	if err := h.executeAssistantTask(ctx, user, &task); err != nil {
 		if msg := strings.TrimSpace(task.LastError); msg != "" {
 			return task.LastMessage, fmt.Errorf("%s", msg)
@@ -56,8 +67,10 @@ func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob) (do
 			return user, nil
 		}
 	}
-	if user, ok := try(job.OwnerUserID); ok {
-		return user, nil
+	if job.SharedTaskID == "" {
+		if user, ok := try(job.OwnerUserID); ok {
+			return user, nil
+		}
 	}
-	return domain.User{}, fmt.Errorf("执行提示词需要项目 Owner 的 CodeBuddy API Key：请在该账号的个人设置中配置")
+	return domain.User{}, fmt.Errorf("执行提示词需要项目 Owner 的 CodeBuddy API Key：请在该账号的个人配置中配置")
 }

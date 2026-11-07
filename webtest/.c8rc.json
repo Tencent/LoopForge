@@ -1,0 +1,16 @@
+{
+  "all": true,
+  "allowExternal": true,
+  "src": "../web",
+  "include": [
+    "**/web/app.js",
+    "**/web/app/*.js",
+    "**/web/knowledge.js",
+    "**/web/orchestrate.js",
+    "**/web/assistant.js",
+    "**/web/collaboration.js",
+    "**/web/chat-next.js"
+  ],
+  "exclude": ["**/node_modules/**"],
+  "exclude-after-remap": true
+}

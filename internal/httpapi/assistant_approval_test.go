@@ -31,7 +31,7 @@ func TestAssistantExecModeForApproval(t *testing.T) {
 		want assistantExecMode
 	}{
 		{AssistantApprovalConfirm, assistantExecMode{}},
-		{AssistantApprovalAssisted, assistantExecMode{AutoWrite: true, ConfirmDangerous: true}},
+		{AssistantApprovalAssisted, assistantExecMode{AutoWrite: true, ReviewWrites: true}},
 		{AssistantApprovalAuto, assistantExecMode{AutoWrite: true}},
 		{"bogus", assistantExecMode{}},
 	} {
@@ -122,7 +122,13 @@ func TestResolveAssistantDraftsByApprovalMode(t *testing.T) {
 	if out := h.resolveAssistantDrafts(context.Background(), domain.User{}, "p", drafts, AssistantApprovalConfirm); len(out) != 2 {
 		t.Fatalf("confirm mode should keep all drafts: %#v", out)
 	}
-	out := h.resolveAssistantDrafts(context.Background(), domain.User{}, "p", drafts, AssistantApprovalAssisted)
+	ctx := withAssistantApprovalReviewer(context.Background(), func(_ context.Context, tool, _ string, _ map[string]any) assistantApprovalReview {
+		if tool == "agents_save" {
+			return assistantApprovalReview{Outcome: "allow", RiskLevel: "low", UserAuthorization: "high", Rationale: "用户要求创建角色"}
+		}
+		return assistantApprovalReview{Outcome: "deny", RiskLevel: "high", UserAuthorization: "unknown", Rationale: "缺少发布授权"}
+	})
+	out := h.resolveAssistantDrafts(ctx, domain.User{}, "p", drafts, AssistantApprovalAssisted)
 	if len(out) != 2 {
 		t.Fatalf("assisted mode should keep both drafts: %#v", out)
 	}
@@ -149,7 +155,7 @@ func TestWorkflowDraftNodeWarnings(t *testing.T) {
 	if err := st.PutProject(domain.Project{ID: "p", Name: "P"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutAgent(domain.AgentDefinition{ID: "p-reviewer", Name: "评审", ProjectID: "p", Version: 1, Instructions: "review"}); err != nil {
+	if err := st.PutAgent(domain.AgentDefinition{ID: "p-reviewer", Name: "评审", ProjectID: "p", Version: 1, Prompt: "review"}); err != nil {
 		t.Fatal(err)
 	}
 	h := &assistantHandlers{deps: &deps{repo: st}}
@@ -226,8 +232,8 @@ func TestAssistantSystemPromptForMode(t *testing.T) {
 		t.Fatal("confirm prompt must block direct write tools")
 	}
 	assisted := assistantSystemPromptForMode(AssistantApprovalAssisted)
-	if !strings.Contains(assisted, "调用即生效") || !strings.Contains(assisted, "放入 drafts") {
-		t.Fatal("assisted prompt must direct-exec saves and draft dangerous writes")
+	if !strings.Contains(assisted, "独立审查模型") || !strings.Contains(assisted, "放入 drafts") {
+		t.Fatal("assisted prompt must review actions and keep denied writes for confirmation")
 	}
 	if strings.Contains(assisted, "不要直接调用平台写入工具") {
 		t.Fatal("assisted prompt must allow direct write calls for saves")
@@ -235,5 +241,13 @@ func TestAssistantSystemPromptForMode(t *testing.T) {
 	auto := assistantSystemPromptForMode(AssistantApprovalAuto)
 	if !strings.Contains(auto, "一次性完成") || !strings.Contains(auto, "不要把写入放进 drafts") {
 		t.Fatal("auto prompt must require one-shot direct execution without drafts")
+	}
+	for name, prompt := range map[string]string{"confirm": base, "assisted": assisted, "auto": auto} {
+		if !strings.Contains(prompt, "只能使用上述 workbench_workspace_* 工具") || !strings.Contains(prompt, "路径不匹配") {
+			t.Fatalf("%s prompt must route workspace search to workbench_workspace_* instead of local Grep", name)
+		}
+		if strings.Contains(prompt, "没有浏览器") || !strings.Contains(prompt, "workbench_browser_*") {
+			t.Fatalf("%s prompt must point page viewing at the Agent browser instead of denying it exists", name)
+		}
 	}
 }

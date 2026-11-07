@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -199,6 +200,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	}
 	if v.DefaultBranch == "" {
 		v.DefaultBranch = "master"
+	}
+	if v.CloneURL != "" {
+		if err := gitwork.ValidateRemoteURL(v.CloneURL, !authRequired() || h.isPlatformAdmin(c.Request)); err != nil {
+			c.JSON(400, map[string]string{"error": "cloneUrl 无效：" + err.Error()})
+			return
+		}
 	}
 	if err := h.repo.PutRepository(v); err != nil {
 		respond(c, err)
@@ -625,14 +632,17 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 			// The binary file manifest is owned by the skill_files table;
 			// the SKILL.md body and text Files are owned by uploaded files
 			// (or existing content if the client never sends them). Client
-			// payloads cannot add, remove or reorder any of these.
+			// payloads cannot add, remove or reorder any of these, nor
+			// forge or drop a market source record.
 			if existing, ok := h.repo.Skill(v.ID); ok {
 				v.FileRefs = existing.FileRefs
 				v.Files = existing.Files
 				v.Content = existing.Content
+				v.Source = existing.Source
 			} else {
 				v.FileRefs = nil
 				v.Files = nil
+				v.Source = nil
 			}
 			respond(c, h.repo.PutSkill(v))
 		}
@@ -917,7 +927,24 @@ func (h *catalogHandlers) shareSandboxDependencies(sandbox domain.SandboxProfile
 }
 func (h *catalogHandlers) workflows(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
-		c.JSON(200, h.repo.Workflows())
+		projectID := strings.TrimSpace(c.Query("projectId"))
+		needle := strings.ToLower(strings.TrimSpace(c.Query("q")))
+		all := h.repo.Workflows()
+		if projectID == "" && needle == "" {
+			c.JSON(200, all)
+			return
+		}
+		out := make([]domain.WorkflowDefinition, 0, len(all))
+		for _, wf := range all {
+			if projectID != "" && wf.ProjectID != projectID && !wf.Generic {
+				continue
+			}
+			if needle != "" && !strings.Contains(strings.ToLower(wf.ID+" "+wf.Name+" "+wf.Description), needle) {
+				continue
+			}
+			out = append(out, wf)
+		}
+		c.JSON(200, out)
 		return
 	}
 	if c.Request.Method == http.MethodPut {
@@ -1210,6 +1237,9 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if _, taken := h.repo.GenericTemplateByWorkflow(req.ID); taken {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该 ID 与平台通用模板冲突，请换一个 ID"})
 			return
+		}
+		if strings.TrimSpace(req.ProjectID) == "" {
+			req.ProjectID = v.ProjectID
 		}
 		taken, _ := h.repo.Workflow(req.ID)
 		if !h.requireProjectWriter(c, strings.TrimSpace(req.ProjectID), taken.ProjectID) {

@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"errors"
+	"log"
+	"mime"
 	"net/http"
 
 	"agentflow/internal/domain"
@@ -55,6 +57,46 @@ func (h *previewsHandlers) runPreview(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, publicPreview(p))
+}
+
+func (h *previewsHandlers) downloadRunPreview(c *gin.Context) {
+	svc := h.engine.Preview()
+	if svc == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "preview is not enabled"})
+		return
+	}
+	runID := c.Param("id")
+	if _, ok := h.repo.Run(runID); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		return
+	}
+	p, ok := h.repo.PreviewByRun(runID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "preview not found"})
+		return
+	}
+	file, err := svc.OpenDownload(c.Request.Context(), p)
+	if err != nil {
+		switch {
+		case errors.Is(err, preview.ErrPreviewNotReady):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		case errors.Is(err, preview.ErrPreviewExpired):
+			c.JSON(http.StatusGone, gin.H{"error": err.Error()})
+		case errors.Is(err, preview.ErrPreviewNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "preview bundle not found"})
+		default:
+			log.Printf("preview download %s: %v", runID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "preview download failed"})
+		}
+		return
+	}
+	defer file.Close()
+	name := "preview-" + runID + ".zip"
+	c.Header("Content-Type", "application/zip")
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	http.ServeContent(c.Writer, c.Request, name, p.UpdatedAt, file)
 }
 
 func (h *previewsHandlers) runPreviewSession(c *gin.Context) {

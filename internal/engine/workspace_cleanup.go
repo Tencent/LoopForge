@@ -13,7 +13,16 @@ func (e *Engine) RunWorkspace(runID string) string {
 	if e.sandboxes == nil {
 		return ""
 	}
+	if run, ok := e.repo.RunState(runID); ok {
+		return e.sandboxes.RunWorkspace(workspaceRunID(run))
+	}
 	return e.sandboxes.RunWorkspace(runID)
+}
+
+// WorkspaceRunID returns the run whose workspace directory run works in; a
+// child SOP shares the checkout of the run that started its SOP chain.
+func WorkspaceRunID(run domain.Run) string {
+	return workspaceRunID(run)
 }
 
 // RunWorkspaceFacts returns the workspace facts last reported by the run's
@@ -71,8 +80,10 @@ func (e *Engine) sandboxSweep(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			e.checkpointTransfers.Close()
 			return
 		case <-ticker.C:
+			e.checkpointTransfers.Sweep(time.Now())
 			if e.preview != nil {
 				e.recoverBuiltPreviewArchives()
 				e.recoverMissingPreviewFinalizers()
@@ -434,17 +445,30 @@ func (e *Engine) discardIdleRunContainers(ctx context.Context, now time.Time) in
 
 // discardIdleRunContainer re-reads the run under stateMu, the lock Retry and
 // Approve take before they flip a run back to running.
+// discardLocalSandbox removes this host's sandbox container after the run
+// moves to a pool runner. The workspace stays for inspection.
+func (e *Engine) discardLocalSandbox(runID string) {
+	if err := e.releaseRunEnvironment(runID, false); err != nil {
+		log.Printf("release local sandbox %s after pool bind: %v", runID, err)
+	}
+	if e.sandboxes != nil {
+		e.sandboxes.DiscardRunContainer(context.Background(), runID)
+	}
+}
+
 func (e *Engine) discardIdleRunContainer(ctx context.Context, runID string, now time.Time) bool {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	run, ok := e.repo.RunState(runID)
+	// Keep preview's local-container reclamation for runs moved to a runner,
+	// while preserving active workspace operations and the new idle deadline.
 	if meta, managed := e.repo.WorkspaceCheckpoint(runID); managed && (meta.Error != "" || meta.LeaseUntil != nil && meta.LeaseUntil.After(now) || meta.FollowUp && now.Before(meta.LastUsedAt.Add(ConversationWorkspaceIdleTTL))) {
 		return false
 	}
 	if e.WorkspaceActive != nil && e.WorkspaceActive(run) {
 		return false
 	}
-	if !ok || !runContainerIdle(run, now) || e.foreignWorkspaceBind(run) || e.defaultExecutionRunner(run) != "" {
+	if !ok || !runContainerIdle(run, now) || e.foreignWorkspaceBind(run) {
 		return false
 	}
 	if err := e.releaseRunEnvironment(runID, false); err != nil {

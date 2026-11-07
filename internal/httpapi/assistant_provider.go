@@ -69,14 +69,19 @@ if not name.startswith("mcp__agentflow_session__"):
     sys.exit(2)
 `
 
-func prepareAlternateAssistantCommand(req assistantCLIRequest, dir string) (runtime.CommandSpec, error) {
-	binary, kind, binding := "claude", "claude-code", runtime.BindClaudeCode
+func prepareAlternateAssistantCommand(ctx context.Context, req assistantCLIRequest, dir string) (runtime.CommandSpec, error) {
+	kind, binding := "claude-code", runtime.BindClaudeCode
 	if req.Executor == "codex" {
-		binary, kind, binding = "codex", "codex", runtime.BindCodex
+		kind, binding = "codex", runtime.BindCodex
 	}
-	bin, err := exec.LookPath(binary)
-	if err != nil {
-		return runtime.CommandSpec{}, fmt.Errorf("%s CLI 未安装", binary)
+	var bin string
+	var err error
+	if req.Executor == "codex" {
+		if bin, err = exec.LookPath("codex"); err != nil {
+			return runtime.CommandSpec{}, fmt.Errorf("codex CLI 未安装")
+		}
+	} else if bin, err = runtime.ResolveClaudeCode(ctx); err != nil {
+		return runtime.CommandSpec{}, err
 	}
 	sys := strings.TrimSpace(req.SystemPrompt)
 	if sys == "" {
@@ -118,7 +123,7 @@ func prepareAlternateAssistantCommand(req assistantCLIRequest, dir string) (runt
 		}
 		args = append(args, "-c", "features.hooks=true", "--dangerously-bypass-hook-trust", "-c", "hooks.PreToolUse=[{hooks=[{type=\"command\",command="+strconv.Quote("python3 '"+strings.ReplaceAll(guard, "'", "'\\''")+"'")+",timeout=5}]}]")
 	} else {
-		args = []string{"-p", "--bare", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--max-turns", nativeAssistantMaxTurns, "--system-prompt", sys, "--tools", "", "--mcp-config", req.MCPConfig, "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk", "--allowedTools", "mcp__agentflow_session__*", "--no-session-persistence"}
+		args = []string{"-p", "--bare", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", sys, "--tools", "", "--mcp-config", req.MCPConfig, "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk", "--allowedTools", "mcp__agentflow_session__*", "--no-session-persistence"}
 	}
 	if req.Model != "" && req.Model != "default" {
 		args = append(args, "--model", req.Model)
@@ -161,7 +166,7 @@ func runAlternateAssistantCLI(ctx context.Context, req assistantCLIRequest, user
 		return "", "", err
 	}
 	defer os.RemoveAll(dir)
-	command, err := prepareAlternateAssistantCommand(req, dir)
+	command, err := prepareAlternateAssistantCommand(ctx, req, dir)
 	if err != nil {
 		return "", "", err
 	}

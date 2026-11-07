@@ -50,6 +50,24 @@ func runTerminal(status string) bool {
 // time, so the event log is the only source that covers every attempt. Runs
 // with no node.started events fall back to node rows.
 func ComputeRunTiming(run Run, events []RunEvent, now time.Time) RunTiming {
+	timing, _, _ := computeRunTiming(run, events, now)
+	return timing
+}
+
+// RunExecutionInterval is one observed span of node execution, excluding waits.
+type RunExecutionInterval struct {
+	StartedAt  time.Time
+	FinishedAt time.Time
+}
+
+// RunExecutionIntervals shares the timing calculation with ComputeRunTiming.
+// The boolean distinguishes an observed zero from missing timing evidence.
+func RunExecutionIntervals(run Run, events []RunEvent, now time.Time) ([]RunExecutionInterval, bool) {
+	_, intervals, known := computeRunTiming(run, events, now)
+	return intervals, known
+}
+
+func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []RunExecutionInterval, bool) {
 	type interval struct{ start, end time.Time }
 	var intervals []interval
 	open := map[string]time.Time{}
@@ -129,6 +147,7 @@ func ComputeRunTiming(run Run, events []RunEvent, now time.Time) RunTiming {
 	}
 
 	var clipped []interval
+	known := false
 	for _, iv := range intervals {
 		if !run.CreatedAt.IsZero() && iv.start.Before(run.CreatedAt) {
 			iv.start = run.CreatedAt
@@ -136,12 +155,16 @@ func ComputeRunTiming(run Run, events []RunEvent, now time.Time) RunTiming {
 		if iv.end.After(end) {
 			iv.end = end
 		}
+		if !iv.start.IsZero() && !iv.end.IsZero() && !iv.end.Before(iv.start) {
+			known = true
+		}
 		if iv.end.After(iv.start) {
 			clipped = append(clipped, iv)
 		}
 	}
 	sort.Slice(clipped, func(i, j int) bool { return clipped[i].start.Before(clipped[j].start) })
 	var total time.Duration
+	var merged []RunExecutionInterval
 	for i := 0; i < len(clipped); {
 		cur := clipped[i]
 		i++
@@ -152,6 +175,7 @@ func ComputeRunTiming(run Run, events []RunEvent, now time.Time) RunTiming {
 			i++
 		}
 		total += cur.end.Sub(cur.start)
+		merged = append(merged, RunExecutionInterval{StartedAt: cur.start, FinishedAt: cur.end})
 	}
 	out.ExecutionMs = total.Milliseconds()
 	if !run.CreatedAt.IsZero() && end.After(run.CreatedAt) {
@@ -161,5 +185,5 @@ func ComputeRunTiming(run Run, events []RunEvent, now time.Time) RunTiming {
 		out.WallMs = out.ExecutionMs
 	}
 	out.WaitingMs = out.WallMs - out.ExecutionMs
-	return out
+	return out, merged, known
 }

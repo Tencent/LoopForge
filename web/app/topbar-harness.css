@@ -1,0 +1,136 @@
+/* 顶栏 · Harness UI 站点头部（MIT，见 harness-ui-LICENSE.txt）。
+ * Loaded after every other stylesheet; all rules are scoped to .topbar so the
+ * platform / v3 / v4 / collaboration layers are overridden only here.
+ * Narrow-screen visibility (search hidden ≤1000px, theme button hidden >1000px)
+ * stays with collaboration.css / product-v4.css, so no display is forced here.
+ */
+.topbar {
+  --topbar-accent: #7b61ff;
+  --topbar-hover: color-mix(in srgb, var(--text) 5%, transparent);
+  --topbar-ease: cubic-bezier(.16, 1, .3, 1);
+}
+html[data-theme="dark"] .topbar { --topbar-accent: #a08aff; }
+
+/* Container: 94% panel + blur, hairline divider, no shadow. */
+.topbar,
+html[data-theme] .topbar {
+  height: 56px;
+  min-height: 56px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .topbar,
+  html[data-theme] .topbar { background: var(--panel); }
+}
+
+/* Search entry. */
+.topbar .command-trigger {
+  height: 34px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 9px !important;
+  background: var(--bg-soft) !important;
+  color: var(--muted-2) !important;
+  box-shadow: none !important;
+}
+.topbar .command-trigger:hover {
+  border-color: var(--line-strong) !important;
+  background: color-mix(in srgb, var(--text) 4%, var(--bg-soft)) !important;
+  color: var(--muted) !important;
+}
+
+/* Theme button: 32px borderless ghost icon button, no switch animation. */
+.topbar .theme-toggle {
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+.topbar .theme-toggle:is(:hover, :focus-visible) {
+  border-color: transparent;
+  background: var(--topbar-hover);
+  color: var(--text);
+}
+.topbar .theme-toggle span { display: inline-flex; font-size: 0; line-height: 1; }
+.topbar .theme-toggle b { display: none; }
+
+/* Hover feedback is background/border only (harness-motion.css adds a shadow elsewhere). */
+.topbar :is(.button, .icon-button, .theme-toggle, .command-trigger, .ai-launch):hover { box-shadow: none !important; }
+.topbar :is(.command-trigger, .theme-toggle, .hui-select-trigger):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--topbar-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+/* Project switcher: Harness Selector trigger over the hidden native select. */
+.topbar .hui-select-native { display: none !important; }
+.topbar .hui-select-trigger {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+  max-width: 220px;
+  height: 34px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: none;
+  transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.topbar .hui-select-trigger:hover {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--text) 4%, var(--bg-soft));
+}
+.topbar .hui-select-trigger[aria-expanded="true"] {
+  border-color: var(--topbar-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--topbar-accent) 14%, transparent);
+}
+/* hui-select marks selectedIndex > 0 as a filter; a project choice is not one. */
+.topbar .hui-select-trigger.is-filtered:not([aria-expanded="true"]) {
+  border-color: var(--line);
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.topbar .hui-select-trigger.is-filtered:not([aria-expanded="true"]):hover {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--text) 4%, var(--bg-soft));
+}
+.topbar .hui-select-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar .hui-select-chevron { flex: none; margin-left: auto; color: var(--muted-2); transition: transform .2s var(--topbar-ease); }
+.topbar .hui-select-trigger[aria-expanded="true"] .hui-select-chevron { transform: rotate(180deg); }
+
+@media (max-width: 1140px) {
+  .topbar .hui-select-trigger { min-width: 110px; max-width: 155px; }
+}
+@media (max-width: 1000px) {
+  .topbar .topbar-project { min-width: 0; flex-shrink: 1; }
+  .topbar .hui-select-trigger { min-width: 0; max-width: 150px; }
+}
+@media (max-width: 760px) {
+  .topbar .hui-select-trigger { max-width: 130px; padding: 0 8px 0 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topbar :is(.hui-select-trigger, .hui-select-chevron, .theme-toggle, .command-trigger) {
+    transition: none !important;
+    animation: none !important;
+  }
+}

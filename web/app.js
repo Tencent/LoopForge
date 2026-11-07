@@ -1,5 +1,8 @@
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
+const SIDEBAR_WIDTH_KEY='agentflow.sidebarWidth',SIDEBAR_LAYOUT_KEY='agentflow.sidebarLayoutVersion',SIDEBAR_LAYOUT_VERSION='grasp-reference-v3';
+// Apply the Grasp reference width once before a workbench iframe can read old widths.
+if(localStorage.getItem(SIDEBAR_LAYOUT_KEY)!==SIDEBAR_LAYOUT_VERSION){localStorage.removeItem(SIDEBAR_WIDTH_KEY);localStorage.setItem(SIDEBAR_LAYOUT_KEY,SIDEBAR_LAYOUT_VERSION)}
 window.__AGENTFLOW_APP_DOMAIN__ = document.querySelector('meta[name="agentflow-app-domain"]')?.content || window.__AGENTFLOW_APP_DOMAIN__ || '';
 // Go serialises an unset time as 0001-01-01; treat that like no time at all.
 const knownTime = v => { const d = v ? new Date(v) : null; return d && d.getFullYear() > 1970 ? d : null; };
@@ -8,17 +11,18 @@ const state = {
   data:null, currentUser:null, authRequired:false, currentView:'', analytics:null, workflow:null, workflowSaved:null, workflowDirty:false, selectedNode:null, connectFrom:null, connectCursor:null, activeRun:null,
   selectedAgent:null, selectedRun:null, selectedRunNode:null, runFilter:'all', runQuery:'', runWorkflowFilter:'',
   selectedIssue:null, projectFilter:'', projectDraft:null, requirementIssueId:null, sourceFilter:'',
+  projectAdminDetailId:null, projectAdminTab:'basic', projectAdminQuery:'', projectAdminFilter:'all', projectDraftFor:'', projectDraftBase:null, projectIdentCustom:false, projectIdentSeed:'', projectAdminErrors:{},
   sopScope:'project', agentScope:'project', ruleScope:'project', skillScope:'project', dockerfileScope:'project', environmentScope:'project', sandboxScope:'project',
   issueRunFilter:'', issueStatusFilter:'', issueAssigneeFilter:'', issueQuery:'', issueView:localStorage.getItem('agentflow.issueView')||'table',
-  assetType:'dockerfiles', selectedAsset:null, mcpTab:'market', mcpScope:'project', mcpMarket:[], mcpQuery:'', editingMCPId:'', poll:null, runStream:null,
+  assetType:'dockerfiles', selectedAsset:null, assetQuery:'', assetDirty:false, mcpTab:'market', mcpScope:'project', mcpMarket:[], mcpQuery:'', editingMCPId:'', poll:null, runStream:null,
   obsTab:'overview', obsDeliveryFilter:'all', obsTraceRunId:null, obsTraceAdapter:'live', obsScope:localStorage.getItem('agentflow.obsScope')==='project'?'project':'user', obsUserFilter:'', obsSourceFilter:'', obsUserFilterReady:false, obsTrendGrain:['day','week','month','all'].includes(localStorage.getItem('agentflow.obsTrendGrain'))?localStorage.getItem('agentflow.obsTrendGrain'):'all', obsPeriodKey:'', obsTrendMetric:['runs','issues','cost'].includes(localStorage.getItem('agentflow.obsTrendMetric'))?localStorage.getItem('agentflow.obsTrendMetric'):'tokens', obsCrossProject:null, drawerOpen:false, issueDetailTab:'overview', issueDetailData:null, propTab:'basic',
   uiScroll:{runId:'', nodeId:'', graphLeft:0, feedTop:0, telTop:0, feedStick:true, telStick:true},
   runLogs:null, runTelemetry:null, runTelemetryAdapter:'live', runWorkspace:null,
   accessTab:localStorage.getItem('agentflow.accessTab')||'setup', accessClient:'cursor',
   accessCapabilities:null, accessCapabilitiesStatus:'idle', accessCapabilitiesError:'',
   accessTokens:[], accessTokensStatus:'idle', accessTokensError:'', revealedToken:'',
-  deploymentData:null, deploymentError:'', deploymentLoading:false, deploymentRepositoryId:'', deploymentBranch:'',
-  metricsRange:['7d','30d','90d','365d','custom'].includes(localStorage.getItem('agentflow.metricsRange'))?localStorage.getItem('agentflow.metricsRange'):'30d', metricsDateFrom:localStorage.getItem('agentflow.metricsDateFrom')||'', metricsDateTo:localStorage.getItem('agentflow.metricsDateTo')||'', metricsData:null, metricsIssues:[], metricsBenchmark:null, metricsLoading:false, metricsError:'', metricsTrendMetric:localStorage.getItem('agentflow.metricsTrendMetric')||'deliveries', metricsDeploymentData:null, metricsDeploymentError:'', metricsDeploymentLoading:false,
+  metricsRange:['7d','30d','90d','365d','custom'].includes(localStorage.getItem('agentflow.metricsRange'))?localStorage.getItem('agentflow.metricsRange'):'30d', metricsDateFrom:localStorage.getItem('agentflow.metricsDateFrom')||'', metricsDateTo:localStorage.getItem('agentflow.metricsDateTo')||'', metricsData:null, metricsIssues:[], metricsLoading:false, metricsError:'', metricsTrendMetric:localStorage.getItem('agentflow.metricsTrendMetric')||'deliveries',
+  issueSelectionMode:false, issueSelection:new Set(), issueSelectionScope:'', issueBulkDeleting:false, issueBulkDeleteProgress:null, issueBulkDeleteResult:null,
   listPages:{}
 };
 
@@ -60,7 +64,7 @@ function pagerHTML(key, p){
 function goListPage(key, page){
   if(!state.listPages)state.listPages={};
   state.listPages[key]=Math.max(1, Number(page)||1);
-  if(String(key).startsWith('obs-'))renderObservability();
+  if(String(key).startsWith('obs-')){if(typeof obsRefreshPaged==='function')obsRefreshPaged(key);else renderObservability()}
   else if(key==='issues')renderIssues();
   else if(key==='runs')renderRuns();
   else if(key==='mcp')renderMCPManagement();
@@ -118,17 +122,18 @@ function toast(message, type='info', duration=2600){
   }
   if(!container)return;
   const kind=['ok','err','warn','info'].includes(type)?type:'info';
-  const icons={ok:'✓',err:'✕',warn:'⚠️',info:'ℹ️'};
+  const icons={ok:'check',err:'alert',warn:'warning',info:'info'};
   const item=document.createElement('div');
   item.className=`toast-item toast-${kind}`;
   item.setAttribute('role','status');
-  item.innerHTML=`<span class="toast-item-icon">${icons[kind]}</span><span class="toast-item-msg">${escapeHTML(message)}</span><button type="button" class="toast-item-close" title="关闭">×</button>`;
+  item.innerHTML=`<span class="toast-item-icon"><svg class="agent-icon harness-icon" data-icon="${icons[kind]}" width="16" height="16" aria-hidden="true" focusable="false"></svg></span><span class="toast-item-msg">${escapeHTML(message)}</span><button type="button" class="toast-item-close" title="关闭" aria-label="关闭"><svg class="agent-icon harness-icon" data-icon="close" width="14" height="14" aria-hidden="true" focusable="false"></svg></button>`;
   const action=toastActions.get(message);
   if(action){
     const button=document.createElement('button');button.type='button';button.className='button primary small toast-item-action';button.textContent=action.label;
     button.onclick=()=>{remove();action.run()};item.insertBefore(button,item.querySelector('.toast-item-close'));duration=Math.max(duration,8000);
   }
   container.appendChild(item);
+  window.AgentFlowHarnessIcons?.hydrate?.(item);
   let timer=null;
   const remove=()=>{
     if(item.classList.contains('leaving'))return;
@@ -141,135 +146,187 @@ function toast(message, type='info', duration=2600){
   item.querySelector('.toast-item-close').onclick=remove;
 }
 
+// Platform dialogs (#confirmModal) replace window.confirm/prompt/alert. Calls
+// queue while one is open; Escape / backdrop cancel, Enter confirms (Ctrl/⌘+Enter
+// in a textarea), Tab stays inside, and focus returns to the opener.
 let confirmPromiseResolve = null;
-function afConfirm(options){
-  return new Promise((resolve)=>{
-    const modal=$('#confirmModal');
-    if(!modal){
-      const msg=typeof options==='string'?options:(options?.message||'');
-      return resolve(window.confirm(msg));
+const afDialogQueue=[];
+let afDialogOpener=null;
+const AF_CONFIRM_MODAL_HTML=`<div id="confirmModal" class="modal">
+  <div class="modal-card confirm-modal-card" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+    <div class="confirm-modal-header">
+      <div class="confirm-icon-wrap" id="confirmIconWrap"><span id="confirmIcon"></span></div>
+      <div class="confirm-header-text"><h3 id="confirmTitle">确认操作</h3><p id="confirmMessage"></p></div>
+    </div>
+    <div id="confirmPromptWrap" class="confirm-prompt-wrap" hidden>
+      <label id="confirmPromptLabel">请输入信息</label>
+      <input type="text" id="confirmPromptInput" class="input" autocomplete="off">
+      <textarea id="confirmPromptMultiline" class="input" rows="6" maxlength="65536" hidden></textarea>
+    </div>
+    <div class="confirm-modal-footer">
+      <button type="button" class="button ghost" id="confirmCancelBtn">取消</button>
+      <button type="button" class="button primary" id="confirmOkBtn">确定</button>
+    </div>
+  </div>
+</div>`;
+function afConfirmModal(){
+  let modal=$('#confirmModal');
+  if(!modal){
+    const host=document.createElement('div');
+    host.innerHTML=AF_CONFIRM_MODAL_HTML;
+    modal=host.firstElementChild;
+    document.body.appendChild(modal);
+  }
+  bindConfirmModal(modal);
+  return modal;
+}
+function setConfirmIcon(tone,name){
+  const wrap=$('#confirmIconWrap'),icon=$('#confirmIcon');
+  if(wrap)wrap.className=`confirm-icon-wrap ${tone}`;
+  if(icon){
+    icon.innerHTML=`<svg class="agent-icon harness-icon" data-icon="${name}" width="17" height="17" aria-hidden="true" focusable="false"></svg>`;
+    window.AgentFlowHarnessIcons?.hydrate?.(icon);
+  }
+}
+// setup(modal) fills the dialog and returns {focus, value(isOk)}; the promise
+// resolves with value(isOk), or isOk when no value() is given.
+function afOpenDialog(setup){
+  return new Promise(resolve=>{
+    afDialogQueue.push({setup,resolve});
+    afNextDialog();
+  });
+}
+function afNextDialog(){
+  if(confirmPromiseResolve){
+    if($('#confirmModal')?.classList.contains('open'))return;
+    return confirmPromiseResolve(false);
+  }
+  const job=afDialogQueue.shift();
+  if(!job)return;
+  const modal=afConfirmModal();
+  if(!afDialogOpener){const active=document.activeElement;afDialogOpener=active&&active!==document.body&&!modal.contains(active)?active:null}
+  $('#confirmPromptWrap').hidden=true;
+  const rerunFields=$('#rerunFromNodeFields');
+  if(rerunFields)rerunFields.hidden=true;
+  const okBtn=$('#confirmOkBtn'),cancelBtn=$('#confirmCancelBtn');
+  cancelBtn.hidden=false;
+  let opened;
+  try{opened=job.setup(modal)||{}}catch(err){job.resolve(null);console.error(err);return afNextDialog()}
+  window.HuiPopover?.closeAll?.();
+  window.HuiTooltip?.hide?.();
+  modal.classList.add('open');
+  const focus=opened.focus||okBtn;
+  focus.focus();
+  if(opened.select)focus.select?.();
+  confirmPromiseResolve=isOk=>{
+    const result=opened.value?opened.value(!!isOk):!!isOk;
+    modal.classList.remove('open');
+    confirmPromiseResolve=null;
+    job.resolve(result);
+    if(afDialogQueue.length)return afNextDialog();
+    const back=afDialogOpener;
+    afDialogOpener=null;
+    if(back?.isConnected)back.focus?.({preventScroll:true});
+  };
+}
+function afDialogFocusables(modal){
+  return [...modal.querySelectorAll('button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
+}
+function bindConfirmModal(modal){
+  if(!modal||modal.dataset.dialogBound)return;
+  modal.dataset.dialogBound='1';
+  $('#confirmOkBtn')?.addEventListener('click',()=>confirmPromiseResolve?.(true));
+  $('#confirmCancelBtn')?.addEventListener('click',()=>confirmPromiseResolve?.(false));
+  modal.addEventListener('click',e=>{if(e.target===modal)confirmPromiseResolve?.(false)});
+  // Anything else that drops .open (generic modal handlers) still settles the
+  // pending call, otherwise the queue would never open another dialog.
+  if(typeof MutationObserver==='function'){
+    new MutationObserver(()=>{if(confirmPromiseResolve&&!modal.classList.contains('open'))confirmPromiseResolve(false)})
+      .observe(modal,{attributes:true,attributeFilter:['class']});
+  }
+  // Capture on document: Escape cancels wherever focus is, before other
+  // Escape handlers close an underlying modal or drawer.
+  document.addEventListener('keydown',e=>{
+    if(!confirmPromiseResolve||!modal.classList.contains('open')||e.isComposing||e.defaultPrevented)return;
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();confirmPromiseResolve(false);return}
+    if(e.key==='Tab'&&!modal.contains(document.activeElement)){
+      const items=afDialogFocusables(modal);
+      if(items.length){e.preventDefault();items[e.shiftKey?items.length-1:0].focus()}
     }
-    const opt=typeof options==='string'?{message:options}:(options||{});
-    const title=opt.title||(opt.danger?'危险操作确认':'操作确认');
-    const message=opt.message||'确定要继续吗？';
-    const confirmText=opt.confirmText||(opt.danger?'确定执行':'确定');
-    const cancelText=opt.cancelText||'取消';
+  },true);
+  modal.addEventListener('keydown',e=>{
+    if(!confirmPromiseResolve||e.isComposing)return;
+    if(e.key==='Tab'){
+      const items=afDialogFocusables(modal);
+      if(!items.length)return;
+      const at=items.indexOf(document.activeElement);
+      if(e.shiftKey&&at<=0){e.preventDefault();items[items.length-1].focus()}
+      else if(!e.shiftKey&&at===items.length-1){e.preventDefault();items[0].focus()}
+      return;
+    }
+    if(e.key!=='Enter')return;
+    const tag=e.target?.tagName;
+    if(tag==='BUTTON'||tag==='SELECT')return;
+    if(tag==='TEXTAREA'&&!(e.ctrlKey||e.metaKey))return;
+    e.preventDefault();
+    confirmPromiseResolve(true);
+  });
+}
+function afConfirm(options){
+  const opt=typeof options==='string'?{message:options}:(options||{});
+  return afOpenDialog(()=>{
     const danger=!!opt.danger;
-
-    $('#confirmTitle').textContent=title;
-    $('#confirmMessage').textContent=message;
+    $('#confirmTitle').textContent=opt.title||(danger?'危险操作确认':'操作确认');
+    $('#confirmMessage').textContent=opt.message||'确定要继续吗？';
     const okBtn=$('#confirmOkBtn');
-    const cancelBtn=$('#confirmCancelBtn');
-    const iconWrap=$('#confirmIconWrap');
-    const iconEl=$('#confirmIcon');
-    const promptWrap=$('#confirmPromptWrap');
-    const rerunFields=$('#rerunFromNodeFields');
-
-    promptWrap.hidden=true;
-    if(rerunFields)rerunFields.hidden=true;
-    okBtn.textContent=confirmText;
+    okBtn.textContent=opt.confirmText||(danger?'确定执行':'确定');
     okBtn.className=`button ${danger?'danger-btn':'primary'}`;
-    cancelBtn.textContent=cancelText;
-    cancelBtn.hidden=false;
-
-    iconWrap.className=`confirm-icon-wrap ${danger?'danger':opt.info?'info':'warn'}`;
-    iconEl.textContent=danger?'🗑️':(opt.info?'ℹ️':'⚠️');
-
-    modal.classList.add('open');
-    okBtn.focus();
-
-    confirmPromiseResolve=(val)=>{
-      modal.classList.remove('open');
-      confirmPromiseResolve=null;
-      resolve(val);
-    };
+    $('#confirmCancelBtn').textContent=opt.cancelText||'取消';
+    if(danger)setConfirmIcon('danger','trash');
+    else if(opt.info)setConfirmIcon('info','info');
+    else setConfirmIcon('warn','warning');
+    return {focus:okBtn};
   });
 }
 
 function afPrompt(options, defaultVal=''){
-  return new Promise((resolve)=>{
-    const modal=$('#confirmModal');
-    const opt=typeof options==='string'?{message:options, defaultValue:defaultVal}:(options||{});
-    if(!modal){
-      return resolve(window.prompt(opt.message||'', opt.defaultValue||''));
-    }
+  const opt=typeof options==='string'?{message:options, defaultValue:defaultVal}:(options||{});
+  return afOpenDialog(()=>{
     const title=opt.title||'请输入内容';
-    const message=opt.message||'';
-    const confirmText=opt.confirmText||'确定';
-    const cancelText=opt.cancelText||'取消';
-    const placeholder=opt.placeholder||'';
-    const defaultValue=opt.defaultValue||'';
-
     $('#confirmTitle').textContent=title;
-    $('#confirmMessage').textContent=message;
-    const okBtn=$('#confirmOkBtn');
-    const cancelBtn=$('#confirmCancelBtn');
-    const iconWrap=$('#confirmIconWrap');
-    const iconEl=$('#confirmIcon');
-    const promptWrap=$('#confirmPromptWrap');
+    $('#confirmMessage').textContent=opt.message||'';
     const single=$('#confirmPromptInput'),multi=$('#confirmPromptMultiline');
-    const promptInput=opt.multiline?multi:single;single.hidden=!!opt.multiline;multi.hidden=!opt.multiline;
+    const promptInput=opt.multiline?multi:single;
+    single.hidden=!!opt.multiline;
+    multi.hidden=!opt.multiline;
     const promptLabel=$('#confirmPromptLabel');
-    const rerunFields=$('#rerunFromNodeFields');
-
-    promptWrap.hidden=false;
-    if(rerunFields)rerunFields.hidden=true;
-    promptLabel.textContent=opt.label||title;promptLabel.htmlFor=promptInput.id;
-    promptInput.value=defaultValue;
-    promptInput.placeholder=placeholder;
-
-    okBtn.textContent=confirmText;
-    okBtn.className='button primary';
-    cancelBtn.textContent=cancelText;
-    cancelBtn.hidden=false;
-
-    iconWrap.className='confirm-icon-wrap info';
-    iconEl.textContent='✎';
-
-    modal.classList.add('open');
-    promptInput.focus();
-    promptInput.select();
-
-    confirmPromiseResolve=(isOk)=>{
-      const val=isOk?promptInput.value:null;
-      modal.classList.remove('open');
-      confirmPromiseResolve=null;
-      resolve(val);
-    };
+    $('#confirmPromptWrap').hidden=false;
+    promptLabel.textContent=opt.label||title;
+    promptLabel.htmlFor=promptInput.id;
+    promptInput.value=opt.defaultValue||'';
+    promptInput.placeholder=opt.placeholder||'';
+    const okBtn=$('#confirmOkBtn');
+    okBtn.textContent=opt.confirmText||'确定';
+    okBtn.className=`button ${opt.danger?'danger-btn':'primary'}`;
+    $('#confirmCancelBtn').textContent=opt.cancelText||'取消';
+    setConfirmIcon(opt.danger?'danger':'info','edit');
+    return {focus:promptInput,select:true,value:isOk=>isOk?promptInput.value:null};
   });
 }
 
 function afAlert(options){
-  return new Promise((resolve)=>{
-    const modal=$('#confirmModal');
-    const opt=typeof options==='string'?{message:options}:(options||{});
-    if(!modal){
-      window.alert(opt.message||'');
-      return resolve();
-    }
+  const opt=typeof options==='string'?{message:options}:(options||{});
+  return afOpenDialog(()=>{
     $('#confirmTitle').textContent=opt.title||'提示';
     $('#confirmMessage').textContent=opt.message||'';
-    $('#confirmPromptWrap').hidden=true;
-    const rerunFields=$('#rerunFromNodeFields');
-    if(rerunFields)rerunFields.hidden=true;
     const okBtn=$('#confirmOkBtn');
-    const cancelBtn=$('#confirmCancelBtn');
     okBtn.textContent='我知道了';
     okBtn.className='button primary';
-    cancelBtn.hidden=true;
-    const iconWrap=$('#confirmIconWrap');
-    const iconEl=$('#confirmIcon');
-    iconWrap.className=`confirm-icon-wrap ${opt.type==='err'?'danger':opt.type==='ok'?'info':'warn'}`;
-    iconEl.textContent=opt.type==='err'?'✕':(opt.type==='ok'?'✓':'ℹ️');
-
-    modal.classList.add('open');
-    okBtn.focus();
-
-    confirmPromiseResolve=()=>{
-      modal.classList.remove('open');
-      confirmPromiseResolve=null;
-      resolve();
-    };
+    $('#confirmCancelBtn').hidden=true;
+    if(opt.type==='err')setConfirmIcon('danger','alert');
+    else if(opt.type==='ok')setConfirmIcon('ok','check');
+    else setConfirmIcon('info','info');
+    return {focus:okBtn,value:()=>undefined};
   });
 }
 
@@ -743,6 +800,11 @@ function runProjectId(r){
   return '';
 }
 function scopedRuns(runs){const pid=state.projectFilter,list=runs||[];return pid?list.filter(r=>runProjectId(r)===pid):list}
+// Conversation workspaces (Run.kind=workspace) are the chat's sandbox, not SOP
+// runs: they have no nodes and stay "waiting" until reclaimed. They are reached
+// from the conversation and the requirement, never from SOP run lists or counts.
+function isSOPRun(r){return r?.kind!=='workspace'}
+function sopRuns(runs){return (runs||[]).filter(isSOPRun)}
 function preferredWorkflow(){
   const usable=catalogWorkflows(), mine=usable.filter(w=>catalogOwned(w.projectId));
   return mine.find(w=>w.id==='issue-fix-production')||mine[0]||usable.find(w=>w.id==='issue-fix-production')||usable[0]||null;
@@ -756,8 +818,8 @@ function syncWorkflowToProject(){
 }
 function isStaleRun(r){if(r?.status!=='running')return false;const t=new Date(r.updatedAt||r.createdAt||0).getTime();return !t||(Date.now()-t)>4*60*1000}
 function isGhostRun(r){if(!['failed','cancelled'].includes(r?.status))return false;return Object.values(r?.nodes||{}).some(n=>n?.status==='running'||n?.status==='pending_input')}
-function liveRuns(){return scopedRuns((state.data?.runs||[]).filter(r=>r.status==='waiting'||(r.status==='running'&&!isStaleRun(r))||isGhostRun(r)))}
-function staleRuns(){return scopedRuns((state.data?.runs||[]).filter(isStaleRun))}
+function liveRuns(){return scopedRuns(sopRuns(state.data?.runs).filter(r=>r.status==='waiting'||(r.status==='running'&&!isStaleRun(r))||isGhostRun(r)))}
+function staleRuns(){return scopedRuns(sopRuns(state.data?.runs).filter(isStaleRun))}
 async function refreshDashboard(){
   try{
     const opt={silent:true};
@@ -767,6 +829,10 @@ async function refreshDashboard(){
   }catch{}
 }
 function currentProject(){return (state.data.projects||[]).find(p=>p.id===state.projectFilter)||(state.data.projects||[])[0]}
+// Newcomers (no project in the URL or saved from an earlier visit) start in a
+// project they belong to, then the welcome project, then the first project.
+const DEFAULT_PROJECT_ID='welcome';
+function defaultProjectId(projects,userId=globalThis.state?.currentUser?.id){const list=projects||[];const mine=userId?list.find(p=>p.ownerId===userId||(p.members||[]).some(m=>m.userId===userId)):null;return (mine||list.find(p=>p.id===DEFAULT_PROJECT_ID)||list[0])?.id||''}
 function currentRepository(project=currentProject()){const id=project?.defaultRepositoryId;return (state.data.repositories||[]).find(r=>r.id===id)}
 function userById(id){return (state.data.users||[]).find(u=>Number(u.id)===Number(id))}
 function userDisplay(user){return user?(user.chineseName&&user.loginName?`${user.loginName}(${user.chineseName})`:user.loginName||user.chineseName||`用户 ${user.id}`):''}
@@ -788,7 +854,7 @@ function isOAHost(hostname){
   if(typeof window!=='undefined' && window.__AGENTFLOW_APP_DOMAIN__ && hostname===window.__AGENTFLOW_APP_DOMAIN__)return true;
   return false;
 }
-function shouldAutoPassportRedirect({isGuest, hostname, bypassAutoAuth, authErr, loginUrl}){
+function shouldAutoSSORedirect({isGuest, hostname, bypassAutoAuth, authErr, loginUrl}){
   return !!(isGuest && isOAHost(hostname) && !bypassAutoAuth && !authErr && loginUrl);
 }
 
@@ -796,7 +862,7 @@ async function boot(){
   state.data = {runs:[],issues:[],tasks:[],workflowMetrics:[],syncLogs:[],agents:[],workflows:[],projects:[],repositories:[],users:[],rules:[],skills:[],mcpServers:[],executors:[],dockerfiles:[],environments:[],sandboxes:[]};
   bind(); renderProjectSwitcher(); updateApprovalBadge();
 
-  // 1. 检查 URL 中是否有太湖/TAI 回调的 code
+  // 1. 检查 URL 中是否有 SSO 回调的 code
   const urlParams = new URLSearchParams(window.location.search);
   const authCode = urlParams.get('code');
   if (authCode) {
@@ -835,12 +901,12 @@ async function boot(){
     }
   }
 
-  // 3. 自动拉起认证：只在公司 OA 域名下把访客送到 Passport。localhost / 127.0.0.1 即使开启 AUTH_REQUIRED 也不跳 iOA，改走本地验收登录。
+  // 3. 自动拉起认证：只在配置的应用域名下把访客送到 SSO 登录页。localhost / 127.0.0.1 即使开启 AUTH_REQUIRED 也不跳转，改走本地验收登录。
   const isGuest = !state.currentUser || state.currentUser.isGuest;
   const bypassAutoAuth = new URLSearchParams(window.location.search).has('guest');
   const authErr = sessionStorage.getItem('agentflow_auth_err');
 
-  if (shouldAutoPassportRedirect({isGuest, hostname: window.location.hostname, bypassAutoAuth, authErr, loginUrl: state.loginUrl})) {
+  if (shouldAutoSSORedirect({isGuest, hostname: window.location.hostname, bypassAutoAuth, authErr, loginUrl: state.loginUrl})) {
     window.location.href = state.loginUrl;
     return;
   }
@@ -849,6 +915,7 @@ async function boot(){
   if(isGuest&&state.authRequired&&['localhost','127.0.0.1','[::1]'].includes(window.location.hostname)){
     const local=await api('/api/auth/local',{silent:true}).catch(()=>({enabled:false}));
     if(local.enabled){
+      finishBootLoader();
       document.body.innerHTML='<main style="max-width:480px;margin:15vh auto;padding:32px"><h1>本地验收环境</h1><p>登录配置的本地验收账号后查看项目和业务域。</p><button id="localBootLogin" class="button primary">本地验收登录</button><p id="localBootError"></p></main>';
       $('#localBootLogin').onclick=async()=>{const button=$('#localBootLogin');button.disabled=true;try{await api('/api/auth/local',{method:'POST',body:'{}'});location.reload()}catch(e){$('#localBootError').textContent=e.message;button.disabled=false}};
       return;
@@ -860,19 +927,24 @@ async function boot(){
   const view=restoredView();
   const shell = await api('/api/bootstrap', {silent: view==='runs'});
   state.data = Object.assign(state.data, shell);
-  const savedProject=localStorage.getItem('agentflow.activeProject');
-  const projectList=state.data.projects||[],myID=state.currentUser?.id;
-  const mine=projectList.find(p=>myID&&(p.ownerId===myID||(p.members||[]).some(m=>m.userId===myID)));
-  state.projectFilter=projectList.some(p=>p.id===savedProject)?savedProject:(mine||projectList[0])?.id||'';
+  const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
+  state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects);
   state.workflow = clone(restoreOpenWorkflow());
   state.workflowSaved = clone(state.workflow);
   state.workflowDirty = false;
   if(state.workflow?.id)localStorage.setItem('agentflow.activeWorkflow',state.workflow.id);
   renderProjectSwitcher(); updateApprovalBadge();
+  listenForGongfengOAuth();
   window.addEventListener('hashchange',async()=>{
     const name=restoredView();
+    const assetDetailHash=state.selectedAsset&&isProjectSharedAsset(activeViewName())?assetViewHash(state.assetType,state.selectedAsset):'';
+    if(assetDetailHash&&location.hash!==assetDetailHash&&!(await confirmAssetLeave())){
+      history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
+      return;
+    }
     if(activeViewName()!==name){
       if(name==='flow')await applyFlowRoute();
+      if(name==='projects')syncProjectAdminRouteState();
       if(restoredView()===name)switchView(name);
       return;
     }
@@ -883,27 +955,83 @@ async function boot(){
       return;
     }
     if(name==='flow')applyFlowRoute();
+    if(name==='agents')applyAgentRoute();
+    if(isProjectSharedAsset(name))applyAssetRoute();
+    if(name==='projects')applyProjectAdminRoute();
+    if(name==='collaboration'){
+      const id=routePart(1);
+      if(id){const url=new URL(location.href);url.searchParams.set('chatSession',id);history.replaceState({},'',url);const frame=$('#chatNextFrame');if(frame){frame.dataset.src='';mountNativeChat()}}
+    }
   });
+  if(view==='projects')syncProjectAdminRouteState();
   renderAll();
   switchView(view);
+  settleBootLoader();
+  if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
 }
-const savedTheme=localStorage.getItem('loopforge.theme.v3')||'light';document.documentElement.dataset.theme=savedTheme;
+const BOOT_LOADER_CHAT_TIMEOUT_MS=8000;
+let nativeChatReady=false,bootLoaderTimer=0;
+function finishBootLoader(){
+  clearTimeout(bootLoaderTimer);bootLoaderTimer=0;
+  document.body.classList.remove('booting');
+  const loader=document.getElementById('bootLoader');
+  if(!loader?.isConnected||loader.classList.contains('leaving'))return;
+  loader.setAttribute('aria-busy','false');
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches){loader.remove();return}
+  loader.classList.add('leaving');
+  const remove=()=>loader.remove();
+  loader.addEventListener('transitionend',remove,{once:true});
+  setTimeout(remove,250);
+}
+function settleBootLoader(){
+  if(!document.body.classList.contains('chat-next-active')||nativeChatReady){finishBootLoader();return}
+  clearTimeout(bootLoaderTimer);
+  bootLoaderTimer=setTimeout(finishBootLoader,BOOT_LOADER_CHAT_TIMEOUT_MS);
+}
+window.addEventListener('pageshow',event=>{if(event.persisted)finishBootLoader()});
+// Shared with the /chatbot/ iframe (chatbot/src/theme.js): light|dark|system, while data-theme stays light|dark.
+const THEME_KEY='agentflow.theme.v3',LEGACY_THEME_KEY='agentflow.native-chat.theme',EARLIER_THEME_KEY='loopforge.theme.v3',themeMedia=matchMedia('(prefers-color-scheme: dark)');
+function readThemePreference(){try{const current=localStorage.getItem(THEME_KEY),legacy=localStorage.getItem(LEGACY_THEME_KEY),earlier=localStorage.getItem(EARLIER_THEME_KEY),valid=value=>['light','dark','system'].includes(value);let preference='light';if(valid(current))preference=current;else if(valid(legacy)||valid(earlier)){preference=valid(legacy)?legacy:earlier;localStorage.setItem(THEME_KEY,preference)}if(legacy!==null)localStorage.removeItem(LEGACY_THEME_KEY);if(earlier!==null)localStorage.removeItem(EARLIER_THEME_KEY);return preference}catch{return'light'}}
+function resolvedTheme(preference){return preference==='system'?(themeMedia.matches?'dark':'light'):preference==='dark'?'dark':'light'}
+// Kept in memory so the switcher still reflects the choice when localStorage is unavailable.
+let activeThemePreference='light',themeFadeTimer=0;
+function applyTheme(preference=readThemePreference()){const root=document.documentElement,previous=root.dataset.theme,next=resolvedTheme(preference);activeThemePreference=preference;if(previous&&previous!==next&&!matchMedia('(prefers-reduced-motion: reduce)').matches){root.classList.add('theme-fading');clearTimeout(themeFadeTimer);themeFadeTimer=setTimeout(()=>root.classList.remove('theme-fading'),320)}root.dataset.theme=next;if(typeof renderThemeToggle==='function')renderThemeToggle()}
+applyTheme();
+themeMedia.addEventListener('change',()=>applyTheme());
+window.addEventListener('storage',event=>{if(!event.key||event.key===THEME_KEY)applyTheme()});
 
 function bind(){
 	prepareMCPFormHints();
-  $$('.nav[data-view]').forEach(btn=>btn.onclick=()=>switchView(btn.dataset.view));
+  $$('.nav[data-view]').forEach(btn=>btn.onclick=async()=>{
+    if(!(await confirmAssetLeave()))return;
+    if(btn.dataset.view==='projects'&&state.projectAdminDetailId){
+      if(!(await confirmDiscardProjectDraft()))return;
+      resetProjectAdminDetail();
+    }
+    if(btn.id==='railSettingsEntry'&&(settingsRouteTransition?.target?isSettingsManagementView(settingsRouteTransition.target):document.body.classList.contains('management-mode'))){
+      switchView('collaboration');
+    }else switchView(btn.dataset.view);
+  });
+  $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
+  $('#railSidebarToggle')?.addEventListener('click',()=>{
+    setPlatformRailExpanded(!platformRailExpanded());
+  });
+  document.addEventListener('click',event=>{
+    if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
+      event.preventDefault();event.stopImmediatePropagation();
+      setSettingsSidebarExpanded(!settingsSidebarExpanded());
+    }
+  },true);
+  matchMedia('(max-width:1000px)').addEventListener('change',()=>setSettingsSidebarExpanded(settingsSidebarExpanded()));
   const capabilityToggle=$('#capabilityNavToggle');if(capabilityToggle)capabilityToggle.onclick=()=>setCapabilityNavExpanded(capabilityToggle.getAttribute('aria-expanded')!=='true');
   setCapabilityNavExpanded(localStorage.getItem('agentflow.capabilityNavExpanded')==='true');
   const environmentToggle=$('#environmentNavToggle');if(environmentToggle)environmentToggle.onclick=()=>setEnvironmentNavExpanded(environmentToggle.getAttribute('aria-expanded')!=='true');
   setEnvironmentNavExpanded(localStorage.getItem('agentflow.environmentNavExpanded')==='true');
   $$('#accessTabs [data-access-tab]').forEach(btn=>btn.onclick=()=>setAccessTab(btn.dataset.accessTab));
   $('#guideCreateToken')&&($('#guideCreateToken').onclick=()=>setAccessTab('tokens',true));
-  $$('[data-add]').forEach(btn=>btn.onclick=()=>addNode(btn.dataset.add));
-  $('#workflowSelect').onchange=async e=>{
-    if(state.workflowDirty&&!(await afConfirm({title:'未保存更改',message:'当前流程有未保存修改，切换将放弃这些修改。继续？',danger:true}))){if(state.workflow)e.target.value=state.workflow.id;return}
-    state.workflow=clone((state.data.workflows||[]).find(w=>w.id===e.target.value)||null);state.selectedNode=null;markWorkflowClean();rememberOpenWorkflow();renderAll();refreshGenericWorkflowRoles();
-  };
+  bindFlowDesigner();
+  $('#workflowSelect').onchange=e=>switchFlowWorkflow(e.target.value);
   $('#workflowName').oninput=e=>{if(!state.workflow)return;state.workflow.name=e.target.value;dirty()};
   $('#workflowOwner').oninput=e=>{if(!state.workflow)return;state.workflow.owner=e.target.value;dirty()};
   $('#workflowSandbox').onchange=e=>{if(!state.workflow)return;state.workflow.sandboxProfileId=e.target.value;dirty()};
@@ -914,10 +1042,6 @@ function bind(){
   $('#workflowDescription').oninput=e=>{if(!state.workflow)return;state.workflow.description=e.target.value;dirty()};
   $('#saveWorkflow').onclick=saveWorkflow; $('#discardWorkflow').onclick=discardWorkflow; $('#publishWorkflow').onclick=publishWorkflow;
   $('#flowHistory')&&($('#flowHistory').onclick=()=>openRevisionHistory('workflow', state.workflow?.id, state.workflow?.name));
-  bindAvatarFallbacks();
-  $('#refreshBots').onclick=loadBots;
-  $('#deleteNode').onclick=deleteSelected; $('#fitButton').onclick=arrange;
-  bindFlowResize();
   $('#runButton').onclick=()=>openRunModal(state.workflow?.id);
   $('#flowSettingsToggle').onclick=()=>{const panel=$('#flowSettingsPanel');panel.hidden=!panel.hidden;$('#flowSettingsToggle').classList.toggle('active',!panel.hidden)};
   const closeFlowSettings=()=>{const panel=$('#flowSettingsPanel');if(panel){panel.hidden=true;$('#flowSettingsToggle')?.classList.remove('active')}};
@@ -943,12 +1067,15 @@ function bind(){
   const userBadge = $('#userBadge');
   const credentialsButton = $('#userCredentialsButton');
   if (userBadge && profileWrap) {
-    const toggleProfile=()=>{profileWrap.classList.toggle('is-open');userBadge.setAttribute('aria-expanded',String(profileWrap.classList.contains('is-open')))};
+    // The card's visibility transition still reports hidden on its first frame, so wait until the switcher can be measured.
+    const snapThemeSegment=(tries=12)=>requestAnimationFrame(()=>{const active=$('#userProfilePopover .upp-theme-seg .active');if(active&&getComputedStyle(active).visibility==='hidden'&&tries>0)return snapThemeSegment(tries-1);renderThemeSegment({snap:true})});
+    profileWrap.addEventListener('mouseenter',()=>snapThemeSegment());
+    const toggleProfile=()=>{profileWrap.classList.toggle('is-open');userBadge.setAttribute('aria-expanded',String(profileWrap.classList.contains('is-open')));if(profileWrap.classList.contains('is-open'))snapThemeSegment()};
     userBadge.onclick = (e) => {
       e.stopPropagation();
       toggleProfile();
     };
-    if(credentialsButton)credentialsButton.onclick=e=>{e.stopPropagation();profileWrap.classList.add('is-open');userBadge.setAttribute('aria-expanded','true');setTimeout(()=>$('#userCredentialForm input')?.focus(),0)};
+    if(credentialsButton)credentialsButton.onclick=e=>{e.stopPropagation();profileWrap.classList.add('is-open');userBadge.setAttribute('aria-expanded','true');setTimeout(()=>$('#credentialAddButton')?.focus(),0)};
     userBadge.onkeydown = (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -994,14 +1121,18 @@ function bind(){
 	$('#refreshDashboard').onclick=refreshDashboard;
 	$('#refreshIssues').onclick=refreshIssues;
 	$('#refreshSOPs').onclick=refreshWorkflowMetrics;
-  $('#agentSearch').oninput=renderAgents;$('#agentPrev').onclick=()=>setAgentWizardStep(state.agentWizardStep-1);$('#agentNext').onclick=()=>setAgentWizardStep(state.agentWizardStep+1);$$('[data-wizard-steps="agent"] [data-step-target]').forEach(b=>b.onclick=()=>setAgentWizardStep(Number(b.dataset.stepTarget)));$$('.agent-close').forEach(b=>b.onclick=()=>$('#agentModal').classList.remove('open'));
+  $('#agentSearch').oninput=renderAgents;$('#agentPrev').onclick=agentWizardPrev;$('#agentNext').onclick=agentWizardNext;$$('[data-wizard-steps="agent"] [data-agent-tab]').forEach(b=>b.onclick=()=>setAgentTab(b.dataset.agentTab));$$('[data-wizard-steps="agent-create"] [data-create-step]').forEach(b=>b.onclick=()=>{if(!b.disabled)setAgentCreateStep(Number(b.dataset.createStep))});bindAgentModalInputs();$$('.agent-close').forEach(b=>b.onclick=()=>$('#agentModal').classList.remove('open'));
   $('#newRunFromRuns')&&($('#newRunFromRuns').onclick=()=>switchView('issues'));
   $('#runSearch').oninput=e=>{state.runQuery=e.target.value.trim().toLowerCase();resetListPage('runs');renderRuns()};
   $('#runWorkflowFilter').onchange=e=>{state.runWorkflowFilter=e.target.value;resetListPage('runs');renderRuns()};
   $('#runFilters').onclick=e=>{const button=e.target.closest('[data-run-filter]');if(!button)return;state.runFilter=button.dataset.runFilter;resetListPage('runs');$$('[data-run-filter]').forEach(x=>x.classList.toggle('active',x===button));renderRuns()};
-  $$('[data-asset-scope]').forEach(btn=>btn.onclick=()=>{state[assetScopeKey(state.assetType)]=btn.dataset.assetScope;state.selectedAsset=null;renderAssets()});
-  $('#newAsset').onclick=()=>{state.selectedAsset='__new__';renderAssets()};
+  $$('[data-asset-scope]').forEach(btn=>btn.onclick=()=>{if(state.selectedAsset)return;const key=assetScopeKey(state.assetType);if(state[key]!==btn.dataset.assetScope)state.assetQuery='';state[key]=btn.dataset.assetScope;renderAssets()});
+  $('#newAsset').onclick=()=>openAssetDetail('__new__');
+  $('#assetSearch').oninput=e=>{state.assetQuery=e.target.value;renderAssetGrid()};
   $('#assetForm').onsubmit=saveAsset;
+  const markAssetFormDirty=e=>{if(e.target instanceof HTMLInputElement&&e.target.type==='file')return;markAssetDirty()};
+  $('#assetForm').addEventListener('input',markAssetFormDirty);
+  $('#assetForm').addEventListener('change',markAssetFormDirty);
   // 技能文件上传：事件委托绑定在持久表单节点上，表单 innerHTML 重建不影响。
   // 每次渲染直接挂 onchange 会因轮询重建表单时 input 被替换而丢事件。
   $('#assetForm').addEventListener('change',e=>{
@@ -1071,7 +1202,8 @@ function bind(){
     }
   });
   $$('[data-mcp-tab]').forEach(btn=>btn.onclick=()=>{state.mcpTab=btn.dataset.mcpTab;resetListPage('mcp');renderMCPManagement()});
-  $$('[data-mcp-scope]').forEach(btn=>btn.onclick=()=>{state.mcpScope=btn.dataset.mcpScope;if(state.mcpScope==='personal')state.mcpTab='installed';resetListPage('mcp');renderMCPManagement()});
+  const mcpScopeSelect=$('#mcpScopeSelect');
+  if(mcpScopeSelect){window.enhanceSelect?.(mcpScopeSelect);mcpScopeSelect.onchange=()=>{state.mcpScope=mcpScopeSelect.value==='personal'?'personal':'project';if(state.mcpScope==='personal')state.mcpTab='installed';resetListPage('mcp');renderMCPManagement()}}
   let mcpSearchTimer=0;
   $('#mcpMarketSearch')&&($('#mcpMarketSearch').oninput=e=>{state.mcpQuery=e.target.value.trim().toLowerCase();resetListPage('mcp');clearTimeout(mcpSearchTimer);mcpSearchTimer=setTimeout(()=>renderMCPManagement(),120)});
   $('#newCustomMcp')&&($('#newCustomMcp').onclick=()=>openCustomMCPModal());
@@ -1099,19 +1231,32 @@ function bind(){
   $('#importTAPDIssue')&&($('#importTAPDIssue').onclick=openImportTAPDModal);
   $$('.import-tapd-close').forEach(b=>b.onclick=()=>$('#importTAPDModal').classList.remove('open'));
   $('#importTAPDForm')&&($('#importTAPDForm').onsubmit=importTAPDStory);
-  $('#newScheduleJob').onclick=openScheduleJobModal;
-  $('#newProject').onclick=()=>{state.projectDraft={id:'',key:'',name:'',description:'',color:'#536dfe',ownerId:state.currentUser?.id||'',workflowId:'generic-backend-delivery',defaultRepositoryId:'',members:[],clarification:defaultClarification(),runEval:defaultRunEval()};renderProjectAdmin()};
-  $('#projectAdminForm').onsubmit=saveProjectAdmin;
+  $('#newScheduleJob').onclick=()=>openScheduleJobModal('dispatch');
+  $('#newAISchedule').onclick=()=>{selectAIScheduleTab('project');openScheduleJobModal('assistant')};
+  $('#refreshAISchedules').onclick=refreshAISchedules;
+  bindSharedScheduleUI();
+  bindProjectAdmin();bindRepoDrawer();
   $$('.requirement-close').forEach(b=>b.onclick=()=>closeRequirementComposer());
-  $('#chatSend').onclick=()=>sendChatClarify(!!state.composerClarifyRetry);
+  $('#reqNext').onclick=()=>startReqClarify();
+  $('#reqSkip').onclick=()=>skipReqClarify();
+  $('#reqBack').onclick=()=>backReqStep();
+  $('#reqGoCreate').onclick=()=>goReqStep(3);
+  $('#reqCreate').onclick=()=>createIssueFromChat();
   $('#chatStop').onclick=()=>abortChatClarify();
-  $('#chatCreateDirect')&&($('#chatCreateDirect').onclick=()=>createIssueDirect());
-  $('#chatCreateLocal')&&($('#chatCreateLocal').onclick=()=>createIssueFromChat('local'));
-  $('#chatCreateTAPD').onclick=()=>createIssueFromChat('tapd');
-  $('#chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){if(chatHistory.length>0){e.preventDefault();sendChatClarify(!!state.composerClarifyRetry)}}});
-  $('#reqWorkflow')&&($('#reqWorkflow').onchange=()=>persistRequirementComposer());
-  $('#reqBaseBranch')?.addEventListener('input',()=>{invalidateRequirementAnalysis();persistRequirementComposer()});
-  $('#chatInput').addEventListener('input',()=>{syncComposerReplyState();persistRequirementComposer()});
+  $('#reqReclarify').onclick=()=>reclarifyRequirement();
+  $('#reqTraceToggle').onclick=()=>toggleReqTrace();
+  $('#reqRepoChipToggle').onclick=e=>{e.stopPropagation();toggleReqRepoPopover()};
+  $$('#reqSteps [data-req-step]').forEach(b=>b.onclick=()=>openReqStep(Number(b.dataset.reqStep)));
+  $$('#reqTarget [data-req-target]').forEach(b=>b.onclick=()=>setReqTarget(b.dataset.reqTarget));
+  document.addEventListener('pointerdown',e=>{
+    const pop=$('#reqRepoPopover');
+    if(pop&&!pop.hidden&&!e.target.closest?.('#reqRepoChip, .hui-select-panel'))toggleReqRepoPopover(false);
+  });
+  $('#chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();startReqClarify()}});
+  $('#reqWorkflow')&&($('#reqWorkflow').onchange=()=>{renderReqFooter();persistRequirementComposer()});
+  $('#reqBaseBranch')?.addEventListener('input',onReqBaseBranchInput);
+  $('#reqTitle').addEventListener('input',onReqTitleInput);
+  $('#chatInput').addEventListener('input',onReqDescriptionInput);
   window.addEventListener('beforeunload',()=>persistRequirementComposer());
   if($('#sopCreateForm')){$('#sopCreateForm').onsubmit=createSOPFromWizard;$('#sopPrev').onclick=()=>setSOPWizardStep(state.sopWizardStep-1);$('#sopNext').onclick=()=>setSOPWizardStep(state.sopWizardStep+1);$$('[data-wizard-steps="sop"] [data-step-target]').forEach(b=>b.onclick=()=>setSOPWizardStep(Number(b.dataset.stepTarget)));$$('.sop-create-close').forEach(b=>b.onclick=()=>$('#sopCreateModal').classList.remove('open'))}
   $('#newSOP')&&($('#newSOP').onclick=openSOPWizard);
@@ -1131,13 +1276,6 @@ function bind(){
   $('#syncNowBtn').onclick=syncNow;
   $('#saveSyncConfig').onclick=saveSyncConfig;
   $('#scheduleJobForm').onsubmit=saveScheduleJob;
-  $('#scheduleJobReset').onclick=()=>{resetScheduleJobForm();$('#scheduleJobForm').elements.name.focus()};
-  $('#scheduleKindTabs')?.addEventListener('click',e=>{
-    const tab=e.target.closest('[data-job-kind]');
-    if(!tab)return;
-    $('#scheduleJobForm').elements.jobKind.value=tab.dataset.jobKind;
-    syncScheduleJobKind();
-  });
   $('#scheduleTimingTabs')?.addEventListener('click',e=>{
     const tab=e.target.closest('[data-schedule-tab]');
     if(!tab)return;
@@ -1152,13 +1290,17 @@ function bind(){
   $('#pushToGongfeng').onclick=()=>pushIssue('gongfeng');
   $('#pushToTAPD').onclick=()=>pushIssue('tapd');
   $('#openSyncModal').onclick=()=>{$('#syncModal').classList.add('open');refreshSyncStatus()};
+  bindIssueHeadingMenu();
+  enhanceIssueFilters();
   $$('.sync-close').forEach(b=>b.onclick=()=>$('#syncModal').classList.remove('open'));
-  $$('.schedule-close').forEach(b=>b.onclick=()=>$('#scheduleModal').classList.remove('open'));
+  $$('.schedule-close').forEach(b=>b.onclick=closeScheduleJobModal);
   $('#syncAutoEnabledInline').onchange=e=>{$('#syncAutoEnabled').checked=e.target.checked;saveSyncConfig()};
   $$('.artifact-close').forEach(b=>b.onclick=()=>$('#artifactModal').classList.remove('open'));
   $$('.modal').forEach(modal=>modal.addEventListener('pointerdown',e=>{
     if(e.target!==modal)return;
     if(modal.id==='requirementModal')return;
+    if(modal.id==='confirmModal')return;
+    if(modal.id==='scheduleModal')return closeScheduleJobModal();
     modal.classList.remove('open');
   }));
   document.addEventListener('keydown',e=>{
@@ -1170,19 +1312,44 @@ function bind(){
       if(e.key==='Enter'){e.preventDefault();executeCommand(commandSelectedIndex);return}
     }
     if(e.key==='Escape'){
-      if(state.connectFrom||state.connectCursor){state.connectFrom=null;state.connectCursor=null;renderCanvas();renderProperties();return}
+      if(flowDesignerEscape(e))return;
       if($('#artifactModal')?.classList.contains('open')){$('#artifactModal').classList.remove('open');return}
       if(state.drawerOpen)return closeIssueDrawer();
-      if($('#requirementModal')?.classList.contains('open')){closeRequirementComposer();return}
+      if($('#requirementModal')?.classList.contains('open')){
+        if(!$('#reqRepoPopover')?.hidden){toggleReqRepoPopover(false);return}
+        closeRequirementComposer();return
+      }
       const open=[...$$('.modal.open')].pop();
+      if(open?.id==='scheduleModal')return closeScheduleJobModal();
       if(open)return open.classList.remove('open');
       const panel=$('#flowSettingsPanel');
       if(panel&&!panel.hidden){panel.hidden=true;$('#flowSettingsToggle')?.classList.remove('active');return}
+      if($('#flowView')?.classList.contains('active')&&closeNodeDrawer())return;
     }
   });
 
   // --- 工作台 / 待办验收 / 可观测与分析 / Issue 详情抽屉 ---
-  $('.platform-sidebar .brand').onclick=()=>switchView('collaboration');
+  $('.platform-sidebar .brand')?.addEventListener('click',()=>switchView('collaboration'));
+  $('.rail-brand') && ($('.rail-brand').onclick=()=>switchView('collaboration'));
+  $('#railUserBadge') && ($('#railUserBadge').onclick=()=>switchView('settings'));
+  (function bindSidebarResize(){
+    const KEY=SIDEBAR_WIDTH_KEY,MIN=220,MAX=420,wide=matchMedia('(min-width:1001px)'),sidebar=$('.platform-sidebar');
+    const handle=document.createElement('button');handle.type='button';handle.className='sidebar-resize';handle.title='拖动调整侧栏宽度，双击恢复默认';handle.setAttribute('aria-label','调整侧栏宽度');sidebar.append(handle);
+    const clamp=px=>Math.round(Math.min(MAX,Math.max(MIN,px)));
+    const apply=()=>{const saved=Number(localStorage.getItem(KEY));if(wide.matches&&saved)document.documentElement.style.setProperty('--sidebar-w',clamp(saved)+'px');else document.documentElement.style.removeProperty('--sidebar-w')};
+    const save=px=>{localStorage.setItem(KEY,String(clamp(px)));apply()};
+    apply();wide.addEventListener('change',apply);
+    window.addEventListener('storage',event=>{if(!event.key||event.key===KEY||event.key===SIDEBAR_LAYOUT_KEY)apply()});
+    handle.onpointerdown=ev=>{
+      if(ev.button!==0)return;ev.preventDefault();
+      const startX=ev.clientX,startW=sidebar.getBoundingClientRect().width;
+      handle.setPointerCapture(ev.pointerId);document.body.classList.add('sidebar-resizing');
+      handle.onpointermove=move=>document.documentElement.style.setProperty('--sidebar-w',clamp(startW+move.clientX-startX)+'px');
+      handle.onpointerup=handle.onpointercancel=()=>{handle.onpointermove=handle.onpointerup=handle.onpointercancel=null;document.body.classList.remove('sidebar-resizing');save(sidebar.getBoundingClientRect().width)};
+    };
+    handle.ondblclick=()=>{localStorage.removeItem(KEY);apply()};
+    handle.onkeydown=ev=>{const cur=sidebar.getBoundingClientRect().width;if(ev.key==='ArrowRight'){ev.preventDefault();save(cur+16)}if(ev.key==='ArrowLeft'){ev.preventDefault();save(cur-16)}};
+  })();
   $('#dashImportTAPD')&&($('#dashImportTAPD').onclick=openImportTAPDModal);
   $('#dashNewRequirement').onclick=openRequirementWizard;
   $('#dashNewRun').onclick=()=>switchView('issues');
@@ -1190,15 +1357,19 @@ function bind(){
   $('#refreshApprovals').onclick=()=>renderApprovals(false);
   $('#refreshObs').onclick=refreshObs;
   $('#refreshMetrics').onclick=()=>refreshMetrics(true);
-  $('#refreshDeployments').onclick=()=>refreshDeployments(true);
   $('#exportObsReport').onclick=exportObsReport;
   $$('.obs-tab').forEach(btn=>btn.onclick=()=>switchObsTab(btn.dataset.obsTab));
   $$('.drawer-tab').forEach(btn=>btn.onclick=()=>{state.issueDetailTab=btn.dataset.dtab;$$('.drawer-tab').forEach(x=>x.classList.toggle('active',x===btn));renderIssueDetailTab()});
   const issueDrawer=$('#issueDetailDrawer');
   if(issueDrawer&&issueDrawer.parentElement!==document.body)document.body.appendChild(issueDrawer);
   $$('[data-close-drawer]').forEach(el=>el.onclick=closeIssueDrawer);
-  $('#projectSwitcher').onchange=e=>{
-    state.projectFilter=e.target.value;state.projectDraft=null;state.selectedIssue=null;
+  $('#projectSwitcher').onchange=async e=>{
+    if(!await confirmAssetLeave()){e.target.value=state.projectFilter||'';return}
+    const frame=$('#chatNextFrame');
+    if(frame?.contentWindow)frame.contentWindow.postMessage({type:'agentflow-project-context',projectId:e.target.value},location.origin);
+    closeScheduleJobModal();
+    state.projectFilter=e.target.value;state.selectedIssue=null;
+    if(state.currentView==='aiSchedules')refreshAISchedules();
     invalidateMetricsForProjectChange();
     localStorage.setItem('agentflow.activeProject',state.projectFilter);
     if($('#botsView')?.classList.contains('active'))loadBots();
@@ -1212,10 +1383,6 @@ function bind(){
     if($('#observabilityView').classList.contains('active'))refreshObs();
     if($('#knowledgeView')?.classList.contains('active')&&typeof renderKnowledgeView==='function')renderKnowledgeView();
     if($('#metricsView').classList.contains('active'))refreshMetrics();
-    if($('#deploymentsView').classList.contains('active')){
-      if(!canShowSkillhubEfficiency()){switchView('dashboard')}
-      else{state.deploymentData=null;state.deploymentError='';state.deploymentRepositoryId='';state.deploymentBranch='';renderDeploymentDashboard();refreshDeployments()}
-    }
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
@@ -1228,30 +1395,7 @@ function bind(){
   bindGlobalModals();
 }
 function bindGlobalModals(){
-  const confirmModal=$('#confirmModal');
-  if(confirmModal){
-    $('#confirmOkBtn')?.addEventListener('click', ()=>{
-      if(confirmPromiseResolve) confirmPromiseResolve(true);
-    });
-    $('#confirmCancelBtn')?.addEventListener('click', ()=>{
-      if(confirmPromiseResolve) confirmPromiseResolve(false);
-    });
-    confirmModal.addEventListener('click', (e)=>{
-      if(e.target===confirmModal){
-        if(confirmPromiseResolve) confirmPromiseResolve(false);
-      }
-    });
-    $('#confirmPromptMultiline')?.addEventListener('keydown',e=>{if(e.key==='Escape'||e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();if(confirmPromiseResolve)confirmPromiseResolve(e.key!=='Escape')}});
-    $('#confirmPromptInput')?.addEventListener('keydown', (e)=>{
-      if(e.key==='Enter'){
-        e.preventDefault();
-        if(confirmPromiseResolve) confirmPromiseResolve(true);
-      } else if(e.key==='Escape'){
-        e.preventDefault();
-        if(confirmPromiseResolve) confirmPromiseResolve(false);
-      }
-    });
-  }
+  bindConfirmModal($('#confirmModal'));
 
   const codeModal=$('#codeEditorModal');
   if(codeModal){
@@ -1340,7 +1484,302 @@ function bindGlobalModals(){
     }
   }
 }
-function viewTitles(){return {management:'配置与管理',collaboration:'AI 工作台',issues:'需求列表',bots:'Bot 管理',runs:'运行记录',metrics:'研发效能',deployments:'部署耗时',approvals:'待我确认',sops:'SOP 流程',flow:'流程设计',agents:'角色定义',mcp:'MCP 管理',rules:'规则管理',skills:'技能管理',dockerfiles:'Dockerfile',environments:'环境安装脚本',sandboxes:'沙箱管理',observability:'用量分析',projects:'项目配置',businessDomains:'业务领域',platform:'平台管理',businessDomainManagement:'领域管理',runners:'执行机器',settings:'个人设置',access:'接入方式',guide:'接入指南',knowledge:'知识中心'}}
+// Until someone picks a project (here, in the chat or through a ?projectId=
+// link) the chat opens as a personal conversation, so a first-time user sees
+// the project picker instead of silently landing in the default project. The
+// default project still scopes the workbench pages.
+function nativeChatProjectId(){
+  const chosen=new URL(location.href).searchParams.has('projectId')||!!localStorage.getItem('agentflow.activeProject');
+  return chosen?($('#projectSwitcher')?.value||state.projectFilter||''):'';
+}
+function postNativeChatProject(frame){
+  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId()},location.origin);
+  frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
+}
+// A project created, deleted or restored from the chat must reach the project
+// switcher without a page refresh.
+function reloadShellProjects(){
+  return api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);renderAll();return state.data.projects||[]});
+}
+function mountNativeChat(){
+  const frame=$('#chatNextFrame');
+  if(!frame)return;
+  if(!frame.dataset.nativeBridge){
+    frame.dataset.nativeBridge='1';
+    frame.addEventListener('load',()=>postNativeChatProject(frame));
+    window.addEventListener('message',event=>{
+      if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
+      const message=event.data||{};
+      if(message.type==='agentflow-chat-ready'){
+        nativeChatReady=true;
+        postNativeChatProject(frame);
+        finishBootLoader();
+      }
+      if(message.type==='agentflow-chat-session'){
+        const id=message.sessionId||'';
+        if(id&&!/^[a-zA-Z0-9_-]{1,64}$/.test(id))return;
+        const url=new URL(location.href);
+        if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
+        url.searchParams.delete('chatIssue');
+        if(activeViewName()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
+        history.replaceState({},'',url);
+      }
+      if(message.type==='agentflow-chat-project'){
+        const projectId=typeof message.projectId==='string'?message.projectId:'';
+        const known=()=>!projectId||(state.data.projects||[]).some(project=>project.id===projectId);
+        const follow=()=>{
+          if(!known())return;
+          localStorage.setItem('agentflow.activeProject',projectId);
+          if(state.projectFilter===projectId)return;
+          const select=$('#projectSwitcher');
+          const option=[...select.options].find(item=>item.value===projectId);
+          if(option)option.selected=true;else select.value=projectId;
+          select.dispatchEvent(new Event('change',{bubbles:true}));
+        };
+        if(known())follow();
+        else reloadShellProjects().then(follow).catch(()=>{});
+      }
+      if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
+      if(message.type==='agentflow-welcome-demo'&&!frame.dataset.demoBusy){
+        frame.dataset.demoBusy='true';
+        api('/api/runs',{method:'POST',body:JSON.stringify({workflowId:'welcome-workflow',projectId:'welcome',input:'首次体验：运行脚本、审批并交付产物'})}).then(run=>{
+          location.hash='#/runs/'+encodeURIComponent(run.id);
+        }).catch(error=>toast(error.message)).finally(()=>{delete frame.dataset.demoBusy});
+      }
+      if(message.type==='agentflow-quick-access-completed'){
+        api('/api/bootstrap',{silent:true}).then(shell=>{
+          Object.assign(state.data,shell);
+          const pid=typeof message.projectId==='string'?message.projectId:'';
+          if(pid&&(state.data.projects||[]).some(p=>p.id===pid)){
+            state.projectFilter=pid;
+            localStorage.setItem('agentflow.activeProject',pid);
+          }
+          renderAll();
+        }).catch(()=>{});
+      }
+      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(message.view)){
+        if(message.view==='settings'&&CREDENTIAL_FIELDS[message.credential])gotoCredential(message.credential);
+        else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
+        else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
+        else switchView(message.view);
+      }
+    });
+  }
+  if(frame.dataset.src!=='native'){
+    frame.dataset.src='native';
+    const topParams=new URL(location.href).searchParams;
+    const projectId=nativeChatProjectId();
+    const sessionId=topParams.get('chatSession')||'';
+    const issueId=topParams.get('chatIssue')||'';
+    const quickAccess=topParams.get('quickAccess')==='1';
+    if(quickAccess||topParams.get('gongfeng')==='ok'){
+      // renderPersonalSettings still owes the OAuth return toast after the URL is cleaned.
+      if(topParams.get('gongfeng')==='ok')state.gongfengReturned=true;
+      topParams.delete('quickAccess');
+      topParams.delete('gongfeng');
+      const clean=topParams.toString();
+      history.replaceState({},'',location.pathname+(clean?'?'+clean:'')+location.hash);
+    }
+    frame.src='/chatbot/?projectId='+encodeURIComponent(projectId)+(sessionId?'&session='+encodeURIComponent(sessionId):issueId?'&issueId='+encodeURIComponent(issueId):'')+(quickAccess?'&quickAccess=1':'');
+  }
+  postNativeChatProject(frame);
+}
+function settingsSidebarExpanded(){
+  return document.body.classList.contains('management-mode')&&!document.body.classList.contains('settings-sidebar-hidden');
+}
+let settingsSidebarEntryFrame=0;
+let settingsSidebarWasManaged=false;
+const settingsManagementViews=['settings','runners','bots','projects','flow','agents','mcp','rules','skills','dockerfiles','environments','sandboxes','knowledge','metrics','businessDomains','guide','platform','businessDomainManagement'];
+const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
+let settingsRouteTransition=null;
+let settingsRouteApplying=false;
+function isSettingsManagementView(name){return settingsManagementViews.includes(name)}
+function settingsRouteSurface(name){
+  if(isSettingsManagementView(name)){
+    const card=$('#settingsSidebar'),nav=card?.querySelector('nav');
+    const header=card?.querySelector('.settings-navigation-header');
+    if(!card||!nav||!header)return null;
+    const rect=card.getBoundingClientRect(),top=header.getBoundingClientRect().bottom;
+    return {nav,expanded:settingsSidebarExpanded(),geometry:{left:rect.left+1,top,width:rect.width-2,height:Math.max(0,rect.bottom-top-1),background:getComputedStyle(card).backgroundColor}};
+  }
+  const frame=$('#chatNextFrame');
+  try{
+    const shell=frame?.contentDocument?.querySelector('.chat-shell');
+    const nav=shell?.querySelector('.conversation-sidebar'),header=shell?.querySelector('.brand');
+    if(!shell||!nav||!header)return null;
+    const frameRect=frame.getBoundingClientRect(),width=parseFloat(shell.style.getPropertyValue('--sidebar-width'))||304;
+    const top=frameRect.top+header.getBoundingClientRect().bottom;
+    return {nav,shell,expanded:!shell.classList.contains('sidebar-hidden'),geometry:{left:frameRect.left+1,top,width:width-2,height:Math.max(0,frameRect.bottom-14-top-1),background:shell.ownerDocument.defaultView.getComputedStyle(shell).backgroundColor}};
+  }catch{return null}
+}
+function cancelSettingsRouteTransition(){
+  const transition=settingsRouteTransition;
+  settingsRouteTransition=null;
+  clearTimeout(transition?.timer);
+  transition?.motion?.cancel();
+  transition?.observer?.disconnect();
+  for(const held of transition?.held||[]){
+    if(held.visibility)held.nav.style.setProperty('visibility',held.visibility,held.priority);
+    else held.nav.style.removeProperty('visibility');
+    held.nav.inert=held.inert;
+  }
+  document.body.classList.remove('settings-mode-switch');
+}
+function startSettingsRouteTransition(name){
+  const apply=()=>{
+    settingsRouteApplying=true;
+    try{switchView(name)}finally{settingsRouteApplying=false}
+    const focused=document.activeElement;
+    if(focused&&focused!==document.body&&!focused.getClientRects().length){
+      $('#railSettingsEntry')?.focus({preventScroll:true});
+    }
+  };
+  const current=settingsRouteTransition;
+  if(current?.motion){
+    const reversing=isSettingsManagementView(current.target)!==isSettingsManagementView(name);
+    current.target=name;
+    apply();
+    if(reversing)current.motion.reverse();
+    return;
+  }
+  cancelSettingsRouteTransition();
+  const fromName=activeViewName(),from=settingsRouteSurface(fromName);
+  const home=settingsRouteSurface('collaboration');
+  const homeSettled=!home?.shell?.matches('.sidebar-entering,.sidebar-transitioning,.sidebar-resizing');
+  const preserveGeometry=!!from?.expanded&&homeSettled&&(isSettingsManagementView(name)||!!home?.expanded);
+  const transition={from:fromName,to:name,target:name,preserveGeometry,held:[],motion:null,observer:null,timer:0};
+  settingsRouteTransition=transition;
+  if(from?.expanded&&!isSettingsManagementView(name)&&home&&!home.expanded){
+    // Returning to an intentionally closed drawer needs one close, not a
+    // close/reopen cycle. Keep the current page mounted until it completes.
+    setSettingsSidebarExpanded(false);
+    transition.timer=setTimeout(()=>{
+      if(settingsRouteTransition!==transition)return;
+      apply();
+      cancelSettingsRouteTransition();
+    },240);
+    return;
+  }
+  // Grasp keeps its card mounted: only the navigation inside it changes mode.
+  // Suppress the host's unrelated two/three-column grid interpolation here.
+  document.body.classList.add('settings-mode-switch');
+  if(home?.geometry.width>0)document.documentElement.style.setProperty('--sidebar-w',`${home.geometry.width+2}px`);
+  const hold=nav=>{
+    if(!nav||transition.held.some(held=>held.nav===nav))return;
+    const doc=nav.ownerDocument;
+    if(nav.contains(doc.activeElement))$('#railSettingsEntry')?.focus({preventScroll:true});
+    transition.held.push({nav,visibility:nav.style.getPropertyValue('visibility'),priority:nav.style.getPropertyPriority('visibility'),inert:nav.inert});
+    nav.style.setProperty('visibility','hidden','important');
+    nav.inert=true;
+  };
+  try{
+    const helper=window.AgentFlowSidebarMotion;
+    const oldPane=preserveGeometry&&helper?.capture(from.nav,from.geometry);
+    if(oldPane)hold(from.nav);
+    apply();
+    const target=settingsRouteSurface(name);
+    const newPane=oldPane&&target?.expanded&&helper.capture(target.nav,target.geometry);
+    if(!newPane){cancelSettingsRouteTransition();return}
+    hold(target.nav);
+    transition.motion=helper.play(oldPane,newPane,{direction:isSettingsManagementView(name)?'settings':'workspace',duration:320});
+    if(home?.shell){
+      transition.observer=new MutationObserver(()=>{
+        if(home.shell.matches('.sidebar-hidden,.sidebar-resizing'))cancelSettingsRouteTransition();
+      });
+      transition.observer.observe(home.shell,{attributes:true,attributeFilter:['class']});
+    }
+    transition.motion.finished.finally(()=>{
+      if(settingsRouteTransition===transition)cancelSettingsRouteTransition();
+    });
+  }catch(error){
+    cancelSettingsRouteTransition();
+    if(activeViewName()!==name)apply();
+    console.error('Sidebar navigation transition failed',error);
+  }
+}
+window.addEventListener('resize',()=>{
+  const pending=settingsRouteTransition?.target;
+  cancelSettingsRouteTransition();
+  if(pending&&activeViewName()!==pending){
+    settingsRouteApplying=true;
+    try{switchView(pending)}finally{settingsRouteApplying=false}
+  }
+});
+settingsRouteMotion.addEventListener('change',()=>{
+  const pending=settingsRouteTransition?.target;
+  cancelSettingsRouteTransition();
+  if(pending)switchView(pending);
+  setSettingsSidebarExpanded(settingsSidebarExpanded());
+});
+function setSettingsSidebarExpanded(expanded){
+  const managing=document.body.classList.contains('management-mode');
+  const open=managing&&expanded;
+  const entering=managing&&!settingsSidebarWasManaged;
+  const animateEntry=entering&&open&&!settingsRouteTransition?.preserveGeometry&&!settingsRouteMotion.matches;
+  settingsSidebarWasManaged=managing;
+  if(settingsSidebarEntryFrame)cancelAnimationFrame(settingsSidebarEntryFrame);
+  settingsSidebarEntryFrame=0;
+  document.body.classList.toggle('settings-sidebar-entering',animateEntry);
+  document.body.classList.toggle('settings-sidebar-hidden',managing&&!open);
+  document.body.classList.toggle('sidebar-open',open&&matchMedia('(max-width:1000px)').matches);
+  const settingsEntry=$('#railSettingsEntry');
+  if(settingsEntry){
+    const label=managing?'返回首页':'设置';
+    settingsEntry.setAttribute('aria-expanded',String(open));
+    settingsEntry.setAttribute('aria-pressed',String(managing));
+    settingsEntry.setAttribute('aria-label',label);
+    settingsEntry.setAttribute('title',label);
+    settingsEntry.dataset.tooltip=label;
+  }
+  const toggle=$('#settingsSidebarToggle');
+  if(toggle){
+    toggle.setAttribute('aria-expanded',String(open));
+    toggle.setAttribute('aria-label',open?'收起设置导航':'展开设置导航');
+    toggle.title=open?'收起设置导航':'展开设置导航';
+  }
+  const mobileToggle=$('.collab-rail-toggle');
+  if(mobileToggle){
+    mobileToggle.setAttribute('aria-expanded',String(open));
+    mobileToggle.setAttribute('aria-label',open?'收起导航':'展开导航');
+  }
+  const sidebar=$('#settingsSidebar');
+  if(!open&&sidebar?.contains(document.activeElement)){
+    const focusTarget=managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
+    focusTarget?.focus({preventScroll:true});
+  }
+  if(sidebar){
+    sidebar.inert=managing&&!open;
+    if(managing&&!open)sidebar.setAttribute('aria-hidden','true');
+    else sidebar.removeAttribute('aria-hidden');
+  }
+  if(animateEntry){
+    // Keep the mounted panel at its closed geometry for one layout before reveal.
+    settingsSidebarEntryFrame=requestAnimationFrame(()=>{
+      settingsSidebarEntryFrame=0;
+      sidebar?.getBoundingClientRect();
+      document.body.classList.remove('settings-sidebar-entering');
+    });
+  }
+}
+function platformRailExpanded(){return document.body.classList.contains('platform-rail-expanded')}
+function setPlatformRailExpanded(expanded){
+  expanded=!!expanded;
+  document.body.classList.toggle('platform-rail-expanded',expanded);
+  const button=$('#railSidebarToggle');
+  if(!button)return;
+  const label=expanded?'只显示图标':'展开导航';
+  button.disabled=false;
+  button.removeAttribute('aria-disabled');
+  button.removeAttribute('title');
+  button.setAttribute('aria-controls','platformRail');
+  button.setAttribute('aria-expanded',String(expanded));
+  button.setAttribute('aria-label',label);
+  if(expanded)button.removeAttribute('data-tooltip');
+  else button.dataset.tooltip=label;
+  const text=button.querySelector('.rail-label');
+  if(text)text.textContent=label;
+}
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'AI 定时任务',bots:'Bot 管理',runs:'运行记录',metrics:'研发效能',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'MCP 管理',rules:'规则管理',skills:'技能管理',dockerfiles:'Dockerfile',environments:'环境安装脚本',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',businessDomains:'业务领域',platform:'平台管理',businessDomainManagement:'领域管理',runners:'执行机器',settings:'个人配置',access:'接入方式',guide:'接入指南',knowledge:'知识中心'}}
 function activeViewName(){if(state.currentView)return state.currentView;const el=document.querySelector('.view.active');return el?el.id.replace(/View$/,''):''}
 function setCapabilityNavExpanded(expanded){const toggle=$('#capabilityNavToggle'),group=$('#capabilityNavGroup');if(!toggle||!group)return;toggle.setAttribute('aria-expanded',String(expanded));group.hidden=!expanded;localStorage.setItem('agentflow.capabilityNavExpanded',String(expanded))}
 function setEnvironmentNavExpanded(expanded){const toggle=$('#environmentNavToggle'),group=$('#environmentNavGroup');if(!toggle||!group)return;toggle.setAttribute('aria-expanded',String(expanded));group.hidden=!expanded;localStorage.setItem('agentflow.environmentNavExpanded',String(expanded))}
@@ -1350,9 +1789,11 @@ function restoredView(){
   if(hash==='access')return 'guide';
   if(hash==='assets')return 'dockerfiles';
   if(hash==='playbooks')return 'sops';
+  if(hash==='management')return 'settings';
   if(titles[hash])return hash;
   const saved=localStorage.getItem('agentflow.activeView');
   if(saved==='playbooks')return 'sops';
+  if(saved==='management')return 'settings';
   if(titles[saved]&&saved!=='dashboard')return saved;
   return 'collaboration';
 }
@@ -1367,6 +1808,43 @@ function runRouteId(){
 }
 function flowRouteId(){
   return routePart(0)==='flow'?routePart(1):'';
+}
+function agentRouteId(){return routePart(0)==='agents'?routePart(1):''}
+function assetRouteId(){return isProjectSharedAsset(routePart(0))?routePart(1):''}
+function assetViewHash(type,id){if(!id)return `#/${type}`;return `#/${type}/${id==='__new__'?'new':encodeURIComponent(id)}`}
+// Syncs the open asset detail with #/<type>/<id>; a no-op until the catalog is loaded.
+function applyAssetRoute(){
+  const type=routePart(0);
+  if(!isProjectSharedAsset(type)||state.assetType!==type||!state.data?.[type])return;
+  const id=assetRouteId();
+  if(!id){if(state.selectedAsset){resetAssetDetailState();renderAssets()}return}
+  const hit=assetFindVisible(id);
+  if(!hit&&id==='new'){
+    if(state.selectedAsset==='__new__')return;
+    state[assetScopeKey(type)]='project';
+    resetAssetDetailState();state.selectedAsset='__new__';state.skillUploadStatus='';
+    renderAssets();scrollAssetTop();return;
+  }
+  if(!hit){
+    toast('资产不存在或已删除');
+    history.replaceState(null,'',assetViewHash(type));
+    resetAssetDetailState();renderAssets();return;
+  }
+  if(state.selectedAsset===id)return;
+  state[assetScopeKey(type)]=hit.scope;
+  resetAssetDetailState();state.selectedAsset=id;state.skillUploadStatus='';
+  renderAssets();scrollAssetTop();
+}
+async function applyAgentRoute(){
+  const id=agentRouteId();
+  if(!id)return;
+  try{
+    const agent=await api(`/api/agents/${encodeURIComponent(id)}`);
+    if(agentRouteId()!==id||activeViewName()!=='agents')return;
+    const index=(state.data.agents||[]).findIndex(a=>a.id===id);
+    if(index>=0)state.data.agents[index]=agent;else state.data.agents.push(agent);
+    openAgentWizard(agent);
+  }catch(error){toast(error.message,'err')}
 }
 // Only SOPs visible in the active project can be restored from the URL or localStorage.
 function openableWorkflow(id){return id?catalogWorkflows().find(w=>w.id===id)||null:null}
@@ -1414,6 +1892,16 @@ function persistView(name,push=false){
     if(linked)next=runViewHash(linked);
   }
   if(name==='flow')next=flowViewHash();
+  if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}`;
+  if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
+  if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
+  if(name==='collaboration'){
+    const current=(location.hash||'').replace(/^#\/?/,'').split('?')[0].split('/').filter(Boolean);
+    let fromHash=current[0]==='collaboration'?current[1]||'':'';
+    try{fromHash=decodeURIComponent(fromHash)}catch{}
+    const id=new URL(location.href).searchParams.get('chatSession')||fromHash;
+    if(id)next='#/collaboration/'+encodeURIComponent(id);
+  }
   if(location.hash===next)return;
   // push=true 时压入新历史记录，让浏览器「后退」能在平台页面间回退；
   // 否则原地替换，避免 boot 时把首个视图压栈。
@@ -1421,24 +1909,32 @@ function persistView(name,push=false){
   else history.replaceState(null,'',next);
 }
 function switchView(name){
-  document.body.classList.remove('sidebar-open');
   $$('details.collab-settings').forEach(menu=>menu.open=false);
   const titles=viewTitles();
   if(name==='dashboard')name='collaboration';
   if(name==='access')name='guide';
   if(name==='assets')name='dockerfiles';
   if(name==='playbooks')name='sops';
+  if(name==='management')name='settings';
   const assetViews=['rules','skills','dockerfiles','environments','sandboxes'];
   const targetView=assetViews.includes(name)?'assets':name;
   if(!titles[name]||!$(`#${targetView}View`)){name='collaboration'}
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   if(name==='businessDomainManagement'&&!canAccessPlatformManagement())name='collaboration';
-  if(name==='deployments'&&!canShowSkillhubEfficiency())name='collaboration';
+  const previous=activeViewName();
+  if(!settingsRouteApplying){
+    const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
+    if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name);return}
+    cancelSettingsRouteTransition();
+  }
   const target=assetViews.includes(name)?'assets':name;
   const staying=activeViewName()===name;
   const prevView=state.currentView;
+  if(previous==='observability'&&name!=='observability'&&typeof obsDisposeCharts==='function'){obsCollapse?.({silent:true});obsDisposeCharts();obsDisposeSelects?.()}
+  if(previous==='businessDomains'&&name!=='businessDomains'&&typeof businessDisposeView==='function')businessDisposeView();
   state.currentView=name;
+  document.body.classList.toggle('business-report-active',name==='businessDomains');
   if(name!=='runs')stopQueuedRunRefresh();
   $$('.nav[data-view]').forEach(n=>n.classList.toggle('active',n.dataset.view===name));
   $('#capabilityNavToggle')?.classList.toggle('child-active',['mcp','rules','skills'].includes(name));
@@ -1448,11 +1944,24 @@ function switchView(name){
   $$('.view').forEach(v=>v.classList.remove('active'));
   $(`#${target}View`).classList.add('active');
   $('#pageTitle').textContent=titles[name]||name;
-  const managementViews=['management','bots','projects','flow','agents','mcp','rules','skills','dockerfiles','environments','sandboxes','knowledge','metrics','deployments','businessDomains','observability','guide','platform','businessDomainManagement','settings','runners'];
-  document.body.classList.toggle('management-mode',managementViews.includes(name));
-  $('#managementEntry')?.classList.toggle('active',managementViews.includes(name));
+  // Views that render their own H1 hide the topbar title; #pageTitle keeps its text for tests and assistive tools.
+  document.body.classList.toggle('view-has-heading',!!$(`#${target}View`).querySelector('.page-heading,.page-header,.kb-head,.pa-ph'));
+  const isPureManagement = isSettingsManagementView(name);
+  document.body.classList.toggle('management-mode', isPureManagement);
+  // At ≤1000px the settings navigation is an overlay drawer: it opens when the
+  // user comes into settings from another page, and closes once a settings
+  // page is picked (or deep-linked) so the page itself is visible.
+  const narrowSettings=isPureManagement&&matchMedia('(max-width:1000px)').matches;
+  setSettingsSidebarExpanded(!narrowSettings?isPureManagement:staying?settingsSidebarExpanded():!!prevView&&!isSettingsManagementView(previous));
+  $('#managementEntry')?.classList.toggle('active', isPureManagement);
+  $('#railSettingsEntry')?.classList.toggle('active', isPureManagement);
+  const noSidebarViews = ['issues', 'runs', 'approvals', 'sops', 'observability', 'aiSchedules'];
+  document.body.classList.toggle('no-sidebar', noSidebarViews.includes(name));
+  document.body.classList.toggle('chat-next-active', name==='collaboration');
+  if(name==='collaboration'||isPureManagement)mountNativeChat();
   showDirectRunButton(name==='flow');
   closeIssueDrawer();
+  if(name!=='sops'&&typeof hideSOPCardMenu==='function')hideSOPCardMenu();
   // 仅真实用户切换时压栈：boot 首次进入（prevView 为空）与同视图重复调用
   //（staying）不压；hashchange 后退触发的调用 prevView 非空且 hash 已是目标值，
   // persistView 内部会短路，不会重复压栈。
@@ -1480,27 +1989,33 @@ function switchView(name){
     }
     refreshRuns(false,true);
   }
-  if(name==='issues'){refreshIssues();renderSync()}
-  if(typeof window.AgentFlowCollaboration?.activate==='function')window.AgentFlowCollaboration.activate(name==='collaboration');
+  if(name==='issues'){refreshIssues();renderSync();const issueId=new URL(location.href).searchParams.get('issueId');if(issueId)openIssueDetail(issueId)}
 
+  if(name==='aiSchedules'){renderScheduleJobs();refreshAISchedules()}
   if(name==='bots')loadBots();
-  if(name==='sops')refreshWorkflowMetrics()
+  if(name==='sops'){if(!staying&&state.data){sopCatalogMotion.reset();renderSOPCatalog()}refreshWorkflowMetrics()}
   if(name==='dashboard')refreshDashboard()
   if(name==='knowledge'&&typeof renderKnowledgeView==='function')renderKnowledgeView()
   if(name==='metrics'){const key=metricsQueryKey();if(state.metricsDataKey!==key&&metricsPendingKey!==key)refreshMetrics();else renderMetricsDashboard()}
   if(name==='approvals')renderApprovals(false)
   if(name==='observability')refreshObs()
-  if(name==='deployments'){renderDeploymentDashboard();if(!state.deploymentData&&!state.deploymentLoading&&!state.deploymentError)refreshDeployments()}
-  if(name==='agents'){api('/api/agents',{silent:true}).then(agents=>{state.data.agents=agents;renderAgents()}).catch(e=>toast(e.message));renderAgents()}
+  if(name==='agents'){api('/api/agents',{silent:true}).then(agents=>{state.data.agents=agents;renderAgents()}).catch(e=>toast(e.message));renderAgents();applyAgentRoute()}
   if(name==='settings')renderPersonalSettings();
   if(name==='platform')renderPlatformAdminPanel();
   if(name==='businessDomainManagement')loadBusinessDomainManagement();
   if(name==='projects')renderProjectAdmin();
   if(name==='businessDomains')loadBusinessDomains();
-  if(assetViews.includes(name)){state.assetType=name;if(!staying)state.selectedAsset=null;renderAssets()}
+  if(assetViews.includes(name)){
+    if(staying&&state.assetType===name){if(state.selectedAsset)closeAssetDetail({force:true});else renderAssets()}
+    else{
+      if(state.assetType!==name)state.assetQuery='';
+      state.assetType=name;resetAssetDetailState();
+      if(routePart(0)===name&&assetRouteId())applyAssetRoute();else renderAssets();
+    }
+  }
   if(name==='mcp')loadMCPMarket();
   if(name==='runners')refreshRunners();
   if(name==='guide')renderGuide();
-  if(name==='flow'){state.selectedNode=state.selectedNode||state.workflow?.nodes?.[0]?.id||null;renderWorkflowMeta();renderCanvas();renderProperties();setFlowView('canvas');refreshGenericWorkflowRoles()}
+  if(name==='flow'){if(!state.workflow?.nodes?.some(n=>n.id===state.selectedNode))state.selectedNode=null;renderWorkflowMeta();renderCanvas();renderProperties();setFlowView('canvas');refreshGenericWorkflowRoles()}
 }
-function renderAll(){renderUserBadge();renderPlatformNav();renderObsTabs();renderProjectSwitcher();renderIssues();renderSOPCatalog();renderWorkflowMeta();renderCanvas();renderProperties();renderAgents();renderAssets();renderMCPManagement();renderRuns();renderSync();renderProjectAdmin();renderDashboard();renderDeploymentDashboard();renderGuide();updateApprovalBadge();showDirectRunButton($('#flowView').classList.contains('active'))}
+function renderAll(){renderUserBadge();renderPlatformNav();renderObsTabs();renderProjectSwitcher();renderIssues();renderSOPCatalog();renderWorkflowMeta();renderCanvas();renderProperties();renderAgents();renderAssets();renderMCPManagement();renderRuns();renderSync();renderProjectAdmin();renderDashboard();renderGuide();updateApprovalBadge();showDirectRunButton($('#flowView').classList.contains('active'))}

@@ -86,7 +86,7 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 			"protocolVersion": agentToolProtocolVersion(request.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]string{"name": agentToolSessionMCPName, "version": "1.0.0"},
-			"instructions":    agentToolInstructions(session.Mode),
+			"instructions":    agentToolInstructions(session.Mode) + spaceDeliverableSuffix(session),
 		}}
 	case "ping":
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{}}
@@ -127,7 +127,7 @@ func agentToolInstructions(mode AgentToolMode) string {
 	case AgentToolScheduled:
 		return "使用当前项目和个人已安装的 MCP 以及 agentflow__* 直接读写，写入立即生效。完成后用自然语言汇报。"
 	default:
-		return "AgentFlow session MCP"
+		return "LoopForge session MCP"
 	}
 }
 
@@ -187,6 +187,9 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 	if name == "workbench_attachment_read" {
 		return readWorkbenchAttachmentTool(session, params.Arguments)
 	}
+	if name == "workbench_publish_artifact" {
+		return h.publishWorkbenchArtifact(session, params.Arguments)
+	}
 	catalog := h.buildCatalog(ctx, session)
 	tool, ok := lookupAgentTool(catalog, name)
 	if !ok {
@@ -203,6 +206,11 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		if err := dec.Decode(&args); err != nil {
 			return nil, err
 		}
+	}
+	if tool.Kind == "browser" {
+		result, err := h.callMainBotBrowser(ctx, session, tool.Name, args)
+		logAgentToolEvent("call", "mode="+string(session.Mode), "tool="+tool.Name, fmt.Sprintf("ok=%t", err == nil && result["isError"] != true))
+		return result, err
 	}
 	text, err := h.dispatch(ctx, session, tool, args)
 	if err != nil {
@@ -238,10 +246,12 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		reply, err := parseSubmitAssistantReplyArgs(raw, session.ProjectID)
 		if err != nil {
 			logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
-			return nil, err
+			return mcpToolTextResult("草稿参数校验失败，本轮继续；请按以下错误修正后重新提交，不代表工具不可用："+err.Error(), true), nil
 		}
-		if session.ExecMode.Consultation && len(reply.Drafts) > 0 {
-			return mcpToolTextResult("角色咨询只能回答和建议返工，不能提交写入草稿；请向 PM 提出建议。", true), nil
+		if len(reply.Drafts) == 0 {
+			// This tool ends the model process. Accepting a progress message here
+			// used to kill sibling read calls before a requested SOP was prepared.
+			return mcpToolTextResult("未提交草稿，本轮继续。submit_assistant_reply 仅用于提交待确认写入草稿；进度说明请用普通文本并继续执行工具查询。请完成用户请求或说明具体阻塞原因后，以自然语言结束；不要提交占位回复。", true), nil
 		}
 		if err := session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &reply}); err != nil {
 			return nil, err
@@ -253,6 +263,9 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 }
 
 func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSession, tool agentToolDescriptor, args map[string]any) (string, error) {
+	if session.Mode == AgentToolAssistant && session.ExecMode.ReviewWrites {
+		ctx = withAssistantApprovalReviewer(ctx, session.approvalReviewer)
+	}
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
@@ -275,18 +288,41 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 			ctx = withAssistantExecMode(ctx, session.ExecMode)
 		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
+		if session.canOpenConversationWorkspace() {
+			ctx = withConversationSession(ctx, session.ChatSessionID)
+		}
+		ctx = context.WithValue(ctx, assistantControlScopeKey{}, session.ControlScope)
+		ctx = context.WithValue(ctx, assistantAssetObserverKey{}, func(asset domain.AssistantAssetRef) {
+			session.mu.Lock()
+			defer session.mu.Unlock()
+			for i, old := range session.assets {
+				if old.Kind == asset.Kind && old.ID == asset.ID {
+					session.assets[i] = asset
+					return
+				}
+			}
+			session.assets = append(session.assets, asset)
+			if asset.Kind == "run" {
+				session.runIDs = append(session.runIDs, asset.ID)
+			}
+		})
 		// A native CLI tool call is a fresh HTTP request, so it does not inherit
 		// the generation's lease context. Reattach only the authenticated
 		// session's own Run lease; a different task must acquire its own lease.
 		if session.WorkspaceToken != "" && session.RunID != "" && strings.HasPrefix(tool.UpstreamName, "runs_") && assistantToolInput(call).Path["id"] == session.RunID {
 			ctx = engine.WithConversationWorkspaceToken(ctx, session.WorkspaceToken, session.RunID)
 		}
+		if session.workspaceTurn != nil && strings.HasPrefix(tool.UpstreamName, "runs_") {
+			releaseTurn := session.workspaceTurn.lockOperation()
+			defer releaseTurn()
+			ctx = session.workspaceTurn.withLease(ctx, assistantToolInput(call).Path["id"])
+		}
 		asst := h.assistant()
 		text, err := asst.callAssistantPlatform(ctx, session.User, session.ProjectID, call)
 		if err != nil {
 			return "", err
 		}
-		return redactAgentToolResult(text, session.User), nil
+		return assistantPlatformResultForModel(tool.UpstreamName, redactAgentToolResult(text, session.User)), nil
 	}
 	call := assistantMCPCall{Server: tool.ServerID, Tool: tool.UpstreamName, Arguments: stringifyTAPDIDs(args)}
 	if call.Server == "" {
@@ -308,7 +344,21 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if !agentToolNameAllowed(session.Mode, kind, tool.UpstreamName) && !(kind == "tapd" && tool.UpstreamName == "proxy_execute_tool") {
 		return "", errAgentToolForbidden
 	}
-	if session.Mode != AgentToolScheduled && clarifyMCPCallWrite(kind, call) {
+	if session.Mode == AgentToolAssistant && mcpCallMayWrite(kind, call) {
+		// A write to an external MCP follows the conversation's approval
+		// mode like a platform write. It has no draft to confirm, so the
+		// confirm mode cannot run it.
+		name := mcpCallName(kind, call)
+		if !session.ExecMode.AutoWrite {
+			return "", fmt.Errorf("%s 会写入外部系统，当前审批模式需要逐项确认，而外部 MCP 写入没有待确认草稿。请让用户把审批模式切到「自动」或「辅助」后再试，或告诉用户要做的改动由其手动完成", name)
+		}
+		if session.ExecMode.ReviewWrites {
+			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
+			if !review.allows() {
+				return "", assistantReviewRefusal(name, review)
+			}
+		}
+	} else if session.Mode != AgentToolScheduled && clarifyMCPCallWrite(kind, call) {
 		name := strings.TrimSpace(call.Tool)
 		if kind == "tapd" {
 			if inner := strings.TrimSpace(fmt.Sprint(assistantMCPCallArguments(call)["tool_name"])); inner != "" {
@@ -358,4 +408,44 @@ func (h *agentToolGateway) assistant() *assistantHandlers {
 
 func (h *agentToolGateway) clarifyMCPUser(issue domain.Issue, user domain.User) domain.User {
 	return (&streamHandlers{deps: h.deps}).clarifyMCPUser(issue, user)
+}
+
+func mcpServerName(h *agentToolGateway, session *AgentToolSession, ref string) string {
+	if item, ok := h.lookupServer(session, ref); ok && strings.TrimSpace(item.Name) != "" {
+		return item.Name
+	}
+	return ref
+}
+
+// mcpCallName is the tool a call runs; for TAPD it is the inner tool.
+func mcpCallName(kind string, call assistantMCPCall) string {
+	if kind == "tapd" {
+		if inner := strings.TrimSpace(fmt.Sprint(assistantMCPCallArguments(call)["tool_name"])); inner != "" && inner != "<nil>" {
+			return inner
+		}
+	}
+	return strings.TrimSpace(call.Tool)
+}
+
+// mcpCallMayWrite treats a call as a write unless its name reads as a read.
+// The approval review is the safety net, so an unknown name such as
+// merge_merge_request is reviewed instead of passing as a read.
+func mcpCallMayWrite(kind string, call assistantMCPCall) bool {
+	name := strings.ToLower(mcpCallName(kind, call))
+	if name == "" || clarifyMCPWriteName(name) {
+		return name != ""
+	}
+	for _, word := range []string{"add", "merge", "upload", "transition", "close", "reopen", "approve", "assign", "set", "remove", "publish", "send", "post", "submit", "comment"} {
+		for _, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' }) {
+			if part == word {
+				return true
+			}
+		}
+	}
+	for _, word := range []string{"get", "list", "search", "query", "count", "lookup", "read", "fetch", "describe", "show", "info", "detail", "tree", "blame", "compare", "schema", "reference", "find", "view"} {
+		if strings.Contains(name, word) {
+			return false
+		}
+	}
+	return true
 }
