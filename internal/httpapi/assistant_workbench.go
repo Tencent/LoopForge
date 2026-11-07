@@ -110,8 +110,7 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			if n == nil {
 				continue
 			}
-			agentID, task := runNodeDefinition(v, id)
-			nodes = append(nodes, gin.H{"id": id, "agentId": agentID, "task": task, "status": n.Status, "attempt": n.Attempt, "reworkCount": n.ReworkCount, "output": truncateRunes(n.Output, 4000), "error": truncateRunes(n.Error, 2000)})
+			nodes = append(nodes, gin.H{"id": id, "agentId": runNodeAgentID(v, id), "status": n.Status, "attempt": n.Attempt, "reworkCount": n.ReworkCount, "output": truncateRunes(n.Output, 4000), "error": truncateRunes(n.Error, 2000)})
 		}
 		data = gin.H{"id": v.ID, "status": v.Status, "input": v.Input, "nodes": nodes, "pauseRequested": v.PauseRequested, "cancelRequested": v.CancelRequested}
 	}
@@ -1197,13 +1196,13 @@ func taskWorkbenchReferenceAllowed(r domain.Run, kind, id string) bool {
 	return false
 }
 
-func runNodeDefinition(r domain.Run, id string) (agentID, task string) {
+func runNodeAgentID(r domain.Run, id string) string {
 	for _, n := range r.WorkflowSnapshot.Nodes {
 		if n.ID == id {
-			return n.AgentID, n.TaskPrompt
+			return n.AgentID
 		}
 	}
-	return "", ""
+	return ""
 }
 
 // workspaceTurnContext tells Main Bot which workspace the conversation is

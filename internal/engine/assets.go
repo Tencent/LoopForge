@@ -20,9 +20,9 @@ func (e *Engine) platformMCPServer() domain.MCPServerDefinition {
 	e.mu.Unlock()
 	def := domain.MCPServerDefinition{
 		ID:          domain.PlatformMCPServerID,
-		Name:        "AgentFlow 平台",
+		Name:        "LoopForge 平台",
 		Scope:       "project",
-		Description: "AgentFlow 平台侧能力：需求、任务、运行、项目等平台操作以 MCP 工具提供",
+		Description: "LoopForge 平台侧能力：需求、任务、运行、项目等平台操作以 MCP 工具提供",
 		Transport:   "http",
 		URL:         base + "/mcp",
 		TimeoutSec:  60,

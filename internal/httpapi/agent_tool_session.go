@@ -90,7 +90,8 @@ type AgentToolSession struct {
 	screenshotSeq int
 	// dispatches are the Agent calls still running this turn. A subagent
 	// works in the bound workspace, so it is not switched under it.
-	dispatches  map[string]bool
+	// The value is the subagent id once the stream reports it.
+	dispatches  map[string]string
 	closed      atomic.Bool
 	CancelModel context.CancelFunc
 }
@@ -141,6 +142,13 @@ func (s *AgentToolSession) addReplyScreenshot(mimeType string, data []byte) {
 // attachReplyFile adds a file to the reply; attaching the same name again
 // replaces it, so a demo revised during the turn is delivered once, current.
 func (s *AgentToolSession) attachReplyFile(name, mimeType string, data []byte) error {
+	return s.addReplyFile(name, mimeType, data, true)
+}
+
+// addReplyFile stores a file of this turn's reply. limited applies the
+// per-turn cap meant for the model's own attachments; a role's collected
+// deliverables are bounded by its contract instead.
+func (s *AgentToolSession) addReplyFile(name, mimeType string, data []byte, limited bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	files := 0
@@ -154,7 +162,7 @@ func (s *AgentToolSession) attachReplyFile(name, mimeType string, data []byte) e
 		}
 		files++
 	}
-	if files >= agentReplyFileLimit {
+	if limited && files >= agentReplyFileLimit {
 		return fmt.Errorf("每轮最多附 %d 个文件", agentReplyFileLimit)
 	}
 	s.replyFiles = append(s.replyFiles, agentReplyFile{Name: name, MimeType: mimeType, Data: data})
@@ -409,22 +417,31 @@ func (s *AgentToolSession) terminalToolsOnly() bool {
 }
 
 // trackDispatch follows Main Bot's Agent calls from the CLI stream: a call
-// starts running when it is announced and stops when its result arrives.
-func (s *AgentToolSession) trackDispatch(event assistantStreamEvent) {
+// starts running when it is announced and stops when its result arrives. It
+// returns the subagent type of a dispatch that just finished without error.
+func (s *AgentToolSession) trackDispatch(event assistantStreamEvent) string {
 	if s == nil || event.ID == "" || event.Parent != "" {
-		return
+		return ""
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
 	case event.Kind == "tool" && (event.Tool == "Agent" || event.Tool == "Task"):
 		if s.dispatches == nil {
-			s.dispatches = map[string]bool{}
+			s.dispatches = map[string]string{}
 		}
-		s.dispatches[event.ID] = true
+		// The CLI announces the call before its input; keep the type once known.
+		if event.Subagent != "" || s.dispatches[event.ID] == "" {
+			s.dispatches[event.ID] = event.Subagent
+		}
 	case event.Kind == "toolDone":
+		subagent, ok := s.dispatches[event.ID]
 		delete(s.dispatches, event.ID)
+		if ok && !event.Failed {
+			return subagent
+		}
 	}
+	return ""
 }
 
 func (s *AgentToolSession) dispatchRunning() bool {

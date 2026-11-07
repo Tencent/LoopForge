@@ -230,7 +230,7 @@ function renderIssueDetailTab(){
 }
 function drawerFact(label,value,title){return `<div class="detail-fact"><span>${label}</span><b title="${escapeHTML(title||value||'')}">${value===''||value==null?'—':value}</b></div>`}
 function clarificationOverviewCard(issue){
-  const c=issue.clarification||{},source=issue.source==='gongfeng'?'工蜂':issue.source==='tapd'?'TAPD':'AgentFlow';
+  const c=issue.clarification||{},source=issue.source==='gongfeng'?'工蜂':issue.source==='tapd'?'TAPD':'LoopForge';
   const score=c.score||0;
   if(issueClarifying(issue.id)||c.status==='analyzing'){
     return `<div class="clarify-overview"><span>…</span><div><b>澄清正在后台分析</b><small>关闭网页也不会中断，点查看可回到分析过程</small></div><button class="button ghost small" data-start-clarify>查看</button></div>`;
@@ -597,7 +597,7 @@ function clarifyHistoryHTML(c){
 function clarifyPane(issue,project){
   const c=recoverClarifyView(issue.clarification||{}),source=issue.source==='gongfeng'?'工蜂 Issue':issue.source==='tapd'?'TAPD 需求':'工作项';
   if(c.status==='ready'&&submittedClarifyDraft?.issueId===issue.id)submittedClarifyDraft=null;
-  const writeBack=c.writeBackStatus==='succeeded'?`已写回 ${source}`:c.writeBackStatus==='failed'?'写回失败':c.writeBackStatus==='skipped'?'仅保存到 AgentFlow':'';
+  const writeBack=c.writeBackStatus==='succeeded'?`已写回 ${source}`:c.writeBackStatus==='failed'?'写回失败':c.writeBackStatus==='skipped'?'仅保存到 LoopForge':'';
   if(c.status==='ready'&&c.summary){
     const pending=c.writeBackStatus==='pending'&&(issue.source==='tapd'||issue.source==='gongfeng')&&issue.externalRef;
     const retry=c.writeBackStatus==='failed'?`<button class="button primary small" data-retry-clarify>重试写回原单</button>`:'';
@@ -783,7 +783,7 @@ function conversationRepoCards(issue,data){
 // 对话需求的阶段卡片：合入为绿、进行中为蓝；没合入就关闭的保持中性，不当成交付成功。
 function conversationHeadState(issue){
   const st=issueCurrentStage(issue);
-  if(issueManuallyClosed(issue))return{tone:'',label:'需求已关闭',hint:'需求已在 AgentFlow 中手动关闭，需要继续时先重新打开'};
+  if(issueManuallyClosed(issue))return{tone:'',label:'需求已关闭',hint:'需求已在 LoopForge 中手动关闭，需要继续时先重新打开'};
   if(issueTrackerClosed(issue)&&!issueMergedDelivery(issue))return{tone:'',label:st.label,hint:'外部工作项已关闭'};
   if(deliveryLocked(issue)){
     const merged=issueMergedDelivery(issue);

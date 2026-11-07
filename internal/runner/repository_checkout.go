@@ -26,6 +26,9 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 	if repository.RequireExistingWorkBranch && strings.TrimSpace(repository.WorkBranch) == "" {
 		return fmt.Errorf("继续已有分支时必须指定工作分支")
 	}
+	if repository.CreateNewWorkBranch && repository.RequireExistingWorkBranch {
+		return fmt.Errorf("工作分支不能既继续已有分支又新建")
+	}
 	info, err := os.Lstat(filepath.Join(workspace, ".git"))
 	if os.IsNotExist(err) {
 		return cloneRepository(ctx, workspace, repository)
@@ -46,6 +49,11 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 	}
 	if repository.RequireExistingWorkBranch {
 		return checkoutExistingRepositoryBranch(ctx, workspace, repository)
+	}
+	if repository.CreateNewWorkBranch {
+		// The name was validated when this checkout was created; reusing it only
+		// needs the local branch, because the remote copy is the one we pushed.
+		return checkoutCreatedRepositoryBranch(ctx, workspace, repository)
 	}
 	if refresh {
 		return refreshCleanRepository(ctx, workspace, repository)

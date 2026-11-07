@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# One-command container installation. Installs Docker when it is missing
-# (Linux, or macOS with Homebrew) and needs Python 3. Re-running is safe:
-# secrets, data and catalog edits are kept.
+# One-command container installation from the published GHCR image pinned in
+# compose.yaml (LOOPFORGE_BUILD_FROM_SOURCE=1 builds this checkout instead).
+# Installs Docker when it is missing (Linux, or macOS with Homebrew) and needs
+# Python 3. Re-running is safe: secrets, data and catalog edits are kept.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -67,7 +68,7 @@ requested_public_url="${LOOPFORGE_PUBLIC_URL:-}"
 bash scripts/configure.sh
 [[ -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
 set -a; source .env; set +a
-export LOOPFORGE_BIND="${LOOPFORGE_BIND:-127.0.0.1}"
+export LOOPFORGE_BIND="${LOOPFORGE_BIND:-0.0.0.0}"
 if [[ -n "$requested_public_url" ]]; then export LOOPFORGE_PUBLIC_URL="$requested_public_url"; fi
 python3 scripts/install-address.py --prepare "${AGENTFLOW_HTTP_PORT:-8090}"
 set -a; source .env; set +a
@@ -96,8 +97,20 @@ if ! docker_access compose ps --status running --services 2>/dev/null | grep -qx
   fi
 fi
 
-if [[ -n "${LOOPFORGE_IMAGE:-}" ]]; then
-  step 'Pulling the prebuilt LoopForge image'
+dev_compose=compose.yaml:compose.dev.yaml
+if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" == 1 && "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
+  # Persisted because sudo-run Compose only reads .env; later plain compose commands keep the source stack.
+  python3 - "$dev_compose" <<'PY'
+import pathlib,re,sys
+p=pathlib.Path('.env')
+text=re.sub(r'(?m)^COMPOSE_FILE=.*\n?','',p.read_text())
+p.write_text(text.rstrip('\n')+'\nCOMPOSE_FILE='+sys.argv[1]+'\n')
+PY
+  export COMPOSE_FILE="$dev_compose"
+fi
+
+if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
+  step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
   docker_access compose --profile platform pull --policy "${LOOPFORGE_PULL_POLICY:-missing}" platform mysql
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
@@ -123,4 +136,4 @@ else
 fi
 printf '  Open “一键体验” on the home page to run a real SOP without an API key.\n'
 printf '  Default sandboxes reuse the installed runtime image; no second CLI image build is needed.\n'
-printf '  Stop: docker compose --profile platform stop   ·   Logs: docker compose logs -f platform\n'
+printf '  Stop: ./start.sh stop   ·   Logs: ./start.sh logs   ·   Update images: ./start.sh pull\n'

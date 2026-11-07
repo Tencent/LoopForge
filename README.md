@@ -27,9 +27,9 @@
   <a href="#documentation">Docs</a>
 </p>
 
-https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
+https://github.com/user-attachments/assets/8af401d9-1aae-427c-b4bc-455c12d17beb
 
-<p align="center"><sub>80-second product tour (1080p, with sound; UI and captions in Chinese).</sub></p>
+<p align="center"><sub>80-second product tour (1080p, with sound).</sub></p>
 
 **LoopForge** is a self-hosted workspace where your team ships software with coding agents. Describe what you need to **Main Bot** in chat: it opens a Docker sandbox, checks out your repositories, delegates to project roles, and opens the PR. When a way of working proves itself, save it as an **SOP** (a standard workflow of agents, scripts and human gates) so the next requirement is delivered the same way, with review and approval built in.
 
@@ -72,10 +72,12 @@ Requires **Git, curl, Docker (with Compose)** and **Python 3**. On a fresh Ubunt
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
 cd LoopForge
-bash scripts/install.sh
+./start.sh
 ```
 
-Open the URL printed by the installer and create your account; the first one becomes the administrator. For a cloud deployment, set `LOOPFORGE_PUBLIC_URL=https://your-domain` before the first run and allow the service port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
+`./start.sh` pulls the GHCR release image pinned in `compose.yaml` without building locally (`bash scripts/install.sh` does the same). Use `./start.sh logs`, `stop`, `restart` or `pull` to manage it, and `./start.sh dev` to build the checkout from source.
+
+Open the address printed by the installer and create your account; the first one becomes the administrator. The service listens on `0.0.0.0:8090` by default. On a cloud host, the installer reads the public IP from the provider's metadata service and prints it; allow the port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
 
 ### Try it without an API key
 

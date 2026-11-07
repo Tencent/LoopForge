@@ -458,7 +458,7 @@ describe("content and panels", () => {
       name: "已保存流程",
       description: "流程说明",
       status: "published",
-      nodes: [{ id: "n1", name: "实现", type: "agent", taskPrompt: "完成实现" }],
+      nodes: [{ id: "n1", name: "实现", type: "agent" }],
     });
     const { rerender } = render(
       <div className="chat-shell">
@@ -551,7 +551,7 @@ describe("content and panels", () => {
         name: "混合流程",
         nodes: [
           { id: "done", name: "已完成节点", type: "agent" },
-          { id: "active", name: "运行节点", type: "agent", taskPrompt: "继续执行" },
+          { id: "active", name: "运行节点", type: "agent" },
           { id: "pending", name: "待执行节点", type: "agent" },
         ],
       },
@@ -567,7 +567,7 @@ describe("content and panels", () => {
     expect(screen.getAllByText("混合流程").length).toBeGreaterThan(0);
     expect(screen.getByText("待执行")).toBeInTheDocument();
     await user.click(screen.getByText("运行节点"));
-    expect(await screen.findByText("继续执行")).toBeInTheDocument();
+    expect(await screen.findByText("执行混合流程")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /产物/ }));
     expect(screen.getByText("这个节点尚未生成产物。")).toBeInTheDocument();
   });

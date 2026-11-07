@@ -3,6 +3,7 @@ import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import ActivityTrace from "./ActivityTrace";
 import { RichContent } from "./RichContent";
+import { resumeMissed } from "./activity";
 
 export function subagentStatus(agent, live) {
   const last = agent.dispatches.at(-1);
@@ -34,14 +35,27 @@ function processSteps(step) {
 
 // SubagentSession shows one subagent like an SOP node: what Main Bot asked,
 // how it worked and what it reported, once per dispatch when it was resumed,
-// plus what it published.
+// plus its collected deliverables and what it published.
 export function SubagentSession({ agent, live = false, artifacts = [], onOpenArtifact }) {
   const [tab, setTab] = useState("conversation");
   useEffect(() => setTab("conversation"), [agent.key]);
-  const published = agent.published.map((title) => ({
-    title,
-    artifact: [...artifacts].reverse().find((item) => item.name === title),
-  }));
+  // A deliverable opens the attachment of the reply that holds its dispatch,
+  // not an older file of the same name. Until that reply is saved there is
+  // no attachment yet.
+  const published = agent.published.map((item) => {
+    const pending = item.source === "交付物" && !item.missing && item.messageIndex == null;
+    const artifact =
+      item.missing || pending
+        ? null
+        : [...artifacts]
+            .reverse()
+            .find(
+              (artifact) =>
+                artifact.name === item.title &&
+                (item.source !== "交付物" || artifact.messageIndex === item.messageIndex),
+            );
+    return { ...item, pending, artifact };
+  });
   return (
     <section
       className="sop-run-embedded sop-run-panel node-conversation-view subagent-session"
@@ -82,6 +96,11 @@ export function SubagentSession({ agent, live = false, artifacts = [], onOpenArt
                       <RichContent message={step.input || step.detail} />
                     </article>
                   ) : null}
+                  {resumeMissed(step) ? (
+                    <p className="muted subagent-resume-missed" role="note">
+                      复用未生效：没有接着 {step.resumed} 做，已新开子 Agent。
+                    </p>
+                  ) : null}
                   {steps.length || running ? (
                     <ActivityTrace
                       steps={steps}
@@ -107,7 +126,7 @@ export function SubagentSession({ agent, live = false, artifacts = [], onOpenArt
           </div>
         ) : (
           <div className="node-artifacts">
-            {published.map(({ title, artifact }, index) =>
+            {published.map(({ title, source, missing, pending, artifact }, index) =>
               artifact ? (
                 <button
                   type="button"
@@ -118,22 +137,22 @@ export function SubagentSession({ agent, live = false, artifacts = [], onOpenArt
                   <HarnessIcon name="doc" size={17} />
                   <span>
                     <strong>{title}</strong>
-                    <small>{artifact.source || "已发布"}</small>
+                    <small>{source}</small>
                   </span>
                   <HarnessIcon name="chevron-right" size={14} />
                 </button>
               ) : (
-                <div className="artifact-row" key={`${title}-${index}`}>
-                  <HarnessIcon name="doc" size={17} />
+                <div className="artifact-row" key={`${title}-${index}`} data-missing={missing || undefined}>
+                  <HarnessIcon name={missing ? "alert" : "doc"} size={17} />
                   <span>
                     <strong>{title}</strong>
-                    <small>已发布</small>
+                    <small>{missing ? "缺少必需交付物" : pending ? "交付物 · 回复完成后可打开" : source}</small>
                   </span>
                 </div>
               ),
             )}
             {!published.length ? (
-              <p className="muted">这个子 Agent 没有发布产物。</p>
+              <p className="muted">这个子 Agent 没有交付物或发布的产物。</p>
             ) : null}
           </div>
         )}

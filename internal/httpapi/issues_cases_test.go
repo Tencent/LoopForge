@@ -149,8 +149,15 @@ func TestIssuesMoreDirectHelpers(t *testing.T) {
 	}
 	first := appendClarificationDescription("", "summary")
 	replaced := appendClarificationDescription("prefix\n\n"+first, "replacement")
-	if strings.Count(replaced, "## AgentFlow 澄清结论") != 1 || !strings.Contains(replaced, "replacement") {
+	if strings.Count(replaced, "## LoopForge 澄清结论") != 1 || !strings.Contains(replaced, "replacement") {
 		t.Fatalf("clarification replacement: %q", replaced)
+	}
+	legacy := appendClarificationDescription("prefix\n\n## AgentFlow 澄清结论\n\nold summary", "new summary")
+	if legacy != "prefix\n\n## LoopForge 澄清结论\n\nnew summary" {
+		t.Fatalf("legacy clarification block was not replaced: %q", legacy)
+	}
+	if comment := clarificationComment(domain.Issue{ID: "T-1", Source: "tapd"}, "结论"); strings.Contains(comment, "AgentFlow") || !strings.HasPrefix(comment, "## LoopForge 澄清结论") {
+		t.Fatalf("clarification comment branding: %q", comment)
 	}
 	for _, issue := range []domain.Issue{
 		{ID: "local"},

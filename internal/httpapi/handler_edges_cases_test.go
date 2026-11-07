@@ -184,7 +184,7 @@ func TestWorkbenchReferencesAndUploads(t *testing.T) {
 	run := domain.Run{
 		ID: "cva-wb-run", WorkflowID: "cva-wb-w", Status: "running",
 		ExecutionContext: domain.TelemetryContext{ProjectID: projectID, IssueID: "cva-wb-i"},
-		WorkflowSnapshot: domain.WorkflowDefinition{Name: "Workflow", Nodes: []domain.WorkflowNode{{ID: "n", AgentID: "cva-wb-a", TaskPrompt: "Task"}}},
+		WorkflowSnapshot: domain.WorkflowDefinition{Name: "Workflow", Nodes: []domain.WorkflowNode{{ID: "n", AgentID: "cva-wb-a"}}},
 		Nodes:            map[string]*domain.NodeRun{"n": {Status: "running", Output: "out"}},
 		Repositories:     []domain.RepositoryContext{{RepositoryID: "cva-wb-r", Name: "Repo"}},
 	}
@@ -216,7 +216,7 @@ func TestWorkbenchReferencesAndUploads(t *testing.T) {
 			t.Errorf("%s reference rejected", kind)
 		}
 	}
-	if agentID, task := runNodeDefinition(run, "n"); taskWorkbenchReferenceAllowed(run, "agent", "other") || agentID != "cva-wb-a" || task != "Task" {
+	if taskWorkbenchReferenceAllowed(run, "agent", "other") || runNodeAgentID(run, "n") != "cva-wb-a" || runNodeAgentID(run, "missing") != "" {
 		t.Fatal("task reference helpers")
 	}
 

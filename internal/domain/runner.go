@@ -92,6 +92,12 @@ func (r Runner) SupportsSharedPush() bool {
 // a missing branch when the caller explicitly continues an existing branch.
 const RunnerVersionExistingWorkBranch = "0.7.0"
 
+// RunnerVersionCreateNewWorkBranch is the first runner that refuses a
+// same-named remote branch when the caller asked for a newly created branch.
+// Older daemons ignore CreateNewWorkBranch and would quietly check the existing
+// branch out instead.
+const RunnerVersionCreateNewWorkBranch = "0.9.1"
+
 type Runner struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
@@ -135,6 +141,12 @@ func PublicRunners(items []Runner) []Runner {
 // older daemons silently create a new branch when the remote head is missing.
 func (r Runner) SupportsExistingWorkBranch() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionExistingWorkBranch)
+}
+
+// SupportsCreateNewWorkBranch guards the create mode: only a daemon that knows
+// CreateNewWorkBranch can refuse an existing same-named branch.
+func (r Runner) SupportsCreateNewWorkBranch() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCreateNewWorkBranch)
 }
 
 // SupportsWorkspacePreparation guards the transient control protocol: older
@@ -447,6 +459,9 @@ type RunnerRepository struct {
 	// RequireExistingWorkBranch keeps explicit continuation on an existing
 	// remote head. Missing/deleted heads are errors, never branch creation.
 	RequireExistingWorkBranch bool `json:"requireExistingWorkBranch,omitempty"`
+	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
+	// same-named remote head already exists.
+	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
 	// Dir is the workspace-relative checkout directory (empty is only kept
 	// for persisted legacy runs that already checked out at the workspace root).
 	Dir string `json:"dir,omitempty"`

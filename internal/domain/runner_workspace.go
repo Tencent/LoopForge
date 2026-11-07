@@ -95,6 +95,9 @@ type RunnerWorkspaceResponse struct {
 const (
 	WorkspaceErrorBusy    = "workspace_busy"
 	WorkspaceErrorMissing = "workspace_missing"
+	// WorkspaceErrorTerminalActive: an exclusive human terminal holds the
+	// workspace; waiting does not help until the user closes it.
+	WorkspaceErrorTerminalActive = "workspace_terminal_active"
 )
 
 // WorkspaceRestoreStatus describes restoration separately from SOP execution.

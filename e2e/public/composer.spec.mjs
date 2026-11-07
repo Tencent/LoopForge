@@ -69,6 +69,11 @@ test('the configured home composer sends a real model reply and reloads its save
     await expect.poll(sessionId).not.toBe('');
     await page.reload();
     await expect(chat(page).locator('.message.assistant').last()).toContainText(marker,{timeout:30_000});
+    // The streamed reply is visible before the background generation commits it.
+    await expect.poll(async()=>{
+      const generation=await page.request.get(`/api/assistant/sessions/${sessionId()}/generation`);
+      return generation.ok()?(await generation.json()).status:'';
+    },{timeout:30_000}).toBe('completed');
     const saved=await page.request.get(`/api/assistant/sessions/${sessionId()}`);
     expect(saved.ok()).toBe(true);
     expect((await saved.json()).messages.some(m=>m.role==='assistant'&&m.content.includes(marker))).toBe(true);

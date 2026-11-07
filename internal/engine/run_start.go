@@ -8,6 +8,32 @@ import (
 	"time"
 )
 
+// assignWorkBranches gives every repository without a branch the first
+// repository's work branch, else a generated one. A branch the caller
+// explicitly continues or creates belongs to its own repository, and a
+// read-only checkout has no work branch at all.
+func assignWorkBranches(repositories []domain.RepositoryContext, generate func() string) {
+	if len(repositories) == 0 {
+		return
+	}
+	workBranch := ""
+	if first := repositories[0]; !first.RequireExistingWorkBranch && !first.CreateNewWorkBranch && !first.ReadOnly {
+		workBranch = strings.TrimSpace(first.WorkBranch)
+	}
+	for i := range repositories {
+		if repositories[i].ReadOnly {
+			repositories[i].WorkBranch = ""
+			continue
+		}
+		if strings.TrimSpace(repositories[i].WorkBranch) == "" {
+			if workBranch == "" {
+				workBranch = generate()
+			}
+			repositories[i].WorkBranch = workBranch
+		}
+	}
+}
+
 func (e *Engine) Start(workflowID, input string) (domain.Run, error) {
 	return e.StartWithContext(workflowID, input, domain.RepositoryContext{})
 }
@@ -87,25 +113,15 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("run-%d", now.UnixNano())
-	workBranch := ""
-	if len(repositories) > 0 {
-		if workBranch = strings.TrimSpace(repositories[0].WorkBranch); workBranch == "" {
-			issueID := strings.TrimSpace(executionContext.IssueID)
-			if issueID != "" {
-				if issue, ok := e.repo.Issue(issueID); ok {
-					workBranch = domain.DefaultWorkBranch(issue, now)
-				}
-			}
-			if workBranch == "" {
-				workBranch = defaultWorkBranch(executionContext.IssueNumber, issueID, now)
+	assignWorkBranches(repositories, func() string {
+		issueID := strings.TrimSpace(executionContext.IssueID)
+		if issueID != "" {
+			if issue, ok := e.repo.Issue(issueID); ok {
+				return domain.DefaultWorkBranch(issue, now)
 			}
 		}
-	}
-	for i := range repositories {
-		if strings.TrimSpace(repositories[i].WorkBranch) == "" {
-			repositories[i].WorkBranch = workBranch
-		}
-	}
+		return defaultWorkBranch(executionContext.IssueNumber, issueID, now)
+	})
 	var firstRepository domain.RepositoryContext
 	if len(repositories) > 0 {
 		firstRepository = repositories[0]
@@ -130,7 +146,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	} else {
 		executionContext.ExecutionMode = domain.ExecutionModeCloud
 	}
-	if err := e.requireExistingWorkBranchRunner(executionContext.ExecutionRunnerID, repositories); err != nil {
+	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
 	wf.SandboxSnapshot = resolvedSandboxSnapshot(profile, resources)
