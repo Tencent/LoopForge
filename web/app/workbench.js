@@ -844,10 +844,50 @@ function renderPlatformNav(){
   const platformItem=group.querySelector('[data-view="platform"]');
   if(platformItem)platformItem.hidden=!isPlatformAdmin();
 }
+// 平台管理分成三个 tab：成员账号、平台管理员、共享 CodeBuddy Key。
+const PLATFORM_TABS=[
+  {id:'accounts',zh:'成员账号',en:'Accounts'},
+  {id:'admins',zh:'平台管理员',en:'Admins'},
+  {id:'sharedKey',zh:'共享 CodeBuddy Key',en:'Shared CodeBuddy Key'},
+];
+function platformTabsHTML(active){
+  return `<div class="pa-tabs-wrap platform-tabs-wrap"><div class="pa-tabs platform-tabs" id="platformTabs" role="tablist" aria-label="平台管理分区">${PLATFORM_TABS.map(t=>{
+    const on=t.id===active;
+    const extra=t.id==='sharedKey'?'<span class="platform-tab-state" data-platform-tab-state hidden></span>':'<span class="pa-tab-n" data-platform-tab-count hidden></span>';
+    return `<button type="button" role="tab" class="pa-tab${on?' on':''}" id="platformTab-${t.id}" data-platform-tab="${t.id}" aria-controls="platformPanel-${t.id}" aria-selected="${on}" tabindex="${on?0:-1}">${lfT(t.zh,t.en)}${extra}</button>`;
+  }).join('')}</div></div>`;
+}
+function platformTabPanel(id,active,body){
+  return `<section class="platform-tab-panel" id="platformPanel-${id}" role="tabpanel" aria-labelledby="platformTab-${id}" data-platform-panel="${id}"${id===active?'':' hidden'}>${body}</section>`;
+}
+function setPlatformTab(host,tab){
+  if(!PLATFORM_TABS.some(t=>t.id===tab))tab=PLATFORM_TABS[0].id;
+  state.platformTab=tab;
+  host.querySelectorAll('[data-platform-tab]').forEach(b=>{const on=b.dataset.platformTab===tab;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1});
+  host.querySelectorAll('[data-platform-panel]').forEach(p=>{p.hidden=p.dataset.platformPanel!==tab});
+}
+function bindPlatformTabs(host){
+  const bar=host.querySelector('#platformTabs');if(!bar)return;
+  bar.querySelectorAll('[data-platform-tab]').forEach(b=>b.onclick=()=>setPlatformTab(host,b.dataset.platformTab));
+  bar.onkeydown=e=>{
+    if(!['ArrowLeft','ArrowRight'].includes(e.key))return;
+    const ids=PLATFORM_TABS.map(t=>t.id),i=ids.indexOf(state.platformTab),next=ids[(i+(e.key==='ArrowRight'?1:ids.length-1))%ids.length];
+    setPlatformTab(host,next);bar.querySelector(`[data-platform-tab="${next}"]`)?.focus();
+  };
+}
+function setPlatformTabCount(host,tab,n){
+  const el=host.querySelector(`[data-platform-tab="${tab}"] [data-platform-tab-count]`);
+  if(el){el.textContent=String(n);el.hidden=false}
+}
 function renderPlatformAdminPanel(){
   const host=$('#platformAdminPanel');if(!host)return;
   if(!isPlatformAdmin()){host.innerHTML='';return}
+  const tab=PLATFORM_TABS.some(t=>t.id===state.platformTab)?state.platformTab:PLATFORM_TABS[0].id;
+  state.platformTab=tab;
   host.innerHTML=`
+    ${platformTabsHTML(tab)}
+    ${platformTabPanel('accounts',tab,platformAccountsHTML())}
+    ${platformTabPanel('admins',tab,`
     <div class="platform-metric-grid">
       <div class="platform-metric-card">
         <div class="platform-metric-icon blue">
@@ -891,13 +931,10 @@ function renderPlatformAdminPanel(){
       </div>
     </div>
 
-    ${platformSettingsHTML()}
-
     <div class="platform-admin-layout">
       <div class="platform-admin-main-card">
         <div class="platform-admin-head">
           <div class="platform-admin-head-meta">
-            <span class="credential-eyebrow">平台权限</span>
             <h2>谁可以改通用模板</h2>
             <p>平台管理员能直接编辑通用模板和它打包的角色，改完所有项目下次运行生效。系统内置名单不能在这里撤销。</p>
           </div>
@@ -978,7 +1015,10 @@ function renderPlatformAdminPanel(){
         </div>
       </div>
     </div>
+    `)}
+    ${platformTabPanel('sharedKey',tab,platformSharedKeyHTML())}
   `;
+  bindPlatformTabs(host);
   loadPlatformAccounts(host);
   loadPlatformSharedKey(host);
   loadPlatformAdmins(host);
@@ -997,59 +1037,73 @@ function sharedModelSummary(){
   const models=Array.isArray(state.data?.sponsoredModels)&&state.data.sponsoredModels.length?state.data.sponsoredModels:(state.data?.sponsoredModel?[state.data.sponsoredModel]:[]);
   return models.map(sharedModelLabel).join('、');
 }
-function platformSettingsHTML(){
-  const envOptions=CODEBUDDY_ENVIRONMENTS.map(env=>`<option value="${escapeHTML(env.value)}">${escapeHTML(env.label)} · ${escapeHTML(env.site)}</option>`).join('');
+const PLATFORM_ICON_USER='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+const PLATFORM_ICON_LOCK='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+const PLATFORM_ICON_SEARCH='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
+function platformAccountsHTML(){
   return `
-    <div class="platform-admin-layout platform-settings-layout">
-      <section class="platform-admin-main-card" id="platformAccountsCard">
-        <div class="platform-admin-head">
-          <div class="platform-admin-head-meta">
-            <span class="credential-eyebrow">成员账号</span>
-            <h2>给同事开账号</h2>
-            <p data-account-intro>填好用户名和初始密码，点创建，再把登录信息发给同事。同事忘记密码时可以在下面重置。</p>
-          </div>
-          <span class="platform-admin-count-pill" id="platformAccountCountBadge">${lfT('-- 个账号','-- accounts')}</span>
+    <section class="platform-admin-main-card" id="platformAccountsCard">
+      <div class="platform-admin-head">
+        <div class="platform-admin-head-meta">
+          <h2>给同事开账号</h2>
+          <p data-account-intro>填好用户名和初始密码，点创建，再把登录信息发给同事。同事忘记密码时可以在下面重置。</p>
         </div>
+        <span class="platform-admin-count-pill" id="platformAccountCountBadge">${lfT('-- 个账号','-- accounts')}</span>
+      </div>
+      <div class="platform-account-create">
         <form id="platformAccountForm" class="platform-account-form" autocomplete="off">
-          <div class="platform-input-wrap"><input name="loginName" placeholder="用户名，如 alice" aria-label="用户名" maxlength="64" autocomplete="off" spellcheck="false"></div>
-          <div class="platform-input-wrap"><input name="password" placeholder="初始密码，至少 6 位" aria-label="初始密码" maxlength="72" autocomplete="new-password" spellcheck="false"><button type="button" class="button ghost small" data-account-generate>随机生成</button></div>
-          <div class="platform-account-form-actions">
-            <label class="platform-check"><input type="checkbox" name="admin"><span>同时设为平台管理员</span></label>
-            <button class="button primary platform-add-btn" type="submit">创建账号</button>
-          </div>
+          <div class="platform-input-wrap"><span class="platform-input-icon">${PLATFORM_ICON_USER}</span><input name="loginName" placeholder="用户名，如 alice" aria-label="用户名" maxlength="64" autocomplete="off" spellcheck="false"></div>
+          <div class="platform-input-wrap"><span class="platform-input-icon">${PLATFORM_ICON_LOCK}</span><input name="password" placeholder="初始密码，至少 6 位" aria-label="初始密码" maxlength="72" autocomplete="new-password" spellcheck="false"><button type="button" class="button ghost small" data-account-generate>随机生成</button></div>
+          <label class="platform-check"><input type="checkbox" name="admin"><span>同时设为平台管理员</span></label>
+          <button class="button primary platform-add-btn" type="submit">创建账号</button>
         </form>
         <div class="platform-account-created" data-account-created hidden></div>
-        <div class="platform-search-wrap platform-account-search">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input data-account-search placeholder="搜索用户名..." autocomplete="off">
+      </div>
+      <div class="platform-list-toolbar">
+        <div class="platform-search-wrap platform-account-search">${PLATFORM_ICON_SEARCH}<input data-account-search placeholder="搜索用户名..." autocomplete="off"></div>
+      </div>
+      <div id="platformAccountList" class="platform-admin-list platform-account-list"></div>
+    </section>`;
+}
+function platformSharedKeyHTML(){
+  const envOptions=CODEBUDDY_ENVIRONMENTS.map(env=>`<option value="${escapeHTML(env.value)}">${escapeHTML(env.label)} · ${escapeHTML(env.site)}</option>`).join('');
+  return `
+    <section class="platform-admin-main-card" id="platformSharedKeyCard">
+      <div class="platform-admin-head">
+        <div class="platform-admin-head-meta">
+          <h2>给没配 Key 的成员用</h2>
+          <p>成员没配自己的 CodeBuddy API Key 时，对话和 SOP 会用这里的 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。</p>
         </div>
-        <div id="platformAccountList" class="platform-admin-list platform-account-list"></div>
-      </section>
-      <section class="platform-admin-main-card" id="platformSharedKeyCard">
-        <div class="platform-admin-head">
-          <div class="platform-admin-head-meta">
-            <span class="credential-eyebrow">共享 CodeBuddy Key</span>
-            <h2>给没配 Key 的成员用</h2>
-            <p>成员没配自己的 CodeBuddy API Key 时，对话和 SOP 会用这里的 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。</p>
+        <span class="platform-admin-count-pill platform-status-pill" data-shared-key-badge>${lfT('加载中','Loading')}</span>
+      </div>
+      <form id="platformSharedKeyForm" class="platform-shared-key-form" autocomplete="off">
+        <div class="platform-shared-key-grid">
+          <div class="platform-shared-key-col">
+            <label class="platform-field"><span>网络环境</span><select name="internetEnvironment">${envOptions}</select></label>
+            <div class="platform-field-group">
+              <label class="platform-field"><span>API Key</span><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="ck_ 开头的 CodeBuddy API Key"></label>
+              <a class="platform-shared-key-link" data-shared-key-link target="_blank" rel="noopener noreferrer"></a>
+            </div>
+            <div class="platform-note is-warn" data-shared-key-warning hidden></div>
+            <label class="platform-field"><span>默认模型</span><select name="defaultModel"></select><small class="platform-field-hint">没指定模型时用它；SOP 角色的模型不在允许范围内时也改用它。</small></label>
           </div>
-          <span class="platform-admin-count-pill" data-shared-key-badge>加载中</span>
+          <div class="platform-shared-key-col">
+            <div class="platform-field">
+              <div class="platform-field-head"><span>允许使用的模型</span><small data-shared-models-count></small></div>
+              <div class="platform-model-list" data-shared-models><p class="prop-hint">正在读取可用模型…</p></div>
+            </div>
+            <label class="platform-field"><span>列表里没有的模型</span><input name="extraModels" placeholder="模型 ID，多个用逗号分隔" autocomplete="off" spellcheck="false"></label>
+          </div>
         </div>
-        <form id="platformSharedKeyForm" class="platform-shared-key-form" autocomplete="off">
-          <label class="platform-field"><span>网络环境</span><select name="internetEnvironment">${envOptions}</select></label>
-          <label class="platform-field"><span>API Key</span><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="ck_ 开头的 CodeBuddy API Key"></label>
-          <a class="platform-shared-key-link" data-shared-key-link target="_blank" rel="noopener noreferrer"></a>
-          <div class="platform-note is-warn" data-shared-key-warning hidden></div>
-          <div class="platform-field"><span>允许使用的模型</span><div class="platform-model-list" data-shared-models><p class="prop-hint">正在读取可用模型…</p></div></div>
-          <label class="platform-field"><span>列表里没有的模型</span><input name="extraModels" placeholder="模型 ID，多个用逗号分隔" autocomplete="off" spellcheck="false"></label>
-          <label class="platform-field"><span>默认模型</span><select name="defaultModel"></select></label>
+        <div class="platform-shared-key-footer">
           <p class="platform-add-hint" data-shared-key-meta></p>
           <div class="platform-shared-key-actions">
-            <button class="button primary" type="submit">保存</button>
             <button class="button ghost danger" type="button" data-shared-key-clear hidden>停用共享 Key</button>
+            <button class="button primary" type="submit">保存</button>
           </div>
-        </form>
-      </section>
-    </div>`;
+        </div>
+      </form>
+    </section>`;
 }
 function platformAccountCreatedHTML(action,login,password){
   const who=`<b data-i18n-skip>${escapeHTML(login)}</b>`,secret=`<code>${escapeHTML(password)}</code>`;
@@ -1069,6 +1123,7 @@ async function loadPlatformAccounts(host){
   };
   const render=()=>{
     const n=accounts.length,badge=card.querySelector('#platformAccountCountBadge');if(badge)badge.textContent=lfT(`共 ${n} 个账号`,`${n} account${n===1?'':'s'}`);
+    setPlatformTabCount(host,'accounts',n);
     const q=query.toLowerCase();
     const rows=accounts.filter(a=>!q||String(a.loginName||'').toLowerCase().includes(q)||String(a.chineseName||'').toLowerCase().includes(q));
     if(!rows.length){list.innerHTML=`<div class="platform-empty-state"><b>${accounts.length?'没有匹配的账号':'还没有账号'}</b></div>`;return}
@@ -1141,8 +1196,10 @@ async function loadPlatformSharedKey(host){
   let status=null,catalog=[],selected=[];
   const extraIDs=()=>String(extra.value||'').split(/[,，\s]+/).map(s=>s.trim()).filter(Boolean);
   const chosen=()=>{const all=[...selected];for(const id of extraIDs())if(!all.includes(id))all.push(id);return all};
+  const modelCount=card.querySelector('[data-shared-models-count]'),tabState=host.querySelector('[data-platform-tab-state]');
   const renderDefault=()=>{
     const models=chosen(),current=defaultSelect.value;
+    if(modelCount)modelCount.textContent=models.length?lfT(`已选 ${models.length} 个`,`${models.length} selected`):'';
     defaultSelect.innerHTML=models.length?models.map(id=>`<option value="${escapeHTML(id)}">${escapeHTML(sharedModelLabel(id))}</option>`).join(''):'<option value="">请先勾选模型</option>';
     defaultSelect.value=models.includes(current)?current:(models[0]||'');
   };
@@ -1160,7 +1217,10 @@ async function loadPlatformSharedKey(host){
   const renderLink=()=>{link.href=codeBuddyKeyURL(env.value);link.textContent=`${codeBuddyKeyLinkLabel(env.value)} ↗`};
   const renderStatus=()=>{
     const on=!!status?.configured,envInfo=CODEBUDDY_ENVIRONMENTS.find(e=>e.value===(status?.internetEnvironment||''))||CODEBUDDY_ENVIRONMENTS[0];
+    const tone=on?'on':status?.legacySponsor?'legacy':'off';
     badge.textContent=on?'已启用':status?.legacySponsor?'使用旧配置':'未启用';
+    badge.classList.remove('is-on','is-legacy','is-off');badge.classList.add(`is-${tone}`);
+    if(tabState){tabState.className=`platform-tab-state is-${tone}`;tabState.title=badge.textContent;tabState.hidden=false}
     key.placeholder=on?'已配置，留空保持不变':'ck_ 开头的 CodeBuddy API Key';
     clear.hidden=!on;
     const parts=[];
@@ -1262,6 +1322,7 @@ async function loadPlatformAdmins(host){
     if(elLocked)elLocked.textContent=locked;
     if(elGranted)elGranted.textContent=granted;
     if(elBadge)elBadge.textContent=`共 ${total} 位管理员`;
+    setPlatformTabCount(host,'admins',total);
   };
 
   const render=()=>{

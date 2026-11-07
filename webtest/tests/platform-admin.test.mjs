@@ -43,6 +43,42 @@ test('platform admin panel loads metrics, searches, filters, grants, revokes, an
   assert.equal(app.evaluate(`state.currentView`), 'agents');
 });
 
+test('platform admin page splits accounts, admins and the shared key into tabs', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
+  app.router.get('/api/platform/admins', [{ userId: 1, loginName: 'owner', chineseName: '', source: 'granted', revocable: true }]);
+  app.router.get('/api/platform/accounts', { signupEnabled: true, accounts: [1, 2, 3].map((id) => ({ userId: id, loginName: `user${id}`, admin: id === 1, password: true, codeBuddyApiKeyConfigured: false })) });
+  app.router.get(/^\/api\/platform\/codebuddy-key/, { configured: true, internetEnvironment: '', models: ['glm-5.1'], updatedBy: 'owner', catalog: [{ id: 'glm-5.1', name: 'GLM-5.1' }, { id: 'kimi-k2.6', name: 'Kimi-K2.6' }] });
+  app.evaluate(`renderPlatformAdminPanel()`);
+  await settle(8);
+  const host = app.document.querySelector('#platformAdminPanel');
+  const panel = (id) => host.querySelector(`[data-platform-panel="${id}"]`);
+  const tab = (id) => host.querySelector(`[data-platform-tab="${id}"]`);
+  const shown = () => ['accounts', 'admins', 'sharedKey'].filter((id) => !panel(id).hidden);
+
+  assert.deepEqual(shown(), ['accounts'], 'accounts open first');
+  assert.equal(tab('accounts').getAttribute('aria-selected'), 'true');
+  assert.equal(tab('accounts').querySelector('[data-platform-tab-count]').textContent, '3');
+  assert.equal(tab('admins').querySelector('[data-platform-tab-count]').textContent, '1');
+  assert.match(tab('sharedKey').querySelector('[data-platform-tab-state]').className, /is-on/);
+  assert.ok(host.querySelector('[data-shared-key-badge]').classList.contains('is-on'));
+  assert.match(host.querySelector('[data-shared-models-count]').textContent, /已选 1 个/);
+
+  tab('sharedKey').click();
+  assert.deepEqual(shown(), ['sharedKey']);
+  assert.equal(tab('accounts').getAttribute('aria-selected'), 'false');
+  host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  assert.deepEqual(shown(), ['accounts'], 'arrow keys wrap around');
+  host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  assert.deepEqual(shown(), ['admins']);
+  assert.ok(panel('admins').querySelector('.platform-metric-grid'), 'admin metrics live in the admins tab');
+
+  app.evaluate(`renderPlatformAdminPanel()`);
+  await settle(6);
+  assert.deepEqual(shown(), ['admins'], 'the open tab survives a re-render');
+});
+
 test('platform admins create accounts and reset passwords from the page', async (t) => {
   const app = await loadApp();
   t.after(app.close);
