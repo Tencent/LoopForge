@@ -1,0 +1,55 @@
+/* Keep workspace choices above the editor, on an inset background strip. */
+.composer-stack {
+  position: relative;
+  container-type: inline-size;
+}
+
+.composer-column .composer-stack > .composer-context {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  min-width: 0;
+  margin: 0 14px -3px;
+  padding: 4px 10px 7px;
+  border: 0;
+  border-radius: 16px 16px 0 0;
+  background: var(--subtle);
+}
+
+.composer-stack > .composer {
+  z-index: 1;
+}
+
+.composer-stack > .composer-context .context-pill {
+  color: var(--muted);
+}
+
+.composer-stack > .composer-context .context-pill:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+}
+
+.composer-stack > .composer-context .context-pill svg {
+  color: inherit;
+}
+
+/* Conversations only run on LoopForge cloud, so the host is a status label. */
+.composer-stack > .composer-context .context-pill.host-status {
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.composer-stack > .composer-context .context-pill.host-status:hover {
+  background: none;
+  color: var(--muted);
+}
+
+@media (max-width: 850px) {
+  .composer-column .composer-stack > .composer-context {
+    gap: 5px;
+    margin-inline: 10px;
+    padding-inline: 8px;
+  }
+}

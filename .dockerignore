@@ -1,0 +1,25 @@
+.git
+.env*
+.local
+upstream.json
+upstream-overrides.json
+scripts/check-upstream.py
+.data
+local
+node_modules
+**/node_modules
+e2e/test-results
+bin
+web/native-chat
+*.log
+
+!web/vscode-web/**/node_modules/
+!web/vscode-web/**
+
+# Local acceptance credentials and generated reports never enter build layers.
+e2e/.auth
+e2e/playwright-report
+e2e/test-results
+**/__pycache__
+**/.venv
+**/*.pyc

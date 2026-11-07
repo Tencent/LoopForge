@@ -1,0 +1,92 @@
+{
+  "description": "Turn requirements into reviewed delivery: reusable agent workflows, coding agents, scripts and human approvals. Self-hosted. MIT.",
+  "topics": [
+    "ai-agents",
+    "multi-agent",
+    "agentic-workflow",
+    "sop",
+    "workflow-automation",
+    "software-engineering",
+    "human-in-the-loop",
+    "self-hosted",
+    "codex",
+    "claude-code",
+    "codebuddy",
+    "mcp",
+    "agent-skills",
+    "golang",
+    "developer-tools"
+  ],
+  "labels": [
+    {
+      "name": "bug",
+      "color": "d73a4a",
+      "description": "A reproducible product defect"
+    },
+    {
+      "name": "enhancement",
+      "color": "a2eeef",
+      "description": "A feature or improvement"
+    },
+    {
+      "name": "needs-triage",
+      "color": "fbca04",
+      "description": "Awaiting maintainer classification"
+    },
+    {
+      "name": "area:platform",
+      "color": "1d76db",
+      "description": "Platform UI, API and workflow behavior"
+    },
+    {
+      "name": "area:runtime",
+      "color": "5319e7",
+      "description": "Engine, worker, runner and sandbox execution"
+    },
+    {
+      "name": "area:local",
+      "color": "0e8a16",
+      "description": "Local workflows and host integrations"
+    },
+    {
+      "name": "area:integrations",
+      "color": "006b75",
+      "description": "GitHub, MCP, model providers and knowledge"
+    },
+    {
+      "name": "documentation",
+      "color": "0075ca",
+      "description": "Documentation, examples and translations"
+    },
+    {
+      "name": "dependencies",
+      "color": "0366d6",
+      "description": "Dependency and security updates"
+    },
+    {
+      "name": "github-actions",
+      "color": "000000",
+      "description": "CI and automation"
+    },
+    {
+      "name": "good first issue",
+      "color": "7057ff",
+      "description": "A scoped task suitable for a first contribution"
+    },
+    {
+      "name": "help wanted",
+      "color": "008672",
+      "description": "Maintainers welcome community help"
+    },
+    {
+      "name": "sync:upstream",
+      "color": "c5def5",
+      "description": "Shared change should be ported to internal upstream"
+    },
+    {
+      "name": "public-only",
+      "color": "bfdadc",
+      "description": "Public adapter, packaging or public documentation"
+    }
+  ]
+}

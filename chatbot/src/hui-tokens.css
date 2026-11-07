@@ -1,0 +1,64 @@
+/* --hui-* tokens for the workbench. web/ declares them in web/app/harness-ui.css,
+ * which the workbench does not load; web/app/hui-controls.css and
+ * harness-controls.css only reference them. Keep the values in sync. */
+:root {
+  --hui-accent: #7b61ff;
+  --hui-accent-hover: #684ce9;
+  --hui-accent-soft: #f0edff;
+  --hui-text: #252529;
+  --hui-muted: #6f6f79;
+  --hui-secondary: #62626c;
+  --hui-tertiary: #9a9aa4;
+  --hui-border: #eae9ee;
+  --hui-border-soft: #f1f0f4;
+  --hui-border-strong: #dcdbe3;
+  --hui-canvas: #fafafb;
+  --hui-soft: #f5f6f7;
+  --hui-surface: #fff;
+  --hui-stage: #f4f3f8;
+  --hui-on-accent: #fff;
+  --hui-panel-shadow: 0 8px 28px rgba(0, 0, 0, .07), 0 2px 8px rgba(0, 0, 0, .024);
+  --hui-popover-shadow: 0 8px 28px rgba(0, 0, 0, .07), 0 2px 8px rgba(0, 0, 0, .024);
+  --hui-ind-shadow: 0 1px 3px rgba(24, 24, 27, .04), 0 2px 5px rgba(24, 24, 27, .024);
+  --hui-info: #597dcc;
+  --hui-success: #338768;
+  --hui-error: #c15161;
+  --hui-warn: #b7791f;
+  --hui-neutral: #6b6b76;
+  --hui-tip: #252529;
+  --hui-tip-text: #fff;
+  --hui-scrim: rgba(15, 15, 20, .32);
+  --hui-ease-flow: cubic-bezier(.16, 1, .3, 1);
+  --hui-sans: Inter, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", ui-sans-serif, sans-serif;
+  --hui-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --hui-z-popover: 9999;
+  --hui-z-tooltip: 10050;
+}
+html[data-theme="dark"] {
+  --hui-accent: #a08aff;
+  --hui-accent-hover: #b2a0ff;
+  --hui-accent-soft: #242033;
+  --hui-text: #ededf0;
+  --hui-muted: #a1a1ac;
+  --hui-secondary: #b1b1ba;
+  --hui-tertiary: #6e6e78;
+  --hui-border: #26262b;
+  --hui-border-soft: #1f1f24;
+  --hui-border-strong: #393940;
+  --hui-canvas: #111114;
+  --hui-soft: #1c1c21;
+  --hui-surface: #141417;
+  --hui-stage: #18181c;
+  --hui-on-accent: #141417;
+  --hui-panel-shadow: 0 16px 44px rgba(0, 0, 0, .32), 0 3px 10px rgba(0, 0, 0, .12);
+  --hui-popover-shadow: 0 16px 44px rgba(0, 0, 0, .32), 0 3px 10px rgba(0, 0, 0, .12);
+  --hui-ind-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  --hui-info: #8aa8ee;
+  --hui-success: #34d399;
+  --hui-error: #f0899a;
+  --hui-warn: #f2c46d;
+  --hui-neutral: #a1a1ac;
+  --hui-tip: #ededf0;
+  --hui-tip-text: #141417;
+  --hui-scrim: rgba(0, 0, 0, .5);
+}

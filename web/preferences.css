@@ -1,0 +1,37 @@
+/* Theme preferences extend the upstream palette and layout. */
+html[data-theme="light"] { color-scheme:light }
+html[data-theme="dark"] { color-scheme:dark }
+html[data-lang="en"] .platform-sidebar { width:230px }
+html[data-lang="en"] .shell-main { min-width:0 }
+html[data-lang="en"] .nav-label { white-space:normal;line-height:1.3 }
+html[data-lang="en"] .topbar-project-label { white-space:nowrap }
+#langToggle { white-space:nowrap;min-width:64px }
+.toast-container { top:72px }
+.login-page { display:grid;place-items:center;min-height:100vh;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,sans-serif }
+.login-card { width:min(420px,calc(100vw - 48px));padding:36px;border:1px solid var(--line);border-radius:20px;background:var(--panel);box-shadow:var(--shadow) }
+.login-card h1 { font-size:28px;letter-spacing:-1px;margin:14px 0 8px }
+.login-card>p,.login-help { color:var(--muted) }
+.login-card label { display:grid;gap:8px;margin:20px 0;font-size:14px }
+.login-card input { width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel-2);color:var(--text);font:inherit }
+.login-card input:focus { outline:2px solid var(--blue);outline-offset:2px }
+.login-card button[type="submit"] { width:100%;padding:12px }
+.login-preferences { display:flex;align-items:center;gap:18px;border-top:1px solid var(--line);padding-top:20px;font-size:13px }
+.login-preferences button { border:0;background:none;color:var(--muted);cursor:pointer;padding:0 }
+.login-preferences a { margin-left:auto;color:var(--blue);text-decoration:none }
+#loginError { color:var(--red);min-height:18px;font-size:13px }
+.login-card [hidden] { display:none!important }
+.login-card .login-setup { padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--blue) 10%,transparent);color:var(--text);font-size:13px }
+.login-card .login-rule { margin:-12px 0 0;font-size:12px;color:var(--muted) }
+.login-link { border:0;background:none;padding:0;color:var(--blue);font:inherit;cursor:pointer }
+.login-link:hover { text-decoration:underline }
+@media(max-width:800px){html[data-lang="en"] .platform-sidebar{width:100%}}
+
+@media(max-width:600px){.topbar .page-context{display:none}}
+.sop-explainer{margin-bottom:4px}
+
+.repository-credential-hint{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;margin-top:18px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--hover);font-size:12px;line-height:1.65;color:var(--muted)}
+.repository-credential-hint b{display:block;margin-bottom:4px;font-weight:500;color:var(--text)}
+.repository-credential-hint p{margin:0}
+.repository-credential-hint button{flex:none;align-self:center}
+@media(max-width:600px){.repository-credential-hint{flex-direction:column;gap:8px}.repository-credential-hint button{align-self:flex-start}}
+

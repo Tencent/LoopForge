@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-labelledby="title">
+<title id="title">LoopForge — 从想法到合入的代码，Agent 全程可控。</title>
+<defs><linearGradient id="mark" x1="19" y1="20" x2="93" y2="93" gradientUnits="userSpaceOnUse"><stop stop-color="#008dcc"/><stop offset=".48" stop-color="#526ce8"/><stop offset="1" stop-color="#8a4ed9"/></linearGradient><linearGradient id="ink" x1="0" x2="1"><stop stop-color="#008dcc"/><stop offset=".5" stop-color="#526ce8"/><stop offset="1" stop-color="#8a4ed9"/></linearGradient><radialGradient id="g1" cx="0.78" cy="0.1" r="0.55"><stop stop-color="#7b61ff" stop-opacity=".10"/><stop offset="1" stop-color="#7b61ff" stop-opacity="0"/></radialGradient><radialGradient id="g2" cx="0.08" cy="1" r="0.5"><stop stop-color="#008dcc" stop-opacity=".07"/><stop offset="1" stop-color="#008dcc" stop-opacity="0"/></radialGradient><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.1" fill="#ecebf1"/></pattern><filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#1b1540" flood-opacity=".08"/></filter><filter id="blur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.4"/></filter><clipPath id="frame"><rect width="1280" height="400" rx="20"/></clipPath></defs>
+<g clip-path="url(#frame)">
+<rect width="1280" height="400" fill="#fafafb"/>
+<rect x="640" width="640" height="400" fill="url(#dots)" opacity=".9"/>
+<rect width="1280" height="400" fill="url(#g1)"/><rect width="1280" height="400" fill="url(#g2)"/>
+</g>
+<rect x=".5" y=".5" width="1279" height="399" rx="19.5" fill="none" stroke="#eae9ee"/>
+<g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif">
+<g transform="translate(66 62) scale(.82) translate(-12 -12)"><path d="M53 72 C53 59 63 52.5 73 52.5 C83 52.5 93 59 93 72 C93 85 83 91.5 73 91.5 C63 91.5 53 85 53 72 C53 66.667 53 61.333 53 56 C53 50.667 53 45.333 53 40 C53 27 44.5 20.5 36 20.5 C27.5 20.5 19 27 19 40" stroke="url(#mark)" stroke-width="11" stroke-linecap="round" fill="none" opacity=".35" filter="url(#blur)"/><path d="M53 72 C53 59 63 52.5 73 52.5 C83 52.5 93 59 93 72 C93 85 83 91.5 73 91.5 C63 91.5 53 85 53 72 C53 66.667 53 61.333 53 56 C53 50.667 53 45.333 53 40 C53 27 44.5 20.5 36 20.5 C27.5 20.5 19 27 19 40" stroke="url(#mark)" stroke-width="7.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></g>
+<text x="150" y="119" fill="#252529" font-size="46" font-weight="700" letter-spacing="-1.2">LoopForge</text>
+<text x="70" y="200" fill="#252529" font-size="40" font-weight="650" letter-spacing="-.8">从想法，到合入的代码。</text>
+<rect x="70" y="218" width="64" height="4" rx="2" fill="url(#ink)"/>
+<text x="70" y="262" fill="#62626c" font-size="19">在沙箱对话工作区里与编码 Agent 协作，</text>
+<text x="70" y="291" fill="#62626c" font-size="19">用 SOP 固化交付流程，关键节点由人把关。</text>
+<rect x="70" y="320" width="68" height="30" rx="15" fill="#ffffff" stroke="#eae9ee"/>
+<text x="84" y="340" fill="#62626c" font-size="13.5" font-weight="500">自托管</text>
+<rect x="148.5" y="320" width="55" height="30" rx="15" fill="#ffffff" stroke="#eae9ee"/>
+<text x="162.5" y="340" fill="#62626c" font-size="13.5" font-weight="500">MIT</text>
+<rect x="213.23000000000002" y="320" width="242" height="30" rx="15" fill="#ffffff" stroke="#eae9ee"/>
+<text x="227.23000000000002" y="340" fill="#62626c" font-size="13.5" font-weight="500">CodeBuddy · Codex · Claude Code</text>
+<g filter="url(#shadow)"><rect x="700" y="30" width="520" height="340" rx="16" fill="#ffffff" stroke="#eae9ee"/></g>
+<circle cx="722" cy="50" r="4.5" fill="#ff5f57" opacity=".85"/>
+<circle cx="738" cy="50" r="4.5" fill="#febc2e" opacity=".85"/>
+<circle cx="754" cy="50" r="4.5" fill="#28c840" opacity=".85"/>
+<path d="M700 70h520" stroke="#f1f0f4"/>
+<rect x="933" y="86" width="265" height="36" rx="12" fill="#f1f1f1"/>
+<text x="949" y="109" fill="#252529" font-size="14">修复登录用例偶发失败，并提一个 PR</text>
+<g transform="translate(720 140) scale(.27) translate(-12 -12)"><path d="M53 72 C53 59 63 52.5 73 52.5 C83 52.5 93 59 93 72 C93 85 83 91.5 73 91.5 C63 91.5 53 85 53 72 C53 66.667 53 61.333 53 56 C53 50.667 53 45.333 53 40 C53 27 44.5 20.5 36 20.5 C27.5 20.5 19 27 19 40" stroke="url(#mark)" stroke-width="9" stroke-linecap="round" fill="none"/></g>
+<text x="750" y="157" fill="#252529" font-size="13.5" font-weight="600">Main Bot</text>
+<text x="821" y="157" fill="#62626c" font-size="13.5">已在 Docker 沙箱中启动缺陷修复 SOP</text>
+<rect x="750" y="172" width="448" height="128" rx="12" fill="#f5f6f7" stroke="#f1f0f4"/>
+<path d="M801.0 210H868.0" stroke="#338768" stroke-opacity=".55" stroke-width="2"/>
+<path d="M894.0 210H961.0" stroke="#338768" stroke-opacity=".55" stroke-width="2"/>
+<path d="M987.0 210H1054.0" stroke="#338768" stroke-opacity=".55" stroke-width="2"/>
+<path d="M1080.0 210H1147.0" stroke="#b7791f" stroke-opacity=".55" stroke-width="2" stroke-dasharray="4 4"/>
+<circle cx="788.0" cy="210" r="12" fill="#338768" fill-opacity=".12" stroke="#338768" stroke-opacity=".5"/>
+<path d="M784.8 210.2l2.2 2.2 4.4-4.6" fill="none" stroke="#338768" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="775.5" y="241" fill="#62626c" font-size="12.5" font-weight="500">规划</text>
+<circle cx="881.0" cy="210" r="12" fill="#338768" fill-opacity=".12" stroke="#338768" stroke-opacity=".5"/>
+<path d="M877.8 210.2l2.2 2.2 4.4-4.6" fill="none" stroke="#338768" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="868.5" y="241" fill="#62626c" font-size="12.5" font-weight="500">修复</text>
+<circle cx="974.0" cy="210" r="12" fill="#338768" fill-opacity=".12" stroke="#338768" stroke-opacity=".5"/>
+<path d="M970.8 210.2l2.2 2.2 4.4-4.6" fill="none" stroke="#338768" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="961.5" y="241" fill="#62626c" font-size="12.5" font-weight="500">评审</text>
+<circle cx="1067.0" cy="210" r="12" fill="#338768" fill-opacity=".12" stroke="#338768" stroke-opacity=".5"/>
+<path d="M1063.8 210.2l2.2 2.2 4.4-4.6" fill="none" stroke="#338768" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1054.5" y="241" fill="#62626c" font-size="12.5" font-weight="500">测试</text>
+<circle cx="1160.0" cy="210" r="12" fill="#b7791f" fill-opacity=".12" stroke="#b7791f" stroke-opacity=".5"/>
+<circle cx="1160.0" cy="210" r="4" fill="#b7791f"/>
+<text x="1147.5" y="241" fill="#b7791f" font-size="12.5" font-weight="600">验收</text>
+<circle cx="772" cy="276" r="3.5" fill="#b7791f"/>
+<text x="783" y="280.5" fill="#62626c" font-size="12.5">等待你确认验收</text>
+<rect x="1054" y="264" width="130" height="24" rx="12" fill="#338768" fill-opacity=".09" stroke="#338768" stroke-opacity=".3"/>
+<path d="M1065.3 276.2l2.2 2.2 4.4-4.6" fill="none" stroke="#338768" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1080" y="280.5" fill="#338768" font-size="12.5" font-weight="600">PR #128 · 可合入</text>
+<rect x="720" y="312" width="480" height="40" rx="12" fill="#ffffff" stroke="#eae9ee"/>
+<text x="738" y="337" fill="#9a9aa4" font-size="13.5">输入需求，@ 角色、SOP 或仓库…</text>
+<circle cx="1178" cy="332" r="13" fill="#7b61ff"/>
+<path d="M1178 338v-12m-4.5 4.5 4.5-4.5 4.5 4.5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g></svg>

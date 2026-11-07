@@ -1,0 +1,12 @@
+# Source build of this checkout, layered on compose.yaml:
+#   ./start.sh dev     or   docker compose -f compose.yaml -f compose.dev.yaml --profile platform up --build
+# The fixed local tag keeps source builds from overwriting the pinned GHCR image.
+services:
+  platform:
+    image: loopforge-platform:local
+    build:
+      context: .
+      args:
+        LOOPFORGE_BUILD_JOBS: ${LOOPFORGE_BUILD_JOBS:-}
+    environment:
+      AGENTFLOW_ISOLATED_IMAGE: loopforge-platform:local

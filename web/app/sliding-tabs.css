@@ -1,0 +1,174 @@
+/* Harness UI SlidingTabs.vue, adapted for the native and React workbenches.
+ * Copyright (c) 2026 Harness UI contributors. MIT: harness-ui-LICENSE.txt.
+ */
+.sliding-tabs[data-sliding-tabs] {
+  --tab-spring: cubic-bezier(.22, 1.15, .36, 1);
+  --sliding-surface: var(--surface, var(--panel, #fff));
+  --sliding-text: var(--text, #252529);
+  --sliding-muted: var(--muted, #85858f);
+  display: flex !important;
+  align-items: stretch !important;
+  isolation: isolate;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100% !important;
+  height: 48px !important;
+  min-height: 48px !important;
+  padding: 4px !important;
+  gap: 0 !important;
+  flex-wrap: nowrap !important;
+  border: 0 !important;
+  border-radius: 11px !important;
+  background: color-mix(in srgb, var(--sliding-text) 5%, var(--sliding-surface)) !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sliding-tabs[data-sliding-tabs][data-sliding-inline] {
+  display: inline-flex !important;
+}
+
+.sliding-tabs[data-sliding-tabs][hidden] {
+  display: none !important;
+}
+
+.sliding-tabs[data-sliding-tabs]::-webkit-scrollbar {
+  display: none;
+}
+
+.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--sliding-text) 3%, transparent);
+  border-radius: 8px;
+  background: var(--sliding-surface);
+  box-shadow: 0 1px 3px #18181b0a, 0 2px 5px #18181b06;
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+
+.sliding-tabs[data-sliding-tabs][data-sliding-ready] > [data-sliding-indicator] {
+  transition: transform 440ms var(--tab-spring), width 440ms var(--tab-spring), height 440ms var(--tab-spring);
+}
+
+.sliding-tabs[data-sliding-tabs] > [data-sliding-tab],
+#runsView .sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex: 1 0 auto;
+  min-width: 0;
+  margin: 0 !important;
+  gap: 6px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--sliding-muted) !important;
+  box-shadow: none !important;
+  font-family: inherit;
+  font-weight: 400 !important;
+  white-space: nowrap;
+  cursor: pointer;
+  transform: none !important;
+  transition: color 180ms ease !important;
+}
+
+.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
+  height: 40px !important;
+  min-height: 40px !important;
+  padding: 8px 6px !important;
+  border-radius: 7px !important;
+  font-size: 14px !important;
+  line-height: 22px !important;
+}
+
+/* Native console tabs size to their labels, so they use the compact segmented
+ * size; page-level #id overrides still take precedence. */
+.sliding-tabs[data-sliding-tabs][data-sliding-compact] {
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 4px !important;
+  border-radius: 9px !important;
+}
+
+.sliding-tabs[data-sliding-tabs][data-sliding-compact] > [data-sliding-indicator] {
+  border-radius: 6px;
+}
+
+.sliding-tabs[data-sliding-tabs][data-sliding-compact] > [data-sliding-tab] {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 12px !important;
+  border-radius: 6px !important;
+  font-size: 13px !important;
+  line-height: 28px !important;
+}
+
+.sliding-tabs[data-sliding-tabs] > [data-sliding-tab][data-sliding-selected="true"],
+#runsView .sliding-tabs[data-sliding-tabs] > [data-sliding-tab][data-sliding-selected="true"] {
+  color: var(--sliding-text) !important;
+  font-weight: 500 !important;
+}
+
+.sliding-tabs[data-sliding-tabs] > [data-sliding-tab]:not(:disabled):hover,
+#runsView .sliding-tabs[data-sliding-tabs] > [data-sliding-tab]:not(:disabled):hover {
+  background: transparent !important;
+  color: var(--sliding-text) !important;
+}
+
+.sliding-tabs[data-sliding-tabs] > [data-sliding-tab]:is(:disabled, [aria-disabled="true"]) {
+  opacity: .38;
+  cursor: not-allowed;
+}
+
+.sliding-tabs[data-sliding-tabs] > [data-sliding-tab]:focus-visible {
+  outline: 2px solid var(--accent, #7b61ff);
+  outline-offset: -2px;
+}
+
+.sliding-tabs[data-sliding-tabs] > [data-sliding-tab]::before,
+.sliding-tabs[data-sliding-tabs] > [data-sliding-tab]::after {
+  display: none !important;
+}
+
+.sliding-tabs[data-sliding-tabs] :is(.sliding-tab-count, [data-scope-count]) {
+  height: auto;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  opacity: .65;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Browser tabs retain their separate close control inside the selected tab. */
+.collab-browser-tabs.sliding-tabs > [data-sliding-tab] > button:first-child {
+  height: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  .sliding-tabs[data-sliding-tabs] {
+    --tab-spring: linear(0, .0669, .213, .3816, .5413, .6774, .7851, .8655, .9224, .9606, .9846, .9987, 1.006, 1.0089, 1.0094, 1.0084, 1.007, 1.0054, 1.0039, 1.0027, 1.0018, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sliding-tabs[data-sliding-tabs] > [data-sliding-tab],
+  .sliding-tabs[data-sliding-tabs][data-sliding-ready] > [data-sliding-indicator] {
+    transition: none !important;
+  }
+}
