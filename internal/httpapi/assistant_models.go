@@ -11,14 +11,17 @@ import (
 	"sync"
 	"time"
 
+	"agentflow/internal/domain"
+
 	"github.com/gin-gonic/gin"
 )
 
 const assistantDefaultModel = "default"
 
-// assistantChatDefaultModel is preselected for new chat conversations when a
-// sponsor account is configured. Otherwise chat uses the operator's default,
-// like clarification, scheduled prompts, reports and executors.
+// assistantChatDefaultModel is the model the legacy sponsor account lends.
+// New chat conversations preselect the shared key's default model when one is
+// configured; otherwise chat uses the operator's default, like clarification,
+// scheduled prompts, reports and executors.
 const assistantChatDefaultModel = assistantSponsoredModel
 
 type assistantModel struct {
@@ -32,9 +35,11 @@ type assistantModel struct {
 type assistantModelCatalog struct {
 	Default string           `json:"default"`
 	Models  []assistantModel `json:"models"`
-	// SponsoredModel is set when users without their own CodeBuddy API Key
-	// may still chat, limited to this model.
-	SponsoredModel string `json:"sponsoredModel,omitempty"`
+	// SponsoredModels is set when users without their own CodeBuddy API Key
+	// may still chat on the platform's shared key, limited to these models;
+	// SponsoredModel is the first (the default).
+	SponsoredModel  string   `json:"sponsoredModel,omitempty"`
+	SponsoredModels []string `json:"sponsoredModels,omitempty"`
 }
 
 func prefetchAssistantModels() {}
@@ -186,35 +191,51 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		return
 	}
 
-	environment := ""
+	var catalog assistantModelCatalog
+	key, shared := h.assistantSharedKey()
+	user, signedIn := domain.User{}, false
 	if current, ok := h.requestUser(c.Request, true); ok {
-		if user, ok := h.repo.User(current.ID); ok {
-			environment = user.CodeBuddyInternetEnvironment
-			refreshCLIModels(c.Request.Context(), environment, user.CodeBuddyAPIKey)
-		}
+		user, signedIn = h.repo.User(current.ID)
 	}
-	catalog := assistantChatCatalog(c.Request.Context(), environment)
-	if _, ok := h.assistantSponsor(); ok {
-		catalog.SponsoredModel = assistantSponsoredModel
+	switch {
+	case signedIn && shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "":
+		// Chat runs on the shared key, so list what that key's environment offers.
+		refreshCLIModels(c.Request.Context(), key.InternetEnvironment, key.APIKey)
+		catalog = restrictAssistantCatalog(assistantChatCatalog(c.Request.Context(), key.InternetEnvironment, key.Models), key.Models)
+	case signedIn:
+		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, key.Models)
+	default:
+		catalog = assistantChatCatalog(c.Request.Context(), "", key.Models)
+	}
+	if shared {
+		catalog.SponsoredModel, catalog.SponsoredModels = key.Models[0], key.Models
 	}
 	c.JSON(200, catalog)
 }
 
 // assistantChatCatalog is the catalog used by chat conversations: the same
-// models, with the chat default listed and preselected.
-func assistantChatCatalog(ctx context.Context, env string) assistantModelCatalog {
+// models, with the shared key's models listed and its default preselected.
+func assistantChatCatalog(ctx context.Context, env string, shared []string) assistantModelCatalog {
 	catalog := loadAssistantModels(ctx, env)
-	if strings.TrimSpace(os.Getenv(assistantSponsorLoginEnv)) == "" {
+	if len(shared) == 0 {
 		return catalog
 	}
-	listed := false
+	listed := map[string]bool{}
 	for _, model := range catalog.Models {
-		listed = listed || model.ID == assistantChatDefaultModel
+		listed[model.ID] = true
 	}
-	if !listed {
-		catalog.Models = append(catalog.Models, assistantListedModel(assistantChatDefaultModel, "Deepseek-V4.1-Flash", ""))
+	for _, id := range shared {
+		if !listed[id] {
+			name := id
+			if id == assistantChatDefaultModel {
+				name = "Deepseek-V4.1-Flash"
+			}
+			catalog.Models = append(catalog.Models, assistantListedModel(id, name, ""))
+			listed[id] = true
+		}
 	}
-	catalog.Default = assistantChatDefaultModel
+	catalog.Default = shared[0]
 	return catalog
 }
 

@@ -85,7 +85,7 @@ func TestScheduleAssistantTitleWritesSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, _ := st.AssistantSession(1, id)
-	h.scheduleAssistantTitle(context.Background(), 1, domain.User{ID: 1}, old, id, []domain.AssistantMessage{{Role: "user", Content: prompt + "，请按模块列出缺口"}}, false)
+	h.scheduleAssistantTitle(context.Background(), 1, domain.User{ID: 1}, old, id, []domain.AssistantMessage{{Role: "user", Content: prompt + "，请按模块列出缺口"}}, nil)
 	deadline := time.Now().Add(2 * time.Second)
 	var got domain.AssistantSession
 	for time.Now().Before(deadline) {

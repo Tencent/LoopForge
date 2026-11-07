@@ -2,6 +2,15 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- Platform administrators create accounts and reset passwords under 平台管理 → 成员账号, so teams that turn off self sign-up no longer need the `loopforge-account` command.
+- Platform administrators can share one CodeBuddy API Key under 平台管理 → 共享 CodeBuddy Key and choose the models it may run. Members without their own key chat and run SOPs on it within those models; `AGENTFLOW_ASSISTANT_SPONSOR_LOGIN` still applies while none is configured.
+- A stored CodeBuddy network environment such as `china` can be saved again as-is to rewrite it, and the quick-access wizard no longer keeps an environment switched back to 国际站 elsewhere.
+- The platform image is published for linux/amd64 and linux/arm64, so Apple silicon Macs and arm servers can pull it.
+
+Existing installations may apply `migrations/024_platform_codebuddy_key.sql`; the platform also creates the table on startup.
+
 ## 0.3.3 — Codex and Claude Code roles in Docker sandboxes
 
 - Codex SOP roles in Docker sandboxes run with `--sandbox danger-full-access`: the container is the isolation boundary, and Codex's own bubblewrap sandbox cannot create namespaces inside it, so every shell command, file write and `submit_gate_result` call failed.

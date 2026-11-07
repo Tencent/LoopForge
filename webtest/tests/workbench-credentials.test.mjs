@@ -122,6 +122,31 @@ test('CodeBuddy inline editor changes only the network environment and keeps the
   assert.deepEqual(saved.body, { codeBuddyApiKey: '', codeBuddyInternetEnvironment: '' });
 });
 
+test('CodeBuddy inline editor rewrites an old china value to internal without retyping the key', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.data.users[0].id=1;
+    state.currentUser={...state.data.users[0],id:1,isGuest:false,codeBuddyApiKeyConfigured:true,codeBuddyInternetEnvironment:'china'};
+    state.data.users[0]=state.currentUser;
+  `);
+  app.router.put('/api/users/1/credentials', { id: 1, username: 'tester', codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'internal' });
+  await app.evaluate(`renderPersonalSettings()`);
+  const row = () => app.document.querySelector('[data-credential-row="codeBuddyApiKey"]');
+  assert.match(row().querySelector('.credential-row-who small').textContent, /「china」无法识别/);
+  row().querySelector('.credential-row-main').click();
+  const select = row().querySelector('select[name="extra"]');
+  const save = row().querySelector('[data-credential-act="save"]');
+  assert.equal(select.value, 'internal', 'the old value preselects what it meant');
+  assert.equal(save.disabled, false, 'the stored text still needs rewriting, so saving is allowed as shown');
+  assert.match(row().querySelector('[data-credential-env-hint]').textContent, /「china」无法识别/);
+  save.click();
+  await settle(6);
+  const saved = app.router.calls.find((call) => call.path === '/api/users/1/credentials');
+  assert.deepEqual(saved.body, { codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'internal' });
+  assert.match(row().querySelector('.credential-row-who small').textContent, /网络环境国内站/);
+});
+
 test('credential panel filters, expands, validates, reveals secrets, and confirms deletion', async (t) => {
   const app = await loadApp();
   t.after(app.close);

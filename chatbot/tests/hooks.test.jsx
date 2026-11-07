@@ -98,6 +98,35 @@ describe("conversation hooks", () => {
     localStorage.removeItem("loopforge.assistant.executor");
   });
 
+  test("without an own key chat is limited to the administrator's shared models", async () => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") return { user: { id: 1, loginName: "tester", codeBuddyApiKeyConfigured: false } };
+      if (path === "/api/users") return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: false }];
+      if (path === "/api/assistant/models")
+        return { default: "glm-5.1", sponsoredModel: "glm-5.1", sponsoredModels: ["glm-5.1", "kimi-k2.6"], models: [{ id: "glm-5.1", name: "GLM" }, { id: "kimi-k2.6", name: "Kimi" }] };
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(result.current.sponsored).toBe(true);
+      expect(result.current.sponsoredModels).toEqual(["glm-5.1", "kimi-k2.6"]);
+      expect(result.current.model).toBe("glm-5.1");
+      let accepted;
+      act(() => { accepted = result.current.setModel("kimi-k2.6"); });
+      expect(accepted).toBe(true);
+      expect(result.current.model).toBe("kimi-k2.6");
+      act(() => { accepted = result.current.setModel("claude-opus-5"); });
+      expect(accepted).toBe(false);
+      expect(result.current.model).toBe("kimi-k2.6");
+      expect(result.current.error).toContain("glm-5.1、kimi-k2.6");
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test("persists the draft sandbox selection when creating a conversation", async () => {
     history.replaceState({}, "", "/?projectId=p1");
     const { result } = renderHook(() => useChat());

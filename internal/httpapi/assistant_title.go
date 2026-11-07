@@ -75,7 +75,8 @@ func assistantPromptTitleMatches(session domain.AssistantSession, title string) 
 	return false
 }
 
-func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID int64, user domain.User, old domain.AssistantSession, sessionID string, messages []domain.AssistantMessage, sponsored bool) {
+// shared lists the allowed models when the turn runs on the shared key.
+func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID int64, user domain.User, old domain.AssistantSession, sessionID string, messages []domain.AssistantMessage, shared []string) {
 	if h == nil || h.repo == nil {
 		return
 	}
@@ -94,7 +95,7 @@ func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID 
 		if h.titleSummary != nil {
 			title, err = h.titleSummary(runCtx, user, prompt)
 		} else {
-			title, err = summarizeAssistantTitle(runCtx, user, prompt, sponsored)
+			title, err = summarizeAssistantTitle(runCtx, user, prompt, shared)
 		}
 		if err != nil || strings.TrimSpace(title) == "" {
 			log.Printf("assistant title summary skipped session=%s: %v", sessionID, err)
@@ -106,10 +107,14 @@ func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID 
 	}()
 }
 
-func summarizeAssistantTitle(ctx context.Context, user domain.User, prompt string, sponsored bool) (string, error) {
-	model := assistantSponsoredModel
-	if !sponsored {
-		model = assistantApprovalReviewModel(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment))
+// A shared-key title uses the cheapest allowed model, or the shared default.
+func summarizeAssistantTitle(ctx context.Context, user domain.User, prompt string, shared []string) (string, error) {
+	if len(shared) == 0 {
+		return runAssistantTitleSummary(ctx, user, assistantApprovalReviewModel(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil)), prompt)
+	}
+	model := assistantApprovalReviewModel(restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, shared), shared))
+	if model == "" {
+		model = shared[0]
 	}
 	return runAssistantTitleSummary(ctx, user, model, prompt)
 }

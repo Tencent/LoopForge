@@ -40,14 +40,21 @@ const CODEBUDDY_ENVIRONMENTS=[
   {value:'ioa',label:'iOA',site:'tencent.sso.copilot.tencent.com',keyUrl:'https://tencent.sso.copilot.tencent.com/profile/keys'},
 ];
 const CODEBUDDY_ENVIRONMENT_ALIASES={public:'',intl:'',international:'','国际站':'',china:'internal',cn:'internal','国内站':'internal'};
-// Returns null for a value the CLI would not recognize.
+// The CLI receives the stored text as-is, so only the exact values count; returns null for anything else.
 function codeBuddyEnvironment(value){
+  const key=String(value||'').trim();
+  return CODEBUDDY_ENVIRONMENTS.find(env=>env.value===key)||null;
+}
+// What an old free-text value most likely meant (china → 国内站), used to preselect the fix.
+function codeBuddyEnvironmentIntent(value){
   const key=String(value||'').trim().toLowerCase();
   const normalized=Object.prototype.hasOwnProperty.call(CODEBUDDY_ENVIRONMENT_ALIASES,key)?CODEBUDDY_ENVIRONMENT_ALIASES[key]:key;
   return CODEBUDDY_ENVIRONMENTS.find(env=>env.value===normalized)||null;
 }
-function codeBuddyKeyURL(value){return (codeBuddyEnvironment(value)||CODEBUDDY_ENVIRONMENTS[0]).keyUrl}
-function codeBuddyKeyLinkLabel(value){return `前往${(codeBuddyEnvironment(value)||CODEBUDDY_ENVIRONMENTS[0]).label}获取 API Key`}
+// A stored value the CLI does not take as written; it connects to 国际站 until it is saved again.
+function codeBuddyEnvironmentLegacy(value){const raw=String(value||'').trim();return !!raw&&!codeBuddyEnvironment(raw)}
+function codeBuddyKeyURL(value){return (codeBuddyEnvironmentIntent(value)||CODEBUDDY_ENVIRONMENTS[0]).keyUrl}
+function codeBuddyKeyLinkLabel(value){return `前往${(codeBuddyEnvironmentIntent(value)||CODEBUDDY_ENVIRONMENTS[0]).label}获取 API Key`}
 const CREDENTIAL_KINDS=[
   {key:'gitToken',group:'platform',name:'GitHub',short:'仓库授权',logo:'github',monochrome:true,
     use:'克隆私有仓库、创建任务分支、推送交付产物',
@@ -100,9 +107,10 @@ function credentialSecretWarning(kind,value){
     ?'这像是 DeepSeek、OpenAI 等第三方模型的 Key，CodeBuddy 会拒绝；第三方 Key 请改填到 Claude Code 或 Codex 凭证并设置 Base URL'
     :'CodeBuddy API Key 通常以 ck_ 开头，请确认复制的是 CodeBuddy 的 Key';
 }
-// The value an extra field starts from. An unrecognized network environment shows as 国际站, which is what the CLI uses.
+// The value an extra field starts from. An old network environment preselects what it meant (china → 国内站),
+// and one that cannot be guessed shows as 国际站, which is what the CLI uses.
 function credentialExtraValue(kind,value){
-  if(kind?.extra?.options)return codeBuddyEnvironment(value)?.value??'';
+  if(kind?.extra?.options)return codeBuddyEnvironmentIntent(value)?.value??'';
   return value||kind?.extra?.fallback||'';
 }
 function credentialExtraLabel(kind,value){
@@ -110,7 +118,7 @@ function credentialExtraLabel(kind,value){
   return String(value||'').trim()||(kind.extra.url?'官方地址':kind.extra.fallback||'');
 }
 function codeBuddyEnvironmentHintHTML(selected,stored=''){
-  const raw=String(stored||'').trim(),legacy=raw&&!codeBuddyEnvironment(raw)?`原来填写的「${raw}」无法识别，CodeBuddy 实际按国际站连接。`:'';
+  const raw=String(stored||'').trim(),legacy=codeBuddyEnvironmentLegacy(raw)?`原来填写的「${raw}」无法识别，CodeBuddy 实际按国际站连接，点保存改为上面选择的环境。`:'';
   return `${escapeHTML(legacy)}Key 只能在创建它的站点使用 · <a href="${escapeHTML(codeBuddyKeyURL(selected))}" target="_blank" rel="noopener noreferrer" data-credential-key-link>${escapeHTML(codeBuddyKeyLinkLabel(selected))} ↗</a>`;
 }
 function credentialSelectFieldHTML(kind,stored,note=''){
@@ -229,8 +237,8 @@ function credentialEditorHTML(kind,user){
   const extraField=!kind.extra?''
     :kind.extra.options?credentialSelectFieldHTML(kind,user[kind.extra.name],'与 Key 所在站点一致')
     :credentialFieldHTML({label:kind.extra.label,note:kind.extra.url?'留空使用官方地址':'',name:'extra',type:kind.extra.url?'url':'text',value:extraValue,placeholder:kind.extra.placeholder,hint:null});
-  // An unrecognized stored environment can be saved as shown without retyping the key.
-  const legacy=!!(kind.extra?.options&&String(user[kind.extra.name]||'').trim()&&!codeBuddyEnvironment(user[kind.extra.name]));
+  // A stored environment the CLI does not take as written (china, private-net…) can be saved as shown without retyping the key.
+  const legacy=!!(kind.extra?.options&&codeBuddyEnvironmentLegacy(user[kind.extra.name]));
   return `<div class="credential-editor-form"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}${legacy?' data-legacy="true"':''}>
     ${credentialFieldHTML({label:kind.short,note:'已配置 · 留空则不改',name:'secret',placeholder:'输入新值以替换',hint:kind.hint||''})}
     ${extraField}
@@ -883,6 +891,8 @@ function renderPlatformAdminPanel(){
       </div>
     </div>
 
+    ${platformSettingsHTML()}
+
     <div class="platform-admin-layout">
       <div class="platform-admin-main-card">
         <div class="platform-admin-head">
@@ -969,7 +979,237 @@ function renderPlatformAdminPanel(){
       </div>
     </div>
   `;
+  loadPlatformAccounts(host);
+  loadPlatformSharedKey(host);
   loadPlatformAdmins(host);
+}
+
+// 平台管理 → 成员账号 / 平台共享 CodeBuddy Key.
+const PLATFORM_ACCOUNT_PASSWORD_MIN=6;
+function platformRandomPassword(){
+  const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const bytes=new Uint32Array(14);window.crypto.getRandomValues(bytes);
+  return Array.from(bytes,b=>alphabet[b%alphabet.length]).join('');
+}
+function sharedModelLabel(id){return id==='deepseek-v4.1-flash'?'Deepseek-V4.1-Flash':String(id||'')}
+// The models users without their own CodeBuddy key may use, as announced by bootstrap.
+function sharedModelSummary(){
+  const models=Array.isArray(state.data?.sponsoredModels)&&state.data.sponsoredModels.length?state.data.sponsoredModels:(state.data?.sponsoredModel?[state.data.sponsoredModel]:[]);
+  return models.map(sharedModelLabel).join('、');
+}
+function platformSettingsHTML(){
+  const envOptions=CODEBUDDY_ENVIRONMENTS.map(env=>`<option value="${escapeHTML(env.value)}">${escapeHTML(env.label)} · ${escapeHTML(env.site)}</option>`).join('');
+  return `
+    <div class="platform-admin-layout platform-settings-layout">
+      <section class="platform-admin-main-card" id="platformAccountsCard">
+        <div class="platform-admin-head">
+          <div class="platform-admin-head-meta">
+            <span class="credential-eyebrow">成员账号</span>
+            <h2>给同事开账号</h2>
+            <p data-account-intro>填好用户名和初始密码，点创建，再把登录信息发给同事。同事忘记密码时可以在下面重置。</p>
+          </div>
+          <span class="platform-admin-count-pill" id="platformAccountCountBadge">-- 个账号</span>
+        </div>
+        <form id="platformAccountForm" class="platform-account-form" autocomplete="off">
+          <div class="platform-input-wrap"><input name="loginName" placeholder="用户名，如 alice" aria-label="用户名" maxlength="64" autocomplete="off" spellcheck="false"></div>
+          <div class="platform-input-wrap"><input name="password" placeholder="初始密码，至少 6 位" aria-label="初始密码" maxlength="72" autocomplete="new-password" spellcheck="false"><button type="button" class="button ghost small" data-account-generate>随机生成</button></div>
+          <label class="platform-check"><input type="checkbox" name="admin"><span>同时设为平台管理员</span></label>
+          <button class="button primary platform-add-btn" type="submit">创建账号</button>
+        </form>
+        <div class="platform-account-created" data-account-created hidden></div>
+        <div class="platform-search-wrap platform-account-search">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input data-account-search placeholder="搜索用户名..." autocomplete="off">
+        </div>
+        <div id="platformAccountList" class="platform-admin-list platform-account-list"></div>
+      </section>
+      <section class="platform-admin-main-card" id="platformSharedKeyCard">
+        <div class="platform-admin-head">
+          <div class="platform-admin-head-meta">
+            <span class="credential-eyebrow">共享 CodeBuddy Key</span>
+            <h2>给没配 Key 的成员用</h2>
+            <p>成员没配自己的 CodeBuddy API Key 时，对话和 SOP 会用这里的 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。</p>
+          </div>
+          <span class="platform-admin-count-pill" data-shared-key-badge>加载中</span>
+        </div>
+        <form id="platformSharedKeyForm" class="platform-shared-key-form" autocomplete="off">
+          <label class="platform-field"><span>网络环境</span><select name="internetEnvironment">${envOptions}</select></label>
+          <label class="platform-field"><span>API Key</span><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="ck_ 开头的 CodeBuddy API Key"></label>
+          <a class="platform-shared-key-link" data-shared-key-link target="_blank" rel="noopener noreferrer"></a>
+          <div class="platform-note is-warn" data-shared-key-warning hidden></div>
+          <div class="platform-field"><span>允许使用的模型</span><div class="platform-model-list" data-shared-models><p class="prop-hint">正在读取可用模型…</p></div></div>
+          <label class="platform-field"><span>列表里没有的模型</span><input name="extraModels" placeholder="模型 ID，多个用逗号分隔" autocomplete="off" spellcheck="false"></label>
+          <label class="platform-field"><span>默认模型</span><select name="defaultModel"></select></label>
+          <p class="platform-add-hint" data-shared-key-meta></p>
+          <div class="platform-shared-key-actions">
+            <button class="button primary" type="submit">保存</button>
+            <button class="button ghost danger" type="button" data-shared-key-clear hidden>停用共享 Key</button>
+          </div>
+        </form>
+      </section>
+    </div>`;
+}
+function platformAccountCreatedHTML(action,login,password){
+  return `<div class="platform-note is-ok"><span>${action==='reset'?'已重置':'已创建'}账号 <b data-i18n-skip>${escapeHTML(login)}</b>，${action==='reset'?'新密码':'初始密码'} <code>${escapeHTML(password)}</code>。密码只显示这一次，请现在发给对方。</span><button type="button" class="button ghost small" data-copy-login>复制登录信息</button></div>`;
+}
+async function loadPlatformAccounts(host){
+  const card=host.querySelector('#platformAccountsCard');if(!card)return;
+  const list=card.querySelector('#platformAccountList'),form=card.querySelector('#platformAccountForm'),created=card.querySelector('[data-account-created]'),search=card.querySelector('[data-account-search]');
+  let accounts=[],query='',resetting=null;
+  const showCreated=(action,login,password)=>{
+    created.innerHTML=platformAccountCreatedHTML(action,login,password);created.hidden=false;
+    created.querySelector('[data-copy-login]').onclick=()=>copyText(`登录地址：${location.origin}\n用户名：${login}\n密码：${password}`,'已复制登录信息');
+  };
+  const render=()=>{
+    const badge=card.querySelector('#platformAccountCountBadge');if(badge)badge.textContent=`共 ${accounts.length} 个账号`;
+    const q=query.toLowerCase();
+    const rows=accounts.filter(a=>!q||String(a.loginName||'').toLowerCase().includes(q)||String(a.chineseName||'').toLowerCase().includes(q));
+    if(!rows.length){list.innerHTML=`<div class="platform-empty-state"><b>${accounts.length?'没有匹配的账号':'还没有账号'}</b></div>`;return}
+    list.innerHTML=rows.map(a=>{
+      const name=a.chineseName&&a.chineseName.toLowerCase()!==String(a.loginName).toLowerCase()?`${a.loginName}(${a.chineseName})`:a.loginName;
+      const badges=[a.admin?'<span class="platform-source-badge source-builtin">平台管理员</span>':'',a.password?'<span class="platform-source-badge source-default">用户名密码</span>':'<span class="platform-source-badge source-default">GitHub / 网关登录</span>',a.codeBuddyApiKeyConfigured?'<span class="platform-source-badge source-env">已配 CodeBuddy Key</span>':'<span class="platform-source-badge source-default">未配 CodeBuddy Key</span>'].join('');
+      const editing=resetting===a.userId;
+      return `<div class="platform-admin-row platform-account-row" data-account-row="${Number(a.userId)}">
+        <div class="platform-admin-user">
+          <div class="platform-admin-avatar">${userAvatarHTML(a.loginName,100)}</div>
+          <div class="platform-admin-info"><span class="platform-admin-name" data-i18n-skip>${escapeHTML(name)}</span><div class="platform-admin-meta">${badges}</div></div>
+        </div>
+        <div class="platform-admin-actions">${a.password?(editing?`<form class="platform-account-reset" data-reset-form="${Number(a.userId)}"><input name="password" placeholder="新密码，至少 6 位" aria-label="新密码" maxlength="72" autocomplete="new-password" spellcheck="false"><button type="button" class="button ghost small" data-reset-generate>随机</button><button type="submit" class="button primary small">确认重置</button><button type="button" class="button ghost small" data-reset-cancel>取消</button></form>`:`<button type="button" class="button ghost small" data-reset-account="${Number(a.userId)}">重置密码</button>`):'<span class="platform-locked-tag" title="通过 GitHub 或网关登录的账号没有平台密码">无平台密码</span>'}</div>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-reset-account]').forEach(btn=>btn.onclick=()=>{resetting=Number(btn.dataset.resetAccount);render();list.querySelector('[data-reset-form] input')?.focus()});
+    const resetForm=list.querySelector('[data-reset-form]');
+    if(resetForm){
+      resetForm.querySelector('[data-reset-cancel]').onclick=()=>{resetting=null;render()};
+      resetForm.querySelector('[data-reset-generate]').onclick=()=>{resetForm.elements.password.value=platformRandomPassword()};
+      resetForm.onsubmit=async e=>{
+        e.preventDefault();
+        const password=resetForm.elements.password.value;
+        if(password.length<PLATFORM_ACCOUNT_PASSWORD_MIN)return toast(`密码至少 ${PLATFORM_ACCOUNT_PASSWORD_MIN} 位`,'err');
+        const account=accounts.find(a=>a.userId===resetting);
+        resetForm.querySelectorAll('button').forEach(b=>b.disabled=true);
+        try{
+          await api(`/api/platform/accounts/${encodeURIComponent(resetting)}/password`,{method:'PUT',body:JSON.stringify({password})});
+          resetting=null;render();showCreated('reset',account?.loginName||'',password);toast('密码已重置','ok');
+        }catch(err){toast(err.message,'err');resetForm.querySelectorAll('button').forEach(b=>b.disabled=false)}
+      };
+    }
+  };
+  const load=async()=>{
+    try{
+      const result=await api('/api/platform/accounts');
+      accounts=Array.isArray(result?.accounts)?result.accounts:[];
+      const intro=card.querySelector('[data-account-intro]');
+      if(intro)intro.textContent=result?.signupEnabled
+        ?'登录页目前允许自助注册。也可以在这里直接创建账号，再把登录信息发给同事；同事忘记密码时可以在下面重置。'
+        :'登录页的自助注册已关闭，同事的账号要在这里创建：填好用户名和初始密码，点创建，再把登录信息发给对方。忘记密码时可以在下面重置。';
+      render();
+    }catch(e){list.innerHTML=`<p class="prop-hint">${escapeHTML(e.message||'加载账号失败')}</p>`}
+  };
+  if(search)search.oninput=()=>{query=search.value.trim();render()};
+  form.querySelector('[data-account-generate]').onclick=()=>{form.elements.password.value=platformRandomPassword()};
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const loginName=form.elements.loginName.value.trim(),password=form.elements.password.value,admin=form.elements.admin.checked;
+    if(!/^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$/.test(loginName))return toast('用户名需 2–64 位，以字母或数字开头，只能包含字母、数字、_ . -','err');
+    if(password.length<PLATFORM_ACCOUNT_PASSWORD_MIN)return toast(`密码至少 ${PLATFORM_ACCOUNT_PASSWORD_MIN} 位`,'err');
+    const submit=form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
+    try{
+      const account=await api('/api/platform/accounts',{method:'POST',body:JSON.stringify({loginName,password,admin})});
+      form.reset();
+      accounts=[...accounts.filter(a=>a.userId!==account?.userId),account].filter(Boolean);
+      render();showCreated('create',loginName,password);toast('账号已创建','ok');
+      if(admin)loadPlatformAdmins(host);
+    }catch(err){toast(err.message,'err')}
+    finally{if(submit)submit.disabled=false}
+  };
+  await load();
+}
+async function loadPlatformSharedKey(host){
+  const card=host.querySelector('#platformSharedKeyCard');if(!card)return;
+  const form=card.querySelector('#platformSharedKeyForm');
+  const env=form.elements.internetEnvironment,key=form.elements.apiKey,extra=form.elements.extraModels,defaultSelect=form.elements.defaultModel;
+  const modelsHost=card.querySelector('[data-shared-models]'),badge=card.querySelector('[data-shared-key-badge]'),meta=card.querySelector('[data-shared-key-meta]');
+  const link=card.querySelector('[data-shared-key-link]'),warning=card.querySelector('[data-shared-key-warning]'),clear=card.querySelector('[data-shared-key-clear]');
+  let status=null,catalog=[],selected=[];
+  const extraIDs=()=>String(extra.value||'').split(/[,，\s]+/).map(s=>s.trim()).filter(Boolean);
+  const chosen=()=>{const all=[...selected];for(const id of extraIDs())if(!all.includes(id))all.push(id);return all};
+  const renderDefault=()=>{
+    const models=chosen(),current=defaultSelect.value;
+    defaultSelect.innerHTML=models.length?models.map(id=>`<option value="${escapeHTML(id)}">${escapeHTML(sharedModelLabel(id))}</option>`).join(''):'<option value="">请先勾选模型</option>';
+    defaultSelect.value=models.includes(current)?current:(models[0]||'');
+  };
+  const renderModels=()=>{
+    const listed=catalog.filter(m=>m&&m.id&&m.id!=='default');
+    const ids=new Set(listed.map(m=>m.id));
+    for(const id of selected)if(!ids.has(id)){listed.push({id,name:id});ids.add(id)}
+    modelsHost.innerHTML=listed.length?listed.map(m=>`<label class="platform-check platform-model-option"><input type="checkbox" value="${escapeHTML(m.id)}"${selected.includes(m.id)?' checked':''}><span>${escapeHTML(m.name&&m.name!==m.id?`${m.name}（${m.id}）`:sharedModelLabel(m.id))}</span>${m.credits?`<small>${escapeHTML(m.credits)}</small>`:''}</label>`).join(''):'<p class="prop-hint">这个网络环境暂时没有读到模型列表，可以在下面直接填模型 ID。</p>';
+    modelsHost.querySelectorAll('input[type="checkbox"]').forEach(box=>box.onchange=()=>{
+      selected=box.checked?[...selected.filter(id=>id!==box.value),box.value]:selected.filter(id=>id!==box.value);
+      renderDefault();
+    });
+    renderDefault();
+  };
+  const renderLink=()=>{link.href=codeBuddyKeyURL(env.value);link.textContent=`${codeBuddyKeyLinkLabel(env.value)} ↗`};
+  const renderStatus=()=>{
+    const on=!!status?.configured,envInfo=CODEBUDDY_ENVIRONMENTS.find(e=>e.value===(status?.internetEnvironment||''))||CODEBUDDY_ENVIRONMENTS[0];
+    badge.textContent=on?'已启用':status?.legacySponsor?'使用旧配置':'未启用';
+    key.placeholder=on?'已配置，留空保持不变':'ck_ 开头的 CodeBuddy API Key';
+    clear.hidden=!on;
+    const parts=[];
+    if(on)parts.push(`当前：${envInfo.label}，${(status.models||[]).length} 个模型，默认 ${sharedModelLabel(status.models?.[0])}${status.updatedBy?`，${status.updatedBy} 最后修改`:''}。`);
+    else parts.push('还没有配置共享 Key，没配 Key 的成员需要先配自己的 Key 才能对话和跑 SOP。');
+    if(status?.legacySponsor)parts.push(on?`配置后不再使用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${status.legacySponsor} 的 Key。`:`现在沿用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${status.legacySponsor} 的 Key，只能用 ${sharedModelLabel(status.legacySponsorModel)}。`);
+    meta.textContent=parts.join('');
+  };
+  const syncBootstrap=()=>{
+    if(!state.data)return;
+    const models=status?.configured?(status.models||[]):(status?.legacySponsor?[status.legacySponsorModel]:[]);
+    state.data.sponsoredModels=models;state.data.sponsoredModel=models[0]||'';
+  };
+  const fetchStatus=async environment=>{
+    const query=environment===undefined?'':`?environment=${encodeURIComponent(environment)}`;
+    const result=await api('/api/platform/codebuddy-key'+query);
+    catalog=Array.isArray(result?.catalog)?result.catalog:[];
+    return result;
+  };
+  try{
+    status=await fetchStatus();
+    env.value=status?.internetEnvironment||'';
+    selected=status?.configured?[...(status.models||[])]:(status?.legacySponsorModel?[status.legacySponsorModel]:[]);
+    renderStatus();renderLink();renderModels();
+  }catch(e){
+    badge.textContent='加载失败';modelsHost.innerHTML=`<p class="prop-hint">${escapeHTML(e.message||'加载共享 Key 失败')}</p>`;
+    return;
+  }
+  env.onchange=async()=>{
+    renderLink();
+    modelsHost.innerHTML='<p class="prop-hint">正在读取可用模型…</p>';
+    try{await fetchStatus(env.value)}catch(e){catalog=[]}
+    renderModels();
+  };
+  extra.oninput=renderDefault;
+  key.oninput=()=>{const text=credentialSecretWarning(credentialKind('codeBuddyApiKey'),key.value);warning.textContent=text;warning.hidden=!text};
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const models=chosen();
+    if(!models.length)return toast('请至少勾选一个允许使用的模型','err');
+    if(!status?.configured&&!key.value.trim())return toast('请填写 CodeBuddy API Key','err');
+    const first=defaultSelect.value&&models.includes(defaultSelect.value)?defaultSelect.value:models[0];
+    const ordered=[first,...models.filter(id=>id!==first)];
+    const submit=form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
+    try{
+      status=await api('/api/platform/codebuddy-key',{method:'PUT',body:JSON.stringify({apiKey:key.value.trim(),internetEnvironment:env.value,models:ordered})});
+      key.value='';warning.hidden=true;extra.value='';selected=[...(status.models||ordered)];
+      renderStatus();renderModels();syncBootstrap();toast('共享 Key 已保存','ok');
+    }catch(err){toast(err.message,'err')}
+    finally{if(submit)submit.disabled=false}
+  };
+  clear.onclick=async()=>{
+    if(!await afConfirm({title:'停用共享 Key',message:'停用后，没配自己 Key 的成员将不能再用共享 Key 对话和跑 SOP。确定停用？',danger:true,confirmText:'停用'}))return;
+    try{status=await api('/api/platform/codebuddy-key',{method:'DELETE'});renderStatus();syncBootstrap();toast('共享 Key 已停用','ok')}
+    catch(err){toast(err.message,'err')}
+  };
 }
 async function loadPlatformAdmins(host){
   const list=host.querySelector('#platformAdminList');

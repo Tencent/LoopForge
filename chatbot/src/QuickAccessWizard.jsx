@@ -15,6 +15,8 @@ import { usePanelPresence } from "./usePanelPresence";
 import {
   CODEBUDDY_ENVIRONMENTS,
   codeBuddyEnvironment,
+  codeBuddyEnvironmentIntent,
+  codeBuddyEnvironmentLegacy,
   codeBuddyKeyURL,
   codeBuddyKeyWarning,
   openCredentialSettings,
@@ -22,6 +24,24 @@ import {
 import "./quick-access-wizard.css";
 
 const DEFAULT_SOP_ID = "generic-backend-delivery";
+
+// Display names for the models users without their own key may use.
+export function sharedModelNames(models, fallback = "") {
+  const list = Array.isArray(models) && models.length ? models : fallback ? [fallback] : [];
+  return list
+    .map((id) => (id === "deepseek-v4.1-flash" ? "Deepseek-V4.1-Flash" : id))
+    .join("、");
+}
+
+// The users API omits an empty (国际站) environment, so a full user response
+// must clear one that was switched to 国际站 elsewhere instead of keeping it.
+export function mergeFreshUser(prev, fresh) {
+  return {
+    ...prev,
+    ...fresh,
+    codeBuddyInternetEnvironment: fresh?.codeBuddyInternetEnvironment || "",
+  };
+}
 
 const STEPS = [
   {
@@ -748,6 +768,7 @@ export default function QuickAccessWizard({
   projects = [],
   projectId = "",
   sponsoredModel = "",
+  sponsoredModels = [],
   onClose,
   onCompleted,
   onOpenView,
@@ -961,7 +982,7 @@ export default function QuickAccessWizard({
           (usersRes || []).find(
             (item) => Number(item.id) === Number(user?.id),
           ) || user;
-        setStoredUser({ ...user, ...freshUser });
+        setStoredUser(mergeFreshUser(user, freshUser));
         if (freshUser?.gitTokenConfigured && freshUser?.id) {
           void verifyStoredGitToken(freshUser.id);
         }
@@ -1045,7 +1066,7 @@ export default function QuickAccessWizard({
             (item) => Number(item.id) === Number(user?.id),
           );
           if (fresh) {
-            setStoredUser((prev) => ({ ...prev, ...fresh }));
+            setStoredUser((prev) => mergeFreshUser(prev, fresh));
             if (fresh.gitTokenConfigured) {
               void verifyStoredGitToken(fresh.id);
             }
@@ -1126,8 +1147,14 @@ export default function QuickAccessWizard({
   const codeBuddyReady = Boolean(
     storedUser?.codeBuddyApiKeyConfigured || codeBuddyApiKey.trim(),
   );
+  // The CLI gets the stored text as-is: an old value such as china preselects
+  // what it meant, and still differs from it, so 下一步 rewrites it.
+  const storedCodeBuddyEnvRaw = String(
+    storedUser?.codeBuddyInternetEnvironment || "",
+  ).trim();
   const storedCodeBuddyEnv =
-    codeBuddyEnvironment(storedUser?.codeBuddyInternetEnvironment)?.value ?? "";
+    codeBuddyEnvironmentIntent(storedCodeBuddyEnvRaw)?.value ?? "";
+  const codeBuddyEnvLegacy = codeBuddyEnvironmentLegacy(storedCodeBuddyEnvRaw);
   const codeBuddyEnv = codeBuddyEnvChoice ?? storedCodeBuddyEnv;
   const codeBuddyEnvInfo =
     codeBuddyEnvironment(codeBuddyEnv) || CODEBUDDY_ENVIRONMENTS[0];
@@ -1149,7 +1176,7 @@ export default function QuickAccessWizard({
     if (codeBuddyApiKey.trim())
       payload.codeBuddyApiKey = codeBuddyApiKey.trim();
     // A key is always saved with the environment it was issued for.
-    if (codeBuddyApiKey.trim() || codeBuddyEnv !== storedCodeBuddyEnv)
+    if (codeBuddyApiKey.trim() || codeBuddyEnv !== storedCodeBuddyEnvRaw)
       payload.codeBuddyInternetEnvironment = codeBuddyEnv;
     if (!Object.keys(payload).length) return storedUser;
     const saved = await write(
@@ -1625,7 +1652,7 @@ export default function QuickAccessWizard({
                             {completedSummary?.codeBuddyReady
                               ? "已配置"
                               : sponsoredModel
-                                ? "未配置。对话和 SOP 都会使用平台共享模型 Deepseek-V4.1-Flash，可以直接开始；配置自己的 Key 后可选用其他模型"
+                                ? `未配置。对话和 SOP 都会使用平台共享 Key（可用模型：${sharedModelNames(sponsoredModels, sponsoredModel)}），可以直接开始；配置自己的 Key 后可选用任意模型`
                                 : "未配置。对话可用平台默认模型，但运行 SOP 时节点需要它调模型，请先在个人配置补齐"}
                           </span>
                         </li>
@@ -1855,7 +1882,7 @@ export default function QuickAccessWizard({
                             role="status"
                           >
                             {codeBuddyWarning ||
-                              `Key 只能在创建它的站点使用：当前选择${codeBuddyEnvInfo.label}（${codeBuddyEnvInfo.site}），「获取 API Key」会打开该站点的密钥页。`}
+                              `${codeBuddyEnvLegacy && codeBuddyEnvChoice === null ? `原来填写的「${storedCodeBuddyEnvRaw}」无法识别，CodeBuddy 实际按国际站连接，点下一步改为当前选择。` : ""}Key 只能在创建它的站点使用：当前选择${codeBuddyEnvInfo.label}（${codeBuddyEnvInfo.site}），「获取 API Key」会打开该站点的密钥页。`}
                           </p>
                         </div>
                       </section>

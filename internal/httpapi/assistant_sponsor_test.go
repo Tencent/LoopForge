@@ -120,6 +120,16 @@ func TestBootstrapAdvertisesSponsoredModel(t *testing.T) {
 	if boot["sponsoredModel"] != assistantSponsoredModel {
 		t.Fatalf("sponsoredModel = %v", boot["sponsoredModel"])
 	}
+	if err := st.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{APIKey: "platform-secret", Models: []string{"glm-5.1", "kimi-k2.6"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	boot = requestEmptyJSON[map[string]any](t, h, http.MethodGet, "/api/bootstrap", http.StatusOK)
+	if models, _ := boot["sponsoredModels"].([]any); boot["sponsoredModel"] != "glm-5.1" || len(models) != 2 {
+		t.Fatalf("platform shared key = %v %v", boot["sponsoredModel"], boot["sponsoredModels"])
+	}
+	if err := st.ClearPlatformCodeBuddyKey(); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(assistantSponsorLoginEnv, "")
 	boot = requestEmptyJSON[map[string]any](t, h, http.MethodGet, "/api/bootstrap", http.StatusOK)
 	if boot["sponsoredModel"] != "" {
@@ -138,9 +148,54 @@ func TestNoSponsorKeepsRequiringOwnKey(t *testing.T) {
 		if rec := sponsoredChat(h, newcomer, ""); rec.Code != 400 || !strings.Contains(rec.Body.String(), "CodeBuddy API Key") {
 			t.Fatalf("sponsor %q: %d %s", login, rec.Code, rec.Body.String())
 		}
-		if _, ok := h.assistantSponsor(); ok {
+		if _, ok := h.assistantSharedKey(); ok {
 			t.Fatalf("sponsor %q without a key must not be available", login)
 		}
+	}
+}
+
+// The key an administrator configures under 平台管理 replaces the legacy
+// sponsor account, and limits shared turns to the models they allowed.
+func TestPlatformSharedKeyLimitsChatToAllowedModels(t *testing.T) {
+	st, newcomer := sponsorFixture(t)
+	stubCLIModelDiscovery(t)
+	t.Setenv(assistantSponsorLoginEnv, "sponsor")
+	if err := st.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{APIKey: "platform-secret", InternetEnvironment: "ioa", Models: []string{"glm-5.1", "kimi-k2.6"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	var used domain.User
+	h := &assistantHandlers{deps: &deps{repo: st}, generate: func(_ context.Context, _ string, u domain.User) (string, error) {
+		used = u
+		return `{"message":"ok","drafts":[]}`, nil
+	}}
+	for model, want := range map[string]string{"": "glm-5.1", "kimi-k2.6": "kimi-k2.6"} {
+		used = domain.User{}
+		rec := sponsoredChat(h, newcomer, model)
+		if rec.Code != 200 || used.CodeBuddyAPIKey != "platform-secret" || used.CodeBuddyInternetEnvironment != "ioa" {
+			t.Fatalf("model %q: %d %s used=%+v", model, rec.Code, rec.Body.String(), used)
+		}
+		if got := assistantAllowedModel(model, h.chatCatalog(context.Background(), used)); got != want {
+			t.Fatalf("model %q resolves to %q, want %q", model, got, want)
+		}
+	}
+	for _, model := range []string{assistantSponsoredModel, "claude-opus-5"} {
+		rec := sponsoredChat(h, newcomer, model)
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), "glm-5.1、kimi-k2.6") {
+			t.Fatalf("model %q outside the allow list: %d %s", model, rec.Code, rec.Body.String())
+		}
+	}
+
+	var catalog assistantModelCatalog
+	mrec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(mrec)
+	c.Request = httptest.NewRequest("GET", "/api/assistant/models", nil)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), requestUserContextKey{}, domainUserToAuth(newcomer)))
+	h.models(c)
+	if json.Unmarshal(mrec.Body.Bytes(), &catalog) != nil || catalog.Default != "glm-5.1" || strings.Join(catalog.SponsoredModels, ",") != "glm-5.1,kimi-k2.6" || len(catalog.Models) != 2 {
+		t.Fatalf("shared-key catalog = %s", mrec.Body.String())
+	}
+	if strings.Contains(mrec.Body.String(), "platform-secret") {
+		t.Fatal("catalog must not reveal the shared key")
 	}
 }
 

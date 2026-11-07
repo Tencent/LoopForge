@@ -95,9 +95,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	req.Executor = assistantExecutor(req.Executor)
-	user, sponsored := stored, false
+	user, sharedModels := stored, []string(nil)
 	if req.Executor == "codebuddy" {
-		if user, sponsored, ok = h.assistantChatUser(stored); !ok {
+		if user, sharedModels, ok = h.assistantChatUser(stored); !ok {
 			c.JSON(400, gin.H{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
 			return
 		}
@@ -105,10 +105,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if sponsored {
-		model, allowed := assistantSponsoredModelFor(req.Model)
+	if sharedModels != nil {
+		model, allowed := assistantSponsoredModelFor(sharedModels, req.Model)
 		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel()})
+			c.JSON(400, gin.H{"error": errAssistantSponsoredModel(sharedModels)})
 			return
 		}
 		req.Model = model
@@ -177,7 +177,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	if req.Executor == "codebuddy" {
-		catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment)
+		catalog := h.chatCatalog(c.Request.Context(), user)
 		req.Model = assistantAllowedModel(req.Model, catalog)
 		if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
