@@ -12,7 +12,13 @@ import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { api, canChatInProject, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
-import { openCredentialSettings } from "./credentials";
+import {
+  CODEBUDDY_ENVIRONMENTS,
+  codeBuddyEnvironment,
+  codeBuddyKeyURL,
+  codeBuddyKeyWarning,
+  openCredentialSettings,
+} from "./credentials";
 import "./quick-access-wizard.css";
 
 const DEFAULT_SOP_ID = "generic-backend-delivery";
@@ -759,6 +765,8 @@ export default function QuickAccessWizard({
   const [error, setError] = useState("");
   const [gitToken, setGitToken] = useState("");
   const [codeBuddyApiKey, setCodeBuddyApiKey] = useState("");
+  // null follows the saved setting until the user picks an environment here.
+  const [codeBuddyEnvChoice, setCodeBuddyEnvChoice] = useState(null);
   const [verifyingGit, setVerifyingGit] = useState(false);
   const [gitVerify, setGitVerify] = useState(null);
   const [projectMode, setProjectMode] = useState("existing");
@@ -904,6 +912,7 @@ export default function QuickAccessWizard({
     setError("");
     setGitToken("");
     setCodeBuddyApiKey("");
+    setCodeBuddyEnvChoice(null);
     setGitVerify(null);
     setCompletedSummary(null);
     setBindRepoNow(true);
@@ -1117,6 +1126,12 @@ export default function QuickAccessWizard({
   const codeBuddyReady = Boolean(
     storedUser?.codeBuddyApiKeyConfigured || codeBuddyApiKey.trim(),
   );
+  const storedCodeBuddyEnv =
+    codeBuddyEnvironment(storedUser?.codeBuddyInternetEnvironment)?.value ?? "";
+  const codeBuddyEnv = codeBuddyEnvChoice ?? storedCodeBuddyEnv;
+  const codeBuddyEnvInfo =
+    codeBuddyEnvironment(codeBuddyEnv) || CODEBUDDY_ENVIRONMENTS[0];
+  const codeBuddyWarning = codeBuddyKeyWarning(codeBuddyApiKey);
   const nodes =
     activeWorkflow?.nodes?.filter((node) => node.type === "agent") ||
     FALLBACK_NODES;
@@ -1133,6 +1148,9 @@ export default function QuickAccessWizard({
     if (gitToken.trim()) payload.gitToken = gitToken.trim();
     if (codeBuddyApiKey.trim())
       payload.codeBuddyApiKey = codeBuddyApiKey.trim();
+    // A key is always saved with the environment it was issued for.
+    if (codeBuddyApiKey.trim() || codeBuddyEnv !== storedCodeBuddyEnv)
+      payload.codeBuddyInternetEnvironment = codeBuddyEnv;
     if (!Object.keys(payload).length) return storedUser;
     const saved = await write(
       `/api/users/${encodeURIComponent(user.id)}/credentials`,
@@ -1140,9 +1158,14 @@ export default function QuickAccessWizard({
       "PUT",
     );
     const merged = { ...storedUser, ...saved };
+    // The server omits an empty environment, so 国际站 must overwrite the old value here.
+    if ("codeBuddyInternetEnvironment" in payload)
+      merged.codeBuddyInternetEnvironment =
+        saved?.codeBuddyInternetEnvironment || "";
     setStoredUser(merged);
     setGitToken("");
     setCodeBuddyApiKey("");
+    setCodeBuddyEnvChoice(null);
     window.parent !== window &&
       window.parent.postMessage(
         { type: "agentflow-credentials-changed" },
@@ -1788,6 +1811,19 @@ export default function QuickAccessWizard({
                           <StatusPill ok={codeBuddyReady} />
                         </header>
                         <div className="qa-cred-body">
+                          <div className="qa-field">
+                            <span className="qa-label">网络环境</span>
+                            <HarnessSelect
+                              value={codeBuddyEnv}
+                              options={CODEBUDDY_ENVIRONMENTS.map((env) => ({
+                                value: env.value,
+                                label: env.label,
+                                hint: env.site,
+                              }))}
+                              onChange={setCodeBuddyEnvChoice}
+                              ariaLabel="CodeBuddy 网络环境"
+                            />
+                          </div>
                           <div className="qa-input-row">
                             <input
                               type="password"
@@ -1801,18 +1837,26 @@ export default function QuickAccessWizard({
                                   ? "已配置，留空保持不变"
                                   : "粘贴 CodeBuddy API Key"
                               }
+                              aria-label="CodeBuddy API Key"
                               autoComplete="new-password"
                             />
                             <a
                               className="qa-link"
                               data-hover-ink-control=""
-                              href="https://www.codebuddy.ai/"
+                              href={codeBuddyKeyURL(codeBuddyEnv)}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
                               获取 API Key ↗
                             </a>
                           </div>
+                          <p
+                            className={`qa-hint${codeBuddyWarning ? " is-warn" : ""}`}
+                            role="status"
+                          >
+                            {codeBuddyWarning ||
+                              `Key 只能在创建它的站点使用：当前选择${codeBuddyEnvInfo.label}（${codeBuddyEnvInfo.site}），「获取 API Key」会打开该站点的密钥页。`}
+                          </p>
                         </div>
                       </section>
                     </div>

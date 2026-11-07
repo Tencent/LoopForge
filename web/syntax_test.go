@@ -23,7 +23,7 @@ func TestCredentialBrandAssetsEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"https://github.com/settings/tokens", "https://www.codebuddy.ai/", "credential-description", "git-token-verify"} {
+	for _, want := range []string{"https://github.com/settings/tokens", "https://www.codebuddy.ai/profile/keys", "https://copilot.tencent.com/profile/", "credential-description", "git-token-verify"} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("credential UI is missing %q", want)
 		}
@@ -832,6 +832,33 @@ assert.equal(credentialSecretError(cred.kind('gitToken'), 'github_pat_1'), '');
 assert.ok(credentialExtraError(cred.kind('codexApiKey'), 'ftp://proxy'));
 assert.equal(credentialExtraError(cred.kind('codexApiKey'), ''), '');
 
+// CodeBuddy: the network environment is a fixed choice and the key link follows it.
+assert.deepEqual(['', 'public', 'INTL', ' iOA ', 'internal', '国内站', 'china'].map(v => codeBuddyEnvironment(v)?.value), ['', '', '', 'ioa', 'internal', 'internal', 'internal']);
+assert.equal(codeBuddyEnvironment('private-net'), null);
+assert.equal(codeBuddyKeyURL(''), 'https://www.codebuddy.ai/profile/keys');
+assert.equal(codeBuddyKeyURL('internal'), 'https://copilot.tencent.com/profile/');
+assert.equal(codeBuddyKeyURL('ioa'), 'https://tencent.sso.copilot.tencent.com/profile/keys');
+assert.equal(codeBuddyKeyURL('typo'), 'https://www.codebuddy.ai/profile/keys');
+const cbKind = cred.kind('codeBuddyApiKey');
+assert.equal(credentialExtraValue(cbKind, 'iOA'), 'ioa');
+assert.equal(credentialExtraValue(cbKind, 'private-net'), '', 'an unknown value shows as 国际站, which is what the CLI uses');
+assert.equal(credentialExtraValue(cred.kind('codexApiKey'), 'https://p.example'), 'https://p.example');
+const cbEditor = credentialEditorHTML(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'internal'});
+assert.ok(cbEditor.includes('<select name="extra">') && !cbEditor.includes('<input name="extra"'));
+assert.ok(cbEditor.includes('data-original="internal"') && cbEditor.includes('<option value="internal" selected>'));
+assert.ok(cbEditor.includes('href="https://copilot.tencent.com/profile/"') && cbEditor.includes('前往国内站获取 API Key'));
+const legacyEditor = credentialEditorHTML(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'private-net'});
+assert.ok(legacyEditor.includes('data-original=""') && legacyEditor.includes('<option value="" selected>') && legacyEditor.includes('「private-net」无法识别'));
+assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'ioa'}).includes('>iOA<'));
+assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true}).includes('>国际站<'));
+assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'private-net'}).includes('无法识别'));
+// Third-party keys are flagged but never blocked.
+assert.equal(credentialSecretWarning(cbKind, 'ck_abc'), '');
+assert.match(credentialSecretWarning(cbKind, 'sk-abc'), /第三方/);
+assert.match(credentialSecretWarning(cbKind, 'abc'), /ck_/);
+assert.equal(credentialSecretWarning(cred.kind('codexApiKey'), 'sk-abc'), '');
+assert.equal(credentialSecretError(cbKind, 'sk-abc'), '');
+
 // Delete swaps the action bar for the confirm bar without sending anything.
 const pane = () => ({classList: {on: new Set(), toggle(name, on) { on ? this.on.add(name) : this.on.delete(name) }}});
 const foot = pane(), confirm = pane();
@@ -862,12 +889,21 @@ assert.equal(calls.length, 0);
   assert.ok(!credentialFieldHTML({label: 'k', name: 'secret', value: 'sk-LEAK'}).includes('sk-LEAK'), 'secrets are never written into markup');
   assert.ok(credentialFieldHTML({label: 'u', name: 'extra', type: 'url', value: 'https://p.example'}).includes('value="https://p.example"'));
   // 去配置 jumps straight to step 2 with no back button.
-  cred.wizard = {step: 2, kind: 'codeBuddyApiKey', direct: true, secret: '', extra: '', guide: {}, error: ''};
+  cred.wizard = {step: 2, kind: 'codeBuddyApiKey', direct: true, secret: '', extra: 'ioa', guide: {}, error: ''};
+  const cbStepTwo = credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey'));
+  assert.ok(cbStepTwo.indexOf('<select name="extra">') < cbStepTwo.indexOf('name="secret"'), 'the network environment is picked before the key');
+  assert.ok(cbStepTwo.includes('href="https://tencent.sso.copilot.tencent.com/profile/keys" target="_blank" rel="noopener noreferrer" data-wizard-link="1" data-environment-link>前往iOA获取 API Key'));
+  assert.ok(!cbStepTwo.includes('https://www.codebuddy.ai/"'));
+  cred.wizard.extra = '';
   assert.ok(credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey')).includes('credential-description'));
   assert.ok(!credentialWizardFootHTML().includes('data-wizard-back'));
   assert.ok(credentialWizardFootHTML().includes('data-wizard-next disabled'), 'an empty key blocks next');
   cred.wizard.direct = false;
   assert.ok(credentialWizardFootHTML().includes('data-wizard-back'));
+  // Step 3 names the environment and repeats the third-party key warning without echoing the key.
+  cred.wizard = {step: 3, kind: 'codeBuddyApiKey', direct: true, secret: 'sk-third', extra: 'internal', guide: {}, error: ''};
+  const cbStepThree = credentialWizardStepThreeHTML(cred.kind('codeBuddyApiKey'));
+  assert.ok(cbStepThree.includes('国内站 · copilot.tencent.com') && cbStepThree.includes('credential-vline is-warn') && !cbStepThree.includes('sk-third'));
   // Step 3 never echoes the secret.
   cred.wizard = {step: 3, kind: 'codeBuddyApiKey', direct: true, secret: 'cb_SECRET', extra: '', guide: {}, error: ''};
   assert.ok(!credentialWizardStepThreeHTML(cred.kind('codeBuddyApiKey')).includes('SECRET'));

@@ -2302,7 +2302,12 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-field>span em{color:var(--cr-tertiary);font-size:11.5px;font-style:normal;font-weight:400}
 .credential-field small{color:var(--cr-tertiary);font-size:11.5px;transition:color .2s}
 .credential-field small:empty{display:none}
-.credential-field small.is-err{color:var(--cr-err)}.credential-field small.is-ok{color:var(--cr-ok)}
+.credential-field small.is-err{color:var(--cr-err)}.credential-field small.is-ok{color:var(--cr-ok)}.credential-field small.is-warn{color:var(--cr-warn)}
+.credential-env-hint a{color:var(--cr-accent);text-decoration:none;white-space:nowrap}
+.credential-env-hint a:hover{text-decoration:underline}
+.credential-input select{width:100%;height:36px;margin:0;padding:0 32px 0 11px;border:1px solid var(--cr-line);border-radius:8px;background:var(--cr-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 11px center;color:var(--cr-text);font:inherit;font-size:13px;outline:none;appearance:none;-webkit-appearance:none;cursor:pointer;transition:border-color .16s,box-shadow .25s var(--cr-flow)}
+.credential-input select:hover{border-color:var(--cr-line-strong)}
+.credential-input select:focus{border-color:color-mix(in srgb,var(--cr-accent) 55%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--cr-accent) 12%,transparent)}
 .credential-input{position:relative;display:flex;align-items:center}
 .credential-input input{width:100%;height:36px;margin:0;padding:0 36px 0 11px;border:1px solid var(--cr-line);border-radius:8px;background:var(--cr-surface);color:var(--cr-text);font:inherit;font-size:13px;outline:none;box-shadow:none;transition:border-color .16s,box-shadow .25s var(--cr-flow)}
 .credential-input.is-plain input{padding-right:11px}
@@ -2311,6 +2316,7 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-input input:focus{border-color:color-mix(in srgb,var(--cr-accent) 55%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--cr-accent) 12%,transparent)}
 .credential-input.is-bad input{border-color:color-mix(in srgb,var(--cr-err) 60%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--cr-err) 10%,transparent)}
 .credential-input.is-good input{border-color:color-mix(in srgb,var(--cr-ok) 50%,var(--cr-line))}
+.credential-input.is-warn input{border-color:color-mix(in srgb,var(--cr-warn) 55%,var(--cr-line))}
 .credential-input.is-shake{animation:credentialShake .32s}
 @keyframes credentialShake{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
 .credential-eye{position:absolute;right:4px;display:grid;place-items:center;width:28px;height:28px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:var(--cr-tertiary);cursor:pointer}
@@ -2335,7 +2341,7 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-note b{font-weight:600}
 .credential-vline{display:flex;align-items:center;gap:7px;margin:0;color:var(--cr-muted);font-size:12px}
 .credential-vline:empty{display:none}
-.credential-vline.is-err{color:var(--cr-err)}.credential-vline.is-info{color:var(--cr-info)}
+.credential-vline.is-err{color:var(--cr-err)}.credential-vline.is-info{color:var(--cr-info)}.credential-vline.is-warn{color:var(--cr-warn)}
 .credential-vline>svg{flex:none}
 .credential-swap{display:grid}
 .credential-swap>*{grid-area:1/1;transition:opacity .2s,transform .3s var(--cr-fold)}

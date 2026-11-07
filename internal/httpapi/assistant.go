@@ -1366,7 +1366,7 @@ func (t *assistantTurnUsage) snapshot() *domain.TokenUsage {
 
 // errAssistantCredentialRejected means CodeBuddy answered the turn with an
 // authorization failure instead of model output; retrying cannot help.
-var errAssistantCredentialRejected = errors.New("CodeBuddy 拒绝了你的 API Key（401/403），请在「设置」里检查 CodeBuddy API Key 和网络环境")
+var errAssistantCredentialRejected = errors.New("CodeBuddy 拒绝了你的 API Key（401/403）：请在「个人配置 → CodeBuddy API Key」确认网络环境与创建 Key 的站点一致，且填的是 CodeBuddy 的 Key，而不是 DeepSeek、OpenAI 等第三方模型的 Key")
 
 // isCredentialRejection reports whether an assistant text block is the bare
 // HTTP auth failure CodeBuddy emits in place of a reply.

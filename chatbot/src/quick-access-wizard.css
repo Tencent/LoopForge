@@ -1014,6 +1014,10 @@
   color: var(--qa-ok-text);
 }
 
+.qa-hint.is-warn {
+  color: var(--qa-warn-text);
+}
+
 .qa-hint code,
 .qa-repo-default-row code {
   padding: 1px 5px;

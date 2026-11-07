@@ -36,6 +36,23 @@ type User struct {
 
 const PlatformRoleAdmin = "admin"
 
+// NormalizeCodeBuddyInternetEnvironment maps a network environment chosen in
+// personal settings to the CODEBUDDY_INTERNET_ENVIRONMENT value: "" for the
+// international edition, "internal" for the China edition and "ioa" for iOA.
+// The CLI silently falls back to the international edition for any value it
+// does not recognize, so unknown values report ok=false instead of being saved.
+func NormalizeCodeBuddyInternetEnvironment(raw string) (value string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "public", "intl", "international", "国际站":
+		return "", true
+	case "internal", "china", "cn", "国内站":
+		return "internal", true
+	case "ioa":
+		return "ioa", true
+	}
+	return "", false
+}
+
 // IsPlatformAdmin reports whether the user holds the platform-admin role.
 func IsPlatformAdmin(u User) bool {
 	return strings.EqualFold(strings.TrimSpace(u.PlatformRole), PlatformRoleAdmin)

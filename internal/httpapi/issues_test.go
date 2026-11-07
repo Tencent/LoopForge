@@ -2195,6 +2195,55 @@ func TestUserCredentialsAreStoredAndRedacted(t *testing.T) {
 	}
 }
 
+func TestCodeBuddyInternetEnvironmentIsNormalizedOrRejected(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "credential-test-session-secret")
+	root := t.TempDir()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	if err := s.PutUser(domain.User{StaffID: 2003, LoginName: "bob", ChineseName: "鲍勃"}); err != nil {
+		t.Fatal(err)
+	}
+	bob, _ := s.UserByLoginName("bob")
+	token, err := auth.NewClientFromEnv().SignUser(&auth.User{ID: bob.ID, LoginName: bob.LoginName, AuthTime: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(environment string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"codeBuddyApiKey": "ck_bob", "codeBuddyInternetEnvironment": environment})
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/users/%d/credentials", bob.ID), bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: authCookieName, Value: token})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for raw, want := range map[string]string{" iOA ": "ioa", "国内站": "internal", "China": "internal", "public": "", "": ""} {
+		if rec := put(raw); rec.Code != http.StatusOK {
+			t.Fatalf("environment %q status=%d body=%s", raw, rec.Code, rec.Body.String())
+		}
+		if stored, _ := s.User(bob.ID); stored.CodeBuddyInternetEnvironment != want {
+			t.Fatalf("environment %q stored as %q, want %q", raw, stored.CodeBuddyInternetEnvironment, want)
+		}
+	}
+	if rec := put("internal"); rec.Code != http.StatusOK {
+		t.Fatalf("internal status=%d", rec.Code)
+	}
+	// A typo would make the CLI quietly call the international edition, so nothing is saved.
+	for _, raw := range []string{"intranet", "selfhosted", "国内"} {
+		rec := put(raw)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "网络环境") {
+			t.Fatalf("environment %q status=%d body=%s", raw, rec.Code, rec.Body.String())
+		}
+	}
+	if stored, _ := s.User(bob.ID); stored.CodeBuddyInternetEnvironment != "internal" || stored.CodeBuddyAPIKey != "ck_bob" {
+		t.Fatalf("rejected environment changed the stored credential: %+v", stored)
+	}
+}
+
 func requestJSON[T any](t *testing.T, h http.Handler, method, path string, body any, wantStatus int) T {
 	t.Helper()
 	raw, err := json.Marshal(body)
