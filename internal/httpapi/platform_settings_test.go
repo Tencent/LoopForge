@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -34,9 +36,18 @@ func (p platformSettingsClient) call(cookie *http.Cookie, method, path, origin, 
 	return w
 }
 
+// platformSettingsSignIns gives every sign-in its own client address, so these
+// tests never use up the per-IP password budget other tests share.
+var platformSettingsSignIns atomic.Int32
+
 func (p platformSettingsClient) signIn(login, password string) *http.Cookie {
 	p.t.Helper()
-	w := p.call(nil, "POST", "/api/auth/password", "http://localhost", `{"login":"`+login+`","password":"`+password+`"}`)
+	r := httptest.NewRequest("POST", "http://localhost/api/auth/password", bytes.NewBufferString(`{"login":"`+login+`","password":"`+password+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://localhost")
+	r.RemoteAddr = fmt.Sprintf("198.51.100.%d:1234", platformSettingsSignIns.Add(1)%250+1)
+	w := httptest.NewRecorder()
+	p.h.ServeHTTP(w, r)
 	if w.Code != 200 || len(w.Result().Cookies()) == 0 {
 		p.t.Fatalf("sign in %s: %d %s", login, w.Code, w.Body.String())
 	}
