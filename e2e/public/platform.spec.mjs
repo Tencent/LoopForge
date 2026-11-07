@@ -57,7 +57,7 @@ test('Chinese/English and light/dark preferences persist across reloads',async({
   expect(errors).toEqual([]);
 });
 
-test('real script artifacts survive a human approval and execution continues',async({page})=>{
+test('real script artifacts survive UI approval and execution continues',async({page})=>{
   await signIn(page);
   const response=await page.request.post('/api/runs',{data:{workflowId:'welcome-workflow',projectId:'welcome',input:'Browser acceptance: artifacts, approval and continuation'}});
   expect(response.ok()).toBe(true);
@@ -72,10 +72,15 @@ test('real script artifacts survive a human approval and execution continues',as
   const artifact=detail.artifacts.find(a=>a.name==='welcome');expect(artifact).toBeTruthy();
   const content=await page.request.get(`/api/runs/${run.id}/artifacts/${encodeURIComponent(artifact.id)}`);
   expect(await content.text()).toContain('LoopForge');
-  const approval=await page.request.post(`/api/runs/${run.id}/approve`,{data:{nodeId:'approve',context:'Verified the saved report'}});
-  expect(approval.ok()).toBe(true);
+  await page.goto(`/#/runs/${encodeURIComponent(run.id)}`);
+  await page.locator('[data-run-node="approve"]').click();
+  const decision=page.locator('#runDetail .approval-callout.human');
+  await expect(decision).toBeVisible();
+  await decision.locator('[data-human-context]').fill('Verified the saved report');
+  await decision.locator('[data-approve="approve"]').click();
   await expect.poll(async()=>(await read()).status,{timeout:30_000}).toBe('succeeded');
   detail=await read();expect(detail.nodes.finish.status).toBe('succeeded');
+  expect(detail.humanContext).toBe('Verified the saved report');
   expect(detail.artifacts.some(a=>a.name==='completed')).toBe(true);
   await page.locator('.nav[data-view="runs"]').click();
   await expect(page.locator('#runsView')).toBeVisible();
