@@ -37,7 +37,7 @@ const CREDENTIAL_GROUPS=[
 const CODEBUDDY_ENVIRONMENTS=[
   {value:'',label:'国际站',site:'codebuddy.ai',keyUrl:'https://www.codebuddy.ai/profile/keys'},
   {value:'internal',label:'国内站',site:'copilot.tencent.com',keyUrl:'https://copilot.tencent.com/profile/'},
-  {value:'ioa',label:'iOA',site:'iOA 登录',keyUrl:'https://tencent.sso.copilot.tencent.com/profile/keys'},
+  {value:'ioa',label:'iOA',site:'tencent.sso.copilot.tencent.com',keyUrl:'https://tencent.sso.copilot.tencent.com/profile/keys'},
 ];
 const CODEBUDDY_ENVIRONMENT_ALIASES={public:'',intl:'',international:'','国际站':'',china:'internal',cn:'internal','国内站':'internal'};
 // Returns null for a value the CLI would not recognize.

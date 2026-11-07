@@ -28,7 +28,7 @@ export const CODEBUDDY_ENVIRONMENTS = [
   {
     value: "ioa",
     label: "iOA",
-    site: "iOA 登录",
+    site: "tencent.sso.copilot.tencent.com",
     keyUrl: "https://tencent.sso.copilot.tencent.com/profile/keys",
   },
 ];
