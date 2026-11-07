@@ -28,6 +28,32 @@ test('credential wizard selects a provider, validates input, saves, and finishes
   assert.ok(app.router.calls.some((call) => call.path === '/api/users/1/credentials'));
 });
 
+test('credential wizard focuses the first field on its own but never pulls focus from a field the user picked', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
+  await app.evaluate(`renderPersonalSettings()`);
+  app.evaluate(`openCredentialWizard()`);
+  const wizard = app.document.querySelector('#credentialWizard');
+  const pane = () => wizard.querySelector('.credential-pane:not(.is-leaving)');
+  const afterFocusTimers = () => new Promise((resolve) => setTimeout(resolve, 300));
+  wizard.querySelector('[data-wizard-kind="codexApiKey"]').click();
+  wizard.querySelector('[data-wizard-next]').click();
+  await afterFocusTimers();
+  assert.equal(app.document.activeElement, pane().querySelector('input[name="secret"]'));
+
+  wizard.querySelector('[data-wizard-back]').click();
+  wizard.querySelector('[data-wizard-next]').click();
+  const baseURL = pane().querySelector('input[name="extra"]');
+  baseURL.focus();
+  await afterFocusTimers();
+  assert.equal(app.document.activeElement, baseURL);
+  baseURL.value = 'not-a-url';
+  baseURL.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.match(pane().querySelector('[data-credential-hint="extra"]').textContent, /http:\/\//);
+  assert.equal(pane().querySelector('input[name="secret"]').value, '');
+});
+
 test('credential panel filters, expands, validates, reveals secrets, and confirms deletion', async (t) => {
   const app = await loadApp();
   t.after(app.close);

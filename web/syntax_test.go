@@ -551,6 +551,8 @@ assert.equal(prompt, '');
 const readyPrompt = accessMcpAgentPrompt(codex, base, 'afp_test_token');
 assert.ok(readyPrompt.includes('使用 curl 下载 安装流程文件, 禁止使用 fetch：http://loopforge.example.com/mcp-setup.txt'));
 assert.ok(!readyPrompt.includes('当前客户端'));
+assert.ok(readyPrompt.includes('验证好 LoopForge MCP'));
+assert.ok(!readyPrompt.includes('AgentFlow'));
 assert.ok(readyPrompt.includes('API_TOKEN = afp_test_token'));
 assert.ok(readyPrompt.includes('ENDPOINT = http://loopforge.example.com/mcp'));
 assert.ok(code.includes('async function createQuickAccessPrompt('));
@@ -574,6 +576,9 @@ func TestMCPSetupInstructionsAreEmbedded(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("MCP setup instructions are missing %q", want)
 		}
+	}
+	if strings.Contains(text, "AgentFlow") {
+		t.Fatal("MCP setup instructions should name the product LoopForge, not AgentFlow")
 	}
 	embedSource, err := os.ReadFile("embed.go")
 	if err != nil {

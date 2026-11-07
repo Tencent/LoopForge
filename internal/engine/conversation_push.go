@@ -45,7 +45,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	}
 	message = strings.TrimSpace(message)
 	if message == "" {
-		message = "AgentFlow: " + strings.TrimSpace(run.Input)
+		message = "LoopForge: " + strings.TrimSpace(run.Input)
 	}
 	message = truncateCommitMessage(message)
 	sharedTarget = strings.TrimSpace(sharedTarget)

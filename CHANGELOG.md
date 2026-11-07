@@ -2,6 +2,26 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## 0.3.3 — Codex and Claude Code roles in Docker sandboxes
+
+- Codex SOP roles in Docker sandboxes run with `--sandbox danger-full-access`: the container is the isolation boundary, and Codex's own bubblewrap sandbox cannot create namespaces inside it, so every shell command, file write and `submit_gate_result` call failed.
+- Claude Code SOP roles run with `--permission-mode bypassPermissions` (as CodeBuddy roles already did) instead of `dontAsk`, which denied every file write, shell command and the gate tool. Docker sandboxes set `IS_SANDBOX=1`, without which Claude Code refuses that mode as root.
+- The installer labels the addresses it prints (public, LAN, this machine) and reads the public IP from the cloud provider's link-local metadata service, so a cloud host behind NAT no longer shows only its private address.
+- The 0.3.0 and 0.3.1 images were republished without Claude Code.
+
+## 0.3.2 — Claude Code installed on first use
+
+- Published images no longer bundle Claude Code, which is proprietary. The first Main Bot conversation or SOP role that selects it installs the pinned `@anthropic-ai/claude-code@2.1.300` from npm into `$LOOPFORGE_DATA_DIR/cli`; Docker sandboxes from the platform image read it through a read-only mount. That first use waits for the download (about a minute); later runs reuse it. Codex and CodeBuddy remain bundled.
+- Listen on `0.0.0.0` by default, including older installations without `LOOPFORGE_BIND`. The installer no longer asks for, or fails without, `LOOPFORGE_PUBLIC_URL`; it is optional and only changes the printed address.
+
+## 0.3.1 — published-image startup
+
+- Start from the published GHCR image pinned in `compose.yaml` instead of building locally: `./start.sh` (`logs`, `stop`, `down`, `restart`, `pull`) and a plain `docker compose --profile platform up` no longer build.
+- Build a checkout explicitly with `./start.sh dev` (`compose.dev.yaml`, local `loopforge-platform:local` tag); `./start.sh release` switches back to the published image.
+- Releases require `compose.yaml` to pin the tagged version and smoke-test the pushed image digest before creating the GitHub Release.
+
+Existing source-built installations switch to the published image on the next `./start.sh`; no migrations are required. The image is published for linux/amd64; use `./start.sh dev` on other architectures.
+
 ## 0.3.0 — platform edition
 
 - Add the self-hosted platform implementation, including Main Bot workspace editing, durable workspace checkpoints, idle reclamation, and task-group SOP completion/reopening.

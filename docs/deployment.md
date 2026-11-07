@@ -13,7 +13,7 @@ codebuddy --version
 npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
 ```
 
-Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFLOW_CODEBUDDY_BIN` to the installed executable. Configure the model key and its network environment in personal settings. The no-key script demo does not need the CLI. The production Docker image already includes CodeBuddy, Codex and Claude Code; Docker sandboxes and connected runners have their own CLI requirements.
+Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFLOW_CODEBUDDY_BIN` to the installed executable. Configure the model key and its network environment in personal settings. The no-key script demo does not need the CLI. The production Docker image includes CodeBuddy and Codex. Claude Code is not redistributed: the first Main Bot conversation or SOP role that selects it installs the pinned `@anthropic-ai/claude-code` from npm into `$LOOPFORGE_DATA_DIR/cli`, so that first run waits for the download and later runs reuse it; Docker sandboxes and connected runners have their own CLI requirements.
 
 Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
 
@@ -22,27 +22,30 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ## Container installation
 
 ```bash
-bash scripts/install.sh
+./start.sh             # install or start in the background (same as bash scripts/install.sh)
+./start.sh logs        # follow platform logs
+./start.sh stop        # stop; ./start.sh down removes containers but keeps data volumes
+./start.sh restart     # restart the platform container
+./start.sh pull        # refresh images and recreate changed containers
+./start.sh dev         # build this checkout instead (compose.dev.yaml)
+./start.sh release     # switch a source build back to the published image
 ```
 
-The installer checks Docker, Compose and Python (and offers to install Docker when it is missing; set `LOOPFORGE_YES=1` to accept without prompting), generates `.env` with unique secrets, builds and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
+The installer checks Docker, Compose and Python (and offers to install Docker when it is missing; set `LOOPFORGE_YES=1` to accept without prompting), generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
-Source builds reuse npm, Go module and Go compiler caches. For the fastest first installation, check out a release tag and use its published image:
+`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.3.3`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
-```bash
-LOOPFORGE_IMAGE=ghcr.io/tencent/loopforge:0.3.0 \
-LOOPFORGE_PUBLIC_URL=https://loopforge.example.com bash scripts/install.sh
-```
+`./start.sh dev` (or `LOOPFORGE_BUILD_FROM_SOURCE=1 bash scripts/install.sh`) builds this checkout as `loopforge-platform:local` from `compose.dev.yaml`. It saves `COMPOSE_FILE=compose.yaml:compose.dev.yaml` in `.env`, so later runs and plain `docker compose` commands keep using the source build until `./start.sh release`. Source builds reuse npm, Go module and Go compiler caches.
 
-Pushing a `vX.Y.Z` tag on `main` runs the `release` workflow once the `platform` workflow has passed on that commit. It publishes `ghcr.io/<owner>/loopforge` as `X.Y.Z`, `X.Y`, `latest` and `sha-<commit>`, and creates the GitHub Release. Forks publish under their own owner; set the GHCR package visibility/access for your team before distributing the image. Images are pulled only when missing by default; use an immutable tag/digest, or set `LOOPFORGE_PULL_POLICY=always` when updating a mutable tag. Without `LOOPFORGE_IMAGE`, the installer builds this checkout. Existing `.env` values take precedence; change the saved image or URL there when updating an installation. Compose waits for the API's health check with a bounded timeout before installing schema extensions and seeds.
+Pushing a `vX.Y.Z` tag on `main` runs the `release` workflow once the `platform` workflow has passed on that commit. The tagged `compose.yaml` must already pin `loopforge:X.Y.Z`. It publishes `ghcr.io/<owner>/loopforge` as `X.Y.Z`, `X.Y`, `latest` and `sha-<commit>`, smoke-tests the pushed digest with `./start.sh`, and creates the GitHub Release. Forks publish under their own owner; set the GHCR package visibility/access for your team before distributing the image. Images are pulled only when missing by default; use an immutable tag/digest, or set `LOOPFORGE_PULL_POLICY=always` when updating a mutable tag. Existing `.env` values take precedence; change the saved image or URL there when updating an installation. Compose waits for the API's health check with a bounded timeout before installing schema extensions and seeds.
 
 Open the platform and create the first account in the browser; it receives platform administration. Until that account exists the login page only offers this setup step.
 
 During initial setup, restrict the cloud security group or firewall to the operator's IP. Do not expose the first-account setup page to arbitrary Internet clients before the administrator account has been created.
 
-New installations save `LOOPFORGE_BIND=0.0.0.0` for team access. Set `LOOPFORGE_PUBLIC_URL` to the public IP/domain users actually visit; the installer prints that URL. Without one it prints detected host addresses, which may be private when a cloud NAT is in use, and explains how to configure the public URL. Allow the HTTP port in the cloud security group/firewall, or use an HTTPS reverse proxy. Existing `.env` files are preserved; older installations without a bind setting retain their loopback binding until explicitly changed. Local-only installations can set `LOOPFORGE_BIND=127.0.0.1`. Proxy WebSocket and streaming requests. Set `AGENTFLOW_SECURE_COOKIES=true` when HTTPS terminates at the proxy. Keep `AGENTFLOW_SESSION_SECRET` stable across API instances and restarts.
+The platform listens on `LOOPFORGE_BIND`, `0.0.0.0` by default, without prompting for an access URL. The installer prints the public, LAN and local addresses; on Tencent Cloud, Alibaba Cloud, AWS, GCP and Azure it reads the public IP from the provider's link-local metadata service, and elsewhere behind NAT you open the public IP yourself. `LOOPFORGE_PUBLIC_URL` is optional and only changes the printed address. Allow the HTTP port in the cloud security group/firewall, or use an HTTPS reverse proxy. Existing `.env` files are preserved; older installations without a bind setting now also listen on `0.0.0.0`. Local-only installations can set `LOOPFORGE_BIND=127.0.0.1`. Proxy WebSocket and streaming requests. Set `AGENTFLOW_SECURE_COOKIES=true` when HTTPS terminates at the proxy. Keep `AGENTFLOW_SESSION_SECRET` stable across API instances and restarts.
 
 ### Docker sandboxes
 

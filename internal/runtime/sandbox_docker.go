@@ -145,6 +145,13 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
 		args = append(args, "-e", environment)
 	}
+	cliPath, err := s.onDemandCLIPath(ctx, command)
+	if err != nil {
+		return "", err
+	}
+	if cliPath != "" {
+		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
+	}
 	args = append(args, s.name)
 	args = append(args, dockerWorkspaceExecArgv(command.Argv)...)
 	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
@@ -168,7 +175,24 @@ if [ -x /workspace/.agentflow/runtime/bin/agentflow ]; then
   PATH=/workspace/.agentflow/runtime/bin:$PATH
   export PATH
 fi
+if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH" ]; then
+  PATH=$PATH:$AGENTFLOW_RUNTIME_CLI_PATH
+  export PATH
+fi
 `
+
+// onDemandCLIPath installs Claude Code for sandboxes of the published runtime
+// image, which does not bundle it, and returns the mounted bin directory. It is
+// appended to PATH so a CLI shipped by an older image still takes precedence.
+func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec) (string, error) {
+	if command.Provider != "claude-code" || len(command.Argv) == 0 || command.Argv[0] != "claude" || RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
+		return "", nil
+	}
+	if _, err := EnsureClaudeCode(ctx); err != nil {
+		return "", err
+	}
+	return ClaudeCodeBinDir(), nil
+}
 
 func dropShellLoginFlag(argv []string) []string {
 	if len(argv) == 0 {
@@ -629,6 +653,12 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		return err
 	}
 	args = append(args, stateArgs...)
+	if cliDir := RuntimeCLIDir(); cliDir != "" && image == isolatedRuntimeImage(s.dockerfile) {
+		if err := os.MkdirAll(cliDir, 0o755); err != nil {
+			return fmt.Errorf("prepare runtime CLI directory: %w", err)
+		}
+		args = append(args, "--mount", "type=bind,src="+cliDir+",dst="+cliDir+",readonly")
+	}
 	if p.ReadOnlyRootFS {
 		args = append(args, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m")
 	}

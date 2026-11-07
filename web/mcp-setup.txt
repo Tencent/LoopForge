@@ -1,10 +1,10 @@
-# AgentFlow MCP — 安装 / 初始化 / 验证
+# LoopForge MCP — 安装 / 初始化 / 验证
 
 接入指南：<https://loopforge.example.com/#/guide>
 
 **适用范围**：Cursor、Claude Code、CodeBuddy、Codex。请根据当前运行的 Agent 自动选择对应配置，不要反问用户使用哪个客户端。
 
-**目标**：把 AgentFlow 作为名为 `agentflow` 的 Streamable HTTP MCP 服务接入当前客户端，并确认能正常返回工具清单。
+**目标**：把 LoopForge 作为名为 `agentflow` 的 Streamable HTTP MCP 服务接入当前客户端，并确认能正常返回工具清单。
 
 **安全原则**：
 
@@ -107,7 +107,7 @@ codex mcp list
 
 ## 通用连通验证
 
-客户端配置完成后，使用下面的请求验证 AgentFlow 能返回 MCP 工具清单：
+客户端配置完成后，使用下面的请求验证 LoopForge 能返回 MCP 工具清单：
 
 ```bash
 API_TOKEN="<API_TOKEN>"

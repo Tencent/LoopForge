@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: AgentFlow Platform REST API
+  title: LoopForge Platform REST API
   version: 1.0.0
   description: |
-    Public control-plane API exposed by AgentFlow Studio. Signed login cookies and
+    Public control-plane API exposed by LoopForge. Signed login cookies and
     user-owned Bearer tokens authenticate Studio, REST API, and MCP access. Legacy
     deployment-level Basic authentication remains available. Worker signals,
     OTLP ingestion, run leases, and sandbox-reclamation endpoints are intentionally

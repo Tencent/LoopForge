@@ -56,7 +56,7 @@ func pushWorkBranch(ctx context.Context, workspace, branch, message string, requ
 	if exec.Command("git", "-C", workspace, "diff", "--cached", "--quiet").Run() != nil {
 		args := []string{"commit", "--no-verify", "-q", "-m", message}
 		if email, _ := C(ctx, workspace, "config", "user.email"); strings.TrimSpace(email) == "" {
-			args = append([]string{"-c", "user.name=AgentFlow", "-c", "user.email=agentflow@local"}, args...)
+			args = append([]string{"-c", "user.name=LoopForge", "-c", "user.email=loopforge@local"}, args...)
 		}
 		if _, err := C(ctx, workspace, args...); err != nil {
 			return "", fmt.Errorf("commit work branch: %w", err)
@@ -181,7 +181,7 @@ func pullWorkBranch(ctx context.Context, workspace, branch string, requireExisti
 	}
 	args := []string{"rebase", "-q", "--autostash", trackingRef}
 	if email, _ := C(ctx, workspace, "config", "user.email"); strings.TrimSpace(email) == "" {
-		args = append([]string{"-c", "user.name=AgentFlow", "-c", "user.email=agentflow@local"}, args...)
+		args = append([]string{"-c", "user.name=LoopForge", "-c", "user.email=loopforge@local"}, args...)
 	}
 	if _, err := C(ctx, workspace, args...); err != nil {
 		_, _ = C(ctx, workspace, "rebase", "--abort")
