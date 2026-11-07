@@ -229,11 +229,13 @@ function credentialEditorHTML(kind,user){
   const extraField=!kind.extra?''
     :kind.extra.options?credentialSelectFieldHTML(kind,user[kind.extra.name],'与 Key 所在站点一致')
     :credentialFieldHTML({label:kind.extra.label,note:kind.extra.url?'留空使用官方地址':'',name:'extra',type:kind.extra.url?'url':'text',value:extraValue,placeholder:kind.extra.placeholder,hint:null});
-  return `<div class="credential-editor-form"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}>
+  // An unrecognized stored environment can be saved as shown without retyping the key.
+  const legacy=!!(kind.extra?.options&&String(user[kind.extra.name]||'').trim()&&!codeBuddyEnvironment(user[kind.extra.name]));
+  return `<div class="credential-editor-form"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}${legacy?' data-legacy="true"':''}>
     ${credentialFieldHTML({label:kind.short,note:'已配置 · 留空则不改',name:'secret',placeholder:'输入新值以替换',hint:kind.hint||''})}
     ${extraField}
     <div class="credential-swap">
-      <div class="credential-editor-foot" data-credential-pane="foot"><button type="button" class="credential-btn ghost danger credential-ink" data-credential-act="delete">${credentialGlyph('trash',14)}<span>删除</span></button><div><button type="button" class="credential-btn ghost credential-ink" data-credential-act="cancel">取消</button><button type="button" class="credential-btn primary credential-ink" data-credential-act="save" disabled>保存</button></div></div>
+      <div class="credential-editor-foot" data-credential-pane="foot"><button type="button" class="credential-btn ghost danger credential-ink" data-credential-act="delete">${credentialGlyph('trash',14)}<span>删除</span></button><div><button type="button" class="credential-btn ghost credential-ink" data-credential-act="cancel">取消</button><button type="button" class="credential-btn primary credential-ink" data-credential-act="save"${legacy?'':' disabled'}>保存</button></div></div>
       <div class="credential-confirm is-off" data-credential-pane="confirm" role="alert"><div>删除 <b>${escapeHTML(kind.short)}</b>？${escapeHTML(kind.impact)}</div><button type="button" class="credential-btn ghost credential-ink" data-credential-act="undelete">取消</button><button type="button" class="credential-btn danger-solid credential-ink" data-credential-act="confirm-delete">删除</button></div>
     </div>
   </div>`;
@@ -346,7 +348,7 @@ function showCredentialPane(row,name,focus=CREDENTIAL_PANE_FOCUS[name]){
 }
 function updateCredentialEditorDirty(form){
   const secret=form.querySelector('input[name="secret"]')?.value.trim()||'',extra=form.querySelector('[name="extra"]'),save=form.querySelector('[data-credential-act="save"]');
-  if(save&&!save.dataset.busy)save.disabled=!secret&&!(extra&&extra.value.trim()!==(form.dataset.original||''));
+  if(save&&!save.dataset.busy)save.disabled=!secret&&!form.dataset.legacy&&!(extra&&extra.value.trim()!==(form.dataset.original||''));
 }
 function setCredentialHint(scope,name,text,tone=''){
   const hint=scope.querySelector(`[data-credential-hint="${name}"]`),box=scope.querySelector(`input[name="${name}"]`)?.closest('.credential-input');

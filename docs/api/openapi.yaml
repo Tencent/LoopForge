@@ -643,7 +643,7 @@ paths:
                 gitTokenClear: {type: boolean}
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
-                codeBuddyInternetEnvironment: {type: string}
+                codeBuddyInternetEnvironment: {type: string, description: "Edition that issued the CodeBuddy key: empty for International, \"internal\" for China, \"ioa\" for iOA (\"public\" and \"China\" are also accepted). Any other value is rejected with 400."}
                 codexApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
                 codexApiKeyClear: {type: boolean}
                 codexBaseUrl: {type: string, description: "HTTP(S) Responses API base URL. Omitted preserves the value; empty uses the official endpoint."}

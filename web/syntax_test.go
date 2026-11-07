@@ -849,6 +849,8 @@ assert.ok(cbEditor.includes('data-original="internal"') && cbEditor.includes('<o
 assert.ok(cbEditor.includes('href="https://copilot.tencent.com/profile/"') && cbEditor.includes('前往国内站获取 API Key'));
 const legacyEditor = credentialEditorHTML(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'private-net'});
 assert.ok(legacyEditor.includes('data-original=""') && legacyEditor.includes('<option value="" selected>') && legacyEditor.includes('「private-net」无法识别'));
+assert.ok(legacyEditor.includes('data-legacy="true"') && !legacyEditor.includes('data-credential-act="save" disabled'), 'a legacy value can be saved as 国际站 without retyping the key');
+assert.ok(!cbEditor.includes('data-legacy') && cbEditor.includes('data-credential-act="save" disabled'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'ioa'}).includes('>iOA<'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true}).includes('>国际站<'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'private-net'}).includes('无法识别'));
