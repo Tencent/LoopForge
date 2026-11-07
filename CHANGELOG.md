@@ -8,7 +8,7 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 - Platform administrators can share one CodeBuddy API Key under 平台管理 → 共享 CodeBuddy Key and choose the models it may run. Members without their own key chat and run SOPs on it within those models; `AGENTFLOW_ASSISTANT_SPONSOR_LOGIN` still applies while none is configured. Members with their own key keep their own network environment's models and default model; previously a configured sponsor also changed their default.
 - A stored CodeBuddy network environment such as `china` can be saved again as-is to rewrite it, and the quick-access wizard no longer keeps an environment switched back to 国际站 elsewhere.
 - In English, the navigation, the top bar and the 个人配置 page (now "Personal settings") no longer show Chinese labels, tooltips or credential descriptions.
-- The platform image is published for linux/amd64 and linux/arm64, so Apple silicon Macs and arm servers can pull it. CodeBuddy CLI 2.167.0 ships no linux-arm64 build of its optional native packages (node-pty, sandbox-cli); if CodeBuddy turns fail on arm64, pull with `--platform linux/amd64`.
+- The platform image is published for linux/amd64 and linux/arm64, so Apple silicon Macs and arm servers can pull it. On a native arm64 host the bundled CodeBuddy and Codex CLIs, chat, and SOP runs in the Docker sandbox behave and perform like amd64. Under QEMU emulation (an arm64 image on an x86 host) CodeBuddy starts about ten times slower and the model list cannot be read; use the amd64 image there.
 
 Existing installations may apply `migrations/024_platform_codebuddy_key.sql`; the platform also creates the table on startup.
 
