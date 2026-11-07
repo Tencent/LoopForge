@@ -1547,7 +1547,6 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 
 @media(max-width:1280px){
   .platform-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .platform-account-form{grid-template-columns:1fr 1fr}
 }
 @media(max-width:1080px){
   .platform-admin-layout{grid-template-columns:1fr}

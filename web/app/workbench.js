@@ -1008,13 +1008,15 @@ function platformSettingsHTML(){
             <h2>给同事开账号</h2>
             <p data-account-intro>填好用户名和初始密码，点创建，再把登录信息发给同事。同事忘记密码时可以在下面重置。</p>
           </div>
-          <span class="platform-admin-count-pill" id="platformAccountCountBadge">-- 个账号</span>
+          <span class="platform-admin-count-pill" id="platformAccountCountBadge">${lfT('-- 个账号','-- accounts')}</span>
         </div>
         <form id="platformAccountForm" class="platform-account-form" autocomplete="off">
           <div class="platform-input-wrap"><input name="loginName" placeholder="用户名，如 alice" aria-label="用户名" maxlength="64" autocomplete="off" spellcheck="false"></div>
           <div class="platform-input-wrap"><input name="password" placeholder="初始密码，至少 6 位" aria-label="初始密码" maxlength="72" autocomplete="new-password" spellcheck="false"><button type="button" class="button ghost small" data-account-generate>随机生成</button></div>
-          <label class="platform-check"><input type="checkbox" name="admin"><span>同时设为平台管理员</span></label>
-          <button class="button primary platform-add-btn" type="submit">创建账号</button>
+          <div class="platform-account-form-actions">
+            <label class="platform-check"><input type="checkbox" name="admin"><span>同时设为平台管理员</span></label>
+            <button class="button primary platform-add-btn" type="submit">创建账号</button>
+          </div>
         </form>
         <div class="platform-account-created" data-account-created hidden></div>
         <div class="platform-search-wrap platform-account-search">
@@ -1050,18 +1052,23 @@ function platformSettingsHTML(){
     </div>`;
 }
 function platformAccountCreatedHTML(action,login,password){
-  return `<div class="platform-note is-ok"><span>${action==='reset'?'已重置':'已创建'}账号 <b data-i18n-skip>${escapeHTML(login)}</b>，${action==='reset'?'新密码':'初始密码'} <code>${escapeHTML(password)}</code>。密码只显示这一次，请现在发给对方。</span><button type="button" class="button ghost small" data-copy-login>复制登录信息</button></div>`;
+  const who=`<b data-i18n-skip>${escapeHTML(login)}</b>`,secret=`<code>${escapeHTML(password)}</code>`;
+  const text=action==='reset'
+    ?lfT(`已重置账号 ${who}，新密码 ${secret}。密码只显示这一次，请现在发给对方。`,`Password of ${who} reset to ${secret}. It is shown only once; send it now.`)
+    :lfT(`已创建账号 ${who}，初始密码 ${secret}。密码只显示这一次，请现在发给对方。`,`Created ${who} with the initial password ${secret}. It is shown only once; send it now.`);
+  return `<div class="platform-note is-ok"><span>${text}</span><button type="button" class="button ghost small" data-copy-login>复制登录信息</button></div>`;
 }
+const platformPasswordTooShort=()=>lfT(`密码至少 ${PLATFORM_ACCOUNT_PASSWORD_MIN} 位`,`The password needs at least ${PLATFORM_ACCOUNT_PASSWORD_MIN} characters`);
 async function loadPlatformAccounts(host){
   const card=host.querySelector('#platformAccountsCard');if(!card)return;
   const list=card.querySelector('#platformAccountList'),form=card.querySelector('#platformAccountForm'),created=card.querySelector('[data-account-created]'),search=card.querySelector('[data-account-search]');
   let accounts=[],query='',resetting=null;
   const showCreated=(action,login,password)=>{
     created.innerHTML=platformAccountCreatedHTML(action,login,password);created.hidden=false;
-    created.querySelector('[data-copy-login]').onclick=()=>copyText(`登录地址：${location.origin}\n用户名：${login}\n密码：${password}`,'已复制登录信息');
+    created.querySelector('[data-copy-login]').onclick=()=>copyText(lfT(`登录地址：${location.origin}\n用户名：${login}\n密码：${password}`,`Sign in at: ${location.origin}\nLogin: ${login}\nPassword: ${password}`),'已复制登录信息');
   };
   const render=()=>{
-    const badge=card.querySelector('#platformAccountCountBadge');if(badge)badge.textContent=`共 ${accounts.length} 个账号`;
+    const n=accounts.length,badge=card.querySelector('#platformAccountCountBadge');if(badge)badge.textContent=lfT(`共 ${n} 个账号`,`${n} account${n===1?'':'s'}`);
     const q=query.toLowerCase();
     const rows=accounts.filter(a=>!q||String(a.loginName||'').toLowerCase().includes(q)||String(a.chineseName||'').toLowerCase().includes(q));
     if(!rows.length){list.innerHTML=`<div class="platform-empty-state"><b>${accounts.length?'没有匹配的账号':'还没有账号'}</b></div>`;return}
@@ -1085,7 +1092,7 @@ async function loadPlatformAccounts(host){
       resetForm.onsubmit=async e=>{
         e.preventDefault();
         const password=resetForm.elements.password.value;
-        if(password.length<PLATFORM_ACCOUNT_PASSWORD_MIN)return toast(`密码至少 ${PLATFORM_ACCOUNT_PASSWORD_MIN} 位`,'err');
+        if(password.length<PLATFORM_ACCOUNT_PASSWORD_MIN)return toast(platformPasswordTooShort(),'err');
         const account=accounts.find(a=>a.userId===resetting);
         resetForm.querySelectorAll('button').forEach(b=>b.disabled=true);
         try{
@@ -1112,7 +1119,7 @@ async function loadPlatformAccounts(host){
     e.preventDefault();
     const loginName=form.elements.loginName.value.trim(),password=form.elements.password.value,admin=form.elements.admin.checked;
     if(!/^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$/.test(loginName))return toast('用户名需 2–64 位，以字母或数字开头，只能包含字母、数字、_ . -','err');
-    if(password.length<PLATFORM_ACCOUNT_PASSWORD_MIN)return toast(`密码至少 ${PLATFORM_ACCOUNT_PASSWORD_MIN} 位`,'err');
+    if(password.length<PLATFORM_ACCOUNT_PASSWORD_MIN)return toast(platformPasswordTooShort(),'err');
     const submit=form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
     try{
       const account=await api('/api/platform/accounts',{method:'POST',body:JSON.stringify({loginName,password,admin})});
@@ -1157,10 +1164,16 @@ async function loadPlatformSharedKey(host){
     key.placeholder=on?'已配置，留空保持不变':'ck_ 开头的 CodeBuddy API Key';
     clear.hidden=!on;
     const parts=[];
-    if(on)parts.push(`当前：${envInfo.label}，${(status.models||[]).length} 个模型，默认 ${sharedModelLabel(status.models?.[0])}${status.updatedBy?`，${status.updatedBy} 最后修改`:''}。`);
-    else parts.push('还没有配置共享 Key，没配 Key 的成员需要先配自己的 Key 才能对话和跑 SOP。');
-    if(status?.legacySponsor)parts.push(on?`配置后不再使用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${status.legacySponsor} 的 Key。`:`现在沿用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${status.legacySponsor} 的 Key，只能用 ${sharedModelLabel(status.legacySponsorModel)}。`);
-    meta.textContent=parts.join('');
+    if(on){
+      const n=(status.models||[]).length,first=sharedModelLabel(status.models?.[0]),by=status.updatedBy||'';
+      parts.push(lfT(`当前：${envInfo.label}，${n} 个模型，默认 ${first}${by?`，${by} 最后修改`:''}。`,`Current: ${envInfo.label}, ${n} model${n===1?'':'s'}, default ${first}${by?`, last changed by ${by}`:''}.`));
+    }
+    else parts.push(lfT('还没有配置共享 Key，没配 Key 的成员需要先配自己的 Key 才能对话和跑 SOP。','No shared key yet; members without their own key must add one before chatting or running SOPs.'));
+    const sponsor=status?.legacySponsor;
+    if(sponsor)parts.push(on
+      ?lfT(`配置后不再使用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key。`,`The key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is no longer used.`)
+      :lfT(`现在沿用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key，只能用 ${sharedModelLabel(status.legacySponsorModel)}。`,`For now the key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is shared, limited to ${sharedModelLabel(status.legacySponsorModel)}.`));
+    meta.textContent=parts.join(lfT('',' '));
   };
   const syncBootstrap=()=>{
     if(!state.data)return;
