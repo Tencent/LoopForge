@@ -103,28 +103,7 @@ func serveRunnerBinary(c *gin.Context) {
 }
 
 func serveRunnerArtifact(c *gin.Context, path string) {
-	if c.Query("metadata") == "1" {
-		serveBinaryMetadata(c, path)
-		return
-	}
-	c.Header("Content-Type", "application/octet-stream")
-	c.Header("Content-Disposition", `attachment; filename="agentflow-runner"`)
-	http.ServeFile(c.Writer, c.Request, path)
-}
-
-func serveBinaryMetadata(c *gin.Context, path string) {
-	file, err := os.Open(path)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, map[string]string{"error": "open binary: " + err.Error()})
-		return
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		c.JSON(http.StatusInternalServerError, map[string]string{"error": "hash binary: " + err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, map[string]string{"sha256": hex.EncodeToString(hash.Sum(nil))})
+	serveBinaryArtifact(c, path, "agentflow-runner")
 }
 
 func sanitizePlatformParam(v string) string {

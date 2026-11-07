@@ -33,7 +33,7 @@ cd web && npm run dev       # UI :5173，代理 /api
 
 ## Docker
 
-LoopForge 打 `vX.Y.Z` tag 发版时，会把本镜像推到 GHCR（版本号与 CLI 相同）：
+LoopForge Local 以 `local-vX.Y.Z` tag 发版时，会把本镜像推到 GHCR（版本号与 CLI 相同）：
 
 ```bash
 docker pull ghcr.io/tencent/loopforge-tcmcp:0.2.1

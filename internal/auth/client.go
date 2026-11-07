@@ -30,14 +30,14 @@ var processSessionSecret = func() string {
 // 默认配置常量
 const (
 	DefaultAuthHost  = ""
-	DefaultAuthURI   = "/ebus/tof4/api/v1/passport/AccessToken"
-	DefaultPhotoURI  = "/ebus/rhrc/photo"
+	DefaultAuthURI   = ""
+	DefaultPhotoURI  = ""
 	DefaultAppDomain = ""
 	DefaultPaaSID    = ""
 	DefaultTimeout   = 5 * time.Second
 )
 
-// Config 包含太湖/TAI 认证客户端的全部配置。
+// Config 包含企业 SSO 认证客户端的全部配置。
 type Config struct {
 	PaaSID        string
 	AppToken      string
@@ -45,11 +45,12 @@ type Config struct {
 	AuthURI       string
 	PhotoURI      string
 	AppDomain     string
+	LoginURL      string
 	SessionSecret string
 	Timeout       time.Duration
 }
 
-// Client 是与太湖 / TOF4 / TAI 认证网关交互的客户端。
+// Client 是与企业 SSO 认证网关交互的客户端。
 type Client struct {
 	cfg        Config
 	httpClient *http.Client
@@ -65,13 +66,13 @@ func NewClient(cfg Config) *Client {
 	if cfg.AuthURI == "" {
 		cfg.AuthURI = DefaultAuthURI
 	}
-	if !strings.HasPrefix(cfg.AuthURI, "/") {
+	if cfg.AuthURI != "" && !strings.HasPrefix(cfg.AuthURI, "/") {
 		cfg.AuthURI = "/" + cfg.AuthURI
 	}
 	if cfg.PhotoURI == "" {
 		cfg.PhotoURI = DefaultPhotoURI
 	}
-	if !strings.HasPrefix(cfg.PhotoURI, "/") {
+	if cfg.PhotoURI != "" && !strings.HasPrefix(cfg.PhotoURI, "/") {
 		cfg.PhotoURI = "/" + cfg.PhotoURI
 	}
 	cfg.PhotoURI = strings.TrimRight(cfg.PhotoURI, "/")
@@ -99,14 +100,15 @@ func NewClient(cfg Config) *Client {
 
 // NewClientFromEnv 从环境变量中读取配置并创建 Client。
 func NewClientFromEnv() *Client {
-	paasID := getEnvAny("AGENTFLOW_TAI_PAAS_ID", "TAI_PAAS_ID")
+	paasID := getEnvAny("AGENTFLOW_SSO_PAAS_ID")
 	if paasID == "" {
 		paasID = DefaultPaaSID
 	}
-	appToken := getEnvAny("AGENTFLOW_TAI_APP_TOKEN", "TAI_APP_TOKEN")
-	authHost := getEnvAny("AGENTFLOW_TAI_AUTH_HOST", "TAI_AUTH_HOST")
-	authURI := getEnvAny("AGENTFLOW_TAI_AUTH_URI", "TAI_AUTH_URI")
-	photoURI := getEnvAny("AGENTFLOW_TAI_PHOTO_URI", "TAI_PHOTO_URI")
+	appToken := getEnvAny("AGENTFLOW_SSO_APP_TOKEN")
+	authHost := getEnvAny("AGENTFLOW_SSO_AUTH_HOST")
+	authURI := getEnvAny("AGENTFLOW_SSO_AUTH_URI")
+	photoURI := getEnvAny("AGENTFLOW_SSO_PHOTO_URI")
+	loginURL := getEnvAny("AGENTFLOW_SSO_LOGIN_URL")
 	appDomain := getEnvAny("AGENTFLOW_APP_DOMAIN", "APP_DOMAIN")
 	sessionSecret := getEnvAny("AGENTFLOW_SESSION_SECRET", "SESSION_SECRET")
 
@@ -117,6 +119,7 @@ func NewClientFromEnv() *Client {
 		AuthURI:       authURI,
 		PhotoURI:      photoURI,
 		AppDomain:     appDomain,
+		LoginURL:      loginURL,
 		SessionSecret: sessionSecret,
 	})
 }
@@ -157,9 +160,10 @@ func FallbackGuestUser() *User {
 	}
 }
 
-// LoginURL 返回跳转至 Passport 登录认证的原始完整 URL。
+// LoginURL 返回跳转至企业 SSO 登录页的完整 URL；未配置 SSO 时返回本地登录页。
 func (c *Client) LoginURL(returnURL string) string {
-	if c.cfg.AppToken == "" {
+	loginURL := strings.TrimSpace(c.cfg.LoginURL)
+	if c.cfg.AppToken == "" || loginURL == "" {
 		return "/login.html"
 	}
 	returnURL = strings.TrimSpace(returnURL)
@@ -170,7 +174,11 @@ func (c *Client) LoginURL(returnURL string) string {
 	if appKey == "" {
 		appKey = DefaultPaaSID
 	}
-	return fmt.Sprintf("https://passport.example.com/modules/passport/signin.ashx?oauth=true&appkey=%s&url=%s",
+	sep := "?"
+	if strings.Contains(loginURL, "?") {
+		sep = "&"
+	}
+	return fmt.Sprintf("%s%soauth=true&appkey=%s&url=%s", loginURL, sep,
 		url.QueryEscape(appKey), url.QueryEscape(returnURL))
 }
 
@@ -196,7 +204,7 @@ func (c *Client) GenerateRIOHeaders() map[string]string {
 	return GenerateRIOHeaders(c.cfg.PaaSID, c.cfg.AppToken, timestamp, nonce)
 }
 
-// ExchangeCode 通过太湖/TAI 认证网关将 code 换取员工信息。
+// ExchangeCode 通过企业 SSO 认证网关将 code 换取员工信息。
 // 遵循降级设计：当网关不可用、未配置凭证或鉴权出错时，记录日志并优雅降级为访客，不抛出阻断异常。
 func (c *Client) ExchangeCode(ctx context.Context, code string) (*User, error) {
 	code = strings.TrimSpace(code)
@@ -204,8 +212,8 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (*User, error) {
 		return FallbackGuestUser(), nil
 	}
 
-	if c.cfg.PaaSID == "" || c.cfg.AppToken == "" {
-		log.Printf("[auth] PaaSID or AppToken is not configured, fallback to guest user")
+	if c.cfg.PaaSID == "" || c.cfg.AppToken == "" || c.cfg.AuthHost == "" || c.cfg.AuthURI == "" {
+		log.Printf("[auth] SSO gateway is not configured, fallback to guest user")
 		return FallbackGuestUser(), nil
 	}
 
@@ -223,7 +231,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (*User, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		log.Printf("[auth] request TOF/TAI endpoint failed: %v, fallback to guest", err)
+		log.Printf("[auth] request SSO endpoint failed: %v, fallback to guest", err)
 		return FallbackGuestUser(), nil
 	}
 	defer resp.Body.Close()
@@ -235,7 +243,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (*User, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[auth] unexpected status code %d from TOF/TAI, body: %s, fallback to guest", resp.StatusCode, string(body))
+		log.Printf("[auth] unexpected status code %d from SSO, body: %s, fallback to guest", resp.StatusCode, string(body))
 		return FallbackGuestUser(), nil
 	}
 
@@ -246,7 +254,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (*User, error) {
 	}
 
 	if authResp.Ret != 0 || authResp.Data == nil {
-		log.Printf("[auth] TOF/TAI returned failure: Ret=%d ErrCode=%d ErrMsg=%s, fallback to guest", authResp.Ret, authResp.ErrCode, authResp.ErrMsg)
+		log.Printf("[auth] SSO returned failure: Ret=%d ErrCode=%d ErrMsg=%s, fallback to guest", authResp.Ret, authResp.ErrCode, authResp.ErrMsg)
 		return FallbackGuestUser(), nil
 	}
 

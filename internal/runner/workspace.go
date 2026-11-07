@@ -62,18 +62,87 @@ type runnerWorkspaceCommitFile struct {
 
 const runnerWorkspaceLogLimit = 80
 
+var runnerBrowserReads = map[string]bool{"": true, "status": true, "frame": true}
+
+// ensureRunnerBrowser launches the browser in the run's shared sandbox, the
+// one its agents execute in, and returns why it could not.
+func (d *Daemon) ensureRunnerBrowser(ctx context.Context, request domain.RunnerWorkspaceRequest) string {
+	if !runtime.BrowserEnabled() {
+		return "平台已关闭 Agent 浏览器"
+	}
+	root, err := d.runnerWorkspaceRoot(request)
+	if err != nil {
+		return "无法定位任务工作区：" + err.Error()
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return "任务工作区不在这台执行机上或已被回收；阶段 Agent 下次执行时会自动准备浏览器"
+	}
+	task, err := d.workspaceSandboxTask(root, request)
+	if err != nil {
+		return "执行机无法打开该任务的沙箱：" + err.Error()
+	}
+	sandbox, release, err := d.acquireTaskSandbox(ctx, task)
+	if err != nil {
+		return "执行机无法打开该任务的沙箱：" + err.Error()
+	}
+	defer release()
+	if runtime.EnsureSandboxBrowser(ctx, sandbox, root, request.RunID, nil) == nil {
+		return "Agent 浏览器启动失败：当前运行环境不支持，或 Chromium 不可用"
+	}
+	return ""
+}
+
 func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
+		if request.Browser == nil {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid browser request"}
+		}
+		if request.Browser.Ensure && !runtime.BrowserRunning(ctx, request.RunID) {
+			if reason := d.ensureRunnerBrowser(ctx, request); reason != "" {
+				return runnerWorkspacePayload(domain.BrowserState{Reason: reason})
+			}
+		}
+		if !runnerBrowserReads[request.Browser.Operation] {
+			d.touchRunSandboxes(request.RunID)
+		}
+		state, err := runtime.HandleBrowser(ctx, request.RunID, *request.Browser)
+		if err != nil {
+			return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
+		}
+		return runnerWorkspacePayload(state)
+	}
 	root, err := d.runnerWorkspaceRoot(request)
 	if err != nil {
 		return runnerWorkspaceError(err)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus {
+		gate := d.requestGate(request)
+		if !gate.TryLock() {
+			return workspaceBusyResponse("workspace is still in use")
+		}
+		defer gate.Unlock()
+		return runtime.WorkspaceCheckpointStatus(root)
+	}
+	if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) {
+		if request.Operation == domain.RunnerWorkspaceOperationCheckpointExport || request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
+			if d.workspaceTerminals.HasRunScope(request.RunID) {
+				return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace terminal is still active"}
+			}
+			gate := d.requestGate(request)
+			if !gate.TryLock() {
+				return workspaceBusyResponse("workspace is still in use")
+			}
+			defer gate.Unlock()
+		}
+		return d.checkpointTransfers.Handle(ctx, root, request)
 	}
 	if (request.Operation == domain.RunnerWorkspaceOperationRestore || request.Operation == domain.RunnerWorkspaceOperationCheckpoint) && d.workspaceTerminals.HasRunScope(request.RunID) {
 		return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace terminal is still active"}
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationRestore {
-		gate := d.workspaceGate(request.RunID)
+		gate := d.requestGate(request)
 		if !gate.TryLock() {
-			return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is still in use"}
+			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
 		if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
@@ -98,13 +167,13 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		return runnerWorkspacePayload(d.runnerWorkspacePreparationStatus(ctx, root, request))
 	}
 
-	groupWrite := request.CollaborationMode == "group" && (request.RunStatus == "running" || request.RunStatus == "waiting")
+	workspaceWrite := request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
 	switch request.Operation {
 	case domain.RunnerWorkspaceOperationArtifacts:
-		if !groupWrite {
-			gate := d.workspaceGate(request.RunID)
+		if !workspaceWrite {
+			gate := d.requestGate(request)
 			if !gate.TryLock() {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is still in use"}
+				return workspaceBusyResponse("workspace is still in use")
 			}
 			defer gate.Unlock()
 			if request.RunStatus == "running" || request.RunStatus == "queued" {
@@ -117,9 +186,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		}
 		return runnerWorkspacePayload(map[string]any{"restoredArtifacts": restored})
 	case domain.RunnerWorkspaceOperationCheckpoint:
-		gate := d.workspaceGate(request.RunID)
+		gate := d.requestGate(request)
 		if !gate.TryLock() {
-			return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is still in use"}
+			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
 		archive, err := runtime.CreateWorkspaceCheckpoint(root)
@@ -136,11 +205,14 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			d.workspaceTerminals.CloseScope(scope)
 			return runnerWorkspacePayload(map[string]bool{"ok": true})
 		}
-		if !groupWrite && request.RunStatus != "waiting" && request.RunStatus != "succeeded" && request.RunStatus != "failed" && request.RunStatus != "cancelled" {
+		if !workspaceWrite && request.RunStatus != "waiting" && request.RunStatus != "succeeded" && request.RunStatus != "failed" && request.RunStatus != "cancelled" {
 			return domain.RunnerWorkspaceResponse{Status: 409, Error: "stop execution before editing"}
 		}
-		result, err := d.handleRunnerWorkspaceTerminal(ctx, root, scope, request, groupWrite)
+		result, err := d.handleRunnerWorkspaceTerminal(ctx, root, scope, request, workspaceWrite)
 		if err != nil {
+			if isWorkspaceBusyError(err) {
+				return workspaceBusyResponse(err.Error())
+			}
 			return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
 		}
 		return runnerWorkspacePayload(result)
@@ -148,19 +220,19 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	case domain.RunnerWorkspaceOperationWrite:
 		// The same human may save files while their terminal holds the fence.
 		scope := fmt.Sprintf("%s:%d", request.RunID, request.TerminalOwner)
-		if !groupWrite && (request.TerminalOwner <= 0 || !d.workspaceTerminals.HasScope(scope)) {
-			gate := d.workspaceGate(request.RunID)
+		if !workspaceWrite && (request.TerminalOwner <= 0 || !d.workspaceTerminals.HasScope(scope)) {
+			gate := d.requestGate(request)
 			if !gate.TryLock() {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "execution is still stopping"}
+				return workspaceBusyResponse("execution is still stopping")
 			}
 			defer gate.Unlock()
 		}
-		if !groupWrite && request.RunStatus != "waiting" && request.RunStatus != "succeeded" && request.RunStatus != "failed" && request.RunStatus != "cancelled" {
+		if !workspaceWrite && request.RunStatus != "waiting" && request.RunStatus != "succeeded" && request.RunStatus != "failed" && request.RunStatus != "cancelled" {
 			return domain.RunnerWorkspaceResponse{Status: 409, Error: "run must be paused before editing"}
 		}
 		for _, id := range d.activeTaskIDs() {
-			if !groupWrite && strings.Contains(id, request.RunID) {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "execution is still stopping"}
+			if !workspaceWrite && strings.Contains(id, request.RunID) {
+				return workspaceBusyResponse("execution is still stopping")
 			}
 		}
 		sha, err := runtime.WriteWorkspaceFile(root, request.Path, request.Content, request.ExpectedSHA256)
@@ -242,14 +314,21 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 
 func (d *Daemon) runnerWorkspaceRoot(request domain.RunnerWorkspaceRequest) (string, error) {
 	runID := strings.TrimSpace(request.RunID)
-	if runID == "" || safeWorkspaceComponent(runID) != runID {
+	if runID == "" || runID == "." || runID == ".." || safeWorkspaceComponent(runID) != runID {
 		return "", fmt.Errorf("invalid run id")
 	}
 	root, err := filepath.Abs(d.cfg.DefaultWorkspaceRoot)
 	if err != nil {
 		return "", err
 	}
-	target := filepath.Join(root, "runs", runID)
+	ownerID := runID
+	if request.WorkspaceLayout == domain.RunnerWorkspaceLayoutShared && request.WorkspaceRunID != "" {
+		ownerID = strings.TrimSpace(request.WorkspaceRunID)
+		if ownerID == "" || ownerID == "." || ownerID == ".." || safeWorkspaceComponent(ownerID) != ownerID {
+			return "", fmt.Errorf("invalid workspace owner run id")
+		}
+	}
+	target := filepath.Join(root, "runs", ownerID)
 	if request.WorkspaceLayout == domain.RunnerWorkspaceLayoutShared {
 		target = filepath.Join(target, "workspace")
 	}
@@ -643,7 +722,9 @@ func runnerReadWorkspaceBaseFile(ctx context.Context, root string, repositories 
 		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
 			continue
 		}
-		if err := exec.CommandContext(ctx, "git", "-C", repository.path, "ls-files", "--error-unmatch", "--", filepath.FromSlash(rel)).Run(); err != nil {
+		// The base is HEAD's blob. A path HEAD never had (untracked, or
+		// registered with `git add -N` by a node) has an empty base.
+		if err := exec.CommandContext(ctx, "git", "-C", repository.path, "cat-file", "-e", "HEAD:"+filepath.ToSlash(rel)).Run(); err != nil {
 			return "", false, nil
 		}
 		out, err := exec.CommandContext(ctx, "git", "-C", repository.path, "show", "HEAD:"+filepath.ToSlash(rel)).Output()

@@ -82,7 +82,7 @@ func TestUpdateGenericAgentStaysInTemplateAndIgnoresProjectCatalog(t *testing.T)
 	if err := s.PutProject(domain.Project{ID: "skillhub", Key: "SH", Name: "SkillHub"}); err != nil {
 		t.Fatal(err)
 	}
-	hijack := domain.AgentDefinition{ID: GenericAgentReview, Name: "SkillHub 评审", ProjectID: "skillhub", Version: 9, Instructions: "project copy"}
+	hijack := domain.AgentDefinition{ID: GenericAgentReview, Name: "SkillHub 评审", ProjectID: "skillhub", Version: 9, Prompt: "project copy"}
 	if err := s.PutAgent(hijack); err != nil {
 		t.Fatal(err)
 	}
@@ -99,20 +99,20 @@ func TestUpdateGenericAgentStaysInTemplateAndIgnoresProjectCatalog(t *testing.T)
 	if review.ID == "" {
 		t.Fatal("review role missing from template")
 	}
-	review.Instructions = "platform review instructions"
+	review.Prompt = "platform review instructions"
 	saved, err := s.UpdateGenericAgent(GenericBackendDeliveryWorkflowID, review)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.ProjectID != "" || saved.Instructions != "platform review instructions" {
+	if saved.ProjectID != "" || saved.Prompt != "platform review instructions" {
 		t.Fatalf("generic agent save leaked a project identity: %+v", saved)
 	}
 	got, _ := s.GenericAgentByID(GenericAgentReview)
-	if got.Instructions != "platform review instructions" {
+	if got.Prompt != "platform review instructions" {
 		t.Fatalf("template role was not updated: %+v", got)
 	}
 	projectCopy, _ := s.Agent(GenericAgentReview)
-	if projectCopy.Instructions != "project copy" || projectCopy.ProjectID != "skillhub" {
+	if projectCopy.Prompt != "project copy" || projectCopy.ProjectID != "skillhub" {
 		t.Fatalf("project catalog role was overwritten: %+v", projectCopy)
 	}
 	if _, err := s.UpdateGenericAgent(GenericBackendDeliveryWorkflowID, domain.AgentDefinition{ID: "skillhub-reviewer"}); err == nil {

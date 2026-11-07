@@ -33,6 +33,7 @@ func checkpointFixture(t *testing.T) (*Engine, string) {
 	return e, r.ID
 }
 func TestConversationWorkspaceReclaimsOriginalAndRestoresThenExpiresAfterOneHour(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	e.reconcileTerminalWorkspaceCleanup()
 	r, _ := e.repo.RunState(id)
@@ -102,9 +103,10 @@ func TestConversationWorkspaceReclaimsOriginalAndRestoresThenExpiresAfterOneHour
 	}
 }
 func TestConversationWorkspacePreservesOnSaveFailureAndWhileActive(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	root := e.RunWorkspace(id)
-	if err := os.Symlink("/outside", filepath.Join(root, "unsafe")); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /outside\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	e.reconcileTerminalWorkspaceCleanup()
@@ -120,7 +122,7 @@ func TestConversationWorkspacePreservesOnSaveFailureAndWhileActive(t *testing.T)
 	if !protected {
 		t.Fatal("orphan sweep can remove unsaved workspace")
 	}
-	if err := os.Remove(filepath.Join(root, "unsafe")); err != nil {
+	if err := os.Remove(filepath.Join(root, ".git")); err != nil {
 		t.Fatal(err)
 	}
 	e.WorkspaceActive = func(domain.Run) bool { return true }
@@ -149,6 +151,7 @@ func TestConversationWorkspacePreservesOnSaveFailureAndWhileActive(t *testing.T)
 	}
 }
 func TestConversationWorkspaceCannotReclaimRunningNodes(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	r, _ := e.repo.RunState(id)
 	r.Nodes = map[string]*domain.NodeRun{"agent": {NodeID: "agent", Status: "running"}}
@@ -162,6 +165,7 @@ func TestConversationWorkspaceCannotReclaimRunningNodes(t *testing.T) {
 	}
 }
 func TestWorkspaceCheckpointServiceRequiresTokenAndBoundIdleRun(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	call := func(token, body string) int {
 		req := httptest.NewRequest("POST", "/internal/workspace-checkpoint", strings.NewReader(body))
@@ -188,6 +192,7 @@ func TestWorkspaceCheckpointServiceRequiresTokenAndBoundIdleRun(t *testing.T) {
 }
 
 func TestConversationWorkspaceSplitWorkerSavesReclaimsAndRestoresOnOwner(t *testing.T) {
+	t.Parallel()
 	worker, id := checkpointFixture(t)
 	worker.workspaceHost = "checkpoint-worker"
 	worker.controlToken = "shared-test-token"
@@ -235,11 +240,12 @@ func TestConversationWorkspaceSplitWorkerSavesReclaimsAndRestoresOnOwner(t *test
 	}
 }
 
-func TestIdleTaskGroupWithoutChatSessionGetsOneHour(t *testing.T) {
+func TestIdleWorkspaceWithoutSharedChatGetsOneHour(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	run, _ := e.repo.RunState(id)
 	run.Status = "waiting"
-	run.WorkflowSnapshot.CollaborationMode = "group"
+	run.Kind = domain.RunKindWorkspace
 	if err := e.repo.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -257,8 +263,98 @@ func TestIdleTaskGroupWithoutChatSessionGetsOneHour(t *testing.T) {
 	}
 }
 
+func TestReleasedConversationWorkspaceSkipsIdleHourUntilUsedAgain(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	run, _ := e.repo.RunState(id)
+	run.Status = "waiting"
+	run.Kind = domain.RunKindWorkspace
+	if err := e.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	token, err := e.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.EndConversationWorkspaceUse(context.Background(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	run, _ = e.repo.RunState(id)
+	e.cleanupWorkspace(run, time.Now().UTC())
+	if run, _ = e.repo.RunState(id); !run.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("a recently used workspace was reclaimed")
+	}
+
+	// A workspace used after its release keeps the idle hour.
+	now := time.Now().UTC()
+	if err = e.repo.ReleaseWorkspace(id, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.repo.TouchWorkspaceUse(id, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	e.cleanupWorkspace(run, now.Add(3*time.Second))
+	if run, _ = e.repo.RunState(id); !run.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("a workspace used again after release was reclaimed")
+	}
+
+	if err = e.repo.ReleaseWorkspace(id, now.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	e.cleanupWorkspace(run, now.Add(5*time.Second))
+	if run, _ = e.repo.RunState(id); run.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("released workspace waited out the idle hour")
+	}
+	token, err = e.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.EndConversationWorkspaceUse(context.Background(), id, token)
+	if err = e.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md")); err != nil || string(body) != "uncommitted" {
+		t.Fatalf("switching back lost files: %q %v", body, err)
+	}
+}
+
+// Merge compatibility: child SOPs now use their parent's checkout. Only the
+// owning run may checkpoint/restore it; child completion must leave it intact.
+func TestChildWorkspaceCheckpointBelongsToParent(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	parent, _ := e.repo.RunState(id)
+	parent.Status = "running"
+	if err := e.repo.PutRun(parent); err != nil {
+		t.Fatal(err)
+	}
+	child := domain.Run{ID: "checkpoint-child", Status: "succeeded", ExecutionContext: domain.TelemetryContext{ParentRunID: id, WorkspaceRunID: id}, Nodes: map[string]*domain.NodeRun{}}
+	if err := e.repo.PutRun(child); err != nil {
+		t.Fatal(err)
+	}
+	e.cleanupWorkspace(child, time.Now().UTC())
+	if _, saved := e.repo.WorkspaceCheckpoint(child.ID); saved {
+		t.Fatal("child archived the active parent checkout")
+	}
+	if data, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md")); err != nil || string(data) != "uncommitted" {
+		t.Fatal("child cleanup removed parent files", err)
+	}
+	token, err := e.BeginConversationWorkspaceUse(child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.EndConversationWorkspaceUse(context.Background(), child.ID, token)
+	if err := e.EnsureConversationWorkspace(context.Background(), child.ID, token); err == nil {
+		t.Fatal("child independently restored the parent checkout")
+	}
+}
+
 // Chat leases are metadata, not evidence that an old checkout was archived.
 func TestLegacyWorkspaceReplayAfterMainBotCreatedEmptyCheckpoint(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("test", "test", time.Minute, false)
 	wf := domain.WorkflowDefinition{ID: "legacy-replay", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "first", Type: "command", Command: "true"}, {ID: "second", Type: "command", Command: "true"}}, Edges: []domain.WorkflowEdge{{Source: "first", Target: "second", When: "success"}}}
@@ -302,6 +398,7 @@ func TestLegacyWorkspaceReplayAfterMainBotCreatedEmptyCheckpoint(t *testing.T) {
 }
 
 func TestExecutionRestoreDoesNotIgnoreCorruptSavedCheckpoint(t *testing.T) {
+	t.Parallel()
 	e, id := checkpointFixture(t)
 	e.reconcileTerminalWorkspaceCleanup()
 	if err := e.repo.DB.Model(&repo.WorkspaceCheckpoint{}).Where("run_id = ?", id).Update("sha256", "invalid").Error; err != nil {
@@ -313,5 +410,66 @@ func TestExecutionRestoreDoesNotIgnoreCorruptSavedCheckpoint(t *testing.T) {
 	r, _ := e.repo.RunState(id)
 	if r.WorkspaceCleanedAt.IsZero() || r.Status != "succeeded" {
 		t.Fatal("corrupt checkpoint mutated run state")
+	}
+}
+
+// A runner only checks repositories out on a prepare request, so opening a
+// fresh chat workspace must ask for one before the first read.
+func TestMaterializeRunnerConversationWorkspaceRequestsCheckout(t *testing.T) {
+	e, s := newRecoveryEngine(t)
+	if err := s.PutRunner(domain.Runner{ID: "chat-runner", RunnerVersion: domain.RunnerVersionConversationWorkspace, Status: domain.RunnerStatusOnline}); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID: "chat-workspace", Kind: domain.RunKindWorkspace, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		ExecutionContext: domain.TelemetryContext{ProjectID: "platform", ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "chat-runner", RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared},
+		Repositories:     []domain.RepositoryContext{{RepositoryID: "web", Name: "web", CloneURL: "https://git.example.com/team/web.git", BaseBranch: "main", WorkBranch: "feature/chat", WorkspaceDir: "web"}},
+	}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	var requests []domain.RunnerWorkspaceRequest
+	busy := 1
+	e.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+		requests = append(requests, request)
+		if busy > 0 {
+			busy--
+			return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is in use; preparation waits for active execution or terminal to finish"}, nil
+		}
+		raw, _ := json.Marshal(runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}})
+		return domain.RunnerWorkspaceResponse{Payload: raw}, nil
+	}
+	if err := e.MaterializeConversationWorkspace(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("busy runner must be retried once, got %d requests", len(requests))
+	}
+	got := requests[1]
+	if got.Operation != domain.RunnerWorkspaceOperationPrepare || got.RefreshCleanRepositories || got.PreparationInvocation == nil || len(got.PreparationInvocation.Repositories) != 1 || got.PreparationInvocation.Repositories[0].WorkBranch != "feature/chat" || got.Sandbox == nil || got.Workflow == nil {
+		t.Fatalf("checkout request = %+v", got)
+	}
+
+	// Git rejecting the clone names the fix instead of a raw git error.
+	e.WorkspaceCheckpointTransport = func(context.Context, domain.Run, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+		return domain.RunnerWorkspaceResponse{Status: 400, Error: "prepare workspace repositories: git clone https://git.example.com/team/web.git: exit status 128 (fatal: Authentication failed)"}, nil
+	}
+	if err := e.MaterializeConversationWorkspace(context.Background(), run.ID); err == nil || !strings.Contains(err.Error(), "Git Token") {
+		t.Fatalf("auth failure not explained: %v", err)
+	}
+
+	// Once a snapshot exists the workspace has been materialized; later tool
+	// calls must not reach the runner again.
+	saved := time.Now().UTC()
+	if err := s.DB.Create(&repo.WorkspaceCheckpoint{RunID: run.ID, LastUsedAt: saved, SavedAt: &saved}).Error; err != nil {
+		t.Fatal(err)
+	}
+	e.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+		t.Fatalf("saved workspace re-prepared: %s", request.Operation)
+		return domain.RunnerWorkspaceResponse{}, nil
+	}
+	if err := e.MaterializeConversationWorkspace(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
 	}
 }

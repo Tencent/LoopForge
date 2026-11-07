@@ -185,8 +185,7 @@ func TestCatalogAgentsKeepsProjectScope(t *testing.T) {
 	source := []domain.AgentDefinition{{
 		ID: "gslb-fix", Name: "Fix", Version: 2, ProjectID: "gslb", Shared: true, PlatformMCP: true,
 		Description:     strings.Repeat("x", 300),
-		Instructions:    "secret playbook",
-		TaskPrompt:      &domain.TaskPromptSpec{Objective: "fix"},
+		Prompt:          "fix",
 		ArtifactOutputs: []domain.ArtifactContract{{Name: "plan", Path: "fix-plan.md"}},
 		Verification: []domain.VerificationGate{{
 			ID: "plan", Name: "Plan", Mode: "command",
@@ -200,7 +199,7 @@ func TestCatalogAgentsKeepsProjectScope(t *testing.T) {
 	if !got[0].PlatformMCP {
 		t.Fatalf("platform MCP binding lost in catalog agent: %+v", got[0])
 	}
-	if got[0].Instructions != "" || got[0].TaskPrompt != nil {
+	if got[0].Prompt != "" {
 		t.Fatalf("catalog agent should stay slim: %+v", got[0])
 	}
 	if len(got[0].ArtifactOutputs) != 1 || len(got[0].Verification) != 1 {
@@ -209,7 +208,7 @@ func TestCatalogAgentsKeepsProjectScope(t *testing.T) {
 	if !strings.HasSuffix(got[0].Description, "…") || len(got[0].Description) >= len(source[0].Description) {
 		t.Fatalf("description not clipped: %q", got[0].Description)
 	}
-	if source[0].Instructions == "" {
+	if source[0].Prompt == "" {
 		t.Fatal("catalogAgents mutated source")
 	}
 }
@@ -227,7 +226,7 @@ func TestAgentCloneStampsProjectAndKeepsBody(t *testing.T) {
 	}
 	if err := s.PutAgent(domain.AgentDefinition{
 		ID: "src-role", Name: "Source", Version: 3, ProjectID: "other", Shared: true,
-		Instructions: "keep me", TaskPrompt: &domain.TaskPromptSpec{Objective: "do it"},
+		Prompt: "do it",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -235,11 +234,11 @@ func TestAgentCloneStampsProjectAndKeepsBody(t *testing.T) {
 	copied := requestJSON[domain.AgentDefinition](t, h, http.MethodPost, "/api/agents/src-role/clone", map[string]any{
 		"id": "dst-role", "name": "Copy", "projectId": "gslb",
 	}, http.StatusCreated)
-	if copied.ID != "dst-role" || copied.Name != "Copy" || copied.ProjectID != "gslb" || copied.Shared || copied.Instructions != "keep me" || copied.Version != 1 {
+	if copied.ID != "dst-role" || copied.Name != "Copy" || copied.ProjectID != "gslb" || copied.Shared || copied.Version != 1 {
 		t.Fatalf("clone = %+v", copied)
 	}
-	if copied.TaskPrompt == nil || copied.TaskPrompt.Objective != "do it" {
-		t.Fatalf("clone dropped task book: %+v", copied.TaskPrompt)
+	if copied.Prompt != "do it" {
+		t.Fatalf("clone dropped role prompt: %q", copied.Prompt)
 	}
 	src, ok := s.Agent("src-role")
 	if !ok || !src.Shared || src.ProjectID != "other" || src.Version != 3 {
@@ -528,7 +527,7 @@ func TestBootstrapAgentsKeepProjectScope(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	if err := s.PutAgent(domain.AgentDefinition{
-		ID: "owned-role", Name: "Owned", ProjectID: "gslb", Shared: true, Instructions: "do not leak",
+		ID: "owned-role", Name: "Owned", ProjectID: "gslb", Shared: true, Prompt: "do not leak",
 		ArtifactOutputs: []domain.ArtifactContract{{Name: "report", Path: "report.md", Required: true}},
 		Verification:    []domain.VerificationGate{{ID: "report", Name: "report", Mode: "command", Commands: []string{"test -s report.md"}, ExecutionScope: domain.ExecutionScopeRun}},
 	}); err != nil {
@@ -551,8 +550,8 @@ func TestBootstrapAgentsKeepProjectScope(t *testing.T) {
 	if found["projectId"] != "gslb" || found["shared"] != true {
 		t.Fatalf("bootstrap dropped project scope: %+v", found)
 	}
-	if found["instructions"] != "" {
-		t.Fatalf("bootstrap leaked instructions: %+v", found)
+	if _, leaked := found["prompt"]; leaked {
+		t.Fatalf("bootstrap leaked the role prompt: %+v", found)
 	}
 	if artifacts, ok := found["artifactOutputs"].([]any); !ok || len(artifacts) != 1 {
 		t.Fatalf("bootstrap dropped role artifact contracts: %+v", found)

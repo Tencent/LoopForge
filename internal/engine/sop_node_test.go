@@ -14,6 +14,7 @@ import (
 )
 
 func TestSOPNodeRunsChildAndHandsOffArtifacts(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +74,7 @@ func TestSOPNodeRunsChildAndHandsOffArtifacts(t *testing.T) {
 
 // 子 SOP 成功不能把整条需求标成已交付；父流程失败时需求仍要能重试。
 func TestSOPChildSuccessDoesNotDeliverParentIssue(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +120,7 @@ func TestSOPChildSuccessDoesNotDeliverParentIssue(t *testing.T) {
 
 // 发布（Drain）打断父流程时子 SOP 不能被取消；新 worker 接着等原来的子 SOP，而不是重跑一遍。
 func TestSOPNodeReattachesChildAfterDrain(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -208,6 +211,7 @@ func childRunsOf(s *repo.Store, parentID string) int {
 
 // 暂停父流程要连带暂停子 SOP；子 SOP 在父流程暂停期间跑完，父流程继续时直接用它的结果。
 func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -269,6 +273,7 @@ func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 
 // 暂停期间 SOP 节点改指向了另一条 SOP 并刷新：继续时不能复用旧 SOP 的子运行结果。
 func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -342,11 +347,13 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 
 // 恢复父流程时，被连带暂停的子 SOP 也要一起继续。
 func TestSOPNodeResumeParentResumesPausedChild(t *testing.T) {
+	t.Parallel()
 	pauseParentThen(t, false)
 }
 
 // 父流程暂停后直接取消，被连带暂停的子 SOP 也要取消。
 func TestSOPNodeCancelPausedParentCancelsChild(t *testing.T) {
+	t.Parallel()
 	pauseParentThen(t, true)
 }
 
@@ -412,6 +419,7 @@ func pauseParentThen(t *testing.T, cancelInstead bool) {
 
 // 子 SOP 失败导致父流程失败；在子 SOP 上重跑后，父流程要接上这次重跑继续，而不是停在失败或另起一个子 SOP。
 func TestSOPChildRetryResumesFailedParent(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -504,6 +512,7 @@ func startPausedParentWithChild(t *testing.T, s *repo.Store, e *Engine, prefix s
 
 // 父流程暂停时子 SOP 被单独取消：继续父流程应如实失败，而不是悄悄另起一个子 SOP。
 func TestSOPNodeFollowsCancelledChildOnResume(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -526,6 +535,7 @@ func TestSOPNodeFollowsCancelledChildOnResume(t *testing.T) {
 
 // 从更早的节点重跑暂停中的父流程：旧的子 SOP 不再被引用，必须被取消，而不是留着占用工作区。
 func TestSOPRetryEarlierNodeCancelsLiveChild(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -548,6 +558,7 @@ func TestSOPRetryEarlierNodeCancelsLiveChild(t *testing.T) {
 
 // 子 SOP 失败导致父流程失败；在子 SOP 上「手动通过」失败节点后，父流程也要接着跑。
 func TestSOPChildPassResumesFailedParent(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -588,6 +599,7 @@ func TestSOPChildPassResumesFailedParent(t *testing.T) {
 }
 
 func TestSOPNodeRejectsSelfReference(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -608,6 +620,7 @@ func TestSOPNodeRejectsSelfReference(t *testing.T) {
 
 // 子 SOP 的节点被打回重做过，父流程要拿最新一版产物，而不是被否决的第一版。
 func TestImportChildArtifactsTakesNewestAttempt(t *testing.T) {
+	t.Parallel()
 	t0 := time.Now().UTC()
 	child := domain.Run{Artifacts: []domain.Artifact{
 		{Name: "plan", Content: "v2", Attempt: 2, CreatedAt: t0.Add(time.Minute)},

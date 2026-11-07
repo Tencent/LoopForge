@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+// PreviewID is the stable preview id for a run: one preview per run.
+func PreviewID(runID string) string {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return "preview"
+	}
+	return "preview-" + runID
+}
+
 // ErrInvalidPreviewBackendURL is returned when a preview session backend URL
 // is not a credential-free http(s) origin.
 var ErrInvalidPreviewBackendURL = errors.New("preview backendUrl must be an http(s) URL without credentials")

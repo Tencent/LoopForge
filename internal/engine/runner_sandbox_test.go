@@ -12,6 +12,7 @@ import (
 )
 
 func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +37,7 @@ func TestRunnerSandboxSpecCarriesResolvedDockerAssets(t *testing.T) {
 }
 
 func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +64,7 @@ func TestRunnerSandboxSpecUsesFrozenSnapshot(t *testing.T) {
 }
 
 func TestDefaultExecutionRunnerUsesFrozenTarget(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +90,7 @@ func TestDefaultExecutionRunnerUsesFrozenTarget(t *testing.T) {
 }
 
 func TestResumePausedWaitsForActiveRunnerTask(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +113,7 @@ func TestResumePausedWaitsForActiveRunnerTask(t *testing.T) {
 }
 
 func TestRunnerWorkspaceRelUsesFrozenLayout(t *testing.T) {
+	t.Parallel()
 	shared := domain.Run{
 		ID: "run-shared",
 		ExecutionContext: domain.TelemetryContext{
@@ -125,6 +130,7 @@ func TestRunnerWorkspaceRelUsesFrozenLayout(t *testing.T) {
 }
 
 func TestShellSingleQuotePreservesPythonScript(t *testing.T) {
+	t.Parallel()
 	script := "print(\"it's shared\")\nprint('done')"
 	got := shellSingleQuote(script)
 	want := `'print("it'"'"'s shared")
@@ -135,6 +141,7 @@ print('"'"'done'"'"')'`
 }
 
 func TestBindRunnerRepositoriesPreservesMultiRepositoryLayout(t *testing.T) {
+	t.Parallel()
 	run := domain.Run{
 		Repositories: []domain.RepositoryContext{
 			{RepositoryID: "frontend", CloneURL: "https://git.example/frontend.git", BaseBranch: "main", WorkBranch: "feature/issue-7", WorkspaceDir: "frontend"},
@@ -158,6 +165,7 @@ func TestBindRunnerRepositoriesPreservesMultiRepositoryLayout(t *testing.T) {
 }
 
 func TestRetryFailsBeforeMutationWhenFrozenRunnerIsOffline(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)

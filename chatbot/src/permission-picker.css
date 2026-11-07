@@ -1,0 +1,161 @@
+.permission-picker-anchor {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-width: 0;
+}
+
+/* The portal defines its own colors outside the workbench's theme scope. */
+.permission-menu {
+  --permission-surface: #fff;
+  --permission-ink: #18181b;
+  --permission-secondary: #71717a;
+  --permission-line: #e5e5e8;
+  --permission-hover: rgb(24 24 27 / .04);
+  --permission-accent: #c9502e;
+  position: fixed;
+  z-index: 140;
+  box-sizing: border-box;
+  width: 260px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  min-height: 0;
+  padding: 5px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--permission-line);
+  border-radius: 11px;
+  background: var(--permission-surface);
+  color: var(--permission-ink);
+  box-shadow: 0 10px 32px rgb(24 24 27 / .09), 0 2px 6px rgb(24 24 27 / .035);
+  opacity: 1;
+  clip-path: inset(-40px round 10px);
+  transition: opacity 160ms ease, clip-path 160ms cubic-bezier(.22, 1, .36, 1);
+  scrollbar-width: thin;
+  scrollbar-color: var(--permission-line) transparent;
+}
+
+[data-theme="dark"] .permission-menu {
+  --permission-surface: #141417;
+  --permission-ink: #ededf0;
+  --permission-secondary: #a1a1aa;
+  --permission-line: #36363e;
+  --permission-hover: rgb(237 237 240 / .055);
+  --permission-accent: #ff8a65;
+  box-shadow: 0 12px 36px rgb(0 0 0 / .28), 0 2px 6px rgb(0 0 0 / .16);
+}
+
+.permission-menu:is([data-phase="entering"], [data-phase="closing"]) {
+  opacity: 0;
+  clip-path: inset(5% -40px -40px round 10px);
+  pointer-events: none;
+}
+
+.permission-menu[data-placement="top"]:is([data-phase="entering"], [data-phase="closing"]) {
+  clip-path: inset(-40px -40px 5% round 10px);
+}
+
+.permission-menu[data-phase="entering"] {
+  transition: none;
+}
+
+.permission-menu .permission-menu-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
+  align-items: start;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 62px;
+  gap: 9px;
+  margin: 0;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--permission-ink);
+  box-shadow: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.permission-menu .permission-menu-option:is(:hover, :focus-visible) {
+  background: var(--permission-hover);
+}
+
+.permission-menu .permission-menu-option:focus-visible {
+  outline: 1px solid var(--permission-line);
+  outline-offset: -1px;
+}
+
+.permission-menu .permission-menu-option > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--permission-secondary);
+}
+
+.permission-menu .permission-menu-copy {
+  display: block;
+  min-width: 0;
+}
+
+.permission-menu .permission-menu-copy > strong,
+.permission-menu .permission-menu-copy > small {
+  display: block;
+  margin: 0;
+}
+
+.permission-menu .permission-menu-copy > strong {
+  color: var(--permission-ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.permission-menu .permission-menu-copy > small {
+  margin-top: 3px;
+  color: var(--permission-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.permission-menu .permission-menu-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 18px;
+  color: var(--permission-ink);
+}
+
+.chat-shell button.permission-selector[data-tone="danger"],
+.chat-shell button.permission-selector[data-tone="danger"]:is(:hover, [aria-expanded="true"]) {
+  --permission-trigger-hover: rgb(201 80 46 / .07);
+  color: #c9502e;
+}
+
+[data-theme="dark"] .chat-shell button.permission-selector[data-tone="danger"],
+[data-theme="dark"] .chat-shell button.permission-selector[data-tone="danger"]:is(:hover, [aria-expanded="true"]) {
+  --permission-trigger-hover: rgb(255 138 101 / .1);
+  color: #ff8a65;
+}
+
+.permission-menu .permission-menu-option[data-tone="danger"] {
+  --permission-ink: var(--permission-accent);
+}
+
+.permission-menu .permission-menu-option[data-tone="danger"] > svg {
+  color: var(--permission-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .permission-menu,
+  .permission-menu .permission-menu-option {
+    animation: none;
+    transition: none;
+  }
+}

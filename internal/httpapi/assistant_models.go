@@ -16,16 +16,25 @@ import (
 
 const assistantDefaultModel = "default"
 
+// assistantChatDefaultModel is preselected for new chat conversations when a
+// sponsor account is configured. Otherwise chat uses the operator's default,
+// like clarification, scheduled prompts, reports and executors.
+const assistantChatDefaultModel = assistantSponsoredModel
+
 type assistantModel struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Family  string `json:"family"`
-	Credits string `json:"credits"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Family  string   `json:"family"`
+	Credits string   `json:"credits"`
+	Efforts []string `json:"efforts"`
 }
 
 type assistantModelCatalog struct {
 	Default string           `json:"default"`
 	Models  []assistantModel `json:"models"`
+	// SponsoredModel is set when users without their own CodeBuddy API Key
+	// may still chat, limited to this model.
+	SponsoredModel string `json:"sponsoredModel,omitempty"`
 }
 
 func prefetchAssistantModels() {}
@@ -159,8 +168,9 @@ func cachedCLIModels(environment string) []string {
 	return models
 }
 
-// models returns the assistant model catalog for the caller's CodeBuddy
-// environment. Guests get the configured models only.
+// models returns the chat model catalog for the caller's CodeBuddy
+// environment. Guests get the configured models only; actually chatting still
+// requires login plus a configured or sponsored CodeBuddy key.
 func (h *assistantHandlers) models(c *gin.Context) {
 	if id := assistantExecutor(c.Query("executor")); id != "codebuddy" {
 		catalog, ok := executorModelCatalogs()[id]
@@ -183,7 +193,29 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			refreshCLIModels(c.Request.Context(), environment, user.CodeBuddyAPIKey)
 		}
 	}
-	c.JSON(200, loadAssistantModels(c.Request.Context(), environment))
+	catalog := assistantChatCatalog(c.Request.Context(), environment)
+	if _, ok := h.assistantSponsor(); ok {
+		catalog.SponsoredModel = assistantSponsoredModel
+	}
+	c.JSON(200, catalog)
+}
+
+// assistantChatCatalog is the catalog used by chat conversations: the same
+// models, with the chat default listed and preselected.
+func assistantChatCatalog(ctx context.Context, env string) assistantModelCatalog {
+	catalog := loadAssistantModels(ctx, env)
+	if strings.TrimSpace(os.Getenv(assistantSponsorLoginEnv)) == "" {
+		return catalog
+	}
+	listed := false
+	for _, model := range catalog.Models {
+		listed = listed || model.ID == assistantChatDefaultModel
+	}
+	if !listed {
+		catalog.Models = append(catalog.Models, assistantListedModel(assistantChatDefaultModel, "Deepseek-V4.1-Flash", ""))
+	}
+	catalog.Default = assistantChatDefaultModel
+	return catalog
 }
 
 // loadAssistantModels never blocks on discovery; validation accepts models the
@@ -203,6 +235,11 @@ func loadAssistantModels(_ context.Context, environment string) assistantModelCa
 	return catalog
 }
 
+// assistantFixedCatalog mirrors `codebuddy --help` (CodeBuddy Code 2.180.0)
+// --model list, names/credits from the CLI's remote product catalog. Two ids
+// are kept although the CLI no longer advertises them: deepseek-v4-flash-ioa
+// is pinned by live roles (and was the old built-in executor default), and
+// hy4-preview-ioa stays alongside hy4std for existing users.
 func assistantFixedCatalog() assistantModelCatalog {
 	defaultID := strings.TrimSpace(os.Getenv("AGENTFLOW_ASSISTANT_MODEL"))
 	if defaultID == "" {
@@ -225,7 +262,7 @@ func assistantFixedCatalog() assistantModelCatalog {
 }
 
 func assistantListedModel(id, name, credits string) assistantModel {
-	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits}
+	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits, Efforts: assistantModelEfforts(id)}
 }
 
 func assistantModelFamily(id string) string {
@@ -247,6 +284,8 @@ func assistantModelFamily(id string) string {
 		return "minimax"
 	case strings.HasPrefix(id, "hy") || strings.Contains(id, "hunyuan"):
 		return "hunyuan"
+	case strings.HasPrefix(id, "mimo"):
+		return "mimo"
 	default:
 		return "other"
 	}

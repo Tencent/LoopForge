@@ -25,6 +25,7 @@ func testGit(t *testing.T, dir string, args ...string) string {
 }
 
 func TestScheduledIntegrationSerializesAndReturnsConflictToWorkBranch(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote := filepath.Join(root, "source"), filepath.Join(root, "remote.git")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -87,6 +88,7 @@ func TestScheduledIntegrationSerializesAndReturnsConflictToWorkBranch(t *testing
 }
 
 func TestMergeLatestIntegrationAutoResolvesSOPDeliverableConflicts(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote := filepath.Join(root, "source"), filepath.Join(root, "remote.git")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -142,6 +144,7 @@ func TestMergeLatestIntegrationAutoResolvesSOPDeliverableConflicts(t *testing.T)
 }
 
 func TestIntegrationConflictRequeuesRepairNodeAndDescendants(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +175,7 @@ func TestIntegrationConflictRequeuesRepairNodeAndDescendants(t *testing.T) {
 }
 
 func TestScheduledIntegrationPreparesConfiguredMainBranchWithoutDirectPush(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote := filepath.Join(root, "source"), filepath.Join(root, "remote.git")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -223,6 +227,7 @@ func TestScheduledIntegrationPreparesConfiguredMainBranchWithoutDirectPush(t *te
 }
 
 func TestPrepareRepositoryDoesNotRealignBaseline(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote := filepath.Join(root, "source"), filepath.Join(root, "remote.git")
 	workspace := filepath.Join(root, "workspace")
@@ -272,6 +277,7 @@ func TestPrepareRepositoryDoesNotRealignBaseline(t *testing.T) {
 }
 
 func TestPrepareRepositoryContinuesWhenDefaultConflictsWithIntegrate(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote := filepath.Join(root, "source"), filepath.Join(root, "remote.git")
 	workspace := filepath.Join(root, "workspace")
@@ -324,6 +330,7 @@ func TestPrepareRepositoryContinuesWhenDefaultConflictsWithIntegrate(t *testing.
 }
 
 func TestAlignIntegrateBaselinePushesCleanMerge(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote := filepath.Join(root, "source"), filepath.Join(root, "remote.git")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -361,6 +368,7 @@ func TestAlignIntegrateBaselinePushesCleanMerge(t *testing.T) {
 }
 
 func TestAlignIntegrateBaselineReportsConflictWithoutPush(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote := filepath.Join(root, "source"), filepath.Join(root, "remote.git")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -408,6 +416,7 @@ func TestAlignIntegrateBaselineReportsConflictWithoutPush(t *testing.T) {
 }
 
 func TestAlignIntegrateBaselineNoopsWithoutRemote(t *testing.T) {
+	t.Parallel()
 	if err := AlignIntegrateBaseline(domain.RepositoryContext{
 		RepositoryID:    "skillhub",
 		BaseBranch:      "agentflow/integration",
@@ -419,6 +428,7 @@ func TestAlignIntegrateBaselineNoopsWithoutRemote(t *testing.T) {
 }
 
 func TestIntegrateScheduledRunDoesNotTouchDefaultBranch(t *testing.T) {
+	t.Parallel()
 	work, remote := setupIntegrateRepo(t)
 	masterBefore := testGit(t, remote, "rev-parse", "refs/heads/master")
 	st, err := repo.OpenTest()
@@ -465,6 +475,7 @@ func TestIntegrateScheduledRunDoesNotTouchDefaultBranch(t *testing.T) {
 }
 
 func TestPrepareRepositorySeedsMissingIntegrationBranch(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, remote, workspace := filepath.Join(root, "source"), filepath.Join(root, "remote.git"), filepath.Join(root, "workspace")
 	if err := os.MkdirAll(source, 0o700); err != nil {
@@ -492,6 +503,7 @@ func TestPrepareRepositorySeedsMissingIntegrationBranch(t *testing.T) {
 }
 
 func TestIntegrationCommitLabelIncludesIssue(t *testing.T) {
+	t.Parallel()
 	got := integrationCommitLabel(domain.Run{
 		Input:            "sandbox_sessions deadlock\n\nlong body",
 		ExecutionContext: domain.TelemetryContext{IssueNumber: 31},
@@ -553,6 +565,7 @@ func setupIntegrateRepo(t *testing.T) (work, remote string) {
 }
 
 func TestMergeLatestIntegrationDropsSOPReports(t *testing.T) {
+	t.Parallel()
 	work, _ := setupIntegrateRepo(t)
 	ctx := context.Background()
 	repo := domain.RepositoryContext{WorkBranch: "feature/fix-issue-30", IntegrateBranch: "agentflow/integration"}
@@ -572,6 +585,7 @@ func TestMergeLatestIntegrationDropsSOPReports(t *testing.T) {
 }
 
 func TestIntegrateScheduledRunUsesMRAndKeepsIntegrateUntouched(t *testing.T) {
+	t.Parallel()
 	work, remote := setupIntegrateRepo(t)
 	before := testGit(t, remote, "rev-parse", "refs/heads/agentflow/integration")
 	st, err := repo.OpenTest()
@@ -622,12 +636,13 @@ func TestIntegrateScheduledRunUsesMRAndKeepsIntegrateUntouched(t *testing.T) {
 }
 
 func TestIntegrateMRTitleIncludesIssue(t *testing.T) {
+	t.Parallel()
 	got := integrateMRTitle(domain.Run{
 		Input:            "timeout spike\nbody",
 		ExecutionContext: domain.TelemetryContext{IssueNumber: 30},
 		Repository:       domain.RepositoryContext{WorkBranch: "feature/fix-issue-30"},
 	}, domain.RepositoryContext{}, "feature/fix-issue-30", "agentflow/integration")
-	if got != "AgentFlow: issue #30 timeout spike → agentflow/integration" {
+	if got != "LoopForge: issue #30 timeout spike → agentflow/integration" {
 		t.Fatalf("title = %q", got)
 	}
 }
@@ -636,6 +651,7 @@ func TestIntegrateMRTitleIncludesIssue(t *testing.T) {
 // workspace layout: every repository is checked out into its own sub-directory
 // under the run workspace, all on the same work branch.
 func TestPrepareRepositoriesMultiDirectoryLayout(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	remoteA := setupMultiRepoRemote(t, root, "alpha")
 	remoteB := setupMultiRepoRemote(t, root, "beta")
@@ -663,6 +679,7 @@ func TestPrepareRepositoriesMultiDirectoryLayout(t *testing.T) {
 }
 
 func TestPrepareRepositoriesSingleDirectoryLayout(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	remote := setupMultiRepoRemote(t, root, "gateway")
 	workspace := filepath.Join(root, "workspace")
@@ -715,6 +732,7 @@ func setupMultiRepoRemote(t *testing.T, root, name string) string {
 // two repositories integrates both equally: each repository gets its own work
 // branch push and its own baseline MR, keyed by its own Gongfeng project.
 func TestIntegrateScheduledRunMultiRepository(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	remoteA := setupMultiRepoRemote(t, root, "frontend")
 	remoteB := setupMultiRepoRemote(t, root, "backend")

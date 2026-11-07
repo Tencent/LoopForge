@@ -1,0 +1,256 @@
+/* 待我确认页 · Harness UI 设计语言（MIT，见 harness-ui-LICENSE.txt）。
+ * 令牌、按钮与状态徽标来自 app/harness-ui.css。Every rule stays inside #approvalsView,
+ * so the shared decision / paused panels keep their look in the issue drawer
+ * and run detail.
+ */
+#approvalsView.page-view.active { background: var(--hui-surface); }
+#approvalsView [hidden] { display: none !important; }
+#approvalsView .harness-icon { flex: none; }
+
+#approvalsView .button { flex: none; width: auto; }
+#approvalsView .button .harness-icon { width: 14px; height: 14px; }
+
+/* ---------- Heading ---------- */
+#approvalsView .approvals-heading {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+#approvalsView .approvals-heading > div:first-child { min-width: 0; max-width: none; }
+#approvalsView .approvals-heading .eyebrow { display: none; }
+#approvalsView .approvals-heading h1 { margin: 0; color: var(--hui-text); font: 600 28px/1.2 var(--hui-sans); letter-spacing: -.02em; }
+#approvalsView .approvals-heading h1 + p { max-width: none; margin: 6px 0 0; color: var(--hui-muted); font-size: 14px; line-height: 1.5; }
+#approvalsView .approvals-heading .heading-actions { flex: none; display: flex; align-items: center; gap: 12px; flex-wrap: nowrap; }
+#approvalsView #approvalLiveState {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--hui-muted);
+  font: 400 12px/1 var(--hui-sans);
+  white-space: nowrap;
+}
+#approvalsView #approvalLiveState i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--hui-tertiary); box-shadow: none; animation: none; }
+#approvalsView #approvalLiveState.active i { background: var(--hui-success); animation: apLampBreath 1.6s var(--hui-ease-flow) infinite; }
+@keyframes apLampBreath { 50% { opacity: .35; } }
+
+/* ---------- Stats ---------- */
+#approvalsView .approval-stats { display: flex; gap: 8px; margin: 0 0 14px; }
+#approvalsView .approval-stats .issue-stat { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--hui-muted); font: 400 13px/1.4 var(--hui-sans); }
+#approvalsView .approval-stats .issue-stat b { color: var(--hui-text); font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* ---------- List & empty state ---------- */
+#approvalsView .approval-list { display: flex; flex-direction: column; gap: 12px; }
+#approvalsView .approval-empty {
+  box-sizing: border-box;
+  padding: 48px 20px;
+  border: 1px solid var(--hui-border);
+  border-radius: 13px;
+  background: var(--hui-surface);
+  box-shadow: none;
+}
+#approvalsView .approval-empty .empty-box { display: grid; justify-items: center; gap: 6px; padding: 0; color: var(--hui-muted); text-align: center; }
+#approvalsView .ap-empty-icon { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 6px; border-radius: 10px; background: var(--hui-accent-soft); color: var(--hui-accent); }
+#approvalsView .ap-empty-icon .harness-icon { width: 20px; height: 20px; }
+#approvalsView .approval-empty .empty-box b { color: var(--hui-text); font-size: 14px; font-weight: 500; }
+#approvalsView .approval-empty .empty-box p { margin: 0; font-size: 13px; }
+
+/* ---------- Card ---------- */
+#approvalsView .ap-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--hui-border);
+  border-radius: 13px;
+  background: var(--hui-surface);
+  box-shadow: none;
+}
+#approvalsView .ap-card-head { display: flex; align-items: flex-start; gap: 12px; }
+#approvalsView .ap-main { flex: 1 1 auto; min-width: 0; }
+#approvalsView .ap-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#approvalsView .ap-head > b { min-width: 0; color: var(--hui-text); font-size: 14px; font-weight: 500; line-height: 1.45; overflow-wrap: anywhere; }
+#approvalsView .ap-meta { margin-top: 4px; color: var(--hui-muted); font-size: 12.5px; line-height: 1.5; }
+#approvalsView .ap-meta code.ap-key { padding: 0; border: 0; background: transparent; color: var(--hui-secondary); font: 400 12px/1.5 var(--hui-mono); }
+#approvalsView .ap-sep { margin: 0 6px; color: var(--hui-tertiary); }
+#approvalsView .ap-side { flex: none; display: flex; align-items: center; gap: 6px; }
+#approvalsView .ap-side > .button {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font: 500 12.5px/1 var(--hui-sans);
+}
+#approvalsView .ap-body { min-width: 0; }
+
+
+/* ---------- ⋯ and its popover ---------- */
+#approvalsView .ap-more { position: relative; display: inline-flex; }
+#approvalsView .ap-more-toggle {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hui-muted);
+  cursor: pointer;
+  transition: background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow);
+}
+#approvalsView .ap-more-toggle:hover,
+#approvalsView .ap-more-toggle[aria-expanded="true"] { background: var(--hui-soft); color: var(--hui-text); }
+#approvalsView .ap-more-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+#approvalsView .ap-more-toggle .harness-icon { width: 16px; height: 16px; }
+#approvalsView .ap-more-menu {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 6px);
+  right: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-popover-shadow);
+  animation: apPopoverIn .18s var(--hui-ease-flow);
+}
+@keyframes apPopoverIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+#approvalsView .ap-menu-item {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hui-text);
+  font: 400 13.5px/1 var(--hui-sans);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow);
+}
+#approvalsView .ap-menu-item:is(:hover, :focus-visible) { background: var(--hui-canvas); outline: 0; }
+#approvalsView .ap-menu-item .harness-icon { width: 16px; height: 16px; color: var(--hui-muted); }
+#approvalsView .ap-menu-item.danger,
+#approvalsView .ap-menu-item.danger .harness-icon { color: var(--hui-error); }
+#approvalsView .ap-menu-item.danger:is(:hover, :focus-visible) { background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface)); color: var(--hui-error); }
+
+/* ---------- Body: decision panel ---------- */
+#approvalsView .human-decision { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+#approvalsView .human-gate-brief,
+#approvalsView .paused-run-callout .callout-content {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--hui-border-soft);
+  border-radius: 9px;
+  background: var(--hui-canvas);
+}
+#approvalsView .human-gate-brief .callout-section { display: flex; flex-direction: column; gap: 3px; }
+#approvalsView .human-gate-brief .callout-label { color: var(--hui-tertiary); font: 500 12px/1.5 var(--hui-sans); }
+#approvalsView :is(.human-gate-brief, .paused-run-callout) p.callout-text { margin: 0; color: var(--hui-text); font: 400 13px/1.6 var(--hui-sans); white-space: pre-wrap; word-break: break-word; }
+#approvalsView .human-gate-brief ul.callout-findings { margin: 0; padding-left: 18px; color: var(--hui-text); font-size: 13px; line-height: 1.55; }
+#approvalsView .human-gate-brief ul.callout-findings li p { margin: 2px 0 0; color: var(--hui-muted); font-size: 12px; }
+
+/* Paused panel: the title row becomes the top of the same brief block. */
+#approvalsView .approval-callout.paused-run-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+#approvalsView .paused-run-callout .callout-head {
+  padding: 10px 12px 3px;
+  border: 1px solid var(--hui-border-soft);
+  border-bottom: 0;
+  border-radius: 9px 9px 0 0;
+  background: var(--hui-canvas);
+}
+#approvalsView .paused-run-callout .callout-badge { display: none; }
+#approvalsView .paused-run-callout b.callout-title { color: var(--hui-tertiary); font: 500 12px/1.5 var(--hui-sans); }
+#approvalsView .paused-run-callout .callout-content { padding-top: 0; border-top: 0; border-radius: 0 0 9px 9px; }
+#approvalsView .paused-run-callout :is(.human-context-field, .ap-buttons) { margin-top: 12px; }
+
+#approvalsView .human-context-field { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+#approvalsView .human-context-field > span { color: var(--hui-secondary); font: 400 12px/1.4 var(--hui-sans); }
+#approvalsView .human-context-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font: 400 13px/1.55 var(--hui-sans);
+  resize: vertical;
+  box-shadow: none;
+  transition: border-color .18s var(--hui-ease-flow), box-shadow .18s var(--hui-ease-flow);
+}
+#approvalsView .human-context-field textarea::placeholder { color: var(--hui-tertiary); }
+#approvalsView .human-context-field textarea:focus { outline: 0; border-color: var(--hui-accent); box-shadow: 0 0 0 3px var(--hui-accent-soft); }
+
+/* Decision buttons: right-aligned, sized to their label; the solid primary sits last. */
+#approvalsView .ap-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin: 0; }
+#approvalsView .ap-buttons .button.primary { order: 1; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 960px) {
+  #approvalsView .approvals-heading { flex-direction: column; align-items: flex-start !important; gap: 14px !important; }
+  #approvalsView .approvals-heading .heading-actions { width: auto !important; flex-wrap: wrap !important; }
+  #approvalsView .ap-card-head { flex-direction: column; gap: 10px; }
+  #approvalsView .ap-side { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #approvalsView *,
+  #approvalsView *::before,
+  #approvalsView *::after { transition: none !important; animation: none !important; }
+}
+
+/* ---------- Batch approval ---------- */
+#approvalsView .approval-batch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  background: var(--hui-soft);
+}
+#approvalsView .ap-batch-check { display: inline-flex; align-items: center; gap: 6px; color: var(--hui-text); font-size: 13px; cursor: pointer; }
+#approvalsView .ap-batch-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--hui-accent); cursor: pointer; }
+#approvalsView .ap-batch-count { color: var(--hui-text); font-size: 13px; font-variant-numeric: tabular-nums; }
+#approvalsView .ap-batch-tip { color: var(--hui-muted); font-size: 12px; }
+#approvalsView .ap-batch-actions { display: inline-flex; gap: 8px; margin-left: auto; }
+#approvalsView .ap-card.is-selected { border-color: color-mix(in srgb, var(--hui-accent) 45%, var(--hui-border)); background: var(--hui-accent-soft); }

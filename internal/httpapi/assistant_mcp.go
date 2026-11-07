@@ -16,7 +16,7 @@ import (
 	"agentflow/internal/runtime"
 )
 
-const assistantMCPResultLimit = 12000
+type assistantAssetObserverKey struct{}
 
 type assistantMCPCall struct {
 	Server    string         `json:"server"`
@@ -109,7 +109,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 		sort.Strings(names)
 		sort.Strings(reads)
 		sort.Strings(writes)
-		raw, _ := json.Marshal(ginH{"server": "agentflow", "name": "AgentFlow", "tools": names, "readOnly": reads, "write": writes})
+		raw, _ := json.Marshal(ginH{"server": "agentflow", "name": "LoopForge", "tools": names, "readOnly": reads, "write": writes})
 		return string(raw), nil
 	}
 	op, ok := assistantPublicOperations[tool]
@@ -133,8 +133,33 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(user))
 	input := assistantToolInput(call)
+	if op.Name == "runs_control_get" {
+		run, ok := h.repo.RunState(input.Path["id"])
+		if !ok || run.ExecutionContext.ProjectID != projectID {
+			return "", fmt.Errorf("只能操作当前项目的任务")
+		}
+		if scope := assistantControlScopeFrom(ctx); scope.RunID != "" && scope.RunID != run.ID {
+			return "", fmt.Errorf("只能操作当前会话绑定的任务")
+		}
+	}
+	if op.Name == "issues_save" || op.Name == "issues_import_tapd" {
+		if body, ok := input.Body.(map[string]any); ok {
+			normalizeAssistantIssueBranchBody(body)
+		}
+	}
 	if mode.AutoWrite && op.Name == "issues_save" {
 		input.Body = h.mergeIssueSaveBody(input.Body, input.Path)
+	}
+	// fields=a,b selects result fields for read tools, and ids=a,b keeps only
+	// those items of a list; handlers never see either.
+	var fields, ids []string
+	if op.ReadOnly {
+		fields = assistantResultFields(input.Query[assistantResultFieldsParam])
+		delete(input.Query, assistantResultFieldsParam)
+		if strings.HasSuffix(op.Name, "_list") {
+			ids = assistantResultFields(input.Query[assistantResultIDsParam])
+			delete(input.Query, assistantResultIDsParam)
+		}
 	}
 	if strings.HasSuffix(op.Name, "_list") && strings.TrimSpace(projectID) != "" {
 		if input.Query == nil {
@@ -150,6 +175,13 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 			input.Query["limit"] = strconv.Itoa(issueListDefaultLimit)
 		}
 	}
+	if !op.ReadOnly && mode.ReviewWrites {
+		// Review the final merged payload immediately before the real handler.
+		review := reviewAssistantAction(ctx, op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
+		if !review.allows() {
+			return "", assistantReviewRefusal(op.Name, review)
+		}
+	}
 	result, err := mcpserver.LocalInvoker{Handler: h.api}.Invoke(ctx, op, input)
 	if err != nil {
 		return "", err
@@ -161,10 +193,46 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 		}
 		return "", fmt.Errorf("%s", truncateRunes(text, 500))
 	}
-	if err := assistantRejectForeignProject(projectID, result.Body); err != nil {
-		return "", err
+	// Conversations legitimately belong to a project other than the current one;
+	// the handler already scopes them by owner / shared run / membership.
+	if !assistantSessionReadOperation(op.Name) {
+		if err := assistantRejectForeignProject(projectID, result.Body); err != nil {
+			return "", err
+		}
 	}
-	return redactAssistantSecrets(truncateRunes(text, assistantMCPResultLimit), user), nil
+	text = strings.TrimSpace(string(h.assistantRunResult(op.Name, result.Body)))
+	// Filter and project only after the foreign-project check above, which
+	// needs projectId.
+	text = projectAssistantResult(filterAssistantResultIDs(text, ids), fields)
+	if observer, ok := ctx.Value(assistantAssetObserverKey{}).(func(domain.AssistantAssetRef)); ok {
+		kind := ""
+		switch op.Name {
+		case "agents_save":
+			kind = "role"
+		case "workflows_save", "workflows_clone", "workflows_publish":
+			kind = "sop"
+		case "runs_start", "issues_dispatch":
+			kind = "run"
+		}
+		if kind != "" {
+			var asset struct {
+				ID     string `json:"id"`
+				RunID  string `json:"runId"`
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			}
+			if json.Unmarshal(result.Body, &asset) == nil {
+				id := asset.ID
+				if kind == "run" && asset.RunID != "" {
+					id = asset.RunID
+				}
+				if id != "" {
+					observer(domain.AssistantAssetRef{Kind: kind, ID: id, Name: asset.Name, Status: asset.Status, ProjectID: projectID, Tool: op.Name})
+				}
+			}
+		}
+	}
+	return redactAssistantSecrets(text, user), nil
 }
 
 func assistantMCPCallArguments(call assistantMCPCall) map[string]any {
@@ -292,7 +360,7 @@ func (h *assistantHandlers) callAssistantMCP(user domain.User, projectID string,
 	if err != nil {
 		return "", err
 	}
-	return redactAssistantSecrets(truncateRunes(text, assistantMCPResultLimit), user), nil
+	return redactAssistantSecrets(strings.TrimSpace(text), user), nil
 }
 
 func (h *assistantHandlers) lookupAssistantMCP(projectID string, userID int64, ref string) (domain.MCPServerDefinition, bool) {
@@ -316,15 +384,6 @@ func bindAssistantMCP(server domain.MCPServerDefinition, user domain.User) (doma
 		return domain.MCPServerDefinition{}, githubErr
 	}
 	server = bundle.MCPServers[0]
-	if strings.TrimSpace(server.AuthType) == runtime.MCPAuthTaihuPAT {
-		bound, err := runtime.BindPersonalMCPHeaders(bundle, user.TaihuPAT)
-		if err != nil {
-			return domain.MCPServerDefinition{}, err
-		}
-		server = bound.MCPServers[0]
-	} else {
-		server = runtime.BindPersonalMCPHeadersOptional(bundle, user.TaihuPAT).MCPServers[0]
-	}
 	headers, err := runtime.ResolveMCPHeaders(server)
 	if err != nil {
 		return domain.MCPServerDefinition{}, err
@@ -334,11 +393,19 @@ func bindAssistantMCP(server domain.MCPServerDefinition, user domain.User) (doma
 }
 
 func redactAssistantSecrets(text string, user domain.User) string {
-	for _, secret := range []string{user.CodeBuddyAPIKey, user.CodexAPIKey, user.ClaudeCodeAPIKey, user.TaihuPAT, user.GitToken} {
+	for _, secret := range []string{user.CodeBuddyAPIKey, user.CodexAPIKey, user.ClaudeCodeAPIKey, user.GitToken} {
 		secret = strings.TrimSpace(secret)
 		if secret != "" {
 			text = strings.ReplaceAll(text, secret, "[redacted]")
 		}
 	}
 	return text
+}
+
+// assistantSessionReadOperation marks read-only platform tools that return
+// conversation records. Such records carry the project the conversation is
+// bound to, so the single-project guard must not reject them after the
+// handler has authorized the read.
+func assistantSessionReadOperation(name string) bool {
+	return name == "assistant_sessions_list" || name == "assistant_sessions_get"
 }

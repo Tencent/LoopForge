@@ -104,7 +104,7 @@ func prepareSandboxEnvironment(workspace string, profile domain.SandboxProfile, 
 	}
 	if len(pathDirs) > 0 {
 		overlay["PATH"] = strings.Join(append(append([]string{}, pathDirs...), basePath), string(os.PathListSeparator))
-		zdot, bashEnv, err := writeEnvironmentShellHooks(root, pathDirs)
+		zdot, bashEnv, err := writeEnvironmentShellHooks(workspace, root, pathDirs)
 		if err != nil {
 			return activatedEnvironment{}, err
 		}
@@ -144,7 +144,7 @@ func writeEnvironmentInstall(workspace string, env domain.EnvironmentDefinition)
 		script = "#!/bin/sh\n" + script
 	}
 	target := filepath.Join(root, installScriptName)
-	if err := writeManagedFile(target, []byte(script+"\n"), 0o700); err != nil {
+	if err := writeManagedFile(workspace, target, []byte(script+"\n"), 0o700); err != nil {
 		return "", "", err
 	}
 	rel := filepath.ToSlash(filepath.Join(".agentflow", managedEnvironmentDir, envID, installScriptName))
@@ -155,16 +155,21 @@ func runEnvironmentInstall(ctx context.Context, sandbox Sandbox, activated activ
 	if strings.TrimSpace(activated.InstallRel) == "" || strings.TrimSpace(activated.InstallScript) == "" {
 		return nil
 	}
+	workspace := sandbox.Workspace()
 	stamp := filepath.Join(activated.Root, installStampName)
 	sum := sha256.Sum256([]byte(activated.InstallScript))
 	want := hex.EncodeToString(sum[:])
-	if current, err := os.ReadFile(stamp); err == nil && strings.TrimSpace(string(current)) == want {
+	current, err := readWorkspaceFile(workspace, stamp)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil && strings.TrimSpace(string(current)) == want {
 		return nil
 	}
 	if _, err := sandbox.Exec(ctx, CommandSpec{Argv: []string{"sh", activated.InstallRel}}, nil); err != nil {
 		return fmt.Errorf("environment install.sh: %w", err)
 	}
-	return writeManagedFile(stamp, []byte(want+"\n"), 0o600)
+	return writeManagedFile(workspace, stamp, []byte(want+"\n"), 0o600)
 }
 
 func discoverEnvironmentRoot(workspace, envID string) (string, bool) {
@@ -185,7 +190,7 @@ func discoverEnvironmentRoot(workspace, envID string) (string, bool) {
 	return "", false
 }
 
-func writeEnvironmentShellHooks(root string, pathDirs []string) (zdot, bashEnv string, err error) {
+func writeEnvironmentShellHooks(workspace, root string, pathDirs []string) (zdot, bashEnv string, err error) {
 	if root == "" || len(pathDirs) == 0 {
 		return "", "", nil
 	}
@@ -196,12 +201,12 @@ func writeEnvironmentShellHooks(root string, pathDirs []string) (zdot, bashEnv s
 	prepend := strings.Join(pathDirs, string(os.PathListSeparator))
 	snippet := environmentPathHook(prepend)
 	for _, name := range []string{".zshenv", ".zprofile", ".zshrc"} {
-		if err := writeManagedFile(filepath.Join(zdot, name), []byte(snippet), 0o600); err != nil {
+		if err := writeManagedFile(workspace, filepath.Join(zdot, name), []byte(snippet), 0o600); err != nil {
 			return "", "", err
 		}
 	}
 	bashEnv = filepath.Join(zdot, environmentBashEnvName)
-	if err := writeManagedFile(bashEnv, []byte(snippet), 0o600); err != nil {
+	if err := writeManagedFile(workspace, bashEnv, []byte(snippet), 0o600); err != nil {
 		return "", "", err
 	}
 	return zdot, bashEnv, nil

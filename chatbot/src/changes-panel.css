@@ -1,0 +1,372 @@
+/* "改动" view of the conversation side panel.
+ * Tabs sit in the artifact panel header; the list and the diff reuse the same
+ * panel chrome so opening changes does not move the conversation.
+ */
+.chat-shell .artifact-panel .artifact-panel-tabs {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  border-radius: 9px;
+  padding: 2px;
+  background: var(--subtle);
+}
+.chat-shell .artifact-panel .artifact-panel-tabs button {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: 5px;
+  border-radius: 7px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .artifact-panel-tabs button small {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.chat-shell .artifact-panel .artifact-panel-tabs button:hover {
+  color: var(--text);
+}
+.chat-shell .artifact-panel .artifact-panel-tabs button.is-active {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+[data-theme="dark"] .chat-shell .artifact-panel .artifact-panel-tabs button.is-active {
+  background: #2f2f2f;
+  box-shadow: none;
+}
+.chat-shell .artifact-panel .artifact-panel-tabs button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chat-shell .artifact-panel .changes-panel {
+  min-width: 0;
+  padding-bottom: 14px;
+}
+.chat-shell .artifact-panel .changes-toolbar {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+  background: var(--surface);
+}
+.chat-shell .artifact-panel .changes-summary {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .changes-summary strong {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.chat-shell .artifact-panel .changes-summary i,
+.chat-shell .artifact-panel .change-stat i {
+  font-style: normal;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-shell .artifact-panel .is-add {
+  color: #1a7f37;
+}
+.chat-shell .artifact-panel .is-del {
+  color: var(--error);
+}
+[data-theme="dark"] .chat-shell .artifact-panel .is-add {
+  color: #6bc46d;
+}
+.chat-shell .artifact-panel .is-new {
+  color: var(--muted);
+}
+
+.chat-shell .artifact-panel .changes-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+}
+.chat-shell .artifact-panel .change-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  border-radius: 9px;
+  padding: 7px 8px;
+  text-align: left;
+}
+.chat-shell .artifact-panel .change-row:hover {
+  background: var(--hover);
+}
+.chat-shell .artifact-panel .change-row.is-selected {
+  background: var(--selected);
+}
+.chat-shell .artifact-panel .change-status {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--subtle);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.chat-shell .artifact-panel .change-status.is-A {
+  color: #1a7f37;
+  background: color-mix(in srgb, #1a7f37 12%, transparent);
+}
+.chat-shell .artifact-panel .change-status.is-D {
+  color: var(--error);
+  background: color-mix(in srgb, #b42318 12%, transparent);
+}
+.chat-shell .artifact-panel .change-status.is-R,
+.chat-shell .artifact-panel .change-status.is-C {
+  color: #8a5a00;
+  background: color-mix(in srgb, #b7791f 14%, transparent);
+}
+.chat-shell .artifact-panel .change-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+.chat-shell .artifact-panel .change-copy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .change-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-shell .artifact-panel .change-stat {
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-shell .artifact-panel .change-row-arrow {
+  flex: none;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.chat-shell .artifact-panel .changes-note {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.chat-shell .artifact-panel .changes-note.is-error {
+  color: var(--error);
+}
+.chat-shell .artifact-panel .changes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 42px 24px 20px;
+  color: var(--muted);
+  text-align: center;
+}
+.chat-shell .artifact-panel .changes-empty p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+.chat-shell .artifact-panel .changes-empty small {
+  max-width: 300px;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+/* The empty state names the work branch and links to the code host: committed work
+   never shows up here, so the branch is the only way back to it. */
+.chat-shell .artifact-panel .changes-empty code {
+  border-radius: 5px;
+  padding: 1px 4px;
+  background: var(--subtle);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.chat-shell .artifact-panel .changes-branch-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  font-size: 11.5px;
+}
+.chat-shell .artifact-panel .changes-branch-link:hover {
+  text-decoration: underline;
+}
+.chat-shell .artifact-panel .changes-footnote {
+  margin: 8px 0 0;
+  padding: 8px 16px 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.chat-shell .artifact-panel .changes-detail-bar {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+  background: var(--surface);
+}
+.chat-shell .artifact-panel .changes-back {
+  display: inline-flex;
+  height: 26px;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  border-radius: 7px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chat-shell .artifact-panel .changes-back:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.chat-shell .artifact-panel .changes-detail-path {
+  overflow: hidden;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-shell .artifact-panel .diff-body {
+  overflow-x: auto;
+  padding: 8px 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.chat-shell .artifact-panel .diff-hunk {
+  display: flex;
+  min-width: max-content;
+  gap: 10px;
+  margin: 4px 0;
+  padding: 3px 16px;
+  background: color-mix(in srgb, var(--line) 35%, transparent);
+  color: var(--muted);
+}
+.chat-shell .artifact-panel .diff-hunk em {
+  color: var(--muted);
+  font-style: normal;
+  opacity: 0.8;
+}
+.chat-shell .artifact-panel .diff-line {
+  display: flex;
+  min-width: 100%;
+  width: max-content;
+  padding-right: 16px;
+  white-space: pre;
+}
+.chat-shell .artifact-panel .diff-line.is-add {
+  background: color-mix(in srgb, #1a7f37 11%, transparent);
+}
+.chat-shell .artifact-panel .diff-line.is-del {
+  background: color-mix(in srgb, #b42318 11%, transparent);
+}
+[data-theme="dark"] .chat-shell .artifact-panel .diff-line.is-add {
+  background: color-mix(in srgb, #6bc46d 14%, transparent);
+}
+[data-theme="dark"] .chat-shell .artifact-panel .diff-line.is-del {
+  background: color-mix(in srgb, #f28c7e 14%, transparent);
+}
+.chat-shell .artifact-panel .diff-no {
+  width: 38px;
+  flex: none;
+  padding-right: 6px;
+  color: var(--muted);
+  text-align: right;
+  opacity: 0.7;
+  user-select: none;
+}
+.chat-shell .artifact-panel .diff-mark {
+  width: 12px;
+  flex: none;
+  color: var(--muted);
+  user-select: none;
+}
+.chat-shell .artifact-panel .diff-line.is-add .diff-mark {
+  color: #1a7f37;
+}
+.chat-shell .artifact-panel .diff-line.is-del .diff-mark {
+  color: var(--error);
+}
+.chat-shell .artifact-panel .diff-text {
+  flex: 1;
+  color: var(--text);
+}
+
+/* Header shortcut: opens the panel directly on the changes view. */
+.chat-shell .changes-toggle .changes-toggle-count {
+  min-width: 16px;
+  border-radius: 999px;
+  padding: 0 4px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* The header toggle is icon-sized by default; this shortcut also carries a
+   count, so let it grow instead of clipping the label. */
+.chat-shell .conversation-header .panel-toggle.changes-toggle {
+  width: auto;
+  min-width: 36px;
+  gap: 5px;
+  padding: 0 8px;
+  overflow: visible;
+}
+.chat-shell .conversation-header .changes-toggle-label {
+  font-size: 12px;
+  line-height: 1;
+}
+.chat-shell .conversation-header .changes-toggle-count {
+  color: var(--navigation-secondary);
+}
+@media (max-width: 720px) {
+  .chat-shell .conversation-header .changes-toggle-label {
+    display: none;
+  }
+}

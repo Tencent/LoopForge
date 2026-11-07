@@ -27,14 +27,14 @@ func TestEnsureSkillFrontmatterFillsMissingDescription(t *testing.T) {
 }
 
 func TestEnsureSkillFrontmatterAddsNameAndDescription(t *testing.T) {
-	got := string(ensureSkillFrontmatter([]byte("# DNSPod Issue 修复\n"), "dnspod-issue-fix", "openclaw-universal SMALL"))
-	if !strings.HasPrefix(got, "---\nname: dnspod-issue-fix\n") {
+	got := string(ensureSkillFrontmatter([]byte("# DemoDNS Issue 修复\n"), "demodns-issue-fix", "openclaw-universal SMALL"))
+	if !strings.HasPrefix(got, "---\nname: demodns-issue-fix\n") {
 		t.Fatalf("missing name frontmatter: %q", got)
 	}
 	if !strings.Contains(got, `description: "openclaw-universal SMALL"`) && !strings.Contains(got, "description: openclaw-universal SMALL") {
 		t.Fatalf("missing description: %q", got)
 	}
-	if !strings.Contains(got, "# DNSPod Issue 修复") {
+	if !strings.Contains(got, "# DemoDNS Issue 修复") {
 		t.Fatalf("body was dropped: %q", got)
 	}
 }

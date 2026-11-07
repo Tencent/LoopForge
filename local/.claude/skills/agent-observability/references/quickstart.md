@@ -129,7 +129,6 @@ PY
 - 没有日志：检查 hook 命令路径。
 - `ms` 为空：通常是 pre/post 未配对。
 - 没有 `usage`：`transcript_path` 缺失、tail 无 usage，或增量已去重。
-- AgentLens 未启用：检查 `.state.json` 的 `_agentlens.enabled` / `last_error`。
 
 ### 已知问题（未修复）
 

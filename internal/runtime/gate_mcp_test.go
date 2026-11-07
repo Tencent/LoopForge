@@ -19,7 +19,7 @@ func TestGateMCPSubmitWritesStructuredResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	resultPath := ".agentflow/gate-results/review/attempt-1.json"
-	server, err := materializeGateMCP(configRoot, ".agentflow/config/reviewer/gate-mcp", resultPath, "local")
+	server, err := materializeGateMCP(workspace, configRoot, ".agentflow/config/reviewer/gate-mcp", resultPath, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestMaterializeInvocationInjectsGateMCP(t *testing.T) {
 }
 
 func TestMockGateDecisionSupportsAttemptSequence(t *testing.T) {
-	agent := domain.AgentDefinition{Instructions: "demo [[mock:gate=rework,pass]]"}
+	agent := domain.AgentDefinition{Prompt: "demo [[mock:gate=rework,pass]]"}
 	if got := mockGateDecision(agent, ".agentflow/gate-results/review/attempt-1.json"); got != "rework" {
 		t.Fatalf("attempt 1 decision=%q", got)
 	}
@@ -95,7 +95,7 @@ func TestMockGateDecisionSupportsAttemptSequence(t *testing.T) {
 }
 
 func TestMockGateResultSupportsRealisticDetails(t *testing.T) {
-	agent := domain.AgentDefinition{Instructions: strings.Join([]string{
+	agent := domain.AgentDefinition{Prompt: strings.Join([]string{
 		"[[mock:gate=human]]",
 		"[[mock:reason=自动化证据无法覆盖业务例外]]",
 		"[[mock:action=请产品负责人确认是否接受该例外]]",
@@ -127,7 +127,7 @@ func TestMaterializeGateMCPSelectsLinuxForDocker(t *testing.T) {
 	if err := os.MkdirAll(configRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := materializeGateMCP(configRoot, ".agentflow/config/reviewer/gate-mcp", "result.json", "docker"); err != nil {
+	if _, err := materializeGateMCP(dir, configRoot, ".agentflow/config/reviewer/gate-mcp", "result.json", "docker"); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(configRoot, "gate-mcp"))

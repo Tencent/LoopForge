@@ -41,23 +41,35 @@ func (m *Manager) RunWorkspace(runID string) string {
 }
 
 func (m *Manager) Create(ctx context.Context, runID, nodeID string, profile domain.SandboxProfile) (Sandbox, error) {
-	return m.open(ctx, safeID(runID+"-"+nodeID), profile, true, true, SandboxRequirements{}, RunCredentials{}, SandboxResources{})
+	id := safeID(runID + "-" + nodeID)
+	return m.open(ctx, id, id, profile, true, true, SandboxRequirements{}, RunCredentials{}, SandboxResources{})
 }
 
 // AcquirePersistent reuses a run/issue workspace across SOP nodes. An existing
 // git checkout is kept so later nodes continue the same branch.
 func (m *Manager) AcquirePersistent(ctx context.Context, persistID string, profile domain.SandboxProfile) (Sandbox, error) {
-	return m.open(ctx, "persist-"+safeID(persistID), profile, false, false, SandboxRequirements{}, RunCredentials{}, SandboxResources{})
+	id := "persist-" + safeID(persistID)
+	return m.open(ctx, id, id, profile, false, false, SandboxRequirements{}, RunCredentials{}, SandboxResources{})
 }
 
 // AcquireRun opens or reconstructs the one sandbox/workspace owned by a
 // workflow run. Requirements must be aggregated across all workflow providers
 // before this call so Docker mounts cannot depend on whichever node runs first.
 func (m *Manager) AcquireRun(ctx context.Context, runID string, profile domain.SandboxProfile, requirements SandboxRequirements, credentials RunCredentials, resources SandboxResources) (Sandbox, error) {
-	return m.open(ctx, safeID(runID), profile, false, false, requirements, credentials, resources)
+	return m.AcquireRunIn(ctx, runID, runID, profile, requirements, credentials, resources)
 }
 
-func (m *Manager) open(ctx context.Context, id string, profile domain.SandboxProfile, wipe, ephemeral bool, requirements SandboxRequirements, credentials RunCredentials, resources SandboxResources) (Sandbox, error) {
+// AcquireRunIn opens the sandbox of runID on the workspace of workspaceRunID.
+// A child SOP keeps its own sandbox (lock, container, environment install)
+// but works in the checkout of the run that owns the workspace.
+func (m *Manager) AcquireRunIn(ctx context.Context, runID, workspaceRunID string, profile domain.SandboxProfile, requirements SandboxRequirements, credentials RunCredentials, resources SandboxResources) (Sandbox, error) {
+	if strings.TrimSpace(workspaceRunID) == "" {
+		workspaceRunID = runID
+	}
+	return m.open(ctx, safeID(runID), safeID(workspaceRunID), profile, false, false, requirements, credentials, resources)
+}
+
+func (m *Manager) open(ctx context.Context, id, dir string, profile domain.SandboxProfile, wipe, ephemeral bool, requirements SandboxRequirements, credentials RunCredentials, resources SandboxResources) (Sandbox, error) {
 	lock, err := m.acquireLock(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox lock: %w", err)
@@ -66,7 +78,7 @@ func (m *Manager) open(ctx context.Context, id string, profile domain.SandboxPro
 		_ = unlockFile(lock)
 		return nil, err
 	}
-	workspace := filepath.Join(m.root, id)
+	workspace := filepath.Join(m.root, dir)
 	if wipe {
 		if err := os.RemoveAll(workspace); err != nil {
 			return fail(fmt.Errorf("clean sandbox workspace: %w", err))
@@ -162,6 +174,14 @@ func (m *Manager) RunsWithIdleDockerSandbox(ctx context.Context, runIDs []string
 	for _, runID := range runIDs {
 		id := safeID(runID)
 		if id == "" {
+			continue
+		}
+		// A child SOP's container is named after the child but binds the
+		// workspace of the run owning the checkout; its lock is the child's.
+		if _, ok := found[dockerContainerName(id)]; ok {
+			if !m.workspaceInUse(id) {
+				out = append(out, runID)
+			}
 			continue
 		}
 		for _, workspace := range []string{id, "persist-" + id} {
@@ -313,7 +333,7 @@ type managedSandbox struct {
 	ephemeral     bool
 	workspace     string
 	credentials   RunCredentials
-	execMu        sync.RWMutex
+	execMu        sync.Mutex
 	credentialsMu sync.RWMutex
 }
 
@@ -398,13 +418,8 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 		return "", ctx.Err()
 	}
 	defer func() { <-s.slots }()
-	if command.Concurrent {
-		s.execMu.RLock()
-		defer s.execMu.RUnlock()
-	} else {
-		s.execMu.Lock()
-		defer s.execMu.Unlock()
-	}
+	s.execMu.Lock()
+	defer s.execMu.Unlock()
 	s.credentialsMu.RLock()
 	credentials := s.credentials
 	s.credentialsMu.RUnlock()

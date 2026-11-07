@@ -188,7 +188,6 @@ func TestCanceledQueuedRunnerTaskScrubsCredentials(t *testing.T) {
 		CredentialSource:  domain.RuntimeAuthPersonal,
 		ClaudeCodeAPIKey:  "claude-secret",
 		ClaudeCodeBaseURL: "https://claude.example",
-		TaihuPAT:          "tai_pat_secret",
 	}
 	if err := s.PutRunnerTask(task); err != nil {
 		t.Fatal(err)
@@ -197,7 +196,7 @@ func TestCanceledQueuedRunnerTaskScrubsCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	final, _ := s.RunnerTask(task.ID)
-	if final.Invocation.ClaudeCodeAPIKey != "" || final.Invocation.ClaudeCodeBaseURL != "" || final.Invocation.TaihuPAT != "" {
+	if final.Invocation.ClaudeCodeAPIKey != "" || final.Invocation.ClaudeCodeBaseURL != "" {
 		t.Fatalf("task credentials survived cancellation: %+v", final.Invocation)
 	}
 }

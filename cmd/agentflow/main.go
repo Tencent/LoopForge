@@ -5,12 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -89,8 +91,19 @@ func main() {
 	cliAction := flag.String("cli-action", "", "local managed CLI administration: status, update, or rollback; exits without starting services")
 	cliProvider := flag.String("cli-provider", "", "provider for CLI rollback: codex, codebuddy, or claude-code")
 	cliTimeout := flag.Duration("cli-timeout", 80*time.Minute, "total managed CLI operation timeout")
+	browserImage := flag.Bool("browser-image", false, "build or pull the agent browser sidecar image, print its name and exit")
 	flag.Parse()
 	loadDotEnv()
+	if *browserImage {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		image, err := runtime.EnsureBrowserImage(ctx)
+		stop()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(image)
+		return
+	}
 	if os.Getenv("AGENTFLOW_SESSION_SECRET") == "" && *cliAction == "" {
 		log.Fatal("AGENTFLOW_SESSION_SECRET is required; generate with openssl rand -hex 32")
 	}
@@ -171,15 +184,29 @@ func main() {
 		log.Printf("platform MCP / knowledge proxy base=%s", endpoints.PlatformBase)
 	}
 
+	mainLn, inherited, err := listenMain(endpoints.ListenAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
 	var srv *http.Server
 	var syncSvc *tracker.Service
-	stopAssistantBackground := func() {}
+	var background *httpapi.Background
+	var agentToolSrv *http.Server
+	readyStatus := "serving"
 	switch role {
 	case "worker":
 		e.ConfigureControl(engine.ControlConfig{Role: role, URL: endpoints.ControlURL, Token: endpoints.ControlToken, APIURL: endpoints.APIBase})
 		e.StartInstanceHeartbeat(claimCtx)
 		srv = &http.Server{Addr: endpoints.ListenAddr, Handler: workerHandler(e), ReadHeaderTimeout: 10 * time.Second}
 	default:
+		readyStatus = handoverStatus
+		agentToolLn, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			log.Fatal(err)
+		}
+		endpoints = endpoints.WithPrivateAgentToolGateway("http://" + agentToolLn.Addr().String())
+		config.SetCurrent(endpoints)
+		log.Printf("agent tool gateway=%s", endpoints.AgentToolGateway)
 		e.ConfigureControl(engine.ControlConfig{Token: endpoints.ControlToken, FallbackURL: endpoints.WorkerFallbackURL, APIURL: endpoints.APIBase})
 		listenAddr := endpoints.ListenAddr
 		syncSvc = tracker.NewService()
@@ -198,11 +225,22 @@ func main() {
 		}
 		syncSvc.StartMRStateSync(s)
 		notifications := notification.New(s)
-		handler, stopBackground := httpapi.NewWithNotificationsAndBackground(claimCtx, s, e, syncSvc, *basicUser, *basicPass, notifications)
-		stopAssistantBackground = stopBackground
-		defer stopAssistantBackground()
+		opts := httpapi.BackgroundOptions{}
+		if inherited {
+			log.Printf("taking over listener %s from pid %d; startup recovery waits for it to exit", mainLn.Addr(), os.Getppid())
+			opts.RecoveryGate = predecessorExited()
+		}
+		handler, bg := httpapi.NewWithNotificationsAndBackground(claimCtx, s, e, syncSvc, *basicUser, *basicPass, notifications, opts)
+		background = bg
+		defer background.Stop()
 		notifications.Start(claimCtx)
 		srv = &http.Server{Addr: listenAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+		agentToolSrv = &http.Server{Handler: httpapi.AgentToolHandler(handler), ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			if err := agentToolSrv.Serve(agentToolLn); err != nil && err != http.ErrServerClosed {
+				log.Printf("agent tool gateway: %v", err)
+			}
+		}()
 	}
 
 	// Configure control endpoints and wire the API's Runner transport before
@@ -213,24 +251,46 @@ func main() {
 	}
 	stopCLIUpdates := startManagedCLIUpdates(claimCtx, role, executeRuns)
 	defer stopCLIUpdates()
+	var handedOver atomic.Bool
 	stopped := make(chan struct{})
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		<-sig
-		log.Printf("shutting down %s: stop claiming, drain local runs, then stop HTTP...", role)
-		stopClaim()
-		stopAssistantBackground()
-		stopCLIUpdates() // Cancel updater subprocesses and join before draining.
-		drainTimeout := 30 * time.Minute
-		if role == "api" {
-			drainTimeout = 15 * time.Second
+		if role != "worker" {
+			signal.Notify(sig, syscall.SIGHUP)
 		}
-		if raw := strings.TrimSpace(os.Getenv("AGENTFLOW_DRAIN_TIMEOUT")); raw != "" {
-			if parsed, parseErr := time.ParseDuration(raw); parseErr == nil && parsed > 0 {
-				drainTimeout = parsed
+	wait:
+		for received := range sig {
+			if received != syscall.SIGHUP {
+				log.Printf("shutting down %s on %s: stop claiming, drain local work, then stop HTTP...", role, received)
+				break
 			}
+			log.Printf("%s: handing listener %s over to a new process...", received, mainLn.Addr())
+			successor, err := handover(mainLn, handoverReadyTimeout)
+			if err != nil {
+				log.Printf("handover failed, this process keeps serving: %v", err)
+				continue
+			}
+			handedOver.Store(true)
+			srv.SetKeepAlivesEnabled(false)
+			_ = mainLn.Close()
+			background.HandedOver()
+			log.Printf("handover complete: pid %d serves new requests; draining in-flight work", successor.Pid)
+			break wait
 		}
+		go func() {
+			for received := range sig {
+				log.Printf("ignoring %s while draining", received)
+			}
+		}()
+		stopClaim()
+		background.StopClaiming()
+		if syncSvc != nil {
+			syncSvc.StopMRStateSync()
+			syncSvc.StopAutoSync()
+		}
+		stopCLIUpdates() // Cancel updater subprocesses and join before draining.
+		drainTimeout := resolveDrainTimeout()
 		drainCtx, cancelDrain := context.WithTimeout(context.Background(), drainTimeout)
 		defer cancelDrain()
 		if err := e.Drain(drainCtx); err != nil {
@@ -238,14 +298,24 @@ func main() {
 		} else {
 			log.Printf("all local runs drained")
 		}
+		if background != nil {
+			if n := background.Inflight(); n > 0 {
+				log.Printf("waiting up to %s for %d in-process task(s) (conversations, clarifications, follow-ups, handoffs)", drainTimeout, n)
+			}
+			if err := background.WaitInflight(drainCtx); err != nil {
+				log.Printf("drain timeout with %d in-process task(s): %v", background.Inflight(), err)
+			} else {
+				log.Printf("all in-process tasks drained")
+			}
+		}
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelShutdown()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			log.Printf("http shutdown: %v", err)
 		}
-		if syncSvc != nil {
-			syncSvc.StopMRStateSync()
-			syncSvc.StopAutoSync()
+		background.Stop()
+		if agentToolSrv != nil {
+			_ = agentToolSrv.Shutdown(shutdownCtx)
 		}
 		s.Close()
 		close(stopped)
@@ -254,19 +324,32 @@ func main() {
 	if strings.HasPrefix(displayAddr, ":") {
 		displayAddr = "localhost" + displayAddr
 	}
-	serve := srv.ListenAndServe
+	serve := func() error { return srv.Serve(mainLn) }
 	if role != "worker" && *tlsCert != "" && *tlsKey != "" {
-		log.Printf("AgentFlow %s listening on https://%s", role, displayAddr)
-		serve = func() error { return srv.ListenAndServeTLS(*tlsCert, *tlsKey) }
+		log.Printf("LoopForge %s listening on https://%s", role, displayAddr)
+		serve = func() error { return srv.ServeTLS(mainLn, *tlsCert, *tlsKey) }
 	} else {
-		log.Printf("AgentFlow %s listening on http://%s", role, displayAddr)
+		log.Printf("LoopForge %s listening on http://%s", role, displayAddr)
 	}
-	if err := serve(); err != nil && err != http.ErrServerClosed {
+	signalReady(readyStatus)
+	if err := serve(); err != nil && err != http.ErrServerClosed && !handedOver.Load() {
 		stopClaim()
 		stopCLIUpdates() // log.Fatal bypasses deferred cleanup.
 		log.Fatal(err)
 	}
 	<-stopped
+}
+
+// resolveDrainTimeout bounds how long a stopping or handed-over process waits
+// for local runs and in-process tasks; long tasks may outlive several deploys.
+func resolveDrainTimeout() time.Duration {
+	drainTimeout := 120 * time.Minute
+	if raw := strings.TrimSpace(os.Getenv("AGENTFLOW_DRAIN_TIMEOUT")); raw != "" {
+		if parsed, parseErr := time.ParseDuration(raw); parseErr == nil && parsed > 0 {
+			drainTimeout = parsed
+		}
+	}
+	return drainTimeout
 }
 
 func startManagedCLIUpdates(ctx context.Context, role string, executeRuns bool) func() {

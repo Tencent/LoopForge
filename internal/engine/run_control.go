@@ -202,6 +202,26 @@ func (e *Engine) controlTokenOK(got string) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
+// ControlTokenHeader carries the shared service credential between processes.
+const ControlTokenHeader = controlTokenHeader
+
+// InternalAPI returns the API listener reachable from this process and the
+// shared service token, for process-to-process calls on the API plane.
+func (e *Engine) InternalAPI() (base, token string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.workspaceControlBase, e.controlToken
+}
+
+// ServiceTokenOK reports whether got is the configured service token. Unlike
+// the interrupt policy, an unconfigured token never authorizes.
+func (e *Engine) ServiceTokenOK(got string) bool {
+	e.mu.Lock()
+	configured := e.controlToken != ""
+	e.mu.Unlock()
+	return configured && e.controlTokenOK(got)
+}
+
 func postRunInterrupt(client *http.Client, baseURL, runID, token string) {
 	if client == nil || strings.TrimSpace(baseURL) == "" || strings.TrimSpace(runID) == "" {
 		return

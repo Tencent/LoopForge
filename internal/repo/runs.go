@@ -20,7 +20,7 @@ import (
 
 func runFromRow(row runRow) domain.Run {
 	run := domain.Run{
-		ID: row.ID, WorkflowID: row.WorkflowID, Status: row.Status, Revision: row.Revision,
+		ID: row.ID, Kind: row.Kind, WorkflowID: row.WorkflowID, Status: row.Status, Revision: row.Revision,
 		Input: row.Input, ToolCalls: row.ToolCalls,
 		TelemetrySequence: row.TelemetrySequence, LogSequence: row.LogSequence,
 		OwnerInstanceID: row.OwnerInstanceID, Generation: row.Generation,
@@ -62,7 +62,7 @@ func runFromRow(row runRow) domain.Run {
 
 func runRowValues(run domain.Run) map[string]any {
 	return map[string]any{
-		"id": run.ID, "workflow_id": run.WorkflowID, "status": run.Status, "revision": run.Revision,
+		"id": run.ID, "kind": run.Kind, "workflow_id": run.WorkflowID, "status": run.Status, "revision": run.Revision,
 		"input": run.Input, "human_context": run.HumanContext,
 		"quota_project_id": strings.TrimSpace(run.ExecutionContext.ProjectID), "quota_parent_run_id": strings.TrimSpace(run.ExecutionContext.ParentRunID),
 		"quota_exempt": run.ConcurrencyExempt, "admission_state": run.AdmissionState, "queue_entered_at": timePtr(run.QueueEnteredAt),
@@ -122,8 +122,21 @@ func (r *RunsRepo) RunSummaries() ([]domain.Run, error) {
 // RunSummariesFor filters headers before loading child rows. Project fallback
 // uses the same Go normalization as legacy runs, without hydrating issue payloads.
 func (r *RunsRepo) RunSummariesFor(filter domain.AnalyticsFilter, issueID string) ([]domain.Run, error) {
+	runs, _, err := r.runSummariesFor(filter, issueID)
+	return runs, err
+}
+
+// RunSummariesWithEventsFor returns list-safe summaries together with the timing
+// events already read to compute each Run.Timing. Callers that need both (the
+// business-domain report) can therefore scan runs, run_nodes and run_events once
+// instead of twice; the rows and projections are identical to RunSummariesFor.
+func (r *RunsRepo) RunSummariesWithEventsFor(filter domain.AnalyticsFilter, issueID string) ([]domain.Run, map[string][]domain.RunEvent, error) {
+	return r.runSummariesFor(filter, issueID)
+}
+
+func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string) ([]domain.Run, map[string][]domain.RunEvent, error) {
 	if filter.ProjectIDs != nil && len(filter.ProjectIDs) == 0 {
-		return []domain.Run{}, nil
+		return []domain.Run{}, nil, nil
 	}
 	q := r.DB
 	if filter.ProjectIDs != nil {
@@ -162,16 +175,17 @@ func (r *RunsRepo) RunSummariesFor(filter domain.AnalyticsFilter, issueID string
 	// 与 master 的 runSummaryHeaderColumns 一致：列表携带控制位与
 	// human_context、多仓 repositories，且 input 在 SQL 层截断到 500 字符
 	//（master 用 LEFT(input, 500)，使 handler 的 clip 不再追加省略号）。
-	// List rows only need the frozen SOP identity. The graph, scripts, and
-	// commands stay in the snapshot column and are not transferred.
-	snapshotExpr := "json_object('id', json_extract(snapshot, '$.id'), 'name', json_extract(snapshot, '$.name')) AS snapshot"
+	// List rows only need the frozen SOP identity and whether it is a free
+	// collaboration task (待我确认 and status badges depend on it). The graph,
+	// scripts, and commands stay in the snapshot column and are not transferred.
+	snapshotExpr := "json_object('id', json_extract(snapshot, '$.id'), 'name', json_extract(snapshot, '$.name'), 'collaborationMode', json_extract(snapshot, '$.collaborationMode')) AS snapshot"
 	if r.isMySQL() {
-		snapshotExpr = "JSON_OBJECT('id', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.id')), 'name', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.name'))) AS snapshot"
+		snapshotExpr = "JSON_OBJECT('id', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.id')), 'name', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.name')), 'collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode'))) AS snapshot"
 	}
-	if err := q.Select("id", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
+	if err := q.Select("id", "kind", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
 		Order("created_at DESC, id DESC").
 		Find(&rows).Error; err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	candidates := make([]domain.Run, 0, len(rows))
 	for _, row := range rows {
@@ -200,21 +214,21 @@ func (r *RunsRepo) RunSummariesFor(filter domain.AnalyticsFilter, issueID string
 	}
 	if len(ids) == 0 {
 		if strings.TrimSpace(filter.ProjectID) != "" {
-			return []domain.Run{}, nil
+			return []domain.Run{}, nil, nil
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 	nodes, err := r.runNodeSummaries(ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	artifactCounts, err := r.artifactCounts(ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	timingEvents, err := r.runTimingEvents(ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	now := time.Now().UTC()
 	out := make([]domain.Run, 0, len(candidates))
@@ -243,9 +257,9 @@ func (r *RunsRepo) RunSummariesFor(filter domain.AnalyticsFilter, issueID string
 	if len(out) == 0 {
 		// 与 master 的 database/sql 实现保持同一 wire 行为：空结果序列化为
 		// null 而非 []（nil slice 语义）。
-		return nil, nil
+		return nil, nil, nil
 	}
-	return out, nil
+	return out, timingEvents, nil
 }
 
 // RunStatuses returns only the fields needed to reconcile task state. It keeps
@@ -738,6 +752,30 @@ func (r *RunsRepo) runTimingEvents(ids []string) (map[string][]domain.RunEvent, 
 	return out, nil
 }
 
+// RunProjectIDs batches authorization metadata without loading run snapshots,
+// nodes, events or artifact content. Missing runs are absent from the map.
+func (r *RunsRepo) RunProjectIDs(ids []string) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	project := "json_extract(execution_context, '$.projectId')"
+	if r.isMySQL() {
+		project = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
+	}
+	for start := 0; start < len(ids); start += 500 {
+		var rows []struct {
+			ID        string
+			ProjectID string
+		}
+		if err := r.DB.Table("runs").Select("id, "+project+" AS project_id").
+			Where("id IN ?", ids[start:min(start+500, len(ids))]).Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			out[row.ID] = row.ProjectID
+		}
+	}
+	return out, nil
+}
+
 // RunExists performs a primary-key lookup without loading nodes or snapshots.
 func (r *RunsRepo) RunExists(id string) bool {
 	var row runRow
@@ -930,6 +968,9 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 			if run.WorkspaceCleanupNotBefore.IsZero() && current.CleanupNotBefore != nil {
 				run.WorkspaceCleanupNotBefore = *current.CleanupNotBefore
 			}
+			if run.IsWorkspace() {
+				keepConversationRunFields(&run, current)
+			}
 		} else if err != gorm.ErrRecordNotFound {
 			return err
 		}
@@ -937,7 +978,7 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 			if err != nil {
 				return ErrRunDecisionStale
 			}
-			if run.Status == "running" {
+			if run.Status == "running" || (!run.PauseRequested && !run.CancelRequested) {
 				if err := tx.Model(&runRow{}).Where("id = ?", run.ID).Updates(map[string]any{"cancel_requested": false, "pause_requested": false}).Error; err != nil {
 					return err
 				}
@@ -971,7 +1012,7 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 		// ClearRunControl, so a worker PutRun can never clobber an API-side
 		// cancel/pause request (master's writeRun has the same omission).
 		if err := upsertColumns(tx, "runs", runRowValues(run), []string{
-			"workflow_id", "status", "revision", "input", "human_context", "sandbox_id", "repository", "repositories", "snapshot",
+			"kind", "workflow_id", "status", "revision", "input", "human_context", "sandbox_id", "repository", "repositories", "snapshot",
 			"execution_context", "usage_json", "tool_calls", "telemetry_sequence",
 			"log_sequence", "workspace_cleaned_at", "updated_at", "admission_state", "queue_entered_at", "quota_project_id", "quota_parent_run_id", "quota_exempt", "quota_bucket",
 		}); err != nil {
@@ -1055,7 +1096,7 @@ func (r *RunsRepo) DeleteRun(id string) error {
 		if row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return fmt.Errorf("run %s is %s: cancel it before deleting", id, row.Status)
 		}
-		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_evals", "run_workspace_checkpoints", "assistant_group_followups", "sop_handoff_jobs"} {
+		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
 			if err := tx.Table(table).Where("run_id = ?", id).Delete(nil).Error; err != nil {
 				return fmt.Errorf("runs delete %s: %w", id, err)
 			}
@@ -1904,54 +1945,4 @@ func (r *RunsRepo) PutRunAtRevision(v domain.Run, revision int) error {
 	v.UpdatedAt = time.Now().UTC()
 	v.Revision++
 	return r.writeRun(v, revision)
-}
-
-// SwitchRunCollaborationMode atomically replaces the scheduled graph, archives
-// removed node rows in the run snapshot, and sets the operator control flags.
-func (r *RunsRepo) SwitchRunCollaborationMode(run domain.Run, revision int) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		scoped := *r
-		base := *r.deps
-		base.DB = tx
-		scoped.deps = &base
-		if err := scoped.PutRunAtRevision(run, revision); err != nil {
-			return err
-		}
-		ids := []string{}
-		for id := range run.Nodes {
-			ids = append(ids, id)
-		}
-		q := tx.Where("run_id = ?", run.ID)
-		if len(ids) > 0 {
-			q = q.Where("node_id NOT IN ?", ids)
-		}
-		if err := q.Delete(&runNodeRow{}).Error; err != nil {
-			return err
-		}
-		return tx.Model(&runRow{}).Where("id = ?", run.ID).Updates(map[string]any{"pause_requested": run.PauseRequested, "cancel_requested": run.CancelRequested}).Error
-	})
-}
-
-// RestoreRunSOP keeps the SOP graph, task status and issue delivery lock in one
-// transaction, so a stale run decision cannot partially reopen its requirement.
-func (r *RunsRepo) RestoreRunSOP(run domain.Run, revision int, complete bool, source ...SOPHandoffSource) error {
-	r.issues.mu.Lock()
-	defer r.issues.mu.Unlock()
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		base := *r.deps
-		base.DB = tx
-		scoped := *r
-		scoped.deps = &base
-		if len(source) > 0 {
-			assistant := *r.assistant
-			assistant.deps = &base
-			if err := assistant.checkSOPHandoffSource(source[0]); err != nil {
-				return err
-			}
-		}
-		if err := scoped.SwitchRunCollaborationMode(run, revision); err != nil {
-			return err
-		}
-		return r.issues.restoreSOPIssue(tx, run, complete)
-	})
 }

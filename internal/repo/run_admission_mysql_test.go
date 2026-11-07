@@ -296,3 +296,9 @@ func TestMySQLAdmissionBucketsDoNotBlockEachOther(t *testing.T) {
 	}
 	admissionMySQLState(t, stores[0], blocked, "running")
 }
+
+func TestMySQLConversationWorkspacesDoNotHoldSOPSlots(t *testing.T) {
+	stores, prefix := admissionMySQLStores(t)
+	ids := checkConversationWorkspaces(t, stores[0], prefix+"-project", prefix+"-")
+	admissionMySQLCleanup(t, stores[0], ids)
+}

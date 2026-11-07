@@ -24,6 +24,7 @@ type dockerSandbox struct {
 	dockerfile          domain.DockerfileDefinition
 	builtImage          string
 	mu                  sync.Mutex
+	browserMu           sync.Mutex
 	started             bool
 }
 
@@ -63,6 +64,7 @@ func removeDockerSandbox(ctx context.Context, container, image string) {
 	defer cancel()
 	if strings.TrimSpace(container) != "" {
 		_ = exec.CommandContext(ctx, "docker", "rm", "-f", dockerScriptContainerName(container)).Run()
+		removeDockerBrowser(ctx, container)
 		_ = exec.CommandContext(ctx, "docker", "rm", "-f", container).Run()
 	}
 	if ephemeralDockerImage(image) {
@@ -143,6 +145,13 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
 		args = append(args, "-e", environment)
 	}
+	cliPath, err := s.onDemandCLIPath(ctx, command)
+	if err != nil {
+		return "", err
+	}
+	if cliPath != "" {
+		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
+	}
 	args = append(args, s.name)
 	args = append(args, dockerWorkspaceExecArgv(command.Argv)...)
 	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
@@ -166,7 +175,24 @@ if [ -x /workspace/.agentflow/runtime/bin/agentflow ]; then
   PATH=/workspace/.agentflow/runtime/bin:$PATH
   export PATH
 fi
+if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH" ]; then
+  PATH=$PATH:$AGENTFLOW_RUNTIME_CLI_PATH
+  export PATH
+fi
 `
+
+// onDemandCLIPath installs Claude Code for sandboxes of the published runtime
+// image, which does not bundle it, and returns the mounted bin directory. It is
+// appended to PATH so a CLI shipped by an older image still takes precedence.
+func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec) (string, error) {
+	if command.Provider != "claude-code" || len(command.Argv) == 0 || command.Argv[0] != "claude" || RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
+		return "", nil
+	}
+	if _, err := EnsureClaudeCode(ctx); err != nil {
+		return "", err
+	}
+	return ClaudeCodeBinDir(), nil
+}
 
 func dropShellLoginFlag(argv []string) []string {
 	if len(argv) == 0 {
@@ -197,6 +223,7 @@ func (s *dockerSandbox) Recreate(ctx context.Context) error {
 	name := s.name
 	s.mu.Unlock()
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", dockerScriptContainerName(name)).Run()
+	removeDockerBrowser(ctx, name)
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
 	return s.ensureStarted(ctx)
 }
@@ -476,6 +503,9 @@ func DockerImageCached(ctx context.Context, dockerfile domain.DockerfileDefiniti
 	if strings.TrimSpace(dockerfile.Content) == "" {
 		return false
 	}
+	if image := isolatedRuntimeImage(dockerfile); image != "" {
+		return dockerImageExists(ctx, image)
+	}
 	return dockerImageExists(ctx, cachedDockerImageName(dockerfile))
 }
 
@@ -623,10 +653,20 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		return err
 	}
 	args = append(args, stateArgs...)
+	if cliDir := RuntimeCLIDir(); cliDir != "" && image == isolatedRuntimeImage(s.dockerfile) {
+		if err := os.MkdirAll(cliDir, 0o755); err != nil {
+			return fmt.Errorf("prepare runtime CLI directory: %w", err)
+		}
+		args = append(args, "--mount", "type=bind,src="+cliDir+",dst="+cliDir+",readonly")
+	}
 	if p.ReadOnlyRootFS {
 		args = append(args, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m")
 	}
-	args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
+	if image == isolatedRuntimeImage(s.dockerfile) {
+		args = append(args, "--entrypoint", "sh", image, "-lc", "trap : TERM INT; sleep infinity & wait")
+	} else {
+		args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
+	}
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		dropEphemeralDockerImage(s.builtImage)
 		s.builtImage = ""
@@ -686,7 +726,7 @@ func prepareDockerfileBuildContext(workspace string, dockerfile domain.Dockerfil
 	if err != nil {
 		return "", err
 	}
-	if err := writeManagedFile(filepath.Join(root, "Dockerfile"), []byte(dockerfile.Content), 0o600); err != nil {
+	if err := writeManagedFile(workspace, filepath.Join(root, "Dockerfile"), []byte(dockerfile.Content), 0o600); err != nil {
 		return "", err
 	}
 	for name, data := range dockerfile.Files {
@@ -704,7 +744,7 @@ func prepareDockerfileBuildContext(workspace string, dockerfile domain.Dockerfil
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return "", err
 		}
-		if err := writeManagedFile(target, []byte(data), 0o644); err != nil {
+		if err := writeManagedFile(workspace, target, []byte(data), 0o644); err != nil {
 			return "", err
 		}
 	}
@@ -712,6 +752,12 @@ func prepareDockerfileBuildContext(workspace string, dockerfile domain.Dockerfil
 }
 
 func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.DockerfileDefinition) (string, error) {
+	if image := isolatedRuntimeImage(dockerfile); image != "" {
+		if !dockerImageExists(ctx, image) {
+			return "", fmt.Errorf("isolated runtime image %q is not available in the sandbox Docker daemon", image)
+		}
+		return image, nil
+	}
 	image := cachedDockerImageName(dockerfile)
 	if dockerImageExists(ctx, image) {
 		return image, nil
@@ -725,6 +771,13 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		return "", fmt.Errorf("docker build: %w: %s", err, out)
 	}
 	return image, nil
+}
+
+func isolatedRuntimeImage(dockerfile domain.DockerfileDefinition) string {
+	if dockerfile.Content != IsolatedDockerfile || len(dockerfile.Files) != 0 {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv("AGENTFLOW_ISOLATED_IMAGE"))
 }
 
 // IsolatedDockerfile matches the public "generic-backend" environment so both

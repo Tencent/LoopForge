@@ -35,8 +35,27 @@ type SkillDefinition struct {
 	// FileRefs is the manifest of binary assets stored in the skill_files
 	// table (one row per file). Only metadata travels in the payload; the
 	// content is loaded on demand when a run is dispatched.
-	FileRefs  []SkillFileRef `json:"fileRefs,omitempty"`
-	UpdatedAt time.Time      `json:"updatedAt"`
+	FileRefs []SkillFileRef `json:"fileRefs,omitempty"`
+	// Source records where an installed skill came from. A non-nil source
+	// marks the files as a read-only snapshot that only the market update
+	// flow may replace.
+	Source    *SkillSource `json:"source,omitempty"`
+	UpdatedAt time.Time    `json:"updatedAt"`
+}
+
+// SkillSourceSkillHub is the provider of skills installed from skillhub.cn.
+const SkillSourceSkillHub = "skillhub"
+
+// SkillSource identifies the market version a skill snapshot was taken from.
+// SkillHub slugs are only unique per publisher namespace, so both are kept.
+type SkillSource struct {
+	Provider    string    `json:"provider"`
+	Namespace   string    `json:"namespace,omitempty"`
+	Slug        string    `json:"slug"`
+	Version     string    `json:"version"`
+	Homepage    string    `json:"homepage,omitempty"`
+	InstalledAt time.Time `json:"installedAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // SkillFileRef describes one binary file of a skill. Path is relative to the
@@ -70,7 +89,7 @@ type MCPServerDefinition struct {
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	PathEntries      []string          `json:"pathEntries,omitempty"`
 	FileRefs         []MCPFileRef      `json:"fileRefs,omitempty"`
-	AuthType         string            `json:"authType,omitempty"` // empty, taihu-pat
+	AuthType         string            `json:"authType,omitempty"` // empty, github-token
 	TimeoutSec       int               `json:"timeoutSec"`
 	UpdatedAt        time.Time         `json:"updatedAt"`
 }
@@ -299,17 +318,17 @@ func ValidateMCPServer(v MCPServerDefinition) error {
 		return fmt.Errorf("scope 只能为空、project 或 personal")
 	}
 	switch strings.TrimSpace(v.AuthType) {
-	case "", "taihu-pat", "github-token":
+	case "", "github-token":
 	default:
-		return fmt.Errorf("authType must be empty, taihu-pat, or github-token")
+		return fmt.Errorf("authType must be empty or github-token")
 	}
-	if (strings.TrimSpace(v.AuthType) == "taihu-pat" || v.AuthType == "github-token") && strings.TrimSpace(v.Transport) != "http" {
-		return fmt.Errorf("太湖个人令牌认证仅支持 HTTP MCP")
+	if v.AuthType == "github-token" && strings.TrimSpace(v.Transport) != "http" {
+		return fmt.Errorf("GitHub 令牌认证仅支持 HTTP MCP")
 	}
-	if strings.TrimSpace(v.AuthType) == "taihu-pat" || v.AuthType == "github-token" {
+	if v.AuthType == "github-token" {
 		for key := range v.Headers {
 			if strings.EqualFold(strings.TrimSpace(key), "authorization") {
-				return fmt.Errorf("太湖个人令牌认证不允许在资产 Headers 中保存 Authorization")
+				return fmt.Errorf("GitHub 令牌认证不允许在资产 Headers 中保存 Authorization")
 			}
 		}
 	}

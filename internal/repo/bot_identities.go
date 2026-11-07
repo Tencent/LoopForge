@@ -62,7 +62,7 @@ func (r *UsersRepo) NewBotBindingChallenge(bot, sender string, now time.Time) (s
 			return err
 		}
 		if existing.UserID > 0 {
-			return errors.New("当前企业微信账号已绑定，请在个人设置解除后重新绑定")
+			return errors.New("当前企业微信账号已绑定，请在个人配置解除后重新绑定")
 		}
 		if err := tx.Model(&domain.BotBindingChallenge{}).Where("binding_id = ? AND status IN ?", id, []string{"pending", "claimed"}).Update("status", "expired").Error; err != nil {
 			return err
@@ -126,7 +126,7 @@ func (r *UsersRepo) ConfirmBotUserBinding(bot, sender, code string, now time.Tim
 			return ErrBotBindingCode
 		}
 		if binding.UserID > 0 {
-			return errors.New("当前账号已经绑定，请在个人设置查看")
+			return errors.New("当前账号已经绑定，请在个人配置查看")
 		}
 		var challenge domain.BotBindingChallenge
 		if err = tx.Where("binding_id = ? AND status = ?", binding.ID, "claimed").Order("created_at DESC").First(&challenge).Error; err != nil {

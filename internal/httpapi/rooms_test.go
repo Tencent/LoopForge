@@ -47,7 +47,7 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	_ = e.Cancel(got.Message.RunID)
 }
 
-func TestRoomCreatesIssueAndDispatchesSOPOrRole(t *testing.T) {
+func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "room-test-session-secret")
 	root := t.TempDir()
 	s, err := repo.OpenTest()
@@ -87,18 +87,15 @@ func TestRoomCreatesIssueAndDispatchesSOPOrRole(t *testing.T) {
 		t.Fatalf("unexpected message: %+v", msg)
 	}
 
-	roleOnly := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
+	renamed := requestJSONAuthed[domain.ChatRoomView](t, h, owner, http.MethodPatch, "/api/rooms/"+room.ID, map[string]any{
+		"name": "值班群",
+	}, http.StatusOK)
+	if renamed.Name != "值班群" || renamed.ID != room.ID {
+		t.Fatalf("rename: %+v", renamed)
+	}
+	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
 		"title": "交给审查角色", "description": "先看方案", "agentId": "reviewer",
-	}, http.StatusCreated)
-	if roleOnly.Issue.AssigneeType != "agent" || roleOnly.Issue.AssigneeID != "reviewer" || roleOnly.Task != nil || roleOnly.DispatchError != "" {
-		t.Fatalf("role dispatch should assign without starting a run: %+v", roleOnly)
-	}
-	if roleOnly.Message.TargetType != "role" || roleOnly.Message.IssueID != roleOnly.Issue.ID {
-		t.Fatalf("role card: %+v", roleOnly.Message)
-	}
-	if s.IssueHasTask(roleOnly.Issue.ID) {
-		t.Fatal("role-only dispatch started a task")
-	}
+	}, http.StatusBadRequest)
 
 	dispatched := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
 		"title": "按 SOP 交付", "description": "走群聊派单", "workflowId": "room-sop", "agentId": "developer",
@@ -106,30 +103,28 @@ func TestRoomCreatesIssueAndDispatchesSOPOrRole(t *testing.T) {
 	if dispatched.Task == nil || dispatched.Task.RunID == "" || dispatched.Task.IssueID != dispatched.Issue.ID {
 		t.Fatalf("sop dispatch: %+v", dispatched)
 	}
-	if dispatched.Issue.WorkflowID != "room-sop" || dispatched.Issue.AssigneeID != "developer" {
-		t.Fatalf("issue binding: %+v", dispatched.Issue)
+	if dispatched.Issue.WorkflowID != "room-sop" || dispatched.Issue.AssigneeType == "agent" || dispatched.Issue.AssigneeID != "" {
+		t.Fatalf("issue binding should ignore a chat-supplied role: %+v", dispatched.Issue)
 	}
-	if dispatched.Message.TargetType != "both" || dispatched.Message.RunID == "" {
+	if dispatched.Message.TargetType != "sop" || dispatched.Message.AgentID != "" || dispatched.Message.RunID == "" {
 		t.Fatalf("dispatch card: %+v", dispatched.Message)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
+	// The approval card is written when the run goroutine reaches the waiting
+	// node. Dispatch returns as soon as the run row exists, so poll for it.
+	var messages []domain.ChatMessage
+	deadline := time.Now().Add(3 * time.Second)
 	for {
-		run, ok := s.RunState(dispatched.Task.RunID)
-		if ok && run.Nodes["approval"] != nil && run.Nodes["approval"].Status == "waiting_approval" {
+		messages = requestJSONAuthed[[]domain.ChatMessage](t, h, owner, http.MethodGet, "/api/rooms/"+room.ID+"/messages", nil, http.StatusOK)
+		if len(messages) == 3 && messages[2].Kind == domain.ChatKindApproval {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("dispatch did not reach its approval gate: %+v", run)
+			t.Fatalf("messages: %+v", messages)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
-
-	messages := requestJSONAuthed[[]domain.ChatMessage](t, h, owner, http.MethodGet, "/api/rooms/"+room.ID+"/messages", nil, http.StatusOK)
-	if len(messages) != 4 {
-		t.Fatalf("messages: %+v", messages)
-	}
-	card, approval := messages[2], messages[3]
+	card, approval := messages[1], messages[2]
 	if card.Kind != domain.ChatKindDispatch || card.RunStatus == "" || card.RunTotal != 1 || len(card.RunCurrent) != 1 {
 		t.Fatalf("dispatch card should carry live run progress: %+v", card)
 	}
@@ -143,7 +138,7 @@ func TestRoomCreatesIssueAndDispatchesSOPOrRole(t *testing.T) {
 		"runId": dispatched.Task.RunID, "nodeId": "approval", "action": "reject",
 	}, http.StatusBadRequest)
 	again := requestJSONAuthed[[]domain.ChatMessage](t, h, owner, http.MethodGet, "/api/rooms/"+room.ID+"/messages", nil, http.StatusOK)
-	if len(again) != 4 {
+	if len(again) != 3 {
 		t.Fatalf("re-reading must not duplicate progress: %d", len(again))
 	}
 	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/decisions", map[string]any{

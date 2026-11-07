@@ -18,9 +18,6 @@ const (
 )
 
 var (
-	iwikiURLRe         = regexp.MustCompile(`(?i)https?://(?:[a-z0-9.-]*iwiki[a-z0-9.-]*|\bi\.example\.com)[^\s<>"'）】\]]+`)
-	iwikiIDRe          = regexp.MustCompile(`(?i)(?:pageId|pageid|docid|docId)=([0-9A-Za-z_-]+)`)
-	iwikiPathRe        = regexp.MustCompile(`(?i)/(?:pages?|p)/([0-9]{4,})`)
 	tapdURLRe          = regexp.MustCompile(`(?i)https?://(?:www\.)?(?:tapd\.example\.com|tapd\.cn)[^\s<>"'）】\]]+`)
 	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
 )
@@ -103,8 +100,6 @@ func classifyClarifyMCP(item domain.MCPServerDefinition) string {
 		return "tapd"
 	case mid == "61" || mid == "gongfeng" || strings.Contains(blob, "gongfeng") || strings.Contains(blob, "工蜂"):
 		return "gongfeng"
-	case mid == "58" || mid == "iwiki" || strings.Contains(blob, "iwiki"):
-		return "iwiki"
 	default:
 		return "other"
 	}
@@ -297,32 +292,6 @@ func clarifyRequestTexts(request chatClarifyRequest) []string {
 	return texts
 }
 
-func extractIWikiURLs(texts ...string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, text := range texts {
-		for _, match := range iwikiURLRe.FindAllString(text, -1) {
-			url := strings.TrimRight(match, ".,;:，。；：")
-			if url == "" || seen[url] {
-				continue
-			}
-			seen[url] = true
-			out = append(out, url)
-		}
-	}
-	return out
-}
-
-func iwikiDocIDFromURL(raw string) string {
-	if m := iwikiIDRe.FindStringSubmatch(raw); len(m) == 2 {
-		return m[1]
-	}
-	if m := iwikiPathRe.FindStringSubmatch(raw); len(m) == 2 {
-		return m[1]
-	}
-	return ""
-}
-
 func (h *streamHandlers) clarifyMCPInstructions(issue domain.Issue, user domain.User, resumed bool, extras ...string) string {
 	return h.clarifyMCPInstructionsFor(issue, user, resumed, extras...)
 }
@@ -334,7 +303,7 @@ func (h *streamHandlers) clarifyMCPInstructionsFor(issue domain.Issue, user doma
 	}
 	servers := h.clarifyHTTPMCPs(projectID, user.ID)
 	project, _ := h.repo.Project(projectID)
-	var tapd, gongfeng, iwiki []domain.MCPServerDefinition
+	var tapd, gongfeng []domain.MCPServerDefinition
 	var other []domain.MCPServerDefinition
 	for _, item := range servers {
 		switch classifyClarifyMCP(item) {
@@ -342,8 +311,6 @@ func (h *streamHandlers) clarifyMCPInstructionsFor(issue domain.Issue, user doma
 			tapd = append(tapd, item)
 		case "gongfeng":
 			gongfeng = append(gongfeng, item)
-		case "iwiki":
-			iwiki = append(iwiki, item)
 		default:
 			other = append(other, item)
 		}
@@ -355,9 +322,6 @@ func (h *streamHandlers) clarifyMCPInstructionsFor(issue domain.Issue, user doma
 	}
 	if len(gongfeng) > 0 {
 		b.WriteString("代码托管 Issue 用 gongfeng__get_issue_detail、gongfeng__get_issue_notes 读取。\n")
-	}
-	if len(iwiki) > 0 {
-		b.WriteString("文档链接用 iwiki__getDocument 读取。\n")
 	}
 	if len(servers) > 0 {
 		b.WriteString("当前项目和个人可用 HTTP MCP：\n")
@@ -383,7 +347,7 @@ func (h *streamHandlers) clarifyMCPInstructionsFor(issue domain.Issue, user doma
 			getTool = "tasks_get"
 		}
 		if resumed {
-			fmt.Fprintf(&b, "这是 TAPD %s。对话里已有此前分析，不要再重拉原单和评论。仅当出现尚未读取的新 iWiki 链接时才 getDocument。\n", entryType)
+			fmt.Fprintf(&b, "这是 TAPD %s。对话里已有此前分析，不要再重拉原单和评论。仅当出现尚未读取的新文档链接时才用对应 MCP 读取。\n", entryType)
 		} else {
 			fmt.Fprintf(&b, "这是 TAPD %s。先静默读取原单和评论。调用 %s：tool_name=%s，tool_args.workspace_id=%s，tool_args.id=%s（字符串），tool_args.limit=1。评论同样调用该工具，tool_name=comments_get，tool_args.workspace_id=%s，tool_args.entry_type=%s，tool_args.entry_id=%s。不要用 params，必须用 tool_args。\n",
 				entryType, tapdTool("proxy_execute_tool"), getTool, ws, entryID, ws, entryType, entryID)
@@ -403,26 +367,8 @@ func (h *streamHandlers) clarifyMCPInstructionsFor(issue domain.Issue, user doma
 				gfProject, issueIID, gfProject, issueID)
 		}
 	}
-	if issue.ID == "" && issue.ExternalRef == nil && (len(tapd) > 0 || len(gongfeng) > 0 || len(iwiki) > 0) {
+	if issue.ID == "" && issue.ExternalRef == nil && (len(tapd) > 0 || len(gongfeng) > 0) {
 		b.WriteString("这是尚未建单的需求草稿，没有原单可拉。描述或对话里出现上述工具能读取的链接时必须先读取后再出题；没有链接不要为了找原单去 list。\n")
-	}
-	if len(iwiki) > 0 {
-		urls := extractIWikiURLs(append([]string{issue.Title, issue.Description}, extras...)...)
-		if resumed {
-			b.WriteString("仅当出现尚未读取过的新 iWiki 链接时，用 iwiki__getDocument 读取；不要顺着文档里的链接继续追。\n")
-		} else {
-			b.WriteString("若需求正文、TAPD/工蜂原单或评论里出现 iWiki 链接，必须同步读取：用 iwiki__getDocument，arguments.docid 为文档 ID（可从 URL 的 pageId/docid 或 /pages/{id} 提取）。不要只根据链接标题猜测正文。文档里再引用的 iWiki 只读与当前缺口直接相关的一篇。\n")
-		}
-		if len(urls) > 0 {
-			b.WriteString("当前描述中已发现 iWiki 链接：\n")
-			for _, url := range urls {
-				line := "- " + url
-				if id := iwikiDocIDFromURL(url); id != "" {
-					line += "（docid=" + id + "）"
-				}
-				b.WriteString(line + "\n")
-			}
-		}
 	}
 	if len(other) > 0 {
 		b.WriteString("其他已安装的 HTTP MCP 按工具名直接调用，仅限只读。\n")
@@ -546,7 +492,7 @@ func (h *streamHandlers) clarifyMCPUser(issue domain.Issue, responsible domain.U
 		return responsible
 	}
 	owner, ok := h.repo.User(project.OwnerID)
-	if !ok || strings.TrimSpace(owner.TaihuPAT) == "" {
+	if !ok || strings.TrimSpace(owner.GitToken) == "" {
 		return responsible
 	}
 	return owner

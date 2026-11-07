@@ -8,10 +8,10 @@ const PREVIEW_MODEL_FALLBACK=[
   {id:'glm-5.3-ioa',name:'GLM-5.3'},
   {id:'gpt-5.6-terra',name:'GPT-5.6-Terra'},
   {id:'gpt-5.6-luna',name:'GPT-5.6-Luna'},
-  {id:'gpt-5.4',name:'GPT-5.4'},
+  {id:'gpt-6-sol',name:'GPT-6-Sol'},
   {id:'claude-sonnet-4.6',name:'Claude-Sonnet-4.6'},
-  {id:'kimi-k2.7-ioa',name:'Kimi-K2.7-Code'},
-  {id:'deepseek-v4.1-flash',name:'Deepseek-V4.1-Flash'}
+  {id:'kimi-k3-ioa',name:'Kimi-K3'},
+  {id:'deepseek-v4.1-flash',name:'DeepSeek-V4.1-Flash'}
 ];
 function isPreviewBuildNode(id){return id===PREVIEW_BUILD_NODE_ID}
 function workflowPreviewModel(wf){
@@ -91,21 +91,60 @@ function syncPreviewBuildGraph(){
   });
   sinks.forEach((n,i)=>wf.edges.push({id:'af-preview-build-edge-'+(i+1),source:n.id,target:PREVIEW_BUILD_NODE_ID,when:'success'}));
 }
+function flowReadOnly(wf=state.workflow){return !wf||catalogForeign(wf.projectId)||(catalogGeneric(wf)&&!isPlatformAdmin())}
+function flowReadOnlyReason(wf=state.workflow){
+  if(!wf)return '先选择或新建一条 SOP';
+  return catalogGeneric(wf)?'通用模板为只读，请先「复制到本项目」再修改':'这是其他项目的共享 SOP，请先复制到本项目再改';
+}
+function flowStatusPill(wf){
+  if(catalogGeneric(wf))return isPlatformAdmin()?{cls:'draft',label:'通用模板 · 可编辑'}:{cls:'ro',label:'只读'};
+  if(catalogForeign(wf.projectId))return {cls:'ro',label:'只读'};
+  if(wf.status==='published')return {cls:'ok',label:'已发布'};
+  if(wf.status==='archived')return {cls:'ro',label:'已归档'};
+  return {cls:'draft',label:'草稿'};
+}
+function renderFlowHeader(){
+  const wf=state.workflow;
+  const title=$('#flowCommandTitle');
+  if(title){title.textContent=wf?(wf.name||'未命名流程'):'选择或新建 SOP';title.title=wf?.name||''}
+  const copyName=$('#copyWorkflowName');if(copyName)copyName.hidden=!wf
+  const meta=$('#workflowMeta');
+  if(meta){
+    if(!wf)meta.innerHTML='<span>还没有打开流程</span>';
+    else{const p=flowStatusPill(wf);meta.innerHTML=`<span class="fd-pill ${p.cls}"><span class="dot"></span>${p.label}</span><span>v${escapeHTML(wf.version||1)}</span><span class="fd-dotsep"></span><span class="v-step">${(wf.nodes||[]).length} 步</span><span class="fd-dotsep v-step-sep"></span>`}
+  }
+  const chip=$('#sandboxChip');
+  if(chip){
+    chip.hidden=!wf;
+    const sb=(state.data?.sandboxes||[]).find(s=>s.id===wf?.sandboxProfileId),label=$('#sandboxChipLabel');
+    if(label)label.textContent=sb?.name||wf?.sandboxProfileId||'未设置沙箱';
+  }
+  const ro=flowReadOnly(wf),pending=!!(wf&&state.workflowDirty&&!ro);
+  const save=$('#saveWorkflow');
+  if(save){
+    save.disabled=!pending;save.classList.toggle('dirty',pending);
+    save.dataset.tip=!wf?'先选择一条 SOP':ro?flowReadOnlyReason(wf):pending?'有未保存的修改':'所有修改已保存';
+  }
+  const label=$('#saveStateLabel');if(label)label.textContent=pending?'保存':'已保存';
+  const top=$('#saveState');if(top){top.textContent=state.workflowDirty?'有未保存更改':'已同步';top.style.color=state.workflowDirty?'#e59a24':''}
+  ['publishWorkflow','flowSettingsQuickSave'].forEach(id=>{const btn=$('#'+id);if(btn)btn.disabled=ro});
+  const discard=$('#discardWorkflow');if(discard)discard.hidden=!(wf&&state.workflowDirty);
+  $('#flowView')?.classList.toggle('fd-readonly',!!wf&&ro);
+  if(typeof flowPalette!=='undefined'&&flowPalette.isSwitcherOpen())flowPalette.renderSwitcher();
+}
 function renderWorkflowMeta(){
   const workflows=catalogWorkflows();
   const wf=state.workflow;
   // Generic templates and an unsaved AI draft are not in the project SOP list.
   // Keep the open workflow selected while it is being previewed.
   const options=wf&&!workflows.some(w=>w.id===wf.id)?[wf,...workflows]:workflows;
-  $('#workflowSelect').innerHTML=options.map(w=>`<option value="${escapeHTML(w.id)}" ${wf&&w.id===wf.id?'selected':''}>${catalogGeneric(w)?'通用 ':(w.status==='published'?'●':'○')} ${escapeHTML(w.name)}</option>`).join('');
+  $('#workflowSelect').innerHTML=options.map(w=>`<option value="${escapeHTML(w.id)}" ${wf&&w.id===wf.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
   if(!wf){
     $('#workflowName').value='';$('#workflowDescription').value='';$('#workflowOwner').value='';$('#workflowSandbox').innerHTML='';
     $('#workflowStatus').value='draft';$('#workflowTags').value='';$('#workflowMetricCategory').value='';$('#workflowSOPLane').value='';
-    const meta=$('#workflowMeta');if(meta)meta.textContent='';
-    const title=$('#flowCommandTitle');if(title)title.textContent='未选择流程';
     const pill=$('#flowSettingsPill');if(pill)pill.textContent='未选择流程';
-    const chip=$('#sandboxChip');if(chip)chip.hidden=true;
-    ['saveWorkflow','publishWorkflow','flowSettingsQuickSave'].forEach(id=>{const btn=$('#'+id);if(btn)btn.disabled=true});
+    renderFlowHeader();
+    if(typeof flowPalette!=='undefined')flowPalette.render();
     return;
   }
   normalizeWorkflowNotifications(wf);
@@ -115,19 +154,19 @@ function renderWorkflowMeta(){
   const previewOn=!!wf.preview?.enabled, hasPreviewNode=(wf.nodes||[]).some(n=>isPreviewBuildNode(n.id));
   if(previewOn!==hasPreviewNode)syncPreviewBuildGraph();
   $('#workflowSandbox').innerHTML=(state.data.sandboxes||[]).filter(s=>catalogVisible(s.projectId,s.shared)).map(s=>`<option value="${escapeHTML(s.id)}" ${s.id===wf.sandboxProfileId?'selected':''}>${escapeHTML(s.name)}${catalogForeign(s.projectId)?' · 共享':''}</option>`).join('');
-  $('#workflowMeta').textContent=catalogGeneric(wf)?(isPlatformAdmin()?`通用模板 · 平台管理员可编辑 · ${wf.nodes.length} 步 · 保存后所有项目下次运行生效`:`通用模板 · 只读 · ${wf.nodes.length} 步 · 复制到本项目后可编辑`): `${wf.status||'draft'} · v${wf.version} · ${wf.nodes.length} 步`;
   const pill=$('#flowSettingsPill');if(pill)pill.textContent=catalogGeneric(wf)?(isPlatformAdmin()?'通用模板 · 可编辑':'通用模板'):`${wf.status==='published'?'已发布':'草稿'} · v${wf.version} · ${wf.nodes.length} 步`;
-  $('#flowCommandTitle').textContent=wf.name||'未命名流程';
-  const chip=$('#sandboxChip');
-  if(chip){
-    const sb=(state.data.sandboxes||[]).find(s=>s.id===wf.sandboxProfileId);
-    chip.hidden=false;
-    chip.textContent=`沙箱 · ${sb?.name||wf.sandboxProfileId||'未设置'}`;
-  }
-  const foreign=catalogForeign(wf.projectId);
-  ['saveWorkflow','publishWorkflow','flowSettingsQuickSave'].forEach(id=>{const btn=$('#'+id);if(btn)btn.disabled=foreign||(catalogGeneric(wf)&&!isPlatformAdmin())});
+  renderFlowHeader();
+  if(typeof flowPalette!=='undefined')flowPalette.render();
 }
-
+async function switchFlowWorkflow(id){
+  if(!id||id===state.workflow?.id)return false;
+  const next=(state.data?.workflows||[]).find(w=>w.id===id);
+  if(!next){toast('SOP 不存在或已删除');return false}
+  if(state.workflowDirty&&!(await afConfirm({title:'未保存更改',message:'当前流程有未保存修改，切换将放弃这些修改。继续？',danger:true}))){renderWorkflowMeta();return false}
+  state.workflow=clone(next);state.selectedNode=null;state.connectFrom=null;state.connectCursor=null;state.renamingNode=null;
+  markWorkflowClean();flowHistory.clear();rememberOpenWorkflow();renderAll();refreshGenericWorkflowRoles();
+  return true;
+}
 function sopWorkflowChoices(exceptId){
   return catalogWorkflows().filter(w=>w.id&&w.id!==exceptId);
 }
@@ -141,78 +180,202 @@ function sopDeclaredArtifacts(wf){
   }));
   return out;
 }
-function addNode(type){
+function addNode(type,opts={}){
   if(!state.workflow)return toast('流程尚未加载');
+  if(flowReadOnly())return toast(flowReadOnlyReason());
+  const at=opts.at?{x:Math.round(opts.at.x/10)*10,y:Math.round(opts.at.y/10)*10}:flowViewport.freeSpot();
   if(type==='preview'){
     const existing=state.workflow.nodes.find(n=>isPreviewBuildNode(n.id));
     if(existing){state.selectedNode=existing.id;renderCanvas();renderProperties();return toast('预览节点已存在，可拖拽连线调整它的位置')}
+    flowHistory.record();
     ensurePreviewContract();
-    const count=state.workflow.nodes.length;
-    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:'codebuddy',executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:{x:110+(count%3)*280,y:120+Math.floor(count/3)*190},artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
+    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:'codebuddy',executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
     state.selectedNode=PREVIEW_BUILD_NODE_ID;
     dirty();renderCanvas();renderProperties();
     return;
   }
-  const count=state.workflow.nodes.length;
+  flowHistory.record();
   const labels={agent:'新 Agent 节点',script:'脚本节点',approval:'人工门禁',sop:'SOP 节点'};
   const firstSOP=type==='sop'?sopWorkflowChoices(state.workflow.id)[0]:null;
-  const node={id:uid(type),name:firstSOP?.name||labels[type]||'新节点',type,agentId:type==='agent'?(workflowAgents()[0]?.id||''):'',sopWorkflowId:firstSOP?.id||'',scriptLanguage:type==='script'?'shell':'',script:type==='script'?"printf 'passed\\n'":'',executionScope:'run',artifactOutputs:firstSOP?sopDeclaredArtifacts(firstSOP):[],rejectTo:'',onFailure:'fail',retryStrategy:'targeted_fix',carryOver:['failed_checks','last_error','upstream_artifacts'],maxAttempts:1,maxReworks:3,position:{x:110+(count%3)*280,y:120+Math.floor(count/3)*190}};
+  const agentId=type==='agent'?(opts.agentId||workflowAgents()[0]?.id||''):'';
+  const agent=agentId?workflowAgent(agentId):null;
+  const node={id:uid(type),name:firstSOP?.name||(opts.agentId&&agent?.name)||labels[type]||'新节点',type,agentId,sopWorkflowId:firstSOP?.id||'',scriptLanguage:type==='script'?'shell':'',script:type==='script'?"printf 'passed\\n'":'',executionScope:'run',artifactOutputs:firstSOP?sopDeclaredArtifacts(firstSOP):[],rejectTo:'',onFailure:'fail',retryStrategy:'targeted_fix',carryOver:['failed_checks','last_error','upstream_artifacts'],maxAttempts:1,maxReworks:3,position:at};
   state.workflow.nodes.push(node);state.selectedNode=node.id;
   dirty();renderCanvas();renderProperties();
 }
-function deleteSelected(){
-  if(!state.selectedNode||!state.workflow)return;
-  const removingPreview=isPreviewBuildNode(state.selectedNode);
-  state.workflow.nodes=state.workflow.nodes.filter(n=>n.id!==state.selectedNode);
-  state.workflow.edges=state.workflow.edges.filter(e=>e.source!==state.selectedNode&&e.target!==state.selectedNode);
-  state.selectedNode=null;
-  if(removingPreview&&state.workflow.preview)delete state.workflow.preview;
+// Removes a node with its edges and any reject routes pointing at it.
+function removeNode(id){
+  const wf=state.workflow,n=wf?.nodes.find(x=>x.id===id);
+  if(!n)return false;
+  if(flowReadOnly()){toast(flowReadOnlyReason());return false}
+  flowHistory.record();
+  wf.nodes=wf.nodes.filter(x=>x.id!==id);
+  wf.edges=wf.edges.filter(e=>e.source!==id&&e.target!==id);
+  wf.nodes.forEach(x=>{if(x.rejectTo===id){x.rejectTo='';x.onFailure='fail'}});
+  if(isPreviewBuildNode(id)&&wf.preview)delete wf.preview;
+  if(state.selectedNode===id)state.selectedNode=null;
+  if(state.renamingNode===id)state.renamingNode=null;
   dirty();renderCanvas();renderProperties();
+  flowToast(`已删除「${n.name}」`,{undo:true});
+  return true;
 }
-function arrange(){workflowStages(state.workflow).forEach((stage,column)=>stage.forEach((node,row)=>{node.position={x:80+column*280,y:80+row*140}}));dirty();renderCanvas();toast('已按依赖层级整理画布')}
+function deleteSelected(){if(state.selectedNode)removeNode(state.selectedNode)}
+function duplicateNode(id){
+  const wf=state.workflow,n=wf?.nodes.find(x=>x.id===id);
+  if(!n||isPreviewBuildNode(id))return null;
+  if(flowReadOnly()){toast(flowReadOnlyReason());return null}
+  flowHistory.record();
+  const copy=clone(n);
+  Object.assign(copy,{id:uid(n.type||'node'),name:`${n.name} 副本`,position:{x:(n.position?.x||0)+40,y:(n.position?.y||0)+40},rejectTo:''});
+  if(copy.onFailure==='reject')copy.onFailure='fail';
+  wf.nodes.push(copy);state.selectedNode=copy.id;
+  dirty();renderCanvas();renderProperties();
+  flowToast('已复制（不含连线）',{undo:true});
+  return copy;
+}
+function arrange(){
+  if(!state.workflow)return;
+  if(flowReadOnly())return toast(flowReadOnlyReason());
+  flowHistory.record();
+  const stage=$('#canvasStage');stage?.classList.add('anim','arranging');
+  workflowStages(state.workflow).forEach((column,x)=>column.forEach((node,y)=>{
+    node.position={x:80+x*320,y:80+y*190};
+    const el=flowNodeEl(node.id);if(el){el.style.left=node.position.x+'px';el.style.top=node.position.y+'px'}
+  }));
+  dirty();
+  setTimeout(()=>{stage?.classList.remove('arranging');renderCanvas();flowViewport.fit()},380);
+  flowToast('已按依赖层级整理画布',{undo:true});
+}
+// Layouts saved for the narrower legacy node, or templates on a 240px column
+// pitch, overlap the 244px node: the overlap hides the ports, so no reject
+// route can be drawn. Rows/columns that are that crowded are widened
+// proportionally in memory; a later save keeps it. Diagonal or far-off
+// overlaps are left to the user (and "整理").
+const FLOW_SPREAD={w:244,h:132,pitchW:280,pitchH:160,maxFactor:1.6};
+function spreadCrowdedNodes(wf){
+  const nodes=(wf?.nodes||[]).filter(n=>n.position&&Number.isFinite(n.position.x)&&Number.isFinite(n.position.y));
+  let minDx=Infinity,minDy=Infinity;
+  for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
+    const dx=Math.abs(nodes[i].position.x-nodes[j].position.x),dy=Math.abs(nodes[i].position.y-nodes[j].position.y);
+    if(dy<40&&dx>=1&&dx<FLOW_SPREAD.w+16)minDx=Math.min(minDx,dx);
+    else if(dx<40&&dy>=1&&dy<FLOW_SPREAD.h+8)minDy=Math.min(minDy,dy);
+  }
+  const fx=minDx<Infinity?FLOW_SPREAD.pitchW/minDx:1,fy=minDy<Infinity?FLOW_SPREAD.pitchH/minDy:1;
+  const sx=fx>1&&fx<=FLOW_SPREAD.maxFactor,sy=fy>1&&fy<=FLOW_SPREAD.maxFactor;
+  if(!sx&&!sy)return false;
+  const x0=Math.min(...nodes.map(n=>n.position.x)),y0=Math.min(...nodes.map(n=>n.position.y));
+  nodes.forEach(n=>{n.position={x:sx?x0+Math.ceil((n.position.x-x0)*fx/10)*10:n.position.x,y:sy?y0+Math.ceil((n.position.y-y0)*fy/10)*10:n.position.y}});
+  return true;
+}
 
+const FLOW_NODE_TYPES={agent:{icon:'bot',label:'Agent 步骤'},script:{icon:'terminal',label:'脚本步骤'},sop:{icon:'layers',label:'子 SOP'},preview:{icon:'eye',label:'预览构建'},approval:{icon:'shield',label:'人工门禁'}};
+function flowNodeKind(n){return isPreviewBuildNode(n.id)?'preview':(FLOW_NODE_TYPES[n.type]?n.type:'approval')}
+function flowNodeTint(n){
+  const kind=flowNodeKind(n);
+  if(kind==='agent'&&n.agentId)return flowPalette.roleTint(n.agentId);
+  return {agent:'79 107 255',script:'139 92 246',sop:'14 165 233',preview:'217 119 6',approval:'16 163 127'}[kind];
+}
+function flowNodeEl(id){return document.querySelector(`#nodes .flow-node[data-id="${CSS.escape(id)}"]`)}
 function nodeMeta(n){
-  if(isPreviewBuildNode(n.id)){
-    return {icon:'预',kind:'preview',subtitle:'CodeBuddy 静态站点构建',detail:workflowPreviewModel(state.workflow)};
-  }
+  if(isPreviewBuildNode(n.id))return {kind:'preview',subtitle:'CodeBuddy 静态站点构建',tags:[{text:workflowPreviewModel(state.workflow)}]};
   if(n.type==='agent'){
-    const a=workflowAgent(n.agentId);
-    const generic=catalogGeneric(state.workflow);
-    const e=state.data.executors.find(x=>x.id===(a?.executorId||n.executorId));
+    const a=workflowAgent(n.agentId),generic=catalogGeneric(state.workflow);
+    const e=(state.data.executors||[]).find(x=>x.id===(a?.executorId||n.executorId));
     const subtitle=a?.name||(n.agentId?(generic?n.agentId:'角色不可用'):'未绑定角色');
-    const detail=a?(a.model||e?.model||e?.name||(generic?'通用模板角色':'模型在角色定义里选')):(n.agentId?(generic?'通用模板角色':'不属于当前项目且未共享'):'模型在角色定义里选');
-    return {icon:'AI',kind:'agent',subtitle,detail};
+    const tags=[];
+    if(!n.agentId)tags.push({text:'未绑定角色',warn:true});
+    else if(!a)tags.push({text:generic?'通用模板角色':'角色不可用',warn:!generic});
+    else{
+      const model=a.model||e?.model||e?.name||'';
+      tags.push(model?{text:model}:{text:'未选模型',warn:!generic});
+      tags.push({text:`${effectiveNodeArtifacts(n,a).length} 产物`});
+      tags.push({text:a.loop?.enabled?`${a.loop.maxIterations||1} 轮 Loop`:'单轮'});
+    }
+    return {kind:'agent',subtitle,tags};
   }
-  if(n.type==='script')return {icon:'⌘',kind:'script',subtitle:n.scriptLanguage==='python'?'Python Script':'Shell Script',detail:n.script||'未配置脚本'};
+  if(n.type==='script'){
+    const line=(n.script||'').trim().split('\n')[0];
+    return {kind:'script',subtitle:n.scriptLanguage==='python'?'Python 脚本':'Shell 脚本',tags:[line?{text:line,mono:true}:{text:'未配置脚本',warn:true}]};
+  }
   if(n.type==='sop'){
     const wf=sopWorkflowChoices().find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);
     const arts=(n.artifactOutputs||[]).map(a=>a.name).filter(Boolean);
-    return {icon:'SOP',kind:'sop',subtitle:wf?.name||(n.sopWorkflowId?'流程不可用':'未选择流程'),detail:arts.length?`交给下一步：${arts.join('、')}`:(wf?.description||'跑完这条 SOP，产物交给下一步')};
+    const tags=!n.sopWorkflowId?[{text:'未选择流程',warn:true}]:!wf?[{text:'流程不可用',warn:true}]:[{text:arts.length?`交给下一步：${arts.join('、')}`:'产物交给下一步'}];
+    return {kind:'sop',subtitle:wf?.name||(n.sopWorkflowId?'流程不可用':'未选择流程'),tags};
   }
-  return {icon:'✓',kind:'approval',subtitle:'Human in the loop',detail:'等待人工判断'};
+  return {kind:'approval',subtitle:'人工门禁',tags:[{text:'等待人工确认'}]};
+}
+function flowNodeHTML(n,run,ro){
+  const m=nodeMeta(n),kind=m.kind,status=run?.nodes?.[n.id]?.status||'';
+  const agent=kind==='agent'?workflowAgent(n.agentId):null;
+  const tile=agent?escapeHTML(flowPalette.initial(agent.name)):flowPalette.icon(FLOW_NODE_TYPES[kind].icon,16);
+  const title=state.renamingNode===n.id?`<input class="fd-rename" value="${escapeHTML(n.name)}" maxlength="120" aria-label="重命名步骤">`:escapeHTML(n.name);
+  const cls=['flow-node','fd-node','t-'+kind,state.selectedNode===n.id?'sel':'',state.connectFrom===n.id?'connecting':'',status?'s-'+status:'',kind==='preview'?'preview-build':''].filter(Boolean).join(' ');
+  const tags=m.tags.map(t=>`<span class="fd-tag${t.warn?' warn':''}${t.mono?' mono':''}" title="${escapeHTML(t.text)}">${escapeHTML(t.text)}</span>`).join('');
+  const outs=`<div class="fd-out ok">成功<span class="fd-port out" data-outlet="success" title="拖到下一步"></span></div>`+(kind==='preview'?'':`<div class="fd-out rj">失败打回<span class="fd-port out" data-outlet="reject" title="拖到失败时要打回的步骤"></span></div>`);
+  return `<div class="${cls}" data-id="${escapeHTML(n.id)}" style="left:${n.position.x}px;top:${n.position.y}px;--tint:${flowNodeTint(n)}"><span class="fd-port in" title="连到这里"></span><div class="fd-nh"><span class="fd-tile">${tile}</span><div class="fd-nt"><div class="node-title">${title}</div><div class="node-subtitle">${escapeHTML(m.subtitle)}</div></div>${status?`<span class="fd-status s-${escapeHTML(status)}">${statusText(status)||escapeHTML(status)}</span>`:''}${ro?'':`<button type="button" class="fd-more" data-node-menu aria-label="更多操作">${flowPalette.icon('more')}</button>`}</div><div class="fd-nbody">${tags}</div><div class="fd-outs">${outs}</div></div>`;
 }
 function renderCanvas(){
-  const run=state.activeRun; const nodes=$('#nodes');if(!nodes)return;nodes.innerHTML='';
-  if(!state.workflow){renderFlowOutline();return}
-  state.workflow.nodes.forEach(n=>{
-    const m=nodeMeta(n), nr=run?.nodes?.[n.id]; const el=document.createElement('div');el.className=`flow-node ${isPreviewBuildNode(n.id)?'preview-build':''} ${state.selectedNode===n.id?'selected':''} ${state.connectFrom===n.id?'connecting':''} ${nr?.status||''}`;el.style.left=`${n.position.x}px`;el.style.top=`${n.position.y}px`;el.dataset.id=n.id;
-    const rejectName=state.workflow.nodes.find(x=>x.id===n.rejectTo)?.name;
-    el.innerHTML=`<button type="button" class="node-port in" title="连到这里"></button><div class="node-top"><span class="node-icon ${m.kind}">${m.icon}</span><div><div class="node-title">${escapeHTML(n.name)}</div><div class="node-subtitle">${escapeHTML(m.subtitle)}</div></div></div><div class="node-meta" title="${escapeHTML(m.detail)}">${escapeHTML(m.detail)}</div>${rejectName?`<div class="node-reject">失败打回 ${escapeHTML(rejectName)}</div>`:''}<button type="button" class="node-port out connector" title="拖到下一步，或点一下再点目标"></button>`;
-    el.onclick=e=>{
-      if(e.target.classList.contains('node-port'))return;
-      if(state.connectFrom&&state.connectFrom!==n.id){connect(state.connectFrom,n.id);state.connectFrom=null;state.connectCursor=null;renderCanvas();renderProperties();return}
-      state.selectedNode=n.id;renderCanvas();renderProperties();
-    };
-    bindNodePort(el,n);makeDraggable(el,n);nodes.appendChild(el);
-  });
-  requestAnimationFrame(renderEdges);renderFlowOutline();
+  const nodes=$('#nodes');if(!nodes)return;
+  const wf=state.workflow,empty=$('#canvasEmpty');
+  flowNodeMetrics.cache?.clear();
+  if(!wf){nodes.innerHTML='';if(empty)empty.hidden=false;renderEdges();flowViewport.afterRender();return}
+  if(empty)empty.hidden=(wf.nodes||[]).length>0;
+  spreadCrowdedNodes(wf);
+  const ro=flowReadOnly();
+  nodes.innerHTML=wf.nodes.map(n=>flowNodeHTML(n,state.activeRun,ro)).join('');
+  nodes.querySelectorAll('.flow-node').forEach(bindFlowNode);
+  bindNodeRename(nodes.querySelector('.fd-rename'));
+  renderEdges();
+  flowViewport.afterRender();
 }
-
-function renderFlowOutline(){
-  const host=$('#flowOutline');if(!host||!state.workflow)return;
-  const run=state.activeRun,stages=workflowStages(state.workflow),ordered=stages.flatMap((stage,stageIndex)=>stage.map(node=>({node,stageIndex,parallel:stage.length>1})));
-  host.innerHTML=ordered.map(({node,stageIndex,parallel},index)=>{const meta=nodeMeta(node),status=run?.nodes?.[node.id]?.status||'',kind=isPreviewBuildNode(node.id)?'预览构建':(node.type==='agent'?'Agent':node.type==='script'?'脚本':node.type==='sop'?'SOP':'人工');return `<div class="flow-step ${state.selectedNode===node.id?'active':''}" data-flow-node="${escapeHTML(node.id)}"><span class="flow-step-index">${index+1}</span><div><b>${escapeHTML(node.name)}</b><small>第 ${stageIndex+1} 阶段${parallel?' · 并行':' · '+kind}</small></div><span class="flow-step-state">${statusText(status)||meta.icon}</span></div>`}).join('')||'<div class="catalog-empty" style="padding:30px 8px"><b>还没有步骤</b><p>从上方选择一种节点开始</p></div>';
-  host.querySelectorAll('[data-flow-node]').forEach(el=>el.onclick=()=>{state.selectedNode=el.dataset.flowNode;renderCanvas();renderProperties()});
+function bindFlowNode(el){
+  const n=state.workflow.nodes.find(x=>x.id===el.dataset.id);if(!n)return;
+  el.addEventListener('pointerdown',e=>{
+    if(e.button!==0||e.target.closest('.fd-port,.fd-more,input'))return;
+    e.stopPropagation();closeNodeMenu();
+    if(state.connectFrom&&state.connectFrom!==n.id){completeFlowConnect(n);return}
+    const sx=e.clientX,sy=e.clientY,start={x:n.position.x,y:n.position.y},ro=flowReadOnly();
+    let moved=false;
+    el.setPointerCapture(e.pointerId);
+    const move=ev=>{
+      if(ro||(!moved&&Math.hypot(ev.clientX-sx,ev.clientY-sy)<4))return;
+      if(!moved){flowHistory.record();moved=true;el.classList.add('dragging')}
+      const z=flowViewport.zoom;
+      n.position={x:Math.round((start.x+(ev.clientX-sx)/z)/10)*10,y:Math.round((start.y+(ev.clientY-sy)/z)/10)*10};
+      el.style.left=n.position.x+'px';el.style.top=n.position.y+'px';
+      scheduleFlowEdges();
+    };
+    const up=()=>{
+      el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',up);el.removeEventListener('pointercancel',up);
+      el.classList.remove('dragging');
+      if(moved){renderEdges();dirty()}else openNodeDrawer(n.id);
+    };
+    el.addEventListener('pointermove',move);el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);
+  });
+  el.addEventListener('dblclick',e=>{if(!e.target.closest('input'))openNodeDrawer(n.id)});
+  el.querySelector('[data-node-menu]')?.addEventListener('click',e=>{e.stopPropagation();openNodeMenu(n.id,e.currentTarget)});
+  el.querySelectorAll('.fd-port.out').forEach(port=>port.addEventListener('pointerdown',e=>startFlowConnect(e,n,port.dataset.outlet)));
+  el.querySelector('.fd-port.in')?.addEventListener('pointerdown',e=>{if(state.connectFrom&&state.connectFrom!==n.id){e.stopPropagation();completeFlowConnect(n)}});
+}
+function startNodeRename(id){
+  if(flowReadOnly()||!state.workflow?.nodes.some(n=>n.id===id))return;
+  state.renamingNode=id;renderCanvas();
+}
+function bindNodeRename(input){
+  if(!input)return;
+  const id=state.renamingNode;
+  input.focus();input.select();
+  const done=commit=>{
+    if(state.renamingNode!==id)return;
+    state.renamingNode=null;
+    const n=state.workflow?.nodes.find(x=>x.id===id),name=input.value.trim();
+    if(commit&&n&&name&&name!==n.name){flowHistory.record();n.name=name;dirty()}
+    renderCanvas();if(state.selectedNode===id)renderProperties();
+  };
+  input.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();done(true)}else if(e.key==='Escape'){e.preventDefault();done(false)}});
+  input.addEventListener('blur',()=>done(true));
+  input.addEventListener('pointerdown',e=>e.stopPropagation());
 }
 
 function flowDiagnostics(){
@@ -223,181 +386,263 @@ function flowDiagnostics(){
   nodes.forEach(n=>{if(isPreviewBuildNode(n.id)){const inDeg=edges.filter(e=>e.target===n.id).length;items.push({level:inDeg?'ok':'warn',title:n.name,detail:inDeg?`插在流程中间：CodeBuddy ${workflowPreviewModel(state.workflow)} 构建静态站点，运行成功后归档预览`:'还没有前序依赖，会作为流程入口直接运行；请从上游节点连线到此'});return}if(n.type==='agent'){const missing=[];const agent=workflowAgent(n.agentId);const generic=catalogGeneric(state.workflow);if(!n.agentId)missing.push('角色');else if(!agent)missing.push(generic?'通用模板角色未加载':'角色不属于当前项目或未共享');else if(!generic&&!(agent.executorId||n.executorId))missing.push('角色未选模型');if(!(n.artifactOutputs||[]).length&&!(agent?.artifactOutputs||[]).length)missing.push('角色产物契约');items.push({level:missing.length?'warn':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:generic?'已绑定通用模板角色；任务书与门禁在角色定义中':'已绑定角色；任务书与门禁在角色定义中'})}if(n.type==='sop'){const missing=[];const wf=sopWorkflowChoices(state.workflow.id).find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);if(!n.sopWorkflowId)missing.push('要跑的 SOP');else if(!wf)missing.push('引用的 SOP 不存在');if(n.sopWorkflowId===state.workflow.id)missing.push('不能引用自己');items.push({level:missing.length?'error':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:`引用「${wf.name}」，产物交给下一步`})}if(n.rejectTo&&!nodes.some(x=>x.id===n.rejectTo))items.push({level:'error',title:n.name,detail:'失败打回目标不存在'})});
   if(nodes.length>1&&edges.length===0)items.push({level:'warn',title:'成功路径',detail:'多个节点之间没有依赖关系，将同时启动'});if(!items.some(x=>x.level==='error'))items.push({level:'ok',title:'结构校验',detail:'未发现阻止保存或试运行的结构错误'});return items;
 }
-function setFlowView(mode){$$('.canvas-view-toggle button').forEach(b=>b.classList.toggle('active',b.dataset.flowView===mode));$('#canvas').hidden=mode!=='canvas';$('#flowCheckPanel').hidden=mode!=='check';if(mode==='check')$('#flowCheckPanel').innerHTML=`<div class="page-heading" style="margin-bottom:14px"><div><h1 style="font-size:17px">配置检查</h1><p>运行前检查入口、CLI、产物契约和返工路径。</p></div></div><div class="flow-check-grid">${flowDiagnostics().map(x=>`<div class="flow-check-item ${x.level}"><b>${escapeHTML(x.title)}</b><p>${escapeHTML(x.detail)}</p></div>`).join('')}</div>`}
-function renderThemeToggle(){const light=document.documentElement.dataset.theme==='light',button=$('#themeToggle');if(!button)return;button.querySelector('span').textContent=light?'☾':'☀';button.querySelector('b').textContent=light?'深色':'亮色';button.title=light?'切换到深色主题':'切换到亮色主题'}
-function toggleTheme(){const theme=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=theme;localStorage.setItem('loopforge.theme.v3',theme);renderThemeToggle();toast(theme==='light'?'已切换亮色主题':'已切换深色主题')}
+function setFlowView(mode){$$('.canvas-view-toggle button').forEach(b=>b.classList.toggle('active',b.dataset.flowView===mode));$('#canvas').hidden=mode!=='canvas';$('#flowCheckPanel').hidden=mode!=='check';$('#flowStageWrap')?.classList.toggle('check-mode',mode==='check');if(mode==='check')$('#flowCheckPanel').innerHTML=`<div class="page-heading" style="margin-bottom:14px"><div><h1 style="font-size:17px">配置检查</h1><p>运行前检查入口、CLI、产物契约和返工路径。</p></div></div><div class="flow-check-grid">${flowDiagnostics().map(x=>`<div class="flow-check-item ${x.level}"><b>${escapeHTML(x.title)}</b><p>${escapeHTML(x.detail)}</p></div>`).join('')}</div>`;else flowViewport.renderMinimap()}
+function setThemePreference(preference){if(!['light','dark','system'].includes(preference))return;try{localStorage.setItem(THEME_KEY,preference)}catch{}applyTheme(preference)}
+// The profile card is visibility:hidden while closed, so callers re-run this with snap when it opens.
+function renderThemeSegment({snap=false}={}){const preference=typeof activeThemePreference==='string'?activeThemePreference:readThemePreference();document.querySelectorAll('.upp-theme-seg').forEach(seg=>{seg.querySelectorAll('[data-theme-pref]').forEach(button=>{const on=button.dataset.themePref===preference;button.classList.toggle('active',on);if(button.getAttribute('aria-checked')!==String(on))button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1});const tabs=window.AgentFlowSlidingTabs;if(!tabs)return;const indicator=seg.querySelector(':scope > [data-sliding-indicator]');if(snap&&indicator)indicator.style.transition='none';tabs.mount(seg,{activeSelector:'.active',auto:true,compact:true,cacheKey:'upp-theme-seg'}).refresh();if(snap&&indicator){indicator.getBoundingClientRect();requestAnimationFrame(()=>{indicator.style.transition=''})}})}
+function renderThemeToggle(){renderThemeSegment();const light=document.documentElement.dataset.theme==='light',button=$('#themeToggle');if(!button)return;window.AgentFlowHarnessIcons?.render(button.querySelector('span'),light?'moon':'sun');button.querySelector('b').textContent=light?'深色':'亮色';button.title=light?'切换到深色主题':'切换到亮色主题'}
+function toggleTheme(){const theme=document.documentElement.dataset.theme==='light'?'dark':'light';try{localStorage.setItem(THEME_KEY,theme)}catch{}applyTheme(theme)}
 function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',failed:'失败',waiting_approval:'待审批',cancelled:'已取消'}[s]||'')}
-function canvasPoint(e){
-  const canvas=$('#canvas');if(!canvas)return {x:0,y:0};
-  const rect=canvas.getBoundingClientRect();
-  return {x:e.clientX-rect.left+canvas.scrollLeft,y:e.clientY-rect.top+canvas.scrollTop};
+function canvasPoint(e){return flowViewport.toWorld(e.clientX,e.clientY)}
+function flowReaches(from,to){
+  const seen=new Set([from]),queue=[from];
+  while(queue.length){const cur=queue.shift();if(cur===to)return true;for(const e of state.workflow.edges)if(e.source===cur&&!seen.has(e.target)){seen.add(e.target);queue.push(e.target)}}
+  return false;
 }
-function bindNodePort(el,node){
-  const out=el.querySelector('.node-port.out');
-  const inn=el.querySelector('.node-port.in');
-  if(inn)inn.onclick=e=>{
-    e.stopPropagation();
-    if(state.connectFrom&&state.connectFrom!==node.id){connect(state.connectFrom,node.id);state.connectFrom=null;state.connectCursor=null;renderCanvas();renderProperties()}
-  };
-  if(!out)return;
-  out.onpointerdown=e=>{
-    e.stopPropagation();e.preventDefault();
-    state.connectFrom=node.id;state.selectedNode=node.id;state.connectCursor=canvasPoint(e);
-    out.setPointerCapture(e.pointerId);
-    el.classList.add('connecting');
-    renderEdges();
-  };
-  out.onpointermove=e=>{
-    if(state.connectFrom!==node.id)return;
-    state.connectCursor=canvasPoint(e);
-    renderEdges();
-  };
-  out.onpointerup=e=>{
-    const moved=state.connectCursor;
-    const start=node.position;
-    const dragged=moved&&(Math.abs(moved.x-(start.x+240))>8||Math.abs(moved.y-(start.y+48))>8);
-    const hit=document.elementFromPoint(e.clientX,e.clientY)?.closest('.flow-node');
-    if(hit&&hit.dataset.id&&hit.dataset.id!==node.id){
-      connect(node.id,hit.dataset.id);state.connectFrom=null;state.connectCursor=null;
-    }else if(!dragged){
-      state.connectCursor=null;
-    }else{
-      state.connectFrom=null;state.connectCursor=null;
+function flowConnectCheck(src,tgt,outlet){
+  if(!tgt||tgt.id===src.id)return {ok:false,why:outlet==='reject'?'不能打回到自己':'不能连到自己'};
+  if(outlet==='reject')return isPreviewBuildNode(src.id)?{ok:false,why:'预览构建节点没有失败出口'}:{ok:true};
+  if(state.workflow.edges.some(e=>e.source===src.id&&e.target===tgt.id))return {ok:false,why:'依赖已经存在'};
+  if(flowReaches(tgt.id,src.id))return {ok:false,why:'会形成循环依赖；返工请用「失败打回」'};
+  return {ok:true};
+}
+function startFlowConnect(e,src,outlet){
+  e.stopPropagation();e.preventDefault();closeNodeMenu();
+  if(flowReadOnly()){toast(flowReadOnlyReason());return}
+  const port=e.currentTarget,sx=e.clientX,sy=e.clientY;
+  port.setPointerCapture(e.pointerId);
+  state.connectFrom=src.id;state.connectOutlet=outlet;state.connectCursor=canvasPoint(e);
+  port.closest('.flow-node')?.classList.add('connecting');
+  let moved=false,hover=null;
+  const clearMarks=()=>$$('#nodes .drop-ok,#nodes .drop-bad').forEach(x=>x.classList.remove('drop-ok','drop-bad'));
+  const move=ev=>{
+    if(Math.hypot(ev.clientX-sx,ev.clientY-sy)>4)moved=true;
+    state.connectCursor=canvasPoint(ev);
+    const hit=document.elementFromPoint(ev.clientX,ev.clientY)?.closest('#nodes .flow-node');
+    clearMarks();hover=null;
+    if(hit&&hit.dataset.id!==src.id){
+      hover=state.workflow.nodes.find(x=>x.id===hit.dataset.id)||null;
+      if(hover){hit.classList.add(flowConnectCheck(src,hover,outlet).ok?'drop-ok':'drop-bad');state.connectCursor=flowPortPoint(hover,'in')}
     }
-    renderCanvas();renderProperties();
+    scheduleFlowEdges();
   };
+  const up=()=>{
+    port.removeEventListener('pointermove',move);port.removeEventListener('pointerup',up);port.removeEventListener('pointercancel',up);
+    clearMarks();
+    if(!moved){state.connectCursor=null;renderEdges();flowToast(outlet==='reject'?'点一下失败时要打回的步骤，Esc 取消':'点一下下一步，Esc 取消');return}
+    if(hover)completeFlowConnect(hover);else cancelFlowConnect();
+  };
+  port.addEventListener('pointermove',move);port.addEventListener('pointerup',up);port.addEventListener('pointercancel',up);
 }
-function makeDraggable(el,node){let start=null;el.onpointerdown=e=>{if(e.target.classList.contains('node-port')||e.target.classList.contains('connector')||['INPUT','TEXTAREA','SELECT','BUTTON'].includes(e.target.tagName))return;start={x:e.clientX,y:e.clientY,nx:node.position.x,ny:node.position.y};el.setPointerCapture(e.pointerId)};el.onpointermove=e=>{if(!start)return;node.position.x=Math.max(20,start.nx+e.clientX-start.x);node.position.y=Math.max(20,start.ny+e.clientY-start.y);el.style.left=node.position.x+'px';el.style.top=node.position.y+'px';renderEdges()};el.onpointerup=()=>{if(start){start=null;dirty()}}}
-function connect(source,target){if(source===target)return;if(state.workflow.edges.some(e=>e.source===source&&e.target===target)){toast('依赖已经存在');return}const reachable=new Set([target]),queue=[target];while(queue.length){const current=queue.shift();for(const edge of state.workflow.edges.filter(e=>e.source===current)){if(edge.target===source){toast('不能形成循环依赖；返工请使用"失败打回到"');return}if(!reachable.has(edge.target)){reachable.add(edge.target);queue.push(edge.target)}}}state.workflow.edges.push({id:uid('edge'),source,target,when:'success'});dirty();renderCanvas();renderProperties()}
+function completeFlowConnect(target){
+  const src=state.workflow?.nodes.find(x=>x.id===state.connectFrom),outlet=state.connectOutlet||'success';
+  state.connectFrom=null;state.connectCursor=null;state.connectOutlet=null;
+  if(!src){renderCanvas();return false}
+  const check=flowConnectCheck(src,target,outlet);
+  if(!check.ok){toast(check.why);renderCanvas();return false}
+  if(outlet!=='reject')return connect(src.id,target.id);
+  const prev=state.workflow.nodes.find(x=>x.id===src.rejectTo);
+  if(!setRejectTo(src.id,target.id)){renderCanvas();return false}
+  flowToast(prev&&prev.id!==target.id?`「${src.name}」的打回目标已从「${prev.name}」改为「${target.name}」`:`「${src.name}」失败时打回到「${target.name}」`,{undo:true});
+  return true;
+}
+function cancelFlowConnect(){
+  if(!state.connectFrom&&!state.connectCursor)return false;
+  state.connectFrom=null;state.connectCursor=null;state.connectOutlet=null;
+  renderCanvas();return true;
+}
+function connect(source,target){
+  if(source===target)return false;
+  if(state.workflow.edges.some(e=>e.source===source&&e.target===target)){toast('依赖已经存在');renderCanvas();return false}
+  if(flowReaches(target,source)){toast('不能形成循环依赖；返工请使用「失败打回」');renderCanvas();return false}
+  flowHistory.record();
+  state.workflow.edges.push({id:uid('edge'),source,target,when:'success'});
+  dirty();renderCanvas();renderProperties();
+  const a=state.workflow.nodes.find(n=>n.id===source),b=state.workflow.nodes.find(n=>n.id===target);
+  flowToast(`已连接「${a?.name||source}」→「${b?.name||target}」`,{undo:true});
+  return true;
+}
+// Sets the single reject route of a node; an empty target clears it.
+function setRejectTo(nodeId,targetId){
+  const wf=state.workflow,n=wf?.nodes.find(x=>x.id===nodeId);
+  if(!n)return false;
+  targetId=targetId||'';
+  if(targetId&&isPreviewBuildNode(nodeId)){toast('预览构建节点没有失败出口');return false}
+  if(targetId===nodeId){toast('不能打回到自己');return false}
+  if(targetId&&!wf.nodes.some(x=>x.id===targetId))return false;
+  const onFailure=targetId?'reject':'fail';
+  if((n.rejectTo||'')===targetId&&n.onFailure===onFailure)return true;
+  flowHistory.record();
+  n.rejectTo=targetId;n.onFailure=onFailure;
+  dirty();renderCanvas();renderProperties();
+  return true;
+}
+// Node size and outlet offsets, measured once per renderCanvas so dragging
+// and panning never force a layout per pointermove.
+function flowNodeMetrics(id){
+  const cache=flowNodeMetrics.cache||(flowNodeMetrics.cache=new Map());
+  let m=cache.get(id);if(m)return m;
+  const el=flowNodeEl(id);if(!el||!el.offsetWidth)return null;
+  const row=sel=>{const r=el.querySelector(sel);return r?r.offsetTop+r.offsetHeight/2:el.offsetHeight/2};
+  m={w:el.offsetWidth,h:el.offsetHeight,ok:row('.fd-out.ok'),rj:row('.fd-out.rj')};
+  cache.set(id,m);return m;
+}
 function nodeBox(n){
-  const el=document.querySelector(`.flow-node[data-id="${CSS.escape?CSS.escape(n.id):n.id}"]`);
-  const w=el?.offsetWidth||228,h=el?.offsetHeight||96;
+  const m=flowNodeMetrics(n.id),w=m?.w||244,h=m?.h||132;
   return {x:n.position.x,y:n.position.y,w,h,cx:n.position.x+w/2,cy:n.position.y+h/2,right:n.position.x+w,left:n.position.x,top:n.position.y,bottom:n.position.y+h};
 }
+function flowPortPoint(n,kind){
+  const m=flowNodeMetrics(n.id),p=n.position;
+  if(!m||kind==='in')return {x:p.x,y:p.y+27};
+  return {x:p.x+m.w,y:p.y+(kind==='reject'?m.rj:m.ok)};
+}
+function scheduleFlowEdges(){
+  if(scheduleFlowEdges.raf)return;
+  scheduleFlowEdges.raf=requestAnimationFrame(()=>{scheduleFlowEdges.raf=0;renderEdges()});
+}
+function flowCurve(a,b){const dx=Math.max(50,Math.abs(b.x-a.x)*.45);return `M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`}
+// Reject routes usually point back upstream; loop them under both nodes.
+function flowRejectPath(src,tgt){
+  const a=flowPortPoint(src,'reject'),b=flowPortPoint(tgt,'in');
+  if(b.x>a.x+60)return {d:flowCurve(a,b),mx:(a.x+b.x)/2,my:(a.y+b.y)/2};
+  const y=Math.max(nodeBox(src).bottom,nodeBox(tgt).bottom)+46;
+  return {d:`M ${a.x} ${a.y} C ${a.x+44} ${a.y}, ${a.x+44} ${y}, ${a.x} ${y} L ${b.x} ${y} C ${b.x-44} ${y}, ${b.x-44} ${b.y}, ${b.x} ${b.y}`,mx:(a.x+b.x)/2,my:y};
+}
 async function deleteEdgeById(id){
-  if(!id)return;
-  const edge=state.workflow.edges.find(x=>x.id===id);
+  const edge=state.workflow?.edges.find(x=>x.id===id);
   if(!edge)return;
-  const a=state.workflow.nodes.find(n=>n.id===edge.source);
-  const b=state.workflow.nodes.find(n=>n.id===edge.target);
-  const desc=(a&&b)?`确定删除从「${a.name}」到「${b.name}」的依赖连线？`:'确定删除这条连线？';
-  if(!await afConfirm({
-    title:'删除连线',
-    message:desc,
-    confirmText:'确认删除',
-    danger:true
-  }))return;
+  if(flowReadOnly())return toast(flowReadOnlyReason());
+  flowHistory.record();
   state.workflow.edges=state.workflow.edges.filter(x=>x.id!==id);
-  dirty();renderCanvas();renderProperties();toast('已删除连线');
+  dirty();renderCanvas();renderProperties();flowToast('已删除连线',{undo:true});
 }
-
 async function deleteRejectEdgeByNodeId(nodeId){
-  if(!nodeId)return;
-  const node=state.workflow.nodes.find(n=>n.id===nodeId);
+  const node=state.workflow?.nodes.find(n=>n.id===nodeId);
   if(!node||!node.rejectTo)return;
-  const target=state.workflow.nodes.find(n=>n.id===node.rejectTo);
-  const desc=target?`确定取消「${node.name}」失败打回到「${target.name}」的返工连线？`:`确定取消「${node.name}」的失败打回关系？`;
-  if(!await afConfirm({
-    title:'取消失败打回',
-    message:desc,
-    confirmText:'确认取消',
-    danger:true
-  }))return;
-  node.rejectTo='';
-  node.onFailure='fail';
-  dirty();renderCanvas();renderProperties();toast('已取消失败打回');
+  if(flowReadOnly())return toast(flowReadOnlyReason());
+  if(setRejectTo(nodeId,''))flowToast('已取消失败打回',{undo:true});
 }
-
 function renderEdges(){
-  const svg=$('#edges');if(!svg||!state.workflow)return;
-  const existingDefs=svg.querySelector('defs');
-  const defs=existingDefs?existingDefs.outerHTML:`<defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#98a2b3"></path></marker>
-    <marker id="arrowHover" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444"></path></marker>
-    <marker id="rejectArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#e26d6d"></path></marker>
-    <marker id="rejectArrowHover" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#dc2626"></path></marker>
-  </defs>`;
-  let html=defs;
-  const size=state.workflow.nodes.reduce((acc,n)=>({w:Math.max(acc.w,n.position.x+320),h:Math.max(acc.h,n.position.y+220)}),{w:1200,h:800});
-  svg.setAttribute('width',size.w);svg.setAttribute('height',size.h);svg.style.width=size.w+'px';svg.style.height=size.h+'px';
-  state.workflow.edges.forEach(e=>{
-    const a=state.workflow.nodes.find(n=>n.id===e.source),b=state.workflow.nodes.find(n=>n.id===e.target);if(!a||!b)return;
-    const A=nodeBox(a),B=nodeBox(b);
-    const x1=A.right,y1=A.cy,x2=B.left,y2=B.cy,dx=Math.max(56,Math.abs(x2-x1)*0.4);
-    const mx=Math.round((x1+x2)/2), my=Math.round((y1+y2)/2);
-    const d=`M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`;
-    html+=`<g class="edge-group" data-edge="${escapeHTML(e.id)}">
-      <path class="edge-hitbox" d="${d}"/>
-      <path class="edge" d="${d}"/>
-      <g class="edge-delete-btn" transform="translate(${mx}, ${my})" data-edge-del="${escapeHTML(e.id)}">
-        <circle cx="0" cy="0" r="11"/>
-        <path d="M -4 -4 L 4 4 M 4 -4 L -4 4"/>
-      </g>
-      <title>点击连线或 × 删除依赖（${escapeHTML(a.name)} → ${escapeHTML(b.name)}）</title>
-    </g>`;
-  });
-  state.workflow.nodes.filter(n=>n.rejectTo).forEach(n=>{
-    const target=state.workflow.nodes.find(x=>x.id===n.rejectTo);if(!target)return;
-    const A=nodeBox(n),B=nodeBox(target);
-    const x1=A.cx,y1=A.bottom,x2=B.cx,y2=B.bottom,dip=Math.max(48,Math.abs(x2-x1)*0.18)+36;
-    const mx=Math.round((x1+x2)/2), my=Math.round((y1+y2)/2 + dip*0.75);
-    const d=`M ${x1} ${y1} C ${x1} ${y1+dip}, ${x2} ${y2+dip}, ${x2} ${y2}`;
-    html+=`<g class="edge-group reject-group" data-reject-from="${escapeHTML(n.id)}">
-      <path class="edge-hitbox reject-hitbox" d="${d}"/>
-      <path class="edge reject-edge" d="${d}"/>
-      <g class="edge-delete-btn reject-del-btn" transform="translate(${mx}, ${my})" data-reject-del="${escapeHTML(n.id)}">
-        <circle cx="0" cy="0" r="11"/>
-        <path d="M -4 -4 L 4 4 M 4 -4 L -4 4"/>
-      </g>
-      <title>点击连线或 × 取消失败打回（${escapeHTML(n.name)} ⇠ ${escapeHTML(target.name)}）</title>
-    </g>`;
-  });
-  if(state.connectFrom&&state.connectCursor){
-    const src=state.workflow.nodes.find(n=>n.id===state.connectFrom);
-    if(src){
-      const A=nodeBox(src),x1=A.right,y1=A.cy,x2=state.connectCursor.x,y2=state.connectCursor.y,dx=Math.max(40,Math.abs(x2-x1)*0.35);
-      html+=`<path class="edge preview-edge" d="M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}"/>`;
+  const svg=$('#edges');if(!svg)return;
+  const wf=state.workflow,del=(x,y)=>`<g class="fd-e-del" transform="translate(${x} ${y})"><circle r="9"/><path d="M -3 -3 L 3 3 M 3 -3 L -3 3"/></g>`;
+  let html='<defs><marker id="fdArrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="fd-arrow" d="M1 1.5 8.5 5 1 8.5"/></marker><marker id="fdArrowHover" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="fd-arrow hover" d="M1 1.5 8.5 5 1 8.5"/></marker><marker id="fdArrowReject" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="fd-arrow rj" d="M1 1.5 8.5 5 1 8.5"/></marker></defs>';
+  if(wf){
+    const byId=new Map(wf.nodes.map(n=>[n.id,n]));
+    wf.edges.forEach(e=>{
+      const a=byId.get(e.source),b=byId.get(e.target);if(!a||!b)return;
+      const p=flowPortPoint(a,'success'),q=flowPortPoint(b,'in'),d=flowCurve(p,q);
+      html+=`<g class="fd-e" data-edge="${escapeHTML(e.id)}"><path class="fd-e-hit" d="${d}"/><path class="edge fd-e-path" d="${d}"/>${del((p.x+q.x)/2,(p.y+q.y)/2)}<title>${escapeHTML(a.name)} → ${escapeHTML(b.name)} · 点击删除</title></g>`;
+    });
+    wf.nodes.forEach(n=>{
+      const t=n.rejectTo&&byId.get(n.rejectTo);if(!t)return;
+      const {d,mx,my}=flowRejectPath(n,t);
+      html+=`<g class="fd-e rj" data-reject-from="${escapeHTML(n.id)}"><path class="fd-e-hit" d="${d}"/><path class="edge fd-e-path reject-edge" d="${d}"/><g class="fd-e-label" transform="translate(${mx} ${my})"><rect x="-30" y="-10" width="60" height="20" rx="10"/><text text-anchor="middle" y="3.5">失败打回</text></g>${del(mx+42,my)}<title>${escapeHTML(n.name)} 失败打回到 ${escapeHTML(t.name)} · 点击取消</title></g>`;
+    });
+    const src=state.connectFrom&&byId.get(state.connectFrom);
+    if(src&&state.connectCursor){
+      const reject=state.connectOutlet==='reject';
+      html+=`<path class="fd-e-temp${reject?' rj':''}" d="${flowCurve(flowPortPoint(src,reject?'reject':'success'),state.connectCursor)}"/>`;
     }
   }
   svg.innerHTML=html;
-  svg.querySelectorAll('.edge-group[data-edge]').forEach(grp=>{
-    grp.onpointerenter=()=>{grp.classList.add('hovered')};
-    grp.onpointerleave=()=>{grp.classList.remove('hovered')};
-    grp.onclick=async ev=>{
-      ev.stopPropagation();
-      if(state.connectFrom)return;
-      const id=grp.dataset.edge;
-      await deleteEdgeById(id);
-    };
-    const delBtn=grp.querySelector('.edge-delete-btn');
-    if(delBtn){
-      delBtn.onclick=async ev=>{
-        ev.stopPropagation();
-        if(state.connectFrom)return;
-        await deleteEdgeById(grp.dataset.edge);
-      };
-    }
-  });
-  svg.querySelectorAll('.edge-group[data-reject-from]').forEach(grp=>{
-    grp.onpointerenter=()=>{grp.classList.add('hovered')};
-    grp.onpointerleave=()=>{grp.classList.remove('hovered')};
-    grp.onclick=async ev=>{
-      ev.stopPropagation();
-      if(state.connectFrom)return;
-      const nodeId=grp.dataset.rejectFrom;
-      await deleteRejectEdgeByNodeId(nodeId);
-    };
-    const delBtn=grp.querySelector('.reject-del-btn');
-    if(delBtn){
-      delBtn.onclick=async ev=>{
-        ev.stopPropagation();
-        if(state.connectFrom)return;
-        await deleteRejectEdgeByNodeId(grp.dataset.rejectFrom);
-      };
-    }
+  if(svg.dataset.bound)return;
+  svg.dataset.bound='1';
+  const edgeAt=e=>state.workflow&&!flowReadOnly()?e.target.closest?.('.fd-e'):null;
+  svg.addEventListener('pointerdown',e=>{if(edgeAt(e))e.stopPropagation()});
+  svg.addEventListener('click',e=>{
+    const g=edgeAt(e);if(!g)return;
+    e.stopPropagation();
+    if(state.connectFrom)return;
+    if(g.dataset.edge)deleteEdgeById(g.dataset.edge);else deleteRejectEdgeByNodeId(g.dataset.rejectFrom);
   });
 }
 
+function openNodeMenu(id,anchor){
+  closeNodeMenu();
+  const wrap=$('#flowStageWrap');if(!wrap||flowReadOnly())return;
+  const menu=document.createElement('div'),ic=name=>flowPalette.icon(name,15);
+  menu.className='fd-menu';menu.id='flowNodeMenu';menu.setAttribute('role','menu');menu.dataset.node=id;
+  menu.innerHTML=`<button type="button" role="menuitem" data-a="edit">${ic('pencil')}编辑属性</button><button type="button" role="menuitem" data-a="rename">${ic('type')}重命名<kbd>F2</kbd></button><button type="button" role="menuitem" data-a="dup" ${isPreviewBuildNode(id)?'disabled':''}>${ic('copy')}复制<kbd>⌘D</kbd></button><hr><button type="button" role="menuitem" data-a="del" class="danger">${ic('trash')}删除<kbd>Del</kbd></button>`;
+  const r=anchor.getBoundingClientRect(),wr=wrap.getBoundingClientRect();
+  menu.style.left=Math.max(8,r.right-wr.left-180)+'px';menu.style.top=(r.bottom-wr.top+6)+'px';
+  wrap.appendChild(menu);
+  menu.addEventListener('pointerdown',e=>e.stopPropagation());
+  menu.addEventListener('click',e=>{
+    const b=e.target.closest('button[data-a]');if(!b||b.disabled)return;
+    closeNodeMenu();
+    ({edit:()=>openNodeDrawer(id),rename:()=>startNodeRename(id),dup:()=>duplicateNode(id),del:()=>removeNode(id)})[b.dataset.a]();
+  });
+}
+function closeNodeMenu(){const menu=$('#flowNodeMenu');if(!menu)return false;menu.remove();return true}
+function flowToast(message,opts={}){
+  const box=$('#flowToast');
+  if(!box||!$('#flowView')?.classList.contains('active')){toast(message);return}
+  $('#flowToastMsg').textContent=message;
+  const withUndo=!!opts.undo&&flowHistory.canUndo(),at=flowHistory.current();
+  box.classList.toggle('noact',!withUndo);
+  $('#flowToastAction').onclick=()=>{box.classList.remove('on');if(flowHistory.current()!==at)return flowToast('之后又有修改，请用工具条或 ⌘Z 撤销');if(flowHistory.undo())flowToast('已撤销')};
+  box.classList.add('on');
+  clearTimeout(flowToast.timer);flowToast.timer=setTimeout(()=>box.classList.remove('on'),withUndo?4200:2400);
+}
+function openNodeDrawer(id){
+  if(!state.workflow?.nodes.some(n=>n.id===id))return;
+  if(state.selectedNode!==id)state.flowWantReject=null;
+  state.selectedNode=id;renderCanvas();renderProperties();
+}
+function closeNodeDrawer(){
+  if(!state.selectedNode)return false;
+  state.selectedNode=null;state.flowWantReject=null;renderCanvas();renderProperties();
+  return true;
+}
+// Keeps the stage wrapper's drawer flag in sync with the inspector and the AI panel.
+function syncFlowDrawerLayout(){
+  const wrap=$('#flowStageWrap');if(!wrap)return;
+  const ai=!$('#aiOrchestrator')?.hidden,props=$('#properties')?.classList.contains('open');
+  const had=wrap.classList.contains('has-drawer'),has=!!(ai||props);
+  wrap.classList.toggle('has-drawer',has);wrap.classList.toggle('ai-open',ai);
+  if(had!==has){flowViewport.layoutTight();flowViewport.renderMinimap()}
+}
+function setFlowDrawer(open,nodeId){
+  const host=$('#properties');if(!host)return;
+  const was=host.classList.contains('open');
+  host.classList.toggle('open',open);
+  syncFlowDrawerLayout();
+  if(open&&(!was||host.dataset.node!==nodeId))setTimeout(()=>flowViewport.reveal(nodeId),260);
+  host.dataset.node=open?nodeId:'';
+}
+function bindFlowDesigner(){
+  if(bindFlowDesigner.done)return;bindFlowDesigner.done=true;
+  flowViewport.bind({onBlankClick:()=>{closeNodeMenu();if(!cancelFlowConnect())closeNodeDrawer()}});
+  flowPalette.bind();
+  $('#canvasUndo')?.addEventListener('click',()=>{if(flowHistory.undo())flowToast('已撤销')});
+  $('#canvasRedo')?.addEventListener('click',()=>{if(flowHistory.redo())flowToast('已重做')});
+  $('#canvasArrange')?.addEventListener('click',arrange);
+  document.addEventListener('pointerdown',e=>{if(!e.target.closest('#flowNodeMenu,[data-node-menu]'))closeNodeMenu()});
+  document.addEventListener('keydown',e=>{
+    if(!$('#flowView')?.classList.contains('active')||e.defaultPrevented)return;
+    const mod=e.metaKey||e.ctrlKey,key=(e.key||'').toLowerCase(),blocked=!!$('.modal.open')||$('#commandPalette')?.hidden===false;
+    if(mod&&key==='s'){e.preventDefault();if(!blocked&&!$('#saveWorkflow')?.disabled)saveWorkflow().catch(()=>{});return}
+    if(blocked||e.target.closest?.('input,textarea,select,[contenteditable="true"],[contenteditable=""]'))return;
+    if(mod&&key==='z'){e.preventDefault();if(e.shiftKey?flowHistory.redo():flowHistory.undo())flowToast(e.shiftKey?'已重做':'已撤销');return}
+    if(mod&&key==='y'){e.preventDefault();if(flowHistory.redo())flowToast('已重做');return}
+    if(mod&&(key==='='||key==='+')){e.preventDefault();flowViewport.zoomBy(1.2);return}
+    if(mod&&key==='-'){e.preventDefault();flowViewport.zoomBy(1/1.2);return}
+    const id=state.selectedNode;
+    if(!id||flowReadOnly())return;
+    if(mod&&key==='d'){e.preventDefault();duplicateNode(id)}
+    else if(!mod&&(e.key==='Delete'||(e.key==='Backspace'&&!e.target.closest?.('#properties,#aiOrchestrator,#flowSwitchPop,#flowSettingsPanel')))){e.preventDefault();removeNode(id)}
+    else if(e.key==='F2'){e.preventDefault();startNodeRename(id)}
+  });
+}
+// Escape order inside the designer: switcher > connecting > node menu > drawer.
+function flowDesignerEscape(e){
+  if(flowPalette.closeSwitcher())return true;
+  if(cancelFlowConnect())return true;
+  if(closeNodeMenu())return true;
+  if(!$('#flowView')?.classList.contains('active'))return false;
+  if(e?.target?.closest?.('#properties input,#properties textarea,#properties select')){e.target.blur();return true}
+  return false;
+}
 function ensureNodeDefaults(n){
   n.onFailure=n.onFailure||(n.rejectTo?'reject':'fail');
   n.retryStrategy=n.retryStrategy||'targeted_fix';
@@ -405,7 +650,7 @@ function ensureNodeDefaults(n){
 }
 function artifactRowsHTML(n){
   return (n.artifactOutputs||[]).map((a,i)=>`<article class="artifact-card" data-artifact-row="${i}">
-      <header><input data-ak="name" value="${escapeHTML(a.name||'')}" placeholder="产物名称，如 checkers-report"><button type="button" data-remove-artifact="${i}" title="删除产物">×</button></header>
+      <header><input data-ak="name" value="${escapeHTML(a.name||'')}" placeholder="产物名称，如 checkers-report"><button type="button" data-remove-artifact="${i}" title="删除产物" aria-label="删除产物">${flowPalette.icon('x',12)}</button></header>
       <label>写入路径</label>
       <input data-ak="path" value="${escapeHTML(a.path||'')}" placeholder="相对路径，如 checkers-report.md">
       <footer><select data-ak="mediaType"><option value="application/json" ${a.mediaType==='application/json'?'selected':''}>JSON</option><option value="text/markdown" ${a.mediaType!=='application/json'?'selected':''}>Markdown</option></select>
@@ -434,7 +679,7 @@ function bindListEditor(host, selector, getItems, setItems, placeholder){
 }
 function ensureAgentDraft(a){
   if(!state.agentDraft||state.agentDraft.id!==a.id)state.agentDraft=JSON.parse(JSON.stringify(a||{}));
-  state.agentDraft.taskPrompt=state.agentDraft.taskPrompt||{};
+  state.agentDraft.prompt=state.agentDraft.prompt||'';
   state.agentDraft.artifactOutputs=state.agentDraft.artifactOutputs||[];
   state.agentDraft.verification=(state.agentDraft.verification||[]).filter(x=>x.mode!=='manual'&&x.mode!=='submit');
   state.agentDraft.loop=state.agentDraft.loop||{enabled:false,maxIterations:3,onExhausted:'fail'};
@@ -459,52 +704,56 @@ function bindAgentListEditor(host, selector, getItems, setItems, placeholder, on
 }
 function renderAgentPresets(){
   const host=$('#agentPresetHost');if(!host)return;
-  const isNew=!($('#agentForm')?.elements?.id?.value||'').trim();
+  const isNew=state.agentModalMode==='create';
   if(!isNew){host.innerHTML='';host.dataset.ready='1';return}
   if(host.dataset.ready)return;
   host.dataset.ready='1';
-  host.innerHTML=`<p class="as-lead-line">可先点一个常见角色，名称和职责会自动填好，再按你们项目改。</p><div class="as-presets">${agentPresets.map(p=>`<button type="button" class="as-preset" data-agent-preset="${p.id}"><span class="as-preset-icon">${p.id==='developer'?'码':p.id==='reviewer'?'审':p.id==='tester'?'测':'交'}</span><b>${p.name}</b><small>${p.desc}</small></button>`).join('')}</div>`;
+  const current=state.agentCreatePreset||'blank';
+  const card=(id,icon,name,desc)=>`<button type="button" class="as-preset ${id===current?'active':''}" data-agent-preset="${id}" aria-pressed="${id===current?'true':'false'}"><span class="as-preset-icon">${icon}</span><b>${name}</b><small>${desc}</small></button>`;
+  const presetIcon=p=>({'developer':'码','reviewer':'审','tester':'测','coordinator':'交'})[p.id]||'角';
+  host.innerHTML=`<div class="as-presets agent-start-grid">${card('blank','空','空白','只填名称和模型，其余创建后再补')}${agentPresets.map(p=>card(p.id,presetIcon(p),p.name,p.desc)).join('')}</div>`;
   host.querySelectorAll('[data-agent-preset]').forEach(button=>button.onclick=()=>applyAgentPreset(button.dataset.agentPreset));
 }
 function insertAgentPlaceholder(host, token){
-  const el=host._tpFocus||host.querySelector('[data-tp="objective"]')||host.querySelector('[data-tp]');
-  if(!el||el.tagName!=='TEXTAREA'&&el.tagName!=='INPUT')return;
+  const el=host.querySelector('[data-tp="prompt"]');
+  if(!el)return;
+  // Assigning el.value moves the caret to the end and scrolls the textarea to
+  // the bottom; setRangeText edits in place, and the scroll offset is kept.
+  const top=el.scrollTop;
   const start=el.selectionStart??el.value.length, end=el.selectionEnd??start;
-  el.value=el.value.slice(0,start)+token+el.value.slice(end);
-  el.focus();
-  const caret=start+token.length;
-  try{el.setSelectionRange(caret,caret)}catch(_){}
+  el.focus({preventScroll:true});
+  el.setRangeText(token,start,end,'end');
+  el.scrollTop=top;
   el.dispatchEvent(new Event('input',{bubbles:true}));
 }
+// Placeholders the engine replaces when it renders a node's task brief
+// (internal/engine/prompt.go applyPromptPlaceholders, node_execute.go).
+const AGENT_PROMPT_PLACEHOLDERS=[
+  {t:'{{input}}',l:'任务输入',d:'本次运行的输入；不写时自动附在末尾'},
+  {t:'{{artifacts}}',l:'上游产物',d:'上游节点交付的产物清单；不写时自动附在末尾'},
+  {t:'{{upstream}}',l:'上游结论',d:'直接上游节点的输出；不写时自动附在末尾'},
+  {t:'{{feedback}}',l:'打回反馈',d:'本节点上一轮被打回或门禁失败的原因，首轮为空'},
+  {t:'{{rejectTo}}',l:'打回节点',d:'失败时打回的节点，未配置时为「上游实现节点」'},
+  {t:'{{repository}}',l:'仓库',d:'仓库名、工蜂项目、基线与本次工作分支'},
+  {t:'{{existingMR}}',l:'已有 MR',d:'本轮是否沿用已有分支与 MR 的说明'},
+  {t:'{{pipelineUrl}}',l:'流水线',d:'仓库绑定的流水线地址'},
+];
 function renderAgentTaskBook(a){
   const host=$('#agentTaskBookPanel');if(!host)return;
-  const d=ensureAgentDraft(a),tp=d.taskPrompt;
-  const block=(key,title,hint,example,items)=>`<section class="as-task-card" data-tp-list="${key}"><div class="as-task-card-head"><div><b>${title}</b><small>${hint}</small></div><em>${(items||[]).filter(Boolean).length}</em></div>${agentListEditorHTML(items,example)}<button type="button" class="as-add" data-list-add>+ 再加一条</button></section>`;
-  const ph=[{t:'{{input}}',l:'任务输入'},{t:'{{artifacts}}',l:'上游产物'},{t:'{{feedback}}',l:'失败原因'},{t:'{{repository}}',l:'仓库'},{t:'{{upstream}}',l:'上游结论'}];
-  host.innerHTML=`<p class="as-lead-line">用几句话写清「做成什么样」。下面的步骤和禁区会编进 Agent 的任务书，不用写 prompt 语法。</p>
-    <label class="as-field as-hero"><span>做成什么样</span><textarea data-tp="objective" rows="4" placeholder="例如：读 Issue 和相关源码，把根因写到具体文件和函数。不要改业务代码，也不要跑测试。">${escapeHTML(tp.objective||'')}</textarea></label>
-    <div class="as-ph-bar"><span>点一下插入到光标处</span>${ph.map(x=>`<button type="button" data-insert-ph="${x.t}" title="${x.l}">${x.l}</button>`).join('')}</div>
-    <label class="as-field as-role-field"><span>对 Agent 怎么称呼</span><input data-tp="role" value="${escapeHTML(tp.role||a.name||'')}" placeholder="例如：Issue 根因分析师"></label>
-    <div class="as-task-grid">
-      ${block('actions','按这个顺序做','每条一句，运行时会按顺序写进任务书','读 Issue，再搜索相关源码，定位到文件与行',tp.actions)}
-      ${block('constraints','这些事不要做','安全边界和职责外的事','不得改业务源码、不得跑测试、不得提交密钥',tp.constraints)}
+  const d=ensureAgentDraft(a);
+  host.innerHTML=`<div class="as-prompt-box">
+      <div class="as-ph-bar" role="toolbar" aria-label="插入运行时变量"><span>插入</span>${AGENT_PROMPT_PLACEHOLDERS.map(x=>`<button type="button" data-insert-ph="${x.t}" data-tip="${escapeHTML(`${x.t} · ${x.d}`)}">${x.l}</button>`).join('')}</div>
+      <textarea data-tp="prompt" aria-label="角色 prompt" placeholder="写清它是谁、做什么、按什么顺序、哪些事不能做。&#10;&#10;例如：你是 Issue 根因分析师，只分析不修改。读 Issue 和相关源码，把根因定位到具体文件和函数，写进 fix-plan.md。先复现，再缩小范围，最后给出修复步骤。不要改业务代码，也不要跑测试。">${escapeHTML(d.prompt||'')}</textarea>
     </div>
-    <div class="as-task-grid">
-      ${block('deliverables','要交什么文件','和「产物与门禁」里的路径对应起来','fix-plan.md：根因、影响面和修复步骤',tp.deliverables)}
-      ${block('acceptanceCriteria','怎样算做完','这里写人话；真正拦运行的命令在下一步','fix-plan.md 写清根因，并点到具体文件',tp.acceptanceCriteria)}
-    </div>
-    <details class="as-fold as-fold-muted"><summary>更多可选说明<em>输入变量、工作区、失败后怎么改</em></summary><div class="as-fold-body as-task-more">
-      <div data-tp-list="inputs"><p class="as-fold-hint">运行时会替换的变量，可点上方按钮插入</p>${agentListEditorHTML(tp.inputs,'任务输入：{{input}}')}<button type="button" class="as-add" data-list-add>+ 添加</button></div>
-      <label class="as-field"><span>工作区里有什么</span><textarea data-tp="context" rows="3" placeholder="当前目录已经是检出好的 git 工作区，直接改相对路径。">${escapeHTML(tp.context||'')}</textarea></label>
-      <label class="as-field"><span>失败或被打回时</span><textarea data-tp="retryInstructions" rows="3" placeholder="先读 failed_checks，只修失败项，不要重做已经通过的部分。">${escapeHTML(tp.retryInstructions||'')}</textarea></label>
-    </div></details>`;
-  const touch=()=>renderAgentSummary();
-  host.onfocusin=e=>{const t=e.target;if(t&&(t.tagName==='TEXTAREA'||(t.tagName==='INPUT'&&t.type!=='checkbox'&&t.type!=='search')))host._tpFocus=t};
-  host.querySelectorAll('[data-tp]').forEach(el=>{
-    el.oninput=()=>{tp[el.dataset.tp]=el.value;touch();dirty()};
+    <p class="as-prompt-note" id="agentPromptNote"></p>`;
+  const el=host.querySelector('[data-tp="prompt"]');
+  el.oninput=()=>{d.prompt=el.value;renderAgentSummary();dirty()};
+  host.querySelectorAll('[data-insert-ph]').forEach(btn=>{
+    // Keep focus (and the caret) in the textarea while clicking a chip.
+    btn.onmousedown=e=>e.preventDefault();
+    btn.onclick=()=>insertAgentPlaceholder(host,btn.dataset.insertPh);
   });
-  host.querySelectorAll('[data-insert-ph]').forEach(btn=>btn.onclick=()=>insertAgentPlaceholder(host,btn.dataset.insertPh));
-  ['inputs','actions','deliverables','acceptanceCriteria','constraints'].forEach(key=>bindAgentListEditor(host,`[data-tp-list="${key}"]`,()=>tp[key]||[],items=>{tp[key]=items},'',touch));
+  renderAgentSummary();
 }
 function renderAgentGovernance(a){
   const host=$('#agentGovPanel');if(!host)return;
@@ -513,11 +762,10 @@ function renderAgentGovernance(a){
   const after=(d.interventions||[]).some(x=>x.stage==='after_execution');
   const publish=(d.interventions||[]).some(x=>x.stage==='before_publish');
   host.innerHTML=`<div class="as-section-stack">
-    <p class="as-lead-line">运行时会先校验必需产物是否存在且符合契约，通过后才触发门禁命令。任一步失败都不会继续交付。</p>
-    <section class="as-section-block as-loop-card"><div class="as-section-head"><b>做不对应再试一次</b><small>同一沙箱里重跑，适合测试失败后只修失败项</small></div><label class="as-toggle"><input name="loopEnabled" type="checkbox" ${loop.enabled?'checked':''}><div><b>启用自动重试</b><small>门禁失败后进入下一轮，直到通过或达到次数上限</small></div></label><div class="as-grid as-grid-tight"><label class="as-field"><span>最多试几轮</span><input name="loopMaxIterations" type="number" min="1" max="12" value="${loop.maxIterations||3}"></label><label class="as-field"><span>试完仍失败</span><select name="loopOnExhausted" class="select"><option value="fail" ${loop.onExhausted!=='human'?'selected':''}>标记失败并停下</option><option value="human" ${loop.onExhausted==='human'?'selected':''}>交给人工处理</option></select></label><label class="as-field wide"><span>下一轮怎么提醒它</span><textarea name="loopFeedbackPrompt" rows="2" placeholder="读 {{feedback}}，只修失败项，不要重做已经通过的部分">${escapeHTML(loop.feedbackPrompt||'')}</textarea></label></div></section>
+    <section class="as-section-block as-loop-card"><div class="as-section-head"><b>做不对应再试一次</b><small>同一沙箱里重跑，适合测试失败后只修失败项</small></div><label class="as-switch-row"><span><b>启用自动重试</b><small>门禁失败后进入下一轮，直到通过或达到次数上限</small></span><input name="loopEnabled" type="checkbox" ${loop.enabled?'checked':''} role="switch"></label><div class="as-grid as-grid-tight"><label class="as-field"><span>最多试几轮</span><input name="loopMaxIterations" type="number" min="1" max="12" value="${loop.maxIterations||3}"></label><label class="as-field"><span>试完仍失败</span><select name="loopOnExhausted" class="select"><option value="fail" ${loop.onExhausted!=='human'?'selected':''}>标记失败并停下</option><option value="human" ${loop.onExhausted==='human'?'selected':''}>交给人工处理</option></select></label><label class="as-field wide"><span>下一轮怎么提醒它</span><textarea name="loopFeedbackPrompt" rows="2" placeholder="读 {{feedback}}，只修失败项，不要重做已经通过的部分">${escapeHTML(loop.feedbackPrompt||'')}</textarea></label></div></section>
     <section class="as-section-block"><div class="as-section-head"><b>要交的文件</b><small>写相对工作区的路径，例如 <code>fix-plan.md</code></small></div><div id="agentArtifactPanel"></div></section>
     <section class="as-section-block"><div class="as-section-head"><b>产物通过后的门禁命令</b><small>必需产物先校验；通过后才按顺序执行这些命令</small></div><div id="agentGatePanel"></div></section>
-    <section class="as-section-block"><div class="as-section-head"><b>要不要人看一眼</b><small>勾选后，运行会停在「待我确认」</small></div><div class="as-toggle-grid"><label class="as-toggle"><input name="interventionAfter" type="checkbox" ${after?'checked':''}><div><b>做完后先复核</b><small>Agent 写完结论，人批准再往下走</small></div></label><label class="as-toggle"><input name="interventionPublish" type="checkbox" ${publish?'checked':''}><div><b>交文件前先确认</b><small>磁盘产物落盘前停一下</small></div></label></div></section>
+    <section class="as-section-block"><div class="as-section-head"><b>要不要人看一眼</b><small>打开后，运行会停在「待我确认」</small></div><div class="as-toggle-grid"><label class="as-switch-row"><span><b>做完后先复核</b><small>Agent 写完结论，人批准再往下走</small></span><input name="interventionAfter" type="checkbox" ${after?'checked':''} role="switch"></label><label class="as-switch-row"><span><b>交文件前先确认</b><small>磁盘产物落盘前停一下</small></span><input name="interventionPublish" type="checkbox" ${publish?'checked':''} role="switch"></label></div></section>
   </div>`;
   renderAgentArtifactEditors(d);
   renderAgentGateEditors(d);
@@ -597,17 +845,20 @@ function nodeGatePane(n){
   const agent=workflowAgent(n.agentId);
   const artifacts=effectiveNodeArtifacts(n,agent);
   const gates=roleGates(agent);
-  const artifactRows=artifacts.length?artifacts.map(a=>`<article class="as-artifact"><div class="as-artifact-head"><span class="as-file-icon">📄</span><b>${escapeHTML(a.name||a.path||'未命名产物')}</b></div><label>${escapeHTML(a.path||'未设置路径')}</label><div class="as-artifact-foot"><span>${escapeHTML(a.mediaType||'text/markdown')}</span><span>${a.required?'必须交':'可选'}</span></div></article>`).join(''):'<div class="as-empty">这个节点没有声明需要校验的产物。</div>';
-  const gateRows=gates.length?gates.map(g=>{const cmds=(g.commands||[]).filter(Boolean);return `<article class="as-gate"><div class="as-gate-head"><span class="as-file-icon">⌘</span><b>${escapeHTML(g.name||g.id||'未命名门禁')}</b></div><div class="script-snippet-preview"><code>${escapeHTML(cmds.join(' && ')||'人工确认')}</code></div><p class="prop-hint">${g.executionScope==='repositories'?'每个代码仓库':'Run 工作区'} · 失败后 ${escapeHTML({loop:'本节点自修正',reject:'打回上游',human:'转人工确认',fail:'本节点失败'}[g.onFailure]||'按节点策略')}</p></article>`}).join(''):'<div class="as-empty">这个节点没有额外门禁命令。</div>';
-  const terminal=n.type==='agent'?`<section class="as-section-block"><div class="as-section-head"><b>1. 先提交结构化终态</b><small>平台内建，无需配置</small></div><article class="as-gate"><div class="as-gate-head"><span class="as-file-icon">✓</span><b>结构化节点终态</b></div><div class="script-snippet-preview"><code>pass | rework | fail | human</code></div><p class="prop-hint">Agent 完成任务后必须先调用 submit_gate_result 提交终态；缺失时自动恢复同一会话重试。</p></article></section>`:'';
-  return `<p class="prop-hint">执行时 Agent 节点先提交结构化终态，随后校验产物，最后执行可选门禁命令。</p>${terminal}<section class="as-section-block"><div class="as-section-head"><b>2. 再校验产物</b><small>${artifacts.length} 项</small></div>${artifactRows}</section><section class="as-section-block"><div class="as-section-head"><b>3. 最后触发额外门禁</b><small>${gates.length} 项</small></div>${gateRows}</section>${agent?'<button type="button" class="button ghost small" id="openBoundAgentValidation">去角色定义编辑校验清单</button>':''}`;
+  const step=(i,title,sub,body)=>`<li class="fd-tl-step"><span class="fd-tl-n">${i}</span><div class="fd-tl-c"><div class="fd-tl-h"><b>${title}</b><small>${sub}</small></div>${body}</div></li>`;
+  const artifactRows=artifacts.length?artifacts.map(a=>`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('file',13)}</span><span class="fd-tl-main"><b>${escapeHTML(a.name||a.path||'未命名产物')}</b><code>${escapeHTML(a.path||'未设置路径')}</code></span><span class="fd-tag${a.required?'':' soft'}">${a.required?'必须交':'可选'}</span></div>`).join(''):'<div class="fd-tl-none">这个节点没有声明需要校验的产物。</div>';
+  const gateRows=gates.length?gates.map(g=>{const cmds=(g.commands||[]).filter(Boolean);return `<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('terminal',13)}</span><span class="fd-tl-main"><b>${escapeHTML(g.name||g.id||'未命名门禁')}</b><code>${escapeHTML(cmds.join(' && ')||'人工确认')}</code><small>${g.executionScope==='repositories'?'每个代码仓库':'Run 工作区'} · 失败后 ${escapeHTML({loop:'本节点自修正',reject:'打回上游',human:'转人工确认',fail:'本节点失败'}[g.onFailure]||'按节点策略')}</small></span></div>`}).join(''):'<div class="fd-tl-none">这个节点没有额外门禁命令。</div>';
+  const terminal=n.type==='agent'?step(1,'先提交结构化终态','平台内建',`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('check',13)}</span><span class="fd-tl-main"><code>pass | rework | fail | human</code><small>Agent 完成任务后必须先调用 submit_gate_result 提交终态；缺失时自动恢复同一会话重试。</small></span></div>`):'';
+  const base=n.type==='agent'?1:0;
+  return `<p class="prop-hint">执行时 Agent 节点先提交结构化终态，随后校验产物，最后执行可选门禁命令。</p><ol class="fd-tl">${terminal}${step(base+1,'再校验产物',`${artifacts.length} 项`,artifactRows)}${step(base+2,'最后触发额外门禁',`${gates.length} 项`,gateRows)}</ol>${agent?'<button type="button" class="fd-btn ghost sm" id="openBoundAgentValidation">去角色定义编辑校验清单</button>':''}`;
 }
+
 function renderAgentAssetsPanel(a){
   const host=$('#agentAssetsPanel');if(!host)return;
   const d=ensureAgentDraft(a);
   const generic=catalogGeneric(state.workflow);
   const col=(title,sub,name,items,selected)=>{const vis=name==='mcpServers'?(generic?(items||[]):visibleMCPAssets(items)):(name==='rules'||name==='skills'?(items||[]).filter(item=>catalogVisible(item.projectId,item.shared)):visibleAssets(items));const picked=vis.filter(item=>name==='mcpServers'&&generic?genericMCPChecked(item.id,selected):(selected||[]).includes(item.id)).length;const empty=name==='mcpServers'?(generic?'通用模板绑定市场别名（如 github），运行时落到当前项目已安装的 MCP':'这个项目或你的个人范围还没有 MCP，先到「MCP 管理」里添加'):name==='rules'?'这个项目还没有可用规则，先到「规则管理」里添加或共享':name==='skills'?'这个项目还没有可用技能，先到「技能管理」里添加或共享':'这个项目还没有此类配置，先到「环境资产」里添加';return `<div class="as-asset-col"><div class="as-asset-col-head"><b>${title}</b><span>${sub}${picked?` · 已选 ${picked}`:''}</span></div><div class="as-asset-search"><span>⌕</span><input type="search" data-asset-filter="${name}" placeholder="搜索名称…"></div><div class="as-asset-list" data-asset-list="${name}">${vis.map(x=>`<label class="as-asset-item"><input type="checkbox" name="${name}" value="${escapeHTML(x.id)}" ${(name==='mcpServers'&&generic?genericMCPChecked(x.id,selected):(selected||[]).includes(x.id))?'checked':''}><div><b>${escapeHTML(x.name)}</b><small>${escapeHTML(x.description||x.id)}${x.shared&&x.projectId!==state.projectFilter?' · 共享':''}</small></div></label>`).join('')||`<div class="as-empty">${empty}</div>`}</div></div>`};
-  host.innerHTML=`<p class="as-lead-line">勾选这个角色能用的规则、技能和外部工具。Hook 只在这个角色跑的时候生效。</p><section class="as-section-block as-platform-mcp-section"><div class="as-section-head"><b>平台能力</b><small>独立开关，不占用 MCP 列表</small></div><label class="as-toggle"><input type="checkbox" name="platformMcp" ${d.platformMcp?'checked':''}><div><b>接入平台 MCP（AgentFlow）</b><small>开启后，这个角色运行时通过平台 MCP（agentflow-platform）直接调用平台侧功能：需求、任务、运行、项目等平台操作。</small></div></label><label class="as-toggle"><input type="checkbox" name="knowledgeBase" ${d.knowledgeBase?'checked':''}><div><b>接入团队知识库</b><small>开启后，这个角色运行时可只读检索团队知识库（agentflow-knowledge），并自动附带「知识库使用规范」规则；产出的 knowledge.md 会进入知识沉淀审核队列。</small></div></label></section><div class="as-assets">${col('必须遵守','规则','rules',state.data.rules,d.rules)}${col('怎么干活','技能','skills',state.data.skills,d.skills)}${col('外部工具','MCP','mcpServers',generic?genericTemplateMCPOptions(d.mcpServers):state.data.mcpServers,d.mcpServers)}</div><section class="as-section-block as-hook-section"><div class="as-section-head"><b>运行时 Hook</b><small>在工具调用前后插一段脚本，比如拦危险命令。一般可以先不配。</small></div><div id="agentHookPanel"></div></section>`;
+  host.innerHTML=`<section class="as-section-block as-platform-mcp-section"><div class="as-section-head"><b>平台能力</b><small>独立开关，不占用 MCP 列表</small></div><label class="as-switch-row"><span><b>接入平台 MCP（LoopForge）</b><small>开启后，这个角色运行时通过平台 MCP（agentflow-platform）直接调用平台侧功能：需求、任务、运行、项目等平台操作。</small></span><input type="checkbox" name="platformMcp" ${d.platformMcp?'checked':''} role="switch"></label><label class="as-switch-row"><span><b>接入团队知识库</b><small>开启后，这个角色运行时可只读检索团队知识库（agentflow-knowledge），并自动附带「知识库使用规范」规则；产出的 knowledge.md 会进入知识沉淀审核队列。</small></span><input type="checkbox" name="knowledgeBase" ${d.knowledgeBase?'checked':''} role="switch"></label></section><div class="as-assets">${col('必须遵守','规则','rules',state.data.rules,d.rules)}${col('怎么干活','技能','skills',state.data.skills,d.skills)}${col('外部工具','MCP','mcpServers',generic?genericTemplateMCPOptions(d.mcpServers):state.data.mcpServers,d.mcpServers)}</div><section class="as-section-block as-hook-section"><div class="as-section-head"><b>运行时 Hook</b><small>在工具调用前后插一段脚本，比如拦危险命令。一般可以先不配。</small></div><div id="agentHookPanel"></div></section>`;
   host.querySelectorAll('[data-asset-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.closest('.as-asset-col').querySelectorAll('.as-asset-item').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))});
   host.querySelectorAll('input[type=checkbox]').forEach(el=>el.onchange=()=>{renderAgentSummary();dirty()});
   const platformToggle=host.querySelector('input[name="platformMcp"]');
@@ -656,24 +907,36 @@ function renderAgentHookEditors(d){
   });
 }
 function renderAgentSummary(){
-  const host=$('#agentSummaryBar');if(!host)return;
   const f=$('#agentForm'),d=state.agentDraft||{};
   const exec=(state.data.executors||[]).find(x=>x.id===(f?.elements?.executorId?.value||d.executorId));
-  const model=agentEffectiveModel(f)||d.model||exec?.model||exec?.name||'未选模型';
+  const chosen=agentEffectiveModel(f),model=chosen||(exec?.model?`${exec.model}（默认）`:'默认模型');
   const effort=(f?.elements?.effort?.value||'').trim();
+  const meta=$('#agentRuntimeMeta');
+  if(meta)meta.textContent=[exec?.name,effort?`${model} · ${effort}`:model].filter(Boolean).join(' · ');
   const arts=(d.artifactOutputs||[]).filter(x=>x.name||x.path).length;
   const gates=(d.verification||[]).filter(x=>x.name||(x.commands||[]).length).length;
   const loopOn=f?.elements?.loopEnabled?.checked??d.loop?.enabled;
-  host.innerHTML=`<span class="as-chip">${escapeHTML(effort?`${model} · ${effort}`:model)}</span>${d.platformMcp?'<span class="as-chip on">平台 MCP</span>':''}${d.knowledgeBase?'<span class="as-chip on">知识库</span>':''}<span class="as-chip ${loopOn?'on':''}">${loopOn?`${f?.elements?.loopMaxIterations?.value||d.loop?.maxIterations||3} 轮 Loop`:'单轮'}</span><span class="as-chip">${arts} 产物</span><span class="as-chip">${gates} 门禁</span><span class="as-chip">${(d.hooks||[]).length} Hook</span>`;
+  const note=$('#agentPromptNote');
+  if(note){
+    const parts=['角色名'];
+    if(arts)parts.push(`${arts} 个产物`);
+    if(gates)parts.push(`${gates} 条门禁`);
+    parts.push(loopOn?`最多 ${f?.elements?.loopMaxIterations?.value||d.loop?.maxIterations||3} 轮重试`:'重试策略');
+    note.textContent=`运行时自动附上：${parts.join('、')}`;
+  }
+  const desc=f?.elements?.description,count=$('#agentDescCount');
+  if(desc&&count)count.textContent=`${desc.value.length}/${desc.maxLength>0?desc.maxLength:160}`;
+  const picked=name=>f?f.querySelectorAll(`input[name="${name}"]:checked`).length:0;
+  const setCount=(sel,n)=>{const el=$(sel);if(el&&el.textContent!==String(n)){el.textContent=String(n);el.hidden=!n;syncTabIndicator(el.closest('.agent-tabs'))}else if(el)el.hidden=!n};
+  setCount('#agentGovCount',arts+gates);
+  setCount('#agentAssetsCount',picked('rules')+picked('skills')+picked('mcpServers')+(d.hooks||[]).length);
 }
 function renderAgentPreview(a){
   renderAgentSummary();
 }
 function readAgentDraft(f){
   const d=state.agentDraft||{};
-  const tp=d.taskPrompt||{};
-  const hasTaskBook=[tp.role,tp.objective,tp.context,tp.retryInstructions,...(tp.inputs||[]),...(tp.actions||[]),...(tp.deliverables||[]),...(tp.acceptanceCriteria||[]),...(tp.constraints||[])].some(v=>String(v||'').trim());
-  return {taskPrompt:hasTaskBook?tp:null,artifactOutputs:d.artifactOutputs||[],verification:d.verification||[],hooks:d.hooks||[]};
+  return {prompt:String(d.prompt||'').trim()?d.prompt:'',artifactOutputs:d.artifactOutputs||[],verification:d.verification||[],hooks:d.hooks||[]};
 }
 function sectionHead(title,hint,count,unit){
   const label=count==null?'':`${count} ${unit||'条'}`;
@@ -691,113 +954,94 @@ function agentBindCard(n){
     ?(available.length?`<optgroup label="通用模板角色 · ${available.length} 个">${options(available)}</optgroup>`:'')
     :(owned.length?`<optgroup label="本项目角色 · ${owned.length} 个">${options(owned)}</optgroup>`:'')+(shared.length?`<optgroup label="共享角色 · ${shared.length} 个">${options(shared)}</optgroup>`:'');
   const opts=(invalid+grouped)||(generic?'<option value="">该模板还没有打包角色</option>':'<option value="">当前项目暂无可用角色</option>');
-  const arts=effectiveNodeArtifacts(n,agent).map(a=>`${a.path||a.name}${a.required?' (必需)':''}`).filter(Boolean).join('、')||'未声明';
-  const gates=roleGates(agent).map(g=>g.name||g.id).filter(Boolean).join('、')||'未声明';
-  const taskHint=agent?.taskPrompt?.objective?`任务：${agent.taskPrompt.objective.slice(0,48)}…`:'任务书在角色定义第 2 步';
   const hint=generic?'这些角色打包在通用模板里，和当前项目目录无关。改任务书只影响平台模板，所有项目下次运行生效。':`本项目 ${owned.length} 个 · 共享 ${shared.length} 个；其他项目私有角色已隐藏。`;
-  return `<div class="agent-bind-card"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p>${agent?`<p class="agent-bind-meta"><b>${escapeHTML(agent.name)}</b> · ${escapeHTML(agent.model||exec?.model||exec?.name||'未选模型')}<br><small>${escapeHTML(taskHint)}</small></p><dl class="agent-contract-preview"><div><dt>会校验的产物</dt><dd>${escapeHTML(arts)}</dd></div><div><dt>统一门禁</dt><dd>${escapeHTML(gates)}</dd></div><div><dt>执行顺序</dt><dd>先交终态，再校验产物，后触发门禁</dd></div><div><dt>Loop</dt><dd>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮自修正`:'单轮'}</dd></div></dl><button type="button" class="button ghost small" id="openBoundAgent">去角色定义编辑任务书</button>`:'<p class="prop-hint">先选一个已定义的角色。画布只编排顺序和打回，不改编排角色内部的任务。</p>'}</div>`;
+  if(!agent)return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p><p class="prop-hint">先选一个已定义的角色。画布只编排顺序和打回，不改编排角色内部的任务。</p></div>`;
+  const arts=effectiveNodeArtifacts(n,agent),gates=roleGates(agent);
+  const duty=String(agent.description||'').trim(),taskHint=duty?(duty.length>48?`${duty.slice(0,48)}…`:duty):'还没写职责，可在角色定义里补';
+  const model=agent.model||exec?.model||exec?.name||'未选模型';
+  return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p></div>
+    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span><button type="button" class="fd-btn ghost sm" id="openBoundAgent">编辑角色 prompt</button></div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
+}
+function flowDrawerHead(n,kind,label){
+  const agent=kind==='agent'?workflowAgent(n.agentId):null;
+  const tile=agent?escapeHTML(flowPalette.initial(agent.name)):flowPalette.icon(FLOW_NODE_TYPES[kind].icon,16);
+  const title=kind==='preview'?`<h3>${escapeHTML(n.name)}</h3>`:`<input class="fd-dh-name" data-p="name" value="${escapeHTML(n.name)}" maxlength="120" aria-label="步骤名称" spellcheck="false">`;
+  return `<div class="fd-dh"><span class="fd-tile" style="--tint:${flowNodeTint(n)}">${tile}</span><div class="fd-dh-t">${title}<small title="${escapeHTML(n.id)}">${label} · ${escapeHTML(n.id)}</small></div><button type="button" class="fd-icon-btn danger" id="deletePropertyNode" aria-label="删除步骤" data-tip="${kind==='preview'?'移除预览节点':'删除 Del'}">${flowPalette.icon('trash')}</button><button type="button" class="fd-icon-btn" id="closeNodeDrawer" aria-label="关闭" data-tip="关闭 Esc">${flowPalette.icon('x')}</button></div>`;
+}
+function flowFold(id,title,sub,body,defaultOpen){
+  const folds=state.flowFolds||(state.flowFolds={});
+  const open=folds[id]===undefined?defaultOpen:folds[id];
+  return `<details class="fd-sec fd-fold" data-fold="${id}" ${open?'open':''}><summary><span class="fd-sec-t">${title}</span>${sub?`<small>${sub}</small>`:''}<span class="fd-chev">${flowPalette.icon('chev',14)}</span></summary><div class="fd-sec-b">${body}</div></details>`;
 }
 function renderPreviewBuildProperties(host,n){
   const model=workflowPreviewModel(state.workflow);
-  const inEdges=state.workflow.edges.filter(e=>e.target===n.id);
-  const inChips=inEdges.length?inEdges.map(e=>{
-    const src=state.workflow.nodes.find(x=>x.id===e.source);
-    const name=src?src.name:'未知步骤';
-    return `<span class="prop-edge-chip" title="前序步骤：${escapeHTML(name)}"><span class="prop-edge-dir">←</span><span class="prop-edge-name">${escapeHTML(name)}</span></span>`;
-  }).join(''):'<span class="prop-edge-none">无前序依赖（从上游节点连线到此）</span>';
   const spa=state.workflow.preview?.spaFallback!==false;
-  host.innerHTML=`<div class="prop-header sticky"><div><h3>${escapeHTML(n.name)}</h3><small>系统步骤 · 前端预览</small></div></div>
-    <div class="prop-body"><div class="prop-pane prop-compact">
-      <p class="prop-hint">从左侧「流程步骤」面板添加，可插入流程任意位置。运行到该节点时用所选模型构建静态站点，不必再手写脚本节点；Run 成功后平台归档预览。</p>
-      <label>CodeBuddy 模型</label>
-      <select class="select" id="previewNodeModel"></select>
-      <label class="flow-check-row" style="margin-top:10px"><input type="checkbox" id="previewNodeSpa" ${spa?'checked':''}><span>单页应用回退（找不到路径时返回入口 HTML）</span></label>
-      <div class="prop-edge-manager" style="margin-top:12px"><div class="prop-edge-group"><div class="prop-edge-title">前序依赖（入边 ${inEdges.length}）</div><div class="prop-edge-chips">${inChips}</div></div></div>
+  host.innerHTML=`${flowDrawerHead(n,'preview','系统步骤 · 前端预览')}
+    <div class="fd-db">
+      <section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">
+        <p class="prop-hint">运行到该节点时用所选模型构建静态站点，不必再手写脚本节点；Run 成功后平台归档预览。它只有成功出口。</p>
+        <div class="fd-field"><label>CodeBuddy 模型</label><select class="select" id="previewNodeModel"></select></div>
+        <label class="fd-check"><input type="checkbox" id="previewNodeSpa" ${spa?'checked':''}><span>单页应用回退（找不到路径时返回入口 HTML）</span></label>
+      </div></section>
     </div>
-    <div class="prop-footer"><button id="deletePropertyNode" class="button ghost danger">移除预览节点</button></div></div>`;
+    <div class="fd-df"><span class="fd-df-hint">从左侧「成功」出口连到下一步；预览节点没有失败出口</span></div>`;
   fillPreviewModelSelect($('#previewNodeModel'), model);
   const sel=$('#previewNodeModel');
-  if(sel)sel.onchange=()=>{updatePreviewContract({model:sel.value});dirty();renderCanvas();};
+  if(sel)sel.onchange=()=>{flowHistory.record();updatePreviewContract({model:sel.value});dirty();renderCanvas();};
   const spaBox=$('#previewNodeSpa');
-  if(spaBox)spaBox.onchange=()=>{updatePreviewContract({spaFallback:spaBox.checked});dirty();};
-  const del=$('#deletePropertyNode');
-  if(del)del.onclick=async()=>{
-    if(!(await afConfirm({title:'移除前端预览',message:'将移除「构建静态站点」节点，并不再归档预览。',danger:true,confirmText:'移除节点'})))return;
-    state.selectedNode=n.id;
-    deleteSelected();
-  };
+  if(spaBox)spaBox.onchange=()=>{flowHistory.record();updatePreviewContract({spaFallback:spaBox.checked});dirty();};
 }
 function renderProperties(){
   const host=$('#properties');if(!host)return;
-  if(!state.workflow){host.innerHTML='<div class="empty-properties"><div>◇</div><b>流程还没加载完</b><p>稍候刷新，或从「SOP 目录」打开一条已发布流程。</p></div>';return}
-  const n=state.workflow.nodes.find(node=>node.id===state.selectedNode);
-  if(!n){host.innerHTML='<div class="empty-properties"><div>◇</div><b>点左侧步骤或画布节点</b><p>Agent 步骤绑定角色、连线、统一校验清单和失败打回。节点会同步展示角色定义的产物与门禁。</p></div>';return}
-  if(isPreviewBuildNode(n.id)){renderPreviewBuildProperties(host,n);return}
-  ensureNodeDefaults(n);
-  const targets=state.workflow.nodes.map(x=>`<option value="${x.id}" ${x.id===n.rejectTo?'selected':''}>${escapeHTML(x.name)}${x.id===n.id?'（当前节点）':''}</option>`).join('');
-  const typeLabel=n.type==='agent'?'Agent 步骤':n.type==='script'?'脚本步骤':n.type==='sop'?'SOP 步骤':'人工门禁';
-  const tabs=n.type==='agent'?[{id:'basic',label:'角色'},{id:'gates',label:'校验'},{id:'fail',label:'失败返工'}]:n.type==='script'?[{id:'basic',label:'基本'},{id:'task',label:'脚本'},{id:'fail',label:'失败返工'}]:n.type==='sop'?[{id:'basic',label:'基本'},{id:'handoff',label:'下游产物'},{id:'fail',label:'失败返工'}]:[{id:'basic',label:'基本'},{id:'fail',label:'失败返工'}];
-  let tab=state.propTab||'basic';if(!tabs.some(t=>t.id===tab))tab='basic';
-  const inEdges=state.workflow.edges.filter(e=>e.target===n.id);
-  const outEdges=state.workflow.edges.filter(e=>e.source===n.id);
-  const inChips=inEdges.length?inEdges.map(e=>{
-    const src=state.workflow.nodes.find(x=>x.id===e.source);
-    const name=src?src.name:'未知步骤';
-    return `<span class="prop-edge-chip" title="前序步骤：${escapeHTML(name)}"><span class="prop-edge-dir">←</span><span class="prop-edge-name">${escapeHTML(name)}</span><button type="button" class="prop-edge-del" data-del-edge="${escapeHTML(e.id)}" title="删除此连线">×</button></span>`;
-  }).join(''):'<span class="prop-edge-none">无（流程起点）</span>';
-
-  const outChips=outEdges.length?outEdges.map(e=>{
-    const tgt=state.workflow.nodes.find(x=>x.id===e.target);
-    const name=tgt?tgt.name:'未知步骤';
-    return `<span class="prop-edge-chip" title="后续步骤：${escapeHTML(name)}"><span class="prop-edge-dir">→</span><span class="prop-edge-name">${escapeHTML(name)}</span><button type="button" class="prop-edge-del" data-del-edge="${escapeHTML(e.id)}" title="删除此连线">×</button></span>`;
-  }).join(''):'<span class="prop-edge-none">无（流程末端）</span>';
-
-  const rejectTarget=n.rejectTo?state.workflow.nodes.find(x=>x.id===n.rejectTo):null;
-  const rejectChip=rejectTarget?`<div class="prop-edge-group reject"><div class="prop-edge-title"><span class="reject-icon">⇠</span> 失败打回到</div><div class="prop-edge-chips"><span class="prop-edge-chip reject" title="失败打回目标：${escapeHTML(rejectTarget.name)}"><span class="prop-edge-name">${escapeHTML(rejectTarget.name)}</span><button type="button" class="prop-edge-del" data-del-reject="${escapeHTML(n.id)}" title="取消打回">×</button></span></div></div>`:'';
-
-  const edgesBlock=`<div class="prop-edge-manager">
-    <div class="prop-edge-group"><div class="prop-edge-title">前序依赖（入边 ${inEdges.length}）</div><div class="prop-edge-chips">${inChips}</div></div>
-    <div class="prop-edge-group"><div class="prop-edge-title">后续步骤（出边 ${outEdges.length}）</div><div class="prop-edge-chips">${outChips}</div></div>
-    ${rejectChip}
-    <div class="prop-edge-hint">💡 悬停画布连线会出现 <b>×</b> 快捷删除；也可点上方标签的 × 移除依赖。</div>
-  </div>`;
-
-  const sopChoices=sopWorkflowChoices(state.workflow.id);
-  const sopSelect=n.type==='sop'?`<label>要跑的 SOP</label><select class="select" data-p="sopWorkflowId"><option value="">选择一条已有流程</option>${sopChoices.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===n.sopWorkflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')}</select><p class="prop-hint">${escapeHTML((sopChoices.find(w=>w.id===n.sopWorkflowId)||{}).description||'这条 SOP 会作为子流程跑完，声明的产物交给下一步。')}</p>`:'';
-  const basic=`<div class="prop-compact">
-      <label>步骤名称</label><input class="input" data-p="name" value="${escapeHTML(n.name)}">
-      ${n.type==='sop'?'<p class="prop-hint">子 SOP 容器不重复计入阶段耗时；请在子流程的实际执行节点上标注统计阶段。</p>':`<label>效能统计阶段</label><select class="select" data-p="metricStage"><option value="" ${!n.metricStage?'selected':''}>未标注（旧流程兼容推断）</option><option value="clarification" ${n.metricStage==='clarification'?'selected':''}>需求澄清</option><option value="development" ${n.metricStage==='development'?'selected':''}>研发</option><option value="testing" ${n.metricStage==='testing'?'selected':''}>测试</option><option value="none" ${n.metricStage==='none'?'selected':''}>不计入阶段耗时</option></select><p class="prop-hint">保存后的新 Run 会冻结此标记；历史 Run 不会被新配置改写。</p>`}
-      <div class="property-grid">${n.type==='agent'?`<div class="wide">${agentBindCard(n)}</div>`:''}</div>
-      ${sopSelect}
-      ${n.type==='approval'?'<p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续。</p>':''}
-      ${edgesBlock}
-    </div>`;
-  const scriptLines=(n.script||'').trim()?n.script.trim().split('\n').length:0;
-  const scriptCountText=scriptLines?`已编写 ${scriptLines} 行 (${n.scriptLanguage==='python'?'Python':'Shell'})`:'未配置 (点击编写)';
-  const scriptPreview=scriptLines?`<div class="script-snippet-preview" id="previewScriptNodeEditor" title="点击在代码编辑器中修改"><code>${escapeHTML(n.script.slice(0, 120))}${n.script.length>120?'…':''}</code></div>`:'';
-  const taskPane=n.type==='script'
-    ? `<label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run工作区（校验产物等场景）</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select><label class="toggle-row"><input type="checkbox" data-p="runOnWorkspaceRebuild" ${n.runOnWorkspaceRebuild?'checked':''}>工作区重建时先执行</label><p class="prop-hint">正常运行按流程执行；重建工作区时，先补跑已完成且开启此项的脚本。请确保脚本可重复执行并保留已有修改。</p><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select><div class="gate-script-trigger-wrap"><label style="font-size:11px;color:var(--muted);font-weight:600">脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>⛶ 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}</div><p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p>`
-    : '<p class="prop-hint">人工门禁没有任务书。</p>';
-  const fail=`<div class="failure-choice"><label class="${n.onFailure!=='reject'?'active':''}"><input type="radio" name="onFailure" value="fail" ${n.onFailure!=='reject'?'checked':''}><span><b>停下来</b><small>重试用尽后标记失败</small></span></label><label class="${n.onFailure==='reject'?'active':''}"><input type="radio" name="onFailure" value="reject" ${n.onFailure==='reject'?'checked':''}><span><b>打回重做</b><small>重置目标步骤及其下游</small></span></label></div>
-    <div class="failure-route ${n.onFailure==='reject'?'':'disabled'}"><label>打回到</label><select id="rejectTarget" class="select" ${n.onFailure==='reject'?'':'disabled'}><option value="">请选择步骤</option>${targets}</select></div>
-    <div class="property-grid"><div><label>单轮最多试几次</label><input class="input" type="number" min="1" max="9" data-p="maxAttempts" value="${n.maxAttempts||1}"></div><div><label>最多返工几轮</label><input class="input" type="number" min="1" max="20" data-p="maxReworks" value="${n.maxReworks||3}"></div></div>
-    <label>返工策略</label><select class="select" data-p="retryStrategy"><option value="targeted_fix" ${n.retryStrategy!=='full_redo'?'selected':''}>只修失败项</option><option value="full_redo" ${n.retryStrategy==='full_redo'?'selected':''}>整步重做</option></select>
-    <p class="prop-hint">${n.type==='agent'?'这里管节点本身失败后怎么走。产物和门禁使用「校验」页里的统一清单。':'停下来或打回轮次用尽后，运行页可以人工通过该节点继续下游，避免硬脚本一直卡住。'}</p>`;
-  const handoffPane=n.type==='sop'
-    ? `<p class="prop-hint">子 SOP 成功后，下列文件会出现在本节点，供下一步读取。留空则收下子流程交出的全部产物。</p><div id="artifactContractRows">${artifactRowsHTML(n)}</div><button type="button" class="button ghost small" id="addSOPHandoff">＋ 增加下游产物</button>`
-    : '';
-  const panes={basic,task:taskPane,gates:nodeGatePane(n),fail,handoff:handoffPane};
-  host.innerHTML=`<div class="prop-header sticky"><div><h3>${escapeHTML(n.name)}</h3><small>${typeLabel}</small></div></div>
-    <div class="prop-tabs">${tabs.map(t=>`<button type="button" data-prop-tab="${t.id}" class="${tab===t.id?'active':''}">${t.label}</button>`).join('')}</div>
-    <div class="prop-body"><div class="prop-pane">${panes[tab]||basic}</div>
-    <div class="prop-footer">${state.connectFrom===n.id?'<div class="connection-mode">正在连线：再点目标步骤，或按 Esc 取消</div>':'<button id="connectNode" class="button ghost">连接到下一步</button>'}<button id="deletePropertyNode" class="button ghost danger">删除步骤</button></div></div>`;
-  host.querySelectorAll('[data-prop-tab]').forEach(b=>b.onclick=()=>{state.propTab=b.dataset.propTab;renderProperties()});
-  host.querySelectorAll('[data-del-edge]').forEach(b=>{b.onclick=async ev=>{ev.stopPropagation();await deleteEdgeById(b.dataset.delEdge)}});
-  host.querySelectorAll('[data-del-reject]').forEach(b=>{b.onclick=async ev=>{ev.stopPropagation();await deleteRejectEdgeByNodeId(b.dataset.delReject)}});
-  host.querySelectorAll('[data-p]').forEach(el=>el.oninput=()=>{n[el.dataset.p]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;const title=host.querySelector('.prop-header h3');if(title&&el.dataset.p==='name')title.textContent=el.value;dirty();if(el.dataset.p==='agentId'){renderProperties();renderCanvas();return}renderCanvas()});
+  const n=state.workflow?.nodes.find(node=>node.id===state.selectedNode);
+  if(!n){setFlowDrawer(false);return}
+  const kind=flowNodeKind(n),ro=flowReadOnly();
+  const same=host.dataset.node===n.id,scroll=same?host.querySelector('.fd-db')?.scrollTop||0:0;
+  const active=same&&host.contains(document.activeElement)?document.activeElement:null;
+  const focusKey=active?.dataset?.p||'',caret=focusKey&&typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null;
+  if(kind==='preview')renderPreviewBuildProperties(host,n);
+  else{
+    ensureNodeDefaults(n);
+    const sopChoices=sopWorkflowChoices(state.workflow.id);
+    const sopSelect=n.type==='sop'?`<div class="fd-field"><label>要跑的 SOP</label><select class="select" data-p="sopWorkflowId"><option value="">选择一条已有流程</option>${sopChoices.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===n.sopWorkflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')}</select><p class="prop-hint">${escapeHTML((sopChoices.find(w=>w.id===n.sopWorkflowId)||{}).description||'这条 SOP 会作为子流程跑完，声明的产物交给下一步。')}</p></div><div class="fd-field"><label>交给下一步的产物</label><p class="prop-hint">子 SOP 成功后，下列文件会出现在本节点，供下一步读取。留空则收下子流程交出的全部产物。</p><div id="artifactContractRows">${artifactRowsHTML(n)}</div><button type="button" class="fd-btn ghost sm" id="addSOPHandoff">${flowPalette.icon('plus',13)}<span>增加下游产物</span></button></div>`:'';
+    const scriptLines=(n.script||'').trim()?n.script.trim().split('\n').length:0;
+    const scriptCountText=scriptLines?`已编写 ${scriptLines} 行 (${n.scriptLanguage==='python'?'Python':'Shell'})`:'未配置 (点击编写)';
+    const scriptPreview=scriptLines?`<div class="script-snippet-preview" id="previewScriptNodeEditor" title="点击在代码编辑器中修改"><code>${escapeHTML(n.script.slice(0, 120))}${n.script.length>120?'…':''}</code></div>`:'';
+    const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
+    const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:'';
+    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n):''}${sopSelect}${scriptPane}${approvalPane}</div></section>`;
+    const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
+    const wantReject=state.flowWantReject??(n.onFailure==='reject');
+    const targets=state.workflow.nodes.filter(x=>x.id!==n.id).map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===n.rejectTo?'selected':''}>${escapeHTML(x.name)}</option>`).join('');
+    const fail=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">失败后</span></div><div class="fd-sec-b"><div class="fd-seg fd-seg-full" role="radiogroup" aria-label="失败后"><button type="button" role="radio" data-fail="fail" class="${wantReject?'':'active'}" aria-checked="${!wantReject}">${flowPalette.icon('stop',13)}<span>停下来</span></button><button type="button" role="radio" data-fail="reject" class="${wantReject?'active':''}" aria-checked="${wantReject}">${flowPalette.icon('rotate',13)}<span>打回重做</span></button></div>${wantReject?`<div class="fd-field"><label>打回到</label><select id="rejectTarget" class="select"><option value="">请选择步骤</option>${targets}</select><p class="prop-hint">重置目标步骤及其下游后重跑。也可以从节点的「失败打回」出口直接拖线。</p></div>`:'<p class="prop-hint">重试用尽后标记失败；运行页可以人工通过该节点继续下游。</p>'}</div></section>`;
+    const metric=n.type==='sop'?'<p class="prop-hint">子 SOP 容器不重复计入阶段耗时；请在子流程的实际执行节点上标注统计阶段。</p>':`<div class="fd-field"><label>效能统计阶段</label><select class="select" data-p="metricStage"><option value="" ${!n.metricStage?'selected':''}>未标注（旧流程兼容推断）</option><option value="clarification" ${n.metricStage==='clarification'?'selected':''}>需求澄清</option><option value="development" ${n.metricStage==='development'?'selected':''}>研发</option><option value="testing" ${n.metricStage==='testing'?'selected':''}>测试</option><option value="none" ${n.metricStage==='none'?'selected':''}>不计入阶段耗时</option></select><p class="prop-hint">保存后的新 Run 会冻结此标记；历史 Run 不会被新配置改写。</p></div>`;
+    const adv=flowFold('adv','高级','重试 · 返工 · 统计',`<div class="fd-row2"><div class="fd-field"><label>单轮最多试几次</label><input class="input" type="number" min="1" max="9" data-p="maxAttempts" value="${n.maxAttempts||1}"></div><div class="fd-field"><label>最多返工几轮</label><input class="input" type="number" min="1" max="20" data-p="maxReworks" value="${n.maxReworks||3}"></div></div><div class="fd-field"><label>返工策略</label><select class="select" data-p="retryStrategy"><option value="targeted_fix" ${n.retryStrategy!=='full_redo'?'selected':''}>只修失败项</option><option value="full_redo" ${n.retryStrategy==='full_redo'?'selected':''}>整步重做</option></select></div>${n.type==='script'?`<label class="fd-check"><input type="checkbox" data-p="runOnWorkspaceRebuild" ${n.runOnWorkspaceRebuild?'checked':''}><span>工作区重建时先执行（脚本需可重复执行）</span></label>`:''}${metric}`,false);
+    host.innerHTML=`${flowDrawerHead(n,kind,FLOW_NODE_TYPES[kind].label)}<div class="fd-db">${main}${gates}${fail}${adv}</div><div class="fd-df"><span class="fd-df-hint"><kbd>F2</kbd> 重命名 · <kbd>⌘D</kbd> 复制 · <kbd>Del</kbd> 删除 · <kbd>⌘Z</kbd> 撤销</span></div>`;
+    bindNodeProperties(host,n);
+  }
+  host.querySelector('#closeNodeDrawer')?.addEventListener('click',closeNodeDrawer);
+  const del=host.querySelector('#deletePropertyNode');if(del)del.onclick=()=>removeNode(n.id);
+  host.querySelectorAll('[data-fold]').forEach(d=>d.addEventListener('toggle',()=>{(state.flowFolds||(state.flowFolds={}))[d.dataset.fold]=d.open}));
+  if(ro)host.querySelectorAll('.fd-db input,.fd-db select,.fd-db textarea,.fd-db button:not(#openBoundAgent):not(#openBoundAgentValidation),.fd-dh-name,#deletePropertyNode').forEach(el=>el.disabled=true);
+  flowPalette.paint(host);
+  const body=host.querySelector('.fd-db');if(body&&scroll)body.scrollTop=scroll;
+  const refocus=focusKey&&host.querySelector(`[data-p="${focusKey}"]`);
+  if(refocus){refocus.focus({preventScroll:true});if(caret)try{refocus.setSelectionRange(caret[0],caret[1])}catch{}}
+  setFlowDrawer(true,n.id);
+}
+function bindNodeProperties(host,n){
+  host.querySelectorAll('[data-p]').forEach(el=>el.oninput=()=>{
+    const key=el.dataset.p;
+    if(key!=='sopWorkflowId')flowHistory.record({merge:`p:${n.id}:${key}`});
+    n[key]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
+    dirty();
+    if(key==='agentId'){renderProperties();renderCanvas();return}
+    renderCanvas();
+  });
   const sopSel=host.querySelector('[data-p="sopWorkflowId"]');
   const renderedSOPId=n.sopWorkflowId;
   if(sopSel)sopSel.onchange=()=>{
+    flowHistory.record();
     const choices=sopWorkflowChoices(state.workflow.id);
     const prev=choices.find(w=>w.id===renderedSOPId);
     const artifactKey=list=>JSON.stringify((list||[]).map(a=>[a.name||'',a.path||'']));
@@ -807,14 +1051,15 @@ function renderProperties(){
     if(wf&&(!n.name||n.name==='SOP 节点'||n.name===prev?.name))n.name=wf.name;
     dirty();renderProperties();renderCanvas();
   };
-  host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
-  if(tab==='handoff')bindArtifactRows(host,n);
-  const openBound=$('#openBoundAgent');if(openBound)openBound.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent)};
+  host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
+  if(n.type==='sop')bindArtifactRows(host,n);
+  const openBound=$('#openBoundAgent');if(openBound)openBound.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,2)};
   const openBoundValidation=$('#openBoundAgentValidation');if(openBoundValidation)openBoundValidation.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,3)};
-  host.querySelectorAll('input[name="onFailure"]').forEach(el=>el.onchange=()=>{n.onFailure=el.value;if(el.value==='fail')n.rejectTo='';host.querySelectorAll('.failure-choice label').forEach(l=>l.classList.toggle('active',l.querySelector('input').value===el.value));const route=host.querySelector('.failure-route'),sel=$('#rejectTarget');if(route)route.classList.toggle('disabled',el.value!=='reject');if(sel)sel.disabled=el.value!=='reject';dirty();renderCanvas()});
-  const reject=$('#rejectTarget');if(reject)reject.onchange=e=>{n.rejectTo=e.target.value;n.onFailure=n.rejectTo?'reject':'fail';dirty();renderCanvas()};
-  const connectButton=$('#connectNode');if(connectButton)connectButton.onclick=()=>{state.connectFrom=n.id;renderCanvas();renderProperties()};
-  const del=$('#deletePropertyNode');if(del)del.onclick=async()=>{if(!(await afConfirm({title:'删除步骤',message:`确定删除步骤「${n.name}」？关联连线将被一并移除。`,danger:true,confirmText:'删除步骤'})))return;state.workflow.nodes=state.workflow.nodes.filter(x=>x.id!==n.id);state.workflow.edges=state.workflow.edges.filter(e=>e.source!==n.id&&e.target!==n.id);state.workflow.nodes.forEach(x=>{if(x.rejectTo===n.id){x.rejectTo='';x.onFailure='fail'}});state.selectedNode=null;dirty();renderCanvas();renderProperties()};
+  host.querySelectorAll('[data-fail]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.fail==='fail'){state.flowWantReject=false;if(!setRejectTo(n.id,'')&&n.onFailure==='reject'){n.onFailure='fail';dirty()}renderProperties();return}
+    state.flowWantReject=true;renderProperties();host.querySelector('#rejectTarget')?.focus();
+  });
+  const reject=$('#rejectTarget');if(reject)reject.onchange=e=>{state.flowWantReject=null;setRejectTo(n.id,e.target.value)};
   const openScriptBtn=$('#openScriptNodeEditor');
   const previewScriptBtn=$('#previewScriptNodeEditor');
   const triggerScriptEditor=()=>{
@@ -825,13 +1070,10 @@ function renderProperties(){
       language:lang,
       value:n.script||'',
       onSave:(newVal, newLang)=>{
+        flowHistory.record();
         n.script=newVal;
-        if(newLang==='python'||newLang==='shell'){
-          n.scriptLanguage=newLang;
-          const langSel=host.querySelector('[data-p="scriptLanguage"]');
-          if(langSel) langSel.value=newLang;
-        }
-        renderProperties();
+        if(newLang==='python'||newLang==='shell')n.scriptLanguage=newLang;
+        renderProperties();renderCanvas();
         dirty();
       }
     });
@@ -839,42 +1081,17 @@ function renderProperties(){
   if(openScriptBtn) openScriptBtn.onclick=triggerScriptEditor;
   if(previewScriptBtn) previewScriptBtn.onclick=triggerScriptEditor;
 }
-
-function dirty(){state.workflowDirty=true;$('#saveState').textContent='有未保存更改';$('#saveState').style.color='#e59a24';const btn=$('#discardWorkflow');if(btn)btn.hidden=false}
-function markWorkflowClean(){state.workflowDirty=false;state.workflowSaved=clone(state.workflow);$('#saveState').textContent='已同步';$('#saveState').style.color='';const btn=$('#discardWorkflow');if(btn)btn.hidden=true;rememberOpenWorkflow()}
+function dirty(){state.workflowDirty=true;renderFlowHeader();flowViewport.renderMinimap()}
+function markWorkflowClean(){state.workflowDirty=false;state.workflowSaved=clone(state.workflow);renderFlowHeader();rememberOpenWorkflow()}
 async function discardWorkflow(){
   if(!state.workflowDirty||!state.workflowSaved)return;
   if(!(await afConfirm({title:'放弃修改',message:'放弃未保存的修改，恢复到上次保存？',danger:true,confirmText:'放弃修改'})))return;
-  state.workflow=clone(state.workflowSaved);state.selectedNode=null;state.connectFrom=null;state.connectCursor=null;markWorkflowClean();renderAll();toast('已取消修改');
+  state.workflow=clone(state.workflowSaved);state.selectedNode=null;state.connectFrom=null;state.connectCursor=null;state.renamingNode=null;markWorkflowClean();flowHistory.clear();renderAll();toast('已取消修改');
 }
 async function saveWorkflow(){
   if(catalogGeneric(state.workflow)&&!isPlatformAdmin()){toast('通用模板为只读，请先「复制到本项目」再修改');throw new Error('generic sop is read-only')}
   if(catalogForeign(state.workflow?.projectId)){toast('这是其他项目的共享 SOP，请先复制到本项目再改');throw new Error('shared sop is read-only')}
-  try{const saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify(state.workflow)});state.workflow=clone(saved);const i=state.data.workflows.findIndex(w=>w.id===saved.id);if(i>=0)state.data.workflows[i]=clone(saved);else state.data.workflows.unshift(clone(saved));markWorkflowClean();renderWorkflowMeta();renderSOPCatalog();toast('SOP 草稿已保存');return saved}catch(e){if(e.message.includes('revision conflict')){toast('保存冲突：其他人已更新该 SOP，请重新选择后合并')}else if(e.message!=='shared sop is read-only'&&e.message!=='generic sop is read-only')toast(e.message);throw e}}
-function bindFlowResize(){
-  const workbench=$('.flow-workbench');if(!workbench)return;
-  const ow=localStorage.getItem('agentflow.flowOutlineW'),pw=localStorage.getItem('agentflow.flowPropsW');
-  if(ow)workbench.style.setProperty('--flow-outline-w',ow);
-  if(pw)workbench.style.setProperty('--flow-props-w',pw);
-  $$('.flow-resize').forEach(handle=>{
-    handle.onpointerdown=e=>{
-      const key=handle.dataset.resize,startX=e.clientX;
-      const startOutline=parseFloat(getComputedStyle(workbench).getPropertyValue('--flow-outline-w'))||240;
-      const startProps=parseFloat(getComputedStyle(workbench).getPropertyValue('--flow-props-w'))||360;
-      handle.setPointerCapture(e.pointerId);handle.classList.add('dragging');
-      handle.onpointermove=ev=>{
-        const dx=ev.clientX-startX;
-        if(key==='outline')workbench.style.setProperty('--flow-outline-w',Math.min(420,Math.max(180,startOutline+dx))+'px');
-        else workbench.style.setProperty('--flow-props-w',Math.min(560,Math.max(280,startProps-dx))+'px');
-      };
-      handle.onpointerup=()=>{
-        handle.classList.remove('dragging');handle.onpointermove=null;
-        localStorage.setItem('agentflow.flowOutlineW',getComputedStyle(workbench).getPropertyValue('--flow-outline-w').trim());
-        localStorage.setItem('agentflow.flowPropsW',getComputedStyle(workbench).getPropertyValue('--flow-props-w').trim());
-      };
-    };
-  });
-}
+  try{const saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify(state.workflow)});state.workflow=clone(saved);const i=state.data.workflows.findIndex(w=>w.id===saved.id);if(i>=0)state.data.workflows[i]=clone(saved);else state.data.workflows.unshift(clone(saved));markWorkflowClean();renderWorkflowMeta();renderSOPCatalog();renderCanvas();renderProperties();toast('SOP 草稿已保存');return saved}catch(e){if(e.message.includes('revision conflict')){toast('保存冲突：其他人已更新该 SOP，请重新选择后合并')}else if(e.message!=='shared sop is read-only'&&e.message!=='generic sop is read-only')toast(e.message);throw e}}
 function newWorkflow(){state.workflow={id:uid('sop'),name:'未命名 SOP',version:1,revision:0,status:'draft',projectId:state.projectFilter||'',shared:false,owner:'',tags:[],description:'',sandboxProfileId:'local',nodes:[],edges:[]};state.selectedNode=null;rememberOpenWorkflow();renderAll();dirty()}
 function openSOPWizard(){
   const f=$('#sopCreateForm');f.reset();

@@ -43,7 +43,7 @@ func (u *User) ToDomain() domain.User {
 	}
 }
 
-// IOAAuthResponse 是太湖 / TOF4 / TAI AccessToken 接口的响应结构。
+// IOAAuthResponse 是企业 SSO AccessToken 接口的响应结构。
 type IOAAuthResponse struct {
 	Ret        int          `json:"Ret"`
 	ErrCode    int          `json:"ErrCode"`
@@ -52,7 +52,7 @@ type IOAAuthResponse struct {
 	Data       *IOAAuthData `json:"Data"`
 }
 
-// IOAAuthData 包含了太湖发放的票据与员工核心信息。
+// IOAAuthData 包含了 SSO 发放的票据与员工核心信息。
 type IOAAuthData struct {
 	Key          string `json:"Key"`
 	Expiration   string `json:"Expiration"`

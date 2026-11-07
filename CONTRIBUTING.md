@@ -4,7 +4,10 @@ LoopForge has a platform at the repository root and a complementary local workfl
 
 For platform changes, preserve upstream engine, repository and handler boundaries. Keep identity, provider and deployment adaptations explicit. Add a regression test for a behavioral fix and document schema or runner-protocol compatibility changes.
 
+The platform binary embeds the chatbot frontend from `web/native-chat`, so build it (Node 22+) before the Go checks; this also runs the chatbot tests.
+
 ```bash
+bash scripts/build-chatbot.sh
 go test -p=2 ./... -count=1 -timeout=180s
 go vet ./...
 python3 scripts/check-public.py

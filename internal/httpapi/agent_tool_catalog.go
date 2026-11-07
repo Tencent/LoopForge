@@ -81,7 +81,7 @@ func sanitizeAgentToolNamespace(id, name string) string {
 		out = strings.ReplaceAll(out, "__", "_")
 	}
 	switch out {
-	case "", "tapd", "gongfeng", "iwiki", "agentflow":
+	case "", "tapd", "gongfeng", "agentflow":
 		return "mcp"
 	default:
 		return out
@@ -143,12 +143,6 @@ func agentToolKindAllowlistNames(mode AgentToolMode, kind string) []string {
 			)
 		}
 		return names
-	case "iwiki":
-		names := []string{"getDocument"}
-		if agentToolAllowsAssistantReads(mode) {
-			names = append(names, "getSpacePageTree", "searchDocument", "searchWeDoc", "getSpaceInfo", "getMySpaces", "aiSearchDocument", "listImages", "getComments", "glossaryTermSearch")
-		}
-		return names
 	case "agentflow":
 		if mode == AgentToolClarify {
 			return []string{"issues_get", "issues_list", "repositories_get", "projects_get"}
@@ -167,7 +161,7 @@ func agentToolKindAllowlistNames(mode AgentToolMode, kind string) []string {
 
 func agentflowNoisyTool(name string) bool {
 	switch name {
-	case "health_get", "capabilities_get", "openapi_get", "bootstrap_get", "observability_spec_get", "analytics_get", "analytics_skillhub_get", "deployment_metrics_get", "workflow_metrics_get":
+	case "health_get", "capabilities_get", "openapi_get", "bootstrap_get", "observability_spec_get", "analytics_get", "workflow_metrics_get":
 		return true
 	default:
 		return false
@@ -186,7 +180,7 @@ func agentflowAssistantReadToolNames() []string {
 }
 
 // agentflowAssistantWriteToolNames 返回审批模式放行直连的平台写入工具：
-// assisted 放行保存类（危险类仍走草稿），auto 放行全部写入。
+// assisted 提供写入工具并在执行前审查；auto 直接执行。
 func agentflowAssistantWriteToolNames(exec assistantExecMode) []string {
 	if !exec.AutoWrite {
 		return nil
@@ -214,7 +208,7 @@ func assistantPlatformToolAllowed(exec assistantExecMode, name string) bool {
 	if op.ReadOnly {
 		return true
 	}
-	if exec.Consultation || !exec.AutoWrite {
+	if !exec.AutoWrite {
 		return false
 	}
 	return !exec.ConfirmDangerous || !assistantRiskyToolName(name)
@@ -243,7 +237,9 @@ func agentToolNameAllowed(mode AgentToolMode, kind, tool string) bool {
 	if tool == "" {
 		return false
 	}
-	if mode == AgentToolScheduled && kind != "agentflow" {
+	// Conversations and scheduled tasks see every tool of the project's MCPs;
+	// a write follows the conversation's approval mode at call time.
+	if (mode == AgentToolScheduled || mode == AgentToolAssistant) && kind != "agentflow" {
 		return true
 	}
 	if allowed := agentToolKindAllowlist(mode, kind); len(allowed) > 0 {
@@ -260,7 +256,7 @@ func tapdInnerToolAllowed(mode AgentToolMode, name string) bool {
 	if name == "" || name == "proxy_execute_tool" {
 		return false
 	}
-	if mode == AgentToolScheduled {
+	if mode == AgentToolScheduled || mode == AgentToolAssistant {
 		return true
 	}
 	if !agentToolNameAllowed(mode, "tapd", name) {
@@ -347,8 +343,8 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 			})
 		}
 	}
-	// 审批模式放行的平台写入工具（assisted 保存类 / auto 全部），模型直连
-	// 调用即生效；confirm 模式目录里没有写工具，模型只能提交草稿。
+	// assisted 的每项写入在执行入口审查；auto 直接执行。
+	// confirm 模式目录里没有写工具，模型只能提交草稿。
 	if session.Mode == AgentToolAssistant {
 		for _, name := range agentflowAssistantWriteToolNames(session.ExecMode) {
 			ns := namespaceAgentTool("agentflow", name)
@@ -361,9 +357,13 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 				continue
 			}
 			schema, _ := json.Marshal(platformToolInputSchema(op))
+			writePolicy := "平台写入工具（已授权直接执行）："
+			if session.ExecMode.ReviewWrites {
+				writePolicy = "平台写入工具（执行前独立 AI 审查，未批准时交给用户确认）："
+			}
 			out = append(out, agentToolDescriptor{
 				Name:         ns,
-				Description:  "平台写入工具（已授权直接执行）：" + op.Description + " (" + op.Method + " " + op.Path + ")",
+				Description:  writePolicy + op.Description + " (" + op.Method + " " + op.Path + ")",
 				InputSchema:  schema,
 				Kind:         "agentflow",
 				UpstreamName: name,
@@ -375,8 +375,17 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	}
 	if session.Mode == AgentToolAssistant {
 		out = append(out, agentToolDescriptor{Name: "workbench_tool_schema", Description: "读取平台工具的准确参数契约。提交写入草稿前先读取对应工具 schema；不要猜字段、路径或参数包装。", InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}`), Kind: "workbench"})
+		if strings.TrimSpace(session.SpaceID) != "" {
+			out = append(out, agentToolDescriptor{Name: "workbench_publish_artifact", Description: "把页面、PPT、图片或文档发布到当前会话。用户在侧边栏打开，看不到服务器磁盘路径。prototype+html 是可交互页面；ppt+markdown 用 --- 分页；图片传 imageBase64；browser 传 https url。", InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"},"kind":{"type":"string","enum":["doc","prototype","api","diff","report","ppt","browser","file"]},"format":{"type":"string","enum":["markdown","html","json","text","png","jpeg","gif","webp"]},"body":{"type":"string"},"url":{"type":"string"},"summary":{"type":"string"},"imageBase64":{"type":"string"}},"required":["title"],"additionalProperties":false}`), Kind: "workbench"})
+		}
 	}
-	out = append(out, mainBotWorkspaceTools(session)...)
+	for _, d := range mainBotWorkspaceTools(session) {
+		if d.Name == "workbench_workspace_open" {
+			d = h.workspaceOpenDescriptorFor(session)
+		}
+		out = append(out, d)
+	}
+	out = append(out, mainBotBrowserTools(session)...)
 	out = append(out, terminalToolDescriptors(session.Mode, session.ExecMode)...)
 	session.mu.Lock()
 	session.catalog = append([]agentToolDescriptor{}, out...)
@@ -447,7 +456,7 @@ func lookupAgentTool(catalog []agentToolDescriptor, name string) (agentToolDescr
 }
 
 func redactAgentToolResult(text string, user domain.User) string {
-	text = redactAssistantSecrets(truncateRunes(text, assistantMCPResultLimit), user)
+	text = redactAssistantSecrets(strings.TrimSpace(text), user)
 	return redactAuthorizationValues(text)
 }
 

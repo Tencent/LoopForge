@@ -102,6 +102,32 @@ func TestPersonalTokenAuthenticatesRESTAndMCPAndCanBeRevoked(t *testing.T) {
 		t.Fatalf("list status=%d body=%s", listRec.Code, listRec.Body.String())
 	}
 
+	// A valid API token is a full API credential but must not manage tokens:
+	// otherwise a leaked token can mint a replacement that survives revocation.
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/auth/tokens", ""},
+		{http.MethodPost, "/api/auth/tokens", `{"name":"minted by token"}`},
+		{http.MethodDelete, "/api/auth/tokens/" + created.Metadata.ID, ""},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Authorization", "Bearer "+created.Token)
+		if tc.body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s with bearer status=%d body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
+		}
+	}
+	if got := len(s.APITokens(stored.ID)); got != 1 {
+		t.Fatalf("bearer caller changed tokens: have %d, want 1", got)
+	}
+
 	revoke := httptest.NewRequest(http.MethodDelete, "/api/auth/tokens/"+created.Metadata.ID, nil)
 	revoke.AddCookie(session)
 	revokeRec := httptest.NewRecorder()

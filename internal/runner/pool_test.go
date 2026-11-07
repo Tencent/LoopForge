@@ -16,7 +16,7 @@ import (
 // carrying the pool label. The returned function stops it.
 func startPoolRunner(t *testing.T, s *repo.Store, serverURL, name string) (domain.Runner, context.CancelFunc) {
 	t.Helper()
-	daemon, err := New(Config{
+	return startPoolRunnerWithConfig(t, s, Config{
 		ServerURL:            serverURL,
 		BootstrapToken:       "boot-secret",
 		StatePath:            filepath.Join(t.TempDir(), "state.json"),
@@ -27,23 +27,37 @@ func startPoolRunner(t *testing.T, s *repo.Store, serverURL, name string) (domai
 		LongPollTimeout:      2 * time.Second,
 		DefaultWorkspaceRoot: filepath.Join(t.TempDir(), "workspace"),
 	})
+}
+
+func startPoolRunnerWithConfig(t *testing.T, s *repo.Store, cfg Config) (domain.Runner, context.CancelFunc) {
+	t.Helper()
+	daemon, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() { _ = daemon.Run(ctx) }()
+	done := make(chan struct{})
+	go func() { defer close(done); _ = daemon.Run(ctx) }()
+	stop := func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("pool runner did not stop")
+		}
+	}
+	t.Cleanup(stop)
 	var runner domain.Runner
-	waitFor(t, 5*time.Second, name+" registration", func() bool {
+	waitFor(t, 5*time.Second, cfg.Name+" registration", func() bool {
 		for _, r := range s.Runners() {
-			if r.Name == name && r.Status == domain.RunnerStatusOnline {
+			if r.Name == cfg.Name && r.Status == domain.RunnerStatusOnline {
 				runner = r
 				return true
 			}
 		}
 		return false
 	})
-	return runner, cancel
+	return runner, stop
 }
 
 // 控制面不再自己执行：没有个人执行机器的 run 等云端执行机器上线后在它上面跑完。
@@ -85,12 +99,18 @@ func TestPoolRequiredRunWaitsForPoolRunner(t *testing.T) {
 	}
 }
 
-// 云端执行机器掉线时，之前节点的代码改动只在那台机器上：不换机，直接失败并提示重跑。
-func TestPoolRunFailsWhenItsRunnerGoesOfflineAfterCodeChanges(t *testing.T) {
+// 部署期间 Worker 比 Runner 先恢复：等待原机器上线，保留上游未提交的代码并继续下游。
+func TestPoolRunResumesOnOriginalRunnerAfterRestart(t *testing.T) {
 	server, s, e := newDaemonTestServer(t)
 	e.ConfigureCloudRunnerPool(engine.CloudRunnerPool{Label: "pool=cloud", Projects: []string{"*"}, Required: true})
 	remote := bareRemoteWithBaseline(t)
-	first, stopFirst := startPoolRunner(t, s, server.URL, "builtin-a")
+	cfg := Config{
+		ServerURL: server.URL, BootstrapToken: "boot-secret", Name: "builtin-a",
+		Labels: []string{"pool=cloud"}, MaxConcurrency: 2,
+		StatePath: filepath.Join(t.TempDir(), "state.json"), DefaultWorkspaceRoot: filepath.Join(t.TempDir(), "workspace"),
+		HeartbeatInterval: time.Hour, LongPollTimeout: 2 * time.Second,
+	}
+	first, stopFirst := startPoolRunnerWithConfig(t, s, cfg)
 	wf := domain.WorkflowDefinition{
 		ID: "pool-takeover", Name: "Pool takeover", SandboxProfileID: "local",
 		Nodes: []domain.WorkflowNode{
@@ -118,24 +138,35 @@ func TestPoolRunFailsWhenItsRunnerGoesOfflineAfterCodeChanges(t *testing.T) {
 		return current.Status == "waiting"
 	})
 	stopFirst()
-	waitFor(t, 10*time.Second, "first runner offline", func() bool {
-		r, _ := s.Runner(first.ID)
-		if r.Status == domain.RunnerStatusOnline {
-			r.Status = domain.RunnerStatusOffline
-			_ = s.PutRunner(r)
-		}
-		return r.Status != domain.RunnerStatusOnline
-	})
+	if stopped, _ := s.Runner(first.ID); stopped.Status != domain.RunnerStatusOffline {
+		t.Fatalf("stopped runner presence = %s", stopped.Status)
+	}
 	startPoolRunner(t, s, server.URL, "builtin-b")
 	if err := e.Approve(run.ID, "gate", ""); err != nil {
 		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, "original runner wait", func() bool {
+		current, _ := s.Run(run.ID)
+		for _, event := range current.Events {
+			if event.Type == "execution.waiting" && strings.Contains(event.Message, first.Name) {
+				return true
+			}
+		}
+		return false
+	})
+	if current, _ := s.Run(run.ID); current.Status != "running" || current.ExecutionContext.ExecutionRunnerID != first.ID {
+		t.Fatalf("run must wait on original runner: %s on %s", current.Status, current.ExecutionContext.ExecutionRunnerID)
+	}
+	restarted, _ := startPoolRunnerWithConfig(t, s, cfg)
+	if restarted.ID != first.ID {
+		t.Fatalf("restart changed runner ID from %s to %s", first.ID, restarted.ID)
 	}
 	waitFor(t, 30*time.Second, "run after runner loss", func() bool {
 		current, _ := s.Run(run.ID)
 		return current.Status == "succeeded" || current.Status == "failed"
 	})
 	final, _ := s.Run(run.ID)
-	if final.Status != "failed" || final.ExecutionContext.ExecutionRunnerID != first.ID || !strings.Contains(final.Nodes["verify"].Error, "builtin-a 已离线") {
+	if final.Status != "succeeded" || final.ExecutionContext.ExecutionRunnerID != first.ID || final.Nodes["implement"].Attempt != 1 || final.Nodes["verify"].Attempt != 1 {
 		t.Fatalf("status = %s on %q, verify error = %q", final.Status, final.ExecutionContext.ExecutionRunnerID, final.Nodes["verify"].Error)
 	}
 	if refs := runGitT(t, remote, "for-each-ref", "refs/heads/fix/takeover"); refs != "" {

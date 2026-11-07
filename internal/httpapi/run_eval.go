@@ -44,7 +44,6 @@ type runEvalHub struct {
 	mu     sync.Mutex
 	jobs   map[string]*runEvalJob
 	tokens chan struct{}
-	exec   runEvalExecFunc
 }
 
 var (
@@ -96,7 +95,7 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 	}
 	user, ok := h.repo.User(current.ID)
 	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": "请先在个人设置中配置自己的 CodeBuddy API Key"})
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
 		return
 	}
 	if rec, busy := h.repo.ActiveRunEval(id); busy {

@@ -19,15 +19,6 @@ function activeRoom() {
   return (rs.items || []).find(item => item.id === rs.activeId) || null;
 }
 
-function roomRepoChoices() {
-  const projectId = roomProjectId();
-  return (state.data?.repositories || []).filter(r => r.projectId === projectId);
-}
-
-function roomSkillChoices() {
-  return (state.data?.skills || []).filter(s => catalogVisible(s.projectId, s.shared));
-}
-
 function roomGreeting() {
   const hour = new Date().getHours();
   const part = hour < 6 ? '凌晨好' : hour < 11 ? '早上好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
@@ -37,9 +28,16 @@ function roomGreeting() {
 }
 
 function roomState() {
-  if (!state.rooms) state.rooms = {items: [], activeId: '', sops: [], active: false};
+  if (!state.rooms) state.rooms = {items: [], activeId: '', sops: [], active: false, mode: 'chat'};
   if (!Array.isArray(state.rooms.sops)) state.rooms.sops = [];
+  if (state.rooms.mode !== 'issue') state.rooms.mode = 'chat';
   return state.rooms;
+}
+
+function setRoomMode(mode) {
+  roomState().mode = mode === 'issue' ? 'issue' : 'chat';
+  syncRoomComposer();
+  $('#roomInput')?.focus();
 }
 
 function roomRunTerminal(status) {
@@ -52,6 +50,9 @@ function bindRooms() {
   if (!create || create.dataset.bound) return;
   create.dataset.bound = '1';
   create.onclick = createRoom;
+  $('#renameRoom').onclick = renameRoom;
+  $('#roomModeChat').onclick = () => setRoomMode('chat');
+  $('#roomModeIssue').onclick = () => setRoomMode('issue');
   form.onsubmit = event => {
     event.preventDefault();
     submitRoomComposer();
@@ -81,7 +82,6 @@ function bindRooms() {
     if (id) toggleRoomSOP(id, true);
     event.target.value = '';
   });
-  $('#roomRole').addEventListener('change', syncRoomComposer);
   document.addEventListener('change', event => {
     if (event.target?.id === 'projectSwitcher' && state.currentView === 'rooms') loadRooms();
   });
@@ -96,16 +96,17 @@ function toggleRoomSOP(id, force) {
     rs.sops.push(id);
   }
   if (!want && has) rs.sops = rs.sops.filter(item => item !== id);
-  syncRoomComposer();
+  if ($('#roomSOPList')) fillRoomSOPList();
+  else syncRoomComposer();
 }
 
 function roomTargetPicked() {
-  return roomState().sops.length > 0 || !!$('#roomRole')?.value;
+  return roomState().sops.length > 0;
 }
 
 function syncRoomComposer() {
   const rs = roomState();
-  const role = $('#roomRole');
+  const issue = rs.mode === 'issue';
   const names = new Map(roomWorkflowChoices().map(w => [w.id, roomWorkflowLabel(w)]));
   rs.sops = rs.sops.filter(id => names.has(id));
   const picks = $('#roomSOPPicks');
@@ -114,26 +115,26 @@ function syncRoomComposer() {
     picks.querySelectorAll('[data-unpick]').forEach(button => { button.onclick = () => toggleRoomSOP(button.dataset.unpick, false); });
   }
   $('#roomSOP')?.closest('.room-chip')?.classList.toggle('on', rs.sops.length > 0);
-  role?.closest('.room-chip')?.classList.toggle('on', !!role.value);
+  $('#roomComposer')?.classList.toggle('is-issue', issue);
+  $('#roomModeChat')?.classList.toggle('on', !issue);
+  $('#roomModeIssue')?.classList.toggle('on', issue);
+  const input = $('#roomInput');
+  if (input) input.placeholder = issue ? '第一行写 Issue 标题，下面写描述。输入 @ 选择 SOP' : '发消息，输入 @ 提醒同事';
   const picked = roomTargetPicked();
   const dispatch = $('#roomDispatch');
   if (dispatch) {
-    dispatch.hidden = false;
-    dispatch.textContent = !picked ? '建 Issue' : rs.sops.length > 1 ? `建单并派发 ${rs.sops.length} 条 SOP` : '建单并派发';
-    dispatch.title = picked ? '第一行作为 Issue 标题，其余作为描述' : '先选派给哪个角色或 SOP';
+    dispatch.textContent = !picked ? '建单并派发' : rs.sops.length > 1 ? `建单并派发 ${rs.sops.length} 条 SOP` : '建单并派发';
+    dispatch.title = picked ? '第一行作为 Issue 标题，其余作为描述' : '先选一条 SOP';
   }
   const hint = $('#roomTargetHint');
   if (hint) {
-    const parts = [];
-    if (role?.value) parts.push('角色「' + role.selectedOptions[0].textContent + '」');
-    if (rs.sops.length) parts.push(rs.sops.length > 1 ? rs.sops.length + ' 条 SOP 并行' : 'SOP「' + names.get(rs.sops[0]) + '」');
-    hint.textContent = parts.length ? '· 回车将建单派给 ' + parts.join(' + ') : '· 输入 @ 选角色或 SOP 就能建 Issue';
+    hint.textContent = !picked
+      ? '选择一条或多条 SOP。第一行是标题，回车建单。'
+      : (rs.sops.length > 1 ? `回车将并行派给 ${rs.sops.length} 条 SOP。` : `回车将建单并派给 SOP「${names.get(rs.sops[0])}」。`);
   }
-  $('#roomSend')?.classList.toggle('ready', !!$('#roomInput')?.value.trim());
+  $('#roomSend')?.classList.toggle('ready', !!input?.value.trim());
   document.querySelectorAll('[data-room-pick]').forEach(button => {
-    const [kind, id] = button.dataset.roomPick.split(':');
-    const on = kind === 'sop' ? rs.sops.includes(id) : role?.value === id;
-    button.classList.toggle('picked', !!id && on);
+    button.classList.toggle('picked', rs.sops.includes(button.dataset.roomPick));
   });
 }
 
@@ -141,9 +142,6 @@ async function loadRooms() {
   bindRooms();
   const rs = roomState();
   const projectId = roomProjectId();
-  const project = (state.data?.projects || []).find(item => item.id === projectId);
-  const name = $('#roomsProjectName');
-  if (name) name.textContent = project?.name || '未选择项目';
   fillRoomTargets();
   if (!projectId) {
     renderRoomList([]);
@@ -175,12 +173,8 @@ function scheduleRoomPoll() {
 
 function fillRoomTargets() {
   const sop = $('#roomSOP');
-  const role = $('#roomRole');
-  if (!sop || !role) return;
-  const roleValue = role.value;
+  if (!sop) return;
   sop.innerHTML = '<option value="">添加 SOP…</option>' + roomWorkflowChoices().map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(roomWorkflowLabel(item))}</option>`).join('');
-  role.innerHTML = '<option value="">不指定</option>' + catalogAgents().map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name)}</option>`).join('');
-  if ([...role.options].some(option => option.value === roleValue)) role.value = roleValue;
   syncRoomComposer();
 }
 
@@ -206,9 +200,11 @@ async function openRoom(id, keepScroll) {
   const room = (rs.items || []).find(item => item.id === id);
   renderRoomResources(room);
   const title = $('#roomTitle');
-  const scope = $('#roomScopeName');
+  const subtitle = $('#roomSubtitle');
+  const rename = $('#renameRoom');
   if (title) title.textContent = room?.name || '选择一个群';
-  if (scope) scope.textContent = room?.name || '未选择群';
+  if (subtitle) subtitle.textContent = room ? `${(room.members || []).length} 位项目成员` : '先在左侧选择或新建一个群';
+  if (rename) rename.hidden = !room;
   if (!id) {
     renderRoomThread(null, []);
     return;
@@ -260,44 +256,62 @@ function roomResItem(icon, iconClass, name, sub, pick) {
   return `<${tag} class="room-res-item ${pick ? '' : 'static'}"${attrs}><span class="room-res-icon ${iconClass}">${escapeHTML(icon)}</span><span class="room-res-text"><b>${escapeHTML(name)}</b>${sub ? `<small>${escapeHTML(sub)}</small>` : ''}</span></${tag}>`;
 }
 
-function roomResList(items, limit, render) {
-  const shown = items.slice(0, limit).map(render).join('');
-  return shown + (items.length > limit ? `<div class="room-res-more">还有 ${items.length - limit} 个</div>` : '');
-}
-
 function renderRoomResources(room) {
   const host = $('#roomResources');
   if (!host) return;
   if (!roomProjectId()) {
-    host.innerHTML = '<div class="room-empty"><b>先选择项目</b><p>项目下的角色、SOP、仓库会出现在这里。</p></div>';
+    host.innerHTML = '<div class="room-empty"><b>先选择项目</b><p>选好项目后，这里会列出群成员，SOP 可以搜索后派发。</p></div>';
     return;
   }
-  const agents = catalogAgents();
-  const workflows = roomWorkflowChoices();
-  const repos = roomRepoChoices();
-  const skills = roomSkillChoices();
   const members = room?.members || [];
+  const workflows = roomWorkflowChoices();
   host.innerHTML = [
-    roomResGroup('角色', agents.length, roomResList(agents, 6, a => roomResItem((a.name || '?').slice(0, 1), 'role', a.name, a.description || a.id, 'role:' + a.id))),
+    roomResGroup('成员', members.length, members.length
+      ? members.map(m => `<div class="room-res-item static"><span class="room-res-text"><b>${escapeHTML(m.name || ('用户 ' + m.userId))}<span class="room-member-tag">${escapeHTML(roomMemberRoleLabel(m.role))}</span></b></span></div>`).join('')
+      : '<div class="room-res-more">这个项目还没有其他成员</div>'),
     roomResGroup('SOP', workflows.length, workflows.length
-      ? roomResList(workflows, 6, w => roomResItem('≡', 'sop', roomWorkflowLabel(w), ((w.nodes || []).length ? (w.nodes.length + ' 个节点') : (w.description || '')), 'sop:' + w.id))
-      : roomNoSOPHint()),
-    roomResGroup('仓库', repos.length, roomResList(repos, 4, r => roomResItem((r.name || 'R').slice(0, 1).toUpperCase(), 'repo', r.name, r.gongfengProjectId || r.webUrl || '', ''))),
-    roomResGroup('技能', skills.length, roomResList(skills, 4, s => roomResItem('⚡', '', s.name, s.description || '', ''))),
-    roomResGroup('成员', members.length, members.map(m => `<div class="room-res-item static"><span class="room-res-text"><b>${escapeHTML(m.name || ('用户 ' + m.userId))}<span class="room-member-tag">${escapeHTML(roomMemberRoleLabel(m.role))}</span></b></span></div>`).join(''))
+      ? `<input id="roomSOPSearch" class="room-sop-search" type="search" placeholder="搜索要派发的 SOP" value="${escapeHTML(roomState().sopQuery || '')}"><div id="roomSOPList"></div>`
+      : roomNoSOPHint())
   ].join('');
-  bindRoomGoSOPs(host);
-  host.querySelectorAll('[data-room-pick]').forEach(button => {
-    button.onclick = () => {
-      const [kind, id] = button.dataset.roomPick.split(':');
-      if (kind === 'sop') toggleRoomSOP(id);
-      else {
-        const select = $('#roomRole');
-        select.value = select.value === id ? '' : id;
-        syncRoomComposer();
-      }
-      $('#roomInput')?.focus();
+  const search = $('#roomSOPSearch');
+  if (search) {
+    search.oninput = () => {
+      roomState().sopQuery = search.value;
+      fillRoomSOPList();
     };
+  }
+  fillRoomSOPList();
+  bindRoomGoSOPs(host);
+}
+
+function fillRoomSOPList() {
+  const list = $('#roomSOPList');
+  if (!list) return;
+  const rs = roomState();
+  const query = String(rs.sopQuery || '').trim().toLowerCase();
+  const picked = new Set(rs.sops);
+  const all = roomWorkflowChoices();
+  const rest = all.filter(w => !picked.has(w.id));
+  const shown = query
+    ? all.filter(w => roomWorkflowLabel(w).toLowerCase().includes(query) || String(w.id).toLowerCase().includes(query))
+    : (rs.sopExpanded ? all : all.filter(w => picked.has(w.id)).concat(rest.slice(0, 4)));
+  const hidden = query || rs.sopExpanded ? 0 : Math.max(0, rest.length - 4);
+  const toggle = !query && rest.length > 4
+    ? `<button type="button" class="room-res-more room-res-expand" data-room-sop-expand="${rs.sopExpanded ? 'collapse' : 'expand'}">${rs.sopExpanded ? '收起' : '展开其余 ' + hidden + ' 条'}</button>`
+    : '';
+  list.innerHTML = (shown.length
+    ? shown.map(w => roomResItem('≡', 'sop', roomWorkflowLabel(w), (w.nodes || []).length ? (w.nodes.length + ' 个节点') : '点选后进入建单', w.id)).join('')
+    : '<div class="room-res-more">没有匹配的 SOP</div>')
+    + toggle;
+  list.querySelectorAll('[data-room-pick]').forEach(button => {
+    button.onclick = () => {
+      setRoomMode('issue');
+      toggleRoomSOP(button.dataset.roomPick);
+    };
+  });
+  list.querySelector('[data-room-sop-expand]')?.addEventListener('click', event => {
+    rs.sopExpanded = event.currentTarget.dataset.roomSopExpand === 'expand';
+    fillRoomSOPList();
   });
   syncRoomComposer();
 }
@@ -319,18 +333,22 @@ function renderRoomThread(room, messages, keepScroll) {
   }
   const mine = Number(state.currentUser?.id) || 0;
   let prevRun = null;
-  log.innerHTML = messages.map(message => {
+  const dispatchRuns = new Set(messages.filter(m => m.kind === 'dispatch' && m.runId).map(m => m.runId));
+  const visible = messages.filter(message => {
+    if (message.kind === 'progress' && message.nodeId && message.nodeStatus === 'succeeded') return false;
+    if (message.kind === 'progress' && !message.nodeId && dispatchRuns.has(message.runId)) return false;
+    return true;
+  });
+  log.innerHTML = visible.map(message => {
     const html = roomMessageHTML(message, mine, prevRun);
     if (['dispatch', 'progress', 'approval'].includes(message.kind)) prevRun = message;
     else if (message.kind !== 'decision') prevRun = null;
     return html;
   }).join('') || roomGuideHTML();
-  log.querySelector('[data-room-try]')?.addEventListener('click', () => {
-    const input = $('#roomInput');
-    if (!input) return;
-    input.focus();
-    if (!/(^|\s)@$/.test(input.value.slice(0, input.selectionStart))) input.setRangeText((input.value && !/\s$/.test(input.value) ? ' ' : '') + '@', input.selectionStart, input.selectionEnd, 'end');
-    updateRoomMention();
+  log.querySelector('[data-room-try-chat]')?.addEventListener('click', () => setRoomMode('chat'));
+  log.querySelector('[data-room-try-issue]')?.addEventListener('click', () => {
+    setRoomMode('issue');
+    if (!roomTargetPicked()) openRoomMention({targetsOnly: true});
   });
   bindRoomGoSOPs(log);
   log.querySelectorAll('[data-open-issue]').forEach(button => {
@@ -373,9 +391,9 @@ function roomDispatchHTML(message, author) {
     const pct = total ? Math.round(done * 100 / total) : 0;
     const status = message.runStatus || message.runFinal || 'queued';
     const current = (message.runCurrent || []).length ? '正在：' + message.runCurrent.join('、') : '';
-    run = `<div class="room-run ${escapeHTML(status)}"><div class="room-run-head"><b>${escapeHTML(message.workflowName || 'SOP')}</b><span>${escapeHTML(roomRunStatusLabel(status))}${total ? ` · ${done}/${total}` : ''}</span></div><div class="room-run-track"><i style="width:${pct}%"></i></div>${current ? `<small>${escapeHTML(current)}</small>` : ''}</div>`;
+    run = `<div class="room-run ${escapeHTML(status)}"><div class="room-run-head"><b>${escapeHTML(message.workflowName || 'SOP')}</b><span>${escapeHTML(roomRunStatusLabel(status))}${total ? ` · ${done}/${total} 步` : ''}</span></div><div class="room-run-track"><i style="width:${pct}%"></i></div>${current ? `<small>${escapeHTML(current)}</small>` : ''}</div>`;
   } else if (!message.dispatchError && !message.workflowId) {
-    run = '<small class="room-card-note">已指派给角色，没有启动运行；再选一条 SOP 才会开始执行</small>';
+    run = '<small class="room-card-note">当时只指定了角色，没有启动 SOP</small>';
   }
   const head = message.lane ? `${author} 并行派发` : `${author} 建了 Issue`;
   const actions = `<div class="room-card-actions"><button type="button" class="button ghost small" data-open-issue="${escapeHTML(message.issueId)}">打开 Issue</button>${message.runId ? `<button type="button" class="button ghost small" data-open-run="${escapeHTML(message.runId)}">查看运行</button>` : ''}</div>`;
@@ -400,9 +418,10 @@ function roomProgressHTML(message, prev) {
 
 function roomApprovalHTML(message) {
   const attrs = `data-run="${escapeHTML(message.runId)}" data-node="${escapeHTML(message.nodeId)}" data-name="${escapeHTML(message.nodeName || message.nodeId)}"`;
-  const actions = message.resolved
-    ? `<div class="room-card-actions"><button type="button" class="button ghost small" data-open-run="${escapeHTML(message.runId)}">看详情</button></div>`
-    : `<div class="room-card-actions"><button type="button" class="button primary small" data-decide="approve" ${attrs}>批准</button>${message.canReject ? `<button type="button" class="button ghost small" data-decide="reject" ${attrs}>打回</button>` : ''}<button type="button" class="button ghost small" data-open-run="${escapeHTML(message.runId)}">看详情</button></div>`;
+  if (message.resolved) {
+    return `<div class="room-decision">${escapeHTML(message.nodeName || '审批')} 已处理 · <button type="button" class="room-link" data-open-run="${escapeHTML(message.runId)}">看运行</button></div>`;
+  }
+  const actions = `<div class="room-card-actions"><button type="button" class="button primary small" data-decide="approve" ${attrs}>批准</button>${message.canReject ? `<button type="button" class="button ghost small" data-decide="reject" ${attrs}>打回</button>` : ''}<button type="button" class="button ghost small" data-open-run="${escapeHTML(message.runId)}">看运行</button></div>`;
   const where = [message.issueNumber ? '#' + message.issueNumber : '', message.issueTitle || ''].filter(Boolean).join(' ');
   return `<article class="room-message room-card room-approval ${message.resolved ? 'resolved' : ''}"><header>${escapeHTML(roomAuthorName(message.author) || 'SOP')} · ${escapeHTML(where)}</header><b>${message.resolved ? '✓' : '⏸'} ${escapeHTML(message.nodeName || '')} ${message.resolved ? '审批已处理' : '等待审批'}</b>${message.resolved ? '' : `<p>${escapeHTML(message.body || '')}</p>`}${actions}</article>`;
 }
@@ -447,15 +466,12 @@ function roomGuideHTML() {
   const noSOP = !roomWorkflowChoices().length;
   return `<div class="room-guide">
     <h2>${escapeHTML(roomGreeting())}</h2>
-    <p class="room-guide-lead">这个群可以聊天，也可以直接建 Issue 交给角色或 SOP 去做。</p>
+    <p class="room-guide-lead">在这里聊天，或者把一条需求派给 SOP。角色写在流程里，不用再选。</p>
     <ol>
-      <li><b>聊天</b><span>输入文字回车发送，Shift+Enter 换行；<code>@成员</code> 可以点名同事。</span></li>
-      <li><b>建 Issue</b><span>输入 <code>@</code> 选一个角色或 SOP（SOP 可选多条并行），第一行写标题、下面写描述，回车就建单并派发。也可以点输入框右下角「建 Issue」。</span></li>
-      <li><b>跟进度</b><span>SOP 每完成一步都会在群里说一声；需要人确认的步骤会出现审批卡片，群里直接批准或打回。</span></li>
+      <li><b>聊天</b><span>回车发送，Shift+Enter 换行。<code>@</code> 用来提醒同事。</span></li>
+      <li><b>建单</b><span>切到「建单」，选一条或多条 SOP，第一行写标题，回车就派发。</span></li>
     </ol>
-    <div class="room-guide-example"><small>示例</small><pre>@上线确认 v2.3 配置热更新上线
-只需要最后确认一下即可上线</pre></div>
-    <div class="room-guide-actions"><button type="button" class="button primary small" data-room-try>试试 @ 一个 SOP</button>${noSOP ? '<button type="button" class="button ghost small" data-room-go-sops>当前项目还没有 SOP，去流程模板</button>' : ''}</div>
+    <div class="room-guide-actions"><button type="button" class="button ghost small" data-room-try-chat>发一条消息</button><button type="button" class="button primary small" data-room-try-issue>建一张单</button>${noSOP ? '<button type="button" class="button ghost small" data-room-go-sops>当前项目还没有 SOP，去流程模板</button>' : ''}</div>
   </div>`;
 }
 
@@ -475,12 +491,12 @@ function roomMentionItems(query, targetsOnly) {
   const q = String(query || '').trim().toLowerCase();
   const hit = (...values) => !q || values.some(value => String(value || '').toLowerCase().includes(q));
   const items = [];
-  catalogAgents().forEach(a => {
-    if (hit(a.name, a.id)) items.push({kind: 'role', id: a.id, name: a.name || a.id, sub: a.description || '派给这个角色'});
-  });
-  roomWorkflowChoices().forEach(w => {
-    if (hit(w.name, w.id)) items.push({kind: 'sop', id: w.id, name: roomWorkflowLabel(w), sub: (w.nodes || []).length ? w.nodes.length + ' 个步骤，派发后立即运行' : '派发后立即运行'});
-  });
+  const wantSOP = targetsOnly || roomState().mode === 'issue';
+  if (wantSOP) {
+    roomWorkflowChoices().forEach(w => {
+      if (hit(w.name, w.id)) items.push({kind: 'sop', id: w.id, name: roomWorkflowLabel(w), sub: (w.nodes || []).length ? w.nodes.length + ' 个步骤，派发后立即运行' : '派发后立即运行'});
+    });
+  }
   if (!targetsOnly) {
     (activeRoom()?.members || []).forEach(m => {
       if (hit(m.name)) items.push({kind: 'member', id: String(m.userId), name: m.name || '用户 ' + m.userId, sub: roomMemberRoleLabel(m.role)});
@@ -520,8 +536,8 @@ function renderRoomMention(query) {
   const box = $('#roomMention');
   const ms = roomMentionState();
   if (!box) return;
-  const groups = [['role', '角色 · 建单并指派'], ['sop', 'SOP · 建单并运行'], ['member', '成员 · 只是提醒']];
-  let html = ms.targetsOnly ? '<div class="room-mention-title">先选这条 Issue 派给谁</div>' : '';
+  const groups = [['sop', 'SOP · 建单并运行'], ['member', '成员 · 提醒']];
+  let html = ms.targetsOnly ? '<div class="room-mention-title">选这条 Issue 要跑的 SOP</div>' : '';
   groups.forEach(([kind, label]) => {
     const rows = ms.items.map((item, index) => ({item, index})).filter(row => row.item.kind === kind);
     if (!rows.length && !(kind === 'sop' && !query && !roomWorkflowChoices().length)) return;
@@ -529,7 +545,7 @@ function renderRoomMention(query) {
     if (!rows.length) html += roomNoSOPHint();
     html += rows.map(({item, index}) => `<button type="button" class="room-mention-item ${index === ms.index ? 'active' : ''}" data-mention="${index}"><span class="room-res-icon ${item.kind === 'member' ? '' : item.kind}">${escapeHTML(item.kind === 'sop' ? '≡' : (item.name || '?').slice(0, 1))}</span><span><b>${escapeHTML(item.name)}</b><small>${escapeHTML(item.sub || '')}</small></span></button>`).join('');
   });
-  if (!ms.items.length && !html.includes('room-mention-group')) html += `<div class="room-mention-empty">没有匹配「${escapeHTML(query)}」的角色、SOP 或成员</div>`;
+  if (!ms.items.length && !html.includes('room-mention-group')) html += `<div class="room-mention-empty">没有匹配「${escapeHTML(query)}」的${roomState().mode === 'issue' || ms.targetsOnly ? ' SOP 或成员' : '成员'}</div>`;
   box.innerHTML = html;
   box.hidden = false;
   box.querySelectorAll('[data-mention]').forEach(button => {
@@ -575,13 +591,15 @@ function pickRoomMention(item) {
     const next = ms.start + insert.length;
     input.setSelectionRange(next, next);
   }
-  if (item.kind === 'role') $('#roomRole').value = item.id;
-  if (item.kind === 'sop') toggleRoomSOP(item.id, true);
+  if (item.kind === 'sop') {
+    roomState().mode = 'issue';
+    toggleRoomSOP(item.id, true);
+  }
   ms.targetsOnly = false;
   closeRoomMention();
   syncRoomComposer();
   input.focus();
-  if (item.kind !== 'member' && !input.value.trim()) toast('已选好派给谁，第一行写 Issue 标题，回车建单');
+  if (item.kind === 'sop' && !input.value.trim()) toast('已选好 SOP，第一行写 Issue 标题，回车建单');
 }
 
 async function decideRoomStep(action, runId, nodeId, name) {
@@ -596,6 +614,25 @@ async function decideRoomStep(action, runId, nodeId, name) {
     await api('/api/rooms/' + encodeURIComponent(id) + '/decisions', {method: 'POST', body: JSON.stringify({runId, nodeId, action, reason: String(reason || '').trim()})});
     toast(action === 'approve' ? '已批准' : '已打回');
     await refreshRoomMessages();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function renameRoom() {
+  const room = activeRoom();
+  if (!room) return toast('先选择一个群');
+  const name = await afPrompt({title: '重命名协作群', message: '新名称会显示在左侧群列表和顶栏。', label: '群名称', placeholder: '例如：需求值班群', defaultValue: room.name, confirmText: '保存'});
+  if (name == null) return;
+  const next = String(name).trim();
+  if (!next || next === room.name) return;
+  try {
+    const updated = await api('/api/rooms/' + encodeURIComponent(room.id), {method: 'PATCH', body: JSON.stringify({name: next})});
+    room.name = updated.name || next;
+    renderRoomList(roomState().items || []);
+    const title = $('#roomTitle');
+    if (title) title.textContent = room.name;
+    toast('已重命名');
   } catch (error) {
     toast(error.message);
   }
@@ -617,7 +654,7 @@ async function createRoom() {
 }
 
 function submitRoomComposer() {
-  if (roomTargetPicked()) dispatchRoomIssue();
+  if (roomState().mode === 'issue') dispatchRoomIssue();
   else sendRoomMessage();
 }
 
@@ -650,16 +687,15 @@ async function dispatchRoomIssue() {
   if (!id) return toast('先选择一个群');
   const {title, description} = splitRoomIssueText($('#roomInput')?.value);
   const workflowIds = rs.sops.slice();
-  const agentId = $('#roomRole')?.value || '';
   if (!title) return toast('第一行写 Issue 标题');
-  if (!workflowIds.length && !agentId) return toast('请选择要派给的 SOP 或角色');
+  if (!workflowIds.length) return toast('请选择要派发的 SOP');
   const button = $('#roomDispatch');
   button.disabled = true;
   try {
-    const result = await api('/api/rooms/' + encodeURIComponent(id) + '/issues', {method: 'POST', body: JSON.stringify({title, description, workflowIds, agentId})});
+    const result = await api('/api/rooms/' + encodeURIComponent(id) + '/issues', {method: 'POST', body: JSON.stringify({title, description, workflowIds})});
     $('#roomInput').value = '';
     rs.sops = [];
-    $('#roomRole').value = '';
+    rs.mode = 'chat';
     closeRoomMention();
     syncRoomComposer();
     if (result.issue) {
@@ -671,7 +707,7 @@ async function dispatchRoomIssue() {
     }
     await openRoom(id);
     const started = (result.tasks || []).length;
-    toast(result.dispatchError ? 'Issue 已创建，部分派发未成功：' + result.dispatchError : (started ? `已建单并启动 ${started} 条 SOP，进度会回到群里` : '已建单并指派给角色'));
+    toast(result.dispatchError ? 'Issue 已创建，部分派发未成功：' + result.dispatchError : (started ? `已建单并启动 ${started} 条 SOP，进度会显示在卡片上` : 'Issue 已创建，但没有启动 SOP'));
   } catch (error) {
     toast(error.message);
   } finally {

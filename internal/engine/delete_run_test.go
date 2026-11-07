@@ -27,6 +27,7 @@ func (s *deleteTrackingSandbox) Close(context.Context) error {
 }
 
 func TestDeleteFailedRunDestroysLocalWorkspace(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +67,7 @@ func TestDeleteFailedRunDestroysLocalWorkspace(t *testing.T) {
 }
 
 func TestDeleteRunPreservesTerminalTaskOutcome(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		runStatus  string
 		taskStatus string
@@ -100,6 +102,7 @@ func TestDeleteRunPreservesTerminalTaskOutcome(t *testing.T) {
 }
 
 func TestFailedTransitionsKeepRunEnvironmentUntouched(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		run  domain.Run
@@ -153,6 +156,7 @@ func TestFailedTransitionsKeepRunEnvironmentUntouched(t *testing.T) {
 }
 
 func TestDeleteFailedRunnerRunQueuesRemoteCleanup(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -191,6 +195,7 @@ func TestDeleteFailedRunnerRunQueuesRemoteCleanup(t *testing.T) {
 }
 
 func TestDeleteRunAfterExecutionRunnerWasUninstalled(t *testing.T) {
+	t.Parallel()
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)

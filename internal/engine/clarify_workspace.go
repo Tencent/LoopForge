@@ -36,6 +36,9 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 	if cloneURL == "" {
 		return "", fmt.Errorf("repository %q has no cloneUrl", repo.ID)
 	}
+	if err := gitwork.ValidateRemoteURL(cloneURL, true); err != nil {
+		return "", fmt.Errorf("repository %q: %w", repo.ID, err)
+	}
 	baseBranch = strings.TrimSpace(baseBranch)
 	if baseBranch == "" {
 		baseBranch = strings.TrimSpace(repo.DefaultBranch)
@@ -48,7 +51,7 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 		// A readable local repository needs no remote credentials. HTTP/SSH
 		// sources still require the responsible user's configured Git token.
 		if info, err := os.Stat(cloneURL); err != nil || !info.IsDir() {
-			return "", fmt.Errorf("需求责任人未配置 Git Token（未指定责任人时用项目 Owner），请让该账号到「个人设置 → 个人凭证」填写。新建需求分析拉代码用的是责任人凭证，不是当前点击的人")
+			return "", fmt.Errorf("需求责任人未配置 Git Token（未指定责任人时用项目 Owner），请让该账号到「个人配置 → 个人凭证」填写。新建需求分析拉代码用的是责任人凭证，不是当前点击的人")
 		}
 	}
 	ctx = withGitToken(ctx, token)
@@ -71,7 +74,7 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 	args := []string{
 		"clone", "--no-hardlinks", "--single-branch", "--depth", "1",
 		"--branch", baseBranch,
-		gitwork.RewriteRemoteForToken(cloneURL, token), cacheDir,
+		"--", gitwork.RewriteRemoteForToken(cloneURL, token), cacheDir,
 	}
 	if _, err := runGit(ctx, cacheDir, args...); err != nil {
 		_ = os.RemoveAll(cacheDir)
@@ -80,7 +83,7 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 	if err := applyWorkspaceGitAuth(ctx, cacheDir); err != nil {
 		return "", err
 	}
-	if _, err := gitC(ctx, cacheDir, "remote", "set-url", "origin", cloneURL); err != nil {
+	if _, err := gitC(ctx, cacheDir, "remote", "set-url", "--", "origin", cloneURL); err != nil {
 		return "", fmt.Errorf("set origin url: %w", err)
 	}
 	// git clone --branch also accepts tags. Requirements must start from an
@@ -98,7 +101,7 @@ func refreshClarifyWorkspace(ctx context.Context, cacheDir, cloneURL, baseBranch
 	if err := applyWorkspaceGitAuth(ctx, cacheDir); err != nil {
 		return err
 	}
-	if _, err := gitC(ctx, cacheDir, "remote", "set-url", "origin", cloneURL); err != nil {
+	if _, err := gitC(ctx, cacheDir, "remote", "set-url", "--", "origin", cloneURL); err != nil {
 		return fmt.Errorf("set origin url: %w", err)
 	}
 	steps := [][]string{

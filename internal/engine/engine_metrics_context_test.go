@@ -8,6 +8,7 @@ import (
 )
 
 func TestObservationContextCarriesTapdAndFrozenMetricStage(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)

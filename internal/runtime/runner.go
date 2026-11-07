@@ -21,12 +21,18 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		return "", err
 	}
 	driver := sandboxDriver(sb)
+	if options.BrowserMCP == nil && BrowserWantedForExecutor(ex.Kind) {
+		options.BrowserMCP = EnsureSandboxBrowser(ctx, sb, sb.Workspace(), options.RunID, sink)
+	}
 	compiled, err := materializeInvocationForDriver(sb.Workspace(), invocationID, ex, agent, assets, options, driver)
 	if err != nil {
 		return "", err
 	}
 	if result, handled, err := provider.RunBuiltin(ctx, agent, prompt, sink); handled {
-		if err == nil && mockShouldSubmitGate(agent, options) {
+		if id := strings.TrimSpace(options.ResumeSessionID); id != "" && strings.Contains(agent.Prompt, "[[mock:session=lost]]") {
+			return fmt.Sprintf("{\"type\":\"error\",\"error\":\"No conversation found with session ID: %s\"}", id), nil
+		}
+		if err == nil && mockShouldSubmitGate(sb.Workspace(), agent, options) {
 			if writeErr := writeMockGateResult(sb.Workspace(), options.GateResultPath, agent); writeErr != nil {
 				return result, writeErr
 			}
@@ -67,7 +73,6 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	if compiled.HookOutput != "" {
 		command.HookOutput = compiled.HookOutput
 	}
-	command.Concurrent = options.Concurrent
 	command = WithCommandEnvironment(command, hookExecutionEnvironment(options.Repositories))
 	adapter := provider.Protocol(ex, sink)
 	execCtx, cancel := context.WithCancel(ctx)
@@ -179,7 +184,7 @@ func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (
 		return nil, err
 	}
 	if result, handled, err := provider.RunBuiltin(context.Background(), inv.Agent, inv.Prompt, nil); handled {
-		if err == nil && mockShouldSubmitGate(inv.Agent, inv.Options) {
+		if err == nil && mockShouldSubmitGate(workspace, inv.Agent, inv.Options) {
 			if writeErr := writeMockGateResult(workspace, inv.Options.GateResultPath, inv.Agent); writeErr != nil {
 				return nil, writeErr
 			}
@@ -206,9 +211,21 @@ func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (
 	return &PreparedRemote{Command: command}, nil
 }
 
-func mockShouldSubmitGate(agent domain.AgentDefinition, options InvocationOptions) bool {
+func mockShouldSubmitGate(workspace string, agent domain.AgentDefinition, options InvocationOptions) bool {
 	if strings.TrimSpace(options.GateResultPath) == "" {
 		return false
+	}
+	if strings.Contains(agent.Prompt, "[[mock:session=lost]]") {
+		// The first call omits the gate file so the engine resumes. That
+		// resume reports the session missing. The following fresh start
+		// finds the marker and submits.
+		marker := filepath.Join(workspace, ".agentflow-mock-lost-session")
+		if _, err := os.Stat(marker); err != nil {
+			_ = os.MkdirAll(filepath.Dir(marker), 0o700)
+			_ = os.WriteFile(marker, []byte("1"), 0o600)
+			return false
+		}
+		return strings.TrimSpace(options.ResumeSessionID) == ""
 	}
 	// This one fixture intentionally omits the first terminal call so the
 	// engine's same-session recovery path remains covered.
@@ -221,7 +238,7 @@ func writeTaskPromptFile(workspace, runtimeRel, prompt string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
-	if err := writeManagedFile(path, []byte(prompt), 0o600); err != nil {
+	if err := writeManagedFile(workspace, path, []byte(prompt), 0o600); err != nil {
 		return "", err
 	}
 	return rel, nil

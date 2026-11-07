@@ -33,8 +33,24 @@ blocked_word_digests = {
     "39bc5d6cbaf0191504a022489a7182327f02e78d1704626d24b2be7ae8b2d189",
     "361c3bb7ef5caa3cf00bee22c7d232969677daa9a288cc9258ea0d6de8914673",
     "cbda26ecd6a0a9455c8ee73edbe819692c68cbc4dbb059e07c9a020030ceeb00",
+    "6162bb7113ee198197f77b11979504ce85c8ced9b5c0230d2aff648f67202a36",
+    "f798533f224be82e4b330e5359083c90003e8938ec99c44c149044e50dcac3a7",
+    "5ccc8b45a1879d03f8ec36866f77dd4614d118b5604f084bd4936d39b3aa03d5",
+    "e34be4a2143785f351febc3cff274028f5ea90adc720d303c3b9e301656de8e9",
+    "c528582a3d776738ee1bdac0143bac95880941ae5ec0ea5d22303dfc7bcfa4ed",
+    "922cbca653ab12710227999f97bc2fa4cc3d723c5573f51c3c877092738674ae",
+    "94acc5bc7885dd2d2895504c12317246d109cc84c882be2d6ec23c8678f5f311",
+    "db996cc80525936a1bc24847f1d3bc7072804a79512b59b78331e029a9a095e7",
+    "1073077b7d460460ec07598556d39f3cff39d68755903f215c2acf92cc35a1f2",
+    "415f4f7b42b6042dce0c2ed9707bdbcc1fa10afad67dc2842c81264ea3d4d74b",
+    "fa9a4893cb501e16467ac84e6651ed0d8eb915f0387d1ec1931599191b7a9717",
+    "b194aec3246fe06c0877890f4e31f9b5880eb654d002252b0e966d39a3874207",
 }
 word = re.compile(r"[A-Za-z0-9_]{5,24}")
+# MIT requires keeping upstream copyright lines verbatim; only those lines, and
+# only inside files that carry the MIT permission notice, skip the word check.
+mit_notice = "Permission is hereby granted, free of charge"
+mit_copyright = re.compile(r"^[\s*/!#-]*Copyright \(c\) \d{4} [A-Za-z0-9_-]+\.?\s*$", re.M)
 errors = []
 for name in sorted(set(paths)):
     p = ROOT / name
@@ -50,7 +66,8 @@ for name in sorted(set(paths)):
     for label, pattern in patterns.items():
         if pattern.search(content):
             errors.append(f"{name}: {label}")
-    if any(hashlib.sha256(w.lower().encode()).hexdigest() in blocked_word_digests for w in set(word.findall(content))):
+    words_text = mit_copyright.sub("", content) if mit_notice in content else content
+    if any(hashlib.sha256(w.lower().encode()).hexdigest() in blocked_word_digests for w in set(word.findall(words_text))):
         errors.append(f"{name}: internal identifier")
     if p.name.endswith((".pem", ".key")):
         errors.append(f"{name}: deployment key/certificate must not be published")

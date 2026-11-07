@@ -34,7 +34,6 @@ func TestRunnerTaskPayloadScrubbedOnTerminalTransitions(t *testing.T) {
 			CodeBuddyAPIKey:   "cb-secret",
 			ClaudeCodeAPIKey:  "cc-secret",
 			ClaudeCodeBaseURL: "https://cc.example.com",
-			TaihuPAT:          "taihu-secret",
 			Repository:        &domain.RunnerRepository{CloneURL: "git@example.com/a.git", GitToken: "legacy-token"},
 			Repositories: []domain.RunnerRepository{
 				{CloneURL: "git@example.com/a.git", GitToken: "token-a", Dir: "a"},
@@ -119,7 +118,7 @@ func TestRunnerTaskPayloadScrubbedOnTerminalTransitions(t *testing.T) {
 func assertPayloadScrubbed(t *testing.T, st *Store, id string) {
 	t.Helper()
 	raw := readRawPayload(t, st, id)
-	for _, secret := range []string{"cb-secret", "cc-secret", "taihu-secret", "legacy-token", "token-a", "token-b"} {
+	for _, secret := range []string{"cb-secret", "cc-secret", "legacy-token", "token-a", "token-b"} {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("credential %q leaked into durable payload of %s: %s", secret, id, raw)
 		}

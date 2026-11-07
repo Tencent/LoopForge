@@ -6,13 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -45,32 +43,6 @@ type mcpCallServer struct {
 	Aliases     []string          `json:"aliases,omitempty"`
 }
 
-// BindPersonalMCPHeadersOptional injects the responsible user's Taihu PAT into
-// Taihu-authenticated MCPs when a token is present. Unlike BindPersonalMCPHeaders
-// it does not fail the whole node when the token is missing; the helper errors
-// later if a script actually calls that MCP.
-func BindPersonalMCPHeadersOptional(assets domain.AgentAssetBundle, taihuPAT string) domain.AgentAssetBundle {
-	out := assets
-	out.MCPServers = append([]domain.MCPServerDefinition(nil), assets.MCPServers...)
-	token := strings.TrimSpace(taihuPAT)
-	for i := range out.MCPServers {
-		m := &out.MCPServers[i]
-		if strings.TrimSpace(m.AuthType) != MCPAuthTaihuPAT {
-			continue
-		}
-		m.Headers = cloneHeaders(m.Headers)
-		for key := range m.Headers {
-			if strings.EqualFold(strings.TrimSpace(key), "authorization") {
-				delete(m.Headers, key)
-			}
-		}
-		if token != "" {
-			m.Headers["Authorization"] = "Bearer " + token
-		}
-	}
-	return out
-}
-
 func mcpCallHostDir(workspace string) string {
 	return filepath.Join(workspace, ".agentflow", "runtime")
 }
@@ -85,7 +57,7 @@ func mcpCallGuestPath(rel string) string {
 func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
 	hostRoot := mcpCallHostDir(workspace)
 	hostBin := filepath.Join(hostRoot, "bin")
-	if err := os.MkdirAll(hostBin, 0o700); err != nil {
+	if _, err := EnsureControlDirectory(workspace, "runtime", "bin"); err != nil {
 		return nil, fmt.Errorf("create mcp call dir: %w", err)
 	}
 	driver := sandboxDriver(sandbox)
@@ -126,11 +98,11 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 		return nil, err
 	}
 	configHost := filepath.Join(hostRoot, "mcp-servers.json")
-	if err := os.WriteFile(configHost, raw, 0o600); err != nil {
+	if err := writeManagedFile(workspace, configHost, raw, 0o600); err != nil {
 		return nil, fmt.Errorf("write mcp call config: %w", err)
 	}
 	helperHost := filepath.Join(hostBin, "agentflow-helper")
-	if err := installMCPCallHelper(helperHost); err != nil {
+	if err := installMCPCallHelper(workspace, helperHost); err != nil {
 		return nil, err
 	}
 	wrapperHost := filepath.Join(hostBin, "agentflow")
@@ -147,11 +119,8 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 		wrapperEnv = mcpCallGuestPath("bin/agentflow")
 		fallback = ""
 	}
-	if err := os.WriteFile(wrapperHost, []byte(mcpCallWrapperScript(helperExec, fallback)), 0o700); err != nil {
+	if err := writeManagedFile(workspace, wrapperHost, []byte(mcpCallWrapperScript(helperExec, fallback)), 0o700); err != nil {
 		return nil, fmt.Errorf("write mcp call wrapper: %w", err)
-	}
-	if err := os.Chmod(wrapperHost, 0o700); err != nil {
-		return nil, err
 	}
 	return map[string]string{
 		mcpCallConfigEnv: configEnv,
@@ -177,63 +146,40 @@ func mcpCallWrapperScript(helperPath, fallback string) string {
 	return b.String()
 }
 
-func installMCPCallHelper(dest string) error {
+func installMCPCallHelper(workspace, dest string) error {
 	src, err := os.Executable()
 	if err != nil {
-		return nil
+		return err
 	}
 	srcInfo, err := os.Stat(src)
 	if err != nil {
-		return nil
+		return err
 	}
-	if dstInfo, err := os.Stat(dest); err == nil {
-		same, linkErr := sameFile(src, dest)
-		if linkErr == nil && same {
-			return nil
+	root, rel, err := openWorkspacePath(workspace, dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if dstInfo, err := root.Stat(rel); err == nil {
+		if !dstInfo.Mode().IsRegular() {
+			return fmt.Errorf("MCP helper is not a regular file")
 		}
 		if dstInfo.Size() == srcInfo.Size() && !srcInfo.ModTime().After(dstInfo.ModTime()) {
 			return nil
 		}
-		_ = os.Remove(dest)
+	} else if !os.IsNotExist(err) {
+		return err
 	}
-	if err := os.Link(src, dest); err == nil {
-		return nil
-	}
-	if goruntime.GOOS != "linux" {
-		// Local macOS/Windows sandboxes re-exec AGENTFLOW_BIN. Linux docker
-		// sandboxes cannot see the host executable path, so they need a copy.
-		return nil
-	}
-	return copyFileMode(src, dest, 0o755)
+	return copyFileMode(workspace, src, dest, 0o755)
 }
 
-func sameFile(a, b string) (bool, error) {
-	ai, err := os.Stat(a)
-	if err != nil {
-		return false, err
-	}
-	bi, err := os.Stat(b)
-	if err != nil {
-		return false, err
-	}
-	return os.SameFile(ai, bi), nil
-}
-
-func copyFileMode(src, dest string, mode os.FileMode) error {
+func copyFileMode(workspace, src, dest string, mode os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return os.Chmod(dest, mode)
+	return writeManagedReader(workspace, dest, in, mode)
 }
 
 func mcpCallAliases(server domain.MCPServerDefinition) []string {
@@ -479,8 +425,8 @@ func mcpCallInvoke(args []string) error {
 	if err != nil {
 		return err
 	}
-	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthTaihuPAT) && authorizationHeader(server.Headers) == "" {
-		return fmt.Errorf("MCP %s 需要太湖个人令牌：请先在个人凭证中配置", server.Name)
+	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	tool := strings.TrimSpace(args[1])
 	if tool == "" {
@@ -552,8 +498,8 @@ func mcpCallTools(args []string) error {
 	if err != nil {
 		return err
 	}
-	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthTaihuPAT) && authorizationHeader(server.Headers) == "" {
-		return fmt.Errorf("MCP %s 需要太湖个人令牌：请先在个人凭证中配置", server.Name)
+	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	var names []string
 	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") {
