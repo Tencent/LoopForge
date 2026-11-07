@@ -1513,8 +1513,9 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 
 /* 平台管理 → 成员账号 / 平台共享 CodeBuddy Key */
 .platform-settings-layout{margin-bottom:22px;align-items:start}
-.platform-account-form{display:grid;grid-template-columns:minmax(150px,1fr) minmax(200px,1.2fr) auto auto;gap:10px;align-items:center}
+.platform-account-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;align-items:center}
 .platform-account-form .platform-input-wrap input{min-width:0}
+.platform-account-form-actions{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .platform-input-wrap .button.small{flex:none;padding:4px 9px;font-size:12px}
 .platform-check{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap}
 .platform-check input{margin:0;accent-color:var(--blue)}
