@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	goruntime "runtime"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -15,6 +16,10 @@ import (
 func OpenRemoteSandbox(ctx context.Context, id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements, resources SandboxResources) (Sandbox, error) {
 	if strings.TrimSpace(workspace) == "" {
 		return nil, fmt.Errorf("runner sandbox workspace is required")
+	}
+	var err error
+	if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return nil, err

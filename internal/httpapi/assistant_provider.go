@@ -32,9 +32,13 @@ func validateAssistantProvider(req *assistantRequest, user domain.User) error {
 		key, label = user.CodeBuddyAPIKey, "CodeBuddy"
 	case "codex":
 		key, label = user.CodexAPIKey, "Codex"
-	case "claude":
+	case "claude", "claude-code":
 		key, label = user.ClaudeCodeAPIKey, "Claude Code"
 	default:
+		if runtime.IsAgentCLI(req.Executor) {
+			key, label = user.AgentCLICredentials[req.Executor].APIKey, runtime.AgentCLILabel(req.Executor)
+			break
+		}
 		return fmt.Errorf("不支持的执行器")
 	}
 	if strings.TrimSpace(key) == "" {
@@ -56,6 +60,7 @@ func assistantProviderCredentials(user domain.User) runtime.RunCredentials {
 		CodeBuddy:  runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment},
 		Codex:      runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL},
 		ClaudeCode: runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL},
+		AgentCLI:   runtime.AgentCLIUserCredentials(user),
 	}
 }
 

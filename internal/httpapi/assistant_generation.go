@@ -35,25 +35,15 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	if !decode(c, &req) {
 		return
 	}
-	req.Executor = assistantExecutor(req.Executor)
-	user, sponsored := stored, false
-	if req.Executor == "codebuddy" {
-		if user, sponsored, ok = h.assistantChatUser(stored); !ok {
-			c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
-			return
-		}
-	} else if err := validateAssistantProvider(&req, stored); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+	req.Model = assistantRequestModel(req.Executor, req.Model)
+	user, model, refusal := h.assistantTurnUser(stored, req.Model)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
 		return
 	}
-	if sponsored {
-		model, allowed := assistantSponsoredModelFor(req.Model)
-		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel()})
-			return
-		}
-		req.Model = model
-	}
+	req.Model = model
+	cliEngine, _ := assistantModelEngine(req.Model)
+	req.Executor = cliEngine
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
 		return
@@ -104,18 +94,20 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Executor == "codebuddy" {
-		req.Model = assistantAllowedModel(req.Model, assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment))
-		if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-	} else {
-		req.Effort = ""
+	req.Model = assistantAllowedUserModel(req.Model, assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment), user)
+	cliEngine, _ = assistantModelEngine(req.Model)
+	req.Executor = cliEngine
+	if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages), req.Model); refusal != "" {
+		c.JSON(409, gin.H{"error": refusal})
+		return
 	}
 	freshCLI := false
 	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
-		freshCLI = assistantExecutor(old.Executor) != req.Executor
+		freshCLI = assistantConversationEngine(old.Messages) != cliEngine
 	}
 	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
 		if len(req.Messages) < len(old.Messages) {
@@ -177,7 +169,8 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	// Keep the authenticated identity, but disconnect model execution from the
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
-	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, sponsored)
+	_, titleSponsored, _ := h.assistantChatUser(stored)
+	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, req.Model, cliEngine == assistantEngineCodeBuddy && titleSponsored)
 	done := inflightTasks.Add()
 	go func() {
 		defer done()

@@ -20,6 +20,9 @@ const (
 	protocolGeneric protocolParser = iota
 	protocolAnthropic
 	protocolCodex
+	// protocolTranslated rewrites each native line into Claude-style
+	// stream-json (NewAgentCLITranslator) and parses that.
+	protocolTranslated
 )
 
 type protocolAdapter struct {
@@ -36,6 +39,7 @@ type protocolAdapter struct {
 	once          sync.Once
 	tools         map[string]*toolUseBuf
 	currentToolID string
+	translate     func(string) []string
 }
 
 // ProtocolObserver normalizes process output from a remotely executed Agent
@@ -117,6 +121,7 @@ func ObservabilitySpec() domain.ObservabilitySpec {
 		Adapters: []domain.AdapterDescriptor{
 			{ID: "anthropic-stream-v1", SpecVersion: domain.ObservabilitySpecVersion, ExecutorKinds: []string{"claude-code", "codebuddy"}, NativeProtocols: []string{"stream-json"}, Capabilities: []string{"session", "model", "reasoning", "output-delta", "tool-lifecycle", "token-usage", "cache-usage", "cost", "duration"}, RawEventPolicy: "discard-after-normalization"},
 			{ID: "codex-jsonl-v1", SpecVersion: domain.ObservabilitySpecVersion, ExecutorKinds: []string{"codex"}, NativeProtocols: []string{"jsonl"}, Capabilities: []string{"session", "reasoning", "output", "tool-lifecycle", "token-usage", "cache-usage"}, RawEventPolicy: "discard-after-normalization"},
+			{ID: "agent-cli-stream-v1", SpecVersion: domain.ObservabilitySpecVersion, ExecutorKinds: append([]string(nil), AgentCLIKinds...), NativeProtocols: []string{"stream-json", "jsonl"}, Capabilities: []string{"session", "reasoning", "output", "tool-lifecycle", "token-usage", "cache-usage"}, RawEventPolicy: "discard-after-normalization"},
 			{ID: "generic-json-v1", SpecVersion: domain.ObservabilitySpecVersion, ExecutorKinds: []string{"custom"}, NativeProtocols: []string{"jsonl", "stream-json"}, Capabilities: []string{"lifecycle", "message", "extensible-metrics"}, RawEventPolicy: "sanitized-attributes-only"},
 		},
 	}
@@ -177,6 +182,18 @@ func (a *protocolAdapter) emit(event domain.TelemetryEvent) {
 func (a *protocolAdapter) Handle(event domain.TelemetryEvent) {
 	if event.Name != "process.stdout" || (a.ex.Protocol != "stream-json" && a.ex.Protocol != "jsonl") {
 		a.emit(event)
+		return
+	}
+	if a.parser == protocolTranslated {
+		if a.translate == nil {
+			a.translate = NewAgentCLITranslator(a.ex.Kind)
+		}
+		for _, line := range a.translate(event.Message) {
+			var raw map[string]any
+			if json.Unmarshal([]byte(line), &raw) == nil {
+				a.handleClaudeStream(raw)
+			}
+		}
 		return
 	}
 	var raw map[string]any

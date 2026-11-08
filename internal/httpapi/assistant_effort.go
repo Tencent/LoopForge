@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 )
 
 // Mirrors CodeBuddy Code 2.180.0's product reasoning.supportedEfforts and
@@ -12,6 +15,11 @@ import (
 // Keep this snapshot alongside the fixed chat model catalog when updating it.
 // Empty effort always leaves the model's native default untouched.
 func assistantModelEfforts(model string) []string {
+	if engine, id := assistantModelEngine(model); engine == runtime.AgentCLICursor {
+		return runtime.CursorModelEfforts(id)
+	} else if runtime.IsAgentCLI(engine) {
+		return domain.ExecutorEffortLevels[engine]
+	}
 	switch model {
 	case "hy4std", "hy4-preview-ioa":
 		return []string{"high"}

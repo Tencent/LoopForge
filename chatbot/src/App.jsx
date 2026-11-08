@@ -1975,7 +1975,7 @@ export default function App() {
                       }}
                     />
                     <PermissionPicker
-                      label="执行器"
+                      label="CLI"
                       options={chat.executors}
                       value={chat.executor}
                       onSelect={(id) => {
@@ -1996,16 +1996,14 @@ export default function App() {
                         input.current?.focus();
                       }}
                     />
-                    {chat.executor === "codebuddy" ? (
-                      <PermissionPicker
-                        label="思考强度"
-                        options={effortOptions(selectedModel)}
-                        value={chat.effort}
-                        onSelect={chat.setEffort}
-                        open={menu?.type === "effort"}
-                        onOpenChange={(open) => setMenu(open ? { type: "effort" } : null)}
-                      />
-                    ) : null}
+                    <PermissionPicker
+                      label="思考强度"
+                      options={effortOptions(selectedModel)}
+                      value={chat.effort}
+                      onSelect={chat.setEffort}
+                      open={menu?.type === "effort"}
+                      onOpenChange={(open) => setMenu(open ? { type: "effort" } : null)}
+                    />
                     <PermissionPicker
                       value={approval}
                       onSelect={setApproval}

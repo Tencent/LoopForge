@@ -27,6 +27,8 @@ type assistantModel struct {
 	Family  string   `json:"family"`
 	Credits string   `json:"credits"`
 	Efforts []string `json:"efforts"`
+	// Engine is set for models that run on a CLI other than CodeBuddy.
+	Engine string `json:"engine,omitempty"`
 }
 
 type assistantModelCatalog struct {
@@ -35,6 +37,8 @@ type assistantModelCatalog struct {
 	// SponsoredModel is set when users without their own CodeBuddy API Key
 	// may still chat, limited to this model.
 	SponsoredModel string `json:"sponsoredModel,omitempty"`
+	// Engines lists the CLIs a signed-in user can switch between.
+	Engines []assistantEngineOption `json:"engines,omitempty"`
 }
 
 func prefetchAssistantModels() {}
@@ -172,7 +176,8 @@ func cachedCLIModels(environment string) []string {
 // environment. Guests get the configured models only; actually chatting still
 // requires login plus a configured or sponsored CodeBuddy key.
 func (h *assistantHandlers) models(c *gin.Context) {
-	if id := assistantExecutor(c.Query("executor")); id != "codebuddy" {
+	if raw := strings.TrimSpace(c.Query("executor")); raw != "" && assistantExecutor(raw) != "codebuddy" {
+		id := assistantExecutor(raw)
 		catalog, ok := executorModelCatalogs()[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
@@ -194,8 +199,15 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		}
 	}
 	catalog := assistantChatCatalog(c.Request.Context(), environment)
-	if _, ok := h.assistantSponsor(); ok {
+	_, sponsored := h.assistantSponsor()
+	if sponsored {
 		catalog.SponsoredModel = assistantSponsoredModel
+	}
+	if current, ok := h.requestUser(c.Request, true); ok {
+		if stored, found := h.repo.User(current.ID); found {
+			catalog.Models = append(catalog.Models, assistantEngineModels(c.Request.Context(), stored)...)
+			catalog.Engines = assistantEngineOptions(stored, sponsored)
+		}
 	}
 	c.JSON(200, catalog)
 }

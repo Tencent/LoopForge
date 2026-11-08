@@ -53,15 +53,15 @@ function runnerStatusLabel(status){
     default:return `<span class="runner-status"><i></i>${escapeHTML(status||'unknown')}</span>`;
   }
 }
-const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy'};
-const runnerCLIGlyphs={'claude-code':'C','codex':'X','codebuddy':'B'};
+const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness'};
+const runnerCLIGlyphs={'claude-code':'C','codex':'X','codebuddy':'B',opencode:'O',cursor:'Cu',agy:'A',kimi:'K',pi:'P',dsh:'D'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
 function runnerPersonalCredentialConfigured(provider){
   const user=userById(state.currentUser?.id)||{};
   if(provider==='codex')return !!user.codexApiKeyConfigured;
   if(provider==='claude-code')return !!user.claudeCodeApiKeyConfigured;
   if(provider==='codebuddy')return !!user.codeBuddyApiKeyConfigured;
-  return false;
+  return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;
 }
 function runnerLastSeen(value){
   if(!value)return '尚无心跳';

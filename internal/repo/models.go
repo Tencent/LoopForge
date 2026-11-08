@@ -43,6 +43,7 @@ type userConfigRow struct {
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url;type:text"`
 	ClaudeCodeAPIKey             *string    `gorm:"column:claude_code_api_key;type:text"`
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url;type:text"`
+	AgentCLICredentials          *string    `gorm:"column:agent_cli_credentials;type:text"`
 	Created                      *time.Time `gorm:"column:created_at"`
 	Updated                      *time.Time `gorm:"column:updated_at"`
 }

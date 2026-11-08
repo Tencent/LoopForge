@@ -46,6 +46,10 @@ func TestAssistantGenerationWithOnlySelectedProviderCredentials(t *testing.T) {
 			if response.Code != 202 {
 				t.Fatalf("start: %d %s", response.Code, response.Body.String())
 			}
+			wantEngine, wantModel := "codex", "codex:custom-model"
+			if provider == "claude" {
+				wantEngine, wantModel = "claude-code", "claude-code:custom-model"
+			}
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
 				generation, _ := h.repo.AssistantGeneration(user.ID, "provider-test")
@@ -54,8 +58,8 @@ func TestAssistantGenerationWithOnlySelectedProviderCredentials(t *testing.T) {
 						t.Fatalf("generation failed: %s", generation.Error)
 					}
 					session, _ := h.repo.AssistantSession(user.ID, "provider-test")
-					if session.Executor != provider || session.Model != "custom-model" || len(session.Messages) != 2 {
-						t.Fatalf("provider conversation lost: executor=%s messages=%d", session.Executor, len(session.Messages))
+					if session.Executor != wantEngine || session.Model != wantModel || len(session.Messages) != 2 {
+						t.Fatalf("provider conversation lost: executor=%s model=%s messages=%d", session.Executor, session.Model, len(session.Messages))
 					}
 					return
 				}

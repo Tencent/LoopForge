@@ -1,10 +1,13 @@
 package repo
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 )
@@ -28,6 +31,7 @@ type userWithConfig struct {
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url"`
 	ClaudeCodeAPIKey             *string    `gorm:"column:claude_code_api_key"`
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url"`
+	AgentCLICredentials          *string    `gorm:"column:agent_cli_credentials"`
 	Created                      *time.Time `gorm:"column:created_at"`
 	Updated                      *time.Time `gorm:"column:updated_at"`
 }
@@ -36,6 +40,7 @@ const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dep
 	COALESCE(u.platform_role, '') AS platform_role,
 	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.claude_code_api_key, c.claude_code_base_url,
+	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
 
 func (r userWithConfig) toDomain() domain.User {
@@ -67,6 +72,9 @@ func (r userWithConfig) toDomain() domain.User {
 	}
 	if r.ClaudeCodeBaseURL != nil {
 		u.ClaudeCodeBaseURL = *r.ClaudeCodeBaseURL
+	}
+	if r.AgentCLICredentials != nil {
+		_ = json.Unmarshal([]byte(*r.AgentCLICredentials), &u.AgentCLICredentials)
 	}
 	if r.Created != nil {
 		u.CreatedAt = *r.Created
@@ -144,6 +152,7 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
 		v.CodeBuddyInternetEnvironment = old.CodeBuddyInternetEnvironment
+		v.AgentCLICredentials = old.AgentCLICredentials
 		if strings.TrimSpace(v.PlatformRole) == "" {
 			v.PlatformRole = old.PlatformRole
 		}
@@ -214,7 +223,8 @@ func userHasConfig(user domain.User) bool {
 		user.CodexAPIKey != "" ||
 		user.CodexBaseURL != "" ||
 		user.ClaudeCodeAPIKey != "" ||
-		user.ClaudeCodeBaseURL != ""
+		user.ClaudeCodeBaseURL != "" ||
+		len(user.AgentCLICredentials) > 0
 }
 
 type UserCredentialUpdate struct {
@@ -229,6 +239,17 @@ type UserCredentialUpdate struct {
 	ClaudeCodeAPIKey             string  `json:"claudeCodeApiKey"`
 	ClaudeCodeAPIKeyClear        bool    `json:"claudeCodeApiKeyClear"`
 	ClaudeCodeBaseURL            *string `json:"claudeCodeBaseUrl"`
+	// AgentCLICredentials updates the agent CLIs by kind; absent fields keep
+	// the stored value. CodeBuddy, Codex and Claude Code stay on their own columns.
+	AgentCLICredentials map[string]AgentCLICredentialUpdate `json:"agentCliCredentials"`
+}
+
+type AgentCLICredentialUpdate struct {
+	APIKey      string             `json:"apiKey"`
+	APIKeyClear bool               `json:"apiKeyClear"`
+	BaseURL     *string            `json:"baseUrl"`
+	Protocol    *string            `json:"protocol"`
+	Models      *[]domain.CLIModel `json:"models"`
 }
 
 func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate) (domain.User, error) {
@@ -271,6 +292,9 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	if update.ClaudeCodeBaseURL != nil {
 		user.ClaudeCodeBaseURL = strings.TrimSpace(*update.ClaudeCodeBaseURL)
 	}
+	if err := applyAgentCLICredentialUpdates(&user, update.AgentCLICredentials); err != nil {
+		return domain.User{}, err
+	}
 	user.UpdatedAt = time.Now().UTC()
 	if err := r.writeUserConfig(user); err != nil {
 		return domain.User{}, err
@@ -304,7 +328,8 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
 		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL),
 		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL),
-		"created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
+		"agent_cli_credentials": encodeAgentCLICredentials(v.AgentCLICredentials),
+		"created_at":            timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
 	})
 }
 
@@ -313,4 +338,109 @@ func nullableString(v string) any {
 		return nil
 	}
 	return v
+}
+
+func applyAgentCLICredentialUpdates(user *domain.User, updates map[string]AgentCLICredentialUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	merged := make(map[string]domain.AgentCLICredential, len(user.AgentCLICredentials)+len(updates))
+	for kind, cred := range user.AgentCLICredentials {
+		merged[kind] = cred
+	}
+	for kind, update := range updates {
+		kind = strings.TrimSpace(kind)
+		if !domain.IsAgentCLIKind(kind) {
+			return fmt.Errorf("不支持的 CLI：%s", kind)
+		}
+		cred := merged[kind]
+		if update.APIKeyClear {
+			cred.APIKey = ""
+		} else if value := strings.TrimSpace(update.APIKey); value != "" {
+			cred.APIKey = value
+		}
+		if update.BaseURL != nil {
+			cred.BaseURL = strings.TrimSpace(*update.BaseURL)
+		}
+		if update.Protocol != nil {
+			protocol := strings.TrimSpace(*update.Protocol)
+			if protocol != "" && domain.NormalizeAgentCLIProtocol(kind, protocol) != protocol {
+				return fmt.Errorf("%s 不支持协议 %s", kind, protocol)
+			}
+			cred.Protocol = protocol
+		}
+		if update.Models != nil {
+			models, err := normalizeCLIModels(*update.Models)
+			if err != nil {
+				return err
+			}
+			cred.Models = models
+		}
+		if cred.APIKey == "" && cred.BaseURL == "" && cred.Protocol == "" && len(cred.Models) == 0 {
+			delete(merged, kind)
+			continue
+		}
+		merged[kind] = cred
+	}
+	if len(merged) == 0 {
+		merged = nil
+	}
+	user.AgentCLICredentials = merged
+	return nil
+}
+
+func encodeAgentCLICredentials(creds map[string]domain.AgentCLICredential) any {
+	if len(creds) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(creds)
+	if err != nil || string(raw) == "{}" || string(raw) == "null" {
+		return nil
+	}
+	return string(raw)
+}
+
+const (
+	maxCLIModels        = 100
+	maxCLIModelIDLen    = 128
+	maxCLIModelNameRune = 64
+)
+
+func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
+	if len(models) > maxCLIModels {
+		return nil, fmt.Errorf("模型目录最多 %d 个", maxCLIModels)
+	}
+	out := make([]domain.CLIModel, 0, len(models))
+	seen := map[string]bool{}
+	for _, model := range models {
+		id, name := strings.TrimSpace(model.ID), strings.TrimSpace(model.Name)
+		if id == "" {
+			return nil, errors.New("模型 ID 不能为空")
+		}
+		if len(id) > maxCLIModelIDLen {
+			return nil, fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
+		}
+		for _, r := range id {
+			if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
+				return nil, fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
+			}
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("模型 ID %s 重复", id)
+		}
+		seen[id] = true
+		if utf8.RuneCountInString(name) > maxCLIModelNameRune {
+			return nil, fmt.Errorf("显示名称长度不能超过 %d 个字符", maxCLIModelNameRune)
+		}
+		for _, r := range name {
+			if r < ' ' || r == 0x7f {
+				return nil, errors.New("显示名称不能包含控制字符")
+			}
+		}
+		if name == id {
+			name = ""
+		}
+		out = append(out, domain.CLIModel{ID: id, Name: name})
+	}
+	return out, nil
 }

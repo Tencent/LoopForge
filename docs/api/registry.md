@@ -203,7 +203,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 ### `GET /api/sandboxes`
 
-返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`local|seatbelt|bwrap|docker`）、`dockerfileId`、`environmentId`、`readOnlyRootFS`、`environment`。
+返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`local|native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap）、`dockerfileId`、`environmentId`、`readOnlyRootFS`、`environment`。
 
 ### `PUT /api/sandboxes`
 

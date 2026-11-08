@@ -47,13 +47,13 @@ func (h *usersHandlers) user(c *gin.Context) {
 		}
 		body.CodeBuddyInternetEnvironment = &environment
 	}
-	for _, raw := range []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL} {
-		if raw == nil || strings.TrimSpace(*raw) == "" {
-			continue
-		}
-		u, err := url.Parse(strings.TrimSpace(*raw))
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || len(*raw) > 2048 {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "Base URL 必须为 HTTP(S) 服务地址，不能包含账号密码、查询参数或片段"})
+	baseURLs := []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL}
+	for _, cred := range body.AgentCLICredentials {
+		baseURLs = append(baseURLs, cred.BaseURL)
+	}
+	for _, raw := range baseURLs {
+		if raw != nil && !validCLIBaseURL(*raw) {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": errInvalidCLIBaseURL})
 			return
 		}
 	}
@@ -63,6 +63,19 @@ func (h *usersHandlers) user(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, domain.PublicUser(saved))
+}
+
+const errInvalidCLIBaseURL = "Base URL 必须为 HTTP(S) 服务地址，不能包含账号密码、查询参数或片段"
+
+// validCLIBaseURL accepts an empty value (the CLI's official endpoint) or a
+// plain HTTP(S) service address.
+func validCLIBaseURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return true
+	}
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && len(raw) <= 2048
 }
 
 func (h *usersHandlers) platformAdmins(c *gin.Context) {
