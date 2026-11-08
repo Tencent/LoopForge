@@ -3,6 +3,10 @@ import {signInUnconfigured, switchProject, chat, openHome, fitsFrame} from './he
 
 test.use({trace:'off',screenshot:'off'});
 
+// first-run drives the published image, whose picker is still labeled 执行器 and
+// lists three CLIs. The browser job builds this checkout, which labels it CLI.
+const executorButton = (frame) => frame.getByRole('button', { name: /^(执行器|CLI)$/ });
+
 for(const viewport of [{width:1280,height:400},{width:390,height:600}]){
   test(`the executor and model menus stay usable at ${viewport.width}x${viewport.height}`,async({page})=>{
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -12,8 +16,8 @@ for(const viewport of [{width:1280,height:400},{width:390,height:600}]){
     await signInUnconfigured(page);
     await openHome(page);
     const frame=chat(page);
-    for(const [name,menu] of [['CLI','.permission-menu[role="menu"]'],['选择模型','.grasp-model-menu']]){
-      await frame.getByRole('button',{name,exact:true}).click();
+    for(const [button,menu,name] of [[executorButton(frame),'.permission-menu[role="menu"]','执行器'],[frame.getByRole('button',{name:'选择模型',exact:true}),'.grasp-model-menu','选择模型']]){
+      await button.click();
       const open=frame.locator(menu);
       await expect(open).toBeVisible();
       await expect.poll(()=>fitsFrame(open),{message:`${name} menu at ${viewport.width}x${viewport.height}`}).toBe(true);
@@ -40,14 +44,15 @@ test('executor selection has independent models, credentials and a persistent ch
   const draft='Keep this draft while choosing an executor';
   const input=await openHome(page);
   const frame=chat(page);
-  const executor=frame.getByRole('button',{name:'CLI',exact:true});
+  const executor=executorButton(frame);
   const choose=async label=>{
     await executor.click();
     await frame.locator('.permission-menu [role="menuitemradio"]').filter({hasText:label}).click();
     await expect(executor).toContainText(label);
   };
   await executor.click();
-  await expect(frame.locator('.permission-menu [role="menuitemradio"]')).toHaveCount(9);
+  const options=frame.locator('.permission-menu [role="menuitemradio"]');
+  for(const label of ['CodeBuddy','Codex','Claude Code'])await expect(options.filter({hasText:label})).toHaveCount(1);
   await page.keyboard.press('Escape');
   await input.fill(draft);
   for(const [id,label] of [['codex','Codex'],['claude','Claude Code'],['codebuddy','CodeBuddy']]){
@@ -63,7 +68,7 @@ test('executor selection has independent models, credentials and a persistent ch
   await choose('Codex');
   await page.reload();
   await expect(composer()).toBeEditable();
-  await expect(chat(page).getByRole('button',{name:'CLI',exact:true})).toContainText('Codex');
+  await expect(executorButton(chat(page))).toContainText('Codex');
   await choose('CodeBuddy');
   expect((await page.request.get('/api/assistant/models?executor=shell')).status()).toBe(400);
   function composer(){return chat(page).locator('.composer-column textarea')}
