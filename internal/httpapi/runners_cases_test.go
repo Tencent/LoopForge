@@ -104,10 +104,10 @@ func TestRunnerManagementAndMachineLifecycle(t *testing.T) {
 }
 
 func TestRunnerNormalizationAndBindCodeBranches(t *testing.T) {
-	reported := []domain.RunnerRuntime{{Provider: "codebuddy", Status: "online"}, {Provider: "codex", Status: "online"}}
-	existing := []domain.RunnerRuntime{{Provider: "codebuddy", Status: domain.RuntimeStatusDisabled, AuthMode: domain.RuntimeAuthLocal}, {Provider: "codex", AuthMode: domain.RuntimeAuthPersonal}}
+	reported := []domain.RunnerRuntime{{Provider: "codebuddy", Status: "online"}, {Provider: "codex", Status: "online"}, {Provider: "opencode", Status: "online"}}
+	existing := []domain.RunnerRuntime{{Provider: "codebuddy", Status: domain.RuntimeStatusDisabled, AuthMode: domain.RuntimeAuthLocal}, {Provider: "codex", AuthMode: domain.RuntimeAuthPersonal}, {Provider: "opencode", AuthMode: domain.RuntimeAuthLocal}}
 	got := normalizeRunnerRuntimes(reported, existing)
-	if got[0].Status != domain.RuntimeStatusDisabled || got[0].AuthMode != domain.RuntimeAuthLocal || got[1].AuthMode != domain.RuntimeAuthPersonal {
+	if got[0].Status != domain.RuntimeStatusDisabled || got[0].AuthMode != domain.RuntimeAuthLocal || got[1].AuthMode != domain.RuntimeAuthPersonal || got[2].AuthMode != domain.RuntimeAuthPersonal {
 		t.Fatalf("normalized = %+v", got)
 	}
 	f := cvBNewHTTPFixture(t)

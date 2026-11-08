@@ -34,6 +34,8 @@ func TestRunnerTaskPayloadScrubbedOnTerminalTransitions(t *testing.T) {
 			CodeBuddyAPIKey:   "cb-secret",
 			ClaudeCodeAPIKey:  "cc-secret",
 			ClaudeCodeBaseURL: "https://cc.example.com",
+			AgentCLIAPIKey:    "agy-secret",
+			AgentCLIBaseURL:   "https://agy.example.com",
 			Repository:        &domain.RunnerRepository{CloneURL: "git@example.com/a.git", GitToken: "legacy-token"},
 			Repositories: []domain.RunnerRepository{
 				{CloneURL: "git@example.com/a.git", GitToken: "token-a", Dir: "a"},
@@ -94,7 +96,7 @@ func TestRunnerTaskPayloadScrubbedOnTerminalTransitions(t *testing.T) {
 		t.Fatalf("task with attempts left must be requeued: %+v", recovered)
 	}
 	payload := readRawPayload(t, st, "task-requeued")
-	if !strings.Contains(string(payload), "token-a") || !strings.Contains(string(payload), "token-b") {
+	if !strings.Contains(string(payload), "token-a") || !strings.Contains(string(payload), "token-b") || !strings.Contains(string(payload), "agy-secret") {
 		t.Fatalf("requeued task must keep checkout credentials: %s", payload)
 	}
 
@@ -118,7 +120,7 @@ func TestRunnerTaskPayloadScrubbedOnTerminalTransitions(t *testing.T) {
 func assertPayloadScrubbed(t *testing.T, st *Store, id string) {
 	t.Helper()
 	raw := readRawPayload(t, st, id)
-	for _, secret := range []string{"cb-secret", "cc-secret", "legacy-token", "token-a", "token-b"} {
+	for _, secret := range []string{"cb-secret", "cc-secret", "agy-secret", "https://agy.example.com", "legacy-token", "token-a", "token-b"} {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("credential %q leaked into durable payload of %s: %s", secret, id, raw)
 		}

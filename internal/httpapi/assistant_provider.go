@@ -123,7 +123,7 @@ func prepareAlternateAssistantCommand(ctx context.Context, req assistantCLIReque
 			return runtime.CommandSpec{}, err
 		}
 		args = []string{"exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-rules", "--sandbox", "read-only", "-c", "approval_policy=\"never\"", "-c", "developer_instructions=" + strconv.Quote(sys), "-c", "web_search=\"disabled\""}
-		for _, feature := range []string{"shell_tool", "unified_exec", "apply_patch_freeform", "multi_agent", "multi_agent_v2", "js_repl", "code_mode", "apps", "plugins", "memories", "image_generation", "browser_use", "computer_use", "tool_suggest", "skill_search", "view_image", "goals", "collab", "sleep_tool", "worktrees"} {
+		for _, feature := range codexAssistantDisabledFeatures {
 			args = append(args, "-c", "features."+feature+"=false")
 		}
 		args = append(args, "-c", "features.hooks=true", "--dangerously-bypass-hook-trust", "-c", "hooks.PreToolUse=[{hooks=[{type=\"command\",command="+strconv.Quote("python3 '"+strings.ReplaceAll(guard, "'", "'\\''")+"'")+",timeout=5}]}]")

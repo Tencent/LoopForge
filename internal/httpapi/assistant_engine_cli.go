@@ -204,8 +204,24 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 }
 
 // Codex tools that act outside the platform gateway. The chat runs on the
-// control plane, so they are switched off together with the shell.
-var codexAssistantDisabledFeatures = []string{"shell_tool", "apps", "plugins", "browser_use", "browser_use_external", "computer_use", "in_app_browser", "image_generation", "multi_agent", "memories", "tool_suggest"}
+// control plane, so they are switched off together with the shell. Feature
+// flags alone do not stop every built-in tool, so the app-server path also
+// installs assistantCodexGuard.
+var codexAssistantDisabledFeatures = []string{
+	"shell_tool", "unified_exec", "apply_patch_freeform", "multi_agent", "multi_agent_v2",
+	"js_repl", "code_mode", "apps", "plugins", "memories", "image_generation",
+	"browser_use", "browser_use_external", "computer_use", "in_app_browser",
+	"tool_suggest", "skill_search", "view_image", "goals", "collab", "sleep_tool", "worktrees",
+}
+
+// codexAssistantGuardArgs forces the PreToolUse denial hook. app-server has
+// no --dangerously-bypass-hook-trust flag; hooks.bypass_hook_trust is the
+// config override it accepts.
+func codexAssistantGuardArgs(guardPath string) []string {
+	command := "python3 " + strconv.Quote(guardPath)
+	hook := "hooks.PreToolUse=[{hooks=[{type=\"command\",command=" + strconv.Quote(command) + ",timeout=5}]}]"
+	return []string{"-c", "features.hooks=true", "-c", "hooks.bypass_hook_trust=true", "-c", hook}
+}
 
 var codexConfigKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 

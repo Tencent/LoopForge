@@ -310,7 +310,9 @@ func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime
 		if disabled[runtimes[i].Provider] {
 			runtimes[i].Status = domain.RuntimeStatusDisabled
 		}
-		if mode := authModes[runtimes[i].Provider]; mode != "" {
+		if domain.IsAgentCLIKind(runtimes[i].Provider) {
+			runtimes[i].AuthMode = domain.RuntimeAuthPersonal
+		} else if mode := authModes[runtimes[i].Provider]; mode != "" {
 			runtimes[i].AuthMode = mode
 		} else if strings.EqualFold(runtimes[i].Provider, "codebuddy") {
 			runtimes[i].AuthMode = domain.RuntimeAuthPersonal
@@ -348,6 +350,9 @@ func (r *RunnersRepo) SetRunnerRuntimeAuthMode(runnerID, provider, authMode stri
 	}
 	if strings.EqualFold(provider, "codebuddy") && authMode != domain.RuntimeAuthPersonal {
 		return fmt.Errorf("CodeBuddy 仅支持个人凭证")
+	}
+	if domain.IsAgentCLIKind(provider) && authMode != domain.RuntimeAuthPersonal {
+		return fmt.Errorf("%s 仅支持个人凭证", provider)
 	}
 	return r.updateRunnerRuntimes(runnerID, func(runtimes []domain.RunnerRuntime) (bool, error) {
 		found := false
@@ -664,6 +669,8 @@ func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
 	task.Invocation.CodexBaseURL = ""
 	task.Invocation.ClaudeCodeAPIKey = ""
 	task.Invocation.ClaudeCodeBaseURL = ""
+	task.Invocation.AgentCLIAPIKey = ""
+	task.Invocation.AgentCLIBaseURL = ""
 	if task.Invocation.Repository != nil {
 		task.Invocation.Repository.GitToken = ""
 	}

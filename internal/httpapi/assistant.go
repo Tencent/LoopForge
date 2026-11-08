@@ -175,7 +175,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages), req.Model); refusal != "" {
+	legacyExecutor := ""
+	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
+		legacyExecutor = old.Executor
+	}
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, legacyExecutor), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}

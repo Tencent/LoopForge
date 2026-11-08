@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,10 +26,15 @@ func prepareAssistantCodexInvocation(o assistantEngineInvocationOpts) (assistant
 			return assistantCLIInvocation{resumeMissing: true}, nil
 		}
 	}
+	guard := filepath.Join(o.Root, "codex-native-guard.py")
+	if err = os.WriteFile(guard, []byte(assistantCodexGuard), 0o600); err != nil {
+		return assistantCLIInvocation{}, err
+	}
 	argv := []string{o.Bin, "app-server", "-c", `web_search="disabled"`}
 	for _, feature := range codexAssistantDisabledFeatures {
 		argv = append(argv, "-c", "features."+feature+"=false")
 	}
+	argv = append(argv, codexAssistantGuardArgs(guard)...)
 	argv = append(argv, codexAssistantMCPArgs(servers)...)
 	if effort := strings.TrimSpace(o.Effort); effort != "" {
 		argv = append(argv, "-c", "model_reasoning_effort="+strconv.Quote(effort))

@@ -230,8 +230,9 @@ export function useChat() {
         if (!current || currentId.current !== activeId) return;
         setSession(stored);
         changeURL(stored.id);
-        // A conversation stays on the CLI that answered it; older ones are CodeBuddy.
-        const locked = conversationEngine(stored.messages);
+        // A conversation stays on the CLI that answered it. Replies saved before
+        // model prefixes keep that CLI on the session executor.
+        const locked = conversationEngine(stored.messages, models, stored.executor);
         setExecutorState(knownExecutor(locked || stored.executor));
         setModel(stored.model || defaultModel.current || models[0]?.id || "");
         setEffort(stored.effort || "");
@@ -508,7 +509,7 @@ export function useChat() {
     (id) => {
       if (id === "claude") id = "claude-code";
       if (!EXECUTORS.some((item) => item.id === id) || id === executor) return;
-      const locked = conversationEngine(sessionRef.current?.messages, models);
+      const locked = conversationEngine(sessionRef.current?.messages, models, sessionRef.current?.executor);
       try {
         localStorage.setItem(EXECUTOR_KEY, id);
       } catch {}

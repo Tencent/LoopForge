@@ -29,15 +29,33 @@ export function engineMissingKeyMessage(engine) {
   return `请先在个人配置中配置 ${engine.name} API Key 后再使用 ${engine.name} 模型`;
 }
 
+// CLIs a session Executor can name when the reply was saved before model prefixes.
+const legacyEngines = new Set(["codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh"]);
+
+function modelHasEnginePrefix(id) {
+  const prefix = /^([a-z][a-z0-9-]*):./.exec(id || "")?.[1];
+  return prefix === defaultEngine || legacyEngines.has(prefix);
+}
+
+function legacyEngine(id) {
+  if (id === "claude") return "claude-code";
+  return legacyEngines.has(id) ? id : "";
+}
+
 /**
  * The CLI that wrote a conversation's latest own reply, "" before the first.
  * Mirrors assistantConversationEngine: a conversation stays on that CLI,
  * because its native session holds tool calls another CLI cannot resume.
+ * An unprefixed model falls back to the session's stored executor.
  */
-export function conversationEngine(messages, models = []) {
+export function conversationEngine(messages, models = [], legacyExecutor = "") {
   for (let i = (messages?.length || 0) - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m?.role === "assistant" && !m.speakerAgentId && m.model) return engineOfModel(m.model, models);
+    if (m?.role !== "assistant" || m.speakerAgentId || !m.model) continue;
+    if (modelHasEnginePrefix(m.model)) return engineOfModel(m.model, models);
+    const legacy = legacyEngine(legacyExecutor);
+    if (legacy) return legacy;
+    return engineOfModel(m.model, models);
   }
   return "";
 }

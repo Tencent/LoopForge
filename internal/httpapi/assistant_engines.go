@@ -170,14 +170,56 @@ func assistantValidEngineModel(model string) bool {
 // own reply, "" before the first one. Role replies (SpeakerAgentID) run on
 // their own executors and do not count. A turn that failed before producing
 // anything leaves no reply, so it does not pin the CLI.
-func assistantConversationEngine(messages []assistantMessage) string {
+//
+// Replies saved before model prefixes carry the CLI on the session Executor
+// (legacyExecutor) instead. An unprefixed model is not itself proof of CodeBuddy.
+func assistantConversationEngine(messages []assistantMessage, legacyExecutor ...string) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
 		if m.Role != "assistant" || m.SpeakerAgentID != "" || strings.TrimSpace(m.Model) == "" {
 			continue
 		}
+		if assistantModelHasEnginePrefix(m.Model) {
+			engine, _ := assistantModelEngine(m.Model)
+			return engine
+		}
+		if legacy := assistantLegacyExecutor(legacyExecutor...); legacy != "" && legacy != assistantEngineCodeBuddy {
+			return legacy
+		}
 		engine, _ := assistantModelEngine(m.Model)
 		return engine
+	}
+	return ""
+}
+
+func assistantModelHasEnginePrefix(id string) bool {
+	id = strings.TrimSpace(id)
+	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
+		if _, ok := strings.CutPrefix(id, engine+":"); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// assistantLegacyExecutor maps a session Executor saved before model prefixes.
+// CodeBuddy and an empty value stay unset so an unprefixed model remains CodeBuddy.
+func assistantLegacyExecutor(candidates ...string) string {
+	for _, raw := range candidates {
+		switch id := strings.ToLower(strings.TrimSpace(raw)); id {
+		case assistantEngineCodex:
+			return assistantEngineCodex
+		case "claude", assistantEngineClaude:
+			return assistantEngineClaude
+		case "", assistantEngineCodeBuddy:
+			continue
+		default:
+			for _, kind := range domain.AgentCLIExecutorKinds {
+				if strings.EqualFold(kind, id) {
+					return kind
+				}
+			}
+		}
 	}
 	return ""
 }
