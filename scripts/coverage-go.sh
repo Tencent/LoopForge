@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # Go statement coverage with agentflow/cmd/ and agentflow/deploy/ excluded.
 #
-#   scripts/coverage-go.sh [--min PCT] [--profile FILE] [--out FILE] [-p N] [--timeout D] [--coverpkg PATTERN]
+#   scripts/coverage-go.sh [--min PCT] [--profile FILE]... [--out FILE] [-p N] [--timeout D] [--coverpkg PATTERN]
 #
 # Without --profile it runs `go test ./... -coverprofile` first, instrumenting
 # every internal package in every test binary (-coverpkg), so a statement run by
 # any package's tests counts. --coverpkg '' measures each package by its own
 # tests only. The per-package table and the total are computed from the merged
 # profile; a block covered by any test binary counts as covered once.
-# The committed threshold is scripts/coverage-go.min (one decimal place, floored
-# from a measurement). CI passes that number with --min and the profile from the
-# same non-browser go test; this script does not read the file itself.
+# Repeat --profile to combine isolated test runs with the same instrumentation.
+# CI passes scripts/coverage-go.min with --min and both the non-browser and real
+# browser profiles; this script does not read the threshold file itself.
 set -euo pipefail
 
 min=""
-profile=""
+profiles=()
 out="${COVERAGE_OUT:-coverage/go.out}"
 par="${GO_TEST_P:-4}"
 timeout="${GO_TEST_TIMEOUT:-4m}"
@@ -22,7 +22,7 @@ coverpkg="${GO_COVERPKG-agentflow/internal/...}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --min) min="$2"; shift 2 ;;
-    --profile) profile="$2"; shift 2 ;;
+    --profile) profiles+=("$2"); shift 2 ;;
     --out) out="$2"; shift 2 ;;
     -p) par="$2"; shift 2 ;;
     --timeout) timeout="$2"; shift 2 ;;
@@ -34,10 +34,10 @@ done
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-if [ -z "$profile" ]; then
+if [ "${#profiles[@]}" -eq 0 ]; then
   mkdir -p "$(dirname "$out")"
-  profile="$out"
-  args=(-p="$par" -count=1 -timeout="$timeout" -covermode=set -coverprofile="$profile")
+  profiles=("$out")
+  args=(-p="$par" -count=1 -timeout="$timeout" -covermode=set -coverprofile="$out")
   [ -z "$coverpkg" ] || args+=(-coverpkg="$coverpkg")
   status=0
   go test "${args[@]}" ./... || status=$?
@@ -47,12 +47,16 @@ if [ -z "$profile" ]; then
   fi
 fi
 
-test -s "$profile" || { echo "empty coverage profile: $profile" >&2; exit 1; }
+for profile in "${profiles[@]}"; do
+  test -s "$profile" || { echo "empty coverage profile: $profile" >&2; exit 1; }
+done
 
-filtered="${profile%.out}.filtered.out"
+filtered="${profiles[0]%.out}.filtered.out"
 {
   echo "mode: set"
-  grep -v '^mode:' "$profile" | grep -Ev '^agentflow/(cmd|deploy)/' || true
+  for profile in "${profiles[@]}"; do
+    grep -v '^mode:' "$profile" | grep -Ev '^agentflow/(cmd|deploy)/' || true
+  done
 } >"$filtered"
 
 awk -v min="$min" '
@@ -84,11 +88,11 @@ awk -v min="$min" '
       printf "%-44s %8d %8d %8d %6.1f%%\n", p, total[p], cov[p], total[p] - cov[p], 100 * cov[p] / total[p]
     }
     pct = all ? 100 * allCov / all : 0
-    printf "%-44s %8d %8d %8d %6.1f%%\n", "total", all, allCov, all - allCov, pct
+    printf "%-44s %8d %8d %8d %6.4f%%\n", "total", all, allCov, all - allCov, pct
     if (min != "" && pct + 1e-9 < min + 0) {
-      printf "FAIL: Go coverage %.1f%% is below the %s%% threshold\n", pct, min > "/dev/stderr"
+      printf "FAIL: Go coverage %.4f%% (%d/%d statements) is below the %s%% threshold\n", pct, allCov, all, min > "/dev/stderr"
       exit 1
     }
-    if (min != "") printf "OK: Go coverage %.1f%% >= %s%%\n", pct, min
+    if (min != "") printf "OK: Go coverage %.4f%% >= %s%%\n", pct, min
   }
 ' "$filtered"

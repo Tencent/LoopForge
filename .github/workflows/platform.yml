@@ -34,16 +34,19 @@ jobs:
             --user-data-dir="$RUNNER_TEMP/chromium-warmup" --dump-dom about:blank >/dev/null
       # Real-Chromium tests run on their own: alongside the rest of the suite
       # the browser can miss its DevTools liveness check on a loaded runner.
-      # Statement coverage is collected on this same non-browser run. The
-      # following gate only reads the profile; it does not test ./... again.
+      # Collect both isolated runs with identical instrumentation, then gate
+      # their union without rerunning the suite or counting a statement twice.
       - name: Non-browser Go tests
         run: go test -p=2 ./... -count=1 -timeout=600s -skip "$REAL_BROWSER_TESTS" -covermode=set -coverpkg=agentflow/internal/... -coverprofile="${{ runner.temp }}/go.cover"
+      - name: Real-browser Go tests
+        run: go test -p=1 ./internal/httpapi ./internal/runner ./internal/runtime -count=1 -timeout=300s -run "$REAL_BROWSER_TESTS" -v -covermode=set -coverpkg=agentflow/internal/... -coverprofile="${{ runner.temp }}/go-browser.cover"
+      - name: Coverage gate regression tests
+        run: python3 scripts/test-coverage-go.py -v
       - name: Go statement coverage gate
         run: |
           min=$(tr -d '[:space:]' < scripts/coverage-go.min)
           test -n "$min"
-          bash scripts/coverage-go.sh --profile "${{ runner.temp }}/go.cover" --min "$min"
-      - run: go test -p=1 ./internal/httpapi ./internal/runner ./internal/runtime -count=1 -timeout=300s -run "$REAL_BROWSER_TESTS" -v
+          bash scripts/coverage-go.sh --profile "${{ runner.temp }}/go.cover" --profile "${{ runner.temp }}/go-browser.cover" --min "$min"
       - name: Browser-free UI tests for the platform console
         run: npm ci --no-audit --no-fund && npm run coverage
         working-directory: webtest
