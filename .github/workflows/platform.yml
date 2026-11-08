@@ -49,6 +49,8 @@ jobs:
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - run: python3 scripts/collect-go-notices.py
       - run: python3 scripts/check-public.py
+      - name: Secret scanner download regression tests
+        run: python3 scripts/test-scan-secrets.py -v
       - run: bash scripts/scan-secrets.sh
   browser:
     runs-on: ubuntu-latest
