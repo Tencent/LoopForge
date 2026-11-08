@@ -8,6 +8,9 @@
 # any package's tests counts. --coverpkg '' measures each package by its own
 # tests only. The per-package table and the total are computed from the merged
 # profile; a block covered by any test binary counts as covered once.
+# The committed threshold is scripts/coverage-go.min (one decimal place, floored
+# from a measurement). CI passes that number with --min and the profile from the
+# same non-browser go test; this script does not read the file itself.
 set -euo pipefail
 
 min=""
