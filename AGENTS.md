@@ -17,7 +17,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `ProjectsRepo` | projects、project members |
 | `IssuesRepo` | issues、issue comments |
 | `TasksRepo` | tasks（跨实例幂等记录） |
-| `UsersRepo` | users、credentials、platform admins |
+| `UsersRepo` | users、credentials（含平台共享 CodeBuddy Key）、platform admins |
 | `TokensRepo` | API tokens |
 | `AssistantRepo` | Studio 助手会话、定时 prompts |
 | `RunsRepo` | runs 及其子资源、run leases、workflow metrics、run evals |

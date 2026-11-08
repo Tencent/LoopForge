@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   CREDENTIAL_GUIDES,
   codeBuddyEnvironment,
+  codeBuddyEnvironmentIntent,
+  codeBuddyEnvironmentLegacy,
   codeBuddyKeyURL,
   codeBuddyKeyWarning,
   credentialGuide,
@@ -17,9 +19,26 @@ test("CodeBuddy key links follow the selected network environment", () => {
     "https://tencent.sso.copilot.tencent.com/profile/keys",
   );
   assert.equal(codeBuddyKeyURL("typo"), "https://www.codebuddy.ai/profile/keys");
-  assert.equal(codeBuddyEnvironment("china")?.value, "internal");
-  assert.equal(codeBuddyEnvironment("public")?.value, "");
-  assert.equal(codeBuddyEnvironment("private-net"), null);
+  assert.equal(codeBuddyKeyURL("china"), "https://copilot.tencent.com/profile/");
+  // The CLI gets the stored text as-is, so only exact values are recognized.
+  assert.equal(codeBuddyEnvironment(" internal ")?.value, "internal");
+  for (const raw of ["china", "public", "iOA", "private-net"])
+    assert.equal(codeBuddyEnvironment(raw), null, raw);
+  assert.equal(codeBuddyEnvironmentIntent("china")?.value, "internal");
+  assert.equal(codeBuddyEnvironmentIntent("public")?.value, "");
+  assert.equal(codeBuddyEnvironmentIntent(" iOA ")?.value, "ioa");
+  assert.equal(codeBuddyEnvironmentIntent("private-net"), null);
+  assert.deepEqual(
+    ["", "internal", "ioa", "china", "iOA", "private-net"].map(
+      codeBuddyEnvironmentLegacy,
+    ),
+    [false, false, false, true, true, true],
+  );
+  assert.match(
+    credentialGuide("codeBuddyApiKey", { codeBuddyInternetEnvironment: "china" })
+      .link,
+    /国内站/,
+  );
 
   const intl = credentialGuide("codeBuddyApiKey", {});
   assert.equal(intl.url, "https://www.codebuddy.ai/profile/keys");

@@ -2332,6 +2332,7 @@ export default function App() {
         projectId={chat.projectId}
         defaultModel={chat.model}
         sponsoredModel={chat.sponsoredModel}
+        sponsoredModels={chat.sponsoredModels}
         onClose={() => setQuickAccessOpen(false)}
         onOpenView={(view) => navigate(view)}
         onCompleted={async (nextProjectId) => {

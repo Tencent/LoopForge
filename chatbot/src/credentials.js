@@ -44,7 +44,15 @@ const CODEBUDDY_ENVIRONMENT_ALIASES = new Map([
 ]);
 
 // codeBuddyEnvironment returns null for a value the CLI would not recognize.
+// The CLI receives the stored text as-is, so only the exact values count.
 export function codeBuddyEnvironment(value) {
+  const key = String(value || "").trim();
+  return CODEBUDDY_ENVIRONMENTS.find((env) => env.value === key) || null;
+}
+
+// codeBuddyEnvironmentIntent guesses what an old free-text value meant
+// (china → 国内站) so the fix can be preselected.
+export function codeBuddyEnvironmentIntent(value) {
   const key = String(value || "").trim().toLowerCase();
   const normalized = CODEBUDDY_ENVIRONMENT_ALIASES.has(key)
     ? CODEBUDDY_ENVIRONMENT_ALIASES.get(key)
@@ -52,8 +60,16 @@ export function codeBuddyEnvironment(value) {
   return CODEBUDDY_ENVIRONMENTS.find((env) => env.value === normalized) || null;
 }
 
+// codeBuddyEnvironmentLegacy is true for a stored value the CLI does not take
+// as written; it connects to 国际站 until the value is saved again.
+export function codeBuddyEnvironmentLegacy(value) {
+  const raw = String(value || "").trim();
+  return !!raw && !codeBuddyEnvironment(raw);
+}
+
 export function codeBuddyKeyURL(value) {
-  return (codeBuddyEnvironment(value) || CODEBUDDY_ENVIRONMENTS[0]).keyUrl;
+  return (codeBuddyEnvironmentIntent(value) || CODEBUDDY_ENVIRONMENTS[0])
+    .keyUrl;
 }
 
 // Advisory only: a third-party model key is accepted but CodeBuddy answers it
@@ -108,7 +124,7 @@ export function credentialGuide(field, owner) {
   const guide = CREDENTIAL_GUIDES[field];
   if (!guide || field !== "codeBuddyApiKey") return guide || null;
   const env =
-    codeBuddyEnvironment(owner?.codeBuddyInternetEnvironment) ||
+    codeBuddyEnvironmentIntent(owner?.codeBuddyInternetEnvironment) ||
     CODEBUDDY_ENVIRONMENTS[0];
   return { ...guide, url: env.keyUrl, link: `打开 CodeBuddy ${env.label}创建 Key` };
 }

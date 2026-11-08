@@ -659,6 +659,132 @@ paths:
                 $ref: "#/components/schemas/User"
         "403":
           $ref: "#/components/responses/Unauthorized"
+  /api/platform/accounts:
+    get:
+      tags: [Users]
+      operationId: listPlatformAccounts
+      summary: List accounts for platform administrators
+      responses:
+        "200":
+          description: Accounts, oldest first, and whether self sign-up is enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts: {type: array, items: {$ref: "#/components/schemas/PlatformAccount"}}
+                  signupEnabled: {type: boolean}
+        "403": {description: Platform administrator access required}
+    post:
+      tags: [Users]
+      operationId: createPlatformAccount
+      summary: Create a password account
+      description: Platform administrators only. Browser requests must be same-origin; API tokens are accepted. The account joins the welcome project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [loginName, password]
+              properties:
+                loginName: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$"}
+                password: {type: string, writeOnly: true, minLength: 6, maxLength: 72}
+                admin: {type: boolean, description: Also grant platform administration}
+      responses:
+        "201":
+          description: Created account
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformAccount"}
+        "400": {description: Invalid login name or password}
+        "403": {description: Platform administrator access or same-origin request required}
+        "409": {description: Login name already taken}
+  /api/platform/accounts/{id}/password:
+    put:
+      tags: [Users]
+      operationId: resetPlatformAccountPassword
+      summary: Set a new password for a password account
+      description: Platform administrators only. Accounts that sign in through GitHub or a gateway are refused with 400, so this never adds a password login to them.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: {type: string, writeOnly: true, minLength: 6, maxLength: 72}
+      responses:
+        "200":
+          description: Account
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformAccount"}
+        "400": {description: Invalid password or not a password account}
+        "403": {description: Platform administrator access or same-origin request required}
+        "404": {description: Unknown account}
+  /api/platform/codebuddy-key:
+    get:
+      tags: [Users]
+      operationId: getPlatformCodeBuddyKey
+      summary: Show the shared CodeBuddy API Key settings
+      description: Platform administrators only. The key itself is never returned.
+      parameters:
+        - name: environment
+          in: query
+          description: Network environment whose models to list in catalog; defaults to the saved one.
+          schema: {type: string, enum: ["", internal, ioa]}
+      responses:
+        "200":
+          description: Shared key status and the models offered in the environment
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformCodeBuddyKey"}
+        "403": {description: Platform administrator access required}
+    put:
+      tags: [Users]
+      operationId: savePlatformCodeBuddyKey
+      summary: Share a CodeBuddy API Key with users who have none
+      description: >-
+        Platform administrators only; browser requests must be same-origin. Users without their own key
+        chat and run SOPs on this key, limited to models (the first is the default). It replaces the
+        AGENTFLOW_ASSISTANT_SPONSOR_LOGIN account while configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [models]
+              properties:
+                apiKey: {type: string, writeOnly: true, description: Blank keeps the stored key.}
+                internetEnvironment: {type: string, description: "Empty for International, \"internal\" for China, \"ioa\" for iOA."}
+                models: {type: array, minItems: 1, maxItems: 32, items: {type: string}}
+      responses:
+        "200":
+          description: Saved settings
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformCodeBuddyKey"}
+        "400": {description: Missing key or models, or an invalid environment or model ID}
+        "403": {description: Platform administrator access or same-origin request required}
+    delete:
+      tags: [Users]
+      operationId: clearPlatformCodeBuddyKey
+      summary: Stop sharing the CodeBuddy API Key
+      responses:
+        "200":
+          description: Settings after clearing
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformCodeBuddyKey"}
+        "403": {description: Platform administrator access or same-origin request required}
   /api/business-domains:
     get:
       tags: [BusinessDomains]
@@ -3974,6 +4100,36 @@ components:
         role:
           type: string
           enum: [maintainer, member, viewer]
+    PlatformAccount:
+      type: object
+      properties:
+        userId: {type: integer, format: int64}
+        loginName: {type: string}
+        chineseName: {type: string}
+        admin: {type: boolean}
+        password: {type: boolean, description: False for accounts that sign in through GitHub or a gateway}
+        codeBuddyApiKeyConfigured: {type: boolean}
+        createdAt: {type: string, format: date-time}
+    PlatformCodeBuddyKey:
+      type: object
+      properties:
+        configured: {type: boolean}
+        internetEnvironment: {type: string}
+        models: {type: array, items: {type: string}, description: Allowed models, the default first}
+        updatedAt: {type: string, format: date-time}
+        updatedBy: {type: string}
+        legacySponsor: {type: string, description: Account named by AGENTFLOW_ASSISTANT_SPONSOR_LOGIN, used while no key is configured here}
+        legacySponsorModel: {type: string}
+        catalog:
+          type: array
+          description: Models offered in the requested network environment (GET only)
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              name: {type: string}
+              family: {type: string}
+              credits: {type: string}
     User:
       type: object
       required: [id, loginName]
