@@ -14,7 +14,9 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 ARCHIVE="$TMP_DIR/gitleaks.tar.gz"
-curl -fsSL \
+# GitHub release downloads can return transient 5xx responses.
+curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
+  --connect-timeout 15 --max-time 60 \
   "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
   -o "$ARCHIVE"
 printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum -c -

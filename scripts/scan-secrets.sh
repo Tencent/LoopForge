@@ -5,7 +5,10 @@ version=8.30.1
 archive_sha256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 scan_dir="$(mktemp -d)"
 trap 'rm -rf "$scan_dir"' EXIT
-curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" -o "$scan_dir/gitleaks.tar.gz"
+# GitHub release downloads can return transient 5xx responses.
+curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
+  --connect-timeout 15 --max-time 60 \
+  "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" -o "$scan_dir/gitleaks.tar.gz"
 printf '%s  %s\n' "$archive_sha256" "$scan_dir/gitleaks.tar.gz" | sha256sum -c -
 tar -xzf "$scan_dir/gitleaks.tar.gz" -C "$scan_dir" gitleaks
 # Build an export of the candidate tracked/untracked files, respecting ignores.
