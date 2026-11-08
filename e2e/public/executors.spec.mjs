@@ -12,7 +12,7 @@ for(const viewport of [{width:1280,height:400},{width:390,height:600}]){
     await signInUnconfigured(page);
     await openHome(page);
     const frame=chat(page);
-    for(const [name,menu] of [['执行器','.permission-menu[role="menu"]'],['选择模型','.grasp-model-menu']]){
+    for(const [name,menu] of [['CLI','.permission-menu[role="menu"]'],['选择模型','.grasp-model-menu']]){
       await frame.getByRole('button',{name,exact:true}).click();
       const open=frame.locator(menu);
       await expect(open).toBeVisible();
@@ -40,14 +40,14 @@ test('executor selection has independent models, credentials and a persistent ch
   const draft='Keep this draft while choosing an executor';
   const input=await openHome(page);
   const frame=chat(page);
-  const executor=frame.getByRole('button',{name:'执行器',exact:true});
+  const executor=frame.getByRole('button',{name:'CLI',exact:true});
   const choose=async label=>{
     await executor.click();
     await frame.locator('.permission-menu [role="menuitemradio"]').filter({hasText:label}).click();
     await expect(executor).toContainText(label);
   };
   await executor.click();
-  await expect(frame.locator('.permission-menu [role="menuitemradio"]')).toHaveCount(3);
+  await expect(frame.locator('.permission-menu [role="menuitemradio"]')).toHaveCount(9);
   await page.keyboard.press('Escape');
   await input.fill(draft);
   for(const [id,label] of [['codex','Codex'],['claude','Claude Code'],['codebuddy','CodeBuddy']]){
@@ -63,7 +63,7 @@ test('executor selection has independent models, credentials and a persistent ch
   await choose('Codex');
   await page.reload();
   await expect(composer()).toBeEditable();
-  await expect(chat(page).getByRole('button',{name:'执行器',exact:true})).toContainText('Codex');
+  await expect(chat(page).getByRole('button',{name:'CLI',exact:true})).toContainText('Codex');
   await choose('CodeBuddy');
   expect((await page.request.get('/api/assistant/models?executor=shell')).status()).toBe(400);
   function composer(){return chat(page).locator('.composer-column textarea')}

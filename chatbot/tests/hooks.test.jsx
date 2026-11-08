@@ -43,7 +43,7 @@ vi.mock("../src/api.js", async (original) => ({
   newId: () => "new-session",
 }));
 
-import { useChat } from "../src/useChat.js";
+import { EXECUTORS, useChat } from "../src/useChat.js";
 import {
   isLocalConversation,
   useLocalConversations,
@@ -79,7 +79,7 @@ describe("conversation hooks", () => {
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.ready).toBe(true));
     expect(result.current.executor).toBe("codebuddy");
-    expect(result.current.executors.map((item) => item.id)).toEqual(["codebuddy", "codex", "claude"]);
+    expect(result.current.executors.map((item) => item.id)).toEqual(EXECUTORS.map((item) => item.id));
     act(() => result.current.setExecutor("codex"));
     await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["default", "gpt-5"]));
     expect(localStorage.getItem("loopforge.assistant.executor")).toBe("codex");

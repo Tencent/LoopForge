@@ -506,8 +506,8 @@ export function useChat() {
   }, [codeBuddy, executor, listedForEngine.length, providerCatalogs]);
   const chooseExecutor = useCallback(
     (id) => {
-      id = knownExecutor(id);
-      if (id === executor) return;
+      if (id === "claude") id = "claude-code";
+      if (!EXECUTORS.some((item) => item.id === id) || id === executor) return;
       const locked = conversationEngine(sessionRef.current?.messages, models);
       try {
         localStorage.setItem(EXECUTOR_KEY, id);

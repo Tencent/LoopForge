@@ -534,8 +534,14 @@ func TestAssetAPIAcceptsSandboxEnvironmentButExecutorsAreReadOnly(t *testing.T) 
 
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/executors", map[string]any{"id": "legacy", "name": "Legacy", "kind": "mock"}, http.StatusMethodNotAllowed)
 	executors := requestEmptyJSON[[]domain.ExecutorDefinition](t, h, http.MethodGet, "/api/executors", http.StatusOK)
-	if len(executors) != 3 || executors[0].ID != "codebuddy" || executors[1].ID != "codex" || executors[2].ID != "claude" {
+	want := repo.BuiltInExecutors()
+	if len(executors) != len(want) {
 		t.Fatalf("built-in CLI catalog = %+v", executors)
+	}
+	for i := range want {
+		if executors[i].ID != want[i].ID || executors[i].Kind != want[i].Kind {
+			t.Fatalf("built-in CLI catalog[%d] = %+v, want %+v", i, executors[i], want[i])
+		}
 	}
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "configured", "name": "Configured", "projectId": "platform", "driver": "local", "environment": map[string]string{"TOOL_MODE": "test"}}, http.StatusOK)
 	profile, ok := s.Sandbox("configured")
