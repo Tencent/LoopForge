@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -8,12 +9,117 @@ import (
 
 var githubRepositoryPath = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
+// gitlabProjectID 匹配 gitlab:<host>/<group...>/<repo> 形式的自托管 GitLab 标识。
+// host 是裸主机名（可带端口，不含 scheme），项目路径至少两段。多实例靠 host 区分。
+var gitlabProjectID = regexp.MustCompile(`^gitlab:([A-Za-z0-9][A-Za-z0-9._-]*(?::[0-9]+)?)/([A-Za-z0-9_./-]+)$`)
+
+// gitlabHostname 允许 http(s) URL 中的主机字符（host[:port]）。
+var gitlabHostname = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(?::[0-9]+)?$`)
+
+// ParseGitLabRepositoryURL 解析自托管 GitLab 仓库（172.32.x 这类非 github 主机）。
+// 接受 https://host/group/repo、http、scp、gitlab:host/group/repo 等形态，
+// 统一产出 "gitlab:<host>/<group>/<repo>" 前缀标识，host 进 ID 以支持多实例。
+func ParseGitLabRepositoryURL(raw string) (GongfengRepoInfo, bool) {
+	s := strings.Trim(strings.TrimSpace(raw), `"'`)
+	if len(s) >= 10 && strings.EqualFold(s[:10], "git clone ") {
+		s = strings.Trim(strings.TrimSpace(s[10:]), `"'`)
+		if i := strings.IndexAny(s, " \t"); i >= 0 {
+			s = s[:i]
+		}
+	}
+	if s == "" || strings.ContainsAny(s, " \t\"'<>()") {
+		return GongfengRepoInfo{}, false
+	}
+	// 已是前缀标识，直接规范化。
+	if strings.HasPrefix(s, "gitlab:") {
+		m := gitlabProjectID.FindStringSubmatch(s)
+		if m == nil {
+			return GongfengRepoInfo{}, false
+		}
+		host, project := m[1], strings.Trim(strings.TrimSuffix(m[2], ".git"), "/")
+		return gitlabRepoInfo(host, project)
+	}
+	var host, path string
+	switch {
+	case strings.Contains(s, "://"):
+		u, err := url.Parse(s)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+			return GongfengRepoInfo{}, false
+		}
+		host = u.Host
+		path = strings.Trim(u.Path, "/")
+	case strings.HasPrefix(strings.ToLower(s), "git@"):
+		rest := strings.TrimPrefix(s, "git@")
+		at := strings.Index(rest, ":")
+		if at < 0 {
+			return GongfengRepoInfo{}, false
+		}
+		host, path = rest[:at], rest[at+1:]
+	default:
+		// 无 scheme 时第一段必须看起来像主机名（含点或端口），避免和工蜂裸 project 冲突。
+		first := s
+		if i := strings.Index(s, "/"); i >= 0 {
+			first = s[:i]
+		}
+		if !strings.Contains(first, ".") && !strings.Contains(first, ":") {
+			return GongfengRepoInfo{}, false
+		}
+		host = first
+		path = strings.TrimPrefix(s, first+"/")
+	}
+	if !gitlabHostname.MatchString(host) {
+		return GongfengRepoInfo{}, false
+	}
+	// 裸 URL（非显式前缀）必须指向可信内网主机：公网域名/仿冒主机名（如
+	// github.com.attacker.invalid）一律拒绝。要接公网自建 GitLab 请用 gitlab: 前缀显式声明。
+	if !isTrustedGitLabHost(strings.Split(host, ":")[0]) {
+		return GongfengRepoInfo{}, false
+	}
+	path = strings.Trim(strings.TrimSuffix(path, ".git"), "/")
+	project := normalizeGongfengProjectPath(path)
+	if project == "" {
+		return GongfengRepoInfo{}, false
+	}
+	return gitlabRepoInfo(host, project)
+}
+
+func gitlabRepoInfo(host, project string) (GongfengRepoInfo, bool) {
+	id := "gitlab:" + host + "/" + project
+	base := "http://" + host + "/" + project
+	info := GongfengRepoInfo{Project: id, Name: project[strings.LastIndex(project, "/")+1:], WebURL: base, CloneURL: base + ".git"}
+	return info, true
+}
+
+// isTrustedGitLabHost 限定自托管 GitLab 的可信主机。
+// 注意：Go 的 net.IP.IsPrivate() 只认 RFC1918（172.16-31），而公司 GitLab 跑在
+// 172.32/172.149/172.153（172.16-31 之外的内网段），因此显式覆盖公司实际网段。
+func isTrustedGitLabHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+			return true
+		}
+		// 公司内网使用的非 RFC1918 网段（172.16/12 全段视作内网边界）。
+		if ip4 := ip.To4(); ip4 != nil && ip4[0] == 172 {
+			return true
+		}
+		return false
+	}
+	// 内网主机名（含点但不是公网 TLD 的常见公司命名；运维可在此扩展白名单）。
+	return strings.Contains(host, ".internal") || strings.HasSuffix(host, ".local")
+}
+
 // ParseRepositoryURL adds public hosting without changing the upstream adapter.
 // The prefixed remote identity prevents collisions with enterprise project IDs.
 func ParseRepositoryURL(raw string) (GongfengRepoInfo, bool) {
 	s := strings.TrimSpace(raw)
 	s = strings.TrimPrefix(s, "git clone ")
 	s = strings.Trim(s, "\"'")
+	if s == "" || strings.HasPrefix(s, "gitlab:") {
+		return ParseGitLabRepositoryURL(s)
+	}
 	if strings.HasPrefix(s, "github:") {
 		s = "https://github.com/" + strings.TrimPrefix(s, "github:")
 	}
@@ -35,6 +141,13 @@ func ParseRepositoryURL(raw string) (GongfengRepoInfo, bool) {
 		}
 		base := "https://github.com/" + path
 		return GongfengRepoInfo{Project: "github:" + path, Name: strings.TrimSuffix(parts[1], ".git"), WebURL: base, CloneURL: base + ".git"}, true
+	}
+	// 非 github 的 http(s) URL：ParseGitLabRepositoryURL 内部已限定可信内网主机，
+	// 公网域名/仿冒主机（github.com.attacker.invalid）会被拒；公网自建请用 gitlab: 前缀。
+	if err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.User == nil {
+		if info, ok := ParseGitLabRepositoryURL(s); ok {
+			return info, true
+		}
 	}
 	return ParseGongfengRepoURL(raw)
 }
