@@ -165,8 +165,11 @@ func TestAssistantSessionListPreservesVisibilityAndMetadata(t *testing.T) {
 				if item.ID == branch.ID && (item.RootSessionID != branch.RootSessionID || item.ParentSessionID != branch.ParentSessionID || item.HistoryRevision != 3 || item.ForkMessageIndex != 2) {
 					t.Fatal("shared branch metadata lost")
 				}
-				if item.ID == job.SessionID && item.GenerationStatus != "running" {
+				if item.ID == job.SessionID && (item.GenerationStatus != "running" || item.GenerationID != job.ID) {
 					t.Fatal("generation status lost")
+				}
+				if item.ID != job.SessionID && (item.GenerationStatus != "idle" || item.GenerationID != "") {
+					t.Fatalf("session without a reply carries generation state: %s", item.ID)
 				}
 			}
 			if len(seen) != len(want) {

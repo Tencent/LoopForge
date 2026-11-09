@@ -215,6 +215,7 @@ paths:
                     shared: {type: boolean}
                     runId: {type: string}
                     generationStatus: {type: string}
+                    generationId: {type: string, description: "Latest reply of the conversation; the sidebar compares it with the reply the reader last saw to mark unread replies"}
                     updatedAt: {type: string, format: date-time}
         "401":
           $ref: "#/components/responses/Unauthorized"

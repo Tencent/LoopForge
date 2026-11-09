@@ -663,3 +663,51 @@ describe("sidebar conversation filter", () => {
     }
   });
 });
+
+describe("sidebar reply status", () => {
+  test("a reply finished elsewhere shows a blue dot, a running one spins, a failed one warns", async () => {
+    const user = userEvent.setup();
+    const previous = { ...chat };
+    const now = new Date().toISOString();
+    const row = (id, title, generationStatus, generationId) => ({
+      id, title, projectId: "p1", userId: "u1", generationStatus, generationId, updatedAt: now, messages: [],
+    });
+    localStorage.setItem("loopforge.chat.seenReplies.v1.u1", JSON.stringify({ unread: "g1", read: "g3" }));
+    Object.assign(chat, {
+      activeId: null,
+      session: null,
+      projectId: "p1",
+      sessions: [
+        row("unread", "完成未读", "completed", "g2"),
+        row("read", "完成已读", "completed", "g3"),
+        row("busy", "正在生成", "running", "g4"),
+        row("broken", "生成出错", "failed", "g5"),
+      ],
+    });
+    const view = render(<App />);
+    try {
+      const showSidebar = screen.queryByLabelText("显示会话侧边栏");
+      if (showSidebar) await user.click(showSidebar);
+      const status = (title) =>
+        screen.getAllByText(title)[0].closest(".session-link").querySelector(".session-status");
+      await waitFor(() => expect(status("完成未读")).toHaveAttribute("data-session-status", "unread"));
+      expect(status("完成未读")).toHaveAccessibleName("有新回复未读");
+      expect(status("完成未读").querySelector(".session-unread-dot")).not.toBeNull();
+      expect(status("完成已读")).toBeNull();
+      expect(status("正在生成").querySelector('[data-icon="arc-spinner"]')).not.toBeNull();
+      expect(status("生成出错").querySelector('[data-icon="alert"]')).not.toBeNull();
+
+      // Opening the conversation marks the reply as read.
+      Object.assign(chat, { activeId: "unread" });
+      view.rerender(<App />);
+      Object.assign(chat, { activeId: null });
+      view.rerender(<App />);
+      await waitFor(() => expect(status("完成未读")).toBeNull());
+      expect(JSON.parse(localStorage.getItem("loopforge.chat.seenReplies.v1.u1")).unread).toBe("g2");
+    } finally {
+      view.unmount();
+      localStorage.removeItem("loopforge.chat.seenReplies.v1.u1");
+      Object.assign(chat, previous);
+    }
+  });
+});

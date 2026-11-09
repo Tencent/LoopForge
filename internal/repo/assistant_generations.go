@@ -145,13 +145,20 @@ func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id st
 	return nil
 }
 
-func (r *AssistantRepo) AssistantGenerationStatuses(ids []string) map[string]string {
-	out := map[string]string{}
+// AssistantGenerationState is the latest reply of a conversation as the
+// history list shows it: its status and the generation it belongs to.
+type AssistantGenerationState struct {
+	ID     string
+	Status string
+}
+
+func (r *AssistantRepo) AssistantGenerationStatuses(ids []string) map[string]AssistantGenerationState {
+	out := map[string]AssistantGenerationState{}
 	if len(ids) == 0 {
 		return out
 	}
 	var rows []assistantGenerationRow
-	if r.DB.Select("session_id,status,updated_at").Where("session_id IN ?", ids).Find(&rows).Error != nil {
+	if r.DB.Select("session_id,generation_id,status,updated_at").Where("session_id IN ?", ids).Find(&rows).Error != nil {
 		return out
 	}
 	for _, row := range rows {
@@ -159,7 +166,7 @@ func (r *AssistantRepo) AssistantGenerationStatuses(ids []string) map[string]str
 		if status == "running" && time.Since(row.UpdatedAt) > 45*time.Second {
 			status = "interrupted"
 		}
-		out[row.SessionID] = status
+		out[row.SessionID] = AssistantGenerationState{ID: row.GenerationID, Status: status}
 	}
 	return out
 }

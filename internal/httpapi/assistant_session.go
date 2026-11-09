@@ -97,6 +97,7 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 			continue
 		}
 		item.GenerationStatus = "idle"
+		item.GenerationID = ""
 		out = append(out, item)
 	}
 	ids := make([]string, 0, len(out))
@@ -104,9 +105,12 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		ids = append(ids, item.ID)
 	}
 	statuses := h.repo.AssistantGenerationStatuses(ids)
+	// The generation ID lets the sidebar tell a reply the reader has already
+	// seen from one that finished while they were elsewhere.
 	for i := range out {
-		if status, ok := statuses[out[i].ID]; ok {
-			out[i].GenerationStatus = status
+		if state, ok := statuses[out[i].ID]; ok {
+			out[i].GenerationStatus = state.Status
+			out[i].GenerationID = state.ID
 		}
 	}
 	if issueID := c.GetString("assistantIssueID"); issueID != "" {

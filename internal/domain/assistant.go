@@ -109,6 +109,7 @@ type AssistantSession struct {
 
 	Shared           bool   `json:"shared,omitempty"`
 	GenerationStatus string `json:"generationStatus,omitempty"`
+	GenerationID     string `json:"generationId,omitempty"`
 	Archived         bool   `json:"archived,omitempty"`
 	ID               string `json:"id"`
 	UserID           int64  `json:"userId,omitempty"`
