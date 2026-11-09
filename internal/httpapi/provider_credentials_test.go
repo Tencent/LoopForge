@@ -42,6 +42,9 @@ func TestProviderCredentialAPIAuthorizationAndURLs(t *testing.T) {
 		{"invalid", "provider-alice", "{\"codexApiKey\":\"secret\",\"codexBaseUrl\":\"file:///tmp/x\"}", 400},
 		{"url-secret", "provider-alice", "{\"claudeCodeBaseUrl\":\"https://user:secret@example.com\"}", 400},
 		{"query", "provider-alice", "{\"codexBaseUrl\":\"https://example.com?key=secret\"}", 400},
+		{"deepseek-other-user", "provider-bob", `{"deepSeekApiKey":"deepseek-test-secret"}`, 403},
+		{"deepseek-invalid-url", "provider-alice", `{"deepSeekApiKey":"deepseek-test-secret","deepSeekBaseUrl":"file:///tmp/key"}`, 400},
+		{"deepseek-url-secret", "provider-alice", `{"deepSeekBaseUrl":"https://user:secret@example.com"}`, 400},
 		{"valid", "provider-alice", "{\"codexApiKey\":\"codex-test-secret\",\"codexBaseUrl\":\"http://localhost:9999/v1\",\"claudeCodeApiKey\":\"claude-test-secret\",\"claudeCodeBaseUrl\":\"https://example.com/anthropic\"}", 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

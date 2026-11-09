@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { loadApp, settle } from '../lib/load-app.mjs';
+
+test('DeepSeek has an independent settings row and saves its key and endpoint', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const user = { id: 1, loginName: 'alice', isGuest: false, deepSeekApiKeyConfigured: true };
+  app.router.put('/api/users/1/credentials', user);
+  app.evaluate(`state.currentUser={id:1,loginName:'alice',isGuest:false,deepSeekApiKeyConfigured:true};state.data.users=[state.currentUser];renderPersonalSettings()`);
+  let row = app.document.querySelector('[data-credential-row="deepSeekApiKey"]');
+  assert.ok(row, 'DeepSeek must appear under model credentials');
+  row.querySelector('.credential-row-main').click();
+  row = app.document.querySelector('[data-credential-row="deepSeekApiKey"]');
+  const secret = row.querySelector('input[name="secret"]');
+  secret.value = 'deepseek-settings-test-key';
+  secret.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  const endpoint = row.querySelector('input[name="extra"]');
+  assert.equal(endpoint.placeholder, 'https://api.deepseek.com');
+  endpoint.value = 'https://gateway.example/v1';
+  endpoint.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  row.querySelector('[data-credential-act="save"]').click();
+  await settle(6);
+  const body = app.router.calls.find(c => c.path === '/api/users/1/credentials').body;
+  assert.deepEqual(body, { deepSeekApiKey: 'deepseek-settings-test-key', deepSeekBaseUrl: 'https://gateway.example/v1' });
+  assert.equal(app.evaluate(`credentialHint('责任人未配置 DeepSeek API Key').field`), 'deepSeekApiKey');
+  const clear = app.evaluate(`credentialClearPayload(credentialKind('deepSeekApiKey'))`);
+  assert.equal(clear.deepSeekApiKeyClear, true);
+  assert.equal(clear.deepSeekBaseUrl, '');
+  assert.match(app.evaluate(`state.data.executors.push({id:'deepseek',name:'DeepSeek'});executorOptions('deepseek')`), /DeepSeek/);
+});

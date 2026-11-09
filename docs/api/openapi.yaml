@@ -680,6 +680,9 @@ paths:
                 codexApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
                 codexApiKeyClear: {type: boolean}
                 codexBaseUrl: {type: string, description: "HTTP(S) Responses API base URL. Omitted preserves the value; empty uses the official endpoint."}
+                deepSeekApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
+                deepSeekApiKeyClear: {type: boolean}
+                deepSeekBaseUrl: {type: string, description: "HTTP(S) DeepSeek Responses-compatible URL. Omitted preserves the value; empty uses https://api.deepseek.com."}
                 claudeCodeApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
                 claudeCodeApiKeyClear: {type: boolean}
                 claudeCodeBaseUrl: {type: string, description: "HTTP(S) Anthropic-compatible service URL. Omitted preserves the value; empty uses the official endpoint."}
@@ -4133,6 +4136,8 @@ components:
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}
+        deepSeekApiKeyConfigured: {type: boolean, readOnly: true}
+        deepSeekBaseUrl: {type: string}
         claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}
         claudeCodeBaseUrl: {type: string}
         codeBuddyInternetEnvironment: {type: string}

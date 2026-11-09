@@ -7,6 +7,9 @@ import (
 
 // User 表示系统注册或登录的员工实体，用于后续资源归属与权限隔离。
 type User struct {
+	DeepSeekAPIKey             string `json:"deepSeekApiKey,omitempty"`
+	DeepSeekAPIKeyConfigured   bool   `json:"deepSeekApiKeyConfigured,omitempty"`
+	DeepSeekBaseURL            string `json:"deepSeekBaseUrl,omitempty"`
 	CodexAPIKey                string `json:"codexApiKey,omitempty"`
 	CodexAPIKeyConfigured      bool   `json:"codexApiKeyConfigured,omitempty"`
 	CodexBaseURL               string `json:"codexBaseUrl,omitempty"`
@@ -76,6 +79,8 @@ func IsPlatformAdmin(u User) bool {
 
 // PublicUser returns user directory information without exposing credentials.
 func PublicUser(u User) User {
+	u.DeepSeekAPIKeyConfigured = strings.TrimSpace(u.DeepSeekAPIKey) != ""
+	u.DeepSeekAPIKey = ""
 	u.CodexAPIKeyConfigured = strings.TrimSpace(u.CodexAPIKey) != ""
 	u.CodexAPIKey = ""
 	u.ClaudeCodeAPIKeyConfigured = strings.TrimSpace(u.ClaudeCodeAPIKey) != ""

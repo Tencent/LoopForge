@@ -207,6 +207,12 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			}
 			invocation.CodexAPIKey = sb.credentialSnapshot().Codex.APIKey
 			invocation.CodexBaseURL = sb.credentialSnapshot().Codex.BaseURL
+		case "deepseek":
+			if strings.TrimSpace(sb.credentialSnapshot().DeepSeek.APIKey) == "" {
+				return "", errors.New("当前责任人未配置 DeepSeek API Key：请先在个人配置中配置")
+			}
+			invocation.DeepSeekAPIKey = sb.credentialSnapshot().DeepSeek.APIKey
+			invocation.DeepSeekBaseURL = sb.credentialSnapshot().DeepSeek.BaseURL
 		case "claude-code":
 			if strings.TrimSpace(sb.credentialSnapshot().ClaudeCode.APIKey) == "" {
 				return "", errors.New("当前责任人未配置 Claude Code API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
@@ -860,6 +866,9 @@ func (e *Engine) requireRunnerProvider(runnerID, provider string) error {
 	}
 	if runner.Status != domain.RunnerStatusOnline {
 		return fmt.Errorf("执行器 %s（%s）当前离线，无法路由 %s 任务", runnerID, runner.Name, provider)
+	}
+	if provider == "deepseek" && !runner.SupportsProvider(provider) {
+		return fmt.Errorf("runner %s (%s) requires version %s or later and an enabled Codex runtime to execute DeepSeek", runnerID, runner.Name, domain.RunnerVersionDeepSeek)
 	}
 	if !runner.SupportsProvider(provider) {
 		return fmt.Errorf("执行器 %s（%s）未启用 %s CLI：请在执行器页面开启或改用云端 API Key 模式", runnerID, runner.Name, provider)

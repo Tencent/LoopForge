@@ -127,6 +127,9 @@ const RunnerVersionExistingWorkBranch = "0.7.0"
 // branch out instead.
 const RunnerVersionCreateNewWorkBranch = "0.9.1"
 
+// RunnerVersionDeepSeek is the first runner that can claim DeepSeek tasks.
+const RunnerVersionDeepSeek = "0.9.3"
+
 type Runner struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
@@ -248,6 +251,12 @@ func versionAtLeast(have, want string) bool {
 // does not target it explicitly.
 func (r Runner) SupportsProvider(provider string) bool {
 	provider = strings.TrimSpace(provider)
+	if strings.EqualFold(provider, "deepseek") {
+		if !versionAtLeast(r.RunnerVersion, RunnerVersionDeepSeek) {
+			return false
+		}
+		provider = "codex"
+	}
 	if provider == "" {
 		return false
 	}
@@ -264,7 +273,7 @@ func (r Runner) SupportsProvider(provider string) bool {
 // they always use the responsible user's personal credential. Codex and
 // Claude Code default to local login.
 func (r Runner) RuntimeAuthMode(provider string) string {
-	if IsAgentCLIKind(provider) {
+	if IsAgentCLIKind(provider) || strings.EqualFold(strings.TrimSpace(provider), "deepseek") {
 		return RuntimeAuthPersonal
 	}
 	provider = strings.TrimSpace(provider)
@@ -403,6 +412,8 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.CodeBuddyInternetEnvironment = ""
 	copyInvocation.CodexAPIKey = ""
 	copyInvocation.CodexBaseURL = ""
+	copyInvocation.DeepSeekAPIKey = ""
+	copyInvocation.DeepSeekBaseURL = ""
 	copyInvocation.ClaudeCodeAPIKey = ""
 	copyInvocation.ClaudeCodeBaseURL = ""
 	copyInvocation.AgentCLIAPIKey = ""
@@ -466,6 +477,8 @@ type RunnerInvocation struct {
 	CodeBuddyInternetEnvironment string   `json:"codebuddyInternetEnvironment,omitempty"`
 	CodexAPIKey                  string   `json:"codexApiKey,omitempty"`
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
+	DeepSeekAPIKey               string   `json:"deepSeekApiKey,omitempty"`
+	DeepSeekBaseURL              string   `json:"deepSeekBaseUrl,omitempty"`
 	ClaudeCodeAPIKey             string   `json:"claudeCodeApiKey,omitempty"`
 	ClaudeCodeBaseURL            string   `json:"claudeCodeBaseUrl,omitempty"`
 	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`

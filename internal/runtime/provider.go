@@ -121,6 +121,7 @@ func (baseProvider) SystemHooks() []domain.AgentHook { return nil }
 
 var providers = map[string]Provider{
 	"claude-code": claudeProvider{},
+	"deepseek":    deepSeekProvider{},
 	"codebuddy":   codeBuddyProvider{},
 	"codex":       codexProvider{},
 	"mock":        mockProvider{},
