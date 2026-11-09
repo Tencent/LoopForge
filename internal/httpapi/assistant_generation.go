@@ -94,7 +94,12 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
-	req.Model = assistantAllowedUserModel(req.Model, assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment), user)
+	catalogEngine, _ := assistantModelEngine(req.Model)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	if catalogEngine == assistantEngineCodeBuddy {
+		catalog = h.chatCatalog(c.Request.Context(), user)
+	}
+	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
 	if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
@@ -173,8 +178,8 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	// Keep the authenticated identity, but disconnect model execution from the
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
-	_, titleSponsored, _ := h.assistantChatUser(stored)
-	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, req.Model, cliEngine == assistantEngineCodeBuddy && titleSponsored)
+	_, sharedModels, _ := h.assistantChatUser(stored)
+	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
 	done := inflightTasks.Add()
 	go func() {
 		defer done()
@@ -424,7 +429,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	user, sponsored, ok := h.assistantChatUser(stored)
+	user, sharedModels, ok := h.assistantChatUser(stored)
 	if !ok {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
@@ -461,15 +466,15 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	model := body.Model
-	if sponsored {
-		forced, allowed := assistantSponsoredModelFor(model)
+	if sharedModels != nil {
+		forced, allowed := assistantSponsoredModelFor(sharedModels, model)
 		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel()})
+			c.JSON(400, gin.H{"error": errAssistantSponsoredModel(sharedModels)})
 			return
 		}
 		model = forced
 	}
-	model = assistantAllowedModel(model, assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment))
+	model = assistantAllowedModel(model, h.chatCatalog(c.Request.Context(), user))
 	if err := validateAssistantEffort(model, body.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

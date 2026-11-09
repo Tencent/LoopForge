@@ -662,8 +662,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				options.GateResultPath = gateResultPath(node.ID, attempt)
 			}
 			ex := ex
-			if ex.Kind == "codebuddy" && sb.credentialSnapshot().CodeBuddy.Sponsored {
-				ex = e.sponsoredExecutor(runID, ex, sink)
+			if cb := sb.credentialSnapshot().CodeBuddy; ex.Kind == "codebuddy" && cb.Sponsored {
+				ex = e.sponsoredExecutor(runID, ex, cb.SponsoredModels, sink)
 			}
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				// 执行机器 mode (bind-cli): the responsible user selected a default

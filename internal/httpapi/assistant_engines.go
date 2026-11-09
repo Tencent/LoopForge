@@ -253,14 +253,14 @@ func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string) 
 		user, _, _ := h.assistantChatUser(stored)
 		return user, model, ""
 	}
-	user, sponsored, ok := h.assistantChatUser(stored)
+	user, shared, ok := h.assistantChatUser(stored)
 	if !ok {
 		return stored, "", "请先在个人配置中配置自己的 CodeBuddy API Key"
 	}
-	if sponsored {
-		forced, allowed := assistantSponsoredModelFor(model)
+	if len(shared) > 0 {
+		forced, allowed := assistantSponsoredModelFor(shared, model)
 		if !allowed {
-			return stored, "", errAssistantSponsoredModel()
+			return stored, "", errAssistantSponsoredModel(shared)
 		}
 		model = forced
 	}

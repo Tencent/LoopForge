@@ -13,6 +13,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     gitTokenConfigured: true, codeBuddyApiKeyConfigured: true,
   };
   const apiMock = vi.fn(async (path) => {
+  if (path === "/api/users" && mockState.users) return mockState.users();
   if (path === "/api/users")
     return [mockState.unconfigured ? {
       id: 1, loginName: "tester", chineseName: "测试",
@@ -34,7 +35,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path.includes("/verify")) return { valid: true };
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false };
+  const mockState = { failClone: false, unconfigured: false, users: null };
   const writeMock = vi.fn(async (path, body) => {
     if (path.includes("/git-token/verify")) return { valid: true };
     if (path === "/api/projects") return { ...project, ...body };
@@ -59,9 +60,16 @@ import QuickAccessWizard, {
   HarnessSelect,
   HarnessSwitch,
   parseGongfengRepo,
+  sharedModelNames,
 } from "../src/QuickAccessWizard.jsx";
 
 describe("QuickAccessWizard", () => {
+  test("names the shared models an administrator allowed", () => {
+    expect(sharedModelNames(["glm-5.1", "deepseek-v4.1-flash"])).toBe("glm-5.1、Deepseek-V4.1-Flash");
+    expect(sharedModelNames([], "deepseek-v4.1-flash")).toBe("Deepseek-V4.1-Flash");
+    expect(sharedModelNames(undefined)).toBe("");
+  });
+
   test("parses supported repository addresses", () => {
     expect(parseGongfengRepo("https://github.com/acme/widgets")).toEqual({
       project: "github:acme/widgets",
@@ -222,6 +230,83 @@ describe("QuickAccessWizard", () => {
       "PUT",
     );
     mockState.unconfigured = false;
+  });
+
+  test("rewrites an old china environment to internal when moving past the credential step", async () => {
+    mockState.users = () => [{ ...user, codeBuddyInternetEnvironment: "china" }];
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    try {
+      render(
+        <QuickAccessWizard
+          open
+          user={user}
+          projects={[project]}
+          projectId="p1"
+          onClose={vi.fn()}
+          onCompleted={vi.fn()}
+          onOpenView={vi.fn()}
+        />,
+      );
+      await screen.findByRole("dialog");
+      expect(await screen.findByText(/「china」无法识别/)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /获取 API Key/ })).toHaveAttribute(
+        "href",
+        "https://copilot.tencent.com/profile/",
+      );
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      await screen.findByText("项目与仓库", { selector: "h3" });
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/users/1/credentials",
+        { codeBuddyInternetEnvironment: "internal" },
+        "PUT",
+      );
+    } finally {
+      mockState.users = null;
+    }
+  });
+
+  test("a refresh after switching to 国际站 elsewhere drops the omitted environment", async () => {
+    let environment = "internal";
+    mockState.users = () => [
+      { ...user, ...(environment ? { codeBuddyInternetEnvironment: environment } : {}) },
+    ];
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    try {
+      render(
+        <QuickAccessWizard
+          open
+          user={user}
+          projects={[project]}
+          projectId="p1"
+          onClose={vi.fn()}
+          onCompleted={vi.fn()}
+          onOpenView={vi.fn()}
+        />,
+      );
+      await screen.findByRole("dialog");
+      const keyLink = screen.getByRole("link", { name: /获取 API Key/ });
+      await waitFor(() =>
+        expect(keyLink).toHaveAttribute("href", "https://copilot.tencent.com/profile/"),
+      );
+      // 个人配置 switched the environment to 国际站; the users API omits it now.
+      environment = "";
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() =>
+        expect(keyLink).toHaveAttribute("href", "https://www.codebuddy.ai/profile/keys"),
+      );
+      await userAction.type(screen.getByLabelText("CodeBuddy API Key"), "ck_new");
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      await screen.findByText("项目与仓库", { selector: "h3" });
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/users/1/credentials",
+        { codeBuddyApiKey: "ck_new", codeBuddyInternetEnvironment: "" },
+        "PUT",
+      );
+    } finally {
+      mockState.users = null;
+    }
   });
 
   test("a sponsored model lets new users skip credentials", async () => {

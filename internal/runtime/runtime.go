@@ -31,9 +31,10 @@ type CodeBuddyCredential struct {
 	APIKey              string
 	InternetEnvironment string
 	// Sponsored is set when the responsible user has no key of their own and
-	// the platform sponsor's key is used; such runs are pinned to the
-	// sponsored model.
-	Sponsored bool
+	// the platform's shared key is used; such runs are limited to
+	// SponsoredModels (the default first).
+	Sponsored       bool
+	SponsoredModels []string
 }
 
 // RunCredentials lives only on the in-memory run sandbox handle. It is never

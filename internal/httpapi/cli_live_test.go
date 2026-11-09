@@ -141,7 +141,7 @@ func TestLiveCLITitles(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), liveTimeout())
 			defer cancel()
 			started := time.Now()
-			title, err := summarizeAssistantTitle(ctx, user, model, "帮我梳理一下积分商城的需求，按模块列出现有缺口，并给出两周的排期建议", false)
+			title, err := summarizeAssistantTitle(ctx, user, model, "帮我梳理一下积分商城的需求，按模块列出现有缺口，并给出两周的排期建议", nil)
 			if err != nil || strings.TrimSpace(title) == "" {
 				t.Fatalf("标题总结失败: %s", redactLive(fmt.Sprint(err)))
 			}

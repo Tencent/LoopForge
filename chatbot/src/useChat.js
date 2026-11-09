@@ -51,8 +51,16 @@ function storedExecutor() {
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
 // credentialHint turns it into a "去配置" button.
-export const sponsoredModelMessage =
-  "未配置个人 CodeBuddy API Key 时只能使用 Deepseek-V4.1-Flash。要使用其他模型，请先在个人配置中配置自己的 CodeBuddy API Key";
+export function sponsoredModelMessage(models = []) {
+  return `未配置个人 CodeBuddy API Key 时只能使用平台管理员允许的模型（${models.join("、")}）。要使用其他模型，请先在个人配置中配置自己的 CodeBuddy API Key`;
+}
+
+// The models a user without their own key may chat with, the default first.
+export function sponsoredModelList(catalog) {
+  const listed = Array.isArray(catalog?.sponsoredModels) ? catalog.sponsoredModels.filter(Boolean) : [];
+  if (listed.length) return listed;
+  return catalog?.sponsoredModel ? [catalog.sponsoredModel] : [];
+}
 const PROJECT_LIST_TOOLS = new Set([
   "projects_save",
   "projects_delete",
@@ -83,7 +91,7 @@ export function useChat() {
     [projectId, setProjectId] = useState(initialProject),
     [model, setModel] = useState(""),
     [effort, setEffort] = useState(""),
-    [sponsoredModel, setSponsoredModel] = useState(""),
+    [sponsoredModels, setSponsoredModels] = useState([]),
     [executor, setExecutorState] = useState(storedExecutor),
     [providerCatalogs, setProviderCatalogs] = useState({}),
     [generation, setGeneration] = useState(null),
@@ -195,7 +203,7 @@ export function useChat() {
         setSandboxes(sandboxRows || []);
         setModels(catalog.models || []);
         defaultModel.current = catalog.default || "";
-        setSponsoredModel(catalog.sponsoredModel || "");
+        setSponsoredModels(sponsoredModelList(catalog));
         setModel(catalog.default);
         await refreshSessions();
         if (!current) return;
@@ -487,9 +495,12 @@ export function useChat() {
     ? (codeBuddy ? models.filter((m) => !m.engine || m.engine === "codebuddy") : listedForEngine)
     : providerCatalogs[executor]?.models || [];
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
-  // Without their own key users chat on the platform's sponsored model only.
+  // Without their own key users chat on the platform's shared key, limited to
+  // the models the administrator allowed (the first is the default).
+  const sponsoredModel = sponsoredModels[0] || "";
   const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
-  const activeModel = sponsored ? sponsoredModel : model;
+  const sharedModelFor = (id) => (sponsoredModels.includes(id) ? id : sponsoredModel);
+  const activeModel = sponsored ? sharedModelFor(model) : model;
   const activeEffort = modelEffort(executorModels.find((m) => m.id === activeModel), effort);
   useEffect(() => {
     if (codeBuddy || listedForEngine.length || providerCatalogs[executor]) return;
@@ -524,15 +535,15 @@ export function useChat() {
   );
   const chooseModel = useCallback(
     (id) => {
-      if (sponsored && id !== sponsoredModel) {
-        setError(sponsoredModelMessage);
+      if (sponsored && !sponsoredModels.includes(id)) {
+        setError(sponsoredModelMessage(sponsoredModels));
         return false;
       }
       setModel(id);
       setEffort((value) => modelEffort(executorModels.find((m) => m.id === id), value));
       return true;
     },
-    [sponsored, sponsoredModel, executorModels],
+    [sponsored, sponsoredModels, executorModels],
   );
   useEffect(() => {
     if (!ready) return;
@@ -881,15 +892,16 @@ export function useChat() {
       setSubmitting(true);
       open(stored.id);
       setSession(stored);
-      setModel(sponsored ? sponsoredModel : stored.model || model);
+      const chosen = sponsored ? sharedModelFor(stored.model || model) : stored.model || model;
+      setModel(chosen);
       setEffort(stored.effort || "");
       const g = await write("/api/assistant/generations", {
         sessionId: stored.id,
         projectId: stored.projectId || "",
         runId: stored.runId || "",
         executor,
-        model: sponsored ? sponsoredModel : stored.model || model,
-        effort: codeBuddy ? modelEffort(models.find((m) => m.id === (sponsored ? sponsoredModel : stored.model || model)), stored.effort || "") : "",
+        model: chosen,
+        effort: codeBuddy ? modelEffort(models.find((m) => m.id === chosen), stored.effort || "") : "",
         messages: stored.messages,
         approvalMode: "confirm",
       });
@@ -1089,6 +1101,7 @@ export function useChat() {
     setEffort,
     sponsored,
     sponsoredModel,
+    sponsoredModels,
     generation,
     live,
     error,

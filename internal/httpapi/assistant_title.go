@@ -80,9 +80,10 @@ func assistantPromptTitleMatches(session domain.AssistantSession, title string) 
 const assistantTitleTimeout = 180 * time.Second
 
 // scheduleAssistantTitle summarizes the first prompt on the CLI of the
-// session's model, with the caller's credential for that CLI. There is no
-// cross-CLI fallback: a failed summary keeps the first-prompt title.
-func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID int64, user domain.User, old domain.AssistantSession, sessionID string, messages []domain.AssistantMessage, model string, sponsored bool) {
+// session's model. shared lists the models a CodeBuddy turn on the platform
+// key may use. There is no cross-CLI fallback: a failed summary keeps the
+// first-prompt title.
+func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID int64, user domain.User, old domain.AssistantSession, sessionID string, messages []domain.AssistantMessage, model string, shared []string) {
 	if h == nil || h.repo == nil {
 		return
 	}
@@ -101,7 +102,7 @@ func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID 
 		if h.titleSummary != nil {
 			title, err = h.titleSummary(runCtx, user, prompt)
 		} else {
-			title, err = summarizeAssistantTitle(runCtx, user, model, prompt, sponsored)
+			title, err = summarizeAssistantTitle(runCtx, user, model, prompt, shared)
 		}
 		if err != nil || strings.TrimSpace(title) == "" {
 			log.Printf("assistant title summary skipped session=%s: %v", sessionID, redactAssistantSecrets(fmt.Sprint(err), user))
@@ -114,30 +115,31 @@ func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID 
 }
 
 // assistantTitleModel picks the model and effort that name a session.
-// CodeBuddy uses its cheapest model (the sponsored one for sponsored chats).
-// Other CLIs publish no price, so they reuse the session's model at its
-// weakest effort; the gateway behind a Base URL may serve nothing else.
-func assistantTitleModel(ctx context.Context, user domain.User, model string, sponsored bool) (string, string) {
+// CodeBuddy uses its cheapest model, limited to shared when the turn borrows
+// the platform key. Other CLIs reuse the session's model at its weakest
+// effort; the gateway behind a Base URL may serve nothing else.
+func assistantTitleModel(ctx context.Context, user domain.User, model string, shared []string) (string, string) {
 	if engine, _ := assistantModelEngine(model); engine != assistantEngineCodeBuddy {
 		if efforts := assistantModelEfforts(model); len(efforts) > 0 {
 			return model, efforts[0]
 		}
 		return model, ""
 	}
-	if sponsored {
-		return assistantSponsoredModel, ""
+	catalog := assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil)
+	if len(shared) > 0 {
+		catalog = restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, shared), shared)
 	}
-	catalog := assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment)
-	if model := assistantApprovalReviewModel(catalog); model != "" {
-		return model, ""
+	if chosen := assistantApprovalReviewModel(catalog); chosen != "" {
+		return chosen, ""
 	}
-	// Catalogs without prices have no cheapest model. Use their default,
-	// the same model a new CodeBuddy chat already runs.
+	if len(shared) > 0 {
+		return shared[0], ""
+	}
 	return catalog.Default, ""
 }
 
-func summarizeAssistantTitle(ctx context.Context, user domain.User, model, prompt string, sponsored bool) (string, error) {
-	model, effort := assistantTitleModel(ctx, user, model, sponsored)
+func summarizeAssistantTitle(ctx context.Context, user domain.User, model, prompt string, shared []string) (string, error) {
+	model, effort := assistantTitleModel(ctx, user, model, shared)
 	return runAssistantTitleSummary(ctx, user, model, effort, prompt)
 }
 

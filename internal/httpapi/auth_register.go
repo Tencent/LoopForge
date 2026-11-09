@@ -40,8 +40,10 @@ const welcomeProjectID = "welcome"
 
 // joinWelcomeProject makes the seeded demo project usable by new accounts so
 // the onboarding path works before they create a project of their own.
-func (h *authHandlers) joinWelcomeProject(userID int64) {
-	project, ok := h.repo.Project(welcomeProjectID)
+func (h *authHandlers) joinWelcomeProject(userID int64) { joinWelcomeProject(h.repo, userID) }
+
+func joinWelcomeProject(store *repo.Store, userID int64) {
+	project, ok := store.Project(welcomeProjectID)
 	if !ok {
 		return
 	}
@@ -51,7 +53,7 @@ func (h *authHandlers) joinWelcomeProject(userID int64) {
 		}
 	}
 	project.Members = append(project.Members, domain.ProjectMember{UserID: userID, Role: "member"})
-	if err := h.repo.PutProject(project); err != nil {
+	if err := store.PutProject(project); err != nil {
 		log.Printf("join welcome project: %v", err)
 	}
 }

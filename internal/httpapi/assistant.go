@@ -167,7 +167,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment)
+	catalogEngine, _ := assistantModelEngine(req.Model)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	if catalogEngine == assistantEngineCodeBuddy {
+		catalog = h.chatCatalog(c.Request.Context(), user)
+	}
 	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine

@@ -64,15 +64,15 @@ func TestAssistantTitleModelReusesSessionModelOnOtherCLIs(t *testing.T) {
 		{"kimi:kimi-k3", ""},
 		{"dsh:deepseek-v4-pro", ""},
 	} {
-		model, effort := assistantTitleModel(context.Background(), domain.User{}, tc.model, true)
+		model, effort := assistantTitleModel(context.Background(), domain.User{}, tc.model, nil)
 		if model != tc.model || effort != tc.wantEffort {
 			t.Errorf("%s: got %q/%q, want same model at %q", tc.model, model, effort, tc.wantEffort)
 		}
 	}
-	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, true); model != assistantSponsoredModel || effort != "" {
+	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, []string{assistantSponsoredModel}); model != assistantSponsoredModel || effort != "" {
 		t.Fatalf("sponsored CodeBuddy title = %q/%q", model, effort)
 	}
-	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, false); model == "" || effort != "" {
+	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, nil); model == "" || effort != "" {
 		t.Fatalf("CodeBuddy title without prices = %q/%q", model, effort)
 	}
 }
@@ -134,7 +134,7 @@ func TestScheduleAssistantTitleWritesSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, _ := st.AssistantSession(1, id)
-	h.scheduleAssistantTitle(context.Background(), 1, domain.User{ID: 1}, old, id, []domain.AssistantMessage{{Role: "user", Content: prompt + "，请按模块列出缺口"}}, assistantChatDefaultModel, false)
+	h.scheduleAssistantTitle(context.Background(), 1, domain.User{ID: 1}, old, id, []domain.AssistantMessage{{Role: "user", Content: prompt + "，请按模块列出缺口"}}, assistantChatDefaultModel, nil)
 	deadline := time.Now().Add(2 * time.Second)
 	var got domain.AssistantSession
 	for time.Now().Before(deadline) {

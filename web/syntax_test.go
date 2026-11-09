@@ -833,8 +833,12 @@ assert.ok(credentialExtraError(cred.kind('codexApiKey'), 'ftp://proxy'));
 assert.equal(credentialExtraError(cred.kind('codexApiKey'), ''), '');
 
 // CodeBuddy: the network environment is a fixed choice and the key link follows it.
-assert.deepEqual(['', 'public', 'INTL', ' iOA ', 'internal', '国内站', 'china'].map(v => codeBuddyEnvironment(v)?.value), ['', '', '', 'ioa', 'internal', 'internal', 'internal']);
-assert.equal(codeBuddyEnvironment('private-net'), null);
+// The CLI gets the stored text as-is, so only exact values are recognized; aliases only guess what an old value meant.
+assert.deepEqual(['', ' internal ', 'ioa'].map(v => codeBuddyEnvironment(v)?.value), ['', 'internal', 'ioa']);
+assert.deepEqual(['public', 'INTL', 'iOA', '国内站', 'china', 'cn', 'private-net'].map(v => codeBuddyEnvironment(v)), [null, null, null, null, null, null, null]);
+assert.deepEqual(['', 'public', 'INTL', ' iOA ', 'internal', '国内站', 'china'].map(v => codeBuddyEnvironmentIntent(v)?.value), ['', '', '', 'ioa', 'internal', 'internal', 'internal']);
+assert.equal(codeBuddyEnvironmentIntent('private-net'), null);
+assert.deepEqual(['', 'internal', 'china', 'iOA', 'private-net'].map(codeBuddyEnvironmentLegacy), [false, false, true, true, true]);
 assert.equal(codeBuddyKeyURL(''), 'https://www.codebuddy.ai/profile/keys');
 assert.equal(codeBuddyKeyURL('internal'), 'https://copilot.tencent.com/profile/');
 assert.equal(codeBuddyKeyURL('ioa'), 'https://tencent.sso.copilot.tencent.com/profile/keys');
@@ -851,6 +855,11 @@ const legacyEditor = credentialEditorHTML(cbKind, {codeBuddyApiKeyConfigured: tr
 assert.ok(legacyEditor.includes('data-original=""') && legacyEditor.includes('<option value="" selected>') && legacyEditor.includes('「private-net」无法识别'));
 assert.ok(legacyEditor.includes('data-legacy="true"') && !legacyEditor.includes('data-credential-act="save" disabled'), 'a legacy value can be saved as 国际站 without retyping the key');
 assert.ok(!cbEditor.includes('data-legacy') && cbEditor.includes('data-credential-act="save" disabled'));
+// An old alias preselects what it meant and stays savable: the CLI would otherwise keep connecting to 国际站.
+const chinaEditor = credentialEditorHTML(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'china'});
+assert.ok(chinaEditor.includes('data-original="internal"') && chinaEditor.includes('<option value="internal" selected>') && chinaEditor.includes('「china」无法识别'));
+assert.ok(chinaEditor.includes('data-legacy="true"') && !chinaEditor.includes('data-credential-act="save" disabled'));
+assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'china'}).includes('「china」无法识别'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'ioa'}).includes('>iOA<'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true}).includes('>国际站<'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'private-net'}).includes('无法识别'));
