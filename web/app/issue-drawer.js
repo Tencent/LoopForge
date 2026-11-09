@@ -25,7 +25,10 @@ async function openIssueDetail(id,tab){
   $('#issueDetailBody').innerHTML='<div class="detail-empty">正在加载需求详情…</div>';
   try{
     const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);const issue=detail.issue;const comments=detail.comments||[];
-    const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);if(localIssue)Object.assign(issue,localIssue);
+    const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);
+    // Keep local view state, but deletion feedback must come from this fresh detail response.
+    const permissions={deletionAllowed:issue.deletionAllowed,deletionBlock:issue.deletionBlock,closureAllowed:issue.closureAllowed};
+    if(localIssue){Object.assign(issue,localIssue,permissions);Object.assign(localIssue,permissions)}
     const task=latestIssueTask(issue);
     const runId=task?.runId||latestIssueRun(issue, task)?.id;
     let requirement=null;
@@ -41,7 +44,12 @@ async function openIssueDetail(id,tab){
         if(['queued','running','waiting'].includes(run.status))startLiveRun(run.id);
       }
     }
-    state.issueDetailData={issue,comments,run,task,requirement};
+    let deletionTask=null;
+    if(issue.deletionBlock?.taskId&&!issue.deletionBlock.runId){
+      try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
+      if(deletionTask?.issueId!==issueId)deletionTask=null;
+    }
+    state.issueDetailData={issue,comments,run,task,requirement,deletionTask};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsClarify=requirementNeedsClarification(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsClarify||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
     $$('#issueDetailTabs .drawer-tab').forEach(b=>b.classList.toggle('active',b.dataset.dtab===state.issueDetailTab));
@@ -196,6 +204,7 @@ function renderIssueDetailTab(){
   host.querySelectorAll('[data-resync-tapd]').forEach(b=>b.onclick=()=>resyncTAPDIssueById(b.dataset.resyncTapd));
   host.querySelectorAll('[data-reopen-issue]').forEach(b=>b.onclick=()=>reopenDeliveredIssue(b.dataset.reopenIssue));
   host.querySelectorAll('[data-delete-issue]').forEach(b=>b.onclick=()=>deleteIssueById(b.dataset.deleteIssue||issue.id));
+  bindIssueDeletionContext(host);
   host.querySelectorAll('[data-close-issue]').forEach(b=>b.onclick=()=>closeIssueById(b.dataset.closeIssue||issue.id));
   host.querySelectorAll('[data-resume-run]').forEach(b=>b.onclick=()=>resumeRun(b.dataset.resumeRun,b));
   host.querySelectorAll('[data-pause-run]').forEach(b=>b.onclick=()=>pauseRun(b.dataset.pauseRun));
@@ -518,7 +527,7 @@ function issueProgressActionsHTML(issue,run,{includeIssueActions=false}={}){
     issueActions.push('<button class="button ghost small" data-edit-issue>编辑需求</button>');
     if(issueCanPushTAPD(issue))issueActions.push(`<button class="button ghost small" data-push-tapd="${escapeHTML(issue.id)}">同步到 TAPD</button>`);
     if(issueCanClose(issue)&&issue.status!=='done'&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&!deliveryLocked(issue))issueActions.push(`<button class="button ghost small" data-close-issue="${escapeHTML(issue.id)}">关闭需求</button>`);
-    if(issueCanDelete(issue))issueActions.push(`<button class="button ghost small danger" data-delete-issue="${escapeHTML(issue.id)}">删除需求</button>`);
+    issueActions.push(issueDeleteControlHTML(issue));
     if(issue.externalRef?.externalUrl)issueActions.push(`<a class="button ghost small" href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer">打开外部链接 ↗</a>`);
     if(issue.source==='tapd'&&issue.externalRef?.externalId)issueActions.push(`<button class="button ghost small" data-resync-tapd="${escapeHTML(issue.id)}">从 TAPD 同步</button>`);
   }
@@ -954,7 +963,9 @@ function activityPane(issue,data){
   const comments=data.comments||[],task=data.task,run=data.run;
   const commentHtml=comments.slice().reverse().map(c=>`<div class="comment-row"><div class="muted">${c.authorType==='agent'?'Agent':c.authorId||'成员'} · ${new Date(c.createdAt).toLocaleString()}</div><p>${escapeHTML(c.body)}</p></div>`).join('')||'<div class="detail-empty compact">暂无讨论</div>';
   const items=[];
-  if(task)items.push({t:new Date(task.createdAt).getTime(),type:'task.created',label:'创建任务',detail:`${taskStatusLabel(task.status)}${task.agentId?' · '+task.agentId:''}`});
+  for(const item of [task,data.deletionTask].filter((t,i,all)=>t&&all.findIndex(x=>x?.id===t.id)===i)){
+    items.push({t:new Date(item.createdAt).getTime(),type:'task.created',label:item.id===data.deletionTask?.id?'阻止删除的任务':'创建任务',detail:`${taskStatusLabel(item.status)} · ${item.id}${item.agentId?' · '+item.agentId:''}`});
+  }
   for(const e of run?.events||[])items.push({t:new Date(e.timestamp).getTime(),type:e.type||'',label:activityEventLabel(e.type),detail:e.message||''});
   items.sort((a,b)=>b.t-a.t);
   const rows=items.map(e=>{
@@ -971,7 +982,7 @@ async function deleteIssueById(issueId){
   if(state.issueBulkDeleting)return toast('正在批量删除需求，请稍候','info');
   const issue=(state.data.issues||[]).find(i=>i.id===issueId)||state.issueDetailData?.issue;
   if(!issue||issue.id!==issueId)return toast('未找到需求单');
-  if(issueClarifying(issueId))return toast('需求正在澄清，请先停止后再删除','err');
+  if(!issueCanDelete(issue))return toast(issueDeletionBlock(issue).reason,'err');
   const external=issue.source==='tapd'||issue.source==='gongfeng';
   if(!await afConfirm({title:'删除需求',message:`确定删除需求「${issue.title||issue.id}」？需求、评论、澄清记录以及失败／取消的历史任务、运行记录、日志、产物和执行工作区将一并清理，且不可恢复。已有成功运行的需求不允许删除。${external?'此操作仅删除本地记录，不会删除 TAPD／工蜂原单，后续同步可能重新导入。':''}`,danger:true,confirmText:'确认删除'}))return;
   try{

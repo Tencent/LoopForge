@@ -4,6 +4,38 @@ function issueCanClose(issue){
 function issueCanDelete(issue){
   return issue?.deletionAllowed===true&&!issueClarifying(issue.id);
 }
+function issueDeletionBlock(issue){
+  if(issueClarifying(issue?.id))return{code:'clarifying',reason:'正在澄清，请先停止澄清后再删除'};
+  if(issueCanDelete(issue))return null;
+  return issue?.deletionBlock?.reason?issue.deletionBlock:{code:'unknown',reason:'暂时无法确认删除条件，请刷新后重试'};
+}
+function issueDeletionContextHTML(issue,{menu=false}={}){
+  const block=issueDeletionBlock(issue);
+  if(!block)return '';
+  const label=block.code==='clarifying'?'查看澄清':block.runId?'查看相关运行':block.code==='active'||block.code==='succeeded'?'查看任务与记录':'查看需求详情';
+  return `<button type="button" class="${menu?'issue-popover-item':'button ghost small'}" data-issue-deletion-context="${escapeHTML(issue.id)}" aria-label="${escapeHTML(`${label}：${issue.title||issue.id}，${block.reason}`)}">${menu?huiIcon('arrow-right','popover-icon'):''}${label}</button>`;
+}
+function issueDeleteControlHTML(issue,{menu=false}={}){
+  const block=issueDeletionBlock(issue),cls=menu?'issue-popover-item':'button ghost small';
+  const reasonId=`issue-delete-reason-${menu?'menu':'detail'}-${issue.id}`;
+  const button=`<button type="button" class="${cls}${block?'':' danger'}" ${menu?'data-action="delete"':`data-delete-issue="${escapeHTML(issue.id)}"`}${block?` disabled aria-describedby="${escapeHTML(reasonId)}"`:''}>${menu?huiIcon('trash','popover-icon'):''}删除需求</button>`;
+  if(!block)return button;
+  return `<div class="issue-delete-control">${button}<p class="issue-delete-reason" id="${escapeHTML(reasonId)}">${escapeHTML(block.reason)}</p>${issueDeletionContextHTML(issue,{menu})}</div>`;
+}
+function bindIssueDeletionContext(root){
+  root.querySelectorAll('[data-issue-deletion-context]').forEach(button=>button.onclick=e=>{
+    e.stopPropagation();
+    const id=button.dataset.issueDeletionContext;
+    const detailIssue=state.issueDetailData?.issue?.id===id?state.issueDetailData.issue:null;
+    const issue=(root.id==='issueDetailBody'?detailIssue:null)||(state.data.issues||[]).find(i=>i.id===id)||detailIssue;
+    if(!issue)return;
+    const block=issueDeletionBlock(issue);
+    if(!block)return;
+    hideIssueActionMenu();
+    if(block.runId){closeIssueDrawer();openRunFromId(block.runId,{forceRuns:true})}
+    else openIssueDetail(id,block.code==='clarifying'?'clarify':block.code==='active'||block.code==='succeeded'?'activity':'overview');
+  });
+}
 const issueStatuses=[['backlog','Backlog'],['todo','Todo'],['in_progress','In progress'],['in_review','In review'],['done','Done'],['closed','Closed'],['blocked','Blocked'],['cancelled','Cancelled']];
 function latestIssueTask(i){
   const tasks=(state.data.tasks||[]).filter(t=>t.issueId===i.id);
@@ -448,7 +480,7 @@ function setIssueRunFilter(value,toggle=true){
   if(!$('#issuesView')?.classList.contains('active'))switchView('issues');
   else renderIssues();
 }
-let issueMenuPopover=null;
+let issueMenuPopover=null,issueMenuTrigger=null;
 function ensureIssueMenuPopover(){
   if(issueMenuPopover)return issueMenuPopover;
   issueMenuPopover=document.createElement('div');
@@ -464,11 +496,26 @@ function ensureIssueMenuPopover(){
   window.addEventListener('resize',hideIssueActionMenu,{passive:true});
   window.addEventListener('scroll',hideIssueActionMenu,{passive:true});
   document.addEventListener('keydown',e=>{
-    if(e.key==='Escape')hideIssueActionMenu();
+    if(issueMenuPopover.hidden)return;
+    if(e.key==='Escape'){
+      e.preventDefault();
+      hideIssueActionMenu();
+      issueMenuTrigger?.focus({preventScroll:true});
+    }else if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){
+      e.preventDefault();
+      const items=[...issueMenuPopover.querySelectorAll('button:not(:disabled)')];
+      const current=items.indexOf(document.activeElement);
+      const next=e.key==='Home'?0:e.key==='End'?items.length-1:(current+(e.key==='ArrowUp'?-1:1)+items.length)%items.length;
+      items[next]?.focus();
+    }else if(e.key==='Tab'){
+      hideIssueActionMenu();
+      issueMenuTrigger?.focus({preventScroll:true});
+    }
   });
   return issueMenuPopover;
 }
 function hideIssueActionMenu(){
+  issueMenuTrigger?.setAttribute('aria-expanded','false');
   if(issueMenuPopover&&!issueMenuPopover.hidden){
     issueMenuPopover.hidden=true;
     issueMenuPopover.innerHTML='';
@@ -479,12 +526,16 @@ function showIssueActionMenu(e,issueId){
   e.stopPropagation();
   const issue=(state.data?.issues||[]).find(i=>i.id===issueId);
   if(!issue)return;
+  issueMenuTrigger?.setAttribute('aria-expanded','false');
+  issueMenuTrigger=e.currentTarget;
+  issueMenuTrigger.setAttribute('aria-expanded','true');
+  issueMenuTrigger.setAttribute('aria-controls','issueActionPopover');
   const menu=ensureIssueMenuPopover();
   const isClosed=issue.status==='done'||issueManuallyClosed(issue)||deliveryLocked(issue);
   menu.innerHTML=`
     <button type="button" class="issue-popover-item" data-action="edit">${huiIcon('edit','popover-icon')}编辑需求</button>
     ${issueTrackerClosed(issue)||(!isClosed&&!issueCanClose(issue))?'':!isClosed?`<button type="button" class="issue-popover-item danger" data-action="close">${huiIcon('close','popover-icon')}关闭需求</button>`:`<button type="button" class="issue-popover-item" data-action="reopen">${huiIcon('undo','popover-icon')}重新打开</button>`}
-    ${issueCanDelete(issue)?`<button type="button" class="issue-popover-item danger" data-action="delete">${huiIcon('trash','popover-icon')}删除需求</button>`:''}
+    ${issueDeleteControlHTML(issue,{menu:true})}
   `;
   window.AgentFlowHarnessIcons?.hydrate?.(menu);
   menu.querySelector('[data-action="edit"]').onclick=ev=>{
@@ -493,11 +544,12 @@ function showIssueActionMenu(e,issueId){
     openIssue(issue);
   };
   const deleteBtn=menu.querySelector('[data-action="delete"]');
-  if(deleteBtn)deleteBtn.onclick=ev=>{
+  if(deleteBtn&&!deleteBtn.disabled)deleteBtn.onclick=ev=>{
     ev.stopPropagation();
     hideIssueActionMenu();
     deleteIssueById(issue.id);
   };
+  bindIssueDeletionContext(menu);
   const closeBtn=menu.querySelector('[data-action="close"]');
   if(closeBtn){
     closeBtn.onclick=ev=>{
@@ -515,19 +567,20 @@ function showIssueActionMenu(e,issueId){
     };
   }
   menu.hidden=false;
+  menu.querySelector('button:not(:disabled)')?.focus();
   const btn=e.currentTarget;
   const rect=btn.getBoundingClientRect();
   const menuWidth=menu.offsetWidth||136;
   const menuHeight=menu.offsetHeight||72;
   let left=rect.right-menuWidth;
-  if(left<8)left=8;
+  left=Math.max(8,Math.min(left,window.innerWidth-menuWidth-8));
   let top=rect.bottom+4;
   if(top+menuHeight>window.innerHeight-8){
     top=rect.top-menuHeight-4;
   }
   menu.style.position='fixed';
   menu.style.left=`${Math.round(left)}px`;
-  menu.style.top=`${Math.round(top)}px`;
+  menu.style.top=`${Math.round(Math.max(8,top))}px`;
 }
 function bindIssueRowActions(root=document){
   bindIssueTriggers(root);
