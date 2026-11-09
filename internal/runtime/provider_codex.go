@@ -30,17 +30,11 @@ func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	if len(in.Compiled.Hooks) > 0 && !hasArg(argv, "--dangerously-bypass-hook-trust") {
 		argv = append(argv, "--dangerously-bypass-hook-trust")
 	}
-	if in.Driver == "local" {
-		for _, flag := range []string{"--ignore-user-config", "--ignore-rules"} {
-			if !hasArg(argv, flag) {
-				argv = append(argv, flag)
-			}
-		}
-	}
-	if in.Driver == "docker" {
-		// The container is the isolation boundary. Codex's own bubblewrap sandbox
-		// cannot create user namespaces inside it, which fails every shell command,
-		// file write and MCP call (including submit_gate_result).
+	// A private CODEX_HOME keeps the host login and config out of the run.
+	// Current Codex rejects --ignore-user-config and --ignore-rules.
+	if in.Driver == "docker" || in.Driver == "bwrap" {
+		// Docker and bwrap are the isolation boundary. Codex's own bubblewrap
+		// sandbox cannot create another user namespace inside them.
 		argv = withCodexSandboxMode(argv, "danger-full-access")
 	}
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {

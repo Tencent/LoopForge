@@ -15,7 +15,7 @@ func TestProvidersBuildFinalArgvWithoutDuplicateManagedFlags(t *testing.T) {
 	}{
 		{kind: "claude-code", driver: "local", key: "--system-prompt-file"},
 		{kind: "codebuddy", driver: "local", key: "--permission-mode"},
-		{kind: "codex", driver: "local", key: "--ignore-user-config"},
+		{kind: "codex", driver: "docker", key: "--sandbox"},
 	}
 	for _, test := range tests {
 		t.Run(test.kind, func(t *testing.T) {

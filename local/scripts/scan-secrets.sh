@@ -21,9 +21,15 @@ if ! curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
   --connect-timeout 15 --max-time 60 \
   "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
   -o "$ARCHIVE"; then
+  # Authenticate the API request when available to avoid the anonymous rate limit.
   # The API redirects to the same pinned asset when the release edge is down.
-  curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
-    --connect-timeout 15 --max-time 60 -H 'Accept: application/octet-stream' \
+  {
+    printf '%s\n' 'Accept: application/octet-stream'
+    if [[ -n "${LOOPFORGE_GITLEAKS_TOKEN:-}" ]]; then
+      printf 'Authorization: Bearer %s\n' "$LOOPFORGE_GITLEAKS_TOKEN"
+    fi
+  } | curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
+    --connect-timeout 15 --max-time 60 --header @- \
     "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/${ASSET_ID}" -o "$ARCHIVE"
 fi
 printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum -c -

@@ -11,9 +11,15 @@ trap 'rm -rf "$scan_dir"' EXIT
 if ! curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
   --connect-timeout 15 --max-time 60 \
   "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" -o "$scan_dir/gitleaks.tar.gz"; then
+  # Authenticate the API request when available to avoid the anonymous rate limit.
   # The API redirects to the same pinned asset when the release edge is down.
-  curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
-    --connect-timeout 15 --max-time 60 -H 'Accept: application/octet-stream' \
+  {
+    printf '%s\n' 'Accept: application/octet-stream'
+    if [[ -n "${LOOPFORGE_GITLEAKS_TOKEN:-}" ]]; then
+      printf 'Authorization: Bearer %s\n' "$LOOPFORGE_GITLEAKS_TOKEN"
+    fi
+  } | curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
+    --connect-timeout 15 --max-time 60 --header @- \
     "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/${asset_id}" -o "$scan_dir/gitleaks.tar.gz"
 fi
 printf '%s  %s\n' "$archive_sha256" "$scan_dir/gitleaks.tar.gz" | sha256sum -c -

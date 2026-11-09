@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 )
@@ -77,6 +78,9 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	fail := func(err error) (Sandbox, error) {
 		_ = unlockFile(lock)
 		return nil, err
+	}
+	if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+		return fail(err)
 	}
 	workspace := filepath.Join(m.root, dir)
 	if wipe {

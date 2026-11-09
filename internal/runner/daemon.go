@@ -847,7 +847,17 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
-	if sandbox != nil && inv.CredentialSource == domain.RuntimeAuthPersonal && prepared.Command.PrivateHome {
+	if runtime.IsAgentCLI(prepared.Command.Provider) {
+		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol}
+		var agentEnv map[string]string
+		argv, agentEnv, err = runtime.BindAgentCLICommand(sandbox, workspace, prepared.Command, cred, argv)
+		if err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		}
+		for key, value := range agentEnv {
+			credentialEnv[key] = value
+		}
+	} else if sandbox != nil && inv.CredentialSource == domain.RuntimeAuthPersonal && prepared.Command.PrivateHome {
 		credentialEnv, err = bindSandboxPrivateHome(workspace, task.Sandbox.Profile.Driver, task.Provider, credentialEnv)
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
@@ -1051,7 +1061,7 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 				baseURL = "https://api.anthropic.com"
 			}
 			env["ANTHROPIC_BASE_URL"] = baseURL
-		case runtime.BindGit, runtime.BindMCP:
+		case runtime.BindGit, runtime.BindMCP, runtime.BindAgentCLI:
 			continue
 		}
 	}

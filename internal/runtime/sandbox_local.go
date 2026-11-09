@@ -51,6 +51,7 @@ func (s *localSandbox) command(ctx context.Context, command CommandSpec, base []
 	cmd.Env = appendEnvironment(base, s.environment, command.environment)
 	cmd.Env = upsertEnv(cmd.Env, "PWD", workspace)
 	cmd.Env = upsertEnv(cmd.Env, "GIT_CEILING_DIRECTORIES", filepath.Dir(workspace))
+	cmd.Stdin = command.Stdin
 	return cmd, nil
 }
 

@@ -22,7 +22,8 @@ class ScanDownloadTests(unittest.TestCase):
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                case.requests.append((self.path, self.headers.get('Accept')))
+                case.requests.append((self.path, self.headers.get('Accept'),
+                                      self.headers.get('Authorization')))
                 status, body = case.responses[self.path].pop(0)
                 self.send_response(status)
                 self.send_header('Content-Length', str(len(body)))
@@ -53,10 +54,14 @@ os.execv(os.environ['SCAN_TEST_CURL'], ['curl', *args])
         self.env = dict(os.environ, PATH=self.temp.name + os.pathsep + os.environ['PATH'],
                         SCAN_TEST_BASE=f'http://127.0.0.1:{self.server.server_port}',
                         SCAN_TEST_CURL=shutil.which('curl'))
+        self.env.pop('LOOPFORGE_GITLEAKS_TOKEN', None)
 
-    def scan(self, script):
+    def scan(self, script, token=None):
         self.requests.clear()
-        return subprocess.run(['bash', str(ROOT / script)], env=self.env,
+        env = self.env.copy()
+        if token:
+            env['LOOPFORGE_GITLEAKS_TOKEN'] = token
+        return subprocess.run(['bash', str(ROOT / script)], env=env,
                               capture_output=True, text=True, timeout=20)
 
     def test_retries_transient_error_and_checks_primary_download_checksum(self):
@@ -64,7 +69,7 @@ os.execv(os.environ['SCAN_TEST_CURL'], ['curl', *args])
             with self.subTest(script=script):
                 self.responses = {'/release': [(504, b'gateway timeout'), (200, b'invalid archive')]}
                 result = self.scan(script)
-                self.assertEqual([path for path, _ in self.requests], ['/release', '/release'])
+                self.assertEqual([path for path, _, _ in self.requests], ['/release', '/release'])
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('FAILED', result.stdout)
 
@@ -73,8 +78,20 @@ os.execv(os.environ['SCAN_TEST_CURL'], ['curl', *args])
             with self.subTest(script=script):
                 self.responses = {'/release': [(404, b'missing')], '/api': [(200, b'invalid archive')]}
                 result = self.scan(script)
-                self.assertEqual([path for path, _ in self.requests], ['/release', '/api'])
+                self.assertEqual([path for path, _, _ in self.requests], ['/release', '/api'])
                 self.assertEqual(self.requests[-1][1], 'application/octet-stream')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('FAILED', result.stdout)
+
+    def test_sends_the_token_only_to_the_api_fallback(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                self.responses = {'/release': [(404, b'missing')], '/api': [(200, b'invalid archive')]}
+                result = self.scan(script, token='test-api-token')
+                self.assertEqual(self.requests, [
+                    ('/release', '*/*', None),
+                    ('/api', 'application/octet-stream', 'Bearer test-api-token'),
+                ])
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('FAILED', result.stdout)
 
@@ -83,7 +100,7 @@ os.execv(os.environ['SCAN_TEST_CURL'], ['curl', *args])
             with self.subTest(script=script):
                 self.responses = {'/release': [(404, b'missing')], '/api': [(404, b'missing')]}
                 result = self.scan(script)
-                self.assertEqual([path for path, _ in self.requests], ['/release', '/api'])
+                self.assertEqual([path for path, _, _ in self.requests], ['/release', '/api'])
                 self.assertEqual(result.returncode, 22)
 
 

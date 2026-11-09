@@ -793,18 +793,18 @@ const count = (html, needle) => html.split(needle).length - 1;
 // Two groups list all four kinds in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 4 已配置'));
+assert.ok(html.includes('<b>2</b> / 10 已配置'));
 assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 1') && html.includes('1 / 3'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>2</span>'));
-assert.equal(count(html, 'data-credential-row='), 4);
+assert.ok(html.includes('1 / 1') && html.includes('1 / 9'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>8</span>'));
+assert.equal(count(html, 'data-credential-row='), 10);
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 2);
+assert.equal(count(html, 'data-credential-act="setup"'), 8);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
 for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
@@ -833,8 +833,12 @@ assert.ok(credentialExtraError(cred.kind('codexApiKey'), 'ftp://proxy'));
 assert.equal(credentialExtraError(cred.kind('codexApiKey'), ''), '');
 
 // CodeBuddy: the network environment is a fixed choice and the key link follows it.
-assert.deepEqual(['', 'public', 'INTL', ' iOA ', 'internal', '国内站', 'china'].map(v => codeBuddyEnvironment(v)?.value), ['', '', '', 'ioa', 'internal', 'internal', 'internal']);
-assert.equal(codeBuddyEnvironment('private-net'), null);
+// The CLI gets the stored text as-is, so only exact values are recognized; aliases only guess what an old value meant.
+assert.deepEqual(['', ' internal ', 'ioa'].map(v => codeBuddyEnvironment(v)?.value), ['', 'internal', 'ioa']);
+assert.deepEqual(['public', 'INTL', 'iOA', '国内站', 'china', 'cn', 'private-net'].map(v => codeBuddyEnvironment(v)), [null, null, null, null, null, null, null]);
+assert.deepEqual(['', 'public', 'INTL', ' iOA ', 'internal', '国内站', 'china'].map(v => codeBuddyEnvironmentIntent(v)?.value), ['', '', '', 'ioa', 'internal', 'internal', 'internal']);
+assert.equal(codeBuddyEnvironmentIntent('private-net'), null);
+assert.deepEqual(['', 'internal', 'china', 'iOA', 'private-net'].map(codeBuddyEnvironmentLegacy), [false, false, true, true, true]);
 assert.equal(codeBuddyKeyURL(''), 'https://www.codebuddy.ai/profile/keys');
 assert.equal(codeBuddyKeyURL('internal'), 'https://copilot.tencent.com/profile/');
 assert.equal(codeBuddyKeyURL('ioa'), 'https://tencent.sso.copilot.tencent.com/profile/keys');
@@ -851,6 +855,11 @@ const legacyEditor = credentialEditorHTML(cbKind, {codeBuddyApiKeyConfigured: tr
 assert.ok(legacyEditor.includes('data-original=""') && legacyEditor.includes('<option value="" selected>') && legacyEditor.includes('「private-net」无法识别'));
 assert.ok(legacyEditor.includes('data-legacy="true"') && !legacyEditor.includes('data-credential-act="save" disabled'), 'a legacy value can be saved as 国际站 without retyping the key');
 assert.ok(!cbEditor.includes('data-legacy') && cbEditor.includes('data-credential-act="save" disabled'));
+// An old alias preselects what it meant and stays savable: the CLI would otherwise keep connecting to 国际站.
+const chinaEditor = credentialEditorHTML(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'china'});
+assert.ok(chinaEditor.includes('data-original="internal"') && chinaEditor.includes('<option value="internal" selected>') && chinaEditor.includes('「china」无法识别'));
+assert.ok(chinaEditor.includes('data-legacy="true"') && !chinaEditor.includes('data-credential-act="save" disabled'));
+assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'china'}).includes('「china」无法识别'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'ioa'}).includes('>iOA<'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true}).includes('>国际站<'));
 assert.ok(credentialSubline(cbKind, {codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'private-net'}).includes('无法识别'));

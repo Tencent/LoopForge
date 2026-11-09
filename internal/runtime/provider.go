@@ -126,6 +126,12 @@ var providers = map[string]Provider{
 	"mock":        mockProvider{},
 }
 
+func init() {
+	for _, kind := range AgentCLIKinds {
+		providers[kind] = newAgentCLIProvider(kind)
+	}
+}
+
 func providerForKind(kind string) Provider {
 	if provider := providers[strings.TrimSpace(kind)]; provider != nil {
 		return provider

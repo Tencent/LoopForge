@@ -87,7 +87,7 @@ func TestProtocolAdaptersCoverNativeFrames(t *testing.T) {
 
 func TestProtocolHelpersAndMetadata(t *testing.T) {
 	spec := ObservabilitySpec()
-	if spec.Version == "" || len(spec.Adapters) != 3 {
+	if spec.Version == "" || len(spec.Adapters) != 4 {
 		t.Fatalf("spec=%+v", spec)
 	}
 	metrics := usageMetrics(domain.TokenUsage{InputTokens: 1, OutputTokens: 2, CacheReadTokens: 3, CacheWriteTokens: 4, ReasoningTokens: 5, CostUSD: 1.25})

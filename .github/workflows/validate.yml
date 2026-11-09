@@ -73,3 +73,5 @@ jobs:
         with:
           fetch-depth: 0
       - run: bash scripts/scan-secrets.sh
+        env:
+          LOOPFORGE_GITLEAKS_TOKEN: ${{ github.token }}
