@@ -67,12 +67,20 @@ func (e *Engine) closeCheckpointTransfer(ctx context.Context, run domain.Run, id
 	_, _ = e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpointClose, CheckpointTransfer: &domain.WorkspaceCheckpointTransfer{ID: id}})
 }
 
+// legacyCheckpointTerminalActive is the message runners sent before checkpoint
+// responses carried WorkspaceErrorTerminalActive.
+const legacyCheckpointTerminalActive = "workspace terminal is still active"
+
 func workspaceCheckpointResponseError(response domain.RunnerWorkspaceResponse) error {
 	if response.Error == "" && response.Status < 400 {
 		return nil
 	}
-	// Older runners have no code field. Preserve their execution fence too.
-	if runnerWorkspaceBusy(response) || response.Code == domain.WorkspaceErrorTerminalActive || response.Error == "workspace terminal is still active" {
+	// An open terminal is an execution fence that waiting cannot clear: fail
+	// fast as workspace preparation does, never as retryable lease contention.
+	if response.Code == domain.WorkspaceErrorTerminalActive || response.Error == legacyCheckpointTerminalActive {
+		return fmt.Errorf("%w（%s）", errWorkspaceTerminalActive, response.Error)
+	}
+	if runnerWorkspaceBusy(response) {
 		return repo.ErrWorkspaceInUse
 	}
 	if response.Code == domain.WorkspaceErrorMissing || response.Status == 404 {
