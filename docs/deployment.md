@@ -55,6 +55,19 @@ The Compose deployment mounts the host Docker socket into the platform container
 
 Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: the platform runs every task in a sandbox container, including SOPs configured for the `local` driver (`AGENTFLOW_LOCAL_SANDBOX=docker`), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. To run without the socket, remove the `docker.sock` volume and the `AGENTFLOW_LOCAL_SANDBOX` setting from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for AI SOPs; the script-only welcome SOP then runs inside the platform container.
 
+### Slow networks: clone and image build limits
+
+Cloning a repository and building a custom sandbox image report progress on the run while they work, and their errors keep the last 20 lines of git or Docker output. A step that prints nothing for its stall window is treated as hung and stopped. A step that keeps printing may be slow but is not stopped unless you set a total limit. All four settings take Go durations such as `90s` or `20m`; `0` turns a limit off.
+
+| Setting | Default | Applies to |
+|---|---|---|
+| `AGENTFLOW_GIT_CLONE_STALL_TIMEOUT` | `5m` | `git clone` with no output. Not applied when cloning from a repository's local source path, whose final repack is silent. |
+| `AGENTFLOW_GIT_CLONE_TIMEOUT` | off | Whole `git clone`. |
+| `AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT` | `10m` | `docker build` with no output. A quiet `RUN` step (a long compile) counts as no output. |
+| `AGENTFLOW_DOCKER_BUILD_TIMEOUT` | off | Whole `docker build`. |
+
+A clone that is stopped this way is not retried, since a retry would wait on the same network. When the execution host reaches GitHub or Debian mirrors slowly, point git at a proxy (`git config --global http.proxy`) and use a nearby package mirror in the Dockerfile rather than raising these limits.
+
 ## Accounts
 
 The first account created in the browser becomes the platform administrator. After that, anyone who can reach the login page may sign up as a regular user while `AGENTFLOW_ALLOW_SIGNUP` is `true` (the default). Registered users can create requirements and run SOPs on your workers, so set `AGENTFLOW_ALLOW_SIGNUP=false` for any installation reachable from untrusted networks and create accounts explicitly instead.

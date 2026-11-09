@@ -6,12 +6,39 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"agentflow/internal/procwatch"
 )
 
 // Run executes git with the context token applied through AuthConfigArgs and
 // Env. Output is trimmed and redacted; on failure it is part of the error.
 func Run(ctx context.Context, workspace string, args ...string) (string, error) {
 	token := TokenFrom(ctx)
+	out, err := command(ctx, workspace, token, args).CombinedOutput()
+	text := Redact(strings.TrimSpace(string(out)), token)
+	if err != nil {
+		if text != "" {
+			return text, fmt.Errorf("%w: %s", err, text)
+		}
+		return text, err
+	}
+	return text, nil
+}
+
+// Watch runs a long git command (clone) like Run, but through procwatch:
+// output is streamed to the context's observer, a command that stops printing
+// is killed, and the error carries only the last lines of output.
+func Watch(ctx context.Context, workspace string, opts procwatch.Options, args ...string) (string, error) {
+	token := TokenFrom(ctx)
+	opts.Redact = func(line string) string { return Redact(line, token) }
+	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd { return command(ctx, workspace, token, args) }, opts)
+	if err != nil && text != "" {
+		return text, fmt.Errorf("%w: %s", err, text)
+	}
+	return text, err
+}
+
+func command(ctx context.Context, workspace, token string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
 	cmd := exec.CommandContext(ctx, "git", append(AuthConfigArgs(token), args...)...)
 	cmd.Dir = dir
@@ -21,15 +48,7 @@ func Run(ctx context.Context, workspace string, args ...string) (string, error) 
 	if absolute, err := filepath.Abs(dir); err == nil {
 		cmd.Env = WithEnvValue(cmd.Env, "GIT_CEILING_DIRECTORIES", filepath.Dir(absolute))
 	}
-	out, err := cmd.CombinedOutput()
-	text := Redact(strings.TrimSpace(string(out)), token)
-	if err != nil {
-		if text != "" {
-			return text, fmt.Errorf("%w: %s", err, text)
-		}
-		return text, err
-	}
-	return text, nil
+	return cmd
 }
 
 // C runs `git -C workspace args...`.
