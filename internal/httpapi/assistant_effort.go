@@ -17,6 +17,8 @@ import (
 func assistantModelEfforts(model string) []string {
 	if engine, id := assistantModelEngine(model); engine == runtime.AgentCLICursor {
 		return runtime.CursorModelEfforts(id)
+	} else if engine == runtime.AgentCLIAntigravity {
+		return runtime.AgyModelEfforts(id)
 	} else if runtime.IsAgentCLI(engine) {
 		return domain.ExecutorEffortLevels[engine]
 	}

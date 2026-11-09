@@ -144,6 +144,9 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		// Chat deny rules travel as --settings (ApplyAgentCLICredential);
 		// they hold even with --dangerously-skip-permissions.
 		argv = []string{binary, "--output-format", "stream-json", "--dangerously-skip-permissions", "--disable-slash-commands"}
+		if model != "" && AgyModelEfforts(model) == nil {
+			effort = ""
+		}
 		if model != "" {
 			argv = append(argv, "--model", agyModelForEffort(model, effort))
 		}
@@ -194,6 +197,16 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		argv = append(append(argv, extra...), prompt)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+}
+
+// AgyModelEfforts lists the efforts agy accepts for a model, weakest first.
+// Only its Gemini models take --effort; agy rejects the flag for any other
+// model a Base URL serves ("--effort is not supported for model …").
+func AgyModelEfforts(model string) []string {
+	if strings.HasPrefix(strings.TrimSpace(model), "gemini-") {
+		return domain.ExecutorEffortLevels[AgentCLIAntigravity]
+	}
+	return nil
 }
 
 // agyModelForEffort replaces the effort suffix of an Antigravity model ID

@@ -69,10 +69,14 @@ func TestAgentCLICommandAgyEffortSuffix(t *testing.T) {
 		{"gemini-3.8-flash-medium", "", "gemini-3.8-flash-medium"},
 		{"gemini-3.8-flash", "low", "gemini-3.8-flash"},
 		{"gemini-4-argon-xhigh", "max", "gemini-4-argon-max"},
+		{"gateway-model", "low", "gateway-model"},
 	} {
 		argv := AgentCLICommand(AgentCLIAntigravity, AgentCLICommandOptions{Model: tc.model, Effort: tc.effort, Prompt: "p"}).Argv
 		if i := slices.Index(argv, "--model"); i < 0 || argv[i+1] != tc.want {
 			t.Errorf("%s at %q: %q", tc.model, tc.effort, argv)
+		}
+		if want := tc.effort != "" && AgyModelEfforts(tc.model) != nil; slices.Contains(argv, "--effort") != want {
+			t.Errorf("%s at %q: --effort passed=%v: %q", tc.model, tc.effort, !want, argv)
 		}
 	}
 }

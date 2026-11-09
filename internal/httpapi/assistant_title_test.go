@@ -59,6 +59,7 @@ func TestAssistantTitleModelReusesSessionModelOnOtherCLIs(t *testing.T) {
 		{"claude-code:claude-opus-5", "low"},
 		{"cursor:gpt-5.6-sol", "none"},
 		{"agy:gemini-3.1-pro", "low"},
+		{"agy:gateway-model", ""},
 		{"pi:deepseek-v4-flash", "minimal"},
 		{"opencode:glm-5", "low"},
 		{"kimi:kimi-k3", ""},
