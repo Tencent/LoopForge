@@ -3,6 +3,7 @@ package procwatch
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -138,4 +139,45 @@ func TestDurationEnv(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunKillsTheWholeProcessTree(t *testing.T) {
+	// The background sleep stands in for a helper such as git-remote-https: it
+	// inherits the output pipe and prints nothing, so only a group kill ends
+	// it. Without one, Run also waits out waitDelay on the held pipe.
+	pidFile := t.TempDir() + "/child.pid"
+	script := `sleep 60 & echo $! > ` + pidFile + `; while :; do echo downloading; sleep 0.05; done`
+	started := time.Now()
+	_, err := Run(context.Background(), shell(script), Options{Label: "克隆仓库", Timeout: 300 * time.Millisecond})
+	if !Stopped(err) {
+		t.Fatalf("err = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= waitDelay {
+		t.Fatalf("Run waited %s on a helper that still held the pipe", elapsed)
+	}
+	raw, readErr := os.ReadFile(pidFile)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	pid := strings.TrimSpace(string(raw))
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = exec.Command("kill", "-9", pid).Run()
+	t.Fatalf("helper %s still running after the step was stopped", pid)
+}
+
+// processAlive treats a zombie as dead: a container whose PID 1 does not reap
+// orphans keeps the killed helper as a zombie, which kill -0 still finds.
+func processAlive(pid string) bool {
+	if stat, err := os.ReadFile("/proc/" + pid + "/stat"); err == nil {
+		if i := strings.LastIndexByte(string(stat), ')'); i >= 0 && i+2 < len(stat) {
+			return stat[i+2] != 'Z'
+		}
+	}
+	return exec.Command("kill", "-0", pid).Run() == nil
 }

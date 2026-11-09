@@ -102,6 +102,7 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 		emit(Progress, opts.Label+"："+line, now.Sub(started))
 	}
 	cmd := build(runCtx)
+	killGroup(cmd)
 	cmd.Stdout, cmd.Stderr = out, out
 	// git and docker leave helpers holding the pipes after a kill; do not
 	// wait on them forever.
