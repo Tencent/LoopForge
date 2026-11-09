@@ -336,11 +336,11 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 
 触发任务可选 `maxDispatch`，配置每次最多成功触发的需求数，取值为 1–10；不配置（或为 0）时默认为 10，旧任务同样适用。自动执行和「立即运行」共用此上限；已有任务、基线阻塞或派发时被跳过的需求不占用名额，其余需求留待后续执行。`lastPulled` 仍记录所有匹配候选数，`lastDispatched` 记录本次实际成功触发数。AI 定时任务不使用此配置。
 
-AI 定时任务（`skipDispatch=true`）字段包括 `id`、`name`、`enabled`、`projectId`、`assistantPrompt` / `assistantModel` / `ownerUserId`、`intervalSec` 或 `cron`。到点用项目 Owner 的 CodeBuddy 按提示词原文执行并自动写入，不扫描需求、不派发 SOP。
+AI 定时任务（`skipDispatch=true`）字段包括 `id`、`name`、`enabled`、`projectId`、`assistantPrompt` / `assistantModel` / `ownerUserId`、`intervalSec` 或 `cron`。到点用项目 Owner（否则任务 Owner）在所选 CLI 上的 Key，按提示词原文走与主页相同的对话轮次并自动写入，不扫描需求、不派发 SOP。非 CodeBuddy CLI 仍要该账号自己的凭据，不借用平台共享的 CodeBuddy Key。
 
 AI 定时任务固定使用自动执行模式，不受 Studio 对话审批模式影响，平台写入无需逐次人工确认。
 
-AI 定时任务单次执行最长 180 分钟。本实例已有定时任务运行时，到点的 cron 会被跳过，不排队、不在当前任务结束后补跑；等待下一个 cron 时间。手动运行仍返回 `409`。
+AI 定时任务没有单独的时长上限：这一轮和普通对话一样，在 CLI 结束或有人从会话页停止时结束；工具网关跟这一轮一起结束。本实例已有定时任务运行时，到点的 cron 会被跳过，不排队、不在当前任务结束后补跑；等待下一个 cron 时间。手动运行仍返回 `409`。
 
 ### `GET /api/schedule-jobs`
 
@@ -348,7 +348,7 @@ AI 定时任务单次执行最长 180 分钟。本实例已有定时任务运行
 
 ### `POST|PUT /api/schedule-jobs`
 
-新建或按 `id` 更新，两种方法语义相同。`name` 必填。调度为 `intervalSec`（常用间隔）或 5 段 `cron`（东八区）。`skipDispatch` 为 true 时是 AI 定时任务，必须有 `assistantPrompt`，保存时清空 SOP 字段；否则是触发任务，必须有 `workflowId`，保存时清空提示词。可选 `useIssueWorkflow`。`assistantModel` 取自助手 CodeBuddy 目录。保存时把项目 Owner 记为 `ownerUserId`。更新时若请求未带 `blockers`，保留触发任务已有的基线暂停状态。
+新建或按 `id` 更新，两种方法语义相同。`name` 必填。调度为 `intervalSec`（常用间隔）或 5 段 `cron`（东八区）。`skipDispatch` 为 true 时是 AI 定时任务，必须有 `assistantPrompt`，保存时清空 SOP 字段；否则是触发任务，必须有 `workflowId`，保存时清空提示词。可选 `useIssueWorkflow`。`assistantModel` 保存时保留已支持 CLI 的模型（`codex:…`、`claude-code:…`）；CodeBuddy 模型仍限制在助手目录内。运行前检查执行账号在该 CLI 上的 Key。保存时把项目 Owner 记为 `ownerUserId`。更新时若请求未带 `blockers`，保留触发任务已有的基线暂停状态。
 
 `id` 为空时生成；`projectId` 默认 `platform`；`intervalSec<30` 时重置为 `300`。更新若不提供 `lastRunAt` 会保留已有最近运行字段。成功 `200` 返回 job；校验/存储错误 `400`。
 

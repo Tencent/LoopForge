@@ -12,8 +12,6 @@ import (
 func TestNativePromptsAreToolFirst(t *testing.T) {
 	prompts := []string{
 		assistantSystemPromptText(),
-		assistantScheduledSystemPromptText(assistantExecMode{AutoWrite: true}),
-		assistantScheduledSystemPromptText(assistantExecMode{AutoWrite: true, DeferSOP: true}),
 		scheduledAssistantPrompt(assistantTask{Name: "n", Prompt: "p", ProjectID: "platform"}, assistantExecMode{AutoWrite: true}),
 		clarifySystemPrompt("intro", "mcp-step", "focus", "rating"),
 		clarifyNativeRetryPrompt(),

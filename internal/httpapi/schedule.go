@@ -117,7 +117,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			job.IntervalSec = 300
 		}
 		if job.SkipDispatch {
-			job.AssistantModel = assistantAllowedModel(job.AssistantModel, loadAssistantModels(c.Request.Context(), ""))
+			job.AssistantModel = assistantScheduledModel(job.AssistantModel, loadAssistantModels(c.Request.Context(), ""))
 		}
 		if job.ProjectID == "" {
 			job.ProjectID = "platform"

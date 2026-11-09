@@ -51,3 +51,11 @@ Object.assign(window.LF_I18N_EN,{
 "AI 对话的 Pi 模型与以 Pi 运行的 SOP 节点":"Pi models in AI chat, and SOP steps that run on Pi",
 "AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 SOP 节点":"DeepSeek Harness models in AI chat, and SOP steps that run on DeepSeek Harness"
 });
+Object.assign(window.LF_I18N_EN,{
+"CLI 与模型":"CLI and model",
+"执行 CLI":"Execution CLI",
+"（未配置 Key）":" (no key configured)",
+"与 AI 助手相同的 CLI 与模型，到点用项目 Owner 在所选 CLI 上配置的 Key 执行。":"Same CLI and model as the AI assistant. At the scheduled time it runs with the project owner's key for the selected CLI.",
+"按计划用项目 Owner 在所选 CLI 上的 Key 执行提示词，使用与主页 AI 对话相同的完全权限，可调用 SOP、平台工具、工作区及浏览器。":"Runs the prompt on schedule with the project owner's key for the selected CLI, using the same full access as the home AI chat, including SOPs, platform tools, the workspace and the browser.",
+"使用项目 Owner 在所选 CLI 上的 Key，以完全权限执行，与主页 AI 对话相同。可调用 SOP、工作区及浏览器工具；关闭页面不会中断执行。":"Uses the project owner's key for the selected CLI, with the same full access as the home AI chat. It can call SOPs, workspace and browser tools; closing the page does not stop it."
+});
