@@ -517,6 +517,33 @@ func dockerIsolationMaskRoot(workspace string) string {
 }
 
 func dockerAgentConfigMasks(workspace string) ([]string, error) {
+	// Docker Desktop cannot create missing nested mount targets on a VirtioFS share.
+	if _, err := EnsureControlDirectory(workspace, "isolation", "empty-dir"); err != nil {
+		return nil, err
+	}
+	target := filepath.Join(workspace, ".agentflow", "isolation", "empty-file")
+	root, rel, err := openWorkspacePath(workspace, target)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	file, err := root.OpenFile(rel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err == nil {
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
+	} else if os.IsExist(err) {
+		info, err := root.Lstat(rel)
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("sandbox mask target is not a regular file: %s", target)
+		}
+	} else {
+		return nil, err
+	}
+
 	emptyDir, emptyFile, err := isolationMaskSourcesAt(dockerIsolationMaskRoot(workspace))
 	if err != nil {
 		return nil, err

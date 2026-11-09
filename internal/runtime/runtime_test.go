@@ -863,11 +863,18 @@ func TestBwrapAndDockerMaskRepositoryAgentConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "services", "api", "CLAUDE.md"), []byte("nested prompt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bwrap, err := bwrapAgentConfigMasks(workspace)
+	docker, err := dockerAgentConfigMasks(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	docker, err := dockerAgentConfigMasks(workspace)
+	for name, isDir := range map[string]bool{"empty-dir": true, "empty-file": false} {
+		target := filepath.Join(workspace, ".agentflow", "isolation", name)
+		info, err := os.Lstat(target)
+		if err != nil || (isDir && !info.IsDir()) || (!isDir && !info.Mode().IsRegular()) {
+			t.Fatalf("Docker mount target %s: %v, %v", target, info, err)
+		}
+	}
+	bwrap, err := bwrapAgentConfigMasks(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
