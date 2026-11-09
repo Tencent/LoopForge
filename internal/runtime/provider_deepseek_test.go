@@ -12,8 +12,11 @@ func TestDeepSeekUsesCodexToolsWithSeparateCredentialBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cmd.Provider != "deepseek" || !cmd.PrivateHome || !hasArg(cmd.Argv, "--json") || !hasArg(cmd.Argv, "--ignore-user-config") {
+	if cmd.Provider != "deepseek" || !cmd.PrivateHome || !hasArg(cmd.Argv, "--json") {
 		t.Fatal("DeepSeek did not preserve the isolated Codex tool runtime")
+	}
+	if hasArg(cmd.Argv, "--ignore-user-config") || hasArg(cmd.Argv, "--ignore-rules") {
+		t.Fatal("DeepSeek command contains flags rejected by current Codex")
 	}
 	bindings := ""
 	for _, binding := range cmd.CredentialBindings {
