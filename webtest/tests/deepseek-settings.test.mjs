@@ -24,6 +24,7 @@ test('DeepSeek has an independent settings row and saves its key and endpoint', 
   const body = app.router.calls.find(c => c.path === '/api/users/1/credentials').body;
   assert.deepEqual(body, { deepSeekApiKey: 'deepseek-settings-test-key', deepSeekBaseUrl: 'https://gateway.example/v1' });
   assert.equal(app.evaluate(`credentialHint('责任人未配置 DeepSeek API Key').field`), 'deepSeekApiKey');
+  assert.equal(app.evaluate(`credentialHint('需求责任人未配置 DeepSeek Harness API Key').field`), 'agentCli.dsh');
   const clear = app.evaluate(`credentialClearPayload(credentialKind('deepSeekApiKey'))`);
   assert.equal(clear.deepSeekApiKeyClear, true);
   assert.equal(clear.deepSeekBaseUrl, '');
