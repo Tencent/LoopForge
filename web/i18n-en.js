@@ -51,3 +51,17 @@ Object.assign(window.LF_I18N_EN,{
 "AI 对话的 Pi 模型与以 Pi 运行的 SOP 节点":"Pi models in AI chat, and SOP steps that run on Pi",
 "AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 SOP 节点":"DeepSeek Harness models in AI chat, and SOP steps that run on DeepSeek Harness"
 });
+Object.assign(window.LF_I18N_EN,{
+"收起编排助手":"Collapse orchestration assistant",
+"描述要编排的流程":"Describe the workflow to draft",
+"选择 CLI":"Select CLI",
+"搜索 CLI":"Search CLIs",
+"搜索 CLI…":"Search CLIs…",
+"没有匹配的 CLI":"No matching CLI",
+"搜索模型":"Search models",
+"搜索模型…":"Search models…",
+"没有匹配的模型":"No matching model",
+"发送编排要求":"Send orchestration request",
+"仅生成草稿 · 切换 CLI 开启新对话，保留画布":"Draft only · switching CLI starts a new chat and keeps the canvas",
+"暂无模型":"No models yet"
+});
