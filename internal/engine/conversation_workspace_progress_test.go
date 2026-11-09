@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 // installFakeClone puts a git first on PATH whose `clone` runs cloneScript;
@@ -103,7 +104,7 @@ func TestMaterializeConversationWorkspaceReportsSlowCloneProgress(t *testing.T) 
 }
 
 func TestMaterializeConversationWorkspaceStopsAStalledClone(t *testing.T) {
-	t.Setenv(cloneStallEnv, "2s")
+	t.Setenv(gitwork.CloneStallEnv, "2s")
 	installFakeClone(t, `    echo "Cloning into '.'..." >&2
     exec sleep 60`)
 	e, run := putCloningWorkspace(t)
@@ -115,7 +116,7 @@ func TestMaterializeConversationWorkspaceStopsAStalledClone(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 3500*time.Millisecond {
 		t.Fatalf("stalled clone held the open for %s", elapsed)
 	}
-	if err == nil || !strings.Contains(err.Error(), "没有任何输出") || !strings.Contains(err.Error(), cloneStallEnv) {
+	if err == nil || !strings.Contains(err.Error(), "没有任何输出") || !strings.Contains(err.Error(), gitwork.CloneStallEnv) {
 		t.Fatalf("stall not explained: %v", err)
 	}
 	events := runEvents(e, run.ID, "workspace.clone.failed")

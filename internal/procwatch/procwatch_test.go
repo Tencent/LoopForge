@@ -120,6 +120,21 @@ func TestRunStopsAtTheTotalTimeout(t *testing.T) {
 	}
 }
 
+func TestRunNamesTheCallersDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := Run(ctx, shell(`while :; do echo tick; sleep 0.05; done`), Options{Label: "克隆仓库 web", Stall: time.Minute})
+	if !Stopped(err) || !strings.Contains(err.Error(), "克隆仓库 web 在调用方时限内没有完成") {
+		t.Fatalf("err = %v", err)
+	}
+	// A caller that cancels (rather than running out of time) is not a stop.
+	ctx, cancel = context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if _, err := Run(ctx, shell(`exec sleep 60`), Options{Label: "克隆仓库"}); err == nil || Stopped(err) {
+		t.Fatalf("canceled run = %v", err)
+	}
+}
+
 func TestRunWithoutObserverStillWorks(t *testing.T) {
 	if _, err := Run(context.Background(), shell(`echo ok`), Options{}); err != nil {
 		t.Fatal(err)

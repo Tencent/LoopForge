@@ -25,6 +25,13 @@ func Run(ctx context.Context, workspace string, args ...string) (string, error) 
 	return text, nil
 }
 
+// Settings that bound a clone, read on whichever host runs it (the platform or
+// an execution machine). See docs/deployment.md.
+const (
+	CloneStallEnv   = "AGENTFLOW_GIT_CLONE_STALL_TIMEOUT"
+	CloneTimeoutEnv = "AGENTFLOW_GIT_CLONE_TIMEOUT"
+)
+
 // Watch runs a long git command (clone) like Run, but through procwatch:
 // output is streamed to the context's observer, a command that stops printing
 // is killed, and the error carries only the last lines of output.

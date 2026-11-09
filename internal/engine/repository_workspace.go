@@ -558,14 +558,10 @@ func checkoutWorkBranch(ctx context.Context, workspace, workBranch, baseBranch s
 	return createWorkBranchFromBase(ctx, workspace, workBranch)
 }
 
-// Clone limits. A clone that keeps printing progress is allowed to be slow;
-// one that prints nothing for the stall window is treated as hung. The total
-// limit is off by default so a large SOP checkout is not cut short.
-const (
-	cloneStallEnv   = "AGENTFLOW_GIT_CLONE_STALL_TIMEOUT"
-	cloneTimeoutEnv = "AGENTFLOW_GIT_CLONE_TIMEOUT"
-)
-
+// cloneWatch bounds a platform-side clone. A clone that keeps printing
+// progress is allowed to be slow; one that prints nothing for the stall window
+// is treated as hung. The total limit is off by default so a large SOP
+// checkout is not cut short.
 func cloneWatch(repository domain.RepositoryContext) procwatch.Options {
 	name := strings.TrimSpace(repository.Name)
 	if name == "" {
@@ -573,8 +569,8 @@ func cloneWatch(repository domain.RepositoryContext) procwatch.Options {
 	}
 	return procwatch.Options{
 		Stage: "clone", Label: "克隆仓库 " + name,
-		Stall: procwatch.DurationEnv(cloneStallEnv, 5*time.Minute), StallEnv: cloneStallEnv,
-		Timeout: procwatch.DurationEnv(cloneTimeoutEnv, 0), TimeoutEnv: cloneTimeoutEnv,
+		Stall: procwatch.DurationEnv(gitwork.CloneStallEnv, 5*time.Minute), StallEnv: gitwork.CloneStallEnv,
+		Timeout: procwatch.DurationEnv(gitwork.CloneTimeoutEnv, 0), TimeoutEnv: gitwork.CloneTimeoutEnv,
 	}
 }
 

@@ -130,6 +130,9 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 		err = &StoppedError{fmt.Sprintf("%s 已 %s 没有任何输出，判定卡住并停止%s", opts.Label, roundDuration(opts.Stall), settingHint(opts.StallEnv)), err}
 	case errors.Is(cause, errTimeout):
 		err = &StoppedError{fmt.Sprintf("%s 超过 %s 仍未完成，已停止%s", opts.Label, roundDuration(opts.Timeout), settingHint(opts.TimeoutEnv)), err}
+	case errors.Is(cause, context.DeadlineExceeded):
+		// The caller's own limit (an assistant turn, a preparation request).
+		err = &StoppedError{fmt.Sprintf("%s 在调用方时限内没有完成（已运行 %s），已停止", opts.Label, roundDuration(elapsed)), err}
 	}
 	message := fmt.Sprintf("%s 失败（耗时 %s）：%v", opts.Label, roundDuration(elapsed), err)
 	if last := lastLines(tail, 3); last != "" {

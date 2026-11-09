@@ -57,12 +57,12 @@ Access to the Docker socket is equivalent to root on the host. Two safeguards fo
 
 ### Slow networks: clone and image build limits
 
-Cloning a repository and building a custom sandbox image report progress on the run while they work, and their errors keep the last 20 lines of git or Docker output. A step that prints nothing for its stall window is treated as hung and stopped. A step that keeps printing may be slow but is not stopped unless you set a total limit. All four settings take Go durations such as `90s` or `20m`; `0` turns a limit off.
+Cloning a repository and building a custom sandbox image report progress while they work, and their errors keep the last lines of git or Docker output. On the platform host the progress is recorded on the run. On an execution machine it is written to the runner's log, and only the final error reaches the platform. A step that prints nothing for its stall window is treated as hung and stopped. A step that keeps printing may be slow but is stopped only by a total limit. All settings take Go durations such as `90s` or `20m`; `0` turns a limit off. Each host reads its own environment, so set the clone limits on execution machines too.
 
 | Setting | Default | Applies to |
 |---|---|---|
-| `AGENTFLOW_GIT_CLONE_STALL_TIMEOUT` | `5m` | `git clone` with no output. Not applied when cloning from a repository's local source path, whose final repack is silent. |
-| `AGENTFLOW_GIT_CLONE_TIMEOUT` | off | Whole `git clone`. |
+| `AGENTFLOW_GIT_CLONE_STALL_TIMEOUT` | `5m` | `git clone` with no output. Not applied when the platform clones from a repository's local source path, whose final repack is silent. |
+| `AGENTFLOW_GIT_CLONE_TIMEOUT` | off on the platform, `10m` on execution machines | Whole `git clone`. Execution machines keep their earlier fixed 10 minute limit as the default. |
 | `AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT` | `10m` | `docker build` with no output. A quiet `RUN` step (a long compile) counts as no output. |
 | `AGENTFLOW_DOCKER_BUILD_TIMEOUT` | off | Whole `docker build`. |
 
