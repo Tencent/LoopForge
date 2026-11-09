@@ -68,14 +68,14 @@ func TestAcquireRunEnvironmentRefreshesGitTokenWithoutReplacingWorkspace(t *test
 		t.Fatalf("refreshed git token = %q, want tok_user", again.credentials.GitToken)
 	}
 	out, err := again.Exec(ctx, runtime.CommandSpec{
-		Argv:               []string{"sh", "-c", `printf %s "$AGENTFLOW_GIT_TOKEN"`},
+		Argv:               []string{"sh", "-c", `if [ "$AGENTFLOW_GIT_TOKEN" = "tok_user" ]; then printf match; else printf mismatch; exit 1; fi`},
 		CredentialBindings: []runtime.CredentialBinding{runtime.BindGit},
 	}, func(domain.TelemetryEvent) {})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out) != "tok_user" {
-		t.Fatalf("sandbox command token = %q, want tok_user", out)
+	if strings.TrimSpace(out) != "match" {
+		t.Fatalf("sandbox credential refresh check = %q, want match", out)
 	}
 }
 

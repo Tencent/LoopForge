@@ -3,6 +3,7 @@ package tracker
 import (
 	"agentflow/internal/domain"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ type gitLabClient struct {
 	base, path, token string
 	http              *http.Client
 	projectID         int
+	ctx               context.Context
 }
 type gitLabMR struct {
 	IID             int        `json:"iid"`
@@ -65,7 +67,11 @@ func (g *gitLabClient) request(method, suffix string, input, output any) error {
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, g.base+"/api/v4/projects/"+url.PathEscape(g.path)+suffix, body)
+	ctx := g.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, g.base+"/api/v4/projects/"+url.PathEscape(g.path)+suffix, body)
 	if err != nil {
 		return err
 	}

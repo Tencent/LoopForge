@@ -53,6 +53,11 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 	if inv == nil {
 		return heads, nil
 	}
+	if push {
+		if err := requireTaskGitLabOrigins(ctx, workspace, inv); err != nil {
+			return heads, err
+		}
+	}
 	if strings.TrimSpace(message) == "" {
 		message = "agentflow: " + inv.NodeID + " (" + inv.RunID + ")"
 	}
@@ -71,6 +76,9 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		}
 		if push {
 			if err := gitwork.RequireOnWorkBranch(repoCtx, dir, repo.WorkBranch); err != nil {
+				return heads, fmt.Errorf("%s: %w", repo.Name, err)
+			}
+			if err := configureRepositoryGitIdentity(repoCtx, dir, inv.GitUserName, inv.GitUserEmail); err != nil {
 				return heads, fmt.Errorf("%s: %w", repo.Name, err)
 			}
 		}

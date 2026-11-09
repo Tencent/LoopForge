@@ -15,13 +15,15 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/tracker"
 )
 
 // workbench_workspace_submit_mr delivers a conversation workspace without
 // an SOP delivery node: it commits and pushes the work branch, then opens a
-// GitHub pull request (or a merge request on the optional legacy Gongfeng
-// host). Both use the requesting user's own Git Token, so the push and the
+// GitHub pull request or a GitLab/legacy Gongfeng merge request.
+// Each provider uses the requesting user's own credential, so the push and the
 // request are attributed to them and limited by their repository permissions.
 // SOP runs keep delivering through nodes.
 
@@ -59,7 +61,7 @@ type workspaceMRResult struct {
 func workspaceSubmitMRDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_submit_mr",
-		Description: "把当前工作区（任务，或本对话打开的临时工作区）的改动提交到工作分支、用请求人自己的 Git Token 推送，并发起 Pull Request（GitHub 仓库）或 MR（工蜂仓库），返回链接 mrUrl。调用前先用 workbench_workspace_command 跑通相关测试。title 写清改了什么；description 用 Markdown 写改动摘要和验证结果。工作分支已有打开的 PR/MR 时会推送新提交，并用本次 title、description 更新它，所以 description 要概括整个 PR/MR 的改动，不只是这次的增量。targetBranch 默认是工作区打开时的 baseBranch（工作分支的起点）；打向别的分支时 PR/MR 会带上两个分支之间的差异提交，结果里会给出 warning，要打 release 这类分支应在 workbench_workspace_open 时就传 baseBranch。只提交工作区记录的工作分支：手工 git checkout 到别的分支时会拒绝提交并说明原因；只读检出（branchMode=readonly）的仓库不会提交。默认 mode=mr；用户要把改动合并进 preview/test 这类共享分支并直接推送、不要 PR/MR（例如「先合到 preview 再推」「本地合并然后推送」）时传 mode=direct，它把工作分支 merge --no-ff 进 targetBranch 并直推（目标必须已在远端存在、且不是可写仓库的基线分支）；直推不产生 PR/MR。",
+		Description: "把当前工作区（任务，或本对话打开的临时工作区）的改动提交到工作分支、用请求人自己的 Git Token 推送，并发起 Pull Request（GitHub 仓库）或 MR（GitLab 或工蜂仓库），返回链接 mrUrl。调用前先用 workbench_workspace_command 跑通相关测试。title 写清改了什么；description 用 Markdown 写改动摘要和验证结果。工作分支已有打开的 PR/MR 时会推送新提交，并用本次 title、description 更新它，所以 description 要概括整个 PR/MR 的改动，不只是这次的增量。targetBranch 默认是工作区打开时的 baseBranch（工作分支的起点）；打向别的分支时 PR/MR 会带上两个分支之间的差异提交，结果里会给出 warning，要打 release 这类分支应在 workbench_workspace_open 时就传 baseBranch。只提交工作区记录的工作分支：手工 git checkout 到别的分支时会拒绝提交并说明原因；只读检出（branchMode=readonly）的仓库不会提交。默认 mode=mr；用户要把改动合并进 preview/test 这类共享分支并直接推送、不要 PR/MR（例如「先合到 preview 再推」「本地合并然后推送」）时传 mode=direct，它把工作分支 merge --no-ff 进 targetBranch 并直推（目标必须已在远端存在、且不是可写仓库的基线分支）；直推不产生 PR/MR。",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","maxLength":20000},"targetBranch":{"type":"string","maxLength":200,"description":"PR/MR 的目标分支，默认是工作区打开时的 baseBranch；与起点不同时结果带 warning。mode=direct 时必填，写要直推的共享分支"},"mode":{"type":"string","enum":["mr","direct"],"description":"mr（默认）推工作分支并发起或更新 PR/MR；direct 把工作分支 merge --no-ff 进 targetBranch 后直推，不发 MR"}},"required":["title"],"additionalProperties":false}`),
 		Kind:        "workspace",
 	}
@@ -124,7 +126,11 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	}
 	gitToken := strings.TrimSpace(h.repo.GitCredential(ctx, s.User.ID))
 	_, apiToken := gitwork.SplitToken(gitToken)
-	if apiToken == "" {
+	gitLabProjects, needsGitToken, err := workspaceGitLabProjects(run.RepositoryContexts(), requester)
+	if err != nil {
+		return "", err
+	}
+	if needsGitToken && apiToken == "" {
 		return "", fmt.Errorf("你还没有配置 Git Token，无法推送和发起 PR。请到「个人配置 → 个人凭证」配置：打开 https://github.com/settings/tokens 新建令牌，为目标仓库授予 Contents 和 Pull requests 的读写权限，复制后粘贴并点校验")
 	}
 	if h.engine == nil {
@@ -154,7 +160,8 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	if len(run.RepositoryContexts()) == 0 {
 		return "", fmt.Errorf("这个工作区没有检出代码仓库，没有可提交的内容")
 	}
-	heads, err := h.engine.PushConversationWorkspace(ctx, run.ID, gitToken, login, email, title, directTarget)
+	heads, err := h.engine.PushConversationWorkspace(ctx, run.ID, gitToken, login, email, title, directTarget,
+		engine.ConversationGitLabCredentials{BaseURL: requester.GitLabBaseURL, Token: requester.GitLabToken})
 	if err != nil {
 		return "", errors.New(redactAgentToolResult(err.Error(), requester))
 	}
@@ -186,6 +193,20 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			result.TargetBranch = target
 			if head.SharedHead != "" {
 				result.Commit = head.SharedHead
+			}
+			results = append(results, result)
+			continue
+		}
+		if project, isGitLab := gitLabProjects[rc.RepositoryID+"\x00"+rc.WorkBranch]; isGitLab {
+			result.CreateURL = strings.TrimPrefix(project, "gitlab:") + "/-/merge_requests/new"
+			mr, err := tracker.CreateGitLabBranchMR(ctx, requester.GitLabBaseURL, requester.GitLabToken,
+				project, result.SourceBranch, result.TargetBranch, head.Head, title, body)
+			if err != nil {
+				result.Error = redactAgentToolResult(err.Error(), requester)
+			} else {
+				result.MRIID, result.MRURL = mr.IID, mr.URL
+				result.Existing, result.Updated = mr.Existing, mr.Updated
+				result.UpdateError = redactAgentToolResult(mr.UpdateError, requester)
 			}
 			results = append(results, result)
 			continue

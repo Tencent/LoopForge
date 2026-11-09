@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGitLabCredentialBoundPerRepository(t *testing.T) {
@@ -65,8 +66,8 @@ func TestGitLabConversationPushDoesNotUseGitHubToken(t *testing.T) {
 	}
 	e := New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	heads, err := e.PushConversationWorkspace(context.Background(), run.ID, "github-secret", "alice", "alice@example.test", "change", "")
-	if err == nil || !strings.Contains(err.Error(), "GitLab conversation delivery") || len(heads) != 0 {
-		t.Fatalf("unsupported delivery was not blocked: %v %v", heads, err)
+	if err == nil || !strings.Contains(err.Error(), "GitLab Token") || len(heads) != 0 {
+		t.Fatalf("missing requester GitLab credentials were not blocked: %v %v", heads, err)
 	}
 }
 
@@ -90,5 +91,89 @@ func TestGitLabRunCredentialsSkipMismatchedRepository(t *testing.T) {
 	auth, ok := gitwork.HostCredentialFrom(gitContextForRepository(ctx, run.Repositories[0]))
 	if !ok || auth.Token != "" {
 		t.Fatal("mismatched repository received a credential")
+	}
+}
+
+func TestGitLabConversationRunnerUsesRequesterCredentials(t *testing.T) {
+	e, st := cvEEngine(t)
+	runner := cvERunner(t, e, "gitlab-runner", domain.RunnerStatusOnline, "terminal")
+	runner.RunnerVersion = domain.RunnerVersionGitLabCredentials
+	if err := st.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	run := cvERunnerRun("gitlab-push", runner.ID)
+	run.ExecutionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
+	run.Repositories = []domain.RepositoryContext{
+		{RepositoryID: "gl", Name: "GL", Provider: "gitlab", CloneURL: "https://gitlab.example.test/team/repo.git", GongfengProjectID: "gitlab:https://gitlab.example.test/team/repo", WorkBranch: "feature", WorkspaceDir: "gl"},
+		{RepositoryID: "gh", Name: "GH", Provider: "github", CloneURL: "https://github.com/team/repo.git", WorkBranch: "feature", WorkspaceDir: "gh"},
+		{RepositoryID: "read-only", Name: "readonly", Provider: "gitlab", CloneURL: "https://other.example.test/team/repo.git", WorkBranch: "feature", WorkspaceDir: "readonly", ReadOnly: true},
+	}
+	if err := st.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	e.SetRunnerDispatchNotify(func(string) {
+		calls++
+		tasks := st.RunnerTasks()
+		if len(tasks) != 1 {
+			t.Fatalf("tasks=%d", len(tasks))
+		}
+		task := tasks[0]
+		if task.Invocation == nil || len(task.Invocation.Repositories) != 2 {
+			t.Fatalf("invocation=%+v", task.Invocation)
+		}
+		gl, gh := task.Invocation.Repositories[0], task.Invocation.Repositories[1]
+		if gl.GitAuthBaseURL != "https://gitlab.example.test" || gh.GitAuthBaseURL != "" {
+			t.Fatal("provider credentials not scoped")
+		}
+		if gl.GitToken != "requester-gitlab" || gh.GitToken != "github-secret" {
+			t.Fatal("persisted task lost requester credentials")
+		}
+		leased, ok, err := st.ClaimRunnerTask(runner.ID, []string{"terminal"}, time.Now().UTC(), time.Minute)
+		if err != nil || !ok || leased.Invocation == nil {
+			t.Fatalf("claim: %v %v", ok, err)
+		}
+		if leased.Invocation.Repositories[0].GitToken != "requester-gitlab" || leased.Invocation.Repositories[1].GitToken != "github-secret" {
+			t.Fatal("lease lost requester credentials")
+		}
+		if gl.SharedPushTarget != "preview" || gh.SharedPushTarget != "preview" {
+			t.Fatal("direct target lost")
+		}
+		cvEFinishQueuedTask(t, e, domain.RunnerTaskSuccess, `[{"repositoryId":"gl","workBranch":"feature","head":"abc","sharedBranch":"preview","sharedHead":"def"}]`, "", nil)
+	})
+	creds := ConversationGitLabCredentials{BaseURL: "https://gitlab.example.test", Token: "requester-gitlab"}
+	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, "github-secret", "alice", "alice@example.test", "title", "preview", creds); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("dispatches=%d", calls)
+	}
+}
+
+func TestGitLabConversationPreflightsAllCredentials(t *testing.T) {
+	for _, tc := range []struct{ name, base, token, project, generic string }{
+		{name: "missing GitLab token", base: "https://gitlab.example.test", project: "gitlab:https://gitlab.example.test/team/repo", generic: "github-token"},
+		{name: "wrong instance", base: "https://other.example.test", token: "gitlab-token", project: "gitlab:https://gitlab.example.test/team/repo", generic: "github-token"},
+		{name: "wrong project", base: "https://gitlab.example.test", token: "gitlab-token", project: "gitlab:https://gitlab.example.test/team/other", generic: "github-token"},
+		{name: "missing generic token", base: "https://gitlab.example.test", token: "gitlab-token", project: "gitlab:https://gitlab.example.test/team/repo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, st := cvEEngine(t)
+			runner := cvERunner(t, e, "gitlab-runner", domain.RunnerStatusOnline, "terminal")
+			runner.RunnerVersion = domain.RunnerVersionGitLabCredentials
+			st.PutRunner(runner)
+			run := cvERunnerRun("preflight", runner.ID)
+			run.Repositories = []domain.RepositoryContext{
+				{RepositoryID: "gh", Provider: "github", CloneURL: "https://github.com/team/repo.git", WorkBranch: "feature"},
+				{RepositoryID: "gl", Provider: "gitlab", CloneURL: "https://gitlab.example.test/team/repo.git", GongfengProjectID: tc.project, WorkBranch: "feature"},
+			}
+			st.PutRun(run)
+			if _, err := e.PushConversationWorkspace(context.Background(), run.ID, tc.generic, "alice", "alice@example.test", "title", "", ConversationGitLabCredentials{BaseURL: tc.base, Token: tc.token}); err == nil {
+				t.Fatal("invalid credentials accepted")
+			}
+			if len(st.RunnerTasks()) != 0 {
+				t.Fatal("dispatched before preflight completed")
+			}
+		})
 	}
 }

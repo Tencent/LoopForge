@@ -68,7 +68,7 @@ test('wizard validates names and repository URLs with actionable errors', async 
   assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /项目名称不能为空/);
   app.evaluate(`projectWizard.step='repos';projectWizard.projectId='project-1';renderProjectWizard()`);
   await app.evaluate(`projectWizardAddRepo()`);
-  assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /请先粘贴 GitHub 仓库地址/);
+  assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /请先粘贴 GitHub 或项目 Owner 配置的 GitLab 仓库地址/);
 });
 
 test('without a TAPD integration the wizard goes from members straight to done', async (t) => {
@@ -98,4 +98,29 @@ test('without a TAPD integration the wizard goes from members straight to done',
   await settle(6);
   assert.equal(host().querySelector('.pw-dialog').dataset.pwStep, 'done');
   assert.equal(host().querySelector('[data-pw-summary="tapd"]'), null);
+});
+
+
+test('an administrator binds a GitLab repository using the project owner configuration', async (t) => {
+  const app=await loadApp();
+  t.after(app.close);
+  app.router.post('/api/repositories',call=>({...call.body,id:'gitlab-repo'}));
+  app.router.put('/api/projects',call=>call.body);
+  app.evaluate(`
+    state.currentUser={id:1,loginName:'admin',platformAdmin:true};
+    state.data.users=[state.currentUser,{id:2,loginName:'owner',gitLabBaseUrl:'https://gitlab.example.org'}];
+    state.data.projects.push({id:'gitlab-project',name:'GitLab project',key:'GL',ownerId:2});
+    openProjectWizard();
+    projectWizard.projectId='gitlab-project';
+    projectWizard.step='repos';
+    projectWizard.repo.url='https://gitlab.example.org/team/sub/repository.git';
+    renderProjectWizard();
+  `);
+  assert.match(app.document.querySelector('#projectWizard [data-pw-repo-hint]').textContent,/repository/);
+  await app.evaluate('projectWizardAddRepo()');
+  const call=app.router.calls.find(c=>c.method==='POST'&&c.path==='/api/repositories');
+  assert.ok(call,'the administrator can save without their own GitLab credentials');
+  assert.equal(call.body.projectId,'gitlab-project');
+  assert.equal(call.body.provider,'gitlab');
+  assert.equal(call.body.cloneUrl,'https://gitlab.example.org/team/sub/repository.git');
 });
