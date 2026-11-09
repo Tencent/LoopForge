@@ -26,6 +26,10 @@ type dockerSandbox struct {
 	mu                  sync.Mutex
 	browserMu           sync.Mutex
 	started             bool
+	// execGate lets parallel branches exec concurrently (read side) while a
+	// cwd-recovery Recreate (write side) waits for them instead of docker
+	// rm-ing the container under a sibling's running command.
+	execGate sync.RWMutex
 }
 
 func (s *dockerSandbox) ID() string        { return s.id }
@@ -110,12 +114,19 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 	if err := s.ensureStarted(ctx); err != nil {
 		return "", err
 	}
+	s.execGate.RLock()
 	out, err := s.execOnce(ctx, command, sink)
+	s.execGate.RUnlock()
 	if err != nil && isDockerCwdUnsafe(out, err) {
-		if recErr := s.Recreate(ctx); recErr != nil {
+		s.execGate.Lock()
+		recErr := s.Recreate(ctx)
+		s.execGate.Unlock()
+		if recErr != nil {
 			return out, fmt.Errorf("current working directory is outside of container mount namespace: %w", err)
 		}
+		s.execGate.RLock()
 		out, err = s.execOnce(ctx, command, sink)
+		s.execGate.RUnlock()
 		if err != nil && isDockerCwdUnsafe(out, err) {
 			return out, fmt.Errorf("current working directory is outside of container mount namespace: %w", err)
 		}

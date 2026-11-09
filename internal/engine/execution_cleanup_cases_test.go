@@ -335,6 +335,6 @@ func TestInterruptedRunRecoverySettlesControlAndCompletedGraphs(t *testing.T) {
 		t.Fatal("claim running idempotence")
 	}
 	e.clearRunning("claimed")
-	unlock := e.lockRunExec("run")
+	unlock := e.lockNodeExec("run", "node")
 	unlock()
 }

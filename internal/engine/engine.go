@@ -32,7 +32,9 @@ type Engine struct {
 	// per run, read where the engine used to inspect its own workspace copy.
 	workspaceFacts map[string]domain.RunnerWorkspaceFacts
 	cloudPool      CloudRunnerPool
-	runExec        map[string]*sync.Mutex
+	execLocks      keyedLocks
+	nodeExecMu     sync.Mutex
+	nodeExecs      map[string]map[string]nodeExecution
 	subMu          sync.Mutex
 	subs           map[string]map[chan domain.Run]struct{}
 	runnerTaskMu   sync.Mutex

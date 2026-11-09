@@ -48,7 +48,7 @@ func WriteCodeBuddyHookBridgeAt(workspace, relativeRoot string) error {
 		return err
 	}
 	script := filepath.Join(root, "hook.py")
-	if err := os.WriteFile(script, []byte(hookPython), 0o755); err != nil {
+	if err := writeFileIfChanged(script, []byte(hookPython), 0o755); err != nil {
 		return err
 	}
 	cmd := codeBuddyHookCommand(filepath.Join(relativeRoot, "hook.py"))
@@ -68,7 +68,36 @@ func WriteCodeBuddyHookBridgeAt(workspace, relativeRoot string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(workspace, filepath.Dir(relativeRoot), "codebuddy-settings.json"), raw, 0o600)
+	return writeFileIfChanged(filepath.Join(workspace, filepath.Dir(relativeRoot), "codebuddy-settings.json"), raw, 0o600)
+}
+
+// writeFileIfChanged leaves an identical file untouched and otherwise
+// replaces it through a rename: a CLI of a parallel branch may be executing
+// hook.py or reading its settings at this moment and must never observe a
+// truncated file.
+func writeFileIfChanged(path string, data []byte, mode os.FileMode) error {
+	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode().Perm() == mode.Perm() {
+		if existing, err := os.ReadFile(path); err == nil && string(existing) == string(data) {
+			return nil
+		}
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Chmod(mode); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), path)
 }
 
 // codeBuddyHookCommand returns a PreToolUse-safe shell command that recreates
