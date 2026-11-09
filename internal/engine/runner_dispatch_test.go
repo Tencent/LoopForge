@@ -9,6 +9,7 @@ import (
 )
 
 func TestResolveRunnerResumeSessionIDPrefersEngineOption(t *testing.T) {
+	t.Parallel()
 	run := domain.Run{Nodes: map[string]*domain.NodeRun{
 		"review": {NodeID: "review", ResumeSessionID: "node-session", SessionID: "observed-session"},
 	}}
@@ -36,6 +37,7 @@ func TestResolveRunnerResumeSessionIDPrefersEngineOption(t *testing.T) {
 }
 
 func TestGateCommandInvocationCarriesResponsibleGitToken(t *testing.T) {
+	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +75,7 @@ func TestGateCommandInvocationCarriesResponsibleGitToken(t *testing.T) {
 }
 
 func TestBindRunnerRepositoriesUsesConfiguredMainBranchWhenBaseIsEmpty(t *testing.T) {
+	t.Parallel()
 	repository := domain.RepositoryContext{RepositoryID: "repo", Name: "Service", CloneURL: "https://example.test/service.git", DefaultBranch: "release/configured-main", WorkBranch: "feature/work", RequireExistingWorkBranch: true}
 	for _, run := range []domain.Run{
 		{Repository: repository},

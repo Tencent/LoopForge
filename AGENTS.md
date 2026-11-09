@@ -17,7 +17,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `ProjectsRepo` | projects、project members |
 | `IssuesRepo` | issues、issue comments |
 | `TasksRepo` | tasks（跨实例幂等记录） |
-| `UsersRepo` | users、credentials、platform admins |
+| `UsersRepo` | users、credentials（含平台共享 CodeBuddy Key）、platform admins |
 | `TokensRepo` | API tokens |
 | `AssistantRepo` | Studio 助手会话、定时 prompts |
 | `RunsRepo` | runs 及其子资源、run leases、workflow metrics、run evals |
@@ -26,6 +26,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `AnalyticsRepo` | 只读运营分析视图 |
 | `PreviewsRepo` | run previews |
 | `EngineInstancesRepo` | engine instances |
+| `FeedbackRepo` | page feedbacks、page feedback images（独立表，不关联项目/Issue） |
 
 规则：
 
@@ -62,8 +63,8 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    `catalogHandlers`、`issuesHandlers`、`tasksHandlers`、`runsHandlers`、
    `previewsHandlers`、`streamHandlers`、`runnersHandlers`、
    `scheduleHandlers`、`tokenHandlers`、`syncHandlers`、
-   `deploymentMetricsHandlers`、`assistantHandlers`、`mcpHandlers`、
-   `marketHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
+   `assistantHandlers`、`mcpHandlers`、
+   `marketHandlers`、`feedbackHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
 2. **新领域必须新建自己的 handler struct**，不要把方法挂到现有领域 handler
    或 `Server` 上。
 3. 同一领域的多个文件允许（`run_eval.go`/`run_workspace.go` 属
@@ -73,6 +74,14 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    `openAPI`、`bootstrap`、`observabilitySpec`、`otel` 等）。
 5. 跨领域协作走显式注入（如 `issuesHandlers` 持有 `tasks`/`stream`），
    与 repo 层同构。
+
+## 前端设计参考（chatbot/、web/）
+
+1. 前端改动先读根目录 `design.md`，沿用其中的布局、图标、动效与交付约定。
+2. 视觉结构与布局参考 Grasp（MIT，许可见 `chatbot/src/assets/provider-logos/LICENSE.grasp`）。
+3. 图标、动效与组件设计语言参考 Harness UI（MIT，许可见 `web/app/harness-ui-LICENSE.txt`）。
+4. 引入上游素材或代码时保留 MIT 许可与来源说明，许可文件位置见
+   `design.md`「设计参考」。
 
 ## 历史整改记录
 

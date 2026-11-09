@@ -1,0 +1,56 @@
+/* Brand artwork stays fixed; only a clipped light passes through its paths. */
+.model-provider-icon {
+  --provider-glint: #fff;
+  --provider-artwork-size: 100%;
+  display: inline-grid;
+  position: relative;
+  flex: none;
+  align-items: center;
+  justify-items: center;
+  overflow: visible;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--muted);
+  vertical-align: middle;
+}
+.model-provider-icon > .model-provider-svg {
+  display: block;
+  width: var(--provider-artwork-size);
+  height: var(--provider-artwork-size);
+  overflow: hidden;
+}
+/* The official blossom contains generous padding in its original viewBox. */
+.model-provider-icon[data-model-provider="openai"] {
+  --provider-artwork-size: 140%;
+}
+.model-provider-icon > .model-provider-svg--dark { display: none; }
+.model-provider-icon--color { border-radius: 4px; }
+.model-provider-glint {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  animation: model-provider-glint 850ms 90ms ease-in-out both;
+}
+:is(button:disabled, [aria-disabled="true"], [aria-busy="true"], [inert]) .model-provider-glint {
+  animation: none;
+}
+[data-theme="dark"] .model-provider-icon--mono {
+  --provider-glint: #000;
+}
+[data-theme="dark"] .model-provider-icon--mono > .model-provider-svg {
+  filter: invert(1);
+}
+[data-theme="dark"] .model-provider-icon--color {
+  background: #fff;
+}
+[data-theme="dark"] .model-provider-icon > .model-provider-svg--light { display: none; }
+[data-theme="dark"] .model-provider-icon > .model-provider-svg--dark { display: block; }
+@keyframes model-provider-glint {
+  0%, 8% { opacity: 0; transform: translateX(-180%) skewX(-16deg); }
+  26% { opacity: .75; }
+  70% { opacity: .55; }
+  100% { opacity: 0; transform: translateX(380%) skewX(-16deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-provider-icon .model-provider-glint { animation: none; }
+}

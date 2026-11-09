@@ -188,10 +188,13 @@ type processSandbox struct {
 	binary        string
 }
 
-func (s *processSandbox) ID() string                  { return s.id }
-func (s *processSandbox) Workspace() string           { return s.workspace }
-func (s *processSandbox) Driver() string              { return s.driver }
-func (s *processSandbox) Close(context.Context) error { return nil }
+func (s *processSandbox) ID() string        { return s.id }
+func (s *processSandbox) Workspace() string { return s.workspace }
+func (s *processSandbox) Driver() string    { return s.driver }
+func (s *processSandbox) Close(context.Context) error {
+	stopHostBrowsers(s.workspace)
+	return nil
+}
 
 func createSeatbelt(id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
 	if goruntime.GOOS != "darwin" {
@@ -385,6 +388,26 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, 
 	return b.String(), nil
 }
 
+// bunFSMountPoint is the virtual root Bun-compiled CLIs (Claude Code,
+// CodeBuddy) resolve their embedded files under. A variable for tests.
+var bunFSMountPoint = "/$bunfs"
+
+// ensureBunFSMountPoint makes sure bwrap can mount a private tmpfs at
+// bunFSMountPoint. bwrap binds the host root read-only, so it cannot create a
+// missing mount point and the whole sandbox would fail ("Can't create file
+// /$bunfs: Read-only file system"). The host directory is created once when
+// the runner may (root, as the builtin runner); otherwise the mount is
+// skipped and Bun falls back to its in-process virtual filesystem.
+func ensureBunFSMountPoint() bool {
+	if info, err := os.Stat(bunFSMountPoint); err == nil {
+		return info.IsDir()
+	}
+	if err := os.Mkdir(bunFSMountPoint, 0o755); err != nil && !os.IsExist(err) {
+		return false
+	}
+	return true
+}
+
 func bwrapArgsRequirements(workspace string, requirements SandboxRequirements) ([]string, error) {
 	return bwrapArgsCommand(workspace, requirements, true)
 }
@@ -404,8 +427,8 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
 	}
-	if requirements.BunFS {
-		args = append(args, "--tmpfs", "/$bunfs")
+	if requirements.BunFS && ensureBunFSMountPoint() {
+		args = append(args, "--tmpfs", bunFSMountPoint)
 	}
 	stateDirs, err := agentStateDirectories(requirements)
 	if err != nil {
@@ -494,6 +517,33 @@ func dockerIsolationMaskRoot(workspace string) string {
 }
 
 func dockerAgentConfigMasks(workspace string) ([]string, error) {
+	// Docker Desktop cannot create missing nested mount targets on a VirtioFS share.
+	if _, err := EnsureControlDirectory(workspace, "isolation", "empty-dir"); err != nil {
+		return nil, err
+	}
+	target := filepath.Join(workspace, ".agentflow", "isolation", "empty-file")
+	root, rel, err := openWorkspacePath(workspace, target)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	file, err := root.OpenFile(rel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err == nil {
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
+	} else if os.IsExist(err) {
+		info, err := root.Lstat(rel)
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("sandbox mask target is not a regular file: %s", target)
+		}
+	} else {
+		return nil, err
+	}
+
 	emptyDir, emptyFile, err := isolationMaskSourcesAt(dockerIsolationMaskRoot(workspace))
 	if err != nil {
 		return nil, err

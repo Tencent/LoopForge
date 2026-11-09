@@ -13,11 +13,11 @@ type MCPTarget struct {
 	// pass their own server URL; cloud runs leave it empty and keep whatever
 	// absolute URL the engine resolved.
 	ServerURL string
-	TaihuPAT  string
 	GitToken  string
-	// RequireTaihuPAT fails when a Taihu-authenticated MCP has no token. Agent
-	// invocations require it; scripts and gates bind opportunistically.
-	RequireTaihuPAT bool
+	// RequireCredentials fails when a credential-authenticated MCP has no
+	// token. Agent invocations require it; scripts and gates bind
+	// opportunistically.
+	RequireCredentials bool
 }
 
 // PrepareMCPServers is the single place that turns a resolved asset bundle
@@ -27,7 +27,7 @@ type MCPTarget struct {
 func PrepareMCPServers(assets domain.AgentAssetBundle, target MCPTarget) (domain.AgentAssetBundle, []string, error) {
 	var warnings []string
 	var githubErr error
-	assets, githubErr = BindGitHubMCPHeaders(assets, target.GitToken, target.RequireTaihuPAT)
+	assets, githubErr = BindGitHubMCPHeaders(assets, target.GitToken, target.RequireCredentials)
 	if githubErr != nil {
 		return assets, nil, githubErr
 	}
@@ -40,11 +40,7 @@ func PrepareMCPServers(assets domain.AgentAssetBundle, target MCPTarget) (domain
 			warnings = append(warnings, "未注入 "+id+"：当前执行实例未配置平台地址（AGENTFLOW_PLATFORM_MCP_URL 或 AGENTFLOW_API_URL，需为沙箱可访问的地址）")
 		}
 	}
-	if !target.RequireTaihuPAT {
-		return BindPersonalMCPHeadersOptional(assets, target.TaihuPAT), warnings, nil
-	}
-	bound, err := BindPersonalMCPHeaders(assets, target.TaihuPAT)
-	return bound, warnings, err
+	return assets, warnings, nil
 }
 
 // IsPlatformMCP reports whether the server is served by the AgentFlow

@@ -47,7 +47,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 		return "绑定的平台账号不可用或已失去项目权限，请在平台检查配置。", nil
 	}
 	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		return "你的平台账号尚未配置 CodeBuddy Key，请在平台个人设置中配置。", nil
+		return "你的平台账号尚未配置 CodeBuddy Key，请在平台个人配置中配置。", nil
 	}
 	model := bot.Model
 	if model == "" {

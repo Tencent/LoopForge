@@ -10,6 +10,65 @@ import (
 	"time"
 )
 
+func TestAgentCLICredentialsRoundTrip(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.PutUser(domain.User{LoginName: "agent-cli-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	user, ok := st.UserByLoginName("agent-cli-owner")
+	if !ok {
+		t.Fatal("missing user")
+	}
+	base := "https://gateway.example/v1"
+	protocol := "chat"
+	models := []domain.CLIModel{{ID: "model-a", Name: "Model A"}}
+	updated, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"opencode": {APIKey: "oc-secret", BaseURL: &base, Protocol: &protocol, Models: &models},
+		"shell":    {APIKey: "nope"},
+	}})
+	if err == nil || updated.ID != 0 {
+		t.Fatal("unknown CLI was accepted")
+	}
+	updated, err = st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"opencode": {APIKey: "oc-secret", BaseURL: &base, Protocol: &protocol, Models: &models},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutUser(domain.User{ID: user.ID, LoginName: "agent-cli-owner", ChineseName: "刷新"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := st.User(user.ID)
+	if !ok {
+		t.Fatal("missing saved user")
+	}
+	cred := got.AgentCLICredentials["opencode"]
+	if cred.APIKey != "oc-secret" || cred.BaseURL != base || cred.Protocol != "chat" || len(cred.Models) != 1 || cred.Models[0].ID != "model-a" {
+		t.Fatalf("agent CLI credential = %+v", cred)
+	}
+	if got.CodexAPIKey != "" {
+		t.Fatal("agent CLI credential wrote a Codex column")
+	}
+	public := domain.PublicUser(got)
+	raw, _ := json.Marshal(public)
+	if strings.Contains(string(raw), "oc-secret") || !public.AgentCLICredentials["opencode"].APIKeyConfigured {
+		t.Fatal("public user leaked the agent CLI key or lost the configured flag")
+	}
+	cleared, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"opencode": {APIKeyClear: true, BaseURL: new(string), Protocol: new(string), Models: &[]domain.CLIModel{}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared.AgentCLICredentials) != 0 {
+		t.Fatalf("clear left %+v", cleared.AgentCLICredentials)
+	}
+}
+
 func TestProviderUserCredentials(t *testing.T) {
 	for _, driver := range []string{"memory", "mysql"} {
 		t.Run(driver, func(t *testing.T) {
@@ -35,7 +94,7 @@ func TestProviderUserCredentials(t *testing.T) {
 			}
 			u, _ := st.UserByLoginName(login)
 			codexURL, claudeURL := "https://codex.example/v1", "https://claude.example"
-			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{TaihuPAT: "tai_pat_secret", CodexAPIKey: "codex-secret", CodexBaseURL: &codexURL, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: &claudeURL})
+			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKey: "codex-secret", CodexBaseURL: &codexURL, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: &claudeURL})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -48,7 +107,7 @@ func TestProviderUserCredentials(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, ok := st.User(u.ID)
-			if !ok || got.TaihuPAT != "tai_pat_secret" || got.CodexAPIKey != "codex-secret" || got.ClaudeCodeAPIKey != "claude-secret" || got.CodexBaseURL != codexURL || got.ClaudeCodeBaseURL != claudeURL {
+			if !ok || got.CodexAPIKey != "codex-secret" || got.ClaudeCodeAPIKey != "claude-secret" || got.CodexBaseURL != codexURL || got.ClaudeCodeBaseURL != claudeURL {
 				t.Fatal("credentials did not survive refresh and partial update")
 			}
 			{
@@ -71,16 +130,16 @@ func TestProviderUserCredentials(t *testing.T) {
 			}
 			public := domain.PublicUser(got)
 			raw, _ := json.Marshal(public)
-			if strings.Contains(string(raw), "secret") || !public.TaihuPATConfigured || !public.CodexAPIKeyConfigured || !public.ClaudeCodeAPIKeyConfigured {
+			if strings.Contains(string(raw), "secret") || !public.CodexAPIKeyConfigured || !public.ClaudeCodeAPIKeyConfigured {
 				t.Fatal("public user leaked credentials or lost configured state")
 			}
 			empty := ""
-			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{TaihuPATClear: true, CodexAPIKeyClear: true, ClaudeCodeAPIKeyClear: true, CodexBaseURL: &empty, ClaudeCodeBaseURL: &empty})
+			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKeyClear: true, ClaudeCodeAPIKeyClear: true, CodexBaseURL: &empty, ClaudeCodeBaseURL: &empty})
 			if err != nil {
 				t.Fatal(err)
 			}
 			cleared, _ := st.User(u.ID)
-			if cleared.TaihuPAT != "" || cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || cleared.GitToken != "git-secret" {
+			if cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || cleared.GitToken != "git-secret" {
 				t.Fatal("clear operation did not isolate providers")
 			}
 		})

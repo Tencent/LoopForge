@@ -49,6 +49,22 @@ func TestPublicRunnerTaskScrubsMultiRepositoryTokens(t *testing.T) {
 	}
 }
 
+func TestAgentCLIRuntimeAuthModeIsPersonal(t *testing.T) {
+	r := Runner{Runtimes: []RunnerRuntime{
+		{Provider: "opencode", AuthMode: RuntimeAuthLocal},
+		{Provider: "codex", AuthMode: RuntimeAuthLocal},
+	}}
+	if r.RuntimeAuthMode("opencode") != RuntimeAuthPersonal {
+		t.Fatal("agent CLI must use personal credentials even when a local mode is stored")
+	}
+	if r.RuntimeAuthMode("codex") != RuntimeAuthLocal {
+		t.Fatal("codex local login must stay local")
+	}
+	if r.RuntimeAuthMode("codebuddy") != RuntimeAuthPersonal {
+		t.Fatal("codebuddy still defaults to personal credentials")
+	}
+}
+
 func TestRunnerSupportsWorkBranchSync(t *testing.T) {
 	for version, want := range map[string]bool{
 		"": false, "dev": false, "0.1.0": false, "0.1.9": false,
@@ -56,6 +72,16 @@ func TestRunnerSupportsWorkBranchSync(t *testing.T) {
 	} {
 		if got := (Runner{RunnerVersion: version}).SupportsWorkBranchSync(); got != want {
 			t.Errorf("SupportsWorkBranchSync(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
+func TestRunnerSupportsCreateNewWorkBranch(t *testing.T) {
+	for version, want := range map[string]bool{
+		"": false, "dev": false, "0.9.0": false, "0.9.1": true, "0.10.0": true, "1.0.0": true,
+	} {
+		if got := (Runner{RunnerVersion: version}).SupportsCreateNewWorkBranch(); got != want {
+			t.Errorf("SupportsCreateNewWorkBranch(%q) = %v, want %v", version, got, want)
 		}
 	}
 }

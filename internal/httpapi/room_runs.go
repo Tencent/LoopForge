@@ -79,13 +79,9 @@ func roomRunMessages(room domain.ChatRoom, dispatch domain.ChatMessage, run doma
 		attempt := fmt.Sprint(nr.Attempt)
 		switch nr.Status {
 		case "succeeded":
-			msg.ID = roomProgressID(run.ID, node.ID, "succeeded", attempt)
-			msg.Kind = domain.ChatKindProgress
-			msg.Body = "完成了「" + msg.NodeName + "」"
-			if out := roomTrim(nr.Output, 280); out != "" && node.Type == "agent" {
-				msg.Body += "\n" + out
-			}
-			msg.CreatedAt = firstTime(nr.FinishedAt, nr.StartedAt, run.UpdatedAt)
+			// Finished steps stay on the dispatch card. The thread only
+			// gets failures, approvals, and the run's final result.
+			continue
 		case "failed":
 			msg.ID = roomProgressID(run.ID, node.ID, "failed", attempt)
 			msg.Kind = domain.ChatKindProgress

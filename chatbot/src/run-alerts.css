@@ -1,0 +1,457 @@
+/* Run alerts at the bottom of the message stream (Harness UI, neutral card).
+ * Colours come from --hui-* tokens only, so html[data-theme] switches them. */
+/* Flex, not grid: a leaving card's negative margin must cancel the gap, and in
+ * grid it would stretch the item instead. */
+.run-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+/* The shell collapses on dismiss so the cards below glide up. */
+.run-alert-shell {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-height: 0;
+  transition:
+    grid-template-rows 0.26s var(--hui-ease-flow) 0.18s,
+    margin 0.26s var(--hui-ease-flow) 0.18s;
+}
+/* The clip has no padding or border, so the 0fr track can reach 0px; the
+ * card's own padding would otherwise keep 28px until removal. */
+.run-alert-clip {
+  min-width: 0;
+  min-height: 0;
+}
+.run-alert-shell.is-leaving {
+  grid-template-rows: 0fr;
+  pointer-events: none;
+}
+.run-alert-shell.is-leaving > .run-alert-clip {
+  overflow: hidden;
+}
+/* Swallow the list gap too, so removal leaves nothing to jump. */
+.run-alert-shell.is-leaving:not(:last-child) {
+  margin-bottom: -10px;
+}
+.run-alert-shell.is-leaving:last-child:not(:first-child) {
+  margin-top: -10px;
+}
+
+.run-alert {
+  --ra-tone: var(--hui-error);
+  position: relative;
+  overflow: hidden;
+  padding: 13px 14px 13px 16px;
+  border: 1px solid var(--hui-border);
+  border-radius: 13px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-ind-shadow);
+  color: var(--hui-text);
+  font-size: 13px;
+  line-height: 1.6;
+  animation: raIn 0.46s var(--hui-ease-flow) both;
+  animation-delay: calc(var(--ra-i, 0) * 60ms);
+  transition:
+    border-color 0.2s var(--hui-ease-flow),
+    box-shadow 0.2s var(--hui-ease-flow),
+    opacity 0.18s ease,
+    transform 0.2s var(--hui-ease-flow);
+}
+.run-alert:hover {
+  border-color: var(--hui-border-strong);
+}
+.run-alert-waiting {
+  --ra-tone: var(--hui-warn);
+}
+.run-alert.is-busy {
+  --ra-tone: var(--hui-info);
+}
+.run-alert.is-settled {
+  animation: none;
+}
+.run-alert-shell.is-leaving .run-alert {
+  opacity: 0;
+  transform: translateX(10px) scale(0.98);
+}
+@keyframes raIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Header: lamp, name + tag, meta, close. */
+.run-alert-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.run-alert-lamp {
+  position: relative;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 7px 3px 0 2px;
+  border-radius: 50%;
+  background: var(--ra-tone);
+  transition: background-color 0.2s var(--hui-ease-flow);
+}
+.run-alert-lamp::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--ra-tone);
+  opacity: 0;
+}
+.run-alert-waiting .run-alert-lamp::after {
+  animation: raHalo 1.8s var(--hui-ease-flow) infinite;
+}
+.run-alert-failed .run-alert-lamp::after {
+  animation: raHalo 1.2s var(--hui-ease-flow) 2;
+  animation-delay: calc(0.3s + var(--ra-i, 0) * 60ms);
+}
+.run-alert-failed.is-settled .run-alert-lamp::after {
+  animation: none;
+}
+.run-alert.is-busy .run-alert-lamp::after {
+  animation: raHalo 1.1s var(--hui-ease-flow) infinite;
+}
+@keyframes raHalo {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+.run-alert-title {
+  flex: 1;
+  min-width: 0;
+}
+.run-alert-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.run-alert-title-row strong {
+  font-weight: 600;
+  color: var(--hui-text);
+}
+.run-alert-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ra-tone) 12%, var(--hui-surface));
+  color: var(--ra-tone);
+  font: 500 11px/1 var(--hui-sans);
+  white-space: nowrap;
+  transition:
+    background-color 0.2s var(--hui-ease-flow),
+    color 0.2s var(--hui-ease-flow);
+}
+.run-alert-meta {
+  display: block;
+  overflow: hidden;
+  color: var(--hui-tertiary);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-alert-meta code {
+  font: 11px var(--hui-mono);
+  color: var(--hui-tertiary);
+}
+.run-alert .run-alert-close {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin: -3px -4px 0 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hui-tertiary);
+  transition:
+    background-color 0.18s var(--hui-ease-flow),
+    color 0.18s var(--hui-ease-flow);
+}
+.run-alert .run-alert-close:hover {
+  background: var(--hui-soft);
+  color: var(--hui-text);
+}
+.run-alert .run-alert-close > svg {
+  transition: rotate 0.3s var(--hui-ease-flow);
+}
+.run-alert .run-alert-close:hover > svg {
+  rotate: 90deg;
+}
+
+/* Body lines up with the node name. */
+.run-alert-body {
+  margin-left: 23px;
+}
+.run-alert-reason {
+  margin-top: 6px;
+  color: var(--hui-secondary);
+}
+.run-alert-reason-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.run-alert-reason.is-open .run-alert-reason-text {
+  display: none;
+}
+.run-alert-reason-full {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s var(--hui-ease-flow);
+}
+.run-alert-reason.is-open .run-alert-reason-full {
+  grid-template-rows: 1fr;
+}
+.run-alert-reason-full > div {
+  min-height: 0;
+  overflow: hidden;
+}
+.run-alert-reason-full p {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.22s ease,
+    transform 0.3s var(--hui-ease-flow);
+}
+.run-alert-reason.is-open .run-alert-reason-full p {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0.06s;
+}
+.run-alert .run-alert-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--hui-tertiary);
+  font: 400 11.5px/1.6 var(--hui-sans);
+  transition: color 0.18s var(--hui-ease-flow);
+}
+.run-alert .run-alert-toggle:hover {
+  color: var(--hui-accent);
+}
+.run-alert .run-alert-toggle > svg {
+  transition: rotate 0.3s var(--hui-ease-flow);
+}
+.run-alert .run-alert-toggle[aria-expanded="true"] > svg {
+  rotate: 180deg;
+}
+
+/* Credential fix block. */
+.run-alert-fix {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hui-border-soft);
+  border-radius: 9px;
+  background: var(--hui-canvas);
+}
+.run-alert-fix.is-ok {
+  border-color: color-mix(in srgb, var(--hui-success) 26%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-success) 6%, var(--hui-surface));
+}
+.run-alert-fix-title {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: var(--hui-text);
+  font-weight: 500;
+}
+.run-alert-fix-title > svg {
+  flex: none;
+  margin-top: 4px;
+  color: var(--hui-warn);
+}
+.run-alert-fix.is-ok .run-alert-fix-title > svg {
+  color: var(--hui-success);
+}
+.run-alert-fix ol {
+  margin: 6px 0 0;
+  padding-left: 0;
+  list-style: none;
+  counter-reset: ra-step;
+}
+.run-alert-fix li {
+  position: relative;
+  margin-top: 4px;
+  padding-left: 24px;
+  color: var(--hui-secondary);
+  counter-increment: ra-step;
+}
+.run-alert-fix li::before {
+  content: counter(ra-step);
+  position: absolute;
+  left: 0;
+  top: 2px;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 50%;
+  background: var(--hui-surface);
+  color: var(--hui-muted);
+  font: 500 10.5px/1 var(--hui-sans);
+}
+.run-alert-fix small {
+  display: block;
+  margin-top: 6px;
+  color: var(--hui-muted);
+  font-size: 12px;
+}
+.run-alert-fix .run-alert-actions {
+  margin-top: 10px;
+}
+
+/* Buttons: Harness secondary, one filled primary at most. */
+.run-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.run-alert .run-alert-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font: 500 12.5px/1 var(--hui-sans);
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 0.18s var(--hui-ease-flow),
+    border-color 0.18s var(--hui-ease-flow),
+    color 0.18s var(--hui-ease-flow),
+    transform 0.12s var(--hui-ease-flow);
+}
+.run-alert .run-alert-btn:hover {
+  background: var(--hui-soft);
+}
+.run-alert .run-alert-btn:active {
+  transform: scale(0.97);
+}
+.run-alert .run-alert-btn.primary {
+  border-color: var(--hui-accent);
+  background: var(--hui-accent);
+  color: var(--hui-on-accent);
+}
+.run-alert .run-alert-btn.primary:hover {
+  border-color: var(--hui-accent-hover);
+  background: var(--hui-accent-hover);
+}
+.run-alert .run-alert-btn.link {
+  padding: 0 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--hui-accent);
+}
+.run-alert .run-alert-btn.link:hover {
+  background: var(--hui-accent-soft);
+}
+.run-alert .run-alert-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+}
+.run-alert .run-alert-btn:disabled:hover {
+  background: var(--hui-surface);
+}
+.run-alert .run-alert-btn.primary:disabled:hover {
+  background: var(--hui-accent);
+}
+.run-alert
+  :is(.run-alert-btn, .run-alert-close, .run-alert-toggle):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent);
+  outline-offset: 1px;
+}
+/* harness-icons.css stops icon motion inside [disabled]; the busy retry
+   button is disabled but its icon must keep turning. */
+@media (prefers-reduced-motion: no-preference) {
+  .run-alert .is-spinning .harness-icon[data-icon="refresh"] .motion-target {
+    transform-origin: 12px 12px;
+    animation: raSpin 0.9s linear infinite !important;
+  }
+}
+@keyframes raSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.run-alert-error {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--hui-error) 8%, var(--hui-surface));
+  color: var(--hui-error);
+  font-size: 12px;
+  animation: raErr 0.26s var(--hui-ease-flow);
+}
+.run-alert-error > svg {
+  flex: none;
+  margin-top: 3px;
+}
+@keyframes raErr {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (max-width: 480px) {
+  .run-alert {
+    padding: 12px 12px 12px 14px;
+  }
+  .run-alert-actions {
+    gap: 6px 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-alert-shell,
+  .run-alert,
+  .run-alert *,
+  .run-alert *::before,
+  .run-alert *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

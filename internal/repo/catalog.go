@@ -19,14 +19,14 @@ import (
 // baseline alignment. No project hooks or issue-fix verification gates.
 func BaselineAlignResolverAgent() domain.AgentDefinition {
 	return domain.AgentDefinition{
-		ID:           domain.BaselineAlignAgentID,
-		Name:         "基线对齐执行员",
-		Version:      1,
-		ProjectID:    "platform",
-		Shared:       true,
-		Description:  "全平台共用：把默认分支合入集成分支并解决冲突。不跑项目测试，不写修复报告，不发 MR。",
-		Instructions: "你只做基线对齐，不是需求修复。\n1. 在当前工作分支执行 git fetch 并 merge 默认分支\n2. 逐块解决冲突，保留双方有效实现；拿不准时选对业务影响更小的一侧并在提交说明里写清\n3. git add 冲突文件并创建合并提交，提交说明列出冲突文件与取舍\n4. 不要 push，不要改默认分支，不要跑项目单测或 E2E，不要写 fix-plan.md / fix-report.md / review-report.md\n5. 结束后用几句话说明每个冲突文件的取舍即可",
-		ExecutorID:   "codebuddy",
+		ID:          domain.BaselineAlignAgentID,
+		Name:        "基线对齐执行员",
+		Version:     1,
+		ProjectID:   "platform",
+		Shared:      true,
+		Description: "全平台共用：把默认分支合入集成分支并解决冲突。不跑项目测试，不写修复报告，不发 MR。",
+		Prompt:      "你只做基线对齐，不是需求修复。\n1. 在当前工作分支执行 git fetch 并 merge 默认分支\n2. 逐块解决冲突，保留双方有效实现；拿不准时选对业务影响更小的一侧并在提交说明里写清\n3. git add 冲突文件并创建合并提交，提交说明列出冲突文件与取舍\n4. 不要 push，不要改默认分支，不要跑项目单测或 E2E，不要写 fix-plan.md / fix-report.md / review-report.md\n5. 结束后用几句话说明每个冲突文件的取舍即可",
+		ExecutorID:  "codebuddy",
 	}
 }
 
@@ -237,6 +237,12 @@ func BuiltInExecutors() []domain.ExecutorDefinition {
 		{ID: "codebuddy", Name: "CodeBuddy", Kind: "codebuddy", Binary: "codebuddy", Args: []string{"-p", "--output-format", "stream-json", "--include-partial-messages", "-y", "--setting-sources", "none"}, Protocol: "stream-json"},
 		{ID: "codex", Name: "Codex", Kind: "codex", Binary: "codex", Args: []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"}, Protocol: "jsonl"},
 		{ID: "claude", Name: "Claude Code", Kind: "claude-code", Binary: "claude", Args: []string{"-p", "--output-format", "stream-json", "--permission-mode", "dontAsk"}, Protocol: "stream-json"},
+		{ID: "opencode", Name: "OpenCode", Kind: "opencode", Binary: "opencode", Protocol: "stream-json"},
+		{ID: "cursor", Name: "Cursor CLI", Kind: "cursor", Binary: "cursor-agent", Protocol: "stream-json"},
+		{ID: "agy", Name: "Antigravity", Kind: "agy", Binary: "agy", Protocol: "stream-json"},
+		{ID: "kimi", Name: "Kimi Code", Kind: "kimi", Binary: "kimi", Protocol: "stream-json"},
+		{ID: "pi", Name: "Pi", Kind: "pi", Binary: "pi", Protocol: "stream-json"},
+		{ID: "dsh", Name: "DeepSeek Harness", Kind: "dsh", Binary: "dsh", Protocol: "stream-json"},
 	}
 }
 
@@ -326,7 +332,7 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 		return fmt.Errorf("sandbox environment: %w", err)
 	}
 	switch strings.TrimSpace(v.Driver) {
-	case "local", "seatbelt", "bwrap", "docker":
+	case "local", "native", "seatbelt", "bwrap", "docker":
 	default:
 		return fmt.Errorf("unsupported sandbox driver %q", v.Driver)
 	}
@@ -764,7 +770,8 @@ func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfil
 	case "local":
 		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
-	case "seatbelt", "bwrap":
+	case "native", "seatbelt", "bwrap":
+		profile.Driver = domain.SandboxDriverNative
 		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
 	case "docker":

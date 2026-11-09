@@ -43,7 +43,7 @@ func TestBotUsesBoundSenderIdentityAutoModeAndSharedChatContext(t *testing.T) {
 		if user.ID != 43 || user.CodeBuddyAPIKey != "other-key" || user.CodeBuddyInternetEnvironment != "ioa" {
 			t.Fatal("wrong credentials")
 		}
-		if !strings.Contains(prompt, "自动执行") || !strings.Contains(prompt, "发送者 new-wecom-user") || !strings.Contains(prompt, "历史回复") {
+		if !strings.Contains(prompt, "当前审批模式为「完全权限」") || !strings.Contains(prompt, "发送者 new-wecom-user") || !strings.Contains(prompt, "历史回复") {
 			t.Fatal("missing shared context or auto mode")
 		}
 		agentToolSessions.mu.Lock()

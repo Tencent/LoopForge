@@ -78,7 +78,7 @@ func startHookObservation(ctx context.Context, compiled compiledConfig, sink Eve
 	}
 }
 
-func materializeAgentHooks(configRoot, agentRel, provider string, hooks []domain.AgentHook) ([]compiledHook, error) {
+func materializeAgentHooks(workspace, configRoot, agentRel, provider string, hooks []domain.AgentHook) ([]compiledHook, error) {
 	if len(hooks) == 0 {
 		return nil, nil
 	}
@@ -103,12 +103,12 @@ func materializeAgentHooks(configRoot, agentRel, provider string, hooks []domain
 		if !strings.HasSuffix(body, "\n") {
 			body += "\n"
 		}
-		if err := writeManagedFile(file, []byte(body), 0o700); err != nil {
+		if err := writeManagedFile(workspace, file, []byte(body), 0o700); err != nil {
 			return nil, err
 		}
 		wrapperName := name + "-agentflow.py"
 		wrapper := hookWrapperPython(name+ext, interpreter, provider, hook)
-		if err := writeManagedFile(filepath.Join(root, wrapperName), []byte(wrapper), 0o700); err != nil {
+		if err := writeManagedFile(workspace, filepath.Join(root, wrapperName), []byte(wrapper), 0o700); err != nil {
 			return nil, err
 		}
 		rel := filepath.ToSlash(filepath.Join(agentRel, "..", "config", filepath.Base(configRoot), "hooks", wrapperName))
@@ -244,19 +244,19 @@ func hookSettings(hooks []compiledHook) map[string]any {
 	return map[string]any{"hooks": events}
 }
 
-func writeHookSettings(path string, hooks []compiledHook) error {
+func writeHookSettings(workspace, path string, hooks []compiledHook) error {
 	raw, err := json.MarshalIndent(hookSettings(hooks), "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeManagedFile(path, raw, 0o600)
+	return writeManagedFile(workspace, path, raw, 0o600)
 }
 
-func mergeHookSettings(path string, hooks []compiledHook) error {
+func mergeHookSettings(workspace, path string, hooks []compiledHook) error {
 	if len(hooks) == 0 {
 		return nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := readWorkspaceFile(workspace, path)
 	if err != nil {
 		return err
 	}
@@ -278,7 +278,7 @@ func mergeHookSettings(path string, hooks []compiledHook) error {
 	if err != nil {
 		return err
 	}
-	return writeManagedFile(path, merged, 0o600)
+	return writeManagedFile(workspace, path, merged, 0o600)
 }
 
 func codexHookConfigArgs(hooks []compiledHook) []string {

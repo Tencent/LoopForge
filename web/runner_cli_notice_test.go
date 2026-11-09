@@ -34,7 +34,7 @@ func TestRunnerCLIUpdateNotice(t *testing.T) {
 	if err := html.Render(&markup, notice); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"由您自行安装和更新", "平台不会代为升级", "部分模型或功能不可用", "所选模型的访问权限", "Runner 自身的自动更新不包括 Codex / CodeBuddy / Claude Code"} {
+	for _, want := range []string{"需自行升级", "平台不会代为升级", "模型权限", "任务失败"} {
 		if !strings.Contains(markup.String(), want) {
 			t.Errorf("missing maintenance guidance: %s", want)
 		}

@@ -188,3 +188,56 @@ printf '%s\n' '{"type":"result","result":"{\"summary\":\"已确认需求\",\"rea
 		t.Fatalf("resumed analysis lost the configured main branch: %s %v", args, err)
 	}
 }
+
+func TestClarifyMultiRepositoryBranchesCheckoutSelectedCode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	st, _ := clarifyTestServer(t)
+	if err := st.PutUser(domain.User{ID: 24, LoginName: "multi-branch-owner", CodeBuddyAPIKey: "test-key"}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	branches := map[string]string{"api": "feature/api", "web": "feature/web"}
+	for _, id := range []string{"api", "web"} {
+		source := filepath.Join(root, id)
+		if err := os.MkdirAll(source, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		mustRunWorkspaceGit(t, source, "init", "-b", "master")
+		mustRunWorkspaceGit(t, source, "config", "user.name", "Test")
+		mustRunWorkspaceGit(t, source, "config", "user.email", "test@example.com")
+		for _, branch := range []string{"master", branches[id]} {
+			if branch != "master" {
+				mustRunWorkspaceGit(t, source, "checkout", "-b", branch)
+			}
+			if err := os.WriteFile(filepath.Join(source, "version.txt"), []byte(branch+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mustRunWorkspaceGit(t, source, "add", ".")
+			mustRunWorkspaceGit(t, source, "commit", "-m", branch)
+		}
+		mustRunWorkspaceGit(t, source, "checkout", "master")
+		if err := st.PutRepository(domain.Repository{ID: id, ProjectID: "platform", Name: id, LocalPath: source, DefaultBranch: "master"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("AGENTFLOW_CLARIFY_SESSION_DIR", filepath.Join(root, "sessions"))
+	bin := filepath.Join(root, "codebuddy")
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	script := `#!/bin/sh
+set -e
+cat api/version.txt web/version.txt > '` + filepath.Join(root, "analyzed-code") + `'
+printf '%s\n' '{"type":"result","result":"{\"summary\":\"已确认多仓库需求\",\"ready\":true,\"questions\":[]}"}'
+`
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h := &streamHandlers{deps: &deps{repo: st}}
+	issue := domain.Issue{ProjectID: "platform", AssigneeUserID: 24, RepositoryIDs: []string{"api", "web"}, RepositoryBranches: branches}
+	if _, _, _, err := h.executeClarify(context.Background(), issue, chatClarifyRequest{Message: "确认前后端需求"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "analyzed-code"))
+	if err != nil || string(content) != "feature/api\nfeature/web\n" {
+		t.Fatalf("multi-repository analysis used the wrong branch code: %q %v", content, err)
+	}
+}

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -351,5 +352,102 @@ func TestMCPClientPreservesInputSchema(t *testing.T) {
 	}
 	if !bytes.Contains(tools[0].InputSchema, []byte(`"required"`)) || !bytes.Contains(tools[0].Annotations, []byte("readOnlyHint")) {
 		t.Fatalf("schema not preserved: %+v", tools[0])
+	}
+}
+
+// A conversation sees every tool of the project's MCPs. Reads run; a write
+// follows the approval mode: confirm refuses it, auto runs it and assisted
+// runs it only after the review allows it.
+func TestConversationMCPFollowsApprovalModeOnly(t *testing.T) {
+	resetAgentToolSessionsForTest()
+	resetAgentToolCatalogCacheForTest()
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	user, ok := st.UserByLoginName("demo-owner")
+	if !ok {
+		t.Fatal("seed user")
+	}
+	var called []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Method string `json:"method"`
+			Params struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		_ = json.Unmarshal(body, &req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"proxy_execute_tool"},{"name":"user_todo_stories_get"}]}}`))
+		case "tools/call":
+			name := req.Params.Name
+			if inner, _ := req.Params.Arguments["tool_name"].(string); inner != "" {
+				name = inner
+			}
+			called = append(called, name)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"done"}]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	server := domain.MCPServerDefinition{ID: "tapd-p", Name: "TAPD", ProjectID: "platform", Scope: "project", MarketID: "70", Transport: "http", URL: upstream.URL}
+	if err := st.PutMCPServer(server); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	call := func(mode assistantExecMode, review string, body string) string {
+		called = nil
+		session := &AgentToolSession{
+			UserID: user.ID, ProjectID: "platform", Mode: AgentToolAssistant, ExecMode: mode,
+			ExpiresAt: time.Now().Add(time.Minute), MCPServers: []domain.MCPServerDefinition{server},
+			User: user, Final: make(chan AgentTerminalResult, 1),
+			approvalReviewer: func(context.Context, string, string, map[string]any) assistantApprovalReview {
+				return assistantApprovalReview{Outcome: review, RiskLevel: "low"}
+			},
+		}
+		if err := agentToolSessions.create(session); err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/internal/agent-tools/"+session.Token+"/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+	read := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tapd__proxy_execute_tool","arguments":{"tool_name":"user_todo_stories_get","tool_args":{}}}}`
+	write := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tapd__proxy_execute_tool","arguments":{"tool_name":"stories_update","tool_args":{"workspace_id":"1","id":"2"}}}}`
+	topLevel := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tapd__user_todo_stories_get","arguments":{}}}`
+
+	confirm := assistantExecMode{}
+	if out := call(confirm, "allow", read); strings.Contains(out, "允许列表") || len(called) != 1 {
+		t.Fatalf("read outside the old list must run: %v %s", called, out)
+	}
+	if out := call(confirm, "allow", topLevel); len(called) != 1 {
+		t.Fatalf("a top-level tool must be callable: %v %s", called, out)
+	}
+	if out := call(confirm, "allow", write); len(called) != 0 || !strings.Contains(out, "审批模式") {
+		t.Fatalf("confirm mode must refuse the write: %v %s", called, out)
+	}
+	if out := call(assistantExecMode{AutoWrite: true}, "deny", write); len(called) != 1 || called[0] != "stories_update" {
+		t.Fatalf("auto mode runs the write without review: %v %s", called, out)
+	}
+	assisted := assistantExecMode{AutoWrite: true, ReviewWrites: true}
+	if out := call(assisted, "deny", write); len(called) != 0 {
+		t.Fatalf("assisted mode must stop a refused write: %v %s", called, out)
+	}
+	if out := call(assisted, "allow", write); len(called) != 1 {
+		t.Fatalf("assisted mode runs an allowed write: %v %s", called, out)
+	}
+	for name, want := range map[string]bool{"merge_merge_request": true, "comments_add": true, "get_branch_list": false, "user_todo_stories_get": false, "frobnicate": true} {
+		if got := mcpCallMayWrite("gongfeng", assistantMCPCall{Tool: name}); got != want {
+			t.Fatalf("mcpCallMayWrite(%s)=%v", name, got)
+		}
 	}
 }

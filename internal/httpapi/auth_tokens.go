@@ -45,7 +45,7 @@ func (h *tokenHandlers) userAccessAuth() gin.HandlerFunc {
 		}
 		// Always attach the signed-in actor when present. LocalInvoker and
 		// background generation hops reuse this request context; without the
-		// key, login-gated tools (runs_group_invite, etc.) see an anonymous
+		// key, login-gated tools (runs_cancel, etc.) see an anonymous
 		// call and return 请先登录 even though the outer /mcp or generation
 		// request was authenticated via cookie.
 		user, ok := h.requestUser(c.Request, true)
@@ -63,6 +63,10 @@ func (h *tokenHandlers) userAccessAuth() gin.HandlerFunc {
 }
 
 func protectedAccessPath(path string) bool {
+	// Ingestion always checks its own project-scoped credential.
+	if path == insightIngestPath {
+		return false
+	}
 	if path == "/mcp" {
 		return true
 	}
@@ -74,7 +78,9 @@ func protectedAccessPath(path string) bool {
 		return false
 	}
 	switch path {
-	case "/api/health", "/api/auth/password", "/api/auth/setup", "/api/auth/register", "/api/auth/current", "/api/auth/exchange", "/api/auth/logout", "/api/auth/local", "/api/auth/photo":
+	// gongfeng/start checks the session itself so a signed-out browser
+	// gets a page that says so, not a bare JSON 401.
+	case "/api/health", "/api/auth/password", "/api/auth/setup", "/api/auth/register", "/api/auth/current", "/api/auth/exchange", "/api/auth/logout", "/api/auth/local", "/api/auth/photo", "/api/auth/gongfeng/start", "/api/auth/gongfeng/callback":
 		return false
 	default:
 		if strings.HasPrefix(path, "/api/auth/photo/") {
@@ -105,14 +111,14 @@ func (d deps) requestUser(r *http.Request, allowBearer bool) (*auth.User, bool) 
 	}
 	cookie, err := r.Cookie(authCookieName)
 	if err != nil || cookie.Value == "" {
-		return nil, false
+		return d.previewLocalAuthUser()
 	}
 	user, err := d.getAuthClient().ParseSignedUser(cookie.Value)
 	if err != nil || user == nil || user.IsGuest || strings.TrimSpace(user.LoginName) == "" {
-		return nil, false
+		return d.previewLocalAuthUser()
 	}
 	if authSessionExpired(user) {
-		return nil, false
+		return d.previewLocalAuthUser()
 	}
 	if stored, exists := d.repo.UserByLoginName(user.LoginName); exists {
 		user.ID = stored.ID
@@ -129,6 +135,27 @@ func bearerToken(r *http.Request) (string, bool) {
 	scheme, raw, ok := strings.Cut(value, " ")
 	raw = strings.TrimSpace(raw)
 	return raw, ok && strings.EqualFold(scheme, "Bearer") && raw != ""
+}
+
+// previewLocalAuthUser signs the configured local acceptance user into this
+// process only. It stays off unless the preview start script sets
+// AGENTFLOW_PREVIEW_LOCAL_LOGIN=1, authentication is not required, and
+// AGENTFLOW_LOCAL_LOGIN_USER names an existing user.
+func (d deps) previewLocalAuthUser() (*auth.User, bool) {
+	if strings.TrimSpace(os.Getenv("AGENTFLOW_PREVIEW_LOCAL_LOGIN")) != "1" || authRequired() || d.repo == nil {
+		return nil, false
+	}
+	login := strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_LOGIN_USER"))
+	if login == "" {
+		return nil, false
+	}
+	stored, ok := d.repo.UserByLoginName(login)
+	if !ok {
+		return nil, false
+	}
+	user := domainUserToAuth(stored)
+	user.AvatarURL = auth.AvatarURL(stored.LoginName, 100)
+	return user, true
 }
 
 func domainUserToAuth(user domain.User) *auth.User {
@@ -174,7 +201,7 @@ func (d deps) isPlatformAdmin(r *http.Request) bool {
 //
 //	g.POST("/api/auth/tokens", h.authTokens)
 func (h *tokenHandlers) authTokens(c *gin.Context) {
-	user, ok := h.interactiveUser(c.Request)
+	user, ok := h.interactiveTokenOwner(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, map[string]string{"error": "请先登录后管理个人 Token"})
 		return
@@ -244,7 +271,7 @@ func (h *tokenHandlers) authTokens(c *gin.Context) {
 
 // 路由: g.DELETE("/api/auth/tokens/:id", h.authToken)
 func (h *tokenHandlers) authToken(c *gin.Context) {
-	user, ok := h.interactiveUser(c.Request)
+	user, ok := h.interactiveTokenOwner(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, map[string]string{"error": "请先登录后管理个人 Token"})
 		return
@@ -259,6 +286,17 @@ func (h *tokenHandlers) authToken(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, map[string]bool{"ok": true})
+}
+
+// interactiveTokenOwner resolves the browser-session user for token
+// management. userAccessAuth already attaches Bearer callers to the request
+// context, so requestUser(…, false) alone would still accept an API token and
+// let a leaked token mint replacements that outlive its revocation.
+func (h *tokenHandlers) interactiveTokenOwner(c *gin.Context) (*auth.User, bool) {
+	if _, bearer := bearerToken(c.Request); bearer {
+		return nil, false
+	}
+	return h.requestUser(c.Request, false)
 }
 
 func newAPIToken() (string, error) {

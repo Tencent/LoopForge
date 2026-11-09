@@ -19,9 +19,11 @@ services:
       retries: 60
   platform:
     profiles: [platform]
-    build: .
+    # Published release stack: never builds. Bump the pinned tag (here and in
+    # AGENTFLOW_ISOLATED_IMAGE) with each release; source builds use compose.dev.yaml.
+    image: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.3.4}
     ports:
-      - "${LOOPFORGE_BIND:-127.0.0.1}:${AGENTFLOW_HTTP_PORT:-8090}:8080"
+      - "${LOOPFORGE_BIND:-0.0.0.0}:${AGENTFLOW_HTTP_PORT:-8090}:8080"
     environment:
       AGENTFLOW_HTTP_PORT: 8080
       AGENTFLOW_MYSQL_DSN: loopforge:${LOOPFORGE_DB_PASSWORD}@tcp(mysql:3306)/loopforge
@@ -29,6 +31,7 @@ services:
       AGENTFLOW_AUTH_REQUIRED: "true"
       AGENTFLOW_ALLOW_SIGNUP: ${AGENTFLOW_ALLOW_SIGNUP:-true}
       AGENTFLOW_SECURE_COOKIES: ${AGENTFLOW_SECURE_COOKIES:-false}
+      AGENTFLOW_GITHUB_CLIENT_ID: ${AGENTFLOW_GITHUB_CLIENT_ID:-}
       AGENTFLOW_ASSISTANT_SESSION_DIR: /data/assistant
       AGENTFLOW_CLARIFY_SESSION_DIR: /data/clarify
       AGENTFLOW_ASSISTANT_MODEL: ${AGENTFLOW_ASSISTANT_MODEL:-}
@@ -37,9 +40,12 @@ services:
       AGENTFLOW_PLATFORM_MCP_URL: ${AGENTFLOW_PLATFORM_MCP_URL:-http://platform:8080}
       AGENTFLOW_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-loopforge}_default
       AGENTFLOW_LOCAL_SANDBOX: docker
+      AGENTFLOW_ISOLATED_IMAGE: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.3.4}
       HOME: ${LOOPFORGE_DATA_DIR:?Run scripts/configure.sh first}/home
       AGENTFLOW_RUNNER_BINARY: /app/bin/agentflow-runner-{os}-{arch}
       AGENTFLOW_GATE_MCP_BINARY: /app/bin/agentflow-gate-mcp-{os}-{arch}
+      # Claude Code is not bundled; it is installed from npm here on first use.
+      AGENTFLOW_RUNTIME_CLI_DIR: ${LOOPFORGE_DATA_DIR}/cli
     command: ["-workspaces", "${LOOPFORGE_DATA_DIR}/workspaces"]
     volumes:
       - platform-data:/data
@@ -50,6 +56,12 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=2).close()"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
     restart: unless-stopped
 volumes:
   mysql-data:

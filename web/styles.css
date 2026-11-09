@@ -17,7 +17,7 @@
   --radius:14px; --radius-sm:9px; --radius-xs:6px; --radius-pill:999px;
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-7:32px;
   /* —— 字体 —— */
-  --mono:'JetBrains Mono','SFMono-Regular',Consolas,'Courier New',monospace;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   --fs-xs:10px; --fs-sm:11px; --fs-base:12.5px; --fs-md:13.5px; --fs-lg:16px; --fs-xl:22px; --fs-2xl:28px;
   /* —— 动效 —— */
   --ease:.18s cubic-bezier(.4,0,.2,1); --ease-spring:.32s cubic-bezier(.34,1.56,.64,1);
@@ -91,7 +91,6 @@ code,.mono{font-family:var(--mono)}
 .textarea.small{min-height:64px}
 .select.small,.input.small{padding:5px 8px;font-size:var(--fs-sm)}
 input[type="color"]{background:var(--bg-soft);border:1px solid var(--line-strong);border-radius:var(--radius-sm);height:36px;padding:3px}
-input[type="checkbox"]{accent-color:var(--blue)}
 input::placeholder,textarea::placeholder{color:var(--muted-2)}
 
 /* ---------- 通用卡片（更立体、悬停微抬升） ---------- */

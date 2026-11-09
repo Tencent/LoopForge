@@ -1,0 +1,438 @@
+/* 需求列表页 · Harness UI 设计语言（MIT，见 harness-ui-LICENSE.txt）。
+ * --hui-* 令牌、按钮、徽标、Selector 与菜单来自 app/harness-ui.css；这里只写本页布局与独有差异，
+ * 规则限定在 #issuesView 与它挂到 <body> 的行内 ⋯ 菜单。
+ */
+#issuesView .harness-icon { flex: none; }
+
+/* ---------- Buttons ---------- */
+#issuesView .issue-act,
+#issuesView .issue-act-more {
+  height: 28px;
+  min-height: 28px;
+  border-radius: 7px;
+  font: 500 12.5px/1 var(--hui-sans);
+  transform: none;
+  box-shadow: none;
+  transition: background .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow), border-color .18s var(--hui-ease-flow);
+}
+#issuesView .issue-act { padding: 0 10px; border: 1px solid var(--hui-border-strong); background: var(--hui-surface); color: var(--hui-secondary); }
+#issuesView .issue-act:hover { background: var(--hui-canvas); border-color: var(--hui-border-strong); color: var(--hui-text); }
+#issuesView .issue-act.primary { background: var(--hui-accent-soft); border-color: transparent; color: var(--hui-accent); }
+#issuesView .issue-act.primary:hover { background: color-mix(in srgb, var(--hui-accent) 16%, var(--hui-surface)); color: var(--hui-accent-hover); }
+#issuesView .issue-act.danger { background: var(--hui-surface); border-color: color-mix(in srgb, var(--hui-error) 30%, var(--hui-border)); color: var(--hui-error); }
+#issuesView .issue-act.danger:hover { background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface)); color: var(--hui-error); }
+#issuesView .issue-act-more { width: 28px; display: inline-grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--hui-muted); }
+#issuesView .issue-act-more:hover { background: var(--hui-soft); color: var(--hui-text); }
+
+/* ---------- Heading ---------- */
+#issuesView .issue-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 0 0 22px; }
+#issuesView .issue-heading > div:first-child { min-width: 0; }
+#issuesView .issue-heading .eyebrow { display: none; }
+#issuesView .issue-heading h1 { margin: 0; color: var(--hui-text); font: 600 28px/1.2 var(--hui-sans); letter-spacing: -.02em; }
+#issuesView .issue-heading h1 + p { margin: 6px 0 0; color: var(--hui-muted); font-size: 14px; line-height: 1.5; }
+#issuesView .issue-heading-actions { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+#issuesView .hui-menu-anchor { position: relative; display: inline-flex; }
+#issuesView #issueHeadingMore { position: relative; }
+#issuesView #issueHeadingMore .hui-menu-chevron { color: var(--hui-tertiary); transition: transform .2s var(--hui-ease-flow); }
+#issuesView #issueHeadingMore[aria-expanded="true"] .hui-menu-chevron { transform: rotate(180deg); }
+#issuesView .hui-alert-dot { display: none; position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--hui-error); box-shadow: 0 0 0 2px var(--hui-surface); }
+#issuesView #issueHeadingMore.has-alert .hui-alert-dot { display: block; }
+
+#issuesView .hui-menu .sync-badge { padding: 0; border-radius: 0; background: transparent; color: var(--hui-tertiary); font: 400 12px/1 var(--hui-sans); letter-spacing: 0; text-transform: none; }
+#issuesView .hui-menu .sync-badge.failed { color: var(--hui-error); }
+#issuesView .hui-menu .sync-badge.success { color: var(--hui-success); }
+#issuesView .hui-menu .schedule-job-count { min-width: 0; height: auto; padding: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; animation: none; }
+#issuesView .hui-menu .schedule-job-count.is-running { color: var(--hui-info); }
+
+.issue-action-popover { min-width: 160px; gap: 0; animation: huiPopoverIn .18s var(--hui-ease-flow); }
+.issue-action-popover .issue-popover-item .popover-icon { width: 16px; height: 16px; opacity: 1; font-size: 0; }
+@keyframes huiPopoverIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+
+/* ---------- Project bar ---------- */
+#issuesView .project-context-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  min-height: 0;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 1px solid var(--hui-border);
+  border-radius: 13px;
+  background: var(--hui-surface);
+  box-shadow: none;
+  overflow: hidden;
+}
+#issuesView .project-context-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 14px 18px; }
+#issuesView .project-context-main > div { flex: 1; min-width: 0; }
+#issuesView .project-context-mark { flex: none; width: 38px; height: 38px; border-radius: 10px; box-shadow: none; color: #fff; font: 600 12px/1 var(--hui-sans); letter-spacing: .02em; }
+#issuesView .project-context-main small,
+#issuesView .project-context-main b,
+#issuesView .project-context-main p { display: block; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#issuesView .project-context-main small { color: var(--hui-tertiary); font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+#issuesView .project-context-main b { margin: 0; color: var(--hui-text); font-size: 14px; font-weight: 600; }
+#issuesView .project-context-main p { margin: 1px 0 0; color: var(--hui-muted); font-size: 12.5px; }
+#issuesView .project-context-metrics { flex: none; display: flex; align-self: stretch; gap: 2px; padding: 6px; border-left: 1px solid var(--hui-border); width: auto; height: auto; flex-wrap: nowrap; }
+#issuesView .project-context-metrics > :is(button, div) {
+  flex: none;
+  min-width: 92px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  transition: background .18s var(--hui-ease-flow);
+}
+#issuesView .project-context-metrics > button { cursor: pointer; }
+#issuesView .project-context-metrics > button:hover { background: var(--hui-canvas); }
+#issuesView .project-context-metrics > button.plain:hover,
+#issuesView .project-context-metrics > button:disabled:hover { background: transparent; }
+#issuesView .project-context-metrics > button.on { background: var(--hui-accent-soft); }
+#issuesView .project-context-metrics > button.on :is(span, b) { color: var(--hui-accent); }
+#issuesView .project-context-metrics span { color: var(--hui-muted); font-size: 12px; white-space: nowrap; }
+#issuesView .project-context-metrics b { max-width: none; margin-top: 2px; color: var(--hui-text); font-size: 18px; font-weight: 600; line-height: 1.3; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+#issuesView .project-context-metrics .danger b { color: var(--hui-error); }
+#issuesView .project-context-metrics .project-default-sop { min-width: 200px; cursor: default; }
+#issuesView .project-context-metrics .project-default-sop b { max-width: 190px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+
+/* ---------- Toolbar ---------- */
+#issuesView .issue-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+  height: auto;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+#issuesView .issue-search {
+  box-sizing: border-box;
+  flex: 0 1 300px;
+  width: auto;
+  min-width: 160px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-tertiary);
+  box-shadow: none;
+  transition: border-color .18s var(--hui-ease-flow);
+}
+#issuesView .issue-search:focus-within { border-color: var(--hui-accent); box-shadow: none; }
+#issuesView .issue-search input { min-width: 0; width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--hui-text); font: 400 13px/1 var(--hui-sans); }
+#issuesView .issue-search input::placeholder { color: var(--hui-tertiary); }
+#issuesView #startIssueSelection { flex: none; height: 34px; min-height: 34px; padding: 0 12px; font-size: 13px; }
+
+/* Sliding tabs (registered for .issue-view-toggle in sliding-tabs.js). */
+#issuesView .issue-view-toggle,
+#issuesView .issue-view-toggle.sliding-tabs[data-sliding-tabs] {
+  flex: none;
+  margin-left: auto !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 4px !important;
+  gap: 2px !important;
+  border: 0 !important;
+  border-radius: 11px !important;
+  background: var(--hui-soft) !important;
+  --sliding-surface: var(--hui-surface);
+  --sliding-text: var(--hui-text);
+  --sliding-muted: var(--hui-muted);
+}
+#issuesView .issue-view-toggle.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] { border-radius: 8px; box-shadow: var(--hui-ind-shadow); }
+#issuesView .issue-view-toggle > button,
+#issuesView .issue-view-toggle.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
+  min-width: 0;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 12px !important;
+  gap: 6px !important;
+  font: 500 13px/1 var(--hui-sans) !important;
+  border-radius: 7px !important;
+}
+#issuesView .issue-view-toggle > button.active { color: var(--hui-text) !important; }
+
+/* ---------- Bulk bar ---------- */
+#issuesView .issue-bulk-toolbar { border: 1px solid var(--hui-border); border-radius: 13px; background: var(--hui-surface); font-size: 13px; }
+
+/* ---------- Table card ---------- */
+#issuesView .issue-board:not(.kanban-mode) { overflow: visible; }
+#issuesView .issue-table-card { border: 1px solid var(--hui-border); border-radius: 13px; background: var(--hui-surface); overflow: hidden; }
+#issuesView .issue-table-scroll { overflow-x: auto; }
+#issuesView .issue-table {
+  --issue-cols: var(--issue-col-key, 76px) minmax(132px, 1.5fr) 88px minmax(100px, .7fr) minmax(84px, .6fr) 72px minmax(104px, .8fr) minmax(128px, 184px) 104px 140px;
+  min-width: max(100%, calc(var(--issue-col-key, 76px) + 952px));
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+#issuesView .issue-table.issue-table-selectable {
+  --issue-cols: 44px var(--issue-col-key, 76px) minmax(132px, 1.5fr) 88px minmax(100px, .7fr) minmax(84px, .6fr) 72px minmax(104px, .8fr) minmax(128px, 184px) 104px 140px;
+  min-width: max(100%, calc(var(--issue-col-key, 76px) + 996px));
+}
+#issuesView .issue-table-row > div,
+#issuesView .issue-table-head > span { padding: 0 12px; }
+#issuesView .issue-table-head {
+  position: static;
+  min-height: 38px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--hui-canvas);
+  color: var(--hui-muted);
+  box-shadow: none;
+}
+#issuesView .issue-table-head > span { font: 500 12.5px/38px var(--hui-sans); color: var(--hui-muted); }
+#issuesView .issue-table-body { display: block; }
+#issuesView .issue-table-body > .issue-table-row,
+#issuesView .issue-table-body > .issue-table-row:hover,
+#issuesView .issue-table-body > .issue-table-row:is(.needs-attention, .needs-confirm),
+#issuesView .issue-table-body > .issue-table-row:is(.needs-attention, .needs-confirm):hover {
+  min-height: 56px;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--hui-border-soft);
+  border-radius: 0;
+  box-shadow: none;
+  transform: none;
+  background: transparent;
+}
+#issuesView .issue-table-body > .issue-table-row { transition: background .18s var(--hui-ease-flow); }
+#issuesView .issue-table-body > .issue-table-row:hover,
+#issuesView .issue-table-body > .issue-table-row:is(.needs-attention, .needs-confirm):hover { background: var(--hui-canvas); }
+#issuesView .issue-table-body > .issue-table-row.is-selected,
+#issuesView .issue-table-body > .issue-table-row.is-selected:hover { background: var(--hui-accent-soft); }
+#issuesView .issue-table-body > .issue-table-row :is(.issue-title-cell > b) { color: var(--hui-text) !important; }
+#issuesView .issue-table-body > .issue-table-row:hover .issue-title-cell > b { color: var(--hui-accent) !important; }
+
+#issuesView .issue-key-cell { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hui-muted); font: 400 12.5px/1.4 var(--hui-mono); }
+#issuesView .issue-key-prefix { color: var(--hui-muted); font-weight: 400; }
+#issuesView .issue-key-num { min-width: 0; color: var(--hui-text); font-weight: 600; }
+#issuesView .issue-key-prefix:empty + .issue-key-num { color: var(--hui-muted); font-weight: 400; }
+#issuesView .issue-title-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#issuesView .issue-title-cell > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; transition: color .18s var(--hui-ease-flow); }
+#issuesView .issue-title-tag,
+#issuesView .issue-title-cell .issue-title-tag[class*="tone-"],
+html[data-theme="dark"] #issuesView .issue-title-cell .issue-title-tag[class*="tone-"] {
+  flex: none;
+  min-width: 0;
+  max-width: 9em;
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hui-soft);
+  color: var(--hui-secondary);
+  font: 400 12px/22px var(--hui-sans);
+  letter-spacing: 0;
+}
+#issuesView .issue-title-cell .issue-title-tag.tone-danger,
+html[data-theme="dark"] #issuesView .issue-title-cell .issue-title-tag.tone-danger,
+#issuesView .kanban-card .issue-title-tag.tone-danger { background: color-mix(in srgb, var(--hui-error) 9%, transparent); color: var(--hui-error); }
+#issuesView .issue-assignee-cell { display: flex; align-items: center; gap: 8px; color: var(--hui-secondary); font-size: 13px; }
+#issuesView .issue-assignee-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#issuesView .hui-avatar { flex: none; box-sizing: border-box; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--hui-border); border-radius: 50%; background: var(--hui-soft); color: var(--hui-secondary); font: 600 11px/1 var(--hui-sans); }
+#issuesView .hui-avatar .harness-icon { width: 12px; height: 12px; }
+#issuesView .hui-avatar.is-agent { color: var(--hui-accent); background: var(--hui-accent-soft); border-color: transparent; }
+#issuesView .hui-avatar.is-empty { color: var(--hui-tertiary); border-style: dashed; background: transparent; }
+#issuesView .issue-source-cell { display: flex; align-items: center; min-width: 0; }
+#issuesView .issue-table-row > .issue-source-cell { padding: 0 10px; }
+#issuesView .issue-source-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--hui-border);
+  border-radius: 6px;
+  background: var(--hui-soft);
+  color: var(--hui-secondary);
+  font: 500 12px/1 var(--hui-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#issuesView .issue-source-chip.tone-tapd { border-color: transparent; background: var(--hui-accent-soft); color: var(--hui-accent); }
+#issuesView .issue-source-chip.tone-gongfeng { border-color: transparent; background: color-mix(in srgb, var(--hui-success) 10%, transparent); color: var(--hui-success); }
+#issuesView .issue-source-chip.tone-github { border-color: transparent; background: color-mix(in srgb, var(--hui-text) 8%, transparent); color: var(--hui-text); }
+/* 责任人头像复用统一头像组件：真实头像填满，未取到照片时回退首字渐变圆。 */
+#issuesView .issue-assignee-avatar {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--hui-accent), #8b5cf6);
+  color: #fff;
+  font: 600 10px/1 var(--hui-sans);
+}
+#issuesView .issue-assignee-avatar .user-avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+#issuesView .issue-assignee-avatar .user-avatar-text { font-size: 10px; font-weight: 600; color: #fff; text-transform: uppercase; }
+#issuesView :is(.issue-repository-cell, .issue-workflow-cell) { color: var(--hui-secondary); font-size: 13px; }
+
+#issuesView .issue-priority {
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--hui-secondary);
+  font: 400 13px/1 var(--hui-sans);
+  opacity: 1;
+  white-space: nowrap;
+}
+#issuesView .issue-priority .harness-icon { width: 14px; height: 14px; }
+#issuesView .issue-priority.urgent { color: var(--hui-error); }
+#issuesView .issue-priority.high { color: var(--hui-text); }
+#issuesView .issue-priority.low { color: var(--hui-tertiary); }
+
+#issuesView .issue-stage-cell { overflow: hidden; }
+
+/* Progress */
+#issuesView .issue-progress-cell { gap: 6px; color: var(--hui-secondary); font-size: 12.5px; }
+#issuesView .issue-progress-cell b { color: var(--hui-secondary); font: 400 12.5px/1.2 var(--hui-sans); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+#issuesView .issue-progress-track { height: 4px; border-radius: 4px; background: var(--hui-soft); }
+#issuesView .issue-progress-track i { border-radius: 4px; background: var(--hui-accent); }
+#issuesView :is(.issue-progress-cell, .kanban-card-progress).done .issue-progress-track i { background: var(--hui-success); }
+#issuesView :is(.issue-progress-cell, .kanban-card-progress).ended .issue-progress-track i { background: var(--hui-border-strong); }
+#issuesView .issue-progress-cell.fail b,
+html[data-theme="dark"] #issuesView .issue-progress-cell.fail b { color: var(--hui-error); }
+#issuesView .issue-progress-cell:is(.warn, .confirm) b,
+html[data-theme="dark"] #issuesView .issue-progress-cell:is(.warn, .confirm) b { color: var(--hui-tertiary); font-size: 12.5px; font-weight: 400; }
+#issuesView .issue-progress-cell.confirm .issue-progress-track i { background: var(--hui-border-strong); }
+
+#issuesView .issue-actions-cell { gap: 4px; }
+#issuesView .issue-actions-cell .issue-act { flex: 0 0 auto; width: auto; min-width: 76px; }
+
+#issuesView .issue-table-empty { display: grid; justify-items: center; gap: 6px; padding: 48px 20px; border-top: 1px solid var(--hui-border-soft); color: var(--hui-tertiary); }
+#issuesView .issue-table-empty .harness-icon { width: 22px; height: 22px; }
+#issuesView .issue-table-empty b { margin: 0; color: var(--hui-text); font-size: 14px; font-weight: 500; }
+#issuesView .issue-table-empty p { margin: 0; font-size: 12.5px; }
+
+/* List mode: the table card fills the remaining view height; the empty state centers in it. */
+#issuesView .issue-board:not(.kanban-mode) { flex: 1 1 auto; display: flex; flex-direction: column; }
+#issuesView .issue-board:not(.kanban-mode) > .issue-table-card { flex: 1 1 auto; display: flex; flex-direction: column; }
+#issuesView .issue-table-card > .issue-table-scroll { flex: 1 1 auto; display: flex; flex-direction: column; }
+#issuesView .issue-table-scroll > .issue-table { flex: 1 1 auto; display: flex; flex-direction: column; }
+#issuesView .issue-table > .issue-table-body { flex: 1 1 auto; }
+#issuesView .issue-table-body:has(> .issue-table-empty) { display: flex; flex-direction: column; }
+#issuesView .issue-table-body > .issue-table-empty { flex: 1 1 auto; align-content: center; }
+
+/* Pager lives in the card footer. */
+#issuesView .issue-table-card > .pager {
+  margin: 0;
+  padding: 10px 12px 10px 16px;
+  border: 0;
+  border-top: 1px solid var(--hui-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+#issuesView .issue-table-card .pager-meta { color: var(--hui-muted); font: 400 12.5px/1 var(--hui-sans); }
+#issuesView .issue-table-card .pager-nav { gap: 4px; }
+#issuesView .issue-table-card :is(.pager-btn, .pager-page) {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hui-secondary);
+  font: 400 12.5px/1 var(--hui-sans);
+}
+#issuesView .issue-table-card :is(.pager-btn:hover:not(:disabled), .pager-page:hover) { background: var(--hui-soft); color: var(--hui-text); }
+#issuesView .issue-table-card .pager-page.active,
+#issuesView .issue-table-card .pager-page.active:hover { background: var(--hui-accent-soft); color: var(--hui-accent); font-weight: 600; }
+#issuesView .issue-table-card .pager-ellipsis { color: var(--hui-tertiary); }
+
+/* ---------- Kanban ---------- */
+#issuesView .kanban-board { grid-auto-columns: minmax(250px, 1fr); gap: 12px; padding: 0 0 12px; }
+#issuesView .kanban-column { min-height: 440px; border: 1px solid var(--hui-border); border-radius: 13px; background: var(--hui-canvas); box-shadow: none; }
+#issuesView .kanban-column.drop-target { border-color: var(--hui-accent); background: color-mix(in srgb, var(--hui-accent) 4%, var(--hui-canvas)); box-shadow: 0 0 0 1px var(--hui-accent); }
+#issuesView .kanban-column > header { justify-content: flex-start; gap: 8px; padding: 12px 14px 10px; border: 0; color: var(--hui-secondary); }
+#issuesView .kanban-column > header .harness-icon { color: var(--hui-muted); }
+#issuesView .kanban-column > header b { color: var(--hui-secondary); font: 500 13px/1 var(--hui-sans); }
+#issuesView .kanban-column > header span { min-width: 0; height: auto; margin-left: auto; padding: 0; border-radius: 0; background: transparent; color: var(--hui-tertiary); font: 400 12px/1 var(--hui-sans); font-variant-numeric: tabular-nums; }
+#issuesView .kanban-column-body { gap: 8px; padding: 0 10px 10px; }
+#issuesView .kanban-card,
+#issuesView .kanban-card:is(.needs-attention, .needs-confirm) {
+  padding: 12px;
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  background: var(--hui-surface);
+  box-shadow: none;
+  transform: none;
+  transition: border-color .18s var(--hui-ease-flow), box-shadow .18s var(--hui-ease-flow);
+}
+#issuesView .kanban-card:hover { border-color: var(--hui-border-strong); box-shadow: var(--hui-ind-shadow); transform: none; }
+#issuesView .kanban-card.is-selected { border-color: var(--hui-accent); background: var(--hui-accent-soft); }
+#issuesView .kanban-card.dragging { opacity: .55; transform: none; }
+#issuesView .kanban-card :is(h4, h4 b) { color: var(--hui-text); }
+#issuesView .kanban-card h4 b { font-size: 13.5px; font-weight: 500; line-height: 1.45; }
+#issuesView .kanban-card-top b { color: var(--hui-tertiary); font: 400 11.5px/1.3 var(--hui-mono); }
+#issuesView .kanban-card-meta { gap: 8px; }
+#issuesView .kanban-stage { max-width: 62%; min-width: 0; display: inline-flex; overflow: hidden; }
+#issuesView .kanban-card .hui-badge { height: 24px; padding: 0 8px; font-size: 12px; }
+#issuesView .kanban-card-progress > span { color: var(--hui-muted); font-size: 12px; }
+#issuesView .kanban-empty { display: grid; justify-items: center; gap: 6px; margin: 0; padding: 26px 8px; border: 1px dashed var(--hui-border-strong); border-radius: 10px; background: transparent; color: var(--hui-tertiary); font-size: 12.5px; }
+#issuesView .kanban-empty .harness-icon { width: 16px; height: 16px; }
+
+/* ---------- Responsive ---------- */
+/* product-v4.css wraps every page heading/toolbar below 1140px with !important;
+   this page keeps a single row until 960px. */
+@media (min-width: 961px) {
+  #issuesView .issue-heading { flex-wrap: nowrap !important; align-items: center !important; gap: 20px !important; }
+  #issuesView .issue-heading > div:first-child { max-width: none !important; }
+  #issuesView .issue-heading-actions { width: auto !important; justify-content: flex-end !important; flex-wrap: nowrap !important; gap: 8px !important; }
+  #issuesView .project-context-bar { flex-wrap: nowrap !important; gap: 0 !important; }
+  #issuesView .project-context-metrics { width: auto !important; flex-wrap: nowrap !important; }
+  #issuesView .issue-toolbar { flex-wrap: nowrap !important; gap: 8px !important; }
+}
+@media (max-width: 1200px) {
+  #issuesView .issue-search { flex: 1 1 140px !important; min-width: 110px !important; }
+  #issuesView .hui-select-trigger { flex: 0 1 auto; min-width: 0; max-width: 150px; }
+  #issuesView #startIssueSelection { padding: 0 10px; }
+  #issuesView .issue-view-toggle > button,
+  #issuesView .issue-view-toggle.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] { padding: 0 10px !important; }
+  #issuesView .project-context-metrics > :is(button, div) { min-width: 76px; padding: 6px 10px; }
+  #issuesView .project-context-metrics .project-default-sop { min-width: 150px; }
+  #issuesView .project-context-metrics .project-default-sop b { max-width: 150px; }
+}
+@media (max-width: 960px) {
+  #issuesView .issue-heading { flex-direction: column; align-items: flex-start !important; gap: 14px !important; }
+  #issuesView .issue-heading-actions { width: auto !important; flex-wrap: wrap !important; }
+  #issuesView .project-context-bar { flex-direction: column; align-items: stretch !important; }
+  #issuesView .project-context-main { box-sizing: border-box; width: 100%; align-self: stretch; }
+  #issuesView .project-context-metrics { width: auto !important; border-left: 0; border-top: 1px solid var(--hui-border); overflow-x: auto; flex-wrap: nowrap !important; }
+  #issuesView .issue-toolbar { flex-wrap: wrap !important; }
+  #issuesView .issue-search { flex: 1 1 100% !important; min-width: 0 !important; }
+  #issuesView .issue-view-toggle,
+  #issuesView .issue-view-toggle.sliding-tabs[data-sliding-tabs] { margin-left: 0 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #issuesView *,
+  #issuesView *::after,
+  .issue-action-popover { transition: none !important; animation: none !important; }
+}

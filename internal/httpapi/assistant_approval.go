@@ -13,8 +13,9 @@ import (
 
 // 助手审批模式（对齐 Codex 的审批策略选择）：
 // confirm  每次确认：全部草稿逐个展示，用户点击保存后才执行（默认）。
-// assisted 帮我批准：保存类等低风险写入自动执行，删除/发布/派发/启动等
-//          危险操作以及存在依赖冲突的草稿仍逐个展示供确认。
+// assisted 帮我批准：独立模型审查具体操作和对话授权，通过后执行；
+// 未通过或审查不可用时交给用户确认。
+//
 // auto     自动执行：全部草稿由平台直接执行，不弹出审批卡片。
 const (
 	AssistantApprovalConfirm  = "confirm"
@@ -45,8 +46,8 @@ func assistantRiskyToolName(tool string) bool {
 	return assistantRiskyToolPattern.MatchString(tool)
 }
 
-// assistantDraftRisky 判断草稿是否属于危险操作。assisted 模式下危险操作
-// 仍保留草稿由用户确认，其余自动执行。
+// assistantDraftRisky retains the legacy tool-name classification. Assisted
+// approval uses the independent reviewer instead.
 func assistantDraftRisky(d assistantDraft) bool {
 	return assistantRiskyToolName(d.Tool)
 }
@@ -54,19 +55,33 @@ func assistantDraftRisky(d assistantDraft) bool {
 // resolveAssistantDrafts 在回复下发前做两件事：
 //  1. 对每个草稿运行依赖预检（assistantDraftWarnings），把执行必然失败的
 //     原因提前展示给用户，而不是等用户点保存后才收到 409；
-//  2. 按审批模式分流：confirm 全部保留；assisted 自动执行低风险且无依赖
-//     冲突的草稿；auto 全部自动执行。自动执行的草稿标记 Auto 由前端渲染
+//  2. 按审批模式分流：confirm 全部保留；assisted 审查通过且无依赖冲突
+//     才执行；auto 自动执行。自动执行的草稿标记 Auto 由前端渲染
 //     为执行回执而不是审批卡片。
 func (h *assistantHandlers) resolveAssistantDrafts(ctx context.Context, user domain.User, projectID string, drafts []assistantDraft, mode string) []assistantDraft {
 	out := make([]assistantDraft, 0, len(drafts))
 	auto := make([]assistantDraft, 0, len(drafts))
 	for _, draft := range drafts {
+		// Review receipts are host-generated, never accepted from model output.
+		draft.Review = nil
+		draft.Body = injectAssistantDraftProjectID(draft.Tool, draft.Body, projectID)
 		draft.Warnings = h.assistantDraftWarnings(draft)
 		// 存在警告（依赖冲突、节点未绑定角色等必然失败或残缺）的草稿，
 		// 即使在 auto 模式也不自动执行，降级为带警告的确认卡片。
-		if len(draft.Warnings) == 0 && (mode == AssistantApprovalAuto || (mode == AssistantApprovalAssisted && !assistantDraftRisky(draft))) {
+		approved := mode == AssistantApprovalAuto
+		if len(draft.Warnings) == 0 && mode == AssistantApprovalAssisted {
+			args := map[string]any{"path": draft.Path, "query": draft.Query}
+			if len(draft.Body) > 0 {
+				var body any
+				_ = json.Unmarshal(draft.Body, &body)
+				args["body"] = body
+			}
+			review := reviewAssistantAction(ctx, draft.Tool, assistantPublicOperations[draft.Tool].Description, args)
+			draft.Review = &review
+			approved = review.allows()
+		}
+		if len(draft.Warnings) == 0 && approved {
 			draft.Auto = true
-			draft.Body = injectAssistantDraftProjectID(draft.Tool, draft.Body, projectID)
 			auto = append(auto, draft)
 			continue
 		}
@@ -79,13 +94,26 @@ func (h *assistantHandlers) resolveAssistantDrafts(ctx context.Context, user dom
 	return out
 }
 
+// assistantGlobalSaveTool 报告保存的是否为不属于任何项目的平台级资源。
+// 项目本身、业务领域和同步配置都没有 projectId 字段。
+func assistantGlobalSaveTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "projects_save", "business_domains_save", "sync_config_save":
+		return true
+	default:
+		return false
+	}
+}
+
 // injectAssistantDraftProjectID 给保存类草稿补上缺失的 projectId 与 name。
 // 模型有时省略这些字段（校验只在字段存在时才比对），平台保存端点却必填；
-// 自动执行前注入可避免必然失败的写入。
+// 自动执行前注入可避免必然失败的写入。平台级资源不归属会话所在项目：
+// 不注入，并去掉模型误填的 projectId，否则确认卡片会把新建项目显示成
+// “项目：<当前项目>”。
 func injectAssistantDraftProjectID(tool string, body json.RawMessage, projectID string) json.RawMessage {
 	tool = strings.TrimSpace(tool)
 	projectID = strings.TrimSpace(projectID)
-	if tool == "assistant_tasks_save" || !strings.HasSuffix(tool, "_save") || len(body) == 0 {
+	if tool == "assistant_tasks_save" || (!strings.HasSuffix(tool, "_save") && tool != "workflows_clone") || len(body) == 0 {
 		return body
 	}
 	var obj map[string]any
@@ -93,7 +121,12 @@ func injectAssistantDraftProjectID(tool string, body json.RawMessage, projectID 
 		return body
 	}
 	changed := false
-	if projectID != "" {
+	if assistantGlobalSaveTool(tool) {
+		if _, exists := obj["projectId"]; exists {
+			delete(obj, "projectId")
+			changed = true
+		}
+	} else if projectID != "" {
 		if raw, exists := obj["projectId"]; !exists || func() bool { s, _ := raw.(string); return strings.TrimSpace(s) == "" }() {
 			obj["projectId"] = projectID
 			changed = true
@@ -202,6 +235,16 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 		return nil
 	}
 	switch strings.TrimSpace(d.Tool) {
+	case "projects_delete":
+		project, ok := h.repo.Project(id)
+		if !ok || project.ArchivedAt != nil {
+			return []string{fmt.Sprintf("项目 %s 不存在或已删除，执行将失败", id)}
+		}
+		ph := &projectsHandlers{deps: h.deps}
+		if blockers := ph.projectDeleteBlockers(id); len(blockers) > 0 {
+			return []string{"项目还有" + strings.Join(blockers, "、") + "，请先停止，否则执行将失败"}
+		}
+		return []string{"删除后项目从列表中移除，需求、运行和设置保留，可以恢复"}
 	case "agents_delete":
 		agent, ok := h.repo.Agent(id)
 		if !ok {

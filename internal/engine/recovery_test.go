@@ -30,6 +30,7 @@ func newRecoveryEngine(t *testing.T) (*Engine, *repo.Store) {
 }
 
 func TestResumeInterruptedRunsResumesOrphansAndSparesGatedRuns(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	now := time.Now().UTC()
 	orphan := domain.Run{ID: "run-orphan", WorkflowID: "wf", Status: "running", CreatedAt: now, UpdatedAt: now,
@@ -79,6 +80,7 @@ func TestResumeInterruptedRunsResumesOrphansAndSparesGatedRuns(t *testing.T) {
 }
 
 func TestResumeInterruptedRunsSettlesCompletedGraph(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("worker", "host", time.Second, true)
 	wf := domain.WorkflowDefinition{ID: "wf-stuck", Name: "stuck", Nodes: []domain.WorkflowNode{
@@ -117,6 +119,7 @@ func TestResumeInterruptedRunsSettlesCompletedGraph(t *testing.T) {
 }
 
 func TestResumeInterruptedRunsLeavesScheduledIntegrateToTheOwner(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("worker", "host", time.Minute, true)
 	wf := domain.WorkflowDefinition{ID: "wf-align", Name: "align", Nodes: []domain.WorkflowNode{
@@ -154,6 +157,7 @@ func TestResumeInterruptedRunsLeavesScheduledIntegrateToTheOwner(t *testing.T) {
 }
 
 func TestResumeInterruptedRunsResumesScheduledRunSoIntegrateCanFinish(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("worker", "host", time.Minute, true)
 	wf := domain.WorkflowDefinition{ID: "wf-align-orphan", Name: "align", Nodes: []domain.WorkflowNode{
@@ -180,7 +184,7 @@ func TestResumeInterruptedRunsResumesScheduledRunSoIntegrateCanFinish(t *testing
 	if len(resumed) != 1 || resumed[0] != run.ID {
 		t.Fatalf("orphan scheduled run should resume for integrate, got %v", resumed)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	var got domain.Run
 	for time.Now().Before(deadline) {
 		got, _ = s.Run(run.ID)
@@ -205,6 +209,7 @@ func TestResumeInterruptedRunsResumesScheduledRunSoIntegrateCanFinish(t *testing
 }
 
 func TestFinishAtKeepsRewoundRunAlive(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("worker", "host", time.Minute, true)
 	wf := domain.WorkflowDefinition{
@@ -244,6 +249,7 @@ func TestFinishAtKeepsRewoundRunAlive(t *testing.T) {
 }
 
 func TestFinishAtFailsWhenANodeIsStillFailed(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("worker", "host", time.Minute, true)
 	wf := domain.WorkflowDefinition{
@@ -280,6 +286,7 @@ func TestFinishAtFailsWhenANodeIsStillFailed(t *testing.T) {
 }
 
 func TestFinishInterruptedSettlesCompletedGraphInsteadOfParking(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("owner", "host", time.Second, true)
 	wf := domain.WorkflowDefinition{ID: "wf-drain", Nodes: []domain.WorkflowNode{{ID: "close", Name: "close"}}}
@@ -304,6 +311,7 @@ func TestFinishInterruptedSettlesCompletedGraphInsteadOfParking(t *testing.T) {
 }
 
 func TestCancelSettlesOrphanedRunWithoutScheduler(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	now := time.Now().UTC()
 	if err := s.PutRun(domain.Run{ID: "run-stale", WorkflowID: "wf", Status: "running", CreatedAt: now, UpdatedAt: now,
@@ -325,6 +333,7 @@ func TestCancelSettlesOrphanedRunWithoutScheduler(t *testing.T) {
 }
 
 func TestResumeInterruptedRunsSkipsUnexpiredLease(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("instance-b", "host-b", time.Second, true)
 	now := time.Now().UTC()
@@ -346,6 +355,7 @@ func TestResumeInterruptedRunsSkipsUnexpiredLease(t *testing.T) {
 }
 
 func TestResumeInterruptedRunsTakesExpiredLeaseAndBumpsGeneration(t *testing.T) {
+	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("instance-b", "host-b", time.Second, true)
 	now := time.Now().UTC()

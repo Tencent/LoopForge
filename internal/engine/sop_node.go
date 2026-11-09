@@ -56,10 +56,22 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		}
 	}
 	if child.ID == "" {
+		// A pool run binds its execution machine at its first non-SOP node.
+		// Bind it now so the child inherits the machine holding the shared
+		// checkout instead of picking its own.
+		bound, err := e.bindPoolRunner(ctx, parent, node.ID)
+		if err != nil {
+			fail(err)
+			return
+		}
+		parent = bound
 		childInput := sopChildInput(parent, node)
 		exec := parent.ExecutionContext
 		exec.ParentRunID = parent.ID
 		exec.ParentNodeID = node.ID
+		// The child works in the parent's checkout, so its code changes are
+		// there when the parent continues; nothing goes through the remote.
+		exec.WorkspaceRunID = workspaceRunID(parent)
 		exec.RunID = ""
 		exec.TraceID = parent.ExecutionContext.TraceID
 		started, err := e.StartWithRepositoriesContext(childID, childInput, parent.RepositoryContexts(), exec)

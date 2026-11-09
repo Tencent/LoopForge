@@ -177,7 +177,7 @@ pipx install ./local
 cd local/tools/tcmcp
 ```
 
-Then follow [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md). Cloud API keys are not written into generated zips or the container image; they stay on the machine that lists resources or installs the MCP client. LoopForge `vX.Y.Z` releases publish `ghcr.io/tencent/loopforge-tcmcp:<version>`.
+Then follow [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md). Cloud API keys are not written into generated zips or the container image; they stay on the machine that lists resources or installs the MCP client. LoopForge Local `local-vX.Y.Z` releases publish `ghcr.io/tencent/loopforge-tcmcp:<version>`.
 
 ## Permissions and security
 

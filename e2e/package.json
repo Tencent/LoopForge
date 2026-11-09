@@ -5,11 +5,12 @@
   "description": "Live end-to-end suite that exercises a real AgentFlow deployment (default: the test environment). See README.md.",
   "scripts": {
     "test": "bash ./run.sh",
-    "test:api": "node --test --test-concurrency=1 --test-reporter=spec api/*.test.mjs",
+    "test:unit": "node --test --test-reporter=spec 'unit/*.test.mjs'",
+    "test:api": "node --test --test-concurrency=1 --test-reporter=spec 'api/*.test.mjs'",
     "test:ui": "playwright test",
     "cleanup": "node ./cleanup.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "1.55.1"
+    "@playwright/test": "1.64.1"
   }
 }

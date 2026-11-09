@@ -284,11 +284,8 @@ func BuildCatalog(run domain.Run, resolveAgent func(id string) (domain.AgentDefi
 			Name:         agent.Name,
 			ProjectID:    agent.ProjectID,
 			Shared:       agent.Shared,
-			Instructions: clip(agent.Instructions, 400),
+			Prompt:       clip(agent.Prompt, 400),
 			Verification: agent.Verification,
-		}
-		if agent.TaskPrompt != nil {
-			item.Objective = clip(agent.TaskPrompt.Objective, 240)
 		}
 		out.Agents = append(out.Agents, item)
 	}

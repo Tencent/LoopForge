@@ -1,10 +1,13 @@
 package repo
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 )
@@ -19,22 +22,25 @@ type userWithConfig struct {
 	DeptID                       int        `gorm:"column:dept_id"`
 	DeptName                     string     `gorm:"column:dept_name"`
 	PlatformRole                 string     `gorm:"column:platform_role"`
-	TaihuPAT                     *string    `gorm:"column:taihu_pat"`
 	GitToken                     *string    `gorm:"column:git_token"`
+	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
+	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url"`
 	ClaudeCodeAPIKey             *string    `gorm:"column:claude_code_api_key"`
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url"`
+	AgentCLICredentials          *string    `gorm:"column:agent_cli_credentials"`
 	Created                      *time.Time `gorm:"column:created_at"`
 	Updated                      *time.Time `gorm:"column:updated_at"`
 }
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.taihu_pat, c.git_token, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.claude_code_api_key, c.claude_code_base_url,
+	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
 
 func (r userWithConfig) toDomain() domain.User {
@@ -43,11 +49,14 @@ func (r userWithConfig) toDomain() domain.User {
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
 		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment,
 	}
-	if r.TaihuPAT != nil {
-		u.TaihuPAT = *r.TaihuPAT
-	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
+	}
+	if r.GongfengRefreshToken != nil {
+		u.GongfengRefreshToken = *r.GongfengRefreshToken
+	}
+	if r.GongfengTokenExpiresAt != nil {
+		u.GongfengTokenExpiresAt = *r.GongfengTokenExpiresAt
 	}
 	if r.CodeBuddyAPIKey != nil {
 		u.CodeBuddyAPIKey = *r.CodeBuddyAPIKey
@@ -63,6 +72,9 @@ func (r userWithConfig) toDomain() domain.User {
 	}
 	if r.ClaudeCodeBaseURL != nil {
 		u.ClaudeCodeBaseURL = *r.ClaudeCodeBaseURL
+	}
+	if r.AgentCLICredentials != nil {
+		_ = json.Unmarshal([]byte(*r.AgentCLICredentials), &u.AgentCLICredentials)
 	}
 	if r.Created != nil {
 		u.CreatedAt = *r.Created
@@ -133,12 +145,14 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		v.CreatedAt = old.CreatedAt
 		// Authentication refreshes identity fields only. Credentials are managed
 		// through UpdateUserCredentials and must survive every login refresh.
-		v.TaihuPAT = old.TaihuPAT
 		v.GitToken = old.GitToken
+		v.GongfengRefreshToken = old.GongfengRefreshToken
+		v.GongfengTokenExpiresAt = old.GongfengTokenExpiresAt
 		v.CodexAPIKey, v.CodexBaseURL = old.CodexAPIKey, old.CodexBaseURL
 		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
 		v.CodeBuddyInternetEnvironment = old.CodeBuddyInternetEnvironment
+		v.AgentCLICredentials = old.AgentCLICredentials
 		if strings.TrimSpace(v.PlatformRole) == "" {
 			v.PlatformRole = old.PlatformRole
 		}
@@ -202,19 +216,18 @@ func (r *UsersRepo) writeUser(v domain.User) (domain.User, error) {
 }
 
 func userHasConfig(user domain.User) bool {
-	return user.TaihuPAT != "" ||
-		user.GitToken != "" ||
+	return user.GitToken != "" ||
+		user.GongfengRefreshToken != "" ||
 		user.CodeBuddyAPIKey != "" ||
 		user.CodeBuddyInternetEnvironment != "" ||
 		user.CodexAPIKey != "" ||
 		user.CodexBaseURL != "" ||
 		user.ClaudeCodeAPIKey != "" ||
-		user.ClaudeCodeBaseURL != ""
+		user.ClaudeCodeBaseURL != "" ||
+		len(user.AgentCLICredentials) > 0
 }
 
 type UserCredentialUpdate struct {
-	TaihuPAT                     string  `json:"taihuPat"`
-	TaihuPATClear                bool    `json:"taihuPatClear"`
 	GitToken                     string  `json:"gitToken"`
 	GitTokenClear                bool    `json:"gitTokenClear"`
 	CodeBuddyAPIKey              string  `json:"codeBuddyApiKey"`
@@ -226,6 +239,17 @@ type UserCredentialUpdate struct {
 	ClaudeCodeAPIKey             string  `json:"claudeCodeApiKey"`
 	ClaudeCodeAPIKeyClear        bool    `json:"claudeCodeApiKeyClear"`
 	ClaudeCodeBaseURL            *string `json:"claudeCodeBaseUrl"`
+	// AgentCLICredentials updates the agent CLIs by kind; absent fields keep
+	// the stored value. CodeBuddy, Codex and Claude Code stay on their own columns.
+	AgentCLICredentials map[string]AgentCLICredentialUpdate `json:"agentCliCredentials"`
+}
+
+type AgentCLICredentialUpdate struct {
+	APIKey      string             `json:"apiKey"`
+	APIKeyClear bool               `json:"apiKeyClear"`
+	BaseURL     *string            `json:"baseUrl"`
+	Protocol    *string            `json:"protocol"`
+	Models      *[]domain.CLIModel `json:"models"`
 }
 
 func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate) (domain.User, error) {
@@ -233,21 +257,16 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	if !ok {
 		return domain.User{}, errors.New("user not found")
 	}
-	if update.TaihuPATClear {
-		user.TaihuPAT = ""
-	} else if value := strings.TrimSpace(update.TaihuPAT); value != "" {
-		if len(value) >= 7 && strings.EqualFold(value[:7], "Bearer ") {
-			value = strings.TrimSpace(value[7:])
-		}
-		if !strings.HasPrefix(value, "tai_pat_") {
-			return domain.User{}, errors.New("太湖个人令牌格式无效，应以 tai_pat_ 开头")
-		}
-		user.TaihuPAT = value
-	}
 	if update.GitTokenClear {
 		user.GitToken = ""
+		user.GongfengRefreshToken = ""
+		user.GongfengTokenExpiresAt = time.Time{}
 	} else if value := strings.TrimSpace(update.GitToken); value != "" {
 		user.GitToken = value
+		// A pasted personal access token replaces an OAuth grant. Leaving the
+		// refresh token in place would overwrite the paste on the next use.
+		user.GongfengRefreshToken = ""
+		user.GongfengTokenExpiresAt = time.Time{}
 	}
 	if update.CodeBuddyAPIKeyClear {
 		user.CodeBuddyAPIKey = ""
@@ -273,6 +292,26 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	if update.ClaudeCodeBaseURL != nil {
 		user.ClaudeCodeBaseURL = strings.TrimSpace(*update.ClaudeCodeBaseURL)
 	}
+	if err := applyAgentCLICredentialUpdates(&user, update.AgentCLICredentials); err != nil {
+		return domain.User{}, err
+	}
+	user.UpdatedAt = time.Now().UTC()
+	if err := r.writeUserConfig(user); err != nil {
+		return domain.User{}, err
+	}
+	return user, nil
+}
+
+// SaveGongfengOAuth stores an OAuth access token in the git credential slot
+// and keeps the refresh token so a later use can renew it.
+func (r *UsersRepo) SaveGongfengOAuth(id int64, accessToken, refreshToken string, expiresAt time.Time) (domain.User, error) {
+	user, ok := r.User(id)
+	if !ok {
+		return domain.User{}, errors.New("user not found")
+	}
+	user.GitToken = strings.TrimSpace(accessToken)
+	user.GongfengRefreshToken = strings.TrimSpace(refreshToken)
+	user.GongfengTokenExpiresAt = expiresAt.UTC()
 	user.UpdatedAt = time.Now().UTC()
 	if err := r.writeUserConfig(user); err != nil {
 		return domain.User{}, err
@@ -282,13 +321,15 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 
 func (r *UsersRepo) writeUserConfig(v domain.User) error {
 	return upsert(r.DB, "user_configs", map[string]any{
-		"user_id":   v.ID,
-		"taihu_pat": nullableString(v.TaihuPAT), "git_token": nullableString(v.GitToken),
+		"user_id":                v.ID,
+		"git_token":              nullableString(v.GitToken),
+		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
 		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL),
 		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL),
-		"created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
+		"agent_cli_credentials": encodeAgentCLICredentials(v.AgentCLICredentials),
+		"created_at":            timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
 	})
 }
 
@@ -297,4 +338,109 @@ func nullableString(v string) any {
 		return nil
 	}
 	return v
+}
+
+func applyAgentCLICredentialUpdates(user *domain.User, updates map[string]AgentCLICredentialUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	merged := make(map[string]domain.AgentCLICredential, len(user.AgentCLICredentials)+len(updates))
+	for kind, cred := range user.AgentCLICredentials {
+		merged[kind] = cred
+	}
+	for kind, update := range updates {
+		kind = strings.TrimSpace(kind)
+		if !domain.IsAgentCLIKind(kind) {
+			return fmt.Errorf("不支持的 CLI：%s", kind)
+		}
+		cred := merged[kind]
+		if update.APIKeyClear {
+			cred.APIKey = ""
+		} else if value := strings.TrimSpace(update.APIKey); value != "" {
+			cred.APIKey = value
+		}
+		if update.BaseURL != nil {
+			cred.BaseURL = strings.TrimSpace(*update.BaseURL)
+		}
+		if update.Protocol != nil {
+			protocol := strings.TrimSpace(*update.Protocol)
+			if protocol != "" && domain.NormalizeAgentCLIProtocol(kind, protocol) != protocol {
+				return fmt.Errorf("%s 不支持协议 %s", kind, protocol)
+			}
+			cred.Protocol = protocol
+		}
+		if update.Models != nil {
+			models, err := normalizeCLIModels(*update.Models)
+			if err != nil {
+				return err
+			}
+			cred.Models = models
+		}
+		if cred.APIKey == "" && cred.BaseURL == "" && cred.Protocol == "" && len(cred.Models) == 0 {
+			delete(merged, kind)
+			continue
+		}
+		merged[kind] = cred
+	}
+	if len(merged) == 0 {
+		merged = nil
+	}
+	user.AgentCLICredentials = merged
+	return nil
+}
+
+func encodeAgentCLICredentials(creds map[string]domain.AgentCLICredential) any {
+	if len(creds) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(creds)
+	if err != nil || string(raw) == "{}" || string(raw) == "null" {
+		return nil
+	}
+	return string(raw)
+}
+
+const (
+	maxCLIModels        = 100
+	maxCLIModelIDLen    = 128
+	maxCLIModelNameRune = 64
+)
+
+func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
+	if len(models) > maxCLIModels {
+		return nil, fmt.Errorf("模型目录最多 %d 个", maxCLIModels)
+	}
+	out := make([]domain.CLIModel, 0, len(models))
+	seen := map[string]bool{}
+	for _, model := range models {
+		id, name := strings.TrimSpace(model.ID), strings.TrimSpace(model.Name)
+		if id == "" {
+			return nil, errors.New("模型 ID 不能为空")
+		}
+		if len(id) > maxCLIModelIDLen {
+			return nil, fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
+		}
+		for _, r := range id {
+			if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
+				return nil, fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
+			}
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("模型 ID %s 重复", id)
+		}
+		seen[id] = true
+		if utf8.RuneCountInString(name) > maxCLIModelNameRune {
+			return nil, fmt.Errorf("显示名称长度不能超过 %d 个字符", maxCLIModelNameRune)
+		}
+		for _, r := range name {
+			if r < ' ' || r == 0x7f {
+				return nil, errors.New("显示名称不能包含控制字符")
+			}
+		}
+		if name == id {
+			name = ""
+		}
+		out = append(out, domain.CLIModel{ID: id, Name: name})
+	}
+	return out, nil
 }

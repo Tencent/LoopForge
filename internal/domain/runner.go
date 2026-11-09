@@ -69,9 +69,34 @@ const RunnerVersionAlignBaseline = "0.5.0"
 // workspaces and binds interactive terminals to the frozen run sandbox.
 const RunnerVersionWorkspacePreparation = "0.6.0"
 
+// RunnerVersionWorkspaceOwnerPreparation supports a child run's prepared
+// sandbox in its parent's checkout and keeps readiness receipts run-scoped.
+const RunnerVersionWorkspaceOwnerPreparation = "0.7.1"
+
+const RunnerVersionConversationWorkspace = "0.8.0"
+
+func (r Runner) SupportsConversationWorkspace() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
+}
+
+// RunnerVersionSharedPush is the first runner that merges the work branch into
+// an existing shared branch (preview/test) in a throwaway worktree and pushes
+// it directly, without a Gongfeng MR.
+const RunnerVersionSharedPush = "0.9.0"
+
+func (r Runner) SupportsSharedPush() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
+}
+
 // RunnerVersionExistingWorkBranch is the first runner that refuses to create
 // a missing branch when the caller explicitly continues an existing branch.
 const RunnerVersionExistingWorkBranch = "0.7.0"
+
+// RunnerVersionCreateNewWorkBranch is the first runner that refuses a
+// same-named remote branch when the caller asked for a newly created branch.
+// Older daemons ignore CreateNewWorkBranch and would quietly check the existing
+// branch out instead.
+const RunnerVersionCreateNewWorkBranch = "0.9.1"
 
 type Runner struct {
 	ID             string   `json:"id"`
@@ -118,10 +143,22 @@ func (r Runner) SupportsExistingWorkBranch() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionExistingWorkBranch)
 }
 
+// SupportsCreateNewWorkBranch guards the create mode: only a daemon that knows
+// CreateNewWorkBranch can refuse an existing same-named branch.
+func (r Runner) SupportsCreateNewWorkBranch() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCreateNewWorkBranch)
+}
+
 // SupportsWorkspacePreparation guards the transient control protocol: older
 // daemons ignore the sandbox fields and must never receive a terminal open.
 func (r Runner) SupportsWorkspacePreparation() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionWorkspacePreparation)
+}
+
+// SupportsWorkspaceOwnerPreparation prevents older runners from ignoring the
+// checkout owner and preparing a child run in the wrong directory.
+func (r Runner) SupportsWorkspaceOwnerPreparation() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionWorkspaceOwnerPreparation)
 }
 
 // SupportsAlignBaseline reports whether the runner executes align_baseline.
@@ -194,9 +231,13 @@ func (r Runner) SupportsProvider(provider string) bool {
 }
 
 // RuntimeAuthMode returns the configured credential source for a provider.
-// CodeBuddy has no reusable local-login flow, so its default is the
-// responsible user's personal credential; other CLIs default to local login.
+// CodeBuddy and the extra agent CLIs have no reusable local-login flow, so
+// they always use the responsible user's personal credential. Codex and
+// Claude Code default to local login.
 func (r Runner) RuntimeAuthMode(provider string) string {
+	if IsAgentCLIKind(provider) {
+		return RuntimeAuthPersonal
+	}
 	provider = strings.TrimSpace(provider)
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) {
@@ -335,7 +376,9 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.CodexBaseURL = ""
 	copyInvocation.ClaudeCodeAPIKey = ""
 	copyInvocation.ClaudeCodeBaseURL = ""
-	copyInvocation.TaihuPAT = ""
+	copyInvocation.AgentCLIAPIKey = ""
+	copyInvocation.AgentCLIBaseURL = ""
+	copyInvocation.AgentCLIProtocol = ""
 	if copyInvocation.Repository != nil {
 		copyRepository := *copyInvocation.Repository
 		copyRepository.GitToken = ""
@@ -359,7 +402,6 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 // and are scrubbed from durable storage when the task finishes.
 type RunnerInvocation struct {
 	ArchivedFiles   []WorkspaceArtifactFile `json:"archivedFiles,omitempty"`
-	Concurrent      bool                    `json:"concurrent,omitempty"`
 	RunID           string                  `json:"runId,omitempty"`
 	NodeID          string                  `json:"nodeId,omitempty"`
 	InvocationID    string                  `json:"invocationId,omitempty"`
@@ -393,10 +435,13 @@ type RunnerInvocation struct {
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
 	ClaudeCodeAPIKey             string   `json:"claudeCodeApiKey,omitempty"`
 	ClaudeCodeBaseURL            string   `json:"claudeCodeBaseUrl,omitempty"`
-	TaihuPAT                     string   `json:"taihuPat,omitempty"`
+	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`
+	AgentCLIBaseURL              string   `json:"agentCliBaseUrl,omitempty"`
+	AgentCLIProtocol             string   `json:"agentCliProtocol,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
-	// in scripts, verification gates, and Agent hooks. It is unbound; TaihuPAT
-	// is applied in memory on the runner. Agent Assets stay allowlist-scoped.
+	// in scripts, verification gates, and Agent hooks. It is unbound; personal
+	// credentials are applied in memory on the runner. Agent Assets stay
+	// allowlist-scoped.
 	MCPCallServers []MCPServerDefinition `json:"mcpCallServers,omitempty"`
 	// GitUserName and GitUserEmail are the frozen requirement owner's commit
 	// identity. The runner applies them to each checkout with --local scope.
@@ -424,6 +469,9 @@ type RunnerRepository struct {
 	// RequireExistingWorkBranch keeps explicit continuation on an existing
 	// remote head. Missing/deleted heads are errors, never branch creation.
 	RequireExistingWorkBranch bool `json:"requireExistingWorkBranch,omitempty"`
+	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
+	// same-named remote head already exists.
+	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
 	// Dir is the workspace-relative checkout directory (empty is only kept
 	// for persisted legacy runs that already checked out at the workspace root).
 	Dir string `json:"dir,omitempty"`
@@ -436,6 +484,10 @@ type RunnerRepository struct {
 	// pushes the merged result to it (no Gongfeng MR is used).
 	IntegrateBranch string `json:"integrateBranch,omitempty"`
 	PushIntegrate   bool   `json:"pushIntegrate,omitempty"`
+	// SharedPushTarget is set on a work-branch push action when the caller asked
+	// to merge the work branch into that existing shared branch and push it
+	// directly (no Gongfeng MR). It is empty for ordinary pushes.
+	SharedPushTarget string `json:"sharedPushTarget,omitempty"`
 	// DefaultBranch is set only on align_baseline: the branch merged into
 	// IntegrateBranch.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -496,6 +548,11 @@ type RunnerWorkBranchHead struct {
 	Name         string `json:"name,omitempty"`
 	WorkBranch   string `json:"workBranch"`
 	Head         string `json:"head"`
+	// SharedBranch and SharedHead report an extra direct push of the work
+	// branch into a shared branch; an empty SharedHead means the shared
+	// branch already contained the work branch.
+	SharedBranch string `json:"sharedBranch,omitempty"`
+	SharedHead   string `json:"sharedHead,omitempty"`
 }
 
 // RunnerTaskEvent is one batched output record reported by the runner. Seq is

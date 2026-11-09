@@ -65,7 +65,8 @@
 .schedule-job-row{display:flex;align-items:center;gap:7px;padding:7px;border:1px solid var(--line);border-radius:7px;background:var(--bg-soft)}
 .schedule-job-main{min-width:0;flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;border:0;background:transparent;color:var(--text);text-align:left;cursor:pointer}
 .schedule-job-main b{font-size:11.5px;display:inline-flex;align-items:center;gap:6px}.schedule-job-main>span,.schedule-job-main small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-2);font-size:10px}
-.schedule-job-form{flex:0 1 auto;min-height:0;display:flex;flex-direction:column;padding:14px 14px 0;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.015);overflow:visible}
+/* The section owns scrolling; the form must retain its full content height. */
+.schedule-job-form{flex:0 0 auto;display:flex;flex-direction:column;padding:14px 14px 0;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.015);overflow:visible}
 .schedule-job-form [hidden]{display:none!important}
 .schedule-job-form .input,.schedule-job-form .select,.schedule-job-form textarea{width:100%;box-sizing:border-box}
 .schedule-job-form input[type=checkbox]{width:auto;flex:0 0 auto;margin:0}
@@ -122,3 +123,89 @@
 .align-resolve-out pre{margin:6px 0 0;max-height:260px;overflow:auto;font-size:10px;background:rgba(127,127,127,.07);border-radius:6px;padding:8px;white-space:pre-wrap;word-break:break-all}
 @media(max-width:900px){.align-conflict-sides{grid-template-columns:1fr}}
 @media(max-width:700px){.schedule-job-row{align-items:flex-start;flex-wrap:wrap}.schedule-job-main{flex-basis:100%}}
+
+/* AI 定时任务：业务导航页与触发配置共用编辑器。 */
+#aiSchedulesView { color:var(--hui-text); }
+#aiSchedulesView .page-heading { display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:22px; }
+#aiSchedulesView h1 { margin:0;font:600 22px/1.3 var(--hui-sans); }
+#aiSchedulesView .page-heading p { margin:6px 0 0;color:var(--hui-secondary);font-size:13px; }
+#aiSchedulesView .heading-actions { display:flex;gap:8px;flex-shrink:0; }
+#aiSchedulesView .ai-schedule-panel { border:1px solid var(--hui-border);border-radius:14px;background:var(--hui-surface);box-shadow:var(--hui-panel-shadow);overflow:hidden; }
+#aiSchedulesView .ai-schedule-panel-head { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--hui-border);font-size:13px; }
+#aiSchedulesView #aiScheduleRuntimeHint { padding:12px 16px;margin:0;color:var(--hui-secondary);font-size:12px;line-height:1.6; }
+#aiSchedulesView .schedule-job-list { max-height:none;overflow:visible;margin:0;gap:0; }
+#aiSchedulesView .schedule-job-item { border-top:1px solid var(--hui-border-soft); }
+#aiSchedulesView .schedule-job-row { padding:14px 16px;border:0;border-radius:0;background:transparent; }
+#aiSchedulesView .schedule-job-item.is-running .schedule-job-row { box-shadow:none; }
+#aiSchedulesView .schedule-job-main { gap:5px;color:var(--hui-text); }
+#aiSchedulesView .schedule-job-main b { font-size:14px;font-weight:500; }
+#aiSchedulesView .schedule-job-main>span, #aiSchedulesView .schedule-job-main small { color:var(--hui-secondary);font-size:12px; }
+#aiSchedulesView .schedule-job-main small { white-space:normal;overflow-wrap:anywhere; }
+#aiSchedulesView .schedule-job-main small.schedule-run-live { color:var(--hui-info); }
+#aiSchedulesView .schedule-kind-tag { background:var(--hui-accent-soft);color:var(--hui-accent); }
+#aiSchedulesView .sync-empty { padding:48px 20px;color:var(--hui-secondary);text-align:center;font-size:13px; }
+#scheduleModal { --line:var(--hui-border);--text:var(--hui-text);--muted:var(--hui-secondary);--muted-2:var(--hui-muted);--panel:var(--hui-surface);--bg-soft:var(--hui-canvas); }
+#scheduleModal .schedule-head[hidden], #scheduleModal .schedule-job-list[hidden] { display:none; }
+#scheduleModal .schedule-fields>div>label:not(.schedule-check) { font-size:12.5px;font-weight:500; }
+#scheduleModal .schedule-field-hint { font-size:12px; }
+#scheduleModal .schedule-job-main b { font-size:13px; }
+#scheduleModal .schedule-job-main>span, #scheduleModal .schedule-job-main small { font-size:12px; }
+@media(max-width:700px) {
+  #aiSchedulesView .page-heading { align-items:flex-start;flex-direction:column;gap:14px; }
+  #aiSchedulesView .schedule-job-row { flex-wrap:wrap; }
+  #aiSchedulesView .schedule-job-main { flex-basis:100%; }
+}
+
+/* 项目触发配置直接编辑。 */
+#scheduleModal #scheduleJobList[hidden] { display:none; }
+#scheduleModal .schedule-config-runtime { display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;color:var(--hui-secondary); }
+#scheduleModal .schedule-config-runtime>div { display:flex;flex-direction:column;gap:5px;min-width:0; }
+#scheduleModal .schedule-config-runtime b { color:var(--hui-text);font-size:13px;font-weight:500; }
+#scheduleModal .schedule-config-runtime :is(span,small) { font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
+#scheduleModal .schedule-config-runtime button { flex:none; }
+
+#scheduleModal .schedule-head small { font-size:12px;line-height:1.5; }
+
+/* Shared schedules use the existing Harness surfaces and dialog controls. */
+.shared-schedule-card { width: min(880px, calc(100vw - 32px)); max-width: 880px; }
+.shared-schedule-form { display: grid; gap: 16px; }
+.shared-schedule-form label, .shared-schedule-values label { display: grid; gap: 6px; min-width: 0; font-size: 13px; }
+.shared-schedule-form .schedule-check { display: flex; align-items: center; gap: 6px; }
+.shared-schedule-section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.shared-schedule-section-head h3, .shared-schedule-section-head p { margin: 0; }
+.shared-schedule-section-head h3 { font-size: 15px; }
+.shared-schedule-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.shared-schedule-origin, .shared-schedule-diff small { color: var(--hui-muted); font-size: 12px; }
+.shared-schedule-origin { display: block; margin-top: 4px; }
+.shared-schedule-values { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin: 16px 0; }
+.shared-schedule-parameter-rows { display: grid; gap: 10px; }
+.shared-schedule-parameter-row { display: grid; grid-template-columns: 1fr 1fr 90px 1fr auto auto; gap: 8px; align-items: end; padding: 12px; border: 1px solid var(--hui-border); border-radius: 10px; }
+.shared-schedule-preview summary { cursor: pointer; font-size: 13px; color: var(--hui-muted); }
+.shared-schedule-preview pre, .shared-schedule-diff pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 13px; line-height: 1.7; max-height: 320px; overflow-y: auto; }
+.shared-schedule-diff { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 12px; margin: 18px 0; }
+.shared-schedule-version-select { display: flex; gap: 12px; align-items: center; font-size: 13px; }
+.shared-schedule-version-select select { width: auto; }
+@media (max-width: 720px) {
+  .shared-schedule-values, .shared-schedule-diff { grid-template-columns: 1fr; }
+  .shared-schedule-parameter-row { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #aiSchedulesView .heading-actions { flex-wrap: wrap; }
+}
+
+#aiSchedulesView :is([role="tabpanel"], #sharedScheduleSearchField)[hidden] { display:none; }
+#aiSchedulesView .ai-schedule-toolbar { margin-bottom: 18px; }
+.shared-schedule-market-icon { display:grid;place-items:center;flex:none;width:38px;height:38px;border:1px solid var(--hui-border);border-radius:10px;background:var(--hui-soft);color:var(--hui-muted); }
+.shared-schedule-market-source { display:block;margin-top:5px;color:var(--hui-tertiary);font-size:12px; }
+.shared-schedule-market-meta { display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 16px;color:var(--hui-muted);font-size:12px; }
+.shared-schedule-market-meta>span { padding:4px 7px;border-radius:6px;background:var(--hui-soft); }
+.shared-schedule-market-meta .shared-schedule-subscribed { background:var(--hui-accent-soft);color:var(--hui-accent); }
+.shared-schedule-market-actions { display:flex;justify-content:space-between;gap:10px;padding-top:12px;border-top:1px solid var(--hui-border); }
+.shared-schedule-market-empty { grid-column:1/-1;padding:54px 20px;border:1px dashed var(--hui-border);border-radius:12px;text-align:center;color:var(--hui-muted);font-size:13px;line-height:1.7; }
+.shared-schedule-market-error { display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;color:var(--hui-error);font-size:13px; }
+
+.shared-schedule-version-editor { padding:16px;border:1px solid var(--hui-border);border-radius:12px;background:var(--hui-canvas); }
+.shared-schedule-version-current { flex:none;color:var(--hui-accent);font-size:12px; }
+.shared-schedule-comparison summary { cursor:pointer;color:var(--hui-secondary);font-size:13px; }
+.shared-schedule-version-editor .shared-schedule-diff { margin:12px 0 0; }
+.shared-schedule-version-editor .shared-schedule-diff pre { max-height:180px; }
+@media(max-width:720px) { .shared-schedule-version-editor .shared-schedule-section-head { align-items:flex-start;flex-direction:column;gap:10px; } }
+#sharedScheduleVersionEditor .shared-schedule-version-select { display:flex;flex:none;align-items:center;gap:12px;margin:0;white-space:nowrap; }

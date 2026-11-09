@@ -811,7 +811,7 @@ def find_fallback_usage_event(
     tool_event: dict[str, Any],
     usage_events: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """当找不到直接匹配的 tool usage 时，为 AgentLens 选一条兜底 usage。"""
+    """当找不到直接匹配的 tool usage 时，选一条兜底 usage 补齐 message_id。"""
     tool_name = str(tool_event.get("tool") or "").strip()
     transcript_path = str(tool_event.get("transcript_path") or "").strip()
     agent = str(tool_event.get("agent") or "main").strip() or "main"

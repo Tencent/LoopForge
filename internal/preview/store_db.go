@@ -9,17 +9,15 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"agentflow/internal/repo"
 )
 
 // DBStore keeps tar.zst blobs in MySQL (sqlite in tests). Serving reads the
 // blob back out and extracts the requested member in memory; no shared disk.
 type DBStore struct {
-	repo *repo.Store
+	repo BlobRepository
 }
 
-func NewDBStore(st *repo.Store) *DBStore {
+func NewDBStore(st BlobRepository) *DBStore {
 	return &DBStore{repo: st}
 }
 
@@ -57,7 +55,7 @@ func (s *DBStore) Open(ctx context.Context, key string) (io.ReadSeekCloser, Obje
 	}
 	data, size, ok := s.repo.PreviewBlob(ContentKey(key))
 	if !ok {
-		return nil, Object{}, fmt.Errorf("preview blob %s not found", key)
+		return nil, Object{}, fmt.Errorf("%w: blob %s", ErrPreviewNotFound, key)
 	}
 	return memBlob{bytes.NewReader(data)}, Object{Key: key, SHA256: ContentKey(key), Size: size}, nil
 }

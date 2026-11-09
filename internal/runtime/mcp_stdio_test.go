@@ -175,6 +175,27 @@ func TestProvisionMCPInstallRejectsLocalDriver(t *testing.T) {
 	}
 }
 
+func TestWithoutUnprovisionableMCPKeepsLocalWorkspaceUsable(t *testing.T) {
+	workspace := t.TempDir()
+	assets := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{
+		{ID: "needs-install", Name: "Zvec-Grep", Transport: "stdio", Command: "zg", InstallScript: "npm install -g x"},
+		{ID: "plain", Name: "Plain", Transport: "stdio", Command: "plain"},
+		{ID: "remote", Name: "Remote", Transport: "http", URL: "https://example.com/mcp", InstallScript: "ignored"},
+	}}
+	local := &localSandbox{id: "run", workspace: workspace}
+	kept, skipped := WithoutUnprovisionableMCP(local, assets)
+	if len(skipped) != 1 || skipped[0] != "Zvec-Grep" || len(kept.MCPServers) != 2 {
+		t.Fatalf("kept=%+v skipped=%v", kept.MCPServers, skipped)
+	}
+	if err := ProvisionMCPAssets(context.Background(), local, workspace, kept, nil); err != nil {
+		t.Fatalf("filtered assets must provision in a local sandbox: %v", err)
+	}
+	isolated, skipped := WithoutUnprovisionableMCP(&provisionSandbox{workspace: workspace}, assets)
+	if len(skipped) != 0 || len(isolated.MCPServers) != 3 {
+		t.Fatalf("isolated sandboxes keep every server: %+v %v", isolated.MCPServers, skipped)
+	}
+}
+
 func TestProvisionMCPRejectsUnsafeRuntimeID(t *testing.T) {
 	workspace := t.TempDir()
 	assets := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{ID: "!!!", Name: "Unsafe", Transport: "stdio", Command: "x", FileRefs: []domain.MCPFileRef{{Path: "server.js", Size: 1}}}}}

@@ -29,8 +29,7 @@ func testNamedGenericTemplate(id, name, agentID string) GenericTemplate {
 		},
 		Agents: []domain.AgentDefinition{{
 			ID: agentID, Name: name + "角色", Version: 1, ExecutorID: "codebuddy",
-			Instructions: "test role",
-			TaskPrompt:   &domain.TaskPromptSpec{Objective: "完成任务", Inputs: []string{"任务输入：{{input}}"}},
+			Prompt: "完成任务\n\n任务输入：{{input}}",
 		}},
 	}
 }
@@ -54,11 +53,10 @@ func testBackendGenericTemplate() GenericTemplate {
 	for i, spec := range agents {
 		outAgents = append(outAgents, domain.AgentDefinition{
 			ID: spec.id, Name: spec.name, Version: 1, ExecutorID: "codebuddy",
-			Instructions: "test role",
-			Rules:        []string{GenericRuleCore, GenericRuleBackendProfile},
-			Skills:       spec.skills,
-			MCPServers:   spec.mcp,
-			TaskPrompt:   &domain.TaskPromptSpec{Objective: spec.name, Inputs: []string{"任务输入：{{input}}"}},
+			Rules:      []string{GenericRuleCore, GenericRuleBackendProfile},
+			Skills:     spec.skills,
+			MCPServers: spec.mcp,
+			Prompt:     spec.name + "\n\n任务输入：{{input}}",
 		})
 		nodeID := spec.id
 		switch spec.id {
@@ -92,7 +90,6 @@ func testBackendGenericTemplate() GenericTemplate {
 			Requirements: []domain.WorkflowRequirement{
 				{Key: RequirementGongfengGitToken, NodeID: "mr", Label: "工蜂 Git Token", Hint: "push 需要 Git Token", Setup: "settings"},
 				{Key: RequirementGongfengMCP, NodeID: "mr", Label: "工蜂 MCP", Hint: "创建 MR 需要工蜂 MCP", Setup: "mcp"},
-				{Key: RequirementTaihuPAT, NodeID: "mr", Label: "太湖个人令牌", Hint: "工蜂 MCP 走太湖认证", Setup: "settings"},
 			},
 			Nodes: nodes,
 			Edges: []domain.WorkflowEdge{

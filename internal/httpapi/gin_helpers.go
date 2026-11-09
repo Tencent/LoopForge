@@ -124,7 +124,16 @@ func securityHeaders() gin.HandlerFunc {
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		path := c.Request.URL.Path
 		frameOptions := "DENY"
-		csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+		csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; frame-src 'self' blob:"
+		if strings.HasPrefix(path, "/chatbot/") {
+			frameOptions = "SAMEORIGIN"
+			csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; frame-src 'self' blob:; form-action 'self'"
+		}
+		if path == "/chatbot/preview.html" {
+			// srcdoc inherits the app's strict CSP and blocks generated scripts.
+			// Give only the isolated preview document an inline-script policy.
+			csp = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: https: http:; font-src data: https:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'none'"
+		}
 		if path == "/vscode.html" || strings.HasPrefix(path, "/vscode-web/") || strings.HasPrefix(path, "/extensions/") {
 			// Real vscode-web workbench + extension-host iframe, same-origin only.
 			frameOptions = "SAMEORIGIN"

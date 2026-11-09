@@ -382,3 +382,65 @@ func TestAdmissionCountsLegacyRowsWithoutBucket(t *testing.T) {
 		t.Fatalf("legacy rows leaked into another project: %s", r.Status)
 	}
 }
+
+// Chat workspaces never use SOP slots. An independently started child SOP does.
+func TestConversationWorkspacesDoNotHoldSOPSlots(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	checkConversationWorkspaces(t, s, "p", "")
+}
+
+func checkConversationWorkspaces(t *testing.T, s *Store, project, prefix string) []string {
+	t.Helper()
+	var ids []string
+	id := func(name string) string {
+		ids = append(ids, prefix+name)
+		return prefix + name
+	}
+	run := func(name string) domain.Run {
+		return domain.Run{ID: id(name), Status: "running", CreatedAt: time.Now().UTC(), ExecutionContext: domain.TelemetryContext{ProjectID: project}, Nodes: map[string]*domain.NodeRun{}}
+	}
+	status := func(name string) string {
+		r, _ := s.RunState(prefix + name)
+		return r.Status
+	}
+	for i := 0; i < ProjectRunLimit+4; i++ {
+		group := run(fmt.Sprintf("chat-workspace-%02d", i))
+		group.Kind, group.WorkflowID, group.Status = domain.RunKindWorkspace, domain.ConversationWorkspaceWorkflowID, "waiting"
+		if err := s.PutRun(group); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < ProjectRunLimit-1; i++ {
+		if err := s.PutRun(run(fmt.Sprintf("sop-%d", i))); err != nil {
+			t.Fatal(err)
+		}
+		if got := status(fmt.Sprintf("sop-%d", i)); got != "running" {
+			t.Fatalf("SOP %d queued behind idle free collaborations: %s", i, got)
+		}
+	}
+	child := run("child-sop")
+	if err := s.PutRun(child); err != nil {
+		t.Fatal(err)
+	}
+	// Nine SOPs plus the independent child fill the ten slots.
+	if err := s.PutRun(run("over-limit")); err != nil {
+		t.Fatal(err)
+	}
+	if got := status("over-limit"); got != "queued" {
+		t.Fatalf("an independent child SOP must keep its own slot: %s", got)
+	}
+	c, _ := s.RunState(prefix + "child-sop")
+	c.Status = "succeeded"
+	if err := s.PutRun(c); err != nil {
+		t.Fatal(err)
+	}
+	promoted, err := s.PromoteQueuedRuns()
+	if err != nil || len(promoted) != 1 || promoted[0] != prefix+"over-limit" {
+		t.Fatalf("finished child must release the slot: %v %v", promoted, err)
+	}
+	return ids
+}

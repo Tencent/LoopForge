@@ -14,6 +14,8 @@ bin/
 *.db
 *.db-*
 node_modules/
+# Built by scripts/build-chatbot.sh and embedded by Go.
+web/native-chat/
 __pycache__/
 *.pyc
 .venv/

@@ -48,6 +48,9 @@ func TestRewriteRemoteForGitToken(t *testing.T) {
 	if got != "https://private:already@git.example.com/example/skillhub.git" {
 		t.Fatalf("existing private user rewrite = %q", got)
 	}
+	if got := RewriteRemoteForToken("git@git.example.com:example/skillhub.git", "oauth2:oauth_secret"); got != "https://oauth2:oauth_secret@git.example.com/example/skillhub.git" {
+		t.Fatalf("oauth2 token rewrite = %q", got)
+	}
 	if RewriteRemoteForToken("/tmp/local-repo", token) != "/tmp/local-repo" {
 		t.Fatalf("local path should stay unchanged")
 	}

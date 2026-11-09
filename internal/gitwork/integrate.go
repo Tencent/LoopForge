@@ -9,10 +9,10 @@ import (
 // EnsureIdentity gives a checkout a committer identity when it has none.
 func EnsureIdentity(ctx context.Context, workspace string) {
 	if n, _ := C(ctx, workspace, "config", "user.name"); strings.TrimSpace(n) == "" {
-		_, _ = C(ctx, workspace, "config", "user.name", "AgentFlow")
+		_, _ = C(ctx, workspace, "config", "user.name", "LoopForge")
 	}
 	if m, _ := C(ctx, workspace, "config", "user.email"); strings.TrimSpace(m) == "" {
-		_, _ = C(ctx, workspace, "config", "user.email", "agentflow@local")
+		_, _ = C(ctx, workspace, "config", "user.email", "loopforge@local")
 	}
 }
 
@@ -34,14 +34,14 @@ func MergeLatestIntegration(ctx context.Context, w, work, integrate, label strin
 	if _, err := C(ctx, w, "rev-parse", "--verify", "MERGE_HEAD"); err == nil {
 		_, _ = C(ctx, w, "add", "-A")
 		DropSOPDeliverablesFromIndex(ctx, w)
-		if err := CommitStaged(ctx, w, labelled("AgentFlow: resolve integration conflicts", label)); err != nil {
+		if err := CommitStaged(ctx, w, labelled("LoopForge: resolve integration conflicts", label)); err != nil {
 			return nil, err
 		}
 	}
 	if s, _ := C(ctx, w, "status", "--porcelain"); strings.TrimSpace(s) != "" {
 		_, _ = C(ctx, w, "add", "-A")
 		DropSOPDeliverablesFromIndex(ctx, w)
-		if err := CommitStaged(ctx, w, labelled("AgentFlow: save scheduled SOP work", label)); err != nil {
+		if err := CommitStaged(ctx, w, labelled("LoopForge: save scheduled SOP work", label)); err != nil {
 			return nil, err
 		}
 	}
@@ -49,7 +49,7 @@ func MergeLatestIntegration(ctx context.Context, w, work, integrate, label strin
 	if _, err := C(ctx, w, "fetch", "origin", ref); err != nil {
 		return nil, err
 	}
-	mergeMsg := labelled("AgentFlow: merge latest "+integrate, label)
+	mergeMsg := labelled("LoopForge: merge latest "+integrate, label)
 	if _, err := C(ctx, w, "merge", "--no-edit", "-m", mergeMsg, "origin/"+integrate); err != nil {
 		conflicts, finishErr := FinishMergeAfterExcludedConflicts(ctx, w, mergeMsg)
 		if finishErr != nil {
@@ -67,7 +67,7 @@ func MergeLatestIntegration(ctx context.Context, w, work, integrate, label strin
 		// Only SOP-report conflicts: merge was completed by FinishMergeAfterExcludedConflicts.
 	}
 	DropSOPDeliverablesFromIndex(ctx, w)
-	if err := CommitStaged(ctx, w, labelled("AgentFlow: drop SOP deliverables", label)); err != nil {
+	if err := CommitStaged(ctx, w, labelled("LoopForge: drop SOP deliverables", label)); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -92,7 +92,7 @@ func MergeLatestRemoteBranch(ctx context.Context, w, branch string) ([]string, e
 	if _, err := C(ctx, w, "fetch", "origin", ref); err != nil {
 		return nil, err
 	}
-	mergeMsg := "AgentFlow: merge latest " + branch
+	mergeMsg := "LoopForge: merge latest " + branch
 	if _, err := C(ctx, w, "merge", "--no-edit", "-m", mergeMsg, "origin/"+branch); err != nil {
 		conflicts, finishErr := FinishMergeAfterExcludedConflicts(ctx, w, mergeMsg)
 		if finishErr != nil {

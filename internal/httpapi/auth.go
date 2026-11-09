@@ -100,13 +100,10 @@ func getHeaderCaseInsensitive(r *http.Request, key string) string {
 	return ""
 }
 
+// getReturnURL 计算 SSO 登录完成后的回跳地址。return_url / Referer 均由客户端
+// 控制，只接受指向本站（请求 Host 或 AppDomain 及其子域）的 http(s) 地址，
+// 否则回落到站点根路径，防止登录后被带到外部钓鱼站点（Open Redirect）。
 func (h *authHandlers) getReturnURL(r *http.Request) string {
-	if raw := strings.TrimSpace(r.URL.Query().Get("return_url")); raw != "" {
-		return raw
-	}
-	if ref := strings.TrimSpace(r.Header.Get("Referer")); ref != "" {
-		return ref
-	}
 	proto := "http"
 	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		proto = "https"
@@ -115,13 +112,58 @@ func (h *authHandlers) getReturnURL(r *http.Request) string {
 	if host == "" {
 		host = h.getAuthClient().Config().AppDomain
 	}
-	return fmt.Sprintf("%s://%s/", proto, host)
+	origin := fmt.Sprintf("%s://%s", proto, host)
+	for _, raw := range []string{r.URL.Query().Get("return_url"), r.Header.Get("Referer")} {
+		if safe, ok := h.safeReturnURL(r, origin, raw); ok {
+			return safe
+		}
+	}
+	return origin + "/"
+}
+
+func (h *authHandlers) safeReturnURL(r *http.Request, origin, raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.ContainsAny(raw, "\\\r\n\t") {
+		return "", false
+	}
+	// 站内相对路径：必须以单个 "/" 开头，"//host" 是协议相对的外部地址。
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		raw = origin + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil || u.Opaque != "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", false
+	}
+	if !h.allowedReturnHost(r, u.Hostname()) {
+		return "", false
+	}
+	return u.String(), true
+}
+
+func (h *authHandlers) allowedReturnHost(r *http.Request, host string) bool {
+	host = bareHostname(host)
+	if host == "" {
+		return false
+	}
+	if reqHost := bareHostname(r.Host); reqHost != "" && host == reqHost {
+		return true
+	}
+	appDomain := strings.TrimPrefix(bareHostname(h.getAuthClient().Config().AppDomain), ".")
+	return appDomain != "" && (host == appDomain || strings.HasSuffix(host, "."+appDomain))
+}
+
+func bareHostname(hostport string) string {
+	hostport = strings.TrimSpace(hostport)
+	if hn, _, err := net.SplitHostPort(hostport); err == nil {
+		hostport = hn
+	}
+	return strings.ToLower(strings.TrimSuffix(strings.Trim(hostport, "[]"), "."))
 }
 
 func (h *authHandlers) authCurrent(c *gin.Context) {
 	r := c.Request
 
-	// 1. 优先检查太湖 / AIO-Forward 网关透传的员工身份 Header
+	// 1. 优先检查认证网关透传的员工身份 Header
 	staffName := gatewayLoginName(r)
 	if staffName != "" {
 		staffID, _ := strconv.Atoi(strings.TrimSpace(getHeaderCaseInsensitive(r, "Staffid")))
@@ -211,6 +253,17 @@ func (h *authHandlers) authCurrent(c *gin.Context) {
 				return
 			}
 		}
+	}
+
+	// Preview-only: this process is explicitly opted in, auth is off, and a
+	// local acceptance user is configured. Sign that user in so the IP preview
+	// does not sit on the guest session and nag the assistant.
+	if user, ok := h.previewLocalAuthUser(); ok {
+		if token, signErr := h.getAuthClient().SignUser(user); signErr == nil && token != "" {
+			h.setAuthCookie(c.Writer, c.Request, token)
+		}
+		c.JSON(http.StatusOK, map[string]any{"user": h.annotateUser(user), "authRequired": false, "appDomain": h.getAuthClient().Config().AppDomain})
+		return
 	}
 
 	// 3. 兜底为访客身份，附带登录跳转链接 loginUrl

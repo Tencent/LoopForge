@@ -26,10 +26,10 @@ func TestPutAgentKeepsExistingProjectID(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if err := s.PutAgent(domain.AgentDefinition{ID: "gslb-fix", Name: "Fix", ProjectID: "gslb", Instructions: "keep"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "gslb-fix", Name: "Fix", ProjectID: "gslb", Prompt: "keep"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutAgent(domain.AgentDefinition{ID: "gslb-fix", Name: "Fix v2", Instructions: "keep"}); err != nil {
+	if err := s.PutAgent(domain.AgentDefinition{ID: "gslb-fix", Name: "Fix v2", Prompt: "keep"}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Agent("gslb-fix")
@@ -117,11 +117,8 @@ func TestSeedPopulatesDefaultsForAnEmptyStore(t *testing.T) {
 	if _, ok := s.Sandbox("local"); !ok {
 		t.Fatal("expected seeded local sandbox")
 	}
-	if _, ok := s.Sandbox("skillhub-macos-seatbelt"); !ok {
-		t.Fatal("expected seeded skillhub-macos-seatbelt sandbox")
-	}
-	if _, ok := s.Sandbox("skillhub-linux-bwrap"); !ok {
-		t.Fatal("expected seeded skillhub-linux-bwrap sandbox")
+	if sandbox, ok := s.Sandbox("skillhub-native"); !ok || sandbox.Driver != domain.SandboxDriverNative {
+		t.Fatalf("expected seeded native skillhub sandbox, got %+v", sandbox)
 	}
 	if _, ok := s.Sandbox("container"); ok {
 		t.Fatal("legacy container sandbox must not be seeded")

@@ -28,7 +28,7 @@
 }
 ```
 
-项目和仓库敏感 token 已脱敏。这里的 Agent 是目录摘要：省略 instructions、taskPrompt、interventions、artifactOutputs、verification 等大字段，只保留标识、描述摘要、执行器/模型、规则/Skill/MCP 引用和简化 loop；获取完整定义请调用 Agent 详情。
+项目和仓库敏感 token 已脱敏。这里的 Agent 是目录摘要：省略 prompt、interventions、artifactOutputs、verification 等大字段，只保留标识、描述摘要、执行器/模型、规则/Skill/MCP 引用和简化 loop；获取完整定义请调用 Agent 详情。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/bootstrap"
@@ -44,8 +44,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/bootstrap"
   "name":"研发 Agent",
   "version":1,
   "description":"实现研发任务",
-  "instructions":"...",
-  "taskPrompt":{"role":"开发者","objective":"...","actions":[],"deliverables":[],"acceptanceCriteria":[]},
+  "prompt":"读任务输入 {{input}} 和相关源码，做最小且完整的修改……",
   "rules":["rule-secure"],
   "skills":["skill-go"],
   "mcpServers":["gongfeng"],
@@ -128,7 +127,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 
 ## MCP Server
 
-`MCPServerDefinition` 字段为 `id`、`name`、`description`、`transport`、`command`、`args`、`workingDirectory`、`installScript`、`fileRefs`、`url`、`environment`、`headers`、`authType`、`timeoutSec`、`updatedAt`。`authType=taihu-pat` 表示运行时注入需求责任人的太湖个人令牌，资产本身不得保存个人 Token。stdio 上传文件的内容保存在 `mcp_files`，payload 只保存 `fileRefs` 清单。
+`MCPServerDefinition` 字段为 `id`、`name`、`description`、`transport`、`command`、`args`、`workingDirectory`、`installScript`、`fileRefs`、`url`、`environment`、`headers`、`authType`、`timeoutSec`、`updatedAt`。`authType=github-token` 表示运行时为 GitHub 官方 MCP 注入需求责任人的 GitHub Token，资产本身不得保存个人 Token。stdio 上传文件的内容保存在 `mcp_files`，payload 只保存 `fileRefs` 清单。
 
 ### `GET /api/mcp-servers`
 
@@ -204,7 +203,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 ### `GET /api/sandboxes`
 
-返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`local|seatbelt|bwrap|docker`）、`dockerfileId`、`environmentId`、`readOnlyRootFS`、`environment`。
+返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`local|native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap）、`dockerfileId`、`environmentId`、`readOnlyRootFS`、`environment`。
 
 ### `PUT /api/sandboxes`
 

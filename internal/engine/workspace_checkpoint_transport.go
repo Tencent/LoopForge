@@ -21,6 +21,12 @@ var ErrWorkspaceControlConfiguration = errors.New("工作区控制通道配置�
 
 func workspaceOperationLabel(operation string) string {
 	switch operation {
+	case domain.RunnerWorkspaceOperationCheckpointStatus:
+		return "检查工作区恢复状态"
+	case domain.RunnerWorkspaceOperationCheckpointExport, domain.RunnerWorkspaceOperationCheckpointRead, domain.RunnerWorkspaceOperationCheckpointClose:
+		return "保存工作区快照"
+	case domain.RunnerWorkspaceOperationCheckpointUpload, domain.RunnerWorkspaceOperationCheckpointAppend, domain.RunnerWorkspaceOperationCheckpointCommit:
+		return "恢复工作区快照"
 	case domain.RunnerWorkspaceOperationCheckpoint:
 		return "保存工作区快照"
 	case domain.RunnerWorkspaceOperationRestore:
@@ -35,6 +41,8 @@ func workspaceOperationLabel(operation string) string {
 		return "记录工作区准备结果"
 	case domain.RunnerWorkspaceOperationArtifacts:
 		return "恢复归档产物"
+	case domain.RunnerWorkspaceOperationBrowser:
+		return "连接 Agent 浏览器"
 	case domain.RunnerWorkspaceOperationTerminal:
 		return "访问工作区终端"
 	default:
@@ -66,6 +74,11 @@ func (e *Engine) requestWorkspaceCheckpoint(ctx context.Context, run domain.Run,
 		}
 		return domain.RunnerWorkspaceResponse{}, fmt.Errorf("%w：无法%s；%s", ErrWorkspaceControlConfiguration, operation, hint)
 	}
+	return postWorkspaceRequest(ctx, base, token, request)
+}
+
+func postWorkspaceRequest(ctx context.Context, base, token string, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+	operation := workspaceOperationLabel(request.Operation)
 	body, err := json.Marshal(request)
 	if err != nil {
 		return domain.RunnerWorkspaceResponse{}, err
@@ -83,6 +96,9 @@ func (e *Engine) requestWorkspaceCheckpoint(ctx context.Context, run domain.Run,
 	defer response.Body.Close()
 	var result domain.RunnerWorkspaceResponse
 	if response.StatusCode != 200 {
+		if response.StatusCode == http.StatusBadRequest && request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "unsupported workspace operation"}, nil
+		}
 		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 			return result, fmt.Errorf("%w：%s认证失败（HTTP %d）；请核对 API/Worker 的 AGENTFLOW_CONTROL_TOKEN 和内部 API 地址", ErrWorkspaceControlConfiguration, operation, response.StatusCode)
 		}
@@ -112,7 +128,14 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "run not found", 404)
 		return
 	}
-	if request.Operation != domain.RunnerWorkspaceOperationPreparationRecord && request.Operation != domain.RunnerWorkspaceOperationPrepare && request.Operation != domain.RunnerWorkspaceOperationPreparationStatus && request.Operation != domain.RunnerWorkspaceOperationTerminal && request.Operation != domain.RunnerWorkspaceOperationCheckpoint && request.Operation != domain.RunnerWorkspaceOperationRestore && request.Operation != domain.RunnerWorkspaceOperationReclaim && request.Operation != domain.RunnerWorkspaceOperationArtifacts {
+	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(e.HandleBrowserRequest(r.Context(), run, request.Browser))
+		return
+	}
+	transfer := domain.IsWorkspaceCheckpointTransferOperation(request.Operation)
+	probe := request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus
+	if !probe && !transfer && request.Operation != domain.RunnerWorkspaceOperationPreparationRecord && request.Operation != domain.RunnerWorkspaceOperationPrepare && request.Operation != domain.RunnerWorkspaceOperationPreparationStatus && request.Operation != domain.RunnerWorkspaceOperationTerminal && request.Operation != domain.RunnerWorkspaceOperationCheckpoint && request.Operation != domain.RunnerWorkspaceOperationRestore && request.Operation != domain.RunnerWorkspaceOperationReclaim && request.Operation != domain.RunnerWorkspaceOperationArtifacts {
 		http.Error(w, "unsupported operation", 400)
 		return
 	}
@@ -120,15 +143,16 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid terminal request", 400)
 		return
 	}
-	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.WorkflowSnapshot.CollaborationMode == "group" || run.Status != "running" && run.Status != "queued" && !hasRunningNode(run))
+	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.IsWorkspace() || run.Status != "running" && run.Status != "queued" && !hasRunningNode(run))
 	interactive := request.Operation == domain.RunnerWorkspaceOperationPreparationRecord || request.Operation == domain.RunnerWorkspaceOperationPrepare || request.Operation == domain.RunnerWorkspaceOperationPreparationStatus || request.Operation == domain.RunnerWorkspaceOperationTerminal
-	if !interactive && !artifactsAllowed && !e.conversationWorkspaceIdle(run) {
+	transferAux := transfer && request.Operation != domain.RunnerWorkspaceOperationCheckpointExport && request.Operation != domain.RunnerWorkspaceOperationCheckpointCommit
+	if !probe && !interactive && (sharesWorkspace(run) || !artifactsAllowed && !transferAux && !e.conversationWorkspaceIdle(run)) {
 		http.Error(w, "workspace in use", 409)
 		return
 	}
 	// Bind execution flags to persisted state, including requests forwarded to a Runner.
 	request.RunStatus = run.Status
-	request.CollaborationMode = run.WorkflowSnapshot.CollaborationMode
+	request.RunKind = run.Kind
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
 	if interactive {
 		var err error
@@ -207,7 +231,15 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 			http.Error(w, reason, 409)
 			return
 		}
-		if request.Operation == domain.RunnerWorkspaceOperationReclaim {
+		if probe {
+			if !e.conversationWorkspaceIdle(run) {
+				result = domain.RunnerWorkspaceResponse{Status: 409, Code: domain.WorkspaceErrorBusy, Error: "workspace is still in use"}
+			} else {
+				result = runtime.WorkspaceCheckpointStatus(root)
+			}
+		} else if transfer {
+			result = e.checkpointTransfers.Handle(r.Context(), root, request)
+		} else if request.Operation == domain.RunnerWorkspaceOperationReclaim {
 			meta, saved := e.repo.WorkspaceCheckpoint(run.ID)
 			if !saved || meta.SavedAt == nil || meta.Error != "" || run.WorkspaceCleanedAt.IsZero() || request.CheckpointLease == "" || meta.LeaseToken != request.CheckpointLease || meta.LeaseUntil == nil || !meta.LeaseUntil.After(time.Now()) {
 				http.Error(w, "workspace cleanup not reserved", 409)

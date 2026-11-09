@@ -1,0 +1,96 @@
+/* HarnessSelect: same trigger and panel spec as web/app/hui-controls.css
+ * (8px radius, fine border, panel shadow, 36px options, check on the selected
+ * option). Checkbox and tooltip styles come from that shared file, tokens from
+ * hui-tokens.css. */
+.harness-select {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  height: 34px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font: 400 13px/1 var(--hui-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s var(--hui-ease-flow);
+}
+.harness-select:hover { border-color: color-mix(in srgb, var(--hui-accent) 30%, var(--hui-border-strong)); }
+.harness-select:focus-visible { outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent); outline-offset: 1px; }
+.harness-select[aria-expanded="true"] { border-color: var(--hui-accent); }
+.harness-select:disabled { opacity: .5; cursor: not-allowed; }
+.harness-select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.harness-select-value.is-placeholder { color: var(--hui-tertiary); }
+.harness-select-chevron { flex: none; color: var(--hui-tertiary); transition: transform .2s var(--hui-ease-flow); }
+.harness-select[aria-expanded="true"] .harness-select-chevron { transform: rotate(180deg); }
+
+.harness-select-panel {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: var(--hui-z-popover, 9999);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  box-shadow: var(--hui-panel-shadow);
+  color: var(--hui-text);
+  font-family: var(--hui-sans);
+  opacity: 1;
+  transform: none;
+  transition: opacity .18s var(--hui-ease-flow), transform .18s var(--hui-ease-flow);
+}
+.harness-select-panel:is([data-phase="entering"], [data-phase="closing"]) { opacity: 0; transform: translateY(-4px); pointer-events: none; }
+.harness-select-panel[data-placement="top"]:is([data-phase="entering"], [data-phase="closing"]) { transform: translateY(4px); }
+.harness-select-panel[data-phase="entering"] { transition: none; }
+.harness-select-search { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; margin: -4px -4px 4px; padding: 0 10px; border-bottom: 1px solid var(--hui-border); color: var(--hui-tertiary); }
+.harness-select-search input { width: 100%; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--hui-text); font: 400 13px/1 var(--hui-sans); }
+.harness-select-search input::placeholder { color: var(--hui-tertiary); }
+.harness-select-search input::-webkit-search-cancel-button { display: none; }
+.harness-select-options { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.harness-select-option {
+  box-sizing: border-box;
+  flex: none;
+  width: 100%;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hui-text);
+  font: 400 13.5px/1 var(--hui-sans);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color .18s var(--hui-ease-flow);
+}
+.harness-select-option:is(:hover, :focus-visible) { background: var(--hui-canvas); outline: 0; }
+.harness-select-option:disabled { opacity: .45; cursor: not-allowed; }
+.harness-select-option.is-selected,
+.harness-select-option.is-selected:hover { background: var(--hui-accent-soft); }
+.harness-select-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.harness-select-option-meta { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--hui-tertiary); font-size: 12px; }
+.harness-select-check { color: var(--hui-accent); }
+.harness-select-empty { padding: 14px 10px; color: var(--hui-tertiary); font-size: 12.5px; text-align: center; }
+
+.field .harness-select { display: flex; width: 100%; }
+.settings-row .harness-select { width: 132px; height: 32px; }
+.sop-panel-scroll > .harness-select { display: flex; width: 100%; margin-bottom: 14px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .harness-select,
+  .harness-select-chevron,
+  .harness-select-panel,
+  .harness-select-option { transition: none !important; }
+}

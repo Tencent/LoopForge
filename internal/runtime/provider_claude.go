@@ -24,7 +24,7 @@ func (claudeProvider) Materialize(ctx *providerMaterializeContext) error {
 	)
 	if len(ctx.Compiled.Hooks) > 0 {
 		settingsPath := filepath.Join(ctx.ConfigRoot, "claude-settings.json")
-		if err := writeHookSettings(settingsPath, ctx.Compiled.Hooks); err != nil {
+		if err := writeHookSettings(ctx.Workspace, settingsPath, ctx.Compiled.Hooks); err != nil {
 			return err
 		}
 		ctx.Compiled.Args = append(ctx.Compiled.Args, "--settings", filepath.ToSlash(filepath.Join(".agentflow", "config", ctx.AgentID, "claude-settings.json")))
@@ -60,6 +60,9 @@ func (claudeProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	argv = dropArgWithValue(argv, "--resume")
 	argv = isolateClaudeFlags(argv, filepath.ToSlash(filepath.Join(in.Compiled.AgentRoot, "agent-system.md")))
 	argv = appendEffortArgs(argv, in.Executor.Effort)
+	// An unattended node must write files and call submit_gate_result; dontAsk
+	// denies every tool that is not explicitly allowlisted.
+	argv = append(dropArgWithValue(argv, "--permission-mode"), "--permission-mode", "bypassPermissions")
 	// Current Claude Code releases require --verbose when print mode emits
 	// stream-json. It is harmless for other print-mode output formats and keeps
 	// older persisted executor definitions working after a CLI upgrade.
@@ -75,7 +78,15 @@ func (claudeProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {
 		argv = append(argv, "--resume", sessionID)
 	}
-	return CommandSpec{Argv: append(argv, positionalPrompt(in)), Provider: "claude-code", CredentialBindings: []CredentialBinding{BindClaudeCode, BindGit, BindMCP}, PrivateHome: true}, nil
+	spec := CommandSpec{Argv: append(argv, positionalPrompt(in)), Provider: "claude-code", CredentialBindings: []CredentialBinding{BindClaudeCode, BindGit, BindMCP}, PrivateHome: true}
+	if in.Driver == "docker" || in.Driver == "bwrap" || in.Driver == "seatbelt" || os.Geteuid() == 0 {
+		// Claude Code refuses bypassPermissions for root unless the process
+		// is told that an outer sandbox is the isolation boundary. Docker and
+		// the lightweight sandboxes are that boundary; a root local process is
+		// too, which is how the platform container runs.
+		spec.environment = map[string]string{"IS_SANDBOX": "1"}
+	}
+	return spec, nil
 }
 
 func (claudeProvider) Protocol(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {

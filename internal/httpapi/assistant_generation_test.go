@@ -95,6 +95,11 @@ func TestReferencesGlobalSearchAndPermission(t *testing.T) {
 	}
 	req := assistantRequest{ProjectID: "workbench", Messages: []assistantMessage{{Role: "user", Content: "比较", References: []domain.AssistantReference{{Type: "issue", ID: "login", ProjectID: "hidden"}}}}}
 	c, _ = workbenchContext(u, "POST", "/", bytes.NewBuffer(nil))
+	if err := h.prepareWorkbenchContext(c, &req, u); err != errForeignReference {
+		t.Fatalf("project conversation referenced another project: %v", err)
+	}
+	// Personal conversations keep cross-project references.
+	req.ProjectID = ""
 	if err := h.prepareWorkbenchContext(c, &req, u); err != nil {
 		t.Fatal(err)
 	}

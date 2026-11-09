@@ -32,12 +32,15 @@ type Issue struct {
 	RepositoryIDs []string `json:"repositoryIds,omitempty"`
 	// BaseBranch is the legacy API key for an existing work branch to continue.
 	// Empty creates a new work branch from the repository configured main branch.
-	BaseBranch      string `json:"baseBranch,omitempty"`
-	LatestTaskID    string `json:"latestTaskId,omitempty"`
-	AutomationState string `json:"automationState,omitempty"` // ignored means scheduled SOPs must not claim it
-	DeliveryState   string `json:"deliveryState,omitempty"`   // merged, reopened
-	DeliveryMRURL   string `json:"deliveryMrUrl,omitempty"`
-	DeliveryMRState string `json:"deliveryMrState,omitempty"` // merged (default branch), integrated (baseline), opened, closed, reopened, unknown
+	BaseBranch string `json:"baseBranch,omitempty"`
+	// RepositoryBranches selects existing work branches by repository ID. When
+	// provided, it replaces BaseBranch; an unlisted repository creates a new branch.
+	RepositoryBranches map[string]string `json:"repositoryBranches,omitempty"`
+	LatestTaskID       string            `json:"latestTaskId,omitempty"`
+	AutomationState    string            `json:"automationState,omitempty"` // ignored means scheduled SOPs must not claim it
+	DeliveryState      string            `json:"deliveryState,omitempty"`   // merged, reopened
+	DeliveryMRURL      string            `json:"deliveryMrUrl,omitempty"`
+	DeliveryMRState    string            `json:"deliveryMrState,omitempty"` // merged (default branch), integrated (baseline), opened, closed, reopened, unknown
 	// DeliveryMRs lists one MR per delivered repository. DeliveryMRURL is its
 	// first entry and DeliveryMRState the aggregate (see SetDeliveryMRs).
 	DeliveryMRs       []DeliveryMR            `json:"deliveryMrs,omitempty"`
@@ -49,10 +52,24 @@ type Issue struct {
 	// It does not create a tracker binding or authorize TAPD write-back.
 	TapdID      string       `json:"tapdId,omitempty"`
 	ExternalRef *ExternalRef `json:"externalRef,omitempty"`
-	CreatedAt   time.Time    `json:"createdAt"`
-	UpdatedAt   time.Time    `json:"updatedAt"`
+	// ConversationSessionID is the conversation that identified and created
+	// this requirement while changing code directly, without an SOP.
+	ConversationSessionID string    `json:"conversationSessionId,omitempty"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
+	// CompletedAt records an observed transition to done/closed, independent of
+	// later edits and MR polling. Older completed issues may have no timestamp.
+	CompletedAt time.Time `json:"completedAt,omitempty"`
 	// Operations is the requirement's own audit trail: create, edit, close, reopen, dispatch.
 	Operations []IssueOperation `json:"operations,omitempty"`
+}
+
+func (i Issue) Completed() bool {
+	switch strings.ToLower(strings.TrimSpace(i.Status)) {
+	case "done", "closed", "completed":
+		return true
+	}
+	return false
 }
 
 // RequirementTAPDID returns the authoritative TAPD key for analytics.
@@ -113,6 +130,19 @@ func (i Issue) EffectiveRepositoryIDs() []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+// WorkBranchForRepository resolves the per-repository selection, falling back
+// to the legacy branch only for a single repository (including project defaults).
+func (i Issue) WorkBranchForRepository(repositoryID string) string {
+	if i.RepositoryBranches != nil {
+		return strings.TrimSpace(i.RepositoryBranches[repositoryID])
+	}
+	ids := i.EffectiveRepositoryIDs()
+	if len(ids) == 0 || (len(ids) == 1 && ids[0] == repositoryID) {
+		return strings.TrimSpace(i.BaseBranch)
+	}
+	return ""
 }
 
 type ClarificationAssessment struct {

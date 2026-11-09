@@ -18,7 +18,7 @@ import (
 //
 // Required makes the pool the only execution path for those projects: this
 // host never runs their nodes, a run waits for a pool runner instead, and a
-// pool run whose runner went offline moves to another pool runner.
+// pool run with workspace changes waits for its original runner to return.
 type CloudRunnerPool struct {
 	Label    string
 	Projects []string
@@ -136,9 +136,9 @@ func isPoolRun(run domain.Run) bool {
 // before a node starts: the first node of a run started while the pool was
 // empty, a cloud-mode run of a project that now requires the pool, and a run
 // whose runner went offline before any node changed its checkout. Once code
-// changes exist they live only in that checkout, so the run stays where it
-// is (or fails when that machine is gone). Runs on a user's own machine are
-// left alone.
+// changes exist they live only in that checkout, so the run waits for that
+// machine to return before continuing. Runs on a user's own machine are left
+// alone.
 func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID string) (domain.Run, error) {
 	ec := run.ExecutionContext
 	convert := ec.ExecutionMode == domain.ExecutionModeCloud && e.cloudPoolRequired(ec.ProjectID)
@@ -163,7 +163,7 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 			if ok && strings.TrimSpace(runner.Name) != "" {
 				name = runner.Name
 			}
-			return run, fmt.Errorf("执行机器 %s 已离线，工作区和之前节点的代码改动都在该机器上，无法换机继续；请等该机器恢复后重试，或从头重跑", name)
+			return e.waitForBoundPoolRunner(ctx, run, nodeID, name)
 		}
 	}
 	label := e.cloudPoolLabel()
@@ -212,27 +212,44 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 	if !ok {
 		return run, errors.New("run not found")
 	}
+	// This host's sandbox is no longer the execution environment. Drain only
+	// detaches it, and the idle sweep skips a run once it has a runner, so
+	// the old container would stay up on sleep infinity.
+	e.discardLocalSandbox(run.ID)
 	return bound, nil
 }
 
-// hasCodeWorkspace reports whether losing this run's checkout loses code:
-// the run is bound to a repository.
-func hasCodeWorkspace(r domain.Run) bool {
-	for _, rc := range r.RepositoryContexts() {
-		if strings.TrimSpace(rc.RepositoryID) != "" {
-			return true
+// A worker can resume interrupted runs before the builtin runner reconnects
+// during a deploy. Presence alone does not mean the checkout was lost: retain
+// the binding and give that runner the same grace period as an empty pool.
+func (e *Engine) waitForBoundPoolRunner(ctx context.Context, run domain.Run, nodeID, name string) (domain.Run, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, poolBindWait)
+	defer cancel()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	e.updateRun(run.ID, func(c *domain.Run) {
+		e.event(c, nodeID, "execution.waiting", fmt.Sprintf("执行机器 %s 暂时离线，等待原机器恢复以继续使用已有工作区，最多等待 %d 分钟", name, int(poolBindWait/time.Minute)))
+	})
+	for {
+		if waitCtx.Err() != nil {
+			if ctx.Err() != nil {
+				return run, ctx.Err()
+			}
+			return run, fmt.Errorf("执行机器 %s 在 %d 分钟内未恢复在线，工作区和之前节点的代码改动仍保留在原机器上；请等该机器恢复后重试，或从头重跑", name, int(poolBindWait/time.Minute))
+		}
+		if runner, ok := e.repo.Runner(run.ExecutionContext.ExecutionRunnerID); ok && runner.Status == domain.RunnerStatusOnline {
+			e.updateRun(run.ID, func(c *domain.Run) {
+				e.event(c, nodeID, "execution.resumed", fmt.Sprintf("执行机器 %s 已恢复在线，继续使用原工作区", name))
+			})
+			current, ok := e.repo.RunState(run.ID)
+			if !ok {
+				return run, errors.New("run not found")
+			}
+			return current, nil
+		}
+		select {
+		case <-waitCtx.Done():
+		case <-ticker.C:
 		}
 	}
-	return false
-}
-
-// hasWorkspaceProgress reports whether nodes other than nodeID already
-// changed the workspace, so continuing on a fresh checkout would drop their work.
-func hasWorkspaceProgress(r domain.Run, nodeID string) bool {
-	for id, nr := range r.Nodes {
-		if id != nodeID && nr != nil && nr.Status == "succeeded" {
-			return true
-		}
-	}
-	return false
 }

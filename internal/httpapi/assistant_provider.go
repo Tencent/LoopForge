@@ -32,9 +32,13 @@ func validateAssistantProvider(req *assistantRequest, user domain.User) error {
 		key, label = user.CodeBuddyAPIKey, "CodeBuddy"
 	case "codex":
 		key, label = user.CodexAPIKey, "Codex"
-	case "claude":
+	case "claude", "claude-code":
 		key, label = user.ClaudeCodeAPIKey, "Claude Code"
 	default:
+		if runtime.IsAgentCLI(req.Executor) {
+			key, label = user.AgentCLICredentials[req.Executor].APIKey, runtime.AgentCLILabel(req.Executor)
+			break
+		}
 		return fmt.Errorf("不支持的执行器")
 	}
 	if strings.TrimSpace(key) == "" {
@@ -56,6 +60,7 @@ func assistantProviderCredentials(user domain.User) runtime.RunCredentials {
 		CodeBuddy:  runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment},
 		Codex:      runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL},
 		ClaudeCode: runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL},
+		AgentCLI:   runtime.AgentCLIUserCredentials(user),
 	}
 }
 
@@ -69,14 +74,19 @@ if not name.startswith("mcp__agentflow_session__"):
     sys.exit(2)
 `
 
-func prepareAlternateAssistantCommand(req assistantCLIRequest, dir string) (runtime.CommandSpec, error) {
-	binary, kind, binding := "claude", "claude-code", runtime.BindClaudeCode
+func prepareAlternateAssistantCommand(ctx context.Context, req assistantCLIRequest, dir string) (runtime.CommandSpec, error) {
+	kind, binding := "claude-code", runtime.BindClaudeCode
 	if req.Executor == "codex" {
-		binary, kind, binding = "codex", "codex", runtime.BindCodex
+		kind, binding = "codex", runtime.BindCodex
 	}
-	bin, err := exec.LookPath(binary)
-	if err != nil {
-		return runtime.CommandSpec{}, fmt.Errorf("%s CLI 未安装", binary)
+	var bin string
+	var err error
+	if req.Executor == "codex" {
+		if bin, err = exec.LookPath("codex"); err != nil {
+			return runtime.CommandSpec{}, fmt.Errorf("codex CLI 未安装")
+		}
+	} else if bin, err = runtime.ResolveClaudeCode(ctx); err != nil {
+		return runtime.CommandSpec{}, err
 	}
 	sys := strings.TrimSpace(req.SystemPrompt)
 	if sys == "" {
@@ -113,12 +123,12 @@ func prepareAlternateAssistantCommand(req assistantCLIRequest, dir string) (runt
 			return runtime.CommandSpec{}, err
 		}
 		args = []string{"exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-rules", "--sandbox", "read-only", "-c", "approval_policy=\"never\"", "-c", "developer_instructions=" + strconv.Quote(sys), "-c", "web_search=\"disabled\""}
-		for _, feature := range []string{"shell_tool", "unified_exec", "apply_patch_freeform", "multi_agent", "multi_agent_v2", "js_repl", "code_mode", "apps", "plugins", "memories", "image_generation", "browser_use", "computer_use", "tool_suggest", "skill_search", "view_image", "goals", "collab", "sleep_tool", "worktrees"} {
+		for _, feature := range codexAssistantDisabledFeatures {
 			args = append(args, "-c", "features."+feature+"=false")
 		}
 		args = append(args, "-c", "features.hooks=true", "--dangerously-bypass-hook-trust", "-c", "hooks.PreToolUse=[{hooks=[{type=\"command\",command="+strconv.Quote("python3 '"+strings.ReplaceAll(guard, "'", "'\\''")+"'")+",timeout=5}]}]")
 	} else {
-		args = []string{"-p", "--bare", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--max-turns", nativeAssistantMaxTurns, "--system-prompt", sys, "--tools", "", "--mcp-config", req.MCPConfig, "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk", "--allowedTools", "mcp__agentflow_session__*", "--no-session-persistence"}
+		args = []string{"-p", "--bare", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", sys, "--tools", "", "--mcp-config", req.MCPConfig, "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk", "--allowedTools", "mcp__agentflow_session__*", "--no-session-persistence"}
 	}
 	if req.Model != "" && req.Model != "default" {
 		args = append(args, "--model", req.Model)
@@ -161,7 +171,7 @@ func runAlternateAssistantCLI(ctx context.Context, req assistantCLIRequest, user
 		return "", "", err
 	}
 	defer os.RemoveAll(dir)
-	command, err := prepareAlternateAssistantCommand(req, dir)
+	command, err := prepareAlternateAssistantCommand(ctx, req, dir)
 	if err != nil {
 		return "", "", err
 	}

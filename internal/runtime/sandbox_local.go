@@ -22,7 +22,10 @@ func (s *localSandbox) Driver() string {
 	}
 	return "local"
 }
-func (s *localSandbox) Close(context.Context) error { return nil }
+func (s *localSandbox) Close(context.Context) error {
+	stopHostBrowsers(s.workspace)
+	return nil
+}
 func (s *localSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
 	cmd, err := s.command(ctx, command, controlledBaseEnvironment(os.Environ()))
 	if err != nil {
@@ -48,6 +51,7 @@ func (s *localSandbox) command(ctx context.Context, command CommandSpec, base []
 	cmd.Env = appendEnvironment(base, s.environment, command.environment)
 	cmd.Env = upsertEnv(cmd.Env, "PWD", workspace)
 	cmd.Env = upsertEnv(cmd.Env, "GIT_CEILING_DIRECTORIES", filepath.Dir(workspace))
+	cmd.Stdin = command.Stdin
 	return cmd, nil
 }
 
@@ -64,7 +68,14 @@ func ExecuteLocalCommand(ctx context.Context, workspace string, command CommandS
 			return "", err
 		}
 		cleanup = func() { _ = os.RemoveAll(root) }
-		command = command.WithPrivateHomeDir(root)
+		command.PrivateHome = false
+		env := make(map[string]string, len(command.environment)+2)
+		for key, value := range command.environment {
+			env[key] = value
+		}
+		env["HOME"] = root
+		env["TMPDIR"] = filepath.Join(root, "tmp")
+		command.environment = env
 		if err := os.MkdirAll(command.environment["TMPDIR"], 0o700); err != nil {
 			cleanup()
 			return "", err

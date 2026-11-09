@@ -51,7 +51,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			// not inherit either variable from the AgentFlow host process.
 			bound.environment["CODEBUDDY_API_KEY"] = strings.TrimSpace(credentials.CodeBuddy.APIKey)
 			if bound.environment["CODEBUDDY_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 CodeBuddy API Key，请在个人设置中配置")
+				return CommandSpec{}, fmt.Errorf("需求责任人未配置 CodeBuddy API Key，请在个人配置中配置")
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 		case BindGit:
@@ -66,7 +66,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		case BindCodex:
 			bound.environment["CODEX_API_KEY"] = strings.TrimSpace(credentials.Codex.APIKey)
 			if bound.environment["CODEX_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key，请在个人设置中配置")
+				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key，请在个人配置中配置")
 			}
 			baseURL := strings.TrimSpace(credentials.Codex.BaseURL)
 			if baseURL == "" {
@@ -91,13 +91,33 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		case BindClaudeCode:
 			bound.environment["ANTHROPIC_API_KEY"] = strings.TrimSpace(credentials.ClaudeCode.APIKey)
 			if bound.environment["ANTHROPIC_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人设置中配置")
+				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
 			}
 			baseURL := strings.TrimSpace(credentials.ClaudeCode.BaseURL)
 			if baseURL == "" {
 				baseURL = "https://api.anthropic.com"
 			}
 			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
+		case BindAgentCLI:
+			home, homeEnv := privateHomePaths(sandbox, workspace, command)
+			if !command.PrivateHome {
+				home = command.environment["HOME"]
+				homeEnv = home
+			}
+			if strings.TrimSpace(home) == "" {
+				return CommandSpec{}, fmt.Errorf("%s 需要独立的 HOME 目录", AgentCLILabel(command.Provider))
+			}
+			argv, env, err := ApplyAgentCLICredential(command.Provider, credentials.AgentCLI[command.Provider], command.AgentCLI, home, homeEnv, bound.Argv)
+			if err != nil {
+				return CommandSpec{}, err
+			}
+			bound.Argv = argv
+			for _, key := range agentCLIHostEnv {
+				bound.environment[key] = ""
+			}
+			for key, value := range env {
+				bound.environment[key] = value
+			}
 		default:
 			return CommandSpec{}, fmt.Errorf("unsupported credential binding %q", binding)
 		}
@@ -118,10 +138,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		bound.environment["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
 	}
 	if command.PrivateHome {
-		provider := safeID(command.Provider)
-		if provider == "" {
-			provider = "process"
-		}
+		provider := PrivateHomeName(command)
 		hostHome := filepath.Join(workspace, ".agentflow", "private-home", provider)
 		hostTmp := filepath.Join(workspace, ".agentflow", "tmp", provider)
 		if err := os.MkdirAll(hostHome, 0o700); err != nil {
@@ -151,6 +168,69 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	return bound, nil
 }
 
+// PrivateHomeName is the directory under .agentflow/private-home that a
+// PrivateHome command runs with as HOME.
+func PrivateHomeName(command CommandSpec) string {
+	name := safeID(command.PrivateHomeKey)
+	if name == "" {
+		name = safeID(command.Provider)
+	}
+	if name == "" {
+		name = "process"
+	}
+	return name
+}
+
+// AgentCLIPrivateHomeKey is the PrivateHomeKey of an agent CLI invocation:
+// one HOME per CLI and Agent, so concurrent Agents keep their own MCP
+// configuration and sessions.
+func AgentCLIPrivateHomeKey(kind, agentID string) string {
+	return safeID(kind + "-" + agentID)
+}
+
+// BindAgentCLICommand is the runner-side BindAgentCLI: it renders the agent
+// CLI's configuration into the command's private HOME and returns argv with
+// the environment (HOME and TMPDIR included) to run it with. Agent CLIs always
+// run in that HOME, sandboxed or not, because their MCP configuration is there.
+func BindAgentCLICommand(sandbox Sandbox, workspace string, command CommandSpec, cred ProviderCredential, argv []string) ([]string, map[string]string, error) {
+	name := PrivateHomeName(command)
+	home, homeEnv := privateHomePaths(sandbox, workspace, command)
+	tmp := filepath.Join(workspace, ".agentflow", "tmp", name)
+	for _, dir := range []string{home, tmp} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, nil, fmt.Errorf("create private home: %w", err)
+		}
+	}
+	argv, bound, err := ApplyAgentCLICredential(command.Provider, cred, command.AgentCLI, home, homeEnv, argv)
+	if err != nil {
+		return nil, nil, err
+	}
+	env := map[string]string{}
+	for _, key := range agentCLIHostEnv {
+		env[key] = ""
+	}
+	for key, value := range bound {
+		env[key] = value
+	}
+	env["HOME"] = homeEnv
+	env["TMPDIR"] = tmp
+	if sandboxDriver(sandbox) == "docker" {
+		env["TMPDIR"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "tmp", name))
+	}
+	return argv, env, nil
+}
+
+// privateHomePaths returns a PrivateHome command's HOME on the host and as
+// the process sees it.
+func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (host, env string) {
+	name := PrivateHomeName(command)
+	host = filepath.Join(workspace, ".agentflow", "private-home", name)
+	if sandboxDriver(sandbox) == "docker" {
+		return host, filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "private-home", name))
+	}
+	return host, host
+}
+
 // GitEnvironment is the git environment a child process needs to reach
 // private remotes with token without the token touching any git config.
 func GitEnvironment(sandbox Sandbox, workspace, token string) (map[string]string, error) {
@@ -167,7 +247,17 @@ func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[strin
 	if token == "" {
 		return nil
 	}
-	const user = "private"
+	user := "private"
+	if strings.HasPrefix(strings.ToLower(token), "oauth2:") {
+		if stripped := strings.TrimSpace(token[len("oauth2:"):]); stripped != "" {
+			user = "oauth2"
+			token = stripped
+		}
+	} else if strings.HasPrefix(strings.ToLower(token), "private:") {
+		if stripped := strings.TrimSpace(token[len("private:"):]); stripped != "" {
+			token = stripped
+		}
+	}
 	prefixes := []string{"git@git.example.com:", "ssh://git@git.example.com/", "https://git.example.com/", "http://git.example.com/"}
 	authed := "https://" + url.UserPassword(user, token).String() + "@git.example.com/"
 	environment["GIT_CONFIG_COUNT"] = strconv.Itoa(len(prefixes))
@@ -179,7 +269,7 @@ func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[strin
 	// rewrites git@ to https://git.example.com/ without credentials. insteadOf does
 	// not chain; GIT_ASKPASS answers the resulting username/password prompt.
 	askpassHost := filepath.Join(workspace, ".agentflow", "runtime", "git-askpass")
-	if err := writeGitAskPass(askpassHost); err != nil {
+	if err := writeGitAskPass(workspace, askpassHost); err != nil {
 		return err
 	}
 	askpass := askpassHost
@@ -200,15 +290,12 @@ case "$1" in
 esac
 `
 
-func writeGitAskPass(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+func writeGitAskPass(workspace, path string) error {
+	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
 		return fmt.Errorf("create git askpass dir: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(gitAskPassScript), 0o700); err != nil {
+	if err := writeManagedFile(workspace, path, []byte(gitAskPassScript), 0o700); err != nil {
 		return fmt.Errorf("write git askpass: %w", err)
-	}
-	if err := os.Chmod(path, 0o700); err != nil {
-		return fmt.Errorf("chmod git askpass: %w", err)
 	}
 	return nil
 }

@@ -32,6 +32,8 @@ type streamHandlers struct {
 	clarifyRepoLock map[string]*stdsync.Mutex
 	jobs            *clarifyHub
 	clarifyRun      clarifyExecFunc
+	// predecessor closes when the process this one took over from exits.
+	predecessor <-chan struct{}
 }
 
 func (h *streamHandlers) streamRun(c *gin.Context) {
@@ -97,15 +99,16 @@ type chatClarifyRequest struct {
 	// RepositoryIDs lists every repository the requirement touches
 	// (multi-repository aware); the legacy single repositoryId stays as
 	// fallback and mirrors the first entry.
-	RepositoryIDs []string `json:"repositoryIds,omitempty"`
-	BaseBranch    string   `json:"baseBranch,omitempty"`
-	Title         string   `json:"title"`
-	Description   string   `json:"description"`
-	Message       string   `json:"message"`
-	Model         string   `json:"model,omitempty"`
-	SessionID     string   `json:"sessionId,omitempty"`
-	JobID         string   `json:"jobId,omitempty"`
-	History       []struct {
+	RepositoryIDs      []string          `json:"repositoryIds,omitempty"`
+	BaseBranch         string            `json:"baseBranch,omitempty"`
+	RepositoryBranches map[string]string `json:"repositoryBranches,omitempty"`
+	Title              string            `json:"title"`
+	Description        string            `json:"description"`
+	Message            string            `json:"message"`
+	Model              string            `json:"model,omitempty"`
+	SessionID          string            `json:"sessionId,omitempty"`
+	JobID              string            `json:"jobId,omitempty"`
+	History            []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"history"`
@@ -135,24 +138,18 @@ func (h *streamHandlers) chatClarify(c *gin.Context) {
 		repoIDs = append(repoIDs, id)
 	}
 	issue := domain.Issue{
-		ProjectID:     request.ProjectID,
-		RepositoryIDs: repoIDs,
-		BaseBranch:    request.BaseBranch,
-		Title:         request.Title,
-		Description:   request.Description,
+		ProjectID:          request.ProjectID,
+		RepositoryIDs:      repoIDs,
+		BaseBranch:         request.BaseBranch,
+		RepositoryBranches: request.RepositoryBranches,
+		Title:              request.Title,
+		Description:        request.Description,
 	}
 	if len(repoIDs) > 0 {
-		// Clarification deep-dives the primary repository; the full list is
-		// surfaced in the prompt so multi-repo scope stays visible.
+		// Keep the legacy primary alias while analyzing every selected repository.
 		issue.RepositoryID = repoIDs[0]
 	}
-	branch, err := normalizeIssueBaseBranch(issue.BaseBranch)
-	if err != nil {
-		c.JSON(400, map[string]string{"error": err.Error()})
-		return
-	}
-	issue.BaseBranch = branch
-	if branch != "" {
+	if issue.BaseBranch != "" || issue.RepositoryBranches != nil {
 		ids := issue.EffectiveRepositoryIDs()
 		if len(ids) == 0 {
 			if project, ok := h.repo.Project(issue.ProjectID); ok && project.DefaultRepositoryID != "" {
@@ -168,7 +165,7 @@ func (h *streamHandlers) chatClarify(c *gin.Context) {
 			}
 			repositories = append(repositories, repository)
 		}
-		if err := validateIssueBaseBranchRepositories(branch, repositories); err != nil {
+		if err := normalizeIssueRepositoryBranches(&issue, repositories); err != nil {
 			c.JSON(400, map[string]string{"error": err.Error()})
 			return
 		}
@@ -468,10 +465,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			analyses = append(analyses, repoAnalysis{id: id, reason: "仓库不存在"})
 			continue
 		}
-		baseBranch := ""
-		if len(repoIDs) == 1 {
-			baseBranch = strings.TrimSpace(issue.BaseBranch)
-		}
+		baseBranch := issue.WorkBranchForRepository(id)
 		repo, useLocalSnapshot := clarifyRepositorySource(repo, baseBranch)
 		resolvedBranch := baseBranch
 		if resolvedBranch == "" {
@@ -609,7 +603,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	modelID := clarifyAllowedModel(request.Model)
 	credentials := runtime.RunCredentials{
 		CodeBuddy: runtime.CodeBuddyCredential{APIKey: strings.TrimSpace(responsible.CodeBuddyAPIKey), InternetEnvironment: strings.TrimSpace(responsible.CodeBuddyInternetEnvironment)},
-		GitToken:  strings.TrimSpace(responsible.GitToken),
+		GitToken:  strings.TrimSpace(h.repo.GitCredential(ctx, responsible.ID)),
 	}
 	turnPrompt := userMsg
 	if resume {
@@ -883,6 +877,19 @@ func clarifyToolDetail(name string, input json.RawMessage) string {
 	}
 	if q := str("query"); q != "" {
 		return q
+	}
+	if strings.HasPrefix(name, mainBotBrowserPrefix) {
+		for _, key := range []string{"url", "action", "key"} {
+			if v := str(key); v != "" {
+				return v
+			}
+		}
+		if ref := str("ref"); ref != "" {
+			if text := str("text"); text != "" {
+				return ref + " ← " + truncateRunes(text, 40)
+			}
+			return ref
+		}
 	}
 	return ""
 }

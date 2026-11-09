@@ -26,6 +26,9 @@ type roomIssueRequest struct {
 	WorkflowID  string   `json:"workflowId"`
 	WorkflowIDs []string `json:"workflowIds"`
 	AgentID     string   `json:"agentId"`
+	// IssueID dispatches onto an existing requirement instead of opening a
+	// new one; the issue must belong to the room's project.
+	IssueID string `json:"issueId"`
 }
 
 type roomIssueResult struct {
@@ -111,14 +114,41 @@ func (h *roomsHandlers) room(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
 		return
 	}
-	if c.Request.Method != http.MethodGet {
+	switch c.Request.Method {
+	case http.MethodGet:
+		if !h.roomAccess(c, room.ProjectID, false) {
+			return
+		}
+		c.JSON(http.StatusOK, h.roomView(room))
+	case http.MethodPatch:
+		if !h.roomAccess(c, room.ProjectID, true) {
+			return
+		}
+		var req struct {
+			Name string `json:"name"`
+		}
+		if !decode(c, &req) {
+			return
+		}
+		req.Name = strings.TrimSpace(req.Name)
+		if req.Name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "群名称不能为空"})
+			return
+		}
+		if len([]rune(req.Name)) > 80 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "群名称不能超过 80 个字"})
+			return
+		}
+		room.Name = req.Name
+		if err := h.repo.PutRoom(room); err != nil {
+			respond(c, err)
+			return
+		}
+		stored, _ := h.repo.Room(room.ID)
+		c.JSON(http.StatusOK, h.roomView(stored))
+	default:
 		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
-		return
 	}
-	if !h.roomAccess(c, room.ProjectID, false) {
-		return
-	}
-	c.JSON(http.StatusOK, h.roomView(room))
 }
 
 func (h *roomsHandlers) messages(c *gin.Context) {
@@ -179,49 +209,56 @@ func (h *roomsHandlers) createIssue(c *gin.Context) {
 	if !decode(c, &req) {
 		return
 	}
+	result, ok := h.dispatchRoomIssue(c, room, req)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusCreated, result)
+}
+
+// dispatchRoomIssue creates the issue behind a room dispatch and starts every
+// requested SOP, posting one dispatch card per lane. Errors are written to c.
+func (h *roomsHandlers) dispatchRoomIssue(c *gin.Context, room domain.ChatRoom, req roomIssueRequest) (roomIssueResult, bool) {
 	if len([]rune(req.Title)) > 200 || len([]rune(req.Description)) > 8000 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "标题或描述过长"})
-		return
+		return roomIssueResult{}, false
 	}
 	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)
-	req.AgentID = strings.TrimSpace(req.AgentID)
 	workflowIDs := roomWorkflowIDs(req)
-	if req.Title == "" {
+	if req.Title == "" && strings.TrimSpace(req.IssueID) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
-		return
+		return roomIssueResult{}, false
 	}
-	if len(workflowIDs) == 0 && req.AgentID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要派给的 SOP 或角色"})
-		return
+	// Roles stay inside the SOP. A room can only start work by dispatching
+	// one or more workflows; a bare agentId does not assign or run anything.
+	if len(workflowIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要派发的 SOP"})
+		return roomIssueResult{}, false
 	}
 	if len(workflowIDs) > roomMaxSOPs {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("一次最多派给 %d 条 SOP", roomMaxSOPs)})
-		return
+		return roomIssueResult{}, false
 	}
 	workflowNames := make([]string, len(workflowIDs))
 	for i, id := range workflowIDs {
 		wf, found := h.repo.Workflow(id)
 		if !found || (!wf.Generic && !catalogVisible(wf.ProjectID, wf.Shared, room.ProjectID)) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "SOP 不存在或不属于当前项目"})
-			return
+			return roomIssueResult{}, false
 		}
 		workflowNames[i] = wf.Name
 	}
-	var agentName string
-	if req.AgentID != "" {
-		agent, found := h.repo.Agent(req.AgentID)
-		if !found || !catalogVisible(agent.ProjectID, agent.Shared, room.ProjectID) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "角色不存在或不属于当前项目"})
-			return
-		}
-		agentName = agent.Name
-	}
-	firstWorkflowID, firstWorkflowName := "", ""
-	if len(workflowIDs) > 0 {
-		firstWorkflowID, firstWorkflowName = workflowIDs[0], workflowNames[0]
-	}
+	firstWorkflowID, firstWorkflowName := workflowIDs[0], workflowNames[0]
 	userID, author := h.roomActor(c)
+	if id := strings.TrimSpace(req.IssueID); id != "" {
+		existing, found := h.repo.Issue(id)
+		if !found || existing.ProjectID != room.ProjectID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "需求不存在或不属于当前项目"})
+			return roomIssueResult{}, false
+		}
+		return h.dispatchToIssue(c, room, existing, req.Description, workflowIDs, workflowNames, userID, author)
+	}
 	issue := domain.Issue{
 		ID:          newChatID("iss"),
 		ProjectID:   room.ProjectID,
@@ -236,20 +273,13 @@ func (h *roomsHandlers) createIssue(c *gin.Context) {
 	if userID > 0 {
 		issue.AssigneeUserID = userID
 	}
-	if req.AgentID != "" {
-		issue.AssigneeType = "agent"
-		issue.AssigneeID = req.AgentID
-	}
-	targetType, targetID, targetName := roomTarget(firstWorkflowID, firstWorkflowName, req.AgentID, agentName)
+	_, _, targetName := roomTarget(firstWorkflowID, firstWorkflowName, "", "")
 	if len(workflowIDs) > 1 {
 		quoted := make([]string, len(workflowNames))
 		for i, name := range workflowNames {
 			quoted[i] = "「" + fallbackName(name, workflowIDs[i]) + "」"
 		}
-		targetType, targetName = "multi", "SOP"+strings.Join(quoted, "、")
-		if agentName != "" {
-			targetName += "和角色「" + agentName + "」"
-		}
+		targetName = "SOP" + strings.Join(quoted, "、")
 	}
 	issue.AppendOperation(domain.IssueOperation{
 		Actor: author, ActorUserID: userID, Action: "create",
@@ -257,23 +287,30 @@ func (h *roomsHandlers) createIssue(c *gin.Context) {
 	})
 	if err := h.repo.PutIssue(issue); err != nil {
 		respond(c, err)
-		return
+		return roomIssueResult{}, false
 	}
 	stored, _ := h.repo.Issue(issue.ID)
+	return h.dispatchToIssue(c, room, stored, req.Description, workflowIDs, workflowNames, userID, author)
+}
+
+// dispatchToIssue starts each workflow on stored and records one dispatch
+// message per lane on the room timeline.
+func (h *roomsHandlers) dispatchToIssue(c *gin.Context, room domain.ChatRoom, stored domain.Issue, description string, workflowIDs, workflowNames []string, userID int64, author string) (roomIssueResult, bool) {
+	targetType, targetID, targetName := roomTarget(workflowIDs[0], workflowNames[0], "", "")
+	if len(workflowIDs) > 1 {
+		quoted := make([]string, len(workflowNames))
+		for i, name := range workflowNames {
+			quoted[i] = "「" + fallbackName(name, workflowIDs[i]) + "」"
+		}
+		targetType, targetName = "multi", "SOP"+strings.Join(quoted, "、")
+	}
 	result := roomIssueResult{Issue: stored}
 	base := domain.ChatMessage{
 		RoomID: room.ID, UserID: userID, Author: author, Kind: domain.ChatKindDispatch,
 		IssueID: stored.ID, IssueNumber: stored.Number, IssueTitle: stored.Title,
-		TargetType: targetType, TargetID: targetID, TargetName: targetName, AgentID: req.AgentID,
+		TargetType: targetType, TargetID: targetID, TargetName: targetName,
 	}
 	var messages []domain.ChatMessage
-	if len(workflowIDs) == 0 {
-		msg := base
-		msg.ID = newChatID("msg")
-		msg.CreatedAt = time.Now().UTC()
-		msg.Body = req.Description
-		messages = append(messages, msg)
-	}
 	var errs []string
 	for i, wfID := range workflowIDs {
 		msg := base
@@ -283,7 +320,7 @@ func (h *roomsHandlers) createIssue(c *gin.Context) {
 		msg.WorkflowID = wfID
 		msg.WorkflowName = workflowNames[i]
 		if i == 0 {
-			msg.Body = req.Description
+			msg.Body = description
 		}
 		task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: stored.ID, WorkflowID: wfID, TriggerUserID: userID})
 		if err != nil {
@@ -311,13 +348,13 @@ func (h *roomsHandlers) createIssue(c *gin.Context) {
 	for _, msg := range messages {
 		if err := h.repo.PutMessage(msg); err != nil {
 			respond(c, err)
-			return
+			return roomIssueResult{}, false
 		}
 	}
 	h.touchRoom(room)
 	result.Message = messages[0]
 	result.Messages = messages
-	c.JSON(http.StatusCreated, result)
+	return result, true
 }
 
 func roomTarget(workflowID, workflowName, agentID, agentName string) (typ, id, name string) {

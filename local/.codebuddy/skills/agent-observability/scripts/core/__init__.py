@@ -4,5 +4,4 @@
 - 采集与 transcript 解析
 - 状态读写与去重
 - skill/rule 扫描
-- AgentLens trace 镜像
 """

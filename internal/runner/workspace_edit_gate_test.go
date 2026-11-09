@@ -84,7 +84,7 @@ func TestWorkspaceTerminalFenceAllowsOwnerSaveAndClosesOnRelease(t *testing.T) {
 	gate.RUnlock()
 }
 
-func TestMainBotGroupWorkspaceWriterKeepsHashChecks(t *testing.T) {
+func TestMainBotConversationWorkspaceWriterKeepsHashChecks(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "runs", "group-write")
 	if err := os.MkdirAll(workspace, 0700); err != nil {
@@ -101,7 +101,7 @@ func TestMainBotGroupWorkspaceWriterKeepsHashChecks(t *testing.T) {
 	if result := d.readRunnerWorkspace(context.Background(), req); result.Status != 409 {
 		t.Fatal("ordinary writer bypassed active SOP", result)
 	}
-	req.CollaborationMode = "group"
+	req.RunKind = domain.RunKindWorkspace
 	if result := d.readRunnerWorkspace(context.Background(), req); result.Status != 200 {
 		t.Fatal("group write blocked", result)
 	}

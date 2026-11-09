@@ -66,27 +66,31 @@ func (d deps) getAuthClient() *auth.Client {
 // 对所有领域可见；需要跨领域协作的领域（issues → tasks/stream）显式注入。
 type Server struct {
 	*deps
-	auth            *authHandlers  // auth.go
+	auth            *authHandlers // auth.go
+	github          *githubHandlers
 	users           *usersHandlers // users.go
 	projects        *projectsHandlers
+	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
-	catalog         *catalogHandlers           // catalog.go
-	mcp             *mcpHandlers               // mcp.go
-	market          *marketHandlers            // mcp_market.go
-	issues          *issuesHandlers            // issues.go（依赖 tasks/stream）
-	tasks           *tasksHandlers             // tasks.go
-	runs            *runsHandlers              // runs.go
-	previews        *previewsHandlers          // run_preview.go
-	stream          *streamHandlers            // stream.go
-	runners         *runnersHandlers           // runners.go
-	schedule        *scheduleHandlers          // schedule.go（align.go 并入）
-	tokens          *tokenHandlers             // auth_tokens.go
-	syncAPI         *syncHandlers              // tracker.go
-	deploy          *deploymentMetricsHandlers // deployment_metrics.go
+	catalog         *catalogHandlers  // catalog.go
+	mcp             *mcpHandlers      // mcp.go
+	market          *marketHandlers   // mcp_market.go
+	skillhub        *skillhubHandlers // skillhub_market.go
+	issues          *issuesHandlers   // issues.go（依赖 tasks/stream）
+	tasks           *tasksHandlers    // tasks.go
+	runs            *runsHandlers     // runs.go
+	previews        *previewsHandlers // run_preview.go
+	browser         *browserHandlers  // browser.go
+	stream          *streamHandlers   // stream.go
+	runners         *runnersHandlers  // runners.go
+	schedule        *scheduleHandlers // schedule.go（align.go 并入）
+	tokens          *tokenHandlers    // auth_tokens.go
+	syncAPI         *syncHandlers     // tracker.go
 	notifications   *notificationHandlers
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
 	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
+	feedback        *feedbackHandlers  // page_feedback.go
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -94,22 +98,28 @@ func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, b
 }
 
 func NewWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service) *gin.Engine {
-	return newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, nil)
+	return newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, nil, nil)
+}
+
+func (b *Background) gate() <-chan struct{} {
+	if b == nil {
+		return nil
+	}
+	return b.recoveryGate
 }
 
 // NewWithNotificationsAndBackground ties autonomous group follow-ups to the
 // caller's shutdown context. The returned stop function cancels and joins them.
-func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service) (*gin.Engine, func()) {
-	stop := func() {}
-	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, func(h *assistantHandlers, runs *runsHandlers) {
-		stopFollowUps := h.startGroupFollowUps(ctx)
-		stopHandoffs := runs.startSOPHandoffJobs(ctx)
-		stop = func() { stopHandoffs(); stopFollowUps() }
+// Cancelling ctx stops claiming; running work is only cancelled by Stop.
+func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, opts BackgroundOptions) (*gin.Engine, *Background) {
+	bg := &Background{recoveryGate: opts.RecoveryGate}
+	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
+		h.startSessionJanitor(ctx)
 	})
-	return router, stop
+	return router, bg
 }
 
-func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
+func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
 	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv()}
 	if err := ensureDefaultMCPsForAllProjects(s); err != nil {
 		log.Printf("ensure default project MCPs: %v", err)
@@ -119,11 +129,16 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	tasks := &tasksHandlers{deps: d}
 	stream := &streamHandlers{deps: d, clarifyCancels: map[string]context.CancelFunc{}, clarifyRepoLock: map[string]*stdsync.Mutex{}}
 	stream.jobs = newClarifyHub(stream)
+	stream.predecessor = bg.gate()
 	stream.clarifyRun = stream.executeClarify
 	if flag.Lookup("test.v") != nil {
 		stream.clarifyRun = testClarifyExec
 	}
 	runnerControls := newRunnerControlHub()
+	runnerControls.successor = relayRunnerWorkspaceToSuccessor(e)
+	if bg != nil {
+		bg.runnerControls = runnerControls
+	}
 	e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
 		return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
 	}
@@ -131,23 +146,27 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
 		auth:            &authHandlers{deps: d},
+		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
+		insights:        &insightsHandlers{deps: d},
 		projects:        &projectsHandlers{deps: d},
 		mcp:             &mcpHandlers{deps: d},
 		market:          &marketHandlers{deps: d},
+		skillhub:        &skillhubHandlers{deps: d, client: newSkillhubClientFromEnv()},
 		issues:          &issuesHandlers{deps: d, tasks: tasks, stream: stream},
 		tasks:           tasks,
 		runs:            &runsHandlers{deps: d, runnerControls: runnerControls, evalJobs: newRunEvalHub()},
 		previews:        &previewsHandlers{deps: d},
+		browser:         &browserHandlers{deps: d, runnerControls: runnerControls},
 		stream:          stream,
 		runners:         &runnersHandlers{deps: d, runnerWaiters: newRunnerWaiterRegistry(), runnerControls: runnerControls, runnerBindCodes: map[string]runnerBindCode{}},
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		deploy:          &deploymentMetricsHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
+		feedback:        &feedbackHandlers{deps: d},
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
@@ -168,10 +187,13 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// deps 由所有领域共享，schedule 服务就绪后回填一次即全局可见。
 	d.schedule = sched
 	if schedulerEnabled() {
-		d.schedule.Start()
+		d.schedule.StartAfter(bg.gate())
+		if bg != nil {
+			bg.scheduler = d.schedule
+		}
 	}
 	api.runners.startRunnerSweeper()
-	stream.recoverClarifyJobs()
+	runAfterGate(bg.gate(), stream.recoverClarifyJobs)
 	g := gin.New()
 	g.HandleMethodNotAllowed = true
 	// master(net/http) 对带尾斜杠的 /api 子树路径按各自 handler 语义返回
@@ -190,7 +212,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
 	g.Use(logging(), securityHeaders(), cors(), gzipMaybe())
-	g.POST("/api/runs/:id/group/mcp", api.runs.groupMCP)
 	g.Use(api.tokens.userAccessAuth())
 	if basicUser != "" && basicPass != "" {
 		g.Use(basicAuth(basicUser, basicPass))
@@ -215,6 +236,14 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/auth/register", api.auth.authRegister)
 	g.GET("/api/auth/local", api.auth.authLocal)
 	g.POST("/api/auth/local", api.auth.authLocal)
+	g.GET("/api/auth/gongfeng", api.auth.gongfengOAuthStatus)
+	g.GET("/api/auth/gongfeng/start", api.auth.gongfengOAuthStart)
+	g.GET("/api/auth/gongfeng/callback", api.auth.gongfengOAuthCallback)
+	g.GET("/api/auth/github", api.github.status)
+	g.PUT("/api/auth/github/config", api.github.configure)
+	g.POST("/api/auth/github/device", api.github.start)
+	g.POST("/api/auth/github/poll", api.github.poll)
+	g.GET("/api/auth/github/repositories", api.github.repositories)
 	g.GET("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/logout", api.auth.authLogout)
@@ -226,6 +255,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/users", api.users.users)
 	g.GET("/api/platform/admins", api.users.platformAdmins)
 	g.PUT("/api/platform/admins", api.users.platformAdmins)
+	g.GET("/api/platform/accounts", api.users.platformAccounts)
+	g.POST("/api/platform/accounts", api.users.platformAccounts)
+	g.PUT("/api/platform/accounts/:id/password", api.users.resetPlatformAccountPassword)
+	g.GET("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
+	g.PUT("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
+	g.DELETE("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {
@@ -237,6 +272,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 	// 工蜂 Git Token 校验：只允许当前登录用户校验自己的令牌。
 	g.GET("/api/users/:id/git-token/verify", api.users.verifyGitToken)
+	g.POST("/api/users/:id/git-token/verify", api.users.verifyGitToken)
+	g.POST("/api/users/:id/cli-models/probe", api.users.probeCLIModels)
 	g.Any("/api/users/:id", func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
@@ -244,6 +281,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
 	asst := &assistantHandlers{deps: d, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
 	api.runs.assistant = asst
+	api.schedule.assistant = asst
 	api.notifications.service.GenerateReport = asst.generateSOPReport
 	if api.notifications.service.Interactions != nil {
 		api.notifications.service.Interactions.Generate = asst.generateBotReply
@@ -259,27 +297,21 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/generations", asst.startGeneration)
 	g.GET("/api/assistant/sessions/:id/generation", asst.generation)
 	g.POST("/api/assistant/sessions/:id/generation/cancel", asst.generation)
+	g.POST("/api/assistant/sessions/:id/generation/steer", asst.steerGeneration)
 	g.GET("/api/assistant/models", asst.models)
 	g.POST("/api/assistant/attachments", asst.uploadAttachment)
 	g.GET("/api/assistant/attachments/:id", asst.downloadAttachment)
 	g.GET("/api/assistant/references", asst.workbenchReferences)
 	g.GET("/api/runs/:id/conversation", asst.runConversation)
-	g.POST("/api/task-groups", api.runs.taskGroups)
-	g.POST("/api/runs/:id/group/mode", api.runs.groupControl)
-	g.POST("/api/runs/:id/group/members", api.runs.groupControl)
-	g.POST("/api/runs/:id/group/sop", api.runs.groupControl)
-	g.GET("/api/runs/:id/group/sop/handoff", api.runs.sopHandoffJob)
-	g.POST("/api/runs/:id/group/sop/handoff/retry", api.runs.retrySOPHandoffJob)
-	g.GET("/api/runs/group/sop/handoffs", api.runs.sopHandoffJobs)
+	g.GET("/api/runs/:id/control", api.runs.runControl)
 	g.POST("/api/assistant/sessions/:id/edit", asst.editSession)
-	g.POST("/api/runs/:id/group/tasks", api.runs.groupControl)
-	g.GET("/api/runs/:id/group/conversation", api.runs.groupConversation)
-	g.GET("/api/runs/:id/group/activity", api.runs.groupActivity)
-	g.GET("/api/runs/:id/group/followup", asst.groupFollowUpStatus)
+	g.GET("/api/issues/:id/conversations", asst.issueConversations)
+	g.PUT("/api/assistant/sessions/:id/issue", asst.sessionIssue)
 	g.GET("/api/assistant/sessions", asst.listSessions)
 	g.POST("/api/assistant/sessions/:id/archive", asst.archiveSession)
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
+	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
 	g.PUT("/api/assistant/sessions/:id", asst.session)
 	g.DELETE("/api/assistant/sessions/:id", asst.session)
 	g.GET("/api/assistant/tasks", asst.listTasks)
@@ -302,6 +334,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/projects", api.projects.projects)
 	g.POST("/api/projects", api.projects.projects)
 	g.GET("/api/projects/:id", api.projects.project)
+	g.DELETE("/api/projects/:id", api.projects.deleteProject)
+	g.POST("/api/projects/:id/restore", api.projects.restoreProject)
 	g.GET("/api/repositories", api.catalog.repositories)
 	g.POST("/api/repositories", api.catalog.repositories)
 	g.PUT("/api/repositories", api.catalog.repositories)
@@ -331,10 +365,40 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/rooms", rooms.rooms)
 	g.POST("/api/rooms", rooms.rooms)
 	g.GET("/api/rooms/:id", rooms.room)
+	g.PATCH("/api/rooms/:id", rooms.room)
 	g.GET("/api/rooms/:id/messages", rooms.messages)
 	g.POST("/api/rooms/:id/messages", rooms.messages)
 	g.POST("/api/rooms/:id/issues", rooms.createIssue)
 	g.POST("/api/rooms/:id/decisions", rooms.decide)
+	spaces := &spacesHandlers{deps: d, rooms: rooms}
+	g.GET("/api/spaces", spaces.spaces)
+	g.POST("/api/spaces", spaces.spaces)
+	g.GET("/api/spaces/:id", spaces.space)
+	g.PATCH("/api/spaces/:id", spaces.space)
+	g.POST("/api/spaces/:id/requirement", spaces.requirement)
+	g.GET("/api/spaces/:id/messages", spaces.messages)
+	g.POST("/api/spaces/:id/messages", spaces.messages)
+	g.GET("/api/spaces/:id/members", spaces.members)
+	g.POST("/api/spaces/:id/members", spaces.members)
+	g.DELETE("/api/spaces/:id/members", spaces.members)
+	g.GET("/api/spaces/:id/threads", spaces.threads)
+	g.POST("/api/spaces/:id/threads", spaces.threads)
+	g.GET("/api/spaces/:id/artifacts", spaces.artifacts)
+	g.POST("/api/spaces/:id/artifacts", spaces.artifacts)
+	g.GET("/api/spaces/:id/artifacts/:artifactId", spaces.artifact)
+	g.PUT("/api/spaces/:id/artifacts/:artifactId", spaces.artifact)
+	g.DELETE("/api/spaces/:id/artifacts/:artifactId", spaces.artifact)
+	g.GET("/api/spaces/:id/artifacts/:artifactId/raw", spaces.artifactRaw)
+	g.GET("/api/spaces/:id/artifacts/:artifactId/revisions", spaces.artifactRevisions)
+	g.GET("/api/spaces/:id/artifacts/:artifactId/revisions/:version", spaces.artifactRevisions)
+	g.GET("/api/spaces/:id/catalog", spaces.catalog)
+	g.GET("/api/spaces/:id/attachments/:attachmentId", spaces.attachment)
+	g.GET("/api/spaces/:id/lanes", spaces.laneList)
+	g.GET("/api/spaces/:id/lanes/:runId", spaces.lane)
+	g.POST("/api/spaces/:id/sops", spaces.startSOPs)
+	g.POST("/api/spaces/:id/decisions", rooms.decide)
+	g.POST("/api/spaces/:id/flows", spaces.saveFlow)
+	g.GET("/api/spaces/:id/usage", spaces.usage)
 	g.POST("/api/chat-clarify", api.stream.chatClarify)
 	g.GET("/api/chat-clarify", api.stream.attachChatClarify)
 	g.POST("/api/chat-clarify/cancel", api.stream.chatClarifyCancel)
@@ -367,6 +431,15 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/mcp-servers/custom", api.market.mcpCustomInstall)
 	g.GET("/api/mcp-market", api.market.mcpMarket)
 	g.POST("/api/mcp-market/install", api.market.mcpMarketInstall)
+	g.GET("/api/skillhub/skills", api.skillhub.list)
+	g.GET("/api/skillhub/categories", api.skillhub.categories)
+	g.GET("/api/skillhub/skills/:slug", api.skillhub.detail)
+	g.GET("/api/skillhub/skills/:slug/versions", api.skillhub.versions)
+	g.GET("/api/skillhub/skills/:slug/files", api.skillhub.files)
+	g.GET("/api/skillhub/skills/:slug/file", api.skillhub.file)
+	g.GET("/api/skillhub/skills/:slug/evaluation", api.skillhub.evaluation)
+	g.POST("/api/skillhub/install", api.skillhub.install)
+	g.POST("/api/skillhub/update", api.skillhub.update)
 	g.GET("/api/executors", api.catalog.executors)
 	g.GET("/api/dockerfiles", api.catalog.dockerfiles)
 	g.PUT("/api/dockerfiles", api.catalog.dockerfiles)
@@ -389,10 +462,19 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/workflows/:id/agents", api.catalog.workflow)
 	g.POST("/api/workflows/:id/clone", api.catalog.workflow)
 	g.GET("/api/workflow-metrics", api.runs.workflowMetrics)
+	g.POST(insightIngestPath, api.insights.ingest)
+	g.GET("/api/insights/v1/sources", api.insights.sources)
+	g.POST("/api/insights/v1/sources", api.insights.sources)
+	g.DELETE("/api/insights/v1/sources/:id", api.insights.revokeSource)
 	g.GET("/api/analytics", api.runs.analytics)
 	g.GET("/api/observability/spec", api.observabilitySpec)
-	g.GET("/api/deployment-metrics", api.deploy.deploymentMetrics)
 	g.POST("/api/otel/*path", api.otel)
+
+	// --- page feedback (standalone, no project) ---
+	g.POST("/api/page-feedback", api.feedback.submit)
+	g.GET("/api/page-feedback", api.feedback.list)
+	g.GET("/api/page-feedback/:id", api.feedback.detail)
+	g.GET("/api/page-feedback/:id/images/:imageId", api.feedback.image)
 
 	// --- knowledge base ---
 	g.GET("/api/knowledge/settings", api.know.settings)
@@ -422,11 +504,14 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/runs/:id/workspace/takeover", api.runs.workspaceTakeover)
 	g.POST("/api/runs/:id/workspace/release", api.runs.workspaceRelease)
 	g.POST("/api/runs/:id/workspace/restore", api.runs.workspaceRestore)
+	g.GET("/api/runs/:id/workspace/restore", api.runs.workspaceRestoreStatus)
 	g.GET("/api/runs/:id/workspace/preparation", api.runs.workspacePreparation)
 	g.POST("/api/runs/:id/workspace/preparation", api.runs.workspacePreparation)
 	g.POST("/api/runs/:id/workspace/use", api.runs.workspaceActivity)
 	g.PUT("/api/runs/:id/workspace/file", api.runs.workspaceWrite)
 	g.POST("/api/runs/:id/workspace/terminal", api.runs.workspaceTerminal)
+	g.POST("/api/runs/:id/browser", api.browser.browser)
+	g.GET("/api/runs/:id/browser/stream", api.browser.stream)
 	g.GET("/api/runs/:id/workspace", api.runs.runWorkspace)
 	g.GET("/api/runs/:id/workspace/tree", api.runs.runWorkspace)
 	g.GET("/api/runs/:id/workspace/file", api.runs.runWorkspace)
@@ -451,6 +536,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/runs/:id/eval/stream", api.runs.streamRunEval)
 	g.POST("/api/runs/:id/eval/apply", api.runs.applyRunEval)
 	g.GET("/api/runs/:id/preview", api.previews.runPreview)
+	g.GET("/api/runs/:id/preview/download", api.previews.downloadRunPreview)
 	g.PUT("/api/runs/:id/preview/backend", api.previews.updatePreviewBackend)
 	g.POST("/api/runs/:id/preview/session", api.previews.runPreviewSession)
 	g.DELETE("/api/runs/:id/preview/session/:sid", api.previews.deletePreviewSession)
@@ -465,6 +551,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/sync/logs", api.syncAPI.syncLogs)
 	g.GET("/api/sync/status", api.syncAPI.syncStatus)
 	g.POST("/api/sync/create", api.syncAPI.syncCreate)
+	g.GET("/api/shared-schedule-tasks", api.schedule.sharedScheduleTasks)
+	g.GET("/api/shared-schedule-tasks/:id/versions", api.schedule.sharedScheduleVersions)
+	g.POST("/api/schedule-jobs/:id/publish", api.schedule.publishSharedSchedule)
 	g.GET("/api/schedule-jobs", api.schedule.scheduleJobs)
 	g.PUT("/api/schedule-jobs", api.schedule.scheduleJobs)
 	g.POST("/api/schedule-jobs", api.schedule.scheduleJobs)
@@ -500,7 +589,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 
 	// Machine plane: this prefix is safe to exempt from gateway interactive
 	// login. Public install assets are read-only; daemon APIs authenticate with
-	// one-time bind codes or runner session tokens instead of Taihu identity.
+	// one-time bind codes or runner session tokens instead of a user identity.
 	g.GET("/runners/install.sh", serveBindCLIScript)
 	g.GET("/runners/agentflow-runner", serveRunnerBinary)
 	g.GET("/runners/agentflow-gate-mcp", serveGateMCPBinary)
@@ -522,8 +611,13 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/deploy/bind-cli.sh", serveBindCLIScript)
 	g.GET("/deploy/agentflow-runner", serveRunnerBinary)
 	g.GET("/deploy/agentflow-gate-mcp", serveGateMCPBinary)
-	g.Any("/mcp", gin.WrapH(mcpserver.New(mcpserver.LocalInvoker{Handler: g}).HTTPHandler()))
+	mcpHandler := mcpserver.New(mcpserver.LocalInvoker{Handler: g}).HTTPHandler()
+	g.Any("/mcp", func(c *gin.Context) {
+		ctx := withConversationSession(c.Request.Context(), c.GetHeader(chatSessionHeader))
+		mcpHandler.ServeHTTP(c.Writer, c.Request.WithContext(ctx))
+	})
 	g.POST("/internal/workspace-checkpoint", func(c *gin.Context) { e.HandleWorkspaceCheckpoint(c.Writer, c.Request) })
+	g.POST(runnerWorkspaceRelayPath, handleRunnerWorkspaceRelay(e, runnerControls))
 	g.POST("/internal/agent-tools/:token/mcp", api.handleAgentToolMCP)
 	g.DELETE("/internal/agent-tools/:token/mcp", api.handleAgentToolMCP)
 	asst.api = g
@@ -576,7 +670,7 @@ func serveBindCLIScript(c *gin.Context) {
 }
 
 func (s *Server) health(c *gin.Context) {
-	c.JSON(http.StatusOK, map[string]any{"status": "ok", "role": "api"})
+	c.JSON(http.StatusOK, map[string]any{"status": "ok", "role": "api", "pid": os.Getpid()})
 }
 
 func (s *Server) capabilities(c *gin.Context) {
@@ -625,7 +719,10 @@ func (s *Server) bootstrap(c *gin.Context) {
 	go func() { defer load.Done(); sandboxes = s.repo.Sandboxes() }()
 	go func() { defer load.Done(); workflows = s.repo.Workflows() }()
 	go func() { defer load.Done(); syncConfig = s.repo.SyncConfig() }()
-	go func() { defer load.Done(); scheduleJobs = s.repo.ScheduleJobs() }()
+	go func() {
+		defer load.Done()
+		scheduleJobs = s.schedule.visibleScheduleJobs(c.Request, s.repo.ScheduleJobs())
+	}()
 	go func() { defer load.Done(); users = s.repo.Users() }()
 	load.Wait()
 	businessDomains, err := s.repo.BusinessDomains()
@@ -638,6 +735,11 @@ func (s *Server) bootstrap(c *gin.Context) {
 		currentUserID = current.ID
 	}
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
+	sharedModels := s.repo.SharedCodeBuddyModels()
+	sponsoredModel := ""
+	if len(sharedModels) > 0 {
+		sponsoredModel = sharedModels[0]
+	}
 	c.JSON(200, map[string]any{
 		"businessDomains": businessDomains, "projects": domain.PublicProjects(projects), "repositories": domain.PublicRepositories(repositories),
 		"agents": catalogAgents(agents), "rules": rules, "skills": skills, "mcpServers": mcpServers,
@@ -646,6 +748,11 @@ func (s *Server) bootstrap(c *gin.Context) {
 		"users":        domain.PublicUsers(users),
 		"storage":      s.repo.StorageInfo(),
 		"capabilities": map[string]bool{"docker": runtime.DockerReady()},
+		// Set when users without their own CodeBuddy API Key can still chat
+		// and run SOPs on the platform's shared key, limited to these models
+		// (sponsoredModel is the default).
+		"sponsoredModel":  sponsoredModel,
+		"sponsoredModels": sharedModels,
 	})
 }
 
@@ -730,7 +837,7 @@ func basicAuth(user, pass string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// The runner machine plane has its own bind/session authentication and
 		// must remain usable behind a gateway login or preview Basic Auth.
-		if strings.HasPrefix(c.Request.URL.Path, "/runners/") || strings.HasPrefix(c.Request.URL.Path, "/internal/agent-tools/") {
+		if c.Request.URL.Path == insightIngestPath || strings.HasPrefix(c.Request.URL.Path, "/runners/") || strings.HasPrefix(c.Request.URL.Path, "/internal/agent-tools/") {
 			c.Next()
 			return
 		}
