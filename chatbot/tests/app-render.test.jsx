@@ -312,18 +312,18 @@ describe("App", () => {
     Object.assign(chat, previous);
   });
 
-  test("the composer switches Main Bot executors and hides CodeBuddy-only effort", async () => {
+  test("the composer switches CLI and keeps the effort picker", async () => {
     const user = userEvent.setup();
     const previous = { ...chat };
     chat.setExecutor = vi.fn();
     const view = render(<App />);
-    await user.click(screen.getByRole("button", { name: /执行器/ }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /Codex/ }));
+    await user.click(screen.getByRole("button", { name: "CLI" }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
     expect(chat.setExecutor).toHaveBeenCalledWith("codex");
-    expect(screen.getByRole("button", { name: /思考强度/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "思考强度" })).toBeInTheDocument();
     chat.executor = "codex";
     view.rerender(<App />);
-    expect(screen.queryByRole("button", { name: /思考强度/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "思考强度" })).toBeInTheDocument();
     Object.assign(chat, previous);
   });
 

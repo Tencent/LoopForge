@@ -13,6 +13,7 @@ import {
 import { reviewedOperation, operationError } from "./operations.js";
 import { credentialHint } from "./credentials.js";
 import { modelEffort } from "./effort.js";
+import { conversationEngine, engineModels } from "./engines.js";
 import {
   enqueue,
   holdQueue,
@@ -27,13 +28,22 @@ import {
 export const EXECUTORS = [
   { id: "codebuddy", icon: "sparkles", label: "CodeBuddy", detail: "使用 CodeBuddy 模型与个人 API Key。" },
   { id: "codex", icon: "terminal", label: "Codex", detail: "使用 Codex CLI 与个人 Codex API Key。" },
-  { id: "claude", icon: "brain", label: "Claude Code", detail: "使用 Claude Code CLI 与个人 Claude Code API Key。" },
+  { id: "claude-code", icon: "brain", label: "Claude Code", detail: "使用 Claude Code CLI 与个人 Claude Code API Key。" },
+  { id: "opencode", icon: "terminal", label: "OpenCode", detail: "使用 OpenCode 与个人 API Key。" },
+  { id: "cursor", icon: "terminal", label: "Cursor", detail: "使用 Cursor CLI 与个人 API Key。" },
+  { id: "agy", icon: "sparkles", label: "Antigravity", detail: "使用 Antigravity 与个人 API Key。" },
+  { id: "kimi", icon: "sparkles", label: "Kimi Code", detail: "使用 Kimi Code 与个人 API Key。" },
+  { id: "pi", icon: "terminal", label: "Pi", detail: "使用 Pi 与个人 API Key。" },
+  { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "使用 DeepSeek Harness 与个人 API Key。" },
 ];
 const EXECUTOR_KEY = "loopforge.assistant.executor";
+function knownExecutor(id) {
+  if (id === "claude") return "claude-code";
+  return EXECUTORS.some((item) => item.id === id) ? id : "codebuddy";
+}
 function storedExecutor() {
   try {
-    const id = localStorage.getItem(EXECUTOR_KEY);
-    return EXECUTORS.some((item) => item.id === id) ? id : "codebuddy";
+    return knownExecutor(localStorage.getItem(EXECUTOR_KEY));
   } catch {
     return "codebuddy";
   }
@@ -156,8 +166,9 @@ export function useChat() {
       if (!id) {
         const preferred = storedExecutor();
         setExecutorState(preferred);
-        if (preferred !== "codebuddy") setModel("default");
-        else if (defaultModel.current) setModel(defaultModel.current);
+        const next = engineModels(models, preferred);
+        if (preferred === "codebuddy") setModel(defaultModel.current || next[0]?.id || "");
+        else setModel(next[0]?.id || "default");
       }
       setEffort("");
       setSandboxProfileId("");
@@ -166,7 +177,7 @@ export function useChat() {
       if (id) setRevealId(id);
       changeURL(id);
     },
-    [changeURL],
+    [changeURL, models],
   );
   const newChat = useCallback(() => {
     setDraftIssueId("");
@@ -227,8 +238,10 @@ export function useChat() {
         if (!current || currentId.current !== activeId) return;
         setSession(stored);
         changeURL(stored.id);
-        // A conversation stays on the CLI that answered it; older ones are CodeBuddy.
-        setExecutorState(EXECUTORS.some((item) => item.id === stored.executor) ? stored.executor : "codebuddy");
+        // A conversation stays on the CLI that answered it. Replies saved before
+        // model prefixes keep that CLI on the session executor.
+        const locked = conversationEngine(stored.messages, models, stored.executor);
+        setExecutorState(knownExecutor(locked || stored.executor));
         setModel(stored.model || defaultModel.current || models[0]?.id || "");
         setEffort(stored.effort || "");
         setProjectId(stored.projectId || "");
@@ -477,7 +490,10 @@ export function useChat() {
     return () => window.removeEventListener("message", listener);
   }, [ready]);
   const codeBuddy = executor === "codebuddy";
-  const executorModels = codeBuddy ? models : providerCatalogs[executor]?.models || [];
+  const listedForEngine = engineModels(models, executor);
+  const executorModels = listedForEngine.length || codeBuddy
+    ? (codeBuddy ? models.filter((m) => !m.engine || m.engine === "codebuddy") : listedForEngine)
+    : providerCatalogs[executor]?.models || [];
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
@@ -485,10 +501,9 @@ export function useChat() {
   const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
   const sharedModelFor = (id) => (sponsoredModels.includes(id) ? id : sponsoredModel);
   const activeModel = sponsored ? sharedModelFor(model) : model;
-  // Reasoning effort is a CodeBuddy model option; the other CLIs use their defaults.
-  const activeEffort = codeBuddy ? modelEffort(models.find((m) => m.id === activeModel), effort) : "";
+  const activeEffort = modelEffort(executorModels.find((m) => m.id === activeModel), effort);
   useEffect(() => {
-    if (codeBuddy || providerCatalogs[executor]) return;
+    if (codeBuddy || listedForEngine.length || providerCatalogs[executor]) return;
     let current = true;
     api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`)
       .then((catalog) => {
@@ -500,19 +515,23 @@ export function useChat() {
     return () => {
       current = false;
     };
-  }, [codeBuddy, executor, providerCatalogs]);
+  }, [codeBuddy, executor, listedForEngine.length, providerCatalogs]);
   const chooseExecutor = useCallback(
     (id) => {
+      if (id === "claude") id = "claude-code";
       if (!EXECUTORS.some((item) => item.id === id) || id === executor) return;
-      setExecutorState(id);
+      const locked = conversationEngine(sessionRef.current?.messages, models, sessionRef.current?.executor);
       try {
         localStorage.setItem(EXECUTOR_KEY, id);
       } catch {}
       setEffort("");
+      const next = engineModels(models, id);
       const catalog = id === "codebuddy" ? { default: defaultModel.current } : providerCatalogs[id];
-      setModel(catalog?.default || (id === "codebuddy" ? defaultModel.current : "default"));
+      setExecutorState(id);
+      setModel(next[0]?.id || catalog?.default || (id === "codebuddy" ? defaultModel.current : "default"));
+      if (locked && locked !== id) open(null);
     },
-    [executor, providerCatalogs],
+    [executor, models, open, providerCatalogs],
   );
   const chooseModel = useCallback(
     (id) => {

@@ -33,6 +33,15 @@ var defaultProviders = []providerSpec{
 	{Kind: "claude-code", Binary: "claude"},
 	{Kind: "codex", Binary: "codex"},
 	{Kind: "codebuddy", Binary: "codebuddy"},
+	// Agent CLIs (domain.AgentCLIExecutorKinds) always run with the
+	// responsible user's key in a private HOME. cursor and agy have no npm
+	// package and are found on PATH only.
+	{Kind: "opencode", Binary: "opencode"},
+	{Kind: "cursor", Binary: "cursor-agent"},
+	{Kind: "agy", Binary: "agy"},
+	{Kind: "kimi", Binary: "kimi"},
+	{Kind: "pi", Binary: "pi"},
+	{Kind: "dsh", Binary: "dsh"},
 }
 
 // terminalProviderKind is the built-in remote-terminal capability: the

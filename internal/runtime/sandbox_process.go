@@ -388,6 +388,26 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, 
 	return b.String(), nil
 }
 
+// bunFSMountPoint is the virtual root Bun-compiled CLIs (Claude Code,
+// CodeBuddy) resolve their embedded files under. A variable for tests.
+var bunFSMountPoint = "/$bunfs"
+
+// ensureBunFSMountPoint makes sure bwrap can mount a private tmpfs at
+// bunFSMountPoint. bwrap binds the host root read-only, so it cannot create a
+// missing mount point and the whole sandbox would fail ("Can't create file
+// /$bunfs: Read-only file system"). The host directory is created once when
+// the runner may (root, as the builtin runner); otherwise the mount is
+// skipped and Bun falls back to its in-process virtual filesystem.
+func ensureBunFSMountPoint() bool {
+	if info, err := os.Stat(bunFSMountPoint); err == nil {
+		return info.IsDir()
+	}
+	if err := os.Mkdir(bunFSMountPoint, 0o755); err != nil && !os.IsExist(err) {
+		return false
+	}
+	return true
+}
+
 func bwrapArgsRequirements(workspace string, requirements SandboxRequirements) ([]string, error) {
 	return bwrapArgsCommand(workspace, requirements, true)
 }
@@ -407,8 +427,8 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
 	}
-	if requirements.BunFS {
-		args = append(args, "--tmpfs", "/$bunfs")
+	if requirements.BunFS && ensureBunFSMountPoint() {
+		args = append(args, "--tmpfs", bunFSMountPoint)
 	}
 	stateDirs, err := agentStateDirectories(requirements)
 	if err != nil {

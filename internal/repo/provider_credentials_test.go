@@ -10,6 +10,65 @@ import (
 	"time"
 )
 
+func TestAgentCLICredentialsRoundTrip(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.PutUser(domain.User{LoginName: "agent-cli-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	user, ok := st.UserByLoginName("agent-cli-owner")
+	if !ok {
+		t.Fatal("missing user")
+	}
+	base := "https://gateway.example/v1"
+	protocol := "chat"
+	models := []domain.CLIModel{{ID: "model-a", Name: "Model A"}}
+	updated, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"opencode": {APIKey: "oc-secret", BaseURL: &base, Protocol: &protocol, Models: &models},
+		"shell":    {APIKey: "nope"},
+	}})
+	if err == nil || updated.ID != 0 {
+		t.Fatal("unknown CLI was accepted")
+	}
+	updated, err = st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"opencode": {APIKey: "oc-secret", BaseURL: &base, Protocol: &protocol, Models: &models},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutUser(domain.User{ID: user.ID, LoginName: "agent-cli-owner", ChineseName: "刷新"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := st.User(user.ID)
+	if !ok {
+		t.Fatal("missing saved user")
+	}
+	cred := got.AgentCLICredentials["opencode"]
+	if cred.APIKey != "oc-secret" || cred.BaseURL != base || cred.Protocol != "chat" || len(cred.Models) != 1 || cred.Models[0].ID != "model-a" {
+		t.Fatalf("agent CLI credential = %+v", cred)
+	}
+	if got.CodexAPIKey != "" {
+		t.Fatal("agent CLI credential wrote a Codex column")
+	}
+	public := domain.PublicUser(got)
+	raw, _ := json.Marshal(public)
+	if strings.Contains(string(raw), "oc-secret") || !public.AgentCLICredentials["opencode"].APIKeyConfigured {
+		t.Fatal("public user leaked the agent CLI key or lost the configured flag")
+	}
+	cleared, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"opencode": {APIKeyClear: true, BaseURL: new(string), Protocol: new(string), Models: &[]domain.CLIModel{}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared.AgentCLICredentials) != 0 {
+		t.Fatalf("clear left %+v", cleared.AgentCLICredentials)
+	}
+}
+
 func TestProviderUserCredentials(t *testing.T) {
 	for _, driver := range []string{"memory", "mysql"} {
 		t.Run(driver, func(t *testing.T) {

@@ -148,11 +148,43 @@ type SandboxProfile struct {
 	Name           string            `json:"name"`
 	ProjectID      string            `json:"projectId,omitempty"`
 	Shared         bool              `json:"shared,omitempty"`
-	Driver         string            `json:"driver"` // local, seatbelt, bwrap, docker
+	Driver         string            `json:"driver"` // local, native, docker (seatbelt / bwrap are resolved native values)
 	DockerfileID   string            `json:"dockerfileId,omitempty"`
 	EnvironmentID  string            `json:"environmentId,omitempty"`
 	ReadOnlyRootFS bool              `json:"readOnlyRootFS"`
 	Environment    map[string]string `json:"environment,omitempty"`
+}
+
+// Sandbox drivers. Profiles store local, native or docker; native is the OS
+// lightweight process sandbox and resolves on the executing machine to
+// seatbelt (macOS) or bwrap (Linux). seatbelt / bwrap remain valid resolved
+// values (runner task payloads, rows written before the native option).
+const (
+	SandboxDriverLocal    = "local"
+	SandboxDriverNative   = "native"
+	SandboxDriverDocker   = "docker"
+	SandboxDriverSeatbelt = "seatbelt"
+	SandboxDriverBwrap    = "bwrap"
+)
+
+// ResolveSandboxDriver maps native onto the lightweight sandbox of goos and
+// returns every other driver unchanged. An empty goos (a runner that never
+// reported its OS) leaves native for that machine to resolve itself.
+func ResolveSandboxDriver(driver, goos string) (string, error) {
+	driver = strings.TrimSpace(driver)
+	if driver != SandboxDriverNative {
+		return driver, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(goos)) {
+	case "darwin":
+		return SandboxDriverSeatbelt, nil
+	case "linux":
+		return SandboxDriverBwrap, nil
+	case "":
+		return driver, nil
+	default:
+		return "", fmt.Errorf("系统轻量隔离（native）仅支持 macOS 与 Linux，当前执行机器为 %s", goos)
+	}
 }
 
 func ValidateDockerfile(v DockerfileDefinition) error {

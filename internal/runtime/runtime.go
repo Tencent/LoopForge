@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +22,9 @@ const (
 	BindClaudeCode CredentialBinding = "claude-code"
 	BindGit        CredentialBinding = "git"
 	BindMCP        CredentialBinding = "mcp"
+	// BindAgentCLI injects the responsible user's key for the command's agent
+	// CLI and writes that CLI's model configuration into its private HOME.
+	BindAgentCLI CredentialBinding = "agent-cli"
 )
 
 type CodeBuddyCredential struct {
@@ -38,6 +43,7 @@ type RunCredentials struct {
 	CodeBuddy    CodeBuddyCredential
 	Codex        ProviderCredential
 	ClaudeCode   ProviderCredential
+	AgentCLI     map[string]ProviderCredential
 	GitToken     string
 	GitUserName  string
 	GitUserEmail string
@@ -45,8 +51,9 @@ type RunCredentials struct {
 }
 
 type ProviderCredential struct {
-	APIKey  string
-	BaseURL string
+	APIKey   string
+	BaseURL  string
+	Protocol string
 }
 
 type InvocationOptions struct {
@@ -67,9 +74,18 @@ type CommandSpec struct {
 	Provider           string
 	CredentialBindings []CredentialBinding
 	PrivateHome        bool
-	HookOutput         string
-	Telemetry          *InvocationOptions
-	environment        map[string]string
+	// PrivateHomeKey names the private HOME directory; empty uses Provider.
+	// Agent CLIs keep one HOME per Agent because their MCP configuration
+	// lives there.
+	PrivateHomeKey string
+	// AgentCLI is what BindAgentCLI needs besides the credential.
+	AgentCLI   AgentCLIOptions
+	HookOutput string
+	Telemetry  *InvocationOptions
+	// Stdin feeds the process on the control-plane local sandbox only.
+	// Codex chat uses it for the app-server JSON-RPC session.
+	Stdin       io.Reader
+	environment map[string]string
 }
 
 // WithPrivateHomeDir keeps CodeBuddy/Claude isolated from the operator HOME
@@ -84,18 +100,38 @@ func (c CommandSpec) WithPrivateHomeDir(dir string) CommandSpec {
 		env[key] = value
 	}
 	env["HOME"] = dir
+	env["TMPDIR"] = filepath.Join(dir, "tmp")
+	_ = os.MkdirAll(env["TMPDIR"], 0o700)
 	if c.Provider == "codex" {
 		env["CODEX_HOME"] = filepath.Join(dir, ".codex")
+		_ = os.MkdirAll(env["CODEX_HOME"], 0o700)
 	}
 	if c.Provider == "claude-code" {
 		env["CLAUDE_CONFIG_DIR"] = filepath.Join(dir, ".claude")
+		_ = os.MkdirAll(env["CLAUDE_CONFIG_DIR"], 0o700)
 	}
-	env["TMPDIR"] = filepath.Join(dir, "tmp")
 	if c.Provider == "codebuddy" {
 		env["CODEBUDDY_CONFIG_DIR"] = filepath.Join(dir, ".codebuddy")
+		_ = os.MkdirAll(env["CODEBUDDY_CONFIG_DIR"], 0o700)
 	}
 	c.environment = env
 	c.PrivateHome = false
+	return c
+}
+
+// WithClaudeBypassAccepted lets a Claude Code command that passes
+// --permission-mode bypassPermissions start when the host runs it as root.
+// The caller's tool policy is what limits the process.
+func (c CommandSpec) WithClaudeBypassAccepted() CommandSpec {
+	if c.Provider != "claude-code" {
+		return c
+	}
+	env := make(map[string]string, len(c.environment)+1)
+	for key, value := range c.environment {
+		env[key] = value
+	}
+	env["IS_SANDBOX"] = "1"
+	c.environment = env
 	return c
 }
 

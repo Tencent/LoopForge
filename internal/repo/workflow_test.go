@@ -114,8 +114,13 @@ func TestNormalizeSandboxProfileKeepsOnlyDriverRelevantFields(t *testing.T) {
 		t.Fatalf("local lost sandbox environment: %+v", local)
 	}
 	light := normalizeSandboxProfile(func() domain.SandboxProfile { p := base; p.Driver = "seatbelt"; return p }())
-	if light.ReadOnlyRootFS {
+	if light.ReadOnlyRootFS || light.Driver != domain.SandboxDriverNative {
 		t.Fatalf("seatbelt normalization mismatch: %+v", light)
+	}
+	for _, driver := range []string{"bwrap", " native "} {
+		if got := normalizeSandboxProfile(domain.SandboxProfile{Driver: driver}).Driver; got != domain.SandboxDriverNative {
+			t.Fatalf("%q stored as %q, want native", driver, got)
+		}
 	}
 	docker := normalizeSandboxProfile(func() domain.SandboxProfile { p := base; p.Driver = "docker"; p.DockerfileID = "runtime"; return p }())
 	if docker.DockerfileID != "runtime" || !docker.ReadOnlyRootFS || docker.EnvironmentID != "" {

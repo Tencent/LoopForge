@@ -21,6 +21,10 @@ type compiledConfig struct {
 	Hooks       []compiledHook
 	HasSkills   bool
 	HasMCP      bool
+	AgentID     string
+	// SystemPrompt is the agent-system.md body for providers that send it
+	// with the task.
+	SystemPrompt string
 }
 
 func materialize(workspace, invocationID string, ex domain.ExecutorDefinition, a domain.AgentDefinition, assets domain.AgentAssetBundle) (compiledConfig, error) {
@@ -49,7 +53,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	}
 	agentRel := filepath.Join(".agentflow", agentID)
 	runtimeRel := filepath.Join(".agentflow", "runtime", invocationID)
-	compiled := compiledConfig{AgentRoot: filepath.ToSlash(agentRel), RuntimeRoot: filepath.ToSlash(runtimeRel), HasSkills: len(assets.Skills) > 0}
+	compiled := compiledConfig{AgentRoot: filepath.ToSlash(agentRel), RuntimeRoot: filepath.ToSlash(runtimeRel), HasSkills: len(assets.Skills) > 0, AgentID: agentID}
 	// run-context.json is a debugging artifact; keep binary skill payloads
 	// out of it (they travel with the bundle, not the workspace dump).
 	slimAssets := assets
