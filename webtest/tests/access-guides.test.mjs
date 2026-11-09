@@ -165,6 +165,56 @@ test('personal token UI creates and revokes tokens through the API', async (t) =
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/auth/tokens/token-1'));
 });
 
+test('token-bearing access base never downgrades a secure deployment', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const base = (configured, protocol, host = 'page.example') => app.evaluate(
+    `accessPublicBaseURL(${JSON.stringify(configured)}, ${JSON.stringify({ protocol, host })})`);
+  // Bare APP_DOMAIN follows the studio page scheme.
+  assert.equal(base('studio.example', 'https:'), 'https://studio.example');
+  assert.equal(base('studio.example:8443', 'https:'), 'https://studio.example:8443');
+  assert.equal(base('studio.example', 'http:'), 'http://studio.example');
+  // An explicit https base wins, and an https page upgrades an explicit http base.
+  assert.equal(base('https://studio.example/', 'http:'), 'https://studio.example');
+  assert.equal(base('https://studio.example/lf/', 'http:'), 'https://studio.example/lf');
+  assert.equal(base('http://studio.example', 'https:'), 'https://studio.example');
+  assert.equal(base('http://studio.example', 'http:'), 'http://studio.example');
+  // Without a usable configured base, the page origin is used as is.
+  assert.equal(base('', 'https:'), 'https://page.example');
+  assert.equal(base('', 'http:', '127.0.0.1:8080'), 'http://127.0.0.1:8080');
+  assert.equal(base('javascript:alert(1)', 'https:'), 'https://page.example');
+  assert.equal(base('ftp://studio.example', 'http:'), 'http://page.example');
+});
+
+test('access snippets copied from an https studio use https endpoints', async (t) => {
+  const app = await loadApp({ origin: 'https://studio.example' });
+  t.after(app.close);
+  app.router.post('/api/auth/tokens', { token: 'af_live_secret' });
+  app.router.get('/api/auth/tokens', []);
+  app.evaluate(`
+    window.__AGENTFLOW_APP_DOMAIN__='studio.example';
+    state.currentUser={id:1,loginName:'alice',isGuest:false};
+    state.accessTokensStatus='ready';state.accessTokens=[];state.revealedToken='';
+    switchView('guide');
+  `);
+  assert.equal(app.evaluate('getPublicBaseURL()'), 'https://studio.example');
+  const form = app.document.querySelector('#accessTokenForm');
+  form.elements.name.value = 'Automation';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  assert.equal(app.evaluate(`state.revealedToken`), 'af_live_secret');
+  for (const client of ['cursor', 'claude', 'codebuddy', 'codex']) {
+    app.evaluate(`state.accessClient='${client}';renderAccessTokens()`);
+    const button = app.document.querySelector('#accessBody [data-copy-revealed-prompt]');
+    assert.ok(button, `${client} reveal offers the client prompt`);
+    const prompt = decodeURIComponent(button.dataset.copyRevealedPrompt);
+    assert.match(prompt, /af_live_secret/);
+    assert.match(prompt, /ENDPOINT = https:\/\/studio\.example\/mcp/);
+    assert.match(prompt, /https:\/\/studio\.example\/mcp-setup\.txt/);
+    assert.doesNotMatch(prompt + app.evaluate(`accessMcpClientSpec('${client}',getPublicBaseURL(),'t').code`), /http:\/\/studio\.example/, `${client} snippet downgraded the endpoint`);
+  }
+});
+
 // renderAll() repaints every page; only the 访问密钥 page may ask for the token
 // list, since Bearer sessions get 401 there and would leave it stuck on error.
 test('the token list is only fetched once 访问密钥 is opened', async (t) => {

@@ -15,15 +15,23 @@ function accessMcpAgentPrompt(spec,base,token){
 }
 // 对外展示的固定接入地址：优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
 function getPublicBaseURL(){
-  const domain = (typeof window !== 'undefined' && (window.__AGENTFLOW_APP_DOMAIN__ || window.__AGENTFLOW_PUBLIC_BASE_URL__))
-    || (typeof state !== 'undefined' && state?.appDomain ? state.appDomain : '')
-    || (typeof window !== 'undefined' && window.location?.host ? window.location.host : '')
-    || 'loopforge.example.com';
-  return 'http://' + domain;
+  const configured = (typeof window !== 'undefined' && (window.__AGENTFLOW_APP_DOMAIN__ || window.__AGENTFLOW_PUBLIC_BASE_URL__))
+    || (typeof state !== 'undefined' && state?.appDomain ? state.appDomain : '');
+  return accessPublicBaseURL(configured, typeof window !== 'undefined' ? window.location : null);
 }
-const PUBLIC_BASE_URL = typeof window !== 'undefined' && (window.__AGENTFLOW_APP_DOMAIN__ || window.location?.host)
-  ? ('http://' + (window.__AGENTFLOW_APP_DOMAIN__ || window.location.host))
-  : 'http://loopforge.example.com';
+// 接入片段会携带 Bearer Token：配置里显式的协议优先，否则跟随当前页面；
+// HTTPS 页面生成的地址绝不降级为 http://。
+function accessPublicBaseURL(configured, page){
+  const secure = page?.protocol === 'https:';
+  const fallback = (secure ? 'https:' : 'http:') + '//' + (page?.host || 'loopforge.example.com');
+  const raw = String(configured || '').trim();
+  if(!raw) return fallback;
+  let url;
+  try{ url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : (secure ? 'https://' : 'http://') + raw) }catch(_){ return fallback }
+  if(!['http:','https:'].includes(url.protocol) || !url.host) return fallback;
+  if(secure) url.protocol = 'https:';
+  return url.protocol + '//' + url.host + url.pathname.replace(/\/+$/, '');
+}
 function accessViewActive(){return !!$('#guideView')?.classList.contains('active')}
 let credentialFocusRequest=0;
 function gotoCredential(name){
