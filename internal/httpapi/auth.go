@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log"
@@ -40,8 +41,24 @@ func trustGatewayIdentityHeaders() bool {
 	return err == nil && enabled
 }
 
+// gatewayIdentitySecretHeader carries AGENTFLOW_IDENTITY_HEADER_SECRET from
+// the authenticating gateway.
+const gatewayIdentitySecretHeader = "X-AgentFlow-Gateway-Secret"
+
+// gatewayLoginName trusts identity headers only from the authenticating
+// gateway. Loopback alone does not prove that: a reverse proxy on the same
+// host also connects from loopback and may pass client headers through. With
+// a configured secret the gateway must present it; without one, any forwarded
+// request is refused, as authLocal does.
 func gatewayLoginName(r *http.Request) string {
 	if !trustGatewayIdentityHeaders() || !isLoopbackAddr(r.RemoteAddr) {
+		return ""
+	}
+	if secret := strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")); secret != "" {
+		if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(r.Header.Get(gatewayIdentitySecretHeader))), []byte(secret)) != 1 {
+			return ""
+		}
+	} else if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" || r.Header.Get("X-Real-IP") != "" {
 		return ""
 	}
 	login := strings.TrimSpace(getHeaderCaseInsensitive(r, "Staffname"))
