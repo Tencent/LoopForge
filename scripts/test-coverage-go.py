@@ -71,6 +71,31 @@ class CoverageGateTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('empty coverage profile:', result.stderr)
 
+    def test_preserves_input_profile_named_like_default_filtered_output(self):
+        core = self.profile('core.out', (
+            'agentflow/internal/runtime/browser.go:1.1,2.2 6 1\n'
+            'agentflow/internal/runtime/browser.go:3.1,4.2 4 0\n'
+        ))
+        second = self.profile('core.filtered.out', (
+            'agentflow/internal/runtime/browser.go:1.1,2.2 6 0\n'
+            'agentflow/internal/runtime/browser.go:3.1,4.2 4 1\n'
+        ))
+        core_before = core.read_text()
+        second_before = second.read_text()
+
+        result = subprocess.run(
+            ['bash', str(SCRIPT), '--profile', 'core.out', '--profile', 'core.filtered.out', '--min', '86'],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r'total\s+10\s+10\s+0\s+100\.0000%')
+        self.assertEqual(core.read_text(), core_before)
+        self.assertEqual(second.read_text(), second_before)
+        self.assertTrue((self.root / 'core.filtered.filtered.out').is_file())
+
 
 if __name__ == '__main__':
     unittest.main()

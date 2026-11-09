@@ -32,9 +32,9 @@ while [ $# -gt 0 ]; do
 done
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$root"
 
 if [ "${#profiles[@]}" -eq 0 ]; then
+  cd "$root"
   mkdir -p "$(dirname "$out")"
   profiles=("$out")
   args=(-p="$par" -count=1 -timeout="$timeout" -covermode=set -coverprofile="$out")
@@ -52,12 +52,27 @@ for profile in "${profiles[@]}"; do
 done
 
 filtered="${profiles[0]%.out}.filtered.out"
+while :; do
+  collides=0
+  for profile in "${profiles[@]}"; do
+    if [ "$filtered" = "$profile" ] || [ "$filtered" -ef "$profile" ]; then
+      collides=1
+      break
+    fi
+  done
+  [ "$collides" -eq 0 ] && break
+  filtered="${filtered%.out}.filtered.out"
+done
+
+tmp_filtered="$(mktemp "${filtered}.XXXXXX")"
+trap 'rm -f "$tmp_filtered"' EXIT
 {
   echo "mode: set"
   for profile in "${profiles[@]}"; do
     grep -v '^mode:' "$profile" | grep -Ev '^agentflow/(cmd|deploy)/' || true
   done
-} >"$filtered"
+} >"$tmp_filtered"
+mv -f "$tmp_filtered" "$filtered"
 
 awk -v min="$min" '
   NR == 1 { next }
