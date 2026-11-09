@@ -49,7 +49,7 @@ import { IconButton, Dialog, Menu, SelectMenu, CredentialAction } from "./ui";
 import { credentialHint, openCredentialSettings } from "./credentials";
 import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
 import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
-import { unreadReply, useSeenReplies } from "./session-unread.js";
+import { unreadReply, useReadReplies } from "./session-unread.js";
 import MentionPicker from "./MentionPicker";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
@@ -362,11 +362,11 @@ export default function App() {
     composerPreviews = useRef(new Map());
   const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || "new:" + chat.projectId}`;
   useEffect(() => setMention(null), [draftKey]);
-  // Replies read per conversation; the history list dots the rest.
-  const seenReplies = useSeenReplies({
-    userId: realChat.user?.id,
-    sessions: realChat.sessions,
+  // The open conversation's reply is reported read; the history list dots
+  // the replies the server still counts as unread.
+  const readReplies = useReadReplies({
     enabled: realChat.ready,
+    sessions: realChat.sessions,
     activeId: realChat.activeId,
     generation: realChat.generation,
   });
@@ -922,7 +922,7 @@ export default function App() {
         generation: chat.generation,
         busy: chat.busy,
       } : undefined),
-      unreadReply(s, seenReplies, { activeId: chat.activeId, userId: chat.user?.id }),
+      unreadReply(s, { activeId: chat.activeId, read: readReplies }),
     );
     const runState = runSessionState(s);
     return (

@@ -1,81 +1,32 @@
-import { act, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, test } from "vitest";
-import {
-  reconcileSeenReplies,
-  seenRepliesKey,
-  unreadReply,
-  useSeenReplies,
-} from "../src/session-unread.js";
+import { renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+
+vi.mock("../src/api.js", async (original) => ({
+  ...(await original()),
+  write: vi.fn(async () => ({ ok: true, recorded: true })),
+}));
+
+import { write } from "../src/api.js";
+import { unreadReply, useReadReplies } from "../src/session-unread.js";
 import { sessionReplyStatus, sidebarReplyStatus } from "../src/session-status.js";
 
-const row = (id, generationId, generationStatus = "completed", extra = {}) => ({
+const row = (id, generationId, extra = {}) => ({
   id,
-  userId: "u1",
   generationId,
-  generationStatus,
+  generationStatus: "completed",
+  unread: true,
   ...extra,
 });
 
-describe("seen replies", () => {
-  test("the first visit treats every finished reply as read but leaves a running one to finish", () => {
-    const seen = reconcileSeenReplies(null, [
-      row("done", "g1"),
-      row("failed", "g2", "failed"),
-      row("busy", "g3", "running"),
-      row("fresh", "", "idle"),
-    ]);
-    expect(seen).toEqual({ done: "g1", failed: "g2" });
-  });
-
-  test("the open conversation records its finished reply, preferring the live generation", () => {
-    const sessions = [row("a", "g1"), row("b", "g2", "running")];
-    expect(reconcileSeenReplies({}, sessions, { activeId: "a" })).toEqual({ a: "g1" });
-    // The list still says g1 is the latest, but the open page already saw g4.
-    expect(
-      reconcileSeenReplies({}, sessions, {
-        activeId: "a",
-        generation: { id: "g4", status: "completed", sessionId: "a" },
-      }),
-    ).toEqual({ a: "g4" });
-    // A reply still running is not read yet, and another session's generation is ignored.
-    expect(reconcileSeenReplies({}, sessions, { activeId: "b" })).toEqual({});
-    expect(
-      reconcileSeenReplies({}, sessions, {
-        activeId: "b",
-        generation: { id: "g9", status: "completed", sessionId: "a" },
-      }),
-    ).toEqual({});
-  });
-
-  test("deleted conversations leave the record, and an empty list keeps it", () => {
-    const stored = { kept: "g1", deleted: "g2" };
-    expect(reconcileSeenReplies(stored, [row("kept", "g1")])).toEqual({ kept: "g1" });
-    expect(reconcileSeenReplies(stored, [])).toEqual(stored);
-  });
-
-  test("a completed reply is unread until its conversation is opened", () => {
+describe("unread replies", () => {
+  test("a reply the server counts as unread keeps its dot until it is opened", () => {
     const session = row("a", "g2");
-    expect(unreadReply(session, { a: "g1" }, { userId: "u1" })).toBe(true);
-    expect(unreadReply(session, {}, { userId: "u1" })).toBe(true);
-    expect(unreadReply(session, { a: "g2" }, { userId: "u1" })).toBe(false);
-    expect(unreadReply(session, { a: "g1" }, { userId: "u1", activeId: "a" })).toBe(false);
-    // Nothing is unread before the record has loaded.
-    expect(unreadReply(session, null, { userId: "u1" })).toBe(false);
-  });
-
-  test("only completed replies get the dot; running and failed ones keep their icons", () => {
-    for (const status of ["running", "failed", "interrupted", "cancelled", "idle"])
-      expect(unreadReply(row("a", "g2", status), {}, { userId: "u1" })).toBe(false);
-  });
-
-  test("a colleague's conversation the reader never joined stays quiet", () => {
-    const colleague = row("c", "g1", "completed", {
-      userId: "u2",
-      participants: [{ id: "u2" }],
-    });
-    expect(unreadReply(colleague, {}, { userId: "u1" })).toBe(false);
-    const joined = { ...colleague, participants: [{ id: "u2" }, { id: "u1" }] };
-    expect(unreadReply(joined, {}, { userId: "u1" })).toBe(true);
+    expect(unreadReply(session)).toBe(true);
+    expect(unreadReply(session, { activeId: "a" })).toBe(false);
+    expect(unreadReply(session, { read: { a: "g2" } })).toBe(false);
+    // A newer reply than the one read on this page is unread again.
+    expect(unreadReply(session, { read: { a: "g1" } })).toBe(true);
+    expect(unreadReply(row("b", "g3", { unread: false }))).toBe(false);
   });
 
   test("the sidebar swaps a completed reply for a blue dot only while it is unread", () => {
@@ -92,36 +43,58 @@ describe("seen replies", () => {
   });
 });
 
-describe("useSeenReplies", () => {
-  afterEach(() => localStorage.clear());
+describe("useReadReplies", () => {
+  beforeEach(() => write.mockClear());
 
-  test("persists the record per user and clears a dot once the conversation is opened", () => {
-    const key = seenRepliesKey("u1");
-    const first = [row("a", "g1"), row("b", "g2", "running")];
-    const { result, rerender } = renderHook((props) => useSeenReplies(props), {
-      initialProps: { userId: "u1", sessions: first, enabled: true, activeId: "" },
+  test("opening a conversation reports its unread reply once and clears the dot", async () => {
+    const sessions = [row("a", "g1"), row("b", "g2")];
+    const { result, rerender } = renderHook((props) => useReadReplies(props), {
+      initialProps: { enabled: true, sessions, activeId: null },
     });
-    expect(result.current).toEqual({ a: "g1" });
-    expect(JSON.parse(localStorage.getItem(key))).toEqual({ a: "g1" });
-
-    // b finished while the reader was elsewhere.
-    const second = [row("a", "g1"), row("b", "g2")];
-    rerender({ userId: "u1", sessions: second, enabled: true, activeId: "" });
-    expect(unreadReply(second[1], result.current, { userId: "u1" })).toBe(true);
-
-    act(() => rerender({ userId: "u1", sessions: second, enabled: true, activeId: "b" }));
-    expect(result.current).toEqual({ a: "g1", b: "g2" });
-    expect(JSON.parse(localStorage.getItem(key))).toEqual({ a: "g1", b: "g2" });
-    expect(unreadReply(second[1], result.current, { userId: "u1" })).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+    rerender({ enabled: true, sessions, activeId: "b" });
+    await waitFor(() => expect(result.current).toEqual({ b: "g2" }));
+    expect(write).toHaveBeenCalledWith("/api/assistant/sessions/b/read", { generationId: "g2" });
+    rerender({ enabled: true, sessions: [...sessions], activeId: "b" });
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(unreadReply(sessions[1], { read: result.current })).toBe(false);
+    expect(unreadReply(sessions[0], { read: result.current })).toBe(true);
   });
 
-  test("waits for the list and ignores a broken stored record", () => {
-    const { result, rerender } = renderHook((props) => useSeenReplies(props), {
-      initialProps: { userId: "u1", sessions: [], enabled: false },
+  test("a reply that completes while its conversation is open is read", async () => {
+    const sessions = [row("a", "g1", { unread: false })];
+    const running = { id: "g2", sessionId: "a", status: "running" };
+    const { result, rerender } = renderHook((props) => useReadReplies(props), {
+      initialProps: { enabled: true, sessions, activeId: "a", generation: running },
     });
-    expect(result.current).toBeNull();
-    localStorage.setItem(seenRepliesKey("u1"), "[1,2]");
-    rerender({ userId: "u1", sessions: [row("a", "g1")], enabled: true });
-    expect(result.current).toEqual({ a: "g1" });
+    expect(write).not.toHaveBeenCalled();
+    rerender({ enabled: true, sessions, activeId: "a", generation: { ...running, status: "completed" } });
+    await waitFor(() => expect(result.current).toEqual({ a: "g2" }));
+    expect(write).toHaveBeenCalledWith("/api/assistant/sessions/a/read", { generationId: "g2" });
+  });
+
+  test("failed replies, another conversation's reply and a page still loading report nothing", () => {
+    const failed = [row("a", "g1", { unread: false, generationStatus: "failed" })];
+    renderHook(() =>
+      useReadReplies({ sessions: failed, activeId: "a", generation: { id: "g1", sessionId: "a", status: "failed" } }),
+    );
+    renderHook(() =>
+      useReadReplies({ sessions: failed, activeId: "a", generation: { id: "g9", sessionId: "b", status: "completed" } }),
+    );
+    renderHook(() => useReadReplies({ enabled: false, sessions: [row("a", "g1")], activeId: "a" }));
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  test("a report that failed is sent again the next time the conversation is opened", async () => {
+    write.mockRejectedValueOnce(new Error("offline"));
+    const sessions = [row("a", "g1")];
+    const { rerender } = renderHook((props) => useReadReplies(props), {
+      initialProps: { sessions, activeId: "a" },
+    });
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    rerender({ sessions, activeId: null });
+    rerender({ sessions, activeId: "a" });
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
   });
 });

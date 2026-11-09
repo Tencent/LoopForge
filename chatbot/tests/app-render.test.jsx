@@ -665,20 +665,21 @@ describe("sidebar conversation filter", () => {
 });
 
 describe("sidebar reply status", () => {
-  test("a reply finished elsewhere shows a blue dot, a running one spins, a failed one warns", async () => {
+  test("an unread completed reply shows a blue dot, a running one spins, a failed one warns", async () => {
     const user = userEvent.setup();
     const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, recorded: true }) }));
     const now = new Date().toISOString();
-    const row = (id, title, generationStatus, generationId) => ({
-      id, title, projectId: "p1", userId: "u1", generationStatus, generationId, updatedAt: now, messages: [],
+    const row = (id, title, generationStatus, generationId, unread = false) => ({
+      id, title, projectId: "p1", userId: "u1", generationStatus, generationId, unread, updatedAt: now, messages: [],
     });
-    localStorage.setItem("loopforge.chat.seenReplies.v1.u1", JSON.stringify({ unread: "g1", read: "g3" }));
     Object.assign(chat, {
       activeId: null,
       session: null,
       projectId: "p1",
       sessions: [
-        row("unread", "完成未读", "completed", "g2"),
+        row("unread", "完成未读", "completed", "g2", true),
         row("read", "完成已读", "completed", "g3"),
         row("busy", "正在生成", "running", "g4"),
         row("broken", "生成出错", "failed", "g5"),
@@ -697,16 +698,21 @@ describe("sidebar reply status", () => {
       expect(status("正在生成").querySelector('[data-icon="arc-spinner"]')).not.toBeNull();
       expect(status("生成出错").querySelector('[data-icon="alert"]')).not.toBeNull();
 
-      // Opening the conversation marks the reply as read.
+      // Opening the conversation reports the reply read and clears its dot.
       Object.assign(chat, { activeId: "unread" });
       view.rerender(<App />);
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          "/api/assistant/sessions/unread/read",
+          expect.objectContaining({ method: "POST", body: JSON.stringify({ generationId: "g2" }) }),
+        ),
+      );
       Object.assign(chat, { activeId: null });
       view.rerender(<App />);
       await waitFor(() => expect(status("完成未读")).toBeNull());
-      expect(JSON.parse(localStorage.getItem("loopforge.chat.seenReplies.v1.u1")).unread).toBe("g2");
     } finally {
       view.unmount();
-      localStorage.removeItem("loopforge.chat.seenReplies.v1.u1");
+      globalThis.fetch = originalFetch;
       Object.assign(chat, previous);
     }
   });
