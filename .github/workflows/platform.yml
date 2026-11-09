@@ -52,6 +52,8 @@ jobs:
       - name: Secret scanner download regression tests
         run: python3 scripts/test-scan-secrets.py -v
       - run: bash scripts/scan-secrets.sh
+        env:
+          LOOPFORGE_GITLEAKS_TOKEN: ${{ github.token }}
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 30
