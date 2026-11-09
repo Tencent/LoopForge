@@ -32,6 +32,8 @@ func TestRunnerTaskPayloadScrubbedOnTerminalTransitions(t *testing.T) {
 		Invocation: &domain.RunnerInvocation{
 			RunID:             "run-1",
 			CodeBuddyAPIKey:   "cb-secret",
+			DeepSeekAPIKey:    "ds-secret",
+			DeepSeekBaseURL:   "https://ds.example.com",
 			ClaudeCodeAPIKey:  "cc-secret",
 			ClaudeCodeBaseURL: "https://cc.example.com",
 			AgentCLIAPIKey:    "agy-secret",
@@ -120,7 +122,7 @@ func TestRunnerTaskPayloadScrubbedOnTerminalTransitions(t *testing.T) {
 func assertPayloadScrubbed(t *testing.T, st *Store, id string) {
 	t.Helper()
 	raw := readRawPayload(t, st, id)
-	for _, secret := range []string{"cb-secret", "cc-secret", "agy-secret", "https://agy.example.com", "legacy-token", "token-a", "token-b"} {
+	for _, secret := range []string{"ds-secret", "https://ds.example.com", "cb-secret", "cc-secret", "agy-secret", "https://agy.example.com", "legacy-token", "token-a", "token-b"} {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("credential %q leaked into durable payload of %s: %s", secret, id, raw)
 		}

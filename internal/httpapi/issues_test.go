@@ -538,10 +538,20 @@ func TestAssetAPIAcceptsSandboxEnvironmentButExecutorsAreReadOnly(t *testing.T) 
 	if len(executors) != len(want) {
 		t.Fatalf("built-in CLI catalog = %+v", executors)
 	}
+	foundDeepSeek := false
 	for i := range want {
 		if executors[i].ID != want[i].ID || executors[i].Kind != want[i].Kind {
 			t.Fatalf("built-in CLI catalog[%d] = %+v, want %+v", i, executors[i], want[i])
 		}
+		if ex := executors[i]; ex.ID == "deepseek" {
+			foundDeepSeek = true
+			if ex.Binary != "codex" || ex.Model != domain.DeepSeekDefaultModel {
+				t.Fatalf("DeepSeek executor = %+v", ex)
+			}
+		}
+	}
+	if !foundDeepSeek {
+		t.Fatal("DeepSeek executor is missing from the built-in catalog")
 	}
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "configured", "name": "Configured", "projectId": "platform", "driver": "local", "environment": map[string]string{"TOOL_MODE": "test"}}, http.StatusOK)
 	profile, ok := s.Sandbox("configured")

@@ -62,7 +62,7 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	if err != nil {
 		return "", err
 	}
-	if strings.EqualFold(command.Provider, "codex") {
+	if strings.EqualFold(command.Provider, "codex") || command.Provider == "deepseek" {
 		overlay := map[string]string{}
 		for key, value := range sandboxIsolationEnv(sb) {
 			overlay[key] = value

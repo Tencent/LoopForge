@@ -20,6 +20,7 @@ const (
 	BindCodeBuddy  CredentialBinding = "codebuddy"
 	BindCodex      CredentialBinding = "codex"
 	BindClaudeCode CredentialBinding = "claude-code"
+	BindDeepSeek   CredentialBinding = "deepseek"
 	BindGit        CredentialBinding = "git"
 	BindMCP        CredentialBinding = "mcp"
 	// BindAgentCLI injects the responsible user's key for the command's agent
@@ -49,6 +50,7 @@ type RunCredentials struct {
 	Codex      ProviderCredential
 	ClaudeCode ProviderCredential
 	AgentCLI   map[string]ProviderCredential
+	DeepSeek   ProviderCredential
 	GitToken   string
 	GitSSHKeys map[string]string `json:"-"`
 	// GitSSHHostKeys maps "host:port" to the requester's private key for a
@@ -123,7 +125,7 @@ func (c CommandSpec) WithPrivateHomeDir(dir string) CommandSpec {
 	env["HOME"] = dir
 	env["TMPDIR"] = filepath.Join(dir, "tmp")
 	_ = os.MkdirAll(env["TMPDIR"], 0o700)
-	if c.Provider == "codex" {
+	if c.Provider == "codex" || c.Provider == "deepseek" {
 		env["CODEX_HOME"] = filepath.Join(dir, ".codex")
 		_ = os.MkdirAll(env["CODEX_HOME"], 0o700)
 	}

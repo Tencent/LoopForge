@@ -61,6 +61,9 @@ func (d *Daemon) managedTaskState(taskID string) *managedTask {
 }
 
 func defaultProviderBinary(provider string) string {
+	if provider == "deepseek" {
+		provider = "codex"
+	}
 	for _, spec := range defaultProviders {
 		if spec.Kind == provider {
 			return spec.Binary
@@ -86,7 +89,11 @@ func (d *Daemon) managedBinary(task domain.RunnerTask) (string, bool) {
 	if state == nil || state.err != nil {
 		return "", false
 	}
-	return state.inventory.BinaryFor(task.Provider)
+	provider := task.Provider
+	if provider == "deepseek" {
+		provider = "codex"
+	}
+	return state.inventory.BinaryFor(provider)
 }
 
 // Do not fall back to refreshed managed discovery: a run pinned to an empty
