@@ -91,6 +91,8 @@ type Repository struct {
 func PublicRepository(r Repository) Repository {
 	r.GitTokenConfigured = false
 	r.GitToken = ""
+	// Rows saved before credentials were rejected may still embed them.
+	r.CloneURL = StripURLCredentials(r.CloneURL)
 	return r
 }
 
