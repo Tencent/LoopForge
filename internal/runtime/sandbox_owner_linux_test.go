@@ -22,14 +22,6 @@ func TestDockerSandboxNativeOwner(t *testing.T) {
 	if err := os.Chmod(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// Materialize the mount targets as the host user, as normal run setup does.
-	// Otherwise the Docker daemon creates root-owned placeholder directories.
-	if err := os.MkdirAll(filepath.Join(workspace, ".agentflow", "isolation", "empty-dir"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, ".agentflow", "isolation", "empty-file"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	name := fmt.Sprintf("native-owner-%d", time.Now().UnixNano())
 	sandbox, err := createDocker(ctx, name, workspace, domain.SandboxProfile{Driver: "docker"}, SandboxRequirements{}, domain.DockerfileDefinition{
 		ID: name, Content: "FROM alpine:3.20\nWORKDIR /workspace\n",
