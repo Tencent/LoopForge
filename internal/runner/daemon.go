@@ -21,6 +21,7 @@ import (
 	"agentflow/internal/gitwork"
 	"agentflow/internal/procwatch"
 	"agentflow/internal/runtime"
+	"agentflow/internal/workspaceprep"
 )
 
 // Daemon is the long-running runner process on a user machine or CVM. It
@@ -1189,54 +1190,60 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	if repo.RequireExistingWorkBranch && strings.TrimSpace(repo.WorkBranch) == "" {
 		return fmt.Errorf("继续已有分支时必须指定工作分支")
 	}
-	url := strings.TrimSpace(repo.CloneURL)
-	if err := gitwork.ValidateRemoteURL(url, true); err != nil {
-		return fmt.Errorf("git clone: %w", err)
-	}
-	// `-c` auth is scoped to this command, so origin stays the clean URL and
-	// the token never lands in .git/config. --progress: without a terminal git
-	// prints nothing until it finishes, so a slow clone looked hung.
-	args := append(gitwork.AuthConfigArgs(repo.GitToken), "clone", "--progress")
-	if ref := strings.TrimSpace(repo.Ref); ref != "" {
-		args = append(args, "--branch", ref)
-	}
-	args = append(args, "--", url, ".")
 	watch := runnerCloneWatch(repo)
-	// The platform cannot see this host's output yet; the operator can.
-	ctx = procwatch.WithObserver(ctx, func(event procwatch.Event) { log.Printf("runner checkout: %s", event.Message) })
-	tail, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = workspace
-		cmd.Env = gitwork.Env(repo.GitToken)
-		return cmd
-	}, watch)
-	if err != nil {
-		return fmt.Errorf("git clone %s: %w (%s)", repo.CloneURL, err, cloneOutput([]byte(tail), repo.GitToken))
+	if err := workspaceprep.Do(ctx, "clone", "正在克隆仓库："+repo.Dir, func(ctx context.Context) error {
+		url := strings.TrimSpace(repo.CloneURL)
+		if err := gitwork.ValidateRemoteURL(url, true); err != nil {
+			return fmt.Errorf("git clone: %w", err)
+		}
+		// `-c` auth is scoped to this command, so origin stays the clean URL and
+		// the token never lands in .git/config.
+		args := append(gitwork.AuthConfigArgs(repo.GitToken), "clone", "--progress")
+		if ref := strings.TrimSpace(repo.Ref); ref != "" {
+			args = append(args, "--branch", ref)
+		}
+		args = append(args, "--", url, ".")
+		ctx = procwatch.WithAdditionalObserver(ctx, func(event procwatch.Event) { log.Printf("runner checkout: %s", event.Message) })
+		tail, err := procwatch.Run(workspaceprep.Observe(ctx), func(ctx context.Context) *exec.Cmd {
+			cmd := exec.CommandContext(ctx, "git", args...)
+			cmd.Dir = workspace
+			cmd.Env = gitwork.Env(repo.GitToken)
+			return cmd
+		}, watch)
+		if err != nil {
+			return fmt.Errorf("git clone %s: %w (%s)", gitwork.Redact(repo.CloneURL, repo.GitToken), err, cloneOutput([]byte(tail), repo.GitToken))
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	// The branch steps below keep the bound they always had.
-	cloneCtx := ctx
-	if watch.Timeout > 0 {
+	// Ordinary task checkouts retain main's configurable branch-step bound.
+	// Workspace opening has a separate branch phase deadline.
+	if !workspaceprep.Enabled(ctx) && watch.Timeout > 0 {
 		var cancel context.CancelFunc
-		cloneCtx, cancel = context.WithTimeout(ctx, watch.Timeout)
+		ctx, cancel = context.WithTimeout(ctx, watch.Timeout)
 		defer cancel()
 	}
-	if repo.RequireExistingWorkBranch {
-		return checkoutExistingRepositoryBranch(cloneCtx, workspace, repo)
-	}
-	if repo.CreateNewWorkBranch {
-		return createNewRepositoryBranch(cloneCtx, workspace, repo)
-	}
-	if workBranch := strings.TrimSpace(repo.WorkBranch); workBranch != "" && workBranch != strings.TrimSpace(repo.Ref) {
-		remoteRef := "refs/remotes/origin/" + workBranch
-		if err := exec.CommandContext(cloneCtx, "git", "-C", workspace, "show-ref", "--verify", "--quiet", remoteRef).Run(); err == nil {
-			if out, err := exec.CommandContext(cloneCtx, "git", "-C", workspace, "checkout", "--quiet", "-b", workBranch, "--track", "origin/"+workBranch).CombinedOutput(); err != nil {
-				return fmt.Errorf("git checkout work branch %s: %v (%s)", workBranch, err, cloneOutput(out, repo.GitToken))
-			}
-		} else if out, err := exec.CommandContext(cloneCtx, "git", "-C", workspace, "checkout", "--quiet", "-b", workBranch).CombinedOutput(); err != nil {
-			return fmt.Errorf("git create work branch %s: %v (%s)", workBranch, err, cloneOutput(out, repo.GitToken))
+	return workspaceprep.Do(ctx, "branch", "正在准备分支："+repo.Dir, func(ctx context.Context) error {
+
+		if repo.RequireExistingWorkBranch {
+			return checkoutExistingRepositoryBranch(ctx, workspace, repo)
 		}
-	}
-	return nil
+		if repo.CreateNewWorkBranch {
+			return createNewRepositoryBranch(ctx, workspace, repo)
+		}
+		if workBranch := strings.TrimSpace(repo.WorkBranch); workBranch != "" && workBranch != strings.TrimSpace(repo.Ref) {
+			remoteRef := "refs/remotes/origin/" + workBranch
+			if _, err := gitwork.C(gitwork.WithToken(ctx, repo.GitToken), workspace, "show-ref", "--verify", "--quiet", remoteRef); err == nil {
+				if out, err := gitwork.C(gitwork.WithToken(ctx, repo.GitToken), workspace, "checkout", "--quiet", "-b", workBranch, "--track", "origin/"+workBranch); err != nil {
+					return fmt.Errorf("git checkout work branch %s: %v (%s)", workBranch, err, cloneOutput([]byte(out), repo.GitToken))
+				}
+			} else if out, err := gitwork.C(gitwork.WithToken(ctx, repo.GitToken), workspace, "checkout", "--quiet", "-b", workBranch); err != nil {
+				return fmt.Errorf("git create work branch %s: %v (%s)", workBranch, err, cloneOutput([]byte(out), repo.GitToken))
+			}
+		}
+		return nil
+	})
 }
 
 // checkoutExistingRepositoryBranch validates the remote head even when the
@@ -1287,8 +1294,8 @@ func createNewRepositoryBranch(ctx context.Context, workspace string, repo *doma
 			return fmt.Errorf("远端已存在分支 %s，不能按新建分支处理；继续该分支请用 branchMode=continue", branch)
 		}
 	}
-	if out, err := exec.CommandContext(ctx, "git", "-C", workspace, "checkout", "--quiet", "-b", branch).CombinedOutput(); err != nil {
-		return fmt.Errorf("git create work branch %s: %v (%s)", branch, err, cloneOutput(out, repo.GitToken))
+	if out, err := gitwork.C(gitwork.WithToken(ctx, repo.GitToken), workspace, "checkout", "--quiet", "-b", branch); err != nil {
+		return fmt.Errorf("git create work branch %s: %v (%s)", branch, err, cloneOutput([]byte(out), repo.GitToken))
 	}
 	return nil
 }
@@ -1317,16 +1324,13 @@ func checkoutCreatedRepositoryBranch(ctx context.Context, workspace string, repo
 		base = "origin/" + base
 	}
 	if out, err := exec.CommandContext(ctx, "git", "-C", workspace, "checkout", "--quiet", "-b", branch, base).CombinedOutput(); err != nil {
-		return fmt.Errorf("git create work branch %s: %v (%s)", branch, err, cloneOutput(out, repo.GitToken))
+		return fmt.Errorf("git create work branch %s: %v (%s)", branch, err, cloneOutput([]byte(out), repo.GitToken))
 	}
 	return nil
 }
 
-// cloneOutput keeps a git failure short and strips the token before the text
-// can be stored on the task or shown in the run timeline.
-// runnerCloneWatch bounds a clone on the execution machine. The total keeps
-// the runner's long-standing 10 minute default, because a task checkout has no
-// other bound here; the stall window ends a hung transfer well before that.
+// runnerCloneWatch keeps the runner's 10 minute default total limit and the
+// shared stall window, independently of workspace-opening phase deadlines.
 func runnerCloneWatch(repo *domain.RunnerRepository) procwatch.Options {
 	name := strings.TrimSpace(repo.Name)
 	if name == "" {
@@ -1336,10 +1340,12 @@ func runnerCloneWatch(repo *domain.RunnerRepository) procwatch.Options {
 		Stage: "clone", Label: "克隆仓库 " + name,
 		Stall: procwatch.DurationEnv(gitwork.CloneStallEnv, 5*time.Minute), StallEnv: gitwork.CloneStallEnv,
 		Timeout: procwatch.DurationEnv(gitwork.CloneTimeoutEnv, 10*time.Minute), TimeoutEnv: gitwork.CloneTimeoutEnv,
-		Redact: func(line string) string { return gitwork.Redact(line, repo.GitToken) },
+		Redact: func(line string) string { return workspaceprep.Sanitize(gitwork.Redact(line, repo.GitToken)) },
 	}
 }
 
+// cloneOutput keeps a git failure short and strips the token before the text
+// can be stored on the task or shown in the run timeline.
 func cloneOutput(out []byte, token string) string {
 	detail := gitwork.Redact(strings.TrimSpace(string(out)), token)
 	if len(detail) > 300 {

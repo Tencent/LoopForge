@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/workspaceprep"
 
 	"github.com/gorilla/websocket"
 )
@@ -32,6 +33,7 @@ type controlMessage struct {
 	RequestID         string                          `json:"requestId,omitempty"`
 	WorkspaceRequest  *domain.RunnerWorkspaceRequest  `json:"workspaceRequest,omitempty"`
 	WorkspaceResponse *domain.RunnerWorkspaceResponse `json:"workspaceResponse,omitempty"`
+	WorkspaceProgress *domain.WorkspaceOpening        `json:"workspaceProgress,omitempty"`
 }
 
 // controlLoop maintains one outbound WebSocket for immediate server-to-runner
@@ -78,6 +80,8 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var requests sync.WaitGroup
 	var writeMu sync.Mutex
+	var cancelMu sync.Mutex
+	cancellations := map[string]context.CancelFunc{}
 	slots := make(chan struct{}, 8)
 	defer func() { cancel(); _ = conn.Close(); requests.Wait(); d.checkpointTransfers.Close() }()
 	done := make(chan struct{})
@@ -92,6 +96,7 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 	_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
 	conn.SetPingHandler(func(data string) error {
 		_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
+
 		err := conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(10*time.Second))
 		if err == websocket.ErrCloseSent {
 			return nil
@@ -107,6 +112,14 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 			return err
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
+		if message.Type == "workspace.cancel" {
+			cancelMu.Lock()
+			if stop := cancellations[message.RequestID]; stop != nil {
+				stop()
+			}
+			cancelMu.Unlock()
+			continue
+		}
 		if message.Type == "task.control" {
 			d.signalTaskControl(message.TaskID, message.DesiredState)
 			continue
@@ -117,6 +130,7 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 			default:
 				response := domain.RunnerWorkspaceResponse{Status: 429, Error: "too many workspace requests"}
 				writeMu.Lock()
+				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				err := conn.WriteJSON(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})
 				writeMu.Unlock()
 				if err != nil {
@@ -125,11 +139,32 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 				continue
 			}
 			requests.Add(1)
+			requestCtx, stop := context.WithCancel(ctx)
+			cancelMu.Lock()
+			cancellations[message.RequestID] = stop
+			cancelMu.Unlock()
 			go func(message controlMessage) {
 				defer requests.Done()
+				defer func() {
+					stop()
+					cancelMu.Lock()
+					delete(cancellations, message.RequestID)
+					cancelMu.Unlock()
+				}()
 				defer func() { <-slots }()
-				response := d.readRunnerWorkspace(ctx, *message.WorkspaceRequest)
+				if request := message.WorkspaceRequest; request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace {
+					requestCtx = workspaceprep.WithSink(requestCtx, func(progress domain.WorkspaceOpening) {
+						writeMu.Lock()
+						defer writeMu.Unlock()
+						_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+						if err := conn.WriteJSON(controlMessage{Type: "workspace.progress", RequestID: message.RequestID, WorkspaceProgress: &progress}); err != nil {
+							stop()
+						}
+					})
+				}
+				response := d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
 				writeMu.Lock()
+				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				err := conn.WriteJSON(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})
 				writeMu.Unlock()
 				if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/workspaceprep"
 )
 
 func checkoutRepositoryForPreparation(ctx context.Context, workspace string, repository *domain.RunnerRepository, refresh bool) error {
@@ -32,50 +33,30 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 	if _, ok := gitwork.RevParse(ctx, workspace, "HEAD"); !ok {
 		// A killed clone leaves .git before there are refs or checked-out files.
 		// Never remove an index, refs or source files from a damaged checkout.
-		if err := removeIncompleteClone(ctx, workspace); err != nil {
+		if err := gitwork.RemoveIncompleteClone(ctx, workspace); err != nil {
 			return err
 		}
 		return cloneRepository(ctx, workspace, repository)
 	}
 	if repository.RequireExistingWorkBranch {
-		return checkoutExistingRepositoryBranch(ctx, workspace, repository)
+		return workspaceprep.Do(ctx, "branch", "正在准备已有分支："+repository.Dir, func(ctx context.Context) error { return checkoutExistingRepositoryBranch(ctx, workspace, repository) })
 	}
 	if repository.CreateNewWorkBranch {
 		// The name was validated when this checkout was created; reusing it only
 		// needs the local branch, because the remote copy is the one we pushed.
-		return checkoutCreatedRepositoryBranch(ctx, workspace, repository)
+		return workspaceprep.Do(ctx, "branch", "正在准备分支："+repository.Dir, func(ctx context.Context) error {
+			if _, err := os.Stat(filepath.Join(workspace, ".git", "agentflow-baseline")); os.IsNotExist(err) {
+				if _, exists := gitwork.RevParse(ctx, workspace, "refs/heads/"+repository.WorkBranch); !exists {
+					return createNewRepositoryBranch(ctx, workspace, repository)
+				}
+			}
+			return checkoutCreatedRepositoryBranch(ctx, workspace, repository)
+		})
 	}
 	if refresh {
 		return refreshCleanRepository(ctx, workspace, repository)
 	}
 	return nil
-}
-
-func removeIncompleteClone(ctx context.Context, workspace string) error {
-	entries, err := os.ReadDir(workspace)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.Name() != ".git" {
-			return fmt.Errorf("repository checkout is incomplete but contains files; preserving workspace %s", workspace)
-		}
-	}
-	for _, name := range []string{"index", "agentflow-baseline"} {
-		if _, err := os.Lstat(filepath.Join(workspace, ".git", name)); !os.IsNotExist(err) {
-			return fmt.Errorf("repository checkout is incomplete but has %s; preserving workspace %s", name, workspace)
-		}
-	}
-	refs, err := gitwork.C(ctx, workspace, "for-each-ref", "--format=%(objectname)")
-	if err != nil || strings.TrimSpace(refs) != "" {
-		return fmt.Errorf("repository checkout is incomplete but refs cannot be safely discarded; preserving workspace %s", workspace)
-	}
-	root, err := os.OpenRoot(workspace)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	return root.RemoveAll(".git")
 }
 
 // A clean working tree can still contain local commits or a stash. Only a

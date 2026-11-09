@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Kind is the lifecycle step of one watched command.
@@ -33,6 +34,7 @@ type Event struct {
 	Stage   string
 	Kind    Kind
 	Message string
+	Output  string // bounded, redacted output tail, including on completion/failure
 	Elapsed time.Duration
 }
 
@@ -46,6 +48,18 @@ type observerKey struct{}
 // attach one still get the watchdog, timeout and short errors.
 func WithObserver(ctx context.Context, observer Observer) context.Context {
 	return context.WithValue(ctx, observerKey{}, observer)
+}
+
+// WithAdditionalObserver preserves an existing observer, such as the run
+// timeline, when also reporting output to the workspace-opening UI.
+func WithAdditionalObserver(ctx context.Context, observer Observer) context.Context {
+	previous := observerFrom(ctx)
+	return WithObserver(ctx, func(event Event) {
+		if previous != nil {
+			previous(event)
+		}
+		observer(event)
+	})
 }
 
 func observerFrom(ctx context.Context) Observer {
@@ -70,9 +84,18 @@ type Options struct {
 
 const (
 	tailLines     = 20
+	tailBytes     = 16 << 10
+	maxLineBytes  = 64 << 10
 	progressEvery = 10 * time.Second
 	waitDelay     = 5 * time.Second
 )
+
+// Configure applies the same cancellation policy to short commands whose full
+// output is needed by their caller, so they cannot use Run's tail-only capture.
+func Configure(cmd *exec.Cmd) {
+	killGroup(cmd)
+	cmd.WaitDelay = waitDelay
+}
 
 // Run starts the command build returns and waits for it. build receives the
 // context to bind with exec.CommandContext; Run owns Stdout and Stderr.
@@ -80,9 +103,9 @@ const (
 // says why (exit, stall, timeout) and does not repeat that tail.
 func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Options) (string, error) {
 	observer := observerFrom(ctx)
-	emit := func(kind Kind, message string, elapsed time.Duration) {
+	emit := func(kind Kind, message, output string, elapsed time.Duration) {
 		if observer != nil {
-			observer(Event{Stage: opts.Stage, Kind: kind, Message: message, Elapsed: elapsed})
+			observer(Event{Stage: opts.Stage, Kind: kind, Message: message, Output: output, Elapsed: elapsed})
 		}
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
@@ -99,15 +122,12 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 			return
 		}
 		out.lastEmit = now
-		emit(Progress, opts.Label+"："+line, now.Sub(started))
+		emit(Progress, opts.Label+"："+line, strings.Join(out.lines, "\n"), now.Sub(started))
 	}
 	cmd := build(runCtx)
-	killGroup(cmd)
+	Configure(cmd)
 	cmd.Stdout, cmd.Stderr = out, out
-	// git and docker leave helpers holding the pipes after a kill; do not
-	// wait on them forever.
-	cmd.WaitDelay = waitDelay
-	emit(Started, "正在"+opts.Label, 0)
+	emit(Started, "正在"+opts.Label, "", 0)
 
 	done := make(chan struct{})
 	if opts.Stall > 0 {
@@ -122,7 +142,7 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 	}
 	tail := out.tail()
 	if err == nil {
-		emit(Completed, fmt.Sprintf("%s 完成，耗时 %s", opts.Label, roundDuration(elapsed)), elapsed)
+		emit(Completed, fmt.Sprintf("%s 完成，耗时 %s", opts.Label, roundDuration(elapsed)), tail, elapsed)
 		return tail, nil
 	}
 	switch cause := context.Cause(runCtx); {
@@ -138,7 +158,7 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 	if last := lastLines(tail, 3); last != "" {
 		message += "\n" + last
 	}
-	emit(Failed, message, elapsed)
+	emit(Failed, message, tail, elapsed)
 	return tail, err
 }
 
@@ -226,13 +246,14 @@ func lastLines(text string, n int) string {
 // lineWriter splits output on \n and \r (git redraws progress with \r), keeps
 // the last lines, and records when output last arrived.
 type lineWriter struct {
-	mu       sync.Mutex
-	redact   func(string) string
-	onLine   func(string, time.Time)
-	pending  bytes.Buffer
-	lines    []string
-	last     time.Time
-	lastEmit time.Time
+	mu          sync.Mutex
+	redact      func(string) string
+	onLine      func(string, time.Time)
+	pending     bytes.Buffer
+	discardLine bool
+	lines       []string
+	last        time.Time
+	lastEmit    time.Time
 }
 
 func (w *lineWriter) Write(p []byte) (int, error) {
@@ -245,12 +266,24 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 			w.endLine(now)
 			continue
 		}
-		w.pending.WriteByte(b)
+		if !w.discardLine {
+			w.pending.WriteByte(b)
+			if w.pending.Len() > maxLineBytes {
+				// Never publish a fragment of an oversized line: a credential
+				// split across writes must be redacted as a whole or discarded.
+				w.pending.Reset()
+				w.discardLine = true
+			}
+		}
 	}
 	return len(p), nil
 }
 
 func (w *lineWriter) endLine(now time.Time) {
+	if w.discardLine {
+		w.discardLine = false
+		return
+	}
 	line := strings.TrimSpace(w.pending.String())
 	w.pending.Reset()
 	if line == "" {
@@ -258,6 +291,13 @@ func (w *lineWriter) endLine(now time.Time) {
 	}
 	if w.redact != nil {
 		line = w.redact(line)
+	}
+	if len(line) > tailBytes {
+		start := len(line) - tailBytes
+		for start < len(line) && !utf8.RuneStart(line[start]) {
+			start++
+		}
+		line = line[start:]
 	}
 	// "Receiving objects: 27% ..." redraws the same counter; keep only the
 	// newest so the tail shows what happened, not 20 copies of one counter.
@@ -268,6 +308,10 @@ func (w *lineWriter) endLine(now time.Time) {
 		if len(w.lines) > tailLines {
 			w.lines = w.lines[len(w.lines)-tailLines:]
 		}
+	}
+	for size := len(strings.Join(w.lines, "\n")); size > tailBytes && len(w.lines) > 1; {
+		size -= len(w.lines[0]) + 1
+		w.lines = w.lines[1:]
 	}
 	if w.onLine != nil {
 		w.onLine(line, now)

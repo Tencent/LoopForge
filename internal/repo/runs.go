@@ -366,9 +366,17 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 	}
 	timing := domain.ComputeRunTiming(run, events[run.ID], time.Now().UTC())
 	run.Timing = &timing
-	if run.WorkflowSnapshot.CollaborationMode == "group" {
+	if run.WorkflowSnapshot.CollaborationMode == "group" || run.IsWorkspace() {
 		var rows []runEventRow
-		if err := r.DB.Where("run_id = ?", id).Order("seq DESC").Limit(80).Find(&rows).Error; err != nil {
+		query := r.DB.Where("run_id = ?", id).Order("seq DESC").Limit(80)
+		if run.IsWorkspace() {
+			// Progress bodies are bounded tails, but 80 copies every poll would
+			// still be expensive. Keep the latest opening plus the ordinary
+			// lifecycle events, including builds that fail after opening.
+			latest := r.DB.Model(&runEventRow{}).Select("MAX(seq)").Where("run_id = ? AND type LIKE ?", id, "workspace.opening.%")
+			query = query.Where("type NOT LIKE ? OR seq = (?)", "workspace.opening.%", latest)
+		}
+		if err := query.Find(&rows).Error; err != nil {
 			return domain.Run{}, false
 		}
 		for i := len(rows) - 1; i >= 0; i-- {

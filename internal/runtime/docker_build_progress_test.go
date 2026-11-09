@@ -11,6 +11,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/procwatch"
+	"agentflow/internal/workspaceprep"
 )
 
 // installFakeDockerBuild makes the image missing and runs buildScript for
@@ -99,10 +100,15 @@ func TestDockerBuildStopsWhenTheBuildStallsOrRunsTooLong(t *testing.T) {
 		installFakeDockerBuild(t, `    echo "#5 [2/3] RUN apt-get update"
     exec sleep 60`)
 		sb := &dockerSandbox{id: "stalled-build", name: "stalled-build-box", workspace: t.TempDir(), dockerfile: slowDockerfile()}
+		var opening []domain.WorkspaceOpening
+		ctx := workspaceprep.WithSink(context.Background(), func(p domain.WorkspaceOpening) { opening = append(opening, p) })
 		started := time.Now()
-		_, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"true"}}, nil)
+		_, err := sb.Exec(ctx, CommandSpec{Argv: []string{"true"}}, nil)
 		if time.Since(started) > 5*time.Second || err == nil || !procwatch.Stopped(err) || !strings.Contains(err.Error(), dockerBuildStallEnv) {
 			t.Fatalf("after %s: %v", time.Since(started), err)
+		}
+		if len(opening) == 0 || opening[0].Phase != "build" || !strings.Contains(opening[0].Output, "apt-get update") {
+			t.Fatalf("stall output not forwarded to opening: %+v", opening)
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {

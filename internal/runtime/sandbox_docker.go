@@ -3,6 +3,7 @@ package runtime
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/procwatch"
+	"agentflow/internal/workspaceprep"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -779,8 +780,12 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		return "", err
 	}
 	args := dockerBuildArgs(image, contextDir)
-	build := func(ctx context.Context) *exec.Cmd { return exec.CommandContext(ctx, "docker", args...) }
-	if tail, err := procwatch.Run(ctx, build, dockerBuildWatch(dockerfile)); err != nil {
+	build := func(ctx context.Context) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "docker", args...)
+		cmd.Env = append(os.Environ(), "BUILDKIT_PROGRESS=plain")
+		return cmd
+	}
+	if tail, err := procwatch.Run(workspaceprep.Observe(ctx), build, dockerBuildWatch(dockerfile)); err != nil {
 		// Only the tail: a build killed after minutes of apt output used to
 		// carry all of it in the error.
 		return "", fmt.Errorf("docker build: %w: %s", err, tail)
@@ -808,6 +813,7 @@ func dockerBuildWatch(dockerfile domain.DockerfileDefinition) procwatch.Options 
 		Stage: "image", Label: label,
 		Stall: procwatch.DurationEnv(dockerBuildStallEnv, 10*time.Minute), StallEnv: dockerBuildStallEnv,
 		Timeout: procwatch.DurationEnv(dockerBuildTimeoutEnv, 0), TimeoutEnv: dockerBuildTimeoutEnv,
+		Redact: workspaceprep.Sanitize,
 	}
 }
 

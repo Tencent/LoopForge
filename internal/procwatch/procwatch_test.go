@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func shell(script string) func(context.Context) *exec.Cmd {
@@ -78,8 +79,40 @@ func TestRunKeepsOnlyTheTailOfFailingOutput(t *testing.T) {
 		t.Fatal("tail not redacted")
 	}
 	last := rec.last()
+	if last.Output != tail {
+		t.Fatalf("observer lost final output: %q", last.Output)
+	}
 	if last.Kind != Failed || !strings.Contains(last.Message, "构建沙箱镜像 失败") || !strings.HasSuffix(last.Message, "line 500 ***") {
 		t.Fatalf("failed event = %+v", last)
+	}
+}
+
+func TestOutputRedactsSplitSecretsAndBoundsUnterminatedLines(t *testing.T) {
+	var published []string
+	w := &lineWriter{
+		redact: func(s string) string { return strings.ReplaceAll(s, "private-secret", "[redacted]") },
+		onLine: func(line string, _ time.Time) { published = append(published, line) },
+	}
+	for _, chunk := range []string{"正在下载 private-", "secret\r", strings.Repeat("x", maxLineBytes+1), "secret-suffix\n", "tail: private-", "secret"} {
+		_, _ = w.Write([]byte(chunk))
+	}
+	w.flush()
+	if got := w.tail(); got != "正在下载 [redacted]\ntail: [redacted]" {
+		t.Fatalf("lost or leaked output: %q", got)
+	}
+	if w.pending.Len() != 0 || w.pending.Cap() > 2*maxLineBytes {
+		t.Fatal("unterminated output grew without bound")
+	}
+	for _, line := range published {
+		if strings.Contains(line, "private-secret") || strings.Contains(line, "secret-suffix") {
+			t.Fatalf("secret leaked to observer: %s", line)
+		}
+	}
+	for i := 0; i < 30; i++ {
+		_, _ = w.Write([]byte(strings.Repeat("下载中", 3000) + "\n"))
+		if got := w.tail(); len(got) > tailBytes || !utf8.ValidString(got) {
+			t.Fatal("output tail must remain bounded UTF8")
+		}
 	}
 }
 

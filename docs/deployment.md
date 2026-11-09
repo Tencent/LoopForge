@@ -57,7 +57,7 @@ Access to the Docker socket is equivalent to root on the host. Two safeguards fo
 
 ### Slow networks: clone and image build limits
 
-Cloning a repository and building a custom sandbox image report progress while they work, and their errors keep the last lines of git or Docker output. On the platform host the progress is recorded on the run. On an execution machine it is written to the runner's log, and only the final error reaches the platform. A step that prints nothing for its stall window is treated as hung and stopped. A step that keeps printing may be slow but is stopped only by a total limit. All settings take Go durations such as `90s` or `20m`; `0` turns a limit off. Each host reads its own environment, so set the clone limits on execution machines too.
+Cloning a repository and building a custom sandbox image report progress while they work, and their errors keep a bounded tail of git or Docker output (at most 20 lines / 16 KiB). On the platform host the progress is recorded on the run. Execution-machine clones also write progress to the runner's log. Workspace-opening requests forward live output to the platform and chat through the same command observer; upgrade both platform and runner for this protocol. Progress is emitted on the first line, at most every 10 seconds thereafter, and with the final output when the command exits. A step that prints nothing for its stall window is treated as hung and stopped. A step that keeps printing may be slow but is stopped only by a total limit. All settings below take Go durations such as `90s` or `20m`; `0` turns that command limit off. Each host reads its own environment, so set the clone limits on execution machines too.
 
 | Setting | Default | Applies to |
 |---|---|---|
@@ -96,6 +96,67 @@ Personal runners are connected from the execution-machine page with a short-live
 A platform administrator can share one CodeBuddy API Key under **Platform administration → Shared CodeBuddy Key** (平台共享 CodeBuddy Key): pick the network environment that issued it and the models members may use (the first is the default). Members without a key of their own then chat and run SOPs on it, limited to those models; a role configured with another model runs on the default and the run says so. Members with their own key keep using it with any model. Scheduled tasks, clarification, reports, bots and run evaluation still need the runner's own key. A scheduled task uses the key for its selected CLI and does not borrow the shared CodeBuddy key. The key is stored in the database like personal keys and is never shown again after saving. `AGENTFLOW_ASSISTANT_SPONSOR_LOGIN`, which lent one account's key limited to `deepseek-v4.1-flash`, still applies while no shared key is configured.
 
 Configure provider credentials in the platform UI, not the host's global CLI configuration. Credentials are bound to the responsible actor by the upstream runtime. The home composer and SOP roles support CodeBuddy, Codex and Claude Code independently. Select the executor beside the home model selector; its API key (and optional Codex/Claude base URL) comes from your personal settings. Changing the executor preserves the draft; saved conversations record the executor used. Main Bot writes still pass through the platform tool gateway and its approval checks. Requirement clarification and notifications continue to use CodeBuddy. A scheduled assistant task can select any supported CLI and runs as an ordinary chat turn; Codex and Claude Code still need that account's own credential. Live model tests are opt-in; set `AGENTFLOW_LIVE_TESTS=1` only for the acceptance suites that need to load local credentials.
+
+## Slow workspace opening and restricted networks
+
+Opening a chat workspace reports sandbox/image preparation, repository cloning,
+branch checkout and initialization in the chat. Git transfer output includes its
+reported bytes and speed. The same bounded, redacted output is retained in the
+run events and logs; preparation failures also appear in `runs_get.problems`,
+including workspaces with no SOP nodes. The run stays `waiting` because it is an
+idle workspace, while its latest `workspace.opening.*` event records readiness
+or failure separately.
+
+Configure these Go-duration values on the process that executes the work (the
+local API/worker or the connected runner), then restart that process:
+
+| Variable | Default | Scope |
+| --- | --- | --- |
+| `AGENTFLOW_WORKSPACE_BUILD_TIMEOUT` | `15m` | Sandbox acquisition, including image build |
+| `AGENTFLOW_WORKSPACE_CLONE_TIMEOUT` | `10m` | Each repository clone, including reference-cache fallback |
+| `AGENTFLOW_WORKSPACE_BRANCH_TIMEOUT` | `2m` | Each repository's branch preparation |
+| `AGENTFLOW_WORKSPACE_PREPARE_TIMEOUT` | `5m` | Runner workspace initialization scripts |
+
+These phase deadlines apply in addition to the command limits above: the first
+deadline or stall window reached stops the command. Setting a command limit to
+`0` does not disable the opening phase deadline. For example, to allow a runner
+clone up to 20 minutes, set both `AGENTFLOW_WORKSPACE_CLONE_TIMEOUT=20m` and
+`AGENTFLOW_GIT_CLONE_TIMEOUT=20m` on that runner. Ordinary task checkouts retain
+the configurable `AGENTFLOW_GIT_CLONE_TIMEOUT` limit (10 minutes by default).
+Invalid or nonpositive workspace phase values use the default. Canceling the opening request also
+cancels its runner request and active Git/build command. Upgrade both platform
+and runner to receive live runner progress and cancellation; older runners
+still return their final result and retain their previous preparation timeout.
+
+A failed open retains its workspace binding and completed checkouts. Retry the
+current workspace without `new=true`; this avoids creating a second run and
+recloning repositories that already completed. A missing requested base branch
+still abandons a newly created workspace so its branch configuration can be
+corrected. Git cannot resume an interrupted pack download: an empty incomplete
+clone is retried, but local files, refs and indexes are preserved. For local
+execution, an administrator-configured repository `localPath` alongside
+`cloneUrl` supplies the existing `--reference --dissociate` cache. It must be
+readable on the execution host. Docker reuses completed image layers. This does
+not introduce a shared cache across users' credentials.
+
+For restricted networks:
+
+- Configure `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, or Git's `http.proxy`,
+  for the service account performing the clone. A proxy on the host loopback
+  address is not automatically reachable from a container or remote runner.
+- Configure registry access/proxies on the Docker daemon separately. Package
+  downloads inside a Dockerfile use that build's network and package sources;
+  the platform's Git proxy does not configure `apt`, npm or pip for it.
+- In the project Dockerfile, use your organization's approved apt mirror and
+  package indexes. For Debian images, update the appropriate `URIs` in
+  `/etc/apt/sources.list.d/debian.sources` (or entries in `/etc/apt/sources.list`
+  on older images) before `apt-get update`. Keep signature verification enabled.
+  Prebuild a reusable base image when dependencies are large.
+
+An existing workspace freezes its Dockerfile content and additional files.
+Opening it after the project Dockerfile changes shows a warning; retrying does
+not replace that environment. Save or push work first, then explicitly open a
+new workspace to use the updated Dockerfile or mirror configuration.
 
 ## Observability schema
 

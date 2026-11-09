@@ -93,3 +93,86 @@ func TestWorkspacePreparationDoesNotBlockTaskControl(t *testing.T) {
 	gate.Unlock()
 	d.closeAllRunSandboxes(context.Background())
 }
+
+func TestWorkspaceOpeningStreamsProgressAndCancelsOnlyItsRequest(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	request.RunKind = domain.RunKindWorkspace
+	request.Workflow.Nodes[0].Script = "touch opening-started; sleep 30"
+	defer d.closeAllRunSandboxes(context.Background())
+	connections := make(chan *websocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err == nil {
+			connections <- conn
+		}
+	}))
+	defer server.Close()
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := <-connections
+	defer peer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- d.readControls(ctx, client) }()
+	defer func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(4 * time.Second):
+			t.Error("control loop did not stop")
+		}
+	}()
+	if err := peer.WriteJSON(controlMessage{Type: "workspace.request", RequestID: "opening", WorkspaceRequest: &request}); err != nil {
+		t.Fatal(err)
+	}
+	_ = peer.SetReadDeadline(time.Now().Add(3 * time.Second))
+	seen := false
+	for !seen {
+		var message controlMessage
+		if err := peer.ReadJSON(&message); err != nil {
+			t.Fatal(err)
+		}
+		if message.Type == "workspace.progress" && message.WorkspaceProgress != nil && message.WorkspaceProgress.Phase == "prepare" {
+			seen = true
+		}
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(root, "opening-started")); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(filepath.Join(root, "opening-started")); err != nil {
+		t.Fatal("preparation did not start", err)
+	}
+	if err := peer.WriteJSON(controlMessage{Type: "workspace.cancel", RequestID: "opening"}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var message controlMessage
+		if err := peer.ReadJSON(&message); err != nil {
+			t.Fatal("cancellation did not finish request", err)
+		}
+		if message.Type == "workspace.response" {
+			if message.RequestID != "opening" || message.WorkspaceResponse == nil || message.WorkspaceResponse.Error == "" {
+				t.Fatalf("unexpected response: %+v", message)
+			}
+			break
+		}
+	}
+	if _, active := d.workspacePreparing.Load(request.RunID); active {
+		t.Fatal("canceled request retained preparation lock")
+	}
+	request.Operation = domain.RunnerWorkspaceOperationPreparationStatus
+	if err := peer.WriteJSON(controlMessage{Type: "workspace.request", RequestID: "status-after-cancel", WorkspaceRequest: &request}); err != nil {
+		t.Fatal(err)
+	}
+	var response controlMessage
+	if err := peer.ReadJSON(&response); err != nil || response.RequestID != "status-after-cancel" {
+		t.Fatalf("cancel closed shared connection: %+v %v", response, err)
+	}
+}

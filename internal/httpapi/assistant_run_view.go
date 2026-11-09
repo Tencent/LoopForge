@@ -290,6 +290,9 @@ func (h *assistantHandlers) assistantRunBrief(run domain.Run) assistantRunBrief 
 // their error and human gates with what they are waiting for.
 func assistantRunProblems(run domain.Run, owner string, limit int) []assistantRunProblem {
 	var out []assistantRunProblem
+	if progress := run.LatestWorkspaceOpening(); progress != nil && progress.State == "failed" {
+		out = append(out, assistantRunProblem{Kind: "failed", NodeName: "工作区准备", Reason: truncateRunes(progress.Message, limit), Credential: assistantCredentialProblem(progress.Message, owner)})
+	}
 	for _, id := range assistantRunNodeOrder(run) {
 		node := run.Nodes[id]
 		if node == nil {
@@ -359,6 +362,24 @@ var workspacePreparationStages = []struct{ key, name string }{
 func workspacePreparationProblems(run domain.Run, owner string, limit int) []assistantRunProblem {
 	failed := map[string]string{}
 	for _, event := range run.Events {
+		if opening := event.WorkspaceOpening; opening != nil {
+			switch opening.State {
+			case "ready":
+				// A retry may reuse a completed checkout/image without running
+				// that command again, so it produces no stage-completed event.
+				clear(failed)
+			case "failed":
+				// assistantRunProblems already includes the opening failure.
+				stage := opening.Phase
+				if stage == "build" {
+					stage = "image"
+				} else if stage == "prepare" {
+					stage = "preparation"
+				}
+				delete(failed, stage)
+			}
+			continue
+		}
 		rest, ok := strings.CutPrefix(event.Type, "workspace.")
 		if !ok {
 			continue

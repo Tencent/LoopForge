@@ -11,6 +11,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/workspaceprep"
 )
 
 const ConversationWorkspaceIdleTTL = time.Hour
@@ -107,7 +108,7 @@ func (e *Engine) EnsureConversationWorkspace(ctx context.Context, id, token stri
 // has never had a workspace, so Main Bot can read and edit it before any
 // command ran. A workspace that was saved or reclaimed is restored by
 // PrepareConversationWorkspace instead.
-func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string) error {
+func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string) (result error) {
 	run, ok := e.repo.RunState(id)
 	if !ok {
 		return fmt.Errorf("运行不存在")
@@ -116,8 +117,21 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 		return nil
 	}
 	if meta, exists := e.repo.WorkspaceCheckpoint(id); exists && meta.SavedAt != nil {
-		return nil
+		// A snapshot of a previously ready workspace is authoritative. A
+		// snapshot taken after the very first open failed can contain only a
+		// partial checkout and must still finish preparation on retry.
+		if run.LatestWorkspaceOpening() == nil {
+			return nil
+		}
+		for _, event := range run.Events {
+			if event.WorkspaceOpening != nil && event.WorkspaceOpening.State == "ready" {
+				return nil
+			}
+		}
 	}
+	ctx = workspaceprep.WithSink(ctx, func(p domain.WorkspaceOpening) { e.RecordWorkspaceOpening(id, p) })
+	workspaceprep.Report(ctx, domain.WorkspaceOpening{State: "running", Phase: "prepare", Message: "正在准备工作区"})
+	defer func() { workspaceprep.Result(ctx, result) }()
 	if e.defaultExecutionRunner(run) != "" {
 		return e.materializeRunnerConversationWorkspace(ctx, run)
 	}
@@ -130,17 +144,23 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 		// configured); never touch a repository that is already checked out.
 		missing := false
 		for _, dir := range repositoryWorkspaceDirs(root, run.RepositoryContexts()) {
-			if _, statErr := os.Stat(filepath.Join(dir, ".git")); statErr != nil {
+			if _, statErr := os.Stat(filepath.Join(dir, ".git", "agentflow-baseline")); statErr != nil {
 				missing = true
 			}
 		}
-		if !missing {
+		previous := run.LatestWorkspaceOpening()
+		if !missing && (previous == nil || previous.State == "ready") {
 			return nil
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	env, err := e.acquireConversationEnvironment(ctx, run)
+	var env *runEnvironment
+	err := workspaceprep.Do(ctx, "build", "正在准备沙箱环境", func(ctx context.Context) error {
+		var err error
+		env, err = e.acquireConversationEnvironment(ctx, run)
+		return err
+	})
 	if err != nil {
 		return err
 	}
