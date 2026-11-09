@@ -209,6 +209,14 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if strings.HasPrefix(v.GongfengProjectID, "gitlab:") {
 		v.Provider = "gitlab"
 	}
+	if v.Provider == "gitlab" {
+		info, ok := domain.ParseGitLabRepositoryURL(v.CloneURL, gitLabBase)
+		if !ok || info.Project != v.GongfengProjectID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "GitLab clone URL must match the project owner configuration and repository without embedded credentials"})
+			return
+		}
+		v.CloneURL, v.WebURL = info.CloneURL, info.WebURL
+	}
 	if v.Provider == "" {
 		v.Provider = "gongfeng"
 	}

@@ -25,7 +25,7 @@ func (e *Engine) AlignBaseline(repository domain.RepositoryContext, gitToken str
 	if !ok {
 		return AlignIntegrateBaseline(repository, gitToken, e.repo)
 	}
-	if err := e.requireExistingWorkBranchRunner(runner.ID, []domain.RepositoryContext{repository}); err != nil {
+	if err := e.requireWorkBranchCapabilities(runner.ID, []domain.RepositoryContext{repository}); err != nil {
 		return err
 	}
 	unlock, err := lockIntegration(e.repo, repository.RepositoryID)

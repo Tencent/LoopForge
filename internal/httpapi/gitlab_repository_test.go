@@ -30,4 +30,11 @@ func TestGitLabRepositoryBindingRequiresConfiguredOrigin(t *testing.T) {
 		t.Fatalf("wrong repository: %+v", saved)
 	}
 	requestJSON[map[string]any](t, h, http.MethodPost, "/api/repositories", map[string]any{"projectId": "p", "repoUrl": "http://git.example.test.attacker:9530/group/repo.git"}, http.StatusBadRequest)
+	count := len(s.Repositories())
+	for _, clone := range []string{"http://oauth2:inert-test-pat@git.example.test:9530/group/sub/repo.git", "http://git.example.test:9530/other/repo.git", "http://other.example.test:9530/group/sub/repo.git"} {
+		requestJSON[map[string]any](t, h, http.MethodPost, "/api/repositories", map[string]any{"projectId": "p", "name": "Rejected", "provider": "gitlab", "gongfengProjectId": saved.GongfengProjectID, "cloneUrl": clone}, http.StatusBadRequest)
+	}
+	if len(s.Repositories()) != count {
+		t.Fatal("invalid clone URL was persisted")
+	}
 }

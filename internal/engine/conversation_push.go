@@ -31,6 +31,11 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	if WorkspaceRunID(run) != run.ID {
 		return nil, fmt.Errorf("子 SOP 共享父任务工作区，请从父任务提交")
 	}
+	for _, repository := range run.RepositoryContexts() {
+		if repository.Provider == "gitlab" {
+			return nil, fmt.Errorf("GitLab conversation delivery is not supported yet; use the configured GitLab scheduled delivery workflow")
+		}
+	}
 	if strings.TrimSpace(gitToken) == "" {
 		return nil, fmt.Errorf("未配置 Git Token，无法推送工作分支。%s", gitTokenFixHint)
 	}

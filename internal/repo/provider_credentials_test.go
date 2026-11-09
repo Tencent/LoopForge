@@ -191,3 +191,34 @@ func TestGitLabCredentialsKeepHostsBound(t *testing.T) {
 		t.Fatal("clear changed unrelated credential")
 	}
 }
+
+func TestGitLabRepositoryDoesNotStoreCredentialBearingCloneURL(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.PutProject(domain.Project{ID: "gitlab-project", Name: "GitLab"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, clone := range []string{"https://oauth2:test-pat@gitlab.example.test/team/repo.git", "https://gitlab.example.test/team/repo.git?token=test-pat", "https://gitlab.example.test/team/repo.git#test-pat"} {
+		err := st.PutRepository(domain.Repository{ID: "gitlab-repo", ProjectID: "gitlab-project", Provider: "gitlab", CloneURL: clone})
+		if err == nil {
+			t.Fatal("stored credential-bearing clone URL")
+		}
+		if strings.Contains(err.Error(), "test-pat") {
+			t.Fatal("error leaked credential")
+		}
+		if _, ok := st.Repository("gitlab-repo"); ok {
+			t.Fatal("rejected repository persisted")
+		}
+	}
+	clean := "https://gitlab.example.test/team/repo.git"
+	if err := st.PutRepository(domain.Repository{ID: "gitlab-repo", ProjectID: "gitlab-project", Provider: "gitlab", CloneURL: clean}); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := st.Repository("gitlab-repo")
+	if saved.CloneURL != clean {
+		t.Fatal("clean URL changed")
+	}
+}

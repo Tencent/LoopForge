@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -494,6 +495,12 @@ func (r *CatalogRepo) Repository(id string) (domain.Repository, bool) {
 }
 
 func (r *CatalogRepo) PutRepository(v domain.Repository) error {
+	if v.Provider == "gitlab" && strings.TrimSpace(v.CloneURL) != "" {
+		remote, err := url.Parse(v.CloneURL)
+		if err != nil || remote.User != nil || remote.RawQuery != "" || remote.Fragment != "" {
+			return errors.New("GitLab clone URL must not contain credentials, query parameters, or fragments")
+		}
+	}
 	if _, ok := r.projects.Project(v.ProjectID); !ok {
 		return fmt.Errorf("project not found")
 	}

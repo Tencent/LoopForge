@@ -233,8 +233,8 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 				if _, ok := domain.ParseGitLabRepositoryURL(rc.CloneURL, user.GitLabBaseURL); ok {
 					credentials.GitLabToken = user.GitLabToken
 					credentials.GitLabBaseURL = user.GitLabBaseURL
+					break
 				}
-				break
 			}
 		}
 		credentials.Codex = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
