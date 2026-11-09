@@ -161,18 +161,26 @@ func TestGitIndexLockUnreadableHolderStaysUnconfirmed(t *testing.T) {
 		}
 		return root
 	}
+	// The lock below is owned by this test's uid. "foreign" simulates a runner
+	// that is another user (e.g. a non-root runner facing a lock created by
+	// root in a rootful container); "self" is the runner's own lock.
+	foreign, self := uint32(os.Geteuid()+1), uint32(os.Geteuid())
 	for name, tc := range map[string]struct {
 		status    string
+		runner    uint32
 		confirmed bool
 	}{
-		"owner":         {"Name:\tgit\nUid:\t" + other + "\t" + owner + "\t" + other + "\t" + owner + "\n", false},
-		"unparsable":    {"Name:\tgit\nUid:\tbad\n", false},
-		"missing-uid":   {"Name:\tgit\n", false},
-		"other-user":    {"Name:\tsshd\nUid:\t" + other + "\t" + other + "\t" + other + "\t" + other + "\n", true},
-		"exited-status": {"", true},
+		"foreign/owner":         {"Name:\tgit\nUid:\t" + other + "\t" + owner + "\t" + other + "\t" + owner + "\n", foreign, false},
+		"foreign/unparsable":    {"Name:\tgit\nUid:\tbad\n", foreign, false},
+		"foreign/missing-uid":   {"Name:\tgit\n", foreign, false},
+		"foreign/other-user":    {"Name:\tsshd\nUid:\t" + other + "\t" + other + "\t" + other + "\t" + other + "\n", foreign, true},
+		"foreign/exited-status": {"", foreign, true},
+		// Same-user processes hidden from us are non-dumpable helpers (for
+		// example a browser sandbox); they must not disable stale cleanup.
+		"self/non-dumpable": {"Name:\tchrome\nUid:\t" + owner + "\t" + owner + "\t" + owner + "\t" + owner + "\n", self, true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			inUse, confirmed, err := gitIndexLockHeldUnder(fakeProc(tc.status), lockPath)
+			inUse, confirmed, err := gitIndexLockHeldUnder(fakeProc(tc.status), lockPath, tc.runner)
 			if err != nil || inUse || confirmed != tc.confirmed {
 				t.Fatalf("inUse=%v confirmed=%v err=%v, want confirmed=%v", inUse, confirmed, err, tc.confirmed)
 			}

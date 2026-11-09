@@ -221,14 +221,19 @@ func gitIndexLockInUse(ctx context.Context, lockPath string) (inUse, confirmed b
 }
 
 func gitIndexLockInUseProc(lockPath string) (inUse, confirmed bool, err error) {
-	return gitIndexLockHeldUnder("/proc", lockPath)
+	return gitIndexLockHeldUnder("/proc", lockPath, uint32(os.Geteuid()))
 }
 
 // gitIndexLockHeldUnder matches open descriptors by file identity, not path:
 // a sandbox may hold the same lock through a bind-mounted or hard-linked path.
-// A process whose descriptors cannot be read is treated as a possible holder
-// when it runs as the lock's owner (the creator of an O_EXCL lock).
-func gitIndexLockHeldUnder(procRoot, lockPath string) (inUse, confirmed bool, err error) {
+//
+// Git creates the lock with O_EXCL, so its holder runs as the lock's owner.
+// When that owner is another user (e.g. root in a rootful container), this
+// process may be unable to read the holder's descriptors; such an unreadable
+// process leaves the result unconfirmed. Our own Git processes are always
+// readable, and same-user processes hidden from us (non-dumpable helpers such
+// as browser sandboxes) do not hold index locks, so they never block cleanup.
+func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confirmed bool, err error) {
 	want, err := filepath.Abs(lockPath)
 	if err != nil {
 		return false, false, err
@@ -249,6 +254,7 @@ func gitIndexLockHeldUnder(procRoot, lockPath string) (inUse, confirmed bool, er
 		return false, false, err
 	}
 	uncertain := false
+	foreignOwner := stat.Uid != self
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -259,7 +265,7 @@ func gitIndexLockHeldUnder(procRoot, lockPath string) (inUse, confirmed bool, er
 		dir := filepath.Join(procRoot, entry.Name(), "fd")
 		fds, readErr := os.ReadDir(dir)
 		if readErr != nil {
-			if !errors.Is(readErr, os.ErrNotExist) && procMayOwnFile(filepath.Join(procRoot, entry.Name()), stat.Uid) {
+			if foreignOwner && !errors.Is(readErr, os.ErrNotExist) && procMayOwnFile(filepath.Join(procRoot, entry.Name()), stat.Uid) {
 				uncertain = true
 			}
 			continue
