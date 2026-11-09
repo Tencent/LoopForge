@@ -28,6 +28,7 @@ esac
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	resetDockerAvailabilityForTest(t)
 	t.Setenv("DOCKER_TEST_LOG", logfile)
 	definition := domain.DockerfileDefinition{Content: IsolatedDockerfile}
 	if !DockerImageCached(context.Background(), definition) {

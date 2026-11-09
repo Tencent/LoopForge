@@ -57,18 +57,19 @@ func TestWithSandboxCredentialsRefreshesExplicitBindings(t *testing.T) {
 	workspace := t.TempDir()
 	original := &localSandbox{workspace: workspace}
 	sandbox := WithSandboxCredentials(original, RunCredentials{GitToken: "first-owned-token"})
-	command := CommandSpec{Argv: []string{"sh", "-c", `printf '%s' "$AGENTFLOW_GIT_TOKEN"`}, CredentialBindings: []CredentialBinding{BindGit}}
-	if output, err := sandbox.Exec(context.Background(), command, nil); err != nil || strings.TrimSpace(output) != "first-owned-token" {
+	command := CommandSpec{Argv: []string{"sh", "-c", `test "$AGENTFLOW_GIT_TOKEN" = "first-owned-token" && printf match`}, CredentialBindings: []CredentialBinding{BindGit}}
+	if output, err := sandbox.Exec(context.Background(), command, nil); err != nil || strings.TrimSpace(output) != "match" {
 		t.Fatalf("explicit credential binding failed: %q %v", output, err)
 	}
 	refreshed := WithSandboxCredentials(sandbox, RunCredentials{GitToken: "next-owned-token"})
 	if refreshed != sandbox {
 		t.Fatal("already managed sandbox nested instead of refreshing credentials")
 	}
-	if output, err := refreshed.Exec(context.Background(), command, nil); err != nil || strings.TrimSpace(output) != "next-owned-token" {
+	command.Argv = []string{"sh", "-c", `test "$AGENTFLOW_GIT_TOKEN" = "next-owned-token" && printf match`}
+	if output, err := refreshed.Exec(context.Background(), command, nil); err != nil || strings.TrimSpace(output) != "match" {
 		t.Fatalf("stale nested binding: %q %v", output, err)
 	}
-	if output, err := refreshed.Exec(context.Background(), CommandSpec{Argv: command.Argv}, nil); err != nil || strings.TrimSpace(output) != "" {
+	if output, err := refreshed.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-c", `test -z "$AGENTFLOW_GIT_TOKEN" && printf unbound`}}, nil); err != nil || strings.TrimSpace(output) != "unbound" {
 		t.Fatalf("unrequested credentials inherited: %q %v", output, err)
 	}
 }
