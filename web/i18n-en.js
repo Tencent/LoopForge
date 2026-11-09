@@ -51,3 +51,27 @@ Object.assign(window.LF_I18N_EN,{
 "AI 对话的 Pi 模型与以 Pi 运行的 SOP 节点":"Pi models in AI chat, and SOP steps that run on Pi",
 "AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 SOP 节点":"DeepSeek Harness models in AI chat, and SOP steps that run on DeepSeek Harness"
 });
+Object.assign(window.LF_I18N_EN,{
+"继续回答关键问题，进度已经保存；不影响直接触发 SOP":"Keep answering the key questions. Progress is saved and does not block starting the SOP",
+"澄清问题等待回答，不影响直接触发 SOP":"Clarification questions are waiting for answers and do not block starting the SOP",
+"待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。":"Items waiting for a clarification conclusion, a failed gate, or a failed or interrupted run show up here.",
+"点此只看待确认澄清结论、门禁失败、运行失败或已中断的工作项":"Show only items waiting for a clarification conclusion, a failed gate, or a failed or interrupted run",
+"待确认结论、失败或已中断":"Conclusion pending, failed, or interrupted",
+"已在平台创建需求，可在详情里触发 SOP":"Requirement created. Start the SOP from its details",
+"已在平台创建需求。澄清尚未完成，可在澄清页继续，也可以直接触发 SOP":"Requirement created. Clarification is unfinished; continue it, or start the SOP directly",
+"已在 TAPD 创建需求。澄清尚未完成，可在澄清页继续，也可以直接触发 SOP":"Requirement created in TAPD. Clarification is unfinished; continue it, or start the SOP directly",
+"澄清已完成 · 已写回 工蜂 Issue 评论":"Clarification complete · written back as a comment on the linked issue",
+"已写回 工蜂 Issue，可直接触发需求执行 SOP":"Written back to the linked issue. Start the SOP directly",
+"已澄清 · 已写回 工蜂":"Clarified · written back to the linked issue",
+"按澄清结论触发 SOP":"Start the SOP from the clarification",
+"可直接点击「触发需求」开始执行":"Click Start to run it now",
+"可选步骤。分析师只围绕这张单本身，结合本项目代码问清阻塞开工的细节；不澄清也可以直接触发 SOP。":"Optional. The analyst only asks what blocks this item, using this project's code. You can start the SOP without clarifying.",
+"每轮只问最关键的 1–3 个问题，只围绕这张单本身":"Each round asks only the 1–3 questions that matter, and only about this item",
+"回答后点「继续澄清」。分析师确认够用后会给出结论；也可以随时直接触发 SOP。":"After answering, click Continue clarifying. The analyst concludes when nothing blocks the work, and you can start the SOP at any time.",
+"澄清已完成，写回失败":"Clarification complete, write-back failed",
+"澄清已完成，待确认写回":"Clarification complete, write-back waiting for confirmation",
+"澄清已完成，需要确认结论后再触发 SOP":"Clarification complete. Confirm the conclusion before starting the SOP",
+"请先确认澄清结论再重新触发":"Confirm the clarification conclusion before retriggering",
+"结论已保存到平台说明，可直接触发需求执行 SOP":"The conclusion is saved on the platform description. Start the SOP directly",
+"可直接触发需求执行 SOP":"Start the SOP directly"
+});

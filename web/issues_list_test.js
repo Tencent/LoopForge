@@ -26,7 +26,7 @@ const tones = [
   [{ key: 'active', label: '排队中' }, 'info', 'clock'],
   [{ key: 'waiting', label: '方案设计' }, 'warn', 'user-hold'],
   [{ key: 'confirm', label: '待确认结论 · 82 分' }, 'warn', 'pending-review'],
-  [{ key: 'attention', label: '待澄清 · 47 分' }, 'warn', 'user-hold'],
+  [{ key: 'clarifying', label: '待澄清' }, 'warn', 'user-hold'],
   [{ key: 'attention', label: '失败 · 编码实现' }, 'error', 'alert'],
   [{ key: 'attention', label: '已取消 · 方案设计' }, 'error', 'alert'],
   [{ key: 'closed', label: 'MR 已合入' }, 'success', 'check'],

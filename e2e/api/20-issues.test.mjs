@@ -3,7 +3,7 @@
 // deleting a local requirement (refused while its run waits, history kept).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { api, get, post, put, list, track, cleanup, ensureProject, setClarification, waitFor, waitRun } from '../lib/api.mjs';
+import { api, get, post, put, list, track, cleanup, ensureProject, waitFor, waitRun } from '../lib/api.mjs';
 import { cfg } from '../lib/env.mjs';
 import { createWorkflow, script, approval, trackRun } from '../lib/fixtures.mjs';
 
@@ -91,27 +91,13 @@ test('requirement view and SOP binding round-trip', async () => {
   await api('PUT', `/api/issues/${issue.id}/sops`, { playbookId: 'e2e-no-such-playbook' }, { expect: 400 });
 });
 
-test('clarification assessment answers with a structured verdict', async () => {
-  const verdict = await post(`/api/issues/${issue.id}/clarify`, { answers: {} }, { expect: [200, 409], timeoutMs: 120_000 });
-  assert.ok(verdict && typeof verdict === 'object');
-});
-
-test('clarification gate blocks dispatch of an assessed, under-scored requirement', async () => {
-  // A requirement is gated once it has been assessed under an enabled policy.
-  await setClarification(true);
-  try {
-    const vague = await post('/api/issues', { projectId: P, kind: 'requirement', title: `E2E 澄清门禁 ${cfg.runTag}`, description: '做个东西', workflowId });
-    const verdict = await post(`/api/issues/${vague.id}/clarify`, { answers: {} });
-    assert.equal(verdict.passed ?? verdict.clarification?.passed ?? false, false, `a two-word requirement must not pass: ${JSON.stringify(verdict).slice(0, 300)}`);
-    const { issue: assessed } = await get(`/api/issues/${vague.id}`);
-    assert.ok(assessed.clarification?.gated, `assessed requirement is not gated: ${JSON.stringify(assessed.clarification)}`);
-    removeLater(vague.id);
-    const res = await api('POST', `/api/issues/${vague.id}/dispatch`, { workflowId }, { expect: 409 });
-    assert.match(JSON.stringify(res), /澄清/);
-    assert.equal(list(await get(`/api/issues/${vague.id}/runs`)).length, 0, 'a refused dispatch must not start a run');
-  } finally {
-    await setClarification(false);
-  }
+test('clarification is optional: no score endpoint, no auto-start on create', async () => {
+  await api('POST', `/api/issues/${issue.id}/clarify`, { answers: {} }, { expect: 404 });
+  const vague = await post('/api/issues', { projectId: P, kind: 'requirement', title: `E2E 澄清可选 ${cfg.runTag}`, description: '做个东西', workflowId });
+  removeLater(vague.id);
+  const { issue: created } = await get(`/api/issues/${vague.id}`);
+  const c = created.clarification || {};
+  assert.ok(!c.status && !c.gated && c.score === undefined, `a new requirement must not be scored or auto-clarified: ${JSON.stringify(c)}`);
 });
 
 test('dispatch starts a run linked to the issue and it succeeds', async () => {

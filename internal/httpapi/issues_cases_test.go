@@ -53,30 +53,27 @@ func TestIssueRouteLifecycleBranches(t *testing.T) {
 }
 
 func TestClarificationSubmissionBranches(t *testing.T) {
-	now := time.Now().UTC()
 	base := domain.Issue{ID: "i", Title: "Issue", Status: "analyzing", Kind: "requirement"}
-	if _, err := applyClarificationSubmission(base, domain.Project{}, false, clarificationSubmission{Ready: true}, now); err == nil {
+	if _, err := applyClarificationSubmission(base, clarificationSubmission{Ready: true}); err == nil {
 		t.Fatal("empty final summary accepted")
 	}
-	draft, err := applyClarificationSubmission(base, domain.Project{}, false, clarificationSubmission{Summary: "draft", Ready: false}, now)
+	draft, err := applyClarificationSubmission(base, clarificationSubmission{Summary: "draft", Ready: false})
 	if err != nil || draft.Clarification.Status != "in_progress" {
 		t.Fatalf("draft: %+v %v", draft, err)
 	}
-	final, err := applyClarificationSubmission(base, domain.Project{}, false, clarificationSubmission{
-		Summary: "summary", Ready: true, Dimensions: map[string]int{"goal": 100}, Missing: []string{" x ", "", "x"},
-	}, now)
+	final, err := applyClarificationSubmission(base, clarificationSubmission{Summary: "summary", Ready: true})
 	if err != nil || final.Clarification.Status != domain.ClarificationReady || !strings.Contains(final.Description, "summary") {
 		t.Fatalf("final: %+v %v", final, err)
 	}
 	retryBase := final
 	retryBase.Clarification.Summary = ""
-	if _, err := applyClarificationSubmission(retryBase, domain.Project{}, false, clarificationSubmission{Retry: true}, now); err == nil {
+	if _, err := applyClarificationSubmission(retryBase, clarificationSubmission{Retry: true}); err == nil {
 		t.Fatal("retry without summary accepted")
 	}
 	bug := base
 	bug.Kind = "issue"
-	bugFinal, err := applyClarificationSubmission(bug, domain.Project{}, true, clarificationSubmission{Summary: "bug", Ready: true}, now)
-	if err != nil || !bugFinal.Clarification.Passed {
+	bugFinal, err := applyClarificationSubmission(bug, clarificationSubmission{Summary: "bug", Ready: true})
+	if err != nil || bugFinal.Clarification.Status != domain.ClarificationReady {
 		t.Fatalf("bug clarification: %+v %v", bugFinal, err)
 	}
 	for _, issue := range []domain.Issue{
@@ -96,7 +93,7 @@ func TestIssuesMoreDirectHelpers(t *testing.T) {
 		RepositoryID: "repo-a", BaseBranch: "feature/x", Kind: "requirement",
 		AssigneeID: "agent", AssigneeType: "agent", AssigneeUserID: 7,
 		WorkflowID: "wf", SOPBindings: []domain.IssueSOPBinding{{WorkflowID: "wf"}},
-		PlaybookID: "book", Clarification: domain.ClarificationAssessment{Score: 80, Passed: true},
+		PlaybookID: "book", Clarification: domain.ClarificationAssessment{Summary: "已澄清", Status: domain.ClarificationReady},
 		Operations: []domain.IssueOperation{{Action: "create"}},
 	}
 	merged := mergeIssueEdit(domain.Issue{ID: "existing"}, existing)
@@ -405,9 +402,7 @@ func TestIssuesMoreRouteBranches(t *testing.T) {
 		{http.MethodPut, "/api/issues/cvb-more-route", nil, http.StatusNotFound},
 		{http.MethodPost, "/api/issues/cvb-more-route/comments", "bad", http.StatusBadRequest},
 		{http.MethodGet, "/api/issues/cvb-more-route/runs", nil, http.StatusOK},
-		{http.MethodPost, "/api/issues/cvb-more-route/clarify", "bad", http.StatusBadRequest},
-		{http.MethodPost, "/api/issues/cvb-more-orphan/clarify", map[string]any{"answers": map[string]string{}}, http.StatusBadRequest},
-		{http.MethodPost, "/api/issues/cvb-more-route/clarify", map[string]any{"answers": map[string]string{"goal": "enough"}}, http.StatusOK},
+		{http.MethodPost, "/api/issues/cvb-more-route/clarify", map[string]any{"answers": map[string]string{"goal": "enough"}}, http.StatusNotFound},
 		{http.MethodPost, "/api/issues/cvb-more-route/clarification", "bad", http.StatusBadRequest},
 		{http.MethodPost, "/api/issues/cvb-more-retry/clarification", map[string]any{"retry": true}, http.StatusOK},
 		{http.MethodPut, "/api/issues/cvb-more-route/sops", "bad", http.StatusBadRequest},
@@ -513,8 +508,8 @@ func TestIssuesMoreForcedPersistenceError(t *testing.T) {
 	if err := f.s.DB.Exec(`CREATE TRIGGER cvb_more_reject_issue_update BEFORE UPDATE ON issues BEGIN SELECT RAISE(FAIL, 'forced issue update failure'); END`).Error; err != nil {
 		t.Fatal(err)
 	}
-	rec := cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/clarify", map[string]any{
-		"answers": map[string]string{"goal": "answer"},
+	rec := cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
+		"summary": "answer",
 	}, true)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("forced persistence error = %d: %s", rec.Code, rec.Body.String())
