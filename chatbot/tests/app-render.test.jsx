@@ -316,8 +316,14 @@ describe("App", () => {
     const user = userEvent.setup();
     const previous = { ...chat };
     chat.setExecutor = vi.fn();
+    chat.executors = [
+      ...previous.executors,
+      { id: "pi", icon: "terminal", label: "Pi", detail: "Pi" },
+    ];
     const view = render(<App />);
     await user.click(screen.getByRole("button", { name: "CLI" }));
+    const pi = await screen.findByRole("menuitemradio", { name: "Pi" });
+    expect(pi.querySelector('[data-model-provider="pi"] svg')).not.toBeNull();
     await user.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
     expect(chat.setExecutor).toHaveBeenCalledWith("codex");
     expect(screen.getByRole("button", { name: "思考强度" })).toBeInTheDocument();
