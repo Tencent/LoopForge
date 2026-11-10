@@ -200,6 +200,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// 405/404；gin 默认会 301 重定向到无斜杠路径，行为不同，关闭之。
 	g.RedirectTrailingSlash = false
 	g.Use(api.previews.previewHost())
+	g.Use(api.browser.devServerHost())
 	// gin 只有在显式注册 NoMethod 后才会对"路径匹配但方法不符"返回 405，
 	// 否则落入 404；这里同时把 405 响应统一成 JSON 形态。
 	g.NoMethod(func(c *gin.Context) {
