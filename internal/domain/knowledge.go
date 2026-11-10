@@ -98,3 +98,101 @@ type KnowledgeCandidate struct {
 	RunStatus    string   `json:"runStatus,omitempty"`
 	SubmissionID string   `json:"submissionId,omitempty"`
 }
+
+// 内置知识引擎的领域实体。控制面在 KnowledgeRepo，内容面在 KnowledgeContentRepo；
+// 内容行只用 SourceID 字符串指向控制面，不建跨组外键。
+
+// KnowledgeBase 是一个知识库。切片只写 Layer="project" 的项目层库；
+// ProjectID 为空留给以后的公共/平台库，不参与 (project_id, layer) 唯一约束。
+type KnowledgeBase struct {
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"projectId,omitempty"`
+	Name        string    `json:"name"`
+	Layer       string    `json:"layer"`
+	OwnerUserID int64     `json:"ownerUserId,omitempty"`
+	CreatedAt   time.Time `json:"createdAt,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt,omitempty"`
+}
+
+// KnowledgeSource 是一个知识来源。Kind 为 hosted 或 git。托管库用
+// HeadRevision 记当前修订号，Git 来源用 HeadCommit 记 commit。
+type KnowledgeSource struct {
+	ID           string     `json:"id"`
+	BaseID       string     `json:"baseId"`
+	Kind         string     `json:"kind"`
+	Name         string     `json:"name"`
+	GitURL       string     `json:"gitUrl,omitempty"`
+	Branch       string     `json:"branch,omitempty"`
+	PathPrefix   string     `json:"pathPrefix,omitempty"`
+	HeadCommit   string     `json:"headCommit,omitempty"`
+	HeadRevision int64      `json:"headRevision,omitempty"`
+	Status       string     `json:"status,omitempty"`
+	IndexStatus  string     `json:"indexStatus,omitempty"`
+	DocCount     int        `json:"docCount,omitempty"`
+	LastError    string     `json:"lastError,omitempty"`
+	LastSyncedAt *time.Time `json:"lastSyncedAt,omitempty"`
+	LeaseOwner   string     `json:"leaseOwner,omitempty"`
+	LeaseUntil   *time.Time `json:"leaseUntil,omitempty"`
+}
+
+// KnowledgeBinding 把项目绑定到知识库；切片里 Permission 只写 submit。
+type KnowledgeBinding struct {
+	ProjectID  string `json:"projectId"`
+	BaseID     string `json:"baseId"`
+	Permission string `json:"permission"`
+}
+
+// KnowledgeSyncJob 是一次同步的记录，状态与错误可在知识中心看见。
+type KnowledgeSyncJob struct {
+	ID           int64      `json:"id"`
+	SourceID     string     `json:"sourceId"`
+	Kind         string     `json:"kind"`
+	Status       string     `json:"status"`
+	FromCommit   string     `json:"fromCommit,omitempty"`
+	ToCommit     string     `json:"toCommit,omitempty"`
+	ChangedCount int        `json:"changedCount,omitempty"`
+	DeletedCount int        `json:"deletedCount,omitempty"`
+	Log          string     `json:"log,omitempty"`
+	StartedAt    *time.Time `json:"startedAt,omitempty"`
+	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
+}
+
+// KnowledgeDocument 是含 frontmatter 的完整 Markdown 正文。出处版本对托管库
+// 是修订号的十进制字符串，对 Git 来源是 commit；两者都放在 Commit 字段。
+type KnowledgeDocument struct {
+	SourceID  string    `json:"sourceId"`
+	Path      string    `json:"path"`
+	Title     string    `json:"title,omitempty"`
+	Body      string    `json:"body"`
+	LineCount int       `json:"lineCount,omitempty"`
+	SHA256    string    `json:"sha256,omitempty"`
+	Commit    string    `json:"commit,omitempty"`
+	Revision  int64     `json:"revision,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+}
+
+// KnowledgeRevision 只给托管库追加，Git 同步不写修订历史。
+type KnowledgeRevision struct {
+	ID        string    `json:"id"`
+	SourceID  string    `json:"sourceId"`
+	Path      string    `json:"path"`
+	Revision  int64     `json:"revision"`
+	Body      string    `json:"body"`
+	Author    string    `json:"author,omitempty"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+}
+
+// KnowledgeChunk 是检索用的索引块，可以从正文重建。
+type KnowledgeChunk struct {
+	ID        int64  `json:"id"`
+	SourceID  string `json:"sourceId"`
+	Path      string `json:"path"`
+	Idx       int    `json:"idx"`
+	Heading   string `json:"heading,omitempty"`
+	Title     string `json:"title,omitempty"`
+	StartLine int    `json:"startLine,omitempty"`
+	EndLine   int    `json:"endLine,omitempty"`
+	Commit    string `json:"commit,omitempty"`
+	Revision  int64  `json:"revision,omitempty"`
+	Text      string `json:"text"`
+}

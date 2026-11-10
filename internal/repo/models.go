@@ -673,6 +673,107 @@ type knowledgeSubmissionRow struct {
 
 func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions" }
 
+// 内置知识引擎控制面（主库，KnowledgeRepo）。
+type knowledgeBaseRow struct {
+	ID          string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID   *string    `gorm:"column:project_id;size:64;index:idx_knowledge_bases_project;uniqueIndex:uq_knowledge_bases_project_layer"`
+	Name        string     `gorm:"column:name;size:255"`
+	Layer       string     `gorm:"column:layer;size:32;uniqueIndex:uq_knowledge_bases_project_layer"`
+	OwnerUserID int64      `gorm:"column:owner_user_id"`
+	Created     *time.Time `gorm:"column:created_at"`
+	Updated     *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeBaseRow) TableName() string { return "knowledge_bases" }
+
+type knowledgeSourceRow struct {
+	ID           string     `gorm:"column:id;primaryKey;size:64"`
+	BaseID       string     `gorm:"column:base_id;size:64;index:idx_knowledge_sources_base"`
+	Kind         string     `gorm:"column:kind;size:32"`
+	Name         string     `gorm:"column:name;size:255"`
+	GitURL       string     `gorm:"column:git_url;size:1024"`
+	Branch       string     `gorm:"column:branch;size:255"`
+	PathPrefix   string     `gorm:"column:path_prefix;size:512"`
+	HeadCommit   string     `gorm:"column:head_commit;size:128"`
+	HeadRevision int64      `gorm:"column:head_revision"`
+	Status       string     `gorm:"column:status;size:32;index:idx_knowledge_sources_status"`
+	IndexStatus  string     `gorm:"column:index_status;size:32"`
+	DocCount     int        `gorm:"column:doc_count"`
+	LastError    string     `gorm:"column:last_error;type:text"`
+	LastSyncedAt *time.Time `gorm:"column:last_synced_at"`
+	LeaseOwner   string     `gorm:"column:lease_owner;size:255"`
+	LeaseUntil   *time.Time `gorm:"column:lease_until"`
+}
+
+func (knowledgeSourceRow) TableName() string { return "knowledge_sources" }
+
+type knowledgeBindingRow struct {
+	ProjectID  string `gorm:"column:project_id;primaryKey;size:64"`
+	BaseID     string `gorm:"column:base_id;primaryKey;size:64"`
+	Permission string `gorm:"column:permission;size:32"`
+}
+
+func (knowledgeBindingRow) TableName() string { return "project_knowledge_bindings" }
+
+type knowledgeSyncJobRow struct {
+	ID           int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	SourceID     string     `gorm:"column:source_id;size:64;index:idx_knowledge_sync_jobs_source"`
+	Kind         string     `gorm:"column:kind;size:32"`
+	Status       string     `gorm:"column:status;size:32"`
+	FromCommit   string     `gorm:"column:from_commit;size:128"`
+	ToCommit     string     `gorm:"column:to_commit;size:128"`
+	ChangedCount int        `gorm:"column:changed_count"`
+	DeletedCount int        `gorm:"column:deleted_count"`
+	Log          string     `gorm:"column:log;type:text"`
+	StartedAt    *time.Time `gorm:"column:started_at"`
+	FinishedAt   *time.Time `gorm:"column:finished_at"`
+}
+
+func (knowledgeSyncJobRow) TableName() string { return "knowledge_sync_jobs" }
+
+// 内置知识引擎内容面（KnowledgeContentRepo，可能指向独立的 MySQL）。
+type knowledgeDocumentRow struct {
+	SourceID  string     `gorm:"column:source_id;primaryKey;size:64"`
+	Path      string     `gorm:"column:path;primaryKey;size:512"`
+	Title     string     `gorm:"column:title;size:512"`
+	Body      string     `gorm:"column:body;type:mediumtext"`
+	LineCount int        `gorm:"column:line_count"`
+	SHA256    string     `gorm:"column:sha256;size:64"`
+	Commit    string     `gorm:"column:commit;size:128"`
+	Revision  int64      `gorm:"column:revision"`
+	Updated   *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeDocumentRow) TableName() string { return "knowledge_documents" }
+
+type knowledgeRevisionRow struct {
+	ID       string     `gorm:"column:id;primaryKey;size:64"`
+	SourceID string     `gorm:"column:source_id;size:64;uniqueIndex:uq_knowledge_revisions_path_rev"`
+	Path     string     `gorm:"column:path;size:512;uniqueIndex:uq_knowledge_revisions_path_rev"`
+	Revision int64      `gorm:"column:revision;uniqueIndex:uq_knowledge_revisions_path_rev"`
+	Body     string     `gorm:"column:body;type:mediumtext"`
+	Author   string     `gorm:"column:author;size:255"`
+	Created  *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeRevisionRow) TableName() string { return "knowledge_revisions" }
+
+type knowledgeChunkRow struct {
+	ID        int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	SourceID  string `gorm:"column:source_id;size:64;uniqueIndex:uq_knowledge_chunks_path_idx"`
+	Path      string `gorm:"column:path;size:512;uniqueIndex:uq_knowledge_chunks_path_idx"`
+	Idx       int    `gorm:"column:idx;uniqueIndex:uq_knowledge_chunks_path_idx"`
+	Heading   string `gorm:"column:heading;size:512"`
+	Title     string `gorm:"column:title;size:512"`
+	StartLine int    `gorm:"column:start_line"`
+	EndLine   int    `gorm:"column:end_line"`
+	Commit    string `gorm:"column:commit;size:128"`
+	Revision  int64  `gorm:"column:revision"`
+	Text      string `gorm:"column:text;type:mediumtext"`
+}
+
+func (knowledgeChunkRow) TableName() string { return "knowledge_chunks" }
+
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
@@ -691,7 +792,9 @@ func allModels() []any {
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
-		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
+		knowledgeSubmissionRow{},
+		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{},
+		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}
 }

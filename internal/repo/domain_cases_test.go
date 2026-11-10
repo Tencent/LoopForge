@@ -304,13 +304,6 @@ func TestCloneParseSortAndJSONHelpers(t *testing.T) {
 
 func TestKnowledgeMCPFilesSpacesAndAssistantTasks(t *testing.T) {
 	s := cvEStore(t)
-	if err := s.PutKnowledgeSettings(domain.KnowledgeSettings{Enabled: true, URL: "https://kb", Token: "secret", DefaultSources: []string{"docs"}}); err != nil {
-		t.Fatal(err)
-	}
-	settings := s.KnowledgeSettings()
-	if !settings.Enabled || settings.Token != "secret" || !settings.TokenConfigured {
-		t.Fatalf("settings = %+v", settings)
-	}
 	if err := s.PutKnowledgeSubmission(domain.KnowledgeSubmission{}); err == nil {
 		t.Fatal("empty submission accepted")
 	}

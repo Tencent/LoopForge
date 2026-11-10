@@ -14,6 +14,7 @@ if [[ ! -f .local/admin-password ]]; then
 fi
 .local/bin/loopforge-account -user admin -admin < .local/admin-password
 bash scripts/install-observability-schema.sh
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/026_builtin_knowledge.sql
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/001_public_catalog.sql
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/002_welcome_project.sql
 printf 'Open http://localhost:%s — account: admin — password: .local/admin-password\n' "$AGENTFLOW_HTTP_PORT"
