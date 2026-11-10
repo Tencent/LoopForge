@@ -160,8 +160,20 @@ func TestApplyZCodeCredentialProtocols(t *testing.T) {
 			t.Errorf("%+v: got %v", tc, api)
 		}
 	}
-	if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{}, t.TempDir(), "/h", nil); err == nil || !strings.Contains(err.Error(), "模型") {
-		t.Fatalf("zcode without model: %v", err)
+	// Chat's "CLI default" arrives as "default"; the default endpoint maps it
+	// to BigModel's coding model, a custom endpoint must name one.
+	for _, model := range []string{"", "default"} {
+		home := t.TempDir()
+		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: model}, home, home, []string{"zcode"}); err != nil {
+			t.Fatal(err)
+		}
+		selection := readJSONFile(t, zcodeKeyFiles(t, home)[0])["config"].(map[string]any)["defaultModelSelection"].(map[string]any)
+		if selection["modelId"] != zcodeDefaultModel {
+			t.Errorf("model %q: selection %v", model, selection)
+		}
+		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k", BaseURL: "https://gw.example"}, AgentCLIOptions{Model: model}, t.TempDir(), "/h", nil); err == nil || !strings.Contains(err.Error(), "模型") {
+			t.Fatalf("custom endpoint without model %q: %v", model, err)
+		}
 	}
 	if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{}, AgentCLIOptions{Model: "m"}, t.TempDir(), "/h", nil); err == nil || !strings.Contains(err.Error(), "ZCode API Key") {
 		t.Fatalf("zcode without key: %v", err)

@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ const (
 	zcodePersonalFileEnv = "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE"
 	// zcodeDefaultBaseURL is BigModel's Anthropic-compatible endpoint.
 	zcodeDefaultBaseURL = "https://open.bigmodel.cn/api/anthropic"
+	zcodeDefaultModel   = "glm-5.3"
 	zcodeRemoveKeyFile  = `rm -f "$` + zcodePersonalFileEnv + `"`
 
 	// zcodeSOPDisallowedTools are the tools that wait for a person.
@@ -72,6 +74,15 @@ func nonEmpty(value any) bool {
 // exists only until ZCode has read it: ZCode accepts a literal key and
 // nothing else, and the key must not stay on disk.
 func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
+	// The private provider has no model of its own, so "CLI default" (sent as
+	// "default") must name a real one: BigModel's coding model on the default
+	// endpoint, while a custom endpoint has no model we could guess.
+	if model == "" || model == "default" {
+		if baseURL != "" {
+			return nil, nil, fmt.Errorf("%s 需要指定模型", AgentCLILabel(AgentCLIZCode))
+		}
+		model = zcodeDefaultModel
+	}
 	apiType := map[string]string{AgentCLIProtocolChat: "openai-chat-completions", AgentCLIProtocolResponses: "openai-responses", AgentCLIProtocolMessages: "anthropic-messages"}[protocol]
 	if baseURL == "" {
 		baseURL, apiType = zcodeDefaultBaseURL, "anthropic-messages"

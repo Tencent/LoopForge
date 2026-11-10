@@ -66,7 +66,8 @@ func AgentCLINeedsBaseURL(kind, protocol string) bool {
 // can, DeepSeek Harness on the official endpoint.
 func agentCLIModelOptional(kind, baseURL string) bool {
 	switch kind {
-	case AgentCLICursor:
+	case AgentCLICursor, AgentCLIZCode:
+		// ZCode resolves an unset model itself (applyZCodeCredential).
 		return true
 	case AgentCLIAntigravity, AgentCLIDeepSeek:
 		return baseURL == ""
