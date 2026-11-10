@@ -137,6 +137,13 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 				{ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro"},
 			},
 		},
+		"zcode": {
+			CustomModel: true,
+			Models: []executorModelInfo{
+				{ID: "glm-5.3", Name: "GLM-5.3"},
+				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
+			},
+		},
 	}
 }
 

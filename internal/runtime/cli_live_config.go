@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var liveCLIOrder = []string{"codebuddy", "codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh"}
+var liveCLIOrder = []string{"codebuddy", "codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode"}
 
 type liveCLIConfig struct {
 	Key         string `json:"key"`

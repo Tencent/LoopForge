@@ -310,7 +310,7 @@ func TestDetectionProviderAndDaemonBasics(t *testing.T) {
 	if !ok || path != tool {
 		t.Fatalf("lookup=%q %v paths=%v", path, ok, extraSearchPaths())
 	}
-	if version := probeVersion(context.Background(), tool); version != "cvR 1.2" {
+	if version := probeVersion(context.Background(), tool, nil); version != "cvR 1.2" {
 		t.Fatalf("version=%q", version)
 	}
 	runtimes := DetectRuntimes(context.Background(), map[string]string{"custom": "cvR-tool"})
