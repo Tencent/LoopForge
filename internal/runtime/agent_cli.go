@@ -25,6 +25,7 @@ const (
 	AgentCLIKimi        = "kimi"
 	AgentCLIPi          = "pi"
 	AgentCLIDeepSeek    = "dsh"
+	AgentCLIZCode       = "zcode"
 )
 
 // AgentCLIKinds is the display order of the agent CLIs.
@@ -90,13 +91,14 @@ const agentCLIKeyEnv = "AGENTFLOW_CLI_API_KEY"
 
 // agentCLIHostEnv is cleared for every child: these variables would select
 // the host's own login, key, gateway or configuration directory.
-var agentCLIHostEnv = []string{
+var agentCLIHostEnv = append([]string{
 	agentCLIKeyEnv, "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GEMINI_BASE_URL",
 	"AGY_LLM_GATEWAY_URL", "AGY_LLM_GATEWAY_API_KEY", "AGY_LLM_GATEWAY_WIRE_PROTOCOL", "AGY_LLM_GATEWAY_MODELS",
 	"DEEPSEEK_API_KEY", "DSH_HOME", "MOONSHOT_API_KEY", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_CODE_HOME",
 	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE",
 	"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
-}
+	"ZCODE_DATA_BASE_DIR", zcodePersonalFileEnv,
+}, zcodeHostEnv...)
 
 // agentCLIConfigPaths are the HOME-relative files an agent CLI reads its MCP
 // servers from.
@@ -107,6 +109,7 @@ var agentCLIMCPPaths = map[string]string{
 	AgentCLIKimi:        ".kimi-code/mcp.json",
 	AgentCLIPi:          ".pi/agent/mcp.json",
 	AgentCLIDeepSeek:    ".dsh/agentflow-mcp.json",
+	AgentCLIZCode:       zcodeConfigPath,
 }
 
 // AgentCLIMCPOptions shapes the MCP configuration of one invocation.
@@ -162,6 +165,8 @@ func WriteAgentCLIMCPConfig(kind, home string, entries map[string]any, options A
 				server["environment"] = env
 			}
 			servers[id] = server
+		case kind == AgentCLIZCode && (url != "" || command != ""):
+			servers[id] = zcodeMCPServer(entry)
 		case kind == AgentCLIDeepSeek && (url != "" || command != ""):
 			name := dshServerNameRe.ReplaceAllString(id, "_")
 			if len(name) > 32 {
@@ -216,6 +221,8 @@ func WriteAgentCLIMCPConfig(kind, home string, entries map[string]any, options A
 		} else {
 			document = []any{map[string]any{"insert": dshInserts}}
 		}
+	case AgentCLIZCode:
+		document = map[string]any{"features": map[string]any{"mcp": true}, "mcp": map[string]any{"servers": servers}}
 	default:
 		document = map[string]any{"mcpServers": servers}
 	}
@@ -384,6 +391,8 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		}
 		head := append([]string{}, argv[:3]...)
 		argv = append(append(head, patches...), argv[3:]...)
+	case AgentCLIZCode:
+		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}
@@ -430,6 +439,8 @@ func AgentCLILabel(kind string) string {
 		return "Pi"
 	case AgentCLIDeepSeek:
 		return "DeepSeek Harness"
+	case AgentCLIZCode:
+		return "ZCode"
 	}
 	return kind
 }

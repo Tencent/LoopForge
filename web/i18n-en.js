@@ -49,5 +49,6 @@ Object.assign(window.LF_I18N_EN,{
 "AI 对话的 Antigravity 模型与以 Antigravity 运行的 SOP 节点":"Antigravity models in AI chat, and SOP steps that run on Antigravity",
 "AI 对话的 Kimi Code 模型与以 Kimi Code 运行的 SOP 节点":"Kimi Code models in AI chat, and SOP steps that run on Kimi Code",
 "AI 对话的 Pi 模型与以 Pi 运行的 SOP 节点":"Pi models in AI chat, and SOP steps that run on Pi",
-"AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 SOP 节点":"DeepSeek Harness models in AI chat, and SOP steps that run on DeepSeek Harness"
+"AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 SOP 节点":"DeepSeek Harness models in AI chat, and SOP steps that run on DeepSeek Harness",
+"AI 对话的 ZCode 模型与以 ZCode 运行的 SOP 节点":"ZCode models in AI chat, and SOP steps that run on ZCode"
 });
