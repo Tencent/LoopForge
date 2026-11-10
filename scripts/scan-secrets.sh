@@ -12,6 +12,7 @@ if ! curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 120 \
   --connect-timeout 15 --max-time 60 \
   "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" -o "$scan_dir/gitleaks.tar.gz"; then
   # Authenticate the API request when available to avoid the anonymous rate limit.
+  # The API redirects to the same pinned asset when the release edge is down.
   {
     printf '%s\n' 'Accept: application/octet-stream'
     if [[ -n "${LOOPFORGE_GITLEAKS_TOKEN:-}" ]]; then

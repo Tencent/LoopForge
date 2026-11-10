@@ -10,7 +10,7 @@ test('issue drawer loads every tab and preserves clarification answers', async (
     source: 'tapd', externalId: 'TAPD-42',
     externalRef: { externalUrl: 'https://tapd.example/42' },
     clarification: {
-      status: 'questions', score: 58, summary: 'Needs browser details', missing: ['browser'],
+      status: 'questions', summary: 'Needs browser details',
       dimensions: { goal: 80, scope: 60, acceptance: 40 },
       questions: [
         { question: 'Target browser?', options: ['Chrome', 'Firefox'], multiSelect: false },

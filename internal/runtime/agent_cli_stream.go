@@ -174,6 +174,8 @@ func NewAgentCLITranslator(kind string) func(string) []string {
 		translate = (&piStream{}).translate
 	case AgentCLIDeepSeek:
 		translate = (&dshStream{}).translate
+	case AgentCLIZCode:
+		translate = (&zcodeStream{}).translate
 	default:
 		return nil
 	}

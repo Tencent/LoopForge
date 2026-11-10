@@ -243,6 +243,7 @@ func BuiltInExecutors() []domain.ExecutorDefinition {
 		{ID: "kimi", Name: "Kimi Code", Kind: "kimi", Binary: "kimi", Protocol: "stream-json"},
 		{ID: "pi", Name: "Pi", Kind: "pi", Binary: "pi", Protocol: "stream-json"},
 		{ID: "dsh", Name: "DeepSeek Harness", Kind: "dsh", Binary: "dsh", Protocol: "stream-json"},
+		{ID: "zcode", Name: "ZCode", Kind: "zcode", Binary: "zcode", Protocol: "stream-json"},
 	}
 }
 

@@ -5,7 +5,7 @@ export const defaultEngine = "codebuddy";
 // Bundled logo per CLI; an unknown CLI falls back to its model's brand.
 const brands = {
   codebuddy: "codebuddy", codex: "codex", "claude-code": "claude",
-  opencode: "opencode", cursor: "cursor", agy: "gemini", kimi: "kimi", pi: "pi", dsh: "deepseek",
+  opencode: "opencode", cursor: "cursor", agy: "gemini", kimi: "kimi", pi: "pi", dsh: "deepseek", zcode: "zhipu",
 };
 export const engineBrand = (id) => brands[id] || "";
 
@@ -30,7 +30,7 @@ export function engineMissingKeyMessage(engine) {
 }
 
 // CLIs a session Executor can name when the reply was saved before model prefixes.
-const legacyEngines = new Set(["codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh"]);
+const legacyEngines = new Set(["codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode"]);
 
 function modelHasEnginePrefix(id) {
   const prefix = /^([a-z][a-z0-9-]*):./.exec(id || "")?.[1];

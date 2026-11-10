@@ -19,12 +19,11 @@ type Project struct {
 	SOPPlaybooks []SOPPlaybook `json:"sopPlaybooks,omitempty"`
 	// SOPBindings is the legacy single playbook. Empty SOPPlaybooks still
 	// expose it as the default combo so old projects keep working.
-	SOPBindings         []IssueSOPBinding   `json:"sopBindings,omitempty"`
-	DefaultRepositoryID string              `json:"defaultRepositoryId,omitempty"`
-	OwnerID             int64               `json:"ownerId,omitempty"`
-	Members             []ProjectMember     `json:"members,omitempty"`
-	Clarification       ClarificationPolicy `json:"clarification"`
-	RunEval             RunEvalPolicy       `json:"runEval,omitempty"`
+	SOPBindings         []IssueSOPBinding `json:"sopBindings,omitempty"`
+	DefaultRepositoryID string            `json:"defaultRepositoryId,omitempty"`
+	OwnerID             int64             `json:"ownerId,omitempty"`
+	Members             []ProjectMember   `json:"members,omitempty"`
+	RunEval             RunEvalPolicy     `json:"runEval,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`
@@ -62,21 +61,6 @@ func PublicProjects(items []Project) []Project {
 type ProjectMember struct {
 	UserID int64  `json:"userId"`
 	Role   string `json:"role"` // maintainer, member, viewer
-}
-
-type ClarificationDimension struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Question  string `json:"question"`
-	Weight    int    `json:"weight"`
-	MinLength int    `json:"minLength"`
-}
-
-type ClarificationPolicy struct {
-	Enabled    bool                     `json:"enabled"`
-	SkillID    string                   `json:"skillId,omitempty"`
-	Threshold  int                      `json:"threshold"`
-	Dimensions []ClarificationDimension `json:"dimensions,omitempty"`
 }
 
 type Repository struct {

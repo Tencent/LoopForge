@@ -334,3 +334,61 @@ test('late save responses cannot close a newly opened editor',async t=>{
  assert.equal(form.elements.name.value,'正在编辑的新任务');assert.equal(form.elements.assistantPrompt.value,'new');
  assert.equal(form.querySelector('[type=submit]').disabled,false);
 });
+
+test('AI schedule model picker narrows models to the chosen CLI and keeps a saved CLI model', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/assistant/models', () => ({
+    default: 'glm-test',
+    models: [
+      { id: 'glm-test', name: 'GLM Test', family: 'glm' },
+      { id: 'claude-test', name: 'Claude Test', family: 'claude' },
+      { id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' },
+    ],
+    engines: [
+      { id: 'codebuddy', name: 'CodeBuddy', configured: true },
+      { id: 'codex', name: 'Codex', configured: true },
+      { id: 'claude-code', name: 'Claude Code', configured: false },
+    ],
+  }));
+  await app.evaluate(`(async () => {
+    fillScheduleJobForm({});
+    const f=$('#scheduleJobForm');
+    f.elements.jobKind.value='assistant';syncScheduleJobKind();
+    await loadScheduleModels();
+  })()`);
+  const doc = app.document;
+  const form = doc.querySelector('#scheduleJobForm');
+  const engine = doc.querySelector('#scheduleEngine');
+  assert.deepEqual([...engine.options].map(o => [o.value, o.disabled]), [['codebuddy', false], ['codex', false], ['claude-code', true]]);
+  assert.match(engine.options[2].textContent, /未配置 Key/);
+  assert.equal(engine.value, 'codebuddy');
+
+  const toggle = doc.querySelector('#scheduleModelPicker [data-model-toggle]');
+  const menu = doc.querySelector('#scheduleModelPicker .ai-model-menu');
+  toggle.click();
+  assert.equal(menu.hidden, false);
+  assert.deepEqual([...menu.querySelectorAll('.ai-model-option')].map(o => o.dataset.id), ['glm-test', 'claude-test']);
+  assert.ok(menu.style.top && menu.style.maxHeight, 'menu is placed against the viewport');
+  toggle.click();
+  assert.equal(menu.hidden, true);
+
+  engine.value = 'codex';
+  engine.dispatchEvent(new app.window.Event('change'));
+  assert.equal(form.elements.assistantModel.value, 'codex:gpt-6-sol');
+  toggle.click();
+  assert.deepEqual([...menu.querySelectorAll('.ai-model-option')].map(o => o.dataset.id), ['codex:gpt-6-sol']);
+  menu.querySelector('.ai-model-option').click();
+  assert.equal(menu.hidden, true);
+
+  engine.value = 'codebuddy';
+  engine.dispatchEvent(new app.window.Event('change'));
+  assert.equal(form.elements.assistantModel.value, 'glm-test');
+
+  // A job saved on a CLI this editor has no key for stays on that CLI.
+  app.evaluate(`paintScheduleModel('claude-code:opus')`);
+  assert.equal(engine.value, 'claude-code');
+  assert.equal(engine.selectedOptions[0].disabled, false);
+  assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
+  assert.match(doc.querySelector('#scheduleModelHint').textContent, /所选 CLI/);
+});

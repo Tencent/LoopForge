@@ -149,9 +149,6 @@ func (r *ProjectsRepo) SetProjectArchived(id string, at *time.Time, by int64) er
 
 func (r *ProjectsRepo) PutProject(v domain.Project) error {
 	now := time.Now().UTC()
-	if v.Clarification.Threshold <= 0 {
-		v.Clarification = domain.DefaultClarificationPolicy()
-	}
 	if old, ok := r.Project(v.ID); ok {
 		if v.OwnerID == 0 {
 			v.OwnerID = old.OwnerID

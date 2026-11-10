@@ -174,9 +174,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if syncSvc != nil {
 		e.MergeIntoBranch = syncSvc.EnsureAndMergeBranchMR
 		e.FindBranchMR = syncSvc.FindBranchMR
-		syncSvc.OnRequirementImported = func(issue domain.Issue) {
-			go stream.autoClarifyIssue(issue.ID)
-		}
 	}
 	// Wake long-polling CLI runners the moment the engine queues a task.
 	e.SetRunnerDispatchNotify(func(provider string) { api.runners.runnerWaiters.notify([]string{provider}) })
@@ -351,7 +348,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.Any("/api/issues/:id", api.issues.issue)
 	g.Any("/api/issues/:id/comments", api.issues.issue)
 	g.Any("/api/issues/:id/runs", api.issues.issue)
-	g.Any("/api/issues/:id/clarify", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify/cancel", api.issues.issue)

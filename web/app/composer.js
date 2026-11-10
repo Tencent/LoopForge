@@ -20,30 +20,7 @@ function reqCreateAccepted(){
   return !state.reqClarifySkipped&&!!state.chatClarifyResult?.ready;
 }
 function composerClarifyQuestions(aiResult){
-  const questions=normalizeClarifyParsed(aiResult).questions;
-  if(questions.length||!aiResult||aiResult.ready)return questions;
-  // Older responses may only contain missing information. Preserve it as
-  // free-text questions; business choices must come from the analyst.
-  return composerAssessmentView(aiResult).missingNames.map((question,i)=>({id:`missing${i+1}`,question:String(question),options:[],freeText:true}));
-}
-function composerAssessmentView(aiResult){
-  const policy=clarificationPolicy(currentProject());
-  const dims=policy.dimensions||[];
-  const rating=aiResult?.assessment||{};
-  const ratings=rating.dimensions&&typeof rating.dimensions==='object'?rating.dimensions:{};
-  const missing=Array.isArray(rating.missing)?rating.missing:[];
-  const missingNames=missing.map(m=>{
-    const dim=dims.find(d=>d.id===m);
-    return dim?dim.name:m;
-  }).filter(Boolean);
-  let weighted=0,weight=0;
-  dims.forEach(d=>{
-    if(ratings[d.id]===undefined)return;
-    const w=Number(d.weight)||0;
-    weighted+=(Number(ratings[d.id])||0)*w;
-    weight+=w;
-  });
-  return {dims,ratings,missing,missingNames,score:weight?Math.round(weighted/weight):0,threshold:policy.threshold||80,ready:!!aiResult?.ready};
+  return normalizeClarifyParsed(aiResult).questions;
 }
 function reqAnswerOf(index){
   const answer=(state.reqAnswers||{})[index];
@@ -56,7 +33,7 @@ function reqQuestionAnswered(index){
 function reqAnsweredCount(questions){
   return questions.filter((_,i)=>reqQuestionAnswered(i)).length;
 }
-// composerProgressHTML 只给出「还有 N 个问题 / 已问清」，评分收进 composerAssessmentDetailsHTML 的折叠区。
+// composerProgressHTML 只给出「还有 N 个问题 / 已问清」。
 function composerProgressHTML(aiResult){
   if(!aiResult)return '';
   if(aiResult.ready)return '<span class="hui-badge" data-tone="success"><span class="hui-lamp is-still"><i></i></span>已问清，可以创建</span>';
@@ -64,18 +41,6 @@ function composerProgressHTML(aiResult){
   const remaining=questions.length-reqAnsweredCount(questions);
   const label=!questions.length?'还需要补充说明':(remaining?`还有 ${remaining} 个问题`:'已答完，提交后继续分析');
   return `<span class="hui-badge" data-tone="warn"><span class="hui-lamp is-still"><i></i></span>${label}</span>`;
-}
-function composerAssessmentDetailsHTML(aiResult){
-  const view=composerAssessmentView(aiResult);
-  const ids=Object.keys(view.ratings);
-  if(!ids.length)return '';
-  const rows=ids.map(id=>{
-    const dim=view.dims.find(d=>d.id===id);
-    const value=Math.max(0,Math.min(100,Math.round(Number(view.ratings[id])||0)));
-    return `<div class="req-dim"><span>${escapeHTML(dim?.name||id)}</span><span class="req-meter"><i style="width:${value}%"></i></span><b>${value}</b></div>`;
-  }).join('');
-  const missing=view.missingNames.length?`<div class="req-dim-missing">缺失项：${view.missingNames.map(n=>escapeHTML(n)).join('、')}</div>`:'';
-  return `<details class="req-score-details"><summary class="req-fold">${reqIcon('chevron-down')}查看完整度详情</summary><div class="req-score-body">${rows}<div class="req-dim req-dim-total"><span>综合</span><span class="req-dim-line">项目准入线 ${view.threshold}</span><b>${view.score}</b></div>${missing}</div></details>`;
 }
 function projectTAPDReady(project){
   project=project||currentProject();
@@ -307,7 +272,7 @@ function renderClarifyPanel(aiResult, err){
   let html=clarifyRepoNoticeHTML(aiResult.repository);
   html+=`<div class="req-cl-top">${composerProgressHTML(aiResult)}<span class="req-toolbar-sp"></span>${recommend}</div>`;
   if(aiResult.ready){
-    html+=`<div class="req-ready-card"><div class="req-ready-head">${reqIcon('check',16)}需求结论</div><div class="req-ready-body">${escapeHTML(summary||'信息已经够用，可以创建。')}</div>${composerAssessmentDetailsHTML(aiResult)}</div>`;
+    html+=`<div class="req-ready-card"><div class="req-ready-head">${reqIcon('check',16)}需求结论</div><div class="req-ready-body">${escapeHTML(summary||'信息已经够用，可以创建。')}</div></div>`;
     html+=reqSupplementHTML('还有要补充的？写在这里会再分析一次','例如：徽章需要支持点击查看获得方式','补充并重新分析');
   }else{
     if(summary)html+=`<p class="req-understand"><b>分析师的理解</b>${escapeHTML(summary)}</p>`;
@@ -315,8 +280,6 @@ function renderClarifyPanel(aiResult, err){
       html+=`<div class="req-clarify-note"><span>分析师没有给出具体问题，可以补充说明，也可以重新生成问题。</span><button type="button" class="button small" id="chatClarifyRetry">${reqIcon('refresh')}重新生成问题</button></div>`;
     }
     html+=questions.length?reqQuestionCardHTML(questions):reqSupplementHTML('补充说明','补充背景、范围或验收标准','提交补充');
-    const details=composerAssessmentDetailsHTML(aiResult);
-    if(details)html+=`<div class="req-score-wrap">${details}</div>`;
   }
   panel.hidden=false;
   panel.innerHTML=html;
@@ -1133,14 +1096,13 @@ async function createIssueFromChat(target){
         clarification:state.reqClarifyStartedAt?{startedAt:state.reqClarifyStartedAt}:undefined
       };
     }else{
-      const rating=r.assessment||{};
       const summary=usableClarifySummary(r.summary);
       payload={
         ...base,
         title:title||r.suggestedTitle||chatHistory[0]?.content?.slice(0,80)||'新工作项',
         description:summary||chatHistory.filter(h=>h.role==='user').map(h=>h.content).join('\n\n'),
         priority:r.suggestedPriority||'medium',
-        clarification:{summary:summary||'',dimensions:rating.dimensions,missing:rating.missing||[],questions:r.questions||[],status:accepted?'ready':'in_progress',passed:accepted,gated:accepted,startedAt:state.reqClarifyStartedAt||undefined}
+        clarification:{summary:summary||'',questions:r.questions||[],status:accepted?'ready':'in_progress',startedAt:state.reqClarifyStartedAt||undefined}
       };
     }
     let issue=await api('/api/issues',{method:'POST',body:JSON.stringify(payload)});
@@ -1161,13 +1123,12 @@ async function createIssueFromChat(target){
     $('#requirementModal').classList.remove('open');
     renderIssues();
     if(direct){
-      toast(target==='tapd'?`已创建需求并同步 TAPD ${issue.externalRef?.externalId||''}`:'已在平台创建需求。未经澄清，不会立刻启动 SOP','ok');
+      toast(target==='tapd'?`已创建需求并同步 TAPD ${issue.externalRef?.externalId||''}`:'已在平台创建需求，可在详情里触发 SOP','ok');
       openIssueDetail(issue.id);
       return;
     }
-    if(!accepted||requirementNeedsClarification(issue)){
-      state.autoStartClarify=!issue.clarification?.questions?.length;
-      toast(target==='tapd'?'已在 TAPD 创建需求。澄清尚未完成，请在澄清页继续，完成后再触发 SOP':'已在平台创建需求。澄清尚未完成，请在澄清页继续，完成后再触发 SOP','ok');
+    if(!accepted){
+      toast(target==='tapd'?'已在 TAPD 创建需求。澄清尚未完成，可在澄清页继续，也可以直接触发 SOP':'已在平台创建需求。澄清尚未完成，可在澄清页继续，也可以直接触发 SOP','ok');
       openIssueDetail(issue.id,'clarify');
       return;
     }

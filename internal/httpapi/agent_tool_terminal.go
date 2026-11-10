@@ -39,7 +39,7 @@ func terminalToolDescriptors(mode AgentToolMode, exec assistantExecMode) []agent
 		schema, _ := json.Marshal(submitClarificationSchema())
 		return []agentToolDescriptor{{
 			Name:         submitClarificationTool,
-			Description:  "调用本工具提交本轮澄清结论。ready=true 时提供 summary；否则必须提供具体问题，不能只在 summary 或 assessment.missing 里描述缺口。选择题提供至少两个不同的 options；需要用户填写路径、数量等内容时设 freeText=true、options=[]。校验失败时修正参数重新调用，提交成功才结束本轮。",
+			Description:  "调用本工具提交本轮澄清结论。ready=true 时提供 summary；否则必须提供具体问题，不能只在 summary 里描述缺口。选择题提供至少两个不同的 options；需要用户填写路径、数量等内容时设 freeText=true、options=[]。校验失败时修正参数重新调用，提交成功才结束本轮。",
 			InputSchema:  schema,
 			Kind:         "terminal",
 			Terminal:     true,
@@ -100,15 +100,7 @@ func submitClarificationSchema() map[string]any {
 					},
 				},
 			},
-			"ready": map[string]any{"type": "boolean"},
-			"assessment": map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"properties": map[string]any{
-					"dimensions": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "integer"}},
-					"missing":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				},
-			},
+			"ready": map[string]any{"type": "boolean", "description": "本需求自身的范围已经足够开工时为 true，并在 summary 给出澄清结论"},
 		},
 	}
 }
@@ -166,22 +158,17 @@ func parseSubmitClarificationArgs(raw json.RawMessage) (clarifyModelResult, erro
 		return clarifyModelResult{}, fmt.Errorf("submit_clarification 不接受 mcpCalls")
 	}
 	var payload struct {
-		Summary    string                         `json:"summary"`
-		Questions  []domain.ClarificationQuestion `json:"questions"`
-		Ready      bool                           `json:"ready"`
-		Assessment struct {
-			Dimensions map[string]int `json:"dimensions"`
-			Missing    []string       `json:"missing"`
-		} `json:"assessment"`
+		Summary   string                         `json:"summary"`
+		Questions []domain.ClarificationQuestion `json:"questions"`
+		Ready     bool                           `json:"ready"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return clarifyModelResult{}, fmt.Errorf("submit_clarification 参数无效: %w", err)
 	}
 	result := clarifyModelResult{
-		Summary:    strings.TrimSpace(payload.Summary),
-		Questions:  sanitizeClarificationQuestions(payload.Questions),
-		Ready:      payload.Ready,
-		Assessment: payload.Assessment,
+		Summary:   strings.TrimSpace(payload.Summary),
+		Questions: sanitizeClarificationQuestions(payload.Questions),
+		Ready:     payload.Ready,
 	}
 	if utf8.RuneCountInString(result.Summary) > agentToolMaxSummaryLen {
 		result.Summary = string([]rune(result.Summary)[:agentToolMaxSummaryLen])
@@ -193,10 +180,6 @@ func parseSubmitClarificationArgs(raw json.RawMessage) (clarifyModelResult, erro
 		"summary":   result.Summary,
 		"questions": result.Questions,
 		"ready":     result.Ready,
-		"assessment": map[string]any{
-			"dimensions": result.Assessment.Dimensions,
-			"missing":    result.Assessment.Missing,
-		},
 	}
 	result.raw = rawMap
 	return result, nil
@@ -211,7 +194,7 @@ func validateSubmitClarification(result clarifyModelResult) error {
 		return fmt.Errorf("ready 结论缺少 summary")
 	}
 	if len(result.Questions) == 0 {
-		return fmt.Errorf("ready=false 时 questions 至少需要一个具体问题，不能只提交 summary 或 assessment.missing。请补齐问题及选项后重新调用 submit_clarification；开放填写题使用 freeText=true、options=[]")
+		return fmt.Errorf("ready=false 时 questions 至少需要一个具体问题，不能只提交 summary。请补齐问题及选项后重新调用 submit_clarification；开放填写题使用 freeText=true、options=[]")
 	}
 	seen := map[string]bool{}
 	for _, q := range result.Questions {

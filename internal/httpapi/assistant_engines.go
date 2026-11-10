@@ -282,6 +282,18 @@ func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user do
 	return engine + ":" + model
 }
 
+// assistantScheduledModel normalizes the model of an AI scheduled task on
+// save. The run uses the project owner's keys, not the editor's, so a
+// well-formed CLI model is kept as-is; the owner's key for that CLI is
+// checked when it runs.
+func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
+	engine, model := assistantModelEngine(id)
+	if engine != assistantEngineCodeBuddy && assistantValidEngineModel(model) {
+		return engine + ":" + model
+	}
+	return assistantAllowedModel(id, catalog)
+}
+
 // assistantEngineModels lists the Codex / Claude Code models the user can
 // chat with: the list from 个人配置 when set, otherwise the models the Base
 // URL publishes, otherwise the built-in executor catalog.

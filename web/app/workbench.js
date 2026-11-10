@@ -98,6 +98,8 @@ const CREDENTIAL_KINDS=[
     note:'Pi 没有自己的模型服务，需要填写 Base URL。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
   agentCliCredentialKind('dsh',{name:'DeepSeek Harness',logo:'deepseek',baseUrl:'https://api.deepseek.com',
     note:'未填写 Base URL 时连接 DeepSeek 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
+  agentCliCredentialKind('zcode',{name:'ZCode',logo:'glm',baseUrl:'https://open.bigmodel.cn/api/anthropic',
+    note:'未填写 Base URL 时连接智谱 BigModel 的 Anthropic 兼容服务（Messages）。',protocols:[['messages','Messages（Anthropic）'],['chat','Chat Completions'],['responses','Responses']]}),
 ];
 function agentCliCredentialKind(cli,o){
   const field=`agentCli.${cli}.`,configurable=!!o.protocols;
@@ -1717,7 +1719,7 @@ function renderDashboard(){
   updateApprovalBadge();
   const needMe=[...waiting,...confirm,...attention.filter(i=>!waiting.includes(i)&&!confirm.includes(i))];
   const statCards=[
-    {label:'需要介入',value:attention.length,foot:'澄清未达标、失败或已中断',color:'#c63c4b',filter:'attention'},
+    {label:'需要介入',value:attention.length,foot:'待确认结论、失败或已中断',color:'#c63c4b',filter:'attention'},
     {label:'待我确认',value:approvalItems().length,foot:'批准后才会继续跑',color:'#fbbf24',to:'approvals'},
     {label:'正在推进',value:active.length,foot:'Agent 正在执行',color:'#5b8cff',filter:'active'},
     {label:'已经完成',value:closed.length,foot:'本项目已闭环',color:'#34d399',filter:'closed'},

@@ -9,7 +9,8 @@
 # 3. route coverage = routes hit in the platform access log / all routes;
 # 4. web/ coverage = webtest/ unit coverage merged with the e2e browser coverage.
 # Thresholds: AGENTFLOW_E2E_ROUTE_MIN and AGENTFLOW_E2E_WEB_MIN (default 85).
-# e2e is not part of CI; this only reports.
+# The pull-request route gate runs in the platform browser job against that
+# job's access log. This script still reruns the full local suite.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 E2E_DIR=$(pwd)

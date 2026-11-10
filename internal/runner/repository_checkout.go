@@ -5,22 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 )
-
-func killCheckoutProcessGroup(cmd *exec.Cmd) error {
-	if runtime.GOOS == "windows" {
-		return cmd.Process.Kill()
-	}
-	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-}
 
 func checkoutRepositoryForPreparation(ctx context.Context, workspace string, repository *domain.RunnerRepository, refresh bool) error {
 	if repository.RequireExistingWorkBranch && strings.TrimSpace(repository.WorkBranch) == "" {
