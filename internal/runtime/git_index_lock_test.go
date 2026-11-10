@@ -186,6 +186,36 @@ func TestGitIndexLockUnreadableHolderStaysUnconfirmed(t *testing.T) {
 			}
 		})
 	}
+	// A foreign lock nobody has written for gitIndexLockForeignStaleAfter is
+	// reclaimable even though unreadable processes may run as its owner.
+	ownerStatus := "Name:\tgit\nUid:\t" + owner + "\t" + owner + "\t" + owner + "\t" + owner + "\n"
+	old := time.Now().Add(-gitIndexLockForeignStaleAfter - time.Minute)
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if inUse, confirmed, err := gitIndexLockHeldUnder(fakeProc(ownerStatus), lockPath, foreign); err != nil || inUse || !confirmed {
+		t.Fatalf("expired foreign lock inUse=%v confirmed=%v err=%v, want confirmed stale", inUse, confirmed, err)
+	}
+	recent := time.Now().Add(-gitIndexLockForeignStaleAfter + time.Minute)
+	if err := os.Chtimes(lockPath, recent, recent); err != nil {
+		t.Fatal(err)
+	}
+	if _, confirmed, err := gitIndexLockHeldUnder(fakeProc(ownerStatus), lockPath, foreign); err != nil || confirmed {
+		t.Fatalf("recent foreign lock confirmed=%v err=%v, want unconfirmed", confirmed, err)
+	}
+	// A readable live holder keeps even an old lock.
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := os.Open(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	if inUse, confirmed, err := gitIndexLockHeldUnder("/proc", lockPath, foreign); err != nil || !inUse || !confirmed {
+		t.Fatalf("old lock with a live holder inUse=%v confirmed=%v err=%v", inUse, confirmed, err)
+	}
+	holder.Close()
 	// A symlinked lock is not a lock Git created; never confirm it stale.
 	link := filepath.Join(t.TempDir(), "index.lock")
 	if err := os.Symlink(lockPath, link); err != nil {

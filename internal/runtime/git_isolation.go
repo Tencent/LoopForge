@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const projectAgentGitExcludeBlock = `# AgentFlow managed sandbox: repository Agent configuration
@@ -233,6 +234,11 @@ func gitIndexLockInUseProc(lockPath string) (inUse, confirmed bool, err error) {
 // process leaves the result unconfirmed. Our own Git processes are always
 // readable, and same-user processes hidden from us (non-dumpable helpers such
 // as browser sandboxes) do not hold index locks, so they never block cleanup.
+//
+// A root-owned lock matches every unreadable root process on the host, so a
+// non-root runner could never reclaim it. Git writes the lock while it holds
+// it; once the lock has not been modified for gitIndexLockForeignStaleAfter,
+// unreadable processes no longer keep it. A readable holder always does.
 func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confirmed bool, err error) {
 	want, err := filepath.Abs(lockPath)
 	if err != nil {
@@ -285,8 +291,13 @@ func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confi
 			}
 		}
 	}
+	if uncertain && time.Since(lock.ModTime()) >= gitIndexLockForeignStaleAfter {
+		uncertain = false
+	}
 	return false, !uncertain, nil
 }
+
+var gitIndexLockForeignStaleAfter = 30 * time.Minute
 
 // procMayOwnFile reports whether the process may run as uid. Unknown state
 // counts as a match, so an unreadable process can only preserve the lock.
