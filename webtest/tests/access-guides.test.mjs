@@ -179,6 +179,13 @@ test('token-bearing access base never downgrades a secure deployment', async (t)
   assert.equal(base('https://studio.example/lf/', 'http:'), 'https://studio.example/lf');
   assert.equal(base('http://studio.example', 'https:'), 'https://studio.example');
   assert.equal(base('http://studio.example', 'http:'), 'http://studio.example');
+  assert.equal(base('http://studio.example:80', 'https:'), 'https://studio.example');
+  assert.equal(base('http://studio.example:443', 'https:'), 'https://studio.example');
+  // An explicit http base with its own port is an HTTP-only listener; https on
+  // that port would point the token at a port without TLS.
+  assert.equal(base('http://studio.example:8080', 'https:'), 'http://studio.example:8080');
+  assert.equal(base('http://studio.example:8080/lf/', 'https:'), 'http://studio.example:8080/lf');
+  assert.equal(base('https://studio.example:8443', 'https:'), 'https://studio.example:8443');
   // Without a usable configured base, the page origin is used as is.
   assert.equal(base('', 'https:'), 'https://page.example');
   assert.equal(base('', 'http:', '127.0.0.1:8080'), 'http://127.0.0.1:8080');

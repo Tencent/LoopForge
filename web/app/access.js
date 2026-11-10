@@ -20,16 +20,19 @@ function getPublicBaseURL(){
   return accessPublicBaseURL(configured, typeof window !== 'undefined' ? window.location : null);
 }
 // 接入片段会携带 Bearer Token：配置里显式的协议优先，否则跟随当前页面；
-// HTTPS 页面生成的地址绝不降级为 http://。
+// HTTPS 页面生成的地址不降级为 http://。只有配置显式写了 http:// 和非 443 端口时
+// 保留 http，因为把只提供 HTTP 的端口改成 https:// 会指向一个没有 TLS 的端口。
 function accessPublicBaseURL(configured, page){
   const secure = page?.protocol === 'https:';
   const fallback = (secure ? 'https:' : 'http:') + '//' + (page?.host || 'loopforge.example.com');
   const raw = String(configured || '').trim();
   if(!raw) return fallback;
+  const explicitScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
   let url;
-  try{ url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : (secure ? 'https://' : 'http://') + raw) }catch(_){ return fallback }
+  try{ url = new URL(explicitScheme ? raw : (secure ? 'https://' : 'http://') + raw) }catch(_){ return fallback }
   if(!['http:','https:'].includes(url.protocol) || !url.host) return fallback;
-  if(secure) url.protocol = 'https:';
+  const explicitHTTPPort = explicitScheme && url.protocol === 'http:' && url.port && url.port !== '443';
+  if(secure && !explicitHTTPPort) url.protocol = 'https:';
   return url.protocol + '//' + url.host + url.pathname.replace(/\/+$/, '');
 }
 function accessViewActive(){return !!$('#guideView')?.classList.contains('active')}
