@@ -84,3 +84,17 @@ Object.assign(window.LF_I18N_EN,{
 "按计划用项目 Owner 在所选 CLI 上的 Key 执行提示词，使用与主页 AI 对话相同的完全权限，可调用 SOP、平台工具、工作区及浏览器。":"Runs the prompt on schedule with the project owner's key for the selected CLI, using the same full access as the home AI chat, including SOPs, platform tools, the workspace and the browser.",
 "使用项目 Owner 在所选 CLI 上的 Key，以完全权限执行，与主页 AI 对话相同。可调用 SOP、工作区及浏览器工具；关闭页面不会中断执行。":"Uses the project owner's key for the selected CLI, with the same full access as the home AI chat. It can call SOPs, workspace and browser tools; closing the page does not stop it."
 });
+Object.assign(window.LF_I18N_EN,{
+"收起编排助手":"Collapse orchestration assistant",
+"描述要编排的流程":"Describe the workflow to draft",
+"选择 CLI":"Select CLI",
+"搜索 CLI":"Search CLIs",
+"搜索 CLI…":"Search CLIs…",
+"没有匹配的 CLI":"No matching CLI",
+"搜索模型":"Search models",
+"搜索模型…":"Search models…",
+"没有匹配的模型":"No matching model",
+"发送编排要求":"Send orchestration request",
+"仅生成草稿 · 切换 CLI 开启新对话，保留画布":"Draft only · switching CLI starts a new chat and keeps the canvas",
+"暂无模型":"No models yet"
+});
