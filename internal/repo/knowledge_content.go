@@ -147,7 +147,7 @@ func (r *KnowledgeContentRepo) KnowledgeChunks(sourceID, path string) []domain.K
 	return out
 }
 
-// chunkMatchRow 是 FulltextChunks 的单行结果，字段与 knowledge_chunks 列对齐。
+// chunkMatchRow 是全文查询的单行结果，字段与 knowledge_chunks 列对齐。
 type chunkMatchRow struct {
 	ID        int64   `gorm:"column:id"`
 	SourceID  string  `gorm:"column:source_id"`
@@ -169,6 +169,17 @@ type chunkMatchRow struct {
 // 来源 id 都走绑定参数，不拼进 SQL。全文索引由 026 脚本补建，gorm 的增量
 // DDL 建不出带 ngram 解析器的索引，因此缺索引的环境须先执行 026。
 func (r *KnowledgeContentRepo) FulltextChunks(ctx context.Context, query string, sourceIDs []string, limit int) ([]domain.KnowledgeChunkMatch, error) {
+	return r.fulltextChunks(ctx, query, sourceIDs, limit, false)
+}
+
+// BooleanChunks 是关键词适配器的可选精确通道，对同一全文索引跑 BOOLEAN
+// MODE。query 由适配器从用户查询里抽出的英文标识符拼成，只含字母、数字和
+// 下划线；这里仍走绑定参数。精确通道失败由适配器降级处理，不影响默认检索。
+func (r *KnowledgeContentRepo) BooleanChunks(ctx context.Context, query string, sourceIDs []string, limit int) ([]domain.KnowledgeChunkMatch, error) {
+	return r.fulltextChunks(ctx, query, sourceIDs, limit, true)
+}
+
+func (r *KnowledgeContentRepo) fulltextChunks(ctx context.Context, query string, sourceIDs []string, limit int, boolean bool) ([]domain.KnowledgeChunkMatch, error) {
 	out := make([]domain.KnowledgeChunkMatch, 0)
 	query = strings.TrimSpace(query)
 	if query == "" || len(sourceIDs) == 0 {
@@ -179,6 +190,10 @@ func (r *KnowledgeContentRepo) FulltextChunks(ctx context.Context, query string,
 	}
 	if limit > knowledgeFulltextMaxLimit {
 		limit = knowledgeFulltextMaxLimit
+	}
+	mode := "NATURAL LANGUAGE MODE"
+	if boolean {
+		mode = "BOOLEAN MODE"
 	}
 
 	// 手动拼 IN 占位符：占位符个数只由来源数量决定，值全部走绑定参数。
@@ -192,10 +207,10 @@ func (r *KnowledgeContentRepo) FulltextChunks(ctx context.Context, query string,
 	args = append(args, limit)
 
 	statement := "SELECT id, source_id, path, idx, heading, title, start_line, end_line, `commit`, revision, `text`, " +
-		"MATCH(title, heading, `text`) AGAINST (? IN NATURAL LANGUAGE MODE) AS score " +
+		"MATCH(title, heading, `text`) AGAINST (? IN " + mode + ") AS score " +
 		"FROM knowledge_chunks " +
 		"WHERE source_id IN (" + placeholders + ") " +
-		"AND MATCH(title, heading, `text`) AGAINST (? IN NATURAL LANGUAGE MODE) " +
+		"AND MATCH(title, heading, `text`) AGAINST (? IN " + mode + ") " +
 		"ORDER BY score DESC LIMIT ?"
 
 	var rows []chunkMatchRow

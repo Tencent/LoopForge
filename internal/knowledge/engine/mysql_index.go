@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"strings"
 
 	"agentflow/internal/domain"
 )
@@ -30,19 +31,30 @@ func (m *mysqlKeywordIndex) Search(ctx context.Context, query string, sources []
 	if limit > MaxSearchLimit {
 		limit = MaxSearchLimit
 	}
-	matches, err := m.q.FulltextChunks(ctx, query, sources, limit)
+	// 多取候选用于重排；调用方看到的条数仍由 limit 收口。MySQL 在 LIMIT
+	// 较大时仍只返回匹配行，代价主要是排序，不引入新表或新索引。
+	fetch := rerankDepth
+	if limit > fetch {
+		fetch = limit
+	}
+	if fetch > MaxSearchLimit {
+		fetch = MaxSearchLimit
+	}
+	matches, err := m.q.FulltextChunks(ctx, query, sources, fetch)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Hit, 0, len(matches))
-	for _, match := range matches {
-		c := match.Chunk
-		out = append(out, Hit{
-			Source: c.SourceID, Commit: c.Commit, Path: c.Path,
-			Title: c.Title, Heading: c.Heading,
-			StartLine: c.StartLine, EndLine: c.EndLine,
-			Text: c.Text, Score: match.Score,
-		})
+
+	// 标识符精确通道是可选的：内容面没实现 BooleanQuerier，或精确查询
+	// 失败，都保留自然语言候选继续检索，不把整次搜索打失败。
+	var exact []domain.KnowledgeChunkMatch
+	strong := strongIdentifiers(query)
+	if len(strong) > 0 {
+		if boolean, ok := m.q.(BooleanQuerier); ok {
+			if rows, err := boolean.BooleanChunks(ctx, strings.Join(strong, " "), sources, fetch); err == nil {
+				exact = rows
+			}
+		}
 	}
-	return out, nil
+	return rerank(query, matches, exact, strong, limit), nil
 }
