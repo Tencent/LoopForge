@@ -181,6 +181,8 @@ Then run `/start-devflow "<your request>"` in Claude Code.
 | --- | --- |
 | Claude Code · CodeBuddy · Codex · Cursor | Classic (default) and Portable editions |
 | Pi | Portable edition |
+| DeepSeek Harness | Portable edition |
+| Hermes Agent | Portable edition |
 
 See the [local guide](docs/local/usage.md) for each host's entry point and [editions](docs/local/editions.md) for the differences. Source lives in [`local/`](local/). Local runs the built-in workflows today; exporting a platform SOP for standalone local execution is planned.
 
