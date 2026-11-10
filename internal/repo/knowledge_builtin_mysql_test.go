@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// TestBuiltinKnowledgeMySQLFulltextIndex 断言执行 026 之后 knowledge_chunks 上
-// 存在带 ngram 解析器的全文索引。未配置 AGENTFLOW_TEST_MYSQL_DSN 时跳过。
+// TestBuiltinKnowledgeMySQLFulltextIndex 断言 026 可重复执行，且执行后
+// knowledge_chunks 上存在带 ngram 解析器的全文索引。未配置
+// AGENTFLOW_TEST_MYSQL_DSN 时跳过。
 func TestBuiltinKnowledgeMySQLFulltextIndex(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("AGENTFLOW_TEST_MYSQL_DSN"))
 	if dsn == "" {
@@ -24,9 +25,12 @@ func TestBuiltinKnowledgeMySQLFulltextIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, stmt := range splitSQLStatements(string(script)) {
-		if err := s.DB.Exec(stmt).Error; err != nil && !isDuplicateSchemaError(err) {
-			t.Fatalf("执行 026 失败：%v\nSQL: %s", err, stmt)
+	// dev.sh 每次启动都执行 026，运维也可能重跑；第二遍必须是空操作。
+	for run := 1; run <= 2; run++ {
+		for _, stmt := range splitSQLStatements(string(script)) {
+			if err := s.DB.Exec(stmt).Error; err != nil {
+				t.Fatalf("第 %d 次执行 026 失败：%v\nSQL: %s", run, err, stmt)
+			}
 		}
 	}
 
@@ -67,9 +71,4 @@ func splitSQLStatements(script string) []string {
 		}
 	}
 	return out
-}
-
-func isDuplicateSchemaError(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "1061") || strings.Contains(msg, "Duplicate key") || strings.Contains(msg, "already exists")
 }

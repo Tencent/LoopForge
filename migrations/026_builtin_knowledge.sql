@@ -7,6 +7,10 @@
 -- 表结构与 internal/repo 的 row 模型一致。gorm 的增量 DDL 只会补缺失的表和
 -- 列，补不出带 ngram 解析器的全文索引，所以检索要用的全文索引由第二段补建：
 -- 即便表已由 autoMigrate 建好，仍须执行本脚本。
+--
+-- 本脚本可重复执行：dev.sh 每次启动都会执行，运维也可能重跑。建表一律用
+-- IF NOT EXISTS、删表用 IF EXISTS；MySQL 的 ADD FULLTEXT INDEX 没有
+-- IF NOT EXISTS，因此先查 information_schema.STATISTICS，索引已存在就跳过。
 
 -- ===== 第一段：主库（控制面，KnowledgeRepo） =====
 
@@ -109,5 +113,20 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
   UNIQUE KEY uq_knowledge_chunks_path_idx (source_id, path, idx)
 ) DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
-ALTER TABLE knowledge_chunks
-  ADD FULLTEXT INDEX ft_knowledge_chunks_text (title, heading, `text`) WITH PARSER ngram;
+-- 全文索引只建一次。用动态 SQL 绕过 MySQL 不支持 IF NOT EXISTS 的限制；
+-- 已存在时执行 DO 0（空操作），整份脚本重跑不报 1061。
+SET @has_ft_knowledge_chunks_text := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'knowledge_chunks'
+    AND INDEX_NAME = 'ft_knowledge_chunks_text'
+);
+SET @add_ft_knowledge_chunks_text := IF(
+  @has_ft_knowledge_chunks_text = 0,
+  'ALTER TABLE knowledge_chunks ADD FULLTEXT INDEX ft_knowledge_chunks_text (title, heading, `text`) WITH PARSER ngram',
+  'DO 0'
+);
+PREPARE add_ft_knowledge_chunks_text FROM @add_ft_knowledge_chunks_text;
+EXECUTE add_ft_knowledge_chunks_text;
+DEALLOCATE PREPARE add_ft_knowledge_chunks_text;
