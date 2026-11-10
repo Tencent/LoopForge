@@ -1343,6 +1343,36 @@ func TestReclaimExceptKeepsLiveRunWorkspaces(t *testing.T) {
 	}
 }
 
+func TestReclaimExceptKeepsKnowledgeCache(t *testing.T) {
+	root := t.TempDir()
+	m := NewManager(root)
+	cache := filepath.Join(root, "knowledge-cache", "src")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "pack"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(root, "persist-run-stale")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := m.ReclaimExcept(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("reclaimed %d workspaces, want 1", removed)
+	}
+	body, err := os.ReadFile(filepath.Join(cache, "pack"))
+	if err != nil || string(body) != "keep" {
+		t.Fatalf("knowledge cache was reclaimed: %v %q", err, body)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale workspace survived reclaim: %v", err)
+	}
+}
+
 func TestReclaimExceptSkipsLockedWorkspace(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root)
