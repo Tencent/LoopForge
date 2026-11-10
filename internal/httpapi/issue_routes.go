@@ -324,7 +324,7 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 		detail = "重新运行 SOP"
 	}
 	_, _ = h.appendStoredOperation(c, issue.ID, "dispatch", detail)
-	c.JSON(201, task)
+	c.JSON(201, publicTask(task))
 }
 
 // deleteIssue checks the complete history before cleaning failed/cancelled runs.

@@ -21,7 +21,11 @@ type tasksHandlers struct {
 
 func (h *tasksHandlers) tasks(c *gin.Context) {
 	h.syncTasks()
-	c.JSON(200, h.repo.Tasks())
+	tasks := h.repo.Tasks()
+	for i := range tasks {
+		tasks[i] = publicTask(tasks[i])
+	}
+	c.JSON(200, tasks)
 }
 
 func (h *tasksHandlers) task(c *gin.Context) {
@@ -31,7 +35,12 @@ func (h *tasksHandlers) task(c *gin.Context) {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "task not found"})
 		return
 	}
-	c.JSON(http.StatusOK, task)
+	c.JSON(http.StatusOK, publicTask(task))
+}
+
+func publicTask(task domain.Task) domain.Task {
+	task.Repository.CloneURL = domain.StripURLCredentials(task.Repository.CloneURL)
+	return task
 }
 
 // settleIssueTasks moves one issue's Tasks onto runs that already finished.

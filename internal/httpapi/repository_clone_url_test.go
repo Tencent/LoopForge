@@ -59,3 +59,40 @@ func TestRepositoryCloneURLNeverCarriesCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyCloneURLCredentialsStayOutOfPromptAndRunViews(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-flow", Name: "Legacy flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	const legacyURL = "https://user:s3cret-token@github.com/acme/app.git"
+	if err := f.s.PutRepository(domain.Repository{ID: "legacy-run", Name: "legacy", ProjectID: "platform", Provider: "github", GongfengProjectID: "acme/app", DefaultBranch: "main", CloneURL: legacyURL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PutIssue(domain.Issue{ID: "iss-legacy", ProjectID: "platform", Title: "Legacy repo", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: "legacy-flow", RepositoryID: "legacy-run"}); err != nil {
+		t.Fatal(err)
+	}
+	rec := cvBRequest(t, f, http.MethodPost, "/api/issues/iss-legacy/dispatch", map[string]any{}, true)
+	if rec.Code != http.StatusCreated || strings.Contains(rec.Body.String(), "s3cret-token") {
+		t.Fatalf("dispatch = %d leaks credentials: %s", rec.Code, rec.Body.String())
+	}
+	var task domain.Task
+	for _, candidate := range f.s.Tasks() {
+		if candidate.IssueID == "iss-legacy" {
+			task = candidate
+		}
+	}
+	run, ok := f.s.Run(task.RunID)
+	if !ok || run.Repository.CloneURL != legacyURL {
+		t.Fatalf("stored run must keep the clone URL it clones with: %+v", run.Repository)
+	}
+	if strings.Contains(run.Input, "s3cret-token") || !strings.Contains(run.Input, "clone URL: https://github.com/acme/app.git") {
+		t.Fatalf("prompt carries clone URL credentials: %q", run.Input)
+	}
+	for _, path := range []string{"/api/runs", "/api/runs/" + run.ID, "/api/tasks", "/api/tasks/" + task.ID} {
+		rec := cvBRequest(t, f, http.MethodGet, path, nil, true)
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "s3cret-token") || !strings.Contains(rec.Body.String(), "https://github.com/acme/app.git") {
+			t.Fatalf("GET %s = %d leaks or drops the clone URL: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}

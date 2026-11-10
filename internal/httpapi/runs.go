@@ -9,6 +9,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"agentflow/internal/runtime"
 
@@ -347,6 +348,14 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 	for i := range run.Artifacts {
 		run.Artifacts[i].Content = ""
 	}
+	// Runs keep the stored clone URL so a repository saved with credentials
+	// before they were rejected still clones; readers never see them.
+	run.Repository.CloneURL = domain.StripURLCredentials(run.Repository.CloneURL)
+	run.Repositories = append([]domain.RepositoryContext(nil), run.Repositories...)
+	for i := range run.Repositories {
+		run.Repositories[i].CloneURL = domain.StripURLCredentials(run.Repositories[i].CloneURL)
+	}
+	run.Input = gitwork.Redact(run.Input)
 	newNodes := make(map[string]*domain.NodeRun, len(run.Nodes))
 	for k, n := range run.Nodes {
 		if n == nil {
