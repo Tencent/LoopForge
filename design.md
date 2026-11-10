@@ -253,6 +253,7 @@ Logo 默认 64px，小屏或短屏为 52px；标题为 36px，小屏为 30px。�
 - 首页只保留品牌、输入区和可执行的起始操作，不显示重复面包屑、键盘说明或无意义的上下文提示。
 - 上传与引用入口合并到 `+` 菜单，输入 `@` 可搜索角色、需求、SOP、运行和仓库；会话主需求仍可关联、更换和解除。
 - 回复状态以真实 generation 为依据。“回复完成”不等同于项目或任务完成，未知状态不推断成等待审批。
+- 会话侧栏行尾的回复状态参照 Codex：回复进行中显示转圈（`arc-spinner`），回复失败或中断显示感叹号（`alert` / `warning`），在用户离开期间完成、尚未打开查看的回复显示 8px 蓝色圆点；打开该会话后圆点消失，已读的完成回复和手动停止的回复不加标记。已读记录由服务端按用户保存每个会话最后看过的回复（`assistant_session_reads`），列表接口据此返回 `unread`：打开会话、或会话打开期间回复完成时，前端调用 `POST /api/assistant/sessions/{id}/read` 记录（`session-unread.js`），换设备也一致。升级前就已结束的回复不算未读，同事发起、自己未参与的项目会话不显示圆点。
 - 回复进行中发送的消息进入排队托盘（参照 Codex）：托盘贴在输入框上方、左右内缩并压在输入框顶边下，不加标题行；每行是排队图标、单行截断的消息和「引导 / 编辑 / 删除」，「引导」打断当前回复立即发送这一条，没有回复在跑时显示为「发送」。停止后托盘顶部提示「已暂停自动发送」并提供继续发送。输入框占位文案不随生成状态变化。
 - 参与者按实际发过消息的用户统计，浮层在外部点击、焦点离开或 Escape 时关闭。
 - 未开始的首页不显示产物入口。有会话内容后显示图标入口；有新产物生成时自动展开产物抽屉，让用户不必先点开才能看到产物。没有产物、只恢复历史会话，或窄屏下抽屉会覆盖会话时保持原有收起状态，只显示未读提示，不抢走正在阅读的回复。
@@ -434,7 +435,7 @@ Bot 管理页（`#botsView`）按需求列表与运行记录列表的 Harness �
 | `MentionPicker.jsx`、`mention-context.css` | `@` 引用搜索、选择和展开收起 |
 | `ArtifactPanel.jsx`、`useArtifactPanelLayout.js`、`artifact-*.css` | 产物列表、预览和响应式抽屉 |
 | `usePanelPresence.js` | 双向动效的挂载、退出和快速反向控制 |
-| `useLocalConversations.js`、`session-status.js` | 本地会话隔离和真实回复状态展示 |
+| `useLocalConversations.js`、`session-status.js`、`session-unread.js` | 本地会话隔离、真实回复状态与未读标记展示 |
 | `web/app/hover-ink.*`、`web/app/sliding-tabs.*` | 两套页面共用的悬停和标签页行为 |
 | `web/app/harness-ui.css` | 唯一设计规范：`--hui-*` 令牌、按钮、Status Badge、面板、输入、Selector 与菜单、设置区旧令牌映射和 1200px 外层容器 |
 | `web/app/issues-list.css` | 需求列表页独有的操作列、看板与响应式样式 |

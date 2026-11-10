@@ -308,6 +308,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/assistant/sessions/:id/issue", asst.sessionIssue)
 	g.GET("/api/assistant/sessions", asst.listSessions)
 	g.POST("/api/assistant/sessions/:id/archive", asst.archiveSession)
+	g.POST("/api/assistant/sessions/:id/read", asst.markSessionRead)
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
