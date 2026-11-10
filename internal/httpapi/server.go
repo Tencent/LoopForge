@@ -43,6 +43,8 @@ type deps struct {
 	schedule   *schedule.Service
 	authClient *auth.Client
 	api        http.Handler
+	// passwordAttempts is this server's brute-force budget (auth_password.go).
+	passwordAttempts *passwordLimiter
 }
 
 // configureSync 是跨领域共享的依赖配置行为（mcp/issues/sync 都调用）。
@@ -120,7 +122,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 }
 
 func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
-	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv()}
+	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
 	if err := ensureDefaultMCPsForAllProjects(s); err != nil {
 		log.Printf("ensure default project MCPs: %v", err)
 	} else {
