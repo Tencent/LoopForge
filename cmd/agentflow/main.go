@@ -19,6 +19,7 @@ import (
 	"agentflow/internal/config"
 	"agentflow/internal/engine"
 	"agentflow/internal/httpapi"
+	knowledgeengine "agentflow/internal/knowledge/engine"
 	"agentflow/internal/managedcli"
 	"agentflow/internal/notification"
 	"agentflow/internal/preview"
@@ -248,6 +249,8 @@ func main() {
 	e.StartMaintenance(claimCtx)
 	if executeRuns {
 		e.StartClaimLoop(claimCtx)
+		knowledgeEngine := knowledgeengine.NewEngine(s, s, knowledgeengine.NewMySQLKeywordIndex(s))
+		knowledgeengine.NewSyncWorker(knowledgeEngine, s, s, root, instanceID).StartSyncLoop(claimCtx, executeRuns)
 	}
 	stopCLIUpdates := startManagedCLIUpdates(claimCtx, role, executeRuns)
 	defer stopCLIUpdates()
