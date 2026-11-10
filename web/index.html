@@ -1205,16 +1205,21 @@
               <p class="schedule-field-hint">可填写 1–10，留空默认 10；其余需求在后续执行时继续触发。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
-              <label>模型</label>
-              <div class="schedule-model-field" id="scheduleModelPicker">
-                <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-                  <span class="ai-model-icon" data-family="glm">智</span>
-                  <span data-model-label>GLM-5.3-Flash</span>
-                  <span class="ai-model-caret" aria-hidden="true"></span>
-                </button>
-                <div class="ai-model-menu" hidden role="listbox"></div>
+              <label for="scheduleEngine">CLI 与模型</label>
+              <div class="schedule-model-row">
+                <select id="scheduleEngine" class="select" name="assistantEngine" aria-label="执行 CLI">
+                  <option value="codebuddy">CodeBuddy</option>
+                </select>
+                <div class="schedule-model-field" id="scheduleModelPicker">
+                  <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false" aria-label="模型">
+                    <span class="ai-model-icon" data-family="glm">智</span>
+                    <span data-model-label>GLM-5.3-Flash</span>
+                    <span class="ai-model-caret" aria-hidden="true"></span>
+                  </button>
+                  <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
+                </div>
               </div>
-              <p class="schedule-field-hint">与 AI 助手相同的 CodeBuddy 模型，用项目 Owner 的 Key 调用。</p>
+              <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用项目 Owner 在所选 CLI 上配置的 Key 执行。</p>
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>

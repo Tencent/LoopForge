@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
@@ -154,6 +155,18 @@ func (h *agentToolGateway) toolList(ctx context.Context, session *AgentToolSessi
 func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSession, raw json.RawMessage) (map[string]any, error) {
 	if session.finished() {
 		return nil, errAgentToolTerminalCommitted
+	}
+	if session.closed.Load() || session.expired(time.Now()) {
+		return nil, errAgentToolInvalidSession
+	}
+	if session.ctx != nil {
+		// Tool calls arrive on independent HTTP requests. Stopping the model
+		// turn must also stop any in-flight work using its gateway.
+		callCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(session.ctx, cancel)
+		defer stop()
+		defer cancel()
+		ctx = callCtx
 	}
 	var params struct {
 		Name      string          `json:"name"`

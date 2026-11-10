@@ -436,6 +436,7 @@ func TestAssistantTaskRunUsesFreshSession(t *testing.T) {
 	if !ok {
 		t.Fatal("user")
 	}
+	joinScheduledProject(t, st, "platform", user.ID)
 	task, err := normalizeAssistantTask(assistantTask{Name: "巡检", Prompt: "看一下待办", IntervalSec: 60, Enabled: true, ProjectID: "platform"}, assistantTask{})
 	if err != nil {
 		t.Fatal(err)
@@ -508,24 +509,6 @@ func TestAssistantStreamEventsDedupRepeatedToolUse(t *testing.T) {
 	}
 	if filter.accept(assistantStreamEvent{Kind: "tool", Tool: "tasks_list"}) {
 		t.Fatal("consecutive same tool without id should be dropped")
-	}
-}
-
-func TestAssistantChatTimeoutAllowsLongCodeTurns(t *testing.T) {
-	if assistantChatTimeout != 60*time.Minute {
-		t.Fatalf("assistant chat timeout %s", assistantChatTimeout)
-	}
-	t.Setenv("AGENTFLOW_ASSISTANT_CHAT_TIMEOUT", "90m")
-	if got := assistantTurnTimeout(); got != 90*time.Minute {
-		t.Fatalf("configured timeout %s", got)
-	}
-	t.Setenv("AGENTFLOW_ASSISTANT_CHAT_TIMEOUT", "not-a-duration")
-	if got := assistantTurnTimeout(); got != 60*time.Minute {
-		t.Fatalf("invalid timeout should fall back, got %s", got)
-	}
-	t.Setenv("AGENTFLOW_ASSISTANT_CHAT_TIMEOUT", "30s")
-	if got := assistantTurnTimeout(); got != 60*time.Minute {
-		t.Fatalf("out-of-range timeout should fall back, got %s", got)
 	}
 }
 

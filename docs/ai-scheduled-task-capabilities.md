@@ -13,17 +13,15 @@
 | Skill | 与主页现有能力一致，不额外禁用内置 Skill 工具。启动 SOP 后，节点会按原有逻辑装载角色绑定的 Skill。主页与定时对话均未独立提供平台 Skill 绑定和自动装载功能，本次不新增这套机制。 |
 | 结果与产物 | 支持自然语言结果，以及主页相同的草稿提交回退；终止 CLI 后仍按完全权限落库并保留已提交结果。工作区附件和浏览器截图写入定时会话。 |
 
-执行身份沿用原逻辑：优先使用项目 Owner 的 CodeBuddy Key，其次使用任务 Owner；工具访问范围沿用执行账号和当前项目的现有规则。关闭页面不会中断执行，定时任务来源、调度方式和超时时间保持不变。
+执行身份是项目 Owner，否则是非共享任务的任务 Owner。用的是所选 CLI 的 Key，不是只能用 CodeBuddy；平台共享的 CodeBuddy Key 不会借给定时任务，Codex / Claude Code 仍要该账号自己的凭据。工具访问范围沿用执行账号和当前项目的现有规则。关闭页面不会中断执行。定时任务没有单独的超时：它就是一轮普通对话，CLI 结束或有人从会话页停止时结束，MCP 网关跟这一轮一起结束。
 
 由于任务以项目 Owner 身份、完全权限执行，`/api/schedule-jobs` 的新建、修改、立即运行和删除都要求项目写权限（Owner、平台管理员或非 viewer 成员），列表只返回调用者所在项目的任务；按 id 保存时既校验原项目也校验目标项目。执行身份只由服务端决定（项目 Owner，否则保留原任务 Owner），请求里的 `ownerUserId` 不生效。项目记录已不存在的任务只允许平台管理员或该任务原 Owner 管理。
 
 ## 实现与验证
 
-- `internal/httpapi/assistant_schedule.go`：不再设置 `DeferSOP`，传入主页完全权限策略。
-- `internal/httpapi/assistant.go`：`openScheduledToolSession` 复用 `openAssistantToolSession`，绑定执行账号和定时会话。
-- `internal/httpapi/assistant_tasks.go`：两类助手定时任务统一使用完全权限，持久化会话、维护工作区租约，接收终结回复并保存附件。
-- `internal/httpapi/assistant_write.go`：定时系统提示词包含主页完全权限的完整系统提示词。
-- `TestScheduledToolSessionMatchesFullAccessConversation`：比较两种入口实际工具目录与 MCP 配置，覆盖 SOP、工作区、浏览器等工具。
+- `internal/httpapi/assistant_schedule.go`：按所选模型的 CLI 选择执行账号，不再给这一轮单独设超时。
+- `internal/httpapi/assistant_tasks.go`：定时任务打开一轮普通对话（`executeGeneration` → `POST /api/assistant/chat`），系统提示词、技能、流式和停止都走主页路径；跑完再把结果写回任务。
+- `internal/httpapi/agent_tool_session.go`：工具网关跟当前轮次的 context 一起结束，没有 5 分钟或固定时长的轮次上限。
 - `TestScheduledAssistantCanDispatchSOP`：通过定时执行链路调用真实平台派发接口，使用内存测试数据和仅含审批节点的 SOP。
 - `TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply`：模拟 CLI 通过本地回环网关提交最终回复，验证执行前会话、租约控制器初始化、绑定和附件留存。
 
