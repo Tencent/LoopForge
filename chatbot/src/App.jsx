@@ -68,7 +68,9 @@ import SessionContextMenu from "./SessionContextMenu";
 import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
+import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
 import PermissionPicker from "./PermissionPicker";
+import { engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
@@ -1976,7 +1978,15 @@ export default function App() {
                     />
                     <PermissionPicker
                       label="CLI"
-                      options={chat.executors}
+                      options={chat.executors.map((executor) => {
+                        const brand = engineBrand(executor.id);
+                        return {
+                          ...executor,
+                          glyph: hasProviderLogo(brand)
+                            ? <ModelProviderIcon brand={brand} size={16} />
+                            : null,
+                        };
+                      })}
                       value={chat.executor}
                       onSelect={(id) => {
                         chat.setExecutor(id);
