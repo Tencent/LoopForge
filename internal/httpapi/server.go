@@ -487,8 +487,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/page-feedback/:id/images/:imageId", api.feedback.image)
 
 	// --- knowledge base ---
-	g.GET("/api/knowledge/settings", api.know.settings)
-	g.PUT("/api/knowledge/settings", api.know.settings)
 	g.POST("/api/knowledge/check", api.know.check)
 	g.GET("/api/knowledge/sources", api.know.sources)
 	g.POST("/api/knowledge/search", api.know.search)

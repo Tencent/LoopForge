@@ -17,16 +17,6 @@ const KnowledgeUsageRuleID = "agentflow-knowledge-usage"
 // when it has knowledge worth distilling back into the knowledge base.
 const KnowledgeArtifactBasename = "knowledge.md"
 
-// KnowledgeSettings contains review publishing preferences only.
-type KnowledgeSettings struct {
-	WriteEnabled bool      `json:"writeEnabled"`
-	UpdatedBy    string    `json:"updatedBy,omitempty"`
-	UpdatedAt    time.Time `json:"updatedAt,omitempty"`
-}
-
-func (s KnowledgeSettings) Public() KnowledgeSettings { return s }
-func (s KnowledgeSettings) Ready() bool               { return true }
-
 const (
 	KnowledgeSubmissionPending   = "pending"
 	KnowledgeSubmissionPublished = "published"

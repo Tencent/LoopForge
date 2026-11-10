@@ -70,7 +70,6 @@ const readOnly = [
   ['/api/sync/config', d => assert.ok('autoSyncEnabled' in d)],
   ['/api/sync/status', d => assert.ok(d)],
   ['/api/sync/logs', d => assert.ok(d)],
-  ['/api/knowledge/settings', d => assert.ok('enabled' in d)],
   ['/api/knowledge/usage', d => assert.ok(d)],
   ['/api/knowledge/candidates', d => assert.ok(d)],
   ['/api/knowledge/submissions', d => assert.ok(d)],
@@ -103,10 +102,4 @@ test('unknown resources answer 404 instead of 500', async () => {
   for (const path of ['/api/runs/run-does-not-exist', '/api/workflows/e2e-missing', '/api/agents/e2e-missing', '/api/projects/e2e-missing']) {
     await api('GET', path, undefined, { expect: 404 });
   }
-});
-
-test('unconfigured knowledge returns an explicit unavailable response',async()=>{
- const settings=await get('/api/knowledge/settings');
- if(settings.enabled&&settings.ready)assert.ok(await get('/api/knowledge/sources'));
- else await api('GET','/api/knowledge/sources',undefined,{expect:503});
 });

@@ -151,3 +151,34 @@ func TestResolveRole(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveKnowledgeCacheRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AGENTFLOW_KNOWLEDGE_CACHE_DIR", "")
+	got, err := resolveKnowledgeCacheRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".agentflow", "knowledge-cache")
+	if got != want {
+		t.Fatalf("default cache root = %q, want %q", got, want)
+	}
+	workspace, err := resolveWorkspaceRoot("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel, err := filepath.Rel(workspace, got); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		t.Fatalf("default cache root %q is inside sandbox workspace %q", got, workspace)
+	}
+	if err := os.MkdirAll(got, 0o755); err != nil {
+		t.Fatalf("default cache root is not writable: %v", err)
+	}
+
+	override := filepath.Join(t.TempDir(), "custom-cache")
+	t.Setenv("AGENTFLOW_KNOWLEDGE_CACHE_DIR", " "+override+" ")
+	got, err = resolveKnowledgeCacheRoot()
+	if err != nil || got != override {
+		t.Fatalf("override cache root = %q, %v; want %q", got, err, override)
+	}
+}

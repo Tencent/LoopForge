@@ -15,8 +15,6 @@ const CallTimeout = 30 * time.Second
 
 // Store is the persistence the 知识库 module needs.
 type Store interface {
-	KnowledgeSettings() domain.KnowledgeSettings
-	PutKnowledgeSettings(domain.KnowledgeSettings) error
 	KnowledgeBindings(string) []domain.KnowledgeBinding
 	KnowledgeSources(string) []domain.KnowledgeSource
 	KnowledgeDocuments(string) []domain.KnowledgeDocument
@@ -56,18 +54,6 @@ func NewService(store Store, newID func() string, upstream Upstream) *Service {
 		now:      time.Now,
 		newID:    newID,
 	}
-}
-
-func (s *Service) Settings() domain.KnowledgeSettings { return s.store.KnowledgeSettings() }
-
-type SettingsInput struct {
-	WriteEnabled bool `json:"writeEnabled"`
-}
-
-func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.KnowledgeSettings, error) {
-	next := domain.KnowledgeSettings{WriteEnabled: input.WriteEnabled, UpdatedBy: actor}
-	err := s.store.PutKnowledgeSettings(next)
-	return next, err
 }
 
 type CheckResult struct {
@@ -342,9 +328,8 @@ func (s *Service) Reject(id, note, actor string) (domain.KnowledgeSubmission, er
 	return s.save(item)
 }
 
-// Publish writes a reviewed item into the upstream KB. It requires the
-// platform-level write switch and a source within the item's project scope;
-// upstream failures are recorded on the item.
+// Publish writes a reviewed item into the upstream KB. It requires a source
+// within the item's project scope; upstream failures are recorded on the item.
 func (s *Service) Publish(ctx context.Context, id, actor string) (domain.KnowledgeSubmission, error) {
 	item, err := s.mutable(id, "该条目已写回知识库")
 	if err != nil {
@@ -352,9 +337,6 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	}
 	if s.upstream == nil {
 		return item, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
-	}
-	if !s.Settings().WriteEnabled {
-		return item, apperr.New(apperr.Forbidden, "平台未开启知识写回：请管理员允许审核后写回")
 	}
 	source := strings.TrimSpace(item.Source)
 	if source == "" {

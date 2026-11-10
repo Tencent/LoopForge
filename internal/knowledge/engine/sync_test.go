@@ -4,10 +4,13 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge/engine/gitsync"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,7 +105,7 @@ func TestGitSyncContentSurvivesCacheAndDeletion(t *testing.T) {
 	if len(s.KnowledgeDocuments(id)) != 1 {
 		t.Fatal("prefix filter")
 	}
-	os.RemoveAll(filepath.Join(cache, "knowledge-cache"))
+	os.RemoveAll(w.cacheDir(id))
 	if _, err = e.Fetch(context.Background(), id, "docs/guide.md", 0, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -176,4 +179,55 @@ func TestAPIRoleDoesNotStartKnowledgeSync(t *testing.T) {
 
 func (p *roleProbe) PublishKnowledgeSync(context.Context, string, string, string, int, func(context.Context) error) (bool, error) {
 	panic("unexpected")
+}
+
+func TestSyncCacheOutsideSandboxWorkspaceSurvivesReclaim(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	cacheRoot := filepath.Join(t.TempDir(), "knowledge-cache")
+	w := NewSyncWorker(nil, nil, nil, cacheRoot, "test")
+	cache := w.cacheDir("src")
+	if rel, err := filepath.Rel(workspaceRoot, cache); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		t.Fatalf("sync cache %q is inside sandbox workspace %q", cache, workspaceRoot)
+	}
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(cache, "pack")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(workspaceRoot, "persist-run-stale")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := runtime.NewManager(workspaceRoot).ReclaimExcept(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("reclaimed %d workspaces, want 1", removed)
+	}
+	if body, err := os.ReadFile(marker); err != nil || string(body) != "keep" {
+		t.Fatalf("sandbox reclaim touched the sync cache: %v %q", err, body)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale workspace survived reclaim: %v", err)
+	}
+}
+
+func TestImportGitWritesIntoConfiguredCacheRoot(t *testing.T) {
+	cacheRoot := filepath.Join(t.TempDir(), "knowledge-cache")
+	w := NewSyncWorker(nil, nil, nil, cacheRoot, "test")
+	var got string
+	w.syncGit = func(_ context.Context, dir, _, _ string, _ map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
+		got = dir
+		return "", "", nil, nil, nil, errors.New("stop after path check")
+	}
+	src := domain.KnowledgeSource{ID: "src", GitURL: "https://example.com/public.git", Branch: "main"}
+	if _, _, err := w.importGit(context.Background(), src, "owner"); err == nil {
+		t.Fatal("expected the injected sync error")
+	}
+	if want := filepath.Join(cacheRoot, "src"); got != want {
+		t.Fatalf("sync cache dir = %q, want %q", got, want)
+	}
 }

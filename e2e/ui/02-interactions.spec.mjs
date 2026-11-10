@@ -170,8 +170,8 @@ test('SOP designer: the agent drawer shows name, role and on-failure in the firs
 });
 
 test('knowledge center: search shows cited hits', async ({ page }) => {
-  const settings = await get('/api/knowledge/settings');
-  test.skip(!settings.ready, 'knowledge base not configured');
+  const sources = list(await get(`/api/knowledge/sources?projectId=${cfg.projectId}`));
+  test.skip(!sources.some(s => (s.doc_count || 0) > 0), 'no indexed knowledge document');
   const errors = watchErrors(page);
   await openView(page, 'knowledge');
   await page.locator('[data-kb-tab="search"]').first().click();

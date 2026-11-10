@@ -4,16 +4,16 @@ import (
 	"net/http"
 	"strconv"
 
-	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
 
 	"github.com/gin-gonic/gin"
 )
 
-// knowledgeHandlers exposes the 知识库 module over HTTP: upstream connection
-// settings, trial search, node usage, the agent-facing read-only proxy
-// (knowledge_proxy.go), and the review queue. Business rules live in
-// knowledge.Service; handlers only do auth, decoding and rendering.
+// knowledgeHandlers exposes the 知识库 module over HTTP: trial search, node
+// usage, the agent-facing read-only proxy (knowledge_proxy.go), the knowledge
+// base management endpoints (knowledge_bases.go), and the review queue.
+// Business rules live in knowledge.Service; handlers only do auth, decoding
+// and rendering.
 type knowledgeHandlers struct {
 	*deps
 	svc      *knowledge.Service
@@ -38,42 +38,6 @@ func render[T any](c *gin.Context, value T, err error) {
 		return
 	}
 	c.JSON(http.StatusOK, value)
-}
-
-type knowledgeSettingsView struct {
-	domain.KnowledgeSettings
-	Ready     bool   `json:"ready"`
-	CanManage bool   `json:"canManage"`
-	ProxyPath string `json:"proxyPath"`
-	UsageRule string `json:"usageRule"`
-}
-
-// 路由: g.GET("/api/knowledge/settings", h.settings)
-//
-//	g.PUT("/api/knowledge/settings", h.settings)
-func (h *knowledgeHandlers) settings(c *gin.Context) {
-	current := h.svc.Settings()
-	if c.Request.Method == http.MethodPut {
-		if !h.canManage(c.Request) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以修改知识库接入配置"})
-			return
-		}
-		var input knowledge.SettingsInput
-		if !decode(c, &input) {
-			return
-		}
-		saved, err := h.svc.UpdateSettings(input, h.actor(c.Request))
-		if err != nil {
-			respond(c, err)
-			return
-		}
-		current = saved
-	}
-	c.JSON(http.StatusOK, knowledgeSettingsView{
-		KnowledgeSettings: current.Public(), Ready: current.Ready(),
-		CanManage: h.canManage(c.Request), ProxyPath: knowledge.ProxyPath,
-		UsageRule: knowledge.UsageRule().Content,
-	})
 }
 
 // 路由: g.POST("/api/knowledge/check", h.check)

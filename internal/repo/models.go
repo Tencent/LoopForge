@@ -649,15 +649,6 @@ type spaceThreadRow struct {
 
 func (spaceThreadRow) TableName() string { return "space_threads" }
 
-// knowledgeSettingsRow stores review publishing preferences.
-type knowledgeSettingsRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (knowledgeSettingsRow) TableName() string { return "knowledge_settings" }
-
 type knowledgeSubmissionRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`

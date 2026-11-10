@@ -13,7 +13,6 @@ import (
 )
 
 type fakeStore struct {
-	settings    domain.KnowledgeSettings
 	submissions map[string]domain.KnowledgeSubmission
 	artifacts   map[string]domain.Artifact
 	runs        map[string]domain.Run
@@ -26,11 +25,6 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{submissions: map[string]domain.KnowledgeSubmission{}, artifacts: map[string]domain.Artifact{}, runs: map[string]domain.Run{}}
 }
 
-func (f *fakeStore) KnowledgeSettings() domain.KnowledgeSettings { return f.settings }
-func (f *fakeStore) PutKnowledgeSettings(s domain.KnowledgeSettings) error {
-	f.settings = s
-	return nil
-}
 func (f *fakeStore) KnowledgeSubmissions(projectID, status string, limit int) []domain.KnowledgeSubmission {
 	var out []domain.KnowledgeSubmission
 	for _, item := range f.submissions {
@@ -112,7 +106,6 @@ func newTestService(store *fakeStore, up *fakeUpstream) *Service {
 	return svc
 }
 
-func readySettings() domain.KnowledgeSettings { return domain.KnowledgeSettings{WriteEnabled: true} }
 func (f *fakeStore) KnowledgeBindings(project string) []domain.KnowledgeBinding {
 	if project == "p1" {
 		return []domain.KnowledgeBinding{{BaseID: "base"}}
@@ -141,7 +134,6 @@ func TestSearchAndDocumentAreProjectScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store.settings = readySettings()
 	_, err = svc.Search(context.Background(), "p1", "  ", nil)
 	wantKind(t, err, apperr.Invalid)
 	_, err = svc.Search(context.Background(), "p1", "q", []string{"secret"})
@@ -165,7 +157,6 @@ func TestSearchAndDocumentAreProjectScoped(t *testing.T) {
 
 func TestSourcesMarksAllowed(t *testing.T) {
 	store := newFakeStore()
-	store.settings = readySettings()
 	svc := newTestService(store, &fakeUpstream{sources: []Source{{ID: "docs"}, {ID: "secret"}}})
 	list, err := svc.Sources(context.Background(), "p1")
 	if err != nil || len(list) != 1 || !list[0].Allowed {
@@ -256,6 +247,9 @@ func TestEditResetsReviewState(t *testing.T) {
 	}
 }
 
+// Publishing is gated by the reviewed item's project scope, not by a
+// platform-wide write switch. The switch was part of the deleted external
+// client configuration and its table is dropped by 026.
 func TestPublishGatesAndWrites(t *testing.T) {
 	store := newFakeStore()
 	up := &fakeUpstream{}
@@ -264,20 +258,10 @@ func TestPublishGatesAndWrites(t *testing.T) {
 		item.ID, item.Status = "s", domain.KnowledgeSubmissionPending
 		store.submissions["s"] = item
 	}
-	put(domain.KnowledgeSubmission{ProjectID: "p1", Title: "T", Source: "docs", Path: "a.md", Content: "body"})
-
-	_, err := svc.Publish(context.Background(), "s", "r")
-	wantKind(t, err, apperr.Forbidden)
-
-	store.settings = readySettings()
-	store.settings.WriteEnabled = false
-	_, err = svc.Publish(context.Background(), "s", "r")
-	wantKind(t, err, apperr.Forbidden)
-	store.settings.WriteEnabled = true
-
 	put(domain.KnowledgeSubmission{ProjectID: "p1", Path: "a.md", Content: "body"})
-	_, err = svc.Publish(context.Background(), "s", "r")
+	_, err := svc.Publish(context.Background(), "s", "r")
 	wantKind(t, err, apperr.Invalid)
+
 	put(domain.KnowledgeSubmission{ProjectID: "p1", Source: "secret", Path: "a.md", Content: "body"})
 	_, err = svc.Publish(context.Background(), "s", "r")
 	wantKind(t, err, apperr.Forbidden)

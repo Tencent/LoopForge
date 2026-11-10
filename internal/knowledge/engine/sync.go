@@ -27,16 +27,24 @@ type SyncContent interface {
 	ReplaceGitKnowledge(context.Context, string, []domain.KnowledgeDocument, []domain.KnowledgeChunk) error
 }
 type SyncWorker struct {
-	engine      *Engine
-	control     SyncControl
-	content     SyncContent
-	root, owner string
-	ttl         time.Duration
-	syncGit     func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error)
+	engine           *Engine
+	control          SyncControl
+	content          SyncContent
+	cacheRoot, owner string
+	ttl              time.Duration
+	syncGit          func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error)
 }
 
-func NewSyncWorker(e *Engine, control SyncControl, content SyncContent, root, owner string) *SyncWorker {
-	return &SyncWorker{engine: e, control: control, content: content, root: root, owner: owner, ttl: 30 * time.Second, syncGit: gitsync.SyncPublicHTTPS}
+// NewSyncWorker 的 cacheRoot 是独立于沙箱工作区的同步缓存目录。工作副本只
+// 是可重建的缓存，不写数据库，也不放进沙箱回收管理的目录。
+func NewSyncWorker(e *Engine, control SyncControl, content SyncContent, cacheRoot, owner string) *SyncWorker {
+	return &SyncWorker{engine: e, control: control, content: content, cacheRoot: cacheRoot, owner: owner, ttl: 30 * time.Second, syncGit: gitsync.SyncPublicHTTPS}
+}
+
+// cacheDir 返回一个来源的工作副本目录；来源 ID 已在 importGit 里校验为
+// 单层目录名，不能越出 cacheRoot。
+func (w *SyncWorker) cacheDir(sourceID string) string {
+	return filepath.Join(w.cacheRoot, sourceID)
 }
 
 // StartSyncLoop returns immediately. The execution-role gate belongs here as
@@ -117,7 +125,9 @@ func (w *SyncWorker) syncClaim(parent context.Context, src domain.KnowledgeSourc
 	}
 	summary := ""
 	if err != nil {
-		summary = strings.ReplaceAll(err.Error(), filepath.Join(w.root, "knowledge-cache"), "[knowledge-cache]")
+		if w.cacheRoot != "" {
+			summary = strings.ReplaceAll(err.Error(), w.cacheRoot, "[knowledge-cache]")
+		}
 		if chars := []rune(summary); len(chars) > 2048 {
 			summary = string(chars[:2048])
 		}
@@ -143,7 +153,7 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 	if prefix != "" && (path.Clean(prefix) != prefix || strings.HasPrefix(prefix, "/") || prefix == ".." || strings.HasPrefix(prefix, "../") || strings.Contains(prefix, "\\")) {
 		return "", 0, errors.New("invalid path prefix")
 	}
-	dir, head, files, _, _, err := w.syncGit(ctx, filepath.Join(w.root, "knowledge-cache", src.ID), src.GitURL, src.Branch, nil)
+	dir, head, files, _, _, err := w.syncGit(ctx, w.cacheDir(src.ID), src.GitURL, src.Branch, nil)
 	if err != nil {
 		return "", 0, err
 	}

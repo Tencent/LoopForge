@@ -12,39 +12,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const knowledgeSettingsID = "default"
-
 // KnowledgeRepo owns knowledge control metadata and the review queue.
 type KnowledgeRepo struct {
 	*deps
-}
-
-// KnowledgeSettings returns review publishing preferences.
-func (r *KnowledgeRepo) KnowledgeSettings() domain.KnowledgeSettings {
-	var row knowledgeSettingsRow
-	if err := r.DB.Where("id = ?", knowledgeSettingsID).Take(&row).Error; err != nil {
-		return domain.KnowledgeSettings{}
-	}
-	var out domain.KnowledgeSettings
-	_ = json.Unmarshal(row.Payload, &out)
-	if row.Updated != nil {
-		out.UpdatedAt = *row.Updated
-	}
-	return out
-}
-
-func (r *KnowledgeRepo) PutKnowledgeSettings(settings domain.KnowledgeSettings) error {
-	now := time.Now().UTC()
-	settings.UpdatedAt = now
-	payload, err := json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	row := knowledgeSettingsRow{ID: knowledgeSettingsID, Payload: payload, Updated: &now}
-	return r.DB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"payload", "updated_at"}),
-	}).Create(&row).Error
 }
 
 // KnowledgeSubmissions lists submissions newest first. Empty filters match

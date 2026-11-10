@@ -12,11 +12,8 @@ before(ensureProject);
 after(cleanup);
 
 test('knowledge: search and fetch a cited document', async t => {
-  const settings = await get('/api/knowledge/settings');
-  if (!settings.enabled || !settings.ready) return t.skip('knowledge base not configured on this deployment');
-  assert.equal(settings.writeEnabled, false, 'e2e refuses to run while KB write-back is enabled');
   const sources = list(await get(`/api/knowledge/sources?projectId=${P}`));
-  assert.ok(sources.length > 0, 'no knowledge sources visible');
+  if (!sources.some(s => (s.doc_count || 0) > 0)) return t.skip('no indexed knowledge document on this deployment');
   const result = await post('/api/knowledge/search', { query: '部署', projectId: P }, { timeoutMs: 90_000 });
   const hits = list(result.result?.results ?? result.results);
   assert.ok(hits.length > 0, `search returned nothing: ${JSON.stringify(result).slice(0, 300)}`);
@@ -38,13 +35,9 @@ test('knowledge: review queue create, edit, reject, delete (no write-back)', asy
   assert.equal(edited.title, 'E2E 已编辑');
   const pending = list(await get(`/api/knowledge/submissions?projectId=${P}`));
   assert.ok(pending.some(s => s.id === item.id));
-  const settings = await get('/api/knowledge/settings');
-  if (!settings.writeEnabled) {
-    // Publishing is the write-back path; with writes disabled it must refuse
-    // (503 when no knowledge base is connected at all, e.g. local.sh).
-    const connected = settings.enabled && settings.ready;
-    await api('POST', `/api/knowledge/submissions/${item.id}/publish`, {}, { expect: connected ? [400, 403, 409] : [503] });
-  }
+  // Publishing needs a bound source; this item has none, so it must refuse
+  // before reaching the engine.
+  await api('POST', `/api/knowledge/submissions/${item.id}/publish`, {}, { expect: [400] });
   const rejected = await post(`/api/knowledge/submissions/${item.id}/reject`, { reviewNote: 'e2e 驳回' });
   assert.equal(rejected.status, 'rejected');
   await del(`/api/knowledge/submissions/${item.id}`, { expect: [200, 204] });

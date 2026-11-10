@@ -51,7 +51,7 @@
 
 ### 2.2 Git 只是同步缓存
 
-`gitsync.Sync`、`CollectMarkdown` 和「把相对路径限制在工作副本内再读文件」留下，供持有租约的实例把变更文件读进内存，然后立刻写入 MySQL。工作副本路径是本机 `{workspaces}/knowledge-cache/{sourceID}`，不进数据库，也不进共享卷。
+`gitsync.Sync`、`CollectMarkdown` 和「把相对路径限制在工作副本内再读文件」留下，供持有租约的实例把变更文件读进内存，然后立刻写入 MySQL。工作副本放在与沙箱工作区无关的独立缓存目录，默认 `$HOME/.agentflow/knowledge-cache/{sourceID}`（本机 HOME 是用户目录，容器部署的 HOME 指向可写数据目录），可用可选的 `AGENTFLOW_KNOWLEDGE_CACHE_DIR` 覆盖；不进数据库，也不进共享卷。缓存丢了可重建，沙箱回收不得触碰它。
 
 从服务路径删除这些调用：
 
@@ -159,7 +159,7 @@ internal/knowledge/engine/gitsync/  同步缓存
 | `project_knowledge_bindings` | 主键 `(project_id, base_id)`；`permission` 切片只写 `submit`。无外键 |
 | `knowledge_sync_jobs` | 自增主键；`source_id`；`kind`；`status`；起止 commit；变更与删除计数；日志；起止时间 |
 | `knowledge_submissions` | 已有表，切片不改列。发布到托管来源时走 `WriteDocument`；发布到 Git 来源返回未实现 |
-| `knowledge_settings` | 删除。`026` 对已有库 `DROP TABLE`。从 `allModels` 去掉 `knowledgeSettingsRow`。新装不再建这张表。`002_knowledge_base.sql` 保持原样 |
+| `knowledge_settings` | 删除。`026` 对已有库 `DROP TABLE`。从 `allModels` 去掉 `knowledgeSettingsRow`，并整体删除 `domain.KnowledgeSettings`、`KnowledgeRepo` 的读写方法与平台级写回开关；审核发布只按项目绑定和来源范围授权。新装不再建这张表。`002_knowledge_base.sql` 保持原样 |
 
 `knowledge_bases.project_id` 加普通索引。一个项目在切片里只有一个自动托管库：用唯一索引 `(project_id, layer)` 挡住并发创建。`project_id` 为空时不参与这个唯一约束（MySQL 里多个 NULL 可以并存），所以不要靠它约束以后的公共库。
 

@@ -131,6 +131,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	knowledgeCacheRoot, err := resolveKnowledgeCacheRoot()
+	if err != nil {
+		log.Fatal(err)
+	}
 	s, err := repo.Open(strings.TrimSpace(*mysqlDSN))
 	if err != nil {
 		log.Fatal(err)
@@ -250,7 +254,7 @@ func main() {
 	if executeRuns {
 		e.StartClaimLoop(claimCtx)
 		knowledgeEngine := knowledgeengine.NewEngine(s, s, knowledgeengine.NewMySQLKeywordIndex(s))
-		knowledgeengine.NewSyncWorker(knowledgeEngine, s, s, root, instanceID).StartSyncLoop(claimCtx, executeRuns)
+		knowledgeengine.NewSyncWorker(knowledgeEngine, s, s, knowledgeCacheRoot, instanceID).StartSyncLoop(claimCtx, executeRuns)
 	}
 	stopCLIUpdates := startManagedCLIUpdates(claimCtx, role, executeRuns)
 	defer stopCLIUpdates()
@@ -407,6 +411,24 @@ func resolveWorkspaceRoot(override string) (string, error) {
 		return "", fmt.Errorf("resolve default sandbox workspace root: user home is empty")
 	}
 	return filepath.Join(home, ".agentflow", "workspace"), nil
+}
+
+// resolveKnowledgeCacheRoot keeps Git working copies outside the sandbox
+// workspace root. The cache is rebuildable, so the default only has to be
+// writable on both a developer machine and the container deployment (HOME is
+// set to the data directory there).
+func resolveKnowledgeCacheRoot() (string, error) {
+	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_KNOWLEDGE_CACHE_DIR")); root != "" {
+		return root, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve default knowledge cache root: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", fmt.Errorf("resolve default knowledge cache root: user home is empty")
+	}
+	return filepath.Join(home, ".agentflow", "knowledge-cache"), nil
 }
 
 func attachPreviewStore(e *engine.Engine, s *repo.Store) {

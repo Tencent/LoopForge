@@ -302,10 +302,7 @@ func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 	var removed int
 	for _, entry := range entries {
 		name := entry.Name()
-		// knowledge-cache is the Git sync work copy under the same root
-		// (see knowledge engine sync). It is not a run workspace; reclaiming
-		// it deletes a clone that is still being written.
-		if name == sandboxLockDir || name == "knowledge-cache" || strings.HasPrefix(name, ".") {
+		if name == sandboxLockDir || strings.HasPrefix(name, ".") {
 			continue
 		}
 		if !match(name) {
