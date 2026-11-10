@@ -240,6 +240,17 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
 .kb-doc > div > code { min-width: 0; color: var(--hui-text); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 .kb-doc > div.hl { background: var(--kb-mark); box-shadow: inset 2px 0 0 var(--hui-warn); }
 
+/* 知识库与来源：登记表单、面板头控件、ngram 脚注 */
+.kb-src-form { padding: 2px 18px 0; }
+.kb-src-form .kb-input { width: 100%; }
+.kb-src-form .kb-field:first-child { margin-top: 10px; }
+.kb-src-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.kb-docs-head { display: flex; align-items: center; gap: 8px; }
+.kb-docs-head select.kb-input { height: 34px; width: auto; min-width: 150px; max-width: 220px; }
+.kb-panel .kb-row .kb-btn.small { margin-left: 4px; }
+.kb-search-note { padding: 10px 18px; color: var(--hui-tertiary); font-size: 12px; border-bottom: 1px solid var(--hui-border-soft); }
+.kb-panel .kb-row .kb-row-value.kb-source-num { width: auto; }
+
 @media (max-width: 1080px) {
   .kb-grid { grid-template-columns: minmax(0, 1fr); }
   .kb-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
