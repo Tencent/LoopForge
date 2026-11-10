@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // MaxPatchBytes bounds one repository-patch inventory; it matches the
@@ -106,6 +107,10 @@ func RecordBaseline(workspace, baseBranch string) error {
 // and SOP deliverable markdown are excluded. Untracked source files are
 // intent-added so they appear in the list. No recorded baseline yields nil.
 func PatchInventory(workspace string) ([]byte, error) {
+	// Parallel branches finishing together inventory the same checkout;
+	// StageUntracked's git add -N would race on .git/index.lock.
+	unlock := lockPatchWorkspace(workspace)
+	defer unlock()
 	baseline, err := os.ReadFile(BaselinePath(workspace))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -326,6 +331,19 @@ func ParseNameStatusNumstat(nameStatus, numstat []byte) []PatchFileSummary {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+var patchWorkspaceLocks sync.Map // cleaned absolute path -> *sync.Mutex
+
+func lockPatchWorkspace(workspace string) func() {
+	key := filepath.Clean(workspace)
+	if abs, err := filepath.Abs(key); err == nil {
+		key = abs
+	}
+	value, _ := patchWorkspaceLocks.LoadOrStore(key, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func isObjectID(s string) bool {

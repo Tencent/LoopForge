@@ -430,10 +430,10 @@ func (e *Engine) recordNodeWorkspacePreparation(ctx context.Context, run domain.
 		}
 		return nil
 	}
-	if run.IsWorkspace() {
-		env.nodeMu.Lock()
-		defer env.nodeMu.Unlock()
-	}
+	// The receipt is read-modify-written; parallel branches no longer hold
+	// nodeMu while executing, so take it for the record itself.
+	env.nodeMu.Lock()
+	defer env.nodeMu.Unlock()
 	_, err := runtime.RecordWorkspacePreparation(ctx, env.sandbox, runtime.WorkspacePreparationWorkflow(run.WorkflowSnapshot), run.RepositoryContexts(), node.ID, output)
 	return err
 }

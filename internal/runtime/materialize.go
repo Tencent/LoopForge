@@ -40,6 +40,11 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	if invocationID == "" {
 		return compiledConfig{}, fmt.Errorf("empty invocation id")
 	}
+	// Parallel branches materialize different Agents into one checkout; the
+	// shared rules/skills/mcp catalogs and git excludes are written one
+	// invocation at a time.
+	unlock := lockWorkspace(workspace)
+	defer unlock()
 	agentID := safeID(a.ID)
 	if agentID == "" {
 		return compiledConfig{}, fmt.Errorf("agent id is required for runtime isolation")
@@ -150,14 +155,15 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	}
 	var skillPaths []string
 	for _, item := range selectedSkills {
-		dir, err := resetControlDirectory(workspace, "skills", item.id)
-		if err != nil {
+		// Another Agent running in parallel may be reading this skill; an
+		// unchanged skill is left in place instead of being recreated.
+		item := item
+		if _, err := refreshSharedControlDirectory(workspace, func(dir string) error {
+			return writeSkillFiles(dir, item, assets.SkillFiles[item.skill.ID])
+		}, "skills", item.id); err != nil {
 			return compiled, err
 		}
 		skillPaths = append(skillPaths, item.root)
-		if err := writeSkillFiles(dir, item, assets.SkillFiles[item.skill.ID]); err != nil {
-			return compiled, err
-		}
 		if err := replaceRelativeSymlink(filepath.Join(bindingRoot, "skills", item.id), filepath.Join("..", "..", "..", "skills", item.id)); err != nil {
 			return compiled, err
 		}
