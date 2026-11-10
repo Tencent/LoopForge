@@ -34,10 +34,21 @@ jobs:
             --user-data-dir="$RUNNER_TEMP/chromium-warmup" --dump-dom about:blank >/dev/null
       # Real-Chromium tests run on their own: alongside the rest of the suite
       # the browser can miss its DevTools liveness check on a loaded runner.
-      - run: go test -p=2 ./... -count=1 -timeout=600s -skip "$REAL_BROWSER_TESTS"
-      - run: go test -p=1 ./internal/httpapi ./internal/runner ./internal/runtime -count=1 -timeout=300s -run "$REAL_BROWSER_TESTS" -v
+      # Collect both isolated runs with identical instrumentation, then gate
+      # their union without rerunning the suite or counting a statement twice.
+      - name: Non-browser Go tests
+        run: go test -p=2 ./... -count=1 -timeout=600s -skip "$REAL_BROWSER_TESTS" -covermode=set -coverpkg=agentflow/internal/... -coverprofile="${{ runner.temp }}/go.cover"
+      - name: Real-browser Go tests
+        run: go test -p=1 ./internal/httpapi ./internal/runner ./internal/runtime -count=1 -timeout=300s -run "$REAL_BROWSER_TESTS" -v -covermode=set -coverpkg=agentflow/internal/... -coverprofile="${{ runner.temp }}/go-browser.cover"
+      - name: Coverage gate regression tests
+        run: python3 scripts/test-coverage-go.py -v
+      - name: Go statement coverage gate
+        run: |
+          min=$(tr -d '[:space:]' < scripts/coverage-go.min)
+          test -n "$min"
+          bash scripts/coverage-go.sh --profile "${{ runner.temp }}/go.cover" --profile "${{ runner.temp }}/go-browser.cover" --min "$min"
       - name: Browser-free UI tests for the platform console
-        run: npm ci --no-audit --no-fund && npm test
+        run: npm ci --no-audit --no-fund && npm run coverage
         working-directory: webtest
       - name: Install pinned CLIs for local protocol acceptance
         run: npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
@@ -112,6 +123,12 @@ jobs:
           LOOPFORGE_UNCONFIGURED_USER: e2e-no-key
           LOOPFORGE_UNCONFIGURED_PASSWORD_FILE: ${{ github.workspace }}/.local/no-key-password
         working-directory: e2e
+      # Separate steps so a failing suite stays failed: these are skipped
+      # unless every suite above succeeded, and a low hit rate fails the job.
+      - name: Export registered HTTP routes
+        run: AGENTFLOW_ROUTES_OUT="${{ runner.temp }}/routes.json" go test ./internal/httpapi -run '^TestRouteInventoryExport$' -count=1
+      - name: Require registered routes to be hit at least 85%
+        run: node e2e/coverage/route-coverage.mjs --routes "${{ runner.temp }}/routes.json" --log /tmp/loopforge.log --min 85
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -166,3 +183,18 @@ jobs:
           name: first-run-results
           path: e2e/test-results/
           if-no-files-found: ignore
+  platform-required:
+    # Stable check name for branch protection. An admin marks this required
+    # in GitHub; the workflow does not change repository settings.
+    name: platform-required
+    if: always()
+    needs: [core, browser, first-run]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every platform job to pass
+        working-directory: ${{ runner.temp }}
+        run: |
+          if [[ "${{ needs.core.result }}" != "success" || "${{ needs.browser.result }}" != "success" || "${{ needs.first-run.result }}" != "success" ]]; then
+            echo "core=${{ needs.core.result }} browser=${{ needs.browser.result }} first-run=${{ needs.first-run.result }}" >&2
+            exit 1
+          fi
