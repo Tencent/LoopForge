@@ -10,8 +10,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"agentflow/internal/domain"
 )
 
 const proxyTokenPrefix = "afkb1."
@@ -21,8 +19,8 @@ const proxyTokenPrefix = "afkb1."
 const ProxyTokenTTL = 48 * time.Hour
 
 // ProxyClaims identify who a proxy token was issued for. Tokens are stateless
-// and signed with a key derived from the upstream token, so rotating the
-// upstream token revokes every outstanding proxy token.
+// and signed with a key derived from the session secret, so rotating the
+// session secret revokes every outstanding proxy token.
 type ProxyClaims struct {
 	ProjectID string `json:"p,omitempty"`
 	UserID    int64  `json:"u,omitempty"`
@@ -32,8 +30,8 @@ type ProxyClaims struct {
 
 var errInvalidProxyToken = errors.New("invalid knowledge proxy token")
 
-func SignProxyToken(settings domain.KnowledgeSettings, claims ProxyClaims, now time.Time) (string, error) {
-	key := proxyKey(settings)
+func SignProxyToken(secret string, claims ProxyClaims, now time.Time) (string, error) {
+	key := proxyKey(secret)
 	if key == nil {
 		return "", ErrNotConfigured
 	}
@@ -48,8 +46,8 @@ func SignProxyToken(settings domain.KnowledgeSettings, claims ProxyClaims, now t
 	return body + "." + sign(key, body), nil
 }
 
-func VerifyProxyToken(settings domain.KnowledgeSettings, token string, now time.Time) (ProxyClaims, error) {
-	key := proxyKey(settings)
+func VerifyProxyToken(secret string, token string, now time.Time) (ProxyClaims, error) {
+	key := proxyKey(secret)
 	token = strings.TrimSpace(token)
 	if key == nil || !strings.HasPrefix(token, proxyTokenPrefix) {
 		return ProxyClaims{}, errInvalidProxyToken
@@ -76,17 +74,12 @@ func VerifyProxyToken(settings domain.KnowledgeSettings, token string, now time.
 	return claims, nil
 }
 
-func proxyKey(settings domain.KnowledgeSettings) []byte {
-	upstream := strings.TrimSpace(settings.Token)
-	if upstream == "" {
+func proxyKey(secret string) []byte {
+	if secret == "" {
 		return nil
 	}
-	secret := strings.TrimSpace(os.Getenv("AGENTFLOW_SESSION_SECRET"))
-	if secret == "" {
-		secret = strings.TrimSpace(os.Getenv("SESSION_SECRET"))
-	}
-	mac := hmac.New(sha256.New, []byte(upstream))
-	mac.Write([]byte("agentflow-knowledge-proxy|" + secret))
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("agentflow-knowledge-proxy"))
 	return mac.Sum(nil)
 }
 
@@ -94,4 +87,11 @@ func sign(key []byte, body string) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(body))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func SessionSecret() string {
+	if s := os.Getenv("AGENTFLOW_SESSION_SECRET"); s != "" {
+		return s
+	}
+	return os.Getenv("SESSION_SECRET")
 }

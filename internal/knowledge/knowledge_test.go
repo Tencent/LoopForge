@@ -5,12 +5,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"agentflow/internal/domain"
 )
 
 func TestProxyTokenRoundTripAndRevocation(t *testing.T) {
-	settings := domain.KnowledgeSettings{Enabled: true, URL: "http://kb/mcp", Token: "upstream-a"}
+	settings := "session-a"
 	now := time.Unix(1_800_000_000, 0)
 	token, err := SignProxyToken(settings, ProxyClaims{ProjectID: "p1", UserID: 7, AgentID: "dev"}, now)
 	if err != nil {
@@ -27,7 +25,7 @@ func TestProxyTokenRoundTripAndRevocation(t *testing.T) {
 		t.Fatal("expired token accepted")
 	}
 	rotated := settings
-	rotated.Token = "upstream-b"
+	rotated = "session-b"
 	if _, err := VerifyProxyToken(rotated, token, now); err == nil {
 		t.Fatal("rotating the upstream token must revoke outstanding proxy tokens")
 	}
@@ -35,7 +33,7 @@ func TestProxyTokenRoundTripAndRevocation(t *testing.T) {
 	if _, err := VerifyProxyToken(settings, tampered, now); err == nil {
 		t.Fatal("tampered token accepted")
 	}
-	if _, err := SignProxyToken(domain.KnowledgeSettings{}, ProxyClaims{}, now); err == nil {
+	if _, err := SignProxyToken("", ProxyClaims{}, now); err == nil {
 		t.Fatal("signing without an upstream token must fail")
 	}
 }
@@ -47,7 +45,7 @@ func TestScopeSources(t *testing.T) {
 		want               []string
 		wantErr            bool
 	}{
-		{"unrestricted keeps request", nil, []string{"a"}, []string{"a"}, false},
+		{"unbound rejects request", nil, []string{"a"}, nil, true},
 		{"unrestricted empty stays empty", nil, nil, []string{}, false},
 		{"empty request expands", []string{"a", "b"}, nil, []string{"a", "b"}, false},
 		{"subset accepted", []string{"a", "b"}, []string{" b "}, []string{"b"}, false},

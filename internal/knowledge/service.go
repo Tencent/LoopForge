@@ -2,7 +2,6 @@ package knowledge
 
 import (
 	"context"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +17,9 @@ const CallTimeout = 30 * time.Second
 type Store interface {
 	KnowledgeSettings() domain.KnowledgeSettings
 	PutKnowledgeSettings(domain.KnowledgeSettings) error
+	KnowledgeBindings(string) []domain.KnowledgeBinding
+	KnowledgeSources(string) []domain.KnowledgeSource
+	KnowledgeDocuments(string) []domain.KnowledgeDocument
 	KnowledgeSubmissions(projectID, status string, limit int) []domain.KnowledgeSubmission
 	KnowledgeSubmission(id string) (domain.KnowledgeSubmission, bool)
 	KnowledgeSubmissionIDsByArtifact(artifactIDs []string) map[string]string
@@ -30,7 +32,7 @@ type Store interface {
 	Workflows() []domain.WorkflowDefinition
 }
 
-// Upstream is the subset of the KB MCP client the service calls.
+// Upstream is the built-in knowledge engine boundary.
 type Upstream interface {
 	Tools(ctx context.Context) ([]mcpclient.Tool, error)
 	ListSources(ctx context.Context) ([]Source, error)
@@ -39,72 +41,33 @@ type Upstream interface {
 	WriteDocument(ctx context.Context, source, path, content string) (WriteResult, error)
 }
 
-// Service holds the 知识库 business rules: settings validation, source
-// scoping, and the review queue that writes distilled knowledge upstream.
+// Service owns project source scoping and the review publishing queue.
 type Service struct {
-	store Store
-	dial  func(domain.KnowledgeSettings) (Upstream, error)
-	now   func() time.Time
-	newID func() string
+	store    Store
+	upstream Upstream
+	now      func() time.Time
+	newID    func() string
 }
 
-func NewService(store Store, newID func() string) *Service {
+func NewService(store Store, newID func() string, upstream Upstream) *Service {
 	return &Service{
-		store: store,
-		dial:  func(s domain.KnowledgeSettings) (Upstream, error) { return NewClient(s) },
-		now:   time.Now,
-		newID: newID,
+		store:    store,
+		upstream: upstream,
+		now:      time.Now,
+		newID:    newID,
 	}
 }
 
 func (s *Service) Settings() domain.KnowledgeSettings { return s.store.KnowledgeSettings() }
 
 type SettingsInput struct {
-	Enabled        bool                `json:"enabled"`
-	URL            string              `json:"url"`
-	Token          string              `json:"token"`
-	ClearToken     bool                `json:"clearToken"`
-	WriteEnabled   bool                `json:"writeEnabled"`
-	DefaultSources []string            `json:"defaultSources"`
-	ProjectSources map[string][]string `json:"projectSources"`
+	WriteEnabled bool `json:"writeEnabled"`
 }
 
-// UpdateSettings replaces the settings. An empty token keeps the saved one
-// unless ClearToken is set.
 func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.KnowledgeSettings, error) {
-	current := s.store.KnowledgeSettings()
-	rawURL := strings.TrimSpace(input.URL)
-	if rawURL != "" {
-		u, err := url.Parse(rawURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return current, apperr.New(apperr.Invalid, "知识库地址必须是 http(s)://host/mcp 形式")
-		}
-	}
-	next := domain.KnowledgeSettings{
-		Enabled: input.Enabled, URL: rawURL, WriteEnabled: input.WriteEnabled,
-		DefaultSources: cleanSources(input.DefaultSources), UpdatedBy: actor,
-	}
-	if input.ProjectSources != nil {
-		next.ProjectSources = map[string][]string{}
-		for project, list := range input.ProjectSources {
-			if project = strings.TrimSpace(project); project != "" {
-				next.ProjectSources[project] = cleanSources(list)
-			}
-		}
-	}
-	switch token := strings.TrimSpace(input.Token); {
-	case token != "":
-		next.Token = stripBearer(token)
-	case !input.ClearToken:
-		next.Token = current.Token
-	}
-	if next.Enabled && (next.URL == "" || next.Token == "") {
-		return current, apperr.New(apperr.Invalid, "启用前需要填写知识库地址和 Token")
-	}
-	if err := s.store.PutKnowledgeSettings(next); err != nil {
-		return current, err
-	}
-	return s.store.KnowledgeSettings(), nil
+	next := domain.KnowledgeSettings{WriteEnabled: input.WriteEnabled, UpdatedBy: actor}
+	err := s.store.PutKnowledgeSettings(next)
+	return next, err
 }
 
 type CheckResult struct {
@@ -115,17 +78,9 @@ type CheckResult struct {
 	Tools     []string `json:"tools,omitempty"`
 }
 
-// Check probes the upstream with the saved settings, overridden by any
-// unsaved URL/token so admins can verify a token before enabling it.
-func (s *Service) Check(ctx context.Context, overrideURL, overrideToken string) CheckResult {
-	settings := s.store.KnowledgeSettings()
-	if u := strings.TrimSpace(overrideURL); u != "" {
-		settings.URL = u
-	}
-	if t := strings.TrimSpace(overrideToken); t != "" {
-		settings.Token = stripBearer(t)
-	}
-	client, err := s.dial(settings)
+// Check checks the injected engine.
+func (s *Service) Check(ctx context.Context) CheckResult {
+	client, err := s.connect()
 	if err != nil {
 		return CheckResult{Error: err.Error()}
 	}
@@ -156,8 +111,7 @@ type SourceView struct {
 
 // Sources lists upstream sources, marking which ones projectID may read.
 func (s *Service) Sources(ctx context.Context, projectID string) ([]SourceView, error) {
-	settings := s.store.KnowledgeSettings()
-	client, err := s.connect(settings)
+	client, err := s.connect()
 	if err != nil {
 		return nil, err
 	}
@@ -167,10 +121,12 @@ func (s *Service) Sources(ctx context.Context, projectID string) ([]SourceView, 
 	if err != nil {
 		return nil, apperr.New(apperr.Upstream, "知识库不可达："+err.Error())
 	}
-	allowed := settings.SourcesForProject(projectID)
+	allowed := s.AllowedSources(projectID)
 	out := make([]SourceView, 0, len(list))
 	for _, src := range list {
-		out = append(out, SourceView{Source: src, Allowed: SourceAllowed(allowed, src.ID)})
+		if SourceAllowed(allowed, src.ID) {
+			out = append(out, SourceView{Source: src, Allowed: true})
+		}
 	}
 	return out, nil
 }
@@ -187,12 +143,14 @@ func (s *Service) Search(ctx context.Context, projectID, query string, sources [
 	if query == "" {
 		return SearchOutput{}, apperr.New(apperr.Invalid, "请输入要检索的问题或关键词")
 	}
-	settings := s.store.KnowledgeSettings()
-	scoped, err := ScopeSources(settings.SourcesForProject(projectID), sources)
+	scoped, err := ScopeSources(s.AllowedSources(projectID), sources)
 	if err != nil {
 		return SearchOutput{}, apperr.New(apperr.Invalid, err.Error())
 	}
-	client, err := s.connect(settings)
+	if len(scoped) == 0 {
+		return SearchOutput{Result: SearchResult{Query: query, Mode: "lexical", Results: []SearchHit{}}, Sources: []string{}}, nil
+	}
+	client, err := s.connect()
 	if err != nil {
 		return SearchOutput{}, err
 	}
@@ -213,11 +171,10 @@ func (s *Service) Document(ctx context.Context, projectID, source, path string, 
 	if source == "" || path == "" {
 		return Document{}, apperr.New(apperr.Invalid, "source 和 path 必填")
 	}
-	settings := s.store.KnowledgeSettings()
-	if !SourceAllowed(settings.SourcesForProject(projectID), source) {
+	if !SourceAllowed(s.AllowedSources(projectID), source) {
 		return Document{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
 	}
-	client, err := s.connect(settings)
+	client, err := s.connect()
 	if err != nil {
 		return Document{}, err
 	}
@@ -393,18 +350,17 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	if err != nil {
 		return item, err
 	}
-	settings := s.store.KnowledgeSettings()
-	if !settings.Ready() {
+	if s.upstream == nil {
 		return item, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
 	}
-	if !settings.WriteEnabled {
-		return item, apperr.New(apperr.Forbidden, "平台未开启知识写回：请管理员在「接入配置」中打开「允许审核后写回」")
+	if !s.Settings().WriteEnabled {
+		return item, apperr.New(apperr.Forbidden, "平台未开启知识写回：请管理员允许审核后写回")
 	}
 	source := strings.TrimSpace(item.Source)
 	if source == "" {
 		return item, apperr.New(apperr.Invalid, "请先选择写入的知识库来源")
 	}
-	if !SourceAllowed(settings.SourcesForProject(item.ProjectID), source) {
+	if !SourceAllowed(s.AllowedSources(item.ProjectID), source) {
 		return item, apperr.New(apperr.Forbidden, "该知识库来源不在项目授权范围内")
 	}
 	path, ok := NormalizeDocPath(item.Path)
@@ -415,7 +371,7 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	if title := strings.TrimSpace(item.Title); title != "" && !strings.HasPrefix(strings.TrimSpace(content), "#") {
 		content = "# " + title + "\n\n" + content
 	}
-	client, err := s.dial(settings)
+	client, err := s.connect()
 	if err != nil {
 		return item, err
 	}
@@ -456,19 +412,46 @@ func (s *Service) save(item domain.KnowledgeSubmission) (domain.KnowledgeSubmiss
 	return saved, nil
 }
 
-// connect dials the upstream, reporting missing configuration as Unavailable.
-func (s *Service) connect(settings domain.KnowledgeSettings) (Upstream, error) {
-	client, err := s.dial(settings)
-	if err != nil {
-		return nil, apperr.New(apperr.Unavailable, err.Error())
+// connect returns the injected engine.
+func (s *Service) connect() (Upstream, error) {
+	if s.upstream == nil {
+		return nil, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
 	}
-	return client, nil
+	return s.upstream, nil
 }
-
+func (s *Service) AllowedSources(project string) []string {
+	out := []string{}
+	if strings.TrimSpace(project) == "" {
+		return out
+	}
+	for _, binding := range s.store.KnowledgeBindings(project) {
+		for _, src := range s.store.KnowledgeSources(binding.BaseID) {
+			out = append(out, src.ID)
+		}
+	}
+	return cleanList(out)
+}
+func (s *Service) Tools(ctx context.Context) ([]mcpclient.Tool, error) {
+	u, err := s.connect()
+	if err != nil {
+		return nil, err
+	}
+	return u.Tools(ctx)
+}
+func (s *Service) DocumentVersion(ctx context.Context, project, source, path, commit string, start, end int) (Document, error) {
+	doc, err := s.Document(ctx, project, source, path, start, end)
+	if err != nil {
+		return doc, err
+	}
+	if commit != "" && commit != doc.Commit {
+		return Document{}, apperr.New(apperr.Invalid, "当前只提供已索引版本")
+	}
+	return doc, nil
+}
 func stripBearer(token string) string { return strings.TrimPrefix(token, "Bearer ") }
 
 func cleanSources(in []string) []string {
-	out, _ := ScopeSources(nil, in)
+	out := cleanList(in)
 	if out == nil {
 		out = []string{}
 	}
@@ -491,4 +474,25 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// SourceDetail returns only public source metadata and document summaries.
+func (s *Service) SourceDetail(ctx context.Context, project, source string) (any, error) {
+	if !SourceAllowed(s.AllowedSources(project), source) {
+		return nil, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
+	}
+	list, err := s.Sources(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	for _, src := range list {
+		if src.ID == source {
+			docs := []map[string]any{}
+			for _, doc := range s.store.KnowledgeDocuments(source) {
+				docs = append(docs, map[string]any{"path": doc.Path, "title": doc.Title, "commit": doc.Commit, "line_count": doc.LineCount})
+			}
+			return map[string]any{"source": src.Source, "documents": docs}, nil
+		}
+	}
+	return nil, apperr.New(apperr.NotFound, "来源不存在")
 }

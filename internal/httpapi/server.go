@@ -23,6 +23,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/knowledge"
+	kbengine "agentflow/internal/knowledge/engine"
 	"agentflow/internal/mcpserver"
 	"agentflow/internal/notification"
 	"agentflow/internal/observability"
@@ -119,7 +120,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 	return router, bg
 }
 
-func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
+func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers), knowledgeEngine ...knowledge.Upstream) *gin.Engine {
 	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv()}
 	if err := ensureDefaultMCPsForAllProjects(s); err != nil {
 		log.Printf("ensure default project MCPs: %v", err)
@@ -141,6 +142,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	}
 	e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
 		return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
+	}
+	var kb knowledge.Upstream = kbengine.NewEngine(d.repo, d.repo, kbengine.NewMySQLKeywordIndex(d.repo))
+	if len(knowledgeEngine) > 0 {
+		kb = knowledgeEngine[0]
 	}
 	api := &Server{
 		deps:            d,
@@ -165,7 +170,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
+		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID, kb), activity: &knowledgeActivityLog{}},
 		feedback:        &feedbackHandlers{deps: d},
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }

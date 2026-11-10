@@ -649,12 +649,10 @@ type spaceThreadRow struct {
 
 func (spaceThreadRow) TableName() string { return "space_threads" }
 
-// knowledgeSettingsRow keeps the upstream token in its own column so the JSON
-// payload can be logged or diffed without leaking the credential.
+// knowledgeSettingsRow stores review publishing preferences.
 type knowledgeSettingsRow struct {
 	ID      string     `gorm:"column:id;primaryKey;size:64"`
 	Payload []byte     `gorm:"column:payload;type:json"`
-	Token   *string    `gorm:"column:token;type:text"`
 	Updated *time.Time `gorm:"column:updated_at"`
 }
 

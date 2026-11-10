@@ -18,7 +18,7 @@ import (
 )
 
 func TestKnowledgeHTTPBranches(t *testing.T) {
-	_, h, _, _ := newKnowledgeTestServer(t)
+	_, h := newKnowledgeTestServer(t)
 	for _, tc := range []struct {
 		method, path, body string
 		code               int

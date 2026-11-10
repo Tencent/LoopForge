@@ -16,7 +16,7 @@ const usageRuleContent = `# 知识库使用规范
 - 动手前先用 kb_search 检索与任务相关的已有知识：排障手册、业务规范、历史方案、接口约定。
 - 命中后用 kb_fetch 按 source + path + 行号读取原文，不要只凭摘要下结论。
 - kb_list_sources 可查看当前项目可用的知识库来源；检索默认覆盖全部已授权来源。
-- 结果 degraded=true 表示语义检索降级为词法检索，可换关键词或更短的词再搜一次。
+- 当前使用关键词检索，可换关键词或更短的词再搜一次。
 
 ## 引用出处
 - 采用知识库内容时，在产物中附上结果里的 citation（形如 source@commit:path#L10-L20）。

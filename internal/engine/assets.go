@@ -43,11 +43,7 @@ func (e *Engine) knowledgeMCPServer(agentID, projectID string, userID int64) (do
 	e.mu.Lock()
 	base := e.platformMCPBase
 	e.mu.Unlock()
-	settings := e.repo.KnowledgeSettings()
-	if !settings.Ready() {
-		return domain.MCPServerDefinition{}, false
-	}
-	token, err := knowledge.SignProxyToken(settings, knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agentID}, time.Now())
+	token, err := knowledge.SignProxyToken(knowledge.SessionSecret(), knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agentID}, time.Now())
 	if err != nil {
 		return domain.MCPServerDefinition{}, false
 	}
@@ -66,7 +62,7 @@ func knowledgeSkippedWarning(agent domain.AgentDefinition, assets domain.AgentAs
 			return ""
 		}
 	}
-	return "角色开启了团队知识库，但未注入 " + domain.KnowledgeMCPServerID + "：知识中心未启用或未配置知识库地址/Token"
+	return "角色开启了团队知识库，但未注入 " + domain.KnowledgeMCPServerID + "：未配置会话密钥"
 }
 
 // RoleAssets resolves a role's assets outside any SOP run, for a chat

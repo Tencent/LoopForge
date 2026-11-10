@@ -14,14 +14,12 @@ import (
 
 const knowledgeSettingsID = "default"
 
-// KnowledgeRepo owns the upstream knowledge base connection and the review
-// queue of distilled documents waiting to be written back.
+// KnowledgeRepo owns knowledge control metadata and the review queue.
 type KnowledgeRepo struct {
 	*deps
 }
 
-// KnowledgeSettings returns the stored settings including the upstream token.
-// Callers that render API responses must use Public().
+// KnowledgeSettings returns review publishing preferences.
 func (r *KnowledgeRepo) KnowledgeSettings() domain.KnowledgeSettings {
 	var row knowledgeSettingsRow
 	if err := r.DB.Where("id = ?", knowledgeSettingsID).Take(&row).Error; err != nil {
@@ -29,11 +27,6 @@ func (r *KnowledgeRepo) KnowledgeSettings() domain.KnowledgeSettings {
 	}
 	var out domain.KnowledgeSettings
 	_ = json.Unmarshal(row.Payload, &out)
-	out.Token = ""
-	if row.Token != nil {
-		out.Token = *row.Token
-	}
-	out.TokenConfigured = strings.TrimSpace(out.Token) != ""
 	if row.Updated != nil {
 		out.UpdatedAt = *row.Updated
 	}
@@ -42,21 +35,15 @@ func (r *KnowledgeRepo) KnowledgeSettings() domain.KnowledgeSettings {
 
 func (r *KnowledgeRepo) PutKnowledgeSettings(settings domain.KnowledgeSettings) error {
 	now := time.Now().UTC()
-	token := strings.TrimSpace(settings.Token)
-	settings.Token = ""
-	settings.TokenConfigured = false
 	settings.UpdatedAt = now
 	payload, err := json.Marshal(settings)
 	if err != nil {
 		return err
 	}
 	row := knowledgeSettingsRow{ID: knowledgeSettingsID, Payload: payload, Updated: &now}
-	if token != "" {
-		row.Token = &token
-	}
 	return r.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"payload", "token", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"payload", "updated_at"}),
 	}).Create(&row).Error
 }
 

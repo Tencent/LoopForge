@@ -82,14 +82,7 @@ func (h *knowledgeHandlers) check(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以检查知识库连接"})
 		return
 	}
-	var input struct {
-		URL   string `json:"url"`
-		Token string `json:"token"`
-	}
-	if !decodeOptional(c, &input) {
-		return
-	}
-	c.JSON(http.StatusOK, h.svc.Check(c.Request.Context(), input.URL, input.Token))
+	c.JSON(http.StatusOK, h.svc.Check(c.Request.Context()))
 }
 
 // 路由: g.GET("/api/knowledge/sources", h.sources)

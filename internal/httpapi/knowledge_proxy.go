@@ -3,11 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -65,13 +65,8 @@ func (l *knowledgeActivityLog) recent() []knowledgeActivity {
 // Stateless Streamable HTTP MCP for agents. Only the read-only upstream tools
 // are listed or callable, and every call is narrowed to the project's sources.
 func (h *knowledgeHandlers) proxyMCP(c *gin.Context) {
-	settings := h.repo.KnowledgeSettings()
-	if !settings.Ready() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": knowledge.ErrNotConfigured.Error()})
-		return
-	}
 	raw, _ := bearerToken(c.Request)
-	claims, err := knowledge.VerifyProxyToken(settings, raw, time.Now())
+	claims, err := knowledge.VerifyProxyToken(knowledge.SessionSecret(), raw, time.Now())
 	if err != nil {
 		c.Header("WWW-Authenticate", `Bearer realm="AgentFlow Knowledge"`)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid knowledge token"})
@@ -89,7 +84,7 @@ func (h *knowledgeHandlers) proxyMCP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, agentToolRPCResponse{JSONRPC: "2.0", Error: &agentToolRPCError{Code: -32700, Message: "parse error", Data: err.Error()}})
 		return
 	}
-	response := h.handleProxyRPC(c.Request.Context(), settings, claims, request)
+	response := h.handleProxyRPC(c.Request.Context(), claims, request)
 	if response == nil {
 		c.Status(http.StatusAccepted)
 		return
@@ -97,7 +92,7 @@ func (h *knowledgeHandlers) proxyMCP(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.KnowledgeSettings, claims knowledge.ProxyClaims, request agentToolRPCRequest) *agentToolRPCResponse {
+func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge.ProxyClaims, request agentToolRPCRequest) *agentToolRPCResponse {
 	if strings.HasPrefix(request.Method, "notifications/") {
 		return nil
 	}
@@ -118,7 +113,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 	case "ping":
 		return reply(map[string]any{})
 	case "tools/list":
-		tools, err := h.proxyTools(ctx, settings)
+		tools, err := h.proxyTools(ctx)
 		if err != nil {
 			return fail(-32603, err.Error())
 		}
@@ -139,7 +134,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索，新知识请写入 knowledge.md 等待审核", params.Name))
 		}
 		started := time.Now()
-		text, hits, err := h.callScoped(ctx, settings, claims.ProjectID, name, params.Arguments)
+		text, hits, err := h.callScoped(ctx, claims.ProjectID, name, params.Arguments)
 		activity := knowledgeActivity{
 			At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
 			Query: truncateRunes(fmt.Sprint(valueOr(params.Arguments["query"], "")), 120), Hits: hits,
@@ -159,12 +154,8 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 	}
 }
 
-func (h *knowledgeHandlers) proxyTools(ctx context.Context, settings domain.KnowledgeSettings) ([]map[string]any, error) {
-	client, err := knowledge.NewClient(settings)
-	if err != nil {
-		return nil, err
-	}
-	upstream, err := client.Tools(ctx)
+func (h *knowledgeHandlers) proxyTools(ctx context.Context) ([]map[string]any, error) {
+	upstream, err := h.svc.Tools(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("知识库不可达：%w", err)
 	}
@@ -184,65 +175,44 @@ func (h *knowledgeHandlers) proxyTools(ctx context.Context, settings domain.Know
 
 // callScoped applies the project's source scope to one read-only call and
 // returns the upstream JSON text plus a hit count for activity reporting.
-func (h *knowledgeHandlers) callScoped(ctx context.Context, settings domain.KnowledgeSettings, projectID, tool string, args map[string]any) (string, int, error) {
+func (h *knowledgeHandlers) callScoped(ctx context.Context, projectID, tool string, args map[string]any) (string, int, error) {
 	if args == nil {
 		args = map[string]any{}
 	}
-	allowed := settings.SourcesForProject(projectID)
+	var value any
+	var err error
+	hits := 0
+	str := func(k string) string { return fmt.Sprint(valueOr(args[k], "")) }
+	integer := func(k string) int { n, _ := strconv.Atoi(str(k)); return n }
 	switch tool {
 	case knowledge.ToolSearch:
-		scoped, err := knowledge.ScopeSources(allowed, stringList(args["sources"]))
-		if err != nil {
-			return "", 0, err
-		}
-		delete(args, "sources")
-		if len(scoped) > 0 {
-			args["sources"] = scoped
-		}
-	case knowledge.ToolFetch, knowledge.ToolGetSource:
-		source := strings.TrimSpace(fmt.Sprint(valueOr(args["source"], "")))
-		if !knowledge.SourceAllowed(allowed, source) {
-			return "", 0, fmt.Errorf("知识库来源 %q 不在当前项目的授权范围", source)
-		}
-	}
-	client, err := knowledge.NewClient(settings)
-	if err != nil {
-		return "", 0, err
-	}
-	text, err := client.Call(ctx, tool, args)
-	if err != nil {
-		return "", 0, err
-	}
-	switch tool {
+		var out knowledge.SearchOutput
+		out, err = h.svc.Search(ctx, projectID, str("query"), stringList(args["sources"]))
+		value = out.Result
+		hits = len(out.Result.Results)
+	case knowledge.ToolFetch:
+		value, err = h.svc.DocumentVersion(ctx, projectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
 	case knowledge.ToolListSources:
-		return filterSourcesText(text, allowed)
-	case knowledge.ToolSearch:
-		var parsed knowledge.SearchResult
-		if json.Unmarshal([]byte(text), &parsed) == nil {
-			return text, len(parsed.Results), nil
+		var list []knowledge.SourceView
+		list, err = h.svc.Sources(ctx, projectID)
+		kept := []knowledge.Source{}
+		for _, src := range list {
+			if src.Allowed {
+				kept = append(kept, src.Source)
+			}
 		}
+		value = map[string]any{"sources": kept}
+		hits = len(kept)
+	case knowledge.ToolGetSource:
+		value, err = h.svc.SourceDetail(ctx, projectID, str("source"))
+	default:
+		return "", 0, fmt.Errorf("unknown knowledge tool")
 	}
-	return text, 0, nil
-}
-
-func filterSourcesText(text string, allowed []string) (string, int, error) {
-	var payload struct {
-		Sources []json.RawMessage `json:"sources"`
+	if err != nil {
+		return "", 0, err
 	}
-	if err := json.Unmarshal([]byte(text), &payload); err != nil {
-		return "", 0, errors.New("知识库来源列表无法解析")
-	}
-	kept := make([]json.RawMessage, 0, len(payload.Sources))
-	for _, raw := range payload.Sources {
-		var item struct {
-			ID string `json:"id"`
-		}
-		if json.Unmarshal(raw, &item) == nil && knowledge.SourceAllowed(allowed, item.ID) {
-			kept = append(kept, raw)
-		}
-	}
-	out, err := json.Marshal(map[string]any{"sources": kept})
-	return string(out), len(kept), err
+	raw, err := json.Marshal(value)
+	return string(raw), hits, err
 }
 
 func stringList(v any) []string {

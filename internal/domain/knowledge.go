@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"strings"
 	"time"
 )
 
@@ -18,44 +17,15 @@ const KnowledgeUsageRuleID = "agentflow-knowledge-usage"
 // when it has knowledge worth distilling back into the knowledge base.
 const KnowledgeArtifactBasename = "knowledge.md"
 
-// KnowledgeSettings is the platform-wide connection to the upstream knowledge
-// base (lightcloud kb). Token is the upstream MCP bearer token; it never
-// leaves the server and Public() strips it before any API response.
+// KnowledgeSettings contains review publishing preferences only.
 type KnowledgeSettings struct {
-	Enabled         bool   `json:"enabled"`
-	URL             string `json:"url"`
-	Token           string `json:"token,omitempty"`
-	TokenConfigured bool   `json:"tokenConfigured"`
-	// WriteEnabled gates publishing reviewed submissions upstream. Agents never
-	// receive the write tool regardless of this flag.
-	WriteEnabled bool `json:"writeEnabled"`
-	// DefaultSources applies to projects without their own entry; empty means
-	// every source the upstream token can see.
-	DefaultSources []string            `json:"defaultSources,omitempty"`
-	ProjectSources map[string][]string `json:"projectSources,omitempty"`
-	UpdatedBy      string              `json:"updatedBy,omitempty"`
-	UpdatedAt      time.Time           `json:"updatedAt,omitempty"`
+	WriteEnabled bool      `json:"writeEnabled"`
+	UpdatedBy    string    `json:"updatedBy,omitempty"`
+	UpdatedAt    time.Time `json:"updatedAt,omitempty"`
 }
 
-func (s KnowledgeSettings) Public() KnowledgeSettings {
-	s.TokenConfigured = strings.TrimSpace(s.Token) != ""
-	s.Token = ""
-	return s
-}
-
-// Ready reports whether agents and platform features may call the upstream.
-func (s KnowledgeSettings) Ready() bool {
-	return s.Enabled && strings.TrimSpace(s.URL) != "" && strings.TrimSpace(s.Token) != ""
-}
-
-// SourcesForProject returns the sources a project may read. A project entry
-// (even an empty one) overrides DefaultSources; empty means unrestricted.
-func (s KnowledgeSettings) SourcesForProject(projectID string) []string {
-	if list, ok := s.ProjectSources[strings.TrimSpace(projectID)]; ok {
-		return list
-	}
-	return s.DefaultSources
-}
+func (s KnowledgeSettings) Public() KnowledgeSettings { return s }
+func (s KnowledgeSettings) Ready() bool               { return true }
 
 const (
 	KnowledgeSubmissionPending   = "pending"
