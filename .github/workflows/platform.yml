@@ -99,7 +99,8 @@ jobs:
           if(!response.ok)throw new Error('Acceptance signup: HTTP '+response.status);
           const {user,admin}=await response.json();
           if(admin)throw new Error('Acceptance account must be an ordinary member');
-          const cookie=response.headers.get('set-cookie').split(';')[0];
+          const cookie=(response.headers.get('set-cookie')||'').split(';')[0];
+          if(!cookie)throw new Error('Acceptance signup: HTTP '+response.status+' without a session cookie');
           const project=await fetch(base+'/api/projects/welcome',{headers:{Cookie:cookie}}).then(r=>r.json());
           if(!project.members?.some(member=>member.userId===user.id))throw new Error('Acceptance account did not join the welcome project');
           JS
@@ -125,7 +126,8 @@ jobs:
           const password=fs.readFileSync(process.env.LOOPFORGE_UNCONFIGURED_PASSWORD_FILE,'utf8').trim();
           const login=await fetch(base+'/api/auth/password',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({login:process.env.LOOPFORGE_UNCONFIGURED_USER,password})});
           if(!login.ok)throw new Error('Second-user login: HTTP '+login.status);
-          const cookie=login.headers.get('set-cookie').split(';')[0];
+          const cookie=(login.headers.get('set-cookie')||'').split(';')[0];
+          if(!cookie)throw new Error('Second-user login: HTTP '+login.status+' without a session cookie');
           const created=await fetch(base+'/api/auth/tokens',{method:'POST',headers:{Origin:base,Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({name:'e2e-second-user',expiresInDays:1})});
           if(!created.ok)throw new Error('Second-user token: HTTP '+created.status);
           const {token}=await created.json();
