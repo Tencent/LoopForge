@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/procwatch"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -767,10 +768,36 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		return "", err
 	}
 	args := dockerBuildArgs(image, contextDir)
-	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker build: %w: %s", err, out)
+	build := func(ctx context.Context) *exec.Cmd { return exec.CommandContext(ctx, "docker", args...) }
+	if tail, err := procwatch.Run(ctx, build, dockerBuildWatch(dockerfile)); err != nil {
+		// Only the tail: a build killed after minutes of apt output used to
+		// carry all of it in the error.
+		return "", fmt.Errorf("docker build: %w: %s", err, tail)
 	}
 	return image, nil
+}
+
+// Build limits. A RUN step can be silent for a while (a compile, a large
+// download without a progress bar), so the stall window is wider than for git.
+const (
+	dockerBuildStallEnv   = "AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT"
+	dockerBuildTimeoutEnv = "AGENTFLOW_DOCKER_BUILD_TIMEOUT"
+)
+
+func dockerBuildWatch(dockerfile domain.DockerfileDefinition) procwatch.Options {
+	name := strings.TrimSpace(dockerfile.Name)
+	if name == "" {
+		name = strings.TrimSpace(dockerfile.ID)
+	}
+	label := "构建沙箱镜像"
+	if name != "" {
+		label += " " + name
+	}
+	return procwatch.Options{
+		Stage: "image", Label: label,
+		Stall: procwatch.DurationEnv(dockerBuildStallEnv, 10*time.Minute), StallEnv: dockerBuildStallEnv,
+		Timeout: procwatch.DurationEnv(dockerBuildTimeoutEnv, 0), TimeoutEnv: dockerBuildTimeoutEnv,
+	}
 }
 
 func isolatedRuntimeImage(dockerfile domain.DockerfileDefinition) string {
