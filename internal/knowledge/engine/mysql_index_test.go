@@ -146,9 +146,19 @@ func (f *fakeFulltextQuerier) FulltextChunks(_ context.Context, query string, so
 	return f.matches, nil
 }
 
-// TestMySQLKeywordIndexLimitContract 验证默认 10 条、上限 50 条，以及来源
-// 集合原样下推给内容面；这些是适配器的契约，不连数据库也能测。
+// TestMySQLKeywordIndexLimitContract 验证输出条数契约仍然默认 10、上限 50；
+// 适配器为了重排会多取候选，但不会把超过调用方 limit 的结果返回出去。
 func TestMySQLKeywordIndexLimitContract(t *testing.T) {
+	matches := make([]domain.KnowledgeChunkMatch, 0, MaxSearchLimit+10)
+	for i := 0; i < MaxSearchLimit+10; i++ {
+		matches = append(matches, domain.KnowledgeChunkMatch{
+			Chunk: domain.KnowledgeChunk{
+				SourceID: "s", Commit: "1", Path: fmt.Sprintf("doc-%02d.md", i),
+				StartLine: 1, EndLine: 2, Text: fmt.Sprintf("麒麟内容 %d", i),
+			},
+			Score: float64(100 - i),
+		})
+	}
 	cases := []struct{ in, want int }{
 		{0, DefaultSearchLimit},
 		{-5, DefaultSearchLimit},
@@ -156,23 +166,23 @@ func TestMySQLKeywordIndexLimitContract(t *testing.T) {
 		{25, 25},
 	}
 	for _, tc := range cases {
-		q := &fakeFulltextQuerier{matches: []domain.KnowledgeChunkMatch{{
-			Chunk: domain.KnowledgeChunk{SourceID: "s", Commit: "1", Path: "a.md", StartLine: 1, EndLine: 2, Text: "麒麟内容"},
-			Score: 1.5,
-		}}}
+		q := &fakeFulltextQuerier{matches: matches}
 		idx := NewMySQLKeywordIndex(q)
 		hits, err := idx.Search(context.Background(), "麒麟", []string{"s"}, SearchOptions{Limit: tc.in})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if q.limit != tc.want {
-			t.Fatalf("limit %d -> %d, want %d", tc.in, q.limit, tc.want)
+		if len(hits) != tc.want {
+			t.Fatalf("limit %d -> %d hits, want %d", tc.in, len(hits), tc.want)
+		}
+		if q.limit < tc.want || q.limit > MaxSearchLimit {
+			t.Fatalf("候选取回 %d 条，应覆盖输出上限且不超过 %d", q.limit, MaxSearchLimit)
 		}
 		if q.query != "麒麟" || !reflect.DeepEqual(q.sources, []string{"s"}) {
 			t.Fatalf("查询未原样下推: query=%q sources=%v", q.query, q.sources)
 		}
-		if len(hits) != 1 || hits[0].Source != "s" || hits[0].Score != 1.5 || hits[0].Text != "麒麟内容" {
-			t.Fatalf("命中映射错误: %+v", hits)
+		if hits[0].Source != "s" || hits[0].Score <= 0 {
+			t.Fatalf("命中映射错误: %+v", hits[0])
 		}
 	}
 }
@@ -202,4 +212,75 @@ func s5SplitSQL(script string) []string {
 func s5IsDuplicateSchemaError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "1061") || strings.Contains(msg, "Duplicate key") || strings.Contains(msg, "already exists")
+}
+
+// TestMySQLKeywordIndexIdentifierChannel 用真实 MySQL 验证：自然语言候选被
+// 高频中文块占满时，只有正文含完整 API 名的块能通过 BOOLEAN 精确通道补进来，
+// 并在重排后进入前排。未配置 AGENTFLOW_TEST_MYSQL_DSN 时跳过。
+func TestMySQLKeywordIndexIdentifierChannel(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("AGENTFLOW_TEST_MYSQL_DSN"))
+	if dsn == "" {
+		t.Skip("AGENTFLOW_TEST_MYSQL_DSN is not set")
+	}
+	t.Setenv("AGENTFLOW_KNOWLEDGE_MYSQL_DSN", "")
+	s, err := repo.Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	script, err := os.ReadFile("../../../migrations/026_builtin_knowledge.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range s5SplitSQL(string(script)) {
+		if err := s.DB.Exec(stmt).Error; err != nil && !s5IsDuplicateSchemaError(err) {
+			t.Fatalf("执行 026 失败：%v\nSQL: %s", err, stmt)
+		}
+	}
+
+	ctx := context.Background()
+	srcID := fmt.Sprintf("rank-%d", time.Now().UTC().UnixNano())
+	if err := s.PutKnowledgeSource(domain.KnowledgeSource{
+		ID: srcID, BaseID: "base1", Kind: "hosted", Name: "排序测试库",
+		Status: "ready", IndexStatus: "ready",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = s.DB.Exec("DELETE FROM knowledge_chunks WHERE source_id=?", srcID)
+		_ = s.DB.Exec("DELETE FROM knowledge_revisions WHERE source_id=?", srcID)
+		_ = s.DB.Exec("DELETE FROM knowledge_documents WHERE source_id=?", srcID)
+		_ = s.DeleteKnowledgeSource(srcID)
+	}()
+
+	eng := NewEngine(s, s, NewMySQLKeywordIndex(s))
+	generic := "# 防火墙规则\n\n" + strings.Repeat("防火墙规则是实例的网络入口，需要核对协议与端口。\n", 80)
+	for i := 0; i < 8; i++ {
+		path := fmt.Sprintf("generic-%02d.md", i)
+		if _, err := eng.WriteDocument(ctx, srcID, path, generic); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apiBody := "# 接口文档\n\n查询防火墙规则的接口是 DescribeInstanceFirewallRules，返回规则列表。\n"
+	if _, err := eng.WriteDocument(ctx, srcID, "api-doc.md", apiBody); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := eng.Search(ctx, "查询实例防火墙规则接口 DescribeInstanceFirewallRules", []string{srcID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Results) == 0 {
+		t.Fatal("检索结果为空")
+	}
+	found := -1
+	for i, hit := range res.Results {
+		if hit.Path == "api-doc.md" {
+			found = i
+			break
+		}
+	}
+	if found < 0 || found > 2 {
+		t.Fatalf("含完整 API 名的块应进入前三，实际位置 %d：%+v", found, res.Results)
+	}
 }
