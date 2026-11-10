@@ -269,6 +269,12 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
+	// 轻量 GitHub 工具（agent_tool_github.go）：用请求人自己的 Git Token 直连
+	// GitHub，范围限定在当前项目已绑定的仓库。与 workspace 工具一样不走 drafts，
+	// 「帮我批准」时写操作在 callMainBotGitHub 里逐项过审查。
+	if tool.Kind == "github" {
+		return h.callMainBotGitHub(ctx, session, tool.Name, args)
+	}
 	if tool.Kind == "agentflow" {
 		if session.Mode == AgentToolClarify && !agentToolNameAllowed(AgentToolClarify, "agentflow", tool.UpstreamName) {
 			return "", errAgentToolForbidden
