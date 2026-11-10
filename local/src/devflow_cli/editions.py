@@ -4,26 +4,30 @@ from typing import Dict, Tuple
 
 
 DEFAULT_EDITION = "classic"
-HOSTS: Tuple[str, ...] = ("codebuddy", "codex", "cursor", "claude", "pi")
+HOSTS: Tuple[str, ...] = ("codebuddy", "codex", "cursor", "claude", "pi", "dsh", "hermes")
 HOST_LABELS = {
     "codebuddy": "CodeBuddy",
     "codex": "Codex",
     "cursor": "Cursor",
     "claude": "Claude Code",
     "pi": "Pi",
+    "dsh": "DeepSeek Harness",
+    "hermes": "Hermes Agent",
 }
 
 EDITION_SPECS: Dict[str, dict] = {
     "portable": {
         "description": "Agent Skills based portable workflow",
         "source_roots": ("skills/",),
-        "hosts": ("codebuddy", "codex", "cursor", "claude", "pi"),
+        "hosts": ("codebuddy", "codex", "cursor", "claude", "pi", "dsh", "hermes"),
         "entrypoints": {
             "codebuddy": "/devflow",
             "codex": "$devflow",
             "cursor": "/devflow",
             "claude": "/devflow",
             "pi": "/skill:devflow",
+            "dsh": "/devflow",
+            "hermes": "/devflow",
         },
     },
     "classic": {
