@@ -133,6 +133,8 @@ test('TAPD resync is refused for a local issue', async () => {
 
 test('deleting a separate draft issue returns 204 and removes it',async()=>{
  const draft=await post('/api/issues',{projectId:P,title:'E2E deletable draft',kind:'issue',status:'todo'});
+ assert.equal(draft.deletionAllowed, true);
+ assert.equal(draft.deletionBlock ?? null, null);
  await api('DELETE',`/api/issues/${draft.id}`,undefined,{expect:204});
  await api('GET',`/api/issues/${draft.id}`,undefined,{expect:404});
 });
@@ -157,13 +159,31 @@ test('delete: refused once a run succeeded or while one waits; a cancelled attem
   todo: 'POST /api/runs/:id/cancel tears the sandbox down inside the request (docker rm -f of the agentflow-run-*-scripts sidecar, up to dockerTeardownTimeout=60s); under nested Docker that rm hangs, so the call outlives the 60s client timeout',
 }, async () => {
   // A requirement that delivered (its dispatched run succeeded) is history.
+  // Listing settles task status before the detail reason is shown.
+  await get(`/api/issues?projectId=${P}`);
+  const deliveredDetail = await detailOf(issue.id);
+  assert.equal(deliveredDetail.issue.deletionAllowed, false);
+  assert.equal(deliveredDetail.issue.deletionBlock?.code, 'succeeded');
+  assert.ok(deliveredDetail.issue.deletionBlock?.runId, `succeeded history has no run: ${JSON.stringify(deliveredDetail.issue.deletionBlock)}`);
+  assert.match(deliveredDetail.issue.deletionBlock.reason, /已有成功执行记录/);
+  const listed = list(await get(`/api/issues?projectId=${P}`)).find(i => i.id === issue.id);
+  assert.equal(listed?.deletionBlock?.reason, deliveredDetail.issue.deletionBlock.reason);
+  assert.equal(listed?.deletionBlock?.runId, deliveredDetail.issue.deletionBlock.runId);
   const delivered = await api('DELETE', `/api/issues/${issue.id}`, undefined, { expect: 409 });
-  assert.match(JSON.stringify(delivered), /成功运行/);
+  assert.equal(delivered.error, deliveredDetail.issue.deletionBlock.reason);
+  assert.equal(delivered.deletionBlock?.code, 'succeeded');
+  assert.equal(delivered.deletionBlock?.runId, deliveredDetail.issue.deletionBlock.runId);
 
   const doomed = await waitingIssue('issue-delete');
   await post(`/api/issues/${doomed.id}/comments`, { body: 'e2e 删除前的评论' });
+  const waiting = await detailOf(doomed.id);
+  assert.equal(waiting.issue.deletionAllowed, false);
+  assert.equal(waiting.issue.deletionBlock?.code, 'active');
+  assert.equal(waiting.issue.deletionBlock?.runId, doomed.runId);
+  assert.match(waiting.issue.deletionBlock.reason, /未结束的运行/);
   const busy = await api('DELETE', `/api/issues/${doomed.id}`, undefined, { expect: 409 });
-  assert.match(JSON.stringify(busy), /停止/);
+  assert.equal(busy.error, waiting.issue.deletionBlock.reason);
+  assert.equal(busy.deletionBlock?.runId, doomed.runId);
   assert.equal((await get(`/api/issues/${doomed.id}`)).issue.id, doomed.id);
 
   await post(`/api/runs/${doomed.runId}/cancel`, {});

@@ -456,6 +456,8 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .issue-action-group>span{padding-top:8px;color:var(--muted);font-size:11px;white-space:nowrap}
 .issue-action-group-buttons{display:flex;flex-wrap:wrap;gap:8px}
 .issue-action-group-buttons .button{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:5px 11px;border-radius:8px;font-size:12px;white-space:normal;text-align:center}
+#issueDetailDrawer .issue-delete-control{flex:1 1 100%;display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding-top:8px;border-top:1px solid var(--hui-border)}
+#issueDetailDrawer .issue-delete-reason{flex:1 1 180px;margin:0;color:var(--hui-secondary);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
 .node-progress-row .button{flex-shrink:0}
 .human-decision{display:flex;flex-direction:column;gap:8px;width:100%}
 .human-gate-brief{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto;padding:10px 12px;border:1px solid rgba(245,158,11,.35);border-radius:8px;background:rgba(251,191,36,.08)}

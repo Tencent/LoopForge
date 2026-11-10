@@ -106,20 +106,61 @@ func (r *IssuesRepo) IssueDeletionAllowed(issues []domain.Issue) (map[string]boo
 	return r.issueActionAllowed(issues, false)
 }
 
+// IssueDeletionBlock explains a restriction using the complete execution history.
+// RunID is only populated for an existing run, including legacy task-linked runs.
+type IssueDeletionBlock struct {
+	Code   string `json:"code"`
+	Reason string `json:"reason"`
+	RunID  string `json:"runId,omitempty"`
+	TaskID string `json:"taskId,omitempty"`
+}
+
+func (r *IssuesRepo) IssueDeletionBlocks(issues []domain.Issue) (map[string]IssueDeletionBlock, error) {
+	return r.issueActionBlocks(issues, false)
+}
+
 // IssueClosureAllowed permits settled execution history, but no active work.
 func (r *IssuesRepo) IssueClosureAllowed(issues []domain.Issue) (map[string]bool, error) {
 	return r.issueActionAllowed(issues, true)
 }
 
 func (r *IssuesRepo) issueActionAllowed(issues []domain.Issue, allowSuccess bool) (map[string]bool, error) {
+	blocks, err := r.issueActionBlocks(issues, allowSuccess)
+	if err != nil {
+		return nil, err
+	}
 	allowed := map[string]bool{}
+	for _, issue := range issues {
+		_, blocked := blocks[issue.ID]
+		allowed[issue.ID] = !blocked
+	}
+	return allowed, nil
+}
+
+func (r *IssuesRepo) issueActionBlocks(issues []domain.Issue, allowSuccess bool) (map[string]IssueDeletionBlock, error) {
+	blocks := map[string]IssueDeletionBlock{}
+	// Prefer actionable temporary blockers, then historical success, then status.
+	priority := map[string]int{"completed": 1, "succeeded": 2, "active": 3, "clarifying": 4}
+	block := func(id string, next IssueDeletionBlock) {
+		prev := blocks[id]
+		if priority[next.Code] > priority[prev.Code] || (next.Code == prev.Code && prev.RunID == "" && next.RunID != "") {
+			blocks[id] = next
+		}
+	}
 	ids := make([]string, 0, len(issues))
+	issueIDs := map[string]bool{}
 	for _, issue := range issues {
 		ids = append(ids, issue.ID)
-		allowed[issue.ID] = (allowSuccess || issue.Status != "done") && issue.Clarification.Status != "analyzing"
+		issueIDs[issue.ID] = true
+		if !allowSuccess && issue.Status == "done" {
+			block(issue.ID, IssueDeletionBlock{Code: "completed", Reason: "需求已完成，当前不支持删除"})
+		}
+		if issue.Clarification.Status == "analyzing" {
+			block(issue.ID, IssueDeletionBlock{Code: "clarifying", Reason: "正在澄清，请先停止澄清后再删除"})
+		}
 	}
 	if len(ids) == 0 {
-		return allowed, nil
+		return blocks, nil
 	}
 	var tasks []taskRow
 	if err := r.DB.Select("id", "issue_id", "run_id", "status").Where("issue_id IN ?", ids).Find(&tasks).Error; err != nil {
@@ -129,7 +170,11 @@ func (r *IssuesRepo) issueActionAllowed(issues []domain.Issue, allowSuccess bool
 	runIDs := []string{}
 	for _, task := range tasks {
 		if task.Status != "failed" && task.Status != "cancelled" && !(allowSuccess && (task.Status == "completed" || task.Status == "succeeded")) {
-			allowed[task.IssueID] = false
+			restriction := IssueDeletionBlock{Code: "active", Reason: "仍有未结束的任务，请先处理或停止后再删除", TaskID: task.ID}
+			if task.Status == "completed" || task.Status == "succeeded" {
+				restriction = IssueDeletionBlock{Code: "succeeded", Reason: "已有成功执行记录，当前不支持删除", TaskID: task.ID}
+			}
+			block(task.IssueID, restriction)
 		}
 		if task.RunID != "" {
 			runIssues[task.RunID] = append(runIssues[task.RunID], task.IssueID)
@@ -152,18 +197,22 @@ func (r *IssuesRepo) issueActionAllowed(issues []domain.Issue, allowSuccess bool
 		if run.Status == "failed" || run.Status == "cancelled" || (allowSuccess && run.Status == "succeeded") {
 			continue
 		}
+		restriction := IssueDeletionBlock{Code: "active", Reason: "仍有未结束的运行，请先处理或停止后再删除", RunID: run.ID}
+		if run.Status == "succeeded" {
+			restriction = IssueDeletionBlock{Code: "succeeded", Reason: "已有成功执行记录，当前不支持删除", RunID: run.ID}
+		}
 		var ctx domain.TelemetryContext
 		if len(run.ExecutionContext) > 0 {
 			if err := jsonUnmarshal(run.ExecutionContext, &ctx); err != nil {
 				return nil, err
 			}
 		}
-		if _, ok := allowed[ctx.IssueID]; ok {
-			allowed[ctx.IssueID] = false
+		if issueIDs[ctx.IssueID] {
+			block(ctx.IssueID, restriction)
 		}
 		for _, id := range runIssues[run.ID] {
-			allowed[id] = false
+			block(id, restriction)
 		}
 	}
-	return allowed, nil
+	return blocks, nil
 }

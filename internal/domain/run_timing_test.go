@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,6 +13,24 @@ func timingEvents(t0 time.Time, specs ...any) []RunEvent {
 		out = append(out, RunEvent{Timestamp: t0.Add(specs[i].(time.Duration)), NodeID: specs[i+1].(string), Type: specs[i+2].(string)})
 	}
 	return out
+}
+
+func TestNodeRunJSONOmitsUnsetStageTimes(t *testing.T) {
+	raw, err := json.Marshal(NodeRun{NodeID: "n", Status: "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "0001-01-01") || strings.Contains(string(raw), "startedAt") || strings.Contains(string(raw), "finishedAt") {
+		t.Fatalf("unset stage times leaked: %s", raw)
+	}
+	started := time.Date(2026, 11, 9, 1, 2, 3, 0, time.UTC)
+	raw, err = json.Marshal(NodeRun{NodeID: "n", Status: "running", StartedAt: started})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"startedAt":"2026-11-09T01:02:03Z"`) || strings.Contains(string(raw), "finishedAt") {
+		t.Fatalf("partial stage window: %s", raw)
+	}
 }
 
 func TestRunTimingCountsEveryAttemptAndSkipsFailedWait(t *testing.T) {

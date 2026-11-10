@@ -348,7 +348,15 @@ func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
 	if err != nil {
 		switch {
 		case errors.Is(err, repo.ErrIssueBusy), errors.Is(err, repo.ErrIssueSucceeded):
-			c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+			// Report the same concrete reason shown by list/detail affordances,
+			// including when execution history changed after the menu was opened.
+			if blocks, checkErr := h.repo.IssueDeletionBlocks([]domain.Issue{issue}); checkErr == nil {
+				if block, ok := blocks[issue.ID]; ok {
+					c.JSON(http.StatusConflict, gin.H{"error": block.Reason, "deletionBlock": block})
+					return
+				}
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		case errors.Is(err, repo.ErrIssueNotFound):
 			c.JSON(http.StatusNotFound, map[string]string{"error": "issue not found"})
 		default:

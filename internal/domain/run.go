@@ -124,8 +124,8 @@ type NodeRun struct {
 	ToolCalls       int         `json:"toolCalls"`
 	GateResult      *GateResult `json:"gateResult,omitempty"`
 	ChildRunID      string      `json:"childRunId,omitempty"`
-	StartedAt       time.Time   `json:"startedAt,omitempty"`
-	FinishedAt      time.Time   `json:"finishedAt,omitempty"`
+	StartedAt       time.Time   `json:"startedAt,omitzero"`
+	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through

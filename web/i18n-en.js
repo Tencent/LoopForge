@@ -98,3 +98,20 @@ Object.assign(window.LF_I18N_EN,{
 "仅生成草稿 · 切换 CLI 开启新对话，保留画布":"Draft only · switching CLI starts a new chat and keeps the canvas",
 "暂无模型":"No models yet"
 });
+Object.assign(window.LF_I18N_EN,{
+"查看澄清":"View clarification",
+"查看相关运行":"View the related run",
+"查看任务与记录":"View tasks and history",
+"查看需求详情":"View requirement",
+"阻止删除的任务":"Task blocking deletion",
+"正在澄清，请先停止澄清后再删除":"Clarification is running. Stop it before deleting.",
+"暂时无法确认删除条件，请刷新后重试":"Deletion rules could not be confirmed. Refresh and try again.",
+"需求已完成，当前不支持删除":"This requirement is completed and cannot be deleted.",
+"仍有未结束的任务，请先处理或停止后再删除":"A task is still open. Finish or stop it before deleting.",
+"已有成功执行记录，当前不支持删除":"A successful run is on record, so this requirement cannot be deleted.",
+"仍有未结束的运行，请先处理或停止后再删除":"A run is still open. Finish or stop it before deleting.",
+"当前列表":"In this list,",
+"项不可删除，查看原因":"cannot be deleted. Show why",
+"选择此需求":"Select this requirement",
+"选择需求":"Select requirement"
+});

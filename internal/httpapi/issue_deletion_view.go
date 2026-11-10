@@ -2,17 +2,20 @@ package httpapi
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
+
 	"github.com/gin-gonic/gin"
 )
 
 type issueDeletionView struct {
 	domain.Issue
-	DeletionAllowed bool `json:"deletionAllowed"`
-	ClosureAllowed  bool `json:"closureAllowed"`
+	DeletionAllowed bool                     `json:"deletionAllowed"`
+	DeletionBlock   *repo.IssueDeletionBlock `json:"deletionBlock,omitempty"`
+	ClosureAllowed  bool                     `json:"closureAllowed"`
 }
 
 func (h issuesHandlers) issueDeletionViews(issues []domain.Issue) ([]issueDeletionView, error) {
-	allowed, err := h.repo.IssueDeletionAllowed(issues)
+	blocks, err := h.repo.IssueDeletionBlocks(issues)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +28,12 @@ func (h issuesHandlers) issueDeletionViews(issues []domain.Issue) ([]issueDeleti
 	}
 	out := make([]issueDeletionView, 0, len(issues))
 	for _, issue := range issues {
-		out = append(out, issueDeletionView{Issue: issue, DeletionAllowed: allowed[issue.ID], ClosureAllowed: closed[issue.ID]})
+		view := issueDeletionView{Issue: issue, DeletionAllowed: true, ClosureAllowed: closed[issue.ID]}
+		if block, ok := blocks[issue.ID]; ok {
+			view.DeletionAllowed = false
+			view.DeletionBlock = &block
+		}
+		out = append(out, view)
 	}
 	return out, nil
 }
