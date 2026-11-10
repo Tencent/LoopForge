@@ -27,6 +27,7 @@ import {
   elapsedSeconds,
   formatElapsed,
   confirmationCaption,
+  isProposalTimeout,
   canChatInProject,
   projectPickerOptions,
 } from "./api";
@@ -1441,7 +1442,7 @@ export default function App() {
                 <div className="loading-session">正在恢复对话…</div>
               ) : null}
               {messages.map((message, index) =>
-                confirmationCaption(message, messages[index - 1]) ? (
+                isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
                     key={index}
                     className="confirmation-note"
@@ -1561,6 +1562,12 @@ export default function App() {
                                 artifact={a}
                                 context={operationContext}
                                 onApply={chat.readOnly ? null : chat.applyDraft}
+                                onDecide={
+                                  chat.readOnly
+                                    ? null
+                                    : (messageIndex, draftIndex, decision) =>
+                                        chat.decideProposal(messageIndex, draftIndex, decision, approval)
+                                }
                                 onPreview={openArtifact}
                               />
                             ))}

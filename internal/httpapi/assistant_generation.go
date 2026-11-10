@@ -415,6 +415,8 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	live.publish()
 	if steer != nil {
 		h.followSteer(parent, g, steer, actor)
+	} else if g.Status == "completed" {
+		h.expireProposalLater(parent, g, req, actor)
 	}
 }
 
@@ -510,7 +512,7 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 		}
 		last := len(session.Messages) - 1
 		if last < 0 || session.Messages[last].Role != "user" || session.Messages[last].Content != content {
-			session.Messages = append(session.Messages, domain.AssistantMessage{Role: "user", Content: content, AuthorID: steer.ActorID, AuthorName: steer.ActorName, CreatedAt: time.Now().UTC(), Attachments: steer.Attachments, References: steer.References, Trigger: "steer"})
+			session.Messages = append(session.Messages, domain.AssistantMessage{Role: "user", Content: content, AuthorID: steer.ActorID, AuthorName: steer.ActorName, CreatedAt: time.Now().UTC(), Attachments: steer.Attachments, References: steer.References, Trigger: firstNonEmpty(steer.Trigger, "steer")})
 			changed = true
 		}
 	}

@@ -923,18 +923,38 @@ export function useChat() {
     applyingRef.current.add(key);
     let executed = false;
     try {
-      const stored = await api(sessionPath(id));
-      const reply = JSON.parse(stored.messages[messageIndex].content);
-      const draft = reply.drafts[draftIndex];
+      let stored = await api(sessionPath(id));
+      let reply = JSON.parse(stored.messages[messageIndex].content);
+      let draft = reply.drafts[draftIndex];
       if (draft.saved || draft.inherited) return null;
+      if (generation?.status === "running")
+        throw Error("请等待回复结束后再确认操作。");
+      if (draft.proposal && !draft.decision) {
+        // Accept before running it: once the timeout has handed the work to
+        // the assistant, the accept fails and the operation must not run.
+        try {
+          stored = (
+            await write(`${sessionPath(id)}/proposals`, {
+              messageIndex,
+              draftIndex,
+              decision: "accepted",
+            })
+          ).session;
+        } catch (error) {
+          void api(sessionPath(id))
+            .then((latest) => currentId.current === id && setSession(latest))
+            .catch(() => {});
+          throw error;
+        }
+        reply = JSON.parse(stored.messages[messageIndex].content);
+        draft = reply.drafts[draftIndex];
+      }
       try {
         Object.assign(draft, reviewedOperation(draft, review));
       } catch (error) {
         if (error.draftChanged && currentId.current === id) setSession(stored);
         throw error;
       }
-      if (generation?.status === "running")
-        throw Error("请等待回复结束后再确认操作。");
       // The session header lets a confirmed SOP continue in this
       // conversation's workspace.
       const result = await api("/mcp", {
@@ -997,6 +1017,36 @@ export function useChat() {
           : "") + e.message,
       );
       throw Object.assign(e, { executed });
+    } finally {
+      applyingRef.current.delete(key);
+    }
+  }
+  // Answers an assistant proposal card. Declining work the assistant had not
+  // started continues with the turn the server returns.
+  async function decideProposal(messageIndex, draftIndex, decision, approvalMode = "confirm") {
+    const id = activeId;
+    if (generation?.status === "running")
+      throw Error("请等待回复结束后再处理建议。");
+    const key = `${id}:${messageIndex}:${draftIndex}`;
+    if (applyingRef.current.has(key)) throw Error("这条建议正在处理，请稍候。");
+    applyingRef.current.add(key);
+    try {
+      const result = await write(`${sessionPath(id)}/proposals`, {
+        messageIndex,
+        draftIndex,
+        decision,
+      });
+      if (currentId.current !== id) return;
+      setSession(result.session);
+      if (result.followUp)
+        await send({
+          text: result.followUp.text,
+          messagesOverride: result.session.messages,
+          approvalMode,
+        });
+    } catch (e) {
+      setError(e.message);
+      throw e;
     } finally {
       applyingRef.current.delete(key);
     }
@@ -1129,6 +1179,7 @@ export function useChat() {
     edit,
     regenerate,
     applyDraft,
+    decideProposal,
     refresh,
     refreshSessions,
   };

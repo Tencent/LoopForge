@@ -51,3 +51,21 @@ Object.assign(window.LF_I18N_EN,{
 "AI 对话的 Pi 模型与以 Pi 运行的 SOP 节点":"Pi models in AI chat, and SOP steps that run on Pi",
 "AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 SOP 节点":"DeepSeek Harness models in AI chat, and SOP steps that run on DeepSeek Harness"
 });
+Object.assign(window.LF_I18N_EN,{
+"AI 助手":"AI assistant",
+"AI 工作台里和你对话、帮你动手的助手。设置它什么时候主动把事情交给角色或 SOP，以及每次对话都要遵守的规则；只对你自己生效。":"The assistant you talk to in the AI workbench. Choose when it hands work to a role or an SOP, and the rules every conversation follows. This applies only to you.",
+"登录后可以设置 AI 助手。":"Sign in to configure the AI assistant.",
+"正在读取设置…":"Loading settings…",
+"主动派发":"Proactive handoff",
+"打开后 AI 助手会更主动地把事情交给角色或 SOP。派角色不需要确认；走 SOP 仍按审批模式先征求同意，完全权限下直接启动。":"When enabled, the assistant is more ready to hand work to a role or an SOP. Roles are dispatched directly. An SOP still follows the approval mode, and full access starts it immediately.",
+"主动派角色":"Dispatch roles",
+"整件事是某个角色的本职（如独立评审、整套测试），或改了高风险代码需要复核时，直接交给这个角色。":"Hand the whole job to a role when it is that role's work, such as an independent review or a full test pass, or when a risky code change needs a second look.",
+"主动走 SOP":"Use an SOP",
+"遇到要落到仓库的新需求时，先交给项目里用途对得上的 SOP，而不是自己直接改代码。":"For a new requirement that should land in the repository, hand it to a matching SOP instead of changing the code directly.",
+"自定义规则":"Custom rules",
+"每轮对话都会带上这些规则，适合写你的习惯和偏好；不会越过审批模式和平台规则。":"These rules go with every turn. Use them for your habits and preferences. They do not override approval mode or platform rules.",
+"规则":"Rules",
+"AI 助手设置已保存":"AI assistant settings saved",
+"保存设置失败，请重试":"Could not save settings. Try again.",
+"读取设置失败":"Could not load settings"
+});
