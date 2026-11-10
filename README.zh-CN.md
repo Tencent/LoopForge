@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 ## 快速开始
 
-需要 **Git、curl、Docker（含 Compose）** 和 **Python 3**。全新 Ubuntu 可先运行 `sudo apt-get update && sudo apt-get install -y git curl python3`。没装 Docker 时，安装脚本会询问并帮你安装。支持普通用户运行，需要时通过 docker 组或 sudo 操作 Docker。
+支持 **macOS 和 Linux**，Windows 暂不支持。需要 **Git、curl、Docker（含 Compose）** 和 **Python 3**。全新 Ubuntu 可先运行 `sudo apt-get update && sudo apt-get install -y git curl python3`。没装 Docker 时，安装脚本会询问并帮你安装。支持普通用户运行，需要时通过 docker 组或 sudo 操作 Docker。
 
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
@@ -78,6 +78,71 @@ cd LoopForge
 `./start.sh` 直接拉取 `compose.yaml` 中 pin 的 GHCR 发布镜像，不在本地构建（`bash scripts/install.sh` 效果相同）。用 `./start.sh logs`、`stop`、`restart`、`pull` 管理服务；需要从源码构建时用 `./start.sh dev`。
 
 打开安装脚本输出的地址创建账号，第一个账号自动成为管理员。服务默认监听 `0.0.0.0:8090`；在云主机上，安装脚本会从云厂商的元数据服务读取公网 IP 并直接打印出来，放通安全组端口即可访问，或配置 HTTPS 反向代理；管理员账号创建前，建议只允许你的 IP 访问。首页的「快速接入」会带你配置模型凭据、绑定仓库并选好默认 SOP。
+
+### 在云服务器上安装
+
+1. **准备机器。** 一台 Linux 云服务器（推荐 Ubuntu 22.04 / 24.04，x86_64 或 arm64 都可以）。镜像和沙箱工作区比较占空间，磁盘建议预留 30 GB 以上。
+2. **放通安全组。** 入站放通 22（SSH）和 8090。创建管理员账号之前，8090 只对你自己的 IP 开放。
+3. **登录服务器。** 用 `ssh root@<公网IP>`（或云厂商默认的 `ubuntu` 用户）登录。很多云厂商默认禁止 root 用密码登录，密码正确也会提示 `Permission denied`，这时改用 SSH 密钥，或在控制台用网页终端登录。
+4. **安装并启动：**
+
+   ```bash
+   sudo apt-get update && sudo apt-get install -y git curl python3
+   git clone https://github.com/Tencent/LoopForge.git
+   cd LoopForge
+   ./start.sh
+   ```
+
+   没装 Docker 时脚本会询问并自动安装。完成后会打印 `http://<公网IP>:8090`。
+5. **创建管理员。** 在浏览器打开该地址，注册的第一个账号就是管理员。之后再按团队需要放开 8090 的访问范围。只给内部成员使用时，可在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 关闭自助注册，再重新执行 `./start.sh` 生效。
+
+<details>
+<summary><b>绑定域名并开启 HTTPS</b>（推荐用于公网访问）</summary>
+
+<br>
+
+把域名的 A 记录解析到服务器公网 IP，安全组放通 80 和 443。以 Caddy 为例（Ubuntu 24.04 / Debian 12 可直接用 apt 安装），它会自动申请和续期证书：
+
+```bash
+sudo apt-get install -y caddy
+sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
+loopforge.example.com {
+    reverse_proxy 127.0.0.1:8090
+}
+EOF
+sudo systemctl reload caddy
+```
+
+然后在 `LoopForge/.env` 中加入 `AGENTFLOW_SECURE_COOKIES=true`，并重新执行 `./start.sh`。确认能通过 `https://` 访问后，可以在安全组中关闭 8090，只保留 80 和 443。
+
+</details>
+
+<details>
+<summary><b>升级与备份</b></summary>
+
+<br>
+
+升级：在 `LoopForge` 目录执行下面的命令。脚本会拉取新版本固定的镜像并重建容器，数据会保留：
+
+```bash
+git pull
+./start.sh
+```
+
+新版本如果附带 `migrations/` 下的数据迁移脚本，不会自动执行，请按[部署指南](docs/deployment.md)审阅后手动导入。
+
+备份数据库（建议升级前做一次，也可以放进 cron 定时执行）：
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines --triggers --databases loopforge' \
+  | gzip > "loopforge-$(date +%F).sql.gz"
+```
+
+当前用户没有 Docker 权限时，在 `docker` 前加 `sudo`。
+
+</details>
+
+> **中国大陆云主机：** 部分机器从 GitHub 拉取仓库很慢，克隆超时会导致对话工作区打不开。目前可以先为 git 配置代理，见[慢网络说明](docs/deployment.md#slow-networks-clone-and-image-build-limits)。后续我们会提供 CNB、镜像仓库等加速方式。
 
 ### 免 API Key 体验
 
