@@ -161,7 +161,7 @@ func TestDevServerPreviewProxiesTheSandboxPort(t *testing.T) {
 		t.Fatal("app headers must pass")
 	}
 
-	if rec := serve("GET", prefix+"/", map[string]string{"Upgrade": "websocket", "Connection": "Upgrade", "Sec-Websocket-Version": "13", "Sec-Websocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}); rec.Code != 501 {
+	if rec := serve("GET", prefix+"/", map[string]string{"Upgrade": "websocket", "Connection": "Upgrade", "Sec-Websocket-Version": "13"}); rec.Code != 501 {
 		t.Fatalf("websocket: %d", rec.Code)
 	}
 
