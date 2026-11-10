@@ -231,7 +231,6 @@ function issueRunHealth(i){
   if(run?.status==='failed'||run?.status==='cancelled'||issueHasFailedNode(run))return'attention';
   if(issueClarifying(i.id))return'active';
   if(clarificationNeedsConfirm(i))return'attention';
-  if(requirementNeedsClarification(i))return'attention';
   if(task&&['queued','dispatched','running'].includes(task.status))return'active';
   if(!task||!run)return'not_started';
   return'not_started';
@@ -257,10 +256,6 @@ function issueActor(i){
   if(issueClarifying(i.id))return{kind:'active',title:'澄清分析中',sub:'关闭网页也不会中断'};
   const task=latestIssueTask(i);
   if(task&&['queued','dispatched','running'].includes(task.status))return{kind:'active',title:'正在启动',sub:task.status==='queued'?'排队中':'调度中'};
-  if(requirementNeedsClarification(i)){
-    const score=i.clarification?.score||0;
-    return{kind:'attention',title:'需要你澄清',sub:`${score} 分 · 未达准入线`};
-  }
   if(issueRunHealth(i)==='attention')return{kind:'attention',title:'需要介入',sub:issueCurrentStage(i).hint||'运行失败或已中断'};
   if(bound)return{kind:'bound',title:bound.name,sub:'已绑定 Agent'};
   return{kind:'idle',title:'尚未执行',sub:'触发后由 SOP 节点 Agent 接手'};
@@ -273,10 +268,6 @@ function issueOutcome(i){
   if((i.status||'')==='done')return{key:'closed',short:stage.label==='交付闭环'?'已交付':'已完成',title:stage.label==='交付闭环'?'交付闭环':'需求已完成',body:stage.label==='交付闭环'?'SOP 已全部通过。如需继续修改，请先重新打开后再触发新的 SOP。':'需求已完成。'};
   if(clarificationNeedsConfirm(i)){
     return{key:'confirm',short:'待确认',title:'请确认澄清结论并写回原单',body:'结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 SOP。'};
-  }
-  if(requirementNeedsClarification(i)){
-    const score=i.clarification?.score||0,threshold=clarificationPolicy((state.data.projects||[]).find(p=>p.id===i.projectId)).threshold||80;
-    return{key:'attention',short:'待澄清',title:'需要你补充澄清',body:`导入评分 ${score} 分，未达准入线 ${threshold} 分。请先回答澄清问题后再触发 SOP。`};
   }
   if(conversationWorkspaceIssue(i)){const c=conversationIssueStage(i);return{key:c.ended?'idle':c.key==='closed'?'closed':'active',short:c.short,title:`对话交付 · ${c.label}`,body:c.hint};}
   if(latestIssueRun(i)?.status==='cancelled')return{key:'attention',short:'已取消',title:'运行已取消',body:'这次运行已结束且工作区已清理，不能接着原记录重试。可以重新触发整条 SOP。'};
@@ -404,7 +395,7 @@ function deliveredHint(issue){const label=deliveryLockedLabel(issue);return `<sp
 function reopenDeliveredButton(issue,{cls='button primary small'}={}){if(issueTrackerClosed(issue)||(!issueManuallyClosed(issue)&&!deliveryLocked(issue)))return'';return `<button type="button" class="${cls}" data-reopen-issue="${escapeHTML(issue.id)}">重新打开</button>`}
 function canRetriggerIssue(issue,run){
   if(!issue||issueManuallyClosed(issue)||issueTrackerClosed(issue))return false;
-  if(clarificationNeedsConfirm(issue)||requirementNeedsClarification(issue))return false;
+  if(clarificationNeedsConfirm(issue))return false;
   const current=run||latestIssueRun(issue);
   if(current&&['queued','running','waiting'].includes(current.status))return false;
   if(deliveryLocked(issue))return true;
@@ -418,7 +409,6 @@ function retriggerButton(issue,run,{ghost=false,cls}={}){
 function triggerSOPButton(issue,{ghost=false,cls='button primary small',text='触发'}={}){
   if(issueExecutionBlocked(issue))return issueTrackerClosed(issue)&&!issueManuallyClosed(issue)?closedTrackerHint(issue):deliveredHint(issue);
   if(clarificationNeedsConfirm(issue))return `<button class="${ghost?'button ghost small':cls}" data-start-clarify title="请先确认澄清结论并写回原单">去确认结论</button>`;
-  if(requirementNeedsClarification(issue))return `<button class="${ghost?'button ghost small':cls}" data-start-clarify title="需求未达准入线，请先补充澄清">去澄清</button>`;
   return `<button class="${ghost?'button ghost small':cls}" data-dispatch-issue="${escapeHTML(issue.id)}">${text}</button>`;
 }
 function issueActionButtons(i){
@@ -429,7 +419,6 @@ function issueActionButtons(i){
   if(issueManuallyClosed(i)||deliveryLocked(i)||issueTrackerClosed(i))return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
   if(issueClarifying(i.id))return `<button type="button" class="issue-act" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">查看分析</button>${more}`;
   if(clarificationNeedsConfirm(i))return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">确认结论</button>${more}`;
-  if(requirementNeedsClarification(i))return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">去澄清</button>${more}`;
   if(stage.key==='waiting')return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="sop">${run?.pauseRequested?'继续流程':'去确认'}</button>${more}`;
   if(run?.status==='cancelled')return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
   if(run?.status==='failed'){
@@ -586,22 +575,22 @@ function issueCurrentStage(i){
   if(!run){
     if(issueClarifying(i.id))return{key:'active',label:'澄清分析中',hint:'关闭网页也不会中断，完成后可回来查看'};
     if(clarificationNeedsConfirm(i)){
-      const score=i.clarification?.score||0;
-      return{key:'confirm',label:score?`待确认结论 · ${score} 分`:'待确认结论',hint:'确认写回原单（追加评论）后即可开始触发需求'};
-    }
-    if(requirementNeedsClarification(i)){
-      const score=i.clarification?.score||0,threshold=clarificationPolicy((state.data.projects||[]).find(p=>p.id===i.projectId)).threshold||80;
-      return{key:'attention',label:`待澄清 · ${score} 分`,hint:`未达准入线 ${threshold} 分，需要你补充信息`};
+      return{key:'confirm',label:'待确认结论',hint:'确认写回原单（追加评论）后即可开始触发需求'};
     }
     if(task&&['queued','dispatched','running'].includes(task.status)){
       return{key:'active',label:task.status==='queued'?'排队中':'运行中',hint:'任务已调度，正在准备执行工作区与 Agent 环境'};
     }
     if((i.status||'')==='done')return{key:'closed',label:'已完成',hint:'需求已完成'};
+    // Questions are waiting for answers. Informational only: it neither
+    // counts as 需要介入 nor blocks triggering the SOP.
+    if(i.clarification?.status==='in_progress'&&(i.clarification.questions||[]).length){
+      return{key:'clarifying',label:'待澄清',hint:'澄清问题等待回答，不影响直接触发 SOP'};
+    }
     if(i.kind==='requirement'){
-      const score=i.clarification?.score||0,ready=i.clarification?.status==='ready'||i.clarification?.passed;
+      const ready=i.clarification?.status==='ready';
       const multi=issueLaneStage(i);
       if(multi)return multi;
-      return{key:'not_started',label:ready?(score?`澄清完成 · ${score} 分`:'澄清已通过'):'等待执行',hint:ready?'可以进入研发 SOP':'尚未创建运行'};
+      return{key:'not_started',label:ready?'澄清已完成':'等待执行',hint:ready?'可以进入研发 SOP':'尚未创建运行'};
     }
     return{key:'not_started',label:'等待执行',hint:'尚未创建运行'};
   }

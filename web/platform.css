@@ -276,7 +276,7 @@ button.issue-stat:hover{border-color:var(--line-strong);color:var(--text)}
 .kanban-card h4{margin:0;color:var(--text);font-size:12.5px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .kanban-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px}
 .kanban-stage{max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-2);font-size:10px}
-.kanban-stage.active{color:var(--blue)}.kanban-stage.waiting,.kanban-stage.confirm{color:var(--amber)}.kanban-stage.attention{color:var(--red)}.kanban-stage.closed{color:var(--green)}
+.kanban-stage.active{color:var(--blue)}.kanban-stage.waiting,.kanban-stage.confirm,.kanban-stage.clarifying{color:var(--amber)}.kanban-stage.attention{color:var(--red)}.kanban-stage.closed{color:var(--green)}
 .kanban-card-progress{margin-top:10px}
 .kanban-card-progress>span{display:block;margin-bottom:5px;color:var(--muted);font-size:10px}
 .kanban-card-progress .issue-progress-track{height:4px}
@@ -416,7 +416,7 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .issue-stage-cell{overflow:hidden;text-align:left}
 .issue-stage-pill{max-width:100%;height:24px;padding:0 9px;display:inline-flex;align-items:center;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);font-size:11px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .issue-stage-cell.active .issue-stage-pill{background:var(--blue-soft);border-color:transparent;color:var(--blue)}
-.issue-stage-cell.waiting .issue-stage-pill,.issue-stage-cell.confirm .issue-stage-pill{background:rgba(251,191,36,.16);border-color:transparent;color:#b45309}
+.issue-stage-cell.waiting .issue-stage-pill,.issue-stage-cell.confirm .issue-stage-pill,.issue-stage-cell.clarifying .issue-stage-pill{background:rgba(251,191,36,.16);border-color:transparent;color:#b45309}
 .issue-stage-cell.attention .issue-stage-pill{background:rgba(198,60,75,.12);border-color:transparent;color:#c63c4b}
 .issue-stage-cell.closed .issue-stage-pill{background:rgba(52,211,153,.15);border-color:transparent;color:var(--green)}
 .issue-progress-cell{display:flex;flex-direction:column;justify-content:center;gap:5px;min-width:0;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}

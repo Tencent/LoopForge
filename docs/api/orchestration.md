@@ -377,4 +377,4 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "$AGENTFLOW_URL/api/schedule-jobs/job-1/run"
 ```
 
-定时派发会冻结集成分支上下文，并避免同一需求重复执行。需求澄清未达标时本轮跳过该 Issue，不把整次任务标失败。Worker signals、实例 lease 和沙箱回收属于内部机制，不是调度公共 API。
+定时派发会冻结集成分支上下文，并避免同一需求重复执行。需求是否澄清过不影响派发。Worker signals、实例 lease 和沙箱回收属于内部机制，不是调度公共 API。

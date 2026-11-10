@@ -1145,7 +1145,7 @@ paths:
       tags: [Issues]
       operationId: importTAPDIssue
       summary: Import one TAPD story, bug or task from a pasted link
-      description: Scores the imported title and description against the project's clarification policy. Below-threshold requirements are marked needs_user and cannot be dispatched until they pass.
+      description: Imports the work item as-is. Clarification is optional and never started automatically; the item can be dispatched right away.
       requestBody:
         required: true
         content:
@@ -1264,37 +1264,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-  /api/issues/{issueId}/clarify:
-    parameters:
-      - $ref: "#/components/parameters/IssueId"
-    post:
-      tags: [Issues]
-      operationId: assessIssueClarification
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [answers]
-              properties:
-                answers:
-                  type: object
-                  additionalProperties:
-                    type: string
-      responses:
-        "200":
-          description: Clarification assessment
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClarificationAssessment"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
   /api/issues/{issueId}/chat-clarify:
     parameters:
       - $ref: "#/components/parameters/IssueId"
@@ -1371,18 +1340,6 @@ paths:
                   type: array
                   items:
                     $ref: "#/components/schemas/ClarificationQuestion"
-                dimensions:
-                  type: object
-                  description: Per-dimension completeness ratings (0-100), folded into score with the project policy weights. For requirements this score gates SOP dispatch.
-                  additionalProperties:
-                    type: integer
-                    minimum: 0
-                    maximum: 100
-                missing:
-                  type: array
-                  description: Key information still unconfirmed after clarification.
-                  items:
-                    type: string
                 retry:
                   type: boolean
       responses:
@@ -4076,8 +4033,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMember"
-        clarification:
-          $ref: "#/components/schemas/ClarificationPolicy"
         tapdWorkspaceId:
           type: string
         tapdIterationId:
@@ -4148,32 +4103,6 @@ components:
         claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}
         claudeCodeBaseUrl: {type: string}
         codeBuddyInternetEnvironment: {type: string}
-    ClarificationPolicy:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-        skillId:
-          type: string
-        threshold:
-          type: integer
-          minimum: 0
-          maximum: 100
-        dimensions:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: string
-              name:
-                type: string
-              question:
-                type: string
-              weight:
-                type: integer
-              minLength:
-                type: integer
     RepositoryInput:
       type: object
       required: [projectId]
@@ -4369,25 +4298,8 @@ components:
           readOnly: true
     ClarificationAssessment:
       type: object
+      description: Optional AI clarification state. It carries no score and never gates SOP dispatch.
       properties:
-        score:
-          type: integer
-          minimum: 0
-          maximum: 100
-        passed:
-          type: boolean
-        answers:
-          type: object
-          additionalProperties:
-            type: string
-        dimensions:
-          type: object
-          additionalProperties:
-            type: integer
-        missing:
-          type: array
-          items:
-            type: string
         summary:
           type: string
         status:
@@ -4409,9 +4321,6 @@ components:
         writeBackFingerprint:
           type: string
         writeBackAt:
-          type: string
-          format: date-time
-        assessedAt:
           type: string
           format: date-time
     ClarificationMessage:

@@ -64,7 +64,7 @@ const ctx = {
     ctx.renderReqRepositoryPicker();
   },
   projectTAPDReady: () => true, usableClarifySummary: s => s,
-  renderIssues: () => {}, openIssueDetail: (id, tab) => opened.push([id, tab || ""]), openRunFromId: () => {}, requirementNeedsClarification: () => false,
+  renderIssues: () => {}, openIssueDetail: (id, tab) => opened.push([id, tab || ""]), openRunFromId: () => {},
   toast: message => notices.push(message),
   api: async (url, init) => {
     const body = JSON.parse(init.body);
@@ -171,20 +171,21 @@ assert.equal(ctx.state.chatClarifyResult.ready, true);
   assert.deepEqual(opened.at(-1), ["created", ""], "a skipped clarification opens the issue detail without dispatching");
 
   ctx.state.reqClarifySkipped = false;
-  ctx.state.chatClarifyResult = {ready: true, suggestedTitle: "继续开发", summary: "分析通过", assessment: {}};
+  ctx.state.chatClarifyResult = {ready: true, suggestedTitle: "继续开发", summary: "分析通过"};
   elements["#reqTitle"].value = "确认页标题";
   await ctx.createIssueFromChat("local");
   const analyzed = requests.filter(request => request.url === "/api/issues").at(-1);
   assert.equal(analyzed.body.baseBranch, "feature/continue");
   assert.equal(analyzed.body.title, "确认页标题");
-  assert.equal(analyzed.body.clarification.passed, true);
+  assert.equal(analyzed.body.clarification.status, "ready");
+  assert.equal(analyzed.body.clarification.passed, undefined, "no score/pass flag is sent");
   assert.equal(requests.at(-1).url, "/api/issues/created/dispatch");
 
-  ctx.state.chatClarifyResult = {ready: false, summary: "还差验收标准", questions: [{question: "验收？", options: []}], assessment: {}};
+  ctx.state.chatClarifyResult = {ready: false, summary: "还差验收标准", questions: [{question: "验收？", options: []}]};
   const before = requests.length;
   await ctx.createIssueFromChat("local");
   assert.equal(requests.length, before + 1, "a not-ready conclusion creates the issue but does not dispatch");
-  assert.equal(requests.at(-1).body.clarification.passed, false);
+  assert.equal(requests.at(-1).body.clarification.status, "in_progress");
   assert.deepEqual(opened.at(-1), ["created", "clarify"]);
 
   input.value = "";
