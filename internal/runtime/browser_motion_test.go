@@ -71,9 +71,18 @@ func TestBrowserScrollEndsOnASharpFrame(t *testing.T) {
 	if _, err := HandleBrowser(ctx, runID, domain.BrowserRequest{Operation: "input", Events: []domain.BrowserInputEvent{{Type: "wheel", X: 0.5, Y: 0.5, DeltaY: 100}}}); err != nil {
 		t.Fatal(err)
 	}
-	seq, width = nextWidth(seq)
-	if width > 400 {
-		t.Fatalf("scroll frame %dpx wide, want half of 800", width)
+	// A full-width frame already in flight can arrive before the screencast
+	// restarts at the lighter size. Keep reading until a light frame shows up.
+	sawLight := false
+	for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
+		seq, width = nextWidth(seq)
+		if width <= 400 {
+			sawLight = true
+			break
+		}
+	}
+	if !sawLight {
+		t.Fatalf("no light frame while scrolling (last %dpx)", width)
 	}
 	// More light frames may follow while the scroll animates; once input
 	// settles a full-width frame arrives although nothing changed.
