@@ -49,6 +49,9 @@ func Sync(ctx context.Context, cacheDir, url, branch string, oldMap map[string]s
 	_, statErr := os.Stat(gitDir)
 	switch {
 	case statErr == nil:
+		if _, err = git(ctx, cacheDir, "remote", "set-url", "origin", url); err != nil {
+			return "", "", nil, nil, nil, err
+		}
 		if _, err = git(ctx, cacheDir, "fetch", "--quiet", "origin", branch); err != nil {
 			return "", "", nil, nil, nil, fmt.Errorf("fetch 失败: %s", err)
 		}
@@ -235,10 +238,24 @@ func readLimited(path string) ([]byte, error) {
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	full := make([]string, 0, len(args)+2)
 	full = append(full, "-c", "credential.helper=")
+	if options, ok := ctx.Value(publicGitOptions{}).([]string); ok {
+		for _, option := range options {
+			full = append(full, "-c", option)
+		}
+	}
 	full = append(full, args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if _, ok := ctx.Value(publicGitOptions{}).([]string); ok {
+		cmd.Env = nil
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "GIT_") {
+				cmd.Env = append(cmd.Env, entry)
+			}
+		}
+		cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	}
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(b)))
