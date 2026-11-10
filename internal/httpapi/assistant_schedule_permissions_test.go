@@ -17,6 +17,7 @@ import (
 	"agentflow/internal/config"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 
@@ -43,6 +44,9 @@ func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
 	if scheduled.Mode != home.Mode || scheduled.ExecMode != auto || scheduled.ChatOwnerID != user.ID {
 		t.Fatalf("scheduled session does not use homepage full access: %+v", scheduled.ExecMode)
 	}
+	if !scheduled.Scheduled || home.Scheduled {
+		t.Fatal("only the scheduled session must be marked unattended")
+	}
 	gateway := &agentToolGateway{deps: h.deps}
 	names := func(s *AgentToolSession) []string {
 		var out []string
@@ -52,9 +56,28 @@ func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
 		slices.Sort(out)
 		return out
 	}
+	// Scheduled tasks reuse the assistant gateway but must not get the
+	// interactive knowledge base tools; every other tool stays identical.
+	withoutKnowledge := func(names []string) []string {
+		out := make([]string, 0, len(names))
+		for _, name := range names {
+			if !knowledge.IsReadOnlyTool(name) {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
 	got, want := names(scheduled), names(home)
-	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(scheduled.MCPServers, home.MCPServers) {
+	if !reflect.DeepEqual(withoutKnowledge(got), withoutKnowledge(want)) || !reflect.DeepEqual(scheduled.MCPServers, home.MCPServers) {
 		t.Fatalf("scheduled and homepage tools differ:\nscheduled=%v\nhome=%v", got, want)
+	}
+	for _, name := range knowledge.ReadOnlyTools {
+		if slices.Contains(got, name) {
+			t.Errorf("scheduled session must not expose knowledge tool %s", name)
+		}
+		if !slices.Contains(want, name) {
+			t.Errorf("homepage session is missing knowledge tool %s", name)
+		}
 	}
 	for _, name := range []string{"agentflow__issues_dispatch", "agentflow__runs_start", "agentflow__runs_retry", "agentflow__workflows_publish", "agentflow__schedule_jobs_save", "agentflow__schedule_jobs_delete", "workbench_workspace_open", "workbench_workspace_command", "workbench_workspace_submit_mr", "workbench_browser_navigate", "workbench_browser_screenshot"} {
 		if !slices.Contains(got, name) {

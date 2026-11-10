@@ -176,6 +176,16 @@ func (h *knowledgeHandlers) proxyTools(ctx context.Context) ([]map[string]any, e
 // callScoped applies the project's source scope to one read-only call and
 // returns the upstream JSON text plus a hit count for activity reporting.
 func (h *knowledgeHandlers) callScoped(ctx context.Context, projectID, tool string, args map[string]any) (string, int, error) {
+	return callKnowledgeTool(ctx, h.svc, projectID, tool, args)
+}
+
+// callKnowledgeTool is the single implementation of the read-only knowledge
+// tool contract. The SOP proxy and Main Bot's in-process tools both call it,
+// so project narrowing and JSON shapes cannot drift apart.
+func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, projectID, tool string, args map[string]any) (string, int, error) {
+	if svc == nil {
+		return "", 0, knowledge.ErrNotConfigured
+	}
 	if args == nil {
 		args = map[string]any{}
 	}
@@ -187,14 +197,14 @@ func (h *knowledgeHandlers) callScoped(ctx context.Context, projectID, tool stri
 	switch tool {
 	case knowledge.ToolSearch:
 		var out knowledge.SearchOutput
-		out, err = h.svc.Search(ctx, projectID, str("query"), stringList(args["sources"]))
+		out, err = svc.Search(ctx, projectID, str("query"), stringList(args["sources"]))
 		value = out.Result
 		hits = len(out.Result.Results)
 	case knowledge.ToolFetch:
-		value, err = h.svc.DocumentVersion(ctx, projectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
+		value, err = svc.DocumentVersion(ctx, projectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
 	case knowledge.ToolListSources:
 		var list []knowledge.SourceView
-		list, err = h.svc.Sources(ctx, projectID)
+		list, err = svc.Sources(ctx, projectID)
 		kept := []knowledge.Source{}
 		for _, src := range list {
 			if src.Allowed {
@@ -204,7 +214,7 @@ func (h *knowledgeHandlers) callScoped(ctx context.Context, projectID, tool stri
 		value = map[string]any{"sources": kept}
 		hits = len(kept)
 	case knowledge.ToolGetSource:
-		value, err = h.svc.SourceDetail(ctx, projectID, str("source"))
+		value, err = svc.SourceDetail(ctx, projectID, str("source"))
 	default:
 		return "", 0, fmt.Errorf("unknown knowledge tool")
 	}

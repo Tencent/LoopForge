@@ -42,6 +42,7 @@ type deps struct {
 	engine     *engine.Engine
 	sync       *tracker.Service
 	schedule   *schedule.Service
+	kb         *knowledge.Service
 	authClient *auth.Client
 	api        http.Handler
 }
@@ -147,6 +148,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if len(knowledgeEngine) > 0 {
 		kb = knowledgeEngine[0]
 	}
+	kbSvc := knowledge.NewService(d.repo, randomID, kb)
+	d.kb = kbSvc
 	api := &Server{
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
@@ -170,7 +173,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID, kb), activity: &knowledgeActivityLog{}},
+		know:            &knowledgeHandlers{deps: d, svc: kbSvc, activity: &knowledgeActivityLog{}},
 		feedback:        &feedbackHandlers{deps: d},
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }

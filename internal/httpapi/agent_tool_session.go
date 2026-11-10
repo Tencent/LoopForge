@@ -50,10 +50,14 @@ type AgentTerminalResult struct {
 // model request. The token is CSPRNG random and is never logged or returned to
 // the browser.
 type AgentToolSession struct {
-	Token          string
-	UserID         int64
-	ProjectID      string
-	Mode           AgentToolMode
+	Token     string
+	UserID    int64
+	ProjectID string
+	Mode      AgentToolMode
+	// Scheduled marks an unattended scheduled task. It reuses the assistant
+	// gateway, but interactive-only tools (the read-only knowledge base)
+	// must stay out of its catalog.
+	Scheduled      bool
 	IssueID        string
 	WorkspaceToken string
 	RunID          string

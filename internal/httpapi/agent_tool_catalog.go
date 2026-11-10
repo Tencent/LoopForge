@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/application"
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/mcpclient"
 	"agentflow/internal/mcpserver"
 )
@@ -237,6 +238,12 @@ func agentToolNameAllowed(mode AgentToolMode, kind, tool string) bool {
 	if tool == "" {
 		return false
 	}
+	// Main Bot gets the built-in read-only knowledge base as direct tools.
+	// Clarify sessions and scheduled tasks never get them; the catalog gate
+	// is mainBotKnowledgeEnabled.
+	if kind == "knowledge" {
+		return mode == AgentToolAssistant && knowledge.IsReadOnlyTool(tool)
+	}
 	// Conversations and scheduled tasks see every tool of the project's MCPs;
 	// a write follows the conversation's approval mode at call time.
 	if (mode == AgentToolScheduled || mode == AgentToolAssistant) && kind != "agentflow" {
@@ -387,10 +394,41 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	}
 	out = append(out, mainBotBrowserTools(session)...)
 	out = append(out, mainBotGitHubTools(session)...)
+	out = append(out, mainBotKnowledgeTools(session)...)
 	out = append(out, terminalToolDescriptors(session.Mode, session.ExecMode)...)
 	session.mu.Lock()
 	session.catalog = append([]agentToolDescriptor{}, out...)
 	session.mu.Unlock()
+	return out
+}
+
+// mainBotKnowledgeEnabled gates the built-in read-only knowledge tools to an
+// interactive Main Bot conversation with a project. Clarify sessions and
+// scheduled tasks reuse other gateway modes and never get them.
+func mainBotKnowledgeEnabled(session *AgentToolSession) bool {
+	return session != nil && session.Mode == AgentToolAssistant && !session.Scheduled && strings.TrimSpace(session.ProjectID) != ""
+}
+
+func mainBotKnowledgeTools(session *AgentToolSession) []agentToolDescriptor {
+	if !mainBotKnowledgeEnabled(session) {
+		return nil
+	}
+	definitions := knowledge.ReadOnlyToolDefinitions()
+	out := make([]agentToolDescriptor, 0, len(definitions))
+	for _, tool := range definitions {
+		if !knowledge.IsReadOnlyTool(tool.Name) {
+			continue
+		}
+		out = append(out, agentToolDescriptor{
+			Name:         tool.Name,
+			Description:  tool.Description,
+			InputSchema:  defaultToolSchema(tool.InputSchema),
+			OutputSchema: tool.OutputSchema,
+			Annotations:  tool.Annotations,
+			Kind:         "knowledge",
+			UpstreamName: tool.Name,
+		})
+	}
 	return out
 }
 
