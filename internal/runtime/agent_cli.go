@@ -84,6 +84,9 @@ type AgentCLIOptions struct {
 	SystemPromptFile string
 	// ReadOnly is AgentCLICommandOptions.Chat.
 	ReadOnly bool
+	// Effort is set for CLIs that take the reasoning level from their model
+	// configuration instead of a flag (ZCode).
+	Effort string
 }
 
 // agentCLIKeyEnv holds the user's key for CLIs whose configuration names
@@ -393,7 +396,7 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		head := append([]string{}, argv[:3]...)
 		argv = append(append(head, patches...), argv[3:]...)
 	case AgentCLIZCode:
-		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
+		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, options.Effort, argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}

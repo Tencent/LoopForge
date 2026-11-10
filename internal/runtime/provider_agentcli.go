@@ -196,6 +196,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(append(argv, extra...), prompt)
 	case AgentCLIZCode:
+		options.Effort = effort
 		disallowed := zcodeSOPDisallowedTools
 		if o.Chat {
 			disallowed = zcodeChatDisallowedTools
