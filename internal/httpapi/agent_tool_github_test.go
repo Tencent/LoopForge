@@ -3,9 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -121,7 +123,7 @@ func (f *fakeGitHubAPI) serve(t *testing.T) {
 		raw, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
-		f.tokens = append(f.tokens, r.Header.Get("Authorization"))
+		f.tokens = append(f.tokens, r.Header.Get("authorization"))
 		f.bodies = append(f.bodies, string(raw))
 		route := f.routes[r.Method+" "+r.URL.Path]
 		f.mu.Unlock()
@@ -164,7 +166,7 @@ func callGitHubTool(t *testing.T, f githubToolFixture, name string, args string)
 func TestGitHubToolsRunWithoutWorkspaceInConfirmMode(t *testing.T) {
 	f := newGitHubToolFixture(t)
 	f.set(githubToolTestToken)
-	if f.session.ExecMode.AutoWrite || f.session.RunID != "" {
+	if f.session.ExecMode.AutoWrite || f.session.ExecMode.ReviewWrites || f.session.RunID != "" {
 		t.Fatalf("fixture must be a confirm-mode chat without a workspace: %+v", f.session)
 	}
 	var labelQuery string
@@ -186,20 +188,20 @@ func TestGitHubToolsRunWithoutWorkspaceInConfirmMode(t *testing.T) {
 	api.serve(t)
 
 	text, isErr := callGitHubTool(t, f, mainBotGitHubIssuesList, `{"repository":"app","labels":"bug"}`)
-	if isErr || !strings.Contains(text, `"Real issue"`) || strings.Contains(text, `"A PR"`) || !strings.Contains(text, `"count":1`) {
+	if isErr || !strings.Contains(text, `"Real issue"`) || strings.Contains(text, `"A PR"`) || !strings.Contains(text, `"count":1`) || !strings.Contains(text, `"hasMore":false`) {
 		t.Fatalf("issues list = %s (error=%t)", text, isErr)
 	}
-	if !strings.Contains(labelQuery, "labels=bug") || !strings.Contains(labelQuery, "state=open") || !strings.Contains(labelQuery, "per_page=20") {
+	if !strings.Contains(labelQuery, "labels=bug") || !strings.Contains(labelQuery, "state=open") || !strings.Contains(labelQuery, "per_page=100") {
 		t.Fatalf("issues query = %q", labelQuery)
 	}
 
 	text, isErr = callGitHubTool(t, f, mainBotGitHubPullsList, `{"repository":"app"}`)
-	if isErr || !strings.Contains(text, `"head":"topic"`) || !strings.Contains(text, `"draft":true`) {
+	if isErr || !strings.Contains(text, `"head":"topic"`) || !strings.Contains(text, `"draft":true`) || !strings.Contains(text, `"hasMore":false`) {
 		t.Fatalf("pulls list = %s (error=%t)", text, isErr)
 	}
 
 	text, isErr = callGitHubTool(t, f, mainBotGitHubPRStatus, `{"repository":"app","number":7}`)
-	if isErr || !strings.Contains(text, `"checksState":"pending"`) || !strings.Contains(text, `"mergeableState":"blocked"`) || !strings.Contains(text, `"ci/legacy"`) {
+	if isErr || !strings.Contains(text, `"checksState":"pending"`) || !strings.Contains(text, `"mergeableState":"blocked"`) || !strings.Contains(text, `"ci/legacy"`) || strings.Contains(text, "checksWarnings") {
 		t.Fatalf("pr status = %s (error=%t)", text, isErr)
 	}
 
@@ -223,6 +225,170 @@ func TestGitHubToolsRunWithoutWorkspaceInConfirmMode(t *testing.T) {
 	bodies := strings.Join(api.bodies, "\n")
 	if !strings.Contains(bodies, `{"body":"LGTM"}`) || !strings.Contains(bodies, `{"labels":["bug","triage"]}`) {
 		t.Fatalf("write payloads = %s", bodies)
+	}
+}
+
+func TestGitHubWriteToolsReviewedInAssistedMode(t *testing.T) {
+	f := newGitHubToolFixture(t)
+	f.set(githubToolTestToken)
+	f.session.ExecMode = assistantExecModeForApproval(AssistantApprovalAssisted)
+	if !f.session.ExecMode.ReviewWrites {
+		t.Fatalf("assisted mode must review writes: %+v", f.session.ExecMode)
+	}
+	allow := false
+	var reviewed []string
+	f.session.approvalReviewer = func(_ context.Context, tool, description string, args map[string]any) assistantApprovalReview {
+		reviewed = append(reviewed, tool)
+		if args["repository"] != "octo/app" || args["projectId"] != "workbench" || args["arguments"] == nil || !strings.Contains(description, "GitHub") {
+			t.Fatalf("review lost scope: %s %v", description, args)
+		}
+		outcome := "deny"
+		if allow {
+			outcome = "allow"
+		}
+		return assistantApprovalReview{Outcome: outcome, RiskLevel: "low", UserAuthorization: "high", Rationale: "核对本次 GitHub 写操作"}
+	}
+	api := &fakeGitHubAPI{routes: map[string]func(http.ResponseWriter, *http.Request){
+		"GET /repos/octo/app/issues":             githubJSON(http.StatusOK, `[]`),
+		"POST /repos/octo/app/issues/7/comments": githubJSON(http.StatusCreated, `{"id":99}`),
+		"POST /repos/octo/app/issues/7/labels":   githubJSON(http.StatusOK, `[{"name":"bug"}]`),
+	}}
+	api.serve(t)
+
+	// 只读工具不过审查。
+	if text, isErr := callGitHubTool(t, f, mainBotGitHubIssuesList, `{"repository":"app"}`); isErr {
+		t.Fatalf("read tool failed: %s", text)
+	}
+	// 参数不合法时先报错，不浪费一次审查。
+	if _, isErr := callGitHubTool(t, f, mainBotGitHubCommentAdd, `{"repository":"app","number":7,"body":" "}`); !isErr {
+		t.Fatal("invalid comment accepted")
+	}
+	if len(reviewed) != 0 {
+		t.Fatalf("unexpected reviews: %v", reviewed)
+	}
+
+	for _, tc := range []struct{ name, args string }{
+		{mainBotGitHubCommentAdd, `{"repository":"app","number":7,"body":"LGTM"}`},
+		{mainBotGitHubLabelsAdd, `{"repository":"app","number":7,"labels":["bug"]}`},
+	} {
+		text, isErr := callGitHubTool(t, f, tc.name, tc.args)
+		if !isErr || !strings.Contains(text, "帮我批准未执行") {
+			t.Fatalf("%s denied review = %s (error=%t)", tc.name, text, isErr)
+		}
+	}
+	api.mu.Lock()
+	for _, req := range api.requests {
+		if strings.HasPrefix(req, "POST ") {
+			api.mu.Unlock()
+			t.Fatalf("GitHub write executed without approval: %v", api.requests)
+		}
+	}
+	api.mu.Unlock()
+	if strings.Join(reviewed, ",") != mainBotGitHubCommentAdd+","+mainBotGitHubLabelsAdd {
+		t.Fatalf("reviewed = %v", reviewed)
+	}
+
+	allow = true
+	if text, isErr := callGitHubTool(t, f, mainBotGitHubCommentAdd, `{"repository":"app","number":7,"body":"LGTM"}`); isErr || !strings.Contains(text, `"commentId":99`) {
+		t.Fatalf("approved comment = %s (error=%t)", text, isErr)
+	}
+	if text, isErr := callGitHubTool(t, f, mainBotGitHubLabelsAdd, `{"repository":"app","number":7,"labels":["bug"]}`); isErr || !strings.Contains(text, `"labels":["bug"]`) {
+		t.Fatalf("approved labels = %s (error=%t)", text, isErr)
+	}
+
+	// 没有可用审查器时按拒绝处理，不静默放行。
+	f.session.approvalReviewer = nil
+	if text, isErr := callGitHubTool(t, f, mainBotGitHubCommentAdd, `{"repository":"app","number":7,"body":"again"}`); !isErr || !strings.Contains(text, "帮我批准未执行") {
+		t.Fatalf("comment without reviewer = %s (error=%t)", text, isErr)
+	}
+}
+
+func githubIssuePage(from, count int, pulls bool) string {
+	items := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		n := from + i
+		pr := ""
+		if pulls {
+			pr = `,"pull_request":{"url":"x"}`
+		}
+		items = append(items, fmt.Sprintf(`{"number":%d,"title":"item %d","state":"open"%s}`, n, n, pr))
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}
+
+func TestGitHubIssuesListPagesPastPullRequests(t *testing.T) {
+	f := newGitHubToolFixture(t)
+	f.set(githubToolTestToken)
+	var queries []string
+	api := &fakeGitHubAPI{routes: map[string]func(http.ResponseWriter, *http.Request){
+		// 第 1 页全是 PR，第 2 页有 2 个 Issue 且不满页。
+		"GET /repos/octo/app/issues": func(w http.ResponseWriter, r *http.Request) {
+			queries = append(queries, r.URL.RawQuery)
+			switch r.URL.Query().Get("page") {
+			case "1":
+				_, _ = io.WriteString(w, githubIssuePage(1000, githubListPageSize, true))
+			case "2":
+				_, _ = io.WriteString(w, githubIssuePage(1, 2, false))
+			default:
+				_, _ = io.WriteString(w, `[]`)
+			}
+		},
+	}}
+	api.serve(t)
+
+	text, isErr := callGitHubTool(t, f, mainBotGitHubIssuesList, `{"repository":"app","limit":3}`)
+	if isErr || !strings.Contains(text, `"count":2`) || !strings.Contains(text, `"hasMore":false`) || !strings.Contains(text, `"item 1"`) || !strings.Contains(text, `"item 2"`) {
+		t.Fatalf("issues = %s (error=%t)", text, isErr)
+	}
+	if len(queries) != 2 || !strings.Contains(queries[0], "per_page=100") || !strings.Contains(queries[1], "page=2") {
+		t.Fatalf("queries = %v", queries)
+	}
+
+	text, isErr = callGitHubTool(t, f, mainBotGitHubIssuesList, `{"repository":"app","limit":1}`)
+	if isErr || !strings.Contains(text, `"count":1`) || !strings.Contains(text, `"hasMore":true`) || strings.Contains(text, `"item 2"`) {
+		t.Fatalf("truncated issues = %s (error=%t)", text, isErr)
+	}
+}
+
+func TestGitHubIssuesListStopsAtPageCap(t *testing.T) {
+	f := newGitHubToolFixture(t)
+	f.set(githubToolTestToken)
+	pages := 0
+	api := &fakeGitHubAPI{routes: map[string]func(http.ResponseWriter, *http.Request){
+		"GET /repos/octo/app/issues": func(w http.ResponseWriter, r *http.Request) {
+			pages++
+			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			_, _ = io.WriteString(w, githubIssuePage(page*1000, githubListPageSize, true))
+		},
+	}}
+	api.serve(t)
+	text, isErr := callGitHubTool(t, f, mainBotGitHubIssuesList, `{"repository":"app"}`)
+	if isErr || !strings.Contains(text, `"count":0`) || !strings.Contains(text, `"hasMore":true`) || pages != githubIssuesMaxPages {
+		t.Fatalf("issues = %s (error=%t) pages=%d", text, isErr, pages)
+	}
+}
+
+func TestGitHubPullsListReportsHasMore(t *testing.T) {
+	f := newGitHubToolFixture(t)
+	f.set(githubToolTestToken)
+	var query string
+	api := &fakeGitHubAPI{routes: map[string]func(http.ResponseWriter, *http.Request){
+		"GET /repos/octo/app/pulls": func(w http.ResponseWriter, r *http.Request) {
+			query = r.URL.RawQuery
+			_, _ = io.WriteString(w, `[{"number":9,"title":"first"},{"number":8,"title":"second"}]`)
+		},
+	}}
+	api.serve(t)
+	text, isErr := callGitHubTool(t, f, mainBotGitHubPullsList, `{"repository":"app","limit":1}`)
+	if isErr || !strings.Contains(text, `"count":1`) || !strings.Contains(text, `"hasMore":true`) || strings.Contains(text, `"second"`) {
+		t.Fatalf("pulls = %s (error=%t)", text, isErr)
+	}
+	if !strings.Contains(query, "per_page=2") {
+		t.Fatalf("pulls query = %q", query)
+	}
+	text, _ = callGitHubTool(t, f, mainBotGitHubPullsList, `{"repository":"app","limit":2}`)
+	if !strings.Contains(text, `"count":2`) || !strings.Contains(text, `"hasMore":false`) {
+		t.Fatalf("pulls = %s", text)
 	}
 }
 
@@ -294,6 +460,10 @@ func TestGitHubToolErrorsDoNotLeakToken(t *testing.T) {
 	if !isErr || !strings.Contains(text, "HTTP 403") || strings.Contains(text, githubToolTestToken) {
 		t.Fatalf("error result = %s (error=%t)", text, isErr)
 	}
+	// 报错按操作说明所需权限，不再沿用"发起 PR"的文案。
+	if !strings.Contains(text, "添加评论") || !strings.Contains(text, "Issues 读写") || strings.Contains(text, "发起 PR") {
+		t.Fatalf("error text = %s", text)
+	}
 }
 
 func TestGitHubCombinedChecksState(t *testing.T) {
@@ -302,19 +472,73 @@ func TestGitHubCombinedChecksState(t *testing.T) {
 	}{
 		{"none", `{"statuses":[]}`, `{"check_runs":[]}`, "none"},
 		{"all success", `{"statuses":[{"context":"a","state":"success"}]}`, `{"check_runs":[{"name":"b","status":"completed","conclusion":"success"}]}`, "success"},
+		{"neutral and skipped pass", `{"statuses":[]}`, `{"check_runs":[{"name":"b","status":"completed","conclusion":"neutral"},{"name":"c","status":"completed","conclusion":"skipped"}]}`, "success"},
 		{"pending", `{"statuses":[{"context":"a","state":"pending"}]}`, `{"check_runs":[]}`, "pending"},
+		{"queued run", `{"statuses":[]}`, `{"check_runs":[{"name":"b","status":"queued","conclusion":null}]}`, "pending"},
 		{"failure wins", `{"statuses":[{"context":"a","state":"pending"}]}`, `{"check_runs":[{"name":"b","status":"completed","conclusion":"failure"}]}`, "failure"},
+		{"action_required", `{"statuses":[]}`, `{"check_runs":[{"name":"b","status":"completed","conclusion":"action_required"}]}`, "failure"},
+		{"startup_failure", `{"statuses":[]}`, `{"check_runs":[{"name":"b","status":"completed","conclusion":"startup_failure"}]}`, "failure"},
+		{"stale", `{"statuses":[]}`, `{"check_runs":[{"name":"b","status":"completed","conclusion":"stale"}]}`, "failure"},
 	} {
 		api := &fakeGitHubAPI{routes: map[string]func(http.ResponseWriter, *http.Request){
 			"GET /repos/octo/app/commits/sha/status":     githubJSON(http.StatusOK, tc.status),
 			"GET /repos/octo/app/commits/sha/check-runs": githubJSON(http.StatusOK, tc.runs),
 		}}
 		api.serve(t)
-		if _, got := githubCombinedChecks(context.Background(), githubHTTPClient(), "tok", "octo/app", "sha"); got != tc.want {
-			t.Errorf("%s: state = %q, want %q", tc.name, got, tc.want)
+		if _, got, warnings := githubCombinedChecks(context.Background(), githubHTTPClient(), "tok", "octo/app", "sha"); got != tc.want || len(warnings) != 0 {
+			t.Errorf("%s: state = %q warnings = %v, want %q", tc.name, got, warnings, tc.want)
 		}
 	}
-	if _, got := githubCombinedChecks(context.Background(), githubHTTPClient(), "tok", "octo/app", " "); got != "none" {
+	if _, got, _ := githubCombinedChecks(context.Background(), githubHTTPClient(), "tok", "octo/app", " "); got != "none" {
 		t.Fatalf("empty sha state = %q", got)
+	}
+}
+
+func TestGitHubCombinedChecksReportsUnreadableSources(t *testing.T) {
+	var runsQuery, statusQuery string
+	api := &fakeGitHubAPI{routes: map[string]func(http.ResponseWriter, *http.Request){
+		"GET /repos/octo/app/commits/sha/status": func(w http.ResponseWriter, r *http.Request) {
+			statusQuery = r.URL.RawQuery
+			_, _ = io.WriteString(w, `{"total_count":1,"statuses":[{"context":"a","state":"success"}]}`)
+		},
+		"GET /repos/octo/app/commits/sha/check-runs": func(w http.ResponseWriter, r *http.Request) {
+			runsQuery = r.URL.RawQuery
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"message":"Resource not accessible by personal access token"}`)
+		},
+	}}
+	api.serve(t)
+	checks, state, warnings := githubCombinedChecks(context.Background(), githubHTTPClient(), "tok", "octo/app", "sha")
+	if state != "unknown" || len(checks) != 1 || len(warnings) != 1 || !strings.Contains(warnings[0], "HTTP 403") || !strings.Contains(warnings[0], "Checks") {
+		t.Fatalf("403 on check-runs: state=%q checks=%v warnings=%v", state, checks, warnings)
+	}
+	if !strings.Contains(runsQuery, "per_page=100") || !strings.Contains(statusQuery, "per_page=100") {
+		t.Fatalf("queries: status=%q runs=%q", statusQuery, runsQuery)
+	}
+
+	// 读到的部分已经失败时，另一个来源读不到（这里 status 返回 404）也不影响
+	// failure 的结论；只统计了前 N 项时要提示。
+	api = &fakeGitHubAPI{routes: map[string]func(http.ResponseWriter, *http.Request){
+		"GET /repos/octo/app/commits/sha/check-runs": githubJSON(http.StatusOK, `{"total_count":150,"check_runs":[{"name":"b","status":"completed","conclusion":"failure"}]}`),
+	}}
+	api.serve(t)
+	_, state, warnings = githubCombinedChecks(context.Background(), githubHTTPClient(), "tok", "octo/app", "sha")
+	if state != "failure" || len(warnings) != 2 || !strings.Contains(strings.Join(warnings, "\n"), "共 150 项") {
+		t.Fatalf("partial failure: state=%q warnings=%v", state, warnings)
+	}
+}
+
+func TestGitHubPRStatusSurfacesCheckWarnings(t *testing.T) {
+	f := newGitHubToolFixture(t)
+	f.set(githubToolTestToken)
+	api := &fakeGitHubAPI{routes: map[string]func(http.ResponseWriter, *http.Request){
+		"GET /repos/octo/app/pulls/7":                githubJSON(http.StatusOK, `{"number":7,"state":"open","head":{"sha":"abc","ref":"topic"},"base":{"ref":"main"}}`),
+		"GET /repos/octo/app/commits/abc/status":     githubJSON(http.StatusForbidden, `{"message":"no"}`),
+		"GET /repos/octo/app/commits/abc/check-runs": githubJSON(http.StatusForbidden, `{"message":"no"}`),
+	}}
+	api.serve(t)
+	text, isErr := callGitHubTool(t, f, mainBotGitHubPRStatus, `{"repository":"app","number":7}`)
+	if isErr || !strings.Contains(text, `"checksState":"unknown"`) || !strings.Contains(text, "checksWarnings") || !strings.Contains(text, "Commit statuses") {
+		t.Fatalf("pr status = %s (error=%t)", text, isErr)
 	}
 }
