@@ -196,3 +196,10 @@ type KnowledgeChunk struct {
 	Revision  int64  `json:"revision,omitempty"`
 	Text      string `json:"text"`
 }
+
+// KnowledgeChunkMatch 是关键词适配器的一次命中：索引块加相关度分数。
+// 分数由适配器给出，调用方据此排序，不改索引块本身。
+type KnowledgeChunkMatch struct {
+	Chunk KnowledgeChunk `json:"chunk"`
+	Score float64        `json:"score"`
+}
