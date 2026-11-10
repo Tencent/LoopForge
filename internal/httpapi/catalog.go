@@ -191,11 +191,17 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.DefaultBranch = "main"
 		}
 	}
+	if strings.HasPrefix(v.GongfengProjectID, "gitlab:") {
+		v.Provider = "gitlab"
+		if v.DefaultBranch == "" {
+			v.DefaultBranch = "main"
+		}
+	}
 	if v.Provider == "" {
 		v.Provider = "gongfeng"
 	}
-	if v.Provider != "gongfeng" && v.Provider != "github" {
-		c.JSON(400, map[string]string{"error": "provider must be github or gongfeng"})
+	if v.Provider != "gongfeng" && v.Provider != "github" && v.Provider != "gitlab" {
+		c.JSON(400, map[string]string{"error": "provider must be github, gitlab or gongfeng"})
 		return
 	}
 	if v.DefaultBranch == "" {
