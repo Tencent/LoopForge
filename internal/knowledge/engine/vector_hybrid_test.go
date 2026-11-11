@@ -33,9 +33,9 @@ func (f *fakeVectorChannel) Search(_ context.Context, _ string, _ []string, _ in
 // can be observed from both sides.
 type vectorFakeContent struct {
 	*fakeContent
-	chunksByPath    map[string][]domain.KnowledgeChunk
-	chunksBySource  map[string][]domain.KnowledgeChunk
-	allChunkCalls   int
+	chunksByPath   map[string][]domain.KnowledgeChunk
+	chunksBySource map[string][]domain.KnowledgeChunk
+	allChunkCalls  int
 }
 
 func newVectorFakeContent() *vectorFakeContent {
@@ -67,7 +67,7 @@ func (f *vectorFakeContent) KnowledgeChunksForSources(sourceIDs []string) []doma
 
 type vectorFakeControl struct {
 	*fakeControl
-	bases   map[string]domain.KnowledgeBase
+	bases    map[string]domain.KnowledgeBase
 	setCalls []vectorSetCall
 }
 
@@ -166,10 +166,10 @@ type fakeEmbedProvider struct {
 	texts []string
 }
 
-func (f *fakeEmbedProvider) Name() string                       { return "fake" }
-func (f *fakeEmbedProvider) Available() bool                    { return true }
-func (f *fakeEmbedProvider) Dim() int                          { return f.dim }
-func (f *fakeEmbedProvider) Probe(context.Context) error        { return nil }
+func (f *fakeEmbedProvider) Name() string                { return "fake" }
+func (f *fakeEmbedProvider) Available() bool             { return true }
+func (f *fakeEmbedProvider) Dim() int                    { return f.dim }
+func (f *fakeEmbedProvider) Probe(context.Context) error { return nil }
 func (f *fakeEmbedProvider) Embed(ctx context.Context, text string, isQuery bool) ([]float32, error) {
 	v, err := f.EmbedBatch(ctx, []string{text}, isQuery)
 	if err != nil {
@@ -194,7 +194,7 @@ func (f *fakeEmbedProvider) EmbedBatch(_ context.Context, texts []string, _ bool
 func testVectorConfig() VectorConfig {
 	return VectorConfig{
 		QdrantURL: "http://qdrant:6333", QdrantAPIKey: "",
-		Collection: "kb_model_1024",
+		Collection:    "kb_model_1024",
 		EmbeddingKind: embed.Sidecar, EmbeddingURL: "http://embedding:8081/embed",
 		EmbeddingAPIKey: "", Model: "model", Dim: 1024, MaxLength: 256,
 	}
@@ -317,8 +317,16 @@ func TestHybridFusesBothChannels(t *testing.T) {
 		{Source: "s", Commit: "1", Path: "b.md", StartLine: 1, EndLine: 3, Text: "B", Score: 1},
 	}}
 	vec := &fakeVectorChannel{active: true, hits: []Hit{
-		{Source: "s", Commit: "1", Path: "a.md", StartLine: 1, EndLine: 3, Text: "A"}, // 两路都命中
-		{Source: "s", Commit: "1", Path: "c.md", StartLine: 1, EndLine: 3, Text: "C"}, // 纯向量命中
+		{Source: "s", Commit: "1", Path: "a.md", StartLine: 1, EndLine: 3, Text: "A", Score: 0.90}, // 两路都命中
+		{Source: "s", Commit: "1", Path: "c.md", StartLine: 1, EndLine: 3, Text: "C", Score: 0.88}, // 纯向量命中且靠近头部
+		{Source: "s", Commit: "1", Path: "d.md", StartLine: 1, EndLine: 3, Text: "D", Score: 0.40}, // 长尾，应被门槛丢掉
+		{Source: "s", Commit: "1", Path: "e.md", StartLine: 1, EndLine: 3, Text: "E", Score: 0.39},
+		{Source: "s", Commit: "1", Path: "f.md", StartLine: 1, EndLine: 3, Text: "F", Score: 0.38},
+		{Source: "s", Commit: "1", Path: "g.md", StartLine: 1, EndLine: 3, Text: "G", Score: 0.37},
+		{Source: "s", Commit: "1", Path: "h.md", StartLine: 1, EndLine: 3, Text: "H", Score: 0.36},
+		{Source: "s", Commit: "1", Path: "i.md", StartLine: 1, EndLine: 3, Text: "I", Score: 0.35},
+		{Source: "s", Commit: "1", Path: "j.md", StartLine: 1, EndLine: 3, Text: "J", Score: 0.34},
+		{Source: "s", Commit: "1", Path: "k.md", StartLine: 1, EndLine: 3, Text: "K", Score: 0.33},
 	}}
 	hr := NewHybridRetriever(index, vec)
 	rr, err := hr.Retrieve(context.Background(), "问句", []string{"s"}, DefaultSearchLimit)
@@ -357,8 +365,16 @@ func TestFuseRRFAndLimit(t *testing.T) {
 		{Source: "s", Path: "c.md", StartLine: 1, EndLine: 2, Text: "C", Score: 1},
 	}
 	vec := []Hit{
-		{Source: "s", Path: "d.md", StartLine: 1, EndLine: 2, Text: "D"},
-		{Source: "s", Path: "a.md", StartLine: 1, EndLine: 2, Text: "A"},
+		{Source: "s", Path: "a.md", StartLine: 1, EndLine: 2, Text: "A", Score: 0.95},
+		{Source: "s", Path: "d.md", StartLine: 1, EndLine: 2, Text: "D", Score: 0.93},
+		{Source: "s", Path: "e.md", StartLine: 1, EndLine: 2, Text: "E", Score: 0.40},
+		{Source: "s", Path: "f.md", StartLine: 1, EndLine: 2, Text: "F", Score: 0.39},
+		{Source: "s", Path: "g.md", StartLine: 1, EndLine: 2, Text: "G", Score: 0.38},
+		{Source: "s", Path: "h.md", StartLine: 1, EndLine: 2, Text: "H", Score: 0.37},
+		{Source: "s", Path: "i.md", StartLine: 1, EndLine: 2, Text: "I", Score: 0.36},
+		{Source: "s", Path: "j.md", StartLine: 1, EndLine: 2, Text: "J", Score: 0.35},
+		{Source: "s", Path: "k.md", StartLine: 1, EndLine: 2, Text: "K", Score: 0.34},
+		{Source: "s", Path: "l.md", StartLine: 1, EndLine: 2, Text: "L", Score: 0.33},
 	}
 	got := Fuse("", kw, vec, 3)
 	if len(got) != 3 {
