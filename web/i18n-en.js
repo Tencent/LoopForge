@@ -117,3 +117,4 @@ Object.assign(window.LF_I18N_EN,{
 "选择此需求":"Select this requirement",
 "选择需求":"Select requirement"
 });
+Object.assign(window.LF_I18N_EN,{"平台目录":"Platform catalog","通用模板按名称绑定这些 MCP，添加到本项目后即可使用。":"Generic templates bind these MCPs by name. Add one to this project to use it.","已添加到当前项目":"Added to this project","添加中…":"Adding…"});

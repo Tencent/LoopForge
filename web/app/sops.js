@@ -48,25 +48,24 @@ const GENERIC_REQUIREMENT_CHECKS={
 function gongfengMarketItem(){
   return (state.mcpMarket||[]).find(item=>(item.aliases||[]).includes('gongfeng')||/gongfeng/i.test(item.url||''))||null;
 }
-function gongfengMCPInstalled(){
-  const marketID=gongfengMarketItem()?.id||'';
+// With the catalog loaded, a market-installed row is recognised by its market
+// ID or alias even when that ID does not mention the service. Rows without a
+// market ID (custom MCPs) and installs made before the catalog loads fall back
+// to name/URL matching. Kept self-contained: genericRequirementRows swallows
+// errors, so a missing helper from another file would silently read as "not installed".
+function projectMCPInstalled(market,pattern){
+  const keys=market?[market.id,...(market.aliases||[])].map(key=>String(key||'').toLowerCase()).filter(Boolean):[];
   return (state.data?.mcpServers||[]).some(item=>{
     if(item.scope!=='project'||item.projectId!==state.projectFilter)return false;
-    if(marketID&&item.marketId)return item.marketId===marketID;
-    return /gongfeng|工蜂/i.test(`${item.name||''} ${item.url||''} ${item.marketId||''}`);
+    if(keys.length&&item.marketId&&keys.includes(String(item.marketId).toLowerCase()))return true;
+    return pattern.test(`${item.name||''} ${item.url||''} ${item.marketId||''}`);
   });
 }
+function gongfengMCPInstalled(){return projectMCPInstalled(gongfengMarketItem(),/gongfeng|工蜂/i)}
 function tapdMarketItem(){
   return (state.mcpMarket||[]).find(item=>(item.aliases||[]).includes('tapd')||/tapd/i.test(item.url||''))||null;
 }
-function tapdMCPInstalled(){
-  const marketID=tapdMarketItem()?.id||'';
-  return (state.data?.mcpServers||[]).some(item=>{
-    if(item.scope!=='project'||item.projectId!==state.projectFilter)return false;
-    if(marketID&&item.marketId)return item.marketId===marketID;
-    return /tapd/i.test(`${item.name||''} ${item.url||''} ${item.marketId||''}`);
-  });
-}
+function tapdMCPInstalled(){return projectMCPInstalled(tapdMarketItem(),/tapd/i)}
 function genericRequirementRows(w){
   return (w?.requirements||[]).map(req=>{
     const meta=GENERIC_REQUIREMENT_CHECKS[req.key]||{};

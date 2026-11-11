@@ -1,8 +1,48 @@
+// 平台 MCP 目录（/api/mcp-market）不再作为独立「市场」页展示，但它仍是
+// 通用模板角色的可选 MCP、市场 ID/别名映射和 SOP 依赖预检的数据来源，
+// 所以启动后和进入相关页面时都要保证加载过一次；失败时允许下次重试。
+let mcpMarketCatalogRequest=null;
+function ensureMCPMarketCatalog(){
+  if((state.mcpMarket||[]).length)return Promise.resolve(state.mcpMarket);
+  if(!mcpMarketCatalogRequest){
+    mcpMarketCatalogRequest=api('/api/mcp-market',{silent:true})
+      .then(result=>{state.mcpMarket=Array.isArray(result?.items)?result.items:[];return state.mcpMarket})
+      .catch(()=>{mcpMarketCatalogRequest=null;return state.mcpMarket||[]});
+  }
+  return mcpMarketCatalogRequest;
+}
 async function loadMCPMarket(){
   try{
-    state.data.mcpServers=await api('/api/mcp-servers',{silent:true});
+    const [,servers]=await Promise.all([ensureMCPMarketCatalog(),api('/api/mcp-servers',{silent:true})]);
+    state.data.mcpServers=servers;
     renderMCPManagement();
   }catch(e){toast(e.message)}
+}
+// mcpMarketMatches mirrors the server's sameMarketItem: an installed row
+// belongs to a catalog entry by its market ID or any of the entry's aliases.
+function mcpMarketMatches(marketId,item){
+  const id=String(marketId||'').toLowerCase();
+  if(!id||!item)return false;
+  return String(item.id||'').toLowerCase()===id||(item.aliases||[]).some(alias=>String(alias).toLowerCase()===id);
+}
+function mcpMarketAdded(item,installed){
+  return (installed||[]).some(row=>mcpMarketMatches(row.marketId,item));
+}
+// Catalog entries not yet added to the project. Generic templates bind MCPs
+// by these aliases, so they stay installable without a separate market tab.
+function mcpCatalogSuggestionsHTML(installed,query){
+  const items=(state.mcpMarket||[]).filter(item=>!mcpMarketAdded(item,installed)&&mcpMatchesQuery(item,query));
+  if(!items.length)return '';
+  return `<section class="mcp-catalog-suggest" aria-label="平台目录"><div><b>平台目录</b><span>通用模板按名称绑定这些 MCP，添加到本项目后即可使用。</span></div><div class="mcp-catalog-actions">${items.map(item=>`<button class="button ghost small" type="button" data-mcp-install="${escapeHTML(item.id)}">＋ ${escapeHTML(item.name)}</button>`).join('')}</div></section>`;
+}
+async function installMarketMCP(marketId,button){
+  if(!state.projectFilter)return toast('请先选择项目');
+  button.disabled=true;const label=button.textContent;button.textContent='添加中…';
+  try{
+    const saved=await api('/api/mcp-market/install',{method:'POST',body:JSON.stringify({marketId,scope:'project',projectId:state.projectFilter})});
+    state.data.mcpServers=[...(state.data.mcpServers||[]).filter(item=>item.id!==saved.id),saved];
+    renderMCPManagement();renderAgents();toast('已添加到当前项目','ok');
+  }catch(e){toast(e.message,'err');button.disabled=false;button.textContent=label}
 }
 function scopedMCPInstallations(){
   const uid=state.currentUser&&!state.currentUser.isGuest?Number(state.currentUser.id):0;
@@ -150,10 +190,12 @@ function renderMCPManagement(){
   hint.innerHTML=personal?`<b>个人 MCP</b><span>仅 ${escapeHTML(userDisplay(state.currentUser)||'当前用户')} 可见。</span>`:`<b>项目 MCP</b><span>添加到「${escapeHTML(project?.name||'未选择项目')}」，不会出现在其他项目中。</span>`;
   if(personal&&(!state.currentUser||state.currentUser.isGuest)){grid.innerHTML='<div class="mcp-market-empty"><b>登录后才能管理个人 MCP</b><p>项目级 MCP 仍可在当前项目中管理。</p></div>';return}
   const pagedMCP=paginateList('mcp',matchedInstalled);
+  const catalog=personal?'':mcpCatalogSuggestionsHTML(installed,query);
   const cards=pagedMCP.items.map(item=>`<article class="mcp-market-card is-installed"><div class="mcp-card-head"><span class="mcp-card-logo">${mcpMarketLogo(item)}</span><div><h3>${escapeHTML(item.name)}</h3><small>${personal?'个人专属':escapeHTML(project?.name||item.projectId)}</small></div><span class="mcp-installed-badge ${item.marketId?'is-market':'is-custom'}">${item.marketId?'市场':'自定义'}</span></div><p>${escapeHTML(item.description||'暂无说明')}</p><div class="mcp-card-meta">${item.authType==='github-token'?'<span>GitHub 令牌认证</span>':'<span>自定义认证</span>'}<span>${escapeHTML(item.transport||'http')}</span></div><div class="mcp-card-actions"><div class="mcp-action-buttons">${item.marketId?'':`<button class="button ghost small" type="button" data-mcp-edit="${escapeHTML(item.id)}">修改</button>`}<button class="button ghost small danger" type="button" data-mcp-remove="${escapeHTML(item.id)}">移除</button></div></div></article>`).join('');
-  grid.innerHTML=cards||(query?'<div class="mcp-market-empty"><b>没有匹配的 MCP</b><p>换个关键词试试。</p></div>':`<div class="mcp-market-empty"><b>当前范围还没有 MCP</b><p>点击右上角「添加 MCP」，${personal?'创建个人专属配置':'为本项目接入工具'}。</p></div>`);
+  grid.innerHTML=catalog+(cards||(query?'<div class="mcp-market-empty"><b>没有匹配的 MCP</b><p>换个关键词试试。</p></div>':`<div class="mcp-market-empty"><b>当前范围还没有 MCP</b><p>点击右上角「添加 MCP」，${personal?'创建个人专属配置':'为本项目接入工具'}。</p></div>`));
   if(cards)grid.insertAdjacentHTML('beforeend',pagerHTML('mcp',pagedMCP));
   bindMCPLogoFallbacks(grid);
+  grid.querySelectorAll('[data-mcp-install]').forEach(button=>button.onclick=()=>installMarketMCP(button.dataset.mcpInstall,button));
   grid.querySelectorAll('[data-mcp-edit]').forEach(button=>button.onclick=()=>openCustomMCPModal(state.data.mcpServers.find(item=>item.id===button.dataset.mcpEdit)));
   grid.querySelectorAll('[data-mcp-remove]').forEach(button=>button.onclick=()=>removeInstalledMCP(button.dataset.mcpRemove,button));
   bindPager(grid);

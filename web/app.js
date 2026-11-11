@@ -726,6 +726,9 @@ function genericTemplateMCPOptions(selected){
     const alias=(item.aliases||[]).find(key=>wanted.includes(key));
     if(alias||wanted.includes(item.id))add(alias||item.id,item.name,item.description);
   }
+  // The server resolves these aliases from its embedded catalog, so they stay
+  // selectable even if the catalog request has not finished or failed.
+  for(const id of wanted)add(id,id==='github'?'GitHub':id);
   for(const id of selected||[]){
     if(seen.has(id))continue;
     const item=(state.mcpMarket||[]).find(m=>m.id===id||(m.aliases||[]).includes(id));
@@ -932,6 +935,7 @@ async function boot(){
   state.workflowDirty = false;
   if(state.workflow?.id)localStorage.setItem('agentflow.activeWorkflow',state.workflow.id);
   renderProjectSwitcher(); updateApprovalBadge();
+  ensureMCPMarketCatalog().then(()=>{if(activeViewName()==='sops')renderSOPCatalog()});
   listenForGongfengOAuth();
   window.addEventListener('hashchange',async()=>{
     const name=restoredView();
