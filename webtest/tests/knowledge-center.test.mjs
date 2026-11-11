@@ -145,15 +145,15 @@ test('knowledge center lists source names, browses Git docs, links citations, an
   assert.ok(hitCite, '搜索结果里的 Git 出处应可点');
   assert.match(hitCite.getAttribute('href'), /github\.com\/example\/repo\/blob\/abcdef1.*docs\/guide\.md#L1-L2$/);
 
-  // Git 登记地址不触发浏览器原生气泡：SSH 地址和空地址都用页面中文提示。
+  // Git 登记地址不触发浏览器原生气泡：不支持的协议和空地址都用页面中文提示。
   body.querySelector('[data-kb-tab="bases"]').click();
   await settle(3);
   const gitForm = app.document.querySelector('#kbGitForm');
   const before = app.router.calls.filter((c) => c.method === 'POST' && c.path === '/api/knowledge/bases/sources').length;
-  gitForm.elements.gitUrl.value = 'git@github.com:Tencent/LoopForge.git';
+  gitForm.elements.gitUrl.value = 'ftp://example.com/repo.git';
   gitForm.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
-  assert.match(app.document.querySelector('#kbGitResult').textContent, /必须是公开 http\(s\) 仓库地址/);
+  assert.match(app.document.querySelector('#kbGitResult').textContent, /HTTPS 或 SSH 仓库地址/);
   gitForm.elements.gitUrl.value = '';
   gitForm.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
@@ -174,4 +174,43 @@ test('knowledge center lists source names, browses Git docs, links citations, an
   const flows = readFileSync(path.join(WEB_ROOT, 'app/flows.js'), 'utf8');
   assert.match(flows, /只读检索本项目知识库/);
   assert.doesNotMatch(flows, /knowledge\.md|知识沉淀审核队列/);
+});
+
+test('shared libraries can be loaded, browsed read-only and managed separately by admins', async (t) => {
+  let loaded = false;
+  const shared = { id: 'shared', name: '公共规范', layer: 'shared', sources: [{ id: 'shared-docs', baseId: 'shared', kind: 'hosted', name: '公共文档', status: 'ready' }] };
+  const app = await loadApp({ routes: [
+    { method: 'GET', path: '/api/knowledge/bases?projectId=project-1', body: () => ({ bases: [...overview.bases, ...(loaded ? [shared] : [])] }) },
+    { method: 'GET', path: '/api/knowledge/bases?projectId=', body: { bases: [shared] } },
+    { method: 'GET', path: '/api/knowledge/bases/bindings?projectId=project-1', body: () => [{ id: 'shared', name: '公共规范', layer: 'shared', loaded }] },
+    { method: 'PUT', path: '/api/knowledge/bases/bindings', body: () => { loaded = true; return { updated: true }; } },
+    { method: 'GET', path: /^\/api\/knowledge\/bases\/documents\?/, body: gitDocs },
+  ] });
+  t.after(app.close);
+  await app.evaluate('renderKnowledgeView()');
+  const toggle = app.document.querySelector('[data-kb-binding="shared"]');
+  assert.ok(toggle, '项目管理者能勾选公共库');
+  toggle.click(); await settle(6);
+  const bindingCall = app.router.calls.find((c) => c.method === 'PUT' && c.url.pathname === '/api/knowledge/bases/bindings');
+  assert.deepEqual(bindingCall.body, { projectId: 'project-1', baseId: 'shared', enabled: true });
+  app.document.querySelector('[data-kb-tab="docs"]').click(); await settle(3);
+  chooseOption(app.document.querySelector('#kbDocsSource'), 'shared-docs'); await settle(3);
+  assert.equal(app.document.querySelector('#kbNewDoc'), null, '公共库文档仅可读');
+  assert.match(app.document.querySelector('#kbDocsSource').textContent, /公共规范/);
+  app.document.querySelector('#kbSharedManage').click(); await settle(5);
+  assert.ok(app.document.querySelector('#kbSharedCreateForm'), '管理员在独立范围管理公共库');
+  assert.equal(app.document.querySelector('[data-kb-binding]'), null);
+});
+
+test('ordinary project members see loaded libraries without management controls', async (t) => {
+  const app = await loadApp({ routes: [
+    { method: 'GET', path: '/api/knowledge/bases?projectId=project-1', body: overview },
+    { method: 'GET', path: '/api/knowledge/bases/bindings?projectId=project-1', body: [{ id: 'shared', name: '公共规范', layer: 'shared', loaded: true }] },
+  ] });
+  t.after(app.close);
+  await app.evaluate('state.authRequired=true;state.currentUser={id:22,isPlatformAdmin:false};state.data.projects=[{id:"project-1",ownerId:1,members:[{userId:22,role:"member"}]}];renderKnowledgeView()');
+  assert.equal(app.document.querySelector('#kbSharedManage'), null);
+  const toggle = app.document.querySelector('[data-kb-binding="shared"]');
+  assert.ok(toggle.checked);
+  assert.ok(toggle.disabled);
 });

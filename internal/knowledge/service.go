@@ -111,6 +111,7 @@ func (s *Service) Sources(ctx context.Context, projectID string) ([]SourceView, 
 	out := make([]SourceView, 0, len(list))
 	for _, src := range list {
 		if SourceAllowed(allowed, src.ID) {
+			src.BaseOrigin = s.sourceOrigin(src.ID)
 			out = append(out, SourceView{Source: src, Allowed: true})
 		}
 	}
@@ -147,6 +148,7 @@ func (s *Service) Search(ctx context.Context, projectID, query string, sources [
 	if err != nil {
 		return SearchOutput{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
 	}
+	s.rankOrigins(&result)
 	return SearchOutput{Result: result, Sources: scoped, LatencyMs: s.now().Sub(started).Milliseconds()}, nil
 }
 
@@ -170,6 +172,7 @@ func (s *Service) Document(ctx context.Context, projectID, source, path string, 
 	if err != nil {
 		return Document{}, apperr.New(apperr.Upstream, "读取原文失败："+err.Error())
 	}
+	doc.BaseOrigin = s.sourceOrigin(source)
 	return doc, nil
 }
 
@@ -349,7 +352,7 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	if source == "" {
 		return item, apperr.New(apperr.Invalid, "请先选择写入的知识库来源")
 	}
-	if !SourceAllowed(s.AllowedSources(item.ProjectID), source) {
+	if !s.projectWritableSource(item.ProjectID, source) {
 		return item, apperr.New(apperr.Forbidden, "该知识库来源不在项目授权范围内")
 	}
 	path, ok := NormalizeDocPath(item.Path)
@@ -450,10 +453,13 @@ func (s *Service) connect() (Upstream, error) {
 	return s.upstream, nil
 }
 func (s *Service) AllowedSources(project string) []string {
-	out := []string{}
 	if strings.TrimSpace(project) == "" {
-		return out
+		return []string{}
 	}
+	if ms, err := s.managed(); err == nil {
+		return allowedSourceIDs(ms, project)
+	}
+	out := []string{}
 	for _, binding := range s.store.KnowledgeBindings(project) {
 		for _, src := range s.store.KnowledgeSources(binding.BaseID) {
 			out = append(out, src.ID)

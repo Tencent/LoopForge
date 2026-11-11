@@ -29,7 +29,15 @@ func IsReadOnlyTool(name string) bool {
 
 var ErrNotConfigured = errors.New("内置知识引擎不可用")
 
+// BaseOrigin identifies the knowledge layer without changing versioned citations.
+type BaseOrigin struct {
+	BaseID   string `json:"base_id,omitempty"`
+	BaseName string `json:"base_name,omitempty"`
+	Layer    string `json:"layer,omitempty"`
+}
+
 type Source struct {
+	BaseOrigin
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Status      string `json:"status"`
@@ -38,6 +46,7 @@ type Source struct {
 }
 
 type SearchHit struct {
+	BaseOrigin
 	Source    string  `json:"source"`
 	Commit    string  `json:"commit"`
 	Path      string  `json:"path"`
@@ -64,6 +73,7 @@ type Line struct {
 }
 
 type Document struct {
+	BaseOrigin
 	Source    string `json:"source"`
 	Commit    string `json:"commit"`
 	Path      string `json:"path"`

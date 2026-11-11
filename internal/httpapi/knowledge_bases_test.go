@@ -15,6 +15,7 @@ import (
 	"agentflow/internal/engine"
 	"agentflow/internal/knowledge"
 	kbengine "agentflow/internal/knowledge/engine"
+	"agentflow/internal/notification"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
@@ -61,7 +62,7 @@ func newKBMgmtServer(t *testing.T) (*repo.Store, http.Handler) {
 		return &memKeywordIndex{store: st}
 	}
 	t.Cleanup(func() { newKnowledgeKeywordIndex = old; s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := newWithNotifications(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "", notification.New(s), nil, nil, kbengine.NewEngine(s, s, &memKeywordIndex{store: s}))
 	return s, h
 }
 
