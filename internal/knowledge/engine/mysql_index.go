@@ -24,6 +24,12 @@ type mysqlKeywordIndex struct {
 }
 
 func (m *mysqlKeywordIndex) Search(ctx context.Context, query string, sources []string, opts SearchOptions) ([]Hit, error) {
+	// 先去掉问句里的疑问词和语气词，再下推给 ngram 索引。保留空结果而不是
+	// 用原句再查一次：问句成分不承载检索意图，重新加回只会带回弱匹配。
+	query = normalizeSearchQuery(query)
+	if len([]rune(query)) < 2 || len(cjkBigrams(query))+len(latinTokens(query)) == 0 {
+		return []Hit{}, nil
+	}
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = DefaultSearchLimit

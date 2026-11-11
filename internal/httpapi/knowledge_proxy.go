@@ -198,8 +198,17 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, projectID, t
 	case knowledge.ToolSearch:
 		var out knowledge.SearchOutput
 		out, err = svc.Search(ctx, projectID, str("query"), stringList(args["sources"]))
-		value = out.Result
 		hits = len(out.Result.Results)
+		if err == nil && hits == 0 {
+			// 空结果直接给 Agent 一句中文说明，避免模型看到空数组后用
+			// 英文自行编造“No results / Try shorter keywords”之类的提示。
+			value = map[string]any{
+				"query": out.Result.Query, "mode": out.Result.Mode,
+				"results": []knowledge.SearchHit{}, "message": "没有命中。换更短或更具体的关键词再试。",
+			}
+		} else {
+			value = out.Result
+		}
 	case knowledge.ToolFetch:
 		value, err = svc.DocumentVersion(ctx, projectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
 	case knowledge.ToolListSources:
