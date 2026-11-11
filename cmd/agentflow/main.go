@@ -140,6 +140,9 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("storage driver=%v database=%v role=%s", s.StorageInfo()["driver"], s.StorageInfo()["database"], role)
+	// 向量运行时按环境变量装配：未配置 Qdrant/embedding 时所有引擎保持纯
+	// 关键词检索，只有 MySQL 也能用。必须在构造任何知识引擎之前调用。
+	knowledgeengine.ConfigureVectorFromEnv(s, s)
 	e := engine.New(s, runtime.NewManagerWithLimit(root, *workerConcurrency))
 	runtime.PrebuildIsolatedImage()
 	host, _ := os.Hostname()

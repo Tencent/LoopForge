@@ -130,6 +130,8 @@ func (r *KnowledgeRepo) PutKnowledgeBase(base domain.KnowledgeBase) error {
 	}
 	row := knowledgeBaseRow{
 		ID: base.ID, Name: base.Name, Layer: base.Layer, OwnerUserID: base.OwnerUserID,
+		VectorEnabled: base.VectorEnabled, EmbeddingModel: base.EmbeddingModel,
+		EmbeddingDim: base.EmbeddingDim, QdrantCollection: base.QdrantCollection,
 		Created: &created, Updated: &now,
 	}
 	if base.ProjectID != "" {
@@ -137,9 +139,25 @@ func (r *KnowledgeRepo) PutKnowledgeBase(base domain.KnowledgeBase) error {
 		row.ProjectID = &projectID
 	}
 	return r.DB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"project_id", "name", "layer", "owner_user_id", "updated_at"}),
+		Columns: []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"project_id", "name", "layer", "owner_user_id",
+			"vector_enabled", "embedding_model", "embedding_dim", "qdrant_collection", "updated_at",
+		}),
 	}).Create(&row).Error
+}
+
+// SetKnowledgeVectorConfig 只更新一行的向量配置，避免用整行 upsert 覆盖
+// 其它字段。启用/停用向量、换模型后重建 collection 都走这里。
+func (r *KnowledgeRepo) SetKnowledgeVectorConfig(id string, enabled bool, model string, dim int, collection string) error {
+	return r.DB.Model(&knowledgeBaseRow{}).Where("id = ?", strings.TrimSpace(id)).
+		Updates(map[string]any{
+			"vector_enabled":    enabled,
+			"embedding_model":  model,
+			"embedding_dim":    dim,
+			"qdrant_collection": collection,
+			"updated_at":       time.Now().UTC(),
+		}).Error
 }
 
 func (r *KnowledgeRepo) KnowledgeBase(id string) (domain.KnowledgeBase, bool) {
@@ -167,7 +185,11 @@ func (r *KnowledgeRepo) KnowledgeBases(projectID string) []domain.KnowledgeBase 
 }
 
 func knowledgeBaseFromRow(row knowledgeBaseRow) domain.KnowledgeBase {
-	out := domain.KnowledgeBase{ID: row.ID, Name: row.Name, Layer: row.Layer, OwnerUserID: row.OwnerUserID}
+	out := domain.KnowledgeBase{
+		ID: row.ID, Name: row.Name, Layer: row.Layer, OwnerUserID: row.OwnerUserID,
+		VectorEnabled: row.VectorEnabled, EmbeddingModel: row.EmbeddingModel,
+		EmbeddingDim: row.EmbeddingDim, QdrantCollection: row.QdrantCollection,
+	}
 	if row.ProjectID != nil {
 		out.ProjectID = *row.ProjectID
 	}

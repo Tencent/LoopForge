@@ -46,6 +46,17 @@ services:
       AGENTFLOW_GATE_MCP_BINARY: /app/bin/agentflow-gate-mcp-{os}-{arch}
       # Claude Code is not bundled; it is installed from npm here on first use.
       AGENTFLOW_RUNTIME_CLI_DIR: ${LOOPFORGE_DATA_DIR}/cli
+      # 可选向量检索：默认全部留空，平台保持纯关键词检索（只有 MySQL 即可）。
+      # 启用 vector profile 时由部署显式设置这些值（见 docs 与启用命令）。
+      AGENTFLOW_KB_QDRANT_URL: ${AGENTFLOW_KB_QDRANT_URL:-}
+      AGENTFLOW_KB_QDRANT_API_KEY: ${AGENTFLOW_KB_QDRANT_API_KEY:-}
+      AGENTFLOW_KB_QDRANT_COLLECTION: ${AGENTFLOW_KB_QDRANT_COLLECTION:-}
+      AGENTFLOW_KB_EMBEDDING_PROVIDER: ${AGENTFLOW_KB_EMBEDDING_PROVIDER:-}
+      AGENTFLOW_KB_EMBEDDING_URL: ${AGENTFLOW_KB_EMBEDDING_URL:-}
+      AGENTFLOW_KB_EMBEDDING_API_KEY: ${AGENTFLOW_KB_EMBEDDING_API_KEY:-}
+      AGENTFLOW_KB_EMBEDDING_MODEL: ${AGENTFLOW_KB_EMBEDDING_MODEL:-}
+      AGENTFLOW_KB_EMBEDDING_DIM: ${AGENTFLOW_KB_EMBEDDING_DIM:-}
+      AGENTFLOW_KB_EMBEDDING_MAX_LENGTH: ${AGENTFLOW_KB_EMBEDDING_MAX_LENGTH:-}
     command: ["-workspaces", "${LOOPFORGE_DATA_DIR}/workspaces"]
     volumes:
       - platform-data:/data
@@ -63,6 +74,56 @@ services:
       retries: 60
       start_period: 10s
     restart: unless-stopped
+
+  # ===== 可选 profile：向量检索 =====
+  # docker compose --profile vector up -d --build qdrant embedding
+  # 平台对二者是弱依赖：不可用或停掉时自动降级为关键词检索并在结果里标记。
+  # 镜像均来自公开来源；embedding 模型固定 Hugging Face 版本与 SHA-256 校验值。
+  qdrant:
+    profiles: [vector]
+    image: qdrant/qdrant:v1.12.5
+    ports:
+      - "127.0.0.1:${LOOPFORGE_QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  embedding:
+    profiles: [vector]
+    # 本地构建标签，镜像由公开 python 基础镜像 + 固定版本模型构建；可按需用
+    # 已构建好的等价镜像覆盖（LOOPFORGE_EMBEDDING_IMAGE），仓库内不写内部镜像名。
+    image: ${LOOPFORGE_EMBEDDING_IMAGE:-loopforge-kb-embedding:bge-m3-onnx-int8}
+    build:
+      context: ./deploy/embedding-sidecar
+    environment:
+      EMBEDDING_MODEL: ${LOOPFORGE_EMBEDDING_MODEL:-gpahal/bge-m3-onnx-int8}
+      EMBEDDING_REVISION: ${LOOPFORGE_EMBEDDING_REVISION:-2b34e84df040034d4b9eabb62383a87c18955822}
+      EMBEDDING_ONNX_SHA256: ${LOOPFORGE_EMBEDDING_ONNX_SHA256:-16de7ea1146ca427e14938ec3e9abfdcaff0e6ac76434cd693ac35d761250bcb}
+      EMBEDDING_DIM: ${LOOPFORGE_EMBEDDING_DIM:-1024}
+      EMBEDDING_MAX_LENGTH: ${LOOPFORGE_EMBEDDING_MAX_LENGTH:-256}
+      EMBEDDING_CACHE_DIR: /models/cache
+      HF_HOME: /models/huggingface
+      EMBEDDING_HEALTH_HOST: 127.0.0.1
+      EMBEDDING_HEALTH_TIMEOUT: "170"
+    ports:
+      - "127.0.0.1:${LOOPFORGE_EMBEDDING_PORT:-8081}:8081"
+    volumes:
+      - embedding-models:/models
+    healthcheck:
+      test: ["CMD", "python", "server.py", "--healthcheck"]
+      interval: 15s
+      timeout: 180s
+      start_period: 10m
+      retries: 3
+    restart: unless-stopped
+
 volumes:
   mysql-data:
   platform-data:
+  qdrant-data:
+  embedding-models:
