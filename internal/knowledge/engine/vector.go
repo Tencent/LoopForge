@@ -149,6 +149,18 @@ func (v *VectorRuntime) SyncSource(ctx context.Context, sourceID string) error {
 	return v.indexChunks(ctx, v.content.KnowledgeChunksBySource(sourceID))
 }
 
+// DeindexDocument 在文档撤回时删掉该文档路径的向量点，供
+// Engine.SetVectorDeindexer 接线。正文与索引块已由 RetractDocument 删除，
+// 这里只清 Qdrant 缓存：按 source+path 过滤删除，与增量更新用的是同一个
+// 已有删除接口。全局向量未启用时是安全的空操作；对从未建过向量、或向量
+// 开关后来被关掉的来源，删除也是幂等的（无匹配点即无操作）。
+func (v *VectorRuntime) DeindexDocument(ctx context.Context, sourceID, path string) error {
+	if !v.cfg.Enabled() {
+		return nil
+	}
+	return v.qdrant.DeleteByFilter(ctx, v.cfg.Collection, sourceID, path)
+}
+
 func (v *VectorRuntime) sourceVectorEnabled(sourceID string) bool {
 	if v.control == nil {
 		return false

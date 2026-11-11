@@ -665,20 +665,39 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 // 内置知识引擎控制面（主库，KnowledgeRepo）。向量配置列由 028 脚本补建；
 // gorm 的增量 DDL 建得出普通列，这里注册后新装也能带全列。
 type knowledgeBaseRow struct {
-	ID               string     `gorm:"column:id;primaryKey;size:64"`
-	ProjectID        *string    `gorm:"column:project_id;size:64;index:idx_knowledge_bases_project;uniqueIndex:uq_knowledge_bases_project_layer"`
-	Name             string     `gorm:"column:name;size:255"`
-	Layer            string     `gorm:"column:layer;size:32;uniqueIndex:uq_knowledge_bases_project_layer"`
-	OwnerUserID      int64      `gorm:"column:owner_user_id"`
-	VectorEnabled    bool       `gorm:"column:vector_enabled"`
-	EmbeddingModel   string     `gorm:"column:embedding_model;size:255"`
-	EmbeddingDim     int        `gorm:"column:embedding_dim"`
-	QdrantCollection string     `gorm:"column:qdrant_collection;size:255"`
-	Created          *time.Time `gorm:"column:created_at"`
-	Updated          *time.Time `gorm:"column:updated_at"`
+	ID                  string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID           *string    `gorm:"column:project_id;size:64;index:idx_knowledge_bases_project;uniqueIndex:uq_knowledge_bases_project_layer"`
+	Name                string     `gorm:"column:name;size:255"`
+	Layer               string     `gorm:"column:layer;size:32;uniqueIndex:uq_knowledge_bases_project_layer"`
+	OwnerUserID         int64      `gorm:"column:owner_user_id"`
+	VectorEnabled       bool       `gorm:"column:vector_enabled"`
+	EmbeddingModel      string     `gorm:"column:embedding_model;size:255"`
+	EmbeddingDim        int        `gorm:"column:embedding_dim"`
+	QdrantCollection    string     `gorm:"column:qdrant_collection;size:255"`
+	SedimentPublishMode string     `gorm:"column:sediment_publish_mode;size:16"`
+	SedimentRules       []byte     `gorm:"column:sediment_rules;type:json"`
+	Created             *time.Time `gorm:"column:created_at"`
+	Updated             *time.Time `gorm:"column:updated_at"`
 }
 
 func (knowledgeBaseRow) TableName() string { return "knowledge_bases" }
+
+// knowledgeTombstoneRow 是撤回墓碑（控制面）。主键是项目加内容指纹；不再
+// 保存正文，只保留出处与撤回元数据。
+type knowledgeTombstoneRow struct {
+	ProjectID    string     `gorm:"column:project_id;primaryKey;size:64"`
+	Fingerprint  string     `gorm:"column:fingerprint;primaryKey;size:64"`
+	BaseID       string     `gorm:"column:base_id;size:64"`
+	SourceID     string     `gorm:"column:source_id;size:64"`
+	Path         string     `gorm:"column:path;size:512"`
+	SubmissionID string     `gorm:"column:submission_id;size:64"`
+	Title        string     `gorm:"column:title;size:512"`
+	Reason       string     `gorm:"column:reason;size:255"`
+	CreatedBy    string     `gorm:"column:created_by;size:255"`
+	Created      *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeTombstoneRow) TableName() string { return "knowledge_tombstones" }
 
 type knowledgeSourceRow struct {
 	CredentialCiphertext string     `gorm:"column:credential_ciphertext;type:text"`
@@ -833,7 +852,7 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSubmissionRow{},
-		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeWritebackRow{},
+		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
 		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}

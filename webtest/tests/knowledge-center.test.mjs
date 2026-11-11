@@ -160,12 +160,12 @@ test('knowledge center lists source names, browses Git docs, links citations, an
   assert.match(app.document.querySelector('#kbGitResult').textContent, /必填/);
   assert.equal(app.router.calls.filter((c) => c.method === 'POST' && c.path === '/api/knowledge/bases/sources').length, before);
 
-  // 审核空态不再承诺 knowledge.md 入队。
+  // 审核空态准确说明：knowledge.md 在闭环后自动入队，Agent 仍只读。
   body.querySelector('[data-kb-tab="distill"]').click();
   await settle(2);
   const audit = app.document.querySelector('#knowledgeBody').textContent;
-  assert.match(audit, /Agent 对知识库只读/);
-  assert.doesNotMatch(audit, /knowledge\.md|写出.*审核/);
+  assert.match(audit, /knowledge\.md/);
+  assert.match(audit, /自动入队/);
 
   // 角色列表的「配置」列会显示知识库开关，不再与之矛盾。
   const summary = app.evaluate(`agentConfigSummary({knowledgeBase:true})`);
@@ -173,7 +173,7 @@ test('knowledge center lists source names, browses Git docs, links citations, an
   assert.doesNotMatch(summary, /true/);
   const flows = readFileSync(path.join(WEB_ROOT, 'app/flows.js'), 'utf8');
   assert.match(flows, /只读检索本项目知识库/);
-  assert.doesNotMatch(flows, /knowledge\.md|知识沉淀审核队列/);
+  assert.match(flows, /自动加入审核队列/);
 });
 
 test('shared libraries can be loaded, browsed read-only and managed separately by admins', async (t) => {

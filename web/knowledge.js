@@ -8,7 +8,9 @@ const KB_TOOLS=[
   ['kb_list_sources','列出当前项目可用的知识库来源'],
   ['kb_get_source','查看来源状态与文档清单'],
 ];
-const KB_SUB_STATUS={pending:['待审核','warn'],published:['已写回','ok'],rejected:['已驳回','']};
+const KB_SUB_STATUS={pending:['待审核','warn'],published:['已写回','ok'],rejected:['已驳回',''],retracted:['已撤回','']};
+const KB_SEDIMENT_MODE={review:'人工审核',auto:'门禁全过自动发布'};
+const KB_SIGNAL_LABEL={run_succeeded:'SOP 运行成功',mr_merged:'合并请求已合并',issue_completed:'需求完成',gate_approved:'人工关卡通过'};
 const KB_WRITE_STATUS={pending:['写回中','warn'],branch_pushed:['已推分支','warn'],mr_open:['合并请求待合并','warn'],merged:['已合并','ok'],closed:['合并请求已关闭',''],failed:['写回失败','err']};
 function kbWriteStatus(d){return KB_WRITE_STATUS[d?.mrStatus]||null}
 function kbSafeHref(url){const u=String(url||'');return /^https?:\/\//i.test(u)?u:''}
@@ -253,7 +255,12 @@ function kbRenderBases(body){
   const writableBases=bases.filter(b=>kbAdminScope()?b.layer==='shared':b.layer==='project');
   const baseOptions=writableBases.map(b=>`<option value="${escapeHTML(b.id)}">${escapeHTML(b.name||b.id)}</option>`).join('');
   const left=`
-    ${kbPanel(kbPanelTitle(kbAdminScope()?'公共知识库':'本项目与已加载的公共库',kbAdminScope()?'维护公共来源，供多个项目只读加载':'项目知识优先；公共知识只读'),bases.length?bases.map(b=>kbRow(kbText(`<span class="mono">${escapeHTML(b.id)}</span>`,`${escapeHTML(b.name||'')} · ${escapeHTML(kbLayerLabel(b.layer))}`),kbValue(`${(b.sources||[]).length} 个来源`))).join(''):'<div class="kb-empty">还没有知识库</div>',{label:'项目知识库'})}
+    ${kbPanel(kbPanelTitle(kbAdminScope()?'公共知识库':'本项目与已加载的公共库',kbAdminScope()?'维护公共来源，供多个项目只读加载':'项目知识优先；公共知识只读'),bases.length?bases.map(b=>{
+      const canConfig=canManage&&(kbAdminScope()?b.layer==='shared':b.layer==='project');
+      const mode=KB_SEDIMENT_MODE[b.sedimentPublishMode]||KB_SEDIMENT_MODE.review;
+      const action=canConfig?`<button type="button" class="kb-btn small" data-kb-sediment="${escapeHTML(b.id)}">沉淀配置</button>`:'';
+      return kbRow(kbText(`<span class="mono">${escapeHTML(b.id)}</span>`,`${escapeHTML(b.name||'')} · ${escapeHTML(kbLayerLabel(b.layer))} · ${escapeHTML(mode)}`),`${action}${kbValue(`${(b.sources||[]).length} 个来源`)}`);
+    }).join(''):'<div class="kb-empty">还没有知识库</div>',{label:'项目知识库'})}
     ${kbAdminScope()?kbSharedCreateHTML():kbSharedBindingsHTML()}
     ${canManage&&writableBases.length?kbPanel(kbPanelTitle('登记 Git 来源','HTTPS 或 SSH；私有仓库按来源配置服务级凭据'),`
       <form id="kbGitForm" class="kb-src-form">
@@ -309,6 +316,7 @@ function kbRenderBases(body){
       await renderKnowledgeView();
     }catch(err){btn.disabled=false;toast(err.message,'err')}
   });
+  body.querySelectorAll('[data-kb-sediment]').forEach(btn=>btn.onclick=()=>kbOpenSedimentConfig(btn.dataset.kbSediment));
   body.querySelectorAll('[data-kb-del]').forEach(btn=>btn.onclick=async()=>{
     const src=kbSourceById(btn.dataset.kbDel);
     if(!src)return;
@@ -513,7 +521,7 @@ function kbRenderUsage(body){
       return kbRow(kbText(escapeHTML(r.name||r.id),escapeHTML(desc)),kbSwitch(r.on,r.name||r.id,{disabled:busy,attrs:`data-kb-agent="${escapeHTML(r.id)}"${busy?' aria-busy="true"':''}`}),{icon:'robot'});
     }).join(''):'<div class="kb-line-note">当前项目还没有可开启的角色</div>'}
     ${kbRow(kbText('运行时注入的工具与规则'),kbValue(`${KB_TOOLS.length} 个只读工具`),{go:true,icon:'settings',attrs:'data-kb-key="inject" data-kb-inject'})}`;
-  body.innerHTML=kbPanel(kbPanelTitle('角色','开启后，该角色运行时可只读检索知识库'),list,{label:'角色'});
+  body.innerHTML=kbPanel(kbPanelTitle('角色','开启后可只读检索；运行产出的 knowledge.md 在闭环后自动入审核队列'),list,{label:'角色'});
   window.AgentFlowHarnessIcons?.hydrate(body);
   body.querySelectorAll('[data-kb-agent]').forEach(sw=>sw.onclick=()=>kbToggleAgent(sw.dataset.kbAgent,sw.getAttribute('aria-checked')!=='true',sw));
   body.querySelector('[data-kb-inject]').onclick=kbOpenInject;
@@ -549,11 +557,43 @@ function kbOpenInject(){
     ${KB_TOOLS.map(([n,d])=>kbRow(kbText(`<span class="mono">${n}</span>`,escapeHTML(d)))).join('')}
     ${kbRow(kbText('<span class="mono kb-off">kb_write_document</span>','不对 Agent 开放，写入只能经知识中心的托管文档编辑'))}
     ${kbCaption('说明')}
-    <div class="kb-cap">角色开启知识库开关后，运行时注入这 4 个只读工具与「知识库使用规范」；节点启动时平台签发限定本项目的只读令牌。</div>`;
-  kbDrawerOpen('运行时注入的工具与规则','Agent 完全只读',body);
+    <div class="kb-cap">角色开启知识库开关后，运行时注入这 4 个只读工具与「知识库使用规范」；节点启动时平台签发限定本项目的只读令牌。Agent 本身仍完全只读；运行到达闭环后，平台把该角色产出的 knowledge.md 自动加入审核队列，审核通过或门禁全过后才写回。</div>`;
+  kbDrawerOpen('运行时注入的工具与规则','Agent 只读，沉淀由平台在闭环后入队',body);
 }
 
-// ---------- 审核（保留，不作为体验主路径） ----------
+// ---------- 沉淀配置 ----------
+async function kbOpenSedimentConfig(baseId){
+  let config;
+  try{config=await api(`/api/knowledge/bases/sediment?projectId=${encodeURIComponent(kbProjectId())}&baseId=${encodeURIComponent(baseId)}`)}
+  catch(err){toast(err.message,'err');return}
+  const rules=(config.rules||[]).filter(r=>r.enabled!==false).map(r=>`${r.name}=${r.pattern}`).join('\n');
+  const body=`
+    <p class="kb-lead">闭环信号到达后，运行产出的 <code>knowledge.md</code> 会自动进入审核队列。这里决定通过后是否还要人工点写回，以及哪些内容按敏感信息拦截。</p>
+    <form id="kbSedimentForm" autocomplete="off">
+      <div class="kb-field"><label for="kbSedimentMode">发布模式</label><select id="kbSedimentMode" class="kb-input" name="mode">
+        <option value="review"${config.mode!=='auto'?' selected':''}>人工审核（默认）：门禁通过后等待审核人写回</option>
+        <option value="auto"${config.mode==='auto'?' selected':''}>门禁全过自动发布：直接走已有写回</option>
+      </select></div>
+      <div class="kb-field"><label for="kbSedimentRules">敏感规则</label><textarea id="kbSedimentRules" class="kb-input mono" name="rules" rows="8" placeholder="令牌=(?i)token\s*[:=]\s*\S+">${escapeHTML(rules)}</textarea>
+        <div class="kb-cap">每行一条「名称=正则」，留空表示关闭敏感过滤。未配置时使用平台内置的通用规则（令牌、口令、私钥、邮箱、手机号、IPv4、提示词注入）。</div></div>
+    </form>`;
+  kbDrawerOpen('沉淀配置',escapeHTML(baseId),body,'<button type="button" class="kb-btn primary" id="kbSedimentSave">保存配置</button>');
+  $('#kbSedimentSave').onclick=async e=>{
+    const form=$('#kbSedimentForm');const btn=e.currentTarget;btn.disabled=true;
+    const rules=[];
+    for(const line of form.elements.rules.value.split('\n')){
+      const text=line.trim();if(!text)continue;
+      const cut=text.indexOf('=');if(cut<=0)return toast('敏感规则每行应为「名称=正则」','err');
+      rules.push({name:text.slice(0,cut).trim(),pattern:text.slice(cut+1).trim(),enabled:true});
+    }
+    try{
+      await api('/api/knowledge/bases/sediment',{method:'PUT',body:JSON.stringify({projectId:kbProjectId(),baseId, mode:form.elements.mode.value, rules})});
+      toast('已保存沉淀配置','ok');kbDrawerClose();await renderKnowledgeView();
+    }catch(err){btn.disabled=false;toast(err.message,'err')}
+  };
+}
+
+// ---------- 审核 ----------
 function kbRenderDistill(body){
   const items=kb.subStatus==='todo'?kbTodoItems():kb.submissions.filter(x=>x.status===kb.subStatus).map(x=>({kind:'sub',x}));
   const showState=kb.subStatus==='todo';
@@ -566,8 +606,8 @@ function kbRenderDistill(body){
     const write=kbWriteStatus(x);
     const side=showState?kbBadge(escapeHTML(label),tone):(write?kbBadge(escapeHTML(write[0]),write[1]):'');
     return kbRow(kbText(escapeHTML(x.title||'未命名'),escapeHTML(`${x.source||'未选来源'} / ${x.path||'未填路径'}${x.branch?` · 分支 ${x.branch}`:''} · ${relativeTime(x.updatedAt)}`)),side,{go:true,attrs:`data-kb-key="sub:${escapeHTML(x.id)}" data-kb-sub="${escapeHTML(x.id)}"`});
-  }).join(''):`<div class="kb-empty">${showState?'暂无待处理条目。Agent 对知识库只读，写回需在此手动新建或从运行产物加入':'没有条目'}</div>`;
-  body.innerHTML=kbPanel(`${kbSeg([['todo','待处理'],['published','已写回'],['rejected','已驳回']],kb.subStatus,'kb-status',{label:'审核筛选'})}<button type="button" class="kb-btn small" id="kbNewSub" data-kb-key="new">新建</button>`,list,{label:'审核'});
+  }).join(''):`<div class="kb-empty">${showState?'暂无待处理条目。运行产出 knowledge.md 并在闭环信号后自动入队；也可以在这里手动新建或从运行产物加入。':'没有条目'}</div>`;
+  body.innerHTML=kbPanel(`${kbSeg([['todo','待处理'],['published','已写回'],['rejected','已驳回'],['retracted','已撤回']],kb.subStatus,'kb-status',{label:'审核筛选'})}<button type="button" class="kb-btn small" id="kbNewSub" data-kb-key="new">新建</button>`,list,{label:'审核'});
   body.querySelectorAll('[data-kb-status]').forEach(b=>b.onclick=()=>{if(kb.subStatus!==b.dataset.kbStatus){kb.subStatus=b.dataset.kbStatus;kbRender()}});
   body.querySelectorAll('[data-kb-cand]').forEach(el=>el.onclick=()=>{const c=kb.candidates.find(x=>x.artifact?.id===el.dataset.kbCand);if(c)kbOpenCandidate(c)});
   body.querySelectorAll('[data-kb-sub]').forEach(el=>el.onclick=()=>kbOpenSubmission(el.dataset.kbSub));
@@ -604,17 +644,31 @@ function kbSourceOptions(selected){
   return `<option value="">选择来源</option>${all.map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===selected?'selected':''}>${escapeHTML(x.name)}</option>`).join('')}`;
 }
 
+function kbGateHTML(d){
+  const checks=d.gateChecks||[];
+  const signals=(d.sedimentSignals||[]).map(x=>KB_SIGNAL_LABEL[x]||x);
+  if(!checks.length&&!signals.length)return '';
+  const rows=checks.map(c=>`<div class="kb-gate ${c.ok?'ok':'err'}">${kbBadge(c.ok?'通过':'未通过',c.ok?'ok':'err')}<span>${escapeHTML(c.name||c.key)}</span><span class="kb-gate-detail">${escapeHTML(c.detail||'')}</span></div>`).join('');
+  const signalLine=signals.length?`<div class="kb-cap">闭环事件：${escapeHTML(signals.join('、'))}${d.fingerprint?` · 指纹 <code>${escapeHTML(d.fingerprint.slice(0,12))}</code>`:''}</div>`:'';
+  return `<div class="kb-gates"><div class="kb-gates-head">沉淀门禁</div>${rows}${signalLine}</div>`;
+}
+
 function kbRenderEditor(opt={}){
   const d=kb.draft;
   if(!d)return;
   const locked=d.status==='published';
   const isNew=d.status==='new';
-  const dis=locked?' disabled':'';
+  const retracted=d.status==='retracted';
+  const dis=locked||retracted?' disabled':'';
   const sub=isNew?'手动添加一条待审核知识':[d.runId?`来自${kbRunLink(d.runId)}`:'手动创建',d.createdBy?`创建人 ${escapeHTML(d.createdBy)}`:'',d.reviewedBy?`审核人 ${escapeHTML(d.reviewedBy)}`:'',escapeHTML(KB_SUB_STATUS[d.status]?.[0]||'')].filter(Boolean).join(' · ');
   const writeInfo=kbWriteInfoHTML(d);
+  const gateHTML=kbGateHTML(d);
   const body=`
     ${d.error?`<div class="kb-alert">上次写回失败：${escapeHTML(d.error)}</div>`:''}
     ${writeInfo}
+    ${gateHTML}
+    ${locked?`<div class="kb-field"><label for="kbRetractReason">撤回原因</label><div class="kb-field-pair"><select id="kbRetractReason" class="kb-input" name="retractReason"><option>不再适用</option><option>内容错误</option><option>包含敏感信息</option><option>重复</option><option>其他</option></select><span class="kb-hint">撤回会写墓碑、删原文并去索引</span></div></div>`:''}
+    ${retracted?`<div class="kb-alert">该条目已撤回，原文与索引已删除；同内容再次沉淀会被墓碑拦截。</div>`:''}
     <form id="kbEditorForm" autocomplete="off">
       <div class="kb-field"><label for="kbEdTitle">标题</label><input id="kbEdTitle" class="kb-input" type="text" name="title" value="${escapeHTML(d.title||'')}" placeholder="一句话说明这条知识"${dis}></div>
       <div class="kb-field"><label for="kbEdSource">写入位置</label><div class="kb-field-pair"><select id="kbEdSource" class="kb-input" name="source"${dis}>${kbSourceOptions(d.source)}</select><input class="kb-input mono" type="text" name="path" aria-label="文档路径（.md）" value="${escapeHTML(d.path||'')}" placeholder="guides/xxx.md"${dis}></div></div>
@@ -622,8 +676,10 @@ function kbRenderEditor(opt={}){
       ${locked&&!d.reviewNote?'':`<div class="kb-field"><label for="kbEdNote">备注</label><input id="kbEdNote" class="kb-input" type="text" name="reviewNote" value="${escapeHTML(d.reviewNote||'')}" placeholder="可选：驳回原因或修改说明"${dis}></div>`}
     </form>`;
   const writeStatus=kbWriteStatus(d);
+  const gitSource=locked&&kbSourceById(d.source)?.kind==='git';
   const foot=locked
-    ?`${writeStatus?kbBadge(escapeHTML(writeStatus[0]),writeStatus[1]):''}<span class="kb-foot-note kb-ok">已写回${d.commit?` · 版本 <code>${escapeHTML(d.commit.slice(0,10))}</code>`:''}</span>`
+    ?`${writeStatus?kbBadge(escapeHTML(writeStatus[0]),writeStatus[1]):''}<span class="kb-foot-note kb-ok">已写回${d.commit?` · 版本 <code>${escapeHTML(d.commit.slice(0,10))}</code>`:''}</span>${gitSource?'<span class="kb-foot-note">Git 来源请通过删除合并请求撤回</span>':'<button type="button" class="kb-btn quiet" data-kb-act="retract">撤回</button>'}`
+    :retracted?`${kbBadge('已撤回','')}`
     :isNew?'<button type="button" class="kb-btn primary" data-kb-act="create">创建</button>'
     :`<button type="button" class="kb-btn quiet" data-kb-act="delete">删除</button><button type="button" class="kb-btn" data-kb-act="reject">驳回</button><button type="button" class="kb-btn" data-kb-act="save">保存</button><button type="button" class="kb-btn primary" data-kb-act="publish">写回知识库</button>`;
   kbDrawerOpen(isNew?'新建条目':(d.title||'未命名'),sub,body,foot,opt);
@@ -665,6 +721,12 @@ async function kbEditorAction(act,d,values){
     if(act==='save'){kb.draft=await save();toast('已保存','ok');await kbRefresh();kbRender();kbRenderEditor();return}
     if(act==='reject'){await save();await api(`/api/knowledge/submissions/${id}/reject`,{method:'POST',body:JSON.stringify({reviewNote:values().reviewNote})});toast('已驳回');await done();return}
     if(act==='delete'){await api(`/api/knowledge/submissions/${id}`,{method:'DELETE'});toast('已删除');await done();return}
+    if(act==='retract'){
+      const reason=$('#kbRetractReason')?.value||'不再适用';
+      if(!(await afConfirm({title:'撤回这条知识？',message:`原因：${reason}\n\n撤回会写墓碑、删除原文并去索引；同内容不能再次沉淀。`,confirmText:'撤回',danger:true})))return;
+      await api(`/api/knowledge/submissions/${id}/retract`,{method:'POST',body:JSON.stringify({reasonCategory:reason,reasonDetail:(values().reviewNote||'')})});
+      toast('已撤回并写入墓碑');await done();return;
+    }
     if(act==='publish'){
       await save();
       const item=await api(`/api/knowledge/submissions/${id}/publish`,{method:'POST'});

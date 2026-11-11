@@ -500,6 +500,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/knowledge/submissions/:id", api.know.submission)
 	g.POST("/api/knowledge/submissions/:id/publish", api.know.publish)
 	g.POST("/api/knowledge/submissions/:id/reject", api.know.reject)
+	g.POST("/api/knowledge/submissions/:id/retract", api.know.retractSubmission)
 	// 知识中心管理接口（内置引擎）：知识库/来源、托管文档、Git 来源、同步、试搜、读原文。
 	g.POST("/api/knowledge/bases/shared", api.know.sharedBases)
 	g.GET("/api/knowledge/bases/bindings", api.know.sharedBindings)
@@ -515,6 +516,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/bases/search", api.know.basesSearch)
 	g.GET("/api/knowledge/bases/vector", api.know.basesVector)
 	g.POST("/api/knowledge/bases/vector", api.know.basesVector)
+	g.GET("/api/knowledge/bases/sediment", api.know.knowledgeSedimentConfig)
+	g.PUT("/api/knowledge/bases/sediment", api.know.knowledgeSedimentConfigUpdate)
 
 	// --- runs ---
 	g.GET("/api/runs", api.runs.runs)

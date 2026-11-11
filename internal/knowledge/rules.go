@@ -22,9 +22,10 @@ const usageRuleContent = `# 知识库使用规范
 - 托管来源的版本是文档修订号，Git 来源的版本是 commit。
 - 知识库没有覆盖的内容要明确说明"知识库未收录"，不要编造出处。
 
-## 只读边界
+## 只读边界与沉淀
 - 知识库对你只读，不要尝试写入，也不要声称已经写回。
-- 需要新增或修正内容时，在回复里说明，由用户到知识中心处理。
+- 运行到达闭环（SOP 成功、合并请求合并、需求完成或人工关卡通过）后，平台会把本角色产出的 knowledge.md 自动加入审核队列；人工审核通过或知识库配置为门禁全过自动发布时，才由平台写回知识库。
+- 需要新增或修正内容时，把可复用的结论写进 knowledge.md 产物；不要把它当作已发布知识引用。
 `
 
 // UsageRule is the built-in rule injected with the knowledge MCP.
@@ -32,7 +33,7 @@ func UsageRule() domain.RuleDefinition {
 	return domain.RuleDefinition{
 		ID:          domain.KnowledgeUsageRuleID,
 		Name:        "知识库使用规范",
-		Description: "先只读检索本项目知识库再动手，引用附出处；知识库对 Agent 只读",
+		Description: "先只读检索本项目知识库再动手，引用附出处；知识库对 Agent 只读，运行产出的 knowledge.md 由平台在闭环后自动入审核队列",
 		Content:     usageRuleContent,
 		Priority:    50,
 	}
@@ -46,7 +47,7 @@ func MCPServerDefinition(baseURL, proxyToken string) domain.MCPServerDefinition 
 		ID:          domain.KnowledgeMCPServerID,
 		Name:        "项目知识库",
 		Scope:       "project",
-		Description: "本项目知识库只读检索：kb_search / kb_fetch / kb_list_sources / kb_get_source",
+		Description: "本项目知识库只读检索：kb_search / kb_fetch / kb_list_sources / kb_get_source；产出 knowledge.md 由平台自动沉淀",
 		Transport:   "http",
 		URL:         strings.TrimRight(baseURL, "/") + ProxyPath,
 		Headers:     map[string]string{"Authorization": "Bearer " + proxyToken},
