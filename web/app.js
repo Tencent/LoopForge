@@ -14,14 +14,12 @@ const state = {
   projectAdminDetailId:null, projectAdminTab:'basic', projectAdminQuery:'', projectAdminFilter:'all', projectDraftFor:'', projectDraftBase:null, projectIdentCustom:false, projectIdentSeed:'', projectAdminErrors:{},
   sopScope:'project', agentScope:'project', ruleScope:'project', skillScope:'project', dockerfileScope:'project', environmentScope:'project', sandboxScope:'project',
   issueRunFilter:'', issueStatusFilter:'', issueAssigneeFilter:'', issueQuery:'', issueView:localStorage.getItem('agentflow.issueView')||'table',
-  assetType:'dockerfiles', selectedAsset:null, assetQuery:'', assetDirty:false, mcpTab:'market', mcpScope:'project', mcpMarket:[], mcpQuery:'', editingMCPId:'', poll:null, runStream:null,
+  assetType:'dockerfiles', selectedAsset:null, assetQuery:'', assetDirty:false, mcpTab:'installed', mcpScope:'project', mcpMarket:[], mcpQuery:'', editingMCPId:'', poll:null, runStream:null,
   obsTab:'overview', obsDeliveryFilter:'all', obsTraceRunId:null, obsTraceAdapter:'live', obsScope:localStorage.getItem('agentflow.obsScope')==='project'?'project':'user', obsUserFilter:'', obsSourceFilter:'', obsUserFilterReady:false, obsTrendGrain:['day','week','month','all'].includes(localStorage.getItem('agentflow.obsTrendGrain'))?localStorage.getItem('agentflow.obsTrendGrain'):'all', obsPeriodKey:'', obsTrendMetric:['runs','issues','cost'].includes(localStorage.getItem('agentflow.obsTrendMetric'))?localStorage.getItem('agentflow.obsTrendMetric'):'tokens', obsCrossProject:null, drawerOpen:false, issueDetailTab:'overview', issueDetailData:null, propTab:'basic',
   uiScroll:{runId:'', nodeId:'', graphLeft:0, feedTop:0, telTop:0, feedStick:true, telStick:true},
   runLogs:null, runTelemetry:null, runTelemetryAdapter:'live', runWorkspace:null,
-  accessTab:localStorage.getItem('agentflow.accessTab')||'setup', accessClient:'cursor',
-  accessCapabilities:null, accessCapabilitiesStatus:'idle', accessCapabilitiesError:'',
+  accessClient:'cursor',
   accessTokens:[], accessTokensStatus:'idle', accessTokensError:'', revealedToken:'',
-  metricsRange:['7d','30d','90d','365d','custom'].includes(localStorage.getItem('agentflow.metricsRange'))?localStorage.getItem('agentflow.metricsRange'):'30d', metricsDateFrom:localStorage.getItem('agentflow.metricsDateFrom')||'', metricsDateTo:localStorage.getItem('agentflow.metricsDateTo')||'', metricsData:null, metricsIssues:[], metricsLoading:false, metricsError:'', metricsTrendMetric:localStorage.getItem('agentflow.metricsTrendMetric')||'deliveries',
   issueSelectionMode:false, issueSelection:new Set(), issueSelectionScope:'', issueBulkDeleting:false, issueBulkDeleteProgress:null, issueBulkDeleteResult:null,
   listPages:{}
 };
@@ -712,6 +710,9 @@ function genericTemplateMCPOptions(selected){
     const alias=(item.aliases||[]).find(key=>wanted.includes(key));
     if(alias||wanted.includes(item.id))add(alias||item.id,item.name,item.description);
   }
+  // The server resolves these aliases from its embedded catalog, so they stay
+  // selectable even if the catalog request has not finished or failed.
+  for(const id of wanted)add(id,id==='github'?'GitHub':id);
   for(const id of selected||[]){
     if(seen.has(id))continue;
     const item=(state.mcpMarket||[]).find(m=>m.id===id||(m.aliases||[]).includes(id));
@@ -918,6 +919,7 @@ async function boot(){
   state.workflowDirty = false;
   if(state.workflow?.id)localStorage.setItem('agentflow.activeWorkflow',state.workflow.id);
   renderProjectSwitcher(); updateApprovalBadge();
+  ensureMCPMarketCatalog().then(()=>{if(activeViewName()==='sops')renderSOPCatalog()});
   listenForGongfengOAuth();
   window.addEventListener('hashchange',async()=>{
     const name=restoredView();
@@ -1008,12 +1010,6 @@ function bind(){
     }
   },true);
   matchMedia('(max-width:1000px)').addEventListener('change',()=>setSettingsSidebarExpanded(settingsSidebarExpanded()));
-  const capabilityToggle=$('#capabilityNavToggle');if(capabilityToggle)capabilityToggle.onclick=()=>setCapabilityNavExpanded(capabilityToggle.getAttribute('aria-expanded')!=='true');
-  setCapabilityNavExpanded(localStorage.getItem('agentflow.capabilityNavExpanded')==='true');
-  const environmentToggle=$('#environmentNavToggle');if(environmentToggle)environmentToggle.onclick=()=>setEnvironmentNavExpanded(environmentToggle.getAttribute('aria-expanded')!=='true');
-  setEnvironmentNavExpanded(localStorage.getItem('agentflow.environmentNavExpanded')==='true');
-  $$('#accessTabs [data-access-tab]').forEach(btn=>btn.onclick=()=>setAccessTab(btn.dataset.accessTab));
-  $('#guideCreateToken')&&($('#guideCreateToken').onclick=()=>setAccessTab('tokens',true));
   bindFlowDesigner();
   $('#workflowSelect').onchange=e=>switchFlowWorkflow(e.target.value);
   $('#workflowName').oninput=e=>{if(!state.workflow)return;state.workflow.name=e.target.value;dirty()};
@@ -1185,9 +1181,22 @@ function bind(){
       setTimeout(()=>clearInterval(poll),180000);
     }
   });
-  $$('[data-mcp-tab]').forEach(btn=>btn.onclick=()=>{state.mcpTab=btn.dataset.mcpTab;resetListPage('mcp');renderMCPManagement()});
+  $$('[data-asset-type-tab]').forEach(btn=>{
+    btn.onclick=async()=>{
+      const next=btn.dataset.assetTypeTab;
+      if(next===activeViewName()||!(await confirmAssetLeave()))return;
+      switchView(next);
+      $$(`[data-asset-type-tab="${next}"]`).find(tab=>tab.getClientRects().length)?.focus();
+    };
+    btn.onkeydown=e=>{
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+      const tabs=[...btn.parentElement.querySelectorAll('[data-asset-type-tab]')],i=tabs.indexOf(btn);
+      const to=e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+      e.preventDefault();tabs[to].click();
+    };
+  });
   const mcpScopeSelect=$('#mcpScopeSelect');
-  if(mcpScopeSelect){window.enhanceSelect?.(mcpScopeSelect);mcpScopeSelect.onchange=()=>{state.mcpScope=mcpScopeSelect.value==='personal'?'personal':'project';if(state.mcpScope==='personal')state.mcpTab='installed';resetListPage('mcp');renderMCPManagement()}}
+  if(mcpScopeSelect){window.enhanceSelect?.(mcpScopeSelect);mcpScopeSelect.onchange=()=>{state.mcpScope=mcpScopeSelect.value==='personal'?'personal':'project';resetListPage('mcp');renderMCPManagement()}}
   let mcpSearchTimer=0;
   $('#mcpMarketSearch')&&($('#mcpMarketSearch').oninput=e=>{state.mcpQuery=e.target.value.trim().toLowerCase();resetListPage('mcp');clearTimeout(mcpSearchTimer);mcpSearchTimer=setTimeout(()=>renderMCPManagement(),120)});
   $('#newCustomMcp')&&($('#newCustomMcp').onclick=()=>openCustomMCPModal());
@@ -1215,7 +1224,7 @@ function bind(){
   $('#importTAPDIssue')&&($('#importTAPDIssue').onclick=openImportTAPDModal);
   $$('.import-tapd-close').forEach(b=>b.onclick=()=>$('#importTAPDModal').classList.remove('open'));
   $('#importTAPDForm')&&($('#importTAPDForm').onsubmit=importTAPDStory);
-  $('#newScheduleJob').onclick=()=>openScheduleJobModal('dispatch');
+  $('#editScheduleTrigger')&&($('#editScheduleTrigger').onclick=()=>openScheduleJobModal('dispatch'));
   $('#newAISchedule').onclick=()=>{selectAIScheduleTab('project');openScheduleJobModal('assistant')};
   $('#refreshAISchedules').onclick=refreshAISchedules;
   bindSharedScheduleUI();
@@ -1340,7 +1349,6 @@ function bind(){
   $$('[data-jump]').forEach(el=>el.onclick=()=>switchView(el.dataset.jump));
   $('#refreshApprovals').onclick=()=>renderApprovals(false);
   $('#refreshObs').onclick=refreshObs;
-  $('#refreshMetrics').onclick=()=>refreshMetrics(true);
   $('#exportObsReport').onclick=exportObsReport;
   $$('.obs-tab').forEach(btn=>btn.onclick=()=>switchObsTab(btn.dataset.obsTab));
   $$('.drawer-tab').forEach(btn=>btn.onclick=()=>{state.issueDetailTab=btn.dataset.dtab;$$('.drawer-tab').forEach(x=>x.classList.toggle('active',x===btn));renderIssueDetailTab()});
@@ -1354,7 +1362,6 @@ function bind(){
     closeScheduleJobModal();
     state.projectFilter=e.target.value;state.selectedIssue=null;
     if(state.currentView==='aiSchedules')refreshAISchedules();
-    invalidateMetricsForProjectChange();
     localStorage.setItem('agentflow.activeProject',state.projectFilter);
     if($('#botsView')?.classList.contains('active'))loadBots();
     resetListPages();
@@ -1365,8 +1372,6 @@ function bind(){
     renderObsTabs();
     if($('#dashboardView').classList.contains('active'))renderDashboard();
     if($('#observabilityView').classList.contains('active'))refreshObs();
-    if($('#knowledgeView')?.classList.contains('active')&&typeof renderKnowledgeView==='function')renderKnowledgeView();
-    if($('#metricsView').classList.contains('active'))refreshMetrics();
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
@@ -1573,7 +1578,7 @@ function settingsSidebarExpanded(){
 }
 let settingsSidebarEntryFrame=0;
 let settingsSidebarWasManaged=false;
-const settingsManagementViews=['settings','runners','bots','projects','flow','agents','mcp','rules','skills','dockerfiles','environments','sandboxes','knowledge','metrics','businessDomains','guide','platform','businessDomainManagement'];
+const settingsManagementViews=['settings','projects','bots','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','dockerfiles','environments','sandboxes','guide','platform'];
 const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let settingsRouteTransition=null;
 let settingsRouteApplying=false;
@@ -1763,10 +1768,18 @@ function setPlatformRailExpanded(expanded){
   const text=button.querySelector('.rail-label');
   if(text)text.textContent=label;
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'AI 定时任务',bots:'Bot 管理',runs:'运行记录',metrics:'研发效能',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'MCP 管理',rules:'规则管理',skills:'技能管理',dockerfiles:'Dockerfile',environments:'环境安装脚本',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',businessDomains:'业务领域',platform:'平台管理',businessDomainManagement:'领域管理',runners:'执行机器',settings:'个人配置',access:'接入方式',guide:'接入指南',knowledge:'知识中心'}}
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',dockerfiles:'环境资产',environments:'环境资产',sandboxes:'环境资产',observability:'统计',projects:'项目配置',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
+// 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产、环境资产的类型 Tab，
+// 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
+function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}
+const assetTypeGroups={capability:['mcp','rules','skills'],environment:['dockerfiles','environments','sandboxes']};
+function assetTypeGroup(name){return Object.keys(assetTypeGroups).find(key=>assetTypeGroups[key].includes(name))||''}
+function syncAssetTypeTabs(name){
+  const group=assetTypeGroup(name);
+  $$('[data-asset-type-group]').forEach(bar=>{if(bar.closest('#assetsView'))bar.hidden=bar.dataset.assetTypeGroup!==group});
+  $$('[data-asset-type-tab]').forEach(btn=>{const on=btn.dataset.assetTypeTab===name;btn.classList.toggle('active',on);btn.setAttribute('aria-selected',String(on));btn.tabIndex=on?0:-1});
+}
 function activeViewName(){if(state.currentView)return state.currentView;const el=document.querySelector('.view.active');return el?el.id.replace(/View$/,''):''}
-function setCapabilityNavExpanded(expanded){const toggle=$('#capabilityNavToggle'),group=$('#capabilityNavGroup');if(!toggle||!group)return;toggle.setAttribute('aria-expanded',String(expanded));group.hidden=!expanded;localStorage.setItem('agentflow.capabilityNavExpanded',String(expanded))}
-function setEnvironmentNavExpanded(expanded){const toggle=$('#environmentNavToggle'),group=$('#environmentNavGroup');if(!toggle||!group)return;toggle.setAttribute('aria-expanded',String(expanded));group.hidden=!expanded;localStorage.setItem('agentflow.environmentNavExpanded',String(expanded))}
 function restoredView(){
   const titles=viewTitles();
   const hash=(location.hash||'').replace(/^#\/?/,'').split(/[/?]/)[0];
@@ -1905,7 +1918,6 @@ function switchView(name){
   if(!titles[name]||!$(`#${targetView}View`)){name='collaboration'}
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
-  if(name==='businessDomainManagement'&&!canAccessPlatformManagement())name='collaboration';
   const previous=activeViewName();
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
@@ -1916,15 +1928,10 @@ function switchView(name){
   const staying=activeViewName()===name;
   const prevView=state.currentView;
   if(previous==='observability'&&name!=='observability'&&typeof obsDisposeCharts==='function'){obsCollapse?.({silent:true});obsDisposeCharts();obsDisposeSelects?.()}
-  if(previous==='businessDomains'&&name!=='businessDomains'&&typeof businessDisposeView==='function')businessDisposeView();
   state.currentView=name;
-  document.body.classList.toggle('business-report-active',name==='businessDomains');
   if(name!=='runs')stopQueuedRunRefresh();
-  $$('.nav[data-view]').forEach(n=>n.classList.toggle('active',n.dataset.view===name));
-  $('#capabilityNavToggle')?.classList.toggle('child-active',['mcp','rules','skills'].includes(name));
-  if(['mcp','rules','skills'].includes(name))setCapabilityNavExpanded(true);
-  $('#environmentNavToggle')?.classList.toggle('child-active',['dockerfiles','environments','sandboxes'].includes(name));
-  if(['dockerfiles','environments','sandboxes'].includes(name))setEnvironmentNavExpanded(true);
+  $$('.nav[data-view]').forEach(n=>n.classList.toggle('active',settingsNavMatches(n,name)));
+  syncAssetTypeTabs(name);
   $$('.view').forEach(v=>v.classList.remove('active'));
   $(`#${target}View`).classList.add('active');
   $('#pageTitle').textContent=titles[name]||name;
@@ -1939,7 +1946,7 @@ function switchView(name){
   setSettingsSidebarExpanded(!narrowSettings?isPureManagement:staying?settingsSidebarExpanded():!!prevView&&!isSettingsManagementView(previous));
   $('#managementEntry')?.classList.toggle('active', isPureManagement);
   $('#railSettingsEntry')?.classList.toggle('active', isPureManagement);
-  const noSidebarViews = ['issues', 'runs', 'approvals', 'sops', 'observability', 'aiSchedules'];
+  const noSidebarViews = ['issues', 'approvals', 'observability'];
   document.body.classList.toggle('no-sidebar', noSidebarViews.includes(name));
   document.body.classList.toggle('chat-next-active', name==='collaboration');
   if(name==='collaboration'||isPureManagement)mountNativeChat();
@@ -1952,10 +1959,10 @@ function switchView(name){
   persistView(name,!staying&&!!prevView);
   const nav=$('.platform-sidebar nav');
   if(nav){
-    if(['dashboard','issues','approvals','sops'].includes(name)){
+    if(['dashboard','issues','approvals'].includes(name)){
       nav.scrollTop=0;
     }else{
-      const activeBtn=$(`.platform-sidebar .nav[data-view="${name}"]`);
+      const activeBtn=$$('.platform-sidebar .nav[data-view]').find(btn=>settingsNavMatches(btn,name));
       if(activeBtn){
         const navRect=nav.getBoundingClientRect(), btnRect=activeBtn.getBoundingClientRect();
         if(btnRect.top < navRect.top || btnRect.bottom > navRect.bottom){
@@ -1979,16 +1986,12 @@ function switchView(name){
   if(name==='bots')loadBots();
   if(name==='sops'){if(!staying&&state.data){sopCatalogMotion.reset();renderSOPCatalog()}refreshWorkflowMetrics()}
   if(name==='dashboard')refreshDashboard()
-  if(name==='knowledge'&&typeof renderKnowledgeView==='function')renderKnowledgeView()
-  if(name==='metrics'){const key=metricsQueryKey();if(state.metricsDataKey!==key&&metricsPendingKey!==key)refreshMetrics();else renderMetricsDashboard()}
   if(name==='approvals')renderApprovals(false)
   if(name==='observability')refreshObs()
   if(name==='agents'){api('/api/agents',{silent:true}).then(agents=>{state.data.agents=agents;renderAgents()}).catch(e=>toast(e.message));renderAgents();applyAgentRoute()}
   if(name==='settings')renderPersonalSettings();
   if(name==='platform')renderPlatformAdminPanel();
-  if(name==='businessDomainManagement')loadBusinessDomainManagement();
   if(name==='projects')renderProjectAdmin();
-  if(name==='businessDomains')loadBusinessDomains();
   if(assetViews.includes(name)){
     if(staying&&state.assetType===name){if(state.selectedAsset)closeAssetDetail({force:true});else renderAssets()}
     else{
