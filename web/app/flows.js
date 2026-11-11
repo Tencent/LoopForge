@@ -103,6 +103,10 @@ function flowStatusPill(wf){
   if(wf.status==='archived')return {cls:'ro',label:'已归档'};
   return {cls:'draft',label:'草稿'};
 }
+let workflowPublishing=false;
+function workflowNeedsPublish(wf=state.workflow){
+  return !!wf&&(state.workflowDirty||wf.status!=='published'||(wf.publishedRevision||wf.revision)!==wf.revision);
+}
 function renderFlowHeader(){
   const wf=state.workflow;
   const title=$('#flowCommandTitle');
@@ -127,7 +131,9 @@ function renderFlowHeader(){
   }
   const label=$('#saveStateLabel');if(label)label.textContent=pending?'保存':'已保存';
   const top=$('#saveState');if(top){top.textContent=state.workflowDirty?'有未保存更改':'已同步';top.style.color=state.workflowDirty?'#e59a24':''}
-  ['publishWorkflow','flowSettingsQuickSave'].forEach(id=>{const btn=$('#'+id);if(btn)btn.disabled=ro});
+  const publish=$('#publishWorkflow');
+  if(publish){publish.disabled=ro||workflowPublishing||!workflowNeedsPublish(wf);publish.dataset.tip=workflowPublishing?'正在发布':!workflowNeedsPublish(wf)?'当前内容已发布，修改后可发布新版本':'发布为新版本';publish.setAttribute('aria-busy',String(workflowPublishing))}
+  const quickSave=$('#flowSettingsQuickSave');if(quickSave)quickSave.disabled=ro;
   const discard=$('#discardWorkflow');if(discard)discard.hidden=!(wf&&state.workflowDirty);
   $('#flowView')?.classList.toggle('fd-readonly',!!wf&&ro);
   if(typeof flowPalette!=='undefined'&&flowPalette.isSwitcherOpen())flowPalette.renderSwitcher();
@@ -162,7 +168,7 @@ async function switchFlowWorkflow(id){
   if(!id||id===state.workflow?.id)return false;
   const next=(state.data?.workflows||[]).find(w=>w.id===id);
   if(!next){toast('SOP 不存在或已删除');return false}
-  if(state.workflowDirty&&!(await afConfirm({title:'未保存更改',message:'当前流程有未保存修改，切换将放弃这些修改。继续？',danger:true}))){renderWorkflowMeta();return false}
+  if(state.workflowDirty&&!(await afConfirm({title:'放弃修改并切换流程？',message:'当前流程有未保存修改。切换后将丢弃这些修改。',danger:true,confirmText:'放弃修改并切换',cancelText:'继续编辑'}))){renderWorkflowMeta();return false}
   state.workflow=clone(next);state.selectedNode=null;state.connectFrom=null;state.connectCursor=null;state.renamingNode=null;
   markWorkflowClean();flowHistory.clear();rememberOpenWorkflow();renderAll();refreshGenericWorkflowRoles();
   return true;
@@ -1142,5 +1148,16 @@ async function deleteWorkflow(id){
     toast('SOP 已删除')
   }catch(e){toast(e.message||'删除失败')}}
 async function publishWorkflow(){
+  if(workflowPublishing||!workflowNeedsPublish())return;
   if(catalogGeneric(state.workflow)&&!isPlatformAdmin())return toast('通用模板为只读，请先「复制到本项目」再发布');
-  try{await saveWorkflow();const published=await api(`/api/workflows/${state.workflow.id}/publish`,{method:'POST',body:'{}'});state.workflow=clone(published);const i=state.data.workflows.findIndex(w=>w.id===published.id);if(i>=0)state.data.workflows[i]=clone(published);markWorkflowClean();renderWorkflowMeta();toast(`已发布 v${published.version}`)}catch(e){if(!e.message.includes('revision conflict'))toast(e.message)}}
+  workflowPublishing=true;renderFlowHeader();
+  try{
+    const id=state.workflow.id;
+    if(state.workflowDirty||!state.workflow.revision)await saveWorkflow();
+    const published=await api(`/api/workflows/${encodeURIComponent(id)}/publish`,{method:'POST',body:'{}'});
+    const i=state.data.workflows.findIndex(w=>w.id===published.id);if(i>=0)state.data.workflows[i]=clone(published);
+    if(state.workflow?.id===id){state.workflow=clone(published);markWorkflowClean();renderWorkflowMeta()}
+    renderSOPCatalog();toast(`已发布 v${published.version}`);
+  }catch(e){if(!e.message.includes('revision conflict'))toast(e.message)}
+  finally{workflowPublishing=false;renderFlowHeader()}
+}
