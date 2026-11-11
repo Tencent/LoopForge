@@ -17,6 +17,11 @@ function normalizeBaseUrl(value) {
     throw new LoopForgeError('LoopForge server URL must use http:// or https://.');
   }
   if (url.username || url.password || url.search || url.hash) throw new LoopForgeError('Server URL must not include credentials, a query, or a fragment.');
+  // WHATWG URL parsing canonicalizes IPv4 addresses before this comparison.
+  const loopback = url.hostname === 'localhost' || url.hostname === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(url.hostname);
+  if (url.protocol === 'http:' && !loopback) {
+    throw new LoopForgeError('LoopForge server URL must use HTTPS for non-loopback hosts. HTTP is allowed only for localhost, 127.0.0.0/8, or ::1.');
+  }
   return url.toString().replace(/\/$/, '');
 }
 

@@ -19,6 +19,16 @@ test('normalizes and validates server URLs', () => {
   assert.throws(() => normalizeBaseUrl('file:///tmp/loopforge'), /must use http/);
 });
 
+test('allows HTTP only for loopback addresses and requires HTTPS elsewhere', () => {
+  for (const url of ['http://localhost:8090', 'http://LOCALHOST:8090', 'http://127.0.0.1:8090', 'http://127.255.255.255:8090', 'http://[::1]:8090', 'http://127.1:8090']) {
+    assert.doesNotThrow(() => normalizeBaseUrl(url), url);
+  }
+  for (const url of ['http://remote.example:8090', 'http://10.0.0.5:8090', 'http://localhost.example:8090', 'http://127.0.0.1.example:8090', 'http://[::ffff:127.0.0.1]:8090']) {
+    assert.throws(() => new LoopForgeClient({ baseUrl: url, token: 'secret-token' }), /must use HTTPS for non-loopback hosts/, url);
+  }
+  assert.equal(normalizeBaseUrl('https://remote.example:8090/'), 'https://remote.example:8090');
+});
+
 test('sends bearer token and JSON body to the Runs API', async () => {
   const calls = [];
   const client = new LoopForgeClient({

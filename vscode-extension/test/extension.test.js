@@ -7,7 +7,7 @@ function harness() {
   const commands = new Map(), errors = [], documents = [], requests = [], updates = [], messages = [];
   let provider, input = ['Implement this', 'looks good'], picks = [], run;
   const folder = { name: 'project', uri: { fsPath: '/project', scheme: 'file' } };
-  const values = { serverUrl: 'http://example.test', projectId: 'project-1', workflowId: 'workflow-1', pollInterval: 300 };
+  const values = { serverUrl: 'https://example.test', projectId: 'project-1', workflowId: 'workflow-1', pollInterval: 300 };
   const vscode = {
     TreeItem: class { constructor(label, collapsibleState) { this.label = label; this.collapsibleState = collapsibleState; } },
     TreeItemCollapsibleState: { Collapsed: 1, None: 0 }, ThemeIcon: class { constructor(id) { this.id = id; } },

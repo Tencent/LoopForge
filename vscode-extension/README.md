@@ -27,7 +27,7 @@ The package can later be published to an extension marketplace with the publishe
 
 Use the command palette:
 
-1. Start or obtain access to a LoopForge platform server. Set `loopforge.serverUrl` in user or remote settings to its base URL (for example `http://127.0.0.1:8090` when the server runs on the extension host). Use HTTPS for a remote server. Workspace settings cannot change the server address, to prevent a project from redirecting the stored token.
+1. Start or obtain access to a LoopForge platform server. Set `loopforge.serverUrl` in user or remote settings to its base URL (for example `http://127.0.0.1:8090` when the server runs on the extension host). HTTPS is required for non-loopback hosts; HTTP is accepted only for `localhost`, IPv4 addresses in `127.0.0.0/8`, and `::1`. Workspace settings cannot change the server address, to prevent a project from redirecting the stored token.
 2. Create a Personal API Token in the platform's account settings if authentication is enabled. `LoopForge: Configure API Token` stores or clears it in SecretStorage. A personal token is not a model-provider key.
 3. `LoopForge: Select Project` and `LoopForge: Select Workflow` discover choices from the configured server, or set `loopforge.projectId` and `loopforge.workflowId` in workspace settings. A project owner or authenticated user is required for manual runs.
 

@@ -81,7 +81,7 @@
           "type": "string",
           "default": "http://127.0.0.1:8090",
           "scope": "machine",
-          "description": "LoopForge server URL. The extension calls its /api endpoints."
+          "description": "LoopForge server URL. Remote hosts require HTTPS; HTTP is allowed only for loopback addresses."
         },
         "loopforge.projectId": {
           "type": "string",
