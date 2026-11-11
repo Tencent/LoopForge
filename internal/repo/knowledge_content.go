@@ -32,13 +32,27 @@ func (r *KnowledgeContentRepo) PutKnowledgeDocument(doc domain.KnowledgeDocument
 	return putKnowledgeDocument(r.db, doc)
 }
 
+// maxKnowledgeLabelRunes matches the VARCHAR(512) label columns. A generated
+// heading can be longer than a database label; truncating the display/search
+// label keeps the full body and chunk text intact instead of failing the whole
+// source sync on MySQL's strict mode.
+const maxKnowledgeLabelRunes = 500
+
+func clipKnowledgeLabel(value string) string {
+	runes := []rune(value)
+	if len(runes) <= maxKnowledgeLabelRunes {
+		return value
+	}
+	return string(runes[:maxKnowledgeLabelRunes])
+}
+
 func putKnowledgeDocument(tx *gorm.DB, doc domain.KnowledgeDocument) error {
 	now := time.Now().UTC()
 	// 元数据在写入索引内容时解析并落列。没有 frontmatter 或字段缺失时保持
 	// 零值，由健康检查报告；托管文档不会被自动补 frontmatter。
 	meta, _ := frontmatter.Parse([]byte(doc.Body))
 	row := knowledgeDocumentRow{
-		SourceID: doc.SourceID, Path: doc.Path, Title: doc.Title, Body: doc.Body,
+		SourceID: doc.SourceID, Path: doc.Path, Title: clipKnowledgeLabel(doc.Title), Body: doc.Body,
 		LineCount: doc.LineCount, SHA256: doc.SHA256, Commit: doc.Commit,
 		Revision: doc.Revision, Owner: meta.Owner, DocStatus: meta.Status,
 		FrontmatterUpdated: meta.Updated, Updated: &now,
@@ -234,7 +248,7 @@ func replaceKnowledgeChunks(tx *gorm.DB, sourceID, path string, chunks []domain.
 	for _, ch := range chunks {
 		rows = append(rows, knowledgeChunkRow{
 			SourceID: sourceID, Path: path, Idx: ch.Idx,
-			Heading: ch.Heading, Title: ch.Title, StartLine: ch.StartLine, EndLine: ch.EndLine,
+			Heading: clipKnowledgeLabel(ch.Heading), Title: clipKnowledgeLabel(ch.Title), StartLine: ch.StartLine, EndLine: ch.EndLine,
 			Commit: ch.Commit, Revision: ch.Revision, Text: ch.Text,
 		})
 	}

@@ -71,7 +71,7 @@ func authenticatedGitContext(ctx context.Context, remote string, options []strin
 			if err != nil || u.Scheme != "ssh" || sshIP == "" {
 				return ctx, cleanup, errors.New("credential protocol mismatch")
 			}
-			if err := write("key", c.PrivateKey); err != nil {
+			if err := write("key", normalizePrivateKey(c.PrivateKey)); err != nil {
 				return ctx, func() { os.RemoveAll(temp) }, errors.New("无法准备来源凭据")
 			}
 			if err := write("known_hosts", c.KnownHosts); err != nil {
@@ -91,6 +91,16 @@ func authenticatedGitContext(ctx context.Context, remote string, options []strin
 	}
 	ctx = context.WithValue(ctx, authEnvironment{}, env)
 	return ctx, cleanup, nil
+}
+
+// normalizePrivateKey keeps the trailing newline OpenSSH requires. A key that
+// came through a JSON field or an editor may lose it even though ssh.ParsePrivateKey
+// accepts the bytes; OpenSSH then reports "error in libcrypto" at sync time.
+func normalizePrivateKey(key string) string {
+	if key == "" || strings.HasSuffix(key, "\n") {
+		return key
+	}
+	return key + "\n"
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
