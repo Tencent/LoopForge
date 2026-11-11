@@ -726,7 +726,7 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 	if gl.GongfengProjectID != "gitlab:gitlab.example.test/group/repo" || gl.Provider != "gitlab" {
 		t.Fatalf("gitlab prefix id must keep prefix and set provider, got %+v", gl)
 	}
-	if gl.WebURL != "http://gitlab.example.test/group/repo" || gl.CloneURL != "http://gitlab.example.test/group/repo.git" {
+	if gl.WebURL != "https://gitlab.example.test/group/repo" || gl.CloneURL != "https://gitlab.example.test/group/repo.git" {
 		t.Fatalf("gitlab urls must derive from the host in id: %+v", gl)
 	}
 	if gl.DefaultBranch != "main" {

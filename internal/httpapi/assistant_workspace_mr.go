@@ -206,9 +206,9 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			results = append(results, result)
 			continue
 		}
-		if host, path := gitlabRepoPath(rc); path != "" {
-			result.CreateURL = "http://" + host + "/" + path + "/-/merge_requests/new"
-			mr, err := createGitLabMR(ctx, apiToken, host, path, result.SourceBranch, result.TargetBranch, title, body)
+		if base, path := gitlabRepoPath(rc); path != "" {
+			result.CreateURL = base + "/" + path + "/-/merge_requests/new"
+			mr, err := createGitLabMR(ctx, apiToken, base, path, result.SourceBranch, result.TargetBranch, title, body)
 			if err != nil {
 				result.Error = redactAgentToolResult(err.Error(), requester)
 			} else {
@@ -216,7 +216,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 				if mr.UpdateError != "" {
 					result.UpdateError = redactAgentToolResult(mr.UpdateError, requester)
 				}
-				result.MRURL = fmt.Sprintf("http://%s/%s/-/merge_requests/%d", host, path, mr.IID)
+				result.MRURL = fmt.Sprintf("%s/%s/-/merge_requests/%d", base, path, mr.IID)
 			}
 			results = append(results, result)
 			continue
@@ -336,7 +336,8 @@ func hostedRepoPath(rc domain.RepositoryContext, host string, valid *regexp.Rege
 	return ""
 }
 
-// gitlabRepoPath 从 "gitlab:<host>/<group>/<repo>" 标识取 (host, path)；
+// gitlabRepoPath 从 "gitlab:<host>/<group>/<repo>" 标识取 (base, path)；
+// base 是 scheme://host——scheme 按仓库记录的 URL 对齐（默认 https），
 // 自托管 GitLab 的 MR 直连仓库所在实例的 API。
 func gitlabRepoPath(rc domain.RepositoryContext) (string, string) {
 	id := strings.TrimSpace(rc.GongfengProjectID)
@@ -352,16 +353,17 @@ func gitlabRepoPath(rc domain.RepositoryContext) (string, string) {
 	if host == "" || path == "" {
 		return "", ""
 	}
-	return host, path
+	return domain.GitLabInstanceScheme(host, rc.CloneURL, rc.WebURL) + "://" + host, path
 }
 
 // createGitLabMR 在自托管 GitLab 上开 MR（v4 REST）。分支已有打开的 MR 时
 // 返回该 MR 并把标题/描述更新到本次提交的内容（对齐 createGongfengMR 语义）。
-func createGitLabMR(ctx context.Context, token, host, path, source, target, title, description string) (gongfengMR, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
-	base := "http://" + host + "/api/v4/projects/" + url.PathEscape(path)
+func createGitLabMR(ctx context.Context, token, base, path, source, target, title, description string) (gongfengMR, error) {
+	// 不跟随重定向：PRIVATE-TOKEN 是凭证，302 到别的 origin 不能携带。
+	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	apiBase := base + "/api/v4/projects/" + url.PathEscape(path)
 	payload, _ := json.Marshal(map[string]string{"source_branch": source, "target_branch": target, "title": title, "description": description})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/merge_requests", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+"/merge_requests", bytes.NewReader(payload))
 	if err != nil {
 		return gongfengMR{}, err
 	}
@@ -369,7 +371,7 @@ func createGitLabMR(ctx context.Context, token, host, path, source, target, titl
 	req.Header.Set("PRIVATE-TOKEN", token)
 	resp, err := client.Do(req)
 	if err != nil {
-		return gongfengMR{}, fmt.Errorf("无法连接 GitLab %s：%v", host, err)
+		return gongfengMR{}, fmt.Errorf("无法连接 GitLab %s：%v", base, err)
 	}
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	resp.Body.Close()
@@ -383,12 +385,12 @@ func createGitLabMR(ctx context.Context, token, host, path, source, target, titl
 		return gongfengMR{}, fmt.Errorf("GitLab 返回的 MR 信息无法解析")
 	}
 	// 已有打开 MR：找出来并更新描述。
-	open, found := findOpenGitLabMR(ctx, client, token, base, source, target)
+	open, found := findOpenGitLabMR(ctx, client, token, apiBase, source, target)
 	if !found {
 		return gongfengMR{}, gitlabMRError(resp.StatusCode, raw)
 	}
 	result := gongfengMR{IID: open.IID, Existing: true}
-	if err := updateGitLabMR(ctx, client, token, base, open.IID, title, description); err != nil {
+	if err := updateGitLabMR(ctx, client, token, apiBase, open.IID, title, description); err != nil {
 		result.UpdateError = err.Error()
 	} else {
 		result.Updated = true

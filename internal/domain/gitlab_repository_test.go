@@ -17,9 +17,35 @@ func TestParseGitLabRepositoryURL(t *testing.T) {
 		if !ok || got.Project != want {
 			t.Fatalf("%s: got %+v ok=%v want %s", raw, got, ok, want)
 		}
-		if got.Name != "repository" || got.CloneURL != "http://gitlab.example.test/group/repository.git" {
+		// 前缀不带 scheme 信息：按安全默认 https，绝不静默降级成明文 http。
+		if got.Name != "repository" || got.CloneURL != "https://gitlab.example.test/group/repository.git" {
 			t.Fatalf("%s: name=%s clone=%s", raw, got.Name, got.CloneURL)
 		}
+	}
+}
+
+func TestParseGitLabRepositoryURLPreservesScheme(t *testing.T) {
+	// 显式 https 保留；显式 http（内网实例常见）也保留，来源 URL 是权威。
+	if got, ok := ParseGitLabRepositoryURL("https://gitlab.example.internal/g/r"); !ok ||
+		got.WebURL != "https://gitlab.example.internal/g/r" || got.CloneURL != "https://gitlab.example.internal/g/r.git" {
+		t.Fatalf("https must be preserved: %+v %v", got, ok)
+	}
+	if got, ok := ParseGitLabRepositoryURL("http://gitlab.example.internal/g/r"); !ok ||
+		got.WebURL != "http://gitlab.example.internal/g/r" || got.CloneURL != "http://gitlab.example.internal/g/r.git" {
+		t.Fatalf("explicit http must be kept for internal instances: %+v %v", got, ok)
+	}
+}
+
+func TestGitLabInstanceScheme(t *testing.T) {
+	// host[:port] 与标识一致时取 URL 的 scheme；不匹配或缺失时默认 https。
+	if s := GitLabInstanceScheme("gitlab.example.test:8443", "https://gitlab.example.test:8443/g/r.git", "http://other/g/r"); s != "https" {
+		t.Fatalf("matched url scheme = %s, want https", s)
+	}
+	if s := GitLabInstanceScheme("gitlab.example.test:8443", "http://gitlab.example.test:8443/g/r.git"); s != "http" {
+		t.Fatalf("explicit http record = %s, want http", s)
+	}
+	if s := GitLabInstanceScheme("gitlab.example.test", "https://other.example.test/g/r", ""); s != "https" {
+		t.Fatalf("unmatched urls must fall back to https, got %s", s)
 	}
 }
 

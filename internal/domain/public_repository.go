@@ -30,24 +30,23 @@ func ParseGitLabRepositoryURL(raw string) (GongfengRepoInfo, bool) {
 	if s == "" || strings.ContainsAny(s, " \t\"'<>()") {
 		return GongfengRepoInfo{}, false
 	}
-	// 已是前缀标识，直接规范化。
+	// 已是前缀标识，直接规范化。前缀不带 scheme 信息，按安全默认 https。
 	if strings.HasPrefix(s, "gitlab:") {
 		m := gitlabProjectID.FindStringSubmatch(s)
 		if m == nil {
 			return GongfengRepoInfo{}, false
 		}
 		host, project := m[1], strings.Trim(strings.TrimSuffix(m[2], ".git"), "/")
-		return gitlabRepoInfo(host, project)
+		return gitlabRepoInfo("", host, project)
 	}
-	var host, path string
+	var host, path, scheme string
 	switch {
 	case strings.Contains(s, "://"):
 		u, err := url.Parse(s)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 			return GongfengRepoInfo{}, false
 		}
-		host = u.Host
-		path = strings.Trim(u.Path, "/")
+		host, path, scheme = u.Host, strings.Trim(u.Path, "/"), u.Scheme
 	case strings.HasPrefix(strings.ToLower(s), "git@"):
 		rest := strings.TrimPrefix(s, "git@")
 		at := strings.Index(rest, ":")
@@ -80,14 +79,38 @@ func ParseGitLabRepositoryURL(raw string) (GongfengRepoInfo, bool) {
 	if project == "" {
 		return GongfengRepoInfo{}, false
 	}
-	return gitlabRepoInfo(host, project)
+	// scp/裸主机形态没有 scheme 信息（scheme 为空），由 gitlabRepoInfo 兜底 https。
+	return gitlabRepoInfo(scheme, host, project)
 }
 
-func gitlabRepoInfo(host, project string) (GongfengRepoInfo, bool) {
+// gitlabRepoInfo 组装前缀标识与站点 URL。scheme 只认 http/https：
+// 显式 http 保留（内网实例常见），其余（空值、https）一律 https，
+// 绝不静默降级——HTTPS-only 实例不能被降成明文 http 传输 token。
+func gitlabRepoInfo(scheme, host, project string) (GongfengRepoInfo, bool) {
+	if scheme != "http" {
+		scheme = "https"
+	}
 	id := "gitlab:" + host + "/" + project
-	base := "http://" + host + "/" + project
+	base := scheme + "://" + host + "/" + project
 	info := GongfengRepoInfo{Project: id, Name: project[strings.LastIndex(project, "/")+1:], WebURL: base, CloneURL: base + ".git"}
 	return info, true
+}
+
+// GitLabInstanceScheme 从仓库记录的 URL 解析实例 scheme：host[:port] 与
+// "gitlab:<host>/<path>" 标识一致时返回该 URL 的 scheme，否则默认 https。
+// 标识本身不带 scheme，API 调用与 MR 链接统一经此对齐，防止硬编码降级。
+func GitLabInstanceScheme(host string, urls ...string) string {
+	host = strings.TrimSpace(host)
+	for _, raw := range urls {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			continue
+		}
+		if strings.EqualFold(u.Host, host) {
+			return u.Scheme
+		}
+	}
+	return "https"
 }
 
 // isTrustedGitLabHost 限定自托管 GitLab 的可信主机。

@@ -46,6 +46,7 @@ func (s *Service) gitlabClient(project string) (*gitlabClient, error) {
 		return nil, fmt.Errorf("invalid GitLab repository")
 	}
 	var token string
+	var siteURLs []string
 	if s.projectAuth != nil {
 		for _, repo := range s.projectAuth.Repositories() {
 			if repo.Provider != "gitlab" || repo.GongfengProjectID != project {
@@ -56,14 +57,18 @@ func (s *Service) gitlabClient(project string) (*gitlabClient, error) {
 					token = u.GitToken
 				}
 			}
+			// 实例 scheme 以仓库记录的 URL 为准（https 默认），不在 ID 里硬编码。
+			siteURLs = []string{repo.WebURL, repo.CloneURL}
 			break
 		}
 	}
 	return &gitlabClient{
-		base:    "http://" + host,
+		base:    domain.GitLabInstanceScheme(host, siteURLs...) + "://" + host,
 		project: url.PathEscape(projectPath),
 		token:   token,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		// 与 GitHub client 一致：不跟随重定向。PRIVATE-TOKEN 是凭证，
+		// 302 到别的 origin 绝不能把 token 带过去。
+		http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
 	}, nil
 }
 
@@ -163,9 +168,9 @@ func (s *Service) gitlabFindBranch(project, branch string) (domain.DeliveryMR, b
 	return m.delivery(project), true, nil
 }
 
-// gitlabMergeBranch 找到或创建 source→target 的 MR 并合并（对齐 githubMergeBranch 语义）。
-// 与上游不同：这里只创建/复用 MR，合并交由人工在 GitLab 评审后执行——质量门已保证
-// 测试通过，但团队保留 merge 按钮作为最终把关（dsh-autoflow 也是开 MR 不自动合并）。
+// gitlabMergeBranch 找到或创建 source→target 的 MR 并真正合并（对齐
+// githubMergeBranch 语义）：调用 merge 端点后校验返回的 MR 状态必须是
+// merged，否则报错——未合并绝不能返回成功，否则交付会虚进。
 func (s *Service) gitlabMergeBranch(project, branch, target, title, description string) (string, error) {
 	if branch == "" {
 		return "", fmt.Errorf("source branch is required")
@@ -198,13 +203,22 @@ func (s *Service) gitlabMergeBranch(project, branch, target, title, description 
 			"title":         title,
 			"description":   description,
 		}, &created); err != nil {
-			// 并发下另一个实例可能已创建：再查一次，复用胜者。
-			if m2, ok2, _ := g.findMR(branch, target); ok2 {
-				return "!" + strconv.Itoa(m2.IID), nil
+			// 并发下另一个实例可能已创建：再查一次，复用胜者继续走合并。
+			rematch, ok2, err2 := g.findMR(branch, target)
+			if err2 != nil || !ok2 {
+				return "", err
 			}
-			return "", err
+			m = rematch
+		} else {
+			m = created
 		}
-		m = created
+	}
+	var merged gitlabMergeRequest
+	if err := g.request("PUT", "/merge_requests/"+strconv.Itoa(m.IID)+"/merge", map[string]any{"merge_method": "merge"}, &merged); err != nil {
+		return "", err
+	}
+	if merged.State != "merged" {
+		return "", fmt.Errorf("GitLab did not merge merge request !%d (state %q)", m.IID, merged.State)
 	}
 	return "!" + strconv.Itoa(m.IID), nil
 }
