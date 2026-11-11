@@ -4,9 +4,11 @@ import io
 import os
 import pty
 import select
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -163,6 +165,7 @@ exec "$@"
         for manager in ('apt-get', 'dnf', 'yum'):
             self.executable(manager, '''#!/usr/bin/env bash
 printf 'package-manager %s %s\\n' "${0##*/}" "$*" >> "$MOCK_LOG"
+printf 'package-environment %s %s\\n' "${DEBIAN_FRONTEND:-}" "${NEEDRESTART_MODE:-}" >> "$MOCK_LOG"
 if [[ "$*" == *'install'* ]]; then touch "$MOCK_PACKAGE_STATE/python3" "$MOCK_PACKAGE_STATE/curl"; fi
 ''')
         for manager in ('apt-get', 'dnf', 'yum'):
@@ -172,7 +175,25 @@ if [[ "$*" == *'install'* ]]; then touch "$MOCK_PACKAGE_STATE/python3" "$MOCK_PA
                 self.assert_success(self.install(BASH_ENV=str(shell_env), MOCK_PACKAGE_STATE=str(state), MOCK_PACKAGE_MANAGER=manager, LOOPFORGE_YES='1'))
                 self.assertTrue((state / 'python3').exists())
                 self.assertTrue((state / 'curl').exists())
-                self.assertIn('package-manager ' + manager + ' install -y python3 curl ca-certificates', (self.root / 'docker.log').read_text())
+                log = (self.root / 'docker.log').read_text()
+                self.assertIn('install -y python3 curl ca-certificates', log)
+                if manager == 'apt-get':
+                    self.assertIn('package-environment noninteractive a', log)
+                    self.assertIn('-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold', log)
+
+    def test_unusable_macos_python_is_replaced_before_configuring(self):
+        ready = self.root / 'python-ready'
+        self.executable('python3', '#!/usr/bin/env bash\n[[ -f "$MOCK_PYTHON_READY" ]] || exit 1\nexec ' + shlex.quote(sys.executable) + ' "$@"\n')
+        self.executable('uname', '#!/usr/bin/env bash\nif [[ "$1" == -s ]]; then echo Darwin; else echo x86_64; fi\n')
+        self.executable('brew', '#!/usr/bin/env bash\nprintf "brew %s\\n" "$*" >> "$MOCK_LOG"\ntouch "$MOCK_PYTHON_READY"\n')
+        shell_env = self.root / 'macos-env.sh'
+        shell_env.write_text('''command() {
+  if [[ "$1" == -v && "$2" =~ ^(apt-get|dnf|yum)$ ]]; then return 1; fi
+  builtin command "$@"
+}
+''')
+        self.assert_success(self.install(BASH_ENV=str(shell_env), MOCK_PYTHON_READY=str(ready), LOOPFORGE_YES='1'))
+        self.assertIn('brew install python3', (self.root / 'docker.log').read_text())
 
     def mock_compose_install(self, fail_download=False):
         # Exercise the shell wiring without writing a plugin to the host.
@@ -181,6 +202,7 @@ if [[ "$*" == *'install'* ]]; then touch "$MOCK_PACKAGE_STATE/python3" "$MOCK_PA
             "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('test plugin')\n")
         self.executable('install', '''#!/usr/bin/env bash
 printf 'plugin-install %s\\n' "$*" >> "$MOCK_LOG"
+if [[ "${MOCK_PLUGIN_FAIL_OPERATION:-}" == "$1" ]]; then exit 1; fi
 if [[ "${!#}" == */docker-compose ]]; then touch "$MOCK_COMPOSE_INSTALLED"; fi
 ''')
         home = self.root / 'home'
@@ -200,11 +222,28 @@ if [[ "${!#}" == */docker-compose ]]; then touch "$MOCK_COMPOSE_INSTALLED"; fi
         self.assertIn(str(config / 'cli-plugins/docker-compose'), (self.root / 'docker.log').read_text())
 
     def test_failed_compose_download_stops_before_creating_deployment_config(self):
-        result = self.install(**self.mock_compose_install(fail_download=True))
+        temporary = self.root / 'plugin temporary'
+        temporary.mkdir()
+        result = self.install(**self.mock_compose_install(fail_download=True), TMPDIR=str(temporary))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Docker Compose download failed', result.stderr)
         self.assertFalse((self.root / '.env').exists())
         self.assertNotIn('pull --policy', (self.root / 'docker.log').read_text())
+        self.assertEqual(list(temporary.iterdir()), [])
+
+    def test_failed_compose_copy_cleans_download_and_reports_plugin_directory(self):
+        values = self.mock_compose_install()
+        temporary = self.root / 'plugin temporary'
+        temporary.mkdir()
+        for direct in ('0', '1'):
+            for operation in ('-d', '-m'):
+                with self.subTest(direct=direct, operation=operation):
+                    result = self.install(**values, TMPDIR=str(temporary), MOCK_USER='1000', MOCK_DIRECT=direct, MOCK_PLUGIN_FAIL_OPERATION=operation)
+                    self.assertNotEqual(result.returncode, 0)
+                    directory = str(Path(values['HOME']) / '.docker/cli-plugins') if direct == '1' else '/usr/local/lib/docker/cli-plugins'
+                    self.assertIn('Could not install Docker Compose in ' + directory, result.stderr)
+                    self.assertEqual(list(temporary.iterdir()), [])
+                    self.assertFalse((self.root / '.env').exists())
 
     def test_declining_compose_install_does_not_start_deployment(self):
         values = self.mock_compose_install()

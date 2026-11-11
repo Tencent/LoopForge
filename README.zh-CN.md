@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 ## 快速开始
 
-先准备 **Git** 并克隆仓库。安装脚本会检查 Docker、Compose、Python 3 和 curl，并在获得确认后补装缺少的组件：Linux 的 Python/curl 支持 apt、dnf、yum，Compose 插件支持 x86_64/arm64 并校验官方发行文件的 SHA-256；macOS 需要 Homebrew 或预先安装 Docker Desktop。支持普通用户运行，需要时通过 Docker 组或 sudo 操作 Docker。设置 `LOOPFORGE_YES=1` 可接受安装提示；安装和拉取镜像需要可用的外网连接。
+先准备 **Git** 并克隆仓库。安装脚本会检查 Docker、Compose、Python 3 和 curl，并在获得确认后补装缺少的组件：Linux 的 Python/curl 支持 apt、dnf、yum，Compose 插件支持 x86_64/arm64 并校验官方发行文件的 SHA-256；macOS 需要可运行的 Python 3 和 Docker Desktop，可通过 Homebrew 补装缺少的组件。支持普通用户运行，需要时通过 Docker 组或 sudo 操作 Docker。设置 `LOOPFORGE_YES=1` 可接受安装提示；安装和拉取镜像需要可用的外网连接。
 
 ```bash
 git clone https://github.com/Tencent/LoopForge.git

@@ -18,16 +18,25 @@ confirm() {
   [[ -z "$answer" || "$answer" =~ ^[Yy] ]]
 }
 
+usable_python() {
+  command -v python3 >/dev/null && python3 -c 'import sys; sys.exit(sys.version_info < (3, 6))' >/dev/null 2>&1
+}
+
 install_prerequisites() {
   local missing=()
-  command -v python3 >/dev/null || missing+=(python3)
+  usable_python || missing+=(python3)
   command -v curl >/dev/null || missing+=(curl ca-certificates)
   [[ ${#missing[@]} -gt 0 ]] || return 0
   confirm "Required packages are missing: ${missing[*]}. Install them now?" \
     || fail 'Install Python 3 and curl, then rerun this script; or rerun with LOOPFORGE_YES=1 to accept installation.'
   if command -v apt-get >/dev/null; then
     as_root apt-get update
-    as_root apt-get install -y "${missing[@]}"
+    if [[ ${LOOPFORGE_YES:-0} == 1 ]]; then
+      as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "${missing[@]}"
+    else
+      as_root apt-get install -y "${missing[@]}"
+    fi
   elif command -v dnf >/dev/null; then
     as_root dnf install -y "${missing[@]}"
   elif command -v yum >/dev/null; then
@@ -37,32 +46,33 @@ install_prerequisites() {
   else
     fail 'Automatic prerequisite installation requires apt, dnf, yum or Homebrew. Install Python 3 and curl, then rerun this script.'
   fi
-  command -v python3 >/dev/null && command -v curl >/dev/null \
-    || fail 'Python 3 or curl is still unavailable after package installation. Check the package manager output and rerun.'
+  usable_python && command -v curl >/dev/null \
+    || fail 'A working Python 3 or curl is still unavailable after package installation. Check the package manager output and rerun.'
 }
 
-install_compose() {
+install_compose() (
   [[ $(uname -s) == Linux ]] \
     || fail 'Docker Compose is unavailable. Install or update Docker Desktop, then rerun this script.'
   confirm 'Docker Compose is missing. Install the official checksum-verified plugin now?' \
     || fail 'Docker Compose is required. Install the plugin or rerun with LOOPFORGE_YES=1.'
   local temporary plugin_dir
   temporary=$(mktemp -d)
+  trap 'rm -rf "$temporary"' EXIT
   if ! python3 scripts/install-compose.py "$temporary/docker-compose" "$(uname -m)"; then
-    rm -rf "$temporary"
     fail 'Docker Compose download failed. Check access to GitHub, or install the Compose plugin manually and rerun.'
   fi
   if [[ ${LOOPFORGE_DOCKER_USE_SUDO:-0} == 1 || $(id -u) -eq 0 ]]; then
     plugin_dir=/usr/local/lib/docker/cli-plugins
-    as_root install -d "$plugin_dir"
-    as_root install -m 0755 "$temporary/docker-compose" "$plugin_dir/docker-compose"
+    if ! { as_root install -d "$plugin_dir" && as_root install -m 0755 "$temporary/docker-compose" "$plugin_dir/docker-compose"; }; then
+      fail "Could not install Docker Compose in $plugin_dir. Check directory permissions and rerun."
+    fi
   else
     plugin_dir="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins"
-    install -d "$plugin_dir"
-    install -m 0755 "$temporary/docker-compose" "$plugin_dir/docker-compose"
+    if ! { install -d "$plugin_dir" && install -m 0755 "$temporary/docker-compose" "$plugin_dir/docker-compose"; }; then
+      fail "Could not install Docker Compose in $plugin_dir. Check directory permissions and rerun."
+    fi
   fi
-  rm -rf "$temporary"
-}
+)
 
 install_docker() {
   case "$(uname -s)" in

@@ -5,10 +5,10 @@ import sys
 import urllib.request
 
 
-VERSION = 'v5.6.0'
+VERSION = 'v5.6.1'
 SHA256 = {
-    'x86_64': '40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a',
-    'aarch64': '733ec76717ceb59052a9609b9dadfb523b2df8eab57a54212872d10a58078ea2',
+    'x86_64': '47737f4236e6d3ccea7291995203f8f018058783b4c3a9469119811a0b5db8c0',
+    'aarch64': '42cfa75f51ad0ccf290bad37899e0038a8c10a0069e85233ecc1d53e3ff1347d',
 }
 
 
