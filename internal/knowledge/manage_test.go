@@ -416,6 +416,29 @@ func TestHostedIDsFitStorageAndRejectForeignSources(t *testing.T) {
 	}
 }
 
+// Before 037 a hosted source was named kb-hosted-<projectID>. The new binary
+// must refuse to add its hash-based source beside the old one, otherwise the
+// project gets two "托管文档" sources and old documents become unreachable.
+func TestEnsureHostedBaseRefusesPre037Source(t *testing.T) {
+	svc, store := newManagedTestService(t)
+	const project = "legacy-source-project"
+	baseID := hostedBaseID(project)
+	if err := store.PutKnowledgeBase(domain.KnowledgeBase{ID: baseID, ProjectID: project, Name: "项目知识库", Layer: "project"}); err != nil {
+		t.Fatal(err)
+	}
+	oldSource := "kb-hosted-" + project
+	if err := store.PutKnowledgeSource(domain.KnowledgeSource{ID: oldSource, BaseID: baseID, Kind: "hosted"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.EnsureHostedBase(project); err == nil || !strings.Contains(err.Error(), "037") {
+		t.Fatalf("pre-037 source must fail with a migration instruction: %v", err)
+	}
+	sources := store.KnowledgeSources(baseID)
+	if len(sources) != 1 || sources[0].ID != oldSource {
+		t.Fatalf("must not create a second hosted source: %+v", sources)
+	}
+}
+
 func TestRegisterGitSourcePreservesOwnedLegacyCredential(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "legacy-credential-test")
 	svc, store := newManagedTestService(t)

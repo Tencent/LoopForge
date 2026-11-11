@@ -2,15 +2,15 @@
 useDefault = true
 
 [allowlist]
-description = "Recorded SHA-256 manifests, unchanged upstream editor distributions (telemetry IDs and minified identifier false positives), and the historical synthetic key fixture in commit ea17552"
+description = "Recorded SHA-256 manifests, unchanged upstream editor distributions (telemetry IDs and minified identifier false positives), and the historical synthetic key fixture in internal/knowledge/engine/gitsync/normalize_test.go"
 paths = [
   '''(^|/)upstream(-overrides)?\.json$''',
   '''(^|/)web/monaco/''',
   '''(^|/)web/vscode-web/''',
-]
-# The fixture was neutralized in a later commit, but the synthetic key remains
-# in this historical commit. Allowlist that commit only; current files are still
-# scanned normally.
-commits = [
-  '''ea17552cecefca9d85a914a0ebbbf75cf3b9e914''',
+  # The fixture was neutralized in a later commit, but the synthetic key remains
+  # in historical commits. Commit hashes change when authors are rewritten, so
+  # allowlist the dedicated test path instead of a commit hash. Current files
+  # under this path contain no literal key header; only the historical
+  # synthetic fixture needs the exception.
+  '''internal/knowledge/engine/gitsync/normalize_test\.go$''',
 ]

@@ -136,6 +136,28 @@ func TestBuiltinKnowledgeContentPlane(t *testing.T) {
 	}
 }
 
+// KnowledgeDocumentPage is the bounded read used by kb_grep; keep its path
+// ordering and afterPath resume contract stable so pagination cannot skip docs.
+func TestKnowledgeDocumentPageIsPathOrderedAndBounded(t *testing.T) {
+	s := builtinStore(t)
+	for _, path := range []string{"docs/b.md", "docs/a.md", "docs/c.md"} {
+		if err := s.PutKnowledgeDocument(domain.KnowledgeDocument{SourceID: "src-page", Path: path, Body: path, Revision: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := s.KnowledgeDocumentPage("src-page", "", 2)
+	if len(first) != 2 || first[0].Path != "docs/a.md" || first[1].Path != "docs/b.md" {
+		t.Fatalf("first page = %+v", first)
+	}
+	second := s.KnowledgeDocumentPage("src-page", first[len(first)-1].Path, 2)
+	if len(second) != 1 || second[0].Path != "docs/c.md" || second[0].Body != "docs/c.md" {
+		t.Fatalf("second page = %+v", second)
+	}
+	if extra := s.KnowledgeDocumentPage("src-page", "docs/c.md", 2); len(extra) != 0 {
+		t.Fatalf("page after last = %+v", extra)
+	}
+}
+
 func assertNoForeignKeys(t *testing.T, db *gorm.DB, table string) {
 	t.Helper()
 	var count int
@@ -199,7 +221,7 @@ func TestBuiltinKnowledgeInstallWiring(t *testing.T) {
 	}
 	apply := strings.Index(string(dev), "knowledge-schema.sh apply")
 	check := strings.Index(string(dev), "knowledge-schema.sh check")
-	seed := strings.Index(string(dev), "migrations/seed/001_public_catalog.sql")
+	seed := strings.Index(string(dev), "knowledge-schema.sh seed")
 	if apply < 0 || check < 0 || seed < 0 || apply > seed || check > seed {
 		t.Fatal("dev.sh 必须在种子 SQL 之前执行知识库迁移和 ngram 检查")
 	}

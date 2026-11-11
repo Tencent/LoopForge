@@ -2,6 +2,8 @@ package knowledge
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +117,61 @@ func TestGrepStopsLoadingAtScanBudget(t *testing.T) {
 	out, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: "not-there"})
 	if err == nil || !strings.Contains(err.Error(), "扫描") {
 		t.Fatalf("oversized scan must be rejected: hits=%d err=%v", len(out.Hits), err)
+	}
+}
+
+type pagedGrepStore struct {
+	*fakeStore
+	pageCalls int
+	fullLoads int
+}
+
+func (p *pagedGrepStore) KnowledgeDocumentPage(source, after string, limit int) []domain.KnowledgeDocument {
+	p.pageCalls++
+	docs := append([]domain.KnowledgeDocument(nil), p.fakeStore.KnowledgeDocuments(source)...)
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Path < docs[j].Path })
+	start := sort.Search(len(docs), func(i int) bool { return docs[i].Path > after })
+	if start >= len(docs) {
+		return nil
+	}
+	end := start + limit
+	if end > len(docs) {
+		end = len(docs)
+	}
+	return docs[start:end]
+}
+
+func (p *pagedGrepStore) KnowledgeDocuments(source string) []domain.KnowledgeDocument {
+	p.fullLoads++
+	return p.fakeStore.KnowledgeDocuments(source)
+}
+
+// kb_grep must check the byte budget while pages arrive, not after loading a
+// whole source. A >100-document source with one oversized late document should
+// stop on the second page instead of materializing every body first.
+func TestGrepReadsBoundedPagesBeforeBudgetCheck(t *testing.T) {
+	store := newFakeStore()
+	docs := make([]domain.KnowledgeDocument, 0, 150)
+	for i := 0; i < 100; i++ {
+		docs = append(docs, domain.KnowledgeDocument{SourceID: "docs", Path: fmt.Sprintf("docs/%03d.md", i), Body: "small\n"})
+	}
+	docs = append(docs, domain.KnowledgeDocument{SourceID: "docs", Path: "docs/100.md", Body: strings.Repeat("x", GrepScanByteLimit+1)})
+	for i := 101; i < 150; i++ {
+		docs = append(docs, domain.KnowledgeDocument{SourceID: "docs", Path: fmt.Sprintf("docs/%03d.md", i), Body: "small\n"})
+	}
+	store.docs = map[string][]domain.KnowledgeDocument{"docs": docs}
+	paged := &pagedGrepStore{fakeStore: store}
+	svc := NewService(paged, func() string { return "id" }, &fakeUpstream{})
+
+	out, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: "not-there"})
+	if err == nil || !strings.Contains(err.Error(), "扫描") {
+		t.Fatalf("oversized scan must be rejected: hits=%d err=%v", len(out.Hits), err)
+	}
+	if paged.fullLoads != 0 {
+		t.Fatalf("grep fell back to loading every document: fullLoads=%d", paged.fullLoads)
+	}
+	if paged.pageCalls != 2 {
+		t.Fatalf("grep must stop after the second page, calls=%d", paged.pageCalls)
 	}
 }
 

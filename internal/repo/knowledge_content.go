@@ -129,6 +129,32 @@ func (r *KnowledgeContentRepo) KnowledgeDocuments(sourceID string) []domain.Know
 	return out
 }
 
+// KnowledgeDocumentPage reads one path-ordered page of document bodies. kb_grep
+// uses it so the time/byte budget is checked while pages arrive instead of
+// materializing an entire source (and its bodies) before the first check.
+func (r *KnowledgeContentRepo) KnowledgeDocumentPage(sourceID, afterPath string, limit int) []domain.KnowledgeDocument {
+	out := make([]domain.KnowledgeDocument, 0)
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" {
+		return out
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	q := r.db.Where("source_id = ?", sourceID)
+	if afterPath != "" {
+		q = q.Where("path > ?", afterPath)
+	}
+	var rows []knowledgeDocumentRow
+	if err := q.Order("path").Limit(limit).Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, row := range rows {
+		out = append(out, knowledgeDocumentFromRow(row))
+	}
+	return out
+}
+
 // KnowledgeDocumentMetas 按来源批量读取检索后处理需要的治理元数据，不返回
 // 正文。为兼容 033 之前写入的历史行，元数据列为空时再读一次正文并解析；
 // 这是读时兜底，不修改数据，下一次覆盖写入会把元数据落到列上。

@@ -107,6 +107,9 @@ type KnowledgeSubmission struct {
 	Source         string `json:"source"`
 	Path           string `json:"path"`
 	Content        string `json:"content,omitempty"`
+	// ContentMissing marks a non-retract review item whose body could not be
+	// read from the content plane. Callers must not substitute an empty body.
+	ContentMissing bool   `json:"-"`
 	Status         string `json:"status"`
 	Commit         string `json:"commit,omitempty"`
 	Error          string `json:"error,omitempty"`

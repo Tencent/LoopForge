@@ -28,8 +28,16 @@ class InstallerTests(unittest.TestCase):
         for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-observability-schema.sh', 'knowledge-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        (self.root / 'migrations/seed/001_test.sql').write_text('SELECT 1;\n')
+        shutil.copyfile(ROOT / 'migrations/002_knowledge_base.sql', self.root / 'migrations/002_knowledge_base.sql')
+        (self.root / 'migrations/seed/001_test.sql').write_text('INSERT INTO seed_test VALUES (1);\n')
         (self.root / 'migrations/026_test.sql').write_text('-- @plane control\nSELECT 1;\n-- @plane content\nSELECT 1;\n')
+        (self.root / 'migrations/035_test.sql').write_text(
+            '-- @plane control\nALTER TABLE knowledge_submissions ADD COLUMN version BIGINT UNSIGNED NOT NULL DEFAULT 1;\n'
+            '-- @plane content\nCREATE TABLE IF NOT EXISTS knowledge_content_fences (source_id VARCHAR(64) NOT NULL, path VARCHAR(512) NOT NULL);\n')
+        (self.root / 'migrations/037_test.sql').write_text(
+            '-- @plane control\nCREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (kind VARCHAR(16), old_id VARCHAR(64), new_id VARCHAR(64));\n'
+            '-- @plane content\nUPDATE knowledge_documents SET source_id=source_id;\n'
+            '-- @plane control\nUPDATE knowledge_bases SET id=id;\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
 printf '%s %s\\n' "${MOCK_PRIVILEGED:-0}" "$*" >> "$MOCK_LOG"
@@ -42,10 +50,11 @@ if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; the
 if [[ "$*" == *'exec -T'* ]]; then
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
   query=$(cat)
+  printf 'SQL %s\n' "$(printf '%s' "$query" | tr '\n' ' ')" >> "$MOCK_LOG"
   if [[ "$query" == *'information_schema.STATISTICS'* ]]; then echo FULLTEXT; fi
   if [[ "$query" == *'SHOW CREATE TABLE knowledge_chunks'* ]]; then echo 'CREATE TABLE `knowledge_chunks` (`text` mediumtext, FULLTEXT KEY `ft_knowledge_chunks_text` (`title`,`heading`,`text`) /*!50100 WITH PARSER `ngram` */)'; fi
   if [[ "$query" == *'information_schema.columns'* ]]; then echo 1; fi
-  if [[ "$*" == *'count(*) from users'* ]]; then echo 0; fi
+  if [[ "$query" == *'count(*) from users'* ]]; then echo 0; fi
 fi
 ''')
         self.executable('id', '#!/usr/bin/env bash\nif [[ "$1" == -u ]]; then echo "${MOCK_USER:-0}"; else /usr/bin/id "$@"; fi\n')
@@ -79,6 +88,18 @@ exec "$@"
         self.assert_success(self.install())
         self.assertEqual((self.root / '.env').read_text(), secrets)
         self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
+
+    def test_install_applies_baseline_before_035_and_uses_dsn_seed(self):
+        self.assert_success(self.install())
+        log = (self.root / 'docker.log').read_text()
+        baseline = log.find('CREATE TABLE IF NOT EXISTS knowledge_submissions')
+        concurrency = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
+        self.assertGreaterEqual(baseline, 0, log)
+        self.assertGreaterEqual(concurrency, 0, log)
+        self.assertLess(baseline, concurrency, '002 baseline must run before 035')
+        # Seed SQL goes through the DSN helper, not a hard-coded `mysql -u loopforge loopforge`.
+        self.assertIn('SQL INSERT INTO', log)
+        self.assertNotIn('mysql -u loopforge loopforge', log)
 
     def test_non_root_without_docker_group_uses_sudo_everywhere(self):
         self.assert_success(self.install(MOCK_USER='1000'))
@@ -236,6 +257,113 @@ class AddressTests(unittest.TestCase):
             urls, note = address.access_addresses('8090', {})
         self.assertEqual(urls, [])
         self.assertIn('published port', note)
+
+class KnowledgeSchemaScriptTests(unittest.TestCase):
+    """Exercise the real migration files and knowledge-schema.sh segmentation.
+
+    No MySQL server is needed: a fake mysql client records every statement and
+    returns canned catalog answers. This catches baseline ordering, the 037
+    control/content/control split, mapping import into a separate content
+    database, fence migration and DSN-driven seeding without Docker.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / 'scripts').mkdir()
+        (self.root / 'migrations/seed').mkdir(parents=True)
+        for name in ('knowledge-schema.sh', 'docker-access.sh'):
+            shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
+        for source in sorted((ROOT / 'migrations').glob('[0-9][0-9][0-9]_*.sql')):
+            shutil.copyfile(source, self.root / 'migrations' / source.name)
+        for source in sorted((ROOT / 'migrations/seed').glob('*.sql')):
+            shutil.copyfile(source, self.root / 'migrations/seed' / source.name)
+        (self.root / 'mock').mkdir()
+        self.executable('mysql', r'''#!/usr/bin/env bash
+db="${@: -1}"
+sql=$(cat)
+{
+  printf '\n@@DB=%s\n' "$db"
+  printf '%s\n' "$sql"
+} >> "$MOCK_SQL_LOG"
+case "$sql" in
+  *"SELECT INDEX_TYPE FROM information_schema.STATISTICS"*) printf 'FULLTEXT\n' ;;
+  *"SHOW CREATE TABLE knowledge_chunks"*) printf 'CREATE TABLE `knowledge_chunks` (`text` mediumtext, FULLTEXT KEY `ft_knowledge_chunks_text` (`title`,`heading`,`text`) /*!50100 WITH PARSER `ngram` */)\n' ;;
+  *"FROM knowledge_id_migration_037"*)
+    printf "CREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (kind VARCHAR(16) NOT NULL, old_id VARCHAR(64) NOT NULL, new_id VARCHAR(64) NOT NULL);\n"
+    printf "INSERT IGNORE INTO knowledge_id_migration_037 (kind, old_id, new_id) VALUES ('source','old-source','new-source');\n" ;;
+  *"information_schema.TABLES"*"engine_instances"*) printf '1\n' ;;
+  *"SELECT COUNT(*) FROM engine_instances"*) printf '%s\n' "${MOCK_LIVE_INSTANCES:-0}" ;;
+  *"knowledge_id_migration_037"*) printf '0\n' ;;
+esac
+''')
+        self.log = self.root / 'mysql.log'
+        self.environ = dict(
+            os.environ,
+            PATH=str(self.root / 'mock') + ':' + os.environ['PATH'],
+            MOCK_SQL_LOG=str(self.log),
+            AGENTFLOW_MYSQL_DSN='loopforge:secret@tcp(control.example:3306)/control_db',
+            AGENTFLOW_KNOWLEDGE_MYSQL_DSN='loopforge:secret@tcp(content.example:3306)/content_db',
+        )
+
+    def executable(self, name, contents):
+        target = self.root / 'mock' / name
+        target.write_text(contents)
+        target.chmod(0o755)
+
+    def run_schema(self, *args):
+        return subprocess.run(
+            ['bash', 'scripts/knowledge-schema.sh', *args, '--native'],
+            cwd=self.root, env=self.environ, text=True, capture_output=True, timeout=30,
+        )
+
+    def test_apply_orders_baseline_and_splits_037(self):
+        result = self.run_schema('apply')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = self.log.read_text()
+        baseline = log.find('CREATE TABLE IF NOT EXISTS knowledge_submissions')
+        version = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
+        self.assertGreaterEqual(baseline, 0, log)
+        self.assertGreaterEqual(version, 0, log)
+        self.assertLess(baseline, version, '002 baseline must run before 035')
+
+        # 037 content work goes to the content DSN, not the control DSN.
+        fences = log.find('knowledge_content_fences')
+        docs = log.find('knowledge_documents d JOIN knowledge_id_migration_037')
+        self.assertGreaterEqual(fences, 0, log)
+        self.assertGreaterEqual(docs, 0, log)
+        self.assertGreater(log.rfind('@@DB=content_db', 0, docs), log.rfind('@@DB=control_db', 0, docs), log)
+        self.assertGreater(log.rfind('@@DB=content_db', 0, fences), log.rfind('@@DB=control_db', 0, fences), log)
+        # The mapping is imported into the content database before the content segment.
+        imported = log.find("INSERT IGNORE INTO knowledge_id_migration_037 (kind, old_id, new_id) VALUES ('source','old-source','new-source');")
+        self.assertGreaterEqual(imported, 0, log)
+        self.assertLess(imported, docs, log)
+        # Control references and the version row come after the content segment.
+        control_updates = log.find('UPDATE knowledge_bases s JOIN knowledge_id_migration_037')
+        self.assertGreater(control_updates, fences, log)
+        self.assertGreater(log.find('INSERT INTO knowledge_schema_versions'), control_updates, log)
+
+    def test_seed_uses_configured_control_database(self):
+        result = self.run_schema('seed')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = self.log.read_text()
+        self.assertIn('@@DB=control_db', log)
+        self.assertIn('INSERT IGNORE INTO', log)
+        self.assertNotIn('@@DB=content_db', log)
+        self.assertNotIn('mysql -u loopforge loopforge', log)
+
+    def test_check_accepts_ngram_index(self):
+        result = self.run_schema('check')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Knowledge full-text index ready', result.stdout)
+
+    def test_apply_aborts_with_live_instances(self):
+        self.environ['MOCK_LIVE_INSTANCES'] = '2'
+        self.environ['LOOPFORGE_MIGRATION_QUIESCE_SECONDS'] = '0'
+        result = self.run_schema('apply')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('仍在线的 API/worker 实例', result.stderr)
 
 
 if __name__ == '__main__':

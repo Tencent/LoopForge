@@ -3,16 +3,22 @@
 #
 #   bash scripts/knowledge-schema.sh apply [--compose|--native]
 #   bash scripts/knowledge-schema.sh check [--compose|--native]
+#   bash scripts/knowledge-schema.sh seed  [--compose|--native]
 #
-# `apply` executes migrations/026_*.sql onward in numeric order. A script can
-# carry `-- @plane control` / `-- @plane content` markers; each segment runs
-# against the control database (AGENTFLOW_MYSQL_DSN) or the content database
+# `apply` applies the 002 knowledge baseline (knowledge_submissions et al.)
+# before 026_*.sql onward in numeric order. A script can carry
+# `-- @plane control` / `-- @plane content` markers; each segment runs against
+# the control database (AGENTFLOW_MYSQL_DSN) or the content database
 # (AGENTFLOW_KNOWLEDGE_MYSQL_DSN, falling back to the control DSN). Scripts
-# without markers are control-plane only.
+# without markers are control-plane only. 037's mapping table is copied to a
+# separate content database before its content segment runs.
 #
 # `check` fails with an explicit repair command when the ngram full-text index
-# required by the MySQL keyword adapter is absent. Neither command runs from
-# the Go process: install/upgrade scripts call this before starting the API.
+# required by the MySQL keyword adapter is absent. `seed` applies
+# migrations/seed/*.sql to the control database through the same DSN parser, so
+# custom database names are not written to a hard-coded schema. None of these
+# commands runs from the Go process: install/upgrade scripts call this before
+# starting the API.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/docker-access.sh
@@ -24,14 +30,14 @@ command_name=""
 mode="compose"
 for arg in "$@"; do
   case "$arg" in
-    apply|check) command_name="$arg" ;;
+    apply|check|seed) command_name="$arg" ;;
     --compose) mode="compose" ;;
     --native) mode="native" ;;
-    -h|--help) printf 'usage: %s {apply|check} [--compose|--native]\n' "$0"; exit 0 ;;
+    -h|--help) printf 'usage: %s {apply|check|seed} [--compose|--native]\n' "$0"; exit 0 ;;
     *) fail "unknown argument: $arg" ;;
   esac
 done
-[[ -n "$command_name" ]] || fail 'usage: scripts/knowledge-schema.sh {apply|check} [--compose|--native]'
+[[ -n "$command_name" ]] || fail 'usage: scripts/knowledge-schema.sh {apply|check|seed} [--compose|--native]'
 
 if [[ -f .env ]]; then
   set -a
@@ -196,6 +202,66 @@ flush()
 PY
 }
 
+# Refuse to start the data migrations while another worker can still write.
+# The check is best-effort: engine_instances exists on upgraded installations
+# and records live workers, but never API-only processes. The documentation
+# still requires stopping every API and worker instance; this guard catches the
+# common Compose/worker case and gives an actionable list.
+#
+# A local platform that was just stopped can keep its heartbeat lease for up to
+# the 30s run-lease TTL, so wait that window out before failing.
+wait_for_quiescent_instances() {
+  local table_count live waited=0
+  local limit="${LOOPFORGE_MIGRATION_QUIESCE_SECONDS:-45}"
+  table_count=$(printf '%s\n' \
+    "SELECT COUNT(*) FROM information_schema.TABLES" \
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'engine_instances';" | mysql_exec control | tr -d '\r')
+  [[ "$table_count" == "1" ]] || return 0
+  while :; do
+    live=$(printf '%s\n' \
+      "SELECT COUNT(*) FROM engine_instances" \
+      "WHERE lease_until > UTC_TIMESTAMP(3);" | mysql_exec control | tr -d '\r')
+    [[ "$live" == "0" ]] && return 0
+    if (( waited >= limit )); then
+      local instances
+      instances=$(printf '%s\n' \
+        "SELECT CONCAT(instance_id, ' (', role, ')') FROM engine_instances" \
+        "WHERE lease_until > UTC_TIMESTAMP(3) ORDER BY instance_id;" | mysql_exec control | tr -d '\r' | paste -sd ',' -)
+      fail "检测到 $live 个仍在线的 API/worker 实例：$instances。035/036/037 是数据迁移，必须先停止所有实例（不只是本机 Compose 平台），等待租约过期后再执行；本机刚停止的平台最多等待 ${limit}s。"
+    fi
+    step "Waiting for $live live instance(s) to stop before data migrations (${waited}s/${limit}s)"
+    sleep 3
+    waited=$((waited + 3))
+  done
+}
+
+# 037's content segment needs the control-plane old→new ID mapping. The script
+# imports it as SQL statements so a content database on another MySQL server
+# works; on the same server the content segment can also copy it directly.
+import_037_mapping() {
+  local mapping
+  mapping=$(printf '%s\n' \
+    "SELECT 'CREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (kind VARCHAR(16) NOT NULL, old_id VARCHAR(64) NOT NULL, new_id VARCHAR(64) NOT NULL, PRIMARY KEY (kind, old_id), UNIQUE KEY uq_knowledge_id_037_target (kind, new_id)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;';" \
+    "SELECT CONCAT('INSERT IGNORE INTO knowledge_id_migration_037 (kind, old_id, new_id) VALUES (', QUOTE(kind), ',', QUOTE(old_id), ',', QUOTE(new_id), ');') FROM knowledge_id_migration_037;" \
+    | mysql_exec control) || fail 'failed to read the 037 ID mapping from the control database'
+  printf '%s\n' "$mapping" | mysql_exec content || fail 'failed to import the 037 ID mapping into the content database'
+}
+
+seed_control() {
+  local files=() file
+  shopt -s nullglob
+  files=(migrations/seed/*.sql)
+  shopt -u nullglob
+  [[ ${#files[@]} -gt 0 ]] || fail 'no migrations/seed/*.sql files found.'
+  step "Applying seed SQL to control database $MAIN_DB"
+  {
+    for file in "${files[@]}"; do
+      cat "$file"
+      printf '\n'
+    done
+  } | mysql_exec control || fail "failed to apply migrations/seed/*.sql to control database $MAIN_DB"
+}
+
 apply_migrations() {
   local control_schema
   control_schema=$(python3 - "$MAIN_DB" <<'PY'
@@ -208,11 +274,23 @@ PY
   files=(migrations/[0-9][0-9][0-9]_*.sql)
   shopt -u nullglob
   [[ ${#files[@]} -gt 0 ]] || fail 'no migrations/*.sql files found.'
+
+  # 002 is the pre-026 knowledge baseline. 035 alters knowledge_submissions and
+  # 036/037 reference the same control tables, so a fresh MySQL cannot start at
+  # 026 and assume the platform's old AutoMigrate created them.
+  step 'Applying 002_knowledge_base.sql (control baseline)'
+  mysql_exec control < migrations/002_knowledge_base.sql \
+    || fail 'failed to apply the 002 knowledge baseline to the control database'
+
+  local mapping_imported=0
   for file in "${files[@]}"; do
     base=$(basename "$file")
     num=${base%%_*}
     if ((10#$num < 26)); then
       continue
+    fi
+    if ((10#$num == 35)); then
+      wait_for_quiescent_instances
     fi
     local outdir
     outdir=$(mktemp -d)
@@ -222,6 +300,10 @@ PY
       plane=$(cat "${segment%.sql}.plane")
       step "Applying $base ($plane)"
       if [[ "$plane" == "content" ]]; then
+        if ((10#$num == 37)) && [[ "$mapping_imported" == 0 ]]; then
+          import_037_mapping
+          mapping_imported=1
+        fi
         {
           printf "SET @knowledge_control_schema = '%s';\n" "$control_schema"
           cat "$segment"
@@ -253,4 +335,5 @@ check_ngram() {
 case "$command_name" in
   apply) apply_migrations ;;
   check) check_ngram ;;
+  seed) seed_control ;;
 esac

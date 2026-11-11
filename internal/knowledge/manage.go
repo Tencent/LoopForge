@@ -47,6 +47,13 @@ func stableKnowledgeID(prefix, seed string) string {
 func HostedSourceID(baseID string) string    { return stableKnowledgeID("kb-hosted-", "hosted:"+baseID) }
 func hostedSourceID(projectID string) string { return HostedSourceID(hostedBaseID(projectID)) }
 
+// knowledgeSchemaRepairError is returned when the control plane still carries
+// pre-037 IDs. The fix is deliberately an explicit operator action, not an
+// in-process rename, because 037 also moves content rows and fences.
+func knowledgeSchemaRepairError(subject string) error {
+	return apperr.New(apperr.Unavailable, "检测到"+subject+"仍使用 037 之前的标识。请先停止所有 API/worker 实例，执行 bash scripts/knowledge-schema.sh apply 完成迁移后再启动；平台不会在此状态下新建第二个托管来源")
+}
+
 // ManagedStore 是管理接口需要的持久化能力。*repo.Store 通过内嵌的
 // KnowledgeRepo / KnowledgeContentRepo 满足它；Service 用类型断言从 s.store
 // 取出，不改 Store 接口、不往 deps 加字段。
@@ -91,6 +98,11 @@ func (s *Service) EnsureHostedBase(projectID string) (domain.KnowledgeBase, erro
 		}
 	}
 	baseID := hostedBaseID(projectID)
+	if legacyID := "kb-" + projectID; legacyID != baseID {
+		if legacy, ok := ms.KnowledgeBase(legacyID); ok && ownsBase(legacy, projectID) {
+			return domain.KnowledgeBase{}, knowledgeSchemaRepairError("项目托管知识库")
+		}
+	}
 	base, found := ms.KnowledgeBase(baseID)
 	if !found {
 		base = domain.KnowledgeBase{ID: baseID, ProjectID: projectID, Name: "项目知识库", Layer: "project"}
@@ -110,6 +122,13 @@ func (s *Service) EnsureHostedBase(projectID string) (domain.KnowledgeBase, erro
 	existingSource, sourceFound := ms.KnowledgeSource(sourceID)
 	if sourceFound && (existingSource.BaseID != base.ID || existingSource.Kind != "hosted") {
 		return domain.KnowledgeBase{}, apperr.New(apperr.Conflict, "托管来源标识冲突")
+	}
+	// Before 037 the hosted source ID was "kb-hosted-<projectID>". A new binary
+	// must never create the hash-based replacement next to it (or silently use
+	// it while the old row remains): the project would then have two hosted
+	// sources and old documents would become unreachable.
+	if legacySource, ok := ms.KnowledgeSource("kb-hosted-" + projectID); ok && legacySource.Kind == "hosted" && legacySource.BaseID == base.ID {
+		return domain.KnowledgeBase{}, knowledgeSchemaRepairError("旧版托管来源")
 	}
 	if !sourceFound {
 		src := domain.KnowledgeSource{

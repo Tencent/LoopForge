@@ -1,9 +1,29 @@
--- Run manually after 034, with API and workers stopped. Never run on startup.
--- Defaults to one database. For content on the same MySQL server, set
--- @knowledge_content_schema before sourcing this file. See the proposal's 037 notes
--- for separate-server content databases. Back up both databases first.
--- ===== PLAN: control database =====
-SET @knowledge_content_schema = COALESCE(@knowledge_content_schema, DATABASE());
+-- 037: 托管知识库/来源 ID 命名空间迁移。可重复执行。
+--
+-- 运行前必须停止所有 API 和 worker 实例（不只是本机 Compose 平台）：
+-- 本脚本会改控制面来源 ID，同时改内容面的 source_id 和撤回 fence；旧实例
+-- 继续写入会产生旧 ID 的孤儿正文或 fence。安装/升级脚本会检查
+-- engine_instances 中仍在线的 worker，并留出停止实例的等待窗口。
+--
+-- 分三段：
+--   control：建立映射表、计算旧版长项目库和新托管来源的 ID，并校验没有
+--            两个旧来源映射到同一个新 ID。
+--   content：在内容库按映射更新 documents/revisions/chunks 和
+--            knowledge_content_fences。独立内容库由
+--            scripts/knowledge-schema.sh 在执行本段前导入控制面的映射表；
+--            同一 MySQL 服务器上也可由本段从 @knowledge_control_schema 复制。
+--   control：更新控制面引用，最后写入 knowledge_schema_versions(37)。
+--
+-- Git 来源 ID 不改：AES-GCM 用来源 ID 做 AAD。重新登记时只在已核实归属的
+-- 库内复用完全相同的旧配置；新 Git ID 以 git:<baseID>\0<url>\0<branch>\0<prefix>
+-- 为种子。
+
+-- @plane control
+
+CREATE TABLE IF NOT EXISTS knowledge_schema_versions (
+  version    INT         NOT NULL PRIMARY KEY,
+  applied_at DATETIME(3) NULL
+) DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 -- Keep the mapping so interruption/repetition and separate content DBs can resume.
 CREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (
@@ -12,7 +32,7 @@ CREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (
   new_id VARCHAR(64) NOT NULL,
   PRIMARY KEY (kind, old_id),
   UNIQUE KEY uq_knowledge_id_037_target (kind, new_id)
-) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 INSERT IGNORE INTO knowledge_id_migration_037 (kind, old_id, new_id)
 SELECT 'base', id, CONCAT('kb-project-', LEFT(SHA2(CONCAT('project:', project_id), 256), 32))
 FROM knowledge_bases
@@ -35,15 +55,38 @@ WHERE s.kind='hosted'
  AND NOT EXISTS (SELECT 1 FROM knowledge_id_migration_037 m WHERE m.kind='source' AND BINARY m.old_id=BINARY s.id
  AND m.new_id=CONCAT('kb-hosted-', LEFT(SHA2(CONCAT('hosted:', COALESCE(b.new_id,s.base_id)),256),32)));
 DROP TEMPORARY TABLE kb037_assert;
--- Git IDs are deliberately not renamed: AES-GCM authenticates their IDs.
--- Re-registration reuses an exact legacy configuration ONLY inside its owning
--- base; new Git IDs hash git:<baseID>\0<url>\0<branch>\0<prefix>.
 
--- ===== CONTENT: content database (with mapping table imported if separate server) =====
-SET @knowledge_content_schema = COALESCE(@knowledge_content_schema, DATABASE());
+-- @plane content
+
+-- The content segment only uses a local mapping table. knowledge-schema.sh
+-- imports it before this segment when the content database is on another
+-- server; on the same server this block copies it from the control schema.
+CREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (
+  kind VARCHAR(16) NOT NULL,
+  old_id VARCHAR(64) NOT NULL,
+  new_id VARCHAR(64) NOT NULL,
+  PRIMARY KEY (kind, old_id),
+  UNIQUE KEY uq_knowledge_id_037_target (kind, new_id)
+) DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
+
+SET @kb037_control_schema = IFNULL(@knowledge_control_schema, DATABASE());
+SET @kb037_has_control_mapping = (
+  SELECT COUNT(*) FROM information_schema.TABLES
+  WHERE TABLE_SCHEMA = @kb037_control_schema AND TABLE_NAME = 'knowledge_id_migration_037'
+);
+SET @kb037_sql = IF(@kb037_has_control_mapping = 0, 'DO 0', CONCAT(
+  'INSERT IGNORE INTO knowledge_id_migration_037 (kind, old_id, new_id) ',
+  'SELECT kind, old_id, new_id FROM `', REPLACE(@kb037_control_schema, '`', '``'), '`.knowledge_id_migration_037'
+));
+PREPARE kb037_stmt FROM @kb037_sql;
+EXECUTE kb037_stmt;
+DEALLOCATE PREPARE kb037_stmt;
+
+-- Content plane. Dynamic quoting keeps schema names out of SQL text; the plain
+-- updates below run in the content database and use only the local mapping.
 START TRANSACTION;
--- Content plane. Dynamic schema names are quoted, never treated as SQL text.
-SET @kb037_schema = CONCAT('`', REPLACE(@knowledge_content_schema, '`', '``'), '`');
+SET @kb037_schema = CONCAT('`', REPLACE(DATABASE(), '`', '``'), '`');
+
 SET @kb037_sql = CONCAT('UPDATE ', @kb037_schema, '.knowledge_documents d JOIN knowledge_id_migration_037 m ON m.kind=''source'' AND BINARY m.old_id=BINARY d.source_id SET d.source_id=m.new_id');
 PREPARE kb037_stmt FROM @kb037_sql;
 EXECUTE kb037_stmt;
@@ -57,9 +100,34 @@ PREPARE kb037_stmt FROM @kb037_sql;
 EXECUTE kb037_stmt;
 DEALLOCATE PREPARE kb037_stmt;
 
+-- Fences must follow the source rename or a late write can revive retracted
+-- content under the new ID. Merge into an existing target fence (greatest token,
+-- retracted wins), then remove the old row.
+SET @kb037_has_fences = (
+  SELECT COUNT(*) FROM information_schema.TABLES
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_content_fences'
+);
+SET @kb037_sql = IF(@kb037_has_fences = 0, 'DO 0', CONCAT(
+  'INSERT INTO knowledge_content_fences (source_id, path, token, retracted) ',
+  'SELECT m.new_id, f.path, f.token, f.retracted FROM knowledge_content_fences f ',
+  'JOIN knowledge_id_migration_037 m ON m.kind=''source'' AND BINARY m.old_id=BINARY f.source_id ',
+  'ON DUPLICATE KEY UPDATE token=GREATEST(knowledge_content_fences.token, VALUES(token)), retracted=(knowledge_content_fences.retracted OR VALUES(retracted))'
+));
+PREPARE kb037_stmt FROM @kb037_sql;
+EXECUTE kb037_stmt;
+DEALLOCATE PREPARE kb037_stmt;
+SET @kb037_sql = IF(@kb037_has_fences = 0, 'DO 0', CONCAT(
+  'DELETE f FROM knowledge_content_fences f ',
+  'JOIN knowledge_id_migration_037 m ON m.kind=''source'' AND BINARY m.old_id=BINARY f.source_id'
+));
+PREPARE kb037_stmt FROM @kb037_sql;
+EXECUTE kb037_stmt;
+DEALLOCATE PREPARE kb037_stmt;
+
 COMMIT;
 
--- ===== CONTROL: control database, after CONTENT succeeded =====
+-- @plane control
+
 START TRANSACTION;
 -- Control plane. Payload stores the review source, including retracted items.
 UPDATE knowledge_submissions s JOIN knowledge_id_migration_037 m
@@ -81,4 +149,10 @@ UPDATE knowledge_governance_issues s JOIN knowledge_id_migration_037 m ON m.kind
 UPDATE knowledge_governance_scans s JOIN knowledge_id_migration_037 m ON m.kind='base' AND BINARY m.old_id=BINARY s.base_id SET s.base_id=m.new_id;
 UPDATE knowledge_citations s JOIN knowledge_id_migration_037 m ON m.kind='base' AND BINARY m.old_id=BINARY s.base_id SET s.base_id=m.new_id;
 UPDATE knowledge_bases s JOIN knowledge_id_migration_037 m ON m.kind='base' AND BINARY m.old_id=BINARY s.id SET s.id=m.new_id;
+
+-- The version row is written only after both planes and the control updates
+-- succeeded. A failed run leaves the old version and is safe to retry.
+INSERT INTO knowledge_schema_versions (version, applied_at)
+VALUES (37, UTC_TIMESTAMP(3))
+ON DUPLICATE KEY UPDATE version = VALUES(version);
 COMMIT;

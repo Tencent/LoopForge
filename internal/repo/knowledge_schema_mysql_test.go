@@ -2,7 +2,9 @@ package repo
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +22,13 @@ import (
 type migrationSegment struct {
 	plane string
 	sql   string
+}
+
+// Keep the test independent of internal/knowledge (which imports repo) while
+// matching HostedSourceID's exact hash seed and truncation.
+func hostedSourceIDForTest(baseID string) string {
+	sum := sha256.Sum256([]byte("hosted:" + baseID))
+	return "kb-hosted-" + hex.EncodeToString(sum[:16])
 }
 
 // TestKnowledgeMigrationsOnSeparateContentDatabase 覆盖审查报告 P1-4/P2-5：
@@ -62,9 +71,33 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := before.KnowledgeSchemaVersion(); err != nil {
+		t.Fatal(err)
+	}
+	if err := before.CheckKnowledgeSchema(); err == nil {
+		t.Fatal("a database without 037 must fail the startup schema check")
+	}
 	legacy := `{"id":"kbs-legacy","projectId":"p1","title":"旧待审","source":"kb-hosted-p1","path":"docs/legacy.md","content":"LEGACY-BODY-SECRET","status":"pending"}`
 	if err := before.DB.Exec("INSERT INTO knowledge_submissions (id, project_id, status, payload, created_at, updated_at) VALUES (?, ?, ?, CAST(? AS JSON), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))",
 		"kbs-legacy", "p1", domain.KnowledgeSubmissionPending, legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Pre-037 data: a hosted source named kb-hosted-<project>, its content, and
+	// a retracted fence. A stale fence under the target ID must be merged.
+	oldSource, newSource := "kb-hosted-p1", hostedSourceIDForTest("kb-p1")
+	if err := before.PutKnowledgeBase(domain.KnowledgeBase{ID: "kb-p1", ProjectID: "p1", Name: "旧项目库", Layer: "project"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := before.PutKnowledgeSource(domain.KnowledgeSource{ID: oldSource, BaseID: "kb-p1", Kind: "hosted"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := before.PutKnowledgeDocument(domain.KnowledgeDocument{SourceID: oldSource, Path: "docs/fenced.md", Title: "Fenced", Body: "FENCED-CONTENT", Commit: "7", Revision: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execOn(t, contentDSN, "INSERT INTO knowledge_content_fences (source_id, path, token, retracted) VALUES (?, ?, 5, FALSE)", oldSource, "docs/fenced.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execOn(t, contentDSN, "INSERT INTO knowledge_content_fences (source_id, path, token, retracted) VALUES (?, ?, 9, TRUE)", newSource, "docs/fenced.md"); err != nil {
 		t.Fatal(err)
 	}
 	before.Close()
@@ -85,6 +118,50 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 				execMigrationSegment(t, target, prefix+segment.sql, file, run)
 			}
 		}
+	}
+
+	// 037 renames hosted source IDs on both planes and moves fences with them.
+	var migratedSource string
+	if err := queryRow(t, controlDSN, "SELECT id FROM knowledge_sources WHERE base_id = 'kb-p1' AND kind = 'hosted'", &migratedSource); err != nil {
+		t.Fatal(err)
+	}
+	if migratedSource != newSource {
+		t.Fatalf("hosted source id = %q, want %q", migratedSource, newSource)
+	}
+	var documentSource, fencedSource string
+	if err := queryRow(t, contentDSN, "SELECT source_id FROM knowledge_documents WHERE path = 'docs/fenced.md'", &documentSource); err != nil {
+		t.Fatal(err)
+	}
+	if documentSource != newSource {
+		t.Fatalf("content document source_id = %q, want %q", documentSource, newSource)
+	}
+	var fenceCount, fenceToken int
+	var fenceRetracted bool
+	if err := queryRow(t, contentDSN, "SELECT COUNT(*) FROM knowledge_content_fences WHERE path = 'docs/fenced.md'", &fenceCount); err != nil {
+		t.Fatal(err)
+	}
+	if fenceCount != 1 {
+		t.Fatalf("fence rows = %d, want 1", fenceCount)
+	}
+	if err := queryRow(t, contentDSN, "SELECT source_id, token, retracted FROM knowledge_content_fences WHERE path = 'docs/fenced.md'", &fencedSource, &fenceToken, &fenceRetracted); err != nil {
+		t.Fatal(err)
+	}
+	if fencedSource != newSource || fenceToken != 9 || !fenceRetracted {
+		t.Fatalf("fence was not merged: source=%q token=%d retracted=%t", fencedSource, fenceToken, fenceRetracted)
+	}
+	var reviewSource string
+	if err := queryRow(t, controlDSN, "SELECT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.source')) FROM knowledge_submissions WHERE id = 'kbs-legacy'", &reviewSource); err != nil {
+		t.Fatal(err)
+	}
+	if reviewSource != newSource {
+		t.Fatalf("review source = %q, want %q", reviewSource, newSource)
+	}
+	var version int
+	if err := queryRow(t, controlDSN, "SELECT MAX(version) FROM knowledge_schema_versions", &version); err != nil {
+		t.Fatal(err)
+	}
+	if version != KnowledgeSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, KnowledgeSchemaVersion)
 	}
 
 	// 主库不能出现内容表；内容库必须有正文表与 staging。
@@ -190,6 +267,9 @@ func TestKnowledgeMigrationsOnSeparateContentDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	if err := store.CheckKnowledgeSchema(); err != nil {
+		t.Fatalf("startup schema check after 037: %v", err)
+	}
 	src := "src-separate"
 	if err := store.PutKnowledgeSource(domain.KnowledgeSource{ID: src, BaseID: "kb-separate", Kind: "hosted", Status: "ready"}); err != nil {
 		t.Fatal(err)
@@ -246,7 +326,7 @@ func knowledgeMigrationFiles(t *testing.T) []string {
 	for _, file := range files {
 		base := filepath.Base(file)
 		number, err := strconv.Atoi(strings.SplitN(base, "_", 2)[0])
-		if err != nil || number < 26 {
+		if err != nil || (number != 2 && number < 26) {
 			continue
 		}
 		out = append(out, file)

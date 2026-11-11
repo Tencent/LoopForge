@@ -140,6 +140,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Data migrations are explicit scripts. Refuse to serve on an older schema
+	// so a new binary cannot create a second hosted source before 037 ran.
+	if err := s.CheckKnowledgeSchema(); err != nil {
+		log.Fatal(err)
+	}
 	log.Printf("storage driver=%v database=%v role=%s", s.StorageInfo()["driver"], s.StorageInfo()["database"], role)
 	// 向量运行时按环境变量装配：未配置 Qdrant/embedding 时所有引擎保持纯
 	// 关键词检索，只有 MySQL 也能用。必须在构造任何知识引擎之前调用。

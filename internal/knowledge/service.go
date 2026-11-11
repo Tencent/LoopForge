@@ -252,6 +252,24 @@ func (s *Service) Submission(id string) (domain.KnowledgeSubmission, error) {
 	return item, nil
 }
 
+// SubmissionForRead is the detail read used by the review UI. It refuses to
+// render a missing content-plane body as an empty document, so an operator
+// cannot save or publish a body that was silently lost.
+func (s *Service) SubmissionForRead(id string) (domain.KnowledgeSubmission, error) {
+	item, err := s.Submission(id)
+	if err != nil {
+		return item, err
+	}
+	if item.ContentMissing {
+		return item, apperr.New(apperr.Upstream, "审核正文在内容库中缺失；已阻止按空正文展示和发布。请先恢复内容库后再操作")
+	}
+	return item, nil
+}
+
+func knowledgeSubmissionHasBody(item domain.KnowledgeSubmission) bool {
+	return !item.ContentMissing && strings.TrimSpace(item.Content) != ""
+}
+
 type SubmissionInput struct {
 	RunID      string `json:"runId"`
 	ArtifactID string `json:"artifactId"`
@@ -325,6 +343,10 @@ func (s *Service) Edit(id string, input SubmissionEdit) (domain.KnowledgeSubmiss
 	item.Path = strings.TrimSpace(input.Path)
 	if strings.TrimSpace(input.Content) != "" {
 		item.Content = input.Content
+		item.ContentMissing = false
+	}
+	if !knowledgeSubmissionHasBody(item) {
+		return item, apperr.New(apperr.Upstream, "审核正文在内容库中缺失，已阻止保存；请先恢复内容库，或重新提交完整正文")
 	}
 	// 控制面只留指纹；正文写入内容面 staging，保存路径由 repo 负责拆分。
 	item.Fingerprint = KnowledgeFingerprint(item.Content)
@@ -377,6 +399,9 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	item, err := s.mutable(id, "该条目已写回知识库")
 	if err != nil {
 		return item, err
+	}
+	if !strings.EqualFold(strings.TrimSpace(item.Action), domain.KnowledgeSubmissionActionRetract) && !knowledgeSubmissionHasBody(item) {
+		return item, apperr.New(apperr.Upstream, "审核正文在内容库中缺失，已阻止发布；请先恢复内容库或重新提交完整正文")
 	}
 	previousStatus := item.Status
 	item.Status = domain.KnowledgeSubmissionPublishing

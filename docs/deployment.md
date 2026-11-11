@@ -17,7 +17,7 @@ Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFL
 
 Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
 
-Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Run `bash scripts/knowledge-schema.sh apply --native` before starting the service so the knowledge tables and ngram index exist; `repo.Open` only adds missing objects. Apply other existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
+Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Run `bash scripts/knowledge-schema.sh apply --native` before starting the service so the knowledge baseline (002), tables and ngram index exist; `repo.Open` only adds missing objects. Apply other existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
 
 ## Container installation
 
@@ -31,7 +31,7 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ./start.sh release     # switch a source build back to the published image
 ```
 
-The installer checks Docker, Compose and Python (and offers to install Docker when it is missing; set `LOOPFORGE_YES=1` to accept without prompting), generates `.env` with unique secrets, pulls the images, starts MySQL, applies the knowledge-engine migrations (026 onward) and the ngram index check, starts the platform container, then installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. `./start.sh pull` performs the same knowledge migration and ngram check before recreating the platform container. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
+The installer checks Docker, Compose and Python (and offers to install Docker when it is missing; set `LOOPFORGE_YES=1` to accept without prompting), generates `.env` with unique secrets, pulls the images, starts MySQL, applies the knowledge baseline (002) and migrations 026 onward with the ngram index check, starts the platform container, then installs the observability columns and applies `migrations/seed/*.sql` through the configured DSN. It is safe to re-run. `./start.sh pull` performs the same knowledge migration and ngram check before recreating the platform container. Both stop this host's platform first; for multiple API/worker instances see [Upgrading a multi-instance deployment](#upgrading-a-multi-instance-deployment). Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
@@ -99,7 +99,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Knowledge engine schema
 
-The built-in knowledge engine has two table groups. The control plane lives in the main database (`AGENTFLOW_MYSQL_DSN`): knowledge bases, sources, bindings, sync jobs, review metadata, writeback records, tombstones, feedback, gaps, governance results, activity and citations. The content plane owns document bodies, hosted revisions, index chunks and the review-body staging table. Set `AGENTFLOW_KNOWLEDGE_MYSQL_DSN` to a separate MySQL database to isolate it; empty reuses the main connection. In Compose, the DSN must be reachable from the platform container (for example `loopforge:PASSWORD@tcp(mysql:3306)/loopforge_content`, after creating that database); the migration helper maps `127.0.0.1:<published MySQL port>` to the Compose MySQL service so the same `.env` also works for native runs. Never place the content tables in the control database when a separate content DSN is configured, and never create foreign keys across the two groups.
+The built-in knowledge engine has two table groups. The control plane lives in the main database (`AGENTFLOW_MYSQL_DSN`): knowledge bases, sources, bindings, sync jobs, review metadata, writeback records, tombstones, feedback, gaps, governance results, activity and citations. The content plane owns document bodies, hosted revisions, index chunks, the review-body staging table and retraction fences. Set `AGENTFLOW_KNOWLEDGE_MYSQL_DSN` to a separate MySQL database to isolate it; empty reuses the main connection. In Compose, the DSN must be reachable from the platform container (for example `loopforge:PASSWORD@tcp(mysql:3306)/loopforge_content`, after creating that database); the migration helper maps `127.0.0.1:<published MySQL port>` to the Compose MySQL service so the same `.env` also works for native runs. Never place the content tables in the control database when a separate content DSN is configured, and never create foreign keys across the two groups.
 
 `repo.Open` only adds missing tables/columns/indexes. It cannot create a MySQL full-text index with the ngram parser, and it does not run data migrations. Apply the scripts before starting the service:
 
@@ -111,10 +111,11 @@ bash scripts/knowledge-schema.sh apply --native
 bash scripts/knowledge-schema.sh check --native
 ```
 
-The helper parses both DSNs, runs each control segment against the control database and each content segment against the content database, and is safe to repeat. The scripts may also be applied by hand in numeric order; `-- @plane control` / `-- @plane content` marks the target group in files with both. When running the 036 content segment by hand against a separate content database, set `@knowledge_control_schema` to the control database first (the helper does this); it defaults to the current database, which is only correct when both planes share one database.
+The helper applies the 002 knowledge baseline (needed by 035) and then every script from 026 onward in numeric order. It parses both DSNs, runs each control segment against the control database and each content segment against the content database, and is safe to repeat. For 037 it copies the control-plane ID mapping into the content database before the content segment, so a content database on another MySQL server is supported. The scripts may also be applied by hand in numeric order; `-- @plane control` / `-- @plane content` marks the target group in files with both. When running the 036 content segment by hand against a separate content database, set `@knowledge_control_schema` to the control database first (the helper does this); it defaults to the current database, which is only correct when both planes share one database. For 037, import `knowledge_id_migration_037` into the content database before applying its content segment when the two databases are on different servers; the content segment also copies it automatically when it can see the control schema on the same server.
 
 | Script | Plane | Purpose |
 |---|---|---|
+| `002_knowledge_base.sql` | control | Pre-026 baseline: `knowledge_submissions` (and legacy settings); applied before 026 on every install/upgrade |
 | `026_builtin_knowledge.sql` | control + content | Knowledge bases/sources/bindings/sync jobs; documents/revisions/chunks and the ngram full-text index |
 | `027_knowledge_activity.sql` | control | Agent retrieval call records |
 | `028_knowledge_vector.sql` | control | Per-base vector index contract columns |
@@ -124,8 +125,32 @@ The helper parses both DSNs, runs each control segment against the control datab
 | `032_knowledge_sediment.sql` | control | Sediment publish mode, rules and tombstones |
 | `033_knowledge_governance.sql` | control + content | Feedback, gaps, governance scans; document frontmatter metadata columns |
 | `034_knowledge_citation.sql` | control | Structured citation records |
-| `035` / `037` | per script | Reserved for parallel branches; apply them when present in the release |
+| `035_knowledge_concurrency.sql` | control + content | Submission version/fingerprint/CAS columns, writeback claims, operation leases; content fences and immutable review-body staging |
 | `036_knowledge_schema_cleanup.sql` | content + control | Review-body staging table, binary path collation, nullable writeback submission ID, legacy payload-body migration |
+| `037_knowledge_source_namespace.sql` | control + content + control | Rename legacy hosted base/source IDs, move content rows and fences to the new IDs, migrate control references, record schema version 37 |
+
+`035`, `036` and `037` are data migrations, not just DDL. Do not run them while an old API or worker can still write review bodies, sync content or create sources. `037` also writes `knowledge_schema_versions(37)`; the new binary refuses to start until that row exists.
+
+### Upgrading a multi-instance deployment
+
+The install and update scripts stop only the platform container on the current host. With more than one API/worker instance, all of them share the same MySQL and must be quiesced:
+
+1. Stop every API and worker process (all hosts, all Compose projects, Kubernetes replicas and standalone `-role api`/`-role worker` processes). Do not start the new version yet.
+2. Confirm the control database has no live worker rows:
+   ```sql
+   SELECT instance_id, role, lease_until FROM engine_instances
+   WHERE lease_until > UTC_TIMESTAMP(3);
+   ```
+   The script checks this table before applying 035 and waits up to `LOOPFORGE_MIGRATION_QUIESCE_SECONDS` (default 45s) for a just-stopped worker's lease to expire. If live rows remain it aborts with their IDs. API-only processes do not heartbeat, so the SQL check and the documented stop step still matter.
+3. Run the migration once, from one host:
+   ```bash
+   bash scripts/knowledge-schema.sh apply --compose   # or --native with exported DSNs
+   bash scripts/knowledge-schema.sh check --compose
+   ```
+   For a content database on another server, run the same command with `AGENTFLOW_KNOWLEDGE_MYSQL_DSN` exported; 037's mapping is imported into the content database before its content segment.
+4. Start the new binaries only after the script and ngram check succeed. Starting an older binary after 037 is not supported, and starting the new binary before 037 fails fast with the repair command.
+
+`./start.sh pull` performs steps 2–4 for this host's Compose platform, but it cannot stop remote API/worker instances; stop them first.
 
 `036` moves review bodies that older installations kept in `knowledge_submissions.payload` into the content-plane `knowledge_submission_contents` table, then removes the `content` key from the control payload. The copy works when the control and content databases are on the same MySQL server (including two schemas on that server) and is skipped otherwise. For a content database on another server, export the affected payloads first, import them into `knowledge_submission_contents`, and only then run the control-plane `UPDATE ... JSON_REMOVE(payload, '$.content')` cleanup manually; the exact statement is in the script comments.
 
@@ -184,6 +209,14 @@ Other dedicated/self-hosted configurations are described in the [official CodeBu
 
 ## Isolated container acceptance
 
-Run `python3 scripts/test-install.py -v` for installer regression tests covering sudo selection, direct Docker access, unattended permission failures, repeated installation, image mode and access URLs. With a locally built platform image, `LOOPFORGE_INSTALL_TEST_IMAGE=your-image bash scripts/test-install-live.sh` verifies real root and UID 65534 installations, non-loopback HTTP access, first-account creation and repeated installation in isolated Compose projects on random ports. This live test requires a Linux root test runner to drop privileges; it removes its own containers and volumes afterwards. To also exercise real sudo inside a disposable UID 1000 installer container, build `scripts/testdata/install-sudo.Dockerfile` with `--build-arg LOOPFORGE_TEST_BASE=your-image`, then pass that test image as `LOOPFORGE_INSTALL_SUDO_TEST_IMAGE`. The production installer itself does not require root.
+Run `python3 scripts/test-install.py -v` for installer regression tests covering sudo selection, direct Docker access, unattended permission failures, repeated installation, image mode and access URLs. It also runs the real `knowledge-schema.sh` against the repository migrations with a recording MySQL client, covering the 002→035 baseline order, 037's control/content/control split, mapping import into a separate content database, fence migration, live-instance refusal and DSN-driven seeding. With a locally built platform image, `LOOPFORGE_INSTALL_TEST_IMAGE=your-image bash scripts/test-install-live.sh` verifies real root and UID 65534 installations, non-loopback HTTP access, first-account creation and repeated installation in isolated Compose projects on random ports, with all migrations including 002 and 030–037 copied into the fixture. This live test requires a Linux root test runner to drop privileges; it removes its own containers and volumes afterwards. To also exercise real sudo inside a disposable UID 1000 installer container, build `scripts/testdata/install-sudo.Dockerfile` with `--build-arg LOOPFORGE_TEST_BASE=your-image`, then pass that test image as `LOOPFORGE_INSTALL_SUDO_TEST_IMAGE`. The production installer itself does not require root.
+
+For a real MySQL upgrade test (old payload body, legacy hosted IDs, retraction fence and an independent content database), set `AGENTFLOW_TEST_MYSQL_DSN` to a disposable server and run:
+
+```bash
+AGENTFLOW_TEST_MYSQL_DSN='root:...@tcp(127.0.0.1:3306)/kb_test' \
+  go test ./internal/repo -run 'TestKnowledgeMigrationsOnSeparateContentDatabase|TestKnowledgeNamespaceMigrationRepeatable' -count=1
+```
+These tests create and drop their own databases; do not point them at production.
 
 From the repository root, run `bash scripts/test-container.sh` after installing `e2e/` dependencies and Chromium. It builds the production image, creates an isolated Compose project and database on ports 8093/33317, provisions test accounts, explicitly applies the observability baseline and public catalog, checks bundled CLIs and cross-platform runner/gate binaries, and runs the public browser suite. Its containers and volumes are removed afterwards. Override `LOOPFORGE_CONTAINER_TEST_PORT` and `LOOPFORGE_CONTAINER_MYSQL_PORT` when those ports are in use. Model calls are disabled for this clean-install check.

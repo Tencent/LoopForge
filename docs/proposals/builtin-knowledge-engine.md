@@ -84,7 +84,7 @@
 
 | 方法 | 内置引擎怎么做 |
 | --- | --- |
-| `Tools` | 返回固定的只读工具说明：`kb_search`、`kb_fetch`、`kb_list_sources`、`kb_get_source`。不向 Agent 列出写工具 |
+| `Tools` | 返回固定的只读工具说明：`kb_search`、`kb_fetch`、`kb_grep`、`kb_list_sources`、`kb_get_source`。不向 Agent 列出写工具 |
 | `ListSources` | 读控制面来源。不含 Git 地址、凭据和本地路径 |
 | `Search` | 在调用方已经收窄的来源集合里做关键词检索 |
 | `Fetch` | 读内容面正文并按行截取。见下方 commit 核对 |
@@ -209,7 +209,7 @@ ALTER TABLE knowledge_chunks
 - 一个 Git 来源：登记公开地址、分支和路径前缀，同步进 MySQL，检索和读原文不再碰工作副本。同步状态和错误在知识中心可见。
 - `Upstream` 五个方法的切片行为，以及代理令牌改用会话密钥。
 - SOP：角色打开知识库开关后，工具仍走 `/runners/knowledge/mcp`，后面是内置引擎。
-- Main Bot：目录里有这四个只读工具，调用按当前项目收窄。
+- Main Bot：目录里有这五个只读工具（另含只写反馈的 `kb_report_issue`），调用按当前项目收窄。
 - 删除地址、Token、默认来源、按项目来源和 `Ready()` 对它们的依赖。检查连接接口改为返回本机索引状态，不再请求外部 MCP。
 - 知识中心界面从「连接配置」改成「本项目的知识库、来源、新建文档、同步、试搜、读原文」。审核标签留着，不作为体验主路径。
 
@@ -229,7 +229,7 @@ ALTER TABLE knowledge_chunks
   通道都记录，写入失败不影响工具调用。
 - 历史 commit 的原文。见第 8 节。
 
-阶段二及以后仍不提前：向量与可选 compose profile、`kb_grep`、出处结构化字段、引用表、自动沉淀、治理面板、对外 MCP。
+阶段二及以后仍不提前：向量与可选 compose profile、出处结构化字段、引用表、自动沉淀、治理面板、对外 MCP（`kb_grep` 已在阶段一补全）。
 
 ### 5.3 本机怎么起
 
@@ -290,7 +290,7 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 | S7 | 删除外部客户端、接入配置和旧密钥 | S5 | 可与 S6 并行 | 删除 `internal/knowledge/client.go` 的远程调用。改 `token.go`、`service.go`、`rules.go`、`internal/httpapi/knowledge.go`、`knowledge_proxy.go`、`internal/engine/assets.go`、`internal/domain/knowledge.go`，以及这些包里断言地址和 Token 的测试 | 现有知识库测试改为：没有地址和 Token 也能检索；错误密钥拒绝代理；写工具不出现在 Agent 的工具列表；Git 来源的 `WriteDocument` 返回未实现且不创建提交 |
 | S8 | 知识中心的管理接口和界面 | S5；同步按钮依赖 S6 | 托管文档部分可与 S6 并行 | `internal/httpapi/knowledge.go` 与新的 `knowledge_bases.go`。`web/knowledge.js`、`web/knowledge.css`。改 `design.md` 知识中心一节 | HTTP 测试覆盖创建文档、试搜、读原文、拒绝其他项目。浏览器侧至少断言页面不再提交 `url` / `token` |
 | S9 | 建项目与打开知识中心时幂等创建托管库 | S5 | 可与 S6–S8 并行 | `internal/httpapi/projects.go` 注入 `knowledge.Service`。知识中心读取接口调用同一个保证函数 | 并发创建同一个项目不会有两个托管库。欢迎项目在第一次打开知识中心后恰好有一个 |
-| S10 | Main Bot 工具与提示词 | S7 | 在 S7 之后 | `internal/httpapi/agent_tool_catalog.go`、`agent_tool_mcp.go`、`assistant.go` | 目录在助手模式包含四个只读工具，澄清模式和定时任务不包含。调用使用会话项目。系统提示包含使用规范里的工具名，且没有写工具 |
+| S10 | Main Bot 工具与提示词 | S7 | 在 S7 之后 | `internal/httpapi/agent_tool_catalog.go`、`agent_tool_mcp.go`、`assistant.go` | 目录在助手模式包含五个只读工具（另含 `kb_report_issue`），澄清模式和定时任务不包含。调用使用会话项目。系统提示包含使用规范里的工具名，且没有写工具 |
 | S11 | 让第 5.3 节的命令成立 | S1 | 可与 S5 之后的任务并行 | `compose.yaml` 的 `ngram_token_size`；`scripts/dev.sh` 执行 `026` | 安装测试若会检查 compose 命令，补上这个参数仍能启动 MySQL。不新增第二套启动方式 |
 
 S2、S3、S4 在 S1 进行时就可以由不同的人同时做。S5 是关键路径。S6、S7、S8 的托管部分、S9、S11 在 S5 之后可以并行。S10 最后做。
@@ -437,7 +437,7 @@ worker 角色启动后立即扫描一次，之后每 24 小时扫描全部知识
 
 ### 12.4 Agent 工具与处置入口
 
-知识库工具面在四个只读工具之外增加 `kb_report_issue`，参数是
+知识库工具面在五个只读工具之外增加 `kb_report_issue`，参数是
 `source`、`path`、`issue`。它只写反馈，不修改正文，也不出现在写回路径上；
 SOP 代理与 Main Bot 目录共用同一份工具定义和授权收窄。
 

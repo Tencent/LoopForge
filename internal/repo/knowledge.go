@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -69,6 +70,13 @@ func (r *KnowledgeRepo) KnowledgeSubmission(id string) (domain.KnowledgeSubmissi
 		if body, ok := r.content.KnowledgeSubmissionContentVersion(out.ID, row.ContentKey); ok {
 			out.Content = body
 		}
+	}
+	// A non-retract review item always has a body at creation time. If the
+	// content plane cannot return it, keep the item readable for authorization
+	// and retraction decisions but mark the body as missing so publish/edit
+	// paths refuse to write an empty document over the hosted copy.
+	if !strings.EqualFold(strings.TrimSpace(out.Action), domain.KnowledgeSubmissionActionRetract) && strings.TrimSpace(out.Content) == "" {
+		out.ContentMissing = true
 	}
 	if wb, ok := r.KnowledgeWritebackBySubmission(out.ID); ok {
 		applyKnowledgeWritebackView(&out, wb)
@@ -681,4 +689,46 @@ func (r *KnowledgeRepo) KnowledgePublicationValid(id string, version uint64) boo
 	}
 	var n int64
 	return q.Count(&n).Error == nil && n == 1
+}
+
+// KnowledgeSchemaVersion is the data-migration generation required by this
+// binary. 037 renames legacy hosted source IDs and inserts version 37 only
+// after both planes have been migrated.
+const KnowledgeSchemaVersion = 37
+
+var ErrKnowledgeSchemaOutdated = errors.New("knowledge schema is not upgraded")
+
+// KnowledgeSchemaVersion reads the control-plane migration ledger. A missing
+// table or row means this installation predates the versioned knowledge schema.
+// SQLite test stores do not run SQL migrations, so they are treated as current.
+func (r *KnowledgeRepo) KnowledgeSchemaVersion() (int, error) {
+	if r == nil || r.deps == nil || r.DB == nil || !r.isMySQL() {
+		return KnowledgeSchemaVersion, nil
+	}
+	var tables int64
+	if err := r.DB.Raw("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_schema_versions'").Scan(&tables).Error; err != nil {
+		return 0, err
+	}
+	if tables == 0 {
+		return 0, nil
+	}
+	var version int
+	if err := r.DB.Raw("SELECT COALESCE(MAX(version), 0) FROM knowledge_schema_versions").Scan(&version).Error; err != nil {
+		return 0, err
+	}
+	return version, nil
+}
+
+// CheckKnowledgeSchema fails startup when the database has not completed the
+// data migrations this binary depends on. It never repairs the schema from Go:
+// the operator must stop every API/worker instance and run the explicit script.
+func (r *KnowledgeRepo) CheckKnowledgeSchema() error {
+	version, err := r.KnowledgeSchemaVersion()
+	if err != nil {
+		return fmt.Errorf("check knowledge schema version: %w", err)
+	}
+	if version >= KnowledgeSchemaVersion {
+		return nil
+	}
+	return fmt.Errorf("%w: 当前版本 %d，需要 %d。升级前先停止所有 API/worker 实例（不只是本机 Compose 平台），执行 bash scripts/knowledge-schema.sh apply 完成 035–037 迁移，再启动服务", ErrKnowledgeSchemaOutdated, version, KnowledgeSchemaVersion)
 }

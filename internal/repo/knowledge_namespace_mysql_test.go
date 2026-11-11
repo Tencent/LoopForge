@@ -33,6 +33,11 @@ func TestKnowledgeNamespaceMigrationRepeatable(t *testing.T) {
 			}
 		}
 	}
+	if _, found := store.KnowledgeSubmission("namespace-review"); found {
+		if err := store.DeleteKnowledgeSubmission("namespace-review"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := store.PutKnowledgeBase(domain.KnowledgeBase{ID: base, ProjectID: "namespace-project", Layer: "project"}); err != nil {
 		t.Fatal(err)
 	}

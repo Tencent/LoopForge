@@ -154,7 +154,7 @@ func (h *knowledgeHandlers) submission(c *gin.Context) {
 	}
 	switch c.Request.Method {
 	case http.MethodGet:
-		item, err := h.svc.Submission(id)
+		item, err := h.svc.SubmissionForRead(id)
 		render(c, item, err)
 	case http.MethodDelete:
 		respond(c, h.svc.Delete(id))

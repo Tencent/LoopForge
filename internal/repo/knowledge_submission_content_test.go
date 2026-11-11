@@ -77,3 +77,33 @@ func TestKnowledgeSubmissionBodyLivesOnContentPlane(t *testing.T) {
 		t.Fatalf("删除审核条目后 staging 仍剩 %d 行", staged)
 	}
 }
+
+// 内容面读不到正文时不能把空字符串当成正文：审核条目要带缺失标记，发布
+// 路径据此拒绝覆盖远端文档。retract 条目本来就没有正文，不算缺失。
+func TestKnowledgeSubmissionMarksMissingContent(t *testing.T) {
+	s := builtinStore(t)
+	item := domain.KnowledgeSubmission{
+		ID: "kbs-missing", ProjectID: "proj-missing", Source: "src-missing", Path: "docs/missing.md",
+		Title: "待审文档", Content: "# 原文\n\nBODY-MUST-NOT-DISAPPEAR", Status: domain.KnowledgeSubmissionPending,
+	}
+	if err := s.PutKnowledgeSubmission(item); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Where("submission_id = ?", item.ID).Delete(&knowledgeSubmissionContentRow{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, ok := s.KnowledgeSubmission(item.ID)
+	if !ok || !got.ContentMissing || got.Content != "" {
+		t.Fatalf("missing body must be marked: %+v ok=%v", got, ok)
+	}
+	if err := s.PutKnowledgeSubmission(domain.KnowledgeSubmission{
+		ID: "kbs-retract-missing", ProjectID: "proj-missing", Source: "src-missing", Path: "docs/missing.md",
+		Action: domain.KnowledgeSubmissionActionRetract, Status: domain.KnowledgeSubmissionPending,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	retract, ok := s.KnowledgeSubmission("kbs-retract-missing")
+	if !ok || retract.ContentMissing {
+		t.Fatalf("retract item has no body by design: %+v ok=%v", retract, ok)
+	}
+}

@@ -94,36 +94,87 @@ func (s *Service) Grep(ctx context.Context, projectID string, q GrepQuery) (Grep
 	expired := func() bool {
 		return grepNow().Sub(started) > GrepTimeout
 	}
-	docs := make([]grepDoc, 0)
+	const loadBatch = 100
 	scanned := 0
+	hits := make([]GrepHit, 0)
+	truncated := false
 	for _, source := range scoped {
-		if err := grepStopped(ctx, expired); err != nil {
-			return out, err
-		}
-		list := append([]domain.KnowledgeDocument(nil), s.store.KnowledgeDocuments(source)...)
-		sort.Slice(list, func(i, j int) bool { return list[i].Path < list[j].Path })
-		for _, doc := range list {
+		after := ""
+		for {
 			if err := grepStopped(ctx, expired); err != nil {
+				out.Hits = hits
 				return out, err
 			}
-			if scanned+len(doc.Body) > GrepScanByteLimit {
-				return out, apperr.New(apperr.Unavailable, "精确匹配扫描内容超过上限，请缩小来源范围")
+			list := s.grepDocumentPage(source, after, loadBatch)
+			if len(list) == 0 {
+				break
 			}
-			scanned += len(doc.Body)
-			docs = append(docs, grepDoc{Source: source, Commit: doc.Commit, Path: doc.Path, Body: doc.Body})
+			docs := make([]grepDoc, 0, len(list))
+			for _, doc := range list {
+				if err := grepStopped(ctx, expired); err != nil {
+					out.Hits = hits
+					return out, err
+				}
+				if scanned+len(doc.Body) > GrepScanByteLimit {
+					out.Hits = hits
+					return out, apperr.New(apperr.Unavailable, "精确匹配扫描内容超过上限，请缩小来源范围")
+				}
+				scanned += len(doc.Body)
+				docs = append(docs, grepDoc{Source: source, Commit: doc.Commit, Path: doc.Path, Body: doc.Body})
+			}
+			remaining := GrepHitLimit - len(hits)
+			if remaining <= 0 {
+				truncated = true
+				break
+			}
+			batchHits, batchTruncated, err := grepBodies(ctx, docs, match, remaining, expired)
+			hits = append(hits, batchHits...)
+			if err != nil {
+				out.Hits = hits
+				out.Truncated = true
+				return out, err
+			}
+			if batchTruncated {
+				truncated = true
+				break
+			}
+			after = list[len(list)-1].Path
+			if len(list) < loadBatch {
+				break
+			}
+		}
+		if truncated {
+			break
 		}
 	}
-	hits, truncated, err := grepBodies(ctx, docs, match, GrepHitLimit, expired)
 	for i := range hits {
 		hits[i].BaseOrigin = s.sourceOrigin(hits[i].Source)
 		hits[i].URL = s.SourceFileURL(hits[i].Source, hits[i].Commit, hits[i].Path, hits[i].Line, hits[i].Line)
 	}
 	out.Hits = hits
 	out.Truncated = truncated
-	if err != nil {
-		return out, err
-	}
 	return out, nil
+}
+
+// grepDocumentPage prefers the content-plane pager so large sources are read in
+// bounded pages. Test doubles and narrow stores keep the whole-list fallback.
+func (s *Service) grepDocumentPage(source, after string, limit int) []domain.KnowledgeDocument {
+	if pager, ok := s.store.(interface {
+		KnowledgeDocumentPage(string, string, int) []domain.KnowledgeDocument
+	}); ok {
+		return pager.KnowledgeDocumentPage(source, after, limit)
+	}
+	list := append([]domain.KnowledgeDocument(nil), s.store.KnowledgeDocuments(source)...)
+	sort.Slice(list, func(i, j int) bool { return list[i].Path < list[j].Path })
+	start := sort.Search(len(list), func(i int) bool { return list[i].Path > after })
+	if start >= len(list) {
+		return nil
+	}
+	end := start + limit
+	if end > len(list) {
+		end = len(list)
+	}
+	return list[start:end]
 }
 
 func grepMatcher(pattern string, regex bool) (func(string) bool, error) {
