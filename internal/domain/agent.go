@@ -12,6 +12,25 @@ var ExecutorEffortLevels = map[string][]string{
 	"claude-code": {"low", "medium", "high", "xhigh", "max", "ultracode"},
 	"codebuddy":   {"low", "medium", "high", "xhigh", "max", "ultracode"},
 	"codex":       {"low", "medium", "high", "xhigh", "max", "ultra"},
+	"opencode":    {"low", "medium", "high"},
+	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max"},
+	"agy":         {"low", "medium", "high", "xhigh", "max"},
+	"pi":          {"minimal", "low", "medium", "high", "xhigh", "max"},
+}
+
+// AgentCLIExecutorKinds are the agent CLIs beyond CodeBuddy / Codex / Claude
+// Code. Their model and MCP configuration lives in a private HOME, so they
+// only run with the responsible user's personal credentials.
+var AgentCLIExecutorKinds = []string{"opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode"}
+
+func IsAgentCLIKind(kind string) bool {
+	kind = strings.TrimSpace(kind)
+	for _, k := range AgentCLIExecutorKinds {
+		if strings.EqualFold(k, kind) {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateAgentEffort checks a role's reasoning-effort choice against the

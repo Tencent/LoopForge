@@ -231,9 +231,13 @@ func (r Runner) SupportsProvider(provider string) bool {
 }
 
 // RuntimeAuthMode returns the configured credential source for a provider.
-// CodeBuddy has no reusable local-login flow, so its default is the
-// responsible user's personal credential; other CLIs default to local login.
+// CodeBuddy and the extra agent CLIs have no reusable local-login flow, so
+// they always use the responsible user's personal credential. Codex and
+// Claude Code default to local login.
 func (r Runner) RuntimeAuthMode(provider string) string {
+	if IsAgentCLIKind(provider) {
+		return RuntimeAuthPersonal
+	}
 	provider = strings.TrimSpace(provider)
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) {
@@ -372,6 +376,9 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.CodexBaseURL = ""
 	copyInvocation.ClaudeCodeAPIKey = ""
 	copyInvocation.ClaudeCodeBaseURL = ""
+	copyInvocation.AgentCLIAPIKey = ""
+	copyInvocation.AgentCLIBaseURL = ""
+	copyInvocation.AgentCLIProtocol = ""
 	if copyInvocation.Repository != nil {
 		copyRepository := *copyInvocation.Repository
 		copyRepository.GitToken = ""
@@ -428,6 +435,9 @@ type RunnerInvocation struct {
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
 	ClaudeCodeAPIKey             string   `json:"claudeCodeApiKey,omitempty"`
 	ClaudeCodeBaseURL            string   `json:"claudeCodeBaseUrl,omitempty"`
+	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`
+	AgentCLIBaseURL              string   `json:"agentCliBaseUrl,omitempty"`
+	AgentCLIProtocol             string   `json:"agentCliProtocol,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
 	// in scripts, verification gates, and Agent hooks. It is unbound; personal
 	// credentials are applied in memory on the runner. Agent Assets stay

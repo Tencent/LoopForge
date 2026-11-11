@@ -1014,6 +1014,48 @@
   color: var(--qa-ok-text);
 }
 
+.qa-hint.is-warn {
+  color: var(--qa-warn-text);
+}
+
+.qa-repo-permission {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--qa-warn-soft);
+}
+
+.qa-repo-permission p {
+  margin: 0;
+}
+
+.qa-repo-permission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 6px;
+}
+
+.qa-link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--qa-accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.qa-link-btn:hover {
+  text-decoration: underline;
+}
+
+.qa-link-btn:focus-visible {
+  outline: 2px solid var(--qa-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .qa-hint code,
 .qa-repo-default-row code {
   padding: 1px 5px;

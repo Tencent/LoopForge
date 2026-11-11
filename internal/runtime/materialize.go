@@ -21,6 +21,10 @@ type compiledConfig struct {
 	Hooks       []compiledHook
 	HasSkills   bool
 	HasMCP      bool
+	AgentID     string
+	// SystemPrompt is the agent-system.md body for providers that send it
+	// with the task.
+	SystemPrompt string
 }
 
 func materialize(workspace, invocationID string, ex domain.ExecutorDefinition, a domain.AgentDefinition, assets domain.AgentAssetBundle) (compiledConfig, error) {
@@ -36,6 +40,11 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	if invocationID == "" {
 		return compiledConfig{}, fmt.Errorf("empty invocation id")
 	}
+	// Parallel branches materialize different Agents into one checkout; the
+	// shared rules/skills/mcp catalogs and git excludes are written one
+	// invocation at a time.
+	unlock := lockWorkspace(workspace)
+	defer unlock()
 	agentID := safeID(a.ID)
 	if agentID == "" {
 		return compiledConfig{}, fmt.Errorf("agent id is required for runtime isolation")
@@ -49,7 +58,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	}
 	agentRel := filepath.Join(".agentflow", agentID)
 	runtimeRel := filepath.Join(".agentflow", "runtime", invocationID)
-	compiled := compiledConfig{AgentRoot: filepath.ToSlash(agentRel), RuntimeRoot: filepath.ToSlash(runtimeRel), HasSkills: len(assets.Skills) > 0}
+	compiled := compiledConfig{AgentRoot: filepath.ToSlash(agentRel), RuntimeRoot: filepath.ToSlash(runtimeRel), HasSkills: len(assets.Skills) > 0, AgentID: agentID}
 	// run-context.json is a debugging artifact; keep binary skill payloads
 	// out of it (they travel with the bundle, not the workspace dump).
 	slimAssets := assets
@@ -146,14 +155,15 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	}
 	var skillPaths []string
 	for _, item := range selectedSkills {
-		dir, err := resetControlDirectory(workspace, "skills", item.id)
-		if err != nil {
+		// Another Agent running in parallel may be reading this skill; an
+		// unchanged skill is left in place instead of being recreated.
+		item := item
+		if _, err := refreshSharedControlDirectory(workspace, func(dir string) error {
+			return writeSkillFiles(dir, item, assets.SkillFiles[item.skill.ID])
+		}, "skills", item.id); err != nil {
 			return compiled, err
 		}
 		skillPaths = append(skillPaths, item.root)
-		if err := writeSkillFiles(dir, item, assets.SkillFiles[item.skill.ID]); err != nil {
-			return compiled, err
-		}
 		if err := replaceRelativeSymlink(filepath.Join(bindingRoot, "skills", item.id), filepath.Join("..", "..", "..", "skills", item.id)); err != nil {
 			return compiled, err
 		}

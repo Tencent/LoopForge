@@ -30,12 +30,12 @@ func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	if len(in.Compiled.Hooks) > 0 && !hasArg(argv, "--dangerously-bypass-hook-trust") {
 		argv = append(argv, "--dangerously-bypass-hook-trust")
 	}
-	if in.Driver == "local" {
-		for _, flag := range []string{"--ignore-user-config", "--ignore-rules"} {
-			if !hasArg(argv, flag) {
-				argv = append(argv, flag)
-			}
-		}
+	// A private CODEX_HOME keeps the host login and config out of the run.
+	// Current Codex rejects --ignore-user-config and --ignore-rules.
+	if in.Driver == "docker" || in.Driver == "bwrap" {
+		// Docker and bwrap are the isolation boundary. Codex's own bubblewrap
+		// sandbox cannot create another user namespace inside them.
+		argv = withCodexSandboxMode(argv, "danger-full-access")
 	}
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {
 		// `resume` is a subcommand of `codex exec`; all exec options must precede it.
@@ -56,6 +56,20 @@ func dropCodexResumeArgs(argv []string) []string {
 		return append(append([]string{}, argv[:i]...), argv[end:]...)
 	}
 	return argv
+}
+
+func withCodexSandboxMode(argv []string, mode string) []string {
+	out := make([]string, 0, len(argv)+2)
+	for i := 0; i < len(argv); i++ {
+		switch arg := argv[i]; {
+		case arg == "--sandbox" || arg == "-s":
+			i++
+		case strings.HasPrefix(arg, "--sandbox="):
+		default:
+			out = append(out, arg)
+		}
+	}
+	return append(out, "--sandbox", mode)
 }
 
 func codexHasReasoningEffort(argv []string) bool {

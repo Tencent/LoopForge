@@ -40,8 +40,10 @@ const welcomeProjectID = "welcome"
 
 // joinWelcomeProject makes the seeded demo project usable by new accounts so
 // the onboarding path works before they create a project of their own.
-func (h *authHandlers) joinWelcomeProject(userID int64) {
-	project, ok := h.repo.Project(welcomeProjectID)
+func (h *authHandlers) joinWelcomeProject(userID int64) { joinWelcomeProject(h.repo, userID) }
+
+func joinWelcomeProject(store *repo.Store, userID int64) {
+	project, ok := store.Project(welcomeProjectID)
 	if !ok {
 		return
 	}
@@ -51,7 +53,7 @@ func (h *authHandlers) joinWelcomeProject(userID int64) {
 		}
 	}
 	project.Members = append(project.Members, domain.ProjectMember{UserID: userID, Role: "member"})
-	if err := h.repo.PutProject(project); err != nil {
+	if err := store.PutProject(project); err != nil {
 		log.Printf("join welcome project: %v", err)
 	}
 }
@@ -60,10 +62,6 @@ func (h *authHandlers) authRegister(c *gin.Context) {
 	origin, err := url.Parse(c.GetHeader("Origin"))
 	if err != nil || origin.Host != c.Request.Host || (origin.Scheme != "http" && origin.Scheme != "https") {
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid request origin"})
-		return
-	}
-	if !allowPasswordAttempt(c.RemoteIP()) {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many attempts. Try again in a minute."})
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
@@ -82,6 +80,12 @@ func (h *authHandlers) authRegister(c *gin.Context) {
 	}
 	if len(input.Password) < repo.MinPasswordLength || len(input.Password) > repo.MaxPasswordLength {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("密码需 %d–%d 个字符", repo.MinPasswordLength, repo.MaxPasswordLength)})
+		return
+	}
+	// Only a valid request reaches the accounts, so only it spends the shared
+	// password budget (see passwordLimiter).
+	if !h.allowPasswordAttempt(c.RemoteIP()) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many attempts. Try again in a minute."})
 		return
 	}
 	registerMu.Lock()

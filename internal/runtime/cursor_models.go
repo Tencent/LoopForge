@@ -1,0 +1,166 @@
+package runtime
+
+import (
+	"slices"
+
+	"agentflow/internal/domain"
+)
+
+// CursorModel is one model family of cursor-agent. The CLI has no effort
+// flag; every reasoning effort is its own model ID, so the family picks the
+// ID for the chosen effort.
+type CursorModel struct {
+	ID, Name string
+	// Default is the effort cursor-agent presents as the plain model; empty
+	// for a model without effort variants.
+	Default string
+	// Variants maps an effort to the cursor-agent model ID; the only key of
+	// a model without effort variants is "".
+	Variants map[string]string
+}
+
+// cursorModels mirrors `cursor-agent models` (2026.11). Fast variants are
+// families of their own: speed is not a reasoning effort.
+var cursorModels = []CursorModel{
+	{ID: "auto", Name: "Auto", Default: "", Variants: map[string]string{"": "auto"}},
+	{ID: "composer-2.5", Name: "Composer 2.5", Default: "", Variants: map[string]string{"": "composer-2.5"}},
+	{ID: "composer-2.5-fast", Name: "Composer 2.5 Fast", Default: "", Variants: map[string]string{"": "composer-2.5-fast"}},
+	{ID: "grok-4.7", Name: "Grok 4.7", Default: "medium", Variants: map[string]string{"low": "grok-4.7-low", "medium": "grok-4.7-medium", "high": "grok-4.7-high", "xhigh": "grok-4.7-xhigh"}},
+	{ID: "grok-4.7-fast", Name: "Grok 4.7 Fast", Default: "medium", Variants: map[string]string{"low": "grok-4.7-low-fast", "medium": "grok-4.7-medium-fast", "high": "grok-4.7-high-fast", "xhigh": "grok-4.7-xhigh-fast"}},
+	{ID: "cursor-grok-4.6", Name: "Grok 4.6", Default: "high", Variants: map[string]string{"low": "cursor-grok-4.6-low", "medium": "cursor-grok-4.6-medium", "high": "cursor-grok-4.6-high", "xhigh": "cursor-grok-4.6-xhigh"}},
+	{ID: "cursor-grok-4.6-fast", Name: "Grok 4.6 Fast", Default: "high", Variants: map[string]string{"low": "cursor-grok-4.6-low-fast", "medium": "cursor-grok-4.6-medium-fast", "high": "cursor-grok-4.6-high-fast", "xhigh": "cursor-grok-4.6-xhigh-fast"}},
+	{ID: "cursor-grok-4.5", Name: "Grok 4.5", Default: "high", Variants: map[string]string{"low": "cursor-grok-4.5-low", "medium": "cursor-grok-4.5-medium", "high": "cursor-grok-4.5-high"}},
+	{ID: "cursor-grok-4.5-fast", Name: "Grok 4.5 Fast", Default: "high", Variants: map[string]string{"low": "cursor-grok-4.5-low-fast", "medium": "cursor-grok-4.5-medium-fast", "high": "cursor-grok-4.5-high-fast"}},
+	{ID: "claude-fable-5-1", Name: "Claude Fable 5.1 (NO ZDR)", Default: "high", Variants: map[string]string{"low": "claude-fable-5-1-low", "medium": "claude-fable-5-1-medium", "high": "claude-fable-5-1-high", "xhigh": "claude-fable-5-1-xhigh", "max": "claude-fable-5-1-max"}},
+	{ID: "claude-fable-5-1-thinking", Name: "Claude Fable 5.1 Thinking (NO ZDR)", Default: "high", Variants: map[string]string{"low": "claude-fable-5-1-thinking-low", "medium": "claude-fable-5-1-thinking-medium", "high": "claude-fable-5-1-thinking-high", "xhigh": "claude-fable-5-1-thinking-xhigh", "max": "claude-fable-5-1-thinking-max"}},
+	{ID: "claude-fable-5", Name: "Claude Fable 5 (NO ZDR)", Default: "high", Variants: map[string]string{"low": "claude-fable-5-low", "medium": "claude-fable-5-medium", "high": "claude-fable-5-high", "xhigh": "claude-fable-5-xhigh", "max": "claude-fable-5-max"}},
+	{ID: "claude-fable-5-thinking", Name: "Claude Fable 5 Thinking (NO ZDR)", Default: "high", Variants: map[string]string{"low": "claude-fable-5-thinking-low", "medium": "claude-fable-5-thinking-medium", "high": "claude-fable-5-thinking-high", "xhigh": "claude-fable-5-thinking-xhigh", "max": "claude-fable-5-thinking-max"}},
+	{ID: "claude-opus-5-5", Name: "Claude Opus 5.5", Default: "medium", Variants: map[string]string{"low": "claude-opus-5-5-low", "medium": "claude-opus-5-5-medium", "high": "claude-opus-5-5-high", "xhigh": "claude-opus-5-5-xhigh", "max": "claude-opus-5-5-max"}},
+	{ID: "claude-opus-5-5-fast", Name: "Claude Opus 5.5 Fast", Default: "medium", Variants: map[string]string{"low": "claude-opus-5-5-low-fast", "medium": "claude-opus-5-5-medium-fast", "high": "claude-opus-5-5-high-fast", "xhigh": "claude-opus-5-5-xhigh-fast", "max": "claude-opus-5-5-max-fast"}},
+	{ID: "claude-opus-5", Name: "Claude Opus 5", Default: "high", Variants: map[string]string{"low": "claude-opus-5-low", "medium": "claude-opus-5-medium", "high": "claude-opus-5-high"}},
+	{ID: "claude-opus-5-thinking", Name: "Claude Opus 5 Thinking", Default: "high", Variants: map[string]string{"low": "claude-opus-5-thinking-low", "medium": "claude-opus-5-thinking-medium", "high": "claude-opus-5-thinking-high", "xhigh": "claude-opus-5-thinking-xhigh", "max": "claude-opus-5-thinking-max"}},
+	{ID: "claude-opus-5-fast", Name: "Claude Opus 5 Fast", Default: "high", Variants: map[string]string{"low": "claude-opus-5-low-fast", "medium": "claude-opus-5-medium-fast", "high": "claude-opus-5-high-fast"}},
+	{ID: "claude-opus-5-thinking-fast", Name: "Claude Opus 5 Thinking Fast", Default: "high", Variants: map[string]string{"low": "claude-opus-5-thinking-low-fast", "medium": "claude-opus-5-thinking-medium-fast", "high": "claude-opus-5-thinking-high-fast", "xhigh": "claude-opus-5-thinking-xhigh-fast", "max": "claude-opus-5-thinking-max-fast"}},
+	{ID: "claude-opus-4-8", Name: "Claude Opus 4.8", Default: "high", Variants: map[string]string{"low": "claude-opus-4-8-low", "medium": "claude-opus-4-8-medium", "high": "claude-opus-4-8-high", "xhigh": "claude-opus-4-8-xhigh", "max": "claude-opus-4-8-max"}},
+	{ID: "claude-opus-4-8-thinking", Name: "Claude Opus 4.8 Thinking", Default: "high", Variants: map[string]string{"low": "claude-opus-4-8-thinking-low", "medium": "claude-opus-4-8-thinking-medium", "high": "claude-opus-4-8-thinking-high", "xhigh": "claude-opus-4-8-thinking-xhigh", "max": "claude-opus-4-8-thinking-max"}},
+	{ID: "claude-opus-4-8-fast", Name: "Claude Opus 4.8 Fast", Default: "high", Variants: map[string]string{"low": "claude-opus-4-8-low-fast", "medium": "claude-opus-4-8-medium-fast", "high": "claude-opus-4-8-high-fast", "xhigh": "claude-opus-4-8-xhigh-fast", "max": "claude-opus-4-8-max-fast"}},
+	{ID: "claude-opus-4-8-thinking-fast", Name: "Claude Opus 4.8 Thinking Fast", Default: "high", Variants: map[string]string{"low": "claude-opus-4-8-thinking-low-fast", "medium": "claude-opus-4-8-thinking-medium-fast", "high": "claude-opus-4-8-thinking-high-fast", "xhigh": "claude-opus-4-8-thinking-xhigh-fast", "max": "claude-opus-4-8-thinking-max-fast"}},
+	{ID: "claude-opus-4-7", Name: "Claude Opus 4.7", Default: "xhigh", Variants: map[string]string{"low": "claude-opus-4-7-low", "medium": "claude-opus-4-7-medium", "high": "claude-opus-4-7-high", "xhigh": "claude-opus-4-7-xhigh", "max": "claude-opus-4-7-max"}},
+	{ID: "claude-opus-4-7-thinking", Name: "Claude Opus 4.7 Thinking", Default: "xhigh", Variants: map[string]string{"low": "claude-opus-4-7-thinking-low", "medium": "claude-opus-4-7-thinking-medium", "high": "claude-opus-4-7-thinking-high", "xhigh": "claude-opus-4-7-thinking-xhigh", "max": "claude-opus-4-7-thinking-max"}},
+	{ID: "claude-opus-4-7-fast", Name: "Claude Opus 4.7 Fast", Default: "xhigh", Variants: map[string]string{"low": "claude-opus-4-7-low-fast", "medium": "claude-opus-4-7-medium-fast", "high": "claude-opus-4-7-high-fast", "xhigh": "claude-opus-4-7-xhigh-fast", "max": "claude-opus-4-7-max-fast"}},
+	{ID: "claude-opus-4-7-thinking-fast", Name: "Claude Opus 4.7 Thinking Fast", Default: "xhigh", Variants: map[string]string{"low": "claude-opus-4-7-thinking-low-fast", "medium": "claude-opus-4-7-thinking-medium-fast", "high": "claude-opus-4-7-thinking-high-fast", "xhigh": "claude-opus-4-7-thinking-xhigh-fast", "max": "claude-opus-4-7-thinking-max-fast"}},
+	{ID: "claude-4.6-opus", Name: "Claude Opus 4.6", Default: "high", Variants: map[string]string{"high": "claude-4.6-opus-high", "max": "claude-4.6-opus-max"}},
+	{ID: "claude-4.6-opus-thinking", Name: "Claude Opus 4.6 Thinking", Default: "high", Variants: map[string]string{"high": "claude-4.6-opus-high-thinking", "max": "claude-4.6-opus-max-thinking"}},
+	{ID: "claude-4.5-opus", Name: "Claude Opus 4.5", Default: "high", Variants: map[string]string{"high": "claude-4.5-opus-high"}},
+	{ID: "claude-4.5-opus-thinking", Name: "Claude Opus 4.5 Thinking", Default: "high", Variants: map[string]string{"high": "claude-4.5-opus-high-thinking"}},
+	{ID: "claude-sonnet-5-5", Name: "Claude Sonnet 5.5", Default: "medium", Variants: map[string]string{"low": "claude-sonnet-5-5-low", "medium": "claude-sonnet-5-5-medium", "high": "claude-sonnet-5-5-high", "xhigh": "claude-sonnet-5-5-xhigh", "max": "claude-sonnet-5-5-max"}},
+	{ID: "claude-sonnet-5", Name: "Claude Sonnet 5", Default: "high", Variants: map[string]string{"low": "claude-sonnet-5-low", "medium": "claude-sonnet-5-medium", "high": "claude-sonnet-5-high", "xhigh": "claude-sonnet-5-xhigh", "max": "claude-sonnet-5-max"}},
+	{ID: "claude-sonnet-5-thinking", Name: "Claude Sonnet 5 Thinking", Default: "high", Variants: map[string]string{"low": "claude-sonnet-5-thinking-low", "medium": "claude-sonnet-5-thinking-medium", "high": "claude-sonnet-5-thinking-high", "xhigh": "claude-sonnet-5-thinking-xhigh", "max": "claude-sonnet-5-thinking-max"}},
+	{ID: "claude-4.6-sonnet", Name: "Claude Sonnet 4.6", Default: "medium", Variants: map[string]string{"medium": "claude-4.6-sonnet-medium"}},
+	{ID: "claude-4.6-sonnet-thinking", Name: "Claude Sonnet 4.6 Thinking", Default: "medium", Variants: map[string]string{"medium": "claude-4.6-sonnet-medium-thinking"}},
+	{ID: "claude-4.5-sonnet", Name: "Claude Sonnet 4.5", Default: "", Variants: map[string]string{"": "claude-4.5-sonnet"}},
+	{ID: "claude-4.5-sonnet-thinking", Name: "Claude Sonnet 4.5 Thinking", Default: "", Variants: map[string]string{"": "claude-4.5-sonnet-thinking"}},
+	{ID: "claude-4-sonnet", Name: "Claude Sonnet 4", Default: "", Variants: map[string]string{"": "claude-4-sonnet"}},
+	{ID: "claude-4-sonnet-thinking", Name: "Claude Sonnet 4 Thinking", Default: "", Variants: map[string]string{"": "claude-4-sonnet-thinking"}},
+	{ID: "claude-haiku-5-5", Name: "Claude Haiku 5.5", Default: "medium", Variants: map[string]string{"low": "claude-haiku-5-5-low", "medium": "claude-haiku-5-5-medium", "high": "claude-haiku-5-5-high", "xhigh": "claude-haiku-5-5-xhigh", "max": "claude-haiku-5-5-max"}},
+	{ID: "claude-haiku-5-5-thinking", Name: "Claude Haiku 5.5 Thinking", Default: "medium", Variants: map[string]string{"low": "claude-haiku-5-5-thinking-low", "medium": "claude-haiku-5-5-thinking-medium", "high": "claude-haiku-5-5-thinking-high", "xhigh": "claude-haiku-5-5-thinking-xhigh", "max": "claude-haiku-5-5-thinking-max"}},
+	{ID: "gpt-5.6-sol", Name: "GPT-5.6 Sol", Default: "medium", Variants: map[string]string{"none": "gpt-5.6-sol-none", "low": "gpt-5.6-sol-low", "medium": "gpt-5.6-sol-medium", "high": "gpt-5.6-sol-high", "xhigh": "gpt-5.6-sol-xhigh", "max": "gpt-5.6-sol-max"}},
+	{ID: "gpt-5.6-sol-fast", Name: "GPT-5.6 Sol Fast", Default: "medium", Variants: map[string]string{"none": "gpt-5.6-sol-none-fast", "low": "gpt-5.6-sol-low-fast", "medium": "gpt-5.6-sol-medium-fast", "high": "gpt-5.6-sol-high-fast", "xhigh": "gpt-5.6-sol-xhigh-fast", "max": "gpt-5.6-sol-max-fast"}},
+	{ID: "gpt-5.6-terra", Name: "GPT-5.6 Terra", Default: "medium", Variants: map[string]string{"none": "gpt-5.6-terra-none", "low": "gpt-5.6-terra-low", "medium": "gpt-5.6-terra-medium", "high": "gpt-5.6-terra-high", "xhigh": "gpt-5.6-terra-xhigh", "max": "gpt-5.6-terra-max"}},
+	{ID: "gpt-5.6-terra-fast", Name: "GPT-5.6 Terra Fast", Default: "medium", Variants: map[string]string{"none": "gpt-5.6-terra-none-fast", "low": "gpt-5.6-terra-low-fast", "medium": "gpt-5.6-terra-medium-fast", "high": "gpt-5.6-terra-high-fast", "xhigh": "gpt-5.6-terra-xhigh-fast", "max": "gpt-5.6-terra-max-fast"}},
+	{ID: "gpt-5.6-luna", Name: "GPT-5.6 Luna", Default: "medium", Variants: map[string]string{"none": "gpt-5.6-luna-none", "low": "gpt-5.6-luna-low", "medium": "gpt-5.6-luna-medium", "high": "gpt-5.6-luna-high", "xhigh": "gpt-5.6-luna-xhigh", "max": "gpt-5.6-luna-max"}},
+	{ID: "gpt-5.6-luna-fast", Name: "GPT-5.6 Luna Fast", Default: "medium", Variants: map[string]string{"none": "gpt-5.6-luna-none-fast", "low": "gpt-5.6-luna-low-fast", "medium": "gpt-5.6-luna-medium-fast", "high": "gpt-5.6-luna-high-fast", "xhigh": "gpt-5.6-luna-xhigh-fast", "max": "gpt-5.6-luna-max-fast"}},
+	{ID: "gpt-5.5", Name: "GPT-5.5", Default: "medium", Variants: map[string]string{"none": "gpt-5.5-none", "low": "gpt-5.5-low", "medium": "gpt-5.5-medium", "high": "gpt-5.5-high", "xhigh": "gpt-5.5-extra-high"}},
+	{ID: "gpt-5.5-fast", Name: "GPT-5.5 Fast", Default: "medium", Variants: map[string]string{"none": "gpt-5.5-none-fast", "low": "gpt-5.5-low-fast", "medium": "gpt-5.5-medium-fast", "high": "gpt-5.5-high-fast", "xhigh": "gpt-5.5-extra-high-fast"}},
+	{ID: "gpt-5.4", Name: "GPT-5.4", Default: "medium", Variants: map[string]string{"low": "gpt-5.4-low", "medium": "gpt-5.4-medium", "high": "gpt-5.4-high", "xhigh": "gpt-5.4-xhigh"}},
+	{ID: "gpt-5.4-fast", Name: "GPT-5.4 Fast", Default: "medium", Variants: map[string]string{"medium": "gpt-5.4-medium-fast", "high": "gpt-5.4-high-fast", "xhigh": "gpt-5.4-xhigh-fast"}},
+	{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Default: "medium", Variants: map[string]string{"none": "gpt-5.4-mini-none", "low": "gpt-5.4-mini-low", "medium": "gpt-5.4-mini-medium", "high": "gpt-5.4-mini-high", "xhigh": "gpt-5.4-mini-xhigh"}},
+	{ID: "gpt-5.4-nano", Name: "GPT-5.4 Nano", Default: "medium", Variants: map[string]string{"none": "gpt-5.4-nano-none", "low": "gpt-5.4-nano-low", "medium": "gpt-5.4-nano-medium", "high": "gpt-5.4-nano-high", "xhigh": "gpt-5.4-nano-xhigh"}},
+	{ID: "gpt-5.3-codex", Name: "Codex 5.3", Default: "medium", Variants: map[string]string{"low": "gpt-5.3-codex-low", "medium": "gpt-5.3-codex", "high": "gpt-5.3-codex-high", "xhigh": "gpt-5.3-codex-xhigh"}},
+	{ID: "gpt-5.3-codex-fast", Name: "Codex 5.3 Fast", Default: "medium", Variants: map[string]string{"low": "gpt-5.3-codex-low-fast", "medium": "gpt-5.3-codex-fast", "high": "gpt-5.3-codex-high-fast", "xhigh": "gpt-5.3-codex-xhigh-fast"}},
+	{ID: "gpt-5.2", Name: "GPT-5.2", Default: "medium", Variants: map[string]string{"low": "gpt-5.2-low", "medium": "gpt-5.2", "high": "gpt-5.2-high", "xhigh": "gpt-5.2-xhigh"}},
+	{ID: "gpt-5.2-fast", Name: "GPT-5.2 Fast", Default: "medium", Variants: map[string]string{"low": "gpt-5.2-low-fast", "medium": "gpt-5.2-fast", "high": "gpt-5.2-high-fast", "xhigh": "gpt-5.2-xhigh-fast"}},
+	{ID: "gpt-5.1", Name: "GPT-5.1", Default: "medium", Variants: map[string]string{"low": "gpt-5.1-low", "medium": "gpt-5.1", "high": "gpt-5.1-high"}},
+	{ID: "gpt-5-mini", Name: "GPT-5 Mini", Default: "", Variants: map[string]string{"": "gpt-5-mini"}},
+	{ID: "gemini-4-argon", Name: "Gemini 4 Argon", Default: "medium", Variants: map[string]string{"low": "gemini-4-argon-low", "medium": "gemini-4-argon-medium", "high": "gemini-4-argon-high"}},
+	{ID: "gemini-3.8-flash", Name: "Gemini 3.8 Flash", Default: "medium", Variants: map[string]string{"low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high"}},
+	{ID: "gemini-3.7-flash", Name: "Gemini 3.7 Flash", Default: "high", Variants: map[string]string{"low": "gemini-3.7-flash-low", "medium": "gemini-3.7-flash-medium", "high": "gemini-3.7-flash-high"}},
+	{ID: "gemini-3.6-flash", Name: "Gemini 3.6 Flash", Default: "high", Variants: map[string]string{"minimal": "gemini-3.6-flash-minimal", "low": "gemini-3.6-flash-low", "medium": "gemini-3.6-flash-medium", "high": "gemini-3.6-flash-high"}},
+	{ID: "gemini-3.5-flash", Name: "Gemini 3.5 Flash", Default: "", Variants: map[string]string{"": "gemini-3.5-flash"}},
+	{ID: "gemini-3.1-pro", Name: "Gemini 3.1 Pro", Default: "", Variants: map[string]string{"": "gemini-3.1-pro"}},
+	{ID: "gemini-3-flash", Name: "Gemini 3 Flash", Default: "", Variants: map[string]string{"": "gemini-3-flash"}},
+	{ID: "kimi-k3", Name: "Kimi K3", Default: "max", Variants: map[string]string{"low": "kimi-k3-low", "high": "kimi-k3-high", "max": "kimi-k3-max"}},
+	{ID: "kimi-k2.7-code", Name: "Kimi K2.7 Code", Default: "", Variants: map[string]string{"": "kimi-k2.7-code"}},
+	{ID: "deepseek-v41-flash-1017", Name: "DeepSeek V4.1 Flash 1017", Default: "medium", Variants: map[string]string{"none": "deepseek-v41-flash-1017-none", "low": "deepseek-v41-flash-1017-low", "medium": "deepseek-v41-flash-1017-medium", "high": "deepseek-v41-flash-1017-high", "max": "deepseek-v41-flash-1017-max"}},
+	{ID: "glm-5.2", Name: "GLM 5.2", Default: "high", Variants: map[string]string{"high": "glm-5.2-high", "max": "glm-5.2-max"}},
+	{ID: "muse-spark-1.3", Name: "Muse Spark 1.3", Default: "high", Variants: map[string]string{"minimal": "muse-spark-1.3-minimal", "low": "muse-spark-1.3-low", "medium": "muse-spark-1.3-medium", "high": "muse-spark-1.3-high", "xhigh": "muse-spark-1.3-xhigh", "max": "muse-spark-1.3-max"}},
+	{ID: "muse-wonder-1.0", Name: "Muse Wonder", Default: "medium", Variants: map[string]string{"minimal": "muse-wonder-1.0-minimal", "low": "muse-wonder-1.0-low", "medium": "muse-wonder-1.0-medium", "high": "muse-wonder-1.0-high", "xhigh": "muse-wonder-1.0-xhigh", "max": "muse-wonder-1.0-max"}},
+}
+
+var cursorModelByID, cursorModelByVariant = func() (map[string]CursorModel, map[string]CursorModel) {
+	byID, byVariant := map[string]CursorModel{}, map[string]CursorModel{}
+	for _, model := range cursorModels {
+		byID[model.ID] = model
+		for _, id := range model.Variants {
+			byVariant[id] = model
+		}
+	}
+	return byID, byVariant
+}()
+
+// CursorModels is the built-in family table, in display order.
+func CursorModels() []CursorModel { return slices.Clone(cursorModels) }
+
+// CursorModelFamily finds the family a cursor-agent model ID belongs to.
+func CursorModelFamily(id string) (CursorModel, bool) {
+	model, ok := cursorModelByVariant[id]
+	return model, ok
+}
+
+// CursorModelEfforts lists the efforts of a family, weakest first; nil for
+// a model ID outside the table or without effort variants.
+func CursorModelEfforts(id string) []string {
+	var out []string
+	for _, effort := range domain.ExecutorEffortLevels[AgentCLICursor] {
+		if _, ok := cursorModelByID[id].Variants[effort]; ok {
+			out = append(out, effort)
+		}
+	}
+	return out
+}
+
+// CursorModelID resolves a family and effort to the cursor-agent model ID.
+// An empty effort takes the family default and an effort the family lacks
+// the closest one (the stronger on a tie); IDs outside the table, including
+// raw cursor-agent IDs, pass through.
+func CursorModelID(id, effort string) string {
+	model, ok := cursorModelByID[id]
+	if !ok {
+		return id
+	}
+	if raw, ok := model.Variants[""]; ok {
+		return raw
+	}
+	if raw, ok := model.Variants[effort]; ok {
+		return raw
+	}
+	levels := domain.ExecutorEffortLevels[AgentCLICursor]
+	want := slices.Index(levels, effort)
+	if want < 0 {
+		return model.Variants[model.Default]
+	}
+	best, distance := model.Default, len(levels)
+	for i, level := range levels {
+		if _, ok := model.Variants[level]; ok && abs(i-want) <= distance {
+			best, distance = level, abs(i-want)
+		}
+	}
+	return model.Variants[best]
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}

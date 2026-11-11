@@ -213,6 +213,16 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			}
 			invocation.CodeBuddyAPIKey = sb.credentialSnapshot().CodeBuddy.APIKey
 			invocation.CodeBuddyInternetEnvironment = sb.credentialSnapshot().CodeBuddy.InternetEnvironment
+		default:
+			if runtime.IsAgentCLI(ex.Kind) {
+				cred := sb.credentialSnapshot().AgentCLI[ex.Kind]
+				if strings.TrimSpace(cred.APIKey) == "" {
+					return "", fmt.Errorf("当前责任人未配置 %s API Key：请先在个人配置中配置", runtime.AgentCLILabel(ex.Kind))
+				}
+				invocation.AgentCLIAPIKey = cred.APIKey
+				invocation.AgentCLIBaseURL = cred.BaseURL
+				invocation.AgentCLIProtocol = cred.Protocol
+			}
 		}
 	}
 	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)

@@ -21,6 +21,9 @@ import (
 type providerSpec struct {
 	Kind   string
 	Binary string
+	// VersionFlags precede --version. A CLI that rejects them is not the one
+	// the platform drives (other tools share the name) and is not reported.
+	VersionFlags []string
 }
 
 // defaultProviders lists the CLIs this runner drives in non-interactive
@@ -33,6 +36,18 @@ var defaultProviders = []providerSpec{
 	{Kind: "claude-code", Binary: "claude"},
 	{Kind: "codex", Binary: "codex"},
 	{Kind: "codebuddy", Binary: "codebuddy"},
+	// Agent CLIs (domain.AgentCLIExecutorKinds) always run with the
+	// responsible user's key in a private HOME. cursor and agy have no npm
+	// package and are found on PATH only.
+	{Kind: "opencode", Binary: "opencode"},
+	{Kind: "cursor", Binary: "cursor-agent"},
+	{Kind: "agy", Binary: "agy"},
+	{Kind: "kimi", Binary: "kimi"},
+	{Kind: "pi", Binary: "pi"},
+	{Kind: "dsh", Binary: "dsh"},
+	// The official ZCode has no npm package and its --help omits
+	// --output-format, so compatibility is probed with the flags we pass.
+	{Kind: "zcode", Binary: "zcode", VersionFlags: []string{"--output-format", "stream-json", "--mode", "yolo"}},
 }
 
 // terminalProviderKind is the built-in remote-terminal capability: the
@@ -141,7 +156,10 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 		if managed {
 			env = managedCLIEnvironment(spec.Kind)
 		}
-		version := probeVersion(ctx, path, env)
+		version := probeVersion(ctx, path, spec.VersionFlags, env)
+		if version == "" && len(spec.VersionFlags) > 0 {
+			continue
+		}
 		out = append(out, domain.RunnerRuntime{
 			Provider:     spec.Kind,
 			BinaryPath:   path,
@@ -153,10 +171,10 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 	return out
 }
 
-func probeVersion(ctx context.Context, path string, environments ...map[string]string) string {
+func probeVersion(ctx context.Context, path string, flags []string, environments ...map[string]string) string {
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(probeCtx, path, "--version")
+	cmd := exec.CommandContext(probeCtx, path, append(append([]string{}, flags...), "--version")...)
 	if len(environments) > 0 && len(environments[0]) > 0 {
 		cmd.Env = os.Environ()
 		for key, value := range environments[0] {

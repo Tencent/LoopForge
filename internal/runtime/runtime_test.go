@@ -692,12 +692,13 @@ func TestBwrapProvidesWritableRuntimeInfrastructure(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	bunfs := stubBunFSMountPoint(t, filepath.Join(t.TempDir(), "$bunfs"))
 	args, err := bwrapArgsRequirements(workspace, ProviderRequirements("codebuddy"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := strings.Join(args, " ")
-	for _, needle := range []string{"--die-with-parent", "--tmpfs /tmp", "--dev-bind /dev /dev", "--proc /proc", "--tmpfs /$bunfs"} {
+	for _, needle := range []string{"--die-with-parent", "--tmpfs /tmp", "--dev-bind /dev /dev", "--proc /proc", "--tmpfs " + bunfs} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("bwrap args missing %q: %v", needle, args)
 		}
@@ -862,11 +863,18 @@ func TestBwrapAndDockerMaskRepositoryAgentConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "services", "api", "CLAUDE.md"), []byte("nested prompt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bwrap, err := bwrapAgentConfigMasks(workspace)
+	docker, err := dockerAgentConfigMasks(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	docker, err := dockerAgentConfigMasks(workspace)
+	for name, isDir := range map[string]bool{"empty-dir": true, "empty-file": false} {
+		target := filepath.Join(workspace, ".agentflow", "isolation", name)
+		info, err := os.Lstat(target)
+		if err != nil || (isDir && !info.IsDir()) || (!isDir && !info.Mode().IsRegular()) {
+			t.Fatalf("Docker mount target %s: %v, %v", target, info, err)
+		}
+	}
+	bwrap, err := bwrapAgentConfigMasks(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2037,6 +2045,44 @@ func TestIsolateClaudeFlagsUsesHostUserSettings(t *testing.T) {
 	}
 }
 
+func TestCodexInDockerUsesTheContainerAsItsSandbox(t *testing.T) {
+	for driver, want := range map[string]string{"docker": "danger-full-access", "bwrap": "danger-full-access", "local": "workspace-write"} {
+		ex := domain.ExecutorDefinition{Kind: "codex", Binary: "codex", Args: []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"}}
+		command, err := PrepareProviderCommand(ex, "probe", driver, InvocationOptions{ResumeSessionID: "thread-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sandboxes := 0
+		for _, arg := range command.Argv {
+			if arg == "--sandbox" {
+				sandboxes++
+			}
+		}
+		if sandboxes != 1 || !containsArgPair(command.Argv, "--sandbox", want) {
+			t.Fatalf("%s: want a single --sandbox %s: %v", driver, want, command.Argv)
+		}
+		if n := len(command.Argv); n < 3 || command.Argv[n-3] != "resume" || command.Argv[n-1] != "probe" {
+			t.Fatalf("%s: resume and prompt must stay last: %v", driver, command.Argv)
+		}
+	}
+}
+
+func TestClaudeNodesCanUseToolsUnattended(t *testing.T) {
+	for _, driver := range []string{"docker", "bwrap", "local"} {
+		ex := domain.ExecutorDefinition{Kind: "claude-code", Binary: "claude", Args: []string{"-p", "--output-format", "stream-json", "--permission-mode", "dontAsk"}}
+		command, err := PrepareProviderCommand(ex, "probe", driver, InvocationOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if containsArg(command.Argv, "dontAsk") || !containsArgPair(command.Argv, "--permission-mode", "bypassPermissions") {
+			t.Fatalf("%s: want bypassPermissions only: %v", driver, command.Argv)
+		}
+		if got, want := command.environment["IS_SANDBOX"], map[bool]string{true: "1"}[driver != "local" || os.Geteuid() == 0]; got != want {
+			t.Fatalf("%s: IS_SANDBOX=%q, want %q", driver, got, want)
+		}
+	}
+}
+
 func TestExecutorRunnerAppliesDriverSpecificUserConfigPolicy(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -2065,13 +2111,13 @@ func TestExecutorRunnerAppliesDriverSpecificUserConfigPolicy(t *testing.T) {
 			}
 		}},
 		{name: "local codex", driver: "local", kind: "codex", check: func(t *testing.T, argv []string) {
-			if !containsArg(argv, "--ignore-user-config") || !containsArg(argv, "--ignore-rules") {
-				t.Fatalf("local Codex compatibility flags missing: %v", argv)
+			if containsArg(argv, "--ignore-user-config") || containsArg(argv, "--ignore-rules") {
+				t.Fatalf("Codex no longer accepts the removed config flags: %v", argv)
 			}
 		}},
 		{name: "sandboxed codex", driver: "bwrap", kind: "codex", check: func(t *testing.T, argv []string) {
 			if containsArg(argv, "--ignore-user-config") || containsArg(argv, "--ignore-rules") {
-				t.Fatalf("sandboxed Codex should inherit user configuration: %v", argv)
+				t.Fatalf("sandboxed Codex should not pass removed config flags: %v", argv)
 			}
 		}},
 	}

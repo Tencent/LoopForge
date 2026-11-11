@@ -10,12 +10,38 @@ import React, {
 import { createPortal } from "react-dom";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
-import { api, canChatInProject, write } from "./api";
+import { api, canChatInProject, canManageProjectRepos, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
-import { openCredentialSettings } from "./credentials";
+import {
+  CODEBUDDY_ENVIRONMENTS,
+  codeBuddyEnvironment,
+  codeBuddyEnvironmentIntent,
+  codeBuddyEnvironmentLegacy,
+  codeBuddyKeyURL,
+  codeBuddyKeyWarning,
+  openCredentialSettings,
+} from "./credentials";
 import "./quick-access-wizard.css";
 
 const DEFAULT_SOP_ID = "generic-backend-delivery";
+
+// Display names for the models users without their own key may use.
+export function sharedModelNames(models, fallback = "") {
+  const list = Array.isArray(models) && models.length ? models : fallback ? [fallback] : [];
+  return list
+    .map((id) => (id === "deepseek-v4.1-flash" ? "Deepseek-V4.1-Flash" : id))
+    .join("、");
+}
+
+// The users API omits an empty (国际站) environment, so a full user response
+// must clear one that was switched to 国际站 elsewhere instead of keeping it.
+export function mergeFreshUser(prev, fresh) {
+  return {
+    ...prev,
+    ...fresh,
+    codeBuddyInternetEnvironment: fresh?.codeBuddyInternetEnvironment || "",
+  };
+}
 
 const STEPS = [
   {
@@ -742,6 +768,7 @@ export default function QuickAccessWizard({
   projects = [],
   projectId = "",
   sponsoredModel = "",
+  sponsoredModels = [],
   onClose,
   onCompleted,
   onOpenView,
@@ -759,6 +786,8 @@ export default function QuickAccessWizard({
   const [error, setError] = useState("");
   const [gitToken, setGitToken] = useState("");
   const [codeBuddyApiKey, setCodeBuddyApiKey] = useState("");
+  // null follows the saved setting until the user picks an environment here.
+  const [codeBuddyEnvChoice, setCodeBuddyEnvChoice] = useState(null);
   const [verifyingGit, setVerifyingGit] = useState(false);
   const [gitVerify, setGitVerify] = useState(null);
   const [projectMode, setProjectMode] = useState("existing");
@@ -824,6 +853,13 @@ export default function QuickAccessWizard({
       null,
     [editableProjects, selectedProjectId],
   );
+
+  // A member can work in a shared project (e.g. the welcome project) without
+  // owning it; binding a repository there would only fail at the last step.
+  const repoBindBlocked =
+    projectMode === "existing" &&
+    Boolean(currentProject) &&
+    !canManageProjectRepos(currentProject, storedUser || user);
 
   const projectRepos = useMemo(
     () =>
@@ -904,6 +940,7 @@ export default function QuickAccessWizard({
     setError("");
     setGitToken("");
     setCodeBuddyApiKey("");
+    setCodeBuddyEnvChoice(null);
     setGitVerify(null);
     setCompletedSummary(null);
     setBindRepoNow(true);
@@ -952,7 +989,7 @@ export default function QuickAccessWizard({
           (usersRes || []).find(
             (item) => Number(item.id) === Number(user?.id),
           ) || user;
-        setStoredUser({ ...user, ...freshUser });
+        setStoredUser(mergeFreshUser(user, freshUser));
         if (freshUser?.gitTokenConfigured && freshUser?.id) {
           void verifyStoredGitToken(freshUser.id);
         }
@@ -1036,7 +1073,7 @@ export default function QuickAccessWizard({
             (item) => Number(item.id) === Number(user?.id),
           );
           if (fresh) {
-            setStoredUser((prev) => ({ ...prev, ...fresh }));
+            setStoredUser((prev) => mergeFreshUser(prev, fresh));
             if (fresh.gitTokenConfigured) {
               void verifyStoredGitToken(fresh.id);
             }
@@ -1117,6 +1154,18 @@ export default function QuickAccessWizard({
   const codeBuddyReady = Boolean(
     storedUser?.codeBuddyApiKeyConfigured || codeBuddyApiKey.trim(),
   );
+  // The CLI gets the stored text as-is: an old value such as china preselects
+  // what it meant, and still differs from it, so 下一步 rewrites it.
+  const storedCodeBuddyEnvRaw = String(
+    storedUser?.codeBuddyInternetEnvironment || "",
+  ).trim();
+  const storedCodeBuddyEnv =
+    codeBuddyEnvironmentIntent(storedCodeBuddyEnvRaw)?.value ?? "";
+  const codeBuddyEnvLegacy = codeBuddyEnvironmentLegacy(storedCodeBuddyEnvRaw);
+  const codeBuddyEnv = codeBuddyEnvChoice ?? storedCodeBuddyEnv;
+  const codeBuddyEnvInfo =
+    codeBuddyEnvironment(codeBuddyEnv) || CODEBUDDY_ENVIRONMENTS[0];
+  const codeBuddyWarning = codeBuddyKeyWarning(codeBuddyApiKey);
   const nodes =
     activeWorkflow?.nodes?.filter((node) => node.type === "agent") ||
     FALLBACK_NODES;
@@ -1133,6 +1182,9 @@ export default function QuickAccessWizard({
     if (gitToken.trim()) payload.gitToken = gitToken.trim();
     if (codeBuddyApiKey.trim())
       payload.codeBuddyApiKey = codeBuddyApiKey.trim();
+    // A key is always saved with the environment it was issued for.
+    if (codeBuddyApiKey.trim() || codeBuddyEnv !== storedCodeBuddyEnvRaw)
+      payload.codeBuddyInternetEnvironment = codeBuddyEnv;
     if (!Object.keys(payload).length) return storedUser;
     const saved = await write(
       `/api/users/${encodeURIComponent(user.id)}/credentials`,
@@ -1140,9 +1192,14 @@ export default function QuickAccessWizard({
       "PUT",
     );
     const merged = { ...storedUser, ...saved };
+    // The server omits an empty environment, so 国际站 must overwrite the old value here.
+    if ("codeBuddyInternetEnvironment" in payload)
+      merged.codeBuddyInternetEnvironment =
+        saved?.codeBuddyInternetEnvironment || "";
     setStoredUser(merged);
     setGitToken("");
     setCodeBuddyApiKey("");
+    setCodeBuddyEnvChoice(null);
     window.parent !== window &&
       window.parent.postMessage(
         { type: "agentflow-credentials-changed" },
@@ -1213,6 +1270,12 @@ export default function QuickAccessWizard({
         setError("请选择一个项目，或切换到新建项目。");
         return;
       }
+      if (bindRepoNow && repoUrl.trim() && repoBindBlocked) {
+        setError(
+          `你不是「${currentProject?.name || "该项目"}」的 Owner，不能为它绑定仓库。请新建自己的项目并绑定，或关闭「绑定仓库」继续体验。`,
+        );
+        return;
+      }
       if (bindRepoNow && repoUrl.trim() && !parsedRepo) {
         setError(
           "仓库地址无法识别，请粘贴 GitHub 仓库链接（https://github.com/owner/repo）或 github:owner/repo。",
@@ -1270,7 +1333,7 @@ export default function QuickAccessWizard({
       }
 
       let boundRepo = defaultRepo;
-      if (bindRepoNow && parsedRepo && targetProject?.id) {
+      if (bindRepoNow && parsedRepo && targetProject?.id && !repoBindBlocked) {
         const existingRepo = (repositories || []).find(
           (repo) =>
             repo.projectId === targetProject.id &&
@@ -1602,7 +1665,7 @@ export default function QuickAccessWizard({
                             {completedSummary?.codeBuddyReady
                               ? "已配置"
                               : sponsoredModel
-                                ? "未配置。对话和 SOP 都会使用平台共享模型 Deepseek-V4.1-Flash，可以直接开始；配置自己的 Key 后可选用其他模型"
+                                ? `未配置。对话和 SOP 都会使用平台共享 Key（可用模型：${sharedModelNames(sponsoredModels, sponsoredModel)}），可以直接开始；配置自己的 Key 后可选用任意模型`
                                 : "未配置。对话可用平台默认模型，但运行 SOP 时节点需要它调模型，请先在个人配置补齐"}
                           </span>
                         </li>
@@ -1788,6 +1851,19 @@ export default function QuickAccessWizard({
                           <StatusPill ok={codeBuddyReady} />
                         </header>
                         <div className="qa-cred-body">
+                          <div className="qa-field">
+                            <span className="qa-label">网络环境</span>
+                            <HarnessSelect
+                              value={codeBuddyEnv}
+                              options={CODEBUDDY_ENVIRONMENTS.map((env) => ({
+                                value: env.value,
+                                label: env.label,
+                                hint: env.site,
+                              }))}
+                              onChange={setCodeBuddyEnvChoice}
+                              ariaLabel="CodeBuddy 网络环境"
+                            />
+                          </div>
                           <div className="qa-input-row">
                             <input
                               type="password"
@@ -1801,18 +1877,26 @@ export default function QuickAccessWizard({
                                   ? "已配置，留空保持不变"
                                   : "粘贴 CodeBuddy API Key"
                               }
+                              aria-label="CodeBuddy API Key"
                               autoComplete="new-password"
                             />
                             <a
                               className="qa-link"
                               data-hover-ink-control=""
-                              href="https://www.codebuddy.ai/"
+                              href={codeBuddyKeyURL(codeBuddyEnv)}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
                               获取 API Key ↗
                             </a>
                           </div>
+                          <p
+                            className={`qa-hint${codeBuddyWarning ? " is-warn" : ""}`}
+                            role="status"
+                          >
+                            {codeBuddyWarning ||
+                              `${codeBuddyEnvLegacy && codeBuddyEnvChoice === null ? `原来填写的「${storedCodeBuddyEnvRaw}」无法识别，CodeBuddy 实际按国际站连接，点下一步改为当前选择。` : ""}Key 只能在创建它的站点使用：当前选择${codeBuddyEnvInfo.label}（${codeBuddyEnvInfo.site}），「获取 API Key」会打开该站点的密钥页。`}
+                          </p>
                         </div>
                       </section>
                     </div>
@@ -1988,6 +2072,39 @@ export default function QuickAccessWizard({
                         >
                           <div className="qa-collapse-inner">
                             <div className="qa-cred-body">
+                              {repoBindBlocked ? (
+                                <div
+                                  className="qa-hint is-warn qa-repo-permission"
+                                  role="note"
+                                >
+                                  <p>
+                                    「{currentProject?.name}」是已有项目，只有它的
+                                    Owner 或平台管理员可以绑定仓库。你可以：
+                                  </p>
+                                  <div className="qa-repo-permission-actions">
+                                    <button
+                                      type="button"
+                                      className="qa-link-btn"
+                                      onClick={() => {
+                                        setError("");
+                                        setProjectMode("create");
+                                      }}
+                                    >
+                                      新建自己的项目并绑定
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="qa-link-btn"
+                                      onClick={() => {
+                                        setError("");
+                                        setBindRepoNow(false);
+                                      }}
+                                    >
+                                      跳过绑定，继续体验
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
                               <div className="qa-repo-grid">
                                 <label className="qa-field">
                                   <span className="qa-label">
@@ -2190,11 +2307,11 @@ export default function QuickAccessWizard({
                               <span className="qa-dot is-ok" />
                               <span>
                                 {projectMode === "create"
-                                  ? newProjectName || "新项目"
-                                  : currentProject?.name || "当前项目"}
+                                  ? `新建项目「${newProjectName || "新项目"}」`
+                                  : `使用已有项目「${currentProject?.name || "当前项目"}」`}
                                 {" · "}
-                                {bindRepoNow && parsedRepo
-                                  ? parsedRepo.name
+                                {bindRepoNow && parsedRepo && !repoBindBlocked
+                                  ? `绑定 ${parsedRepo.name}`
                                   : defaultRepo?.name || "运行时指定仓库"}
                               </span>
                             </dd>

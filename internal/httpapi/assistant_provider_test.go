@@ -46,6 +46,10 @@ func TestAssistantGenerationWithOnlySelectedProviderCredentials(t *testing.T) {
 			if response.Code != 202 {
 				t.Fatalf("start: %d %s", response.Code, response.Body.String())
 			}
+			wantEngine, wantModel := "codex", "codex:custom-model"
+			if provider == "claude" {
+				wantEngine, wantModel = "claude-code", "claude-code:custom-model"
+			}
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
 				generation, _ := h.repo.AssistantGeneration(user.ID, "provider-test")
@@ -54,8 +58,8 @@ func TestAssistantGenerationWithOnlySelectedProviderCredentials(t *testing.T) {
 						t.Fatalf("generation failed: %s", generation.Error)
 					}
 					session, _ := h.repo.AssistantSession(user.ID, "provider-test")
-					if session.Executor != provider || session.Model != "custom-model" || len(session.Messages) != 2 {
-						t.Fatalf("provider conversation lost: executor=%s messages=%d", session.Executor, len(session.Messages))
+					if session.Executor != wantEngine || session.Model != wantModel || len(session.Messages) != 2 {
+						t.Fatalf("provider conversation lost: executor=%s model=%s messages=%d", session.Executor, session.Model, len(session.Messages))
 					}
 					return
 				}
@@ -250,7 +254,13 @@ func TestAssistantNativeProviderGateway(t *testing.T) {
 			user := domain.User{CodexAPIKey: "fixture-provider-key", CodexBaseURL: gateway.URL + "/v1", ClaudeCodeAPIKey: "fixture-provider-key", ClaudeCodeBaseURL: gateway.URL}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			out, _, err := runAlternateAssistantCLI(ctx, assistantCLIRequest{Executor: provider, Model: "gateway-test-model", Prompt: "Read demo then reply JSON.", MCPConfig: config}, user, nil)
+			var out string
+			var err error
+			if provider == "codex" {
+				out, _, err = runAssistantCLI(ctx, assistantCLIRequest{Executor: provider, Model: "gateway-test-model", Prompt: "Read demo then reply JSON.", MCPConfig: config, Native: true, SessionRoot: dir}, user, nil)
+			} else {
+				out, _, err = runAlternateAssistantCLI(ctx, assistantCLIRequest{Executor: provider, Model: "gateway-test-model", Prompt: "Read demo then reply JSON.", MCPConfig: config}, user, nil)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -263,5 +273,69 @@ func TestAssistantNativeProviderGateway(t *testing.T) {
 				t.Fatalf("MCP/stream mismatch: requests=%d calls=%d output=%q", requests, calls, out)
 			}
 		})
+	}
+}
+
+func TestAssistantConversationEngineKeepsLegacyExecutor(t *testing.T) {
+	reply := []assistantMessage{{Role: "user", Content: "hi"}, {Role: "assistant", Model: "gpt-5.4", Content: "ok"}}
+	if got := assistantConversationEngine(reply, "codex"); got != assistantEngineCodex {
+		t.Fatalf("codex legacy = %q", got)
+	}
+	if got := assistantConversationEngine(reply, "claude"); got != assistantEngineClaude {
+		t.Fatalf("claude legacy = %q", got)
+	}
+	if got := assistantConversationEngine(reply, "agy"); got != "agy" {
+		t.Fatalf("agy legacy = %q", got)
+	}
+	if got := assistantConversationEngine(reply); got != assistantEngineCodeBuddy {
+		t.Fatalf("unprefixed = %q", got)
+	}
+	if got := assistantConversationEngine(reply, "codebuddy"); got != assistantEngineCodeBuddy {
+		t.Fatalf("codebuddy legacy = %q", got)
+	}
+	prefixed := []assistantMessage{{Role: "assistant", Model: "codex:gpt-5.4", Content: "ok"}}
+	if got := assistantConversationEngine(prefixed, ""); got != assistantEngineCodex {
+		t.Fatalf("prefix wins = %q", got)
+	}
+	role := []assistantMessage{{Role: "assistant", Model: "gpt-5.4", SpeakerAgentID: "role", Content: "ok"}}
+	if got := assistantConversationEngine(role, "codex"); got != "" {
+		t.Fatalf("role reply locked = %q", got)
+	}
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(reply, "codex"), "codex:gpt-5.4"); refusal != "" {
+		t.Fatal(refusal)
+	}
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(reply, "codex"), "default"); refusal == "" {
+		t.Fatal("expected refusal when a legacy codex session continues on CodeBuddy")
+	}
+}
+
+func TestAssistantCodexAppServerDisablesNativeTools(t *testing.T) {
+	dir := t.TempDir()
+	config := filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := prepareAssistantCodexInvocation(assistantEngineInvocationOpts{Bin: "codex", Root: dir, Config: config, Prompt: "hi", Model: "gpt", SessionID: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closer, ok := inv.command.Stdin.(interface{ Close() error }); ok {
+		closer.Close()
+	}
+	joined := strings.Join(inv.command.Argv, "\n")
+	for _, feature := range []string{"view_image", "goals", "shell_tool", "unified_exec"} {
+		if !strings.Contains(joined, "features."+feature+"=false") {
+			t.Fatalf("missing features.%s=false:\n%s", feature, joined)
+		}
+	}
+	if !strings.Contains(joined, "features.hooks=true") || !strings.Contains(joined, "hooks.bypass_hook_trust=true") || !strings.Contains(joined, "hooks.PreToolUse=") {
+		t.Fatalf("guard hook missing:\n%s", joined)
+	}
+	if strings.Contains(joined, "--dangerously-bypass-hook-trust") {
+		t.Fatalf("app-server argv must not use the exec-only trust flag:\n%s", joined)
+	}
+	guard, err := os.ReadFile(filepath.Join(dir, "codex-native-guard.py"))
+	if err != nil || !strings.Contains(string(guard), "native tools are disabled") {
+		t.Fatalf("guard script = %q err=%v", guard, err)
 	}
 }

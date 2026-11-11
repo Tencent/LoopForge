@@ -147,6 +147,53 @@ function bindClarifyModelPicker(host){
     }
   };
 }
+// The AI 定时任务 model picker: a CLI select narrows the model list to that
+// CLI, like the chat composer's CLI switch. The menu is fixed-positioned so the
+// modal's scroll area cannot clip it, and opens toward the side with room.
+function scheduleEngineModels(engine){
+  return (scheduleModelAPI()?.catalog?.().models||[]).filter(m=>(m.engine||'codebuddy')===engine);
+}
+function scheduleModelEngine(id){
+  return scheduleModelAPI()?.engineOf?.(id)||'codebuddy';
+}
+function paintScheduleEngines(selected){
+  const select=$('#scheduleEngine');
+  if(!select)return;
+  const current=scheduleModelEngine(selected);
+  const engines=scheduleModelAPI()?.catalog?.().engines||[];
+  const list=engines.length?[...engines]:[{id:'codebuddy',name:'CodeBuddy'}];
+  if(!list.some(e=>e.id===current))list.push({id:current,name:current});
+  // A CLI without listed models has no key in this account; a saved task
+  // keeps its CLI selectable so editing it does not move it elsewhere.
+  select.replaceChildren(...list.map(e=>{
+    const usable=e.id===current||scheduleEngineModels(e.id).length>0;
+    const option=new Option(usable?e.name:`${e.name}（未配置 Key）`,e.id);
+    option.disabled=!usable;
+    return option;
+  }));
+  select.value=current;
+}
+function closeScheduleModelMenu(){
+  const host=$('#scheduleModelPicker');
+  if(!host)return;
+  host.querySelector('.ai-model-menu').hidden=true;
+  host.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false');
+}
+// Call with the menu shown: a short list must sit against its toggle, so the
+// placement uses the rendered height, not the maximum.
+function placeScheduleModelMenu(toggle,menu){
+  const rect=toggle.getBoundingClientRect();
+  const width=Math.min(Math.max(rect.width,320),window.innerWidth-24);
+  menu.style.width=width+'px';
+  menu.style.left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12))+'px';
+  menu.style.maxHeight='none';
+  const need=Math.min(320,menu.scrollHeight,window.innerHeight-24);
+  const below=window.innerHeight-rect.bottom-12,above=rect.top-12;
+  const down=below>=need||below>=above;
+  const room=Math.min(need,down?below:above);
+  menu.style.maxHeight=room+'px';
+  menu.style.top=(down?rect.bottom+6:Math.max(12,rect.top-room-6))+'px';
+}
 function bindScheduleModelPicker(){
   const host=$('#scheduleModelPicker');
   if(!host||host.dataset.bound)return;
@@ -154,28 +201,36 @@ function bindScheduleModelPicker(){
   const menu=host.querySelector('.ai-model-menu');
   if(!toggle||!menu)return;
   host.dataset.bound='1';
+  const form=$('#scheduleJobForm');
   toggle.onclick=e=>{
     e.stopPropagation();
     const api=scheduleModelAPI();
     if(!api)return;
     const open=menu.hidden;
-    menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open){
-      const selected=$('#scheduleJobForm').elements.assistantModel.value||api.DEFAULT;
-      api.renderList(menu, selected, id=>{
-        $('#scheduleJobForm').elements.assistantModel.value=id;
-        api.paint(toggle, id);
-        menu.hidden=true;
-        toggle.setAttribute('aria-expanded','false');
-      });
-    }
+    closeScheduleModelMenu();
+    if(!open)return;
+    const selected=form.elements.assistantModel.value||api.DEFAULT;
+    api.renderOptions(menu, scheduleEngineModels(scheduleModelEngine(selected)), selected, id=>{
+      paintScheduleModel(id);
+      closeScheduleModelMenu();
+    });
+    menu.hidden=false;
+    placeScheduleModelMenu(toggle,menu);
+    toggle.setAttribute('aria-expanded','true');
   };
-  document.addEventListener('click',e=>{
-    if(host.contains(e.target))return;
-    menu.hidden=true;
-    toggle.setAttribute('aria-expanded','false');
-  });
+  const engine=$('#scheduleEngine');
+  if(engine)engine.onchange=()=>{
+    const api=scheduleModelAPI();
+    const models=scheduleEngineModels(engine.value);
+    const fallback=engine.value==='codebuddy'?(api?.catalog?.().default||api?.DEFAULT):'';
+    const next=models.some(m=>m.id===fallback)?fallback:models[0]?.id;
+    if(next)paintScheduleModel(next);
+  };
+  document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeScheduleModelMenu()});
+  // A fixed menu would drift from its toggle; close it when anything else scrolls.
+  document.addEventListener('scroll',e=>{if(!menu.contains(e.target))closeScheduleModelMenu()},true);
+  window.addEventListener('resize',closeScheduleModelMenu);
 }
 async function loadScheduleModels(){
   const api=scheduleModelAPI();
@@ -192,6 +247,7 @@ function paintScheduleModel(selected){
   const keep=selected||f.elements.assistantModel.value||catalog.default||api.DEFAULT;
   f.elements.assistantModel.value=keep;
   api.paint(host.querySelector('[data-model-toggle]'), keep);
+  paintScheduleEngines(keep);
 }
 function syncScheduleJobTiming(){
   const f=$('#scheduleJobForm');if(!f)return;
@@ -217,7 +273,7 @@ function syncScheduleJobKind(){
   f.elements.name.required=kind==='assistant';
   const assistant=kind==='assistant';
   $('#scheduleModalTitle').textContent=assistant?'AI 定时任务':'触发配置';
-  $('#scheduleModalHint').textContent=assistant?'按计划用项目 Owner 的 CodeBuddy 执行提示词，使用与主页 AI 对话相同的完全权限，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
+  $('#scheduleModalHint').textContent=assistant?'按计划用项目 Owner 在所选 CLI 上的 Key 执行提示词，使用与主页 AI 对话相同的完全权限，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
   $('#scheduleModal').querySelector('.schedule-head').hidden=assistant;
   $('#scheduleJobList').hidden=assistant||!projectTriggerJob();
   f.querySelector('[type="submit"]').textContent=assistant?'保存 AI 定时任务':'保存触发配置';
@@ -372,12 +428,17 @@ function renderScheduleJobs(){
   if(count){count.textContent=!dispatch.length?'未配置':scheduleJobRunning(dispatch[0])?'运行中':dispatch[0].enabled?'已启用':'未启用';count.classList.toggle('is-running',dispatch.some(scheduleJobRunning))}
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
-  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'使用项目 Owner 的 CodeBuddy，以完全权限执行，与主页 AI 对话相同。可调用 SOP、工作区及浏览器工具；关闭页面不会中断执行。':disabled;
+  const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
+  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'使用项目 Owner 在所选 CLI 上的 Key，以完全权限执行，与主页 AI 对话相同。可调用 SOP、工作区及浏览器工具；关闭页面不会中断执行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
   $('#newAISchedule').disabled=!state.projectFilter;
+  const editTrigger=$('#editScheduleTrigger');if(editTrigger){editTrigger.disabled=!state.projectFilter;editTrigger.lastChild.textContent=dispatch.length?'编辑触发配置':'配置触发'}
+  const triggerList=$('#aiScheduleTriggerList');
   $('#scheduleJobList').hidden=$('#scheduleJobForm').elements.jobKind.value==='assistant'||!dispatch.length;
   renderScheduleJobList($('#scheduleJobList'),dispatch,'dispatch',canRun);
+  renderScheduleJobList(triggerList,dispatch,'dispatch',canRun);
+  if(triggerList&&!dispatch.length)triggerList.innerHTML=`<div class="sync-empty">${state.projectFilter?'当前项目还没有触发配置，点击「配置触发」设置自动派发。':'请先在顶栏选择项目，再配置 SOP 触发。'}</div>`;
   renderScheduleJobList($('#aiScheduleJobList'),assistant,'assistant',canRun);
   renderAISchedulePanels();
   startScheduleJobPoll();

@@ -855,7 +855,7 @@ func filterEnvironmentAssets[T any](items []T, projectID string, scope func(T) (
 	out := make([]T, 0, len(items))
 	for _, item := range items {
 		owner, shared := scope(item)
-		if owner == projectID || (owner != "" && shared) {
+		if owner == projectID || shared {
 			out = append(out, item)
 		}
 	}
@@ -1209,13 +1209,11 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			c.JSON(200, stored)
 			return
 		}
-		v.Status = "published"
-		v.Version++
-		if err := h.repo.PutWorkflow(v); err != nil {
+		stored, err := h.repo.PublishWorkflow(id)
+		if err != nil {
 			respond(c, err)
 			return
 		}
-		stored, _ := h.repo.Workflow(id)
 		c.JSON(200, stored)
 	case "/api/workflows/:id/clone":
 		var req struct {

@@ -6,15 +6,15 @@ import { test, expect, watchErrors } from './fixtures.mjs';
 // Keep in sync with viewTitles() in web/app.js; a renamed or dropped view is
 // a visible product change the suite should notice.
 const TITLES = {
-  collaboration: 'AI 工作台', issues: '需求列表', aiSchedules: 'AI 定时任务', bots: 'Bot 管理', runs: '运行记录', metrics: '研发效能',
-  approvals: '待我确认', sops: '流程模板', flow: '流程设计', agents: '角色定义', mcp: 'MCP 管理', rules: '规则管理', skills: '技能管理',
-  dockerfiles: 'Dockerfile', environments: '环境安装脚本', sandboxes: '沙箱管理', observability: '统计', projects: '项目配置',
-  businessDomains: '业务领域', businessDomainManagement: '领域管理', platform: '平台管理', runners: '执行机器', settings: '个人配置',
-  guide: '接入指南', knowledge: '知识中心',
+  collaboration: 'AI 工作台', issues: '需求列表', aiSchedules: '定时任务', bots: '通道管理', runs: '运行记录',
+  approvals: '待我确认', sops: '流程模板', flow: '流程设计', agents: '角色定义', mcp: '能力资产', rules: '能力资产', skills: '能力资产',
+  dockerfiles: '环境资产', environments: '环境资产', sandboxes: '环境资产', observability: '统计', projects: '项目配置',
+  platform: '平台管理', runners: '执行机器', settings: '个人配置', guide: '访问密钥',
 };
-// Only offered for some projects/hosts/roles; the app redirects otherwise.
-const CONDITIONAL = ['businessDomainManagement', 'platform'];
+// Only offered for some roles; the app redirects otherwise.
+const CONDITIONAL = ['platform'];
 const ASSET_VIEWS = ['rules', 'skills', 'dockerfiles', 'environments', 'sandboxes'];
+const RETIRED = ['metrics', 'knowledge', 'businessDomains', 'businessDomainManagement'];
 const projects = [process.env.AGENTFLOW_E2E_VIEW_PROJECT || 'welcome', null];
 
 test('legacy routes land on their replacements', async ({ page }) => {
@@ -35,6 +35,37 @@ test('legacy routes land on their replacements', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+// SlidingTabs enhances each type-tab row and its rule forces display:flex, so
+// only a real browser shows whether the inactive group actually disappears.
+test('merged asset pages show only their own type tabs', async ({ page }) => {
+  const errors = watchErrors(page);
+  const visibleTabs = () => page.evaluate(() => [...document.querySelectorAll('[data-asset-type-tab]')]
+    .filter(el => el.getClientRects().length).map(el => el.dataset.assetTypeTab));
+  const cases = [
+    ['mcp', ['mcp', 'rules', 'skills'], 'mcp'],
+    ['rules', ['mcp', 'rules', 'skills'], 'rules'],
+    ['sandboxes', ['dockerfiles', 'environments', 'sandboxes'], 'sandboxes'],
+    ['skills', ['mcp', 'rules', 'skills'], 'skills'],
+  ];
+  for (const [view, tabs, active] of cases) {
+    await page.goto(`/#/${view}`);
+    await expect(page.locator('#pageTitle')).toHaveText(TITLES[view]);
+    await expect.poll(visibleTabs, { message: `${view} type tabs` }).toEqual(tabs);
+    await expect(page.locator(`[data-asset-type-tab="${active}"]:visible`)).toHaveAttribute('aria-selected', 'true');
+    const nav = view === 'sandboxes' ? 'dockerfiles' : 'mcp';
+    await expect(page.locator(`.platform-sidebar .nav[data-view="${nav}"]`)).toHaveClass(/\bactive\b/);
+  }
+  // Clicking a tab switches the page and keeps the single sidebar entry selected.
+  await page.goto('/#/sandboxes');
+  await expect(page.locator('#pageTitle')).toHaveText(TITLES.sandboxes);
+  await page.locator('#assetsView [data-asset-type-tab="environments"]:visible').click();
+  await expect(page).toHaveURL(/#\/environments/);
+  await expect.poll(visibleTabs).toEqual(['dockerfiles', 'environments', 'sandboxes']);
+  await expect(page.locator('[data-asset-type-tab="environments"]:visible')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.platform-sidebar .nav[data-view="dockerfiles"]')).toHaveClass(/\bactive\b/);
+  expect(errors).toEqual([]);
+});
+
 for (const project of projects) {
   test(`every view renders cleanly (${project || 'e2e project'})`, async ({ page, identity }) => {
     const projectId = project || identity.projectId;
@@ -43,7 +74,8 @@ for (const project of projects) {
     await page.goto('/#/collaboration');
     await expect(page.locator('#pageTitle')).toHaveText(TITLES.collaboration);
     const views = await page.$$eval('[data-view]', els => [...new Set(els.map(e => e.dataset.view))]);
-    expect(views.length).toBeGreaterThanOrEqual(20);
+    expect(views.length).toBeGreaterThanOrEqual(15);
+    expect(views.filter(v => RETIRED.includes(v)), 'retired modules are not offered').toEqual([]);
     expect(views.filter(v => !TITLES[v]), 'navigation entries without a known title').toEqual([]);
 
     for (const view of views) {

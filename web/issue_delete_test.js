@@ -22,10 +22,10 @@ assert.equal(visibility.issueCanClose({id:'settled',closureAllowed:true}),true);
 assert.equal(visibility.issueCanClose({id:'active',closureAllowed:false}),false);
 assert.equal(visibility.issueCanClose({id:'busy',closureAllowed:true}),false);
 async function run({confirm=true, busy=false, fail=false, batch=false}={}) {
- const issue={id:'issue/1',title:'测试需求',source:'tapd'};
+ const issue={id:'issue/1',title:'测试需求',source:'tapd',deletionAllowed:true};
  const calls=[];
  const state={data:{issues:[issue,{id:'other'}]},issueDetailData:{issue},selectedIssue:issue.id,issueBulkDeleting:batch,issueSelection:new Set([issue.id,'other'])};
- const context={state,issueClarifying:()=>busy,toast:()=>{},refreshRuns:async()=>{},renderIssues:()=>calls.push('render'),closeIssueDrawer:()=>calls.push('close'),afConfirm:async opts=>{assert(opts.message.includes('后续同步可能重新导入'));return confirm;},api:async(path,opts)=>{calls.push([path,opts.method]);if(fail)throw new Error('conflict');}};
+ const context={state,issueCanDelete:()=>!busy,issueDeletionBlock:()=>({reason:'正在澄清'}),toast:()=>{},refreshRuns:async()=>{},renderIssues:()=>calls.push('render'),closeIssueDrawer:()=>calls.push('close'),afConfirm:async opts=>{assert(opts.message.includes('后续同步可能重新导入'));return confirm;},api:async(path,opts)=>{calls.push([path,opts.method]);if(fail)throw new Error('conflict');}};
  vm.createContext(context);vm.runInContext(code,context);
  await context.deleteIssueById(issue.id);
  return {state,calls};

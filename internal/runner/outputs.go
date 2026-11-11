@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
@@ -20,6 +21,10 @@ func prepareInvocationWorkspace(workspace string, inv *domain.RunnerInvocation) 
 	if inv == nil {
 		return nil
 	}
+	// Parallel branches consuming the same upstream artifact write the same
+	// input file; chmod/write/chmod must not interleave.
+	unlock := lockInvocationWorkspace(workspace)
+	defer unlock()
 	if _, err := runtime.RestoreMissingWorkspaceArtifacts(workspace, inv.ArchivedFiles); err != nil {
 		return fmt.Errorf("restore archived outputs: %w", err)
 	}
@@ -37,6 +42,19 @@ func prepareInvocationWorkspace(workspace string, inv *domain.RunnerInvocation) 
 		}
 	}
 	return nil
+}
+
+var invocationWorkspaceLocks sync.Map // cleaned absolute workspace -> *sync.Mutex
+
+func lockInvocationWorkspace(workspace string) func() {
+	key := filepath.Clean(workspace)
+	if abs, err := filepath.Abs(key); err == nil {
+		key = abs
+	}
+	value, _ := invocationWorkspaceLocks.LoadOrStore(key, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func writeInputFile(workspace string, input domain.RunnerInputFile) error {

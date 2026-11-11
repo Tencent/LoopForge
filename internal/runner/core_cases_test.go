@@ -278,6 +278,27 @@ func TestReadRunnerWorkspaceDispatch(t *testing.T) {
 	}
 }
 
+func TestDetectRuntimesReportsAgentCLIs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tool := filepath.Join(bin, "opencode")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nprintf 'opencode 1.0\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	runtimes := DetectRuntimes(context.Background(), nil)
+	for _, rt := range runtimes {
+		if rt.Provider == "opencode" && rt.BinaryPath == tool && rt.Status == domain.RuntimeStatusOnline {
+			return
+		}
+	}
+	t.Fatalf("opencode not detected: %+v", runtimes)
+}
+
 func TestDetectionProviderAndDaemonBasics(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -289,7 +310,7 @@ func TestDetectionProviderAndDaemonBasics(t *testing.T) {
 	if !ok || path != tool {
 		t.Fatalf("lookup=%q %v paths=%v", path, ok, extraSearchPaths())
 	}
-	if version := probeVersion(context.Background(), tool); version != "cvR 1.2" {
+	if version := probeVersion(context.Background(), tool, nil); version != "cvR 1.2" {
 		t.Fatalf("version=%q", version)
 	}
 	runtimes := DetectRuntimes(context.Background(), map[string]string{"custom": "cvR-tool"})

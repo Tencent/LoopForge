@@ -3,6 +3,7 @@ package engine
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/procwatch"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -168,14 +169,20 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	}
 	baseBranch := repositoryBaseBranch(repository)
 	clone := func(branch string, useReference bool) error {
-		args := []string{"clone", "--no-hardlinks", "--single-branch", "--branch", branch}
+		// --progress: without a terminal git prints nothing until it finishes,
+		// which is what made a slow clone indistinguishable from a hung one.
+		args := []string{"clone", "--progress", "--no-hardlinks", "--single-branch", "--branch", branch}
+		watch := cloneWatch(repository)
 		if useReference && localIsGit && cloneURL != "" && localPath != cloneURL {
 			args = append(args, "--reference", localPath, "--dissociate")
+			// --dissociate repacks silently after the transfer; a large local
+			// cache can take minutes there without a byte of output.
+			watch.Stall = 0
 		}
 		// Clone into the existing directory (`.`) so git cannot unlink and
 		// recreate `workspace`. That inode is the Docker bind-mount source.
 		args = append(args, "--", gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
-		if _, err := runGit(ctx, workspace, args...); err != nil {
+		if _, err := gitwork.Watch(ctx, workspace, watch, args...); err != nil {
 			return fmt.Errorf("git clone: %w", err)
 		}
 		return nil
@@ -190,6 +197,12 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		return err
 	}
 	if err := clone(baseBranch, true); err != nil {
+		// The retries below recover from a bad --reference cache or an empty
+		// remote. A clone that stalled, timed out or outlived the caller would
+		// only repeat the same wait on the same network.
+		if procwatch.Stopped(err) || ctx.Err() != nil {
+			return err
+		}
 		if clearErr := reset(workspace); clearErr != nil {
 			return clearErr
 		}
@@ -387,6 +400,14 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		checkout := func() error { return checkoutWorkBranch(ctx, workspace, repository.WorkBranch, baseBranch, false) }
 		if repository.RequireExistingWorkBranch {
 			checkout = func() error { return checkoutContinuedWorkBranch(ctx, workspace, repository.WorkBranch) }
+		} else if repository.CreateNewWorkBranch {
+			// A local branch in this cached workspace is the one this run created
+			// (and may have pushed), so it is resumed. Without it the branch is
+			// still to be created here, and a same-named remote branch belongs to
+			// someone else: refuse it exactly as a fresh clone does.
+			if _, created := gitRevParse(ctx, workspace, "refs/heads/"+strings.TrimSpace(repository.WorkBranch)); !created {
+				checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
+			}
 		}
 		if err := checkout(); err != nil {
 			return err
@@ -543,6 +564,22 @@ func checkoutWorkBranch(ctx context.Context, workspace, workBranch, baseBranch s
 		return nil
 	}
 	return createWorkBranchFromBase(ctx, workspace, workBranch)
+}
+
+// cloneWatch bounds a platform-side clone. A clone that keeps printing
+// progress is allowed to be slow; one that prints nothing for the stall window
+// is treated as hung. The total limit is off by default so a large SOP
+// checkout is not cut short.
+func cloneWatch(repository domain.RepositoryContext) procwatch.Options {
+	name := strings.TrimSpace(repository.Name)
+	if name == "" {
+		name = repository.RepositoryID
+	}
+	return procwatch.Options{
+		Stage: "clone", Label: "克隆仓库 " + name,
+		Stall: procwatch.DurationEnv(gitwork.CloneStallEnv, 5*time.Minute), StallEnv: gitwork.CloneStallEnv,
+		Timeout: procwatch.DurationEnv(gitwork.CloneTimeoutEnv, 0), TimeoutEnv: gitwork.CloneTimeoutEnv,
+	}
 }
 
 func runGit(ctx context.Context, workspace string, args ...string) (string, error) {

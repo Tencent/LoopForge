@@ -1,13 +1,70 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { CREDENTIAL_GUIDES, credentialHint } from "../src/credentials.js";
+import {
+  CREDENTIAL_GUIDES,
+  codeBuddyEnvironment,
+  codeBuddyEnvironmentIntent,
+  codeBuddyEnvironmentLegacy,
+  codeBuddyKeyURL,
+  codeBuddyKeyWarning,
+  credentialGuide,
+  credentialHint,
+} from "../src/credentials.js";
+
+test("CodeBuddy key links follow the selected network environment", () => {
+  assert.equal(codeBuddyKeyURL(""), "https://www.codebuddy.ai/profile/keys");
+  assert.equal(codeBuddyKeyURL("internal"), "https://copilot.tencent.com/profile/");
+  assert.equal(
+    codeBuddyKeyURL(" iOA "),
+    "https://tencent.sso.copilot.tencent.com/profile/keys",
+  );
+  assert.equal(codeBuddyKeyURL("typo"), "https://www.codebuddy.ai/profile/keys");
+  assert.equal(codeBuddyKeyURL("china"), "https://copilot.tencent.com/profile/");
+  // The CLI gets the stored text as-is, so only exact values are recognized.
+  assert.equal(codeBuddyEnvironment(" internal ")?.value, "internal");
+  for (const raw of ["china", "public", "iOA", "private-net"])
+    assert.equal(codeBuddyEnvironment(raw), null, raw);
+  assert.equal(codeBuddyEnvironmentIntent("china")?.value, "internal");
+  assert.equal(codeBuddyEnvironmentIntent("public")?.value, "");
+  assert.equal(codeBuddyEnvironmentIntent(" iOA ")?.value, "ioa");
+  assert.equal(codeBuddyEnvironmentIntent("private-net"), null);
+  assert.deepEqual(
+    ["", "internal", "ioa", "china", "iOA", "private-net"].map(
+      codeBuddyEnvironmentLegacy,
+    ),
+    [false, false, false, true, true, true],
+  );
+  assert.match(
+    credentialGuide("codeBuddyApiKey", { codeBuddyInternetEnvironment: "china" })
+      .link,
+    /国内站/,
+  );
+
+  const intl = credentialGuide("codeBuddyApiKey", {});
+  assert.equal(intl.url, "https://www.codebuddy.ai/profile/keys");
+  const china = credentialGuide("codeBuddyApiKey", {
+    codeBuddyInternetEnvironment: "internal",
+  });
+  assert.equal(china.url, "https://copilot.tencent.com/profile/");
+  assert.match(china.link, /国内站/);
+  assert.deepEqual(china.steps, CREDENTIAL_GUIDES.codeBuddyApiKey.steps);
+  assert.equal(credentialGuide("gitToken", {}), CREDENTIAL_GUIDES.gitToken);
+  assert.equal(credentialGuide("unknown", {}), null);
+});
+
+test("third-party model keys are flagged before CodeBuddy rejects them", () => {
+  assert.equal(codeBuddyKeyWarning(""), "");
+  assert.equal(codeBuddyKeyWarning("ck_abc"), "");
+  assert.match(codeBuddyKeyWarning("sk-abc"), /第三方/);
+  assert.match(codeBuddyKeyWarning("abc"), /ck_/);
+});
 
 test("credential errors from the platform link to the right setting", () => {
   const cases = [
     ["请先在个人配置中配置自己的 CodeBuddy API Key", "codeBuddyApiKey", false],
     ["请先配置个人 CodeBuddy API Key", "codeBuddyApiKey", false],
     [
-      "CodeBuddy 拒绝了你的 API Key（401/403），请在「设置」里检查 CodeBuddy API Key 和网络环境",
+      "CodeBuddy 拒绝了你的 API Key（401/403）：请在「个人配置 → CodeBuddy API Key」确认网络环境与创建 Key 的站点一致，且填的是 CodeBuddy 的 Key，而不是 DeepSeek、OpenAI 等第三方模型的 Key",
       "codeBuddyApiKey",
       false,
     ],

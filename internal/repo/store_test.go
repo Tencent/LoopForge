@@ -117,11 +117,8 @@ func TestSeedPopulatesDefaultsForAnEmptyStore(t *testing.T) {
 	if _, ok := s.Sandbox("local"); !ok {
 		t.Fatal("expected seeded local sandbox")
 	}
-	if _, ok := s.Sandbox("skillhub-macos-seatbelt"); !ok {
-		t.Fatal("expected seeded skillhub-macos-seatbelt sandbox")
-	}
-	if _, ok := s.Sandbox("skillhub-linux-bwrap"); !ok {
-		t.Fatal("expected seeded skillhub-linux-bwrap sandbox")
+	if sandbox, ok := s.Sandbox("skillhub-native"); !ok || sandbox.Driver != domain.SandboxDriverNative {
+		t.Fatalf("expected seeded native skillhub sandbox, got %+v", sandbox)
 	}
 	if _, ok := s.Sandbox("container"); ok {
 		t.Fatal("legacy container sandbox must not be seeded")

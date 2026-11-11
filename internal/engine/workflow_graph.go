@@ -133,6 +133,17 @@ func hasWaiting(wf domain.WorkflowDefinition, r domain.Run) bool {
 	return false
 }
 
+// cancelledNode returns a node stopped by a cancel that nothing will run
+// again unless an operator resumes it.
+func cancelledNode(wf domain.WorkflowDefinition, r domain.Run) (domain.WorkflowNode, bool) {
+	for _, definition := range wf.Nodes {
+		if n := r.Nodes[definition.ID]; n != nil && n.Status == "cancelled" {
+			return definition, true
+		}
+	}
+	return domain.WorkflowNode{}, false
+}
+
 func hasFailed(wf domain.WorkflowDefinition, r domain.Run) bool {
 	for _, definition := range wf.Nodes {
 		if n := r.Nodes[definition.ID]; n != nil && n.Status == "failed" {

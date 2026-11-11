@@ -61,7 +61,7 @@ function botBusyLabel(action,icon,label,busyLabel){return botUI.busy&&botUI.busy
 function botTabsHTML(tab,count){
  const n=Number(count)||0,on=tab==='records'?'records':'list';
  const item=(id,label,extra='')=>`<button type="button" role="tab" aria-selected="${on===id}" class="${on===id?'active':''}" data-bot-tab="${id}" ${botUI.busy&&tab!==id?'aria-disabled="true"':''}><span>${label}</span>${extra}</button>`;
- return `<div class="bot-tabs" role="tablist" aria-label="Bot 管理">${item('list','机器人',n?`<span class="bot-tab-count sliding-tab-count" data-bot-count>${n}</span>`:'')}${item('records','记录')}</div>`;
+ return `<div class="bot-tabs" role="tablist" aria-label="通道管理">${item('list','机器人',n?`<span class="bot-tab-count sliding-tab-count" data-bot-count>${n}</span>`:'')}${item('records','记录')}</div>`;
 }
 function botCrumbHTML(bot){
  const stored=botStoredBot(bot),manage=!!bot.id&&canManageBot(bot),current=bot.id?escapeHTML(stored?.name||bot.name||'未命名 Bot'):'新建 Bot';

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,6 +33,7 @@ type executorModelCatalog struct {
 }
 
 var effortOptionLabels = map[string]string{
+	"none":      "关闭 none",
 	"minimal":   "最低 minimal",
 	"low":       "低 low",
 	"medium":    "中 medium",
@@ -72,6 +74,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 			CustomModel: true,
 			Models: []executorModelInfo{
 				{ID: "gpt-6.1-sol", Name: "GPT-6.1 Sol"},
+				{ID: "gpt-6.1-terra", Name: "GPT-6.1 Terra"},
 				{ID: "gpt-6-astra", Name: "GPT-6 Astra"},
 				{ID: "gpt-6-sol", Name: "GPT-6 Sol"},
 				{ID: "gpt-6-luna", Name: "GPT-6 Luna"},
@@ -96,11 +99,62 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 				{ID: "claude-sonnet-5", Name: "Claude Sonnet 5"},
 				{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
 				{ID: "claude-sonnet-4-5", Name: "Claude Sonnet 4.5"},
+				{ID: "claude-haiku-5-5", Name: "Claude Haiku 5.5"},
 				{ID: "claude-haiku-4-5", Name: "Claude Haiku 4.5"},
 			},
 			Efforts: effortOptions(domain.ExecutorEffortLevels["claude-code"]),
 		},
+		// Official-endpoint catalogs. OpenCode and Pi have none, so their
+		// models come from the Base URL.
+		"opencode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["opencode"])},
+		"cursor": {
+			CustomModel: true,
+			Models:      cursorCatalogModels(),
+			Efforts:     effortOptions(domain.ExecutorEffortLevels["cursor"]),
+		},
+		"agy": {
+			CustomModel: true,
+			Models: []executorModelInfo{
+				{ID: "gemini-3.8-flash-medium", Name: "Gemini 3.8 Flash"},
+				{ID: "gemini-4-argon-medium", Name: "Gemini 4 Argon"},
+			},
+			Efforts: effortOptions(domain.ExecutorEffortLevels["agy"]),
+		},
+		"kimi": {
+			CustomModel: true,
+			Models: []executorModelInfo{
+				{ID: "k3.1-pro", Name: "K3.1 Pro"},
+				{ID: "k3.1-pro-highspeed", Name: "K3.1 Pro Highspeed"},
+				{ID: "k3", Name: "K3"},
+				{ID: "k3-256k", Name: "K3 256K"},
+				{ID: "kimi-for-coding", Name: "K2.8 Preview"},
+				{ID: "kimi-for-coding-highspeed", Name: "K2.7 Code Highspeed"},
+			},
+		},
+		"pi": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
+		"dsh": {
+			CustomModel: true,
+			Models: []executorModelInfo{
+				{ID: "deepseek-flash", Name: "DeepSeek V4.1 Flash"},
+				{ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro"},
+			},
+		},
+		"zcode": {
+			CustomModel: true,
+			Models: []executorModelInfo{
+				{ID: "glm-5.3", Name: "GLM-5.3"},
+				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
+			},
+		},
 	}
+}
+
+func cursorCatalogModels() []executorModelInfo {
+	var out []executorModelInfo
+	for _, model := range runtime.CursorModels() {
+		out = append(out, executorModelInfo{ID: model.ID, Name: model.Name})
+	}
+	return out
 }
 
 // executorModels serves the built-in model/effort catalog. It is a static,

@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +53,55 @@ func TestDecodeAssistantTitleSummary(t *testing.T) {
 	}
 }
 
+func TestAssistantTitleModelReusesSessionModelOnOtherCLIs(t *testing.T) {
+	for _, tc := range []struct{ model, wantEffort string }{
+		{"codex:gpt-5.5", "low"},
+		{"claude-code:claude-opus-5", "low"},
+		{"cursor:gpt-5.6-sol", "none"},
+		{"agy:gemini-3.1-pro", "low"},
+		{"agy:gateway-model", ""},
+		{"pi:deepseek-v4-flash", "minimal"},
+		{"opencode:glm-5", "low"},
+		{"kimi:kimi-k3", ""},
+		{"dsh:deepseek-v4-pro", ""},
+		{"zcode:glm-5.3", ""},
+	} {
+		model, effort := assistantTitleModel(context.Background(), domain.User{}, tc.model, nil)
+		if model != tc.model || effort != tc.wantEffort {
+			t.Errorf("%s: got %q/%q, want same model at %q", tc.model, model, effort, tc.wantEffort)
+		}
+	}
+	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, []string{assistantSponsoredModel}); model != assistantSponsoredModel || effort != "" {
+		t.Fatalf("sponsored CodeBuddy title = %q/%q", model, effort)
+	}
+	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, nil); model == "" || effort != "" {
+		t.Fatalf("CodeBuddy title without prices = %q/%q", model, effort)
+	}
+}
+
+func TestAssistantTitleSummaryNeedsTheSessionCLICredential(t *testing.T) {
+	user := domain.User{CodeBuddyAPIKey: "cb-key"}
+	if _, err := runAssistantTitleSummary(context.Background(), user, "codex:gpt-5.5", "low", "梳理需求"); err == nil || !strings.Contains(err.Error(), "credential unavailable") {
+		t.Fatalf("a Codex session must not fall back to CodeBuddy: %v", err)
+	}
+}
+
+func TestAssistantClaudeReviewOnlyHasNoTools(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "mcp.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := prepareAssistantClaudeInvocation(assistantEngineInvocationOpts{Bin: "claude", Root: root, Config: config, Prompt: "p", Model: "claude-haiku-5.5", Effort: "low", SessionID: "s", ReviewOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := strings.Join(inv.command.Argv, "\x00")
+	if !strings.Contains(argv, "\x00--tools\x00\x00--no-session-persistence\x00") || !strings.Contains(argv, "\x00--effort\x00low\x00") {
+		t.Fatalf("review-only Claude argv: %q", inv.command.Argv)
+	}
+}
+
 func TestAssistantPromptTitleMatchesTruncation(t *testing.T) {
 	text := strings.Repeat("需", 40)
 	session := domain.AssistantSession{Messages: []domain.AssistantMessage{{Role: "user", Content: text}}}
@@ -85,7 +136,7 @@ func TestScheduleAssistantTitleWritesSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, _ := st.AssistantSession(1, id)
-	h.scheduleAssistantTitle(context.Background(), 1, domain.User{ID: 1}, old, id, []domain.AssistantMessage{{Role: "user", Content: prompt + "，请按模块列出缺口"}}, false)
+	h.scheduleAssistantTitle(context.Background(), 1, domain.User{ID: 1}, old, id, []domain.AssistantMessage{{Role: "user", Content: prompt + "，请按模块列出缺口"}}, assistantChatDefaultModel, nil)
 	deadline := time.Now().Add(2 * time.Second)
 	var got domain.AssistantSession
 	for time.Now().Before(deadline) {

@@ -281,9 +281,6 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 		if s.repo.IssueHasTask(issue.ID) || issue.DeliveryLocked() || issue.GongfengClosed() || issue.Status == "done" || issue.Status == "closed" || issue.Status == "cancelled" || issue.AutomationState == "ignored" {
 			continue
 		}
-		if project, ok := s.repo.Project(issue.ProjectID); ok && domain.RequirementSOPBlocked(issue, project.Clarification) {
-			continue
-		}
 		eligible = append(eligible, issue)
 	}
 	blocked := map[string]domain.ScheduleJobBlocker{}

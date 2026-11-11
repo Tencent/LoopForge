@@ -13,12 +13,12 @@ const ctx = {
     {id:"generic-backend-delivery",name:"Backend",generic:true},
   ]}},
   escapeHTML:s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])),
-  clone:v=>JSON.parse(JSON.stringify(v)),captureRepoRows:()=>{},defaultClarification:()=>({}),
+  clone:v=>JSON.parse(JSON.stringify(v)),captureRepoRows:()=>{},
   toast:s=>notices.push(s),renderAll:()=>{},localStorage:{setItem:()=>{}},
   api:async(url,init)=>{const body=JSON.parse(init.body);requests.push({url,body});return body;},
 };
 vm.createContext(ctx);
-for(const name of ["projectDefaultSOPField","applyProjectDefaultSOP","buildProjectPayload","validateProjectPayload","storeSavedProject","saveProjectBusinessDomain","saveProjectAdmin"]){
+for(const name of ["projectDefaultSOPField","applyProjectDefaultSOP","buildProjectPayload","validateProjectPayload","storeSavedProject","saveProjectAdmin"]){
   const start=source.search(new RegExp("^(?:async )?function "+name+"\\(","m"));
   assert.ok(start>=0,name);
   const rest=source.slice(start),next=/\n(?:async )?function \w+\(/.exec(rest);

@@ -71,9 +71,15 @@ jobs:
             echo "prerelease=${prerelease}"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      # arm64 lets Apple silicon and arm servers pull the image; only the final
+      # stage runs under emulation, the Go and chatbot builds cross-compile.
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
 
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -90,10 +96,11 @@ jobs:
             type=sha,prefix=sha-,format=long
             type=raw,value=latest,enable=${{ steps.release.outputs.prerelease == 'false' }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         id: push
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}

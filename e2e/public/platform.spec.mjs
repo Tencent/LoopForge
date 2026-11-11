@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import fs from 'node:fs';
-import {password, appReady, switchProject} from './helpers.mjs';
+import {password, appReady, switchProject, openSettingsPage} from './helpers.mjs';
 
 async function signIn(page){
   await page.goto('/login.html');
@@ -17,7 +17,7 @@ test('password authentication loads the upstream workspace',async({page,request,
   const forged=await request.post('/api/auth/password',{headers:{Origin:'https://attacker.invalid'},data:{login:'admin',password:password()}});expect(forged.status()).toBe(403);
   await signIn(page);
   await expect(page.locator('.nav[data-view="issues"]')).toBeVisible();
-  await expect(page.locator('.nav[data-view="sops"]')).toBeVisible();
+  await expect(page.locator('#railSettingsEntry')).toBeVisible();
   expect(errors).toEqual([]);
   const cookie=(await page.context().cookies(baseURL)).find(c=>c.name==='agentflow_user');
   expect(cookie.httpOnly).toBe(true);expect(cookie.sameSite).toBe('Lax');
@@ -82,7 +82,7 @@ test('real script artifacts survive UI approval and execution continues',async({
   detail=await read();expect(detail.nodes.finish.status).toBe('succeeded');
   expect(detail.humanContext).toBe('Verified the saved report');
   expect(detail.artifacts.some(a=>a.name==='completed')).toBe(true);
-  await page.locator('.nav[data-view="runs"]').click();
+  await openSettingsPage(page,'runs');
   await expect(page.locator('#runsView')).toBeVisible();
   } finally {
     if(!process.env.AGENTFLOW_E2E_KEEP){

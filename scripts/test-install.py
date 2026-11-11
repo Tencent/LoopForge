@@ -1,11 +1,16 @@
 import importlib.util
+import hashlib
+import io
 import os
 import pty
 import select
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -15,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('install_address', ROOT / 'scripts/install-address.py')
 address = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(address)
+compose_spec = importlib.util.spec_from_file_location('install_compose', ROOT / 'scripts/install-compose.py')
+compose_download = importlib.util.module_from_spec(compose_spec)
+compose_spec.loader.exec_module(compose_download)
 
 
 class InstallerTests(unittest.TestCase):
@@ -24,7 +32,7 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
         (self.root / 'migrations/seed').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-observability-schema.sh'):
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         (self.root / 'migrations/seed/001_test.sql').write_text('SELECT 1;\n')
@@ -35,6 +43,7 @@ if [[ "$1" == info ]]; then
   [[ "${MOCK_USER:-0}" == 0 || "${MOCK_PRIVILEGED:-0}" == 1 || "${MOCK_DIRECT:-0}" == 1 ]]
   exit
 fi
+if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
 if [[ "$*" == *'exec -T mysql'* ]]; then
@@ -139,6 +148,111 @@ exec "$@"
         self.assertNotIn('build platform', log)
         self.assertIn('--no-build --wait --wait-timeout 180', log)
 
+    def test_missing_python_and_curl_are_installed_with_supported_package_managers(self):
+        state = self.root / 'packages'
+        state.mkdir()
+        shell_env = self.root / 'package-env.sh'
+        shell_env.write_text('''command() {
+  if [[ "$1" == -v ]]; then
+    case "$2" in
+      python3|curl) [[ -e "$MOCK_PACKAGE_STATE/$2" ]] || return 1 ;;
+      apt-get|dnf|yum) [[ "$2" == "$MOCK_PACKAGE_MANAGER" ]] || return 1 ;;
+    esac
+  fi
+  builtin command "$@"
+}
+''')
+        for manager in ('apt-get', 'dnf', 'yum'):
+            self.executable(manager, '''#!/usr/bin/env bash
+printf 'package-manager %s %s\\n' "${0##*/}" "$*" >> "$MOCK_LOG"
+printf 'package-environment %s %s\\n' "${DEBIAN_FRONTEND:-}" "${NEEDRESTART_MODE:-}" >> "$MOCK_LOG"
+if [[ "$*" == *'install'* ]]; then touch "$MOCK_PACKAGE_STATE/python3" "$MOCK_PACKAGE_STATE/curl"; fi
+''')
+        for manager in ('apt-get', 'dnf', 'yum'):
+            with self.subTest(manager=manager):
+                for item in state.iterdir():
+                    item.unlink()
+                self.assert_success(self.install(BASH_ENV=str(shell_env), MOCK_PACKAGE_STATE=str(state), MOCK_PACKAGE_MANAGER=manager, LOOPFORGE_YES='1'))
+                self.assertTrue((state / 'python3').exists())
+                self.assertTrue((state / 'curl').exists())
+                log = (self.root / 'docker.log').read_text()
+                self.assertIn('install -y python3 curl ca-certificates', log)
+                if manager == 'apt-get':
+                    self.assertIn('package-environment noninteractive a', log)
+                    self.assertIn('-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold', log)
+
+    def test_unusable_macos_python_is_replaced_before_configuring(self):
+        ready = self.root / 'python-ready'
+        self.executable('python3', '#!/usr/bin/env bash\n[[ -f "$MOCK_PYTHON_READY" ]] || exit 1\nexec ' + shlex.quote(sys.executable) + ' "$@"\n')
+        self.executable('uname', '#!/usr/bin/env bash\nif [[ "$1" == -s ]]; then echo Darwin; else echo x86_64; fi\n')
+        self.executable('brew', '#!/usr/bin/env bash\nprintf "brew %s\\n" "$*" >> "$MOCK_LOG"\ntouch "$MOCK_PYTHON_READY"\n')
+        shell_env = self.root / 'macos-env.sh'
+        shell_env.write_text('''command() {
+  if [[ "$1" == -v && "$2" =~ ^(apt-get|dnf|yum)$ ]]; then return 1; fi
+  builtin command "$@"
+}
+''')
+        self.assert_success(self.install(BASH_ENV=str(shell_env), MOCK_PYTHON_READY=str(ready), LOOPFORGE_YES='1'))
+        self.assertIn('brew install python3', (self.root / 'docker.log').read_text())
+
+    def mock_compose_install(self, fail_download=False):
+        # Exercise the shell wiring without writing a plugin to the host.
+        (self.root / 'scripts/install-compose.py').write_text(
+            "raise SystemExit('simulated download failure')\n" if fail_download else
+            "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('test plugin')\n")
+        self.executable('install', '''#!/usr/bin/env bash
+printf 'plugin-install %s\\n' "$*" >> "$MOCK_LOG"
+if [[ "${MOCK_PLUGIN_FAIL_OPERATION:-}" == "$1" ]]; then exit 1; fi
+if [[ "${!#}" == */docker-compose ]]; then touch "$MOCK_COMPOSE_INSTALLED"; fi
+''')
+        home = self.root / 'home'
+        home.mkdir()
+        return dict(HOME=str(home), MOCK_COMPOSE_MISSING='1', MOCK_COMPOSE_INSTALLED=str(self.root / 'compose-installed'), LOOPFORGE_YES='1')
+
+    def test_missing_compose_is_installed_where_root_and_sudo_docker_find_it(self):
+        values = self.mock_compose_install()
+        self.assert_success(self.install(**values, MOCK_USER='1000'))
+        self.assertIn('plugin-install -m 0755', (self.root / 'docker.log').read_text())
+        self.assertIn('/usr/local/lib/docker/cli-plugins/docker-compose', (self.root / 'docker.log').read_text())
+
+    def test_missing_compose_uses_user_config_with_direct_docker_access(self):
+        values = self.mock_compose_install()
+        config = self.root / 'custom-docker-config'
+        self.assert_success(self.install(**values, MOCK_USER='1000', MOCK_DIRECT='1', MOCK_SUDO_DENIED='1', DOCKER_CONFIG=str(config)))
+        self.assertIn(str(config / 'cli-plugins/docker-compose'), (self.root / 'docker.log').read_text())
+
+    def test_failed_compose_download_stops_before_creating_deployment_config(self):
+        temporary = self.root / 'plugin temporary'
+        temporary.mkdir()
+        result = self.install(**self.mock_compose_install(fail_download=True), TMPDIR=str(temporary))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Docker Compose download failed', result.stderr)
+        self.assertFalse((self.root / '.env').exists())
+        self.assertNotIn('pull --policy', (self.root / 'docker.log').read_text())
+        self.assertEqual(list(temporary.iterdir()), [])
+
+    def test_failed_compose_copy_cleans_download_and_reports_plugin_directory(self):
+        values = self.mock_compose_install()
+        temporary = self.root / 'plugin temporary'
+        temporary.mkdir()
+        for direct in ('0', '1'):
+            for operation in ('-d', '-m'):
+                with self.subTest(direct=direct, operation=operation):
+                    result = self.install(**values, TMPDIR=str(temporary), MOCK_USER='1000', MOCK_DIRECT=direct, MOCK_PLUGIN_FAIL_OPERATION=operation)
+                    self.assertNotEqual(result.returncode, 0)
+                    directory = str(Path(values['HOME']) / '.docker/cli-plugins') if direct == '1' else '/usr/local/lib/docker/cli-plugins'
+                    self.assertIn('Could not install Docker Compose in ' + directory, result.stderr)
+                    self.assertEqual(list(temporary.iterdir()), [])
+                    self.assertFalse((self.root / '.env').exists())
+
+    def test_declining_compose_install_does_not_start_deployment(self):
+        values = self.mock_compose_install()
+        values['LOOPFORGE_YES'] = '0'
+        result = self.install(**values)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Docker Compose is required', result.stderr)
+        self.assertFalse((self.root / '.env').exists())
+
     def test_invalid_public_url_fails_before_build(self):
         result = self.install(LOOPFORGE_PUBLIC_URL='javascript:alert(1)')
         self.assertNotEqual(result.returncode, 0)
@@ -187,26 +301,93 @@ exec "$@"
 class AddressTests(unittest.TestCase):
     def test_public_url_and_loopback_proxy(self):
         urls, note = address.access_addresses('8090', {'LOOPFORGE_BIND': '127.0.0.1', 'LOOPFORGE_PUBLIC_URL': 'https://team.example.test/'})
-        self.assertEqual(urls, ['https://team.example.test'])
+        self.assertEqual(urls, [('Access', 'https://team.example.test')])
         self.assertIn('reverse proxy', note)
 
     def test_ipv6_and_local_mode(self):
-        self.assertEqual(address.access_addresses('8090', {'LOOPFORGE_BIND': '2001:db8::1'})[0], ['http://[2001:db8::1]:8090'])
-        urls, note = address.access_addresses('8090', {'LOOPFORGE_BIND': '127.0.0.1'})
-        self.assertEqual(urls, ['http://127.0.0.1:8090'])
+        with patch.object(address, 'container_host', return_value=False):
+            self.assertEqual(address.access_addresses('8090', {'LOOPFORGE_BIND': '2001:db8::1'})[0], [('LAN', 'http://[2001:db8::1]:8090')])
+            urls, note = address.access_addresses('8090', {'LOOPFORGE_BIND': '127.0.0.1'})
+        self.assertEqual(urls, [('This machine', 'http://127.0.0.1:8090')])
         self.assertIn('Local access only', note)
 
-    def test_cloud_address_is_not_claimed_to_be_public(self):
-        with patch.object(address, 'container_host', return_value=False), patch.object(address.socket, 'socket', side_effect=OSError), patch.object(address.socket, 'gethostbyname_ex', return_value=('host', [], ['127.0.0.1', '192.168.1.2'])):
+    def interfaces(self, *hosts):
+        return patch.object(address.socket, 'gethostbyname_ex', return_value=('host', [], ['127.0.0.1', *hosts]))
+
+    def test_private_address_is_labelled_lan_without_a_detected_public_ip(self):
+        with patch.object(address, 'container_host', return_value=False), patch.object(address.socket, 'socket', side_effect=OSError), self.interfaces('10.0.0.126'):
             urls, note = address.access_addresses('8090', {})
-        self.assertEqual(urls, ['http://192.168.1.2:8090'])
-        self.assertIn('NAT', note)
+        self.assertEqual(urls, [('LAN', 'http://10.0.0.126:8090'), ('This machine', 'http://localhost:8090')])
+        self.assertIn('No public IP detected', note)
+
+    def test_detected_public_ip_comes_first(self):
+        with patch.object(address, 'container_host', return_value=False), patch.object(address.socket, 'socket', side_effect=OSError), self.interfaces('10.0.0.126'):
+            urls, note = address.access_addresses('8090', {}, public_ip='43.160.231.118')
+        self.assertEqual(urls, [('Public', 'http://43.160.231.118:8090'), ('LAN', 'http://10.0.0.126:8090'), ('This machine', 'http://localhost:8090')])
+        self.assertIn('security group', note)
+
+    def test_metadata_answers_must_be_global_ipv4(self):
+        self.assertEqual(address.global_ipv4(' 43.160.231.118\n'), '43.160.231.118')
+        for answer in ('10.0.0.126', '<html>404</html>', '', '2001:4860::1'):
+            self.assertEqual(address.global_ipv4(answer), '')
+
+    def test_public_ip_detection_is_bounded(self):
+        def hang(url, headers):
+            threading.Event().wait(5)
+        with patch.object(address, 'metadata_public_ipv4', side_effect=hang):
+            started = time.monotonic()
+            self.assertEqual(address.detect_public_ipv4(timeout=0.2), '')
+        self.assertLess(time.monotonic() - started, 1)
+        with patch.object(address, 'metadata_public_ipv4', side_effect=lambda url, headers: '43.160.231.118' if '169.254.0.23' in url else ''):
+            self.assertEqual(address.detect_public_ipv4(), '43.160.231.118')
 
     def test_container_does_not_publish_its_bridge_address(self):
         with patch.object(address, 'container_host', return_value=True):
             urls, note = address.access_addresses('8090', {})
         self.assertEqual(urls, [])
         self.assertIn('published port', note)
+
+
+class ComposeDownloadTests(unittest.TestCase):
+    def test_pinned_download_verifies_checksum_for_both_architectures(self):
+        payload = b'verified compose fixture'
+        checksum = hashlib.sha256(payload).hexdigest()
+        for architecture, asset in (('amd64', 'x86_64'), ('arm64', 'aarch64')):
+            with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as root:
+                calls = []
+                def fetch(url, timeout):
+                    calls.append((url, timeout))
+                    return io.BytesIO(payload)
+                target = Path(root) / 'docker-compose'
+                with patch.dict(compose_download.SHA256, {asset: checksum}):
+                    compose_download.download(target, architecture, fetch)
+                self.assertEqual(target.read_bytes(), payload)
+                self.assertEqual(calls, [('https://github.com/docker/compose/releases/download/' + compose_download.VERSION + '/docker-compose-linux-' + asset, 120)])
+
+    def test_bad_checksum_preserves_existing_plugin_and_removes_partial_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / 'docker-compose'
+            target.write_bytes(b'existing plugin')
+            with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                compose_download.download(target, 'x86_64', lambda *a, **kw: io.BytesIO(b'corrupt download'))
+            self.assertEqual(target.read_bytes(), b'existing plugin')
+            self.assertFalse(target.with_suffix('.download').exists())
+
+    def test_failed_transfer_removes_partial_download(self):
+        class BrokenTransfer(io.BytesIO):
+            def read(self, *args):
+                raise OSError('connection lost')
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / 'docker-compose'
+            with self.assertRaisesRegex(OSError, 'connection lost'):
+                compose_download.download(target, 'aarch64', lambda *a, **kw: BrokenTransfer())
+            self.assertFalse(target.exists())
+            self.assertFalse(target.with_suffix('.download').exists())
+
+    def test_unsupported_architecture_does_not_download(self):
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaisesRegex(ValueError, 'architecture'):
+                compose_download.download(Path(root) / 'docker-compose', 'unknown', lambda *a, **kw: self.fail('unexpected download'))
 
 
 if __name__ == '__main__':

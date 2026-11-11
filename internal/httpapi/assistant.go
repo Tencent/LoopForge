@@ -95,24 +95,15 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	req.Executor = assistantExecutor(req.Executor)
-	user, sponsored := stored, false
-	if req.Executor == "codebuddy" {
-		if user, sponsored, ok = h.assistantChatUser(stored); !ok {
-			c.JSON(400, gin.H{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
-			return
-		}
-	} else if err := validateAssistantProvider(&req, stored); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+	req.Model = assistantRequestModel(req.Executor, req.Model)
+	user, model, refusal := h.assistantTurnUser(stored, req.Model)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
 		return
 	}
-	if sponsored {
-		model, allowed := assistantSponsoredModelFor(req.Model)
-		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel()})
-			return
-		}
-		req.Model = model
-	}
+	req.Model = model
+	cliEngine, _ := assistantModelEngine(req.Model)
+	req.Executor = cliEngine
 	if len(req.Messages) == 0 {
 		c.JSON(400, gin.H{"error": "请提供对话消息"})
 		return
@@ -176,16 +167,25 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Executor == "codebuddy" {
-		catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment)
-		req.Model = assistantAllowedModel(req.Model, catalog)
-		if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-	} else {
-		// Reasoning effort is a CodeBuddy model option; the other CLIs use their defaults.
-		req.Effort = ""
+	catalogEngine, _ := assistantModelEngine(req.Model)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	if catalogEngine == assistantEngineCodeBuddy {
+		catalog = h.chatCatalog(c.Request.Context(), user)
+	}
+	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	cliEngine, _ = assistantModelEngine(req.Model)
+	req.Executor = cliEngine
+	if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	legacyExecutor := ""
+	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
+		legacyExecutor = old.Executor
+	}
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, legacyExecutor), req.Model); refusal != "" {
+		c.JSON(409, gin.H{"error": refusal})
+		return
 	}
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	if req.SessionID == "" {
@@ -210,7 +210,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	sourceRoot := h.resolvedSourceRoot()
 	fullPrompt := h.turnPrompt(req, sourceRoot, false)
 	turn := fullPrompt
-	ctx, cancel := context.WithTimeout(c.Request.Context(), assistantChatTimeout)
+	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 	var emit func(string, any)
 	var activity assistantActivityLog
@@ -238,6 +238,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	var toolFiles agentToolFiles
 	if sess, files, err := h.openAssistantToolSession(modelCtx, user, req.ProjectID, assistantExecModeForApproval(approvalMode), cancelModel); err != nil {
 		logAgentToolEvent("session-fallback", "mode=assistant", "err="+truncateRunes(err.Error(), 160))
+		if modelCtx.Err() != nil {
+			status, message := assistantGenerationFailure(modelCtx, err)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
 		c.JSON(502, gin.H{"error": "无法启动工具会话，请重试"})
 		return
 	} else {
@@ -334,18 +339,16 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		resume := false
 		branch := false
 		rewritten := false
-		differentProvider := false
 		if saved, err := loadAssistantConversation(h.repo, assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); err == nil {
-			differentProvider = assistantExecutor(saved.Executor) != req.Executor
 			branch = saved.ParentSessionID != ""
 			rewritten = saved.HistoryRevision > 0
 		}
-		if saved, err := loadAssistantConversation(h.repo, user.ID, req.SessionID); req.Executor == "codebuddy" && err == nil && saved.ParentSessionID == "" && len(req.Messages) > 1 && !shared && !rewritten {
+		if saved, err := loadAssistantConversation(h.repo, user.ID, req.SessionID); err == nil && saved.ParentSessionID == "" && len(req.Messages) > 1 && !shared && !rewritten {
 			resume = true
 			turn = h.turnPrompt(req, sourceRoot, true)
 		}
 		cliSessionID := req.SessionID
-		if shared || branch || rewritten || differentProvider || req.Executor != "codebuddy" || c.Request.Context().Value(assistantFreshCLIKey{}) == true {
+		if shared || branch || rewritten || c.Request.Context().Value(assistantFreshCLIKey{}) == true {
 			resume = false
 			turn = fullPrompt
 			cliSessionID = newAssistantSessionID()
@@ -374,14 +377,25 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			cliRoot = nativeSession.root
 		}
+		// A conversation stays on one CLI. A mismatch is a transcript from
+		// before that rule, and it starts a fresh CLI session.
+		turnEngine, _ := assistantModelEngine(req.Model)
+		if nativeSession == nil {
+			if state := readAssistantEngineState(cliRoot); state.Engine != turnEngine {
+				if resume {
+					resume = false
+					turn = fullPrompt
+				}
+				cliSessionID = newAssistantSessionID()
+			} else if resume && state.SessionID != "" {
+				cliSessionID = state.SessionID
+			}
+		}
 		if err := h.writeConversationAssets(cliRoot, req); err != nil {
 			log.Printf("assistant skills/agents session=%s: %v", req.SessionID, err)
 		}
 		generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
 			cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: toolFiles.MCPConfig, Settings: toolFiles.Settings, SystemPrompt: assistantSystemPromptForRequest(req, approvalMode), SessionRoot: cliRoot, OnUsage: turnUsage.add}
-			if req.Executor != "codebuddy" && prompt != fullPrompt {
-				cliReq.Prompt = fullPrompt + "\n\n" + prompt
-			}
 			relay := func(ev assistantStreamEvent) {
 				finished := toolSession.trackDispatch(ev)
 				if !streaming {
@@ -405,6 +419,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				cliReq.Prompt = fullPrompt
 				raw, _, err = runAssistantCLI(ctx, cliReq, u, relay)
 			}
+			if err == nil && nativeSession == nil {
+				if stateErr := writeAssistantEngineState(cliRoot, assistantEngineState{Engine: turnEngine, SessionID: cliReq.SessionID}); stateErr != nil {
+					log.Printf("assistant engine state session=%s: %v", req.SessionID, stateErr)
+				}
+			}
 			resume = true
 			nativeContinuationReady = err == nil
 			return raw, err
@@ -423,6 +442,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			return
 		}
 		raw, err := generate(modelCtx, turn, user)
+		if err == nil && modelCtx.Err() != nil {
+			err = modelCtx.Err()
+		}
 		if errors.Is(err, errAssistantCredentialRejected) {
 			fail(400, err.Error())
 			return
@@ -669,30 +691,13 @@ func assistantAttachmentTurnNote(messages []assistantMessage) string {
 }
 
 const (
-	assistantMaxBatch        = 1
-	assistantScheduleTimeout = 180 * time.Minute
+	assistantMaxBatch = 1
+	// assistantMCPCallTimeout bounds one HTTP call to a user MCP server so a
+	// dead server cannot hang a tool call. Turns themselves have no time
+	// limit, like the Codex and Claude Code CLIs: they end when the CLI
+	// finishes or the user stops them.
+	assistantMCPCallTimeout = 60 * time.Minute
 )
-
-// assistantChatTimeout bounds one assistant turn. A turn that edits code,
-// runs tests and reviews the diff can legitimately need more than the old 30
-// minute cap, which cut long code changes off before the final answer.
-// Operators can extend it with AGENTFLOW_ASSISTANT_CHAT_TIMEOUT (Go
-// duration, 5m..4h); the range keeps a stuck generation from holding its
-// workspace lease forever.
-var assistantChatTimeout = assistantTurnTimeout()
-
-func assistantTurnTimeout() time.Duration {
-	const fallback = 60 * time.Minute
-	raw := strings.TrimSpace(os.Getenv("AGENTFLOW_ASSISTANT_CHAT_TIMEOUT"))
-	if raw == "" {
-		return fallback
-	}
-	parsed, err := time.ParseDuration(raw)
-	if err != nil || parsed < 5*time.Minute || parsed > 4*time.Hour {
-		return fallback
-	}
-	return parsed
-}
 
 func assistantNativeRetryPrompt() string {
 	return "本轮尚未完成，请沿当前上下文继续，核对已执行操作，避免重复写入。需要待确认操作时通过 mcp__agentflow_session__submit_assistant_reply 提交完整草稿；普通问答和已实际完成的操作用自然语言总结结果；若工具参数校验失败，修正字段后再提交。不要提交空草稿或进度占位回复。"
@@ -1192,10 +1197,12 @@ type assistantCLIRequest struct {
 }
 
 func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.User, onEvent func(assistantStreamEvent)) (string, string, error) {
-	if req.Executor != "" && req.Executor != "codebuddy" {
-		return runAlternateAssistantCLI(ctx, req, user, onEvent)
+	req.Model = assistantRequestModel(req.Executor, req.Model)
+	engine, engineModel := assistantModelEngine(req.Model)
+	if engine != assistantEngineCodeBuddy && (req.ReportOnly || (!req.Native && !req.ReviewOnly)) {
+		return "", "", errAssistantEngineUnsupported
 	}
-	bin, err := resolveCodeBuddyBin()
+	bin, err := resolveAssistantEngineBin(engine)
 	if err != nil {
 		log.Printf("assistant CLI resolve failed: %v", err)
 		return "", "", err
@@ -1234,11 +1241,32 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if sessionID == "" {
 		sessionID = newAssistantSessionID()
 	}
-	command, err := prepareAssistantCommand(assistantCommandOpts{Bin: bin, Config: config, Prompt: req.Prompt, Model: req.Model, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, Native: req.Native, Settings: req.Settings, ReportOnly: req.ReportOnly, ReviewOnly: req.ReviewOnly})
+	var inv assistantCLIInvocation
+	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly}
+	switch engine {
+	case assistantEngineClaude:
+		engineOpts.User = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
+		inv, err = prepareAssistantClaudeInvocation(engineOpts)
+	case assistantEngineCodex:
+		engineOpts.User = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
+		inv, err = prepareAssistantCodexInvocation(engineOpts)
+	default:
+		if runtime.IsAgentCLI(engine) {
+			engineOpts.User = runtime.AgentCLIUserCredentials(user)[engine]
+			inv, err = prepareAssistantAgentCLIInvocation(engine, engineOpts)
+			break
+		}
+		inv.command, err = prepareAssistantCommand(assistantCommandOpts{Bin: bin, Config: config, Prompt: req.Prompt, Model: req.Model, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, Native: req.Native, Settings: req.Settings, ReportOnly: req.ReportOnly, ReviewOnly: req.ReviewOnly})
+		inv.credentials = runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment}}
+		inv.sessionRef = sessionID
+	}
 	if err != nil {
 		return "", "", err
 	}
-	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))
+	if inv.resumeMissing {
+		return "", sessionID, errAssistantSessionMissing
+	}
+	command := inv.command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	workspace := filepath.Join(root, "ws")
 	if req.ReportOnly {
 		workspace = reportRoot
@@ -1250,10 +1278,12 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
 	var usage domain.TokenUsage
+	missingText := "No conversation found with session ID: " + inv.sessionRef
+	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
 		if event.Name == "process.stderr" {
 			if line := strings.TrimSpace(event.Message); line != "" {
-				missingSession = missingSession || strings.Contains(line, "No conversation found with session ID: "+sessionID)
+				missingSession = missingSession || strings.Contains(line, missingText)
 				stderrTail = append(stderrTail, line)
 				if len(stderrTail) > 20 {
 					stderrTail = stderrTail[len(stderrTail)-20:]
@@ -1264,7 +1294,16 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		if event.Name != "process.stdout" {
 			return
 		}
-		line := strings.TrimSpace(event.Message)
+		if inv.translate == nil {
+			handle(event.Message)
+			return
+		}
+		for _, line := range inv.translate(event.Message) {
+			handle(line)
+		}
+	}
+	handle = func(line string) {
+		line = strings.TrimSpace(line)
 		if failure := assistantCLIStreamFailure(line); failure != nil {
 			streamError = failure
 		}
@@ -1294,7 +1333,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 				final, resultError = result.Result, result.IsError
 				usage = runtime.ParseTokenUsage(result.Usage)
 			case "error":
-				missingSession = missingSession || strings.Contains(result.Error, "No conversation found with session ID: "+sessionID)
+				missingSession = missingSession || strings.Contains(result.Error, missingText)
 			case "assistant", "user", "stream_event":
 				modelStarted = true
 				if result.Type == "assistant" {
@@ -1305,12 +1344,23 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			}
 		}
 	}
-	_, err = runtime.ExecuteLocalCommand(ctx, workspace, command, runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment}}, sink)
+	_, err = runtime.ExecuteLocalCommand(ctx, workspace, command, inv.credentials, sink)
 	if req.OnUsage != nil && assistantUsageReported(usage) {
 		req.OnUsage(usage)
 	}
+	if inv.finish != nil {
+		inv.finish(err == nil && !resultError && final != "")
+	}
+	failed := err != nil || (runtime.IsAgentCLI(engine) && streamError != nil)
+	if (engine == assistantEngineCodex || runtime.IsAgentCLI(engine)) && req.Resume && failed && !modelStarted {
+		missingSession = true
+	}
 	if req.Resume && missingSession && !modelStarted && final == "" && ctx.Err() == nil {
 		return "", sessionID, errAssistantSessionMissing
+	}
+	if engine != assistantEngineCodeBuddy && ctx.Err() == nil && strings.TrimSpace(final) == "" &&
+		(credentialRejected || (streamError != nil && assistantAuthFailureText(streamError.Error()))) {
+		return "", sessionID, assistantCredentialError{engine: engine}
 	}
 	if credentialRejected && strings.TrimSpace(final) == "" && err == nil && ctx.Err() == nil {
 		return "", sessionID, errAssistantCredentialRejected
@@ -1366,7 +1416,7 @@ func (t *assistantTurnUsage) snapshot() *domain.TokenUsage {
 
 // errAssistantCredentialRejected means CodeBuddy answered the turn with an
 // authorization failure instead of model output; retrying cannot help.
-var errAssistantCredentialRejected = errors.New("CodeBuddy 拒绝了你的 API Key（401/403），请在「设置」里检查 CodeBuddy API Key 和网络环境")
+var errAssistantCredentialRejected = errors.New("CodeBuddy 拒绝了你的 API Key（401/403）：请在「个人配置 → CodeBuddy API Key」确认网络环境与创建 Key 的站点一致，且填的是 CodeBuddy 的 Key，而不是 DeepSeek、OpenAI 等第三方模型的 Key")
 
 // isCredentialRejection reports whether an assistant text block is the bare
 // HTTP auth failure CodeBuddy emits in place of a reply.
@@ -1419,7 +1469,7 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 		sys = assistantSystemPromptText()
 	}
 	// Use the CLI's unlimited value; omitting the flag retains a finite default.
-	// The conversation deadline and explicit cancellation still stop execution.
+	// A turn has no deadline; explicit cancellation still stops execution.
 	args := []string{"-p", "--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", sys, "--output-format", "stream-json", "--include-partial-messages", "--mcp-config", opts.Config}
 	if strings.TrimSpace(opts.Settings) != "" {
 		args = append(args, "--settings", opts.Settings)
@@ -1466,18 +1516,6 @@ func assistantCLIWorkspace(tempDir string) string {
 
 func (h *assistantHandlers) openAssistantToolSession(ctx context.Context, user domain.User, projectID string, exec assistantExecMode, cancel context.CancelFunc) (*AgentToolSession, agentToolFiles, error) {
 	return startAgentToolSession(ctx, user, projectID, AgentToolAssistant, exec, "", h.assistantHTTPMCPs(projectID, user.ID), cancel, filepath.Join(assistantSessionRoot(user.ID), "mcp-sessions"))
-}
-
-func (h *assistantHandlers) openScheduledToolSession(ctx context.Context, user domain.User, projectID, sessionID string, cancel context.CancelFunc) (*AgentToolSession, agentToolFiles, error) {
-	// Use the same gateway and policy as a homepage conversation in full-access
-	// mode, so scheduled runs inherit its platform, MCP and workspace tools.
-	session, files, err := h.openAssistantToolSession(ctx, user, projectID, assistantExecModeForApproval(AssistantApprovalAuto), cancel)
-	if err != nil {
-		return nil, files, err
-	}
-	session.ChatSessionID = sessionID
-	session.ChatOwnerID = user.ID
-	return session, files, nil
 }
 
 func (h *assistantHandlers) assistantHTTPMCPs(projectID string, userID int64) []domain.MCPServerDefinition {

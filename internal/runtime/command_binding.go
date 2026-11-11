@@ -98,6 +98,26 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 				baseURL = "https://api.anthropic.com"
 			}
 			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
+		case BindAgentCLI:
+			home, homeEnv := privateHomePaths(sandbox, workspace, command)
+			if !command.PrivateHome {
+				home = command.environment["HOME"]
+				homeEnv = home
+			}
+			if strings.TrimSpace(home) == "" {
+				return CommandSpec{}, fmt.Errorf("%s 需要独立的 HOME 目录", AgentCLILabel(command.Provider))
+			}
+			argv, env, err := ApplyAgentCLICredential(command.Provider, credentials.AgentCLI[command.Provider], command.AgentCLI, home, homeEnv, bound.Argv)
+			if err != nil {
+				return CommandSpec{}, err
+			}
+			bound.Argv = argv
+			for _, key := range agentCLIHostEnv {
+				bound.environment[key] = ""
+			}
+			for key, value := range env {
+				bound.environment[key] = value
+			}
 		default:
 			return CommandSpec{}, fmt.Errorf("unsupported credential binding %q", binding)
 		}
@@ -118,10 +138,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		bound.environment["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
 	}
 	if command.PrivateHome {
-		provider := safeID(command.Provider)
-		if provider == "" {
-			provider = "process"
-		}
+		provider := PrivateHomeName(command)
 		hostHome := filepath.Join(workspace, ".agentflow", "private-home", provider)
 		hostTmp := filepath.Join(workspace, ".agentflow", "tmp", provider)
 		if err := os.MkdirAll(hostHome, 0o700); err != nil {
@@ -149,6 +166,69 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		}
 	}
 	return bound, nil
+}
+
+// PrivateHomeName is the directory under .agentflow/private-home that a
+// PrivateHome command runs with as HOME.
+func PrivateHomeName(command CommandSpec) string {
+	name := safeID(command.PrivateHomeKey)
+	if name == "" {
+		name = safeID(command.Provider)
+	}
+	if name == "" {
+		name = "process"
+	}
+	return name
+}
+
+// AgentCLIPrivateHomeKey is the PrivateHomeKey of an agent CLI invocation:
+// one HOME per CLI and Agent, so concurrent Agents keep their own MCP
+// configuration and sessions.
+func AgentCLIPrivateHomeKey(kind, agentID string) string {
+	return safeID(kind + "-" + agentID)
+}
+
+// BindAgentCLICommand is the runner-side BindAgentCLI: it renders the agent
+// CLI's configuration into the command's private HOME and returns argv with
+// the environment (HOME and TMPDIR included) to run it with. Agent CLIs always
+// run in that HOME, sandboxed or not, because their MCP configuration is there.
+func BindAgentCLICommand(sandbox Sandbox, workspace string, command CommandSpec, cred ProviderCredential, argv []string) ([]string, map[string]string, error) {
+	name := PrivateHomeName(command)
+	home, homeEnv := privateHomePaths(sandbox, workspace, command)
+	tmp := filepath.Join(workspace, ".agentflow", "tmp", name)
+	for _, dir := range []string{home, tmp} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, nil, fmt.Errorf("create private home: %w", err)
+		}
+	}
+	argv, bound, err := ApplyAgentCLICredential(command.Provider, cred, command.AgentCLI, home, homeEnv, argv)
+	if err != nil {
+		return nil, nil, err
+	}
+	env := map[string]string{}
+	for _, key := range agentCLIHostEnv {
+		env[key] = ""
+	}
+	for key, value := range bound {
+		env[key] = value
+	}
+	env["HOME"] = homeEnv
+	env["TMPDIR"] = tmp
+	if sandboxDriver(sandbox) == "docker" {
+		env["TMPDIR"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "tmp", name))
+	}
+	return argv, env, nil
+}
+
+// privateHomePaths returns a PrivateHome command's HOME on the host and as
+// the process sees it.
+func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (host, env string) {
+	name := PrivateHomeName(command)
+	host = filepath.Join(workspace, ".agentflow", "private-home", name)
+	if sandboxDriver(sandbox) == "docker" {
+		return host, filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "private-home", name))
+	}
+	return host, host
 }
 
 // GitEnvironment is the git environment a child process needs to reach

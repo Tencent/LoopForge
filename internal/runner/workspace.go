@@ -126,7 +126,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) {
 		if request.Operation == domain.RunnerWorkspaceOperationCheckpointExport || request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
 			if d.workspaceTerminals.HasRunScope(request.RunID) {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace terminal is still active"}
+				return workspaceTerminalActiveResponse("workspace terminal is still active")
 			}
 			gate := d.requestGate(request)
 			if !gate.TryLock() {
@@ -137,7 +137,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		return d.checkpointTransfers.Handle(ctx, root, request)
 	}
 	if (request.Operation == domain.RunnerWorkspaceOperationRestore || request.Operation == domain.RunnerWorkspaceOperationCheckpoint) && d.workspaceTerminals.HasRunScope(request.RunID) {
-		return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace terminal is still active"}
+		return workspaceTerminalActiveResponse("workspace terminal is still active")
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationRestore {
 		gate := d.requestGate(request)

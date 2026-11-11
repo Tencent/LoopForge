@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -98,17 +98,17 @@ jobs:
           bash scripts/scan-secrets.sh
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push tcmcp image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: local/tools/tcmcp
           push: true

@@ -77,19 +77,18 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		if err != nil {
 			return err
 		}
-		if restoring && run.WorkspaceCleaned == nil {
+		var checkpoint WorkspaceCheckpoint
+		if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&checkpoint).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		// An unfinished outcome on a bound workspace is retried, never assumed.
+		unfinished := checkpoint.RestoreStatus == "failed" || checkpoint.RestoreStatus == "restoring"
+		if restoring && run.WorkspaceCleaned == nil && !unfinished {
 			token = ""
 			return nil
 		}
-		if !touch {
-			var checkpoint WorkspaceCheckpoint
-			if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&checkpoint).Error; err == nil {
-				if checkpoint.SaveRetryAt != nil && now.Before(*checkpoint.SaveRetryAt) {
-					return ErrWorkspaceCheckpointBackoff
-				}
-			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
+		if !touch && checkpoint.SaveRetryAt != nil && now.Before(*checkpoint.SaveRetryAt) {
+			return ErrWorkspaceCheckpointBackoff
 		}
 		until := now.Add(15 * time.Minute)
 		lastUsed := now
@@ -106,6 +105,11 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		}
 		if restoring {
 			values["restore_status"], values["restore_started"], values["restore_error"] = "restoring", now, ""
+		} else if checkpoint.RestoreStatus == "restoring" {
+			// Taking over an expired restore lease fences that restore out, so
+			// record it as interrupted. A later binding under this lease can
+			// then tell a stale outcome from a restore still in progress.
+			values["restore_status"], values["restore_error"] = "failed", WorkspaceRestoreInterrupted
 		}
 		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND (lease_until IS NULL OR lease_until < ?)", runID, now).Updates(values)
 		if result.Error != nil {
@@ -231,6 +235,13 @@ func (r *RunsRepo) RestoreCheckpointWorkspaceBinding(runID, token, host, root st
 		}
 		if count != 1 {
 			return ErrWorkspaceInUse
+		}
+		// A restore lease keeps "restoring" until FinishWorkspaceRestore records
+		// its outcome. Any other lease that binds the workspace supersedes an
+		// earlier failed or interrupted restore.
+		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND restore_status = ?", runID, token, "failed").
+			Updates(map[string]any{"restore_status": "ready", "restore_error": ""}).Error; err != nil {
+			return err
 		}
 		values := map[string]any{"workspace_cleaned_at": nil, "revision": gorm.Expr("revision + 1")}
 		if host != "" {
