@@ -21,10 +21,10 @@ func TestAssistantSettingsPageIsWired(t *testing.T) {
 			t.Fatalf("index.html is missing %q", want)
 		}
 	}
-	if strings.Index(index, `data-view="assistant"`) < strings.Index(index, `data-view="bots"`) {
-		t.Fatal("AI 助手 belongs right after Bot 管理 under 管理与记录")
+	if strings.Index(index, `data-view="assistant"`) > strings.Index(index, `data-view="bots"`) || strings.Index(index, `data-view="assistant"`) < strings.Index(index, `data-view="settings"`) {
+		t.Fatal("AI 助手 belongs with personal settings, ahead of the project section")
 	}
-	for _, want := range []string{"'bots','assistant'", "assistant:'AI 助手'", "if(name==='assistant')loadAssistantSettings();"} {
+	for _, want := range []string{"'settings','assistant'", "assistant:'AI 助手'", "if(name==='assistant')loadAssistantSettings();"} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app.js is missing %q", want)
 		}

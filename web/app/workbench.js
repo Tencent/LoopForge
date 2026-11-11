@@ -1177,13 +1177,11 @@ async function renderPersonalSettings(){
     if(!cached||(cached.busy&&!state.gitTokenVerifyInFlight)){state.gitTokenVerifyInFlight=true;refreshGitTokenStatus().finally(()=>{state.gitTokenVerifyInFlight=false})}
   }
 }
-// 谁能改通用模板是平台级权限，不属于任何一个项目，也不属于个人凭据，
-// 平台管理也容纳业务域管理；按各自授权展示入口与 tab。
+// 谁能改通用模板是平台级权限，不属于任何一个项目，也不属于个人凭据；
+// 只有平台管理员能看到「平台管理」入口。
 function renderPlatformNav(){
   const group=$('#platformNavGroup');if(!group)return;
-  group.hidden=!canAccessPlatformManagement();
-  const platformItem=group.querySelector('[data-view="platform"]');
-  if(platformItem)platformItem.hidden=!isPlatformAdmin();
+  group.hidden=!isPlatformAdmin();
 }
 // 平台管理分成三个 tab：成员账号、平台管理员、共享 CodeBuddy Key。
 const PLATFORM_TABS=[
