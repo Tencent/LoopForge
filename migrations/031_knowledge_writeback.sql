@@ -6,7 +6,7 @@
 
 CREATE TABLE IF NOT EXISTS knowledge_writebacks (
   id            VARCHAR(64)   NOT NULL PRIMARY KEY,
-  submission_id VARCHAR(64)   NOT NULL DEFAULT '',
+  submission_id VARCHAR(64)   NULL DEFAULT NULL,
   source_id     VARCHAR(64)   NOT NULL DEFAULT '',
   project_id    VARCHAR(64)   NOT NULL DEFAULT '',
   path          VARCHAR(512)  NOT NULL DEFAULT '',

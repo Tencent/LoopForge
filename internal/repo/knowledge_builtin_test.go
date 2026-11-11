@@ -179,8 +179,9 @@ func TestContentPoolIsSeparate(t *testing.T) {
 	}
 }
 
-// TestBuiltinKnowledgeInstallWiring 覆盖 S11：compose 写明 ngram 参数，
-// dev.sh 在种子 SQL 之前执行 026。
+// TestBuiltinKnowledgeInstallWiring 覆盖 S11/P1-4：compose 写明 ngram 参数与
+// 内容库 DSN，安装、升级和 dev 启动都在种子 SQL / 平台启动之前执行知识库
+// 迁移并检查 ngram 索引。
 func TestBuiltinKnowledgeInstallWiring(t *testing.T) {
 	compose, err := os.ReadFile("../../compose.yaml")
 	if err != nil {
@@ -189,17 +190,35 @@ func TestBuiltinKnowledgeInstallWiring(t *testing.T) {
 	if !strings.Contains(string(compose), "--ngram_token_size=2") {
 		t.Fatal("compose.yaml 的 MySQL command 缺少 --ngram_token_size=2")
 	}
+	if !strings.Contains(string(compose), "AGENTFLOW_KNOWLEDGE_MYSQL_DSN") {
+		t.Fatal("compose.yaml 未把内容库 DSN 传给平台容器")
+	}
 	dev, err := os.ReadFile("../../scripts/dev.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	migration := strings.Index(string(dev), "migrations/026_builtin_knowledge.sql")
-	if migration < 0 {
-		t.Fatal("dev.sh 未执行 026")
-	}
+	apply := strings.Index(string(dev), "knowledge-schema.sh apply")
+	check := strings.Index(string(dev), "knowledge-schema.sh check")
 	seed := strings.Index(string(dev), "migrations/seed/001_public_catalog.sql")
-	if seed < 0 || migration > seed {
-		t.Fatal("026 必须在种子 SQL 之前执行")
+	if apply < 0 || check < 0 || seed < 0 || apply > seed || check > seed {
+		t.Fatal("dev.sh 必须在种子 SQL 之前执行知识库迁移和 ngram 检查")
+	}
+	install, err := os.ReadFile("../../scripts/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installApply := strings.Index(string(install), "knowledge-schema.sh apply")
+	installCheck := strings.Index(string(install), "knowledge-schema.sh check")
+	platformUp := strings.LastIndex(string(install), "up -d --no-build --wait --wait-timeout 180")
+	if installApply < 0 || installCheck < 0 || platformUp < 0 || installApply > platformUp || installCheck > platformUp {
+		t.Fatal("install.sh 必须在平台启动前执行知识库迁移和 ngram 检查")
+	}
+	start, err := os.ReadFile("../../start.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(start), "knowledge-schema.sh apply") || !strings.Contains(string(start), "knowledge-schema.sh check") {
+		t.Fatal("start.sh 的升级路径必须执行知识库迁移和 ngram 检查")
 	}
 }
 

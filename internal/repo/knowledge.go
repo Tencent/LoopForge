@@ -12,9 +12,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// KnowledgeRepo owns knowledge control metadata and the review queue.
+// KnowledgeRepo owns knowledge control metadata and the review queue. The
+// review body itself belongs to the content plane; content is injected here so
+// callers keep a single Put/Get API while payload never carries the body.
 type KnowledgeRepo struct {
 	*deps
+	content *KnowledgeContentRepo
 }
 
 // KnowledgeSubmissions lists submissions newest first. Empty filters match
@@ -58,6 +61,12 @@ func (r *KnowledgeRepo) KnowledgeSubmission(id string) (domain.KnowledgeSubmissi
 		return domain.KnowledgeSubmission{}, false
 	}
 	out := knowledgeSubmissionFromRow(row)
+	out.Content = ""
+	if r.content != nil {
+		if body, ok := r.content.KnowledgeSubmissionContent(out.ID); ok {
+			out.Content = body
+		}
+	}
 	if wb, ok := r.KnowledgeWritebackBySubmission(out.ID); ok {
 		applyKnowledgeWritebackView(&out, wb)
 	}
@@ -93,6 +102,20 @@ func (r *KnowledgeRepo) PutKnowledgeSubmission(item domain.KnowledgeSubmission) 
 	if item.Status == "" {
 		item.Status = domain.KnowledgeSubmissionPending
 	}
+	// The body is content-plane data. Stage it first, then marshal the control
+	// row without the body; a retry after a metadata failure simply overwrites
+	// the staging row. Metadata-only saves (reject, gate refresh) keep the
+	// existing staging body because Content is empty.
+	body := item.Content
+	item.Content = ""
+	if strings.TrimSpace(body) != "" {
+		if r.content == nil {
+			return errors.New("knowledge content store is not configured")
+		}
+		if err := r.content.PutKnowledgeSubmissionContent(item.ID, body); err != nil {
+			return err
+		}
+	}
 	payload, err := json.Marshal(item)
 	if err != nil {
 		return err
@@ -109,7 +132,13 @@ func (r *KnowledgeRepo) PutKnowledgeSubmission(item domain.KnowledgeSubmission) 
 }
 
 func (r *KnowledgeRepo) DeleteKnowledgeSubmission(id string) error {
-	res := r.DB.Where("id = ?", strings.TrimSpace(id)).Delete(&knowledgeSubmissionRow{})
+	id = strings.TrimSpace(id)
+	if r.content != nil {
+		if err := r.content.DeleteKnowledgeSubmissionContent(id); err != nil {
+			return err
+		}
+	}
+	res := r.DB.Where("id = ?", id).Delete(&knowledgeSubmissionRow{})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -271,10 +300,10 @@ func (r *KnowledgeRepo) SetKnowledgeVectorConfig(id string, enabled bool, model 
 	return r.DB.Model(&knowledgeBaseRow{}).Where("id = ?", strings.TrimSpace(id)).
 		Updates(map[string]any{
 			"vector_enabled":    enabled,
-			"embedding_model":  model,
-			"embedding_dim":    dim,
+			"embedding_model":   model,
+			"embedding_dim":     dim,
 			"qdrant_collection": collection,
-			"updated_at":       time.Now().UTC(),
+			"updated_at":        time.Now().UTC(),
 		}).Error
 }
 

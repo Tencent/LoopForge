@@ -25,10 +25,11 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
         (self.root / 'migrations/seed').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-observability-schema.sh'):
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-observability-schema.sh', 'knowledge-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         (self.root / 'migrations/seed/001_test.sql').write_text('SELECT 1;\n')
+        (self.root / 'migrations/026_test.sql').write_text('-- @plane control\nSELECT 1;\n-- @plane content\nSELECT 1;\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
 printf '%s %s\\n' "${MOCK_PRIVILEGED:-0}" "$*" >> "$MOCK_LOG"
@@ -38,9 +39,11 @@ if [[ "$1" == info ]]; then
 fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
-if [[ "$*" == *'exec -T mysql'* ]]; then
+if [[ "$*" == *'exec -T'* ]]; then
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
   query=$(cat)
+  if [[ "$query" == *'information_schema.STATISTICS'* ]]; then echo FULLTEXT; fi
+  if [[ "$query" == *'SHOW CREATE TABLE knowledge_chunks'* ]]; then echo 'CREATE TABLE `knowledge_chunks` (`text` mediumtext, FULLTEXT KEY `ft_knowledge_chunks_text` (`title`,`heading`,`text`) /*!50100 WITH PARSER `ngram` */)'; fi
   if [[ "$query" == *'information_schema.columns'* ]]; then echo 1; fi
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; fi
 fi
@@ -83,7 +86,7 @@ exec "$@"
         operations = [line for line in lines if 'compose' in line]
         self.assertTrue(operations)
         self.assertTrue(all(line.startswith('1 ') for line in operations), operations)
-        self.assertTrue(any('exec -T mysql' in line for line in operations))
+        self.assertTrue(any('exec -T' in line for line in operations))
 
     def test_non_root_with_direct_access_never_uses_sudo(self):
         self.assert_success(self.install(MOCK_USER='1000', MOCK_DIRECT='1', MOCK_SUDO_DENIED='1'))

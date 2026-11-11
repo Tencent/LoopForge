@@ -51,24 +51,104 @@ func TestBuiltinKnowledgeMySQLFulltextIndex(t *testing.T) {
 	}
 }
 
-// splitSQLStatements 把迁移脚本按分号拆成单条语句，跳过注释与空行。
+// splitSQLStatements 把迁移脚本拆成单条语句。迁移里有同一行写多条语句的
+// 动态 SQL，因此不能按行尾分号切；这里按引号/反引号/注释之外的分号切。
 func splitSQLStatements(script string) []string {
 	var out []string
 	var b strings.Builder
-	for _, line := range strings.Split(script, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+	inSingle, inDouble, inBacktick, inLineComment, inBlockComment := false, false, false, false, false
+	for i := 0; i < len(script); i++ {
+		c := script[i]
+		switch {
+		case inLineComment:
+			if c == '\n' {
+				inLineComment = false
+				b.WriteByte(c)
+			}
+			continue
+		case inBlockComment:
+			if c == '*' && i+1 < len(script) && script[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		case inSingle:
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(script) {
+				i++
+				b.WriteByte(script[i])
+			} else if c == '\'' {
+				if i+1 < len(script) && script[i+1] == '\'' {
+					i++
+					b.WriteByte(script[i])
+				} else {
+					inSingle = false
+				}
+			}
+			continue
+		case inDouble:
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(script) {
+				i++
+				b.WriteByte(script[i])
+			} else if c == '"' {
+				if i+1 < len(script) && script[i+1] == '"' {
+					i++
+					b.WriteByte(script[i])
+				} else {
+					inDouble = false
+				}
+			}
+			continue
+		case inBacktick:
+			b.WriteByte(c)
+			if c == '`' {
+				if i+1 < len(script) && script[i+1] == '`' {
+					i++
+					b.WriteByte(script[i])
+				} else {
+					inBacktick = false
+				}
+			}
 			continue
 		}
-		b.WriteString(line)
-		b.WriteByte('\n')
-		if strings.HasSuffix(trimmed, ";") {
-			stmt := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(b.String()), ";"))
-			if stmt != "" {
+		switch c {
+		case '\'':
+			inSingle = true
+			b.WriteByte(c)
+		case '"':
+			inDouble = true
+			b.WriteByte(c)
+		case '`':
+			inBacktick = true
+			b.WriteByte(c)
+		case '#':
+			inLineComment = true
+		case '-':
+			if i+1 < len(script) && script[i+1] == '-' && (i+2 == len(script) || script[i+2] == ' ' || script[i+2] == '\t' || script[i+2] == '\n') {
+				inLineComment = true
+				i++
+			} else {
+				b.WriteByte(c)
+			}
+		case '/':
+			if i+1 < len(script) && script[i+1] == '*' {
+				inBlockComment = true
+				i++
+			} else {
+				b.WriteByte(c)
+			}
+		case ';':
+			if stmt := strings.TrimSpace(b.String()); stmt != "" {
 				out = append(out, stmt)
 			}
 			b.Reset()
+		default:
+			b.WriteByte(c)
 		}
+	}
+	if stmt := strings.TrimSpace(b.String()); stmt != "" {
+		out = append(out, stmt)
 	}
 	return out
 }

@@ -199,8 +199,8 @@ func newStore(db, contentDB *gorm.DB, contentSeparate bool) *Store {
 	s.EngineInstancesRepo = &EngineInstancesRepo{deps: d}
 	s.RoomsRepo = &RoomsRepo{deps: d}
 	s.SpacesRepo = &SpacesRepo{deps: d}
-	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
 	s.KnowledgeContentRepo = &KnowledgeContentRepo{db: contentDB, separate: contentSeparate}
+	s.KnowledgeRepo = &KnowledgeRepo{deps: d, content: s.KnowledgeContentRepo}
 	s.FeedbackRepo = &FeedbackRepo{deps: d}
 	return s
 }
@@ -239,12 +239,18 @@ func Open(dsn string) (*Store, error) {
 	}
 	s := newStore(db, contentDB, contentSeparate)
 	// Incremental DDL only (missing columns/tables/indexes) via gorm's
-	// migrator. Schema baselines, data migrations and seed data are NOT run
-	// from code: they are plain SQL scripts under migrations/, applied
-	// manually by the operator.
-	if err := autoMigrateIncremental(s.DB); err != nil {
+	// migrator, split by plane: control tables on the main handle, content
+	// tables on the content handle (the same handle when the DSN is empty).
+	// Schema baselines, data migrations and seed data are NOT run from code:
+	// they are plain SQL scripts under migrations/, applied by the install /
+	// upgrade scripts before the service starts.
+	if err := autoMigrateIncremental(s.DB, controlModels()); err != nil {
 		s.Close()
-		return nil, fmt.Errorf("auto migrate: %w", err)
+		return nil, fmt.Errorf("auto migrate control plane: %w", err)
+	}
+	if err := autoMigrateIncremental(contentDB, contentModels()); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("auto migrate content plane: %w", err)
 	}
 	return s, nil
 }
