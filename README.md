@@ -108,7 +108,7 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 - **Sandboxes.** In the default Compose installation, SOP runs and conversation workspaces both use Docker sandbox containers started through the host Docker socket. Default sandboxes reuse the installed runtime image, so nothing extra is built after installation; custom Dockerfiles still build their own images. Docker socket access grants control of the host daemon, so this setup is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
 - **Accounts and access.** New installations listen on all interfaces (existing bind settings are kept) and are designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
 - **Remote access, HTTPS, separate workers.** See [Deployment](docs/deployment.md).
-- **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.10+).
+- **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.11+).
 
 </details>
 
