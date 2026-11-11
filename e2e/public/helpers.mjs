@@ -30,6 +30,16 @@ export async function switchProject(page,id){
   await page.locator('#projectSwitcher').selectOption(id,{force:true});
 }
 
+// Settings pages (flow templates, runs, …) live in the settings sidebar, which
+// only shows once the rail's settings entry is opened.
+export async function openSettingsPage(page,view){
+  const {expect}=await import('@playwright/test');
+  const entry=page.locator(`.platform-sidebar .nav[data-view="${view}"]`);
+  if(!(await entry.isVisible()))await page.locator('#railSettingsEntry').click();
+  await expect(entry).toBeVisible();
+  await entry.click();
+}
+
 // The home page embeds the chat app in an iframe; its composer is the entry point.
 export const chat=page=>page.frameLocator('iframe[src*="/chatbot/"]');
 export const composer=page=>chat(page).locator('.composer-column textarea');
