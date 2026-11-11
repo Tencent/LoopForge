@@ -401,7 +401,7 @@ func (h *agentToolGateway) callMainBotKnowledge(ctx context.Context, session *Ag
 		return "", errAgentToolForbidden
 	}
 	name := strings.TrimSpace(tool.UpstreamName)
-	if !knowledge.IsReadOnlyTool(name) {
+	if !knowledge.IsAgentTool(name) {
 		return "", errAgentToolForbidden
 	}
 	if h == nil || h.deps == nil || h.kb == nil {

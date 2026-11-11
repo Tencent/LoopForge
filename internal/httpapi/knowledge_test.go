@@ -117,7 +117,7 @@ func TestKnowledgeProxyIsReadOnlyAndProjectScoped(t *testing.T) {
 	for _, tool := range list.Result.Tools {
 		names = append(names, tool.Name)
 	}
-	if strings.Join(names, ",") != "kb_search,kb_fetch,kb_grep,kb_list_sources,kb_get_source" {
+	if strings.Join(names, ",") != "kb_search,kb_fetch,kb_grep,kb_list_sources,kb_get_source,kb_report_issue" {
 		t.Fatalf("proxy tools = %v", names)
 	}
 

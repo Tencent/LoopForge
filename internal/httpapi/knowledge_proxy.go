@@ -19,8 +19,9 @@ import (
 
 // 路由: g.POST(knowledge.ProxyPath, h.proxyMCP)
 //
-// Stateless Streamable HTTP MCP for agents. Only the read-only upstream tools
-// are listed or callable, and every call is narrowed to the project's sources.
+// Stateless Streamable HTTP MCP for agents. Only the agent knowledge tools
+// (read-only retrieval plus issue marking) are listed or callable, and every
+// call is narrowed to the project's sources.
 func (h *knowledgeHandlers) proxyMCP(c *gin.Context) {
 	raw, _ := bearerToken(c.Request)
 	claims, err := knowledge.VerifyProxyToken(knowledge.SessionSecret(), raw, time.Now())
@@ -65,7 +66,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 			"protocolVersion": agentToolProtocolVersion(request.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]string{"name": domain.KnowledgeMCPServerID, "version": "1.0.0"},
-			"instructions":    "本项目知识库（只读）。先 kb_search 检索；错误码、接口名等逐字标识用 kb_grep；再用 kb_fetch 读原文并附上 citation。",
+			"instructions":    "本项目知识库：先 kb_search 检索；错误码、接口名等逐字标识用 kb_grep；再用 kb_fetch 读原文并附 citation。发现文档问题时用 kb_report_issue 记录，不改正文。",
 		})
 	case "ping":
 		return reply(map[string]any{})
@@ -87,8 +88,8 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 		if i := strings.LastIndex(name, "__"); i >= 0 {
 			name = name[i+2:]
 		}
-		if !knowledge.IsReadOnlyTool(name) {
-			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索本项目知识库", params.Name))
+		if !knowledge.IsAgentTool(name) {
+			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索、读取原文和标记文档问题", params.Name))
 		}
 		started := time.Now()
 		caller := knowledge.Caller{
@@ -110,9 +111,9 @@ func (h *knowledgeHandlers) proxyTools(ctx context.Context) ([]map[string]any, e
 	if err != nil {
 		return nil, fmt.Errorf("知识库不可达：%w", err)
 	}
-	out := make([]map[string]any, 0, len(knowledge.ReadOnlyTools))
+	out := make([]map[string]any, 0, len(knowledge.AgentTools))
 	for _, tool := range upstream {
-		if !knowledge.IsReadOnlyTool(tool.Name) {
+		if !knowledge.IsAgentTool(tool.Name) {
 			continue
 		}
 		item := map[string]any{"name": tool.Name, "description": tool.Description, "inputSchema": json.RawMessage(defaultToolSchema(tool.InputSchema))}
@@ -212,6 +213,13 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 		hits = len(kept)
 	case knowledge.ToolGetSource:
 		value, err = svc.SourceDetail(ctx, caller.ProjectID, str("source"))
+	case knowledge.ToolReportIssue:
+		var item domain.KnowledgeFeedback
+		item, err = svc.ReportIssue(ctx, caller, str("source"), str("path"), str("issue"))
+		if err == nil {
+			value = map[string]any{"recorded": true, "feedback": item, "message": "已记录文档问题，平台会在治理面板汇总。"}
+			hits = 1
+		}
 	default:
 		return "", 0, fmt.Errorf("unknown knowledge tool")
 	}

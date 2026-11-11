@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge/engine/frontmatter"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -33,14 +34,21 @@ func (r *KnowledgeContentRepo) PutKnowledgeDocument(doc domain.KnowledgeDocument
 
 func putKnowledgeDocument(tx *gorm.DB, doc domain.KnowledgeDocument) error {
 	now := time.Now().UTC()
+	// 元数据在写入索引内容时解析并落列。没有 frontmatter 或字段缺失时保持
+	// 零值，由健康检查报告；托管文档不会被自动补 frontmatter。
+	meta, _ := frontmatter.Parse([]byte(doc.Body))
 	row := knowledgeDocumentRow{
 		SourceID: doc.SourceID, Path: doc.Path, Title: doc.Title, Body: doc.Body,
 		LineCount: doc.LineCount, SHA256: doc.SHA256, Commit: doc.Commit,
-		Revision: doc.Revision, Updated: &now,
+		Revision: doc.Revision, Owner: meta.Owner, DocStatus: meta.Status,
+		FrontmatterUpdated: meta.Updated, Updated: &now,
 	}
 	return tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "source_id"}, {Name: "path"}},
-		DoUpdates: clause.AssignmentColumns([]string{"title", "body", "line_count", "sha256", "commit", "revision", "updated_at"}),
+		Columns: []clause.Column{{Name: "source_id"}, {Name: "path"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"title", "body", "line_count", "sha256", "commit", "revision",
+			"owner", "doc_status", "frontmatter_updated_at", "updated_at",
+		}),
 	}).Create(&row).Error
 }
 
@@ -60,6 +68,68 @@ func (r *KnowledgeContentRepo) KnowledgeDocuments(sourceID string) []domain.Know
 	}
 	for _, row := range rows {
 		out = append(out, knowledgeDocumentFromRow(row))
+	}
+	return out
+}
+
+// KnowledgeDocumentMetas 按来源批量读取检索后处理需要的治理元数据，不返回
+// 正文。为兼容 033 之前写入的历史行，元数据列为空时再读一次正文并解析；
+// 这是读时兜底，不修改数据，下一次覆盖写入会把元数据落到列上。
+func (r *KnowledgeContentRepo) KnowledgeDocumentMetas(sourceIDs []string) []domain.KnowledgeDocumentMeta {
+	out := make([]domain.KnowledgeDocumentMeta, 0)
+	sourceIDs = cleanKnowledgeIDs(sourceIDs)
+	if len(sourceIDs) == 0 {
+		return out
+	}
+	var rows []knowledgeDocumentRow
+	if err := r.db.Select("source_id, path, title, owner, doc_status, frontmatter_updated_at, line_count, `commit`, revision, updated_at").
+		Where("source_id IN ?", sourceIDs).Order("source_id, path").Find(&rows).Error; err != nil {
+		return out
+	}
+	missing := map[string][]string{}
+	for _, row := range rows {
+		if row.Owner == "" && row.DocStatus == "" && row.FrontmatterUpdated == nil {
+			missing[row.SourceID] = append(missing[row.SourceID], row.Path)
+		}
+	}
+	bodies := map[string]string{}
+	for sourceID, paths := range missing {
+		for start := 0; start < len(paths); start += 500 {
+			end := start + 500
+			if end > len(paths) {
+				end = len(paths)
+			}
+			var bodyRows []knowledgeDocumentRow
+			if err := r.db.Select("path, body").Where("source_id = ? AND path IN ?", sourceID, paths[start:end]).Find(&bodyRows).Error; err != nil {
+				continue
+			}
+			for _, bodyRow := range bodyRows {
+				bodies[lifecycleDocumentKey(sourceID, bodyRow.Path)] = bodyRow.Body
+			}
+		}
+	}
+	for _, row := range rows {
+		if row.Owner == "" && row.DocStatus == "" && row.FrontmatterUpdated == nil {
+			meta, _ := frontmatter.Parse([]byte(bodies[lifecycleDocumentKey(row.SourceID, row.Path)]))
+			row.Owner, row.DocStatus, row.FrontmatterUpdated = meta.Owner, meta.Status, meta.Updated
+		}
+		out = append(out, knowledgeDocumentMetaFromRow(row))
+	}
+	return out
+}
+
+func lifecycleDocumentKey(sourceID, path string) string { return sourceID + "\x00" + path }
+
+func cleanKnowledgeIDs(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, id := range in {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
 	}
 	return out
 }
@@ -270,6 +340,24 @@ func knowledgeDocumentFromRow(row knowledgeDocumentRow) domain.KnowledgeDocument
 	out := domain.KnowledgeDocument{
 		SourceID: row.SourceID, Path: row.Path, Title: row.Title, Body: row.Body,
 		LineCount: row.LineCount, SHA256: row.SHA256, Commit: row.Commit, Revision: row.Revision,
+		Owner: row.Owner, Status: row.DocStatus, FrontmatterUpdated: row.FrontmatterUpdated,
+	}
+	if out.Owner == "" && out.Status == "" && out.FrontmatterUpdated == nil {
+		// 033 之前写入的历史行没有元数据列；读时从正文解析，不写回。
+		meta, _ := frontmatter.Parse([]byte(row.Body))
+		out.Owner, out.Status, out.FrontmatterUpdated = meta.Owner, meta.Status, meta.Updated
+	}
+	if row.Updated != nil {
+		out.UpdatedAt = *row.Updated
+	}
+	return out
+}
+
+func knowledgeDocumentMetaFromRow(row knowledgeDocumentRow) domain.KnowledgeDocumentMeta {
+	out := domain.KnowledgeDocumentMeta{
+		SourceID: row.SourceID, Path: row.Path, Title: row.Title,
+		Owner: row.Owner, Status: row.DocStatus, FrontmatterUpdated: row.FrontmatterUpdated,
+		LineCount: row.LineCount, Commit: row.Commit, Revision: row.Revision,
 	}
 	if row.Updated != nil {
 		out.UpdatedAt = *row.Updated

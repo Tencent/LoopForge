@@ -572,6 +572,25 @@ func (s *Service) Retract(ctx context.Context, id, reasonCategory, reasonDetail,
 	if item.Status != domain.KnowledgeSubmissionPublished {
 		return item, apperr.New(apperr.Conflict, "只有已写回的条目可以撤回")
 	}
+	reason := strings.TrimSpace(reasonCategory)
+	if detail := strings.TrimSpace(reasonDetail); detail != "" {
+		reason = strings.TrimSpace(reason + "：" + detail)
+	}
+	return s.retractDocument(ctx, item, reason, actor)
+}
+
+// publishRetraction 执行治理面板发起、审核通过的 pending 下线条目。它不跑
+// 沉淀门禁：内容本身可能正是因为有敏感信息或质量问题才需要下线。
+func (s *Service) publishRetraction(ctx context.Context, item domain.KnowledgeSubmission, actor string) (domain.KnowledgeSubmission, error) {
+	reason := strings.TrimSpace(item.ReviewNote)
+	if reason == "" {
+		reason = "治理处置：申请下线"
+	}
+	return s.retractDocument(ctx, item, reason, actor)
+}
+
+// retractDocument 是已发布撤回和审核通过下线的共同执行路径。
+func (s *Service) retractDocument(ctx context.Context, item domain.KnowledgeSubmission, reason, actor string) (domain.KnowledgeSubmission, error) {
 	source := strings.TrimSpace(item.Source)
 	if source == "" {
 		return item, apperr.New(apperr.Invalid, "提交项没有写回来源")
@@ -595,10 +614,6 @@ func (s *Service) Retract(ctx context.Context, id, reasonCategory, reasonDetail,
 		fingerprint = KnowledgeFingerprint(item.Content)
 	}
 	now := s.clock()
-	reason := strings.TrimSpace(reasonCategory)
-	if detail := strings.TrimSpace(reasonDetail); detail != "" {
-		reason = strings.TrimSpace(reason + "：" + detail)
-	}
 	store, ok := s.store.(SedimentStore)
 	if !ok {
 		return item, apperr.New(apperr.Unavailable, "知识库沉淀存储不可用")
@@ -606,15 +621,14 @@ func (s *Service) Retract(ctx context.Context, id, reasonCategory, reasonDetail,
 	if err := store.PutKnowledgeTombstone(domain.KnowledgeTombstone{
 		ProjectID: item.ProjectID, Fingerprint: fingerprint, BaseID: src.BaseID,
 		SourceID: source, Path: item.Path, SubmissionID: item.ID,
-		Title: item.Title, Reason: reason, CreatedBy: actor, CreatedAt: now,
+		Title: item.Title, Reason: strings.TrimSpace(reason), CreatedBy: actor, CreatedAt: now,
 	}); err != nil {
 		return item, apperr.New(apperr.Upstream, "写入墓碑失败："+err.Error())
 	}
 	item.Status = domain.KnowledgeSubmissionRetracted
 	item.RetractedAt = &now
-	item.ReviewNote = strings.TrimSpace(item.ReviewNote)
-	if reason != "" {
-		item.ReviewNote = reason
+	if strings.TrimSpace(reason) != "" {
+		item.ReviewNote = strings.TrimSpace(reason)
 	}
 	item.ReviewedBy = actor
 	return s.save(item)

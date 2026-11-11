@@ -148,6 +148,11 @@ func (s *Service) Search(ctx context.Context, projectID, query string, sources [
 	if err != nil {
 		return SearchOutput{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
 	}
+	rawHits := len(result.Results)
+	s.applyLifecycle(&result)
+	if rawHits == 0 {
+		_ = s.RecordGap(projectID, query)
+	}
 	s.rankOrigins(&result)
 	return SearchOutput{Result: result, Sources: scoped, LatencyMs: s.now().Sub(started).Milliseconds()}, nil
 }
@@ -303,6 +308,16 @@ func (s *Service) Edit(id string, input SubmissionEdit) (domain.KnowledgeSubmiss
 	if err != nil {
 		return item, err
 	}
+	if strings.EqualFold(strings.TrimSpace(item.Action), domain.KnowledgeSubmissionActionRetract) {
+		// 下线条目只允许审核备注变化；正文、来源和路径在创建时已锁定，避免
+		// 审批前被改成另一篇文档。
+		if input.ReviewNote != "" {
+			item.ReviewNote = strings.TrimSpace(input.ReviewNote)
+		}
+		item.Status = domain.KnowledgeSubmissionPending
+		item.Error = ""
+		return s.save(item)
+	}
 	item.Title = strings.TrimSpace(firstNonEmpty(input.Title, item.Title))
 	item.Source = strings.TrimSpace(input.Source)
 	item.Path = strings.TrimSpace(input.Path)
@@ -347,6 +362,9 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	item, err := s.mutable(id, "该条目已写回知识库")
 	if err != nil {
 		return item, err
+	}
+	if strings.EqualFold(strings.TrimSpace(item.Action), domain.KnowledgeSubmissionActionRetract) {
+		return s.publishRetraction(ctx, item, actor)
 	}
 	item, err = s.checkPublishGates(item)
 	if err != nil {

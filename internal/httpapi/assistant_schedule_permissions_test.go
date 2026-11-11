@@ -61,7 +61,7 @@ func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
 	withoutKnowledge := func(names []string) []string {
 		out := make([]string, 0, len(names))
 		for _, name := range names {
-			if !knowledge.IsReadOnlyTool(name) {
+			if !knowledge.IsAgentTool(name) {
 				out = append(out, name)
 			}
 		}
@@ -71,7 +71,7 @@ func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
 	if !reflect.DeepEqual(withoutKnowledge(got), withoutKnowledge(want)) || !reflect.DeepEqual(scheduled.MCPServers, home.MCPServers) {
 		t.Fatalf("scheduled and homepage tools differ:\nscheduled=%v\nhome=%v", got, want)
 	}
-	for _, name := range knowledge.ReadOnlyTools {
+	for _, name := range knowledge.AgentTools {
 		if slices.Contains(got, name) {
 			t.Errorf("scheduled session must not expose knowledge tool %s", name)
 		}

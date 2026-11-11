@@ -669,6 +669,50 @@ small {
 .message-actions:focus-within .icon-button {
   opacity: 1;
 }
+.reply-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  opacity: 1;
+}
+.message.assistant:hover .reply-feedback,
+.message-actions:focus-within .reply-feedback,
+.reply-feedback.is-sent {
+  opacity: 1;
+}
+.reply-feedback button {
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.reply-feedback button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.reply-feedback button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 1px;
+}
+.reply-feedback button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.reply-feedback.is-sent {
+  color: var(--muted);
+  font-size: 11px;
+}
+.reply-feedback-error {
+  color: var(--danger, #b42318);
+  font-size: 11px;
+}
 .message-time {
   font-size: 11px;
   line-height: 16px;

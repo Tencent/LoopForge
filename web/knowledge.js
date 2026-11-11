@@ -1,6 +1,6 @@
 // 知识中心：本项目的托管知识库、来源、文档、试搜与读原文；角色与审核标签保留。
 // 依赖 app.js 的全局 state、api、$、$$、escapeHTML、toast、relativeTime、switchView、showRunDetail、huiIcon、afConfirm。
-const kb={tab:'bases',projectId:null,overview:null,overviewError:'',docs:{source:'',items:[],error:'',loading:false,loaded:false},usage:null,candidates:[],submissions:[],subStatus:'todo',draft:null,togglingAgents:new Set(),search:{query:'',sources:[],result:null,loading:false,error:'',seq:0},drawer:{opener:null,openerKey:'',seq:0}};
+const kb={tab:'bases',projectId:null,overview:null,overviewError:'',docs:{source:'',items:[],error:'',loading:false,loaded:false},usage:null,candidates:[],submissions:[],subStatus:'todo',draft:null,togglingAgents:new Set(),search:{query:'',sources:[],result:null,loading:false,error:'',seq:0},governance:null,governanceError:'',feedbackSent:new Set(),drawer:{opener:null,openerKey:'',seq:0}};
 
 const KB_TOOLS=[
   ['kb_search','在项目已授权来源里做关键词检索，返回带出处和行号的结果'],
@@ -8,6 +8,7 @@ const KB_TOOLS=[
   ['kb_grep','按字面量或正则精确匹配错误码、接口名等标识，返回路径、行号和出处'],
   ['kb_list_sources','列出当前项目可用的知识库来源'],
   ['kb_get_source','查看来源状态与文档清单'],
+  ['kb_report_issue','标记文档问题；只记录反馈，不修改正文'],
 ];
 const KB_SUB_STATUS={pending:['待审核','warn'],published:['已写回','ok'],rejected:['已驳回',''],retracted:['已撤回','']};
 const KB_SEDIMENT_MODE={review:'人工审核',auto:'门禁全过自动发布'};
@@ -27,6 +28,9 @@ function kbWriteInfoHTML(d){
   return `<div class="kb-write-info">${st?kbBadge(escapeHTML(st[0]),st[1]):''}${parts.join(' · ')}${note}${err}</div>`;
 }
 const KB_SOURCE_STATUS={ready:['就绪','ok'],pending:['待同步','warn'],syncing:['同步中','warn'],error:['异常','err'],failed:['异常','err'],'':['未同步','warn']};
+const KB_DOC_STATUS={draft:['草稿',''],verified:['已验证','ok'],deprecated:['已废弃','warn'],archived:['已归档','']};
+const KB_GOVERNANCE_TYPE={stale:['过期','warn'],duplicate:['重复','warn'],dead_link:['死链','err'],missing_owner:['缺负责人','warn']};
+const KB_FEEDBACK_KIND={helpful:['有用','ok'],not_helpful:['没用','warn'],issue:['标记问题','warn']};
 const KB_SEARCH_ICON='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
 
 function kbProjectId(){return kb.sharedAdmin?'':(state.projectFilter||'')}
@@ -166,6 +170,7 @@ async function renderKnowledgeView(){
   if(kb.projectId!==null&&kb.projectId!==kbProjectId()){
     kbDrawerClose();
     Object.assign(kb.search,{result:null,error:'',sources:[]});
+    kb.governance=null;kb.governanceError='';kb.feedbackSent=new Set();
     kb.docs={source:'',items:[],error:'',loading:false,loaded:false};
   }
   kb.projectId=kbProjectId();
@@ -176,16 +181,18 @@ async function renderKnowledgeView(){
 
 async function kbRefresh(){
   const pid=encodeURIComponent(kbProjectId());
-  const [overview,usage,subs,cands,bindings]=await Promise.all([
+  const [overview,usage,subs,cands,bindings,governance]=await Promise.all([
     api(`/api/knowledge/bases?projectId=${pid}`,{silent:true}).catch(err=>({error:err.message})),
     api(`/api/knowledge/usage?projectId=${pid}`,{silent:true}).catch(()=>null),
     api(`/api/knowledge/submissions?projectId=${pid}`,{silent:true}).catch(()=>[]),
     api(`/api/knowledge/candidates?projectId=${pid}`,{silent:true}).catch(()=>[]),
     kbProjectId()?api(`/api/knowledge/bases/bindings?projectId=${pid}`,{silent:true}).catch(err=>({error:err.message})):Promise.resolve([]),
+    api(`/api/knowledge/governance?projectId=${pid}`,{silent:true}).catch(err=>({error:err.message})),
   ]);
   kb.bindings=Array.isArray(bindings)?bindings:[];kb.bindingsError=bindings?.error||'';
   kb.overview=overview;kb.overviewError=overview?.error||'';
   kb.usage=usage;kb.submissions=subs||[];kb.candidates=cands||[];
+  kb.governanceError=governance?.error||'';if(!kb.governanceError)kb.governance=governance;
 }
 
 // 返回 [色调, 指标卡短标签, 完整说明]。
@@ -237,7 +244,8 @@ function kbRender(){
   const tabFocused=!!document.activeElement?.closest?.('#kbTabs');
   const roles=kb.usage?.agents?.length||0;
   const todo=kbTodoItems().length;
-  const tabs=[['bases','知识库',0],['docs','文档',0],['search','试搜',0],['usage','角色',roles],['distill','审核',todo]];
+  const governanceIssues=Number(kb.governance?.counts?.total)||0;
+  const tabs=[['bases','知识库',0],['docs','文档',0],['search','试搜',0],['governance','治理',governanceIssues],['usage','角色',roles],['distill','审核',todo]];
   if(!tabs.some(([k])=>k===kb.tab))kb.tab='bases';
   root.innerHTML=`
     ${(!state.authRequired||isPlatformAdmin())?`<div class="kb-scope"><span>${kbAdminScope()?'公共知识库管理':escapeHTML(kbProjectName())+' · 项目知识库'}</span><button type="button" class="kb-btn small" id="kbSharedManage">${kb.sharedAdmin?'返回项目知识库':'公共知识库管理'}</button></div>`:''}
@@ -249,7 +257,7 @@ function kbRender(){
     kb.tab=b.dataset.kbTab;kbRender();
     $(`#kbTab-${kb.tab}`)?.focus({preventScroll:true});
   });
-  ({bases:kbRenderBases,docs:kbRenderDocs,search:kbRenderSearch,usage:kbRenderUsage,distill:kbRenderDistill}[kb.tab])($('#kbTabBody'));
+  ({bases:kbRenderBases,docs:kbRenderDocs,search:kbRenderSearch,governance:kbRenderGovernance,usage:kbRenderUsage,distill:kbRenderDistill}[kb.tab])($('#kbTabBody'));
   if(tabFocused)$(`#kbTab-${kb.tab}`)?.focus({preventScroll:true});
 }
 
@@ -563,8 +571,8 @@ function kbOpenInject(){
     ${KB_TOOLS.map(([n,d])=>kbRow(kbText(`<span class="mono">${n}</span>`,escapeHTML(d)))).join('')}
     ${kbRow(kbText('<span class="mono kb-off">kb_write_document</span>','不对 Agent 开放，写入只能经知识中心的托管文档编辑'))}
     ${kbCaption('说明')}
-    <div class="kb-cap">角色开启知识库开关后，运行时注入这 4 个只读工具与「知识库使用规范」；节点启动时平台签发限定本项目的只读令牌。Agent 本身仍完全只读；运行到达闭环后，平台把该角色产出的 knowledge.md 自动加入审核队列，审核通过或门禁全过后才写回。</div>`;
-  kbDrawerOpen('运行时注入的工具与规则','Agent 只读，沉淀由平台在闭环后入队',body);
+    <div class="kb-cap">角色开启知识库开关后，运行时注入这 5 个知识库工具（4 个只读检索 + 1 个标记问题）与「知识库使用规范」；节点启动时平台签发限定本项目的令牌。Agent 对正文仍完全只读，标记问题只记录反馈、不改正文；运行到达闭环后，平台把该角色产出的 knowledge.md 自动加入审核队列，审核通过或门禁全过后才写回。</div>`;
+  kbDrawerOpen('运行时注入的工具与规则','Agent 只读正文；标记问题只记录反馈',body);
 }
 
 // ---------- 沉淀配置 ----------
@@ -611,7 +619,8 @@ function kbRenderDistill(body){
     const x=it.x;const [label,tone]=KB_SUB_STATUS[x.status]||[x.status||'-',''];
     const write=kbWriteStatus(x);
     const side=showState?kbBadge(escapeHTML(label),tone):(write?kbBadge(escapeHTML(write[0]),write[1]):'');
-    return kbRow(kbText(escapeHTML(x.title||'未命名'),escapeHTML(`${x.source||'未选来源'} / ${x.path||'未填路径'}${x.branch?` · 分支 ${x.branch}`:''} · ${relativeTime(x.updatedAt)}`)),side,{go:true,attrs:`data-kb-key="sub:${escapeHTML(x.id)}" data-kb-sub="${escapeHTML(x.id)}"`});
+    const action=x.action==='retract'?` ${kbBadge('下线','warn')}`:'';
+    return kbRow(kbText(`${escapeHTML(x.title||'未命名')}${action}`,escapeHTML(`${x.source||'未选来源'} / ${x.path||'未填路径'}${x.branch?` · 分支 ${x.branch}`:''} · ${relativeTime(x.updatedAt)}`)),side,{go:true,attrs:`data-kb-key="sub:${escapeHTML(x.id)}" data-kb-sub="${escapeHTML(x.id)}"`});
   }).join(''):`<div class="kb-empty">${showState?'暂无待处理条目。运行产出 knowledge.md 并在闭环信号后自动入队；也可以在这里手动新建或从运行产物加入。':'没有条目'}</div>`;
   body.innerHTML=kbPanel(`${kbSeg([['todo','待处理'],['published','已写回'],['rejected','已驳回'],['retracted','已撤回']],kb.subStatus,'kb-status',{label:'审核筛选'})}<button type="button" class="kb-btn small" id="kbNewSub" data-kb-key="new">新建</button>`,list,{label:'审核'});
   body.querySelectorAll('[data-kb-status]').forEach(b=>b.onclick=()=>{if(kb.subStatus!==b.dataset.kbStatus){kb.subStatus=b.dataset.kbStatus;kbRender()}});
@@ -665,13 +674,15 @@ function kbRenderEditor(opt={}){
   const locked=d.status==='published';
   const isNew=d.status==='new';
   const retracted=d.status==='retracted';
-  const dis=locked||retracted?' disabled':'';
+  const offline=d.action==='retract'&&!isNew;
+  const dis=locked||retracted||offline?' disabled':'';
   const sub=isNew?'手动添加一条待审核知识':[d.runId?`来自${kbRunLink(d.runId)}`:'手动创建',d.createdBy?`创建人 ${escapeHTML(d.createdBy)}`:'',d.reviewedBy?`审核人 ${escapeHTML(d.reviewedBy)}`:'',escapeHTML(KB_SUB_STATUS[d.status]?.[0]||'')].filter(Boolean).join(' · ');
   const writeInfo=kbWriteInfoHTML(d);
   const gateHTML=kbGateHTML(d);
   const body=`
     ${d.error?`<div class="kb-alert">上次写回失败：${escapeHTML(d.error)}</div>`:''}
     ${writeInfo}
+    ${offline?`<div class="kb-alert">治理下线：审核通过后会删除托管正文与索引并写墓碑，不会直接修改知识内容。</div>`:''}
     ${gateHTML}
     ${locked?`<div class="kb-field"><label for="kbRetractReason">撤回原因</label><div class="kb-field-pair"><select id="kbRetractReason" class="kb-input" name="retractReason"><option>不再适用</option><option>内容错误</option><option>包含敏感信息</option><option>重复</option><option>其他</option></select><span class="kb-hint">撤回会写墓碑、删原文并去索引</span></div></div>`:''}
     ${retracted?`<div class="kb-alert">该条目已撤回，原文与索引已删除；同内容再次沉淀会被墓碑拦截。</div>`:''}
@@ -687,6 +698,7 @@ function kbRenderEditor(opt={}){
     ?`${writeStatus?kbBadge(escapeHTML(writeStatus[0]),writeStatus[1]):''}<span class="kb-foot-note kb-ok">已写回${d.commit?` · 版本 <code>${escapeHTML(d.commit.slice(0,10))}</code>`:''}</span>${gitSource?'<span class="kb-foot-note">Git 来源请通过删除合并请求撤回</span>':'<button type="button" class="kb-btn quiet" data-kb-act="retract">撤回</button>'}`
     :retracted?`${kbBadge('已撤回','')}`
     :isNew?'<button type="button" class="kb-btn primary" data-kb-act="create">创建</button>'
+    :offline?`<button type="button" class="kb-btn quiet" data-kb-act="delete">删除</button><button type="button" class="kb-btn" data-kb-act="reject">驳回</button><button type="button" class="kb-btn primary" data-kb-act="publish">确认下线</button>`
     :`<button type="button" class="kb-btn quiet" data-kb-act="delete">删除</button><button type="button" class="kb-btn" data-kb-act="reject">驳回</button><button type="button" class="kb-btn" data-kb-act="save">保存</button><button type="button" class="kb-btn primary" data-kb-act="publish">写回知识库</button>`;
   kbDrawerOpen(isNew?'新建条目':(d.title||'未命名'),sub,body,foot,opt);
   const form=$('#kbEditorForm');
@@ -707,12 +719,16 @@ async function kbEditorAction(act,d,values){
     const v=values();
     if(!v.source)return toast('请选择写入的知识库来源');
     if(!/\.md$/i.test(v.path))return toast('路径必须以 .md 结尾');
-    const source=kbSourceById(v.source);
-    const isGit=source?.kind==='git';
-    const message=isGit
-      ?`来源：${kbSourceName(source)}\n路径：${v.path}\n\n将提交到一个新分支并推送，再按托管平台创建合并请求；不支持的平台只推送分支，需在仓库网页手动创建。`
-      :`来源：${v.source}\n路径：${v.path}\n\n将写入托管知识库并重建索引。`;
-    if(!(await afConfirm({title:isGit?'确认写回 Git 来源？':'确认写回知识库？',message,confirmText:'写回',info:true})))return;
+    if(d.action==='retract'){
+      if(!(await afConfirm({title:'确认下线这篇文档？',message:`来源：${v.source}\n路径：${v.path}\n\n将删除托管正文与索引并写墓碑；不会直接修改知识内容，也不会改写 Git 仓库。`,confirmText:'确认下线',danger:true})))return;
+    }else{
+      const source=kbSourceById(v.source);
+      const isGit=source?.kind==='git';
+      const message=isGit
+        ?`来源：${kbSourceName(source)}\n路径：${v.path}\n\n将提交到一个新分支并推送，再按托管平台创建合并请求；不支持的平台只推送分支，需在仓库网页手动创建。`
+        :`来源：${v.source}\n路径：${v.path}\n\n将写入托管知识库并重建索引。`;
+      if(!(await afConfirm({title:isGit?'确认写回 Git 来源？':'确认写回知识库？',message,confirmText:'写回',info:true})))return;
+    }
   }
   busy(true);
   try{
@@ -736,7 +752,8 @@ async function kbEditorAction(act,d,values){
     if(act==='publish'){
       await save();
       const item=await api(`/api/knowledge/submissions/${id}/publish`,{method:'POST'});
-      if(item.mrUrl)toast('已推送分支并创建合并请求','ok');
+      if(d.action==='retract')toast('已下线并写入墓碑','ok');
+      else if(item.mrUrl)toast('已推送分支并创建合并请求','ok');
       else if(item.branch)toast(`已推送写回分支 ${item.branch}`,'ok');
       else toast(`已写回知识库 · 版本 ${String(item.commit||'').slice(0,8)}`,'ok');
       await done();
@@ -749,6 +766,120 @@ async function kbEditorAction(act,d,values){
     }
     busy(false);
   }
+}
+
+// ---------- 反馈与治理 ----------
+function kbDocStatusBadge(status){
+  const item=KB_DOC_STATUS[String(status||'').toLowerCase()];
+  return item?` ${kbBadge(item[0],item[1])}`:'';
+}
+
+function kbFeedbackButtons(source,path,title,query=''){
+  const attrs=` data-kb-fb-source="${escapeHTML(source||'')}" data-kb-fb-path="${escapeHTML(path||'')}" data-kb-fb-title="${escapeHTML(title||'')}" data-kb-fb-query="${escapeHTML(query||'')}"`;
+  return `<span class="kb-fb-actions" data-kb-feedback-box><button type="button" class="kb-btn small" data-kb-feedback="helpful"${attrs}>有用</button><button type="button" class="kb-btn small" data-kb-feedback="not_helpful"${attrs}>没用</button></span>`;
+}
+
+async function kbSendFeedback(btn){
+  const box=btn.closest('[data-kb-feedback-box]');
+  if(!box||box.dataset.sent)return;
+  const kind=btn.dataset.kbFeedback;
+  if(!kind)return;
+  box.querySelectorAll('button').forEach(b=>b.disabled=true);
+  try{
+    await api('/api/knowledge/feedback',{method:'POST',body:JSON.stringify({
+      projectId:kbProjectId(),source:btn.dataset.kbFbSource||'',path:btn.dataset.kbFbPath||'',
+      title:btn.dataset.kbFbTitle||'',query:btn.dataset.kbFbQuery||'',kind,surface:'knowledge_center',
+    })});
+    box.dataset.sent='1';
+    box.innerHTML=`<span class="kb-fb-sent">${kind==='helpful'?'已记录：有用':'已记录：没用'}</span>`;
+    toast(kind==='helpful'?'已记录：有用':'已记录：没用','ok');
+    if(kb.governance)await kbRefresh();
+  }catch(err){
+    box.querySelectorAll('button').forEach(b=>b.disabled=false);
+    toast(err.message,'err');
+  }
+}
+
+function kbBindFeedback(root=document){
+  root.querySelectorAll('[data-kb-feedback-box] [data-kb-feedback]').forEach(btn=>{
+    btn.onclick=e=>{e.stopPropagation();kbSendFeedback(btn)};
+  });
+}
+
+function kbGovernanceIssueHTML(issue,i){
+  const meta=KB_GOVERNANCE_TYPE[issue.type]||[issue.type||'问题','warn'];
+  const hosted=kbSourceById(issue.sourceId)?.kind==='hosted';
+  const loc=[issue.sourceId,issue.path,issue.line?`L${issue.line}`:''].filter(Boolean).join(' · ');
+  const actions=`<span class="kb-row-actions kb-gov-actions"><button type="button" class="kb-btn small" data-kb-gov-action="update" data-kb-gov-source="${escapeHTML(issue.sourceId||'')}" data-kb-gov-path="${escapeHTML(issue.path||'')}">发起更新</button>${hosted?`<button type="button" class="kb-btn quiet small" data-kb-gov-action="retract" data-kb-gov-source="${escapeHTML(issue.sourceId||'')}" data-kb-gov-path="${escapeHTML(issue.path||'')}">下线</button>`:''}</span>`;
+  return kbRow(`<div class="kb-row-title">${escapeHTML(issue.title||issue.path||'文档')} ${kbBadge(meta[0],meta[1])}</div><div class="kb-row-desc">${escapeHTML(issue.summary||'')}</div><cite>${escapeHTML(loc)}</cite>`,actions,{cls:'kb-gov-row',attrs:`data-kb-key="gov:${i}"`});
+}
+
+function kbFeedbackRowHTML(item,i){
+  const meta=KB_FEEDBACK_KIND[item.kind]||[item.kind||'反馈',''];
+  const target=item.title||item.path||(item.surface==='main_bot'?'Main Bot 回答':'知识文档');
+  const detail=[meta[0],item.actor,relativeTime(item.createdAt),item.surface==='agent'?'Agent 标记':item.surface==='main_bot'?'Main Bot':'知识中心'].filter(Boolean).join(' · ');
+  return kbRow(kbText(`${escapeHTML(target)} ${kbBadge(meta[0],meta[1])}`,item.note?escapeHTML(item.note):escapeHTML(detail)),item.note?kbCaption(escapeHTML(detail)):'',{cls:'kb-feedback-row',attrs:`data-kb-key="fb:${i}"`});
+}
+
+function kbCitationDocRow(item,value){
+  const title=item.title||item.path||item.sourceId||'-';
+  const desc=[item.layer==='project'?'项目层':item.layer==='shared'?'公共层':'',item.sourceId,item.path].filter(Boolean).join(' · ');
+  return kbRow(kbText(escapeHTML(title),escapeHTML(desc)),kbValue(escapeHTML(value),'kb-source-num'));
+}
+function kbCitationUsageHTML(g){
+  const cited=g.citedDocuments,uncited=g.uncitedDocuments;
+  if(!Array.isArray(cited)||!Array.isArray(uncited)){
+    return kbPanel(kbPanelTitle('引用次数与从未命中','引用表不可用'),`
+      <div class="kb-row kb-placeholder-row"><div class="kb-row-main"><div class="kb-row-title">常被引用的文档</div><div class="kb-row-desc">当前范围没有可统计的引用</div></div><span class="kb-row-value">—</span></div>
+      <div class="kb-row kb-placeholder-row"><div class="kb-row-main"><div class="kb-row-title">从未命中的文档</div><div class="kb-row-desc">当前范围没有可统计的引用</div></div><span class="kb-row-value">—</span></div>
+      <div class="kb-cap">平台不会用 0 冒充“从未命中”。请在具体项目里查看。</div>`,{label:'引用与命中'});
+  }
+  const citedRows=cited.length?cited.slice(0,12).map(item=>kbCitationDocRow(item,String(item.count||0))).join(''):'<div class="kb-empty">最近 90 天还没有引用记录</div>';
+  const uncitedRows=uncited.length?uncited.slice(0,12).map(item=>kbCitationDocRow(item,'未引用')).join(''):'<div class="kb-empty">窗口内没有从未命中的文档</div>';
+  const more=[cited.length>12?`引用还有 ${cited.length-12} 篇`:'' ,uncited.length>12?`未引用还有 ${uncited.length-12} 篇`:''].filter(Boolean).join(' · ');
+  return kbPanel(kbPanelTitle('引用次数与从未命中',`${cited.length} 篇被引用 · ${uncited.length} 篇未引用`),
+    `<div class="kb-cap">最近 90 天的检索、读取和精确匹配。有正文但没有引用的文档列在后面。</div>${citedRows}${uncitedRows}${more?`<div class="kb-cap">${escapeHTML(more)}</div>`:''}`,
+    {label:'引用与命中'});
+}
+function kbRenderGovernance(body){
+  if(kb.governanceError){body.innerHTML=`<div class="kb-empty">治理面板读取失败：${escapeHTML(kb.governanceError)}</div>`;return}
+  const g=kb.governance||{};
+  const counts=g.counts||{};
+  const issues=g.issues||[];
+  const feedback=g.feedback||[];
+  const gaps=g.gaps||[];
+  const last=g.lastScanAt?relativeTime(g.lastScanAt):'尚未检查';
+  const chips=Object.entries(KB_GOVERNANCE_TYPE).map(([k,meta])=>`<span class="kb-gov-chip">${meta[0]} <b>${Number(counts[k])||0}</b></span>`).join('');
+  const health=kbPanel(`${kbPanelTitle('健康检查',`最近检查 ${escapeHTML(last)}`)}<button type="button" class="kb-btn small" id="kbGovScan">立即检查</button>`,
+    `<div class="kb-gov-chips">${chips}<span class="kb-gov-chip">合计 <b>${Number(counts.total)||0}</b></span></div>${issues.length?issues.map(kbGovernanceIssueHTML).join(''):'<div class="kb-empty">还没有健康检查结果。点「立即检查」或等待每日定时检查。</div>'}`,
+    {label:'健康检查'});
+  const feedbackPanel=kbPanel(kbPanelTitle('反馈与问题标记',`${feedback.length} 条`),feedback.length?feedback.map(kbFeedbackRowHTML).join(''):'<div class="kb-empty">还没有反馈。试搜、读原文或 Main Bot 回答旁都可以反馈；Agent 可用 kb_report_issue 标记问题。</div>',{label:'反馈与问题标记'});
+  const gapsPanel=kbPanel(kbPanelTitle('知识缺口',`${Number(g.gapsTotal)||0} 组搜不到结果的查询`),gaps.length?gaps.map((gap,i)=>kbRow(kbText(escapeHTML(gap.query||'-'),`出现 ${Number(gap.count)||1} 次 · 最近 ${escapeHTML(relativeTime(gap.lastSeen))}`),kbValue(String(Number(gap.count)||1),'kb-source-num'),{cls:'kb-gap-row',attrs:`data-kb-key="gap:${i}"`})).join(''):'<div class="kb-empty">还没有知识缺口记录。试搜没有命中时会自动记录在这里。</div>',{label:'知识缺口'});
+  const usage=kbCitationUsageHTML(g);
+  body.innerHTML=`<div class="kb-gov-layout"><div class="kb-gov-main">${health}${feedbackPanel}</div><div class="kb-gov-side">${gapsPanel}${usage}</div></div>`;
+  const scan=$('#kbGovScan');
+  if(scan)scan.onclick=async()=>{
+    scan.disabled=true;scan.textContent='检查中…';
+    try{
+      await api('/api/knowledge/governance/scan',{method:'POST',body:JSON.stringify({projectId:kbProjectId()})});
+      toast('健康检查完成','ok');
+      await kbRefresh();kbRender();
+    }catch(err){scan.disabled=false;scan.textContent='立即检查';toast(err.message,'err')}
+  };
+  body.querySelectorAll('[data-kb-gov-action]').forEach(btn=>btn.onclick=async e=>{
+    e.stopPropagation();
+    const action=btn.dataset.kbGovAction;
+    btn.disabled=true;
+    try{
+      const item=await api('/api/knowledge/governance/dispose',{method:'POST',body:JSON.stringify({
+        projectId:kbProjectId(),source:btn.dataset.kbGovSource,path:btn.dataset.kbGovPath,action,
+      })});
+      toast(action==='retract'?'已加入审核队列，确认后下线':'已加入审核队列，可继续编辑','ok');
+      kb.tab='distill';kb.subStatus='todo';
+      await kbRefresh();kbRender();
+      await kbOpenSubmission(item.id);
+    }catch(err){btn.disabled=false;toast(err.message,'err')}
+  });
 }
 
 // ---------- 试搜与读原文 ----------
@@ -805,7 +936,8 @@ function kbHitsHTML(){
   return head+hits.map((h,i)=>{
     const citation=h.citation||kbCitationText(h.source,h.commit,h.revision,h.path,h.start_line,h.end_line);
     const url=kbGitFileURL(h.source,h.commit,h.path,h.start_line,h.end_line);
-    return kbRow(`<div class="kb-row-title">${escapeHTML(h.title||h.path)}${h.heading?` <span class="kb-count">· ${escapeHTML(h.heading)}</span>`:''}</div><div class="kb-row-desc">${escapeHTML(h.snippet||'')}</div><cite>${escapeHTML([kbLayerLabel(h.layer),h.base_name].filter(Boolean).join(' · '))} · ${kbCitationHTML(citation,url)}</cite>`,'',{go:true,cls:'kb-hit',attrs:`data-kb-key="hit:${i}" data-kb-hit="${i}"`});
+    const fb=kbFeedbackButtons(h.source,h.path,h.title||h.path,q.query);
+    return kbRow(`<div class="kb-row-title">${escapeHTML(h.title||h.path)}${kbDocStatusBadge(h.doc_status)}${h.heading?` <span class="kb-count">· ${escapeHTML(h.heading)}</span>`:''}</div><div class="kb-row-desc">${escapeHTML(h.snippet||'')}</div><cite>${escapeHTML([kbLayerLabel(h.layer),h.base_name].filter(Boolean).join(' · '))} · ${kbCitationHTML(citation,url)}</cite>`,fb,{go:true,cls:'kb-hit',attrs:`data-kb-key="hit:${i}" data-kb-hit="${i}"`});
   }).join('');
 }
 
@@ -814,6 +946,7 @@ function kbUpdateHits(){const hits=$('#kbHits');if(hits){hits.innerHTML=kbHitsHT
 function kbBindHits(){
   $$('#kbHits [data-kb-cite]').forEach(a=>a.onclick=e=>e.stopPropagation());
   $$('#kbHits [data-kb-hit]').forEach(el=>el.onclick=()=>kbOpenDocument(kb.search.result?.result?.results?.[Number(el.dataset.kbHit)]));
+  kbBindFeedback($('#kbHits'));
   const recent=(kb.usage?.activity||[]).slice(0,20);
   $$('#kbHits [data-kb-recent]').forEach(el=>el.onclick=()=>{
     const query=recent[Number(el.dataset.kbRecent)]?.query;
@@ -860,6 +993,12 @@ async function kbOpenDocument(hit){
     const first=start||Number(doc.start_line)||0,last=end||Number(doc.end_line)||0;
     const host=$('#kbDrawerBody');
     host.innerHTML=note+`<div class="kb-doc">${(doc.lines||[]).map(l=>`<div class="${l.number>=first&&l.number<=last?'hl':''}"${l.number===first?' id="kbDocAnchor"':''}><span>${l.number}</span><code>${escapeHTML(l.text)}</code></div>`).join('')}</div>`;
+    const foot=$('#kbDrawerFoot');
+    if(foot){
+      foot.hidden=false;
+      foot.innerHTML=`<div class="kb-feedback-bar"><span>这篇知识对你有帮助吗？</span>${kbFeedbackButtons(source,path,hit.title||path,kb.search.query)}</div>`;
+      kbBindFeedback(foot);
+    }
     const anchor=$('#kbDocAnchor');
     if(anchor)host.scrollTop+=anchor.getBoundingClientRect().top-host.getBoundingClientRect().top-(host.clientHeight-anchor.offsetHeight)/2;
   }catch(err){

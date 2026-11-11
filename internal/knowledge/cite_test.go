@@ -216,3 +216,44 @@ func TestGrepReadsProjectAndBoundSharedBodiesOnly(t *testing.T) {
 		t.Fatalf("foreign source must stay outside the project: %v", err)
 	}
 }
+
+func TestGovernanceOverviewUsesCitationCounts(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.PutKnowledgeBase(domain.KnowledgeBase{ID: "local", ProjectID: "p", Layer: "project", Name: "本项目"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutKnowledgeSource(domain.KnowledgeSource{ID: "docs", BaseID: "local", Kind: "hosted"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range []domain.KnowledgeDocument{
+		{SourceID: "docs", Path: "used.md", Title: "用过", Body: "正文", Commit: "1"},
+		{SourceID: "docs", Path: "idle.md", Title: "闲置", Body: "还没人引用", Commit: "1"},
+	} {
+		if err := st.PutKnowledgeDocument(doc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := knowledge.NewService(st, func() string { return "id" }, nil)
+	if err := svc.RecordCitations([]domain.KnowledgeCitation{{
+		At: time.Now().UTC(), ProjectID: "p", Tool: knowledge.ToolSearch, SourceID: "docs", Path: "used.md", Commit: "1", StartLine: 1, EndLine: 1,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := svc.GovernanceOverview("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Placeholders.CitationCounts || overview.Placeholders.NeverHit {
+		t.Fatalf("citation table is available, placeholders = %+v", overview.Placeholders)
+	}
+	if len(overview.CitedDocuments) != 1 || overview.CitedDocuments[0].Path != "used.md" || overview.CitedDocuments[0].Count != 1 {
+		t.Fatalf("cited = %+v", overview.CitedDocuments)
+	}
+	if len(overview.UncitedDocuments) != 1 || overview.UncitedDocuments[0].Path != "idle.md" {
+		t.Fatalf("uncited = %+v", overview.UncitedDocuments)
+	}
+}
