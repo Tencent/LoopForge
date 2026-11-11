@@ -6,13 +6,16 @@
 #   bash scripts/knowledge-schema.sh seed  [--compose|--native]
 #
 # `apply` applies the 002 knowledge baseline (knowledge_submissions et al.)
-# before 026_*.sql onward in numeric order. A script can carry
+# and then the explicit knowledge migration list below, in order. It never
+# scans numbered migrations by range: upstream files such as
+# 026_assistant_session_reads.sql and 027_cli_model_catalog.sql are published
+# optional manual DDL, not part of this runner. A script can carry
 # `-- @plane control` / `-- @plane content` markers; each segment runs against
 # the control database (AGENTFLOW_MYSQL_DSN) or the content database
 # (AGENTFLOW_KNOWLEDGE_MYSQL_DSN, falling back to the control DSN). Scripts
-# without markers are control-plane only. 037's mapping table is copied to a
-# separate content database before its content segment runs. 038 is included
-# in the same numeric sweep and records knowledge_schema_versions(38).
+# without markers are control-plane only. 039's mapping table is copied to a
+# separate content database before its content segment runs. 040 records
+# knowledge_schema_versions(40).
 #
 # `check` fails with an explicit repair command when the ngram full-text index
 # required by the MySQL keyword adapter is absent. `seed` applies
@@ -58,7 +61,7 @@ content_dsn="${AGENTFLOW_KNOWLEDGE_MYSQL_DSN:-}"
 
 # Parse a go-sql-driver DSN into shell-safe values. Only tcp/unix networks are
 # accepted; the database name is restricted to characters that are safe in an
-# SQL identifier because 036 quotes it in cross-schema migration SQL.
+# SQL identifier because 038 quotes it in cross-schema migration SQL.
 parse_dsn() {
   local prefix=$1 dsn=$2 parsed
   parsed=$(python3 - "$prefix" "$dsn" <<'PY'
@@ -229,7 +232,7 @@ wait_for_quiescent_instances() {
       instances=$(printf '%s\n' \
         "SELECT CONCAT(instance_id, ' (', role, ')') FROM engine_instances" \
         "WHERE lease_until > UTC_TIMESTAMP(3) ORDER BY instance_id;" | mysql_exec control | tr -d '\r' | paste -sd ',' -)
-      fail "检测到 $live 个仍在线的 API/worker 实例：$instances。035/036/037 是数据迁移，必须先停止所有实例（不只是本机 Compose 平台），等待租约过期后再执行；本机刚停止的平台最多等待 ${limit}s。"
+      fail "检测到 $live 个仍在线的 API/worker 实例：$instances。037/038/039 是数据迁移，必须先停止所有实例（不只是本机 Compose 平台），等待租约过期后再执行；本机刚停止的平台最多等待 ${limit}s。"
     fi
     step "Waiting for $live live instance(s) to stop before data migrations (${waited}s/${limit}s)"
     sleep 3
@@ -237,16 +240,16 @@ wait_for_quiescent_instances() {
   done
 }
 
-# 037's content segment needs the control-plane old→new ID mapping. The script
+# 039's content segment needs the control-plane old→new ID mapping. The script
 # imports it as SQL statements so a content database on another MySQL server
 # works; on the same server the content segment can also copy it directly.
-import_037_mapping() {
+import_039_mapping() {
   local mapping
   mapping=$(printf '%s\n' \
-    "SELECT 'CREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (kind VARCHAR(16) NOT NULL, old_id VARCHAR(64) NOT NULL, new_id VARCHAR(64) NOT NULL, PRIMARY KEY (kind, old_id), UNIQUE KEY uq_knowledge_id_037_target (kind, new_id)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;';" \
-    "SELECT CONCAT('INSERT IGNORE INTO knowledge_id_migration_037 (kind, old_id, new_id) VALUES (', QUOTE(kind), ',', QUOTE(old_id), ',', QUOTE(new_id), ');') FROM knowledge_id_migration_037;" \
-    | mysql_exec control) || fail 'failed to read the 037 ID mapping from the control database'
-  printf '%s\n' "$mapping" | mysql_exec content || fail 'failed to import the 037 ID mapping into the content database'
+    "SELECT 'CREATE TABLE IF NOT EXISTS knowledge_id_migration_039 (kind VARCHAR(16) NOT NULL, old_id VARCHAR(64) NOT NULL, new_id VARCHAR(64) NOT NULL, PRIMARY KEY (kind, old_id), UNIQUE KEY uq_knowledge_id_039_target (kind, new_id)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;';" \
+    "SELECT CONCAT('INSERT IGNORE INTO knowledge_id_migration_039 (kind, old_id, new_id) VALUES (', QUOTE(kind), ',', QUOTE(old_id), ',', QUOTE(new_id), ');') FROM knowledge_id_migration_039;" \
+    | mysql_exec control) || fail 'failed to read the 039 ID mapping from the control database'
+  printf '%s\n' "$mapping" | mysql_exec content || fail 'failed to import the 039 ID mapping into the content database'
 }
 
 seed_control() {
@@ -271,15 +274,34 @@ import sys
 print(sys.argv[1].replace("'", "''"))
 PY
 )
-  local files=() file base num
-  shopt -s nullglob
-  files=(migrations/[0-9][0-9][0-9]_*.sql)
-  shopt -u nullglob
-  [[ ${#files[@]} -gt 0 ]] || fail 'no migrations/*.sql files found.'
+  # Explicit list. Upstream 026_assistant_session_reads.sql and
+  # 027_cli_model_catalog.sql are published optional manual DDL and stay out of
+  # the knowledge runner; never replace this list with a numeric range.
+  local -a knowledge_migrations=(
+    028_builtin_knowledge.sql
+    029_knowledge_activity.sql
+    030_knowledge_vector.sql
+    031_knowledge_git_credentials.sql
+    032_shared_knowledge.sql
+    033_knowledge_writeback.sql
+    034_knowledge_sediment.sql
+    035_knowledge_governance.sql
+    036_knowledge_citation.sql
+    037_knowledge_concurrency.sql
+    038_knowledge_schema_cleanup.sql
+    039_knowledge_source_namespace.sql
+    040_knowledge_governance_noise.sql
+  )
+  local -a files=()
+  local base file
+  for base in "${knowledge_migrations[@]}"; do
+    [[ -f "migrations/$base" ]] || fail "missing knowledge migration migrations/$base"
+    files+=("migrations/$base")
+  done
 
-  # 002 is the pre-026 knowledge baseline. 035 alters knowledge_submissions and
-  # 036/037 reference the same control tables, so a fresh MySQL cannot start at
-  # 026 and assume the platform's old AutoMigrate created them.
+  # 002 is the pre-028 knowledge baseline. 037 alters knowledge_submissions and
+  # 038/039 reference the same control tables, so a fresh MySQL cannot start at
+  # 028 and assume the platform's old AutoMigrate created them.
   step 'Applying 002_knowledge_base.sql (control baseline)'
   mysql_exec control < migrations/002_knowledge_base.sql \
     || fail 'failed to apply the 002 knowledge baseline to the control database'
@@ -287,11 +309,7 @@ PY
   local mapping_imported=0
   for file in "${files[@]}"; do
     base=$(basename "$file")
-    num=${base%%_*}
-    if ((10#$num < 26 || 10#$num > 38)); then
-      continue
-    fi
-    if ((10#$num == 35)); then
+    if [[ "$base" == 037_* ]]; then
       wait_for_quiescent_instances
     fi
     local outdir
@@ -302,8 +320,8 @@ PY
       plane=$(cat "${segment%.sql}.plane")
       step "Applying $base ($plane)"
       if [[ "$plane" == "content" ]]; then
-        if ((10#$num == 37)) && [[ "$mapping_imported" == 0 ]]; then
-          import_037_mapping
+        if [[ "$base" == 039_* ]] && [[ "$mapping_imported" == 0 ]]; then
+          import_039_mapping
           mapping_imported=1
         fi
         {
@@ -325,11 +343,11 @@ check_ngram() {
     "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_chunks'" \
     "AND INDEX_NAME = 'ft_knowledge_chunks_text' LIMIT 1;" | mysql_exec content | tr -d '\r')
   if [[ "$index_type" != "FULLTEXT" ]]; then
-    fail "content database '$CONTENT_DB' is missing the knowledge full-text index ft_knowledge_chunks_text. Retrieval fails with \"Can't find FULLTEXT index matching the column list\". Repair: bash scripts/knowledge-schema.sh apply (or run migrations/026_builtin_knowledge.sql on the content database)."
+    fail "content database '$CONTENT_DB' is missing the knowledge full-text index ft_knowledge_chunks_text. Retrieval fails with \"Can't find FULLTEXT index matching the column list\". Repair: bash scripts/knowledge-schema.sh apply (or run migrations/028_builtin_knowledge.sql on the content database)."
   fi
   ddl=$(printf '%s\n' 'SHOW CREATE TABLE knowledge_chunks;' | mysql_exec content | tr -d '\r')
   if ! grep -qi 'ngram' <<<"$ddl"; then
-    fail "content database '$CONTENT_DB' has ft_knowledge_chunks_text but it does not use the ngram parser. Repair: bash scripts/knowledge-schema.sh apply (or run migrations/026_builtin_knowledge.sql on the content database)."
+    fail "content database '$CONTENT_DB' has ft_knowledge_chunks_text but it does not use the ngram parser. Repair: bash scripts/knowledge-schema.sh apply (or run migrations/028_builtin_knowledge.sql on the content database)."
   fi
   printf 'Knowledge full-text index ready on content database %s.\n' "$CONTENT_DB"
 }

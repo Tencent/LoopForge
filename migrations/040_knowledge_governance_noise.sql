@@ -1,8 +1,8 @@
--- 038: 治理降噪。可重复执行。
+-- 040: 治理降噪。可重复执行。
 --
 -- 控制面：来源可关闭负责人/过期检查；同步进行中写入阶段；知识缺口可标为
 -- 忽略或已处理，并记下最近的用户和会话，供短时间重复合并计数。
--- 不改文档正文。启动版本检查认 knowledge_schema_versions(38)。
+-- 不改文档正文。启动版本检查认 knowledge_schema_versions(40)。
 
 -- @plane control
 
@@ -52,5 +52,5 @@ EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 INSERT INTO knowledge_schema_versions (version, applied_at)
-VALUES (38, UTC_TIMESTAMP(3))
+VALUES (40, UTC_TIMESTAMP(3))
 ON DUPLICATE KEY UPDATE version = VALUES(version);

@@ -81,7 +81,7 @@ func TestKnowledgeCitationCapKeepsNewest(t *testing.T) {
 }
 
 func TestCitationMigrationIsRepeatable(t *testing.T) {
-	raw, err := os.ReadFile("../../migrations/034_knowledge_citation.sql")
+	raw, err := os.ReadFile("../../migrations/036_knowledge_citation.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

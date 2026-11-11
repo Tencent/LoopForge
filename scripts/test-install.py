@@ -35,16 +35,9 @@ class InstallerTests(unittest.TestCase):
         for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'knowledge-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        shutil.copyfile(ROOT / 'migrations/002_knowledge_base.sql', self.root / 'migrations/002_knowledge_base.sql')
+        for source in sorted((ROOT / 'migrations').glob('[0-9][0-9][0-9]_*.sql')):
+            shutil.copyfile(source, self.root / 'migrations' / source.name)
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT INTO seed_test VALUES (1);\n')
-        (self.root / 'migrations/026_test.sql').write_text('-- @plane control\nSELECT 1;\n-- @plane content\nSELECT 1;\n')
-        (self.root / 'migrations/035_test.sql').write_text(
-            '-- @plane control\nALTER TABLE knowledge_submissions ADD COLUMN version BIGINT UNSIGNED NOT NULL DEFAULT 1;\n'
-            '-- @plane content\nCREATE TABLE IF NOT EXISTS knowledge_content_fences (source_id VARCHAR(64) NOT NULL, path VARCHAR(512) NOT NULL);\n')
-        (self.root / 'migrations/037_test.sql').write_text(
-            '-- @plane control\nCREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (kind VARCHAR(16), old_id VARCHAR(64), new_id VARCHAR(64));\n'
-            '-- @plane content\nUPDATE knowledge_documents SET source_id=source_id;\n'
-            '-- @plane control\nUPDATE knowledge_bases SET id=id;\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
 printf '%s %s\\n' "${MOCK_PRIVILEGED:-0}" "$*" >> "$MOCK_LOG"
@@ -97,14 +90,18 @@ exec "$@"
         self.assertEqual((self.root / '.env').read_text(), secrets)
         self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
 
-    def test_install_applies_baseline_before_035_and_uses_dsn_seed(self):
+    def test_install_applies_baseline_before_037_and_uses_dsn_seed(self):
         self.assert_success(self.install())
         log = (self.root / 'docker.log').read_text()
         baseline = log.find('CREATE TABLE IF NOT EXISTS knowledge_submissions')
         concurrency = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
         self.assertGreaterEqual(baseline, 0, log)
         self.assertGreaterEqual(concurrency, 0, log)
-        self.assertLess(baseline, concurrency, '002 baseline must run before 035')
+        self.assertLess(baseline, concurrency, '002 baseline must run before 037')
+        # The runner has an explicit knowledge-migration list, so upstream
+        # optional manual DDL is never swept into an install/upgrade.
+        self.assertNotIn('assistant_session_reads', log)
+        self.assertNotIn('codex_models', log)
         # Seed SQL goes through the DSN helper, not a hard-coded `mysql -u loopforge loopforge`.
         self.assertIn('SQL INSERT INTO', log)
         self.assertNotIn('mysql -u loopforge loopforge', log)
@@ -375,7 +372,7 @@ class KnowledgeSchemaScriptTests(unittest.TestCase):
     """Exercise the real migration files and knowledge-schema.sh segmentation.
 
     No MySQL server is needed: a fake mysql client records every statement and
-    returns canned catalog answers. This catches baseline ordering, the 037
+    returns canned catalog answers. This catches baseline ordering, the 039
     control/content/control split, mapping import into a separate content
     database, fence migration and DSN-driven seeding without Docker.
     """
@@ -403,12 +400,12 @@ sql=$(cat)
 case "$sql" in
   *"SELECT INDEX_TYPE FROM information_schema.STATISTICS"*) printf 'FULLTEXT\n' ;;
   *"SHOW CREATE TABLE knowledge_chunks"*) printf 'CREATE TABLE `knowledge_chunks` (`text` mediumtext, FULLTEXT KEY `ft_knowledge_chunks_text` (`title`,`heading`,`text`) /*!50100 WITH PARSER `ngram` */)\n' ;;
-  *"FROM knowledge_id_migration_037"*)
-    printf "CREATE TABLE IF NOT EXISTS knowledge_id_migration_037 (kind VARCHAR(16) NOT NULL, old_id VARCHAR(64) NOT NULL, new_id VARCHAR(64) NOT NULL);\n"
-    printf "INSERT IGNORE INTO knowledge_id_migration_037 (kind, old_id, new_id) VALUES ('source','old-source','new-source');\n" ;;
+  *"FROM knowledge_id_migration_039"*)
+    printf "CREATE TABLE IF NOT EXISTS knowledge_id_migration_039 (kind VARCHAR(16) NOT NULL, old_id VARCHAR(64) NOT NULL, new_id VARCHAR(64) NOT NULL);\n"
+    printf "INSERT IGNORE INTO knowledge_id_migration_039 (kind, old_id, new_id) VALUES ('source','old-source','new-source');\n" ;;
   *"information_schema.TABLES"*"engine_instances"*) printf '1\n' ;;
   *"SELECT COUNT(*) FROM engine_instances"*) printf '%s\n' "${MOCK_LIVE_INSTANCES:-0}" ;;
-  *"knowledge_id_migration_037"*) printf '0\n' ;;
+  *"knowledge_id_migration_039"*) printf '0\n' ;;
 esac
 ''')
         self.log = self.root / 'mysql.log'
@@ -431,7 +428,7 @@ esac
             cwd=self.root, env=self.environ, text=True, capture_output=True, timeout=30,
         )
 
-    def test_apply_orders_baseline_and_splits_037(self):
+    def test_apply_orders_baseline_and_splits_039(self):
         result = self.run_schema('apply')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         log = self.log.read_text()
@@ -439,23 +436,34 @@ esac
         version = log.find('ALTER TABLE knowledge_submissions ADD COLUMN version')
         self.assertGreaterEqual(baseline, 0, log)
         self.assertGreaterEqual(version, 0, log)
-        self.assertLess(baseline, version, '002 baseline must run before 035')
+        self.assertLess(baseline, version, '002 baseline must run before 037')
 
-        # 037 content work goes to the content DSN, not the control DSN.
+        # 039 content work goes to the content DSN, not the control DSN.
         fences = log.find('knowledge_content_fences')
-        docs = log.find('knowledge_documents d JOIN knowledge_id_migration_037')
+        docs = log.find('knowledge_documents d JOIN knowledge_id_migration_039')
         self.assertGreaterEqual(fences, 0, log)
         self.assertGreaterEqual(docs, 0, log)
         self.assertGreater(log.rfind('@@DB=content_db', 0, docs), log.rfind('@@DB=control_db', 0, docs), log)
         self.assertGreater(log.rfind('@@DB=content_db', 0, fences), log.rfind('@@DB=control_db', 0, fences), log)
         # The mapping is imported into the content database before the content segment.
-        imported = log.find("INSERT IGNORE INTO knowledge_id_migration_037 (kind, old_id, new_id) VALUES ('source','old-source','new-source');")
+        imported = log.find("INSERT IGNORE INTO knowledge_id_migration_039 (kind, old_id, new_id) VALUES ('source','old-source','new-source');")
         self.assertGreaterEqual(imported, 0, log)
         self.assertLess(imported, docs, log)
         # Control references and the version row come after the content segment.
-        control_updates = log.find('UPDATE knowledge_bases s JOIN knowledge_id_migration_037')
+        control_updates = log.find('UPDATE knowledge_bases s JOIN knowledge_id_migration_039')
         self.assertGreater(control_updates, fences, log)
         self.assertGreater(log.find('INSERT INTO knowledge_schema_versions'), control_updates, log)
+
+    def test_apply_runs_only_explicit_knowledge_migrations(self):
+        result = self.run_schema('apply')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Applying 028_builtin_knowledge.sql', result.stdout)
+        self.assertIn('Applying 040_knowledge_governance_noise.sql', result.stdout)
+        self.assertNotIn('026_assistant_session_reads.sql', result.stdout)
+        self.assertNotIn('027_cli_model_catalog.sql', result.stdout)
+        log = self.log.read_text()
+        self.assertNotIn('assistant_session_reads', log)
+        self.assertNotIn('codex_models', log)
 
     def test_seed_uses_configured_control_database(self):
         result = self.run_schema('seed')

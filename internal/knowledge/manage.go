@@ -48,10 +48,10 @@ func HostedSourceID(baseID string) string    { return stableKnowledgeID("kb-host
 func hostedSourceID(projectID string) string { return HostedSourceID(hostedBaseID(projectID)) }
 
 // knowledgeSchemaRepairError is returned when the control plane still carries
-// pre-037 IDs. The fix is deliberately an explicit operator action, not an
-// in-process rename, because 037 also moves content rows and fences.
+// pre-039 IDs. The fix is deliberately an explicit operator action, not an
+// in-process rename, because 039 also moves content rows and fences.
 func knowledgeSchemaRepairError(subject string) error {
-	return apperr.New(apperr.Unavailable, "检测到"+subject+"仍使用 037 之前的标识。请先停止所有 API/worker 实例，执行 bash scripts/knowledge-schema.sh apply 完成迁移后再启动；平台不会在此状态下新建第二个托管来源")
+	return apperr.New(apperr.Unavailable, "检测到"+subject+"仍使用 039 之前的标识。请先停止所有 API/worker 实例，执行 bash scripts/knowledge-schema.sh apply 完成迁移后再启动；平台不会在此状态下新建第二个托管来源")
 }
 
 // ManagedStore 是管理接口需要的持久化能力。*repo.Store 通过内嵌的
@@ -123,7 +123,7 @@ func (s *Service) EnsureHostedBase(projectID string) (domain.KnowledgeBase, erro
 	if sourceFound && (existingSource.BaseID != base.ID || existingSource.Kind != "hosted") {
 		return domain.KnowledgeBase{}, apperr.New(apperr.Conflict, "托管来源标识冲突")
 	}
-	// Before 037 the hosted source ID was "kb-hosted-<projectID>". A new binary
+	// Before 039 the hosted source ID was "kb-hosted-<projectID>". A new binary
 	// must never create the hash-based replacement next to it (or silently use
 	// it while the old row remains): the project would then have two hosted
 	// sources and old documents would become unreachable.

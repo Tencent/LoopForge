@@ -256,7 +256,7 @@ func TestEditResetsReviewState(t *testing.T) {
 
 // Publishing is gated by the reviewed item's project scope, not by a
 // platform-wide write switch. The switch was part of the deleted external
-// client configuration and its table is dropped by 026.
+// client configuration and its table is dropped by 028.
 func TestPublishGatesAndWrites(t *testing.T) {
 	store := newFakeStore()
 	up := &fakeUpstream{}

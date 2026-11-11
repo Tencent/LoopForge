@@ -31,7 +31,7 @@ func TestGitSyncContentSurvivesCacheAndDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	script, err := os.ReadFile("../../../migrations/026_builtin_knowledge.sql")
+	script, err := os.ReadFile("../../../migrations/028_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

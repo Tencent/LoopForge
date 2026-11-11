@@ -22,7 +22,7 @@ func TestSharedKnowledgeMigrationRepeatable(t *testing.T) {
 	if err := s.PutKnowledgeBinding(domain.KnowledgeBinding{ProjectID: "migration-project", BaseID: "migration-shared", Permission: "submit"}); err != nil {
 		t.Fatal(err)
 	}
-	script, err := os.ReadFile("../../migrations/030_shared_knowledge.sql")
+	script, err := os.ReadFile("../../migrations/032_shared_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

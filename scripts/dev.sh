@@ -14,8 +14,9 @@ if [[ ! -f .local/admin-password ]]; then
 fi
 .local/bin/loopforge-account -user admin -admin < .local/admin-password
 bash scripts/install-observability-schema.sh
-# 知识库 schema 由脚本先建 002 基线，再按 026 起的编号执行；控制段进主库，
-# 内容段进 AGENTFLOW_KNOWLEDGE_MYSQL_DSN 指向的内容库，并检查 ngram 全文索引。
+# 知识库 schema 由脚本先建 002 基线，再按 scripts/knowledge-schema.sh 的
+# 显式知识迁移清单执行；控制段进主库，内容段进
+# AGENTFLOW_KNOWLEDGE_MYSQL_DSN 指向的内容库，并检查 ngram 全文索引。
 bash scripts/knowledge-schema.sh apply --native
 bash scripts/knowledge-schema.sh check --native
 # seed 也走同一个 DSN 解析，不再写死 loopforge 库名。

@@ -172,7 +172,7 @@ else
   wait "$mysql_pull" || true
 fi
 # Stop an existing platform before applying schema/data migrations: the old
-# binary must not write a review body into the control payload between 036's
+# binary must not write a review body into the control payload between 038's
 # copy and strip. A fresh install has no platform container yet.
 docker_access compose --profile platform stop platform >/dev/null || true
 # Start only MySQL first. The platform starts after the knowledge schema and

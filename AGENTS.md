@@ -58,11 +58,16 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    （改数据、删行、删列）和 seed 数据一律写成 `migrations/` 下的 SQL
    脚本，由安装/升级脚本（如 `scripts/knowledge-schema.sh`）或运维按序
    执行；**Go 进程启动不会自动跑**。
-2. 每个分支自带自己的迁移脚本，不做任何自动化生成（没有 seedgen 之类的
+2. **上游已发布的迁移文件名与内容是发布契约，不得改名、改写或重排。**
+   合并上游后，本分支自己的迁移从上游已发布的最大编号之后继续；上游可选的
+   手工 DDL 保持原名原内容，安装脚本也不代跑。知识库 runner
+   `scripts/knowledge-schema.sh` 用显式清单执行 002 与知识库自己的迁移，
+   禁止按编号区间扫描 `migrations/`，避免把上游迁移混入安装/升级。
+3. 每个分支自带自己的迁移脚本，不做任何自动化生成（没有 seedgen 之类的
    工具）。脚本命名 `NNN_描述.sql`，按序号递增。知识库脚本若同时含控制面
    与内容面 DDL，用 `-- @plane control` / `-- @plane content` 分段，
    `scripts/knowledge-schema.sh` 会按 DSN 分别执行到主库与内容库。
-3. 禁止新增 `ensureXxx`/`migrateXxx`/`seedXxx` 之类的启动自愈逻辑写入
+4. 禁止新增 `ensureXxx`/`migrateXxx`/`seedXxx` 之类的启动自愈逻辑写入
    生产路径。测试专用的默认数据只存在于 `internal/repo/opentest.go`
    （`OpenTest`，仅测试调用，生产代码不得引用）。
 

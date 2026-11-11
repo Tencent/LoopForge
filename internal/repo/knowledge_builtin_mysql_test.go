@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestBuiltinKnowledgeMySQLFulltextIndex 断言 026 可重复执行，且执行后
+// TestBuiltinKnowledgeMySQLFulltextIndex 断言 028 可重复执行，且执行后
 // knowledge_chunks 上存在带 ngram 解析器的全文索引。未配置
 // AGENTFLOW_TEST_MYSQL_DSN 时跳过。
 func TestBuiltinKnowledgeMySQLFulltextIndex(t *testing.T) {
@@ -21,15 +21,15 @@ func TestBuiltinKnowledgeMySQLFulltextIndex(t *testing.T) {
 	}
 	defer s.Close()
 
-	script, err := os.ReadFile("../../migrations/026_builtin_knowledge.sql")
+	script, err := os.ReadFile("../../migrations/028_builtin_knowledge.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// dev.sh 每次启动都执行 026，运维也可能重跑；第二遍必须是空操作。
+	// dev.sh 每次启动都执行 028，运维也可能重跑；第二遍必须是空操作。
 	for run := 1; run <= 2; run++ {
 		for _, stmt := range splitSQLStatements(string(script)) {
 			if err := s.DB.Exec(stmt).Error; err != nil {
-				t.Fatalf("第 %d 次执行 026 失败：%v\nSQL: %s", run, err, stmt)
+				t.Fatalf("第 %d 次执行 028 失败：%v\nSQL: %s", run, err, stmt)
 			}
 		}
 	}

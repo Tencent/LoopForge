@@ -189,7 +189,7 @@ type KnowledgeBase struct {
 	Name        string `json:"name"`
 	Layer       string `json:"layer"`
 	OwnerUserID int64  `json:"ownerUserId,omitempty"`
-	// 向量检索索引契约（见 028）。向量按知识库开启，换模型换 collection 重建。
+	// 向量检索索引契约（见 030）。向量按知识库开启，换模型换 collection 重建。
 	VectorEnabled    bool   `json:"vectorEnabled,omitempty"`
 	EmbeddingModel   string `json:"embeddingModel,omitempty"`
 	EmbeddingDim     int    `json:"embeddingDim,omitempty"`

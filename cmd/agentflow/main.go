@@ -141,7 +141,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// Data migrations are explicit scripts. Refuse to serve on an older schema
-	// so a new binary cannot create a second hosted source before 037 ran.
+	// so a new binary cannot create a second hosted source before 039 ran.
 	if err := s.CheckKnowledgeSchema(); err != nil {
 		log.Fatal(err)
 	}
