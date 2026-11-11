@@ -56,7 +56,7 @@ func TestNoRepositoryWorkspaceReadWriteAndAttach(t *testing.T) {
 			if raw, err := call("attach", map[string]any{"path": "report.txt"}); err != nil || !strings.Contains(raw, "report.txt") {
 				t.Fatalf("attach: %s %v", raw, err)
 			}
-			if _, err := call("submit_mr", map[string]any{}); err == nil || !strings.Contains(err.Error(), "没有检出仓库") {
+			if _, err := call("submit_mr", map[string]any{"title": "deliver report"}); err == nil || !strings.Contains(err.Error(), "没有检出仓库") {
 				t.Fatalf("submit without repository: %v", err)
 			}
 		})

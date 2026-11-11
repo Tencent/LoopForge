@@ -570,6 +570,7 @@ func TestWorkspaceSubmitMRValidationBranches(t *testing.T) {
 	}
 	run.Kind = domain.RunKindWorkspace
 	run.WorkflowSnapshot.CollaborationMode = ""
+	run.Repositories = []domain.RepositoryContext{{RepositoryID: "repo", Name: "app"}}
 	_ = st.PutRun(run)
 	for _, args := range []map[string]any{
 		{},
