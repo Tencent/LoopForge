@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,8 +17,9 @@ import (
 func enablePreview(t *testing.T, engine *Engine, store *repo.Store) *preview.Service {
 	t.Helper()
 	svc := preview.NewService(store, preview.NewDBStore(store), preview.Config{
-		PublicScheme:        "http",
-		FrameAncestors:      "'self'",
+		PublicScheme:        "https",
+		PublicHost:          "preview.example",
+		FrameAncestors:      "https://studio.example",
 		MaxFiles:            50,
 		MaxCompressed:       1 << 20,
 		MaxExpanded:         4 << 20,
@@ -372,7 +374,7 @@ func TestDeleteRunRevokesPreviewSession(t *testing.T) {
 	if ready.Status != domain.PreviewReady {
 		t.Fatalf("preview not ready: %+v", ready)
 	}
-	session, urlStr, err := svc.CreateSession(ready, nil, "")
+	session, urlStr, err := svc.CreateSession(ready, httptest.NewRequest("POST", "https://studio.example/", nil), "")
 	if err != nil || urlStr == "" || session.ID == "" {
 		t.Fatalf("session %v %s", err, urlStr)
 	}

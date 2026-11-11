@@ -597,6 +597,12 @@ func (s *Service) CreateSession(preview domain.RunPreview, req *http.Request, ba
 	if err != nil {
 		return domain.PreviewSession{}, "", err
 	}
+	if err := s.validateSessionOrigin(req); err != nil {
+		return domain.PreviewSession{}, "", err
+	}
+	if err := s.validateBackendOrigin(backendURL); err != nil {
+		return domain.PreviewSession{}, "", err
+	}
 	token, hash, err := newOpaqueToken()
 	if err != nil {
 		return domain.PreviewSession{}, "", err
@@ -627,6 +633,9 @@ func (s *Service) SetPreviewBackend(previewID, backendURL string) (domain.RunPre
 	}
 	normalized, err := domain.NormalizePreviewBackendURL(backendURL)
 	if err != nil {
+		return domain.RunPreview{}, err
+	}
+	if err := s.validateBackendOrigin(normalized); err != nil {
 		return domain.RunPreview{}, err
 	}
 	if err := s.repo.UpdatePreviewBackendURL(preview.ID, normalized); err != nil {
@@ -694,31 +703,12 @@ func (s *Service) DeleteForRun(runID string) error {
 	return s.DeletePreview(preview)
 }
 
-func (s *Service) PublicURL(token string, req *http.Request) string {
-	scheme, host := s.publicOrigin(req)
-	return scheme + "://" + host + PreviewBasePath(token) + "/"
-}
-
-func (s *Service) publicOrigin(req *http.Request) (scheme, host string) {
-	scheme = s.cfg.PublicScheme
-	if scheme == "" {
-		scheme = "https"
+func (s *Service) PublicURL(token string, _ *http.Request) string {
+	if _, _, err := s.isolatedOrigins(); err != nil {
+		return ""
 	}
-	if req != nil {
-		if proto := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")); proto != "" {
-			scheme = strings.TrimSpace(strings.Split(proto, ",")[0])
-		} else if req.TLS == nil {
-			scheme = "http"
-		}
-	}
-	host = strings.TrimSpace(s.cfg.PublicHost)
-	if host == "" && req != nil {
-		host = req.Host
-	}
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	return scheme, host
+	// The serving origin is deployment configuration, never a request header.
+	return s.cfg.PublicScheme + "://" + s.cfg.PublicHost + PreviewBasePath(token) + "/"
 }
 
 func (s *Service) event(runID, typ, msg string) {

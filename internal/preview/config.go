@@ -64,9 +64,6 @@ func LoadConfig() Config {
 	if cfg.PublicScheme == "" {
 		cfg.PublicScheme = "https"
 	}
-	if cfg.FrameAncestors == "" {
-		cfg.FrameAncestors = "'self'"
-	}
 	if scheme, host, ok := SplitPublicURL(cfg.PublicURL); ok {
 		cfg.PublicScheme = scheme
 		cfg.PublicHost = host
@@ -113,8 +110,8 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 	return d
 }
 
-// SplitPublicURL parses an optional preview serving origin such as
-// https://loopforge.example.com. Path and query are ignored; the gateway still
+// SplitPublicURL parses the dedicated preview serving origin, for example
+// https://preview.example.net. Path and query are ignored; the gateway still
 // serves /preview/{token}/ on that host.
 func SplitPublicURL(raw string) (scheme, host string, ok bool) {
 	raw = strings.TrimSpace(raw)

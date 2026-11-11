@@ -5,6 +5,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/preview"
@@ -27,9 +28,14 @@ func (h *previewsHandlers) previewHost() gin.HandlerFunc {
 			return
 		}
 		if _, _, ok := preview.ParsePreviewPath(c.Request.URL.Path); !ok {
-			if target, stray := svc.StrayNavigationTarget(c.Request); stray {
+			if target, stray := svc.StrayNavigationTarget(c.Request); svc.IsPreviewHost(c.Request) && stray {
 				c.Redirect(http.StatusSeeOther, target)
 				c.Abort()
+				return
+			}
+			if svc.IsPreviewHost(c.Request) || strings.HasPrefix(c.Request.URL.Path, preview.HTTPPathPrefix) {
+				// The preview hostname must never expose the studio or its APIs.
+				c.AbortWithStatus(http.StatusNotFound)
 				return
 			}
 			c.Next()

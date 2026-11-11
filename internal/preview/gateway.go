@@ -41,6 +41,10 @@ var jsRootAssetRe = regexp.MustCompile("([`'\"])(/(?:assets|static|chunks|media|
 var referrerMetaRe = regexp.MustCompile(`(?i)<meta\b[^>]*?\sname\s*=\s*(?:"referrer"|'referrer'|referrer\b)[^>]*>`)
 
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.IsPreviewHost(r) {
+		http.NotFound(w, r)
+		return
+	}
 	token, rel, ok := ParsePreviewPath(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
@@ -54,6 +58,12 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	session, preview, ok := s.LookupSession(token)
 	if !ok {
 		http.Error(w, "preview session expired", http.StatusForbidden)
+		return
+	}
+	// Revalidate persisted sessions too, including those minted before an
+	// upgrade or before the studio origins were reconfigured.
+	if err := s.validateBackendOrigin(session.BackendURL); err != nil {
+		http.Error(w, "preview backend uses a studio hostname", http.StatusForbidden)
 		return
 	}
 	s.RenewSession(session)
@@ -198,6 +208,7 @@ func (s *Service) writePreviewHeaders(w http.ResponseWriter, name, backend strin
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
+	w.Header().Set("Origin-Agent-Cluster", "?1")
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=()")
 	w.Header().Set("Content-Security-Policy", s.previewCSP(backend))
 	w.Header().Set("Cache-Control", "no-cache")
@@ -207,17 +218,21 @@ func (s *Service) writePreviewHeaders(w http.ResponseWriter, name, backend strin
 }
 
 func (s *Service) previewCSP(backend string) string {
-	ancestors := strings.TrimSpace(s.cfg.FrameAncestors)
-	if ancestors == "" {
-		ancestors = "'self'"
-	} else if !strings.Contains(ancestors, "'self'") {
-		ancestors = "'self' " + ancestors
+	ancestors := "'none'"
+	if _, parents, err := s.isolatedOrigins(); err == nil {
+		var origins []string
+		for _, parent := range parents {
+			origins = append(origins, parent.String())
+		}
+		ancestors = strings.Join(origins, " ")
 	}
 	connect := "'none'"
 	if origin := backendOrigin(backend); origin != "" {
 		connect = "'self' " + origin
 	}
-	return "sandbox allow-scripts allow-forms allow-modals allow-downloads allow-same-origin; frame-ancestors " + ancestors + "; base-uri 'self'; connect-src " + connect + "; form-action 'self'"
+	// Resource directives also block credentialed no-cors requests (images,
+	// scripts, nested frames) to the studio. Bundles must carry their assets.
+	return "default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; worker-src 'none'; frame-src 'none'; sandbox allow-scripts allow-forms allow-modals allow-downloads allow-same-origin; frame-ancestors " + ancestors + "; base-uri 'self'; connect-src " + connect + "; form-action 'self'"
 }
 
 func backendOrigin(raw string) string {

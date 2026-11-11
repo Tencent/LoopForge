@@ -375,17 +375,17 @@ Runner 离线时，preview 显示“等待执行机器上线”。超过 finaliz
 
 ## 13. Preview Gateway 与安全边界
 
-### 13.1 路径托管，不用独立 Origin
+### 13.1 独立 Origin 下的路径托管
 
-未配置 wildcard DNS 的部署不能使用 `https://<token>.preview.example.com/`。当前 MVP 使用同 Host 路径：
+无需 wildcard DNS；配置一个独立于工作台的 hostname，令牌仍放在路径中：
 
 ```text
-https://loopforge.example.com/preview/<session-token>/
+https://preview.example.net/preview/<session-token>/
 ```
 
-不要再引入 `AGENTFLOW_PREVIEW_ENABLED`、`AGENTFLOW_PREVIEW_ROOT`、`AGENTFLOW_PREVIEW_BASE_DOMAIN`。预览默认开启；静态包进 MySQL；`AGENTFLOW_PREVIEW_PUBLIC_URL` 只覆盖对外 origin（例如反代后的 `https://loopforge.example.com`）。
+不要再引入 `AGENTFLOW_PREVIEW_ENABLED`、`AGENTFLOW_PREVIEW_ROOT`、`AGENTFLOW_PREVIEW_BASE_DOMAIN`。归档默认开启，静态包进 MySQL。在线预览必须配置独立的 `AGENTFLOW_PREVIEW_PUBLIC_URL`（如 `https://preview.example.net`），并在 `AGENTFLOW_PREVIEW_FRAME_ANCESTORS` 中列出完整工作台 origin（如 `https://studio.example.com`）。禁止同一 hostname 换端口、通配符或 `self`；部署配置见 [deployment](../deployment.md#isolated-preview-host)。未配置时不签发预览会话，归档和鉴权 ZIP 下载 API 仍可用。
 
-预览 HTML 仍是不可信内容。用短期 token、CSP `sandbox` + `connect-src`、以及运行时拦截 fetch/XHR 来约束它能访问的后端。主站 API 不在预览 token 路径下。
+预览 HTML 仍是不可信内容。隔离依赖独立 origin、预览域名的平台路由拒绝和浏览器 CSP。短期 token 控制预览访问；运行时拦截 fetch/XHR 仅提供后端路径映射。
 
 ### 13.2 访问会话
 
@@ -404,15 +404,17 @@ Studio 调用 `POST /api/runs/:id/preview/session`。服务端验证用户对 Ru
 
 ```html
 <iframe
-  src="/preview/<token>/"
+  src="https://preview.example.net/preview/<token>/"
   sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-same-origin"
   referrerpolicy="no-referrer"
 ></iframe>
 ```
 
-路径托管下必须开 `allow-same-origin`，否则 Vite ESM 无法加载。不要添加 `allow-top-navigation`。剪贴板、摄像头、麦克风和定位默认不授权。
+预览使用独立 hostname；`allow-same-origin` 保留 ES modules 和 History API 兼容性。主站上的 `/preview/<token>/` 返回 404，预览 hostname 上所有平台页面与 API 返回 404。不要添加 `allow-top-navigation`。剪贴板、摄像头、麦克风和定位默认不授权。
 
-代价是预览与平台同源：预览脚本可以操作外层 Studio 页面（读写 DOM、借 `parent.fetch` 以当前登录用户身份调平台接口），CSP 的 `connect-src` 只约束预览文档自身。
+威胁模型：同项目成员或 Agent 构建产物可包含不可信脚本，查看者可能已登录工作台。浏览器同源策略阻止预览读写工作台父窗口或调用 `parent.fetch`；CSP 限制 fetch、表单、图片、脚本等资源请求，后端 URL 禁止指向任何配置的工作台 hostname。资源必须打包在静态包内，子 iframe 和 worker/service worker 禁用。已有会话也在读取时重新校验后端地址。后端拦截脚本不承担安全边界。预览之间仍共享同一个独立 origin，并不提供预览间租户隔离。
+
+`TestPreviewIsolationBrowser` 通过实际归档、网关与 Chromium 验证带签名登录 Cookie 的查看者、父窗口访问、原生 fetch/no-cors/图片请求、模块与样式加载、History API 路由，以及独立窗口。
 
 ### 13.4 静态响应
 
@@ -430,10 +432,10 @@ Studio 调用 `POST /api/runs/:id/preview/session`。服务端验证用户对 Ru
 路径托管下 `location.pathname` 只有一个值：应用要的是 `/about`，地址栏、刷新和 Referer 要的是 `/preview/<token>/about`。垫片只能在一段时间内二选一，已知限制：
 
 - 业务代码在启动后直接读 `location.pathname`，读到的是带前缀的路径。
-- 有路由的包在路由启动前，独立窗口地址栏显示去掉前缀的地址，这时用浏览器刷新或复制地址会落到平台；load 后 10 秒仍未启动的路由会读到带前缀的路径。
-- 启动期间在新标签页打开链接、提交 POST 表单，以及不支持 Navigation API 的浏览器里的脚本跳转，仍会落到平台。
+- 有路由的包在路由启动前，独立窗口地址栏显示去掉前缀的地址，这时用浏览器刷新或复制地址会在预览域名返回 404；load 后 10 秒仍未启动的路由会读到带前缀的路径。
+- 启动期间在新标签页打开链接、提交 POST 表单，以及不支持 Navigation API 的浏览器里的脚本跳转，仍会在预览域名返回 404。
 
-独立 preview host 可以自然解决绝对 `/assets/*`、前端路由和 service worker base path 问题，比 path-based proxy 兼容性更高。
+当前独立 hostname 仍使用带令牌的路径，保留上述路由限制；service worker 禁用。后续若采用每个预览独立的 origin，需另行定义路由和存储隔离契约。
 
 ## 14. Studio 交互
 
@@ -649,7 +651,7 @@ preview.deleted
 - 实现本地 Preview Finalizer。
 - 实现 Runner `archive_preview` 和流式上传。
 - 增加 cleanup hold、超时和启动恢复。
-- 实现路径 `/preview/{token}/` 静态服务，不用独立 origin。
+- 在独立预览 hostname 实现 `/preview/{token}/` 静态服务，主站不托管可执行预览。
 - Studio 增加“前端预览”Tab。
 - 暂不截图、不支持运行时容器。
 
