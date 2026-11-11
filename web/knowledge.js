@@ -391,7 +391,7 @@ function kbCredentialFields(requiredKind='',prefix='kbCredential'){
       <div class="kb-field"><label for="${prefix}Token">令牌</label><input id="${prefix}Token" class="kb-input" name="credentialToken" type="password" autocomplete="new-password"></div>
     </div>
     <div data-kb-auth="ssh" hidden>
-      <div class="kb-field"><label for="${prefix}Key">SSH 私钥</label><textarea id="${prefix}Key" class="kb-input mono" name="credentialPrivateKey" rows="4" autocomplete="off" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></div>
+      <div class="kb-field"><label for="${prefix}Key">SSH 私钥</label><textarea id="${prefix}Key" class="kb-input mono" name="credentialPrivateKey" rows="4" autocomplete="off" spellcheck="false" placeholder="粘贴 OpenSSH 私钥内容（含 BEGIN/END 行）"></textarea></div>
       <div class="kb-field"><label for="${prefix}Hosts">服务器公钥记录（known_hosts）</label><textarea id="${prefix}Hosts" class="kb-input mono" name="credentialKnownHosts" rows="2" spellcheck="false" placeholder="github.com ssh-ed25519 AAAA…"></textarea><span class="kb-hint">向仓库管理员取得并核对服务器公钥记录。</span></div>
     </div>
     <label class="kb-hint" data-kb-auth-grant hidden><input type="checkbox" name="credentialCanWrite"> 此凭据已授予写权限</label>`;
