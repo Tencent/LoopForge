@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strings"
 )
@@ -37,6 +38,29 @@ const (
 	// vectorWindow / keywordWindow 是两路召回窗口，量级保持一致。
 	vectorWindow  = 50
 	keywordWindow = 50
+
+	// 纯向量命中的相对相关度门槛。关键词适配器已经有 relevantCandidates，
+	// 但融合层不经过那段重排；这里用同一套「候选分布相对判断」补上，避免
+	// 关键词判空时把 Qdrant 的 50 个近邻全部当结果，也避免为凑满条数保留
+	// 纯向量长尾。余弦相似度的分布比关键词分数平，因此头部比值门槛低于
+	// 关键词重排的 relevanceGateRatio；比值和离群度必须同时成立。
+	vectorHeadRatio     = 1.20
+	vectorHeadMAD       = 3.0
+	vectorKeepRatio     = 0.85
+	vectorCandidateMAD  = 2.0
+	vectorMinCandidates = 10
+	// 关键词完全判空时没有第二路证据，纯向量批次必须更陡才算强：否则
+	// 小语料里一个短块的余弦离群值也会被当成命中。关键词有命中时保持
+	// 较低比值门槛，避免误伤「关键词只覆盖一部分、向量补足语义」的查询。
+	vectorHeadRatioNoKeyword = 1.50
+
+	// keywordHeadRatio 判断关键词第一名是否明显领先第二名。低于它说明
+	// 关键词通道自己的名次也不确定；此时若向量批次也没有明显头部，两路
+	// 名次都不可靠，融合层用关键词自身的相关度分数打破噪声，而不是让
+	// 一个偶然靠前的语义近邻把关键词首选挤掉。关键词头部明确时保持
+	// 现有权重，保留向量对错别字/口语查询的纠错能力。
+	keywordHeadRatio = 1.2
+
 	// degradeReason 只给安全枚举文案，不回传底层 error（可能含 URL/凭据细节）。
 	degradeReason = "语义检索暂不可用，已降级为关键词检索"
 )
@@ -150,17 +174,22 @@ func keyOf(h Hit) hitKey {
 // Fuse 用查询自适应加权 RRF 融合关键词与向量两路命中，取 top limit。
 // 权重由 weightsForQuery(query) 给出：问句/口语抬高向量权重、压低词法分数
 // 加成；其余查询保持均衡。query 为空时按非问句处理（与早期 Fuse 等价）。
+// 融合前会过滤掉没有关键词覆盖且向量相对分数弱的纯向量命中；结果条数
+// 只由真实命中决定，不补齐到 limit。
 func Fuse(query string, kwHits, vecHits []Hit, limit int) []Hit {
 	return FuseWithWeights(kwHits, vecHits, limit, WeightsForQuery(query))
 }
 
 // FuseWithWeights 用显式权重做加权 RRF 融合，是 Fuse 的可调核心。生产与离线
-// 调参共用这一段，保证调出来的权重上线后行为一致。
+// 调参共用这一段，保证调出来的权重上线后行为一致。纯向量命中必须通过
+// vectorRelevance 的相对门槛：既有明显高于候选池中位数的头部，单个命中
+// 也要靠近头部并显著高于中位数；关键词零覆盖且向量弱的结果不进入结果集。
 func FuseWithWeights(kwHits, vecHits []Hit, limit int, w FusionWeights) []Hit {
 	meta := make(map[hitKey]Hit, len(kwHits)+len(vecHits))
 	lexRank := make(map[hitKey]int, len(kwHits))
 	lexScore := make(map[hitKey]float64, len(kwHits))
 	vecRank := make(map[hitKey]int, len(vecHits))
+	vecScore := make(map[hitKey]float64, len(vecHits))
 	maxLex := 0.0
 	for i, h := range kwHits {
 		k := keyOf(h)
@@ -179,6 +208,21 @@ func FuseWithWeights(kwHits, vecHits []Hit, limit int, w FusionWeights) []Hit {
 			meta[k] = h // 纯向量命中：出处/摘要来自向量库载荷
 		}
 		vecRank[k] = i + 1
+		if _, ok := vecScore[k]; !ok {
+			vecScore[k] = h.Score
+		}
+	}
+	headRatio := vectorHeadRatio
+	if len(kwHits) == 0 {
+		headRatio = vectorHeadRatioNoKeyword
+	}
+	vectorGate := assessVectorRelevance(vecHits, headRatio)
+	// 两路都没有明显头部时恢复默认的小词法分数权重。只在问句/口语权重把
+	// LexScore 压低到 0 附近时生效；非问句本来就带这个权重，不改变行为。
+	if !vectorGate.strong && len(kwHits) >= 2 &&
+		kwHits[0].Score < keywordHeadRatio*kwHits[1].Score &&
+		w.LexScore < defaultLexScoreWeight {
+		w.LexScore = defaultLexScoreWeight
 	}
 
 	type agg struct {
@@ -187,6 +231,12 @@ func FuseWithWeights(kwHits, vecHits []Hit, limit int, w FusionWeights) []Hit {
 	}
 	aggs := make([]agg, 0, len(meta))
 	for k := range meta {
+		// 有任一关键词命中就保留；纯向量命中要过相对相关度门槛。
+		if _, keywordCovered := lexRank[k]; !keywordCovered {
+			if !vectorGate.accepts(vecScore[k]) {
+				continue
+			}
+		}
 		s := 0.0
 		if r, ok := lexRank[k]; ok {
 			s += w.LexRank / (hybridRRFK + float64(r))
@@ -227,4 +277,59 @@ func FuseWithWeights(kwHits, vecHits []Hit, limit int, w FusionWeights) []Hit {
 		out = append(out, h)
 	}
 	return out
+}
+
+// vectorRelevance 是向量候选分布的相对门槛。它不依赖固定语料或模型分值的
+// 绝对大小，只用本批候选中位数、MAD 和第一名的相对差判断「有没有相关度
+// 头部」；候选数少于 vectorMinCandidates 时无法估计分布，按弱批次处理。
+type vectorRelevance struct {
+	usable bool
+	strong bool
+	top    float64
+	median float64
+	scale  float64
+}
+
+func assessVectorRelevance(hits []Hit, headRatio float64) vectorRelevance {
+	if len(hits) < vectorMinCandidates {
+		return vectorRelevance{}
+	}
+	scores := make([]float64, 0, len(hits))
+	for _, h := range hits {
+		scores = append(scores, h.Score)
+	}
+	sort.Sort(sort.Reverse(sort.Float64Slice(scores)))
+	top := scores[0]
+	if top <= 0 {
+		return vectorRelevance{}
+	}
+	rest := scores[1:]
+	median := medianScore(rest)
+	scale := math.Max(medianAbsoluteDeviation(rest, median), math.Abs(median)*0.05)
+	v := vectorRelevance{usable: true, top: top, median: median, scale: scale}
+	ratio := math.Inf(1)
+	if median > 0 {
+		ratio = top / median
+	}
+	v.strong = ratio >= headRatio && v.z(top) >= vectorHeadMAD
+	return v
+}
+
+func (v vectorRelevance) z(score float64) float64 {
+	if v.scale <= 0 {
+		if score > v.median {
+			return math.Inf(1)
+		}
+		return 0
+	}
+	return (score - v.median) / v.scale
+}
+
+// accepts 判断一个纯向量命中能否进入融合结果：批次要有明显头部，命中
+// 还要靠近第一名并显著高于候选池中位数，避免用长尾凑满 10 条。
+func (v vectorRelevance) accepts(score float64) bool {
+	if !v.usable || !v.strong {
+		return false
+	}
+	return score >= v.top*vectorKeepRatio && v.z(score) >= vectorCandidateMAD
 }

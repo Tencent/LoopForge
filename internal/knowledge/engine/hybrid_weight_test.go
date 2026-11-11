@@ -84,10 +84,19 @@ func TestConversationalFusionAdoptsVectorRanking(t *testing.T) {
 		{Source: "s", Path: "proposals/a.md", StartLine: 1, EndLine: 2, Text: "方案", Score: 4},
 		{Source: "s", Path: "proposals/b.md", StartLine: 1, EndLine: 2, Text: "方案2", Score: 3},
 	}
-	// 向量通道：语义命中部署文档（关键词通道里没有它）。
+	// 向量通道：语义命中部署文档（关键词通道里没有它）。同时补足候选
+	// 分布，让纯向量的 deployment.md 能通过融合层的相对相关度门槛。
 	vec := []Hit{
 		{Source: "s", Path: "deployment.md", StartLine: 10, EndLine: 12, Text: "端口与 DSN", Score: 0.95},
-		{Source: "s", Path: "api/orchestration.md", StartLine: 1, EndLine: 2, Text: "编排", Score: 0.8},
+		{Source: "s", Path: "api/orchestration.md", StartLine: 1, EndLine: 2, Text: "编排", Score: 0.55},
+		{Source: "s", Path: "other/guide-a.md", StartLine: 1, EndLine: 2, Text: "其他文档", Score: 0.54},
+		{Source: "s", Path: "other/guide-b.md", StartLine: 1, EndLine: 2, Text: "其他文档二", Score: 0.53},
+		{Source: "s", Path: "other/guide-c.md", StartLine: 1, EndLine: 2, Text: "其他文档三", Score: 0.52},
+		{Source: "s", Path: "other/guide-d.md", StartLine: 1, EndLine: 2, Text: "其他文档四", Score: 0.51},
+		{Source: "s", Path: "other/guide-e.md", StartLine: 1, EndLine: 2, Text: "其他文档五", Score: 0.50},
+		{Source: "s", Path: "other/guide-f.md", StartLine: 1, EndLine: 2, Text: "其他文档六", Score: 0.49},
+		{Source: "s", Path: "other/guide-g.md", StartLine: 1, EndLine: 2, Text: "其他文档七", Score: 0.48},
+		{Source: "s", Path: "other/guide-h.md", StartLine: 1, EndLine: 2, Text: "其他文档八", Score: 0.47},
 	}
 
 	question := "怎么在本机把平台跑起来"
@@ -123,8 +132,16 @@ func TestHybridRetrieverQuestionUsesConversationalWeights(t *testing.T) {
 		{Source: "s", Path: "proposals/a.md", StartLine: 1, EndLine: 2, Text: "方案", Score: 4},
 	}}
 	vec := &fakeVectorChannel{active: true, hits: []Hit{
-		{Source: "s", Path: "deployment.md", StartLine: 10, EndLine: 12, Text: "端口"},
-		{Source: "s", Path: "api/orchestration.md", StartLine: 1, EndLine: 2, Text: "编排"},
+		{Source: "s", Path: "deployment.md", StartLine: 10, EndLine: 12, Text: "端口", Score: 0.95},
+		{Source: "s", Path: "api/orchestration.md", StartLine: 1, EndLine: 2, Text: "编排", Score: 0.55},
+		{Source: "s", Path: "other/guide-a.md", StartLine: 1, EndLine: 2, Text: "其他文档", Score: 0.54},
+		{Source: "s", Path: "other/guide-b.md", StartLine: 1, EndLine: 2, Text: "其他文档二", Score: 0.53},
+		{Source: "s", Path: "other/guide-c.md", StartLine: 1, EndLine: 2, Text: "其他文档三", Score: 0.52},
+		{Source: "s", Path: "other/guide-d.md", StartLine: 1, EndLine: 2, Text: "其他文档四", Score: 0.51},
+		{Source: "s", Path: "other/guide-e.md", StartLine: 1, EndLine: 2, Text: "其他文档五", Score: 0.50},
+		{Source: "s", Path: "other/guide-f.md", StartLine: 1, EndLine: 2, Text: "其他文档六", Score: 0.49},
+		{Source: "s", Path: "other/guide-g.md", StartLine: 1, EndLine: 2, Text: "其他文档七", Score: 0.48},
+		{Source: "s", Path: "other/guide-h.md", StartLine: 1, EndLine: 2, Text: "其他文档八", Score: 0.47},
 	}}
 	hr := NewHybridRetriever(kw, vec)
 	rr, err := hr.Retrieve(context.Background(), "默认端口是多少", []string{"s"}, DefaultSearchLimit)
