@@ -9,15 +9,13 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
     const issue={...state.data.issues[0],source:'tapd',status:'backlog',priority:'high',
       externalRef:{externalId:'T-1',externalUrl:'https://tapd.example/T-1'},
       repositoryIds:['repo-1'],baseBranch:'feature/chart',
-      clarification:{status:'in_progress',score:65,dimensions:{goal:80,scope:55},
-        missing:['scope'],questions:[
+      clarification:{status:'in_progress',questions:[
           {question:'Browser?',options:['Chrome','Safari'],multiSelect:false},
           {question:'Checks?',options:['Unit','E2E'],multiSelect:true}],
         history:[
           {role:'assistant',content:JSON.stringify({questions:[{question:'Browser?'}]})},
           {role:'user',content:'Safari'}]}};
-    const project={...state.data.projects[0],clarificationPolicy:{threshold:75,dimensions:[
-      {id:'goal',name:'目标'},{id:'scope',name:'范围'}]}};
+    const project={...state.data.projects[0]};
     state.data.projects=[project];
     state.issueDetailData={issue,comments:[
       {authorType:'agent',body:'Automated note',createdAt:'2026-01-01T01:02:03Z'}],
@@ -40,7 +38,7 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
       visible:clarifyVisibleSummary(protocol),
       hidden:clarifyThoughtShouldHide(protocol),
       recovered:recoverClarifyView({status:'in_progress',summary:protocol,questions:[]}),
-      score:clarifyScoreHTML(issue,project),
+      pane:clarifyPane(issue,project),
       overview:clarificationOverviewCard(issue),
       operations:operationsPane({...issue,createdAt:'2026-01-01',operations:[
         {at:'2026-01-03',action:'update',actor:'Alice',detail:'changed title'}]}),
@@ -49,8 +47,6 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
         {id:'a1',nodeId:'n1',name:'Report',path:'report.md',attempt:2,size:2048,sha256:'abcdef123456'}]}}),
       delivery:deliveryPane(issue,state.issueDetailData),
       acceptance:acceptancePane(issue,state.issueDetailData),
-      dimensions:issueClarifyDimensions({...issue,source:'gongfeng'},project).map(x=>x.id),
-      levels:[clarifyScoreLevel(90),clarifyScoreLevel(70),clarifyScoreLevel(20)],
       labels:[activityEventLabel('node.failed'),activityEventLabel('run.custom'),issueOperationLabel('reopen')],
       badTime:formatActivityTime('not-a-date')
     };
@@ -64,8 +60,8 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
   assert.equal(result.visible, 'prefix');
   assert.equal(result.hidden, true);
   assert.equal(result.recovered.questions[0].question, 'OS?');
-  assert.match(result.score, /65/);
-  assert.match(result.score, /范围/);
+  assert.doesNotMatch(result.pane, /信息完整度|准入线|clarify-score/);
+  assert.match(result.pane, /只围绕这张单本身/);
   assert.match(result.overview, /继续/);
   assert.match(result.operations, /编辑需求|changed title/);
   assert.match(result.activity, /Automated note/);
@@ -73,8 +69,6 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
   assert.match(result.artifacts, /Report/);
   assert.match(result.delivery, /feature\/chart/);
   assert.match(result.acceptance, /门禁失败/);
-  assert.deepEqual(result.dimensions, ['phenomenon','impact','expected','acceptance','constraints']);
-  assert.deepEqual(result.levels, ['good','fair','weak']);
   assert.deepEqual(result.labels, ['节点失败','运行 · custom','重新打开']);
   assert.equal(result.badTime, '—');
 });
@@ -90,7 +84,7 @@ test('drawer actions write back clarification and resync TAPD with API payloads'
   app.router.post('/api/issues/issue-1/clarification', written);
   app.router.post('/api/issues/issue-1/resync-tapd', synced);
   app.router.post('/api/issues/issue-1/chat-clarify', {
-    issue: { ...written, clarification: { status: 'ready', score: 88, summary: 'Clarified', writeBackStatus: 'succeeded' } },
+    issue: { ...written, clarification: { status: 'ready', summary: 'Clarified', writeBackStatus: 'succeeded' } },
     ready: true
   });
   app.router.get('/api/issues/issue-1/chat-clarify', {}, 404);

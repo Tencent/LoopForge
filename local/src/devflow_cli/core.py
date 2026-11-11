@@ -157,6 +157,25 @@ def materialize_portable(host: str, stage: Path) -> None:
         for name in manifest["skill_sets"]["portable"]:
             copy_skill(skills_root / name, target / name)
         return
+    if host == "dsh":
+        target = stage / ".dsh/skills"
+        target.mkdir(parents=True, exist_ok=True)
+        manifest = json.loads((skills_root / "manifest.json").read_text(encoding="utf-8"))
+        copy_skills_manifest(skills_root, target)
+        for name in manifest["skill_sets"]["portable"]:
+            copy_skill(skills_root / name, target / name)
+        return
+    if host == "hermes":
+        # Hermes discovers project skills under .hermes/skills after the user
+        # explicitly trusts the repository. Keep installation project-local;
+        # never mutate ~/.hermes/config.yaml or the user's profile skills.
+        target = stage / ".hermes/skills"
+        target.mkdir(parents=True, exist_ok=True)
+        manifest = json.loads((skills_root / "manifest.json").read_text(encoding="utf-8"))
+        copy_skills_manifest(skills_root, target)
+        for name in manifest["skill_sets"]["portable"]:
+            copy_skill(skills_root / name, target / name)
+        return
     raise DevFlowError(f"不支持的宿主: {host}")
 
 

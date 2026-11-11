@@ -729,14 +729,14 @@ func TestAssistantTaskGenerationAndWriterBranches(t *testing.T) {
 
 	task := assistantTask{ID: "cva-r3-empty", Name: "Empty", Prompt: "P", ProjectID: projectID, Enabled: true, IntervalSec: 60}
 	h.generate = func(context.Context, string, domain.User) (string, error) { return "   ", nil }
-	if err := h.executeAssistantTask(context.Background(), user, &task); err == nil || task.LastError != "未返回结果" {
+	if err := h.executeAssistantTask(context.Background(), user, &task); err == nil || task.LastStatus != "error" || task.LastError == "" {
 		t.Fatalf("empty result=%+v %v", task, err)
 	}
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	task.ID = "cva-r3-cancel"
 	h.generate = func(context.Context, string, domain.User) (string, error) { return "unused", nil }
-	if err := h.executeAssistantTask(cancelCtx, user, &task); err == nil || !strings.Contains(task.LastError, "取消") {
+	if err := h.executeAssistantTask(cancelCtx, user, &task); err == nil || !strings.Contains(task.LastError, "停止") {
 		t.Fatalf("cancelled=%+v %v", task, err)
 	}
 	task.ID, task.LastRunAt = "cva-r3-due", time.Now().Add(-2*time.Minute)

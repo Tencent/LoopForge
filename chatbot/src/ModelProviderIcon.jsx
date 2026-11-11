@@ -2,8 +2,8 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
 import "./model-provider-icon.css";
 
-// Trusted, bundled brand artwork copied unchanged from Grasp. Source and license
-// notices are retained beside the SVGs in assets/provider-logos/README.md.
+// Trusted, bundled brand artwork from Grasp and local assets. Source and
+// license notices are retained beside the SVGs in assets/provider-logos/README.md.
 const brandSources = import.meta.glob("./assets/provider-logos/*.svg", {
   eager: true,
   query: "?raw",
@@ -48,6 +48,10 @@ export function modelProviderFor(model) {
   }
   return values.map((value) => String(value || "").trim().toLowerCase())
     .find((value) => fallbackBrands.has(value)) || "";
+}
+
+export function hasProviderLogo(name) {
+  return Boolean(brandSources[`./assets/provider-logos/${name}.svg`]);
 }
 
 function artwork(name, prefix) {
@@ -107,11 +111,12 @@ function BrandSvg({ name, identity, motionKey, className = "" }) {
   );
 }
 
-export default function ModelProviderIcon({ model, size = 20, className = "" }) {
+/** `brand` names a bundled logo directly, for example a CLI rather than a model. */
+export default function ModelProviderIcon({ model, brand: named = "", size = 20, className = "" }) {
   const host = useRef(null);
   const identity = `model-provider-${useId().replace(/[^\w-]/g, "")}`;
   const [motionKey, setMotionKey] = useState(0);
-  const brand = modelProviderFor(model);
+  const brand = named || modelProviderFor(model);
 
   useEffect(() => {
     const element = host.current;

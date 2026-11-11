@@ -82,7 +82,6 @@ const issueTrackerClosed = () => false;
 const deliveryLocked = () => false;
 const issueClarifying = () => false;
 const clarificationNeedsConfirm = () => false;
-const requirementNeedsClarification = () => false;
 const conversationWorkspaceIssue = () => false;
 const isScriptWorkflowNode = node => node?.type==='script'||node?.type==='command';
 const cachedRun = () => null;
@@ -793,18 +792,18 @@ const count = (html, needle) => html.split(needle).length - 1;
 // Two groups list all four kinds in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 10 已配置'));
+assert.ok(html.includes('<b>2</b> / 11 已配置'));
 assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 1') && html.includes('1 / 9'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>8</span>'));
-assert.equal(count(html, 'data-credential-row='), 10);
+assert.ok(html.includes('1 / 1') && html.includes('1 / 10'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>9</span>'));
+assert.equal(count(html, 'data-credential-row='), 11);
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 8);
+assert.equal(count(html, 'data-credential-act="setup"'), 9);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
 for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
@@ -824,8 +823,40 @@ assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'ioa'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'ioa'});
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: ''}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: ''});
 assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: 'sk-1'}), {codexApiKey: 'sk-1'});
-assert.deepEqual(credentialClearPayload(cred.kind('codexApiKey')), {codexApiKeyClear: true, codexBaseUrl: ''});
-assert.deepEqual(credentialClearPayload(cred.kind('claudeCodeApiKey')), {claudeCodeApiKeyClear: true, claudeCodeBaseUrl: ''});
+assert.deepEqual(credentialSavePayload(cred.kind('claudeCodeApiKey'), {secret: '', extra: '', models: [{id: ' hy4 ', name: '混元 4'}, {id: 'glm-5', name: 'glm-5'}]}), {claudeCodeApiKey: '', claudeCodeBaseUrl: '', claudeCodeModels: [{id: 'hy4', name: '混元 4'}, {id: 'glm-5'}]});
+assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: '', extra: '', models: []}), {codexApiKey: '', codexBaseUrl: '', codexModels: []}, '恢复默认 sends an empty catalog');
+assert.deepEqual(credentialSavePayload(cred.kind('agentCli.opencode'), {secret: 'k', extra: 'https://gw.example/v1', protocol: 'messages', models: [{id: 'a', name: 'A'}]}), {agentCliCredentials: {opencode: {apiKey: 'k', baseUrl: 'https://gw.example/v1', protocol: 'messages', models: [{id: 'a', name: 'A'}]}}});
+assert.equal(cred.kind('agentCli.cursor').models, undefined, 'Cursor stays on its official models');
+assert.equal(cred.kind('agentCli.zcode').models.engine, 'zcode');
+assert.ok(credentialSubline(cred.kind('codexApiKey'), {codexApiKeyConfigured: true, codexModels: [{id: 'hy4'}, {id: 'gpt-5.5'}]}).includes('2 个自定义模型'));
+assert.deepEqual(credentialClearPayload(cred.kind('codexApiKey')), {codexApiKeyClear: true, codexBaseUrl: '', codexModels: []});
+assert.deepEqual(credentialClearPayload(cred.kind('claudeCodeApiKey')), {claudeCodeApiKeyClear: true, claudeCodeBaseUrl: '', claudeCodeModels: []});
+assert.deepEqual(credentialClearPayload(cred.kind('agentCli.opencode')), {agentCliCredentials: {opencode: {apiKeyClear: true, baseUrl: '', protocol: '', models: []}}});
+assert.deepEqual(credentialClearPayload(cred.kind('agentCli.cursor')), {agentCliCredentials: {cursor: {apiKeyClear: true, baseUrl: '', protocol: ''}}});
+const catalogUser = {codexApiKeyConfigured: true, codexBaseUrl: 'https://gw.example/v1', codexModels: [{id: 'hy4', name: '混元 4'}, {id: 'gpt-5.5'}]};
+const catalogHTML = credentialCatalogHTML(cred.kind('codexApiKey'), catalogUser);
+assert.equal(count(catalogHTML, 'data-catalog-row'), 2);
+assert.ok(catalogHTML.indexOf('value="hy4"') < catalogHTML.indexOf('value="gpt-5.5"') && catalogHTML.includes('value="混元 4"'));
+assert.ok(catalogHTML.includes('data-catalog-act="probe"') && catalogHTML.includes('data-catalog-act="add"') && catalogHTML.includes('data-catalog-grip'));
+assert.ok(catalogHTML.includes('data-catalog-source="https://gw.example/v1"'));
+assert.equal(credentialCatalogSource(' https://gw.example/v1/ '), credentialCatalogSource('https://gw.example/v1'));
+assert.ok(catalogHTML.includes('data-catalog-empty hidden') && catalogHTML.includes('2 个模型') && catalogHTML.includes('data-catalog-body>') && !catalogHTML.includes('data-catalog-body hidden'));
+const emptyCatalog = credentialCatalogHTML(cred.kind('claudeCodeApiKey'), {claudeCodeBaseUrl: 'https://gw.example'});
+assert.ok(emptyCatalog.includes('跟随服务发布的模型') && emptyCatalog.includes('/v1/models') && emptyCatalog.includes('data-catalog-foot hidden') && emptyCatalog.includes('未自定义'));
+const officialCatalog = credentialCatalogHTML(cred.kind('codexApiKey'), {codexModels: [{id: 'hy4'}]});
+assert.ok(officialCatalog.includes('value="hy4"') && officialCatalog.includes('data-catalog-act="probe"') && officialCatalog.includes('改回使用自带的模型') && !officialCatalog.includes('data-catalog-body hidden'), 'an official key keeps its custom catalog editable');
+const officialEmpty = credentialCatalogHTML(cred.kind('codexApiKey'), {});
+assert.ok(officialEmpty.includes('使用 Codex 自带的模型') && officialEmpty.includes('data-catalog-act="add"') && !officialEmpty.includes('data-catalog-body hidden'));
+const geminiCatalog = credentialCatalogHTML(cred.kind('agentCli.agy'), {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
+assert.ok(geminiCatalog.includes('使用 Antigravity 自带的模型') && geminiCatalog.includes('data-catalog-act="probe"') && !geminiCatalog.includes('data-catalog-body hidden'), 'Gemini official API can still keep a custom catalog');
+assert.ok(credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('data-credential-catalog') && credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('has-catalog'));
+assert.ok(!credentialEditorHTML(cred.kind('agentCli.cursor'), {agentCliCredentials: {cursor: {apiKeyConfigured: true}}}).includes('data-credential-catalog'));
+assert.equal(credentialCatalogKey([{id: 'a', name: 'a'}, {id: '', name: ''}]), credentialCatalogKey([{id: 'a'}]));
+assert.equal(credentialCatalogError([{id: 'a'}, {id: 'b', name: 'B'}]), null);
+assert.deepEqual(credentialCatalogError([{id: 'a'}, {id: '', name: 'x'}]), {index: 1, field: 'id', error: '模型 ID 不能为空'});
+assert.ok(credentialCatalogError([{id: 'a b'}]).error.includes('空格'));
+assert.ok(credentialCatalogError([{id: 'a'}, {id: 'a'}]).error.includes('重复'));
+assert.equal(credentialCatalogError([{id: 'a', name: 'n'.repeat(65)}]).field, 'name');
 assert.deepEqual(credentialClearPayload(cred.kind('codeBuddyApiKey')), {codeBuddyApiKeyClear: true});
 assert.deepEqual(credentialClearPayload(cred.kind('gitToken')), {gitTokenClear: true});
 assert.equal(credentialSecretError(cred.kind('gitToken'), 'github_pat_1'), '');
@@ -882,7 +913,7 @@ assert.equal(calls.length, 0);
 
 (async () => {
   await deleteCredential('codexApiKey');
-  assert.deepEqual(calls.at(-1).body, {codexApiKeyClear: true, codexBaseUrl: ''});
+  assert.deepEqual(calls.at(-1).body, {codexApiKeyClear: true, codexBaseUrl: '', codexModels: []});
 
   // 添加凭证 starts at step 1 with configured kinds disabled.
   cred.wizard = {step: 1, kind: null, direct: false, secret: '', extra: '', guide: {}, error: ''};
@@ -1330,17 +1361,17 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	}
 	for _, want := range []string{
 		`function goReqStep(`, `function renderReqSteps(`, `function renderReqFooter(`, `function renderReqConfirm(`, `function renderReqRepoChip(`, `function pickReqOption(`, `function submitReqAnswers(`, `function reclarifyRequirement(`,
-		`reqCreateDirect`, `reqCreateAccepted`, `不会立刻启动`, `persistRequirementComposer`, `agentflow.requirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`,
+		`reqCreateDirect`, `reqCreateAccepted`, `可在详情里触发 SOP`, `persistRequirementComposer`, `agentflow.requirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`,
 		`resumeChatClarify`, `jobId:chatClarifyJobId`, `正在接上分析`, `从空白开始`, `stripClarifyReason`, `renderClarifyPanel(JSON.parse(lastAssistant.content))`,
 		`assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `workflowId:selectedReqWorkflowId()`, `composerProgressHTML`,
-		`已问清，可以创建`, `查看完整度详情`, `至少回答一题，或点「直接去创建」`, `提交回答`, `跳过此题`, `上一题`, `你的回答`, `全部用推荐答案`, `下一步：确认创建`, `澄清基于原仓库`, `重新澄清`, `· 已跳过`,
+		`已问清，可以创建`, `至少回答一题，或点「直接去创建」`, `提交回答`, `跳过此题`, `上一题`, `你的回答`, `全部用推荐答案`, `下一步：确认创建`, `澄清基于原仓库`, `重新澄清`, `· 已跳过`,
 		`questionIndex:`, `answers:`, `repoSnapshot:`, `target:`, `step:`,
 	} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("requirement wizard behavior is missing %q", want)
 		}
 	}
-	for _, gone := range []string{`invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`} {
+	for _, gone := range []string{`查看完整度详情`, `准入线`, `composerAssessmentView`, `invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`} {
 		if strings.Contains(code, gone) {
 			t.Fatalf("requirement wizard must not keep %q", gone)
 		}
@@ -1420,7 +1451,7 @@ func TestTAPDImportUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{`/api/issues/import-tapd`, `openImportTAPDModal`, `fillImportTAPDWorkflow`, `fillImportTAPDRepository`, `selectedImportTAPDRepositoryIds`, `renderImportTAPDRepositoryPicker`, `repositoryIds`, `请至少选择一个代码仓库`, `importTAPDStory`, `requirementNeedsClarification`, `clarificationNeedsConfirm`, `data-dtab="clarify"`, `确认结论`, `clarification?.gated`, `autoStartClarify`, `issueClarifyJobs`, `attachIssueClarifyStream`, `关闭网页也不会中断`, `clarifyOptionLabel`, `clarifyQuestionOptions`, `createIssueFromChat`, `projectTAPDReady`, `reqCreate`, `setReqTarget`, `pushIssueToTAPDFromDetail`, `dashImportTAPD`, `run-id-copy`, `data-export-logs`, `从这里重跑`, `重新触发`, `data-retrigger-issue`, `data-rerun-from-here`, `canRetriggerIssue`, `openRerunFromNode`, `executionContext?.issueId`, `run?.status==='succeeded'`, `/api/issues/${encodeURIComponent(issueId)}/requirement`, `inferSOPLane`, `req-lane-card`, `issueLaneDots`, `.filter(l=>!l.orphan)`, `lanes.length<2`, `collapseSingleSOPLane`, `issueSOPLabel`, `actionWorkflow`, `data-workflow`, `workflowSOPLane`, `需求开发`, `saveIssueSOPS`, `/sops`, `effectiveIssueSOPBindings`, `projectSOPBindings`, `fillReqWorkflow`, `plannedSOPNodes`, `sopWorkflowId`, `sopWorkflowChoices`, `renderReqConfirm`} {
+	for _, want := range []string{`/api/issues/import-tapd`, `openImportTAPDModal`, `fillImportTAPDWorkflow`, `fillImportTAPDRepository`, `selectedImportTAPDRepositoryIds`, `renderImportTAPDRepositoryPicker`, `repositoryIds`, `请至少选择一个代码仓库`, `importTAPDStory`, `clarificationNeedsConfirm`, `data-dtab="clarify"`, `确认结论`, `issueClarifyJobs`, `attachIssueClarifyStream`, `关闭网页也不会中断`, `clarifyOptionLabel`, `clarifyQuestionOptions`, `createIssueFromChat`, `projectTAPDReady`, `reqCreate`, `setReqTarget`, `pushIssueToTAPDFromDetail`, `dashImportTAPD`, `run-id-copy`, `data-export-logs`, `从这里重跑`, `重新触发`, `data-retrigger-issue`, `data-rerun-from-here`, `canRetriggerIssue`, `openRerunFromNode`, `executionContext?.issueId`, `run?.status==='succeeded'`, `/api/issues/${encodeURIComponent(issueId)}/requirement`, `inferSOPLane`, `req-lane-card`, `issueLaneDots`, `.filter(l=>!l.orphan)`, `lanes.length<2`, `collapseSingleSOPLane`, `issueSOPLabel`, `actionWorkflow`, `data-workflow`, `workflowSOPLane`, `需求开发`, `saveIssueSOPS`, `/sops`, `effectiveIssueSOPBindings`, `projectSOPBindings`, `fillReqWorkflow`, `plannedSOPNodes`, `sopWorkflowId`, `sopWorkflowChoices`, `renderReqConfirm`} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("app.js is missing %q", want)
 		}

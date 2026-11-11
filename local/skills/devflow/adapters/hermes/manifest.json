@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "id": "hermes",
+  "compatibility": {
+    "verified_on": "2026-11-09",
+    "product": "Nous Research Hermes Agent",
+    "version_policy": "Current stable Hermes releases exposing project-local skills, hermes skills trust, and delegate_task; no private-version pin",
+    "capabilities": ["project-local-skills", "hermes-skills-trust", "delegate_task"],
+    "documentation": "https://github.com/NousResearch/hermes-agent"
+  },
+  "dispatch_tool": "delegate_task",
+  "topology": "spawn",
+  "stage_executor": "dynamic",
+  "research_executor": "dynamic",
+  "required_tools": ["delegate_task"]
+}

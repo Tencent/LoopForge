@@ -34,7 +34,7 @@
   <link rel="stylesheet" href="/app/harness-motion.css">
   <link rel="stylesheet" href="/app/sliding-tabs.css">
   <link rel="stylesheet" href="/app/mcp.css">
-  <link rel="stylesheet" href="/app/flow-canvas.css?v=20261030fd3">
+  <link rel="stylesheet" href="/app/flow-canvas.css?v=20261109cli">
   <link rel="stylesheet" href="/app/page-feedback.css">
   <link rel="stylesheet" href="/app/assistant-settings.css">
   <link rel="stylesheet" href="/preferences.css">
@@ -607,7 +607,7 @@
       <aside id="aiOrchestrator" class="ai-orchestrator fd-ai-panel" hidden>
         <div class="ai-orchestrator-head">
           <b><span data-fd-ic="sparkles" data-s="15"></span>AI 编排助手</b>
-          <div><button type="button" id="aiOrchestratorReset" class="fd-icon-btn" data-tip="新对话"><span data-fd-ic="plus"></span></button><button type="button" id="closeAIOrchestrator" class="fd-icon-btn" data-tip="收起"><span data-fd-ic="x"></span></button></div>
+          <div><button type="button" id="aiOrchestratorReset" aria-label="新对话" class="fd-icon-btn" data-tip="新对话"><span data-fd-ic="plus"></span></button><button type="button" id="closeAIOrchestrator" aria-label="收起编排助手" class="fd-icon-btn" data-tip="收起"><span data-fd-ic="x"></span></button></div>
         </div>
         <div id="aiOrchestratorLog" class="ai-orchestrator-log">
           <div id="aiOrchestratorIntro" class="ai-orchestrator-intro">
@@ -620,10 +620,34 @@
         <div id="aiBuildStatus" class="ai-build-status" hidden></div>
         <form id="aiOrchestratorForm" class="ai-orchestrator-form">
           <div class="ai-orchestrator-box">
-            <textarea id="aiOrchestratorInput" rows="3" maxlength="2000" placeholder="告诉我你的目标，我来搞定…"></textarea>
-            <button class="ai-orchestrator-send" type="submit" data-tip="在画布上编排"><span data-fd-ic="arrowUp" data-s="15"></span></button>
+            <textarea id="aiOrchestratorInput" rows="3" maxlength="2000" aria-label="描述要编排的流程" placeholder="告诉我你的目标，我来搞定…"></textarea>
+            <div class="ai-orchestrator-toolbar">
+              <div id="aiOrchestratorRuntime" class="ai-orchestrator-runtime">
+                <div id="aiOrchestratorCLIPicker" class="ai-orchestrator-picker">
+                  <button type="button" class="ai-model-toggle" data-model-toggle aria-label="选择 CLI" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiOrchestratorCLIs">
+                    <span class="ai-model-icon"></span><span data-model-label>CLI</span><span class="ai-model-caret" aria-hidden="true"></span>
+                  </button>
+                  <div class="ai-model-menu" hidden>
+                    <input type="search" data-model-search aria-label="搜索 CLI" placeholder="搜索 CLI…">
+                    <div id="aiOrchestratorCLIs" role="listbox" aria-label="CLI"></div>
+                    <p data-model-empty hidden>没有匹配的 CLI</p>
+                  </div>
+                </div>
+                <div id="aiOrchestratorModelPicker" class="ai-orchestrator-picker">
+                  <button type="button" class="ai-model-toggle" data-model-toggle aria-label="选择模型" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiOrchestratorModels">
+                    <span class="ai-model-icon"></span><span data-model-label>模型</span><span class="ai-model-caret" aria-hidden="true"></span>
+                  </button>
+                  <div class="ai-model-menu" hidden>
+                    <input type="search" data-model-search aria-label="搜索模型" placeholder="搜索模型…">
+                    <div id="aiOrchestratorModels" role="listbox" aria-label="模型"></div>
+                    <p data-model-empty hidden>没有匹配的模型</p>
+                  </div>
+                </div>
+              </div>
+              <button class="ai-orchestrator-send" type="submit" aria-label="发送编排要求" data-tip="在画布上编排"><span data-fd-ic="arrowUp" data-s="15"></span></button>
+            </div>
           </div>
-          <small>AI 只生成草稿，不会自动发布</small>
+          <small>仅生成草稿 · 切换 CLI 开启新对话，保留画布</small>
         </form>
       </aside>
         </div>
@@ -1213,16 +1237,21 @@
               <p class="schedule-field-hint">可填写 1–10，留空默认 10；其余需求在后续执行时继续触发。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
-              <label>模型</label>
-              <div class="schedule-model-field" id="scheduleModelPicker">
-                <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-                  <span class="ai-model-icon" data-family="glm">智</span>
-                  <span data-model-label>GLM-5.3-Flash</span>
-                  <span class="ai-model-caret" aria-hidden="true"></span>
-                </button>
-                <div class="ai-model-menu" hidden role="listbox"></div>
+              <label for="scheduleEngine">CLI 与模型</label>
+              <div class="schedule-model-row">
+                <select id="scheduleEngine" class="select" name="assistantEngine" aria-label="执行 CLI">
+                  <option value="codebuddy">CodeBuddy</option>
+                </select>
+                <div class="schedule-model-field" id="scheduleModelPicker">
+                  <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false" aria-label="模型">
+                    <span class="ai-model-icon" data-family="glm">智</span>
+                    <span data-model-label>GLM-5.3-Flash</span>
+                    <span class="ai-model-caret" aria-hidden="true"></span>
+                  </button>
+                  <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
+                </div>
               </div>
-              <p class="schedule-field-hint">与 AI 助手相同的 CodeBuddy 模型，用项目 Owner 的 Key 调用。</p>
+              <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用项目 Owner 在所选 CLI 上配置的 Key 执行。</p>
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>
@@ -1292,7 +1321,7 @@
         <div class="code-editor-gutter" id="codeEditorGutter" aria-hidden="true">1</div>
         <div class="code-editor-viewport" id="codeEditorViewport">
           <pre class="code-editor-highlight" id="codeEditorHighlight" aria-hidden="true"></pre>
-          <textarea id="codeEditorTextarea" class="code-editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+          <textarea id="codeEditorTextarea" class="code-editor-textarea" wrap="off" aria-label="脚本内容" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
         </div>
       </div>
       <div class="code-editor-footer">
@@ -1398,6 +1427,6 @@
   <script src="/knowledge.js?v=20261030r2"></script>
   </div>
   </div>
-  <script src="/orchestrate.js?v=20260928r4"></script>
+  <script src="/orchestrate.js?v=20261109cli"></script>
 </body>
 </html>

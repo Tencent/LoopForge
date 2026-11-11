@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/procwatch"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
@@ -67,7 +68,18 @@ func (e *Engine) preparationSink(runID string) runtime.EventSink {
 	}
 }
 
+// withPreparationProgress records clone and image-build steps on the run while
+// they happen. A conversation workspace has no nodes, so these events are the
+// only place a slow or failed checkout or build shows up.
+func (e *Engine) withPreparationProgress(ctx context.Context, runID string) context.Context {
+	return procwatch.WithObserver(ctx, func(event procwatch.Event) {
+		e.AppendRunEvent(runID, "workspace."+event.Stage+"."+string(event.Kind), event.Message)
+	})
+}
+
 func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, env *runEnvironment) (runtime.WorkspacePreparationStatus, error) {
+	// The first sandbox call below builds the Docker image when it is missing.
+	ctx = e.withPreparationProgress(ctx, run.ID)
 	env.preparing.Store(true)
 	defer env.preparing.Store(false)
 	// Caller owns env.nodeMu so reconstruction is serialized without turning
@@ -418,10 +430,10 @@ func (e *Engine) recordNodeWorkspacePreparation(ctx context.Context, run domain.
 		}
 		return nil
 	}
-	if run.IsWorkspace() {
-		env.nodeMu.Lock()
-		defer env.nodeMu.Unlock()
-	}
+	// The receipt is read-modify-written; parallel branches no longer hold
+	// nodeMu while executing, so take it for the record itself.
+	env.nodeMu.Lock()
+	defer env.nodeMu.Unlock()
 	_, err := runtime.RecordWorkspacePreparation(ctx, env.sandbox, runtime.WorkspacePreparationWorkflow(run.WorkflowSnapshot), run.RepositoryContexts(), node.ID, output)
 	return err
 }

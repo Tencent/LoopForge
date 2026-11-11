@@ -33,8 +33,8 @@ function issueSelectAllCheckbox(label,showLabel=false){
 function issueSelectionCheckbox(issue){
   if(!state.issueSelectionMode)return '';
   const allowed=issueCanDelete(issue),disabled=state.issueBulkDeleting||!allowed;
-  const hint=allowed?'选择此需求':'澄清或执行中、已有成功记录的需求不能删除';
-  return `<label class="issue-select-label" title="${hint}" draggable="false"><input type="checkbox" class="issue-select-checkbox" data-issue-select="${escapeHTML(issue.id)}" aria-label="选择需求 ${escapeHTML(issue.title||issue.id)}"${state.issueSelection?.has(issue.id)?' checked':''}${disabled?' disabled':''}></label>`;
+  const hint=allowed?'选择此需求':issueDeletionBlock(issue).reason;
+  return `<label class="issue-select-label" title="${escapeHTML(hint)}" draggable="false"><input type="checkbox" class="issue-select-checkbox" data-issue-select="${escapeHTML(issue.id)}" aria-label="选择需求 ${escapeHTML(issue.title||issue.id)}${allowed?'':`：${escapeHTML(hint)}`}"${state.issueSelection?.has(issue.id)?' checked':''}${disabled?' disabled':''}></label>`;
 }
 
 function renderIssueBulkActions(visibleIssues){
@@ -46,10 +46,13 @@ function renderIssueBulkActions(visibleIssues){
   const selected=state.issueSelection.size,busy=state.issueBulkDeleting,progress=state.issueBulkDeleteProgress,result=state.issueBulkDeleteResult;
   const scope=state.issueView==='kanban'?'全选当前可删除需求':'全选本页可删除需求';
   const buttonText=busy?(progress?`正在删除 ${progress.completed}/${progress.total}…`:'等待确认…'):'删除所选';
+  const blocked=visibleIssues.filter(i=>!issueCanDelete(i));
+  const reasonsOpen=host.querySelector('.issue-bulk-blocked')?.open;
   host.innerHTML=`<div class="issue-bulk-toolbar">
     <div class="issue-bulk-summary">${issueSelectAllCheckbox(scope,true)}<span aria-live="polite">已选择 <b>${selected}</b> 项</span><small>可跨页选择；切换筛选条件会清空选择</small></div>
     <div class="issue-bulk-buttons"><button type="button" class="button ghost small" data-issue-cancel-selection${busy?' disabled':''}>取消</button><button type="button" class="button ghost small" data-issue-clear-selection${!selected||busy?' disabled':''}>清空选择</button><button type="button" class="button danger-outline small" data-issue-bulk-delete${!selected||busy?' disabled':''}>${buttonText}</button></div>
-  </div>${result?.failures.length?`<details class="issue-bulk-result" open><summary>已删除 ${result.deleted} 条，${result.failures.length} 条未删除</summary><ul>${result.failures.map(f=>`<li><b>${escapeHTML(f.title||f.id)}</b>：${escapeHTML(f.message)}</li>`).join('')}</ul></details>`:''}`;
+  </div>${blocked.length?`<details class="issue-bulk-blocked"${reasonsOpen?' open':''}><summary>当前列表 ${blocked.length} 项不可删除，查看原因</summary><ul>${blocked.map(i=>`<li><div><b>${escapeHTML(i.title||i.id)}</b><p>${escapeHTML(issueDeletionBlock(i).reason)}</p></div>${issueDeletionContextHTML(i)}</li>`).join('')}</ul></details>`:''}${result?.failures.length?`<details class="issue-bulk-result" open><summary>已删除 ${result.deleted} 条，${result.failures.length} 条未删除</summary><ul>${result.failures.map(f=>`<li><b>${escapeHTML(f.title||f.id)}</b>：${escapeHTML(f.message)}</li>`).join('')}</ul></details>`:''}`;
+  bindIssueDeletionContext(host);
   host.querySelector('[data-issue-cancel-selection]').onclick=()=>setIssueSelectionMode(false);
   host.querySelector('[data-issue-clear-selection]').onclick=()=>{state.issueSelection.clear();renderIssueBulkActions(visibleIssues);bindIssueSelection(visibleIssues)};
   host.querySelector('[data-issue-bulk-delete]').onclick=deleteSelectedIssues;

@@ -195,6 +195,16 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--session-id", resume)
 		}
 		argv = append(append(argv, extra...), prompt)
+	case AgentCLIZCode:
+		disallowed := zcodeSOPDisallowedTools
+		if o.Chat {
+			disallowed = zcodeChatDisallowedTools
+		}
+		argv = []string{binary, "--prompt", prompt, "--output-format", "stream-json", "--mode", "yolo", "--no-color", "--disallowed-tools", disallowed}
+		if resume != "" {
+			argv = append(argv, "--resume", resume)
+		}
+		argv = append(argv, extra...)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
 }

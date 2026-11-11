@@ -87,7 +87,7 @@ test('issue model derives lanes, health, stages, outcomes, and action markup', a
   assert.deepEqual(result.chips, ['需要介入','修复','未指定 · +1']);
   const edge = structuredClone(app.evaluate(`(() => {
     const base={id:'edge',projectId:'p1',title:'Edge',source:'local',kind:'requirement',
-      status:'backlog',workflowId:'wf-product',clarification:{status:'ready',passed:true,score:90}};
+      status:'backlog',workflowId:'wf-product',clarification:{status:'ready'}};
     state.data.issues=[base];state.data.tasks=[];state.data.runs=[];
     const stages=[];
     stages.push(issueCurrentStage({...base,status:'closed',closeSource:'manual'}).label);
@@ -101,23 +101,29 @@ test('issue model derives lanes, health, stages, outcomes, and action markup', a
     state.data.runs=[{id:'cancel',workflowId:'wf-product',status:'cancelled',
       executionContext:{issueId:'edge'},nodes:{p1:{status:'cancelled'}}}];
     stages.push(issueCurrentStage(base).label);
+    state.data.tasks=[];state.data.runs=[];
+    const asked={...base,clarification:{status:'in_progress',questions:[{id:'q1',question:'Q?',options:['A','B']}]}};
+    stages.push(issueCurrentStage(asked).label,issueCurrentStage(asked).key,issueRunHealth(asked));
+    stages.push(issueCurrentStage({...base,clarification:{status:'in_progress',questions:[]}}).label);
+    const askedTrigger=triggerSOPButton(asked);
     const actionKinds=[
       issueActionButtons({...base,status:'closed',closeSource:'manual'}),
       issueActionButtons({...base,clarification:{status:'analyzing'}}),
-      issueActionButtons({...base,clarification:{status:'needs_user',score:20,gated:true}})
+      issueActionButtons({...base,clarification:{status:'needs_user',gated:true}})
     ];
     const triggers=[
       triggerSOPButton({...base,clarification:{status:'ready',writeBackStatus:'pending'},source:'tapd',
         externalRef:{externalId:'T-1'}}),
-      triggerSOPButton({...base,clarification:{status:'needs_user',score:20,gated:true}})
+      triggerSOPButton({...base,clarification:{status:'needs_user',gated:true}})
     ];
-    return {stages,actionKinds,triggers,externals:[
+    return {stages,actionKinds,triggers,askedTrigger,externals:[
       issueExternalState({externalRef:{externalState:' 已关闭 '}}),
       issueExternallyDone({externalRef:{externalState:'已完成'}}),
       issueInPlanning({externalRef:{externalState:'planning'}})
     ]};
   })()`));
-  assert.deepEqual(edge.stages, ['已关闭','已完成','澄清完成 · 90 分','排队中','交付闭环','已取消 · 定义']);
+  assert.deepEqual(edge.stages, ['已关闭','已完成','澄清已完成','排队中','交付闭环','已取消 · 定义','待澄清','clarifying','not_started','等待执行']);
+  assert.match(edge.askedTrigger, /data-dispatch-issue/);
   assert.match(edge.actionKinds.join(' '), /更多操作/);
   assert.match(edge.triggers[0], /确认结论/);
   assert.match(edge.triggers[1], /触发/);

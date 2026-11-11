@@ -62,6 +62,39 @@ class WorkflowModesE2E(unittest.TestCase):
         self.assertEqual(["REQUIREMENT"], [e["stage"] for e in events(project, "approved")])
         self.assert_code_fixed(project)
 
+    def test_dsh_medium_workflow_uses_the_subagent_adapter(self):
+        project = self.install("dsh")
+        h.fake_agent("dsh", project, check_rc=0)
+        state = h.workflow_state(project)
+        self.assertEqual("completed", state["status"])
+        self.assertEqual("dsh", state["host_adapter"])
+        self.assertEqual("isolated", state["execution_mode"])
+        self.assertTrue(events(project, "spawned"))
+
+    def test_dsh_can_record_single_context_fallback(self):
+        project = self.install("dsh")
+        state_file = h.run_workflow(
+            project, "init", "--project-root", project, "--slug", "dsh-fallback",
+            "--size", "medium", "--mode", "auto", "--execution-mode", "single-context",
+            "--fallback-reason", "subagent tool unavailable",
+        ).stdout.strip()
+        result = h.fake_agent("dsh", project, "--slug", "dsh-fallback", "--resume", check_rc=0)
+        self.assertEqual(0, result.returncode)
+        state = h.workflow_state(project, "dsh-fallback")
+        self.assertEqual("single-context", state["execution_mode"])
+        self.assertEqual("subagent tool unavailable", state["fallback_reason"])
+        self.assertTrue(events(project, "fallback"))
+
+    def test_hermes_medium_workflow_uses_delegate_task_adapter(self):
+        project = self.install("hermes")
+        h.fake_agent("hermes", project, check_rc=0)
+        state = h.workflow_state(project)
+        self.assertEqual("completed", state["status"])
+        self.assertEqual("hermes", state["host_adapter"])
+        self.assertEqual("isolated", state["execution_mode"])
+        self.assertTrue(events(project, "spawned"))
+        self.assertTrue((project / ".hermes/skills/devflow/adapters/hermes/manifest.json").is_file())
+
     def test_large_task_runs_the_knowledge_stage_when_it_has_value(self):
         project = self.install("codex")
         h.fake_agent("codex", project, "--size", "large", "--knowledge", "run", check_rc=0)

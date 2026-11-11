@@ -243,6 +243,7 @@ func BuiltInExecutors() []domain.ExecutorDefinition {
 		{ID: "kimi", Name: "Kimi Code", Kind: "kimi", Binary: "kimi", Protocol: "stream-json"},
 		{ID: "pi", Name: "Pi", Kind: "pi", Binary: "pi", Protocol: "stream-json"},
 		{ID: "dsh", Name: "DeepSeek Harness", Kind: "dsh", Binary: "dsh", Protocol: "stream-json"},
+		{ID: "zcode", Name: "ZCode", Kind: "zcode", Binary: "zcode", Protocol: "stream-json"},
 	}
 }
 
@@ -413,6 +414,61 @@ func (r *CatalogRepo) storedWorkflow(id string) (domain.WorkflowDefinition, bool
 }
 
 func (r *CatalogRepo) PutWorkflow(v domain.WorkflowDefinition) error {
+	return r.putWorkflow(v, false)
+}
+
+func workflowContent(v domain.WorkflowDefinition) string {
+	v.Revision, v.PublishedRevision = 0, 0
+	v.CreatedAt, v.UpdatedAt = time.Time{}, time.Time{}
+	return string(mustJSON(v))
+}
+
+func workflowPublishedRevision(v domain.WorkflowDefinition) int {
+	if v.PublishedRevision == 0 && v.Status == "published" {
+		return v.Revision // Legacy published definitions predate this marker.
+	}
+	return v.PublishedRevision
+}
+
+func workflowNeedsPublish(v domain.WorkflowDefinition) bool {
+	return v.Status != "published" || workflowPublishedRevision(v) != v.Revision
+}
+
+// PublishWorkflow is idempotent until the saved definition changes.
+func (r *CatalogRepo) PublishWorkflow(id string) (domain.WorkflowDefinition, error) {
+	var published domain.WorkflowDefinition
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row struct{ ID string }
+		if err := r.locking(tx.Table("workflows")).Select("id").Where("id = ?", id).Take(&row).Error; err != nil {
+			return err
+		}
+		catalog := *r
+		catalog.deps = &deps{DB: tx}
+		var err error
+		published, err = catalog.publishStoredWorkflow(id)
+		return err
+	})
+	return published, err
+}
+
+func (r *CatalogRepo) publishStoredWorkflow(id string) (domain.WorkflowDefinition, error) {
+	v, ok := r.storedWorkflow(id)
+	if !ok {
+		return domain.WorkflowDefinition{}, errors.New("workflow not found")
+	}
+	if !workflowNeedsPublish(v) {
+		return v, nil
+	}
+	v.Status = "published"
+	v.Version++
+	if err := r.putWorkflow(v, true); err != nil {
+		return domain.WorkflowDefinition{}, err
+	}
+	stored, _ := r.storedWorkflow(id)
+	return stored, nil
+}
+
+func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) error {
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return errors.New("workflow id and name are required")
 	}
@@ -436,12 +492,17 @@ func (r *CatalogRepo) PutWorkflow(v domain.WorkflowDefinition) error {
 		if v.Revision != old.Revision {
 			return fmt.Errorf("workflow revision conflict: current revision is %d", old.Revision)
 		}
+		if !publishing && workflowContent(v) == workflowContent(old) {
+			return nil
+		}
+		v.PublishedRevision = workflowPublishedRevision(old)
 		v.Revision = old.Revision + 1
 		v.CreatedAt = old.CreatedAt
 		if v.Version == 0 {
 			v.Version = old.Version
 		}
 	} else {
+		v.PublishedRevision = 0
 		v.Revision = 1
 		v.CreatedAt = now
 		if v.Version == 0 {
@@ -453,6 +514,9 @@ func (r *CatalogRepo) PutWorkflow(v domain.WorkflowDefinition) error {
 	}
 	if v.Status == "" {
 		v.Status = "draft"
+	}
+	if publishing {
+		v.PublishedRevision = v.Revision
 	}
 	v.UpdatedAt = now
 	if ok {

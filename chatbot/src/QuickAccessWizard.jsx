@@ -10,7 +10,7 @@ import React, {
 import { createPortal } from "react-dom";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
-import { api, canChatInProject, write } from "./api";
+import { api, canChatInProject, canManageProjectRepos, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
 import {
   CODEBUDDY_ENVIRONMENTS,
@@ -854,6 +854,13 @@ export default function QuickAccessWizard({
     [editableProjects, selectedProjectId],
   );
 
+  // A member can work in a shared project (e.g. the welcome project) without
+  // owning it; binding a repository there would only fail at the last step.
+  const repoBindBlocked =
+    projectMode === "existing" &&
+    Boolean(currentProject) &&
+    !canManageProjectRepos(currentProject, storedUser || user);
+
   const projectRepos = useMemo(
     () =>
       currentProject
@@ -1263,6 +1270,12 @@ export default function QuickAccessWizard({
         setError("请选择一个项目，或切换到新建项目。");
         return;
       }
+      if (bindRepoNow && repoUrl.trim() && repoBindBlocked) {
+        setError(
+          `你不是「${currentProject?.name || "该项目"}」的 Owner，不能为它绑定仓库。请新建自己的项目并绑定，或关闭「绑定仓库」继续体验。`,
+        );
+        return;
+      }
       if (bindRepoNow && repoUrl.trim() && !parsedRepo) {
         setError(
           "仓库地址无法识别，请粘贴 GitHub 仓库链接（https://github.com/owner/repo）或 github:owner/repo。",
@@ -1320,7 +1333,7 @@ export default function QuickAccessWizard({
       }
 
       let boundRepo = defaultRepo;
-      if (bindRepoNow && parsedRepo && targetProject?.id) {
+      if (bindRepoNow && parsedRepo && targetProject?.id && !repoBindBlocked) {
         const existingRepo = (repositories || []).find(
           (repo) =>
             repo.projectId === targetProject.id &&
@@ -2059,6 +2072,39 @@ export default function QuickAccessWizard({
                         >
                           <div className="qa-collapse-inner">
                             <div className="qa-cred-body">
+                              {repoBindBlocked ? (
+                                <div
+                                  className="qa-hint is-warn qa-repo-permission"
+                                  role="note"
+                                >
+                                  <p>
+                                    「{currentProject?.name}」是已有项目，只有它的
+                                    Owner 或平台管理员可以绑定仓库。你可以：
+                                  </p>
+                                  <div className="qa-repo-permission-actions">
+                                    <button
+                                      type="button"
+                                      className="qa-link-btn"
+                                      onClick={() => {
+                                        setError("");
+                                        setProjectMode("create");
+                                      }}
+                                    >
+                                      新建自己的项目并绑定
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="qa-link-btn"
+                                      onClick={() => {
+                                        setError("");
+                                        setBindRepoNow(false);
+                                      }}
+                                    >
+                                      跳过绑定，继续体验
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
                               <div className="qa-repo-grid">
                                 <label className="qa-field">
                                   <span className="qa-label">
@@ -2261,11 +2307,11 @@ export default function QuickAccessWizard({
                               <span className="qa-dot is-ok" />
                               <span>
                                 {projectMode === "create"
-                                  ? newProjectName || "新项目"
-                                  : currentProject?.name || "当前项目"}
+                                  ? `新建项目「${newProjectName || "新项目"}」`
+                                  : `使用已有项目「${currentProject?.name || "当前项目"}」`}
                                 {" · "}
-                                {bindRepoNow && parsedRepo
-                                  ? parsedRepo.name
+                                {bindRepoNow && parsedRepo && !repoBindBlocked
+                                  ? `绑定 ${parsedRepo.name}`
                                   : defaultRepo?.name || "运行时指定仓库"}
                               </span>
                             </dd>

@@ -327,6 +327,9 @@ func assistantRunProblems(run domain.Run, owner string, limit int) []assistantRu
 			out = append(out, assistantRunProblem{NodeID: id, NodeName: name, Kind: "waiting_approval", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
 		}
 	}
+	if run.IsWorkspace() {
+		out = append(out, workspacePreparationProblems(run, owner, limit)...)
+	}
 	if len(out) == 0 && run.Status == "failed" {
 		reason := "运行失败，但没有节点记录错误"
 		for i := len(run.Events) - 1; i >= 0; i-- {
@@ -336,6 +339,51 @@ func assistantRunProblems(run domain.Run, owner string, limit int) []assistantRu
 			}
 		}
 		out = append(out, assistantRunProblem{Kind: "failed", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
+	}
+	return out
+}
+
+// workspacePreparationStages are the steps the engine records on a run as
+// workspace.<stage>.<started|progress|completed|failed> events, in the order
+// they run.
+var workspacePreparationStages = []struct{ key, name string }{
+	{"clone", "克隆仓库"},
+	{"image", "构建沙箱镜像"},
+	{"preparation", "工作区准备脚本"},
+}
+
+// workspacePreparationProblems reports each preparation stage whose latest
+// attempt failed. A conversation workspace has no nodes, so without this a
+// failed clone or image build left problems empty. A later start or success
+// of the same stage clears the failure.
+func workspacePreparationProblems(run domain.Run, owner string, limit int) []assistantRunProblem {
+	failed := map[string]string{}
+	for _, event := range run.Events {
+		rest, ok := strings.CutPrefix(event.Type, "workspace.")
+		if !ok {
+			continue
+		}
+		stage, kind, ok := strings.Cut(rest, ".")
+		if !ok {
+			continue
+		}
+		switch kind {
+		case "failed":
+			failed[stage] = strings.TrimSpace(event.Message)
+		case "started", "completed":
+			delete(failed, stage)
+		}
+	}
+	var out []assistantRunProblem
+	for _, stage := range workspacePreparationStages {
+		reason, ok := failed[stage.key]
+		if !ok {
+			continue
+		}
+		if reason == "" {
+			reason = stage.name + "失败"
+		}
+		out = append(out, assistantRunProblem{NodeName: stage.name, Kind: "failed", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
 	}
 	return out
 }

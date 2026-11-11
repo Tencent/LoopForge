@@ -375,35 +375,17 @@ function highlightShell(src){
 }
 
 function highlightPython(src){
-  const lines=src.split('\n');
-  return lines.map(line=>{
-    let commentIdx=-1;
-    let inSingle=false, inDouble=false;
-    for(let i=0;i<line.length;i++){
-      const ch=line[i];
-      if(ch==="'"&&!inDouble) inSingle=!inSingle;
-      else if(ch==='"'&&!inSingle&&(i===0||line[i-1]!=='\\')) inDouble=!inDouble;
-      else if(ch==='#'&&!inSingle&&!inDouble){
-        commentIdx=i;
-        break;
-      }
-    }
-    let codePart=commentIdx>=0?line.slice(0, commentIdx):line;
-    let comment=commentIdx>=0?line.slice(commentIdx):'';
-
-    let html=escapeHTML(codePart);
-    html=html.replace(/(&quot;[\s\S]*?&quot;|&#39;[\s\S]*?&#39;)/g, '<span class="tok-str">$1</span>');
-    html=html.replace(/\b(def|class|import|from|return|if|elif|else|for|while|try|except|finally|with|as|lambda|pass|raise|yield|async|await|assert|break|continue|global|nonlocal|del|in|is|not|and|or)\b/g, '<span class="tok-kw">$1</span>');
-    html=html.replace(/\b(print|len|range|str|int|float|dict|list|set|tuple|bool|open|isinstance|issubclass|type|enumerate|zip|map|filter|sum|min|max|any|all|abs|round|input)\b/g, '<span class="tok-built">$1</span>');
-    html=html.replace(/\b(True|False|None)\b/g, '<span class="tok-cmd">$1</span>');
-    html=html.replace(/(@[a-zA-Z_0-9.]+)/g, '<span class="tok-var">$1</span>');
-    html=html.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-num">$1</span>');
-
-    if(comment){
-      html+=`<span class="tok-comment">${escapeHTML(comment)}</span>`;
-    }
-    return html;
-  }).join('\n');
+  // Tokenize the source once: later replacements must never rewrite generated
+  // span attributes (Python's "class" and "str" are also words in that markup).
+  const tokens=/(#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b(?:def|class|import|from|return|if|elif|else|for|while|try|except|finally|with|as|lambda|pass|raise|yield|async|await|assert|break|continue|global|nonlocal|del|in|is|not|and|or)\b)|(\b(?:print|len|range|str|int|float|dict|list|set|tuple|bool|open|isinstance|issubclass|type|enumerate|zip|map|filter|sum|min|max|any|all|abs|round|input)\b)|(\b(?:True|False|None)\b)|(@[a-zA-Z_0-9.]+)|(\b\d+(?:\.\d+)?\b)/g;
+  const classes=['comment','str','kw','built','cmd','var','num'];
+  let html='',offset=0;
+  for(const match of src.matchAll(tokens)){
+    const kind=match.slice(1).findIndex(value=>value!==undefined);
+    html+=escapeHTML(src.slice(offset,match.index))+`<span class="tok-${classes[kind]}">${escapeHTML(match[0])}</span>`;
+    offset=match.index+match[0].length;
+  }
+  return html+escapeHTML(src.slice(offset));
 }
 
 function highlightJSON(src){
@@ -626,6 +608,7 @@ function openCodeEditorModal({ title, subtitle, language='shell', value='', onSa
   card?.classList.remove('fullscreen');
 
   textarea.value=value;
+  textarea.scrollTop=textarea.scrollLeft=0;
 
   function updateView(){
     const text=textarea.value;
@@ -641,6 +624,7 @@ function openCodeEditorModal({ title, subtitle, language='shell', value='', onSa
     const curLine=beforeCursor.split('\n').length;
     const curCol=selStart - beforeCursor.lastIndexOf('\n');
     stats.textContent=`行 ${curLine}，列 ${curCol} · 共 ${lineCount} 行 · ${text.length} 字符`;
+    syncScroll();
   }
 
   function syncScroll(){

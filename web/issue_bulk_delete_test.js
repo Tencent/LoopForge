@@ -18,6 +18,8 @@ function setup(items, options = {}) {
     issueSelectionMode:false, issueSelection:new Set(), issueBulkDeleting:false, issueView:'table'};
   const c = {state, Set, escapeHTML, $:s => s === '#issueBulkActions' ? host : s === '#startIssueSelection' ? (buttons[s] ||= {}) : root,
     issueCanDelete:i => i?.deletionAllowed === true && i.clarification?.status !== 'analyzing',
+    issueDeletionBlock:i => i.deletionBlock || {reason:'暂时无法确认删除条件，请刷新后重试'},
+    issueDeletionContextHTML:() => '', bindIssueDeletionContext:() => {},
     filteredIssues:() => state.data.issues.filter(i => !state.projectFilter || i.projectId === state.projectFilter),
     toast:(...args) => notices.push(args),
     afConfirm:async opts => {calls.push(['confirm',opts]);return options.confirm !== false;},

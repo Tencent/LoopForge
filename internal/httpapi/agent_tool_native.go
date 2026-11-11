@@ -229,7 +229,7 @@ func startAgentToolSession(ctx context.Context, user domain.User, projectID stri
 		ProjectID:    projectID,
 		Mode:         mode,
 		IssueID:      issueID,
-		ExpiresAt:    time.Now().Add(agentToolSessionTTL(ctx)),
+		ctx:          ctx,
 		MCPServers:   servers,
 		User:         user,
 		ExecMode:     exec,

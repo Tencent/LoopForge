@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -255,52 +254,11 @@ func (w *generationHTTPWriter) Write(p []byte) (int, error) {
 func (w *generationHTTPWriter) Flush() {}
 
 func (h *assistantHandlers) executeGeneration(parent context.Context, req assistantRequest, g domain.AssistantGeneration, actor *auth.User) {
-	ctx, cancel := context.WithTimeout(parent, assistantChatTimeout)
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	var mu sync.Mutex
-	sequence := 0
-	eventBytes := 0
-	var projection assistantStreamProjection
-	live := &assistantLiveGeneration{changed: make(chan struct{})}
-	live.read = func() domain.AssistantGeneration {
-		mu.Lock()
-		defer mu.Unlock()
-		copy := g
-		copy.Events = append([]domain.AssistantGenerationEvent(nil), g.Events...)
-		copy.Stream = projection.snapshot(sequence)
-		return copy
-	}
-	assistantLiveGenerations.Store(g.ID, live)
-	defer assistantLiveGenerations.Delete(g.ID)
-	sink := func(kind string, value any) {
-		mu.Lock()
-		defer func() { mu.Unlock(); live.publish() }()
-		raw, _ := json.Marshal(value)
-		switch kind {
-		case "thought":
-			if len(raw) > 256<<10 {
-				return
-			}
-			sequence++
-			projection.add(raw)
-			eventBytes += len(raw)
-			g.Events = append(g.Events, domain.AssistantGenerationEvent{Sequence: sequence, Data: raw})
-			for len(g.Events) > 500 || eventBytes > 2<<20 {
-				eventBytes -= len(g.Events[0].Data)
-				g.Events = g.Events[1:]
-			}
-		case "result":
-			g.Reply = raw
-		case "workspace_warning":
-			g.WorkspaceWarning = fmt.Sprint(value)
-		case "error":
-			var e struct {
-				Error string `json:"error"`
-			}
-			_ = json.Unmarshal(raw, &e)
-			g.Error = e.Error
-		}
-	}
+	rec := newAssistantGenerationRecorder(g)
+	defer rec.close()
+	sink := rec.sink
 	stopped := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -319,19 +277,14 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 				}
 				old, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID)
 				if ok && old.ID == g.ID && old.Steer != nil {
-					mu.Lock()
-					g.Steer = old.Steer
-					mu.Unlock()
+					rec.mu.Lock()
+					rec.g.Steer = old.Steer
+					rec.mu.Unlock()
 				}
 				if !ok || old.ID != g.ID || old.Status != "running" || old.CancelRequested {
 					cancel()
 				}
-				mu.Lock()
-				copy := g
-				copy.Events = append([]domain.AssistantGenerationEvent(nil), g.Events...)
-				copy.Stream = projection.snapshot(sequence)
-				mu.Unlock()
-				if err := h.repo.CheckpointAssistantGeneration(copy); err != nil {
+				if err := h.repo.CheckpointAssistantGeneration(rec.snapshot()); err != nil {
 					cancel()
 				}
 			}
@@ -359,7 +312,8 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	}()
 	close(stopped)
 	<-done
-	mu.Lock()
+	rec.mu.Lock()
+	g = rec.g
 	if req.workspaceToken != "" {
 		saveCtx, stop := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
 		if err := h.engine.EndConversationWorkspaceUse(saveCtx, req.RunID, req.workspaceToken); err != nil {
@@ -384,21 +338,18 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 		if ctx.Err() != nil {
 			g.Status = "cancelled"
 			g.Error = "生成已停止"
-			if ctx.Err() == context.DeadlineExceeded {
-				g.Status = "failed"
-				g.Error = "生成超时，尚未完成；已有执行记录已保留，请核对后继续。"
-			}
 		}
 	}
-	g.Stream = projection.snapshot(sequence)
+	rec.g = g
+	g = rec.snapshotLocked()
 	steer := g.Steer
-	mu.Unlock()
+	rec.mu.Unlock()
 	if steer == nil {
 		if latest, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID); ok && latest.ID == g.ID && latest.Steer != nil {
-			mu.Lock()
+			rec.mu.Lock()
 			g.Steer = latest.Steer
 			steer = latest.Steer
-			mu.Unlock()
+			rec.mu.Unlock()
 		}
 	}
 	// A stop or a mid-turn redirect keeps the paragraphs and tool rows written
@@ -412,7 +363,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	if err := h.repo.CheckpointAssistantGeneration(g); err != nil {
 		fmt.Printf("assistant generation checkpoint failed: %T\n", err)
 	}
-	live.publish()
+	rec.live.publish()
 	if steer != nil {
 		h.followSteer(parent, g, steer, actor)
 	} else if g.Status == "completed" {

@@ -282,9 +282,23 @@ func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user do
 	return engine + ":" + model
 }
 
-// assistantEngineModels lists the Codex / Claude Code models the user can
-// chat with: the list from 个人配置 when set, otherwise the models the Base
-// URL publishes, otherwise the built-in executor catalog.
+// assistantScheduledModel normalizes the model of an AI scheduled task on
+// save. The run uses the project owner's keys, not the editor's, so a
+// well-formed CLI model is kept as-is; the owner's key for that CLI is
+// checked when it runs.
+func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
+	engine, model := assistantModelEngine(id)
+	if engine != assistantEngineCodeBuddy && assistantValidEngineModel(model) {
+		return engine + ":" + model
+	}
+	return assistantAllowedModel(id, catalog)
+}
+
+// assistantEngineModels lists the models a configured CLI offers in chat.
+// A personal catalog wins on the official endpoint and behind a Base URL.
+// An empty catalog asks the Base URL for its published models, then falls
+// back to the built-in executor catalog. Gemini publishes no OpenAI-style
+// list, so an empty catalog there uses the built-in models directly.
 func assistantEngineModels(ctx context.Context, user domain.User) []assistantModel {
 	var out []assistantModel
 	for _, engine := range assistantCLIEngines() {
@@ -294,21 +308,16 @@ func assistantEngineModels(ctx context.Context, user domain.User) []assistantMod
 		}
 		protocol := assistantEngineProtocol(user, engine)
 		if protocol == runtime.AgentCLIProtocolGemini {
-			// A Gemini endpoint publishes no OpenAI-style model list.
 			baseURL = ""
 		}
-		// The official endpoint serves the CLI's own models, so a catalog
-		// only applies behind a Base URL.
 		var listed []assistantDiscoveredModel
-		if baseURL != "" {
-			for _, model := range assistantEngineCustomModels(user, engine) {
-				if assistantValidEngineModel(model.ID) {
-					listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
-				}
+		for _, model := range assistantEngineCustomModels(user, engine) {
+			if assistantValidEngineModel(model.ID) {
+				listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
 			}
-			if len(listed) == 0 {
-				listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
-			}
+		}
+		if len(listed) == 0 && baseURL != "" {
+			listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
 		}
 		if engine == runtime.AgentCLICursor {
 			listed = cachedCursorModels(key)
