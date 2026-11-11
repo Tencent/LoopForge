@@ -501,6 +501,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/submissions/:id/publish", api.know.publish)
 	g.POST("/api/knowledge/submissions/:id/reject", api.know.reject)
 	// 知识中心管理接口（内置引擎）：知识库/来源、托管文档、Git 来源、同步、试搜、读原文。
+	g.POST("/api/knowledge/bases/shared", api.know.sharedBases)
+	g.GET("/api/knowledge/bases/bindings", api.know.sharedBindings)
+	g.PUT("/api/knowledge/bases/bindings", api.know.sharedBindings)
 	g.GET("/api/knowledge/bases", api.know.basesOverview)
 	g.GET("/api/knowledge/bases/documents", api.know.basesDocuments)
 	g.POST("/api/knowledge/bases/documents", api.know.basesDocuments)

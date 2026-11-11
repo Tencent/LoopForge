@@ -48,7 +48,7 @@ func TestKnowledgeActivityWriteFailureDoesNotAffectToolCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutKnowledgeBase(domain.KnowledgeBase{ID: "a", Name: "a"}); err != nil {
+	if err := s.PutKnowledgeBase(domain.KnowledgeBase{ID: "a", Name: "a", ProjectID: "p1", Layer: "project"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutKnowledgeSource(domain.KnowledgeSource{ID: "a", BaseID: "a", Name: "a", Kind: "hosted"}); err != nil {
