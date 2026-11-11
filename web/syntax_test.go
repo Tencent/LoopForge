@@ -823,8 +823,40 @@ assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'ioa'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'ioa'});
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: ''}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: ''});
 assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: 'sk-1'}), {codexApiKey: 'sk-1'});
-assert.deepEqual(credentialClearPayload(cred.kind('codexApiKey')), {codexApiKeyClear: true, codexBaseUrl: ''});
-assert.deepEqual(credentialClearPayload(cred.kind('claudeCodeApiKey')), {claudeCodeApiKeyClear: true, claudeCodeBaseUrl: ''});
+assert.deepEqual(credentialSavePayload(cred.kind('claudeCodeApiKey'), {secret: '', extra: '', models: [{id: ' hy4 ', name: '混元 4'}, {id: 'glm-5', name: 'glm-5'}]}), {claudeCodeApiKey: '', claudeCodeBaseUrl: '', claudeCodeModels: [{id: 'hy4', name: '混元 4'}, {id: 'glm-5'}]});
+assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: '', extra: '', models: []}), {codexApiKey: '', codexBaseUrl: '', codexModels: []}, '恢复默认 sends an empty catalog');
+assert.deepEqual(credentialSavePayload(cred.kind('agentCli.opencode'), {secret: 'k', extra: 'https://gw.example/v1', protocol: 'messages', models: [{id: 'a', name: 'A'}]}), {agentCliCredentials: {opencode: {apiKey: 'k', baseUrl: 'https://gw.example/v1', protocol: 'messages', models: [{id: 'a', name: 'A'}]}}});
+assert.equal(cred.kind('agentCli.cursor').models, undefined, 'Cursor stays on its official models');
+assert.equal(cred.kind('agentCli.zcode').models.engine, 'zcode');
+assert.ok(credentialSubline(cred.kind('codexApiKey'), {codexApiKeyConfigured: true, codexModels: [{id: 'hy4'}, {id: 'gpt-5.5'}]}).includes('2 个自定义模型'));
+assert.deepEqual(credentialClearPayload(cred.kind('codexApiKey')), {codexApiKeyClear: true, codexBaseUrl: '', codexModels: []});
+assert.deepEqual(credentialClearPayload(cred.kind('claudeCodeApiKey')), {claudeCodeApiKeyClear: true, claudeCodeBaseUrl: '', claudeCodeModels: []});
+assert.deepEqual(credentialClearPayload(cred.kind('agentCli.opencode')), {agentCliCredentials: {opencode: {apiKeyClear: true, baseUrl: '', protocol: '', models: []}}});
+assert.deepEqual(credentialClearPayload(cred.kind('agentCli.cursor')), {agentCliCredentials: {cursor: {apiKeyClear: true, baseUrl: '', protocol: ''}}});
+const catalogUser = {codexApiKeyConfigured: true, codexBaseUrl: 'https://gw.example/v1', codexModels: [{id: 'hy4', name: '混元 4'}, {id: 'gpt-5.5'}]};
+const catalogHTML = credentialCatalogHTML(cred.kind('codexApiKey'), catalogUser);
+assert.equal(count(catalogHTML, 'data-catalog-row'), 2);
+assert.ok(catalogHTML.indexOf('value="hy4"') < catalogHTML.indexOf('value="gpt-5.5"') && catalogHTML.includes('value="混元 4"'));
+assert.ok(catalogHTML.includes('data-catalog-act="probe"') && catalogHTML.includes('data-catalog-act="add"') && catalogHTML.includes('data-catalog-grip'));
+assert.ok(catalogHTML.includes('data-catalog-source="https://gw.example/v1"'));
+assert.equal(credentialCatalogSource(' https://gw.example/v1/ '), credentialCatalogSource('https://gw.example/v1'));
+assert.ok(catalogHTML.includes('data-catalog-empty hidden') && catalogHTML.includes('2 个模型') && catalogHTML.includes('data-catalog-body>') && !catalogHTML.includes('data-catalog-body hidden'));
+const emptyCatalog = credentialCatalogHTML(cred.kind('claudeCodeApiKey'), {claudeCodeBaseUrl: 'https://gw.example'});
+assert.ok(emptyCatalog.includes('跟随服务发布的模型') && emptyCatalog.includes('/v1/models') && emptyCatalog.includes('data-catalog-foot hidden') && emptyCatalog.includes('未自定义'));
+const officialCatalog = credentialCatalogHTML(cred.kind('codexApiKey'), {codexModels: [{id: 'hy4'}]});
+assert.ok(officialCatalog.includes('value="hy4"') && officialCatalog.includes('data-catalog-act="probe"') && officialCatalog.includes('改回使用自带的模型') && !officialCatalog.includes('data-catalog-body hidden'), 'an official key keeps its custom catalog editable');
+const officialEmpty = credentialCatalogHTML(cred.kind('codexApiKey'), {});
+assert.ok(officialEmpty.includes('使用 Codex 自带的模型') && officialEmpty.includes('data-catalog-act="add"') && !officialEmpty.includes('data-catalog-body hidden'));
+const geminiCatalog = credentialCatalogHTML(cred.kind('agentCli.agy'), {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
+assert.ok(geminiCatalog.includes('使用 Antigravity 自带的模型') && geminiCatalog.includes('data-catalog-act="probe"') && !geminiCatalog.includes('data-catalog-body hidden'), 'Gemini official API can still keep a custom catalog');
+assert.ok(credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('data-credential-catalog') && credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('has-catalog'));
+assert.ok(!credentialEditorHTML(cred.kind('agentCli.cursor'), {agentCliCredentials: {cursor: {apiKeyConfigured: true}}}).includes('data-credential-catalog'));
+assert.equal(credentialCatalogKey([{id: 'a', name: 'a'}, {id: '', name: ''}]), credentialCatalogKey([{id: 'a'}]));
+assert.equal(credentialCatalogError([{id: 'a'}, {id: 'b', name: 'B'}]), null);
+assert.deepEqual(credentialCatalogError([{id: 'a'}, {id: '', name: 'x'}]), {index: 1, field: 'id', error: '模型 ID 不能为空'});
+assert.ok(credentialCatalogError([{id: 'a b'}]).error.includes('空格'));
+assert.ok(credentialCatalogError([{id: 'a'}, {id: 'a'}]).error.includes('重复'));
+assert.equal(credentialCatalogError([{id: 'a', name: 'n'.repeat(65)}]).field, 'name');
 assert.deepEqual(credentialClearPayload(cred.kind('codeBuddyApiKey')), {codeBuddyApiKeyClear: true});
 assert.deepEqual(credentialClearPayload(cred.kind('gitToken')), {gitTokenClear: true});
 assert.equal(credentialSecretError(cred.kind('gitToken'), 'github_pat_1'), '');
@@ -881,7 +913,7 @@ assert.equal(calls.length, 0);
 
 (async () => {
   await deleteCredential('codexApiKey');
-  assert.deepEqual(calls.at(-1).body, {codexApiKeyClear: true, codexBaseUrl: ''});
+  assert.deepEqual(calls.at(-1).body, {codexApiKeyClear: true, codexBaseUrl: '', codexModels: []});
 
   // 添加凭证 starts at step 1 with configured kinds disabled.
   cred.wizard = {step: 1, kind: null, direct: false, secret: '', extra: '', guide: {}, error: ''};
