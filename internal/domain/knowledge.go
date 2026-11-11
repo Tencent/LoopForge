@@ -87,22 +87,24 @@ type KnowledgeBase struct {
 // KnowledgeSource 是一个知识来源。Kind 为 hosted 或 git。托管库用
 // HeadRevision 记当前修订号，Git 来源用 HeadCommit 记 commit。
 type KnowledgeSource struct {
-	ID           string     `json:"id"`
-	BaseID       string     `json:"baseId"`
-	Kind         string     `json:"kind"`
-	Name         string     `json:"name"`
-	GitURL       string     `json:"gitUrl,omitempty"`
-	Branch       string     `json:"branch,omitempty"`
-	PathPrefix   string     `json:"pathPrefix,omitempty"`
-	HeadCommit   string     `json:"headCommit,omitempty"`
-	HeadRevision int64      `json:"headRevision,omitempty"`
-	Status       string     `json:"status,omitempty"`
-	IndexStatus  string     `json:"indexStatus,omitempty"`
-	DocCount     int        `json:"docCount,omitempty"`
-	LastError    string     `json:"lastError,omitempty"`
-	LastSyncedAt *time.Time `json:"lastSyncedAt,omitempty"`
-	LeaseOwner   string     `json:"leaseOwner,omitempty"`
-	LeaseUntil   *time.Time `json:"leaseUntil,omitempty"`
+	CredentialCiphertext string     `json:"-"`
+	CredentialConfigured bool       `json:"credentialConfigured"`
+	ID                   string     `json:"id"`
+	BaseID               string     `json:"baseId"`
+	Kind                 string     `json:"kind"`
+	Name                 string     `json:"name"`
+	GitURL               string     `json:"gitUrl,omitempty"`
+	Branch               string     `json:"branch,omitempty"`
+	PathPrefix           string     `json:"pathPrefix,omitempty"`
+	HeadCommit           string     `json:"headCommit,omitempty"`
+	HeadRevision         int64      `json:"headRevision,omitempty"`
+	Status               string     `json:"status,omitempty"`
+	IndexStatus          string     `json:"indexStatus,omitempty"`
+	DocCount             int        `json:"docCount,omitempty"`
+	LastError            string     `json:"lastError,omitempty"`
+	LastSyncedAt         *time.Time `json:"lastSyncedAt,omitempty"`
+	LeaseOwner           string     `json:"leaseOwner,omitempty"`
+	LeaseUntil           *time.Time `json:"leaseUntil,omitempty"`
 }
 
 // KnowledgeBinding 把项目绑定到知识库；切片里 Permission 只写 submit。
@@ -125,6 +127,28 @@ type KnowledgeSyncJob struct {
 	Log          string     `json:"log,omitempty"`
 	StartedAt    *time.Time `json:"startedAt,omitempty"`
 	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
+}
+
+// KnowledgeActivityLimit 是每个项目保留的最近调用条数，也是知识中心一次
+// 读取的上限。控制面裁剪与读取共用这个值，避免两处漂移。
+const KnowledgeActivityLimit = 200
+
+// KnowledgeActivity 是一次 Agent 知识库工具调用。它只存控制面，不存正文；
+// 记录在工具调用返回前尽力写入，写入失败不影响调用本身。ProjectID 是读取
+// 时的隔离边界，RunID/SessionID 用来把记录对回 SOP 运行或 Main Bot 会话。
+type KnowledgeActivity struct {
+	At        time.Time `json:"at"`
+	Tool      string    `json:"tool"`
+	ProjectID string    `json:"projectId,omitempty"`
+	AgentID   string    `json:"agentId,omitempty"`
+	UserID    int64     `json:"userId,omitempty"`
+	RunID     string    `json:"runId,omitempty"`
+	SessionID string    `json:"sessionId,omitempty"`
+	Query     string    `json:"query,omitempty"`
+	Hits      int       `json:"hits"`
+	OK        bool      `json:"ok"`
+	Error     string    `json:"error,omitempty"`
+	LatencyMS int64     `json:"latencyMs"`
 }
 
 // KnowledgeDocument 是含 frontmatter 的完整 Markdown 正文。出处版本对托管库

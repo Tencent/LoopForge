@@ -16,8 +16,7 @@ import (
 // and rendering.
 type knowledgeHandlers struct {
 	*deps
-	svc      *knowledge.Service
-	activity *knowledgeActivityLog
+	svc *knowledge.Service
 }
 
 func (h *knowledgeHandlers) canManage(r *http.Request) bool {
@@ -81,13 +80,7 @@ func (h *knowledgeHandlers) document(c *gin.Context) {
 func (h *knowledgeHandlers) usage(c *gin.Context) {
 	projectID := c.Query("projectId")
 	agents, total := h.svc.Usage(projectID)
-	activity := make([]knowledgeActivity, 0)
-	for _, item := range h.activity.recent() {
-		if projectID == "" || item.ProjectID == projectID {
-			activity = append(activity, item)
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"agents": agents, "totalAgents": total, "activity": activity})
+	c.JSON(http.StatusOK, gin.H{"agents": agents, "totalAgents": total, "activity": h.svc.Activities(projectID, knowledge.ActivityLimit)})
 }
 
 // 路由: g.GET("/api/knowledge/candidates", h.candidates)

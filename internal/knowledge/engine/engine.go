@@ -191,15 +191,18 @@ func (e *Engine) WriteDocument(ctx context.Context, source, path, content string
 	}
 
 	normalized := strings.ReplaceAll(content, "\r\n", "\n")
-	body, err := frontmatter.Ensure(docPath, []byte(normalized))
-	if err != nil {
+	if err := frontmatter.Validate([]byte(normalized)); err != nil {
 		return knowledge.WriteResult{}, fmt.Errorf("文档校验失败: %w", err)
 	}
-	bodyText := string(body)
+	bodyText := normalized
 	lines := splitBody(bodyText)
 	title := chunk.Title(bodyText)
 
-	revision := src.HeadRevision + 1
+	// 修订号按文档计数：新文档从 1 起，同一路径覆盖时只递增这篇文档的号。
+	revision := int64(1)
+	if existing, ok := e.content.KnowledgeDocument(source, docPath); ok && existing.Revision > 0 {
+		revision = existing.Revision + 1
+	}
 	version := strconv.FormatInt(revision, 10)
 	now := e.now().UTC()
 

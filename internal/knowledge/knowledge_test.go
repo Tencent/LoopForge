@@ -75,19 +75,39 @@ func TestParseDistilled(t *testing.T) {
 
 func TestNormalizeDocPath(t *testing.T) {
 	for in, want := range map[string]string{
-		"guides/a.md":         "guides/a.md",
-		"/guides/../b.md":     "b.md",
-		"../../etc/passwd.md": "etc/passwd.md",
-		"排障/帕鲁 断联.md":         "排障/帕鲁-断联.md",
+		"guides/a.md":   "guides/a.md",
+		" guides/a.md ": "guides/a.md",
+		"排障/帕鲁 断联.md":   "排障/帕鲁-断联.md",
 	} {
 		got, ok := NormalizeDocPath(in)
 		if !ok || got != want {
 			t.Fatalf("NormalizeDocPath(%q) = %q, %v; want %q", in, got, ok, want)
 		}
 	}
-	for _, bad := range []string{"", "guides/a.txt", ".."} {
-		if _, ok := NormalizeDocPath(bad); ok {
-			t.Fatalf("NormalizeDocPath(%q) accepted", bad)
+	// 越界路径直接拒绝，不改写后保存。后缀校验保留。
+	for _, bad := range []string{
+		"", "guides/a.txt", "..",
+		"../secret.md", "guides/../secret.md", "guides/..",
+		"/etc/passwd.md", "/guides/a.md",
+		`C:\secret.md`, "C:/secret.md",
+		`guides\a.md`, `..\secret.md`,
+		"guides//a.md", "./guides/a.md", "guides/./a.md",
+		"guides/\x00a.md",
+	} {
+		if got, ok := NormalizeDocPath(bad); ok {
+			t.Fatalf("NormalizeDocPath(%q) 应拒绝，实际放行为 %q", bad, got)
+		}
+	}
+}
+
+func TestUsageRuleOnlyPromisesReadOnlyAccess(t *testing.T) {
+	rule := UsageRule()
+	if !strings.Contains(rule.Content, "只读检索本项目知识库") || !strings.Contains(rule.Content, "不要尝试写入") {
+		t.Fatalf("使用规范应说明只读检索本项目知识库: %q", rule.Content)
+	}
+	for _, stale := range []string{"knowledge.md", "沉淀审核", "写回知识库"} {
+		if strings.Contains(rule.Content, stale) {
+			t.Fatalf("使用规范不应再承诺写入路径 %q: %q", stale, rule.Content)
 		}
 	}
 }

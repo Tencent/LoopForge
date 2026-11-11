@@ -110,6 +110,24 @@ func (r *KnowledgeContentRepo) WriteHostedDocument(doc domain.KnowledgeDocument,
 	})
 }
 
+// DeleteKnowledgeSourceContent 删除某个来源在内容面的全部行：索引块、托管
+// 修订和正文。控制面来源由 Service 在本方法成功后单独删除，不做级联。
+func (r *KnowledgeContentRepo) DeleteKnowledgeSourceContent(sourceID string) error {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" {
+		return nil
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("source_id = ?", sourceID).Delete(&knowledgeChunkRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_id = ?", sourceID).Delete(&knowledgeRevisionRow{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("source_id = ?", sourceID).Delete(&knowledgeDocumentRow{}).Error
+	})
+}
+
 // ReplaceKnowledgeChunks 用新的索引块整体替换某篇文档的块，覆盖后旧正文不再命中。
 func (r *KnowledgeContentRepo) ReplaceKnowledgeChunks(sourceID, path string, chunks []domain.KnowledgeChunk) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {

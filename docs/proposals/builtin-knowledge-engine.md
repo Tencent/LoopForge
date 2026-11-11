@@ -47,7 +47,7 @@
 
 同步或托管写入的顺序是：读出完整 Markdown，写入内容面的文档正文，再用现有分块规则切出索引块。检索、读原文、以后的精确匹配都只读这两张内容表。索引块可以删掉后从正文重建。
 
-托管库没有 Git commit。修订号是递增整数，写在 `knowledge_revisions`，当前号记在来源上。出处字符串仍是 `source@<版本>:path#Lx-Ly`。JSON 字段名保持现有的 `commit`，不新增字段。托管库把修订号的十进制字符串放进 `commit`，例如 `"3"`。Git 来源放 40 位 commit。Agent 把这个字段当不透明版本号使用。
+托管库没有 Git commit。修订号按文档计数：每篇文档首次写入从 1 起，同一路径覆盖时只递增这篇文档的号，写在 `knowledge_revisions`；来源上的 `head_revision` 记最近一次写入的号。出处字符串仍是 `source@<版本>:path#Lx-Ly`，托管来源的版本是文档修订号。JSON 字段名保持现有的 `commit`，不新增字段。托管库把修订号的十进制字符串放进 `commit`，例如 `"3"`。Git 来源放 40 位 commit。Agent 把这个字段当不透明版本号使用。
 
 ### 2.2 Git 只是同步缓存
 
@@ -220,10 +220,12 @@ ALTER TABLE knowledge_chunks
 
 - 公共知识库、平台知识库，以及「相关度相同时项目层在前」。
 - 一个知识库挂多个 Git 来源的完整管理，以及把项目里已登记的代码仓库当成来源。
-- 私有 Git 的服务端凭据。切片只克隆不需要凭据的公开 HTTPS。
+- 私有 Git 的服务端凭据已在阶段一补全，见第 9 节。
 - 外部仓库的提交、推送或合并请求。
 - 审核队列的自动入队、门禁、指纹和墓碑。
-- 调用记录持久化。内存里的 `knowledgeActivityLog` 切片可以继续用，重启丢失是已知的，不在切片修。
+- 调用记录持久化：已实现。控制面表 `knowledge_activity`（`027`）按项目保留最近
+  200 条，`/api/knowledge/usage` 的 `activity` 从库读取；SOP 代理与 Main Bot 两条
+  通道都记录，写入失败不影响工具调用。
 - 历史 commit 的原文。见第 8 节。
 
 阶段二及以后仍不提前：向量与可选 compose profile、`kb_grep`、出处结构化字段、引用表、自动沉淀、治理面板、对外 MCP。
@@ -306,4 +308,19 @@ S2、S3、S4 在 S1 进行时就可以由不同的人同时做。S5 是关键路
 2. **内容面放在哪个 Repo。** 方案写的是扩展 `KnowledgeRepo`，同时要求内容面可以换连接。`AGENTS.md` 又不允许往共享 `deps` 里加第二个数据库。派发按第 4.2 节实现：控制面扩展已有 `KnowledgeRepo`，内容面用新的 `KnowledgeContentRepo` 持有自己的 `*gorm.DB`。这是同时满足两条已定约束的映射，不是改掉其中一条。若要求改成单一 Repo 持有两个连接，先改本节再写代码。
 3. **关键词召回是否合格。** 已定默认是 MySQL ngram，本文不判断它够不够用。对照用的 `lex` 只移植、不接线。召回对比的结论若是 ngram 明显更差，只更换第 3 节的关键词适配器。
 4. **外部仓库怎么写回。** 直接推送还是合并请求，以及这件事放在阶段一还是阶段三，都还没定。切片对 Git 来源的 `WriteDocument` 返回未实现。不要在切片里做推送，也不要做合并请求。
-5. **私有来源的 Git 凭据放哪。** 还没定。切片不新增凭据字段的存储设计，只支持公开 HTTPS 克隆。克隆失败把 Git 的错误摘要写到来源的 `last_error`。
+5. **私有来源的 Git 凭据。** 阶段一补全采用来源级服务凭据，见第 9 节。
+
+
+## 9. 私有 Git 来源凭据（阶段一补全）
+
+登记来源支持 HTTPS 用户名与令牌、SSH 部署密钥，SSH 可用 `ssh://git@host/path` 或 `git@host:path`。凭据独立于用户、项目仓库凭据。既有 UsersRepo、项目仓库与通知机器人凭据没有通用加密工具，因此来源凭据新增 AES-256-GCM 加密存储，写入控制面 `knowledge_sources.credential_ciphertext`，迁移为可重复执行的 `029_knowledge_git_credentials.sql`。
+
+加密密钥从服务的 `AGENTFLOW_SESSION_SECRET`（兼容 `SESSION_SECRET`）按独立用途派生，source ID 作为认证附加数据。多实例使用相同服务密钥，备份数据库时保留该密钥。更换密钥后需重新配置来源凭据。凭据保存 `canWrite` 标记，默认为 false，本次同步只使用读取操作。
+
+`POST /api/knowledge/bases/sources` 接受可选 `credential`。省略时保留已有凭据，提供时原子替换来源与凭据。`PUT /api/knowledge/bases/sources/credential` 单独替换凭据并重新排队同步。只有知识库所属项目的 Owner、非 viewer 成员或平台管理员可管理来源与凭据。接口和界面仅返回 `credentialConfigured`，不读取已有用户名、令牌、私钥或密文。删除来源同时删除同一行上的密文。
+
+HTTPS 通过临时 askpass 文件读取用户名和令牌，SSH 使用临时私钥和明确配置的 `known_hosts` 记录验证服务器。临时目录 0700、密钥文件 0600，命令结束后删除。子进程只接收文件路径，环境采用白名单，禁用个人凭据 helper、SSH agent、全局 Git/SSH 配置及代理。HTTPS URL 不含 userinfo，`.git/config` 只写无凭据地址。私有来源按密文指纹分开缓存，替换凭据产生新指纹，旧租约退出期间新同步可独立克隆；相同凭据的后续同步仍复用缓存。
+
+两种协议都校验 DNS 的全部结果并拒绝私网和保留地址。HTTPS 保留 `http.curloptResolve` 固定解析、禁用重定向和代理，SSH 使用已校验 IP 的 `HostName` 固定连接以及原始域名的 `HostKeyAlias` 验证主机。HTTP 明文地址在登记时拒绝。
+
+Git stderr 只用于分类，日志、错误响应与同步记录均保存分类后的提示。鉴权失败、仓库不存在、分支不存在及 SSH 主机公钥错误分别显示中文提示。有些托管服务对无权访问返回 404，此时按服务器提供的“仓库不存在”信号提示，并提醒检查凭据访问范围。

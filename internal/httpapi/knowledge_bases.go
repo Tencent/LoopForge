@@ -77,14 +77,32 @@ func (h *knowledgeHandlers) basesDocument(c *gin.Context) {
 
 // 路由: g.POST("/api/knowledge/bases/sources", h.basesSources)
 //
-// 登记公开 Git 来源（地址、分支、路径前缀），状态置为待同步。
+// 登记 Git 来源（地址、分支、路径前缀），状态置为待同步。
 func (h *knowledgeHandlers) basesSources(c *gin.Context) {
 	var input knowledge.GitSourceInput
 	if !decode(c, &input) {
 		return
 	}
+	if !h.requireKnowledgeManager(c, input.ProjectID) {
+		return
+	}
 	src, err := h.svc.RegisterGitSource(input)
 	render(c, src, err)
+}
+
+// 路由: g.DELETE("/api/knowledge/bases/sources", h.basesSourceDelete)
+//
+// 删除不再需要的 Git 来源：先删内容面正文/修订/索引块，再删控制面记录。
+// 托管来源没有删除入口，后端也拒绝。
+func (h *knowledgeHandlers) basesSourceDelete(c *gin.Context) {
+	if !h.requireKnowledgeManager(c, c.Query("projectId")) {
+		return
+	}
+	if err := h.svc.DeleteSource(c.Query("projectId"), c.Query("sourceId")); err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
 // 路由: g.POST("/api/knowledge/bases/sync", h.basesSync)
@@ -160,4 +178,46 @@ func (h *knowledgeHandlers) basesVector(c *gin.Context) {
 	}
 	updated, _ := h.repo.KnowledgeBase(baseID)
 	c.JSON(http.StatusOK, gin.H{"status": kbengine.CurrentVectorStatus(), "base": updated})
+}
+
+func (h *knowledgeHandlers) requireKnowledgeManager(c *gin.Context, projectID string) bool {
+	if !authRequired() {
+		return true
+	}
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录"})
+		return false
+	}
+	if h.isPlatformAdmin(c.Request) {
+		return true
+	}
+	if project, found := h.repo.Project(strings.TrimSpace(projectID)); found {
+		if project.OwnerID == user.ID {
+			return true
+		}
+		for _, member := range project.Members {
+			if member.UserID == user.ID && !strings.EqualFold(strings.TrimSpace(member.Role), "viewer") {
+				return true
+			}
+		}
+	}
+	c.JSON(403, gin.H{"error": "只有项目成员、项目 Owner 或平台管理员可以管理知识库来源凭据"})
+	return false
+}
+
+func (h *knowledgeHandlers) basesSourceCredential(c *gin.Context) {
+	var input struct {
+		ProjectID  string                  `json:"projectId"`
+		SourceID   string                  `json:"sourceId"`
+		Credential knowledge.GitCredential `json:"credential"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	if !h.requireKnowledgeManager(c, input.ProjectID) {
+		return
+	}
+	out, err := h.svc.SetSourceCredential(input.ProjectID, input.SourceID, input.Credential)
+	render(c, out, err)
 }

@@ -681,22 +681,23 @@ type knowledgeBaseRow struct {
 func (knowledgeBaseRow) TableName() string { return "knowledge_bases" }
 
 type knowledgeSourceRow struct {
-	ID           string     `gorm:"column:id;primaryKey;size:64"`
-	BaseID       string     `gorm:"column:base_id;size:64;index:idx_knowledge_sources_base"`
-	Kind         string     `gorm:"column:kind;size:32"`
-	Name         string     `gorm:"column:name;size:255"`
-	GitURL       string     `gorm:"column:git_url;size:1024"`
-	Branch       string     `gorm:"column:branch;size:255"`
-	PathPrefix   string     `gorm:"column:path_prefix;size:512"`
-	HeadCommit   string     `gorm:"column:head_commit;size:128"`
-	HeadRevision int64      `gorm:"column:head_revision"`
-	Status       string     `gorm:"column:status;size:32;index:idx_knowledge_sources_status"`
-	IndexStatus  string     `gorm:"column:index_status;size:32"`
-	DocCount     int        `gorm:"column:doc_count"`
-	LastError    string     `gorm:"column:last_error;type:text"`
-	LastSyncedAt *time.Time `gorm:"column:last_synced_at"`
-	LeaseOwner   string     `gorm:"column:lease_owner;size:255"`
-	LeaseUntil   *time.Time `gorm:"column:lease_until"`
+	CredentialCiphertext string     `gorm:"column:credential_ciphertext;type:text"`
+	ID                   string     `gorm:"column:id;primaryKey;size:64"`
+	BaseID               string     `gorm:"column:base_id;size:64;index:idx_knowledge_sources_base"`
+	Kind                 string     `gorm:"column:kind;size:32"`
+	Name                 string     `gorm:"column:name;size:255"`
+	GitURL               string     `gorm:"column:git_url;size:1024"`
+	Branch               string     `gorm:"column:branch;size:255"`
+	PathPrefix           string     `gorm:"column:path_prefix;size:512"`
+	HeadCommit           string     `gorm:"column:head_commit;size:128"`
+	HeadRevision         int64      `gorm:"column:head_revision"`
+	Status               string     `gorm:"column:status;size:32;index:idx_knowledge_sources_status"`
+	IndexStatus          string     `gorm:"column:index_status;size:32"`
+	DocCount             int        `gorm:"column:doc_count"`
+	LastError            string     `gorm:"column:last_error;type:text"`
+	LastSyncedAt         *time.Time `gorm:"column:last_synced_at"`
+	LeaseOwner           string     `gorm:"column:lease_owner;size:255"`
+	LeaseUntil           *time.Time `gorm:"column:lease_until"`
 }
 
 func (knowledgeSourceRow) TableName() string { return "knowledge_sources" }
@@ -724,6 +725,26 @@ type knowledgeSyncJobRow struct {
 }
 
 func (knowledgeSyncJobRow) TableName() string { return "knowledge_sync_jobs" }
+
+// knowledgeActivityRow 是 Agent 知识库工具调用记录。只属于控制面，按项目
+// 保留最近若干条；写入在工具调用路径上尽力完成。
+type knowledgeActivityRow struct {
+	ID        int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_knowledge_activity_project,priority:2"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_knowledge_activity_project,priority:1"`
+	AgentID   string     `gorm:"column:agent_id;size:64"`
+	UserID    int64      `gorm:"column:user_id"`
+	RunID     string     `gorm:"column:run_id;size:64"`
+	SessionID string     `gorm:"column:session_id;size:64"`
+	Tool      string     `gorm:"column:tool;size:64"`
+	Query     string     `gorm:"column:query_text;size:500"`
+	Hits      int        `gorm:"column:hits"`
+	OK        bool       `gorm:"column:ok"`
+	Error     string     `gorm:"column:error_text;size:512"`
+	LatencyMS int64      `gorm:"column:latency_ms"`
+	At        *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeActivityRow) TableName() string { return "knowledge_activity" }
 
 // 内置知识引擎内容面（KnowledgeContentRepo，可能指向独立的 MySQL）。
 type knowledgeDocumentRow struct {
@@ -787,7 +808,7 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSubmissionRow{},
-		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{},
+		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{},
 		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}

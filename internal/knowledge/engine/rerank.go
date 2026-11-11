@@ -25,11 +25,27 @@ const (
 	titleHitWeight   = 3.0
 	headingHitWeight = 0.2
 	// identifierHitWeight 是查询里的英文标识符在块内完整出现的加权。
-	identifierHitWeight = 1.5
+	identifierHitWeight = 2.2
 	// lengthPenaltyExponent 用块长做 BM25 式长度惩罚，抑制 8k 长块。
 	lengthPenaltyExponent = 0.3
 	// navigationPenalty 只降权目录/导航页，不把它们排除出候选。
 	navigationPenalty = 0.3
+	// phraseHitWeight 是查询里的连续短语在块内完整出现的加权。只对至少
+	// 3 个连续汉字生效，避免“平台”“环境”这类常见词普涨。
+	phraseHitWeight = 1.5
+	// relevanceKeepRatio 只保留分数不低于第一名这个比例的候选，避免在
+	// 真实命中后面再凑满 10 条弱匹配。
+	relevanceKeepRatio = 0.02
+	// relevanceGateRatio / relevanceGateMAD 判断第一名是否明显高于候选
+	// 池中位数：达不到时说明查询只命中了常见片段，整批结果按空处理。
+	relevanceGateRatio = 2.0
+	relevanceGateMAD   = 3.0
+	// relevanceStrongCoverage 是“查询词大部分都在块内”的覆盖度；达到
+	// 这个比例时不再要求分数显著高于中位数。
+	relevanceStrongCoverage = 0.5
+	// termCoverageWeight 把查询词在正文里的覆盖度并入重排分。标题/小节
+	// 没命中时，正文覆盖更多查询词的块应排在只命中一个常见片段的块前。
+	termCoverageWeight = 0.5
 )
 
 // BooleanQuerier 是 FulltextQuerier 的可选扩展：用 BOOLEAN MODE 查应用侧
@@ -56,6 +72,8 @@ type rerankCandidate struct {
 	titleCoverage      float64
 	headingCoverage    float64
 	identifierCoverage float64
+	termCoverage       float64
+	phraseHit          bool
 
 	score float64
 }
@@ -104,6 +122,9 @@ func rerank(query string, nl, exact []domain.KnowledgeChunkMatch, strongIDs []st
 	terms, latin := queryTerms(query)
 	applyMetadataCoverage(ordered, terms)
 	applyIdentifierCoverage(ordered, latin)
+	phrase := exactPhrase(query)
+	coverageTerms := append(append([]string(nil), terms...), latin...)
+	applyTermCoverage(ordered, coverageTerms, phrase)
 
 	for _, c := range ordered {
 		c.score = c.rerankScore()
@@ -115,6 +136,7 @@ func rerank(query string, nl, exact []domain.KnowledgeChunkMatch, strongIDs []st
 		return candidateLess(ordered[i], ordered[j])
 	})
 
+	ordered = relevantCandidates(ordered)
 	if limit <= 0 || limit > len(ordered) {
 		limit = len(ordered)
 	}
@@ -158,7 +180,10 @@ func (c *rerankCandidate) rerankScore() float64 {
 	if c.boolRank >= 0 {
 		base += booleanChannelWeight * (rrfK + 1) / (rrfK + float64(c.boolRank+1))
 	}
-	score := base * (1 + titleHitWeight*c.titleCoverage + headingHitWeight*c.headingCoverage + identifierHitWeight*c.identifierCoverage)
+	score := base * (1 + titleHitWeight*c.titleCoverage + headingHitWeight*c.headingCoverage + identifierHitWeight*c.identifierCoverage + termCoverageWeight*c.termCoverage)
+	if c.phraseHit {
+		score *= phraseHitWeight
+	}
 	if c.nav {
 		score *= navigationPenalty
 	}
@@ -332,12 +357,12 @@ func applyMetadataCoverage(candidates []*rerankCandidate, terms []string) {
 	if len(candidates) == 0 || len(terms) == 0 {
 		return
 	}
-	type termWeight struct {
+	type termIDF struct {
 		title   float64
 		heading float64
 	}
 	n := float64(len(candidates))
-	weights := make(map[string]termWeight, len(terms))
+	weights := make(map[string]termIDF, len(terms))
 	var totalTitle, totalHeading float64
 	for _, term := range terms {
 		titleDF, headingDF := 0, 0
@@ -349,9 +374,10 @@ func applyMetadataCoverage(candidates []*rerankCandidate, terms []string) {
 				headingDF++
 			}
 		}
-		w := termWeight{
-			title:   math.Log(1 + n/float64(1+titleDF)),
-			heading: math.Log(1 + n/float64(1+headingDF)),
+		weight := termWeight(term)
+		w := termIDF{
+			title:   weight * math.Log(1+n/float64(1+titleDF)),
+			heading: weight * math.Log(1+n/float64(1+headingDF)),
 		}
 		weights[term] = w
 		totalTitle += w.title
@@ -377,6 +403,116 @@ func applyMetadataCoverage(candidates []*rerankCandidate, terms []string) {
 		c.titleCoverage = titleHit / totalTitle
 		c.headingCoverage = headingHit / totalHeading
 	}
+}
+
+// applyTermCoverage 统计查询词在标题、小节和正文里的加权覆盖度。虚词
+// 二字片段只按 functionTermWeight 计入，因此“环境选择”不会因为一个
+// “的环”之类的片段被当成强命中。phrase 是查询里最长连续汉字短语。
+func applyTermCoverage(candidates []*rerankCandidate, terms []string, phrase string) {
+	if len(candidates) == 0 || len(terms) == 0 {
+		return
+	}
+	n := float64(len(candidates))
+	weights := make(map[string]float64, len(terms))
+	total := 0.0
+	for _, term := range terms {
+		df := 0
+		for _, c := range candidates {
+			if containsTerm(c, term) {
+				df++
+			}
+		}
+		if df == 0 {
+			// 所有候选里都没有这个词，说明它只是问句残片或语料未收录；
+			// 不把它放进分母，避免把真实命中的覆盖度整体压低。
+			continue
+		}
+		weight := termWeight(term) * math.Log(1+n/float64(1+df))
+		weights[term] = weight
+		total += weight
+	}
+	if total == 0 {
+		return
+	}
+	phrase = strings.ToLower(phrase)
+	for _, c := range candidates {
+		hit := 0.0
+		for term, weight := range weights {
+			if containsTerm(c, term) {
+				hit += weight
+			}
+		}
+		c.termCoverage = hit / total
+		if len([]rune(phrase)) >= 3 && (strings.Contains(c.titleLower, phrase) || strings.Contains(c.headingLower, phrase) || strings.Contains(c.bodyLower, phrase)) {
+			c.phraseHit = true
+		}
+	}
+}
+
+func containsTerm(c *rerankCandidate, term string) bool {
+	return strings.Contains(c.titleLower, term) || strings.Contains(c.headingLower, term) || strings.Contains(c.bodyLower, term)
+}
+
+// relevantCandidates 按候选分数分布做相对门槛：第一名没有明显高于候选
+// 池中位数、并且查询词覆盖度也不高时，说明只是弱片段命中，整批返回空；
+// 否则只保留分数接近第一名的候选，不为了凑数保留长尾。
+func relevantCandidates(ordered []*rerankCandidate) []*rerankCandidate {
+	if len(ordered) == 0 {
+		return nil
+	}
+	top := ordered[0]
+	if top.termCoverage <= 0 {
+		return nil
+	}
+	if len(ordered) >= 4 && top.termCoverage < relevanceStrongCoverage {
+		rest := make([]float64, 0, len(ordered)-1)
+		for _, c := range ordered[1:] {
+			rest = append(rest, c.score)
+		}
+		median := medianScore(rest)
+		if median > 0 {
+			mad := medianAbsoluteDeviation(rest, median)
+			denom := math.Max(mad, median*0.05)
+			ratio := top.score / median
+			z := (top.score - median) / denom
+			if ratio < relevanceGateRatio && z < relevanceGateMAD {
+				return nil
+			}
+		}
+	}
+	out := make([]*rerankCandidate, 0, len(ordered))
+	cutoff := top.score * relevanceKeepRatio
+	for _, c := range ordered {
+		if c.termCoverage <= 0 || c.score < cutoff {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func medianScore(scores []float64) float64 {
+	if len(scores) == 0 {
+		return 0
+	}
+	cp := append([]float64(nil), scores...)
+	sort.Float64s(cp)
+	mid := len(cp) / 2
+	if len(cp)%2 == 0 {
+		return (cp[mid-1] + cp[mid]) / 2
+	}
+	return cp[mid]
+}
+
+func medianAbsoluteDeviation(scores []float64, median float64) float64 {
+	if len(scores) == 0 {
+		return 0
+	}
+	dev := make([]float64, len(scores))
+	for i, s := range scores {
+		dev[i] = math.Abs(s - median)
+	}
+	return medianScore(dev)
 }
 
 // applyIdentifierCoverage 统计查询里的英文标识符有多少在块内完整出现。

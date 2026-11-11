@@ -273,6 +273,25 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 	}
 }
 
+func TestKnowledgeMCPCarriesRunID(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "test-session")
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	e := &Engine{repo: st}
+	e.ConfigurePlatformMCP("http://agentflow.local/", "")
+	assets := e.resolveAssetsForRun(domain.AgentDefinition{ID: "dev", KnowledgeBase: true}, "p1", "", 3, "run-42")
+	if len(assets.MCPServers) != 1 {
+		t.Fatalf("knowledge MCP not bound: %#v", assets.MCPServers)
+	}
+	claims, err := knowledge.VerifyProxyToken(knowledge.SessionSecret(), strings.TrimPrefix(assets.MCPServers[0].Headers["Authorization"], "Bearer "), time.Now())
+	if err != nil || claims.RunID != "run-42" {
+		t.Fatalf("proxy token claims = %#v, %v", claims, err)
+	}
+}
+
 func TestKnowledgeMCPWithoutPlatformBase(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "")
 	t.Setenv("SESSION_SECRET", "")

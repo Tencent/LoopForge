@@ -173,7 +173,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: kbSvc, activity: &knowledgeActivityLog{}},
+		know:            &knowledgeHandlers{deps: d, svc: kbSvc},
 		feedback:        &feedbackHandlers{deps: d},
 	}
 	// 建项目与打开知识中心共用同一个 knowledge.Service 实例，幂等保证托管库。
@@ -506,6 +506,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/bases/documents", api.know.basesDocuments)
 	g.GET("/api/knowledge/bases/document", api.know.basesDocument)
 	g.POST("/api/knowledge/bases/sources", api.know.basesSources)
+	g.PUT("/api/knowledge/bases/sources/credential", api.know.basesSourceCredential)
+	g.DELETE("/api/knowledge/bases/sources", api.know.basesSourceDelete)
 	g.POST("/api/knowledge/bases/sync", api.know.basesSync)
 	g.POST("/api/knowledge/bases/search", api.know.basesSearch)
 	g.GET("/api/knowledge/bases/vector", api.know.basesVector)

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/knowledge"
 	kbengine "agentflow/internal/knowledge/engine"
@@ -381,5 +382,89 @@ func TestKnowledgeVectorEndpoint(t *testing.T) {
 	}
 	if base, _ := s.KnowledgeBase("kb-pVec"); base.VectorEnabled {
 		t.Fatal("启用失败后该库不应处于向量启用状态")
+	}
+}
+
+func TestDeleteGitSourceKeepsHostedSource(t *testing.T) {
+	s, h := newKBMgmtServer(t)
+	createProject(t, h, "pDel")
+	body, _ := json.Marshal(map[string]string{
+		"projectId": "pDel", "baseId": "kb-pDel", "name": "失败来源",
+		"gitUrl": "https://github.com/example/missing.git", "branch": "main",
+	})
+	rec := doJSON(t, h, http.MethodPost, "/api/knowledge/bases/sources", string(body), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register: %d %s", rec.Code, rec.Body.String())
+	}
+	var src struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &src); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutKnowledgeDocument(domain.KnowledgeDocument{
+		SourceID: src.ID, Path: "README.md", Title: "Readme", Body: "# Readme\n", LineCount: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutKnowledgeRevision(domain.KnowledgeRevision{
+		ID: "rev-git-http", SourceID: src.ID, Path: "README.md", Revision: 1, Body: "# Readme\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceKnowledgeChunks(src.ID, "README.md", []domain.KnowledgeChunk{{
+		SourceID: src.ID, Path: "README.md", Idx: 0, Title: "Readme", StartLine: 1, EndLine: 1, Text: "# Readme",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 托管来源没有删除入口，后端也拒绝。
+	hostedURL := "/api/knowledge/bases/sources?projectId=pDel&sourceId=kb-hosted-pDel"
+	if rec := doJSON(t, h, http.MethodDelete, hostedURL, "", nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("托管来源应拒绝删除，实际 %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.KnowledgeSource("kb-hosted-pDel"); !ok {
+		t.Fatal("托管来源不应被删除")
+	}
+
+	// 其它项目不能删除。
+	otherURL := "/api/knowledge/bases/sources?projectId=pOther&sourceId=" + src.ID
+	if rec := doJSON(t, h, http.MethodDelete, otherURL, "", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("其它项目应 403，实际 %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.KnowledgeSource(src.ID); !ok {
+		t.Fatal("越权删除不应生效")
+	}
+
+	gitURL := "/api/knowledge/bases/sources?projectId=pDel&sourceId=" + src.ID
+	if rec := doJSON(t, h, http.MethodDelete, gitURL, "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("删除 Git 来源: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.KnowledgeSource(src.ID); ok {
+		t.Fatal("Git 来源未删除")
+	}
+	if docs := s.KnowledgeDocuments(src.ID); len(docs) != 0 {
+		t.Fatalf("删除来源后内容面仍有文档: %+v", docs)
+	}
+	if revs := s.KnowledgeRevisions(src.ID, "README.md"); len(revs) != 0 {
+		t.Fatalf("删除来源后内容面仍有修订: %+v", revs)
+	}
+	if chunks := s.KnowledgeChunks(src.ID, "README.md"); len(chunks) != 0 {
+		t.Fatalf("删除来源后内容面仍有索引块: %+v", chunks)
+	}
+}
+
+func TestWriteDocumentRejectsTraversalPathWithoutRewriting(t *testing.T) {
+	s, h := newKBMgmtServer(t)
+	createProject(t, h, "pPath")
+	body, _ := json.Marshal(map[string]string{
+		"projectId": "pPath", "sourceId": "kb-hosted-pPath", "path": "../secret.md", "content": "# 越界\n",
+	})
+	rec := doJSON(t, h, http.MethodPost, "/api/knowledge/bases/documents", string(body), nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("越界路径应 400，实际 %d %s", rec.Code, rec.Body.String())
+	}
+	if docs := s.KnowledgeDocuments("kb-hosted-pPath"); len(docs) != 0 {
+		t.Fatalf("越界路径不应被改写后保存: %+v", docs)
 	}
 }

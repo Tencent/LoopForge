@@ -471,7 +471,7 @@ func (s *Service) SourceDetail(ctx context.Context, project, source string) (any
 		if src.ID == source {
 			docs := []map[string]any{}
 			for _, doc := range s.store.KnowledgeDocuments(source) {
-				docs = append(docs, map[string]any{"path": doc.Path, "title": doc.Title, "commit": doc.Commit, "line_count": doc.LineCount})
+				docs = append(docs, map[string]any{"path": doc.Path, "title": doc.Title, "commit": doc.Commit, "revision": doc.Revision, "line_count": doc.LineCount})
 			}
 			return map[string]any{"source": src.Source, "documents": docs}, nil
 		}
