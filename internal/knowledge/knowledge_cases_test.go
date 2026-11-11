@@ -11,4 +11,7 @@ func TestAgentToolsAreReadOnly(t *testing.T) {
 	if IsReadOnlyTool(ToolWrite) {
 		t.Fatal("write tool exposed")
 	}
+	if !IsAgentTool(ToolReportIssue) || IsReadOnlyTool(ToolReportIssue) {
+		t.Fatal("report issue must be available to agents without being a read-only tool")
+	}
 }

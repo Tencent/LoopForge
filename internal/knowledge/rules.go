@@ -16,6 +16,7 @@ const usageRuleContent = `# 知识库使用规范
 - 命中后用 kb_fetch 按 source + path + 行号读取原文，不要只凭摘要下结论。
 - kb_list_sources 可查看当前项目可用的知识库来源；检索默认覆盖全部已授权来源。
 - 当前使用关键词检索，可换关键词或更短的词再搜一次。
+- 发现文档过时、写错、链接失效或缺少负责人时，用 kb_report_issue 标记 source + path + 问题说明；它只记录问题，不修改正文。
 
 ## 引用出处
 - 采用知识库内容时，在产物中附上结果里的 citation（形如 source@版本:path#L10-L20）。
@@ -23,7 +24,7 @@ const usageRuleContent = `# 知识库使用规范
 - 知识库没有覆盖的内容要明确说明"知识库未收录"，不要编造出处。
 
 ## 只读边界与沉淀
-- 知识库对你只读，不要尝试写入，也不要声称已经写回。
+- 知识库正文对你只读（可以检索、读取和标记问题），不要尝试写入，也不要声称已经写回。
 - 运行到达闭环（SOP 成功、合并请求合并、需求完成或人工关卡通过）后，平台会把本角色产出的 knowledge.md 自动加入审核队列；人工审核通过或知识库配置为门禁全过自动发布时，才由平台写回知识库。
 - 需要新增或修正内容时，把可复用的结论写进 knowledge.md 产物；不要把它当作已发布知识引用。
 `
@@ -33,7 +34,7 @@ func UsageRule() domain.RuleDefinition {
 	return domain.RuleDefinition{
 		ID:          domain.KnowledgeUsageRuleID,
 		Name:        "知识库使用规范",
-		Description: "先只读检索本项目知识库再动手，引用附出处；知识库对 Agent 只读，运行产出的 knowledge.md 由平台在闭环后自动入审核队列",
+		Description: "先只读检索本项目知识库再动手，引用附出处；发现文档问题用 kb_report_issue 记录；运行产出的 knowledge.md 由平台在闭环后自动入审核队列",
 		Content:     usageRuleContent,
 		Priority:    50,
 	}
@@ -47,7 +48,7 @@ func MCPServerDefinition(baseURL, proxyToken string) domain.MCPServerDefinition 
 		ID:          domain.KnowledgeMCPServerID,
 		Name:        "项目知识库",
 		Scope:       "project",
-		Description: "本项目知识库只读检索：kb_search / kb_fetch / kb_list_sources / kb_get_source；产出 knowledge.md 由平台自动沉淀",
+		Description: "本项目知识库检索与问题标记：kb_search / kb_fetch / kb_list_sources / kb_get_source / kb_report_issue；产出 knowledge.md 由平台自动沉淀",
 		Transport:   "http",
 		URL:         strings.TrimRight(baseURL, "/") + ProxyPath,
 		Headers:     map[string]string{"Authorization": "Bearer " + proxyToken},

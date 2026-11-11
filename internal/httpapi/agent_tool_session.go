@@ -55,7 +55,7 @@ type AgentToolSession struct {
 	ProjectID string
 	Mode      AgentToolMode
 	// Scheduled marks an unattended scheduled task. It reuses the assistant
-	// gateway, but interactive-only tools (the read-only knowledge base)
+	// gateway, but interactive-only tools (the knowledge base tools)
 	// must stay out of its catalog.
 	Scheduled      bool
 	IssueID        string

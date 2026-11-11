@@ -45,4 +45,20 @@ func ReadOnlyToolDefinitions() []mcpclient.Tool {
 	}
 }
 
+// AgentToolDefinitions 是 ReadOnlyToolDefinitions 加上“标记文档问题”。该工具
+// 只写反馈，不提供正文写入，也不出现在知识库写回路径上。
+func AgentToolDefinitions() []mcpclient.Tool {
+	tools := append([]mcpclient.Tool{}, ReadOnlyToolDefinitions()...)
+	return append(tools, mcpclient.Tool{
+		Name:        ToolReportIssue,
+		Description: "标记一篇知识文档的问题（内容过时、错误、链接失效或缺少负责人等）。只记录反馈到治理面板，不修改正文，也不写回知识库。",
+		InputSchema: toolSchema(`{"type":"object","properties":{
+			"source":{"type":"string","description":"来源 id"},
+			"path":{"type":"string","description":"来源内的相对 Markdown 路径"},
+			"issue":{"type":"string","description":"具体问题说明，例如哪一段已经过时或哪里写错了"}
+		},"required":["source","path","issue"]}`),
+		Annotations: json.RawMessage(`{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":false}`),
+	})
+}
+
 func toolSchema(s string) json.RawMessage { return json.RawMessage(s) }

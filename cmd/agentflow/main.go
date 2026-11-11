@@ -259,7 +259,9 @@ func main() {
 		e.StartClaimLoop(claimCtx)
 		knowledgeEngine := knowledgeengine.NewEngine(s, s, knowledgeengine.NewMySQLKeywordIndex(s))
 		knowledgeengine.NewSyncWorker(knowledgeEngine, s, s, knowledgeCacheRoot, instanceID).StartSyncLoop(claimCtx, executeRuns)
-		knowledge.NewService(s, knowledge.NewID, knowledgeEngine).StartSedimentLoop(claimCtx)
+		knowledgeSvc := knowledge.NewService(s, knowledge.NewID, knowledgeEngine)
+		knowledgeSvc.StartSedimentLoop(claimCtx)
+		knowledgeSvc.StartGovernanceLoop(claimCtx)
 	}
 	stopCLIUpdates := startManagedCLIUpdates(claimCtx, role, executeRuns)
 	defer stopCLIUpdates()

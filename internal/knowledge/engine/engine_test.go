@@ -136,12 +136,12 @@ func TestToolsAreReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools) != len(knowledge.ReadOnlyTools) {
-		t.Fatalf("工具数量 = %d, want %d", len(tools), len(knowledge.ReadOnlyTools))
+	if len(tools) != len(knowledge.AgentTools) {
+		t.Fatalf("工具数量 = %d, want %d", len(tools), len(knowledge.AgentTools))
 	}
 	for _, tool := range tools {
-		if !knowledge.IsReadOnlyTool(tool.Name) {
-			t.Fatalf("列出了非只读工具 %q", tool.Name)
+		if !knowledge.IsAgentTool(tool.Name) {
+			t.Fatalf("列出了 Agent 不可用工具 %q", tool.Name)
 		}
 		if tool.Name == knowledge.ToolWrite {
 			t.Fatal("写工具不应出现在 Tools")

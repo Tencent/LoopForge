@@ -62,6 +62,7 @@ func needsUTF8MB4Table(model any) bool {
 	switch model.(type) {
 	case domain.BotInteraction, pageFeedbackRow, pageFeedbackImageRow,
 		knowledgeBaseRow, knowledgeSourceRow, knowledgeBindingRow, knowledgeSyncJobRow, knowledgeActivityRow,
+		knowledgeFeedbackRow, knowledgeGapRow, knowledgeGovernanceIssueRow, knowledgeGovernanceScanRow,
 		knowledgeDocumentRow, knowledgeRevisionRow, knowledgeChunkRow:
 		return true
 	}

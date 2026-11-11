@@ -5,7 +5,8 @@ import (
 	"agentflow/internal/mcpclient"
 )
 
-// readOnlyTools 复用 knowledge 包的固定只读工具说明；写工具不在其中。
+// readOnlyTools 返回 Agent 可用的知识库工具（只读检索 + 标记问题）；
+// 正文写工具不在其中。
 func readOnlyTools() []mcpclient.Tool {
-	return knowledge.ReadOnlyToolDefinitions()
+	return knowledge.AgentToolDefinitions()
 }

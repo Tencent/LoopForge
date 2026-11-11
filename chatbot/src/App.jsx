@@ -10,6 +10,7 @@ import { useChat } from "./useChat";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
+import ReplyFeedback from "./ReplyFeedback";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
   activityForReply,
@@ -1576,6 +1577,12 @@ export default function App() {
                             label="复制回复"
                           />
                           <MessageInfo message={message} />
+                          <ReplyFeedback
+                            projectId={chat.session?.projectId}
+                            sessionId={chat.activeId}
+                            message={message}
+                            index={index}
+                          />
                         </div>
                       </>
                     ) : null}
