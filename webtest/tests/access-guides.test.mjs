@@ -22,7 +22,7 @@ test('token management renders client specs, revealed prompts, and credential hi
     state.accessClient='claude';
     state.revealedToken='tok-secret';
     state.accessTokensStatus='ready';state.accessTokens=[];
-    renderGuide();
+    switchView('guide');
   `);
   const body = app.document.querySelector('#accessBody');
   assert.match(body.textContent, /访问密钥已创建/);
@@ -99,7 +99,7 @@ test('token management renders client specs, revealed prompts, and credential hi
   assert.match(app.document.querySelector('#userProfilePopover').textContent, /访客身份/);
   await app.evaluate(`renderPersonalSettings()`);
   assert.match(app.document.querySelector('#personalSettingsContent').textContent, /登录后即可管理自己的 Git Token 和 API Key/);
-  app.evaluate(`renderGuide()`);
+  app.evaluate(`switchView('guide')`);
   assert.match(body.textContent, /请先登录/);
   app.evaluate(`openCommandPalette()`);
   const commandSearch = app.document.querySelector('#commandSearch');
@@ -143,7 +143,7 @@ test('personal token UI creates and revokes tokens through the API', async (t) =
   app.evaluate(`
     state.currentUser={id:1,loginName:'alice',isGuest:false};
     state.accessTokensStatus='ready';state.accessTokens=${JSON.stringify([token])};
-    renderGuide();
+    switchView('guide');
   `);
   const form = app.document.querySelector('#accessTokenForm');
   form.elements.name.value = 'Automation';
@@ -163,4 +163,25 @@ test('personal token UI creates and revokes tokens through the API', async (t) =
   app.document.querySelector('#confirmOkBtn').click();
   await settle(8);
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/auth/tokens/token-1'));
+});
+
+// renderAll() repaints every page; only the 访问密钥 page may ask for the token
+// list, since Bearer sessions get 401 there and would leave it stuck on error.
+test('the token list is only fetched once 访问密钥 is opened', async (t) => {
+  const app = await loadApp({ hash: '#/bots' });
+  t.after(app.close);
+  await settle(8);
+  const tokenCalls = () => app.router.calls.filter(c => c.method === 'GET' && c.path === '/api/auth/tokens').length;
+  app.evaluate(`state.currentUser={id:1,loginName:'alice',isGuest:false};renderAll()`);
+  await settle(4);
+  assert.equal(tokenCalls(), 0, 'other pages do not fetch the token list');
+  assert.equal(app.evaluate(`state.accessTokensStatus`), 'idle');
+  app.router.get('/api/auth/tokens', []);
+  app.evaluate(`switchView('guide')`);
+  await settle(6);
+  assert.equal(tokenCalls(), 1, 'opening 访问密钥 loads it');
+  assert.equal(app.evaluate(`state.accessTokensStatus`), 'ready');
+  app.evaluate(`renderAll()`);
+  await settle(4);
+  assert.equal(tokenCalls(), 1, 'repaints reuse the loaded list');
 });

@@ -75,7 +75,9 @@ document.addEventListener('click',e=>{
   const button=e.target.closest?.('[data-goto-credential]');
   if(button)gotoCredential(button.dataset.gotoCredential);
 });
-function renderGuide(openCreate=false){if($('#accessBody'))renderAccessTokens(openCreate)}
+// renderAll() repaints every page, so only the active 访问密钥 page may fetch
+// the token list; Bearer sessions get 401 there and would poison the state.
+function renderGuide(openCreate=false){if($('#accessBody')&&accessViewActive())renderAccessTokens(openCreate)}
 // loadAccessTokens always settles accessTokensStatus, and only repaints when the
 // user is still on 访问密钥, so a slow or failing request can never leave the
 // loading placeholder on top of another page.
