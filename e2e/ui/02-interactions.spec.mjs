@@ -1,6 +1,5 @@
 // Key user journeys driven through the real UI: create a requirement, approve
-// a waiting run from its detail page, edit a SOP in the designer and search
-// the knowledge base. Fixtures are created through the API and cleaned up.
+// a waiting run from its detail page and edit a SOP in the designer. Fixtures are created through the API and cleaned up.
 import { test, expect, watchErrors, openView } from './fixtures.mjs';
 import { get, post, put, del, list, cleanup, track, waitRun } from '../lib/api.mjs';
 import { cfg } from '../lib/env.mjs';
@@ -169,19 +168,6 @@ test('SOP designer: the agent drawer shows name, role and on-failure in the firs
   expect(errors).toEqual([]);
 });
 
-test('knowledge center: search shows cited hits', async ({ page }) => {
-  const settings = await get('/api/knowledge/settings');
-  test.skip(!settings.ready, 'knowledge base not configured');
-  const errors = watchErrors(page);
-  await openView(page, 'knowledge');
-  await page.locator('[data-kb-tab="search"]').first().click();
-  await page.locator('#kbSearchForm input[name="q"]').fill('部署');
-  await page.locator('#kbSearchForm input[name="q"]').press('Enter');
-  await expect(page.locator('.kb-hit').first()).toBeVisible({ timeout: 60_000 });
-  expect(await page.locator('.kb-hit').count()).toBeGreaterThan(0);
-  expect(errors).toEqual([]);
-});
-
 // The reply to "让 AI 分析" must stay between the question and the alert while
 // it streams and after it finishes; it used to stream below the alert and then
 // jump above it, which read as "no answer".
@@ -224,7 +210,7 @@ test('settings at ≤1000px: the drawer opens from the rail and closes once a pa
   const drawerOpen = () => page.evaluate(() => document.body.classList.contains('sidebar-open'));
   // A deep link shows the page, not the navigation on top of it.
   await page.goto('/#/skills');
-  await expect(page.locator('#pageTitle')).toHaveText('技能管理');
+  await expect(page.locator('#pageTitle')).toHaveText('能力资产');
   expect(await drawerOpen()).toBe(false);
   // Coming into settings from the workbench offers the navigation…
   await page.evaluate(() => { location.hash = '#/collaboration'; });

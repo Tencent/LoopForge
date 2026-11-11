@@ -41,8 +41,10 @@ type userConfigRow struct {
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment;size:64"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key;type:text"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url;type:text"`
+	CodexModels                  *string    `gorm:"column:codex_models;type:text"`
 	ClaudeCodeAPIKey             *string    `gorm:"column:claude_code_api_key;type:text"`
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url;type:text"`
+	ClaudeCodeModels             *string    `gorm:"column:claude_code_models;type:text"`
 	AgentCLICredentials          *string    `gorm:"column:agent_cli_credentials;type:text"`
 	Created                      *time.Time `gorm:"column:created_at"`
 	Updated                      *time.Time `gorm:"column:updated_at"`
