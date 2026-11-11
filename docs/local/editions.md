@@ -6,7 +6,7 @@ LoopForge Local 内置两套工作流，源码位于 `local/`。为避免同一�
 
 | Edition | 仓库事实源 | 入口 | 维护方式 |
 | --- | --- | --- | --- |
-| Portable | `skills/` | CodeBuddy/Cursor/Claude/DeepSeek Harness/Hermes 使用 `/devflow`，Codex 使用 `$devflow`，Pi 使用 `/skill:devflow` | 修改 canonical Skill 和 adapter manifest |
+| Portable | `skills/` | CodeBuddy/Cursor/Claude/DeepSeek Harness/Hermes 使用 `/devflow`，Codex 使用 `$devflow`，Pi 使用 `/skill:devflow`，ZCode 使用 `/skill devflow` | 修改 canonical Skill 和 adapter manifest |
 | Classic（默认） | `.codebuddy/`、`.codex/`、`.cursor/`、`.claude/` | CodeBuddy/Cursor/Claude 使用 `/start-devflow`，Codex 使用 `$devflow-codex` | 以 `.codebuddy` 为参考行为；Cursor/Claude 由生成器产生 |
 
 表中路径均相对于 `local/`。安装器将对应资产安装到目标项目的宿主原生目录，

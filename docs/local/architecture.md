@@ -11,8 +11,8 @@
 ## Portable Edition
 
 `skills/` 提供独立的新 DevFlow 状态机、模板、规则、测试和 adapter，
-支持 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness 和 Hermes Agent（Pi 只有声明型 adapter，
-isolated 模式依赖公开扩展 `npm:pi-subagents`；DSH 使用内置 `subagent` 工具；Hermes 使用 `delegate_task`）。脚本只依赖 Python 3.8+
+支持 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness、Hermes Agent 和 ZCode（Pi 只有声明型 adapter，
+isolated 模式依赖公开扩展 `npm:pi-subagents`；DSH 使用内置 `subagent` 工具；Hermes 使用 `delegate_task`；ZCode 使用 `Agent`）。脚本只依赖 Python 3.8+
 标准库；具体 Agent 调度能力由宿主提供。
 
 `skills/manifest.json` 是跨宿主 Skill 集合清单。`skills/` 是这一层的唯一

@@ -181,6 +181,7 @@ npx -y loopforge-cli@latest install claude
 | --- | --- |
 | Claude Code · CodeBuddy · Codex · Cursor | Classic（默认）与 Portable 版 |
 | Pi | Portable 版 |
+| ZCode | Portable 版 |
 
 各宿主的入口见[本地使用指南](docs/local/usage.zh-CN.md)，版本差异见[版本说明](docs/local/editions.md)，源码位于 [`local/`](local/)。Local 目前运行内置工作流；平台 SOP 导出后在本地独立执行是后续方向，尚未实现。
 

@@ -142,6 +142,7 @@ The Classic Edition from the quick start is the right choice for most users. If 
 | Pi | `npx -y loopforge-cli@latest skills install pi`, then `pi install npm:pi-subagents` | `/skill:devflow "<request>"` |
 | DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<request>"` |
 | Hermes Agent | `npx -y loopforge-cli@latest skills install hermes`, then `hermes skills trust .` | `/devflow "<request>"` (optional plugin: `/loopforge`) |
+| ZCode | `npx -y loopforge-cli@latest skills install zcode` | `/skill devflow "<request>"` |
 
 See [Edition selection](editions.md) for the complete boundaries and directory layout.
 
@@ -153,7 +154,7 @@ For ongoing use, install the CLI globally:
 npm install --global loopforge-cli
 ```
 
-Then maintain an installation with the same agent names as above (`codebuddy`, `codex`, `cursor`, `claude`, `pi`, `dsh`, and `hermes` for the Portable Edition):
+Then maintain an installation with the same agent names as above (`codebuddy`, `codex`, `cursor`, `claude`, `pi`, `dsh`, `hermes`, and `zcode` for the Portable Edition):
 
 ```bash
 # Classic Edition

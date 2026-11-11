@@ -196,6 +196,17 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(DevFlowError):
                 apply_install(project, "hermes", "classic")
 
+    def test_zcode_installs_project_skills_and_rejects_classic(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            installed, _unchanged = apply_install(project, "zcode", "portable")
+            self.assertGreater(installed, 0)
+            self.assertTrue((project / ".zcode/skills/devflow/SKILL.md").is_file())
+            self.assertTrue((project / ".zcode/skills/manifest.json").is_file())
+            self.assertTrue((project / ".zcode/skills/devflow/adapters/zcode/manifest.json").is_file())
+            with self.assertRaises(DevFlowError):
+                apply_install(project, "zcode", "classic")
+
     def test_editions_and_plan_make_the_split_visible_without_writing(self):
         output = StringIO()
         with redirect_stdout(output):
@@ -259,6 +270,7 @@ class InstallerTests(unittest.TestCase):
             "codex": ".agents/skills",
             "cursor": ".cursor/skills",
             "claude": ".claude/skills",
+            "zcode": ".zcode/skills",
         }
         for host, relative in skill_roots.items():
             with self.subTest(host=host), tempfile.TemporaryDirectory() as temporary:

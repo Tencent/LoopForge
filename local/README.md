@@ -1,6 +1,6 @@
 # LoopForge Local
 
-LoopForge 的本地工作流组件，在 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness 或 Hermes Agent 中使用，无需启动平台。
+LoopForge 的本地工作流组件，在 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness、Hermes Agent 或 ZCode 中使用，无需启动平台。
 
 Local workflows for LoopForge, running inside an existing coding assistant without the platform server.
 

@@ -176,6 +176,14 @@ def materialize_portable(host: str, stage: Path) -> None:
         for name in manifest["skill_sets"]["portable"]:
             copy_skill(skills_root / name, target / name)
         return
+    if host == "zcode":
+        target = stage / ".zcode/skills"
+        target.mkdir(parents=True, exist_ok=True)
+        manifest = json.loads((skills_root / "manifest.json").read_text(encoding="utf-8"))
+        copy_skills_manifest(skills_root, target)
+        for name in manifest["skill_sets"]["portable"]:
+            copy_skill(skills_root / name, target / name)
+        return
     raise DevFlowError(f"不支持的宿主: {host}")
 
 

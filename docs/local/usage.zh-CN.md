@@ -141,6 +141,7 @@ LoopForge 尤其适合这些任务：
 | Pi | `npx -y loopforge-cli@latest skills install pi`，然后 `pi install npm:pi-subagents` | `/skill:devflow "<需求>"` |
 | DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<需求>"` |
 | Hermes Agent | `npx -y loopforge-cli@latest skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"`（可选插件：`/loopforge`） |
+| ZCode | `npx -y loopforge-cli@latest skills install zcode` | `/skill devflow "<需求>"` |
 
 完整边界和目录说明见 [Classic / Portable 说明](editions.md)。
 
@@ -152,7 +153,7 @@ LoopForge 尤其适合这些任务：
 npm install --global loopforge-cli
 ```
 
-之后用上面的宿主名（`codebuddy`、`codex`、`cursor`、`claude`，Portable Edition 另有 `pi`、`dsh` 和 `hermes`）维护安装：
+之后用上面的宿主名（`codebuddy`、`codex`、`cursor`、`claude`，Portable Edition 另有 `pi`、`dsh`、`hermes` 和 `zcode`）维护安装：
 
 ```bash
 # Classic Edition
