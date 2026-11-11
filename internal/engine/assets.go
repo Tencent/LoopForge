@@ -37,13 +37,19 @@ func (e *Engine) platformMCPServer() domain.MCPServerDefinition {
 // a fresh project-scoped token. It degrades to a no-op while the knowledge
 // base is not connected, so turning the role toggle on never fails a run.
 func (e *Engine) knowledgeMCPServer(agentID, projectID string, userID int64) (domain.MCPServerDefinition, bool) {
+	return e.knowledgeMCPServerForRun(agentID, projectID, userID, "")
+}
+
+// knowledgeMCPServerForRun is the SOP node path: the run id travels in the
+// signed token so persisted activity can be traced back to the run.
+func (e *Engine) knowledgeMCPServerForRun(agentID, projectID string, userID int64, runID string) (domain.MCPServerDefinition, bool) {
 	if e.repo == nil {
 		return domain.MCPServerDefinition{}, false
 	}
 	e.mu.Lock()
 	base := e.platformMCPBase
 	e.mu.Unlock()
-	token, err := knowledge.SignProxyToken(knowledge.SessionSecret(), knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agentID}, time.Now())
+	token, err := knowledge.SignProxyToken(knowledge.SessionSecret(), knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agentID, RunID: runID}, time.Now())
 	if err != nil {
 		return domain.MCPServerDefinition{}, false
 	}
@@ -72,6 +78,10 @@ func (e *Engine) RoleAssets(agent domain.AgentDefinition, projectID string, user
 }
 
 func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflowID string, userID int64) domain.AgentAssetBundle {
+	return e.resolveAssetsForRun(agent, projectID, workflowID, userID, "")
+}
+
+func (e *Engine) resolveAssetsForRun(agent domain.AgentDefinition, projectID, workflowID string, userID int64, runID string) domain.AgentAssetBundle {
 	bundle := domain.AgentAssetBundle{}
 	for _, id := range agent.Rules {
 		if v, ok := e.repo.Rule(id); ok {
@@ -146,7 +156,7 @@ func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflow
 		bundle.MCPServers = append(bundle.MCPServers, e.platformMCPServer())
 	}
 	if agent.KnowledgeBase {
-		if v, ok := e.knowledgeMCPServer(agent.ID, projectID, userID); ok {
+		if v, ok := e.knowledgeMCPServerForRun(agent.ID, projectID, userID, runID); ok {
 			bundle.MCPServers = append(bundle.MCPServers, v)
 			bundle.Rules = append(bundle.Rules, knowledge.UsageRule())
 		}

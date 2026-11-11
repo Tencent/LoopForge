@@ -223,7 +223,9 @@ ALTER TABLE knowledge_chunks
 - 私有 Git 的服务端凭据。切片只克隆不需要凭据的公开 HTTPS。
 - 外部仓库的提交、推送或合并请求。
 - 审核队列的自动入队、门禁、指纹和墓碑。
-- 调用记录持久化。内存里的 `knowledgeActivityLog` 切片可以继续用，重启丢失是已知的，不在切片修。
+- 调用记录持久化：已实现。控制面表 `knowledge_activity`（`027`）按项目保留最近
+  200 条，`/api/knowledge/usage` 的 `activity` 从库读取；SOP 代理与 Main Bot 两条
+  通道都记录，写入失败不影响工具调用。
 - 历史 commit 的原文。见第 8 节。
 
 阶段二及以后仍不提前：向量与可选 compose profile、`kb_grep`、出处结构化字段、引用表、自动沉淀、治理面板、对外 MCP。

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
 )
 
@@ -140,6 +141,51 @@ func TestMainBotKnowledgeCallsUseSessionProject(t *testing.T) {
 	}
 	if text, isError = agentToolCall(t, handler, projectB, knowledge.ToolGetSource, `{"source":"a"}`); !isError || !strings.Contains(text, "授权范围") {
 		t.Fatalf("other project must not read project A's source detail: isError=%t body=%s", isError, text)
+	}
+}
+
+func TestMainBotKnowledgeActivityRecordsSessionAndSurvivesRestart(t *testing.T) {
+	resetAgentToolSessionsForTest()
+	s, handler := newKnowledgeTestServer(t)
+
+	session := newKnowledgeAgentToolSession(t, "p1", AgentToolAssistant, false)
+	session.RunID = "run-bot"
+	session.ChatSessionID = "chat-bot"
+	if text, isError := agentToolCall(t, handler, session, knowledge.ToolSearch, `{"query":"检索"}`); isError || !strings.Contains(text, `"source":"a"`) {
+		t.Fatalf("Main Bot search: isError=%t body=%s", isError, text)
+	}
+
+	restarted := newKnowledgeTestHandler(t, s)
+	usage := doJSON(t, restarted, http.MethodGet, "/api/knowledge/usage?projectId=p1", "", nil)
+	var payload struct {
+		Activity []domain.KnowledgeActivity `json:"activity"`
+	}
+	if err := json.Unmarshal(usage.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode usage: %v body=%s", err, usage.Body.String())
+	}
+	if len(payload.Activity) != 1 {
+		t.Fatalf("Main Bot activity after restart = %#v", payload.Activity)
+	}
+	item := payload.Activity[0]
+	if item.Tool != knowledge.ToolSearch || !item.OK || item.Query != "检索" || item.Hits != 1 ||
+		item.RunID != "run-bot" || item.SessionID != "chat-bot" || item.ProjectID != "p1" {
+		t.Fatalf("Main Bot activity = %#v", item)
+	}
+	if item.At.IsZero() {
+		t.Fatal("Main Bot activity time must be recorded")
+	}
+
+	other := newKnowledgeAgentToolSession(t, "p2", AgentToolAssistant, false)
+	other.RunID = "run-other"
+	if _, isError := agentToolCall(t, handler, other, knowledge.ToolSearch, `{"query":"检索"}`); isError {
+		t.Fatal("project p2 search failed")
+	}
+	usage = doJSON(t, restarted, http.MethodGet, "/api/knowledge/usage?projectId=p1", "", nil)
+	if err := json.Unmarshal(usage.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Activity) != 1 || payload.Activity[0].ProjectID != "p1" {
+		t.Fatalf("project p1 saw another project's Main Bot activity: %#v", payload.Activity)
 	}
 }
 

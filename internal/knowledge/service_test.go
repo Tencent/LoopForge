@@ -19,6 +19,7 @@ type fakeStore struct {
 	agents      []domain.AgentDefinition
 	workflows   []domain.WorkflowDefinition
 	candidates  []domain.KnowledgeCandidate
+	activities  []domain.KnowledgeActivity
 }
 
 func newFakeStore() *fakeStore {

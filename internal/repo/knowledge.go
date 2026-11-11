@@ -119,6 +119,97 @@ func knowledgeSubmissionFromRow(row knowledgeSubmissionRow) domain.KnowledgeSubm
 	return out
 }
 
+// knowledgeActivityRetention 是每个项目保留的最近调用条数。按项目裁剪而不是
+// 全局裁剪，避免活跃项目把其他项目的记录挤掉；项目数有界，总行数因此有界。
+const knowledgeActivityRetention = domain.KnowledgeActivityLimit
+
+// PutKnowledgeActivity records one Agent knowledge tool call and trims the
+// project to its newest retention window. It runs after the tool call has
+// already succeeded or failed, so callers must treat an error as diagnostic
+// only and never fail the tool call because of it.
+func (r *KnowledgeRepo) PutKnowledgeActivity(item domain.KnowledgeActivity) error {
+	projectID := strings.TrimSpace(item.ProjectID)
+	if projectID == "" {
+		return errors.New("knowledge activity project id is required")
+	}
+	projectID = clipActivity(projectID, 64)
+	at := item.At.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	row := knowledgeActivityRow{
+		ProjectID: projectID,
+		AgentID:   clipActivity(item.AgentID, 64),
+		UserID:    item.UserID,
+		RunID:     clipActivity(item.RunID, 64),
+		SessionID: clipActivity(item.SessionID, 64),
+		Tool:      clipActivity(item.Tool, 64),
+		Query:     clipActivity(item.Query, 500),
+		Hits:      item.Hits,
+		OK:        item.OK,
+		Error:     clipActivity(item.Error, 512),
+		LatencyMS: item.LatencyMS,
+		At:        &at,
+	}
+	if err := r.DB.Create(&row).Error; err != nil {
+		return err
+	}
+	// Offset retention finds the first row outside the window; deleting by id
+	// keeps the operation portable between MySQL and sqlite.
+	var cutoff knowledgeActivityRow
+	err := r.DB.Select("id").Where("project_id = ?", projectID).
+		Order("id DESC").Offset(knowledgeActivityRetention).Limit(1).Take(&cutoff).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return r.DB.Where("project_id = ? AND id <= ?", projectID, cutoff.ID).Delete(&knowledgeActivityRow{}).Error
+}
+
+// KnowledgeActivities returns the newest calls of one project, newest first.
+// An empty project returns nothing instead of every project's rows.
+func (r *KnowledgeRepo) KnowledgeActivities(projectID string, limit int) []domain.KnowledgeActivity {
+	out := make([]domain.KnowledgeActivity, 0)
+	projectID = clipActivity(projectID, 64)
+	if projectID == "" {
+		return out
+	}
+	if limit <= 0 || limit > knowledgeActivityRetention {
+		limit = knowledgeActivityRetention
+	}
+	var rows []knowledgeActivityRow
+	if err := r.DB.Where("project_id = ?", projectID).Order("id DESC").Limit(limit).Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, row := range rows {
+		out = append(out, knowledgeActivityFromRow(row))
+	}
+	return out
+}
+
+func knowledgeActivityFromRow(row knowledgeActivityRow) domain.KnowledgeActivity {
+	out := domain.KnowledgeActivity{
+		Tool: row.Tool, ProjectID: row.ProjectID, AgentID: row.AgentID, UserID: row.UserID,
+		RunID: row.RunID, SessionID: row.SessionID, Query: row.Query,
+		Hits: row.Hits, OK: row.OK, Error: row.Error, LatencyMS: row.LatencyMS,
+	}
+	if row.At != nil {
+		out.At = *row.At
+	}
+	return out
+}
+
+func clipActivity(value string, max int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max])
+}
+
 // 内置知识引擎控制面：知识库、来源、项目绑定、同步任务都由 KnowledgeRepo 拥有，
 // 只写主库，不存正文。
 

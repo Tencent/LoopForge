@@ -407,7 +407,11 @@ func (h *agentToolGateway) callMainBotKnowledge(ctx context.Context, session *Ag
 	if h == nil || h.deps == nil || h.kb == nil {
 		return "", fmt.Errorf("知识库不可用：%w", knowledge.ErrNotConfigured)
 	}
-	text, _, err := callKnowledgeTool(ctx, h.kb, session.ProjectID, name, args)
+	caller := knowledge.Caller{
+		ProjectID: session.ProjectID, UserID: session.UserID,
+		RunID: session.RunID, SessionID: session.ChatSessionID,
+	}
+	text, _, err := callKnowledgeTool(ctx, h.kb, caller, name, args)
 	if err != nil {
 		return "", err
 	}
