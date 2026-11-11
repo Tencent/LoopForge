@@ -252,6 +252,27 @@ describe("conversation hooks", () => {
     }
   });
 
+  test.each(["declined", "muted", "expired"])("a %s proposal decision refreshes a stale card without writing", async (decision) => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 SOP", timing: "start" } };
+    const withDraft = (value) => ({
+      ...result.current.session,
+      messages: [{ role: "assistant", content: JSON.stringify({ message: "建议", drafts: [value] }) }],
+    });
+    act(() => result.current.setSession(withDraft(draft)));
+    const latest = withDraft({ ...draft, decision });
+    apiMock.mockResolvedValueOnce(latest);
+
+    await act(() => expect(result.current.applyDraft(0, 0, { approved: true })).rejects.toThrow("这条建议已经处理过"));
+
+    expect(apiMock).not.toHaveBeenCalledWith("/mcp", expect.anything());
+    expect(writeMock).not.toHaveBeenCalled();
+    expect(result.current.session).toEqual(latest);
+  });
+
   test("provides local fixture conversations and completes a local reply", async () => {
     history.replaceState({}, "", "/?localPreview=1");
     vi.useFakeTimers();

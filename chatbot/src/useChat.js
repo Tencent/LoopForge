@@ -949,6 +949,10 @@ export function useChat() {
         reply = JSON.parse(stored.messages[messageIndex].content);
         draft = reply.drafts[draftIndex];
       }
+      if (draft.proposal && draft.decision !== "accepted") {
+        if (currentId.current === id) setSession(stored);
+        throw Error("这条建议已经处理过，不能执行。");
+      }
       try {
         Object.assign(draft, reviewedOperation(draft, review));
       } catch (error) {
