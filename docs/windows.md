@@ -129,13 +129,22 @@ remembered. Stop the Runner before changing these options. The default concurren
 is one. The platform launcher starts the platform containers. Start the Runner
 separately when it is needed.
 
-Windows Runner self-updates are disabled by this launcher. Stop the Runner,
-replace the binaries with a matching build, then start it again. The Windows
+Windows Runner self-updates are disabled, including when the binary is started
+directly or passed `-auto-update=true`. Windows cannot replace a running executable
+with the current updater. Stop the Runner, replace the Runner and Gate MCP binaries
+with a matching build, then start it again. The Windows
 workspace browser and task execution are supported, while the web interactive
 PTY terminal is unavailable on Windows. Use a local terminal for interactive
 commands. These scripts do not change which platform features execute on the
 server. In particular, the homepage assistant and requirement clarification keep
 their existing server-side credential requirements.
+
+Cancelling a Windows command immediately terminates its process tree; it does not
+have the Unix SIGTERM grace period. When the root command exits, its Windows Job
+Object also ends any remaining descendants. Background commands such as
+`nohup ... &` therefore do not keep a service running after that task exits. Keep
+services in the foreground for the lifetime of their task, or manage them
+separately from the Runner.
 
 ## Launcher regression checks
 

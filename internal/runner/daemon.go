@@ -64,7 +64,8 @@ type Config struct {
 	DefaultWorkspaceRoot string
 	HeartbeatInterval    time.Duration
 	LongPollTimeout      time.Duration
-	DisableAutoUpdate    bool
+	// DisableAutoUpdate is always enabled on Windows, where a running executable cannot be replaced.
+	DisableAutoUpdate bool
 	// DisableRunSandboxReuse gives every task its own sandbox instead of one
 	// per run and sandbox definition.
 	DisableRunSandboxReuse bool
@@ -92,6 +93,10 @@ func DefaultStatePath() (string, error) {
 func New(cfg Config) (*Daemon, error) {
 	cfg.ManagedCLIRoot = strings.TrimSpace(cfg.ManagedCLIRoot)
 	cfg.ServerURL = trimTrailingSlash(cfg.ServerURL)
+	if goruntime.GOOS == "windows" {
+		// Fence library callers as well as the CLI; Windows upgrades require a stopped Runner.
+		cfg.DisableAutoUpdate = true
+	}
 	if cfg.ServerURL == "" {
 		return nil, errors.New("server URL is required")
 	}

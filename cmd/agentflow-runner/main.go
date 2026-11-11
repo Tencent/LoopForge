@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -32,10 +33,13 @@ func main() {
 	concurrency := flag.Int("concurrency", 1, "maximum concurrent tasks")
 	heartbeat := flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	longPoll := flag.Duration("long-poll", 35*time.Second, "client-side long-poll timeout; must exceed the server's")
-	autoUpdate := flag.Bool("auto-update", true, "check for platform updates before claiming queued work")
+	autoUpdate := flag.Bool("auto-update", goruntime.GOOS != "windows", "check for platform updates before claiming queued work (unavailable on Windows)")
 	labels := flag.String("labels", "", "comma-separated runner labels")
 	reuseSandbox := flag.Bool("reuse-run-sandbox", true, "run all nodes of a run in one sandbox per definition instead of one per task")
 	flag.Parse()
+	if goruntime.GOOS == "windows" && *autoUpdate {
+		log.Printf("automatic Runner updates are unavailable on Windows; stop the Runner before replacing its binaries")
+	}
 	loadDotEnv()
 
 	cfg := runner.Config{
