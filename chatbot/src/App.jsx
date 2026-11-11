@@ -38,7 +38,7 @@ import {
   ArtifactPreview,
   ImageLightbox,
 } from "./RichContent";
-import { KnowledgeProject } from "./knowledge-citation.js";
+import { KnowledgeProject } from "./knowledge-citation.jsx";
 import { DraftCard } from "./SidePanel";
 import ArtifactPanel from "./ArtifactPanel";
 import { useWorkspaceChanges } from "./useWorkspaceChanges";

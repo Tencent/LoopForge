@@ -10,7 +10,7 @@ import {
 } from "./activity";
 import { elapsedSeconds, formatElapsed } from "./api";
 import { RichContent } from "./RichContent";
-import { CitationNotes } from "./knowledge-citation.js";
+import { CitationNotes } from "./knowledge-citation.jsx";
 import { CredentialAction } from "./ui";
 
 const Brain = (props) => <HarnessIcon name="brain" {...props} />;

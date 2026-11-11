@@ -13,7 +13,7 @@ import DOMPurify from "dompurify";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { attachmentURL, visibleText } from "./api";
-import { applyCitationMarks, useCitationStatuses } from "./knowledge-citation.js";
+import { applyCitationMarks, useCitationStatuses } from "./knowledge-citation.jsx";
 import { definitionTarget } from "./platform.js";
 import {
   AgentBrowserLinks,

@@ -1,6 +1,6 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { applyCitationMarks, findCitations } from "../src/knowledge-citation.js";
+import { applyCitationMarks, findCitations } from "../src/knowledge-citation.jsx";
 
 test("citation marks compare the cited version without touching ordinary text", () => {
   const text = "见 docs@1:guides/a.md#L2-L4，以及 user@example.com 和 docs@2:guides/a.md#L2。";
