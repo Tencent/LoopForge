@@ -71,18 +71,20 @@ const CREDENTIAL_KINDS=[
     impact:'AI 对话将只能使用默认模型，CodeBuddy 执行器节点会失败。'},
   {key:'codexApiKey',group:'model',name:'Codex',short:'Codex API Key',logo:'codex',monochrome:true,
     use:'AI 对话选择 Codex 执行器，以及以 Codex 运行的 SOP 节点',
-    description:'用于调用 OpenAI Responses API 兼容服务：AI 对话可选择 Codex 执行器，SOP 中以 Codex 运行的节点也使用它；具体模型名称在角色定义中设置。',
-    guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；模型名在角色定义中设置']],
+    description:'AI 对话切换到 Codex 后可选用模型目录里的模型，SOP 在执行机器上以 Codex 运行的节点也使用它。模型目录默认跟随服务发布的模型，也可以自己挑选、排序和命名。',
+    guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；保存后可在模型目录里挑选 AI 对话的模型']],
     placeholder:'请输入 Codex API Key',
     extra:{name:'codexBaseUrl',label:'Base URL',placeholder:'https://api.openai.com/v1',url:true,clearWithKey:true},
-    impact:'以 Codex 运行的 SOP 节点将无法执行，Base URL 一并清空。'},
+    models:{name:'codexModels',engine:'codex',endpoint:'/models'},
+    impact:'以 Codex 运行的 SOP 节点将无法执行，Base URL 与模型目录一并清空。'},
   {key:'claudeCodeApiKey',group:'model',name:'Claude Code',short:'Claude Code API Key',logo:'claude',monochrome:true,
     use:'AI 对话选择 Claude 执行器，以及以 Claude Code 运行的 SOP 节点',
-    description:'用于调用 Anthropic Messages API 兼容服务：AI 对话可选择 Claude 执行器，SOP 中以 Claude Code 运行的节点也使用它；支持自定义服务地址。',
-    guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL']],
+    description:'AI 对话切换到 Claude Code 后可选用模型目录里的模型，SOP 在执行机器上以 Claude Code 运行的节点也使用它。模型目录默认跟随服务发布的模型，也可以自己挑选、排序和命名。',
+    guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；保存后可在模型目录里挑选 AI 对话的模型']],
     placeholder:'请输入 Claude Code API Key',
     extra:{name:'claudeCodeBaseUrl',label:'Base URL',placeholder:'https://api.anthropic.com',url:true,clearWithKey:true},
-    impact:'以 Claude Code 运行的 SOP 节点将无法执行，Base URL 一并清空。'},
+    models:{name:'claudeCodeModels',engine:'claude-code',endpoint:'/v1/models'},
+    impact:'以 Claude Code 运行的 SOP 节点将无法执行，Base URL 与模型目录一并清空。'},
   agentCliCredentialKind('opencode',{name:'OpenCode',logo:'opencode',baseUrl:'https://api.example.com/v1',required:()=>true,
     note:'OpenCode 没有自己的模型服务，需要填写 Base URL。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
   agentCliCredentialKind('cursor',{name:'Cursor CLI',logo:'cursor',monochrome:true,
@@ -90,7 +92,7 @@ const CREDENTIAL_KINDS=[
     guide:[['登录 Cursor 控制台，在「Integrations → User API Keys」新建 Key','https://cursor.com/dashboard?tab=integrations','前往 Cursor 创建 API Key'],['复制以 <code>crsr_</code> 开头的 Key'],['粘贴到下方保存']]}),
   agentCliCredentialKind('agy',{name:'Antigravity',logo:'gemini',baseUrl:'https://gateway.example.com/v1',required:protocol=>protocol==='chat',
     note:'默认连接 Gemini 官方服务；选择 OpenAI 兼容网关时需要填写 Base URL。',extraNote:'OpenAI 兼容网关必填',
-    guide:[['在 Google AI Studio 创建 Gemini API Key，或准备 OpenAI 兼容网关的 Key','https://aistudio.google.com/apikey','前往 Google AI Studio'],['走网关时记下网关地址'],['粘贴 Key，选择协议']],
+    guide:[['在 Google AI Studio 创建 Gemini API Key，或准备 OpenAI 兼容网关的 Key','https://aistudio.google.com/apikey','前往 Google AI Studio'],['走网关时记下网关地址'],['粘贴 Key，选择协议；保存后可在模型目录里挑选 AI 对话的模型']],
     protocols:[['gemini','Gemini 官方 API'],['chat','OpenAI 兼容网关（Chat Completions）']]}),
   agentCliCredentialKind('kimi',{name:'Kimi Code',logo:'kimi',baseUrl:'https://api.moonshot.cn/v1',
     note:'未填写 Base URL 时连接 Moonshot 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
@@ -106,13 +108,14 @@ function agentCliCredentialKind(cli,o){
   return {key:`agentCli.${cli}`,agentCli:cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,monochrome:!!o.monochrome,
     use:`AI 对话的 ${o.name} 模型与以 ${o.name} 运行的 SOP 节点`,
     description:`AI 对话切换到 ${o.name} 后可选用它的模型，SOP 在执行机器上以 ${o.name} 运行的节点也使用它。${o.note||''}`,
-    guide:o.guide||[['在模型服务商控制台创建 API Key'],['记下服务地址和它提供的接口协议'],['粘贴 Key，按需填写 Base URL 并选择协议']],
+    guide:o.guide||[['在模型服务商控制台创建 API Key'],['记下服务地址和它提供的接口协议'],['粘贴 Key，按需填写 Base URL 并选择协议；保存后可在模型目录里挑选 AI 对话的模型']],
     placeholder:`请输入 ${o.name} API Key`,
     ...(configurable?{
       extra:{name:field+'baseUrl',label:'Base URL',placeholder:o.baseUrl,url:true,clearWithKey:true,required:o.required,note:o.extraNote||(o.required?'必填':'')},
       protocol:{name:field+'protocol',options:o.protocols},
+      models:{name:field+'models',engine:cli},
     }:{}),
-    impact:`AI 对话将不能再切换到 ${o.name}，以 ${o.name} 运行的 SOP 节点将无法执行${configurable?'，Base URL 与协议一并清空':''}。`};
+    impact:`AI 对话将不能再切换到 ${o.name}，以 ${o.name} 运行的 SOP 节点将无法执行${configurable?'，Base URL、协议与模型目录一并清空':''}。`};
 }
 function credentialValue(user,name){
   const [scope,cli,field]=String(name).split('.');
@@ -124,6 +127,237 @@ function credentialProtocol(kind,user){
 }
 function credentialProtocolHTML(kind,value){
   return `<label class="credential-field"><span>接口协议<em>Base URL 提供的 API</em></span><div class="credential-input is-plain is-select"><select name="protocol" aria-label="接口协议">${kind.protocol.options.map(([id,label])=>`<option value="${id}"${id===value?' selected':''}>${escapeHTML(label)}</option>`).join('')}</select></div></label>`;
+}
+// The model list behind an Anthropic-style Base URL sits under /v1.
+function credentialModelsEndpoint(kind,protocol){return kind.models.endpoint||(protocol==='messages'?'/v1/models':'/models')}
+// ---- 模型目录（Codex / Claude Code / 可配置 Agent CLI） ----
+// An empty catalog follows the models the Base URL publishes. Edits stay in the DOM until 保存.
+// Without a Base URL the CLI talks to its official service, so the catalog gives way to the CLI's own models.
+const CREDENTIAL_CATALOG_MAX=100;
+function credentialCatalogModels(value){
+  return (Array.isArray(value)?value:[]).map(model=>{const id=String(model?.id||'').trim(),name=String(model?.name||'').trim();return {id,name:name===id?'':name}}).filter(model=>model.id||model.name);
+}
+function credentialCatalogStored(models){return credentialCatalogModels(models).map(model=>model.name?model:{id:model.id})}
+function credentialCatalogKey(models){return JSON.stringify(credentialCatalogModels(models).map(model=>[model.id,model.name]))}
+function credentialCatalogError(models){
+  const seen=new Set();
+  if(models.length>CREDENTIAL_CATALOG_MAX)return {index:CREDENTIAL_CATALOG_MAX,error:`模型目录最多 ${CREDENTIAL_CATALOG_MAX} 个`};
+  for(const [index,{id='',name=''}] of models.entries()){
+    const model={id,name};
+    if(!model.id)return {index,field:'id',error:'模型 ID 不能为空'};
+    if(model.id.length>128)return {index,field:'id',error:'模型 ID 不能超过 128 个字符'};
+    if(/[\s"'`\\\u0000-\u001f\u007f]/.test(model.id))return {index,field:'id',error:`模型 ID「${model.id}」不能包含空格、引号或反斜杠`};
+    if(seen.has(model.id))return {index,field:'id',error:`模型 ID「${model.id}」重复`};
+    if([...model.name].length>64)return {index,field:'name',error:'显示名称不能超过 64 个字符'};
+    seen.add(model.id);
+  }
+  return null;
+}
+function credentialCatalogRowHTML(model={}){
+  return `<li class="credential-catalog-row" data-catalog-row><button type="button" class="credential-catalog-grip" data-catalog-grip aria-label="拖动排序，也可以按 ↑ ↓ 移动">${credentialGlyph('grip',14)}</button><span class="credential-input is-plain"><input class="credential-mono" data-catalog-field="id" value="${escapeHTML(model.id||'')}" placeholder="模型 ID，如 gpt-5.5" aria-label="模型 ID" autocomplete="off" spellcheck="false"></span><span class="credential-input is-plain"><input data-catalog-field="name" value="${escapeHTML(model.name||'')}" placeholder="显示名称（可选）" aria-label="显示名称" autocomplete="off"></span><button type="button" class="credential-btn ghost icon danger credential-ink" data-catalog-act="remove" aria-label="移除模型">${credentialGlyph('trash',14)}</button></li>`;
+}
+function credentialCatalogHTML(kind,user){
+  const baseUrl=credentialValue(user,kind.extra.name),protocol=credentialProtocol(kind,user);
+  const models=credentialCatalogModels(credentialValue(user,kind.models.name)),empty=!models.length,official=!String(baseUrl||'').trim()||protocol==='gemini';
+  return `<section class="credential-catalog" data-credential-catalog data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
+    <div class="credential-catalog-official" data-catalog-official${official?'':' hidden'}>${credentialGlyph('layers',16)}<div><b>使用 ${escapeHTML(kind.name)} 自带的模型</b><small>未填写 Base URL 时连接官方服务，AI 对话直接列出 ${escapeHTML(kind.name)} 支持的模型。填写 Base URL 后可以获取服务发布的模型，并自定义模型目录。</small></div></div>
+    <div class="credential-catalog-body" data-catalog-body${official?' hidden':''}>
+    <div class="credential-catalog-head"><div><b>模型目录</b><small data-catalog-count>${credentialCatalogCountText(models.length)}</small></div><div><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('download',14)}<span>获取可用模型</span></button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="add"><span class="credential-turn">${credentialGlyph('plus',14)}</span><span>添加模型</span></button></div></div>
+    <div class="credential-catalog-probe" data-catalog-probe hidden></div>
+    <ol class="credential-catalog-list" data-catalog-list${empty?' hidden':''}>${models.map(credentialCatalogRowHTML).join('')}</ol>
+    <div class="credential-catalog-empty" data-catalog-empty${empty?'':' hidden'}>${credentialGlyph('layers',16)}<div><b>跟随服务发布的模型</b><small>目录为空时，AI 对话列出 Base URL 的 <code data-catalog-endpoint>${escapeHTML(credentialModelsEndpoint(kind,protocol))}</code> 返回的模型。</small></div></div>
+    <div class="credential-catalog-foot" data-catalog-foot${empty?' hidden':''}><button type="button" class="credential-btn link credential-ink" data-catalog-act="reset">${credentialGlyph('undo',13)}<span>恢复默认</span></button><small>清空目录，改回跟随服务发布的模型</small></div>
+    </div>
+    <span class="credential-sr" data-catalog-live role="status" aria-live="polite"></span>
+  </section>`;
+}
+function credentialCatalogSource(baseUrl){return String(baseUrl||'').trim().replace(/\/+$/,'')}
+function credentialCatalogCountText(count){return count?`${count} 个模型 · AI 对话按此顺序列出`:'未自定义'}
+function credentialCatalogRows(catalog){return [...catalog.querySelectorAll('[data-catalog-row]')]}
+function credentialCatalogRowModel(row){return {id:row.querySelector('[data-catalog-field="id"]').value,name:row.querySelector('[data-catalog-field="name"]').value}}
+function credentialCatalogFilledRows(catalog){return credentialCatalogRows(catalog).filter(row=>credentialCatalogModels([credentialCatalogRowModel(row)]).length)}
+function readCredentialCatalog(catalog){return credentialCatalogModels(credentialCatalogRows(catalog).map(credentialCatalogRowModel))}
+function credentialCatalogOfficial(catalog){
+  const form=catalog?.closest('.credential-editor-form'),extra=form?.querySelector('input[name="extra"]');
+  return (!!extra&&!extra.value.trim())||form?.querySelector('select[name="protocol"]')?.value==='gemini';
+}
+function credentialCatalogDirty(catalog){return !!catalog&&!credentialCatalogOfficial(catalog)&&credentialCatalogKey(readCredentialCatalog(catalog))!==catalog.dataset.originalKey}
+function credentialCatalogPayload(catalog){
+  if(!catalog)return undefined;
+  if(credentialCatalogOfficial(catalog))return catalog.dataset.originalKey==='[]'?undefined:[];
+  return credentialCatalogDirty(catalog)?readCredentialCatalog(catalog):undefined;
+}
+function syncCredentialCatalog(catalog){
+  const official=credentialCatalogOfficial(catalog),kind=credentialKind(catalog.closest('[data-credential-row]')?.dataset.credentialRow),protocol=catalog.closest('.credential-editor-form')?.querySelector('select[name="protocol"]')?.value;
+  const endpoint=catalog.querySelector('[data-catalog-endpoint]');if(endpoint&&kind?.models)endpoint.textContent=credentialModelsEndpoint(kind,protocol);
+  catalog.querySelector('[data-catalog-official]').hidden=!official;
+  catalog.querySelector('[data-catalog-body]').hidden=official;
+  if(official&&!catalog.querySelector('[data-catalog-probe]').hidden)closeCredentialCatalogProbe(catalog);
+  const rows=credentialCatalogRows(catalog).length,empty=!rows;
+  catalog.querySelector('[data-catalog-count]').textContent=credentialCatalogCountText(rows);
+  catalog.querySelector('[data-catalog-list]').hidden=empty;
+  catalog.querySelector('[data-catalog-empty]').hidden=!empty;
+  catalog.querySelector('[data-catalog-foot]').hidden=empty;
+  catalog.querySelector('[data-catalog-act="add"]').disabled=rows>=CREDENTIAL_CATALOG_MAX;
+}
+function announceCredentialCatalog(catalog,text){const live=catalog.querySelector('[data-catalog-live]');if(live)live.textContent=text}
+function credentialCatalogChanged(catalog){
+  syncCredentialCatalog(catalog);
+  const form=catalog.closest('.credential-editor-form');if(form)updateCredentialEditorDirty(form);
+}
+function resetCredentialCatalog(row){
+  const catalog=row.querySelector('[data-credential-catalog]'),kind=credentialKind(row.dataset.credentialRow);if(!catalog||!kind)return;
+  const holder=document.createElement('div');
+  holder.innerHTML=credentialCatalogHTML(kind,credentialUser());
+  catalog.replaceWith(holder.firstElementChild);
+  const fresh=row.querySelector('[data-credential-catalog]');
+  syncCredentialCatalog(fresh);
+  hydrateCredentialIcons(fresh);
+}
+function addCredentialCatalogRow(catalog,model={}){
+  const list=catalog.querySelector('[data-catalog-list]');
+  list.insertAdjacentHTML('beforeend',credentialCatalogRowHTML(model));
+  const row=list.lastElementChild;
+  hydrateCredentialIcons(row);
+  credentialCatalogChanged(catalog);
+  return row;
+}
+function removeCredentialCatalogRow(catalog,row){
+  const next=row.nextElementSibling||row.previousElementSibling;
+  row.remove();
+  credentialCatalogChanged(catalog);
+  announceCredentialCatalog(catalog,'已移除模型，保存后生效');
+  (next?.querySelector('[data-catalog-grip]')||catalog.querySelector('[data-catalog-act="add"]'))?.focus({preventScroll:true});
+}
+function moveCredentialCatalogRow(catalog,row,step){
+  const target=step<0?row.previousElementSibling:row.nextElementSibling;if(!target)return;
+  if(step<0)target.before(row);else target.after(row);
+  row.querySelector('[data-catalog-grip]')?.focus({preventScroll:true});
+  credentialCatalogChanged(catalog);
+  announceCredentialCatalog(catalog,`已移到第 ${credentialCatalogRows(catalog).indexOf(row)+1} 位`);
+}
+function startCredentialCatalogDrag(event,grip){
+  if(event.button!==0)return;
+  const row=grip.closest('[data-catalog-row]'),catalog=grip.closest('[data-credential-catalog]'),list=row?.parentElement;if(!row||!catalog)return;
+  event.preventDefault();
+  row.classList.add('is-dragging');list.classList.add('is-sorting');
+  const move=moveEvent=>{
+    if(moveEvent.pointerId!==event.pointerId)return;
+    const y=moveEvent.clientY;
+    let prev=row.previousElementSibling,next=row.nextElementSibling;
+    while(prev&&y<prev.getBoundingClientRect().top+prev.getBoundingClientRect().height/2){prev.before(row);prev=row.previousElementSibling}
+    while(next&&y>next.getBoundingClientRect().top+next.getBoundingClientRect().height/2){next.after(row);next=row.nextElementSibling}
+  };
+  const end=endEvent=>{
+    if(endEvent.pointerId!==event.pointerId)return;
+    window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',end);window.removeEventListener('pointercancel',end);
+    row.classList.remove('is-dragging');list.classList.remove('is-sorting');
+    grip.focus({preventScroll:true});
+    credentialCatalogChanged(catalog);
+  };
+  window.addEventListener('pointermove',move);window.addEventListener('pointerup',end);window.addEventListener('pointercancel',end);
+}
+function credentialCatalogProbeHTML(catalog,kind){
+  const probe=catalog.probe,current=new Set(readCredentialCatalog(catalog).map(model=>model.id)),followAll=!current.size;
+  const items=probe.models.map(model=>{
+    const listed=current.has(model.id),checked=followAll||listed;
+    return `<label class="credential-catalog-pick" data-pick="${escapeHTML((model.id+' '+(model.name||'')).toLowerCase())}"><input type="checkbox" value="${escapeHTML(model.id)}"${checked?' checked':''}><code>${escapeHTML(model.id)}</code>${model.name&&model.name!==model.id?`<small>${escapeHTML(model.name)}</small>`:''}${listed?'<em>已在目录</em>':''}</label>`;
+  }).join('');
+  const protocol=catalog.closest('.credential-editor-form')?.querySelector('select[name="protocol"]')?.value;
+  const source=probe.source==='builtin'?'未填写 Base URL，以下是内置模型':`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`;
+  return `<div class="credential-catalog-probe-top"><span class="credential-input is-plain is-search">${credentialGlyph('search',14)}<input data-catalog-search placeholder="搜索模型" aria-label="搜索模型" autocomplete="off" spellcheck="false"></span><span class="credential-catalog-picked" data-catalog-picked></span><button type="button" class="credential-btn link credential-ink" data-catalog-act="toggle-all">全选</button></div>
+    <div class="credential-catalog-probe-list" role="group" aria-label="可用模型">${items}</div>
+    <div class="credential-catalog-probe-foot"><small>${source} · 勾选的模型会加入目录，取消勾选会移出</small><div><button type="button" class="credential-btn ghost credential-ink" data-catalog-act="probe-close">取消</button><button type="button" class="credential-btn primary credential-ink" data-catalog-act="probe-apply">更新列表</button></div></div>`;
+}
+function syncCredentialCatalogProbe(catalog){
+  const panel=catalog.querySelector('[data-catalog-probe]'),query=String(panel.querySelector('[data-catalog-search]')?.value||'').trim().toLowerCase();
+  const picks=[...panel.querySelectorAll('.credential-catalog-pick')];
+  picks.forEach(pick=>{pick.hidden=!!query&&!pick.dataset.pick.includes(query)});
+  const visible=picks.filter(pick=>!pick.hidden),checked=picks.filter(pick=>pick.querySelector('input').checked).length;
+  const counter=panel.querySelector('[data-catalog-picked]');if(counter)counter.textContent=`已选 ${checked} / ${picks.length}`;
+  const toggle=panel.querySelector('[data-catalog-act="toggle-all"]');
+  if(toggle){toggle.textContent=visible.length&&visible.every(pick=>pick.querySelector('input').checked)?'全不选':'全选';toggle.disabled=!visible.length}
+}
+function closeCredentialCatalogProbe(catalog){
+  const panel=catalog.querySelector('[data-catalog-probe]');
+  catalog.probeToken=(catalog.probeToken||0)+1;catalog.probe=null;
+  panel.hidden=true;panel.innerHTML='';
+}
+async function probeCredentialCatalog(row,catalog,button){
+  const kind=credentialKind(row.dataset.credentialRow),form=row.querySelector('.credential-editor-form'),panel=catalog.querySelector('[data-catalog-probe]');
+  const extra=form.querySelector('input[name="extra"]'),secret=form.querySelector('input[name="secret"]')?.value.trim()||'',protocol=form.querySelector('select[name="protocol"]')?.value;
+  const extraError=extra?credentialExtraError(kind,extra.value,protocol):'';
+  if(extraError){toast(extraError,'err');extra.focus();return}
+  const token=(catalog.probeToken||0)+1;catalog.probeToken=token;catalog.probe=null;
+  panel.hidden=false;
+  panel.innerHTML=`<p class="credential-vline is-info" role="status">${credentialSpinner(13)}正在获取可用模型…</p>`;
+  hydrateCredentialIcons(panel);
+  setCredentialButtonBusy(button,'获取中');
+  let result;
+  try{result=await api(`/api/users/${state.currentUser.id}/cli-models/probe`,{method:'POST',body:JSON.stringify({engine:kind.models.engine,apiKey:secret,...(extra?{baseUrl:extra.value.trim()}:{}),...(protocol?{protocol}:{})}),silent:true})}
+  catch(err){result={error:err.message}}
+  finally{setCredentialButtonBusy(button,'')}
+  if(catalog.probeToken!==token||!catalog.isConnected)return;
+  if(result?.error||!result?.models?.length){
+    panel.innerHTML=`<div class="credential-catalog-probe-fail"><p class="credential-vline is-err" role="alert">${credentialGlyph('alert',13)}${escapeHTML(result?.error||'服务没有返回可用模型')}</p><div><button type="button" class="credential-btn ghost credential-ink" data-catalog-act="probe-close">关闭</button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('refresh',13)}<span>重试</span></button></div></div>`;
+    hydrateCredentialIcons(panel);
+    return;
+  }
+  const source=credentialCatalogSource(extra?.value);
+  if(source!==catalog.dataset.catalogSource){
+    const cleared=credentialCatalogRows(catalog);
+    cleared.forEach(item=>item.remove());
+    catalog.dataset.catalogSource=source;
+    credentialCatalogChanged(catalog);
+    if(cleared.length)announceCredentialCatalog(catalog,'Base URL 已更换，原模型目录已清空，保存后生效');
+  }
+  catalog.probe=result;
+  panel.innerHTML=credentialCatalogProbeHTML(catalog,kind);
+  hydrateCredentialIcons(panel);
+  syncCredentialCatalogProbe(catalog);
+  panel.querySelector('[data-catalog-search]')?.focus({preventScroll:true});
+}
+function toggleCredentialCatalogProbe(catalog){
+  const panel=catalog.querySelector('[data-catalog-probe]'),visible=[...panel.querySelectorAll('.credential-catalog-pick:not([hidden]) input')];
+  const on=!visible.every(input=>input.checked);
+  visible.forEach(input=>{input.checked=on});
+  syncCredentialCatalogProbe(catalog);
+}
+function applyCredentialCatalogProbe(catalog){
+  const probe=catalog.probe;if(!probe)return;
+  const picked=new Set([...catalog.querySelectorAll('[data-catalog-probe] input[type="checkbox"]:checked')].map(input=>input.value));
+  const offered=new Set(probe.models.map(model=>model.id)),kept=new Set();
+  let removed=0;
+  credentialCatalogRows(catalog).forEach(row=>{
+    const id=row.querySelector('[data-catalog-field="id"]').value.trim();
+    if(offered.has(id)&&!picked.has(id)){row.remove();removed++}else kept.add(id);
+  });
+  const added=probe.models.filter(model=>picked.has(model.id)&&!kept.has(model.id));
+  const room=Math.max(0,CREDENTIAL_CATALOG_MAX-kept.size),list=catalog.querySelector('[data-catalog-list]');
+  list.insertAdjacentHTML('beforeend',added.slice(0,room).map(model=>credentialCatalogRowHTML({id:model.id,name:model.name&&model.name!==model.id?model.name:''})).join(''));
+  hydrateCredentialIcons(list);
+  closeCredentialCatalogProbe(catalog);
+  credentialCatalogChanged(catalog);
+  const skipped=added.length-Math.min(added.length,room);
+  const message=`模型目录已更新：新增 ${Math.min(added.length,room)} 个，移除 ${removed} 个${skipped?`，超出上限未加入 ${skipped} 个`:''}，保存后生效`;
+  announceCredentialCatalog(catalog,message);
+  toast(message,skipped?'err':'ok');
+  catalog.querySelector('[data-catalog-act="probe"]')?.focus({preventScroll:true});
+}
+function credentialCatalogAction(action,row,catalog,button){
+  if(action==='add'){addCredentialCatalogRow(catalog).querySelector('[data-catalog-field="id"]').focus({preventScroll:true});return}
+  if(action==='remove')return removeCredentialCatalogRow(catalog,button.closest('[data-catalog-row]'));
+  if(action==='reset'){
+    credentialCatalogRows(catalog).forEach(item=>item.remove());
+    credentialCatalogChanged(catalog);
+    announceCredentialCatalog(catalog,'已恢复默认，保存后跟随服务发布的模型');
+    catalog.querySelector('[data-catalog-act="add"]')?.focus({preventScroll:true});
+    return;
+  }
+  if(action==='probe')return probeCredentialCatalog(row,catalog,catalog.querySelector('[data-catalog-act="probe"]'));
+  if(action==='probe-close'){closeCredentialCatalogProbe(catalog);catalog.querySelector('[data-catalog-act="probe"]')?.focus({preventScroll:true});return}
+  if(action==='toggle-all')return toggleCredentialCatalogProbe(catalog);
+  if(action==='probe-apply')return applyCredentialCatalogProbe(catalog);
 }
 // Platform features depend on these, in the order people should configure them.
 const CREDENTIAL_RECOMMENDED=['gitToken','codeBuddyApiKey'];
@@ -186,16 +420,23 @@ function credentialSavePayload(kind,values={}){
     if(secret)entry.apiKey=secret;
     if(kind.extra&&values.extra!==undefined)entry.baseUrl=String(values.extra||'').trim();
     if(kind.protocol&&values.protocol!==undefined)entry.protocol=values.protocol;
+    if(kind.models&&values.models!==undefined)entry.models=credentialCatalogStored(values.models);
     return {agentCliCredentials:{[kind.agentCli]:entry}};
   }
   const payload={[kind.key]:String(values.secret||'').trim()};
   if(kind.extra&&values.extra!==undefined)payload[kind.extra.name]=String(values.extra||'').trim()||(kind.extra.fallback||'');
+  if(kind.models&&values.models!==undefined)payload[kind.models.name]=credentialCatalogStored(values.models);
   return payload;
 }
 function credentialClearPayload(kind){
-  if(kind.agentCli)return {agentCliCredentials:{[kind.agentCli]:{apiKeyClear:true,baseUrl:'',protocol:''}}};
+  if(kind.agentCli){
+    const entry={apiKeyClear:true,baseUrl:'',protocol:''};
+    if(kind.models)entry.models=[];
+    return {agentCliCredentials:{[kind.agentCli]:entry}};
+  }
   const payload={[kind.key+'Clear']:true};
   if(kind.extra?.clearWithKey)payload[kind.extra.name]='';
+  if(kind.models)payload[kind.models.name]=[];
   return payload;
 }
 function gitTokenVerifyFor(user){return state.gitTokenVerify&&Number(state.gitTokenVerify.userId)===Number(user?.id)?state.gitTokenVerify:null}
@@ -233,7 +474,11 @@ function credentialSubline(kind,user){
     const raw=String(user.codeBuddyInternetEnvironment||'').trim(),env=codeBuddyEnvironment(raw);
     return `<span>网络环境</span>${env?`<span class="credential-mono">${escapeHTML(env.label)}</span>`:`<span class="is-err">「${escapeHTML(raw)}」无法识别，按国际站连接</span>`}${dot}${use}`;
   }
-  if(kind.extra){const extra=credentialValue(user,kind.extra.name);return (extra?`<span class="credential-mono">${escapeHTML(extra)}</span>`:'<span>官方地址</span>')+dot+use;}
+  if(kind.extra){
+    const models=kind.models&&credentialCatalogModels(credentialValue(user,kind.models.name)).length,baseUrl=credentialValue(user,kind.extra.name);
+    const protocol=kind.protocol?kind.protocol.options.find(([id])=>id===credentialProtocol(kind,user))?.[1]:'';
+    return (baseUrl?`<span class="credential-mono">${escapeHTML(baseUrl)}</span>`:'<span>官方地址</span>')+(protocol?dot+`<span>${escapeHTML(protocol)}</span>`:'')+(models?dot+`<span>${models} 个自定义模型</span>`:'')+dot+use;
+  }
   return use;
 }
 function credentialFieldHTML({label,note='',name,type='password',value='',placeholder='',hint='',hintTone='',id=''}){
@@ -288,12 +533,14 @@ function credentialEditorHTML(kind,user){
   const extraField=!kind.extra?''
     :kind.extra.options?credentialSelectFieldHTML(kind,extraStored,'与 Key 所在站点一致')
     :credentialFieldHTML({label:kind.extra.label,note:kind.extra.note||(kind.extra.url?'留空使用官方地址':''),name:'extra',type:kind.extra.url?'url':'text',value:extraValue,placeholder:kind.extra.placeholder,hint:null});
-  const protocolField=kind.protocol?credentialProtocolHTML(kind,credentialProtocol(kind,user)):'';
+  const protocolValue=kind.protocol?credentialProtocol(kind,user):'';
+  const protocolField=kind.protocol?credentialProtocolHTML(kind,protocolValue):'';
   const legacy=!!(kind.extra?.options&&codeBuddyEnvironmentLegacy(user[kind.extra.name]));
-  return `<div class="credential-editor-form"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}${legacy?' data-legacy="true"':''}>
+  return `<div class="credential-editor-form${kind.models?' has-catalog':''}"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}${kind.protocol?` data-original-protocol="${escapeHTML(protocolValue)}"`:''}${legacy?' data-legacy="true"':''}>
     ${credentialFieldHTML({label:kind.short,note:'已配置 · 留空则不改',name:'secret',placeholder:'输入新值以替换',hint:kind.hint||''})}
     ${extraField}
     ${protocolField}
+    ${kind.models?credentialCatalogHTML(kind,user):''}
     <div class="credential-swap">
       <div class="credential-editor-foot" data-credential-pane="foot"><button type="button" class="credential-btn ghost danger credential-ink" data-credential-act="delete">${credentialGlyph('trash',14)}<span>删除</span></button><div><button type="button" class="credential-btn ghost credential-ink" data-credential-act="cancel">取消</button><button type="button" class="credential-btn primary credential-ink" data-credential-act="save"${legacy?'':' disabled'}>保存</button></div></div>
       <div class="credential-confirm is-off" data-credential-pane="confirm" role="alert"><div>删除 <b>${escapeHTML(kind.short)}</b>？${escapeHTML(kind.impact)}</div><button type="button" class="credential-btn ghost credential-ink" data-credential-act="undelete">取消</button><button type="button" class="credential-btn danger-solid credential-ink" data-credential-act="confirm-delete">删除</button></div>
@@ -384,6 +631,8 @@ function resetCredentialEditor(row){
   const form=row.querySelector('.credential-editor-form');if(!form)return;
   const extra=form.querySelector('[name="extra"]');if(extra)extra.value=form.dataset.original||'';
   if(extra?.tagName==='SELECT')refreshCredentialEnvironmentLinks(form,extra.value);
+  const protocol=form.querySelector('select[name="protocol"]');if(protocol)protocol.value=form.dataset.originalProtocol||'';
+  resetCredentialCatalog(row);
   if(row.dataset.credentialRow==='gitToken'){
     const line=form.querySelector('[data-git-verify-line]');if(line){line.classList.remove('is-err');line.innerHTML=''}
     setCredentialHint(form,'secret',GIT_TOKEN_REPLACE_HINT);
@@ -407,8 +656,8 @@ function showCredentialPane(row,name,focus=CREDENTIAL_PANE_FOCUS[name]){
   if(focus)setTimeout(()=>target.querySelector(focus)?.focus({preventScroll:true}),60);
 }
 function updateCredentialEditorDirty(form){
-  const secret=form.querySelector('input[name="secret"]')?.value.trim()||'',extra=form.querySelector('[name="extra"]'),save=form.querySelector('[data-credential-act="save"]');
-  if(save&&!save.dataset.busy)save.disabled=!secret&&!form.dataset.legacy&&!(extra&&extra.value.trim()!==(form.dataset.original||''));
+  const secret=form.querySelector('input[name="secret"]')?.value.trim()||'',extra=form.querySelector('[name="extra"]'),protocol=form.querySelector('select[name="protocol"]'),save=form.querySelector('[data-credential-act="save"]');
+  if(save&&!save.dataset.busy)save.disabled=!secret&&!form.dataset.legacy&&!(extra&&extra.value.trim()!==(form.dataset.original||''))&&!(protocol&&protocol.value!==(form.dataset.originalProtocol||''))&&!credentialCatalogDirty(form.querySelector('[data-credential-catalog]'));
 }
 function setCredentialHint(scope,name,text,tone=''){
   const hint=scope.querySelector(`[data-credential-hint="${name}"]`),box=scope.querySelector(`input[name="${name}"]`)?.closest('.credential-input');
@@ -479,6 +728,14 @@ async function submitCredentialEditor(row,button){
   const secretError=credentialSecretError(kind,secret),extraError=extra?credentialExtraError(kind,extra.value,protocol?.value):'';
   if(secretError){setCredentialHint(form,'secret',secretError,'err');return}
   if(extraError){toast(extraError,'err');extra.focus();return}
+  const catalog=form.querySelector('[data-credential-catalog]'),models=credentialCatalogPayload(catalog);
+  const catalogError=models&&credentialCatalogError(models);
+  if(catalogError){
+    toast(catalogError.error,'err');
+    const input=credentialCatalogFilledRows(catalog)[catalogError.index]?.querySelector(`[data-catalog-field="${catalogError.field||'id'}"]`);
+    if(input){const box=input.closest('.credential-input');box.classList.add('is-bad');box.classList.remove('is-shake');void box.offsetWidth;box.classList.add('is-shake');input.focus()}
+    return;
+  }
   setCredentialButtonBusy(button,key==='gitToken'?'校验中':'保存中');
   try{
     if(key==='gitToken'){
@@ -493,7 +750,7 @@ async function submitCredentialEditor(row,button){
       credentialSaved(key,'Git Token 校验通过，已保存');
       return;
     }
-    await saveCredential(key,{secret,...(extra?{extra:extra.value}:{}),...(protocol?{protocol:protocol.value}:{})});
+    await saveCredential(key,{secret,...(extra?{extra:extra.value}:{}),...(protocol?{protocol:protocol.value}:{}),...(models?{models}:{})});
     credentialSaved(key,`${kind.short} 已保存`);
   }catch(err){toast(err.message,'err');setCredentialButtonBusy(button,'')}
 }
@@ -550,6 +807,8 @@ function bindCredentialPanel(panel){
     const head=target.closest('.credential-group-head');if(head)return toggleCredentialGroup(head);
     const eye=target.closest('[data-credential-eye]');if(eye)return toggleCredentialSecret(eye);
     const row=target.closest('[data-credential-row]');if(!row)return;
+    const catalogAction=target.closest('[data-catalog-act]');
+    if(catalogAction){event.stopPropagation();if(!catalogAction.disabled)credentialCatalogAction(catalogAction.dataset.catalogAct,row,catalogAction.closest('[data-credential-catalog]'),catalogAction);return}
     const action=target.closest('[data-credential-act]');
     if(action){event.stopPropagation();if(!action.disabled)credentialRowAction(action.dataset.credentialAct,row,action);return}
     if(target.closest('.credential-editor'))return;
@@ -558,11 +817,24 @@ function bindCredentialPanel(panel){
   panel.onkeydown=event=>{
     const main=event.target.closest?.('.credential-row-main[role="button"]');
     if(main&&event.target===main&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activateCredentialRow(main.closest('[data-credential-row]'))}
-    const input=event.target.closest?.('.credential-editor-form input');
-    if(input&&event.key==='Enter'){event.preventDefault();const save=input.closest('.credential-editor-form').querySelector('[data-credential-act="save"]');if(!save.disabled)save.click()}
+    const grip=event.target.closest?.('[data-catalog-grip]');
+    if(grip&&(event.key==='ArrowUp'||event.key==='ArrowDown')){event.preventDefault();moveCredentialCatalogRow(grip.closest('[data-credential-catalog]'),grip.closest('[data-catalog-row]'),event.key==='ArrowUp'?-1:1);return}
+    const probe=event.target.closest?.('[data-catalog-probe]');
+    if(probe&&event.key==='Escape'){event.preventDefault();event.stopPropagation();credentialCatalogAction('probe-close',null,probe.closest('[data-credential-catalog]'));return}
+    const input=event.target.closest?.('.credential-editor-form input, .credential-editor-form select');
+    if(input&&event.key==='Enter'&&!probe){event.preventDefault();const save=input.closest('.credential-editor-form').querySelector('[data-credential-act="save"]');if(!save.disabled)save.click()}
+  };
+  panel.onpointerdown=event=>{
+    const grip=event.target.closest?.('[data-catalog-grip]');if(grip)startCredentialCatalogDrag(event,grip);
   };
   panel.oninput=event=>{
     const form=event.target.closest?.('.credential-editor-form');if(!form)return;
+    const catalog=event.target.closest('[data-credential-catalog]');
+    if(catalog){
+      if(event.target.closest('[data-catalog-probe]'))return syncCredentialCatalogProbe(catalog);
+      event.target.closest('.credential-input')?.classList.remove('is-bad');
+    }
+    if(event.target.name==='extra'||event.target.name==='protocol'){const catalogBox=form.querySelector('[data-credential-catalog]');if(catalogBox)syncCredentialCatalog(catalogBox)}
     if(event.target.name==='secret'){
       const kind=credentialKind(form.closest('[data-credential-row]').dataset.credentialRow),error=credentialSecretError(kind,event.target.value),warning=credentialSecretWarning(kind,event.target.value);
       setCredentialHint(form,'secret',error||warning||(kind.key==='gitToken'?GIT_TOKEN_REPLACE_HINT:kind.hint||''),error?'err':warning?'warn':'');
