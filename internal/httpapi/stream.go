@@ -224,7 +224,10 @@ func resolveCodeBuddyBin() (string, error) {
 			return c, nil
 		}
 	}
-	return "", fmt.Errorf("codebuddy 可执行文件未找到（PATH 及常见安装路径均无）；可设置 AGENTFLOW_CODEBUDDY_BIN 指定绝对路径")
+	if path, ok := runtime.OnDemandCLIPath("codebuddy"); ok {
+		return path, nil
+	}
+	return "", assistantCLIMissingError{engine: assistantEngineCodeBuddy, binary: "codebuddy"}
 }
 
 // fileExecutable reports whether path is a regular file with an executable bit.

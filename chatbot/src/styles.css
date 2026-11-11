@@ -1556,6 +1556,10 @@ small {
 .credential-action button:hover {
   background: var(--hover);
 }
+.credential-action button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
 .credential-action small {
   color: var(--muted);
   font-size: 11px;

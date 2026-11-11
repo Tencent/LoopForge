@@ -298,6 +298,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/generation/cancel", asst.generation)
 	g.POST("/api/assistant/sessions/:id/generation/steer", asst.steerGeneration)
 	g.GET("/api/assistant/models", asst.models)
+	g.POST("/api/assistant/cli-install", asst.installCLI)
+	g.GET("/api/assistant/cli-install", asst.cliInstallStatus)
 	g.POST("/api/assistant/attachments", asst.uploadAttachment)
 	g.GET("/api/assistant/attachments/:id", asst.downloadAttachment)
 	g.GET("/api/assistant/references", asst.workbenchReferences)
