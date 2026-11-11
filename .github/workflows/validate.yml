@@ -14,7 +14,8 @@ defaults:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # setup-python has no Python 3.8 build for Ubuntu 26.04.
+    runs-on: ${{ matrix.python-version == '3.8' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
