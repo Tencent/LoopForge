@@ -2,7 +2,7 @@
 
 [English](usage.md) | 简体中文
 
-LoopForge Local 在已有的编程助手中运行本地开发工作流，无需启动平台。当前支持内置的 Classic 和 Portable 工作流；平台 SOP 导出和独立执行尚未实现。平台部署见[部署指南](../deployment.md)。
+LoopForge Local 在已有的编程助手中运行本地开发工作流，无需启动平台。当前支持内置的 Classic 和 Portable 工作流；平台 SOP 导出和独立执行尚未实现。平台部署见[部署指南](../deployment.zh-CN.md)。
 
 ## 快速开始
 

@@ -129,7 +129,7 @@ git pull
 ./start.sh
 ```
 
-新版本如果附带 `migrations/` 下的数据迁移脚本，不会自动执行，请按[部署指南](docs/deployment.md)审阅后手动导入。
+新版本如果附带 `migrations/` 下的数据迁移脚本，不会自动执行，请按[部署指南](docs/deployment.zh-CN.md)审阅后手动导入。
 
 备份数据库（建议升级前做一次，也可以放进 cron 定时执行）：
 
@@ -142,7 +142,7 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -
 
 </details>
 
-> **中国大陆云主机：** 部分机器从 GitHub 拉取仓库很慢，克隆超时会导致对话工作区打不开。目前可以先为 git 配置代理，见[慢网络说明](docs/deployment.md#slow-networks-clone-and-image-build-limits)。后续我们会提供 CNB、镜像仓库等加速方式。
+> **中国大陆云主机：** 部分机器从 GitHub 拉取仓库很慢，克隆超时会导致对话工作区打不开。目前可以先为 git 配置代理，见[慢网络说明](docs/deployment.zh-CN.md#慢网络下的克隆与镜像构建限制)。后续我们会提供 CNB、镜像仓库等加速方式。
 
 ### 免 API Key 体验
 
@@ -165,12 +165,12 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -
 
 <br>
 
-- **执行器。** 在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清、定时助手任务和通知 AI 汇总目前使用 CodeBuddy。Docker 镜像内置三个 CLI；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
+- **执行器。** 在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清、定时助手任务和通知 AI 汇总目前使用 CodeBuddy。Docker 镜像内置三个 CLI；[原生部署](docs/deployment.zh-CN.md#worker-与执行机器)需安装所选执行器的 CLI。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
 - **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库（已内置 LoopForge 授权应用，无需申请 PAT，仍可手动填写 PAT），再配置执行器凭据（或绑定本机执行机器），之后既可以运行一条项目 SOP，也可以直接让 Main Bot 修改代码并提交 PR/MR。
-- **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
-- **账号与访问。** 新安装默认监听所有网卡（已有安装保留原配置），面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
-- **远程访问、HTTPS、独立 Worker。** 见[部署指南](docs/deployment.md)。
+- **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.zh-CN.md#账号)。重复执行安装脚本会保留已有数据。
+- **账号与访问。** 新安装默认监听所有网卡（已有安装保留原配置），面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.zh-CN.md#账号)。
+- **远程访问、HTTPS、独立 Worker。** 见[部署指南](docs/deployment.zh-CN.md)。
 - **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.10+）。
 
 </details>
@@ -274,13 +274,13 @@ npx -y loopforge-cli@latest install claude
 LoopForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对话都运行这些 CLI 之一；LoopForge 补上外面的部分：谁来做、在哪个沙箱里、按什么顺序、经过哪些检查、由谁签字。
 
 **可以直接暴露到公网吗？**
-新安装默认监听所有网卡，面向可信团队。开放前请阅读[账号与访问边界](docs/deployment.md#accounts)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
+新安装默认监听所有网卡，面向可信团队。开放前请阅读[账号与访问边界](docs/deployment.zh-CN.md#账号)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
 
 ## 文档
 
 | 我想了解 | 从这里开始 |
 | --- | --- |
-| 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.md) |
+| 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.zh-CN.md) |
 | 对话工作区、AI 定时任务与 Token 成本口径 | [对话工作区](docs/conversation-workspaces.md) · [AI 定时任务](docs/ai-scheduled-task-capabilities.md) · [Token 成本统计](docs/token-pricing.md) |
 | 本地工作流的安装、使用与版本选择 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
 | 扩展平台或接入 HTTP / MCP API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) · [共享定时任务 API](docs/api/shared-schedules.md) |
