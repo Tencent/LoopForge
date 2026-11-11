@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
-test('access guide renders client specs, capabilities search, and credential hints', async (t) => {
+test('token management renders client specs, revealed prompts, and credential hints', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.router.put('/api/users/1/credentials', {
@@ -21,16 +21,14 @@ test('access guide renders client specs, capabilities search, and credential hin
     state.authRequired=true;
     state.accessClient='claude';
     state.revealedToken='tok-secret';
-    state.accessCapabilitiesStatus='ready';
-    state.accessCapabilities={operations:[
-      {name:'issues_get',method:'GET',path:'/api/issues',description:'读取需求',readOnly:true},
-      {name:'projects_save',method:'PUT',path:'/api/projects',description:'保存项目',readOnly:false}
-    ]};
-    state.accessTab='mcp';renderGuide();
+    state.accessTokensStatus='ready';state.accessTokens=[];
+    renderGuide();
   `);
   const body = app.document.querySelector('#accessBody');
-  assert.match(body.textContent, /MCP 快速接入/);
+  assert.match(body.textContent, /Token 已创建/);
   assert.match(body.textContent, /Claude Code/);
+  assert.match(body.textContent, /复制 Claude Code 配置提示词/);
+  assert.equal(body.querySelector('[data-access-tab]'), null, 'Token 管理 has no MCP/能力/API tabs');
   const spec = app.evaluate(`accessMcpClientSpec('codex','http://example.test','abc')`);
   assert.match(spec.code, /mcp_servers\.agentflow/);
   assert.match(spec.code, /Bearer abc/);
@@ -38,14 +36,9 @@ test('access guide renders client specs, capabilities search, and credential hin
   assert.equal(app.evaluate(`credentialHint('工蜂 Authentication failed，需由责任人处理').field`), 'gitToken');
   assert.match(app.evaluate(`credentialActionHTML('CodeBuddy API Key 被拒绝')`), /codeBuddyApiKey/);
 
-  app.evaluate(`state.accessTab='capabilities';renderGuide()`);
-  const search = app.document.querySelector('#accessCapabilitySearch');
-  assert.equal(body.querySelectorAll('tbody tr').length, 2);
-  search.value = '保存';
-  search.dispatchEvent(new app.window.Event('input', { bubbles: true }));
-  assert.equal(body.querySelectorAll('tbody tr').length, 1);
-  assert.match(body.querySelector('tbody').textContent, /项目与仓库/);
-  assert.match(body.querySelector('tbody').textContent, /写入/);
+  body.querySelector('[data-revealed-client="codex"]').click();
+  assert.equal(app.evaluate(`state.accessClient`), 'codex');
+  assert.match(body.textContent, /复制 Codex 配置提示词/);
 
   const credential = app.evaluate(`({
     pat:credentialSecretError(credentialKind('codexApiKey'),'any-key'),
@@ -104,7 +97,7 @@ test('access guide renders client specs, capabilities search, and credential hin
   assert.match(app.document.querySelector('#userProfilePopover').textContent, /访客身份/);
   await app.evaluate(`renderPersonalSettings()`);
   assert.match(app.document.querySelector('#personalSettingsContent').textContent, /登录后即可管理自己的 Git Token 和 API Key/);
-  app.evaluate(`state.accessTab='setup';renderGuide()`);
+  app.evaluate(`renderGuide()`);
   assert.match(body.textContent, /请先登录/);
   app.evaluate(`openCommandPalette()`);
   const commandSearch = app.document.querySelector('#commandSearch');
@@ -147,7 +140,7 @@ test('personal token UI creates and revokes tokens through the API', async (t) =
   app.router.delete('/api/auth/tokens/token-1', { ok: true });
   app.evaluate(`
     state.currentUser={id:1,loginName:'alice',isGuest:false};
-    state.accessTab='tokens';state.accessTokensStatus='ready';state.accessTokens=${JSON.stringify([token])};
+    state.accessTokensStatus='ready';state.accessTokens=${JSON.stringify([token])};
     renderGuide();
   `);
   const form = app.document.querySelector('#accessTokenForm');
@@ -160,16 +153,9 @@ test('personal token UI creates and revokes tokens through the API', async (t) =
   assert.equal(app.evaluate(`state.revealedToken`), 'af_secret');
   app.evaluate(`renderAccessTokens()`);
   assert.match(app.document.querySelector('#accessBody').textContent, /af_secret/);
-  await app.evaluate(`
-    (() => {
-      const b=document.createElement('button');b.textContent='生成并复制';
-      return createQuickAccessPrompt(b);
-    })()
-  `);
-  await settle(4);
-  assert.match(app.evaluate(`state.revealedToken`), /af_secret/);
+  assert.ok(app.document.querySelector('#accessBody [data-copy-revealed-prompt]'), 'the one-time reveal offers the client prompt');
 
-  app.evaluate(`state.accessTab='tokens';renderAccessTokens()`);
+  app.evaluate(`renderAccessTokens()`);
   app.document.querySelector('[data-revoke-token="token-1"]').click();
   await settle(2);
   app.document.querySelector('#confirmOkBtn').click();

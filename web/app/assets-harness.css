@@ -593,3 +593,16 @@
   #assetsView .skillhub-drawer,
   #assetsView .skillhub-drawer.is-open { transition: none; }
 }
+
+/* 能力资产（MCP / 规则 / 技能）与环境资产（Dockerfile / 安装脚本 / 沙箱）的类型标签：
+ * 下划线分段，沿用 Bot 记录页的 SlidingTabs 指示层；mcpView 与 assetsView 共用。 */
+:is(#mcpView, #assetsView) .asset-type-tabs{display:flex;align-items:flex-end;gap:22px;margin:-6px 0 16px;border-bottom:1px solid var(--hui-border-soft,var(--hui-border))}
+:is(#mcpView, #assetsView) .asset-type-tabs[hidden]{display:none!important}
+:is(#mcpView, #assetsView) .asset-type-tabs.sliding-tabs[data-sliding-tabs]{--sliding-surface:transparent;--sliding-text:var(--hui-text);--sliding-muted:var(--hui-muted);display:flex!important;width:auto;height:40px!important;min-height:40px!important;padding:0!important;gap:22px!important;border-radius:0!important;background:transparent!important}
+:is(#mcpView, #assetsView) .asset-type-tabs.sliding-tabs[data-sliding-tabs]>[data-sliding-indicator]{top:auto;bottom:-1px;height:2px!important;border:0;border-radius:2px;background:var(--hui-accent);box-shadow:none}
+:is(#mcpView, #assetsView) .asset-type-tabs>button{flex:0 0 auto;height:40px;padding:0;border:0;border-radius:0;background:transparent;color:var(--hui-muted);font:500 13px/40px var(--hui-sans);cursor:pointer}
+:is(#mcpView, #assetsView) .asset-type-tabs>button:hover{color:var(--hui-text)}
+:is(#mcpView, #assetsView) .asset-type-tabs>button.active{color:var(--hui-text)}
+:is(#mcpView, #assetsView) .asset-type-tabs:not([data-sliding-tabs])>button.active{box-shadow:inset 0 -2px 0 var(--hui-accent)}
+:is(#mcpView, #assetsView) .asset-type-tabs>button:focus-visible{outline:2px solid var(--hui-accent);outline-offset:2px;border-radius:4px}
+#mcpView .mcp-installed-total{display:inline-flex;align-items:center;gap:6px;color:var(--hui-muted);font-size:13px;white-space:nowrap}

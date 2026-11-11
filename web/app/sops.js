@@ -42,8 +42,8 @@ async function toggleShare(kind,id){
 // request, so the catalog surfaces that dependency before adoption.
 const GENERIC_REQUIREMENT_CHECKS={
   'gongfeng-git-token':{label:'工蜂 Git Token',hint:'推送工作分支到工蜂。',fix:'settings',fixLabel:'去个人配置配置',check:()=>!!(userById(state.currentUser?.id)||{}).gitTokenConfigured},
-  'gongfeng-mcp':{label:'工蜂 MCP',hint:'调用工蜂接口创建 MR；未安装时复制出的 SOP 需安装后为「交付工程师」角色绑定。',fix:'mcp',fixLabel:'去 MCP 市场安装',check:()=>gongfengMCPInstalled()},
-  'tapd-mcp':{label:'TAPD MCP',hint:'把验收结论回写 TAPD；未安装时只产出待人工粘贴的说明。',fix:'mcp',fixLabel:'去 MCP 市场安装',check:()=>tapdMCPInstalled()}
+  'gongfeng-mcp':{label:'工蜂 MCP',hint:'调用工蜂接口创建 MR；未安装时复制出的 SOP 需安装后为「交付工程师」角色绑定。',fix:'mcp',fixLabel:'去能力资产添加',check:()=>gongfengMCPInstalled()},
+  'tapd-mcp':{label:'TAPD MCP',hint:'把验收结论回写 TAPD；未安装时只产出待人工粘贴的说明。',fix:'mcp',fixLabel:'去能力资产添加',check:()=>tapdMCPInstalled()}
 };
 function gongfengMarketItem(){
   return (state.mcpMarket||[]).find(item=>(item.aliases||[]).includes('gongfeng')||/gongfeng/i.test(item.url||''))||null;
@@ -424,10 +424,10 @@ function openGenericRequirementTarget(key){
   $('#genericTemplateModal').classList.remove('open');
   if(meta.fix==='mcp'){
     const query=key==='tapd-mcp'?'tapd':'gongfeng';
-    state.mcpScope='project';state.mcpTab='market';state.mcpQuery=query;
+    state.mcpScope='project';state.mcpQuery=query;
     const input=$('#mcpMarketSearch');if(input)input.value=query;
     switchView('mcp');
-    toast(query==='tapd'?'在 MCP 市场安装 TAPD MCP，安装后回到通用模板查看状态':'在 MCP 市场安装 Gongfeng MCP，安装后回到通用模板查看状态');
+    toast(query==='tapd'?'在「能力资产 › MCP」添加 TAPD MCP，添加后回到通用模板查看状态':'在「能力资产 › MCP」添加 Gongfeng MCP，添加后回到通用模板查看状态');
     return;
   }
   switchView('settings');

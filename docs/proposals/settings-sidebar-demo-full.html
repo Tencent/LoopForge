@@ -1,0 +1,1301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoopForge 设置收敛 Demo（完整版）</title>
+<style>
+  :root{
+    --accent:#7b61ff;--accent-soft:#f0edff;--text:#252529;--text-2:#62626c;--text-3:#9a9aa4;
+    --border:#eae9ee;--border-soft:#f1f0f4;--border-strong:#dcdbe3;--canvas:#fafafb;--surface:#ffffff;--soft:#f5f6f7;
+    --rail:#f6f6f6;--hover:#f1f1f3;--selected:#ebebee;
+    --info:#597dcc;--success:#338768;--warn:#b7791f;--error:#c15161;
+    --shadow:0 1px 2px rgba(20,20,30,.04),0 4px 16px -8px rgba(20,20,30,.08);
+    --pop:0 12px 32px -12px rgba(20,20,30,.24),0 2px 6px rgba(20,20,30,.06);
+    --ease:cubic-bezier(.2,.7,.2,1);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --accent:#a08aff;--accent-soft:#242033;--text:#ededf0;--text-2:#b1b1ba;--text-3:#73737d;
+      --border:#26262b;--border-soft:#1f1f24;--border-strong:#393940;--canvas:#111114;--surface:#16161a;--soft:#1c1c21;
+      --rail:#0b0b0d;--hover:#1f1f24;--selected:#27272d;
+      --info:#8aa8ee;--success:#34d399;--warn:#f2c46d;--error:#f0899a;
+      --shadow:none;--pop:0 12px 32px -12px rgba(0,0,0,.7);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{display:flex;flex-direction:column;background:var(--canvas);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  button,input,select,textarea{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .grow{flex:1}
+  .muted{color:var(--text-3)}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  [hidden]{display:none!important}
+
+  /* 演示条 */
+  .demo-bar{flex:none;position:relative;z-index:60;display:flex;align-items:center;gap:12px;height:40px;padding:0 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12.5px}
+  .demo-bar b{font-weight:600}
+  .switch-label{display:inline-flex;align-items:center;gap:8px;color:var(--text-2);cursor:pointer;user-select:none}
+  .switch{appearance:none;flex:none;width:30px;height:18px;margin:0;border-radius:999px;background:var(--border-strong);position:relative;cursor:pointer;transition:background .15s}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s var(--ease)}
+  .switch:checked{background:var(--accent)}
+  .switch:checked::after{transform:translateX(12px)}
+  .pop{position:absolute;right:14px;top:calc(100% + 6px);width:400px;max-height:72vh;overflow:auto;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--pop);font-size:13px}
+  .pop h3{margin:0 0 6px;font-size:13px}
+  .pop ol{margin:0 0 12px;padding-left:18px;color:var(--text-2)}
+  .pop li{margin:3px 0}
+  .pop li b{color:var(--text);font-weight:500}
+
+  /* 外壳 */
+  .app{flex:1;min-height:0;display:flex;position:relative}
+  .rail{flex:none;width:56px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0;background:var(--rail);border-right:1px solid var(--border);z-index:30}
+  .rail .logo{width:30px;height:30px;margin-bottom:10px;border-radius:9px;display:grid;place-items:center;background:var(--text);color:var(--surface);font:700 11px var(--mono)}
+  .rail-btn{position:relative;width:38px;height:38px;display:grid;place-items:center;border:0;border-radius:10px;background:transparent;color:var(--text-2);cursor:pointer;transition:background .15s,color .15s}
+  .rail-btn:hover{background:var(--hover);color:var(--text)}
+  .rail-btn.active{background:var(--selected);color:var(--text)}
+  .rail-btn .tip{position:absolute;left:46px;top:50%;transform:translateY(-50%);padding:3px 8px;border-radius:6px;background:var(--text);color:var(--surface);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s;z-index:70}
+  .rail-btn:hover .tip,.rail-btn:focus-visible .tip{opacity:1}
+  .rail-count{position:absolute;top:2px;right:1px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--error);color:#fff;font:600 10px/16px var(--mono);text-align:center}
+  .rail-sep{width:24px;height:1px;margin:4px 0;background:var(--border)}
+  .avatar{width:30px;height:30px;margin-top:6px;border:0;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-weight:600;font-size:12.5px;cursor:pointer}
+
+  .sidebar{flex:none;width:248px;overflow:hidden;background:var(--surface);border-right:1px solid var(--border);transition:width .24s var(--ease),border-color .24s}
+  .sidebar.closed{width:0;border-right-color:transparent}
+  .sb-inner{width:248px;height:100%;display:flex;flex-direction:column}
+  .sb-head{flex:none;display:flex;align-items:center;justify-content:space-between;padding:14px 12px 6px 18px}
+  .sb-head h2{margin:0;font-size:15px;font-weight:600}
+  .sb-nav{flex:1;overflow:auto;padding:4px 10px 24px}
+  .sb-group{margin-top:14px}
+  .sb-group>p{margin:0 0 4px;padding:0 10px;font-size:12px;color:var(--text-3)}
+  .nav{width:100%;height:34px;display:flex;align-items:center;gap:10px;padding:0 10px;border:0;border-radius:8px;background:transparent;color:var(--text-2);font-size:13.5px;text-align:left;cursor:pointer;transition:background .15s,color .15s}
+  .nav:hover{background:var(--hover);color:var(--text)}
+  .nav.active{background:var(--selected);color:var(--text);font-weight:500}
+  .nav svg{flex:none}
+  .nav .label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .narrow-only{display:none}
+
+  .mark{flex:none;font-size:11px;line-height:18px;padding:0 6px;border-radius:999px;border:1px solid;white-space:nowrap;font-weight:400}
+  .mark.merge{color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);border-color:color-mix(in srgb,var(--accent) 24%,transparent)}
+  .mark.move{color:var(--warn);background:color-mix(in srgb,var(--warn) 8%,transparent);border-color:color-mix(in srgb,var(--warn) 24%,transparent)}
+  .mark.new{color:var(--success);background:color-mix(in srgb,var(--success) 8%,transparent);border-color:color-mix(in srgb,var(--success) 24%,transparent)}
+  body:not(.marks) .mark,body:not(.marks) .mark-block{display:none!important}
+
+  .main-col{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{flex:none;height:52px;display:flex;align-items:center;gap:10px;padding:0 20px;border-bottom:1px solid var(--border-soft);background:var(--canvas)}
+  .crumb{display:flex;align-items:center;gap:6px;min-width:0;font-size:13px;color:var(--text-2)}
+  .crumb b{color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .crumb button{border:0;background:none;padding:0;color:var(--text-2);cursor:pointer}
+  .crumb button:hover{color:var(--text);text-decoration:underline}
+  .proj{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-3)}
+  .content{flex:1;overflow:auto}
+  .page{max-width:1120px;margin:0 auto;padding:24px 28px 72px}
+
+  @media (max-width:1000px){
+    .sidebar{position:absolute;left:56px;top:0;bottom:0;z-index:25;box-shadow:var(--pop)}
+    .sidebar.closed{box-shadow:none}
+    .narrow-only{display:flex}
+    .page{padding:20px 18px 64px}
+  }
+
+  /* 通用组件 */
+  .heading{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
+  .heading>div:first-child{flex:1;min-width:0}
+  .eyebrow{margin:0 0 2px;font-size:12px;color:var(--text-3)}
+  .heading h1,.flow-head h1{margin:0;font-size:22px;font-weight:600;line-height:1.35}
+  .desc{margin:4px 0 0;color:var(--text-2);font-size:13px}
+  .actions{flex:none;display:flex;align-items:center;gap:8px}
+  .btn{height:32px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;white-space:nowrap;cursor:pointer;transition:background .15s,border-color .15s}
+  .btn:hover{background:var(--hover)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.sm{height:28px;padding:0 10px;font-size:12.5px}
+  .btn.primary{border-color:transparent;background:var(--accent);color:#fff}
+  .btn.primary:hover{background:color-mix(in srgb,var(--accent) 88%,#000)}
+  .btn.soft{border-color:transparent;background:var(--accent-soft);color:var(--accent)}
+  .btn.ghost{border-color:transparent;background:transparent}
+  .btn.ghost:hover{background:var(--hover)}
+  .btn.danger{border-color:transparent;background:var(--error);color:#fff}
+  .btn.danger-outline{color:var(--error);border-color:color-mix(in srgb,var(--error) 40%,transparent)}
+  .icon-btn{width:32px;height:32px;flex:none;display:grid;place-items:center;border:0;border-radius:8px;background:transparent;color:var(--text-2);cursor:pointer}
+  .icon-btn:hover{background:var(--hover);color:var(--text)}
+  .link{border:0;padding:0;background:none;color:var(--text);font-weight:500;text-align:left;cursor:pointer}
+  .link:hover{color:var(--accent);text-decoration:underline}
+
+  .badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:999px;border:1px solid;font-size:12px;white-space:nowrap;vertical-align:middle;font-weight:400}
+  .badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .badge.ok{color:var(--success);background:color-mix(in srgb,var(--success) 8%,transparent);border-color:color-mix(in srgb,var(--success) 24%,transparent)}
+  .badge.run{color:var(--info);background:color-mix(in srgb,var(--info) 8%,transparent);border-color:color-mix(in srgb,var(--info) 24%,transparent)}
+  .badge.wait{color:var(--warn);background:color-mix(in srgb,var(--warn) 8%,transparent);border-color:color-mix(in srgb,var(--warn) 24%,transparent)}
+  .badge.err{color:var(--error);background:color-mix(in srgb,var(--error) 8%,transparent);border-color:color-mix(in srgb,var(--error) 24%,transparent)}
+  .badge.off{color:var(--text-3);background:var(--soft);border-color:var(--border)}
+  .tag{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;background:var(--soft);color:var(--text-2);font-size:11.5px;white-space:nowrap;vertical-align:middle;font-weight:400}
+
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .panel+.panel,.grid2+.panel,.panel+.grid2,.kpis+.panel,.callout+.panel,.tabs+.panel{margin-top:16px}
+  .panel-head{display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 16px;border-bottom:1px solid var(--border-soft);font-size:13px;color:var(--text-2)}
+  .panel-head b{color:var(--text);font-weight:600}
+  .panel-head .r{margin-left:auto;font-size:12px;color:var(--text-3)}
+  .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  @media (max-width:820px){.grid2{grid-template-columns:1fr}}
+  .stack{display:grid;gap:12px}
+
+  .row{display:flex;align-items:center;gap:12px;min-height:56px;padding:10px 16px;border-bottom:1px solid var(--border-soft)}
+  .row:last-child{border-bottom:0}
+  .row-ico{flex:none;width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:var(--soft);color:var(--text-2)}
+  .row-main{flex:1;min-width:0}
+  .row-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:500;font-size:13.5px}
+  .row-sub{margin-top:2px;color:var(--text-3);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row-meta{flex:none;color:var(--text-3);font-size:12px;text-align:right}
+  .row-actions{flex:none;display:flex;align-items:center;gap:6px}
+
+  .table{width:100%;border-collapse:collapse;font-size:13px}
+  .table th,.table td{padding:11px 14px;border-bottom:1px solid var(--border-soft);text-align:left;vertical-align:middle}
+  .table th{background:var(--soft);color:var(--text-2);font-size:12px;font-weight:500;white-space:nowrap}
+  .table th.num,.table td.num{text-align:right}
+  .table tr:last-child td{border-bottom:0}
+  .table tbody tr:hover{background:color-mix(in srgb,var(--hover) 60%,transparent)}
+  .table-wrap{overflow-x:auto}
+
+  .tabs{display:flex;gap:22px;margin-bottom:16px;border-bottom:1px solid var(--border);overflow-x:auto}
+  .tab{position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;padding:8px 0;border:0;background:transparent;color:var(--text-2);font-size:13.5px;cursor:pointer}
+  .tab:hover{color:var(--text)}
+  .tab[aria-selected="true"]{color:var(--text);font-weight:500}
+  .tab[aria-selected="true"]::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:2px;background:var(--accent)}
+  .tab .count{min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:var(--soft);color:var(--text-2);font:500 11px/18px var(--mono);text-align:center}
+
+  .seg{display:inline-flex;gap:2px;padding:2px;border-radius:9px;background:var(--soft)}
+  .seg button{height:28px;padding:0 12px;border:0;border-radius:7px;background:transparent;color:var(--text-2);font-size:12.5px;cursor:pointer;white-space:nowrap}
+  .seg button:hover{color:var(--text)}
+  .seg button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .seg button small{margin-left:4px;color:var(--text-3);font:11px var(--mono)}
+
+  .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border-soft)}
+  .search{display:inline-flex;align-items:center;gap:8px;height:32px;min-width:240px;padding:0 10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text-3)}
+  .search input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--text)}
+  .search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+
+  .callout{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 14px;border-radius:10px;background:var(--accent-soft);color:var(--text-2);font-size:13px}
+  .callout b{color:var(--accent);font-weight:600}
+  .callout .btn{margin-left:auto}
+
+  .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px}
+  @media (max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  .kpi{padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow)}
+  .kpi small{display:block;color:var(--text-2);font-size:12px}
+  .kpi b{display:block;margin-top:4px;font:600 24px/1.25 var(--mono)}
+  .kpi span{font-size:12px;color:var(--text-3)}
+  .kpi span.up{color:var(--success)}
+  .kpi span.down{color:var(--error)}
+
+  .chart{display:block;width:100%;height:auto}
+  .chart rect{fill:var(--accent);opacity:.72;transition:opacity .15s}
+  .chart rect:hover{opacity:1}
+  .chart line{stroke:var(--border)}
+  .chart text{fill:var(--text-3);font-size:11px}
+  .chart-box{padding:12px 16px 8px}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+  .card{display:flex;flex-direction:column;gap:10px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow)}
+  .card-head{display:flex;align-items:flex-start;gap:10px}
+  .card-head h3{flex:1;margin:0;font-size:15px;font-weight:600}
+  .card p{flex:1;margin:0;color:var(--text-2);font-size:12.5px}
+  .card .meta{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--text-3);font-size:12px}
+  .card footer{display:flex;align-items:center;gap:8px}
+  .chain{display:flex;flex-wrap:wrap;align-items:center;gap:4px;color:var(--text-3);font-size:12px}
+  .chain span{padding:1px 7px;border-radius:6px;background:var(--soft);color:var(--text-2)}
+
+  .kv{display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px 14px;margin:0;padding:14px 16px;font-size:13px}
+  .kv dt{color:var(--text-3)}
+  .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+
+  .empty{padding:44px 20px;text-align:center;color:var(--text-3);font-size:13px}
+  .empty b{display:block;margin-bottom:4px;color:var(--text);font-size:14px}
+  .empty.sm{padding:28px 16px}
+
+  .menu-anchor{position:relative}
+  .menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;width:230px;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--pop)}
+  .menu button{width:100%;height:36px;display:flex;align-items:center;gap:8px;padding:0 10px;border:0;border-radius:6px;background:transparent;text-align:left;font-size:13px;cursor:pointer}
+  .menu button:hover,.menu button:focus-visible{background:var(--hover)}
+  .menu button span{flex:1}
+  .menu small{color:var(--text-3);font-size:12px}
+  .menu hr{margin:4px 0;border:0;border-top:1px solid var(--border-soft)}
+
+  /* 表单 */
+  .field{display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--text-2)}
+  .field small{color:var(--text-3);font-size:12px}
+  fieldset.field{margin:0;padding:0;border:0}
+  fieldset.field legend{margin-bottom:6px;padding:0}
+  .input,.field input:not([type=checkbox]),.field select,.field textarea{width:100%;min-height:34px;padding:6px 10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px}
+  .field textarea{min-height:88px;resize:vertical;line-height:1.55}
+  .field input:focus,.field select:focus,.field textarea:focus,.input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .fields{display:grid;gap:14px;padding:16px}
+  .field-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}
+  .checks{display:flex;flex-wrap:wrap;gap:8px 16px;color:var(--text)}
+  .checks label{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+  .checks input{accent-color:var(--accent)}
+  .form-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-soft)}
+  .inline-form{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:16px;border-bottom:1px solid var(--border-soft)}
+  .inline-form .field{min-width:200px}
+  .inline-form .field.wide{flex:1}
+
+  /* 首页 */
+  .home{min-height:100%;display:grid;place-items:center;padding:40px 24px}
+  .home-inner{width:min(720px,100%);text-align:center}
+  .home-logo{width:52px;height:52px;margin:0 auto 14px;border-radius:15px;display:grid;place-items:center;background:var(--text);color:var(--surface);font:700 16px var(--mono)}
+  .home h1{margin:0;font-size:28px;font-weight:600}
+  .composer{margin-top:22px;text-align:left;background:var(--surface);border:1px solid var(--border-strong);border-radius:16px;box-shadow:var(--shadow)}
+  .composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .composer textarea{display:block;width:100%;min-height:84px;padding:14px 16px 6px;border:0;outline:0;background:transparent;resize:none;font-size:14px}
+  .composer-bar{display:flex;align-items:center;gap:8px;padding:8px 10px}
+  .chip{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:999px;background:var(--soft);color:var(--text-2);font-size:12px}
+  .starters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}
+  @media (max-width:720px){.starters{grid-template-columns:1fr}}
+  .starter{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface);text-align:left;cursor:pointer;transition:border-color .15s,background .15s}
+  .starter:hover{border-color:var(--border-strong);background:var(--hover)}
+  .starter b{font-size:13.5px;font-weight:600}
+  .starter span{color:var(--text-3);font-size:12px}
+
+  /* 待我确认 */
+  .approval{padding:16px}
+  .ap-head{display:flex;align-items:flex-start;gap:12px}
+  .ap-head>div{flex:1;min-width:0}
+  .ap-head h3{margin:2px 0 0;font-size:15px;font-weight:600}
+  .ap-sum{margin:10px 0 12px;padding:10px 12px;border-radius:10px;background:var(--soft);color:var(--text-2);font-size:13px}
+  .ap-sum b{color:var(--text);font-weight:500}
+  .ap-foot{display:flex;align-items:center;gap:8px}
+
+  /* 流程设计 */
+  .flow-head{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .flow-wrap{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px}
+  @media (max-width:1100px){.flow-wrap{grid-template-columns:1fr}}
+  .canvas{overflow:auto;background-color:var(--surface);background-image:radial-gradient(var(--border) 1px,transparent 1px);background-size:18px 18px}
+  .flow{display:block}
+  .flow .edges path{fill:none;stroke:var(--border-strong);stroke-width:1.6}
+  .flow marker path{fill:var(--text-3)}
+  .fnode{cursor:pointer;outline:none}
+  .fnode rect{fill:var(--surface);stroke:var(--border-strong);stroke-width:1.2;transition:stroke .15s}
+  .fnode.gate rect{stroke:var(--warn);stroke-dasharray:5 4}
+  .fnode.action rect{fill:var(--soft)}
+  .fnode:hover rect,.fnode:focus-visible rect{stroke:var(--accent)}
+  .fnode.sel rect{stroke:var(--accent);stroke-width:2.2;stroke-dasharray:none}
+  .fnode .t1{fill:var(--text);font-size:13px;font-weight:600}
+  .fnode .t2{fill:var(--text-3);font-size:11.5px}
+
+  /* 时间线 */
+  .timeline{margin:0;padding:6px 16px 10px;list-style:none}
+  .tl{position:relative;display:flex;align-items:center;gap:12px;padding:10px 0 10px 22px}
+  .tl::before{content:"";position:absolute;left:5px;top:0;bottom:0;width:1px;background:var(--border)}
+  .tl:first-child::before{top:50%}
+  .tl:last-child::before{bottom:50%}
+  .tl .dot{position:absolute;left:0;top:50%;width:11px;height:11px;margin-top:-5.5px;border-radius:50%;background:var(--surface);border:2px solid var(--text-3)}
+  .tl.ok .dot{border-color:var(--success);background:var(--success)}
+  .tl.run .dot{border-color:var(--info)}
+  .tl.wait .dot{border-color:var(--warn)}
+  .tl.err .dot{border-color:var(--error);background:var(--error)}
+  .tl>div{flex:1;min-width:0}
+  .tl b{display:block;font-weight:500;font-size:13px}
+  .tl small{color:var(--text-3);font-size:12px}
+  .log{margin:0;padding:12px 14px;max-height:220px;overflow:auto;border-radius:10px;background:var(--soft);font:12px/1.6 var(--mono);color:var(--text-2);white-space:pre-wrap}
+  .log .e{color:var(--error)}
+
+  /* 环境资产 */
+  .split{display:grid;grid-template-columns:280px minmax(0,1fr)}
+  @media (max-width:820px){.split{grid-template-columns:1fr}}
+  .split-list{border-right:1px solid var(--border-soft)}
+  .split-item{width:100%;display:block;padding:12px 16px;border:0;border-bottom:1px solid var(--border-soft);background:transparent;text-align:left;cursor:pointer}
+  .split-item:hover{background:var(--hover)}
+  .split-item[aria-current="true"]{background:var(--selected)}
+  .split-item b{display:block;font-size:13.5px;font-weight:500}
+  .split-item small{color:var(--text-3);font-size:12px}
+  .code{margin:0;padding:16px;min-height:240px;overflow:auto;font:12.5px/1.7 var(--mono);color:var(--text);white-space:pre}
+
+  /* 执行机器 */
+  .runner-status{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+  .runner-status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text-3)}
+  .runner-status.on{color:var(--success)}
+  .runner-status.on::before{background:var(--success);box-shadow:0 0 0 3px color-mix(in srgb,var(--success) 20%,transparent)}
+
+  /* Token */
+  .reveal{margin:16px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--success) 30%,transparent);border-radius:12px;background:color-mix(in srgb,var(--success) 6%,transparent)}
+  .reveal b{display:block;margin-bottom:4px;font-weight:600}
+  .reveal p{margin:0 0 10px;color:var(--text-2);font-size:12.5px}
+  .reveal code{display:block;margin:10px 0;padding:8px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font:12.5px var(--mono);overflow-wrap:anywhere}
+  .reveal .btns{display:flex;flex-wrap:wrap;gap:8px}
+
+  /* 抽屉与弹窗 */
+  .scrim{position:fixed;inset:0;z-index:80;background:rgba(10,10,15,.32)}
+  .drawer{position:fixed;top:0;right:0;bottom:0;z-index:90;width:min(520px,100vw);display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--pop);transform:translateX(100%);transition:transform .24s var(--ease)}
+  .drawer.open{transform:none}
+  .drawer-head{flex:none;display:flex;align-items:flex-start;gap:10px;padding:16px 18px;border-bottom:1px solid var(--border-soft)}
+  .drawer-head>div{flex:1;min-width:0}
+  .drawer-head h2{margin:0;font-size:16px;font-weight:600;line-height:1.4}
+  .drawer-sub{margin-top:4px;color:var(--text-3);font-size:12.5px}
+  .drawer-body{flex:1;overflow:auto;padding:4px 18px 24px}
+  .drawer-body .kv{padding:12px 0}
+  .drawer-body .panel{box-shadow:none}
+  .sec{margin:18px 0 8px;font-size:13px;font-weight:600}
+  .list{margin:0;padding-left:18px;font-size:13px}
+  .drawer-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+  .modal-wrap{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:20px;background:rgba(10,10,15,.36)}
+  .modal{width:min(480px,100%);max-height:calc(100vh - 40px);display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--pop)}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:14px 16px 6px 18px}
+  .modal-head h2{flex:1;margin:0;font-size:16px;font-weight:600}
+  .modal-desc{margin:0;padding:0 18px;color:var(--text-2);font-size:13px}
+  .modal-body{display:grid;gap:14px;padding:14px 18px;overflow:auto}
+  .modal-body p{margin:0;color:var(--text-2);font-size:13px}
+  .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--border-soft)}
+  .copy-line{display:flex;gap:8px}
+  .copy-line input{flex:1;font-family:var(--mono);font-size:12px}
+
+  .toasts{position:fixed;left:50%;bottom:24px;z-index:120;display:grid;gap:8px;transform:translateX(-50%);pointer-events:none}
+  .toast{padding:9px 14px;border-radius:10px;background:var(--text);color:var(--surface);font-size:13px;box-shadow:var(--pop);animation:tin .2s var(--ease)}
+  .toast.ok{background:var(--success);color:#fff}
+  .toast.err{background:var(--error);color:#fff}
+  .toast.out{opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s}
+  @keyframes tin{from{opacity:0;transform:translateY(6px)}}
+
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body class="marks">
+
+<div class="demo-bar">
+  <b>LoopForge 设置收敛 Demo</b>
+  <span class="muted">数据均为模拟，刷新页面后重置</span>
+  <span class="grow"></span>
+  <label class="switch-label"><input type="checkbox" class="switch" id="marksToggle" checked>标注改动</label>
+  <button type="button" class="btn sm" id="changesBtn" aria-expanded="false" aria-controls="changesPop">改动清单</button>
+  <div class="pop" id="changesPop" role="dialog" aria-label="改动清单" hidden>
+    <h3>删除</h3>
+    <ol>
+      <li><b>研发效能、知识中心、业务领域、领域管理</b>四个模块下线；旧链接会转到个人配置</li>
+      <li>设置里的<b>流程设计</b>入口去掉，从流程模板卡片「打开」进入设计器</li>
+      <li>MCP 页去掉<b>MCP 市场</b>，只保留已添加列表</li>
+    </ol>
+    <h3>移动</h3>
+    <ol>
+      <li><b>流程模板、运行记录、定时任务</b>从图标栏移入设置，组成「流程与任务」</li>
+      <li>需求列表「更多」里的<b>触发配置</b>移入定时任务，作为「SOP 触发」标签</li>
+      <li><b>Bot 管理</b>更名为<b>通道管理</b>并归「项目」，<b>执行机器</b>归「运行环境」</li>
+    </ol>
+    <h3>合并与简化</h3>
+    <ol>
+      <li>MCP / 规则 / 技能合成<b>能力资产</b>；Dockerfile / 安装脚本 / 沙箱合成<b>环境资产</b></li>
+      <li><b>接入指南</b>只保留个人 Token，改名 <b>Token 管理</b></li>
+      <li>图标栏 7 项减到 4 项；设置侧栏 21 项减到 12 项，最多两层</li>
+    </ol>
+  </div>
+</div>
+
+<div class="app">
+  <aside class="rail" id="rail" aria-label="全局导航"></aside>
+  <aside class="sidebar" id="sidebar" aria-label="设置导航">
+    <div class="sb-inner">
+      <div class="sb-head"><h2>设置</h2><button type="button" class="icon-btn" data-act="toggleSidebar" aria-label="收起设置导航"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg></button></div>
+      <nav class="sb-nav" id="sbNav"></nav>
+    </div>
+  </aside>
+  <div class="main-col">
+    <header class="topbar" id="topbar"></header>
+    <main class="content" id="main"></main>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" inert>
+  <div class="drawer-head"><div><h2 id="drawerTitle"></h2><div class="drawer-sub" id="drawerSub"></div></div><button type="button" class="icon-btn" id="drawerClose" data-act="closeDrawer" aria-label="关闭"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+<div class="modal-wrap" id="modalWrap" hidden><form class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" novalidate></form></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+'use strict';
+
+/* ---------- 工具 ---------- */
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const narrow=()=>matchMedia('(max-width:1000px)').matches;
+let seq=2000;
+
+const P={
+  home:'<path d="m3.5 10 7.3-6a1.9 1.9 0 0 1 2.4 0l7.3 6"/><path d="M5.5 8.4v10.1A1.5 1.5 0 0 0 7 20h3v-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5h3a1.5 1.5 0 0 0 1.5-1.5V8.4"/>',
+  chart:'<path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V9"/><path d="M12 17V7"/><path d="M16 17v-5"/>',
+  form:'<rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  gate:'<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="m9 12 2 2 4-4"/>',
+  workflow:'<circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M8.2 6C12 6 14 8.2 16.4 10.4M8.2 18c3.8 0 5.8-2.2 8.2-4.4"/>',
+  runs:'<circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  users:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1"/><path d="M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/>',
+  robot:'<rect x="4" y="8" width="16" height="11" rx="2"/><path d="M12 3v5M8 13h.01M16 13h.01M9 17h6"/>',
+  server:'<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/>',
+  skills:'<path d="M9 4V3a2 2 0 0 1 4 0v1h5a2 2 0 0 1 2 2v4h-1a2 2 0 0 0 0 4h1v4a2 2 0 0 1-2 2h-4v-1a2 2 0 0 0-4 0v1H6a2 2 0 0 1-2-2v-4H3a2 2 0 0 1 0-4h1V6a2 2 0 0 1 2-2h3Z"/>',
+  layers:'<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  key:'<circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M16 7l3 3M18 5l2 2"/>',
+  shield:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+  chevL:'<path d="M15 6l-6 6 6 6"/>',
+  chevR:'<path d="M9 6l6 6-6 6"/>',
+  down:'<path d="m6 9 6 6 6-6"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  play:'<path d="M8 5v14l11-7z"/>',
+  panel:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
+  doc:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>',
+  terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
+  box:'<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+  plug:'<path d="M9 2v6M15 2v6"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v5"/>',
+  send:'<path d="M5 12h14M13 6l6 6-6 6"/>',
+  sync:'<path d="M4 12a8 8 0 0 1 14-5.3L20 9"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-14 5.3L4 15"/><path d="M4 20v-5h5"/>',
+  git:'<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 8v8M18 10c0 4-6 3-10 6"/>',
+  bell:'<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  refresh:'<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'
+};
+const ic=(n,s=16)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${P[n]||''}</svg>`;
+
+/* ---------- 模拟数据 ---------- */
+const N=(id,name,kind,agent,desc)=>({id,name,kind,agent,desc});
+const NODES={
+  req:[N('n1','需求澄清','agent','需求分析师','补全背景和验收标准，有疑问时向负责人提问。'),N('n2','方案设计','agent','架构师','输出技术方案、影响面和回滚方案。'),N('n3','方案评审','gate','','负责人确认方案后再开始开发。'),N('n4','开发实现','agent','开发工程师','按方案实现，并补齐单元测试。'),N('n5','测试','agent','测试工程师','编写并执行测试用例，输出测试报告。'),N('n6','测试验收','gate','','负责人确认测试结果。'),N('n7','提交 MR','action','','创建合并请求并通知评审人。')],
+  bug:[N('n1','问题复现','agent','测试工程师','根据描述复现问题并记录步骤。'),N('n2','定位修复','agent','开发工程师','定位根因并修复，补充回归用例。'),N('n3','回归验证','agent','测试工程师','执行回归用例并对比修复前后结果。'),N('n4','修复确认','gate','','负责人确认修复结果。'),N('n5','提交 MR','action','','创建合并请求。')],
+  fe:[N('n1','需求澄清','agent','需求分析师','补全交互细节和验收标准。'),N('n2','交互方案','agent','前端工程师','输出页面结构和交互说明。'),N('n3','方案评审','gate','','负责人确认交互方案。'),N('n4','页面开发','agent','前端工程师','实现页面并补齐组件测试。'),N('n5','视觉验收','gate','','负责人对照设计稿验收。'),N('n6','提交 MR','action','','创建合并请求。')],
+  dep:[N('n1','依赖扫描','agent','开发工程师','扫描过期依赖与安全公告。'),N('n2','升级与测试','agent','开发工程师','逐个升级依赖并运行测试。'),N('n3','提交 MR','action','','创建升级合并请求。')]
+};
+const cloneNodes=k=>NODES[k].map(n=>({...n}));
+const KIND={agent:'Agent 节点',gate:'人工确认',action:'自动动作'};
+const STATUS={running:['run','运行中'],waiting:['wait','待确认'],merged:['ok','已合入'],succeeded:['ok','已完成'],todo:['off','未开始'],failed:['err','失败']};
+const INTERVALS=[['900','每 15 分钟'],['1800','每 30 分钟'],['3600','每小时'],['14400','每 4 小时'],['86400','每天']];
+const WHENS=['每天 09:00','工作日 09:00','每周一 10:00','每周五 17:30','每月 1 日 10:00','每 30 分钟'];
+const TRIGGER_STATUSES=[['todo','未开始'],['confirmed','已确认'],['reopened','已重开']];
+const USERS=['林悦','陈默','周宁','许然','宋一','唐果'];
+const FACTOR={'p-pay':1,'p-app':.56,'p-ops':.31};
+
+const DB={
+  me:{name:'林悦',login:'linyue',email:'linyue@example.com'},
+  projects:[
+    {id:'p-pay',name:'支付中台',key:'PAY',owner:'林悦',repos:3,sop:'需求交付 SOP',updated:'今天 10:24'},
+    {id:'p-app',name:'会员 App',key:'APP',owner:'陈默',repos:2,sop:'前端交付 SOP',updated:'昨天 18:02'},
+    {id:'p-ops',name:'运维平台',key:'OPS',owner:'周宁',repos:1,sop:'缺陷修复 SOP',updated:'3 天前'}
+  ],
+  members:{'p-pay':[['林悦','负责人'],['陈默','成员'],['许然','成员'],['宋一','成员'],['唐果','只读']],'p-app':[['陈默','负责人'],['林悦','成员'],['唐果','成员']],'p-ops':[['周宁','负责人'],['许然','成员']]},
+  repos:{'p-pay':['pay/gateway','pay/settlement','pay/admin-web'],'p-app':['app/member-ios','app/member-web'],'p-ops':['ops/inspector']},
+  issues:[
+    {id:'PAY-1024',p:'p-pay',title:'登录状态在 Token 过期后自动恢复',status:'running',sop:'需求交付 SOP',owner:'林悦',prio:'P1',updated:'5 分钟前',run:'r-8812'},
+    {id:'PAY-1023',p:'p-pay',title:'任务完成后推送企业微信通知',status:'waiting',sop:'需求交付 SOP',owner:'陈默',prio:'P1',updated:'12 分钟前',run:'r-8810'},
+    {id:'PAY-1021',p:'p-pay',title:'退款单导出支持按商户筛选',status:'waiting',sop:'需求交付 SOP',owner:'许然',prio:'P2',updated:'40 分钟前',run:'r-8806'},
+    {id:'PAY-1019',p:'p-pay',title:'对账报表增加手续费列',status:'merged',sop:'需求交付 SOP',owner:'宋一',prio:'P2',updated:'2 小时前',run:'r-8799'},
+    {id:'PAY-1017',p:'p-pay',title:'导出 CSV 时中文乱码',status:'failed',sop:'缺陷修复 SOP',owner:'林悦',prio:'P0',updated:'3 小时前',run:'r-8790'},
+    {id:'PAY-1016',p:'p-pay',title:'支付回调重试改为指数退避',status:'merged',sop:'需求交付 SOP',owner:'陈默',prio:'P1',updated:'昨天',run:'r-8781'},
+    {id:'PAY-1015',p:'p-pay',title:'商户后台新增风控标签',status:'todo',sop:'—',owner:'唐果',prio:'P2',updated:'昨天'},
+    {id:'PAY-1012',p:'p-pay',title:'清算任务失败时自动告警',status:'todo',sop:'—',owner:'未指定',prio:'P3',updated:'2 天前'},
+    {id:'PAY-1009',p:'p-pay',title:'订单详情页加载慢',status:'merged',sop:'缺陷修复 SOP',owner:'许然',prio:'P1',updated:'3 天前',run:'r-8774'},
+    {id:'APP-311',p:'p-app',title:'会员等级页改版',status:'running',sop:'前端交付 SOP',owner:'陈默',prio:'P1',updated:'20 分钟前',run:'r-8805'},
+    {id:'APP-309',p:'p-app',title:'积分兑换弹窗在小屏溢出',status:'waiting',sop:'缺陷修复 SOP',owner:'唐果',prio:'P2',updated:'1 小时前',run:'r-8802'},
+    {id:'APP-305',p:'p-app',title:'签到日历支持补签',status:'merged',sop:'前端交付 SOP',owner:'林悦',prio:'P2',updated:'2 天前',run:'r-8770'},
+    {id:'OPS-88',p:'p-ops',title:'告警规则支持静默时段',status:'todo',sop:'—',owner:'周宁',prio:'P2',updated:'今天'},
+    {id:'OPS-86',p:'p-ops',title:'主机巡检脚本超时',status:'failed',sop:'缺陷修复 SOP',owner:'许然',prio:'P1',updated:'5 小时前',run:'r-8793'}
+  ],
+  approvals:[
+    {id:'ap1',p:'p-pay',issue:'PAY-1023',title:'任务完成后推送企业微信通知',node:'方案评审',run:'r-8810',waited:'12 分钟',by:'架构师',summary:'新增 notify 模块，复用现有通知通道；影响 gateway 与 settlement 两个服务，无数据库变更，可按开关回滚。'},
+    {id:'ap2',p:'p-pay',issue:'PAY-1021',title:'退款单导出支持按商户筛选',node:'测试验收',run:'r-8806',waited:'40 分钟',by:'测试工程师',summary:'单测 46 条、E2E 3 条全部通过；覆盖率 81% → 83%；导出 10 万行耗时 4.2 秒。'},
+    {id:'ap3',p:'p-app',issue:'APP-309',title:'积分兑换弹窗在小屏溢出',node:'修复确认',run:'r-8802',waited:'1 小时',by:'测试工程师',summary:'在 320px、375px 两种宽度下回归通过，附 4 张截图。'}
+  ],
+  runs:[
+    {id:'r-8812',p:'p-pay',issue:'PAY-1024',title:'登录状态在 Token 过期后自动恢复',sopId:'sop-req',status:'running',node:'开发实现',started:'今天 10:02',dur:'22 分钟',tokens:184,by:'林悦'},
+    {id:'r-8810',p:'p-pay',issue:'PAY-1023',title:'任务完成后推送企业微信通知',sopId:'sop-req',status:'waiting',node:'方案评审',started:'今天 09:51',dur:'9 分钟',tokens:62,by:'陈默'},
+    {id:'r-8806',p:'p-pay',issue:'PAY-1021',title:'退款单导出支持按商户筛选',sopId:'sop-req',status:'waiting',node:'测试验收',started:'今天 08:40',dur:'48 分钟',tokens:410,by:'许然'},
+    {id:'r-8799',p:'p-pay',issue:'PAY-1019',title:'对账报表增加手续费列',sopId:'sop-req',status:'succeeded',node:'提交 MR',started:'今天 07:12',dur:'1 小时 12 分',tokens:522,by:'宋一'},
+    {id:'r-8790',p:'p-pay',issue:'PAY-1017',title:'导出 CSV 时中文乱码',sopId:'sop-bug',status:'failed',node:'定位修复',started:'今天 06:30',dur:'31 分钟',tokens:233,by:'林悦',error:'单测 3 条失败：csv_export_test.go:88 期望 UTF-8 BOM'},
+    {id:'r-8781',p:'p-pay',issue:'PAY-1016',title:'支付回调重试改为指数退避',sopId:'sop-req',status:'succeeded',node:'提交 MR',started:'昨天 15:20',dur:'58 分钟',tokens:446,by:'陈默'},
+    {id:'r-8774',p:'p-pay',issue:'PAY-1009',title:'订单详情页加载慢',sopId:'sop-bug',status:'succeeded',node:'提交 MR',started:'3 天前',dur:'36 分钟',tokens:198,by:'许然'},
+    {id:'r-8760',p:'p-pay',issue:'',title:'每日需求整理',sopId:null,status:'succeeded',node:'AI 定时任务',started:'今天 09:00',dur:'3 分钟',tokens:21,by:'定时任务'},
+    {id:'r-8805',p:'p-app',issue:'APP-311',title:'会员等级页改版',sopId:'sop-fe',status:'running',node:'页面开发',started:'今天 09:40',dur:'31 分钟',tokens:260,by:'陈默'},
+    {id:'r-8802',p:'p-app',issue:'APP-309',title:'积分兑换弹窗在小屏溢出',sopId:'sop-bug',status:'waiting',node:'修复确认',started:'今天 08:55',dur:'26 分钟',tokens:120,by:'唐果'},
+    {id:'r-8770',p:'p-app',issue:'APP-305',title:'签到日历支持补签',sopId:'sop-fe',status:'succeeded',node:'提交 MR',started:'2 天前',dur:'1 小时 4 分',tokens:390,by:'林悦'},
+    {id:'r-8793',p:'p-ops',issue:'OPS-86',title:'主机巡检脚本超时',sopId:'sop-bug',status:'failed',node:'问题复现',started:'今天 05:10',dur:'12 分钟',tokens:44,by:'许然',error:'沙箱访问 10.0.0.0/8 被拒绝：离线沙箱禁止外网'}
+  ],
+  sops:[
+    {id:'sop-req',p:'p-pay',scope:'project',name:'需求交付 SOP',desc:'从需求澄清到提交 MR，含方案评审和测试验收两道人工确认。',version:'v5',runs:96,rate:92,last:'5 分钟前',nodes:cloneNodes('req')},
+    {id:'sop-bug',p:'p-pay',scope:'project',name:'缺陷修复 SOP',desc:'复现、定位、修复、回归验证，修复结果需负责人确认。',version:'v3',runs:41,rate:88,last:'3 小时前',nodes:cloneNodes('bug')},
+    {id:'sop-fe',p:'p-app',scope:'project',name:'前端交付 SOP',desc:'交互方案先评审，页面开发后对照设计稿验收。',version:'v2',runs:23,rate:91,last:'20 分钟前',nodes:cloneNodes('fe')},
+    {id:'sop-bug-app',p:'p-app',scope:'project',name:'缺陷修复 SOP',desc:'复现、定位、修复、回归验证。',version:'v1',runs:9,rate:89,last:'1 小时前',nodes:cloneNodes('bug')},
+    {id:'sop-dep',p:'p-ops',scope:'shared',name:'依赖升级 SOP',desc:'扫描过期依赖并提交升级 MR，由运维平台共享。',version:'v4',runs:57,rate:95,last:'昨天',nodes:cloneNodes('dep')},
+    {id:'sop-generic',p:'',scope:'builtin',name:'通用后端交付 SOP',desc:'平台维护的只读蓝图，复制到项目后才能派发和修改。',version:'v8',runs:0,rate:0,last:'—',nodes:cloneNodes('req'),builtin:true}
+  ],
+  prompts:[
+    {id:'s1',p:'p-pay',name:'每日需求整理',when:'工作日 09:00',bot:'研发群',enabled:true,last:'今天 09:00 · 成功',prompt:'整理昨天新增和变更的需求，按优先级列出待澄清的问题，发到研发群。'},
+    {id:'s2',p:'p-pay',name:'周五进展汇总',when:'每周五 17:30',bot:'周报群',enabled:true,last:'上周五 17:30 · 成功',prompt:'汇总本周合入的 MR、完成的需求和遇到的阻塞。'},
+    {id:'s3',p:'p-pay',name:'仓库依赖巡检',when:'每月 1 日 10:00',bot:'',enabled:false,last:'11-01 10:00 · 成功',prompt:'检查三个仓库的依赖是否有安全公告，有则新建缺陷需求。'},
+    {id:'s4',p:'p-app',name:'每日崩溃汇总',when:'每天 09:00',bot:'App 研发群',enabled:true,last:'今天 09:00 · 成功',prompt:'汇总昨天的崩溃 Top 10 并给出可能原因。'}
+  ],
+  triggers:{
+    'p-pay':{enabled:true,interval:'1800',sop:'sop-req',statuses:['todo','confirmed'],max:10,last:'8 分钟前',next:'22 分钟后',history:[['10:30','候选 3，启动 2','ok'],['10:00','候选 1，启动 1','ok'],['09:30','基线冲突，暂停派发，对齐 Agent 处理中','wait'],['09:00','没有符合条件的需求','off']]}
+  },
+  market:[
+    {id:'m1',name:'周报生成',desc:'汇总本周合入的 MR 与需求进展，生成周报草稿发到群里。',source:'平台示例项目',version:3,params:2,subs:6,when:'每周五 17:30'},
+    {id:'m2',name:'缺陷巡检',desc:'扫描最近 7 天的失败运行，按原因归类并给出处理建议。',source:'运维平台',version:2,params:1,subs:4,when:'每天 09:00'},
+    {id:'m3',name:'依赖升级提醒',desc:'检查依赖安全公告，有风险时新建缺陷需求。',source:'运维平台',version:5,params:3,subs:9,when:'每周一 10:00'},
+    {id:'m4',name:'需求澄清提醒',desc:'对超过 2 天还没澄清的需求，提醒负责人补充信息。',source:'会员 App',version:1,params:1,subs:2,when:'工作日 09:00'}
+  ],
+  bots:[
+    {id:'b1',p:'p-pay',name:'研发群',channel:'企业微信群聊',bound:true,usedBy:'2 个定时任务 · 需求交付 SOP',last:'今天 09:00'},
+    {id:'b2',p:'p-pay',name:'周报群',channel:'企业微信群聊',bound:true,usedBy:'1 个定时任务',last:'上周五 17:30'},
+    {id:'b3',p:'p-pay',name:'林悦（单聊）',channel:'企业微信单聊',bound:false,usedBy:'未使用',last:'—'},
+    {id:'b4',p:'p-app',name:'App 研发群',channel:'企业微信群聊',bound:true,usedBy:'1 个定时任务',last:'今天 09:00'}
+  ],
+  agents:[
+    {id:'a1',name:'需求分析师',desc:'澄清需求，补全背景和验收标准。',exec:'CodeBuddy',model:'Deepseek-V4.1-Flash',sops:'需求交付 SOP、前端交付 SOP',scope:'本项目'},
+    {id:'a2',name:'架构师',desc:'输出技术方案、影响面和回滚方案。',exec:'Claude Code',model:'Claude Sonnet',sops:'需求交付 SOP',scope:'本项目'},
+    {id:'a3',name:'开发工程师',desc:'按方案实现，并补齐单元测试。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'需求交付 SOP、缺陷修复 SOP',scope:'本项目'},
+    {id:'a4',name:'测试工程师',desc:'编写并执行测试用例，输出测试报告。',exec:'Codex',model:'GPT Codex',sops:'需求交付 SOP、缺陷修复 SOP',scope:'本项目'},
+    {id:'a5',name:'前端工程师',desc:'实现页面并补齐组件测试。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'前端交付 SOP',scope:'共享'},
+    {id:'a6',name:'对齐 Agent',desc:'解决集成分支与默认分支的合并冲突。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'SOP 触发（基线对齐）',scope:'内置'}
+  ],
+  mcps:[
+    {id:'c1',name:'GitHub',url:'https://mcp.example.com/github',scope:'project',tools:12,status:'ok',added:'20 天前'},
+    {id:'c2',name:'企业微信文档',url:'https://mcp.example.com/wedoc',scope:'personal',tools:6,status:'ok',added:'3 天前'},
+    {id:'c3',name:'内部监控查询',url:'https://mcp.example.com/monitor',scope:'project',tools:4,status:'err',added:'9 天前',error:'连接超时'},
+    {id:'c4',name:'Figma',url:'https://mcp.example.com/figma',scope:'personal',tools:8,status:'ok',added:'1 个月前'}
+  ],
+  rules:[
+    {id:'r1',scope:'project',name:'代码规范',desc:'Go 代码遵循 gofmt 与 golangci-lint，禁止裸 panic。',updated:'3 天前'},
+    {id:'r2',scope:'project',name:'提交信息格式',desc:'使用 Conventional Commits，标题不超过 72 个字符。',updated:'2 周前'},
+    {id:'r3',scope:'shared',name:'安全基线',desc:'禁止在代码与日志里输出密钥；对外请求需做 SSRF 校验。',updated:'1 个月前'},
+    {id:'r4',scope:'shared',name:'数据库变更规范',desc:'DDL 写在 migrations 目录，由运维手动执行，代码里不做自动迁移。',updated:'1 个月前'}
+  ],
+  skills:[
+    {id:'k1',scope:'project',name:'go-test-writer',desc:'为改动的 Go 函数生成表驱动测试。',files:3},
+    {id:'k2',scope:'project',name:'api-doc-sync',desc:'接口变更后同步更新 OpenAPI 文档。',files:2},
+    {id:'k3',scope:'project',name:'sql-review',desc:'检查 SQL 是否使用参数绑定、是否命中索引。',files:1},
+    {id:'k4',scope:'shared',name:'frontend-a11y',desc:'检查组件的键盘可达性与颜色对比度。',files:4}
+  ],
+  skillhub:[
+    {id:'h1',name:'pdf',desc:'读取、拆分、合并 PDF 文件。',installs:'1.2k'},
+    {id:'h2',name:'xlsx',desc:'读写电子表格，生成图表。',installs:'980'},
+    {id:'h3',name:'playwright-cli',desc:'浏览器自动化、表单填写与截图。',installs:'860'},
+    {id:'h4',name:'docx',desc:'生成和编辑 Word 文档。',installs:'640'}
+  ],
+  runners:[
+    {id:'n1',name:'林悦的 MacBook Pro',os:'macOS 15.1 · arm64',scope:'个人',online:true,cli:'CodeBuddy CLI 2.3.1',tasks:1,beat:'1 分钟前'},
+    {id:'n2',name:'cvm-sh-02',os:'Ubuntu 22.04 · 8 核 16 GB',scope:'项目共享',online:true,cli:'LoopForge Runner 1.8.0',tasks:3,beat:'刚刚'},
+    {id:'n3',name:'cvm-sh-03',os:'Ubuntu 22.04 · 4 核 8 GB',scope:'项目共享',online:false,cli:'LoopForge Runner 1.7.2',tasks:0,beat:'2 小时前'}
+  ],
+  dockerfiles:[
+    {id:'d1',scope:'本项目',name:'go122-build',desc:'后端编译与单测',updated:'5 天前',content:'FROM golang:1.22-bookworm\nRUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1\nENV CGO_ENABLED=0 GOFLAGS=-mod=mod\nWORKDIR /workspace'},
+    {id:'d2',scope:'本项目',name:'node20-base',desc:'前端构建与 E2E',updated:'2 周前',content:'FROM node:20-bookworm\nRUN corepack enable && npm i -g pnpm@9\nRUN npx playwright install --with-deps chromium\nWORKDIR /workspace'},
+    {id:'d3',scope:'共享',name:'python311-tools',desc:'脚本与数据处理',updated:'1 个月前',content:'FROM python:3.11-slim\nRUN pip install --no-cache-dir uv ruff pytest\nWORKDIR /workspace'}
+  ],
+  scripts:[
+    {id:'e1',scope:'本项目',name:'install-go.sh',desc:'安装 Go 1.22 和常用工具',updated:'5 天前',content:'#!/usr/bin/env bash\nset -euo pipefail\ncurl -fsSL https://go.dev/dl/go1.22.5.linux-amd64.tar.gz | tar -C /usr/local -xz\necho \'export PATH=$PATH:/usr/local/go/bin\' >> ~/.profile\ngo version'},
+    {id:'e2',scope:'本项目',name:'install-playwright.sh',desc:'安装 Playwright 与 Chromium',updated:'2 周前',content:'#!/usr/bin/env bash\nset -euo pipefail\nnpm i -g playwright@1.48\nplaywright install --with-deps chromium'},
+    {id:'e3',scope:'共享',name:'install-protoc.sh',desc:'安装 protoc 与 Go 插件',updated:'1 个月前',content:'#!/usr/bin/env bash\nset -euo pipefail\napt-get update && apt-get install -y protobuf-compiler\ngo install google.golang.org/protobuf/cmd/protoc-gen-go@latest'}
+  ],
+  sandboxes:[
+    {id:'x1',name:'默认沙箱',image:'go122-build',net:'仅白名单域名',cpu:'4 核',mem:'8 GB',timeout:'2 小时',used:'需求交付 SOP、缺陷修复 SOP'},
+    {id:'x2',name:'高配沙箱',image:'node20-base',net:'仅白名单域名',cpu:'8 核',mem:'16 GB',timeout:'4 小时',used:'前端交付 SOP'},
+    {id:'x3',name:'离线沙箱',image:'go122-build',net:'禁止外网',cpu:'2 核',mem:'4 GB',timeout:'1 小时',used:'依赖升级 SOP'}
+  ],
+  tokens:[
+    {id:'t1',name:'我的 Cursor',prefix:'lf_8a3f',created:'12 天前',used:'2 小时前',expires:'2027-02-08',status:'active'},
+    {id:'t2',name:'CI 流水线',prefix:'lf_c71e',created:'40 天前',used:'1 天前',expires:'2027-01-11',status:'active'},
+    {id:'t3',name:'旧笔记本',prefix:'lf_29bd',created:'120 天前',used:'95 天前',expires:'2026-10-01',status:'revoked'}
+  ],
+  creds:[
+    {key:'codebuddy',name:'CodeBuddy API Key',ok:true,hint:'Agent 调模型执行任务；未配置时使用平台共享模型'},
+    {key:'codex',name:'Codex API Key',ok:false,hint:'公共 SOP 可选的执行器'},
+    {key:'claude',name:'Claude Code API Key',ok:false,hint:'可以按角色选择的执行器'},
+    {key:'git',name:'GitHub Git Token',ok:true,hint:'目标仓库需要 Contents 和 Pull requests 读写权限'}
+  ],
+  platform:{admins:['林悦','周宁'],shared:true,model:'Deepseek-V4.1-Flash',quota:2000000,concurrency:20},
+  stats:{
+    tokens:[182,210,164,240,268,120,96,230,256,301,278,322,140,118],
+    users:[['林悦',820,34],['陈默',640,27],['许然',512,22],['宋一',388,18],['唐果',204,9]],
+    weekly:[4,6,5,7,6,8,9,7],
+    bySop:[['需求交付 SOP',96,92,'52 分钟',1900],['缺陷修复 SOP',41,88,'31 分钟',820],['AI 定时任务',64,98,'4 分钟',510]]
+  }
+};
+const DAYS=(()=>{const out=[],end=new Date(2026,10,10);for(let i=13;i>=0;i--){const d=new Date(end);d.setDate(end.getDate()-i);out.push(`${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)}return out})();
+const WEEKS=['W38','W39','W40','W41','W42','W43','W44','W45'];
+
+/* ---------- 状态与路由 ---------- */
+const state={
+  view:'home',project:'p-pay',lastSettings:'settings',sidebarOpen:true,menu:null,focusAfter:null,
+  tab:{observability:'usage',schedules:'prompt',capability:'mcp',environment:'dockerfiles'},
+  flowSop:'sop-req',flowNode:null,revealed:null,
+  ui:{issueQuery:'',issueStatus:'all',runQuery:'',runFilter:'all',sopScope:'project',mcpScope:'all',ruleScope:'project',skillScope:'project',marketQuery:'',tokenClient:'cursor',envSel:{dockerfiles:'d1',scripts:'e1'}}
+};
+const VIEWS={
+  home:{title:'AI 工作台',area:'rail',render:vHome,bare:true},
+  observability:{title:'统计',area:'rail',render:vStats,tabs:['usage','delivery']},
+  issues:{title:'需求列表',area:'rail',render:vIssues},
+  approvals:{title:'待我确认',area:'rail',render:vApprovals},
+  settings:{title:'个人配置',area:'settings',render:vSettings},
+  projects:{title:'项目配置',area:'settings',render:vProjects},
+  bots:{title:'通道管理',area:'settings',render:vBots},
+  sops:{title:'流程模板',area:'settings',render:vSops},
+  flow:{title:'流程设计',area:'settings',render:vFlow},
+  runs:{title:'运行记录',area:'settings',render:vRuns},
+  schedules:{title:'定时任务',area:'settings',render:vSchedules,tabs:['prompt','trigger','market']},
+  agents:{title:'角色定义',area:'settings',render:vAgents},
+  capability:{title:'能力资产',area:'settings',render:vCapability,tabs:['mcp','rules','skills']},
+  runners:{title:'执行机器',area:'settings',render:vRunners},
+  environment:{title:'环境资产',area:'settings',render:vEnvironment,tabs:['dockerfiles','scripts','sandboxes']},
+  tokens:{title:'Token 管理',area:'settings',render:vTokens},
+  platform:{title:'平台管理',area:'settings',render:vPlatform}
+};
+// 旧路由仍可直达新位置；下线模块提示后落到个人配置。
+const ALIASES={collaboration:'home',dashboard:'home',mcp:'capability/mcp',rules:'capability/rules',skills:'capability/skills',dockerfiles:'environment/dockerfiles',environments:'environment/scripts',sandboxes:'environment/sandboxes',aiSchedules:'schedules/prompt',guide:'tokens',access:'tokens'};
+const REMOVED={metrics:'研发效能',knowledge:'知识中心',businessDomains:'业务领域',businessDomainManagement:'领域管理'};
+
+function hashParts(){return location.hash.replace(/^#\/?/,'').split('/').filter(Boolean).map(s=>{try{return decodeURIComponent(s)}catch{return s}})}
+function go(path){const h='#/'+path;if(location.hash===h)route();else location.hash=h}
+function route(){
+  const parts=hashParts(),v=parts[0]||'home';
+  if(ALIASES[v]){history.replaceState(null,'','#/'+ALIASES[v]);return route()}
+  if(REMOVED[v]){toast(`「${REMOVED[v]}」模块已下线，已转到个人配置`);history.replaceState(null,'','#/settings');return route()}
+  if(!VIEWS[v]){history.replaceState(null,'','#/home');return route()}
+  const prevArea=VIEWS[state.view].area,conf=VIEWS[v];
+  state.view=v;
+  if(conf.tabs){const t=parts[1];state.tab[v]=conf.tabs.includes(t)?t:state.tab[v]}
+  if(v==='flow'){if(parts[1]&&DB.sops.some(s=>s.id===parts[1]))state.flowSop=parts[1];state.flowNode=null}
+  if(conf.area==='settings'){
+    state.lastSettings=parts.join('/')||v;
+    if(narrow())state.sidebarOpen=prevArea!=='settings';
+    else if(prevArea!=='settings')state.sidebarOpen=true;
+  }
+  state.menu=null;
+  closeDrawer(true);
+  render();
+  $('#main').scrollTop=0;
+  if(state.focusAfter){const el=$(state.focusAfter);state.focusAfter=null;el?.focus()}
+}
+
+/* ---------- 数据查询 ---------- */
+const proj=()=>DB.projects.find(p=>p.id===state.project)||DB.projects[0];
+const projIssues=()=>DB.issues.filter(i=>i.p===state.project);
+const projApprovals=()=>DB.approvals.filter(a=>a.p===state.project);
+const projRuns=()=>DB.runs.filter(r=>r.p===state.project);
+const projSops=()=>DB.sops.filter(s=>s.scope==='project'&&s.p===state.project);
+const projPrompts=()=>DB.prompts.filter(s=>s.p===state.project);
+const projBots=()=>DB.bots.filter(b=>b.p===state.project);
+const sopById=id=>DB.sops.find(s=>s.id===id);
+const trigger=()=>DB.triggers[state.project]||(DB.triggers[state.project]={enabled:false,interval:'3600',sop:projSops()[0]?.id||'',statuses:['todo'],max:10,last:'尚未运行',next:'—',history:[]});
+const fmtK=v=>v>=1000?`${(v/1000).toFixed(2)}M`:`${Math.round(v)}K`;
+
+/* ---------- 渲染骨架 ---------- */
+function render(){renderRail();renderSidebar();renderTopbar();renderMain()}
+const RAIL=[['home','AI 工作台','home'],['observability','统计','chart'],['issues','需求列表','form'],['approvals','待我确认','gate']];
+function renderRail(){
+  const area=VIEWS[state.view].area,count=projApprovals().length;
+  $('#rail').innerHTML='<div class="logo" aria-hidden="true">LF</div>'+RAIL.map(([v,l,i])=>{
+    const on=state.view===v,badgeHtml=v==='approvals'&&count?`<span class="rail-count" aria-hidden="true">${count}</span>`:'';
+    return `<button type="button" class="rail-btn${on?' active':''}" data-go="${v}" aria-label="${l}${v==='approvals'&&count?`，${count} 条待确认`:''}"${on?' aria-current="page"':''}>${ic(i,18)}${badgeHtml}<span class="tip" aria-hidden="true">${l}</span></button>`;
+  }).join('')+`<span class="grow"></span><span class="rail-sep"></span><button type="button" class="rail-btn${area==='settings'?' active':''}" data-act="toggleSettings" aria-label="设置" aria-expanded="${area==='settings'}" aria-controls="sidebar">${ic('settings',18)}<span class="tip" aria-hidden="true">设置</span></button><button type="button" class="avatar" data-go="settings" aria-label="个人配置：${esc(DB.me.name)}">${esc(DB.me.name.slice(-1))}</button>`;
+}
+const NAV=[
+  {item:'settings',label:'个人配置',icon:'user'},
+  {group:'项目',items:[{item:'projects',label:'项目配置',icon:'users'},{item:'bots',label:'通道管理',icon:'robot',mark:['move','原·管理与记录/Bot 管理']}]},
+  {group:'流程与任务',items:[{item:'sops',label:'流程模板',icon:'workflow',mark:['new','原·图标栏'],match:['flow']},{item:'runs',label:'运行记录',icon:'runs',mark:['new','原·图标栏']},{item:'schedules',label:'定时任务',icon:'clock',mark:['new','原·图标栏']}]},
+  {group:'Agent 能力',items:[{item:'agents',label:'角色定义',icon:'user'},{item:'capability',label:'能力资产',icon:'skills',mark:['merge','合并 3 项']}]},
+  {group:'运行环境',items:[{item:'runners',label:'执行机器',icon:'server',mark:['move','原·管理与记录']},{item:'environment',label:'环境资产',icon:'layers',mark:['merge','合并 3 项']}]},
+  {group:'开放与平台',items:[{item:'tokens',label:'Token 管理',icon:'key',mark:['move','原·接入指南']},{item:'platform',label:'平台管理',icon:'shield'}]}
+];
+function navBtn(n){
+  const on=state.view===n.item||(n.match||[]).includes(state.view);
+  return `<button type="button" class="nav${on?' active':''}" data-go="${n.item}"${on?' aria-current="page"':''}>${ic(n.icon)}<span class="label">${n.label}</span>${n.mark?`<span class="mark ${n.mark[0]}">${n.mark[1]}</span>`:''}</button>`;
+}
+function renderSidebar(){
+  const show=VIEWS[state.view].area==='settings'&&state.sidebarOpen,sb=$('#sidebar');
+  sb.classList.toggle('closed',!show);
+  sb.toggleAttribute('inert',!show);
+  $('#sbNav').innerHTML=`<button type="button" class="nav narrow-only" data-go="home">${ic('chevL')}<span class="label">返回工作台</span></button>`+NAV.map(n=>n.group?`<div class="sb-group"><p>${n.group}</p>${n.items.map(navBtn).join('')}</div>`:navBtn(n)).join('');
+}
+function renderTopbar(){
+  const conf=VIEWS[state.view],settings=conf.area==='settings';
+  let crumb=`<b>${esc(conf.title)}</b>`;
+  if(state.view==='flow'){const s=sopById(state.flowSop);crumb=`<button type="button" data-go="sops">流程模板</button>${ic('chevR',14)}<b>${esc(s?.name||'流程设计')}</b>`}
+  const options=DB.projects.map(p=>`<option value="${p.id}"${p.id===state.project?' selected':''}>${esc(p.name)}</option>`).join('');
+  $('#topbar').innerHTML=`${settings?`<button type="button" class="icon-btn" data-act="toggleSidebar" aria-label="${state.sidebarOpen?'收起':'展开'}设置导航" aria-expanded="${state.sidebarOpen}" aria-controls="sidebar">${ic('panel')}</button>`:''}<div class="crumb">${settings?`<span>设置</span>${ic('chevR',14)}`:''}${crumb}</div><span class="grow"></span><label class="proj"><span>项目</span><select id="projectSelect" class="input" style="width:auto;min-height:32px">${options}</select></label>`;
+}
+function renderMain(){const c=VIEWS[state.view];$('#main').innerHTML=c.bare?c.render():`<div class="page">${c.render()}</div>`}
+
+/* ---------- 组件 ---------- */
+const badge=(tone,text)=>`<span class="badge ${tone}">${esc(text)}</span>`;
+const st=s=>badge(...(STATUS[s]||['off',s]));
+const tag=t=>`<span class="tag">${esc(t)}</span>`;
+const mark=(kind,t)=>`<span class="mark ${kind}">${esc(t)}</span>`;
+const note=html=>`<div class="callout mark-block">${html}</div>`;
+const empty=(t,d)=>`<div class="empty"><b>${esc(t)}</b>${esc(d)}</div>`;
+function heading(title,desc,actions='',eyebrow=''){
+  return `<div class="heading"><div>${eyebrow?`<p class="eyebrow">${esc(eyebrow)}</p>`:''}<h1>${esc(title)}</h1>${desc?`<p class="desc">${esc(desc)}</p>`:''}</div>${actions?`<div class="actions">${actions}</div>`:''}</div>`;
+}
+function tabs(group,items,cur,label){
+  return `<div class="tabs" role="tablist" aria-label="${esc(label)}">${items.map(([k,l,c,m])=>{const on=k===cur;return `<button type="button" role="tab" class="tab" aria-selected="${on}" tabindex="${on?0:-1}" data-go="${group}/${k}">${esc(l)}${c!=null?`<span class="count">${esc(c)}</span>`:''}${m?mark(m[0],m[1]):''}</button>`}).join('')}</div>`;
+}
+function seg(key,items,label){
+  const cur=state.ui[key];
+  return `<div class="seg" role="group" aria-label="${esc(label)}">${items.map(([k,l,c])=>`<button type="button" aria-pressed="${k===cur}" data-act="setUi" data-key="${key}" data-val="${k}">${esc(l)}${c!=null?`<small>${c}</small>`:''}</button>`).join('')}</div>`;
+}
+function row({icon='layers',title,sub='',meta='',right=''}){
+  return `<div class="row"><span class="row-ico">${ic(icon,15)}</span><div class="row-main"><div class="row-title">${title}</div>${sub?`<div class="row-sub">${sub}</div>`:''}</div>${meta?`<div class="row-meta">${meta}</div>`:''}${right?`<div class="row-actions">${right}</div>`:''}</div>`;
+}
+const field=(label,input,hint='')=>`<label class="field"><span>${label}</span>${input}${hint?`<small>${hint}</small>`:''}</label>`;
+const opts=(list,cur)=>list.map(([v,l])=>`<option value="${esc(v)}"${String(v)===String(cur)?' selected':''}>${esc(l)}</option>`).join('');
+function kpi(label,value,sub='',tone=''){return `<div class="kpi"><small>${esc(label)}</small><b>${esc(value)}</b>${sub?`<span class="${tone}">${esc(sub)}</span>`:''}</div>`}
+function barChart(vals,labels,fmt,label){
+  const W=680,H=190,pad=28,bw=(W-pad*2)/vals.length,max=Math.max(...vals,1)*1.15,step=Math.ceil(labels.length/7);
+  const bars=vals.map((v,i)=>{const h=(H-44)*v/max,x=pad+i*bw+bw*.18,y=H-26-h;return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw*.64).toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="3"><title>${esc(labels[i])}：${esc(fmt(v))}</title></rect>`}).join('');
+  const ticks=labels.map((l,i)=>i%step===0||i===labels.length-1?`<text x="${(pad+i*bw+bw/2).toFixed(1)}" y="${H-8}" text-anchor="middle">${esc(l)}</text>`:'').join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}"><line x1="${pad}" x2="${W-pad}" y1="${H-26}" y2="${H-26}"/>${bars}${ticks}</svg>`;
+}
+
+/* ---------- 页面：图标栏 ---------- */
+function vHome(){
+  const p=proj();
+  return `<div class="home"><div class="home-inner">
+    <div class="home-logo" aria-hidden="true">LF</div>
+    <h1>把想法，变成下一步。</h1>
+    <p class="desc">在「${esc(p.name)}」里描述你要做的事，AI 会拆成需求、调用 SOP，或者直接回答。</p>
+    <form class="composer" data-form="chat"><label class="sr-only" for="chatInput">输入内容</label><textarea id="chatInput" name="text" rows="3" placeholder="例如：把 PAY-1017 的 CSV 乱码修掉，并补上回归测试"></textarea>
+      <div class="composer-bar"><button type="button" class="icon-btn" data-act="demoOnly" aria-label="添加附件">${ic('plus')}</button><span class="chip">CodeBuddy</span><span class="chip">${esc(DB.platform.model)}</span><span class="grow"></span><button type="submit" class="btn primary">${ic('send',14)}发送</button></div></form>
+    <div class="starters">
+      <button type="button" class="starter" data-act="newIssue">${ic('form')}<b>新建一条需求</b><span>写清目标，选 SOP 自动交付</span></button>
+      <button type="button" class="starter" data-go="schedules/prompt">${ic('clock')}<b>配置定时任务</b><span>按计划执行提示词或派发 SOP</span></button>
+      <button type="button" class="starter" data-go="sops">${ic('workflow')}<b>查看流程模板</b><span>打开 SOP，调整节点和人工确认</span></button>
+    </div></div></div>`;
+}
+
+function vStats(){
+  const t=state.tab.observability,k=FACTOR[state.project];
+  const head=heading('统计',`「${proj().name}」的用量与交付数据。`,`<button type="button" class="btn" data-act="toast" data-msg="已导出 CSV（模拟）">导出</button>`);
+  const tb=tabs('observability',[['usage','用量'],['delivery','交付']],t,'统计视图');
+  if(t==='usage'){
+    const tokens=DB.stats.tokens.map(v=>v*k),total=tokens.reduce((a,b)=>a+b,0);
+    const users=DB.stats.users.map(([n,tk,r])=>`<tr><td>${esc(n)}</td><td class="num">${fmtK(tk*k)}</td><td class="num">${Math.max(1,Math.round(r*k))}</td><td class="num">${Math.round(tk*k/Math.max(1,r*k))}K</td></tr>`).join('');
+    return head+tb+`<div class="kpis">${kpi('近 14 天 Token',fmtK(total),'较前 14 天 +12%','up')}${kpi('运行次数',String(Math.round(128*k)),'SOP 与定时任务')}${kpi('成功率','92%','较前 14 天 +3%','up')}${kpi('人均 Token',fmtK(total/5),'5 名活跃成员')}</div>
+      <section class="panel"><div class="panel-head"><b>每日 Token 用量</b><span class="r">单位 K</span></div><div class="chart-box">${barChart(tokens,DAYS,v=>fmtK(v),'近 14 天每日 Token 用量')}</div></section>
+      <section class="panel"><div class="panel-head"><b>成员用量</b></div><div class="table-wrap"><table class="table"><thead><tr><th>成员</th><th class="num">Token</th><th class="num">运行</th><th class="num">单次平均</th></tr></thead><tbody>${users}</tbody></table></div></section>`;
+  }
+  const weekly=DB.stats.weekly.map(v=>Math.max(1,Math.round(v*k)));
+  const bySop=DB.stats.bySop.map(([n,r,rate,d,tk])=>`<tr><td>${esc(n)}</td><td class="num">${Math.max(1,Math.round(r*k))}</td><td class="num">${rate}%</td><td class="num">${esc(d)}</td><td class="num">${fmtK(tk*k)}</td></tr>`).join('');
+  return head+tb+`<div class="kpis">${kpi('交付需求',String(weekly.reduce((a,b)=>a+b,0)),'近 8 周')}${kpi('合入 MR',String(Math.round(41*k)),'含缺陷修复')}${kpi('平均交付周期','1.8 天','较上月 -0.4 天','up')}${kpi('人工确认',String(Math.round(52*k)),'平均等待 23 分钟')}</div>
+    <section class="panel"><div class="panel-head"><b>每周交付需求数</b></div><div class="chart-box">${barChart(weekly,WEEKS,v=>v+' 条','近 8 周每周交付需求数')}</div></section>
+    <section class="panel"><div class="panel-head"><b>按 SOP 统计</b></div><div class="table-wrap"><table class="table"><thead><tr><th>SOP</th><th class="num">运行</th><th class="num">成功率</th><th class="num">平均耗时</th><th class="num">Token</th></tr></thead><tbody>${bySop}</tbody></table></div></section>`;
+}
+
+function filteredIssues(){
+  const q=state.ui.issueQuery.trim().toLowerCase(),s=state.ui.issueStatus;
+  return projIssues().filter(i=>(s==='all'||i.status===s)&&(!q||`${i.id} ${i.title} ${i.owner}`.toLowerCase().includes(q)));
+}
+function issueTable(){
+  const list=filteredIssues();
+  if(!list.length)return empty('没有匹配的需求','换个关键词或状态试试。');
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>编号</th><th>标题</th><th>状态</th><th>SOP</th><th>负责人</th><th>优先级</th><th>更新</th></tr></thead><tbody>${list.map(i=>`<tr><td class="mono">${esc(i.id)}</td><td><button type="button" class="link" data-act="issue" data-id="${esc(i.id)}">${esc(i.title)}</button></td><td>${st(i.status)}</td><td>${esc(i.sop)}</td><td>${esc(i.owner)}</td><td>${tag(i.prio)}</td><td class="muted">${esc(i.updated)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function vIssues(){
+  const all=projIssues(),cnt=s=>all.filter(i=>i.status===s).length,open=state.menu==='issueMore';
+  const menu=`<div class="menu-anchor"><button type="button" class="btn" data-act="menu" data-menu="issueMore" aria-haspopup="menu" aria-expanded="${open}">更多${ic('down',14)}</button>${open?`<div class="menu" role="menu"><button type="button" role="menuitem" data-act="toast" data-msg="外部同步尚未配置（模拟）">${ic('sync',15)}<span>外部同步</span><small>未配置</small></button><hr><button type="button" role="menuitem" data-act="toast" data-msg="已从 GitHub 同步，没有新需求（模拟）">${ic('git',15)}<span>同步 GitHub</span></button></div>`:''}</div>`;
+  const actions=`<button type="button" class="icon-btn" data-act="toast" data-msg="已刷新" aria-label="刷新">${ic('refresh')}</button>${menu}<button type="button" class="btn primary" data-act="newIssue">${ic('plus',14)}新建需求</button>`;
+  return heading('需求列表','查看每条需求的执行结果。失败的点进去看卡在哪，再决定重试或修改。',actions,'需求与缺陷')+
+    note(`「更多」里的<b>触发配置</b>已移到 设置 › 定时任务 › SOP 触发。<button type="button" class="btn sm soft" data-go="schedules/trigger">去看看</button>`)+
+    `<section class="panel"><div class="toolbar"><label class="search">${ic('search',15)}<input type="search" data-input="issueQuery" value="${esc(state.ui.issueQuery)}" placeholder="搜索编号、标题或负责人" aria-label="搜索需求"></label>${seg('issueStatus',[['all','全部',all.length],['running','运行中',cnt('running')],['waiting','待确认',cnt('waiting')],['failed','失败',cnt('failed')],['merged','已合入',cnt('merged')],['todo','未开始',cnt('todo')]],'按状态筛选')}</div><div id="issueTable">${issueTable()}</div></section>`;
+}
+
+function vApprovals(){
+  const list=projApprovals();
+  return heading('待我确认',list.length?`${list.length} 条需要你处理。确认后流程继续，退回会回到上一个节点。`:'流程走到人工确认节点时会出现在这里。')+
+    (list.length?`<div class="stack">${list.map(a=>`<article class="panel approval"><div class="ap-head"><div><p class="eyebrow">${esc(a.node)} · ${esc(a.issue)}</p><h3>${esc(a.title)}</h3></div>${badge('wait','已等待 '+a.waited)}</div><p class="ap-sum"><b>${esc(a.by)}：</b>${esc(a.summary)}</p><div class="ap-foot"><button type="button" class="link" data-act="run" data-id="${esc(a.run)}">查看运行 ${esc(a.run)}</button><span class="grow"></span><button type="button" class="btn" data-act="reject" data-id="${esc(a.id)}">退回</button><button type="button" class="btn primary" data-act="approve" data-id="${esc(a.id)}">确认通过</button></div></article>`).join('')}</div>`:`<section class="panel">${empty('没有待确认的事项','现在可以去做别的了。')}</section>`);
+}
+
+/* ---------- 页面：设置 ---------- */
+function vSettings(){
+  const me=DB.me;
+  const creds=DB.creds.map(c=>row({icon:'key',title:`${esc(c.name)} ${c.ok?badge('ok','已配置'):badge('off','未配置')}`,sub:esc(c.hint),right:`<button type="button" class="btn sm" data-act="credEdit" data-id="${c.key}">${c.ok?'更新':'去配置'}</button>`})).join('');
+  return heading('个人配置','管理个人账号与执行凭据。','','个人中心')+
+    `<div class="grid2"><section class="panel"><div class="panel-head"><b>账号</b></div><dl class="kv"><dt>姓名</dt><dd>${esc(me.name)}</dd><dt>登录名</dt><dd class="mono">${esc(me.login)}</dd><dt>邮箱</dt><dd>${esc(me.email)}</dd><dt>平台角色</dt><dd>${DB.platform.admins.includes(me.name)?'平台管理员':'成员'}</dd></dl></section>
+    <section class="panel"><div class="panel-head"><b>本机 CLI</b>${badge('ok','已绑定')}</div><dl class="kv"><dt>设备</dt><dd>林悦的 MacBook Pro</dd><dt>版本</dt><dd class="mono">CodeBuddy CLI 2.3.1</dd><dt>心跳</dt><dd>1 分钟前</dd></dl></section></div>
+    <section class="panel"><div class="panel-head"><b>执行凭据</b><span class="r">只保存在你的账号下，保存后不再明文展示</span></div>${creds}</section>`;
+}
+function vProjects(){
+  const rows=DB.projects.map(p=>`<tr><td><button type="button" class="link" data-act="project" data-id="${p.id}">${esc(p.name)}</button> <span class="mono muted">${esc(p.key)}</span>${p.id===state.project?' '+badge('run','当前'):''}</td><td>${esc(p.owner)}</td><td class="num">${(DB.members[p.id]||[]).length}</td><td class="num">${(DB.repos[p.id]||[]).length}</td><td>${esc(p.sop)}</td><td class="muted">${esc(p.updated)}</td></tr>`).join('');
+  return heading('项目配置','项目、成员和仓库。需求、角色和运行都归属到顶栏选中的项目。',`<button type="button" class="btn primary" data-act="newProject">${ic('plus',14)}新建项目</button>`)+
+    `<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>项目</th><th>负责人</th><th class="num">成员</th><th class="num">仓库</th><th>默认 SOP</th><th>更新</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+function vBots(){
+  const list=projBots();
+  return heading('通道管理','配置通知通道，把任务进展发到企业微信单聊或群聊，在 SOP 和定时任务里选用。',`<button type="button" class="btn primary" data-act="newBot">${ic('plus',14)}新建通道</button>`)+
+    `<section class="panel"><div class="panel-head"><b>「${esc(proj().name)}」的通道</b><span class="r">${list.length} 个</span></div>${list.length?list.map(b=>row({icon:'robot',title:`${esc(b.name)} ${tag(b.channel)} ${b.bound?badge('ok','已绑定'):badge('wait','待绑定')}`,sub:`用于：${esc(b.usedBy)} · 最近发送 ${esc(b.last)}`,right:`<button type="button" class="btn sm" data-act="testBot" data-id="${b.id}"${b.bound?'':' disabled'}>发送测试</button><button type="button" class="btn sm danger-outline" data-act="deleteBot" data-id="${b.id}">删除</button>`})).join(''):empty('还没有通道','新建一个，把运行结果发到群里。')}</section>`;
+}
+
+function vSops(){
+  const scope=state.ui.sopScope;
+  const list=DB.sops.filter(s=>scope==='project'?s.scope==='project'&&s.p===state.project:s.scope===scope);
+  const cards=list.map(s=>{
+    const health=s.builtin?badge('off','只读蓝图'):s.rate>=90?badge('ok','健康'):badge('wait','需关注');
+    const chain=s.nodes.slice(0,4).map(n=>`<span>${esc(n.name)}</span>`).join('→')+(s.nodes.length>4?`<span>+${s.nodes.length-4}</span>`:'');
+    const btns=s.builtin?`<button type="button" class="btn sm" data-go="flow/${s.id}">查看</button><button type="button" class="btn sm soft" data-act="copySop" data-id="${s.id}">复制到本项目</button>`:`<button type="button" class="btn sm" data-act="runSop" data-id="${s.id}">${ic('play',12)}派发</button><button type="button" class="btn sm soft" data-go="flow/${s.id}">打开</button>`;
+    return `<article class="card"><div class="card-head"><h3>${esc(s.name)}</h3>${tag(s.version)}</div><p>${esc(s.desc)}</p><div class="chain">${chain}</div><div class="meta"><span>${s.nodes.length} 个节点</span>${s.builtin?'':`<span>运行 ${s.runs} 次</span><span>成功率 ${s.rate}%</span><span>最近 ${esc(s.last)}</span>`}</div><footer>${health}<span class="grow"></span>${btns}</footer></article>`;
+  }).join('');
+  const count=k=>DB.sops.filter(s=>k==='project'?s.scope==='project'&&s.p===state.project:s.scope===k).length;
+  return heading('流程模板','可复用的 AI 协作流程。点「打开」进入设计器，编辑节点和人工确认。',`<button type="button" class="btn primary" data-act="newSop">${ic('plus',14)}新建 SOP</button>`)+
+    note('设置里不再单独放「流程设计」入口，从卡片上的<b>打开</b>进入设计器。')+
+    `<div style="margin-bottom:14px">${seg('sopScope',[['project','本项目',count('project')],['shared','共享',count('shared')],['builtin','内置',count('builtin')]],'流程范围')}</div>`+
+    (list.length?`<div class="cards">${cards}</div>`:`<section class="panel">${empty('这里还没有 SOP','从「内置」复制一个，或者新建。')}</section>`);
+}
+function flowSvg(s){
+  const W=168,H=72,gap=44,y=56,width=40+s.nodes.length*(W+gap)-gap+40,height=y*2+H;
+  const nodes=s.nodes.map((n,i)=>{const x=40+i*(W+gap),sel=state.flowNode===n.id;return `<g class="fnode ${n.kind}${sel?' sel':''}" data-act="flowNode" data-id="${esc(n.id)}" role="button" tabindex="0" aria-pressed="${sel}" aria-label="${esc(n.name)}，${KIND[n.kind]}"><rect x="${x}" y="${y}" width="${W}" height="${H}" rx="12"/><text class="t1" x="${x+16}" y="${y+29}">${esc(n.name)}</text><text class="t2" x="${x+16}" y="${y+51}">${esc(n.agent||KIND[n.kind])}</text></g>`}).join('');
+  const edges=s.nodes.slice(1).map((n,i)=>{const x1=40+i*(W+gap)+W,x2=x1+gap;return `<path d="M${x1} ${y+H/2}H${x2-4}" marker-end="url(#arrow)"/>`}).join('');
+  return `<svg class="flow" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(s.name)} 流程图"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z"/></marker></defs><g class="edges">${edges}</g>${nodes}</svg>`;
+}
+function flowProps(n){
+  if(!n)return `<div class="empty sm"><b>节点属性</b>点画布上的节点，查看它的配置。</div>`;
+  const agent=DB.agents.find(a=>a.name===n.agent);
+  const io={agent:[['输入','需求描述、上一节点产物'],['产物','Markdown 文档 / 代码变更'],['执行器',agent?`${agent.exec} · ${agent.model}`:'—'],['沙箱','默认沙箱']],gate:[['确认人','需求负责人'],['超时提醒','24 小时'],['退回到','上一节点']],action:[['动作','创建 MR 并通知评审人'],['目标分支','默认分支']]}[n.kind];
+  return `<div class="panel-head"><b>${esc(n.name)}</b>${badge(n.kind==='gate'?'wait':n.kind==='agent'?'run':'off',KIND[n.kind])}</div><dl class="kv">${n.agent?`<dt>角色</dt><dd>${esc(n.agent)}</dd>`:''}${io.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}<dt>说明</dt><dd>${esc(n.desc||'—')}</dd></dl>`;
+}
+function vFlow(){
+  const s=sopById(state.flowSop)||DB.sops[0],n=s.nodes.find(x=>x.id===state.flowNode);
+  const next='v'+(parseInt(s.version.slice(1),10)+1);
+  return `<div class="flow-head"><button type="button" class="btn ghost" data-go="sops">${ic('chevL',14)}流程模板</button><div class="grow"><h1>${esc(s.name)}</h1><p class="desc">${esc(s.version)} · ${s.nodes.length} 个节点 · ${s.builtin?'内置蓝图，只读':'可编辑'}</p></div><button type="button" class="btn" data-act="toast" data-msg="草稿已保存（模拟）"${s.builtin?' disabled':''}>保存草稿</button><button type="button" class="btn primary" data-act="publishSop" data-id="${s.id}"${s.builtin?' disabled':''}>发布 ${next}</button></div>
+    <div class="flow-wrap"><section class="panel canvas" aria-label="流程画布">${flowSvg(s)}</section><aside class="panel" aria-label="节点属性">${flowProps(n)}</aside></div>`;
+}
+
+function filteredRuns(){
+  const q=state.ui.runQuery.trim().toLowerCase(),f=state.ui.runFilter;
+  return projRuns().filter(r=>(f==='all'||r.status===f)&&(!q||`${r.id} ${r.title} ${r.issue}`.toLowerCase().includes(q)));
+}
+function runTable(){
+  const list=filteredRuns();
+  if(!list.length)return empty('没有匹配的运行','换个关键词或状态试试。');
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>运行</th><th>需求</th><th>SOP</th><th>状态</th><th>当前节点</th><th>开始</th><th class="num">耗时</th><th class="num">Token</th></tr></thead><tbody>${list.map(r=>`<tr><td><button type="button" class="link mono" data-act="run" data-id="${esc(r.id)}">${esc(r.id)}</button></td><td>${esc(r.title)}</td><td>${esc(sopById(r.sopId)?.name||'AI 定时任务')}</td><td>${st(r.status)}</td><td>${esc(r.node)}</td><td class="muted">${esc(r.started)}</td><td class="num">${esc(r.dur)}</td><td class="num">${fmtK(r.tokens)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function vRuns(){
+  const all=projRuns(),cnt=s=>all.filter(r=>r.status===s).length,done=all.filter(r=>r.status==='succeeded'||r.status==='failed');
+  const rate=done.length?Math.round(cnt('succeeded')/done.length*100):0;
+  return heading('运行记录','查看每次运行的节点进度、日志和产物。')+
+    `<div class="kpis">${kpi('运行中',String(cnt('running')))}${kpi('待确认',String(cnt('waiting')),cnt('waiting')?'去「待我确认」处理':'')}${kpi('成功率',rate+'%','已结束的运行')}${kpi('累计 Token',fmtK(all.reduce((a,r)=>a+r.tokens,0)))}</div>`+
+    `<section class="panel"><div class="toolbar"><label class="search">${ic('search',15)}<input type="search" data-input="runQuery" value="${esc(state.ui.runQuery)}" placeholder="搜索运行 ID 或需求" aria-label="搜索运行"></label>${seg('runFilter',[['all','全部',all.length],['running','运行中',cnt('running')],['waiting','待确认',cnt('waiting')],['failed','失败',cnt('failed')],['succeeded','已完成',cnt('succeeded')]],'按状态筛选')}</div><div id="runTable">${runTable()}</div></section>`;
+}
+
+function marketGrid(){
+  const q=state.ui.marketQuery.trim().toLowerCase();
+  const list=DB.market.filter(m=>!q||`${m.name} ${m.desc} ${m.source}`.toLowerCase().includes(q));
+  if(!list.length)return `<section class="panel">${empty('没有匹配的共享任务','换个关键词试试。')}</section>`;
+  return `<div class="cards">${list.map(m=>{const mine=DB.prompts.filter(s=>s.p===state.project&&s.sharedId===m.id).length;return `<article class="card"><div class="card-head"><h3>${esc(m.name)}</h3>${tag('v'+m.version)}</div><p>${esc(m.desc)}</p><div class="meta"><span>来自 ${esc(m.source)}</span><span>推荐 ${esc(m.when)}</span><span>${m.params} 个参数</span><span>${m.subs} 个项目订阅</span></div><footer>${mine?badge('ok',`本项目已订阅 ${mine} 个`):''}<span class="grow"></span><button type="button" class="btn sm soft" data-act="subscribe" data-id="${m.id}">${mine?'继续添加':'添加订阅'}</button></footer></article>`}).join('')}</div>`;
+}
+function vSchedules(){
+  const t=state.tab.schedules,prompts=projPrompts(),trig=trigger();
+  const actions=t==='prompt'?`<button type="button" class="btn primary" data-act="editPrompt">${ic('plus',14)}新建 AI 定时任务</button>`:'';
+  let body='';
+  if(t==='prompt'){
+    body=`<section class="panel"><div class="panel-head"><b>「${esc(proj().name)}」的提示词任务</b><span class="r">用项目 Owner 的 CodeBuddy 执行，关闭页面不会中断</span></div>${prompts.length?prompts.map(s=>row({icon:'clock',title:`${esc(s.name)}${s.sharedId?' '+tag('共享订阅'):''} ${s.enabled?badge('ok','已启用'):badge('off','已停用')}`,sub:`${esc(s.when)} · ${s.bot?'通知 '+esc(s.bot):'不通知'} · 最近：${esc(s.last)}`,right:`<input type="checkbox" class="switch" data-change="togglePrompt" data-id="${s.id}"${s.enabled?' checked':''} aria-label="启用 ${esc(s.name)}"><button type="button" class="btn sm" data-act="runPrompt" data-id="${s.id}">立即运行</button><button type="button" class="btn sm" data-act="editPrompt" data-id="${s.id}">编辑</button><button type="button" class="btn sm danger-outline" data-act="deletePrompt" data-id="${s.id}">删除</button>`})).join(''):empty('还没有提示词任务','点右上角新建，或到「共享任务市场」订阅。')}</section>`;
+  }else if(t==='trigger'){
+    const sops=projSops();
+    const hist=trig.history.length?trig.history.map(([time,text,tone])=>row({icon:'sync',title:`${esc(time)} ${badge(tone,tone==='ok'?'已派发':tone==='wait'?'已暂停':'无候选')}`,sub:esc(text)})).join(''):empty('还没有运行记录','保存并启用后，按间隔扫描需求。');
+    body=note('原来在需求列表「更多 → 触发配置」，现在和提示词任务放在一起管理。')+
+      `<div class="grid2"><form class="panel" data-form="trigger" novalidate><div class="panel-head"><b>SOP 自动派发</b><span class="r">每个项目一份配置</span></div><div class="fields">
+        <label class="field-row"><span>启用自动派发</span><input type="checkbox" class="switch" name="enabled"${trig.enabled?' checked':''}></label>
+        ${field('扫描间隔',`<select name="interval">${opts(INTERVALS,trig.interval)}</select>`)}
+        ${field('默认 SOP',sops.length?`<select name="sop">${opts(sops.map(s=>[s.id,s.name]),trig.sop)}</select>`:`<select name="sop" disabled><option value="">本项目还没有 SOP</option></select>`,'需求没指定 SOP 时使用')}
+        <fieldset class="field"><legend>触发状态</legend><div class="checks">${TRIGGER_STATUSES.map(([v,l])=>`<label><input type="checkbox" name="status" value="${v}"${trig.statuses.includes(v)?' checked':''}>${l}</label>`).join('')}</div></fieldset>
+        ${field('单次最多派发',`<input type="number" name="max" min="1" max="10" value="${trig.max}">`,'1–10 个需求')}
+      </div><div class="form-foot"><button type="submit" class="btn primary">保存触发配置</button></div></form>
+      <section class="panel"><div class="panel-head"><b>运行情况</b>${trig.enabled?badge('ok','已启用'):badge('off','未启用')}</div><dl class="kv"><dt>最近一次</dt><dd>${esc(trig.last)}</dd><dt>下一次</dt><dd>${esc(trig.enabled?trig.next:'—')}</dd></dl><div class="panel-head" style="border-top:1px solid var(--border-soft)"><b>最近记录</b><button type="button" class="btn sm" style="margin-left:auto" data-act="runTrigger"${trig.enabled?'':' disabled'}>立即运行</button></div>${hist}</section></div>`;
+  }else{
+    body=`<div style="margin-bottom:14px"><label class="search">${ic('search',15)}<input type="search" data-input="marketQuery" value="${esc(state.ui.marketQuery)}" placeholder="搜索名称、用途或来源项目" aria-label="搜索共享任务"></label></div><div id="marketGrid">${marketGrid()}</div>`;
+  }
+  return heading('定时任务','提示词任务和 SOP 自动派发统一在这里管理。',actions)+
+    tabs('schedules',[['prompt','提示词任务',prompts.length],['trigger','SOP 触发',trig.enabled?'已启用':'未启用',['new','从需求列表移入']],['market','共享任务市场',DB.market.length]],t,'定时任务类型')+body;
+}
+
+function vAgents(){
+  const scopeTone={'本项目':'run','共享':'ok','内置':'off'};
+  return heading('角色定义','每个角色有自己的职责、执行器和模型，在 SOP 节点里选用。',`<button type="button" class="btn primary" data-act="newAgent">${ic('plus',14)}新建角色</button>`)+
+    `<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>角色</th><th>职责</th><th>执行器</th><th>模型</th><th>用于</th><th>范围</th></tr></thead><tbody>${DB.agents.map(a=>`<tr><td><b style="font-weight:500">${esc(a.name)}</b></td><td class="muted">${esc(a.desc)}</td><td>${esc(a.exec)}</td><td class="mono">${esc(a.model)}</td><td>${esc(a.sops)}</td><td>${badge(scopeTone[a.scope]||'off',a.scope)}</td></tr>`).join('')}</tbody></table></div></section>`;
+}
+
+function vCapability(){
+  const t=state.tab.capability;
+  const act={mcp:`<button type="button" class="btn primary" data-act="mcpEdit">${ic('plus',14)}添加自定义 MCP</button>`,rules:`<button type="button" class="btn primary" data-act="newRule">${ic('plus',14)}新建规则</button>`,skills:state.ui.skillScope==='market'?'':`<button type="button" class="btn primary" data-act="newSkill">${ic('plus',14)}新建技能</button>`}[t];
+  let body='';
+  if(t==='mcp'){
+    const s=state.ui.mcpScope,list=DB.mcps.filter(m=>s==='all'||m.scope===s);
+    body=note('已去掉「MCP 市场」，这里只保留已经添加的 MCP。')+`<section class="panel"><div class="panel-head"><b>已添加的 MCP</b>${seg('mcpScope',[['all','全部',DB.mcps.length],['project','本项目',DB.mcps.filter(m=>m.scope==='project').length],['personal','个人',DB.mcps.filter(m=>m.scope==='personal').length]],'MCP 范围')}<span class="r">安装脚本只在隔离沙箱里执行</span></div>${list.length?list.map(m=>row({icon:'plug',title:`${esc(m.name)} ${tag(m.scope==='project'?'本项目':'个人')} ${m.status==='ok'?badge('ok','已连接'):badge('err',m.error||'连接异常')}`,sub:`<span class="mono">${esc(m.url)}</span> · ${m.tools} 个工具 · 添加于 ${esc(m.added)}`,right:`<button type="button" class="btn sm" data-act="mcpEdit" data-id="${m.id}">编辑</button><button type="button" class="btn sm danger-outline" data-act="mcpDelete" data-id="${m.id}">删除</button>`})).join(''):empty('这个范围还没有 MCP','点右上角添加。')}</section>`;
+  }else if(t==='rules'){
+    const s=state.ui.ruleScope,list=DB.rules.filter(r=>r.scope===s);
+    body=`<section class="panel"><div class="panel-head"><b>规则</b>${seg('ruleScope',[['project','本项目',DB.rules.filter(r=>r.scope==='project').length],['shared','共享',DB.rules.filter(r=>r.scope==='shared').length]],'规则范围')}</div>${list.length?list.map(r=>row({icon:'doc',title:esc(r.name),sub:esc(r.desc),meta:`更新于 ${esc(r.updated)}`,right:`<button type="button" class="btn sm" data-act="demoOnly">编辑</button>`})).join(''):empty('还没有规则','规则会注入到每个 Agent 的上下文里。')}</section>`;
+  }else{
+    const s=state.ui.skillScope;
+    const head=`<div class="panel-head"><b>技能</b>${seg('skillScope',[['project','本项目',DB.skills.filter(k=>k.scope==='project').length],['shared','共享',DB.skills.filter(k=>k.scope==='shared').length],['market','SkillHub 市场',DB.skillhub.length]],'技能范围')}</div>`;
+    if(s==='market'){
+      body=`<section class="panel">${head}<div style="padding:16px"><div class="cards">${DB.skillhub.map(h=>{const has=DB.skills.some(k=>k.name===h.name&&k.scope==='project');return `<article class="card"><div class="card-head"><h3 class="mono">${esc(h.name)}</h3>${tag(h.installs+' 次安装')}</div><p>${esc(h.desc)}</p><footer><span class="grow"></span>${has?badge('ok','已安装'):`<button type="button" class="btn sm soft" data-act="installSkill" data-id="${h.id}">安装到本项目</button>`}</footer></article>`}).join('')}</div></div></section>`;
+    }else{
+      const list=DB.skills.filter(k=>k.scope===s);
+      body=`<section class="panel">${head}${list.length?list.map(k=>row({icon:'skills',title:`<span class="mono">${esc(k.name)}</span>`,sub:esc(k.desc),meta:`${k.files} 个文件`,right:`<button type="button" class="btn sm" data-act="demoOnly">编辑</button>`})).join(''):empty('还没有技能','新建一个，或从 SkillHub 市场安装。')}</section>`;
+    }
+  }
+  return heading('能力资产','Agent 可以调用的 MCP、规则和技能。',act)+tabs('capability',[['mcp','MCP',DB.mcps.length],['rules','规则',DB.rules.length],['skills','技能',DB.skills.length]],t,'能力资产类型')+body;
+}
+
+function vRunners(){
+  return heading('执行机器','用自己的电脑或云主机跑任务。个人机器只跑你发起的任务，项目共享机器所有成员可用。',`<button type="button" class="btn primary" data-act="addRunner">${ic('plus',14)}添加执行机器</button>`)+
+    note('执行机器从「管理与记录」移到了「运行环境」，和镜像、沙箱放在一起。')+
+    `<div class="cards">${DB.runners.map(r=>`<article class="card"><div class="card-head"><h3>${esc(r.name)}</h3><span class="runner-status${r.online?' on':''}">${r.online?'在线':'离线'}</span></div><dl class="kv" style="padding:0"><dt>系统</dt><dd>${esc(r.os)}</dd><dt>客户端</dt><dd class="mono">${esc(r.cli)}</dd><dt>范围</dt><dd>${esc(r.scope)}</dd><dt>心跳</dt><dd>${esc(r.beat)}</dd></dl><footer>${r.tasks?badge('run',`${r.tasks} 个任务执行中`):badge('off','空闲')}<span class="grow"></span><button type="button" class="btn sm" data-act="toast" data-msg="已向 ${esc(r.name)} 发送诊断请求（模拟）"${r.online?'':' disabled'}>诊断</button></footer></article>`).join('')}</div>`;
+}
+
+function vEnvironment(){
+  const t=state.tab.environment;
+  const label={dockerfiles:'Dockerfile',scripts:'安装脚本',sandboxes:'沙箱'}[t];
+  let body='';
+  if(t==='sandboxes'){
+    body=`<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>沙箱</th><th>镜像</th><th>网络</th><th class="num">CPU</th><th class="num">内存</th><th class="num">超时</th><th>用于</th></tr></thead><tbody>${DB.sandboxes.map(x=>`<tr><td><b style="font-weight:500">${esc(x.name)}</b></td><td class="mono">${esc(x.image)}</td><td>${x.net==='禁止外网'?badge('wait',x.net):badge('ok',x.net)}</td><td class="num">${esc(x.cpu)}</td><td class="num">${esc(x.mem)}</td><td class="num">${esc(x.timeout)}</td><td class="muted">${esc(x.used)}</td></tr>`).join('')}</tbody></table></div></section>`;
+  }else{
+    const list=DB[t],sel=list.find(x=>x.id===state.ui.envSel[t])||list[0];
+    body=`<section class="panel split"><div class="split-list" role="list">${list.map(x=>`<button type="button" role="listitem" class="split-item" data-act="envSel" data-tab="${t}" data-id="${x.id}" aria-current="${x.id===sel.id}"><b class="mono">${esc(x.name)}</b><small>${esc(x.desc)} · ${esc(x.scope)} · ${esc(x.updated)}</small></button>`).join('')}</div><div><div class="panel-head"><b class="mono">${esc(sel.name)}</b>${tag(sel.scope)}<span class="grow"></span><button type="button" class="btn sm" data-act="copyText" data-text="${esc(sel.content)}">${ic('copy',13)}复制</button><button type="button" class="btn sm" data-act="demoOnly">编辑</button></div><pre class="code">${esc(sel.content)}</pre></div></section>`;
+  }
+  return heading('环境资产','任务运行用的镜像、安装脚本和沙箱策略。',t==='sandboxes'?`<button type="button" class="btn primary" data-act="demoOnly">${ic('plus',14)}新建沙箱</button>`:`<button type="button" class="btn primary" data-act="demoOnly">${ic('plus',14)}新建 ${label}</button>`)+
+    tabs('environment',[['dockerfiles','Dockerfile',DB.dockerfiles.length],['scripts','安装脚本',DB.scripts.length],['sandboxes','沙箱',DB.sandboxes.length]],t,'环境资产类型')+body;
+}
+
+const CLIENTS=[['cursor','Cursor'],['claude','Claude Code'],['codebuddy','CodeBuddy'],['codex','Codex']];
+function mcpPrompt(token){const c=CLIENTS.find(x=>x[0]===state.ui.tokenClient)?.[1]||'Cursor';return `按照这个流程安装并验证 LoopForge MCP（客户端：${c}）：\n1. 用 curl 下载安装流程：https://loopforge.example.com/mcp-setup.txt\n2. 把两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = https://loopforge.example.com/mcp`}
+function vTokens(){
+  const r=state.revealed,active=DB.tokens.filter(t=>t.status==='active').length;
+  const reveal=r?`<div class="reveal" role="status"><b>Token 已创建：${esc(r.name)}</b><p>平台只保存哈希，关闭后无法再次查看明文。选择客户端，可以直接复制带好 Token 的接入提示词。</p>${seg('tokenClient',CLIENTS,'客户端')}<code>${esc(r.token)}</code><div class="btns"><button type="button" class="btn sm primary" data-act="copyText" data-text="${esc(mcpPrompt(r.token))}">${ic('copy',13)}复制接入提示词</button><button type="button" class="btn sm" data-act="copyText" data-text="${esc(r.token)}">仅复制 Token</button><button type="button" class="btn sm ghost" data-act="closeReveal">我已保存</button></div></div>`:'';
+  const rows=DB.tokens.map(t=>{const off=t.status!=='active';return row({icon:'key',title:`${esc(t.name)} <span class="mono muted">${esc(t.prefix)}••••••••</span> ${off?badge('off','已撤销'):badge('ok','可用')}`,sub:`创建 ${esc(t.created)} · ${t.used?'最近使用 '+esc(t.used):'尚未使用'} · ${off?'已失效':'有效至 '+esc(t.expires)}`,right:off?'':`<button type="button" class="btn sm danger-outline" data-act="revokeToken" data-id="${t.id}">撤销</button>`})}).join('');
+  return heading('Token 管理','创建和撤销个人 Token，REST API 与 MCP 共用同一个 Token。',`<button type="button" class="btn" data-act="toast" data-msg="OpenAPI 契约：/api/openapi.yaml（模拟）">OpenAPI 契约</button>`,'开放与平台')+
+    note('原「接入指南」的 5 个标签只保留了「我的 Token」，页面改名为 Token 管理。')+
+    `<section class="panel">${reveal}<form class="inline-form" data-form="token" novalidate>${field('Token 名称','<input name="name" maxlength="64" placeholder="例如：我的 Cursor" autocomplete="off" required>').replace('class="field"','class="field wide"')}${field('有效期',`<select name="days">${opts([['30','30 天'],['90','90 天'],['180','180 天'],['365','365 天']],'90')}</select>`)}<button type="submit" class="btn primary">创建 Token</button></form><div class="panel-head"><b>我的 Token</b><span class="r">${active} 个可用</span></div>${rows}</section>`;
+}
+
+function vPlatform(){
+  const pf=DB.platform;
+  return heading('平台管理','跨项目生效的平台级设置，只有平台管理员可见。','','平台')+
+    `<div class="grid2"><section class="panel"><div class="panel-head"><b>平台管理员</b><button type="button" class="btn sm" style="margin-left:auto" data-act="addAdmin">${ic('plus',13)}添加</button></div>${pf.admins.map(n=>row({icon:'user',title:esc(n)+(n===DB.me.name?' '+tag('你'):''),right:`<button type="button" class="btn sm danger-outline" data-act="removeAdmin" data-name="${esc(n)}">移除</button>`})).join('')}</section>
+    <form class="panel" data-form="platform" novalidate><div class="panel-head"><b>共享模型与配额</b></div><div class="fields">
+      <label class="field-row"><span>未配置个人 Key 时使用共享模型</span><input type="checkbox" class="switch" name="shared"${pf.shared?' checked':''}></label>
+      ${field('共享模型',`<select name="model">${opts([['Deepseek-V4.1-Flash','Deepseek-V4.1-Flash'],['Deepseek-V4.1','Deepseek-V4.1'],['GLM-4.6','GLM-4.6']],pf.model)}</select>`)}
+      ${field('每人每日 Token 上限',`<input type="number" name="quota" min="10000" step="10000" value="${pf.quota}">`,'超出后当天只能使用个人 Key')}
+      ${field('平台最大并发运行数',`<input type="number" name="concurrency" min="1" max="200" value="${pf.concurrency}">`)}
+    </div><div class="form-foot"><button type="submit" class="btn primary">保存</button></div></form></div>`;
+}
+
+/* ---------- 抽屉、弹窗、提示 ---------- */
+let drawerOpener=null,modalCtx=null;
+function openDrawer(title,sub,body){
+  drawerOpener=document.activeElement;
+  $('#drawerTitle').textContent=title;$('#drawerSub').innerHTML=sub;$('#drawerBody').innerHTML=body;
+  const d=$('#drawer');$('#scrim').hidden=false;d.removeAttribute('inert');
+  requestAnimationFrame(()=>{d.classList.add('open');$('#drawerClose').focus()});
+}
+function closeDrawer(silent){
+  const d=$('#drawer');if(!d.classList.contains('open'))return;
+  d.classList.remove('open');d.setAttribute('inert','');$('#scrim').hidden=true;
+  if(!silent&&drawerOpener?.isConnected)drawerOpener.focus();drawerOpener=null;
+}
+function openModal({title,desc='',body,submit='保存',danger=false,onSubmit}){
+  modalCtx={onSubmit,opener:document.activeElement};
+  $('#modal').innerHTML=`<div class="modal-head"><h2 id="modalTitle">${esc(title)}</h2><button type="button" class="icon-btn" data-act="closeModal" aria-label="关闭"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>${desc?`<p class="modal-desc">${esc(desc)}</p>`:''}<div class="modal-body">${body}</div><div class="modal-foot"><button type="button" class="btn" data-act="closeModal">取消</button><button type="submit" class="btn ${danger?'danger':'primary'}">${esc(submit)}</button></div>`;
+  $('#modalWrap').hidden=false;
+  requestAnimationFrame(()=>($('#modal .modal-body').querySelector('input:not([readonly]),textarea,select')||$('#modal [type=submit]')).focus());
+}
+function closeModal(){
+  if($('#modalWrap').hidden)return;
+  $('#modalWrap').hidden=true;
+  const o=modalCtx?.opener;modalCtx=null;
+  if(o?.isConnected)o.focus();
+}
+function confirmModal(title,message,submit,onOk){openModal({title,body:`<p>${esc(message)}</p>`,submit,danger:true,onSubmit:()=>{onOk();return true}})}
+function toast(msg,tone=''){
+  const t=document.createElement('div');t.className='toast '+tone;t.textContent=msg;$('#toasts').append(t);
+  setTimeout(()=>{t.classList.add('out');setTimeout(()=>t.remove(),220)},2600);
+}
+async function copyText(text,msg='已复制'){
+  try{await navigator.clipboard.writeText(text);toast(msg,'ok')}
+  catch{const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.append(ta);ta.select();let ok=false;try{ok=document.execCommand('copy')}catch{}ta.remove();toast(ok?msg:'复制失败，请手动复制',ok?'ok':'err')}
+}
+function randomToken(){const b=new Uint8Array(16);crypto.getRandomValues(b);return 'lf_'+[...b].map(x=>x.toString(16).padStart(2,'0')).join('')}
+
+function openIssue(id){
+  const i=DB.issues.find(x=>x.id===id);if(!i)return;
+  const r=i.run&&DB.runs.find(x=>x.id===i.run),sops=projSops();
+  const body=`<dl class="kv"><dt>状态</dt><dd>${st(i.status)}</dd><dt>优先级</dt><dd>${tag(i.prio)}</dd><dt>负责人</dt><dd>${esc(i.owner)}</dd><dt>SOP</dt><dd>${esc(i.sop)}</dd><dt>更新</dt><dd>${esc(i.updated)}</dd></dl>
+    <h3 class="sec">验收标准</h3><ol class="list muted"><li>${esc(i.title)}，覆盖正常和异常分支</li><li>补齐单元测试，CI 全部通过</li><li>合入前完成方案评审与测试验收</li></ol>
+    ${r?`<h3 class="sec">关联运行</h3><div class="panel">${row({icon:'runs',title:`<button type="button" class="link mono" data-act="run" data-id="${esc(r.id)}">${esc(r.id)}</button> ${st(r.status)}`,sub:`当前节点：${esc(r.node)} · ${esc(r.dur)}`})}</div>`:''}
+    ${i.status==='todo'?`<h3 class="sec">派发</h3>${sops.length?`<form class="panel inline-form" data-form="dispatch" data-id="${esc(i.id)}">${field('选择 SOP',`<select name="sop">${opts(sops.map(s=>[s.id,s.name]),sops[0].id)}</select>`)}<button type="submit" class="btn primary">${ic('play',12)}派发</button></form>`:'<p class="muted">本项目还没有 SOP，先到流程模板复制一个。</p>'}`:''}`;
+  openDrawer(`${i.id} ${i.title}`,`${esc(proj().name)} · ${esc(i.owner)}`,body);
+}
+function openRun(id){
+  const r=DB.runs.find(x=>x.id===id);if(!r)return;
+  const s=sopById(r.sopId),nodes=s?s.nodes:[],cur=nodes.findIndex(n=>n.name===r.node);
+  const tl=nodes.map((n,i)=>{let tone='off',label='未开始';if(r.status==='succeeded'||i<cur){tone='ok';label='完成'}else if(i===cur){[tone,label]=STATUS[r.status]}return `<li class="tl ${tone}"><span class="dot"></span><div><b>${esc(n.name)}</b><small>${esc(n.agent||KIND[n.kind])}${tone==='ok'?` · ${3+i*2} 分钟`:''}</small></div>${badge(tone,label)}</li>`}).join('');
+  const log=[`[${esc(r.started)}] 运行开始，SOP：${esc(s?.name||'AI 定时任务')}`,`[+00:01] 准备工作区：默认沙箱 · go122-build`,`[+00:02] 拉取仓库并切到集成分支`,`[+00:05] 进入节点「${esc(r.node)}」`];
+  if(r.error)log.push(`<span class="e">[+${esc(r.dur)}] 失败：${esc(r.error)}</span>`);
+  else if(r.status==='waiting')log.push(`[+${esc(r.dur)}] 等待人工确认`);
+  else if(r.status==='succeeded')log.push(`[+${esc(r.dur)}] 运行完成`);
+  const actions=r.status==='failed'?`<button type="button" class="btn primary" data-act="retryRun" data-id="${esc(r.id)}">${ic('refresh',13)}从失败节点重试</button>`:r.status==='waiting'?`<button type="button" class="btn primary" data-go="approvals">去确认</button>`:'';
+  const body=`<dl class="kv"><dt>状态</dt><dd>${st(r.status)}</dd><dt>需求</dt><dd>${r.issue?`<button type="button" class="link" data-act="issue" data-id="${esc(r.issue)}">${esc(r.issue)}</button>`:'—'}</dd><dt>发起</dt><dd>${esc(r.by)}</dd><dt>开始</dt><dd>${esc(r.started)}</dd><dt>耗时</dt><dd>${esc(r.dur)}</dd><dt>Token</dt><dd>${fmtK(r.tokens)}</dd></dl>
+    ${nodes.length?`<h3 class="sec">节点进度</h3><div class="panel"><ol class="timeline">${tl}</ol></div>`:''}
+    <h3 class="sec">日志</h3><pre class="log">${log.join('\n')}</pre>${actions?`<div class="drawer-actions">${actions}</div>`:''}`;
+  openDrawer(`${r.id} · ${r.title}`,esc(s?.name||'AI 定时任务'),body);
+}
+function createRun(issue,sop){
+  const first=sop.nodes[0];
+  const r={id:'r-'+(++seq),p:state.project,issue:issue?.id||'',title:issue?.title||sop.name,sopId:sop.id,status:'running',node:first.name,started:'刚刚',dur:'1 分钟',tokens:2,by:DB.me.name};
+  DB.runs.unshift(r);sop.runs++;sop.last='刚刚';
+  if(issue){issue.status='running';issue.sop=sop.name;issue.run=r.id;issue.updated='刚刚'}
+  return r;
+}
+
+/* ---------- 交互 ---------- */
+const ACT={
+  toast:a=>toast(a.dataset.msg),
+  demoOnly:()=>toast('Demo 里没有实现这个操作'),
+  toggleSettings:()=>{if(VIEWS[state.view].area==='settings')go('home');else go(state.lastSettings||'settings')},
+  toggleSidebar:()=>{state.sidebarOpen=!state.sidebarOpen;renderSidebar();renderTopbar();if(state.sidebarOpen)$('#sbNav .nav.active')?.focus()},
+  setUi:a=>{state.ui[a.dataset.key]=a.dataset.val;renderMain();$(`[data-act="setUi"][data-key="${a.dataset.key}"][data-val="${a.dataset.val}"]`)?.focus()},
+  menu:a=>{state.menu=state.menu===a.dataset.menu?null:a.dataset.menu;renderMain();(state.menu?$('.menu [role="menuitem"]'):$(`[data-menu="${a.dataset.menu}"]`))?.focus()},
+  closeModal:()=>closeModal(),
+  closeDrawer:()=>closeDrawer(),
+  copyText:a=>copyText(a.dataset.text),
+  issue:a=>openIssue(a.dataset.id),
+  run:a=>openRun(a.dataset.id),
+  newIssue:()=>{
+    const sops=projSops();
+    openModal({title:'新建需求',desc:`需求会创建在「${proj().name}」。选了 SOP 就会立即派发。`,submit:'创建',body:
+      field('标题','<input name="title" maxlength="80" required placeholder="一句话说清要做什么">')+
+      field('优先级',`<select name="prio">${opts([['P0','P0 紧急'],['P1','P1 高'],['P2','P2 中'],['P3','P3 低']],'P2')}</select>`)+
+      field('SOP',`<select name="sop"><option value="">暂不派发</option>${opts(sops.map(s=>[s.id,s.name]),'')}</select>`),
+      onSubmit:f=>{
+        const title=f.get('title').trim();if(!title){toast('请填写标题','err');return false}
+        const i={id:`${proj().key}-${++seq}`,p:state.project,title,status:'todo',sop:'—',owner:DB.me.name,prio:f.get('prio'),updated:'刚刚'};
+        DB.issues.unshift(i);const sop=sopById(f.get('sop'));
+        if(sop)createRun(i,sop);
+        toast(sop?`已创建 ${i.id}，并派发到「${sop.name}」`:`已创建 ${i.id}`,'ok');
+        if(state.view!=='issues')go('issues');else render();
+      }});
+  },
+  approve:a=>{
+    const ap=DB.approvals.find(x=>x.id===a.dataset.id);if(!ap)return;
+    DB.approvals=DB.approvals.filter(x=>x!==ap);
+    const r=DB.runs.find(x=>x.id===ap.run),s=r&&sopById(r.sopId);
+    if(r){r.status='running';const i=s?s.nodes.findIndex(n=>n.name===r.node):-1;if(s&&s.nodes[i+1])r.node=s.nodes[i+1].name}
+    const is=DB.issues.find(x=>x.id===ap.issue);if(is){is.status='running';is.updated='刚刚'}
+    toast(`已确认「${ap.node}」，流程继续执行`,'ok');render();
+  },
+  reject:a=>{
+    const ap=DB.approvals.find(x=>x.id===a.dataset.id);if(!ap)return;
+    openModal({title:'退回到上一节点',desc:`「${ap.title}」会回到「${ap.node}」之前的节点重新执行。`,submit:'退回',danger:true,body:field('退回原因','<textarea name="reason" maxlength="500" required placeholder="说明需要怎么改，Agent 会带着这段话重做"></textarea>'),
+      onSubmit:f=>{
+        if(!f.get('reason').trim()){toast('请填写退回原因','err');return false}
+        DB.approvals=DB.approvals.filter(x=>x!==ap);
+        const r=DB.runs.find(x=>x.id===ap.run),s=r&&sopById(r.sopId);
+        if(r){r.status='running';const i=s?s.nodes.findIndex(n=>n.name===r.node):-1;if(s&&i>0)r.node=s.nodes[i-1].name}
+        const is=DB.issues.find(x=>x.id===ap.issue);if(is)is.status='running';
+        toast('已退回，Agent 正在按意见重做','ok');render();
+      }});
+  },
+  retryRun:a=>{const r=DB.runs.find(x=>x.id===a.dataset.id);if(!r)return;r.status='running';delete r.error;const is=DB.issues.find(x=>x.id===r.issue);if(is)is.status='running';toast(`${r.id} 已从「${r.node}」重试`,'ok');closeDrawer(true);render();openRun(r.id)},
+  credEdit:a=>{
+    const c=DB.creds.find(x=>x.key===a.dataset.id);if(!c)return;
+    openModal({title:`配置 ${c.name}`,desc:'保存后只显示是否已配置，不会再展示明文。',body:field(c.name,'<input type="password" name="value" autocomplete="off" required placeholder="粘贴你的 Key">'),
+      onSubmit:f=>{if(!f.get('value').trim()){toast('请填写内容','err');return false}c.ok=true;toast(`${c.name} 已保存`,'ok');renderMain()}});
+  },
+  project:a=>{
+    const p=DB.projects.find(x=>x.id===a.dataset.id);if(!p)return;
+    const members=(DB.members[p.id]||[]).map(([n,r])=>row({icon:'user',title:esc(n),meta:esc(r)})).join('');
+    const repos=(DB.repos[p.id]||[]).map(r=>row({icon:'git',title:`<span class="mono">${esc(r)}</span>`,meta:'默认分支 main'})).join('');
+    openDrawer(p.name,`<span class="mono">${esc(p.key)}</span> · 负责人 ${esc(p.owner)}`,`<h3 class="sec">成员</h3><div class="panel">${members}</div><h3 class="sec">仓库</h3><div class="panel">${repos}</div><div class="drawer-actions">${p.id===state.project?badge('run','当前项目'):`<button type="button" class="btn primary" data-act="setProject" data-id="${p.id}">切换到这个项目</button>`}</div>`);
+  },
+  setProject:a=>{state.project=a.dataset.id;closeDrawer(true);toast(`已切换到「${proj().name}」`);render()},
+  newProject:()=>openModal({title:'新建项目',submit:'创建',body:field('项目名称','<input name="name" maxlength="40" required>')+field('项目 Key','<input name="key" maxlength="6" required placeholder="2–6 位大写字母，例如 CRM">','用作需求编号前缀'),
+    onSubmit:f=>{
+      const name=f.get('name').trim(),key=f.get('key').trim().toUpperCase();
+      if(!name){toast('请填写项目名称','err');return false}
+      if(!/^[A-Z]{2,6}$/.test(key)){toast('Key 需要 2–6 位大写字母','err');return false}
+      if(DB.projects.some(p=>p.key===key)){toast('Key 已被占用','err');return false}
+      const id='p-'+key.toLowerCase()+(++seq);DB.projects.push({id,name,key,owner:DB.me.name,repos:0,sop:'—',updated:'刚刚'});DB.members[id]=[[DB.me.name,'负责人']];DB.repos[id]=[];FACTOR[id]=.2;
+      toast(`已创建「${name}」`,'ok');render();
+    }}),
+  newBot:()=>openModal({title:'新建通道',desc:`通道归属「${proj().name}」。`,submit:'创建',body:field('名称','<input name="name" maxlength="30" required placeholder="例如：研发群">')+field('通道类型',`<select name="channel">${opts([['企业微信群聊','企业微信群聊'],['企业微信单聊','企业微信单聊']],'企业微信群聊')}</select>`)+field('Webhook 地址','<input name="url" type="url" required placeholder="https://">','只接受 https 地址；Demo 不会真正请求'),
+    onSubmit:f=>{
+      const name=f.get('name').trim(),url=f.get('url').trim();
+      if(!name){toast('请填写名称','err');return false}
+      if(!/^https:\/\/\S+$/.test(url)){toast('Webhook 地址需要以 https:// 开头','err');return false}
+      DB.bots.push({id:'b'+(++seq),p:state.project,name,channel:f.get('channel'),bound:true,usedBy:'未使用',last:'—'});toast(`已创建「${name}」`,'ok');renderMain();
+    }}),
+  testBot:a=>{const b=DB.bots.find(x=>x.id===a.dataset.id);if(b){b.last='刚刚';toast(`已向「${b.name}」发送测试消息（模拟）`,'ok');renderMain()}},
+  deleteBot:a=>{const b=DB.bots.find(x=>x.id===a.dataset.id);if(b)confirmModal('删除通道',`删除后，使用「${b.name}」的定时任务和 SOP 将不再发送通知。`,'删除',()=>{DB.bots=DB.bots.filter(x=>x!==b);toast('已删除');renderMain()})},
+  newSop:()=>{
+    const bases=DB.sops.filter(s=>s.scope!=='project'||s.p===state.project);
+    openModal({title:'新建 SOP',submit:'创建并打开',body:field('名称','<input name="name" maxlength="40" required placeholder="例如：数据修复 SOP">')+field('基于',`<select name="base">${opts(bases.map(s=>[s.id,`${s.name}（${s.scope==='builtin'?'内置':s.scope==='shared'?'共享':'本项目'}）`]),bases[0]?.id)}</select>`,'复制它的节点作为起点'),
+      onSubmit:f=>{
+        const name=f.get('name').trim();if(!name){toast('请填写名称','err');return false}
+        const base=sopById(f.get('base'))||DB.sops[0],id='sop-'+(++seq);
+        DB.sops.push({id,p:state.project,scope:'project',name,desc:base.desc,version:'v1',runs:0,rate:0,last:'尚未运行',nodes:base.nodes.map(n=>({...n}))});
+        state.ui.sopScope='project';closeModal();go('flow/'+id);toast(`已创建「${name}」`,'ok');
+      }});
+  },
+  copySop:a=>{const s=sopById(a.dataset.id);if(!s)return;const id='sop-'+(++seq);DB.sops.push({...s,id,p:state.project,scope:'project',builtin:false,name:s.name,version:'v1',runs:0,rate:0,last:'尚未运行',nodes:s.nodes.map(n=>({...n}))});state.ui.sopScope='project';toast(`已复制到「${proj().name}」`,'ok');renderMain()},
+  runSop:a=>{
+    const s=sopById(a.dataset.id);if(!s)return;
+    const todo=projIssues().filter(i=>i.status==='todo');
+    if(!todo.length){toast('本项目没有未开始的需求，先新建一条');return}
+    openModal({title:`派发到「${s.name}」`,submit:'派发',body:field('选择需求',`<select name="issue">${opts(todo.map(i=>[i.id,`${i.id} ${i.title}`]),todo[0].id)}</select>`),
+      onSubmit:f=>{const i=DB.issues.find(x=>x.id===f.get('issue'));if(!i)return false;const r=createRun(i,s);toast(`已派发，运行 ${r.id} 开始执行`,'ok');renderMain()}});
+  },
+  publishSop:a=>{const s=sopById(a.dataset.id);if(!s)return;s.version='v'+(parseInt(s.version.slice(1),10)+1);toast(`已发布 ${s.version}，新运行会使用这个版本`,'ok');renderMain();renderTopbar()},
+  flowNode:a=>{const id=a.dataset.id;state.flowNode=state.flowNode===id?null:id;renderMain();$(`.fnode[data-id="${id}"]`)?.focus()},
+  editPrompt:a=>{
+    const s=a.dataset.id&&DB.prompts.find(x=>x.id===a.dataset.id),bots=projBots();
+    openModal({title:s?'编辑 AI 定时任务':'新建 AI 定时任务',desc:'用项目 Owner 的 CodeBuddy 执行，与首页 AI 对话的权限相同。',submit:s?'保存':'创建',body:
+      field('任务名称',`<input name="name" maxlength="40" required value="${esc(s?.name||'')}">`)+
+      field('执行时间',`<select name="when">${opts(WHENS.map(w=>[w,w]),s?.when||WHENS[1])}</select>`)+
+      field('提示词',`<textarea name="prompt" maxlength="2000" required placeholder="说清楚要做什么、结果发到哪里">${esc(s?.prompt||'')}</textarea>`)+
+      field('通知通道',`<select name="bot"><option value="">不通知</option>${opts(bots.map(b=>[b.name,b.name]),s?.bot||'')}</select>`)+
+      `<label class="field-row"><span>保存后启用</span><input type="checkbox" class="switch" name="enabled"${!s||s.enabled?' checked':''}></label>`,
+      onSubmit:f=>{
+        const name=f.get('name').trim(),prompt=f.get('prompt').trim();
+        if(!name||!prompt){toast('请填写任务名称和提示词','err');return false}
+        const data={name,when:f.get('when'),prompt,bot:f.get('bot'),enabled:f.get('enabled')==='on'};
+        if(s)Object.assign(s,data);else DB.prompts.push({id:'s'+(++seq),p:state.project,last:'尚未运行',...data});
+        toast(s?'已保存':`已创建「${name}」`,'ok');renderMain();
+      }});
+  },
+  runPrompt:a=>{
+    const s=DB.prompts.find(x=>x.id===a.dataset.id);if(!s)return;
+    s.last='刚刚 · 运行中';toast(`「${s.name}」开始执行`);renderMain();
+    setTimeout(()=>{s.last='刚刚 · 成功';DB.runs.unshift({id:'r-'+(++seq),p:s.p,issue:'',title:s.name,sopId:null,status:'succeeded',node:'AI 定时任务',started:'刚刚',dur:'1 分钟',tokens:12,by:'定时任务'});if(state.view==='schedules')renderMain();toast(`「${s.name}」执行完成`,'ok')},1500);
+  },
+  deletePrompt:a=>{const s=DB.prompts.find(x=>x.id===a.dataset.id);if(s)confirmModal('删除定时任务',`删除「${s.name}」后不会再按计划执行。`,'删除',()=>{DB.prompts=DB.prompts.filter(x=>x!==s);toast('已删除');renderMain()})},
+  runTrigger:()=>{const t=trigger(),c=projIssues().filter(i=>t.statuses.includes(i.status)).length;t.last='刚刚';t.history.unshift([new Date().toTimeString().slice(0,5),c?`候选 ${c}，启动 ${Math.min(c,t.max)}`:'没有符合条件的需求',c?'ok':'off']);toast('已触发一次扫描（模拟）','ok');renderMain()},
+  subscribe:a=>{
+    const m=DB.market.find(x=>x.id===a.dataset.id);if(!m)return;
+    DB.prompts.push({id:'s'+(++seq),p:state.project,name:m.name,when:m.when,bot:'',enabled:true,last:'尚未运行',prompt:m.desc,sharedId:m.id});m.subs++;
+    toast(`已订阅「${m.name}」，可以在提示词任务里调整参数`,'ok');renderMain();
+  },
+  mcpEdit:a=>{
+    const m=a.dataset.id&&DB.mcps.find(x=>x.id===a.dataset.id);
+    openModal({title:m?'编辑 MCP':'添加自定义 MCP',desc:'配置只保存在所选范围内。',submit:m?'保存':'添加',body:
+      field('名称',`<input name="name" maxlength="40" required value="${esc(m?.name||'')}">`)+
+      field('地址',`<input name="url" type="url" required value="${esc(m?.url||'')}" placeholder="https://">`,'只接受 https 地址；Demo 不会真正连接')+
+      field('范围',`<select name="scope">${opts([['project','本项目'],['personal','个人']],m?.scope||'project')}</select>`),
+      onSubmit:f=>{
+        const name=f.get('name').trim(),url=f.get('url').trim();
+        if(!name){toast('请填写名称','err');return false}
+        if(!/^https:\/\/\S+$/.test(url)){toast('地址需要以 https:// 开头','err');return false}
+        if(m)Object.assign(m,{name,url,scope:f.get('scope')});
+        else DB.mcps.push({id:'c'+(++seq),name,url,scope:f.get('scope'),tools:Math.floor(Math.random()*8)+2,status:'ok',added:'刚刚'});
+        toast(m?'已保存':`已添加「${name}」`,'ok');renderMain();
+      }});
+  },
+  mcpDelete:a=>{const m=DB.mcps.find(x=>x.id===a.dataset.id);if(m)confirmModal('删除 MCP',`删除后，Agent 无法再调用「${m.name}」的工具。`,'删除',()=>{DB.mcps=DB.mcps.filter(x=>x!==m);toast('已删除');renderMain()})},
+  newRule:()=>openModal({title:'新建规则',submit:'创建',body:field('名称','<input name="name" maxlength="40" required>')+field('内容','<textarea name="desc" maxlength="2000" required placeholder="写给 Agent 的约束，例如：禁止修改 migrations 目录"></textarea>'),
+    onSubmit:f=>{const name=f.get('name').trim(),desc=f.get('desc').trim();if(!name||!desc){toast('请填写名称和内容','err');return false}DB.rules.push({id:'r'+(++seq),scope:'project',name,desc,updated:'刚刚'});state.ui.ruleScope='project';toast('已创建规则','ok');renderMain()}}),
+  newSkill:()=>openModal({title:'新建技能',submit:'创建',body:field('名称','<input name="name" maxlength="40" required placeholder="小写字母和短横线，例如 log-triage">')+field('用途','<input name="desc" maxlength="120" required>'),
+    onSubmit:f=>{const name=f.get('name').trim(),desc=f.get('desc').trim();if(!/^[a-z0-9-]{2,40}$/.test(name)){toast('名称只能用小写字母、数字和短横线','err');return false}if(!desc){toast('请填写用途','err');return false}DB.skills.push({id:'k'+(++seq),scope:'project',name,desc,files:1});state.ui.skillScope='project';toast('已创建技能','ok');renderMain()}}),
+  installSkill:a=>{const h=DB.skillhub.find(x=>x.id===a.dataset.id);if(!h)return;DB.skills.push({id:'k'+(++seq),scope:'project',name:h.name,desc:h.desc,files:2});toast(`已安装 ${h.name}`,'ok');renderMain()},
+  addRunner:()=>openModal({title:'添加执行机器',desc:'在要接入的机器上运行下面的命令，连接成功后会出现在列表里。',submit:'完成',body:`<div class="copy-line"><input class="input" readonly value="npx loopforge-runner connect --server https://loopforge.example.com" aria-label="连接命令"><button type="button" class="btn" data-act="copyText" data-text="npx loopforge-runner connect --server https://loopforge.example.com">${ic('copy',13)}复制</button></div><p>命令会打开浏览器完成授权，不需要手动粘贴 Token。</p>`,onSubmit:()=>true}),
+  envSel:a=>{state.ui.envSel[a.dataset.tab]=a.dataset.id;renderMain();$(`.split-item[data-id="${a.dataset.id}"]`)?.focus()},
+  closeReveal:()=>{state.revealed=null;renderMain()},
+  revokeToken:a=>{const t=DB.tokens.find(x=>x.id===a.dataset.id);if(t)confirmModal('撤销 Token',`撤销后，正在使用「${t.name}」的 API 和 MCP 客户端会立即失效。`,'撤销',()=>{t.status='revoked';if(state.revealed?.id===t.id)state.revealed=null;toast('Token 已撤销');renderMain()})},
+  addAdmin:()=>{
+    const left=USERS.filter(u=>!DB.platform.admins.includes(u));
+    if(!left.length){toast('所有成员都已经是管理员');return}
+    openModal({title:'添加平台管理员',submit:'添加',body:field('成员',`<select name="user">${opts(left.map(u=>[u,u]),left[0])}</select>`),onSubmit:f=>{DB.platform.admins.push(f.get('user'));toast(`已添加 ${f.get('user')}`,'ok');renderMain()}});
+  },
+  removeAdmin:a=>{
+    const n=a.dataset.name;
+    if(DB.platform.admins.length<=1){toast('至少需要保留一名平台管理员','err');return}
+    confirmModal('移除平台管理员',`移除后，${n} 将看不到平台管理。`,'移除',()=>{DB.platform.admins=DB.platform.admins.filter(x=>x!==n);toast('已移除');render()});
+  }
+};
+const FORM={
+  chat:f=>{const v=f.elements.text.value.trim();if(!v){toast('先输入点什么');return}f.elements.text.value='';toast('Demo 里不会真正发送消息')},
+  dispatch:f=>{const i=DB.issues.find(x=>x.id===f.dataset.id),s=sopById(f.elements.sop.value);if(!i||!s)return;const r=createRun(i,s);toast(`已派发，运行 ${r.id} 开始执行`,'ok');closeDrawer(true);renderMain();openIssue(i.id)},
+  trigger:f=>{
+    const t=trigger(),statuses=[...f.querySelectorAll('[name=status]:checked')].map(x=>x.value),max=Number(f.elements.max.value);
+    if(!statuses.length){toast('至少选择一个触发状态','err');return}
+    if(!Number.isInteger(max)||max<1||max>10){toast('单次最多派发需要是 1–10','err');return}
+    if(f.elements.enabled.checked&&!f.elements.sop.value){toast('请先选择默认 SOP','err');return}
+    Object.assign(t,{enabled:f.elements.enabled.checked,interval:f.elements.interval.value,sop:f.elements.sop.value,statuses,max,next:INTERVALS.find(x=>x[0]===f.elements.interval.value)[1].replace('每 ','')+'后'});
+    toast('触发配置已保存','ok');renderMain();
+  },
+  token:f=>{
+    const name=f.elements.name.value.trim();if(!name){toast('请填写 Token 名称','err');f.elements.name.focus();return}
+    const token=randomToken(),days=Number(f.elements.days.value),exp=new Date(2026,10,10);exp.setDate(exp.getDate()+days);
+    const t={id:'t'+(++seq),name,prefix:token.slice(0,7),created:'刚刚',used:'',expires:exp.toISOString().slice(0,10),status:'active'};
+    DB.tokens.unshift(t);state.revealed={id:t.id,name,token};toast('Token 已创建，请立即复制','ok');renderMain();
+  },
+  platform:f=>{
+    const quota=Number(f.elements.quota.value),c=Number(f.elements.concurrency.value);
+    if(!Number.isFinite(quota)||quota<10000){toast('每日 Token 上限至少 10000','err');return}
+    if(!Number.isInteger(c)||c<1||c>200){toast('并发数需要是 1–200','err');return}
+    Object.assign(DB.platform,{shared:f.elements.shared.checked,model:f.elements.model.value,quota,concurrency:c});toast('平台设置已保存','ok');
+  }
+};
+const PARTIAL={issueQuery:()=>{$('#issueTable').innerHTML=issueTable()},runQuery:()=>{$('#runTable').innerHTML=runTable()},marketQuery:()=>{$('#marketGrid').innerHTML=marketGrid()}};
+
+document.addEventListener('click',e=>{
+  const t=e.target;
+  if(!t.closest('#changesPop')&&!t.closest('#changesBtn'))setChanges(false);
+  if(t.closest('#changesBtn')){setChanges($('#changesPop').hidden);return}
+  if(t===$('#scrim')){closeDrawer();return}
+  if(t===$('#modalWrap')){closeModal();return}
+  if(state.menu&&!t.closest('.menu')&&!t.closest('[data-act="menu"]')){state.menu=null;renderMain()}
+  const g=t.closest('[data-go]');
+  if(g){e.preventDefault();if(g.closest('#drawer'))closeDrawer(true);if(g.closest('#modal'))closeModal();go(g.dataset.go);return}
+  const a=t.closest('[data-act]');
+  if(a&&ACT[a.dataset.act]){
+    e.preventDefault();
+    const inMenu=!!a.closest('.menu');
+    ACT[a.dataset.act](a,e);
+    if(inMenu){state.menu=null;renderMain();$('[data-act="menu"]')?.focus()}
+  }
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(!$('#modalWrap').hidden){closeModal();return}
+    if($('#drawer').classList.contains('open')){closeDrawer();return}
+    if(state.menu){const m=state.menu;state.menu=null;renderMain();$(`[data-menu="${m}"]`)?.focus();return}
+    if(!$('#changesPop').hidden){setChanges(false);$('#changesBtn').focus();return}
+    if(narrow()&&state.sidebarOpen&&VIEWS[state.view].area==='settings'){ACT.toggleSidebar();return}
+  }
+  const tab=e.target.closest?.('[role="tab"][data-go]');
+  if(tab&&(e.key==='ArrowRight'||e.key==='ArrowLeft')){
+    e.preventDefault();
+    const list=$$('[role="tab"][data-go]',tab.parentNode),i=list.indexOf(tab),n=list[(i+(e.key==='ArrowRight'?1:-1)+list.length)%list.length];
+    state.focusAfter=`[role="tab"][data-go="${n.dataset.go}"]`;go(n.dataset.go);return;
+  }
+  const el=e.target.closest?.('[data-act][role="button"]');
+  if(el&&el.tagName!=='BUTTON'&&(e.key==='Enter'||e.key===' ')){e.preventDefault();ACT[el.dataset.act]?.(el,e)}
+});
+document.addEventListener('input',e=>{const k=e.target.dataset?.input;if(!k)return;state.ui[k]=e.target.value;PARTIAL[k]?.()});
+document.addEventListener('change',e=>{
+  const t=e.target;
+  if(t.id==='projectSelect'){state.project=t.value;state.revealed=null;toast(`已切换到「${proj().name}」`);render();return}
+  if(t.id==='marksToggle'){document.body.classList.toggle('marks',t.checked);return}
+  if(t.dataset?.change==='togglePrompt'){const s=DB.prompts.find(x=>x.id===t.dataset.id);if(s){s.enabled=t.checked;toast(`「${s.name}」已${s.enabled?'启用':'停用'}`);renderMain();$(`[data-change="togglePrompt"][data-id="${s.id}"]`)?.focus()}}
+});
+document.addEventListener('submit',e=>{
+  const f=e.target;e.preventDefault();
+  if(f.id==='modal'){if(!modalCtx)return;const r=modalCtx.onSubmit(new FormData(f),f);if(r!==false)closeModal();return}
+  const k=f.dataset.form;if(k&&FORM[k])FORM[k](f);
+});
+function setChanges(open){$('#changesPop').hidden=!open;$('#changesBtn').setAttribute('aria-expanded',String(open))}
+window.addEventListener('hashchange',route);
+matchMedia('(max-width:1000px)').addEventListener('change',()=>{state.sidebarOpen=!narrow();renderSidebar();renderTopbar()});
+
+route();
+})();
+</script>
+</body>
+</html>

@@ -196,7 +196,6 @@ function projectAdminFormHTML(d,ctx){
       ${creating&&!Number(state.currentUser?.id)?paRow('项目 Owner','项目的默认责任人，创建后可在「项目成员」中调整。',userCombobox('ownerId',d.ownerId,'请选择项目 Owner'),{required:true}):''}
       ${paRow('默认 SOP','用于新需求的默认流程；已关联 SOP 的需求保留原绑定。',projectDefaultSOPField(d),{required:true})}
       ${paRow('默认代码仓库',repoDesc,`<select name="defaultRepositoryId" class="select" ${repos.length?'':'disabled'}><option value="">暂未绑定</option>${repoOptions}</select>`)}
-      ${paRow('主业务域','用于业务域交付报表归类。',projectBusinessDomainField(d))}
     </div>`);
   const owner=userById(d.ownerId);
   const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><span class="member-kind">成员</span>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
@@ -278,7 +277,7 @@ function syncProjectIdentity(){
 function captureProjectAdminForm(){
   const form=$('#projectAdminForm'),d=state.projectDraft;if(!form||!d||form.dataset.projectFor!==state.projectDraftFor)return;
   const el=form.elements;
-  ['name','description','color','workflowId','defaultRepositoryId','businessDomainId','tapdWorkspaceId','tapdIterationId','key'].forEach(n=>{if(el[n])d[n]=el[n].value});
+  ['name','description','color','workflowId','defaultRepositoryId','tapdWorkspaceId','tapdIterationId','key'].forEach(n=>{if(el[n])d[n]=el[n].value});
   if(state.projectAdminDetailId==='new'&&el.id)d.id=el.id.value.trim();
   if(el.tapdClear)d.tapdClear=!!el.tapdClear.checked;
   if(el.ownerId){
@@ -543,51 +542,22 @@ function storeSavedProject(result,value){
   const i=projects.findIndex(p=>p.id===stored.id);if(i>=0)projects[i]=stored;else projects.push(stored);
   return stored;
 }
-// Returns an error message; the project itself is already saved when this runs.
-async function saveProjectBusinessDomain(projectId,targetDomainId,expectedDomainId){
-  if(targetDomainId===expectedDomainId)return '';
-  try{
-    const assigned=await api('/api/projects/'+encodeURIComponent(projectId)+'/business-domain',{method:'PUT',body:JSON.stringify({businessDomainId:targetDomainId,expectedDomainId})});
-    const projects=state.data.projects||[],pi=projects.findIndex(p=>p.id===projectId);if(pi>=0&&assigned&&assigned.id)projects[pi]=assigned;
-    businessState.report=null;businessState.seq++;return '';
-  }catch(err){return err.message||String(err)}
-}
 async function saveProjectAdmin(e){
   e.preventDefault();
   const f=e.currentTarget,el=f.elements,projects=state.data.projects||[],creating=state.projectAdminDetailId==='new';
   const projectId=String(el.id?.value||'').trim(),saved=projects.find(p=>p.id===projectId);
   const base=clone(state.projectDraft||saved||{});
   const value=buildProjectPayload(base,{id:projectId,key:el.key?.value||'',name:el.name?.value||'',description:el.description?.value,color:el.color?.value,ownerId:el.ownerId?el.ownerId.value:undefined,workflowId:el.workflowId?.value,defaultRepositoryId:el.defaultRepositoryId?.value||'',tapdWorkspaceId:el.tapdWorkspaceId?.value,tapdIterationId:el.tapdIterationId?.value,tapdClear:!!el.tapdClear?.checked});
-  const expectedDomainId=saved?.businessDomainId||'',targetDomainId=el.businessDomainId?.value??expectedDomainId;
   const invalid=validateProjectPayload(value,{creating,projects,workflows:state.data.workflows||[],saved});
   if(invalid)return invalid.field?projectAdminFail(f,invalid.field,invalid.message):toast(invalid.message,'err');
   const submit=f.querySelector?.('[data-pa-submit]');if(submit)submit.disabled=true;
   try{
     const result=await api('/api/projects',{method:creating?'POST':'PUT',body:JSON.stringify(value)});
     const savedProjectId=storeSavedProject(result,value).id||value.id;
-    const domainFailure=await saveProjectBusinessDomain(savedProjectId,targetDomainId,expectedDomainId),domainError=domainFailure?'项目设置已保存，业务域保存失败：'+domainFailure:'';
     if(!state.projectFilter){state.projectFilter=savedProjectId;localStorage.setItem('agentflow.activeProject',savedProjectId)}
     projectAdminAfterSave(savedProjectId,creating);
     renderAll();
-    toast(domainError||(creating?'项目已创建，下一步绑定代码仓库':'项目设置已保存'),domainError?'err':'ok');
+    toast(creating?'项目已创建，下一步绑定代码仓库':'项目设置已保存','ok');
   }catch(err){toast(err.message,'err')}
   finally{if(submit)submit.disabled=false}
-}
-
-// Project attribution is edited here; the business-domain page owns the catalog and reports.
-function projectBusinessDomainField(project){
-  const saved=(state.data.projects||[]).find(p=>p.id===project.id);
-  const admin=!state.authRequired||isPlatformAdmin();
-  const uid=Number(state.currentUser?.id)||0;
-  const canSetInitialDomain=uid>0&&(!saved||(!saved.businessDomainId&&Number(saved.ownerId)===uid));
-  const canAssign=admin||canSetInitialDomain;
-  const current=project.businessDomainId||'';
-  const domains=state.data.businessDomains||[];
-  const options=domains
-    .filter(d=>d.active||d.id===current)
-    .map(d=>`<option value="${escapeHTML(d.id)}" ${d.id===current?'selected':''}>${escapeHTML(d.name)}${d.active?'':'（已停用）'}</option>`)
-    .join('');
-  const missing=current&&!domains.some(d=>d.id===current)
-    ?`<option value="${escapeHTML(current)}" selected>${escapeHTML(current)}</option>`:'';
-  return `<select id="projectBusinessDomainSelect" name="businessDomainId" class="select" ${canAssign?'':'disabled'}><option value="">未分类</option>${options}${missing}</select>`;
 }

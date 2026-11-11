@@ -94,20 +94,22 @@ test('global confirm, prompt, alert, toast, and code editor controls resolve thr
   assert.equal(app.evaluate(`window.__savedCode`), 'print(2)\n# done');
 });
 
-test('theme, settings sidebar, capability groups, and route helpers persist UI state', async (t) => {
+test('theme, settings sidebar, merged asset tabs, and route helpers persist UI state', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`
     localStorage.setItem('theme','dark');
     readThemePreference();applyTheme('system');applyTheme('light');toggleTheme();
-    setCapabilityNavExpanded(false);setCapabilityNavExpanded(true);
-    setEnvironmentNavExpanded(false);setEnvironmentNavExpanded(true);
     setSettingsSidebarExpanded(false);setSettingsSidebarExpanded(true);
     switchView('settings');startSettingsRouteTransition('access');cancelSettingsRouteTransition();
+    switchView('rules');
   `);
   app.window.dispatchEvent(new app.window.StorageEvent('storage', { key: 'agentflow.theme' }));
   app.window.dispatchEvent(new app.window.Event('resize'));
   assert.equal(app.document.documentElement.dataset.theme, 'dark');
-  assert.equal(app.document.querySelector('#capabilityNavToggle')?.getAttribute('aria-expanded'), 'true');
+  assert.equal(app.document.querySelector('#configurationNav .nav[data-view="mcp"]')?.classList.contains('active'), true);
+  assert.equal(app.document.querySelector('#assetsView [data-asset-type-tab="rules"]')?.getAttribute('aria-selected'), 'true');
+  assert.equal(app.document.querySelector('#assetsView [data-asset-type-group="environment"]')?.hidden, true);
   assert.match(app.evaluate(`viewTitles().settings`), /个人配置/);
+  assert.equal(app.evaluate(`viewTitles().bots`), '通道管理');
 });
