@@ -56,9 +56,13 @@ test('merged asset pages show only their own type tabs', async ({ page }) => {
     await expect(page.locator(`.platform-sidebar .nav[data-view="${nav}"]`)).toHaveClass(/\bactive\b/);
   }
   // Clicking a tab switches the page and keeps the single sidebar entry selected.
+  await page.goto('/#/sandboxes');
+  await expect(page.locator('#pageTitle')).toHaveText(TITLES.sandboxes);
   await page.locator('#assetsView [data-asset-type-tab="environments"]:visible').click();
   await expect(page).toHaveURL(/#\/environments/);
   await expect.poll(visibleTabs).toEqual(['dockerfiles', 'environments', 'sandboxes']);
+  await expect(page.locator('[data-asset-type-tab="environments"]:visible')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.platform-sidebar .nav[data-view="dockerfiles"]')).toHaveClass(/\bactive\b/);
   expect(errors).toEqual([]);
 });
 
