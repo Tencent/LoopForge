@@ -840,13 +840,15 @@ assert.ok(catalogHTML.indexOf('value="hy4"') < catalogHTML.indexOf('value="gpt-5
 assert.ok(catalogHTML.includes('data-catalog-act="probe"') && catalogHTML.includes('data-catalog-act="add"') && catalogHTML.includes('data-catalog-grip'));
 assert.ok(catalogHTML.includes('data-catalog-source="https://gw.example/v1"'));
 assert.equal(credentialCatalogSource(' https://gw.example/v1/ '), credentialCatalogSource('https://gw.example/v1'));
-assert.ok(catalogHTML.includes('data-catalog-empty hidden') && catalogHTML.includes('2 个模型') && catalogHTML.includes('data-catalog-official hidden') && catalogHTML.includes('data-catalog-body>'));
+assert.ok(catalogHTML.includes('data-catalog-empty hidden') && catalogHTML.includes('2 个模型') && catalogHTML.includes('data-catalog-body>') && !catalogHTML.includes('data-catalog-body hidden'));
 const emptyCatalog = credentialCatalogHTML(cred.kind('claudeCodeApiKey'), {claudeCodeBaseUrl: 'https://gw.example'});
 assert.ok(emptyCatalog.includes('跟随服务发布的模型') && emptyCatalog.includes('/v1/models') && emptyCatalog.includes('data-catalog-foot hidden') && emptyCatalog.includes('未自定义'));
 const officialCatalog = credentialCatalogHTML(cred.kind('codexApiKey'), {codexModels: [{id: 'hy4'}]});
-assert.ok(officialCatalog.includes('使用 Codex 自带的模型') && officialCatalog.includes('data-catalog-body hidden') && !officialCatalog.includes('data-catalog-official hidden'));
+assert.ok(officialCatalog.includes('value="hy4"') && officialCatalog.includes('data-catalog-act="probe"') && officialCatalog.includes('改回使用自带的模型') && !officialCatalog.includes('data-catalog-body hidden'), 'an official key keeps its custom catalog editable');
+const officialEmpty = credentialCatalogHTML(cred.kind('codexApiKey'), {});
+assert.ok(officialEmpty.includes('使用 Codex 自带的模型') && officialEmpty.includes('data-catalog-act="add"') && !officialEmpty.includes('data-catalog-body hidden'));
 const geminiCatalog = credentialCatalogHTML(cred.kind('agentCli.agy'), {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
-assert.ok(geminiCatalog.includes('data-catalog-body hidden'), 'Gemini official API keeps the builtin model list');
+assert.ok(geminiCatalog.includes('使用 Antigravity 自带的模型') && geminiCatalog.includes('data-catalog-act="probe"') && !geminiCatalog.includes('data-catalog-body hidden'), 'Gemini official API can still keep a custom catalog');
 assert.ok(credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('data-credential-catalog') && credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('has-catalog'));
 assert.ok(!credentialEditorHTML(cred.kind('agentCli.cursor'), {agentCliCredentials: {cursor: {apiKeyConfigured: true}}}).includes('data-credential-catalog'));
 assert.equal(credentialCatalogKey([{id: 'a', name: 'a'}, {id: '', name: ''}]), credentialCatalogKey([{id: 'a'}]));

@@ -71,7 +71,7 @@ const CREDENTIAL_KINDS=[
     impact:'AI 对话将只能使用默认模型，CodeBuddy 执行器节点会失败。'},
   {key:'codexApiKey',group:'model',name:'Codex',short:'Codex API Key',logo:'codex',monochrome:true,
     use:'AI 对话选择 Codex 执行器，以及以 Codex 运行的 SOP 节点',
-    description:'AI 对话切换到 Codex 后可选用模型目录里的模型，SOP 在执行机器上以 Codex 运行的节点也使用它。模型目录默认跟随服务发布的模型，也可以自己挑选、排序和命名。',
+    description:'AI 对话切换到 Codex 后可选用模型目录里的模型，SOP 在执行机器上以 Codex 运行的节点也使用它。目录为空时，未填 Base URL 使用 Codex 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
     guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；保存后可在模型目录里挑选 AI 对话的模型']],
     placeholder:'请输入 Codex API Key',
     extra:{name:'codexBaseUrl',label:'Base URL',placeholder:'https://api.openai.com/v1',url:true,clearWithKey:true},
@@ -79,7 +79,7 @@ const CREDENTIAL_KINDS=[
     impact:'以 Codex 运行的 SOP 节点将无法执行，Base URL 与模型目录一并清空。'},
   {key:'claudeCodeApiKey',group:'model',name:'Claude Code',short:'Claude Code API Key',logo:'claude',monochrome:true,
     use:'AI 对话选择 Claude 执行器，以及以 Claude Code 运行的 SOP 节点',
-    description:'AI 对话切换到 Claude Code 后可选用模型目录里的模型，SOP 在执行机器上以 Claude Code 运行的节点也使用它。模型目录默认跟随服务发布的模型，也可以自己挑选、排序和命名。',
+    description:'AI 对话切换到 Claude Code 后可选用模型目录里的模型，SOP 在执行机器上以 Claude Code 运行的节点也使用它。目录为空时，未填 Base URL 使用 Claude Code 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
     guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；保存后可在模型目录里挑选 AI 对话的模型']],
     placeholder:'请输入 Claude Code API Key',
     extra:{name:'claudeCodeBaseUrl',label:'Base URL',placeholder:'https://api.anthropic.com',url:true,clearWithKey:true},
@@ -131,8 +131,10 @@ function credentialProtocolHTML(kind,value){
 // The model list behind an Anthropic-style Base URL sits under /v1.
 function credentialModelsEndpoint(kind,protocol){return kind.models.endpoint||(protocol==='messages'?'/v1/models':'/models')}
 // ---- 模型目录（Codex / Claude Code / 可配置 Agent CLI） ----
-// An empty catalog follows the models the Base URL publishes. Edits stay in the DOM until 保存.
-// Without a Base URL the CLI talks to its official service, so the catalog gives way to the CLI's own models.
+// A saved catalog is the chat list on the official endpoint and behind a Base URL.
+// An empty catalog follows the CLI's built-in models when there is no Base URL
+// (or the protocol is Gemini), and the Base URL's published models otherwise.
+// Edits stay in the DOM until 保存.
 const CREDENTIAL_CATALOG_MAX=100;
 function credentialCatalogModels(value){
   return (Array.isArray(value)?value:[]).map(model=>{const id=String(model?.id||'').trim(),name=String(model?.name||'').trim();return {id,name:name===id?'':name}}).filter(model=>model.id||model.name);
@@ -156,17 +158,27 @@ function credentialCatalogError(models){
 function credentialCatalogRowHTML(model={}){
   return `<li class="credential-catalog-row" data-catalog-row><button type="button" class="credential-catalog-grip" data-catalog-grip aria-label="拖动排序，也可以按 ↑ ↓ 移动">${credentialGlyph('grip',14)}</button><span class="credential-input is-plain"><input class="credential-mono" data-catalog-field="id" value="${escapeHTML(model.id||'')}" placeholder="模型 ID，如 gpt-5.5" aria-label="模型 ID" autocomplete="off" spellcheck="false"></span><span class="credential-input is-plain"><input data-catalog-field="name" value="${escapeHTML(model.name||'')}" placeholder="显示名称（可选）" aria-label="显示名称" autocomplete="off"></span><button type="button" class="credential-btn ghost icon danger credential-ink" data-catalog-act="remove" aria-label="移除模型">${credentialGlyph('trash',14)}</button></li>`;
 }
+function credentialCatalogCopy(official,kind){
+  const name=kind?.name||'该 CLI';
+  return official
+    ?{title:`使用 ${name} 自带的模型`,detail:`目录为空时，AI 对话列出 ${name} 支持的模型。获取可用模型可以改成自己的目录，也可以手动添加。`,reset:'清空目录，改回使用自带的模型',restored:'已恢复默认，保存后使用自带的模型'}
+    :{title:'跟随服务发布的模型',reset:'清空目录，改回跟随服务发布的模型',restored:'已恢复默认，保存后跟随服务发布的模型'};
+}
+function credentialCatalogDetailHTML(official,kind,protocol){
+  const copy=credentialCatalogCopy(official,kind);
+  return official?escapeHTML(copy.detail):`目录为空时，AI 对话列出 Base URL 的 <code data-catalog-endpoint>${escapeHTML(credentialModelsEndpoint(kind,protocol))}</code> 返回的模型。`;
+}
 function credentialCatalogHTML(kind,user){
   const baseUrl=credentialValue(user,kind.extra.name),protocol=credentialProtocol(kind,user);
   const models=credentialCatalogModels(credentialValue(user,kind.models.name)),empty=!models.length,official=!String(baseUrl||'').trim()||protocol==='gemini';
-  return `<section class="credential-catalog" data-credential-catalog data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
-    <div class="credential-catalog-official" data-catalog-official${official?'':' hidden'}>${credentialGlyph('layers',16)}<div><b>使用 ${escapeHTML(kind.name)} 自带的模型</b><small>未填写 Base URL 时连接官方服务，AI 对话直接列出 ${escapeHTML(kind.name)} 支持的模型。填写 Base URL 后可以获取服务发布的模型，并自定义模型目录。</small></div></div>
-    <div class="credential-catalog-body" data-catalog-body${official?' hidden':''}>
+  const copy=credentialCatalogCopy(official,kind);
+  return `<section class="credential-catalog" data-credential-catalog data-catalog-mode="${official?'official':'remote'}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
+    <div class="credential-catalog-body" data-catalog-body>
     <div class="credential-catalog-head"><div><b>模型目录</b><small data-catalog-count>${credentialCatalogCountText(models.length)}</small></div><div><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('download',14)}<span>获取可用模型</span></button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="add"><span class="credential-turn">${credentialGlyph('plus',14)}</span><span>添加模型</span></button></div></div>
     <div class="credential-catalog-probe" data-catalog-probe hidden></div>
     <ol class="credential-catalog-list" data-catalog-list${empty?' hidden':''}>${models.map(credentialCatalogRowHTML).join('')}</ol>
-    <div class="credential-catalog-empty" data-catalog-empty${empty?'':' hidden'}>${credentialGlyph('layers',16)}<div><b>跟随服务发布的模型</b><small>目录为空时，AI 对话列出 Base URL 的 <code data-catalog-endpoint>${escapeHTML(credentialModelsEndpoint(kind,protocol))}</code> 返回的模型。</small></div></div>
-    <div class="credential-catalog-foot" data-catalog-foot${empty?' hidden':''}><button type="button" class="credential-btn link credential-ink" data-catalog-act="reset">${credentialGlyph('undo',13)}<span>恢复默认</span></button><small>清空目录，改回跟随服务发布的模型</small></div>
+    <div class="credential-catalog-empty" data-catalog-empty${empty?'':' hidden'}>${credentialGlyph('layers',16)}<div><b data-catalog-empty-title>${escapeHTML(copy.title)}</b><small data-catalog-empty-detail>${credentialCatalogDetailHTML(official,kind,protocol)}</small></div></div>
+    <div class="credential-catalog-foot" data-catalog-foot${empty?' hidden':''}><button type="button" class="credential-btn link credential-ink" data-catalog-act="reset">${credentialGlyph('undo',13)}<span>恢复默认</span></button><small data-catalog-reset-note>${escapeHTML(copy.reset)}</small></div>
     </div>
     <span class="credential-sr" data-catalog-live role="status" aria-live="polite"></span>
   </section>`;
@@ -181,18 +193,20 @@ function credentialCatalogOfficial(catalog){
   const form=catalog?.closest('.credential-editor-form'),extra=form?.querySelector('input[name="extra"]');
   return (!!extra&&!extra.value.trim())||form?.querySelector('select[name="protocol"]')?.value==='gemini';
 }
-function credentialCatalogDirty(catalog){return !!catalog&&!credentialCatalogOfficial(catalog)&&credentialCatalogKey(readCredentialCatalog(catalog))!==catalog.dataset.originalKey}
+function credentialCatalogDirty(catalog){return !!catalog&&credentialCatalogKey(readCredentialCatalog(catalog))!==catalog.dataset.originalKey}
 function credentialCatalogPayload(catalog){
   if(!catalog)return undefined;
-  if(credentialCatalogOfficial(catalog))return catalog.dataset.originalKey==='[]'?undefined:[];
   return credentialCatalogDirty(catalog)?readCredentialCatalog(catalog):undefined;
 }
 function syncCredentialCatalog(catalog){
   const official=credentialCatalogOfficial(catalog),kind=credentialKind(catalog.closest('[data-credential-row]')?.dataset.credentialRow),protocol=catalog.closest('.credential-editor-form')?.querySelector('select[name="protocol"]')?.value;
-  const endpoint=catalog.querySelector('[data-catalog-endpoint]');if(endpoint&&kind?.models)endpoint.textContent=credentialModelsEndpoint(kind,protocol);
-  catalog.querySelector('[data-catalog-official]').hidden=!official;
-  catalog.querySelector('[data-catalog-body]').hidden=official;
-  if(official&&!catalog.querySelector('[data-catalog-probe]').hidden)closeCredentialCatalogProbe(catalog);
+  const copy=credentialCatalogCopy(official,kind),mode=official?'official':'remote';
+  const title=catalog.querySelector('[data-catalog-empty-title]'),detail=catalog.querySelector('[data-catalog-empty-detail]'),note=catalog.querySelector('[data-catalog-reset-note]');
+  if(title)title.textContent=copy.title;
+  if(detail)detail.innerHTML=credentialCatalogDetailHTML(official,kind,protocol);
+  if(note)note.textContent=copy.reset;
+  if(catalog.dataset.catalogMode&&catalog.dataset.catalogMode!==mode&&!catalog.querySelector('[data-catalog-probe]').hidden)closeCredentialCatalogProbe(catalog);
+  catalog.dataset.catalogMode=mode;
   const rows=credentialCatalogRows(catalog).length,empty=!rows;
   catalog.querySelector('[data-catalog-count]').textContent=credentialCatalogCountText(rows);
   catalog.querySelector('[data-catalog-list]').hidden=empty;
@@ -264,7 +278,7 @@ function credentialCatalogProbeHTML(catalog,kind){
     return `<label class="credential-catalog-pick" data-pick="${escapeHTML((model.id+' '+(model.name||'')).toLowerCase())}"><input type="checkbox" value="${escapeHTML(model.id)}"${checked?' checked':''}><code>${escapeHTML(model.id)}</code>${model.name&&model.name!==model.id?`<small>${escapeHTML(model.name)}</small>`:''}${listed?'<em>已在目录</em>':''}</label>`;
   }).join('');
   const protocol=catalog.closest('.credential-editor-form')?.querySelector('select[name="protocol"]')?.value;
-  const source=probe.source==='builtin'?'未填写 Base URL，以下是内置模型':`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`;
+  const source=probe.source==='builtin'?'以下是内置模型':`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`;
   return `<div class="credential-catalog-probe-top"><span class="credential-input is-plain is-search">${credentialGlyph('search',14)}<input data-catalog-search placeholder="搜索模型" aria-label="搜索模型" autocomplete="off" spellcheck="false"></span><span class="credential-catalog-picked" data-catalog-picked></span><button type="button" class="credential-btn link credential-ink" data-catalog-act="toggle-all">全选</button></div>
     <div class="credential-catalog-probe-list" role="group" aria-label="可用模型">${items}</div>
     <div class="credential-catalog-probe-foot"><small>${source} · 勾选的模型会加入目录，取消勾选会移出</small><div><button type="button" class="credential-btn ghost credential-ink" data-catalog-act="probe-close">取消</button><button type="button" class="credential-btn primary credential-ink" data-catalog-act="probe-apply">更新列表</button></div></div>`;
@@ -350,7 +364,7 @@ function credentialCatalogAction(action,row,catalog,button){
   if(action==='reset'){
     credentialCatalogRows(catalog).forEach(item=>item.remove());
     credentialCatalogChanged(catalog);
-    announceCredentialCatalog(catalog,'已恢复默认，保存后跟随服务发布的模型');
+    announceCredentialCatalog(catalog,credentialCatalogCopy(credentialCatalogOfficial(catalog),credentialKind(row?.dataset.credentialRow)).restored);
     catalog.querySelector('[data-catalog-act="add"]')?.focus({preventScroll:true});
     return;
   }
