@@ -494,14 +494,14 @@ func (s *Service) DisposeGovernanceDocument(input GovernanceDispositionInput, ac
 	if action != domain.KnowledgeSubmissionActionUpdate && action != domain.KnowledgeSubmissionActionRetract {
 		return domain.KnowledgeSubmission{}, apperr.New(apperr.Invalid, "处置动作只能是 update 或 retract")
 	}
-	if projectID == "" || source == "" || docPath == "" {
-		return domain.KnowledgeSubmission{}, apperr.New(apperr.Invalid, "项目、来源和文档路径必填")
+	if source == "" || docPath == "" {
+		return domain.KnowledgeSubmission{}, apperr.New(apperr.Invalid, "来源和文档路径必填")
 	}
 	ms, err := s.managed()
 	if err != nil {
 		return domain.KnowledgeSubmission{}, err
 	}
-	if !sourceInProject(ms, projectID, source) {
+	if !sourceWritable(ms, projectID, source) {
 		return domain.KnowledgeSubmission{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
 	}
 	src, ok := ms.KnowledgeSource(source)
@@ -529,7 +529,7 @@ func (s *Service) DisposeGovernanceDocument(input GovernanceDispositionInput, ac
 		if existingAction == "" {
 			existingAction = domain.KnowledgeSubmissionActionUpdate
 		}
-		if existing.Source == source && existing.Path == docPath && existingAction == action {
+		if existing.ProjectID == projectID && existing.Source == source && existing.Path == docPath && existingAction == action {
 			return existing, nil
 		}
 	}

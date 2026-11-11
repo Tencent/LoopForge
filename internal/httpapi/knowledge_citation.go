@@ -12,7 +12,7 @@ import (
 // available 为 false 时调用方不要把空列表当成「从未命中」。
 func (h *knowledgeHandlers) citationUsage(c *gin.Context) {
 	projectID := c.Query("projectId")
-	if !h.requireManagementScope(c, projectID) {
+	if !h.requireKnowledgeReader(c, projectID) {
 		return
 	}
 	usage, ok := h.svc.CitationUsage(projectID)
@@ -34,7 +34,7 @@ func (h *knowledgeHandlers) citationFreshness(c *gin.Context) {
 	if !decode(c, &body) {
 		return
 	}
-	if !h.requireManagementScope(c, body.ProjectID) {
+	if !h.requireKnowledgeReader(c, body.ProjectID) {
 		return
 	}
 	citations := body.Citations

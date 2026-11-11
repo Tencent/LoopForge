@@ -54,6 +54,9 @@ func (h *knowledgeHandlers) canManageBindings(c *gin.Context, projectID string) 
 
 func (h *knowledgeHandlers) sharedBindings(c *gin.Context) {
 	if c.Request.Method == "GET" {
+		if !h.requireKnowledgeReader(c, c.Query("projectId")) {
+			return
+		}
 		out, err := h.svc.SharedBindings(c.Query("projectId"))
 		render(c, out, err)
 		return
@@ -81,9 +84,36 @@ func (h *knowledgeHandlers) sharedBindings(c *gin.Context) {
 	c.JSON(200, gin.H{"updated": true})
 }
 
-func (h *knowledgeHandlers) requireManagementScope(c *gin.Context, project string) bool {
+func (h *knowledgeHandlers) requireKnowledgeReader(c *gin.Context, project string) bool {
 	if strings.TrimSpace(project) == "" {
 		return h.requireSharedAdmin(c)
 	}
-	return true
+	if h.canReadKnowledgeProject(c, project) {
+		return true
+	}
+	c.JSON(403, gin.H{"error": "只有项目 Owner、成员或平台管理员可以读取项目知识库"})
+	return false
+}
+
+func (h *knowledgeHandlers) canReadKnowledgeProject(c *gin.Context, project string) bool {
+	if !authRequired() || h.isPlatformAdmin(c.Request) {
+		return true
+	}
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		return false
+	}
+	p, ok := h.repo.Project(strings.TrimSpace(project))
+	if !ok {
+		return false
+	}
+	if p.OwnerID == user.ID {
+		return true
+	}
+	for _, m := range p.Members {
+		if m.UserID == user.ID {
+			return true
+		}
+	}
+	return false
 }

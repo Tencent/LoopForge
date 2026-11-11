@@ -188,3 +188,14 @@ func TestCreateMergeRequestRejectsInvalidRepo(t *testing.T) {
 		t.Fatal("invalid repository path must be rejected")
 	}
 }
+
+func TestProductionMergeRequestClientRejectsPrivateDNS(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.Write([]byte(`{"state":"opened"}`)) }))
+	defer srv.Close()
+	client := &Client{BaseURL: srv.URL, Token: "private-token"}
+	_, err := client.MergeRequestState(context.Background(), Repo{Provider: GitLab, Host: "gitlab.example.com", Path: "team/repo"}, 1)
+	if err == nil || calls != 0 {
+		t.Fatalf("private endpoint received token: calls=%d err=%v", calls, err)
+	}
+}

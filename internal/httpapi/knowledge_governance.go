@@ -12,7 +12,7 @@ import (
 // 路由: g.GET("/api/knowledge/governance", h.governanceOverview)
 func (h *knowledgeHandlers) governanceOverview(c *gin.Context) {
 	projectID := c.Query("projectId")
-	if !h.requireManagementScope(c, projectID) {
+	if !h.requireKnowledgeReader(c, projectID) {
 		return
 	}
 	out, err := h.svc.GovernanceOverview(projectID)
@@ -40,7 +40,7 @@ func (h *knowledgeHandlers) knowledgeFeedback(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	if !h.requireManagementScope(c, input.ProjectID) {
+	if !h.requireKnowledgeManager(c, input.ProjectID) {
 		return
 	}
 	var userID int64

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 	"agentflow/internal/mcpclient"
 	"agentflow/internal/repo"
@@ -217,5 +218,38 @@ func TestGovernanceDispositionQueuesUpdateAndRetraction(t *testing.T) {
 	}
 	if _, ok := s.KnowledgeTombstone("p1", KnowledgeFingerprint(body)); !ok {
 		t.Fatal("retraction must write a tombstone")
+	}
+}
+
+// The execution boundary must reject forged/legacy queue entries without HTTP.
+func TestServiceRejectsCrossProjectRetraction(t *testing.T) {
+	store := governanceServiceStore(t)
+	up := &governanceUpstream{}
+	svc := NewService(store, func() string { return "authz" }, up)
+	putGovernanceDoc(t, store, "a.md", "A", "# A private document")
+	// User B's project has an invalid legacy read binding to user A's base.
+	if err := store.PutKnowledgeBinding(domain.KnowledgeBinding{ProjectID: "b", BaseID: "b1", Permission: "read"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{domain.KnowledgeSubmissionPending, domain.KnowledgeSubmissionPublished} {
+		item := domain.KnowledgeSubmission{ID: "forged-" + string(status), ProjectID: "b", Source: "s1", Path: "a.md", Action: "retract", Status: status}
+		if err := store.PutKnowledgeSubmission(item); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		if status == domain.KnowledgeSubmissionPending {
+			_, err = svc.Publish(context.Background(), item.ID, "user-b")
+		} else {
+			_, err = svc.Retract(context.Background(), item.ID, "内容错误", "", "user-b")
+		}
+		if ae, _ := apperr.As(err); ae == nil || ae.Kind != apperr.Forbidden {
+			t.Errorf("cross-project %s: %v", status, err)
+		}
+	}
+	if len(up.retracted) != 0 {
+		t.Fatal("cross-project execution reached content engine")
+	}
+	if _, ok := store.KnowledgeDocument("s1", "a.md"); !ok {
+		t.Fatal("A's document removed")
 	}
 }

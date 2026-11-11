@@ -123,7 +123,7 @@ func newSedimentFixture(t *testing.T) (*Service, *sedimentStore, *sedimentUpstre
 	t.Helper()
 	store := newSedimentStore()
 	store.bases["kb-p1"] = domain.KnowledgeBase{ID: "kb-p1", ProjectID: "p1", Name: "项目知识库", Layer: "project", SedimentPublishMode: domain.KnowledgeSedimentReview}
-	store.sources["kb-hosted-p1"] = domain.KnowledgeSource{ID: "kb-hosted-p1", BaseID: "kb-p1", Kind: "hosted", Name: "托管文档", Status: "ready"}
+	store.sources[hostedSourceID("p1")] = domain.KnowledgeSource{ID: hostedSourceID("p1"), BaseID: "kb-p1", Kind: "hosted", Name: "托管文档", Status: "ready"}
 	store.bindings["p1"] = []domain.KnowledgeBinding{{ProjectID: "p1", BaseID: "kb-p1", Permission: "submit"}}
 	store.agents = []domain.AgentDefinition{{ID: "agent-kb", Name: "知识角色", KnowledgeBase: true}}
 	store.workflows = []domain.WorkflowDefinition{{ID: "wf", Nodes: []domain.WorkflowNode{{ID: "write", Type: "agent", AgentID: "agent-kb"}}}}
@@ -162,7 +162,7 @@ func TestSedimentQueuesSucceededRunWithGatesAndStaysIdempotent(t *testing.T) {
 		t.Fatalf("submissions = %+v", items)
 	}
 	item, _ := store.KnowledgeSubmission(items[0].ID)
-	if item.Status != domain.KnowledgeSubmissionPending || item.Source != "kb-hosted-p1" || item.ProjectID != "p1" {
+	if item.Status != domain.KnowledgeSubmissionPending || item.Source != hostedSourceID("p1") || item.ProjectID != "p1" {
 		t.Fatalf("item = %+v", item)
 	}
 	if !strings.HasPrefix(item.Path, "knowledge/") || !strings.HasSuffix(item.Path, ".md") {
@@ -275,7 +275,7 @@ func TestSedimentAutoPublishUsesHostedWriteback(t *testing.T) {
 	if item.Status != domain.KnowledgeSubmissionPublished || item.Commit != "7" || item.ReviewedBy == "" {
 		t.Fatalf("auto published item = %+v", item)
 	}
-	if len(up.written) != 1 || up.written[0] != "kb-hosted-p1\x00"+item.Path {
+	if len(up.written) != 1 || up.written[0] != "kb-hosted-c4b3147b9250b03a56cf4b06a349cce8\x00"+item.Path {
 		t.Fatalf("writeback = %+v path=%s", up.written, item.Path)
 	}
 }
@@ -339,7 +339,7 @@ func TestRetractWritesTombstoneAndBlocksResediment(t *testing.T) {
 	if item.Status != domain.KnowledgeSubmissionRetracted || item.RetractedAt == nil {
 		t.Fatalf("retracted item = %+v", item)
 	}
-	if len(up.retracted) != 1 || up.retracted[0] != "kb-hosted-p1\x00"+item.Path {
+	if len(up.retracted) != 1 || up.retracted[0] != "kb-hosted-c4b3147b9250b03a56cf4b06a349cce8\x00"+item.Path {
 		t.Fatalf("retractor = %+v", up.retracted)
 	}
 	tombstone, ok := store.KnowledgeTombstone("p1", item.Fingerprint)
@@ -377,7 +377,7 @@ func TestRetractWritesTombstoneAndBlocksResediment(t *testing.T) {
 func TestPublishRechecksTombstoneAndSensitiveRules(t *testing.T) {
 	svc, store, _ := newSedimentFixture(t)
 	svc.now = func() time.Time { return time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC) }
-	item, err := svc.Submit(SubmissionInput{ProjectID: "p1", Title: "手工", Source: "kb-hosted-p1", Path: "manual/a.md", Content: "手工正文，足够长可以发布。"}, "author")
+	item, err := svc.Submit(SubmissionInput{ProjectID: "p1", Title: "手工", Source: hostedSourceID("p1"), Path: "manual/a.md", Content: "手工正文，足够长可以发布。"}, "author")
 	if err != nil {
 		t.Fatal(err)
 	}

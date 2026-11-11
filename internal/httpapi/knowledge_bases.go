@@ -34,7 +34,7 @@ func (h *knowledgeHandlers) kbUpstream() knowledge.Upstream {
 //
 // 打开知识中心时调用：幂等保证托管库，并返回本项目的知识库与来源列表。
 func (h *knowledgeHandlers) basesOverview(c *gin.Context) {
-	if !h.requireManagementScope(c, c.Query("projectId")) {
+	if !h.requireKnowledgeReader(c, c.Query("projectId")) {
 		return
 	}
 	out, err := h.svc.Overview(c.Query("projectId"))
@@ -46,7 +46,7 @@ func (h *knowledgeHandlers) basesOverview(c *gin.Context) {
 //	g.POST("/api/knowledge/bases/documents", h.basesDocuments)
 func (h *knowledgeHandlers) basesDocuments(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
-		if !h.requireManagementScope(c, c.Query("projectId")) {
+		if !h.requireKnowledgeReader(c, c.Query("projectId")) {
 			return
 		}
 		list, err := h.svc.DocumentList(c.Query("projectId"), c.Query("source"))
@@ -62,7 +62,7 @@ func (h *knowledgeHandlers) basesDocuments(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	if !h.requireManagementScope(c, input.ProjectID) {
+	if !h.requireKnowledgeManager(c, input.ProjectID) {
 		return
 	}
 	out, err := h.svc.CreateHostedDocument(
@@ -75,7 +75,7 @@ func (h *knowledgeHandlers) basesDocuments(c *gin.Context) {
 //
 // 读原文抽屉：读已索引版本并按行截取，出处版本是修订号或 commit。
 func (h *knowledgeHandlers) basesDocument(c *gin.Context) {
-	if !h.requireManagementScope(c, c.Query("projectId")) {
+	if !h.requireKnowledgeReader(c, c.Query("projectId")) {
 		return
 	}
 	start, _ := strconv.Atoi(c.Query("start"))
@@ -156,7 +156,7 @@ func (h *knowledgeHandlers) basesSearch(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	if !h.requireManagementScope(c, input.ProjectID) {
+	if !h.requireKnowledgeReader(c, input.ProjectID) {
 		return
 	}
 	out, err := h.svc.TrialSearch(c.Request.Context(), h.kbUpstream(), input.ProjectID, input.Query, input.Sources)

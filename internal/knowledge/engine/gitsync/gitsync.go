@@ -46,6 +46,10 @@ func Sync(ctx context.Context, cacheDir, url, branch string, oldMap map[string]s
 		return "", "", nil, nil, nil, fmt.Errorf("%w: 非法远程地址或分支", ErrInvalidPath)
 	}
 
+	if err = privateCacheDir(cacheDir); err != nil {
+		return "", "", nil, nil, nil, err
+	}
+
 	gitDir := filepath.Join(cacheDir, ".git")
 	_, statErr := os.Stat(gitDir)
 	switch {
@@ -67,7 +71,7 @@ func Sync(ctx context.Context, cacheDir, url, branch string, oldMap map[string]s
 			return "", "", nil, nil, nil, fmt.Errorf("checkout 失败: %s", err)
 		}
 	case os.IsNotExist(statErr):
-		if err = os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
+		if err = os.MkdirAll(filepath.Dir(cacheDir), 0o700); err != nil {
 			return "", "", nil, nil, nil, err
 		}
 		if _, err = git(ctx, filepath.Dir(cacheDir), "clone", "--quiet", "--branch", branch, "--", url, cacheDir); err != nil {
@@ -322,4 +326,19 @@ func protectedGitEnv() []string {
 		}
 	}
 	return env
+}
+
+// A private source directory protects the clone, including .git and plaintext
+// files, while leaving pre-existing ancestor directories under caller control.
+func privateCacheDir(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return ErrInvalidPath
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0700)
 }

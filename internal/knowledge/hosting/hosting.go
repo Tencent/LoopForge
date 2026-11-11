@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -128,6 +129,29 @@ func (c *Client) httpClient() *http.Client {
 		client = *c.HTTP
 	} else {
 		client.Timeout = 30 * time.Second
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
+			addresses, err := gitremote.PublicAddresses(ctx, host, net.DefaultResolver.LookupIPAddr)
+			if err != nil {
+				return nil, err
+			}
+			var dialer net.Dialer
+			var last error
+			for _, a := range addresses {
+				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(a.IP.String(), port))
+				if err == nil {
+					return conn, nil
+				}
+				last = err
+			}
+			return nil, last
+		}
+		client.Transport = transport
 	}
 	// A redirect could move the request to another host while keeping the token.
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
