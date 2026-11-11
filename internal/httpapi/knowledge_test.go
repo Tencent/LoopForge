@@ -124,6 +124,14 @@ func TestKnowledgeProxyIsReadOnlyAndProjectScoped(t *testing.T) {
 		t.Fatal("scoped search failed")
 	}
 
+	emptyText, isErr, _ := rpcText(t, call(token, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"kb_search","arguments":{"query":"ngram"}}}`))
+	if isErr || !strings.Contains(emptyText, "没有命中") {
+		t.Fatalf("empty search should return Chinese tool text: %q", emptyText)
+	}
+	if strings.Contains(emptyText, "No results") || strings.Contains(emptyText, "Try shorter") {
+		t.Fatalf("empty search tool text should not be English: %q", emptyText)
+	}
+
 	if text, isErr, _ := rpcText(t, call(token, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kb_search","arguments":{"query":"x","sources":["b"]}}}`)); !isErr || !strings.Contains(text, "授权范围") {
 		t.Fatalf("out-of-scope search must fail: %q", text)
 	}
@@ -215,5 +223,8 @@ func TestKnowledgeProxyRejectsRotatedSecret(t *testing.T) {
 type knowledgeTestIndex struct{}
 
 func (knowledgeTestIndex) Search(_ context.Context, query string, sources []string, _ kbengine.SearchOptions) ([]kbengine.Hit, error) {
+	if query == "ngram" {
+		return nil, nil
+	}
 	return []kbengine.Hit{{Source: "a", Path: "x.md", Commit: "1", Text: "检索正文"}}, nil
 }
