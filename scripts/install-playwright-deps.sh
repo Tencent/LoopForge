@@ -3,20 +3,28 @@
 #   bash scripts/install-playwright-deps.sh npx playwright
 #   bash scripts/install-playwright-deps.sh python3 -m playwright
 #
-# GitHub's Ubuntu runners resolve packages through an Azure apt mirror list.
-# When that mirror stops resolving, every browser job fails on a few font
-# packages, so retry the system dependencies against archive.ubuntu.com.
+# GitHub's Ubuntu runners already ship Chromium's shared libraries; apt only
+# adds fonts. When the runners cannot resolve the Ubuntu archives, continue
+# without those fonts as long as Chromium still has every library it links.
 set -euo pipefail
 (($#)) || { echo "usage: $0 <playwright command...>" >&2; exit 2; }
 
 "$@" install chromium
-"$@" install-deps chromium && exit 0
 
-echo "Playwright system dependencies failed; retrying with archive.ubuntu.com" >&2
-mapfile -t sources < <(sudo grep -rlE 'mirror\+file:|azure\.archive\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || true)
-((${#sources[@]})) || { echo "no Azure apt mirror configured; nothing to fall back from" >&2; exit 1; }
-sudo sed -i -E \
-  -e 's#mirror\+file:/etc/apt/apt-mirrors\.txt#http://archive.ubuntu.com/ubuntu/#g' \
-  -e 's#https?://azure\.archive\.ubuntu\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' \
-  "${sources[@]}"
-"$@" install-deps chromium
+if getent hosts archive.ubuntu.com >/dev/null || getent hosts azure.archive.ubuntu.com >/dev/null; then
+  "$@" install-deps chromium && exit 0
+  echo "::warning::Playwright system dependencies failed to install" >&2
+else
+  echo "::warning::Ubuntu archives do not resolve; skipping Playwright system dependencies" >&2
+fi
+
+shopt -s nullglob
+browsers=("${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/chromium*/chrome-*/{chrome,chrome-headless-shell,headless_shell})
+((${#browsers[@]})) || { echo "Chromium was not installed" >&2; exit 1; }
+missing="$(ldd "${browsers[@]}" | grep 'not found' | sort -u || true)"
+if [[ -n "$missing" ]]; then
+  echo "Chromium is missing shared libraries:" >&2
+  echo "$missing" >&2
+  exit 1
+fi
+echo "Chromium links all of its libraries; continuing without the optional apt fonts"
