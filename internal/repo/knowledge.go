@@ -637,14 +637,41 @@ func sourceAssignments(columns []string, mysql bool) clause.Set {
 // RecoverExpiredKnowledgePublications includes hosted writes and attempts that
 // crashed before or after creating a writeback. Version changes fence final CAS.
 func (r *KnowledgeRepo) RecoverExpiredKnowledgePublications() error {
-	q := r.DB.Model(&knowledgeSubmissionRow{}).Where("status = ?", domain.KnowledgeSubmissionPublishing)
-	if r.isMySQL() {
-		q = q.Where("publish_until IS NULL OR publish_until <= UTC_TIMESTAMP(6)")
-	} else {
-		q = q.Where("publish_until IS NULL OR publish_until <= ?", time.Now().UTC())
+	expired := func() *gorm.DB {
+		q := r.DB.Model(&knowledgeSubmissionRow{}).Where("status = ?", domain.KnowledgeSubmissionPublishing)
+		if r.isMySQL() {
+			return q.Where("publish_until IS NULL OR publish_until <= UTC_TIMESTAMP(6)")
+		}
+		return q.Where("publish_until IS NULL OR publish_until <= ?", time.Now().UTC())
 	}
-	return q.Updates(map[string]any{"status": domain.KnowledgeSubmissionPending, "publish_until": nil, "version": gorm.Expr("version + 1")}).Error
+	var rows []knowledgeSubmissionRow
+	if err := expired().Select("id", "version").Order("id").Limit(200).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		var wb knowledgeWritebackRow
+		err := r.DB.Where("submission_id = ?", row.ID).Take(&wb).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		durable := err == nil && wb.Commit != "" && (wb.Status == domain.KnowledgeWritebackBranchPushed || wb.Status == domain.KnowledgeWritebackMROpen || wb.Status == domain.KnowledgeWritebackMerged || wb.Status == domain.KnowledgeWritebackClosed)
+		if durable {
+			// A persisted push is the publication result. Complete its existing CAS
+			// before making the entry editable; reconcile also uses this same path.
+			if err := r.RecoverKnowledgeWritebackSubmission(row.ID); err != nil {
+				if ae, ok := apperr.As(err); !ok || ae.Kind != apperr.Conflict {
+					return err
+				}
+			}
+			continue
+		}
+		if err := expired().Where("id = ? AND version = ?", row.ID, row.Version).Updates(map[string]any{"status": domain.KnowledgeSubmissionPending, "publish_until": nil, "version": gorm.Expr("version + 1")}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
+
 func (r *KnowledgeRepo) KnowledgePublicationValid(id string, version uint64) bool {
 	q := r.DB.Model(&knowledgeSubmissionRow{}).Where("id = ? AND version = ? AND status = ?", id, version, domain.KnowledgeSubmissionPublishing)
 	if r.isMySQL() {

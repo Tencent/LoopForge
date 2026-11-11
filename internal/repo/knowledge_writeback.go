@@ -148,10 +148,12 @@ func (r *KnowledgeRepo) UpdateKnowledgeWritebackState(id, status, mrURL, mrProvi
 	updates["error_text"] = errText
 	q := r.DB.Model(&knowledgeWritebackRow{}).Where("id = ?", strings.TrimSpace(id)).Where("status NOT IN ?", []string{domain.KnowledgeWritebackMerged, domain.KnowledgeWritebackClosed})
 	if len(claim) > 0 && claim[0] != "" {
-		q = q.Where("claim_owner = ? AND claimed_until > CURRENT_TIMESTAMP", claim[0])
+		q = q.Where("claim_owner = ?", claim[0])
 		if r.isMySQL() {
+			q = q.Where("claimed_until > UTC_TIMESTAMP(6)")
 			updates["checked_at"] = gorm.Expr("UTC_TIMESTAMP(6)")
 		} else {
+			q = q.Where("claimed_until > CURRENT_TIMESTAMP")
 			updates["checked_at"] = gorm.Expr("CURRENT_TIMESTAMP")
 		}
 	} else {

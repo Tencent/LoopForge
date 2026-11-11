@@ -3,6 +3,7 @@ package repo
 import (
 	"agentflow/internal/domain"
 	"context"
+	"gorm.io/gorm"
 	"os"
 	"testing"
 	"time"
@@ -445,5 +446,61 @@ func TestStaleReviewCASDoesNotOverwriteStagedBody(t *testing.T) {
 	got, _ := s.KnowledgeSubmission(id)
 	if got.Content != "winning body" {
 		t.Fatalf("failed CAS changed staged body: %q", got.Content)
+	}
+}
+
+func TestExpiredReviewWithDurablePushRecoversBeforeReconcile(t *testing.T) {
+	s := concurrencyStore(t)
+	for _, status := range []string{domain.KnowledgeWritebackBranchPushed, domain.KnowledgeWritebackMROpen, domain.KnowledgeWritebackMerged, domain.KnowledgeWritebackClosed} {
+		t.Run(status, func(t *testing.T) {
+			id := "expired-durable-" + status
+			if err := s.PutKnowledgeSubmission(domain.KnowledgeSubmission{ID: id, Status: domain.KnowledgeSubmissionPublishing, Content: "durable reviewed content"}); err != nil {
+				t.Fatal(err)
+			}
+			defer s.DeleteKnowledgeSubmission(id)
+			defer s.DeleteKnowledgeWritebackBySubmission(id)
+			if err := s.PutKnowledgeWriteback(domain.KnowledgeWriteback{ID: id, SubmissionID: id, Status: status, Commit: "durable-push", Branch: "kb/recover"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.DB.Exec("UPDATE knowledge_submissions SET publish_until=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(6)) WHERE id=?", id).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RecoverExpiredKnowledgePublications(); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RecoverKnowledgeWritebackSubmission(id); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := s.KnowledgeSubmission(id)
+			if got.Status != domain.KnowledgeSubmissionPublished || got.Commit != "durable-push" || got.Content != "durable reviewed content" {
+				t.Fatalf("expiry/reconcile lost durable publication: %+v", got)
+			}
+		})
+	}
+}
+
+func TestReconcileUsesUTCWithNonUTCDatabaseSession(t *testing.T) {
+	s := concurrencyStore(t)
+	id := "concurrency-reconcile-timezone"
+	if err := s.PutKnowledgeWriteback(domain.KnowledgeWriteback{ID: id, Status: domain.KnowledgeWritebackMROpen}); err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Where("id = ?", id).Delete(&knowledgeWritebackRow{})
+	if err := s.DB.Connection(func(db *gorm.DB) error {
+		var previous string
+		if err := db.Raw("SELECT @@session.time_zone").Scan(&previous).Error; err != nil {
+			return err
+		}
+		if err := db.Exec("SET time_zone = '+08:00'").Error; err != nil {
+			return err
+		}
+		defer db.Exec("SET time_zone = ?", previous)
+		scoped := &KnowledgeRepo{deps: &deps{DB: db.Session(&gorm.Session{NewDB: true})}}
+		if ok, err := scoped.ClaimKnowledgeWriteback(id, "owner", time.Minute); err != nil || !ok {
+			t.Fatalf("claim %v %v", ok, err)
+		}
+		return scoped.UpdateKnowledgeWritebackState(id, domain.KnowledgeWritebackMerged, "", "", "merged", "", "", 0, time.Now().UTC(), "owner")
+	}); err != nil {
+		t.Fatalf("live UTC lease rejected in non-UTC session: %v", err)
 	}
 }
