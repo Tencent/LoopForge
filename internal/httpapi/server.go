@@ -173,7 +173,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: kbSvc, activity: &knowledgeActivityLog{}},
+		know:            &knowledgeHandlers{deps: d, svc: kbSvc},
 		feedback:        &feedbackHandlers{deps: d},
 	}
 	// 建项目与打开知识中心共用同一个 knowledge.Service 实例，幂等保证托管库。

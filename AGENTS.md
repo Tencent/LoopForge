@@ -27,7 +27,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `PreviewsRepo` | run previews |
 | `EngineInstancesRepo` | engine instances |
 | `FeedbackRepo` | page feedbacks、page feedback images（独立表，不关联项目/Issue） |
-| `KnowledgeRepo` | 知识库、来源、项目绑定、同步任务、审核队列。主库 |
+| `KnowledgeRepo` | 知识库、来源、项目绑定、同步任务、审核队列、检索调用记录。主库 |
 | `KnowledgeContentRepo` | 文档正文、托管修订、索引块。独立的 gorm 连接，由 `newStore` 注入，不写入 `deps`；默认与主库同一个连接池 |
 
 规则：

@@ -25,6 +25,7 @@ type ProxyClaims struct {
 	ProjectID string `json:"p,omitempty"`
 	UserID    int64  `json:"u,omitempty"`
 	AgentID   string `json:"a,omitempty"`
+	RunID     string `json:"r,omitempty"`
 	ExpiresAt int64  `json:"e"`
 }
 

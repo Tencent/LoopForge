@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	stdsync "sync"
 	"time"
 
 	"agentflow/internal/domain"
@@ -17,48 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
-const knowledgeActivityLimit = 200
-
-// knowledgeActivity is one proxied agent tool call, kept in memory so the
-// 知识库 page can show which roles are actually using the knowledge base.
-type knowledgeActivity struct {
-	At        time.Time `json:"at"`
-	Tool      string    `json:"tool"`
-	ProjectID string    `json:"projectId,omitempty"`
-	AgentID   string    `json:"agentId,omitempty"`
-	UserID    int64     `json:"userId,omitempty"`
-	Query     string    `json:"query,omitempty"`
-	Hits      int       `json:"hits"`
-	OK        bool      `json:"ok"`
-	Error     string    `json:"error,omitempty"`
-	LatencyMS int64     `json:"latencyMs"`
-}
-
-type knowledgeActivityLog struct {
-	mu    stdsync.Mutex
-	items []knowledgeActivity
-}
-
-func (l *knowledgeActivityLog) add(item knowledgeActivity) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.items = append(l.items, item)
-	if over := len(l.items) - knowledgeActivityLimit; over > 0 {
-		l.items = append([]knowledgeActivity(nil), l.items[over:]...)
-	}
-}
-
-// recent returns newest first.
-func (l *knowledgeActivityLog) recent() []knowledgeActivity {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	out := make([]knowledgeActivity, 0, len(l.items))
-	for i := len(l.items) - 1; i >= 0; i-- {
-		out = append(out, l.items[i])
-	}
-	return out
-}
 
 // 路由: g.POST(knowledge.ProxyPath, h.proxyMCP)
 //
@@ -134,17 +91,11 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索，新知识请写入 knowledge.md 等待审核", params.Name))
 		}
 		started := time.Now()
-		text, hits, err := h.callScoped(ctx, claims.ProjectID, name, params.Arguments)
-		activity := knowledgeActivity{
-			At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
-			Query: truncateRunes(fmt.Sprint(valueOr(params.Arguments["query"], "")), 120), Hits: hits,
-			OK: err == nil, LatencyMS: time.Since(started).Milliseconds(),
+		caller := knowledge.Caller{
+			ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID, RunID: claims.RunID,
 		}
-		if err != nil {
-			activity.Error = truncateRunes(err.Error(), 200)
-		}
-		h.activity.add(activity)
-		log.Printf("knowledge-proxy tool=%s project=%s agent=%s ok=%t latency=%dms", name, claims.ProjectID, claims.AgentID, err == nil, activity.LatencyMS)
+		text, _, err := h.callScoped(ctx, caller, name, params.Arguments)
+		log.Printf("knowledge-proxy tool=%s project=%s agent=%s run=%s ok=%t latency=%dms", name, claims.ProjectID, claims.AgentID, claims.RunID, err == nil, time.Since(started).Milliseconds())
 		if err != nil {
 			return reply(mcpToolTextResult(err.Error(), true))
 		}
@@ -175,14 +126,30 @@ func (h *knowledgeHandlers) proxyTools(ctx context.Context) ([]map[string]any, e
 
 // callScoped applies the project's source scope to one read-only call and
 // returns the upstream JSON text plus a hit count for activity reporting.
-func (h *knowledgeHandlers) callScoped(ctx context.Context, projectID, tool string, args map[string]any) (string, int, error) {
-	return callKnowledgeTool(ctx, h.svc, projectID, tool, args)
+func (h *knowledgeHandlers) callScoped(ctx context.Context, caller knowledge.Caller, tool string, args map[string]any) (string, int, error) {
+	return callKnowledgeTool(ctx, h.svc, caller, tool, args)
 }
 
 // callKnowledgeTool is the single implementation of the read-only knowledge
 // tool contract. The SOP proxy and Main Bot's in-process tools both call it,
-// so project narrowing and JSON shapes cannot drift apart.
-func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, projectID, tool string, args map[string]any) (string, int, error) {
+// so project narrowing, JSON shapes and activity records cannot drift apart.
+func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowledge.Caller, tool string, args map[string]any) (text string, hits int, err error) {
+	started := time.Now()
+	defer func() {
+		if svc == nil {
+			return
+		}
+		activity := domain.KnowledgeActivity{
+			At: started.UTC(), Tool: tool, ProjectID: caller.ProjectID, AgentID: caller.AgentID,
+			UserID: caller.UserID, RunID: caller.RunID, SessionID: caller.SessionID,
+			Query: truncateRunes(fmt.Sprint(valueOr(args["query"], "")), 120), Hits: hits,
+			OK: err == nil, LatencyMS: time.Since(started).Milliseconds(),
+		}
+		if err != nil {
+			activity.Error = truncateRunes(err.Error(), 200)
+		}
+		recordKnowledgeActivity(svc, activity)
+	}()
 	if svc == nil {
 		return "", 0, knowledge.ErrNotConfigured
 	}
@@ -190,21 +157,19 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, projectID, t
 		args = map[string]any{}
 	}
 	var value any
-	var err error
-	hits := 0
 	str := func(k string) string { return fmt.Sprint(valueOr(args[k], "")) }
 	integer := func(k string) int { n, _ := strconv.Atoi(str(k)); return n }
 	switch tool {
 	case knowledge.ToolSearch:
 		var out knowledge.SearchOutput
-		out, err = svc.Search(ctx, projectID, str("query"), stringList(args["sources"]))
+		out, err = svc.Search(ctx, caller.ProjectID, str("query"), stringList(args["sources"]))
 		value = out.Result
 		hits = len(out.Result.Results)
 	case knowledge.ToolFetch:
-		value, err = svc.DocumentVersion(ctx, projectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
+		value, err = svc.DocumentVersion(ctx, caller.ProjectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
 	case knowledge.ToolListSources:
 		var list []knowledge.SourceView
-		list, err = svc.Sources(ctx, projectID)
+		list, err = svc.Sources(ctx, caller.ProjectID)
 		kept := []knowledge.Source{}
 		for _, src := range list {
 			if src.Allowed {
@@ -214,7 +179,7 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, projectID, t
 		value = map[string]any{"sources": kept}
 		hits = len(kept)
 	case knowledge.ToolGetSource:
-		value, err = svc.SourceDetail(ctx, projectID, str("source"))
+		value, err = svc.SourceDetail(ctx, caller.ProjectID, str("source"))
 	default:
 		return "", 0, fmt.Errorf("unknown knowledge tool")
 	}
@@ -223,6 +188,14 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, projectID, t
 	}
 	raw, err := json.Marshal(value)
 	return string(raw), hits, err
+}
+
+// recordKnowledgeActivity logs a failed write and never changes the tool
+// result: the 知识中心 panel is diagnostic, not part of the tool contract.
+func recordKnowledgeActivity(svc *knowledge.Service, activity domain.KnowledgeActivity) {
+	if err := svc.RecordActivity(activity); err != nil {
+		log.Printf("knowledge-activity write failed: tool=%s project=%s err=%v", activity.Tool, activity.ProjectID, err)
+	}
 }
 
 func stringList(v any) []string {

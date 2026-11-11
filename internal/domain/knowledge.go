@@ -117,6 +117,28 @@ type KnowledgeSyncJob struct {
 	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
 }
 
+// KnowledgeActivityLimit 是每个项目保留的最近调用条数，也是知识中心一次
+// 读取的上限。控制面裁剪与读取共用这个值，避免两处漂移。
+const KnowledgeActivityLimit = 200
+
+// KnowledgeActivity 是一次 Agent 知识库工具调用。它只存控制面，不存正文；
+// 记录在工具调用返回前尽力写入，写入失败不影响调用本身。ProjectID 是读取
+// 时的隔离边界，RunID/SessionID 用来把记录对回 SOP 运行或 Main Bot 会话。
+type KnowledgeActivity struct {
+	At        time.Time `json:"at"`
+	Tool      string    `json:"tool"`
+	ProjectID string    `json:"projectId,omitempty"`
+	AgentID   string    `json:"agentId,omitempty"`
+	UserID    int64     `json:"userId,omitempty"`
+	RunID     string    `json:"runId,omitempty"`
+	SessionID string    `json:"sessionId,omitempty"`
+	Query     string    `json:"query,omitempty"`
+	Hits      int       `json:"hits"`
+	OK        bool      `json:"ok"`
+	Error     string    `json:"error,omitempty"`
+	LatencyMS int64     `json:"latencyMs"`
+}
+
 // KnowledgeDocument 是含 frontmatter 的完整 Markdown 正文。出处版本对托管库
 // 是修订号的十进制字符串，对 Git 来源是 commit；两者都放在 Commit 字段。
 type KnowledgeDocument struct {
