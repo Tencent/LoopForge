@@ -126,12 +126,26 @@ func TestApplyMaskValidationAndFilesystemBranches(t *testing.T) {
 
 func TestRemoveMasksRejectsWritableSources(t *testing.T) {
 	requireRoot(t)
+	// Own the source fixture instead of relying on a prior test leaving it
+	// behind. Never overwrite a platform mask already present in /workspace.
+	sourcePath := "/workspace/.agentflow/isolation/empty-file"
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.OpenFile(sourcePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o444)
+	if err != nil && !os.IsExist(err) {
+		t.Fatal(err)
+	}
+	if err == nil {
+		_ = source.Close()
+		t.Cleanup(func() { _ = os.Remove(sourcePath) })
+	}
 	rootDir := "/workspace/cvs-scriptview-remove"
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(rootDir) })
-	err := removeMasks([]string{filepath.Join(rootDir, "AGENTS.md")})
+	err = removeMasks([]string{filepath.Join(rootDir, "AGENTS.md")})
 	if err == nil || !strings.Contains(err.Error(), "not read-only") {
 		t.Fatalf("removeMasks error = %v", err)
 	}

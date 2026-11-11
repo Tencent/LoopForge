@@ -150,18 +150,18 @@ func TestPreparationFailureIncludesBoundedOutputTailAndPreservesExitError(t *tes
 
 func TestPreparationFailureOutputRedactsCredentialsBeforeTruncation(t *testing.T) {
 	sb := &managedSandbox{Sandbox: &localSandbox{environment: map[string]string{"DB_PASSWORD": "db-secret-value"}}, credentials: RunCredentials{
-		GitToken: "owned-secret",
+		GitToken: "owned-secret", GitLabToken: "gitlab-preparation-secret",
 		MCPServers: []domain.MCPServerDefinition{{
 			Headers:     map[string]string{"Authorization": "Bearer header-owned-secret"},
 			Environment: map[string]string{"API_TOKEN": "mcp-owned-secret", "ENABLED": "1"},
 		}},
 	}}
-	raw := "\x1b[31mfailed\x1b[0m: owned-secret header-owned-secret mcp-owned-secret db-secret-value\n" +
+	raw := "\x1b[31mfailed\x1b[0m: owned-secret header-owned-secret mcp-owned-secret db-secret-value gitlab-preparation-secret\n" +
 		`{"password":"json-password", "API_KEY":"json-api-key"}` + "\n" +
 		"AGENTFLOW_CONTROL_TOKEN=control-value Authorization: Bearer auth-value\n" +
 		"https://private:url-password@example.test/repo\nexit status 1\n"
 	redacted := redactPreparationOutput(sb, raw)
-	for _, secret := range []string{"owned-secret", "header-owned-secret", "mcp-owned-secret", "header-[redacted]", "mcp-[redacted]", "db-secret-value", "json-password", "json-api-key", "control-value", "auth-value", "url-password", "\x1b"} {
+	for _, secret := range []string{"gitlab-preparation-secret", "owned-secret", "header-owned-secret", "mcp-owned-secret", "header-[redacted]", "mcp-[redacted]", "db-secret-value", "json-password", "json-api-key", "control-value", "auth-value", "url-password", "\x1b"} {
 		if strings.Contains(redacted, secret) {
 			t.Fatalf("failure output exposed %q: %s", secret, redacted)
 		}

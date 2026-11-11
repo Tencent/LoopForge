@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,16 +11,18 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/notification"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 )
 
 type cvBHTTPFixture struct {
-	h    http.Handler
-	s    *repo.Store
-	e    *engine.Engine
-	user domain.User
+	h                    http.Handler
+	s                    *repo.Store
+	e                    *engine.Engine
+	user                 domain.User
+	notificationProvider *cvBNotificationProviderRound2
 }
 
 func cvBNewHTTPFixture(t *testing.T) cvBHTTPFixture {
@@ -36,7 +39,12 @@ func cvBNewHTTPFixture(t *testing.T) cvBHTTPFixture {
 		t.Fatal("OpenTest user 1 missing")
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
-	return cvBHTTPFixture{h: New(s, e, tracker.NewService(), "", ""), s: s, e: e, user: user}
+	// HTTP unit tests must never bootstrap or send through the real bot provider.
+	providerErr := errors.New("notification provider unavailable in unit test")
+	provider := &cvBNotificationProviderRound2{err: providerErr, sendErr: providerErr}
+	notifications := notification.New(s)
+	notifications.Provider = provider
+	return cvBHTTPFixture{h: NewWithNotifications(s, e, tracker.NewService(), "", "", notifications), s: s, e: e, user: user, notificationProvider: provider}
 }
 
 func cvBRequest(t *testing.T, f cvBHTTPFixture, method, path string, body any, authed bool) *httptest.ResponseRecorder {

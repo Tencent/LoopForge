@@ -17,13 +17,16 @@ const (
 	conversationPushTimeout = 3 * time.Minute
 )
 
+// ConversationGitLabCredentials are the requesting user's instance-scoped credentials.
+type ConversationGitLabCredentials struct{ BaseURL, Token string }
+
 // PushConversationWorkspace commits whatever changed in the run workspace and
 // pushes the work branch of every bound repository that differs from its base,
 // so a conversation can open an MR without an SOP delivery node. Unchanged
 // repositories are left out of the returned heads. Callers
 // hold the conversation workspace lease and pass the requesting user's own
 // token: the push is attributed to whoever asked for it.
-func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
+func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken, gitUserName, gitUserEmail, message, sharedTarget string, gitLabCredentials ...ConversationGitLabCredentials) ([]domain.RunnerWorkBranchHead, error) {
 	run, ok := e.repo.RunState(runID)
 	if !ok {
 		return nil, fmt.Errorf("运行不存在")
@@ -31,17 +34,32 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	if WorkspaceRunID(run) != run.ID {
 		return nil, fmt.Errorf("子 SOP 共享父任务工作区，请从父任务提交")
 	}
-	if strings.TrimSpace(gitToken) == "" {
-		return nil, fmt.Errorf("未配置 Git Token，无法推送工作分支。%s", gitTokenFixHint)
+	var gitlab ConversationGitLabCredentials
+	if len(gitLabCredentials) > 0 {
+		gitlab = gitLabCredentials[0]
 	}
 	var repositories []domain.RepositoryContext
 	for _, rc := range run.RepositoryContexts() {
-		if strings.TrimSpace(rc.CloneURL) != "" && strings.TrimSpace(rc.WorkBranch) != "" {
+		if !rc.ReadOnly && strings.TrimSpace(rc.CloneURL) != "" && strings.TrimSpace(rc.WorkBranch) != "" {
 			repositories = append(repositories, rc)
 		}
 	}
 	if len(repositories) == 0 {
 		return nil, fmt.Errorf("当前任务没有绑定可推送的代码仓库")
+	}
+	// Validate every credential and destination before pushing any repository.
+	for _, rc := range repositories {
+		if rc.Provider == "gitlab" {
+			if strings.TrimSpace(gitlab.Token) == "" {
+				return nil, fmt.Errorf("requesting user must configure a GitLab Token")
+			}
+			info, valid := domain.ParseGitLabRepositoryURL(rc.CloneURL, gitlab.BaseURL)
+			if !valid || info.Project != rc.GongfengProjectID {
+				return nil, fmt.Errorf("GitLab repository does not match the requesting user's configured instance and project")
+			}
+		} else if strings.TrimSpace(gitToken) == "" {
+			return nil, fmt.Errorf("Git Token is required to push the work branch: %s", gitTokenFixHint)
+		}
 	}
 	message = strings.TrimSpace(message)
 	if message == "" {
@@ -51,16 +69,34 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	sharedTarget = strings.TrimSpace(sharedTarget)
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
-	ctx = withGitIdentity(withGitToken(ctx, gitToken), gitUserName, gitUserEmail)
+	ctx = withGitLabCredentials(withGitIdentity(withGitToken(ctx, gitToken), gitUserName, gitUserEmail), gitlab.BaseURL, gitlab.Token)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
-		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, gitToken, gitUserName, gitUserEmail, message, sharedTarget)
+		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, gitToken, gitUserName, gitUserEmail, message, sharedTarget, gitlab)
 	}
 	root, reason := e.LocalRunWorkspace(run)
 	if reason != "" {
 		return nil, errors.New(reason)
 	}
+	// Validate all GitLab remotes before committing or pushing any repository.
+	for _, rc := range repositories {
+		if rc.Provider != "gitlab" {
+			continue
+		}
+		repoCtx := gitContextForRepository(ctx, rc)
+		// Remove legacy credential includes before evaluating effective remote URLs.
+		if err := applyWorkspaceGitAuth(repoCtx, repositoryWorkspacePath(root, rc)); err != nil {
+			return nil, err
+		}
+		if err := gitwork.RequireOriginURLs(repoCtx, repositoryWorkspacePath(root, rc), func(raw string) bool {
+			info, ok := domain.ParseGitLabRepositoryURL(raw, gitlab.BaseURL)
+			return ok && info.Project == rc.GongfengProjectID
+		}); err != nil {
+			return nil, fmt.Errorf("%s: %w", rc.Name, err)
+		}
+	}
 	heads := []domain.RunnerWorkBranchHead{}
 	for _, rc := range repositories {
+		ctx := gitContextForRepository(ctx, rc)
 		dir := repositoryWorkspacePath(root, rc)
 		if !gitwork.HasWork(ctx, dir, repositoryBaseBranch(rc)) {
 			continue
@@ -83,6 +119,9 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 			head, err = gitwork.PushWorkBranch(ctx, dir, rc.WorkBranch, message)
 		}
 		if err != nil {
+			if rc.Provider == "gitlab" {
+				return heads, fmt.Errorf("%s: GitLab push failed; check the requesting user's GitLab token and repository permissions: %w", rc.Name, err)
+			}
 			return heads, explainGitAuthFailure(fmt.Errorf("%s: git push %s: %w", rc.Name, rc.WorkBranch, err), true)
 		}
 		if head == "" {
@@ -105,7 +144,14 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	return heads, nil
 }
 
-func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, run domain.Run, repositories []domain.RepositoryContext, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
+func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, run domain.Run, repositories []domain.RepositoryContext, gitToken, gitUserName, gitUserEmail, message, sharedTarget string, gitLabCredentials ...ConversationGitLabCredentials) ([]domain.RunnerWorkBranchHead, error) {
+	if err := e.requireWorkBranchCapabilities(runnerID, repositories); err != nil {
+		return nil, err
+	}
+	var gitlab ConversationGitLabCredentials
+	if len(gitLabCredentials) > 0 {
+		gitlab = gitLabCredentials[0]
+	}
 	if run.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
 		return nil, fmt.Errorf("该任务的执行机器工作区不是共享布局，暂不支持直接提交 MR")
 	}
@@ -118,6 +164,7 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 	}
 	invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: conversationPushNode}
 	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
+	bindRunnerGitLabCredentials(invocation, run, gitlab.BaseURL, gitlab.Token)
 	invocation.Repository = nil
 	wanted := map[string]bool{}
 	for _, rc := range repositories {

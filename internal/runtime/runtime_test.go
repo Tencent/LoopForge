@@ -1443,7 +1443,7 @@ func TestRunSandboxBindsCodeBuddyCredentialOnlyToTargetProcess(t *testing.T) {
 	defer sandbox.Close(context.Background())
 
 	codeBuddy := CommandSpec{
-		Argv:               []string{"sh", "-lc", `printf '%s|%s|%s' "$CODEBUDDY_API_KEY" "$CODEBUDDY_INTERNET_ENVIRONMENT" "$HOME"; touch "$HOME/used"`},
+		Argv:               []string{"sh", "-lc", `test "$CODEBUDDY_API_KEY" = "project-key" || exit 1; test "$CODEBUDDY_INTERNET_ENVIRONMENT" = "project-network" || exit 1; printf 'match|%s' "$HOME"; touch "$HOME/used"`},
 		Provider:           "codebuddy",
 		CredentialBindings: []CredentialBinding{BindCodeBuddy},
 		PrivateHome:        true,
@@ -1453,11 +1453,11 @@ func TestRunSandboxBindsCodeBuddyCredentialOnlyToTargetProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	parts := strings.Split(strings.TrimSpace(output), "|")
-	if len(parts) != 3 || parts[0] != "project-key" || parts[1] != "project-network" {
+	if len(parts) != 2 || parts[0] != "match" {
 		t.Fatalf("bound credential output = %q", output)
 	}
-	if !strings.HasPrefix(parts[2], filepath.Join(sandbox.Workspace(), ".agentflow", "private-home")) {
-		t.Fatalf("CodeBuddy HOME is not run-private: %q", parts[2])
+	if !strings.HasPrefix(parts[1], filepath.Join(sandbox.Workspace(), ".agentflow", "private-home")) {
+		t.Fatalf("CodeBuddy HOME is not run-private: %q", parts[1])
 	}
 	plain, err := sandbox.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-lc", `printf '%s|%s' "$CODEBUDDY_API_KEY" "$CODEBUDDY_INTERNET_ENVIRONMENT"`}, Provider: "command"}, nil)
 	if err != nil {
@@ -1496,7 +1496,7 @@ func TestRunSandboxBindsGitAskPassForVerification(t *testing.T) {
 	defer sandbox.Close(context.Background())
 
 	output, err := sandbox.Exec(context.Background(), CommandSpec{
-		Argv:               []string{"sh", "-lc", `printf '%s\n' "$GIT_ASKPASS"; test -x "$GIT_ASKPASS"; "$GIT_ASKPASS" "Username for 'https://git.example.com':"; "$GIT_ASKPASS" "Password for 'https://git.example.com':"`},
+		Argv:               []string{"sh", "-lc", `printf '%s\n' "$GIT_ASKPASS"; test -x "$GIT_ASKPASS" || exit 1; "$GIT_ASKPASS" "Username for 'https://git.example.com':"; password=$("$GIT_ASKPASS" "Password for 'https://git.example.com':") || exit 1; test "$password" = "proj_git_token" && printf match`},
 		Provider:           "verification",
 		CredentialBindings: []CredentialBinding{BindGit},
 	}, nil)
@@ -1510,7 +1510,7 @@ func TestRunSandboxBindsGitAskPassForVerification(t *testing.T) {
 	if !strings.HasSuffix(lines[0], filepath.Join(".agentflow", "runtime", "git-askpass")) {
 		t.Fatalf("GIT_ASKPASS = %q", lines[0])
 	}
-	if lines[1] != "private" || lines[2] != "proj_git_token" {
+	if lines[1] != "private" || lines[2] != "match" {
 		t.Fatalf("askpass answers = %q %q", lines[1], lines[2])
 	}
 	plain, err := sandbox.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-lc", `printf '%s|%s' "$GIT_ASKPASS" "$AGENTFLOW_GIT_TOKEN"`}, Provider: "verification"}, nil)

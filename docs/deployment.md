@@ -113,6 +113,20 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 
 This repeatable SQL changes only instruction fields that still match the original public seed. It preserves operator edits and project copies. New installations already receive these instructions from the public catalog seed; application startup does not migrate data.
 
+## Self-managed GitLab
+
+In personal settings, configure a GitLab instance URL and a personal access token separately from the GitHub token. Use HTTPS when available; HTTP sends the token without transport encryption. The identity check calls `/api/v4/user` and does not assert repository permissions.
+
+The project owner must configure the instance before binding its repositories. Repository links must match that instance, including the scheme, host and port. Nested group paths and scp-style SSH links are accepted; SSH references are normalized to the configured HTTP(S) clone endpoint for token authentication. Set the repository's actual default branch when it differs from `main`.
+
+Git operations use the responsible user's GitLab credential and reject a different instance. MR lookup, delivery-state refresh and scheduled merge operations use the project owner's GitLab token, following the existing GitHub adapter's ownership model. Normal SOPs do not automatically create an MR solely because a repository was bound. Conversation-workspace submission supports GitLab with the requesting user's own GitLab instance and token, including mixed GitHub/GitLab workspaces. It validates every writable GitLab destination before pushing, opens a new MR or updates the matching open MR for the pushed commit, and never automatically merges it. Direct submission mode follows the existing protected-base safeguards and can merge into an explicitly selected shared branch. GitLab Issue import and promotion/default-branch reconciliation are not included in this adapter.
+
+Use a personal token with the API and repository permissions needed by the intended operations. Access is still limited by project membership and protected branches. Tokens are stored in `user_configs`, under the same storage model as existing provider credentials, and are omitted from public user responses.
+
+This adds nullable `gitlab_token` and `gitlab_base_url` columns through the existing incremental GORM schema setup. Upgrade execution-machine runners to **0.9.3 or newer** before dispatching GitLab tasks: older runners do not understand the host-bound credential field and are rejected. Existing GitHub and legacy-hosting tasks retain their previous protocol.
+
+For an opt-in read-only Git probe, set `LOOPFORGE_TEST_GITLAB_BASE`, `LOOPFORGE_TEST_GITLAB_REMOTE` and `LOOPFORGE_TEST_GITLAB_TOKEN` in the test process environment, then run `go test ./internal/gitwork -run TestGitLabLiveReadOnly`. The probe only lists remote branches. Do not commit credentials or enable live tests against a production repository by default.
+
 ## GitHub credentials
 
 Users can choose **Connect GitHub** in personal credentials or while adding a repository, copy the displayed PIN, and approve it on GitHub. The platform saves the grant to that signed-in user's existing Git credential slot. The repository picker lists repositories owned by the account, shared with it, or accessible through its organizations, supports pagination and search over loaded repositories, and copies the selected repository's real default branch into the form. PAT entry remains available.

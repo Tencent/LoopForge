@@ -30,6 +30,9 @@ func useFakeCommands(t *testing.T, scripts map[string]string) {
 		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	if _, ok := scripts["docker"]; ok {
+		resetDockerAvailabilityForTest(t)
+	}
 }
 
 func TestEnsureClaudeCodeInstallsPinnedReleaseOnce(t *testing.T) {

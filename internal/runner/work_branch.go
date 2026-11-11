@@ -53,6 +53,11 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 	if inv == nil {
 		return heads, nil
 	}
+	if push {
+		if err := requireTaskGitLabOrigins(ctx, workspace, inv); err != nil {
+			return heads, err
+		}
+	}
 	if strings.TrimSpace(message) == "" {
 		message = "agentflow: " + inv.NodeID + " (" + inv.RunID + ")"
 	}
@@ -64,13 +69,16 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		if rel := safeRunnerRepoDir(repo.Dir); rel != "" {
 			dir = filepath.Join(workspace, rel)
 		}
-		repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+		repoCtx := gitContextForRunnerRepository(ctx, &repo)
 		// A continued branch must still exist remotely even when nothing changed.
 		if push && !repo.RequireExistingWorkBranch && !gitwork.HasWork(repoCtx, dir, repo.Ref) {
 			continue
 		}
 		if push {
 			if err := gitwork.RequireOnWorkBranch(repoCtx, dir, repo.WorkBranch); err != nil {
+				return heads, fmt.Errorf("%s: %w", repo.Name, err)
+			}
+			if err := configureRepositoryGitIdentity(repoCtx, dir, inv.GitUserName, inv.GitUserEmail); err != nil {
 				return heads, fmt.Errorf("%s: %w", repo.Name, err)
 			}
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,14 @@ import (
 const processWaitDelay = time.Second
 
 func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
+	redact := processRedactor(cmd)
+	if sink != nil {
+		original := sink
+		sink = func(event domain.TelemetryEvent) {
+			event.Message = redact(event.Message)
+			original(event)
+		}
+	}
 	var buf bytes.Buffer
 	var mu sync.Mutex
 	if sink != nil {
@@ -34,6 +43,9 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	}
 	stdout.flush()
 	stderr.flush()
+	if err != nil && redact(err.Error()) != err.Error() {
+		err = &redactedProcessError{cause: err, message: redact(err.Error())}
+	}
 	if sink != nil {
 		phase, level := "finish", "info"
 		if err != nil {
@@ -41,8 +53,35 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 		}
 		sink(domain.TelemetryEvent{Category: "process", Name: "process.finished", Phase: phase, Level: level, Message: commandResult(err)})
 	}
-	return buf.String(), err
+	return redact(buf.String()), err
 }
+
+// Docker carries bindings in argv, while local sandboxes use the environment.
+// Keep credentials out of both telemetry and returned failure diagnostics.
+func processRedactor(cmd *exec.Cmd) func(string) string {
+	var secrets []string
+	for _, value := range append(append([]string(nil), cmd.Env...), cmd.Args...) {
+		key, secret, found := strings.Cut(value, "=")
+		if found && sensitiveProcessEnvironmentKey(key) && secret != "" {
+			secrets = append(secrets, secret)
+		}
+	}
+	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	return func(text string) string {
+		for _, secret := range secrets {
+			text = strings.ReplaceAll(text, secret, "<redacted>")
+		}
+		return text
+	}
+}
+
+type redactedProcessError struct {
+	cause   error
+	message string
+}
+
+func (e *redactedProcessError) Error() string { return e.message }
+func (e *redactedProcessError) Unwrap() error { return e.cause }
 
 type processWriter struct {
 	output  *bytes.Buffer
@@ -121,7 +160,8 @@ func sensitiveProcessEnvironmentKey(key string) bool {
 	return key == "CODEBUDDY_API_KEY" ||
 		key == "OPENAI_API_KEY" || key == "CODEX_API_KEY" ||
 		key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "CLAUDE_CODE_OAUTH_TOKEN" ||
-		key == "AGENTFLOW_GIT_TOKEN" ||
+		key == "AGENTFLOW_GIT_TOKEN" || key == "AGENTFLOW_GITLAB_TOKEN" ||
+		key == "AGENTFLOW_GIT_HTTP_PASSWORD" ||
 		strings.HasPrefix(key, "GIT_CONFIG_KEY_")
 }
 

@@ -25,6 +25,8 @@ type userWithConfig struct {
 	GitToken                     *string    `gorm:"column:git_token"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
+	GitLabToken                  *string    `gorm:"column:gitlab_token"`
+	GitLabBaseURL                *string    `gorm:"column:gitlab_base_url"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
@@ -38,7 +40,7 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.git_token, c.gitlab_token, c.gitlab_base_url, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.claude_code_api_key, c.claude_code_base_url,
 	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
@@ -57,6 +59,12 @@ func (r userWithConfig) toDomain() domain.User {
 	}
 	if r.GongfengTokenExpiresAt != nil {
 		u.GongfengTokenExpiresAt = *r.GongfengTokenExpiresAt
+	}
+	if r.GitLabToken != nil {
+		u.GitLabToken = *r.GitLabToken
+	}
+	if r.GitLabBaseURL != nil {
+		u.GitLabBaseURL = *r.GitLabBaseURL
 	}
 	if r.CodeBuddyAPIKey != nil {
 		u.CodeBuddyAPIKey = *r.CodeBuddyAPIKey
@@ -148,6 +156,7 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		v.GitToken = old.GitToken
 		v.GongfengRefreshToken = old.GongfengRefreshToken
 		v.GongfengTokenExpiresAt = old.GongfengTokenExpiresAt
+		v.GitLabToken, v.GitLabBaseURL = old.GitLabToken, old.GitLabBaseURL
 		v.CodexAPIKey, v.CodexBaseURL = old.CodexAPIKey, old.CodexBaseURL
 		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
@@ -216,7 +225,7 @@ func (r *UsersRepo) writeUser(v domain.User) (domain.User, error) {
 }
 
 func userHasConfig(user domain.User) bool {
-	return user.GitToken != "" ||
+	return user.GitToken != "" || user.GitLabToken != "" || user.GitLabBaseURL != "" ||
 		user.GongfengRefreshToken != "" ||
 		user.CodeBuddyAPIKey != "" ||
 		user.CodeBuddyInternetEnvironment != "" ||
@@ -230,6 +239,9 @@ func userHasConfig(user domain.User) bool {
 type UserCredentialUpdate struct {
 	GitToken                     string  `json:"gitToken"`
 	GitTokenClear                bool    `json:"gitTokenClear"`
+	GitLabToken                  string  `json:"gitLabToken"`
+	GitLabTokenClear             bool    `json:"gitLabTokenClear"`
+	GitLabBaseURL                *string `json:"gitLabBaseUrl"`
 	CodeBuddyAPIKey              string  `json:"codeBuddyApiKey"`
 	CodeBuddyAPIKeyClear         bool    `json:"codeBuddyApiKeyClear"`
 	CodeBuddyInternetEnvironment *string `json:"codeBuddyInternetEnvironment"`
@@ -267,6 +279,18 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 		// refresh token in place would overwrite the paste on the next use.
 		user.GongfengRefreshToken = ""
 		user.GongfengTokenExpiresAt = time.Time{}
+	}
+	if update.GitLabTokenClear {
+		user.GitLabToken = ""
+	} else if value := strings.TrimSpace(update.GitLabToken); value != "" {
+		user.GitLabToken = value
+	}
+	if update.GitLabBaseURL != nil {
+		newURL := strings.TrimRight(strings.TrimSpace(*update.GitLabBaseURL), "/")
+		if newURL != user.GitLabBaseURL && user.GitLabToken != "" && strings.TrimSpace(update.GitLabToken) == "" && !update.GitLabTokenClear {
+			return domain.User{}, errors.New("更换 GitLab 地址时请重新输入或清除 Token")
+		}
+		user.GitLabBaseURL = newURL
 	}
 	if update.CodeBuddyAPIKeyClear {
 		user.CodeBuddyAPIKey = ""
@@ -324,6 +348,7 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 		"user_id":                v.ID,
 		"git_token":              nullableString(v.GitToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
+		"gitlab_token": nullableString(v.GitLabToken), "gitlab_base_url": nullableString(v.GitLabBaseURL),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
 		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL),

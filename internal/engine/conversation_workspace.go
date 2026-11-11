@@ -150,6 +150,7 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	// frozen base branch, and a fresh work branch.
 	gitToken := env.credentialSnapshot().GitToken
 	ctx = withGitToken(e.withPreparationProgress(ctx, run.ID), gitToken)
+	ctx = withGitLabCredentials(ctx, env.credentialSnapshot().GitLabBaseURL, env.credentialSnapshot().GitLabToken)
 	return env.prepareRepositoriesOnce(func() error {
 		if err := prepareRepositories(ctx, env.Workspace(), run.RepositoryContexts()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitToken) != "")

@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -277,6 +279,30 @@ esac
 	}
 	t.Setenv("CVR_DOCKER_WORKSPACE", workspace)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	resetDockerAvailabilityForTest(t)
+}
+
+// A prior local-only test may have cached Docker as unavailable before this
+// test installs its fake CLI. Keep that process-wide optimization isolated
+// from each test's PATH, restoring it once the fake command is removed.
+func resetDockerAvailabilityForTest(t *testing.T) {
+	t.Helper()
+	original := dockerAvailable
+	dockerAvailable = sync.OnceValue(func() bool {
+		_, err := exec.LookPath("docker")
+		return err == nil
+	})
+	t.Cleanup(func() { dockerAvailable = original })
+}
+
+func TestFakeDockerRefreshesPreviouslyUnavailableCache(t *testing.T) {
+	original := dockerAvailable
+	t.Cleanup(func() { dockerAvailable = original })
+	dockerAvailable = func() bool { return false }
+	cvRInstallFakeDocker(t, t.TempDir())
+	if !dockerAvailable() {
+		t.Fatal("fake Docker inherited a prior test's unavailable cache")
+	}
 }
 
 func cvRErrorsJoin(base error, text string) error {

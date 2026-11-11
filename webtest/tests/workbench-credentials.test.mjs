@@ -193,3 +193,62 @@ test('Git token verification rejects invalid tokens before save and accepts vali
   assert.equal(invalid.saved, false);
   assert.equal(valid.saved, true);
 });
+
+
+test('GitLab verification ignores old responses after another check, credential change, or user switch', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.currentUser={id:1,isGuest:false,gitTokenConfigured:true,gitLabTokenConfigured:true,gitLabBaseUrl:'https://gitlab.example.org'};
+    state.data.users=[state.currentUser];
+  `);
+  await app.evaluate('renderPersonalSettings()');
+  const pending = [];
+  app.router.get('/api/users/1/gitlab-token/verify', () => new Promise((resolve) => pending.push(resolve)));
+  app.router.put('/api/users/1/credentials', (call) => ({
+    id: 1, isGuest: false, gitTokenConfigured: true,
+    gitLabTokenConfigured: !call.body.gitLabTokenClear,
+    gitLabBaseUrl: call.body.gitLabTokenClear ? '' : 'https://gitlab.example.org',
+  }));
+  const begin = async () => {
+    const request = app.evaluate('refreshGitLabTokenStatus()');
+    await settle(2);
+    assert.ok(pending.length, 'verification reached the GitLab endpoint');
+    return { request, resolve: pending.shift() };
+  };
+  const row = () => app.document.querySelector('[data-credential-row="gitLabToken"]');
+
+  const older = await begin();
+  const newer = await begin();
+  newer.resolve({valid: true, login: 'current-account'});
+  await newer.request;
+  older.resolve({valid: true, login: 'old-account'});
+  await older.request;
+  assert.equal(app.evaluate('state.gitLabTokenVerify.result.login'), 'current-account');
+  assert.match(row().textContent, /current-account/);
+  assert.match(row().textContent, /仓库权限尚未验证/);
+  assert.doesNotMatch(row().textContent, /old-account/);
+
+  const replaced = await begin();
+  await app.evaluate("saveCredential('gitLabToken',{secret:'inert-replacement',extra:'https://gitlab.example.org'})");
+  replaced.resolve({valid: true, login: 'replaced-account'});
+  await replaced.request;
+  assert.equal(app.evaluate('state.gitLabTokenVerify'), null);
+  assert.equal(app.evaluate('credentialUser().gitTokenConfigured'), true, 'GitHub credentials stay independent');
+  app.evaluate("repaintCredentialRow('gitLabToken')");
+  assert.equal(row().querySelector('[data-gitlab-verify-status]'), null);
+
+  const deleted = await begin();
+  await app.evaluate("deleteCredential('gitLabToken')");
+  deleted.resolve({valid: true, login: 'deleted-account'});
+  await deleted.request;
+  assert.equal(app.evaluate('state.gitLabTokenVerify'), null);
+  assert.equal(app.evaluate('credentialUser().gitLabTokenConfigured'), false);
+  assert.equal(app.evaluate('credentialUser().gitTokenConfigured'), true);
+
+  const previousUser = await begin();
+  app.evaluate('state.currentUser={id:2,isGuest:false}');
+  previousUser.resolve({valid: true, login: 'previous-user'});
+  await previousUser.request;
+  assert.equal(app.evaluate('state.gitLabTokenVerify.result'), null);
+});

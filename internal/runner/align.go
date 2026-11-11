@@ -47,7 +47,7 @@ func alignBaseline(ctx context.Context, dir string, inv *domain.RunnerInvocation
 	if err := checkoutRepository(ctx, dir, &clone); err != nil {
 		return domain.RunnerAlignResult{}, err
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := gitContextForRunnerRepository(ctx, &repo)
 	gitwork.EnsureIdentity(repoCtx, dir)
 	conflicts, err := gitwork.MergeLatestRemoteBranch(repoCtx, dir, def)
 	if err != nil {

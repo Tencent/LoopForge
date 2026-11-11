@@ -273,6 +273,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/users/:id/git-token/verify", api.users.verifyGitToken)
 	g.POST("/api/users/:id/git-token/verify", api.users.verifyGitToken)
 	g.POST("/api/users/:id/cli-models/probe", api.users.probeCLIModels)
+	g.GET("/api/users/:id/gitlab-token/verify", api.users.verifyGitLabToken)
 	g.Any("/api/users/:id", func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})

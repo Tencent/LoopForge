@@ -111,3 +111,30 @@ test("a /-/ merge request link names the repository, not the dash segment", () =
   assert.equal(artifacts[0].url, dashed);
   assert.equal(artifacts[0].source, "MR · example/agent-flow");
 });
+
+
+test("self-managed GitLab conversation merge requests preserve host, port and subgroup", () => {
+  const urls = [
+    "https://gitlab.example.org:8443/team/sub/repository/-/merge_requests/12",
+    "https://other.example.org/team/sub/repository/-/merge_requests/12",
+    "https://github.com/team/repository/pull/12",
+  ];
+  const artifacts = collectArtifacts({messages: [
+    ...urls.map(url => ({role:"assistant",content:"Submitted: " + url})),
+    {role:"assistant",content:"Same MR: " + urls[0]},
+    {role:"user",content:"https://untrusted.example.org/team/repository/-/merge_requests/99"},
+  ]});
+  assert.equal(artifacts.length,3);
+  assert.equal(new Set(artifacts.map(a=>a.id)).size,3);
+  assert.deepEqual(artifacts.map(a=>a.url),urls);
+  assert.equal(artifacts[0].name,"repository !12");
+  assert.equal(artifacts[0].source,"MR · team/sub/repository");
+  assert.ok(artifacts.every(a=>a.kind==="merge-request" && a.external));
+});
+
+
+test("malformed GitLab link ports do not break conversation artifact rendering", () => {
+  const artifacts=collectArtifacts({messages:[{role:"assistant",content:
+    "https://gitlab.example.org:999999/team/repo/-/merge_requests/1"}]});
+  assert.equal(artifacts.length,0);
+});
