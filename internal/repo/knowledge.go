@@ -403,3 +403,8 @@ func (r *KnowledgeRepo) SetKnowledgeSourceCredential(id, ciphertext string) erro
 	}
 	return nil
 }
+
+// DeleteKnowledgeBinding is idempotent; unloading never deletes shared content.
+func (r *KnowledgeRepo) DeleteKnowledgeBinding(projectID, baseID string) error {
+	return r.DB.Where("project_id = ? AND base_id = ?", projectID, baseID).Delete(&knowledgeBindingRow{}).Error
+}

@@ -45,6 +45,7 @@ type ManagedStore interface {
 	PutKnowledgeBase(domain.KnowledgeBase) error
 	KnowledgeBindings(projectID string) []domain.KnowledgeBinding
 	PutKnowledgeBinding(domain.KnowledgeBinding) error
+	DeleteKnowledgeBinding(projectID, baseID string) error
 	KnowledgeSources(baseID string) []domain.KnowledgeSource
 	KnowledgeSource(id string) (domain.KnowledgeSource, bool)
 	PutKnowledgeSource(domain.KnowledgeSource) error
@@ -149,15 +150,17 @@ type Overview struct {
 
 // Overview 幂等保证托管库后返回本项目的知识库与来源列表。
 func (s *Service) Overview(projectID string) (Overview, error) {
-	if _, err := s.EnsureHostedBase(projectID); err != nil {
-		return Overview{}, err
+	if strings.TrimSpace(projectID) != "" {
+		if _, err := s.EnsureHostedBase(projectID); err != nil {
+			return Overview{}, err
+		}
 	}
 	ms, err := s.managed()
 	if err != nil {
 		return Overview{}, err
 	}
 	out := Overview{Bases: []BaseView{}}
-	for _, b := range ms.KnowledgeBases(strings.TrimSpace(projectID)) {
+	for _, b := range visibleBases(ms, projectID) {
 		bv := BaseView{KnowledgeBase: b, Sources: []ManagedSourceView{}}
 		for _, src := range ms.KnowledgeSources(b.ID) {
 			bv.Sources = append(bv.Sources, managedSourceView(src))
@@ -173,12 +176,8 @@ func allowedSourceIDs(ms ManagedStore, projectID string) []string {
 	projectID = strings.TrimSpace(projectID)
 	seen := map[string]bool{}
 	out := []string{}
-	for _, binding := range ms.KnowledgeBindings(projectID) {
-		base, ok := ms.KnowledgeBase(binding.BaseID)
-		if !ok || (base.ProjectID != "" && base.ProjectID != projectID) {
-			continue
-		}
-		for _, src := range ms.KnowledgeSources(binding.BaseID) {
+	for _, base := range visibleBases(ms, projectID) {
+		for _, src := range ms.KnowledgeSources(base.ID) {
 			if !seen[src.ID] {
 				seen[src.ID] = true
 				out = append(out, src.ID)
@@ -255,6 +254,7 @@ func (s *Service) TrialSearch(ctx context.Context, up Upstream, projectID, query
 	if err != nil {
 		return TrialResult{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
 	}
+	s.rankOrigins(&result)
 	return TrialResult{Result: result, Sources: scoped, LatencyMs: time.Since(started).Milliseconds()}, nil
 }
 
@@ -275,6 +275,7 @@ func (s *Service) ReadDocument(ctx context.Context, up Upstream, projectID, sour
 	if err != nil {
 		return Document{}, apperr.New(apperr.Upstream, "读取原文失败："+err.Error())
 	}
+	doc.BaseOrigin = s.sourceOrigin(source)
 	return doc, nil
 }
 
@@ -288,7 +289,7 @@ func (s *Service) CreateHostedDocument(ctx context.Context, up Upstream, project
 	if err != nil {
 		return WriteResult{}, err
 	}
-	if !sourceInProject(ms, projectID, source) {
+	if !sourceWritable(ms, projectID, source) {
 		return WriteResult{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
 	}
 	src, ok := ms.KnowledgeSource(source)
@@ -366,7 +367,7 @@ func (s *Service) RegisterGitSource(input GitSourceInput) (domain.KnowledgeSourc
 	}
 	baseID := strings.TrimSpace(input.BaseID)
 	base, ok := ms.KnowledgeBase(baseID)
-	if !ok || base.ProjectID != projectID {
+	if !ok || !ownsBase(base, projectID) {
 		return domain.KnowledgeSource{}, apperr.New(apperr.Forbidden, "知识库不属于当前项目")
 	}
 	branch := strings.TrimSpace(input.Branch)
@@ -381,7 +382,11 @@ func (s *Service) RegisterGitSource(input GitSourceInput) (domain.KnowledgeSourc
 	if name == "" {
 		name = "Git 来源"
 	}
-	seed := projectID + "\x00" + gitURL + "\x00" + branch + "\x00" + prefix
+	seedScope := projectID
+	if base.Layer == "shared" {
+		seedScope = baseID
+	}
+	seed := seedScope + "\x00" + gitURL + "\x00" + branch + "\x00" + prefix
 	sum := sha256.Sum256([]byte(seed))
 	id := "kb-git-" + hex.EncodeToString(sum[:8])
 	src := domain.KnowledgeSource{
@@ -425,7 +430,7 @@ func (s *Service) TriggerSync(projectID, sourceID string) (domain.KnowledgeSourc
 	if err != nil {
 		return domain.KnowledgeSource{}, err
 	}
-	if !sourceInProject(ms, projectID, sourceID) {
+	if !sourceWritable(ms, projectID, sourceID) {
 		return domain.KnowledgeSource{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
 	}
 	src, ok := ms.KnowledgeSource(strings.TrimSpace(sourceID))
@@ -453,7 +458,7 @@ func (s *Service) DeleteSource(projectID, sourceID string) error {
 		return err
 	}
 	sourceID = strings.TrimSpace(sourceID)
-	if !sourceInProject(ms, projectID, sourceID) {
+	if !sourceWritable(ms, projectID, sourceID) {
 		return apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
 	}
 	src, ok := ms.KnowledgeSource(sourceID)
@@ -484,7 +489,7 @@ func (s *Service) SetSourceCredential(projectID, sourceID string, credential Git
 		return ManagedSourceView{}, apperr.New(apperr.NotFound, "来源不存在")
 	}
 	base, ok := ms.KnowledgeBase(src.BaseID)
-	if !ok || base.ProjectID != strings.TrimSpace(projectID) {
+	if !ok || !ownsBase(base, projectID) {
 		return ManagedSourceView{}, apperr.New(apperr.Forbidden, "知识库不属于当前项目")
 	}
 	if src.Kind != "git" {
