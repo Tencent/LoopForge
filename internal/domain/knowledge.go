@@ -225,6 +225,11 @@ type KnowledgeSource struct {
 	LastSyncedAt         *time.Time `json:"lastSyncedAt,omitempty"`
 	LeaseOwner           string     `json:"leaseOwner,omitempty"`
 	LeaseUntil           *time.Time `json:"leaseUntil,omitempty"`
+	// MetadataChecks 为真时，健康检查对该来源里写了 frontmatter 的文档
+	// 检查负责人和过期。为假时跳过这两类，死链和重复仍检查。新建来源默认开启。
+	MetadataChecks bool `json:"metadataChecks"`
+	// SyncStage 是进行中的同步阶段：pulling、comparing、indexing。空表示空闲。
+	SyncStage string `json:"syncStage,omitempty"`
 }
 
 // KnowledgeBinding 把项目绑定到知识库；切片里 Permission 只写 submit。
@@ -377,6 +382,17 @@ type KnowledgeFeedback struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// KnowledgeGapRepeatWindow 内，同一用户或同一会话重复的同一查询只算一次。
+// 窗口外或换了人或会话才增加计数。
+const KnowledgeGapRepeatWindow = 10 * time.Minute
+
+// 知识缺口的处置状态。面板只显示 open；ignored 和 resolved 保留原记录但隐藏。
+const (
+	KnowledgeGapOpen     = "open"
+	KnowledgeGapIgnored  = "ignored"
+	KnowledgeGapResolved = "resolved"
+)
+
 // KnowledgeGap 是搜不到结果的查询。同一项目内按归一化查询合并计数，保留首次
 // 和最近出现时间，面板据此排序补充优先级。
 type KnowledgeGap struct {
@@ -384,6 +400,9 @@ type KnowledgeGap struct {
 	Query      string    `json:"query"`
 	Normalized string    `json:"-"`
 	Count      int       `json:"count"`
+	Status     string    `json:"status,omitempty"`
+	UserID     int64     `json:"-"`
+	SessionID  string    `json:"-"`
 	FirstSeen  time.Time `json:"firstSeen"`
 	LastSeen   time.Time `json:"lastSeen"`
 }

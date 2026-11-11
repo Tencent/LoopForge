@@ -5,6 +5,7 @@ package knowledge
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sort"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge/governance"
+
+	"gorm.io/gorm"
 )
 
 const (
@@ -35,6 +38,36 @@ type DocumentMetaStore interface {
 type GapStore interface {
 	PutKnowledgeGap(domain.KnowledgeGap) error
 	KnowledgeGaps(projectID string, limit int) []domain.KnowledgeGap
+	SetKnowledgeGapStatus(projectID, normalized, status string) error
+	CountHiddenKnowledgeGaps(projectID string) int
+}
+
+// MetadataCheckRule 写在治理面板上，说明负责人和过期不是对所有文档生效。
+const MetadataCheckRule = "没有 frontmatter 的文档只检查死链和标题重复；负责人和过期只检查写了 frontmatter 的文档。可在来源上关闭元数据检查。"
+
+type gapActorContextKey struct{}
+
+// GapActor 是记录知识缺口时能用来合并短时间重复的人。两者都空时每次都计数。
+type GapActor struct {
+	UserID    int64
+	SessionID string
+}
+
+// WithGapActor 把检索调用者放进 context，供 RecordGap 合并同一人或同一会话的重复查询。
+func WithGapActor(ctx context.Context, actor GapActor) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, gapActorContextKey{}, actor)
+}
+
+// GapActorFrom 读取 WithGapActor 放进 context 的调用者。没有时返回零值。
+func GapActorFrom(ctx context.Context) GapActor {
+	if ctx == nil {
+		return GapActor{}
+	}
+	actor, _ := ctx.Value(gapActorContextKey{}).(GapActor)
+	return actor
 }
 
 // FeedbackStore 是反馈持久化能力。
@@ -100,8 +133,9 @@ func normalizeGapQuery(query string) string {
 }
 
 // RecordGap 持久化一次搜不到结果的查询。空项目或空查询不记录；同一项目内
-// 按归一化查询合并计数。写入失败只影响面板，不回滚检索。
-func (s *Service) RecordGap(projectID, query string) error {
+// 按归一化查询合并计数。actor 用来把同一用户或同一会话的短时间重复算作一次。
+// 写入失败只影响面板，不回滚检索。
+func (s *Service) RecordGap(projectID, query string, actor GapActor) error {
 	if s == nil || s.store == nil {
 		return nil
 	}
@@ -117,8 +151,64 @@ func (s *Service) RecordGap(projectID, query string) error {
 	now := s.clock()
 	return store.PutKnowledgeGap(domain.KnowledgeGap{
 		ProjectID: projectID, Query: strings.TrimSpace(query), Normalized: normalized,
-		Count: 1, FirstSeen: now, LastSeen: now,
+		Count: 1, UserID: actor.UserID, SessionID: strings.TrimSpace(actor.SessionID),
+		FirstSeen: now, LastSeen: now,
 	})
+}
+
+// SetGapStatus 让管理者把一条缺口标为忽略或已处理。原记录保留，面板不再列出。
+func (s *Service) SetGapStatus(projectID, query, status string) error {
+	if s == nil || s.store == nil {
+		return apperr.New(apperr.Unavailable, "知识库治理存储不可用")
+	}
+	switch status {
+	case domain.KnowledgeGapIgnored, domain.KnowledgeGapResolved:
+	default:
+		return apperr.New(apperr.Invalid, "知识缺口只能标为忽略或已处理")
+	}
+	projectID = strings.TrimSpace(projectID)
+	normalized := normalizeGapQuery(query)
+	if projectID == "" || normalized == "" {
+		return apperr.New(apperr.Invalid, "项目和查询不能为空")
+	}
+	store, ok := s.store.(GapStore)
+	if !ok {
+		return apperr.New(apperr.Unavailable, "知识库治理存储不可用")
+	}
+	if err := store.SetKnowledgeGapStatus(projectID, normalized, status); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperr.New(apperr.NotFound, "知识缺口不存在")
+		}
+		return apperr.New(apperr.Upstream, "更新知识缺口失败："+err.Error())
+	}
+	return nil
+}
+
+// SetSourceMetadataChecks 按来源打开或关闭负责人/过期检查。只改开关，不改文档。
+func (s *Service) SetSourceMetadataChecks(projectID, sourceID string, enabled bool) (domain.KnowledgeSource, error) {
+	ms, err := s.managed()
+	if err != nil {
+		return domain.KnowledgeSource{}, err
+	}
+	sourceID = strings.TrimSpace(sourceID)
+	if !sourceWritable(ms, projectID, sourceID) {
+		return domain.KnowledgeSource{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
+	}
+	setter, ok := s.store.(interface {
+		SetKnowledgeSourceMetadataChecks(string, bool) error
+	})
+	if !ok {
+		return domain.KnowledgeSource{}, apperr.New(apperr.Unavailable, "知识库来源存储不可用")
+	}
+	if err := setter.SetKnowledgeSourceMetadataChecks(sourceID, enabled); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.KnowledgeSource{}, apperr.New(apperr.NotFound, "知识库来源不存在")
+		}
+		return domain.KnowledgeSource{}, apperr.New(apperr.Upstream, "更新来源检查开关失败："+err.Error())
+	}
+	src, _ := ms.KnowledgeSource(sourceID)
+	src.MetadataChecks = enabled
+	return src, nil
 }
 
 // FeedbackInput 是知识中心、Main Bot 回答和 Agent 标记问题共用的反馈入参。
@@ -271,6 +361,8 @@ type GovernanceOverview struct {
 	FeedbackCounts   map[string]int                    `json:"feedbackCounts"`
 	Gaps             []domain.KnowledgeGap             `json:"gaps"`
 	GapsTotal        int                               `json:"gapsTotal"`
+	GapsHidden       int                               `json:"gapsHidden"`
+	MetadataRule     string                            `json:"metadataRule"`
 	CitedDocuments   []CitedDocument                   `json:"citedDocuments"`
 	UncitedDocuments []UncitedDocument                 `json:"uncitedDocuments"`
 	Placeholders     GovernancePlaceholders            `json:"placeholders"`
@@ -308,7 +400,7 @@ func (s *Service) GovernanceOverview(projectID string) (GovernanceOverview, erro
 		generatedAt = s.clock()
 	}
 	out := GovernanceOverview{
-		StaleDays: GovernanceStaleDays, Bases: []GovernanceBaseView{}, Scans: []domain.KnowledgeGovernanceScan{},
+		StaleDays: GovernanceStaleDays, MetadataRule: MetadataCheckRule, Bases: []GovernanceBaseView{}, Scans: []domain.KnowledgeGovernanceScan{},
 		Issues: []domain.KnowledgeGovernanceIssue{}, Counts: newGovernanceCounts(),
 		Feedback: []domain.KnowledgeFeedback{}, FeedbackCounts: map[string]int{
 			domain.KnowledgeFeedbackHelpful: 0, domain.KnowledgeFeedbackNotHelpful: 0, domain.KnowledgeFeedbackIssue: 0,
@@ -366,6 +458,7 @@ func (s *Service) GovernanceOverview(projectID string) (GovernanceOverview, erro
 		if gaps, ok := s.store.(GapStore); ok {
 			out.Gaps = gaps.KnowledgeGaps(projectID, 100)
 			out.GapsTotal = len(out.Gaps)
+			out.GapsHidden = gaps.CountHiddenKnowledgeGaps(projectID)
 		}
 		usage, ok := s.CitationUsage(projectID)
 		if ok {
@@ -429,6 +522,7 @@ func (s *Service) scanBases(ctx context.Context, ms ManagedStore, bases []domain
 				docs = append(docs, governance.Document{
 					SourceID: doc.SourceID, Path: doc.Path, Title: doc.Title, Body: doc.Body,
 					Owner: doc.Owner, Updated: doc.FrontmatterUpdated,
+					HasFrontmatter: governance.HasFrontmatter(doc.Body), SkipMetadata: !src.MetadataChecks,
 				})
 			}
 		}

@@ -137,6 +137,83 @@ func TestGovernanceScanPersistsAndSummarizes(t *testing.T) {
 	if got.Counts["dead_link"] != 1 || got.Counts["stale"] != 1 || got.Counts["missing_owner"] != 1 || got.Counts["duplicate"] != 2 {
 		t.Fatalf("persisted counts = %+v, issues = %+v", got.Counts, got.Issues)
 	}
+	if got.MetadataRule == "" {
+		t.Fatal("governance overview should explain the frontmatter rule")
+	}
+}
+
+func TestGovernanceScanIgnoresPlainDocumentsAndSourceSwitch(t *testing.T) {
+	s := governanceServiceStore(t)
+	putGovernanceDoc(t, s, "plain.md", "外部说明", "# 外部说明\n")
+	putGovernanceDoc(t, s, "headed.md", "有头", "---\nstatus: draft\nupdated: 2026-11-01\n---\n# 有头\n\n[缺失](missing.md)\n")
+	svc := NewService(s, func() string { return "id" }, &governanceUpstream{})
+	svc.now = func() time.Time { return time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC) }
+
+	overview, err := svc.ScanGovernance(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range overview.Issues {
+		if issue.Path == "plain.md" && (issue.Type == domain.KnowledgeGovernanceMissingOwner || issue.Type == domain.KnowledgeGovernanceStale) {
+			t.Fatalf("plain document flagged: %+v", issue)
+		}
+	}
+	if overview.Counts[domain.KnowledgeGovernanceMissingOwner] != 1 || overview.Counts[domain.KnowledgeGovernanceDeadLink] != 1 {
+		t.Fatalf("counts = %+v issues = %+v", overview.Counts, overview.Issues)
+	}
+	if _, err := svc.SetSourceMetadataChecks("p1", "s1", false); err != nil {
+		t.Fatal(err)
+	}
+	overview, err = svc.ScanGovernance(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Counts[domain.KnowledgeGovernanceMissingOwner] != 0 || overview.Counts[domain.KnowledgeGovernanceStale] != 0 || overview.Counts[domain.KnowledgeGovernanceDeadLink] != 1 {
+		t.Fatalf("disabled metadata checks = %+v", overview.Counts)
+	}
+	if _, err := svc.SetSourceMetadataChecks("p2", "s1", true); err == nil {
+		t.Fatal("another project must not change this source")
+	}
+}
+
+func TestRepeatedGapFromSameUserDoesNotInflateAndCanBeHidden(t *testing.T) {
+	s := governanceServiceStore(t)
+	svc := NewService(s, func() string { return "id" }, &governanceUpstream{})
+	start := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
+	now := start
+	svc.now = func() time.Time { return now }
+	ctx := WithGapActor(context.Background(), GapActor{UserID: 7, SessionID: "sess"})
+	for i := 0; i < 2; i++ {
+		now = start.Add(time.Duration(i) * time.Minute)
+		if _, err := svc.Search(ctx, "p1", "香蕉皮", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gaps := s.KnowledgeGaps("p1", 10)
+	if len(gaps) != 1 || gaps[0].Count != 1 {
+		t.Fatalf("same user within the window should count once: %+v", gaps)
+	}
+	now = start.Add(11 * time.Minute)
+	if _, err := svc.Search(ctx, "p1", "香蕉皮", nil); err != nil {
+		t.Fatal(err)
+	}
+	gaps = s.KnowledgeGaps("p1", 10)
+	if len(gaps) != 1 || gaps[0].Count != 2 {
+		t.Fatalf("after the window the query should count again: %+v", gaps)
+	}
+	if err := svc.SetGapStatus("p1", "香蕉皮", domain.KnowledgeGapIgnored); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := svc.GovernanceOverview("p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Gaps) != 0 || overview.GapsHidden != 1 {
+		t.Fatalf("hidden gap = %+v hidden %d", overview.Gaps, overview.GapsHidden)
+	}
+	if again := s.KnowledgeGaps("p1", 10); len(again) != 0 {
+		t.Fatal("ignored row was deleted or still visible")
+	}
 }
 
 func TestGovernanceFeedbackAndAgentIssue(t *testing.T) {

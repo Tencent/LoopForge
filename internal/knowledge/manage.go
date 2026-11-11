@@ -166,6 +166,8 @@ type ManagedSourceView struct {
 	DocCount             int        `json:"docCount,omitempty"`
 	LastError            string     `json:"lastError,omitempty"`
 	LastSyncedAt         *time.Time `json:"lastSyncedAt,omitempty"`
+	MetadataChecks       bool       `json:"metadataChecks"`
+	SyncStage            string     `json:"syncStage,omitempty"`
 	// 向量重建进度只在处理同步的进程内可读，其他实例保持空值。
 	VectorCurrent int    `json:"vectorCurrent,omitempty"`
 	VectorTotal   int    `json:"vectorTotal,omitempty"`
@@ -180,6 +182,7 @@ func managedSourceView(src domain.KnowledgeSource) ManagedSourceView {
 		HeadCommit: src.HeadCommit, HeadRevision: src.HeadRevision,
 		Status: src.Status, IndexStatus: src.IndexStatus, DocCount: src.DocCount,
 		LastError: src.LastError, LastSyncedAt: src.LastSyncedAt,
+		MetadataChecks: src.MetadataChecks, SyncStage: src.SyncStage,
 	}
 }
 
@@ -312,7 +315,7 @@ func (s *Service) TrialSearch(ctx context.Context, up Upstream, projectID, query
 	s.applyLifecycle(&result)
 	s.annotateSearchVersions(&result)
 	if rawHits == 0 {
-		_ = s.RecordGap(projectID, query)
+		_ = s.RecordGap(projectID, query, GapActorFrom(ctx))
 	}
 	s.rankOrigins(&result)
 	return TrialResult{Result: result, Sources: scoped, LatencyMs: time.Since(started).Milliseconds()}, nil

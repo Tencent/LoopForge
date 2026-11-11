@@ -74,6 +74,8 @@ func TestKnowledgeProjectAuthorization(t *testing.T) {
 		{"GET", "/api/knowledge/submissions?projectId=a", ""}, {"GET", "/api/knowledge/submissions/secret-a", ""},
 		{"POST", "/api/knowledge/search", `{"projectId":"a","query":"Private"}`}, {"POST", "/api/knowledge/bases/search", `{"projectId":"a","query":"Private"}`},
 		{"POST", "/api/knowledge/citations/freshness", `{"projectId":"a","citations":[]}`}, {"POST", "/api/knowledge/feedback", `{"projectId":"a","kind":"helpful"}`},
+		{"POST", "/api/knowledge/governance/gaps", `{"projectId":"a","query":"x","status":"ignored"}`},
+		{"POST", "/api/knowledge/bases/sources/metadata", `{"projectId":"a","sourceId":"` + source + `","enabled":false}`},
 	}
 	for _, tc := range reads {
 		t.Run(tc.path, func(t *testing.T) {
@@ -84,6 +86,12 @@ func TestKnowledgeProjectAuthorization(t *testing.T) {
 	}
 	if w := request(viewer, "POST", "/api/knowledge/feedback", `{"projectId":"a","kind":"helpful"}`); w.Code != 403 {
 		t.Errorf("viewer feedback write: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(viewer, "POST", "/api/knowledge/bases/sources/metadata", fmt.Sprintf(`{"projectId":"a","sourceId":%q,"enabled":false}`, source)); w.Code != 403 {
+		t.Errorf("viewer metadata switch: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(viewer, "POST", "/api/knowledge/governance/gaps", `{"projectId":"a","query":"x","status":"ignored"}`); w.Code != 403 {
+		t.Errorf("viewer gap dismissal: %d %s", w.Code, w.Body.String())
 	}
 	w := request(b, "GET", "/api/knowledge/submissions", "")
 	if strings.Contains(w.Body.String(), "secret-a") {

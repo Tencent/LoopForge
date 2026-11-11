@@ -36,6 +36,29 @@ type FileInfo struct {
 	Lines  int
 }
 
+const (
+	// StagePulling 是克隆或 fetch。StageComparing 是拉取完成后的文件比对。
+	StagePulling   = "pulling"
+	StageComparing = "comparing"
+)
+
+type progressKey struct{}
+
+// WithProgress 让同步在拉取和比对两个阶段回调。索引阶段由调用方在落库前自己报。
+func WithProgress(ctx context.Context, fn func(stage string)) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, progressKey{}, fn)
+}
+
+func notify(ctx context.Context, stage string) {
+	fn, _ := ctx.Value(progressKey{}).(func(string))
+	if fn != nil {
+		fn(stage)
+	}
+}
+
 // Sync 把 url 的 branch 克隆或更新到 cacheDir。
 // oldMap 是 path→sha256 的既有指纹；返回值 changed/removed 在无增量时也是空切片。
 // 工作区有本地改动时中止，不覆盖缓存。
@@ -50,6 +73,7 @@ func Sync(ctx context.Context, cacheDir, url, branch string, oldMap map[string]s
 		return "", "", nil, nil, nil, err
 	}
 
+	notify(ctx, StagePulling)
 	gitDir := filepath.Join(cacheDir, ".git")
 	_, statErr := os.Stat(gitDir)
 	switch {
@@ -85,6 +109,7 @@ func Sync(ctx context.Context, cacheDir, url, branch string, oldMap map[string]s
 	if err != nil || head == "" {
 		return cacheDir, "", nil, nil, nil, fmt.Errorf("无法解析 HEAD: %v", err)
 	}
+	notify(ctx, StageComparing)
 	files, err = CollectMarkdown(cacheDir)
 	if err != nil {
 		return cacheDir, head, nil, nil, nil, err

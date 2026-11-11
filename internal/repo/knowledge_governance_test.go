@@ -105,6 +105,80 @@ func TestKnowledgeFeedbackAndGapsPersist(t *testing.T) {
 	if other := s.KnowledgeGaps("p2", 10); len(other) != 0 {
 		t.Fatalf("gap project isolation broken: %+v", other)
 	}
+
+	repeatAt := now.Add(time.Minute)
+	put := func(item domain.KnowledgeGap) {
+		t.Helper()
+		if err := s.PutKnowledgeGap(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(domain.KnowledgeGap{ProjectID: "p1", Query: "怎么部署", Normalized: "怎么部署", UserID: 7, FirstSeen: repeatAt, LastSeen: repeatAt})
+	put(domain.KnowledgeGap{ProjectID: "p1", Query: "怎么部署", Normalized: "怎么部署", UserID: 7, FirstSeen: repeatAt.Add(time.Minute), LastSeen: repeatAt.Add(time.Minute)})
+	put(domain.KnowledgeGap{ProjectID: "p1", Query: "会话重复", Normalized: "会话重复", SessionID: "sess-1", FirstSeen: repeatAt, LastSeen: repeatAt})
+	put(domain.KnowledgeGap{ProjectID: "p1", Query: "会话重复", Normalized: "会话重复", SessionID: "sess-1", FirstSeen: repeatAt.Add(time.Minute), LastSeen: repeatAt.Add(time.Minute)})
+	counts := map[string]int{}
+	for _, gap := range s.KnowledgeGaps("p1", 10) {
+		counts[gap.Normalized] = gap.Count
+	}
+	if counts["怎么部署"] != 1 || counts["会话重复"] != 1 {
+		t.Fatalf("short repeats should stay at 1: %+v", counts)
+	}
+	laterUser := repeatAt.Add(3 * time.Minute)
+	put(domain.KnowledgeGap{ProjectID: "p1", Query: "怎么部署", Normalized: "怎么部署", UserID: 8, FirstSeen: laterUser, LastSeen: laterUser})
+	counts = map[string]int{}
+	for _, gap := range s.KnowledgeGaps("p1", 10) {
+		counts[gap.Normalized] = gap.Count
+	}
+	if counts["怎么部署"] != 2 {
+		t.Fatalf("a different user should count: %+v", counts)
+	}
+	if err := s.SetKnowledgeGapStatus("p1", "怎么部署", domain.KnowledgeGapIgnored); err != nil {
+		t.Fatal(err)
+	}
+	for _, gap := range s.KnowledgeGaps("p1", 10) {
+		if gap.Normalized == "怎么部署" {
+			t.Fatalf("ignored gap still listed: %+v", gap)
+		}
+	}
+	if s.CountHiddenKnowledgeGaps("p1") != 1 {
+		t.Fatalf("hidden = %d", s.CountHiddenKnowledgeGaps("p1"))
+	}
+}
+
+func TestKnowledgeSourceMetadataSwitchAndSyncStage(t *testing.T) {
+	s := governanceStore(t)
+	if err := s.PutKnowledgeSource(domain.KnowledgeSource{ID: "src-meta", BaseID: "b", Kind: "git", Name: "文档", Status: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := s.KnowledgeSource("src-meta")
+	if !ok || !got.MetadataChecks {
+		t.Fatalf("new source should check metadata by default: %+v", got)
+	}
+	if err := s.SetKnowledgeSourceMetadataChecks("src-meta", false); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.KnowledgeSource("src-meta")
+	if got.MetadataChecks {
+		t.Fatal("metadata checks should be off")
+	}
+	if err := s.DB.Model(&knowledgeSourceRow{}).Where("id = ?", "src-meta").Updates(map[string]any{"status": "syncing", "lease_owner": "worker-1"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetKnowledgeSyncStage("src-meta", "worker-1", "pulling"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.KnowledgeSource("src-meta")
+	if got.SyncStage != "pulling" || got.MetadataChecks {
+		t.Fatalf("stage must not reset the metadata switch: %+v", got)
+	}
+	if err := s.SetKnowledgeSyncStage("src-meta", "other", "indexing"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.KnowledgeSource("src-meta")
+	if got.SyncStage != "pulling" {
+		t.Fatalf("a different lease must not change the stage: %q", got.SyncStage)
+	}
 }
 
 func TestKnowledgeGovernanceReportReplacesPreviousScan(t *testing.T) {

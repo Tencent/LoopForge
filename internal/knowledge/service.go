@@ -153,7 +153,7 @@ func (s *Service) Search(ctx context.Context, projectID, query string, sources [
 	s.applyLifecycle(&result)
 	s.annotateSearchVersions(&result)
 	if rawHits == 0 {
-		_ = s.RecordGap(projectID, query)
+		_ = s.RecordGap(projectID, query, GapActorFrom(ctx))
 	}
 	s.rankOrigins(&result)
 	return SearchOutput{Result: result, Sources: scoped, LatencyMs: s.now().Sub(started).Milliseconds()}, nil

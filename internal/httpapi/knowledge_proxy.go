@@ -163,7 +163,7 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 	switch tool {
 	case knowledge.ToolSearch:
 		var out knowledge.SearchOutput
-		out, err = svc.Search(ctx, caller.ProjectID, str("query"), stringList(args["sources"]))
+		out, err = svc.Search(knowledge.WithGapActor(ctx, knowledge.GapActor{UserID: caller.UserID, SessionID: caller.SessionID}), caller.ProjectID, str("query"), stringList(args["sources"]))
 		hits = len(out.Result.Results)
 		if err == nil {
 			recordKnowledgeCitations(svc, knowledge.CitationsForSearch(caller, started, out.Result))

@@ -67,7 +67,8 @@ func knowledgeFeedbackFromRow(row knowledgeFeedbackRow) domain.KnowledgeFeedback
 }
 
 // PutKnowledgeGap 用 (project_id, normalized_query) 合并重复查询：第一次插入
-// 计数为 1，后续只增加计数并刷新最近时间；原始查询文本保留最新写法。
+// 计数为 1。同一用户或同一会话在短窗口内再查同一句只刷新最近时间，不增加
+// 计数；换人、换会话或超过窗口才加一。已忽略或已处理的行保持原状态。
 func (r *KnowledgeRepo) PutKnowledgeGap(item domain.KnowledgeGap) error {
 	projectID := strings.TrimSpace(item.ProjectID)
 	normalized := strings.TrimSpace(item.Normalized)
@@ -81,19 +82,55 @@ func (r *KnowledgeRepo) PutKnowledgeGap(item domain.KnowledgeGap) error {
 	if item.FirstSeen.IsZero() {
 		item.FirstSeen = item.LastSeen
 	}
-	row := knowledgeGapRow{
-		ProjectID: projectID, Normalized: clipActivity(normalized, 500),
-		Query: clipActivity(item.Query, 500), OccurrenceCount: 1,
-		FirstSeen: &item.FirstSeen, LastSeen: &item.LastSeen,
+	item.LastSeen = item.LastSeen.UTC()
+	item.FirstSeen = item.FirstSeen.UTC()
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row knowledgeGapRow
+		q := tx.Where("project_id = ? AND normalized_query = ?", projectID, clipActivity(normalized, 500))
+		if r.isMySQL() {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		err := q.Take(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			created := knowledgeGapRow{
+				ProjectID: projectID, Normalized: clipActivity(normalized, 500),
+				Query: clipActivity(item.Query, 500), OccurrenceCount: 1, Status: domain.KnowledgeGapOpen,
+				LastUserID: item.UserID, LastSessionID: clipActivity(item.SessionID, 64),
+				FirstSeen: &item.FirstSeen, LastSeen: &item.LastSeen,
+			}
+			return tx.Create(&created).Error
+		}
+		if err != nil {
+			return err
+		}
+		repeat := sameGapActor(item, row) && withinGapWindow(row.LastSeen, item.LastSeen)
+		updates := map[string]any{
+			"query_text":      clipActivity(item.Query, 500),
+			"last_seen":       item.LastSeen,
+			"last_user_id":    item.UserID,
+			"last_session_id": clipActivity(item.SessionID, 64),
+		}
+		if !repeat {
+			updates["occurrence_count"] = row.OccurrenceCount + 1
+		}
+		return tx.Model(&knowledgeGapRow{}).Where("project_id = ? AND normalized_query = ?", row.ProjectID, row.Normalized).Updates(updates).Error
+	})
+}
+
+func sameGapActor(item domain.KnowledgeGap, row knowledgeGapRow) bool {
+	if item.UserID != 0 && item.UserID == row.LastUserID {
+		return true
 	}
-	return r.DB.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "project_id"}, {Name: "normalized_query"}},
-		DoUpdates: clause.Assignments(map[string]any{
-			"query_text":       row.Query,
-			"occurrence_count": gorm.Expr("occurrence_count + 1"),
-			"last_seen":        row.LastSeen,
-		}),
-	}).Create(&row).Error
+	session := strings.TrimSpace(item.SessionID)
+	return session != "" && session == row.LastSessionID
+}
+
+func withinGapWindow(previous *time.Time, current time.Time) bool {
+	if previous == nil || current.IsZero() {
+		return false
+	}
+	delta := current.Sub(previous.UTC())
+	return delta >= 0 && delta < domain.KnowledgeGapRepeatWindow
 }
 
 func (r *KnowledgeRepo) KnowledgeGaps(projectID string, limit int) []domain.KnowledgeGap {
@@ -106,7 +143,7 @@ func (r *KnowledgeRepo) KnowledgeGaps(projectID string, limit int) []domain.Know
 		limit = 100
 	}
 	var rows []knowledgeGapRow
-	if err := r.DB.Where("project_id = ?", projectID).
+	if err := r.DB.Where("project_id = ? AND (status = ? OR status = '')", projectID, domain.KnowledgeGapOpen).
 		Order("occurrence_count DESC, last_seen DESC").Limit(limit).Find(&rows).Error; err != nil {
 		return out
 	}
@@ -116,10 +153,40 @@ func (r *KnowledgeRepo) KnowledgeGaps(projectID string, limit int) []domain.Know
 	return out
 }
 
+// SetKnowledgeGapStatus 把一条缺口标为忽略或已处理。不删除行。
+func (r *KnowledgeRepo) SetKnowledgeGapStatus(projectID, normalized, status string) error {
+	projectID = strings.TrimSpace(projectID)
+	normalized = strings.TrimSpace(normalized)
+	if projectID == "" || normalized == "" {
+		return errors.New("knowledge gap project and normalized query are required")
+	}
+	var n int64
+	if err := r.DB.Model(&knowledgeGapRow{}).Where("project_id = ? AND normalized_query = ?", projectID, normalized).Count(&n).Error; err != nil {
+		return err
+	}
+	if n == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return r.DB.Model(&knowledgeGapRow{}).Where("project_id = ? AND normalized_query = ?", projectID, normalized).Update("status", status).Error
+}
+
+// CountHiddenKnowledgeGaps 统计已从面板隐藏、但仍留在表里的缺口。
+func (r *KnowledgeRepo) CountHiddenKnowledgeGaps(projectID string) int {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return 0
+	}
+	var n int64
+	if err := r.DB.Model(&knowledgeGapRow{}).Where("project_id = ? AND status <> ? AND status <> ''", projectID, domain.KnowledgeGapOpen).Count(&n).Error; err != nil {
+		return 0
+	}
+	return int(n)
+}
+
 func knowledgeGapFromRow(row knowledgeGapRow) domain.KnowledgeGap {
 	out := domain.KnowledgeGap{
 		ProjectID: row.ProjectID, Query: row.Query, Normalized: row.Normalized,
-		Count: row.OccurrenceCount,
+		Count: row.OccurrenceCount, Status: row.Status, UserID: row.LastUserID, SessionID: row.LastSessionID,
 	}
 	if row.FirstSeen != nil {
 		out.FirstSeen = *row.FirstSeen

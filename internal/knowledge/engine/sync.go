@@ -36,6 +36,7 @@ type SyncWorker struct {
 	cacheRoot, owner string
 	ttl              time.Duration
 	syncGit          func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error)
+	remoteHead       func(context.Context, string, string) (string, error)
 
 	reconcileEvery time.Duration
 	reconcileStale time.Duration
@@ -48,7 +49,7 @@ type SyncWorker struct {
 func NewSyncWorker(e *Engine, control SyncControl, content SyncContent, cacheRoot, owner string) *SyncWorker {
 	return &SyncWorker{
 		engine: e, control: control, content: content, cacheRoot: cacheRoot, owner: owner,
-		ttl: 30 * time.Second, syncGit: gitsync.SyncRemote,
+		ttl: 30 * time.Second, syncGit: gitsync.SyncRemote, remoteHead: gitsync.RemoteHead,
 		reconcileEvery: 30 * time.Second, reconcileStale: 20 * time.Second,
 	}
 }
@@ -200,6 +201,11 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 		// workers share a cache root. Ciphertext has a fresh nonce on every save.
 		cacheDir += "-" + sha256Hex(src.CredentialCiphertext)
 	}
+	// 已索引快照用于增量，也用于在克隆前判断远端 HEAD 未变时能否直接结束。
+	oldDocs, oldMap, hasIncremental := w.indexedSnapshot(src.ID)
+	if skipped, head, count, err := w.skipUnchangedRemote(ctx, src, owner, allowNoop, oldDocs); skipped {
+		return head, count, err
+	}
 	cacheDir = filepath.Join(cacheDir, sha256Hex(owner))
 	defer os.RemoveAll(cacheDir)
 	if src.LeaseVersion > 0 {
@@ -211,24 +217,13 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 			}
 		}
 	}
-	// 已索引快照用于增量：只有路径新增或指纹变化才读正文落库，合并后
-	// 写回的新文档因此只新增自己，不会重写其他文档。
-	oldDocs := []domain.KnowledgeDocument{}
-	oldMap := map[string]string{}
-	incremental, hasIncremental := w.content.(interface {
-		KnowledgeDocuments(string) []domain.KnowledgeDocument
-		ApplyGitKnowledge(context.Context, string, []domain.KnowledgeDocument, []domain.KnowledgeChunk, []string) error
-	})
-	if hasIncremental {
-		oldDocs = incremental.KnowledgeDocuments(src.ID)
-		for _, d := range oldDocs {
-			oldMap[d.Path] = d.SHA256
-		}
-	}
+	ctx = gitsync.WithProgress(ctx, func(stage string) { w.reportStage(src.ID, owner, stage) })
+	w.reportStage(src.ID, owner, gitsync.StagePulling)
 	dir, head, files, changed, removed, err := w.syncGit(ctx, cacheDir, src.GitURL, src.Branch, oldMap)
 	if err != nil {
 		return "", 0, err
 	}
+	w.reportStage(src.ID, owner, gitsync.StageComparing)
 	// HEAD 未变且已落库篇数一致时没有新内容可写：只释放租约并保持 ready，
 	// 不重写正文/索引块，也不触发向量重嵌入。失败后的重试不看这个短路，
 	// 避免把上次没落完的内容当成已完成。
@@ -242,6 +237,7 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 		}
 		return head, len(oldDocs), nil
 	}
+	w.reportStage(src.ID, owner, "indexing")
 	inPrefix := func(path string) bool { return prefix == "" || strings.HasPrefix(path, prefix+"/") }
 	readDoc := func(path string) (domain.KnowledgeDocument, []domain.KnowledgeChunk, error) {
 		b, err := gitsync.ReadRepoFile(dir, path)
@@ -304,6 +300,9 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 		if !ok {
 			return "", 0, errors.New("knowledge sync lease lost")
 		}
+		incremental := w.content.(interface {
+			ApplyGitKnowledge(context.Context, string, []domain.KnowledgeDocument, []domain.KnowledgeChunk, []string) error
+		})
 		ok, err = w.control.PublishKnowledgeSync(ctx, src.ID, owner, head, count, func(ctx context.Context) error {
 			if err := incremental.ApplyGitKnowledge(ctx, src.ID, docs, chunks, removedList); err != nil {
 				return err
@@ -354,6 +353,57 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 		return "", 0, errors.New("knowledge sync lease lost before publication")
 	}
 	return head, len(docs), nil
+}
+
+func (w *SyncWorker) indexedSnapshot(sourceID string) ([]domain.KnowledgeDocument, map[string]string, bool) {
+	oldMap := map[string]string{}
+	reader, ok := w.content.(interface {
+		KnowledgeDocuments(string) []domain.KnowledgeDocument
+	})
+	_, incremental := w.content.(interface {
+		ApplyGitKnowledge(context.Context, string, []domain.KnowledgeDocument, []domain.KnowledgeChunk, []string) error
+	})
+	if !ok || !incremental {
+		return nil, oldMap, false
+	}
+	docs := reader.KnowledgeDocuments(sourceID)
+	for _, doc := range docs {
+		oldMap[doc.Path] = doc.SHA256
+	}
+	return docs, oldMap, true
+}
+
+// skipUnchangedRemote 在克隆前用 ls-remote 对比已记录的 HEAD。对得上且篇数
+// 一致就结束同步。探测失败或 HEAD 变了就返回 false，调用方继续克隆。
+func (w *SyncWorker) skipUnchangedRemote(ctx context.Context, src domain.KnowledgeSource, owner string, allowNoop bool, oldDocs []domain.KnowledgeDocument) (bool, string, int, error) {
+	if !allowNoop || w.remoteHead == nil || src.HeadCommit == "" || len(oldDocs) != src.DocCount {
+		return false, "", 0, nil
+	}
+	w.reportStage(src.ID, owner, gitsync.StagePulling)
+	head, err := w.remoteHead(ctx, src.GitURL, src.Branch)
+	if err != nil || head != src.HeadCommit {
+		return false, "", 0, nil
+	}
+	ok, err := w.control.FinishKnowledgeSync(src.ID, owner, head, len(oldDocs), "")
+	if err != nil {
+		return true, "", 0, err
+	}
+	if !ok {
+		return true, "", 0, errors.New("knowledge sync lease lost")
+	}
+	return true, head, len(oldDocs), nil
+}
+
+func (w *SyncWorker) reportStage(id, owner, stage string) {
+	stager, ok := w.control.(interface {
+		SetKnowledgeSyncStage(string, string, string) error
+	})
+	if !ok {
+		return
+	}
+	if err := stager.SetKnowledgeSyncStage(id, owner, stage); err != nil {
+		log.Printf("knowledge sync stage %s: %v", id, err)
+	}
 }
 
 // syncFailureMessage 把 Git 原始错误归类成用户能懂的中文。它不返回原始

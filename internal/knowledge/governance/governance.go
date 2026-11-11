@@ -27,14 +27,18 @@ const (
 	MaxIssues    = 500
 )
 
-// Document 是健康检查需要的文档视图。
+// Document 是健康检查需要的文档视图。HasFrontmatter 为假时不检查负责人
+// 和过期：外部仓库的正文通常没有头。SkipMetadata 为真时，即使写了
+// frontmatter 也不做这两类检查，死链和重复仍要查。
 type Document struct {
-	SourceID string
-	Path     string
-	Title    string
-	Body     string
-	Owner    string
-	Updated  *time.Time
+	SourceID       string
+	Path           string
+	Title          string
+	Body           string
+	Owner          string
+	Updated        *time.Time
+	HasFrontmatter bool
+	SkipMetadata   bool
 }
 
 // Issue 是单项检查结果。Line 只在死链时填写。
@@ -71,10 +75,12 @@ func Analyze(docs []Document, now time.Time, staleDays int) Report {
 	pathIndex := buildPathIndex(docs)
 	for i := range docs {
 		doc := &docs[i]
-		if strings.TrimSpace(doc.Owner) == "" {
-			report.Issues = append(report.Issues, newIssue(doc, TypeMissingOwner, 0, "frontmatter 缺少负责人（owner）"))
+		if doc.HasFrontmatter && !doc.SkipMetadata {
+			if strings.TrimSpace(doc.Owner) == "" {
+				report.Issues = append(report.Issues, newIssue(doc, TypeMissingOwner, 0, "frontmatter 缺少负责人（owner）"))
+			}
+			report.Issues = append(report.Issues, staleIssues(doc, now, staleDays)...)
 		}
-		report.Issues = append(report.Issues, staleIssues(doc, now, staleDays)...)
 		report.Issues = append(report.Issues, deadLinkIssues(doc, pathIndex[doc.SourceID])...)
 	}
 	report.Issues = append(report.Issues, duplicateIssues(docs)...)
@@ -198,6 +204,25 @@ func deadLinkIssues(doc *Document, sourcePaths map[string]bool) []Issue {
 		}
 	}
 	return issues
+}
+
+// HasFrontmatter 只认文首成对的 ---。没有闭合标记的正文按普通
+// Markdown 处理，不因此要求负责人或更新时间。
+func HasFrontmatter(body string) bool {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	first := 0
+	for first < len(lines) && strings.TrimSpace(lines[first]) == "" {
+		first++
+	}
+	if first >= len(lines) || strings.TrimSpace(lines[first]) != "---" {
+		return false
+	}
+	for i := first + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return true
+		}
+	}
+	return false
 }
 
 func frontmatterEnd(lines []string) int {

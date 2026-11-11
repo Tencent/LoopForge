@@ -57,6 +57,23 @@ func (h *knowledgeHandlers) knowledgeFeedback(c *gin.Context) {
 	render(c, item, err)
 }
 
+// 路由: g.POST("/api/knowledge/governance/gaps", h.governanceGap)
+func (h *knowledgeHandlers) governanceGap(c *gin.Context) {
+	var input struct {
+		ProjectID string `json:"projectId"`
+		Query     string `json:"query"`
+		Status    string `json:"status"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	if !h.requireKnowledgeManager(c, input.ProjectID) {
+		return
+	}
+	err := h.svc.SetGapStatus(input.ProjectID, input.Query, input.Status)
+	render(c, gin.H{"ok": err == nil, "status": input.Status}, err)
+}
+
 // 路由: g.POST("/api/knowledge/governance/dispose", h.governanceDispose)
 func (h *knowledgeHandlers) governanceDispose(c *gin.Context) {
 	var input knowledge.GovernanceDispositionInput

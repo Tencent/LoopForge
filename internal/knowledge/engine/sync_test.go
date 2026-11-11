@@ -244,6 +244,14 @@ type syncFakeControl struct {
 	finishedCount    int
 	published        bool
 	publishCallbacks int
+	stages           []string
+}
+
+func (c *syncFakeControl) SetKnowledgeSyncStage(_, _, stage string) error {
+	if len(c.stages) == 0 || c.stages[len(c.stages)-1] != stage {
+		c.stages = append(c.stages, stage)
+	}
+	return nil
 }
 
 func (c *syncFakeControl) KnowledgeSources(string) []domain.KnowledgeSource { return nil }
@@ -315,14 +323,46 @@ func TestSyncSkipsUnchangedHeadWithoutPublishing(t *testing.T) {
 		SourceID: "noop-src", Path: "docs/a.md", SHA256: "sha-1",
 	}}}
 	w := NewSyncWorker(&Engine{newID: func() string { return "probe" }}, control, content, t.TempDir(), "worker")
+	cloned := false
+	w.remoteHead = func(context.Context, string, string) (string, error) { return "head-1", nil }
 	w.syncGit = func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
+		cloned = true
 		return t.TempDir(), "head-1", []gitsync.FileInfo{{Path: "docs/a.md", SHA256: "sha-1"}}, nil, nil, nil
 	}
 	if err := w.SyncOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if cloned {
+		t.Fatal("unchanged remote HEAD should be detected with ls-remote and must not clone")
+	}
 	if control.finished != 1 || control.published != 0 || content.applied != 0 {
 		t.Fatalf("unchanged HEAD should no-op: finished=%d published=%d applied=%d", control.finished, control.published, content.applied)
+	}
+	if len(control.stages) != 1 || control.stages[0] != gitsync.StagePulling {
+		t.Fatalf("stages = %v, want only pulling", control.stages)
+	}
+}
+
+func TestSyncCloneReportsPullCompareAndIndexStages(t *testing.T) {
+	control := &syncFakeControl{finishOK: true}
+	content := &syncFakeContent{}
+	w := NewSyncWorker(&Engine{newID: func() string { return "probe" }}, control, content, t.TempDir(), "worker")
+	w.remoteHead = func(context.Context, string, string) (string, error) { return "new-head", nil }
+	w.syncGit = func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
+		return t.TempDir(), "new-head", nil, nil, nil, nil
+	}
+	src := domain.KnowledgeSource{
+		ID: "src", Kind: "git", GitURL: "https://github.com/example/repo.git", Branch: "main",
+		HeadCommit: "old-head", DocCount: 1, Status: "pending",
+	}
+	if _, _, err := w.importGit(context.Background(), src, "owner", true); err != nil {
+		t.Fatal(err)
+	}
+	if !control.published {
+		t.Fatal("a changed HEAD should still publish")
+	}
+	if strings.Join(control.stages, ",") != "pulling,comparing,indexing" {
+		t.Fatalf("stages = %v", control.stages)
 	}
 }
 
@@ -330,6 +370,7 @@ type syncNoopControl struct {
 	src       domain.KnowledgeSource
 	finished  int
 	published int
+	stages    []string
 }
 
 func (c *syncNoopControl) KnowledgeSources(string) []domain.KnowledgeSource {
@@ -352,6 +393,12 @@ func (c *syncNoopControl) PublishKnowledgeSync(ctx context.Context, _ string, _ 
 }
 func (c *syncNoopControl) KnowledgeSource(string) (domain.KnowledgeSource, bool) {
 	return c.src, true
+}
+func (c *syncNoopControl) SetKnowledgeSyncStage(_, _, stage string) error {
+	if len(c.stages) == 0 || c.stages[len(c.stages)-1] != stage {
+		c.stages = append(c.stages, stage)
+	}
+	return nil
 }
 
 type syncNoopContent struct {

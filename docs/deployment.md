@@ -128,8 +128,9 @@ The helper applies the 002 knowledge baseline (needed by 035) and then every scr
 | `035_knowledge_concurrency.sql` | control + content | Submission version/fingerprint/CAS columns, writeback claims, operation leases; content fences and immutable review-body staging |
 | `036_knowledge_schema_cleanup.sql` | content + control | Review-body staging table, binary path collation, nullable writeback submission ID, legacy payload-body migration |
 | `037_knowledge_source_namespace.sql` | control + content + control | Rename legacy hosted base/source IDs, move content rows and fences to the new IDs, migrate control references, record schema version 37 |
+| `038_knowledge_governance_noise.sql` | control | Per-source metadata-check switch, sync stage, gap status and repeat actor; record schema version 38 |
 
-`035`, `036` and `037` are data migrations, not just DDL. Do not run them while an old API or worker can still write review bodies, sync content or create sources. `037` also writes `knowledge_schema_versions(37)`; the new binary refuses to start until that row exists.
+`035`, `036` and `037` are data migrations, not just DDL. Do not run them while an old API or worker can still write review bodies, sync content or create sources. `037` writes `knowledge_schema_versions(37)`. `038` writes version 38; the new binary refuses to start until that row exists.
 
 ### Upgrading a multi-instance deployment
 
@@ -148,7 +149,7 @@ The install and update scripts stop only the platform container on the current h
    bash scripts/knowledge-schema.sh check --compose
    ```
    For a content database on another server, run the same command with `AGENTFLOW_KNOWLEDGE_MYSQL_DSN` exported; 037's mapping is imported into the content database before its content segment.
-4. Start the new binaries only after the script and ngram check succeed. Starting an older binary after 037 is not supported, and starting the new binary before 037 fails fast with the repair command.
+4. Start the new binaries only after the script and ngram check succeed. Starting an older binary after 037 is not supported, and starting the new binary before 038 fails fast with the repair command.
 
 `./start.sh pull` performs steps 2–4 for this host's Compose platform, but it cannot stop remote API/worker instances; stop them first.
 

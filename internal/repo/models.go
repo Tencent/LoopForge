@@ -741,6 +741,8 @@ type knowledgeSourceRow struct {
 	LastSyncedAt         *time.Time `gorm:"column:last_synced_at"`
 	LeaseOwner           string     `gorm:"column:lease_owner;size:255"`
 	LeaseUntil           *time.Time `gorm:"column:lease_until"`
+	MetadataChecks       bool       `gorm:"column:metadata_checks;not null;default:1"`
+	SyncStage            string     `gorm:"column:sync_stage;size:32;not null;default:''"`
 }
 
 func (knowledgeSourceRow) TableName() string { return "knowledge_sources" }
@@ -930,6 +932,9 @@ type knowledgeGapRow struct {
 	Normalized      string     `gorm:"column:normalized_query;primaryKey;size:500"`
 	Query           string     `gorm:"column:query_text;size:500"`
 	OccurrenceCount int        `gorm:"column:occurrence_count"`
+	Status          string     `gorm:"column:status;size:16;not null;default:open"`
+	LastUserID      int64      `gorm:"column:last_user_id"`
+	LastSessionID   string     `gorm:"column:last_session_id;size:64"`
 	FirstSeen       *time.Time `gorm:"column:first_seen"`
 	LastSeen        *time.Time `gorm:"column:last_seen;index:idx_knowledge_gaps_last_seen"`
 }

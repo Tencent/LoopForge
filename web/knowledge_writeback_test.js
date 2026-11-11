@@ -49,6 +49,39 @@ assert.equal(ctx.kbVectorStatusText(true, false), '向量检索：已启用');
 assert.equal(ctx.kbVectorStatusText(false, false), '向量检索：未启用（仅关键词）');
 assert.match(ctx.kbSourceProgressHTML({ vectorCurrent: 32, vectorTotal: 40 }), /重建向量中 32\/40/);
 assert.equal(ctx.kbSourceProgressHTML({}), '');
+assert.equal(ctx.kbSyncStageLabel('pulling'), '拉取中');
+assert.equal(ctx.kbSyncStageLabel('comparing'), '比对中');
+assert.equal(ctx.kbSyncStageLabel('indexing'), '建索引中');
+assert.equal(ctx.kbSyncStageLabel(''), '');
+
+ctx.state={projectFilter:'p',data:{projects:[{id:'p',name:'体验'}]}};
+const kbState=ctx.kbViewModel();
+kbState.sharedAdmin=false;
+kbState.overview={bases:[{id:'b',layer:'project',name:'项目知识库',sources:[
+  {id:'git1',baseId:'b',kind:'git',name:'LoopForge 文档',status:'syncing',syncStage:'pulling',branch:'main',metadataChecks:true,docCount:25},
+]}]};
+const sourcesHTML=ctx.kbSourcesPanelHTML(true);
+assert.match(sourcesHTML, /拉取中/);
+assert.match(sourcesHTML, /data-kb-metadata="git1"/);
+assert.match(sourcesHTML, /aria-checked="true"/);
+
+ctx.relativeTime=()=>'刚刚';
+ctx.$=()=>null;
+kbState.governance={
+  metadataRule:'没有 frontmatter 的文档只检查死链和标题重复',
+  counts:{stale:0,duplicate:1,dead_link:0,missing_owner:0,total:1},
+  issues:[],feedback:[],
+  gaps:[{query:'香蕉皮',count:2,lastSeen:'2026-11-11T00:00:00Z'}],
+  gapsTotal:1,gapsHidden:3,
+};
+const body={innerHTML:'',querySelectorAll(){return []}};
+ctx.kbRenderGovernance(body);
+assert.match(body.innerHTML, /没有 frontmatter/);
+assert.match(body.innerHTML, /忽略/);
+assert.match(body.innerHTML, /已处理/);
+assert.match(body.innerHTML, /另有 3 条已忽略或已处理/);
+assert.match(source, /\/api\/knowledge\/governance\/gaps/);
+assert.match(source, /\/api\/knowledge\/bases\/sources\/metadata/);
 
 assert.match(ctx.kbGitCredentialError('git@github.com:Tencent/LoopForge.git', ''), /SSH 地址需要部署密钥/);
 assert.equal(ctx.kbGitCredentialError('git@github.com:Tencent/LoopForge.git', 'ssh'), '');

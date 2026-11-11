@@ -11,7 +11,8 @@
 # the control database (AGENTFLOW_MYSQL_DSN) or the content database
 # (AGENTFLOW_KNOWLEDGE_MYSQL_DSN, falling back to the control DSN). Scripts
 # without markers are control-plane only. 037's mapping table is copied to a
-# separate content database before its content segment runs.
+# separate content database before its content segment runs. 038 is included
+# in the same numeric sweep and records knowledge_schema_versions(38).
 #
 # `check` fails with an explicit repair command when the ngram full-text index
 # required by the MySQL keyword adapter is absent. `seed` applies

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +24,15 @@ type knowledgeHandlers struct {
 
 func (h *knowledgeHandlers) canManage(r *http.Request) bool {
 	return !authRequired() || h.isPlatformAdmin(r)
+}
+
+func (h *knowledgeHandlers) withGapActor(c *gin.Context) context.Context {
+	ctx := c.Request.Context()
+	actor := knowledge.GapActor{}
+	if user, ok := h.requestUser(c.Request, true); ok && user != nil {
+		actor.UserID = user.ID
+	}
+	return knowledge.WithGapActor(ctx, actor)
 }
 
 func (h *knowledgeHandlers) actor(r *http.Request) string {
@@ -72,7 +82,7 @@ func (h *knowledgeHandlers) search(c *gin.Context) {
 	if !h.requireKnowledgeReader(c, input.ProjectID) {
 		return
 	}
-	out, err := h.svc.Search(c.Request.Context(), input.ProjectID, input.Query, input.Sources)
+	out, err := h.svc.Search(h.withGapActor(c), input.ProjectID, input.Query, input.Sources)
 	render(c, out, err)
 }
 

@@ -67,6 +67,39 @@ func commitAll(t *testing.T, dir string) {
 	run("commit", "-m", "change")
 }
 
+func TestSyncReportsPullThenCompare(t *testing.T) {
+	src := fixtureRepo(t)
+	var stages []string
+	ctx := WithProgress(context.Background(), func(stage string) { stages = append(stages, stage) })
+	if _, _, _, _, _, err := Sync(ctx, filepath.Join(t.TempDir(), "cache"), src, "main", nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(stages, ",") != StagePulling+","+StageComparing {
+		t.Fatalf("stages = %v", stages)
+	}
+}
+
+func TestRemoteHeadReadsLocalBranchWithoutCloning(t *testing.T) {
+	src := fixtureRepo(t)
+	head, err := RemoteHead(context.Background(), src, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = src
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head != strings.TrimSpace(string(out)) {
+		t.Fatalf("ls-remote head = %s, rev-parse = %s", head, strings.TrimSpace(string(out)))
+	}
+	cache := filepath.Join(t.TempDir(), "should-not-exist")
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatal("remote head probe created a cache")
+	}
+}
+
 func TestSyncCloneAndIncremental(t *testing.T) {
 	ctx := context.Background()
 	src := fixtureRepo(t)

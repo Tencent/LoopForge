@@ -169,7 +169,7 @@ func (h *knowledgeHandlers) basesSearch(c *gin.Context) {
 	if !h.requireKnowledgeReader(c, input.ProjectID) {
 		return
 	}
-	out, err := h.svc.TrialSearch(c.Request.Context(), h.kbUpstream(), input.ProjectID, input.Query, input.Sources)
+	out, err := h.svc.TrialSearch(h.withGapActor(c), h.kbUpstream(), input.ProjectID, input.Query, input.Sources)
 	render(c, out, err)
 }
 
@@ -244,6 +244,27 @@ func (h *knowledgeHandlers) requireKnowledgeManager(c *gin.Context, projectID st
 	}
 	c.JSON(403, gin.H{"error": "只有项目成员、项目 Owner 或平台管理员可以管理知识库来源凭据"})
 	return false
+}
+
+// 路由: g.POST("/api/knowledge/bases/sources/metadata", h.basesSourceMetadata)
+func (h *knowledgeHandlers) basesSourceMetadata(c *gin.Context) {
+	var input struct {
+		ProjectID string `json:"projectId"`
+		SourceID  string `json:"sourceId"`
+		Enabled   *bool  `json:"enabled"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	if !h.requireKnowledgeManager(c, input.ProjectID) {
+		return
+	}
+	if input.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请指定是否检查负责人与过期"})
+		return
+	}
+	src, err := h.svc.SetSourceMetadataChecks(input.ProjectID, input.SourceID, *input.Enabled)
+	render(c, src, err)
 }
 
 func (h *knowledgeHandlers) basesSourceCredential(c *gin.Context) {

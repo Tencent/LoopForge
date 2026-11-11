@@ -14,6 +14,45 @@ import (
 
 type publicGitOptions struct{}
 
+// RemoteHead 用 ls-remote 读取分支尖端，不克隆仓库。本地绝对路径只给测试；
+// 公网地址走与同步相同的地址校验和凭据。
+func RemoteHead(ctx context.Context, remote, branch string) (string, error) {
+	remote = strings.TrimSpace(remote)
+	branch = strings.TrimSpace(branch)
+	if !validRemote(remote) || !validBranch(branch) {
+		return "", errors.New("public Git URL required")
+	}
+	if filepath.IsAbs(remote) {
+		return lsRemoteHead(ctx, remote, branch)
+	}
+	options, sshIP, err := remoteGitOptions(ctx, remote)
+	if err != nil {
+		return "", err
+	}
+	credential, _ := ctx.Value(credentialContext{}).(*knowledge.GitCredential)
+	authCtx, cleanup, err := authenticatedGitContext(ctx, remote, options, credential, sshIP)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	return lsRemoteHead(authCtx, remote, branch)
+}
+
+func lsRemoteHead(ctx context.Context, remote, branch string) (string, error) {
+	out, err := git(ctx, os.TempDir(), "ls-remote", "--heads", "--", remote, "refs/heads/"+branch)
+	if err != nil {
+		return "", err
+	}
+	want := "refs/heads/" + branch
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.Split(strings.TrimSpace(line), "\t")
+		if len(parts) == 2 && parts[1] == want && len(parts[0]) >= 7 {
+			return parts[0], nil
+		}
+	}
+	return "", errors.New("remote branch not found")
+}
+
 // SyncRemote pins DNS to validated public addresses and disables redirects
 // and proxies, so Git cannot re-resolve a checked hostname to a private target.
 func SyncRemote(ctx context.Context, dir, remote, branch string, old map[string]string) (string, string, []FileInfo, []string, []string, error) {

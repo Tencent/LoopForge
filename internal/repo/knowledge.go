@@ -432,6 +432,7 @@ func (r *KnowledgeRepo) PutKnowledgeSource(source domain.KnowledgeSource) error 
 		Status: source.Status, IndexStatus: source.IndexStatus, DocCount: source.DocCount,
 		LastError: source.LastError, LastSyncedAt: source.LastSyncedAt,
 		LeaseOwner: source.LeaseOwner, LeaseUntil: source.LeaseUntil,
+		MetadataChecks: true,
 	}
 	columns := []string{"base_id", "kind", "name", "git_url", "branch", "path_prefix", "last_error"}
 	if source.Kind != "git" {
@@ -498,6 +499,7 @@ func knowledgeSourceFromRow(row knowledgeSourceRow) domain.KnowledgeSource {
 		Status: row.Status, IndexStatus: row.IndexStatus, DocCount: row.DocCount,
 		LastError: row.LastError, LastSyncedAt: row.LastSyncedAt,
 		LeaseOwner: row.LeaseOwner, LeaseUntil: row.LeaseUntil,
+		MetadataChecks: row.MetadataChecks, SyncStage: row.SyncStage,
 	}
 }
 
@@ -511,6 +513,25 @@ func (r *KnowledgeRepo) PutKnowledgeSourceWithCredential(source domain.Knowledge
 		}
 		return tx.Model(&knowledgeSourceRow{}).Where("id = ? AND status <> 'deleting'", source.ID).Update("credential_ciphertext", ciphertext).Error
 	})
+}
+
+// SetKnowledgeSourceMetadataChecks 只改来源的元数据检查开关，不动同步状态。
+// 来源不存在时返回 ErrRecordNotFound。
+func (r *KnowledgeRepo) SetKnowledgeSourceMetadataChecks(id string, enabled bool) error {
+	result := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND status <> 'deleting'", strings.TrimSpace(id)).Update("metadata_checks", enabled)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		var n int64
+		if err := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND status <> 'deleting'", strings.TrimSpace(id)).Count(&n).Error; err != nil {
+			return err
+		}
+		if n != 1 {
+			return gorm.ErrRecordNotFound
+		}
+	}
+	return nil
 }
 
 func (r *KnowledgeRepo) SetKnowledgeSourceCredential(id, ciphertext string) error {
@@ -693,8 +714,9 @@ func (r *KnowledgeRepo) KnowledgePublicationValid(id string, version uint64) boo
 
 // KnowledgeSchemaVersion is the data-migration generation required by this
 // binary. 037 renames legacy hosted source IDs and inserts version 37 only
-// after both planes have been migrated.
-const KnowledgeSchemaVersion = 37
+// after both planes have been migrated. 038 adds governance noise-control
+// columns and inserts version 38.
+const KnowledgeSchemaVersion = 38
 
 var ErrKnowledgeSchemaOutdated = errors.New("knowledge schema is not upgraded")
 
@@ -730,5 +752,5 @@ func (r *KnowledgeRepo) CheckKnowledgeSchema() error {
 	if version >= KnowledgeSchemaVersion {
 		return nil
 	}
-	return fmt.Errorf("%w: 当前版本 %d，需要 %d。升级前先停止所有 API/worker 实例（不只是本机 Compose 平台），执行 bash scripts/knowledge-schema.sh apply 完成 035–037 迁移，再启动服务", ErrKnowledgeSchemaOutdated, version, KnowledgeSchemaVersion)
+	return fmt.Errorf("%w: 当前版本 %d，需要 %d。升级前先停止所有 API/worker 实例（不只是本机 Compose 平台），执行 bash scripts/knowledge-schema.sh apply 完成 035–038 迁移，再启动服务", ErrKnowledgeSchemaOutdated, version, KnowledgeSchemaVersion)
 }

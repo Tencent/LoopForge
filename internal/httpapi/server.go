@@ -513,6 +513,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/citations/freshness", api.know.citationFreshness)
 	g.POST("/api/knowledge/bases/sources", api.know.basesSources)
 	g.PUT("/api/knowledge/bases/sources/credential", api.know.basesSourceCredential)
+	g.POST("/api/knowledge/bases/sources/metadata", api.know.basesSourceMetadata)
 	g.DELETE("/api/knowledge/bases/sources", api.know.basesSourceDelete)
 	g.POST("/api/knowledge/bases/sync", api.know.basesSync)
 	g.POST("/api/knowledge/bases/search", api.know.basesSearch)
@@ -522,6 +523,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/knowledge/bases/sediment", api.know.knowledgeSedimentConfigUpdate)
 	g.GET("/api/knowledge/governance", api.know.governanceOverview)
 	g.POST("/api/knowledge/governance/scan", api.know.governanceScan)
+	g.POST("/api/knowledge/governance/gaps", api.know.governanceGap)
 	g.POST("/api/knowledge/governance/dispose", api.know.governanceDispose)
 	g.POST("/api/knowledge/feedback", api.know.knowledgeFeedback)
 

@@ -1,6 +1,7 @@
 // 知识中心：本项目的托管知识库、来源、文档、试搜与读原文；角色与审核标签保留。
 // 依赖 app.js 的全局 state、api、$、$$、escapeHTML、toast、relativeTime、switchView、showRunDetail、huiIcon、afConfirm。
 const kb={tab:'bases',projectId:null,overview:null,overviewError:'',docs:{source:'',items:[],error:'',loading:false,loaded:false},usage:null,candidates:[],submissions:[],subStatus:'todo',draft:null,togglingAgents:new Set(),search:{query:'',sources:[],result:null,loading:false,error:'',seq:0},governance:null,governanceError:'',feedbackSent:new Set(),drawer:{opener:null,openerKey:'',seq:0},pollTimer:0,rendered:false,pendingCitation:''};
+function kbViewModel(){return kb}
 
 const KB_TOOLS=[
   ['kb_search','在项目已授权来源里做关键词检索，返回带出处和行号的结果'],
@@ -28,6 +29,8 @@ function kbWriteInfoHTML(d){
   return `<div class="kb-write-info">${st?kbBadge(escapeHTML(st[0]),st[1]):''}${parts.join(' · ')}${note}${err}</div>`;
 }
 const KB_SOURCE_STATUS={ready:['就绪','ok'],pending:['待同步','warn'],syncing:['同步中','warn'],error:['异常','err'],failed:['异常','err'],'':['未同步','warn']};
+const KB_SYNC_STAGE={pulling:'拉取中',comparing:'比对中',indexing:'建索引中'};
+function kbSyncStageLabel(stage){return KB_SYNC_STAGE[stage]||''}
 const KB_DOC_STATUS={draft:['草稿',''],verified:['已验证','ok'],deprecated:['已废弃','warn'],archived:['已归档','']};
 const KB_GOVERNANCE_TYPE={stale:['过期','warn'],duplicate:['重复','warn'],dead_link:['死链','err'],missing_owner:['缺负责人','warn']};
 const KB_FEEDBACK_KIND={helpful:['有用','ok'],not_helpful:['没用','warn'],issue:['标记问题','warn']};
@@ -361,19 +364,31 @@ function kbSourceProgressHTML(s){
 function kbSourcesPanelHTML(canManage){
   const sources=kbAllSources();
   return kbPanel(kbPanelTitle('来源与同步状态','同步状态、篇数与最近错误'),sources.length?sources.map(s=>{
-    const [label,tone]=KB_SOURCE_STATUS[s.status]||[s.status||'未同步','warn'];
+    let [label,tone]=KB_SOURCE_STATUS[s.status]||[s.status||'未同步','warn'];
+    const stageLabel=kbSyncStageLabel(s.syncStage);
+    if(stageLabel){label=stageLabel;tone='warn'}
     const synced=s.lastSyncedAt?` · 最近同步 ${escapeHTML(relativeTime(s.lastSyncedAt))}`:'';
     const meta=s.kind==='git'?`Git · ${escapeHTML(s.branch||'main')} · ${escapeHTML(s.pathPrefix||'仓库根目录')}${synced}`:`托管${synced}`;
     const err=s.lastError?`<div class="kb-row-desc kb-err" title="${escapeHTML(s.lastError)}">同步错误：${escapeHTML(s.lastError)}</div>`:'';
+    const metaSwitch=canManage&&kbSourceWritable(s)?kbSwitch(s.metadataChecks!==false,'检查负责人与过期',{attrs:`data-kb-metadata="${escapeHTML(s.id)}"`}):'';
     const actions=s.kind==='git'&&canManage&&kbSourceWritable(s)
-      ?`<span class="kb-row-actions"><button type="button" class="kb-btn small" data-kb-credential="${escapeHTML(s.id)}">${s.credentialConfigured?'替换凭据':'配置凭据'}</button><button type="button" class="kb-btn small" data-kb-sync="${escapeHTML(s.id)}">同步</button><button type="button" class="kb-btn quiet small" data-kb-del="${escapeHTML(s.id)}">删除</button></span>`
-      :'';
+      ?`<span class="kb-row-actions">${metaSwitch}<button type="button" class="kb-btn small" data-kb-credential="${escapeHTML(s.id)}">${s.credentialConfigured?'替换凭据':'配置凭据'}</button><button type="button" class="kb-btn small" data-kb-sync="${escapeHTML(s.id)}">同步</button><button type="button" class="kb-btn quiet small" data-kb-del="${escapeHTML(s.id)}">删除</button></span>`
+      :metaSwitch;
     const name=kbSourceName(s);
     return kbRow(kbText(escapeHTML(name)+(s.credentialConfigured?'<span class="kb-hint"> · 凭据已配置</span>':''),`<span>${escapeHTML(kbSourceLabel(s))}</span> · ${meta} · ${Number(s.docCount)||0} 篇`)+err+kbSourceProgressHTML(s),actions+kbBadge(escapeHTML(label),tone),{cls:'kb-source-row'});
   }).join(''):'<div class="kb-empty">暂无来源</div>',{label:'来源与同步状态'});
 }
 
 function kbBindSourceActions(root){
+  root.querySelectorAll('[data-kb-metadata]').forEach(btn=>btn.onclick=async()=>{
+    const enabled=btn.getAttribute('aria-checked')!=='true';
+    btn.disabled=true;
+    try{
+      await api('/api/knowledge/bases/sources/metadata',{method:'POST',body:JSON.stringify({projectId:kbProjectId(),sourceId:btn.dataset.kbMetadata,enabled})});
+      toast(enabled?'已开启负责人与过期检查':'已关闭负责人与过期检查','ok');
+      await renderKnowledgeView();
+    }catch(err){btn.disabled=false;toast(err.message,'err')}
+  });
   root.querySelectorAll('[data-kb-credential]').forEach(btn=>btn.onclick=()=>kbOpenCredentialEditor(btn.dataset.kbCredential));
   root.querySelectorAll('[data-kb-sync]').forEach(btn=>btn.onclick=async()=>{
     btn.disabled=true;
@@ -933,11 +948,17 @@ function kbRenderGovernance(body){
   const gaps=g.gaps||[];
   const last=g.lastScanAt?relativeTime(g.lastScanAt):'尚未检查';
   const chips=Object.entries(KB_GOVERNANCE_TYPE).map(([k,meta])=>`<span class="kb-gov-chip">${meta[0]} <b>${Number(counts[k])||0}</b></span>`).join('');
+  const rule=g.metadataRule||'没有 frontmatter 的文档只检查死链和标题重复；负责人和过期只检查写了 frontmatter 的文档。可在来源上关闭元数据检查。';
   const health=kbPanel(`${kbPanelTitle('健康检查',`最近检查 ${escapeHTML(last)}`)}<button type="button" class="kb-btn small" id="kbGovScan">立即检查</button>`,
-    `<div class="kb-gov-chips">${chips}<span class="kb-gov-chip">合计 <b>${Number(counts.total)||0}</b></span></div>${issues.length?issues.map(kbGovernanceIssueHTML).join(''):'<div class="kb-empty">还没有健康检查结果。点「立即检查」或等待每日定时检查。</div>'}`,
+    `<div class="kb-cap">${escapeHTML(rule)}</div><div class="kb-gov-chips">${chips}<span class="kb-gov-chip">合计 <b>${Number(counts.total)||0}</b></span></div>${issues.length?issues.map(kbGovernanceIssueHTML).join(''):'<div class="kb-empty">还没有健康检查结果。点「立即检查」或等待每日定时检查。</div>'}`,
     {label:'健康检查'});
   const feedbackPanel=kbPanel(kbPanelTitle('反馈与问题标记',`${feedback.length} 条`),feedback.length?feedback.map(kbFeedbackRowHTML).join(''):'<div class="kb-empty">还没有反馈。试搜、读原文或 Main Bot 回答旁都可以反馈；Agent 可用 kb_report_issue 标记问题。</div>',{label:'反馈与问题标记'});
-  const gapsPanel=kbPanel(kbPanelTitle('知识缺口',`${Number(g.gapsTotal)||0} 组搜不到结果的查询`),gaps.length?gaps.map((gap,i)=>kbRow(kbText(escapeHTML(gap.query||'-'),`出现 ${Number(gap.count)||1} 次 · 最近 ${escapeHTML(relativeTime(gap.lastSeen))}`),kbValue(String(Number(gap.count)||1),'kb-source-num'),{cls:'kb-gap-row',attrs:`data-kb-key="gap:${i}"`})).join(''):'<div class="kb-empty">还没有知识缺口记录。试搜没有命中时会自动记录在这里。</div>',{label:'知识缺口'});
+  const hidden=Number(g.gapsHidden)||0;
+  const gapRows=gaps.length?gaps.map((gap,i)=>{
+    const actions=`<span class="kb-row-actions"><button type="button" class="kb-btn small" data-kb-gap="ignored" data-kb-gap-index="${i}">忽略</button><button type="button" class="kb-btn quiet small" data-kb-gap="resolved" data-kb-gap-index="${i}">已处理</button></span>`;
+    return kbRow(kbText(escapeHTML(gap.query||'-'),`出现 ${Number(gap.count)||1} 次 · 最近 ${escapeHTML(relativeTime(gap.lastSeen))}`),actions+kbValue(String(Number(gap.count)||1),'kb-source-num'),{cls:'kb-gap-row',attrs:`data-kb-key="gap:${i}"`});
+  }).join(''):'<div class="kb-empty">还没有知识缺口记录。试搜没有命中时会自动记录在这里。</div>';
+  const gapsPanel=kbPanel(kbPanelTitle('知识缺口',`${Number(g.gapsTotal)||0} 组搜不到结果的查询`),`${gapRows}${hidden?`<div class="kb-cap">另有 ${hidden} 条已忽略或已处理，不再显示。</div>`:''}`,{label:'知识缺口'});
   const usage=kbCitationUsageHTML(g);
   body.innerHTML=`<div class="kb-gov-layout"><div class="kb-gov-main">${health}${feedbackPanel}</div><div class="kb-gov-side">${gapsPanel}${usage}</div></div>`;
   const scan=$('#kbGovScan');
@@ -949,6 +970,17 @@ function kbRenderGovernance(body){
       await kbRefresh();kbRender();
     }catch(err){scan.disabled=false;scan.textContent='立即检查';toast(err.message,'err')}
   };
+  body.querySelectorAll('[data-kb-gap]').forEach(btn=>btn.onclick=async e=>{
+    e.stopPropagation();
+    const gap=gaps[Number(btn.dataset.kbGapIndex)];
+    if(!gap)return;
+    btn.disabled=true;
+    try{
+      await api('/api/knowledge/governance/gaps',{method:'POST',body:JSON.stringify({projectId:kbProjectId(),query:gap.query,status:btn.dataset.kbGap})});
+      toast(btn.dataset.kbGap==='ignored'?'已忽略这条缺口':'已标为处理过','ok');
+      await kbRefresh();kbRender();
+    }catch(err){btn.disabled=false;toast(err.message,'err')}
+  });
   body.querySelectorAll('[data-kb-gov-action]').forEach(btn=>btn.onclick=async e=>{
     e.stopPropagation();
     const action=btn.dataset.kbGovAction;

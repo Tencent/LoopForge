@@ -16,15 +16,27 @@ func (r *KnowledgeRepo) ClaimKnowledgeSync(id, owner string, ttl time.Duration) 
 		return false, errors.New("owner and positive TTL required")
 	}
 	q := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND kind = ? AND status IN ?", id, "git", []string{"pending", "syncing"}).Where("lease_until IS NULL OR lease_until <= UTC_TIMESTAMP(6)")
-	res := q.Updates(map[string]any{"lease_owner": owner, "lease_version": gorm.Expr("GREATEST(lease_version + 1, CAST(UNIX_TIMESTAMP(UTC_TIMESTAMP(6)) * 1000000 AS UNSIGNED))"), "lease_until": gorm.Expr("TIMESTAMPADD(MICROSECOND, ?, UTC_TIMESTAMP(6))", ttl.Microseconds()), "status": "syncing", "index_status": "indexing"})
+	res := q.Updates(map[string]any{"lease_owner": owner, "lease_version": gorm.Expr("GREATEST(lease_version + 1, CAST(UNIX_TIMESTAMP(UTC_TIMESTAMP(6)) * 1000000 AS UNSIGNED))"), "lease_until": gorm.Expr("TIMESTAMPADD(MICROSECOND, ?, UTC_TIMESTAMP(6))", ttl.Microseconds()), "status": "syncing", "index_status": "indexing", "sync_stage": ""})
 	return res.RowsAffected == 1, res.Error
 }
+
+// SetKnowledgeSyncStage 只在当前租约持有者同步中时写入阶段，避免过期 worker
+// 把别人的来源行改成「拉取中」。
+func (r *KnowledgeRepo) SetKnowledgeSyncStage(id, owner, stage string) error {
+	switch stage {
+	case "", "pulling", "comparing", "indexing":
+	default:
+		return errors.New("invalid knowledge sync stage")
+	}
+	return r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND status = ? AND lease_owner = ?", strings.TrimSpace(id), "syncing", owner).Update("sync_stage", stage).Error
+}
+
 func (r *KnowledgeRepo) RenewKnowledgeSync(id, owner string, ttl time.Duration) (bool, error) {
 	res := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND status <> 'deleting' AND lease_owner = ? AND lease_until > UTC_TIMESTAMP(6)", id, owner).Update("lease_until", gorm.Expr("TIMESTAMPADD(MICROSECOND, ?, UTC_TIMESTAMP(6))", ttl.Microseconds()))
 	return res.RowsAffected == 1, res.Error
 }
 func (r *KnowledgeRepo) FinishKnowledgeSync(id, owner, head string, count int, lastError string) (bool, error) {
-	updates := map[string]any{"lease_owner": "", "lease_until": nil, "last_error": lastError, "status": gorm.Expr("CASE WHEN status = 'pending' THEN 'pending' ELSE 'error' END"), "index_status": "error"}
+	updates := map[string]any{"lease_owner": "", "lease_until": nil, "last_error": lastError, "sync_stage": "", "status": gorm.Expr("CASE WHEN status = 'pending' THEN 'pending' ELSE 'error' END"), "index_status": "error"}
 	if lastError == "" {
 		updates["status"] = gorm.Expr("CASE WHEN status = 'pending' THEN 'pending' ELSE 'ready' END")
 		updates["index_status"] = "ready"
@@ -56,7 +68,7 @@ func (r *KnowledgeRepo) PublishKnowledgeSync(ctx context.Context, id, owner, hea
 // RequestKnowledgeSync changes only queue state, preserving the current lease
 // and published snapshot even when a user queues another pass mid-sync.
 func (r *KnowledgeRepo) RequestKnowledgeSync(id string) error {
-	res := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND kind = 'git' AND status <> 'deleting'", id).Updates(map[string]any{"status": "pending", "last_error": ""})
+	res := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND kind = 'git' AND status <> 'deleting'", id).Updates(map[string]any{"status": "pending", "last_error": "", "sync_stage": ""})
 	if res.Error != nil {
 		return res.Error
 	}
