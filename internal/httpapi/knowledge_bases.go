@@ -86,6 +86,18 @@ func (h *knowledgeHandlers) basesSources(c *gin.Context) {
 	render(c, src, err)
 }
 
+// 路由: g.DELETE("/api/knowledge/bases/sources", h.basesSourceDelete)
+//
+// 删除不再需要的 Git 来源：先删内容面正文/修订/索引块，再删控制面记录。
+// 托管来源没有删除入口，后端也拒绝。
+func (h *knowledgeHandlers) basesSourceDelete(c *gin.Context) {
+	if err := h.svc.DeleteSource(c.Query("projectId"), c.Query("sourceId")); err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
 // 路由: g.POST("/api/knowledge/bases/sync", h.basesSync)
 //
 // 同步按钮只把来源状态置为待同步；实际同步由 worker 循环（S6）执行。

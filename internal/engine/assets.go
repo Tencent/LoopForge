@@ -68,7 +68,7 @@ func knowledgeSkippedWarning(agent domain.AgentDefinition, assets domain.AgentAs
 			return ""
 		}
 	}
-	return "角色开启了团队知识库，但未注入 " + domain.KnowledgeMCPServerID + "：未配置会话密钥"
+	return "角色开启了项目知识库，但未注入 " + domain.KnowledgeMCPServerID + "：未配置会话密钥"
 }
 
 // RoleAssets resolves a role's assets outside any SOP run, for a chat

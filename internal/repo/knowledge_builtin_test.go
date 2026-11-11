@@ -202,3 +202,42 @@ func TestBuiltinKnowledgeInstallWiring(t *testing.T) {
 		t.Fatal("026 必须在种子 SQL 之前执行")
 	}
 }
+
+func TestDeleteKnowledgeSourceContentRemovesAllContentRows(t *testing.T) {
+	s := builtinStore(t)
+	sourceID := "src-delete-content"
+	if err := s.PutKnowledgeDocument(domain.KnowledgeDocument{
+		SourceID: sourceID, Path: "a.md", Title: "A", Body: "# A\n", LineCount: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutKnowledgeRevision(domain.KnowledgeRevision{
+		ID: "rev-delete", SourceID: sourceID, Path: "a.md", Revision: 1, Body: "# A\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceKnowledgeChunks(sourceID, "a.md", []domain.KnowledgeChunk{{
+		SourceID: sourceID, Path: "a.md", Idx: 0, Title: "A", StartLine: 1, EndLine: 1, Text: "# A",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	other := domain.KnowledgeDocument{SourceID: "src-keep", Path: "keep.md", Title: "Keep", Body: "# Keep\n", LineCount: 1}
+	if err := s.PutKnowledgeDocument(other); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteKnowledgeSourceContent(sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if docs := s.KnowledgeDocuments(sourceID); len(docs) != 0 {
+		t.Fatalf("documents = %+v", docs)
+	}
+	if revs := s.KnowledgeRevisions(sourceID, "a.md"); len(revs) != 0 {
+		t.Fatalf("revisions = %+v", revs)
+	}
+	if chunks := s.KnowledgeChunks(sourceID, "a.md"); len(chunks) != 0 {
+		t.Fatalf("chunks = %+v", chunks)
+	}
+	if docs := s.KnowledgeDocuments("src-keep"); len(docs) != 1 {
+		t.Fatalf("其它来源的正文被误删: %+v", docs)
+	}
+}

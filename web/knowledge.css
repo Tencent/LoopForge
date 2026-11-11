@@ -96,12 +96,18 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
 .kb-row-icon { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: color-mix(in srgb, var(--hui-text) 5%, var(--hui-surface)); color: var(--hui-muted); }
 .kb-row-icon svg { width: 15px; height: 15px; }
 .kb-row.kb-go { cursor: pointer; transition: background-color 150ms ease; }
+.kb-source-row .kb-row-desc { display: -webkit-box; white-space: normal; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .kb-row.kb-go:hover { background: var(--kb-hover); }
 .kb-row.kb-go:focus-visible { outline: 2px solid var(--kb-focus); outline-offset: -2px; }
 .kb-chev { flex: none; color: var(--hui-tertiary); }
 .kb-hit .kb-row-title { font-weight: 500; }
 .kb-hit .kb-row-desc { display: -webkit-box; white-space: normal; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .kb-hit cite { display: block; margin-top: 4px; overflow: hidden; color: var(--hui-tertiary); font: 12px var(--mono); font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.kb-hit cite a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.kb-hit cite a:hover { color: var(--hui-accent); }
+.kb-cite { display: block; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.kb-row-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+.kb-row-actions .kb-btn.quiet { margin-right: 0; }
 .kb-off { color: var(--hui-tertiary); text-decoration: line-through; }
 
 /* 来源占比条 */
@@ -212,7 +218,7 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
 .kb-drawer-head { display: flex; align-items: flex-start; gap: 12px; padding: 20px 24px 16px; border-bottom: 1px solid var(--hui-border-soft); }
 .kb-drawer-heading { flex: 1; min-width: 0; }
 .kb-drawer h2 { margin: 0; overflow-wrap: anywhere; color: var(--hui-text); font-size: 16px; font-weight: 600; }
-.kb-drawer-sub { margin-top: 2px; overflow-wrap: anywhere; color: var(--hui-muted); font-size: 12.5px; }
+.kb-drawer-sub { margin-top: 2px; min-width: 0; overflow-wrap: anywhere; color: var(--hui-muted); font-size: 12.5px; }
 .kb-drawer-sub a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .kb-drawer-sub a:hover { color: var(--hui-accent); }
 .kb-drawer-close { flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--hui-muted); cursor: pointer; }
@@ -230,6 +236,8 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
 .kb-field { margin-top: 16px; }
 .kb-field > label { display: block; margin-bottom: 6px; color: var(--hui-secondary); font-size: 12.5px; font-weight: 500; }
 #kbDrawer .kb-field .kb-input { width: 100%; }
+.kb-field-error { margin-top: 6px; color: var(--hui-error); font-size: 12.5px; }
+.kb-field-error[hidden] { display: none; }
 .kb-field-pair { display: flex; gap: 8px; }
 #kbDrawer .kb-field-pair select.kb-input { flex: 0 0 40%; width: 40%; }
 #kbDrawer .kb-field-pair input.kb-input { flex: 1; min-width: 0; }
@@ -240,16 +248,17 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
 .kb-doc > div > code { min-width: 0; color: var(--hui-text); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 .kb-doc > div.hl { background: var(--kb-mark); box-shadow: inset 2px 0 0 var(--hui-warn); }
 
-/* 知识库与来源：登记表单、面板头控件、ngram 脚注 */
+/* 知识库与来源：登记表单、面板头控件、检索脚注 */
 .kb-src-form { padding: 2px 18px 0; }
 .kb-src-form .kb-input { width: 100%; }
 .kb-src-form .kb-field:first-child { margin-top: 10px; }
 .kb-src-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
-.kb-docs-head { display: flex; align-items: center; gap: 8px; }
+.kb-docs-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .kb-docs-head select.kb-input { height: 34px; width: auto; min-width: 150px; max-width: 220px; }
 .kb-panel .kb-row .kb-btn.small { margin-left: 4px; }
 .kb-search-note { padding: 10px 18px; color: var(--hui-tertiary); font-size: 12px; border-bottom: 1px solid var(--hui-border-soft); }
 .kb-panel .kb-row .kb-row-value.kb-source-num { width: auto; }
+.kb-docs-head .kb-hint { margin-right: 0; white-space: nowrap; }
 
 @media (max-width: 1080px) {
   .kb-grid { grid-template-columns: minmax(0, 1fr); }

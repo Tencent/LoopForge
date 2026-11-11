@@ -231,3 +231,136 @@ func TestImportGitWritesIntoConfiguredCacheRoot(t *testing.T) {
 		t.Fatalf("sync cache dir = %q, want %q", got, want)
 	}
 }
+
+type syncFakeControl struct {
+	finishOK         bool
+	finishedSummary  string
+	finishedCount    int
+	published        bool
+	publishCallbacks int
+}
+
+func (c *syncFakeControl) KnowledgeSources(string) []domain.KnowledgeSource { return nil }
+func (c *syncFakeControl) ClaimKnowledgeSync(string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+func (c *syncFakeControl) RenewKnowledgeSync(string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+func (c *syncFakeControl) FinishKnowledgeSync(_ string, _ string, _ string, count int, summary string) (bool, error) {
+	c.finishedCount = count
+	c.finishedSummary = summary
+	return c.finishOK, nil
+}
+func (c *syncFakeControl) PublishKnowledgeSync(ctx context.Context, _ string, _ string, _ string, _ int, publish func(context.Context) error) (bool, error) {
+	c.published = true
+	c.publishCallbacks++
+	return true, publish(ctx)
+}
+
+type syncFakeContent struct {
+	docs   []domain.KnowledgeDocument
+	chunks []domain.KnowledgeChunk
+}
+
+func (c *syncFakeContent) ReplaceGitKnowledge(_ context.Context, _ string, docs []domain.KnowledgeDocument, chunks []domain.KnowledgeChunk) error {
+	c.docs = docs
+	c.chunks = chunks
+	return nil
+}
+
+func TestSyncFailureMessageIsUserFacing(t *testing.T) {
+	cacheRoot := filepath.Join(t.TempDir(), "kb-git-136d7fcc94e3db62")
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"仓库不存在或需要凭据", errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled"), "仓库不存在，或该地址需要凭据"},
+		{"认证失败", errors.New("fatal: Authentication failed for 'https://github.com/x/private.git/'"), "仓库不存在，或该地址需要凭据"},
+		{"分支不存在", errors.New("fatal: Remote branch nope not found in upstream origin"), "分支不存在，请检查分支名"},
+		{"网络不可达", errors.New("fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host: github.com"), "无法连接仓库服务器，请检查网络或地址"},
+		{"连接超时", errors.New("fatal: unable to access 'https://github.com/x/y.git/': Operation timed out after 30000 milliseconds"), "无法连接仓库服务器，请检查网络或地址"},
+		{"非公开 HTTPS", errors.New("Git source requires public HTTPS without credentials"), "Git 地址必须是公开 HTTPS 仓库地址"},
+		{"路径前缀无效", errors.New("invalid path prefix"), "路径前缀无效，请使用仓库内的相对目录"},
+		{"其他错误", errors.New("boom"), "同步失败，请稍后重试"},
+	}
+	for _, tc := range cases {
+		got := syncFailureMessage(tc.err)
+		if got != tc.want {
+			t.Fatalf("%s: got %q want %q", tc.name, got, tc.want)
+		}
+		if strings.Contains(got, "git ") || strings.Contains(got, cacheRoot) || strings.Contains(got, "fatal:") {
+			t.Fatalf("%s: 用户文案泄露了原始错误: %q", tc.name, got)
+		}
+	}
+}
+
+func TestSyncClaimStoresFriendlyErrorWithoutGitDetails(t *testing.T) {
+	cacheRoot := filepath.Join(t.TempDir(), "knowledge-cache")
+	control := &syncFakeControl{finishOK: true}
+	w := NewSyncWorker(&Engine{newID: func() string { return "probe" }}, control, &syncFakeContent{}, cacheRoot, "worker")
+	w.syncGit = func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
+		return "", "", nil, nil, nil, errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled")
+	}
+	src := domain.KnowledgeSource{ID: "src", Kind: "git", GitURL: "https://github.com/example/missing.git", Branch: "main"}
+	if err := w.syncClaim(context.Background(), src, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if control.finishedSummary != "仓库不存在，或该地址需要凭据" {
+		t.Fatalf("来源上应存用户能懂的中文错误: %q", control.finishedSummary)
+	}
+	for _, leaked := range []string{"git ", cacheRoot, "fatal:", "terminal prompts disabled"} {
+		if strings.Contains(control.finishedSummary, leaked) {
+			t.Fatalf("用户可见错误泄露了 %q: %q", leaked, control.finishedSummary)
+		}
+	}
+}
+
+func TestImportGitIndexesRootMarkdownForEmptyPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docs", "guide.md"), []byte("# Guide\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := []gitsync.FileInfo{{Path: "README.md"}, {Path: "docs/guide.md"}}
+	for _, tc := range []struct {
+		name   string
+		prefix string
+		want   []string
+	}{
+		{"空前缀索引根目录与子目录", "", []string{"README.md", "docs/guide.md"}},
+		{"斜杠按空前缀处理", "/", []string{"README.md", "docs/guide.md"}},
+		{"限定前缀只索引子目录", "docs/", []string{"docs/guide.md"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			control := &syncFakeControl{finishOK: true}
+			content := &syncFakeContent{}
+			w := NewSyncWorker(&Engine{newID: func() string { return "probe" }}, control, content, t.TempDir(), "worker")
+			w.syncGit = func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
+				return dir, "abcdef", files, nil, nil, nil
+			}
+			src := domain.KnowledgeSource{ID: "src", Kind: "git", GitURL: "https://github.com/example/repo.git", Branch: "main", PathPrefix: tc.prefix, Status: "pending"}
+			_, count, err := w.importGit(context.Background(), src, "owner")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count != len(tc.want) {
+				t.Fatalf("count = %d want %d: %+v", count, len(tc.want), content.docs)
+			}
+			for i, doc := range content.docs {
+				if doc.Path != tc.want[i] {
+					t.Fatalf("docs = %+v want %v", content.docs, tc.want)
+				}
+			}
+			if !control.published || control.publishCallbacks != 1 {
+				t.Fatalf("同步结果应发布一次: %+v", control)
+			}
+		})
+	}
+}
