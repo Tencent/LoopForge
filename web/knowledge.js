@@ -571,7 +571,7 @@ function kbOpenInject(){
     ${KB_TOOLS.map(([n,d])=>kbRow(kbText(`<span class="mono">${n}</span>`,escapeHTML(d)))).join('')}
     ${kbRow(kbText('<span class="mono kb-off">kb_write_document</span>','不对 Agent 开放，写入只能经知识中心的托管文档编辑'))}
     ${kbCaption('说明')}
-    <div class="kb-cap">角色开启知识库开关后，运行时注入这 5 个知识库工具（4 个只读检索 + 1 个标记问题）与「知识库使用规范」；节点启动时平台签发限定本项目的令牌。Agent 对正文仍完全只读，标记问题只记录反馈、不改正文；运行到达闭环后，平台把该角色产出的 knowledge.md 自动加入审核队列，审核通过或门禁全过后才写回。</div>`;
+    <div class="kb-cap">角色开启知识库开关后，运行时注入这 6 个知识库工具（5 个只读检索 + 1 个标记问题）与「知识库使用规范」；节点启动时平台签发限定本项目的令牌。Agent 对正文仍完全只读，标记问题只记录反馈、不改正文；运行到达闭环后，平台把该角色产出的 knowledge.md 自动加入审核队列，审核通过或门禁全过后才写回。</div>`;
   kbDrawerOpen('运行时注入的工具与规则','Agent 只读正文；标记问题只记录反馈',body);
 }
 

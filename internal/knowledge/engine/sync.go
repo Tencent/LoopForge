@@ -276,6 +276,8 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 		if !ok {
 			return "", 0, errors.New("knowledge sync lease lost before publication")
 		}
+		// Git 来源的增量发布也要刷新向量缓存；否则合并写回后检索仍看到旧向量。
+		afterSourceSynced(ctx, src.ID)
 		return head, count, nil
 	}
 	// 没有增量能力的内容存储（单元测试的假实现）仍按完整快照发布。
