@@ -317,3 +317,89 @@ func TestDeleteSourceRefusesActiveWritebackLease(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSourceNamespaceCannotHijackPublicBase(t *testing.T) {
+	svc, store := newManagedTestService(t)
+	svc.newID = func() string { return "collision" }
+	shared, err := svc.CreateSharedBase("Public A", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := GitSourceInput{BaseID: shared.ID, GitURL: "https://example.com/docs.git", Branch: "main"}
+	public, err := svc.RegisterGitSource(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// User B chooses A's public base ID as their project ID.
+	if _, err := svc.EnsureHostedBase(shared.ID); err == nil {
+		t.Error("project ID matching an existing base must fail")
+	}
+	// A pre-existing collision project still cannot take the public source.
+	project := domain.KnowledgeBase{ID: "legacy-project", ProjectID: shared.ID, Layer: "project"}
+	if err := store.PutKnowledgeBase(project); err != nil {
+		t.Fatal(err)
+	}
+	input.ProjectID = shared.ID
+	input.BaseID = project.ID
+	own, err := svc.RegisterGitSource(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if own.ID == public.ID {
+		t.Error("B's Git source collided with A's public source")
+	}
+	saved, _ := store.KnowledgeSource(public.ID)
+	if saved.BaseID != shared.ID {
+		t.Error("public source ownership hijacked")
+	}
+}
+
+func TestHostedIDsFitStorageAndRejectForeignSources(t *testing.T) {
+	svc, store := newManagedTestService(t)
+	project := strings.Repeat("p", 64)
+	base, err := svc.EnsureHostedBase(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base.ID) > 64 {
+		t.Errorf("base ID exceeds storage limit: %d", len(base.ID))
+	}
+	for _, src := range store.KnowledgeSources(base.ID) {
+		if len(src.ID) > 64 {
+			t.Errorf("source ID exceeds storage limit: %d", len(src.ID))
+		}
+	}
+	// A corrupt deterministic source must fail instead of being silently adopted.
+	store.PutKnowledgeBase(domain.KnowledgeBase{ID: "foreign", ProjectID: "a", Layer: "project"})
+	store.PutKnowledgeSource(domain.KnowledgeSource{ID: hostedSourceID("b"), BaseID: "foreign", Kind: "hosted"})
+	if _, err := svc.EnsureHostedBase("b"); err == nil {
+		t.Error("adopted another project's hosted source")
+	}
+}
+
+func TestRegisterGitSourcePreservesOwnedLegacyCredential(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "legacy-credential-test")
+	svc, store := newManagedTestService(t)
+	base, err := svc.EnsureHostedBase("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const source = "kb-git-legacy-id"
+	credential := GitCredential{Kind: "https", Username: "deploy", Token: "test-token"}
+	ciphertext, err := encryptGitCredential(source, credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutKnowledgeSourceWithCredential(domain.KnowledgeSource{ID: source, BaseID: base.ID, Kind: "git", GitURL: "https://example.com/docs.git", Branch: "main"}, ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.RegisterGitSource(GitSourceInput{ProjectID: "legacy", BaseID: base.ID, GitURL: "https://example.com/docs.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := store.KnowledgeSource(got.ID)
+	decoded, err := DecryptGitCredential(saved.ID, saved.CredentialCiphertext)
+	if got.ID != source || err != nil || decoded == nil || decoded.Token != "test-token" {
+		t.Fatalf("legacy grant lost: id=%s err=%v", got.ID, err)
+	}
+}

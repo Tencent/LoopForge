@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +40,9 @@ func CommitAndPushRemote(ctx context.Context, dir, remote, baseBranch string, op
 		return WriteResult{}, err
 	}
 	defer cleanup()
+	if err := privateCacheDir(dir); err != nil {
+		return WriteResult{}, err
+	}
 	return CommitAndPush(authCtx, dir, strings.TrimSpace(remote), baseBranch, opts)
 }
 
@@ -58,6 +60,9 @@ func RemoteContainsCommitRemote(ctx context.Context, dir, remote, baseBranch, co
 		return false, err
 	}
 	defer cleanup()
+	if err := privateCacheDir(dir); err != nil {
+		return false, err
+	}
 	if _, statErr := os.Stat(filepath.Join(dir, ".git")); statErr != nil {
 		if _, _, _, _, _, err := Sync(authCtx, dir, strings.TrimSpace(remote), baseBranch, nil); err != nil {
 			return false, err
@@ -97,14 +102,14 @@ func publicOptions(ctx context.Context, remote string, lookup func(context.Conte
 	if err != nil {
 		return nil, errors.New("public Git URL required")
 	}
-	addresses, err := lookup(ctx, u.Hostname())
+	addresses, err := gitremote.PublicAddresses(ctx, u.Hostname(), lookup)
 	if err != nil || len(addresses) == 0 {
 		return nil, errors.New("cannot resolve public Git host")
 	}
 	ips := []string{}
 	for _, a := range addresses {
 		ip := a.IP
-		if reservedPublicIP(ip) || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+		if !gitremote.IsPublicIP(ip) {
 			return nil, errors.New("Git host must resolve only to public addresses")
 		}
 		v := ip.String()
@@ -121,19 +126,4 @@ func publicOptions(ctx context.Context, remote string, lookup func(context.Conte
 		port = "443"
 	}
 	return []string{"http.followRedirects=false", "http.proxy=", "http.sslVerify=true", "protocol.allow=never", "protocol.https.allow=always", "http.curloptResolve=" + u.Hostname() + ":" + port + ":" + strings.Join(ips, ",")}, nil
-}
-
-// Exclude non-public ranges that net.IP.IsPrivate intentionally does not cover.
-func reservedPublicIP(ip net.IP) bool {
-	a, ok := netip.AddrFromSlice(ip)
-	if !ok {
-		return true
-	}
-	a = a.Unmap()
-	for _, s := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4", "2001:db8::/32", "::/96", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32"} {
-		if netip.MustParsePrefix(s).Contains(a) {
-			return true
-		}
-	}
-	return false
 }

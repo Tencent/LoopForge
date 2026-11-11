@@ -592,6 +592,13 @@ func (s *Service) publishRetraction(ctx context.Context, item domain.KnowledgeSu
 // retractDocument 是已发布撤回和审核通过下线的共同执行路径。
 func (s *Service) retractDocument(ctx context.Context, item domain.KnowledgeSubmission, reason, actor string) (domain.KnowledgeSubmission, error) {
 	source := strings.TrimSpace(item.Source)
+	ms, err := s.managed()
+	if err != nil {
+		return item, err
+	}
+	if !sourceWritable(ms, item.ProjectID, source) {
+		return item, apperr.New(apperr.Forbidden, "知识库不属于当前项目")
+	}
 	if source == "" {
 		return item, apperr.New(apperr.Invalid, "提交项没有写回来源")
 	}

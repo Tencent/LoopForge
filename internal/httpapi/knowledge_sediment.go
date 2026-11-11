@@ -19,7 +19,7 @@ var knowledgeRetractReasons = map[string]bool{
 
 // 路由: g.GET("/api/knowledge/bases/sediment", h.knowledgeSedimentConfig)
 func (h *knowledgeHandlers) knowledgeSedimentConfig(c *gin.Context) {
-	if !h.requireManagementScope(c, c.Query("projectId")) {
+	if !h.requireKnowledgeReader(c, c.Query("projectId")) {
 		return
 	}
 	config, err := h.svc.SedimentConfig(c.Query("projectId"), c.Query("baseId"))

@@ -317,3 +317,25 @@ func TestReadRepoFileLimit(t *testing.T) {
 		t.Fatalf("超限文件应拒绝: %v", err)
 	}
 }
+
+func TestSyncCacheIsPrivateOnCreateAndReuse(t *testing.T) {
+	remote := fixtureRepo(t)
+	cache := filepath.Join(t.TempDir(), "cache", "source")
+	for i := 0; i < 2; i++ {
+		if _, _, _, _, _, err := Sync(context.Background(), cache, remote, "main", nil); err != nil {
+			t.Fatal(err)
+		}
+		for _, dir := range []string{cache, filepath.Dir(cache)} {
+			info, err := os.Stat(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm()&0077 != 0 {
+				t.Errorf("cache readable by other users: %s %o", dir, info.Mode().Perm())
+			}
+		}
+		if i == 0 {
+			os.Chmod(cache, 0755)
+		}
+	}
+}
