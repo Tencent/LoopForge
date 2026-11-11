@@ -79,6 +79,18 @@ cd LoopForge
 
 Open the address printed by the installer and create your account; the first one becomes the administrator. The service listens on `0.0.0.0:8090` by default. On a cloud host, the installer reads the public IP from the provider's metadata service and prints it; allow the port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
 
+### Upgrading an existing installation
+
+If you installed with `git clone` and `bash scripts/install.sh` (or `./start.sh`), back up the database, `.env` and `LOOPFORGE_DATA_DIR`, then run in the original installation directory:
+
+```bash
+git fetch origin --tags
+git checkout vX.Y.Z   # replace with the target release tag
+bash scripts/install.sh
+```
+
+Keep the existing `.env`, data directory and Compose project name. If `.env` pins `LOOPFORGE_IMAGE`, update it or clear it to use the release's default. Check all intervening entries in [CHANGELOG.md](CHANGELOG.md) for required manual SQL migrations and their order. `./start.sh pull` refreshes the configured image; it does not select a newer release. See the [upgrade guide](docs/deployment.md#upgrading-an-existing-installation).
+
 ### Try it without an API key
 
 New accounts join the **LoopForge demo project**, which includes an SOP made only of a script and a human gate:

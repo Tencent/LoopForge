@@ -23,7 +23,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -71,6 +71,25 @@ jobs:
             echo "prerelease=${prerelease}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Select the preceding published stable platform release
+        id: upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --exclude-drafts --exclude-pre-releases \
+            --json tagName,isDraft,isPrerelease > "$RUNNER_TEMP/platform-releases.json"
+          from_tag=$(python3 scripts/release-upgrade-base.py "$TAG" < "$RUNNER_TEMP/platform-releases.json")
+          if [[ -n "$from_tag" ]]; then
+            git rev-parse --verify "refs/tags/${from_tag}^{commit}"
+            echo "Upgrade validation: $from_tag -> $TAG"
+          fi
+          echo "from_tag=$from_tag" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+
       # arm64 lets Apple silicon and arm servers pull the image; only the final
       # stage runs under emulation, the Go and chatbot builds cross-compile.
       - uses: docker/setup-qemu-action@v4
@@ -102,7 +121,9 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.metadata.outputs.tags }}
+          # Make the version available for the real installer. Promote the
+          # mutable X.Y/latest tags only after clean-install AND upgrade tests.
+          tags: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -111,11 +132,32 @@ jobs:
         env:
           LOOPFORGE_IMAGE: ${{ steps.release.outputs.image }}@${{ steps.push.outputs.digest }}
         run: |
-          ./start.sh -d
+          bash scripts/install.sh
           curl -fsS http://127.0.0.1:8090/api/health
+
+      - name: Verify an existing installation upgrades without losing user data
+        if: steps.upgrade.outputs.from_tag != ''
+        timeout-minutes: 15
+        env:
+          FROM_TAG: ${{ steps.upgrade.outputs.from_tag }}
+          TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_IMAGE: ${{ steps.release.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          bash scripts/test-upgrade.sh "$FROM_TAG" "$TAG" "$RELEASE_IMAGE"
+          echo "Verified upgrade: $FROM_TAG → $TAG, preserving user data and repeated installation." >> "$GITHUB_STEP_SUMMARY"
 
       - if: failure()
         run: docker compose logs platform | tail -200
+
+      - name: Promote the verified image tags
+        env:
+          METADATA: ${{ steps.metadata.outputs.json }}
+          RELEASE_IMAGE: ${{ steps.release.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          tags=$(jq -er '.tags[]' <<< "$METADATA")
+          args=()
+          while IFS= read -r tag; do args+=(--tag "$tag"); done <<< "$tags"
+          docker buildx imagetools create "${args[@]}" "$RELEASE_IMAGE"
 
       - name: Create or update GitHub Release
         shell: bash
@@ -126,7 +168,8 @@ jobs:
           IMAGE: ${{ steps.release.outputs.image }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
-          notes="$(cat <<EOF
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes_file" <<EOF
           ## Install
 
           \`\`\`bash
@@ -135,14 +178,27 @@ jobs:
           ./start.sh
           \`\`\`
 
-          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
+          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`).
+
+          ## Upgrade an existing installation
+
+          Back up the database, \`.env\` and \`LOOPFORGE_DATA_DIR\` first. Review [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md) for every intervening release and apply its required SQL migrations in the documented order.
+
+          In the original installation directory:
+
+          \`\`\`bash
+          git fetch origin --tags
+          git checkout ${TAG}
+          bash scripts/install.sh
+          \`\`\`
+
+          Keep the original \`.env\`, data directory and Compose project name. If \`.env\` pins \`LOOPFORGE_IMAGE\`, update it to \`${IMAGE}:${VERSION}\` or clear it to use the checkout's default. \`./start.sh pull\` only refreshes the configured image; it does not select a newer release. See the [upgrade guide](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/deployment.md#upgrading-an-existing-installation).
           EOF
-          )"
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists; image republished"
             exit 0
           fi
-          release_args=(--title "LoopForge v${VERSION}" --notes "${notes}" --generate-notes --verify-tag)
+          release_args=(--title "LoopForge v${VERSION}" --notes-file "$notes_file" --generate-notes --verify-tag)
           if [[ "${PRERELEASE}" == "true" ]]; then
             release_args+=(--prerelease)
           else

@@ -79,6 +79,18 @@ cd LoopForge
 
 打开安装脚本输出的地址创建账号，第一个账号自动成为管理员。服务默认监听 `0.0.0.0:8090`；在云主机上，安装脚本会从云厂商的元数据服务读取公网 IP 并直接打印出来，放通安全组端口即可访问，或配置 HTTPS 反向代理；管理员账号创建前，建议只允许你的 IP 访问。首页的「快速接入」会带你配置模型凭据、绑定仓库并选好默认 SOP。
 
+### 升级已有安装
+
+通过 `git clone` 和 `bash scripts/install.sh`（或 `./start.sh`）安装的用户，先备份数据库、`.env` 和 `LOOPFORGE_DATA_DIR` 数据目录，再在**原安装目录**执行：
+
+```bash
+git fetch origin --tags
+git checkout vX.Y.Z   # 替换为目标发布版本
+bash scripts/install.sh
+```
+
+保留原来的 `.env`、数据目录和 Compose 项目名。如果 `.env` 固定了 `LOOPFORGE_IMAGE`，需要同步更新或清空，以使用该版本默认镜像。阅读 [CHANGELOG.md](CHANGELOG.md) 中跨过的各版本说明，按要求和顺序手动执行 SQL 迁移。`./start.sh pull` 只刷新已配置的镜像，不会自动选择新版本。详见[升级说明](docs/deployment.md#upgrading-an-existing-installation)。
+
 ### 免 API Key 体验
 
 新注册的账号会自动加入 **LoopForge 体验项目**，其中有一条只包含脚本和人工审批的 SOP：

@@ -2,6 +2,12 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- Keep the platform container's workspace hostname stable across image upgrades. The installer adopts an existing container's hostname before replacement, preserving access to old workspaces and waiting SOPs without changing their database bindings.
+- Gate platform releases on upgrading the preceding published stable version through `bash scripts/install.sh`. Verify the pushed image digest, preserved configuration and user data, operator-edited catalog, waiting SOP continuation, new SOP execution and repeated installation before promoting mutable image tags or creating the GitHub Release.
+- Document the upgrade commands for existing Git-clone installations in both READMEs, the deployment guide and generated release notes, including saved image overrides and manual SQL migrations.
+
 ## 0.3.6 — a default sandbox on an uninitialized catalog
 
 - A database without sandbox catalog rows, for example after a plain `docker compose --profile platform up` without the installer, now offers the built-in 默认运行沙箱 (`local`). Creating a blank SOP no longer fails with `sandbox profile not found`. The default is not written to the database, a saved `local` profile takes priority, and it cannot be deleted. Compose still runs it in a separate Docker container.
