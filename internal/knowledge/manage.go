@@ -48,6 +48,8 @@ type ManagedStore interface {
 	KnowledgeSources(baseID string) []domain.KnowledgeSource
 	KnowledgeSource(id string) (domain.KnowledgeSource, bool)
 	PutKnowledgeSource(domain.KnowledgeSource) error
+	DeleteKnowledgeSource(id string) error
+	DeleteKnowledgeSourceContent(sourceID string) error
 	KnowledgeDocuments(sourceID string) []domain.KnowledgeDocument
 }
 
@@ -372,7 +374,10 @@ func (s *Service) RegisterGitSource(input GitSourceInput) (domain.KnowledgeSourc
 	if branch == "" {
 		branch = "main"
 	}
-	prefix := strings.TrimSpace(input.PathPrefix)
+	prefix, ok := NormalizePathPrefix(input.PathPrefix)
+	if !ok {
+		return domain.KnowledgeSource{}, apperr.New(apperr.Invalid, "路径前缀必须是仓库内的相对目录")
+	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		name = "Git 来源"
@@ -416,4 +421,31 @@ func (s *Service) TriggerSync(projectID, sourceID string) (domain.KnowledgeSourc
 		return domain.KnowledgeSource{}, err
 	}
 	return src, nil
+}
+
+// DeleteSource 先删内容面正文/修订/索引块，再删控制面来源记录。托管来源
+// 是项目知识库的事实源，不从知识中心删除。
+func (s *Service) DeleteSource(projectID, sourceID string) error {
+	ms, err := s.managed()
+	if err != nil {
+		return err
+	}
+	sourceID = strings.TrimSpace(sourceID)
+	if !sourceInProject(ms, projectID, sourceID) {
+		return apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
+	}
+	src, ok := ms.KnowledgeSource(sourceID)
+	if !ok {
+		return apperr.New(apperr.NotFound, "来源不存在")
+	}
+	if src.Kind == "hosted" {
+		return apperr.New(apperr.Invalid, "托管来源不能删除")
+	}
+	if err := ms.DeleteKnowledgeSourceContent(sourceID); err != nil {
+		return apperr.New(apperr.Upstream, "删除来源内容失败："+err.Error())
+	}
+	if err := ms.DeleteKnowledgeSource(sourceID); err != nil {
+		return apperr.New(apperr.Upstream, "删除来源失败："+err.Error())
+	}
+	return nil
 }

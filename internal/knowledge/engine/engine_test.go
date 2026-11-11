@@ -292,6 +292,9 @@ func TestWriteDocumentHosted(t *testing.T) {
 	}
 	key := docKey("src", "guides/a.md")
 	doc := content.docs[key]
+	if doc.Body != testMarkdown {
+		t.Fatalf("用户写的 frontmatter 与正文应原样落库: %q", doc.Body)
+	}
 	if !strings.HasPrefix(doc.Body, "---\n") || !strings.Contains(doc.Body, "麒麟服务器") {
 		t.Fatalf("正文（含 frontmatter）未落库: %q", doc.Body)
 	}
@@ -333,6 +336,68 @@ func TestWriteDocumentHosted(t *testing.T) {
 	}
 	if fetched.Commit != "1" || fetched.LineCount != doc.LineCount {
 		t.Fatalf("Fetch 与写入不一致: %+v", fetched)
+	}
+}
+
+func TestWriteDocumentKeepsPlainMarkdownAndCountsRevisionPerDocument(t *testing.T) {
+	control := newFakeControl()
+	control.sources["src"] = domain.KnowledgeSource{ID: "src", Kind: "hosted"}
+	content := newFakeContent()
+	e := newTestEngine(control, content, &fakeIndex{})
+
+	a := "# 第一篇\n\n这是用户写的第一行。\n"
+	b := "# 第二篇\n\n另一篇文档。\n"
+	first, err := e.WriteDocument(context.Background(), "src", "guides/a.md", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Commit != "1" {
+		t.Fatalf("新文档应从修订 1 起: %+v", first)
+	}
+	second, err := e.WriteDocument(context.Background(), "src", "guides/b.md", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Commit != "1" {
+		t.Fatalf("第二篇新文档也应从修订 1 起，而不是全库递增: %+v", second)
+	}
+
+	docA := content.docs[docKey("src", "guides/a.md")]
+	if docA.Body != a {
+		t.Fatalf("不应自动插入 frontmatter: %q", docA.Body)
+	}
+	if docA.Revision != 1 || docA.LineCount != 3 {
+		t.Fatalf("文档元数据错误: %+v", docA)
+	}
+	fetched, err := e.Fetch(context.Background(), "src", "guides/a.md", 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fetched.Lines) != 1 || fetched.Lines[0].Text != "# 第一篇" || fetched.Lines[0].Number != 1 {
+		t.Fatalf("用户写的第一行应仍是第 1 行: %+v", fetched.Lines)
+	}
+	if fetched.Citation != "src@1:guides/a.md#L1" {
+		t.Fatalf("出处里的版本应为文档修订号: %q", fetched.Citation)
+	}
+
+	third, err := e.WriteDocument(context.Background(), "src", "guides/a.md", "# 第一篇\n\n覆盖后的正文。\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Commit != "2" {
+		t.Fatalf("同一文档覆盖后应为修订 2: %+v", third)
+	}
+	docA = content.docs[docKey("src", "guides/a.md")]
+	if docA.Revision != 2 || strings.Contains(docA.Body, "这是用户写的第一行") {
+		t.Fatalf("覆盖后正文/修订错误: %+v", docA)
+	}
+	for _, ch := range content.chunks[docKey("src", "guides/a.md")] {
+		if ch.Commit != "2" || ch.Revision != 2 {
+			t.Fatalf("覆盖后索引块仍带旧修订: %+v", ch)
+		}
+	}
+	if control.sources["src"].HeadRevision != 2 || control.sources["src"].DocCount != 2 {
+		t.Fatalf("来源应记录最近修订与篇数: %+v", control.sources["src"])
 	}
 }
 
@@ -399,8 +464,10 @@ func TestWriteDocumentRejectsInvalidInput(t *testing.T) {
 	t.Run("path", func(t *testing.T) {
 		content := newFakeContent()
 		e := newTestEngine(control, content, &fakeIndex{})
-		if _, err := e.WriteDocument(context.Background(), "src", "notes.txt", testMarkdown); err == nil {
-			t.Fatal("非 .md 路径应被拒绝")
+		for _, bad := range []string{"notes.txt", "../secret.md", "guides/../secret.md", "/etc/passwd.md", `guides\a.md`} {
+			if _, err := e.WriteDocument(context.Background(), "src", bad, testMarkdown); err == nil {
+				t.Fatalf("越界或非 .md 路径应被拒绝: %q", bad)
+			}
 		}
 		assertNoWrite(t, content)
 	})

@@ -30,6 +30,7 @@ function agentConfigSummary(a){
   const parts=[];
   if(a?.loop?.enabled)parts.push(`<span class="loop">${a.loop.maxIterations||1} 轮 Loop</span>`);
   [[a?.artifactOutputs?.length,'产物'],[a?.verification?.length,'门禁'],[a?.rules?.length,'规则'],[a?.skills?.length,'技能'],[a?.mcpServers?.length,'MCP'],[a?.hooks?.length,'Hook']].forEach(([n,label])=>{if(n)parts.push(`${n} ${label}`)});
+  if(a?.knowledgeBase)parts.push('知识库');
   return parts.length?parts.join(' · '):'<span class="empty">未配置</span>';
 }
 function agentDeleteBlockReason(a){

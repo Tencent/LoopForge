@@ -1,7 +1,6 @@
 package knowledge
 
 import (
-	"path"
 	"regexp"
 	"strings"
 
@@ -10,7 +9,7 @@ import (
 
 const usageRuleContent = `# 知识库使用规范
 
-本角色已接入团队知识库（MCP：` + domain.KnowledgeMCPServerID + `，只读）。
+本角色可只读检索本项目知识库（MCP：` + domain.KnowledgeMCPServerID + `，只读）。
 
 ## 先查再做
 - 动手前先用 kb_search 检索与任务相关的已有知识：排障手册、业务规范、历史方案、接口约定。
@@ -19,22 +18,13 @@ const usageRuleContent = `# 知识库使用规范
 - 当前使用关键词检索，可换关键词或更短的词再搜一次。
 
 ## 引用出处
-- 采用知识库内容时，在产物中附上结果里的 citation（形如 source@commit:path#L10-L20）。
+- 采用知识库内容时，在产物中附上结果里的 citation（形如 source@版本:path#L10-L20）。
+- 托管来源的版本是文档修订号，Git 来源的版本是 commit。
 - 知识库没有覆盖的内容要明确说明"知识库未收录"，不要编造出处。
 
-## 沉淀新知识
-- 知识库对你只读，不要尝试写入。
-- 本次任务中沉淀出的可复用知识（踩坑、排障步骤、团队约定），写到工作区根目录的 knowledge.md，
-  平台会在人工审核后写回知识库。格式：
-
-` + "```markdown" + `
----
-title: 一句话标题
-source: 建议写入的知识库来源 id（可选）
-path: 建议路径，例如 guides/xxx.md（可选）
----
-正文（Markdown）
-` + "```" + `
+## 只读边界
+- 知识库对你只读，不要尝试写入，也不要声称已经写回。
+- 需要新增或修正内容时，在回复里说明，由用户到知识中心处理。
 `
 
 // UsageRule is the built-in rule injected with the knowledge MCP.
@@ -42,7 +32,7 @@ func UsageRule() domain.RuleDefinition {
 	return domain.RuleDefinition{
 		ID:          domain.KnowledgeUsageRuleID,
 		Name:        "知识库使用规范",
-		Description: "先检索团队知识库再动手，引用附出处，新知识写入 knowledge.md 待审核沉淀",
+		Description: "先只读检索本项目知识库再动手，引用附出处；知识库对 Agent 只读",
 		Content:     usageRuleContent,
 		Priority:    50,
 	}
@@ -54,9 +44,9 @@ func UsageRule() domain.RuleDefinition {
 func MCPServerDefinition(baseURL, proxyToken string) domain.MCPServerDefinition {
 	return domain.MCPServerDefinition{
 		ID:          domain.KnowledgeMCPServerID,
-		Name:        "团队知识库",
+		Name:        "项目知识库",
 		Scope:       "project",
-		Description: "团队知识库只读检索：kb_search / kb_fetch / kb_list_sources / kb_get_source",
+		Description: "本项目知识库只读检索：kb_search / kb_fetch / kb_list_sources / kb_get_source",
 		Transport:   "http",
 		URL:         strings.TrimRight(baseURL, "/") + ProxyPath,
 		Headers:     map[string]string{"Authorization": "Bearer " + proxyToken},
@@ -120,13 +110,56 @@ func ParseDistilled(content string) Distilled {
 
 var unsafePathChars = regexp.MustCompile(`[^\p{L}\p{N}._/-]+`)
 
-// NormalizeDocPath keeps upstream write paths repository-relative Markdown.
+// NormalizeDocPath 只接受仓库内的相对 .md 路径。含 .. 段、绝对路径、盘符或
+// 反斜杠的越界路径直接拒绝，不做改写；安全的名称字符（空格等）仍会归一化。
 func NormalizeDocPath(p string) (string, bool) {
-	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
-	p = unsafePathChars.ReplaceAllString(p, "-")
-	p = strings.TrimLeft(path.Clean("/"+p), "/")
-	if p == "" || p == "." || strings.HasPrefix(p, "../") || !strings.HasSuffix(strings.ToLower(p), ".md") {
+	p = strings.TrimSpace(p)
+	if p == "" || strings.ContainsAny(p, "\\\x00") || strings.HasPrefix(p, "/") {
 		return "", false
 	}
+	if len(p) >= 2 && p[1] == ':' {
+		return "", false
+	}
+	for _, r := range p {
+		if r < 0x20 {
+			return "", false
+		}
+	}
+	if !strings.HasSuffix(strings.ToLower(p), ".md") {
+		return "", false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", false
+		}
+	}
+	p = unsafePathChars.ReplaceAllString(p, "-")
 	return p, true
+}
+
+// NormalizePathPrefix 把来源的路径前缀统一成仓库内的相对目录。空串和单个
+// "/" 都表示仓库根目录；含 ..、绝对路径、反斜杠或空路径段的输入直接拒绝。
+func NormalizePathPrefix(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "/" {
+		return "", true
+	}
+	if strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, "\\\x00") {
+		return "", false
+	}
+	if len(raw) >= 2 && raw[1] == ':' {
+		return "", false
+	}
+	for _, r := range raw {
+		if r < 0x20 {
+			return "", false
+		}
+	}
+	raw = strings.TrimSuffix(raw, "/")
+	for _, seg := range strings.Split(raw, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", false
+		}
+	}
+	return raw, true
 }

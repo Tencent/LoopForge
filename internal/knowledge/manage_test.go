@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"agentflow/internal/apperr"
+	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 )
 
@@ -128,3 +129,143 @@ func TestValidatePublicGitURL(t *testing.T) {
 	}
 }
 
+func TestRegisterGitSourceNormalizesRootPrefix(t *testing.T) {
+	svc, s := newManagedTestService(t)
+	base, err := svc.EnsureHostedBase("proj-prefix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"", "  ", "/", " / "} {
+		src, err := svc.RegisterGitSource(GitSourceInput{
+			ProjectID: "proj-prefix", BaseID: base.ID, Name: "样例",
+			GitURL: "https://github.com/example/repo.git", Branch: "main", PathPrefix: prefix,
+		})
+		if err != nil {
+			t.Fatalf("prefix %q 应登记成功: %v", prefix, err)
+		}
+		stored, ok := s.KnowledgeSource(src.ID)
+		if !ok || stored.PathPrefix != "" {
+			t.Fatalf("空前缀或 / 应存成空，实际 %+v (ok=%v)", stored, ok)
+		}
+	}
+	for _, bad := range []string{"..", "../docs", "/docs", `docs\guide`, "a/../b", "a//b"} {
+		if _, err := svc.RegisterGitSource(GitSourceInput{
+			ProjectID: "proj-prefix", BaseID: base.ID, GitURL: "https://github.com/example/other.git", PathPrefix: bad,
+		}); err == nil {
+			t.Fatalf("非法路径前缀 %q 应被拒绝", bad)
+		} else if ae, _ := apperr.As(err); ae == nil || ae.Kind != apperr.Invalid {
+			t.Fatalf("非法路径前缀 %q 应返回 Invalid，实际 %v", bad, err)
+		}
+	}
+}
+
+func TestDocumentListIncludesGitSource(t *testing.T) {
+	svc, s := newManagedTestService(t)
+	base, err := svc.EnsureHostedBase("proj-docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := svc.RegisterGitSource(GitSourceInput{
+		ProjectID: "proj-docs", BaseID: base.ID, Name: "Git 文档",
+		GitURL: "https://github.com/example/repo.git", Branch: "main", PathPrefix: "docs/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutKnowledgeDocument(domain.KnowledgeDocument{
+		SourceID: src.ID, Path: "docs/guide.md", Title: "指南", LineCount: 2, Commit: "abcdef123456",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := svc.DocumentList("proj-docs", src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Path != "docs/guide.md" || list[0].Commit != "abcdef123456" {
+		t.Fatalf("文档页应能列出 Git 来源的已索引文档: %+v", list)
+	}
+	if _, err := svc.DocumentList("other-project", src.ID); err == nil {
+		t.Fatal("其它项目不应读取该来源的文档清单")
+	}
+}
+
+type deleteOrderStore struct {
+	*repo.Store
+	calls []string
+}
+
+func (s *deleteOrderStore) DeleteKnowledgeSourceContent(id string) error {
+	s.calls = append(s.calls, "content:"+id)
+	return s.Store.DeleteKnowledgeSourceContent(id)
+}
+
+func (s *deleteOrderStore) DeleteKnowledgeSource(id string) error {
+	s.calls = append(s.calls, "control:"+id)
+	return s.Store.DeleteKnowledgeSource(id)
+}
+
+func TestDeleteSourceRemovesContentBeforeControl(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	store := &deleteOrderStore{Store: s}
+	svc := &Service{store: store}
+	base, err := svc.EnsureHostedBase("proj-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosted := hostedSourceID("proj-delete")
+	src, err := svc.RegisterGitSource(GitSourceInput{
+		ProjectID: "proj-delete", BaseID: base.ID, Name: "失败来源",
+		GitURL: "https://github.com/example/missing.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutKnowledgeDocument(domain.KnowledgeDocument{
+		SourceID: src.ID, Path: "README.md", Title: "Readme", Body: "# Readme\n", LineCount: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutKnowledgeRevision(domain.KnowledgeRevision{
+		ID: "rev-git", SourceID: src.ID, Path: "README.md", Revision: 1, Body: "# Readme\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceKnowledgeChunks(src.ID, "README.md", []domain.KnowledgeChunk{{
+		SourceID: src.ID, Path: "README.md", Idx: 0, Title: "Readme", StartLine: 1, EndLine: 1, Text: "# Readme",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.DeleteSource("proj-delete", hosted); err == nil {
+		t.Fatal("托管来源不可删除")
+	} else if ae, _ := apperr.As(err); ae == nil || ae.Kind != apperr.Invalid {
+		t.Fatalf("删除托管来源应返回 Invalid，实际 %v", err)
+	}
+	if len(store.calls) != 0 {
+		t.Fatalf("托管来源被拒时不应触碰内容面: %v", store.calls)
+	}
+
+	if err := svc.DeleteSource("proj-delete", src.ID); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"content:" + src.ID, "control:" + src.ID}
+	if strings.Join(store.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("删除顺序应为先内容后控制面: %v", store.calls)
+	}
+	if _, ok := s.KnowledgeSource(src.ID); ok {
+		t.Fatal("控制面来源未删除")
+	}
+	if docs := s.KnowledgeDocuments(src.ID); len(docs) != 0 {
+		t.Fatalf("内容面文档未删除: %+v", docs)
+	}
+	if revs := s.KnowledgeRevisions(src.ID, "README.md"); len(revs) != 0 {
+		t.Fatalf("内容面修订未删除: %+v", revs)
+	}
+	if chunks := s.KnowledgeChunks(src.ID, "README.md"); len(chunks) != 0 {
+		t.Fatalf("内容面索引块未删除: %+v", chunks)
+	}
+}

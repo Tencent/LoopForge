@@ -108,7 +108,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 			"protocolVersion": agentToolProtocolVersion(request.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]string{"name": domain.KnowledgeMCPServerID, "version": "1.0.0"},
-			"instructions":    "团队知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；引用时附上 citation。",
+			"instructions":    "本项目知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；引用时附上 citation。",
 		})
 	case "ping":
 		return reply(map[string]any{})
@@ -131,7 +131,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 			name = name[i+2:]
 		}
 		if !knowledge.IsReadOnlyTool(name) {
-			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索，新知识请写入 knowledge.md 等待审核", params.Name))
+			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索本项目知识库", params.Name))
 		}
 		started := time.Now()
 		text, hits, err := h.callScoped(ctx, claims.ProjectID, name, params.Arguments)
