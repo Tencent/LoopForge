@@ -106,6 +106,8 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
 .kb-hit cite a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .kb-hit cite a:hover { color: var(--hui-accent); }
 .kb-cite { display: block; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.kb-cite-full { overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+.kb-vector-progress { color: var(--hui-accent); }
 .kb-row-actions { flex: none; display: flex; align-items: center; gap: 6px; }
 .kb-row-actions .kb-btn.quiet { margin-right: 0; }
 .kb-off { color: var(--hui-tertiary); text-decoration: line-through; }

@@ -185,7 +185,7 @@ func (e *Engine) Fetch(_ context.Context, source, path string, start, end int) (
 		return knowledge.Document{}, err
 	}
 	out := knowledge.Document{
-		Source: source, Commit: doc.Commit, Path: path,
+		Source: source, Commit: doc.Commit, Path: path, Title: doc.Title,
 		StartLine: first, EndLine: last, LineCount: len(lines),
 		Lines:    make([]knowledge.Line, 0, last-first+1),
 		Citation: citation(source, doc.Commit, path, first, last),

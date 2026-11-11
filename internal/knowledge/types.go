@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -73,6 +74,11 @@ type SearchHit struct {
 	Score     float64 `json:"score"`
 	Citation  string  `json:"citation"`
 	URL       string  `json:"url,omitempty"`
+	// Revision and Version are tool-output hints: hosted sources say 「修订 N」
+	// while Git sources say "commit …". The opaque citation contract keeps the
+	// existing commit field value.
+	Revision int64  `json:"revision,omitempty"`
+	Version  string `json:"version,omitempty"`
 	// DocStatus 是索引时从 frontmatter 解析的生命周期状态。空值表示没有
 	// 标注；检索后处理据此降权废弃、移除归档。
 	DocStatus string `json:"doc_status,omitempty"`
@@ -96,12 +102,15 @@ type Document struct {
 	Source         string `json:"source"`
 	Commit         string `json:"commit"`
 	Path           string `json:"path"`
+	Title          string `json:"title,omitempty"`
 	StartLine      int    `json:"start_line"`
 	EndLine        int    `json:"end_line"`
 	LineCount      int    `json:"line_count"`
 	Lines          []Line `json:"lines"`
 	Citation       string `json:"citation"`
 	URL            string `json:"url,omitempty"`
+	Revision       int64  `json:"revision,omitempty"`
+	Version        string `json:"version,omitempty"`
 	Freshness      string `json:"freshness,omitempty"`
 	CurrentVersion string `json:"current_version,omitempty"`
 }
@@ -195,4 +204,24 @@ func FinalizeWriteback(ctx context.Context, result WriteResult) error {
 		return finish(result)
 	}
 	return nil
+}
+
+// versionLabel turns an opaque citation version into the wording shown to
+// agents. Hosted sources count document revisions; Git sources keep commits.
+func versionLabel(kind, version string) (int64, string) {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return 0, ""
+	}
+	if kind == "hosted" {
+		if n, err := strconv.ParseInt(version, 10, 64); err == nil && n > 0 {
+			return n, fmt.Sprintf("修订 %d", n)
+		}
+		return 0, "修订 " + version
+	}
+	short := version
+	if len(short) > 10 {
+		short = short[:10]
+	}
+	return 0, "commit " + short
 }

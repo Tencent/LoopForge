@@ -233,6 +233,9 @@ func TestGitFailureCategoriesDiscardRemoteSecrets(t *testing.T) {
 	for _, tc := range []struct{ stderr, want string }{
 		{"fatal: Authentication failed secret-token", "authentication failed"},
 		{"fatal: repository not found secret-token", "repository not found"},
+		{"remote: Repository not found.\nfatal: could not read Username for 'https://github.com': terminal prompts disabled", "repository not found"},
+		{"fatal: could not read Username for 'https://github.com': terminal prompts disabled", "credentials required"},
+		{"error: 403 secret-token", "authentication failed"},
 		{"fatal: Remote branch absent not found in upstream origin secret-token", "remote branch missing"},
 		{"fatal: secret-token", "Git operation failed"},
 	} {

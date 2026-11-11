@@ -48,6 +48,8 @@ type GrepHit struct {
 	EndLine   int    `json:"end_line"`
 	Citation  string `json:"citation"`
 	URL       string `json:"url,omitempty"`
+	Revision  int64  `json:"revision,omitempty"`
+	Version   string `json:"version,omitempty"`
 }
 
 // GrepResult 是精确匹配的工具结果。Truncated 表示因为条数上限提前停止。
@@ -152,6 +154,7 @@ func (s *Service) Grep(ctx context.Context, projectID string, q GrepQuery) (Grep
 		hits[i].URL = s.SourceFileURL(hits[i].Source, hits[i].Commit, hits[i].Path, hits[i].Line, hits[i].Line)
 	}
 	out.Hits = hits
+	s.annotateGrepVersions(&out)
 	out.Truncated = truncated
 	return out, nil
 }

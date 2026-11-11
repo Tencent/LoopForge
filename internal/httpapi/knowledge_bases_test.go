@@ -149,6 +149,9 @@ func TestKnowledgeManagementReadSearchAndIsolation(t *testing.T) {
 	if !strings.Contains(hits[0].Citation, "@1:") {
 		t.Fatalf("出处应是修订号而非 commit: %q", hits[0].Citation)
 	}
+	if hits[0].Revision != 1 || hits[0].Version != "修订 1" {
+		t.Fatalf("托管来源的版本口径应为「修订 N」: %+v", hits[0])
+	}
 
 	// 读原文：行号与正文一致，版本是修订号。
 	docURL := "/api/knowledge/bases/document?projectId=pA&source=" + hosted.ID + "&path=" + kbDocPath
@@ -162,6 +165,9 @@ func TestKnowledgeManagementReadSearchAndIsolation(t *testing.T) {
 	}
 	if doc.Commit != "1" || doc.LineCount == 0 || len(doc.Lines) != doc.LineCount {
 		t.Fatalf("读原文头错误: %+v", doc)
+	}
+	if doc.Revision != 1 || doc.Version != "修订 1" {
+		t.Fatalf("读原文的托管版本口径应为「修订 N」: %+v", doc)
 	}
 	if doc.Lines[0].Number != 1 || doc.Lines[len(doc.Lines)-1].Number != doc.LineCount {
 		t.Fatalf("行号不连续: %+v", doc.Lines)

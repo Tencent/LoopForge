@@ -9,6 +9,8 @@ const ctx = {
   kbBadge: (label, tone) => `<span class="hui-badge" data-tone="${tone}">${label}</span>`,
   document: { addEventListener() {}, getElementById() { return null; } },
   MutationObserver: class { observe() {} },
+  URL,
+  window: {},
 };
 vm.createContext(ctx);
 const source = fs.readFileSync(path.join(__dirname, 'knowledge.js'), 'utf8');
@@ -41,4 +43,24 @@ assert.match(failed, /推送被仓库拒绝/);
 
 assert.equal(ctx.kbWriteStatus({ mrStatus: 'branch_pushed' })[0], '已推分支');
 assert.equal(ctx.kbSafeHref('ftp://example.com/x'), '');
+
+assert.equal(ctx.kbVectorStatusText(true, true), '向量检索：已启用（当前不可用）');
+assert.equal(ctx.kbVectorStatusText(true, false), '向量检索：已启用');
+assert.equal(ctx.kbVectorStatusText(false, false), '向量检索：未启用（仅关键词）');
+assert.match(ctx.kbSourceProgressHTML({ vectorCurrent: 32, vectorTotal: 40 }), /重建向量中 32\/40/);
+assert.equal(ctx.kbSourceProgressHTML({}), '');
+
+assert.match(ctx.kbGitCredentialError('git@github.com:Tencent/LoopForge.git', ''), /SSH 地址需要部署密钥/);
+assert.equal(ctx.kbGitCredentialError('git@github.com:Tencent/LoopForge.git', 'ssh'), '');
+assert.match(ctx.kbGitCredentialError('https://github.com/Tencent/LoopForge.git', 'ssh'), /HTTPS 地址/);
+
+const parsedCite = ctx.kbParseCitation('kb-hosted-x@4:guides/a.md#L12-L13');
+assert.equal(parsedCite.source, 'kb-hosted-x');
+assert.equal(parsedCite.version, '4');
+assert.equal(parsedCite.path, 'guides/a.md');
+assert.equal(parsedCite.start, 12);
+assert.equal(parsedCite.end, 13);
+const fullCite = ctx.kbCitationHTML('kb-hosted-x@4:guides/a.md#L12-L13', '', { citation: 'kb-hosted-x@4:guides/a.md#L12-L13', full: true });
+assert.match(fullCite, /kb-cite-full/);
+assert.match(fullCite, /data-kb-cite-open/);
 console.log('knowledge writeback ok');

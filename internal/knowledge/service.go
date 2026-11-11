@@ -151,6 +151,7 @@ func (s *Service) Search(ctx context.Context, projectID, query string, sources [
 	}
 	rawHits := len(result.Results)
 	s.applyLifecycle(&result)
+	s.annotateSearchVersions(&result)
 	if rawHits == 0 {
 		_ = s.RecordGap(projectID, query)
 	}
@@ -182,6 +183,7 @@ func (s *Service) Document(ctx context.Context, projectID, source, path string, 
 	if doc.URL == "" {
 		doc.URL = s.SourceFileURL(doc.Source, doc.Commit, doc.Path, doc.StartLine, doc.EndLine)
 	}
+	s.annotateDocumentVersion(&doc)
 	return doc, nil
 }
 

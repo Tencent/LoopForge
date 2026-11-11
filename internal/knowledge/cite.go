@@ -29,6 +29,11 @@ type Freshness struct {
 	Commit   string `json:"commit,omitempty"`
 	Status   string `json:"status"`
 	Current  string `json:"current,omitempty"`
+	// Kind/Title/URL let Main Bot render the citation as a link: hosted sources
+	// open the knowledge drawer, Git sources open the commit line on the host.
+	Kind  string `json:"kind,omitempty"`
+	Title string `json:"title,omitempty"`
+	URL   string `json:"url,omitempty"`
 }
 
 // CitedDocument 是统计窗口内被引用过的文档及次数。
@@ -198,16 +203,40 @@ func (s *Service) JudgeFreshness(projectID, source, path, cited string) Freshnes
 func (s *Service) JudgeCitations(projectID string, citations []string) []Freshness {
 	out := make([]Freshness, 0, len(citations))
 	for _, raw := range citations {
-		source, version, path, _, _, ok := ParseCitation(raw)
+		source, version, path, start, end, ok := ParseCitation(raw)
 		if !ok {
 			out = append(out, Freshness{Citation: strings.TrimSpace(raw), Status: FreshnessDeleted})
 			continue
 		}
 		item := s.JudgeFreshness(projectID, source, path, version)
 		item.Citation = strings.TrimSpace(raw)
+		s.annotateFreshness(&item, source, version, path, start, end)
 		out = append(out, item)
 	}
 	return out
+}
+
+// annotateFreshness adds only presentation metadata. It never reveals a source
+// outside the caller's project: deleted citations get no kind/title/URL.
+func (s *Service) annotateFreshness(item *Freshness, source, version, path string, start, end int) {
+	if s == nil || item == nil || item.Status == FreshnessDeleted {
+		return
+	}
+	ms, err := s.managed()
+	if err != nil {
+		return
+	}
+	src, ok := ms.KnowledgeSource(source)
+	if !ok {
+		return
+	}
+	item.Kind = src.Kind
+	if doc, found := findDocument(ms, source, path); found {
+		item.Title = doc.Title
+	}
+	if src.Kind == "git" {
+		item.URL = s.SourceFileURL(source, version, path, start, end)
+	}
 }
 
 func (s *Service) citationNow() time.Time {

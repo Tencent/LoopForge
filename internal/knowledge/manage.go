@@ -166,6 +166,10 @@ type ManagedSourceView struct {
 	DocCount             int        `json:"docCount,omitempty"`
 	LastError            string     `json:"lastError,omitempty"`
 	LastSyncedAt         *time.Time `json:"lastSyncedAt,omitempty"`
+	// 向量重建进度只在处理同步的进程内可读，其他实例保持空值。
+	VectorCurrent int    `json:"vectorCurrent,omitempty"`
+	VectorTotal   int    `json:"vectorTotal,omitempty"`
+	VectorPhase   string `json:"vectorPhase,omitempty"`
 }
 
 func managedSourceView(src domain.KnowledgeSource) ManagedSourceView {
@@ -306,6 +310,7 @@ func (s *Service) TrialSearch(ctx context.Context, up Upstream, projectID, query
 	}
 	rawHits := len(result.Results)
 	s.applyLifecycle(&result)
+	s.annotateSearchVersions(&result)
 	if rawHits == 0 {
 		_ = s.RecordGap(projectID, query)
 	}
@@ -334,6 +339,7 @@ func (s *Service) ReadDocument(ctx context.Context, up Upstream, projectID, sour
 	if doc.URL == "" {
 		doc.URL = s.SourceFileURL(doc.Source, doc.Commit, doc.Path, doc.StartLine, doc.EndLine)
 	}
+	s.annotateDocumentVersion(&doc)
 	return doc, nil
 }
 

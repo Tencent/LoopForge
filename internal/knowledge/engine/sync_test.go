@@ -230,7 +230,7 @@ func TestImportGitWritesIntoConfiguredCacheRoot(t *testing.T) {
 		return "", "", nil, nil, nil, errors.New("stop after path check")
 	}
 	src := domain.KnowledgeSource{ID: "src", GitURL: "https://example.com/public.git", Branch: "main"}
-	if _, _, err := w.importGit(context.Background(), src, "owner"); err == nil {
+	if _, _, err := w.importGit(context.Background(), src, "owner", false); err == nil {
 		t.Fatal("expected the injected sync error")
 	}
 	if root := filepath.Join(cacheRoot, "sync", "src") + string(filepath.Separator); !strings.HasPrefix(got, root) {
@@ -282,8 +282,8 @@ func TestSyncFailureMessageIsUserFacing(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"仓库不存在或需要凭据", errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled"), "仓库鉴权失败，请检查来源凭据及仓库读取权限"},
-		{"仓库不存在", errors.New("repository not found"), "仓库不存在，请检查仓库地址及凭据的访问范围"},
+		{"仓库不存在或需要凭据", errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled"), "仓库不存在，或该地址需要凭据"},
+		{"仓库不存在", errors.New("repository not found"), "仓库不存在，或该地址需要凭据"},
 		{"认证失败", errors.New("fatal: Authentication failed for 'https://github.com/x/private.git/'"), "仓库鉴权失败，请检查来源凭据及仓库读取权限"},
 		{"分支不存在", errors.New("fatal: Remote branch nope not found in upstream origin"), "分支不存在，请检查分支名"},
 		{"网络不可达", errors.New("fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host: github.com"), "无法连接仓库服务器，请检查网络或地址"},
@@ -303,6 +303,73 @@ func TestSyncFailureMessageIsUserFacing(t *testing.T) {
 	}
 }
 
+// An unchanged remote HEAD must not rewrite documents or re-embed vectors.
+// The sync only refreshes the source row and releases the lease.
+func TestSyncSkipsUnchangedHeadWithoutPublishing(t *testing.T) {
+	control := &syncNoopControl{src: domain.KnowledgeSource{
+		ID: "noop-src", BaseID: "noop-base", Kind: "git",
+		GitURL: "https://example.com/public.git", Branch: "main",
+		Status: knowledge.SourceStatusPending, HeadCommit: "head-1", DocCount: 1,
+	}}
+	content := &syncNoopContent{docs: []domain.KnowledgeDocument{{
+		SourceID: "noop-src", Path: "docs/a.md", SHA256: "sha-1",
+	}}}
+	w := NewSyncWorker(&Engine{newID: func() string { return "probe" }}, control, content, t.TempDir(), "worker")
+	w.syncGit = func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
+		return t.TempDir(), "head-1", []gitsync.FileInfo{{Path: "docs/a.md", SHA256: "sha-1"}}, nil, nil, nil
+	}
+	if err := w.SyncOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if control.finished != 1 || control.published != 0 || content.applied != 0 {
+		t.Fatalf("unchanged HEAD should no-op: finished=%d published=%d applied=%d", control.finished, control.published, content.applied)
+	}
+}
+
+type syncNoopControl struct {
+	src       domain.KnowledgeSource
+	finished  int
+	published int
+}
+
+func (c *syncNoopControl) KnowledgeSources(string) []domain.KnowledgeSource {
+	return []domain.KnowledgeSource{c.src}
+}
+func (c *syncNoopControl) ClaimKnowledgeSync(string, string, time.Duration) (bool, error) {
+	c.src.Status = knowledge.SourceStatusSyncing
+	return true, nil
+}
+func (c *syncNoopControl) RenewKnowledgeSync(string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+func (c *syncNoopControl) FinishKnowledgeSync(string, string, string, int, string) (bool, error) {
+	c.finished++
+	return true, nil
+}
+func (c *syncNoopControl) PublishKnowledgeSync(ctx context.Context, _ string, _ string, _ string, _ int, publish func(context.Context) error) (bool, error) {
+	c.published++
+	return true, publish(ctx)
+}
+func (c *syncNoopControl) KnowledgeSource(string) (domain.KnowledgeSource, bool) {
+	return c.src, true
+}
+
+type syncNoopContent struct {
+	docs    []domain.KnowledgeDocument
+	applied int
+}
+
+func (c *syncNoopContent) KnowledgeDocuments(string) []domain.KnowledgeDocument {
+	return c.docs
+}
+func (c *syncNoopContent) ApplyGitKnowledge(context.Context, string, []domain.KnowledgeDocument, []domain.KnowledgeChunk, []string) error {
+	c.applied++
+	return nil
+}
+func (c *syncNoopContent) ReplaceGitKnowledge(context.Context, string, []domain.KnowledgeDocument, []domain.KnowledgeChunk) error {
+	return nil
+}
+
 func TestSyncClaimStoresFriendlyErrorWithoutGitDetails(t *testing.T) {
 	var output bytes.Buffer
 	previous := log.Writer()
@@ -315,10 +382,10 @@ func TestSyncClaimStoresFriendlyErrorWithoutGitDetails(t *testing.T) {
 		return "", "", nil, nil, nil, errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled secret-canary-token")
 	}
 	src := domain.KnowledgeSource{ID: "src", Kind: "git", GitURL: "https://github.com/example/missing.git", Branch: "main"}
-	if err := w.syncClaim(context.Background(), src, "owner"); err != nil {
+	if err := w.syncClaim(context.Background(), src, "owner", true); err != nil {
 		t.Fatal(err)
 	}
-	if control.finishedSummary != "仓库鉴权失败，请检查来源凭据及仓库读取权限" {
+	if control.finishedSummary != "仓库不存在，或该地址需要凭据" {
 		t.Fatalf("来源上应存用户能懂的中文错误: %q", control.finishedSummary)
 	}
 	if strings.Contains(output.String(), "secret-canary-token") {
@@ -360,7 +427,7 @@ func TestImportGitIndexesRootMarkdownForEmptyPrefix(t *testing.T) {
 				return dir, "abcdef", files, nil, nil, nil
 			}
 			src := domain.KnowledgeSource{ID: "src", Kind: "git", GitURL: "https://github.com/example/repo.git", Branch: "main", PathPrefix: tc.prefix, Status: "pending"}
-			_, count, err := w.importGit(context.Background(), src, "owner")
+			_, count, err := w.importGit(context.Background(), src, "owner", false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -540,7 +607,7 @@ func TestIncrementalSyncWritesOnlyChangedDocuments(t *testing.T) {
 	w.syncGit = func(ctx context.Context, dir, _ string, branch string, old map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
 		return gitsync.Sync(ctx, dir, remote, branch, old)
 	}
-	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
+	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(q.points) != 2 {
@@ -558,7 +625,7 @@ func TestIncrementalSyncWritesOnlyChangedDocuments(t *testing.T) {
 	os.WriteFile(filepath.Join(remote, "docs", "c.md"), []byte("# C\n\n写回的新文档。\n"), 0644)
 	git("add", ".")
 	git("commit", "-m", "add merged knowledge")
-	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
+	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(q.points) != 3 {
@@ -582,7 +649,7 @@ func TestIncrementalSyncWritesOnlyChangedDocuments(t *testing.T) {
 	// Deleting a document removes exactly that path.
 	git("rm", "docs/b.md")
 	git("commit", "-m", "delete b")
-	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
+	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(q.points) != 2 {

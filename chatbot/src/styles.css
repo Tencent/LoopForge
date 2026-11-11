@@ -3998,6 +3998,18 @@ a.draft-title {
   padding-left: 10px;
   border-left: 1px solid var(--line);
 }
+.markdown .kb-citation-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown .kb-citation-link:hover {
+  color: var(--accent, #2563eb);
+}
+.markdown .kb-citation-link code {
+  color: inherit;
+}
+
 .kb-cite-notes {
   margin: 6px 0 0;
   padding: 0;

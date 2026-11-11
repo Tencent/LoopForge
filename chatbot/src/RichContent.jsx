@@ -13,7 +13,11 @@ import DOMPurify from "dompurify";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { attachmentURL, visibleText } from "./api";
-import { applyCitationMarks, useCitationStatuses } from "./knowledge-citation.jsx";
+import {
+  KNOWLEDGE_CITATION_SCHEME,
+  remarkKnowledgeCitations,
+  useCitationInfo,
+} from "./knowledge-citation.jsx";
 import { definitionTarget } from "./platform.js";
 import {
   AgentBrowserLinks,
@@ -257,7 +261,9 @@ const InsideLink = createContext(false);
 // file:///workspace/... survives URL sanitizing only to be opened in the Agent
 // browser; it is never rendered as an href.
 const markdownURL = (url) =>
-  /^file:\/\/\/workspace\//i.test(url) ? url : defaultUrlTransform(url);
+  url.startsWith(KNOWLEDGE_CITATION_SCHEME) || /^file:\/\/\/workspace\//i.test(url)
+    ? url
+    : defaultUrlTransform(url);
 function AgentBrowserLink({ target, open, children }) {
   return (
     <InsideLink.Provider value>
@@ -319,7 +325,39 @@ const markdownComponents = {
       <code>{children}</code>
     );
   },
-  a: ({ href, children }) => {
+  a: ({ href, children, className, "data-kb-citation": dataCitation }) => {
+    const hosted =
+      typeof href === "string" && href.startsWith(KNOWLEDGE_CITATION_SCHEME);
+    const citation = dataCitation || (hosted ? decodeURIComponent(href.slice(KNOWLEDGE_CITATION_SCHEME.length)) : "");
+    if (citation) {
+      return (
+        <a
+          className={className || "kb-citation-link"}
+          href={href}
+          title={citation}
+          data-kb-citation={citation}
+          target={hosted ? undefined : "_blank"}
+          rel={hosted ? undefined : "noopener noreferrer"}
+          onClick={
+            hosted
+              ? (event) => {
+                  event.preventDefault();
+                  if (window.parent !== window)
+                    window.parent.postMessage(
+                      {
+                        type: "agentflow-open-knowledge-citation",
+                        citation,
+                      },
+                      window.location.origin,
+                    );
+                }
+              : undefined
+          }
+        >
+          <code>{children}</code>
+        </a>
+      );
+    }
     const openInBrowser = useContext(AgentBrowserLinks);
     const target = openInBrowser ? agentBrowserTarget(href) : "";
     if (target)
@@ -353,16 +391,20 @@ const markdownComponents = {
 };
 export function RichContent({ message, assets = [], projectId = "" }) {
   const text = typeof message === "string" ? message : visibleText(message);
-  const marked = applyCitationMarks(text, useCitationStatuses(text));
+  const citationInfo = useCitationInfo(text);
   return (
     <MarkdownAssets.Provider value={{ assets, projectId }}>
       <div className="markdown">
         <Markdown
-          remarkPlugins={[remarkGfm, remarkWorkspaceLinks]}
+          remarkPlugins={[
+            remarkGfm,
+            remarkWorkspaceLinks,
+            [remarkKnowledgeCitations, { info: citationInfo }],
+          ]}
           components={markdownComponents}
           urlTransform={markdownURL}
         >
-          {marked}
+          {text}
         </Markdown>
       </div>
     </MarkdownAssets.Provider>

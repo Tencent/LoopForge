@@ -38,6 +38,16 @@ func (h *knowledgeHandlers) basesOverview(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.Overview(c.Query("projectId"))
+	if err == nil {
+		for bi := range out.Bases {
+			for si := range out.Bases[bi].Sources {
+				src := &out.Bases[bi].Sources[si]
+				if p, ok := kbengine.VectorProgressForSource(src.ID); ok && p.Total > 0 {
+					src.VectorCurrent, src.VectorTotal, src.VectorPhase = p.Current, p.Total, p.Phase
+				}
+			}
+		}
+	}
 	render(c, out, err)
 }
 

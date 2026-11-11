@@ -341,7 +341,9 @@ func writebackFailureMessage(err error) string {
 	switch {
 	case containsAny(raw, "write lease", "lease lost", "租约"):
 		return "来源写回租约已失效，请重试"
-	case containsAny(raw, "authentication failed", "permission denied", "could not read username", "terminal prompts disabled"):
+	case containsAny(raw, "repository not found", "credentials required", "could not read username", "terminal prompts disabled"):
+		return "仓库不存在，或该地址需要凭据"
+	case containsAny(raw, "authentication failed", "permission denied", "error: 401", "error: 403"):
 		return "仓库鉴权失败，请检查来源凭据的写入权限"
 	case containsAny(raw, "push rejected", "protected branch", "pre-receive"):
 		return "推送被仓库拒绝，请检查分支保护规则或凭据写入权限"
@@ -349,8 +351,6 @@ func writebackFailureMessage(err error) string {
 		return "写回分支已被其他写入更新，请重新发布"
 	case containsAny(raw, "remote branch missing"):
 		return "来源分支不存在，请检查分支名"
-	case containsAny(raw, "repository not found"):
-		return "仓库不存在，请检查仓库地址及凭据的访问范围"
 	case containsAny(raw, "host key verification failed"):
 		return "SSH 服务器公钥验证失败，请核对 known_hosts 记录"
 	case containsAny(raw, "failed to connect", "could not resolve", "unable to access", "timed out", "network is unreachable"):

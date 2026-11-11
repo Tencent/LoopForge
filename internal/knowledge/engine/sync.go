@@ -111,6 +111,9 @@ func (w *SyncWorker) SyncOnce(ctx context.Context) error {
 		}
 		// Each attempt has a distinct owner token, including after a local restart.
 		owner := fmt.Sprintf("%s-%s", w.owner, w.engine.newID())
+		// A previous failure must be retried even when the remote HEAD looks the
+		// same: the failure may have happened before the content was written.
+		allowNoop := src.Status != knowledge.SourceStatusError
 		ok, err := w.control.ClaimKnowledgeSync(src.ID, owner, w.ttl)
 		if err != nil {
 			return err
@@ -127,13 +130,13 @@ func (w *SyncWorker) SyncOnce(ctx context.Context) error {
 			}
 			src = current
 		}
-		if err = w.syncClaim(ctx, src, owner); err != nil {
+		if err = w.syncClaim(ctx, src, owner, allowNoop); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func (w *SyncWorker) syncClaim(parent context.Context, src domain.KnowledgeSource, owner string) error {
+func (w *SyncWorker) syncClaim(parent context.Context, src domain.KnowledgeSource, owner string, allowNoop bool) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	done := make(chan struct{})
@@ -155,7 +158,7 @@ func (w *SyncWorker) syncClaim(parent context.Context, src domain.KnowledgeSourc
 			}
 		}
 	}()
-	head, count, err := w.importGit(ctx, src, owner)
+	head, count, err := w.importGit(ctx, src, owner, allowNoop)
 	if err == nil {
 		return nil
 	}
@@ -174,7 +177,7 @@ func (w *SyncWorker) syncClaim(parent context.Context, src domain.KnowledgeSourc
 	}
 	return nil
 }
-func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, owner string) (string, int, error) {
+func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, owner string, allowNoop bool) (string, int, error) {
 	if _, err := gitremote.Parse(src.GitURL); err != nil {
 		return "", 0, errors.New("public Git URL required")
 	}
@@ -225,6 +228,19 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 	dir, head, files, changed, removed, err := w.syncGit(ctx, cacheDir, src.GitURL, src.Branch, oldMap)
 	if err != nil {
 		return "", 0, err
+	}
+	// HEAD 未变且已落库篇数一致时没有新内容可写：只释放租约并保持 ready，
+	// 不重写正文/索引块，也不触发向量重嵌入。失败后的重试不看这个短路，
+	// 避免把上次没落完的内容当成已完成。
+	if allowNoop && src.HeadCommit != "" && head == src.HeadCommit && len(oldDocs) == src.DocCount {
+		ok, err := w.control.FinishKnowledgeSync(src.ID, owner, head, len(oldDocs), "")
+		if err != nil {
+			return "", 0, err
+		}
+		if !ok {
+			return "", 0, errors.New("knowledge sync lease lost")
+		}
+		return head, len(oldDocs), nil
 	}
 	inPrefix := func(path string) bool { return prefix == "" || strings.HasPrefix(path, prefix+"/") }
 	readDoc := func(path string) (domain.KnowledgeDocument, []domain.KnowledgeChunk, error) {
@@ -350,12 +366,13 @@ func syncFailureMessage(err error) string {
 	switch {
 	case containsAny(raw, "remote branch", "couldn't find remote ref", "could not find remote ref", "not found in upstream", "unknown revision"):
 		return "分支不存在，请检查分支名"
+	case containsAny(raw, "repository not found", "could not find repository", "repository does not exist", "project you were looking for could not be found", "credentials required", "could not read username", "terminal prompts disabled"):
+		// 公开仓库不存在和私有仓库未带凭据时，托管平台都可能返回 404 或要求
+		// 用户名；无法从 Git 输出区分时给出这两种可能，不要把用户直接引向凭据。
+		return "仓库不存在，或该地址需要凭据"
 	case containsAny(raw,
-		"could not read username", "terminal prompts disabled", "authentication failed",
-		"permission denied"):
+		"authentication failed", "permission denied", "error: 401", "error: 403"):
 		return "仓库鉴权失败，请检查来源凭据及仓库读取权限"
-	case containsAny(raw, "repository not found", "could not find repository", "repository does not exist", "project you were looking for could not be found"):
-		return "仓库不存在，请检查仓库地址及凭据的访问范围"
 	case strings.Contains(raw, "host key verification failed"):
 		return "SSH 服务器公钥验证失败，请核对 known_hosts 记录"
 	case strings.Contains(raw, "来源凭据无法解密"):

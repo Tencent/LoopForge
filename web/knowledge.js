@@ -1,6 +1,6 @@
 // 知识中心：本项目的托管知识库、来源、文档、试搜与读原文；角色与审核标签保留。
 // 依赖 app.js 的全局 state、api、$、$$、escapeHTML、toast、relativeTime、switchView、showRunDetail、huiIcon、afConfirm。
-const kb={tab:'bases',projectId:null,overview:null,overviewError:'',docs:{source:'',items:[],error:'',loading:false,loaded:false},usage:null,candidates:[],submissions:[],subStatus:'todo',draft:null,togglingAgents:new Set(),search:{query:'',sources:[],result:null,loading:false,error:'',seq:0},governance:null,governanceError:'',feedbackSent:new Set(),drawer:{opener:null,openerKey:'',seq:0}};
+const kb={tab:'bases',projectId:null,overview:null,overviewError:'',docs:{source:'',items:[],error:'',loading:false,loaded:false},usage:null,candidates:[],submissions:[],subStatus:'todo',draft:null,togglingAgents:new Set(),search:{query:'',sources:[],result:null,loading:false,error:'',seq:0},governance:null,governanceError:'',feedbackSent:new Set(),drawer:{opener:null,openerKey:'',seq:0},pollTimer:0,rendered:false,pendingCitation:''};
 
 const KB_TOOLS=[
   ['kb_search','在项目已授权来源里做关键词检索，返回带出处和行号的结果'],
@@ -94,11 +94,20 @@ function kbCitationText(sourceId,commit,revision,path,start,end){
   const ref=lo?`#L${lo}${hi>lo?`-L${hi}`:''}`:'';
   return `${sourceId}@${version}:${path}${ref}`;
 }
+function kbParseCitation(raw){
+  const m=/^([^@\s]+)@([^:\s]+):([^\s#]+)(?:#L(\d+)(?:-L(\d+))?)?$/.exec(String(raw||'').trim());
+  if(!m)return null;
+  return {source:m[1],version:m[2],path:m[3],start:Number(m[4])||0,end:Number(m[5])||Number(m[4])||0};
+}
 // 出处标识固定一行：超长时省略而不是折断；能拼出仓库网页时给可点链接。
-function kbCitationHTML(text,url=''){
+// full 用于抽屉标题下：允许换行完整展示；citation 让托管出处也可点开原文。
+function kbCitationHTML(text,url='',opt={}){
   const body=escapeHTML(text);
-  const link=url?`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer" data-kb-cite>${body}<span aria-hidden="true"> ↗</span></a>`:body;
-  return `<span class="kb-cite" title="${escapeHTML(text)}">${link}</span>`;
+  const cls=`kb-cite${opt.full?' kb-cite-full':''}`;
+  let link=body;
+  if(url)link=`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer" data-kb-cite>${body}<span aria-hidden="true"> ↗</span></a>`;
+  else if(opt.citation)link=`<a href="#" data-kb-cite data-kb-cite-open="${escapeHTML(opt.citation)}">${body}</a>`;
+  return `<span class="${cls}" title="${escapeHTML(text)}">${link}</span>`;
 }
 function kbFreshnessHTML(status){
   if(status==='changed')return kbBadge('原文已变更','warn','出处版本和来源当前正文不一致，下面显示的是当前正文');
@@ -112,6 +121,15 @@ function kbGitURLError(raw){
   let u;try{u=new URL(normalized)}catch{return 'Git 地址必须是 HTTPS 或 SSH 仓库地址'}
   if(!['https:','ssh:'].includes(u.protocol)||!u.hostname||!u.pathname||u.pathname==='/')return 'Git 地址必须是 HTTPS 或 SSH 仓库地址';
   if(u.password||(u.protocol==='https:'&&u.username)||u.search||u.hash)return 'Git 地址不能包含凭据或查询参数';
+  return '';
+}
+function kbGitCredentialError(raw,kind){
+  const value=String(raw||'').trim();
+  if(!value)return '';
+  const normalized=/^[\w.-]+@[^/:]+:.+/.test(value)?`ssh://${value.replace(':','/')}`:value;
+  let u;try{u=new URL(normalized)}catch{return ''}
+  if(u.protocol==='ssh:'&&kind!=='ssh')return 'SSH 地址需要部署密钥：请选择「SSH 部署密钥」并填写私钥与 known_hosts';
+  if(u.protocol==='https:'&&kind==='ssh')return 'HTTPS 地址应使用「HTTPS 用户名与令牌」凭据';
   return '';
 }
 function kbDocPathError(raw){
@@ -167,16 +185,24 @@ async function renderKnowledgeView(){
  if(kb.selectedProject!==state.projectFilter){kb.sharedAdmin=false;kb.selectedProject=state.projectFilter}
   const root=$('#knowledgeBody');
   if(!root)return;
+  kb.rendered=false;
   if(kb.projectId!==null&&kb.projectId!==kbProjectId()){
     kbDrawerClose();
     Object.assign(kb.search,{result:null,error:'',sources:[]});
     kb.governance=null;kb.governanceError='';kb.feedbackSent=new Set();
     kb.docs={source:'',items:[],error:'',loading:false,loaded:false};
+    kb.pendingCitation='';
   }
   kb.projectId=kbProjectId();
   if(!kb.overview&&!kb.overviewError){root.innerHTML='<div class="kb-empty">正在加载知识库…</div>';kbRenderStatus()}
   await kbRefresh();
   kbRender();
+  kb.rendered=true;
+  if(kb.pendingCitation){
+    const citation=kb.pendingCitation;kb.pendingCitation='';
+    await kbOpenCitation(citation);
+  }
+  kbEnsureSyncPoll();
 }
 
 async function kbRefresh(){
@@ -288,17 +314,7 @@ function kbRenderBases(body){
         ${kbCredentialFields()}
         <div class="kb-foot"><span class="kb-hint" id="kbGitResult">登记后由后台同步；点右侧「同步」可重新触发</span><button type="submit" class="kb-btn primary">登记来源</button></div>
       </form>`,{label:'登记 Git 来源'}):''}`;
-  const right=kbPanel(kbPanelTitle('来源与同步状态','同步状态、篇数与最近错误'),sources.length?sources.map(s=>{
-    const [label,tone]=KB_SOURCE_STATUS[s.status]||[s.status||'未同步','warn'];
-    const synced=s.lastSyncedAt?` · 最近同步 ${escapeHTML(relativeTime(s.lastSyncedAt))}`:'';
-    const meta=s.kind==='git'?`Git · ${escapeHTML(s.branch||'main')} · ${escapeHTML(s.pathPrefix||'仓库根目录')}${synced}`:`托管${synced}`;
-    const err=s.lastError?`<div class="kb-row-desc kb-err" title="${escapeHTML(s.lastError)}">同步错误：${escapeHTML(s.lastError)}</div>`:'';
-    const actions=s.kind==='git'&&canManage&&kbSourceWritable(s)
-      ?`<span class="kb-row-actions"><button type="button" class="kb-btn small" data-kb-credential="${escapeHTML(s.id)}">${s.credentialConfigured?'替换凭据':'配置凭据'}</button><button type="button" class="kb-btn small" data-kb-sync="${escapeHTML(s.id)}">同步</button><button type="button" class="kb-btn quiet small" data-kb-del="${escapeHTML(s.id)}">删除</button></span>`
-      :'';
-    const name=kbSourceName(s);
-    return kbRow(kbText(escapeHTML(name)+(s.credentialConfigured?'<span class="kb-hint"> · 凭据已配置</span>':''),`<span>${escapeHTML(kbSourceLabel(s))}</span> · ${meta} · ${Number(s.docCount)||0} 篇`+err),actions+kbBadge(escapeHTML(label),tone),{cls:'kb-source-row'});
-  }).join(''):'<div class="kb-empty">暂无来源</div>',{label:'来源与同步状态'});
+  const right=`<div id="kbSourcesHost">${kbSourcesPanelHTML(canManage)}</div>`;
   body.innerHTML=`<div class="kb-grid"><div class="kb-source-column">${left}</div>${right}</div>`;
   kbBindSharedControls(body);
   const form=$('#kbGitForm');
@@ -309,6 +325,8 @@ function kbRenderBases(body){
     const out=$('#kbGitResult');
     const invalid=kbGitURLError(f.gitUrl.value);
     if(invalid){out.className='kb-hint kb-err';out.textContent=invalid;f.gitUrl.focus();return}
+    const credentialInvalid=kbGitCredentialError(f.gitUrl.value,f.credentialKind.value);
+    if(credentialInvalid){out.className='kb-hint kb-err';out.textContent=credentialInvalid;f.credentialKind.focus();return}
     const submit=form.querySelector('[type="submit"]');submit.disabled=true;
     out.className='kb-hint';out.textContent='登记中…';
     try{
@@ -320,9 +338,44 @@ function kbRenderBases(body){
       await renderKnowledgeView();
     }catch(err){submit.disabled=false;out.className='kb-hint kb-err';out.textContent=err.message}
   };
-  if(form)form.elements.gitUrl.oninput=()=>{const out=$('#kbGitResult');out.className='kb-hint';out.textContent='登记后由后台同步；点右侧「同步」可重新触发'};
-  body.querySelectorAll('[data-kb-credential]').forEach(btn=>btn.onclick=()=>kbOpenCredentialEditor(btn.dataset.kbCredential));
-  body.querySelectorAll('[data-kb-sync]').forEach(btn=>btn.onclick=async()=>{
+  if(form){
+    const fields=form.elements;
+    const showGitHint=()=>{
+      const out=$('#kbGitResult');if(!out)return;
+      const credentialError=kbGitCredentialError(fields.gitUrl.value,fields.credentialKind.value);
+      out.className=credentialError?'kb-hint kb-err':'kb-hint';
+      out.textContent=credentialError||'登记后由后台同步；点右侧「同步」可重新触发';
+    };
+    fields.gitUrl.oninput=showGitHint;
+    fields.credentialKind.addEventListener('change',showGitHint);
+  }
+  kbBindSourceActions(body);
+  body.querySelectorAll('[data-kb-sediment]').forEach(btn=>btn.onclick=()=>kbOpenSedimentConfig(btn.dataset.kbSediment));
+}
+
+function kbSourceProgressHTML(s){
+  if(!(Number(s.vectorTotal)>0))return '';
+  return `<div class="kb-row-desc kb-vector-progress">重建向量中 ${Number(s.vectorCurrent)||0}/${Number(s.vectorTotal)}</div>`;
+}
+
+function kbSourcesPanelHTML(canManage){
+  const sources=kbAllSources();
+  return kbPanel(kbPanelTitle('来源与同步状态','同步状态、篇数与最近错误'),sources.length?sources.map(s=>{
+    const [label,tone]=KB_SOURCE_STATUS[s.status]||[s.status||'未同步','warn'];
+    const synced=s.lastSyncedAt?` · 最近同步 ${escapeHTML(relativeTime(s.lastSyncedAt))}`:'';
+    const meta=s.kind==='git'?`Git · ${escapeHTML(s.branch||'main')} · ${escapeHTML(s.pathPrefix||'仓库根目录')}${synced}`:`托管${synced}`;
+    const err=s.lastError?`<div class="kb-row-desc kb-err" title="${escapeHTML(s.lastError)}">同步错误：${escapeHTML(s.lastError)}</div>`:'';
+    const actions=s.kind==='git'&&canManage&&kbSourceWritable(s)
+      ?`<span class="kb-row-actions"><button type="button" class="kb-btn small" data-kb-credential="${escapeHTML(s.id)}">${s.credentialConfigured?'替换凭据':'配置凭据'}</button><button type="button" class="kb-btn small" data-kb-sync="${escapeHTML(s.id)}">同步</button><button type="button" class="kb-btn quiet small" data-kb-del="${escapeHTML(s.id)}">删除</button></span>`
+      :'';
+    const name=kbSourceName(s);
+    return kbRow(kbText(escapeHTML(name)+(s.credentialConfigured?'<span class="kb-hint"> · 凭据已配置</span>':''),`<span>${escapeHTML(kbSourceLabel(s))}</span> · ${meta} · ${Number(s.docCount)||0} 篇`)+err+kbSourceProgressHTML(s),actions+kbBadge(escapeHTML(label),tone),{cls:'kb-source-row'});
+  }).join(''):'<div class="kb-empty">暂无来源</div>',{label:'来源与同步状态'});
+}
+
+function kbBindSourceActions(root){
+  root.querySelectorAll('[data-kb-credential]').forEach(btn=>btn.onclick=()=>kbOpenCredentialEditor(btn.dataset.kbCredential));
+  root.querySelectorAll('[data-kb-sync]').forEach(btn=>btn.onclick=async()=>{
     btn.disabled=true;
     try{
       await api('/api/knowledge/bases/sync',{method:'POST',body:JSON.stringify({projectId:kbProjectId(),sourceId:btn.dataset.kbSync})});
@@ -330,8 +383,7 @@ function kbRenderBases(body){
       await renderKnowledgeView();
     }catch(err){btn.disabled=false;toast(err.message,'err')}
   });
-  body.querySelectorAll('[data-kb-sediment]').forEach(btn=>btn.onclick=()=>kbOpenSedimentConfig(btn.dataset.kbSediment));
-  body.querySelectorAll('[data-kb-del]').forEach(btn=>btn.onclick=async()=>{
+  root.querySelectorAll('[data-kb-del]').forEach(btn=>btn.onclick=async()=>{
     const src=kbSourceById(btn.dataset.kbDel);
     if(!src)return;
     if(!(await afConfirm({title:'删除来源',message:`删除来源「${kbSourceName(src)}」以及它已索引的全部文档？`,confirmText:'删除',danger:true})))return;
@@ -344,6 +396,34 @@ function kbRenderBases(body){
       await renderKnowledgeView();
     }catch(err){btn.disabled=false;toast(err.message,'err')}
   });
+}
+
+function kbSyncInProgress(){
+  return kbAllSources().some(s=>['pending','syncing'].includes(s.status)||Number(s.vectorTotal)>0);
+}
+
+function kbStopSyncPoll(){
+  if(!kb.pollTimer)return;
+  clearTimeout(kb.pollTimer);kb.pollTimer=0;
+}
+
+function kbEnsureSyncPoll(){
+  if(!kbSyncInProgress()||!$('#knowledgeView')?.classList.contains('active')){kbStopSyncPoll();return}
+  if(kb.pollTimer)return;
+  kb.pollTimer=setTimeout(()=>{kb.pollTimer=0;kbPollSources()},1500);
+}
+
+async function kbPollSources(){
+  if(!$('#knowledgeView')?.classList.contains('active'))return;
+  try{
+    const overview=await api(`/api/knowledge/bases?projectId=${encodeURIComponent(kbProjectId())}`,{silent:true});
+    if(overview?.error)return;
+    kb.overview=overview;kb.overviewError='';
+    kbRenderStatus();
+    const host=$('#kbSourcesHost');
+    if(host&&kb.tab==='bases'){host.innerHTML=kbSourcesPanelHTML(kbCanManageSources());kbBindSourceActions(host)}
+  }catch{}
+  kbEnsureSyncPoll();
 }
 
 function kbCanManageBindings(){
@@ -793,7 +873,10 @@ async function kbSendFeedback(btn){
     box.dataset.sent='1';
     box.innerHTML=`<span class="kb-fb-sent">${kind==='helpful'?'已记录：有用':'已记录：没用'}</span>`;
     toast(kind==='helpful'?'已记录：有用':'已记录：没用','ok');
-    if(kb.governance)await kbRefresh();
+    // 反馈写入后立即刷新治理数据并重绘当前标签；否则用户切到治理时会
+    // 先看到提交前的计数，直到整页刷新。
+    await kbRefresh();
+    kbRender();
   }catch(err){
     box.querySelectorAll('button').forEach(b=>b.disabled=false);
     toast(err.message,'err');
@@ -888,7 +971,7 @@ function kbRenderSearch(body){
   const sources=kbAllSources();
   if(q.sources.length&&!sources.some(x=>x.id===q.sources[0]))q.sources=[];
   const selected=q.sources[0]||'';
-  body.innerHTML=kbPanel(`<form class="kb-search" id="kbSearchForm" role="search">${KB_SEARCH_ICON}<input type="search" name="q" aria-label="检索知识库" placeholder="问一个问题，或输入关键词，结果与 Agent 看到的一致" autocomplete="off" value="${escapeHTML(q.query)}"><select name="source" aria-label="限定来源"><option value="">全部来源</option>${sources.map(x=>`<option value="${escapeHTML(x.id)}"${x.id===selected?' selected':''}>${escapeHTML(x.name||x.id)}</option>`).join('')}</select></form>`,`<div class="kb-cap kb-search-note">少于两个字的查询可能没有结果，换更长或更具体的词再试。 ${escapeHTML(kbVectorEnabledText())}</div><div id="kbHits">${kbHitsHTML()}</div>`,{label:'试搜',headCls:'kb-panel-search'});
+  body.innerHTML=kbPanel(`<form class="kb-search" id="kbSearchForm" role="search">${KB_SEARCH_ICON}<input type="search" name="q" aria-label="检索知识库" placeholder="问一个问题，或输入关键词，结果与 Agent 看到的一致" autocomplete="off" value="${escapeHTML(q.query)}"><select name="source" aria-label="限定来源"><option value="">全部来源</option>${sources.map(x=>`<option value="${escapeHTML(x.id)}"${x.id===selected?' selected':''}>${escapeHTML(x.name||x.id)}</option>`).join('')}</select></form>`,`<div class="kb-cap kb-search-note">少于两个字的查询可能没有结果，换更长或更具体的词再试。 <span id="kbVectorNote">${escapeHTML(kbVectorEnabledText(q.result?.result))}</span></div><div id="kbHits">${kbHitsHTML()}</div>`,{label:'试搜',headCls:'kb-panel-search'});
   const form=$('#kbSearchForm');
   form.onsubmit=async e=>{
     e.preventDefault();
@@ -920,8 +1003,12 @@ function kbVectorModeText(r){
   if(r.degraded)return '语义检索暂不可用，已降级为关键词检索';
   return r.mode==='hybrid'?'混合检索（关键词+向量）':'关键词检索';
 }
-function kbVectorEnabledText(){
-  return kbBases().some(b=>b.vectorEnabled)?'向量检索：已启用':'向量检索：未启用（仅关键词）';
+function kbVectorStatusText(enabled,degraded){
+  if(!enabled)return '向量检索：未启用（仅关键词）';
+  return degraded?'向量检索：已启用（当前不可用）':'向量检索：已启用';
+}
+function kbVectorEnabledText(r){
+  return kbVectorStatusText(kbBases().some(b=>b.vectorEnabled),!!r?.degraded);
 }
 
 function kbHitsHTML(){
@@ -941,7 +1028,11 @@ function kbHitsHTML(){
   }).join('');
 }
 
-function kbUpdateHits(){const hits=$('#kbHits');if(hits){hits.innerHTML=kbHitsHTML();kbBindHits()}}
+function kbUpdateHits(){
+  const note=$('#kbVectorNote');
+  if(note)note.textContent=kbVectorEnabledText(kb.search.result?.result);
+  const hits=$('#kbHits');if(hits){hits.innerHTML=kbHitsHTML();kbBindHits()}
+}
 
 function kbBindHits(){
   $$('#kbHits [data-kb-cite]').forEach(a=>a.onclick=e=>e.stopPropagation());
@@ -973,6 +1064,34 @@ async function kbDoSearch(){
   kbUpdateHits();
 }
 
+async function kbOpenCitation(raw){
+  const parsed=kbParseCitation(raw);
+  if(!parsed)return false;
+  if(!kb.overview)await kbRefresh();
+  const src=kbSourceById(parsed.source);
+  if(src?.kind==='git'){
+    const url=kbGitFileURL(parsed.source,parsed.version,parsed.path,parsed.start,parsed.end);
+    if(url){window.open(url,'_blank','noopener,noreferrer');return true}
+  }
+  await kbOpenDocument({
+    source:parsed.source,commit:parsed.version,revision:Number(parsed.version)||0,
+    path:parsed.path,title:parsed.path,start_line:parsed.start,end_line:parsed.end,
+  });
+  return true;
+}
+// Main Bot 在 iframe 里通过 postMessage 请求打开出处；知识中心已渲染时直接开，
+// 否则先记下，等 renderKnowledgeView 完成后再开，避免与首次加载抢抽屉。
+function kbOpenCitationFromChat(citation){
+  const value=String(citation||'').trim();
+  if(!value)return;
+  if(kb.rendered&&$('#knowledgeView')?.classList.contains('active')){
+    kbOpenCitation(value);
+    return;
+  }
+  kb.pendingCitation=value;
+}
+window.agentflowOpenKnowledgeCitation=kbOpenCitationFromChat;
+
 async function kbOpenDocument(hit){
   if(!hit)return;
   const source=hit.source||kb.docs.source;
@@ -982,14 +1101,17 @@ async function kbOpenDocument(hit){
   const end=Number(hit.end_line)||0;
   const citation=hit.citation||kbCitationText(source,hit.commit,hit.revision,path,start,end);
   const cited=hit.commit||'';
-  const seq=kbDrawerOpen(hit.title||path,kbCitationHTML(citation,kbGitFileURL(source,hit.commit,path,start,end)),'<div class="kb-empty">正在读取原文…</div>');
+  const hosted=kbSourceById(source)?.kind==='hosted';
+  const seq=kbDrawerOpen(hit.title||path,kbCitationHTML(citation,kbGitFileURL(source,hit.commit,path,start,end),{citation:hosted?citation:'',full:true}),'<div class="kb-empty">正在读取原文…</div>');
   try{
     const doc=await api(`/api/knowledge/bases/document?projectId=${encodeURIComponent(kbProjectId())}&source=${encodeURIComponent(source)}&path=${encodeURIComponent(path)}&start=${start}&end=${end}&commit=${encodeURIComponent(cited)}`);
     if(seq!==kb.drawer.seq)return;
     const shownCitation=doc.citation||citation;
+    if(doc.title)$('#kbDrawerTitle').textContent=doc.title;
     const fresh=kbFreshnessHTML(doc.freshness);
     const note=doc.freshness==='changed'?'<div class="kb-line-note" data-kb-freshness="changed">出处版本已不是当前正文，下面显示的是来源里的当前原文。</div>':'';
-    $('#kbDrawerSub').innerHTML=escapeHTML([kbLayerLabel(doc.layer),doc.base_name].filter(Boolean).join(' · '))+' · '+kbCitationHTML(shownCitation,kbGitFileURL(source,doc.commit||cited,path,start||doc.start_line,end||doc.end_line))+(fresh?` ${fresh}`:'');
+    const docHosted=kbSourceById(source)?.kind==='hosted';
+    $('#kbDrawerSub').innerHTML=escapeHTML([kbLayerLabel(doc.layer),doc.base_name].filter(Boolean).join(' · '))+' · '+kbCitationHTML(shownCitation,kbGitFileURL(source,doc.commit||cited,path,start||doc.start_line,end||doc.end_line),{citation:docHosted?shownCitation:'',full:true})+(fresh?` ${fresh}`:'');
     const first=start||Number(doc.start_line)||0,last=end||Number(doc.end_line)||0;
     const host=$('#kbDrawerBody');
     host.innerHTML=note+`<div class="kb-doc">${(doc.lines||[]).map(l=>`<div class="${l.number>=first&&l.number<=last?'hl':''}"${l.number===first?' id="kbDocAnchor"':''}><span>${l.number}</span><code>${escapeHTML(l.text)}</code></div>`).join('')}</div>`;
@@ -1016,6 +1138,8 @@ async function kbOpenDocument(hit){
 // ---------- 全局交互 ----------
 document.addEventListener('click',e=>{
   if(e.target.closest('#kbDrawerClose')||e.target.id==='kbScrim')return kbDrawerClose();
+  const cite=e.target.closest('#kbDrawer [data-kb-cite-open]');
+  if(cite){e.preventDefault();e.stopPropagation();kbOpenCitation(cite.dataset.kbCiteOpen);return}
   const run=e.target.closest('#kbDrawer [data-kb-run]');
   if(run){e.preventDefault();const id=run.dataset.kbRun;kbDrawerClose();switchView('runs');showRunDetail(id)}
 });

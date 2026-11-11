@@ -56,6 +56,19 @@ type VectorRuntime struct {
 	control VectorControlStore
 
 	mu sync.Mutex // 串行化全量重建，避免并发删集合
+
+	progressMu sync.RWMutex
+	progress   map[string]VectorProgress
+}
+
+// VectorProgress 是一次向量重建的只读进度。它只存在处理同步的进程里，
+// 用于在知识中心显示「重建向量中 N/M」；多实例部署时其他实例看不到，
+// 会继续显示来源的同步状态，不影响正确性。
+type VectorProgress struct {
+	SourceID string `json:"sourceId"`
+	Current  int    `json:"current"`
+	Total    int    `json:"total"`
+	Phase    string `json:"phase"`
 }
 
 var _ VectorChannel = (*VectorRuntime)(nil)
@@ -67,7 +80,7 @@ func newVectorRuntime(cfg VectorConfig, content VectorContentStore, control Vect
 	})
 	return &VectorRuntime{
 		cfg: cfg, embed: provider, qdrant: qdrant.New(cfg.QdrantURL, cfg.QdrantAPIKey),
-		content: content, control: control,
+		content: content, control: control, progress: map[string]VectorProgress{},
 	}
 }
 
@@ -147,7 +160,20 @@ func (v *VectorRuntime) SyncSource(ctx context.Context, sourceID string) error {
 	if err := v.qdrant.DeleteByFilter(ctx, v.cfg.Collection, sourceID, ""); err != nil {
 		return err
 	}
-	return v.indexChunks(ctx, v.content.KnowledgeChunksBySource(sourceID))
+	return v.indexSourceChunks(ctx, sourceID)
+}
+
+// indexSourceChunks embeds one source's current chunks and publishes progress
+// under that source. The full rebuild and the post-sync incremental path share
+// it so both show 「重建向量中 N/M」 in the knowledge center.
+func (v *VectorRuntime) indexSourceChunks(ctx context.Context, sourceID string) error {
+	chunks := v.content.KnowledgeChunksBySource(sourceID)
+	if len(chunks) == 0 {
+		return nil
+	}
+	v.setProgress(sourceID, 0, len(chunks))
+	defer v.clearProgress(sourceID)
+	return v.indexChunksWithProgress(ctx, chunks, sourceID)
 }
 
 // DeindexDocument 在文档撤回时删掉该文档路径的向量点，供
@@ -177,6 +203,10 @@ func (v *VectorRuntime) sourceVectorEnabled(sourceID string) bool {
 // indexChunks 分批嵌入并写入，单批不超过 sidecar 的 64 输入上限，也避免
 // 一次把整库点都堆进内存。
 func (v *VectorRuntime) indexChunks(ctx context.Context, chunks []domain.KnowledgeChunk) error {
+	return v.indexChunksWithProgress(ctx, chunks, "")
+}
+
+func (v *VectorRuntime) indexChunksWithProgress(ctx context.Context, chunks []domain.KnowledgeChunk, progressSource string) error {
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -205,8 +235,44 @@ func (v *VectorRuntime) indexChunks(ctx context.Context, chunks []domain.Knowled
 		if err := v.qdrant.Upsert(ctx, v.cfg.Collection, points); err != nil {
 			return err
 		}
+		if progressSource != "" {
+			v.setProgress(progressSource, end, len(chunks))
+		}
 	}
 	return nil
+}
+
+func (v *VectorRuntime) setProgress(sourceID string, current, total int) {
+	if sourceID == "" || total <= 0 {
+		return
+	}
+	v.progressMu.Lock()
+	defer v.progressMu.Unlock()
+	if v.progress == nil {
+		v.progress = map[string]VectorProgress{}
+	}
+	v.progress[sourceID] = VectorProgress{SourceID: sourceID, Current: current, Total: total, Phase: "rebuild"}
+}
+
+func (v *VectorRuntime) clearProgress(sourceID string) {
+	if sourceID == "" {
+		return
+	}
+	v.progressMu.Lock()
+	defer v.progressMu.Unlock()
+	delete(v.progress, sourceID)
+}
+
+func (v *VectorRuntime) progressFor(sourceID string) (VectorProgress, bool) {
+	v.progressMu.RLock()
+	defer v.progressMu.RUnlock()
+	p, ok := v.progress[sourceID]
+	return p, ok
+}
+
+// VectorProgressForSource 供管理接口显示当前实例正在重建的向量进度。
+func VectorProgressForSource(sourceID string) (VectorProgress, bool) {
+	return vectorRuntime().progressFor(sourceID)
 }
 
 // embeddingText 用标题、小节、正文拼出语义输入，帮助口语问句命中短块。
@@ -348,8 +414,13 @@ func (v *VectorRuntime) rebuild(ctx context.Context, sourceIDs []string) error {
 	if err := v.qdrant.EnsureCollection(ctx, v.cfg.Collection, v.cfg.Dim); err != nil {
 		return err
 	}
-	if err := v.indexChunks(ctx, v.content.KnowledgeChunksForSources(sourceIDs)); err != nil {
-		return err
+	for _, sourceID := range sourceIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := v.indexSourceChunks(ctx, sourceID); err != nil {
+			return err
+		}
 	}
 	return v.setRebuildDirty(ctx, false)
 }

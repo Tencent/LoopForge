@@ -107,6 +107,11 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'
 
 // Remote stderr is untrusted and may echo a password or private key. Preserve
 // only recognized categories, never raw output, arguments or environment.
+//
+// "Repository not found" from common hosts also covers a private repository the
+// caller cannot see, so it must not be collapsed into authentication failure.
+// A prompt-only failure ("could not read Username") is even more ambiguous and
+// keeps its own category; the caller turns both into "missing or credentials".
 func safeGitError(output string) error {
 	raw := strings.ToLower(output)
 	for _, group := range []struct {
@@ -114,11 +119,12 @@ func safeGitError(output string) error {
 		terms   []string
 	}{
 		{"host key verification failed", []string{"host key verification failed", "remote host identification has changed"}},
-		{"authentication failed", []string{"authentication failed", "permission denied", "could not read username", "terminal prompts disabled", "error: 401", "error: 403"}},
+		{"repository not found", []string{"repository not found", "requested url returned error: 404", "error: 404"}},
+		{"authentication failed", []string{"authentication failed", "permission denied", "error: 401", "error: 403"}},
+		{"credentials required", []string{"could not read username", "terminal prompts disabled"}},
 		{"remote branch missing", []string{"remote branch", "couldn't find remote ref", "could not find remote ref", "remote ref does not exist"}},
 		{"push rejected", []string{"pre-receive hook declined", "remote rejected", "protected branch", "failed to push some refs"}},
 		{"non fast forward", []string{"non-fast-forward", "fetch first", "updates were rejected"}},
-		{"repository not found", []string{"repository not found", "requested url returned error: 404"}},
 		{"failed to connect", []string{"unable to access", "could not resolve", "failed to connect", "connection refused", "timed out", "network is unreachable", "certificate"}},
 	} {
 		for _, term := range group.terms {

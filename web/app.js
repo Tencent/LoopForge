@@ -1563,6 +1563,15 @@ function mountNativeChat(){
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
         else switchView(message.view);
       }
+      if(message.type==='agentflow-open-knowledge-citation'&&typeof message.citation==='string'){
+        switchView('knowledge');
+        let tries=0;
+        const openCitation=()=>{
+          if(typeof window.agentflowOpenKnowledgeCitation==='function'){window.agentflowOpenKnowledgeCitation(message.citation);return}
+          if(tries++<20)setTimeout(openCitation,50);
+        };
+        openCitation();
+      }
     });
   }
   if(frame.dataset.src!=='native'){

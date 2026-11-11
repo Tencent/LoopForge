@@ -30,6 +30,13 @@ func TestCitationFreshnessCompareCurrentDocument(t *testing.T) {
 	if err := st.PutKnowledgeSource(domain.KnowledgeSource{ID: "foreign", BaseID: "other", Kind: "hosted"}); err != nil {
 		t.Fatal(err)
 	}
+	gitCommit := "0123456789abcdef0123456789abcdef01234567"
+	if err := st.PutKnowledgeSource(domain.KnowledgeSource{ID: "gitdocs", BaseID: "local", Kind: "git", GitURL: "https://github.com/example/repo.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutKnowledgeDocument(domain.KnowledgeDocument{SourceID: "gitdocs", Path: "docs/git.md", Title: "Git 指南", Body: "正文", Commit: gitCommit}); err != nil {
+		t.Fatal(err)
+	}
 	eng := kbengine.NewEngine(st, st, kbengine.NewMySQLKeywordIndex(st))
 	if _, err := eng.WriteDocument(context.Background(), "docs", "guide.md", "# 指南\n\n版本一\n"); err != nil {
 		t.Fatal(err)
@@ -48,6 +55,17 @@ func TestCitationFreshnessCompareCurrentDocument(t *testing.T) {
 	changed := svc.JudgeFreshness("p", "docs", "guide.md", "1")
 	if changed.Status != knowledge.FreshnessChanged || changed.Current != "2" {
 		t.Fatalf("changed = %+v", changed)
+	}
+	items := svc.JudgeCitations("p", []string{"docs@1:guide.md#L1-L2", "gitdocs@" + gitCommit + ":docs/git.md#L3-L4"})
+	if len(items) != 2 {
+		t.Fatalf("freshness items = %+v", items)
+	}
+	if items[0].Kind != "hosted" || items[0].Title != "指南" || items[0].URL != "" || items[0].Status != knowledge.FreshnessChanged {
+		t.Fatalf("hosted citation metadata = %+v", items[0])
+	}
+	wantURL := "https://github.com/example/repo/blob/" + gitCommit + "/docs/git.md#L3-L4"
+	if items[1].Kind != "git" || items[1].Title != "Git 指南" || items[1].URL != wantURL {
+		t.Fatalf("git citation metadata = %+v want url %s", items[1], wantURL)
 	}
 	if err := st.DeleteKnowledgeDocument("docs", "guide.md"); err != nil {
 		t.Fatal(err)

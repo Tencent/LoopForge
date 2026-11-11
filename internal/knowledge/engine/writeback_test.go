@@ -377,7 +377,7 @@ func TestReconcileWritebackAfterMergeTriggersIncrementalIndex(t *testing.T) {
 		return gitsync.Sync(ctx, dir, f.remote, branch, old)
 	}
 	src, _ := f.store.KnowledgeSource(f.sourceID)
-	if _, _, err := worker.importGit(context.Background(), src, "owner"); err != nil {
+	if _, _, err := worker.importGit(context.Background(), src, "owner", false); err != nil {
 		t.Fatal(err)
 	}
 	oldDoc, ok := f.store.KnowledgeDocument(f.sourceID, "docs/old.md")
@@ -406,7 +406,7 @@ func TestReconcileWritebackAfterMergeTriggersIncrementalIndex(t *testing.T) {
 		t.Fatalf("source was not queued for incremental sync: %+v", src)
 	}
 	// Run the incremental import that the sync loop would perform.
-	if _, _, err := worker.importGit(context.Background(), src, "owner"); err != nil {
+	if _, _, err := worker.importGit(context.Background(), src, "owner", false); err != nil {
 		t.Fatal(err)
 	}
 	newDoc, ok := f.store.KnowledgeDocument(f.sourceID, "docs/merged.md")
