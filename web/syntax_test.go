@@ -324,13 +324,13 @@ func TestAccessGuideIsTheSingleOnboardingEntry(t *testing.T) {
 	if strings.Contains(page, `id="accessView"`) || strings.Contains(page, `data-view="access"`) {
 		t.Fatal("legacy access page or navigation entry is still present")
 	}
-	for _, want := range []string{`id="guideView"`, `<h1>Token 管理</h1>`, `id="accessBody"`} {
+	for _, want := range []string{`id="guideView"`, `<h1>访问密钥</h1>`, `id="accessBody"`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("token management page is missing %q", want)
 		}
 	}
 	if strings.Contains(page, `data-access-tab=`) {
-		t.Fatal("接入指南 collapsed into Token 管理; MCP/能力/API tabs must not come back")
+		t.Fatal("接入指南 collapsed into 访问密钥; MCP/能力/API tabs must not come back")
 	}
 	if strings.Contains(page, `data-access-tab="stdio"`) {
 		t.Fatal("stdio bridge must not be advertised in the onboarding UI")

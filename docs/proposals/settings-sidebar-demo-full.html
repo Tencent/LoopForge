@@ -384,7 +384,7 @@
     <h3>合并与简化</h3>
     <ol>
       <li>MCP / 规则 / 技能合成<b>能力资产</b>；Dockerfile / 安装脚本 / 沙箱合成<b>环境资产</b></li>
-      <li><b>接入指南</b>只保留个人 Token，改名 <b>Token 管理</b></li>
+      <li><b>接入指南</b>只保留访问密钥，改名 <b>访问密钥</b></li>
       <li>图标栏 7 项减到 4 项；设置侧栏 21 项减到 12 项，最多两层</li>
     </ol>
   </div>
@@ -647,7 +647,7 @@ const VIEWS={
   capability:{title:'能力资产',area:'settings',render:vCapability,tabs:['mcp','rules','skills']},
   runners:{title:'执行机器',area:'settings',render:vRunners},
   environment:{title:'环境资产',area:'settings',render:vEnvironment,tabs:['dockerfiles','scripts','sandboxes']},
-  tokens:{title:'Token 管理',area:'settings',render:vTokens},
+  tokens:{title:'访问密钥',area:'settings',render:vTokens},
   platform:{title:'平台管理',area:'settings',render:vPlatform}
 };
 // 旧路由仍可直达新位置；下线模块提示后落到个人配置。
@@ -705,7 +705,7 @@ const NAV=[
   {group:'流程与任务',items:[{item:'sops',label:'流程模板',icon:'workflow',mark:['new','原·图标栏'],match:['flow']},{item:'runs',label:'运行记录',icon:'runs',mark:['new','原·图标栏']},{item:'schedules',label:'定时任务',icon:'clock',mark:['new','原·图标栏']}]},
   {group:'Agent 能力',items:[{item:'agents',label:'角色定义',icon:'user'},{item:'capability',label:'能力资产',icon:'skills',mark:['merge','合并 3 项']}]},
   {group:'运行环境',items:[{item:'runners',label:'执行机器',icon:'server',mark:['move','原·管理与记录']},{item:'environment',label:'环境资产',icon:'layers',mark:['merge','合并 3 项']}]},
-  {group:'开放与平台',items:[{item:'tokens',label:'Token 管理',icon:'key',mark:['move','原·接入指南']},{item:'platform',label:'平台管理',icon:'shield'}]}
+  {group:'开放与平台',items:[{item:'tokens',label:'访问密钥',icon:'key',mark:['move','原·接入指南']},{item:'platform',label:'平台管理',icon:'shield'}]}
 ];
 function navBtn(n){
   const on=state.view===n.item||(n.match||[]).includes(state.view);
@@ -969,11 +969,11 @@ const CLIENTS=[['cursor','Cursor'],['claude','Claude Code'],['codebuddy','CodeBu
 function mcpPrompt(token){const c=CLIENTS.find(x=>x[0]===state.ui.tokenClient)?.[1]||'Cursor';return `按照这个流程安装并验证 LoopForge MCP（客户端：${c}）：\n1. 用 curl 下载安装流程：https://loopforge.example.com/mcp-setup.txt\n2. 把两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = https://loopforge.example.com/mcp`}
 function vTokens(){
   const r=state.revealed,active=DB.tokens.filter(t=>t.status==='active').length;
-  const reveal=r?`<div class="reveal" role="status"><b>Token 已创建：${esc(r.name)}</b><p>平台只保存哈希，关闭后无法再次查看明文。选择客户端，可以直接复制带好 Token 的接入提示词。</p>${seg('tokenClient',CLIENTS,'客户端')}<code>${esc(r.token)}</code><div class="btns"><button type="button" class="btn sm primary" data-act="copyText" data-text="${esc(mcpPrompt(r.token))}">${ic('copy',13)}复制接入提示词</button><button type="button" class="btn sm" data-act="copyText" data-text="${esc(r.token)}">仅复制 Token</button><button type="button" class="btn sm ghost" data-act="closeReveal">我已保存</button></div></div>`:'';
+  const reveal=r?`<div class="reveal" role="status"><b>访问密钥已创建：${esc(r.name)}</b><p>平台只保存哈希，关闭后无法再次查看明文。选择客户端，可以直接复制带好访问密钥的接入提示词。</p>${seg('tokenClient',CLIENTS,'客户端')}<code>${esc(r.token)}</code><div class="btns"><button type="button" class="btn sm primary" data-act="copyText" data-text="${esc(mcpPrompt(r.token))}">${ic('copy',13)}复制接入提示词</button><button type="button" class="btn sm" data-act="copyText" data-text="${esc(r.token)}">仅复制密钥</button><button type="button" class="btn sm ghost" data-act="closeReveal">我已保存</button></div></div>`:'';
   const rows=DB.tokens.map(t=>{const off=t.status!=='active';return row({icon:'key',title:`${esc(t.name)} <span class="mono muted">${esc(t.prefix)}••••••••</span> ${off?badge('off','已撤销'):badge('ok','可用')}`,sub:`创建 ${esc(t.created)} · ${t.used?'最近使用 '+esc(t.used):'尚未使用'} · ${off?'已失效':'有效至 '+esc(t.expires)}`,right:off?'':`<button type="button" class="btn sm danger-outline" data-act="revokeToken" data-id="${t.id}">撤销</button>`})}).join('');
-  return heading('Token 管理','创建和撤销个人 Token，REST API 与 MCP 共用同一个 Token。',`<button type="button" class="btn" data-act="toast" data-msg="OpenAPI 契约：/api/openapi.yaml（模拟）">OpenAPI 契约</button>`,'开放与平台')+
-    note('原「接入指南」的 5 个标签只保留了「我的 Token」，页面改名为 Token 管理。')+
-    `<section class="panel">${reveal}<form class="inline-form" data-form="token" novalidate>${field('Token 名称','<input name="name" maxlength="64" placeholder="例如：我的 Cursor" autocomplete="off" required>').replace('class="field"','class="field wide"')}${field('有效期',`<select name="days">${opts([['30','30 天'],['90','90 天'],['180','180 天'],['365','365 天']],'90')}</select>`)}<button type="submit" class="btn primary">创建 Token</button></form><div class="panel-head"><b>我的 Token</b><span class="r">${active} 个可用</span></div>${rows}</section>`;
+  return heading('访问密钥','创建和撤销访问密钥，REST API 与 MCP 共用同一个访问密钥。',`<button type="button" class="btn" data-act="toast" data-msg="OpenAPI 契约：/api/openapi.yaml（模拟）">OpenAPI 契约</button>`,'开放与平台')+
+    note('原「接入指南」的 5 个标签只保留了「我的访问密钥」，页面改名为 访问密钥。')+
+    `<section class="panel">${reveal}<form class="inline-form" data-form="token" novalidate>${field('密钥名称','<input name="name" maxlength="64" placeholder="例如：我的 Cursor" autocomplete="off" required>').replace('class="field"','class="field wide"')}${field('有效期',`<select name="days">${opts([['30','30 天'],['90','90 天'],['180','180 天'],['365','365 天']],'90')}</select>`)}<button type="submit" class="btn primary">创建访问密钥</button></form><div class="panel-head"><b>我的访问密钥</b><span class="r">${active} 个可用</span></div>${rows}</section>`;
 }
 
 function vPlatform(){
@@ -1203,10 +1203,10 @@ const ACT={
   newSkill:()=>openModal({title:'新建技能',submit:'创建',body:field('名称','<input name="name" maxlength="40" required placeholder="小写字母和短横线，例如 log-triage">')+field('用途','<input name="desc" maxlength="120" required>'),
     onSubmit:f=>{const name=f.get('name').trim(),desc=f.get('desc').trim();if(!/^[a-z0-9-]{2,40}$/.test(name)){toast('名称只能用小写字母、数字和短横线','err');return false}if(!desc){toast('请填写用途','err');return false}DB.skills.push({id:'k'+(++seq),scope:'project',name,desc,files:1});state.ui.skillScope='project';toast('已创建技能','ok');renderMain()}}),
   installSkill:a=>{const h=DB.skillhub.find(x=>x.id===a.dataset.id);if(!h)return;DB.skills.push({id:'k'+(++seq),scope:'project',name:h.name,desc:h.desc,files:2});toast(`已安装 ${h.name}`,'ok');renderMain()},
-  addRunner:()=>openModal({title:'添加执行机器',desc:'在要接入的机器上运行下面的命令，连接成功后会出现在列表里。',submit:'完成',body:`<div class="copy-line"><input class="input" readonly value="npx loopforge-runner connect --server https://loopforge.example.com" aria-label="连接命令"><button type="button" class="btn" data-act="copyText" data-text="npx loopforge-runner connect --server https://loopforge.example.com">${ic('copy',13)}复制</button></div><p>命令会打开浏览器完成授权，不需要手动粘贴 Token。</p>`,onSubmit:()=>true}),
+  addRunner:()=>openModal({title:'添加执行机器',desc:'在要接入的机器上运行下面的命令，连接成功后会出现在列表里。',submit:'完成',body:`<div class="copy-line"><input class="input" readonly value="npx loopforge-runner connect --server https://loopforge.example.com" aria-label="连接命令"><button type="button" class="btn" data-act="copyText" data-text="npx loopforge-runner connect --server https://loopforge.example.com">${ic('copy',13)}复制</button></div><p>命令会打开浏览器完成授权，不需要手动粘贴访问密钥。</p>`,onSubmit:()=>true}),
   envSel:a=>{state.ui.envSel[a.dataset.tab]=a.dataset.id;renderMain();$(`.split-item[data-id="${a.dataset.id}"]`)?.focus()},
   closeReveal:()=>{state.revealed=null;renderMain()},
-  revokeToken:a=>{const t=DB.tokens.find(x=>x.id===a.dataset.id);if(t)confirmModal('撤销 Token',`撤销后，正在使用「${t.name}」的 API 和 MCP 客户端会立即失效。`,'撤销',()=>{t.status='revoked';if(state.revealed?.id===t.id)state.revealed=null;toast('Token 已撤销');renderMain()})},
+  revokeToken:a=>{const t=DB.tokens.find(x=>x.id===a.dataset.id);if(t)confirmModal('撤销访问密钥',`撤销后，正在使用「${t.name}」的 API 和 MCP 客户端会立即失效。`,'撤销',()=>{t.status='revoked';if(state.revealed?.id===t.id)state.revealed=null;toast('访问密钥已撤销');renderMain()})},
   addAdmin:()=>{
     const left=USERS.filter(u=>!DB.platform.admins.includes(u));
     if(!left.length){toast('所有成员都已经是管理员');return}
@@ -1230,10 +1230,10 @@ const FORM={
     toast('触发配置已保存','ok');renderMain();
   },
   token:f=>{
-    const name=f.elements.name.value.trim();if(!name){toast('请填写 Token 名称','err');f.elements.name.focus();return}
+    const name=f.elements.name.value.trim();if(!name){toast('请填写 密钥名称','err');f.elements.name.focus();return}
     const token=randomToken(),days=Number(f.elements.days.value),exp=new Date(2026,10,10);exp.setDate(exp.getDate()+days);
     const t={id:'t'+(++seq),name,prefix:token.slice(0,7),created:'刚刚',used:'',expires:exp.toISOString().slice(0,10),status:'active'};
-    DB.tokens.unshift(t);state.revealed={id:t.id,name,token};toast('Token 已创建，请立即复制','ok');renderMain();
+    DB.tokens.unshift(t);state.revealed={id:t.id,name,token};toast('访问密钥已创建，请立即复制','ok');renderMain();
   },
   platform:f=>{
     const quota=Number(f.elements.quota.value),c=Number(f.elements.concurrency.value);

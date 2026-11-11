@@ -25,10 +25,12 @@ test('token management renders client specs, revealed prompts, and credential hi
     renderGuide();
   `);
   const body = app.document.querySelector('#accessBody');
-  assert.match(body.textContent, /Token 已创建/);
+  assert.match(body.textContent, /访问密钥已创建/);
+  assert.match(body.textContent, /我的访问密钥/);
+  assert.doesNotMatch(body.textContent, /Token/);
   assert.match(body.textContent, /Claude Code/);
   assert.match(body.textContent, /复制 Claude Code 配置提示词/);
-  assert.equal(body.querySelector('[data-access-tab]'), null, 'Token 管理 has no MCP/能力/API tabs');
+  assert.equal(body.querySelector('[data-access-tab]'), null, '访问密钥 has no MCP/能力/API tabs');
   const spec = app.evaluate(`accessMcpClientSpec('codex','http://example.test','abc')`);
   assert.match(spec.code, /mcp_servers\.agentflow/);
   assert.match(spec.code, /Bearer abc/);

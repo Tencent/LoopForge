@@ -1,4 +1,4 @@
-// Token 管理：个人 Token 的创建、撤销，以及创建后复制 MCP 接入提示词。
+// 访问密钥：访问密钥 的创建、撤销，以及创建后复制 MCP 接入提示词。
 function accessMcpClientSpec(client,base,token){
   const json=JSON.stringify({mcpServers:{agentflow:{type:'streamable-http',url:`${base}/mcp`,headers:{Authorization:`Bearer ${token}`}}}},null,2);
   const specs={
@@ -77,7 +77,7 @@ document.addEventListener('click',e=>{
 });
 function renderGuide(openCreate=false){if($('#accessBody'))renderAccessTokens(openCreate)}
 // loadAccessTokens always settles accessTokensStatus, and only repaints when the
-// user is still on Token 管理, so a slow or failing request can never leave the
+// user is still on 访问密钥, so a slow or failing request can never leave the
 // loading placeholder on top of another page.
 async function loadAccessTokens(){
   state.accessTokensStatus='loading';state.accessTokensError='';
@@ -93,14 +93,14 @@ async function loadAccessTokens(){
 function renderAccessTokens(openCreate=false){
   const body=$('#accessBody'),user=state.currentUser,isGuest=!user||user.isGuest,tokens=Array.isArray(state.accessTokens)?state.accessTokens:[];
   if(isGuest){
-    body.innerHTML=`<div class="access-card access-tokens"><div class="token-empty"><b>请先登录</b><p>个人 Token 必须绑定到登录用户。</p><button type="button" class="button primary" data-access-login>登录后申请</button></div></div>`;
+    body.innerHTML=`<div class="access-card access-tokens"><div class="token-empty"><b>请先登录</b><p>访问密钥必须绑定到登录用户。</p><button type="button" class="button primary" data-access-login>登录后申请</button></div></div>`;
     body.querySelector('[data-access-login]').onclick=()=>{if(state.loginUrl)location.href=state.loginUrl};
     return;
   }
   if(state.accessTokensStatus==='idle'){loadAccessTokens()}
-  if(state.accessTokensStatus==='loading'){body.innerHTML='<div class="access-card access-tokens"><div class="token-empty">正在加载我的 Token…</div></div>';return}
+  if(state.accessTokensStatus==='loading'){body.innerHTML='<div class="access-card access-tokens"><div class="token-empty">正在加载访问密钥…</div></div>';return}
   if(state.accessTokensStatus==='error'){
-    body.innerHTML=`<div class="access-card access-tokens"><div class="token-empty"><b>Token 列表加载失败</b><p>${escapeHTML(state.accessTokensError)}</p><div style="display:flex;gap:8px;justify-content:center"><button type="button" class="button primary small" data-retry-tokens>重试</button><button type="button" class="button ghost small" data-access-login>重新登录</button></div></div></div>`;
+    body.innerHTML=`<div class="access-card access-tokens"><div class="token-empty"><b>访问密钥列表加载失败</b><p>${escapeHTML(state.accessTokensError)}</p><div style="display:flex;gap:8px;justify-content:center"><button type="button" class="button primary small" data-retry-tokens>重试</button><button type="button" class="button ghost small" data-access-login>重新登录</button></div></div></div>`;
     body.querySelector('[data-retry-tokens]').onclick=()=>{state.accessTokensStatus='idle';renderAccessTokens()};
     body.querySelector('[data-access-login]').onclick=()=>{if(state.loginUrl)location.href=state.loginUrl};
     return;
@@ -109,11 +109,11 @@ function renderAccessTokens(openCreate=false){
   const revealedSpec=state.revealedToken?accessMcpClientSpec(state.accessClient,base,state.revealedToken):null;
   const revealedPrompt=revealedSpec?accessMcpAgentPrompt(revealedSpec,base,state.revealedToken):'';
   const revealClients=state.revealedToken?[['cursor','Cursor'],['claude','Claude Code'],['codebuddy','CodeBuddy'],['codex','Codex']].map(([id,label])=>`<button type="button" class="${state.accessClient===id?'active':''}" data-revealed-client="${id}">${label}</button>`).join(''):'';
-  const reveal=state.revealedToken?`<div class="token-reveal"><b>Token 已创建，可直接复制完整配置提示词</b><p>先选择客户端；复制内容会自动带上本次 Token 和 Endpoint，无需再次替换占位符。平台只保存哈希，关闭后无法再次查看明文。</p><div class="access-clients token-client-picker">${revealClients}</div><div class="token-reveal-line"><code>${escapeHTML(state.revealedToken)}</code><button type="button" class="button primary small" data-copy-revealed-prompt="${encodeURIComponent(revealedPrompt)}">⧉ 复制 ${escapeHTML(revealedSpec.label)} 配置提示词</button><button type="button" class="button ghost small" data-copy-revealed>仅复制 Token</button><button type="button" class="button ghost small" data-close-revealed>已保存</button></div></div>`:'';
-  const rows=tokens.length?tokens.map(t=>{const revoked=!!t.revokedAt,expired=t.expiresAt&&new Date(t.expiresAt)<new Date();return `<div class="token-row ${revoked||expired?'revoked':''}"><div class="token-row-main"><b>${escapeHTML(t.name)}</b><code>${escapeHTML(t.prefix)}••••••••</code></div><div class="token-meta">创建 ${relativeTime(t.createdAt)} · ${t.lastUsedAt?`最近使用 ${relativeTime(t.lastUsedAt)}`:'尚未使用'} · ${revoked?'已撤销':expired?'已过期':`有效至 ${new Date(t.expiresAt).toLocaleDateString()}`}</div>${!revoked&&!expired?`<button type="button" class="button danger-outline small" data-revoke-token="${escapeHTML(t.id)}">撤销</button>`:''}</div>`}).join(''):'<div class="token-empty">还没有个人 Token，创建后即可接入 REST API 和 MCP。</div>';
+  const reveal=state.revealedToken?`<div class="token-reveal"><b>访问密钥已创建，可直接复制完整配置提示词</b><p>先选择客户端；复制内容会自动带上本次访问密钥和 Endpoint，无需再次替换占位符。平台只保存哈希，关闭后无法再次查看明文。</p><div class="access-clients token-client-picker">${revealClients}</div><div class="token-reveal-line"><code>${escapeHTML(state.revealedToken)}</code><button type="button" class="button primary small" data-copy-revealed-prompt="${encodeURIComponent(revealedPrompt)}">⧉ 复制 ${escapeHTML(revealedSpec.label)} 配置提示词</button><button type="button" class="button ghost small" data-copy-revealed>仅复制密钥</button><button type="button" class="button ghost small" data-close-revealed>已保存</button></div></div>`:'';
+  const rows=tokens.length?tokens.map(t=>{const revoked=!!t.revokedAt,expired=t.expiresAt&&new Date(t.expiresAt)<new Date();return `<div class="token-row ${revoked||expired?'revoked':''}"><div class="token-row-main"><b>${escapeHTML(t.name)}</b><code>${escapeHTML(t.prefix)}••••••••</code></div><div class="token-meta">创建 ${relativeTime(t.createdAt)} · ${t.lastUsedAt?`最近使用 ${relativeTime(t.lastUsedAt)}`:'尚未使用'} · ${revoked?'已撤销':expired?'已过期':`有效至 ${new Date(t.expiresAt).toLocaleDateString()}`}</div>${!revoked&&!expired?`<button type="button" class="button danger-outline small" data-revoke-token="${escapeHTML(t.id)}">撤销</button>`:''}</div>`}).join(''):'<div class="token-empty">还没有访问密钥，创建后即可接入 REST API 和 MCP。</div>';
   const activeCount=tokens.filter(t=>!t.revokedAt&&(!t.expiresAt||new Date(t.expiresAt)>new Date())).length;
-  body.innerHTML=`<div class="access-card access-tokens">${reveal}<form id="accessTokenForm" class="token-create-form"><label>Token 名称<input class="input" name="name" required maxlength="128" placeholder="例如：我的 Cursor"></label><label>有效期<select class="select" name="expiresInDays"><option value="30">30 天</option><option value="90" selected>90 天</option><option value="180">180 天</option><option value="365">365 天</option></select></label><button type="submit" class="button primary">创建 Token</button></form><div class="access-card-title"><i>K</i>我的 Token <span style="margin-left:auto;color:var(--muted-2);font-size:10.5px">${activeCount} 个可用</span></div><div class="token-list">${rows}</div></div>`;
-  body.querySelector('[data-copy-revealed]')?.addEventListener('click',()=>copyText(state.revealedToken,'Token 已复制'));
+  body.innerHTML=`<div class="access-card access-tokens">${reveal}<form id="accessTokenForm" class="token-create-form"><label>密钥名称<input class="input" name="name" required maxlength="128" placeholder="例如：我的 Cursor"></label><label>有效期<select class="select" name="expiresInDays"><option value="30">30 天</option><option value="90" selected>90 天</option><option value="180">180 天</option><option value="365">365 天</option></select></label><button type="submit" class="button primary">创建访问密钥</button></form><div class="access-card-title"><i>K</i>我的访问密钥 <span style="margin-left:auto;color:var(--muted-2);font-size:10.5px">${activeCount} 个可用</span></div><div class="token-list">${rows}</div></div>`;
+  body.querySelector('[data-copy-revealed]')?.addEventListener('click',()=>copyText(state.revealedToken,'访问密钥已复制'));
   body.querySelector('[data-copy-revealed-prompt]')?.addEventListener('click',b=>copyText(decodeURIComponent(b.currentTarget.dataset.copyRevealedPrompt),`${revealedSpec.label} 配置提示词已复制`));
   body.querySelectorAll('[data-revealed-client]').forEach(b=>b.onclick=()=>{state.accessClient=b.dataset.revealedClient;renderAccessTokens()});
   body.querySelector('[data-close-revealed]')?.addEventListener('click',()=>{state.revealedToken='';renderAccessTokens()});
@@ -122,17 +122,17 @@ function renderAccessTokens(openCreate=false){
 }
 async function createPersonalToken(e){
   e.preventDefault();const form=e.currentTarget;
-  try{const result=await api('/api/auth/tokens',{method:'POST',body:JSON.stringify({name:form.elements.name.value.trim(),expiresInDays:Number(form.elements.expiresInDays.value)})});state.revealedToken=result.token;await loadAccessTokens();toast('Token 已创建，请立即复制','ok')}catch(err){toast(err.message,'err')}
+  try{const result=await api('/api/auth/tokens',{method:'POST',body:JSON.stringify({name:form.elements.name.value.trim(),expiresInDays:Number(form.elements.expiresInDays.value)})});state.revealedToken=result.token;await loadAccessTokens();toast('访问密钥已创建，请立即复制','ok')}catch(err){toast(err.message,'err')}
 }
 async function revokePersonalToken(id){
-  if(!(await afConfirm({title:'撤销 Token',message:'撤销后，正在使用这个 Token 的 API 和 MCP 客户端会立即失效。确定撤销？',danger:true,confirmText:'确定撤销'})))return;
-  try{await api(`/api/auth/tokens/${encodeURIComponent(id)}`,{method:'DELETE'});await loadAccessTokens();toast('Token 已撤销','ok')}catch(err){toast(err.message,'err')}
+  if(!(await afConfirm({title:'撤销访问密钥',message:'撤销后，正在使用这个访问密钥的 API 和 MCP 客户端会立即失效。确定撤销？',danger:true,confirmText:'确定撤销'})))return;
+  try{await api(`/api/auth/tokens/${encodeURIComponent(id)}`,{method:'DELETE'});await loadAccessTokens();toast('访问密钥已撤销','ok')}catch(err){toast(err.message,'err')}
 }
 
 
 let commandMatches=[],commandSelectedIndex=0;
 function commandCatalog(){
-  const pages=[['collaboration','AI 工作台','和 AI 对话，派发与跟进任务'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['observability','统计','用量分析 · Token 与质量'],['settings','个人配置','账号、模型与执行凭据'],['projects','项目配置','项目、成员和仓库'],['bots','通道管理','企业微信单聊或群聊通知通道'],['sops','流程模板','Issue 修复与需求开发'],['runs','运行记录','查看节点日志和产物'],['aiSchedules','定时任务','提示词任务、SOP 触发与共享任务'],['agents','角色定义','管理角色和能力资产'],['mcp','能力资产 · MCP','添加项目级或个人 MCP'],['rules','能力资产 · 规则','当前项目的行为与执行约束'],['skills','能力资产 · 技能','当前项目的技能和附加文件'],['runners','执行机器','用自己的电脑或 CVM 跑任务'],['dockerfiles','环境资产 · Dockerfile','管理项目容器构建定义'],['environments','环境资产 · 安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','环境资产 · 沙箱','管理项目运行隔离策略'],['guide','Token 管理','创建和撤销个人 Token']].map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
+  const pages=[['collaboration','AI 工作台','和 AI 对话，派发与跟进任务'],['issues','需求列表','查看进度，触发或重试'],['approvals','待我确认','批准或退回卡住的需求'],['observability','统计','用量分析 · Token 与质量'],['settings','个人配置','账号、模型与执行凭据'],['projects','项目配置','项目、成员和仓库'],['bots','通道管理','企业微信单聊或群聊通知通道'],['sops','流程模板','Issue 修复与需求开发'],['runs','运行记录','查看节点日志和产物'],['aiSchedules','定时任务','提示词任务、SOP 触发与共享任务'],['agents','角色定义','管理角色和能力资产'],['mcp','能力资产 · MCP','添加项目级或个人 MCP'],['rules','能力资产 · 规则','当前项目的行为与执行约束'],['skills','能力资产 · 技能','当前项目的技能和附加文件'],['runners','执行机器','用自己的电脑或 CVM 跑任务'],['dockerfiles','环境资产 · Dockerfile','管理项目容器构建定义'],['environments','环境资产 · 安装脚本','管理隔离环境的工具安装脚本'],['sandboxes','环境资产 · 沙箱','管理项目运行隔离策略'],['guide','访问密钥','创建和撤销访问密钥']].map(([view,title,meta])=>({kind:'页面',title,meta,action:()=>switchView(view)}));
   const issues=(state.data.issues||[]).map(i=>({kind:'需求',title:i.title,meta:`${i.priority||'—'} · ${issueStatusLabel(i.status)}`,action:()=>openIssueDetail(i.id)}));
   const runs=sopRuns(state.data.runs).map(r=>({kind:'运行',title:runIssueTitle(r),meta:`${runDisplayStatus(r)} · ${r.workflowSnapshot?.name||r.workflowId}`,action:()=>openRunFromId(r.id)}));
   const sops=catalogWorkflows().map(w=>({kind:'SOP',title:w.name,meta:`${w.status==='published'?'已发布':'草稿'} · ${w.nodes?.length||0} 个节点`,action:()=>{state.workflow=clone(w);state.selectedNode=null;switchView('flow')}}));
