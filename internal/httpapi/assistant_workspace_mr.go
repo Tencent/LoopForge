@@ -77,6 +77,9 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	if !ok {
 		return "", errAgentToolForbidden
 	}
+	if len(run.RepositoryContexts()) == 0 {
+		return "", fmt.Errorf("当前工作区没有检出仓库，不能提交 PR/MR；可用 workbench_workspace_attach 交付文件")
+	}
 	if !run.IsWorkspace() {
 		if s.RunID != "" {
 			return "", fmt.Errorf("只有对话工作区可以直接提交 MR；SOP 运行请由交付节点提交")

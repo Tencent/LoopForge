@@ -406,7 +406,9 @@ func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
 	var task *domain.Run
 	if runID := strings.TrimSpace(c.Query("runId")); runID != "" {
 		r, exists := h.repo.RunState(runID)
-		if !exists || r.ExecutionContext.ProjectID != project || !h.workbenchProjectAllowed(c, r.ExecutionContext.ProjectID, u.ID) {
+		// The task reference picker is for project SOP conversations. Personal
+		// workspace runs have no project ACL and must not become task contexts.
+		if !exists || project == "" || r.ExecutionContext.ProjectID != project || !h.workbenchProjectAllowed(c, r.ExecutionContext.ProjectID, u.ID) {
 			c.JSON(403, gin.H{"error": "无权访问任务"})
 			return
 		}

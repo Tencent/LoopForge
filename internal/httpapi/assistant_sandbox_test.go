@@ -101,8 +101,8 @@ func TestSelectConversationRepositories(t *testing.T) {
 		{ID: "r2", ProjectID: "p", Name: "api", GongfengProjectID: "team/api-server"},
 		{ID: "other", ProjectID: "q", Name: "web"},
 	}
-	if _, err := selectConversationRepositories(domain.Project{ID: "none"}, all, nil, false); err == nil || !strings.Contains(err.Error(), "还没有配置代码仓库") {
-		t.Fatalf("no repository: %v", err)
+	if got, err := selectConversationRepositories(domain.Project{ID: "none"}, all, nil, false); err != nil || len(got) != 0 {
+		t.Fatalf("no repository: %v %v", got, err)
 	}
 	ids := func(rcs []domain.RepositoryContext) string {
 		out := []string{}

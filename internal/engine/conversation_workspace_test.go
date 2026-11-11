@@ -321,6 +321,49 @@ func TestReleasedConversationWorkspaceSkipsIdleHourUntilUsedAgain(t *testing.T) 
 	}
 }
 
+func TestPersonalScratchWorkspaceRestoresFilesAfterRelease(t *testing.T) {
+	e, store := newRecoveryEngine(t)
+	run := domain.Run{ID: "personal-scratch", Kind: domain.RunKindWorkspace, Status: "waiting", ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 1}, Nodes: map[string]*domain.NodeRun{}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	root := e.RunWorkspace(run.ID)
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.WriteWorkspaceFile(root, "report.txt", "personal scratch contents", "missing"); err != nil {
+		t.Fatal(err)
+	}
+	token, err := e.BeginConversationWorkspaceUse(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.EndConversationWorkspaceUse(context.Background(), run.ID, token); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := store.ReleaseWorkspace(run.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	run, _ = store.RunState(run.ID)
+	e.cleanupWorkspace(run, now.Add(time.Second))
+	if current, _ := store.RunState(run.ID); current.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("released scratch workspace was not reclaimed")
+	}
+	token, err = e.BeginConversationWorkspaceUse(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.EndConversationWorkspaceUse(context.Background(), run.ID, token)
+	if err := e.EnsureConversationWorkspace(context.Background(), run.ID, token); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "report.txt"))
+	if err != nil || string(content) != "personal scratch contents" {
+		t.Fatalf("scratch workspace restore: %q %v", content, err)
+	}
+}
+
 // Merge compatibility: child SOPs now use their parent's checkout. Only the
 // owning run may checkpoint/restore it; child completion must leave it intact.
 func TestChildWorkspaceCheckpointBelongsToParent(t *testing.T) {

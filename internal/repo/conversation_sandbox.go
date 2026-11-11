@@ -12,7 +12,7 @@ import (
 func (r *CatalogRepo) ConversationSandbox(projectID, id string) (domain.SandboxProfile, error) {
 	id = strings.TrimSpace(id)
 	profile, ok := r.Sandbox(id)
-	if !ok || !(profile.ProjectID == projectID || profile.Shared) {
+	if !ok || !(profile.Shared || projectID != "" && profile.ProjectID == projectID) {
 		return domain.SandboxProfile{}, fmt.Errorf("请选择本项目或共享的 Docker 沙箱")
 	}
 	if profile.Driver != "docker" || profile.DockerfileID == "" {

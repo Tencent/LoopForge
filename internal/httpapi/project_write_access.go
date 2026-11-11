@@ -78,6 +78,17 @@ var guardedRunWrites = map[string]bool{
 // access rules.
 func (d deps) runWriteGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Personal workspace runs have no project ACL. Guard all run endpoints,
+		// including reads, browser streams and previews, by their owner.
+		if c.Param("id") != "" && strings.HasPrefix(c.FullPath(), "/api/runs/:id") {
+			if run, ok := d.repo.RunState(c.Param("id")); ok && run.IsWorkspace() && run.ExecutionContext.ProjectID == "" {
+				user, authenticated := d.requestUser(c.Request, true)
+				if !authenticated || user.ID != run.ExecutionContext.ResponsibleUserID {
+					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "无权访问个人工作区"})
+					return
+				}
+			}
+		}
 		if c.Request.Method == http.MethodGet || !guardedRunWrites[c.FullPath()] {
 			c.Next()
 			return

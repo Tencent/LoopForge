@@ -57,8 +57,11 @@ func TestConversationWorkspaceToolsForAllProjectParticipants(t *testing.T) {
 	if got := names(peer); got != names(s) {
 		t.Fatalf("participant tools differ from creator tools: %s", got)
 	}
+	personal := &AgentToolSession{Mode: s.Mode, UserID: s.UserID, ChatSessionID: s.ChatSessionID, ChatOwnerID: s.UserID}
+	if got := names(personal); got != names(s) {
+		t.Fatalf("personal chat tools = %s", got)
+	}
 	for name, mutate := range map[string]func(*AgentToolSession){
-		"no project":    func(s *AgentToolSession) { s.ProjectID = "" },
 		"no session id": func(s *AgentToolSession) { s.ChatSessionID = "" },
 	} {
 		c := &AgentToolSession{Mode: s.Mode, ProjectID: s.ProjectID, UserID: s.UserID, ChatSessionID: s.ChatSessionID, ChatOwnerID: s.ChatOwnerID}

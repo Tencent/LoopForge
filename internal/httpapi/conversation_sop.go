@@ -56,7 +56,7 @@ func linkDispatchingConversation(d *deps, r *http.Request, userID int64, issue d
 // borrowableSOPRun reports whether a top-level SOP run of projectID can lend
 // its workspace to an ordinary conversation.
 func borrowableSOPRun(run domain.Run, projectID string) bool {
-	return run.ID != "" && !run.IsWorkspace() && !run.HistoricalGroup() && run.ExecutionContext.ParentRunID == "" && run.ExecutionContext.ProjectID == projectID
+	return projectID != "" && run.ID != "" && !run.IsWorkspace() && !run.HistoricalGroup() && run.ExecutionContext.ParentRunID == "" && run.ExecutionContext.ProjectID == projectID
 }
 
 // ownWorkspaceRunIDs lists the workspaces conv opened itself. A workspace run

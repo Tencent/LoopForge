@@ -117,7 +117,7 @@ func (h *agentToolGateway) callMainBotBrowser(ctx context.Context, s *AgentToolS
 		}
 		return nil, runErr
 	}
-	if run, ok := h.repo.RunState(runID); !ok || run.ExecutionContext.ProjectID != s.ProjectID || s.User.ID != s.UserID {
+	if run, ok := h.repo.RunState(runID); !ok || !h.mayUseWorkspace(s, run) {
 		return nil, errAgentToolForbidden
 	}
 	req, err := mainBotBrowserRequest(name, args)

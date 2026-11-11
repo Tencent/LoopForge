@@ -137,6 +137,9 @@ func (h *browserHandlers) canControl(r *http.Request, run domain.Run, userID int
 	if mainBotWorkspaceRun(r.Context()) == run.ID {
 		return true
 	}
+	if run.IsWorkspace() && run.ExecutionContext.ProjectID == "" {
+		return userID > 0 && userID == run.ExecutionContext.ResponsibleUserID
+	}
 	if h.isPlatformAdmin(r) {
 		return true
 	}

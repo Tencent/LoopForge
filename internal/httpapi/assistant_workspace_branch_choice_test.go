@@ -167,8 +167,8 @@ func TestWorkspaceOpenScratch(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatalf("scratch in a project without repositories = %+v %v", got, err)
 	}
-	if _, err := selectConversationRepositories(domain.Project{ID: "none", Name: "空项目"}, nil, nil, false); err == nil || !strings.Contains(err.Error(), "repositories: []") {
-		t.Fatalf("a project without repositories must point at the scratch workspace: %v", err)
+	if got, err := selectConversationRepositories(domain.Project{ID: "none", Name: "空项目"}, nil, nil, false); err != nil || len(got) != 0 {
+		t.Fatalf("a project without repositories should open a scratch workspace: %v %v", got, err)
 	}
 }
 
