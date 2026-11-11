@@ -28,7 +28,7 @@ func newKnowledgeTestServer(t *testing.T) (*repo.Store, http.Handler) {
 	}
 	t.Cleanup(func() { s.Close() })
 	for _, id := range []string{"a", "b"} {
-		if err := s.PutKnowledgeBase(domain.KnowledgeBase{ID: id, Name: id}); err != nil {
+		if err := s.PutKnowledgeBase(domain.KnowledgeBase{ID: id, Name: id, Layer: "project", ProjectID: map[string]string{"a": "p1", "b": "p2"}[id]}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.PutKnowledgeSource(domain.KnowledgeSource{ID: id, BaseID: id, Name: id, Kind: "hosted"}); err != nil {

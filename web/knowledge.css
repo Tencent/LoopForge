@@ -291,3 +291,6 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
   :is(#knowledgeView, #kbDrawer, #kbScrim) *,
   :is(#knowledgeView, #kbDrawer, #kbScrim) *::after { transition: none !important; }
 }
+
+/* Project loading and platform maintenance use the same knowledge panels. */
+#knowledgeView .kb-scope{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;color:var(--hui-text-secondary);font-size:13px}
