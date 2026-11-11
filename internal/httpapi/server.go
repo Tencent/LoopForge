@@ -506,6 +506,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/bases/documents", api.know.basesDocuments)
 	g.GET("/api/knowledge/bases/document", api.know.basesDocument)
 	g.POST("/api/knowledge/bases/sources", api.know.basesSources)
+	g.PUT("/api/knowledge/bases/sources/credential", api.know.basesSourceCredential)
 	g.DELETE("/api/knowledge/bases/sources", api.know.basesSourceDelete)
 	g.POST("/api/knowledge/bases/sync", api.know.basesSync)
 	g.POST("/api/knowledge/bases/search", api.know.basesSearch)

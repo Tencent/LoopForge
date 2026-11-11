@@ -78,9 +78,10 @@ function kbCitationHTML(text,url=''){
 function kbGitURLError(raw){
   const value=String(raw||'').trim();
   if(!value)return 'Git 地址必填';
-  let u;try{u=new URL(value)}catch{return 'Git 地址必须是公开 http(s) 仓库地址'}
-  if(!/^https?:$/.test(u.protocol)||!u.hostname)return 'Git 地址必须是公开 http(s) 仓库地址';
-  if(u.username||u.password)return 'Git 地址不能包含凭据';
+  const normalized=/^[\w.-]+@[^/:]+:.+/.test(value)?`ssh://${value.replace(':','/')}`:value;
+  let u;try{u=new URL(normalized)}catch{return 'Git 地址必须是 HTTPS 或 SSH 仓库地址'}
+  if(!['https:','ssh:'].includes(u.protocol)||!u.hostname||!u.pathname||u.pathname==='/')return 'Git 地址必须是 HTTPS 或 SSH 仓库地址';
+  if(u.password||(u.protocol==='https:'&&u.username)||u.search||u.hash)return 'Git 地址不能包含凭据或查询参数';
   return '';
 }
 function kbDocPathError(raw){
@@ -120,6 +121,7 @@ function kbDrawerClose(){
   const drawer=$('#kbDrawer');
   if(!drawer||!kbDrawerIsOpen())return;
   kb.drawer.seq++;
+  $('#kbCredentialForm')?.reset();
   drawer.classList.remove('open');drawer.setAttribute('aria-hidden','true');drawer.inert=true;drawer.setAttribute('inert','');
   $('#kbScrim')?.classList.remove('open');
   kb.draft=null;
@@ -224,10 +226,11 @@ function kbRender(){
 function kbRenderBases(body){
   const bases=kbBases();
   const sources=kbAllSources();
+  const canManage=kbCanManageSources();
   const baseOptions=bases.map(b=>`<option value="${escapeHTML(b.id)}">${escapeHTML(b.name||b.id)}</option>`).join('');
   const left=`
     ${kbPanel(kbPanelTitle('项目知识库','建项目自动创建，打开本页时幂等保证'),bases.length?bases.map(b=>kbRow(kbText(`<span class="mono">${escapeHTML(b.id)}</span>`,`${escapeHTML(b.name||'')} · ${b.layer==='project'?'项目层':escapeHTML(b.layer)}`),kbValue(`${(b.sources||[]).length} 个来源`))).join(''):'<div class="kb-empty">还没有知识库</div>',{label:'项目知识库'})}
-    ${kbPanel(kbPanelTitle('登记公开 Git 来源','只支持不需要凭据的公开 HTTPS 仓库'),`
+    ${canManage?kbPanel(kbPanelTitle('登记 Git 来源','HTTPS 或 SSH；私有仓库按来源配置服务级凭据'),`
       <form id="kbGitForm" class="kb-src-form">
         <div class="kb-field"><label for="kbGitName">名称</label><input id="kbGitName" class="kb-input" name="name" placeholder="公开样例"></div>
         <div class="kb-field"><label for="kbGitUrl">Git 地址</label><input id="kbGitUrl" class="kb-input mono" name="gitUrl" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://github.com/example/repo.git"></div>
@@ -236,21 +239,23 @@ function kbRenderBases(body){
           <div class="kb-field"><label for="kbGitPrefix">路径前缀</label><input id="kbGitPrefix" class="kb-input mono" name="pathPrefix" placeholder="docs/"></div>
         </div>
         <div class="kb-field"><label for="kbGitBase">写入知识库</label><select id="kbGitBase" class="kb-input" name="baseId">${baseOptions}</select></div>
+        ${kbCredentialFields()}
         <div class="kb-foot"><span class="kb-hint" id="kbGitResult">登记后由后台同步；点右侧「同步」可重新触发</span><button type="submit" class="kb-btn primary">登记来源</button></div>
-      </form>`,{label:'登记公开 Git 来源'})}`;
+      </form>`,{label:'登记 Git 来源'}):''}`;
   const right=kbPanel(kbPanelTitle('来源与同步状态','同步状态、篇数与最近错误'),sources.length?sources.map(s=>{
     const [label,tone]=KB_SOURCE_STATUS[s.status]||[s.status||'未同步','warn'];
     const synced=s.lastSyncedAt?` · 最近同步 ${escapeHTML(relativeTime(s.lastSyncedAt))}`:'';
     const meta=s.kind==='git'?`Git · ${escapeHTML(s.branch||'main')} · ${escapeHTML(s.pathPrefix||'仓库根目录')}${synced}`:`托管${synced}`;
     const err=s.lastError?`<div class="kb-row-desc kb-err" title="${escapeHTML(s.lastError)}">同步错误：${escapeHTML(s.lastError)}</div>`:'';
-    const actions=s.kind==='git'
-      ?`<span class="kb-row-actions"><button type="button" class="kb-btn small" data-kb-sync="${escapeHTML(s.id)}">同步</button><button type="button" class="kb-btn quiet small" data-kb-del="${escapeHTML(s.id)}">删除</button></span>`
+    const actions=s.kind==='git'&&canManage
+      ?`<span class="kb-row-actions"><button type="button" class="kb-btn small" data-kb-credential="${escapeHTML(s.id)}">${s.credentialConfigured?'替换凭据':'配置凭据'}</button><button type="button" class="kb-btn small" data-kb-sync="${escapeHTML(s.id)}">同步</button><button type="button" class="kb-btn quiet small" data-kb-del="${escapeHTML(s.id)}">删除</button></span>`
       :'';
     const name=kbSourceName(s);
-    return kbRow(kbText(escapeHTML(name),`<span class="mono">${escapeHTML(s.id)}</span> · ${meta} · ${Number(s.docCount)||0} 篇`+err),actions+kbBadge(escapeHTML(label),tone),{cls:'kb-source-row'});
+    return kbRow(kbText(escapeHTML(name)+(s.credentialConfigured?'<span class="kb-hint"> · 凭据已配置</span>':''),`<span class="mono">${escapeHTML(s.id)}</span> · ${meta} · ${Number(s.docCount)||0} 篇`+err),actions+kbBadge(escapeHTML(label),tone),{cls:'kb-source-row'});
   }).join(''):'<div class="kb-empty">暂无来源</div>',{label:'来源与同步状态'});
-  body.innerHTML=`<div class="kb-grid">${left}${right}</div>`;
+  body.innerHTML=`<div class="kb-grid"><div class="kb-source-column">${left}</div>${right}</div>`;
   const form=$('#kbGitForm');
+  if(form)kbBindCredentialFields(form);
   if(form)form.onsubmit=async e=>{
     e.preventDefault();
     const f=form.elements;
@@ -262,13 +267,14 @@ function kbRenderBases(body){
     try{
       await api('/api/knowledge/bases/sources',{method:'POST',body:JSON.stringify({
         projectId:kbProjectId(),baseId:f.baseId.value,name:f.name.value.trim(),
-        gitUrl:f.gitUrl.value.trim(),branch:f.branch.value.trim(),pathPrefix:f.pathPrefix.value.trim(),
+        gitUrl:f.gitUrl.value.trim(),branch:f.branch.value.trim(),pathPrefix:f.pathPrefix.value.trim(),credential:kbCredentialPayload(form),
       })});
       toast('已登记 Git 来源','ok');
       await renderKnowledgeView();
     }catch(err){submit.disabled=false;out.className='kb-hint kb-err';out.textContent=err.message}
   };
   if(form)form.elements.gitUrl.oninput=()=>{const out=$('#kbGitResult');out.className='kb-hint';out.textContent='登记后由后台同步；点右侧「同步」可重新触发'};
+  body.querySelectorAll('[data-kb-credential]').forEach(btn=>btn.onclick=()=>kbOpenCredentialEditor(btn.dataset.kbCredential));
   body.querySelectorAll('[data-kb-sync]').forEach(btn=>btn.onclick=async()=>{
     btn.disabled=true;
     try{
@@ -290,6 +296,52 @@ function kbRenderBases(body){
       await renderKnowledgeView();
     }catch(err){btn.disabled=false;toast(err.message,'err')}
   });
+}
+
+function kbCanManageSources(){
+  if(!state.authRequired||isPlatformAdmin())return true;
+  const project=(state.data?.projects||[]).find(p=>p.id===kbProjectId());
+  const userId=Number(state.currentUser?.id);
+  return !!project&&!!userId&&(Number(project.ownerId)===userId||(project.members||[]).some(m=>Number(m.userId)===userId&&String(m.role||'').toLowerCase()!=='viewer'));
+}
+function kbCredentialFields(requiredKind='',prefix='kbCredential'){
+  return `<div class="kb-field"><label for="${prefix}Kind">来源凭据</label><select id="${prefix}Kind" class="kb-input" name="credentialKind">${requiredKind?'':'<option value="">公开仓库，无凭据</option>'}<option value="https"${requiredKind==='https'?' selected':''}>HTTPS 用户名与令牌</option><option value="ssh"${requiredKind==='ssh'?' selected':''}>SSH 部署密钥</option></select></div>
+    <div data-kb-auth="https" hidden>
+      <div class="kb-field"><label for="${prefix}User">用户名</label><input id="${prefix}User" class="kb-input" name="credentialUsername" autocomplete="off"></div>
+      <div class="kb-field"><label for="${prefix}Token">令牌</label><input id="${prefix}Token" class="kb-input" name="credentialToken" type="password" autocomplete="new-password"></div>
+    </div>
+    <div data-kb-auth="ssh" hidden>
+      <div class="kb-field"><label for="${prefix}Key">SSH 私钥</label><textarea id="${prefix}Key" class="kb-input mono" name="credentialPrivateKey" rows="4" autocomplete="off" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></div>
+      <div class="kb-field"><label for="${prefix}Hosts">服务器公钥记录（known_hosts）</label><textarea id="${prefix}Hosts" class="kb-input mono" name="credentialKnownHosts" rows="2" spellcheck="false" placeholder="github.com ssh-ed25519 AAAA…"></textarea><span class="kb-hint">向仓库管理员取得并核对服务器公钥记录。</span></div>
+    </div>
+    <label class="kb-hint" data-kb-auth-grant hidden><input type="checkbox" name="credentialCanWrite"> 此凭据已授予写权限</label>`;
+}
+function kbBindCredentialFields(form){
+  const update=()=>{
+    const kind=form.elements.credentialKind.value;
+    form.querySelectorAll('[data-kb-auth]').forEach(el=>{el.hidden=el.dataset.kbAuth!==kind;el.querySelectorAll('input,textarea').forEach(input=>input.disabled=el.hidden)});
+    form.querySelector('[data-kb-auth-grant]').hidden=!kind;
+  };
+  form.elements.credentialKind.onchange=update;update();
+}
+function kbCredentialPayload(form){
+  const f=form.elements;
+  if(!f.credentialKind.value)return undefined;
+  const grant={kind:f.credentialKind.value,canWrite:f.credentialCanWrite.checked};
+  return grant.kind==='https'?{...grant,username:f.credentialUsername.value,token:f.credentialToken.value}:{...grant,privateKey:f.credentialPrivateKey.value,knownHosts:f.credentialKnownHosts.value};
+}
+function kbOpenCredentialEditor(sourceId){
+  const source=kbSourceById(sourceId);if(!source)return;
+  const kind=source.gitUrl.startsWith('https://')?'https':'ssh';
+  kbDrawerOpen(source.credentialConfigured?'替换来源凭据':'配置来源凭据',escapeHTML(kbSourceName(source)),`<form id="kbCredentialForm" class="kb-src-form">${kbCredentialFields(kind,'kbReplaceCredential')}<span id="kbCredentialResult" class="kb-hint">${source.credentialConfigured?'凭据已配置，填写新凭据后替换。':'凭据仅供本来源的后台同步使用。'}</span></form>`,'<button type="button" class="kb-btn primary" id="kbCredentialSave">保存凭据</button>');
+  const form=$('#kbCredentialForm');kbBindCredentialFields(form);
+  $('#kbCredentialSave').onclick=async e=>{
+    const button=e.currentTarget;button.disabled=true;
+    try{
+      await api('/api/knowledge/bases/sources/credential',{method:'PUT',body:JSON.stringify({projectId:kbProjectId(),sourceId,credential:kbCredentialPayload(form)})});
+      kbDrawerClose();toast('凭据已配置，等待后台同步','ok');await renderKnowledgeView();
+    }catch(err){button.disabled=false;const result=$('#kbCredentialResult');result.className='kb-hint kb-err';result.textContent=err.message}
+  };
 }
 
 // ---------- 文档：按来源浏览托管与 Git 已索引文档 ----------

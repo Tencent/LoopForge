@@ -249,8 +249,11 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
 .kb-doc > div.hl { background: var(--kb-mark); box-shadow: inset 2px 0 0 var(--hui-warn); }
 
 /* 知识库与来源：登记表单、面板头控件、检索脚注 */
+.kb-source-column { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .kb-src-form { padding: 2px 18px 0; }
-.kb-src-form .kb-input { width: 100%; }
+:is(#knowledgeView, #kbDrawer) .kb-src-form .kb-input { width: 100%; }
+:is(#knowledgeView, #kbDrawer) .kb-src-form textarea.kb-input { height: 110px; }
+:is(#knowledgeView, #kbDrawer) .kb-src-form textarea[name="credentialKnownHosts"] { height: 80px; }
 .kb-src-form .kb-field:first-child { margin-top: 10px; }
 .kb-src-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
 .kb-docs-head { display: flex; align-items: center; gap: 8px; min-width: 0; }

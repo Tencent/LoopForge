@@ -1,15 +1,15 @@
 package knowledge
 
-// 知识中心管理面：托管库的幂等保证、来源与文档清单、登记公开 Git 来源、
+// 知识中心管理面：托管库的幂等保证、来源与文档清单、登记 Git 来源、
 // 触发同步，以及试搜/读原文的授权收窄。业务规则放在 Service 的新方法里，
 // 不改 service.go 里已有的设置/拨号代码。需要引擎的操作由调用方把
 // Upstream 传进来（knowledge 包不能 import engine，否则循环依赖）。
 
 import (
+	"agentflow/internal/knowledge/gitremote"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"net/url"
 	"strings"
 	"time"
 
@@ -108,26 +108,28 @@ func (s *Service) EnsureHostedBase(projectID string) (domain.KnowledgeBase, erro
 // ManagedSourceView 是来源的管理视图：展示同步状态与错误，去掉租约等内部
 // 字段。名字与 service.go 里面向设置页的 SourceView 区分开。
 type ManagedSourceView struct {
-	ID           string     `json:"id"`
-	BaseID       string     `json:"baseId"`
-	Kind         string     `json:"kind"`
-	Name         string     `json:"name"`
-	GitURL       string     `json:"gitUrl,omitempty"`
-	Branch       string     `json:"branch,omitempty"`
-	PathPrefix   string     `json:"pathPrefix,omitempty"`
-	HeadCommit   string     `json:"headCommit,omitempty"`
-	HeadRevision int64      `json:"headRevision,omitempty"`
-	Status       string     `json:"status,omitempty"`
-	IndexStatus  string     `json:"indexStatus,omitempty"`
-	DocCount     int        `json:"docCount,omitempty"`
-	LastError    string     `json:"lastError,omitempty"`
-	LastSyncedAt *time.Time `json:"lastSyncedAt,omitempty"`
+	CredentialConfigured bool       `json:"credentialConfigured"`
+	ID                   string     `json:"id"`
+	BaseID               string     `json:"baseId"`
+	Kind                 string     `json:"kind"`
+	Name                 string     `json:"name"`
+	GitURL               string     `json:"gitUrl,omitempty"`
+	Branch               string     `json:"branch,omitempty"`
+	PathPrefix           string     `json:"pathPrefix,omitempty"`
+	HeadCommit           string     `json:"headCommit,omitempty"`
+	HeadRevision         int64      `json:"headRevision,omitempty"`
+	Status               string     `json:"status,omitempty"`
+	IndexStatus          string     `json:"indexStatus,omitempty"`
+	DocCount             int        `json:"docCount,omitempty"`
+	LastError            string     `json:"lastError,omitempty"`
+	LastSyncedAt         *time.Time `json:"lastSyncedAt,omitempty"`
 }
 
 func managedSourceView(src domain.KnowledgeSource) ManagedSourceView {
 	return ManagedSourceView{
 		ID: src.ID, BaseID: src.BaseID, Kind: src.Kind, Name: src.Name,
-		GitURL: src.GitURL, Branch: src.Branch, PathPrefix: src.PathPrefix,
+		CredentialConfigured: src.CredentialConfigured,
+		GitURL:               src.GitURL, Branch: src.Branch, PathPrefix: src.PathPrefix,
 		HeadCommit: src.HeadCommit, HeadRevision: src.HeadRevision,
 		Status: src.Status, IndexStatus: src.IndexStatus, DocCount: src.DocCount,
 		LastError: src.LastError, LastSyncedAt: src.LastSyncedAt,
@@ -330,30 +332,27 @@ func (s *Service) DocumentList(projectID, source string) ([]DocumentMeta, error)
 	return out, nil
 }
 
-// GitSourceInput 是登记公开 Git 来源的入参。切片只支持不需要凭据的公开
-// HTTPS 地址；路径前缀限定只索引此前缀下的 Markdown。
+// GitSourceInput 登记 HTTPS 或 SSH 来源，凭据独立配置。
+// 路径前缀限定只索引此前缀下的 Markdown。
 type GitSourceInput struct {
-	ProjectID  string `json:"projectId"`
-	BaseID     string `json:"baseId"`
-	Name       string `json:"name"`
-	GitURL     string `json:"gitUrl"`
-	Branch     string `json:"branch"`
-	PathPrefix string `json:"pathPrefix"`
+	Credential *GitCredential `json:"credential,omitempty"`
+	ProjectID  string         `json:"projectId"`
+	BaseID     string         `json:"baseId"`
+	Name       string         `json:"name"`
+	GitURL     string         `json:"gitUrl"`
+	Branch     string         `json:"branch"`
+	PathPrefix string         `json:"pathPrefix"`
 }
 
 func validatePublicGitURL(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return "", apperr.New(apperr.Invalid, "Git 地址必须是公开 http(s) 仓库地址")
+	_, err := gitremote.Parse(raw)
+	if err != nil {
+		return "", apperr.New(apperr.Invalid, "Git 地址必须是无内嵌凭据的 HTTPS 或 SSH 仓库地址")
 	}
-	if u.User != nil {
-		return "", apperr.New(apperr.Invalid, "Git 地址不能包含凭据")
-	}
-	return raw, nil
+	return strings.TrimSpace(raw), nil
 }
 
-// RegisterGitSource 登记一个公开 Git 来源，状态置为待同步，由 worker 执行同步。
+// RegisterGitSource 登记一个 Git 来源，状态置为待同步，由 worker 执行同步。
 // 定值 id 让相同配置重复登记只更新同一行，不产生第二个来源。
 func (s *Service) RegisterGitSource(input GitSourceInput) (domain.KnowledgeSource, error) {
 	projectID := strings.TrimSpace(input.ProjectID)
@@ -390,8 +389,31 @@ func (s *Service) RegisterGitSource(input GitSourceInput) (domain.KnowledgeSourc
 		GitURL: gitURL, Branch: branch, PathPrefix: prefix,
 		Status: SourceStatusPending,
 	}
-	if err := ms.PutKnowledgeSource(src); err != nil {
-		return domain.KnowledgeSource{}, err
+	if input.Credential != nil {
+		if err := validateGitCredential(*input.Credential, gitURL); err != nil {
+			return domain.KnowledgeSource{}, apperr.New(apperr.Invalid, err.Error())
+		}
+		ciphertext, err := encryptGitCredential(src.ID, *input.Credential)
+		if err != nil {
+			return domain.KnowledgeSource{}, apperr.New(apperr.Invalid, err.Error())
+		}
+		writer, ok := ms.(interface {
+			PutKnowledgeSourceWithCredential(domain.KnowledgeSource, string) error
+		})
+		if !ok {
+			return domain.KnowledgeSource{}, apperr.New(apperr.Unavailable, "来源凭据存储不可用")
+		}
+		if err := writer.PutKnowledgeSourceWithCredential(src, ciphertext); err != nil {
+			return domain.KnowledgeSource{}, apperr.New(apperr.Upstream, "保存来源凭据失败")
+		}
+		src.CredentialConfigured = true
+	} else {
+		if err := ms.PutKnowledgeSource(src); err != nil {
+			return domain.KnowledgeSource{}, err
+		}
+		if saved, ok := ms.KnowledgeSource(src.ID); ok {
+			src.CredentialConfigured = saved.CredentialConfigured
+		}
 	}
 	return src, nil
 }
@@ -448,4 +470,42 @@ func (s *Service) DeleteSource(projectID, sourceID string) error {
 		return apperr.New(apperr.Upstream, "删除来源失败："+err.Error())
 	}
 	return nil
+}
+
+// SetSourceCredential replaces the grant without ever reading it back to HTTP.
+// The owning base authorizes changes, independently of read bindings.
+func (s *Service) SetSourceCredential(projectID, sourceID string, credential GitCredential) (ManagedSourceView, error) {
+	ms, err := s.managed()
+	if err != nil {
+		return ManagedSourceView{}, err
+	}
+	src, ok := ms.KnowledgeSource(strings.TrimSpace(sourceID))
+	if !ok {
+		return ManagedSourceView{}, apperr.New(apperr.NotFound, "来源不存在")
+	}
+	base, ok := ms.KnowledgeBase(src.BaseID)
+	if !ok || base.ProjectID != strings.TrimSpace(projectID) {
+		return ManagedSourceView{}, apperr.New(apperr.Forbidden, "知识库不属于当前项目")
+	}
+	if src.Kind != "git" {
+		return ManagedSourceView{}, apperr.New(apperr.Invalid, "托管来源无需 Git 凭据")
+	}
+	if err := validateGitCredential(credential, src.GitURL); err != nil {
+		return ManagedSourceView{}, apperr.New(apperr.Invalid, err.Error())
+	}
+	ciphertext, err := encryptGitCredential(src.ID, credential)
+	if err != nil {
+		return ManagedSourceView{}, apperr.New(apperr.Invalid, err.Error())
+	}
+	writer, ok := ms.(interface{ SetKnowledgeSourceCredential(string, string) error })
+	if !ok {
+		return ManagedSourceView{}, apperr.New(apperr.Unavailable, "来源凭据存储不可用")
+	}
+	if err := writer.SetKnowledgeSourceCredential(src.ID, ciphertext); err != nil {
+		return ManagedSourceView{}, apperr.New(apperr.Upstream, "替换来源凭据失败")
+	}
+	src.CredentialConfigured = true
+	src.Status = SourceStatusPending
+	src.LastError = ""
+	return managedSourceView(src), nil
 }

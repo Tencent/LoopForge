@@ -348,10 +348,36 @@ func (r *KnowledgeRepo) DeleteKnowledgeSource(id string) error {
 func knowledgeSourceFromRow(row knowledgeSourceRow) domain.KnowledgeSource {
 	return domain.KnowledgeSource{
 		ID: row.ID, BaseID: row.BaseID, Kind: row.Kind, Name: row.Name,
+		CredentialCiphertext: row.CredentialCiphertext, CredentialConfigured: row.CredentialCiphertext != "",
 		GitURL: row.GitURL, Branch: row.Branch, PathPrefix: row.PathPrefix,
 		HeadCommit: row.HeadCommit, HeadRevision: row.HeadRevision,
 		Status: row.Status, IndexStatus: row.IndexStatus, DocCount: row.DocCount,
 		LastError: row.LastError, LastSyncedAt: row.LastSyncedAt,
 		LeaseOwner: row.LeaseOwner, LeaseUntil: row.LeaseUntil,
 	}
+}
+
+// PutKnowledgeSourceWithCredential atomically registers/replaces a source and
+// its encrypted grant. Normal source updates never overwrite this column.
+func (r *KnowledgeRepo) PutKnowledgeSourceWithCredential(source domain.KnowledgeSource, ciphertext string) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		scoped := &KnowledgeRepo{deps: &deps{DB: tx}}
+		if err := scoped.PutKnowledgeSource(source); err != nil {
+			return err
+		}
+		return tx.Model(&knowledgeSourceRow{}).Where("id = ?", source.ID).Update("credential_ciphertext", ciphertext).Error
+	})
+}
+
+func (r *KnowledgeRepo) SetKnowledgeSourceCredential(id, ciphertext string) error {
+	result := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND kind = ?", id, "git").Updates(map[string]any{
+		"credential_ciphertext": ciphertext, "status": "pending", "last_error": "", "lease_owner": "", "lease_until": nil,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }

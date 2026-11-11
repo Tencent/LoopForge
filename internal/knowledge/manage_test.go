@@ -112,7 +112,8 @@ func TestScopeToProject(t *testing.T) {
 func TestValidatePublicGitURL(t *testing.T) {
 	for _, raw := range []string{
 		"https://github.com/example/repo.git",
-		"http://example.com/repo",
+		"ssh://git@example.com/repo.git",
+		"git@example.com:repo.git",
 		"  https://github.com/example/repo  ",
 	} {
 		if _, err := validatePublicGitURL(raw); err != nil {
@@ -120,7 +121,8 @@ func TestValidatePublicGitURL(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{
-		"", "ftp://example.com/repo", "github.com/repo",
+		"", "http://example.com/repo", "ftp://example.com/repo", "github.com/repo",
+		"ssh://git:secret@example.com/repo", "https://example.com/repo?token=secret",
 		"https://u:p@example.com/repo.git",
 	} {
 		if _, err := validatePublicGitURL(raw); err == nil {

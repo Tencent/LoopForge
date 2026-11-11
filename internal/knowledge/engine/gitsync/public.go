@@ -1,34 +1,51 @@
 package gitsync
 
 import (
+	"agentflow/internal/knowledge"
+	"agentflow/internal/knowledge/gitremote"
 	"context"
 	"errors"
 	"net"
 	"net/netip"
-	"net/url"
 	"os/exec"
 	"strings"
 )
 
 type publicGitOptions struct{}
 
-// SyncPublicHTTPS pins DNS to validated public addresses and disables redirects
+// SyncRemote pins DNS to validated public addresses and disables redirects
 // and proxies, so Git cannot re-resolve a checked hostname to a private target.
-func SyncPublicHTTPS(ctx context.Context, dir, remote, branch string, old map[string]string) (string, string, []FileInfo, []string, []string, error) {
-	capabilities, err := exec.CommandContext(ctx, "git", "help", "--config").Output()
-	if err != nil || !strings.Contains(strings.ToLower(string(capabilities)), "http.curloptresolve") {
-		return "", "", nil, nil, nil, errors.New("Git with http.curloptResolve support is required for public HTTPS sync")
+func SyncRemote(ctx context.Context, dir, remote, branch string, old map[string]string) (string, string, []FileInfo, []string, []string, error) {
+	u, err := gitremote.Parse(remote)
+	if err != nil {
+		return "", "", nil, nil, nil, errors.New("public Git URL required")
 	}
-	options, err := publicOptions(ctx, remote, net.DefaultResolver.LookupIPAddr)
+	options, err := publicOptions(ctx, u.String(), net.DefaultResolver.LookupIPAddr)
 	if err != nil {
 		return "", "", nil, nil, nil, err
 	}
-	return Sync(context.WithValue(ctx, publicGitOptions{}, options), dir, remote, branch, old)
+	sshIP := ""
+	if u.Scheme == "https" {
+		command := exec.CommandContext(ctx, "git", "help", "--config")
+		command.Env = protectedGitEnv()
+		capabilities, err := command.Output()
+		if err != nil || !strings.Contains(strings.ToLower(string(capabilities)), "http.curloptresolve") {
+			return "", "", nil, nil, nil, errors.New("Git with http.curloptResolve support is required")
+		}
+	} else {
+		// publicOptions carries the validated address. HostName prevents a second
+		// DNS resolution inside SSH after validation.
+		sshIP = strings.TrimPrefix(options[len(options)-1], "ssh.pinnedIP=")
+		options = options[:len(options)-1]
+	}
+	credential, _ := ctx.Value(credentialContext{}).(*knowledge.GitCredential)
+	return syncAuthenticated(ctx, dir, strings.TrimSpace(remote), branch, old, options, credential, sshIP)
 }
+
 func publicOptions(ctx context.Context, remote string, lookup func(context.Context, string) ([]net.IPAddr, error)) ([]string, error) {
-	u, err := url.Parse(remote)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("public HTTPS URL required")
+	u, err := gitremote.Parse(remote)
+	if err != nil {
+		return nil, errors.New("public Git URL required")
 	}
 	addresses, err := lookup(ctx, u.Hostname())
 	if err != nil || len(addresses) == 0 {
@@ -46,6 +63,9 @@ func publicOptions(ctx context.Context, remote string, lookup func(context.Conte
 		}
 		ips = append(ips, v)
 	}
+	if u.Scheme == "ssh" {
+		return []string{"protocol.allow=never", "protocol.ssh.allow=always", "ssh.pinnedIP=" + addresses[0].IP.String()}, nil
+	}
 	port := u.Port()
 	if port == "" {
 		port = "443"
@@ -60,7 +80,7 @@ func reservedPublicIP(ip net.IP) bool {
 		return true
 	}
 	a = a.Unmap()
-	for _, s := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4", "2001:db8::/32"} {
+	for _, s := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4", "2001:db8::/32", "::/96", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32"} {
 		if netip.MustParsePrefix(s).Contains(a) {
 			return true
 		}

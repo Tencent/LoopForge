@@ -4,6 +4,7 @@
 package gitsync
 
 import (
+	"agentflow/internal/knowledge/gitremote"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -237,7 +238,7 @@ func readLimited(path string) ([]byte, error) {
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	full := make([]string, 0, len(args)+2)
-	full = append(full, "-c", "credential.helper=")
+	full = append(full, "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null", "-c", "http.extraHeader=", "-c", "http.cookieFile=", "-c", "http.saveCookies=false")
 	if options, ok := ctx.Value(publicGitOptions{}).([]string); ok {
 		for _, option := range options {
 			full = append(full, "-c", option)
@@ -248,17 +249,17 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if _, ok := ctx.Value(publicGitOptions{}).([]string); ok {
-		cmd.Env = nil
-		for _, entry := range os.Environ() {
-			if !strings.HasPrefix(entry, "GIT_") {
-				cmd.Env = append(cmd.Env, entry)
-			}
-		}
-		cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+		cmd.Env = protectedGitEnv()
+	}
+	if env, ok := ctx.Value(authEnvironment{}).([]string); ok {
+		cmd.Env = append(cmd.Env, env...)
 	}
 	b, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(b)))
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", safeGitError(string(b))
 	}
 	return strings.TrimSpace(string(b)), nil
 }
@@ -266,6 +267,10 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 func validRemote(raw string) bool {
 	if raw == "" || strings.HasPrefix(raw, "-") || strings.ContainsAny(raw, "\r\n\x00") {
 		return false
+	}
+	if strings.HasPrefix(raw, "ssh://") || strings.Contains(raw, "@") && !strings.Contains(raw, "://") {
+		_, err := gitremote.Parse(raw)
+		return err == nil
 	}
 	switch {
 	case strings.HasPrefix(raw, "https://"):
@@ -302,4 +307,14 @@ func validBranch(branch string) bool {
 		}
 	}
 	return true
+}
+
+func protectedGitEnv() []string {
+	env := []string{"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+	for _, key := range []string{"PATH", "LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }

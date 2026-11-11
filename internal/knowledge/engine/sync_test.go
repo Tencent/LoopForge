@@ -2,15 +2,20 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/knowledge/engine/gitsync"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -276,12 +281,13 @@ func TestSyncFailureMessageIsUserFacing(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"仓库不存在或需要凭据", errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled"), "仓库不存在，或该地址需要凭据"},
-		{"认证失败", errors.New("fatal: Authentication failed for 'https://github.com/x/private.git/'"), "仓库不存在，或该地址需要凭据"},
+		{"仓库不存在或需要凭据", errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled"), "仓库鉴权失败，请检查来源凭据及仓库读取权限"},
+		{"仓库不存在", errors.New("repository not found"), "仓库不存在，请检查仓库地址及凭据的访问范围"},
+		{"认证失败", errors.New("fatal: Authentication failed for 'https://github.com/x/private.git/'"), "仓库鉴权失败，请检查来源凭据及仓库读取权限"},
 		{"分支不存在", errors.New("fatal: Remote branch nope not found in upstream origin"), "分支不存在，请检查分支名"},
 		{"网络不可达", errors.New("fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host: github.com"), "无法连接仓库服务器，请检查网络或地址"},
 		{"连接超时", errors.New("fatal: unable to access 'https://github.com/x/y.git/': Operation timed out after 30000 milliseconds"), "无法连接仓库服务器，请检查网络或地址"},
-		{"非公开 HTTPS", errors.New("Git source requires public HTTPS without credentials"), "Git 地址必须是公开 HTTPS 仓库地址"},
+		{"非公开 HTTPS", errors.New("Git source requires public HTTPS without credentials"), "Git 地址必须是指向公网服务器的 HTTPS 或 SSH 地址"},
 		{"路径前缀无效", errors.New("invalid path prefix"), "路径前缀无效，请使用仓库内的相对目录"},
 		{"其他错误", errors.New("boom"), "同步失败，请稍后重试"},
 	}
@@ -297,18 +303,25 @@ func TestSyncFailureMessageIsUserFacing(t *testing.T) {
 }
 
 func TestSyncClaimStoresFriendlyErrorWithoutGitDetails(t *testing.T) {
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previous)
 	cacheRoot := filepath.Join(t.TempDir(), "knowledge-cache")
 	control := &syncFakeControl{finishOK: true}
 	w := NewSyncWorker(&Engine{newID: func() string { return "probe" }}, control, &syncFakeContent{}, cacheRoot, "worker")
 	w.syncGit = func(context.Context, string, string, string, map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
-		return "", "", nil, nil, nil, errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled")
+		return "", "", nil, nil, nil, errors.New("clone 失败: git clone --quiet --branch main -- https://github.com/x/missing.git " + cacheRoot + "/src: fatal: could not read Username for 'https://github.com': terminal prompts disabled secret-canary-token")
 	}
 	src := domain.KnowledgeSource{ID: "src", Kind: "git", GitURL: "https://github.com/example/missing.git", Branch: "main"}
 	if err := w.syncClaim(context.Background(), src, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if control.finishedSummary != "仓库不存在，或该地址需要凭据" {
+	if control.finishedSummary != "仓库鉴权失败，请检查来源凭据及仓库读取权限" {
 		t.Fatalf("来源上应存用户能懂的中文错误: %q", control.finishedSummary)
+	}
+	if strings.Contains(output.String(), "secret-canary-token") {
+		t.Fatal("服务日志泄露凭据")
 	}
 	for _, leaked := range []string{"git ", cacheRoot, "fatal:", "terminal prompts disabled"} {
 		if strings.Contains(control.finishedSummary, leaked) {
@@ -360,6 +373,122 @@ func TestImportGitIndexesRootMarkdownForEmptyPrefix(t *testing.T) {
 			}
 			if !control.published || control.publishCallbacks != 1 {
 				t.Fatalf("同步结果应发布一次: %+v", control)
+			}
+		})
+	}
+}
+
+type credentialSyncControl struct {
+	*repo.Store
+	sourceID string
+}
+
+func (c credentialSyncControl) KnowledgeSources(string) []domain.KnowledgeSource {
+	if source, ok := c.KnowledgeSource(c.sourceID); ok {
+		return []domain.KnowledgeSource{source}
+	}
+	return nil
+}
+
+func TestCredentialReplacementDuringSyncKeepsNewSourceReady(t *testing.T) {
+	for _, replacement := range []string{"replace", "register"} {
+		t.Run(replacement, func(t *testing.T) {
+			dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
+			if dsn == "" {
+				t.Skip("MySQL DSN not set")
+			}
+			t.Setenv("AGENTFLOW_SESSION_SECRET", "credential-replacement-test-key")
+			t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			store, err := repo.Open(dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			service := knowledge.NewService(store, nil, nil)
+			base, err := service.EnsureHostedBase("credential-overlap")
+			if err != nil {
+				t.Fatal(err)
+			}
+			src, err := service.RegisterGitSource(knowledge.GitSourceInput{ProjectID: "credential-overlap", BaseID: base.ID, GitURL: "https://example.com/private.git", Credential: &knowledge.GitCredential{Kind: "https", Username: "deploy", Token: "old-grant"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.DeleteKnowledgeSource(src.ID)
+			defer store.DeleteKnowledgeSourceContent(src.ID)
+			remote := t.TempDir()
+			run := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", args...)
+				cmd.Dir = remote
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("fixture Git: %s %v", out, err)
+				}
+			}
+			run("init", "-b", "main")
+			run("config", "user.email", "test@example.com")
+			run("config", "user.name", "Test")
+			if err := os.WriteFile(filepath.Join(remote, "README.md"), []byte("# Private source\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			run("add", ".")
+			run("commit", "-m", "initial")
+			cache := t.TempDir()
+			e := NewEngine(store, store, NewMySQLKeywordIndex(store))
+			control := credentialSyncControl{Store: store, sourceID: src.ID}
+			oldWorker := NewSyncWorker(e, control, store, cache, "old")
+			newWorker := NewSyncWorker(e, control, store, cache, "new")
+			entered, release := make(chan struct{}), make(chan struct{})
+			var attempts atomic.Int32
+			transport := func(ctx context.Context, dir, url, branch string, old map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
+				result, head, files, changed, removed, err := gitsync.Sync(ctx, dir, remote, branch, old)
+				if err == nil && attempts.Add(1) == 1 {
+					// Hold a real Git index lock while the old attempt is paused.
+					lock := filepath.Join(dir, ".git", "index.lock")
+					if err := os.WriteFile(lock, nil, 0600); err != nil {
+						return "", "", nil, nil, nil, err
+					}
+					close(entered)
+					<-release
+					os.Remove(lock)
+				}
+				return result, head, files, changed, removed, err
+			}
+			oldWorker.syncGit = transport
+			newWorker.syncGit = transport
+			finished := make(chan error, 1)
+			oldDone := make(chan struct{})
+			go func() { defer close(oldDone); finished <- oldWorker.SyncOnce(context.Background()) }()
+			var releaseOnce sync.Once
+			defer func() { releaseOnce.Do(func() { close(release) }); <-oldDone }()
+			select {
+			case <-entered:
+			case err := <-finished:
+				t.Fatalf("old sync failed to start: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("old sync did not start")
+			}
+			grant := knowledge.GitCredential{Kind: "https", Username: "deploy", Token: "replacement-grant"}
+			if replacement == "register" {
+				_, err = service.RegisterGitSource(knowledge.GitSourceInput{ProjectID: "credential-overlap", BaseID: base.ID, GitURL: src.GitURL, Credential: &grant})
+			} else {
+				_, err = service.SetSourceCredential("credential-overlap", src.ID, grant)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := newWorker.SyncOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			current, _ := store.KnowledgeSource(src.ID)
+			if current.Status != "ready" || current.DocCount != 1 {
+				t.Fatalf("replacement must sync while old Git operation exits: status=%s error=%s", current.Status, current.LastError)
+			}
+			releaseOnce.Do(func() { close(release) })
+			<-finished
+			current, _ = store.KnowledgeSource(src.ID)
+			if current.Status != "ready" || len(store.KnowledgeDocuments(src.ID)) != 1 {
+				t.Fatal("stale sync changed the replacement result")
 			}
 		})
 	}

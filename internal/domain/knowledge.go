@@ -77,22 +77,24 @@ type KnowledgeBase struct {
 // KnowledgeSource 是一个知识来源。Kind 为 hosted 或 git。托管库用
 // HeadRevision 记当前修订号，Git 来源用 HeadCommit 记 commit。
 type KnowledgeSource struct {
-	ID           string     `json:"id"`
-	BaseID       string     `json:"baseId"`
-	Kind         string     `json:"kind"`
-	Name         string     `json:"name"`
-	GitURL       string     `json:"gitUrl,omitempty"`
-	Branch       string     `json:"branch,omitempty"`
-	PathPrefix   string     `json:"pathPrefix,omitempty"`
-	HeadCommit   string     `json:"headCommit,omitempty"`
-	HeadRevision int64      `json:"headRevision,omitempty"`
-	Status       string     `json:"status,omitempty"`
-	IndexStatus  string     `json:"indexStatus,omitempty"`
-	DocCount     int        `json:"docCount,omitempty"`
-	LastError    string     `json:"lastError,omitempty"`
-	LastSyncedAt *time.Time `json:"lastSyncedAt,omitempty"`
-	LeaseOwner   string     `json:"leaseOwner,omitempty"`
-	LeaseUntil   *time.Time `json:"leaseUntil,omitempty"`
+	CredentialCiphertext string     `json:"-"`
+	CredentialConfigured bool       `json:"credentialConfigured"`
+	ID                   string     `json:"id"`
+	BaseID               string     `json:"baseId"`
+	Kind                 string     `json:"kind"`
+	Name                 string     `json:"name"`
+	GitURL               string     `json:"gitUrl,omitempty"`
+	Branch               string     `json:"branch,omitempty"`
+	PathPrefix           string     `json:"pathPrefix,omitempty"`
+	HeadCommit           string     `json:"headCommit,omitempty"`
+	HeadRevision         int64      `json:"headRevision,omitempty"`
+	Status               string     `json:"status,omitempty"`
+	IndexStatus          string     `json:"indexStatus,omitempty"`
+	DocCount             int        `json:"docCount,omitempty"`
+	LastError            string     `json:"lastError,omitempty"`
+	LastSyncedAt         *time.Time `json:"lastSyncedAt,omitempty"`
+	LeaseOwner           string     `json:"leaseOwner,omitempty"`
+	LeaseUntil           *time.Time `json:"leaseUntil,omitempty"`
 }
 
 // KnowledgeBinding 把项目绑定到知识库；切片里 Permission 只写 submit。
