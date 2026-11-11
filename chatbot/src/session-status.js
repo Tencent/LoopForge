@@ -19,6 +19,14 @@ export function sessionReplyStatus(session, { generation, busy = false } = {}) {
   return states[value === "canceled" ? "cancelled" : value] || states.idle;
 }
 
+// A completed reply the reader has not opened yet carries a blue dot, as in
+// Codex; once read, a completed row is quiet again.
+const unreadState = { state: "unread", label: "有新回复未读", dot: true };
+
+export function sidebarReplyStatus(status, unread = false) {
+  return unread && status.state === "completed" ? unreadState : status;
+}
+
 // Run sessions only earn a chip while something needs the reader: a running
 // SOP, a run waiting for a person, or a failure. Finished runs stay quiet; the
 // title already says which SOP they belong to.

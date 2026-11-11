@@ -45,6 +45,8 @@ type deps struct {
 	kb         *knowledge.Service
 	authClient *auth.Client
 	api        http.Handler
+	// passwordAttempts is this server's brute-force budget (auth_password.go).
+	passwordAttempts *passwordLimiter
 }
 
 // configureSync 是跨领域共享的依赖配置行为（mcp/issues/sync 都调用）。
@@ -122,7 +124,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 }
 
 func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers), knowledgeEngine ...knowledge.Upstream) *gin.Engine {
-	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv()}
+	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
 	if err := ensureDefaultMCPsForAllProjects(s); err != nil {
 		log.Printf("ensure default project MCPs: %v", err)
 	} else {
@@ -184,9 +186,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if syncSvc != nil {
 		e.MergeIntoBranch = syncSvc.EnsureAndMergeBranchMR
 		e.FindBranchMR = syncSvc.FindBranchMR
-		syncSvc.OnRequirementImported = func(issue domain.Issue) {
-			go stream.autoClarifyIssue(issue.ID)
-		}
 	}
 	// Wake long-polling CLI runners the moment the engine queues a task.
 	e.SetRunnerDispatchNotify(func(provider string) { api.runners.runnerWaiters.notify([]string{provider}) })
@@ -319,6 +318,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/assistant/sessions/:id/issue", asst.sessionIssue)
 	g.GET("/api/assistant/sessions", asst.listSessions)
 	g.POST("/api/assistant/sessions/:id/archive", asst.archiveSession)
+	g.POST("/api/assistant/sessions/:id/read", asst.markSessionRead)
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
@@ -361,7 +361,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.Any("/api/issues/:id", api.issues.issue)
 	g.Any("/api/issues/:id/comments", api.issues.issue)
 	g.Any("/api/issues/:id/runs", api.issues.issue)
-	g.Any("/api/issues/:id/clarify", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify/cancel", api.issues.issue)

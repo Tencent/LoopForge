@@ -538,16 +538,6 @@
 #requirementModal .req-ready-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--hui-border-soft); font-weight: 500; }
 #requirementModal .req-ready-head .harness-icon { color: var(--hui-success); }
 #requirementModal .req-ready-body { padding: 12px 14px; color: var(--hui-secondary); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
-#requirementModal .req-score-details { padding: 0 14px 8px; border-top: 1px solid var(--hui-border-soft); }
-#requirementModal .req-score-wrap .req-score-details { margin-top: 16px; padding: 0; border-top: 0; }
-#requirementModal .req-score-body { padding: 6px 0 4px; }
-#requirementModal .req-dim { display: grid; grid-template-columns: 96px 1fr 34px; align-items: center; gap: 10px; padding: 4px 0; color: var(--hui-muted); font-size: 12px; }
-#requirementModal .req-dim b { color: var(--hui-text); font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
-#requirementModal .req-meter { position: relative; height: 4px; overflow: hidden; border-radius: 2px; background: var(--hui-soft); }
-#requirementModal .req-meter i { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: color-mix(in srgb, var(--hui-accent) 70%, transparent); }
-#requirementModal .req-dim-total { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--hui-border-soft); color: var(--hui-text); }
-#requirementModal .req-dim-line { color: var(--hui-tertiary); font-size: 11.5px; }
-#requirementModal .req-dim-missing { padding-top: 4px; color: var(--hui-muted); font-size: 12px; }
 #requirementModal .req-supplement { margin-top: 14px; }
 #requirementModal .req-supplement-label { margin-bottom: 6px; color: var(--hui-muted); font-size: 12px; }
 

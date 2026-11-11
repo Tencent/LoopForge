@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -83,6 +84,46 @@ func TestPrivateAssistantReportsExecutionFailureWithoutReplayingTools(t *testing
 			h.chat(c)
 			if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), tc.want) || strings.Contains(w.Body.String(), "test-only") || calls != 1 {
 				t.Fatalf("execution failure was misreported or replayed: status=%d calls=%d body=%s", w.Code, calls, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAssistantClosedToolSessionDoesNotRetrySubmission(t *testing.T) {
+	for _, processError := range []bool{true, false} {
+		t.Run(fmt.Sprintf("process_error=%t", processError), func(t *testing.T) {
+			h, actor := workbenchFixture(t)
+			calls := 0
+			h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
+				calls++
+				if calls > 1 {
+					return "", context.Canceled
+				}
+				agentToolSessions.mu.Lock()
+				var session *AgentToolSession
+				for _, candidate := range agentToolSessions.sessions {
+					if candidate.ChatSessionID == "closed-tool-session" && candidate.UserID == actor.ID {
+						session = candidate
+						break
+					}
+				}
+				agentToolSessions.mu.Unlock()
+				if session == nil {
+					t.Fatal("turn did not create its tool session")
+				}
+				session.Close()
+				if ctx.Err() == nil {
+					t.Fatal("closing the gateway did not cancel the model")
+				}
+				if processError {
+					return "", ctx.Err()
+				}
+				return "", nil
+			}
+			c, w := workbenchContext(actor, "POST", "/api/assistant/chat", bytes.NewBufferString(`{"sessionId":"closed-tool-session","projectId":"workbench","messages":[{"role":"user","content":"检查代码"}]}`))
+			h.chat(c)
+			if calls != 1 || w.Code != http.StatusGatewayTimeout || !strings.Contains(w.Body.String(), "取消或超时") {
+				t.Fatalf("cancelled execution retried or lost its cause: calls=%d status=%d body=%s", calls, w.Code, w.Body.String())
 			}
 		})
 	}

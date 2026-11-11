@@ -2,12 +2,12 @@ function assetScopeKey(type){return ({rules:'ruleScope',skills:'skillScope',dock
 function isProjectSharedAsset(type){return ['rules','skills','dockerfiles','environments','sandboxes'].includes(type)}
 function assetPageCopy(type=state.assetType){
   return ({
-    rules:{group:'能力资产',page:'规则管理',desc:'维护当前项目的行为约束和执行规则。',create:'新建规则'},
-    skills:{group:'能力资产',page:'技能管理',desc:'维护当前项目可供角色使用的技能和附加文件。',create:'新建技能'},
-    dockerfiles:{group:'运行环境',page:'Dockerfile',desc:'维护当前项目的容器构建定义。',create:'新建 Dockerfile'},
-    environments:{group:'运行环境',page:'环境安装脚本',desc:'维护安装到隔离执行环境中的工具与依赖。',create:'新建安装脚本'},
-    sandboxes:{group:'运行环境',page:'沙箱管理',desc:'维护当前项目的运行隔离方式及环境依赖。',create:'新建沙箱'}
-  })[type]||{group:'运行环境',page:'Dockerfile',desc:'维护当前项目的容器构建定义。',create:'新建 Dockerfile'};
+    rules:{group:'Agent 能力',page:'能力资产',tab:'规则',desc:'维护当前项目的行为约束和执行规则。',create:'新建规则'},
+    skills:{group:'Agent 能力',page:'能力资产',tab:'技能',desc:'维护当前项目可供角色使用的技能和附加文件。',create:'新建技能'},
+    dockerfiles:{group:'运行环境',page:'环境资产',tab:'Dockerfile',desc:'维护当前项目的容器构建定义。',create:'新建 Dockerfile'},
+    environments:{group:'运行环境',page:'环境资产',tab:'安装脚本',desc:'维护安装到隔离执行环境中的工具与依赖。',create:'新建安装脚本'},
+    sandboxes:{group:'运行环境',page:'环境资产',tab:'沙箱',desc:'维护当前项目的运行隔离方式及环境依赖。',create:'新建沙箱'}
+  })[type]||{group:'运行环境',page:'环境资产',tab:'Dockerfile',desc:'维护当前项目的容器构建定义。',create:'新建 Dockerfile'};
 }
 function assetSharedDescription(type=state.assetType){return type==='rules'?'查看其他项目共享的规则；共享规则只读，可直接绑定到本项目角色。':type==='skills'?'查看其他项目共享的技能；共享技能只读，可直接绑定到本项目角色。':'查看其他项目共享的环境资产；共享资产只读，可直接用于本项目。'}
 function assetIconName(type=state.assetType){return ({rules:'gate',skills:'skills',dockerfiles:'layers',environments:'terminal',sandboxes:'server'})[type]||'layers'}
@@ -116,7 +116,7 @@ function assetDetailHeadHTML(a,{creating=false,dirty=false}={}){
 function renderAssetDetailHead(a){
   const creating=state.selectedAsset==='__new__',copy=assetPageCopy();
   const crumbs=$('#assetCrumbs');
-  if(crumbs)crumbs.innerHTML=`<a href="${assetViewHash(state.assetType)}" data-asset-back>${escapeHTML(copy.page)}</a>${huiIcon('chevron-right')}<span class="is-current">${escapeHTML(creating?`新建${assetKindLabel()}`:(a.name||a.id))}</span>`;
+  if(crumbs)crumbs.innerHTML=`<a href="${assetViewHash(state.assetType)}" data-asset-back>${escapeHTML(copy.page)} · ${escapeHTML(copy.tab)}</a>${huiIcon('chevron-right')}<span class="is-current">${escapeHTML(creating?`新建${assetKindLabel()}`:(a.name||a.id))}</span>`;
   const head=$('#assetDetailHead');if(!head)return;
   closeAssetMenu();
   head.innerHTML=assetDetailHeadHTML(a,{creating,dirty:!!state.assetDirty});

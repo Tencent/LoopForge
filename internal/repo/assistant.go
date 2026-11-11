@@ -349,6 +349,9 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		}
 	}
 	v.UserID = userID
+	// The latest reply and its read state are projections for the history
+	// list, recomputed on every listing; a saved transcript never stores them.
+	v.GenerationID, v.Unread = "", false
 	deriveAssistantParticipants(&v, v.Messages)
 	return upsert(r.DB, "assistant_sessions", map[string]any{
 		"id":         v.ID,
@@ -418,6 +421,9 @@ func (r *AssistantRepo) DeleteAssistantSession(userID int64, id string) error {
 		}
 		if res.RowsAffected == 0 {
 			return fmt.Errorf("assistant session not found")
+		}
+		if err := tx.Where("session_id = ?", id).Delete(&assistantSessionReadRow{}).Error; err != nil {
+			return err
 		}
 		return tx.Where("session_id = ? AND user_id = ?", id, userID).Delete(&assistantGenerationRow{}).Error
 	})

@@ -88,19 +88,16 @@ async function projectWizardCreate(){
   const value=buildProjectPayload(clone(d),{id:ident.id,key:ident.key,defaultRepositoryId:''});
   const invalid=validateProjectPayload(value,{creating:true,projects,workflows:state.data.workflows||[]});
   if(invalid)return projectWizardFail(invalid.field==='id'||invalid.field==='key'?'无法根据名称生成可用的项目标识，请换个名称重试':invalid.message,['name','workflowId','ownerId'].includes(invalid.field)?invalid.field:'');
-  let domainError='';
   const stored=await projectWizardRequest(async()=>{
     const result=await api('/api/projects',{method:'POST',body:JSON.stringify(value)});
-    const saved=storeSavedProject(result,value);
-    domainError=await saveProjectBusinessDomain(saved.id,String(d.businessDomainId||''),'');
-    return saved;
+    return storeSavedProject(result,value);
   },'创建失败，可修改项目名称后重试：');
   if(!stored||projectWizard!==w)return false;
   w.projectId=stored.id||value.id;
   if(!state.projectFilter){state.projectFilter=w.projectId;localStorage.setItem('agentflow.activeProject',w.projectId)}
   projectWizardMark('basic',true);
   renderAll();
-  toast(domainError?`项目已创建，业务域保存失败：${domainError}`:`项目已创建 · 标识 ${w.projectId} · Key ${stored.key||value.key}`,domainError?'err':'ok');
+  toast(`项目已创建 · 标识 ${w.projectId} · Key ${stored.key||value.key}`,'ok');
   projectWizardEnter('repos');
   return true;
 }
@@ -242,7 +239,7 @@ function projectWizardBasicHTML(w){
     +pwField('项目说明',`<textarea class="pw-input" id="pwDescription" name="description" rows="3" placeholder="可选，这个项目负责什么？Agent 会把它作为上下文。">${escapeHTML(d.description||'')}</textarea>`,{for:'pwDescription'}));
   const owner=Number(state.currentUser?.id)?'':pwField('项目 Owner',userCombobox('ownerId',d.ownerId,'请选择项目 Owner'),{required:true,hint:'项目的默认责任人，创建后可在项目成员中调整。'});
   const defaults=pwCard('默认设置','新建需求时自动带上的流程',pwPill('已预选','ok'),
-    `<div class="pw-row2">${pwField('默认 SOP',pwSelect(projectDefaultSOPField(d)),{required:true})}${pwField('主业务域',pwSelect(projectBusinessDomainField(d)))}</div>${owner}`);
+    `${pwField('默认 SOP',pwSelect(projectDefaultSOPField(d)),{required:true})}${owner}`);
   return projectWizardHeadHTML(w,'基本信息','只需填写项目名称即可创建，其余都有默认值。')+`<div class="pw-pane">${identity}${defaults}</div>`;
 }
 function projectWizardRepoHint(url){
@@ -367,7 +364,7 @@ function syncProjectWizardField(t){
     const pill=$('#projectWizard')?.querySelector('[data-pw-people-pill]');if(pill)pill.outerHTML=projectWizardPeoplePill(d);
     return true;
   }
-  if(!['name','description','workflowId','businessDomainId','tapdWorkspaceId','tapdIterationId'].includes(name))return false;
+  if(!['name','description','workflowId','tapdWorkspaceId','tapdIterationId'].includes(name))return false;
   d[name]=t.value;
   if(name==='name'){const pill=$('#projectWizard')?.querySelector('[data-pw-name-pill]');if(pill)pill.outerHTML=projectWizardNamePill(t.value)}
   return true;

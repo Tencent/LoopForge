@@ -1,6 +1,5 @@
 // Key user journeys driven through the real UI: create a requirement, approve
-// a waiting run from its detail page, edit a SOP in the designer and search
-// the knowledge base. Fixtures are created through the API and cleaned up.
+// a waiting run from its detail page and edit a SOP in the designer. Fixtures are created through the API and cleaned up.
 import { test, expect, watchErrors, openView } from './fixtures.mjs';
 import { get, post, put, del, list, cleanup, track, waitRun } from '../lib/api.mjs';
 import { cfg } from '../lib/env.mjs';
@@ -224,7 +223,7 @@ test('settings at ≤1000px: the drawer opens from the rail and closes once a pa
   const drawerOpen = () => page.evaluate(() => document.body.classList.contains('sidebar-open'));
   // A deep link shows the page, not the navigation on top of it.
   await page.goto('/#/skills');
-  await expect(page.locator('#pageTitle')).toHaveText('技能管理');
+  await expect(page.locator('#pageTitle')).toHaveText('能力资产');
   expect(await drawerOpen()).toBe(false);
   // Coming into settings from the workbench offers the navigation…
   await page.evaluate(() => { location.hash = '#/collaboration'; });

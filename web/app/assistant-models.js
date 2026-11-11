@@ -37,6 +37,15 @@
     if (v === 'echo') return 'echo';
     return 'other';
   }
+  // engineOf names the CLI that runs a model: catalog entries carry it, and a
+  // saved "codex:…" id that the viewer cannot list still keeps its prefix.
+  function engineOf(id) {
+    const listed = (catalog.models || []).find(m => m.id === id);
+    if (listed) return listed.engine || 'codebuddy';
+    const value = String(id || '');
+    const prefix = value.slice(0, Math.max(0, value.indexOf(':')));
+    return (catalog.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
+  }
   function modelMeta(id) {
     return (catalog.models || []).find(m => m.id === id) || {id: id || DEFAULT_MODEL, family: familyOf(id), name: id || DEFAULT_MODEL};
   }
@@ -123,7 +132,7 @@
   function load() {
     if (!loading) {
       loading = fetchCatalog().then(data => {
-        if (data?.models?.length) catalog = {default: data.default || DEFAULT_MODEL, models: data.models};
+        if (data?.models?.length) catalog = {default: data.default || DEFAULT_MODEL, models: data.models, engines: data.engines || []};
         return catalog;
       }).catch(() => catalog).finally(() => { loading = null; });
     }
@@ -132,6 +141,7 @@
   window.AgentFlowAssistantModels = {
     DEFAULT: DEFAULT_MODEL,
     catalog: () => catalog,
+    engineOf,
     load,
     paint,
     paintItem,

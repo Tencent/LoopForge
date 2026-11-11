@@ -155,7 +155,7 @@ function renderIssues(){
     return;
   }
   const emptyTitle=state.issueRunFilter==='attention'?'没有需要介入的工作项':state.issueRunFilter==='mr'?'没有待处理 MR 的需求':'当前项目没有匹配的工作项';
-  const emptyHint=state.issueRunFilter==='attention'?'澄清未达标、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
+  const emptyHint=state.issueRunFilter==='attention'?'待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
   const keyWidth=issueKeyColumnWidth(paged.items);
   const pager=pagerHTML('issues',paged)||(paged.total?`<nav class="pager pager-summary" aria-label="分页"><span class="pager-meta">共 ${paged.total} 条</span></nav>`:'');
   board.innerHTML=`<div class="issue-table-card"><div class="issue-table-scroll"><div class="issue-table${state.issueSelectionMode?' issue-table-selectable':''}" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectAllCheckbox('全选本页可删除的需求')}</div>`:''}<span>编号</span><span>标题</span><span>来源</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 SOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div></div>${pager}</div>`;
@@ -245,14 +245,14 @@ function bindIssueKanban(){
 function issueStatusLabel(value){return ({backlog:'待规划',todo:'待处理',in_progress:'进行中',in_review:'评审中',done:'已完成',blocked:'已阻塞',cancelled:'已取消',closed:'已关闭'}[value]||value||'—')}
 function issueStatusIcon(value){return ({backlog:'circle',todo:'clock',in_progress:'user-hold',in_review:'pending-review',done:'check',closed:'close',blocked:'alert',cancelled:'close'}[value]||'circle')}
 function huiIcon(name,cls=''){return `<svg class="agent-icon harness-icon${cls?` ${cls}`:''}" data-icon="${escapeHTML(name)}" width="14" height="14" aria-hidden="true" focusable="false"></svg>`}
-// stage.key alone is not enough: 「待澄清」 shares attention with failures and
-// 「已关闭」 shares closed with merged deliveries.
+// stage.key alone is not enough: 「已关闭」 shares closed with merged deliveries.
 function issueStageTone(stage){
   const key=stage?.key||'',label=String(stage?.label||'');
   if(key==='active')return /排队/.test(label)?{tone:'info',icon:'clock'}:{tone:'info',icon:'lamp'};
   if(key==='waiting')return {tone:'warn',icon:'user-hold'};
   if(key==='confirm')return {tone:'warn',icon:'pending-review'};
-  if(key==='attention')return label.startsWith('待澄清')?{tone:'warn',icon:'user-hold'}:{tone:'error',icon:'alert'};
+  if(key==='clarifying')return {tone:'warn',icon:'user-hold'};
+  if(key==='attention')return {tone:'error',icon:'alert'};
   if(key==='closed')return ['已完成','交付闭环','MR 已合入','已合入基线'].includes(label)?{tone:'success',icon:'check'}:{tone:'neutral',icon:'close'};
   return {tone:'neutral',icon:'circle'};
 }
@@ -301,7 +301,7 @@ function issueWaitingToExecute(i){
   // 已阻塞必须留在各自的状态筛选中，即使它们暂时没有 Run。
   if(status!=='backlog')return false;
   const stage=issueCurrentStage(i);
-  return stage.key==='not_started'||stage.label==='等待执行';
+  return stage.key==='not_started'||stage.key==='clarifying'||stage.label==='等待执行';
 }
 function issueFinished(i){
   if(!i)return false;
@@ -385,7 +385,6 @@ function issueRow(i){
   const convo=conversationIssueProgress(i,run);
   const isFailed=!conversationWorkspaceIssue(i,run)&&Boolean(run&&(['failed','cancelled'].includes(run.status)||issueHasFailedNode(run)));
   const needsConfirm=clarificationNeedsConfirm(i);
-  const needsClarify=requirementNeedsClarification(i);
   let progressText=`${progress.pct}%`;
   let progressCls='';
   let progressTitle=`${progress.done}/${progress.total||0} 节点`;
@@ -403,13 +402,8 @@ function issueRow(i){
   }else if(needsConfirm){
     progressText='需要确认结论';
     progressCls=' confirm';
-    trackWidth=Math.min(100,Math.max(20,i.clarification?.score||100));
-    progressTitle=`澄清已完成（${i.clarification?.score||80} 分），需要确认结论后再触发 SOP`;
-  }else if(needsClarify){
-    progressText='待澄清';
-    progressCls=' warn';
-    trackWidth=0;
-    progressTitle=`信息完整度 ${i.clarification?.score||0} 分，未达准入线，需先澄清`;
+    trackWidth=100;
+    progressTitle='澄清已完成，需要确认结论后再触发 SOP';
   }else if(progress.pct>=100){
     progressCls=' done';
   }
@@ -684,14 +678,8 @@ async function importTAPDStory(e){
     if(idx>=0)state.data.issues[idx]=issue;else (state.data.issues||(state.data.issues=[])).unshift(issue);
     $('#importTAPDModal').classList.remove('open');
     renderIssues();
-    if(requirementNeedsClarification(issue)){
-      state.autoStartClarify=true;
-      toast(`已导入：${issue.title||issue.id}。评分 ${issue.clarification?.score||0} 分，需要你补充澄清`,'ok');
-      openIssueDetail(issue.id,'clarify');
-    }else{
-      toast(`已导入 TAPD 工作项：${issue.title||issue.id}`,'ok');
-      if(issue.id)openIssueDetail(issue.id);
-    }
+    toast(`已导入 TAPD 工作项：${issue.title||issue.id}`,'ok');
+    if(issue.id)openIssueDetail(issue.id);
   }catch(err){toast(err.message)}
   finally{if(button){button.disabled=false;button.textContent='导入'}}
 }
@@ -727,7 +715,7 @@ async function persistIssue(issue){
 async function saveIssue(e){e.preventDefault();const button=e.currentTarget.querySelector('button[type="submit"]');try{button.disabled=true;button.textContent='正在保存…';const saved=await persistIssue(issueFromForm());state.selectedIssue=saved.id;$('#issueModal').classList.remove('open');renderIssues();toast('需求已保存')}catch(err){toast(err.message)}finally{button.disabled=false;button.textContent='保存'}}
 async function dispatchIssue(){try{let issue=issueFromForm();const blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);const current=latestIssueTask(issue),rerun=!!current;if(current&&!await afConfirm({title:'重新运行确认',message:['queued','dispatched','running'].includes(current.status)?'该需求已有进行中的任务，确定额外发起一次重新运行吗？':'该需求已经处理过，确定整条 SOP 重新运行吗？',confirmText:'确认重新运行'}))return;const button=$('#dispatchIssue');button.disabled=true;button.textContent='正在调度…';issue=await persistIssue(issue);const task=await api(`/api/issues/${issue.id}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId:issue.workflowId||''})});issue.latestTaskId=task.id;issue.status='in_progress';const idx=state.data.issues.findIndex(i=>i.id===issue.id);if(idx>=0)state.data.issues[idx]=issue;if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}$('#issueModal').classList.remove('open');renderIssues();await openIssueDetail(issue.id,'sop');toast(rerun?'已创建重新运行':'已创建执行任务并启动工作流','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});}catch(err){toast(err.message)}finally{const button=$('#dispatchIssue');button.disabled=false;button.textContent='启动 SOP'}}
 async function dispatchIssueById(issueId,rerun=false,workflowId=''){try{const issue=(state.data.issues||[]).find(i=>i.id===issueId),blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);if(clarificationNeedsConfirm(issue)){openIssueDetail(issueId,'clarify');return toast('请先确认澄清结论后再触发 SOP')}
-    if(requirementNeedsClarification(issue)){state.autoStartClarify=true;openIssueDetail(issueId,'clarify');return toast('需求澄清未达标，请先补充关键信息')}const task=await api(`/api/issues/${issueId}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId})});if(issue){issue.latestTaskId=task.id;issue.status='in_progress'}if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}renderIssues();await openIssueDetail(issueId,'sop');toast(rerun?'已创建重新运行':'已启动 SOP','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});setTimeout(()=>refreshIssues(),2000);setTimeout(()=>refreshIssues(),10000);}catch(err){if(/澄清/.test(err.message||'')){state.issueDetailTab='clarify';openIssueDetail(issueId,'clarify')}toast(err.message,'err')}}
+const task=await api(`/api/issues/${issueId}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId})});if(issue){issue.latestTaskId=task.id;issue.status='in_progress'}if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}renderIssues();await openIssueDetail(issueId,'sop');toast(rerun?'已创建重新运行':'已启动 SOP','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});setTimeout(()=>refreshIssues(),2000);setTimeout(()=>refreshIssues(),10000);}catch(err){if(/澄清/.test(err.message||'')){state.issueDetailTab='clarify';openIssueDetail(issueId,'clarify')}toast(err.message,'err')}}
 function defaultSOPForIssue(issue){
   const projectId=issue?.projectId||state.projectFilter;
   const project=(state.data.projects||[]).find(p=>p.id===projectId);
@@ -778,11 +766,6 @@ async function triggerIssue(issueId,workflowId){
   const issue=(state.data.issues||[]).find(i=>i.id===issueId);
   if(!issue)return toast('未找到工作项');
   const blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);
-  if(requirementNeedsClarification(issue)){
-    state.autoStartClarify=true;
-    openIssueDetail(issue.id,'clarify');
-    return toast('需求澄清未达标，请先补充关键信息');
-  }
   const targetWorkflow=String(workflowId||'').trim()||issue.workflowId||defaultSOPForIssue(issue);
   const laneTask=(state.data.tasks||[]).find(t=>t.issueId===issue.id&&t.workflowId===targetWorkflow);
   const latestRun=laneTask?latestIssueRun(issue,laneTask):null;
@@ -842,9 +825,9 @@ async function retriggerIssue(issueId,workflowId){
   if(!issue)return toast('未找到工作项');
   if(issueTrackerClosed(issue))return toast('外部工作项已关闭，请先在外部系统重新打开');
   if(issueManuallyClosed(issue))return toast('请先重新打开该需求，再触发 SOP');
-  if(requirementNeedsClarification(issue)||clarificationNeedsConfirm(issue)){
+  if(clarificationNeedsConfirm(issue)){
     openIssueDetail(issue.id,'clarify');
-    return toast('请先完成澄清再重新触发');
+    return toast('请先确认澄清结论再重新触发');
   }
   if(!await afConfirm({title:'重新触发确认',message:'会整条 SOP 从头再开一条新运行，已完成步骤也会重做，旧记录还在。失败时若只想从失败点继续，请用「重试」。',confirmText:'确认重新触发'}))return;
   try{

@@ -277,6 +277,105 @@ func TestWorkspaceRestoreExpiredLeaseFencesOldCompletion(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRestoreOutcomeOutranksClearedBinding(t *testing.T) {
+	t.Parallel()
+	for _, backend := range []string{"sqlite", "mysql"} {
+		for _, scenario := range []string{"expired-after-binding", "failed-after-binding"} {
+			t.Run(backend+"/"+scenario, func(t *testing.T) {
+				worker, controller, id := remoteWorkspaceRestoreFixture(t, backend)
+				now := time.Now().UTC()
+				token, err := worker.repo.BeginWorkspaceRestore(id, now)
+				if err != nil || token == "" {
+					t.Fatalf("restore lease not acquired: %q %v", token, err)
+				}
+				// The restore binds the workspace, which clears the cleanup mark,
+				// before the rest of its work has finished.
+				if err = worker.repo.RestoreCheckpointWorkspaceBinding(id, token, worker.workspaceHost, worker.sandboxes.Root(), now); err != nil {
+					t.Fatal(err)
+				}
+				wantError := repo.WorkspaceRestoreInterrupted
+				if scenario == "expired-after-binding" {
+					// The process exits before recording an outcome.
+					if err = worker.repo.DB.Model(&repo.WorkspaceCheckpoint{}).Where("run_id = ?", id).
+						Update("lease_until", now.Add(-time.Minute)).Error; err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					wantError = "post-binding failure"
+					if err = worker.repo.FinishWorkspaceRestore(id, token, now, wantError); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if run, _ := worker.repo.RunState(id); !run.WorkspaceCleanedAt.IsZero() {
+					t.Fatal("fixture binding did not clear the cleanup mark")
+				}
+				state, err := controller.WorkspaceRestoreStatus(id)
+				if err != nil || state.Status != "failed" || state.Error != wantError {
+					t.Fatalf("unfinished restore reported as %+v %v", state, err)
+				}
+				// The failure stays retryable although the workspace is bound.
+				if state, err = controller.StartWorkspaceRestore(id); err != nil || state.Status == "failed" {
+					t.Fatalf("retry was not started: %+v %v", state, err)
+				}
+				if state = awaitWorkspaceRestore(t, controller, id); state.Status != "ready" || state.Error != "" {
+					t.Fatalf("retry did not finish the restore: %+v", state)
+				}
+				if meta, _ := worker.repo.WorkspaceCheckpoint(id); meta.RestoreStatus != "ready" || meta.LeaseToken != "" {
+					t.Fatalf("retry left restore state %q lease=%q", meta.RestoreStatus, meta.LeaseToken)
+				}
+			})
+		}
+	}
+}
+
+func TestWorkspaceUseSupersedesEarlierRestoreOutcome(t *testing.T) {
+	t.Parallel()
+	for _, backend := range []string{"sqlite", "mysql"} {
+		for _, scenario := range []string{"failed", "interrupted"} {
+			t.Run(backend+"/"+scenario, func(t *testing.T) {
+				worker, controller, id := remoteWorkspaceRestoreFixture(t, backend)
+				now := time.Now().UTC()
+				var old string
+				var err error
+				if scenario == "failed" {
+					old, err = worker.repo.BeginWorkspaceRestore(id, now)
+					if err == nil {
+						err = worker.repo.FinishWorkspaceRestore(id, old, now, "runner disconnected")
+					}
+				} else {
+					old, err = worker.repo.BeginWorkspaceRestore(id, now.Add(-20*time.Minute))
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				// An ordinary workspace use takes the lease and binds the workspace.
+				token, err := worker.repo.BeginWorkspaceUse(id, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if scenario == "interrupted" {
+					meta, _ := worker.repo.WorkspaceCheckpoint(id)
+					if meta.RestoreStatus != "failed" || meta.RestoreError != repo.WorkspaceRestoreInterrupted {
+						t.Fatalf("taken-over restore not recorded as interrupted: %q %q", meta.RestoreStatus, meta.RestoreError)
+					}
+					if err = worker.repo.FinishWorkspaceRestore(id, old, now, ""); !errors.Is(err, repo.ErrWorkspaceInUse) {
+						t.Fatalf("fenced restore recorded an outcome: %v", err)
+					}
+				}
+				if err = worker.repo.RestoreCheckpointWorkspaceBinding(id, token, worker.workspaceHost, worker.sandboxes.Root(), now); err != nil {
+					t.Fatal(err)
+				}
+				if state, err := controller.WorkspaceRestoreStatus(id); err != nil || state.Status != "ready" || state.Error != "" {
+					t.Fatalf("bound workspace still reports the earlier restore: %+v %v", state, err)
+				}
+				if token, err = worker.repo.BeginWorkspaceRestore(id, now.Add(time.Hour)); err != nil || token != "" {
+					t.Fatalf("ready workspace started another restore: %q %v", token, err)
+				}
+			})
+		}
+	}
+}
+
 func TestLegacyWorkspaceProbeConfirmsMissingRoot(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []string{"runner-missing", "runner-file-missing", "worker-missing", "worker-file-missing"} {

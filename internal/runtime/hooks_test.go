@@ -64,7 +64,7 @@ func TestAgentHooksCompileForAllCLIsAndStayInvocationScoped(t *testing.T) {
 					t.Fatalf("Claude settings not attached: %v", compiled.Args)
 				}
 			case "codebuddy":
-				settings := filepath.Join(workspace, ".agentflow", "hooks", "codebuddy-settings.json")
+				settings := filepath.Join(workspace, ".agentflow", "config", "reviewer", "codebuddy-settings.json")
 				assertHookSettings(t, settings, "PreToolUse", "python3 '.agentflow/config/reviewer/hooks/audit-agentflow.py'")
 			case "codex":
 				joined := strings.Join(compiled.Args, " ")

@@ -47,6 +47,11 @@
 
 /* SOP 创建向导起点选择 */
 .template-choice-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.sop-sandbox-settings{margin-top:20px}
+.sop-sandbox-settings>.wide{grid-column:1/-1}
+.sop-sandbox-settings select{width:100%;margin-top:6px}
+.sop-sandbox-settings p{margin:0;color:var(--hui-secondary);font-size:12px;line-height:1.6}
+.sop-sandbox-actions{display:flex;flex-wrap:wrap;gap:8px}
 .template-choice{display:flex;align-items:center;gap:11px;padding:12px;border:1px solid var(--line-strong);border-radius:11px;cursor:pointer;transition:all .14s ease;background:var(--bg-soft)}
 .template-choice:hover{border-color:rgba(91,140,255,.4)}
 .template-choice.active{border-color:var(--blue);background:var(--blue-soft)}

@@ -40,10 +40,11 @@ for arg in "$@"; do
 done
 [[ -n "$command_name" ]] || fail 'usage: scripts/knowledge-schema.sh {apply|check|seed} [--compose|--native]'
 
-if [[ -f .env ]]; then
+schema_env_file="${LOOPFORGE_ENV_FILE:-.env}"
+if [[ -f "$schema_env_file" ]]; then
   set -a
   # shellcheck disable=SC1091
-  source .env
+  source "$schema_env_file"
   set +a
 fi
 
@@ -287,7 +288,7 @@ PY
   for file in "${files[@]}"; do
     base=$(basename "$file")
     num=${base%%_*}
-    if ((10#$num < 26)); then
+    if ((10#$num < 26 || 10#$num > 38)); then
       continue
     fi
     if ((10#$num == 35)); then

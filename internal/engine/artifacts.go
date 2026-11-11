@@ -12,10 +12,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 const maxArtifactBytes = 1 << 20
+
+// artifactSeq keeps IDs unique when parallel branches publish in the same
+// clock tick.
+var artifactSeq atomic.Uint64
 
 func materializeInputs(workspace string, wf domain.WorkflowDefinition, node domain.WorkflowNode, run domain.Run) (string, error) {
 	sources := map[string]bool{}
@@ -48,7 +53,7 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 			fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nNo full diff is stored. The run workspace is the source of truth.\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, summary)
 			continue
 		}
-		nodeSegment := safePathSegment(artifact.NodeID)
+		nodeSegment := safePathSegment(nodeControlKey(run, artifact.NodeID))
 		controlSegments := []string{"inputs", nodeSegment}
 		if artifact.RepositoryDir != "" {
 			controlSegments = append(controlSegments, safePathSegment(artifact.RepositoryDir))
@@ -58,7 +63,7 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 			return "", err
 		}
 		fileName := safePathSegment(artifact.Name) + extensionFor(artifact.MediaType)
-		rel := artifactInputRelPath(artifact)
+		rel := artifactInputRelPath(run, artifact)
 		target := filepath.Join(inputDir, fileName)
 		if info, err := os.Lstat(target); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
@@ -88,8 +93,8 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 
 // artifactInputRelPath is where an upstream artifact is mounted for the
 // consuming node, relative to the run workspace.
-func artifactInputRelPath(artifact domain.Artifact) string {
-	segments := []string{".agentflow", "inputs", safePathSegment(artifact.NodeID)}
+func artifactInputRelPath(run domain.Run, artifact domain.Artifact) string {
+	segments := []string{".agentflow", "inputs", safePathSegment(nodeControlKey(run, artifact.NodeID))}
 	if artifact.RepositoryDir != "" {
 		segments = append(segments, safePathSegment(artifact.RepositoryDir))
 	}
@@ -406,7 +411,7 @@ func artifactPromptBody(artifact domain.Artifact) string {
 func newArtifact(runID, nodeID string, attempt int, name, path, mediaType string, content []byte) domain.Artifact {
 	sum := sha256.Sum256(content)
 	now := time.Now().UTC()
-	return domain.Artifact{ID: fmt.Sprintf("artifact-%d", now.UnixNano()), RunID: runID, NodeID: nodeID, Attempt: attempt, Name: name, Path: path, MediaType: mediaType, Size: int64(len(content)), SHA256: fmt.Sprintf("%x", sum), Content: string(content), CreatedAt: now}
+	return domain.Artifact{ID: fmt.Sprintf("artifact-%d-%d", now.UnixNano(), artifactSeq.Add(1)), RunID: runID, NodeID: nodeID, Attempt: attempt, Name: name, Path: path, MediaType: mediaType, Size: int64(len(content)), SHA256: fmt.Sprintf("%x", sum), Content: string(content), CreatedAt: now}
 }
 
 func appendArtifact(run *domain.Run, nodeID string, attempt int, name, path, mediaType string, content []byte) {

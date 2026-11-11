@@ -1151,12 +1151,9 @@
     settings: "settings", bots: "robot", projects: "users", flow: "workflow",
     agents: "user", mcp: "connector", rules: "doc", skills: "skills",
     dockerfiles: "layers", environments: "terminal", sandboxes: "server",
-    knowledge: "brain", metrics: "chart",
-    businessDomains: "layers", businessDomainManagement: "layers",
-    observability: "token", guide: "doc", platform: "gate",
+    observability: "token", guide: "key", platform: "gate",
   };
   const controls = {
-    capabilityNavToggle: "skills", environmentNavToggle: "server",
     collabNew: "plus", collabRefresh: "refresh", collabSearchToggle: "search",
     refreshDashboard: "refresh", themeToggle: "sun",
   };
@@ -1257,7 +1254,7 @@
   const rail = document.getElementById("platformRail");
 
   document.querySelectorAll("#platformRail .rail-btn[data-view], #configurationNav .nav[data-view]").forEach(host => {
-    replace(host, views[host.dataset.view]);
+    replace(host, host.dataset.navIcon || views[host.dataset.view]);
   });
   document.querySelectorAll("#configurationNav .management-back").forEach(host => replace(host, "chevron-left"));
   Object.entries(controls).forEach(([id, name]) => replace(document.getElementById(id), name));

@@ -8,7 +8,7 @@ test('issue drawer panes render clarification, SOP, delivery, and activity data'
   const rendered = app.evaluate(`
     (() => {
       const issue={...state.data.issues[0], status:'completed', source:'tapd', externalId:'TAPD-9',
-        clarification:{status:'completed',score:86,summary:'Clear objective',questions:[
+        clarification:{status:'completed',summary:'Clear objective',questions:[
           {id:'q1',question:'Which browser?',options:['Chrome','Firefox'],required:true}
         ],history:[{role:'assistant',content:'Please clarify'},{role:'user',content:'Chrome'}]},
         operations:[{action:'closed',createdAt:'2026-10-21T10:00:00Z',userName:'Tester'}]};
@@ -19,7 +19,7 @@ test('issue drawer panes render clarification, SOP, delivery, and activity data'
       state.issueDetailData=data;
       return [
         clarificationOverviewCard(issue), clarifyQuestionCardsHTML(issue.clarification.questions,{}),
-        clarifyScoreHTML(issue,project), clarifyHistoryHTML(issue.clarification),
+        clarifyHistoryHTML(issue.clarification),
         clarifyPane(issue,project), sopPane(issue,data), artifactsPane(data), deliveryPane(issue,data),
         acceptancePane(issue,data), operationsPane(issue), activityPane(issue,data),
         issueProgressActionsHTML(issue,run,{includeIssueActions:true})

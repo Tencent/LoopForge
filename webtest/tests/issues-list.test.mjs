@@ -11,7 +11,7 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
   app.router.put('/api/issues/issue-1/sops', { ...saved, sopBindings: [{ workflowId: 'flow-1', order: 1 }] });
   app.router.post('/api/issues/import-tapd', {
     id: 'tapd-new', projectId: 'project-1', title: 'Imported TAPD', source: 'tapd',
-    status: 'backlog', repositoryIds: ['repo-1'], clarification: { status: 'ready', score: 90 }
+    status: 'backlog', repositoryIds: ['repo-1'], clarification: { status: 'ready' }
   });
   const result = structuredClone(await app.evaluate(`(async () => {
     state.data.projects[0].key='ATL';

@@ -28,15 +28,17 @@ func (e *Engine) nodeFailed(runID string, node domain.WorkflowNode, err error, a
 }
 
 // shouldCommitNodeOutcome is the exclusive-execute write fence for one node.
-// Generation mismatch means another instance took the lease. A successful
-// outcome may still land after retries bumped Attempt, so a live agent that
-// passed gates is not dropped. Failures stay attempt-scoped and never
-// overwrite succeeded or waiting_approval.
+// Generation mismatch means another instance took the lease. Either outcome
+// needs the node still in flight: with parallel branches a rework or retry can
+// reset a running sibling to pending, and its late result must neither
+// overwrite the reset nor let it be scheduled twice. A successful outcome may
+// still land after retries bumped Attempt, so a live agent that passed gates
+// is not dropped for an attempt mismatch. Failures stay attempt-scoped.
 func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attempt int, success bool) bool {
 	if r.Generation != generation || nr == nil {
 		return false
 	}
-	if nr.Status == "succeeded" || nr.Status == "waiting_approval" {
+	if nr.Status != "running" && nr.Status != "pending_input" {
 		return false
 	}
 	if success {

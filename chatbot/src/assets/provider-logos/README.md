@@ -10,6 +10,9 @@ requests to an image host.
   [Simple Icons repository](https://github.com/simple-icons/simple-icons),
   and the pinned assets were downloaded from the corresponding
   `cdn.jsdelivr.net/npm/simple-icons@v16/icons/<slug>.svg` URLs.
+- `pi.svg` is a plain π glyph drawn locally, not from Grasp. It is the same
+  mark as `web/images/credentials/pi.svg`, bundled here for the chat CLI
+  selector.
 - `openai.svg` comes from the [OpenAI 2025 logo package](https://cdn.openai.com/brand/OpenAI-Logos-2025.zip).
   `codex.svg` uses the same official OpenAI blossom because OpenAI does not
   publish a separate Codex mark in that package or in the official Codex CLI

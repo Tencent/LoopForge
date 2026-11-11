@@ -15,7 +15,7 @@ async function refreshRunners(silent){
     renderRunnersView();
   }catch(e){if(!silent)toast(e.message)}
 }
-// 接入命令携带一次性绑定码（10 分钟有效）：复制即用，无需先创建个人 Token。
+// 接入命令携带一次性绑定码（10 分钟有效）：复制即用，无需先创建访问密钥。
 async function ensureRunnerBindCode(silent){
   const cached=state.runnerBindCode;
   if(cached&&new Date(cached.expiresAt).getTime()>Date.now()+60_000)return;

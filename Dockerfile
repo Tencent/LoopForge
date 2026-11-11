@@ -9,7 +9,7 @@ RUN --mount=type=cache,target=/root/.npm npm --prefix chatbot ci --include=dev -
 COPY chatbot/ chatbot/
 COPY web/app/ web/app/
 RUN npm --prefix chatbot run build && test -f web/native-chat/index.html
-FROM --platform=$BUILDPLATFORM golang:1.26.10-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src

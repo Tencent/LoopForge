@@ -400,6 +400,14 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		checkout := func() error { return checkoutWorkBranch(ctx, workspace, repository.WorkBranch, baseBranch, false) }
 		if repository.RequireExistingWorkBranch {
 			checkout = func() error { return checkoutContinuedWorkBranch(ctx, workspace, repository.WorkBranch) }
+		} else if repository.CreateNewWorkBranch {
+			// A local branch in this cached workspace is the one this run created
+			// (and may have pushed), so it is resumed. Without it the branch is
+			// still to be created here, and a same-named remote branch belongs to
+			// someone else: refuse it exactly as a fresh clone does.
+			if _, created := gitRevParse(ctx, workspace, "refs/heads/"+strings.TrimSpace(repository.WorkBranch)); !created {
+				checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
+			}
 		}
 		if err := checkout(); err != nil {
 			return err

@@ -11,6 +11,7 @@ import (
 	stdruntime "runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const projectAgentGitExcludeBlock = `# AgentFlow managed sandbox: repository Agent configuration
@@ -73,7 +74,13 @@ func EnsureAgentFlowGitExcludes(workspace string) error {
 	return appendGitExcludeBlock(workspace, agentFlowGitExcludeBlock, "AgentFlow runtime excludes")
 }
 
+var gitExcludeMu sync.Mutex
+
 func appendGitExcludeBlock(workspace, block, label string) error {
+	// Parallel branches prepare the same checkout; check-then-append must not
+	// interleave or the block is appended twice.
+	gitExcludeMu.Lock()
+	defer gitExcludeMu.Unlock()
 	root, excludePath, err := openWorkspacePath(workspace, filepath.Join(workspace, ".git", "info", "exclude"))
 	if err != nil {
 		return err

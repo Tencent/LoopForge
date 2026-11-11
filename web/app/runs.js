@@ -973,12 +973,18 @@ function graphNodeView(r,nodeId){
   return view;
 }
 // Stage window: when this stage's nodes started and finished, shown next to the stage label.
+// Go zero time (0001-01-01T00:00:00Z) means "not set"; older payloads still carry it.
+function runTimeMs(value){
+  if(!value)return null;
+  const ms=new Date(value).getTime();
+  return Number.isFinite(ms)&&new Date(ms).getUTCFullYear()>1?ms:null;
+}
 function stageTimeRange(r,stage){
-  const entries=(stage||[]).map(node=>r?.nodes?.[node.id]).filter(item=>item&&item.startedAt);
-  const starts=entries.map(item=>new Date(item.startedAt).getTime()).filter(value=>Number.isFinite(value));
+  const entries=(stage||[]).map(node=>r?.nodes?.[node.id]).filter(item=>item&&runTimeMs(item.startedAt)!==null);
+  const starts=entries.map(item=>runTimeMs(item.startedAt));
   if(!starts.length)return null;
-  const running=entries.some(item=>!item.finishedAt);
-  const ends=running?[]:entries.map(item=>new Date(item.finishedAt).getTime()).filter(value=>Number.isFinite(value));
+  const running=entries.some(item=>runTimeMs(item.finishedAt)===null);
+  const ends=running?[]:entries.map(item=>runTimeMs(item.finishedAt));
   return {start:Math.min(...starts),end:ends.length?Math.max(...ends):null,running:running||!ends.length};
 }
 function stageTimeLabel(r,stage){

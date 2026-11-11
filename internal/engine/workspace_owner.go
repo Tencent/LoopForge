@@ -25,6 +25,18 @@ func sharesWorkspace(r domain.Run) bool {
 	return workspaceRunID(r) != r.ID
 }
 
+// nodeControlKey names a node's own control paths in the checkout (gate
+// results, materialized inputs, runtime invocation directories). A child SOP
+// runs in its parent's checkout, concurrently with the parent's other
+// branches, and its workflow may reuse the parent's node IDs; its keys carry
+// the child run so neither side clears or reads the other's files.
+func nodeControlKey(r domain.Run, nodeID string) string {
+	if !sharesWorkspace(r) {
+		return nodeID
+	}
+	return r.ID + "--" + nodeID
+}
+
 // workspaceBind returns the (host, root) holding r's workspace. A child SOP
 // follows the run that owns the checkout once that run has bound one.
 func (e *Engine) workspaceBind(r domain.Run) (string, string) {

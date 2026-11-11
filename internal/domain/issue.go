@@ -146,11 +146,6 @@ func (i Issue) WorkBranchForRepository(repositoryID string) string {
 }
 
 type ClarificationAssessment struct {
-	Score                int                     `json:"score"`
-	Passed               bool                    `json:"passed"`
-	Answers              map[string]string       `json:"answers,omitempty"`
-	Dimensions           map[string]int          `json:"dimensions,omitempty"`
-	Missing              []string                `json:"missing,omitempty"`
 	Summary              string                  `json:"summary,omitempty"`
 	Status               string                  `json:"status,omitempty"` // analyzing, in_progress, ready, needs_user
 	History              []ClarificationMessage  `json:"history,omitempty"`
@@ -163,11 +158,9 @@ type ClarificationAssessment struct {
 	WriteBackAt          time.Time               `json:"writeBackAt,omitempty"`
 	// StartedAt is the first observed start of clarification, including
 	// pre-issue composer analysis when its server timestamp is carried over.
-	StartedAt  time.Time `json:"startedAt,omitempty"`
-	AssessedAt time.Time `json:"assessedAt,omitempty"`
-	// Gated is set when the issue was scored on a manual intake path
-	// (新建需求 / 导入 TAPD). External sync leaves this false so those
-	// tickets can be dispatched without the import-time score gate.
+	StartedAt time.Time `json:"startedAt,omitempty"`
+	// Gated is legacy: older TAPD imports were marked by it instead of
+	// ExternalRef.Imported. It is only read (tracker retention), never set.
 	Gated bool `json:"gated,omitempty"`
 }
 

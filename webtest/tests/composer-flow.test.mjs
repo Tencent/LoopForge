@@ -57,7 +57,7 @@ test('wizard step 1 gates actions on the description and skipping goes straight 
   assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')));
   assert.ok(!app.router.calls.some((c) => c.path === '/api/chat-clarify'));
   assert.equal($('#requirementModal').classList.contains('open'), false);
-  assert.match($('#toastContainer').textContent, /未经澄清，不会立刻启动 SOP/);
+  assert.match($('#toastContainer').textContent, /可在详情里触发 SOP/);
 });
 
 test('wizard clarifies one question at a time, auto-submits the last answer, and dispatches a ready requirement', async (t) => {
@@ -110,7 +110,7 @@ test('wizard clarifies one question at a time, auto-submits the last answer, and
   assert.equal(second.body.message, 'Which users?：Employees\nWhich checks?：Unit');
   assert.equal(second.body.sessionId, 'clarify-1');
   assert.match(panel.textContent, /已问清，可以创建/);
-  assert.match(panel.textContent, /查看完整度详情/);
+  assert.doesNotMatch(panel.textContent, /查看完整度详情|准入线/);
   assert.match($('#reqAnswerHistory').textContent, /你的回答.*Which users.*Employees/s);
   assert.equal($('#reqGoCreate').textContent.trim(), '下一步：确认创建');
 
@@ -133,7 +133,7 @@ test('wizard clarifies one question at a time, auto-submits the last answer, and
   await settle(6);
   const create = app.router.calls.find((c) => c.path === '/api/issues');
   assert.equal(create.body.title, 'Audit log');
-  assert.equal(create.body.clarification.passed, true);
+  assert.equal(create.body.clarification.status, 'ready');
   assert.ok(app.router.calls.some((c) => c.path === '/api/issues/issue-ready/dispatch'));
   assert.ok(app.evaluate(`state.data.issues.some(issue=>issue.id==='issue-ready')`));
 });
@@ -167,7 +167,7 @@ test('wizard creates a not-ready requirement without dispatching and handles TAP
   const partial = app.router.calls.filter((c) => c.path === '/api/issues').at(-1);
   assert.equal(partial.body.title, 'Complex');
   assert.equal(partial.body.clarification.status, 'in_progress');
-  assert.equal(partial.body.clarification.passed, false);
+  assert.equal(partial.body.clarification.passed, undefined);
   assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')));
   assert.match($('#toastContainer').textContent, /澄清尚未完成/);
 

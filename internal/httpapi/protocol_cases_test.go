@@ -232,7 +232,6 @@ func TestClarifyResultCoercionAndPersistence(t *testing.T) {
 	_ = st.PutProject(domain.Project{ID: "clarify-p", Name: "P"})
 	_ = st.PutIssue(domain.Issue{ID: "clarify-i", ProjectID: "clarify-p", Title: "Need", Description: "Original"})
 	h := &streamHandlers{deps: &deps{repo: st}}
-	ready.Assessment.Dimensions = map[string]int{"goal": 100}
 	saved, err := h.saveClarificationAssessment("clarify-i", ready)
 	if err != nil || saved.Clarification.Status != domain.ClarificationReady || !strings.Contains(saved.Description, "complete") {
 		t.Fatalf("ready save=%+v %v", saved.Clarification, err)
@@ -241,7 +240,6 @@ func TestClarifyResultCoercionAndPersistence(t *testing.T) {
 		Questions: []domain.ClarificationQuestion{{ID: "q", Question: "Pick", Options: []string{"A", "B"}}},
 		raw:       map[string]any{"ready": false, "questions": []any{}},
 	}
-	pending.Assessment.Dimensions = map[string]int{"goal": 20}
 	saved, err = h.saveClarificationAssessment("clarify-i", pending)
 	if err != nil || saved.Clarification.Status != domain.ClarificationInProgress {
 		t.Fatalf("pending save=%+v %v", saved.Clarification, err)
@@ -337,7 +335,7 @@ func TestWorkbenchDeckAndClarifySessionHelpers(t *testing.T) {
 	if captureClarifySessionID(`{"session_id":" abc "}`) != "abc" || captureClarifySessionID("bad") != "" {
 		t.Fatal("session capture")
 	}
-	if !strings.Contains(clarifyResumeTurnPrompt(""), "继续澄清") || !isClarifyProtocolObject(map[string]any{"ready": true}) || isClarifyProtocolObject("x") {
+	if !strings.Contains(clarifyResumeTurnPrompt("", "", 0), "继续澄清") || !isClarifyProtocolObject(map[string]any{"ready": true}) || isClarifyProtocolObject("x") {
 		t.Fatal("clarify protocol helpers")
 	}
 	for msg, want := range map[string]string{

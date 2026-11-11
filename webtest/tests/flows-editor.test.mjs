@@ -110,3 +110,36 @@ test('SOP wizard creates a workflow and publish/delete actions send expected req
   await app.evaluate(`deleteWorkflow(${JSON.stringify(id)})`);
   assert.equal(app.evaluate(`state.data.workflows.some(w=>w.id===${JSON.stringify(id)})`), false);
 });
+
+test('publishing blocks double clicks and stays disabled until new changes are saved', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.workflow={id:'publish-check',projectId:'project-1',name:'Check',status:'published',version:2,revision:4,publishedRevision:4,nodes:[],edges:[]};markWorkflowClean()`);
+  assert.equal(app.document.querySelector('#publishWorkflow').disabled, true);
+  await app.evaluate(`publishWorkflow()`);
+  assert.equal(app.router.calls.filter(c=>c.path.endsWith('/publish')).length, 0);
+  app.evaluate(`state.workflow.revision=5;state.workflowSaved=clone(state.workflow);renderFlowHeader()`);
+  assert.equal(app.document.querySelector('#publishWorkflow').disabled, false);
+  let finish;
+  app.router.post('/api/workflows/publish-check/publish', () => new Promise(resolve=>{finish=resolve}));
+  const first=app.evaluate(`publishWorkflow()`);
+  await app.evaluate(`publishWorkflow()`);
+  assert.equal(app.document.querySelector('#publishWorkflow').disabled, true);
+  assert.equal(app.router.calls.filter(c=>c.path.endsWith('/publish')).length, 1);
+  assert.equal(app.router.calls.filter(c=>c.path==='/api/workflows'&&c.method==='PUT').length, 0);
+  finish({...app.evaluate(`structuredClone(state.workflow)`),version:3,revision:6,publishedRevision:6});
+  await first;
+  assert.equal(app.document.querySelector('#publishWorkflow').disabled, true);
+  app.evaluate(`state.workflow.description='Changed';dirty()`);
+  assert.equal(app.document.querySelector('#publishWorkflow').disabled, false);
+});
+
+test('switching workflows explicitly offers to discard edits or continue editing', async (t) => {
+  const app=await loadApp();t.after(app.close);
+  app.evaluate(`state.data.workflows.push({id:'another-flow',name:'Another',nodes:[],edges:[]});state.workflowDirty=true`);
+  const pending=app.evaluate(`switchFlowWorkflow('another-flow')`);
+  assert.equal(app.document.querySelector('#confirmOkBtn').textContent,'放弃修改并切换');
+  assert.equal(app.document.querySelector('#confirmCancelBtn').textContent,'继续编辑');
+  app.document.querySelector('#confirmCancelBtn').click();
+  assert.equal(await pending,false);
+});

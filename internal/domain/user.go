@@ -14,8 +14,8 @@ type User struct {
 	ClaudeCodeAPIKeyConfigured bool   `json:"claudeCodeApiKeyConfigured,omitempty"`
 	ClaudeCodeBaseURL          string `json:"claudeCodeBaseUrl,omitempty"`
 	// CodexModels and ClaudeCodeModels are the model catalogs AI 对话 offers
-	// for that CLI, in display order. Empty means the models the Base URL's
-	// /models endpoint publishes.
+	// for that CLI, in display order. Empty follows the CLI's built-in models
+	// on the official endpoint, or the models the Base URL publishes.
 	CodexModels      []CLIModel `json:"codexModels,omitempty"`
 	ClaudeCodeModels []CLIModel `json:"claudeCodeModels,omitempty"`
 	// AgentCLICredentials holds the credentials of the agent CLIs

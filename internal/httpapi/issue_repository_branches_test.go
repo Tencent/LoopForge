@@ -52,7 +52,7 @@ func TestIssueRepositoryBranchesCreateEditAndReset(t *testing.T) {
 	if _, err := st.PatchIssue(created.ID, func(issue *domain.Issue) error {
 		issue.Clarification.SessionID = "multi-repo-session"
 		issue.Clarification.SessionUserID = 1
-		issue.Clarification.Answers = map[string]string{"scope": "保留业务回答"}
+		issue.Clarification.Summary = "保留业务回答"
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestIssueRepositoryBranchesCreateEditAndReset(t *testing.T) {
 	changed := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
 		"id": created.ID, "repositoryBranches": branches,
 	}, http.StatusOK)
-	if !maps.Equal(changed.RepositoryBranches, branches) || changed.Clarification.SessionID != "" || changed.Clarification.SessionUserID != 0 || changed.Clarification.Answers["scope"] != "保留业务回答" {
+	if !maps.Equal(changed.RepositoryBranches, branches) || changed.Clarification.SessionID != "" || changed.Clarification.SessionUserID != 0 || changed.Clarification.Summary != "保留业务回答" {
 		t.Fatalf("secondary branch changes must reset code context and retain business answers: %+v", changed)
 	}
 	if len(changed.Operations) == 0 || !strings.Contains(changed.Operations[len(changed.Operations)-1].Detail, "各仓库继续开发分支") {
@@ -144,7 +144,7 @@ func testImportTAPDRepositoryBranches(t *testing.T, st *repo.Store) {
 	if _, err := st.PatchIssue(imported.ID, func(issue *domain.Issue) error {
 		issue.Clarification.SessionID = "imported-multi-repo-session"
 		issue.Clarification.SessionUserID = 1
-		issue.Clarification.Answers = map[string]string{"scope": "保留导入回答"}
+		issue.Clarification.Summary = "保留导入回答"
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func testImportTAPDRepositoryBranches(t *testing.T, st *repo.Store) {
 	branches[ids[1]] = "feature/web-v2"
 	payload["repositoryBranches"] = branches
 	changed := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/import-tapd", payload, http.StatusOK)
-	if !maps.Equal(changed.RepositoryBranches, branches) || changed.Clarification.SessionID != "" || changed.Clarification.Answers["scope"] != "保留导入回答" {
+	if !maps.Equal(changed.RepositoryBranches, branches) || changed.Clarification.SessionID != "" || changed.Clarification.Summary != "保留导入回答" {
 		t.Fatalf("secondary repository branch change must invalidate reimported code context: %+v", changed)
 	}
 	payload["repositoryIds"] = ids[1:2]

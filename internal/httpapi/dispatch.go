@@ -43,10 +43,6 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	scheduled := strings.TrimSpace(req.ScheduleJobID) != ""
 	project, _ := d.repo.Project(issue.ProjectID)
-	policy := domain.EffectiveClarificationPolicy(project.Clarification)
-	if domain.RequirementSOPBlocked(issue, policy) {
-		return domain.Task{}, HTTPError{http.StatusConflict, fmt.Sprintf("需求澄清未达标：当前 %d 分，需要 %d 分", issue.Clarification.Score, policy.Threshold)}
-	}
 	workflowID := strings.TrimSpace(req.WorkflowID)
 	if workflowID == "" {
 		workflowID = issue.WorkflowID
@@ -134,16 +130,6 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	domain.AssignRepositoryDirs(repositories)
 	if summary := strings.TrimSpace(issue.Clarification.Summary); summary != "" {
 		input += "\n\nClarification summary:\n" + summary
-	}
-	if issue.Kind == "requirement" && len(issue.Clarification.Answers) > 0 {
-		input += fmt.Sprintf("\n\nClarification score: %d/100 (passed=%t)", issue.Clarification.Score, issue.Clarification.Passed)
-		if p, ok := d.repo.Project(issue.ProjectID); ok {
-			for _, d := range p.Clarification.Dimensions {
-				if a := issue.Clarification.Answers[d.ID]; a != "" {
-					input += "\n- " + d.Name + ": " + a
-				}
-			}
-		}
 	}
 	if len(repositories) > 0 {
 		if len(repositories) == 1 {

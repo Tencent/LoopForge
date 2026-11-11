@@ -30,6 +30,17 @@ export async function switchProject(page,id){
   await page.locator('#projectSwitcher').selectOption(id,{force:true});
 }
 
+// Flow templates and runs sit in the settings sidebar, opened from the rail's
+// settings entry; the pinned release that first-run installs still shows them
+// on the rail, so click whichever entry is visible.
+export async function openSettingsPage(page,view){
+  const {expect}=await import('@playwright/test');
+  const entry=page.locator(`.nav[data-view="${view}"]:visible`).first();
+  if(!(await entry.count()))await page.locator('#railSettingsEntry').click();
+  await expect(entry).toBeVisible();
+  await entry.click();
+}
+
 // The home page embeds the chat app in an iframe; its composer is the entry point.
 export const chat=page=>page.frameLocator('iframe[src*="/chatbot/"]');
 export const composer=page=>chat(page).locator('.composer-column textarea');

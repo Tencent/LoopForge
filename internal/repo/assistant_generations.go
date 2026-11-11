@@ -19,6 +19,10 @@ type assistantGenerationRow struct {
 	CancelRequested bool
 	Payload         []byte `gorm:"type:json"`
 	UpdatedAt       time.Time
+	// FinishedAt is set when a turn ends through a checkpoint and cleared when
+	// the next turn starts. Rows that ended before the column existed keep
+	// NULL, which is how read tracking leaves older history unmarked.
+	FinishedAt *time.Time
 }
 
 func (assistantGenerationRow) TableName() string { return "assistant_generations" }
@@ -91,7 +95,7 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 			if old.Status == "running" {
 				return fmt.Errorf("此会话正在生成，请等待完成或停止")
 			}
-			return tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC()}).Error
+			return tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil}).Error
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
@@ -111,7 +115,12 @@ func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGenerati
 		if g.Steer == nil && current.Steer != nil {
 			g.Steer = current.Steer
 		}
-		res := tx.Model(&row).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": time.Now().UTC()})
+		now := time.Now().UTC()
+		changes := map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": now}
+		if g.Status != "running" {
+			changes["finished_at"] = now
+		}
+		res := tx.Model(&row).Updates(changes)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -145,13 +154,40 @@ func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id st
 	return nil
 }
 
-func (r *AssistantRepo) AssistantGenerationStatuses(ids []string) map[string]string {
-	out := map[string]string{}
+// AssistantGenerationState is the latest reply of a conversation as the
+// history list shows it to one reader.
+type AssistantGenerationState struct {
+	ID     string
+	Status string
+	// FinishedAt is when the reply ended. Replies that ended before it was
+	// recorded have none, so read tracking leaves older history unmarked.
+	FinishedAt *time.Time
+	// Seen reports that the reader has opened the conversation since this
+	// reply (see MarkAssistantSessionRead).
+	Seen bool
+}
+
+// AssistantGenerationStatuses reads the latest reply of each conversation
+// and whether the reader has seen it, in one query for the whole list.
+func (r *AssistantRepo) AssistantGenerationStatuses(readerID int64, ids []string) map[string]AssistantGenerationState {
+	out := map[string]AssistantGenerationState{}
 	if len(ids) == 0 {
 		return out
 	}
-	var rows []assistantGenerationRow
-	if r.DB.Select("session_id,status,updated_at").Where("session_id IN ?", ids).Find(&rows).Error != nil {
+	var rows []struct {
+		SessionID    string
+		GenerationID string
+		Status       string
+		UpdatedAt    time.Time
+		FinishedAt   *time.Time
+		ReadID       *string
+	}
+	err := r.DB.Table("assistant_generations AS g").
+		Select("g.session_id, g.generation_id, g.status, g.updated_at, g.finished_at, r.generation_id AS read_id").
+		Joins("LEFT JOIN assistant_session_reads AS r ON r.session_id = g.session_id AND r.user_id = ?", readerID).
+		Where("g.session_id IN ?", ids).
+		Scan(&rows).Error
+	if err != nil {
 		return out
 	}
 	for _, row := range rows {
@@ -159,7 +195,12 @@ func (r *AssistantRepo) AssistantGenerationStatuses(ids []string) map[string]str
 		if status == "running" && time.Since(row.UpdatedAt) > 45*time.Second {
 			status = "interrupted"
 		}
-		out[row.SessionID] = status
+		out[row.SessionID] = AssistantGenerationState{
+			ID:         row.GenerationID,
+			Status:     status,
+			FinishedAt: row.FinishedAt,
+			Seen:       row.ReadID != nil && *row.ReadID == row.GenerationID,
+		}
 	}
 	return out
 }

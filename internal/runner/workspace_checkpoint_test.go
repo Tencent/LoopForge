@@ -34,13 +34,18 @@ func TestRunnerWorkspaceCheckpointRestoreAndActiveTerminalProtection(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if blocked := d.readRunnerWorkspace(context.Background(), req); blocked.Status != 409 {
-		t.Fatal("active terminal captured")
+	// The code lets the control plane fail fast; the message stays readable by
+	// older control planes that only match the text.
+	terminalActive := func(r domain.RunnerWorkspaceResponse) bool {
+		return r.Status == 409 && r.Code == domain.WorkspaceErrorTerminalActive && r.Error == "workspace terminal is still active"
+	}
+	if blocked := d.readRunnerWorkspace(context.Background(), req); !terminalActive(blocked) {
+		t.Fatalf("active terminal captured: %+v", blocked)
 	}
 	chunkRequest := req
 	chunkRequest.Operation = domain.RunnerWorkspaceOperationCheckpointExport
-	if blocked := d.readRunnerWorkspace(context.Background(), chunkRequest); blocked.Status != 409 {
-		t.Fatal("chunked capture ignored active terminal")
+	if blocked := d.readRunnerWorkspace(context.Background(), chunkRequest); !terminalActive(blocked) {
+		t.Fatalf("chunked capture ignored active terminal: %+v", blocked)
 	}
 	if _, err = d.workspaceTerminals.Handle(workspace, "checkpoint:1", domain.WorkspaceTerminalRequest{Operation: "close", ID: opened.ID}, nil); err != nil {
 		t.Fatal(err)

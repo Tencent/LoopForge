@@ -13,7 +13,7 @@ const elements = {
 const ctx = {
   state:{},chatHistory:[],chatClarifySessionId:'',chatClarifyJobId:'',chatClarifyStopping:false,chatAbortController:null,reqAdvanceTimer:null,
   $:s=>elements[s],$$:()=>[],window:{},setTimeout,clearTimeout,
-  currentProject:()=>({id:'p'}),clarificationPolicy:()=>({threshold:80,dimensions:[{id:'goal',name:'目标',weight:1}]}),
+  currentProject:()=>({id:'p'}),
   escapeHTML:s=>String(s),clarifyRepoNoticeHTML:()=>'',
   clarifyThinkingReset:()=>{},persistRequirementComposer:()=>{persisted++},renderReqFooter:()=>{footer++},renderReqAnswerHistory:()=>{},
   selectedReqRepositoryId:()=>'r1',selectedReqRepositoryIds:()=>['r1'],selectedReqBaseBranch:()=>'feature/existing',selectedClarifyModel:()=>'test',
@@ -24,8 +24,8 @@ const ctx = {
 };
 vm.createContext(ctx);
 for(const name of [
-  'reqIcon','hydrateReqIcons','reqDescription','clarifyOptionLabel','clarifyQuestionOptions','composerClarifyQuestions','composerAssessmentView',
-  'reqAnswerOf','reqQuestionAnswered','reqAnsweredCount','composerProgressHTML','composerAssessmentDetailsHTML','collectChatReply',
+  'reqIcon','hydrateReqIcons','reqDescription','clarifyOptionLabel','clarifyQuestionOptions','composerClarifyQuestions',
+  'reqAnswerOf','reqQuestionAnswered','reqAnsweredCount','composerProgressHTML','collectChatReply',
   'usableClarifySummary','reqSupplementHTML','reqQuestionCardHTML','renderClarifyPanel','bindReqClarifyPanel','pickReqOption','setReqOtherAnswer',
   'moveReqQuestion','submitReqAnswers','useRecommendedAnswers','normalizeClarifyParsed','parseClarifyPayload',
   'requirementComposerBusy','applyChatClarifyOutcome','sendChatClarify','newComposerJobId','finishComposerClarifyStream','setChatSendAnalyzing','reqAnswerReceipts','projectTAPDReady',
@@ -43,21 +43,13 @@ function show(result) {
   ctx.renderClarifyPanel(result);
 }
 (async()=>{
-  // Older responses with only missing items become free-text questions plus a regenerate action.
-  const legacy={summary:'已读懂代码，需要确认修复目的和 ID 输入方式。',questions:[],ready:false,assessment:{missing:['修复目的是什么？','ID 怎么输入？']}};
+  // Older responses that only carried assessment.missing offer a regenerate action and free-form supplement; no scores.
+  const legacy={summary:'已读懂代码，需要确认修复目的和 ID 输入方式。',questions:[],ready:false,assessment:{dimensions:{goal:40},missing:['修复目的是什么？','ID 怎么输入？']}};
   show(legacy);
   assert.ok(panel.html.includes('重新生成问题'));
-  assert.ok(panel.html.includes('第 1 / 2 题'));
-  assert.ok(panel.html.includes('还有 2 个问题'));
-  assert.ok(!panel.html.includes('查看完整度详情'), 'no ratings, no score details');
+  assert.ok(panel.html.includes('还需要补充说明'));
+  assert.ok(!panel.html.includes('查看完整度详情') && !panel.html.includes('准入线'), 'scores are never shown');
   assert.ok(!/第 \d+ 轮|没有固定轮数/.test(panel.html));
-
-  // Submitting with nothing answered warns and sends nothing.
-  ctx.chatHistory=[{role:'user',content:'原始需求'}];
-  ctx.state.reqQuestionIndex=1;
-  await ctx.submitReqAnswers();
-  assert.equal(requests.length,0);
-  assert.ok(panel.html.includes('至少回答一题，或点「直接去创建」'));
 
   // One question per card; single choice auto-advances, the last one auto-submits.
   const choice={summary:'确认修复方式',ready:false,assessment:{dimensions:{goal:60},missing:['goal']},questions:[
@@ -67,9 +59,17 @@ function show(result) {
   show(choice);
   assert.ok(panel.html.includes('第 1 / 2 题'));
   assert.ok(panel.html.includes('id="reqNextQuestion"') && panel.html.includes('跳过此题'));
-  assert.ok(panel.html.includes('查看完整度详情') && panel.html.includes('项目准入线 80'));
+  assert.ok(!panel.html.includes('查看完整度详情') && !panel.html.includes('准入线'));
   assert.ok(!panel.html.includes('推荐'), 'no recommended tag without recommended options');
   assert.ok(!panel.html.includes('全部用推荐答案'));
+  // Submitting with nothing answered warns and sends nothing.
+  ctx.chatHistory=[{role:'user',content:'原始需求'}];
+  ctx.state.reqQuestionIndex=1;
+  await ctx.submitReqAnswers();
+  assert.equal(requests.length,0);
+  assert.ok(panel.html.includes('至少回答一题，或点「直接去创建」'));
+  ctx.state.reqQuestionIndex=0;
+  ctx.renderClarifyPanel(choice);
   ctx.pickReqOption(0);
   assert.equal(ctx.state.reqQuestionIndex,0);
   assert.ok(panel.html.includes('aria-checked="true"'));

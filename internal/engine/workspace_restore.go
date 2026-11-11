@@ -26,14 +26,18 @@ func (e *Engine) WorkspaceRestoreStatus(id string) (domain.WorkspaceRestoreStatu
 		return e.WorkspaceRestoreStatus(workspaceRunID(run))
 	}
 	state := domain.WorkspaceRestoreStatus{Status: "idle", StartedAt: meta.RestoreStarted}
-	if meta.RestoreStatus == "restoring" && meta.LeaseUntil != nil && meta.LeaseUntil.After(time.Now()) {
+	// A restore clears the cleanup mark when it binds the workspace, before its
+	// remaining work finishes. Its recorded outcome therefore takes precedence
+	// over the binding: a failed or interrupted restore is never "ready".
+	switch {
+	case meta.RestoreStatus == "restoring" && meta.LeaseUntil != nil && meta.LeaseUntil.After(time.Now()):
 		state.Status = "restoring"
-	} else if run.WorkspaceCleanedAt.IsZero() || meta.SavedAt == nil {
-		state.Status = "ready"
-	} else if meta.RestoreStatus == "failed" {
+	case meta.RestoreStatus == "failed":
 		state.Status, state.Error = "failed", meta.RestoreError
-	} else if meta.RestoreStatus == "restoring" {
-		state.Status, state.Error = "failed", "工作区恢复已中断，请重新发起重跑"
+	case meta.RestoreStatus == "restoring":
+		state.Status, state.Error = "failed", repo.WorkspaceRestoreInterrupted
+	case run.WorkspaceCleanedAt.IsZero() || meta.SavedAt == nil:
+		state.Status = "ready"
 	}
 	return state, nil
 }

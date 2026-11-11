@@ -249,6 +249,16 @@ export function canChatInProject(project, user) {
     project.ownerId === user.id || members.some((m) => m.userId === user.id)
   );
 }
+// Mirrors canManageProjectRepositories on the server: only the project owner
+// or a platform admin may bind repositories. Without a signed-in user the
+// server decides (open deployments allow it), so this only says no when it
+// knows the answer.
+export function canManageProjectRepos(project, user) {
+  if (!project || !user || user.isGuest) return true;
+  if (user.isPlatformAdmin) return true;
+  if (String(user.platformRole || "").toLowerCase() === "admin") return true;
+  return Boolean(project.ownerId) && Number(project.ownerId) === Number(user.id);
+}
 export const UNJOINED_PROJECTS_SECTION = "未加入的项目";
 // Projects the user can chat in keep their original order; the rest follow
 // under their own section without a per-row explanation.

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -304,21 +303,6 @@ func (e *Engine) claimRunning(runID string, cancel context.CancelFunc) bool {
 	}
 	e.running[runID] = cancel
 	return true
-}
-
-func (e *Engine) lockRunExec(runID string) func() {
-	e.runEnvMu.Lock()
-	if e.runExec == nil {
-		e.runExec = map[string]*sync.Mutex{}
-	}
-	mu := e.runExec[runID]
-	if mu == nil {
-		mu = &sync.Mutex{}
-		e.runExec[runID] = mu
-	}
-	e.runEnvMu.Unlock()
-	mu.Lock()
-	return mu.Unlock
 }
 
 func (e *Engine) clearRunning(runID string) {

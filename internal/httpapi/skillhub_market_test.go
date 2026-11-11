@@ -211,7 +211,7 @@ func newSkillhubTestServer(t *testing.T, apiKey string) (*fakeSkillhub, *repo.St
 	t.Setenv("SKILLHUB_BASE_URL", f.api.URL)
 	t.Setenv("SKILLHUB_API_KEY", apiKey)
 	s := newSkillFileServer(t)
-	if err := s.PutProject(domain.Project{ID: "other", Key: "OTH", Name: "数据中台", WorkflowID: "requirement-development-production", Clarification: domain.DefaultClarificationPolicy()}); err != nil {
+	if err := s.PutProject(domain.Project{ID: "other", Key: "OTH", Name: "数据中台", WorkflowID: "requirement-development-production"}); err != nil {
 		t.Fatal(err)
 	}
 	return f, s, skillFileHandler(t, s)

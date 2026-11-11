@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -97,16 +98,23 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 			continue
 		}
 		item.GenerationStatus = "idle"
+		item.GenerationID = ""
+		item.Unread = false
 		out = append(out, item)
 	}
 	ids := make([]string, 0, len(out))
 	for _, item := range out {
 		ids = append(ids, item.ID)
 	}
-	statuses := h.repo.AssistantGenerationStatuses(ids)
+	statuses := h.repo.AssistantGenerationStatuses(current.ID, ids)
 	for i := range out {
-		if status, ok := statuses[out[i].ID]; ok {
-			out[i].GenerationStatus = status
+		if state, ok := statuses[out[i].ID]; ok {
+			out[i].GenerationStatus = state.Status
+			out[i].GenerationID = state.ID
+			// A reply that completed while the reader was elsewhere stays
+			// unread until they open the conversation (Codex's blue dot).
+			out[i].Unread = state.Status == "completed" && state.FinishedAt != nil && !state.Seen &&
+				assistantSessionIncludesUser(out[i], current.ID)
 		}
 	}
 	if issueID := c.GetString("assistantIssueID"); issueID != "" {
@@ -158,6 +166,59 @@ func (h *assistantHandlers) archiveSession(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})
+}
+
+// markSessionRead records the reply the reader has seen in a conversation, so
+// the history list stops marking it unread on every device. An older reply
+// is ignored: only the latest one carries a mark.
+func (h *assistantHandlers) markSessionRead(c *gin.Context) {
+	current, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录后使用 AI 助手"})
+		return
+	}
+	id := strings.TrimSpace(c.Param("id"))
+	ownerID, _, _, err := h.conversationReadScope(c, id, current.ID)
+	if err != nil {
+		c.JSON(403, gin.H{"error": err.Error()})
+		return
+	}
+	var body struct {
+		GenerationID string `json:"generationId"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	body.GenerationID = strings.TrimSpace(body.GenerationID)
+	if body.GenerationID == "" || len(body.GenerationID) > 64 {
+		c.JSON(400, gin.H{"error": "请提供回复 ID"})
+		return
+	}
+	recorded, err := h.repo.MarkAssistantSessionRead(current.ID, ownerID, id, body.GenerationID)
+	if errors.Is(err, repo.ErrAssistantReplyNotFound) {
+		c.JSON(404, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		c.JSON(500, gin.H{"error": "记录已读失败"})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true, "recorded": recorded})
+}
+
+// assistantSessionIncludesUser matches the sidebar's "仅我参与的对话": the
+// people a transcript names, or its owner while it names nobody. A
+// colleague's conversation the reader never joined is not news to them.
+func assistantSessionIncludesUser(item domain.AssistantSession, userID int64) bool {
+	if len(item.Participants) == 0 {
+		return item.UserID == userID
+	}
+	for _, participant := range item.Participants {
+		if participant.ID == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *assistantHandlers) session(c *gin.Context) {

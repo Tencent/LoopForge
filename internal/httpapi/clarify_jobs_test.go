@@ -42,7 +42,7 @@ func TestIssueClarifyContinuesAfterClientDisconnect(t *testing.T) {
 	t.Cleanup(func() { setClarifyExecForTest(nil) })
 
 	s, h := clarifyTestServer(t)
-	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-bg", ProjectID: "platform", Title: "需要澄清", Description: "短", Kind: "requirement", Status: "backlog", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser, Score: 10}}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-bg", ProjectID: "platform", Title: "需要澄清", Description: "短", Kind: "requirement", Status: "backlog", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser}}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"message": domain.ClarificationKickoff})

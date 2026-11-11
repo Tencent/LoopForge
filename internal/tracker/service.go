@@ -38,7 +38,6 @@ type Service struct {
 	mrStopCh              chan struct{}
 	deliveryReconcileOnce sync.Once
 	projectAuth           ProjectAuthStore
-	OnRequirementImported func(issue domain.Issue)
 }
 
 type syncConfigHolder struct {
@@ -1199,9 +1198,6 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 		issue.CreatedAt = parseTime(st.Created)
 		issue.AssigneeUserID = s.resolveTAPDAssignee(store, projectID, assignee, fallbackUserID)
 	}
-	if gateClarification {
-		scoreStoredRequirement(store, &issue)
-	}
 	issue.UpdatedAt = time.Now().UTC()
 	if err := store.PutSyncedIssue(issue); err != nil {
 		return domain.Issue{}, err
@@ -1287,27 +1283,6 @@ func (s *Service) resolveTAPDAssignee(store IssueStoreAdapter, projectID, owner 
 	return 0
 }
 
-func (s *Service) notifyRequirementImported(issue domain.Issue) {
-	if s == nil || s.OnRequirementImported == nil {
-		return
-	}
-	if !domain.ShouldAutoStartClarification(issue) {
-		return
-	}
-	s.OnRequirementImported(issue)
-}
-
-func scoreStoredRequirement(store IssueStoreAdapter, issue *domain.Issue) {
-	if issue == nil || !strings.EqualFold(issue.Kind, "requirement") {
-		return
-	}
-	policy := domain.DefaultClarificationPolicy()
-	if p, ok := store.Project(issue.ProjectID); ok {
-		policy = domain.EffectiveClarificationPolicy(p.Clarification)
-	}
-	issue.Clarification = domain.ScoreRequirementIssue(*issue, policy)
-}
-
 func tapdWorkspaceFromURL(raw string) string {
 	ref, err := ParseTAPDStoryURL(raw)
 	if err != nil {
@@ -1366,10 +1341,6 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 		}
 	}
 
-	existed := false
-	if id := strings.TrimSpace(issue.ID); id != "" {
-		_, existed = store.Issue(id)
-	}
 	if issue.Kind == "" {
 		issue.Kind = "requirement"
 	}
@@ -1391,14 +1362,7 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 			_ = store.DeleteIssue(oldID)
 		}
 	}
-	// Intake scoring belongs to brand-new TAPD stories (import / 新建并同步).
-	// Pushing an existing platform ticket must keep its description and
-	// clarification; 直接创建 explicitly skipped analysis.
-	if !existed {
-		scoreStoredRequirement(store, &issue)
-	}
 	_ = store.PutIssue(issue)
-	s.notifyRequirementImported(issue)
 
 	s.addLog(domain.SyncLog{
 		ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "push", Source: "tapd",
@@ -2079,7 +2043,7 @@ func mergeIssueKeep(keeper, extra domain.Issue) domain.Issue {
 	if keeper.RepositoryID == "" {
 		keeper.RepositoryID = extra.RepositoryID
 	}
-	if keeper.Clarification.Score == 0 && extra.Clarification.Score > 0 {
+	if clarificationEmpty(keeper.Clarification) && !clarificationEmpty(extra.Clarification) {
 		keeper.Clarification = extra.Clarification
 	}
 	if deliveryFieldsPresent(extra) {
@@ -2101,4 +2065,8 @@ func copyDeliveryFields(dst, src domain.Issue) domain.Issue {
 	dst.DeliveryMRs = src.DeliveryMRs
 	dst.DeliveryUpdatedAt = src.DeliveryUpdatedAt
 	return dst
+}
+
+func clarificationEmpty(a domain.ClarificationAssessment) bool {
+	return a.Status == "" && strings.TrimSpace(a.Summary) == "" && len(a.History) == 0
 }

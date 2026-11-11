@@ -104,9 +104,6 @@ export async function cleanup() {
 
 // ensureProject returns the long-lived e2e project. Projects have no delete
 // endpoint, so the suite reuses one fixed project instead of leaking one per run.
-// A policy with enabled=false and no threshold counts as "unset" and falls back
-// to the platform default (enabled, 80 points), so disabling needs a threshold.
-export const CLARIFICATION_OFF = { enabled: false, skillId: 'requirement-clarification', threshold: 80 };
 
 export async function ensureProject() {
   let project = await get(`/api/projects/${cfg.projectId}`, { expect: [200, 404] });
@@ -117,13 +114,12 @@ export async function ensureProject() {
       name: 'E2E 自动化测试（勿用）',
       description: 'e2e/ 目录下的实测套件专用项目，资源会被自动创建和清理。',
       color: '#8b5cf6',
-      clarification: CLARIFICATION_OFF,
     });
   }
   // AI analysis and dispatch need a responsible user; default to the token owner.
   const ownerId = project.ownerId || (await tokenOwner()).id;
-  if (project.clarification?.enabled || project.ownerId !== ownerId) {
-    project = await put('/api/projects', { ...project, ownerId, clarification: { ...CLARIFICATION_OFF, ...project.clarification, enabled: false } });
+  if (project.ownerId !== ownerId) {
+    project = await put('/api/projects', { ...project, ownerId });
   }
   return project;
 }
@@ -178,9 +174,4 @@ export async function withProjectMember(userId, role) {
   };
   track(`project members ${cfg.projectId}`, restore);
   return restore;
-}
-
-export async function setClarification(enabled) {
-  const project = await get(`/api/projects/${cfg.projectId}`);
-  return put('/api/projects', { ...project, clarification: { ...CLARIFICATION_OFF, ...project.clarification, enabled } });
 }

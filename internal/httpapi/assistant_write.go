@@ -64,17 +64,6 @@ func assistantDeferredSOPTool(name string) bool {
 	}
 }
 
-func assistantScheduledSystemPromptText(mode assistantExecMode) string {
-	if !mode.AutoWrite {
-		return assistantSystemPromptText()
-	}
-	extra := "这是无人值守定时任务：直接调用当前项目和个人已安装的 MCP，以及 agentflow__* 平台工具。读写都立即生效。issues_save 把需求 id 放在 body.id（也可同时放 path.id）。完成后用自然语言汇报。"
-	if mode.DeferSOP {
-		extra += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"
-	}
-	return assistantSystemPromptForMode(AssistantApprovalAuto) + "\n" + extra
-}
-
 func (h *assistantHandlers) mergeIssueSaveBody(body any, path map[string]string) any {
 	if h == nil || h.repo == nil {
 		return body

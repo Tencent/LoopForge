@@ -170,11 +170,11 @@ func TestArtifactFilesValidationCollectionAndRecovery(t *testing.T) {
 
 	artifact := newArtifact(run.ID, "up", 1, "note", "note.md", "text/markdown", []byte("body"))
 	artifact.RepositoryDir = "repo"
-	if !strings.Contains(artifactInputRelPath(artifact), "repo") {
-		t.Fatal(artifactInputRelPath(artifact))
+	if !strings.Contains(artifactInputRelPath(run, artifact), "repo") {
+		t.Fatal(artifactInputRelPath(run, artifact))
 	}
 	var manifest strings.Builder
-	writeInputManifestEntry(&manifest, artifact, artifactInputRelPath(artifact))
+	writeInputManifestEntry(&manifest, artifact, artifactInputRelPath(run, artifact))
 	if !strings.Contains(manifest.String(), artifact.SHA256) {
 		t.Fatal(manifest.String())
 	}

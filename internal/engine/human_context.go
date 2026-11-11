@@ -52,7 +52,30 @@ func writeHumanContextFile(workspace, note string) error {
 	if note == "" || strings.TrimSpace(workspace) == "" {
 		return nil
 	}
-	return os.WriteFile(filepath.Join(workspace, "human-context.md"), []byte("# 人工补充上下文\n\n"+note+"\n"), 0o644)
+	// Replace through a rename: a parallel branch's CLI may be reading the
+	// file and must never see it truncated.
+	target := filepath.Join(workspace, "human-context.md")
+	content := []byte("# 人工补充上下文\n\n" + note + "\n")
+	if existing, err := os.ReadFile(target); err == nil && string(existing) == string(content) {
+		return nil
+	}
+	temp, err := os.CreateTemp(workspace, ".human-context-*.md")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	if _, err := temp.Write(content); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Chmod(0o644); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), target)
 }
 
 func safePathSegment(value string) string {

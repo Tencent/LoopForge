@@ -82,3 +82,77 @@ func TestPrepareRepositoryCreatesCallerNamedBranchOnly(t *testing.T) {
 		t.Fatalf("resume a created work branch: %v", err)
 	}
 }
+
+// #80: a cached workspace that has only checked out the base must apply the
+// same new-branch contract as a fresh clone when it is resumed.
+func TestResumeRejectsRemoteBranchCreatedElsewhere(t *testing.T) {
+	ctx := context.Background()
+	remote := newBranchRemote(t)
+	base := domain.RepositoryContext{RepositoryID: "repo", CloneURL: remote, BaseBranch: "master", DefaultBranch: "master"}
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := prepareRepository(ctx, workspace, base); err != nil {
+		t.Fatalf("prepare base-only workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("local work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Someone else publishes the name after the workspace was cached.
+	other := filepath.Join(t.TempDir(), "other")
+	mustGit(t, "", "clone", "-q", remote, other)
+	mustGit(t, other, "config", "user.email", "other@example.com")
+	mustGit(t, other, "config", "user.name", "Other")
+	mustGit(t, other, "checkout", "-q", "-b", "feature/later")
+	if err := os.WriteFile(filepath.Join(other, "theirs.txt"), []byte("not ours\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, other, "add", ".")
+	mustGit(t, other, "commit", "-qm", "unrelated work")
+	mustGit(t, other, "push", "-q", "origin", "feature/later")
+
+	create := base
+	create.WorkBranch = "feature/later"
+	create.CreateNewWorkBranch = true
+	if err := prepareRepository(ctx, workspace, create); err == nil || !strings.Contains(err.Error(), "远端已存在分支") {
+		t.Fatalf("resume attached to a remote branch created elsewhere: %v", err)
+	}
+	if branch, _ := gitC(ctx, workspace, "branch", "--show-current"); strings.TrimSpace(branch) == create.WorkBranch {
+		t.Fatal("resume switched to the colliding branch")
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "theirs.txt")); err == nil {
+		t.Fatal("resume checked out someone else's files")
+	}
+	if body, err := os.ReadFile(filepath.Join(workspace, "notes.txt")); err != nil || string(body) != "local work\n" {
+		t.Fatalf("resume discarded local work: %q %v", body, err)
+	}
+
+	// A fresh name still works on resume, and the branch this workspace then
+	// created and pushed is resumed rather than reported as a collision.
+	fresh := base
+	fresh.WorkBranch = "feature/mine"
+	fresh.CreateNewWorkBranch = true
+	if err := prepareRepository(ctx, workspace, fresh); err != nil {
+		t.Fatalf("resume creating a fresh branch: %v", err)
+	}
+	mustGit(t, workspace, "config", "user.email", "test@example.com")
+	mustGit(t, workspace, "config", "user.name", "Test")
+	mustGit(t, workspace, "add", "notes.txt")
+	mustGit(t, workspace, "commit", "-qm", "mine")
+	mustGit(t, workspace, "push", "-q", "origin", "feature/mine")
+	if err := prepareRepository(ctx, workspace, fresh); err != nil {
+		t.Fatalf("resume of the branch this workspace created: %v", err)
+	}
+	if branch, _ := gitC(ctx, workspace, "branch", "--show-current"); strings.TrimSpace(branch) != fresh.WorkBranch {
+		t.Fatalf("work branch = %q, want %q", branch, fresh.WorkBranch)
+	}
+
+	// Continuing an existing branch is unchanged.
+	continued := base
+	continued.WorkBranch = "feature/later"
+	continued.RequireExistingWorkBranch = true
+	if err := prepareRepository(ctx, workspace, continued); err != nil {
+		t.Fatalf("continue existing branch on resume: %v", err)
+	}
+	if branch, _ := gitC(ctx, workspace, "branch", "--show-current"); strings.TrimSpace(branch) != continued.WorkBranch {
+		t.Fatalf("continued branch = %q", branch)
+	}
+}

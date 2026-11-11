@@ -181,7 +181,7 @@ func runnerArtifactInputs(wf domain.WorkflowDefinition, node domain.WorkflowNode
 			manifest.WriteString("## " + artifact.NodeID + " / repository-patch (" + artifact.RepositoryDir + ")\n\nNo full diff is stored. The run workspace is the source of truth.\n\n" + repositoryPatchSummary(artifact) + "\n\n")
 			continue
 		}
-		rel := artifactInputRelPath(artifact)
+		rel := artifactInputRelPath(run, artifact)
 		files = append(files, domain.RunnerInputFile{Path: rel, Content: artifact.Content})
 		writeInputManifestEntry(&manifest, artifact, rel)
 	}

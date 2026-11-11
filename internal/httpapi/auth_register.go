@@ -64,10 +64,6 @@ func (h *authHandlers) authRegister(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid request origin"})
 		return
 	}
-	if !allowPasswordAttempt(c.RemoteIP()) {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many attempts. Try again in a minute."})
-		return
-	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 	var input struct {
 		Login    string `json:"login"`
@@ -84,6 +80,12 @@ func (h *authHandlers) authRegister(c *gin.Context) {
 	}
 	if len(input.Password) < repo.MinPasswordLength || len(input.Password) > repo.MaxPasswordLength {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("密码需 %d–%d 个字符", repo.MinPasswordLength, repo.MaxPasswordLength)})
+		return
+	}
+	// Only a valid request reaches the accounts, so only it spends the shared
+	// password budget (see passwordLimiter).
+	if !h.allowPasswordAttempt(c.RemoteIP()) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many attempts. Try again in a minute."})
 		return
 	}
 	registerMu.Lock()

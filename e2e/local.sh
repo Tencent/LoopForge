@@ -121,7 +121,7 @@ api() {
     -X "$1" "$BASE$2" --data-raw "$3")
   case "$code" in 2??) ;; *) echo "seed $1 $2 failed ($code): $(cat "$WORK/seed.out" 2>/dev/null)"; exit 1 ;; esac
 }
-api POST /api/projects '{"id":"e2e-auto","key":"E2E","name":"E2E 自动化测试（勿用）","color":"#8b5cf6","ownerId":900001,"clarification":{"enabled":false,"skillId":"requirement-clarification","threshold":80}}'
+api POST /api/projects '{"id":"e2e-auto","key":"E2E","name":"E2E 自动化测试（勿用）","color":"#8b5cf6","ownerId":900001}'
 api PUT /api/dockerfiles '{"id":"generic-backend","name":"generic backend","projectId":"e2e-auto","content":"FROM python:3.12-slim\nRUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*\n"}'
 api PUT /api/sandboxes '{"id":"generic-docker","name":"Generic Docker","projectId":"e2e-auto","driver":"docker","dockerfileId":"generic-backend","readOnlyRootFS":false}'
 api PUT /api/sandboxes '{"id":"local","name":"Local","projectId":"e2e-auto","driver":"local"}'

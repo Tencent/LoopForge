@@ -50,7 +50,9 @@ func TestResumeInterruptedRunsResumesOrphansAndSparesGatedRuns(t *testing.T) {
 
 	// Inspect recovery before the resumed scheduler starts the next node.
 	// An empty workflow could finish between ResumeInterruptedRuns and Run.
-	unlock := e.lockRunExec(orphan.ID)
+	// Node execution is per node now; holding "a" keeps the scheduler from
+	// moving that pending node before the assertions below.
+	unlock := e.lockNodeExec(orphan.ID, "a")
 	defer unlock()
 	resumed := e.ResumeInterruptedRuns()
 	if len(resumed) != 1 || resumed[0] != "run-orphan" {

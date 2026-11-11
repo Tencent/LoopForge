@@ -1,5 +1,5 @@
 // Journeys through the AI workbench conversation list, the personal credential
-// wizard, notification bots, business-domain management and what a project
+// wizard, notification bots and what a project
 // viewer or member is offered on the bot page. Fixtures are created through the
 // API and removed afterwards; nothing here calls a model or WeCom.
 import { test, expect, watchErrors, openView, openPageAs } from './fixtures.mjs';
@@ -240,40 +240,4 @@ test('bot page: a viewer is read-only, a member can add but not manage others\' 
   const restore = await withProjectMember(userB.id, 'member');
   await api('DELETE', `/api/notification-bots/${bot.id}`, undefined, asB({ expect: 403 }));
   await restore();
-});
-
-test('business domains: edit the reused e2e domain and refuse a duplicate identifier', async ({ page }) => {
-  test.skip(!(await get('/api/business-domains')).canAdmin, 'token owner is not a platform admin');
-  // Domains cannot be deleted: reuse the one the API suite maintains.
-  const id = 'e2e-auto-domain';
-  const base = { id, name: 'E2E 自动化业务域', description: 'e2e 自动化复用（勿删）', active: true, managerIds: [], viewerIds: [] };
-  await put('/api/business-domains', base);
-  track(`business domain ${id}`, () => put('/api/business-domains', base));
-
-  // Known defect: the identifier's pattern "[a-z0-9][a-z0-9_-]{0,63}" is not
-  // valid under the 'v' flag browsers compile pattern attributes with (an
-  // unescaped '-' in a class), so Chrome logs an error and skips the
-  // client-side format check; the server still validates. Remove this
-  // allowance once web/app/business-domains.js escapes the '-'.
-  test.info().annotations.push({ type: 'known defect', description: 'business-domain id pattern is an invalid v-flag regex' });
-  const errors = watchErrors(page, { allow: [/Pattern attribute value \[a-z0-9\]\[a-z0-9_-\]\{0,63\} is not a valid regular expression/] });
-  await openView(page, 'businessDomainManagement');
-  test.skip(!(await page.evaluate(() => location.hash.startsWith('#/businessDomainManagement'))), '领域管理 is not offered here');
-  const host = page.locator('#platformBusinessDomains');
-  await host.locator(`[data-business-domain="${id}"]`).click();
-  const form = host.locator('#businessDomainForm');
-  await expect(form.locator('input[name="id"]')).toHaveValue(id);
-  await expect(form.locator('input[name="id"]')).toHaveAttribute('readonly', '');
-  const description = `e2e 自动化复用（勿删）UI ${cfg.runTag}`;
-  await form.locator('textarea[name="description"]').fill(description);
-  await form.locator('button[type="submit"]').click();
-  await expect.poll(async () => (await get('/api/business-domains')).items.find(i => i.domain.id === id)?.domain.description).toBe(description);
-
-  await host.locator('#businessNew').click();
-  await form.locator('input[name="name"]').fill('E2E 重复标识');
-  await form.locator('input[name="id"]').fill(id);
-  await form.locator('button[type="submit"]').click();
-  await expect(host.locator('#businessSaveStatus')).toHaveText('业务域标识已存在，请使用新的标识');
-  expect((await get('/api/business-domains')).items.find(i => i.domain.id === id)?.domain.name).toBe(base.name);
-  expect(errors).toEqual([]);
 });

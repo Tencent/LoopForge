@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {signInUnconfigured, switchProject, chat, openHome, fitsFrame} from './helpers.mjs';
+import {signInUnconfigured, switchProject, chat, openHome, fitsFrame, openSettingsPage} from './helpers.mjs';
 
 test.use({trace:'off',screenshot:'off'});
 
@@ -89,7 +89,7 @@ test('SOP readiness checks each role executor rather than always requiring CodeB
       expect((await page.request.put('/api/workflows',{data:{id,projectId,name:id,status:'draft',sandboxProfileId:'local',nodes:[{id:'work',name:'Work',type:'agent',agentId:id,executorId:'codebuddy',position:{x:100,y:100}}],edges:[]}})).ok()).toBe(true);
     }
     await page.reload();await switchProject(page,projectId);
-    await page.locator('.nav[data-view="sops"]').click();
+    await openSettingsPage(page,'sops');
     const expectRows=async configured=>{
       for(const [i,label] of ['CodeBuddy','Codex','Claude Code'].entries()){
         const chips=page.locator(`[data-sop="${ids[i]}"] .sop-requirements .sop-badge`);

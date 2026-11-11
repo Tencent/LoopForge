@@ -176,6 +176,57 @@ test('repository-bound child SOP hands code back through the shared checkout', {
   assert.match(logs, /PARENT_SAW_CHILD/);
 });
 
+test('parallel branches run together and a fast successor does not wait for them', async () => {
+  const start = script('start', 'echo START_DONE');
+  const left = script('left', 'sleep 2; echo LEFT_DONE');
+  const right = script('right', 'sleep 2; echo RIGHT_DONE');
+  const fast = script('fast', 'echo FAST_DONE');
+  const after = script('after-fast', 'echo AFTER_FAST_DONE');
+  const join = script('join', 'echo JOIN_DONE');
+  const edge = (source, target) => ({ id: `${source}-${target}`, source, target, when: 'success' });
+  const wf = await createWorkflow('parallel', [start, left, right, fast, after, join], {
+    edges: [
+      edge('start', 'left'), edge('start', 'right'), edge('start', 'fast'),
+      edge('fast', 'after-fast'),
+      edge('left', 'join'), edge('right', 'join'), edge('after-fast', 'join'),
+    ],
+  });
+  const { id } = await startRun(wf);
+  const run = await waitRun(id, r => r.status === 'succeeded', { label: 'parallel succeeded' });
+  const at = value => Date.parse(value);
+  const leftN = nodeOf(run, 'left');
+  const rightN = nodeOf(run, 'right');
+  const afterN = nodeOf(run, 'after-fast');
+  const joinN = nodeOf(run, 'join');
+  assert.ok(at(leftN.startedAt) < at(rightN.finishedAt) && at(rightN.startedAt) < at(leftN.finishedAt),
+    `branches did not overlap left ${leftN.startedAt}..${leftN.finishedAt} right ${rightN.startedAt}..${rightN.finishedAt}`);
+  assert.ok(at(afterN.startedAt) < at(leftN.finishedAt) && at(afterN.startedAt) < at(rightN.finishedAt),
+    `fast successor waited for slow siblings: after ${afterN.startedAt} left ${leftN.finishedAt} right ${rightN.finishedAt}`);
+  assert.ok(at(joinN.startedAt) >= at(leftN.finishedAt) && at(joinN.startedAt) >= at(rightN.finishedAt), 'join started before its dependencies finished');
+});
+
+test('retry after cancelling a parallel stage restores the cancelled sibling', async () => {
+  const start = script('start', 'echo START_DONE');
+  const left = script('left', 'sleep 12; echo LEFT_DONE');
+  const right = script('right', 'sleep 12; echo RIGHT_DONE');
+  const join = script('join', 'echo JOIN_DONE');
+  const edge = (source, target) => ({ id: `${source}-${target}`, source, target, when: 'success' });
+  const wf = await createWorkflow('parallel-cancel', [start, left, right, join], {
+    edges: [edge('start', 'left'), edge('start', 'right'), edge('left', 'join'), edge('right', 'join')],
+  });
+  const { id } = await startRun(wf);
+  await waitRun(id, r => nodeStatus(r, 'left') === 'running' && nodeStatus(r, 'right') === 'running', { label: 'both branches running', timeoutMs: 60_000 });
+  await post(`/api/runs/${id}/cancel`, {});
+  const cancelled = await waitRun(id, r => r.status === 'cancelled', { label: 'cancelled', timeoutMs: 60_000 });
+  assert.equal(nodeStatus(cancelled, 'left'), 'cancelled');
+  assert.equal(nodeStatus(cancelled, 'right'), 'cancelled');
+  await post(`/api/runs/${id}/retry`, { nodeId: 'left', reason: 'e2e restore parallel branch' });
+  const run = await waitRun(id, r => r.status === 'succeeded', { label: 'succeeded after parallel retry' });
+  assert.equal(nodeStatus(run, 'right'), 'succeeded');
+  assert.equal(nodeStatus(run, 'join'), 'succeeded');
+  assert.equal(nodeOf(run, 'start').attempt, 1, 'replaying one branch must not rerun its upstream');
+});
+
 test('run stream emits server-sent events', async () => {
   const wf = await createWorkflow('stream', [script('s', 'for i in 1 2 3; do echo tick-$i; sleep 1; done')]);
   const { id } = await startRun(wf);

@@ -130,9 +130,6 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		return
 	}
 	stored, _ := h.repo.Issue(issue.ID)
-	if stored.ID != "" {
-		go h.stream.autoClarifyIssue(stored.ID)
-	}
 	c.JSON(http.StatusOK, stored)
 }
 
@@ -292,9 +289,8 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			respond(c, err)
 			return
 		}
-		// Import scoring and auto-clarify are owned by TAPD import / create,
-		// not by issues_save. Binding SOP or repositories on a synced ticket
-		// must not gate it as "待澄清".
+		// Clarification is optional: saving a ticket never scores it or starts
+		// a round. Binding SOP or repositories must not invent a status.
 		if found {
 			keepExistingTrackerBinding(&v, existing)
 		} else {
@@ -317,7 +313,6 @@ func (h issuesHandlers) issues(c *gin.Context) {
 						return
 					}
 					stored, _ = h.repo.Issue(stored.ID)
-					go h.stream.autoClarifyIssue(stored.ID)
 				}
 				h.writeIssueView(c, 200, stored)
 				return
@@ -397,7 +392,7 @@ func mergeIssueEdit(v, existing domain.Issue) domain.Issue {
 	if v.PlaybookID == "" {
 		v.PlaybookID = existing.PlaybookID
 	}
-	if v.Clarification.Score == 0 && !v.Clarification.Passed && len(v.Clarification.Answers) == 0 {
+	if v.Clarification.Status == "" && strings.TrimSpace(v.Clarification.Summary) == "" && len(v.Clarification.History) == 0 {
 		v.Clarification = existing.Clarification
 	}
 	v.Operations = append([]domain.IssueOperation(nil), existing.Operations...)
@@ -432,7 +427,6 @@ var issueRoutes = map[string]issueRoute{
 	"/api/issues/:id":                     {handle: issuesHandlers.issueDetail, methods: []string{http.MethodGet, http.MethodDelete}},
 	"/api/issues/:id/comments":            {handle: issuesHandlers.addIssueComment, methods: []string{http.MethodPost}},
 	"/api/issues/:id/runs":                {handle: issuesHandlers.issueRuns, methods: []string{http.MethodGet}},
-	"/api/issues/:id/clarify":             {handle: issuesHandlers.assessIssueClarification, methods: []string{http.MethodPost}},
 	"/api/issues/:id/clarification":       {handle: issuesHandlers.submitIssueClarification, methods: []string{http.MethodPost}},
 	"/api/issues/:id/chat-clarify":        {handle: issuesHandlers.chatClarifyIssue, methods: []string{http.MethodGet, http.MethodPost}},
 	"/api/issues/:id/chat-clarify/cancel": {handle: issuesHandlers.cancelChatClarifyIssue, methods: []string{http.MethodPost}},
@@ -611,10 +605,6 @@ func clarificationComment(issue domain.Issue, summary string) string {
 		source = "TAPD 需求"
 	}
 	return fmt.Sprintf("%s\n\n%s\n\n---\n来源：%s `%s`，由 LoopForge 基于当前描述和用户回答生成。", clarificationHeading, strings.TrimSpace(summary), source, issue.ID)
-}
-
-func assessClarification(policy domain.ClarificationPolicy, answers map[string]string) domain.ClarificationAssessment {
-	return domain.AssessClarificationAnswers(policy, answers)
 }
 
 func (h issuesHandlers) bindIssueRepositories(v *domain.Issue) error {

@@ -174,6 +174,7 @@ type WorkflowDefinition struct {
 	Name              string                `json:"name"`
 	Version           int                   `json:"version"`
 	Revision          int                   `json:"revision"`
+	PublishedRevision int                   `json:"publishedRevision,omitempty"`
 	Status            string                `json:"status"` // draft, published, archived
 	ProjectID         string                `json:"projectId,omitempty"`
 	Shared            bool                  `json:"shared,omitempty"`

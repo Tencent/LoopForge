@@ -172,3 +172,27 @@ test('run detail topology shows each stage time window beside its stage label', 
   assert.ok(runtime, 'node inspector should keep the runtime details row');
   assert.doesNotMatch(runtime.textContent, /\u2192/, 'time window is no longer repeated under the node output');
 });
+
+test('a stage that has not started or finished hides the zero default time', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const workflow = app.evaluate('structuredClone(state.data.workflows[0])');
+  const [first, second] = workflow.nodes;
+  const nodes = {
+    [first.id]: { status: 'pending', startedAt: '0001-01-01T00:00:00Z', finishedAt: '0001-01-01T00:00:00Z' },
+    [second.id]: { status: 'running', startedAt: '2026-10-21T10:04:00Z', finishedAt: '0001-01-01T00:00:00Z' },
+  };
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'), status: 'running',
+    workflowSnapshot: workflow, nodes,
+  };
+  app.router.get('/api/runs/run-1', run);
+  app.evaluate(`state.data.runs=[${JSON.stringify(run)}];state.selectedRun='run-1';state.activeRun=state.data.runs[0]`);
+  app.evaluate(`switchView('runs');showRunDetail('run-1')`);
+  await settle(6);
+  const labels = [...app.document.querySelectorAll('#runsView .graph-stage-label')];
+  const times = labels.map((label) => label.querySelector('.graph-stage-time')?.textContent || '');
+  assert.ok(times.some((text) => text === ''), 'an unstarted stage has no duration');
+  assert.ok(times.some((text) => text.includes('现在') && !text.includes('0001')), `an open stage shows now, not year 1: ${times.join(' | ')}`);
+  assert.ok(times.every((text) => !text.includes('0001')), times.join(' | '));
+});

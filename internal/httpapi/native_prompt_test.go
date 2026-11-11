@@ -5,23 +5,19 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"agentflow/internal/domain"
 )
 
 func TestNativePromptsAreToolFirst(t *testing.T) {
 	prompts := []string{
 		assistantSystemPromptText(),
-		assistantScheduledSystemPromptText(assistantExecMode{AutoWrite: true}),
-		assistantScheduledSystemPromptText(assistantExecMode{AutoWrite: true, DeferSOP: true}),
 		scheduledAssistantPrompt(assistantTask{Name: "n", Prompt: "p", ProjectID: "platform"}, assistantExecMode{AutoWrite: true}),
-		clarifySystemPrompt("intro", "mcp-step", "focus", "rating"),
+		clarifySystemPrompt("intro", "mcp-step", "focus"),
 		clarifyNativeRetryPrompt(),
 		assistantNativeRetryPrompt(),
 		agentToolInstructions(AgentToolClarify),
 		agentToolInstructions(AgentToolAssistant),
 		agentToolInstructions(AgentToolScheduled),
-		clarifyResumeTurnPrompt("hello"),
+		clarifyResumeTurnPrompt("标题", "hello", 4),
 	}
 	forbidden := []string{
 		"不要再打印",
@@ -54,17 +50,29 @@ func TestNativePromptsAreToolFirst(t *testing.T) {
 	if prompt := assistantSystemPromptText(); !strings.Contains(prompt, "mode=direct") || !strings.Contains(prompt, "targetBranch") {
 		t.Fatalf("native assistant prompt must teach mode=direct for shared branches:\n%s", prompt)
 	}
-	if !strings.Contains(clarifySystemPrompt("i", "m", "f", "r"), "submit_clarification") {
+	if !strings.Contains(clarifySystemPrompt("i", "m", "f"), "submit_clarification") {
 		t.Fatal("native clarify prompt must require submit_clarification")
 	}
 }
 
-func TestClarificationRatingPromptAlwaysAsksAssessment(t *testing.T) {
-	prompt := clarificationRatingPrompt(domain.DefaultClarificationPolicy().Dimensions)
-	for _, want := range []string{"每轮都必须返回 assessment", "ready=false 时也要打分", "才把 ready 设为 true", "goal"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("rating prompt missing %q:\n%s", want, prompt)
+func TestClarifyPromptsAnchorScopeWithoutScoring(t *testing.T) {
+	system := clarifySystemPrompt("i", "m", "f")
+	for _, want := range []string{"范围规则", "就是本次范围的边界", "不要提出会扩大范围的问题或选项", "不在本次范围", "没有阻塞开工的缺口就设 ready=true"} {
+		if !strings.Contains(system, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, system)
 		}
+	}
+	for _, banned := range []string{"assessment", "打分", "0-100", "主要改哪个"} {
+		if strings.Contains(system, banned) || strings.Contains(clarifyNativeRetryPrompt(), banned) {
+			t.Fatalf("clarify prompts must not mention %q", banned)
+		}
+	}
+	resume := clarifyResumeTurnPrompt("国际站绑定对齐", "顺便把国内站也改了", 1)
+	if !strings.Contains(resume, "「国际站绑定对齐」") || !strings.Contains(resume, "不在本次范围") || strings.Contains(resume, "已经澄清了") {
+		t.Fatalf("resume prompt must re-anchor on the title:\n%s", resume)
+	}
+	if late := clarifyResumeTurnPrompt("x", "y", 3); !strings.Contains(late, "已经澄清了 3 轮") || !strings.Contains(late, "ready=true") {
+		t.Fatalf("resume prompt must push for a conclusion after several rounds:\n%s", late)
 	}
 }
 

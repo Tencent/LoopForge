@@ -40,7 +40,6 @@ func PublicOperations() []Operation {
 		{Name: "issues_delete", Description: "Delete a local issue and failed/cancelled execution history; reject successful or active runs", Method: "DELETE", Path: "/api/issues/{id}"},
 		{Name: "issues_comments_add", Description: "Add a comment to an issue", Method: "POST", Path: "/api/issues/{id}/comments"},
 		{Name: "issues_runs_list", Description: "List runs belonging to an issue", Method: "GET", Path: "/api/issues/{id}/runs", ReadOnly: true},
-		{Name: "issues_clarify", Description: "Save structured requirement clarification", Method: "POST", Path: "/api/issues/{id}/clarify"},
 		{Name: "issues_chat_clarify", Description: "Run AI clarification for an existing issue. The job keeps running after the client disconnects; GET the same path with Accept: text/event-stream to resume SSE.", Method: "POST", Path: "/api/issues/{id}/chat-clarify"},
 		{Name: "issues_chat_clarify_stream", Description: "Attach to an in-flight issue clarification SSE stream", Method: "GET", Path: "/api/issues/{id}/chat-clarify", ReadOnly: true},
 		{Name: "issues_chat_clarify_cancel", Description: "Cancel one issue's in-flight AI clarification", Method: "POST", Path: "/api/issues/{id}/chat-clarify/cancel"},

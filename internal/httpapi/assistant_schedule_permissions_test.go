@@ -84,10 +84,7 @@ func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
 			t.Errorf("full-access scheduled session is missing %s", name)
 		}
 	}
-	prompt := assistantScheduledSystemPromptText(auto)
-	if !strings.Contains(prompt, assistantSystemPromptForMode(AssistantApprovalAuto)) {
-		t.Fatal("scheduled system prompt must include the homepage full-access prompt")
-	}
+
 }
 
 func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
@@ -156,6 +153,14 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 		sessionID := session.ChatSessionID
 		sessionIDs <- sessionID
 		conv, exists := h.repo.AssistantSession(user.ID, sessionID)
+		if !session.Scheduled {
+			t.Error("scheduled execution must retain unattended knowledge-tool policy")
+		}
+		for _, tool := range gateway.buildCatalog(r.Context(), session) {
+			if knowledge.IsAgentTool(tool.Name) {
+				t.Errorf("scheduled execution exposes knowledge tool %s", tool.Name)
+			}
+		}
 		if !exists || conv.Source != domain.AssistantSourceScheduled || session.workspaceTurn == nil || session.ExecMode != assistantExecModeForApproval(AssistantApprovalAuto) {
 			t.Error("scheduled gateway lacks its persisted conversation or full-access workspace lifecycle")
 		}
@@ -213,8 +218,8 @@ raise SystemExit(1)
 	if !ok || task.SessionID != sessionID || conv.WorkspaceRunID != "scheduled-workspace" || !slices.Contains(conv.OwnWorkspaceRunIDs, "scheduled-workspace") {
 		t.Fatalf("workspace binding was lost: %+v", conv)
 	}
-	var reply assistantReply
-	if err := json.Unmarshal([]byte(conv.Messages[len(conv.Messages)-1].Content), &reply); err != nil || len(reply.Images) != 1 || reply.Images[0].Name != "report.md" {
-		t.Fatalf("scheduled report attachment was lost: %+v %v", reply.Images, err)
+	// Reply files are attachments on the stored reply, as for a chat turn.
+	if files := conv.Messages[len(conv.Messages)-1].Attachments; len(files) != 1 || files[0].Name != "report.md" {
+		t.Fatalf("scheduled report attachment was lost: %+v", files)
 	}
 }

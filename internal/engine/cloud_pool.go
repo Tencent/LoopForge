@@ -140,6 +140,13 @@ func isPoolRun(run domain.Run) bool {
 // machine to return before continuing. Runs on a user's own machine are left
 // alone.
 func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID string) (domain.Run, error) {
+	// Parallel first nodes bind together: the first picks the machine, the
+	// others re-read the run and follow it.
+	release := e.lockPoolBinding(run.ID)
+	defer release()
+	if fresh, ok := e.repo.RunState(run.ID); ok {
+		run = fresh
+	}
 	ec := run.ExecutionContext
 	convert := ec.ExecutionMode == domain.ExecutionModeCloud && e.cloudPoolRequired(ec.ProjectID)
 	if convert && hasCodeWorkspace(run) && hasWorkspaceProgress(run, nodeID) {

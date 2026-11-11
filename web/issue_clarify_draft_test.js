@@ -68,10 +68,8 @@ const flags = {analyzing: false};
 const ctx = {
   document: {get activeElement() { return active.current; }},
   issueClarifying: () => flags.analyzing,
-  requirementNeedsClarification: () => false,
   clarificationNeedsConfirm: () => false,
   issueExecutionBlocked: () => '',
-  clarificationPolicy: () => ({threshold: 80}),
   clarifyQuestionOptions: q => q.options || [],
   escapeHTML: s => String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])),
   CLARIFY_AUTO_PROMPTS: ['auto'],
@@ -85,7 +83,7 @@ for (const name of ['issueClarifyViewKey', 'clarifyQuestionKey', 'clarifySubmitt
 const issue = {
   id: 'dns-1', source: 'tapd', updatedAt: '2026-10-14T02:55:07Z',
   clarification: {
-    status: 'in_progress', score: 42,
+    status: 'in_progress',
     questions: [{question: '预计涉及多少行？', options: ['50万行']}],
     history: [{role: 'assistant', content: '{}'}]
   }
@@ -94,7 +92,7 @@ const key = ctx.issueClarifyViewKey(issue, {id: 'p'});
 const refreshed = JSON.parse(JSON.stringify(issue));
 refreshed.updatedAt = '2026-10-14T03:01:00Z';
 assert.equal(ctx.issueClarifyViewKey(refreshed, {id: 'p'}), key);
-refreshed.clarification.score = 80;
+refreshed.clarification.summary = '已有阶段结论';
 assert.notEqual(ctx.issueClarifyViewKey(refreshed, {id: 'p'}), key);
 
 const other = el({classes: ['issue-clarify-other'], value: '凌晨 2-5 点，约 50 万行', selectionStart: 2, selectionEnd: 2});

@@ -51,7 +51,7 @@ func TestIssueBaseBranchCreateEditAndDefault(t *testing.T) {
 	if _, err := st.PatchIssue(created.ID, func(issue *domain.Issue) error {
 		issue.Clarification.SessionID = "original-branch-session"
 		issue.Clarification.SessionUserID = 42
-		issue.Clarification.Answers = map[string]string{"scope": "保留业务范围"}
+		issue.Clarification.Summary = "保留业务范围"
 		issue.Clarification.History = []domain.ClarificationMessage{{Role: "user", Content: "保留业务回答"}}
 		return nil
 	}); err != nil {
@@ -69,7 +69,7 @@ func TestIssueBaseBranchCreateEditAndDefault(t *testing.T) {
 	if reset.BaseBranch != "" {
 		t.Fatalf("explicit blank must restore dynamic default: %+v", reset)
 	}
-	if reset.Clarification.SessionID != "" || reset.Clarification.SessionUserID != 0 || reset.Clarification.Answers["scope"] != "保留业务范围" || len(reset.Clarification.History) != 1 {
+	if reset.Clarification.SessionID != "" || reset.Clarification.SessionUserID != 0 || reset.Clarification.Summary != "保留业务范围" || len(reset.Clarification.History) != 1 {
 		t.Fatalf("branch changes must discard the code session and preserve business answers: %+v", reset.Clarification)
 	}
 	if len(reset.Operations) == 0 || !strings.Contains(reset.Operations[len(reset.Operations)-1].Detail, "工作分支改为自动新建") {
@@ -148,7 +148,7 @@ func TestImportTAPDBaseBranchSelectionAndReimport(t *testing.T) {
 	if _, err := st.PatchIssue(imported.ID, func(issue *domain.Issue) error {
 		issue.Clarification.SessionID = "imported-branch-session"
 		issue.Clarification.SessionUserID = owner.ID
-		issue.Clarification.Answers = map[string]string{"scope": "保留导入回答"}
+		issue.Clarification.Summary = "保留导入回答"
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestImportTAPDBaseBranchSelectionAndReimport(t *testing.T) {
 	if changed.BaseBranch != "release/2026" {
 		t.Fatalf("reimport must apply an explicit changed selection: %+v", changed)
 	}
-	if changed.Clarification.SessionID != "" || changed.Clarification.SessionUserID != 0 || changed.Clarification.Answers["scope"] != "保留导入回答" {
+	if changed.Clarification.SessionID != "" || changed.Clarification.SessionUserID != 0 || changed.Clarification.Summary != "保留导入回答" {
 		t.Fatalf("reimported branch changes must invalidate the code session only: %+v", changed.Clarification)
 	}
 	payload["baseBranch"] = ""
@@ -245,13 +245,13 @@ func TestIssueRepositoryChangeInvalidatesClarifySession(t *testing.T) {
 		}
 	}
 	issue := domain.Issue{ID: "repo-switch", ProjectID: "platform", Title: "更换分析仓库", RepositoryID: "original-repo", BaseBranch: "feature/continue",
-		Clarification: domain.ClarificationAssessment{SessionID: "original-repo-session", SessionUserID: 42, Answers: map[string]string{"scope": "保留回答"}}}
+		Clarification: domain.ClarificationAssessment{SessionID: "original-repo-session", SessionUserID: 42, Summary: "保留回答"}}
 	if err := st.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
 	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	updated := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{"id": issue.ID, "repositoryId": "new-repo"}, http.StatusOK)
-	if updated.BaseBranch != issue.BaseBranch || updated.Clarification.SessionID != "" || updated.Clarification.SessionUserID != 0 || updated.Clarification.Answers["scope"] != "保留回答" {
+	if updated.BaseBranch != issue.BaseBranch || updated.Clarification.SessionID != "" || updated.Clarification.SessionUserID != 0 || updated.Clarification.Summary != "保留回答" {
 		t.Fatalf("repository changes must invalidate the old code session: %+v", updated)
 	}
 }

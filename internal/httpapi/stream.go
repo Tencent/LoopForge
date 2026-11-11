@@ -361,6 +361,25 @@ func (h *streamHandlers) runChatClarify(c *gin.Context, issue domain.Issue, requ
 	h.handleComposerClarify(c, issue, request)
 }
 
+// isBugStyleWorkItem reports whether the work item is a bug (Gongfeng issue)
+// rather than a requirement; the clarification focus differs.
+func isBugStyleWorkItem(issue domain.Issue) bool {
+	return strings.EqualFold(issue.Source, "gongfeng") || strings.EqualFold(issue.Kind, "issue")
+}
+
+func clarifyAssistantRounds(history []struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}) int {
+	n := 0
+	for _, item := range history {
+		if strings.EqualFold(strings.TrimSpace(item.Role), "assistant") {
+			n++
+		}
+	}
+	return n
+}
+
 func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue, request chatClarifyRequest, emit func(event string, payload any)) (any, string, map[string]any, error) {
 	if emit == nil {
 		emit = func(string, any) {}
@@ -373,13 +392,11 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	extras := clarifyRequestTexts(request)
 	hydrateClarifyIssueFromText(&issue, extras...)
 	workItemType := "需求"
-	focus := "目标、范围、用户场景、约束和可验证的验收标准"
+	focus := "这条需求具体要改什么、改到什么程度、怎样验收"
 	if isBugStyleWorkItem(issue) {
 		workItemType = "Issue"
-		focus = "实际现象、复现条件、期望行为、影响范围、约束和可验证的验收标准"
+		focus = "实际现象、复现条件、期望行为和怎样验证已修复"
 	}
-	ratingProject, ratingProjectFound := h.repo.Project(issue.ProjectID)
-	ratingPrompt := clarificationRatingPrompt(clarificationRatingDimensions(issue, ratingProject, ratingProjectFound))
 	modelCtx, cancelModel := context.WithCancel(ctx)
 	defer cancelModel()
 	var toolSession *AgentToolSession
@@ -404,7 +421,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			mcpStep = "2. 若下文列出了可用 MCP 工具：描述或对话里出现外部需求、Issue 或文档链接时必须先调用对应工具读取，并同步读评论。没有链接不要为了找原单去 list。不要声称看不到评论或文档。"
 		}
 	}
-	systemPrompt := clarifySystemPrompt(intro, mcpStep, focus, ratingPrompt)
+	systemPrompt := clarifySystemPrompt(intro, mcpStep, focus)
 	var prompt strings.Builder
 	prompt.WriteString(systemPrompt)
 	prompt.WriteString("\n\n## 需求\n标题：")
@@ -432,7 +449,8 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		prompt.WriteString(request.Message)
 		prompt.WriteString("\n")
 	}
-	prompt.WriteString("\n请基于以上对话继续澄清，完成后调用 submit_clarification。")
+	prompt.WriteString(clarifyRoundBudgetHint(clarifyAssistantRounds(request.History)))
+	prompt.WriteString("\n请基于以上对话继续澄清，只围绕「## 需求」本身，完成后调用 submit_clarification。")
 	cbPath, cbErr := resolveCodeBuddyBin()
 	if cbErr != nil {
 		return nil, "", nil, cbErr
@@ -579,7 +597,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 				fmt.Fprintf(&b, "\n- %s: 目录 %s", a.name, a.dir)
 			}
 		}
-		b.WriteString("\n澄清问题与 summary 需覆盖以上所有仓库的协同改动，分别说明每个仓库各自需要什么。")
+		b.WriteString("\n只澄清本需求实际要改动的仓库；summary 分别说明涉及的每个仓库各自需要什么，不涉及的仓库不必展开。")
 		for _, a := range analyses {
 			if a.analyzed && a.dirName != "" {
 				continue
@@ -593,7 +611,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		prompt.WriteString(b.String())
 	} else if len(analyzedRepos) == 1 && len(analyses) > 1 {
 		a := analyzedRepos[0]
-		prompt.WriteString(fmt.Sprintf("\n\n## 多仓库范围\n本次需求还涉及其他仓库，但仅 %s 成功检出（当前工作目录），其余未能分析，请勿声称已阅读其代码。澄清问题与 summary 需说明多仓库协同的范围。", a.name))
+		prompt.WriteString(fmt.Sprintf("\n\n## 多仓库范围\n本次需求还涉及其他仓库，但仅 %s 成功检出（当前工作目录），其余未能分析，请勿声称已阅读其代码。summary 需说明本需求涉及的其他仓库各自需要什么。", a.name))
 	}
 	if mcpHint := h.clarifyMCPInstructionsFor(issue, responsible, len(request.History) > 0, extras...); mcpHint != "" {
 		prompt.WriteString(mcpHint)
@@ -607,7 +625,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	turnPrompt := userMsg
 	if resume {
-		turnPrompt = clarifyResumeTurnPrompt(request.Message)
+		turnPrompt = clarifyResumeTurnPrompt(issue.Title, request.Message, clarifyAssistantRounds(request.History))
 		if len(codeBaselines) > 0 {
 			turnPrompt += "\n\n本次各仓库代码基准为 " + strings.Join(codeBaselines, "；") + "。请重新确认当前工作目录的代码，不要沿用其他分支的代码结论。"
 		}

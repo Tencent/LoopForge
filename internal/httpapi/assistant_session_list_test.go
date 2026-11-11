@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -55,6 +57,7 @@ func putSessionListConversation(t testing.TB, h *assistantHandlers, ownerID int6
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		h.repo.DB.Exec("DELETE FROM assistant_session_reads WHERE session_id=?", session.ID)
 		h.repo.DB.Exec("DELETE FROM assistant_generations WHERE session_id=?", session.ID)
 		h.repo.DB.Exec("DELETE FROM assistant_sessions WHERE id=?", session.ID)
 	})
@@ -165,14 +168,114 @@ func TestAssistantSessionListPreservesVisibilityAndMetadata(t *testing.T) {
 				if item.ID == branch.ID && (item.RootSessionID != branch.RootSessionID || item.ParentSessionID != branch.ParentSessionID || item.HistoryRevision != 3 || item.ForkMessageIndex != 2) {
 					t.Fatal("shared branch metadata lost")
 				}
-				if item.ID == job.SessionID && item.GenerationStatus != "running" {
+				if item.ID == job.SessionID && (item.GenerationStatus != "running" || item.GenerationID != job.ID) {
 					t.Fatal("generation status lost")
+				}
+				if item.ID != job.SessionID && (item.GenerationStatus != "idle" || item.GenerationID != "") {
+					t.Fatalf("session without a reply carries generation state: %s", item.ID)
 				}
 			}
 			if len(seen) != len(want) {
 				t.Fatalf("missing sessions: got=%v want=%v", seen, want)
 			}
 		})
+	}
+}
+
+func TestAssistantSessionListMarksUnreadRepliesUntilOpened(t *testing.T) {
+	h, owner, viewer, prefix := sessionListFixture(t)
+	project := prefix + "team"
+	putSessionListProject(t, h, domain.Project{ID: project, OwnerID: owner.ID, Members: []domain.ProjectMember{{UserID: viewer.ID, Role: "member"}}})
+	question := []domain.AssistantMessage{{Role: "user", Content: "question", AuthorID: owner.ID}}
+	for _, key := range []string{"done", "legacy", "failed", "busy", "team-chat"} {
+		session := domain.AssistantSession{ID: prefix + key, Title: key, Messages: question}
+		if key == "team-chat" {
+			session.ProjectID = project
+		}
+		putSessionListConversation(t, h, owner.ID, session)
+	}
+	reply := func(key, id, status string) {
+		t.Helper()
+		g := domain.AssistantGeneration{ID: prefix + id, SessionID: prefix + key, UserID: owner.ID, Status: "running"}
+		if err := h.repo.BeginAssistantGeneration(g); err != nil {
+			t.Fatal(err)
+		}
+		if status != "running" {
+			g.Status = status
+			if err := h.repo.CheckpointAssistantGeneration(g); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	reply("done", "g1", "completed")
+	reply("legacy", "g-legacy", "completed")
+	// A reply that ended before finish times were recorded stays unmarked.
+	if err := h.repo.DB.Exec("UPDATE assistant_generations SET finished_at = NULL WHERE session_id = ?", prefix+"legacy").Error; err != nil {
+		t.Fatal(err)
+	}
+	reply("failed", "g-failed", "failed")
+	reply("busy", "g-busy", "running")
+	reply("team-chat", "g-team", "completed")
+
+	unread := func(user domain.User) map[string]bool {
+		t.Helper()
+		c, rec := workbenchContext(user, "GET", "/api/assistant/sessions", bytes.NewBuffer(nil))
+		h.listSessions(c)
+		if rec.Code != 200 {
+			t.Fatalf("list status %d: %s", rec.Code, rec.Body)
+		}
+		var list []domain.AssistantSession
+		if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, item := range list {
+			if strings.HasPrefix(item.ID, prefix) {
+				out[strings.TrimPrefix(item.ID, prefix)] = item.Unread
+			}
+		}
+		return out
+	}
+	markRead := func(user domain.User, key, generationID string) int {
+		t.Helper()
+		body := bytes.NewBufferString(`{"generationId":"` + generationID + `"}`)
+		c, rec := workbenchContext(user, "POST", "/api/assistant/sessions/"+prefix+key+"/read", body)
+		c.Params = gin.Params{{Key: "id", Value: prefix + key}}
+		h.markSessionRead(c)
+		return rec.Code
+	}
+
+	if got := unread(owner); !reflect.DeepEqual(got, map[string]bool{"done": true, "legacy": false, "failed": false, "busy": false, "team-chat": true}) {
+		t.Fatalf("owner unread marks: %v", got)
+	}
+	// The viewer can see the colleague's project chat but never joined it.
+	if got := unread(viewer); !reflect.DeepEqual(got, map[string]bool{"team-chat": false}) {
+		t.Fatalf("viewer unread marks: %v", got)
+	}
+	if code := markRead(viewer, "done", prefix+"g1"); code != 404 {
+		t.Fatalf("another user's private conversation was marked read: %d", code)
+	}
+	var stray int64
+	h.repo.DB.Table("assistant_session_reads").Where("user_id = ? AND session_id = ?", viewer.ID, prefix+"done").Count(&stray)
+	if stray != 0 {
+		t.Fatal("a reader recorded a conversation they cannot open")
+	}
+	if code := markRead(owner, "done", prefix+"g0"); code != 200 || !unread(owner)["done"] {
+		t.Fatalf("an older reply cleared the mark: %d", code)
+	}
+	if code := markRead(owner, "done", prefix+"g1"); code != 200 || unread(owner)["done"] {
+		t.Fatalf("opening the conversation did not clear the mark: %d", code)
+	}
+	reply("done", "g2", "running")
+	if unread(owner)["done"] {
+		t.Fatal("a running reply is unread")
+	}
+	next := domain.AssistantGeneration{ID: prefix + "g2", SessionID: prefix + "done", UserID: owner.ID, Status: "completed"}
+	if err := h.repo.CheckpointAssistantGeneration(next); err != nil {
+		t.Fatal(err)
+	}
+	if !unread(owner)["done"] {
+		t.Fatal("the next completed reply is not unread")
 	}
 }
 

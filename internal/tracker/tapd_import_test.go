@@ -29,11 +29,8 @@ func TestImportTAPDStoryFromDetailURL(t *testing.T) {
 	if issue.Title != "国际站取回绑定套餐域名逻辑对齐国内站" {
 		t.Fatalf("title=%q", issue.Title)
 	}
-	if issue.Clarification.Passed || issue.Clarification.Status != domain.ClarificationNeedsUser || !issue.Clarification.Gated {
-		t.Fatalf("thin import must need clarification: %+v", issue.Clarification)
-	}
-	if len(issue.Clarification.Dimensions) == 0 {
-		t.Fatal("import score must not return empty dimensions")
+	if issue.Clarification.Status != "" || issue.Clarification.Gated {
+		t.Fatalf("import must not score or gate clarification: %+v", issue.Clarification)
 	}
 	if issue.ExternalRef == nil || issue.ExternalRef.ExternalID != "1010000000100000555" {
 		t.Fatalf("external=%+v", issue.ExternalRef)
@@ -226,25 +223,6 @@ func TestImportTAPDStoryKeepsExistingAssignee(t *testing.T) {
 	}
 }
 
-func TestImportTAPDStoryScoresCompleteDescription(t *testing.T) {
-	payload := `{"data":[{"id":"1002","name":"国际站绑定对齐","status":"open","description":"<p>目标是解决国际站绑定套餐域名和国内站不一致的问题，预期产生对齐全站业务价值。</p><p>用户是国际站套餐管理员，在续费场景下使用。</p><p>本次范围包含取回绑定逻辑，不包含计费边界。</p><p>验收标准：国内站与国际站绑定结果一致，相关接口测试通过即可判断完成。</p><p>约束是必须兼容现有套餐依赖，本迭代截止前交付，注意回滚风险。</p>"}]}`
-	gateway := mockTAPDStoriesGateway(t, payload)
-	defer gateway.Close()
-	svc := NewService()
-	svc.Configure(domain.SyncConfig{TAPDMCPURL: gateway.URL})
-	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp", Name: "DemoDNS"}}}
-	issue, err := svc.ImportTAPDStory(store, "dp", "https://tapd.example.com/tapd_fe/10000000/story/detail/1002", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !issue.Clarification.Passed || issue.Clarification.Score < 80 {
-		t.Fatalf("complete description should pass: %+v", issue.Clarification)
-	}
-	if issue.Clarification.Status == domain.ClarificationNeedsUser {
-		t.Fatal("passed import must not ask the user to clarify")
-	}
-}
-
 func TestSyncTAPDStoryDoesNotScoreOrGate(t *testing.T) {
 	gateway := mockTAPDStoriesGateway(t, `{"data":[{"id":"3001","name":"【国内站】mq_flush_dns命令CMQ SDK连接异常","status":"open"}]}`)
 	defer gateway.Close()
@@ -255,7 +233,7 @@ func TestSyncTAPDStoryDoesNotScoreOrGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issue.Clarification.Gated || issue.Clarification.Score != 0 || len(issue.Clarification.Dimensions) != 0 {
+	if issue.Clarification.Gated || issue.Clarification.Status != "" {
 		t.Fatalf("sync must not score: %+v", issue.Clarification)
 	}
 }

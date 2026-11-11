@@ -68,12 +68,12 @@ func TestMCPViewUsesScopeSelect(t *testing.T) {
 	if section == "" {
 		t.Fatal("#mcpView section not found")
 	}
-	for _, want := range []string{`<select id="mcpScopeSelect"`, `aria-label="范围"`, `<option value="project"`, `<option value="personal"`, `id="mcpMarketCount"`, `id="mcpInstalledCount"`, `data-mcp-tab="market"`, `data-mcp-tab="installed"`} {
+	for _, want := range []string{`<select id="mcpScopeSelect"`, `aria-label="范围"`, `<option value="project"`, `<option value="personal"`, `id="mcpInstalledCount"`, `data-asset-type-tab="mcp"`, `data-asset-type-tab="rules"`, `data-asset-type-tab="skills"`} {
 		if !strings.Contains(section, want) {
 			t.Fatalf("#mcpView is missing %q", want)
 		}
 	}
-	for _, unwanted := range []string{"mcp-scope-switch", "data-mcp-scope", `class="mcp-toolbar panel"`} {
+	for _, unwanted := range []string{"mcp-scope-switch", "data-mcp-scope", `class="mcp-toolbar panel"`, "data-mcp-tab", "mcpMarketCount"} {
 		if strings.Contains(section, unwanted) {
 			t.Fatalf("#mcpView still contains %q", unwanted)
 		}
@@ -85,7 +85,7 @@ func TestMCPViewUsesScopeSelect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"window.enhanceSelect?.(mcpScopeSelect)", "scopeSelect.value=state.mcpScope", "mcpMarketCount", "mcpInstalledCount"} {
+	for _, want := range []string{"window.enhanceSelect?.(mcpScopeSelect)", "scopeSelect.value=state.mcpScope", "mcpInstalledCount"} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("app bundle is missing %q", want)
 		}

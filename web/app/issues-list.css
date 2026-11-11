@@ -46,6 +46,16 @@
 
 .issue-action-popover { min-width: 160px; gap: 0; animation: huiPopoverIn .18s var(--hui-ease-flow); }
 .issue-action-popover .issue-popover-item .popover-icon { width: 16px; height: 16px; opacity: 1; font-size: 0; }
+.issue-action-popover:has(.issue-delete-control) { width: min(288px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-y: auto; }
+.issue-action-popover .issue-delete-control { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--hui-border); }
+.issue-action-popover .issue-popover-item:disabled { opacity: .45; cursor: not-allowed; background: transparent; color: var(--hui-text); }
+.issue-action-popover .issue-delete-reason { margin: 0; padding: 0 10px 4px 35px; color: var(--hui-secondary); font: 400 12px/1.6 var(--hui-sans); overflow-wrap: anywhere; }
+#issuesView .issue-bulk-blocked { margin-top: 8px; color: var(--hui-secondary); font-size: 12px; }
+#issuesView .issue-bulk-blocked summary { cursor: pointer; padding: 4px 0; }
+#issuesView .issue-bulk-blocked ul { max-height: 240px; overflow-y: auto; margin: 4px 0 0; padding: 0; list-style: none; }
+#issuesView .issue-bulk-blocked li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--hui-border); }
+#issuesView .issue-bulk-blocked li > div { flex: 1; min-width: min(200px, 100%); overflow-wrap: anywhere; }
+#issuesView .issue-bulk-blocked p { margin: 3px 0 0; }
 @keyframes huiPopoverIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
 

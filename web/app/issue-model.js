@@ -4,6 +4,38 @@ function issueCanClose(issue){
 function issueCanDelete(issue){
   return issue?.deletionAllowed===true&&!issueClarifying(issue.id);
 }
+function issueDeletionBlock(issue){
+  if(issueClarifying(issue?.id))return{code:'clarifying',reason:'正在澄清，请先停止澄清后再删除'};
+  if(issueCanDelete(issue))return null;
+  return issue?.deletionBlock?.reason?issue.deletionBlock:{code:'unknown',reason:'暂时无法确认删除条件，请刷新后重试'};
+}
+function issueDeletionContextHTML(issue,{menu=false}={}){
+  const block=issueDeletionBlock(issue);
+  if(!block)return '';
+  const label=block.code==='clarifying'?'查看澄清':block.runId?'查看相关运行':block.code==='active'||block.code==='succeeded'?'查看任务与记录':'查看需求详情';
+  return `<button type="button" class="${menu?'issue-popover-item':'button ghost small'}" data-issue-deletion-context="${escapeHTML(issue.id)}" aria-label="${escapeHTML(`${label}：${issue.title||issue.id}，${block.reason}`)}">${menu?huiIcon('arrow-right','popover-icon'):''}${label}</button>`;
+}
+function issueDeleteControlHTML(issue,{menu=false}={}){
+  const block=issueDeletionBlock(issue),cls=menu?'issue-popover-item':'button ghost small';
+  const reasonId=`issue-delete-reason-${menu?'menu':'detail'}-${issue.id}`;
+  const button=`<button type="button" class="${cls}${block?'':' danger'}" ${menu?'data-action="delete"':`data-delete-issue="${escapeHTML(issue.id)}"`}${block?` disabled aria-describedby="${escapeHTML(reasonId)}"`:''}>${menu?huiIcon('trash','popover-icon'):''}删除需求</button>`;
+  if(!block)return button;
+  return `<div class="issue-delete-control">${button}<p class="issue-delete-reason" id="${escapeHTML(reasonId)}">${escapeHTML(block.reason)}</p>${issueDeletionContextHTML(issue,{menu})}</div>`;
+}
+function bindIssueDeletionContext(root){
+  root.querySelectorAll('[data-issue-deletion-context]').forEach(button=>button.onclick=e=>{
+    e.stopPropagation();
+    const id=button.dataset.issueDeletionContext;
+    const detailIssue=state.issueDetailData?.issue?.id===id?state.issueDetailData.issue:null;
+    const issue=(root.id==='issueDetailBody'?detailIssue:null)||(state.data.issues||[]).find(i=>i.id===id)||detailIssue;
+    if(!issue)return;
+    const block=issueDeletionBlock(issue);
+    if(!block)return;
+    hideIssueActionMenu();
+    if(block.runId){closeIssueDrawer();openRunFromId(block.runId,{forceRuns:true})}
+    else openIssueDetail(id,block.code==='clarifying'?'clarify':block.code==='active'||block.code==='succeeded'?'activity':'overview');
+  });
+}
 const issueStatuses=[['backlog','Backlog'],['todo','Todo'],['in_progress','In progress'],['in_review','In review'],['done','Done'],['closed','Closed'],['blocked','Blocked'],['cancelled','Cancelled']];
 function latestIssueTask(i){
   const tasks=(state.data.tasks||[]).filter(t=>t.issueId===i.id);
@@ -231,7 +263,6 @@ function issueRunHealth(i){
   if(run?.status==='failed'||run?.status==='cancelled'||issueHasFailedNode(run))return'attention';
   if(issueClarifying(i.id))return'active';
   if(clarificationNeedsConfirm(i))return'attention';
-  if(requirementNeedsClarification(i))return'attention';
   if(task&&['queued','dispatched','running'].includes(task.status))return'active';
   if(!task||!run)return'not_started';
   return'not_started';
@@ -257,10 +288,6 @@ function issueActor(i){
   if(issueClarifying(i.id))return{kind:'active',title:'澄清分析中',sub:'关闭网页也不会中断'};
   const task=latestIssueTask(i);
   if(task&&['queued','dispatched','running'].includes(task.status))return{kind:'active',title:'正在启动',sub:task.status==='queued'?'排队中':'调度中'};
-  if(requirementNeedsClarification(i)){
-    const score=i.clarification?.score||0;
-    return{kind:'attention',title:'需要你澄清',sub:`${score} 分 · 未达准入线`};
-  }
   if(issueRunHealth(i)==='attention')return{kind:'attention',title:'需要介入',sub:issueCurrentStage(i).hint||'运行失败或已中断'};
   if(bound)return{kind:'bound',title:bound.name,sub:'已绑定 Agent'};
   return{kind:'idle',title:'尚未执行',sub:'触发后由 SOP 节点 Agent 接手'};
@@ -273,10 +300,6 @@ function issueOutcome(i){
   if((i.status||'')==='done')return{key:'closed',short:stage.label==='交付闭环'?'已交付':'已完成',title:stage.label==='交付闭环'?'交付闭环':'需求已完成',body:stage.label==='交付闭环'?'SOP 已全部通过。如需继续修改，请先重新打开后再触发新的 SOP。':'需求已完成。'};
   if(clarificationNeedsConfirm(i)){
     return{key:'confirm',short:'待确认',title:'请确认澄清结论并写回原单',body:'结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 SOP。'};
-  }
-  if(requirementNeedsClarification(i)){
-    const score=i.clarification?.score||0,threshold=clarificationPolicy((state.data.projects||[]).find(p=>p.id===i.projectId)).threshold||80;
-    return{key:'attention',short:'待澄清',title:'需要你补充澄清',body:`导入评分 ${score} 分，未达准入线 ${threshold} 分。请先回答澄清问题后再触发 SOP。`};
   }
   if(conversationWorkspaceIssue(i)){const c=conversationIssueStage(i);return{key:c.ended?'idle':c.key==='closed'?'closed':'active',short:c.short,title:`对话交付 · ${c.label}`,body:c.hint};}
   if(latestIssueRun(i)?.status==='cancelled')return{key:'attention',short:'已取消',title:'运行已取消',body:'这次运行已结束且工作区已清理，不能接着原记录重试。可以重新触发整条 SOP。'};
@@ -404,7 +427,7 @@ function deliveredHint(issue){const label=deliveryLockedLabel(issue);return `<sp
 function reopenDeliveredButton(issue,{cls='button primary small'}={}){if(issueTrackerClosed(issue)||(!issueManuallyClosed(issue)&&!deliveryLocked(issue)))return'';return `<button type="button" class="${cls}" data-reopen-issue="${escapeHTML(issue.id)}">重新打开</button>`}
 function canRetriggerIssue(issue,run){
   if(!issue||issueManuallyClosed(issue)||issueTrackerClosed(issue))return false;
-  if(clarificationNeedsConfirm(issue)||requirementNeedsClarification(issue))return false;
+  if(clarificationNeedsConfirm(issue))return false;
   const current=run||latestIssueRun(issue);
   if(current&&['queued','running','waiting'].includes(current.status))return false;
   if(deliveryLocked(issue))return true;
@@ -418,7 +441,6 @@ function retriggerButton(issue,run,{ghost=false,cls}={}){
 function triggerSOPButton(issue,{ghost=false,cls='button primary small',text='触发'}={}){
   if(issueExecutionBlocked(issue))return issueTrackerClosed(issue)&&!issueManuallyClosed(issue)?closedTrackerHint(issue):deliveredHint(issue);
   if(clarificationNeedsConfirm(issue))return `<button class="${ghost?'button ghost small':cls}" data-start-clarify title="请先确认澄清结论并写回原单">去确认结论</button>`;
-  if(requirementNeedsClarification(issue))return `<button class="${ghost?'button ghost small':cls}" data-start-clarify title="需求未达准入线，请先补充澄清">去澄清</button>`;
   return `<button class="${ghost?'button ghost small':cls}" data-dispatch-issue="${escapeHTML(issue.id)}">${text}</button>`;
 }
 function issueActionButtons(i){
@@ -429,7 +451,6 @@ function issueActionButtons(i){
   if(issueManuallyClosed(i)||deliveryLocked(i)||issueTrackerClosed(i))return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
   if(issueClarifying(i.id))return `<button type="button" class="issue-act" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">查看分析</button>${more}`;
   if(clarificationNeedsConfirm(i))return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">确认结论</button>${more}`;
-  if(requirementNeedsClarification(i))return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">去澄清</button>${more}`;
   if(stage.key==='waiting')return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="sop">${run?.pauseRequested?'继续流程':'去确认'}</button>${more}`;
   if(run?.status==='cancelled')return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
   if(run?.status==='failed'){
@@ -448,7 +469,7 @@ function setIssueRunFilter(value,toggle=true){
   if(!$('#issuesView')?.classList.contains('active'))switchView('issues');
   else renderIssues();
 }
-let issueMenuPopover=null;
+let issueMenuPopover=null,issueMenuTrigger=null;
 function ensureIssueMenuPopover(){
   if(issueMenuPopover)return issueMenuPopover;
   issueMenuPopover=document.createElement('div');
@@ -464,11 +485,26 @@ function ensureIssueMenuPopover(){
   window.addEventListener('resize',hideIssueActionMenu,{passive:true});
   window.addEventListener('scroll',hideIssueActionMenu,{passive:true});
   document.addEventListener('keydown',e=>{
-    if(e.key==='Escape')hideIssueActionMenu();
+    if(issueMenuPopover.hidden)return;
+    if(e.key==='Escape'){
+      e.preventDefault();
+      hideIssueActionMenu();
+      issueMenuTrigger?.focus({preventScroll:true});
+    }else if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){
+      e.preventDefault();
+      const items=[...issueMenuPopover.querySelectorAll('button:not(:disabled)')];
+      const current=items.indexOf(document.activeElement);
+      const next=e.key==='Home'?0:e.key==='End'?items.length-1:(current+(e.key==='ArrowUp'?-1:1)+items.length)%items.length;
+      items[next]?.focus();
+    }else if(e.key==='Tab'){
+      hideIssueActionMenu();
+      issueMenuTrigger?.focus({preventScroll:true});
+    }
   });
   return issueMenuPopover;
 }
 function hideIssueActionMenu(){
+  issueMenuTrigger?.setAttribute('aria-expanded','false');
   if(issueMenuPopover&&!issueMenuPopover.hidden){
     issueMenuPopover.hidden=true;
     issueMenuPopover.innerHTML='';
@@ -479,12 +515,16 @@ function showIssueActionMenu(e,issueId){
   e.stopPropagation();
   const issue=(state.data?.issues||[]).find(i=>i.id===issueId);
   if(!issue)return;
+  issueMenuTrigger?.setAttribute('aria-expanded','false');
+  issueMenuTrigger=e.currentTarget;
+  issueMenuTrigger.setAttribute('aria-expanded','true');
+  issueMenuTrigger.setAttribute('aria-controls','issueActionPopover');
   const menu=ensureIssueMenuPopover();
   const isClosed=issue.status==='done'||issueManuallyClosed(issue)||deliveryLocked(issue);
   menu.innerHTML=`
     <button type="button" class="issue-popover-item" data-action="edit">${huiIcon('edit','popover-icon')}编辑需求</button>
     ${issueTrackerClosed(issue)||(!isClosed&&!issueCanClose(issue))?'':!isClosed?`<button type="button" class="issue-popover-item danger" data-action="close">${huiIcon('close','popover-icon')}关闭需求</button>`:`<button type="button" class="issue-popover-item" data-action="reopen">${huiIcon('undo','popover-icon')}重新打开</button>`}
-    ${issueCanDelete(issue)?`<button type="button" class="issue-popover-item danger" data-action="delete">${huiIcon('trash','popover-icon')}删除需求</button>`:''}
+    ${issueDeleteControlHTML(issue,{menu:true})}
   `;
   window.AgentFlowHarnessIcons?.hydrate?.(menu);
   menu.querySelector('[data-action="edit"]').onclick=ev=>{
@@ -493,11 +533,12 @@ function showIssueActionMenu(e,issueId){
     openIssue(issue);
   };
   const deleteBtn=menu.querySelector('[data-action="delete"]');
-  if(deleteBtn)deleteBtn.onclick=ev=>{
+  if(deleteBtn&&!deleteBtn.disabled)deleteBtn.onclick=ev=>{
     ev.stopPropagation();
     hideIssueActionMenu();
     deleteIssueById(issue.id);
   };
+  bindIssueDeletionContext(menu);
   const closeBtn=menu.querySelector('[data-action="close"]');
   if(closeBtn){
     closeBtn.onclick=ev=>{
@@ -515,19 +556,20 @@ function showIssueActionMenu(e,issueId){
     };
   }
   menu.hidden=false;
+  menu.querySelector('button:not(:disabled)')?.focus();
   const btn=e.currentTarget;
   const rect=btn.getBoundingClientRect();
   const menuWidth=menu.offsetWidth||136;
   const menuHeight=menu.offsetHeight||72;
   let left=rect.right-menuWidth;
-  if(left<8)left=8;
+  left=Math.max(8,Math.min(left,window.innerWidth-menuWidth-8));
   let top=rect.bottom+4;
   if(top+menuHeight>window.innerHeight-8){
     top=rect.top-menuHeight-4;
   }
   menu.style.position='fixed';
   menu.style.left=`${Math.round(left)}px`;
-  menu.style.top=`${Math.round(top)}px`;
+  menu.style.top=`${Math.round(Math.max(8,top))}px`;
 }
 function bindIssueRowActions(root=document){
   bindIssueTriggers(root);
@@ -586,22 +628,22 @@ function issueCurrentStage(i){
   if(!run){
     if(issueClarifying(i.id))return{key:'active',label:'澄清分析中',hint:'关闭网页也不会中断，完成后可回来查看'};
     if(clarificationNeedsConfirm(i)){
-      const score=i.clarification?.score||0;
-      return{key:'confirm',label:score?`待确认结论 · ${score} 分`:'待确认结论',hint:'确认写回原单（追加评论）后即可开始触发需求'};
-    }
-    if(requirementNeedsClarification(i)){
-      const score=i.clarification?.score||0,threshold=clarificationPolicy((state.data.projects||[]).find(p=>p.id===i.projectId)).threshold||80;
-      return{key:'attention',label:`待澄清 · ${score} 分`,hint:`未达准入线 ${threshold} 分，需要你补充信息`};
+      return{key:'confirm',label:'待确认结论',hint:'确认写回原单（追加评论）后即可开始触发需求'};
     }
     if(task&&['queued','dispatched','running'].includes(task.status)){
       return{key:'active',label:task.status==='queued'?'排队中':'运行中',hint:'任务已调度，正在准备执行工作区与 Agent 环境'};
     }
     if((i.status||'')==='done')return{key:'closed',label:'已完成',hint:'需求已完成'};
+    // Questions are waiting for answers. Informational only: it neither
+    // counts as 需要介入 nor blocks triggering the SOP.
+    if(i.clarification?.status==='in_progress'&&(i.clarification.questions||[]).length){
+      return{key:'clarifying',label:'待澄清',hint:'澄清问题等待回答，不影响直接触发 SOP'};
+    }
     if(i.kind==='requirement'){
-      const score=i.clarification?.score||0,ready=i.clarification?.status==='ready'||i.clarification?.passed;
+      const ready=i.clarification?.status==='ready';
       const multi=issueLaneStage(i);
       if(multi)return multi;
-      return{key:'not_started',label:ready?(score?`澄清完成 · ${score} 分`:'澄清已通过'):'等待执行',hint:ready?'可以进入研发 SOP':'尚未创建运行'};
+      return{key:'not_started',label:ready?'澄清已完成':'等待执行',hint:ready?'可以进入研发 SOP':'尚未创建运行'};
     }
     return{key:'not_started',label:'等待执行',hint:'尚未创建运行'};
   }

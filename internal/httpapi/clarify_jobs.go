@@ -122,13 +122,16 @@ func (j *clarifyJob) finished() bool {
 	}
 }
 
-func (h *streamHandlers) autoClarifyIssue(issueID string) {
+// resumeClarifyIssue picks up a clarification round that was interrupted
+// mid-analysis (process restart). Clarification itself is never started
+// automatically; the user opens it from the issue or the composer.
+func (h *streamHandlers) resumeClarifyIssue(issueID string) {
 	issueID = strings.TrimSpace(issueID)
 	if issueID == "" || h == nil || h.repo == nil {
 		return
 	}
 	issue, ok := h.repo.Issue(issueID)
-	if !ok || !domain.ShouldAutoStartClarification(issue) {
+	if !ok || !domain.ShouldResumeClarification(issue) {
 		return
 	}
 	if h.jobRunning(issueID) {
@@ -136,7 +139,7 @@ func (h *streamHandlers) autoClarifyIssue(issueID string) {
 	}
 	req := chatClarifyRequest{Message: domain.ClarificationKickoff, History: historyToClarify(issue.Clarification.History)}
 	if _, err := h.ensureClarifyJob(issue, req); err != nil {
-		log.Printf("auto clarify %s: %v", issueID, err)
+		log.Printf("resume clarify %s: %v", issueID, err)
 	}
 }
 
@@ -146,7 +149,7 @@ func (h *streamHandlers) recoverClarifyJobs() {
 	}
 	for _, issue := range h.repo.Issues() {
 		if issue.Clarification.Status == domain.ClarificationAnalyzing {
-			h.autoClarifyIssue(issue.ID)
+			h.resumeClarifyIssue(issue.ID)
 		}
 	}
 }
@@ -558,14 +561,10 @@ func (h *streamHandlers) persistClarifyOutcome(issueID string, parsed any, raw s
 }
 
 type clarifyModelResult struct {
-	Summary    string                         `json:"summary"`
-	Questions  []domain.ClarificationQuestion `json:"questions"`
-	Ready      bool                           `json:"ready"`
-	Assessment struct {
-		Dimensions map[string]int `json:"dimensions"`
-		Missing    []string       `json:"missing"`
-	} `json:"assessment"`
-	raw map[string]any
+	Summary   string                         `json:"summary"`
+	Questions []domain.ClarificationQuestion `json:"questions"`
+	Ready     bool                           `json:"ready"`
+	raw       map[string]any
 }
 
 func parseClarifyModel(parsed any, raw string) clarifyModelResult {
@@ -600,6 +599,7 @@ func parseClarifyModel(parsed any, raw string) clarifyModelResult {
 	result.raw["summary"] = result.Summary
 	result.raw["questions"] = result.Questions
 	result.raw["ready"] = result.Ready
+	delete(result.raw, "assessment")
 	return result
 }
 
@@ -624,10 +624,6 @@ func clarificationAPIPayload(c domain.ClarificationAssessment) map[string]any {
 		"summary":   c.Summary,
 		"questions": c.Questions,
 		"ready":     c.Status == domain.ClarificationReady,
-		"assessment": map[string]any{
-			"dimensions": c.Dimensions,
-			"missing":    c.Missing,
-		},
 	}
 }
 
@@ -825,32 +821,6 @@ func (h *streamHandlers) saveClarificationAssessment(issueID string, result clar
 			}
 			assessment.Status = domain.ClarificationReady
 			issue.Description = appendClarificationDescription(issue.Description, assessment.Summary)
-			project, found := h.repo.Project(issue.ProjectID)
-			dimensions := clarificationRatingDimensions(*issue, project, found)
-			score, rated := scoreClarificationDimensions(dimensions, result.Assessment.Dimensions)
-			assessment.Score = score
-			assessment.Dimensions = rated
-			assessment.Missing = trimClarificationMissing(result.Assessment.Missing)
-			if len(assessment.Missing) == 0 {
-				for _, dim := range dimensions {
-					if rated[dim.ID] < 100 {
-						assessment.Missing = append(assessment.Missing, dim.ID)
-					}
-				}
-			}
-			if isBugStyleWorkItem(*issue) {
-				assessment.Passed = true
-			} else {
-				policy := domain.DefaultClarificationPolicy()
-				if found {
-					policy = domain.EffectiveClarificationPolicy(project.Clarification)
-				}
-				assessment.Passed = domain.ClarificationPassed(policy, score)
-			}
-			assessment.AssessedAt = time.Now().UTC()
-			if !isBugStyleWorkItem(*issue) {
-				assessment.Gated = true
-			}
 			promoteClarifiedIssueTodo(issue)
 			fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(assessment.Summary)))
 			if assessment.WriteBackStatus != "succeeded" || assessment.WriteBackFingerprint != fingerprint {
@@ -860,14 +830,6 @@ func (h *streamHandlers) saveClarificationAssessment(issueID string, result clar
 			}
 		} else {
 			assessment.Status = domain.ClarificationInProgress
-			if len(result.Assessment.Dimensions) > 0 {
-				project, found := h.repo.Project(issue.ProjectID)
-				dimensions := clarificationRatingDimensions(*issue, project, found)
-				score, rated := scoreClarificationDimensions(dimensions, result.Assessment.Dimensions)
-				assessment.Score = score
-				assessment.Dimensions = rated
-				assessment.Missing = trimClarificationMissing(result.Assessment.Missing)
-			}
 		}
 		issue.Clarification = assessment
 		return nil

@@ -14,30 +14,68 @@ type loginAttempts struct {
 	until time.Time
 }
 
-var passwordAttempts = struct {
-	sync.Mutex
-	entries map[string]loginAttempts
-}{entries: map[string]loginAttempts{}}
+// Password attempts allowed per client IP per window, and the number of IPs
+// tracked at once before new ones are refused.
+const (
+	passwordAttemptLimit   = 10
+	passwordAttemptWindow  = time.Minute
+	passwordAttemptSources = 4096
+)
 
-func allowPasswordAttempt(ip string) bool {
-	passwordAttempts.Lock()
-	defer passwordAttempts.Unlock()
-	now := time.Now()
-	for k, v := range passwordAttempts.entries {
+// passwordLimiter is the brute-force budget for one API server. Login and
+// registration share it: both reveal whether credentials or account names
+// exist. Each server owns its own limiter, so separately constructed servers
+// (and tests) never share counters.
+//
+// Contract:
+//   - Every login request counts, malformed or not, before any lookup.
+//   - A registration request counts once it is well-formed and valid, i.e.
+//     when it reaches account creation (including "login taken", which
+//     discloses that an account exists). Malformed or invalid sign-up input
+//     is rejected for free: it reveals nothing and creates nothing.
+type passwordLimiter struct {
+	mu      sync.Mutex
+	entries map[string]loginAttempts
+	now     func() time.Time
+}
+
+func newPasswordLimiter() *passwordLimiter {
+	return &passwordLimiter{entries: map[string]loginAttempts{}, now: time.Now}
+}
+
+func (l *passwordLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	for k, v := range l.entries {
 		if now.After(v.until) {
-			delete(passwordAttempts.entries, k)
+			delete(l.entries, k)
 		}
 	}
-	v := passwordAttempts.entries[ip]
-	if v.count >= 10 || (v.count == 0 && len(passwordAttempts.entries) >= 4096) {
+	v := l.entries[ip]
+	if v.count >= passwordAttemptLimit || (v.count == 0 && len(l.entries) >= passwordAttemptSources) {
 		return false
 	}
 	if v.count == 0 {
-		v.until = now.Add(time.Minute)
+		v.until = now.Add(passwordAttemptWindow)
 	}
 	v.count++
-	passwordAttempts.entries[ip] = v
+	l.entries[ip] = v
 	return true
+}
+
+// passwordLimiterInit guards lazy creation for handlers built without New.
+var passwordLimiterInit sync.Mutex
+
+// allowPasswordAttempt spends one attempt from this server's budget.
+func (d *deps) allowPasswordAttempt(ip string) bool {
+	passwordLimiterInit.Lock()
+	if d.passwordAttempts == nil {
+		d.passwordAttempts = newPasswordLimiter()
+	}
+	limiter := d.passwordAttempts
+	passwordLimiterInit.Unlock()
+	return limiter.allow(ip)
 }
 
 func (h *authHandlers) authPassword(c *gin.Context) {
@@ -47,7 +85,7 @@ func (h *authHandlers) authPassword(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid request origin"})
 		return
 	}
-	if !allowPasswordAttempt(c.RemoteIP()) {
+	if !h.allowPasswordAttempt(c.RemoteIP()) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many attempts. Try again in a minute."})
 		return
 	}

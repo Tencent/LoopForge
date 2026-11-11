@@ -379,3 +379,81 @@ describe("QuickAccessWizard", () => {
     mockState.failClone = false;
   });
 });
+
+describe("QuickAccessWizard repository permission (#122)", () => {
+  const welcome = {
+    id: "welcome", key: "WELCOME", name: "LoopForge 体验项目", ownerId: 99,
+    members: [{ userId: 1, role: "member" }], workflowId: "generic-backend-delivery",
+  };
+  const member = { ...user, isPlatformAdmin: false };
+  const renderWizard = () =>
+    render(
+      <QuickAccessWizard
+        open
+        user={member}
+        projects={[welcome]}
+        projectId="welcome"
+        sponsoredModel="m1"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+        onOpenView={vi.fn()}
+      />,
+    );
+  const openProjectStep = async (userAction) => {
+    await screen.findByRole("dialog");
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("项目与仓库", { selector: "h3" });
+  };
+
+  test("explains on the project step that a member cannot bind the shared project", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/projects") return [welcome];
+      if (path === "/api/users") return [member];
+      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 SOP", generic: true, nodes: [] }];
+      return [];
+    });
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    renderWizard();
+    await openProjectStep(userAction);
+    expect(screen.getByRole("note")).toHaveTextContent("只有它的 Owner 或平台管理员可以绑定仓库");
+    const input = screen.getByPlaceholderText("https://github.com/owner/repo");
+    await userAction.type(input, "https://github.com/team/repo");
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    // Blocked here, not on the last step, and nothing was written.
+    expect(await screen.findByText(/不能为它绑定仓库/)).toBeInTheDocument();
+    expect(screen.queryByText("默认角色与 SOP", { selector: "h3" })).toBeNull();
+    expect(writeMock).not.toHaveBeenCalledWith("/api/repositories", expect.anything());
+    expect(writeMock).not.toHaveBeenCalledWith("/api/repositories", expect.anything(), expect.anything());
+
+    // "Create my own project" keeps the typed repository.
+    await userAction.click(screen.getByRole("button", { name: "新建自己的项目并绑定" }));
+    expect(screen.getByRole("tab", { name: /新建项目/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByPlaceholderText("https://github.com/owner/repo")).toHaveValue("https://github.com/team/repo");
+    expect(screen.queryByRole("note")).toBeNull();
+    apiMock.mockReset();
+  });
+
+  test("skipping the binding continues with the shared project and writes no repository", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/projects") return [welcome];
+      if (path === "/api/users") return [member];
+      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 SOP", generic: true, nodes: [] }];
+      return [];
+    });
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    renderWizard();
+    await openProjectStep(userAction);
+    await userAction.type(screen.getByPlaceholderText("https://github.com/owner/repo"), "https://github.com/team/repo");
+    await userAction.click(screen.getByRole("button", { name: "跳过绑定，继续体验" }));
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("默认角色与 SOP", { selector: "h3" });
+    expect(screen.getByText(/使用已有项目「LoopForge 体验项目」/)).toBeInTheDocument();
+    expect(screen.queryByText(/绑定 repo/)).toBeNull();
+    await userAction.click(screen.getByRole("button", { name: "完成接入" }));
+    expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
+    expect(writeMock.mock.calls.some(([path]) => path === "/api/repositories")).toBe(false);
+    apiMock.mockReset();
+  });
+});
