@@ -41,9 +41,9 @@ func serveRunnerBinary(c *gin.Context) {
 		targetArch = "amd64"
 	}
 	switch targetOS {
-	case "darwin", "linux":
+	case "darwin", "linux", "windows":
 	default:
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux)", targetOS)})
+		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux, windows)", targetOS)})
 		return
 	}
 	switch targetArch {
@@ -103,7 +103,11 @@ func serveRunnerBinary(c *gin.Context) {
 }
 
 func serveRunnerArtifact(c *gin.Context, path string) {
-	serveBinaryArtifact(c, path, "agentflow-runner")
+	name := "agentflow-runner"
+	if sanitizePlatformParam(c.Query("os")) == "windows" {
+		name += ".exe"
+	}
+	serveBinaryArtifact(c, path, name)
 }
 
 func sanitizePlatformParam(v string) string {

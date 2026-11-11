@@ -67,6 +67,8 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 ## 快速开始
 
+**Windows 用户**可以使用 Docker Desktop 和 PowerShell 启动脚本，参见 [Windows 部署与本机执行器指南](docs/windows.md)。
+
 需要 **Git、curl、Docker（含 Compose）** 和 **Python 3**。全新 Ubuntu 可先运行 `sudo apt-get update && sudo apt-get install -y git curl python3`。没装 Docker 时，安装脚本会询问并帮你安装。支持普通用户运行，需要时通过 docker 组或 sudo 操作 Docker。
 
 ```bash

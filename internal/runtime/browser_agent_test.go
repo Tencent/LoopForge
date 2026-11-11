@@ -10,27 +10,34 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/processgroup"
 )
 
 func TestReapOrphanHostBrowsersKillsBrowsersOfDeadOwners(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
-	dead := exec.Command("true")
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	t.Setenv("TMP", temporary)
+	dead := exec.Command(os.Args[0], "-test.run=^$")
 	if err := dead.Run(); err != nil {
 		t.Fatal(err)
 	}
-	orphan := exec.Command("sleep", "60")
-	orphan.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := orphan.Start(); err != nil {
+	orphan := exec.Command(os.Args[0], "-test.run=^TestOrphanBrowserProcessHelper$")
+	orphan.Env = append(os.Environ(), "AGENTFLOW_TEST_ORPHAN_BROWSER=1")
+	cleanup, err := processgroup.Start(orphan)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer cleanup()
 	exited := make(chan struct{})
 	go func() { _ = orphan.Wait(); close(exited) }()
-	defer func() { _ = orphan.Process.Kill() }()
+	defer func() {
+		_ = processgroup.Kill(orphan.Process.Pid)
+		<-exited
+	}()
 	write := func(runID string, record hostBrowserRecord) string {
 		dir := hostBrowserDir(runID)
 		raw, _ := json.Marshal(record)
@@ -55,6 +62,12 @@ func TestReapOrphanHostBrowsersKillsBrowsersOfDeadOwners(t *testing.T) {
 	}
 	if _, err := os.Stat(ownedDir); err != nil {
 		t.Fatalf("live owner's record removed: %v", err)
+	}
+}
+
+func TestOrphanBrowserProcessHelper(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_ORPHAN_BROWSER") == "1" {
+		time.Sleep(time.Minute)
 	}
 }
 

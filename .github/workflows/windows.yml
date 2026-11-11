@@ -1,0 +1,47 @@
+name: windows
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  runner:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Build the embedded frontend
+        shell: bash
+        run: npm --prefix chatbot ci --include=dev --no-audit --no-fund && npm --prefix chatbot run build
+      - name: Build native Windows commands
+        shell: bash
+        run: go build -o .local/bin/ ./cmd/agentflow-runner ./cmd/agentflow-gate-mcp
+      - name: Exercise Windows processes, filesystem boundaries and binary distribution
+        shell: bash
+        run: >-
+          go test -p=2 ./internal/processgroup ./internal/procwatch ./internal/runtime ./internal/runner ./internal/httpapi ./internal/preview
+          -run 'TestWindows|TestWorkspaceLock|TestFilesystemEnvironmentIdentity|TestAssistantNativeFileLock|TestArchiveDirRejectsHardlink|TestRejectSpecialFailsClosed|TestGateMCPSubmit|TestMaterializeInvocationInjectsGateMCP|TestMaterializeGateMCPSelectsLinuxForDocker|TestReapOrphanHostBrowsers'
+          -count=1 -timeout=300s
+      - name: Test PowerShell startup without Docker or account credentials
+        run: |
+          python scripts/test-windows-startup.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:LOOPFORGE_TEST_POWERSHELL = 'pwsh'
+          python scripts/test-windows-startup.py -v
+      - name: Vet Windows packages
+        run: go vet ./internal/processgroup ./internal/procwatch ./internal/runtime ./internal/runner ./internal/httpapi ./internal/preview ./cmd/agentflow-runner

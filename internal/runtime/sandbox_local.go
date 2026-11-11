@@ -27,6 +27,11 @@ func (s *localSandbox) Close(context.Context) error {
 	return nil
 }
 func (s *localSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	command, cleanup, err := PrepareHostShellCommand(command)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
 	cmd, err := s.command(ctx, command, controlledBaseEnvironment(os.Environ()))
 	if err != nil {
 		return "", err

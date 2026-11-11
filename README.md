@@ -67,6 +67,8 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 ## Quick start
 
+**Windows users** can use Docker Desktop and the PowerShell launchers in the [Windows setup guide](docs/windows.md).
+
 Requires **Git, curl, Docker (with Compose)** and **Python 3**. On a fresh Ubuntu host, start with `sudo apt-get update && sudo apt-get install -y git curl python3`. The installer offers to install Docker if it is missing. Ordinary Linux users are supported through Docker group access or sudo.
 
 ```bash

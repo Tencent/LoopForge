@@ -102,7 +102,6 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 		emit(Progress, opts.Label+"："+line, now.Sub(started))
 	}
 	cmd := build(runCtx)
-	killGroup(cmd)
 	cmd.Stdout, cmd.Stderr = out, out
 	// git and docker leave helpers holding the pipes after a kill; do not
 	// wait on them forever.
@@ -113,13 +112,10 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 	if opts.Stall > 0 {
 		go watchStall(runCtx, cancel, out, opts.Stall, done)
 	}
-	err := cmd.Run()
+	err := runWatchedCommand(cmd)
 	close(done)
 	out.flush()
 	elapsed := time.Since(started)
-	if errors.Is(err, exec.ErrWaitDelay) {
-		err = nil
-	}
 	tail := out.tail()
 	if err == nil {
 		emit(Completed, fmt.Sprintf("%s 完成，耗时 %s", opts.Label, roundDuration(elapsed)), elapsed)

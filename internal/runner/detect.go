@@ -88,6 +88,9 @@ func extraSearchPaths() []string {
 // lookupCLI resolves a binary name against PATH first, then the common
 // user-local installation directories.
 func lookupCLI(binary string) (string, bool) {
+	if goruntime.GOOS == "windows" {
+		return lookupWindowsCLI(binary)
+	}
 	if path, err := exec.LookPath(binary); err == nil && strings.TrimSpace(path) != "" {
 		return path, true
 	}
@@ -98,6 +101,48 @@ func lookupCLI(binary string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// lookupWindowsCLI searches for the exact native executable. PATHEXT may
+// prefer npm batch shims, which cannot be spawned directly by the runner.
+func lookupWindowsCLI(binary string) (string, bool) {
+	if binary == "" {
+		return "", false
+	}
+	switch strings.ToLower(filepath.Ext(binary)) {
+	case "":
+		binary += ".exe"
+	case ".exe":
+	default:
+		return "", false
+	}
+	if strings.ContainsAny(binary, "/\\:") {
+		path, err := filepath.Abs(binary)
+		if err != nil {
+			return "", false
+		}
+		if isWindowsCLIFile(path) {
+			return path, true
+		}
+		return "", false
+	}
+	dirs := append(filepath.SplitList(os.Getenv("PATH")), extraSearchPaths()...)
+	for _, dir := range dirs {
+		// Implicit relative paths could resolve inside the daemon directory.
+		if !filepath.IsAbs(dir) {
+			continue
+		}
+		candidate := filepath.Join(dir, binary)
+		if isWindowsCLIFile(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func isWindowsCLIFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // DetectRuntimes scans PATH for the known Agent CLIs and records their

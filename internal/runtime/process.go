@@ -14,6 +14,7 @@ import (
 const processWaitDelay = time.Second
 
 func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
+	prepareCommandProcess(cmd)
 	var buf bytes.Buffer
 	var mu sync.Mutex
 	if sink != nil {
@@ -28,7 +29,7 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	// at 100ms a busy host (CI running Go and JS tests together) dropped the
 	// tail of a 50KB failure log, which is the part users need.
 	cmd.WaitDelay = processWaitDelay
-	err := cmd.Run()
+	err := runPreparedCommand(cmd)
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil
 	}

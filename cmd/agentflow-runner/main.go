@@ -78,7 +78,7 @@ func main() {
 			log.Fatal("locate updated runner: ", exeErr)
 		}
 		log.Printf("restarting updated runner")
-		if exeErr := syscall.Exec(binary, os.Args, os.Environ()); exeErr != nil {
+		if exeErr := restartRunner(binary); exeErr != nil {
 			log.Fatal("restart updated runner: ", exeErr)
 		}
 	} else if err != nil {

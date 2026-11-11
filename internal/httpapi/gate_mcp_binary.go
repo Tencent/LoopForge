@@ -27,8 +27,8 @@ func serveGateMCPBinary(c *gin.Context) {
 	if targetArch == "" {
 		targetArch = "amd64"
 	}
-	if targetOS != "darwin" && targetOS != "linux" {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux)", targetOS)})
+	if targetOS != "darwin" && targetOS != "linux" && targetOS != "windows" {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux, windows)", targetOS)})
 		return
 	}
 	if targetArch != "amd64" && targetArch != "arm64" {
@@ -87,5 +87,9 @@ func serveGateMCPBinary(c *gin.Context) {
 }
 
 func serveGateMCPFile(c *gin.Context, path string) {
-	serveBinaryArtifact(c, path, "agentflow-gate-mcp")
+	name := "agentflow-gate-mcp"
+	if sanitizePlatformParam(c.Query("os")) == "windows" {
+		name += ".exe"
+	}
+	serveBinaryArtifact(c, path, name)
 }
