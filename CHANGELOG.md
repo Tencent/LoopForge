@@ -2,6 +2,14 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## 0.3.6 — a default sandbox on an uninitialized catalog
+
+- A database without sandbox catalog rows, for example after a plain `docker compose --profile platform up` without the installer, now offers the built-in 默认运行沙箱 (`local`). Creating a blank SOP no longer fails with `sandbox profile not found`. The default is not written to the database, a saved `local` profile takes priority, and it cannot be deleted. Compose still runs it in a separate Docker container.
+- The new-SOP wizard picks the run sandbox from the project's, shared and global profiles, keeps a template's sandbox when it is available, asks for a replacement when it is not, and can refresh the list without losing the entered fields.
+- Project sandbox lists include globally shared profiles.
+
+No migrations are required.
+
 ## 0.3.5 — more agent CLIs, parallel SOP branches and a smaller settings menu
 
 - Chat and SOP roles can run ZCode with a personal API key. Personal settings keep a model catalog for Codex, Claude Code and the agent CLIs behind a custom Base URL: fetch the models the service publishes, then pick, reorder and rename them.
