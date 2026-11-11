@@ -326,7 +326,7 @@ func knowledgeMigrationFiles(t *testing.T) []string {
 	for _, file := range files {
 		base := filepath.Base(file)
 		number, err := strconv.Atoi(strings.SplitN(base, "_", 2)[0])
-		if err != nil || (number != 2 && number < 26) {
+		if err != nil || (number != 2 && (number < 26 || number > 38)) {
 			continue
 		}
 		out = append(out, file)
