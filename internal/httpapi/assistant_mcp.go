@@ -109,7 +109,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 		sort.Strings(names)
 		sort.Strings(reads)
 		sort.Strings(writes)
-		raw, _ := json.Marshal(ginH{"server": "agentflow", "name": "AgentFlow", "tools": names, "readOnly": reads, "write": writes})
+		raw, _ := json.Marshal(ginH{"server": "agentflow", "name": "LoopForge", "tools": names, "readOnly": reads, "write": writes})
 		return string(raw), nil
 	}
 	op, ok := assistantPublicOperations[tool]
@@ -346,7 +346,7 @@ func (h *assistantHandlers) callAssistantMCP(user domain.User, projectID string,
 	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
 		return "", fmt.Errorf("MCP %s 的 URL 无效", server.Name)
 	}
-	client := mcpclient.New(bound.URL, bound.Headers).WithTimeout(assistantChatTimeout)
+	client := mcpclient.New(bound.URL, bound.Headers).WithTimeout(assistantMCPCallTimeout)
 	tool := strings.TrimSpace(call.Tool)
 	if tool == "" || tool == "tools/list" {
 		tools, err := client.ListTools()

@@ -1,4 +1,4 @@
-# AgentFlow HTTP API
+# LoopForge HTTP API
 
 本文档以 `internal/httpapi/server.go`、`dispatch.go`、`schedule.go` 的当前实现为准。接口按领域拆分：
 
@@ -84,7 +84,6 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `GET` | `/api/issues/{issueId}` |
 | `POST` | `/api/issues/{issueId}/comments` |
 | `GET` | `/api/issues/{issueId}/runs` |
-| `POST` | `/api/issues/{issueId}/clarify` |
 | `POST` | `/api/issues/{issueId}/chat-clarify` |
 | `POST` | `/api/issues/{issueId}/reopen` |
 | `POST` | `/api/issues/{issueId}/dispatch` |

@@ -11,7 +11,7 @@ function accessMcpClientSpec(client,base,token){
 }
 function accessMcpAgentPrompt(spec,base,token){
   if(!token||token==='<YOUR_PERSONAL_TOKEN>')return '';
-  return `按照这个流程安装、初始化并验证好 AgentFlow MCP：\n\n1. 使用 curl 下载 安装流程文件, 禁止使用 fetch：${base}/mcp-setup.txt\n2. 两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
+  return `按照这个流程安装、初始化并验证好 LoopForge MCP：\n\n1. 使用 curl 下载 安装流程文件, 禁止使用 fetch：${base}/mcp-setup.txt\n2. 两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
 }
 // 对外展示的固定接入地址：优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
 function getPublicBaseURL(){

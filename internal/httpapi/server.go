@@ -43,6 +43,8 @@ type deps struct {
 	schedule   *schedule.Service
 	authClient *auth.Client
 	api        http.Handler
+	// passwordAttempts is this server's brute-force budget (auth_password.go).
+	passwordAttempts *passwordLimiter
 }
 
 // configureSync 是跨领域共享的依赖配置行为（mcp/issues/sync 都调用）。
@@ -66,7 +68,8 @@ func (d deps) getAuthClient() *auth.Client {
 // 对所有领域可见；需要跨领域协作的领域（issues → tasks/stream）显式注入。
 type Server struct {
 	*deps
-	auth            *authHandlers  // auth.go
+	auth            *authHandlers // auth.go
+	github          *githubHandlers
 	users           *usersHandlers // users.go
 	projects        *projectsHandlers
 	insights        *insightsHandlers
@@ -119,7 +122,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 }
 
 func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
-	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv()}
+	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
 	if err := ensureDefaultMCPsForAllProjects(s); err != nil {
 		log.Printf("ensure default project MCPs: %v", err)
 	} else {
@@ -145,6 +148,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
 		auth:            &authHandlers{deps: d},
+		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
@@ -172,9 +176,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if syncSvc != nil {
 		e.MergeIntoBranch = syncSvc.EnsureAndMergeBranchMR
 		e.FindBranchMR = syncSvc.FindBranchMR
-		syncSvc.OnRequirementImported = func(issue domain.Issue) {
-			go stream.autoClarifyIssue(issue.ID)
-		}
 	}
 	// Wake long-polling CLI runners the moment the engine queues a task.
 	e.SetRunnerDispatchNotify(func(provider string) { api.runners.runnerWaiters.notify([]string{provider}) })
@@ -237,6 +238,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/auth/gongfeng", api.auth.gongfengOAuthStatus)
 	g.GET("/api/auth/gongfeng/start", api.auth.gongfengOAuthStart)
 	g.GET("/api/auth/gongfeng/callback", api.auth.gongfengOAuthCallback)
+	g.GET("/api/auth/github", api.github.status)
+	g.PUT("/api/auth/github/config", api.github.configure)
+	g.POST("/api/auth/github/device", api.github.start)
+	g.POST("/api/auth/github/poll", api.github.poll)
+	g.GET("/api/auth/github/repositories", api.github.repositories)
 	g.GET("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/logout", api.auth.authLogout)
@@ -248,6 +254,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/users", api.users.users)
 	g.GET("/api/platform/admins", api.users.platformAdmins)
 	g.PUT("/api/platform/admins", api.users.platformAdmins)
+	g.GET("/api/platform/accounts", api.users.platformAccounts)
+	g.POST("/api/platform/accounts", api.users.platformAccounts)
+	g.PUT("/api/platform/accounts/:id/password", api.users.resetPlatformAccountPassword)
+	g.GET("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
+	g.PUT("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
+	g.DELETE("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {
@@ -260,6 +272,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// 工蜂 Git Token 校验：只允许当前登录用户校验自己的令牌。
 	g.GET("/api/users/:id/git-token/verify", api.users.verifyGitToken)
 	g.POST("/api/users/:id/git-token/verify", api.users.verifyGitToken)
+	g.POST("/api/users/:id/cli-models/probe", api.users.probeCLIModels)
 	g.Any("/api/users/:id", func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
@@ -295,6 +308,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/assistant/sessions/:id/issue", asst.sessionIssue)
 	g.GET("/api/assistant/sessions", asst.listSessions)
 	g.POST("/api/assistant/sessions/:id/archive", asst.archiveSession)
+	g.POST("/api/assistant/sessions/:id/read", asst.markSessionRead)
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
@@ -337,7 +351,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.Any("/api/issues/:id", api.issues.issue)
 	g.Any("/api/issues/:id/comments", api.issues.issue)
 	g.Any("/api/issues/:id/runs", api.issues.issue)
-	g.Any("/api/issues/:id/clarify", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify/cancel", api.issues.issue)
@@ -721,6 +734,11 @@ func (s *Server) bootstrap(c *gin.Context) {
 		currentUserID = current.ID
 	}
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
+	sharedModels := s.repo.SharedCodeBuddyModels()
+	sponsoredModel := ""
+	if len(sharedModels) > 0 {
+		sponsoredModel = sharedModels[0]
+	}
 	c.JSON(200, map[string]any{
 		"businessDomains": businessDomains, "projects": domain.PublicProjects(projects), "repositories": domain.PublicRepositories(repositories),
 		"agents": catalogAgents(agents), "rules": rules, "skills": skills, "mcpServers": mcpServers,
@@ -730,8 +748,10 @@ func (s *Server) bootstrap(c *gin.Context) {
 		"storage":      s.repo.StorageInfo(),
 		"capabilities": map[string]bool{"docker": runtime.DockerReady()},
 		// Set when users without their own CodeBuddy API Key can still chat
-		// and run SOPs on the platform's shared model.
-		"sponsoredModel": s.repo.SponsoredCodeBuddyModelAvailable(),
+		// and run SOPs on the platform's shared key, limited to these models
+		// (sponsoredModel is the default).
+		"sponsoredModel":  sponsoredModel,
+		"sponsoredModels": sharedModels,
 	})
 }
 

@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: AgentFlow Platform REST API
+  title: LoopForge Platform REST API
   version: 1.0.0
   description: |
-    Public control-plane API exposed by AgentFlow Studio. Signed login cookies and
+    Public control-plane API exposed by LoopForge. Signed login cookies and
     user-owned Bearer tokens authenticate Studio, REST API, and MCP access. Legacy
     deployment-level Basic authentication remains available. Worker signals,
     OTLP ingestion, run leases, and sandbox-reclamation endpoints are intentionally
@@ -215,9 +215,42 @@ paths:
                     shared: {type: boolean}
                     runId: {type: string}
                     generationStatus: {type: string}
+                    generationId: {type: string, description: "Latest reply of the conversation"}
+                    unread: {type: boolean, description: "The latest reply completed after the caller last opened the conversation (sidebar blue dot). Only for conversations the caller takes part in; replies that ended before read tracking existed are never unread."}
                     updatedAt: {type: string, format: date-time}
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/assistant/sessions/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Assistant]
+      operationId: markAssistantSessionRead
+      summary: Record the reply the caller has seen in a conversation
+      description: Clears the conversation's unread mark for the caller on every device. Only the conversation's latest reply is recorded; an older generationId changes nothing and returns recorded=false. Stored in MySQL `assistant_session_reads`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [generationId]
+              properties:
+                generationId: {type: string, maxLength: 64}
+      responses:
+        "200":
+          description: "`{ok: true, recorded: boolean}`"
+        "400":
+          description: Missing or invalid generationId
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/runs/{id}/conversation:
     parameters:
       - name: id
@@ -643,7 +676,7 @@ paths:
                 gitTokenClear: {type: boolean}
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
-                codeBuddyInternetEnvironment: {type: string}
+                codeBuddyInternetEnvironment: {type: string, description: "Edition that issued the CodeBuddy key: empty for International, \"internal\" for China, \"ioa\" for iOA (\"public\" and \"China\" are also accepted). Any other value is rejected with 400."}
                 codexApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
                 codexApiKeyClear: {type: boolean}
                 codexBaseUrl: {type: string, description: "HTTP(S) Responses API base URL. Omitted preserves the value; empty uses the official endpoint."}
@@ -659,6 +692,132 @@ paths:
                 $ref: "#/components/schemas/User"
         "403":
           $ref: "#/components/responses/Unauthorized"
+  /api/platform/accounts:
+    get:
+      tags: [Users]
+      operationId: listPlatformAccounts
+      summary: List accounts for platform administrators
+      responses:
+        "200":
+          description: Accounts, oldest first, and whether self sign-up is enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts: {type: array, items: {$ref: "#/components/schemas/PlatformAccount"}}
+                  signupEnabled: {type: boolean}
+        "403": {description: Platform administrator access required}
+    post:
+      tags: [Users]
+      operationId: createPlatformAccount
+      summary: Create a password account
+      description: Platform administrators only. Browser requests must be same-origin; API tokens are accepted. The account joins the welcome project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [loginName, password]
+              properties:
+                loginName: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$"}
+                password: {type: string, writeOnly: true, minLength: 6, maxLength: 72}
+                admin: {type: boolean, description: Also grant platform administration}
+      responses:
+        "201":
+          description: Created account
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformAccount"}
+        "400": {description: Invalid login name or password}
+        "403": {description: Platform administrator access or same-origin request required}
+        "409": {description: Login name already taken}
+  /api/platform/accounts/{id}/password:
+    put:
+      tags: [Users]
+      operationId: resetPlatformAccountPassword
+      summary: Set a new password for a password account
+      description: Platform administrators only. Accounts that sign in through GitHub or a gateway are refused with 400, so this never adds a password login to them.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: {type: string, writeOnly: true, minLength: 6, maxLength: 72}
+      responses:
+        "200":
+          description: Account
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformAccount"}
+        "400": {description: Invalid password or not a password account}
+        "403": {description: Platform administrator access or same-origin request required}
+        "404": {description: Unknown account}
+  /api/platform/codebuddy-key:
+    get:
+      tags: [Users]
+      operationId: getPlatformCodeBuddyKey
+      summary: Show the shared CodeBuddy API Key settings
+      description: Platform administrators only. The key itself is never returned.
+      parameters:
+        - name: environment
+          in: query
+          description: Network environment whose models to list in catalog; defaults to the saved one.
+          schema: {type: string, enum: ["", internal, ioa]}
+      responses:
+        "200":
+          description: Shared key status and the models offered in the environment
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformCodeBuddyKey"}
+        "403": {description: Platform administrator access required}
+    put:
+      tags: [Users]
+      operationId: savePlatformCodeBuddyKey
+      summary: Share a CodeBuddy API Key with users who have none
+      description: >-
+        Platform administrators only; browser requests must be same-origin. Users without their own key
+        chat and run SOPs on this key, limited to models (the first is the default). It replaces the
+        AGENTFLOW_ASSISTANT_SPONSOR_LOGIN account while configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [models]
+              properties:
+                apiKey: {type: string, writeOnly: true, description: Blank keeps the stored key.}
+                internetEnvironment: {type: string, description: "Empty for International, \"internal\" for China, \"ioa\" for iOA."}
+                models: {type: array, minItems: 1, maxItems: 32, items: {type: string}}
+      responses:
+        "200":
+          description: Saved settings
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformCodeBuddyKey"}
+        "400": {description: Missing key or models, or an invalid environment or model ID}
+        "403": {description: Platform administrator access or same-origin request required}
+    delete:
+      tags: [Users]
+      operationId: clearPlatformCodeBuddyKey
+      summary: Stop sharing the CodeBuddy API Key
+      responses:
+        "200":
+          description: Settings after clearing
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformCodeBuddyKey"}
+        "403": {description: Platform administrator access or same-origin request required}
   /api/business-domains:
     get:
       tags: [BusinessDomains]
@@ -1019,7 +1178,7 @@ paths:
       tags: [Issues]
       operationId: importTAPDIssue
       summary: Import one TAPD story, bug or task from a pasted link
-      description: Scores the imported title and description against the project's clarification policy. Below-threshold requirements are marked needs_user and cannot be dispatched until they pass.
+      description: Imports the work item as-is. Clarification is optional and never started automatically; the item can be dispatched right away.
       requestBody:
         required: true
         content:
@@ -1138,37 +1297,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-  /api/issues/{issueId}/clarify:
-    parameters:
-      - $ref: "#/components/parameters/IssueId"
-    post:
-      tags: [Issues]
-      operationId: assessIssueClarification
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [answers]
-              properties:
-                answers:
-                  type: object
-                  additionalProperties:
-                    type: string
-      responses:
-        "200":
-          description: Clarification assessment
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClarificationAssessment"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
   /api/issues/{issueId}/chat-clarify:
     parameters:
       - $ref: "#/components/parameters/IssueId"
@@ -1245,18 +1373,6 @@ paths:
                   type: array
                   items:
                     $ref: "#/components/schemas/ClarificationQuestion"
-                dimensions:
-                  type: object
-                  description: Per-dimension completeness ratings (0-100), folded into score with the project policy weights. For requirements this score gates SOP dispatch.
-                  additionalProperties:
-                    type: integer
-                    minimum: 0
-                    maximum: 100
-                missing:
-                  type: array
-                  description: Key information still unconfirmed after clarification.
-                  items:
-                    type: string
                 retry:
                   type: boolean
       responses:
@@ -3950,8 +4066,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMember"
-        clarification:
-          $ref: "#/components/schemas/ClarificationPolicy"
         tapdWorkspaceId:
           type: string
         tapdIterationId:
@@ -3974,6 +4088,36 @@ components:
         role:
           type: string
           enum: [maintainer, member, viewer]
+    PlatformAccount:
+      type: object
+      properties:
+        userId: {type: integer, format: int64}
+        loginName: {type: string}
+        chineseName: {type: string}
+        admin: {type: boolean}
+        password: {type: boolean, description: False for accounts that sign in through GitHub or a gateway}
+        codeBuddyApiKeyConfigured: {type: boolean}
+        createdAt: {type: string, format: date-time}
+    PlatformCodeBuddyKey:
+      type: object
+      properties:
+        configured: {type: boolean}
+        internetEnvironment: {type: string}
+        models: {type: array, items: {type: string}, description: Allowed models, the default first}
+        updatedAt: {type: string, format: date-time}
+        updatedBy: {type: string}
+        legacySponsor: {type: string, description: Account named by AGENTFLOW_ASSISTANT_SPONSOR_LOGIN, used while no key is configured here}
+        legacySponsorModel: {type: string}
+        catalog:
+          type: array
+          description: Models offered in the requested network environment (GET only)
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              name: {type: string}
+              family: {type: string}
+              credits: {type: string}
     User:
       type: object
       required: [id, loginName]
@@ -3992,32 +4136,6 @@ components:
         claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}
         claudeCodeBaseUrl: {type: string}
         codeBuddyInternetEnvironment: {type: string}
-    ClarificationPolicy:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-        skillId:
-          type: string
-        threshold:
-          type: integer
-          minimum: 0
-          maximum: 100
-        dimensions:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: string
-              name:
-                type: string
-              question:
-                type: string
-              weight:
-                type: integer
-              minLength:
-                type: integer
     RepositoryInput:
       type: object
       required: [projectId]
@@ -4121,6 +4239,24 @@ components:
           type: boolean
           readOnly: true
           description: Whether deletion is currently permitted, computed from complete task and run history on list and detail responses.
+        deletionBlock:
+          type: object
+          readOnly: true
+          description: Present when deletion is blocked. Uses complete execution history; clarification and unfinished work take precedence over historical success and completed issue status. The DELETE conflict response uses the same reason.
+          required: [code, reason]
+          properties:
+            code:
+              type: string
+              enum: [clarifying, active, succeeded, completed]
+            reason:
+              type: string
+              description: Human-readable explanation suitable for direct display.
+            runId:
+              type: string
+              description: Existing run responsible for the restriction, including legacy task-linked runs outside the current run list.
+            taskId:
+              type: string
+              description: Task responsible for the restriction when there is no corresponding blocking run.
         id:
           type: string
         projectId:
@@ -4213,25 +4349,8 @@ components:
           readOnly: true
     ClarificationAssessment:
       type: object
+      description: Optional AI clarification state. It carries no score and never gates SOP dispatch.
       properties:
-        score:
-          type: integer
-          minimum: 0
-          maximum: 100
-        passed:
-          type: boolean
-        answers:
-          type: object
-          additionalProperties:
-            type: string
-        dimensions:
-          type: object
-          additionalProperties:
-            type: integer
-        missing:
-          type: array
-          items:
-            type: string
         summary:
           type: string
         status:
@@ -4253,9 +4372,6 @@ components:
         writeBackFingerprint:
           type: string
         writeBackAt:
-          type: string
-          format: date-time
-        assessedAt:
           type: string
           format: date-time
     ClarificationMessage:

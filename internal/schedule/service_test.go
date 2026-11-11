@@ -459,16 +459,16 @@ func TestRunJobHonorsSourceFilter(t *testing.T) {
 	}
 }
 
-func TestRunJobSkipsUnmetRequirementClarification(t *testing.T) {
+func TestRunJobDispatchesRequirementsWithoutClarificationGate(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
 	for _, issue := range []domain.Issue{
-		{ID: "thin-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Score: 20, Status: domain.ClarificationNeedsUser, Gated: true}},
-		{ID: "sync-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Score: 0, Status: domain.ClarificationNeedsUser}},
-		{ID: "ready-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Passed: true, Score: 90, Gated: true}},
+		{ID: "thin-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser, Gated: true}},
+		{ID: "sync-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser}},
+		{ID: "ready-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationReady, Gated: true}},
 		{ID: "bug", ProjectID: "platform", Kind: "issue", Source: "gongfeng", Status: "todo", WorkflowID: "wf"},
 	} {
 		if err := st.PutIssue(issue); err != nil {
@@ -488,14 +488,14 @@ func TestRunJobSkipsUnmetRequirementClarification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.LastStatus != "success" || result.LastDispatched != 3 {
+	if result.LastStatus != "success" || result.LastDispatched != 4 {
 		t.Fatalf("result=%+v dispatched=%v", result, dispatched)
 	}
 	seen := map[string]bool{}
 	for _, id := range dispatched {
 		seen[id] = true
 	}
-	if seen["thin-req"] || !seen["sync-req"] || !seen["ready-req"] || !seen["bug"] {
+	if !seen["thin-req"] || !seen["sync-req"] || !seen["ready-req"] || !seen["bug"] {
 		t.Fatalf("dispatched=%v", dispatched)
 	}
 }

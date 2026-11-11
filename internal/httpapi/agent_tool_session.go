@@ -46,8 +46,9 @@ type AgentTerminalResult struct {
 	Report        *domain.AINotificationContent
 }
 
-// AgentToolSession is a short-lived, in-process MCP gateway binding for one
-// model request. The token is CSPRNG random and is never logged or returned to
+// AgentToolSession is an in-process MCP gateway binding for one model turn.
+// Its lifetime follows the turn, including turns without a deadline.
+// The token is CSPRNG random and is never logged or returned to
 // the browser.
 type AgentToolSession struct {
 	Token          string
@@ -90,8 +91,12 @@ type AgentToolSession struct {
 	screenshotSeq int
 	// dispatches are the Agent calls still running this turn. A subagent
 	// works in the bound workspace, so it is not switched under it.
-	dispatches  map[string]bool
+	// The value is the subagent id once the stream reports it.
+	dispatches  map[string]string
 	closed      atomic.Bool
+	committed   atomic.Bool
+	ctx         context.Context
+	stopContext func() bool // protected by mu
 	CancelModel context.CancelFunc
 }
 
@@ -141,6 +146,13 @@ func (s *AgentToolSession) addReplyScreenshot(mimeType string, data []byte) {
 // attachReplyFile adds a file to the reply; attaching the same name again
 // replaces it, so a demo revised during the turn is delivered once, current.
 func (s *AgentToolSession) attachReplyFile(name, mimeType string, data []byte) error {
+	return s.addReplyFile(name, mimeType, data, true)
+}
+
+// addReplyFile stores a file of this turn's reply. limited applies the
+// per-turn cap meant for the model's own attachments; a role's collected
+// deliverables are bounded by its contract instead.
+func (s *AgentToolSession) addReplyFile(name, mimeType string, data []byte, limited bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	files := 0
@@ -154,7 +166,7 @@ func (s *AgentToolSession) attachReplyFile(name, mimeType string, data []byte) e
 		}
 		files++
 	}
-	if files >= agentReplyFileLimit {
+	if limited && files >= agentReplyFileLimit {
 		return fmt.Errorf("每轮最多附 %d 个文件", agentReplyFileLimit)
 	}
 	s.replyFiles = append(s.replyFiles, agentReplyFile{Name: name, MimeType: mimeType, Data: data})
@@ -216,19 +228,6 @@ func newAgentToolSessionToken() (string, error) {
 	return hex.EncodeToString(raw[:]), nil
 }
 
-func agentToolSessionTTL(ctx context.Context) time.Duration {
-	if ctx != nil {
-		if deadline, ok := ctx.Deadline(); ok {
-			d := time.Until(deadline)
-			if d < time.Second {
-				return time.Second
-			}
-			return d
-		}
-	}
-	return agentToolSessionDefaultTTL
-}
-
 func (r *agentToolSessionRegistry) create(session *AgentToolSession) error {
 	if session == nil {
 		return errAgentToolInvalidSession
@@ -245,15 +244,29 @@ func (r *agentToolSessionRegistry) create(session *AgentToolSession) error {
 	if session.Final == nil {
 		session.Final = make(chan AgentTerminalResult, 1)
 	}
-	if session.ExpiresAt.IsZero() {
+	if session.ctx != nil {
+		if err := session.ctx.Err(); err != nil {
+			return err
+		}
+		// A live turn without a deadline must not inherit the fallback TTL
+		// used by standalone bindings. Cancellation and Close revoke it.
+		session.ExpiresAt, _ = session.ctx.Deadline()
+	} else if session.ExpiresAt.IsZero() {
 		session.ExpiresAt = time.Now().Add(agentToolSessionDefaultTTL)
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.sessions == nil {
 		r.sessions = map[string]*AgentToolSession{}
 	}
 	r.sessions[token] = session
+	r.mu.Unlock()
+	if session.ctx != nil {
+		session.mu.Lock()
+		if !session.closed.Load() {
+			session.stopContext = context.AfterFunc(session.ctx, func() { r.delete(token) })
+		}
+		session.mu.Unlock()
+	}
 	ensureAgentToolJanitor()
 	return nil
 }
@@ -321,6 +334,9 @@ func (s *AgentToolSession) expired(now time.Time) bool {
 	if s == nil {
 		return true
 	}
+	if s.ctx != nil && s.ctx.Err() != nil {
+		return true
+	}
 	return !s.ExpiresAt.IsZero() && !s.ExpiresAt.After(now)
 }
 
@@ -328,8 +344,14 @@ func (s *AgentToolSession) shutdown() {
 	if s == nil {
 		return
 	}
-	s.closed.Store(true)
-	if s.CancelModel != nil {
+	closing := s.closed.CompareAndSwap(false, true)
+	s.mu.Lock()
+	if s.stopContext != nil {
+		s.stopContext()
+		s.stopContext = nil
+	}
+	s.mu.Unlock()
+	if closing && s.CancelModel != nil {
 		s.CancelModel()
 	}
 }
@@ -342,11 +364,14 @@ func (s *AgentToolSession) Close() {
 }
 
 func (s *AgentToolSession) finished() bool {
-	return s != nil && s.closed.Load()
+	return s != nil && s.committed.Load()
 }
 
 func (s *AgentToolSession) commitFinal(result AgentTerminalResult) error {
 	if s == nil {
+		return errAgentToolInvalidSession
+	}
+	if s.expired(time.Now()) {
 		return errAgentToolInvalidSession
 	}
 	if !s.closed.CompareAndSwap(false, true) {
@@ -356,6 +381,7 @@ func (s *AgentToolSession) commitFinal(result AgentTerminalResult) error {
 	case s.Final <- result:
 	default:
 	}
+	s.committed.Store(true)
 	if s.CancelModel != nil {
 		s.CancelModel()
 	}
@@ -409,22 +435,31 @@ func (s *AgentToolSession) terminalToolsOnly() bool {
 }
 
 // trackDispatch follows Main Bot's Agent calls from the CLI stream: a call
-// starts running when it is announced and stops when its result arrives.
-func (s *AgentToolSession) trackDispatch(event assistantStreamEvent) {
+// starts running when it is announced and stops when its result arrives. It
+// returns the subagent type of a dispatch that just finished without error.
+func (s *AgentToolSession) trackDispatch(event assistantStreamEvent) string {
 	if s == nil || event.ID == "" || event.Parent != "" {
-		return
+		return ""
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
 	case event.Kind == "tool" && (event.Tool == "Agent" || event.Tool == "Task"):
 		if s.dispatches == nil {
-			s.dispatches = map[string]bool{}
+			s.dispatches = map[string]string{}
 		}
-		s.dispatches[event.ID] = true
+		// The CLI announces the call before its input; keep the type once known.
+		if event.Subagent != "" || s.dispatches[event.ID] == "" {
+			s.dispatches[event.ID] = event.Subagent
+		}
 	case event.Kind == "toolDone":
+		subagent, ok := s.dispatches[event.ID]
 		delete(s.dispatches, event.ID)
+		if ok && !event.Failed {
+			return subagent
+		}
 	}
+	return ""
 }
 
 func (s *AgentToolSession) dispatchRunning() bool {

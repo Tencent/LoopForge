@@ -116,9 +116,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		return runnerWorkspaceError(err)
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationCheckpointStatus {
-		gate := d.workspaceGate(request.RunID)
+		gate := d.requestGate(request)
 		if !gate.TryLock() {
-			return domain.RunnerWorkspaceResponse{Status: 409, Code: domain.WorkspaceErrorBusy, Error: "workspace is still in use"}
+			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
 		return runtime.WorkspaceCheckpointStatus(root)
@@ -126,23 +126,23 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) {
 		if request.Operation == domain.RunnerWorkspaceOperationCheckpointExport || request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
 			if d.workspaceTerminals.HasRunScope(request.RunID) {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace terminal is still active"}
+				return workspaceTerminalActiveResponse("workspace terminal is still active")
 			}
-			gate := d.workspaceGate(request.RunID)
+			gate := d.requestGate(request)
 			if !gate.TryLock() {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is still in use"}
+				return workspaceBusyResponse("workspace is still in use")
 			}
 			defer gate.Unlock()
 		}
 		return d.checkpointTransfers.Handle(ctx, root, request)
 	}
 	if (request.Operation == domain.RunnerWorkspaceOperationRestore || request.Operation == domain.RunnerWorkspaceOperationCheckpoint) && d.workspaceTerminals.HasRunScope(request.RunID) {
-		return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace terminal is still active"}
+		return workspaceTerminalActiveResponse("workspace terminal is still active")
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationRestore {
-		gate := d.workspaceGate(request.RunID)
+		gate := d.requestGate(request)
 		if !gate.TryLock() {
-			return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is still in use"}
+			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
 		if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
@@ -171,9 +171,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	switch request.Operation {
 	case domain.RunnerWorkspaceOperationArtifacts:
 		if !workspaceWrite {
-			gate := d.workspaceGate(request.RunID)
+			gate := d.requestGate(request)
 			if !gate.TryLock() {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is still in use"}
+				return workspaceBusyResponse("workspace is still in use")
 			}
 			defer gate.Unlock()
 			if request.RunStatus == "running" || request.RunStatus == "queued" {
@@ -186,9 +186,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		}
 		return runnerWorkspacePayload(map[string]any{"restoredArtifacts": restored})
 	case domain.RunnerWorkspaceOperationCheckpoint:
-		gate := d.workspaceGate(request.RunID)
+		gate := d.requestGate(request)
 		if !gate.TryLock() {
-			return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is still in use"}
+			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
 		archive, err := runtime.CreateWorkspaceCheckpoint(root)
@@ -210,6 +210,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		}
 		result, err := d.handleRunnerWorkspaceTerminal(ctx, root, scope, request, workspaceWrite)
 		if err != nil {
+			if isWorkspaceBusyError(err) {
+				return workspaceBusyResponse(err.Error())
+			}
 			return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
 		}
 		return runnerWorkspacePayload(result)
@@ -218,9 +221,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		// The same human may save files while their terminal holds the fence.
 		scope := fmt.Sprintf("%s:%d", request.RunID, request.TerminalOwner)
 		if !workspaceWrite && (request.TerminalOwner <= 0 || !d.workspaceTerminals.HasScope(scope)) {
-			gate := d.workspaceGate(request.RunID)
+			gate := d.requestGate(request)
 			if !gate.TryLock() {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "execution is still stopping"}
+				return workspaceBusyResponse("execution is still stopping")
 			}
 			defer gate.Unlock()
 		}
@@ -229,7 +232,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		}
 		for _, id := range d.activeTaskIDs() {
 			if !workspaceWrite && strings.Contains(id, request.RunID) {
-				return domain.RunnerWorkspaceResponse{Status: 409, Error: "execution is still stopping"}
+				return workspaceBusyResponse("execution is still stopping")
 			}
 		}
 		sha, err := runtime.WriteWorkspaceFile(root, request.Path, request.Content, request.ExpectedSHA256)

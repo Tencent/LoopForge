@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/procwatch"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -26,6 +27,10 @@ type dockerSandbox struct {
 	mu                  sync.Mutex
 	browserMu           sync.Mutex
 	started             bool
+	// execGate lets parallel branches exec concurrently (read side) while a
+	// cwd-recovery Recreate (write side) waits for them instead of docker
+	// rm-ing the container under a sibling's running command.
+	execGate sync.RWMutex
 }
 
 func (s *dockerSandbox) ID() string        { return s.id }
@@ -110,12 +115,19 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 	if err := s.ensureStarted(ctx); err != nil {
 		return "", err
 	}
+	s.execGate.RLock()
 	out, err := s.execOnce(ctx, command, sink)
+	s.execGate.RUnlock()
 	if err != nil && isDockerCwdUnsafe(out, err) {
-		if recErr := s.Recreate(ctx); recErr != nil {
+		s.execGate.Lock()
+		recErr := s.Recreate(ctx)
+		s.execGate.Unlock()
+		if recErr != nil {
 			return out, fmt.Errorf("current working directory is outside of container mount namespace: %w", err)
 		}
+		s.execGate.RLock()
 		out, err = s.execOnce(ctx, command, sink)
+		s.execGate.RUnlock()
 		if err != nil && isDockerCwdUnsafe(out, err) {
 			return out, fmt.Errorf("current working directory is outside of container mount namespace: %w", err)
 		}
@@ -145,6 +157,13 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
 		args = append(args, "-e", environment)
 	}
+	cliPath, err := s.onDemandCLIPath(ctx, command)
+	if err != nil {
+		return "", err
+	}
+	if cliPath != "" {
+		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
+	}
 	args = append(args, s.name)
 	args = append(args, dockerWorkspaceExecArgv(command.Argv)...)
 	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
@@ -168,7 +187,24 @@ if [ -x /workspace/.agentflow/runtime/bin/agentflow ]; then
   PATH=/workspace/.agentflow/runtime/bin:$PATH
   export PATH
 fi
+if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH" ]; then
+  PATH=$PATH:$AGENTFLOW_RUNTIME_CLI_PATH
+  export PATH
+fi
 `
+
+// onDemandCLIPath installs Claude Code for sandboxes of the published runtime
+// image, which does not bundle it, and returns the mounted bin directory. It is
+// appended to PATH so a CLI shipped by an older image still takes precedence.
+func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec) (string, error) {
+	if command.Provider != "claude-code" || len(command.Argv) == 0 || command.Argv[0] != "claude" || RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
+		return "", nil
+	}
+	if _, err := EnsureClaudeCode(ctx); err != nil {
+		return "", err
+	}
+	return ClaudeCodeBinDir(), nil
+}
 
 func dropShellLoginFlag(argv []string) []string {
 	if len(argv) == 0 {
@@ -479,6 +515,9 @@ func DockerImageCached(ctx context.Context, dockerfile domain.DockerfileDefiniti
 	if strings.TrimSpace(dockerfile.Content) == "" {
 		return false
 	}
+	if image := isolatedRuntimeImage(dockerfile); image != "" {
+		return dockerImageExists(ctx, image)
+	}
 	return dockerImageExists(ctx, cachedDockerImageName(dockerfile))
 }
 
@@ -626,10 +665,20 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		return err
 	}
 	args = append(args, stateArgs...)
+	if cliDir := RuntimeCLIDir(); cliDir != "" && image == isolatedRuntimeImage(s.dockerfile) {
+		if err := os.MkdirAll(cliDir, 0o755); err != nil {
+			return fmt.Errorf("prepare runtime CLI directory: %w", err)
+		}
+		args = append(args, "--mount", "type=bind,src="+cliDir+",dst="+cliDir+",readonly")
+	}
 	if p.ReadOnlyRootFS {
 		args = append(args, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m")
 	}
-	args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
+	if image == isolatedRuntimeImage(s.dockerfile) {
+		args = append(args, "--entrypoint", "sh", image, "-lc", "trap : TERM INT; sleep infinity & wait")
+	} else {
+		args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
+	}
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		dropEphemeralDockerImage(s.builtImage)
 		s.builtImage = ""
@@ -715,6 +764,12 @@ func prepareDockerfileBuildContext(workspace string, dockerfile domain.Dockerfil
 }
 
 func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.DockerfileDefinition) (string, error) {
+	if image := isolatedRuntimeImage(dockerfile); image != "" {
+		if !dockerImageExists(ctx, image) {
+			return "", fmt.Errorf("isolated runtime image %q is not available in the sandbox Docker daemon", image)
+		}
+		return image, nil
+	}
 	image := cachedDockerImageName(dockerfile)
 	if dockerImageExists(ctx, image) {
 		return image, nil
@@ -724,10 +779,43 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		return "", err
 	}
 	args := dockerBuildArgs(image, contextDir)
-	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker build: %w: %s", err, out)
+	build := func(ctx context.Context) *exec.Cmd { return exec.CommandContext(ctx, "docker", args...) }
+	if tail, err := procwatch.Run(ctx, build, dockerBuildWatch(dockerfile)); err != nil {
+		// Only the tail: a build killed after minutes of apt output used to
+		// carry all of it in the error.
+		return "", fmt.Errorf("docker build: %w: %s", err, tail)
 	}
 	return image, nil
+}
+
+// Build limits. A RUN step can be silent for a while (a compile, a large
+// download without a progress bar), so the stall window is wider than for git.
+const (
+	dockerBuildStallEnv   = "AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT"
+	dockerBuildTimeoutEnv = "AGENTFLOW_DOCKER_BUILD_TIMEOUT"
+)
+
+func dockerBuildWatch(dockerfile domain.DockerfileDefinition) procwatch.Options {
+	name := strings.TrimSpace(dockerfile.Name)
+	if name == "" {
+		name = strings.TrimSpace(dockerfile.ID)
+	}
+	label := "构建沙箱镜像"
+	if name != "" {
+		label += " " + name
+	}
+	return procwatch.Options{
+		Stage: "image", Label: label,
+		Stall: procwatch.DurationEnv(dockerBuildStallEnv, 10*time.Minute), StallEnv: dockerBuildStallEnv,
+		Timeout: procwatch.DurationEnv(dockerBuildTimeoutEnv, 0), TimeoutEnv: dockerBuildTimeoutEnv,
+	}
+}
+
+func isolatedRuntimeImage(dockerfile domain.DockerfileDefinition) string {
+	if dockerfile.Content != IsolatedDockerfile || len(dockerfile.Files) != 0 {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv("AGENTFLOW_ISOLATED_IMAGE"))
 }
 
 // IsolatedDockerfile matches the public "generic-backend" environment so both

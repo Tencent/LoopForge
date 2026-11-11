@@ -112,14 +112,37 @@ func TestContinueExistingBranchRequiresCompatibleRunner(t *testing.T) {
 	}
 	e := &Engine{repo: st}
 	repositories := []domain.RepositoryContext{{RepositoryID: "repo", WorkBranch: "feature/continue", RequireExistingWorkBranch: true}}
-	if err := e.requireExistingWorkBranchRunner("old", repositories); err == nil {
+	if err := e.requireWorkBranchCapabilities("old", repositories); err == nil {
 		t.Fatal("an older runner must not silently ignore the existing-branch requirement")
 	}
-	if err := e.requireExistingWorkBranchRunner("new", repositories); err != nil {
+	if err := e.requireWorkBranchCapabilities("new", repositories); err != nil {
 		t.Fatal(err)
 	}
 	repositories[0].RequireExistingWorkBranch = false
-	if err := e.requireExistingWorkBranchRunner("old", repositories); err != nil {
+	if err := e.requireWorkBranchCapabilities("old", repositories); err != nil {
 		t.Fatalf("creating a new branch must stay compatible with older runners: %v", err)
+	}
+}
+
+func TestCreateWorkBranchRequiresCompatibleRunner(t *testing.T) {
+	t.Parallel()
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutRunner(domain.Runner{ID: "old", RunnerVersion: "0.9.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutRunner(domain.Runner{ID: "new", RunnerVersion: domain.RunnerVersionCreateNewWorkBranch}); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{repo: st}
+	repositories := []domain.RepositoryContext{{RepositoryID: "repo", WorkBranch: "feature/caller", CreateNewWorkBranch: true}}
+	if err := e.requireWorkBranchCapabilities("old", repositories); err == nil {
+		t.Fatal("an older runner must not silently ignore the create-branch requirement")
+	}
+	if err := e.requireWorkBranchCapabilities("new", repositories); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -1520,7 +1520,7 @@ async function exportObsReport(){
     const scope=obsReportScope();
     const stamp=new Date().toISOString().slice(0,10);
     a.href=URL.createObjectURL(blob);
-    a.download=`AgentFlow用量报告-${scope.project}-${scope.who}-${stamp}.html`;
+    a.download=`LoopForge用量报告-${scope.project}-${scope.who}-${stamp}.html`;
     document.body.appendChild(a);a.click();a.remove();
     setTimeout(()=>URL.revokeObjectURL(a.href),1500);
     toast('已导出 HTML 报告','ok');
@@ -1578,7 +1578,7 @@ th{text-align:left;color:var(--muted);font-size:11px;padding:8px;border-bottom:1
 @media print{body{background:#fff}.wrap{padding:0}.kpis article,.block{break-inside:avoid}}
 @media(max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style></head><body><div class="wrap">
-<header><p class="eyebrow">AgentFlow</p><h1>用量分析报告</h1><p>效果看成功率和一次通过，投入看 Token、成本和执行耗时。交付看 SOP 是否跑完、PR 是否合入。</p>
+<header><p class="eyebrow">LoopForge</p><h1>用量分析报告</h1><p>效果看成功率和一次通过，投入看 Token、成本和执行耗时。交付看 SOP 是否跑完、PR 是否合入。</p>
 <div class="meta"><span>项目 ${escapeHTML(scope.project)}</span><span>维度 ${escapeHTML(scope.dim)}</span><span>${obsScope()==='project'?'范围':'责任人'} ${escapeHTML(scope.who)}</span><span>来源 ${escapeHTML(scope.source)}</span><span>生成于 ${escapeHTML(scope.at)}</span></div></header>
 <section class="kpis">${kpis}</section>
 ${obsReportTable('SOP 一览',['SOP','运行','成功率','返工率','Tokens','成本','均执行'],wfRows)}
@@ -1590,7 +1590,7 @@ ${obsReportTable('SOP 版本对比',['SOP','版本','运行','成功率','Tokens
 ${obsReportTable(obsGrainCaption()+'趋势',['周期','运行','需求','成功','失败','Tokens','成本','执行耗时'],trendRows)}
 ${projectRows?obsReportTable('各项目用量',['项目','运行','需求','Tokens','成本'],projectRows):''}
 ${obsReportTable('交付明细',['单号','标题','SOP','流程','责任人','Tokens','成本','PR','交付'],deliveryRows)}
-<footer>由 AgentFlow 用量分析导出。日志与 Trace 请在运行记录中查看。</footer>
+<footer>由 LoopForge 用量分析导出。日志与 Trace 请在运行记录中查看。</footer>
 </div></body></html>`;
 }
 

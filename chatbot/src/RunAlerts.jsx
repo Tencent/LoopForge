@@ -9,7 +9,7 @@ import React, {
 import { api } from "./api";
 import HarnessIcon from "./HarnessIcon";
 import {
-  CREDENTIAL_GUIDES,
+  credentialGuide,
   credentialHint,
   openCredentialSettings,
 } from "./credentials";
@@ -160,10 +160,15 @@ function RunAlert({
   const { run } = item;
   const failed = item.kind === "failed";
   const hint = credentialHint(item.reason);
-  const guide = hint ? CREDENTIAL_GUIDES[hint.field] : null;
   const ownerId = run.executionContext?.responsibleUserId;
   const mine = !ownerId || ownerId === user?.id;
   const owner = users.find((u) => u.id === ownerId);
+  const guide = hint
+    ? credentialGuide(
+        hint.field,
+        mine ? users.find((u) => u.id === user?.id) || user : owner,
+      )
+    : null;
   const ownerName =
     owner?.chineseName || owner?.name || owner?.loginName || "运行责任人";
   const flag = hint ? `${hint.field}Configured` : "";

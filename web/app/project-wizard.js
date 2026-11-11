@@ -251,6 +251,7 @@ function projectWizardReposHTML(w){
   const project=projectWizardProject()||{},repos=projectWizardRepos();
   const list=repos.map(r=>{const path=r.gongfengProjectId||'',name=r.name||path||r.id,shown=repoDisplayPath(parseGongfengRepoURL(r.webUrl||r.cloneUrl||path),path);return `<div class="pw-repo" data-pw-repo="${escapeHTML(r.id)}"><span class="pw-repo-ic">${pwIcon('repo',14,1.9)}</span><b title="${escapeHTML(name)}">${escapeHTML(name)}</b><code title="${escapeHTML(shown)}">${escapeHTML(shown)}</code><small>${escapeHTML(r.defaultBranch||'main')}</small>${r.integrateBranch?`<small title="集成分支">${escapeHTML(r.integrateBranch)}</small>`:''}${r.id===project.defaultRepositoryId?'<small class="is-def">默认</small>':''}<button type="button" class="pw-repo-rm" data-pw-repo-remove="${escapeHTML(r.id)}" title="移除" aria-label="移除仓库 ${escapeHTML(name)}">${pwIcon('x',14)}</button></div>`}).join('');
   const body=(list?`<div class="pw-repo-list">${list}</div>`:'')
+    +'<div data-github-repositories></div>'
     +pwField('GitHub 仓库地址',`<input class="pw-input pw-mono" id="pwRepoUrl" name="repoUrl" value="${escapeHTML(w.repo.url)}" placeholder="https://github.com/owner/repo" spellcheck="false" autocomplete="off">`,{for:'pwRepoUrl',hint:projectWizardRepoHint(w.repo.url),hintAttrs:' data-pw-repo-hint'})
     +`<div class="pw-row2">${pwField('主分支',`<input class="pw-input pw-mono" id="pwRepoBranch" name="repoBranch" value="${escapeHTML(w.repo.branch)}" placeholder="main" spellcheck="false">`,{for:'pwRepoBranch'})}${pwField('集成分支',`<input class="pw-input pw-mono" id="pwRepoIntegrate" name="repoIntegrate" value="${escapeHTML(w.repo.integrate)}" placeholder="可选" spellcheck="false">`,{for:'pwRepoIntegrate'})}</div>`
     +`<div><button type="button" class="pw-btn pw-btn-outline pw-btn-sm" data-pw-action="add-repo"${w.saving?' disabled':''}>＋ 添加仓库</button></div>`;
@@ -335,6 +336,11 @@ function renderProjectWizard(){
   }
   document.body?.classList?.add('pw-open');
   bindUserSearches(host);
+  if(w.step==='repos'&&typeof mountGitHubRepoPicker==='function')mountGitHubRepoPicker(host.querySelector('[data-github-repositories]'),repository=>{
+    w.repo.url=repository.html_url;w.repo.branch=repository.default_branch||'main';
+    const url=host.querySelector('[name="repoUrl"]'),branch=host.querySelector('[name="repoBranch"]');
+    url.value=w.repo.url;branch.value=w.repo.branch;syncProjectWizardField(url);
+  });
   focusProjectWizard();
 }
 function focusProjectWizard(){

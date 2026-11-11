@@ -14,6 +14,8 @@ LoopForge Local 在已有的编程助手中运行本地开发工作流，无需�
 | Codex | `npx -y loopforge-cli@latest install codex` | `$devflow-codex "<需求>"` |
 | Cursor | `npx -y loopforge-cli@latest install cursor` | `/start-devflow "<需求>"` |
 | Claude Code | `npx -y loopforge-cli@latest install claude` | `/start-devflow "<需求>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<需求>"` |
+| Hermes Agent | `npx -y loopforge-cli@latest skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"` |
 
 以 Claude Code 为例：
 
@@ -32,7 +34,7 @@ npx -y loopforge-cli@latest status claude
 npx -y loopforge-cli@latest doctor
 ```
 
-Pi 通过 [Portable Edition](#portable-edition) 支持。
+Pi、DeepSeek Harness 和 Hermes Agent 通过 [Portable Edition](#portable-edition) 支持。DSH 还可以安装[可选插件](../../local/dsh-plugin/README.md)，提供任务控制、状态、产物和人工审批入口。Hermes 使用项目级 `.hermes/skills/` 和 `delegate_task`，不会修改 `~/.hermes/config.yaml`；需要独立命令时可安装[可选 Hermes 插件](../../local/hermes-plugin/README.md)，提供 `/loopforge status`、`/loopforge result` 和 `/loopforge approve`。
 
 ## 工作方式
 
@@ -63,6 +65,8 @@ LoopForge 会根据任务复杂度选择路径：小改动走精简的单角色�
 | Cursor | ✓ | ✓ |
 | Claude Code | ✓ | ✓ |
 | Pi | — | ✓ |
+| DeepSeek Harness | — | ✓ |
+| Hermes Agent | — | ✓ |
 
 同一项目中，每个编码 Agent 只能启用一种 Edition。两者的区别和目录说明见 [Edition selection](editions.md)。
 
@@ -135,6 +139,8 @@ LoopForge 尤其适合这些任务：
 | Cursor | `npx -y loopforge-cli@latest skills install cursor` | `/devflow "<需求>"` |
 | Claude Code | `npx -y loopforge-cli@latest skills install claude` | `/devflow "<需求>"` |
 | Pi | `npx -y loopforge-cli@latest skills install pi`，然后 `pi install npm:pi-subagents` | `/skill:devflow "<需求>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<需求>"` |
+| Hermes Agent | `npx -y loopforge-cli@latest skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"`（可选插件：`/loopforge`） |
 
 完整边界和目录说明见 [Classic / Portable 说明](editions.md)。
 
@@ -146,7 +152,7 @@ LoopForge 尤其适合这些任务：
 npm install --global loopforge-cli
 ```
 
-之后用上面的宿主名（`codebuddy`、`codex`、`cursor`、`claude`，Portable Edition 另有 `pi`）维护安装：
+之后用上面的宿主名（`codebuddy`、`codex`、`cursor`、`claude`，Portable Edition 另有 `pi`、`dsh` 和 `hermes`）维护安装：
 
 ```bash
 # Classic Edition
@@ -176,7 +182,7 @@ pipx install ./local
 cd local/tools/tcmcp
 ```
 
-再按 [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md) 启动。云 API 密钥不会写入生成的 zip 或容器镜像，只留在拉取资源或安装 MCP 客户端的本机。LoopForge 打 `vX.Y.Z` tag 发版时会发布 `ghcr.io/tencent/loopforge-tcmcp:<version>`。
+再按 [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md) 启动。云 API 密钥不会写入生成的 zip 或容器镜像，只留在拉取资源或安装 MCP 客户端的本机。LoopForge Local 以 `local-vX.Y.Z` tag 发版时会发布 `ghcr.io/tencent/loopforge-tcmcp:<version>`。
 
 ## 权限与安全
 

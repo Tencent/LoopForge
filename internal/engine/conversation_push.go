@@ -45,7 +45,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	}
 	message = strings.TrimSpace(message)
 	if message == "" {
-		message = "AgentFlow: " + strings.TrimSpace(run.Input)
+		message = "LoopForge: " + strings.TrimSpace(run.Input)
 	}
 	message = truncateCommitMessage(message)
 	sharedTarget = strings.TrimSpace(sharedTarget)
@@ -64,6 +64,9 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 		dir := repositoryWorkspacePath(root, rc)
 		if !gitwork.HasWork(ctx, dir, repositoryBaseBranch(rc)) {
 			continue
+		}
+		if err := gitwork.RequireOnWorkBranch(ctx, dir, rc.WorkBranch); err != nil {
+			return heads, fmt.Errorf("%s: %w", rc.Name, err)
 		}
 		if err := applyWorkspaceGitAuth(ctx, dir); err != nil {
 			return heads, err

@@ -114,11 +114,21 @@ func safeRunnerPath(v string) string {
 	return b.String()
 }
 
-func (e *Engine) requireExistingWorkBranchRunner(runnerID string, repositories []domain.RepositoryContext) error {
+// requireWorkBranchCapabilities refuses a run whose branch semantics the
+// selected runner cannot honour: an old daemon would ignore the flags and
+// silently check out an existing same-named branch.
+func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []domain.RepositoryContext) error {
 	if runnerID == "" {
 		return nil
 	}
 	for _, repository := range repositories {
+		if repository.CreateNewWorkBranch {
+			runner, ok := e.repo.Runner(runnerID)
+			if !ok || !runner.SupportsCreateNewWorkBranch() {
+				return fmt.Errorf("按指定名字新建分支需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionCreateNewWorkBranch)
+			}
+			continue
+		}
 		if !repository.RequireExistingWorkBranch {
 			continue
 		}
@@ -126,13 +136,12 @@ func (e *Engine) requireExistingWorkBranchRunner(runnerID string, repositories [
 		if !ok || !runner.SupportsExistingWorkBranch() {
 			return fmt.Errorf("继续已有分支需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionExistingWorkBranch)
 		}
-		break
 	}
 	return nil
 }
 
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
-	if err := e.requireExistingWorkBranchRunner(e.defaultExecutionRunner(run), run.RepositoryContexts()); err != nil {
+	if err := e.requireWorkBranchCapabilities(e.defaultExecutionRunner(run), run.RepositoryContexts()); err != nil {
 		return nil, err
 	}
 	profile, resources, err := e.workspaceSandboxProfile(run)
@@ -158,7 +167,7 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 // task-scoped invocation. The run's repository travels with the task so the
 // sandbox/workspace is created on that machine.
 func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run domain.Run, node domain.WorkflowNode, sb *runEnvironment, workspace string, ex domain.ExecutorDefinition, agent domain.AgentDefinition, assets domain.AgentAssetBundle, prompt, invocationID string, options runtime.InvocationOptions, sink runtime.EventSink) (string, error) {
-	if err := e.requireExistingWorkBranchRunner(runnerID, run.RepositoryContexts()); err != nil {
+	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return "", err
 	}
 	if err := e.requireRunnerProvider(runnerID, ex.Kind); err != nil {
@@ -204,6 +213,16 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			}
 			invocation.CodeBuddyAPIKey = sb.credentialSnapshot().CodeBuddy.APIKey
 			invocation.CodeBuddyInternetEnvironment = sb.credentialSnapshot().CodeBuddy.InternetEnvironment
+		default:
+			if runtime.IsAgentCLI(ex.Kind) {
+				cred := sb.credentialSnapshot().AgentCLI[ex.Kind]
+				if strings.TrimSpace(cred.APIKey) == "" {
+					return "", fmt.Errorf("当前责任人未配置 %s API Key：请先在个人配置中配置", runtime.AgentCLILabel(ex.Kind))
+				}
+				invocation.AgentCLIAPIKey = cred.APIKey
+				invocation.AgentCLIBaseURL = cred.BaseURL
+				invocation.AgentCLIProtocol = cred.Protocol
+			}
 		}
 	}
 	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
@@ -319,6 +338,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			Ref:                       repositoryBaseBranch(run.Repository),
 			WorkBranch:                run.Repository.WorkBranch,
 			RequireExistingWorkBranch: run.Repository.RequireExistingWorkBranch,
+			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
 			GitToken:                  gitToken,
 		}
 	}
@@ -333,6 +353,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			Ref:                       repositoryBaseBranch(rc),
 			WorkBranch:                rc.WorkBranch,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
+			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
 			GitToken:                  gitToken,
 			Dir:                       rc.WorkspaceDir,
 		})
@@ -348,7 +369,7 @@ func shellSingleQuote(value string) string {
 // the first node; subsequent shared-layout nodes reuse the same checkout and
 // its workspace-local Git index flags.
 func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run domain.Run, nodeID, workspace, language, script, artifactDirectory string, artifacts []domain.ArtifactContract, sb *runEnvironment, gitToken, gitUserName, gitUserEmail string, assets domain.AgentAssetBundle, sink runtime.EventSink) (string, error) {
-	if err := e.requireExistingWorkBranchRunner(runnerID, run.RepositoryContexts()); err != nil {
+	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return "", err
 	}
 	if err := e.requireRunnerProvider(runnerID, "terminal"); err != nil {

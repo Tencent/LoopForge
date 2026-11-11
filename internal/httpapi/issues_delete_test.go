@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,15 @@ func TestDeleteIssueExecutionHistory(t *testing.T) {
 			if detail.Issue.DeletionAllowed == success || len(list) != 1 || list[0].DeletionAllowed == success {
 				t.Fatal("incorrect deletion affordance")
 			}
+			if success {
+				for _, view := range []issueDeletionView{detail.Issue, list[0]} {
+					if view.DeletionBlock == nil || view.DeletionBlock.Code != "succeeded" || view.DeletionBlock.RunID != "succeeded" {
+						t.Fatalf("missing deletion reason/destination: %+v", view.DeletionBlock)
+					}
+				}
+			} else if detail.Issue.DeletionBlock != nil || list[0].DeletionBlock != nil {
+				t.Fatal("deletable issue has a stale block")
+			}
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/api/issues/history", nil))
 			expected := http.StatusNoContent
@@ -88,6 +98,9 @@ func TestDeleteIssueExecutionHistory(t *testing.T) {
 			}
 			if rr.Code != expected {
 				t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+			}
+			if success && !strings.Contains(rr.Body.String(), detail.Issue.DeletionBlock.Reason) {
+				t.Fatalf("delete conflict disagrees with list/detail: %s", rr.Body.String())
 			}
 			for _, status := range statuses {
 				_, runExists := st.Run(status)

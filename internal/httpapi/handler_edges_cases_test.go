@@ -184,7 +184,7 @@ func TestWorkbenchReferencesAndUploads(t *testing.T) {
 	run := domain.Run{
 		ID: "cva-wb-run", WorkflowID: "cva-wb-w", Status: "running",
 		ExecutionContext: domain.TelemetryContext{ProjectID: projectID, IssueID: "cva-wb-i"},
-		WorkflowSnapshot: domain.WorkflowDefinition{Name: "Workflow", Nodes: []domain.WorkflowNode{{ID: "n", AgentID: "cva-wb-a", TaskPrompt: "Task"}}},
+		WorkflowSnapshot: domain.WorkflowDefinition{Name: "Workflow", Nodes: []domain.WorkflowNode{{ID: "n", AgentID: "cva-wb-a"}}},
 		Nodes:            map[string]*domain.NodeRun{"n": {Status: "running", Output: "out"}},
 		Repositories:     []domain.RepositoryContext{{RepositoryID: "cva-wb-r", Name: "Repo"}},
 	}
@@ -216,7 +216,7 @@ func TestWorkbenchReferencesAndUploads(t *testing.T) {
 			t.Errorf("%s reference rejected", kind)
 		}
 	}
-	if agentID, task := runNodeDefinition(run, "n"); taskWorkbenchReferenceAllowed(run, "agent", "other") || agentID != "cva-wb-a" || task != "Task" {
+	if taskWorkbenchReferenceAllowed(run, "agent", "other") || runNodeAgentID(run, "n") != "cva-wb-a" || runNodeAgentID(run, "missing") != "" {
 		t.Fatal("task reference helpers")
 	}
 
@@ -729,14 +729,14 @@ func TestAssistantTaskGenerationAndWriterBranches(t *testing.T) {
 
 	task := assistantTask{ID: "cva-r3-empty", Name: "Empty", Prompt: "P", ProjectID: projectID, Enabled: true, IntervalSec: 60}
 	h.generate = func(context.Context, string, domain.User) (string, error) { return "   ", nil }
-	if err := h.executeAssistantTask(context.Background(), user, &task); err == nil || task.LastError != "未返回结果" {
+	if err := h.executeAssistantTask(context.Background(), user, &task); err == nil || task.LastStatus != "error" || task.LastError == "" {
 		t.Fatalf("empty result=%+v %v", task, err)
 	}
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	task.ID = "cva-r3-cancel"
 	h.generate = func(context.Context, string, domain.User) (string, error) { return "unused", nil }
-	if err := h.executeAssistantTask(cancelCtx, user, &task); err == nil || !strings.Contains(task.LastError, "取消") {
+	if err := h.executeAssistantTask(cancelCtx, user, &task); err == nil || !strings.Contains(task.LastError, "停止") {
 		t.Fatalf("cancelled=%+v %v", task, err)
 	}
 	task.ID, task.LastRunAt = "cva-r3-due", time.Now().Add(-2*time.Minute)

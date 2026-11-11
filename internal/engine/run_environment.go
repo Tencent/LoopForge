@@ -15,8 +15,9 @@ import (
 )
 
 // runEnvironment owns the single sandbox/workspace assigned to a workflow run.
-// SOP nodes serialize complete executions. Group tasks hold nodeMu only while
-// preparing the shared environment and use independent invocation configuration.
+// SOP nodes and group tasks hold nodeMu only while preparing the shared
+// environment (checkout, preparation scripts, inputs); parallel branches then
+// execute concurrently and are counted in activeExecutions.
 type runEnvironment struct {
 	sandbox              runtime.Sandbox
 	nodeMu               sync.Mutex
@@ -229,6 +230,7 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	if user, ok := e.repo.User(userID); ok {
 		credentials.Codex = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
 		credentials.ClaudeCode = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
+		credentials.AgentCLI = runtime.AgentCLIUserCredentials(user)
 	}
 	scriptAssets, _, _ := runtime.PrepareMCPServers(e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, userID), runtime.MCPTarget{GitToken: credentials.GitToken})
 	credentials.MCPServers = scriptAssets.MCPServers
@@ -355,7 +357,7 @@ func (e *Engine) LocalRunWorkspace(run domain.Run) (string, string) {
 		return "", "工作区位于远程执行机器，当前版本暂不支持远程浏览"
 	}
 	if e.foreignWorkspaceBind(run) {
-		return "", "工作区绑定在其他 AgentFlow 实例"
+		return "", "工作区绑定在其他 LoopForge 实例"
 	}
 	workspace := e.sandboxes.RunWorkspace(workspaceRunID(run))
 	if strings.TrimSpace(workspace) == "" {

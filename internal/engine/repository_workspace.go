@@ -3,6 +3,7 @@ package engine
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/procwatch"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -97,6 +98,14 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	if repository.RequireExistingWorkBranch && !existingDevelopmentBranch(repository) {
 		return fmt.Errorf("continuing an existing branch requires a development branch distinct from the main and integration branches")
 	}
+	if repository.CreateNewWorkBranch {
+		if repository.RequireExistingWorkBranch {
+			return fmt.Errorf("a work branch cannot both continue an existing branch and be newly created")
+		}
+		if !existingDevelopmentBranch(repository) {
+			return fmt.Errorf("creating a work branch requires a development branch name distinct from the main and integration branches")
+		}
+	}
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return fmt.Errorf("create repository directory: %w", err)
 	}
@@ -137,7 +146,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("copy local source: %w: %s", err, strings.TrimSpace(string(output)))
 		}
-		for _, args := range [][]string{{"init", "-b", "agentflow-base"}, {"config", "user.email", "agentflow@local"}, {"config", "user.name", "AgentFlow"}, {"add", "-A"}, {"commit", "-m", "AgentFlow baseline", "--quiet"}} {
+		for _, args := range [][]string{{"init", "-b", "agentflow-base"}, {"config", "user.email", "loopforge@local"}, {"config", "user.name", "LoopForge"}, {"add", "-A"}, {"commit", "-m", "LoopForge baseline", "--quiet"}} {
 			cmd = exec.CommandContext(ctx, "git", append([]string{"-C", workspace}, args...)...)
 			if output, err := cmd.CombinedOutput(); err != nil {
 				return fmt.Errorf("snapshot local source: %w: %s", err, strings.TrimSpace(string(output)))
@@ -155,16 +164,25 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	if remote == "" {
 		return fmt.Errorf("repository has neither localPath nor cloneUrl")
 	}
+	if err := gitwork.ValidateRemoteURL(remote, true); err != nil {
+		return fmt.Errorf("git clone: %w", err)
+	}
 	baseBranch := repositoryBaseBranch(repository)
 	clone := func(branch string, useReference bool) error {
-		args := []string{"clone", "--no-hardlinks", "--single-branch", "--branch", branch}
+		// --progress: without a terminal git prints nothing until it finishes,
+		// which is what made a slow clone indistinguishable from a hung one.
+		args := []string{"clone", "--progress", "--no-hardlinks", "--single-branch", "--branch", branch}
+		watch := cloneWatch(repository)
 		if useReference && localIsGit && cloneURL != "" && localPath != cloneURL {
 			args = append(args, "--reference", localPath, "--dissociate")
+			// --dissociate repacks silently after the transfer; a large local
+			// cache can take minutes there without a byte of output.
+			watch.Stall = 0
 		}
 		// Clone into the existing directory (`.`) so git cannot unlink and
 		// recreate `workspace`. That inode is the Docker bind-mount source.
-		args = append(args, gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
-		if _, err := runGit(ctx, workspace, args...); err != nil {
+		args = append(args, "--", gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
+		if _, err := gitwork.Watch(ctx, workspace, watch, args...); err != nil {
 			return fmt.Errorf("git clone: %w", err)
 		}
 		return nil
@@ -179,6 +197,12 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		return err
 	}
 	if err := clone(baseBranch, true); err != nil {
+		// The retries below recover from a bad --reference cache or an empty
+		// remote. A clone that stalled, timed out or outlived the caller would
+		// only repeat the same wait on the same network.
+		if procwatch.Stopped(err) || ctx.Err() != nil {
+			return err
+		}
 		if clearErr := reset(workspace); clearErr != nil {
 			return clearErr
 		}
@@ -218,7 +242,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		return err
 	}
 	if origin := strings.TrimSpace(cloneURL); origin != "" {
-		if _, err := gitC(ctx, workspace, "remote", "set-url", "origin", origin); err != nil {
+		if _, err := gitC(ctx, workspace, "remote", "set-url", "--", "origin", origin); err != nil {
 			return fmt.Errorf("set origin url: %w", err)
 		}
 	}
@@ -240,6 +264,11 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		if repository.RequireExistingWorkBranch {
 			checkout = func() error { return checkoutContinuedWorkBranch(ctx, workspace, repository.WorkBranch) }
 		}
+		if repository.CreateNewWorkBranch {
+			// A freshly cloned workspace is where a named branch is created, so this
+			// is the one place that must refuse an already existing remote branch.
+			checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
+		}
 		if err := checkout(); err != nil {
 			return err
 		}
@@ -255,7 +284,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 // one empty commit and leaves workspace on it. seeded is false when the
 // remote is unreachable or has branches; the clone error then stands.
 func seedEmptyRepository(ctx context.Context, workspace, remote, defaultBranch, baseBranch string, reset func(string) error) (seeded bool, err error) {
-	heads, lsErr := runGit(ctx, workspace, "ls-remote", "--heads", remote)
+	heads, lsErr := runGit(ctx, workspace, "ls-remote", "--heads", "--", remote)
 	if lsErr != nil || strings.TrimSpace(heads) != "" {
 		return false, nil
 	}
@@ -269,7 +298,7 @@ func seedEmptyRepository(ctx context.Context, workspace, remote, defaultBranch, 
 	for _, args := range [][]string{
 		{"init", "-q", "."},
 		{"symbolic-ref", "HEAD", "refs/heads/" + first},
-		{"remote", "add", "origin", remote},
+		{"remote", "add", "--", "origin", remote},
 	} {
 		if _, err := runGit(ctx, workspace, args...); err != nil {
 			return true, fmt.Errorf("initialize empty repository: %w", err)
@@ -341,7 +370,10 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		return err
 	}
 	if origin := strings.TrimSpace(repository.CloneURL); origin != "" {
-		_, _ = gitC(ctx, workspace, "remote", "set-url", "origin", origin)
+		if err := gitwork.ValidateRemoteURL(origin, true); err != nil {
+			return fmt.Errorf("set origin url: %w", err)
+		}
+		_, _ = gitC(ctx, workspace, "remote", "set-url", "--", "origin", origin)
 	}
 	baseBranch := repositoryBaseBranch(repository)
 	if repository.IntegrateBranch != "" && repository.WorkBranch != "" {
@@ -368,6 +400,14 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		checkout := func() error { return checkoutWorkBranch(ctx, workspace, repository.WorkBranch, baseBranch, false) }
 		if repository.RequireExistingWorkBranch {
 			checkout = func() error { return checkoutContinuedWorkBranch(ctx, workspace, repository.WorkBranch) }
+		} else if repository.CreateNewWorkBranch {
+			// A local branch in this cached workspace is the one this run created
+			// (and may have pushed), so it is resumed. Without it the branch is
+			// still to be created here, and a same-named remote branch belongs to
+			// someone else: refuse it exactly as a fresh clone does.
+			if _, created := gitRevParse(ctx, workspace, "refs/heads/"+strings.TrimSpace(repository.WorkBranch)); !created {
+				checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
+			}
 		}
 		if err := checkout(); err != nil {
 			return err
@@ -405,6 +445,30 @@ func checkoutContinuedWorkBranch(ctx context.Context, workspace, branch string) 
 	// available for the normal synchronization or repair step.
 	_, _ = gitC(ctx, workspace, "merge", "--ff-only", remoteRef)
 	return nil
+}
+
+// checkoutNewWorkBranch creates the caller-named work branch. The caller asked
+// for a new branch, so a same-named remote (or leftover local) branch is an
+// error: silently checking it out would put the run on other people's work.
+func checkoutNewWorkBranch(ctx context.Context, workspace, workBranch string) error {
+	workBranch = strings.TrimSpace(workBranch)
+	if workBranch == "" {
+		return fmt.Errorf("creating a work branch requires its name")
+	}
+	if _, ok := gitRevParse(ctx, workspace, "refs/heads/"+workBranch); ok {
+		return fmt.Errorf("本地已存在分支 %s，不能按新建分支处理", workBranch)
+	}
+	out, err := gitC(ctx, workspace, "ls-remote", "--heads", "origin", "refs/heads/"+workBranch)
+	if err != nil {
+		return fmt.Errorf("无法确认远端分支 %s 是否存在：%w", workBranch, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		_, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if ok && ref == "refs/heads/"+workBranch {
+			return fmt.Errorf("远端已存在分支 %s，不能按新建分支处理；继续该分支请用 branchMode=continue", workBranch)
+		}
+	}
+	return createWorkBranchFromBase(ctx, workspace, workBranch)
 }
 
 func fetchRepositoryWorkBranch(ctx context.Context, workspace string, repository domain.RepositoryContext) error {
@@ -500,6 +564,22 @@ func checkoutWorkBranch(ctx context.Context, workspace, workBranch, baseBranch s
 		return nil
 	}
 	return createWorkBranchFromBase(ctx, workspace, workBranch)
+}
+
+// cloneWatch bounds a platform-side clone. A clone that keeps printing
+// progress is allowed to be slow; one that prints nothing for the stall window
+// is treated as hung. The total limit is off by default so a large SOP
+// checkout is not cut short.
+func cloneWatch(repository domain.RepositoryContext) procwatch.Options {
+	name := strings.TrimSpace(repository.Name)
+	if name == "" {
+		name = repository.RepositoryID
+	}
+	return procwatch.Options{
+		Stage: "clone", Label: "克隆仓库 " + name,
+		Stall: procwatch.DurationEnv(gitwork.CloneStallEnv, 5*time.Minute), StallEnv: gitwork.CloneStallEnv,
+		Timeout: procwatch.DurationEnv(gitwork.CloneTimeoutEnv, 0), TimeoutEnv: gitwork.CloneTimeoutEnv,
+	}
 }
 
 func runGit(ctx context.Context, workspace string, args ...string) (string, error) {

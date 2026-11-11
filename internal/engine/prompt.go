@@ -26,11 +26,8 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	if role != nil && strings.TrimSpace(role.Prompt) != "" {
 		prompt = compileTaskPrompt(node, role.Name, role.Prompt, role.Verification)
 	}
-	if task := strings.TrimSpace(node.TaskPrompt); task != "" {
-		prompt += "\n\n## 本节点任务\n\n" + task
-	}
-	// Roles may only define instructions, without a task prompt. Never
-	// silently drop their node task or run input.
+	// A role prompt may not reference {{input}}; never silently drop the run
+	// input.
 	if strings.TrimSpace(run.Input) != "" && !strings.Contains(prompt, "{{input}}") {
 		prompt += "\n\n## 本次运行输入\n\n{{input}}"
 	}

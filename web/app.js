@@ -1541,6 +1541,12 @@ function mountNativeChat(){
         else reloadShellProjects().then(follow).catch(()=>{});
       }
       if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
+      if(message.type==='agentflow-welcome-demo'&&!frame.dataset.demoBusy){
+        frame.dataset.demoBusy='true';
+        api('/api/runs',{method:'POST',body:JSON.stringify({workflowId:'welcome-workflow',projectId:'welcome',input:'首次体验：运行脚本、审批并交付产物'})}).then(run=>{
+          location.hash='#/runs/'+encodeURIComponent(run.id);
+        }).catch(error=>toast(error.message)).finally(()=>{delete frame.dataset.demoBusy});
+      }
       if(message.type==='agentflow-quick-access-completed'){
         api('/api/bootstrap',{silent:true}).then(shell=>{
           Object.assign(state.data,shell);

@@ -237,6 +237,13 @@ func BuiltInExecutors() []domain.ExecutorDefinition {
 		{ID: "codebuddy", Name: "CodeBuddy", Kind: "codebuddy", Binary: "codebuddy", Args: []string{"-p", "--output-format", "stream-json", "--include-partial-messages", "-y", "--setting-sources", "none"}, Protocol: "stream-json"},
 		{ID: "codex", Name: "Codex", Kind: "codex", Binary: "codex", Args: []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"}, Protocol: "jsonl"},
 		{ID: "claude", Name: "Claude Code", Kind: "claude-code", Binary: "claude", Args: []string{"-p", "--output-format", "stream-json", "--permission-mode", "dontAsk"}, Protocol: "stream-json"},
+		{ID: "opencode", Name: "OpenCode", Kind: "opencode", Binary: "opencode", Protocol: "stream-json"},
+		{ID: "cursor", Name: "Cursor CLI", Kind: "cursor", Binary: "cursor-agent", Protocol: "stream-json"},
+		{ID: "agy", Name: "Antigravity", Kind: "agy", Binary: "agy", Protocol: "stream-json"},
+		{ID: "kimi", Name: "Kimi Code", Kind: "kimi", Binary: "kimi", Protocol: "stream-json"},
+		{ID: "pi", Name: "Pi", Kind: "pi", Binary: "pi", Protocol: "stream-json"},
+		{ID: "dsh", Name: "DeepSeek Harness", Kind: "dsh", Binary: "dsh", Protocol: "stream-json"},
+		{ID: "zcode", Name: "ZCode", Kind: "zcode", Binary: "zcode", Protocol: "stream-json"},
 	}
 }
 
@@ -326,7 +333,7 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 		return fmt.Errorf("sandbox environment: %w", err)
 	}
 	switch strings.TrimSpace(v.Driver) {
-	case "local", "seatbelt", "bwrap", "docker":
+	case "local", "native", "seatbelt", "bwrap", "docker":
 	default:
 		return fmt.Errorf("unsupported sandbox driver %q", v.Driver)
 	}
@@ -764,7 +771,8 @@ func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfil
 	case "local":
 		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
-	case "seatbelt", "bwrap":
+	case "native", "seatbelt", "bwrap":
+		profile.Driver = domain.SandboxDriverNative
 		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
 	case "docker":

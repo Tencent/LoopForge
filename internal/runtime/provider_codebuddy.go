@@ -16,22 +16,31 @@ func (codeBuddyProvider) Materialize(ctx *providerMaterializeContext) error {
 	if err := materializeClaudePlugin(ctx); err != nil {
 		return err
 	}
-	if _, err := resetControlDirectory(ctx.Workspace, "hooks", "codebuddy"); err != nil {
-		return err
-	}
-	if err := writeManagedFile(ctx.Workspace, filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"), nil, 0o600); err != nil {
+	// The hook bridge is static and shared by every CodeBuddy Agent in the
+	// checkout, and a parallel branch may be running it: keep the directory
+	// and rewrite only changed files. The settings, which merge this Agent's
+	// own hooks, are per Agent so parallel roles do not overwrite each other.
+	if _, err := EnsureControlDirectory(ctx.Workspace, "hooks", "codebuddy"); err != nil {
 		return err
 	}
 	if err := observability.WriteCodeBuddyHookBridgeAt(ctx.Workspace, filepath.Join(".agentflow", "hooks", "codebuddy")); err != nil {
 		return err
 	}
-	if err := mergeHookSettings(ctx.Workspace, filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"), ctx.Compiled.Hooks); err != nil {
+	base, err := readWorkspaceFile(ctx.Workspace, filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"))
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(ctx.ConfigRoot, "codebuddy-settings.json")
+	if err := writeManagedFile(ctx.Workspace, settingsPath, base, 0o600); err != nil {
+		return err
+	}
+	if err := mergeHookSettings(ctx.Workspace, settingsPath, ctx.Compiled.Hooks); err != nil {
 		return err
 	}
 	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "hooks"), filepath.Join("..", "hooks", "codebuddy")); err != nil {
 		return err
 	}
-	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "codebuddy-settings.json"), filepath.Join("..", "hooks", "codebuddy-settings.json")); err != nil {
+	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "codebuddy-settings.json"), filepath.Join("..", "config", ctx.AgentID, "codebuddy-settings.json")); err != nil {
 		return err
 	}
 	ctx.Compiled.Args = append(ctx.Compiled.Args,

@@ -37,8 +37,8 @@ for(const variant of [
     // A first conversation is personal until a project is picked.
     await expect(frame.locator('.project-picker')).toHaveClass(/is-unset/);
     const starters=frame.locator('.home-starter');
-    await expect(starters).toHaveCount(3);
-    for(let i=0;i<3;i++){await starters.nth(i).scrollIntoViewIfNeeded();await expect(starters.nth(i)).toBeInViewport()}
+    await expect(starters).toHaveCount(4);
+    for(let i=0;i<4;i++){await starters.nth(i).scrollIntoViewIfNeeded();await expect(starters.nth(i)).toBeInViewport()}
     expect(await frame.locator('html').evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:info.outputPath(`home-${variant.name}.png`)});
@@ -55,18 +55,16 @@ test('the welcome SOP needs no key, runs a real script and waits for approval in
   test.setTimeout(120_000);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await signInUnconfigured(page);
-  await switchProject(page,'welcome');
-  await page.locator('.nav[data-view="sops"]').click();
-  const card=page.locator('article.sop-card[data-sop="welcome-workflow"]');
-  await expect(card).toBeVisible();
-  await expect(card.locator('.sop-requirements .sop-badge')).toHaveCount(1);
-  await expect(card.locator('.sop-requirements .sop-badge')).toHaveClass(/tone-success/);
+  await openHome(page);
+  await expect(chat(page).locator('.session-list [data-session-id^="local-preview-"]')).toHaveCount(0);
   let runId='';
   try{
-    const created=await page.request.post('/api/runs',{data:{workflowId:'welcome-workflow',projectId:'welcome',input:'Browser acceptance: approve from the run view'}});
+    const pending=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/runs');
+    await chat(page).getByRole('button',{name:/一键体验/}).click();
+    const created=await pending;
     expect(created.ok()).toBe(true);runId=(await created.json()).id;
     const read=async()=>{const r=await page.request.get(`/api/runs/${runId}`);expect(r.ok()).toBe(true);return r.json()};
-    await expect.poll(async()=>(await read()).status,{timeout:60_000}).toBe('waiting');
+    await expect.poll(async()=>(await read()).status,{timeout:30_000}).toBe('waiting');
     const run=await read();
     expect(run.nodes.prepare.status).toBe('succeeded');
     expect(run.nodes.approve.status).not.toBe('succeeded');
@@ -199,6 +197,9 @@ for(const variant of [
       await expect(modal).not.toHaveClass(/open/);
       await expect(page).toHaveURL(/#\/settings/);
       const wizard=page.locator('#credentialWizard');
+      await expect(wizard.getByRole('tab',{name:'GitHub 授权'})).toHaveAttribute('aria-selected','true');
+      await expect(wizard.locator('input[name="secret"]')).toHaveCount(0);
+      await wizard.getByRole('tab',{name:'访问令牌'}).click();
       await expect(wizard.locator('.credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
       await expect(wizard).toContainText('GitHub');
       await page.keyboard.press('Escape');

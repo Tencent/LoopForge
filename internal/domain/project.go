@@ -19,12 +19,11 @@ type Project struct {
 	SOPPlaybooks []SOPPlaybook `json:"sopPlaybooks,omitempty"`
 	// SOPBindings is the legacy single playbook. Empty SOPPlaybooks still
 	// expose it as the default combo so old projects keep working.
-	SOPBindings         []IssueSOPBinding   `json:"sopBindings,omitempty"`
-	DefaultRepositoryID string              `json:"defaultRepositoryId,omitempty"`
-	OwnerID             int64               `json:"ownerId,omitempty"`
-	Members             []ProjectMember     `json:"members,omitempty"`
-	Clarification       ClarificationPolicy `json:"clarification"`
-	RunEval             RunEvalPolicy       `json:"runEval,omitempty"`
+	SOPBindings         []IssueSOPBinding `json:"sopBindings,omitempty"`
+	DefaultRepositoryID string            `json:"defaultRepositoryId,omitempty"`
+	OwnerID             int64             `json:"ownerId,omitempty"`
+	Members             []ProjectMember   `json:"members,omitempty"`
+	RunEval             RunEvalPolicy     `json:"runEval,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`
@@ -62,21 +61,6 @@ func PublicProjects(items []Project) []Project {
 type ProjectMember struct {
 	UserID int64  `json:"userId"`
 	Role   string `json:"role"` // maintainer, member, viewer
-}
-
-type ClarificationDimension struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Question  string `json:"question"`
-	Weight    int    `json:"weight"`
-	MinLength int    `json:"minLength"`
-}
-
-type ClarificationPolicy struct {
-	Enabled    bool                     `json:"enabled"`
-	SkillID    string                   `json:"skillId,omitempty"`
-	Threshold  int                      `json:"threshold"`
-	Dimensions []ClarificationDimension `json:"dimensions,omitempty"`
 }
 
 type Repository struct {
@@ -135,6 +119,14 @@ type RepositoryContext struct {
 	PipelineDefID             int    `json:"pipelineDefId,omitempty"`
 	PipelineURLPattern        string `json:"pipelineUrlPattern,omitempty"`
 	AlignOnly                 bool   `json:"alignOnly,omitempty"`
+	// CreateNewWorkBranch creates WorkBranch from the base branch and refuses a
+	// same-named remote branch: the caller asked for a new branch, so an
+	// existing one belongs to other work and must not be resumed silently.
+	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
+	// ReadOnly checks BaseBranch out without a work branch: the repository can
+	// be read, built and tested, but is never committed or pushed. It is the
+	// only way to sit on a shared branch such as preview.
+	ReadOnly bool `json:"readOnly,omitempty"`
 	// WorkspaceDir is the first-level sub-directory of the run workspace this
 	// repository is checked out into (slash-separated, relative). Empty is
 	// only kept for persisted legacy runs that already checked out at the

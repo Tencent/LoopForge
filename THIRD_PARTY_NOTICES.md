@@ -48,6 +48,6 @@ SOFTWARE.
 
 ## Executor CLI packages
 
-The Docker build downloads pinned Codex, Claude Code and CodeBuddy CLI packages from their provider registries. These packages and their bundled dependencies retain the licenses/notices shipped by their providers; they are not relicensed under LoopForge's MIT license. Provider accounts, credentials and service terms apply separately. The installed packages retain their original license/readme files in the image's npm package directories.
+The Docker build downloads pinned Codex and CodeBuddy CLI packages from their provider registries. Claude Code is proprietary and is not included in published images: when a user first selects it, the platform installs the pinned `@anthropic-ai/claude-code` package from npm into the installation's data directory, subject to Anthropic's terms. These packages and their bundled dependencies retain the licenses/notices shipped by their providers; they are not relicensed under LoopForge's MIT license. Provider accounts, credentials and service terms apply separately. The installed packages retain their original license/readme files in the image's npm package directories.
 
 The platform source was contributed by the repository owner from the recorded upstream master and is distributed under the root MIT license.

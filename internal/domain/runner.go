@@ -92,6 +92,12 @@ func (r Runner) SupportsSharedPush() bool {
 // a missing branch when the caller explicitly continues an existing branch.
 const RunnerVersionExistingWorkBranch = "0.7.0"
 
+// RunnerVersionCreateNewWorkBranch is the first runner that refuses a
+// same-named remote branch when the caller asked for a newly created branch.
+// Older daemons ignore CreateNewWorkBranch and would quietly check the existing
+// branch out instead.
+const RunnerVersionCreateNewWorkBranch = "0.9.1"
+
 type Runner struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
@@ -135,6 +141,12 @@ func PublicRunners(items []Runner) []Runner {
 // older daemons silently create a new branch when the remote head is missing.
 func (r Runner) SupportsExistingWorkBranch() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionExistingWorkBranch)
+}
+
+// SupportsCreateNewWorkBranch guards the create mode: only a daemon that knows
+// CreateNewWorkBranch can refuse an existing same-named branch.
+func (r Runner) SupportsCreateNewWorkBranch() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCreateNewWorkBranch)
 }
 
 // SupportsWorkspacePreparation guards the transient control protocol: older
@@ -219,9 +231,13 @@ func (r Runner) SupportsProvider(provider string) bool {
 }
 
 // RuntimeAuthMode returns the configured credential source for a provider.
-// CodeBuddy has no reusable local-login flow, so its default is the
-// responsible user's personal credential; other CLIs default to local login.
+// CodeBuddy and the extra agent CLIs have no reusable local-login flow, so
+// they always use the responsible user's personal credential. Codex and
+// Claude Code default to local login.
 func (r Runner) RuntimeAuthMode(provider string) string {
+	if IsAgentCLIKind(provider) {
+		return RuntimeAuthPersonal
+	}
 	provider = strings.TrimSpace(provider)
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) {
@@ -360,6 +376,9 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.CodexBaseURL = ""
 	copyInvocation.ClaudeCodeAPIKey = ""
 	copyInvocation.ClaudeCodeBaseURL = ""
+	copyInvocation.AgentCLIAPIKey = ""
+	copyInvocation.AgentCLIBaseURL = ""
+	copyInvocation.AgentCLIProtocol = ""
 	if copyInvocation.Repository != nil {
 		copyRepository := *copyInvocation.Repository
 		copyRepository.GitToken = ""
@@ -416,6 +435,9 @@ type RunnerInvocation struct {
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
 	ClaudeCodeAPIKey             string   `json:"claudeCodeApiKey,omitempty"`
 	ClaudeCodeBaseURL            string   `json:"claudeCodeBaseUrl,omitempty"`
+	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`
+	AgentCLIBaseURL              string   `json:"agentCliBaseUrl,omitempty"`
+	AgentCLIProtocol             string   `json:"agentCliProtocol,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
 	// in scripts, verification gates, and Agent hooks. It is unbound; personal
 	// credentials are applied in memory on the runner. Agent Assets stay
@@ -447,6 +469,9 @@ type RunnerRepository struct {
 	// RequireExistingWorkBranch keeps explicit continuation on an existing
 	// remote head. Missing/deleted heads are errors, never branch creation.
 	RequireExistingWorkBranch bool `json:"requireExistingWorkBranch,omitempty"`
+	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
+	// same-named remote head already exists.
+	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
 	// Dir is the workspace-relative checkout directory (empty is only kept
 	// for persisted legacy runs that already checked out at the workspace root).
 	Dir string `json:"dir,omitempty"`

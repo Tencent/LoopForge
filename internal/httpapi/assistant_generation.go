@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -35,25 +34,15 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	if !decode(c, &req) {
 		return
 	}
-	req.Executor = assistantExecutor(req.Executor)
-	user, sponsored := stored, false
-	if req.Executor == "codebuddy" {
-		if user, sponsored, ok = h.assistantChatUser(stored); !ok {
-			c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
-			return
-		}
-	} else if err := validateAssistantProvider(&req, stored); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+	req.Model = assistantRequestModel(req.Executor, req.Model)
+	user, model, refusal := h.assistantTurnUser(stored, req.Model)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
 		return
 	}
-	if sponsored {
-		model, allowed := assistantSponsoredModelFor(req.Model)
-		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel()})
-			return
-		}
-		req.Model = model
-	}
+	req.Model = model
+	cliEngine, _ := assistantModelEngine(req.Model)
+	req.Executor = cliEngine
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
 		return
@@ -104,18 +93,29 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Executor == "codebuddy" {
-		req.Model = assistantAllowedModel(req.Model, assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment))
-		if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-	} else {
-		req.Effort = ""
+	catalogEngine, _ := assistantModelEngine(req.Model)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	if catalogEngine == assistantEngineCodeBuddy {
+		catalog = h.chatCatalog(c.Request.Context(), user)
+	}
+	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	cliEngine, _ = assistantModelEngine(req.Model)
+	req.Executor = cliEngine
+	if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	legacyExecutor := ""
+	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
+		legacyExecutor = old.Executor
+	}
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, legacyExecutor), req.Model); refusal != "" {
+		c.JSON(409, gin.H{"error": refusal})
+		return
 	}
 	freshCLI := false
 	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
-		freshCLI = assistantExecutor(old.Executor) != req.Executor
+		freshCLI = assistantConversationEngine(old.Messages, old.Executor) != cliEngine
 	}
 	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
 		if len(req.Messages) < len(old.Messages) {
@@ -177,7 +177,8 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	// Keep the authenticated identity, but disconnect model execution from the
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
-	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, sponsored)
+	_, sharedModels, _ := h.assistantChatUser(stored)
+	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
 	done := inflightTasks.Add()
 	go func() {
 		defer done()
@@ -253,52 +254,11 @@ func (w *generationHTTPWriter) Write(p []byte) (int, error) {
 func (w *generationHTTPWriter) Flush() {}
 
 func (h *assistantHandlers) executeGeneration(parent context.Context, req assistantRequest, g domain.AssistantGeneration, actor *auth.User) {
-	ctx, cancel := context.WithTimeout(parent, assistantChatTimeout)
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	var mu sync.Mutex
-	sequence := 0
-	eventBytes := 0
-	var projection assistantStreamProjection
-	live := &assistantLiveGeneration{changed: make(chan struct{})}
-	live.read = func() domain.AssistantGeneration {
-		mu.Lock()
-		defer mu.Unlock()
-		copy := g
-		copy.Events = append([]domain.AssistantGenerationEvent(nil), g.Events...)
-		copy.Stream = projection.snapshot(sequence)
-		return copy
-	}
-	assistantLiveGenerations.Store(g.ID, live)
-	defer assistantLiveGenerations.Delete(g.ID)
-	sink := func(kind string, value any) {
-		mu.Lock()
-		defer func() { mu.Unlock(); live.publish() }()
-		raw, _ := json.Marshal(value)
-		switch kind {
-		case "thought":
-			if len(raw) > 256<<10 {
-				return
-			}
-			sequence++
-			projection.add(raw)
-			eventBytes += len(raw)
-			g.Events = append(g.Events, domain.AssistantGenerationEvent{Sequence: sequence, Data: raw})
-			for len(g.Events) > 500 || eventBytes > 2<<20 {
-				eventBytes -= len(g.Events[0].Data)
-				g.Events = g.Events[1:]
-			}
-		case "result":
-			g.Reply = raw
-		case "workspace_warning":
-			g.WorkspaceWarning = fmt.Sprint(value)
-		case "error":
-			var e struct {
-				Error string `json:"error"`
-			}
-			_ = json.Unmarshal(raw, &e)
-			g.Error = e.Error
-		}
-	}
+	rec := newAssistantGenerationRecorder(g)
+	defer rec.close()
+	sink := rec.sink
 	stopped := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -317,19 +277,14 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 				}
 				old, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID)
 				if ok && old.ID == g.ID && old.Steer != nil {
-					mu.Lock()
-					g.Steer = old.Steer
-					mu.Unlock()
+					rec.mu.Lock()
+					rec.g.Steer = old.Steer
+					rec.mu.Unlock()
 				}
 				if !ok || old.ID != g.ID || old.Status != "running" || old.CancelRequested {
 					cancel()
 				}
-				mu.Lock()
-				copy := g
-				copy.Events = append([]domain.AssistantGenerationEvent(nil), g.Events...)
-				copy.Stream = projection.snapshot(sequence)
-				mu.Unlock()
-				if err := h.repo.CheckpointAssistantGeneration(copy); err != nil {
+				if err := h.repo.CheckpointAssistantGeneration(rec.snapshot()); err != nil {
 					cancel()
 				}
 			}
@@ -357,7 +312,8 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	}()
 	close(stopped)
 	<-done
-	mu.Lock()
+	rec.mu.Lock()
+	g = rec.g
 	if req.workspaceToken != "" {
 		saveCtx, stop := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
 		if err := h.engine.EndConversationWorkspaceUse(saveCtx, req.RunID, req.workspaceToken); err != nil {
@@ -382,21 +338,18 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 		if ctx.Err() != nil {
 			g.Status = "cancelled"
 			g.Error = "生成已停止"
-			if ctx.Err() == context.DeadlineExceeded {
-				g.Status = "failed"
-				g.Error = "生成超时，尚未完成；已有执行记录已保留，请核对后继续。"
-			}
 		}
 	}
-	g.Stream = projection.snapshot(sequence)
+	rec.g = g
+	g = rec.snapshotLocked()
 	steer := g.Steer
-	mu.Unlock()
+	rec.mu.Unlock()
 	if steer == nil {
 		if latest, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID); ok && latest.ID == g.ID && latest.Steer != nil {
-			mu.Lock()
+			rec.mu.Lock()
 			g.Steer = latest.Steer
 			steer = latest.Steer
-			mu.Unlock()
+			rec.mu.Unlock()
 		}
 	}
 	// A stop or a mid-turn redirect keeps the paragraphs and tool rows written
@@ -410,7 +363,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	if err := h.repo.CheckpointAssistantGeneration(g); err != nil {
 		fmt.Printf("assistant generation checkpoint failed: %T\n", err)
 	}
-	live.publish()
+	rec.live.publish()
 	if steer != nil {
 		h.followSteer(parent, g, steer, actor)
 	}
@@ -427,7 +380,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	user, sponsored, ok := h.assistantChatUser(stored)
+	user, sharedModels, ok := h.assistantChatUser(stored)
 	if !ok {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
@@ -464,15 +417,15 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	model := body.Model
-	if sponsored {
-		forced, allowed := assistantSponsoredModelFor(model)
+	if sharedModels != nil {
+		forced, allowed := assistantSponsoredModelFor(sharedModels, model)
 		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel()})
+			c.JSON(400, gin.H{"error": errAssistantSponsoredModel(sharedModels)})
 			return
 		}
 		model = forced
 	}
-	model = assistantAllowedModel(model, assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment))
+	model = assistantAllowedModel(model, h.chatCatalog(c.Request.Context(), user))
 	if err := validateAssistantEffort(model, body.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

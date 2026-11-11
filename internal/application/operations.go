@@ -16,9 +16,9 @@ type Operation struct {
 // excluded.
 func PublicOperations() []Operation {
 	return []Operation{
-		{Name: "health_get", Description: "Check AgentFlow service health", Method: "GET", Path: "/api/health", ReadOnly: true},
+		{Name: "health_get", Description: "Check LoopForge service health", Method: "GET", Path: "/api/health", ReadOnly: true},
 		{Name: "capabilities_get", Description: "List public API and MCP operations", Method: "GET", Path: "/api/capabilities", ReadOnly: true},
-		{Name: "openapi_get", Description: "Read the AgentFlow OpenAPI 3.1 contract", Method: "GET", Path: "/api/openapi.yaml", ReadOnly: true},
+		{Name: "openapi_get", Description: "Read the LoopForge OpenAPI 3.1 contract", Method: "GET", Path: "/api/openapi.yaml", ReadOnly: true},
 		{Name: "bootstrap_get", Description: "Get the Studio bootstrap catalog", Method: "GET", Path: "/api/bootstrap", ReadOnly: true},
 		{Name: "business_domains_list", Description: "List managed business domains with the caller's permissions", Method: "GET", Path: "/api/business-domains", ReadOnly: true},
 		{Name: "business_domains_save", Description: "Manage a business domain. Platform admins control lifecycle and managers; domain managers control information and viewers.", Method: "PUT", Path: "/api/business-domains"},
@@ -40,7 +40,6 @@ func PublicOperations() []Operation {
 		{Name: "issues_delete", Description: "Delete a local issue and failed/cancelled execution history; reject successful or active runs", Method: "DELETE", Path: "/api/issues/{id}"},
 		{Name: "issues_comments_add", Description: "Add a comment to an issue", Method: "POST", Path: "/api/issues/{id}/comments"},
 		{Name: "issues_runs_list", Description: "List runs belonging to an issue", Method: "GET", Path: "/api/issues/{id}/runs", ReadOnly: true},
-		{Name: "issues_clarify", Description: "Save structured requirement clarification", Method: "POST", Path: "/api/issues/{id}/clarify"},
 		{Name: "issues_chat_clarify", Description: "Run AI clarification for an existing issue. The job keeps running after the client disconnects; GET the same path with Accept: text/event-stream to resume SSE.", Method: "POST", Path: "/api/issues/{id}/chat-clarify"},
 		{Name: "issues_chat_clarify_stream", Description: "Attach to an in-flight issue clarification SSE stream", Method: "GET", Path: "/api/issues/{id}/chat-clarify", ReadOnly: true},
 		{Name: "issues_chat_clarify_cancel", Description: "Cancel one issue's in-flight AI clarification", Method: "POST", Path: "/api/issues/{id}/chat-clarify/cancel"},
@@ -90,7 +89,7 @@ func PublicOperations() []Operation {
 		{Name: "workflows_clone", Description: "Clone an SOP workflow", Method: "POST", Path: "/api/workflows/{id}/clone"},
 		{Name: "workflow_metrics_get", Description: "Get SOP workflow operating metrics", Method: "GET", Path: "/api/workflow-metrics", ReadOnly: true},
 		{Name: "analytics_get", Description: "Get usage and delivery analytics", Method: "GET", Path: "/api/analytics", ReadOnly: true},
-		{Name: "observability_spec_get", Description: "Get the AgentFlow observability contract", Method: "GET", Path: "/api/observability/spec", ReadOnly: true},
+		{Name: "observability_spec_get", Description: "Get the LoopForge observability contract", Method: "GET", Path: "/api/observability/spec", ReadOnly: true},
 		{Name: "runs_list", Description: "List lightweight Run summaries", Method: "GET", Path: "/api/runs", ReadOnly: true},
 		{Name: "runs_control_get", Description: "Read the run mode (sop or workspace), waiting reason, allowed control actions and delivery acceptance. Node execution progress is separate from test results and user acceptance. Read this before changing a run's state.", Method: "GET", Path: "/api/runs/{id}/control", ReadOnly: true},
 		{Name: "runs_start", Description: "Start an SOP Run", Method: "POST", Path: "/api/runs"},

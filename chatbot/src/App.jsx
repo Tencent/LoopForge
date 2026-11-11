@@ -48,7 +48,8 @@ import { isGeneratedArtifact, shouldRevealArtifactPanel } from "./artifact-autor
 import { IconButton, Dialog, Menu, SelectMenu, CredentialAction } from "./ui";
 import { credentialHint, openCredentialSettings } from "./credentials";
 import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
-import { runSessionState, sessionReplyStatus, sessionTooltip } from "./session-status.js";
+import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
+import { unreadReply, useReadReplies } from "./session-unread.js";
 import MentionPicker from "./MentionPicker";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
@@ -68,7 +69,9 @@ import SessionContextMenu from "./SessionContextMenu";
 import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
+import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
 import PermissionPicker from "./PermissionPicker";
+import { engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
@@ -140,6 +143,14 @@ function useTitleReveal(sessionId, title, revealId) {
 }
 
 const homeStarters = [
+  {
+    id: "welcome-demo",
+    icon: "workflow",
+    tone: "green",
+    title: "一键体验",
+    description: "无需 API Key 或 GitHub，运行真实脚本，体验人工审批和产物交付。",
+    steps: ["运行脚本", "人工审批", "查看产物"],
+  },
   {
     id: "quick-access",
     icon: "sparkles",
@@ -353,6 +364,14 @@ export default function App() {
     composerPreviews = useRef(new Map());
   const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || "new:" + chat.projectId}`;
   useEffect(() => setMention(null), [draftKey]);
+  // The open conversation's reply is reported read; the history list dots
+  // the replies the server still counts as unread.
+  const readReplies = useReadReplies({
+    enabled: realChat.ready,
+    sessions: realChat.sessions,
+    activeId: realChat.activeId,
+    generation: realChat.generation,
+  });
   const conversationRuns = useConversationRuns(chat.session, runsRefresh);
   // The workspace of this conversation (opened by workbench_workspace_open).
   // Its git state drives the "改动" view of the side panel.
@@ -456,6 +475,14 @@ export default function App() {
     });
   }
   function handleStarter(starter) {
+    if (starter.id === "welcome-demo") {
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: "agentflow-welcome-demo" }, location.origin);
+      } else {
+        location.href = "/#/sops";
+      }
+      return;
+    }
     if (starter.id === "quick-access") {
       setQuickAccessOpen(true);
       return;
@@ -892,10 +919,13 @@ export default function App() {
     };
   }
   const renderSession = (s, options = {}) => {
-    const status = sessionReplyStatus(s, s.id === chat.activeId ? {
-      generation: chat.generation,
-      busy: chat.busy,
-    } : undefined);
+    const status = sidebarReplyStatus(
+      sessionReplyStatus(s, s.id === chat.activeId ? {
+        generation: chat.generation,
+        busy: chat.busy,
+      } : undefined),
+      unreadReply(s, { activeId: chat.activeId, read: readReplies }),
+    );
     const runState = runSessionState(s);
     return (
     <div
@@ -957,9 +987,13 @@ export default function App() {
         {pinned.includes(s.id) ? (
           <HarnessIcon name="pin" size={12} className="pin-mark" />
         ) : null}
-        {status.icon ? (
+        {status.icon || status.dot ? (
           <span className="session-status" data-session-status={status.state} role="img" aria-label={status.label} title={status.label}>
-            <HarnessIcon name={status.icon} size={15} motion={status.busy ? "busy" : "idle"} />
+            {status.icon ? (
+              <HarnessIcon name={status.icon} size={15} motion={status.busy ? "busy" : "idle"} />
+            ) : (
+              <span className="session-unread-dot" aria-hidden="true" />
+            )}
           </span>
         ) : null}
       </button>
@@ -1668,10 +1702,10 @@ export default function App() {
                 <div className="composer-context">
                   <span
                     className="context-pill host-status"
-                    title="对话在 AgentFlow 云端运行"
+                    title="对话在 LoopForge 云端运行"
                   >
                     <HarnessIcon name="server" size={13} interactive={false} />
-                    <span>AgentFlow 云端</span>
+                    <span>LoopForge 云端</span>
                     <i
                       className={`connection-dot ${chat.ready ? "online" : ""}`}
                     />
@@ -1959,8 +1993,16 @@ export default function App() {
                       }}
                     />
                     <PermissionPicker
-                      label="执行器"
-                      options={chat.executors}
+                      label="CLI"
+                      options={chat.executors.map((executor) => {
+                        const brand = engineBrand(executor.id);
+                        return {
+                          ...executor,
+                          glyph: hasProviderLogo(brand)
+                            ? <ModelProviderIcon brand={brand} size={16} />
+                            : null,
+                        };
+                      })}
                       value={chat.executor}
                       onSelect={(id) => {
                         chat.setExecutor(id);
@@ -1980,16 +2022,14 @@ export default function App() {
                         input.current?.focus();
                       }}
                     />
-                    {chat.executor === "codebuddy" ? (
-                      <PermissionPicker
-                        label="思考强度"
-                        options={effortOptions(selectedModel)}
-                        value={chat.effort}
-                        onSelect={chat.setEffort}
-                        open={menu?.type === "effort"}
-                        onOpenChange={(open) => setMenu(open ? { type: "effort" } : null)}
-                      />
-                    ) : null}
+                    <PermissionPicker
+                      label="思考强度"
+                      options={effortOptions(selectedModel)}
+                      value={chat.effort}
+                      onSelect={chat.setEffort}
+                      open={menu?.type === "effort"}
+                      onOpenChange={(open) => setMenu(open ? { type: "effort" } : null)}
+                    />
                     <PermissionPicker
                       value={approval}
                       onSelect={setApproval}
@@ -2316,6 +2356,7 @@ export default function App() {
         projectId={chat.projectId}
         defaultModel={chat.model}
         sponsoredModel={chat.sponsoredModel}
+        sponsoredModels={chat.sponsoredModels}
         onClose={() => setQuickAccessOpen(false)}
         onOpenView={(view) => navigate(view)}
         onCompleted={async (nextProjectId) => {

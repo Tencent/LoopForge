@@ -1,12 +1,49 @@
 # Changelog
 
-## Unreleased — platform edition
+Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+
+## 0.3.4 — ARM64 platform images and shared CodeBuddy keys
+
+- Platform administrators create accounts and reset passwords under 平台管理 → 成员账号, so teams that turn off self sign-up no longer need the `loopforge-account` command.
+- Platform administrators can share one CodeBuddy API Key under 平台管理 → 共享 CodeBuddy Key and choose the models it may run. Members without their own key chat and run SOPs on it within those models; `AGENTFLOW_ASSISTANT_SPONSOR_LOGIN` still applies while none is configured. Members with their own key keep their own network environment's models and default model; previously a configured sponsor also changed their default.
+- A stored CodeBuddy network environment such as `china` can be saved again as-is to rewrite it, and the quick-access wizard no longer keeps an environment switched back to 国际站 elsewhere.
+- In English, the navigation, the top bar and the 个人配置 page (now "Personal settings") no longer show Chinese labels, tooltips or credential descriptions.
+- The platform image is published for linux/amd64 and linux/arm64, so Apple silicon Macs and arm servers can pull it. On a native arm64 host the bundled CodeBuddy and Codex CLIs, chat, and SOP runs in the Docker sandbox behave and perform like amd64. Under QEMU emulation (an arm64 image on an x86 host) CodeBuddy starts about ten times slower and the model list cannot be read; use the amd64 image there.
+- Prepare nested sandbox mount targets before Docker starts, so Docker Desktop can launch SOP containers with VirtioFS-backed workspaces.
+
+Existing installations may apply `migrations/024_platform_codebuddy_key.sql`; the platform also creates the table on startup.
+
+## 0.3.3 — Codex and Claude Code roles in Docker sandboxes
+
+- Codex SOP roles in Docker sandboxes run with `--sandbox danger-full-access`: the container is the isolation boundary, and Codex's own bubblewrap sandbox cannot create namespaces inside it, so every shell command, file write and `submit_gate_result` call failed.
+- Claude Code SOP roles run with `--permission-mode bypassPermissions` (as CodeBuddy roles already did) instead of `dontAsk`, which denied every file write, shell command and the gate tool. Docker sandboxes set `IS_SANDBOX=1`, without which Claude Code refuses that mode as root.
+- The installer labels the addresses it prints (public, LAN, this machine) and reads the public IP from the cloud provider's link-local metadata service, so a cloud host behind NAT no longer shows only its private address.
+- The 0.3.0 and 0.3.1 images were republished without Claude Code.
+
+## 0.3.2 — Claude Code installed on first use
+
+- Published images no longer bundle Claude Code, which is proprietary. The first Main Bot conversation or SOP role that selects it installs the pinned `@anthropic-ai/claude-code@2.1.300` from npm into `$LOOPFORGE_DATA_DIR/cli`; Docker sandboxes from the platform image read it through a read-only mount. That first use waits for the download (about a minute); later runs reuse it. Codex and CodeBuddy remain bundled.
+- Listen on `0.0.0.0` by default, including older installations without `LOOPFORGE_BIND`. The installer no longer asks for, or fails without, `LOOPFORGE_PUBLIC_URL`; it is optional and only changes the printed address.
+
+## 0.3.1 — published-image startup
+
+- Start from the published GHCR image pinned in `compose.yaml` instead of building locally: `./start.sh` (`logs`, `stop`, `down`, `restart`, `pull`) and a plain `docker compose --profile platform up` no longer build.
+- Build a checkout explicitly with `./start.sh dev` (`compose.dev.yaml`, local `loopforge-platform:local` tag); `./start.sh release` switches back to the published image.
+- Releases require `compose.yaml` to pin the tagged version and smoke-test the pushed image digest before creating the GitHub Release.
+
+Existing source-built installations switch to the published image on the next `./start.sh`; no migrations are required. The image is published for linux/amd64; use `./start.sh dev` on other architectures.
+
+## 0.3.0 — platform edition
 
 - Add the self-hosted platform implementation, including Main Bot workspace editing, durable workspace checkpoints, idle reclamation, and task-group SOP completion/reopening.
 - Add public password accounts, explicit catalog installation, GitHub issue/PR adapters, actor-scoped GitHub MCP credentials, language and theme preferences, local deployment and public acceptance checks.
+- Connect GitHub by copying a PIN and approving the built-in LoopForge application, then pick repositories; PAT entry remains available.
+- Choose the branch mode, base branch and per-repository branches when opening a conversation workspace; role dispatches report their collected deliverables.
+- Install as an ordinary Linux user through sudo, install from a published platform image, and reuse that image for default sandboxes.
+- Validate repository remote URLs and restrict SSO return URLs to the same site.
 - Integrate the original workflows as LoopForge Local under `local/`, with unified documentation, project policies and release history.
 
-Platform source and Local package releases are separate; merging the platform does not publish a platform image or a new npm version.
+Existing installations apply `migrations/022_auth_integrations.sql` and `migrations/023_role_prompt.sql`. Creating a named workspace branch on a connected runner requires runner 0.9.1 or later.
 
 ## 0.2.3 — Local packaging
 

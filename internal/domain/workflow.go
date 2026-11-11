@@ -37,6 +37,9 @@ type WorkflowRequirement struct {
 }
 
 type WorkflowNode struct {
+	// TaskPrompt is what an approval node asks its approver to check
+	// (「需要确认什么」). Role nodes take their whole brief from the role's
+	// prompt; the field is not read for them.
 	TaskPrompt   string   `json:"taskPrompt,omitempty"`
 	RequestedBy  string   `json:"requestedBy,omitempty"`
 	RequestID    string   `json:"requestId,omitempty"`

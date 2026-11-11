@@ -642,7 +642,7 @@ func TestIntegrateMRTitleIncludesIssue(t *testing.T) {
 		ExecutionContext: domain.TelemetryContext{IssueNumber: 30},
 		Repository:       domain.RepositoryContext{WorkBranch: "feature/fix-issue-30"},
 	}, domain.RepositoryContext{}, "feature/fix-issue-30", "agentflow/integration")
-	if got != "AgentFlow: issue #30 timeout spike → agentflow/integration" {
+	if got != "LoopForge: issue #30 timeout spike → agentflow/integration" {
 		t.Fatalf("title = %q", got)
 	}
 }

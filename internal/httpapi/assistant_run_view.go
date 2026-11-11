@@ -112,9 +112,9 @@ var assistantCredentialRules = []struct {
 		"到 LoopForge「个人配置 → Claude Code API Key」填写 Key（及 Base URL）并保存，或把执行机器的认证方式切回本机登录",
 		"回到运行重试失败节点",
 	}},
-	{"codeBuddyApiKey", "CodeBuddy API Key", regexp.MustCompile(`(?i)CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key`), "https://www.codebuddy.ai/", []string{
-		"打开 https://www.codebuddy.ai/ 创建 API Key 并复制",
-		"到 LoopForge「个人配置 → CodeBuddy API Key」粘贴并保存",
+	{"codeBuddyApiKey", "CodeBuddy API Key", regexp.MustCompile(`(?i)CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key`), "https://www.codebuddy.ai/profile/keys", []string{
+		"确认 CodeBuddy 账号所在站点并在该站点创建 API Key：国际站 https://www.codebuddy.ai/profile/keys ，国内站 https://copilot.tencent.com/profile/ ，iOA https://tencent.sso.copilot.tencent.com/profile/keys",
+		"到 LoopForge「个人配置 → CodeBuddy API Key」选择同一网络环境，粘贴 Key 并保存；DeepSeek、OpenAI 等第三方模型的 Key 不能用作 CodeBuddy Key",
 		"回到运行重试失败节点",
 	}},
 	{"gitToken", "GitHub Git Token", regexp.MustCompile(`(?i)Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]`), "https://github.com/settings/tokens", []string{
@@ -327,6 +327,9 @@ func assistantRunProblems(run domain.Run, owner string, limit int) []assistantRu
 			out = append(out, assistantRunProblem{NodeID: id, NodeName: name, Kind: "waiting_approval", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
 		}
 	}
+	if run.IsWorkspace() {
+		out = append(out, workspacePreparationProblems(run, owner, limit)...)
+	}
 	if len(out) == 0 && run.Status == "failed" {
 		reason := "运行失败，但没有节点记录错误"
 		for i := len(run.Events) - 1; i >= 0; i-- {
@@ -336,6 +339,51 @@ func assistantRunProblems(run domain.Run, owner string, limit int) []assistantRu
 			}
 		}
 		out = append(out, assistantRunProblem{Kind: "failed", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
+	}
+	return out
+}
+
+// workspacePreparationStages are the steps the engine records on a run as
+// workspace.<stage>.<started|progress|completed|failed> events, in the order
+// they run.
+var workspacePreparationStages = []struct{ key, name string }{
+	{"clone", "克隆仓库"},
+	{"image", "构建沙箱镜像"},
+	{"preparation", "工作区准备脚本"},
+}
+
+// workspacePreparationProblems reports each preparation stage whose latest
+// attempt failed. A conversation workspace has no nodes, so without this a
+// failed clone or image build left problems empty. A later start or success
+// of the same stage clears the failure.
+func workspacePreparationProblems(run domain.Run, owner string, limit int) []assistantRunProblem {
+	failed := map[string]string{}
+	for _, event := range run.Events {
+		rest, ok := strings.CutPrefix(event.Type, "workspace.")
+		if !ok {
+			continue
+		}
+		stage, kind, ok := strings.Cut(rest, ".")
+		if !ok {
+			continue
+		}
+		switch kind {
+		case "failed":
+			failed[stage] = strings.TrimSpace(event.Message)
+		case "started", "completed":
+			delete(failed, stage)
+		}
+	}
+	var out []assistantRunProblem
+	for _, stage := range workspacePreparationStages {
+		reason, ok := failed[stage.key]
+		if !ok {
+			continue
+		}
+		if reason == "" {
+			reason = stage.name + "失败"
+		}
+		out = append(out, assistantRunProblem{NodeName: stage.name, Kind: "failed", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
 	}
 	return out
 }

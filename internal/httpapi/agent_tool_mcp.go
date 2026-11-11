@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
@@ -127,7 +128,7 @@ func agentToolInstructions(mode AgentToolMode) string {
 	case AgentToolScheduled:
 		return "使用当前项目和个人已安装的 MCP 以及 agentflow__* 直接读写，写入立即生效。完成后用自然语言汇报。"
 	default:
-		return "AgentFlow session MCP"
+		return "LoopForge session MCP"
 	}
 }
 
@@ -154,6 +155,18 @@ func (h *agentToolGateway) toolList(ctx context.Context, session *AgentToolSessi
 func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSession, raw json.RawMessage) (map[string]any, error) {
 	if session.finished() {
 		return nil, errAgentToolTerminalCommitted
+	}
+	if session.closed.Load() || session.expired(time.Now()) {
+		return nil, errAgentToolInvalidSession
+	}
+	if session.ctx != nil {
+		// Tool calls arrive on independent HTTP requests. Stopping the model
+		// turn must also stop any in-flight work using its gateway.
+		callCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(session.ctx, cancel)
+		defer stop()
+		defer cancel()
+		ctx = callCtx
 	}
 	var params struct {
 		Name      string          `json:"name"`
@@ -268,6 +281,12 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	}
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
+	}
+	// 轻量 GitHub 工具（agent_tool_github.go）：用请求人自己的 Git Token 直连
+	// GitHub，范围限定在当前项目已绑定的仓库。与 workspace 工具一样不走 drafts，
+	// 「帮我批准」时写操作在 callMainBotGitHub 里逐项过审查。
+	if tool.Kind == "github" {
+		return h.callMainBotGitHub(ctx, session, tool.Name, args)
 	}
 	if tool.Kind == "agentflow" {
 		if session.Mode == AgentToolClarify && !agentToolNameAllowed(AgentToolClarify, "agentflow", tool.UpstreamName) {

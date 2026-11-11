@@ -458,7 +458,7 @@ describe("content and panels", () => {
       name: "已保存流程",
       description: "流程说明",
       status: "published",
-      nodes: [{ id: "n1", name: "实现", type: "agent", taskPrompt: "完成实现" }],
+      nodes: [{ id: "n1", name: "实现", type: "agent" }],
     });
     const { rerender } = render(
       <div className="chat-shell">
@@ -551,7 +551,7 @@ describe("content and panels", () => {
         name: "混合流程",
         nodes: [
           { id: "done", name: "已完成节点", type: "agent" },
-          { id: "active", name: "运行节点", type: "agent", taskPrompt: "继续执行" },
+          { id: "active", name: "运行节点", type: "agent" },
           { id: "pending", name: "待执行节点", type: "agent" },
         ],
       },
@@ -567,7 +567,7 @@ describe("content and panels", () => {
     expect(screen.getAllByText("混合流程").length).toBeGreaterThan(0);
     expect(screen.getByText("待执行")).toBeInTheDocument();
     await user.click(screen.getByText("运行节点"));
-    expect(await screen.findByText("继续执行")).toBeInTheDocument();
+    expect(await screen.findByText("执行混合流程")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /产物/ }));
     expect(screen.getByText("这个节点尚未生成产物。")).toBeInTheDocument();
   });
@@ -590,6 +590,40 @@ describe("content and panels", () => {
     await user.click(screen.getByText("重试节点"));
     await user.click(screen.getByText("让 AI 分析"));
     expect(onAsk).toHaveBeenCalled();
+  });
+
+  test("a CodeBuddy key alert links to the key page of the owner's network environment", () => {
+    const { unmount } = render(
+      <RunAlerts
+        runs={[run]}
+        user={{ id: 1 }}
+        users={[{ id: 1, codeBuddyInternetEnvironment: "internal" }]}
+        readOnly={false}
+        onOpenNode={vi.fn()}
+        onAsk={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("link", { name: /国内站创建 Key/ })).toHaveAttribute(
+      "href",
+      "https://copilot.tencent.com/profile/",
+    );
+    unmount();
+    render(
+      <RunAlerts
+        runs={[{ ...run, executionContext: { responsibleUserId: 2 } }]}
+        user={{ id: 1, codeBuddyInternetEnvironment: "internal" }}
+        users={[{ id: 2, loginName: "owner", codeBuddyInternetEnvironment: "ioa" }]}
+        readOnly={false}
+        onOpenNode={vi.fn()}
+        onAsk={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("link", { name: /iOA创建 Key/ })).toHaveAttribute(
+      "href",
+      "https://tencent.sso.copilot.tencent.com/profile/keys",
+    );
   });
 
   test("renders a waiting approval alert", () => {

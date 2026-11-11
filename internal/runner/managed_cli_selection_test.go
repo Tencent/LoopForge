@@ -81,7 +81,7 @@ func TestManagedDetectionReportsRealVersionAndRespectsExplicitBinary(t *testing.
 		inventory[provider] = managedcli.Installation{Version: "1.0.0", Binary: managedTestBinary(t, root, provider, "1.0.0")}
 	}
 	for _, rt := range detectRuntimes(context.Background(), nil, inventory) {
-		if rt.Provider == "mock" || rt.Provider == "terminal" {
+		if _, managed := inventory[rt.Provider]; !managed {
 			continue
 		}
 		if !strings.HasPrefix(rt.Version, "actual-1.0.0|") || rt.BinaryPath != inventory[rt.Provider].Binary {

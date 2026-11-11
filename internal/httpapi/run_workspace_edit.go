@@ -206,6 +206,11 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 					return err
 				}
 				if response.Error != "" {
+					// The runner refuses a busy open before creating a PTY, so a
+					// caller may retry it like any other workspace_busy answer.
+					if req.Operation == "open" && response.Code == domain.WorkspaceErrorBusy {
+						return fmt.Errorf("%w（%s）", repo.ErrWorkspaceInUse, response.Error)
+					}
 					return fmt.Errorf("%s", response.Error)
 				}
 				result = json.RawMessage(response.Payload)

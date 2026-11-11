@@ -42,6 +42,8 @@ type workspaceMRResult struct {
 	Repository   string `json:"repository"`
 	SourceBranch string `json:"sourceBranch"`
 	TargetBranch string `json:"targetBranch"`
+	BaseBranch   string `json:"baseBranch,omitempty"`
+	Warning      string `json:"warning,omitempty"`
 	Commit       string `json:"commit,omitempty"`
 	Pushed       bool   `json:"pushed"`
 	Direct       bool   `json:"direct,omitempty"`
@@ -57,8 +59,8 @@ type workspaceMRResult struct {
 func workspaceSubmitMRDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_submit_mr",
-		Description: "把当前工作区（任务，或本对话打开的临时工作区）的改动提交到工作分支、用请求人自己的 Git Token 推送，并发起 Pull Request（GitHub 仓库）或 MR（工蜂仓库），返回链接 mrUrl。调用前先用 workbench_workspace_command 跑通相关测试。title 写清改了什么；description 用 Markdown 写改动摘要和验证结果。工作分支已有打开的 PR/MR 时会推送新提交，并用本次 title、description 更新它，所以 description 要概括整个 PR/MR 的改动，不只是这次的增量。targetBranch 默认是仓库的基线分支。默认 mode=mr；用户要把改动合并进 preview/test 这类共享分支并直接推送、不要 PR/MR（例如「先合到 preview 再推」「本地合并然后推送」）时传 mode=direct，它把工作分支 merge --no-ff 进 targetBranch 并直推（目标必须已在远端存在、且不是基线分支）；直推不产生 PR/MR。",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","maxLength":20000},"targetBranch":{"type":"string","maxLength":200,"description":"PR/MR 的目标分支，默认仓库基线分支；mode=direct 时必填，写要直推的共享分支"},"mode":{"type":"string","enum":["mr","direct"],"description":"mr（默认）推工作分支并发起或更新 PR/MR；direct 把工作分支 merge --no-ff 进 targetBranch 后直推，不发 MR"}},"required":["title"],"additionalProperties":false}`),
+		Description: "把当前工作区（任务，或本对话打开的临时工作区）的改动提交到工作分支、用请求人自己的 Git Token 推送，并发起 Pull Request（GitHub 仓库）或 MR（工蜂仓库），返回链接 mrUrl。调用前先用 workbench_workspace_command 跑通相关测试。title 写清改了什么；description 用 Markdown 写改动摘要和验证结果。工作分支已有打开的 PR/MR 时会推送新提交，并用本次 title、description 更新它，所以 description 要概括整个 PR/MR 的改动，不只是这次的增量。targetBranch 默认是工作区打开时的 baseBranch（工作分支的起点）；打向别的分支时 PR/MR 会带上两个分支之间的差异提交，结果里会给出 warning，要打 release 这类分支应在 workbench_workspace_open 时就传 baseBranch。只提交工作区记录的工作分支：手工 git checkout 到别的分支时会拒绝提交并说明原因；只读检出（branchMode=readonly）的仓库不会提交。默认 mode=mr；用户要把改动合并进 preview/test 这类共享分支并直接推送、不要 PR/MR（例如「先合到 preview 再推」「本地合并然后推送」）时传 mode=direct，它把工作分支 merge --no-ff 进 targetBranch 并直推（目标必须已在远端存在、且不是可写仓库的基线分支）；直推不产生 PR/MR。",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","maxLength":20000},"targetBranch":{"type":"string","maxLength":200,"description":"PR/MR 的目标分支，默认是工作区打开时的 baseBranch；与起点不同时结果带 warning。mode=direct 时必填，写要直推的共享分支"},"mode":{"type":"string","enum":["mr","direct"],"description":"mr（默认）推工作分支并发起或更新 PR/MR；direct 把工作分支 merge --no-ff 进 targetBranch 后直推，不发 MR"}},"required":["title"],"additionalProperties":false}`),
 		Kind:        "workspace",
 	}
 }
@@ -108,6 +110,9 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			return "", fmt.Errorf("mode=direct 时 targetBranch 必填：写要直推的共享分支，例如 preview")
 		}
 		for _, rc := range run.RepositoryContexts() {
+			if rc.ReadOnly {
+				continue
+			}
 			if base := repositoryBaseBranchName(rc); target == base || target == "master" || target == "main" {
 				return "", fmt.Errorf("不能直推基线分支 %s；preview/test 这类共享分支才可以直推，基线请走 PR/MR", target)
 			}
@@ -134,6 +139,21 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	if direct {
 		directTarget = target
 	}
+	readOnly := []string{}
+	deliverable := 0
+	for _, rc := range run.RepositoryContexts() {
+		if rc.ReadOnly {
+			readOnly = append(readOnly, rc.Name)
+		} else if strings.TrimSpace(rc.WorkBranch) != "" {
+			deliverable++
+		}
+	}
+	if deliverable == 0 && len(readOnly) > 0 {
+		return "", fmt.Errorf("这个工作区的仓库都是只读检出（%s），没有工作分支可以提交；要提交改动，用 workbench_workspace_open new 新开一个工作区（branchMode=create 或 continue）后把改动带过去", strings.Join(readOnly, "、"))
+	}
+	if len(run.RepositoryContexts()) == 0 {
+		return "", fmt.Errorf("这个工作区没有检出代码仓库，没有可提交的内容")
+	}
 	heads, err := h.engine.PushConversationWorkspace(ctx, run.ID, gitToken, login, email, title, directTarget)
 	if err != nil {
 		return "", errors.New(redactAgentToolResult(err.Error(), requester))
@@ -153,9 +173,13 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 		if !ok {
 			continue
 		}
-		result := workspaceMRResult{Repository: rc.Name, SourceBranch: rc.WorkBranch, TargetBranch: target, Commit: head.Head, Pushed: true}
+		base := repositoryBaseBranchName(rc)
+		result := workspaceMRResult{Repository: rc.Name, SourceBranch: rc.WorkBranch, TargetBranch: target, BaseBranch: base, Commit: head.Head, Pushed: true}
 		if result.TargetBranch == "" {
-			result.TargetBranch = repositoryBaseBranchName(rc)
+			result.TargetBranch = base
+		}
+		if !direct && base != "" && result.TargetBranch != base {
+			result.Warning = fmt.Sprintf("工作分支从 %s 拉出，MR 却打向 %s：%s 有而 %s 没有的提交会一起出现在这个 MR 里。要只带本次改动，用 workbench_workspace_open new + baseBranch=%s 新开工作区，把改动搬过去再提交", base, result.TargetBranch, base, result.TargetBranch, result.TargetBranch)
 		}
 		if direct {
 			result.Direct = true
@@ -217,7 +241,19 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			note = "部分仓库没能自动发起 PR/MR：如实告诉用户 error，并给出 createUrl 让用户手动发起（源分支 sourceBranch、目标分支 targetBranch）。"
 		}
 	}
+	for _, r := range results {
+		if r.Warning != "" {
+			note += "有仓库的 MR 目标和工作分支起点不同，把 warning 如实告诉用户。"
+			break
+		}
+	}
+	if len(readOnly) > 0 {
+		note += fmt.Sprintf("只读检出的仓库（%s）不会提交，里面的改动仍只在工作区。", strings.Join(readOnly, "、"))
+	}
 	out := map[string]any{"results": results, "note": note}
+	if len(readOnly) > 0 {
+		out["readOnlyRepositories"] = readOnly
+	}
 	if run.IsWorkspace() {
 		issue, created, err := h.linkConversationRequirement(s, run, conversationRequirement{Title: title, Description: strings.TrimSpace(description)}, true)
 		if err == nil {

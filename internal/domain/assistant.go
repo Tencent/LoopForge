@@ -109,11 +109,15 @@ type AssistantSession struct {
 
 	Shared           bool   `json:"shared,omitempty"`
 	GenerationStatus string `json:"generationStatus,omitempty"`
-	Archived         bool   `json:"archived,omitempty"`
-	ID               string `json:"id"`
-	UserID           int64  `json:"userId,omitempty"`
-	Title            string `json:"title"`
-	TitleEdited      bool   `json:"titleEdited,omitempty"`
+	GenerationID     string `json:"generationId,omitempty"`
+	// Unread marks, for the listing reader, a reply that completed after they
+	// last opened the conversation. Listing only; never stored.
+	Unread      bool   `json:"unread,omitempty"`
+	Archived    bool   `json:"archived,omitempty"`
+	ID          string `json:"id"`
+	UserID      int64  `json:"userId,omitempty"`
+	Title       string `json:"title"`
+	TitleEdited bool   `json:"titleEdited,omitempty"`
 	// TitleGenerated is set when a background model replaced the first-prompt
 	// title. It is not a user rename: later turns keep it, and a real rename clears it.
 	TitleGenerated bool   `json:"titleGenerated,omitempty"`

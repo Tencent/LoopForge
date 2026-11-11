@@ -32,8 +32,31 @@ const CREDENTIAL_GROUPS=[
   {id:'platform',name:'平台集成',sub:'代码仓库与统一认证',icon:'key'},
   {id:'model',name:'模型与执行',sub:'AI 对话与编码 CLI',icon:'sparkles'},
 ];
+// A CodeBuddy key only works on the edition that issued it; the CLI treats unknown values as 国际站.
+// Keep in sync with chatbot/src/credentials.js and domain.NormalizeCodeBuddyInternetEnvironment.
+const CODEBUDDY_ENVIRONMENTS=[
+  {value:'',label:'国际站',site:'codebuddy.ai',keyUrl:'https://www.codebuddy.ai/profile/keys'},
+  {value:'internal',label:'国内站',site:'copilot.tencent.com',keyUrl:'https://copilot.tencent.com/profile/'},
+  {value:'ioa',label:'iOA',site:'tencent.sso.copilot.tencent.com',keyUrl:'https://tencent.sso.copilot.tencent.com/profile/keys'},
+];
+const CODEBUDDY_ENVIRONMENT_ALIASES={public:'',intl:'',international:'','国际站':'',china:'internal',cn:'internal','国内站':'internal'};
+// The CLI receives the stored text as-is, so only the exact values count; returns null for anything else.
+function codeBuddyEnvironment(value){
+  const key=String(value||'').trim();
+  return CODEBUDDY_ENVIRONMENTS.find(env=>env.value===key)||null;
+}
+// What an old free-text value most likely meant (china → 国内站), used to preselect the fix.
+function codeBuddyEnvironmentIntent(value){
+  const key=String(value||'').trim().toLowerCase();
+  const normalized=Object.prototype.hasOwnProperty.call(CODEBUDDY_ENVIRONMENT_ALIASES,key)?CODEBUDDY_ENVIRONMENT_ALIASES[key]:key;
+  return CODEBUDDY_ENVIRONMENTS.find(env=>env.value===normalized)||null;
+}
+// A stored value the CLI does not take as written; it connects to 国际站 until it is saved again.
+function codeBuddyEnvironmentLegacy(value){const raw=String(value||'').trim();return !!raw&&!codeBuddyEnvironment(raw)}
+function codeBuddyKeyURL(value){return (codeBuddyEnvironmentIntent(value)||CODEBUDDY_ENVIRONMENTS[0]).keyUrl}
+function codeBuddyKeyLinkLabel(value){return `前往${(codeBuddyEnvironmentIntent(value)||CODEBUDDY_ENVIRONMENTS[0]).label}获取 API Key`}
 const CREDENTIAL_KINDS=[
-  {key:'gitToken',group:'platform',name:'代码仓库',short:'GitHub Git Token',logo:'gongfeng',
+  {key:'gitToken',group:'platform',name:'GitHub',short:'仓库授权',logo:'github',monochrome:true,
     use:'克隆私有仓库、创建任务分支、推送交付产物',
     description:'用于克隆私有仓库、创建任务分支及推送交付产物。',
     guide:[['打开 GitHub「Settings → Developer settings → Personal access tokens」','https://github.com/settings/tokens','前往 GitHub 申请个人访问令牌'],['新建令牌，为目标仓库授予 <code>Contents</code> 和 <code>Pull requests</code> 的读写权限'],['复制令牌粘贴到下方，保存前会自动校验权限']],
@@ -42,9 +65,9 @@ const CREDENTIAL_KINDS=[
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
     use:'AI 对话与 SOP 的 CodeBuddy 执行器',
     description:'AI 对话（含 Claude、GPT 等模型）和 SOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',
-    guide:[['登录 CodeBuddy 个人密钥页','https://www.codebuddy.ai/','前往 CodeBuddy 获取 API Key'],['新建 API Key，复制以 <code>ck_</code> 开头的密钥'],['粘贴到下方；网络环境国际站留空，国内站填 internal，iOA 填 ioa']],
+    guide:[['先在下方选择 CodeBuddy 账号所在的网络环境：国际站、国内站或 iOA'],['登录该站点的 API Key 页面，新建 API Key',codeBuddyKeyURL,codeBuddyKeyLinkLabel],['复制以 <code>ck_</code> 开头的密钥粘贴到下方；DeepSeek、OpenAI 等第三方模型的 Key 不能填在这里']],
     placeholder:'请输入个人 ck_ key',
-    extra:{name:'codeBuddyInternetEnvironment',label:'网络环境',placeholder:'国际站留空，国内站 internal，iOA 填 ioa'},
+    extra:{name:'codeBuddyInternetEnvironment',label:'网络环境',options:CODEBUDDY_ENVIRONMENTS},
     impact:'AI 对话将只能使用默认模型，CodeBuddy 执行器节点会失败。'},
   {key:'codexApiKey',group:'model',name:'Codex',short:'Codex API Key',logo:'codex',monochrome:true,
     use:'AI 对话选择 Codex 执行器，以及以 Codex 运行的 SOP 节点',
@@ -60,12 +83,53 @@ const CREDENTIAL_KINDS=[
     placeholder:'请输入 Claude Code API Key',
     extra:{name:'claudeCodeBaseUrl',label:'Base URL',placeholder:'https://api.anthropic.com',url:true,clearWithKey:true},
     impact:'以 Claude Code 运行的 SOP 节点将无法执行，Base URL 一并清空。'},
+  agentCliCredentialKind('opencode',{name:'OpenCode',logo:'opencode',baseUrl:'https://api.example.com/v1',required:()=>true,
+    note:'OpenCode 没有自己的模型服务，需要填写 Base URL。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
+  agentCliCredentialKind('cursor',{name:'Cursor CLI',logo:'cursor',monochrome:true,
+    note:'Cursor CLI 只连接 Cursor 官方服务，使用 Cursor 自带的模型。',
+    guide:[['登录 Cursor 控制台，在「Integrations → User API Keys」新建 Key','https://cursor.com/dashboard?tab=integrations','前往 Cursor 创建 API Key'],['复制以 <code>crsr_</code> 开头的 Key'],['粘贴到下方保存']]}),
+  agentCliCredentialKind('agy',{name:'Antigravity',logo:'gemini',baseUrl:'https://gateway.example.com/v1',required:protocol=>protocol==='chat',
+    note:'默认连接 Gemini 官方服务；选择 OpenAI 兼容网关时需要填写 Base URL。',extraNote:'OpenAI 兼容网关必填',
+    guide:[['在 Google AI Studio 创建 Gemini API Key，或准备 OpenAI 兼容网关的 Key','https://aistudio.google.com/apikey','前往 Google AI Studio'],['走网关时记下网关地址'],['粘贴 Key，选择协议']],
+    protocols:[['gemini','Gemini 官方 API'],['chat','OpenAI 兼容网关（Chat Completions）']]}),
+  agentCliCredentialKind('kimi',{name:'Kimi Code',logo:'kimi',baseUrl:'https://api.moonshot.cn/v1',
+    note:'未填写 Base URL 时连接 Moonshot 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
+  agentCliCredentialKind('pi',{name:'Pi',logo:'pi',monochrome:true,baseUrl:'https://api.example.com/v1',required:()=>true,
+    note:'Pi 没有自己的模型服务，需要填写 Base URL。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
+  agentCliCredentialKind('dsh',{name:'DeepSeek Harness',logo:'deepseek',baseUrl:'https://api.deepseek.com',
+    note:'未填写 Base URL 时连接 DeepSeek 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
+  agentCliCredentialKind('zcode',{name:'ZCode',logo:'glm',baseUrl:'https://open.bigmodel.cn/api/anthropic',
+    note:'未填写 Base URL 时连接智谱 BigModel 的 Anthropic 兼容服务（Messages）。',protocols:[['messages','Messages（Anthropic）'],['chat','Chat Completions'],['responses','Responses']]}),
 ];
+function agentCliCredentialKind(cli,o){
+  const field=`agentCli.${cli}.`,configurable=!!o.protocols;
+  return {key:`agentCli.${cli}`,agentCli:cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,monochrome:!!o.monochrome,
+    use:`AI 对话的 ${o.name} 模型与以 ${o.name} 运行的 SOP 节点`,
+    description:`AI 对话切换到 ${o.name} 后可选用它的模型，SOP 在执行机器上以 ${o.name} 运行的节点也使用它。${o.note||''}`,
+    guide:o.guide||[['在模型服务商控制台创建 API Key'],['记下服务地址和它提供的接口协议'],['粘贴 Key，按需填写 Base URL 并选择协议']],
+    placeholder:`请输入 ${o.name} API Key`,
+    ...(configurable?{
+      extra:{name:field+'baseUrl',label:'Base URL',placeholder:o.baseUrl,url:true,clearWithKey:true,required:o.required,note:o.extraNote||(o.required?'必填':'')},
+      protocol:{name:field+'protocol',options:o.protocols},
+    }:{}),
+    impact:`AI 对话将不能再切换到 ${o.name}，以 ${o.name} 运行的 SOP 节点将无法执行${configurable?'，Base URL 与协议一并清空':''}。`};
+}
+function credentialValue(user,name){
+  const [scope,cli,field]=String(name).split('.');
+  return scope==='agentCli'&&field?user?.agentCliCredentials?.[cli]?.[field]:user?.[name];
+}
+function credentialProtocol(kind,user){
+  const options=kind.protocol?.options||[],value=credentialValue(user,kind.protocol?.name||'');
+  return options.some(([id])=>id===value)?value:(options[0]?.[0]||'');
+}
+function credentialProtocolHTML(kind,value){
+  return `<label class="credential-field"><span>接口协议<em>Base URL 提供的 API</em></span><div class="credential-input is-plain is-select"><select name="protocol" aria-label="接口协议">${kind.protocol.options.map(([id,label])=>`<option value="${id}"${id===value?' selected':''}>${escapeHTML(label)}</option>`).join('')}</select></div></label>`;
+}
 // Platform features depend on these, in the order people should configure them.
 const CREDENTIAL_RECOMMENDED=['gitToken','codeBuddyApiKey'];
 const CREDENTIAL_PAT_WARNING='请填写 GitHub <b>个人访问令牌（PAT）</b>，为目标仓库授予 <b>Contents</b> 和 <b>Pull requests</b> 的读写权限；少勾权限会导致克隆 / 推送仓库失败。';
 function credentialKind(key){return CREDENTIAL_KINDS.find(kind=>kind.key===key)||null}
-function credentialConfigured(kind,user){return !!user?.[kind.key+'Configured']}
+function credentialConfigured(kind,user){return !!credentialValue(user,kind.agentCli?kind.key+'.apiKeyConfigured':kind.key+'Configured')}
 function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
 function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon harness-icon${cls?' '+cls:''}" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
@@ -76,19 +140,60 @@ function credentialNextKind(user){return CREDENTIAL_RECOMMENDED.map(credentialKi
 function credentialSecretError(kind,value){
   return '';
 }
-function credentialExtraError(kind,value){
+// Advisory only: a third-party model key is accepted here but CodeBuddy answers it with 401.
+function credentialSecretWarning(kind,value){
   const text=String(value||'').trim();
+  if(kind?.key!=='codeBuddyApiKey'||!text||text.startsWith('ck_'))return '';
+  return /^sk-/i.test(text)
+    ?'这像是 DeepSeek、OpenAI 等第三方模型的 Key，CodeBuddy 会拒绝；第三方 Key 请改填到 Claude Code 或 Codex 凭证并设置 Base URL'
+    :'CodeBuddy API Key 通常以 ck_ 开头，请确认复制的是 CodeBuddy 的 Key';
+}
+// The value an extra field starts from. An old network environment preselects what it meant (china → 国内站),
+// and one that cannot be guessed shows as 国际站, which is what the CLI uses.
+function credentialExtraValue(kind,value){
+  if(kind?.extra?.options)return codeBuddyEnvironmentIntent(value)?.value??'';
+  return value||kind?.extra?.fallback||'';
+}
+function credentialExtraLabel(kind,value){
+  if(kind.extra.options){const env=codeBuddyEnvironment(value)||CODEBUDDY_ENVIRONMENTS[0];return `${env.label} · ${env.site}`}
+  return String(value||'').trim()||(kind.extra.url?'官方地址':kind.extra.fallback||'');
+}
+function codeBuddyEnvironmentHintHTML(selected,stored=''){
+  const raw=String(stored||'').trim(),legacy=codeBuddyEnvironmentLegacy(raw)?`原来填写的「${raw}」无法识别，CodeBuddy 实际按国际站连接，点保存改为上面选择的环境。`:'';
+  return `${escapeHTML(legacy)}Key 只能在创建它的站点使用 · <a href="${escapeHTML(codeBuddyKeyURL(selected))}" target="_blank" rel="noopener noreferrer" data-credential-key-link>${escapeHTML(codeBuddyKeyLinkLabel(selected))} ↗</a>`;
+}
+function credentialSelectFieldHTML(kind,stored,note=''){
+  const selected=credentialExtraValue(kind,stored);
+  const options=kind.extra.options.map(option=>`<option value="${escapeHTML(option.value)}"${option.value===selected?' selected':''}>${escapeHTML(option.label)} · ${escapeHTML(option.site)}</option>`).join('');
+  return `<label class="credential-field"><span>${escapeHTML(kind.extra.label)}${note?`<em>${escapeHTML(note)}</em>`:''}</span><div class="credential-input is-plain is-select"><select name="extra">${options}</select></div><small class="credential-env-hint" data-credential-env-hint>${codeBuddyEnvironmentHintHTML(selected,stored)}</small></label>`;
+}
+// Keeps the 获取 API Key links pointed at the edition that is selected now.
+function refreshCredentialEnvironmentLinks(scope,value){
+  const hint=scope?.querySelector('[data-credential-env-hint]');if(hint)hint.innerHTML=codeBuddyEnvironmentHintHTML(value);
+  scope?.querySelectorAll('[data-wizard-link][data-environment-link]').forEach(link=>{link.href=codeBuddyKeyURL(value);link.textContent=`${codeBuddyKeyLinkLabel(value)} ↗`});
+}
+function credentialExtraError(kind,value,protocol){
+  const text=String(value||'').trim();
+  if(!text&&kind.extra?.required?.(protocol))return '请填写 Base URL';
   if(!kind.extra?.url||!text)return '';
   try{const url=new URL(text);if(url.protocol==='http:'||url.protocol==='https:')return ''}catch{}
   return '请填写以 http:// 或 https:// 开头的地址';
 }
 // Only the fields of one credential are sent; the server leaves the rest alone.
 function credentialSavePayload(kind,values={}){
+  if(kind.agentCli){
+    const entry={},secret=String(values.secret||'').trim();
+    if(secret)entry.apiKey=secret;
+    if(kind.extra&&values.extra!==undefined)entry.baseUrl=String(values.extra||'').trim();
+    if(kind.protocol&&values.protocol!==undefined)entry.protocol=values.protocol;
+    return {agentCliCredentials:{[kind.agentCli]:entry}};
+  }
   const payload={[kind.key]:String(values.secret||'').trim()};
   if(kind.extra&&values.extra!==undefined)payload[kind.extra.name]=String(values.extra||'').trim()||(kind.extra.fallback||'');
   return payload;
 }
 function credentialClearPayload(kind){
+  if(kind.agentCli)return {agentCliCredentials:{[kind.agentCli]:{apiKeyClear:true,baseUrl:'',protocol:''}}};
   const payload={[kind.key+'Clear']:true};
   if(kind.extra?.clearWithKey)payload[kind.extra.name]='';
   return payload;
@@ -124,17 +229,20 @@ function credentialSubline(kind,user){
     if(!result.valid)return source+dot+`<span class="is-err">缺少权限 ${escapeHTML((result.missing||[]).join('、'))}</span>`;
     return source+dot+'<span class="is-ok">令牌有效</span>'+(result.scopes?.length?dot+`<span class="credential-mono">${escapeHTML(result.scopes.join(' · '))}</span>`:'');
   }
-  if(kind.key==='codeBuddyApiKey')return `<span>网络环境</span><span class="credential-mono">${escapeHTML(user.codeBuddyInternetEnvironment||'国际站')}</span>${dot}${use}`;
-  if(kind.extra)return (user[kind.extra.name]?`<span class="credential-mono">${escapeHTML(user[kind.extra.name])}</span>`:'<span>官方地址</span>')+dot+use;
+  if(kind.key==='codeBuddyApiKey'){
+    const raw=String(user.codeBuddyInternetEnvironment||'').trim(),env=codeBuddyEnvironment(raw);
+    return `<span>网络环境</span>${env?`<span class="credential-mono">${escapeHTML(env.label)}</span>`:`<span class="is-err">「${escapeHTML(raw)}」无法识别，按国际站连接</span>`}${dot}${use}`;
+  }
+  if(kind.extra){const extra=credentialValue(user,kind.extra.name);return (extra?`<span class="credential-mono">${escapeHTML(extra)}</span>`:'<span>官方地址</span>')+dot+use;}
   return use;
 }
-function credentialFieldHTML({label,note='',name,type='password',value='',placeholder='',hint='',id=''}){
+function credentialFieldHTML({label,note='',name,type='password',value='',placeholder='',hint='',hintTone='',id=''}){
   const secret=type==='password';
   // Secrets are never serialized into markup; callers assign input.value after rendering.
-  return `<label class="credential-field"><span>${escapeHTML(label)}${note?`<em>${escapeHTML(note)}</em>`:''}</span><div class="credential-input${secret?'':' is-plain'}"><input${id?` id="${id}"`:''} name="${name}" type="${type}" ${secret?'autocomplete="new-password"':'autocomplete="off" spellcheck="false"'}${secret?'':` value="${escapeHTML(value)}"`} placeholder="${escapeHTML(placeholder)}">${secret?`<button type="button" class="credential-eye" data-credential-eye aria-label="显示">${credentialGlyph('eye',15)}</button>`:''}</div>${hint!==null?`<small data-credential-hint="${name}">${escapeHTML(hint)}</small>`:''}</label>`;
+  return `<label class="credential-field"><span>${escapeHTML(label)}${note?`<em>${escapeHTML(note)}</em>`:''}</span><div class="credential-input${secret?'':' is-plain'}${hintTone?' is-'+(hintTone==='err'?'bad':hintTone==='ok'?'good':hintTone):''}"><input${id?` id="${id}"`:''} name="${name}" type="${type}" ${secret?'autocomplete="new-password"':'autocomplete="off" spellcheck="false"'}${secret?'':` value="${escapeHTML(value)}"`} placeholder="${escapeHTML(placeholder)}">${secret?`<button type="button" class="credential-eye" data-credential-eye aria-label="显示">${credentialGlyph('eye',15)}</button>`:''}</div>${hint!==null?`<small data-credential-hint="${name}"${hintTone?` class="is-${hintTone}"`:''}>${escapeHTML(hint)}</small>`:''}</label>`;
 }
 function credentialOAuthHTML(label,note){
-  return `<div class="credential-oauth" data-gongfeng-oauth${state.gongfengOAuthEnabled?'':' hidden'}><a class="credential-btn secondary credential-ink" href="/api/auth/gongfeng/start" target="_blank" rel="noopener noreferrer">${credentialLogo(credentialKind('gitToken'),'is-mini')}<span>${label}</span></a><small>${note}</small></div>`;
+  return (typeof githubConnectHTML==='function'?githubConnectHTML():'')+`<div class="credential-oauth" data-gongfeng-oauth${state.gongfengOAuthEnabled?'':' hidden'}><a class="credential-btn secondary credential-ink" href="/api/auth/gongfeng/start" target="_blank" rel="noopener noreferrer">${credentialLogo(credentialKind('gitToken'),'is-mini')}<span>${label}</span></a><small>${note}</small></div>`;
 }
 function credentialPatWarningHTML(show){return `<div class="credential-note is-warn git-token-pat-warning"${show?'':' hidden'}>${credentialGlyph('alert',14)}<span>${CREDENTIAL_PAT_WARNING}</span></div>`}
 const GIT_TOKEN_REPLACE_HINT='保存后替换当前的令牌，对下一次任务生效';
@@ -155,7 +263,7 @@ function gitTokenDetailHTML(kind,user){
     :result.error?`<span class="is-err">${escapeHTML(result.error)}</span>${ago}`
     :!result.valid?`<span class="is-err">令牌有效但缺少权限 ${escapeHTML(missing.join('、'))}</span>${ago}`
     :`<span class="is-ok">令牌有效</span>${ago}`;
-  return `<dl class="credential-kv" data-git-detail><dt>来源</dt><dd>${user.gitTokenOAuth?'工蜂授权 · 到期自动续期':'个人访问令牌'}</dd><dt>权限</dt><dd>${scopes||'<span class="is-muted">校验后显示</span>'}</dd><dt>最近校验</dt><dd>${checked}</dd><dt>用于</dt><dd>${escapeHTML(kind.description)}</dd></dl>`;
+  return `<dl class="credential-kv" data-git-detail><dt>来源</dt><dd>${user.gitTokenOAuth?'工蜂授权 · 到期自动续期':'GitHub 授权 / 个人访问令牌'}</dd><dt>权限</dt><dd>${scopes||'<span class="is-muted">校验后显示</span>'}</dd><dt>最近校验</dt><dd>${checked}</dd><dt>用于</dt><dd>${escapeHTML(kind.description)}</dd></dl>`;
 }
 function gitTokenEditorHTML(kind,user){
   const failure=gitTokenFailure(gitTokenVerifyFor({id:state.currentUser?.id})?.result);
@@ -175,12 +283,19 @@ function gitTokenEditorHTML(kind,user){
 }
 function credentialEditorHTML(kind,user){
   if(kind.key==='gitToken')return gitTokenEditorHTML(kind,user);
-  const extraValue=kind.extra?(user[kind.extra.name]||kind.extra.fallback||''):'';
-  return `<div class="credential-editor-form"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}>
+  const extraStored=kind.extra?credentialValue(user,kind.extra.name):'';
+  const extraValue=kind.extra?credentialExtraValue(kind,extraStored):'';
+  const extraField=!kind.extra?''
+    :kind.extra.options?credentialSelectFieldHTML(kind,extraStored,'与 Key 所在站点一致')
+    :credentialFieldHTML({label:kind.extra.label,note:kind.extra.note||(kind.extra.url?'留空使用官方地址':''),name:'extra',type:kind.extra.url?'url':'text',value:extraValue,placeholder:kind.extra.placeholder,hint:null});
+  const protocolField=kind.protocol?credentialProtocolHTML(kind,credentialProtocol(kind,user)):'';
+  const legacy=!!(kind.extra?.options&&codeBuddyEnvironmentLegacy(user[kind.extra.name]));
+  return `<div class="credential-editor-form"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}${legacy?' data-legacy="true"':''}>
     ${credentialFieldHTML({label:kind.short,note:'已配置 · 留空则不改',name:'secret',placeholder:'输入新值以替换',hint:kind.hint||''})}
-    ${kind.extra?credentialFieldHTML({label:kind.extra.label,note:kind.extra.url?'留空使用官方地址':'',name:'extra',type:kind.extra.url?'url':'text',value:extraValue,placeholder:kind.extra.placeholder,hint:null}):''}
+    ${extraField}
+    ${protocolField}
     <div class="credential-swap">
-      <div class="credential-editor-foot" data-credential-pane="foot"><button type="button" class="credential-btn ghost danger credential-ink" data-credential-act="delete">${credentialGlyph('trash',14)}<span>删除</span></button><div><button type="button" class="credential-btn ghost credential-ink" data-credential-act="cancel">取消</button><button type="button" class="credential-btn primary credential-ink" data-credential-act="save" disabled>保存</button></div></div>
+      <div class="credential-editor-foot" data-credential-pane="foot"><button type="button" class="credential-btn ghost danger credential-ink" data-credential-act="delete">${credentialGlyph('trash',14)}<span>删除</span></button><div><button type="button" class="credential-btn ghost credential-ink" data-credential-act="cancel">取消</button><button type="button" class="credential-btn primary credential-ink" data-credential-act="save"${legacy?'':' disabled'}>保存</button></div></div>
       <div class="credential-confirm is-off" data-credential-pane="confirm" role="alert"><div>删除 <b>${escapeHTML(kind.short)}</b>？${escapeHTML(kind.impact)}</div><button type="button" class="credential-btn ghost credential-ink" data-credential-act="undelete">取消</button><button type="button" class="credential-btn danger-solid credential-ink" data-credential-act="confirm-delete">删除</button></div>
     </div>
   </div>`;
@@ -231,6 +346,7 @@ function renderCredentialPanel(){
   const panel=$('#credentialPanel');if(!panel)return;
   const user=credentialUser();
   panel.innerHTML=credentialPanelHTML(user);
+  if(typeof hydrateGitHubConnections==='function')hydrateGitHubConnections(panel);
   applyCredentialFilter(panel,user);
   hydrateCredentialIcons(panel);
 }
@@ -266,11 +382,12 @@ function setCredentialRowOpen(key,open){
 function resetCredentialEditor(row){
   row.querySelectorAll('input[name="secret"]').forEach(input=>{input.value='';input.type='password'});
   const form=row.querySelector('.credential-editor-form');if(!form)return;
-  const extra=form.querySelector('input[name="extra"]');if(extra)extra.value=form.dataset.original||'';
+  const extra=form.querySelector('[name="extra"]');if(extra)extra.value=form.dataset.original||'';
+  if(extra?.tagName==='SELECT')refreshCredentialEnvironmentLinks(form,extra.value);
   if(row.dataset.credentialRow==='gitToken'){
     const line=form.querySelector('[data-git-verify-line]');if(line){line.classList.remove('is-err');line.innerHTML=''}
     setCredentialHint(form,'secret',GIT_TOKEN_REPLACE_HINT);
-  }
+  }else setCredentialHint(form,'secret',credentialKind(row.dataset.credentialRow)?.hint||'');
   updateCredentialEditorDirty(form);
 }
 function toggleCredentialRow(key,open){
@@ -290,13 +407,13 @@ function showCredentialPane(row,name,focus=CREDENTIAL_PANE_FOCUS[name]){
   if(focus)setTimeout(()=>target.querySelector(focus)?.focus({preventScroll:true}),60);
 }
 function updateCredentialEditorDirty(form){
-  const secret=form.querySelector('input[name="secret"]')?.value.trim()||'',extra=form.querySelector('input[name="extra"]'),save=form.querySelector('[data-credential-act="save"]');
-  if(save&&!save.dataset.busy)save.disabled=!secret&&!(extra&&extra.value.trim()!==(form.dataset.original||''));
+  const secret=form.querySelector('input[name="secret"]')?.value.trim()||'',extra=form.querySelector('[name="extra"]'),save=form.querySelector('[data-credential-act="save"]');
+  if(save&&!save.dataset.busy)save.disabled=!secret&&!form.dataset.legacy&&!(extra&&extra.value.trim()!==(form.dataset.original||''));
 }
 function setCredentialHint(scope,name,text,tone=''){
   const hint=scope.querySelector(`[data-credential-hint="${name}"]`),box=scope.querySelector(`input[name="${name}"]`)?.closest('.credential-input');
   if(hint){hint.textContent=text;hint.className=tone?'is-'+tone:''}
-  if(box){box.classList.toggle('is-bad',tone==='err');box.classList.toggle('is-good',tone==='ok');if(tone==='err'){box.classList.remove('is-shake');void box.offsetWidth;box.classList.add('is-shake')}}
+  if(box){box.classList.toggle('is-bad',tone==='err');box.classList.toggle('is-good',tone==='ok');box.classList.toggle('is-warn',tone==='warn');if(tone==='err'){box.classList.remove('is-shake');void box.offsetWidth;box.classList.add('is-shake')}}
 }
 function setCredentialButtonBusy(button,label){
   if(!button)return;
@@ -358,8 +475,8 @@ function credentialSaved(key,message){
 }
 async function submitCredentialEditor(row,button){
   const key=row.dataset.credentialRow,kind=credentialKind(key),form=row.querySelector('.credential-editor-form');
-  const secret=form.querySelector('input[name="secret"]').value.trim(),extra=form.querySelector('input[name="extra"]');
-  const secretError=credentialSecretError(kind,secret),extraError=extra?credentialExtraError(kind,extra.value):'';
+  const secret=form.querySelector('input[name="secret"]').value.trim(),extra=form.querySelector('[name="extra"]'),protocol=form.querySelector('[name="protocol"]');
+  const secretError=credentialSecretError(kind,secret),extraError=extra?credentialExtraError(kind,extra.value,protocol?.value):'';
   if(secretError){setCredentialHint(form,'secret',secretError,'err');return}
   if(extraError){toast(extraError,'err');extra.focus();return}
   setCredentialButtonBusy(button,key==='gitToken'?'校验中':'保存中');
@@ -376,7 +493,7 @@ async function submitCredentialEditor(row,button){
       credentialSaved(key,'Git Token 校验通过，已保存');
       return;
     }
-    await saveCredential(key,{secret,...(extra?{extra:extra.value}:{})});
+    await saveCredential(key,{secret,...(extra?{extra:extra.value}:{}),...(protocol?{protocol:protocol.value}:{})});
     credentialSaved(key,`${kind.short} 已保存`);
   }catch(err){toast(err.message,'err');setCredentialButtonBusy(button,'')}
 }
@@ -446,7 +563,11 @@ function bindCredentialPanel(panel){
   };
   panel.oninput=event=>{
     const form=event.target.closest?.('.credential-editor-form');if(!form)return;
-    if(event.target.name==='secret'){const kind=credentialKind(form.closest('[data-credential-row]').dataset.credentialRow),error=credentialSecretError(kind,event.target.value);setCredentialHint(form,'secret',error||(kind.key==='gitToken'?GIT_TOKEN_REPLACE_HINT:kind.hint||''),error?'err':'')}
+    if(event.target.name==='secret'){
+      const kind=credentialKind(form.closest('[data-credential-row]').dataset.credentialRow),error=credentialSecretError(kind,event.target.value),warning=credentialSecretWarning(kind,event.target.value);
+      setCredentialHint(form,'secret',error||warning||(kind.key==='gitToken'?GIT_TOKEN_REPLACE_HINT:kind.hint||''),error?'err':warning?'warn':'');
+    }
+    if(event.target.name==='extra'&&event.target.tagName==='SELECT')refreshCredentialEnvironmentLinks(form,event.target.value);
     updateCredentialEditorDirty(form);
   };
 }
@@ -465,7 +586,7 @@ function revealCredentialRow(key){
 
 // ---- 添加凭证向导 ----
 let credentialWizard=null;
-function credentialWizardDefaults(kind,user){return kind?.extra?(user[kind.extra.name]||kind.extra.fallback||''):''}
+function credentialWizardDefaults(kind,user){return kind?.extra?credentialExtraValue(kind,credentialValue(user,kind.extra.name)):''}
 function openCredentialWizard(key){
   const user=credentialUser();
   if(!state.currentUser||state.currentUser.isGuest||!$('#credentialPanel'))return;
@@ -474,7 +595,7 @@ function openCredentialWizard(key){
   const kind=preset||CREDENTIAL_RECOMMENDED.map(credentialKind).find(k=>!credentialConfigured(k,user))||CREDENTIAL_KINDS.find(k=>!credentialConfigured(k,user))||null;
   if(credentialWizard)closeCredentialWizard(true);
   credentialUI().open&&toggleCredentialRow(credentialUI().open,false);
-  credentialWizard={step:preset?2:1,kind:kind?.key||null,direct:!!preset,secret:'',extra:credentialWizardDefaults(kind,user),saving:false,error:'',done:false,guide:{},returnFocus:document.activeElement};
+  credentialWizard={step:preset?2:1,kind:kind?.key||null,direct:!!preset,secret:'',extra:credentialWizardDefaults(kind,user),protocol:credentialProtocol(kind||{},user),saving:false,error:'',done:false,guide:{},returnFocus:document.activeElement};
   let scrim=$('#credentialWizard');
   if(scrim?.closeTimer){clearTimeout(scrim.closeTimer);scrim.closeTimer=0}
   if(!scrim){
@@ -512,8 +633,13 @@ function closeCredentialWizard(immediate=false){
 }
 function credentialWizardValid(wizard=credentialWizard){
   const kind=credentialKind(wizard.kind);if(!kind)return {ok:false};
-  const secret=String(wizard.secret||'').trim(),error=credentialSecretError(kind,secret)||(kind.extra?credentialExtraError(kind,wizard.extra):'');
+  const secret=String(wizard.secret||'').trim(),error=credentialSecretError(kind,secret)||(kind.extra?credentialExtraError(kind,wizard.extra,wizard.protocol):'');
   return {ok:!!secret&&!error,error};
+}
+function credentialWizardSecretHint(kind,wizard,validity=credentialWizardValid(wizard)){
+  const error=credentialSecretError(kind,wizard.secret);if(error)return {text:error,tone:'err'};
+  const warning=credentialSecretWarning(kind,wizard.secret);if(warning)return {text:warning,tone:'warn'};
+  return validity.ok?{text:'格式正确',tone:'ok'}:{text:kind.hint||'只在你负责的任务运行时注入，保存后不再明文展示',tone:''};
 }
 function credentialWizardStepOneHTML(user){
   const wizard=credentialWizard,all=CREDENTIAL_KINDS.every(kind=>credentialConfigured(kind,user));
@@ -525,26 +651,41 @@ function credentialWizardStepOneHTML(user){
 }
 function credentialWizardStepTwoHTML(kind){
   const wizard=credentialWizard;
-  const guide=kind.guide.map(([text,href,label],index)=>`<li class="${wizard.guide[index]?'is-done':''}" data-wizard-guide="${index}"><span class="credential-guide-no">${wizard.guide[index]?credentialGlyph('check-draw',10):index+1}</span><span>${text}${href?`<a href="${href}" target="_blank" rel="noopener noreferrer" data-wizard-link="${index}">${escapeHTML(label)} ↗</a>`:''}</span></li>`).join('');
-  const gongfeng=kind.key==='gitToken'?`${credentialOAuthHTML('一键用工蜂授权','推荐 · 授权后自动续期')}${state.gongfengOAuthEnabled?'<div class="credential-or">或手动填写个人访问令牌</div>':''}${credentialPatWarningHTML(true)}`:'';
+  // A guide link given as functions follows the selected network environment.
+  const guide=kind.guide.map(([text,href,label],index)=>{
+    const dynamic=typeof href==='function',url=dynamic?href(wizard.extra):href,name=typeof label==='function'?label(wizard.extra):label;
+    return `<li class="${wizard.guide[index]?'is-done':''}" data-wizard-guide="${index}"><span class="credential-guide-no">${wizard.guide[index]?credentialGlyph('check-draw',10):index+1}</span><span>${text}${url?`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer" data-wizard-link="${index}"${dynamic?' data-environment-link':''}>${escapeHTML(name)} ↗</a>`:''}</span></li>`;
+  }).join('');
+  const github=kind.key==='gitToken';
+  const manual=wizard.githubMethod==='manual';
+  const methods=github?`<div class="github-methods" role="tablist" aria-label="GitHub 连接方式"><button type="button" role="tab" data-github-method="oauth" aria-selected="${!manual}">GitHub 授权</button><button type="button" role="tab" data-github-method="manual" aria-selected="${manual}">访问令牌</button></div>`:'';
+  if(github&&!manual)return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>连接 GitHub</span><small class="credential-description">连接后可选择仓库，用于克隆代码、创建分支和推送交付产物。</small></div>${methods}${credentialOAuthHTML('用工蜂授权','')}`;
   const validity=credentialWizardValid();
-  const secretHint=validity.error&&credentialSecretError(kind,wizard.secret)?validity.error:validity.ok?'格式正确':(kind.hint||'只在你负责的任务运行时注入，保存后不再明文展示');
-  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>配置 ${escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${gongfeng}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
-    ${credentialFieldHTML({label:kind.short,name:'secret',id:'credentialWizardSecret',placeholder:kind.placeholder,hint:secretHint})}
-    ${kind.extra?credentialFieldHTML({label:kind.extra.label,note:kind.extra.url?'可选 · 留空使用官方地址':'',name:'extra',type:kind.extra.url?'url':'text',value:wizard.extra,placeholder:kind.extra.placeholder,hint:''}):''}
+  const {text:secretHint,tone:secretTone}=credentialWizardSecretHint(kind,wizard,validity);
+  const secretField=credentialFieldHTML({label:github?'个人访问令牌（PAT）':kind.short,name:'secret',id:'credentialWizardSecret',placeholder:kind.placeholder,hint:secretHint,hintTone:secretTone});
+  const extraField=!kind.extra?''
+    :kind.extra.options?credentialSelectFieldHTML(kind,wizard.extra)
+    :credentialFieldHTML({label:kind.extra.label,note:kind.extra.note||(kind.extra.url?'可选 · 留空使用官方地址':''),name:'extra',type:kind.extra.url?'url':'text',value:wizard.extra,placeholder:kind.extra.placeholder,hint:''});
+  const protocolField=kind.protocol?credentialProtocolHTML(kind,wizard.protocol||credentialProtocol(kind,{})):'';
+  // The network environment decides where the key comes from, so it is chosen first.
+  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
+    ${kind.extra?.options?extraField+secretField:secretField+extraField+protocolField}
   </div>`;
 }
 function credentialWizardStepThreeHTML(kind){
   const wizard=credentialWizard;
   if(wizard.done)return `<div class="credential-saved"><span class="credential-check-big"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg></span><h4>${escapeHTML(kind.short)} 已保存</h4><p>下一次运行你负责的任务时生效，可随时在列表中展开编辑。</p></div>`;
-  const extra=kind.extra?`<dt>${escapeHTML(kind.extra.label)}</dt><dd${kind.extra.url?' class="credential-mono"':''}>${escapeHTML(String(wizard.extra||'').trim()||(kind.extra.url?'官方地址':kind.extra.fallback))}</dd>`:'';
+  const extra=kind.extra?`<dt>${escapeHTML(kind.extra.label)}</dt><dd${kind.extra.url?' class="credential-mono"':''}>${escapeHTML(credentialExtraLabel(kind,wizard.extra))}</dd>`:'';
+  const warning=credentialSecretWarning(kind,wizard.secret);
   const line=wizard.error?`<p class="credential-vline is-err" role="alert">${credentialGlyph('alert',13)}${escapeHTML(wizard.error)}</p>`
     :wizard.saving&&kind.key==='gitToken'?`<p class="credential-vline is-info" role="status">${credentialSpinner(13)}正在校验令牌有效性与权限…</p>`
-    :kind.key==='gitToken'?`<p class="credential-vline git-token-verify-status">${credentialGlyph('lock',13)}保存前会先校验令牌有效性与权限</p>`:'';
+    :kind.key==='gitToken'?`<p class="credential-vline git-token-verify-status">${credentialGlyph('lock',13)}保存前会先校验令牌有效性与权限</p>`
+    :warning?`<p class="credential-vline is-warn" role="status">${credentialGlyph('alert',13)}${escapeHTML(warning)}</p>`:'';
   return `<div class="credential-question">${credentialGlyph('check',16)}<span>确认并保存</span><small>密钥只在任务运行时注入，不写入 Agent 资产</small></div><div class="credential-summary"><div>${credentialGlyph('key',14)}${escapeHTML(kind.name)}</div><dl><dt>凭证</dt><dd>${escapeHTML(kind.short)}</dd><dt>密钥</dt><dd class="credential-mask">已填写 ••••••••</dd>${extra}<dt>生效</dt><dd>下一次任务</dd></dl></div>${line}`;
 }
 function credentialWizardFootHTML(){
   const wizard=credentialWizard;
+  if(wizard.step===2&&wizard.kind==='gitToken'&&wizard.githubMethod!=='manual')return '<span class="credential-kbd"><kbd>Esc</kbd> 关闭</span><span class="github-private-note">仅为当前账号授权</span>';
   if(wizard.done)return `<span></span><button type="button" class="credential-btn primary credential-ink" data-wizard-done>完成</button>`;
   const back=wizard.step===1||(wizard.direct&&wizard.step===2)
     ?'<span class="credential-kbd"><kbd>Esc</kbd> 关闭</span>'
@@ -578,6 +719,8 @@ function paintCredentialWizard(direction){
   scrim.querySelector('[data-wizard-close]').disabled=wizard.saving;
   scrim.querySelector('.credential-dialog-foot').innerHTML=credentialWizardFootHTML();
   hydrateCredentialIcons(scrim);
+  if(typeof hydrateGitHubConnections==='function')hydrateGitHubConnections(pane);
+  pane.querySelectorAll('[data-github-method]').forEach(button=>{button.onclick=()=>{wizard.githubMethod=button.dataset.githubMethod;paintCredentialWizard(0);focusCredentialWizard()}});
 }
 function refreshCredentialWizardFoot(){
   const scrim=$('#credentialWizard');if(!scrim||!credentialWizard)return;
@@ -586,6 +729,8 @@ function refreshCredentialWizardFoot(){
 }
 function focusCredentialWizard(){
   const pane=$('#credentialWizard .credential-pane:not(.is-leaving)');
+  // Deferred calls must not pull focus back once the user is already in this pane, or typing lands in the wrong field.
+  if(pane?.contains(document.activeElement))return;
   (pane?.querySelector('input, .credential-opt.is-selected:not(:disabled), .credential-opt:not(:disabled)')
     ||$('#credentialWizard [data-wizard-next]:not(:disabled), #credentialWizard [data-wizard-done]')
     ||$('#credentialWizard [data-wizard-close]:not(:disabled)')
@@ -593,7 +738,7 @@ function focusCredentialWizard(){
 }
 function credentialWizardFocusables(){
   const dialog=$('#credentialWizard .credential-dialog');if(!dialog)return [];
-  return [...dialog.querySelectorAll('button, a[href], input')].filter(el=>!el.disabled&&!el.closest('.credential-pane.is-leaving, [hidden]')&&el.getClientRects().length);
+  return [...dialog.querySelectorAll('button, a[href], input, select')].filter(el=>!el.disabled&&!el.closest('.credential-pane.is-leaving, [hidden]')&&el.getClientRects().length);
 }
 function markCredentialGuide(index){
   const wizard=credentialWizard;if(!wizard||wizard.guide[index])return;
@@ -607,10 +752,12 @@ function credentialWizardInput(event){
   const wizard=credentialWizard,input=event.target;if(!wizard||!input.name)return;
   const kind=credentialKind(wizard.kind),pane=input.closest('.credential-pane');
   if(input.name==='extra')wizard.extra=input.value;
+  if(input.name==='protocol')wizard.protocol=input.value;
   if(input.name==='secret')wizard.secret=input.value;
-  const secretError=credentialSecretError(kind,wizard.secret),valid=credentialWizardValid();
-  setCredentialHint(pane,'secret',secretError||(valid.ok?'格式正确':kind.hint||'只在你负责的任务运行时注入，保存后不再明文展示'),secretError?'err':valid.ok?'ok':'');
-  if(kind.extra){const extraError=credentialExtraError(kind,wizard.extra);setCredentialHint(pane,'extra',extraError,extraError?'err':'')}
+  const valid=credentialWizardValid(),hint=credentialWizardSecretHint(kind,wizard,valid);
+  setCredentialHint(pane,'secret',hint.text,hint.tone);
+  if(kind.extra?.options){if(input.name==='extra')refreshCredentialEnvironmentLinks(pane,wizard.extra)}
+  else if(kind.extra){const extraError=credentialExtraError(kind,wizard.extra,wizard.protocol);setCredentialHint(pane,'extra',extraError,extraError?'err':'')}
   if(valid.ok)kind.guide.forEach((_,index)=>markCredentialGuide(index));
   const next=$('#credentialWizard [data-wizard-next]');if(next)next.disabled=!valid.ok;
 }
@@ -631,6 +778,7 @@ function selectCredentialWizardKind(key){
   // A secret typed for one kind must never be submitted as another kind's credential.
   wizard.kind=key;wizard.secret='';wizard.guide={};wizard.error='';
   wizard.extra=credentialWizardDefaults(credentialKind(key),credentialUser());
+  wizard.protocol=credentialProtocol(credentialKind(key),credentialUser());
 }
 function credentialWizardClick(event){
   const wizard=credentialWizard,target=event.target;if(!wizard)return;
@@ -665,7 +813,7 @@ async function advanceCredentialWizard(){
     if(kind.key==='gitToken'){
       const outcome=await verifyAndSaveGitToken(secret);
       if(!outcome.saved){wizard.error=`${gitTokenFailure(outcome.result)||'Git Token 校验未通过'}（未保存）`;return}
-    }else await saveCredential(kind.key,{secret,...(kind.extra?{extra:wizard.extra}:{})});
+    }else await saveCredential(kind.key,{secret,...(kind.extra?{extra:wizard.extra}:{}),...(kind.protocol?{protocol:wizard.protocol}:{})});
     wizard.done=true;wizard.secret='';
     renderCredentialPanel();
     toast(kind.key==='gitToken'?'Git Token 校验通过，已保存':`${kind.short} 已保存`,'ok');
@@ -749,10 +897,50 @@ function renderPlatformNav(){
   const group=$('#platformNavGroup');if(!group)return;
   group.hidden=!isPlatformAdmin();
 }
+// 平台管理分成三个 tab：成员账号、平台管理员、共享 CodeBuddy Key。
+const PLATFORM_TABS=[
+  {id:'accounts',zh:'成员账号',en:'Accounts'},
+  {id:'admins',zh:'平台管理员',en:'Admins'},
+  {id:'sharedKey',zh:'共享 CodeBuddy Key',en:'Shared CodeBuddy Key'},
+];
+function platformTabsHTML(active){
+  return `<div class="pa-tabs-wrap platform-tabs-wrap"><div class="pa-tabs platform-tabs" id="platformTabs" role="tablist" aria-label="平台管理分区">${PLATFORM_TABS.map(t=>{
+    const on=t.id===active;
+    const extra=t.id==='sharedKey'?'<span class="platform-tab-state" data-platform-tab-state hidden></span>':'<span class="pa-tab-n" data-platform-tab-count hidden></span>';
+    return `<button type="button" role="tab" class="pa-tab${on?' on':''}" id="platformTab-${t.id}" data-platform-tab="${t.id}" aria-controls="platformPanel-${t.id}" aria-selected="${on}" tabindex="${on?0:-1}">${lfT(t.zh,t.en)}${extra}</button>`;
+  }).join('')}</div></div>`;
+}
+function platformTabPanel(id,active,body){
+  return `<section class="platform-tab-panel" id="platformPanel-${id}" role="tabpanel" aria-labelledby="platformTab-${id}" data-platform-panel="${id}"${id===active?'':' hidden'}>${body}</section>`;
+}
+function setPlatformTab(host,tab){
+  if(!PLATFORM_TABS.some(t=>t.id===tab))tab=PLATFORM_TABS[0].id;
+  state.platformTab=tab;
+  host.querySelectorAll('[data-platform-tab]').forEach(b=>{const on=b.dataset.platformTab===tab;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1});
+  host.querySelectorAll('[data-platform-panel]').forEach(p=>{p.hidden=p.dataset.platformPanel!==tab});
+}
+function bindPlatformTabs(host){
+  const bar=host.querySelector('#platformTabs');if(!bar)return;
+  bar.querySelectorAll('[data-platform-tab]').forEach(b=>b.onclick=()=>setPlatformTab(host,b.dataset.platformTab));
+  bar.onkeydown=e=>{
+    if(!['ArrowLeft','ArrowRight'].includes(e.key))return;
+    const ids=PLATFORM_TABS.map(t=>t.id),i=ids.indexOf(state.platformTab),next=ids[(i+(e.key==='ArrowRight'?1:ids.length-1))%ids.length];
+    setPlatformTab(host,next);bar.querySelector(`[data-platform-tab="${next}"]`)?.focus();
+  };
+}
+function setPlatformTabCount(host,tab,n){
+  const el=host.querySelector(`[data-platform-tab="${tab}"] [data-platform-tab-count]`);
+  if(el){el.textContent=String(n);el.hidden=false}
+}
 function renderPlatformAdminPanel(){
   const host=$('#platformAdminPanel');if(!host)return;
   if(!isPlatformAdmin()){host.innerHTML='';return}
+  const tab=PLATFORM_TABS.some(t=>t.id===state.platformTab)?state.platformTab:PLATFORM_TABS[0].id;
+  state.platformTab=tab;
   host.innerHTML=`
+    ${platformTabsHTML(tab)}
+    ${platformTabPanel('accounts',tab,platformAccountsHTML())}
+    ${platformTabPanel('admins',tab,`
     <div class="platform-metric-grid">
       <div class="platform-metric-card">
         <div class="platform-metric-icon blue">
@@ -800,7 +988,6 @@ function renderPlatformAdminPanel(){
       <div class="platform-admin-main-card">
         <div class="platform-admin-head">
           <div class="platform-admin-head-meta">
-            <span class="credential-eyebrow">平台权限</span>
             <h2>谁可以改通用模板</h2>
             <p>平台管理员能直接编辑通用模板和它打包的角色，改完所有项目下次运行生效。系统内置名单不能在这里撤销。</p>
           </div>
@@ -881,8 +1068,274 @@ function renderPlatformAdminPanel(){
         </div>
       </div>
     </div>
+    `)}
+    ${platformTabPanel('sharedKey',tab,platformSharedKeyHTML())}
   `;
+  bindPlatformTabs(host);
+  loadPlatformAccounts(host);
+  loadPlatformSharedKey(host);
   loadPlatformAdmins(host);
+}
+
+// 平台管理 → 成员账号 / 平台共享 CodeBuddy Key.
+const PLATFORM_ACCOUNT_PASSWORD_MIN=6;
+function platformRandomPassword(){
+  const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const bytes=new Uint32Array(14);window.crypto.getRandomValues(bytes);
+  return Array.from(bytes,b=>alphabet[b%alphabet.length]).join('');
+}
+function sharedModelLabel(id){return id==='deepseek-v4.1-flash'?'Deepseek-V4.1-Flash':String(id||'')}
+// The models users without their own CodeBuddy key may use, as announced by bootstrap.
+function sharedModelSummary(){
+  const models=Array.isArray(state.data?.sponsoredModels)&&state.data.sponsoredModels.length?state.data.sponsoredModels:(state.data?.sponsoredModel?[state.data.sponsoredModel]:[]);
+  return models.map(sharedModelLabel).join('、');
+}
+const PLATFORM_ICON_USER='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+const PLATFORM_ICON_LOCK='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+const PLATFORM_ICON_SEARCH='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
+function platformAccountsHTML(){
+  return `
+    <section class="platform-admin-main-card" id="platformAccountsCard">
+      <div class="platform-admin-head">
+        <div class="platform-admin-head-meta">
+          <h2>给同事开账号</h2>
+          <p data-account-intro>填好用户名和初始密码，点创建，再把登录信息发给同事。同事忘记密码时可以在下面重置。</p>
+        </div>
+        <span class="platform-admin-count-pill" id="platformAccountCountBadge">${lfT('-- 个账号','-- accounts')}</span>
+      </div>
+      <div class="platform-account-create">
+        <form id="platformAccountForm" class="platform-account-form" autocomplete="off">
+          <div class="platform-input-wrap"><span class="platform-input-icon">${PLATFORM_ICON_USER}</span><input name="loginName" placeholder="用户名，如 alice" aria-label="用户名" maxlength="64" autocomplete="off" spellcheck="false"></div>
+          <div class="platform-input-wrap"><span class="platform-input-icon">${PLATFORM_ICON_LOCK}</span><input name="password" placeholder="初始密码，至少 6 位" aria-label="初始密码" maxlength="72" autocomplete="new-password" spellcheck="false"><button type="button" class="button ghost small" data-account-generate>随机生成</button></div>
+          <label class="platform-check"><input type="checkbox" name="admin"><span>同时设为平台管理员</span></label>
+          <button class="button primary platform-add-btn" type="submit">创建账号</button>
+        </form>
+        <div class="platform-account-created" data-account-created hidden></div>
+      </div>
+      <div class="platform-list-toolbar">
+        <div class="platform-search-wrap platform-account-search">${PLATFORM_ICON_SEARCH}<input data-account-search placeholder="搜索用户名..." autocomplete="off"></div>
+      </div>
+      <div id="platformAccountList" class="platform-admin-list platform-account-list"></div>
+    </section>`;
+}
+function platformSharedKeyHTML(){
+  const envOptions=CODEBUDDY_ENVIRONMENTS.map(env=>`<option value="${escapeHTML(env.value)}">${escapeHTML(env.label)} · ${escapeHTML(env.site)}</option>`).join('');
+  return `
+    <section class="platform-admin-main-card" id="platformSharedKeyCard">
+      <div class="platform-admin-head">
+        <div class="platform-admin-head-meta">
+          <h2>给没配 Key 的成员用</h2>
+          <p>成员没配自己的 CodeBuddy API Key 时，对话和 SOP 会用这里的 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。</p>
+        </div>
+        <span class="platform-admin-count-pill platform-status-pill" data-shared-key-badge>${lfT('加载中','Loading')}</span>
+      </div>
+      <form id="platformSharedKeyForm" class="platform-shared-key-form" autocomplete="off">
+        <div class="platform-shared-key-grid">
+          <div class="platform-shared-key-col">
+            <label class="platform-field"><span>网络环境</span><select name="internetEnvironment">${envOptions}</select></label>
+            <div class="platform-field-group">
+              <label class="platform-field"><span>API Key</span><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="ck_ 开头的 CodeBuddy API Key"></label>
+              <a class="platform-shared-key-link" data-shared-key-link target="_blank" rel="noopener noreferrer"></a>
+            </div>
+            <div class="platform-note is-warn" data-shared-key-warning hidden></div>
+            <label class="platform-field"><span>默认模型</span><select name="defaultModel"></select><small class="platform-field-hint">没指定模型时用它；SOP 角色的模型不在允许范围内时也改用它。</small></label>
+          </div>
+          <div class="platform-shared-key-col">
+            <div class="platform-field">
+              <div class="platform-field-head"><span>允许使用的模型</span><small data-shared-models-count></small></div>
+              <div class="platform-model-list" data-shared-models><p class="prop-hint">正在读取可用模型…</p></div>
+            </div>
+            <label class="platform-field"><span>列表里没有的模型</span><input name="extraModels" placeholder="模型 ID，多个用逗号分隔" autocomplete="off" spellcheck="false"></label>
+          </div>
+        </div>
+        <div class="platform-shared-key-footer">
+          <p class="platform-add-hint" data-shared-key-meta></p>
+          <div class="platform-shared-key-actions">
+            <button class="button ghost danger" type="button" data-shared-key-clear hidden>停用共享 Key</button>
+            <button class="button primary" type="submit">保存</button>
+          </div>
+        </div>
+      </form>
+    </section>`;
+}
+function platformAccountCreatedHTML(action,login,password){
+  const who=`<b data-i18n-skip>${escapeHTML(login)}</b>`,secret=`<code>${escapeHTML(password)}</code>`;
+  const text=action==='reset'
+    ?lfT(`已重置账号 ${who}，新密码 ${secret}。密码只显示这一次，请现在发给对方。`,`Password of ${who} reset to ${secret}. It is shown only once; send it now.`)
+    :lfT(`已创建账号 ${who}，初始密码 ${secret}。密码只显示这一次，请现在发给对方。`,`Created ${who} with the initial password ${secret}. It is shown only once; send it now.`);
+  return `<div class="platform-note is-ok"><span>${text}</span><button type="button" class="button ghost small" data-copy-login>复制登录信息</button></div>`;
+}
+const platformPasswordTooShort=()=>lfT(`密码至少 ${PLATFORM_ACCOUNT_PASSWORD_MIN} 位`,`The password needs at least ${PLATFORM_ACCOUNT_PASSWORD_MIN} characters`);
+async function loadPlatformAccounts(host){
+  const card=host.querySelector('#platformAccountsCard');if(!card)return;
+  const list=card.querySelector('#platformAccountList'),form=card.querySelector('#platformAccountForm'),created=card.querySelector('[data-account-created]'),search=card.querySelector('[data-account-search]');
+  let accounts=[],query='',resetting=null;
+  const showCreated=(action,login,password)=>{
+    created.innerHTML=platformAccountCreatedHTML(action,login,password);created.hidden=false;
+    created.querySelector('[data-copy-login]').onclick=()=>copyText(lfT(`登录地址：${location.origin}\n用户名：${login}\n密码：${password}`,`Sign in at: ${location.origin}\nLogin: ${login}\nPassword: ${password}`),'已复制登录信息');
+  };
+  const render=()=>{
+    const n=accounts.length,badge=card.querySelector('#platformAccountCountBadge');if(badge)badge.textContent=lfT(`共 ${n} 个账号`,`${n} account${n===1?'':'s'}`);
+    setPlatformTabCount(host,'accounts',n);
+    const q=query.toLowerCase();
+    const rows=accounts.filter(a=>!q||String(a.loginName||'').toLowerCase().includes(q)||String(a.chineseName||'').toLowerCase().includes(q));
+    if(!rows.length){list.innerHTML=`<div class="platform-empty-state"><b>${accounts.length?'没有匹配的账号':'还没有账号'}</b></div>`;return}
+    list.innerHTML=rows.map(a=>{
+      const name=a.chineseName&&a.chineseName.toLowerCase()!==String(a.loginName).toLowerCase()?`${a.loginName}(${a.chineseName})`:a.loginName;
+      const badges=[a.admin?'<span class="platform-source-badge source-builtin">平台管理员</span>':'',a.password?'<span class="platform-source-badge source-default">用户名密码</span>':'<span class="platform-source-badge source-default">GitHub / 网关登录</span>',a.codeBuddyApiKeyConfigured?'<span class="platform-source-badge source-env">已配 CodeBuddy Key</span>':'<span class="platform-source-badge source-default">未配 CodeBuddy Key</span>'].join('');
+      const editing=resetting===a.userId;
+      return `<div class="platform-admin-row platform-account-row" data-account-row="${Number(a.userId)}">
+        <div class="platform-admin-user">
+          <div class="platform-admin-avatar">${userAvatarHTML(a.loginName,100)}</div>
+          <div class="platform-admin-info"><span class="platform-admin-name" data-i18n-skip>${escapeHTML(name)}</span><div class="platform-admin-meta">${badges}</div></div>
+        </div>
+        <div class="platform-admin-actions">${a.password?(editing?`<form class="platform-account-reset" data-reset-form="${Number(a.userId)}"><input name="password" placeholder="新密码，至少 6 位" aria-label="新密码" maxlength="72" autocomplete="new-password" spellcheck="false"><button type="button" class="button ghost small" data-reset-generate>随机</button><button type="submit" class="button primary small">确认重置</button><button type="button" class="button ghost small" data-reset-cancel>取消</button></form>`:`<button type="button" class="button ghost small" data-reset-account="${Number(a.userId)}">重置密码</button>`):'<span class="platform-locked-tag" title="通过 GitHub 或网关登录的账号没有平台密码">无平台密码</span>'}</div>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-reset-account]').forEach(btn=>btn.onclick=()=>{resetting=Number(btn.dataset.resetAccount);render();list.querySelector('[data-reset-form] input')?.focus()});
+    const resetForm=list.querySelector('[data-reset-form]');
+    if(resetForm){
+      resetForm.querySelector('[data-reset-cancel]').onclick=()=>{resetting=null;render()};
+      resetForm.querySelector('[data-reset-generate]').onclick=()=>{resetForm.elements.password.value=platformRandomPassword()};
+      resetForm.onsubmit=async e=>{
+        e.preventDefault();
+        const password=resetForm.elements.password.value;
+        if(password.length<PLATFORM_ACCOUNT_PASSWORD_MIN)return toast(platformPasswordTooShort(),'err');
+        const account=accounts.find(a=>a.userId===resetting);
+        resetForm.querySelectorAll('button').forEach(b=>b.disabled=true);
+        try{
+          await api(`/api/platform/accounts/${encodeURIComponent(resetting)}/password`,{method:'PUT',body:JSON.stringify({password})});
+          resetting=null;render();showCreated('reset',account?.loginName||'',password);toast('密码已重置','ok');
+        }catch(err){toast(err.message,'err');resetForm.querySelectorAll('button').forEach(b=>b.disabled=false)}
+      };
+    }
+  };
+  const load=async()=>{
+    try{
+      const result=await api('/api/platform/accounts');
+      accounts=Array.isArray(result?.accounts)?result.accounts:[];
+      const intro=card.querySelector('[data-account-intro]');
+      if(intro)intro.textContent=result?.signupEnabled
+        ?'登录页目前允许自助注册。也可以在这里直接创建账号，再把登录信息发给同事；同事忘记密码时可以在下面重置。'
+        :'登录页的自助注册已关闭，同事的账号要在这里创建：填好用户名和初始密码，点创建，再把登录信息发给对方。忘记密码时可以在下面重置。';
+      render();
+    }catch(e){list.innerHTML=`<p class="prop-hint">${escapeHTML(e.message||'加载账号失败')}</p>`}
+  };
+  if(search)search.oninput=()=>{query=search.value.trim();render()};
+  form.querySelector('[data-account-generate]').onclick=()=>{form.elements.password.value=platformRandomPassword()};
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const loginName=form.elements.loginName.value.trim(),password=form.elements.password.value,admin=form.elements.admin.checked;
+    if(!/^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$/.test(loginName))return toast('用户名需 2–64 位，以字母或数字开头，只能包含字母、数字、_ . -','err');
+    if(password.length<PLATFORM_ACCOUNT_PASSWORD_MIN)return toast(platformPasswordTooShort(),'err');
+    const submit=form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
+    try{
+      const account=await api('/api/platform/accounts',{method:'POST',body:JSON.stringify({loginName,password,admin})});
+      form.reset();
+      accounts=[...accounts.filter(a=>a.userId!==account?.userId),account].filter(Boolean);
+      render();showCreated('create',loginName,password);toast('账号已创建','ok');
+      if(admin)loadPlatformAdmins(host);
+    }catch(err){toast(err.message,'err')}
+    finally{if(submit)submit.disabled=false}
+  };
+  await load();
+}
+async function loadPlatformSharedKey(host){
+  const card=host.querySelector('#platformSharedKeyCard');if(!card)return;
+  const form=card.querySelector('#platformSharedKeyForm');
+  const env=form.elements.internetEnvironment,key=form.elements.apiKey,extra=form.elements.extraModels,defaultSelect=form.elements.defaultModel;
+  const modelsHost=card.querySelector('[data-shared-models]'),badge=card.querySelector('[data-shared-key-badge]'),meta=card.querySelector('[data-shared-key-meta]');
+  const link=card.querySelector('[data-shared-key-link]'),warning=card.querySelector('[data-shared-key-warning]'),clear=card.querySelector('[data-shared-key-clear]');
+  let status=null,catalog=[],selected=[];
+  const extraIDs=()=>String(extra.value||'').split(/[,，\s]+/).map(s=>s.trim()).filter(Boolean);
+  const chosen=()=>{const all=[...selected];for(const id of extraIDs())if(!all.includes(id))all.push(id);return all};
+  const modelCount=card.querySelector('[data-shared-models-count]'),tabState=host.querySelector('[data-platform-tab-state]');
+  const renderDefault=()=>{
+    const models=chosen(),current=defaultSelect.value;
+    if(modelCount)modelCount.textContent=models.length?lfT(`已选 ${models.length} 个`,`${models.length} selected`):'';
+    defaultSelect.innerHTML=models.length?models.map(id=>`<option value="${escapeHTML(id)}">${escapeHTML(sharedModelLabel(id))}</option>`).join(''):'<option value="">请先勾选模型</option>';
+    defaultSelect.value=models.includes(current)?current:(models[0]||'');
+  };
+  const renderModels=()=>{
+    const listed=catalog.filter(m=>m&&m.id&&m.id!=='default');
+    const ids=new Set(listed.map(m=>m.id));
+    for(const id of selected)if(!ids.has(id)){listed.push({id,name:id});ids.add(id)}
+    modelsHost.innerHTML=listed.length?listed.map(m=>`<label class="platform-check platform-model-option"><input type="checkbox" value="${escapeHTML(m.id)}"${selected.includes(m.id)?' checked':''}><span>${escapeHTML(m.name&&m.name!==m.id?`${m.name}（${m.id}）`:sharedModelLabel(m.id))}</span>${m.credits?`<small>${escapeHTML(m.credits)}</small>`:''}</label>`).join(''):'<p class="prop-hint">这个网络环境暂时没有读到模型列表，可以在下面直接填模型 ID。</p>';
+    modelsHost.querySelectorAll('input[type="checkbox"]').forEach(box=>box.onchange=()=>{
+      selected=box.checked?[...selected.filter(id=>id!==box.value),box.value]:selected.filter(id=>id!==box.value);
+      renderDefault();
+    });
+    renderDefault();
+  };
+  const renderLink=()=>{link.href=codeBuddyKeyURL(env.value);link.textContent=`${codeBuddyKeyLinkLabel(env.value)} ↗`};
+  const renderStatus=()=>{
+    const on=!!status?.configured,envInfo=CODEBUDDY_ENVIRONMENTS.find(e=>e.value===(status?.internetEnvironment||''))||CODEBUDDY_ENVIRONMENTS[0];
+    const tone=on?'on':status?.legacySponsor?'legacy':'off';
+    badge.textContent=on?'已启用':status?.legacySponsor?'使用旧配置':'未启用';
+    badge.classList.remove('is-on','is-legacy','is-off');badge.classList.add(`is-${tone}`);
+    if(tabState){tabState.className=`platform-tab-state is-${tone}`;tabState.title=badge.textContent;tabState.hidden=false}
+    key.placeholder=on?'已配置，留空保持不变':'ck_ 开头的 CodeBuddy API Key';
+    clear.hidden=!on;
+    const parts=[];
+    if(on){
+      const n=(status.models||[]).length,first=sharedModelLabel(status.models?.[0]),by=status.updatedBy||'';
+      parts.push(lfT(`当前：${envInfo.label}，${n} 个模型，默认 ${first}${by?`，${by} 最后修改`:''}。`,`Current: ${envInfo.label}, ${n} model${n===1?'':'s'}, default ${first}${by?`, last changed by ${by}`:''}.`));
+    }
+    else parts.push(lfT('还没有配置共享 Key，没配 Key 的成员需要先配自己的 Key 才能对话和跑 SOP。','No shared key yet; members without their own key must add one before chatting or running SOPs.'));
+    const sponsor=status?.legacySponsor;
+    if(sponsor)parts.push(on
+      ?lfT(`配置后不再使用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key。`,`The key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is no longer used.`)
+      :lfT(`现在沿用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key，只能用 ${sharedModelLabel(status.legacySponsorModel)}。`,`For now the key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is shared, limited to ${sharedModelLabel(status.legacySponsorModel)}.`));
+    meta.textContent=parts.join(lfT('',' '));
+  };
+  const syncBootstrap=()=>{
+    if(!state.data)return;
+    const models=status?.configured?(status.models||[]):(status?.legacySponsor?[status.legacySponsorModel]:[]);
+    state.data.sponsoredModels=models;state.data.sponsoredModel=models[0]||'';
+  };
+  const fetchStatus=async environment=>{
+    const query=environment===undefined?'':`?environment=${encodeURIComponent(environment)}`;
+    const result=await api('/api/platform/codebuddy-key'+query);
+    catalog=Array.isArray(result?.catalog)?result.catalog:[];
+    return result;
+  };
+  try{
+    status=await fetchStatus();
+    env.value=status?.internetEnvironment||'';
+    selected=status?.configured?[...(status.models||[])]:(status?.legacySponsorModel?[status.legacySponsorModel]:[]);
+    renderStatus();renderLink();renderModels();
+  }catch(e){
+    badge.textContent='加载失败';modelsHost.innerHTML=`<p class="prop-hint">${escapeHTML(e.message||'加载共享 Key 失败')}</p>`;
+    return;
+  }
+  env.onchange=async()=>{
+    renderLink();
+    modelsHost.innerHTML='<p class="prop-hint">正在读取可用模型…</p>';
+    try{await fetchStatus(env.value)}catch(e){catalog=[]}
+    renderModels();
+  };
+  extra.oninput=renderDefault;
+  key.oninput=()=>{const text=credentialSecretWarning(credentialKind('codeBuddyApiKey'),key.value);warning.textContent=text;warning.hidden=!text};
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const models=chosen();
+    if(!models.length)return toast('请至少勾选一个允许使用的模型','err');
+    if(!status?.configured&&!key.value.trim())return toast('请填写 CodeBuddy API Key','err');
+    const first=defaultSelect.value&&models.includes(defaultSelect.value)?defaultSelect.value:models[0];
+    const ordered=[first,...models.filter(id=>id!==first)];
+    const submit=form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
+    try{
+      status=await api('/api/platform/codebuddy-key',{method:'PUT',body:JSON.stringify({apiKey:key.value.trim(),internetEnvironment:env.value,models:ordered})});
+      key.value='';warning.hidden=true;extra.value='';selected=[...(status.models||ordered)];
+      renderStatus();renderModels();syncBootstrap();toast('共享 Key 已保存','ok');
+    }catch(err){toast(err.message,'err')}
+    finally{if(submit)submit.disabled=false}
+  };
+  clear.onclick=async()=>{
+    if(!await afConfirm({title:'停用共享 Key',message:'停用后，没配自己 Key 的成员将不能再用共享 Key 对话和跑 SOP。确定停用？',danger:true,confirmText:'停用'}))return;
+    try{status=await api('/api/platform/codebuddy-key',{method:'DELETE'});renderStatus();syncBootstrap();toast('共享 Key 已停用','ok')}
+    catch(err){toast(err.message,'err')}
+  };
 }
 async function loadPlatformAdmins(host){
   const list=host.querySelector('#platformAdminList');
@@ -922,6 +1375,7 @@ async function loadPlatformAdmins(host){
     if(elLocked)elLocked.textContent=locked;
     if(elGranted)elGranted.textContent=granted;
     if(elBadge)elBadge.textContent=`共 ${total} 位管理员`;
+    setPlatformTabCount(host,'admins',total);
   };
 
   const render=()=>{
@@ -1263,7 +1717,7 @@ function renderDashboard(){
   updateApprovalBadge();
   const needMe=[...waiting,...confirm,...attention.filter(i=>!waiting.includes(i)&&!confirm.includes(i))];
   const statCards=[
-    {label:'需要介入',value:attention.length,foot:'澄清未达标、失败或已中断',color:'#c63c4b',filter:'attention'},
+    {label:'需要介入',value:attention.length,foot:'待确认结论、失败或已中断',color:'#c63c4b',filter:'attention'},
     {label:'待我确认',value:approvalItems().length,foot:'批准后才会继续跑',color:'#fbbf24',to:'approvals'},
     {label:'正在推进',value:active.length,foot:'Agent 正在执行',color:'#5b8cff',filter:'active'},
     {label:'已经完成',value:closed.length,foot:'本项目已闭环',color:'#34d399',filter:'closed'},

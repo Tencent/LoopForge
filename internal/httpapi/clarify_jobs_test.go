@@ -42,7 +42,7 @@ func TestIssueClarifyContinuesAfterClientDisconnect(t *testing.T) {
 	t.Cleanup(func() { setClarifyExecForTest(nil) })
 
 	s, h := clarifyTestServer(t)
-	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-bg", ProjectID: "platform", Title: "需要澄清", Description: "短", Kind: "requirement", Status: "backlog", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser, Score: 10}}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-bg", ProjectID: "platform", Title: "需要澄清", Description: "短", Kind: "requirement", Status: "backlog", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser}}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"message": domain.ClarificationKickoff})
@@ -320,7 +320,7 @@ func TestPersistClarifyReadyWaitsForUserConfirm(t *testing.T) {
 	if stored.Clarification.WriteBackStatus != "pending" {
 		t.Fatalf("writeBack=%s want pending", stored.Clarification.WriteBackStatus)
 	}
-	if !strings.Contains(stored.Description, "原 TAPD 描述") || !strings.Contains(stored.Description, "## AgentFlow 澄清结论") || !strings.Contains(stored.Description, "查不到套餐时应返回空数据") {
+	if !strings.Contains(stored.Description, "原 TAPD 描述") || !strings.Contains(stored.Description, "## LoopForge 澄清结论") || !strings.Contains(stored.Description, "查不到套餐时应返回空数据") {
 		t.Fatalf("platform description missing conclusion: %q", stored.Description)
 	}
 	again, err := h.persistClarifyOutcome("iss-ready-confirm", map[string]any{
@@ -331,7 +331,7 @@ func TestPersistClarifyReadyWaitsForUserConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(again.Description, "## AgentFlow 澄清结论") != 1 {
+	if strings.Count(again.Description, "## LoopForge 澄清结论") != 1 {
 		t.Fatalf("conclusion block should be replaced, not stacked: %q", again.Description)
 	}
 	if !strings.Contains(again.Description, "第二轮结论：返回空数据并记日志") || strings.Contains(again.Description, "查不到套餐时应返回空数据") {

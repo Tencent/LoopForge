@@ -118,3 +118,16 @@ func TestAssistantCredentialProblemMatchesGitToken(t *testing.T) {
 		t.Fatal("ordinary failures must not suggest credentials")
 	}
 }
+
+func TestAssistantCredentialProblemPointsCodeBuddyAtEveryKeyPage(t *testing.T) {
+	fix := assistantCredentialProblem(errAssistantCredentialRejected.Error(), "")
+	if fix == nil || fix.Field != "codeBuddyApiKey" || fix.HelpURL != "https://www.codebuddy.ai/profile/keys" {
+		t.Fatalf("fix = %+v", fix)
+	}
+	steps := strings.Join(fix.Steps, "\n")
+	for _, want := range []string{"https://www.codebuddy.ai/profile/keys", "https://copilot.tencent.com/profile/", "https://tencent.sso.copilot.tencent.com/profile/keys", "网络环境", "第三方"} {
+		if !strings.Contains(steps, want) {
+			t.Fatalf("CodeBuddy steps miss %q: %s", want, steps)
+		}
+	}
+}

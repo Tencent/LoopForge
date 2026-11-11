@@ -13,6 +13,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     gitTokenConfigured: true, codeBuddyApiKeyConfigured: true,
   };
   const apiMock = vi.fn(async (path) => {
+  if (path === "/api/users" && mockState.users) return mockState.users();
   if (path === "/api/users")
     return [mockState.unconfigured ? {
       id: 1, loginName: "tester", chineseName: "测试",
@@ -34,7 +35,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path.includes("/verify")) return { valid: true };
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false };
+  const mockState = { failClone: false, unconfigured: false, users: null };
   const writeMock = vi.fn(async (path, body) => {
     if (path.includes("/git-token/verify")) return { valid: true };
     if (path === "/api/projects") return { ...project, ...body };
@@ -59,9 +60,16 @@ import QuickAccessWizard, {
   HarnessSelect,
   HarnessSwitch,
   parseGongfengRepo,
+  sharedModelNames,
 } from "../src/QuickAccessWizard.jsx";
 
 describe("QuickAccessWizard", () => {
+  test("names the shared models an administrator allowed", () => {
+    expect(sharedModelNames(["glm-5.1", "deepseek-v4.1-flash"])).toBe("glm-5.1、Deepseek-V4.1-Flash");
+    expect(sharedModelNames([], "deepseek-v4.1-flash")).toBe("Deepseek-V4.1-Flash");
+    expect(sharedModelNames(undefined)).toBe("");
+  });
+
   test("parses supported repository addresses", () => {
     expect(parseGongfengRepo("https://github.com/acme/widgets")).toEqual({
       project: "github:acme/widgets",
@@ -150,6 +158,7 @@ describe("QuickAccessWizard", () => {
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     expect(screen.getByText(/请至少填写 GitHub Git Token 与 CodeBuddy API Key/)).toBeInTheDocument();
     expect(screen.queryByText(/工蜂/)).toBeNull();
+    await userAction.click(screen.getByText("使用访问令牌（高级）"));
     await userAction.type(
       screen.getByPlaceholderText(/GitHub personal access token/),
       "token-value",
@@ -184,10 +193,120 @@ describe("QuickAccessWizard", () => {
     await screen.findByText("项目与仓库", { selector: "h3" });
     expect(writeMock).toHaveBeenCalledWith(
       "/api/users/1/credentials",
-      { codeBuddyApiKey: "cb-key" },
+      { codeBuddyApiKey: "cb-key", codeBuddyInternetEnvironment: "" },
       "PUT",
     );
     mockState.unconfigured = false;
+  });
+
+  test("saves the CodeBuddy key with the chosen network environment and links to its key page", async () => {
+    mockState.unconfigured = true;
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    render(
+      <QuickAccessWizard
+        open
+        user={{ id: 1, loginName: "tester", chineseName: "测试" }}
+        projects={[project]}
+        projectId="p1"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+        onOpenView={vi.fn()}
+      />,
+    );
+    await screen.findByRole("dialog");
+    const keyLink = screen.getByRole("link", { name: /获取 API Key/ });
+    expect(keyLink).toHaveAttribute("href", "https://www.codebuddy.ai/profile/keys");
+    await userAction.click(screen.getByLabelText("CodeBuddy 网络环境"));
+    await userAction.click(screen.getByRole("option", { name: /国内站/ }));
+    expect(keyLink).toHaveAttribute("href", "https://copilot.tencent.com/profile/");
+    await userAction.type(screen.getByPlaceholderText("粘贴 CodeBuddy API Key"), "sk-deepseek");
+    expect(screen.getByText(/第三方模型的 Key/)).toBeInTheDocument();
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("项目与仓库", { selector: "h3" });
+    expect(writeMock).toHaveBeenCalledWith(
+      "/api/users/1/credentials",
+      { codeBuddyApiKey: "sk-deepseek", codeBuddyInternetEnvironment: "internal" },
+      "PUT",
+    );
+    mockState.unconfigured = false;
+  });
+
+  test("rewrites an old china environment to internal when moving past the credential step", async () => {
+    mockState.users = () => [{ ...user, codeBuddyInternetEnvironment: "china" }];
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    try {
+      render(
+        <QuickAccessWizard
+          open
+          user={user}
+          projects={[project]}
+          projectId="p1"
+          onClose={vi.fn()}
+          onCompleted={vi.fn()}
+          onOpenView={vi.fn()}
+        />,
+      );
+      await screen.findByRole("dialog");
+      expect(await screen.findByText(/「china」无法识别/)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /获取 API Key/ })).toHaveAttribute(
+        "href",
+        "https://copilot.tencent.com/profile/",
+      );
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      await screen.findByText("项目与仓库", { selector: "h3" });
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/users/1/credentials",
+        { codeBuddyInternetEnvironment: "internal" },
+        "PUT",
+      );
+    } finally {
+      mockState.users = null;
+    }
+  });
+
+  test("a refresh after switching to 国际站 elsewhere drops the omitted environment", async () => {
+    let environment = "internal";
+    mockState.users = () => [
+      { ...user, ...(environment ? { codeBuddyInternetEnvironment: environment } : {}) },
+    ];
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    try {
+      render(
+        <QuickAccessWizard
+          open
+          user={user}
+          projects={[project]}
+          projectId="p1"
+          onClose={vi.fn()}
+          onCompleted={vi.fn()}
+          onOpenView={vi.fn()}
+        />,
+      );
+      await screen.findByRole("dialog");
+      const keyLink = screen.getByRole("link", { name: /获取 API Key/ });
+      await waitFor(() =>
+        expect(keyLink).toHaveAttribute("href", "https://copilot.tencent.com/profile/"),
+      );
+      // 个人配置 switched the environment to 国际站; the users API omits it now.
+      environment = "";
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() =>
+        expect(keyLink).toHaveAttribute("href", "https://www.codebuddy.ai/profile/keys"),
+      );
+      await userAction.type(screen.getByLabelText("CodeBuddy API Key"), "ck_new");
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      await screen.findByText("项目与仓库", { selector: "h3" });
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/users/1/credentials",
+        { codeBuddyApiKey: "ck_new", codeBuddyInternetEnvironment: "" },
+        "PUT",
+      );
+    } finally {
+      mockState.users = null;
+    }
   });
 
   test("a sponsored model lets new users skip credentials", async () => {
@@ -258,5 +377,83 @@ describe("QuickAccessWizard", () => {
       }),
     );
     mockState.failClone = false;
+  });
+});
+
+describe("QuickAccessWizard repository permission (#122)", () => {
+  const welcome = {
+    id: "welcome", key: "WELCOME", name: "LoopForge 体验项目", ownerId: 99,
+    members: [{ userId: 1, role: "member" }], workflowId: "generic-backend-delivery",
+  };
+  const member = { ...user, isPlatformAdmin: false };
+  const renderWizard = () =>
+    render(
+      <QuickAccessWizard
+        open
+        user={member}
+        projects={[welcome]}
+        projectId="welcome"
+        sponsoredModel="m1"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+        onOpenView={vi.fn()}
+      />,
+    );
+  const openProjectStep = async (userAction) => {
+    await screen.findByRole("dialog");
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("项目与仓库", { selector: "h3" });
+  };
+
+  test("explains on the project step that a member cannot bind the shared project", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/projects") return [welcome];
+      if (path === "/api/users") return [member];
+      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 SOP", generic: true, nodes: [] }];
+      return [];
+    });
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    renderWizard();
+    await openProjectStep(userAction);
+    expect(screen.getByRole("note")).toHaveTextContent("只有它的 Owner 或平台管理员可以绑定仓库");
+    const input = screen.getByPlaceholderText("https://github.com/owner/repo");
+    await userAction.type(input, "https://github.com/team/repo");
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    // Blocked here, not on the last step, and nothing was written.
+    expect(await screen.findByText(/不能为它绑定仓库/)).toBeInTheDocument();
+    expect(screen.queryByText("默认角色与 SOP", { selector: "h3" })).toBeNull();
+    expect(writeMock).not.toHaveBeenCalledWith("/api/repositories", expect.anything());
+    expect(writeMock).not.toHaveBeenCalledWith("/api/repositories", expect.anything(), expect.anything());
+
+    // "Create my own project" keeps the typed repository.
+    await userAction.click(screen.getByRole("button", { name: "新建自己的项目并绑定" }));
+    expect(screen.getByRole("tab", { name: /新建项目/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByPlaceholderText("https://github.com/owner/repo")).toHaveValue("https://github.com/team/repo");
+    expect(screen.queryByRole("note")).toBeNull();
+    apiMock.mockReset();
+  });
+
+  test("skipping the binding continues with the shared project and writes no repository", async () => {
+    apiMock.mockImplementation(async (path) => {
+      if (path === "/api/projects") return [welcome];
+      if (path === "/api/users") return [member];
+      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 SOP", generic: true, nodes: [] }];
+      return [];
+    });
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    renderWizard();
+    await openProjectStep(userAction);
+    await userAction.type(screen.getByPlaceholderText("https://github.com/owner/repo"), "https://github.com/team/repo");
+    await userAction.click(screen.getByRole("button", { name: "跳过绑定，继续体验" }));
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("默认角色与 SOP", { selector: "h3" });
+    expect(screen.getByText(/使用已有项目「LoopForge 体验项目」/)).toBeInTheDocument();
+    expect(screen.queryByText(/绑定 repo/)).toBeNull();
+    await userAction.click(screen.getByRole("button", { name: "完成接入" }));
+    expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
+    expect(writeMock.mock.calls.some(([path]) => path === "/api/repositories")).toBe(false);
+    apiMock.mockReset();
   });
 });

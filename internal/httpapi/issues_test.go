@@ -93,7 +93,7 @@ func TestDispatchTAPDIssuePutsStoryIdentityInInput(t *testing.T) {
 	issue := domain.Issue{
 		ID: "tapd-1010000000100001887", ProjectID: "platform", Kind: "requirement", Source: "tapd",
 		Title: "在soul广场页面新增一个banner", Description: "纯前端写死", Status: "todo",
-		WorkflowID: "tapd-identity", Clarification: domain.ClarificationAssessment{Passed: true, Score: 90, Status: "ready"},
+		WorkflowID: "tapd-identity", Clarification: domain.ClarificationAssessment{Status: "ready"},
 		ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "1010000000100001887", ExternalType: "story", ExternalURL: "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001887"},
 	}
 	if err := s.PutIssue(issue); err != nil {
@@ -534,8 +534,14 @@ func TestAssetAPIAcceptsSandboxEnvironmentButExecutorsAreReadOnly(t *testing.T) 
 
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/executors", map[string]any{"id": "legacy", "name": "Legacy", "kind": "mock"}, http.StatusMethodNotAllowed)
 	executors := requestEmptyJSON[[]domain.ExecutorDefinition](t, h, http.MethodGet, "/api/executors", http.StatusOK)
-	if len(executors) != 3 || executors[0].ID != "codebuddy" || executors[1].ID != "codex" || executors[2].ID != "claude" {
+	want := repo.BuiltInExecutors()
+	if len(executors) != len(want) {
 		t.Fatalf("built-in CLI catalog = %+v", executors)
+	}
+	for i := range want {
+		if executors[i].ID != want[i].ID || executors[i].Kind != want[i].Kind {
+			t.Fatalf("built-in CLI catalog[%d] = %+v, want %+v", i, executors[i], want[i])
+		}
 	}
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{"id": "configured", "name": "Configured", "projectId": "platform", "driver": "local", "environment": map[string]string{"TOOL_MODE": "test"}}, http.StatusOK)
 	profile, ok := s.Sandbox("configured")
@@ -1360,7 +1366,7 @@ func TestMergedTAPDDeliveryRequiresExplicitReopen(t *testing.T) {
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
-	issue := domain.Issue{ID: "tapd-merged", ProjectID: "platform", Source: "tapd", Kind: "requirement", Title: "Delivered", Status: "done", WorkflowID: wf.ID, LatestTaskID: "task-old", DeliveryState: "merged", DeliveryMRURL: "https://git.example.com/org/repo/merge_requests/9", AutomationState: "ignored", Clarification: domain.ClarificationAssessment{Passed: true, Score: 100}}
+	issue := domain.Issue{ID: "tapd-merged", ProjectID: "platform", Source: "tapd", Kind: "requirement", Title: "Delivered", Status: "done", WorkflowID: wf.ID, LatestTaskID: "task-old", DeliveryState: "merged", DeliveryMRURL: "https://git.example.com/org/repo/merge_requests/9", AutomationState: "ignored"}
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
@@ -1389,7 +1395,7 @@ func TestMergedTAPDDeliveryRequiresExplicitReopen(t *testing.T) {
 	}
 }
 
-func TestRequirementMustPassConfigurableClarificationBeforeDispatch(t *testing.T) {
+func TestRequirementDispatchesWithoutClarificationGate(t *testing.T) {
 	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1400,34 +1406,25 @@ func TestRequirementMustPassConfigurableClarificationBeforeDispatch(t *testing.T
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
-	if err := s.PutIssue(domain.Issue{ID: "req-gated", ProjectID: "platform", Kind: "requirement", Title: "Build requirement", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Gated: true}}); err != nil {
+	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	h := New(s, e, tracker.NewService(), "", "")
+	// Legacy imports still carry gated/needs_user; neither may block the SOP.
+	if err := s.PutIssue(domain.Issue{ID: "req-gated", ProjectID: "platform", Kind: "requirement", Title: "Build requirement", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Gated: true, Status: domain.ClarificationNeedsUser}}); err != nil {
 		t.Fatal(err)
 	}
-	issue, _ := s.Issue("req-gated")
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{}, http.StatusConflict)
-	partial := requestJSON[domain.ClarificationAssessment](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/clarify", map[string]any{"answers": map[string]string{"goal": "short"}}, http.StatusOK)
-	if partial.Passed || partial.Score >= 80 {
-		t.Fatalf("partial clarification unexpectedly passed: %+v", partial)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/issues/req-gated/clarify", strings.NewReader(`{"answers":{}}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("score endpoint must be gone, got %d", rec.Code)
 	}
-	long := strings.Repeat("完整且可验证的需求信息", 8)
-	passed := requestJSON[domain.ClarificationAssessment](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/clarify", map[string]any{"answers": map[string]string{"goal": long, "user": long, "scope": long, "acceptance": long, "constraints": long}}, http.StatusOK)
-	if !passed.Passed || passed.Score != 100 {
-		t.Fatalf("complete clarification did not pass: %+v", passed)
+	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/req-gated/dispatch", map[string]any{}, http.StatusCreated)
+	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
+	if task.RunID == "" {
+		t.Fatal("unclarified requirement must dispatch")
 	}
-	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{}, http.StatusCreated)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		run, _ := s.Run(task.RunID)
-		if run.Status == "waiting" {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("clarified requirement run did not settle")
 }
 
-func TestScheduledDispatchAlsoRequiresClarification(t *testing.T) {
+func TestScheduledDispatchDoesNotRequireClarification(t *testing.T) {
 	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1440,16 +1437,17 @@ func TestScheduledDispatchAlsoRequiresClarification(t *testing.T) {
 	}
 	if err := s.PutIssue(domain.Issue{
 		ID: "req-sched-gate", ProjectID: "platform", Kind: "requirement", Title: "Thin TAPD",
-		WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Score: 20, Status: domain.ClarificationNeedsUser, Gated: true},
+		WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser, Gated: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	d := &deps{repo: s, engine: engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), sync: tracker.NewService()}
-	_, err = dispatchIssue(d, dispatchRequest{IssueID: "req-sched-gate", WorkflowID: wf.ID, ScheduleJobID: "job-1"})
-	httpErr, ok := err.(HTTPError)
-	if !ok || httpErr.Status != http.StatusConflict || !strings.Contains(httpErr.Message, "澄清未达标") {
-		t.Fatalf("scheduled dispatch must stay gated: %v", err)
+	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
+	d := &deps{repo: s, engine: e, sync: tracker.NewService()}
+	task, err := dispatchIssue(d, dispatchRequest{IssueID: "req-sched-gate", WorkflowID: wf.ID, ScheduleJobID: "job-1"})
+	if err != nil {
+		t.Fatalf("scheduled dispatch must not be gated: %v", err)
 	}
+	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
 }
 
 func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
@@ -1465,7 +1463,7 @@ func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
 	}
 	if err := s.PutIssue(domain.Issue{
 		ID: "req-sync", ProjectID: "platform", Kind: "requirement", Source: "tapd", Title: "mq_flush_dns CMQ SDK",
-		WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Score: 0, Status: domain.ClarificationNeedsUser},
+		WorkflowID: wf.ID, Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1481,7 +1479,7 @@ func TestSyncedRequirementCanDispatchWithoutClarification(t *testing.T) {
 	}
 }
 
-func TestReadyClarificationCanDispatchBelowThreshold(t *testing.T) {
+func TestReadyClarificationCanDispatch(t *testing.T) {
 	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1496,7 +1494,7 @@ func TestReadyClarificationCanDispatchBelowThreshold(t *testing.T) {
 		ID: "req-ready-low", ProjectID: "platform", Kind: "requirement", Title: "Low score but clarified",
 		WorkflowID: wf.ID,
 		Clarification: domain.ClarificationAssessment{
-			Gated: true, Score: 76, Passed: false, Status: domain.ClarificationReady, Summary: "已确认 insert/delete 语义",
+			Gated: true, Status: domain.ClarificationReady, Summary: "已确认 insert/delete 语义",
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -1509,7 +1507,7 @@ func TestReadyClarificationCanDispatchBelowThreshold(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
 	if task.RunID == "" {
-		t.Fatal("finished clarification must dispatch even below 80")
+		t.Fatal("finished clarification must dispatch")
 	}
 }
 
@@ -1519,7 +1517,7 @@ func TestAppendClarificationDescriptionReplacesPreviousBlock(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	got = appendClarificationDescription(got, "第二轮结论")
-	if strings.Count(got, "## AgentFlow 澄清结论") != 1 || strings.Contains(got, "第一轮结论") || !strings.Contains(got, "第二轮结论") {
+	if strings.Count(got, "## LoopForge 澄清结论") != 1 || strings.Contains(got, "第一轮结论") || !strings.Contains(got, "第二轮结论") {
 		t.Fatalf("replace failed: %q", got)
 	}
 }
@@ -1545,7 +1543,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 		"summary": "复现条件和预期行为已经确认", "ready": true,
 		"history": []map[string]string{{"role": "user", "content": "仅在首次加载时发生"}},
 	}, http.StatusOK)
-	if !updated.Clarification.Passed || updated.Clarification.Status != "ready" || updated.Clarification.WriteBackStatus != "skipped" {
+	if updated.Clarification.Status != "ready" || updated.Clarification.WriteBackStatus != "skipped" {
 		t.Fatalf("unexpected clarification: %+v", updated.Clarification)
 	}
 	if !strings.Contains(updated.Description, "复现条件和预期行为已经确认") {
@@ -1567,50 +1565,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
 }
 
-func TestClarificationScoreIsWeightedAndNeverGatesDispatch(t *testing.T) {
-	root := t.TempDir()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "issue-flow", Name: "Issue flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}
-	if err := s.PutWorkflow(wf); err != nil {
-		t.Fatal(err)
-	}
-	issue := domain.Issue{ID: "gf-rated", ProjectID: "platform", Kind: "issue", Source: "gongfeng", Title: "partial info", WorkflowID: wf.ID}
-	if err := s.PutIssue(issue); err != nil {
-		t.Fatal(err)
-	}
-	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
-	h := New(s, e, tracker.NewService(), "", "")
-	// Bug-style weights are 25/20/25/20/10; "acceptance" is left unrated on
-	// purpose and must count as zero rather than being dropped.
-	updated := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
-		"summary": "现象和期望行为已确认，验收标准仍缺", "ready": true,
-		"dimensions": map[string]int{"phenomenon": 100, "impact": 50, "expected": 80, "constraints": 100},
-		"missing":    []string{"验收标准还没定", "  "},
-	}, http.StatusOK)
-	if updated.Clarification.Score != 65 {
-		t.Fatalf("weighted score = %d, want 65 (%+v)", updated.Clarification.Score, updated.Clarification.Dimensions)
-	}
-	if got, ok := updated.Clarification.Dimensions["acceptance"]; !ok || got != 0 {
-		t.Fatalf("unrated dimension should be stored as 0: %+v", updated.Clarification.Dimensions)
-	}
-	if len(updated.Clarification.Missing) != 1 || updated.Clarification.Missing[0] != "验收标准还没定" {
-		t.Fatalf("missing items not trimmed: %+v", updated.Clarification.Missing)
-	}
-	if !updated.Clarification.Passed {
-		t.Fatalf("bug-style clarification still marks the item clarified: %+v", updated.Clarification)
-	}
-	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{}, http.StatusCreated)
-	if task.RunID == "" {
-		t.Fatal("low clarification score must not block dispatch")
-	}
-	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
-}
-
-func TestRequirementChatClarificationEmptyRatingsDoNotPass(t *testing.T) {
+func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
 	root := t.TempDir()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -1630,12 +1585,6 @@ func TestRequirementChatClarificationEmptyRatingsDoNotPass(t *testing.T) {
 	updated := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
 		"summary": "还缺验收和范围", "ready": true,
 	}, http.StatusOK)
-	if updated.Clarification.Passed || updated.Clarification.Score != 0 {
-		t.Fatalf("empty ratings must not pass: %+v", updated.Clarification)
-	}
-	if len(updated.Clarification.Dimensions) == 0 {
-		t.Fatal("empty ratings must still store every dimension as 0")
-	}
 	if updated.Clarification.Status != domain.ClarificationReady {
 		t.Fatalf("status=%s", updated.Clarification.Status)
 	}
@@ -1644,7 +1593,7 @@ func TestRequirementChatClarificationEmptyRatingsDoNotPass(t *testing.T) {
 	}
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+issue.ID+"/dispatch", map[string]any{}, http.StatusCreated)
 	if task.RunID == "" {
-		t.Fatal("ready clarification must dispatch even with empty ratings")
+		t.Fatal("ready clarification must dispatch")
 	}
 	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
 }
@@ -1775,13 +1724,9 @@ func TestImportTAPDIssueFromURL(t *testing.T) {
 	if imported.AssigneeUserID != owner.ID {
 		t.Fatalf("assignee=%d want project owner %d when TAPD handler is missing", imported.AssigneeUserID, owner.ID)
 	}
-	if imported.Clarification.Passed || imported.Clarification.Status != domain.ClarificationNeedsUser || !imported.Clarification.Gated {
-		t.Fatalf("imported clarification=%+v", imported.Clarification)
+	if imported.Clarification.Status != "" || imported.Clarification.Gated {
+		t.Fatalf("import must not score or auto-start clarification: %+v", imported.Clarification)
 	}
-	if len(imported.Clarification.Dimensions) == 0 {
-		t.Fatal("import must persist per-dimension scores")
-	}
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues/"+imported.ID+"/dispatch", map[string]any{}, http.StatusConflict)
 }
 
 func TestImportTAPDIssueSaveKeepsExternalBinding(t *testing.T) {
@@ -1848,8 +1793,6 @@ func TestSaveAfterClarificationDoesNotRecreateOrDeleteTAPDIssue(t *testing.T) {
 			ExternalType: "story",
 		},
 		Clarification: domain.ClarificationAssessment{
-			Score:   88,
-			Passed:  true,
 			Gated:   true,
 			Status:  domain.ClarificationReady,
 			Summary: "已补齐验收标准",
@@ -1883,7 +1826,7 @@ func TestSaveAfterClarificationDoesNotRecreateOrDeleteTAPDIssue(t *testing.T) {
 	if saved.Title != "澄清后改标题" {
 		t.Fatalf("title=%q", saved.Title)
 	}
-	if !saved.Clarification.Passed || saved.Clarification.Summary != "已补齐验收标准" {
+	if saved.Clarification.Status != domain.ClarificationReady || saved.Clarification.Summary != "已补齐验收标准" {
 		t.Fatalf("clarification wiped on save: %+v", saved.Clarification)
 	}
 }
@@ -1926,7 +1869,7 @@ func TestIssuesSaveDoesNotGateSyncedTAPDRequirement(t *testing.T) {
 	if saved.WorkflowID != "demodns-issue-fix" || saved.RepositoryID != "repo-new-demodns" {
 		t.Fatalf("binding not saved: workflow=%q repo=%q", saved.WorkflowID, saved.RepositoryID)
 	}
-	if saved.Clarification.Gated || saved.Clarification.Score != 0 || saved.Clarification.Status != "" {
+	if saved.Clarification.Gated || saved.Clarification.Status != "" {
 		t.Fatalf("synced TAPD save must not import-score: %+v", saved.Clarification)
 	}
 }
@@ -2192,6 +2135,55 @@ func TestUserCredentialsAreStoredAndRedacted(t *testing.T) {
 	h.ServeHTTP(unauthorizedRec, unauthorized)
 	if unauthorizedRec.Code != http.StatusForbidden {
 		t.Fatalf("guest credential update status=%d", unauthorizedRec.Code)
+	}
+}
+
+func TestCodeBuddyInternetEnvironmentIsNormalizedOrRejected(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "credential-test-session-secret")
+	root := t.TempDir()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
+	if err := s.PutUser(domain.User{StaffID: 2003, LoginName: "bob", ChineseName: "鲍勃"}); err != nil {
+		t.Fatal(err)
+	}
+	bob, _ := s.UserByLoginName("bob")
+	token, err := auth.NewClientFromEnv().SignUser(&auth.User{ID: bob.ID, LoginName: bob.LoginName, AuthTime: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(environment string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"codeBuddyApiKey": "ck_bob", "codeBuddyInternetEnvironment": environment})
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/users/%d/credentials", bob.ID), bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: authCookieName, Value: token})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for raw, want := range map[string]string{" iOA ": "ioa", "国内站": "internal", "China": "internal", "public": "", "": ""} {
+		if rec := put(raw); rec.Code != http.StatusOK {
+			t.Fatalf("environment %q status=%d body=%s", raw, rec.Code, rec.Body.String())
+		}
+		if stored, _ := s.User(bob.ID); stored.CodeBuddyInternetEnvironment != want {
+			t.Fatalf("environment %q stored as %q, want %q", raw, stored.CodeBuddyInternetEnvironment, want)
+		}
+	}
+	if rec := put("internal"); rec.Code != http.StatusOK {
+		t.Fatalf("internal status=%d", rec.Code)
+	}
+	// A typo would make the CLI quietly call the international edition, so nothing is saved.
+	for _, raw := range []string{"intranet", "selfhosted", "国内"} {
+		rec := put(raw)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "网络环境") {
+			t.Fatalf("environment %q status=%d body=%s", raw, rec.Code, rec.Body.String())
+		}
+	}
+	if stored, _ := s.User(bob.ID); stored.CodeBuddyInternetEnvironment != "internal" || stored.CodeBuddyAPIKey != "ck_bob" {
+		t.Fatalf("rejected environment changed the stored credential: %+v", stored)
 	}
 }
 
