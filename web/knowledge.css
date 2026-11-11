@@ -232,6 +232,14 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
 .kb-foot-note { min-width: 0; margin-right: auto; overflow: hidden; color: var(--hui-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .kb-foot-note code { font: 12px var(--mono); }
 .kb-alert { margin-top: 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--hui-error) 23%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--hui-error) 6%, transparent); color: var(--hui-error); font-size: 13px; overflow-wrap: anywhere; }
+
+.kb-write-info { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 16px; padding: 9px 12px; border: 1px solid var(--hui-border); border-radius: 8px; background: var(--hui-surface-2, color-mix(in srgb, var(--hui-surface) 70%, var(--hui-canvas))); color: var(--hui-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.kb-write-info code { font: 12px var(--mono); color: var(--hui-text); }
+.kb-write-info a { color: var(--hui-accent); text-decoration: none; }
+.kb-write-info a:hover { text-decoration: underline; }
+.kb-write-note { flex-basis: 100%; color: var(--hui-muted); line-height: 1.55; }
+.kb-write-note.kb-err { color: var(--hui-error); }
+
 .kb-lead { margin: 16px 0 0; color: var(--hui-muted); font-size: 13px; }
 .kb-field { margin-top: 16px; }
 .kb-field > label { display: block; margin-bottom: 6px; color: var(--hui-secondary); font-size: 12.5px; font-weight: 500; }

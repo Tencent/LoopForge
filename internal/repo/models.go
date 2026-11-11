@@ -746,6 +746,31 @@ type knowledgeActivityRow struct {
 
 func (knowledgeActivityRow) TableName() string { return "knowledge_activity" }
 
+// knowledgeWritebackRow 记录审核条目发布到 Git 来源的分支与合并请求。
+// 同一审核条目一行；重试沿用同一分支。属于控制面，不存正文。
+type knowledgeWritebackRow struct {
+	ID           string     `gorm:"column:id;primaryKey;size:64"`
+	SubmissionID string     `gorm:"column:submission_id;size:64;uniqueIndex:uq_knowledge_writebacks_submission"`
+	SourceID     string     `gorm:"column:source_id;size:64;index:idx_knowledge_writebacks_source"`
+	ProjectID    string     `gorm:"column:project_id;size:64"`
+	Path         string     `gorm:"column:path;size:512"`
+	Branch       string     `gorm:"column:branch;size:255"`
+	Commit       string     `gorm:"column:commit;size:64"`
+	MRURL        string     `gorm:"column:mr_url;size:1024"`
+	MRProvider   string     `gorm:"column:mr_provider;size:32"`
+	MRIID        int        `gorm:"column:mr_iid"`
+	MRState      string     `gorm:"column:mr_state;size:32"`
+	Status       string     `gorm:"column:status;size:32;index:idx_knowledge_writebacks_status,priority:1"`
+	Note         string     `gorm:"column:note;type:text"`
+	Error        string     `gorm:"column:error_text;type:text"`
+	Attempts     int        `gorm:"column:attempts"`
+	CheckedAt    *time.Time `gorm:"column:checked_at;index:idx_knowledge_writebacks_status,priority:2"`
+	Created      *time.Time `gorm:"column:created_at"`
+	Updated      *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeWritebackRow) TableName() string { return "knowledge_writebacks" }
+
 // 内置知识引擎内容面（KnowledgeContentRepo，可能指向独立的 MySQL）。
 type knowledgeDocumentRow struct {
 	SourceID  string     `gorm:"column:source_id;primaryKey;size:64"`
@@ -808,7 +833,7 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSubmissionRow{},
-		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{},
+		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeWritebackRow{},
 		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}

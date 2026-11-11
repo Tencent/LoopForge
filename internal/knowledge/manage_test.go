@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
@@ -231,6 +232,12 @@ func TestDeleteSourceRemovesContentBeforeControl(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.PutKnowledgeWriteback(domain.KnowledgeWriteback{
+		ID: "kwb-delete", SubmissionID: "kbs-delete", SourceID: src.ID, Path: "README.md",
+		Branch: "kb/writeback-kbs-delete", Status: domain.KnowledgeWritebackBranchPushed,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.PutKnowledgeRevision(domain.KnowledgeRevision{
 		ID: "rev-git", SourceID: src.ID, Path: "README.md", Revision: 1, Body: "# Readme\n",
 	}); err != nil {
@@ -264,10 +271,49 @@ func TestDeleteSourceRemovesContentBeforeControl(t *testing.T) {
 	if docs := s.KnowledgeDocuments(src.ID); len(docs) != 0 {
 		t.Fatalf("内容面文档未删除: %+v", docs)
 	}
+	if _, ok := s.KnowledgeWriteback("kwb-delete"); ok {
+		t.Fatal("来源删除后写回记录未清理")
+	}
 	if revs := s.KnowledgeRevisions(src.ID, "README.md"); len(revs) != 0 {
 		t.Fatalf("内容面修订未删除: %+v", revs)
 	}
 	if chunks := s.KnowledgeChunks(src.ID, "README.md"); len(chunks) != 0 {
 		t.Fatalf("内容面索引块未删除: %+v", chunks)
+	}
+}
+
+func TestDeleteSourceRefusesActiveWritebackLease(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	svc := &Service{store: s, now: func() time.Time { return time.Now().UTC() }}
+	base, err := svc.EnsureHostedBase("proj-delete-lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := svc.RegisterGitSource(GitSourceInput{
+		ProjectID: "proj-delete-lease", BaseID: base.ID, Name: "写回中的来源",
+		GitURL: "https://github.com/example/lease.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.ClaimKnowledgeWrite(src.ID, "peer", time.Minute); err != nil || !ok {
+		t.Fatalf("claim = %v %v", ok, err)
+	}
+	err = svc.DeleteSource("proj-delete-lease", src.ID)
+	if ae, _ := apperr.As(err); ae == nil || ae.Kind != apperr.Conflict {
+		t.Fatalf("delete during lease = %v", err)
+	}
+	if _, ok := s.KnowledgeSource(src.ID); !ok {
+		t.Fatal("source was deleted while a writeback held the lease")
+	}
+	if _, err := s.FinishKnowledgeWrite(src.ID, "peer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteSource("proj-delete-lease", src.ID); err != nil {
+		t.Fatal(err)
 	}
 }
