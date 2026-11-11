@@ -734,9 +734,9 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 	}
 	fromURL := requestJSON[domain.Repository](t, h, http.MethodPost, "/api/repositories", map[string]any{
 		"projectId": "linkproj",
-		"repoUrl":   "http://172.32.0.10/team/svc.git",
+		"repoUrl":   "http://172.20.0.10/team/svc.git",
 	}, http.StatusOK)
-	if fromURL.GongfengProjectID != "gitlab:172.32.0.10/team/svc" || fromURL.Provider != "gitlab" {
+	if fromURL.GongfengProjectID != "gitlab:172.20.0.10/team/svc" || fromURL.Provider != "gitlab" {
 		t.Fatalf("trusted gitlab url must normalize to prefixed id, got %+v", fromURL)
 	}
 	// 裸工蜂路径配 provider=gitlab 必须 400：落库后 MR/同步全按 gitlab: 前缀

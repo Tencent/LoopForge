@@ -80,17 +80,26 @@ func TestParseGitLabRepositoryURLRejectsImpersonation(t *testing.T) {
 }
 
 func TestIsTrustedGitLabHost(t *testing.T) {
-	// 私有/回环网段与 172.16/12 规划段应受信任（只断言网段类别，不引用真实主机）。
+	// 私有/回环网段应受信任（只断言网段类别，不引用真实主机）。
 	for _, host := range []string{"127.0.0.1", "10.0.0.1", "192.168.0.1", "172.16.0.1", "172.31.255.254"} {
 		if !isTrustedGitLabHost(host) {
 			t.Errorf("internal range host %s should be trusted", host)
 		}
 	}
 	// 公网地址、仿冒主机名、空值不受信任（192.0.2.x/198.51.100.x/203.0.113.x 为文档保留段）。
-	for _, host := range []string{"203.0.113.1", "198.51.100.2", "192.0.2.3", "github.com.attacker.example", "gitlab.public.example", ""} {
+	// 172.0.0.0/8 内 RFC1918 之外的公网段（172.217/16 Google、172.64/13 Cloudflare）
+	// 必须拒绝：整段放行等于让公网主机冒充内网实例。
+	for _, host := range []string{"203.0.113.1", "198.51.100.2", "192.0.2.3", "172.217.0.1", "172.64.1.1", "172.32.0.1", "172.149.0.1", "172.153.0.1", "github.com.attacker.example", "gitlab.public.example", ""} {
 		if isTrustedGitLabHost(host) {
 			t.Errorf("external host %s must not be trusted", host)
 		}
+	}
+	// 非常规网段走显式 gitlab: 前缀声明（管理员行为，任意主机含公网自建）。
+	if got, ok := ParseGitLabRepositoryURL("gitlab:gitlab.self-hosted.example/team/repo"); !ok {
+		t.Fatalf("explicit prefix must remain the escape hatch for non-RFC1918 instances: %+v", got)
+	}
+	if got, ok := ParseGitLabRepositoryURL("http://172.217.0.1/group/repo"); ok {
+		t.Fatalf("bare public 172.x URL must be rejected without the prefix: %+v", got)
 	}
 }
 
