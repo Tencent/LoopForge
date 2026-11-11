@@ -649,6 +649,13 @@ type spaceThreadRow struct {
 
 func (spaceThreadRow) TableName() string { return "space_threads" }
 
+// 内置知识引擎的 schema 基线以 migrations/026+ 的 SQL 为准。下面的 gorm tag
+// 只保证缺表时服务能启动；AutoMigrate 不会改已有列的类型、collation 或默认值，
+// 安装/升级脚本必须先按序执行迁移（见 docs/deployment.md）。
+
+// knowledgeSubmissionRow 是审核队列的控制面行。Payload 只保存元数据与内容
+// 指纹，待审正文落在内容面的 knowledge_submission_contents；写入路径在
+// KnowledgeRepo.PutKnowledgeSubmission 里拆分，读取时再按 ID 取回正文。
 type knowledgeSubmissionRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`
@@ -791,8 +798,10 @@ func (knowledgeCitationRow) TableName() string { return "knowledge_citations" }
 // knowledgeWritebackRow 记录审核条目发布到 Git 来源的分支与合并请求。
 // 同一审核条目一行；重试沿用同一分支。属于控制面，不存正文。
 type knowledgeWritebackRow struct {
-	ID           string     `gorm:"column:id;primaryKey;size:64"`
-	SubmissionID string     `gorm:"column:submission_id;size:64;uniqueIndex:uq_knowledge_writebacks_submission"`
+	ID string `gorm:"column:id;primaryKey;size:64"`
+	// 可空唯一：MySQL 的唯一索引允许多个 NULL，空串却会互相冲突。写入路径
+	// 没有审核条目时落 NULL（见 036），不落空串。
+	SubmissionID *string    `gorm:"column:submission_id;size:64;uniqueIndex:uq_knowledge_writebacks_submission"`
 	SourceID     string     `gorm:"column:source_id;size:64;index:idx_knowledge_writebacks_source"`
 	ProjectID    string     `gorm:"column:project_id;size:64"`
 	Path         string     `gorm:"column:path;size:512"`
@@ -859,6 +868,17 @@ type knowledgeChunkRow struct {
 
 func (knowledgeChunkRow) TableName() string { return "knowledge_chunks" }
 
+// knowledgeSubmissionContentRow 是内容面的审核正文 staging 表。控制面的
+// knowledge_submissions.payload 只留元数据与指纹，正文按 submission_id 放
+// 在这里；表在内容库，不建跨库外键。
+type knowledgeSubmissionContentRow struct {
+	SubmissionID string     `gorm:"column:submission_id;primaryKey;size:64"`
+	Body         string     `gorm:"column:body;type:mediumtext"`
+	Updated      *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeSubmissionContentRow) TableName() string { return "knowledge_submission_contents" }
+
 // knowledgeFeedbackRow 是知识中心、Main Bot 回答旁和 Agent 标记问题的统一
 // 反馈。属于控制面，不存正文；Path 为空时表示只对回答反馈。
 type knowledgeFeedbackRow struct {
@@ -923,8 +943,12 @@ type knowledgeGovernanceScanRow struct {
 
 func (knowledgeGovernanceScanRow) TableName() string { return "knowledge_governance_scans" }
 
-// allModels lists every table for the sqlite test schema (AutoMigrate).
-func allModels() []any {
+// controlModels lists the tables that belong to the main (control) database.
+// The content plane is deliberately absent: when AGENTFLOW_KNOWLEDGE_MYSQL_DSN
+// points at another database, the main database must never grow an empty copy
+// of the document tables. autoMigrateIncremental runs this list on s.DB and
+// contentModels() on the content handle (the same handle by default).
+func controlModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
 		userRow{}, localAccountRow{}, userConfigRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
@@ -944,7 +968,23 @@ func allModels() []any {
 		knowledgeSubmissionRow{},
 		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeCitationRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
 		knowledgeFeedbackRow{}, knowledgeGapRow{}, knowledgeGovernanceIssueRow{}, knowledgeGovernanceScanRow{},
-		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}
+}
+
+// contentModels lists the tables owned by KnowledgeContentRepo. They are only
+// created on the content connection: the main database is not allowed to hold
+// document bodies, revisions, chunks, or the review staging table.
+func contentModels() []any {
+	return []any{
+		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
+		knowledgeSubmissionContentRow{},
+	}
+}
+
+// allModels lists every table for the sqlite test schema (AutoMigrate) when
+// both planes share one in-memory database.
+func allModels() []any {
+	models := controlModels()
+	return append(models, contentModels()...)
 }

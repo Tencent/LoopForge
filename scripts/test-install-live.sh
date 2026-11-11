@@ -20,8 +20,9 @@ actors=(root nonroot)
 for actor in "${actors[@]}"; do
   fixture="$task_dir/$actor"
   mkdir -p "$fixture/scripts" "$fixture/migrations/seed" "$fixture/user-home"
-  cp scripts/{install.sh,configure.sh,docker-access.sh,install-address.py,install-observability-schema.sh} "$fixture/scripts/"
+  cp scripts/{install.sh,configure.sh,docker-access.sh,install-address.py,install-observability-schema.sh,knowledge-schema.sh} "$fixture/scripts/"
   cp migrations/001_run_obs_generated_columns.sql "$fixture/migrations/"
+  cp migrations/0[2-9][6-9]_*.sql "$fixture/migrations/"
   cp migrations/seed/*.sql "$fixture/migrations/seed/"
   cp compose.yaml "$fixture/"
   read -r http_port mysql_port < <(python3 - <<'PY'

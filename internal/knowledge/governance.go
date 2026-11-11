@@ -548,7 +548,8 @@ func (s *Service) DisposeGovernanceDocument(input GovernanceDispositionInput, ac
 	item := domain.KnowledgeSubmission{
 		ID: "kbs-" + s.itemID(), ProjectID: projectID, Title: title,
 		Source: source, Path: docPath, Content: doc.Body,
-		Status: domain.KnowledgeSubmissionPending, Action: action,
+		Fingerprint: KnowledgeFingerprint(doc.Body),
+		Status:      domain.KnowledgeSubmissionPending, Action: action,
 		ReviewNote: note, CreatedBy: strings.TrimSpace(actor),
 		CreatedAt: s.clock(), UpdatedAt: s.clock(),
 	}

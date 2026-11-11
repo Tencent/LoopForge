@@ -37,12 +37,22 @@ PY
     ;;
   pull)
     compose pull --ignore-buildable --policy always
+    # Stop the old binary before data migrations so it cannot write a review
+    # body into the control payload after 036 has already moved existing rows.
+    compose stop platform >/dev/null || true
+    compose up -d --no-build --wait --wait-timeout 180 mysql
+    bash scripts/knowledge-schema.sh apply --compose
+    bash scripts/knowledge-schema.sh check --compose
     compose up -d --no-build --wait --wait-timeout 180
     ;;
   logs) compose logs -f "${@:-platform}" ;;
   stop) compose stop ;;
   down) compose down --remove-orphans ;;
-  restart) compose restart platform ;;
+  restart)
+    compose up -d --no-build --wait --wait-timeout 180 mysql
+    bash scripts/knowledge-schema.sh check --compose
+    compose restart platform
+    ;;
   build)
     echo 'The default start uses the published GHCR image (no local build).' >&2
     echo 'For a source build: ./start.sh dev' >&2

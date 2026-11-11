@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -30,6 +31,42 @@ type KnowledgeContentRepo struct {
 
 func (r *KnowledgeContentRepo) PutKnowledgeDocument(doc domain.KnowledgeDocument) error {
 	return putKnowledgeDocument(r.db, doc)
+}
+
+// PutKnowledgeSubmissionContent stages a review body on the content plane. The
+// control plane only keeps metadata and the fingerprint; the body is upserted
+// by submission ID so re-saving an item does not duplicate rows.
+func (r *KnowledgeContentRepo) PutKnowledgeSubmissionContent(submissionID, body string) error {
+	submissionID = strings.TrimSpace(submissionID)
+	if submissionID == "" {
+		return errors.New("knowledge submission content requires a submission id")
+	}
+	now := time.Now().UTC()
+	row := knowledgeSubmissionContentRow{SubmissionID: submissionID, Body: body, Updated: &now}
+	return r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "submission_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"body", "updated_at"}),
+	}).Create(&row).Error
+}
+
+func (r *KnowledgeContentRepo) KnowledgeSubmissionContent(submissionID string) (string, bool) {
+	submissionID = strings.TrimSpace(submissionID)
+	if submissionID == "" {
+		return "", false
+	}
+	var row knowledgeSubmissionContentRow
+	if err := r.db.Where("submission_id = ?", submissionID).Take(&row).Error; err != nil {
+		return "", false
+	}
+	return row.Body, true
+}
+
+func (r *KnowledgeContentRepo) DeleteKnowledgeSubmissionContent(submissionID string) error {
+	submissionID = strings.TrimSpace(submissionID)
+	if submissionID == "" {
+		return nil
+	}
+	return r.db.Where("submission_id = ?", submissionID).Delete(&knowledgeSubmissionContentRow{}).Error
 }
 
 // maxKnowledgeLabelRunes matches the VARCHAR(512) label columns. A generated

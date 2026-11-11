@@ -119,7 +119,7 @@ func TestRelevanceGateUsesCandidateDistribution(t *testing.T) {
 
 // 走查环境索引的是 f21b960 的 25 篇 docs 快照，设计提案
 // docs/proposals/builtin-knowledge-engine.md 是之后才加入的；回归语料保持
-// 走查时的快照，这样 “ngram” 仍然是一个库里不存在的词。
+// 走查时的快照，用一个人工构造的、文档里不存在的英文词验证空召回。
 const docsRegressionSkip = "proposals/builtin-knowledge-engine.md"
 
 // openDocsRegressionStore 为回归用例准备一个干净的全文索引。MySQL 的
@@ -263,7 +263,7 @@ func TestMySQLKeywordIndexLoopForgeDocsQuestions(t *testing.T) {
 	assertDeploymentNearTop("数据库连接串的环境变量叫什么")
 	assertDeploymentNearTop("怎么在本机把平台跑起来")
 	assertDeploymentNearTop("默认端口是多少")
-	if paths := search("ngram"); len(paths) != 0 {
-		t.Fatalf("库里没有 ngram 时应返回空，got %v", paths)
+	if paths := search("zzzzunindexed"); len(paths) != 0 {
+		t.Fatalf("库里没有 zzzzunindexed 时应返回空，got %v", paths)
 	}
 }

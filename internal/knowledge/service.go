@@ -285,6 +285,7 @@ func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeS
 	}
 	parsed := ParseDistilled(content)
 	item.Content = parsed.Body
+	item.Fingerprint = KnowledgeFingerprint(item.Content)
 	item.Title = strings.TrimSpace(firstNonEmpty(input.Title, parsed.Title, "未命名知识"))
 	item.Source = strings.TrimSpace(firstNonEmpty(input.Source, parsed.Source))
 	item.Path = strings.TrimSpace(firstNonEmpty(input.Path, parsed.Path))
@@ -324,6 +325,8 @@ func (s *Service) Edit(id string, input SubmissionEdit) (domain.KnowledgeSubmiss
 	if strings.TrimSpace(input.Content) != "" {
 		item.Content = input.Content
 	}
+	// 控制面只留指纹；正文写入内容面 staging，保存路径由 repo 负责拆分。
+	item.Fingerprint = KnowledgeFingerprint(item.Content)
 	item.ReviewNote = input.ReviewNote
 	item.Status = domain.KnowledgeSubmissionPending
 	item.Error = ""

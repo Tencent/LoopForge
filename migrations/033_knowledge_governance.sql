@@ -8,6 +8,7 @@
 -- 元数据列只对执行脚本之后新写入/覆盖的文档立即生效；历史行由内容 Repo
 -- 在读取时从正文解析作为兜底，下一次覆盖写入会落列。
 
+-- @plane control
 -- ===== 第一段：主库（控制面，KnowledgeRepo） =====
 
 CREATE TABLE IF NOT EXISTS knowledge_feedback (
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS knowledge_governance_scans (
   issue_count INT         NOT NULL DEFAULT 0
 ) DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
+-- @plane content
 -- ===== 第二段：内容库（内容面，KnowledgeContentRepo） =====
 
 SET @ddl = IF(
