@@ -2,7 +2,7 @@
 
 ## Native development
 
-`bash scripts/dev.sh` explicitly configures local secrets, starts only this checkout's MySQL service, builds the platform, provisions the `admin` account, installs the missing observability generated columns through an explicit script, applies `migrations/seed/*.sql`, and starts the server on port 8090. Existing catalog definitions are preserved by `INSERT IGNORE`. Keep `.env`, `.local/` and database volumes outside version control.
+`bash scripts/dev.sh` explicitly configures local secrets, starts only this checkout's MySQL service, builds the platform, provisions the `admin` account, installs the missing observability generated columns through an explicit script, applies the knowledge-engine migrations and their ngram check, applies `migrations/seed/*.sql`, and starts the server on port 8090. Existing catalog definitions are preserved by `INSERT IGNORE`. Keep `.env`, `.local/` and database volumes outside version control.
 
 For a native installation, use Node.js 22+ on the API host and install the CLIs you choose. CodeBuddy is also used for requirement clarification and scheduled assistant tasks:
 
@@ -17,7 +17,7 @@ Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFL
 
 Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
 
-Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Apply existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
+Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Run `bash scripts/knowledge-schema.sh apply --native` before starting the service so the knowledge tables and ngram index exist; `repo.Open` only adds missing objects. Apply other existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
 
 ## Container installation
 
@@ -31,7 +31,7 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ./start.sh release     # switch a source build back to the published image
 ```
 
-The installer checks Docker, Compose and Python (and offers to install Docker when it is missing; set `LOOPFORGE_YES=1` to accept without prompting), generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
+The installer checks Docker, Compose and Python (and offers to install Docker when it is missing; set `LOOPFORGE_YES=1` to accept without prompting), generates `.env` with unique secrets, pulls the images, starts MySQL, applies the knowledge-engine migrations (026 onward) and the ngram index check, starts the platform container, then installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. `./start.sh pull` performs the same knowledge migration and ngram check before recreating the platform container. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
@@ -96,6 +96,47 @@ Personal runners are connected from the execution-machine page with a short-live
 A platform administrator can share one CodeBuddy API Key under **Platform administration → Shared CodeBuddy Key** (平台共享 CodeBuddy Key): pick the network environment that issued it and the models members may use (the first is the default). Members without a key of their own then chat and run SOPs on it, limited to those models; a role configured with another model runs on the default and the run says so. Members with their own key keep using it with any model. Scheduled tasks, clarification, reports, bots and run evaluation still need a personal key. The key is stored in the database like personal keys and is never shown again after saving. `AGENTFLOW_ASSISTANT_SPONSOR_LOGIN`, which lent one account's key limited to `deepseek-v4.1-flash`, still applies while no shared key is configured.
 
 Configure provider credentials in the platform UI, not the host's global CLI configuration. Credentials are bound to the responsible actor by the upstream runtime. The home composer and SOP roles support CodeBuddy, Codex and Claude Code independently. Select the executor beside the home model selector; its API key (and optional Codex/Claude base URL) comes from your personal settings. Changing the executor preserves the draft; saved conversations record the executor used. Main Bot writes still pass through the platform tool gateway and its approval checks. Requirement clarification, scheduled assistant tasks and notifications continue to use CodeBuddy. Live model tests are opt-in; set `AGENTFLOW_LIVE_TESTS=1` only for the acceptance suites that need to load local credentials.
+
+## Knowledge engine schema
+
+The built-in knowledge engine has two table groups. The control plane lives in the main database (`AGENTFLOW_MYSQL_DSN`): knowledge bases, sources, bindings, sync jobs, review metadata, writeback records, tombstones, feedback, gaps, governance results, activity and citations. The content plane owns document bodies, hosted revisions, index chunks and the review-body staging table. Set `AGENTFLOW_KNOWLEDGE_MYSQL_DSN` to a separate MySQL database to isolate it; empty reuses the main connection. In Compose, the DSN must be reachable from the platform container (for example `loopforge:PASSWORD@tcp(mysql:3306)/loopforge_content`, after creating that database); the migration helper maps `127.0.0.1:<published MySQL port>` to the Compose MySQL service so the same `.env` also works for native runs. Never place the content tables in the control database when a separate content DSN is configured, and never create foreign keys across the two groups.
+
+`repo.Open` only adds missing tables/columns/indexes. It cannot create a MySQL full-text index with the ngram parser, and it does not run data migrations. Apply the scripts before starting the service:
+
+```bash
+bash scripts/knowledge-schema.sh apply --compose   # container install
+bash scripts/knowledge-schema.sh check --compose
+# Native development or an external MySQL:
+bash scripts/knowledge-schema.sh apply --native
+bash scripts/knowledge-schema.sh check --native
+```
+
+The helper parses both DSNs, runs each control segment against the control database and each content segment against the content database, and is safe to repeat. The scripts may also be applied by hand in numeric order; `-- @plane control` / `-- @plane content` marks the target group in files with both. When running the 036 content segment by hand against a separate content database, set `@knowledge_control_schema` to the control database first (the helper does this); it defaults to the current database, which is only correct when both planes share one database.
+
+| Script | Plane | Purpose |
+|---|---|---|
+| `026_builtin_knowledge.sql` | control + content | Knowledge bases/sources/bindings/sync jobs; documents/revisions/chunks and the ngram full-text index |
+| `027_knowledge_activity.sql` | control | Agent retrieval call records |
+| `028_knowledge_vector.sql` | control | Per-base vector index contract columns |
+| `029_knowledge_git_credentials.sql` | control | Encrypted Git source credentials |
+| `030_shared_knowledge.sql` | control | Normalize shared-library bindings to read-only (including NULL) |
+| `031_knowledge_writeback.sql` | control | Git branch / merge-request writeback records |
+| `032_knowledge_sediment.sql` | control | Sediment publish mode, rules and tombstones |
+| `033_knowledge_governance.sql` | control + content | Feedback, gaps, governance scans; document frontmatter metadata columns |
+| `034_knowledge_citation.sql` | control | Structured citation records |
+| `035` / `037` | per script | Reserved for parallel branches; apply them when present in the release |
+| `036_knowledge_schema_cleanup.sql` | content + control | Review-body staging table, binary path collation, nullable writeback submission ID, legacy payload-body migration |
+
+`036` moves review bodies that older installations kept in `knowledge_submissions.payload` into the content-plane `knowledge_submission_contents` table, then removes the `content` key from the control payload. The copy works when the control and content databases are on the same MySQL server (including two schemas on that server) and is skipped otherwise. For a content database on another server, export the affected payloads first, import them into `knowledge_submission_contents`, and only then run the control-plane `UPDATE ... JSON_REMOVE(payload, '$.content')` cleanup manually; the exact statement is in the script comments.
+
+Before the API starts, `scripts/knowledge-schema.sh check` verifies that `knowledge_chunks` has the FULLTEXT index `ft_knowledge_chunks_text` using the ngram parser. If it is missing, retrieval fails with `Can't find FULLTEXT index matching the column list`. The check fails with the repair command; it never creates the index from Go code:
+
+```bash
+# Repair a content database that missed 026:
+bash scripts/knowledge-schema.sh apply
+```
+
+For an external MySQL deployment, apply the same order and segments on the control and content databases, then run the check with both DSNs exported. A fresh schema created only by `repo.Open` is not enough for knowledge retrieval.
 
 ## Observability schema
 

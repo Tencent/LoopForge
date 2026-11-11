@@ -1,8 +1,9 @@
 -- 026: 内置知识引擎（阶段一最小切片）的控制面与内容面表。
 --
 -- 分两段，段内都不含跨库外键或跨库事务。同一 MySQL 时整份执行；配置了独立
--- 内容库时，第一段在主库执行，第二段在内容库执行。由运维手动执行，进程启动
--- 不会跑这份脚本。
+-- 内容库时，第一段在主库执行，第二段在内容库执行。由安装/升级脚本
+-- （scripts/knowledge-schema.sh）或运维手动执行；进程启动不会跑这份脚本。
+-- 段落用 "-- @plane control|content" 标记，脚本据此选择目标库。
 --
 -- 表结构与 internal/repo 的 row 模型一致。gorm 的增量 DDL 只会补缺失的表和
 -- 列，补不出带 ngram 解析器的全文索引，所以检索要用的全文索引由第二段补建：
@@ -12,6 +13,7 @@
 -- IF NOT EXISTS、删表用 IF EXISTS；MySQL 的 ADD FULLTEXT INDEX 没有
 -- IF NOT EXISTS，因此先查 information_schema.STATISTICS，索引已存在就跳过。
 
+-- @plane control
 -- ===== 第一段：主库（控制面，KnowledgeRepo） =====
 
 -- 外部客户端与「地址加 Token」配置下线，这张表不再使用。
@@ -72,11 +74,12 @@ CREATE TABLE IF NOT EXISTS knowledge_sync_jobs (
   KEY idx_knowledge_sync_jobs_source (source_id)
 ) DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
+-- @plane content
 -- ===== 第二段：内容库（内容面，KnowledgeContentRepo） =====
 
 CREATE TABLE IF NOT EXISTS knowledge_documents (
   source_id  VARCHAR(64)  NOT NULL,
-  path       VARCHAR(512) NOT NULL,
+  path       VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   title      VARCHAR(512) NOT NULL DEFAULT '',
   body       MEDIUMTEXT   NULL,
   line_count INT          NOT NULL DEFAULT 0,
@@ -90,7 +93,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 CREATE TABLE IF NOT EXISTS knowledge_revisions (
   id         VARCHAR(64)  NOT NULL PRIMARY KEY,
   source_id  VARCHAR(64)  NOT NULL DEFAULT '',
-  path       VARCHAR(512) NOT NULL DEFAULT '',
+  path       VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
   revision   BIGINT       NOT NULL DEFAULT 0,
   body       MEDIUMTEXT   NULL,
   author     VARCHAR(255) NOT NULL DEFAULT '',
@@ -101,7 +104,7 @@ CREATE TABLE IF NOT EXISTS knowledge_revisions (
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
   id         BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
   source_id  VARCHAR(64)  NOT NULL DEFAULT '',
-  path       VARCHAR(512) NOT NULL DEFAULT '',
+  path       VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
   idx        INT          NOT NULL DEFAULT 0,
   heading    VARCHAR(512) NOT NULL DEFAULT '',
   title      VARCHAR(512) NOT NULL DEFAULT '',

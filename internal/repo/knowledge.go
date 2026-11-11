@@ -1,6 +1,8 @@
 package repo
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -13,9 +15,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// KnowledgeRepo owns knowledge control metadata and the review queue.
+// KnowledgeRepo owns knowledge control metadata and the review queue. The
+// review body itself belongs to the content plane; content is injected here so
+// callers keep a single Put/Get API while payload never carries the body.
 type KnowledgeRepo struct {
 	*deps
+	content *KnowledgeContentRepo
 }
 
 // KnowledgeSubmissions lists submissions newest first. Empty filters match
@@ -59,6 +64,12 @@ func (r *KnowledgeRepo) KnowledgeSubmission(id string) (domain.KnowledgeSubmissi
 		return domain.KnowledgeSubmission{}, false
 	}
 	out := knowledgeSubmissionFromRow(row)
+	out.Content = ""
+	if r.content != nil {
+		if body, ok := r.content.KnowledgeSubmissionContentVersion(out.ID, row.ContentKey); ok {
+			out.Content = body
+		}
+	}
 	if wb, ok := r.KnowledgeWritebackBySubmission(out.ID); ok {
 		applyKnowledgeWritebackView(&out, wb)
 	}
@@ -94,13 +105,27 @@ func (r *KnowledgeRepo) PutKnowledgeSubmission(item domain.KnowledgeSubmission) 
 	if item.Status == "" {
 		item.Status = domain.KnowledgeSubmissionPending
 	}
+	// Stage an immutable body version, then publish its reference with the
+	// control CAS. Losing writers cannot mutate the winner's selected body.
+	body := item.Content
+	item.Content = ""
+	if strings.TrimSpace(body) != "" {
+		if r.content == nil {
+			return errors.New("knowledge content store is not configured")
+		}
+		sum := sha256.Sum256([]byte(body))
+		item.ContentKey = hex.EncodeToString(sum[:])
+		if err := r.content.PutKnowledgeSubmissionContentVersion(item.ID, item.ContentKey, body); err != nil {
+			return err
+		}
+	}
 	payload, err := json.Marshal(item)
 	if err != nil {
 		return err
 	}
 	created := item.CreatedAt
 	row := knowledgeSubmissionRow{
-		ID: item.ID, ProjectID: item.ProjectID, RunID: item.RunID, ArtifactID: item.ArtifactID,
+		ID: item.ID, ProjectID: item.ProjectID, RunID: item.RunID, ArtifactID: item.ArtifactID, ContentKey: item.ContentKey,
 		Status: item.Status, Payload: payload, Created: &created, Updated: &now, Version: item.Version + 1,
 	}
 	if item.Status == domain.KnowledgeSubmissionPublishing {
@@ -133,6 +158,9 @@ func (r *KnowledgeRepo) PutKnowledgeSubmission(item domain.KnowledgeSubmission) 
 			updates["publish_until"] = row.PublishUntil
 		}
 	}
+	if row.ContentKey != "" {
+		updates["content_key"] = row.ContentKey
+	}
 	res := q.Updates(updates)
 	if res.Error != nil {
 		return res.Error
@@ -144,7 +172,13 @@ func (r *KnowledgeRepo) PutKnowledgeSubmission(item domain.KnowledgeSubmission) 
 }
 
 func (r *KnowledgeRepo) DeleteKnowledgeSubmission(id string) error {
-	res := r.DB.Where("id = ?", strings.TrimSpace(id)).Delete(&knowledgeSubmissionRow{})
+	id = strings.TrimSpace(id)
+	if r.content != nil {
+		if err := r.content.DeleteKnowledgeSubmissionContent(id); err != nil {
+			return err
+		}
+	}
+	res := r.DB.Where("id = ?", id).Delete(&knowledgeSubmissionRow{})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -158,7 +192,7 @@ func knowledgeSubmissionFromRow(row knowledgeSubmissionRow) domain.KnowledgeSubm
 	var out domain.KnowledgeSubmission
 	_ = json.Unmarshal(row.Payload, &out)
 	out.ID, out.ProjectID, out.RunID, out.ArtifactID, out.Status = row.ID, row.ProjectID, row.RunID, row.ArtifactID, row.Status
-	out.Version, out.ExpectedStatus = row.Version, row.Status
+	out.Version, out.ExpectedStatus, out.ContentKey = row.Version, row.Status, row.ContentKey
 	if row.Created != nil {
 		out.CreatedAt = *row.Created
 	}
@@ -565,6 +599,9 @@ func (r *KnowledgeRepo) DeleteKnowledgeSubmissionCAS(item domain.KnowledgeSubmis
 	}
 	if res.RowsAffected != 1 {
 		return apperr.New(apperr.Conflict, "审核条目已被其他操作修改")
+	}
+	if r.content != nil {
+		return r.content.DeleteKnowledgeSubmissionContent(item.ID)
 	}
 	return nil
 }

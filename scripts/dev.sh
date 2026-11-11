@@ -14,15 +14,10 @@ if [[ ! -f .local/admin-password ]]; then
 fi
 .local/bin/loopforge-account -user admin -admin < .local/admin-password
 bash scripts/install-observability-schema.sh
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/026_builtin_knowledge.sql
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/027_knowledge_activity.sql
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/028_knowledge_vector.sql
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/029_knowledge_git_credentials.sql
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/030_shared_knowledge.sql
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/031_knowledge_writeback.sql
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/032_knowledge_sediment.sql
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/033_knowledge_governance.sql
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/034_knowledge_citation.sql
+# 知识库 schema 由脚本按 026 起的编号执行；控制段进主库，内容段进
+# AGENTFLOW_KNOWLEDGE_MYSQL_DSN 指向的内容库，并检查 ngram 全文索引。
+bash scripts/knowledge-schema.sh apply --native
+bash scripts/knowledge-schema.sh check --native
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/001_public_catalog.sql
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/002_welcome_project.sql
 printf 'Open http://localhost:%s — account: admin — password: .local/admin-password\n' "$AGENTFLOW_HTTP_PORT"

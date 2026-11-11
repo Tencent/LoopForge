@@ -37,7 +37,7 @@
 | `store` | 2182 | 1042 | 不移植。Postgres 模型改写成第 4 节的 MySQL 表 |
 | `api`、`kbaccess` | 2662 | 2954 | 不移植。权限用平台项目成员 |
 | `projectkb` 与 project binding | — | — | 不移植 |
-| `agent`、`worker`、`manageddsh`、`dshclaim`、`client`、`config`、`settings` | — | — | 不移植 |
+| 运行时内部包（`agent`、`worker`、`client`、`config`、`settings` 等） | — | — | 不移植 |
 
 `store` 的 `documents` 表现在只存路径、标题、行数、指纹和 commit，正文不在库里。`chunks.text` 是切块，不能还原带 frontmatter 的原文。这是必须改掉的前提，不是可选优化。
 
@@ -350,7 +350,7 @@ Git stderr 只用于分类，日志、错误响应与同步记录均保存分类
 2. 领取来源写回租约（`knowledge_sources.lease_owner/lease_until`，与同步互斥）。其他实例正在同步或写回时返回「该来源正在同步或写回，请稍后重试」。租约默认 60 秒并按 TTL/3 续期。
 3. 刷新来源缓存工作副本，丢弃崩溃写入留下的未提交改动。缓存仍只是可重建副本，事实源是 Git 仓库。
 4. 从来源分支创建或重建写回分支 `kb/writeback-<审核条目 ID>`，只提交审核路径这一个文件，作者固定为 `LoopForge Knowledge <knowledge@loopforge.local>`，再推送到远端。重试沿用同一分支并重建为单个提交；推送使用 `--force-with-lease`，租约排除并发写者。
-5. 按托管平台创建合并请求。GitHub（`github.com`）调用 REST `POST /repos/{owner}/{repo}/pulls`；GitLab（`gitlab.com` 与自建 GitLab）调用 `POST /projects/{urlencoded path}/merge_requests`。GitLab 使用 `PRIVATE-TOKEN`（Personal 或 Project Access Token）；GitHub 使用 Bearer 令牌。部署密钥、没有合并请求权限的令牌或其他平台（Gitee、Codeberg、Bitbucket 等）没有可用 HTTP 令牌时只推分支，返回中文提示让用户在仓库网页创建。合并请求状态沿用交付能力的口径（`opened` / `merged` / `closed`），但不写入 `mr_delivery_states`：那张表绑定 Gongfeng 项目与需求 ID，知识写回没有需求上下文，单独记录在 `knowledge_writebacks` 才不会把知识库混进交付统计。
+5. 按托管平台创建合并请求。GitHub（`github.com`）调用 REST `POST /repos/{owner}/{repo}/pulls`；GitLab（`gitlab.com` 与自建 GitLab）调用 `POST /projects/{urlencoded path}/merge_requests`。GitLab 使用 `PRIVATE-TOKEN`（Personal 或 Project Access Token）；GitHub 使用 Bearer 令牌。部署密钥、没有合并请求权限的令牌或其他平台（Gitee、Codeberg、Bitbucket 等）没有可用 HTTP 令牌时只推分支，返回中文提示让用户在仓库网页创建。合并请求状态沿用交付能力的口径（`opened` / `merged` / `closed`），但不写入 `mr_delivery_states`：那张表绑定现有交付系统的项目与需求 ID，知识写回没有需求上下文，单独记录在 `knowledge_writebacks` 才不会把知识库混进交付统计。
 6. 控制面写 `knowledge_writebacks`：分支、提交、合并请求链接/编号/状态与中文提示。审核条目读取时叠加写回视图，知识中心审核页可见分支、合并请求链接与状态。
 7. worker 的同步循环每 30 秒刷新未终结的写回：优先向托管平台查询合并请求状态，API 不可用时再用缓存工作副本探测提交是否已进入来源分支。检测到合并后把来源置为待同步；同步器按已有文档指纹只读取新增或变化的文件，删掉已移除的路径，其他文档和索引块保持不动。压缩合并（squash）会改写提交，祖先探测认不出；这类平台若不支持查询合并请求状态，由用户在合并后手动触发同步。
 
@@ -373,7 +373,7 @@ Git stderr 只用于分类，日志、错误响应与同步记录均保存分类
 门禁逐项保存在 `KnowledgeSubmission.gateChecks`：
 
 - `evidence`：有闭环事件，且正文与标题达到可复用长度。LoopForge 不保存
-  会话里的逐字引用，因此不再照搬 dsh 的“三类证据原文必须逐字命中”；闭环
+  会话里的逐字引用，因此不再照搬移植源的“三类证据原文必须逐字命中”；闭环
   事件本身是运行证据。
 - `sensitive`：知识库配置的正则规则；未配置时使用平台内置的通用规则
   （令牌、口令、私钥、JWT、邮箱、手机号、IPv4、提示词注入），不包含任何
@@ -456,3 +456,36 @@ SOP 代理与 Main Bot 目录共用同一份工具定义和授权收窄。
 引用次数和从未命中的文档已接上 `knowledge_citations`：按文档统计最近 90 天的
 检索、读取和精确匹配；有正文但窗口内没有引用的文档算从未命中。没有引用表时
 面板不用 0 冒充统计结果。
+
+## 13. 授权审查修复与 037 迁移
+
+项目知识管理接口显式检查当前用户：Owner、成员（含 viewer）和平台管理员可读；
+写操作排除 viewer 和非成员。审核列表按用户可读项目过滤，详情与写操作再次检查
+条目所属项目；公共库的空项目管理范围只允许平台管理员。服务层另按来源的实际
+知识库归属检查写入、治理处置和撤回执行，项目加载公共库只授予读取与问题反馈。
+SOP 代理和 Main Bot 继续使用令牌/会话里的项目，工具参数不能切换项目。
+
+新来源 ID 使用 `hosted:<baseID>` 或 `git:<baseID>\0<url>\0<branch>\0<prefix>`
+作 SHA-256 种子，保留前 128 位并加类型前缀，项目与公共库共用规则。
+项目基座保留现有短 ID；加前缀后超过 64 字节时用 `project:<projectID>` 的
+128 位 hash。公共基座也使用有界 hash。创建项目拒绝与已有知识库 ID 冲突。
+已有 Git 来源 ID 不改名：ID 是加密凭据的 AES-GCM 附加认证数据；重复登记只在
+已核实归属的库内，按完整 Git 配置复用原 ID，不能把其他库的来源认领过来。
+
+已有托管来源在升级前手动执行 `037_knowledge_source_namespace.sql`，覆盖正文、
+修订、索引块、审核 payload 和控制面引用；异常超长项目的基座引用也同时改名。
+执行期间停止 API 和 worker，成功后重启。该脚本可重复执行，并保留
+`knowledge_id_migration_037` 映射以便中断后恢复；内容先更新、控制面后更新。
+同库直接执行整份；同一 MySQL 服务的独立内容库先设置
+`@knowledge_content_schema` 为内容库名再执行整份。
+
+内容库在另一台服务器时按脚本的三个标记分段执行：先在控制库执行 `PLAN`，
+把 `knowledge_id_migration_037` 表（结构和数据）导入内容库；在内容库执行
+`CONTENT`（`@knowledge_content_schema` 使用内容库名）；确认完成后在控制库
+执行 `CONTROL`。失败后按相同顺序重跑，使用原映射，不重新生成或清空映射表。
+历史聊天中已经呈现的旧出处字符串不重写；新调用使用新 ID。若启用了向量索引，
+清除旧托管 source 的缓存点并重新启用相关库的向量索引，按内容库重建缓存。
+迁移不修复已经发生的来源劫持；若发现来源归属与备份不符，需从可信备份恢复。
+
+MR API 与 Git 共用公网地址校验；HTTP 连接直接拨已校验 IP，保留原始 TLS
+主机名，禁用代理和重定向。Git 缓存新目录及复用的来源目录为 0700。

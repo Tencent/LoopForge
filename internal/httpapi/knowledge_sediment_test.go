@@ -68,7 +68,7 @@ func putSedimentRun(t *testing.T, s *repo.Store, projectID, runID, artifactID, c
 
 func putSedimentBase(t *testing.T, s *repo.Store, projectID, mode string) {
 	t.Helper()
-	baseID, sourceID := "kb-"+projectID, "kb-hosted-"+projectID
+	baseID, sourceID := "kb-"+projectID, knowledge.HostedSourceID("kb-"+projectID)
 	if err := s.PutKnowledgeBase(domain.KnowledgeBase{ID: baseID, ProjectID: projectID, Name: "项目知识库", Layer: "project", SedimentPublishMode: mode}); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestKnowledgeSedimentHTTPFlowAndRetraction(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"key":"tombstone","name":"墓碑检查","ok":false`) {
 		t.Fatalf("review page must show tombstone gate: %s", rec.Body.String())
 	}
-	docs := doJSON(t, handler, http.MethodGet, "/api/knowledge/bases/documents?projectId=p1&source=kb-hosted-p1", "", nil)
+	docs := doJSON(t, handler, http.MethodGet, "/api/knowledge/bases/documents?projectId=p1&source=kb-hosted-c4b3147b9250b03a56cf4b06a349cce8", "", nil)
 	if strings.Contains(docs.Body.String(), "青鸾排障") {
 		t.Fatalf("tombstoned content was written back: %s", docs.Body.String())
 	}

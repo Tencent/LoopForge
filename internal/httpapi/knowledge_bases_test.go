@@ -131,7 +131,7 @@ func TestKnowledgeManagementReadSearchAndIsolation(t *testing.T) {
 		t.Fatalf("overview 应有 1 个库 1 个托管来源: %+v", ov)
 	}
 	hosted := ov.Bases[0].Sources[0]
-	if hosted.Kind != "hosted" || hosted.ID != "kb-hosted-pA" {
+	if hosted.Kind != "hosted" || hosted.ID != knowledge.HostedSourceID("kb-pA") {
 		t.Fatalf("托管来源字段错误: %+v", hosted)
 	}
 
@@ -210,7 +210,7 @@ func TestKnowledgeManagementReadSearchAndIsolation(t *testing.T) {
 	}
 	// 不点名来源时检索只在 B 自己的空库里查，结果为空而不是越权。
 	_, scoped := searchWord(t, h, "pB", "貔貅", nil)
-	if len(scoped.Result.Results) != 0 || strings.Join(scoped.Sources, ",") != "kb-hosted-pB" {
+	if len(scoped.Result.Results) != 0 || strings.Join(scoped.Sources, ",") != knowledge.HostedSourceID("kb-pB") {
 		t.Fatalf("B 的检索应只收窄到自己的空库: sources=%v hits=%v", scoped.Sources, scoped.Result.Results)
 	}
 }
@@ -420,11 +420,11 @@ func TestDeleteGitSourceKeepsHostedSource(t *testing.T) {
 	}
 
 	// 托管来源没有删除入口，后端也拒绝。
-	hostedURL := "/api/knowledge/bases/sources?projectId=pDel&sourceId=kb-hosted-pDel"
+	hostedURL := "/api/knowledge/bases/sources?projectId=pDel&sourceId=kb-hosted-c7307f6808362b3aee7596f3bac5c289"
 	if rec := doJSON(t, h, http.MethodDelete, hostedURL, "", nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("托管来源应拒绝删除，实际 %d %s", rec.Code, rec.Body.String())
 	}
-	if _, ok := s.KnowledgeSource("kb-hosted-pDel"); !ok {
+	if _, ok := s.KnowledgeSource(knowledge.HostedSourceID("kb-pDel")); !ok {
 		t.Fatal("托管来源不应被删除")
 	}
 
@@ -459,13 +459,13 @@ func TestWriteDocumentRejectsTraversalPathWithoutRewriting(t *testing.T) {
 	s, h := newKBMgmtServer(t)
 	createProject(t, h, "pPath")
 	body, _ := json.Marshal(map[string]string{
-		"projectId": "pPath", "sourceId": "kb-hosted-pPath", "path": "../secret.md", "content": "# 越界\n",
+		"projectId": "pPath", "sourceId": knowledge.HostedSourceID("kb-pPath"), "path": "../secret.md", "content": "# 越界\n",
 	})
 	rec := doJSON(t, h, http.MethodPost, "/api/knowledge/bases/documents", string(body), nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("越界路径应 400，实际 %d %s", rec.Code, rec.Body.String())
 	}
-	if docs := s.KnowledgeDocuments("kb-hosted-pPath"); len(docs) != 0 {
+	if docs := s.KnowledgeDocuments(knowledge.HostedSourceID("kb-pPath")); len(docs) != 0 {
 		t.Fatalf("越界路径不应被改写后保存: %+v", docs)
 	}
 }

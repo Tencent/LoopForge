@@ -424,3 +424,26 @@ func TestOwnedWritebackPersistsWithMillisecondLeaseColumn(t *testing.T) {
 		t.Fatalf("stale branch persisted: %+v", got)
 	}
 }
+
+func TestStaleReviewCASDoesNotOverwriteStagedBody(t *testing.T) {
+	s := concurrencyStore(t)
+	id := "concurrency-staged-cas"
+	if err := s.PutKnowledgeSubmission(domain.KnowledgeSubmission{ID: id, Content: "original", Status: domain.KnowledgeSubmissionPending}); err != nil {
+		t.Fatal(err)
+	}
+	defer s.DeleteKnowledgeSubmission(id)
+	stale, _ := s.KnowledgeSubmission(id)
+	winner := stale
+	winner.Content = "winning body"
+	if err := s.PutKnowledgeSubmission(winner); err != nil {
+		t.Fatal(err)
+	}
+	stale.Content = "stale body"
+	if err := s.PutKnowledgeSubmission(stale); err == nil {
+		t.Error("stale control CAS accepted")
+	}
+	got, _ := s.KnowledgeSubmission(id)
+	if got.Content != "winning body" {
+		t.Fatalf("failed CAS changed staged body: %q", got.Content)
+	}
+}

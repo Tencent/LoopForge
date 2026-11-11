@@ -157,3 +157,31 @@ func TestDeleteKnowledgeWritebacksBySubmissionAndSource(t *testing.T) {
 		t.Fatal("source writeback was not deleted")
 	}
 }
+
+// submission_id 允许为空，且空值使用 NULL 而不是空串：MySQL 的唯一索引对
+// NULL 不判重，历史数据或手工记录才不会互相撞唯一键。
+func TestKnowledgeWritebackEmptySubmissionIDDoesNotCollide(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, id := range []string{"kwb-empty-a", "kwb-empty-b"} {
+		if err := s.PutKnowledgeWriteback(domain.KnowledgeWriteback{ID: id, SourceID: "kb-git-" + id}); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	for _, id := range []string{"kwb-empty-a", "kwb-empty-b"} {
+		got, ok := s.KnowledgeWriteback(id)
+		if !ok || got.SubmissionID != "" {
+			t.Fatalf("writeback %s = %+v ok=%v", id, got, ok)
+		}
+		var raw *string
+		if err := s.DB.Raw("SELECT submission_id FROM knowledge_writebacks WHERE id = ?", id).Row().Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		if raw != nil {
+			t.Fatalf("空 submission_id 应落 NULL，实际 %q", *raw)
+		}
+	}
+}

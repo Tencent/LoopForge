@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"time"
 
@@ -29,13 +30,22 @@ const (
 
 // 托管知识库用从 projectID 推导的定值 id：同一项目并发或重复创建都只落一行，
 // 不依赖数据库唯一约束报错的翻译。控制面另有 (project_id, layer) 唯一索引兜底。
-const (
-	hostedBaseIDPrefix   = "kb-"
-	hostedSourceIDPrefix = "kb-hosted-"
-)
+// Keep existing short base IDs; hash long project identifiers to fit VARCHAR(64).
+func hostedBaseID(projectID string) string {
+	if len("kb-"+projectID) <= 64 {
+		return "kb-" + projectID
+	}
+	return stableKnowledgeID("kb-project-", "project:"+projectID)
+}
 
-func hostedBaseID(projectID string) string   { return hostedBaseIDPrefix + projectID }
-func hostedSourceID(projectID string) string { return hostedSourceIDPrefix + projectID }
+func stableKnowledgeID(prefix, seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return prefix + hex.EncodeToString(sum[:16])
+}
+
+// HostedSourceID uses the owning base, independently of project/shared scope.
+func HostedSourceID(baseID string) string    { return stableKnowledgeID("kb-hosted-", "hosted:"+baseID) }
+func hostedSourceID(projectID string) string { return HostedSourceID(hostedBaseID(projectID)) }
 
 // ManagedStore 是管理接口需要的持久化能力。*repo.Store 通过内嵌的
 // KnowledgeRepo / KnowledgeContentRepo 满足它；Service 用类型断言从 s.store
@@ -75,6 +85,11 @@ func (s *Service) EnsureHostedBase(projectID string) (domain.KnowledgeBase, erro
 	if err != nil {
 		return domain.KnowledgeBase{}, err
 	}
+	if _, exists := ms.KnowledgeBase(projectID); exists {
+		if own, found := ms.KnowledgeBase(hostedBaseID(projectID)); !found || !ownsBase(own, projectID) {
+			return domain.KnowledgeBase{}, apperr.New(apperr.Conflict, "项目标识与已有知识库标识冲突")
+		}
+	}
 	baseID := hostedBaseID(projectID)
 	base, found := ms.KnowledgeBase(baseID)
 	if !found {
@@ -88,8 +103,15 @@ func (s *Service) EnsureHostedBase(projectID string) (domain.KnowledgeBase, erro
 			}
 		}
 	}
-	sourceID := hostedSourceID(projectID)
-	if _, ok := ms.KnowledgeSource(sourceID); !ok {
+	if !ownsBase(base, projectID) {
+		return domain.KnowledgeBase{}, apperr.New(apperr.Forbidden, "知识库不属于当前项目")
+	}
+	sourceID := HostedSourceID(base.ID)
+	existingSource, sourceFound := ms.KnowledgeSource(sourceID)
+	if sourceFound && (existingSource.BaseID != base.ID || existingSource.Kind != "hosted") {
+		return domain.KnowledgeBase{}, apperr.New(apperr.Conflict, "托管来源标识冲突")
+	}
+	if !sourceFound {
 		src := domain.KnowledgeSource{
 			ID: sourceID, BaseID: baseID, Kind: "hosted", Name: "托管文档",
 			Status: SourceStatusReady, IndexStatus: SourceStatusReady,
@@ -250,9 +272,17 @@ func (s *Service) TrialSearch(ctx context.Context, up Upstream, projectID, query
 	if err != nil {
 		return TrialResult{}, err
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
 	started := time.Now()
 	result, err := up.Search(ctx, query, scoped)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return TrialResult{}, apperr.New(apperr.Upstream, "检索超时，请稍后重试")
+		}
 		return TrialResult{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
 	}
 	rawHits := len(result.Results)
@@ -302,7 +332,7 @@ func (s *Service) CreateHostedDocument(ctx context.Context, up Upstream, project
 		return WriteResult{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
 	}
 	src, ok := ms.KnowledgeSource(source)
-	if !ok || src.Kind != "hosted" {
+	if !ok || src.Kind != "hosted" || source != HostedSourceID(src.BaseID) {
 		return WriteResult{}, apperr.New(apperr.Invalid, "只能在托管来源新建或覆盖文档")
 	}
 	if strings.TrimSpace(content) == "" {
@@ -391,13 +421,19 @@ func (s *Service) RegisterGitSource(input GitSourceInput) (domain.KnowledgeSourc
 	if name == "" {
 		name = "Git 来源"
 	}
-	seedScope := projectID
-	if base.Layer == "shared" {
-		seedScope = baseID
+	seed := "git:" + baseID + "\x00" + gitURL + "\x00" + branch + "\x00" + prefix
+	id := stableKnowledgeID("kb-git-", seed)
+	// Legacy Git IDs remain stable because source IDs authenticate encrypted
+	// credentials. Reuse only an exact configuration under the verified owner.
+	for _, existing := range ms.KnowledgeSources(baseID) {
+		if existing.Kind == "git" && existing.GitURL == gitURL && existing.Branch == branch && existing.PathPrefix == prefix {
+			id = existing.ID
+			break
+		}
 	}
-	seed := seedScope + "\x00" + gitURL + "\x00" + branch + "\x00" + prefix
-	sum := sha256.Sum256([]byte(seed))
-	id := "kb-git-" + hex.EncodeToString(sum[:8])
+	if existing, found := ms.KnowledgeSource(id); found && existing.BaseID != baseID {
+		return domain.KnowledgeSource{}, apperr.New(apperr.Conflict, "来源标识已被其他知识库使用")
+	}
 	src := domain.KnowledgeSource{
 		ID: id, BaseID: baseID, Kind: "git", Name: name,
 		GitURL: gitURL, Branch: branch, PathPrefix: prefix,

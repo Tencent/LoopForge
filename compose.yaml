@@ -27,6 +27,9 @@ services:
     environment:
       AGENTFLOW_HTTP_PORT: 8080
       AGENTFLOW_MYSQL_DSN: loopforge:${LOOPFORGE_DB_PASSWORD}@tcp(mysql:3306)/loopforge
+      # Optional separate MySQL database for document bodies/index chunks.
+      # Empty keeps the content plane on the control connection above.
+      AGENTFLOW_KNOWLEDGE_MYSQL_DSN: ${AGENTFLOW_KNOWLEDGE_MYSQL_DSN:-}
       AGENTFLOW_SESSION_SECRET: ${AGENTFLOW_SESSION_SECRET:?Run scripts/configure.sh first}
       AGENTFLOW_AUTH_REQUIRED: "true"
       AGENTFLOW_ALLOW_SIGNUP: ${AGENTFLOW_ALLOW_SIGNUP:-true}
@@ -95,7 +98,8 @@ services:
 
   embedding:
     profiles: [vector]
-    # 本地构建标签，镜像由公开 python 基础镜像 + 固定版本模型构建；可按需用
+    # 本地构建标签由公开 python 基础镜像（Dockerfile 内按 digest 固定）加
+    # 锁定 SHA-256 的 Python 依赖和固定 revision/SHA-256 的模型构建；可按需用
     # 已构建好的等价镜像覆盖（LOOPFORGE_EMBEDDING_IMAGE），仓库内不写内部镜像名。
     image: ${LOOPFORGE_EMBEDDING_IMAGE:-loopforge-kb-embedding:bge-m3-onnx-int8}
     build:

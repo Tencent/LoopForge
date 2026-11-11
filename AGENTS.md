@@ -28,7 +28,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `EngineInstancesRepo` | engine instances |
 | `FeedbackRepo` | page feedbacks、page feedback images（独立表，不关联项目/Issue） |
 | `KnowledgeRepo` | 知识库（含沉淀发布模式与敏感规则）、来源、项目绑定、同步任务、审核队列、检索调用记录、Git 写回记录（分支/合并请求）、撤回墓碑、反馈、知识缺口、健康检查结果。主库 |
-| `KnowledgeContentRepo` | 文档正文、托管修订、索引块。独立的 gorm 连接，由 `newStore` 注入，不写入 `deps`；默认与主库同一个连接池 |
+| `KnowledgeContentRepo` | 文档正文、托管修订、索引块、审核正文 staging。独立的 gorm 连接，由 `newStore` 注入，不写入 `deps`；默认与主库同一个连接池 |
 
 规则：
 
@@ -48,16 +48,20 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    （如 `runs.go`/`run_evals.go` 都属 `RunsRepo`），但文件不得为其他领域定义方法。
 5. 内容面（`KnowledgeContentRepo`）禁止外键指向控制面，控制面也不存正文；
    内容行只用 `source_id` 字符串指向控制面，删除来源由 `Service` 按顺序清理，
-   不做数据库级联。
+   不做数据库级联。审核队列同理：控制面 `knowledge_submissions.payload` 只
+   留元数据与内容指纹，待审正文写内容面 `knowledge_submission_contents`。
 
 ## 迁移与 seed（migrations/）
 
 1. **代码不做迁移、不做 seed。** `repo.Open()` 只负责连接和 gorm
    AutoMigrate 的增量 DDL（补缺失的表/列/索引）。基线 schema、数据迁移
    （改数据、删行、删列）和 seed 数据一律写成 `migrations/` 下的 SQL
-   脚本，由运维**手动执行**，部署时不会自动跑。
+   脚本，由安装/升级脚本（如 `scripts/knowledge-schema.sh`）或运维按序
+   执行；**Go 进程启动不会自动跑**。
 2. 每个分支自带自己的迁移脚本，不做任何自动化生成（没有 seedgen 之类的
-   工具）。脚本命名 `NNN_描述.sql`，按序号递增。
+   工具）。脚本命名 `NNN_描述.sql`，按序号递增。知识库脚本若同时含控制面
+   与内容面 DDL，用 `-- @plane control` / `-- @plane content` 分段，
+   `scripts/knowledge-schema.sh` 会按 DSN 分别执行到主库与内容库。
 3. 禁止新增 `ensureXxx`/`migrateXxx`/`seedXxx` 之类的启动自愈逻辑写入
    生产路径。测试专用的默认数据只存在于 `internal/repo/opentest.go`
    （`OpenTest`，仅测试调用，生产代码不得引用）。

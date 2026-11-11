@@ -34,6 +34,42 @@ func (r *KnowledgeContentRepo) PutKnowledgeDocument(doc domain.KnowledgeDocument
 	return putKnowledgeDocument(r.db, doc)
 }
 
+// PutKnowledgeSubmissionContent stages a review body on the content plane. The
+// control plane only keeps metadata and the fingerprint; the body is upserted
+// by submission ID so re-saving an item does not duplicate rows.
+func (r *KnowledgeContentRepo) PutKnowledgeSubmissionContent(submissionID, body string) error {
+	submissionID = strings.TrimSpace(submissionID)
+	if submissionID == "" {
+		return errors.New("knowledge submission content requires a submission id")
+	}
+	now := time.Now().UTC()
+	row := knowledgeSubmissionContentRow{SubmissionID: submissionID, Body: body, Updated: &now}
+	return r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "submission_id"}, {Name: "version_key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"body", "updated_at"}),
+	}).Create(&row).Error
+}
+
+func (r *KnowledgeContentRepo) KnowledgeSubmissionContent(submissionID string) (string, bool) {
+	submissionID = strings.TrimSpace(submissionID)
+	if submissionID == "" {
+		return "", false
+	}
+	var row knowledgeSubmissionContentRow
+	if err := r.db.Where("submission_id = ? AND version_key = ?", submissionID, "").Take(&row).Error; err != nil {
+		return "", false
+	}
+	return row.Body, true
+}
+
+func (r *KnowledgeContentRepo) DeleteKnowledgeSubmissionContent(submissionID string) error {
+	submissionID = strings.TrimSpace(submissionID)
+	if submissionID == "" {
+		return nil
+	}
+	return r.db.Where("submission_id = ?", submissionID).Delete(&knowledgeSubmissionContentRow{}).Error
+}
+
 // maxKnowledgeLabelRunes matches the VARCHAR(512) label columns. A generated
 // heading can be longer than a database label; truncating the display/search
 // label keeps the full body and chunk text intact instead of failing the whole
@@ -482,4 +518,19 @@ func (r *KnowledgeContentRepo) KnowledgeDocumentGeneration(source, path string) 
 		return 0, nil
 	}
 	return fence.Token, err
+}
+
+// Staging bodies are immutable versions. A failed control CAS can leave an
+// unreferenced version, but can never replace the body selected by the winner.
+func (r *KnowledgeContentRepo) PutKnowledgeSubmissionContentVersion(id, key, body string) error {
+	now := time.Now().UTC()
+	row := knowledgeSubmissionContentRow{SubmissionID: id, VersionKey: key, Body: body, Updated: &now}
+	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
+}
+func (r *KnowledgeContentRepo) KnowledgeSubmissionContentVersion(id, key string) (string, bool) {
+	var row knowledgeSubmissionContentRow
+	if err := r.db.Where("submission_id = ? AND version_key = ?", id, key).Take(&row).Error; err != nil {
+		return "", false
+	}
+	return row.Body, true
 }

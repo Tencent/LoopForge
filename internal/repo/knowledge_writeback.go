@@ -15,10 +15,13 @@ import (
 
 func knowledgeWritebackFromRow(row knowledgeWritebackRow) domain.KnowledgeWriteback {
 	out := domain.KnowledgeWriteback{
-		ID: row.ID, SubmissionID: row.SubmissionID, SourceID: row.SourceID, ProjectID: row.ProjectID,
+		ID: row.ID, SubmissionID: "", SourceID: row.SourceID, ProjectID: row.ProjectID,
 		Path: row.Path, Branch: row.Branch, Commit: row.Commit,
 		MRURL: row.MRURL, MRProvider: row.MRProvider, MRIID: row.MRIID, MRState: row.MRState,
 		Status: row.Status, Note: row.Note, Error: row.Error, Attempts: row.Attempts,
+	}
+	if row.SubmissionID != nil {
+		out.SubmissionID = *row.SubmissionID
 	}
 	if row.CheckedAt != nil {
 		at := row.CheckedAt.UTC()
@@ -34,23 +37,24 @@ func knowledgeWritebackFromRow(row knowledgeWritebackRow) domain.KnowledgeWriteb
 }
 
 // PutKnowledgeWriteback inserts or replaces one writeback. A missing
-// submission ID is stored as the writeback ID so the unique index still lets
-// one row per review item (empty strings would collide in MySQL).
+// submission ID is stored as NULL, not an empty string: the unique index then
+// permits more than one row without a review item (manual/legacy records).
 func (r *KnowledgeRepo) PutKnowledgeWriteback(item domain.KnowledgeWriteback) error {
 	item.ID = strings.TrimSpace(item.ID)
 	if item.ID == "" {
 		return errors.New("knowledge writeback id is required")
 	}
 	item.SubmissionID = strings.TrimSpace(item.SubmissionID)
-	if item.SubmissionID == "" {
-		item.SubmissionID = item.ID
-	}
 	if item.Status == "" {
 		item.Status = domain.KnowledgeWritebackPending
 	}
+	var submissionID *string
+	if item.SubmissionID != "" {
+		submissionID = &item.SubmissionID
+	}
 	now := time.Now().UTC()
 	row := knowledgeWritebackRow{
-		ID: item.ID, SubmissionID: item.SubmissionID, SourceID: item.SourceID, ProjectID: item.ProjectID,
+		ID: item.ID, SubmissionID: submissionID, SourceID: item.SourceID, ProjectID: item.ProjectID,
 		Path: item.Path, Branch: item.Branch, Commit: item.Commit,
 		MRURL: item.MRURL, MRProvider: item.MRProvider, MRIID: item.MRIID, MRState: item.MRState,
 		Status: item.Status, Note: item.Note, Error: item.Error, Attempts: item.Attempts,
@@ -98,7 +102,10 @@ func (r *KnowledgeRepo) KnowledgeWritebacksBySubmissions(submissionIDs []string)
 		return out
 	}
 	for _, row := range rows {
-		out[row.SubmissionID] = knowledgeWritebackFromRow(row)
+		if row.SubmissionID == nil {
+			continue
+		}
+		out[*row.SubmissionID] = knowledgeWritebackFromRow(row)
 	}
 	return out
 }

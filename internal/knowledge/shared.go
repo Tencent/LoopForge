@@ -19,11 +19,11 @@ func (s *Service) CreateSharedBase(name string, owner int64) (domain.KnowledgeBa
 	if err != nil {
 		return domain.KnowledgeBase{}, err
 	}
-	base := domain.KnowledgeBase{ID: "kb-shared-" + s.newID(), Name: name, Layer: "shared", OwnerUserID: owner}
+	base := domain.KnowledgeBase{ID: stableKnowledgeID("kb-shared-", "shared:"+s.newID()), Name: name, Layer: "shared", OwnerUserID: owner}
 	if err = ms.PutKnowledgeBase(base); err != nil {
 		return domain.KnowledgeBase{}, err
 	}
-	if err = ms.PutKnowledgeSource(domain.KnowledgeSource{ID: "kb-hosted-" + base.ID, BaseID: base.ID, Kind: "hosted", Name: "托管文档", Status: SourceStatusReady, IndexStatus: SourceStatusReady}); err != nil {
+	if err = ms.PutKnowledgeSource(domain.KnowledgeSource{ID: HostedSourceID(base.ID), BaseID: base.ID, Kind: "hosted", Name: "托管文档", Status: SourceStatusReady, IndexStatus: SourceStatusReady}); err != nil {
 		return domain.KnowledgeBase{}, err
 	}
 	return base, nil

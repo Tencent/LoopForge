@@ -93,6 +93,7 @@ const (
 // KnowledgeSubmission is one distilled document waiting for human review
 // before it is written back to an upstream knowledge source.
 type KnowledgeSubmission struct {
+	ContentKey     string `json:"-"`
 	Version        uint64 `json:"version"`
 	ExpectedStatus string `json:"-"`
 	ID             string `json:"id"`

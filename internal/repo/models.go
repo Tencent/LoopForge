@@ -660,7 +660,16 @@ type knowledgeContentFenceRow struct {
 
 func (knowledgeContentFenceRow) TableName() string { return "knowledge_content_fences" }
 
+// 内置知识引擎的 schema 基线以 migrations/026+ 的 SQL 为准。下面的 gorm tag
+// 只保证缺表时服务能启动；AutoMigrate 不会改已有列的类型、collation 或默认值，
+// 安装/升级脚本必须先按序执行迁移（见 docs/deployment.md）。
+
+// knowledgeSubmissionRow 是审核队列的控制面行。Payload 只保存元数据与内容
+// 指纹，待审正文落在内容面的 knowledge_submission_contents；写入路径在
+// KnowledgeRepo.PutKnowledgeSubmission 里拆分，读取时再按 ID 取回正文。
+
 type knowledgeSubmissionRow struct {
+	ContentKey   string     `gorm:"column:content_key;size:64;not null;default:''"`
 	PublishUntil *time.Time `gorm:"column:publish_until"`
 	Version      uint64     `gorm:"column:version;not null;default:1"`
 	Fingerprint  *string    `gorm:"column:fingerprint;size:64;uniqueIndex:uq_knowledge_submission_fingerprint,priority:2"`
@@ -809,23 +818,25 @@ type knowledgeWritebackRow struct {
 	ClaimOwner   string     `gorm:"column:claim_owner;size:255;not null;default:''"`
 	ClaimedUntil *time.Time `gorm:"column:claimed_until"`
 	ID           string     `gorm:"column:id;primaryKey;size:64"`
-	SubmissionID string     `gorm:"column:submission_id;size:64;uniqueIndex:uq_knowledge_writebacks_submission"`
-	SourceID     string     `gorm:"column:source_id;size:64;index:idx_knowledge_writebacks_source"`
-	ProjectID    string     `gorm:"column:project_id;size:64"`
-	Path         string     `gorm:"column:path;size:512"`
-	Branch       string     `gorm:"column:branch;size:255"`
-	Commit       string     `gorm:"column:commit;size:64"`
-	MRURL        string     `gorm:"column:mr_url;size:1024"`
-	MRProvider   string     `gorm:"column:mr_provider;size:32"`
-	MRIID        int        `gorm:"column:mr_iid"`
-	MRState      string     `gorm:"column:mr_state;size:32"`
-	Status       string     `gorm:"column:status;size:32;index:idx_knowledge_writebacks_status,priority:1"`
-	Note         string     `gorm:"column:note;type:text"`
-	Error        string     `gorm:"column:error_text;type:text"`
-	Attempts     int        `gorm:"column:attempts"`
-	CheckedAt    *time.Time `gorm:"column:checked_at;index:idx_knowledge_writebacks_status,priority:2"`
-	Created      *time.Time `gorm:"column:created_at"`
-	Updated      *time.Time `gorm:"column:updated_at"`
+	// Missing review IDs use NULL, preserving the upstream nullable unique key.
+	SubmissionID *string `gorm:"column:submission_id;size:64;uniqueIndex:uq_knowledge_writebacks_submission"`
+
+	SourceID   string     `gorm:"column:source_id;size:64;index:idx_knowledge_writebacks_source"`
+	ProjectID  string     `gorm:"column:project_id;size:64"`
+	Path       string     `gorm:"column:path;size:512"`
+	Branch     string     `gorm:"column:branch;size:255"`
+	Commit     string     `gorm:"column:commit;size:64"`
+	MRURL      string     `gorm:"column:mr_url;size:1024"`
+	MRProvider string     `gorm:"column:mr_provider;size:32"`
+	MRIID      int        `gorm:"column:mr_iid"`
+	MRState    string     `gorm:"column:mr_state;size:32"`
+	Status     string     `gorm:"column:status;size:32;index:idx_knowledge_writebacks_status,priority:1"`
+	Note       string     `gorm:"column:note;type:text"`
+	Error      string     `gorm:"column:error_text;type:text"`
+	Attempts   int        `gorm:"column:attempts"`
+	CheckedAt  *time.Time `gorm:"column:checked_at;index:idx_knowledge_writebacks_status,priority:2"`
+	Created    *time.Time `gorm:"column:created_at"`
+	Updated    *time.Time `gorm:"column:updated_at"`
 }
 
 func (knowledgeWritebackRow) TableName() string { return "knowledge_writebacks" }
@@ -875,6 +886,18 @@ type knowledgeChunkRow struct {
 }
 
 func (knowledgeChunkRow) TableName() string { return "knowledge_chunks" }
+
+// knowledgeSubmissionContentRow 是内容面的审核正文 staging 表。控制面的
+// knowledge_submissions.payload 只留元数据与指纹，正文按 submission_id 放
+// 在这里；表在内容库，不建跨库外键。
+type knowledgeSubmissionContentRow struct {
+	VersionKey   string     `gorm:"column:version_key;primaryKey;size:64;not null;default:''"`
+	SubmissionID string     `gorm:"column:submission_id;primaryKey;size:64"`
+	Body         string     `gorm:"column:body;type:mediumtext"`
+	Updated      *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeSubmissionContentRow) TableName() string { return "knowledge_submission_contents" }
 
 // knowledgeFeedbackRow 是知识中心、Main Bot 回答旁和 Agent 标记问题的统一
 // 反馈。属于控制面，不存正文；Path 为空时表示只对回答反馈。
@@ -940,8 +963,12 @@ type knowledgeGovernanceScanRow struct {
 
 func (knowledgeGovernanceScanRow) TableName() string { return "knowledge_governance_scans" }
 
-// allModels lists every table for the sqlite test schema (AutoMigrate).
-func allModels() []any {
+// controlModels lists the tables that belong to the main (control) database.
+// The content plane is deliberately absent: when AGENTFLOW_KNOWLEDGE_MYSQL_DSN
+// points at another database, the main database must never grow an empty copy
+// of the document tables. autoMigrateIncremental runs this list on s.DB and
+// contentModels() on the content handle (the same handle by default).
+func controlModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
 		userRow{}, localAccountRow{}, userConfigRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
@@ -961,7 +988,24 @@ func allModels() []any {
 		knowledgeSubmissionRow{}, knowledgeOperationLeaseRow{},
 		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeCitationRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
 		knowledgeFeedbackRow{}, knowledgeGapRow{}, knowledgeGovernanceIssueRow{}, knowledgeGovernanceScanRow{},
-		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{}, knowledgeContentFenceRow{},
+
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}
+}
+
+// contentModels lists the tables owned by KnowledgeContentRepo. They are only
+// created on the content connection: the main database is not allowed to hold
+// document bodies, revisions, chunks, or the review staging table.
+func contentModels() []any {
+	return []any{
+		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
+		knowledgeSubmissionContentRow{}, knowledgeContentFenceRow{},
+	}
+}
+
+// allModels lists every table for the sqlite test schema (AutoMigrate) when
+// both planes share one in-memory database.
+func allModels() []any {
+	models := controlModels()
+	return append(models, contentModels()...)
 }

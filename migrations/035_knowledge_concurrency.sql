@@ -1,4 +1,5 @@
 -- 035: knowledge concurrency and recovery. Safe to execute repeatedly.
+-- @plane control
 -- CONTROL DATABASE: run this section on the primary database.
 CREATE TABLE IF NOT EXISTS knowledge_operation_leases (
  id VARCHAR(191) NOT NULL PRIMARY KEY,
@@ -88,11 +89,20 @@ PREPARE stmt FROM @ddl;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @ddl=IF(
+ (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE()
+  AND table_name='knowledge_submissions' AND column_name='content_key')=0,
+ 'ALTER TABLE knowledge_submissions ADD COLUMN content_key VARCHAR(64) NOT NULL DEFAULT ''''', 'SELECT 1');
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- @plane content
 -- CONTENT DATABASE: run this section on the knowledge content database (the
 -- same database by default). Fences have no foreign keys into the control plane.
 CREATE TABLE IF NOT EXISTS knowledge_content_fences (
  source_id VARCHAR(64) NOT NULL,
- path VARCHAR(512) NOT NULL,
+ path VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
  token BIGINT NOT NULL DEFAULT 0,
  retracted BOOLEAN NOT NULL DEFAULT FALSE,
  PRIMARY KEY(source_id,path)
@@ -102,6 +112,38 @@ SET @ddl=IF(
  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE()
   AND table_name='knowledge_content_fences' AND column_name='token')=0,
  'ALTER TABLE knowledge_content_fences ADD COLUMN token BIGINT NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Immutable staging versions keep failed control CAS writes invisible. The
+-- empty version key remains the legacy 036 migration target and read fallback.
+CREATE TABLE IF NOT EXISTS knowledge_submission_contents (
+ submission_id VARCHAR(64) NOT NULL,
+ version_key VARCHAR(64) NOT NULL DEFAULT '',
+ body MEDIUMTEXT NULL,
+ updated_at DATETIME(3) NULL,
+ PRIMARY KEY(submission_id,version_key)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SET @ddl=IF(
+ (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE()
+  AND table_name='knowledge_submission_contents' AND column_name='version_key')=0,
+ 'ALTER TABLE knowledge_submission_contents ADD COLUMN version_key VARCHAR(64) NOT NULL DEFAULT ''''', 'SELECT 1');
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+SET @ddl=IF(
+ (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE()
+  AND table_name='knowledge_submission_contents' AND index_name='PRIMARY')=1,
+ 'ALTER TABLE knowledge_submission_contents DROP PRIMARY KEY, ADD PRIMARY KEY(submission_id,version_key)', 'SELECT 1');
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl=IF(
+ (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE()
+  AND table_name='knowledge_content_fences' AND column_name='path' AND collation_name <> 'utf8mb4_bin')>0,
+ 'ALTER TABLE knowledge_content_fences MODIFY path VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL', 'SELECT 1');
 PREPARE stmt FROM @ddl;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;

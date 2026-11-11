@@ -7,6 +7,8 @@
 -- - gorm 增量迁移（autoMigrateIncremental）同样会补建这两张表；此脚本供运维
 --   在只读 DDL 账号或需要预建的环境手动执行，可重复执行。
 -- - knowledge_settings.token 为上游 Bearer Token，单独成列，payload 中不含凭据。
+-- - knowledge_submissions.payload 只保存审核元数据与内容指纹；待审正文在内容面
+--   knowledge_submission_contents（036），不再写进控制面。
 
 CREATE TABLE IF NOT EXISTS knowledge_settings (
   id         VARCHAR(64) NOT NULL PRIMARY KEY,

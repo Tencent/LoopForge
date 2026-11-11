@@ -41,7 +41,7 @@ func TestKnowledgeGovernancePanelScanFeedbackGapsAndDisposition(t *testing.T) {
 	if len(bases) != 1 {
 		t.Fatalf("bases = %+v", bases)
 	}
-	sourceID := "kb-hosted-pGov"
+	sourceID := knowledge.HostedSourceID("kb-pGov")
 
 	writeGovernanceDoc(t, h, "pGov", sourceID, "stale.md", "---\ntitle: 过期文档\nowner: alice\nstatus: verified\nupdated: 2020-01-01\n---\n# 过期文档\n")
 	writeGovernanceDoc(t, h, "pGov", sourceID, "owner.md", "---\ntitle: 缺负责人\nstatus: draft\nupdated: 2026-11-01\n---\n# 缺负责人\n")
@@ -113,7 +113,7 @@ func TestKnowledgeGovernanceScanIsProjectScoped(t *testing.T) {
 	s, h := newKBMgmtServer(t)
 	createProject(t, h, "pA")
 	createProject(t, h, "pB")
-	writeGovernanceDoc(t, h, "pA", "kb-hosted-pA", "a.md", "# A\n")
+	writeGovernanceDoc(t, h, "pA", knowledge.HostedSourceID("kb-pA"), "a.md", "# A\n")
 	if rec := doJSON(t, h, http.MethodPost, "/api/knowledge/governance/scan", `{"projectId":"pA"}`, nil); rec.Code != http.StatusOK {
 		t.Fatalf("scan A: %d %s", rec.Code, rec.Body.String())
 	}
