@@ -13,6 +13,7 @@
 | Pi | 无（Portable only） | `.pi/skills` + `subagent` adapter（需 `npm:pi-subagents`） |
 | DeepSeek Harness | 无（Portable only） | `.dsh/skills` + `subagent` adapter（DSH base 默认提供） |
 | Hermes Agent | 无（Portable only） | `.hermes/skills` + `delegate_task` adapter；首次使用需 `hermes skills trust .`；可选 `hermes-plugin/` 提供 `/loopforge` 控制命令 |
+| ZCode | 无（Portable only） | `.zcode/skills` + `Agent` adapter |
 
 Classic 的 Cursor/Claude 目录是生成产物；Portable 的事实只保存在 `skills/`。
 两者只共享显式行为合同和测试，不共享宿主运行文件。

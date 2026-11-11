@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "id": "zcode",
+  "compatibility": {
+    "verified_on": "2026-11-10",
+    "version_policy": "Current stable ZCode releases exposing the Agent tool; sessions without it use the recorded single-context fallback",
+    "documentation": "https://github.com/zai-org/ZCode"
+  },
+  "dispatch_tool": "agent",
+  "topology": "spawn",
+  "stage_executor": "dynamic",
+  "research_executor": "dynamic",
+  "required_tools": ["Agent"]
+}
