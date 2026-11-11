@@ -115,5 +115,7 @@ Object.assign(window.LF_I18N_EN,{
 "选择此需求":"Select this requirement",
 "选择需求":"Select requirement",
 "配置沙箱":"Configure sandbox",
-"刷新沙箱":"Refresh sandboxes"
+"刷新沙箱":"Refresh sandboxes",
+"默认运行沙箱":"Default sandbox",
+"默认运行沙箱不能删除；可编辑配置或新建其他沙箱":"The default sandbox cannot be deleted; edit its settings or create another sandbox."
 });

@@ -318,11 +318,31 @@ func (r *CatalogRepo) DeleteEnvironment(id string) error {
 }
 
 func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
-	return payloadList[domain.SandboxProfile](r.DB, "sandboxes", "")
+	profiles := payloadList[domain.SandboxProfile](r.DB, "sandboxes", "")
+	for _, profile := range profiles {
+		if profile.ID == DefaultSandboxProfileID {
+			return profiles
+		}
+	}
+	if profile, ok := r.Sandbox(DefaultSandboxProfileID); ok {
+		profiles = append(profiles, profile)
+	}
+	return profiles
 }
 
 func (r *CatalogRepo) Sandbox(id string) (domain.SandboxProfile, bool) {
-	return payloadOne[domain.SandboxProfile](r.DB, "sandboxes", id)
+	var profile domain.SandboxProfile
+	var row payloadRow
+	err := r.DB.Table("sandboxes").Where("id = ?", id).Take(&row).Error
+	// A missing row may use the built-in default. Database failures or invalid
+	// stored configuration must not silently switch a run's execution policy.
+	if errors.Is(err, gorm.ErrRecordNotFound) && id == DefaultSandboxProfileID {
+		return DefaultSandboxProfile(), true
+	}
+	if err != nil || json.Unmarshal(row.Payload, &profile) != nil {
+		return domain.SandboxProfile{}, false
+	}
+	return profile, true
 }
 
 func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
@@ -357,6 +377,9 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 }
 
 func (r *CatalogRepo) DeleteSandbox(id string) error {
+	if id == DefaultSandboxProfileID {
+		return errors.New("默认运行沙箱不能删除；可编辑配置或新建其他沙箱")
+	}
 	if _, ok := r.Sandbox(id); !ok {
 		return fmt.Errorf("sandbox not found")
 	}

@@ -855,7 +855,7 @@ func filterEnvironmentAssets[T any](items []T, projectID string, scope func(T) (
 	out := make([]T, 0, len(items))
 	for _, item := range items {
 		owner, shared := scope(item)
-		if owner == projectID || (owner != "" && shared) {
+		if owner == projectID || shared {
 			out = append(out, item)
 		}
 	}
