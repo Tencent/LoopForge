@@ -156,7 +156,7 @@ func TestBooleanChannelAddsExactIdentifierHits(t *testing.T) {
 // TestBooleanChannelSkippedWithoutStrongIdentifier 固化触发条件：纯中文
 // 查询、只有普通小写英文词的查询都不打第二条 SQL。
 func TestBooleanChannelSkippedWithoutStrongIdentifier(t *testing.T) {
-	cases := []string{"测试环境搭建", "lighthouse 测试环境搭建", "防火墙规则怎么查"}
+	cases := []string{"测试环境搭建", "example 测试环境搭建", "防火墙规则怎么查"}
 	for _, query := range cases {
 		q := &rankingQuerier{nl: []domain.KnowledgeChunkMatch{chunkMatch("a.md", "文档", "", "正文")}}
 		if _, err := NewMySQLKeywordIndex(q).Search(context.Background(), query, []string{"s"}, SearchOptions{Limit: 10}); err != nil {
@@ -214,7 +214,7 @@ func TestStrongIdentifiers(t *testing.T) {
 		"CVM":                           true,
 		"IPv6":                          true,
 		"OpenClaw":                      true,
-		"lighthouse":                    false,
+		"example":                       false,
 		"frontend":                      false,
 		"no":                            false,
 	}

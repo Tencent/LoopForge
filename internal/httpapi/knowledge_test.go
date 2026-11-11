@@ -125,7 +125,7 @@ func TestKnowledgeProxyIsReadOnlyAndProjectScoped(t *testing.T) {
 		t.Fatalf("write tool must be rejected, got %q", msg)
 	}
 
-	if _, isErr, _ := rpcText(t, call(token, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mcp__agentflow-knowledge__kb_search","arguments":{"query":"帕鲁"}}}`)); isErr {
+	if _, isErr, _ := rpcText(t, call(token, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mcp__agentflow-knowledge__kb_search","arguments":{"query":"E_DEMO_42"}}}`)); isErr {
 		t.Fatal("scoped search failed")
 	}
 
@@ -166,7 +166,7 @@ func TestKnowledgeActivitySurvivesRestartAndStaysProjectScoped(t *testing.T) {
 	call := func(h http.Handler, body string) *httptest.ResponseRecorder {
 		return doJSON(t, h, http.MethodPost, knowledge.ProxyPath, body, map[string]string{"Authorization": "Bearer " + token})
 	}
-	if _, isErr, msg := rpcText(t, call(h, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kb_search","arguments":{"query":"帕鲁"}}}`)); isErr {
+	if _, isErr, msg := rpcText(t, call(h, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kb_search","arguments":{"query":"E_DEMO_42"}}}`)); isErr {
 		t.Fatalf("search failed: %s", msg)
 	}
 	if text, isErr, _ := rpcText(t, call(h, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"kb_fetch","arguments":{"source":"b","path":"x.md"}}}`)); !isErr || !strings.Contains(text, "授权范围") {
@@ -191,7 +191,7 @@ func TestKnowledgeActivitySurvivesRestartAndStaysProjectScoped(t *testing.T) {
 		t.Fatalf("newest activity = %#v", failed)
 	}
 	searched := payload.Activity[1]
-	if searched.Tool != knowledge.ToolSearch || !searched.OK || searched.Query != "帕鲁" || searched.Hits != 1 || searched.RunID != "run-1" {
+	if searched.Tool != knowledge.ToolSearch || !searched.OK || searched.Query != "E_DEMO_42" || searched.Hits != 1 || searched.RunID != "run-1" {
 		t.Fatalf("search activity = %#v", searched)
 	}
 	if searched.At.IsZero() {

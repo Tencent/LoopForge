@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"time"
 
@@ -249,9 +250,17 @@ func (s *Service) TrialSearch(ctx context.Context, up Upstream, projectID, query
 	if err != nil {
 		return TrialResult{}, err
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
 	started := time.Now()
 	result, err := up.Search(ctx, query, scoped)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return TrialResult{}, apperr.New(apperr.Upstream, "检索超时，请稍后重试")
+		}
 		return TrialResult{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
 	}
 	rawHits := len(result.Results)

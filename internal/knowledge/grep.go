@@ -21,6 +21,9 @@ const (
 	GrepHitLimit = 50
 	// GrepTimeout 是一次精确匹配的执行时间上限。
 	GrepTimeout = 2 * time.Second
+	// GrepScanByteLimit 限制一次精确匹配加载和扫描的正文总字节数，避免
+	// 大知识库把请求拖到超时之后仍占用内存。
+	GrepScanByteLimit = 8 << 20
 )
 
 // grepNow 供测试把时钟往前拨，生产使用真实时间。
@@ -87,18 +90,30 @@ func (s *Service) Grep(ctx context.Context, projectID string, q GrepQuery) (Grep
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	started := grepNow()
+	expired := func() bool {
+		return grepNow().Sub(started) > GrepTimeout
+	}
 	docs := make([]grepDoc, 0)
+	scanned := 0
 	for _, source := range scoped {
+		if err := grepStopped(ctx, expired); err != nil {
+			return out, err
+		}
 		list := append([]domain.KnowledgeDocument(nil), s.store.KnowledgeDocuments(source)...)
 		sort.Slice(list, func(i, j int) bool { return list[i].Path < list[j].Path })
 		for _, doc := range list {
+			if err := grepStopped(ctx, expired); err != nil {
+				return out, err
+			}
+			if scanned+len(doc.Body) > GrepScanByteLimit {
+				return out, apperr.New(apperr.Unavailable, "精确匹配扫描内容超过上限，请缩小来源范围")
+			}
+			scanned += len(doc.Body)
 			docs = append(docs, grepDoc{Source: source, Commit: doc.Commit, Path: doc.Path, Body: doc.Body})
 		}
 	}
-	started := grepNow()
-	hits, truncated, err := grepBodies(ctx, docs, match, GrepHitLimit, func() bool {
-		return grepNow().Sub(started) > GrepTimeout
-	})
+	hits, truncated, err := grepBodies(ctx, docs, match, GrepHitLimit, expired)
 	for i := range hits {
 		hits[i].BaseOrigin = s.sourceOrigin(hits[i].Source)
 		hits[i].URL = s.SourceFileURL(hits[i].Source, hits[i].Commit, hits[i].Path, hits[i].Line, hits[i].Line)
@@ -122,6 +137,14 @@ func grepMatcher(pattern string, regex bool) (func(string) bool, error) {
 	return re.MatchString, nil
 }
 
+// grepStopped 在加载和逐行匹配两个阶段共用同一套取消与超时判断。
+func grepStopped(ctx context.Context, expired func() bool) error {
+	if (ctx != nil && ctx.Err() != nil) || (expired != nil && expired()) {
+		return apperr.New(apperr.Unavailable, "精确匹配超过时间上限，请缩短模式或缩小来源范围")
+	}
+	return nil
+}
+
 // grepBodies 逐行匹配。expired 或 ctx 结束时返回已扫到的命中和超时错误，
 // 不再继续后面的行。条数达到 limit 时 Truncated 为 true，不算超时。
 func grepBodies(ctx context.Context, docs []grepDoc, match func(string) bool, limit int, expired func() bool) ([]GrepHit, bool, error) {
@@ -132,21 +155,15 @@ func grepBodies(ctx context.Context, docs []grepDoc, match func(string) bool, li
 		limit = GrepHitLimit
 	}
 	hits := make([]GrepHit, 0)
-	stop := func() error {
-		if ctx.Err() != nil || (expired != nil && expired()) {
-			return apperr.New(apperr.Unavailable, "精确匹配超过时间上限，请缩短模式或缩小来源范围")
-		}
-		return nil
-	}
 	for _, doc := range docs {
-		if err := stop(); err != nil {
+		if err := grepStopped(ctx, expired); err != nil {
 			return hits, true, err
 		}
 		if !strings.HasSuffix(strings.ToLower(doc.Path), ".md") {
 			continue
 		}
 		for i, line := range grepLines(doc.Body) {
-			if err := stop(); err != nil {
+			if err := grepStopped(ctx, expired); err != nil {
 				return hits, true, err
 			}
 			if !match(line) {

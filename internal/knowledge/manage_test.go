@@ -1,6 +1,8 @@
 package knowledge
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -189,6 +191,29 @@ func TestDocumentListIncludesGitSource(t *testing.T) {
 	}
 	if _, err := svc.DocumentList("other-project", src.ID); err == nil {
 		t.Fatal("其它项目不应读取该来源的文档清单")
+	}
+}
+
+type deadlineSearchUpstream struct{ fakeUpstream }
+
+func (u *deadlineSearchUpstream) Search(ctx context.Context, query string, sources []string) (SearchResult, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return SearchResult{}, errors.New("search called without a timeout")
+	}
+	return SearchResult{Query: query, Mode: "lexical", Results: []SearchHit{}}, nil
+}
+
+func TestTrialSearchCallsUpstreamWithTimeout(t *testing.T) {
+	svc, _ := newManagedTestService(t)
+	if _, err := svc.EnsureHostedBase("proj-trial"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.TrialSearch(context.Background(), &deadlineSearchUpstream{}, "proj-trial", "检索", nil)
+	if err != nil {
+		t.Fatalf("trial search failed: %v", err)
+	}
+	if len(out.Sources) != 1 || out.Sources[0] != "kb-hosted-proj-trial" {
+		t.Fatalf("trial sources = %v", out.Sources)
 	}
 }
 

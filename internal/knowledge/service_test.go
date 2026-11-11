@@ -21,6 +21,8 @@ type fakeStore struct {
 	candidates  []domain.KnowledgeCandidate
 	activities  []domain.KnowledgeActivity
 	docs        map[string][]domain.KnowledgeDocument
+	docsHook    func(source string)
+	sources     []domain.KnowledgeSource
 }
 
 func newFakeStore() *fakeStore {
@@ -115,6 +117,9 @@ func (f *fakeStore) KnowledgeBindings(project string) []domain.KnowledgeBinding 
 	return nil
 }
 func (f *fakeStore) KnowledgeSources(base string) []domain.KnowledgeSource {
+	if f.sources != nil {
+		return f.sources
+	}
 	return []domain.KnowledgeSource{{ID: "docs", BaseID: "base"}}
 }
 func wantKind(t *testing.T, err error, kind apperr.Kind) *apperr.Error {
@@ -332,6 +337,9 @@ func TestFetchRejectsDifferentVersion(t *testing.T) {
 }
 
 func (f *fakeStore) KnowledgeDocuments(source string) []domain.KnowledgeDocument {
+	if f.docsHook != nil {
+		f.docsHook(source)
+	}
 	if f.docs == nil {
 		return nil
 	}

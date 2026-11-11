@@ -12,7 +12,7 @@ func TestIsConversationalQuery(t *testing.T) {
 		"怎么在本机把平台跑起来",
 		"默认端口是多少",
 		"kb_search 工具怎么用",
-		"搭建 lighthouse 测试环境需要谁审批",
+		"搭建 example 测试环境需要谁审批",
 		"为什么镜像删除不掉",
 		"默认端口是多少？",
 	}
@@ -138,4 +138,3 @@ func TestHybridRetrieverQuestionUsesConversationalWeights(t *testing.T) {
 		t.Fatalf("问句混合首选应为 deployment.md: %+v", paths(rr.Hits))
 	}
 }
-
