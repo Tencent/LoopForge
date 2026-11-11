@@ -17,6 +17,7 @@ import (
 	"agentflow/internal/knowledge/engine/frontmatter"
 	"agentflow/internal/knowledge/engine/gitsync"
 	"agentflow/internal/knowledge/hosting"
+	"agentflow/internal/knowledge/publication"
 	"agentflow/internal/mcpclient"
 )
 
@@ -199,6 +200,18 @@ func (e *Engine) Fetch(_ context.Context, source, path string, start, end int) (
 // 写正文、追加修订、替换该文档的索引块，再更新来源的修订号与篇数。
 // Git 来源返回明确的未实现错误，不推送、不建提交。
 func (e *Engine) WriteDocument(ctx context.Context, source, path, content string) (knowledge.WriteResult, error) {
+	for attempt := 0; attempt < 32; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return knowledge.WriteResult{}, err
+		}
+		result, err := e.writeHostedAttempt(ctx, source, path, content)
+		if !errors.Is(err, publication.ErrRevisionConflict) {
+			return result, err
+		}
+	}
+	return knowledge.WriteResult{}, publication.ErrRevisionConflict
+}
+func (e *Engine) writeHostedAttempt(ctx context.Context, source, path, content string) (knowledge.WriteResult, error) {
 	source = strings.TrimSpace(source)
 	path = strings.TrimSpace(path)
 	docPath, ok := knowledge.NormalizeDocPath(path)
@@ -208,6 +221,9 @@ func (e *Engine) WriteDocument(ctx context.Context, source, path, content string
 	src, found := e.control.KnowledgeSource(source)
 	if !found {
 		return knowledge.WriteResult{}, fmt.Errorf("来源 %s 不存在", source)
+	}
+	if src.Status == "deleting" {
+		return knowledge.WriteResult{}, errors.New("来源正在删除")
 	}
 	if src.Kind != "hosted" {
 		return knowledge.WriteResult{}, ErrExternalWriteNotImplemented
@@ -221,6 +237,16 @@ func (e *Engine) WriteDocument(ctx context.Context, source, path, content string
 	lines := splitBody(bodyText)
 	title := chunk.Title(bodyText)
 
+	generation := int64(0)
+	if generations, ok := e.content.(interface {
+		KnowledgeDocumentGeneration(string, string) (int64, error)
+	}); ok {
+		var err error
+		generation, err = generations.KnowledgeDocumentGeneration(source, docPath)
+		if err != nil {
+			return knowledge.WriteResult{}, err
+		}
+	}
 	// 修订号按文档计数：新文档从 1 起，同一路径覆盖时只递增这篇文档的号。
 	revision := int64(1)
 	if existing, ok := e.content.KnowledgeDocument(source, docPath); ok && existing.Revision > 0 {
@@ -240,12 +266,47 @@ func (e *Engine) WriteDocument(ctx context.Context, source, path, content string
 	}
 	chunks := buildChunks(source, docPath, title, version, revision, lines)
 
-	if err := e.content.WriteHostedDocument(doc, rev, chunks); err != nil {
+	check := func() error {
+		intent := publication.IntentFrom(ctx)
+		if intent.ID != "" {
+			if claims, ok := e.control.(interface{ KnowledgePublicationValid(string, uint64) bool }); ok && !claims.KnowledgePublicationValid(intent.ID, intent.Version) {
+				return errors.New("publication claim expired or changed")
+			}
+		}
+		if intent.Project != "" && intent.Fingerprint != "" {
+			if tombstones, ok := e.control.(interface {
+				KnowledgeTombstone(string, string) (domain.KnowledgeTombstone, bool)
+			}); ok {
+				if _, found := tombstones.KnowledgeTombstone(intent.Project, intent.Fingerprint); found {
+					return errors.New("content has been retracted")
+				}
+			}
+		}
+		return ctx.Err()
+	}
+	if err := check(); err != nil {
 		return knowledge.WriteResult{}, err
+	}
+	var writeErr error
+	if writer, ok := e.content.(interface {
+		WriteHostedDocumentContext(context.Context, domain.KnowledgeDocument, domain.KnowledgeRevision, []domain.KnowledgeChunk) error
+	}); ok {
+		writeErr = writer.WriteHostedDocumentContext(publication.WithDocumentGeneration(ctx, source, docPath, generation), doc, rev, chunks)
+	} else {
+		writeErr = e.content.WriteHostedDocument(doc, rev, chunks)
+	}
+	if writeErr != nil {
+		return knowledge.WriteResult{}, writeErr
 	}
 	src.HeadRevision = revision
 	src.DocCount = len(e.content.KnowledgeDocuments(source))
-	if err := e.control.PutKnowledgeSource(src); err != nil {
+	if summary, ok := e.control.(interface {
+		UpdateKnowledgeSourceSummary(string, int64, int) error
+	}); ok {
+		if err := summary.UpdateKnowledgeSourceSummary(source, revision, src.DocCount); err != nil {
+			return knowledge.WriteResult{}, err
+		}
+	} else if err := e.control.PutKnowledgeSource(src); err != nil {
 		return knowledge.WriteResult{}, err
 	}
 	// 托管文档写入后增量更新向量（best-effort）。向量是缓存，失败不影响正文
@@ -422,4 +483,12 @@ func makeSnippet(text, query string) string {
 		return string(runes[:120]) + "…"
 	}
 	return string(runes)
+}
+
+// DeleteSourceIndex removes every vector point for a source before control deletion.
+func (e *Engine) DeleteSourceIndex(ctx context.Context, source string) error {
+	if e.vectorDeindexer != nil {
+		return e.vectorDeindexer(ctx, source, "")
+	}
+	return nil
 }

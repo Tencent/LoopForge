@@ -104,14 +104,14 @@ func (r *KnowledgeRepo) KnowledgeWritebacksBySubmissions(submissionIDs []string)
 }
 
 // KnowledgeWritebacksNeedingRefresh returns open writebacks whose state check
-// is stale. Pending rows are excluded because that attempt is still running.
+// is stale. Expired pending attempts are recoverable after a crash.
 func (r *KnowledgeRepo) KnowledgeWritebacksNeedingRefresh(before time.Time, limit int) ([]domain.KnowledgeWriteback, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	var rows []knowledgeWritebackRow
 	if err := r.DB.
-		Where("status IN ? AND (checked_at IS NULL OR checked_at < ?)", []string{domain.KnowledgeWritebackBranchPushed, domain.KnowledgeWritebackMROpen}, before.UTC()).
+		Where("((status IN ? AND (checked_at IS NULL OR checked_at < ?)) OR (status = ? AND updated_at < ?))", []string{domain.KnowledgeWritebackBranchPushed, domain.KnowledgeWritebackMROpen}, before.UTC(), domain.KnowledgeWritebackPending, before.UTC()).
 		Order("checked_at IS NULL DESC, checked_at ASC").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (r *KnowledgeRepo) KnowledgeWritebacksNeedingRefresh(before time.Time, limi
 
 // UpdateKnowledgeWritebackState refreshes only lifecycle fields. Branch,
 // commit and MR identity stay from the successful push.
-func (r *KnowledgeRepo) UpdateKnowledgeWritebackState(id, status, mrURL, mrProvider, mrState, note, errText string, mrIID int, checkedAt time.Time) error {
+func (r *KnowledgeRepo) UpdateKnowledgeWritebackState(id, status, mrURL, mrProvider, mrState, note, errText string, mrIID int, checkedAt time.Time, claim ...string) error {
 	updates := map[string]any{"status": status, "mr_state": mrState, "checked_at": checkedAt.UTC(), "updated_at": time.Now().UTC()}
 	if strings.TrimSpace(mrURL) != "" {
 		updates["mr_url"] = mrURL
@@ -139,7 +139,18 @@ func (r *KnowledgeRepo) UpdateKnowledgeWritebackState(id, status, mrURL, mrProvi
 		updates["note"] = note
 	}
 	updates["error_text"] = errText
-	res := r.DB.Model(&knowledgeWritebackRow{}).Where("id = ?", strings.TrimSpace(id)).Updates(updates)
+	q := r.DB.Model(&knowledgeWritebackRow{}).Where("id = ?", strings.TrimSpace(id)).Where("status NOT IN ?", []string{domain.KnowledgeWritebackMerged, domain.KnowledgeWritebackClosed})
+	if len(claim) > 0 && claim[0] != "" {
+		q = q.Where("claim_owner = ? AND claimed_until > CURRENT_TIMESTAMP", claim[0])
+		if r.isMySQL() {
+			updates["checked_at"] = gorm.Expr("UTC_TIMESTAMP(6)")
+		} else {
+			updates["checked_at"] = gorm.Expr("CURRENT_TIMESTAMP")
+		}
+	} else {
+		q = q.Where("checked_at IS NULL OR checked_at <= ?", checkedAt.UTC())
+	}
+	res := q.Updates(updates)
 	if res.Error != nil {
 		return res.Error
 	}
@@ -179,7 +190,8 @@ func (r *KnowledgeRepo) ClaimKnowledgeWrite(id, owner string, ttl time.Duration)
 	}
 	if r.isMySQL() {
 		res := r.DB.Model(&knowledgeSourceRow{}).
-			Where("id = ? AND kind = ? AND (lease_owner = '' OR lease_until IS NULL OR lease_until <= UTC_TIMESTAMP(6))", id, "git").
+			Where("id = ? AND status <> 'deleting' AND kind = ? AND (lease_owner = '' OR lease_until IS NULL OR lease_until <= UTC_TIMESTAMP(6))", id, "git").
+			Where("NOT EXISTS (SELECT 1 FROM knowledge_writebacks w WHERE BINARY w.source_id = BINARY knowledge_sources.id AND w.claimed_until > UTC_TIMESTAMP(6))").
 			Updates(map[string]any{
 				"lease_owner": owner,
 				"lease_until": gorm.Expr("TIMESTAMPADD(MICROSECOND, ?, UTC_TIMESTAMP(6))", ttl.Microseconds()),
@@ -189,7 +201,7 @@ func (r *KnowledgeRepo) ClaimKnowledgeWrite(id, owner string, ttl time.Duration)
 	claimed := false
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var row knowledgeSourceRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND kind = ?", id, "git").Take(&row).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND status <> 'deleting' AND kind = ?", id, "git").Take(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
@@ -237,36 +249,13 @@ func (r *KnowledgeRepo) FinishKnowledgeWrite(id, owner string) (bool, error) {
 }
 
 // QueueKnowledgeResync asks the sync worker to pull the source again after a
-// writeback merged. An active lease means another worker is already touching
-// the source; the caller leaves the writeback open and retries later.
+// writeback merged. Queueing preserves any active source lease.
 func (r *KnowledgeRepo) QueueKnowledgeResync(sourceID string) (bool, error) {
-	sourceID = strings.TrimSpace(sourceID)
-	updates := map[string]any{"status": "pending", "last_error": "", "lease_owner": "", "lease_until": nil}
-	var res *gorm.DB
-	if r.isMySQL() {
-		res = r.DB.Model(&knowledgeSourceRow{}).
-			Where("id = ? AND kind = ? AND (lease_owner = '' OR lease_until IS NULL OR lease_until <= UTC_TIMESTAMP(6))", sourceID, "git").
-			Updates(updates)
-	} else {
-		res = r.DB.Model(&knowledgeSourceRow{}).
-			Where("id = ? AND kind = ? AND (lease_owner = '' OR lease_until IS NULL OR lease_until <= ?)", sourceID, "git", time.Now().UTC()).
-			Updates(updates)
+	err := r.RequestKnowledgeSync(strings.TrimSpace(sourceID))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
 	}
-	if res.Error != nil {
-		return false, res.Error
-	}
-	if res.RowsAffected == 1 {
-		return true, nil
-	}
-	// Already pending means the resync is queued; that is success for the caller.
-	var row knowledgeSourceRow
-	if err := r.DB.Select("status").Where("id = ? AND kind = ?", sourceID, "git").Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	return row.Status == "pending", nil
+	return err == nil, err
 }
 
 // ---------- review queue view overlay ----------
@@ -286,4 +275,76 @@ func applyKnowledgeWritebackView(item *domain.KnowledgeSubmission, wb domain.Kno
 	item.MRStatus = wb.Status
 	item.WriteNote = wb.Note
 	item.WriteError = wb.Error
+}
+
+// ClaimKnowledgeWriteback excludes active publishers and competing reconcilers.
+func (r *KnowledgeRepo) ClaimKnowledgeWriteback(id, owner string, ttl time.Duration) (bool, error) {
+	q := r.DB.Model(&knowledgeWritebackRow{}).Where("id = ? AND status IN ?", id, []string{domain.KnowledgeWritebackPending, domain.KnowledgeWritebackBranchPushed, domain.KnowledgeWritebackMROpen})
+	updates := map[string]any{"claim_owner": owner}
+	if r.isMySQL() {
+		q = q.Where("(claimed_until IS NULL OR claimed_until <= UTC_TIMESTAMP(6)) AND NOT EXISTS (SELECT 1 FROM knowledge_sources s WHERE BINARY s.id = BINARY knowledge_writebacks.source_id AND s.lease_until > UTC_TIMESTAMP(6) AND s.lease_owner <> ?)", owner)
+		updates["claimed_until"] = gorm.Expr("TIMESTAMPADD(MICROSECOND, ?, UTC_TIMESTAMP(6))", ttl.Microseconds())
+	} else {
+		now := time.Now().UTC()
+		q = q.Where("claimed_until IS NULL OR claimed_until <= ?", now)
+		updates["claimed_until"] = now.Add(ttl)
+	}
+	res := q.Updates(updates)
+	return res.RowsAffected == 1, res.Error
+}
+func (r *KnowledgeRepo) ReleaseKnowledgeWriteback(id, owner string) error {
+	return r.DB.Model(&knowledgeWritebackRow{}).Where("id = ? AND claim_owner = ?", id, owner).Updates(map[string]any{"claim_owner": "", "claimed_until": nil}).Error
+}
+
+// PutKnowledgeWritebackOwned fences every attempt update with the source lease.
+// Only control-plane writes happen while this short transaction owns the row.
+func (r *KnowledgeRepo) PutKnowledgeWritebackOwned(item domain.KnowledgeWriteback, owner string) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		q := tx.Model(&knowledgeSourceRow{}).Where("id = ? AND lease_owner = ? AND status <> 'deleting'", item.SourceID, owner)
+		var extension any
+		if r.isMySQL() {
+			q = q.Where("lease_until > UTC_TIMESTAMP(6)")
+			extension = gorm.Expr("TIMESTAMPADD(MICROSECOND, 1000, lease_until)")
+		} else {
+			q = q.Where("lease_until > ?", time.Now().UTC())
+			extension = gorm.Expr("lease_until")
+		}
+		res := q.Update("lease_until", extension)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errors.New("writeback source lease lost")
+		}
+		return (&KnowledgeRepo{deps: &deps{DB: tx}}).PutKnowledgeWriteback(item)
+	})
+}
+
+// RecoverKnowledgeWritebackSubmission makes a crashed publish retryable after
+// the reconcile owner has converted its pending attempt to failed.
+func (r *KnowledgeRepo) RecoverKnowledgeWritebackSubmission(id string) error {
+	item, ok := r.KnowledgeSubmission(id)
+	if !ok || item.Status != domain.KnowledgeSubmissionPublishing {
+		return nil
+	}
+	wb, ok := r.KnowledgeWritebackBySubmission(id)
+	if !ok {
+		return nil
+	}
+	if wb.Status == domain.KnowledgeWritebackFailed {
+		item.Status = domain.KnowledgeSubmissionPending
+		item.Error = wb.Error
+	} else {
+		if wb.Commit == "" {
+			return nil
+		}
+		item.Status = domain.KnowledgeSubmissionPublished
+		item.Commit = wb.Commit
+		item.Branch = wb.Branch
+		item.MRURL = wb.MRURL
+		item.MRProvider = wb.MRProvider
+		item.MRStatus = wb.Status
+		item.PublishedAt = time.Now().UTC()
+	}
+	return r.PutKnowledgeSubmission(item)
 }

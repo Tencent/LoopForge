@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
 	"agentflow/internal/knowledge/engine/gitsync"
+	"agentflow/internal/knowledge/engine/qdrant"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"bytes"
@@ -232,8 +233,8 @@ func TestImportGitWritesIntoConfiguredCacheRoot(t *testing.T) {
 	if _, _, err := w.importGit(context.Background(), src, "owner"); err == nil {
 		t.Fatal("expected the injected sync error")
 	}
-	if want := filepath.Join(cacheRoot, "src"); got != want {
-		t.Fatalf("sync cache dir = %q, want %q", got, want)
+	if root := filepath.Join(cacheRoot, "sync", "src") + string(filepath.Separator); !strings.HasPrefix(got, root) {
+		t.Fatalf("sync cache dir = %q, outside operation cache %q", got, root)
 	}
 }
 
@@ -481,11 +482,14 @@ func TestCredentialReplacementDuringSyncKeepsNewSourceReady(t *testing.T) {
 				t.Fatal(err)
 			}
 			current, _ := store.KnowledgeSource(src.ID)
-			if current.Status != "ready" || current.DocCount != 1 {
-				t.Fatalf("replacement must sync while old Git operation exits: status=%s error=%s", current.Status, current.LastError)
+			if current.Status != "pending" || current.LeaseOwner == "" {
+				t.Fatalf("credential replacement erased the active lease: %+v", current)
 			}
 			releaseOnce.Do(func() { close(release) })
 			<-finished
+			if err := newWorker.SyncOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
 			current, _ = store.KnowledgeSource(src.ID)
 			if current.Status != "ready" || len(store.KnowledgeDocuments(src.ID)) != 1 {
 				t.Fatal("stale sync changed the replacement result")
@@ -522,15 +526,25 @@ func TestIncrementalSyncWritesOnlyChangedDocuments(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "initial")
 	id := "sync-incremental"
-	if err := store.PutKnowledgeSource(domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main", Status: "ready"}); err != nil {
+	if err := store.PutKnowledgeSource(domain.KnowledgeSource{ID: id, BaseID: "vector-incremental", Kind: "git", GitURL: "https://example.com/public.git", Branch: "main", Status: "ready"}); err != nil {
 		t.Fatal(err)
 	}
+	cfg := testVectorConfig()
+	if err := store.PutKnowledgeBase(domain.KnowledgeBase{ID: "vector-incremental", VectorEnabled: true, QdrantCollection: cfg.Collection}); err != nil {
+		t.Fatal(err)
+	}
+	q := &deindexQdrant{points: map[uint64]qdrant.Point{}}
+	rt := &VectorRuntime{cfg: cfg, control: store, content: store, qdrant: q, embed: &fakeEmbedProvider{dim: cfg.Dim}}
+	defer setGlobalVectorForTest(rt)()
 	w := NewSyncWorker(&Engine{newID: func() string { return "probe" }}, &syncFakeControl{finishOK: true}, store, t.TempDir(), "worker")
 	w.syncGit = func(ctx context.Context, dir, _ string, branch string, old map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
 		return gitsync.Sync(ctx, dir, remote, branch, old)
 	}
 	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
 		t.Fatal(err)
+	}
+	if len(q.points) != 2 {
+		t.Fatalf("initial vectors=%d", len(q.points))
 	}
 	first := store.KnowledgeDocuments(id)
 	if len(first) != 2 {
@@ -546,6 +560,9 @@ func TestIncrementalSyncWritesOnlyChangedDocuments(t *testing.T) {
 	git("commit", "-m", "add merged knowledge")
 	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
 		t.Fatal(err)
+	}
+	if len(q.points) != 3 {
+		t.Fatalf("incremental sync did not refresh vectors: %d", len(q.points))
 	}
 	after := store.KnowledgeDocuments(id)
 	if len(after) != 3 {
@@ -567,6 +584,9 @@ func TestIncrementalSyncWritesOnlyChangedDocuments(t *testing.T) {
 	git("commit", "-m", "delete b")
 	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
 		t.Fatal(err)
+	}
+	if len(q.points) != 2 {
+		t.Fatalf("deleted vector survived incremental sync: %d", len(q.points))
 	}
 	if _, ok := store.KnowledgeDocument(id, "docs/b.md"); ok {
 		t.Fatal("deleted document survived incremental sync")

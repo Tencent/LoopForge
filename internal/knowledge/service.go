@@ -8,6 +8,7 @@ import (
 
 	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge/publication"
 	"agentflow/internal/mcpclient"
 )
 
@@ -324,6 +325,7 @@ func (s *Service) Edit(id string, input SubmissionEdit) (domain.KnowledgeSubmiss
 	if strings.TrimSpace(input.Content) != "" {
 		item.Content = input.Content
 	}
+	item.Fingerprint = KnowledgeFingerprint(item.Content)
 	item.ReviewNote = input.ReviewNote
 	item.Status = domain.KnowledgeSubmissionPending
 	item.Error = ""
@@ -334,6 +336,17 @@ func (s *Service) Delete(id string) error {
 	item, err := s.mutable(id, "已写回知识库的条目不能删除")
 	if err != nil {
 		return err
+	}
+	if deleter, ok := s.store.(interface {
+		DeleteKnowledgeSubmissionCAS(domain.KnowledgeSubmission) error
+	}); ok {
+		if err := deleter.DeleteKnowledgeSubmissionCAS(item); err != nil {
+			return err
+		}
+		if cleaner, ok := s.store.(interface{ DeleteKnowledgeWritebackBySubmission(string) error }); ok {
+			return cleaner.DeleteKnowledgeWritebackBySubmission(item.ID)
+		}
+		return nil
 	}
 	if deleter, ok := s.store.(interface {
 		DeleteKnowledgeWritebackBySubmission(string) error
@@ -363,6 +376,26 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	if err != nil {
 		return item, err
 	}
+	previousStatus := item.Status
+	item.Status = domain.KnowledgeSubmissionPublishing
+	item, err = s.save(item)
+	if err != nil {
+		return item, err
+	}
+	ctx, publishCancel := context.WithTimeout(ctx, 3*CallTimeout)
+	defer publishCancel()
+	ctx = publication.WithIntent(ctx, publication.Intent{Project: item.ProjectID, Fingerprint: KnowledgeFingerprint(item.Content), ID: item.ID, Version: item.Version})
+	claimVersion := item.Version
+	defer func() {
+		current, ok := s.store.KnowledgeSubmission(id)
+		if ok && current.Status == domain.KnowledgeSubmissionPublishing && current.Version == claimVersion {
+			current.Status = previousStatus
+			current.Error = item.Error
+			current.ReviewedBy = item.ReviewedBy
+			current.GateChecks = item.GateChecks
+			_ = s.store.PutKnowledgeSubmission(current)
+		}
+	}()
 	if strings.EqualFold(strings.TrimSpace(item.Action), domain.KnowledgeSubmissionActionRetract) {
 		return s.publishRetraction(ctx, item, actor)
 	}
@@ -401,6 +434,29 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 		}
 		ctx, cancel := context.WithTimeout(ctx, 3*CallTimeout)
 		defer cancel()
+		finalized := false
+		finish := func(result WriteResult) error {
+			item.Status = domain.KnowledgeSubmissionPublished
+			item.Commit = result.Commit
+			item.Branch = result.Branch
+			item.MRURL = result.MRURL
+			item.MRProvider = result.MRProvider
+			item.MRStatus = result.MRStatus
+			item.WriteNote = result.Message
+			item.WriteError = ""
+			item.Error = ""
+			item.PublishedAt = s.now().UTC()
+			var saveErr error
+			item, saveErr = s.save(item)
+			return saveErr
+		}
+		ctx = WithWritebackFinalizer(ctx, func(result WriteResult) error {
+			err := finish(result)
+			if err == nil {
+				finalized = true
+			}
+			return err
+		})
 		result, err := writer.WriteGitDocument(ctx, WritebackRequest{
 			SubmissionID: item.ID, ProjectID: item.ProjectID, Source: source,
 			Path: path, Content: content, Title: item.Title,
@@ -408,27 +464,20 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 		if err != nil {
 			item.Error = err.Error()
 			item.MRStatus = domain.KnowledgeWritebackFailed
-			_ = s.store.PutKnowledgeSubmission(item)
 			return item, apperr.New(apperr.Upstream, "写回知识库失败："+err.Error())
 		}
-		item.Status = domain.KnowledgeSubmissionPublished
-		item.Commit = result.Commit
-		item.Branch = result.Branch
-		item.MRURL = result.MRURL
-		item.MRProvider = result.MRProvider
-		item.MRStatus = result.MRStatus
-		item.WriteNote = result.Message
-		item.WriteError = ""
-		item.Error = ""
-		item.PublishedAt = s.now().UTC()
-		return s.save(item)
+		if !finalized {
+			if err := finish(result); err != nil {
+				return item, err
+			}
+		}
+		return item, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
 	defer cancel()
 	result, err := client.WriteDocument(ctx, source, path, content)
 	if err != nil {
 		item.Error = err.Error()
-		_ = s.store.PutKnowledgeSubmission(item)
 		return item, apperr.New(apperr.Upstream, "写回知识库失败："+err.Error())
 	}
 	item.Status = domain.KnowledgeSubmissionPublished
@@ -452,9 +501,18 @@ func (s *Service) sourceByID(id string) (domain.KnowledgeSource, bool) {
 
 // mutable loads an item that has not been published yet.
 func (s *Service) mutable(id, publishedMessage string) (domain.KnowledgeSubmission, error) {
+	if recovery, ok := s.store.(interface{ RecoverExpiredKnowledgePublications() error }); ok {
+		if err := recovery.RecoverExpiredKnowledgePublications(); err != nil {
+			return domain.KnowledgeSubmission{}, err
+		}
+	}
+
 	item, err := s.Submission(id)
 	if err != nil {
 		return item, err
+	}
+	if item.Status == domain.KnowledgeSubmissionPublishing {
+		return item, apperr.New(apperr.Conflict, "条目正在发布，请稍后重试")
 	}
 	if item.Status == domain.KnowledgeSubmissionPublished {
 		return item, apperr.New(apperr.Conflict, publishedMessage)

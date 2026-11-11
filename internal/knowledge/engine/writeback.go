@@ -30,7 +30,7 @@ type writebackStore interface {
 // writebackReconcileControl 是后台合并状态刷新需要的控制面能力。
 type writebackReconcileControl interface {
 	KnowledgeWritebacksNeedingRefresh(before time.Time, limit int) ([]domain.KnowledgeWriteback, error)
-	UpdateKnowledgeWritebackState(id, status, mrURL, mrProvider, mrState, note, errText string, mrIID int, checkedAt time.Time) error
+	UpdateKnowledgeWritebackState(id, status, mrURL, mrProvider, mrState, note, errText string, mrIID int, checkedAt time.Time, claim ...string) error
 	KnowledgeSource(id string) (domain.KnowledgeSource, bool)
 	QueueKnowledgeResync(sourceID string) (bool, error)
 }
@@ -63,7 +63,7 @@ func (e *Engine) writebackOwner() string {
 }
 
 func (e *Engine) writebackCacheDir(src domain.KnowledgeSource) string {
-	dir := filepath.Join(e.writeCacheRoot, src.ID)
+	dir := filepath.Join(e.writeCacheRoot, "writeback", src.ID)
 	if src.CredentialCiphertext != "" {
 		// Keep each credential grant's cache separate, matching the sync worker.
 		dir += "-" + sha256Hex(src.CredentialCiphertext)
@@ -129,6 +129,14 @@ func (e *Engine) WriteGitDocument(ctx context.Context, req knowledge.WritebackRe
 	runCtx, stopLease := keepWriteLease(ctx, store, src.ID, owner, e.writeLeaseTTL)
 	defer stopLease()
 
+	persist := func(record domain.KnowledgeWriteback) error {
+		if owned, ok := store.(interface {
+			PutKnowledgeWritebackOwned(domain.KnowledgeWriteback, string) error
+		}); ok {
+			return owned.PutKnowledgeWritebackOwned(record, owner)
+		}
+		return store.PutKnowledgeWriteback(record)
+	}
 	record, found := store.KnowledgeWritebackBySubmission(req.SubmissionID)
 	if !found {
 		record = domain.KnowledgeWriteback{
@@ -139,19 +147,22 @@ func (e *Engine) WriteGitDocument(ctx context.Context, req knowledge.WritebackRe
 	if record.Status == domain.KnowledgeWritebackMerged {
 		return knowledge.WriteResult{}, errors.New("该条目已合并，无需重复写回")
 	}
+	if record.Branch == "" {
+		record.Branch = writebackBranch(req.SubmissionID, record.ID)
+	}
 	record.Path = path
 	record.Status = domain.KnowledgeWritebackPending
 	record.Attempts++
 	record.Error = ""
 	record.Note = ""
-	if err := store.PutKnowledgeWriteback(record); err != nil {
+	if err := persist(record); err != nil {
 		return knowledge.WriteResult{}, errors.New("保存写回记录失败，请稍后重试")
 	}
 	fail := func(cause error) (knowledge.WriteResult, error) {
 		message := writebackFailureMessage(cause)
 		record.Status = domain.KnowledgeWritebackFailed
 		record.Error = message
-		_ = store.PutKnowledgeWriteback(record)
+		_ = persist(record)
 		return knowledge.WriteResult{}, errors.New(message)
 	}
 	branch := strings.TrimSpace(record.Branch)
@@ -160,8 +171,10 @@ func (e *Engine) WriteGitDocument(ctx context.Context, req knowledge.WritebackRe
 	}
 	record.Branch = branch
 
+	cacheDir := filepath.Join(e.writebackCacheDir(src), sha256Hex(owner))
+	defer os.RemoveAll(cacheDir)
 	gitCtx := gitsync.WithCredential(runCtx, credential)
-	result, err := e.gitWrite(gitCtx, e.writebackCacheDir(src), src.GitURL, baseBranch, gitsync.WriteOptions{
+	result, err := e.gitWrite(gitCtx, cacheDir, src.GitURL, baseBranch, gitsync.WriteOptions{
 		Branch: branch, Path: path, Content: req.Content,
 		Message:        writebackCommitMessage(req.Title, path),
 		ExpectedRemote: record.Commit,
@@ -172,7 +185,7 @@ func (e *Engine) WriteGitDocument(ctx context.Context, req knowledge.WritebackRe
 	record.Commit = result.Commit
 	record.Status = domain.KnowledgeWritebackBranchPushed
 	record.Note = ""
-	if err := store.PutKnowledgeWriteback(record); err != nil {
+	if err := persist(record); err != nil {
 		return knowledge.WriteResult{}, errors.New("保存写回记录失败，请稍后重试")
 	}
 
@@ -205,14 +218,18 @@ func (e *Engine) WriteGitDocument(ctx context.Context, req knowledge.WritebackRe
 	now := e.now().UTC()
 	record.Note = note
 	record.CheckedAt = &now
-	if err := store.PutKnowledgeWriteback(record); err != nil {
+	if err := persist(record); err != nil {
 		return knowledge.WriteResult{}, errors.New("保存写回记录失败，请稍后重试")
 	}
-	return knowledge.WriteResult{
+	resultView := knowledge.WriteResult{
 		Source: src.ID, Path: path, Commit: record.Commit,
 		Branch: branch, MRURL: record.MRURL, MRProvider: record.MRProvider,
 		MRStatus: record.Status, Message: note,
-	}, nil
+	}
+	if err := knowledge.FinalizeWriteback(runCtx, resultView); err != nil {
+		return knowledge.WriteResult{}, err
+	}
+	return resultView, nil
 }
 
 func keepWriteLease(parent context.Context, store writebackStore, sourceID, owner string, ttl time.Duration) (context.Context, func()) {
@@ -386,11 +403,60 @@ func (w *SyncWorker) reconcileWritebacks(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		src, found := control.KnowledgeSource(item.SourceID)
-		if !found || src.Kind != "git" {
+		claimer, ok := w.control.(interface {
+			ClaimKnowledgeWriteback(string, string, time.Duration) (bool, error)
+			ReleaseKnowledgeWriteback(string, string) error
+			KnowledgeWriteback(string) (domain.KnowledgeWriteback, bool)
+		})
+		if !ok {
 			continue
 		}
-		w.reconcileWriteback(ctx, control, item, src)
+		owner := w.engine.writebackOwner()
+		sourceLeases, ok := w.control.(writebackStore)
+		if !ok {
+			continue
+		}
+		sourceClaimed, err := sourceLeases.ClaimKnowledgeWrite(item.SourceID, owner, time.Minute)
+		if err != nil || !sourceClaimed {
+			continue
+		}
+		reconcileCtx, stopLease := keepWriteLease(ctx, sourceLeases, item.SourceID, owner, time.Minute)
+		releaseSource := func() { stopLease(); _, _ = sourceLeases.FinishKnowledgeWrite(item.SourceID, owner) }
+		claimed, err := claimer.ClaimKnowledgeWriteback(item.ID, owner, 2*time.Minute)
+		if err != nil || !claimed {
+			releaseSource()
+			continue
+		}
+		current, found := claimer.KnowledgeWriteback(item.ID)
+		if !found {
+			_ = claimer.ReleaseKnowledgeWriteback(item.ID, owner)
+			releaseSource()
+			continue
+		}
+		item = current
+		item.ClaimOwner = owner
+		if item.Status == domain.KnowledgeWritebackPending {
+			if err := control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackFailed, "", "", "", "写回进程中断，请重试；沿用已登记的分支。", "", 0, time.Now().UTC(), owner); err == nil {
+				if recovery, ok := w.control.(interface{ RecoverKnowledgeWritebackSubmission(string) error }); ok {
+					_ = recovery.RecoverKnowledgeWritebackSubmission(item.SubmissionID)
+				}
+			}
+			_ = claimer.ReleaseKnowledgeWriteback(item.ID, owner)
+			releaseSource()
+			continue
+		}
+		if recovery, ok := w.control.(interface{ RecoverKnowledgeWritebackSubmission(string) error }); ok {
+			_ = recovery.RecoverKnowledgeWritebackSubmission(item.SubmissionID)
+		}
+		src, found := control.KnowledgeSource(item.SourceID)
+		if !found || src.Kind != "git" {
+			_ = claimer.ReleaseKnowledgeWriteback(item.ID, owner)
+			releaseSource()
+			continue
+		}
+		w.reconcileWriteback(reconcileCtx, control, item, src)
+		_ = claimer.ReleaseKnowledgeWriteback(item.ID, owner)
+		releaseSource()
 	}
 }
 
@@ -408,10 +474,10 @@ func (w *SyncWorker) reconcileWriteback(ctx context.Context, control writebackRe
 						w.finishWritebackMerged(ctx, control, item, src, now)
 						return
 					case "closed":
-						_ = control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackClosed, "", "", "closed", "合并请求已关闭，未合并到来源分支。", "", 0, now)
+						_ = control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackClosed, "", "", "closed", "合并请求已关闭，未合并到来源分支。", "", 0, now, item.ClaimOwner)
 						return
 					default:
-						_ = control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackMROpen, "", "", "opened", "", "", 0, now)
+						_ = control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackMROpen, "", "", "opened", "", "", 0, now, item.ClaimOwner)
 						return
 					}
 				}
@@ -422,11 +488,11 @@ func (w *SyncWorker) reconcileWriteback(ctx context.Context, control writebackRe
 	}
 	credential, err := knowledge.DecryptGitCredential(src.ID, src.CredentialCiphertext)
 	if err != nil || credential == nil {
-		_ = control.UpdateKnowledgeWritebackState(item.ID, item.Status, "", "", item.MRState, "", "", 0, now)
+		_ = control.UpdateKnowledgeWritebackState(item.ID, item.Status, "", "", item.MRState, "", "", 0, now, item.ClaimOwner)
 		return
 	}
 	if w.engine.gitMergeProbe == nil {
-		_ = control.UpdateKnowledgeWritebackState(item.ID, item.Status, "", "", item.MRState, "", "", 0, now)
+		_ = control.UpdateKnowledgeWritebackState(item.ID, item.Status, "", "", item.MRState, "", "", 0, now, item.ClaimOwner)
 		return
 	}
 	probeCtx := gitsync.WithCredential(ctx, credential)
@@ -434,17 +500,19 @@ func (w *SyncWorker) reconcileWriteback(ctx context.Context, control writebackRe
 	if baseBranch == "" {
 		baseBranch = "main"
 	}
-	merged, probeErr := w.engine.gitMergeProbe(probeCtx, w.engine.writebackCacheDir(src), src.GitURL, baseBranch, item.Commit)
+	probeDir := filepath.Join(w.engine.writeCacheRoot, "probe", src.ID, item.ID, sha256Hex(item.ClaimOwner))
+	defer os.RemoveAll(probeDir)
+	merged, probeErr := w.engine.gitMergeProbe(probeCtx, probeDir, src.GitURL, baseBranch, item.Commit)
 	if probeErr != nil {
 		log.Printf("knowledge writeback probe %s: %v", item.ID, probeErr)
-		_ = control.UpdateKnowledgeWritebackState(item.ID, item.Status, "", "", item.MRState, "", "", 0, now)
+		_ = control.UpdateKnowledgeWritebackState(item.ID, item.Status, "", "", item.MRState, "", "", 0, now, item.ClaimOwner)
 		return
 	}
 	if merged {
 		w.finishWritebackMerged(ctx, control, item, src, now)
 		return
 	}
-	_ = control.UpdateKnowledgeWritebackState(item.ID, item.Status, "", "", item.MRState, "", "", 0, now)
+	_ = control.UpdateKnowledgeWritebackState(item.ID, item.Status, "", "", item.MRState, "", "", 0, now, item.ClaimOwner)
 }
 
 func (w *SyncWorker) finishWritebackMerged(ctx context.Context, control writebackReconcileControl, item domain.KnowledgeWriteback, src domain.KnowledgeSource, now time.Time) {
@@ -455,12 +523,12 @@ func (w *SyncWorker) finishWritebackMerged(ctx context.Context, control writebac
 	if !queued {
 		// The source is being synced or written by another instance. Keep the
 		// writeback open so the next tick retries the queue step.
-		_ = control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackMROpen, "", "", "merged", "已合并，等待来源同步", "", 0, now)
+		_ = control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackMROpen, "", "", "merged", "已合并，等待来源同步", "", 0, now, item.ClaimOwner)
 		return
 	}
 	note := "已合并，来源已排队增量同步。"
 	if item.MRURL == "" {
 		note = "来源分支已包含写回提交，已排队增量同步。"
 	}
-	_ = control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackMerged, "", "", "merged", note, "", 0, now)
+	_ = control.UpdateKnowledgeWritebackState(item.ID, domain.KnowledgeWritebackMerged, "", "", "merged", note, "", 0, now, item.ClaimOwner)
 }

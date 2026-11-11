@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -177,7 +178,8 @@ func TestGovernanceDispositionQueuesUpdateAndRetraction(t *testing.T) {
 	body := "---\nowner: alice\nstatus: verified\nupdated: 2026-11-01\n---\n# A\n\n正文\n"
 	putGovernanceDoc(t, s, "a.md", "A", body)
 	up := &governanceUpstream{}
-	svc := NewService(s, func() string { return "id" }, up)
+	seq := 0
+	svc := NewService(s, func() string { seq++; return fmt.Sprintf("id%d", seq) }, up)
 	svc.now = func() time.Time { return time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC) }
 
 	update, err := svc.DisposeGovernanceDocument(GovernanceDispositionInput{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,7 +56,7 @@ func NewSyncWorker(e *Engine, control SyncControl, content SyncContent, cacheRoo
 // cacheDir 返回一个来源的工作副本目录；来源 ID 已在 importGit 里校验为
 // 单层目录名，不能越出 cacheRoot。
 func (w *SyncWorker) cacheDir(sourceID string) string {
-	return filepath.Join(w.cacheRoot, sourceID)
+	return filepath.Join(w.cacheRoot, "sync", sourceID)
 }
 
 // StartSyncLoop returns immediately. The execution-role gate belongs here as
@@ -65,16 +66,22 @@ func (w *SyncWorker) StartSyncLoop(ctx context.Context, executeRuns bool) {
 		return
 	}
 	go func() {
-		// worker 启动时 reconcile 一次：模型/维度变更（换环境变量+重启）后
-		// 在这里换 collection 并全量重建向量。仅在 executeRuns 实例运行。
-		if err := ReconcileVector(ctx); err != nil {
-			log.Printf("knowledge vector reconcile: %v", err)
-		}
+		nextVectorCheck := time.Time{}
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			if ctx.Err() != nil {
 				return
+			}
+			if !time.Now().Before(nextVectorCheck) {
+				if err := ReconcileVector(ctx); err != nil {
+					if !errors.Is(err, ErrVectorRebuildBusy) {
+						log.Printf("knowledge vector reconcile: %v", err)
+					}
+					nextVectorCheck = time.Now().Add(2 * time.Second)
+				} else {
+					nextVectorCheck = time.Now().Add(30 * time.Second)
+				}
 			}
 			if err := w.SyncOnce(ctx); err != nil {
 				log.Printf("knowledge sync: %v", err)
@@ -89,6 +96,12 @@ func (w *SyncWorker) StartSyncLoop(ctx context.Context, executeRuns bool) {
 	}()
 }
 func (w *SyncWorker) SyncOnce(ctx context.Context) error {
+	if recovery, ok := w.control.(interface{ RecoverExpiredKnowledgePublications() error }); ok {
+		if err := recovery.RecoverExpiredKnowledgePublications(); err != nil {
+			return err
+		}
+	}
+
 	for _, src := range w.control.KnowledgeSources("") {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -184,6 +197,17 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 		// workers share a cache root. Ciphertext has a fresh nonce on every save.
 		cacheDir += "-" + sha256Hex(src.CredentialCiphertext)
 	}
+	cacheDir = filepath.Join(cacheDir, sha256Hex(owner))
+	defer os.RemoveAll(cacheDir)
+	if src.LeaseVersion > 0 {
+		if barrier, ok := w.content.(interface {
+			FenceKnowledgeSource(context.Context, string, int64) error
+		}); ok {
+			if err := barrier.FenceKnowledgeSource(ctx, src.ID, src.LeaseVersion); err != nil {
+				return "", 0, err
+			}
+		}
+	}
 	// 已索引快照用于增量：只有路径新增或指纹变化才读正文落库，合并后
 	// 写回的新文档因此只新增自己，不会重写其他文档。
 	oldDocs := []domain.KnowledgeDocument{}
@@ -265,10 +289,11 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 			return "", 0, errors.New("knowledge sync lease lost")
 		}
 		ok, err = w.control.PublishKnowledgeSync(ctx, src.ID, owner, head, count, func(ctx context.Context) error {
-			if len(docs) == 0 && len(removedList) == 0 {
-				return nil
+			if err := incremental.ApplyGitKnowledge(ctx, src.ID, docs, chunks, removedList); err != nil {
+				return err
 			}
-			return incremental.ApplyGitKnowledge(ctx, src.ID, docs, chunks, removedList)
+			afterSourceSynced(ctx, src.ID)
+			return nil
 		})
 		if err != nil {
 			return "", 0, err
@@ -300,7 +325,11 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 		return "", 0, errors.New("knowledge sync lease lost")
 	}
 	ok, err = w.control.PublishKnowledgeSync(ctx, src.ID, owner, head, len(docs), func(ctx context.Context) error {
-		return w.content.ReplaceGitKnowledge(ctx, src.ID, docs, chunks)
+		if err := w.content.ReplaceGitKnowledge(ctx, src.ID, docs, chunks); err != nil {
+			return err
+		}
+		afterSourceSynced(ctx, src.ID)
+		return nil
 	})
 	if err != nil {
 		return "", 0, err
@@ -308,8 +337,6 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 	if !ok {
 		return "", 0, errors.New("knowledge sync lease lost before publication")
 	}
-	// Git 同步发布后，由持有租约的实例增量更新该来源的向量（best-effort）。
-	afterSourceSynced(ctx, src.ID)
 	return head, len(docs), nil
 }
 

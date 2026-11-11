@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge/engine/embed"
@@ -328,12 +329,29 @@ func (v *VectorRuntime) Rebuild(ctx context.Context, sourceIDs []string) error {
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	runCtx, release, claimed, err := v.claimRebuild(ctx)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return nil
+	}
+	defer release()
+	return v.rebuild(runCtx, sourceIDs)
+}
+func (v *VectorRuntime) rebuild(ctx context.Context, sourceIDs []string) error {
+	if err := v.setRebuildDirty(ctx, true); err != nil {
+		return err
+	}
 	// 删集合可保证不残留旧模型/旧块的点；不存在时忽略 404。
 	_ = v.qdrant.DeleteCollection(ctx, v.cfg.Collection)
 	if err := v.qdrant.EnsureCollection(ctx, v.cfg.Collection, v.cfg.Dim); err != nil {
 		return err
 	}
-	return v.indexChunks(ctx, v.content.KnowledgeChunksForSources(sourceIDs))
+	if err := v.indexChunks(ctx, v.content.KnowledgeChunksForSources(sourceIDs)); err != nil {
+		return err
+	}
+	return v.setRebuildDirty(ctx, false)
 }
 
 func (v *VectorRuntime) enabledSourceIDs() []string {
@@ -359,7 +377,19 @@ func (v *VectorRuntime) Reconcile(ctx context.Context) error {
 	if !v.cfg.Enabled() || v.control == nil || v.content == nil {
 		return nil
 	}
-	stale := false
+	runCtx, release, claimed, err := v.claimRebuild(ctx)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return nil
+	}
+	defer release()
+	ctx = runCtx
+	stale, err := v.rebuildDirty()
+	if err != nil {
+		return err
+	}
 	for _, b := range v.control.KnowledgeBases("") {
 		if b.VectorEnabled && b.QdrantCollection != v.cfg.Collection {
 			stale = true
@@ -373,7 +403,7 @@ func (v *VectorRuntime) Reconcile(ctx context.Context) error {
 	if !stale {
 		return nil
 	}
-	if err := v.Rebuild(ctx, v.enabledSourceIDs()); err != nil {
+	if err := v.rebuild(ctx, v.enabledSourceIDs()); err != nil {
 		return err
 	}
 	for _, b := range v.control.KnowledgeBases("") {
@@ -429,4 +459,71 @@ func joinNonEmpty(parts []string, sep string) string {
 		out += p
 	}
 	return out
+}
+
+type vectorLeaseStore interface {
+	ClaimKnowledgeOperation(string, string, time.Duration) (bool, error)
+	RenewKnowledgeOperation(string, string, time.Duration) (bool, error)
+	ReleaseKnowledgeOperation(string, string) error
+}
+
+func (v *VectorRuntime) claimRebuild(ctx context.Context) (context.Context, func(), bool, error) {
+	store, ok := v.control.(vectorLeaseStore)
+	if !ok {
+		return ctx, func() {}, true, nil
+	}
+	id := "vector-" + sha256Hex(v.cfg.QdrantURL+"/"+v.cfg.Collection)
+	owner := fmt.Sprintf("rebuild-%d-%d", time.Now().UnixNano(), revisionIDSeq.Add(1))
+	ttl := time.Minute
+	claimed, err := store.ClaimKnowledgeOperation(id, owner, ttl)
+	if err != nil || !claimed {
+		if err == nil {
+			err = ErrVectorRebuildBusy
+		}
+		return ctx, func() {}, claimed, err
+	}
+	runCtx, cancel := context.WithCancel(context.WithValue(ctx, vectorLeaseKey{}, vectorLeaseClaim{id: id, owner: owner}))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(ttl / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				ok, err := store.RenewKnowledgeOperation(id, owner, ttl)
+				if err != nil || !ok {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return runCtx, func() { cancel(); <-done; _ = store.ReleaseKnowledgeOperation(id, owner) }, true, nil
+}
+
+var ErrVectorRebuildBusy = errors.New("向量索引正在由其他实例重建，将在租约到期后重试")
+
+type vectorLeaseKey struct{}
+type vectorLeaseClaim struct{ id, owner string }
+
+func (v *VectorRuntime) setRebuildDirty(ctx context.Context, dirty bool) error {
+	claim, ok := ctx.Value(vectorLeaseKey{}).(vectorLeaseClaim)
+	if !ok {
+		return nil
+	}
+	if state, ok := v.control.(interface {
+		SetKnowledgeOperationDirty(string, string, bool) error
+	}); ok {
+		return state.SetKnowledgeOperationDirty(claim.id, claim.owner, dirty)
+	}
+	return nil
+}
+func (v *VectorRuntime) rebuildDirty() (bool, error) {
+	if state, ok := v.control.(interface{ KnowledgeOperationDirty(string) (bool, error) }); ok {
+		return state.KnowledgeOperationDirty("vector-" + sha256Hex(v.cfg.QdrantURL+"/"+v.cfg.Collection))
+	}
+	return false, nil
 }

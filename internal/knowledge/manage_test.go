@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -205,6 +206,15 @@ func (s *deleteOrderStore) DeleteKnowledgeSourceContent(id string) error {
 func (s *deleteOrderStore) DeleteKnowledgeSource(id string) error {
 	s.calls = append(s.calls, "control:"+id)
 	return s.Store.DeleteKnowledgeSource(id)
+}
+
+func (s *deleteOrderStore) DeleteKnowledgeSourceContentContext(ctx context.Context, id string) error {
+	s.calls = append(s.calls, "content:"+id)
+	return s.Store.DeleteKnowledgeSourceContentContext(ctx, id)
+}
+func (s *deleteOrderStore) DeleteKnowledgeSourceMarked(id, owner string) error {
+	s.calls = append(s.calls, "control:"+id)
+	return s.Store.DeleteKnowledgeSourceMarked(id, owner)
 }
 
 func TestDeleteSourceRemovesContentBeforeControl(t *testing.T) {

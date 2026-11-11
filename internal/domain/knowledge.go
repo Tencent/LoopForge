@@ -18,10 +18,11 @@ const KnowledgeUsageRuleID = "agentflow-knowledge-usage"
 const KnowledgeArtifactBasename = "knowledge.md"
 
 const (
-	KnowledgeSubmissionPending   = "pending"
-	KnowledgeSubmissionPublished = "published"
-	KnowledgeSubmissionRejected  = "rejected"
-	KnowledgeSubmissionRetracted = "retracted"
+	KnowledgeSubmissionPublishing = "publishing"
+	KnowledgeSubmissionPending    = "pending"
+	KnowledgeSubmissionPublished  = "published"
+	KnowledgeSubmissionRejected   = "rejected"
+	KnowledgeSubmissionRetracted  = "retracted"
 )
 
 // 审核条目的处置动作。update 是默认写回；retract 表示治理面板发起的下线，
@@ -92,20 +93,22 @@ const (
 // KnowledgeSubmission is one distilled document waiting for human review
 // before it is written back to an upstream knowledge source.
 type KnowledgeSubmission struct {
-	ID         string `json:"id"`
-	ProjectID  string `json:"projectId,omitempty"`
-	RunID      string `json:"runId,omitempty"`
-	NodeID     string `json:"nodeId,omitempty"`
-	ArtifactID string `json:"artifactId,omitempty"`
-	IssueID    string `json:"issueId,omitempty"`
-	WorkflowID string `json:"workflowId,omitempty"`
-	Title      string `json:"title"`
-	Source     string `json:"source"`
-	Path       string `json:"path"`
-	Content    string `json:"content,omitempty"`
-	Status     string `json:"status"`
-	Commit     string `json:"commit,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Version        uint64 `json:"version"`
+	ExpectedStatus string `json:"-"`
+	ID             string `json:"id"`
+	ProjectID      string `json:"projectId,omitempty"`
+	RunID          string `json:"runId,omitempty"`
+	NodeID         string `json:"nodeId,omitempty"`
+	ArtifactID     string `json:"artifactId,omitempty"`
+	IssueID        string `json:"issueId,omitempty"`
+	WorkflowID     string `json:"workflowId,omitempty"`
+	Title          string `json:"title"`
+	Source         string `json:"source"`
+	Path           string `json:"path"`
+	Content        string `json:"content,omitempty"`
+	Status         string `json:"status"`
+	Commit         string `json:"commit,omitempty"`
+	Error          string `json:"error,omitempty"`
 	// Git 来源写回的管理视图。读取时由 knowledge_writebacks 覆盖，避免
 	// 审核条目里的历史快照与合并状态不一致。
 	Branch     string `json:"branch,omitempty"`
@@ -133,6 +136,7 @@ type KnowledgeSubmission struct {
 // 链接与状态由托管平台返回并在后台刷新；Note/Error 只保存分类后的中文提示。
 // 同一审核条目只有一条写回记录，重试沿用同一分支。
 type KnowledgeWriteback struct {
+	ClaimOwner   string     `json:"-"`
 	ID           string     `json:"id"`
 	SubmissionID string     `json:"submissionId,omitempty"`
 	SourceID     string     `json:"sourceId"`
@@ -198,6 +202,7 @@ type KnowledgeBase struct {
 // KnowledgeSource 是一个知识来源。Kind 为 hosted 或 git。托管库用
 // HeadRevision 记当前修订号，Git 来源用 HeadCommit 记 commit。
 type KnowledgeSource struct {
+	LeaseVersion         int64      `json:"-"`
 	CredentialCiphertext string     `json:"-"`
 	CredentialConfigured bool       `json:"credentialConfigured"`
 	ID                   string     `json:"id"`

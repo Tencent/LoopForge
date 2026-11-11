@@ -7,6 +7,7 @@ package knowledge
 
 import (
 	"agentflow/internal/knowledge/gitremote"
+	"agentflow/internal/knowledge/publication"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -448,13 +449,19 @@ func (s *Service) TriggerSync(projectID, sourceID string) (domain.KnowledgeSourc
 	if src.Kind != "git" {
 		return domain.KnowledgeSource{}, apperr.New(apperr.Invalid, "托管来源不需要同步")
 	}
-	src.Status = SourceStatusPending
-	src.LastError = ""
-	src.LeaseOwner = ""
-	src.LeaseUntil = nil
-	if err := ms.PutKnowledgeSource(src); err != nil {
-		return domain.KnowledgeSource{}, err
+	if queue, ok := ms.(interface{ RequestKnowledgeSync(string) error }); ok {
+		if err := queue.RequestKnowledgeSync(src.ID); err != nil {
+			return domain.KnowledgeSource{}, err
+		}
+		src, _ = ms.KnowledgeSource(src.ID)
+	} else {
+		src.Status = SourceStatusPending
+		src.LastError = ""
+		if err := ms.PutKnowledgeSource(src); err != nil {
+			return domain.KnowledgeSource{}, err
+		}
 	}
+
 	return src, nil
 }
 
@@ -476,14 +483,44 @@ func (s *Service) DeleteSource(projectID, sourceID string) error {
 	if src.Kind == "hosted" {
 		return apperr.New(apperr.Invalid, "托管来源不能删除")
 	}
-	now := time.Now().UTC()
-	if s.now != nil {
-		now = s.now().UTC()
-	}
-	if src.LeaseOwner != "" && src.LeaseUntil != nil && src.LeaseUntil.After(now) {
+	marker, marked := ms.(interface {
+		BeginKnowledgeSourceDelete(string, string) (bool, error)
+		DeleteKnowledgeSourceMarked(string, string) error
+	})
+	deleteOwner := "delete-" + NewID()
+	deleteCtx := context.Background()
+	if marked {
+		ok, err := marker.BeginKnowledgeSourceDelete(sourceID, deleteOwner)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return apperr.New(apperr.Conflict, "来源正在同步或写回，请稍后再删除")
+		}
+		current, found := ms.KnowledgeSource(sourceID)
+		if !found || current.LeaseOwner != deleteOwner {
+			return apperr.New(apperr.Conflict, "来源删除租约已变更")
+		}
+		deleteCtx = publication.WithFence(deleteCtx, sourceID, current.LeaseVersion)
+	} else if src.LeaseOwner != "" && src.LeaseUntil != nil && src.LeaseUntil.After(time.Now().UTC()) {
 		return apperr.New(apperr.Conflict, "来源正在同步或写回，请稍后再删除")
 	}
-	if err := ms.DeleteKnowledgeSourceContent(sourceID); err != nil {
+	if cleaner, ok := s.upstream.(interface {
+		DeleteSourceIndex(context.Context, string) error
+	}); ok {
+		if err := cleaner.DeleteSourceIndex(context.Background(), sourceID); err != nil {
+			return err
+		}
+	}
+	var contentErr error
+	if cleaner, ok := ms.(interface {
+		DeleteKnowledgeSourceContentContext(context.Context, string) error
+	}); ok {
+		contentErr = cleaner.DeleteKnowledgeSourceContentContext(deleteCtx, sourceID)
+	} else {
+		contentErr = ms.DeleteKnowledgeSourceContent(sourceID)
+	}
+	if err := contentErr; err != nil {
 		return apperr.New(apperr.Upstream, "删除来源内容失败："+err.Error())
 	}
 	if cleaner, ok := s.store.(interface {
@@ -499,7 +536,13 @@ func (s *Service) DeleteSource(projectID, sourceID string) error {
 			return apperr.New(apperr.Upstream, "删除来源写回记录失败："+err.Error())
 		}
 	}
-	if err := ms.DeleteKnowledgeSource(sourceID); err != nil {
+	var deleteErr error
+	if marked {
+		deleteErr = marker.DeleteKnowledgeSourceMarked(sourceID, deleteOwner)
+	} else {
+		deleteErr = ms.DeleteKnowledgeSource(sourceID)
+	}
+	if err := deleteErr; err != nil {
 		return apperr.New(apperr.Upstream, "删除来源失败："+err.Error())
 	}
 	return nil

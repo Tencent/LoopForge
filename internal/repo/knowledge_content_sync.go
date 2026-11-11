@@ -2,6 +2,7 @@ package repo
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge/publication"
 	"context"
 	"gorm.io/gorm"
 )
@@ -9,7 +10,7 @@ import (
 // ReplaceGitKnowledge publishes a complete source snapshot atomically in the
 // content database. No control database connection or revision rows are used.
 func (r *KnowledgeContentRepo) ReplaceGitKnowledge(ctx context.Context, source string, docs []domain.KnowledgeDocument, chunks []domain.KnowledgeChunk) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return r.contentTransaction(ctx, source, "", false, func(tx *gorm.DB) error {
 		if err := tx.Where("source_id = ?", source).Delete(&knowledgeChunkRow{}).Error; err != nil {
 			return err
 		}
@@ -39,7 +40,7 @@ func (r *KnowledgeContentRepo) ReplaceGitKnowledge(ctx context.Context, source s
 // leaves untouched documents and their chunks in place, so a writeback that
 // merged later only adds its new document to the index.
 func (r *KnowledgeContentRepo) ApplyGitKnowledge(ctx context.Context, source string, docs []domain.KnowledgeDocument, chunks []domain.KnowledgeChunk, removed []string) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return r.contentTransaction(ctx, source, "", false, func(tx *gorm.DB) error {
 		byPath := map[string][]domain.KnowledgeChunk{}
 		for _, c := range chunks {
 			byPath[c.Path] = append(byPath[c.Path], c)
@@ -62,4 +63,11 @@ func (r *KnowledgeContentRepo) ApplyGitKnowledge(ctx context.Context, source str
 		}
 		return nil
 	})
+}
+
+// FenceKnowledgeSource establishes takeover before reading the incremental
+// baseline. All older content transactions finish before this barrier or fail
+// their token CAS; none can modify the baseline after it has been read.
+func (r *KnowledgeContentRepo) FenceKnowledgeSource(ctx context.Context, source string, token int64) error {
+	return r.contentTransaction(publication.WithFence(ctx, source, token), source, "", false, func(*gorm.DB) error { return nil })
 }

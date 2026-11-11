@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 
 	"gorm.io/gorm"
@@ -100,12 +101,46 @@ func (r *KnowledgeRepo) PutKnowledgeSubmission(item domain.KnowledgeSubmission) 
 	created := item.CreatedAt
 	row := knowledgeSubmissionRow{
 		ID: item.ID, ProjectID: item.ProjectID, RunID: item.RunID, ArtifactID: item.ArtifactID,
-		Status: item.Status, Payload: payload, Created: &created, Updated: &now,
+		Status: item.Status, Payload: payload, Created: &created, Updated: &now, Version: item.Version + 1,
 	}
-	return r.DB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"project_id", "run_id", "artifact_id", "status", "payload", "updated_at"}),
-	}).Create(&row).Error
+	if item.Status == domain.KnowledgeSubmissionPublishing {
+		until := now.Add(2 * time.Minute)
+		row.PublishUntil = &until
+	}
+	if len(item.SedimentSignals) > 0 && item.Fingerprint != "" && (item.Status == domain.KnowledgeSubmissionPending || item.Status == domain.KnowledgeSubmissionPublishing || item.Status == domain.KnowledgeSubmissionPublished) {
+		fingerprint := item.Fingerprint
+		row.Fingerprint = &fingerprint
+	}
+	if item.Version == 0 {
+		res := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return apperr.New(apperr.Conflict, "审核条目或内容指纹已存在")
+		}
+		return nil
+	}
+	q := r.DB.Model(&knowledgeSubmissionRow{}).Where("id = ? AND version = ?", item.ID, item.Version)
+	if item.ExpectedStatus != "" {
+		q = q.Where("status = ?", item.ExpectedStatus)
+	}
+	updates := map[string]any{"status": row.Status, "payload": row.Payload, "version": row.Version, "fingerprint": row.Fingerprint, "updated_at": now, "publish_until": nil}
+	if item.Status == domain.KnowledgeSubmissionPublishing {
+		if r.isMySQL() {
+			updates["publish_until"] = gorm.Expr("TIMESTAMPADD(SECOND,120,UTC_TIMESTAMP(6))")
+		} else {
+			updates["publish_until"] = row.PublishUntil
+		}
+	}
+	res := q.Updates(updates)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected != 1 {
+		return apperr.New(apperr.Conflict, "审核条目已被其他操作修改")
+	}
+	return nil
 }
 
 func (r *KnowledgeRepo) DeleteKnowledgeSubmission(id string) error {
@@ -123,6 +158,7 @@ func knowledgeSubmissionFromRow(row knowledgeSubmissionRow) domain.KnowledgeSubm
 	var out domain.KnowledgeSubmission
 	_ = json.Unmarshal(row.Payload, &out)
 	out.ID, out.ProjectID, out.RunID, out.ArtifactID, out.Status = row.ID, row.ProjectID, row.RunID, row.ArtifactID, row.Status
+	out.Version, out.ExpectedStatus = row.Version, row.Status
 	if row.Created != nil {
 		out.CreatedAt = *row.Created
 	}
@@ -271,10 +307,10 @@ func (r *KnowledgeRepo) SetKnowledgeVectorConfig(id string, enabled bool, model 
 	return r.DB.Model(&knowledgeBaseRow{}).Where("id = ?", strings.TrimSpace(id)).
 		Updates(map[string]any{
 			"vector_enabled":    enabled,
-			"embedding_model":  model,
-			"embedding_dim":    dim,
+			"embedding_model":   model,
+			"embedding_dim":     dim,
 			"qdrant_collection": collection,
-			"updated_at":       time.Now().UTC(),
+			"updated_at":        time.Now().UTC(),
 		}).Error
 }
 
@@ -355,14 +391,25 @@ func (r *KnowledgeRepo) PutKnowledgeSource(source domain.KnowledgeSource) error 
 		LastError: source.LastError, LastSyncedAt: source.LastSyncedAt,
 		LeaseOwner: source.LeaseOwner, LeaseUntil: source.LeaseUntil,
 	}
-	return r.DB.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"base_id", "kind", "name", "git_url", "branch", "path_prefix",
-			"head_commit", "head_revision", "status", "index_status", "doc_count",
-			"last_error", "last_synced_at", "lease_owner", "lease_until",
-		}),
+	columns := []string{"base_id", "kind", "name", "git_url", "branch", "path_prefix", "last_error"}
+	if source.Kind != "git" {
+		columns = append(columns, "head_commit", "head_revision", "index_status", "doc_count", "last_synced_at")
+	}
+	result := r.DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: sourceAssignments(columns, r.isMySQL()),
 	}).Create(&row).Error
+	if result != nil {
+		return result
+	}
+	var current knowledgeSourceRow
+	if err := r.DB.Select("status").Where("id = ?", source.ID).Take(&current).Error; err != nil {
+		return err
+	}
+	if current.Status == "deleting" {
+		return apperr.New(apperr.Conflict, "来源正在删除，请稍后重新登记")
+	}
+	return nil
 }
 
 func (r *KnowledgeRepo) KnowledgeSource(id string) (domain.KnowledgeSource, bool) {
@@ -403,7 +450,7 @@ func (r *KnowledgeRepo) DeleteKnowledgeSource(id string) error {
 func knowledgeSourceFromRow(row knowledgeSourceRow) domain.KnowledgeSource {
 	return domain.KnowledgeSource{
 		ID: row.ID, BaseID: row.BaseID, Kind: row.Kind, Name: row.Name,
-		CredentialCiphertext: row.CredentialCiphertext, CredentialConfigured: row.CredentialCiphertext != "",
+		LeaseVersion: row.LeaseVersion, CredentialCiphertext: row.CredentialCiphertext, CredentialConfigured: row.CredentialCiphertext != "",
 		GitURL: row.GitURL, Branch: row.Branch, PathPrefix: row.PathPrefix,
 		HeadCommit: row.HeadCommit, HeadRevision: row.HeadRevision,
 		Status: row.Status, IndexStatus: row.IndexStatus, DocCount: row.DocCount,
@@ -420,13 +467,13 @@ func (r *KnowledgeRepo) PutKnowledgeSourceWithCredential(source domain.Knowledge
 		if err := scoped.PutKnowledgeSource(source); err != nil {
 			return err
 		}
-		return tx.Model(&knowledgeSourceRow{}).Where("id = ?", source.ID).Update("credential_ciphertext", ciphertext).Error
+		return tx.Model(&knowledgeSourceRow{}).Where("id = ? AND status <> 'deleting'", source.ID).Update("credential_ciphertext", ciphertext).Error
 	})
 }
 
 func (r *KnowledgeRepo) SetKnowledgeSourceCredential(id, ciphertext string) error {
-	result := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND kind = ?", id, "git").Updates(map[string]any{
-		"credential_ciphertext": ciphertext, "status": "pending", "last_error": "", "lease_owner": "", "lease_until": nil,
+	result := r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND status <> 'deleting' AND kind = ?", id, "git").Updates(map[string]any{
+		"credential_ciphertext": ciphertext, "status": "pending", "last_error": "",
 	})
 	if result.Error != nil {
 		return result.Error
@@ -508,4 +555,66 @@ func knowledgeTombstoneFromRow(row knowledgeTombstoneRow) domain.KnowledgeTombst
 		out.CreatedAt = *row.Created
 	}
 	return out
+}
+
+// DeleteKnowledgeSubmissionCAS cannot delete an item claimed by a publisher.
+func (r *KnowledgeRepo) DeleteKnowledgeSubmissionCAS(item domain.KnowledgeSubmission) error {
+	res := r.DB.Where("id = ? AND version = ? AND status = ?", item.ID, item.Version, item.ExpectedStatus).Delete(&knowledgeSubmissionRow{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected != 1 {
+		return apperr.New(apperr.Conflict, "审核条目已被其他操作修改")
+	}
+	return nil
+}
+
+func (r *KnowledgeRepo) KnowledgeSubmissionByFingerprint(project, fingerprint string) (domain.KnowledgeSubmission, bool) {
+	var row knowledgeSubmissionRow
+	if err := r.DB.Where("project_id = ? AND fingerprint = ?", project, fingerprint).Take(&row).Error; err != nil {
+		return domain.KnowledgeSubmission{}, false
+	}
+	return knowledgeSubmissionFromRow(row), true
+}
+func (r *KnowledgeRepo) UpdateKnowledgeSourceSummary(id string, revision int64, count int) error {
+	expr := "MAX(head_revision, ?)"
+	if r.isMySQL() {
+		expr = "GREATEST(head_revision, ?)"
+	}
+	return r.DB.Model(&knowledgeSourceRow{}).Where("id = ? AND status <> 'deleting'", id).Updates(map[string]any{"head_revision": gorm.Expr(expr, revision), "doc_count": count}).Error
+}
+
+func sourceAssignments(columns []string, mysql bool) clause.Set {
+	columns = append(columns, "status") // status last: MySQL evaluates assignments left to right.
+	out := make(clause.Set, 0, len(columns))
+	for _, col := range columns {
+		incoming := "excluded.`" + col + "`"
+		if mysql {
+			incoming = "VALUES(`" + col + "`)"
+		}
+		out = append(out, clause.Assignment{Column: clause.Column{Name: col}, Value: gorm.Expr("CASE WHEN knowledge_sources.status = 'deleting' THEN knowledge_sources.`" + col + "` ELSE " + incoming + " END")})
+	}
+	return out
+}
+
+// RecoverExpiredKnowledgePublications includes hosted writes and attempts that
+// crashed before or after creating a writeback. Version changes fence final CAS.
+func (r *KnowledgeRepo) RecoverExpiredKnowledgePublications() error {
+	q := r.DB.Model(&knowledgeSubmissionRow{}).Where("status = ?", domain.KnowledgeSubmissionPublishing)
+	if r.isMySQL() {
+		q = q.Where("publish_until IS NULL OR publish_until <= UTC_TIMESTAMP(6)")
+	} else {
+		q = q.Where("publish_until IS NULL OR publish_until <= ?", time.Now().UTC())
+	}
+	return q.Updates(map[string]any{"status": domain.KnowledgeSubmissionPending, "publish_until": nil, "version": gorm.Expr("version + 1")}).Error
+}
+func (r *KnowledgeRepo) KnowledgePublicationValid(id string, version uint64) bool {
+	q := r.DB.Model(&knowledgeSubmissionRow{}).Where("id = ? AND version = ? AND status = ?", id, version, domain.KnowledgeSubmissionPublishing)
+	if r.isMySQL() {
+		q = q.Where("publish_until > UTC_TIMESTAMP(6)")
+	} else {
+		q = q.Where("publish_until > ?", time.Now().UTC())
+	}
+	var n int64
+	return q.Count(&n).Error == nil && n == 1
 }

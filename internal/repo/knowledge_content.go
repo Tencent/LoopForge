@@ -1,7 +1,9 @@
 package repo
 
 import (
+	knowledge "agentflow/internal/knowledge/publication"
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -46,7 +48,7 @@ func clipKnowledgeLabel(value string) string {
 	return string(runes[:maxKnowledgeLabelRunes])
 }
 
-func putKnowledgeDocument(tx *gorm.DB, doc domain.KnowledgeDocument) error {
+func knowledgeDocumentRecord(doc domain.KnowledgeDocument) knowledgeDocumentRow {
 	now := time.Now().UTC()
 	// 元数据在写入索引内容时解析并落列。没有 frontmatter 或字段缺失时保持
 	// 零值，由健康检查报告；托管文档不会被自动补 frontmatter。
@@ -57,6 +59,11 @@ func putKnowledgeDocument(tx *gorm.DB, doc domain.KnowledgeDocument) error {
 		Revision: doc.Revision, Owner: meta.Owner, DocStatus: meta.Status,
 		FrontmatterUpdated: meta.Updated, Updated: &now,
 	}
+	return row
+}
+
+func putKnowledgeDocument(tx *gorm.DB, doc domain.KnowledgeDocument) error {
+	row := knowledgeDocumentRecord(doc)
 	return tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "source_id"}, {Name: "path"}},
 		DoUpdates: clause.AssignmentColumns([]string{
@@ -183,9 +190,23 @@ func (r *KnowledgeContentRepo) KnowledgeRevisions(sourceID, path string) []domai
 // 写/覆盖正文、追加修订、替换该文档的索引块。控制面的来源修订号与篇数
 // 由调用方在事务成功后单独更新，不与内容库做跨库事务。
 func (r *KnowledgeContentRepo) WriteHostedDocument(doc domain.KnowledgeDocument, rev domain.KnowledgeRevision, chunks []domain.KnowledgeChunk) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := putKnowledgeDocument(tx, doc); err != nil {
-			return err
+	return r.WriteHostedDocumentContext(context.Background(), doc, rev, chunks)
+}
+func (r *KnowledgeContentRepo) WriteHostedDocumentContext(ctx context.Context, doc domain.KnowledgeDocument, rev domain.KnowledgeRevision, chunks []domain.KnowledgeChunk) error {
+	return r.contentTransaction(ctx, doc.SourceID, doc.Path, false, func(tx *gorm.DB) error {
+		row := knowledgeDocumentRecord(doc)
+		var result *gorm.DB
+		if doc.Revision == 1 {
+			result = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
+		} else {
+			result = tx.Model(&knowledgeDocumentRow{}).Where("source_id = ? AND path = ? AND revision = ?", doc.SourceID, doc.Path, doc.Revision-1).
+				Select("title", "body", "line_count", "sha256", "commit", "revision", "owner", "doc_status", "frontmatter_updated_at", "updated_at").Updates(&row)
+		}
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrKnowledgeRevisionConflict
 		}
 		if err := putKnowledgeRevision(tx, rev); err != nil {
 			return err
@@ -197,11 +218,17 @@ func (r *KnowledgeContentRepo) WriteHostedDocument(doc domain.KnowledgeDocument,
 // DeleteKnowledgeSourceContent 删除某个来源在内容面的全部行：索引块、托管
 // 修订和正文。控制面来源由 Service 在本方法成功后单独删除，不做级联。
 func (r *KnowledgeContentRepo) DeleteKnowledgeSourceContent(sourceID string) error {
+	return r.DeleteKnowledgeSourceContentContext(context.Background(), sourceID)
+}
+func (r *KnowledgeContentRepo) DeleteKnowledgeSourceContentContext(ctx context.Context, sourceID string) error {
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID == "" {
 		return nil
 	}
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return r.contentTransaction(ctx, sourceID, "", false, func(tx *gorm.DB) error {
+		if err := tx.Where("source_id = ? AND path <> ''", sourceID).Delete(&knowledgeContentFenceRow{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("source_id = ?", sourceID).Delete(&knowledgeChunkRow{}).Error; err != nil {
 			return err
 		}
@@ -219,7 +246,7 @@ func (r *KnowledgeContentRepo) DeleteKnowledgeDocument(sourceID, path string) er
 	if sourceID == "" || path == "" {
 		return nil
 	}
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return r.contentTransaction(context.Background(), sourceID, path, true, func(tx *gorm.DB) error {
 		if err := tx.Where("source_id = ? AND path = ?", sourceID, path).Delete(&knowledgeChunkRow{}).Error; err != nil {
 			return err
 		}
@@ -396,4 +423,63 @@ func knowledgeChunkFromRow(row knowledgeChunkRow) domain.KnowledgeChunk {
 		Heading: row.Heading, Title: row.Title, StartLine: row.StartLine, EndLine: row.EndLine,
 		Commit: row.Commit, Revision: row.Revision, Text: row.Text,
 	}
+}
+
+// ErrKnowledgeRevisionConflict asks a hosted writer to reread and retry its CAS.
+var ErrKnowledgeRevisionConflict = knowledge.ErrRevisionConflict
+
+func (r *KnowledgeContentRepo) contentTransaction(ctx context.Context, source, path string, retract bool, write func(*gorm.DB) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		fence := knowledgeContentFenceRow{SourceID: source, Path: path}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&fence).Error; err != nil {
+			return err
+		}
+		// A no-op UPDATE locks only the content fence. Lease renewals use a different row/connection.
+		if err := tx.Model(&knowledgeContentFenceRow{}).Where("source_id = ? AND path = ?", source, path).Update("retracted", gorm.Expr("retracted")).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_id = ? AND path = ?", source, path).Take(&fence).Error; err != nil {
+			return err
+		}
+		incoming := knowledge.FromContext(ctx)
+		if incoming.Token > 0 && incoming.Source == source {
+			if fence.Token > incoming.Token {
+				return errors.New("stale content fencing token")
+			}
+			if err := tx.Model(&fence).Update("token", incoming.Token).Error; err != nil {
+				return err
+			}
+		}
+		generation := knowledge.GenerationFrom(ctx)
+		if !retract && path != "" && generation.Set && generation.Source == source && generation.Path == path {
+			if generation.Value != fence.Token {
+				return ErrKnowledgeRevisionConflict
+			}
+			if fence.Retracted {
+				if err := tx.Model(&fence).Update("retracted", false).Error; err != nil {
+					return err
+				}
+			}
+		} else if fence.Retracted && !retract {
+			return errors.New("document has been retracted")
+		}
+		if retract {
+			if err := tx.Model(&fence).Updates(map[string]any{"retracted": true, "token": gorm.Expr("token + 1")}).Error; err != nil {
+				return err
+			}
+		}
+		if err := write(tx); err != nil {
+			return err
+		}
+		return ctx.Err()
+	})
+}
+
+func (r *KnowledgeContentRepo) KnowledgeDocumentGeneration(source, path string) (int64, error) {
+	var fence knowledgeContentFenceRow
+	err := r.db.Where("source_id = ? AND path = ?", source, path).Take(&fence).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	return fence.Token, err
 }

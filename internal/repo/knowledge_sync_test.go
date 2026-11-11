@@ -95,19 +95,19 @@ func TestKnowledgePublicationRejectsStaleOwner(t *testing.T) {
 	claimed := make(chan bool, 1)
 	go func() { ok, _ := s.ClaimKnowledgeSync(id, "third", time.Second); claimed <- ok }()
 	select {
-	case <-claimed:
-		t.Fatal("claim escaped publication lock")
-	case <-time.After(50 * time.Millisecond):
+	case ok := <-claimed:
+		if !ok {
+			t.Error("expired lease was not reclaimable during content work")
+		}
+	case <-time.After(time.Second):
+		t.Error("content work blocked takeover")
 	}
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if <-claimed {
-		t.Fatal("claimed completed source")
-	}
 	src, _ := s.KnowledgeSource(id)
-	if src.HeadCommit != "current" || src.Status != "ready" {
-		t.Fatalf("publication %+v", src)
+	if src.HeadCommit == "current" || src.LeaseOwner != "third" {
+		t.Fatalf("stale publication changed control state: %+v", src)
 	}
 }

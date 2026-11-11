@@ -193,6 +193,13 @@ func (s *Service) sedimentCandidate(ctx context.Context, store SedimentStore, ca
 		Fingerprint: fingerprint, SedimentSignals: signals, GateChecks: gates,
 	}
 	if _, err := s.save(item); err != nil {
+		if lookup, ok := s.store.(interface {
+			KnowledgeSubmissionByFingerprint(string, string) (domain.KnowledgeSubmission, bool)
+		}); ok {
+			if _, exists := lookup.KnowledgeSubmissionByFingerprint(projectID, fingerprint); exists {
+				return false, false, nil
+			}
+		}
 		return false, false, err
 	}
 	if gatesPassed(gates) && sedimentAutoPublish(base) {
@@ -569,7 +576,7 @@ func (s *Service) Retract(ctx context.Context, id, reasonCategory, reasonDetail,
 	if item.Status == domain.KnowledgeSubmissionRetracted {
 		return item, nil
 	}
-	if item.Status != domain.KnowledgeSubmissionPublished {
+	if item.Status != domain.KnowledgeSubmissionPublished && item.Status != domain.KnowledgeSubmissionPublishing {
 		return item, apperr.New(apperr.Conflict, "只有已写回的条目可以撤回")
 	}
 	reason := strings.TrimSpace(reasonCategory)
@@ -606,9 +613,6 @@ func (s *Service) retractDocument(ctx context.Context, item domain.KnowledgeSubm
 	if !ok {
 		return item, apperr.New(apperr.Unavailable, "内置知识引擎不支持撤回")
 	}
-	if err := retractor.RetractDocument(ctx, source, item.Path); err != nil {
-		return item, apperr.New(apperr.Upstream, "撤回失败："+err.Error())
-	}
 	fingerprint := strings.TrimSpace(item.Fingerprint)
 	if fingerprint == "" {
 		fingerprint = KnowledgeFingerprint(item.Content)
@@ -625,6 +629,9 @@ func (s *Service) retractDocument(ctx context.Context, item domain.KnowledgeSubm
 	}); err != nil {
 		return item, apperr.New(apperr.Upstream, "写入墓碑失败："+err.Error())
 	}
+	if err := retractor.RetractDocument(ctx, source, item.Path); err != nil {
+		return item, apperr.New(apperr.Upstream, "撤回失败："+err.Error())
+	}
 	item.Status = domain.KnowledgeSubmissionRetracted
 	item.RetractedAt = &now
 	if strings.TrimSpace(reason) != "" {
@@ -637,10 +644,7 @@ func (s *Service) retractDocument(ctx context.Context, item domain.KnowledgeSubm
 // checkPublishGates 在真正写回前重算门禁：墓碑与敏感规则对所有条目生效；
 // 自动沉淀条目还重算证据与指纹去重，人工提交不因缺少运行事件被卡住。
 func (s *Service) checkPublishGates(item domain.KnowledgeSubmission) (domain.KnowledgeSubmission, error) {
-	fingerprint := strings.TrimSpace(item.Fingerprint)
-	if fingerprint == "" {
-		fingerprint = KnowledgeFingerprint(item.Content)
-	}
+	fingerprint := KnowledgeFingerprint(item.Content)
 	item.Fingerprint = fingerprint
 	base := s.baseForSource(item.Source)
 	auto := len(item.SedimentSignals) > 0
@@ -660,20 +664,16 @@ func (s *Service) checkPublishGates(item domain.KnowledgeSubmission) (domain.Kno
 	}
 	item.GateChecks = checks
 	if check := checks[3]; !check.OK {
-		_ = s.store.PutKnowledgeSubmission(item)
 		return item, apperr.New(apperr.Conflict, check.Detail)
 	}
 	if check := checks[1]; !check.OK {
-		_ = s.store.PutKnowledgeSubmission(item)
 		return item, apperr.New(apperr.Invalid, check.Detail)
 	}
 	if auto {
 		if check := checks[0]; !check.OK {
-			_ = s.store.PutKnowledgeSubmission(item)
 			return item, apperr.New(apperr.Invalid, check.Detail)
 		}
 		if check := checks[2]; !check.OK {
-			_ = s.store.PutKnowledgeSubmission(item)
 			return item, apperr.New(apperr.Conflict, check.Detail)
 		}
 	}

@@ -251,7 +251,6 @@ func cleanCacheWorktree(ctx context.Context, dir string) error {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return nil
 	}
-	_ = os.Remove(filepath.Join(dir, ".git", "index.lock"))
 	status, err := git(ctx, dir, "status", "--porcelain")
 	if err != nil {
 		return err

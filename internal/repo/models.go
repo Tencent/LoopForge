@@ -649,15 +649,29 @@ type spaceThreadRow struct {
 
 func (spaceThreadRow) TableName() string { return "space_threads" }
 
+// knowledgeContentFenceRow serializes independent content commits without
+// holding the source/control lease row. Document fences survive retraction.
+type knowledgeContentFenceRow struct {
+	Token     int64  `gorm:"column:token;not null;default:0"`
+	SourceID  string `gorm:"column:source_id;primaryKey;size:64"`
+	Path      string `gorm:"column:path;primaryKey;size:512"`
+	Retracted bool   `gorm:"column:retracted"`
+}
+
+func (knowledgeContentFenceRow) TableName() string { return "knowledge_content_fences" }
+
 type knowledgeSubmissionRow struct {
-	ID         string     `gorm:"column:id;primaryKey;size:64"`
-	ProjectID  string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64"`
-	RunID      string     `gorm:"column:run_id;index:idx_knowledge_submissions_run;size:64"`
-	ArtifactID string     `gorm:"column:artifact_id;index:idx_knowledge_submissions_artifact;size:64"`
-	Status     string     `gorm:"column:status;index:idx_knowledge_submissions_status;size:32"`
-	Payload    []byte     `gorm:"column:payload;type:json"`
-	Created    *time.Time `gorm:"column:created_at"`
-	Updated    *time.Time `gorm:"column:updated_at"`
+	PublishUntil *time.Time `gorm:"column:publish_until"`
+	Version      uint64     `gorm:"column:version;not null;default:1"`
+	Fingerprint  *string    `gorm:"column:fingerprint;size:64;uniqueIndex:uq_knowledge_submission_fingerprint,priority:2"`
+	ID           string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID    string     `gorm:"column:project_id;index:idx_knowledge_submissions_project;size:64;uniqueIndex:uq_knowledge_submission_fingerprint,priority:1"`
+	RunID        string     `gorm:"column:run_id;index:idx_knowledge_submissions_run;size:64"`
+	ArtifactID   string     `gorm:"column:artifact_id;index:idx_knowledge_submissions_artifact;size:64"`
+	Status       string     `gorm:"column:status;index:idx_knowledge_submissions_status;size:32"`
+	Payload      []byte     `gorm:"column:payload;type:json"`
+	Created      *time.Time `gorm:"column:created_at"`
+	Updated      *time.Time `gorm:"column:updated_at"`
 }
 
 func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions" }
@@ -700,6 +714,7 @@ type knowledgeTombstoneRow struct {
 func (knowledgeTombstoneRow) TableName() string { return "knowledge_tombstones" }
 
 type knowledgeSourceRow struct {
+	LeaseVersion         int64      `gorm:"column:lease_version;not null;default:0"`
 	CredentialCiphertext string     `gorm:"column:credential_ciphertext;type:text"`
 	ID                   string     `gorm:"column:id;primaryKey;size:64"`
 	BaseID               string     `gorm:"column:base_id;size:64;index:idx_knowledge_sources_base"`
@@ -791,6 +806,8 @@ func (knowledgeCitationRow) TableName() string { return "knowledge_citations" }
 // knowledgeWritebackRow 记录审核条目发布到 Git 来源的分支与合并请求。
 // 同一审核条目一行；重试沿用同一分支。属于控制面，不存正文。
 type knowledgeWritebackRow struct {
+	ClaimOwner   string     `gorm:"column:claim_owner;size:255;not null;default:''"`
+	ClaimedUntil *time.Time `gorm:"column:claimed_until"`
 	ID           string     `gorm:"column:id;primaryKey;size:64"`
 	SubmissionID string     `gorm:"column:submission_id;size:64;uniqueIndex:uq_knowledge_writebacks_submission"`
 	SourceID     string     `gorm:"column:source_id;size:64;index:idx_knowledge_writebacks_source"`
@@ -941,10 +958,10 @@ func allModels() []any {
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
-		knowledgeSubmissionRow{},
+		knowledgeSubmissionRow{}, knowledgeOperationLeaseRow{},
 		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeCitationRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
 		knowledgeFeedbackRow{}, knowledgeGapRow{}, knowledgeGovernanceIssueRow{}, knowledgeGovernanceScanRow{},
-		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
+		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{}, knowledgeContentFenceRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}
 }

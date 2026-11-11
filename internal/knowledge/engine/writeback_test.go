@@ -61,7 +61,31 @@ func newWritebackFixture(t *testing.T, gitURL string, canWrite bool) *writebackF
 	eng.writeCacheRoot = t.TempDir()
 	eng.writeLeaseTTL = 5 * time.Second
 	eng.gitWrite = func(ctx context.Context, dir, _ string, base string, opts gitsync.WriteOptions) (gitsync.WriteResult, error) {
-		return gitsync.CommitAndPush(ctx, dir, remote, base, opts)
+		rows, err := store.KnowledgeWritebacksNeedingRefresh(time.Now().Add(time.Hour), 200)
+		if err != nil {
+			t.Fatal(err)
+		}
+		durable := false
+		for _, row := range rows {
+			if row.SourceID == src.ID && row.Branch == opts.Branch && row.Attempts > 0 {
+				durable = true
+			}
+		}
+		if !durable {
+			t.Error("push began before branch and attempt were durable")
+		}
+
+		result, pushErr := gitsync.CommitAndPush(ctx, dir, remote, base, opts)
+		if pushErr == nil {
+			config, err := os.ReadFile(filepath.Join(dir, ".git", "config"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(config), canaryToken) || strings.Contains(string(config), "deploy") {
+				t.Error(".git/config leaked credentials")
+			}
+		}
+		return result, pushErr
 	}
 	eng.gitMergeProbe = func(ctx context.Context, dir, _ string, base, commit string) (bool, error) {
 		return gitsync.RemoteContainsCommit(ctx, dir, remote, base, commit)
@@ -164,13 +188,7 @@ func TestWriteGitDocumentCreatesBranchPushesAndMROpen(t *testing.T) {
 	if src.LeaseOwner != "" || src.LeaseUntil != nil {
 		t.Fatalf("lease not released: %+v", src)
 	}
-	config, err := os.ReadFile(filepath.Join(f.engine.writebackCacheDir(src), ".git", "config"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(config), canaryToken) || strings.Contains(string(config), "deploy") {
-		t.Fatal(".git/config leaked credentials")
-	}
+
 }
 
 func TestWriteGitDocumentUnsupportedPlatformPushesBranchOnly(t *testing.T) {

@@ -97,7 +97,7 @@ func TestKnowledgeWritebackLease(t *testing.T) {
 	}
 }
 
-func TestQueueKnowledgeResyncSkipsActiveLease(t *testing.T) {
+func TestQueueKnowledgeResyncPreservesActiveLease(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -118,8 +118,12 @@ func TestQueueKnowledgeResyncSkipsActiveLease(t *testing.T) {
 	if ok, err := s.ClaimKnowledgeWrite("kb-git-resync", "owner", time.Minute); err != nil || !ok {
 		t.Fatalf("claim = %v %v", ok, err)
 	}
-	if ok, err := s.QueueKnowledgeResync("kb-git-resync"); err != nil || ok {
+	if ok, err := s.QueueKnowledgeResync("kb-git-resync"); err != nil || !ok {
 		t.Fatalf("queue with lease = %v %v", ok, err)
+	}
+	src, _ = s.KnowledgeSource("kb-git-resync")
+	if src.Status != "pending" || src.LeaseOwner != "owner" || src.LeaseUntil == nil {
+		t.Fatalf("queue erased lease: %+v", src)
 	}
 }
 

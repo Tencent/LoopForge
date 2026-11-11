@@ -182,3 +182,17 @@ func clip(s string, n int) string {
 	}
 	return string(r[:n]) + "…"
 }
+
+type writebackFinalizerKey struct{}
+
+// WithWritebackFinalizer lets Service persist the review CAS before Engine
+// releases the source lease. The callback performs only a short control write.
+func WithWritebackFinalizer(ctx context.Context, finish func(WriteResult) error) context.Context {
+	return context.WithValue(ctx, writebackFinalizerKey{}, finish)
+}
+func FinalizeWriteback(ctx context.Context, result WriteResult) error {
+	if finish, ok := ctx.Value(writebackFinalizerKey{}).(func(WriteResult) error); ok {
+		return finish(result)
+	}
+	return nil
+}
