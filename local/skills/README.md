@@ -35,7 +35,6 @@ loopforge skills install codex
 loopforge skills install cursor
 loopforge skills install claude
 loopforge skills install pi
-loopforge skills install dsh
 loopforge skills install hermes
 loopforge skills install zcode
 ```
@@ -47,9 +46,8 @@ Hermes Agent 使用项目级 `.hermes/skills/`，安装后在项目根目录执�
 状态、结果和审批命令时，可按 [`hermes-plugin/README.md`](../hermes-plugin/README.md)
 安装可选原生插件，使用 `/loopforge status|result|approve`；`/devflow` 仍是工作流入口。
 
-ZCode 使用项目级 `.zcode/skills/`，安装后使用 `/skill devflow "<软件交付需求>"`。
-ZCode 的 medium/large 阶段通过 `Agent` 工具创建独立子 Agent；缺少该工具时记录原因并降级为
-`single-context`。安装器不会改动 `~/.zcode` 用户配置。
+ZCode 使用项目级 `.zcode/skills/`，安装后使用 `/skill devflow "<软件交付需求>"`。隔离阶段通过 ZCode 的 `Agent` 工具派发，
+详见 [`devflow/adapters/zcode/adapter.md`](devflow/adapters/zcode/adapter.md)；安装器不会改动 `~/.zcode` 用户配置。
 
 `loopforge skills status/update/uninstall <host>` 和 `loopforge doctor` 使用
 `.devflow/install-state.json` 保护用户文件。下面的 adapter 命令只保留为开发和

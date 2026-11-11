@@ -27,7 +27,7 @@ Portable 安装到目标项目时才生成 `.cursor/.claude/.agents/.codebuddy` 
 
 ## 统一安装控制面
 
-`DevFlow` CLI 负责 install、status、update、uninstall 和 doctor。四个 target
+`DevFlow` CLI 负责 install、status、update、uninstall 和 doctor。八个 target
 保持薄层，安装核心统一处理计划、冲突检查、状态记录和用户文件保护。默认 edition
 是 Classic；`loopforge install <host>` 安装完整宿主包，Portable 通过
 `loopforge skills install <host>` 安装。安装器不改变两套工作流的内部状态机。

@@ -22,13 +22,15 @@ Classic 的 Cursor/Claude 目录是生成产物；Portable 的事实只保存在
 
 1. **结构门禁**：校验 JSON/YAML、Skill frontmatter、manifest 引用和链接。
 2. **漂移门禁**：`build-classic-hosts.py --check` 逐字比较 Classic 生成包。
-3. **安装门禁**：统一 CLI 覆盖 7 宿主 × 2 edition（Pi、DSH 和 Hermes 仅 Portable），并验证重复安装、更新、卸载、
+3. **安装门禁**：统一 CLI 覆盖 8 宿主 × 2 edition（Pi、DSH、Hermes 和 ZCode 仅 Portable），并验证重复安装、更新、卸载、
    mixed-edition 拒绝和用户文件保护。
 4. **流程回归**：标准库单测和 CLI E2E 验证状态机、门禁、产物与恢复协议。
 5. **真实宿主 canary**：发布前或宿主大版本升级后，在隔离 fixture 仓库用真实
    Cursor/Claude/Codex/CodeBuddy CLI 各跑一次 small 和一次 medium 流程，保存宿主
    版本、调用轨迹、最终状态和 diff。此层需要各宿主凭据和运行环境，不应伪装成
    无凭据的普通单测。
+
+ZCode 迭代很快且没有 npm 包，适配器清单的 `verified_on` 记录其最近验证日期；升级大版本后应先在隔离 fixture 上做 canary（默认 `--workflow-mode disabled`，再用 `alwaysOn` 确认不会误调内置 `CreateWorkflow`），再更新该日期。
 
 Hermes 与 DSH 不绑定私有版本号：当前稳定版及后续版本必须提供清单中列出的公开能力。
 能力缺失时，Hermes 不得伪造 isolated 执行器，DSH/Hermes 均须记录原因并按适配器合同降级到

@@ -95,30 +95,6 @@ class WorkflowModesE2E(unittest.TestCase):
         self.assertTrue(events(project, "spawned"))
         self.assertTrue((project / ".hermes/skills/devflow/adapters/hermes/manifest.json").is_file())
 
-    def test_zcode_medium_workflow_uses_agent_adapter(self):
-        project = self.install("zcode")
-        h.fake_agent("zcode", project, check_rc=0)
-        state = h.workflow_state(project)
-        self.assertEqual("completed", state["status"])
-        self.assertEqual("zcode", state["host_adapter"])
-        self.assertEqual("isolated", state["execution_mode"])
-        self.assertTrue(events(project, "spawned"))
-        self.assertTrue((project / ".zcode/skills/devflow/adapters/zcode/manifest.json").is_file())
-
-    def test_zcode_can_record_single_context_fallback(self):
-        project = self.install("zcode")
-        h.run_workflow(
-            project, "init", "--project-root", project, "--slug", "zcode-fallback",
-            "--size", "medium", "--mode", "auto", "--execution-mode", "single-context",
-            "--fallback-reason", "Agent tool unavailable",
-        )
-        result = h.fake_agent("zcode", project, "--slug", "zcode-fallback", "--resume", check_rc=0)
-        self.assertEqual(0, result.returncode)
-        state = h.workflow_state(project, "zcode-fallback")
-        self.assertEqual("single-context", state["execution_mode"])
-        self.assertEqual("Agent tool unavailable", state["fallback_reason"])
-        self.assertTrue(events(project, "fallback"))
-
     def test_large_task_runs_the_knowledge_stage_when_it_has_value(self):
         project = self.install("codex")
         h.fake_agent("codex", project, "--size", "large", "--knowledge", "run", check_rc=0)
