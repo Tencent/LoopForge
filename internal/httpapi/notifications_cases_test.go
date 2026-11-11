@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,6 +52,12 @@ func TestNotificationBotMutationBranches(t *testing.T) {
 		if rec.Code != tc.want {
 			t.Errorf("%d %s %s = %d want %d: %s", i, tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
 		}
+		if tc.want == http.StatusBadGateway && !strings.Contains(rec.Body.String(), f.notificationProvider.err.Error()) {
+			t.Errorf("sessions response did not contain the fake provider error: %s", rec.Body.String())
+		}
+	}
+	if sessions, sends := f.notificationProvider.sessionsCalls.Load(), f.notificationProvider.sendCalls.Load(); sessions != 1 || sends != 0 {
+		t.Fatalf("provider calls: sessions=%d send=%d, want 1 and 0", sessions, sends)
 	}
 }
 
@@ -181,16 +188,20 @@ func cvBJSONReaderRound2(t *testing.T, body any) *bytes.Reader {
 }
 
 type cvBNotificationProviderRound2 struct {
-	sessions []domain.BotChat
-	err      error
-	sendErr  error
+	sessions      []domain.BotChat
+	err           error
+	sendErr       error
+	sessionsCalls atomic.Int32
+	sendCalls     atomic.Int32
 }
 
 func (p *cvBNotificationProviderRound2) Sessions(context.Context, string, string) ([]domain.BotChat, error) {
+	p.sessionsCalls.Add(1)
 	return p.sessions, p.err
 }
 
 func (p *cvBNotificationProviderRound2) Send(context.Context, string, string, string, string) error {
+	p.sendCalls.Add(1)
 	return p.sendErr
 }
 
