@@ -1,0 +1,117 @@
+{
+  "name": "loopforge",
+  "displayName": "LoopForge",
+  "description": "Start and inspect LoopForge workflows from VS Code.",
+  "version": "0.1.4",
+  "publisher": "tencent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Tencent/LoopForge.git"
+  },
+  "engines": {
+    "vscode": ">=1.85.0"
+  },
+  "main": "./extension.js",
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:loopforge.runs",
+    "onCommand:loopforge.startWorkflow",
+    "onCommand:loopforge.showStatus",
+    "onCommand:loopforge.showResult",
+    "onCommand:loopforge.approve",
+    "onCommand:loopforge.reject",
+    "onCommand:loopforge.openArtifact",
+    "onCommand:loopforge.openDiff"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "loopforge.startWorkflow", "title": "LoopForge: Start Workflow", "icon": "$(play)" },
+      { "command": "loopforge.showStatus", "title": "LoopForge: Show Status", "icon": "$(pulse)" },
+      { "command": "loopforge.showResult", "title": "LoopForge: Show Result", "icon": "$(output)" },
+      { "command": "loopforge.approve", "title": "LoopForge: Approve Current Stage", "icon": "$(check)" },
+      { "command": "loopforge.reject", "title": "LoopForge: Send Current Stage Back", "icon": "$(discard)" },
+      { "command": "loopforge.openArtifact", "title": "LoopForge: Open Artifact", "icon": "$(file)" },
+      { "command": "loopforge.openFile", "title": "LoopForge: Open Run File", "icon": "$(go-to-file)" },
+      { "command": "loopforge.openDiff", "title": "LoopForge: Open Diff", "icon": "$(diff)" },
+      { "command": "loopforge.refresh", "title": "LoopForge: Refresh", "icon": "$(refresh)" },
+      { "command": "loopforge.configureToken", "title": "LoopForge: Configure API Token" },
+      { "command": "loopforge.selectProject", "title": "LoopForge: Select Project" },
+      { "command": "loopforge.selectWorkflow", "title": "LoopForge: Select Workflow" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "loopforge", "title": "LoopForge", "icon": "resources/loopforge.svg" }
+      ]
+    },
+    "views": {
+      "loopforge": [
+        {
+          "id": "loopforge.runs",
+          "name": "Runs",
+          "contextualTitle": "LoopForge Runs"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "loopforge.startWorkflow", "when": "view == loopforge.runs", "group": "navigation@1" },
+        { "command": "loopforge.refresh", "when": "view == loopforge.runs", "group": "navigation@2" }
+      ],
+      "view/item/context": [
+        { "command": "loopforge.showStatus", "when": "view == loopforge.runs && viewItem == loopforge.run", "group": "inline@1" },
+        { "command": "loopforge.showResult", "when": "view == loopforge.runs && viewItem == loopforge.run", "group": "inline@2" },
+        { "command": "loopforge.approve", "when": "view == loopforge.runs && viewItem == loopforge.approval", "group": "inline@3" },
+        { "command": "loopforge.reject", "when": "view == loopforge.runs && viewItem == loopforge.approval", "group": "navigation@4" },
+        { "command": "loopforge.openArtifact", "when": "view == loopforge.runs && viewItem == loopforge.artifact", "group": "inline@4" },
+        { "command": "loopforge.openFile", "when": "view == loopforge.runs && viewItem == loopforge.run", "group": "inline@5" },
+        { "command": "loopforge.openDiff", "when": "view == loopforge.runs && viewItem == loopforge.run", "group": "inline@5" }
+      ],
+      "commandPalette": [
+        { "command": "loopforge.configureToken" },
+        { "command": "loopforge.selectProject" },
+        { "command": "loopforge.selectWorkflow" }
+      ]
+    },
+    "configuration": {
+      "title": "LoopForge",
+      "properties": {
+        "loopforge.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8090",
+          "scope": "machine",
+          "description": "LoopForge server URL. The extension calls its /api endpoints."
+        },
+        "loopforge.projectId": {
+          "type": "string",
+          "default": "",
+          "description": "Project ID used when starting a workflow. Leave empty to choose from the server."
+        },
+        "loopforge.workflowId": {
+          "type": "string",
+          "default": "",
+          "description": "Workflow ID used as the default when starting a workflow. Leave empty to choose from the server."
+        },
+        "loopforge.pollInterval": {
+          "type": "number",
+          "default": 10,
+          "minimum": 3,
+          "maximum": 300,
+          "description": "Seconds between status refreshes while a run is active."
+        },
+        "loopforge.maxRuns": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Number of recent runs shown in the Runs view."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "package": "npx --yes @vscode/vsce package"
+  }
+}

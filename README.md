@@ -193,6 +193,20 @@ See the [local guide](docs/local/usage.md) for each host's entry point and [edit
 | Workflows | Chat with Main Bot + custom SOPs on a visual canvas | Built-in Classic / Portable workflows |
 | Evidence | Shared run details, approvals and metrics in the web workspace | Artifacts under `artifacts/{task_slug}/` + optional local dashboard |
 
+## LoopForge for VS Code
+
+The standalone desktop [VS Code extension](vscode-extension/) connects to a LoopForge platform server, starts a workflow with project and selected-code context, and shows run status, logs, approvals, artifacts, files and diffs. It targets VS Code 1.85+ and the platform REST API.
+
+Build and install a local VSIX:
+
+```bash
+cd vscode-extension
+npx --yes @vscode/vsce package --no-dependencies
+code --install-extension loopforge-0.1.4.vsix
+```
+
+See the [extension guide](vscode-extension/README.md) for configuration, API token storage, capability boundaries, upgrades and uninstalling.
+
 ## FAQ
 
 **Do I need an API key to try it?**
