@@ -357,3 +357,37 @@ Git stderr 只用于分类，日志、错误响应与同步记录均保存分类
 安全边界：凭据只通过临时 askpass / 私钥文件传给 Git 子进程，并走白名单环境；`.git/config` 只保存无凭据地址。Git stderr 和托管平台响应正文都不进入日志、错误或 API 响应，只保留分类后的中文。合并请求接口禁用重定向、限制响应大小，并对只推送分支的平台给出明确说明。
 
 迁移：`migrations/031_knowledge_writeback.sql` 可重复执行，只建控制面表，不含跨库外键。内容面的增量写入由 `KnowledgeContentRepo.ApplyGitKnowledge` 完成。
+
+## 11. 自动沉淀（阶段三）
+
+实现落在 `internal/knowledge/sediment.go` 与 `internal/knowledge/engine` 的
+`RetractDocument`，迁移是 `migrations/032_knowledge_sediment.sql`（可重复
+执行，只动控制面）。后台循环在 worker 角色启动，扫描最近的 `knowledge.md`
+运行产物；同一个产物用一个内容无关的稳定 ID 入队，重复扫描只落一行。
+
+闭环信号取自 LoopForge 已有事件：运行 `succeeded`、运行事件
+`gate.approved`、需求 `done/closed/completed`、需求交付合并请求状态
+`merged`。产物所属节点有 Agent 时按该角色的知识库开关判断；脚本/命令节点
+没有角色，按同一次运行里是否至少有一个开启知识库的角色判断。
+
+门禁逐项保存在 `KnowledgeSubmission.gateChecks`：
+
+- `evidence`：有闭环事件，且正文与标题达到可复用长度。LoopForge 不保存
+  会话里的逐字引用，因此不再照搬 dsh 的“三类证据原文必须逐字命中”；闭环
+  事件本身是运行证据。
+- `sensitive`：知识库配置的正则规则；未配置时使用平台内置的通用规则
+  （令牌、口令、私钥、JWT、邮箱、手机号、IPv4、提示词注入），不包含任何
+  内部名词。
+- `fingerprint`：正文归一化后的 SHA-256，与同项目待审核/已写回的条目比较。
+- `tombstone`：同项目同指纹的撤回墓碑。
+
+发布模式在 `knowledge_bases.sediment_publish_mode`：`review`（默认）只入队，
+`auto` 在四项门禁全过后调用已有 `Publish`，因此托管来源直接写 MySQL、Git
+来源仍走写回分支与合并请求。`Publish` 在真正写回前重新检查墓碑与敏感规则，
+自动沉淀条目还重算证据与指纹。
+
+撤回对托管来源删除正文、修订与索引块，写 `knowledge_tombstones` 并写回
+墓碑；同一项目再次产出相同正文时墓碑门禁失败，不会写回。Git 来源的事实源
+在仓库，平台返回中文提示要求通过删除合并请求撤回，避免只删平台副本。
+向量索引是可选缓存，`Engine.SetVectorDeindexer` 提供窄回调；向量分支合并后
+在回调里调用已有的 Qdrant 删除接口，检索融合层不改。

@@ -55,6 +55,9 @@ type Engine struct {
 	gitWrite         func(context.Context, string, string, string, gitsync.WriteOptions) (gitsync.WriteResult, error)
 	gitMergeProbe    func(context.Context, string, string, string, string) (bool, error)
 	hostingClientFor func(hosting.Repo, string) *hosting.Client
+	// vectorDeindexer 是可选向量索引的去索引钩子。向量分支合并后由
+	// VectorRuntime 装上；本分支没有向量运行时，保持 nil 即不执行。
+	vectorDeindexer func(context.Context, string, string) error
 }
 
 var _ knowledge.Upstream = (*Engine)(nil)
@@ -216,6 +219,54 @@ func (e *Engine) WriteDocument(_ context.Context, source, path, content string) 
 		return knowledge.WriteResult{}, err
 	}
 	return knowledge.WriteResult{Source: source, Path: docPath, Commit: version}, nil
+}
+
+// SetVectorDeindexer installs the optional vector-index hook used by
+// retraction. It is kept as a narrow callback so retraction never imports or
+// changes the retrieval/fusion path.
+func (e *Engine) SetVectorDeindexer(hook func(context.Context, string, string) error) {
+	e.vectorDeindexer = hook
+}
+
+// RetractDocument removes one published hosted document from the content
+// plane: body, revisions and chunks. The keyword index disappears with the
+// chunks; an optional vector runtime is asked to remove its points through the
+// same hook used for incremental indexing. Git sources are rejected because
+// deleting the platform copy would not delete the repository fact source.
+func (e *Engine) RetractDocument(ctx context.Context, source, path string) error {
+	source = strings.TrimSpace(source)
+	docPath, ok := knowledge.NormalizeDocPath(path)
+	if !ok {
+		return errors.New("撤回路径必须是仓库内的 .md 相对路径")
+	}
+	src, found := e.control.KnowledgeSource(source)
+	if !found {
+		return fmt.Errorf("来源 %s 不存在", source)
+	}
+	if src.Kind != "hosted" {
+		return errors.New("Git 来源的知识请通过删除合并请求撤回")
+	}
+	deleter, ok := e.content.(interface {
+		DeleteKnowledgeDocument(sourceID, path string) error
+	})
+	if !ok {
+		return errors.New("知识库内容存储不支持撤回")
+	}
+	if err := deleter.DeleteKnowledgeDocument(source, docPath); err != nil {
+		return err
+	}
+	src.DocCount = len(e.content.KnowledgeDocuments(source))
+	if err := e.control.PutKnowledgeSource(src); err != nil {
+		return err
+	}
+	if e.vectorDeindexer != nil {
+		if err := e.vectorDeindexer(ctx, source, docPath); err != nil {
+			// Vectors are a cache. The rows are already gone; report the failure
+			// so the caller can retry the deindex without reviving the document.
+			return fmt.Errorf("删除向量索引失败：%w", err)
+		}
+	}
+	return nil
 }
 
 // buildChunks 从正文行切出索引块。frontmatter 行被置空但保留行数，使块的
