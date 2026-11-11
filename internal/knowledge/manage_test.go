@@ -204,16 +204,21 @@ func (u *deadlineSearchUpstream) Search(ctx context.Context, query string, sourc
 }
 
 func TestTrialSearchCallsUpstreamWithTimeout(t *testing.T) {
-	svc, _ := newManagedTestService(t)
-	if _, err := svc.EnsureHostedBase("proj-trial"); err != nil {
+	svc, store := newManagedTestService(t)
+	base, err := svc.EnsureHostedBase("proj-trial")
+	if err != nil {
 		t.Fatal(err)
+	}
+	sources := store.KnowledgeSources(base.ID)
+	if len(sources) != 1 {
+		t.Fatalf("hosted sources = %+v", sources)
 	}
 	out, err := svc.TrialSearch(context.Background(), &deadlineSearchUpstream{}, "proj-trial", "检索", nil)
 	if err != nil {
 		t.Fatalf("trial search failed: %v", err)
 	}
-	if len(out.Sources) != 1 || out.Sources[0] != hostedSourceID("proj-trial") {
-		t.Fatalf("trial sources = %v", out.Sources)
+	if len(out.Sources) != 1 || out.Sources[0] != sources[0].ID {
+		t.Fatalf("trial sources = %v, want %s", out.Sources, sources[0].ID)
 	}
 }
 
