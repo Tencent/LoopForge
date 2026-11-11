@@ -546,11 +546,10 @@ export function useChat() {
     },
     [sponsored, sponsoredModels, executorModels],
   );
-  useEffect(() => {
-    if (!ready) return;
-    // Credential flags are omitted when false, so drop the old ones before
-    // merging; otherwise a cleared key would still look configured.
-    const refresh = () =>
+  // Credential flags are omitted when false, so drop the old ones before
+  // merging; otherwise a cleared key would still look configured.
+  const refreshUser = useCallback(
+    () =>
       api("/api/users")
         .then((rows) => {
           setUsers(rows || []);
@@ -569,22 +568,26 @@ export function useChat() {
             return hint && fresh?.[`${hint.field}Configured`] ? "" : old;
           });
         })
-        .catch(() => {});
+        .catch(() => {}),
+    [],
+  );
+  useEffect(() => {
+    if (!ready) return;
     const onMessage = (e) => {
       if (
         e.source === window.parent &&
         e.origin === location.origin &&
         e.data?.type === "agentflow-credentials-changed"
       )
-        void refresh();
+        void refreshUser();
     };
     window.addEventListener("message", onMessage);
-    if (missingKey) window.addEventListener("focus", refresh);
+    if (missingKey) window.addEventListener("focus", refreshUser);
     return () => {
       window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", refreshUser);
     };
-  }, [ready, missingKey]);
+  }, [ready, missingKey, refreshUser]);
   useEffect(() => writeQueues(queues), [queues]);
   useEffect(() => {
     const s = steeringRef.current;
@@ -1078,6 +1081,7 @@ export function useChat() {
   }
   return {
     user,
+    refreshUser,
     users,
     issueId: session?.issueId || (!activeId ? draftIssueId : ""),
     linkIssue,

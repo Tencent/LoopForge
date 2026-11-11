@@ -771,6 +771,7 @@ export default function QuickAccessWizard({
   sponsoredModels = [],
   onClose,
   onCompleted,
+  onCredentialsSaved,
   onOpenView,
 }) {
   const [step, setStep] = useState(0);
@@ -1200,6 +1201,7 @@ export default function QuickAccessWizard({
     setGitToken("");
     setCodeBuddyApiKey("");
     setCodeBuddyEnvChoice(null);
+    void onCredentialsSaved?.();
     window.parent !== window &&
       window.parent.postMessage(
         { type: "agentflow-credentials-changed" },
