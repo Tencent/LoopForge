@@ -87,31 +87,31 @@ func TestKeywordIndexDropsFragmentOnlyMatches(t *testing.T) {
 // 整批按空处理；真实命中则只保留分数接近第一名的候选。
 func TestRelevanceGateUsesCandidateDistribution(t *testing.T) {
 	weak := []*rerankCandidate{
-		{score: 0.11, termCoverage: 0.10},
-		{score: 0.105, termCoverage: 0.10},
-		{score: 0.10, termCoverage: 0.10},
-		{score: 0.095, termCoverage: 0.10},
+		{score: 0.11, termCoverage: 0.10, queryCoverage: 0.10},
+		{score: 0.105, termCoverage: 0.10, queryCoverage: 0.10},
+		{score: 0.10, termCoverage: 0.10, queryCoverage: 0.10},
+		{score: 0.095, termCoverage: 0.10, queryCoverage: 0.10},
 	}
 	if got := relevantCandidates(weak); len(got) != 0 {
 		t.Fatalf("弱匹配批次应清空，got %d", len(got))
 	}
 
 	strong := []*rerankCandidate{
-		{score: 1.0, termCoverage: 0.6},
-		{score: 0.01, termCoverage: 0.1},
-		{score: 0.005, termCoverage: 0.1},
-		{score: 0.001, termCoverage: 0.1},
+		{score: 1.0, termCoverage: 0.6, queryCoverage: 0.6},
+		{score: 0.01, termCoverage: 0.1, queryCoverage: 0.1},
+		{score: 0.005, termCoverage: 0.1, queryCoverage: 0.1},
+		{score: 0.001, termCoverage: 0.1, queryCoverage: 0.1},
 	}
 	got := relevantCandidates(strong)
 	if len(got) != 1 || got[0] != strong[0] {
 		t.Fatalf("只应保留明显领先的第一名：%+v", got)
 	}
 
-	single := []*rerankCandidate{{score: 0.2, termCoverage: 1}}
+	single := []*rerankCandidate{{score: 0.2, termCoverage: 1, queryCoverage: 1}}
 	if got := relevantCandidates(single); len(got) != 1 {
 		t.Fatalf("单候选真实命中不应被门槛丢掉：%+v", got)
 	}
-	noCoverage := []*rerankCandidate{{score: 1, termCoverage: 0}, {score: 0.5, termCoverage: 0}}
+	noCoverage := []*rerankCandidate{{score: 1, termCoverage: 0, queryCoverage: 0}, {score: 0.5, termCoverage: 0, queryCoverage: 0}}
 	if got := relevantCandidates(noCoverage); len(got) != 0 {
 		t.Fatalf("没有任何查询词覆盖时应清空：%+v", got)
 	}

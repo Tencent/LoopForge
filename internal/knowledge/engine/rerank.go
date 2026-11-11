@@ -43,6 +43,10 @@ const (
 	// relevanceStrongCoverage 是“查询词大部分都在块内”的覆盖度；达到
 	// 这个比例时不再要求分数显著高于中位数。
 	relevanceStrongCoverage = 0.5
+	// Coverage includes absent terms; this is a ratio, not a corpus score cutoff.
+	relevanceMinQueryCoverage = 0.2
+	intentCoverageWeight      = 3.0
+	intentIdentifierWeight    = 3.0
 	// termCoverageWeight 把查询词在正文里的覆盖度并入重排分。标题/小节
 	// 没命中时，正文覆盖更多查询词的块应排在只命中一个常见片段的块前。
 	termCoverageWeight = 0.5
@@ -74,6 +78,8 @@ type rerankCandidate struct {
 	identifierCoverage float64
 	termCoverage       float64
 	phraseHit          bool
+	intentCoverage     float64
+	queryCoverage      float64
 
 	score float64
 }
@@ -90,6 +96,8 @@ type candidateKey struct {
 // 标识符精确出现和导航页降权重新排序。strongIDs 只用于过滤精确通道：
 // ngram BOOLEAN 查询仍会把片段相近的块带进来，必须再要求完整标识符出现。
 func rerank(query string, nl, exact []domain.KnowledgeChunkMatch, strongIDs []string, limit int) []Hit {
+	conversational := IsConversationalQuery(query)
+	query = normalizeSearchQuery(query)
 	candidates := make(map[candidateKey]*rerankCandidate, len(nl)+len(exact))
 	ordered := make([]*rerankCandidate, 0, len(nl)+len(exact))
 
@@ -121,13 +129,19 @@ func rerank(query string, nl, exact []domain.KnowledgeChunkMatch, strongIDs []st
 
 	terms, latin := queryTerms(query)
 	applyMetadataCoverage(ordered, terms)
-	applyIdentifierCoverage(ordered, latin)
+	applyIdentifierCoverage(ordered, latin, conversational)
 	phrase := exactPhrase(query)
 	coverageTerms := append(append([]string(nil), terms...), latin...)
 	applyTermCoverage(ordered, coverageTerms, phrase)
+	if conversational {
+		applyIntentCoverage(ordered, query)
+	}
 
 	for _, c := range ordered {
 		c.score = c.rerankScore()
+		if c.intentCoverage > 0 {
+			c.score += intentIdentifierWeight * c.intentCoverage * c.identifierCoverage
+		}
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		if ordered[i].score != ordered[j].score {
@@ -180,7 +194,7 @@ func (c *rerankCandidate) rerankScore() float64 {
 	if c.boolRank >= 0 {
 		base += booleanChannelWeight * (rrfK + 1) / (rrfK + float64(c.boolRank+1))
 	}
-	score := base * (1 + titleHitWeight*c.titleCoverage + headingHitWeight*c.headingCoverage + identifierHitWeight*c.identifierCoverage + termCoverageWeight*c.termCoverage)
+	score := base * (1 + titleHitWeight*c.titleCoverage + headingHitWeight*c.headingCoverage + identifierHitWeight*c.identifierCoverage + termCoverageWeight*c.termCoverage + intentCoverageWeight*c.intentCoverage)
 	if c.phraseHit {
 		score *= phraseHitWeight
 	}
@@ -415,6 +429,7 @@ func applyTermCoverage(candidates []*rerankCandidate, terms []string, phrase str
 	n := float64(len(candidates))
 	weights := make(map[string]float64, len(terms))
 	total := 0.0
+	presentTotal := 0.0
 	for _, term := range terms {
 		df := 0
 		for _, c := range candidates {
@@ -422,14 +437,12 @@ func applyTermCoverage(candidates []*rerankCandidate, terms []string, phrase str
 				df++
 			}
 		}
-		if df == 0 {
-			// 所有候选里都没有这个词，说明它只是问句残片或语料未收录；
-			// 不把它放进分母，避免把真实命中的覆盖度整体压低。
-			continue
-		}
 		weight := termWeight(term) * math.Log(1+n/float64(1+df))
 		weights[term] = weight
 		total += weight
+		if df > 0 {
+			presentTotal += weight
+		}
 	}
 	if total == 0 {
 		return
@@ -442,7 +455,12 @@ func applyTermCoverage(candidates []*rerankCandidate, terms []string, phrase str
 				hit += weight
 			}
 		}
-		c.termCoverage = hit / total
+		// Keep missing content terms in the gate denominator. The present-term
+		// ratio remains the ranking signal for short phrases and synonyms.
+		c.queryCoverage = hit / total
+		if presentTotal > 0 {
+			c.termCoverage = hit / presentTotal
+		}
 		if len([]rune(phrase)) >= 3 && (strings.Contains(c.titleLower, phrase) || strings.Contains(c.headingLower, phrase) || strings.Contains(c.bodyLower, phrase)) {
 			c.phraseHit = true
 		}
@@ -453,11 +471,44 @@ func containsTerm(c *rerankCandidate, term string) bool {
 	return strings.Contains(c.titleLower, term) || strings.Contains(c.headingLower, term) || strings.Contains(c.bodyLower, term)
 }
 
+// Latin query terms match whole identifier components: ENV must not match
+// environment, while DSN still matches AGENTFLOW_MYSQL_DSN.
+func containsQueryTerm(text, term string) bool {
+	if term == "" {
+		return false
+	}
+	if term[0] < 'a' || term[0] > 'z' {
+		return strings.Contains(text, term)
+	}
+	for offset := 0; offset < len(text); {
+		i := strings.Index(text[offset:], term)
+		if i < 0 {
+			return false
+		}
+		i += offset
+		end := i + len(term)
+		word := func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' }
+		if (i == 0 || !word(text[i-1])) && (end == len(text) || !word(text[end])) {
+			return true
+		}
+		offset = i + 1
+	}
+	return false
+}
+
 // relevantCandidates 按候选分数分布做相对门槛：第一名没有明显高于候选
 // 池中位数、并且查询词覆盖度也不高时，说明只是弱片段命中，整批返回空；
 // 否则只保留分数接近第一名的候选，不为了凑数保留长尾。
 func relevantCandidates(ordered []*rerankCandidate) []*rerankCandidate {
 	if len(ordered) == 0 {
+		return nil
+	}
+	maxCoverage := 0.0
+	for _, c := range ordered {
+		maxCoverage = math.Max(maxCoverage, math.Max(c.queryCoverage, c.intentCoverage))
+	}
+	// A score outlier cannot rescue a query whose content words are absent.
+	if maxCoverage < relevanceMinQueryCoverage {
 		return nil
 	}
 	top := ordered[0]
@@ -517,14 +568,18 @@ func medianAbsoluteDeviation(scores []float64, median float64) float64 {
 
 // applyIdentifierCoverage 统计查询里的英文标识符有多少在块内完整出现。
 // 这是对已召回候选的加权，不会扩大召回范围。
-func applyIdentifierCoverage(candidates []*rerankCandidate, tokens []string) {
+func applyIdentifierCoverage(candidates []*rerankCandidate, tokens []string, wholeComponents bool) {
 	if len(tokens) == 0 {
 		return
 	}
 	for _, c := range candidates {
 		hit := 0
 		for _, token := range tokens {
-			if strings.Contains(c.titleLower, token) || strings.Contains(c.headingLower, token) || strings.Contains(c.bodyLower, token) {
+			matched := containsTerm(c, token)
+			if wholeComponents {
+				matched = containsQueryTerm(c.titleLower, token) || containsQueryTerm(c.headingLower, token) || containsQueryTerm(c.bodyLower, token)
+			}
+			if matched {
 				hit++
 			}
 		}
@@ -564,4 +619,65 @@ func navigationPage(path, text string) bool {
 	links := strings.Count(text, "](")
 	runes := utf8.RuneCountInString(text)
 	return links >= 8 && links*20 >= runes
+}
+
+// applyIntentCoverage preserves content phrases after removing question language
+// and function words. Existing query expansions are alternatives for a phrase,
+// but a compound phrase requires all its translated concepts, not just ENV.
+func applyIntentCoverage(candidates []*rerankCandidate, query string) {
+	clean := stripPhrases(query, questionPhrases)
+	parts := strings.FieldsFunc(clean, func(r rune) bool { return !unicode.Is(unicode.Han, r) || functionRunes[r] })
+	var phrases []string
+	for _, p := range parts {
+		if utf8.RuneCountInString(p) >= 3 {
+			phrases = append(phrases, p)
+		}
+	}
+	if len(phrases) == 0 {
+		return
+	}
+	weights := make([]float64, len(phrases))
+	matches := make([][]bool, len(candidates))
+	for i := range matches {
+		matches[i] = make([]bool, len(phrases))
+	}
+	total := 0.0
+	for j, p := range phrases {
+		df := 0
+		for i, c := range candidates {
+			match := containsTerm(c, p)
+			if !match {
+				covered := p
+				all := true
+				count := 0
+				for term, aliases := range queryExpansions {
+					if strings.Contains(p, term) {
+						count++
+						found := false
+						for _, a := range aliases {
+							if (containsQueryTerm(c.titleLower, strings.ToLower(a)) || containsQueryTerm(c.headingLower, strings.ToLower(a)) || containsQueryTerm(c.bodyLower, strings.ToLower(a))) || containsTerm(c, term) {
+								found = true
+							}
+						}
+						all = all && found
+						covered = strings.ReplaceAll(covered, term, "")
+					}
+				}
+				match = count > 0 && covered == "" && all
+			}
+			matches[i][j] = match
+			if match {
+				df++
+			}
+		}
+		weights[j] = math.Log(1 + float64(len(candidates))/float64(1+df))
+		total += weights[j]
+	}
+	for i, c := range candidates {
+		for j, w := range weights {
+			if matches[i][j] {
+				c.intentCoverage += w / total
+			}
+		}
+	}
 }

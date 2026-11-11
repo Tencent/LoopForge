@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -222,5 +223,39 @@ func TestStrongIdentifiers(t *testing.T) {
 		if got := isStrongIdentifier(token); got != want {
 			t.Fatalf("isStrongIdentifier(%q) = %v, want %v", token, got, want)
 		}
+	}
+}
+
+// Common fragments must not hide the missing content words in a long query.
+func TestKeywordRejectsUncoveredContentWords(t *testing.T) {
+	q := &rankingQuerier{nl: []domain.KnowledgeChunkMatch{
+		chunkMatch("api.md", "API 规范", "接口规范", "运行编排接口规范。"),
+		chunkMatch("registry.md", "注册规范", "规范", "注册接口规范。"),
+		chunkMatch("guide.md", "开发指南", "规范", "开发规范与约定。"),
+		chunkMatch("test.md", "测试", "约定", "遵循测试规范。"),
+	}}
+	hits, err := NewMySQLKeywordIndex(q).Search(context.Background(), "量子纠缠香蕉皮运输规范", []string{"s"}, SearchOptions{Limit: 10})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("uncovered query must be empty: %v %v", paths(hits), err)
+	}
+}
+
+func TestKeywordQuestionContentBeatsGenericEnvironment(t *testing.T) {
+	// Deployment is retrieved only by the identifier channel, below generic
+	// environment documents. Matching two channels must not outweigh intent.
+	bot := chunkMatch("bot.md", "Main Bot 流程交接与交付验收", "Main Bot 流程交接与交付验收", "操作返回 job 仅表示受理。Bot 应提交简短回复后结束本轮，后台在回复和工作区保存结束后执行。不要在同一轮等待该 job 完成。当前用户消息、发起人和 generation 由会话网关绑定，模型不能通过参数伪造。取消、替换或未完成的回复不能推进流程；显式重试绑定新的用户消息。无人值守定时任务不能调用这三个控制写工具。\n\n验收凭据保存在 run 的 `workflowSnapshot.groupCompletion`，包含发起人、依据、来源会话/generation/消息序号和时间；需求操作历史也记录发起人及依据。验收不会将未运行的测试改成通过，也不表示已合并 MR。\n\n部署前可手动执行 `migrations/017_bot_sop_controls.sql`，为原交接任务表添加操作类型和消息来源字段。脚本不创建任务、不改历史数据；已由 AutoMigrate 补齐列的环境不必重复执行。\n\n回归测试默认使用内存测试库；设置 `AGENTFLOW_BOT_SOP_TEST_MYSQL_DSN` 可在专用本地 Docker MySQL 上验证完整工具调用、事务闭环、重复请求、取消后的显式重试和交接时序。该测试只接受 `127.0.0.1` 和 `agentflow_handoff_jobs_test_` 前缀的临时数据库，不需要生产凭据或模型调用。")
+	deployment := chunkMatch("docs/deployment.md", "Deployment", "Native development", "Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.\n\nUse `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Apply existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.\n\n## Container installation")
+	q := &rankingQuerier{boolHits: []domain.KnowledgeChunkMatch{bot}}
+	for i := 0; i < 17; i++ {
+		q.nl = append(q.nl, chunkMatch(fmt.Sprintf("nl-%d.md", i), "环境", "", strings.Repeat("选择适合的环境。", 40)))
+	}
+	q.nl = append(q.nl, bot)
+	for i := 0; i < 10; i++ {
+		q.boolHits = append(q.boolHits, chunkMatch(fmt.Sprintf("generic-%d.md", i), "Environment", "", strings.Repeat("环境选择只影响客户端。ENV configuration.", 40)))
+	}
+	q.boolHits = append(q.boolHits, deployment)
+	hits, err := NewMySQLKeywordIndex(q).Search(context.Background(), "数据库连接串的环境变量叫什么", []string{"s"}, SearchOptions{Limit: 10})
+	if err != nil || len(hits) == 0 || hits[0].Path != "docs/deployment.md" {
+		t.Fatalf("content words must rank deployment first: %v %v", paths(hits), err)
 	}
 }
