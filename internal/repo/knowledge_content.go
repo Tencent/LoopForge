@@ -128,6 +128,24 @@ func (r *KnowledgeContentRepo) DeleteKnowledgeSourceContent(sourceID string) err
 	})
 }
 
+// DeleteKnowledgeDocument 撤回一篇托管文档：正文、修订历史和索引块一起删，
+// 检索与读原文随即失效。方法幂等，路径已不存在时也返回成功。
+func (r *KnowledgeContentRepo) DeleteKnowledgeDocument(sourceID, path string) error {
+	sourceID, path = strings.TrimSpace(sourceID), strings.TrimSpace(path)
+	if sourceID == "" || path == "" {
+		return nil
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("source_id = ? AND path = ?", sourceID, path).Delete(&knowledgeChunkRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_id = ? AND path = ?", sourceID, path).Delete(&knowledgeRevisionRow{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("source_id = ? AND path = ?", sourceID, path).Delete(&knowledgeDocumentRow{}).Error
+	})
+}
+
 // ReplaceKnowledgeChunks 用新的索引块整体替换某篇文档的块，覆盖后旧正文不再命中。
 func (r *KnowledgeContentRepo) ReplaceKnowledgeChunks(sourceID, path string, chunks []domain.KnowledgeChunk) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {

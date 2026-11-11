@@ -21,7 +21,55 @@ const (
 	KnowledgeSubmissionPending   = "pending"
 	KnowledgeSubmissionPublished = "published"
 	KnowledgeSubmissionRejected  = "rejected"
+	KnowledgeSubmissionRetracted = "retracted"
 )
+
+// 自动沉淀的发布模式，配置在知识库上。默认人工审核；auto 只在门禁全过时
+// 自动走已有的写回路径。
+const (
+	KnowledgeSedimentReview = "review"
+	KnowledgeSedimentAuto   = "auto"
+)
+
+// 触发自动沉淀的闭环事件。LoopForge 运行、合并请求、需求和人工关卡的实际
+// 事件各对应一个取值；多个事件同时成立时全部记录。
+const (
+	KnowledgeSignalRunSucceeded   = "run_succeeded"
+	KnowledgeSignalMRMerged       = "mr_merged"
+	KnowledgeSignalIssueCompleted = "issue_completed"
+	KnowledgeSignalGateApproved   = "gate_approved"
+)
+
+// KnowledgeGateRule 是敏感内容过滤的可配置规则。Pattern 是 Go 正则；
+// 内置规则在没配置时生效，配置后以知识库上的规则集为准。
+type KnowledgeGateRule struct {
+	Name    string `json:"name"`
+	Pattern string `json:"pattern"`
+	Enabled bool   `json:"enabled"`
+}
+
+// KnowledgeGateCheck 是一项门禁结果，逐项保存在审核条目上供审核页展示。
+type KnowledgeGateCheck struct {
+	Key    string `json:"key"`
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// KnowledgeTombstone 记录一次撤回。同项目内相同内容指纹再次沉淀时被门禁
+// 拦截；墓碑只存指纹和出处元数据，不保存正文。
+type KnowledgeTombstone struct {
+	ProjectID    string    `json:"projectId"`
+	Fingerprint  string    `json:"fingerprint"`
+	BaseID       string    `json:"baseId,omitempty"`
+	SourceID     string    `json:"sourceId,omitempty"`
+	Path         string    `json:"path,omitempty"`
+	SubmissionID string    `json:"submissionId,omitempty"`
+	Title        string    `json:"title,omitempty"`
+	Reason       string    `json:"reason,omitempty"`
+	CreatedBy    string    `json:"createdBy,omitempty"`
+	CreatedAt    time.Time `json:"createdAt,omitempty"`
+}
 
 // Git 写回的生命周期。审核条目发布成功即进入 published；写回记录另行
 // 跟踪分支与合并请求，合并后由同步器把新文档纳入索引。
@@ -53,18 +101,24 @@ type KnowledgeSubmission struct {
 	Error      string `json:"error,omitempty"`
 	// Git 来源写回的管理视图。读取时由 knowledge_writebacks 覆盖，避免
 	// 审核条目里的历史快照与合并状态不一致。
-	Branch      string    `json:"branch,omitempty"`
-	MRURL       string    `json:"mrUrl,omitempty"`
-	MRProvider  string    `json:"mrProvider,omitempty"`
-	MRStatus    string    `json:"mrStatus,omitempty"`
-	WriteNote   string    `json:"writeNote,omitempty"`
-	WriteError  string    `json:"writeError,omitempty"`
-	ReviewNote  string    `json:"reviewNote,omitempty"`
-	CreatedBy   string    `json:"createdBy,omitempty"`
-	ReviewedBy  string    `json:"reviewedBy,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	PublishedAt time.Time `json:"publishedAt,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	MRURL      string `json:"mrUrl,omitempty"`
+	MRProvider string `json:"mrProvider,omitempty"`
+	MRStatus   string `json:"mrStatus,omitempty"`
+	WriteNote  string `json:"writeNote,omitempty"`
+	WriteError string `json:"writeError,omitempty"`
+	// 自动沉淀的门禁快照。Fingerprint 是正文（不含 frontmatter）归一化后的
+	// SHA-256；Signals 记录入队时的闭环事件；GateChecks 逐项保留结果。
+	Fingerprint     string               `json:"fingerprint,omitempty"`
+	SedimentSignals []string             `json:"sedimentSignals,omitempty"`
+	GateChecks      []KnowledgeGateCheck `json:"gateChecks,omitempty"`
+	RetractedAt     *time.Time           `json:"retractedAt,omitempty"`
+	ReviewNote      string               `json:"reviewNote,omitempty"`
+	CreatedBy       string               `json:"createdBy,omitempty"`
+	ReviewedBy      string               `json:"reviewedBy,omitempty"`
+	CreatedAt       time.Time            `json:"createdAt"`
+	UpdatedAt       time.Time            `json:"updatedAt"`
+	PublishedAt     time.Time            `json:"publishedAt,omitempty"`
 }
 
 // KnowledgeWriteback 是一次 Git 来源写回。分支和提交是推送结果，合并请求
@@ -108,13 +162,18 @@ type KnowledgeCandidate struct {
 // KnowledgeBase 是一个知识库。切片只写 Layer="project" 的项目层库；
 // ProjectID 为空留给以后的公共/平台库，不参与 (project_id, layer) 唯一约束。
 type KnowledgeBase struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"projectId,omitempty"`
-	Name        string    `json:"name"`
-	Layer       string    `json:"layer"`
-	OwnerUserID int64     `json:"ownerUserId,omitempty"`
-	CreatedAt   time.Time `json:"createdAt,omitempty"`
-	UpdatedAt   time.Time `json:"updatedAt,omitempty"`
+	ID          string `json:"id"`
+	ProjectID   string `json:"projectId,omitempty"`
+	Name        string `json:"name"`
+	Layer       string `json:"layer"`
+	OwnerUserID int64  `json:"ownerUserId,omitempty"`
+	// SedimentPublishMode 为空按人工审核处理；auto 表示门禁全过后自动写回。
+	SedimentPublishMode string `json:"sedimentPublishMode,omitempty"`
+	// SedimentRules 是敏感内容过滤规则集。nil 表示使用内置默认规则；非 nil
+	//（包括空数组）表示该知识库显式配置的规则集。
+	SedimentRules []KnowledgeGateRule `json:"sedimentRules,omitempty"`
+	CreatedAt     time.Time           `json:"createdAt,omitempty"`
+	UpdatedAt     time.Time           `json:"updatedAt,omitempty"`
 }
 
 // KnowledgeSource 是一个知识来源。Kind 为 hosted 或 git。托管库用

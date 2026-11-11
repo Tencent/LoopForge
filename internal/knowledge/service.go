@@ -257,7 +257,7 @@ type SubmissionInput struct {
 // front matter supplies defaults) or from raw content.
 func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeSubmission, error) {
 	item := domain.KnowledgeSubmission{
-		ID: "kbs-" + s.newID(), ProjectID: strings.TrimSpace(input.ProjectID),
+		ID: "kbs-" + s.itemID(), ProjectID: strings.TrimSpace(input.ProjectID),
 		Status: domain.KnowledgeSubmissionPending, CreatedBy: actor,
 	}
 	content := input.Content
@@ -342,6 +342,10 @@ func (s *Service) Reject(id, note, actor string) (domain.KnowledgeSubmission, er
 // within the item's project scope; upstream failures are recorded on the item.
 func (s *Service) Publish(ctx context.Context, id, actor string) (domain.KnowledgeSubmission, error) {
 	item, err := s.mutable(id, "该条目已写回知识库")
+	if err != nil {
+		return item, err
+	}
+	item, err = s.checkPublishGates(item)
 	if err != nil {
 		return item, err
 	}
@@ -433,6 +437,9 @@ func (s *Service) mutable(id, publishedMessage string) (domain.KnowledgeSubmissi
 	}
 	if item.Status == domain.KnowledgeSubmissionPublished {
 		return item, apperr.New(apperr.Conflict, publishedMessage)
+	}
+	if item.Status == domain.KnowledgeSubmissionRetracted {
+		return item, apperr.New(apperr.Conflict, "已撤回的条目不能再修改")
 	}
 	return item, nil
 }

@@ -232,8 +232,21 @@ func (r *KnowledgeRepo) PutKnowledgeBase(base domain.KnowledgeBase) error {
 	if created.IsZero() {
 		created = now
 	}
+	mode := strings.TrimSpace(base.SedimentPublishMode)
+	if mode == "" {
+		mode = domain.KnowledgeSedimentReview
+	}
+	var rules []byte
+	if base.SedimentRules != nil {
+		encoded, err := json.Marshal(base.SedimentRules)
+		if err != nil {
+			return err
+		}
+		rules = encoded
+	}
 	row := knowledgeBaseRow{
 		ID: base.ID, Name: base.Name, Layer: base.Layer, OwnerUserID: base.OwnerUserID,
+		SedimentPublishMode: mode, SedimentRules: rules,
 		Created: &created, Updated: &now,
 	}
 	if base.ProjectID != "" {
@@ -242,7 +255,7 @@ func (r *KnowledgeRepo) PutKnowledgeBase(base domain.KnowledgeBase) error {
 	}
 	return r.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"project_id", "name", "layer", "owner_user_id", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"project_id", "name", "layer", "owner_user_id", "sediment_publish_mode", "sediment_rules", "updated_at"}),
 	}).Create(&row).Error
 }
 
@@ -271,9 +284,17 @@ func (r *KnowledgeRepo) KnowledgeBases(projectID string) []domain.KnowledgeBase 
 }
 
 func knowledgeBaseFromRow(row knowledgeBaseRow) domain.KnowledgeBase {
-	out := domain.KnowledgeBase{ID: row.ID, Name: row.Name, Layer: row.Layer, OwnerUserID: row.OwnerUserID}
+	out := domain.KnowledgeBase{
+		ID: row.ID, Name: row.Name, Layer: row.Layer, OwnerUserID: row.OwnerUserID,
+		SedimentPublishMode: row.SedimentPublishMode,
+	}
 	if row.ProjectID != nil {
 		out.ProjectID = *row.ProjectID
+	}
+	if len(row.SedimentRules) > 0 {
+		if err := json.Unmarshal(row.SedimentRules, &out.SedimentRules); err != nil {
+			out.SedimentRules = nil
+		}
 	}
 	if row.Created != nil {
 		out.CreatedAt = *row.Created
@@ -398,4 +419,72 @@ func (r *KnowledgeRepo) SetKnowledgeSourceCredential(id, ciphertext string) erro
 // DeleteKnowledgeBinding is idempotent; unloading never deletes shared content.
 func (r *KnowledgeRepo) DeleteKnowledgeBinding(projectID, baseID string) error {
 	return r.DB.Where("project_id = ? AND base_id = ?", projectID, baseID).Delete(&knowledgeBindingRow{}).Error
+}
+
+// ---------- 撤回墓碑（控制面） ----------
+
+// KnowledgeTombstone 按项目加内容指纹读取一条墓碑。指纹相同即视为同内容，
+// 不再区分来源和路径。
+func (r *KnowledgeRepo) KnowledgeTombstone(projectID, fingerprint string) (domain.KnowledgeTombstone, bool) {
+	projectID, fingerprint = strings.TrimSpace(projectID), strings.TrimSpace(fingerprint)
+	if projectID == "" || fingerprint == "" {
+		return domain.KnowledgeTombstone{}, false
+	}
+	var row knowledgeTombstoneRow
+	if err := r.DB.Where("project_id = ? AND fingerprint = ?", projectID, fingerprint).Take(&row).Error; err != nil {
+		return domain.KnowledgeTombstone{}, false
+	}
+	return knowledgeTombstoneFromRow(row), true
+}
+
+// PutKnowledgeTombstone upserts a tombstone; retracting the same content twice
+// keeps one row.
+func (r *KnowledgeRepo) PutKnowledgeTombstone(item domain.KnowledgeTombstone) error {
+	now := time.Now().UTC()
+	created := item.CreatedAt
+	if created.IsZero() {
+		created = now
+	}
+	row := knowledgeTombstoneRow{
+		ProjectID: item.ProjectID, Fingerprint: item.Fingerprint,
+		BaseID: item.BaseID, SourceID: item.SourceID, Path: item.Path,
+		SubmissionID: item.SubmissionID, Title: clipActivity(item.Title, 512),
+		Reason: clipActivity(item.Reason, 255), CreatedBy: clipActivity(item.CreatedBy, 255),
+		Created: &created,
+	}
+	return r.DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "project_id"}, {Name: "fingerprint"}},
+		DoUpdates: clause.AssignmentColumns([]string{"base_id", "source_id", "path", "submission_id", "title", "reason", "created_by", "created_at"}),
+	}).Create(&row).Error
+}
+
+// KnowledgeTombstones lists a project's tombstones newest first. Empty project
+// lists every project; it is only used by background diagnostics.
+func (r *KnowledgeRepo) KnowledgeTombstones(projectID string) []domain.KnowledgeTombstone {
+	out := make([]domain.KnowledgeTombstone, 0)
+	q := r.DB.Model(&knowledgeTombstoneRow{})
+	if projectID = strings.TrimSpace(projectID); projectID != "" {
+		q = q.Where("project_id = ?", projectID)
+	}
+	var rows []knowledgeTombstoneRow
+	if err := q.Order("created_at DESC").Limit(500).Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, row := range rows {
+		out = append(out, knowledgeTombstoneFromRow(row))
+	}
+	return out
+}
+
+func knowledgeTombstoneFromRow(row knowledgeTombstoneRow) domain.KnowledgeTombstone {
+	out := domain.KnowledgeTombstone{
+		ProjectID: row.ProjectID, Fingerprint: row.Fingerprint,
+		BaseID: row.BaseID, SourceID: row.SourceID, Path: row.Path,
+		SubmissionID: row.SubmissionID, Title: row.Title,
+		Reason: row.Reason, CreatedBy: row.CreatedBy,
+	}
+	if row.Created != nil {
+		out.CreatedAt = *row.Created
+	}
+	return out
 }

@@ -100,14 +100,11 @@ func TestNormalizeDocPath(t *testing.T) {
 	}
 }
 
-func TestUsageRuleOnlyPromisesReadOnlyAccess(t *testing.T) {
+func TestUsageRuleExplainsReadOnlyAgentAndPlatformSediment(t *testing.T) {
 	rule := UsageRule()
-	if !strings.Contains(rule.Content, "只读检索本项目知识库") || !strings.Contains(rule.Content, "不要尝试写入") {
-		t.Fatalf("使用规范应说明只读检索本项目知识库: %q", rule.Content)
-	}
-	for _, stale := range []string{"knowledge.md", "沉淀审核", "写回知识库"} {
-		if strings.Contains(rule.Content, stale) {
-			t.Fatalf("使用规范不应再承诺写入路径 %q: %q", stale, rule.Content)
+	for _, want := range []string{"只读检索本项目知识库", "不要尝试写入", "knowledge.md", "自动加入审核队列"} {
+		if !strings.Contains(rule.Content, want) {
+			t.Fatalf("使用规范应说明只读边界与平台自动沉淀 %q: %q", want, rule.Content)
 		}
 	}
 }
