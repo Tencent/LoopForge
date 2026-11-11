@@ -59,7 +59,7 @@ test "${AGENTFLOW_GIT_HTTP_USER:-}" = oauth2 || exit 62
 case "$*" in *runner-test-secret*) exit 63 ;; esac
 case "$*" in *credential.https://gitlab.example.test.helper=*) ;; *) exit 64 ;; esac
 case "$*" in
-  *"clone --quiet --branch main -- https://gitlab.example.test/team/repo.git ."*)
+  *"clone --progress --branch main -- https://gitlab.example.test/team/repo.git ."*)
     printf 'clone rejected runner-test-secret\n' >&2; exit 65 ;;
   *"ls-remote --heads origin refs/heads/new-branch"*) exit 0 ;;
   *) exit 66 ;;

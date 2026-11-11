@@ -1224,7 +1224,6 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 		var cancel context.CancelFunc
 		cloneCtx, cancel = context.WithTimeout(ctx, watch.Timeout)
 		defer cancel()
-
 	}
 	if repo.RequireExistingWorkBranch {
 		return checkoutExistingRepositoryBranch(cloneCtx, workspace, repo)
@@ -1328,8 +1327,6 @@ func checkoutCreatedRepositoryBranch(ctx context.Context, workspace string, repo
 	return nil
 }
 
-// cloneOutput keeps a git failure short and strips the token before the text
-// can be stored on the task or shown in the run timeline.
 // runnerCloneWatch bounds a clone on the execution machine. The total keeps
 // the runner's long-standing 10 minute default, because a task checkout has no
 // other bound here; the stall window ends a hung transfer well before that.
@@ -1346,6 +1343,8 @@ func runnerCloneWatch(repo *domain.RunnerRepository) procwatch.Options {
 	}
 }
 
+// cloneOutput keeps a git failure short and strips the token before the text
+// can be stored on the task or shown in the run timeline.
 func cloneOutput(out []byte, token string) string {
 	detail := gitwork.Redact(strings.TrimSpace(string(out)), token)
 	if len(detail) > 300 {

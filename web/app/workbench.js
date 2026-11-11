@@ -465,10 +465,14 @@ async function verifyAndSaveGitToken(token){
 }
 async function refreshGitLabTokenStatus(){
   const user=state.currentUser;if(!user||user.isGuest)return;
+  const previous=state.gitLabTokenVerify;
+  const request={userId:user.id,result:Number(previous?.userId)===Number(user.id)?previous.result:null};
+  state.gitLabTokenVerify=request;
   let result;
   try{result=await api(`/api/users/${user.id}/gitlab-token/verify`,{silent:true})}
   catch(err){result={valid:false,error:err.message}}
-  if(Number(state.currentUser?.id)!==Number(user.id))return;
+  // A newer check or a credential save/delete invalidates this response.
+  if(Number(state.currentUser?.id)!==Number(user.id)||state.gitLabTokenVerify!==request)return;
   state.gitLabTokenVerify={userId:user.id,result};
   repaintCredentialRow('gitLabToken');
 }

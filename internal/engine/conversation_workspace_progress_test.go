@@ -124,3 +124,52 @@ func TestMaterializeConversationWorkspaceStopsAStalledClone(t *testing.T) {
 		t.Fatalf("failed event lacks git's last output: %+v", events)
 	}
 }
+
+func TestMaterializeGitLabWorkspaceKeepsCredentialsAndRedactsCloneProgress(t *testing.T) {
+	const token = "gitlab-progress-test-token"
+	t.Setenv(gitwork.CloneStallEnv, "2s")
+	installFakeClone(t, `    if [ "$AGENTFLOW_GIT_HTTP_USER" != oauth2 ] || [ "$AGENTFLOW_GIT_HTTP_PASSWORD" != gitlab-progress-test-token ]; then
+      echo 'wrong provider credential' >&2
+      exit 1
+    fi
+    printf 'GitLab authentication configured: %s\n' "$AGENTFLOW_GIT_HTTP_PASSWORD" >&2
+    exec sleep 60`)
+	e, run := putCloningWorkspace(t)
+	if err := e.repo.PutUser(domain.User{
+		LoginName: "gitlab-progress-owner", GitToken: "github-progress-test-token",
+		GitLabBaseURL: "https://git.example.invalid", GitLabToken: token,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	owner, ok := e.repo.UserByLoginName("gitlab-progress-owner")
+	if !ok {
+		t.Fatal("GitLab owner not saved")
+	}
+	run.ExecutionContext.ResponsibleUserID = owner.ID
+	run.Repositories[0].Provider = "gitlab"
+	if err := e.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := e.MaterializeConversationWorkspace(ctx, run.ID)
+	if err == nil || !strings.Contains(err.Error(), gitwork.CloneStallEnv) {
+		t.Fatalf("GitLab clone did not preserve stall handling: %v", err)
+	}
+	if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "github-progress-test-token") {
+		t.Fatal("clone error exposed a provider token")
+	}
+	events := runEvents(e, run.ID, "workspace.clone.")
+	progress := false
+	for _, event := range events {
+		if strings.Contains(event.Message, token) || strings.Contains(event.Message, "github-progress-test-token") {
+			t.Fatal("clone event exposed a provider token")
+		}
+		if event.Type == "workspace.clone.progress" && strings.Contains(event.Message, "GitLab authentication configured: ***") {
+			progress = true
+		}
+	}
+	if !progress || len(events) == 0 || events[len(events)-1].Type != "workspace.clone.failed" {
+		t.Fatalf("GitLab clone did not retain redacted progress and failure events: %+v", events)
+	}
+}
