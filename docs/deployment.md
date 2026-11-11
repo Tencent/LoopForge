@@ -17,6 +17,8 @@ Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFL
 
 A conversation workspace on a custom Dockerfile without Node.js, npm or Python 3 uses the platform's own copies. On first use the platform copies its Node.js, npm and a relocatable Python into `$LOOPFORGE_DATA_DIR/cli/toolchain/<build>/`, plus each bundled CLI (CodeBuddy, Codex, DeepSeek Harness) the first time a sandbox needs it, and mounts the directory read-only at the end of the sandbox `PATH`. Tools the image ships take precedence. Only glibc images of the platform's architecture use it; Alpine (musl) images need their own Node.js, npm and Python 3. A new platform build creates a new directory and leaves the previous ones in place: after an upgrade, delete the other `cli/toolchain/<build>/` directories (about 200 MB each plus the CLIs copied into them).
 
+WeCom notifications require `wecom-cli` on the platform service's PATH. The platform image built from this Dockerfile includes `@wecom/cli@1.3.4`; published images gain it with the next release. For a native installation, install it separately with `npm install --global @wecom/cli@1.3.4` and verify `wecom-cli --version` as the service user. Configuring a WeCom bot is still required to send notifications.
+
 Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
 
 Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Apply existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
