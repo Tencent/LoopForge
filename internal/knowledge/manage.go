@@ -254,6 +254,11 @@ func (s *Service) TrialSearch(ctx context.Context, up Upstream, projectID, query
 	if err != nil {
 		return TrialResult{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
 	}
+	rawHits := len(result.Results)
+	s.applyLifecycle(&result)
+	if rawHits == 0 {
+		_ = s.RecordGap(projectID, query)
+	}
 	s.rankOrigins(&result)
 	return TrialResult{Result: result, Sources: scoped, LatencyMs: time.Since(started).Milliseconds()}, nil
 }
@@ -477,6 +482,12 @@ func (s *Service) DeleteSource(projectID, sourceID string) error {
 	}
 	if err := ms.DeleteKnowledgeSourceContent(sourceID); err != nil {
 		return apperr.New(apperr.Upstream, "删除来源内容失败："+err.Error())
+	}
+	if cleaner, ok := s.store.(interface {
+		DeleteKnowledgeGovernanceSource(string) error
+	}); ok {
+		// 健康检查结果是派生数据；删除失败不阻断来源删除，下次扫描会重算。
+		_ = cleaner.DeleteKnowledgeGovernanceSource(sourceID)
 	}
 	if deleter, ok := ms.(interface {
 		DeleteKnowledgeWritebacksBySource(string) error

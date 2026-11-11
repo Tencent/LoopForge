@@ -24,6 +24,13 @@ const (
 	KnowledgeSubmissionRetracted = "retracted"
 )
 
+// 审核条目的处置动作。update 是默认写回；retract 表示治理面板发起的下线，
+// 审核通过后删除托管原文与索引并写墓碑，Git 来源仍要求从仓库撤回。
+const (
+	KnowledgeSubmissionActionUpdate  = "update"
+	KnowledgeSubmissionActionRetract = "retract"
+)
+
 // 自动沉淀的发布模式，配置在知识库上。默认人工审核；auto 只在门禁全过时
 // 自动走已有的写回路径。
 const (
@@ -112,6 +119,7 @@ type KnowledgeSubmission struct {
 	Fingerprint     string               `json:"fingerprint,omitempty"`
 	SedimentSignals []string             `json:"sedimentSignals,omitempty"`
 	GateChecks      []KnowledgeGateCheck `json:"gateChecks,omitempty"`
+	Action          string               `json:"action,omitempty"`
 	RetractedAt     *time.Time           `json:"retractedAt,omitempty"`
 	ReviewNote      string               `json:"reviewNote,omitempty"`
 	CreatedBy       string               `json:"createdBy,omitempty"`
@@ -243,18 +251,114 @@ type KnowledgeActivity struct {
 	LatencyMS int64     `json:"latencyMs"`
 }
 
+// 文档生命周期状态。frontmatter 的 status 在索引时归一化成这四个值；未知值
+// 保留原文，但检索只对 deprecated/archived 生效。
+const (
+	KnowledgeDocDraft      = "draft"
+	KnowledgeDocVerified   = "verified"
+	KnowledgeDocDeprecated = "deprecated"
+	KnowledgeDocArchived   = "archived"
+)
+
 // KnowledgeDocument 是含 frontmatter 的完整 Markdown 正文。出处版本对托管库
 // 是修订号的十进制字符串，对 Git 来源是 commit；两者都放在 Commit 字段。
+// Owner/Status/FrontmatterUpdated 是索引时从 frontmatter 解析出的治理元数据，
+// 没有 frontmatter 或字段缺失时保持零值，由健康检查报告缺失。
 type KnowledgeDocument struct {
-	SourceID  string    `json:"sourceId"`
-	Path      string    `json:"path"`
+	SourceID           string     `json:"sourceId"`
+	Path               string     `json:"path"`
+	Title              string     `json:"title,omitempty"`
+	Body               string     `json:"body"`
+	LineCount          int        `json:"lineCount,omitempty"`
+	SHA256             string     `json:"sha256,omitempty"`
+	Commit             string     `json:"commit,omitempty"`
+	Revision           int64      `json:"revision,omitempty"`
+	Owner              string     `json:"owner,omitempty"`
+	Status             string     `json:"status,omitempty"`
+	FrontmatterUpdated *time.Time `json:"frontmatterUpdated,omitempty"`
+	UpdatedAt          time.Time  `json:"updatedAt,omitempty"`
+}
+
+// KnowledgeDocumentMeta 是检索后按来源/路径回查的轻量治理视图，不携带正文。
+type KnowledgeDocumentMeta struct {
+	SourceID           string     `json:"sourceId"`
+	Path               string     `json:"path"`
+	Title              string     `json:"title,omitempty"`
+	Owner              string     `json:"owner,omitempty"`
+	Status             string     `json:"status,omitempty"`
+	FrontmatterUpdated *time.Time `json:"frontmatterUpdated,omitempty"`
+	LineCount          int        `json:"lineCount,omitempty"`
+	Commit             string     `json:"commit,omitempty"`
+	Revision           int64      `json:"revision,omitempty"`
+	UpdatedAt          time.Time  `json:"updatedAt,omitempty"`
+}
+
+// KnowledgeFeedback 是知识中心、Main Bot 回答旁和 Agent 标记问题共用的反馈。
+// Path 为空表示只对回答本身反馈；Kind 为 issue 时 Note 记录问题说明。
+const (
+	KnowledgeFeedbackHelpful    = "helpful"
+	KnowledgeFeedbackNotHelpful = "not_helpful"
+	KnowledgeFeedbackIssue      = "issue"
+)
+
+type KnowledgeFeedback struct {
+	ID        string    `json:"id"`
+	ProjectID string    `json:"projectId,omitempty"`
+	BaseID    string    `json:"baseId,omitempty"`
+	SourceID  string    `json:"sourceId,omitempty"`
+	Path      string    `json:"path,omitempty"`
 	Title     string    `json:"title,omitempty"`
-	Body      string    `json:"body"`
-	LineCount int       `json:"lineCount,omitempty"`
-	SHA256    string    `json:"sha256,omitempty"`
-	Commit    string    `json:"commit,omitempty"`
-	Revision  int64     `json:"revision,omitempty"`
-	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+	Query     string    `json:"query,omitempty"`
+	Kind      string    `json:"kind"`
+	Note      string    `json:"note,omitempty"`
+	Surface   string    `json:"surface,omitempty"`
+	Actor     string    `json:"actor,omitempty"`
+	UserID    int64     `json:"userId,omitempty"`
+	AgentID   string    `json:"agentId,omitempty"`
+	RunID     string    `json:"runId,omitempty"`
+	SessionID string    `json:"sessionId,omitempty"`
+	MessageID string    `json:"messageId,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// KnowledgeGap 是搜不到结果的查询。同一项目内按归一化查询合并计数，保留首次
+// 和最近出现时间，面板据此排序补充优先级。
+type KnowledgeGap struct {
+	ProjectID  string    `json:"projectId"`
+	Query      string    `json:"query"`
+	Normalized string    `json:"-"`
+	Count      int       `json:"count"`
+	FirstSeen  time.Time `json:"firstSeen"`
+	LastSeen   time.Time `json:"lastSeen"`
+}
+
+// 健康检查问题类型。结果按知识库整体持久化，面板按项目可见库读取。
+const (
+	KnowledgeGovernanceStale        = "stale"
+	KnowledgeGovernanceDuplicate    = "duplicate"
+	KnowledgeGovernanceDeadLink     = "dead_link"
+	KnowledgeGovernanceMissingOwner = "missing_owner"
+)
+
+// KnowledgeGovernanceIssue 是一次健康检查的单项结果。不存正文，只保留定位和
+// 中文说明；再次扫描同一知识库时整批替换，避免陈旧的已修复问题留在面板。
+type KnowledgeGovernanceIssue struct {
+	BaseID     string    `json:"baseId"`
+	SourceID   string    `json:"sourceId,omitempty"`
+	Path       string    `json:"path"`
+	Title      string    `json:"title,omitempty"`
+	Type       string    `json:"type"`
+	Line       int       `json:"line,omitempty"`
+	Summary    string    `json:"summary"`
+	DetectedAt time.Time `json:"detectedAt"`
+}
+
+// KnowledgeGovernanceScan 是知识库最近一次健康检查的摘要。
+type KnowledgeGovernanceScan struct {
+	BaseID     string    `json:"baseId"`
+	ScannedAt  time.Time `json:"scannedAt"`
+	DocCount   int       `json:"docCount"`
+	IssueCount int       `json:"issueCount"`
 }
 
 // KnowledgeRevision 只给托管库追加，Git 同步不写修订历史。

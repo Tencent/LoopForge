@@ -67,7 +67,7 @@ func agentToolCall(t *testing.T, handler http.Handler, session *AgentToolSession
 
 func assertKnowledgeToolsAbsent(t *testing.T, names []string) {
 	t.Helper()
-	for _, name := range knowledge.ReadOnlyTools {
+	for _, name := range knowledge.AgentTools {
 		if slices.Contains(names, name) {
 			t.Fatalf("knowledge tool %q must not be in catalog: %v", name, names)
 		}
@@ -76,7 +76,7 @@ func assertKnowledgeToolsAbsent(t *testing.T, names []string) {
 
 func assertKnowledgeToolsPresent(t *testing.T, names []string) {
 	t.Helper()
-	for _, name := range knowledge.ReadOnlyTools {
+	for _, name := range knowledge.AgentTools {
 		if !slices.Contains(names, name) {
 			t.Fatalf("knowledge tool %q missing from catalog: %v", name, names)
 		}
@@ -205,7 +205,7 @@ func TestScheduledToolSessionMarksItselfUnattended(t *testing.T) {
 func TestAssistantSystemPromptIncludesKnowledgeUsageRule(t *testing.T) {
 	rule := knowledge.UsageRule().Content
 	prompt := assistantSystemPromptText()
-	for _, name := range knowledge.ReadOnlyTools {
+	for _, name := range knowledge.AgentTools {
 		if strings.Contains(rule, name) && !strings.Contains(prompt, name) {
 			t.Errorf("assistant system prompt missing knowledge tool %q", name)
 		}
@@ -213,7 +213,26 @@ func TestAssistantSystemPromptIncludesKnowledgeUsageRule(t *testing.T) {
 	if !strings.Contains(prompt, rule) {
 		t.Fatal("assistant system prompt must embed knowledge.UsageRule() verbatim")
 	}
+	if !strings.Contains(rule, knowledge.ToolReportIssue) || !strings.Contains(prompt, knowledge.ToolReportIssue) {
+		t.Fatalf("system prompt must advertise %s", knowledge.ToolReportIssue)
+	}
 	if strings.Contains(prompt, knowledge.ToolWrite) {
 		t.Fatalf("assistant system prompt must not advertise the knowledge write tool %q", knowledge.ToolWrite)
+	}
+}
+
+func TestMainBotReportIssueRecordsGovernanceFeedback(t *testing.T) {
+	resetAgentToolSessionsForTest()
+	s, handler := newKnowledgeTestServer(t)
+	session := newKnowledgeAgentToolSession(t, "p1", AgentToolAssistant, false)
+	session.RunID = "run-1"
+	session.ChatSessionID = "chat-1"
+	text, isError := agentToolCall(t, handler, session, knowledge.ToolReportIssue, `{"source":"a","path":"x.md","issue":"命令已经过时"}`)
+	if isError || !strings.Contains(text, `"recorded":true`) {
+		t.Fatalf("report issue: isError=%t body=%s", isError, text)
+	}
+	list := s.KnowledgeFeedbacks("p1", 10)
+	if len(list) != 1 || list[0].Kind != domain.KnowledgeFeedbackIssue || list[0].Note != "命令已经过时" || list[0].RunID != "run-1" {
+		t.Fatalf("feedback = %+v", list)
 	}
 }

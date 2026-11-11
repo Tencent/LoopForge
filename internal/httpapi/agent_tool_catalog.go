@@ -238,11 +238,11 @@ func agentToolNameAllowed(mode AgentToolMode, kind, tool string) bool {
 	if tool == "" {
 		return false
 	}
-	// Main Bot gets the built-in read-only knowledge base as direct tools.
+	// Main Bot gets the built-in knowledge tools (read-only retrieval plus issue marking) as direct tools.
 	// Clarify sessions and scheduled tasks never get them; the catalog gate
 	// is mainBotKnowledgeEnabled.
 	if kind == "knowledge" {
-		return mode == AgentToolAssistant && knowledge.IsReadOnlyTool(tool)
+		return mode == AgentToolAssistant && knowledge.IsAgentTool(tool)
 	}
 	// Conversations and scheduled tasks see every tool of the project's MCPs;
 	// a write follows the conversation's approval mode at call time.
@@ -402,7 +402,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	return out
 }
 
-// mainBotKnowledgeEnabled gates the built-in read-only knowledge tools to an
+// mainBotKnowledgeEnabled gates the built-in knowledge tools to an
 // interactive Main Bot conversation with a project. Clarify sessions and
 // scheduled tasks reuse other gateway modes and never get them.
 func mainBotKnowledgeEnabled(session *AgentToolSession) bool {
@@ -413,10 +413,10 @@ func mainBotKnowledgeTools(session *AgentToolSession) []agentToolDescriptor {
 	if !mainBotKnowledgeEnabled(session) {
 		return nil
 	}
-	definitions := knowledge.ReadOnlyToolDefinitions()
+	definitions := knowledge.AgentToolDefinitions()
 	out := make([]agentToolDescriptor, 0, len(definitions))
 	for _, tool := range definitions {
-		if !knowledge.IsReadOnlyTool(tool.Name) {
+		if !knowledge.IsAgentTool(tool.Name) {
 			continue
 		}
 		out = append(out, agentToolDescriptor{

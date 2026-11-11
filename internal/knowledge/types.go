@@ -12,14 +12,28 @@ const (
 	ToolFetch       = "kb_fetch"
 	ToolListSources = "kb_list_sources"
 	ToolGetSource   = "kb_get_source"
+	ToolReportIssue = "kb_report_issue"
 	ToolWrite       = "kb_write_document"
 )
 
-// ReadOnlyTools is the only upstream surface exposed to agents.
+// ReadOnlyTools 是只读检索/读取工具。Agent 还可使用 ToolReportIssue 记录
+// 文档问题；它写反馈但不改正文，因此不放进只读列表。
 var ReadOnlyTools = []string{ToolSearch, ToolFetch, ToolListSources, ToolGetSource}
+
+// AgentTools 是暴露给 SOP 代理和 Main Bot 的全部知识库工具。
+var AgentTools = []string{ToolSearch, ToolFetch, ToolListSources, ToolGetSource, ToolReportIssue}
 
 func IsReadOnlyTool(name string) bool {
 	for _, tool := range ReadOnlyTools {
+		if tool == name {
+			return true
+		}
+	}
+	return false
+}
+
+func IsAgentTool(name string) bool {
+	for _, tool := range AgentTools {
 		if tool == name {
 			return true
 		}
@@ -57,6 +71,9 @@ type SearchHit struct {
 	Snippet   string  `json:"snippet"`
 	Score     float64 `json:"score"`
 	Citation  string  `json:"citation"`
+	// DocStatus 是索引时从 frontmatter 解析的生命周期状态。空值表示没有
+	// 标注；检索后处理据此降权废弃、移除归档。
+	DocStatus string `json:"doc_status,omitempty"`
 }
 
 type SearchResult struct {

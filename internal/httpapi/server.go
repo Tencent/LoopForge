@@ -516,6 +516,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/knowledge/bases/search", api.know.basesSearch)
 	g.GET("/api/knowledge/bases/sediment", api.know.knowledgeSedimentConfig)
 	g.PUT("/api/knowledge/bases/sediment", api.know.knowledgeSedimentConfigUpdate)
+	g.GET("/api/knowledge/governance", api.know.governanceOverview)
+	g.POST("/api/knowledge/governance/scan", api.know.governanceScan)
+	g.POST("/api/knowledge/governance/dispose", api.know.governanceDispose)
+	g.POST("/api/knowledge/feedback", api.know.knowledgeFeedback)
 
 	// --- runs ---
 	g.GET("/api/runs", api.runs.runs)

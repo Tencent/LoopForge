@@ -787,15 +787,18 @@ func (knowledgeWritebackRow) TableName() string { return "knowledge_writebacks" 
 
 // 内置知识引擎内容面（KnowledgeContentRepo，可能指向独立的 MySQL）。
 type knowledgeDocumentRow struct {
-	SourceID  string     `gorm:"column:source_id;primaryKey;size:64"`
-	Path      string     `gorm:"column:path;primaryKey;size:512"`
-	Title     string     `gorm:"column:title;size:512"`
-	Body      string     `gorm:"column:body;type:mediumtext"`
-	LineCount int        `gorm:"column:line_count"`
-	SHA256    string     `gorm:"column:sha256;size:64"`
-	Commit    string     `gorm:"column:commit;size:128"`
-	Revision  int64      `gorm:"column:revision"`
-	Updated   *time.Time `gorm:"column:updated_at"`
+	SourceID           string     `gorm:"column:source_id;primaryKey;size:64"`
+	Path               string     `gorm:"column:path;primaryKey;size:512"`
+	Title              string     `gorm:"column:title;size:512"`
+	Body               string     `gorm:"column:body;type:mediumtext"`
+	LineCount          int        `gorm:"column:line_count"`
+	SHA256             string     `gorm:"column:sha256;size:64"`
+	Commit             string     `gorm:"column:commit;size:128"`
+	Revision           int64      `gorm:"column:revision"`
+	Owner              string     `gorm:"column:owner;size:255"`
+	DocStatus          string     `gorm:"column:doc_status;size:32"`
+	FrontmatterUpdated *time.Time `gorm:"column:frontmatter_updated_at;type:date"`
+	Updated            *time.Time `gorm:"column:updated_at"`
 }
 
 func (knowledgeDocumentRow) TableName() string { return "knowledge_documents" }
@@ -828,6 +831,70 @@ type knowledgeChunkRow struct {
 
 func (knowledgeChunkRow) TableName() string { return "knowledge_chunks" }
 
+// knowledgeFeedbackRow 是知识中心、Main Bot 回答旁和 Agent 标记问题的统一
+// 反馈。属于控制面，不存正文；Path 为空时表示只对回答反馈。
+type knowledgeFeedbackRow struct {
+	ID        string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_knowledge_feedback_project,priority:1"`
+	BaseID    string     `gorm:"column:base_id;size:64"`
+	SourceID  string     `gorm:"column:source_id;size:64"`
+	Path      string     `gorm:"column:path;size:512"`
+	Title     string     `gorm:"column:title;size:512"`
+	Query     string     `gorm:"column:query_text;size:500"`
+	Kind      string     `gorm:"column:kind;size:32"`
+	Note      string     `gorm:"column:note;type:text"`
+	Surface   string     `gorm:"column:surface;size:32"`
+	Actor     string     `gorm:"column:actor;size:255"`
+	UserID    int64      `gorm:"column:user_id"`
+	AgentID   string     `gorm:"column:agent_id;size:64"`
+	RunID     string     `gorm:"column:run_id;size:64"`
+	SessionID string     `gorm:"column:session_id;size:64"`
+	MessageID string     `gorm:"column:message_id;size:64"`
+	Created   *time.Time `gorm:"column:created_at;index:idx_knowledge_feedback_project,priority:2"`
+}
+
+func (knowledgeFeedbackRow) TableName() string { return "knowledge_feedback" }
+
+// knowledgeGapRow 是搜不到结果的查询。项目加归一化查询做主键，重复出现只
+// 增加计数与最近时间，不无限追加行。
+type knowledgeGapRow struct {
+	ProjectID       string     `gorm:"column:project_id;primaryKey;size:64"`
+	Normalized      string     `gorm:"column:normalized_query;primaryKey;size:500"`
+	Query           string     `gorm:"column:query_text;size:500"`
+	OccurrenceCount int        `gorm:"column:occurrence_count"`
+	FirstSeen       *time.Time `gorm:"column:first_seen"`
+	LastSeen        *time.Time `gorm:"column:last_seen;index:idx_knowledge_gaps_last_seen"`
+}
+
+func (knowledgeGapRow) TableName() string { return "knowledge_gaps" }
+
+// knowledgeGovernanceIssueRow 是健康检查结果。按知识库整批替换；行上不存
+// 正文，只保留定位和中文说明。
+type knowledgeGovernanceIssueRow struct {
+	ID         int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	BaseID     string     `gorm:"column:base_id;size:64;index:idx_knowledge_governance_issues_base,priority:1"`
+	SourceID   string     `gorm:"column:source_id;size:64"`
+	Path       string     `gorm:"column:path;size:512"`
+	Title      string     `gorm:"column:title;size:512"`
+	IssueType  string     `gorm:"column:issue_type;size:32;index:idx_knowledge_governance_issues_base,priority:2"`
+	Line       int        `gorm:"column:line"`
+	Summary    string     `gorm:"column:summary;type:text"`
+	DetectedAt *time.Time `gorm:"column:detected_at"`
+}
+
+func (knowledgeGovernanceIssueRow) TableName() string { return "knowledge_governance_issues" }
+
+// knowledgeGovernanceScanRow 是知识库最近一次扫描的摘要。扫描成功但 0 个
+// 问题时仍保留这一行，面板才能显示“最近检查时间”。
+type knowledgeGovernanceScanRow struct {
+	BaseID     string     `gorm:"column:base_id;primaryKey;size:64"`
+	ScannedAt  *time.Time `gorm:"column:scanned_at"`
+	DocCount   int        `gorm:"column:doc_count"`
+	IssueCount int        `gorm:"column:issue_count"`
+}
+
+func (knowledgeGovernanceScanRow) TableName() string { return "knowledge_governance_scans" }
+
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
@@ -848,6 +915,7 @@ func allModels() []any {
 		engineInstanceRow{},
 		knowledgeSubmissionRow{},
 		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
+		knowledgeFeedbackRow{}, knowledgeGapRow{}, knowledgeGovernanceIssueRow{}, knowledgeGovernanceScanRow{},
 		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}
