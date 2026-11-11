@@ -148,18 +148,14 @@ func (h *knowledgeHandlers) candidates(c *gin.Context) {
 // Knowledge submissions are platform-wide, so personal workspace artifacts
 // cannot safely enter that shared review queue.
 func (h *knowledgeHandlers) personalWorkspaceRun(id string) bool {
-	run, ok := h.repo.RunState(id)
+	run, ok := h.repo.RunHeader(id)
 	return ok && run.IsWorkspace() && run.ExecutionContext.ProjectID == ""
 }
 
-// An artifact-derived submission remains shared after its run is deleted.
-// When its source can no longer be verified, do not expose it as public data.
+// Existing submissions remain manageable after their source run is deleted.
+// Personal workspace artifacts are rejected when submissions are created.
 func (h *knowledgeHandlers) restrictedKnowledgeSubmission(item domain.KnowledgeSubmission) bool {
-	if item.RunID == "" {
-		return item.ArtifactID != ""
-	}
-	run, ok := h.repo.RunState(item.RunID)
-	return !ok || run.IsWorkspace() && run.ExecutionContext.ProjectID == ""
+	return item.RunID != "" && h.personalWorkspaceRun(item.RunID)
 }
 
 // 路由: g.GET("/api/knowledge/submissions", h.submissions)
@@ -182,7 +178,7 @@ func (h *knowledgeHandlers) submissions(c *gin.Context) {
 		return
 	}
 	if input.ArtifactID != "" {
-		run, exists := h.repo.RunState(input.RunID)
+		run, exists := h.repo.RunHeader(input.RunID)
 		if !exists {
 			c.JSON(http.StatusNotFound, gin.H{"error": "运行产物不存在"})
 			return

@@ -283,6 +283,15 @@ func (r *RunsRepo) RunsWithActiveNodes() map[string]bool {
 	return out
 }
 
+// RunHeader returns the stored run without loading nodes, events or artifacts.
+func (r *RunsRepo) RunHeader(id string) (domain.Run, bool) {
+	row, ok := takeRun(r.DB, id)
+	if !ok {
+		return domain.Run{}, false
+	}
+	return runFromRow(row), true
+}
+
 func (r *RunsRepo) Run(id string) (domain.Run, bool) {
 	row, ok := takeRun(r.DB, id)
 	if !ok {

@@ -158,17 +158,9 @@ func TestPersonalWorkspacePeripheralEndpoints(t *testing.T) {
 	if err := h.repo.PutKnowledgeSubmission(domain.KnowledgeSubmission{ID: "legacy-private-submission", RunID: run.ID, Title: "private title", Content: "private knowledge content"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, item := range []domain.KnowledgeSubmission{
-		{ID: "missing-run-submission", RunID: "deleted-run", ArtifactID: "deleted-artifact", Title: "orphan private title", Content: "orphan private content"},
-		{ID: "missing-run-id-submission", ArtifactID: "orphan-artifact", Title: "orphan private title", Content: "orphan private content"},
-	} {
-		if err := h.repo.PutKnowledgeSubmission(item); err != nil {
-			t.Fatal(err)
-		}
-	}
 	for _, user := range []domain.User{owner, other} {
 		for _, path := range []string{"/api/knowledge/candidates", "/api/knowledge/submissions"} {
-			if rec := call(user, http.MethodGet, path, ""); rec.Code != 200 || strings.Contains(rec.Body.String(), "private-knowledge") || strings.Contains(rec.Body.String(), "private title") || strings.Contains(rec.Body.String(), "missing-run-submission") {
+			if rec := call(user, http.MethodGet, path, ""); rec.Code != 200 || strings.Contains(rec.Body.String(), "private-knowledge") || strings.Contains(rec.Body.String(), "private title") {
 				t.Fatalf("private knowledge exposed at %s: %d %s", path, rec.Code, rec.Body.String())
 			}
 		}
@@ -179,11 +171,6 @@ func TestPersonalWorkspacePeripheralEndpoints(t *testing.T) {
 			{http.MethodDelete, "/api/knowledge/submissions/legacy-private-submission", ""},
 			{http.MethodPost, "/api/knowledge/submissions/legacy-private-submission/publish", ""},
 			{http.MethodPost, "/api/knowledge/submissions/legacy-private-submission/reject", `{}`},
-			{http.MethodGet, "/api/knowledge/submissions/missing-run-submission", ""},
-			{http.MethodGet, "/api/knowledge/submissions/missing-run-id-submission", ""},
-			{http.MethodDelete, "/api/knowledge/submissions/missing-run-submission", ""},
-			{http.MethodPost, "/api/knowledge/submissions/missing-run-submission/publish", ""},
-			{http.MethodPost, "/api/knowledge/submissions/missing-run-submission/reject", `{}`},
 		} {
 			if rec := call(user, tc.method, tc.path, tc.body); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "private knowledge content") {
 				t.Fatalf("private knowledge via %s %s: %d %s", tc.method, tc.path, rec.Code, rec.Body.String())
