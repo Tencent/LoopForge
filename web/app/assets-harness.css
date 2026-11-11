@@ -321,7 +321,7 @@
 #assetsView .skill-upload-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 #assetsView .skill-upload-status:empty { display: none; }
 #assetsView .skill-upload-status { margin: 0 0 12px; font-size: 12.5px; }
-#assetsView .skill-file-tree { margin: 0; overflow: hidden; border: 1px solid var(--hui-border); border-radius: 8px; background: var(--hui-surface); }
+#assetsView .skill-file-tree { margin: 0; overflow: auto; overscroll-behavior: contain; flex-shrink: 0; border: 1px solid var(--hui-border); border-radius: 8px; background: var(--hui-surface); }
 #assetsView .skill-file-tree :is(.skill-file-row, .skill-tree-row) { min-height: 38px; border-bottom: 1px solid var(--hui-border-soft); color: var(--hui-secondary); font-size: 13px; }
 #assetsView .skill-file-tree > :last-child { border-bottom: 0; }
 #assetsView .skill-file-tree :is(.skill-file-path, .skill-tree-dirname) { background: none; color: var(--hui-text); font: 400 12.5px/1.4 var(--hui-mono); }

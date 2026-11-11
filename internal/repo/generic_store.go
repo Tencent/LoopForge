@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+
+	"gorm.io/gorm"
 )
 
 func (r *CatalogRepo) loadGenericTemplate(id string) (GenericTemplate, bool) {
@@ -115,6 +117,10 @@ func (r *CatalogRepo) UpdateGenericWorkflow(workflow domain.WorkflowDefinition) 
 		workflow.SandboxProfileID = template.Workflow.SandboxProfileID
 	}
 	workflow.UpdatedAt = now
+	if workflowContent(workflow) == workflowContent(old) {
+		return old, nil
+	}
+	workflow.PublishedRevision = workflowPublishedRevision(old)
 	template.Workflow = workflow
 	if err := r.snapshotRevision("workflow", old.ID, old.Name, old.Version, old.Revision, old); err != nil {
 		return domain.WorkflowDefinition{}, err
@@ -165,14 +171,35 @@ func (r *CatalogRepo) UpdateGenericAgent(workflowID string, agent domain.AgentDe
 	return agent, nil
 }
 
-// PublishGenericWorkflow bumps the stored template version and marks it published.
+// PublishGenericWorkflow publishes only when the stored template has changed.
 func (r *CatalogRepo) PublishGenericWorkflow(id string) (domain.WorkflowDefinition, error) {
+	var published domain.WorkflowDefinition
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row struct{ ID string }
+		if err := r.locking(tx.Table("generic_templates")).Select("id").Where("id = ?", id).Take(&row).Error; err != nil {
+			return err
+		}
+		catalog := *r
+		catalog.deps = &deps{DB: tx}
+		var err error
+		published, err = catalog.publishGenericWorkflow(id)
+		return err
+	})
+	return published, err
+}
+
+func (r *CatalogRepo) publishGenericWorkflow(id string) (domain.WorkflowDefinition, error) {
 	template, ok := r.GenericTemplateByWorkflow(id)
 	if !ok {
 		return domain.WorkflowDefinition{}, errors.New("generic template not found")
 	}
+	if !workflowNeedsPublish(template.Workflow) {
+		return template.Workflow, nil
+	}
 	template.Workflow.Status = "published"
 	template.Workflow.Version++
+	template.Workflow.Revision++
+	template.Workflow.PublishedRevision = template.Workflow.Revision
 	if template.Workflow.Version < 1 {
 		template.Workflow.Version = 1
 	}

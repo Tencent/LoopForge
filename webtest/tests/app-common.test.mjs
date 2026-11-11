@@ -2,6 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
+test('script highlighting preserves source text and editor scrolling stays synchronized after input', async (t) => {
+  const app=await loadApp();t.after(app.close);
+  const script='class Example:\n\tprint("str class return 42 <span>")\n\t# comment';
+  const host=app.document.createElement('div');
+  host.innerHTML=app.evaluate(`highlightCode(${JSON.stringify(script)},'python')`);
+  assert.equal(host.textContent,script);
+  app.evaluate(`openCodeEditorModal({language:'python',value:${JSON.stringify(script)}})`);
+  const editor=app.document.querySelector('#codeEditorTextarea');
+  editor.scrollTop=200;editor.scrollLeft=100;
+  editor.value+='\nprint("edited")';
+  editor.dispatchEvent(new app.window.Event('input'));
+  const highlight=app.document.querySelector('#codeEditorHighlight');
+  assert.equal(highlight.textContent,editor.value+'\n');
+  assert.equal(highlight.scrollTop,editor.scrollTop);
+  assert.equal(highlight.scrollLeft,editor.scrollLeft);
+});
+
 test('markdown renderer covers tables, alerts, quotes, lists, tasks, rules, links, and code languages', async (t) => {
   const app = await loadApp();
   t.after(app.close);
