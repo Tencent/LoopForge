@@ -34,7 +34,7 @@ npx -y loopforge-cli@latest status claude
 npx -y loopforge-cli@latest doctor
 ```
 
-Pi、DeepSeek Harness 和 Hermes Agent 通过 [Portable Edition](#portable-edition) 支持。DSH 还可以安装[可选插件](../../local/dsh-plugin/README.md)，提供任务控制、状态、产物和人工审批入口。Hermes 使用项目级 `.hermes/skills/` 和 `delegate_task`，不会修改 `~/.hermes/config.yaml`；需要独立命令时可安装[可选 Hermes 插件](../../local/hermes-plugin/README.md)，提供 `/loopforge status`、`/loopforge result` 和 `/loopforge approve`。
+Pi、DeepSeek Harness、Hermes Agent 和 ZCode 通过 [Portable Edition](#portable-edition) 支持。DSH 还可以安装[可选插件](../../local/dsh-plugin/README.md)，提供任务控制、状态、产物和人工审批入口。Hermes 使用项目级 `.hermes/skills/` 和 `delegate_task`，不会修改 `~/.hermes/config.yaml`；需要独立命令时可安装[可选 Hermes 插件](../../local/hermes-plugin/README.md)，提供 `/loopforge status`、`/loopforge result` 和 `/loopforge approve`。ZCode 使用项目级 `.zcode/skills/`，隔离阶段通过 `Agent` 工具派发，入口为 `/skill devflow "<需求>"`。
 
 ## 工作方式
 
@@ -67,6 +67,7 @@ LoopForge 会根据任务复杂度选择路径：小改动走精简的单角色�
 | Pi | — | ✓ |
 | DeepSeek Harness | — | ✓ |
 | Hermes Agent | — | ✓ |
+| ZCode | — | ✓ |
 
 同一项目中，每个编码 Agent 只能启用一种 Edition。两者的区别和目录说明见 [Edition selection](editions.md)。
 

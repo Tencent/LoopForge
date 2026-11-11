@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from . import __version__
-from .editions import EDITIONS, HOSTS, hosts_for, source_for
+from .editions import EDITIONS, HOSTS, host_label, hosts_for, source_for
 
 
 STATE_VERSION = 1
@@ -141,8 +141,8 @@ def materialize_portable(host: str, stage: Path) -> None:
             clarifier.unlink()
             copy_skill(skills_root / "devflow-clarify-requirements", clarifier)
         return
-    if host == "codex":
-        target = stage / ".agents/skills"
+    if host in ("codex", "zcode"):
+        target = stage / {"codex": ".agents/skills", "zcode": ".zcode/skills"}[host]
         target.mkdir(parents=True, exist_ok=True)
         manifest = json.loads((skills_root / "manifest.json").read_text(encoding="utf-8"))
         copy_skills_manifest(skills_root, target)
@@ -170,14 +170,6 @@ def materialize_portable(host: str, stage: Path) -> None:
         # explicitly trusts the repository. Keep installation project-local;
         # never mutate ~/.hermes/config.yaml or the user's profile skills.
         target = stage / ".hermes/skills"
-        target.mkdir(parents=True, exist_ok=True)
-        manifest = json.loads((skills_root / "manifest.json").read_text(encoding="utf-8"))
-        copy_skills_manifest(skills_root, target)
-        for name in manifest["skill_sets"]["portable"]:
-            copy_skill(skills_root / name, target / name)
-        return
-    if host == "zcode":
-        target = stage / ".zcode/skills"
         target.mkdir(parents=True, exist_ok=True)
         manifest = json.loads((skills_root / "manifest.json").read_text(encoding="utf-8"))
         copy_skills_manifest(skills_root, target)
@@ -226,8 +218,8 @@ def validate_choice(host: str, edition: str) -> None:
     if host not in hosts_for(edition):
         available = [item for item in EDITIONS if host in hosts_for(item)]
         hint = (
-            f"；Pi 只有 Portable，请运行: loopforge skills install {host}"
-            if host == "pi" and "portable" in available
+            f"；{host_label(host)} 只有 Portable，请运行: loopforge skills install {host}"
+            if host in ("pi", "zcode") and "portable" in available
             else f"；{host} 可用 edition: {', '.join(available)}"
         )
         raise DevFlowError(f"{edition} edition 不支持宿主 {host}{hint}")

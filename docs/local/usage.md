@@ -34,7 +34,7 @@ Check any installation with `npx -y loopforge-cli@latest status <agent>`. If ins
 npx -y loopforge-cli@latest doctor
 ```
 
-Pi, DeepSeek Harness and Hermes Agent are supported through the [Portable Edition](#portable-edition). DSH has an optional [plugin](../../local/dsh-plugin/README.md) for task controls, status, artifacts and approval gates. Hermes uses its project-local Agent Skills discovery and `delegate_task` tool; it does not modify `~/.hermes/config.yaml`. Hermes users can optionally install the native [Hermes plugin](../../local/hermes-plugin/README.md) for the same `/loopforge status`, `/loopforge result` and `/loopforge approve` controls.
+Pi, DeepSeek Harness, Hermes Agent and ZCode are supported through the [Portable Edition](#portable-edition). DSH has an optional [plugin](../../local/dsh-plugin/README.md) for task controls, status, artifacts and approval gates. Hermes uses its project-local Agent Skills discovery and `delegate_task` tool; it does not modify `~/.hermes/config.yaml`. Hermes users can optionally install the native [Hermes plugin](../../local/hermes-plugin/README.md) for the same `/loopforge status`, `/loopforge result` and `/loopforge approve` controls. ZCode loads the project-local `.zcode/skills/` and dispatches isolated stages through its `Agent` tool; use `/skill devflow "<request>"`.
 
 ## How it works
 
@@ -68,6 +68,7 @@ Your request
 | Pi | — | ✓ |
 | DeepSeek Harness | — | ✓ |
 | Hermes Agent | — | ✓ |
+| ZCode | — | ✓ |
 
 LoopForge enables only one edition per coding agent in each project. See [Edition selection](editions.md) for the differences and directory layout.
 
