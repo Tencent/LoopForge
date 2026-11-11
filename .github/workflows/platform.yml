@@ -85,7 +85,7 @@ jobs:
         working-directory: e2e
       - run: npm audit --audit-level=high
         working-directory: e2e
-      - run: npx playwright install --with-deps chromium
+      - run: bash ../scripts/install-playwright-deps.sh npx playwright
         working-directory: e2e
       - name: Start clean local installation
         run: |
@@ -152,7 +152,7 @@ jobs:
           node-version: '22'
       - run: npm ci
         working-directory: e2e
-      - run: npx playwright install --with-deps chromium
+      - run: bash ../scripts/install-playwright-deps.sh npx playwright
         working-directory: e2e
       - name: Install the pinned release, or build it while that release is not published yet
         run: |
