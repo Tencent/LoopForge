@@ -47,7 +47,12 @@ func newKnowledgeTestServer(t *testing.T) (*repo.Store, http.Handler) {
 
 func newKnowledgeTestHandler(t *testing.T, s *repo.Store) http.Handler {
 	t.Helper()
-	return newWithNotifications(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "", notification.New(s), nil, nil, kbengine.NewEngine(s, s, knowledgeTestIndex{}))
+	return newKnowledgeTestHandlerWithUpstream(t, s, kbengine.NewEngine(s, s, knowledgeTestIndex{}))
+}
+
+func newKnowledgeTestHandlerWithUpstream(t *testing.T, s *repo.Store, upstream knowledge.Upstream) http.Handler {
+	t.Helper()
+	return newWithNotifications(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "", notification.New(s), nil, nil, upstream)
 }
 func doJSON(t *testing.T, h http.Handler, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()

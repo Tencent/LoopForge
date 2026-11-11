@@ -9,6 +9,20 @@ const KB_TOOLS=[
   ['kb_get_source','查看来源状态与文档清单'],
 ];
 const KB_SUB_STATUS={pending:['待审核','warn'],published:['已写回','ok'],rejected:['已驳回','']};
+const KB_WRITE_STATUS={pending:['写回中','warn'],branch_pushed:['已推分支','warn'],mr_open:['合并请求待合并','warn'],merged:['已合并','ok'],closed:['合并请求已关闭',''],failed:['写回失败','err']};
+function kbWriteStatus(d){return KB_WRITE_STATUS[d?.mrStatus]||null}
+function kbSafeHref(url){const u=String(url||'');return /^https?:\/\//i.test(u)?u:''}
+function kbWriteInfoHTML(d){
+  const parts=[];
+  if(d.branch)parts.push(`分支 <code>${escapeHTML(d.branch)}</code>`);
+  const href=kbSafeHref(d.mrUrl);
+  if(href)parts.push(`<a href="${escapeHTML(href)}" target="_blank" rel="noopener">合并请求</a>`);
+  const st=kbWriteStatus(d);
+  const note=d.writeNote?`<div class="kb-write-note">${escapeHTML(d.writeNote)}</div>`:'';
+  const err=d.writeError&&d.writeError!==d.error?`<div class="kb-write-note kb-err">${escapeHTML(d.writeError)}</div>`:'';
+  if(!parts.length&&!note&&!err&&!st)return '';
+  return `<div class="kb-write-info">${st?kbBadge(escapeHTML(st[0]),st[1]):''}${parts.join(' · ')}${note}${err}</div>`;
+}
 const KB_SOURCE_STATUS={ready:['就绪','ok'],pending:['待同步','warn'],syncing:['同步中','warn'],error:['异常','err'],failed:['异常','err'],'':['未同步','warn']};
 const KB_SEARCH_ICON='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
 
@@ -505,7 +519,9 @@ function kbRenderDistill(body){
       return kbRow(kbText(escapeHTML(a.path||a.name||'运行产物'),escapeHTML(`运行 ${a.runId||'-'} 产出 · ${relativeTime(a.createdAt)}`)),kbBadge('候选'),{go:true,attrs:`data-kb-key="cand:${escapeHTML(a.id)}" data-kb-cand="${escapeHTML(a.id)}"`});
     }
     const x=it.x;const [label,tone]=KB_SUB_STATUS[x.status]||[x.status||'-',''];
-    return kbRow(kbText(escapeHTML(x.title||'未命名'),escapeHTML(`${x.source||'未选来源'} / ${x.path||'未填路径'} · ${relativeTime(x.updatedAt)}`)),showState?kbBadge(escapeHTML(label),tone):'',{go:true,attrs:`data-kb-key="sub:${escapeHTML(x.id)}" data-kb-sub="${escapeHTML(x.id)}"`});
+    const write=kbWriteStatus(x);
+    const side=showState?kbBadge(escapeHTML(label),tone):(write?kbBadge(escapeHTML(write[0]),write[1]):'');
+    return kbRow(kbText(escapeHTML(x.title||'未命名'),escapeHTML(`${x.source||'未选来源'} / ${x.path||'未填路径'}${x.branch?` · 分支 ${x.branch}`:''} · ${relativeTime(x.updatedAt)}`)),side,{go:true,attrs:`data-kb-key="sub:${escapeHTML(x.id)}" data-kb-sub="${escapeHTML(x.id)}"`});
   }).join(''):`<div class="kb-empty">${showState?'暂无待处理条目。Agent 对知识库只读，写回需在此手动新建或从运行产物加入':'没有条目'}</div>`;
   body.innerHTML=kbPanel(`${kbSeg([['todo','待处理'],['published','已写回'],['rejected','已驳回']],kb.subStatus,'kb-status',{label:'审核筛选'})}<button type="button" class="kb-btn small" id="kbNewSub" data-kb-key="new">新建</button>`,list,{label:'审核'});
   body.querySelectorAll('[data-kb-status]').forEach(b=>b.onclick=()=>{if(kb.subStatus!==b.dataset.kbStatus){kb.subStatus=b.dataset.kbStatus;kbRender()}});
@@ -551,16 +567,19 @@ function kbRenderEditor(opt={}){
   const isNew=d.status==='new';
   const dis=locked?' disabled':'';
   const sub=isNew?'手动添加一条待审核知识':[d.runId?`来自${kbRunLink(d.runId)}`:'手动创建',d.createdBy?`创建人 ${escapeHTML(d.createdBy)}`:'',d.reviewedBy?`审核人 ${escapeHTML(d.reviewedBy)}`:'',escapeHTML(KB_SUB_STATUS[d.status]?.[0]||'')].filter(Boolean).join(' · ');
+  const writeInfo=kbWriteInfoHTML(d);
   const body=`
     ${d.error?`<div class="kb-alert">上次写回失败：${escapeHTML(d.error)}</div>`:''}
+    ${writeInfo}
     <form id="kbEditorForm" autocomplete="off">
       <div class="kb-field"><label for="kbEdTitle">标题</label><input id="kbEdTitle" class="kb-input" type="text" name="title" value="${escapeHTML(d.title||'')}" placeholder="一句话说明这条知识"${dis}></div>
       <div class="kb-field"><label for="kbEdSource">写入位置</label><div class="kb-field-pair"><select id="kbEdSource" class="kb-input" name="source"${dis}>${kbSourceOptions(d.source)}</select><input class="kb-input mono" type="text" name="path" aria-label="文档路径（.md）" value="${escapeHTML(d.path||'')}" placeholder="guides/xxx.md"${dis}></div></div>
       <div class="kb-field"><label for="kbEdContent">正文</label><textarea id="kbEdContent" class="kb-input" name="content"${dis}>${escapeHTML(d.content||'')}</textarea></div>
       ${locked&&!d.reviewNote?'':`<div class="kb-field"><label for="kbEdNote">备注</label><input id="kbEdNote" class="kb-input" type="text" name="reviewNote" value="${escapeHTML(d.reviewNote||'')}" placeholder="可选：驳回原因或修改说明"${dis}></div>`}
     </form>`;
+  const writeStatus=kbWriteStatus(d);
   const foot=locked
-    ?`<span class="kb-foot-note kb-ok">已写回${d.commit?` · 版本 <code>${escapeHTML(d.commit.slice(0,10))}</code>`:''}</span>`
+    ?`${writeStatus?kbBadge(escapeHTML(writeStatus[0]),writeStatus[1]):''}<span class="kb-foot-note kb-ok">已写回${d.commit?` · 版本 <code>${escapeHTML(d.commit.slice(0,10))}</code>`:''}</span>`
     :isNew?'<button type="button" class="kb-btn primary" data-kb-act="create">创建</button>'
     :`<button type="button" class="kb-btn quiet" data-kb-act="delete">删除</button><button type="button" class="kb-btn" data-kb-act="reject">驳回</button><button type="button" class="kb-btn" data-kb-act="save">保存</button><button type="button" class="kb-btn primary" data-kb-act="publish">写回知识库</button>`;
   kbDrawerOpen(isNew?'新建条目':(d.title||'未命名'),sub,body,foot,opt);
@@ -582,7 +601,12 @@ async function kbEditorAction(act,d,values){
     const v=values();
     if(!v.source)return toast('请选择写入的知识库来源');
     if(!/\.md$/i.test(v.path))return toast('路径必须以 .md 结尾');
-    if(!(await afConfirm({title:'确认写回知识库？',message:`来源：${v.source}\n路径：${v.path}\n\n将写入托管知识库并重建索引。`,confirmText:'写回',info:true})))return;
+    const source=kbSourceById(v.source);
+    const isGit=source?.kind==='git';
+    const message=isGit
+      ?`来源：${kbSourceName(source)}\n路径：${v.path}\n\n将提交到一个新分支并推送，再按托管平台创建合并请求；不支持的平台只推送分支，需在仓库网页手动创建。`
+      :`来源：${v.source}\n路径：${v.path}\n\n将写入托管知识库并重建索引。`;
+    if(!(await afConfirm({title:isGit?'确认写回 Git 来源？':'确认写回知识库？',message,confirmText:'写回',info:true})))return;
   }
   busy(true);
   try{
@@ -600,7 +624,9 @@ async function kbEditorAction(act,d,values){
     if(act==='publish'){
       await save();
       const item=await api(`/api/knowledge/submissions/${id}/publish`,{method:'POST'});
-      toast(`已写回知识库 · 版本 ${String(item.commit||'').slice(0,8)}`,'ok');
+      if(item.mrUrl)toast('已推送分支并创建合并请求','ok');
+      else if(item.branch)toast(`已推送写回分支 ${item.branch}`,'ok');
+      else toast(`已写回知识库 · 版本 ${String(item.commit||'').slice(0,8)}`,'ok');
       await done();
     }
   }catch(err){

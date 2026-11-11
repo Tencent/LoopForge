@@ -444,15 +444,15 @@ keywords: "狻猊标记"
 	}
 }
 
-func TestWriteDocumentGitUnimplemented(t *testing.T) {
+func TestWriteDocumentGitRequiresReviewPublish(t *testing.T) {
 	control := newFakeControl()
 	control.sources["remote"] = domain.KnowledgeSource{ID: "remote", Kind: "git", GitURL: "https://example.invalid/r.git"}
 	content := newFakeContent()
 	e := newTestEngine(control, content, &fakeIndex{})
 
 	_, err := e.WriteDocument(context.Background(), "remote", "a.md", testMarkdown)
-	if err == nil || !strings.Contains(err.Error(), "未实现") {
-		t.Fatalf("Git 来源应返回未实现: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "审核队列") {
+		t.Fatalf("Git 来源应要求经审核队列发布: %v", err)
 	}
 	assertNoWrite(t, content)
 }

@@ -493,3 +493,85 @@ func TestCredentialReplacementDuringSyncKeepsNewSourceReady(t *testing.T) {
 		})
 	}
 }
+
+// A writeback merge only adds one document. Incremental sync must leave the
+// untouched documents (and their updated_at) in place instead of rewriting the
+// whole source snapshot.
+func TestIncrementalSyncWritesOnlyChangedDocuments(t *testing.T) {
+	ctx := context.Background()
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	remote := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = remote
+		if out, e := cmd.CombinedOutput(); e != nil {
+			t.Fatalf("git: %s %v", out, e)
+		}
+	}
+	git("init", "-b", "main")
+	git("config", "user.email", "test@example.com")
+	git("config", "user.name", "Test")
+	os.Mkdir(filepath.Join(remote, "docs"), 0755)
+	os.WriteFile(filepath.Join(remote, "docs", "a.md"), []byte("# A\n\n甲文档。\n"), 0644)
+	os.WriteFile(filepath.Join(remote, "docs", "b.md"), []byte("# B\n\n乙文档。\n"), 0644)
+	git("add", ".")
+	git("commit", "-m", "initial")
+	id := "sync-incremental"
+	if err := store.PutKnowledgeSource(domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main", Status: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	w := NewSyncWorker(&Engine{newID: func() string { return "probe" }}, &syncFakeControl{finishOK: true}, store, t.TempDir(), "worker")
+	w.syncGit = func(ctx context.Context, dir, _ string, branch string, old map[string]string) (string, string, []gitsync.FileInfo, []string, []string, error) {
+		return gitsync.Sync(ctx, dir, remote, branch, old)
+	}
+	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	first := store.KnowledgeDocuments(id)
+	if len(first) != 2 {
+		t.Fatalf("first sync docs = %d", len(first))
+	}
+	before := map[string]time.Time{}
+	for _, d := range first {
+		before[d.Path] = d.UpdatedAt
+	}
+	// The merged writeback adds docs/c.md to the source branch.
+	os.WriteFile(filepath.Join(remote, "docs", "c.md"), []byte("# C\n\n写回的新文档。\n"), 0644)
+	git("add", ".")
+	git("commit", "-m", "add merged knowledge")
+	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	after := store.KnowledgeDocuments(id)
+	if len(after) != 3 {
+		t.Fatalf("incremental docs = %d", len(after))
+	}
+	for _, d := range after {
+		if d.Path == "docs/c.md" {
+			if !strings.Contains(d.Body, "写回的新文档") {
+				t.Fatalf("new document body = %q", d.Body)
+			}
+			continue
+		}
+		if !d.UpdatedAt.Equal(before[d.Path]) {
+			t.Fatalf("unchanged %s was rewritten: %v -> %v", d.Path, before[d.Path], d.UpdatedAt)
+		}
+	}
+	// Deleting a document removes exactly that path.
+	git("rm", "docs/b.md")
+	git("commit", "-m", "delete b")
+	if _, _, err := w.importGit(ctx, domain.KnowledgeSource{ID: id, Kind: "git", GitURL: "https://example.com/public.git", Branch: "main"}, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.KnowledgeDocument(id, "docs/b.md"); ok {
+		t.Fatal("deleted document survived incremental sync")
+	}
+	if docs := store.KnowledgeDocuments(id); len(docs) != 2 {
+		t.Fatalf("after delete docs = %d", len(docs))
+	}
+}

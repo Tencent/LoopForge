@@ -463,8 +463,22 @@ func (s *Service) DeleteSource(projectID, sourceID string) error {
 	if src.Kind == "hosted" {
 		return apperr.New(apperr.Invalid, "托管来源不能删除")
 	}
+	now := time.Now().UTC()
+	if s.now != nil {
+		now = s.now().UTC()
+	}
+	if src.LeaseOwner != "" && src.LeaseUntil != nil && src.LeaseUntil.After(now) {
+		return apperr.New(apperr.Conflict, "来源正在同步或写回，请稍后再删除")
+	}
 	if err := ms.DeleteKnowledgeSourceContent(sourceID); err != nil {
 		return apperr.New(apperr.Upstream, "删除来源内容失败："+err.Error())
+	}
+	if deleter, ok := ms.(interface {
+		DeleteKnowledgeWritebacksBySource(string) error
+	}); ok {
+		if err := deleter.DeleteKnowledgeWritebacksBySource(sourceID); err != nil {
+			return apperr.New(apperr.Upstream, "删除来源写回记录失败："+err.Error())
+		}
 	}
 	if err := ms.DeleteKnowledgeSource(sourceID); err != nil {
 		return apperr.New(apperr.Upstream, "删除来源失败："+err.Error())

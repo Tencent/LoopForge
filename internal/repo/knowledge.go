@@ -40,6 +40,15 @@ func (r *KnowledgeRepo) KnowledgeSubmissions(projectID, status string, limit int
 		item.Content = ""
 		out = append(out, item)
 	}
+	ids := make([]string, 0, len(out))
+	for _, item := range out {
+		ids = append(ids, item.ID)
+	}
+	if writebacks := r.KnowledgeWritebacksBySubmissions(ids); len(writebacks) > 0 {
+		for i := range out {
+			applyKnowledgeWritebackView(&out[i], writebacks[out[i].ID])
+		}
+	}
 	return out
 }
 
@@ -48,7 +57,11 @@ func (r *KnowledgeRepo) KnowledgeSubmission(id string) (domain.KnowledgeSubmissi
 	if err := r.DB.Where("id = ?", strings.TrimSpace(id)).Take(&row).Error; err != nil {
 		return domain.KnowledgeSubmission{}, false
 	}
-	return knowledgeSubmissionFromRow(row), true
+	out := knowledgeSubmissionFromRow(row)
+	if wb, ok := r.KnowledgeWritebackBySubmission(out.ID); ok {
+		applyKnowledgeWritebackView(&out, wb)
+	}
+	return out, true
 }
 
 // KnowledgeSubmissionIDsByArtifact maps artifact ids to the submission that

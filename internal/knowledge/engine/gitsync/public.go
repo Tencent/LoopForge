@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -16,13 +18,62 @@ type publicGitOptions struct{}
 // SyncRemote pins DNS to validated public addresses and disables redirects
 // and proxies, so Git cannot re-resolve a checked hostname to a private target.
 func SyncRemote(ctx context.Context, dir, remote, branch string, old map[string]string) (string, string, []FileInfo, []string, []string, error) {
+	options, sshIP, err := remoteGitOptions(ctx, remote)
+	if err != nil {
+		return "", "", nil, nil, nil, err
+	}
+	credential, _ := ctx.Value(credentialContext{}).(*knowledge.GitCredential)
+	return syncAuthenticated(ctx, dir, strings.TrimSpace(remote), branch, old, options, credential, sshIP)
+}
+
+// CommitAndPushRemote is the authenticated write path: validate the public
+// address exactly like a sync, then commit one reviewed file on a new branch
+// and push that branch. Credentials still live only in the short-lived child
+// environment prepared by authenticatedGitContext.
+func CommitAndPushRemote(ctx context.Context, dir, remote, baseBranch string, opts WriteOptions) (WriteResult, error) {
+	options, sshIP, err := remoteGitOptions(ctx, remote)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	credential, _ := ctx.Value(credentialContext{}).(*knowledge.GitCredential)
+	authCtx, cleanup, err := authenticatedGitContext(ctx, strings.TrimSpace(remote), options, credential, sshIP)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	defer cleanup()
+	return CommitAndPush(authCtx, dir, strings.TrimSpace(remote), baseBranch, opts)
+}
+
+// RemoteContainsCommitRemote refreshes the tracked branch and reports whether
+// commit is already an ancestor of it. This is the platform-independent merge
+// probe used when the hosting platform cannot report merge state.
+func RemoteContainsCommitRemote(ctx context.Context, dir, remote, baseBranch, commit string) (bool, error) {
+	options, sshIP, err := remoteGitOptions(ctx, remote)
+	if err != nil {
+		return false, err
+	}
+	credential, _ := ctx.Value(credentialContext{}).(*knowledge.GitCredential)
+	authCtx, cleanup, err := authenticatedGitContext(ctx, strings.TrimSpace(remote), options, credential, sshIP)
+	if err != nil {
+		return false, err
+	}
+	defer cleanup()
+	if _, statErr := os.Stat(filepath.Join(dir, ".git")); statErr != nil {
+		if _, _, _, _, _, err := Sync(authCtx, dir, strings.TrimSpace(remote), baseBranch, nil); err != nil {
+			return false, err
+		}
+	}
+	return remoteContainsCommit(authCtx, dir, baseBranch, commit)
+}
+
+func remoteGitOptions(ctx context.Context, remote string) ([]string, string, error) {
 	u, err := gitremote.Parse(remote)
 	if err != nil {
-		return "", "", nil, nil, nil, errors.New("public Git URL required")
+		return nil, "", errors.New("public Git URL required")
 	}
 	options, err := publicOptions(ctx, u.String(), net.DefaultResolver.LookupIPAddr)
 	if err != nil {
-		return "", "", nil, nil, nil, err
+		return nil, "", err
 	}
 	sshIP := ""
 	if u.Scheme == "https" {
@@ -30,7 +81,7 @@ func SyncRemote(ctx context.Context, dir, remote, branch string, old map[string]
 		command.Env = protectedGitEnv()
 		capabilities, err := command.Output()
 		if err != nil || !strings.Contains(strings.ToLower(string(capabilities)), "http.curloptresolve") {
-			return "", "", nil, nil, nil, errors.New("Git with http.curloptResolve support is required")
+			return nil, "", errors.New("Git with http.curloptResolve support is required")
 		}
 	} else {
 		// publicOptions carries the validated address. HostName prevents a second
@@ -38,8 +89,7 @@ func SyncRemote(ctx context.Context, dir, remote, branch string, old map[string]
 		sshIP = strings.TrimPrefix(options[len(options)-1], "ssh.pinnedIP=")
 		options = options[:len(options)-1]
 	}
-	credential, _ := ctx.Value(credentialContext{}).(*knowledge.GitCredential)
-	return syncAuthenticated(ctx, dir, strings.TrimSpace(remote), branch, old, options, credential, sshIP)
+	return options, sshIP, nil
 }
 
 func publicOptions(ctx context.Context, remote string, lookup func(context.Context, string) ([]net.IPAddr, error)) ([]string, error) {

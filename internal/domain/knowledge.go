@@ -23,29 +23,72 @@ const (
 	KnowledgeSubmissionRejected  = "rejected"
 )
 
+// Git 写回的生命周期。审核条目发布成功即进入 published；写回记录另行
+// 跟踪分支与合并请求，合并后由同步器把新文档纳入索引。
+const (
+	KnowledgeWritebackPending      = "pending"
+	KnowledgeWritebackBranchPushed = "branch_pushed"
+	KnowledgeWritebackMROpen       = "mr_open"
+	KnowledgeWritebackMerged       = "merged"
+	KnowledgeWritebackClosed       = "closed"
+	KnowledgeWritebackFailed       = "failed"
+)
+
 // KnowledgeSubmission is one distilled document waiting for human review
 // before it is written back to an upstream knowledge source.
 type KnowledgeSubmission struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"projectId,omitempty"`
-	RunID       string    `json:"runId,omitempty"`
-	NodeID      string    `json:"nodeId,omitempty"`
-	ArtifactID  string    `json:"artifactId,omitempty"`
-	IssueID     string    `json:"issueId,omitempty"`
-	WorkflowID  string    `json:"workflowId,omitempty"`
-	Title       string    `json:"title"`
-	Source      string    `json:"source"`
-	Path        string    `json:"path"`
-	Content     string    `json:"content,omitempty"`
-	Status      string    `json:"status"`
-	Commit      string    `json:"commit,omitempty"`
-	Error       string    `json:"error,omitempty"`
+	ID         string `json:"id"`
+	ProjectID  string `json:"projectId,omitempty"`
+	RunID      string `json:"runId,omitempty"`
+	NodeID     string `json:"nodeId,omitempty"`
+	ArtifactID string `json:"artifactId,omitempty"`
+	IssueID    string `json:"issueId,omitempty"`
+	WorkflowID string `json:"workflowId,omitempty"`
+	Title      string `json:"title"`
+	Source     string `json:"source"`
+	Path       string `json:"path"`
+	Content    string `json:"content,omitempty"`
+	Status     string `json:"status"`
+	Commit     string `json:"commit,omitempty"`
+	Error      string `json:"error,omitempty"`
+	// Git 来源写回的管理视图。读取时由 knowledge_writebacks 覆盖，避免
+	// 审核条目里的历史快照与合并状态不一致。
+	Branch      string    `json:"branch,omitempty"`
+	MRURL       string    `json:"mrUrl,omitempty"`
+	MRProvider  string    `json:"mrProvider,omitempty"`
+	MRStatus    string    `json:"mrStatus,omitempty"`
+	WriteNote   string    `json:"writeNote,omitempty"`
+	WriteError  string    `json:"writeError,omitempty"`
 	ReviewNote  string    `json:"reviewNote,omitempty"`
 	CreatedBy   string    `json:"createdBy,omitempty"`
 	ReviewedBy  string    `json:"reviewedBy,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	PublishedAt time.Time `json:"publishedAt,omitempty"`
+}
+
+// KnowledgeWriteback 是一次 Git 来源写回。分支和提交是推送结果，合并请求
+// 链接与状态由托管平台返回并在后台刷新；Note/Error 只保存分类后的中文提示。
+// 同一审核条目只有一条写回记录，重试沿用同一分支。
+type KnowledgeWriteback struct {
+	ID           string     `json:"id"`
+	SubmissionID string     `json:"submissionId,omitempty"`
+	SourceID     string     `json:"sourceId"`
+	ProjectID    string     `json:"projectId,omitempty"`
+	Path         string     `json:"path"`
+	Branch       string     `json:"branch,omitempty"`
+	Commit       string     `json:"commit,omitempty"`
+	MRURL        string     `json:"mrUrl,omitempty"`
+	MRProvider   string     `json:"mrProvider,omitempty"`
+	MRIID        int        `json:"mrIid,omitempty"`
+	MRState      string     `json:"mrState,omitempty"`
+	Status       string     `json:"status"`
+	Note         string     `json:"note,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	Attempts     int        `json:"attempts,omitempty"`
+	CheckedAt    *time.Time `json:"checkedAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt,omitempty"`
+	UpdatedAt    time.Time  `json:"updatedAt,omitempty"`
 }
 
 // KnowledgeCandidate is a run artifact that looks like a distilled knowledge

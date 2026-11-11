@@ -314,6 +314,13 @@ func (s *Service) Delete(id string) error {
 	if err != nil {
 		return err
 	}
+	if deleter, ok := s.store.(interface {
+		DeleteKnowledgeWritebackBySubmission(string) error
+	}); ok {
+		if err := deleter.DeleteKnowledgeWritebackBySubmission(item.ID); err != nil {
+			return apperr.New(apperr.Upstream, "删除写回记录失败："+err.Error())
+		}
+	}
 	return s.store.DeleteKnowledgeSubmission(item.ID)
 }
 
@@ -357,11 +364,40 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	if err != nil {
 		return item, err
 	}
+	item.Path = path
+	item.ReviewedBy = actor
+	if src, ok := s.sourceByID(source); ok && src.Kind == "git" {
+		writer, ok := client.(GitWritebacker)
+		if !ok {
+			return item, apperr.New(apperr.Unavailable, "内置知识引擎不支持 Git 来源写回")
+		}
+		ctx, cancel := context.WithTimeout(ctx, 3*CallTimeout)
+		defer cancel()
+		result, err := writer.WriteGitDocument(ctx, WritebackRequest{
+			SubmissionID: item.ID, ProjectID: item.ProjectID, Source: source,
+			Path: path, Content: content, Title: item.Title,
+		})
+		if err != nil {
+			item.Error = err.Error()
+			item.MRStatus = domain.KnowledgeWritebackFailed
+			_ = s.store.PutKnowledgeSubmission(item)
+			return item, apperr.New(apperr.Upstream, "写回知识库失败："+err.Error())
+		}
+		item.Status = domain.KnowledgeSubmissionPublished
+		item.Commit = result.Commit
+		item.Branch = result.Branch
+		item.MRURL = result.MRURL
+		item.MRProvider = result.MRProvider
+		item.MRStatus = result.MRStatus
+		item.WriteNote = result.Message
+		item.WriteError = ""
+		item.Error = ""
+		item.PublishedAt = s.now().UTC()
+		return s.save(item)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
 	defer cancel()
 	result, err := client.WriteDocument(ctx, source, path, content)
-	item.Path = path
-	item.ReviewedBy = actor
 	if err != nil {
 		item.Error = err.Error()
 		_ = s.store.PutKnowledgeSubmission(item)
@@ -372,6 +408,18 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	item.Error = ""
 	item.PublishedAt = s.now().UTC()
 	return s.save(item)
+}
+
+// sourceByID reads the control-plane source when the store supports it. Tests
+// with a narrow fake store fall back to the hosted write path.
+func (s *Service) sourceByID(id string) (domain.KnowledgeSource, bool) {
+	lookup, ok := s.store.(interface {
+		KnowledgeSource(string) (domain.KnowledgeSource, bool)
+	})
+	if !ok {
+		return domain.KnowledgeSource{}, false
+	}
+	return lookup.KnowledgeSource(id)
 }
 
 // mutable loads an item that has not been published yet.

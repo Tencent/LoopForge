@@ -1,6 +1,6 @@
 // Package gitsync 维护来源仓的本地同步缓存：克隆、拉取、列举 Markdown，
-// 以及把相对路径限制在工作副本内再读文件。缓存目录由调用方指定，不进数据库。
-// 不提交、不推送，也不读取历史 commit。
+// 把相对路径限制在工作副本内再读文件，以及为审核写回创建分支、提交并推送。
+// 缓存目录由调用方指定，不进数据库；不读取历史 commit。
 package gitsync
 
 import (
@@ -236,7 +236,7 @@ func readLimited(path string) ([]byte, error) {
 	return buf, nil
 }
 
-func git(ctx context.Context, dir string, args ...string) (string, error) {
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	full := make([]string, 0, len(args)+2)
 	full = append(full, "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null", "-c", "http.extraHeader=", "-c", "http.cookieFile=", "-c", "http.saveCookies=false")
 	if options, ok := ctx.Value(publicGitOptions{}).([]string); ok {
@@ -254,6 +254,11 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	if env, ok := ctx.Value(authEnvironment{}).([]string); ok {
 		cmd.Env = append(cmd.Env, env...)
 	}
+	return cmd
+}
+
+func git(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := gitCommand(ctx, dir, args...)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() != nil {

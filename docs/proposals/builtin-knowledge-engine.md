@@ -59,7 +59,7 @@
 - 索引过程里「先写库、再从工作树回读正文」的双路径。读进内存的字节就是要落库的正文，不要再打开工作树给检索用。
 - `gitsync` 里为特定 Git 包装器准备的 `--task-authorized` / `--user-approved`（`authorizedGitArgs`，测试在 `gitsync_auth_test.go`）。平台用普通 `git`，不移植这层参数。
 
-`gitsync.WriteDocument`（提交并推送）的代码可以随包留下并保持单元测试，但切片的写路径不调用它。外部仓库写回方式还没定，见第 8 节。
+`gitsync.CommitAndPush`（提交并推送写回分支）留到阶段一补全，见第 10 节；切片验收时不调用它。
 
 ### 2.3 托管库是事实源
 
@@ -88,7 +88,7 @@
 | `ListSources` | 读控制面来源。不含 Git 地址、凭据和本地路径 |
 | `Search` | 在调用方已经收窄的来源集合里做关键词检索 |
 | `Fetch` | 读内容面正文并按行截取。见下方 commit 核对 |
-| `WriteDocument` | 仅托管来源：写 MySQL 修订并重建该文档的块。Git 来源返回明确的「切片未实现外部写回」，不要尝试推送 |
+| `WriteDocument` | 仅托管来源：写 MySQL 修订并重建该文档的块。Git 来源的审核发布走引擎的 `WriteGitDocument`，见第 10 节；直接调 `WriteDocument` 返回「需经审核队列发布」 |
 
 `kb_get_source` 不进 `Upstream`。它要的是来源状态加文档清单，由 `Service.SourceDetail` 直接读两个 Repo。代理不再把原始工具调用转发给 HTTP 客户端。
 
@@ -158,7 +158,8 @@ internal/knowledge/engine/gitsync/  同步缓存
 | `knowledge_sources` | `id` 主键；`base_id` 普通字符串，不建外键；`kind` 为 `hosted` 或 `git`；`name`；`git_url`；`branch`；`path_prefix`（只索引此前缀下的 `.md`）；`head_commit`；`head_revision`（托管库的当前修订号）；`status`；`index_status`；`doc_count`；`last_error`；`last_synced_at`；`lease_owner`；`lease_until` |
 | `project_knowledge_bindings` | 主键 `(project_id, base_id)`；`permission` 切片只写 `submit`。无外键 |
 | `knowledge_sync_jobs` | 自增主键；`source_id`；`kind`；`status`；起止 commit；变更与删除计数；日志；起止时间 |
-| `knowledge_submissions` | 已有表，切片不改列。发布到托管来源时走 `WriteDocument`；发布到 Git 来源返回未实现 |
+| `knowledge_writebacks` | `031`。`id` 主键；`submission_id` 唯一；`source_id`；`path`；`branch`；`commit`；`mr_url`；`mr_provider`；`mr_iid`；`mr_state`；`status`；中文提示与错误；`attempts`；`checked_at`；时间戳 |
+| `knowledge_submissions` | 已有表，切片不改列。发布到托管来源时走 `WriteDocument`；发布到 Git 来源走 `WriteGitDocument`，分支与合并请求另存 `knowledge_writebacks` |
 | `knowledge_settings` | 删除。`026` 对已有库 `DROP TABLE`。从 `allModels` 去掉 `knowledgeSettingsRow`，并整体删除 `domain.KnowledgeSettings`、`KnowledgeRepo` 的读写方法与平台级写回开关；审核发布只按项目绑定和来源范围授权。新装不再建这张表。`002_knowledge_base.sql` 保持原样 |
 
 `knowledge_bases.project_id` 加普通索引。一个项目在切片里只有一个自动托管库：用唯一索引 `(project_id, layer)` 挡住并发创建。`project_id` 为空时不参与这个唯一约束（MySQL 里多个 NULL 可以并存），所以不要靠它约束以后的公共库。
@@ -221,7 +222,7 @@ ALTER TABLE knowledge_chunks
 - 公共知识库、平台知识库，以及「相关度相同时项目层在前」。
 - 一个知识库挂多个 Git 来源的完整管理，以及把项目里已登记的代码仓库当成来源。
 - 私有 Git 的服务端凭据已在阶段一补全，见第 9 节。
-- 外部仓库的提交、推送或合并请求。
+- 外部仓库的提交、推送与合并请求：已实现，见第 10 节。
 - 审核队列的自动入队、门禁、指纹和墓碑。
 - 调用记录持久化：已实现。控制面表 `knowledge_activity`（`027`）按项目保留最近
   200 条，`/api/knowledge/usage` 的 `activity` 从库读取；SOP 代理与 Main Bot 两条
@@ -298,7 +299,7 @@ S2、S3、S4 在 S1 进行时就可以由不同的人同时做。S5 是关键路
 
 ## 7. 阶段一补全时再打开的原阶段清单
 
-切片验收通过之后，阶段一剩下的是第 5.2 节。本机测试在那之前不要求向量、写回推送或黄金案例。那些仍属于更后面的阶段。
+切片验收通过之后，阶段一剩下的是第 5.2 节。写回推送已按第 10 节补全；向量、自动沉淀与治理仍属于更后面的阶段。
 
 ## 8. 冲突与未决
 
@@ -307,7 +308,7 @@ S2、S3、S4 在 S1 进行时就可以由不同的人同时做。S5 是关键路
 1. **历史版本的原文。** 方案既要求服务路径的读原文只读 MySQL、任何实例都能做，又写了外部仓库读取历史 commit 时按需从 Git 取。后者只有持有工作副本的实例能做，和多实例无状态读原文冲突。切片按第 3 节核对当前版本，其他 commit 直接报错。历史版本留在阶段一补全之外，直到这个冲突有结论。
 2. **内容面放在哪个 Repo。** 方案写的是扩展 `KnowledgeRepo`，同时要求内容面可以换连接。`AGENTS.md` 又不允许往共享 `deps` 里加第二个数据库。派发按第 4.2 节实现：控制面扩展已有 `KnowledgeRepo`，内容面用新的 `KnowledgeContentRepo` 持有自己的 `*gorm.DB`。这是同时满足两条已定约束的映射，不是改掉其中一条。若要求改成单一 Repo 持有两个连接，先改本节再写代码。
 3. **关键词召回是否合格。** 已定默认是 MySQL ngram，本文不判断它够不够用。对照用的 `lex` 只移植、不接线。召回对比的结论若是 ngram 明显更差，只更换第 3 节的关键词适配器。
-4. **外部仓库怎么写回。** 直接推送还是合并请求，以及这件事放在阶段一还是阶段三，都还没定。切片对 Git 来源的 `WriteDocument` 返回未实现。不要在切片里做推送，也不要做合并请求。
+4. **外部仓库怎么写回。** 已定：提交到新分支并推送，再按托管平台创建合并请求；不支持的平台只推分支并给出中文提示。由持有来源租约的实例执行，工作副本仍是缓存。实现见第 10 节。
 5. **私有来源的 Git 凭据。** 阶段一补全采用来源级服务凭据，见第 9 节。
 
 
@@ -324,3 +325,19 @@ HTTPS 通过临时 askpass 文件读取用户名和令牌，SSH 使用临时私�
 两种协议都校验 DNS 的全部结果并拒绝私网和保留地址。HTTPS 保留 `http.curloptResolve` 固定解析、禁用重定向和代理，SSH 使用已校验 IP 的 `HostName` 固定连接以及原始域名的 `HostKeyAlias` 验证主机。HTTP 明文地址在登记时拒绝。
 
 Git stderr 只用于分类，日志、错误响应与同步记录均保存分类后的提示。鉴权失败、仓库不存在、分支不存在及 SSH 主机公钥错误分别显示中文提示。有些托管服务对无权访问返回 404，此时按服务器提供的“仓库不存在”信号提示，并提醒检查凭据访问范围。
+
+## 10. Git 来源写回（阶段一补全 1f-4）
+
+审核队列把条目发布到 Git 来源时，平台按以下顺序执行。托管来源不受影响，仍直接写 MySQL。
+
+1. 校验来源为 `git`、路径在来源的 `path_prefix` 内，并解密来源凭据。凭据必须已标记 `canWrite`，否则返回中文提示，不推送。
+2. 领取来源写回租约（`knowledge_sources.lease_owner/lease_until`，与同步互斥）。其他实例正在同步或写回时返回「该来源正在同步或写回，请稍后重试」。租约默认 60 秒并按 TTL/3 续期。
+3. 刷新来源缓存工作副本，丢弃崩溃写入留下的未提交改动。缓存仍只是可重建副本，事实源是 Git 仓库。
+4. 从来源分支创建或重建写回分支 `kb/writeback-<审核条目 ID>`，只提交审核路径这一个文件，作者固定为 `LoopForge Knowledge <knowledge@loopforge.local>`，再推送到远端。重试沿用同一分支并重建为单个提交；推送使用 `--force-with-lease`，租约排除并发写者。
+5. 按托管平台创建合并请求。GitHub（`github.com`）调用 REST `POST /repos/{owner}/{repo}/pulls`；GitLab（`gitlab.com` 与自建 GitLab）调用 `POST /projects/{urlencoded path}/merge_requests`。GitLab 使用 `PRIVATE-TOKEN`（Personal 或 Project Access Token）；GitHub 使用 Bearer 令牌。部署密钥、没有合并请求权限的令牌或其他平台（Gitee、Codeberg、Bitbucket 等）没有可用 HTTP 令牌时只推分支，返回中文提示让用户在仓库网页创建。合并请求状态沿用交付能力的口径（`opened` / `merged` / `closed`），但不写入 `mr_delivery_states`：那张表绑定 Gongfeng 项目与需求 ID，知识写回没有需求上下文，单独记录在 `knowledge_writebacks` 才不会把知识库混进交付统计。
+6. 控制面写 `knowledge_writebacks`：分支、提交、合并请求链接/编号/状态与中文提示。审核条目读取时叠加写回视图，知识中心审核页可见分支、合并请求链接与状态。
+7. worker 的同步循环每 30 秒刷新未终结的写回：优先向托管平台查询合并请求状态，API 不可用时再用缓存工作副本探测提交是否已进入来源分支。检测到合并后把来源置为待同步；同步器按已有文档指纹只读取新增或变化的文件，删掉已移除的路径，其他文档和索引块保持不动。压缩合并（squash）会改写提交，祖先探测认不出；这类平台若不支持查询合并请求状态，由用户在合并后手动触发同步。
+
+安全边界：凭据只通过临时 askpass / 私钥文件传给 Git 子进程，并走白名单环境；`.git/config` 只保存无凭据地址。Git stderr 和托管平台响应正文都不进入日志、错误或 API 响应，只保留分类后的中文。合并请求接口禁用重定向、限制响应大小，并对只推送分支的平台给出明确说明。
+
+迁移：`migrations/031_knowledge_writeback.sql` 可重复执行，只建控制面表，不含跨库外键。内容面的增量写入由 `KnowledgeContentRepo.ApplyGitKnowledge` 完成。

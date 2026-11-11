@@ -15,12 +15,14 @@ import (
 	"agentflow/internal/knowledge"
 	"agentflow/internal/knowledge/engine/chunk"
 	"agentflow/internal/knowledge/engine/frontmatter"
+	"agentflow/internal/knowledge/engine/gitsync"
+	"agentflow/internal/knowledge/hosting"
 	"agentflow/internal/mcpclient"
 )
 
-// ErrExternalWriteNotImplemented 是对 Git 等外部来源写入时的明确拒绝。
-// 切片不推送、不建合并请求，外部仓库写回留到后面的阶段。
-var ErrExternalWriteNotImplemented = errors.New("切片未实现外部仓库写回")
+// ErrExternalWriteNotImplemented 是对直接写入 Git 来源的明确拒绝：Git 来源
+// 必须经审核队列发布，由 Engine.WriteGitDocument 提交、推送并创建合并请求。
+var ErrExternalWriteNotImplemented = errors.New("Git 来源写回需经审核队列发布")
 
 // ControlStore 是引擎需要的控制面（主库）能力，由 *repo.KnowledgeRepo 提供。
 type ControlStore interface {
@@ -39,12 +41,20 @@ type ContentStore interface {
 var revisionIDSeq atomic.Uint64
 
 // Engine 实现 knowledge.Upstream 五个方法，是内置知识引擎的唯一适配器。
+// 写回相关字段由 initWriteback 填默认值，测试可在同包内替换 Git/托管平台
+// 调用，不改变 Upstream 契约。
 type Engine struct {
 	control ControlStore
 	content ContentStore
 	index   KeywordIndex
 	now     func() time.Time
 	newID   func() string
+
+	writeCacheRoot   string
+	writeLeaseTTL    time.Duration
+	gitWrite         func(context.Context, string, string, string, gitsync.WriteOptions) (gitsync.WriteResult, error)
+	gitMergeProbe    func(context.Context, string, string, string, string) (bool, error)
+	hostingClientFor func(hosting.Repo, string) *hosting.Client
 }
 
 var _ knowledge.Upstream = (*Engine)(nil)
@@ -52,11 +62,13 @@ var _ knowledge.Upstream = (*Engine)(nil)
 // NewEngine 用控制面、内容面与关键词适配器装配引擎。关键词适配器是内部
 // 替换点，可换成内存倒排等实现而不改 Upstream 和表。
 func NewEngine(control ControlStore, content ContentStore, index KeywordIndex) *Engine {
-	return &Engine{
+	e := &Engine{
 		control: control, content: content, index: index,
 		now:   time.Now,
 		newID: func() string { return fmt.Sprintf("kr-%d-%d", time.Now().UTC().UnixNano(), revisionIDSeq.Add(1)) },
 	}
+	e.initWriteback()
+	return e
 }
 
 // Tools 返回固定的只读工具说明，不向 Agent 列出写工具。

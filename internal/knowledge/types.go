@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -74,9 +75,31 @@ type Document struct {
 }
 
 type WriteResult struct {
-	Source string `json:"source"`
-	Path   string `json:"path"`
-	Commit string `json:"commit"`
+	Source     string `json:"source"`
+	Path       string `json:"path"`
+	Commit     string `json:"commit"`
+	Branch     string `json:"branch,omitempty"`
+	MRURL      string `json:"mrUrl,omitempty"`
+	MRProvider string `json:"mrProvider,omitempty"`
+	MRStatus   string `json:"mrStatus,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
+// WritebackRequest 是审核条目发布到 Git 来源时需要的最小上下文。引擎只
+// 用它记录写回、生成分支名和合并请求文案，不接收任何凭据字段。
+type WritebackRequest struct {
+	SubmissionID string
+	ProjectID    string
+	Source       string
+	Path         string
+	Content      string
+	Title        string
+}
+
+// GitWritebacker 是内置引擎对 Git 来源的写回能力。Service 通过类型断言
+// 使用它，保持 Upstream 五个只读方法不变。
+type GitWritebacker interface {
+	WriteGitDocument(ctx context.Context, req WritebackRequest) (WriteResult, error)
 }
 
 func ScopeSources(allowed, requested []string) ([]string, error) {
