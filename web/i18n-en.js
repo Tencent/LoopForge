@@ -113,5 +113,7 @@ Object.assign(window.LF_I18N_EN,{
 "当前列表":"In this list,",
 "项不可删除，查看原因":"cannot be deleted. Show why",
 "选择此需求":"Select this requirement",
-"选择需求":"Select requirement"
+"选择需求":"Select requirement",
+"配置沙箱":"Configure sandbox",
+"刷新沙箱":"Refresh sandboxes"
 });
