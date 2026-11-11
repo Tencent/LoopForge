@@ -1,4 +1,5 @@
 """Exercise Windows launchers with fake Docker and Runner processes, without services."""
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -156,6 +157,26 @@ class WindowsStartupTest(unittest.TestCase):
         self.assertFalse(record.exists())
 
     def test_runner_preserves_user_environment_and_saved_options(self):
+        self.assert_runner_environment()
+
+    def test_runner_preserves_user_environment_with_short_path_alias(self):
+        get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        get_short_path.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        get_short_path.restype = ctypes.c_uint32
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_short_path(str(self.root), buffer, len(buffer))
+        if not length:
+            raise ctypes.WinError(ctypes.get_last_error())
+        self.assertLess(length, len(buffer), "temporary directory alias exceeded the path buffer")
+        alias = Path(buffer.value)
+        if os.path.normcase(str(alias)) == os.path.normcase(str(self.root)):
+            self.skipTest("the temporary volume does not provide an 8.3 path alias")
+        # The owning TemporaryDirectory retains the long path for cleanup.
+        self.root = alias
+        self.environment["LOOPFORGE_TEST_ROOT"] = str(alias)
+        self.assert_runner_environment()
+
+    def assert_runner_environment(self):
         (self.root / "bin").mkdir()
         for name in ("agentflow-runner-windows-amd64.exe", "agentflow-gate-mcp-windows-amd64.exe"):
             (self.root / "bin" / name).touch()
@@ -175,7 +196,10 @@ class WindowsStartupTest(unittest.TestCase):
             " if($ArgumentList -notcontains '-auto-update=false'){throw 'auto update enabled'}\n"
             " if($env:AGENTFLOW_MANAGED_CLI_ROOT){throw 'managed CLI root inherited'}\n"
             " if($env:USERPROFILE -ne $beforeHome){throw 'user home changed'}\n"
-            " if($env:PATH -notlike ($env:LOOPFORGE_TEST_ROOT+'\\custom cli;*')){throw 'missing CLI path'}\n"
+            " $expectedCli=[IO.Path]::GetFullPath((Join-Path $env:LOOPFORGE_TEST_ROOT 'custom cli'))\n"
+            " $pathParts=$env:PATH -split ([regex]::Escape([string][IO.Path]::PathSeparator)),2\n"
+            " if(-not [String]::Equals($pathParts[0],$expectedCli,[StringComparison]::OrdinalIgnoreCase)){throw 'missing normalized CLI path'}\n"
+            " if($pathParts.Count -ne 2 -or $pathParts[1] -cne $beforePath){throw 'inherited PATH changed'}\n"
             " if($env:AGENTFLOW_SERVER_URL -ne 'http://127.0.0.1:18090'){throw 'incorrect server'}\n"
             " if($ArgumentList -notcontains '3'){throw 'lost concurrency'}\n"
             " $fake=[pscustomobject]@{Id=987654;StartTime=[datetime]::UtcNow;HasExited=$false}\n"
