@@ -3954,3 +3954,14 @@ a.draft-title {
   padding-left: 10px;
   border-left: 1px solid var(--line);
 }
+.kb-cite-notes {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+.kb-cite-notes li[data-freshness="changed"],
+.kb-cite-notes li[data-freshness="deleted"] {
+  color: #9a6700;
+}

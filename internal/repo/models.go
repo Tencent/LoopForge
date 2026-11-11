@@ -765,6 +765,29 @@ type knowledgeActivityRow struct {
 
 func (knowledgeActivityRow) TableName() string { return "knowledge_activity" }
 
+// knowledgeCitationRow 是 Agent 检索或读取时写下的引用。按项目隔离，
+// 只保留统计窗口内、且不超过每项目上限的行。
+type knowledgeCitationRow struct {
+	ID        int64      `gorm:"column:id;primaryKey;autoIncrement;index:idx_knowledge_citation_project,priority:2"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_knowledge_citation_project,priority:1;index:idx_knowledge_citation_doc,priority:1"`
+	AgentID   string     `gorm:"column:agent_id;size:64"`
+	UserID    int64      `gorm:"column:user_id"`
+	RunID     string     `gorm:"column:run_id;size:64"`
+	SessionID string     `gorm:"column:session_id;size:64"`
+	Tool      string     `gorm:"column:tool;size:64"`
+	SourceID  string     `gorm:"column:source_id;size:64;index:idx_knowledge_citation_doc,priority:2"`
+	Path      string     `gorm:"column:path;size:512;index:idx_knowledge_citation_doc,priority:3"`
+	Commit    string     `gorm:"column:commit;size:128"`
+	StartLine int        `gorm:"column:start_line"`
+	EndLine   int        `gorm:"column:end_line"`
+	ChunkID   int64      `gorm:"column:chunk_id"`
+	BaseID    string     `gorm:"column:base_id;size:64"`
+	Layer     string     `gorm:"column:layer;size:32"`
+	At        *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeCitationRow) TableName() string { return "knowledge_citations" }
+
 // knowledgeWritebackRow 记录审核条目发布到 Git 来源的分支与合并请求。
 // 同一审核条目一行；重试沿用同一分支。属于控制面，不存正文。
 type knowledgeWritebackRow struct {
@@ -852,7 +875,7 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSubmissionRow{},
-		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
+		knowledgeBaseRow{}, knowledgeSourceRow{}, knowledgeBindingRow{}, knowledgeSyncJobRow{}, knowledgeActivityRow{}, knowledgeCitationRow{}, knowledgeWritebackRow{}, knowledgeTombstoneRow{},
 		knowledgeDocumentRow{}, knowledgeRevisionRow{}, knowledgeChunkRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
 	}

@@ -20,6 +20,7 @@ type fakeStore struct {
 	workflows   []domain.WorkflowDefinition
 	candidates  []domain.KnowledgeCandidate
 	activities  []domain.KnowledgeActivity
+	docs        map[string][]domain.KnowledgeDocument
 }
 
 func newFakeStore() *fakeStore {
@@ -330,4 +331,9 @@ func TestFetchRejectsDifferentVersion(t *testing.T) {
 	}
 }
 
-func (f *fakeStore) KnowledgeDocuments(string) []domain.KnowledgeDocument { return nil }
+func (f *fakeStore) KnowledgeDocuments(source string) []domain.KnowledgeDocument {
+	if f.docs == nil {
+		return nil
+	}
+	return f.docs[source]
+}

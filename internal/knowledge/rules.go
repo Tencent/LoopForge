@@ -13,8 +13,9 @@ const usageRuleContent = `# 知识库使用规范
 
 ## 先查再做
 - 动手前先用 kb_search 检索与任务相关的已有知识：排障手册、业务规范、历史方案、接口约定。
-- 命中后用 kb_fetch 按 source + path + 行号读取原文，不要只凭摘要下结论。
-- kb_list_sources 可查看当前项目可用的知识库来源；检索默认覆盖全部已授权来源。
+- 查错误码、实例 ID、接口名、配置项或其他必须逐字命中的标识时用 kb_grep。默认按字面量匹配；只有模式本身是正则时才把 regex 设为 true。
+- 命中后用 kb_fetch 按 source + path + 行号读取原文，不要只凭摘要或命中行下结论。
+- kb_list_sources 可查看当前项目可用的知识库来源；检索和精确匹配默认覆盖全部已授权来源。
 - 当前使用关键词检索，可换关键词或更短的词再搜一次。
 
 ## 引用出处
@@ -47,7 +48,7 @@ func MCPServerDefinition(baseURL, proxyToken string) domain.MCPServerDefinition 
 		ID:          domain.KnowledgeMCPServerID,
 		Name:        "项目知识库",
 		Scope:       "project",
-		Description: "本项目知识库只读检索：kb_search / kb_fetch / kb_list_sources / kb_get_source；产出 knowledge.md 由平台自动沉淀",
+		Description: "本项目知识库只读检索：kb_search / kb_fetch / kb_grep / kb_list_sources / kb_get_source；产出 knowledge.md 由平台自动沉淀",
 		Transport:   "http",
 		URL:         strings.TrimRight(baseURL, "/") + ProxyPath,
 		Headers:     map[string]string{"Authorization": "Bearer " + proxyToken},

@@ -31,6 +31,15 @@ func ReadOnlyToolDefinitions() []mcpclient.Tool {
 			},"required":["source","path"]}`),
 		},
 		{
+			Name:        ToolGrep,
+			Description: "在项目已授权来源的 Markdown 正文里做精确匹配。默认按字面量，正则需把 regex 设为 true。返回路径、行号、命中行和出处；需要上下文时再用 kb_fetch。",
+			InputSchema: toolSchema(`{"type":"object","properties":{
+				"pattern":{"type":"string","description":"要匹配的字面量；regex 为 true 时是正则"},
+				"regex":{"type":"boolean","description":"为 true 时按正则匹配，默认按字面量"},
+				"sources":{"type":"array","items":{"type":"string"},"description":"限定来源 id；不传则覆盖当前项目可见来源"}
+			},"required":["pattern"]}`),
+		},
+		{
 			Name:        ToolListSources,
 			Description: "列出当前项目可用的知识库来源及其状态、篇数。",
 			InputSchema: toolSchema(`{"type":"object","properties":{}}`),

@@ -382,11 +382,7 @@ func cleanSources(in []string) []string {
 }
 
 func citation(source, version, path string, start, end int) string {
-	ref := fmt.Sprintf("#L%d", start)
-	if end > start {
-		ref += fmt.Sprintf("-L%d", end)
-	}
-	return source + "@" + version + ":" + path + ref
+	return knowledge.FormatCitation(source, version, path, start, end)
 }
 
 func sha256Hex(s string) string {

@@ -37,6 +37,7 @@ import {
   ArtifactPreview,
   ImageLightbox,
 } from "./RichContent";
+import { KnowledgeProject } from "./knowledge-citation.js";
 import { DraftCard } from "./SidePanel";
 import ArtifactPanel from "./ArtifactPanel";
 import { useWorkspaceChanges } from "./useWorkspaceChanges";
@@ -1033,6 +1034,7 @@ export default function App() {
     );
   };
   return (
+    <KnowledgeProject.Provider value={chat.session?.projectId || chat.projectId || ""}>
     <AgentBrowserLinks.Provider
       value={conversationStarted && workspaceRunId ? openAgentBrowser : null}
     >
@@ -2340,6 +2342,7 @@ export default function App() {
       />
     </div>
     </AgentBrowserLinks.Provider>
+    </KnowledgeProject.Provider>
   );
 }
 function ChevronRightSmall() {

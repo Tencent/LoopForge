@@ -276,6 +276,9 @@ func (s *Service) ReadDocument(ctx context.Context, up Upstream, projectID, sour
 		return Document{}, apperr.New(apperr.Upstream, "读取原文失败："+err.Error())
 	}
 	doc.BaseOrigin = s.sourceOrigin(source)
+	if doc.URL == "" {
+		doc.URL = s.SourceFileURL(doc.Source, doc.Commit, doc.Path, doc.StartLine, doc.EndLine)
+	}
 	return doc, nil
 }
 

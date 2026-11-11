@@ -10,13 +10,14 @@ import (
 const (
 	ToolSearch      = "kb_search"
 	ToolFetch       = "kb_fetch"
+	ToolGrep        = "kb_grep"
 	ToolListSources = "kb_list_sources"
 	ToolGetSource   = "kb_get_source"
 	ToolWrite       = "kb_write_document"
 )
 
 // ReadOnlyTools is the only upstream surface exposed to agents.
-var ReadOnlyTools = []string{ToolSearch, ToolFetch, ToolListSources, ToolGetSource}
+var ReadOnlyTools = []string{ToolSearch, ToolFetch, ToolGrep, ToolListSources, ToolGetSource}
 
 func IsReadOnlyTool(name string) bool {
 	for _, tool := range ReadOnlyTools {
@@ -57,6 +58,7 @@ type SearchHit struct {
 	Snippet   string  `json:"snippet"`
 	Score     float64 `json:"score"`
 	Citation  string  `json:"citation"`
+	URL       string  `json:"url,omitempty"`
 }
 
 type SearchResult struct {
@@ -74,14 +76,17 @@ type Line struct {
 
 type Document struct {
 	BaseOrigin
-	Source    string `json:"source"`
-	Commit    string `json:"commit"`
-	Path      string `json:"path"`
-	StartLine int    `json:"start_line"`
-	EndLine   int    `json:"end_line"`
-	LineCount int    `json:"line_count"`
-	Lines     []Line `json:"lines"`
-	Citation  string `json:"citation"`
+	Source         string `json:"source"`
+	Commit         string `json:"commit"`
+	Path           string `json:"path"`
+	StartLine      int    `json:"start_line"`
+	EndLine        int    `json:"end_line"`
+	LineCount      int    `json:"line_count"`
+	Lines          []Line `json:"lines"`
+	Citation       string `json:"citation"`
+	URL            string `json:"url,omitempty"`
+	Freshness      string `json:"freshness,omitempty"`
+	CurrentVersion string `json:"current_version,omitempty"`
 }
 
 type WriteResult struct {

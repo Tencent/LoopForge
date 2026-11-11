@@ -143,7 +143,11 @@ func (s *Service) sourceOrigin(source string) BaseOrigin {
 // Kept in Service so lexical and hybrid adapters share the same D11 policy.
 func (s *Service) rankOrigins(result *SearchResult) {
 	for i := range result.Results {
-		result.Results[i].BaseOrigin = s.sourceOrigin(result.Results[i].Source)
+		hit := &result.Results[i]
+		hit.BaseOrigin = s.sourceOrigin(hit.Source)
+		if hit.URL == "" {
+			hit.URL = s.SourceFileURL(hit.Source, hit.Commit, hit.Path, hit.StartLine, hit.EndLine)
+		}
 	}
 	sort.SliceStable(result.Results, func(i, j int) bool { return result.Results[i].Score > result.Results[j].Score })
 	for start := 0; start < len(result.Results); {

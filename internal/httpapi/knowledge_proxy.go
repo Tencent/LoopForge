@@ -65,7 +65,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, claims knowledge
 			"protocolVersion": agentToolProtocolVersion(request.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]string{"name": domain.KnowledgeMCPServerID, "version": "1.0.0"},
-			"instructions":    "本项目知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；引用时附上 citation。",
+			"instructions":    "本项目知识库（只读）。先 kb_search 检索；错误码、接口名等逐字标识用 kb_grep；再用 kb_fetch 读原文并附上 citation。",
 		})
 	case "ping":
 		return reply(map[string]any{})
@@ -142,7 +142,7 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 		activity := domain.KnowledgeActivity{
 			At: started.UTC(), Tool: tool, ProjectID: caller.ProjectID, AgentID: caller.AgentID,
 			UserID: caller.UserID, RunID: caller.RunID, SessionID: caller.SessionID,
-			Query: truncateRunes(fmt.Sprint(valueOr(args["query"], "")), 120), Hits: hits,
+			Query: truncateRunes(activityQuery(args), 120), Hits: hits,
 			OK: err == nil, LatencyMS: time.Since(started).Milliseconds(),
 		}
 		if err != nil {
@@ -164,6 +164,9 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 		var out knowledge.SearchOutput
 		out, err = svc.Search(ctx, caller.ProjectID, str("query"), stringList(args["sources"]))
 		hits = len(out.Result.Results)
+		if err == nil {
+			recordKnowledgeCitations(svc, knowledge.CitationsForSearch(caller, started, out.Result))
+		}
 		if err == nil && hits == 0 {
 			// 空结果直接给 Agent 一句中文说明，避免模型看到空数组后用
 			// 英文自行编造“No results / Try shorter keywords”之类的提示。
@@ -175,7 +178,27 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 			value = out.Result
 		}
 	case knowledge.ToolFetch:
-		value, err = svc.DocumentVersion(ctx, caller.ProjectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
+		var doc knowledge.Document
+		doc, err = svc.DocumentVersion(ctx, caller.ProjectID, str("source"), str("path"), str("commit"), integer("start_line"), integer("end_line"))
+		value = doc
+		if err == nil {
+			recordKnowledgeCitations(svc, knowledge.CitationsForDocument(caller, started, doc))
+		}
+	case knowledge.ToolGrep:
+		var grepped knowledge.GrepResult
+		grepped, err = svc.Grep(ctx, caller.ProjectID, knowledge.GrepQuery{Pattern: str("pattern"), Regex: argBool(args["regex"]), Sources: stringList(args["sources"])})
+		hits = len(grepped.Hits)
+		if err == nil {
+			recordKnowledgeCitations(svc, knowledge.CitationsForGrep(caller, started, grepped))
+			if hits == 0 {
+				value = map[string]any{
+					"pattern": grepped.Pattern, "regex": grepped.Regex, "hits": []knowledge.GrepHit{},
+					"message": "没有命中。确认是字面量还是正则，或缩短模式再试。",
+				}
+			} else {
+				value = grepped
+			}
+		}
 	case knowledge.ToolListSources:
 		var list []knowledge.SourceView
 		list, err = svc.Sources(ctx, caller.ProjectID)
@@ -204,6 +227,48 @@ func callKnowledgeTool(ctx context.Context, svc *knowledge.Service, caller knowl
 func recordKnowledgeActivity(svc *knowledge.Service, activity domain.KnowledgeActivity) {
 	if err := svc.RecordActivity(activity); err != nil {
 		log.Printf("knowledge-activity write failed: tool=%s project=%s err=%v", activity.Tool, activity.ProjectID, err)
+	}
+}
+
+// recordKnowledgeCitations logs a failed write and never changes the tool result.
+func recordKnowledgeCitations(svc *knowledge.Service, items []domain.KnowledgeCitation) {
+	if svc == nil || len(items) == 0 {
+		return
+	}
+	if err := svc.RecordCitations(items); err != nil {
+		log.Printf("knowledge-citation write failed: tool=%s project=%s err=%v", items[0].Tool, items[0].ProjectID, err)
+	}
+}
+
+func activityQuery(args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+	q := strings.TrimSpace(fmt.Sprint(valueOr(args["query"], "")))
+	if q == "" || q == "<nil>" {
+		q = strings.TrimSpace(fmt.Sprint(valueOr(args["pattern"], "")))
+	}
+	if q == "<nil>" {
+		return ""
+	}
+	return q
+}
+
+func argBool(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		switch strings.ToLower(strings.TrimSpace(x)) {
+		case "1", "true", "yes":
+			return true
+		default:
+			return false
+		}
+	case json.Number:
+		return x.String() == "1"
+	default:
+		return false
 	}
 }
 

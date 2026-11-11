@@ -13,6 +13,7 @@ import DOMPurify from "dompurify";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { attachmentURL, visibleText } from "./api";
+import { applyCitationMarks, useCitationStatuses } from "./knowledge-citation.js";
 import { definitionTarget } from "./platform.js";
 import {
   AgentBrowserLinks,
@@ -352,6 +353,7 @@ const markdownComponents = {
 };
 export function RichContent({ message, assets = [], projectId = "" }) {
   const text = typeof message === "string" ? message : visibleText(message);
+  const marked = applyCitationMarks(text, useCitationStatuses(text));
   return (
     <MarkdownAssets.Provider value={{ assets, projectId }}>
       <div className="markdown">
@@ -360,7 +362,7 @@ export function RichContent({ message, assets = [], projectId = "" }) {
           components={markdownComponents}
           urlTransform={markdownURL}
         >
-          {text}
+          {marked}
         </Markdown>
       </div>
     </MarkdownAssets.Provider>

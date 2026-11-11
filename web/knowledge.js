@@ -5,6 +5,7 @@ const kb={tab:'bases',projectId:null,overview:null,overviewError:'',docs:{source
 const KB_TOOLS=[
   ['kb_search','在项目已授权来源里做关键词检索，返回带出处和行号的结果'],
   ['kb_fetch','按 source + path + 行号读取 Markdown 原文'],
+  ['kb_grep','按字面量或正则精确匹配错误码、接口名等标识，返回路径、行号和出处'],
   ['kb_list_sources','列出当前项目可用的知识库来源'],
   ['kb_get_source','查看来源状态与文档清单'],
 ];
@@ -94,6 +95,11 @@ function kbCitationHTML(text,url=''){
   const body=escapeHTML(text);
   const link=url?`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer" data-kb-cite>${body}<span aria-hidden="true"> ↗</span></a>`:body;
   return `<span class="kb-cite" title="${escapeHTML(text)}">${link}</span>`;
+}
+function kbFreshnessHTML(status){
+  if(status==='changed')return kbBadge('原文已变更','warn','出处版本和来源当前正文不一致，下面显示的是当前正文');
+  if(status==='deleted')return kbBadge('原文已删除','err','这篇原文已不在来源中');
+  return '';
 }
 function kbGitURLError(raw){
   const value=String(raw||'').trim();
@@ -842,18 +848,30 @@ async function kbOpenDocument(hit){
   const start=Number(hit.start_line)||0;
   const end=Number(hit.end_line)||0;
   const citation=hit.citation||kbCitationText(source,hit.commit,hit.revision,path,start,end);
+  const cited=hit.commit||'';
   const seq=kbDrawerOpen(hit.title||path,kbCitationHTML(citation,kbGitFileURL(source,hit.commit,path,start,end)),'<div class="kb-empty">正在读取原文…</div>');
   try{
-    const doc=await api(`/api/knowledge/bases/document?projectId=${encodeURIComponent(kbProjectId())}&source=${encodeURIComponent(source)}&path=${encodeURIComponent(path)}&start=${start}&end=${end}`);
+    const doc=await api(`/api/knowledge/bases/document?projectId=${encodeURIComponent(kbProjectId())}&source=${encodeURIComponent(source)}&path=${encodeURIComponent(path)}&start=${start}&end=${end}&commit=${encodeURIComponent(cited)}`);
     if(seq!==kb.drawer.seq)return;
     const shownCitation=doc.citation||citation;
-    $('#kbDrawerSub').innerHTML=escapeHTML([kbLayerLabel(doc.layer),doc.base_name].filter(Boolean).join(' · '))+' · '+kbCitationHTML(shownCitation,kbGitFileURL(source,doc.commit,path,start||doc.start_line,end||doc.end_line));
+    const fresh=kbFreshnessHTML(doc.freshness);
+    const note=doc.freshness==='changed'?'<div class="kb-line-note" data-kb-freshness="changed">出处版本已不是当前正文，下面显示的是来源里的当前原文。</div>':'';
+    $('#kbDrawerSub').innerHTML=escapeHTML([kbLayerLabel(doc.layer),doc.base_name].filter(Boolean).join(' · '))+' · '+kbCitationHTML(shownCitation,kbGitFileURL(source,doc.commit||cited,path,start||doc.start_line,end||doc.end_line))+(fresh?` ${fresh}`:'');
     const first=start||Number(doc.start_line)||0,last=end||Number(doc.end_line)||0;
     const host=$('#kbDrawerBody');
-    host.innerHTML=`<div class="kb-doc">${(doc.lines||[]).map(l=>`<div class="${l.number>=first&&l.number<=last?'hl':''}"${l.number===first?' id="kbDocAnchor"':''}><span>${l.number}</span><code>${escapeHTML(l.text)}</code></div>`).join('')}</div>`;
+    host.innerHTML=note+`<div class="kb-doc">${(doc.lines||[]).map(l=>`<div class="${l.number>=first&&l.number<=last?'hl':''}"${l.number===first?' id="kbDocAnchor"':''}><span>${l.number}</span><code>${escapeHTML(l.text)}</code></div>`).join('')}</div>`;
     const anchor=$('#kbDocAnchor');
     if(anchor)host.scrollTop+=anchor.getBoundingClientRect().top-host.getBoundingClientRect().top-(host.clientHeight-anchor.offsetHeight)/2;
-  }catch(err){if(seq===kb.drawer.seq)$('#kbDrawerBody').innerHTML=`<div class="kb-empty">读取失败：${escapeHTML(err.message)}</div>`}
+  }catch(err){
+    if(seq!==kb.drawer.seq)return;
+    const deleted=/不存在|已删除/.test(err.message||'');
+    if(deleted){
+      const fresh=kbFreshnessHTML('deleted');
+      const sub=$('#kbDrawerSub');
+      if(sub)sub.innerHTML=sub.innerHTML+(fresh?` ${fresh}`:'');
+    }
+    $('#kbDrawerBody').innerHTML=`<div class="kb-empty" data-kb-freshness="${deleted?'deleted':''}">读取失败：${escapeHTML(err.message)}</div>`;
+  }
 }
 
 // ---------- 全局交互 ----------

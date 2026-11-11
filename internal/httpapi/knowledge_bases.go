@@ -84,7 +84,16 @@ func (h *knowledgeHandlers) basesDocument(c *gin.Context) {
 		c.Request.Context(), h.kbUpstream(),
 		c.Query("projectId"), c.Query("source"), c.Query("path"), start, end,
 	)
-	render(c, doc, err)
+	if err != nil {
+		render(c, doc, err)
+		return
+	}
+	fresh := h.svc.JudgeFreshness(c.Query("projectId"), doc.Source, doc.Path, c.Query("commit"))
+	doc.Freshness = fresh.Status
+	if fresh.Status == knowledge.FreshnessChanged {
+		doc.CurrentVersion = fresh.Current
+	}
+	render(c, doc, nil)
 }
 
 // 路由: g.POST("/api/knowledge/bases/sources", h.basesSources)

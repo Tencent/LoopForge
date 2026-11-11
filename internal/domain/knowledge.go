@@ -254,6 +254,42 @@ type KnowledgeActivity struct {
 	LatencyMS int64     `json:"latencyMs"`
 }
 
+// KnowledgeCitationLimit 是每个项目在统计窗口内保留的引用上限。
+// KnowledgeCitationWindow 是引用计入「引用次数」和「从未命中」的时间窗：
+// 更早的记录不参与统计，写入时也会删掉。
+const (
+	KnowledgeCitationLimit  = 2000
+	KnowledgeCitationWindow = 90 * 24 * time.Hour
+)
+
+// KnowledgeCitation 是 Agent 一次检索或读取引用到的块或行范围。
+// 它只记引用关系，不存正文。ProjectID 是隔离边界。
+type KnowledgeCitation struct {
+	ID        int64     `json:"id,omitempty"`
+	At        time.Time `json:"at"`
+	ProjectID string    `json:"projectId,omitempty"`
+	AgentID   string    `json:"agentId,omitempty"`
+	UserID    int64     `json:"userId,omitempty"`
+	RunID     string    `json:"runId,omitempty"`
+	SessionID string    `json:"sessionId,omitempty"`
+	Tool      string    `json:"tool"`
+	SourceID  string    `json:"sourceId"`
+	Path      string    `json:"path"`
+	Commit    string    `json:"commit,omitempty"`
+	StartLine int       `json:"startLine,omitempty"`
+	EndLine   int       `json:"endLine,omitempty"`
+	ChunkID   int64     `json:"chunkId,omitempty"`
+	BaseID    string    `json:"baseId,omitempty"`
+	Layer     string    `json:"layer,omitempty"`
+}
+
+// KnowledgeCitationCount 是某篇文档在统计窗口内被引用的次数。
+type KnowledgeCitationCount struct {
+	SourceID string `json:"sourceId"`
+	Path     string `json:"path"`
+	Count    int    `json:"count"`
+}
+
 // KnowledgeDocument 是含 frontmatter 的完整 Markdown 正文。出处版本对托管库
 // 是修订号的十进制字符串，对 Git 来源是 commit；两者都放在 Commit 字段。
 type KnowledgeDocument struct {
