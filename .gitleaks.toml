@@ -2,9 +2,16 @@
 useDefault = true
 
 [allowlist]
-description = "Recorded SHA-256 manifests and unchanged upstream editor distributions (telemetry IDs and minified identifier false positives)"
+description = "Recorded SHA-256 manifests, unchanged upstream editor distributions (telemetry IDs and minified identifier false positives), and the synthetic key fixture in the gitsync normalization test"
 paths = [
   '''(^|/)upstream(-overrides)?\.json$''',
   '''(^|/)web/monaco/''',
   '''(^|/)web/vscode-web/''',
+]
+# The fixture was neutralized in a later commit, but it remains in commit
+# ea17552. Match the exact synthetic line instead of exempting the test file,
+# so a real key added there is still reported.
+regexTarget = "line"
+regexes = [
+  '''const key = "-----BEGIN OPENSSH PRIVATE KEY-----\\nabc\\n-----END OPENSSH PRIVATE KEY-----"''',
 ]

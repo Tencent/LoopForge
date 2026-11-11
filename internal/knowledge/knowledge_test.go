@@ -63,8 +63,8 @@ func TestScopeSources(t *testing.T) {
 }
 
 func TestParseDistilled(t *testing.T) {
-	got := ParseDistilled("---\ntitle: \"帕鲁断联排查\"\nsource: lighthouse-kb\npath: playbooks/palu.md\n---\n\n## 现象\n正文")
-	if got.Title != "帕鲁断联排查" || got.Source != "lighthouse-kb" || got.Path != "playbooks/palu.md" || got.Body != "## 现象\n正文" {
+	got := ParseDistilled("---\ntitle: \"示例断联排查\"\nsource: example-kb\npath: playbooks/example.md\n---\n\n## 现象\n正文")
+	if got.Title != "示例断联排查" || got.Source != "example-kb" || got.Path != "playbooks/example.md" || got.Body != "## 现象\n正文" {
 		t.Fatalf("front matter parse = %#v", got)
 	}
 	plain := ParseDistilled("intro\n# 标题一\nbody")
@@ -75,9 +75,9 @@ func TestParseDistilled(t *testing.T) {
 
 func TestNormalizeDocPath(t *testing.T) {
 	for in, want := range map[string]string{
-		"guides/a.md":   "guides/a.md",
-		" guides/a.md ": "guides/a.md",
-		"排障/帕鲁 断联.md":   "排障/帕鲁-断联.md",
+		"guides/a.md":     "guides/a.md",
+		" guides/a.md ":   "guides/a.md",
+		"guides/示例 文档.md": "guides/示例-文档.md",
 	} {
 		got, ok := NormalizeDocPath(in)
 		if !ok || got != want {

@@ -19,28 +19,28 @@ func grepFixture(body string) *Service {
 }
 
 func TestGrepStaysInsideProjectSources(t *testing.T) {
-	svc := grepFixture("错误码 E_PALU_42 见手册\n下一行\n")
-	out, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: "E_PALU_42"})
+	svc := grepFixture("错误码 E_DEMO_42 见手册\n下一行\n")
+	out, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: "E_DEMO_42"})
 	if err != nil || len(out.Hits) != 1 {
 		t.Fatalf("grep = %+v %v", out, err)
 	}
 	hit := out.Hits[0]
 	if hit.Source != "docs" || hit.Path != "guides/a.md" || hit.Line != 1 || hit.StartLine != 1 || hit.EndLine != 1 ||
-		!strings.Contains(hit.Text, "E_PALU_42") || hit.Citation != "docs@1:guides/a.md#L1" {
+		!strings.Contains(hit.Text, "E_DEMO_42") || hit.Citation != "docs@1:guides/a.md#L1" {
 		t.Fatalf("hit = %+v", hit)
 	}
 	if _, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: "SECRET-TOKEN", Sources: []string{"secret"}}); err == nil || !strings.Contains(err.Error(), "授权范围") {
 		t.Fatalf("unbound source must be rejected: %v", err)
 	}
-	other, err := svc.Grep(context.Background(), "other", GrepQuery{Pattern: "E_PALU_42"})
+	other, err := svc.Grep(context.Background(), "other", GrepQuery{Pattern: "E_DEMO_42"})
 	if err != nil || len(other.Hits) != 0 {
 		t.Fatalf("unbound project must see nothing: %+v %v", other, err)
 	}
-	literal, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: "E_PALU_42."})
+	literal, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: "E_DEMO_42."})
 	if err != nil || len(literal.Hits) != 0 {
 		t.Fatalf("literal dot must not match any character: %+v %v", literal, err)
 	}
-	regex, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: `E_PALU_\d+`, Regex: true})
+	regex, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: `E_DEMO_\d+`, Regex: true})
 	if err != nil || len(regex.Hits) != 1 || regex.Hits[0].Line != 1 {
 		t.Fatalf("regex = %+v %v", regex, err)
 	}
@@ -85,7 +85,9 @@ func TestGrepStopsWhenTimeLimitPasses(t *testing.T) {
 	prev := grepNow
 	grepNow = func() time.Time {
 		calls++
-		if calls > 4 {
+		// 加载来源/文档和逐行匹配共用同一个截止时间；前 6 次取时钟
+		// 尚未到期，之后返回超时时间，验证扫描会在最后一行前停止。
+		if calls > 6 {
 			return start.Add(GrepTimeout + time.Second)
 		}
 		return start
@@ -105,6 +107,44 @@ func TestGrepStopsWhenTimeLimitPasses(t *testing.T) {
 	stopped, err := svc.Grep(ctx, "p1", GrepQuery{Pattern: "HIT"})
 	if err == nil || !strings.Contains(err.Error(), "时间上限") || len(stopped.Hits) != 0 {
 		t.Fatalf("cancelled context = %+v %v", stopped, err)
+	}
+}
+
+func TestGrepStopsLoadingAtScanBudget(t *testing.T) {
+	svc := grepFixture(strings.Repeat("x", GrepScanByteLimit+1))
+	out, err := svc.Grep(context.Background(), "p1", GrepQuery{Pattern: "not-there"})
+	if err == nil || !strings.Contains(err.Error(), "扫描") {
+		t.Fatalf("oversized scan must be rejected: hits=%d err=%v", len(out.Hits), err)
+	}
+}
+
+func TestGrepChecksContextWhileLoadingSources(t *testing.T) {
+	store := newFakeStore()
+	store.sources = []domain.KnowledgeSource{
+		{ID: "one", BaseID: "base"},
+		{ID: "two", BaseID: "base"},
+	}
+	store.docs = map[string][]domain.KnowledgeDocument{
+		"one": {{SourceID: "one", Path: "one.md", Commit: "1", Body: "needle\n"}},
+		"two": {{SourceID: "two", Path: "two.md", Commit: "2", Body: "needle\n"}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	loaded := make([]string, 0, 2)
+	store.docsHook = func(source string) {
+		loaded = append(loaded, source)
+		cancel()
+	}
+	svc := newTestService(store, &fakeUpstream{})
+	out, err := svc.Grep(ctx, "p1", GrepQuery{Pattern: "needle"})
+	if err == nil || !strings.Contains(err.Error(), "时间上限") {
+		t.Fatalf("cancelled load must stop: hits=%d err=%v", len(out.Hits), err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("cancelled load must not read later sources: %v", loaded)
+	}
+	if len(out.Hits) != 0 {
+		t.Fatalf("no body was matched before cancel: %+v", out.Hits)
 	}
 }
 
