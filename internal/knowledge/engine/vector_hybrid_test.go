@@ -360,7 +360,7 @@ func TestFuseRRFAndLimit(t *testing.T) {
 		{Source: "s", Path: "d.md", StartLine: 1, EndLine: 2, Text: "D"},
 		{Source: "s", Path: "a.md", StartLine: 1, EndLine: 2, Text: "A"},
 	}
-	got := Fuse(kw, vec, 3)
+	got := Fuse("", kw, vec, 3)
 	if len(got) != 3 {
 		t.Fatalf("limit 应截断到 3: %d", len(got))
 	}
@@ -377,7 +377,7 @@ func TestFuseRRFAndLimit(t *testing.T) {
 		seen[h.Path] = true
 	}
 	// limit<=0 不截断。
-	all := Fuse(kw, vec, 0)
+	all := Fuse("", kw, vec, 0)
 	if len(all) != 4 {
 		t.Fatalf("limit<=0 应保留全部并集: %d", len(all))
 	}
