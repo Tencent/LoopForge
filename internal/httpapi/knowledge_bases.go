@@ -154,6 +154,50 @@ func (h *knowledgeHandlers) basesSearch(c *gin.Context) {
 	render(c, out, err)
 }
 
+// 路由: g.GET("/api/knowledge/bases/vector", h.basesVector)
+//
+//	g.POST("/api/knowledge/bases/vector", h.basesVector)
+//
+// 某个知识库启用/停用向量检索。回显部署级向量状态与该知识库行；试搜结果
+// 里的 mode / degraded 会随这里的开关变化。启用会即时把现有来源增量写进
+// 向量库，停用会清掉该库来源的向量点。只有平台管理员可写。
+func (h *knowledgeHandlers) basesVector(c *gin.Context) {
+	if c.Request.Method == http.MethodGet {
+		c.JSON(http.StatusOK, gin.H{"status": kbengine.CurrentVectorStatus()})
+		return
+	}
+	if !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以修改向量检索配置"})
+		return
+	}
+	var input struct {
+		ProjectID string `json:"projectId"`
+		BaseID    string `json:"baseId"`
+		Enabled   bool   `json:"enabled"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	baseID := strings.TrimSpace(input.BaseID)
+	base, ok := h.repo.KnowledgeBase(baseID)
+	if !ok || base.ProjectID != strings.TrimSpace(input.ProjectID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "知识库不属于当前项目"})
+		return
+	}
+	var err error
+	if input.Enabled {
+		err = kbengine.EnableVectorForBase(c.Request.Context(), baseID)
+	} else {
+		err = kbengine.DisableVectorForBase(c.Request.Context(), baseID)
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	updated, _ := h.repo.KnowledgeBase(baseID)
+	c.JSON(http.StatusOK, gin.H{"status": kbengine.CurrentVectorStatus(), "base": updated})
+}
+
 func (h *knowledgeHandlers) requireKnowledgeManager(c *gin.Context, projectID string) bool {
 	if strings.TrimSpace(projectID) == "" {
 		return h.requireSharedAdmin(c)

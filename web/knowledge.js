@@ -751,7 +751,7 @@ function kbRenderSearch(body){
   const sources=kbAllSources();
   if(q.sources.length&&!sources.some(x=>x.id===q.sources[0]))q.sources=[];
   const selected=q.sources[0]||'';
-  body.innerHTML=kbPanel(`<form class="kb-search" id="kbSearchForm" role="search">${KB_SEARCH_ICON}<input type="search" name="q" aria-label="检索知识库" placeholder="问一个问题，或输入关键词，结果与 Agent 看到的一致" autocomplete="off" value="${escapeHTML(q.query)}"><select name="source" aria-label="限定来源"><option value="">全部来源</option>${sources.map(x=>`<option value="${escapeHTML(x.id)}"${x.id===selected?' selected':''}>${escapeHTML(x.name||x.id)}</option>`).join('')}</select></form>`,`<div class="kb-cap kb-search-note">少于两个字的查询可能没有结果，换更长或更具体的词再试。</div><div id="kbHits">${kbHitsHTML()}</div>`,{label:'试搜',headCls:'kb-panel-search'});
+  body.innerHTML=kbPanel(`<form class="kb-search" id="kbSearchForm" role="search">${KB_SEARCH_ICON}<input type="search" name="q" aria-label="检索知识库" placeholder="问一个问题，或输入关键词，结果与 Agent 看到的一致" autocomplete="off" value="${escapeHTML(q.query)}"><select name="source" aria-label="限定来源"><option value="">全部来源</option>${sources.map(x=>`<option value="${escapeHTML(x.id)}"${x.id===selected?' selected':''}>${escapeHTML(x.name||x.id)}</option>`).join('')}</select></form>`,`<div class="kb-cap kb-search-note">少于两个字的查询可能没有结果，换更长或更具体的词再试。 ${escapeHTML(kbVectorEnabledText())}</div><div id="kbHits">${kbHitsHTML()}</div>`,{label:'试搜',headCls:'kb-panel-search'});
   const form=$('#kbSearchForm');
   form.onsubmit=async e=>{
     e.preventDefault();
@@ -777,6 +777,16 @@ function kbRecentHTML(){
   }).join('');
 }
 
+// 向量检索状态（最少展示）：混合检索说明知识库启用了向量；degraded 说明
+// 向量通道故障、本次已降级为关键词。数据来自 SearchResult.mode/degraded。
+function kbVectorModeText(r){
+  if(r.degraded)return '语义检索暂不可用，已降级为关键词检索';
+  return r.mode==='hybrid'?'混合检索（关键词+向量）':'关键词检索';
+}
+function kbVectorEnabledText(){
+  return kbBases().some(b=>b.vectorEnabled)?'向量检索：已启用':'向量检索：未启用（仅关键词）';
+}
+
 function kbHitsHTML(){
   const q=kb.search;
   if(q.loading)return '<div class="kb-empty">检索中…</div>';
@@ -784,7 +794,7 @@ function kbHitsHTML(){
   if(!q.result)return kbRecentHTML();
   const r=q.result.result||{};
   const hits=r.results||[];
-  const head=kbCaption(`${hits.length} 条结果 · ${Number(q.result.latencyMs)||0}ms`);
+  const head=kbCaption(`${hits.length} 条结果 · ${escapeHTML(kbVectorModeText(r))} · ${Number(q.result.latencyMs)||0}ms`);
   if(!hits.length)return head+'<div class="kb-empty">没有命中，换个关键词试试</div>';
   return head+hits.map((h,i)=>{
     const citation=h.citation||kbCitationText(h.source,h.commit,h.revision,h.path,h.start_line,h.end_line);

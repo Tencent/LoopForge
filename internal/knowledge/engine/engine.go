@@ -41,14 +41,16 @@ type ContentStore interface {
 var revisionIDSeq atomic.Uint64
 
 // Engine 实现 knowledge.Upstream 五个方法，是内置知识引擎的唯一适配器。
+// 检索经 Retriever（关键词适配器之上一层的融合层），不直接依赖具体的
+// KeywordIndex 实现，便于在未配置向量时保持纯关键词行为、在配置后叠加向量。
 // 写回相关字段由 initWriteback 填默认值，测试可在同包内替换 Git/托管平台
 // 调用，不改变 Upstream 契约。
 type Engine struct {
-	control ControlStore
-	content ContentStore
-	index   KeywordIndex
-	now     func() time.Time
-	newID   func() string
+	control   ControlStore
+	content   ContentStore
+	retriever Retriever
+	now       func() time.Time
+	newID     func() string
 
 	writeCacheRoot   string
 	writeLeaseTTL    time.Duration
@@ -62,15 +64,38 @@ type Engine struct {
 
 var _ knowledge.Upstream = (*Engine)(nil)
 
-// NewEngine 用控制面、内容面与关键词适配器装配引擎。关键词适配器是内部
-// 替换点，可换成内存倒排等实现而不改 Upstream 和表。
-func NewEngine(control ControlStore, content ContentStore, index KeywordIndex) *Engine {
+// newEngineBase 装配控制面/内容面与写回默认值。检索实现由各构造函数注入：
+// 生产用关键词适配器 + 融合层，测试可用显式 Retriever。
+func newEngineBase(control ControlStore, content ContentStore) *Engine {
 	e := &Engine{
-		control: control, content: content, index: index,
+		control: control, content: content,
 		now:   time.Now,
 		newID: func() string { return fmt.Sprintf("kr-%d-%d", time.Now().UTC().UnixNano(), revisionIDSeq.Add(1)) },
 	}
 	e.initWriteback()
+	// 撤回时同步清掉该文档的向量点。用「调用时才取全局运行时」的委托，
+	// 这样无论 ConfigureVectorFromEnv 在构造前后调用都生效；向量未启用时
+	// DeindexDocument 是空操作，行为与纯关键词版本一致。
+	e.SetVectorDeindexer(func(ctx context.Context, source, path string) error {
+		return vectorRuntime().DeindexDocument(ctx, source, path)
+	})
+	return e
+}
+
+// NewEngine 用控制面、内容面与关键词适配器装配引擎。融合层包在关键词适配器
+// 之上；全局向量运行时未配置时 Active() 为 false，检索行为与纯关键词版本
+// 完全一致。关键词适配器是内部替换点，可换成内存倒排等实现而不改 Upstream。
+func NewEngine(control ControlStore, content ContentStore, index KeywordIndex) *Engine {
+	e := newEngineBase(control, content)
+	e.retriever = NewHybridRetriever(index, vectorRuntime())
+	return e
+}
+
+// NewEngineWithRetriever 用显式融合层装配引擎，供测试注入假向量通道，以及
+// 需要替换检索实现而不改 Upstream 的场景。
+func NewEngineWithRetriever(control ControlStore, content ContentStore, retriever Retriever) *Engine {
+	e := newEngineBase(control, content)
+	e.retriever = retriever
 	return e
 }
 
@@ -109,15 +134,20 @@ func (e *Engine) Search(ctx context.Context, query string, sources []string) (kn
 	if len(scope) == 0 {
 		return result, nil
 	}
-	hits, err := e.index.Search(ctx, query, scope, SearchOptions{Limit: DefaultSearchLimit})
+	rr, err := e.retriever.Retrieve(ctx, query, scope, DefaultSearchLimit)
 	if err != nil {
 		return result, err
 	}
+	// 通道与降级标记来自融合层：mode=hybrid 表示关键词+向量，degraded=true
+	// 表示向量通道故障、已降级为关键词。
+	result.Mode = rr.Mode
+	result.Degraded = rr.Degraded
+	result.DegradeReason = rr.Reason
 	allowed := make(map[string]bool, len(scope))
 	for _, id := range scope {
 		allowed[id] = true
 	}
-	for _, h := range hits {
+	for _, h := range rr.Hits {
 		if !allowed[h.Source] {
 			continue
 		}
@@ -168,7 +198,7 @@ func (e *Engine) Fetch(_ context.Context, source, path string, start, end int) (
 // WriteDocument 仅对托管来源生效：校验路径与 frontmatter，在内容库事务里
 // 写正文、追加修订、替换该文档的索引块，再更新来源的修订号与篇数。
 // Git 来源返回明确的未实现错误，不推送、不建提交。
-func (e *Engine) WriteDocument(_ context.Context, source, path, content string) (knowledge.WriteResult, error) {
+func (e *Engine) WriteDocument(ctx context.Context, source, path, content string) (knowledge.WriteResult, error) {
 	source = strings.TrimSpace(source)
 	path = strings.TrimSpace(path)
 	docPath, ok := knowledge.NormalizeDocPath(path)
@@ -218,6 +248,9 @@ func (e *Engine) WriteDocument(_ context.Context, source, path, content string) 
 	if err := e.control.PutKnowledgeSource(src); err != nil {
 		return knowledge.WriteResult{}, err
 	}
+	// 托管文档写入后增量更新向量（best-effort）。向量是缓存，失败不影响正文
+	// 写入，检索会自动降级为关键词。
+	afterDocumentIndexed(ctx, source, docPath)
 	return knowledge.WriteResult{Source: source, Path: docPath, Commit: version}, nil
 }
 

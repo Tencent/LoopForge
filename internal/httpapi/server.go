@@ -514,6 +514,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/knowledge/bases/sources", api.know.basesSourceDelete)
 	g.POST("/api/knowledge/bases/sync", api.know.basesSync)
 	g.POST("/api/knowledge/bases/search", api.know.basesSearch)
+	g.GET("/api/knowledge/bases/vector", api.know.basesVector)
+	g.POST("/api/knowledge/bases/vector", api.know.basesVector)
 	g.GET("/api/knowledge/bases/sediment", api.know.knowledgeSedimentConfig)
 	g.PUT("/api/knowledge/bases/sediment", api.know.knowledgeSedimentConfigUpdate)
 

@@ -662,13 +662,18 @@ type knowledgeSubmissionRow struct {
 
 func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions" }
 
-// 内置知识引擎控制面（主库，KnowledgeRepo）。
+// 内置知识引擎控制面（主库，KnowledgeRepo）。向量配置列由 028 脚本补建；
+// gorm 的增量 DDL 建得出普通列，这里注册后新装也能带全列。
 type knowledgeBaseRow struct {
 	ID                  string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID           *string    `gorm:"column:project_id;size:64;index:idx_knowledge_bases_project;uniqueIndex:uq_knowledge_bases_project_layer"`
 	Name                string     `gorm:"column:name;size:255"`
 	Layer               string     `gorm:"column:layer;size:32;uniqueIndex:uq_knowledge_bases_project_layer"`
 	OwnerUserID         int64      `gorm:"column:owner_user_id"`
+	VectorEnabled       bool       `gorm:"column:vector_enabled"`
+	EmbeddingModel      string     `gorm:"column:embedding_model;size:255"`
+	EmbeddingDim        int        `gorm:"column:embedding_dim"`
+	QdrantCollection    string     `gorm:"column:qdrant_collection;size:255"`
 	SedimentPublishMode string     `gorm:"column:sediment_publish_mode;size:16"`
 	SedimentRules       []byte     `gorm:"column:sediment_rules;type:json"`
 	Created             *time.Time `gorm:"column:created_at"`

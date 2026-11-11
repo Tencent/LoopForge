@@ -346,6 +346,46 @@ func TestKnowledgePageNoLongerSubmitsURLOrToken(t *testing.T) {
 	}
 }
 
+// TestKnowledgeVectorEndpoint 覆盖按知识库启用向量的管理接口：状态回显、
+// 项目归属校验，以及未配置 Qdrant/embedding 时拒绝启用（纯关键词回退）。
+func TestKnowledgeVectorEndpoint(t *testing.T) {
+	s, h := newKBMgmtServer(t)
+	createProject(t, h, "pVec")
+	if err := s.SetKnowledgeVectorConfig("kb-pVec", false, "", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// GET 状态：测试进程没有配置向量组件，available 应为 false。
+	statusRec := doJSON(t, h, http.MethodGet, "/api/knowledge/bases/vector", "", nil)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("vector status: %d %s", statusRec.Code, statusRec.Body.String())
+	}
+	var status struct {
+		Status kbengine.VectorStatus `json:"status"`
+	}
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Status.Available {
+		t.Fatal("未配置环境变量时 available 应为 false")
+	}
+
+	// 点名别的项目的知识库应被拒绝。
+	wrong := `{"projectId":"other","baseId":"kb-pVec","enabled":true}`
+	if rec := doJSON(t, h, http.MethodPost, "/api/knowledge/bases/vector", wrong, nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("跨项目启用应被拒绝: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 未配置 Qdrant/embedding 时启用应被拒，不静默成功。
+	enable := `{"projectId":"pVec","baseId":"kb-pVec","enabled":true}`
+	if rec := doJSON(t, h, http.MethodPost, "/api/knowledge/bases/vector", enable, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("未配置向量时启用应报错: %d %s", rec.Code, rec.Body.String())
+	}
+	if base, _ := s.KnowledgeBase("kb-pVec"); base.VectorEnabled {
+		t.Fatal("启用失败后该库不应处于向量启用状态")
+	}
+}
+
 func TestDeleteGitSourceKeepsHostedSource(t *testing.T) {
 	s, h := newKBMgmtServer(t)
 	createProject(t, h, "pDel")

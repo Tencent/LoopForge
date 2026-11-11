@@ -161,12 +161,23 @@ type KnowledgeCandidate struct {
 
 // KnowledgeBase 是一个知识库。切片只写 Layer="project" 的项目层库；
 // ProjectID 为空留给以后的公共/平台库，不参与 (project_id, layer) 唯一约束。
+//
+// 向量检索按知识库开启：VectorEnabled 打开且平台配置了 Qdrant/embedding 时，
+// 该库下来源的索引块会进向量库，检索走混合通道。EmbeddingModel/Dim/
+// QdrantCollection 是「索引契约」，固定在该行上：换模型必须换 collection 并
+// 全量重建，不能让不同模型的向量混进同一 collection。向量只从正文重建，
+// 这些字段是校验用的快照，不是事实源。
 type KnowledgeBase struct {
 	ID          string `json:"id"`
 	ProjectID   string `json:"projectId,omitempty"`
 	Name        string `json:"name"`
 	Layer       string `json:"layer"`
 	OwnerUserID int64  `json:"ownerUserId,omitempty"`
+	// 向量检索索引契约（见 028）。向量按知识库开启，换模型换 collection 重建。
+	VectorEnabled    bool   `json:"vectorEnabled,omitempty"`
+	EmbeddingModel   string `json:"embeddingModel,omitempty"`
+	EmbeddingDim     int    `json:"embeddingDim,omitempty"`
+	QdrantCollection string `json:"qdrantCollection,omitempty"`
 	// SedimentPublishMode 为空按人工审核处理；auto 表示门禁全过后自动写回。
 	SedimentPublishMode string `json:"sedimentPublishMode,omitempty"`
 	// SedimentRules 是敏感内容过滤规则集。nil 表示使用内置默认规则；非 nil

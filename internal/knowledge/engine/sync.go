@@ -65,6 +65,11 @@ func (w *SyncWorker) StartSyncLoop(ctx context.Context, executeRuns bool) {
 		return
 	}
 	go func() {
+		// worker 启动时 reconcile 一次：模型/维度变更（换环境变量+重启）后
+		// 在这里换 collection 并全量重建向量。仅在 executeRuns 实例运行。
+		if err := ReconcileVector(ctx); err != nil {
+			log.Printf("knowledge vector reconcile: %v", err)
+		}
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -303,6 +308,8 @@ func (w *SyncWorker) importGit(ctx context.Context, src domain.KnowledgeSource, 
 	if !ok {
 		return "", 0, errors.New("knowledge sync lease lost before publication")
 	}
+	// Git 同步发布后，由持有租约的实例增量更新该来源的向量（best-effort）。
+	afterSourceSynced(ctx, src.ID)
 	return head, len(docs), nil
 }
 

@@ -1,0 +1,7 @@
+# Pinned runtime for the optional local BGE-M3 ONNX embedding sidecar.
+# Everything here comes from public PyPI; the model artifact is pinned by
+# Hugging Face revision and SHA-256 below (see server.py / compose.yaml).
+huggingface-hub==1.17.0
+numpy==1.26.4
+onnxruntime==1.26.0
+transformers==5.10.2
