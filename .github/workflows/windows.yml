@@ -35,8 +35,8 @@ jobs:
         shell: bash
         run: >-
           go test -p=2 ./internal/processgroup ./internal/procwatch ./internal/runtime ./internal/runner ./internal/httpapi ./internal/preview
-          -run 'TestWindows|TestWorkspaceLock|TestFilesystemEnvironmentIdentity|TestAssistantNativeFileLock|TestArchiveDirRejectsHardlink|TestRejectSpecialFailsClosed|TestGateMCPSubmit|TestMaterializeInvocationInjectsGateMCP|TestMaterializeGateMCPSelectsLinuxForDocker|TestReapOrphanHostBrowsers'
-          -count=1 -timeout=300s
+          -run 'TestWindows|TestWorkspaceLock|TestFilesystemEnvironmentIdentity|TestAssistantNativeFileLock|TestArchiveDirRejectsHardlink|TestArchiveDirAcceptsLongWindowsPaths|TestRejectSpecialFailsClosed|TestGateMCPSubmit|TestMaterializeInvocationInjectsGateMCP|TestMaterializeGateMCPSelectsLinuxForDocker|TestReapOrphanHostBrowsers'
+          -count=1 -timeout=300s -v
       - name: Test PowerShell startup without Docker or account credentials
         run: |
           python scripts/test-windows-startup.py -v
