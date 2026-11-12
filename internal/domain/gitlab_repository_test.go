@@ -89,7 +89,9 @@ func TestIsTrustedGitLabHost(t *testing.T) {
 	// 公网地址、仿冒主机名、空值不受信任（192.0.2.x/198.51.100.x/203.0.113.x 为文档保留段）。
 	// 172.0.0.0/8 内 RFC1918 之外的公网段（172.217/16 Google、172.64/13 Cloudflare）
 	// 必须拒绝：整段放行等于让公网主机冒充内网实例。link-local（云元数据端点）同样拒绝。
-	for _, host := range []string{"203.0.113.1", "198.51.100.2", "192.0.2.3", "172.217.0.1", "172.64.1.1", "172.32.0.1", "172.149.0.1", "172.153.0.1", "169.254.169.254", "169.254.0.1", "github.com.attacker.example", "gitlab.public.example", ""} {
+	// 主机名只认 .internal/.local 后缀：包含 ".internal" 子串的公网攻击域名
+	// （gitlab.internal.attacker.example）不是内网主机。
+	for _, host := range []string{"203.0.113.1", "198.51.100.2", "192.0.2.3", "172.217.0.1", "172.64.1.1", "172.32.0.1", "172.149.0.1", "172.153.0.1", "169.254.169.254", "169.254.0.1", "gitlab.internal.attacker.example", "internal.example.com", "github.com.attacker.example", "gitlab.public.example", ""} {
 		if isTrustedGitLabHost(host) {
 			t.Errorf("external host %s must not be trusted", host)
 		}

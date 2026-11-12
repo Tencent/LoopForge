@@ -126,8 +126,11 @@ func isTrustedGitLabHost(host string) bool {
 	if ip := net.ParseIP(host); ip != nil {
 		return ip.IsLoopback() || ip.IsPrivate()
 	}
-	// 内网主机名（含点但不是公网 TLD 的常见公司命名；运维可在此扩展白名单）。
-	return strings.Contains(host, ".internal") || strings.HasSuffix(host, ".local")
+	// 内网主机名：只认 .internal/.local 结尾的后缀。绝不能用子串匹配
+	// （Contains）——gitlab.internal.attacker.example 这类公网攻击域名
+	// 包含 ".internal" 子串，会被当成内网实例，成员 token 随 PRIVATE-TOKEN
+	// 发到攻击者主机。运维可在此扩展精确后缀白名单。
+	return strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".local")
 }
 
 // ParseRepositoryURL adds public hosting without changing the upstream adapter.
