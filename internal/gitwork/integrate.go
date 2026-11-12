@@ -45,26 +45,9 @@ func MergeLatestIntegration(ctx context.Context, w, work, integrate, label strin
 			return nil, err
 		}
 	}
-	ref := "+refs/heads/" + integrate + ":refs/remotes/origin/" + integrate
-	if _, err := C(ctx, w, "fetch", "origin", ref); err != nil {
-		return nil, err
-	}
-	mergeMsg := labelled("LoopForge: merge latest "+integrate, label)
-	if _, err := C(ctx, w, "merge", "--no-edit", "-m", mergeMsg, "origin/"+integrate); err != nil {
-		conflicts, finishErr := FinishMergeAfterExcludedConflicts(ctx, w, mergeMsg)
-		if finishErr != nil {
-			return nil, finishErr
-		}
-		if len(conflicts) > 0 {
-			return conflicts, nil
-		}
-		if _, mergeErr := C(ctx, w, "rev-parse", "--verify", "MERGE_HEAD"); mergeErr == nil {
-			return UnmergedFiles(ctx, w), nil
-		}
-		if leftover := UnmergedFiles(ctx, w); len(leftover) > 0 {
-			return leftover, nil
-		}
-		// Only SOP-report conflicts: merge was completed by FinishMergeAfterExcludedConflicts.
+	conflicts, pending, err := mergeOriginBranch(ctx, w, integrate, labelled("LoopForge: merge latest "+integrate, label))
+	if err != nil || pending {
+		return conflicts, err
 	}
 	DropSOPDeliverablesFromIndex(ctx, w)
 	if err := CommitStaged(ctx, w, labelled("LoopForge: drop SOP deliverables", label)); err != nil {
@@ -88,28 +71,37 @@ func MergeLatestRemoteBranch(ctx context.Context, w, branch string) ([]string, e
 	if branch == "" {
 		return nil, nil
 	}
+	conflicts, _, err := mergeOriginBranch(ctx, w, branch, "LoopForge: merge latest "+branch)
+	return conflicts, err
+}
+
+// mergeOriginBranch fetches origin/<branch> and merges it into HEAD with msg.
+// Conflicts limited to SOP deliverables are resolved and the merge committed.
+// It returns the remaining conflicts; pending reports that the merge is still
+// in progress (real conflicts or an unfinished MERGE_HEAD) for a repair agent.
+func mergeOriginBranch(ctx context.Context, w, branch, msg string) (conflicts []string, pending bool, err error) {
 	ref := "+refs/heads/" + branch + ":refs/remotes/origin/" + branch
 	if _, err := C(ctx, w, "fetch", "origin", ref); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	mergeMsg := "LoopForge: merge latest " + branch
-	if _, err := C(ctx, w, "merge", "--no-edit", "-m", mergeMsg, "origin/"+branch); err != nil {
-		conflicts, finishErr := FinishMergeAfterExcludedConflicts(ctx, w, mergeMsg)
-		if finishErr != nil {
-			return nil, finishErr
-		}
-		if len(conflicts) > 0 {
-			return conflicts, nil
-		}
-		if leftover := UnmergedFiles(ctx, w); len(leftover) > 0 {
-			return leftover, nil
-		}
-		if _, mergeErr := C(ctx, w, "rev-parse", "--verify", "MERGE_HEAD"); mergeErr == nil {
-			return UnmergedFiles(ctx, w), nil
-		}
-		// Only SOP-report conflicts were auto-resolved.
+	if _, err := C(ctx, w, "merge", "--no-edit", "-m", msg, "origin/"+branch); err == nil {
+		return nil, false, nil
 	}
-	return nil, nil
+	conflicts, err = FinishMergeAfterExcludedConflicts(ctx, w, msg)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(conflicts) > 0 {
+		return conflicts, true, nil
+	}
+	if leftover := UnmergedFiles(ctx, w); len(leftover) > 0 {
+		return leftover, true, nil
+	}
+	if _, err := C(ctx, w, "rev-parse", "--verify", "MERGE_HEAD"); err == nil {
+		return nil, true, nil
+	}
+	// Only SOP-report conflicts: FinishMergeAfterExcludedConflicts completed the merge.
+	return nil, false, nil
 }
 
 // ResolveExcludedMergeConflicts drops unmerged SOP deliverables (reports the
