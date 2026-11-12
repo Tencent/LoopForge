@@ -558,3 +558,45 @@ func TestConversationWorkspaceMaterializesOnConnectedRunner(t *testing.T) {
 		t.Fatal("second open moved the checkout")
 	}
 }
+
+// A SOP without preparation steps never stamps readiness: its nodes skip
+// preparation. While a node runs, the IDE still joins that live environment.
+func TestRunnerIDEJoinsRunningSOPWithoutPreparationSteps(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	defer d.closeAllRunSandboxes(context.Background())
+	request.RunStatus = "running"
+	request.Workflow = &domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "agent", Type: "agent"}}}
+	task := domain.RunnerTask{ID: "running-node", RunID: request.RunID, Workspace: "runs/prepared/workspace", Provider: "codebuddy", Sandbox: request.Sandbox}
+	_, release, err := d.acquireTaskSandbox(context.Background(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	gate := d.workspaceGate(request.RunID)
+	gate.RLock()
+	defer gate.RUnlock()
+
+	request.Operation = domain.RunnerWorkspaceOperationPrepare
+	result := d.readRunnerWorkspace(context.Background(), request)
+	var state runtime.WorkspacePreparationStatus
+	if err := json.Unmarshal(result.Payload, &state); result.Status != 200 || err != nil || state.Status != "ready" {
+		t.Fatalf("prepare beside running node: %+v %v", result, err)
+	}
+	request.Operation = domain.RunnerWorkspaceOperationWrite
+	request.ConcurrentEdit = true
+	request.Path, request.Content, request.ExpectedSHA256 = "ide.txt", "edited while running\n", "missing"
+	if result := d.readRunnerWorkspace(context.Background(), request); result.Status != 200 {
+		t.Fatalf("write beside running node: %+v", result)
+	}
+	if raw, err := os.ReadFile(filepath.Join(root, "ide.txt")); err != nil || string(raw) != "edited while running\n" {
+		t.Fatalf("write landed: %q %v", raw, err)
+	}
+	request.Operation = domain.RunnerWorkspaceOperationTerminal
+	request.TerminalOwner = 7
+	request.Terminal = &domain.WorkspaceTerminalRequest{Operation: "open", ExpiresAt: time.Now().Add(time.Minute)}
+	opened := d.readRunnerWorkspace(context.Background(), request)
+	if opened.Status != 200 {
+		t.Fatalf("terminal beside running node: %+v", opened)
+	}
+	d.workspaceTerminals.CloseScope("prepared:7")
+}

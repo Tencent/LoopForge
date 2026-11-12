@@ -59,20 +59,8 @@ func (h *runsHandlers) workspaceTakeover(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// Enabling edit implicitly pauses agents; callers no longer need a separate pause click.
-	if run.Status == "running" || (run.Status == "waiting" && !run.PauseRequested) {
-		if err := h.engine.Pause(run.ID); err != nil {
-			c.JSON(409, gin.H{"error": err.Error()})
-			return
-		}
-		run, _ = h.repo.RunState(run.ID)
-	}
-	tasks, err := h.repo.ActiveRunnerTasksForRun(run.ID)
-	if err != nil || len(tasks) > 0 {
-		c.JSON(409, gin.H{"error": "正在停止执行，请稍后重试启用编辑"})
-		return
-	}
-	if err = h.repo.AcquireWorkspaceEditor(run.ID, user); err != nil {
+	// Kept for older clients. People edit at any time, so this pauses nothing.
+	if err := h.repo.AcquireWorkspaceEditor(run.ID, user); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
@@ -112,7 +100,7 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 			}
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 			defer cancel()
-			response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: runnerWorkspaceRunID(locked), RunStatus: locked.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, RunKind: mainBotWorkspaceMode(c, locked), Operation: domain.RunnerWorkspaceOperationWrite, Path: req.Path, Content: req.Content, ExpectedSHA256: req.ExpectedSHA, TerminalOwner: user})
+			response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: runnerWorkspaceRunID(locked), RunStatus: locked.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, RunKind: mainBotWorkspaceMode(c, locked), ConcurrentEdit: humanWorkspaceEdit(c, locked), Operation: domain.RunnerWorkspaceOperationWrite, Path: req.Path, Content: req.Content, ExpectedSHA256: req.ExpectedSHA, TerminalOwner: user})
 			if err != nil {
 				return fmt.Errorf("执行端写入失败：%w", err)
 			}
@@ -162,7 +150,10 @@ func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 			allowed = true
 		}
 	}
-	return allowed && ((run.Status == "waiting" && run.PauseRequested && !run.CancelRequested) || run.Status == "succeeded" || run.Status == "failed" || run.Status == "cancelled")
+	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
+		return run.LiveWorkspace() || (run.Status == "waiting" && run.PauseRequested && !run.CancelRequested) || domain.TerminalRunStatus(run.Status)
+	}
+	return allowed && run.HumanEditable()
 }
 
 func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
@@ -194,6 +185,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 			trustedRequest.RunStatus = locked.Status
 			trustedRequest.WorkspaceLayout = locked.ExecutionContext.RunnerWorkspaceLayout
 			trustedRequest.RunKind = mainBotWorkspaceMode(c, locked)
+			trustedRequest.ConcurrentEdit = humanWorkspaceEdit(c, locked)
 			if runnerID != "" {
 				if h.runnerControls == nil {
 					return fmt.Errorf("执行端未连接")
@@ -227,7 +219,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				result = json.RawMessage(response.Payload)
 				return nil
 			}
-			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run.ID, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req)
+			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req)
 			result = r
 			return err
 		})
@@ -298,6 +290,15 @@ func (h *runsHandlers) withWorkspaceWriter(c *gin.Context, runID string, user in
 	}
 	return h.repo.WithWorkspaceEditor(runID, user, fn)
 }
+
+// humanWorkspaceEdit marks IDE requests, which the runner serves beside
+// running tasks instead of waiting for their fence.
+func humanWorkspaceEdit(c *gin.Context, run domain.Run) bool {
+	return mainBotWorkspaceRun(c.Request.Context()) != run.ID && run.HumanEditable()
+}
+
+// mainBotWorkspaceMode tells the runner to apply the live-workspace rule to
+// Main Bot (no SOP fence on its conversation workspace).
 func mainBotWorkspaceMode(c *gin.Context, run domain.Run) string {
 	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
 		return run.Kind

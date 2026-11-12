@@ -1107,6 +1107,9 @@ func TestRestoreProjectAgentGitIndexKeepsLiveIndexLock(t *testing.T) {
 	}
 	defer lock.Close()
 	defer os.Remove(lockPath)
+	wait, poll := gitIndexLockWait, gitIndexLockPoll
+	gitIndexLockWait, gitIndexLockPoll = 300*time.Millisecond, 20*time.Millisecond
+	defer func() { gitIndexLockWait, gitIndexLockPoll = wait, poll }()
 	err = RestoreProjectAgentGitIndex(context.Background(), workspace, "docker")
 	if err == nil || !strings.Contains(err.Error(), "held by a live process") {
 		t.Fatalf("restore error = %v, want live-process protection", err)
@@ -2405,5 +2408,35 @@ func TestMCPStartupWaitReachesCodeBuddyProcess(t *testing.T) {
 		if _, ok := command.environment[codeBuddyMCPStartupWaitEnv]; ok {
 			t.Fatalf("unexpected MCP startup wait for %+v", command)
 		}
+	}
+}
+
+// A short-lived git reader holding .git/index.lock (an IDE status refresh, an
+// agent's commit) must not fail workspace preparation: it waits for release.
+func TestProjectAgentGitIndexWaitsForBriefLiveLock(t *testing.T) {
+	workspace := t.TempDir()
+	testRuntimeGit(t, workspace, "init", "-b", "main")
+	testRuntimeGit(t, workspace, "config", "user.email", "agentflow@test.local")
+	testRuntimeGit(t, workspace, "config", "user.name", "AgentFlow Test")
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testRuntimeGit(t, workspace, "add", "AGENTS.md")
+	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
+	wait, poll := gitIndexLockWait, gitIndexLockPoll
+	gitIndexLockWait, gitIndexLockPoll = 5*time.Second, 20*time.Millisecond
+	defer func() { gitIndexLockWait, gitIndexLockPoll = wait, poll }()
+	lockPath := filepath.Join(workspace, ".git", "index.lock")
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		lock.Close()
+		os.Remove(lockPath)
+	}()
+	if err := ProtectProjectAgentGitIndex(context.Background(), workspace, "docker"); err != nil {
+		t.Fatalf("brief live lock failed preparation: %v", err)
 	}
 }

@@ -6,6 +6,7 @@ import { DraftCard } from "./SidePanel";
 import SopRunPanel, { runStatus } from "./SopRunPanel";
 import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
+import WorkspaceIDE from "./WorkspaceIDE";
 import { SubagentSession, subagentName, subagentStatus } from "./SubagentSession";
 import { collectSubagents, resumeMissed } from "./activity";
 import { IconButton } from "./ui";
@@ -198,7 +199,8 @@ export default function ArtifactPanel({
   const [nodeId, setNodeId] = useState(selected?.nodeId || null);
   const [search, setSearch] = useState("");
   const browsing = view === "browser";
-  const listView = view !== "changes" && !browsing;
+  const coding = view === "ide";
+  const listView = view !== "changes" && !browsing && !coding;
   const live = !!chat?.busy;
   const subagents = collectSubagents(
     chat?.session?.messages || [],
@@ -249,7 +251,8 @@ export default function ArtifactPanel({
     onClose,
     nodeId ||
       (selectedAgent ? `subagent-${selectedAgent.key}` : null) ||
-      (browsing && workspaceRunId ? "agent-browser" : null),
+      (browsing && workspaceRunId ? "agent-browser" : null) ||
+      (coding && workspaceRunId ? "workspace-ide" : null),
     open,
   );
   useEffect(
@@ -424,7 +427,7 @@ export default function ArtifactPanel({
         id="conversation-artifacts"
         role={layout.compact ? "dialog" : "complementary"}
         aria-modal={layout.compact && open ? "true" : undefined}
-        aria-label={view === "changes" ? "会话改动" : browsing ? "Agent 浏览器" : "会话产物"}
+        aria-label={view === "changes" ? "会话改动" : browsing ? "Agent 浏览器" : coding ? "工作区 IDE" : "会话产物"}
         aria-hidden={!open || undefined}
         inert={!open}
         data-compact={layout.compact || undefined}
@@ -476,6 +479,22 @@ export default function ArtifactPanel({
             >
               <HarnessIcon name="stage-browser" size={14} />
               <span>浏览器</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={coding}
+              className={coding ? "is-active" : ""}
+              onClick={() => onViewChange("ide")}
+              disabled={!workspaceRunId}
+              title={
+                workspaceRunId
+                  ? "在 VS Code 里浏览、编辑本次会话的工作区"
+                  : "本次会话还没有工作区"
+              }
+            >
+              <HarnessIcon name="stage-ide" size={14} />
+              <span>IDE</span>
             </button>
           </div>
           <div className="artifact-panel-actions">
@@ -567,6 +586,22 @@ export default function ArtifactPanel({
         {view === "changes" ? (
           <div className="artifact-panel-content">
             <ChangesPanel changes={workspaceChanges} />
+          </div>
+        ) : null}
+        {coding ? (
+          <div className="artifact-panel-content workspace-ide-content">
+            {workspaceRunId && open ? (
+              <WorkspaceIDE
+                key={workspaceRunId}
+                runId={workspaceRunId}
+                onMaximize={layout.compact ? undefined : layout.toggleCovered}
+              />
+            ) : (
+              <div className="agent-browser-empty" role="status">
+                <HarnessIcon name="stage-ide" size={28} />
+                <p>本次会话还没有工作区。让助手打开工作区后，可以在这里用 VS Code 浏览和编辑它的代码。</p>
+              </div>
+            )}
           </div>
         ) : null}
         {browsing ? (

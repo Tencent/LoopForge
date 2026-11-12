@@ -26,7 +26,7 @@ func (r *RunsRepo) AcquireWorkspaceEditor(runID string, userID int64) error {
 		if err != nil {
 			return err
 		}
-		if !workspacePaused(row) {
+		if !runFromRow(row).HumanEditable() {
 			return fmt.Errorf("请先停止执行后再启用编辑")
 		}
 		var count int64
@@ -43,14 +43,14 @@ func (r *RunsRepo) AcquireWorkspaceEditor(runID string, userID int64) error {
 	})
 }
 
-// WithWorkspaceEditor runs fn while the run is stopped for human editing.
-// Exclusive editor identity is no longer required; agents re-read before write.
+// WithWorkspaceEditor runs fn for a person editing in the IDE, at any time the
+// workspace is HumanEditable. Agents re-read before write; the hash guards saves.
 func (r *RunsRepo) WithWorkspaceEditor(runID string, userID int64, fn func(domain.Run) error) error {
 	return r.withWorkspaceWriter(runID, userID, false, fn)
 }
 
-// Main Bot may edit its idle conversation workspace. SOP
-// execution still requires a stopped run, just like the IDE.
+// WithMainBotWorkspace lets Main Bot edit a live conversation workspace as is;
+// a borrowed SOP workspace must be stopped first (workbench_workspace_sop).
 func (r *RunsRepo) WithMainBotWorkspace(runID string, userID int64, fn func(domain.Run) error) error {
 	return r.withWorkspaceWriter(runID, userID, true, fn)
 }
@@ -64,8 +64,11 @@ func (r *RunsRepo) withWorkspaceWriter(runID string, userID int64, mainBot bool,
 			return err
 		}
 		run := runFromRow(row)
-		workspaceWrite := mainBot && run.IsWorkspace() && !run.CancelRequested && row.WorkspaceCleaned == nil && (run.Status == "running" || run.Status == "waiting")
-		if !workspacePaused(row) && !workspaceWrite {
+		allowed := run.HumanEditable()
+		if mainBot {
+			allowed = workspacePaused(row) || run.LiveWorkspace()
+		}
+		if !allowed {
 			return fmt.Errorf("请先停止 SOP 执行后再编辑工作区")
 		}
 		return fn(run)

@@ -656,7 +656,7 @@ function workspacePaneHTML(run){
   if(ws.error)return `<div class="workspace-unavailable"><span>!</span><b>工作区加载失败</b><p>${escapeHTML(ws.error)}</p><button class="button ghost small" data-workspace-refresh>重试</button></div>`;
   if(!ws.info?.available)return workspaceUnavailableHTML(ws.info?.reason);
   const maximized=!!ws.maximized;
-  return `<section class="run-workspace vscode-embed${maximized?' maximized':''}"><iframe data-vscode-frame data-run-id="${escapeHTML(run.id)}" title="VS Code" src="${escapeHTML(vscodeWorkbenchURL(run.id,{embed:true}))}" allow="clipboard-read; clipboard-write"></iframe></section>`;
+  return `<section class="run-workspace vscode-embed${maximized?' maximized':''}"><iframe data-vscode-frame data-run-id="${escapeHTML(run.id)}" aria-label="VS Code" src="${escapeHTML(vscodeWorkbenchURL(run.id,{embed:true}))}" allow="clipboard-read; clipboard-write"></iframe></section>`;
 }
 function runPreviewDeclared(run){
   return !!(run?.workflowSnapshot?.preview&&run.workflowSnapshot.preview.enabled);
