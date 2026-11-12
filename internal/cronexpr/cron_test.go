@@ -131,3 +131,57 @@ func TestNextReportsImpossibleSchedules(t *testing.T) {
 		t.Fatal("parse errors should propagate")
 	}
 }
+
+func TestParseErrorMessagesNameTheField(t *testing.T) {
+	cases := map[string]string{
+		"* * * *":       "cron 需为 5 段（分 时 日 月 周），例如 0 * * * *",
+		"60 * * * *":    "分钟: 超出 0-59",
+		"* 24 * * *":    "小时: 超出 0-23",
+		"* * 0 * *":     "日: 超出 1-31",
+		"* * * 13 *":    "月: 超出 1-12",
+		"* * * * 8":     "周: 超出 0-7",
+		"*/0 * * * *":   "分钟: 步长无效",
+		"* 5-1 * * *":   "小时: 超出 0-23",
+		"* * 1-2-3 * *": "日: 范围无效",
+		"* * * a-2 *":   "月: 范围无效",
+		"* * * * x":     "周: 不是数字",
+		"1,,2 * * * *":  "分钟: 无效分段",
+	}
+	for expr, want := range cases {
+		_, err := Parse(expr)
+		if err == nil || err.Error() != want {
+			t.Errorf("Parse(%q) error = %v, want %q", expr, err, want)
+		}
+	}
+}
+
+func TestParseFieldBitmasks(t *testing.T) {
+	cases := []struct {
+		raw      string
+		min, max int
+		want     uint64
+	}{
+		{"*", 0, 7, 0xff},
+		{"5", 0, 59, 1 << 5},
+		{"1-3", 1, 12, 1<<1 | 1<<2 | 1<<3},
+		{"*/20", 0, 59, 1<<0 | 1<<20 | 1<<40},
+		{"10-20/5,1", 0, 59, 1<<1 | 1<<10 | 1<<15 | 1<<20},
+		{" 2 , 4 ", 0, 7, 1<<2 | 1<<4},
+	}
+	for _, tc := range cases {
+		got, err := parseField(tc.raw, tc.min, tc.max)
+		if err != nil || got != tc.want {
+			t.Errorf("parseField(%q) = %b, %v; want %b", tc.raw, got, err, tc.want)
+		}
+	}
+}
+
+func TestParseMapsSundaySevenToZero(t *testing.T) {
+	sched, err := Parse("0 0 * * 7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sched.dow != 1<<0|1<<7 {
+		t.Fatalf("dow bits = %b, want 7 and 0 set", sched.dow)
+	}
+}
