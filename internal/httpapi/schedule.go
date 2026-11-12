@@ -97,10 +97,6 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 				job.IssueStatuses = append([]string{}, domain.DefaultScheduleIssueStatuses...)
 			}
 		}
-		if len(job.AssistantPrompt) > 4000 {
-			c.JSON(400, map[string]string{"error": "assistantPrompt is too long"})
-			return
-		}
 		if job.WorkflowID != "" {
 			if _, ok := h.repo.Workflow(job.WorkflowID); !ok {
 				c.JSON(400, map[string]string{"error": "workflow not found"})

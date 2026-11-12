@@ -1155,7 +1155,7 @@
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>
-              <textarea name="assistantPrompt" class="input" rows="4" maxlength="4000" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
+              <textarea name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
               <p class="schedule-field-hint">到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 SOP、操作工作区及浏览器。</p>
             </div>
           </div>
@@ -1175,7 +1175,7 @@
         <input name="sourceJobId" type="hidden"><input name="sourceProjectId" type="hidden"><input name="baseVersion" type="hidden">
         <label>共享名称<input class="input" name="name" required maxlength="255"></label>
         <label>用途说明<textarea class="input" name="description" rows="2" maxlength="2000"></textarea></label>
-        <label>提示词模板<textarea class="input" name="prompt" required rows="6" maxlength="4000"></textarea></label>
+        <label>提示词模板<textarea class="input" name="prompt" required rows="6"></textarea></label>
         <p class="schedule-field-hint">用 {{params.days}} 引用下方参数，例如“检查超过 {{params.days}} 天未更新的需求”。发布内容对平台登录用户可见。</p>
         <div class="shared-schedule-section-head"><b>业务参数</b><button id="sharedScheduleAddParameter" type="button" class="button ghost small">添加参数</button></div>
         <div id="sharedScheduleParameterRows" class="shared-schedule-parameter-rows"></div>

@@ -54,8 +54,10 @@ func TestSharedScheduleParameters(t *testing.T) {
 		}
 	}
 	long := v
-	long.Prompt = strings.Repeat("{{params.team}}", 10)
-	if _, _, err := long.Render(map[string]string{"team": strings.Repeat("x", 500)}); err == nil {
-		t.Fatal("expanded prompt limit not enforced")
+	long.Prompt = strings.Repeat("{{params.team}}", 10) + strings.Repeat("说明", 2000)
+	got, _, err := long.Render(map[string]string{"team": strings.Repeat("x", 500)})
+	want := strings.Repeat(strings.Repeat("x", 500), 10) + strings.Repeat("说明", 2000)
+	if err != nil || got != want {
+		t.Fatalf("long prompt rejected: %v len=%d", err, len(got))
 	}
 }
