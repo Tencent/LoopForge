@@ -7,9 +7,11 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"agentflow/internal/engine"
 	"agentflow/internal/repo"
@@ -49,6 +51,50 @@ func TestStudioIndexStampsAssetsWithContentHash(t *testing.T) {
 	}
 	if strings.Contains(html, "/app.js?v=20260820s6") || strings.Contains(html, "/app.js?v=20260820s5") {
 		t.Fatal("hand-edited cache-bust versions should be replaced")
+	}
+	css, err := fs.ReadFile(static, "observability.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssHash := sha256.Sum256(css)
+	if want := `/observability.css?v=` + hex.EncodeToString(cssHash[:8]) + `"`; !strings.Contains(html, want) {
+		t.Fatalf("served index must use the activity stylesheet's content hash: want %s, got %s", want, snippet(html, "observability.css"))
+	}
+}
+
+func TestStudioStylesheetChangesInvalidateURLWithoutEditingIndex(t *testing.T) {
+	const index = `<html><head><link rel="stylesheet" href="/observability.css?v=20261031metrics2"></head></html>`
+	static := fstest.MapFS{
+		"index.html":        {Data: []byte(index)},
+		"observability.css": {Data: []byte(`.node-activity-inline{color:gray}`)},
+	}
+	h := studioFileServer(static)
+	previousURL := ""
+	for _, css := range []string{
+		`.node-activity-inline{color:gray}`,
+		`.node-activity-inline.is-running{animation:shimmer 2.4s infinite}`,
+	} {
+		// The deployment changes only the stylesheet; keep the same HTML and handler.
+		static["observability.css"].Data = []byte(css)
+		sum := sha256.Sum256([]byte(css))
+		url := "/observability.css?v=" + hex.EncodeToString(sum[:8])
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-cache" {
+			t.Fatalf("index must be revalidated: status=%d cache=%q", rec.Code, rec.Header().Get("Cache-Control"))
+		}
+		if !strings.Contains(rec.Body.String(), `href="`+url+`"`) || strings.Contains(rec.Body.String(), "20261031metrics2") {
+			t.Fatalf("handwritten version must be replaced by the current stylesheet hash: %s", rec.Body.String())
+		}
+		if url == previousURL {
+			t.Fatal("changed stylesheet reused its immutable URL")
+		}
+		asset := httptest.NewRecorder()
+		h.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, url, nil))
+		if asset.Code != http.StatusOK || asset.Body.String() != css {
+			t.Fatalf("stamped URL must serve the matching stylesheet: status=%d body=%q", asset.Code, asset.Body.String())
+		}
+		previousURL = url
 	}
 }
 
@@ -116,6 +162,78 @@ func TestStudioIndexInjectsAppDomain(t *testing.T) {
 	// The CSP forbids inline scripts, so nothing may be injected as one.
 	if strings.Contains(html, "<script>") {
 		t.Fatalf("index.html carries an inline script the CSP would block: %s", snippet(html, "<script>"))
+	}
+}
+
+func TestStudioPagesShowShortBuildCommit(t *testing.T) {
+	t.Setenv("LOOPFORGE_COMMIT", "60FC455aabbccddeeff001122334455667788990")
+	static := fstest.MapFS{
+		"index.html":  {Data: []byte(`<html><head></head><body><div id="app"></div></body></html>`)},
+		"login.html":  {Data: []byte(`<html><body class="login-page"></body></html>`)},
+		"vscode.html": {Data: []byte(`<html><body><div id="workbench"></div></body></html>`)},
+	}
+	h := studioFileServer(static)
+	want := `class="loopforge-build" title="镜像版本 60fc455aabbccddeeff001122334455667788990">60fc455</span>`
+	for _, path := range []string{"/", "/login.html", "/vscode.html"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, want) || strings.Contains(body, "<script>") {
+			t.Fatalf("%s should show the short commit without an inline script: %s", path, body)
+		}
+		if !strings.Contains(body, "position:fixed;right:12px;bottom:8px") {
+			t.Fatalf("%s commit label should sit in the corner: %s", path, body)
+		}
+	}
+}
+
+func TestStudioPagesShowCommitBakedByDockerBuild(t *testing.T) {
+	t.Setenv("LOOPFORGE_COMMIT", "")
+	path := filepath.Join(t.TempDir(), "loopforge-commit")
+	if err := os.WriteFile(path, []byte("60fc455aabbccddeeff001122334455667788990\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOOPFORGE_COMMIT_FILE", path)
+	static := fstest.MapFS{
+		"index.html": {Data: []byte(`<html><body></body></html>`)},
+	}
+	rec := httptest.NewRecorder()
+	studioFileServer(static).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(rec.Body.String(), `>60fc455</span>`) {
+		t.Fatalf("docker-build commit file should show in the corner: %s", rec.Body.String())
+	}
+}
+
+func TestStudioPagesShowSHA256BuildCommit(t *testing.T) {
+	t.Setenv("LOOPFORGE_COMMIT", strings.Repeat("60fc455a", 8))
+	static := fstest.MapFS{
+		"index.html": {Data: []byte(`<html><body></body></html>`)},
+	}
+	rec := httptest.NewRecorder()
+	studioFileServer(static).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(rec.Body.String(), `>60fc455</span>`) {
+		t.Fatalf("a 64-character commit should show in the corner: %s", rec.Body.String())
+	}
+}
+
+func TestStudioPagesOmitUnsafeOrMissingBuildCommit(t *testing.T) {
+	t.Setenv("LOOPFORGE_COMMIT_FILE", filepath.Join(t.TempDir(), "missing"))
+	static := fstest.MapFS{
+		"index.html": {Data: []byte(`<html><body></body></html>`)},
+	}
+	h := studioFileServer(static)
+	for _, commit := range []string{"", "60fc45", "<img src=x onerror=alert(1)>", "60fc455;rm", "not-a-sha"} {
+		t.Run(commit, func(t *testing.T) {
+			t.Setenv("LOOPFORGE_COMMIT", commit)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			if strings.Contains(rec.Body.String(), "loopforge-build") || strings.Contains(rec.Body.String(), "onerror") {
+				t.Fatalf("commit %q must not be rendered: %s", commit, rec.Body.String())
+			}
+		})
 	}
 }
 

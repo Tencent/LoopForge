@@ -278,6 +278,15 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 				}
 				continue
 			}
+			if ref.Type == pageElementReference {
+				canonical, text, err := pageElementContext(ref)
+				if err != nil {
+					return err
+				}
+				m.References[j] = canonical
+				context.WriteString("引用（数据）：" + text + "\n")
+				continue
+			}
 			if req.RunID != "" {
 				r, ok := h.repo.RunState(req.RunID)
 				if !ok || !h.taskReferenceAllowed(r, ref.Type, ref.ID) {

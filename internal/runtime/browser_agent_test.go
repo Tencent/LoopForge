@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,36 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/processgroup"
 )
+
+func TestHostBrowserEndpointPreservesWorkspace(t *testing.T) {
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	t.Setenv("TMP", temporary)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"Browser":"fixture"}`))
+	}))
+	defer server.Close()
+	record := hostBrowserRecord{PID: os.Getpid(), Owner: os.Getpid(), Port: server.Listener.Addr().(*net.TCPAddr).Port, WebSocket: "ws://127.0.0.1/fixture", Workspace: t.TempDir()}
+	dir := hostBrowserDir(t.Name())
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "endpoint.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	endpoint, ok := lookupBrowserEndpoint(context.Background(), t.Name())
+	if !ok || endpoint.Kind != "local" || endpoint.Workspace != record.Workspace || endpoint.WebSocket != record.WebSocket {
+		t.Fatalf("live host browser lost its workspace: %+v found=%v", endpoint, ok)
+	}
+}
 
 func TestReapOrphanHostBrowsersKillsBrowsersOfDeadOwners(t *testing.T) {
 	temporary := t.TempDir()
