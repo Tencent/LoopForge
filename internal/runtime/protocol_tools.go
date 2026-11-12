@@ -4,7 +4,6 @@ import (
 	"agentflow/internal/domain"
 	"encoding/json"
 	"strings"
-	"unicode/utf8"
 )
 
 func safeNativeAttributes(raw map[string]any) map[string]any {
@@ -251,13 +250,9 @@ func clipToolMsg(s string) string {
 	if len(s) <= n {
 		return s
 	}
-	// Cut on a rune boundary: a byte cut can split a multi-byte character
-	// (a Chinese label such as "失败" is 3 bytes a rune) and leave invalid UTF-8.
-	end := n
-	for end > 0 && !utf8.RuneStart(s[end]) {
-		end--
-	}
-	return s[:end] + "…"
+	// A byte cut can split a multi-byte character (a Chinese label such as
+	// "失败" is 3 bytes a rune) and leave invalid UTF-8.
+	return clipOnRuneBoundary(s, n) + "…"
 }
 
 func firstNonEmpty(values ...string) string {

@@ -258,16 +258,30 @@ func appendTaskPromptToSystemFile(workspace, agentRel, prompt string) error {
 
 const maxExecutorOutputBytes = 32 << 10
 
+// clipOnRuneBoundary cuts s to at most n bytes without splitting a UTF-8
+// sequence. It backs off at most utf8.UTFMax-1 bytes, so malformed input
+// cannot shrink the result to nothing.
+func clipOnRuneBoundary(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	end := n
+	for i := 0; i < utf8.UTFMax-1 && end > 0 && !utf8.RuneStart(s[end]); i++ {
+		end--
+	}
+	if !utf8.RuneStart(s[end]) {
+		// Not valid UTF-8 here anyway; keep the byte cut.
+		end = n
+	}
+	return s[:end]
+}
+
 func clipExecutorOutput(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= maxExecutorOutputBytes {
 		return s
 	}
-	end := maxExecutorOutputBytes
-	for end > 0 && !utf8.RuneStart(s[end]) {
-		end--
-	}
-	return s[:end] + fmt.Sprintf("\n… [output truncated, %d bytes]", len(s))
+	return clipOnRuneBoundary(s, maxExecutorOutputBytes) + fmt.Sprintf("\n… [output truncated, %d bytes]", len(s))
 }
 
 var ErrMaxTurns = errors.New("executor reached max turns")

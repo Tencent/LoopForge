@@ -2196,6 +2196,15 @@ func TestClipToolMsgKeepsMultiByteRunesWhole(t *testing.T) {
 	}
 }
 
+func TestClipOnRuneBoundaryBoundsBackoffOnMalformedInput(t *testing.T) {
+	// A run of continuation bytes has no rune start to back off to; keep the
+	// byte cut rather than shrinking the result to nothing.
+	got := clipOnRuneBoundary("x"+strings.Repeat("\x80", 50), 20)
+	if len(got) != 20 {
+		t.Fatalf("expected a 20-byte cut, got %d bytes", len(got))
+	}
+}
+
 func TestOversizedPromptMovesOffArgvIntoSystemFile(t *testing.T) {
 	sb := &capturingSandbox{workspace: t.TempDir(), driver: "local"}
 	ex := domain.ExecutorDefinition{Kind: "codebuddy", Binary: "codebuddy", Args: []string{"-p"}}
