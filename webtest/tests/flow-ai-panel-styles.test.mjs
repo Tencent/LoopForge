@@ -61,5 +61,9 @@ test('canvas build effects are styled', async () => {
   for (const selector of ['#flowView .canvas.ai-building::after', '#flowView .canvas.ai-done::before', '#flowView .ai-ghost-node']) {
     assert.ok(css.includes(`${selector}{`), `no rule for ${selector}`);
   }
+  // The ghost node replaces the "还没有步骤" card while the assistant builds.
+  assert.ok(css.includes('#flowView .canvas.ai-building .fd-empty{display:none}'), 'empty-canvas card stays visible during an AI build');
+  const effects = css.split('\n').filter((line) => /^#flowView (\.canvas\.ai-|\.ai-ghost-node)/.test(line)).join('\n');
+  assert.doesNotMatch(effects, /rgba\(124,92,252/, 'build effects must follow --hui-accent in both themes');
   assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{[^}]*#flowView \.ai-ghost-node[^}]*\{animation:none\}/);
 });
