@@ -228,3 +228,30 @@ func TestAgentCLIUserCredentials(t *testing.T) {
 		t.Fatal("empty user has agent CLI credentials")
 	}
 }
+
+func TestWriteAgentCLIFileSecurity(t *testing.T) {
+	home := t.TempDir()
+	data := []byte(`{"test":true}`)
+
+	// Normal write within home subdirectories
+	if err := writeAgentCLIFile(home, ".cursor/cli-config.json", data); err != nil {
+		t.Fatalf("valid write failed: %v", err)
+	}
+	readBack, err := os.ReadFile(filepath.Join(home, ".cursor", "cli-config.json"))
+	if err != nil || string(readBack) != string(data) {
+		t.Fatalf("read back content mismatch: %q, %v", readBack, err)
+	}
+
+	// Traversal attacks must be rejected
+	for _, invalid := range []string{
+		"../escape.json",
+		"../../escape.json",
+		"sub/../../escape.json",
+		"/etc/passwd",
+		filepath.Join("..", "foo.json"),
+	} {
+		if err := writeAgentCLIFile(home, invalid, data); err == nil {
+			t.Errorf("path %q was accepted, expected error", invalid)
+		}
+	}
+}

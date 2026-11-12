@@ -249,11 +249,25 @@ func WriteAgentCLIMCPConfig(kind, home string, entries map[string]any, options A
 var agyChatPermissions = map[string]any{"allow": []string{"mcp(*)"}, "deny": []string{"command(*)", "write_file(*)", "read_url(*)"}}
 
 func writeAgentCLIFile(home, rel string, data []byte) error {
-	path := filepath.Join(home, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	rel = filepath.Clean(filepath.ToSlash(rel))
+	if !filepath.IsLocal(rel) || filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("invalid agent CLI file path %q", rel)
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	dir := filepath.Dir(rel)
+	if dir != "." && dir != "" {
+		if err := root.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	return root.WriteFile(rel, data, 0o600)
 }
 
 // ApplyAgentCLICredential writes the credential-dependent model configuration of an
