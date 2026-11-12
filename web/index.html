@@ -22,9 +22,6 @@
   <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
   <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
   <link rel="stylesheet" href="/assistant-models.css">
-  <link rel="stylesheet" href="/metrics-dashboard.css?v=20261030obs1">
-  <link rel="stylesheet" href="/knowledge.css?v=20261030r2">
-  <link rel="stylesheet" href="/business-domains.css">
   <link rel="stylesheet" href="/bots.css">
   <link rel="stylesheet" href="/app/frame.css">
   <link rel="stylesheet" href="/chat-codex.css?v=20261031drawer">
@@ -43,7 +40,6 @@
   <link rel="stylesheet" href="/app/sops-harness.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
   <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1">
-  <link rel="stylesheet" href="/app/business-harness.css?v=20261031bd1">
   <link rel="stylesheet" href="/app/topbar-harness.css?v=20261030tb1">
   <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1">
   <style>
@@ -101,22 +97,6 @@
         <span class="rail-label">待我确认</span>
         <span id="approvalNavBadge" class="nav-badge" hidden></span>
       </button>
-
-      <!-- 5. 流程模板 -->
-      <button class="rail-btn nav" data-view="sops" data-tooltip="流程模板" aria-label="流程模板">
-        <svg class="agent-icon harness-icon" data-icon="workflow" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="node-a" cx="6" cy="6" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-b" cx="6" cy="18" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-c" cx="18" cy="12" r="2.2" fill="currentColor" fill-opacity="0"/><path pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55"/><path class="signal" pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55" opacity="0" stroke-width="2.5"/></svg>
-        <span class="rail-label">流程模板</span>
-      </button>
-
-      <!-- 6. 运行记录 -->
-      <button class="rail-btn nav" data-view="runs" data-tooltip="运行记录" aria-label="运行记录">
-        <svg class="agent-icon harness-icon" data-icon="runs" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path class="motion-target" d="M10 9l5 3-5 3z"/></svg>
-        <span class="rail-label">运行记录</span>
-      </button>
-      <button class="rail-btn nav" data-view="aiSchedules" data-tooltip="AI 定时任务" aria-label="AI 定时任务">
-        <svg class="agent-icon harness-icon" data-icon="clock" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-        <span class="rail-label">AI 定时任务</span>
-      </button>
     </nav>
 
     <div class="rail-bottom">
@@ -159,35 +139,22 @@
       <div id="configurationNav" class="management-navigation">
       <button class="nav management-back" data-jump="collaboration"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="chevron-left" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"/></svg></span><span class="nav-label">返回工作台</span></button>
       <button class="nav" data-view="settings"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="user" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="head" cx="12" cy="8" r="4"/><path class="body" d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="nav-label">个人配置</span></button>
-      <p>管理与记录</p>
-      <button class="nav" data-view="bots" aria-label="Bot 管理" title="Bot 管理"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="robot" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="8" width="16" height="11" rx="2"/><path class="antenna" d="M12 3v5"/><path class="eyes" d="M8 13h.01M16 13h.01"/><path class="mouth" d="M9 17h6"/></svg></span><span class="nav-label">Bot 管理</span></button>
-
+      <p>项目</p>
       <button class="nav" data-view="projects"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="users" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="team-front"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1"/></g><g class="team-back"><path d="M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/></g></svg></span><span class="nav-label">项目配置</span></button>
-      <button class="nav" data-view="runners"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="server" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/></svg></span><span class="nav-label">执行机器</span></button>
-      <p>流程配置</p>
-
-      <button class="nav" data-view="flow"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="workflow" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="node-a" cx="6" cy="6" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-b" cx="6" cy="18" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-c" cx="18" cy="12" r="2.2" fill="currentColor" fill-opacity="0"/><path pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55"/><path class="signal" pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55" opacity="0" stroke-width="2.5"/></svg></span><span class="nav-label">流程设计</span></button>
+      <button class="nav" data-view="bots" aria-label="通道管理" title="通道管理"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="robot" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="8" width="16" height="11" rx="2"/><path class="antenna" d="M12 3v5"/><path class="eyes" d="M8 13h.01M16 13h.01"/><path class="mouth" d="M9 17h6"/></svg></span><span class="nav-label">通道管理</span></button>
+      <p>流程与任务</p>
+      <button class="nav" data-view="sops" data-nav-match="flow"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="workflow" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="node-a" cx="6" cy="6" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-b" cx="6" cy="18" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-c" cx="18" cy="12" r="2.2" fill="currentColor" fill-opacity="0"/><path pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55"/><path class="signal" pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55" opacity="0" stroke-width="2.5"/></svg></span><span class="nav-label">流程模板</span></button>
+      <button class="nav" data-view="runs"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="runs" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path class="motion-target" d="M10 9l5 3-5 3z"/></svg></span><span class="nav-label">运行记录</span></button>
+      <button class="nav" data-view="aiSchedules"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="clock" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="nav-label">定时任务</span></button>
+      <p>Agent 能力</p>
       <button class="nav" data-view="agents"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="user" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="head" cx="12" cy="8" r="4"/><path class="body" d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="nav-label">角色定义</span></button>
-      <button id="capabilityNavToggle" class="nav nav-group-toggle" type="button" aria-expanded="false"><span class="nav-icon"><svg class="agent-icon harness-icon " data-icon="skills" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="skill-piece" d="M9 4V3a2 2 0 0 1 4 0v1h5a2 2 0 0 1 2 2v4h-1a2 2 0 0 0 0 4h1v4a2 2 0 0 1-2 2h-4v-1a2 2 0 0 0-4 0v1H6a2 2 0 0 1-2-2v-4H3a2 2 0 0 1 0-4h1V6a2 2 0 0 1 2-2h3Z"/></svg></span><span class="nav-label">能力资产</span><svg class="agent-icon harness-icon nav-group-chevron" data-icon="chevron-down" data-icon-motion="idle" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"/></svg></button>
-      <div id="capabilityNavGroup" class="nav-submenu" hidden>
-        <button class="nav nav-child" data-view="mcp"><span class="nav-label">MCP 管理</span></button>
-        <button class="nav nav-child" data-view="rules"><span class="nav-label">规则管理</span></button>
-        <button class="nav nav-child" data-view="skills"><span class="nav-label">技能管理</span></button>
-      </div>
-      <button id="environmentNavToggle" class="nav nav-group-toggle" type="button" aria-expanded="false"><span class="nav-icon"><svg class="agent-icon harness-icon " data-icon="server" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/></svg></span><span class="nav-label">环境资产</span><svg class="agent-icon harness-icon nav-group-chevron" data-icon="chevron-down" data-icon-motion="idle" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"/></svg></button>
-      <div id="environmentNavGroup" class="nav-submenu" hidden>
-        <button class="nav nav-child" data-view="dockerfiles"><span class="nav-label">Dockerfile</span></button>
-        <button class="nav nav-child" data-view="environments"><span class="nav-label">环境安装脚本</span></button>
-        <button class="nav nav-child" data-view="sandboxes"><span class="nav-label">沙箱管理</span></button>
-      </div>
-      <button class="nav" data-view="knowledge"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="brain" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="left" d="M9.5 3A2.5 2.5 0 0 0 7 5.5v.1A3 3 0 0 0 4.6 10a3 3 0 0 0 .4 5.4A3 3 0 0 0 9.5 20a2.5 2.5 0 0 0 2.5-2.5v-12A2.5 2.5 0 0 0 9.5 3z"/><path class="right" d="M14.5 3A2.5 2.5 0 0 1 17 5.5v.1a3 3 0 0 1 2.4 4.4 3 3 0 0 1-.4 5.4 3 3 0 0 1-4.5 4.6 2.5 2.5 0 0 1-2.5-2.5"/></svg></span><span class="nav-label">知识中心</span></button>
-
-      <p>数据洞察</p>
-      <button class="nav" data-view="metrics"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="chart" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V9"/><path d="M12 17V7"/><path d="M16 17v-5"/></svg></span><span class="nav-label">研发效能</span></button>
-      <button class="nav" data-view="businessDomains"><span class="nav-icon"><svg class="agent-icon harness-icon " data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="motion"><rect class="p0" x="4" y="4" width="14" height="14" rx="2"/><path class="p1" d="m7 20 10.5-.1A2.5 2.5 0 0 0 20 17.4V8" pathLength="100"/></g></svg></span><span class="nav-label">业务领域</span></button>
-      <p>开放能力</p>
-      <button class="nav" data-view="guide"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="doc" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path pathLength="1" d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path pathLength="1" d="M14 3v5h5"/><path pathLength="1" d="M9 13h6"/><path pathLength="1" d="M9 17h6"/></svg></span><span class="nav-label">接入指南</span></button>
-      <div id="platformNavGroup" hidden><p>平台</p><button class="nav" data-view="platform"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="gate" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="gate-shield" d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path class="gate-check agent-check-draw" pathLength="1" d="m9 12 2 2 4-4"/></svg></span><span class="nav-label">平台管理</span></button><button class="nav" data-view="businessDomainManagement"><span class="nav-icon"><svg class="agent-icon harness-icon " data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="motion"><rect class="p0" x="4" y="4" width="14" height="14" rx="2"/><path class="p1" d="m7 20 10.5-.1A2.5 2.5 0 0 0 20 17.4V8" pathLength="100"/></g></svg></span><span class="nav-label">领域管理</span></button></div>
+      <button class="nav" data-view="mcp" data-nav-match="rules skills" data-nav-icon="skills"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="skills" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="skill-piece" d="M9 4V3a2 2 0 0 1 4 0v1h5a2 2 0 0 1 2 2v4h-1a2 2 0 0 0 0 4h1v4a2 2 0 0 1-2 2h-4v-1a2 2 0 0 0-4 0v1H6a2 2 0 0 1-2-2v-4H3a2 2 0 0 1 0-4h1V6a2 2 0 0 1 2-2h3Z"/></svg></span><span class="nav-label">能力资产</span></button>
+      <p>运行环境</p>
+      <button class="nav" data-view="runners"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="server" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/></svg></span><span class="nav-label">执行机器</span></button>
+      <button class="nav" data-view="dockerfiles" data-nav-match="environments sandboxes" data-nav-icon="layers"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></span><span class="nav-label">环境资产</span></button>
+      <p>开放与平台</p>
+      <button class="nav" data-view="guide"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="key" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3"/><path d="M16 7l3 3"/><path d="M18 5l2 2"/></svg></span><span class="nav-label">访问密钥</span></button>
+      <div id="platformNavGroup" hidden><button class="nav" data-view="platform"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="gate" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="gate-shield" d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path class="gate-check agent-check-draw" pathLength="1" d="m9 12 2 2 4-4"/></svg></span><span class="nav-label">平台管理</span></button></div>
       </div>
     </nav>
 
@@ -230,10 +197,6 @@
       </div>
       <div id="platformAdminPanel" class="platform-admin-panel"></div>
     </section>
-    <section id="businessDomainManagementView" class="view page-view">
-      <div class="page-heading"><div><p class="eyebrow">平台</p><h1>领域管理</h1><p>维护业务分类、管理员与汇报查看者。</p></div></div>
-      <div id="platformBusinessDomains"></div>
-    </section>
     <!-- 工作台 -->
     <section id="dashboardView" class="view page-view">
       <div class="page-heading dash-heading">
@@ -268,15 +231,16 @@
 
     <section id="aiSchedulesView" class="view page-view">
       <div class="page-heading">
-        <div><h1>AI 定时任务</h1><p>按计划执行提示词，自动整理需求、巡检项目或汇总进展。</p></div>
+        <div><h1>定时任务</h1><p>按计划执行提示词，或自动派发 SOP，整理需求、巡检项目或汇总进展。</p></div>
         <div class="heading-actions">
-          <button id="refreshAISchedules" class="button ghost hui-icon-button" type="button" aria-label="刷新 AI 定时任务" title="刷新"><svg class="agent-icon harness-icon" data-icon="refresh" width="16" height="16" aria-hidden="true" focusable="false"></svg></button>
+          <button id="refreshAISchedules" class="button ghost hui-icon-button" type="button" aria-label="刷新定时任务" title="刷新"><svg class="agent-icon harness-icon" data-icon="refresh" width="16" height="16" aria-hidden="true" focusable="false"></svg></button>
           <button id="newAISchedule" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>新建 AI 定时任务</button>
         </div>
       </div>
       <div class="mcp-toolbar ai-schedule-toolbar">
-        <div class="mcp-view-tabs" role="tablist" aria-label="AI 定时任务视图">
-          <button id="aiScheduleProjectTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="aiScheduleProjectPanel" data-ai-schedule-tab="project">本项目任务<span id="aiScheduleProjectCount" class="mcp-tab-count">0</span></button>
+        <div class="mcp-view-tabs" role="tablist" aria-label="定时任务视图">
+          <button id="aiScheduleProjectTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="aiScheduleProjectPanel" data-ai-schedule-tab="project">提示词任务<span id="aiScheduleProjectCount" class="mcp-tab-count">0</span></button>
+          <button id="aiScheduleTriggerTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleTriggerPanel" data-ai-schedule-tab="trigger">SOP 触发<span id="scheduleJobCount" class="schedule-job-count">未配置</span></button>
           <button id="aiScheduleMarketTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleMarketPanel" data-ai-schedule-tab="market">共享任务市场<span id="sharedScheduleMarketCount" class="mcp-tab-count">0</span></button>
         </div>
         <label id="sharedScheduleSearchField" class="mcp-search" hidden><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="sharedScheduleSearch" type="search" aria-label="搜索共享任务" placeholder="搜索名称、用途或来源项目"></label>
@@ -286,6 +250,11 @@
         <p id="aiScheduleRuntimeHint" class="schedule-field-hint" role="status"></p>
         <div id="aiScheduleJobList" class="schedule-job-list"></div>
       </div>
+      <section id="aiScheduleTriggerPanel" class="ai-schedule-panel" role="tabpanel" aria-labelledby="aiScheduleTriggerTab" hidden>
+        <div class="ai-schedule-panel-head"><b>SOP 自动派发</b><button id="editScheduleTrigger" class="button ghost small" type="button"><svg class="agent-icon harness-icon" data-icon="edit" width="14" height="14" aria-hidden="true" focusable="false"></svg>编辑触发配置</button></div>
+        <p id="aiScheduleTriggerHint" class="schedule-field-hint" role="status">按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。</p>
+        <div id="aiScheduleTriggerList" class="schedule-job-list"></div>
+      </section>
       <section id="aiScheduleMarketPanel" role="tabpanel" aria-labelledby="aiScheduleMarketTab" hidden>
         <p id="sharedScheduleMarketHint" class="mcp-scope-hint"></p>
         <div id="sharedScheduleMarketStatus" role="status"></div>
@@ -303,7 +272,6 @@
             <button id="issueHeadingMore" class="button ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="issueHeadingMenu">更多<svg class="agent-icon harness-icon hui-menu-chevron" data-icon="chevron-down" width="14" height="14" aria-hidden="true" focusable="false"></svg><i class="hui-alert-dot" aria-hidden="true"></i></button>
             <div id="issueHeadingMenu" class="hui-menu" role="menu" aria-labelledby="issueHeadingMore" inert>
               <button id="openSyncModal" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="swap" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">外部同步</span><span class="hui-menu-meta"><span id="syncBadge" class="sync-badge live">未配置</span></span></button>
-              <button id="newScheduleJob" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="clock" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">触发配置</span><span class="hui-menu-meta"><span id="scheduleJobCount" class="schedule-job-count">未配置</span></span></button>
               <span class="hui-menu-sep" role="separator"></span>
               <button id="importGitHubIssues" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="download" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">同步 GitHub</span></button>
               <button id="importTAPDIssue" class="hui-menu-item" type="button" role="menuitem" tabindex="-1" data-legacy-tracker hidden><svg class="agent-icon harness-icon" data-icon="download" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">导入 TAPD</span></button>
@@ -336,8 +304,8 @@
 
     <section id="botsView" class="view page-view">
       <div class="page-heading bot-heading">
-        <div><h1>Bot 管理</h1><p>把任务进展发到企业微信单聊或群聊；在 SOP 设置或 AI 定时任务中选用这些 Bot。</p></div>
-        <div class="heading-actions"><button id="botNew" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>添加 Bot</button></div>
+        <div><h1>通道管理</h1><p>配置企业微信单聊或群聊通知通道，把任务进展发出去；在 SOP 设置或定时任务中选用这些通道。</p></div>
+        <div class="heading-actions"><button id="botNew" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>添加通道</button></div>
       </div>
       <div id="botsContent"></div>
     </section>
@@ -668,37 +636,6 @@
     </section>
 
     <!-- 可观测与分析 -->
-    <section id="metricsView" class="view page-view">
-      <div class="page-heading metrics-heading">
-        <div class="metrics-title-row"><h1>研发效能</h1><p>从需求到交付，看产能、效率、质量与自动化</p></div>
-        <div class="heading-actions">
-          <span class="live-state" id="metricsLiveState"><i></i> 数据就绪</span>
-          <button id="refreshMetrics" class="button ghost" type="button">↻ 刷新</button>
-        </div>
-      </div>
-      <div class="obs-fbar metrics-fbar">
-        <div class="obs-fbar-row">
-          <div class="obs-seg metrics-period" role="group" aria-label="统计周期">
-            <button type="button" data-metrics-range="7d">7 天</button>
-            <button type="button" data-metrics-range="30d">30 天</button>
-            <button type="button" data-metrics-range="90d">90 天</button>
-            <button type="button" data-metrics-range="365d">1 年</button>
-          </div>
-          <form id="metricsDateFilter" class="metrics-date-filter">
-            <label class="obs-pick"><span>开始</span><input id="metricsDateFrom" name="from" type="date" aria-label="开始日期"></label>
-            <i aria-hidden="true">→</i>
-            <label class="obs-pick"><span>结束</span><input id="metricsDateTo" name="to" type="date" aria-label="结束日期"></label>
-            <button class="obs-btn" type="submit">应用日期</button>
-          </form>
-          <span class="obs-sp"></span>
-          <span id="metricsActiveWindow" class="obs-chip metrics-active-window"></span>
-          <span class="obs-info" tabindex="0">口径说明<span class="obs-tip" role="tooltip">澄清：开始澄清 → 开始开发计时。<br>研发、测试：SOP 中标注阶段的节点执行累计。<br>已采集耗时：单条有记录的澄清 + 研发 + 测试之和，缺失阶段不计入，三项全缺为「待采集」。<br>阶段趋势柱高为当日三阶段均值之和；悬停可见按条平均的已采集耗时。<br>* 表示旧流程按节点名称推断。</span></span>
-        </div>
-      </div>
-      <div id="metricsBody" class="metrics-body"></div>
-      <div id="metricsExpand" class="obs-expand" hidden role="dialog" aria-modal="true" aria-label="放大查看"><div class="obs-expand-box" tabindex="-1"></div></div>
-    </section>
-
     <section id="observabilityView" class="view page-view">
       <div class="page-heading obs-heading">
         <div class="obs-title-row"><h1>统计</h1>
@@ -715,11 +652,6 @@
       </div>
       <div id="obsBody" class="obs-body"></div>
       <div id="obsExpand" class="obs-expand" hidden role="dialog" aria-modal="true" aria-label="放大查看"><div class="obs-expand-box" tabindex="-1"></div></div>
-    </section>
-
-    <section id="businessDomainsView" class="view page-view">
-      <div class="page-heading"><div><h1>业务领域</h1><p>跨项目查看交付规模、完成耗时与资源投入，按项目当前业务归属统计。</p></div><div class="heading-actions"><button id="businessExport" class="button ghost" type="button" disabled><svg class="agent-icon harness-icon" data-icon="download" width="14" height="14" aria-hidden="true" focusable="false"></svg>导出报告</button><button id="businessRefresh" class="button ghost" type="button"><svg class="agent-icon harness-icon" data-icon="refresh" width="14" height="14" aria-hidden="true" focusable="false"></svg>刷新</button></div></div>
-      <div id="businessDomainsBody"></div>
     </section>
     <!-- 项目与成员 -->
     <section id="projectsView" class="view page-view">
@@ -742,16 +674,17 @@
       </div>
     </section>
 
-    <!-- MCP 市场与安装管理 -->
+    <!-- 能力资产 · MCP -->
     <section id="mcpView" class="view page-view">
       <div class="page-heading mcp-page-heading">
-        <div><p class="eyebrow">工具接入</p><h1>MCP 管理</h1><p>市场 MCP 统一供给项目；个人范围仅管理自己添加的自定义 MCP。</p></div>
-        <div class="heading-actions"><a class="button ghost" href="https://github.com/modelcontextprotocol/servers" target="_blank" rel="noopener noreferrer">浏览公共 MCP ↗</a><button id="newCustomMcp" class="button primary" type="button">＋ 添加自定义 MCP</button></div>
+        <div><p class="eyebrow">Agent 能力</p><h1>能力资产</h1><p>MCP、规则和技能统一在这里维护，角色按需绑定后即可使用。</p></div>
+        <div class="heading-actions"><a class="button ghost" href="https://github.com/modelcontextprotocol/servers" target="_blank" rel="noopener noreferrer">浏览公共 MCP ↗</a><button id="newCustomMcp" class="button primary" type="button">＋ 添加 MCP</button></div>
       </div>
+      <div class="asset-type-tabs" role="tablist" aria-label="能力资产类型" data-asset-type-group="capability"><button type="button" role="tab" data-asset-type-tab="mcp" class="active" aria-selected="true">MCP</button><button type="button" role="tab" data-asset-type-tab="rules" aria-selected="false" tabindex="-1">规则</button><button type="button" role="tab" data-asset-type-tab="skills" aria-selected="false" tabindex="-1">技能</button></div>
       <div class="mcp-toolbar">
         <select id="mcpScopeSelect" class="select" aria-label="范围"><option value="project" data-meta="当前项目">本项目</option><option value="personal" data-meta="仅自己可见">个人</option></select>
-        <div class="mcp-view-tabs" aria-label="MCP 视图"><button class="active" data-mcp-tab="market" type="button">MCP 市场<span id="mcpMarketCount" class="mcp-tab-count">0</span></button><button data-mcp-tab="installed" type="button">已添加<span id="mcpInstalledCount" class="mcp-tab-count">0</span></button></div>
-        <label class="mcp-search"><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="mcpMarketSearch" type="search" placeholder="搜索名称、分类、标签或能力"></label>
+        <span class="mcp-installed-total">已添加<span id="mcpInstalledCount" class="mcp-tab-count">0</span></span>
+        <label class="mcp-search"><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="mcpMarketSearch" type="search" placeholder="搜索名称、描述或地址"></label>
       </div>
       <div id="mcpScopeHint" class="mcp-scope-hint"></div>
       <div id="mcpMarketGrid" class="mcp-market-grid"></div>
@@ -759,31 +692,15 @@
 
     <div id="customMcpModal" class="modal"><form id="customMcpForm" class="modal-card issue-modal-card custom-mcp-card"><button type="button" class="modal-close custom-mcp-close">×</button><p class="eyebrow">自定义 MCP</p><h2 id="customMcpTitle">添加自定义 MCP</h2><p class="modal-hint">配置只保存在所选范围内；安装脚本仅在隔离 sandbox 内执行。</p><details id="mcpJsonImport" class="mcp-json-import"><summary>从 mcp.json 粘贴导入</summary><div class="mcp-json-import-body"><label for="mcpJsonInput">粘贴 mcp.json 或单条配置</label><textarea id="mcpJsonInput" rows="5" spellcheck="false" placeholder='"my-mcp": {&#10;  "url": "https://example.com/mcp",&#10;  "headers": {}&#10;}'></textarea><div class="mcp-upload-row"><button id="mcpJsonParseBtn" type="button" class="button ghost small">解析并填入</button><span class="modal-hint">支持完整 mcpServers / servers，也支持缺少最外层大括号的片段；解析不会直接保存</span></div></div></details><div class="form-grid"><div><label>安装范围</label><select name="scope" class="select"><option value="project">当前项目</option><option value="personal">个人</option></select></div><div><label>标识</label><input name="id" required placeholder="my-mcp"></div></div><div class="form-grid"><div><label>名称</label><input name="name" required placeholder="我的 MCP"></div><div><label>Transport</label><select name="transport" class="select"><option value="http">HTTP / Streamable HTTP</option><option value="stdio">stdio</option></select></div></div><label>描述</label><input name="description" placeholder="这个 MCP 能做什么"><div data-mcp-http><div class="form-grid"><div><label>认证方式</label><select name="authType" class="select"><option value="">无认证 / 自带认证</option><option value="github-token">GitHub 个人 Git Token</option></select></div><div><label>超时（秒）</label><input name="timeoutSecHttp" type="number" min="0" max="600" value="60"></div></div><label>HTTP URL *</label><input name="url" type="url" placeholder="https://example.example.com/mcp"><details class="mcp-advanced"><summary>高级配置</summary><label>Headers</label><div id="mcpHeadersEditor" class="kv-editor"></div><button type="button" class="button ghost small" data-mcp-kv-add="headers">+ 添加 Header</button></details></div><div data-mcp-stdio hidden><h3 class="mcp-section-title">MCP 程序</h3><div class="mcp-upload-row"><button id="mcpFolderBtn" type="button" class="button ghost small hui-button"><svg class="agent-icon harness-icon" data-icon="folder" width="14" height="14" aria-hidden="true" focusable="false"></svg>上传文件夹</button><button id="mcpZipBtn" type="button" class="button ghost small hui-button"><svg class="agent-icon harness-icon" data-icon="download" width="14" height="14" aria-hidden="true" focusable="false"></svg>上传 ZIP</button><input id="mcpFolderPick" type="file" webkitdirectory multiple hidden><input id="mcpZipPick" type="file" accept=".zip,application/zip" hidden><span id="mcpFileSummary" class="modal-hint"></span></div><label>安装脚本（可选）</label><textarea name="installScript" rows="4" placeholder="npm ci&#10;npm run build"></textarea><h3 class="mcp-section-title">启动配置</h3><label>Command *</label><input name="command" placeholder="node"><label>Arguments <small>每行一个</small></label><textarea name="args" rows="3" placeholder="dist/server.js&#10;--stdio"></textarea><label>Working Directory（可选）</label><input name="workingDirectory" placeholder="为空时上传 MCP 使用其目录，否则使用 workspace"><div class="form-grid"><div><label>超时（秒）</label><input name="timeoutSecStdio" type="number" min="0" max="600" value="60"></div></div><details class="mcp-advanced"><summary>高级配置</summary><label>Environment Variables</label><div id="mcpEnvironmentEditor" class="kv-editor"></div><button type="button" class="button ghost small" data-mcp-kv-add="environment">+ 添加环境变量</button></details></div><div class="modal-actions"><button type="button" class="button ghost custom-mcp-close">取消</button><button id="customMcpSubmit" type="submit" class="button primary">添加 MCP</button></div></form></div>
 
-    <!-- 团队知识库 -->
-    <section id="knowledgeView" class="view page-view">
-      <div class="kb-page">
-        <header class="kb-head">
-          <div class="kb-head-main"><h1>知识中心</h1><p class="kb-head-desc">把团队知识库接入 Agent，运行时按项目授权只读检索，审核后写回</p></div>
-          <a id="kbConsoleLink" class="kb-btn" href="#" target="_blank" rel="noopener noreferrer" hidden>打开控制台 ↗</a>
-        </header>
-        <section id="kbMetrics" class="kb-metrics" aria-label="概览"></section>
-        <div id="knowledgeBody"></div>
-      </div>
-    </section>
-    <div id="kbScrim" class="kb-scrim"></div>
-    <aside id="kbDrawer" class="kb-drawer" role="dialog" aria-labelledby="kbDrawerTitle" aria-hidden="true" inert>
-      <header class="kb-drawer-head"><div class="kb-drawer-heading"><h2 id="kbDrawerTitle"></h2><div id="kbDrawerSub" class="kb-drawer-sub"></div></div><button id="kbDrawerClose" class="kb-drawer-close" type="button" aria-label="关闭">✕</button></header>
-      <div id="kbDrawerBody" class="kb-drawer-body"></div>
-      <footer id="kbDrawerFoot" class="kb-drawer-foot" hidden></footer>
-    </aside>
-
     <!-- 项目环境资产 -->
     <section id="assetsView" class="view page-view">
       <div id="assetListPane" class="asset-list-pane">
         <div class="page-heading asset-heading">
-          <div><p id="assetPageEyebrow" class="eyebrow">运行环境</p><h1 id="assetPageTitle">Dockerfile</h1><p id="assetPageDescription">维护当前项目的容器构建定义。</p></div>
+          <div><p id="assetPageEyebrow" class="eyebrow">运行环境</p><h1 id="assetPageTitle">环境资产</h1><p id="assetPageDescription">维护当前项目的容器构建定义。</p></div>
           <div class="heading-actions"><button id="newAsset" type="button" class="button primary"><svg class="agent-icon harness-icon" data-icon="plus" width="14" height="14" aria-hidden="true" focusable="false"></svg><span id="newAssetLabel">新建配置</span></button></div>
         </div>
+        <div class="asset-type-tabs" role="tablist" aria-label="能力资产类型" data-asset-type-group="capability" hidden><button type="button" role="tab" data-asset-type-tab="mcp" aria-selected="false" tabindex="-1">MCP</button><button type="button" role="tab" data-asset-type-tab="rules" aria-selected="false" tabindex="-1">规则</button><button type="button" role="tab" data-asset-type-tab="skills" aria-selected="false" tabindex="-1">技能</button></div>
+        <div class="asset-type-tabs" role="tablist" aria-label="环境资产类型" data-asset-type-group="environment"><button type="button" role="tab" data-asset-type-tab="dockerfiles" class="active" aria-selected="true">Dockerfile</button><button type="button" role="tab" data-asset-type-tab="environments" aria-selected="false" tabindex="-1">安装脚本</button><button type="button" role="tab" data-asset-type-tab="sandboxes" aria-selected="false" tabindex="-1">沙箱</button></div>
         <div id="assetScopeToolbar" class="asset-toolbar">
           <div id="assetScopeSwitch" class="mcp-scope-switch asset-scope-tabs" aria-label="资产范围"><button type="button" data-asset-scope="project" class="active">本项目<span class="sliding-tab-count" data-asset-scope-count="project">0</span></button><button type="button" data-asset-scope="shared">共享<span class="sliding-tab-count" data-asset-scope-count="shared">0</span></button><button type="button" data-asset-scope="skillhub" hidden>SkillHub 市场</button></div>
           <label id="assetSearchBox" class="asset-search"><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="assetSearch" type="search" placeholder="搜索名称或标识…" aria-label="搜索资产" autocomplete="off"></label>
@@ -850,20 +767,11 @@
       <div id="runnersList" class="runner-grid"></div>
     </section>
 
-    <!-- 开放能力：接入指南（MCP 接入流程 + 页面操作） -->
+    <!-- 开放与平台：访问密钥 -->
     <section id="guideView" class="view page-view">
       <div class="page-heading">
-        <div><p class="eyebrow">开放能力</p><h1>接入指南</h1><p>一个页面完成 Token 申请、MCP 配置和连通验证。</p></div>
-        <div class="heading-actions"><a class="button ghost" href="/api/openapi.yaml" target="_blank" rel="noopener">OpenAPI 契约</a><button id="guideCreateToken" class="button primary" type="button">＋ 创建个人 Token</button></div>
+        <div><p class="eyebrow">开放与平台</p><h1>访问密钥</h1><p>创建和撤销访问密钥，REST API 与 MCP 共用同一个访问密钥。</p></div>
       </div>
-      <div class="access-tabs" id="accessTabs">
-        <button type="button" class="active" data-access-tab="setup">最小接入配置</button>
-        <button type="button" data-access-tab="mcp">MCP 快速接入</button>
-        <button type="button" data-access-tab="tokens">我的 Token</button>
-        <button type="button" data-access-tab="capabilities">能力清单</button>
-        <button type="button" data-access-tab="api">REST API</button>
-      </div>
-      <div id="accessSummary"></div>
       <div id="accessBody"></div>
     </section>
   </main>
@@ -983,7 +891,7 @@
     </form>
   </div>
 
-  <div id="sopCreateModal" class="modal"><form id="sopCreateForm" class="modal-card definition-wizard-card sop-wizard-card"><button type="button" class="modal-close sop-create-close">×</button><div class="wizard-head"><div><p class="eyebrow">新建 SOP</p><h2>创建 SOP 流程</h2><p>先确定用途和起点，再进入可视化流程设计器完善节点。</p></div><span class="pill">草稿</span></div><div class="wizard-steps" data-wizard-steps="sop"><button type="button" class="active" data-step-target="1"><i>1</i><span>流程信息</span></button><button type="button" data-step-target="2"><i>2</i><span>选择起点</span></button><button type="button" data-step-target="3"><i>3</i><span>确认创建</span></button></div><div class="wizard-body"><section class="wizard-pane active" data-step="1"><div class="wizard-intro"><b>这条 SOP 解决什么问题？</b><p>清晰的用途能帮助团队快速选择正确流程。</p></div><div class="wizard-grid"><label class="wide">流程名称<input name="name" required placeholder="例如：服务端需求交付流程"></label><label>负责人<input name="owner" placeholder="团队或姓名"></label><label>标签<input name="tags" placeholder="需求, 后端, 生产"></label><label class="wide">流程说明<textarea name="description" rows="4" placeholder="适用范围、入口条件和预期交付"></textarea></label></div></section><section class="wizard-pane" data-step="2"><div class="wizard-intro"><b>选择一个流程起点</b><p>复制模板会保留节点、门禁和返工策略，之后仍可自由编辑。</p></div><div id="sopTemplateChoices" class="template-choice-grid"></div></section><section class="wizard-pane" data-step="3"><div class="wizard-intro"><b>准备创建</b><p>创建后将进入流程设计器：绑定角色、连线、配置打回。任务书和门禁在角色定义里改。</p></div><div id="sopCreateSummary" class="create-summary"></div></section></div><div class="wizard-actions"><button id="sopPrev" type="button" class="button ghost" disabled>上一步</button><span id="sopStepHint">第 1 步，共 3 步</span><button id="sopNext" type="button" class="button primary">下一步</button><button id="sopFinish" type="submit" class="button primary" hidden>创建并设计流程</button></div></form></div>
+  <div id="sopCreateModal" class="modal"><form id="sopCreateForm" class="modal-card definition-wizard-card sop-wizard-card"><button type="button" class="modal-close sop-create-close">×</button><div class="wizard-head"><div><p class="eyebrow">新建 SOP</p><h2>创建 SOP 流程</h2><p>先确定用途和起点，再进入可视化流程设计器完善节点。</p></div><span class="pill">草稿</span></div><div class="wizard-steps" data-wizard-steps="sop"><button type="button" class="active" data-step-target="1"><i>1</i><span>流程信息</span></button><button type="button" data-step-target="2"><i>2</i><span>选择起点</span></button><button type="button" data-step-target="3"><i>3</i><span>确认创建</span></button></div><div class="wizard-body"><section class="wizard-pane active" data-step="1"><div class="wizard-intro"><b>这条 SOP 解决什么问题？</b><p>清晰的用途能帮助团队快速选择正确流程。</p></div><div class="wizard-grid"><label class="wide">流程名称<input name="name" required placeholder="例如：服务端需求交付流程"></label><label>负责人<input name="owner" placeholder="团队或姓名"></label><label>标签<input name="tags" placeholder="需求, 后端, 生产"></label><label class="wide">流程说明<textarea name="description" rows="4" placeholder="适用范围、入口条件和预期交付"></textarea></label></div></section><section class="wizard-pane" data-step="2"><div class="wizard-intro"><b>选择一个流程起点</b><p>复制模板会保留节点、门禁和返工策略，之后仍可自由编辑。</p></div><div id="sopTemplateChoices" class="template-choice-grid"></div><div class="wizard-grid sop-sandbox-settings"><label class="wide" for="sopCreateSandbox">运行沙箱<select class="select" id="sopCreateSandbox" name="sandboxProfileId" aria-describedby="sopSandboxHint"></select></label><p id="sopSandboxHint" class="wide" role="status"></p><div class="wide sop-sandbox-actions"><a class="button ghost small" href="/#/sandboxes" target="_blank" rel="noopener">配置沙箱</a><button id="sopRefreshSandboxes" type="button" class="button ghost small">刷新沙箱</button></div></div></section><section class="wizard-pane" data-step="3"><div class="wizard-intro"><b>准备创建</b><p>创建后将进入流程设计器：绑定角色、连线、配置打回。任务书和门禁在角色定义里改。</p></div><div id="sopCreateSummary" class="create-summary"></div></section></div><div class="wizard-actions"><button id="sopPrev" type="button" class="button ghost" disabled>上一步</button><span id="sopStepHint">第 1 步，共 3 步</span><button id="sopNext" type="button" class="button primary">下一步</button><button id="sopFinish" type="submit" class="button primary" hidden>创建并设计流程</button></div></form></div>
 
   <div id="requirementModal" class="modal">
     <div class="modal-card req-composer req-wizard" role="dialog" aria-modal="true" aria-labelledby="reqWizardTitle">
@@ -1313,7 +1221,7 @@
         <div class="code-editor-gutter" id="codeEditorGutter" aria-hidden="true">1</div>
         <div class="code-editor-viewport" id="codeEditorViewport">
           <pre class="code-editor-highlight" id="codeEditorHighlight" aria-hidden="true"></pre>
-          <textarea id="codeEditorTextarea" class="code-editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+          <textarea id="codeEditorTextarea" class="code-editor-textarea" wrap="off" aria-label="脚本内容" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
         </div>
       </div>
       <div class="code-editor-footer">
@@ -1380,7 +1288,6 @@
   <script src="/app/github-connect.js"></script>
   <script src="/app/project-wizard.js"></script>
   <script src="/app/repo_drawer.js"></script>
-  <script src="/app/business-domains.js"></script>
   <script src="/app/composer.js"></script>
   <script src="/app/hui-select.js"></script>
   <script src="/app/hui-date.js"></script>
@@ -1415,7 +1322,6 @@
   <script src="/app/sliding-tabs.js?v=20261031req1"></script>
   <script src="/app/page-feedback.js"></script>
   <script src="/app/start.js"></script>
-  <script src="/knowledge.js?v=20261030r2"></script>
   </div>
   </div>
   <script src="/orchestrate.js?v=20261109cli"></script>

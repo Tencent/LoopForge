@@ -56,7 +56,7 @@ jobs:
       - name: Install Playwright
         run: |
           python3 -m pip install pyyaml==6.0.3 playwright==1.55.0
-          python3 -m playwright install --with-deps chromium
+          bash ../scripts/install-playwright-deps.sh python3 -m playwright
       - name: Render the observability dashboard
         env:
           LOOPFORGE_E2E_BROWSER: "1"

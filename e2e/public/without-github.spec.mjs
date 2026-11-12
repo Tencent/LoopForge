@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import fs from 'node:fs';
-import {signInUnconfigured, switchProject} from './helpers.mjs';
+import {signInUnconfigured, switchProject, openSettingsPage} from './helpers.mjs';
 
 // Acceptance uses a dedicated account without Git credentials. The optional
 // model case reads a protected local key file; never capture request bodies.
@@ -68,7 +68,7 @@ test('all generic SOPs can start without a GitHub repository or token',async({pa
   try{
     await page.reload();
     await switchProject(page,projectId);
-    await page.locator('.nav[data-view="sops"]').click();
+    await openSettingsPage(page,'sops');
     await page.locator('[data-scope-for="sop"] [data-scope="generic"]').click();
     for(const id of ['generic-product-delivery','generic-backend-delivery','generic-frontend-delivery','issue-fix-production']){
       const card=page.locator(`article.sop-card[data-generic-id="${id}"]`);

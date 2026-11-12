@@ -7,6 +7,7 @@ record a session, and the dashboard built from what they wrote.
 """
 
 import json
+import sys
 import unittest
 import urllib.request
 
@@ -53,6 +54,69 @@ class ClassicCodeBuddyE2E(unittest.TestCase):
         with self.subTest("manual gate"):
             gated = self.dispatch("architect", "TASK-02_completed", "developer")
             self.assertNotIn("modifiedInput", json.dumps(gated))
+
+    def dispatch_without_yaml(self, event="TASK-02_completed", target="developer"):
+        hook = self.project / ".codebuddy/hooks/devflow-auto-dispatch.py"
+        output = h.run_hook(
+            self.project,
+            [sys.executable, "-c",
+             "import runpy, sys; sys.modules['yaml'] = None; "
+             "runpy.run_path(sys.argv[1], run_name='__main__')", hook],
+            {"tool_name": "SendMessage", "tool_input": {
+                "type": "message", "from": "architect", "recipient": "main",
+                "content": json.dumps({"event": event, "dispatch_prompt": "continue",
+                                       "next_target": {"subagent_name": target}})}},
+        )
+        return json.loads(output)
+
+    def test_manual_gates_without_yaml(self):
+        config = self.project / ".codebuddy/devflow.config.yaml"
+        for value in ("false", "true"):
+            config.write_text("multi:\n  auto_mode: " + value + " # user choice\n",
+                              encoding="utf-8")
+            for _, event, target in (ROUTE[1], ROUTE[3], ROUTE[4]):
+                with self.subTest(value=value, event=event):
+                    output = self.dispatch_without_yaml(event, target)
+                    self.assertEqual(value == "true", "hookSpecificOutput" in output)
+
+    def test_unreadable_config_keeps_manual_gates_without_yaml(self):
+        config = self.project / ".codebuddy/devflow.config.yaml"
+        for content in ("multi: [", "multi:\n  auto_mode: perhaps\n",
+                        "multi: {auto_mode: false}\n",
+                        "multi:\n  auto_mode: true#invalid\n",
+                        "multi:\n  auto_mode: true\n  auto_mode: false\n"):
+            config.write_text(content, encoding="utf-8")
+            with self.subTest(content=content):
+                self.assertEqual({"continue": True}, self.dispatch_without_yaml())
+                records = (self.project / ".codebuddy/hooks/logs/auto-dispatch.log").read_text()
+                record = json.loads(records.splitlines()[-1])
+                self.assertEqual("config_unreadable", record["reason"])
+                self.assertEqual("fallback_to_main", record["decision"])
+                self.assertIn("hookSpecificOutput", self.dispatch_without_yaml(
+                    "TASK-01_completed", "architect"))
+
+    def test_partial_override_preserves_default_manual_mode_without_yaml(self):
+        defaults = self.project / ".codebuddy/assets/devflow.defaults.yaml"
+        defaults.write_text("multi:\n  auto_mode: false\n", encoding="utf-8")
+        (self.project / ".codebuddy/devflow.config.yaml").write_text(
+            "multi:\n  compact_after_brainstorming: true\n", encoding="utf-8")
+        self.assertEqual({"continue": True}, self.dispatch_without_yaml())
+
+    def test_invalid_config_keeps_manual_gates_with_normal_python(self):
+        config = self.project / ".codebuddy/devflow.config.yaml"
+        for content in ("multi: [", "multi: false\n", "multi:\n  auto_mode: 'false'\n"):
+            config.write_text(content, encoding="utf-8")
+            with self.subTest(content=content):
+                self.assertEqual({"continue": True},
+                                 self.dispatch("architect", "TASK-02_completed", "developer"))
+                records = (self.project / ".codebuddy/hooks/logs/auto-dispatch.log").read_text()
+                self.assertEqual("config_unreadable", json.loads(records.splitlines()[-1])["reason"])
+
+    def test_config_read_error_keeps_manual_gates_without_yaml(self):
+        (self.project / ".codebuddy/devflow.config.yaml").mkdir()
+        self.assertEqual({"continue": True}, self.dispatch_without_yaml())
+        records = (self.project / ".codebuddy/hooks/logs/auto-dispatch.log").read_text()
+        self.assertEqual("config_unreadable", json.loads(records.splitlines()[-1])["reason"])
 
     def test_recorded_session_shows_up_in_the_local_dashboard(self):
         h.record_classic_session(self.project, self.state_path)

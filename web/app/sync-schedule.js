@@ -428,12 +428,17 @@ function renderScheduleJobs(){
   if(count){count.textContent=!dispatch.length?'未配置':scheduleJobRunning(dispatch[0])?'运行中':dispatch[0].enabled?'已启用':'未启用';count.classList.toggle('is-running',dispatch.some(scheduleJobRunning))}
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
+  const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
   $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'使用项目 Owner 在所选 CLI 上的 Key，以完全权限执行，与主页 AI 对话相同。可调用 SOP、工作区及浏览器工具；关闭页面不会中断执行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
   $('#newAISchedule').disabled=!state.projectFilter;
+  const editTrigger=$('#editScheduleTrigger');if(editTrigger){editTrigger.disabled=!state.projectFilter;editTrigger.lastChild.textContent=dispatch.length?'编辑触发配置':'配置触发'}
+  const triggerList=$('#aiScheduleTriggerList');
   $('#scheduleJobList').hidden=$('#scheduleJobForm').elements.jobKind.value==='assistant'||!dispatch.length;
   renderScheduleJobList($('#scheduleJobList'),dispatch,'dispatch',canRun);
+  renderScheduleJobList(triggerList,dispatch,'dispatch',canRun);
+  if(triggerList&&!dispatch.length)triggerList.innerHTML=`<div class="sync-empty">${state.projectFilter?'当前项目还没有触发配置，点击「配置触发」设置自动派发。':'请先在顶栏选择项目，再配置 SOP 触发。'}</div>`;
   renderScheduleJobList($('#aiScheduleJobList'),assistant,'assistant',canRun);
   renderAISchedulePanels();
   startScheduleJobPoll();

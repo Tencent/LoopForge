@@ -165,6 +165,10 @@ func TestUpdateGenericAgentAcceptsUnversionedWrite(t *testing.T) {
 func TestPublishGenericWorkflow(t *testing.T) {
 	s := testStoreWithGenericTemplates(t)
 	before, _ := s.GenericWorkflowByID(GenericBackendDeliveryWorkflowID)
+	before.Description += " updated"
+	if _, err := s.UpdateGenericWorkflow(before); err != nil {
+		t.Fatal(err)
+	}
 	published, err := s.PublishGenericWorkflow(GenericBackendDeliveryWorkflowID)
 	if err != nil {
 		t.Fatal(err)
