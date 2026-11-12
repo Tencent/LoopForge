@@ -27,7 +27,7 @@ async function openIssueDetail(id,tab){
     const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);const issue=detail.issue;const comments=detail.comments||[];
     const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);
     // Keep local view state, but deletion feedback must come from this fresh detail response.
-    const permissions={deletionAllowed:issue.deletionAllowed,deletionBlock:issue.deletionBlock,closureAllowed:issue.closureAllowed};
+    const permissions={deletionAllowed:issue.deletionAllowed,deletionRequiresForce:issue.deletionRequiresForce,deletionBlock:issue.deletionBlock,closureAllowed:issue.closureAllowed};
     if(localIssue){Object.assign(issue,localIssue,permissions);Object.assign(localIssue,permissions)}
     const task=latestIssueTask(issue);
     const runId=task?.runId||latestIssueRun(issue, task)?.id;
@@ -931,10 +931,12 @@ async function deleteIssueById(issueId){
   const issue=(state.data.issues||[]).find(i=>i.id===issueId)||state.issueDetailData?.issue;
   if(!issue||issue.id!==issueId)return toast('未找到需求单');
   if(!issueCanDelete(issue))return toast(issueDeletionBlock(issue).reason,'err');
+  const force=issue.deletionRequiresForce===true;
+  const title=force?'强制删除需求':'删除需求';
   const external=issue.source==='tapd'||issue.source==='gongfeng';
-  if(!await afConfirm({title:'删除需求',message:`确定删除需求「${issue.title||issue.id}」？需求、评论、澄清记录以及失败／取消的历史任务、运行记录、日志、产物和执行工作区将一并清理，且不可恢复。已有成功运行的需求不允许删除。${external?'此操作仅删除本地记录，不会删除 TAPD／工蜂原单，后续同步可能重新导入。':''}`,danger:true,confirmText:'确认删除'}))return;
+  if(!await afConfirm({title,message:`确定${title}「${issue.title||issue.id}」？${issueDeletionWarning(force,external)}`,danger:true,confirmText:force?'确认强制删除':'确认删除'}))return;
   try{
-    await api(`/api/issues/${encodeURIComponent(issueId)}`,{method:'DELETE'});
+    await api(issueDeletePath(issueId,force),{method:'DELETE'});
     state.data.issues=(state.data.issues||[]).filter(i=>i.id!==issueId);
     state.issueSelection?.delete(issueId);
     if(state.issueDetailData?.issue?.id===issueId){closeIssueDrawer();state.issueDetailData=null;state.selectedIssue=null;}
@@ -942,7 +944,10 @@ async function deleteIssueById(issueId){
     await refreshRuns();
     renderIssues();
     toast('需求已删除','ok');
-  }catch(err){toast(err.message,'err')}
+  }catch(err){
+    toast(err.message,'err');
+    await refreshIssues();
+  }
 }
 
 // Association does not expose private conversations to other project members.

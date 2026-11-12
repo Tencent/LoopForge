@@ -122,3 +122,14 @@ Object.assign(window.LF_I18N_EN,{
 "默认运行沙箱不能删除；可编辑配置或新建其他沙箱":"The default sandbox cannot be deleted; edit its settings or create another sandbox."
 });
 Object.assign(window.LF_I18N_EN,{"平台目录":"Platform catalog","通用模板按名称绑定这些 MCP，添加到本项目后即可使用。":"Generic templates bind these MCPs by name. Add one to this project to use it.","已添加到当前项目":"Added to this project","添加中…":"Adding…"});
+Object.assign(window.LF_I18N_EN,{
+  "强制删除":"Force delete",
+  "强制删除需求":"Force-delete requirement",
+  "强制删除所选":"Force-delete selected",
+  "确认强制删除":"Force delete",
+  "需求、评论和澄清记录将被删除。":"The requirement, its comments, and clarification history will be deleted.",
+  "关联的任务、运行记录、日志、产物和执行工作区将一并清理。":"Linked tasks, runs, logs, outputs, and workspaces will be removed as well.",
+  "删除后无法恢复。":"This cannot be undone.",
+  "外部原单会保留，后续同步可能重新导入。":"The original external record is kept, and a later sync may import it again.",
+  "需求已有执行记录或已完成，请确认强制删除":"This requirement has execution history or is already completed. Confirm force deletion."
+});
