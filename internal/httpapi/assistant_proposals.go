@@ -539,7 +539,7 @@ func (h *assistantHandlers) expireProposal(ownerID int64, sessionID string, mess
 	next := session
 	next.Messages = append([]assistantMessage(nil), session.Messages...)
 	next.Messages[messageIndex].Content = jsonObject(content)
-	next.Messages = append(next.Messages, assistantMessage{Role: "user", Content: steer.Content, AuthorID: actorID, AuthorName: actorName, CreatedAt: time.Now().UTC(), Trigger: steer.Trigger})
+	next.Messages = append(next.Messages, assistantMessage{TraceID: newAssistantSessionID(), Role: "user", Content: steer.Content, AuthorID: actorID, AuthorName: actorName, CreatedAt: time.Now().UTC(), Trigger: steer.Trigger})
 	if err := h.repo.PutAssistantSessionIfUnchanged(ownerID, next, session); err != nil {
 		return nil
 	}

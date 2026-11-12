@@ -680,6 +680,10 @@ small {
 .message-actions:focus-within .icon-button {
   opacity: 1;
 }
+/* Wrapper only prefetches the build; the button lays out like its siblings. */
+.trace-copy {
+  display: contents;
+}
 .message-time {
   font-size: 11px;
   line-height: 16px;
