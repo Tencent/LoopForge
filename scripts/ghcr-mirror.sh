@@ -1,22 +1,49 @@
 #!/usr/bin/env bash
-# Optional pull path for a slow ghcr.io link. Sourced by start.sh and install.sh.
-# MIRROR is unset: callers keep their existing pull. MIRROR=<host> replaces the
-# ghcr.io host, for example MIRROR=ghcr.nju.edu.cn, then tags the image back
-# so compose.yaml and the default pull policy stay unchanged.
+# Optional pull path for a slow ghcr.io or Docker Hub link. Sourced by start.sh
+# and install.sh. MIRROR is unset: callers keep their existing pull.
+# MIRROR=<host> replaces the ghcr.io host, for example MIRROR=ghcr.nju.edu.cn,
+# then tags the image back so compose.yaml and the default pull policy stay
+# unchanged. A ghcr.<domain> host also pulls MySQL from docker.<domain>;
+# DOCKERHUB_MIRROR=<host> names another Docker Hub mirror. A mirror that cannot
+# serve an image falls back to the original registry.
+
+registry_host() {
+  local host
+  host=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  host="${host#"${host%%[![:space:]]*}"}"
+  host="${host%"${host##*[![:space:]]}"}"
+  printf '%s' "${host%/}"
+}
+
+valid_registry_host() {
+  [[ "$1" =~ ^(localhost|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+)(:[0-9]{1,5})?$ ]]
+}
+
+# pull_mirrored <mirror image> <compose image> <fallback name>
+# Returns 1 when the caller should pull the compose image from its own registry.
+pull_mirrored() {
+  printf '\n▸ Pulling %s and tagging it %s\n' "$1" "$2"
+  # Called from `if`, so a failing docker command does not exit on its own.
+  if ! docker_access pull "$1"; then
+    printf '\n! Could not pull %s. Falling back to %s.\n' "$1" "$3" >&2
+    return 1
+  fi
+  if ! docker_access tag "$1" "$2"; then
+    printf '\n✗ Could not tag %s as %s. Stopped without starting.\n' "$1" "$2" >&2
+    exit 1
+  fi
+}
 
 mirror_published_ghcr() {
   local policy="${1:-missing}"
   [[ -n "${MIRROR:-}" ]] || return 1
   local mirror_host
-  mirror_host=$(printf '%s' "$MIRROR" | tr '[:upper:]' '[:lower:]')
-  mirror_host="${mirror_host#"${mirror_host%%[![:space:]]*}"}"
-  mirror_host="${mirror_host%"${mirror_host##*[![:space:]]}"}"
-  mirror_host=${mirror_host%/}
+  mirror_host=$(registry_host "$MIRROR")
   # The upstream host is the normal pull. Any other registry host replaces ghcr.io.
   if [[ "$mirror_host" == ghcr.io || "$mirror_host" == ghcr.io:443 ]]; then
     return 1
   fi
-  if [[ ! "$mirror_host" =~ ^(localhost|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+)(:[0-9]{1,5})?$ ]]; then
+  if ! valid_registry_host "$mirror_host"; then
     printf '\n✗ MIRROR must be the registry host that replaces ghcr.io, for example ghcr.nju.edu.cn.\n' >&2
     exit 1
   fi
@@ -81,15 +108,33 @@ PY
     printf '\n▸ Using local image %s\n' "$image"
     return 0
   fi
-  printf '\n▸ Pulling %s and tagging it %s\n' "$mirror_image" "$image"
-  # Called from `if`, so a failing docker command does not exit on its own.
-  # Exit rather than return: a return would make the caller pull ghcr.io directly.
-  if ! docker_access pull "$mirror_image"; then
-    printf '\n✗ Could not pull %s. Stopped without retagging the previous image.\n' "$mirror_image" >&2
+  pull_mirrored "$mirror_image" "$image" ghcr.io
+}
+
+mirror_dockerhub_mysql() {
+  local policy="${1:-missing}"
+  local hub
+  if [[ -n "${DOCKERHUB_MIRROR:-}" ]]; then
+    hub=$(registry_host "$DOCKERHUB_MIRROR")
+  elif [[ -n "${MIRROR:-}" ]]; then
+    hub=$(registry_host "$MIRROR")
+    [[ "$hub" == ghcr.* && "$hub" != ghcr.io && "$hub" != ghcr.io:* ]] || return 1
+    hub="docker.${hub#ghcr.}"
+  else
+    return 1
+  fi
+  [[ "$hub" != docker.io && "$hub" != registry-1.docker.io ]] || return 1
+  if ! valid_registry_host "$hub"; then
+    printf '\n✗ DOCKERHUB_MIRROR must be a Docker Hub mirror host, for example docker.nju.edu.cn.\n' >&2
     exit 1
   fi
-  if ! docker_access tag "$mirror_image" "$image"; then
-    printf '\n✗ Could not tag %s as %s. Stopped without starting.\n' "$mirror_image" "$image" >&2
-    exit 1
+
+  local image
+  [[ -f compose.yaml ]] || return 1
+  image=$(sed -nE 's/^[[:space:]]+image:[[:space:]]*(mysql:[A-Za-z0-9_][A-Za-z0-9_.-]*)[[:space:]]*$/\1/p' compose.yaml | head -n 1)
+  [[ -n "$image" ]] || return 1
+  if [[ "$policy" != always ]] && docker_access image inspect "$image" >/dev/null 2>&1; then
+    return 0
   fi
+  pull_mirrored "${hub}/library/${image}" "$image" 'Docker Hub'
 }

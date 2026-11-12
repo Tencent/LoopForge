@@ -65,7 +65,7 @@ export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
         self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL'):
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'DOCKERHUB_MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL'):
             self.environ.pop(name, None)
 
     def executable(self, name, contents):
@@ -117,6 +117,10 @@ exec "$@"
         import re
         return re.search(r'image:\s*\$\{LOOPFORGE_IMAGE:-([^}]+)\}', text).group(1).strip()
 
+    def mysql_image(self):
+        import re
+        return re.search(r'image:\s*(mysql:\S+)', (ROOT / 'compose.yaml').read_text()).group(1)
+
     def use_compose_file(self):
         shutil.copyfile(ROOT / 'compose.yaml', self.root / 'compose.yaml')
 
@@ -141,6 +145,29 @@ exec "$@"
                 self.assertLess(log.index(f'pull {mirror}'), log.index(f'tag {mirror} {image}'))
                 self.assertLess(log.index(f'tag {mirror} {image}'), log.index('pull --policy missing platform mysql'))
                 self.assertNotIn('MIRROR=', (self.root / '.env').read_text())
+                hub = 'docker.nju.edu.cn/library/' + self.mysql_image()
+                if host == 'ghcr.nju.edu.cn':
+                    self.assertLess(log.index(f'tag {hub} {self.mysql_image()}'), log.index('pull --policy missing platform mysql'))
+                else:
+                    self.assertNotIn('library/mysql', log)
+
+    def test_dockerhub_mirror_names_the_mysql_host(self):
+        self.use_compose_file()
+        self.assert_success(self.install(MIRROR='mirror.example.test', DOCKERHUB_MIRROR='Hub.Example.Test/'))
+        log = (self.root / 'docker.log').read_text()
+        mysql = self.mysql_image()
+        self.assertIn(f'tag hub.example.test/library/{mysql} {mysql}', log)
+        self.assertIn('pull --policy missing platform mysql', log)
+
+    def test_failed_mysql_mirror_falls_back_to_docker_hub(self):
+        self.use_compose_file()
+        result = self.install(DOCKERHUB_MIRROR='docker.nju.edu.cn', MOCK_PULL_FAIL='1')
+        self.assert_success(result)
+        self.assertIn('Falling back to Docker Hub', result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull docker.nju.edu.cn/library/' + self.mysql_image(), log)
+        self.assertNotIn(' tag ', log)
+        self.assertIn('pull --policy missing platform mysql', log)
 
     def test_mirror_keeps_a_local_image(self):
         self.use_compose_file()
@@ -189,7 +216,7 @@ exec "$@"
         self.assertIn('pull --ignore-buildable --policy always', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
 
-    def test_start_pull_with_nju_mirror_does_not_contact_ghcr_for_platform(self):
+    def test_start_pull_with_nju_mirror_does_not_contact_upstream_registries(self):
         self.use_compose_file()
         self.assert_success(self.install())
         (self.root / 'docker.log').unlink()
@@ -197,11 +224,22 @@ exec "$@"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         image = self.pinned_image()
         mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
+        mysql = self.mysql_image()
         log = (self.root / 'docker.log').read_text()
         self.assertIn(f'pull {mirror}', log)
         self.assertIn(f'tag {mirror} {image}', log)
-        self.assertIn('pull --policy always mysql', log)
-        self.assertNotIn('pull --ignore-buildable --policy always', log)
+        self.assertIn(f'tag docker.nju.edu.cn/library/{mysql} {mysql}', log)
+        self.assertNotIn('compose --profile platform pull', log)
+
+    def test_start_pull_with_other_mirror_refreshes_mysql_upstream(self):
+        self.use_compose_file()
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='mirror.example.test'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull --ignore-buildable --policy always mysql', log)
+        self.assertNotIn('always platform', log)
 
     def test_mirror_uses_the_last_image_assignment_in_env(self):
         self.use_compose_file()
@@ -217,17 +255,19 @@ exec "$@"
         self.assertNotIn('example/ignored', log)
         self.assertNotIn('ghcr.nju.edu.cn/tencent/loopforge', log)
 
-    def test_failed_mirror_pull_does_not_retag_or_start(self):
+    def test_failed_mirror_pull_falls_back_without_retagging(self):
         self.use_compose_file()
         result = self.install(MIRROR='ghcr.nju.edu.cn', MOCK_PULL_FAIL='1')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Could not pull', result.stderr)
+        self.assert_success(result)
+        self.assertIn('Falling back to ghcr.io', result.stderr)
+        self.assertIn('Falling back to Docker Hub', result.stderr)
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
+        self.assertIn('pull docker.nju.edu.cn/library/' + self.mysql_image(), log)
         self.assertNotIn(' tag ', log)
-        self.assertNotIn('up -d --no-build', log)
+        self.assertLess(log.index('pull --policy missing platform mysql'), log.index('up -d --no-build'))
 
-    def test_failed_mirror_refresh_does_not_retag_a_cached_image(self):
+    def test_failed_mirror_refresh_falls_back_to_upstream_registries(self):
         self.use_compose_file()
         self.assert_success(self.install())
         (self.root / 'docker.log').unlink()
@@ -235,12 +275,12 @@ exec "$@"
             ['bash', 'start.sh', 'pull'], cwd=self.root,
             env=dict(self.environ, MIRROR='ghcr.nju.edu.cn', MOCK_PULL_FAIL='1', MOCK_IMAGE_PRESENT='1'),
             text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Could not pull', result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Falling back', result.stderr)
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
         self.assertNotIn(' tag ', log)
-        self.assertNotIn('up -d --no-build', log)
+        self.assertLess(log.index('pull --ignore-buildable --policy always platform mysql'), log.index('up -d --no-build'))
 
     def test_failed_mirror_tag_stops_before_startup(self):
         self.use_compose_file()

@@ -163,18 +163,23 @@ fi
 
 if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
   pull_policy="${LOOPFORGE_PULL_POLICY:-missing}"
+  # A mirrored image is already local under its compose name. Pull it with
+  # missing so Compose does not contact the original registry.
+  platform_policy="$pull_policy"
+  mysql_policy="$pull_policy"
   if mirror_published_ghcr "$pull_policy"; then
-    # The platform name is already local. Pull it with missing so Compose does
-    # not contact ghcr.io; MySQL keeps the requested policy.
-    if [[ "$pull_policy" == always ]]; then
-      docker_access compose --profile platform pull --policy missing platform
-      docker_access compose --profile platform pull --policy always mysql
-    else
-      docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
-    fi
+    platform_policy=missing
   else
     step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
-    docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+  fi
+  if mirror_dockerhub_mysql "$pull_policy"; then
+    mysql_policy=missing
+  fi
+  if [[ "$platform_policy" == "$mysql_policy" ]]; then
+    docker_access compose --profile platform pull --policy "$platform_policy" platform mysql
+  else
+    docker_access compose --profile platform pull --policy "$platform_policy" platform
+    docker_access compose --profile platform pull --policy "$mysql_policy" mysql
   fi
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
@@ -184,7 +189,7 @@ else
     export LOOPFORGE_COMMIT
   fi
   # Download MySQL while the platform image builds instead of afterwards.
-  docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
+  { mirror_dockerhub_mysql missing || docker_access compose pull --quiet --policy missing mysql; } >/dev/null 2>&1 &
   mysql_pull=$!
   docker_access compose --profile platform build platform
   wait "$mysql_pull" || true
