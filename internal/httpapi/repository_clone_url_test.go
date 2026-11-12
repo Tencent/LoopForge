@@ -23,6 +23,14 @@ func TestRepositorySaveRejectsUnsafeCloneURL(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("non-admin local cloneUrl = %d: %s", rec.Code, rec.Body.String())
 	}
+	for _, cloneURL := range []string{"http://127.0.0.1:9/repo.git", "https://169.254.169.254/latest/meta-data", "http://localhost:3000/repo.git", "git@[::1]:a/b.git"} {
+		rec = cvBRequest(t, f, http.MethodPost, "/api/repositories", map[string]any{
+			"projectId": "platform", "name": "internal", "gongfengProjectId": "example/internal", "cloneUrl": cloneURL,
+		}, true)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("non-admin host-local cloneUrl %q = %d: %s", cloneURL, rec.Code, rec.Body.String())
+		}
+	}
 	rec = cvBRequest(t, f, http.MethodPost, "/api/repositories", map[string]any{
 		"projectId": "platform", "name": "ok", "gongfengProjectId": "example/ok", "cloneUrl": "git@git.example.com:example/ok.git",
 	}, true)

@@ -2,6 +2,10 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- Project owners can no longer save a repository `cloneUrl` that points at the platform or runner host itself: loopback (`127.0.0.0/8`, `::1`, `localhost`, and forms such as `127.1` or `2130706433`), unspecified, link-local (including `169.254.169.254` metadata) and multicast hosts return 400. Private ranges such as `10.0.0.0/8` and `192.168.0.0/16` stay allowed for self-hosted Git servers. Platform administrators, and deployments with `AGENTFLOW_AUTH_REQUIRED` off, are unaffected. Repositories already saved are not re-checked. Refs #85.
+
 ## 0.3.8 — header sign-in hardening and a GHCR mirror option
 
 - With `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`, identity headers such as `Staffname` are ignored on requests that carry `X-Forwarded-For`, `Forwarded` or `X-Real-IP`, unless the gateway also sends `X-AgentFlow-Gateway-Secret` matching the new `AGENTFLOW_IDENTITY_HEADER_SECRET`. A client behind a pass-through reverse proxy could otherwise sign in as any account. Deployments with the option off are unaffected.
