@@ -72,3 +72,25 @@ func checkAnalyticsPublicPrices(t *testing.T, s *Store) {
 		t.Fatalf("partial recognized amount must survive with incomplete coverage: %+v", priced.Usage)
 	}
 }
+
+func TestAnalyticsDeepSeekPricesCachedInputOnce(t *testing.T) {
+	usage := domain.TokenUsage{
+		InputTokens: 1_000_000, CacheReadTokens: 800_000,
+		OutputTokens: 100_000, TotalTokens: 1_100_000,
+	}
+	run := domain.Run{
+		Usage: usage,
+		Nodes: map[string]*domain.NodeRun{
+			"role": {Provider: "deepseek", Model: domain.DeepSeekDefaultModel, Usage: usage},
+		},
+	}
+
+	priced := analyticsPricedRun(run)
+	// 200k uncached input + 800k cache reads + 100k output.
+	const wantCNY = 1.232
+	for _, pricedUsage := range []domain.TokenUsage{priced.Nodes["role"].Usage, priced.Usage} {
+		if got := pricedUsage.CostUSD * domain.AnalyticsUSDToCNY; math.Abs(got-wantCNY) > 1e-8 || pricedUsage.CostStatus != "estimated" {
+			t.Fatalf("estimated cost = %.4f CNY (%s), want %.4f CNY", got, pricedUsage.CostStatus, wantCNY)
+		}
+	}
+}
