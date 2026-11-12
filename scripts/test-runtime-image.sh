@@ -24,5 +24,7 @@ unzip -v >/dev/null
 codex --version
 if command -v claude >/dev/null; then printf 'Claude Code must not be bundled; it installs on first use.\n' >&2; exit 1; fi
 codebuddy --version
+# WeCom notification bots shell out to wecom-cli (internal/notification/provider.go).
+wecom-cli --version
 printf 'Runtime image compatibility checks passed.\n'
 CHECK
