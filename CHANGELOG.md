@@ -2,6 +2,10 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`, mirrored to `ccr.ccs.tencentyun.com/loopforge/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- The floating page-feedback button is gone. The page-feedback API goes with it. Existing `page_feedbacks` and `page_feedback_images` tables are left in place and are no longer created for new databases.
+
 ## 0.3.7 — Tencent Cloud image mirror
 
 - Platform releases also push `ccr.ccs.tencentyun.com/loopforge/loopforge` with the same tags as `ghcr.io/tencent/loopforge`. `compose.yaml` still pins GHCR. Install from Tencent Cloud with `LOOPFORGE_IMAGE=ccr.ccs.tencentyun.com/loopforge/loopforge:0.3.7 ./start.sh`.
