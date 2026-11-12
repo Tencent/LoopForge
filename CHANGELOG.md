@@ -1,6 +1,11 @@
 # Changelog
 
-Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`, mirrored to `ccr.ccs.tencentyun.com/loopforge/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+
+## Unreleased
+
+- `MIRROR=<host> ./start.sh` pulls `<host>/tencent/loopforge:<version>` and tags it back to the name pinned in `compose.yaml`. `ghcr.nju.edu.cn` is one such host. Unset `MIRROR` still pulls `ghcr.io` directly. `MIRROR=<host> ./start.sh pull` refreshes through the same host. Setting `MIRROR` trusts that host. The published image stays on GHCR, and the GitHub Release records its digest. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub. The existing `v0.3.7` tag does not include this script.
+- The release workflow publishes GHCR only. It no longer copies the image to `ccr.ccs.tencentyun.com`.
 
 ## 0.3.7 — Tencent Cloud image mirror
 
@@ -11,6 +16,12 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`, mir
 - The TKE node-pool tool keeps the SDK error and CAM hint when its fallback query fails.
 
 No migrations are required.
+
+## Unreleased
+
+- With `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`, identity headers such as `Staffname` are ignored on requests that carry `X-Forwarded-For`, `Forwarded` or `X-Real-IP`, unless the gateway also sends `X-AgentFlow-Gateway-Secret` matching the new `AGENTFLOW_IDENTITY_HEADER_SECRET`. A client behind a pass-through reverse proxy could otherwise sign in as any account. Deployments with the option off are unaffected.
+
+Before upgrading a deployment that signs users in by header behind a proxy adding forwarding headers, set `AGENTFLOW_IDENTITY_HEADER_SECRET` and have the gateway send it in `X-AgentFlow-Gateway-Secret`; otherwise header sign-in falls back to guest after the upgrade. See `docs/deployment.md`.
 
 ## 0.3.6 — a default sandbox on an uninitialized catalog
 

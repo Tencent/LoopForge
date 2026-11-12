@@ -60,8 +60,12 @@ type AgentToolSession struct {
 	RunID          string
 	// ChatSessionID/ChatOwnerID identify the ordinary conversation this turn
 	// belongs to, so Main Bot can open and bind a temporary workspace there.
-	ChatSessionID    string
-	ChatOwnerID      int64
+	ChatSessionID string
+	ChatOwnerID   int64
+	// turnMessages is the transcript this chat request is sending. A new
+	// personal session is stored only after the reply, so proposal checks
+	// read the request before the saved session.
+	turnMessages     []assistantMessage
 	SandboxProfileID string
 	// workspaceRunID is the one workspace an ordinary conversation is bound
 	// to: one it opened itself, or the SOP run of an issue.

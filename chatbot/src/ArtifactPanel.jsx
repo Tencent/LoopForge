@@ -193,6 +193,7 @@ export default function ArtifactPanel({
   workspaceRunId = "",
   browserRequest = null,
   onBrowserRequestHandled = () => {},
+  onAddElement = null,
 }) {
   const root = useRef(null);
   const searchInput = useRef(null);
@@ -612,6 +613,15 @@ export default function ArtifactPanel({
                 runId={workspaceRunId}
                 request={browserRequest}
                 onRequestHandled={onBrowserRequestHandled}
+                onAddElement={
+                  onAddElement &&
+                  ((ref) => {
+                    onAddElement(ref);
+                    // A compact panel covers the composer: go back so the
+                    // new chip is in view.
+                    if (layout.compact) onClose();
+                  })
+                }
               />
             ) : (
               <div className="agent-browser-empty" role="status">

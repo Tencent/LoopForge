@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 )
@@ -2172,6 +2173,38 @@ func TestClipExecutorOutputBoundsRawCLIStreams(t *testing.T) {
 	got := clipExecutorOutput(raw)
 	if len(got) <= maxExecutorOutputBytes || !strings.Contains(got, "output truncated") {
 		t.Fatalf("expected clipped output, got %d bytes", len(got))
+	}
+}
+
+func TestClipExecutorOutputKeepsMultiByteRunesWhole(t *testing.T) {
+	// "失" is 3 bytes, so one leading byte puts the cut inside a rune.
+	raw := "x" + strings.Repeat("失", maxExecutorOutputBytes/3+10)
+	got := clipExecutorOutput(raw)
+	if !utf8.ValidString(got) {
+		t.Fatalf("clipped output is not valid UTF-8: %q", got[maxExecutorOutputBytes-4:maxExecutorOutputBytes+4])
+	}
+	if !strings.Contains(got, "output truncated") {
+		t.Fatalf("expected clipped output, got %d bytes", len(got))
+	}
+}
+
+func TestClipToolMsgKeepsMultiByteRunesWhole(t *testing.T) {
+	// 180 bytes is 60 three-byte runes; one leading byte moves the cut inside one.
+	got := clipToolMsg("x" + strings.Repeat("失败", 100))
+	if !utf8.ValidString(got) {
+		t.Fatalf("clipped tool message is not valid UTF-8: %q", got)
+	}
+	if !strings.HasSuffix(got, "…") || len(got) > 180+len("…") {
+		t.Fatalf("expected a clipped message of at most 180 bytes, got %d bytes", len(got))
+	}
+}
+
+func TestClipOnRuneBoundaryBoundsBackoffOnMalformedInput(t *testing.T) {
+	// A run of continuation bytes has no rune start to back off to; keep the
+	// byte cut rather than shrinking the result to nothing.
+	got := clipOnRuneBoundary("x"+strings.Repeat("\x80", 50), 20)
+	if len(got) != 20 {
+		t.Fatalf("expected a 20-byte cut, got %d bytes", len(got))
 	}
 }
 

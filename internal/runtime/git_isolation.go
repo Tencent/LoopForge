@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -247,14 +248,45 @@ func gitIndexLockInUse(ctx context.Context, lockPath string) (inUse, confirmed b
 }
 
 func gitIndexLockInUseProc(lockPath string) (inUse, confirmed bool, err error) {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return false, false, err
-	}
+	return gitIndexLockHeldUnder("/proc", lockPath, uint32(os.Geteuid()))
+}
+
+// gitIndexLockHeldUnder matches open descriptors by file identity, not path:
+// a sandbox may hold the same lock through a bind-mounted or hard-linked path.
+//
+// Git creates the lock with O_EXCL, so its holder runs as the lock's owner.
+// When that owner is another user (e.g. root in a rootful container), this
+// process may be unable to read the holder's descriptors; such an unreadable
+// process leaves the result unconfirmed. Our own Git processes are always
+// readable, and same-user processes hidden from us (non-dumpable helpers such
+// as browser sandboxes) do not hold index locks, so they never block cleanup.
+//
+// A root-owned lock matches every unreadable root process on the host, so a
+// non-root runner could never reclaim it. Git writes the lock while it holds
+// it; once the lock has not been modified for gitIndexLockForeignStaleAfter,
+// unreadable processes no longer keep it. A readable holder always does.
+func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confirmed bool, err error) {
 	want, err := filepath.Abs(lockPath)
 	if err != nil {
 		return false, false, err
 	}
+	lock, err := os.Lstat(want)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, true, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	stat, ok := lock.Sys().(*syscall.Stat_t)
+	if !lock.Mode().IsRegular() || !ok {
+		return false, false, fmt.Errorf("index lock %s is not a regular file", want)
+	}
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return false, false, err
+	}
+	uncertain := false
+	foreignOwner := stat.Uid != self
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -262,21 +294,60 @@ func gitIndexLockInUseProc(lockPath string) (inUse, confirmed bool, err error) {
 		if _, err := strconv.Atoi(entry.Name()); err != nil {
 			continue
 		}
-		fds, readErr := os.ReadDir(filepath.Join("/proc", entry.Name(), "fd"))
+		dir := filepath.Join(procRoot, entry.Name(), "fd")
+		fds, readErr := os.ReadDir(dir)
 		if readErr != nil {
+			if foreignOwner && !errors.Is(readErr, os.ErrNotExist) && procMayOwnFile(filepath.Join(procRoot, entry.Name()), stat.Uid) {
+				uncertain = true
+			}
 			continue
 		}
 		for _, fd := range fds {
-			target, linkErr := os.Readlink(filepath.Join("/proc", entry.Name(), "fd", fd.Name()))
-			if linkErr != nil {
+			link := filepath.Join(dir, fd.Name())
+			target, linkErr := os.Readlink(link)
+			// Sockets, pipes and anonymous inodes are never the lock file.
+			if linkErr != nil || !strings.HasPrefix(target, "/") {
 				continue
 			}
 			if target == want {
 				return true, true, nil
 			}
+			if open, statErr := os.Stat(link); statErr == nil && os.SameFile(lock, open) {
+				return true, true, nil
+			}
 		}
 	}
-	return false, true, nil
+	if uncertain && time.Since(lock.ModTime()) >= gitIndexLockForeignStaleAfter {
+		uncertain = false
+	}
+	return false, !uncertain, nil
+}
+
+var gitIndexLockForeignStaleAfter = 30 * time.Minute
+
+// procMayOwnFile reports whether the process may run as uid. Unknown state
+// counts as a match, so an unreadable process can only preserve the lock.
+func procMayOwnFile(procDir string, uid uint32) bool {
+	status, err := os.ReadFile(filepath.Join(procDir, "status"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false // the process has exited
+	}
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "Uid:" {
+			continue
+		}
+		for _, field := range fields[1:] {
+			if id, parseErr := strconv.ParseUint(field, 10, 32); parseErr != nil || uint32(id) == uid {
+				return true
+			}
+		}
+		return false
+	}
+	return true
 }
 
 func trackedProjectAgentConfigPathsForMode(ctx context.Context, workspace, mode string) ([]string, error) {
