@@ -2,6 +2,12 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- Repository clone URLs no longer carry credentials. Saving a `cloneUrl` with a user name or password, such as `https://user:token@github.com/acme/app.git`, is rejected with a pointer to the Git token in personal settings; the repositories API, bootstrap payload, run, task and requirement views, and the runner task management list strip credentials from `cloneUrl` and `webUrl` of rows saved earlier; a `webUrl` with credentials is rejected on save; runner clone errors and redacted Git output mask them. `ssh://git@host/...` and `git@host:path` remotes are still accepted.
+
+Repositories saved earlier with a token in `cloneUrl` keep cloning until they are saved again. Saving one from the studio stores the URL without the token, so first put the Git token in 个人配置, then save the repository. Until then the token also lands in each workspace's `.git/config`, where the agent can read it, so re-save such repositories soon after upgrading.
+
 ## 0.3.8 — header sign-in hardening and a GHCR mirror option
 
 - With `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`, identity headers such as `Staffname` are ignored on requests that carry `X-Forwarded-For`, `Forwarded` or `X-Real-IP`, unless the gateway also sends `X-AgentFlow-Gateway-Secret` matching the new `AGENTFLOW_IDENTITY_HEADER_SECRET`. A client behind a pass-through reverse proxy could otherwise sign in as any account. Deployments with the option off are unaffected.
@@ -19,16 +25,6 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 Before upgrading a deployment that signs users in by header behind a proxy adding forwarding headers, set `AGENTFLOW_IDENTITY_HEADER_SECRET` and have the gateway send it in `X-AgentFlow-Gateway-Secret`; otherwise header sign-in falls back to guest after the upgrade. See `docs/deployment.md`.
 
 No migrations are required.
-
-## Unreleased
-
-- With `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`, identity headers such as `Staffname` are ignored on requests that carry `X-Forwarded-For`, `Forwarded` or `X-Real-IP`, unless the gateway also sends `X-AgentFlow-Gateway-Secret` matching the new `AGENTFLOW_IDENTITY_HEADER_SECRET`. A client behind a pass-through reverse proxy could otherwise sign in as any account. Deployments with the option off are unaffected.
-
-Before upgrading a deployment that signs users in by header behind a proxy adding forwarding headers, set `AGENTFLOW_IDENTITY_HEADER_SECRET` and have the gateway send it in `X-AgentFlow-Gateway-Secret`; otherwise header sign-in falls back to guest after the upgrade. See `docs/deployment.md`.
-
-- Repository clone URLs no longer carry credentials. Saving a `cloneUrl` with a user name or password, such as `https://user:token@github.com/acme/app.git`, is rejected with a pointer to the Git token in personal settings; the repositories API and bootstrap payload strip credentials from rows saved earlier; runner clone errors and redacted Git output mask them. `ssh://git@host/...` and `git@host:path` remotes are still accepted.
-
-Repositories saved earlier with a token in `cloneUrl` keep cloning until they are saved again. Saving one from the studio stores the URL without the token, so first put the Git token in 个人配置, then save the repository. Until then the token also lands in each workspace's `.git/config`, where the agent can read it, so re-save such repositories soon after upgrading.
 
 ## 0.3.7 — Tencent Cloud image mirror
 
