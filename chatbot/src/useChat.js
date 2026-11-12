@@ -12,6 +12,7 @@ import {
 } from "./api";
 import { reviewedOperation, operationError } from "./operations.js";
 import { credentialHint } from "./credentials.js";
+import { cliFailureSettles } from "./cli-install.jsx";
 import { modelEffort } from "./effort.js";
 import { conversationEngine, engineModels } from "./engines.js";
 import {
@@ -1133,6 +1134,26 @@ export function useChat() {
     }
     await refreshSessions();
   }
+  const adoptCLIInstall = useCallback((message) => {
+    setError(message);
+    setGeneration((current) =>
+      current?.error && cliFailureSettles(current.error)
+        ? { ...current, error: message }
+        : current,
+    );
+    setSession((current) => {
+      if (!current?.messages?.some((item) => cliFailureSettles(item.unfinished)))
+        return current;
+      return {
+        ...current,
+        messages: current.messages.map((item) =>
+          cliFailureSettles(item.unfinished)
+            ? { ...item, unfinished: message }
+            : item,
+        ),
+      };
+    });
+  }, []);
   return {
     user,
     refreshUser,
@@ -1175,6 +1196,7 @@ export function useChat() {
     steering: (steering?.sessionId === activeId && steering.item) || null,
     readOnly: !!session?.readOnly,
     setError,
+    adoptCLIInstall,
     setModel: chooseModel,
     setSession,
     open,

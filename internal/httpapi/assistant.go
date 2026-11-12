@@ -454,6 +454,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			fail(400, err.Error())
 			return
 		}
+		if errors.Is(err, errAssistantCLIMissing) {
+			fail(503, err.Error())
+			return
+		}
 		if err != nil && !(toolSession != nil && toolSession.finished()) {
 			// A failed process may already have executed tools. Report the cause
 			// instead of treating it as a missing draft submission and rerunning it.
