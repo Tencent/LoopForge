@@ -22,31 +22,33 @@ type Schedule struct {
 	dayStar, dowStar bool
 }
 
+// cronFields lists the five cron fields in order with their display name and
+// inclusive value range. Day-of-week accepts 7 as an alias of Sunday (0).
+var cronFields = [...]struct {
+	name     string
+	min, max int
+}{
+	{"分钟", 0, 59},
+	{"小时", 0, 23},
+	{"日", 1, 31},
+	{"月", 1, 12},
+	{"周", 0, 7},
+}
+
 func Parse(expr string) (Schedule, error) {
 	fields := strings.Fields(strings.TrimSpace(expr))
 	if len(fields) != 5 {
 		return Schedule{}, fmt.Errorf("cron 需为 5 段（分 时 日 月 周），例如 0 * * * *")
 	}
-	min, err := parseField(fields[0], 0, 59)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("分钟: %w", err)
+	var bits [len(cronFields)]uint64
+	for i, f := range cronFields {
+		v, err := parseField(fields[i], f.min, f.max)
+		if err != nil {
+			return Schedule{}, fmt.Errorf("%s: %w", f.name, err)
+		}
+		bits[i] = v
 	}
-	hour, err := parseField(fields[1], 0, 23)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("小时: %w", err)
-	}
-	day, err := parseField(fields[2], 1, 31)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("日: %w", err)
-	}
-	month, err := parseField(fields[3], 1, 12)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("月: %w", err)
-	}
-	dow, err := parseField(fields[4], 0, 7)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("周: %w", err)
-	}
+	min, hour, day, month, dow := bits[0], bits[1], bits[2], bits[3], bits[4]
 	if dow&(1<<7) != 0 {
 		dow |= 1 << 0
 	}
@@ -78,25 +80,9 @@ func parseField(raw string, min, max int) (uint64, error) {
 			}
 			step = n
 		}
-		start, end := min, max
-		if rangePart != "*" {
-			bounds := strings.Split(rangePart, "-")
-			if len(bounds) == 1 {
-				n, err := strconv.Atoi(bounds[0])
-				if err != nil {
-					return 0, fmt.Errorf("不是数字")
-				}
-				start, end = n, n
-			} else if len(bounds) == 2 {
-				a, err1 := strconv.Atoi(bounds[0])
-				b, err2 := strconv.Atoi(bounds[1])
-				if err1 != nil || err2 != nil {
-					return 0, fmt.Errorf("范围无效")
-				}
-				start, end = a, b
-			} else {
-				return 0, fmt.Errorf("范围无效")
-			}
+		start, end, err := parseRange(rangePart, min, max)
+		if err != nil {
+			return 0, err
 		}
 		if start < min || end > max || start > end {
 			return 0, fmt.Errorf("超出 %d-%d", min, max)
@@ -109,6 +95,33 @@ func parseField(raw string, min, max int) (uint64, error) {
 		return 0, fmt.Errorf("没有有效取值")
 	}
 	return bits, nil
+}
+
+// parseRange parses the part of a field before an optional "/step": "*" spans
+// [min, max], "n" is a single value and "a-b" an inclusive range. Bounds are
+// checked by the caller.
+func parseRange(rangePart string, min, max int) (int, int, error) {
+	if rangePart == "*" {
+		return min, max, nil
+	}
+	bounds := strings.Split(rangePart, "-")
+	switch len(bounds) {
+	case 1:
+		n, err := strconv.Atoi(bounds[0])
+		if err != nil {
+			return 0, 0, fmt.Errorf("不是数字")
+		}
+		return n, n, nil
+	case 2:
+		a, err1 := strconv.Atoi(bounds[0])
+		b, err2 := strconv.Atoi(bounds[1])
+		if err1 != nil || err2 != nil {
+			return 0, 0, fmt.Errorf("范围无效")
+		}
+		return a, b, nil
+	default:
+		return 0, 0, fmt.Errorf("范围无效")
+	}
 }
 
 func (c Schedule) Matches(t time.Time) bool {
