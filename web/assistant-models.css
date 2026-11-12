@@ -38,3 +38,9 @@
 .ai-model-option.is-active{background:var(--blue-soft);color:var(--blue)}
 .ai-model-option:hover{background:var(--hover)}
 .ai-mode-option .ai-model-name{font-weight:640}
+/* 澄清选择器的框架分组：整组不可用时把原因写在标题里，禁用项不给手势。 */
+.ai-model-group{padding:7px 10px 3px;color:var(--muted-2);font-size:11px;font-weight:600;line-height:1.45;overflow-wrap:anywhere}
+.ai-model-option:disabled{opacity:.55;cursor:not-allowed}
+.ai-model-option:disabled:hover{background:transparent}
+.clarify-responsible-hint{display:flex;gap:4px;align-items:baseline;margin:0 0 8px;color:var(--muted);font-size:11.5px;line-height:1.5}
+.clarify-responsible-hint b{color:var(--text);font-weight:600}

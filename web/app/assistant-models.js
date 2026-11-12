@@ -84,39 +84,65 @@
     const credits = creditLabel(item);
     toggle.title = credits ? `${item?.name || id} ${credits}` : (item?.name || id || '');
   }
+  // appendModelOption draws one row of a model list and returns the element, so a
+  // caller that must disable the row can do it without re-finding it.
+  function appendModelOption(menu, item, selectedId, onPick) {
+    const opt = document.createElement('button');
+    opt.type = 'button';
+    opt.setAttribute('role', 'option');
+    opt.className = 'ai-model-option' + (item.id === selectedId ? ' is-active' : '');
+    opt.dataset.id = item.id;
+    if (item.icon !== false) {
+      const icon = document.createElement('span');
+      icon.className = 'ai-model-icon';
+      fillModelIcon(icon, item.family || familyOf(item.id), item.id);
+      opt.append(icon);
+    }
+    const label = document.createElement('span');
+    label.className = 'ai-model-name';
+    label.textContent = item.name || item.id;
+    label.title = item.name ? `${item.name} (${item.id})` : item.id;
+    const credits = document.createElement('span');
+    credits.className = 'ai-model-credits';
+    credits.textContent = creditLabel(item);
+    opt.append(label, credits);
+    opt.onclick = () => {
+      try { onPick(item.id); } finally {
+        menu.hidden = true;
+        const toggle = menu.parentElement?.querySelector('[data-model-toggle]');
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+      }
+    };
+    menu.append(opt);
+    return opt;
+  }
   // renderOptions renders any {id,name,family,credits,icon} list; icon:false
   // skips the icon slot (effort levels, custom model entry).
   function renderOptions(menu, items, selectedId, onPick) {
     if (!menu) return;
     menu.replaceChildren();
-    for (const item of items || []) {
-      const opt = document.createElement('button');
-      opt.type = 'button';
-      opt.setAttribute('role', 'option');
-      opt.className = 'ai-model-option' + (item.id === selectedId ? ' is-active' : '');
-      opt.dataset.id = item.id;
-      if (item.icon !== false) {
-        const icon = document.createElement('span');
-        icon.className = 'ai-model-icon';
-        fillModelIcon(icon, item.family || familyOf(item.id), item.id);
-        opt.append(icon);
-      }
-      const label = document.createElement('span');
-      label.className = 'ai-model-name';
-      label.textContent = item.name || item.id;
-      label.title = item.name ? `${item.name} (${item.id})` : item.id;
-      const credits = document.createElement('span');
-      credits.className = 'ai-model-credits';
-      credits.textContent = creditLabel(item);
-      opt.append(label, credits);
-      opt.onclick = () => {
-        try { onPick(item.id); } finally {
-          menu.hidden = true;
-          const toggle = menu.parentElement?.querySelector('[data-model-toggle]');
-          if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    for (const item of items || []) appendModelOption(menu, item, selectedId, onPick);
+  }
+  // renderGrouped draws the framework-grouped menu. A group whose framework cannot
+  // run right now is disabled as a whole and states why in its header, so nothing
+  // selectable is ever a promise the server cannot keep.
+  function renderGrouped(menu, groups, selectedId, onPick) {
+    if (!menu) return;
+    menu.replaceChildren();
+    for (const group of groups || []) {
+      const reason = group.disabled ? String(group.reason || '') : '';
+      const header = document.createElement('div');
+      header.className = 'ai-model-group';
+      header.textContent = reason ? `${group.name || group.id}｜${reason}` : (group.name || group.id);
+      menu.append(header);
+      for (const item of group.models || []) {
+        const opt = appendModelOption(menu, item, group.disabled ? '' : selectedId, onPick);
+        if (group.disabled) {
+          opt.disabled = true;
+          opt.title = reason;
+          opt.onclick = () => {};
         }
-      };
-      menu.append(opt);
+      }
     }
   }
   function renderList(menu, selectedId, onPick) {
@@ -146,6 +172,7 @@
     paint,
     paintItem,
     renderList,
-    renderOptions
+    renderOptions,
+    renderGrouped
   };
 })();

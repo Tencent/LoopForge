@@ -49,6 +49,26 @@ func TestClarifyModelPickerAndMCPPrompt(t *testing.T) {
 	}
 }
 
+// The clarification picker must ask the availability endpoint and render the
+// grouped menu, otherwise it silently falls back to the flat CodeBuddy-centric list.
+func TestClarifyEnginePickerChrome(t *testing.T) {
+	app, err := readAppBundle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"renderGrouped",
+		"clarifyPickerGroups",
+		"/api/clarify-engines",
+		"clarifyResponsibleHint",
+		"clarifyEffectiveModel",
+	} {
+		if !strings.Contains(string(app), want) {
+			t.Fatalf("clarify engine picker is missing %q", want)
+		}
+	}
+}
+
 func TestAppJSParses(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

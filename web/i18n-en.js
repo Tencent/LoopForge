@@ -122,3 +122,4 @@ Object.assign(window.LF_I18N_EN,{
 "默认运行沙箱不能删除；可编辑配置或新建其他沙箱":"The default sandbox cannot be deleted; edit its settings or create another sandbox."
 });
 Object.assign(window.LF_I18N_EN,{"平台目录":"Platform catalog","通用模板按名称绑定这些 MCP，添加到本项目后即可使用。":"Generic templates bind these MCPs by name. Add one to this project to use it.","已添加到当前项目":"Added to this project","添加中…":"Adding…"});
+Object.assign(window.LF_I18N_EN,{"澄清将使用这位责任人的凭据：":"Clarification runs on this responsible user's credentials:","该框架暂无可用模型，请先在个人配置里添加":"This framework has no model yet; add one in personal settings","需求澄清 · 默认框架与模型":"Requirement clarification · default framework and model","已失效，当前用 CodeBuddy":"No longer available; currently using CodeBuddy","新建需求和需求详情里的澄清默认用它；澄清时可以临时改，临时选择不写回这里。":"Clarification uses this by default in the new-requirement wizard and the issue drawer. You can switch per clarification without changing this setting."});

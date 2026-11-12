@@ -112,7 +112,59 @@ function clarifyModelPickerHTML(disabled){
   const id=escapeHTML(selectedClarifyModel());
   return `<div class="clarify-model-field" data-clarify-model><input type="hidden" data-clarify-model-value value="${id}"><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"${disabled?' disabled':''}><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div>`;
 }
-function bindClarifyModelPicker(host){
+// 澄清的框架可用性按需求责任人算：这张单（或这个项目）能选哪些框架、为什么不能选。
+// 状态挂在函数上，方便单测按名字逐个取出来跑。
+function clarifyEngineCacheKey(scope){
+  if(!scope||typeof scope!=='object')return '';
+  if(scope.issueId)return 'issue:'+scope.issueId;
+  if(scope.projectId)return 'project:'+scope.projectId;
+  return '';
+}
+function resetClarifyEngineCatalogCache(){clarifyEngineCatalog.cache=new Map()}
+function clarifyEngineCatalogCached(scope){
+  const key=clarifyEngineCacheKey(scope);
+  const cache=clarifyEngineCatalog.cache||new Map();
+  return key&&cache.has(key)?cache.get(key):null;
+}
+async function clarifyEngineCatalog(scope){
+  const key=clarifyEngineCacheKey(scope);
+  if(!key)return null;
+  const cache=clarifyEngineCatalog.cache||(clarifyEngineCatalog.cache=new Map());
+  if(cache.has(key))return cache.get(key);
+  const query=scope.issueId?`issueId=${encodeURIComponent(scope.issueId)}`:`projectId=${encodeURIComponent(scope.projectId)}`;
+  let catalog=null;
+  try{
+    const resp=await fetch(`/api/clarify-engines?${query}`,{headers:{Accept:'application/json'},credentials:'same-origin'});
+    if(!resp.ok)throw new Error(`框架目录加载失败（${resp.status}）`);
+    catalog=await resp.json();
+  }catch(err){catalog=null}
+  cache.set(key,catalog);
+  return catalog;
+}
+function clarifyPickerGroups(catalog){
+  return ((catalog&&catalog.engines)||[]).map(engine=>({
+    id:engine.id,
+    name:engine.name||engine.id,
+    reason:engine.reason||'',
+    disabled:engine.available!==true,
+    models:(engine.models||[]).map(model=>({id:model.id,name:model.name,family:model.family,credits:model.credits}))
+  }));
+}
+// clarifyEffectiveModel 的优先级：这张单记住的框架 > 浏览器里的临时选择 > 接口给的默认。
+function clarifyEffectiveModel(catalog,issue){
+  const stored=issue&&issue.clarification&&issue.clarification.modelId;
+  if(stored)return stored;
+  const local=selectedClarifyModel();
+  if(local&&local!=='default')return local;
+  return (catalog&&catalog.default)||local||'default';
+}
+function clarifyResponsibleHint(catalog){
+  if(!catalog)return '';
+  const me=Number(state?.currentUser?.id)||0;
+  if(!me||Number(catalog.responsibleUserId)===me)return '';
+  return `<div class="clarify-responsible-hint"><span>澄清将使用这位责任人的凭据：</span><b>${escapeHTML(catalog.responsibleUserName||'')}</b></div>`;
+}
+function bindClarifyModelPicker(host,scope){
   if(!host)return;
   const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
   if(!api||!toggle||!menu)return;
@@ -131,20 +183,32 @@ function bindClarifyModelPicker(host){
   }
   if(host.dataset.bound)return;
   host.dataset.bound='1';
+  const choose=id=>{
+    setClarifyModel(id);
+    api.paint(toggle,id);
+    menu.hidden=true;
+    toggle.setAttribute('aria-expanded','false');
+  };
+  const render=catalog=>{
+    if(catalog&&catalog.engines&&catalog.engines.length){
+      api.renderGrouped(menu, clarifyPickerGroups(catalog), clarifyEffectiveModel(catalog,null), choose);
+      return;
+    }
+    api.renderList(menu, selectedClarifyModel(), choose);
+  };
   toggle.onclick=e=>{
     e.stopPropagation();
     if(toggle.disabled)return;
     const open=menu.hidden;
     menu.hidden=!open;
     toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open){
-      api.renderList(menu, selectedClarifyModel(), id=>{
-        setClarifyModel(id);
-        api.paint(toggle, id);
-        menu.hidden=true;
-        toggle.setAttribute('aria-expanded','false');
-      });
-    }
+    if(!open)return;
+    // 没有作用域（其它调用方）就完全不走可用性那套，保持原来的平铺菜单。
+    if(!scope||!clarifyEngineCacheKey(scope)){render(null);return}
+    // 先画一份能用的，目录到了再换成按框架分组的版本：菜单不能空着等网络。
+    const cached=clarifyEngineCatalogCached(scope);
+    render(cached);
+    if(!cached)clarifyEngineCatalog(scope).then(current=>{if(current&&!menu.hidden)render(current)});
   };
 }
 // The AI 定时任务 model picker: a CLI select narrows the model list to that
