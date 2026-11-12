@@ -49,15 +49,39 @@ func TestRepositoryCloneURLNeverCarriesCredentials(t *testing.T) {
 			t.Fatalf("cloneUrl with credentials %q = %d: %s", cloneURL, rec.Code, rec.Body.String())
 		}
 	}
+	rec := cvBRequest(t, f, http.MethodPost, "/api/repositories", map[string]any{
+		"projectId": "platform", "name": "leak", "gongfengProjectId": "example/leak", "webUrl": "https://user:s3cret-token@github.com/acme/app",
+	}, true)
+	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "s3cret-token") {
+		t.Fatalf("webUrl with credentials = %d: %s", rec.Code, rec.Body.String())
+	}
 	// A row stored before this check must not leak through the API either.
-	if err := f.s.PutRepository(domain.Repository{ID: "legacy-leak", Name: "legacy", ProjectID: "platform", Provider: "github", DefaultBranch: "main", CloneURL: "https://user:s3cret-token@github.com/acme/app.git"}); err != nil {
+	if err := f.s.PutRepository(domain.Repository{ID: "legacy-leak", Name: "legacy", ProjectID: "platform", Provider: "github", DefaultBranch: "main", WebURL: "https://user:s3cret-token@github.com/acme/app", CloneURL: "https://user:s3cret-token@github.com/acme/app.git"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/repositories", "/api/repositories/legacy-leak"} {
+	for _, path := range []string{"/api/repositories", "/api/repositories/legacy-leak", "/api/bootstrap"} {
 		rec := cvBRequest(t, f, http.MethodGet, path, nil, true)
-		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "s3cret-token") || !strings.Contains(rec.Body.String(), "https://github.com/acme/app.git") {
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "s3cret-token") || !strings.Contains(rec.Body.String(), `"https://github.com/acme/app"`) || !strings.Contains(rec.Body.String(), "https://github.com/acme/app.git") {
 			t.Fatalf("GET %s = %d leaks or drops the clone URL: %s", path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+func TestRunnerTaskListDropsCloneURLCredentials(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	const legacyURL = "https://user:s3cret-token@github.com/acme/app.git"
+	if err := f.s.PutRunnerTask(domain.RunnerTask{ID: "rt-legacy", Provider: "mock", Status: "queued", Invocation: &domain.RunnerInvocation{
+		Repository:   &domain.RunnerRepository{CloneURL: legacyURL},
+		Repositories: []domain.RunnerRepository{{CloneURL: legacyURL}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := cvBRequest(t, f, http.MethodGet, "/api/runners/tasks", nil, true)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "s3cret-token") || !strings.Contains(rec.Body.String(), "https://github.com/acme/app.git") {
+		t.Fatalf("GET /api/runners/tasks = %d leaks or drops the clone URL: %s", rec.Code, rec.Body.String())
+	}
+	if stored, ok := f.s.RunnerTask("rt-legacy"); !ok || stored.Invocation.Repository.CloneURL != legacyURL {
+		t.Fatalf("the claiming runner still needs the stored clone URL: %+v", stored.Invocation)
 	}
 }
 
@@ -67,7 +91,7 @@ func TestLegacyCloneURLCredentialsStayOutOfPromptAndRunViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	const legacyURL = "https://user:s3cret-token@github.com/acme/app.git"
-	if err := f.s.PutRepository(domain.Repository{ID: "legacy-run", Name: "legacy", ProjectID: "platform", Provider: "github", GongfengProjectID: "acme/app", DefaultBranch: "main", CloneURL: legacyURL}); err != nil {
+	if err := f.s.PutRepository(domain.Repository{ID: "legacy-run", Name: "legacy", ProjectID: "platform", Provider: "github", GongfengProjectID: "acme/app", DefaultBranch: "main", WebURL: "https://user:s3cret-token@github.com/acme/app", CloneURL: legacyURL}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.PutIssue(domain.Issue{ID: "iss-legacy", ProjectID: "platform", Title: "Legacy repo", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: "legacy-flow", RepositoryID: "legacy-run"}); err != nil {

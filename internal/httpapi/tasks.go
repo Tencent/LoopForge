@@ -39,7 +39,7 @@ func (h *tasksHandlers) task(c *gin.Context) {
 }
 
 func publicTask(task domain.Task) domain.Task {
-	task.Repository.CloneURL = domain.StripURLCredentials(task.Repository.CloneURL)
+	task.Repository = domain.PublicRepositoryContext(task.Repository)
 	return task
 }
 
