@@ -67,6 +67,14 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 ## Quick start
 
+**Why deploy to the cloud?**
+
+- **Close your laptop and let runs continue.** Start an SOP before signing off and the cloud server can run it up to the approval gate. Scheduled jobs can start overnight, too.
+- **Hand off work from a browser.** Teammates can open the same requirement, see its progress, logs and artifacts, and approve a step or send it back for changes.
+- **Free up your development machine.** Run builds and tests for multiple SOPs in parallel, each in its own cloud Docker sandbox. Connect a runner for tasks that need local tools or private network access.
+
+See the [deployment guide](docs/deployment.md) for HTTPS and runner setup.
+
 Install **Git** and clone the repository first. The installer checks Docker, Compose, Python 3 and curl and offers to install missing components. Python/curl installation supports apt, dnf and yum on Linux; the Compose plugin supports x86_64/arm64 and verifies the official release SHA-256. macOS needs a working Python 3 and Docker Desktop; Homebrew can install missing components. Ordinary Linux users are supported through Docker group access or sudo. Set `LOOPFORGE_YES=1` to accept installation prompts. Package and image downloads require internet access.
 
 ```bash
@@ -194,9 +202,6 @@ See the [local guide](docs/local/usage.md) for each host's entry point and [edit
 | Evidence | Shared run details, approvals and metrics in the web workspace | Artifacts under `artifacts/{task_slug}/` + optional local dashboard |
 
 ## FAQ
-
-**When should I deploy LoopForge on a cloud server?**
-A cloud deployment gives your team a shared place to review run logs and artifacts and approve SOP steps from a browser. Scheduled jobs and SOPs running on the server can continue when your laptop is off. Cloud workers can take builds and tests off your laptop, and a connected runner can handle tasks that need local tools or access to a private network. See [Deployment](docs/deployment.md).
 
 **Do I need an API key to try it?**
 No. The demo SOP uses only a script and a human gate. Chat and agent steps need a key for the executor you pick. Model usage is not included; you bring your own credentials.

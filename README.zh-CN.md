@@ -67,6 +67,14 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 ## 快速开始
 
+**部署到云端的优势**
+
+- **合上电脑，任务照跑。** 下班前发起一条 SOP，云服务器可以继续跑到人工审批环节，夜间的定时任务也能照常触发。
+- **同事打开浏览器就能接手。** 团队成员可以查看同一个需求的进度、日志和产物，直接审批或打回。
+- **开发机腾出算力。** 多条 SOP 可以在各自的云端 Docker 沙箱里并行构建和测试。需要本地工具或内网访问的任务，可以交给接入平台的 Runner。
+
+HTTPS 和 Runner 的配置见[部署指南](docs/deployment.md)。
+
 先准备 **Git** 并克隆仓库。安装脚本会检查 Docker、Compose、Python 3 和 curl，并在获得确认后补装缺少的组件：Linux 的 Python/curl 支持 apt、dnf、yum，Compose 插件支持 x86_64/arm64 并校验官方发行文件的 SHA-256；macOS 需要可运行的 Python 3 和 Docker Desktop，可通过 Homebrew 补装缺少的组件。支持普通用户运行，需要时通过 Docker 组或 sudo 操作 Docker。设置 `LOOPFORGE_YES=1` 可接受安装提示；安装和拉取镜像需要可用的外网连接。
 
 ```bash
@@ -192,9 +200,6 @@ npx -y loopforge-cli@latest install claude
 | 证据留存 | Web 工作台中共享运行详情、审批和指标 | `artifacts/{task_slug}/` 下的产物 + 可选本地看板 |
 
 ## 常见问题
-
-**什么时候适合把 LoopForge 部署到云端？**
-部署到云端后，团队可以用浏览器查看同一份运行日志和产物，也可以直接审批 SOP 节点。即使关掉开发机，云端的定时任务和 SOP 仍能运行。构建和测试可以交给云端 Worker，需要本地工具或内网访问的任务则可以交给接入平台的 Runner。详见[部署指南](docs/deployment.md)。
 
 **体验需要 API Key 吗？**
 不需要。体验 SOP 只包含脚本和人工审批。对话和 Agent 步骤需要所选执行器的 Key。平台不附带模型额度，凭据由你自己配置。
