@@ -71,7 +71,8 @@ func (p *TerminalPool) HandleSandbox(ctx context.Context, sandbox Sandbox, scope
 	return p.HandleSandboxWithGitSSH(ctx, sandbox, scope, req, release, nil)
 }
 
-// HandleSandboxWithGitSSH gives the terminal its caller's SSH identity. The
+// HandleSandboxWithGitSSH gives the terminal its caller's SSH identity when the
+// sandbox can keep it private to this terminal (see BindTerminalGitSSH). The
 // pool owns the agent for the same lifetime as the terminal, including expiry.
 func (p *TerminalPool) HandleSandboxWithGitSSH(ctx context.Context, sandbox Sandbox, scope string, req domain.WorkspaceTerminalRequest, release func(), keys map[string]string) (TerminalResult, error) {
 	if req.Operation != "open" {
@@ -84,7 +85,7 @@ func (p *TerminalPool) HandleSandboxWithGitSSH(ctx context.Context, sandbox Sand
 	var bind func(*CommandSpec) error
 	if len(keys) > 0 && sandbox != nil {
 		bind = func(command *CommandSpec) error {
-			stop, err := BindGitSSH(sandbox, sandbox.Workspace(), command.environment, keys)
+			stop, err := BindTerminalGitSSH(sandbox, command, keys)
 			if err == nil {
 				stopSSH = stop
 			}

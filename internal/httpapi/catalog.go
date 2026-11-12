@@ -115,12 +115,13 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if sshReference == "" {
 		sshReference = v.CloneURL
 	}
-	// Preserve the optional legacy host's existing token flow unless the
+	// GitHub and the optional legacy host keep their existing token flow (and
+	// GitHub's automatic pull requests) for SSH-style addresses unless the
 	// caller explicitly selects SSH authentication.
 	legacySSH := false
 	if v.Provider != domain.RepositoryProviderSSH {
 		if remote, err := gitwork.ParseSSHRemote(sshReference); err == nil {
-			legacySSH = remote.Host == domain.GongfengRepoHost && remote.Port == "22"
+			legacySSH = remote.Port == "22" && (remote.Host == domain.GongfengRepoHost || remote.Host == "github.com")
 		}
 	}
 	githubShorthand := primary != "" && strings.HasPrefix(strings.TrimPrefix(primary, "git clone "), "github:")

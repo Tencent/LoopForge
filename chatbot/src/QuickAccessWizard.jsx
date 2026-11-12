@@ -549,7 +549,7 @@ function parseGitHubRepo(raw) {
     .replace(/^['"]+|['"]+$/g, "")
     .replace(/^git\s+clone\s+/i, "")
     .replace(/^github:/i, "https://github.com/")
-    .replace(/^git@github\.com:/i, "https://github.com/");
+    .replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/i, "https://github.com/");
   if (/^github\.com\//i.test(value)) value = `https://${value}`;
   let url;
   try {
@@ -578,7 +578,8 @@ function parseGitHubRepo(raw) {
   };
 }
 
-// GitHub first; self-hosted legacy repositories keep the git.example.com form.
+// SSH preview first (it leaves github.com to the GitHub parser, matching the
+// server); self-hosted legacy repositories keep the git.example.com form.
 export function parseGongfengRepo(raw) {
   const sshInfo = globalThis.LoopForgeGitSSH(raw);
   if (sshInfo) return sshInfo;

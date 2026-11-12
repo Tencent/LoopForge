@@ -33,5 +33,8 @@ globalThis.LoopForgeGitSSH = function parseSSHRepository(raw) {
   if (!name) return null;
   const endpoint = globalThis.LoopForgeGitSSHHost(`${host}:${port}`);
   if (!endpoint) return null;
+  // git@github.com: stays a GitHub repository (HTTPS + token, automatic PRs),
+  // the same as on the server; only an explicit provider "ssh" uses SSH there.
+  if (endpoint === 'github.com:22') return null;
   return { provider: 'ssh', host: endpoint, project: `${host.toLowerCase()}${port === '22' ? '' : ':' + port}/${segments.join('/')}`, name, cloneUrl, webUrl: '' };
 };

@@ -79,7 +79,11 @@ describe("QuickAccessWizard", () => {
       webUrl: "https://github.com/acme/widgets",
       cloneUrl: "https://github.com/acme/widgets.git",
     });
-    expect(parseGongfengRepo("git@github.com:acme/widgets.git")?.provider).toBe("ssh");
+    // GitHub SSH-style addresses stay GitHub repositories (token + automatic PRs).
+    for (const address of ["git@github.com:acme/widgets.git", "ssh://git@github.com/acme/widgets.git"]) {
+      expect(parseGongfengRepo(address)).toMatchObject({ provider: "github", project: "github:acme/widgets" });
+    }
+    expect(parseGongfengRepo("ssh://git@github.com:2222/acme/widgets.git")?.provider).toBe("ssh");
     expect(parseGongfengRepo("git clone ssh://git@gitlab.example.org:2222/team/sub/app.git")).toMatchObject({
       provider: "ssh", name: "app", cloneUrl: "ssh://git@gitlab.example.org:2222/team/sub/app.git",
     });

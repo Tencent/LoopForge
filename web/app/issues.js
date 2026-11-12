@@ -547,7 +547,7 @@ function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.p
 function repoProviderLabel(info){return info?.provider==='ssh'?'Git SSH':info?.provider==='github'?'GitHub':'工蜂'}
 function parseGongfengRepoURL(raw){
   const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
-  let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^git@github.com:/,'https://github.com/');
+  let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/,'https://github.com/');
   if(publicURL.startsWith('github.com/'))publicURL='https://'+publicURL;
   try{const u=new URL(publicURL);if(u.hostname==='github.com'&&!u.username&&!u.password&&['http:','https:'].includes(u.protocol)){const parts=u.pathname.split('/').filter(Boolean),owner=parts[0],name=(parts[1]||'').replace(/\.git$/,'');if(parts.length>=2&&/^[A-Za-z0-9_.-]+$/.test(owner)&&/^[A-Za-z0-9_.-]+$/.test(name)&&!['.','..'].includes(owner)&&!['.','..'].includes(name))return {project:'github:'+owner+'/'+name,name,webUrl:'https://github.com/'+owner+'/'+name,cloneUrl:'https://github.com/'+owner+'/'+name+'.git',provider:'github'}}}catch(_){}
 
