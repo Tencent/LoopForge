@@ -3,7 +3,6 @@ package repo
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"time"
@@ -360,16 +359,8 @@ func (r *RunsRepo) checkParentAdmission(tx *gorm.DB, run domain.Run) error {
 func (r *RunsRepo) PromoteQueuedRuns() ([]string, error) {
 	var raw []*string
 	if err := r.DB.Model(&runRow{}).Where("status = ?", "queued").Distinct("quota_bucket").Pluck("quota_bucket", &raw).Error; err != nil {
-		log.Printf("promote: query buckets failed: %v", err)
 		return nil, err
 	}
-	vals := make([]string, 0, len(raw))
-	for _, b := range raw {
-		if b != nil {
-			vals = append(vals, *b)
-		}
-	}
-	log.Printf("promote: queued bucket values=%v", vals)
 	keys := make([]string, 0, len(raw))
 	for _, key := range raw {
 		if key != nil && *key != "" {
@@ -394,24 +385,19 @@ func (r *RunsRepo) promoteBucket(key string) ([]string, error) {
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		promoted = nil
 		if err := lockAdmissionGate(r.deps, tx, key); err != nil {
-			log.Printf("promote: lock gate %s failed: %v", key, err)
 			return err
 		}
 		s := newAdmissionScope(tx)
 		limit, err := s.limit(key)
 		if err != nil {
-			log.Printf("promote: limit err: %v", err)
 			return err
 		}
 		occupied := 0
 		if limit > 0 {
 			if occupied, err = s.occupied(key, ""); err != nil {
-				log.Printf("promote: occupied err: %v", err)
 				return err
 			}
-			log.Printf("promote: before-gate key=%s limit=%d occupied=%d", key, limit, occupied)
 			if occupied >= limit {
-				log.Printf("promote: gate full, skipping")
 				return nil
 			}
 		}
@@ -420,7 +406,6 @@ func (r *RunsRepo) promoteBucket(key string) ([]string, error) {
 			Order("queue_entered_at, created_at, id").Find(&queued).Error; err != nil {
 			return err
 		}
-		log.Printf("promote: bucket=%s limit=%d occupied=%d queued_rows=%d", key, limit, occupied, len(queued))
 		for _, row := range queued {
 			if limit > 0 && occupied >= limit {
 				break

@@ -32,9 +32,11 @@ func GongfengMRURL(project string, iid int) string {
 		return fmt.Sprintf("https://github.com/%s/pull/%d", strings.TrimPrefix(project, "github:"), iid)
 	}
 	if strings.HasPrefix(project, "gitlab:") {
-		// "gitlab:<host>/<group>/<repo>" → http://<host>/<group>/<repo>/-/merge_requests/<iid>
+		// "gitlab:<host>/<group>/<repo>" → https://<host>/<group>/<repo>/-/merge_requests/<iid>
+		// 这里拿不到仓库记录，按安全默认 https（与 GitLabInstanceScheme 一致）；
+		// http 实例以 API 返回的 web_url 为准，覆盖这个兜底值。
 		rest := strings.TrimPrefix(project, "gitlab:")
-		return fmt.Sprintf("http://%s/-/merge_requests/%d", rest, iid)
+		return fmt.Sprintf("https://%s/-/merge_requests/%d", rest, iid)
 	}
 	return fmt.Sprintf("https://git.example.com/%s/-/merge_requests/%d", project, iid)
 }

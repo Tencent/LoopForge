@@ -114,17 +114,17 @@ func GitLabInstanceScheme(host string, urls ...string) string {
 }
 
 // isTrustedGitLabHost 限定自托管 GitLab 的可信主机：裸 URL（无 gitlab: 前缀）
-// 只信 RFC1918/回环/链路本地地址与内网命名（.internal/.local）。
-// 172 系只认 RFC1918 的 172.16.0.0/12——172.0.0.0/8 其余大半是公网
-// （如 172.217/16 Google、172.64/13 Cloudflare），整段放行会让公网主机
-// 冒充内网实例，绕过"任意主机需显式 gitlab: 前缀声明"的信任边界。
-// 非常规网段的内网实例请用 gitlab: 前缀显式声明（管理员行为，任意主机）。
+// 只信 RFC1918/回环地址与内网命名（.internal/.local）。172 系只认 RFC1918 的
+// 172.16.0.0/12——172.0.0.0/8 其余大半是公网（如 172.217/16 Google、172.64/13
+// Cloudflare），整段放行会让公网主机冒充内网实例。link-local（169.254/16，
+// 云元数据端点）同样不放行：没有任何理由把实例指向它。非常规网段的内网
+// 实例请用 gitlab: 前缀显式声明（管理员行为，任意主机）。
 func isTrustedGitLabHost(host string) bool {
 	if host == "" {
 		return false
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+		return ip.IsLoopback() || ip.IsPrivate()
 	}
 	// 内网主机名（含点但不是公网 TLD 的常见公司命名；运维可在此扩展白名单）。
 	return strings.Contains(host, ".internal") || strings.HasSuffix(host, ".local")

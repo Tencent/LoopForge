@@ -88,8 +88,8 @@ func TestIsTrustedGitLabHost(t *testing.T) {
 	}
 	// 公网地址、仿冒主机名、空值不受信任（192.0.2.x/198.51.100.x/203.0.113.x 为文档保留段）。
 	// 172.0.0.0/8 内 RFC1918 之外的公网段（172.217/16 Google、172.64/13 Cloudflare）
-	// 必须拒绝：整段放行等于让公网主机冒充内网实例。
-	for _, host := range []string{"203.0.113.1", "198.51.100.2", "192.0.2.3", "172.217.0.1", "172.64.1.1", "172.32.0.1", "172.149.0.1", "172.153.0.1", "github.com.attacker.example", "gitlab.public.example", ""} {
+	// 必须拒绝：整段放行等于让公网主机冒充内网实例。link-local（云元数据端点）同样拒绝。
+	for _, host := range []string{"203.0.113.1", "198.51.100.2", "192.0.2.3", "172.217.0.1", "172.64.1.1", "172.32.0.1", "172.149.0.1", "172.153.0.1", "169.254.169.254", "169.254.0.1", "github.com.attacker.example", "gitlab.public.example", ""} {
 		if isTrustedGitLabHost(host) {
 			t.Errorf("external host %s must not be trusted", host)
 		}
@@ -114,5 +114,13 @@ func TestParseRepositoryURLKeepsGitHubAndGitLabApart(t *testing.T) {
 	}
 	if got, ok := ParseRepositoryURL("https://github.com.attacker.example/owner/repo"); ok {
 		t.Fatalf("impersonation accepted: %+v", got)
+	}
+}
+
+// MR 兜底网页链接与解析层同一安全默认：https，不再硬编码 http://。
+// 真实 web_url 由 API 响应覆盖，这里只兜底。
+func TestGongfengMRURLDefaultsToHTTPSForGitLab(t *testing.T) {
+	if got := GongfengMRURL("gitlab:gitlab.example.test/g/r", 7); got != "https://gitlab.example.test/g/r/-/merge_requests/7" {
+		t.Fatalf("gitlab MR url = %s, want https fallback", got)
 	}
 }
