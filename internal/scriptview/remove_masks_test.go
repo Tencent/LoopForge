@@ -74,3 +74,36 @@ func TestOwnedMaskIgnoresMissingAndForeignTargets(t *testing.T) {
 		t.Fatalf("foreign target = %v, %v", owned, err)
 	}
 }
+
+func TestMountTargetsReportsScannerErrors(t *testing.T) {
+	line := "36 35 98:0 / /workspace/" + strings.Repeat("a", 1024*1024) + " rw - ext4 /dev/root rw\n"
+	if _, err := mountTargets(strings.NewReader(line)); err == nil {
+		t.Fatal("expected oversized mountinfo line to fail")
+	}
+}
+
+func TestOwnedMaskTrimsWorkspacePrefixAndReportsInspectErrors(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Targets come from mountinfo as absolute /workspace paths; they must be
+	// resolved relative to the opened root rather than rejected as escapes.
+	if owned, err := ownedMask(root, "/workspace/AGENTS.md", nil); err != nil || owned {
+		t.Fatalf("workspace-prefixed target = %v, %v", owned, err)
+	}
+	if owned, err := ownedMask(root, "/workspace/missing.md", nil); err != nil || owned {
+		t.Fatalf("workspace-prefixed missing target = %v, %v", owned, err)
+	}
+	// A path through a regular file is not "missing": it must fail closed
+	// instead of being silently skipped.
+	owned, err := ownedMask(root, "/workspace/AGENTS.md/nested", nil)
+	if err == nil || owned || !strings.Contains(err.Error(), "inspect script instruction mask /workspace/AGENTS.md/nested") {
+		t.Fatalf("not-a-directory target = %v, %v", owned, err)
+	}
+}
