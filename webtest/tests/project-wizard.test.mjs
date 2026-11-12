@@ -68,7 +68,7 @@ test('wizard validates names and repository URLs with actionable errors', async 
   assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /项目名称不能为空/);
   app.evaluate(`projectWizard.step='repos';projectWizard.projectId='project-1';renderProjectWizard()`);
   await app.evaluate(`projectWizardAddRepo()`);
-  assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /请先粘贴 GitHub 仓库地址/);
+  assert.match(app.document.querySelector('#projectWizard [role="alert"]').textContent, /请先粘贴 GitHub 链接或 Git SSH 地址/);
 });
 
 test('without a TAPD integration the wizard goes from members straight to done', async (t) => {

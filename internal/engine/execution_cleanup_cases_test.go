@@ -257,7 +257,7 @@ func TestWorkspacePreparationDirectValidationAndRemoteStates(t *testing.T) {
 	if _, err := e.TrustedWorkspaceRequest("missing", domain.RunnerWorkspaceRequest{}); err == nil {
 		t.Fatal("missing trusted request succeeded")
 	}
-	if _, err := e.HandlePreparedWorkspaceTerminal(context.Background(), "missing", &runtime.TerminalPool{}, "scope", domain.WorkspaceTerminalRequest{Operation: "open"}); err == nil {
+	if _, err := e.HandlePreparedWorkspaceTerminal(context.Background(), "missing", &runtime.TerminalPool{}, "scope", domain.WorkspaceTerminalRequest{Operation: "open"}, 0); err == nil {
 		t.Fatal("unprepared terminal opened")
 	}
 	if state, err := e.PrepareNodeWorkspace(context.Background(), domain.Run{}, &runEnvironment{}); err != nil || state.Status != "ready" {

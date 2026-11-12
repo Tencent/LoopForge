@@ -47,6 +47,7 @@ import { runProblems, useConversationRuns } from "./runs.js";
 import { reconcileOperation, visibleSidebarArtifact } from "./platform.js";
 import { isGeneratedArtifact, shouldRevealArtifactPanel } from "./artifact-autoreveal.js";
 import { IconButton, Dialog, Menu, SelectMenu, CredentialAction } from "./ui";
+import { CLIInstallAction } from "./cli-install.jsx";
 import { credentialHint, openCredentialSettings } from "./credentials";
 import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
 import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
@@ -1676,6 +1677,7 @@ export default function App() {
               <div role="alert" className="chat-error">
                 <span>{chat.error}</span>
                 <CredentialAction text={chat.error} />
+                <CLIInstallAction text={chat.error} onResult={chat.adoptCLIInstall} />
                 <IconButton label="关闭提示" onClick={() => chat.setError("")}>
                   <HarnessIcon name="close" size={15} />
                 </IconButton>
