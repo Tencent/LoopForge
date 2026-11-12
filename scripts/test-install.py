@@ -44,6 +44,8 @@ if [[ "$1" == info ]]; then
   exit
 fi
 if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; then exit 1; fi
+if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
+if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
 if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
@@ -63,7 +65,7 @@ export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
         self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT'):
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL'):
             self.environ.pop(name, None)
 
     def executable(self, name, contents):
@@ -214,6 +216,41 @@ exec "$@"
         self.assertIn('tag ghcr.nju.edu.cn/example/chosen:9 ghcr.io/example/chosen:9', log)
         self.assertNotIn('example/ignored', log)
         self.assertNotIn('ghcr.nju.edu.cn/tencent/loopforge', log)
+
+    def test_failed_mirror_pull_does_not_retag_or_start(self):
+        self.use_compose_file()
+        result = self.install(MIRROR='ghcr.nju.edu.cn', MOCK_PULL_FAIL='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not pull', result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
+        self.assertNotIn(' tag ', log)
+        self.assertNotIn('up -d --no-build', log)
+
+    def test_failed_mirror_refresh_does_not_retag_a_cached_image(self):
+        self.use_compose_file()
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(
+            ['bash', 'start.sh', 'pull'], cwd=self.root,
+            env=dict(self.environ, MIRROR='ghcr.nju.edu.cn', MOCK_PULL_FAIL='1', MOCK_IMAGE_PRESENT='1'),
+            text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Could not pull', result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
+        self.assertNotIn(' tag ', log)
+        self.assertNotIn('up -d --no-build', log)
+
+    def test_failed_mirror_tag_stops_before_startup(self):
+        self.use_compose_file()
+        result = self.install(MIRROR='ghcr.nju.edu.cn', MOCK_TAG_FAIL='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not tag', result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
+        self.assertIn(' tag ', log)
+        self.assertNotIn('up -d --no-build', log)
 
     def test_source_build_ignores_nju_mirror(self):
         self.use_compose_file()

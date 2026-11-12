@@ -82,6 +82,14 @@ PY
     return 0
   fi
   printf '\n▸ Pulling %s and tagging it %s\n' "$mirror_image" "$image"
-  docker_access pull "$mirror_image"
-  docker_access tag "$mirror_image" "$image"
+  # Called from `if`, so a failing docker command does not exit on its own.
+  # Exit rather than return: a return would make the caller pull ghcr.io directly.
+  if ! docker_access pull "$mirror_image"; then
+    printf '\n✗ Could not pull %s. Stopped without retagging the previous image.\n' "$mirror_image" >&2
+    exit 1
+  fi
+  if ! docker_access tag "$mirror_image" "$image"; then
+    printf '\n✗ Could not tag %s as %s. Stopped without starting.\n' "$mirror_image" "$image" >&2
+    exit 1
+  fi
 }
