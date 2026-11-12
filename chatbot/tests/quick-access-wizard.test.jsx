@@ -21,6 +21,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     } : user];
   if (path === "/api/projects") return [project];
   if (path === "/api/repositories") return [];
+  if (path === "/api/users/1/git-ssh-keys") return mockState.sshKeys || [];
   if (path === "/api/workflows")
     return [
       {
@@ -35,7 +36,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path.includes("/verify")) return { valid: true };
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false, users: null };
+  const mockState = { failClone: false, unconfigured: false, users: null, sshKeys: null };
   const writeMock = vi.fn(async (path, body) => {
     if (path.includes("/git-token/verify")) return { valid: true };
     if (path === "/api/projects") return { ...project, ...body };
@@ -78,13 +79,19 @@ describe("QuickAccessWizard", () => {
       webUrl: "https://github.com/acme/widgets",
       cloneUrl: "https://github.com/acme/widgets.git",
     });
-    expect(parseGongfengRepo("git@github.com:acme/widgets.git")?.project).toBe("github:acme/widgets");
+    // GitHub SSH-style addresses stay GitHub repositories (token + automatic PRs).
+    for (const address of ["git@github.com:acme/widgets.git", "ssh://git@github.com/acme/widgets.git"]) {
+      expect(parseGongfengRepo(address)).toMatchObject({ provider: "github", project: "github:acme/widgets" });
+    }
+    expect(parseGongfengRepo("ssh://git@github.com:2222/acme/widgets.git")?.provider).toBe("ssh");
+    expect(parseGongfengRepo("git clone ssh://git@gitlab.example.org:2222/team/sub/app.git")).toMatchObject({
+      provider: "ssh", name: "app", cloneUrl: "ssh://git@gitlab.example.org:2222/team/sub/app.git",
+    });
     expect(parseGongfengRepo("github:acme/widgets")?.cloneUrl).toBe("https://github.com/acme/widgets.git");
     expect(parseGongfengRepo("git clone https://github.com/acme/widgets.git")?.name).toBe("widgets");
     expect(parseGongfengRepo("https://token@github.com/acme/widgets")).toBeNull();
     expect(parseGongfengRepo("https://github.com/acme")).toBeNull();
-    expect(parseGongfengRepo("git@git.example.com:team/repo.git")?.project).toBe("team/repo");
-    expect(parseGongfengRepo("git@git.example.com:team/repo.git")?.provider).toBe("gongfeng");
+    expect(parseGongfengRepo("git@git.example.com:team/repo.git")?.provider).toBe("ssh");
     expect(parseGongfengRepo("https://git.example.com/team/repo/-/tree/main")?.name).toBe("repo");
     expect(parseGongfengRepo("https://example.com/team/repo")).toBeNull();
     expect(parseGongfengRepo("")).toBeNull();
@@ -140,6 +147,46 @@ describe("QuickAccessWizard", () => {
     expect(completed).toHaveBeenCalledWith("p1");
   });
 
+  test("warns only when the selected SSH host has no personal key and refreshes after settings changes", async () => {
+    mockState.sshKeys = [{ id: "gitlab", name: "GitLab", host: "gitlab.example.org:22" }];
+    const userAction = userEvent.setup();
+    try {
+      render(<QuickAccessWizard open user={{ ...user, gitSshKeyConfigured: true }} projects={[project]} projectId="p1" sponsoredModel="m1" onClose={vi.fn()} onCompleted={vi.fn()} onOpenView={vi.fn()} />);
+      await screen.findByRole("dialog");
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/users/1/git-ssh-keys"));
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      await screen.findByText("项目与仓库", { selector: "h3" });
+      const address = screen.getByPlaceholderText(/https:\/\/github.com\/owner\/repo/);
+      await userAction.type(address, "git@gitlab.example.org:team/repo.git");
+      expect(screen.queryByText(/尚未配置 .* 的 SSH 密钥/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "配置此仓库的 SSH 密钥" })).toBeNull();
+      await userAction.clear(address);
+      await userAction.type(address, "ssh://git@gitlab.example.org:2222/team/repo.git");
+      expect(screen.getByRole("alert")).toHaveTextContent("尚未配置 gitlab.example.org:2222 的 SSH 密钥");
+      expect(screen.getByRole("alert").querySelector("button")).toBeNull();
+      mockState.sshKeys = [...mockState.sshKeys, { id: "port", name: "Other SSH port", host: "gitlab.example.org:2222" }];
+      window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: window.parent, data: { type: "agentflow-credentials-changed" } }));
+      await waitFor(() => expect(screen.queryByText(/尚未配置 .* 的 SSH 密钥/)).toBeNull());
+      expect(address).toHaveValue("ssh://git@gitlab.example.org:2222/team/repo.git");
+      await userAction.clear(address);
+      await userAction.type(address, "git@gitea.example.org:team/repo.git");
+      expect(screen.getByRole("alert")).toHaveTextContent("尚未配置 gitea.example.org:22 的 SSH 密钥");
+      await userAction.clear(address);
+      await userAction.type(address, "https://github.com/team/repo");
+      expect(screen.queryByText(/尚未配置 .* 的 SSH 密钥/)).toBeNull();
+      await userAction.clear(address);
+      await userAction.type(address, "git@gitea.example.org:team/repo.git");
+      expect(screen.getByRole("alert")).toHaveTextContent("可稍后");
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      await screen.findByText("默认角色与 SOP", { selector: "h3" });
+      await userAction.click(screen.getByRole("button", { name: "完成接入" }));
+      expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
+      expect(writeMock).toHaveBeenCalledWith("/api/repositories", expect.objectContaining({ provider: "ssh", cloneUrl: "git@gitea.example.org:team/repo.git" }));
+    } finally {
+      mockState.sshKeys = null;
+    }
+  });
+
   test("validates and saves typed credentials", async () => {
     mockState.unconfigured = true;
     const userAction = userEvent.setup();
@@ -156,7 +203,7 @@ describe("QuickAccessWizard", () => {
     );
     await screen.findByRole("dialog");
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    expect(screen.getByText(/请至少填写 GitHub Git Token 与 CodeBuddy API Key/)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("请先配置 GitHub Git Token、Git SSH 密钥或 CodeBuddy API Key");
     expect(screen.queryByText(/工蜂/)).toBeNull();
     await userAction.click(screen.getByText("使用访问令牌（高级）"));
     await userAction.type(

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 const alignTaskTimeout = 15 * time.Minute
@@ -17,12 +18,31 @@ const alignTaskTimeout = 15 * time.Minute
 // branch. With a cloud runner pool it runs on a pool runner; otherwise, and
 // for repositories only reachable through a local path, on this host.
 func (e *Engine) AlignBaseline(repository domain.RepositoryContext, gitToken string) error {
+	return e.alignBaseline(repository, gitToken, 0)
+}
+
+func (e *Engine) AlignBaselineForUser(repository domain.RepositoryContext, userID int64) error {
+	return e.alignBaseline(repository, resolveGitToken(e.repo, userID), userID)
+}
+
+func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken string, userID int64) error {
 	if !ShouldAlignIntegrate(repository) {
 		return nil
 	}
 	runner, ok := e.alignRunner(repository)
+	ssh := repository.Provider == domain.RepositoryProviderSSH
+	if ssh {
+		gitToken = ""
+	}
 	if !ok {
-		return AlignIntegrateBaseline(repository, gitToken, e.repo)
+		ctx := context.Background()
+		if ssh {
+			ctx = gitwork.WithSSHKeys(ctx, e.repo.GitSSHKeysForRemotes(userID, []string{repository.CloneURL}))
+		}
+		return alignIntegrateBaseline(ctx, repository, gitToken, e.repo)
+	}
+	if err := e.requireWorkBranchCapabilities(runner.ID, []domain.RepositoryContext{repository}); err != nil {
+		return err
 	}
 	unlock, err := lockIntegration(e.repo, repository.RepositoryID)
 	if err != nil {
@@ -44,9 +64,13 @@ func (e *Engine) AlignBaseline(repository domain.RepositoryContext, gitToken str
 			Name:            repository.Name,
 			CloneURL:        repository.CloneURL,
 			GitToken:        gitToken,
+			UseSSH:          ssh,
 			IntegrateBranch: integrate,
 			DefaultBranch:   strings.TrimSpace(repository.DefaultBranch),
 		}}},
+	}
+	if ssh {
+		task.Invocation.GitSSHUserID = userID
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return err

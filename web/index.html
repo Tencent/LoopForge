@@ -1008,13 +1008,17 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">GitHub 仓库地址</span>
+          <label class="pa-field"><span class="pa-field-l">GitHub 链接或 Git SSH 地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
-            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@github.com:owner/repo.git</code><code>git clone …</code></span>
-            <span class="pa-field-e" id="repoDrawerUrlError" hidden>无法识别为 GitHub 仓库链接，请粘贴 github.com 的 Web / SSH / clone 地址。</span>
+            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
+            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
           </label>
           <div class="pa-detect" id="repoDrawerDetect" hidden><span class="pa-detect-ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div class="pa-detect-m"><b id="repoDrawerDetectName"></b><code id="repoDrawerDetectPath"></code></div><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
           <label class="pa-field" id="repoDrawerNameField" hidden><span class="pa-field-l">仓库名称</span><input class="pa-input mono" name="name" placeholder="留空则自动取项目路径末段"></label>
+          <div id="repoDrawerSSH" hidden>
+            <label class="pa-field"><span class="pa-field-l">仓库网页地址 <i>可选</i></span><input class="pa-input mono" name="webUrl" placeholder="https://gitlab.com/group/repo" autocomplete="off"></label>
+            <p id="repoDrawerSSHMissing" class="git-ssh-missing" role="alert" hidden></p>
+          </div>
         </div>
         <div class="pa-fs">
           <h5>分支</h5>
@@ -1301,6 +1305,7 @@
   <script src="/app/hui-date.js"></script>
   <script src="/app/hui-upload.js"></script>
   <script src="/app/hui-tooltip.js"></script>
+  <script src="/app/git-ssh.js"></script>
   <script src="/app/issues.js"></script>
   <script src="/app/issue-bulk-delete.js"></script>
   <script src="/app/sync-schedule.js"></script>
@@ -1320,6 +1325,7 @@
   <script src="/app/runs.js"></script>
   <script src="/app/run-activation.js"></script>
   <script src="/app/workbench.js?v=20261030theme1"></script>
+  <script src="/app/git-ssh-keys.js"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>

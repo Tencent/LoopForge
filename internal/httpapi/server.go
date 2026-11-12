@@ -276,6 +276,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// 工蜂 Git Token 校验：只允许当前登录用户校验自己的令牌。
 	g.GET("/api/users/:id/git-token/verify", api.users.verifyGitToken)
 	g.POST("/api/users/:id/git-token/verify", api.users.verifyGitToken)
+	g.GET("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
+	g.PUT("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
+	g.DELETE("/api/users/:id/git-ssh-keys/:keyID", api.users.gitSSHKeys)
 	g.POST("/api/users/:id/cli-models/probe", api.users.probeCLIModels)
 	g.Any("/api/users/:id", func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

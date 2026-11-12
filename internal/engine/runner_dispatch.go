@@ -122,6 +122,12 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 		return nil
 	}
 	for _, repository := range repositories {
+		if repository.Provider == domain.RepositoryProviderSSH {
+			runner, ok := e.repo.Runner(runnerID)
+			if !ok || !runner.SupportsGitSSH() {
+				return fmt.Errorf("Git SSH 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitSSH)
+			}
+		}
 		if repository.CreateNewWorkBranch {
 			runner, ok := e.repo.Runner(runnerID)
 			if !ok || !runner.SupportsCreateNewWorkBranch() {
@@ -340,6 +346,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			RequireExistingWorkBranch: run.Repository.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
 			GitToken:                  gitToken,
+			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH,
 		}
 	}
 	for _, rc := range run.RepositoryContexts() {
@@ -355,8 +362,20 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
 			GitToken:                  gitToken,
+			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH,
 			Dir:                       rc.WorkspaceDir,
 		})
+	}
+	if len(invocation.GitSSHRemotes()) > 0 {
+		invocation.GitSSHUserID = run.ExecutionContext.ResponsibleUserID
+		if invocation.Repository != nil && invocation.Repository.UseSSH {
+			invocation.Repository.GitToken = ""
+		}
+		for i := range invocation.Repositories {
+			if invocation.Repositories[i].UseSSH {
+				invocation.Repositories[i].GitToken = ""
+			}
+		}
 	}
 }
 
