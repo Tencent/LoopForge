@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type ExecutorRunner struct{}
@@ -262,7 +263,11 @@ func clipExecutorOutput(s string) string {
 	if len(s) <= maxExecutorOutputBytes {
 		return s
 	}
-	return s[:maxExecutorOutputBytes] + fmt.Sprintf("\n… [output truncated, %d bytes]", len(s))
+	end := maxExecutorOutputBytes
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end] + fmt.Sprintf("\n… [output truncated, %d bytes]", len(s))
 }
 
 var ErrMaxTurns = errors.New("executor reached max turns")
