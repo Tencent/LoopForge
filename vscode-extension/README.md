@@ -9,7 +9,7 @@ This directory contains the first standalone desktop VS Code extension for LoopF
 - Platform workflows (SOPs). The extension starts a run through the server; model providers and execution environments remain configured by LoopForge.
 - A server URL and, when authentication is enabled, a LoopForge Personal API Token. The token is stored in VS Code SecretStorage and is never written to workspace settings.
 
-The extension uses the active file's workspace folder (or the first folder if no file is active). `LoopForge: Start Workflow` asks for a task description and appends the project path, active file path and up to 4,000 characters of selected text as input. This sends the selected content to the configured server. Paths are descriptive: the extension does not upload or mount the local project. Configure a repository on the platform if the workflow needs source files. The server remains the source of truth for project access, workflow permissions, execution, and secrets.
+The extension uses the active file's workspace folder (or the first folder if no file is active). `LoopForge: Start Workflow` asks for a task description and appends the workspace name, relative file path and up to 4,000 characters of selected text as input. Without a workspace folder, it sends only the file name. This sends the selected content to the configured server. Paths are descriptive: the extension does not upload or mount the local project. Configure a repository on the platform if the workflow needs source files. The server remains the source of truth for project access, workflow permissions, execution, and secrets.
 
 ## Install from a VSIX
 
@@ -33,7 +33,7 @@ Use the command palette:
 
 When switching projects with `LoopForge: Select Project`, the extension clears the workspace's workflow selection so the next run asks for a workflow in the new project. If you edit these settings manually, choose a workflow that belongs to the selected project or is shared with it.
 
-The extension only writes the two explicitly selected LoopForge workspace settings. It does not change unrelated VS Code settings. Uninstalling removes the extension files and leaves the workspace settings and SecretStorage entry under the user's control; clear the token with `LoopForge: Configure API Token` when desired.
+The extension only writes the two explicitly selected LoopForge settings (workspace settings when a folder is open, otherwise user settings). In untrusted workspaces, project and workflow settings from that workspace are restricted. It does not change unrelated VS Code settings. Uninstalling removes the extension files and leaves the settings and SecretStorage entry under the user's control; clear the token with `LoopForge: Configure API Token` when desired.
 
 ## Commands and run view
 
@@ -46,7 +46,7 @@ The LoopForge activity bar view lists recent runs, their status and active stage
 - Open a changed file from the run workspace in a VS Code editor.
 - Open the current workspace change as a VS Code diff. If there are multiple changes, the extension asks which path to compare.
 
-Connection, authentication, timeout, HTTP, and server validation errors are shown in the Runs view or as VS Code error messages. Run polling is bounded by `loopforge.pollInterval` and is disabled on deactivation. To upgrade, install the new VSIX through VS Code; to uninstall, use the Extensions view. Existing LoopForge settings may remain after uninstall; remove them manually if desired.
+Connection, authentication, timeout, HTTP, and server validation errors are shown in the Runs view or as VS Code error messages. The extension refreshes when the Runs view becomes visible and polls only while the view is visible and a listed run is non-terminal. Polling backs off on failures and stops on deactivation. The platform currently returns all matching runs before the extension applies `loopforge.maxRuns`; use a project selection to limit the scope. To upgrade, install the new VSIX through VS Code; to uninstall, use the Extensions view. Existing LoopForge settings may remain after uninstall; remove them manually if desired.
 
 ## Capability boundary
 

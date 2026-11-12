@@ -57,11 +57,11 @@ test('encodes run, artifact, and diff paths', async () => {
   const urls = [];
   const client = new LoopForgeClient({ baseUrl: 'http://localhost:8090', fetchImpl: async url => { urls.push(url); return response(200, { content: 'ok' }, 'text/plain'); } });
   await client.getRun('run/1');
-  await client.getArtifact('run/1', 'report final.md');
+  await client.getArtifact('run/1', 'artifact id');
   await client.getDiff('run/1', 'src/a b.go');
   assert.deepEqual(urls, [
     'http://localhost:8090/api/runs/run%2F1',
-    'http://localhost:8090/api/runs/run%2F1/artifacts/report%20final.md',
+    'http://localhost:8090/api/runs/run%2F1/artifacts/artifact%20id',
     'http://localhost:8090/api/runs/run%2F1/workspace/diff?path=src%2Fa%20b.go'
   ]);
 });

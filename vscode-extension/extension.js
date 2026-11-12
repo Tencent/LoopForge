@@ -24,7 +24,8 @@ function trimText(value, max = 4000) {
 function selectedContext() {
   const editor = vscode.window.activeTextEditor;
   if (!editor) return { file: '', selection: '' };
-  const file = vscode.workspace.asRelativePath(editor.document.uri, false);
+  const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+  const file = folder ? vscode.workspace.asRelativePath(editor.document.uri, false) : path.basename(editor.document.uri.fsPath || '');
   const selected = editor.selection && !editor.selection.isEmpty ? editor.document.getText(editor.selection) : '';
   const selection = selected.length > 4000 ? `${selected.slice(0, 4000)}\n…(已截断)` : selected;
   return { file, selection };
@@ -58,15 +59,14 @@ class RunTreeItem extends vscode.TreeItem {
     this.tooltip = kind === 'run' ? `${run.workflowId || run.workflowSnapshot?.name || 'workflow'}\n${run.input || ''}` : label;
     if (kind === 'run') {
       this.description = run.workflowSnapshot?.name || run.workflowId || '';
-      this.iconPath = new vscode.ThemeIcon(run.status === 'succeeded' ? 'pass' : run.status === 'failed' ? 'error' : 'sync~spin');
+      const icons = { succeeded: 'pass', failed: 'error', cancelled: 'circle-slash', waiting: 'clock', paused: 'debug-pause', queued: 'clock', running: 'sync~spin' };
+      this.iconPath = new vscode.ThemeIcon(icons[run.status] || 'circle-outline');
       this.command = { command: 'loopforge.showStatus', title: 'Show Status', arguments: [this] };
     } else if (kind === 'approval') {
       this.description = '需要人工确认';
       this.iconPath = new vscode.ThemeIcon('question');
       this.command = { command: 'loopforge.approve', title: 'Approve', arguments: [this] };
     } else {
-      const artifact = parent?.artifact;
-      this.description = `${artifact?.mediaType || 'text'} · ${artifact?.size || 0} bytes`;
       this.iconPath = new vscode.ThemeIcon('file');
       this.command = { command: 'loopforge.openArtifact', title: 'Open Artifact', arguments: [this] };
     }
@@ -116,8 +116,11 @@ class ExtensionState {
     this.client = null;
     this.output = vscode.window.createOutputChannel('LoopForge');
     this.tree = new LoopForgeTreeProvider(this);
-    this.refreshing = false;
+    this.refreshing = null;
     this.pollTimer = undefined;
+    this.visible = false;
+    this.disposed = false;
+    this.failures = 0;
     this.lastError = '';
   }
   async connect() {
@@ -126,20 +129,36 @@ class ExtensionState {
     return this.client;
   }
   async refresh({ quiet = false } = {}) {
-    if (this.refreshing) return;
-    this.refreshing = true;
+    if (this.refreshing) {
+      await this.refreshing;
+      if (this.disposed) return;
+      return this.refresh({ quiet });
+    }
+    this.refreshing = this.doRefresh(quiet);
+    try { await this.refreshing; } finally { this.refreshing = null; this.schedulePoll(); }
+  }
+  async doRefresh(quiet) {
     try {
       await this.connect();
       this.runs = await this.client.listRuns(configured('projectId', ''), Number(configured('maxRuns', 20)));
       this.lastError = '';
+      this.failures = 0;
       this.tree.refresh();
       if (!quiet) vscode.window.setStatusBarMessage(`LoopForge: 已刷新 ${this.runs.length} 个任务`, 3000);
     } catch (error) {
+      this.failures++;
       this.lastError = error.message;
       this.tree.refresh();
       if (!quiet) this.error(error);
       else this.output.appendLine(`Refresh failed: ${error.message}`);
-    } finally { this.refreshing = false; }
+    }
+  }
+  schedulePoll() {
+    clearTimeout(this.pollTimer);
+    this.pollTimer = undefined;
+    if (this.disposed || !this.visible || !this.runs.some(run => !['succeeded', 'failed', 'cancelled', 'canceled'].includes(run.status))) return;
+    const seconds = Math.min(300, Math.max(3, Number(configured('pollInterval', 10)) || 10) * 2 ** Math.min(this.failures, 5));
+    this.pollTimer = setTimeout(() => this.refresh({ quiet: true }), seconds * 1000);
   }
   error(error) {
     const message = error instanceof LoopForgeError ? error.message : `LoopForge error: ${error?.message || error}`;
@@ -157,7 +176,8 @@ class ExtensionState {
     return detail;
   }
   dispose() {
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.disposed = true;
+    clearTimeout(this.pollTimer);
     this.output.dispose();
     this.tree.emitter.dispose();
   }
@@ -186,8 +206,6 @@ async function chooseWorkflow(state, projectId, force = false) {
 function workflowInput() {
   const context = selectedContext();
   const lines = [`在项目“${workspaceName()}”中执行 LoopForge 工作流。`];
-  const folder = workspaceFolder();
-  if (folder) lines.push(`项目路径：${folder.uri.fsPath}`);
   if (context.file) lines.push(`当前文件：${context.file}`);
   if (context.selection) lines.push(`选中代码：\n${context.selection}`);
   return lines.join('\n');
@@ -232,7 +250,7 @@ async function approve(state, item) {
     const run = await state.detail(item || state.runs[0]);
     const node = item?.approval || waitingApproval(run);
     if (!node || node.status !== 'waiting_approval') throw new LoopForgeError('This run has no stage waiting for approval.');
-    const context = await vscode.window.showInputBox({ prompt: `确认 ${node.nodeId}（第 ${node.attempt} 次执行，退回 ${node.reworkCount} 次），可附加说明`, value: '' });
+    const context = await vscode.window.showInputBox({ prompt: `确认 ${node.nodeId}（第 ${node.attempt ?? 0} 次执行，退回 ${node.reworkCount ?? 0} 次），可附加说明`, value: '' });
     if (context === undefined) return;
     await state.client.approve(run.id, { nodeId: node.nodeId, context, expected: { status: node.status, attempt: node.attempt || 0, reworkCount: node.reworkCount || 0 } });
     vscode.window.showInformationMessage(`LoopForge 已确认 ${node.nodeId || '当前阶段'}`);
@@ -244,7 +262,7 @@ async function reject(state, item) {
     const run = await state.detail(item || state.runs[0]);
     const node = item?.approval || waitingApproval(run);
     if (!node || node.status !== 'waiting_approval') throw new LoopForgeError('This run has no stage waiting for a human decision.');
-    const reason = await vscode.window.showInputBox({ prompt: `退回 ${node.nodeId}（第 ${node.attempt} 次执行，退回 ${node.reworkCount} 次）的原因`, validateInput: value => value.trim() ? undefined : '请输入原因' });
+    const reason = await vscode.window.showInputBox({ prompt: `退回 ${node.nodeId}（第 ${node.attempt ?? 0} 次执行，退回 ${node.reworkCount ?? 0} 次）的原因`, validateInput: value => value.trim() ? undefined : '请输入原因' });
     if (reason === undefined) return;
     const workflowNode = (run.workflowSnapshot?.nodes || []).find(value => value.id === node.nodeId);
     await state.client.reject(run.id, { nodeId: node.nodeId, reason, targetId: workflowNode?.rejectTo || '', expected: { status: node.status, attempt: node.attempt || 0, reworkCount: node.reworkCount || 0 } });
@@ -273,6 +291,8 @@ async function openDiff(state, item) {
     const run = await state.detail(item || state.runs[0]);
     const workspace = await state.client.getWorkspace(run.id);
     if (!workspace.available) throw new LoopForgeError(workspace.reason || 'Run workspace is unavailable.');
+    // Paths returned by the platform are relative to the run workspace and
+    // include the repository directory for multi-repository runs.
     const changes = workspace?.changes || [];
     let selectedPath = changes.length === 1 ? changes[0].path : undefined;
     if (!selectedPath && changes.length > 1) {
@@ -309,12 +329,17 @@ async function openFile(state, item) {
 async function configureToken(state) {
   const token = await vscode.window.showInputBox({ prompt: '输入 LoopForge Personal API Token（保存在 VS Code SecretStorage）', password: true, ignoreFocusOut: true });
   if (token === undefined) return;
-  if (!token.trim()) { await state.context.secrets.delete(TOKEN_KEY); vscode.window.showInformationMessage('LoopForge API Token 已清除。'); return; }
-  await state.context.secrets.store(TOKEN_KEY, token.trim());
-  vscode.window.showInformationMessage('LoopForge API Token 已安全保存。');
+  if (!token.trim()) {
+    await state.context.secrets.delete(TOKEN_KEY);
+    vscode.window.showInformationMessage('LoopForge API Token 已清除。');
+  } else {
+    await state.context.secrets.store(TOKEN_KEY, token.trim());
+    vscode.window.showInformationMessage('LoopForge API Token 已安全保存。');
+  }
+  if (state.visible) await state.refresh({ quiet: true });
 }
 async function configureSetting(name, value) {
-  await config().update(name, value, vscode.ConfigurationTarget.Workspace);
+  await config().update(name, value, vscode.workspace.workspaceFolders?.length ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
 }
 
 function activate(context) {
@@ -337,7 +362,7 @@ function activate(context) {
     const project = await chooseProject(state, true);
     if (!project) return;
     if (project !== configured('projectId', '')) {
-      // An explicit empty workspace value also masks any user-level default.
+      // An explicit empty value also masks any user-level default in a workspace.
       await configureSetting('workflowId', '');
       await configureSetting('projectId', project);
       await state.refresh({ quiet: true });
@@ -346,9 +371,18 @@ function activate(context) {
   });
   command('loopforge.selectWorkflow', async state => { const workflow = await chooseWorkflow(state, configured('projectId', ''), true); if (workflow) await configureSetting('workflowId', workflow); });
   context.subscriptions.push(view, { dispose: () => state.dispose() });
-  state.refresh({ quiet: true });
-  const interval = Math.max(3, Number(configured('pollInterval', 10))) * 1000;
-  state.pollTimer = setInterval(() => state.refresh({ quiet: true }), interval);
+  state.visible = view.visible;
+  context.subscriptions.push(view.onDidChangeVisibility(({ visible }) => {
+    state.visible = visible;
+    if (visible) state.refresh({ quiet: true });
+    else state.schedulePoll();
+  }));
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('loopforge.serverUrl') || event.affectsConfiguration('loopforge.projectId') || event.affectsConfiguration('loopforge.maxRuns')) {
+      if (state.visible) state.refresh();
+    } else if (event.affectsConfiguration('loopforge.pollInterval')) state.schedulePoll();
+  }));
+  if (state.visible) state.refresh({ quiet: true });
 }
 function deactivate() {}
 

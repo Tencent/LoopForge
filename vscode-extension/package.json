@@ -14,17 +14,13 @@
   },
   "main": "./extension.js",
   "categories": ["Other"],
-  "activationEvents": [
-    "onStartupFinished",
-    "onView:loopforge.runs",
-    "onCommand:loopforge.startWorkflow",
-    "onCommand:loopforge.showStatus",
-    "onCommand:loopforge.showResult",
-    "onCommand:loopforge.approve",
-    "onCommand:loopforge.reject",
-    "onCommand:loopforge.openArtifact",
-    "onCommand:loopforge.openDiff"
-  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Project and workflow settings are ignored in untrusted workspaces.",
+      "restrictedConfigurations": ["loopforge.projectId", "loopforge.workflowId"]
+    }
+  },
   "contributes": {
     "commands": [
       { "command": "loopforge.startWorkflow", "title": "LoopForge: Start Workflow", "icon": "$(play)" },

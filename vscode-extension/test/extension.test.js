@@ -5,23 +5,24 @@ const Module = require('node:module');
 
 function harness() {
   const commands = new Map(), errors = [], documents = [], requests = [], updates = [], messages = [];
-  let provider, input = ['Implement this', 'looks good'], picks = [], run;
+  let provider, visibilityListener, configurationListener, input = ['Implement this', 'looks good'], picks = [], run;
   const folder = { name: 'project', uri: { fsPath: '/project', scheme: 'file' } };
   const values = { serverUrl: 'https://example.test', projectId: 'project-1', workflowId: 'workflow-1', pollInterval: 300 };
   const vscode = {
     TreeItem: class { constructor(label, collapsibleState) { this.label = label; this.collapsibleState = collapsibleState; } },
     TreeItemCollapsibleState: { Collapsed: 1, None: 0 }, ThemeIcon: class { constructor(id) { this.id = id; } },
     EventEmitter: class { constructor() { this.event = () => {}; } fire() {} dispose() {} },
-    ConfigurationTarget: { Workspace: 2 },
+    ConfigurationTarget: { Global: 1, Workspace: 2 },
     workspace: {
       workspaceFolders: [folder], getWorkspaceFolder: () => folder, asRelativePath: () => 'src/file.js',
       getConfiguration: () => ({ get: (key, fallback) => values[key] ?? fallback, update: async (...args) => { updates.push(args); values[args[0]] = args[1]; } }),
+      onDidChangeConfiguration: fn => { configurationListener = fn; return { dispose() {} }; },
       openTextDocument: async options => { documents.push(options); return { uri: `document-${documents.length}` }; }
     },
     window: {
       activeTextEditor: { document: { uri: { fsPath: '/project/src/file.js' }, getText: () => 'first line\nsecond line' }, selection: { isEmpty: false } },
       createOutputChannel: () => ({ appendLine() {}, clear() {}, show() {}, dispose() {} }),
-      createTreeView: (_id, options) => { provider = options.treeDataProvider; return { dispose() {} }; },
+      createTreeView: (_id, options) => { provider = options.treeDataProvider; return { visible: false, onDidChangeVisibility: fn => { visibilityListener = fn; return { dispose() {} }; }, dispose() {} }; },
       showInputBox: async () => input.shift(), showQuickPick: async items => picks.length ? picks.shift() : items[0],
       showErrorMessage: message => { errors.push(message); }, showInformationMessage: async message => { messages.push(message); },
       setStatusBarMessage() {}, showTextDocument: async doc => { documents.push(doc); }
@@ -57,7 +58,7 @@ function harness() {
   };
   const context = { subscriptions: [], secrets: { get: async () => '', store: async () => {}, delete: async () => {} } };
   extension.activate(context);
-  return { commands, errors, documents, requests, updates, messages, get provider() { return provider; }, setInput: value => { input = value; }, setPicks: value => { picks = value; }, advanceRun() { run = { ...run, nodes: { gate: { ...run.nodes.gate, attempt: 2, reworkCount: 1 } } }; }, dispose() { context.subscriptions.forEach(item => item.dispose()); globalThis.fetch = oldFetch; } };
+  return { commands, errors, documents, requests, updates, messages, values, vscode, get provider() { return provider; }, setVisible: visible => visibilityListener({ visible }), changeConfig: name => configurationListener({ affectsConfiguration: key => key === name }), setInput: value => { input = value; }, setPicks: value => { picks = value; }, advanceRun() { run = { ...run, nodes: { gate: { ...run.nodes.gate, attempt: 2, reworkCount: 1 } } }; }, dispose() { context.subscriptions.forEach(item => item.dispose()); globalThis.fetch = oldFetch; } };
 }
 
 test('starts a run with multiline selection, shows approval and opens artifact by ID', async () => {
@@ -69,6 +70,7 @@ test('starts a run with multiline selection, shows approval and opens artifact b
     assert.match(request.body.input, /Implement this/);
     assert.match(request.body.input, /src\/file\.js/);
     assert.match(request.body.input, /first line\nsecond line/);
+    assert.doesNotMatch(request.body.input, /\/project/);
     const roots = await h.provider.getChildren();
     assert.equal(roots[0].contextValue, 'loopforge.run');
     const children = await h.provider.getChildren(roots[0]);
@@ -82,6 +84,85 @@ test('starts a run with multiline selection, shows approval and opens artifact b
     assert.ok(h.requests.some(item => item.route === '/api/runs/run-1/logs'));
     assert.deepEqual(h.errors, []);
     assert.deepEqual(h.updates, []);
+  } finally { h.dispose(); }
+});
+
+test('polls only for visible non-terminal runs and responds to configuration changes', async () => {
+  const h = harness();
+  try {
+    const state = h.provider.state;
+    assert.equal(h.requests.length, 0);
+    assert.equal(state.pollTimer, undefined);
+    await h.commands.get('loopforge.startWorkflow')();
+    assert.equal(state.pollTimer, undefined);
+    h.setVisible(true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(state.pollTimer);
+    assert.equal(state.pollTimer._idleTimeout, 300000);
+    h.values.pollInterval = 12; h.changeConfig('loopforge.pollInterval');
+    assert.equal(state.pollTimer._idleTimeout, 12000);
+    h.setVisible(false); assert.equal(state.pollTimer, undefined);
+    h.setVisible(true); await new Promise(resolve => setImmediate(resolve));
+    await h.commands.get('loopforge.approve')();
+    assert.equal(state.pollTimer, undefined);
+  } finally { h.dispose(); }
+});
+
+test('selecting a project without an open folder uses user settings', async () => {
+  const h = harness();
+  try {
+    h.vscode.workspace.workspaceFolders = [];
+    await h.commands.get('loopforge.selectProject')();
+    assert.deepEqual(h.updates, [['workflowId', '', 1], ['projectId', 'project-2', 1]]);
+  } finally { h.dispose(); }
+});
+
+test('manual refresh runs again after an in-flight refresh', async () => {
+  const h = harness();
+  const originalFetch = globalThis.fetch;
+  try {
+    let release;
+    globalThis.fetch = async (...args) => { await new Promise(resolve => { release = resolve; }); return originalFetch(...args); };
+    const initial = h.provider.state.refresh({ quiet: true });
+    await new Promise(resolve => setImmediate(resolve));
+    const manual = h.commands.get('loopforge.refresh')();
+    globalThis.fetch = originalFetch;
+    release();
+    await Promise.all([initial, manual]);
+    assert.equal(h.requests.filter(r => r.route === '/api/runs').length, 2);
+  } finally { h.dispose(); }
+});
+
+test('backs off polling on failures and resumes at the configured interval', async () => {
+  const h = harness();
+  const originalFetch = globalThis.fetch;
+  try {
+    h.values.pollInterval = 10;
+    await h.commands.get('loopforge.startWorkflow')();
+    h.setVisible(true);
+    await new Promise(resolve => setImmediate(resolve));
+    globalThis.fetch = async () => { throw new Error('offline'); };
+    await h.provider.state.refresh({ quiet: true });
+    assert.equal(h.provider.state.pollTimer._idleTimeout, 20000);
+    await h.provider.state.refresh({ quiet: true });
+    assert.equal(h.provider.state.pollTimer._idleTimeout, 40000);
+    globalThis.fetch = originalFetch;
+    await h.provider.state.refresh({ quiet: true });
+    assert.equal(h.provider.state.pollTimer._idleTimeout, 10000);
+  } finally { h.dispose(); }
+});
+
+test('refreshes a visible view on server changes and stays idle while hidden', async () => {
+  const h = harness();
+  try {
+    h.changeConfig('loopforge.serverUrl');
+    assert.equal(h.requests.length, 0);
+    h.setVisible(true);
+    await new Promise(resolve => setImmediate(resolve));
+    const before = h.requests.length;
+    h.changeConfig('loopforge.serverUrl');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.requests.length, before + 1);
   } finally { h.dispose(); }
 });
 

@@ -17,6 +17,9 @@ import (
 )
 
 func TestExtensionClientAgainstRealPlatform(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for the VS Code extension acceptance test")
+	}
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "false")
 	gin.SetMode(gin.ReleaseMode)
 	store, err := repo.OpenTest()

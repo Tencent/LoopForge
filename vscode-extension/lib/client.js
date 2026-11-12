@@ -95,10 +95,9 @@ class LoopForgeClient {
     const query = path ? `?path=${encodeURIComponent(path)}` : '';
     return this.request(`/api/runs/${encodeURIComponent(runId)}/workspace/diff${query}`);
   }
-  getArtifact(runId, name) {
-    return this.request(`/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`, { method: 'GET', parseJson: false });
+  getArtifact(runId, artifactId) {
+    return this.request(`/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(artifactId)}`, { method: 'GET', parseJson: false });
   }
-  artifactUrl(runId, name) { return `${this.baseUrl}/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`; }
 }
 
 module.exports = { LoopForgeClient, LoopForgeError, normalizeBaseUrl };
