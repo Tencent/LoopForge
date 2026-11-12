@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -126,7 +125,7 @@ var dshServerNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 // WriteAgentCLIMCPConfig renders MCP entries (the mcpConfigEntries shape:
 // {"type":"http","url","headers"} or {"command","args","cwd","env"}) in the
 // CLI's own format under home, replacing whatever an earlier invocation left.
-func WriteAgentCLIMCPConfig(kind, home string, entries map[string]any, options AgentCLIMCPOptions) error {
+func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]any, options AgentCLIMCPOptions) error {
 	rel, ok := agentCLIMCPPaths[kind]
 	if !ok {
 		return fmt.Errorf("unknown agent CLI %q", kind)
@@ -249,7 +248,7 @@ func WriteAgentCLIMCPConfig(kind, home string, entries map[string]any, options A
 // agyChatPermissions are the Antigravity deny rules of AI 对话.
 var agyChatPermissions = map[string]any{"allow": []string{"mcp(*)"}, "deny": []string{"command(*)", "write_file(*)", "read_url(*)"}}
 
-func writeAgentCLIFile(home, rel string, data []byte) error {
+func writeAgentCLIFile(home AgentCLIHome, rel string, data []byte) error {
 	rel = filepath.Clean(filepath.ToSlash(rel))
 	if !filepath.IsLocal(rel) || filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") {
 		return fmt.Errorf("invalid agent CLI file path %q", rel)
@@ -268,33 +267,73 @@ func writeAgentCLIFile(home, rel string, data []byte) error {
 	return root.WriteFile(rel, data, 0o600)
 }
 
-// openAgentCLIHome opens home as an os.Root, creating it when missing. home
-// itself must be a real directory: a private HOME lives in the workspace that
-// sandboxed Agents can write, so a previous run may have replaced it with a
-// symlink to anywhere on the host, and os.OpenRoot would follow it.
-func openAgentCLIHome(home string) (*os.Root, error) {
-	info, err := os.Lstat(home)
-	if errors.Is(err, fs.ErrNotExist) {
-		if err := os.MkdirAll(home, 0o700); err != nil {
-			return nil, err
+// AgentCLIHome locates an agent CLI HOME as a path below a trusted base
+// directory. A private HOME lives in the workspace that sandboxed Agents can
+// write, so any component below Base may have been replaced with a symlink to
+// anywhere on the host; Base itself is owned by the control plane.
+type AgentCLIHome struct {
+	// Base is trusted and opened as given (it may be reached through
+	// symlinks, e.g. a temp directory on macOS).
+	Base string
+	// Rel is a local path below Base; every component must be a real
+	// directory and is created when missing.
+	Rel string
+}
+
+// HostAgentCLIHome is a HOME the control plane chose itself. Its parent is
+// trusted; the HOME itself must still be a real directory.
+func HostAgentCLIHome(home string) AgentCLIHome {
+	home = filepath.Clean(home)
+	return AgentCLIHome{Base: filepath.Dir(home), Rel: filepath.Base(home)}
+}
+
+// WorkspaceAgentCLIHome is the private HOME name below
+// <workspace>/.agentflow/private-home.
+func WorkspaceAgentCLIHome(workspace, name string) AgentCLIHome {
+	return AgentCLIHome{Base: workspace, Rel: filepath.Join(".agentflow", "private-home", name)}
+}
+
+// Path is the HOME as a host path.
+func (h AgentCLIHome) Path() string { return filepath.Join(h.Base, h.Rel) }
+
+// openAgentCLIHome opens home as an os.Root, creating missing directories.
+// It starts from the trusted Base and Lstat-checks every component of Rel
+// inside that os.Root, so no symlink below Base is ever followed by mkdir or
+// open; a component swapped afterwards still cannot leave Base, and the
+// opened HOME is re-checked against the validated directory.
+func openAgentCLIHome(home AgentCLIHome) (*os.Root, error) {
+	rel := filepath.Clean(home.Rel)
+	if strings.TrimSpace(home.Base) == "" || rel == "." || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("invalid agent CLI home: %s", home.Path())
+	}
+	if err := os.MkdirAll(home.Base, 0o700); err != nil {
+		return nil, err
+	}
+	base, err := os.OpenRoot(home.Base)
+	if err != nil {
+		return nil, err
+	}
+	defer base.Close()
+	current := ""
+	for _, element := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, element)
+		if err := ensureRootDirectory(base, current); err != nil {
+			return nil, fmt.Errorf("agent CLI home is not a real directory: %s: %w", home.Path(), err)
 		}
-		info, err = os.Lstat(home)
 	}
+	info, err := base.Lstat(rel)
 	if err != nil {
 		return nil, err
 	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("agent CLI home is not a real directory: %s", home)
-	}
-	root, err := os.OpenRoot(home)
+	root, err := base.OpenRoot(rel)
 	if err != nil {
 		return nil, err
 	}
-	// home may have been swapped for a symlink between Lstat and OpenRoot.
+	// A component may have been swapped for a symlink after the checks.
 	opened, err := root.Stat(".")
 	if err != nil || !os.SameFile(info, opened) {
 		root.Close()
-		return nil, fmt.Errorf("agent CLI home changed while opening: %s", home)
+		return nil, fmt.Errorf("agent CLI home changed while opening: %s", home.Path())
 	}
 	return root, nil
 }
@@ -304,7 +343,7 @@ func openAgentCLIHome(home string) (*os.Root, error) {
 // process sees it) and returns argv and the environment to run it with. The
 // key itself stays in the environment; configuration files only name the
 // variable.
-func ApplyAgentCLICredential(kind string, cred ProviderCredential, options AgentCLIOptions, home, homeEnv string, argv []string) ([]string, map[string]string, error) {
+func ApplyAgentCLICredential(kind string, cred ProviderCredential, options AgentCLIOptions, home AgentCLIHome, homeEnv string, argv []string) ([]string, map[string]string, error) {
 	key := strings.TrimSpace(cred.APIKey)
 	if key == "" {
 		return nil, nil, fmt.Errorf("需求责任人未配置 %s API Key，请在个人配置中配置", AgentCLILabel(kind))
@@ -430,7 +469,13 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 			return nil, nil, errors.New("invalid DeepSeek Harness invocation")
 		}
 		patches := []string{"--patch", homeEnv + "/.dsh/agentflow-model.json"}
-		if _, err := os.Stat(filepath.Join(home, ".dsh", "agentflow-mcp.json")); err == nil {
+		root, err := openAgentCLIHome(home)
+		if err != nil {
+			return nil, nil, err
+		}
+		_, err = root.Stat(filepath.Join(".dsh", "agentflow-mcp.json"))
+		root.Close()
+		if err == nil {
 			patches = append(patches, "--patch", homeEnv+"/.dsh/agentflow-mcp.json")
 		}
 		head := append([]string{}, argv[:3]...)

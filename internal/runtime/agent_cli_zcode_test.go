@@ -73,11 +73,11 @@ func zcodeKeyFiles(t *testing.T, home string) []string {
 
 func TestApplyZCodeCredential(t *testing.T) {
 	home := t.TempDir()
-	if err := WriteAgentCLIMCPConfig(AgentCLIZCode, home, map[string]any{"gw": map[string]any{"type": "http", "url": "http://127.0.0.1:1/mcp"}}, AgentCLIMCPOptions{}); err != nil {
+	if err := WriteAgentCLIMCPConfig(AgentCLIZCode, HostAgentCLIHome(home), map[string]any{"gw": map[string]any{"type": "http", "url": "http://127.0.0.1:1/mcp"}}, AgentCLIMCPOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	argv := []string{"zcode", "--prompt", "it's \"quoted\" $HOME"}
-	bound, env, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: " secret-key "}, AgentCLIOptions{Model: "glm-5.3"}, home, "/w/home", argv)
+	bound, env, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: " secret-key "}, AgentCLIOptions{Model: "glm-5.3"}, HostAgentCLIHome(home), "/w/home", argv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestApplyZCodeCredential(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, zcodeConfigPath), []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, env2, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: "glm-5.3"}, home, "/w/home", argv); err != nil || env2[zcodePersonalFileEnv] == env[zcodePersonalFileEnv] {
+	if _, env2, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: "glm-5.3"}, HostAgentCLIHome(home), "/w/home", argv); err != nil || env2[zcodePersonalFileEnv] == env[zcodePersonalFileEnv] {
 		t.Fatalf("second call: %v %v", env2, err)
 	}
 	if len(zcodeKeyFiles(t, home)) != 2 {
@@ -151,7 +151,7 @@ func TestApplyZCodeCredentialProtocols(t *testing.T) {
 		{"https://gw.example", "", "https://gw.example", "anthropic-messages"},
 	} {
 		home := t.TempDir()
-		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k", BaseURL: tc.baseURL, Protocol: tc.protocol}, AgentCLIOptions{Model: "m"}, home, home, []string{"zcode"}); err != nil {
+		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k", BaseURL: tc.baseURL, Protocol: tc.protocol}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(home), home, []string{"zcode"}); err != nil {
 			t.Fatal(err)
 		}
 		rules := readJSONFile(t, zcodeKeyFiles(t, home)[0])["config"].(map[string]any)["providerConfigRules"].(map[string]any)["providerRules"].([]any)
@@ -164,18 +164,18 @@ func TestApplyZCodeCredentialProtocols(t *testing.T) {
 	// to BigModel's coding model, a custom endpoint must name one.
 	for _, model := range []string{"", "default"} {
 		home := t.TempDir()
-		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: model}, home, home, []string{"zcode"}); err != nil {
+		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: model}, HostAgentCLIHome(home), home, []string{"zcode"}); err != nil {
 			t.Fatal(err)
 		}
 		selection := readJSONFile(t, zcodeKeyFiles(t, home)[0])["config"].(map[string]any)["defaultModelSelection"].(map[string]any)
 		if selection["modelId"] != zcodeDefaultModel {
 			t.Errorf("model %q: selection %v", model, selection)
 		}
-		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k", BaseURL: "https://gw.example"}, AgentCLIOptions{Model: model}, t.TempDir(), "/h", nil); err == nil || !strings.Contains(err.Error(), "模型") {
+		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k", BaseURL: "https://gw.example"}, AgentCLIOptions{Model: model}, HostAgentCLIHome(t.TempDir()), "/h", nil); err == nil || !strings.Contains(err.Error(), "模型") {
 			t.Fatalf("custom endpoint without model %q: %v", model, err)
 		}
 	}
-	if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{}, AgentCLIOptions{Model: "m"}, t.TempDir(), "/h", nil); err == nil || !strings.Contains(err.Error(), "ZCode API Key") {
+	if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(t.TempDir()), "/h", nil); err == nil || !strings.Contains(err.Error(), "ZCode API Key") {
 		t.Fatalf("zcode without key: %v", err)
 	}
 }
@@ -188,7 +188,7 @@ func TestWriteAgentCLIMCPConfigZCode(t *testing.T) {
 		"local": map[string]any{"command": "node", "args": []string(nil), "cwd": "", "env": map[string]string{}},
 		"full":  map[string]any{"command": "npx", "args": []string{"-y", "x"}, "cwd": "/w", "env": map[string]string{"A": "1"}},
 	}
-	if err := WriteAgentCLIMCPConfig(AgentCLIZCode, home, entries, AgentCLIMCPOptions{ReadOnly: true}); err != nil {
+	if err := WriteAgentCLIMCPConfig(AgentCLIZCode, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
 	doc := readJSONFile(t, filepath.Join(home, zcodeConfigPath))
@@ -229,7 +229,7 @@ func TestZCodeCleanupScriptRemovesKeyFile(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\"\nprintf 'base=%s builtin=%s data=%s\\n' \"${ZCODE_BASE_URL-unset}\" \"${ZCODE_BUILTIN_PROVIDER_CONFIG_FILE-unset}\" \"$ZCODE_DATA_BASE_DIR\"\nrm -f \"$ZCODE_PERSONAL_PROVIDER_CONFIG_FILE\"\n: > \"$ZCODE_PERSONAL_PROVIDER_CONFIG_FILE\"\nexit 7\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	argv, env, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: "m"}, home, home, []string{fake, "--prompt", "it's \"q\" $HOME"})
+	argv, env, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(home), home, []string{fake, "--prompt", "it's \"q\" $HOME"})
 	if err != nil {
 		t.Fatal(err)
 	}

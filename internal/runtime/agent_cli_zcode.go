@@ -71,7 +71,7 @@ func nonEmpty(value any) bool {
 // applyZCodeCredential gives ZCode the key as a personal provider file that
 // exists only until ZCode has read it: ZCode accepts a literal key and
 // nothing else, and the key must not stay on disk.
-func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
+func applyZCodeCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
 	// The private provider has no model of its own, so "CLI default" (sent as
 	// "default") must name a real one: BigModel's coding model on the default
 	// endpoint, while a custom endpoint has no model we could guess.
@@ -116,7 +116,7 @@ func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, a
 
 // addZCodeKeyCleanupHook merges a SessionStart hook into ZCode's config,
 // keeping whatever the MCP configuration put there.
-func addZCodeKeyCleanupHook(home string) error {
+func addZCodeKeyCleanupHook(home AgentCLIHome) error {
 	document := map[string]any{}
 	root, err := openAgentCLIHome(home)
 	if err != nil {
