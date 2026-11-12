@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGitHubImportPreservesLocalWorkAndMergeChecksConfirmation(t *testing.T) {
@@ -77,5 +78,31 @@ func TestGitHubImportPreservesLocalWorkAndMergeChecksConfirmation(t *testing.T) 
 	mergeAllowed = true
 	if ref, err := s.EnsureAndMergeBranchMR(r.GongfengProjectID, "feature/work", "main", "Title", ""); err != nil || ref != "#7" {
 		t.Fatalf("merge: %s %v", ref, err)
+	}
+}
+
+func TestGitHubPullMergedRefAndDeliveryState(t *testing.T) {
+	at := time.Date(2026, 11, 13, 4, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name   string
+		pull   githubPull
+		merged bool
+		state  string
+	}{
+		{"merged flag", githubPull{Number: 7, Merged: true, State: "closed"}, true, "merged"},
+		{"merged_at only", githubPull{Number: 7, MergedAt: &at, State: "closed"}, true, "merged"},
+		{"closed unmerged", githubPull{Number: 7, State: "closed"}, false, "closed"},
+		{"open", githubPull{Number: 7, State: "open"}, false, "opened"},
+	}
+	for _, c := range cases {
+		if got := c.pull.merged(); got != c.merged {
+			t.Fatalf("%s: merged()=%v want %v", c.name, got, c.merged)
+		}
+		if got := c.pull.delivery("github:example/repo").State; got != c.state {
+			t.Fatalf("%s: delivery state=%q want %q", c.name, got, c.state)
+		}
+		if got := c.pull.ref(); got != "#7" {
+			t.Fatalf("%s: ref()=%q", c.name, got)
+		}
 	}
 }
