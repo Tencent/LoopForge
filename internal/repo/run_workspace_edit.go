@@ -14,9 +14,9 @@ func workspacePaused(row runRow) bool {
 	return ((row.Status == "waiting" && row.PauseRequested && !row.CancelRequested) || row.Status == "succeeded" || row.Status == "failed" || row.Status == "cancelled") && row.WorkspaceCleaned == nil
 }
 
-// AcquireWorkspaceEditor pauses-compatible marker for callers that still hit
-// /workspace/takeover. It no longer grants an exclusive lease — any project
-// writer may edit once the run is stopped.
+// AcquireWorkspaceEditor is a compatibility marker for callers that still hit
+// /workspace/takeover. It no longer grants an exclusive lease or pauses
+// anything — any project writer may edit while the run is HumanEditable.
 func (r *RunsRepo) AcquireWorkspaceEditor(runID string, userID int64) error {
 	if userID <= 0 {
 		return fmt.Errorf("请先登录")
@@ -26,15 +26,9 @@ func (r *RunsRepo) AcquireWorkspaceEditor(runID string, userID int64) error {
 		if err != nil {
 			return err
 		}
+		// People edit beside running agents, so running nodes do not block this.
 		if !runFromRow(row).HumanEditable() {
-			return fmt.Errorf("请先停止执行后再启用编辑")
-		}
-		var count int64
-		if err = tx.Model(&runNodeRow{}).Where("run_id = ? AND status = ?", runID, "running").Count(&count).Error; err != nil {
-			return err
-		}
-		if count > 0 {
-			return fmt.Errorf("节点仍在停止，请稍后启用编辑")
+			return fmt.Errorf("工作区已清理或正在取消，无法编辑")
 		}
 		// Clear any stale lease columns so resume paths stay clean.
 		return tx.Model(&runRow{}).Where("id = ?", runID).Updates(map[string]any{

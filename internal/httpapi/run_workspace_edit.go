@@ -291,10 +291,11 @@ func (h *runsHandlers) withWorkspaceWriter(c *gin.Context, runID string, user in
 	return h.repo.WithWorkspaceEditor(runID, user, fn)
 }
 
-// humanWorkspaceEdit marks IDE requests, which the runner serves beside
-// running tasks instead of waiting for their fence.
+// humanWorkspaceEdit marks IDE requests on runs that may still have agents
+// running, which the runner serves beside those tasks (sharing their gate)
+// instead of waiting for their fence. Finished runs keep the exclusive fence.
 func humanWorkspaceEdit(c *gin.Context, run domain.Run) bool {
-	return mainBotWorkspaceRun(c.Request.Context()) != run.ID && run.HumanEditable()
+	return mainBotWorkspaceRun(c.Request.Context()) != run.ID && run.HumanEditable() && !domain.TerminalRunStatus(run.Status)
 }
 
 // mainBotWorkspaceMode tells the runner to apply the live-workspace rule to

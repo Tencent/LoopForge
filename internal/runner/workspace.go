@@ -167,9 +167,21 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		return runnerWorkspacePayload(d.runnerWorkspacePreparationStatus(ctx, root, request))
 	}
 
-	workspaceWrite := request.ConcurrentEdit || request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
+	liveWorkspace := request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
+	// A person editing from the IDE only shares the workspace with running
+	// agent tasks (gate readers). Preparation, restore and checkpoints hold the
+	// gate exclusively and must still exclude the edit.
+	concurrentEdit := request.ConcurrentEdit && !liveWorkspace
+	workspaceWrite := liveWorkspace || concurrentEdit
 	switch request.Operation {
 	case domain.RunnerWorkspaceOperationArtifacts:
+		if concurrentEdit {
+			gate := d.requestGate(request)
+			if !gate.TryRLock() {
+				return workspaceBusyResponse("workspace is still in use")
+			}
+			defer gate.RUnlock()
+		}
 		if !workspaceWrite {
 			gate := d.requestGate(request)
 			if !gate.TryLock() {
@@ -220,7 +232,15 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	case domain.RunnerWorkspaceOperationWrite:
 		// The same human may save files while their terminal holds the fence.
 		scope := fmt.Sprintf("%s:%d", request.RunID, request.TerminalOwner)
-		if !workspaceWrite && (request.TerminalOwner <= 0 || !d.workspaceTerminals.HasScope(scope)) {
+		ownTerminal := request.TerminalOwner > 0 && d.workspaceTerminals.HasScope(scope)
+		if concurrentEdit && !ownTerminal {
+			gate := d.requestGate(request)
+			if !gate.TryRLock() {
+				return workspaceBusyResponse("workspace is being prepared, restored or saved")
+			}
+			defer gate.RUnlock()
+		}
+		if !workspaceWrite && !ownTerminal {
 			gate := d.requestGate(request)
 			if !gate.TryLock() {
 				return workspaceBusyResponse("execution is still stopping")

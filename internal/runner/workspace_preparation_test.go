@@ -600,3 +600,51 @@ func TestRunnerIDEJoinsRunningSOPWithoutPreparationSteps(t *testing.T) {
 	}
 	d.workspaceTerminals.CloseScope("prepared:7")
 }
+
+// IDE edits share the workspace with running agents (gate readers) but stay
+// excluded from preparation, restore and checkpoints (the exclusive holder).
+func TestRunnerConcurrentEditSharesOnlyTheAgentFence(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	defer d.closeAllRunSandboxes(context.Background())
+	request.RunStatus = "running"
+	request.ConcurrentEdit = true
+	gate := d.workspaceGate(request.RunID)
+	write := func(content string) domain.RunnerWorkspaceResponse {
+		request.Operation = domain.RunnerWorkspaceOperationWrite
+		request.Path, request.Content, request.ExpectedSHA256 = "ide.txt", content, "missing"
+		return d.readRunnerWorkspace(context.Background(), request)
+	}
+	artifacts := func() domain.RunnerWorkspaceResponse {
+		request.Operation = domain.RunnerWorkspaceOperationArtifacts
+		return d.readRunnerWorkspace(context.Background(), request)
+	}
+
+	gate.Lock()
+	if result := write("during preparation\n"); result.Status != 409 || result.Code != domain.WorkspaceErrorBusy {
+		t.Fatalf("write during an exclusive hold: %+v", result)
+	}
+	if result := artifacts(); result.Status != 409 || result.Code != domain.WorkspaceErrorBusy {
+		t.Fatalf("artifacts during an exclusive hold: %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ide.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write landed during an exclusive hold: %v", err)
+	}
+	gate.Unlock()
+
+	gate.RLock()
+	if result := write("beside a running agent\n"); result.Status != 200 {
+		t.Fatalf("write beside a running agent: %+v", result)
+	}
+	if result := artifacts(); result.Status != 200 {
+		t.Fatalf("artifacts beside a running agent: %+v", result)
+	}
+	gate.RUnlock()
+	if raw, err := os.ReadFile(filepath.Join(root, "ide.txt")); err != nil || string(raw) != "beside a running agent\n" {
+		t.Fatalf("write landed: %q %v", raw, err)
+	}
+	// The edit released its read hold: an exclusive holder can take the gate.
+	if !gate.TryLock() {
+		t.Fatal("concurrent edit leaked its gate hold")
+	}
+	gate.Unlock()
+}
