@@ -99,8 +99,20 @@
 .node-inspector-title h3{flex:0 0 auto}
 .node-inspector-title .node-inspector-model{display:block;margin-top:0;color:var(--muted-2);font-size:11px}
 .node-inspector-title .node-activity-inline{display:inline-flex;align-items:baseline;gap:4px;margin-top:0;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:var(--bg-soft);color:var(--muted-2);font-size:10px;white-space:nowrap;max-width:100%;overflow:hidden}
-.node-inspector-title .node-activity-inline b{font-weight:650;color:var(--text);overflow:hidden;text-overflow:ellipsis}
+.node-inspector-title .node-activity-inline b{min-width:0;font-weight:650;color:var(--hui-text);overflow:hidden;text-overflow:ellipsis}
 .node-inspector-title .node-activity-inline[hidden]{display:none}
+/* 运行状态转圈与活动文字高光共享真实执行状态，不影响历史日志。 */
+.node-inspector .node-inspector-status{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
+.node-inspector-status.is-running::before{content:"";width:12px;height:12px;box-sizing:border-box;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:node-status-spin .85s linear infinite}
+@keyframes node-status-spin{to{transform:rotate(360deg)}}
+@supports ((background-clip:text) or (-webkit-background-clip:text)){
+  .node-inspector-title .node-activity-inline.is-running b{color:transparent;background-image:linear-gradient(100deg,var(--hui-secondary) 40%,var(--hui-text) 50%,var(--hui-secondary) 60%);background-size:250% 100%;background-position:100% 0;background-clip:text;-webkit-background-clip:text;animation:node-activity-shimmer 2.4s ease-in-out infinite}
+}
+@keyframes node-activity-shimmer{from{background-position:100% 0}to{background-position:0 0}}
+@media (prefers-reduced-motion:reduce),(forced-colors:active){
+  .node-inspector-status.is-running::before{animation:none}
+  .node-inspector-title .node-activity-inline.is-running b{animation:none;background:none;color:var(--hui-text)}
+}
 .node-error,.node-output{margin-top:10px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
 .node-output>div{height:35px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
 .node-output b{font-size:10px}

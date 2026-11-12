@@ -46,7 +46,7 @@ func terminalToolDescriptors(mode AgentToolMode, exec assistantExecMode) []agent
 			UpstreamName: submitClarificationTool,
 		}}
 	case AgentToolAssistant:
-		schema, _ := json.Marshal(submitAssistantReplySchema())
+		schema, _ := json.Marshal(submitAssistantReplySchema(exec))
 		return []agentToolDescriptor{{
 			Name:         submitAssistantReplyTool,
 			Description:  submitAssistantReplyDescription(exec),
@@ -105,7 +105,9 @@ func submitClarificationSchema() map[string]any {
 	}
 }
 
-func submitAssistantReplySchema() map[string]any {
+// submitAssistantReplySchema offers SOP proposals only where the user
+// answers them: full access starts a SOP without asking.
+func submitAssistantReplySchema(exec assistantExecMode) map[string]any {
 	names := assistantWriteToolNameList()
 	toolSchema := map[string]any{"type": "string", "description": "必填：本草稿要执行的写入工具名称，如 issues_save、issues_dispatch；不要省略，不带 mcp__ 前缀"}
 	if len(names) > 0 {
@@ -115,6 +117,15 @@ func submitAssistantReplySchema() map[string]any {
 		}
 		enum = append(enum, "assistant_tasks_save")
 		toolSchema["enum"] = enum
+	}
+	draft := map[string]any{
+		"tool":  toolSchema,
+		"path":  map[string]any{"type": "object"},
+		"query": map[string]any{"type": "object"},
+		"body":  map[string]any{},
+	}
+	if !exec.AutoWrite || exec.ReviewWrites {
+		draft["proposal"] = assistantProposalSchema()
 	}
 	return map[string]any{
 		"type":                 "object",
@@ -130,12 +141,7 @@ func submitAssistantReplySchema() map[string]any {
 					"type":                 "object",
 					"additionalProperties": false,
 					"required":             []string{"tool"},
-					"properties": map[string]any{
-						"tool":  toolSchema,
-						"path":  map[string]any{"type": "object"},
-						"query": map[string]any{"type": "object"},
-						"body":  map[string]any{},
-					},
+					"properties":           draft,
 				},
 			},
 		},

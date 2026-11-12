@@ -547,11 +547,10 @@ export function useChat() {
     },
     [sponsored, sponsoredModels, executorModels],
   );
-  useEffect(() => {
-    if (!ready) return;
-    // Credential flags are omitted when false, so drop the old ones before
-    // merging; otherwise a cleared key would still look configured.
-    const refresh = () =>
+  // Credential flags are omitted when false, so drop the old ones before
+  // merging; otherwise a cleared key would still look configured.
+  const refreshUser = useCallback(
+    () =>
       api("/api/users")
         .then((rows) => {
           setUsers(rows || []);
@@ -570,22 +569,26 @@ export function useChat() {
             return hint && fresh?.[`${hint.field}Configured`] ? "" : old;
           });
         })
-        .catch(() => {});
+        .catch(() => {}),
+    [],
+  );
+  useEffect(() => {
+    if (!ready) return;
     const onMessage = (e) => {
       if (
         e.source === window.parent &&
         e.origin === location.origin &&
         e.data?.type === "agentflow-credentials-changed"
       )
-        void refresh();
+        void refreshUser();
     };
     window.addEventListener("message", onMessage);
-    if (missingKey) window.addEventListener("focus", refresh);
+    if (missingKey) window.addEventListener("focus", refreshUser);
     return () => {
       window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", refreshUser);
     };
-  }, [ready, missingKey]);
+  }, [ready, missingKey, refreshUser]);
   useEffect(() => writeQueues(queues), [queues]);
   useEffect(() => {
     const s = steeringRef.current;
@@ -925,18 +928,42 @@ export function useChat() {
     applyingRef.current.add(key);
     let executed = false;
     try {
-      const stored = await api(sessionPath(id));
-      const reply = JSON.parse(stored.messages[messageIndex].content);
-      const draft = reply.drafts[draftIndex];
+      let stored = await api(sessionPath(id));
+      let reply = JSON.parse(stored.messages[messageIndex].content);
+      let draft = reply.drafts[draftIndex];
       if (draft.saved || draft.inherited) return null;
+      if (generation?.status === "running")
+        throw Error("请等待回复结束后再确认操作。");
+      if (draft.proposal && !draft.decision) {
+        // Accept before running it: once the timeout has handed the work to
+        // the assistant, the accept fails and the operation must not run.
+        try {
+          stored = (
+            await write(`${sessionPath(id)}/proposals`, {
+              messageIndex,
+              draftIndex,
+              decision: "accepted",
+            })
+          ).session;
+        } catch (error) {
+          void api(sessionPath(id))
+            .then((latest) => currentId.current === id && setSession(latest))
+            .catch(() => {});
+          throw error;
+        }
+        reply = JSON.parse(stored.messages[messageIndex].content);
+        draft = reply.drafts[draftIndex];
+      }
+      if (draft.proposal && draft.decision !== "accepted") {
+        if (currentId.current === id) setSession(stored);
+        throw Error("这条建议已经处理过，不能执行。");
+      }
       try {
         Object.assign(draft, reviewedOperation(draft, review));
       } catch (error) {
         if (error.draftChanged && currentId.current === id) setSession(stored);
         throw error;
       }
-      if (generation?.status === "running")
-        throw Error("请等待回复结束后再确认操作。");
       // The session header lets a confirmed SOP continue in this
       // conversation's workspace.
       const result = await api("/mcp", {
@@ -999,6 +1026,36 @@ export function useChat() {
           : "") + e.message,
       );
       throw Object.assign(e, { executed });
+    } finally {
+      applyingRef.current.delete(key);
+    }
+  }
+  // Answers an assistant proposal card. Declining work the assistant had not
+  // started continues with the turn the server returns.
+  async function decideProposal(messageIndex, draftIndex, decision, approvalMode = "confirm") {
+    const id = activeId;
+    if (generation?.status === "running")
+      throw Error("请等待回复结束后再处理建议。");
+    const key = `${id}:${messageIndex}:${draftIndex}`;
+    if (applyingRef.current.has(key)) throw Error("这条建议正在处理，请稍候。");
+    applyingRef.current.add(key);
+    try {
+      const result = await write(`${sessionPath(id)}/proposals`, {
+        messageIndex,
+        draftIndex,
+        decision,
+      });
+      if (currentId.current !== id) return;
+      setSession(result.session);
+      if (result.followUp)
+        await send({
+          text: result.followUp.text,
+          messagesOverride: result.session.messages,
+          approvalMode,
+        });
+    } catch (e) {
+      setError(e.message);
+      throw e;
     } finally {
       applyingRef.current.delete(key);
     }
@@ -1099,6 +1156,7 @@ export function useChat() {
   }, []);
   return {
     user,
+    refreshUser,
     users,
     issueId: session?.issueId || (!activeId ? draftIssueId : ""),
     linkIssue,
@@ -1152,6 +1210,7 @@ export function useChat() {
     edit,
     regenerate,
     applyDraft,
+    decideProposal,
     refresh,
     refreshSessions,
   };

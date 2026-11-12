@@ -651,6 +651,17 @@ small {
   font-size: 11px;
   color: var(--muted);
 }
+.message-references > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+/* A page element picked in the native preview: the label is page text. */
+.composer-attachment-file.is-element {
+  max-width: 260px;
+  white-space: nowrap;
+}
 /* The send time stays visible; the copy and info buttons appear on hover. */
 .message-actions {
   display: flex;
@@ -2307,10 +2318,32 @@ a.project-entry {
   font-size: 10px;
 }
 .draft-card > .primary-button,
-.draft-card > .quiet-button {
+.draft-card > .quiet-button,
+.proposal-actions > .quiet-button {
   min-height: 29px;
   padding: 5px 9px;
   font-size: 11px;
+}
+.proposal-reason {
+  color: var(--muted);
+}
+.proposal-countdown {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.proposal-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+.proposal-mute {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 2px;
+}
+.proposal-mute:hover {
+  color: var(--text);
 }
 .run-row {
   border: 1px solid var(--line);

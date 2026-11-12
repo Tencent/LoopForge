@@ -27,6 +27,7 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ./start.sh stop        # stop; ./start.sh down removes containers but keeps data volumes
 ./start.sh restart     # restart the platform container
 ./start.sh pull        # refresh images and recreate changed containers
+MIRROR=ghcr.nju.edu.cn ./start.sh  # same install; replace the ghcr.io host with this registry
 ./start.sh dev         # build this checkout instead (compose.dev.yaml)
 ./start.sh release     # switch a source build back to the published image
 ```
@@ -35,7 +36,14 @@ The installer checks Docker, Compose, Python 3 and curl. It offers to install mi
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
-`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.3.4`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
+`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.3.8`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
+
+Where `ghcr.io` downloads stall, set `MIRROR` to the registry host that replaces `ghcr.io`. `./start.sh` and `./start.sh pull` pull that reference and tag it back to the name in `compose.yaml`. Setting `MIRROR` trusts that host, because the result is tagged with the official name. The GitHub Release records the image digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. The pull policy stays `missing` on install, so a local image is kept; `./start.sh pull` refreshes it from the same host. Leaving `MIRROR` unset preserves the direct `ghcr.io` pull. [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr) is one compatible host. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
+
+```bash
+MIRROR=ghcr.nju.edu.cn ./start.sh
+MIRROR=ghcr.nju.edu.cn ./start.sh pull
+```
 
 `./start.sh dev` (or `LOOPFORGE_BUILD_FROM_SOURCE=1 bash scripts/install.sh`) builds this checkout as `loopforge-platform:local` from `compose.dev.yaml`. It saves `COMPOSE_FILE=compose.yaml:compose.dev.yaml` in `.env`, so later runs and plain `docker compose` commands keep using the source build until `./start.sh release`. Source builds reuse npm, Go module and Go compiler caches.
 
@@ -47,7 +55,14 @@ During initial setup, restrict the cloud security group or firewall to the opera
 
 The platform listens on `LOOPFORGE_BIND`, `0.0.0.0` by default, without prompting for an access URL. The installer prints the public, LAN and local addresses; on Tencent Cloud, Alibaba Cloud, AWS, GCP and Azure it reads the public IP from the provider's link-local metadata service, and elsewhere behind NAT you open the public IP yourself. `LOOPFORGE_PUBLIC_URL` is optional and only changes the printed address. Allow the HTTP port in the cloud security group/firewall, or use an HTTPS reverse proxy. Existing `.env` files are preserved; older installations without a bind setting now also listen on `0.0.0.0`. Local-only installations can set `LOOPFORGE_BIND=127.0.0.1`. Proxy WebSocket and streaming requests. Set `AGENTFLOW_SECURE_COOKIES=true` when HTTPS terminates at the proxy. Keep `AGENTFLOW_SESSION_SECRET` stable across API instances and restarts.
 
+Enterprise authentication gateways can sign users in by header with `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`. This option is off by default. The API then accepts `Staffname` / `x-staff-name` only from a loopback peer, and only when it can tell the request came from the gateway:
+
+- Set `AGENTFLOW_IDENTITY_HEADER_SECRET` to a random value, and have the gateway send it in `X-AgentFlow-Gateway-Secret`. The gateway must overwrite, never pass through, the client's `Staffname`, `Staffid`, `x-staff-name` and `X-AgentFlow-Gateway-Secret` headers.
+- Without a secret, any request carrying `X-Forwarded-For`, `Forwarded` or `X-Real-IP` is treated as a forwarded client, and its identity headers are ignored. This only protects proxies that add one of those headers: a same-host proxy that passes client headers through without adding them (for example nginx `proxy_pass` without `proxy_set_header X-Forwarded-For`), and any other process on the host, can still sign in as any user. Set the secret whenever header sign-in is on; the platform logs a warning at startup when it is missing.
+
 ### Docker sandboxes
+
+The platform exposes a built-in default sandbox (`local`) even when the catalog SQL has not been installed. It is an in-memory fallback and does not insert database rows. An existing saved `local` profile takes priority, including its configured driver and environment. The default cannot be deleted; edit its configuration or create another profile to change how tasks run. The full installer still imports starter SOPs and the welcome project.
 
 For native services running as an ordinary host user, default/root Docker images run with that service user's UID/GID so private workspaces remain accessible without relaxing their permissions or adding capabilities. Images that explicitly select a non-root user retain that identity; operators must arrange compatible bind-mount ownership for those images.
 

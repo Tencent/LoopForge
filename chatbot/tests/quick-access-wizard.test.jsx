@@ -176,6 +176,7 @@ describe("QuickAccessWizard", () => {
     mockState.unconfigured = true;
     writeMock.mockClear();
     const userAction = userEvent.setup();
+    const credentialsSaved = vi.fn();
     render(
       <QuickAccessWizard
         open
@@ -184,6 +185,7 @@ describe("QuickAccessWizard", () => {
         projectId="p1"
         onClose={vi.fn()}
         onCompleted={vi.fn()}
+        onCredentialsSaved={credentialsSaved}
         onOpenView={vi.fn()}
       />,
     );
@@ -196,6 +198,7 @@ describe("QuickAccessWizard", () => {
       { codeBuddyApiKey: "cb-key", codeBuddyInternetEnvironment: "" },
       "PUT",
     );
+    expect(credentialsSaved).toHaveBeenCalledTimes(1);
     mockState.unconfigured = false;
   });
 

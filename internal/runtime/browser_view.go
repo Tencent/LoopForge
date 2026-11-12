@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"sync"
@@ -28,19 +29,29 @@ type browserView struct {
 	endpoint browserEndpoint
 	client   *cdpClient
 
-	mu       sync.Mutex
-	targets  map[string]*browserTarget
-	active   string
-	session  string
-	frame    string
-	seq      int64
-	width    float64
-	height   float64
-	lastUsed time.Time
-	changed  chan struct{}
-	follow   bool
+	mu      sync.Mutex
+	targets map[string]*browserTarget
+	active  string
+	session string
+	frame   string
+	seq     int64
+	width   float64
+	height  float64
+	// Document scroll position from frame metadata and content size from
+	// layout metrics, refreshed at most every browserContentRefresh.
+	scrollX, scrollY            float64
+	contentWidth, contentHeight float64
+	contentAt                   time.Time
+	contentBusy                 bool
+	lastUsed                    time.Time
+	changed                     chan struct{}
+	follow                      bool
 	// frameWidth is the panel's device pixel width; 0 keeps the default cap.
 	frameWidth int
+	// motion is set while the panel scrolls or drags: frames are captured
+	// lighter until the input settles (see markMotion).
+	motion    bool
+	motionGen int64
 	// History flags are cached per active page URL: re-reading them on every
 	// frame would add a CDP round trip to each one.
 	historyKey              string
@@ -57,6 +68,13 @@ var browserViewReads = map[string]bool{"": true, "status": true, "frame": true}
 // HandleBrowser serves one task panel browser request for a run whose browser
 // lives on this host (docker sidecar or host Chromium).
 func HandleBrowser(ctx context.Context, runID string, req domain.BrowserRequest) (domain.BrowserState, error) {
+	if req.Operation == "http" {
+		// Dev server preview needs the sandbox network, not the CDP view.
+		return handleDevServerHTTP(ctx, runID, req.HTTP)
+	}
+	if req.Operation == "file" {
+		return handleWorkspaceFile(ctx, runID, req.File)
+	}
 	view, err := openBrowserView(ctx, runID)
 	if err != nil {
 		return domain.BrowserState{Available: false, Reason: err.Error()}, nil
@@ -115,6 +133,12 @@ func HandleBrowser(ctx context.Context, runID string, req domain.BrowserRequest)
 		if err := view.client.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": target}, nil); err != nil {
 			return view.state(req.After), err
 		}
+	case "inspect":
+		inspection, err := view.inspect(ctx, req.Point, req.Detail)
+		// Inspection never needs a frame: the panel already shows one.
+		state := view.state(math.MaxInt64)
+		state.Inspect = inspection
+		return state, err
 	case "snapshot", "screenshot", "click", "type", "press":
 		snap, frame, err := view.agentOperation(ctx, req)
 		state := view.state(req.After)
@@ -307,8 +331,11 @@ func (v *browserView) onEvent(msg cdpMessage) {
 			Data      string `json:"data"`
 			SessionID int64  `json:"sessionId"`
 			Metadata  struct {
-				DeviceWidth  float64 `json:"deviceWidth"`
-				DeviceHeight float64 `json:"deviceHeight"`
+				DeviceWidth     float64 `json:"deviceWidth"`
+				DeviceHeight    float64 `json:"deviceHeight"`
+				ScrollOffsetX   float64 `json:"scrollOffsetX"`
+				ScrollOffsetY   float64 `json:"scrollOffsetY"`
+				PageScaleFactor float64 `json:"pageScaleFactor"`
 			} `json:"metadata"`
 		}
 		if json.Unmarshal(msg.Params, &ev) != nil {
@@ -316,17 +343,48 @@ func (v *browserView) onEvent(msg cdpMessage) {
 		}
 		v.mu.Lock()
 		current := msg.SessionID == v.session
+		refresh := false
 		if current {
 			v.frame, v.width, v.height = ev.Data, ev.Metadata.DeviceWidth, ev.Metadata.DeviceHeight
+			v.scrollX, v.scrollY = ev.Metadata.ScrollOffsetX, ev.Metadata.ScrollOffsetY
 			v.seq++
 			v.notify()
+			if !v.contentBusy && time.Since(v.contentAt) > browserContentRefresh {
+				v.contentBusy, refresh = true, true
+			}
 		}
 		v.mu.Unlock()
+		if refresh {
+			go v.refreshContentSize(msg.SessionID)
+		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = v.client.call(ctx, msg.SessionID, "Page.screencastFrameAck", map[string]any{"sessionId": ev.SessionID}, nil)
 		}()
+	}
+}
+
+// browserContentRefresh bounds layout metric reads: content size changes
+// rarely, and one read per frame would add a CDP round trip to each.
+const browserContentRefresh = time.Second
+
+func (v *browserView) refreshContentSize(session string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var metrics struct {
+		CSSContentSize struct {
+			Width  float64 `json:"width"`
+			Height float64 `json:"height"`
+		} `json:"cssContentSize"`
+	}
+	err := v.client.call(ctx, session, "Page.getLayoutMetrics", nil, &metrics)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.contentBusy = false
+	v.contentAt = time.Now()
+	if err == nil && session == v.session {
+		v.contentWidth, v.contentHeight = metrics.CSSContentSize.Width, metrics.CSSContentSize.Height
 	}
 }
 
@@ -401,13 +459,64 @@ func (v *browserView) attach(ctx context.Context, targetID string) error {
 
 func (v *browserView) screencastParams() map[string]any {
 	v.mu.Lock()
-	width := v.frameWidth
+	width, motion := v.frameWidth, v.motion
 	v.mu.Unlock()
-	if width <= 0 || width > 1600 {
-		width = 1600
+	if width <= 0 || width > 2560 {
+		width = 2560
+	}
+	// Text needs a cleaner JPEG than photos; 80 keeps edges sharp at about
+	// twice the bytes of 60.
+	quality := 80
+	if motion {
+		// Moving content is not read: half the pixels at quality 60 cut a
+		// text page frame to about a fifth, so the sandbox renders and the
+		// link carries several times as many while scrolling.
+		width, quality = width/2, browserMotionQuality
 	}
 	width = max(width, 320)
-	return map[string]any{"format": "jpeg", "quality": 60, "maxWidth": width, "maxHeight": min(2*width, 2000), "everyNthFrame": 1}
+	return map[string]any{"format": "jpeg", "quality": quality, "maxWidth": width, "maxHeight": min(2*width, 4000), "everyNthFrame": 1}
+}
+
+const browserMotionQuality = 60
+
+// browserMotionSettle is how long after the last scroll or drag the
+// screencast returns to sharp frames.
+var browserMotionSettle = 400 * time.Millisecond
+
+// markMotion switches the screencast to light frames for scrolling and
+// dragging, and back once input has been quiet for browserMotionSettle.
+// Restarting the screencast makes Chromium send the current page again, so
+// the view ends on a sharp frame even when nothing moves afterwards.
+func (v *browserView) markMotion(ctx context.Context) {
+	v.mu.Lock()
+	v.motionGen++
+	gen, start, session := v.motionGen, !v.motion, v.session
+	v.motion = true
+	v.mu.Unlock()
+	if start && session != "" {
+		v.restartScreencast(ctx, session)
+	}
+	time.AfterFunc(browserMotionSettle, func() {
+		v.mu.Lock()
+		if gen != v.motionGen || !v.motion {
+			v.mu.Unlock()
+			return
+		}
+		v.motion = false
+		session := v.session
+		v.mu.Unlock()
+		if session == "" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		v.restartScreencast(ctx, session)
+	})
+}
+
+func (v *browserView) restartScreencast(ctx context.Context, session string) {
+	_ = v.client.call(ctx, session, "Page.stopScreencast", nil, nil)
+	_ = v.client.call(ctx, session, "Page.startScreencast", v.screencastParams(), nil)
 }
 
 // setFrameWidth restarts the screencast when the panel's pixel width changes.
@@ -469,7 +578,8 @@ func (v *browserView) waitFrame(ctx context.Context, after int64, waitMs int) {
 func (v *browserView) state(after int64) domain.BrowserState {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	state := domain.BrowserState{Available: !v.client.closed(), Kind: v.endpoint.Kind, Seq: v.seq, Width: v.width, Height: v.height}
+	state := domain.BrowserState{Available: !v.client.closed(), Kind: v.endpoint.Kind, Seq: v.seq, Width: v.width, Height: v.height,
+		ScrollX: v.scrollX, ScrollY: v.scrollY, ContentWidth: v.contentWidth, ContentHeight: v.contentHeight}
 	if !state.Available {
 		state.Reason = "浏览器连接已断开"
 	}
@@ -619,6 +729,12 @@ func (v *browserView) input(ctx context.Context, events []domain.BrowserInputEve
 	v.mu.Unlock()
 	if width <= 0 || height <= 0 {
 		width, height = 1280, 800
+	}
+	for _, ev := range events {
+		if ev.Type == "wheel" || ev.Type == "mouse" && ev.Action == "move" && ev.Buttons != 0 {
+			v.markMotion(ctx)
+			break
+		}
 	}
 	for _, ev := range events {
 		x, y := clampUnit(ev.X)*width, clampUnit(ev.Y)*height
