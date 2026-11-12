@@ -529,13 +529,14 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			repoInfo = map[string]any{"id": first.id, "name": first.name, "analyzed": false, "reason": first.reason}
 		}
 	}
+	rootDir := clarifySessionRoot(responsible.ID)
 	homeDir := clarifyCLIHome(responsible.ID)
 	sessionID := strings.TrimSpace(request.SessionID)
 	if sessionID == "" {
 		sessionID = strings.TrimSpace(issue.Clarification.SessionID)
 	}
 	resume := sessionID != ""
-	if resume && !clarifySessionReusable(issue, engine, homeDir, responsible.ID) {
+	if resume && !clarifySessionReusable(issue, engine, sessionID, rootDir, responsible.ID) {
 		emit("thought", map[string]string{"kind": "status", "text": "分析环境已变化，正在结合已有回答重新分析…"})
 		sessionID = ""
 	}
@@ -658,7 +659,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	var recoveredRaw string
 	for follow := 0; ; follow++ {
 		_, turnRaw, captured, err := h.runClarifyTurn(modelCtx, clarifyTurn{
-			WorkDir: workDir, Engine: engine, Bin: binPath, Prompt: turnPrompt, RunID: clarifyID,
+			WorkDir: workDir, Root: rootDir, Engine: engine, Bin: binPath, Prompt: turnPrompt, RunID: clarifyID,
 			SessionID: sessionID, HomeDir: homeDir, Resume: resume, Credentials: credentials, Opts: turnOpts,
 		}, emit)
 		if captured != "" {
@@ -674,7 +675,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 				fallbackPrompt = sessionContext + "\n" + turnPrompt
 			}
 			_, turnRaw, captured, err = h.runClarifyTurn(modelCtx, clarifyTurn{
-				WorkDir: workDir, Engine: engine, Bin: binPath, Prompt: fallbackPrompt, RunID: clarifyID,
+				WorkDir: workDir, Root: rootDir, Engine: engine, Bin: binPath, Prompt: fallbackPrompt, RunID: clarifyID,
 				SessionID: sessionID, HomeDir: homeDir, Resume: false, Credentials: credentials, Opts: turnOpts,
 			}, emit)
 			resume = false
@@ -734,8 +735,10 @@ func (h *streamHandlers) rememberClarifySession(issueID, sessionID string, userI
 }
 
 // clarifyTurn 是一次澄清进程需要的东西：引擎、二进制、会话位置和已装配好的全套凭据。
+// Root 是该责任人的引擎配置与登记目录，HomeDir 是进程 HOME（= Root/home）。
 type clarifyTurn struct {
 	WorkDir     string
+	Root        string
 	Engine      clarifyEngine
 	Bin         string
 	Prompt      string
@@ -751,8 +754,13 @@ func (h *streamHandlers) runClarifyTurn(ctx context.Context, turn clarifyTurn, e
 	if emit == nil {
 		emit = func(string, any) {}
 	}
+	// 各引擎的 MCP 配置与 thread/session 登记簿是按责任人共享的一份；同一责任人的两轮澄清
+	// 重叠时，后一轮写的网关 token 会被前一轮的进程读到，结论会串到别的单上。
+	turnLock := clarifyDirLock(turn.Root)
+	turnLock.Lock()
+	defer turnLock.Unlock()
 	invocation, err := prepareClarifyInvocation(turn.Engine, clarifyInvocationOpts{
-		Bin: turn.Bin, Root: turn.HomeDir, Config: turn.Opts.MCPConfig, Settings: turn.Opts.Settings,
+		Bin: turn.Bin, Root: turn.Root, Config: turn.Opts.MCPConfig, Settings: turn.Opts.Settings,
 		Prompt: turn.Prompt, Model: turn.Engine.Model, SystemPrompt: turn.Opts.SystemPrompt,
 		SessionID: turn.SessionID, RunID: turn.RunID, Resume: turn.Resume, SubmitOnly: turn.Opts.SubmitOnly,
 		User: clarifyEngineCredential(turn.Credentials, turn.Engine.ID),
@@ -772,7 +780,9 @@ func (h *streamHandlers) runClarifyTurn(ctx context.Context, turn clarifyTurn, e
 	// 每个引擎的行都先归一成 CodeBuddy 风格的 stream-json，会话 ID、思考流和结论兜底都只看
 	// 归一后的行；否则 Codex 的 JSON-RPC 和 agent CLI 的原生格式一律读不出东西。
 	handle := func(line string) {
-		if sid := captureClarifySessionID(line); sid != "" {
+		// 只认自己发出去的 ID：非 CodeBuddy 引擎在输出里报的是它自己的 native ID，用它覆盖
+		// 平台 ID 会让下一轮按错的键去找登记簿，永远续不上。
+		if sid := captureClarifySessionID(line); sid != "" && (turn.Engine.ID == assistantEngineCodeBuddy || sid == turn.SessionID) {
 			captured = sid
 		}
 		for _, ui := range clarifyStreamEvents(line) {

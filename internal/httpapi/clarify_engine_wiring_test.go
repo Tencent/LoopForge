@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 // Task 4: executeClarify 的引擎接线。这些测试钉住的是「用户选了哪个框架就真的用哪个跑」：
@@ -200,5 +202,163 @@ func TestClarifyToolVocabularyFollowsTheEngine(t *testing.T) {
 	}
 	if got := clarifyApplyToolVocabulary(text, assistantEngineCodeBuddy); got != text {
 		t.Fatalf("codebuddy 提示词被改写了：%s", got)
+	}
+}
+
+// 会话归属修正：非 CodeBuddy 引擎报的是它自己的 native ID，平台的 Clarification.SessionID
+// 必须保持我们发出去的那个 ID —— 各引擎的 thread/session 登记表都以它为键。
+func TestRunClarifyTurnKeepsThePlatformSessionID(t *testing.T) {
+	root := t.TempDir()
+	echo := filepath.Join(root, "echo-cli")
+	script := "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"result\",\"session_id\":\"native-9\",\"result\":\"{\\\"summary\\\":\\\"已确认\\\",\\\"ready\\\":true,\\\"questions\\\":[]}\"}'\n"
+	if err := os.WriteFile(echo, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := writeClarifyMCPFixture(t)
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h := &streamHandlers{}
+
+	_, _, captured, err := h.runClarifyTurn(context.Background(), clarifyTurn{
+		WorkDir: root, Root: root, HomeDir: home, Engine: clarifyEngineOf("claude-code:claude-opus-5"), Bin: echo,
+		Prompt: "p", RunID: "r-cc", SessionID: "af-1",
+		Credentials: runtime.RunCredentials{ClaudeCode: runtime.ProviderCredential{APIKey: "sk"}},
+		Opts:        clarifyTurnOpts{Native: true, MCPConfig: config},
+	}, nil)
+	if err != nil {
+		t.Fatalf("claude turn: %v", err)
+	}
+	if captured != "af-1" {
+		t.Fatalf("captured session = %q, want the platform id af-1（native ID 只进登记簿，不能顶掉平台 ID）", captured)
+	}
+	// 引擎的配置文件写在 Root 下，Root/home 必须就是进程 HOME，否则 CLI 根本读不到。
+	if _, err := os.Stat(filepath.Join(root, "claude-mcp.json")); err != nil {
+		t.Fatalf("claude mcp config not under Root: %v", err)
+	}
+
+	_, _, captured, err = h.runClarifyTurn(context.Background(), clarifyTurn{
+		WorkDir: root, Root: root, HomeDir: home, Engine: clarifyEngineOf("default"), Bin: echo,
+		Prompt: "p", RunID: "r-cb", SessionID: "af-1",
+		Credentials: runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: "test-key"}},
+		Opts:        clarifyTurnOpts{Native: true},
+	}, nil)
+	if err != nil {
+		t.Fatalf("codebuddy turn: %v", err)
+	}
+	if captured != "native-9" {
+		t.Fatalf("codebuddy must keep adopting its own session id, got %q", captured)
+	}
+}
+
+// 草稿澄清（还没建单）靠请求带回来的 sessionId 续跑，不能被探测不到 issue 会话而打断。
+func TestExecuteClarifyDraftKeepsItsSessionFromTheRequest(t *testing.T) {
+	root := t.TempDir()
+	args := filepath.Join(root, "args")
+	bin := clarifyFakeCLI(t, root, "codebuddy", args)
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	s := clarifyWiringStore(t, domain.User{ID: 13, CodeBuddyAPIKey: "test-key"})
+	home := clarifyCLIHome(13)
+	mustWriteClarifyFile(t, filepath.Join(home, ".codebuddy", "projects", "ws", "af-draft.jsonl"), "conversation\n")
+	h := &streamHandlers{deps: &deps{repo: s}}
+
+	if _, _, _, err := h.executeClarify(context.Background(), domain.Issue{ProjectID: "platform", AssigneeUserID: 13, Title: "草稿", Description: "说一半"},
+		chatClarifyRequest{ProjectID: "platform", Message: "继续", SessionID: "af-draft"}, nil); err != nil {
+		t.Fatalf("draft turn: %v", err)
+	}
+	log, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Split(string(log), "END_CALL\n")[0]
+	if !strings.Contains(first, "--resume\n") || !strings.Contains(first, "af-draft\n") {
+		t.Fatalf("草稿第二轮必须续上自己的会话：%s", first)
+	}
+	if strings.Contains(first, "分析环境已变化") {
+		t.Fatal("草稿不该被判定为环境变化")
+	}
+}
+
+// 同一责任人的澄清共用一个配置目录，重叠执行会让后一轮的 MCP 网关 token 覆盖前一轮正在
+// 读的文件，串到别的单上去。
+func TestExecuteClarifySerializesTurnsOfOneResponsibleUser(t *testing.T) {
+	root := t.TempDir()
+	trace := filepath.Join(root, "trace")
+	bin := filepath.Join(root, "codebuddy")
+	script := "#!/bin/sh\nprintf 'start\\n' >> '" + trace + "'\nsleep 0.3\nprintf 'end\\n' >> '" + trace + "'\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"{\\\"summary\\\":\\\"已确认\\\",\\\"ready\\\":true,\\\"questions\\\":[]}\"}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	s := clarifyWiringStore(t, domain.User{ID: 13, CodeBuddyAPIKey: "test-key"})
+	for _, id := range []string{"par-1", "par-2"} {
+		if err := s.PutIssue(domain.Issue{ID: id, ProjectID: "platform", AssigneeUserID: 13, Title: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &streamHandlers{deps: &deps{repo: s}}
+
+	var wg sync.WaitGroup
+	for _, id := range []string{"par-1", "par-2"} {
+		issueID := id
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			issue, _ := s.Issue(issueID)
+			if _, _, _, err := h.executeClarify(context.Background(), issue, chatClarifyRequest{Message: "继续"}, nil); err != nil {
+				t.Errorf("%s: %v", issueID, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	traceLog, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Fields(strings.TrimSpace(string(traceLog)))
+	if len(lines) == 0 || len(lines)%2 != 0 {
+		t.Fatalf("expected whole start/end pairs, got %v", lines)
+	}
+	for i, line := range lines {
+		want := "start"
+		if i%2 == 1 {
+			want = "end"
+		}
+		if line != want {
+			t.Fatalf("同一责任人的澄清在第 %d 行重叠了：%v", i, lines)
+		}
+	}
+}
+
+// 默认框架指向一个没装的 CLI 时，这一轮回退 CodeBuddy 并标记失效，而不是每轮都报错。
+func TestClarifyChoiceFallsBackWhenDefaultCLIsMissing(t *testing.T) {
+	root := t.TempDir()
+	emptyBin := filepath.Join(root, "emptybin")
+	if err := os.MkdirAll(emptyBin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", root)
+	t.Setenv("PATH", emptyBin)
+	t.Setenv("AGENTFLOW_CODEX_BIN", "")
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+
+	engine, err := (&streamHandlers{}).clarifyChoice(chatClarifyRequest{}, domain.Issue{},
+		domain.User{CodexAPIKey: "sk-x", ClarifyModel: "codex:gpt-5.5"})
+	if err != nil {
+		t.Fatalf("missing CLI must fall back, got %v", err)
+	}
+	if engine.ID != assistantEngineCodeBuddy || engine.ModelID != clarifyDefaultModel {
+		t.Fatalf("engine = %+v, want codebuddy/default", engine)
+	}
+	// 当场选中的框架哪怕没装也不回退：那是用户明确的选择，报错由起进程那步给出原因。
+	chosen, err := (&streamHandlers{}).clarifyChoice(chatClarifyRequest{Model: "codex:gpt-5.5"}, domain.Issue{},
+		domain.User{CodexAPIKey: "sk-x"})
+	if err != nil {
+		t.Fatalf("explicit choice must not error in the resolver: %v", err)
+	}
+	if chosen.ID != assistantEngineCodex {
+		t.Fatalf("explicit choice = %+v, want codex（宁缺不替）", chosen)
 	}
 }

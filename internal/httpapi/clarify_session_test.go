@@ -114,38 +114,39 @@ func mustWriteClarifyFile(t *testing.T, path, body string) {
 }
 
 func TestCanResumeClarifySessionUsesResponsibleUserHome(t *testing.T) {
-	root := t.TempDir()
-	ownerHome := filepath.Join(root, "1", "home")
-	newHome := filepath.Join(root, "13", "home")
-	mustWriteClarifyFile(t, filepath.Join(ownerHome, ".codebuddy", "projects", "repo", "old-session.jsonl"), "conversation\n")
+	base := t.TempDir()
+	ownerRoot := filepath.Join(base, "1")
+	newRoot := filepath.Join(base, "13")
+	// transcript 在 CLI 的 HOME（= Root/home）里，thread / native session 登记簿在 Root。
+	mustWriteClarifyFile(t, filepath.Join(ownerRoot, "home", ".codebuddy", "projects", "repo", "old-session.jsonl"), "conversation\n")
 	for _, tc := range []struct {
 		name        string
-		home        string
+		root        string
 		owner, user int64
 		want        bool
 	}{
-		{"same owner", ownerHome, 1, 1, true},
-		{"changed responsible user", newHome, 1, 13, false},
-		{"legacy same user", ownerHome, 0, 1, true},
-		{"legacy changed user", newHome, 0, 13, false},
-		{"missing file", newHome, 13, 13, false},
-		{"owner mismatch even with file", ownerHome, 13, 1, false},
+		{"same owner", ownerRoot, 1, 1, true},
+		{"changed responsible user", newRoot, 1, 13, false},
+		{"legacy same user", ownerRoot, 0, 1, true},
+		{"legacy changed user", newRoot, 0, 13, false},
+		{"missing file", newRoot, 13, 13, false},
+		{"owner mismatch even with file", ownerRoot, 13, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := canResumeClarifySession(tc.home, "codebuddy", "old-session", tc.owner, tc.user); got != tc.want {
+			if got := canResumeClarifySession(tc.root, "codebuddy", "old-session", tc.owner, tc.user); got != tc.want {
 				t.Fatalf("canResume=%v, want %v", got, tc.want)
 			}
 		})
 	}
 	for _, id := range []string{"", "../old-session", "*", "old-session?", ".."} {
-		if canResumeClarifySession(ownerHome, "codebuddy", id, 1, 1) {
+		if canResumeClarifySession(ownerRoot, "codebuddy", id, 1, 1) {
 			t.Fatalf("invalid session ID accepted: %q", id)
 		}
 	}
 }
 
 func TestCanResumeClarifySessionPerEngine(t *testing.T) {
-	home := t.TempDir()
+	root := t.TempDir()
 	for _, tc := range []struct {
 		name   string
 		engine string
@@ -154,56 +155,60 @@ func TestCanResumeClarifySessionPerEngine(t *testing.T) {
 		{"codex without a recorded thread", "codex", false},
 		{"opencode without a recorded session", "opencode", false},
 	} {
-		if got := canResumeClarifySession(home, tc.engine, "af-1", 1, 1); got != tc.want {
+		if got := canResumeClarifySession(root, tc.engine, "af-1", 1, 1); got != tc.want {
 			t.Fatalf("%s: canResume=%v, want %v", tc.name, got, tc.want)
 		}
 	}
-	// Claude Code derives its session UUID from the platform ID, so there is no
-	// bookkeeping file to consult; a missing transcript surfaces as an error the
-	// caller recovers from by replaying the history.
-	if !canResumeClarifySession(home, "claude-code", "af-1", 1, 1) {
+	// Claude Code 的 session UUID 由平台 ID 稳定推导，没有可探测的登记簿；会话缺失会以
+	// 错误形式出现，由调用方改为重放历史。
+	if !canResumeClarifySession(root, "claude-code", "af-1", 1, 1) {
 		t.Fatal("claude-code must be treated as resumable from its stable session ID")
 	}
-	// An engine the platform does not know must never resume.
-	if canResumeClarifySession(home, "foobar", "af-1", 1, 1) {
+	// 平台不认识的引擎永不续跑。
+	if canResumeClarifySession(root, "foobar", "af-1", 1, 1) {
 		t.Fatal("unknown engine must not resume")
 	}
 
-	mustWriteClarifyFile(t, codexThreadsPath(home), `{"af-1":"thread-1"}`)
-	if !canResumeClarifySession(home, "codex", "af-1", 1, 1) {
+	mustWriteClarifyFile(t, codexThreadsPath(root), `{"af-1":"thread-1"}`)
+	if !canResumeClarifySession(root, "codex", "af-1", 1, 1) {
 		t.Fatal("codex must resume once its thread is recorded")
 	}
-	if canResumeClarifySession(home, "codex", "af-2", 1, 1) {
+	if canResumeClarifySession(root, "codex", "af-2", 1, 1) {
 		t.Fatal("a different clarification session must not borrow the recorded thread")
 	}
 
-	mustWriteClarifyFile(t, agentCLISessionsPath(home), `{"opencode:af-1":"native-1"}`)
-	if !canResumeClarifySession(home, "opencode", "af-1", 1, 1) {
+	mustWriteClarifyFile(t, agentCLISessionsPath(root), `{"opencode:af-1":"native-1"}`)
+	if !canResumeClarifySession(root, "opencode", "af-1", 1, 1) {
 		t.Fatal("opencode must resume once its native session is recorded")
 	}
-	if canResumeClarifySession(home, "cursor", "af-1", 1, 1) {
+	if canResumeClarifySession(root, "cursor", "af-1", 1, 1) {
 		t.Fatal("another CLI must not reuse opencode's native session")
 	}
 }
 
 func TestClarifySessionReusableRejectsEngineSwitch(t *testing.T) {
-	home := t.TempDir()
-	mustWriteClarifyFile(t, filepath.Join(home, ".codebuddy", "projects", "repo", "af-1.jsonl"), "conversation\n")
+	root := t.TempDir()
+	mustWriteClarifyFile(t, filepath.Join(root, "home", ".codebuddy", "projects", "repo", "af-1.jsonl"), "conversation\n")
 	issue := domain.Issue{ID: "iss-1", Clarification: domain.ClarificationAssessment{
 		SessionID: "af-1", SessionUserID: 1, ModelID: "codex:gpt-5.5",
 	}}
-	if clarifySessionReusable(issue, clarifyEngineOf("default"), home, 1) {
+	if clarifySessionReusable(issue, clarifyEngineOf("default"), "af-1", root, 1) {
 		t.Fatal("a CodeBuddy turn must not resume the session Codex started")
 	}
-	mustWriteClarifyFile(t, codexThreadsPath(home), `{"af-1":"thread-1"}`)
-	if !clarifySessionReusable(issue, clarifyEngineOf("codex:gpt-5.5"), home, 1) {
+	mustWriteClarifyFile(t, codexThreadsPath(root), `{"af-1":"thread-1"}`)
+	if !clarifySessionReusable(issue, clarifyEngineOf("codex:gpt-5.5"), "af-1", root, 1) {
 		t.Fatal("staying on the engine that started the session must keep resuming")
 	}
 	legacy := domain.Issue{ID: "iss-2", Clarification: domain.ClarificationAssessment{
 		SessionID: "af-1", SessionUserID: 1,
 	}}
-	if !clarifySessionReusable(legacy, clarifyEngineOf("default"), home, 1) {
+	if !clarifySessionReusable(legacy, clarifyEngineOf("default"), "af-1", root, 1) {
 		t.Fatal("assessments saved before engine pinning keep resuming on their transcript")
+	}
+	// 草稿还没建单，会话 ID 靠前端带回来：探测必须用这个有效值，否则每轮都从头重放。
+	draft := domain.Issue{ProjectID: "platform"}
+	if !clarifySessionReusable(draft, clarifyEngineOf("default"), "af-1", root, 1) {
+		t.Fatal("a draft continuation must resume from the session id the client carries")
 	}
 }
 

@@ -244,7 +244,7 @@ function renderIssueDetailTab(){
       if(!wasSelected)b.classList.add('selected');
     }
   });
-  host.querySelectorAll('[data-clarify-model]').forEach(el=>bindClarifyModelPicker(el, clarifyScopeForIssue(issue), issue.clarification?.modelId||''));
+  host.querySelectorAll('[data-clarify-model]').forEach(el=>bindClarifyModelPicker(el, clarifyScopeForIssue(issue), issue));
   const clarifyScope=clarifyScopeForIssue(issue);
   if(clarifyScope&&!clarifyEngineCatalogCached(clarifyScope))clarifyEngineCatalog(clarifyScope).then(()=>{
     if(state.issueDetailData?.issue?.id===issue.id&&state.issueDetailTab==='clarify')paintIssueClarifyAvailability(issue);

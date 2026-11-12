@@ -124,7 +124,7 @@ vm.runInContext(moduleSource, ctx);
   assert.deepEqual(picked, ['glm-b'], '禁用项不能触发选择');
 
   // 2) 真实的澄清选择器 helper：作用域查询、分组映射、生效值、责任人提示。
-  for (const name of ['selectedClarifyModel', 'setClarifyModel', 'clarifyEngineCacheKey', 'clarifyEngineCatalogCached', 'clarifyEngineCatalog', 'resetClarifyEngineCatalogCache', 'clarifyPickerGroups', 'clarifyEffectiveModel', 'clarifyResponsibleHint']) {
+  for (const name of ['clarifyPickOf', 'selectedClarifyModel', 'setClarifyModel', 'clarifyEngineCacheKey', 'clarifyEngineCatalogCached', 'clarifyEngineCatalog', 'resetClarifyEngineCatalogCache', 'clarifyModelEngine', 'clarifyEngineAvailable', 'clarifyPickerGroups', 'clarifyEffectiveModel', 'clarifyResponsibleName', 'clarifyResponsibleHint']) {
     vm.runInContext(extract(name), ctx);
   }
 
@@ -143,11 +143,20 @@ vm.runInContext(moduleSource, ctx);
   assert.equal(disabledGroup.reason, engineCatalog.engines[2].reason, '原因要原样带出来');
   assert.equal(mapped.find(group => group.id === 'codex').disabled, false);
 
+  // 向导（没有单）用全局那一份临时选择；有单时单自己的临时选择 > 单记住的框架 > 接口默认。
   store.set('agentflow.clarifyModel', 'glm-a');
-  assert.equal(ctx.clarifyEffectiveModel(first, null), 'glm-a', '浏览器里的临时选择优先');
-  assert.equal(ctx.clarifyEffectiveModel(first, { clarification: { modelId: 'codex:gpt-5.5' } }), 'codex:gpt-5.5', '这张单记住的框架优先于临时选择');
+  assert.equal(ctx.clarifyEffectiveModel(first, null), 'glm-a', '向导里的临时选择优先');
+  const pinnedIssue = { id: 'i9', clarification: { modelId: 'codex:gpt-5.5' } };
+  assert.equal(ctx.clarifyEffectiveModel(first, pinnedIssue), 'codex:gpt-5.5', '全局临时选择不能把别的单换掉引擎');
+  store.set('agentflow.clarifyModel.i9', 'glm-b');
+  assert.equal(ctx.clarifyEffectiveModel(first, pinnedIssue), 'glm-b', '在这张单上显式换框架必须生效');
+  store.set('agentflow.clarifyModel.i9', 'claude-code:claude-opus-5');
+  assert.equal(ctx.clarifyEffectiveModel(first, pinnedIssue), 'codex:gpt-5.5', '跑不了的框架不能被发出去');
   store.clear();
+  assert.equal(ctx.clarifyEffectiveModel(first, pinnedIssue), 'codex:gpt-5.5', '单记住的框架优先');
   assert.equal(ctx.clarifyEffectiveModel(first, null), 'codex:gpt-5.5', '没有临时选择时用接口给的默认');
+  assert.equal(ctx.clarifyEngineAvailable(first, 'glm-a'), true);
+  assert.equal(ctx.clarifyEngineAvailable(first, 'claude-code:claude-opus-5'), false, '未配 Key 的框架判为不可用');
 
   const hint = ctx.clarifyResponsibleHint(first);
   assert.ok(hint.includes('澄清将使用这位责任人的凭据'), '责任人不是自己要说明用的是谁的凭据');

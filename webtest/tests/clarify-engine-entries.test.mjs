@@ -8,7 +8,7 @@ import { loadApp, settle } from '../lib/load-app.mjs';
 const engineEngines = [
   { id: 'codebuddy', name: 'CodeBuddy', configured: true, available: true, reason: '', credential: 'codeBuddyApiKey', models: [{ id: 'glm-a', name: 'GLM A' }] },
   { id: 'codex', name: 'Codex', configured: true, available: true, reason: '', credential: 'codexApiKey', models: [{ id: 'codex:gpt-5.5', name: 'GPT 5.5', engine: 'codex' }] },
-  { id: 'claude-code', name: 'Claude Code', configured: false, available: false, reason: '请先在个人配置中配置 Claude Code API Key 后再使用 Claude Code 模型', credential: 'claudeCodeApiKey', models: [] },
+  { id: 'claude-code', name: 'Claude Code', configured: false, available: false, reason: '请先在个人配置中配置 Claude Code API Key 后再使用 Claude Code 模型', credential: 'claudeCodeApiKey', models: [{ id: 'claude-code:claude-opus-5', name: 'Claude Opus 5', engine: 'claude-code' }] },
 ];
 
 test('the new-requirement wizard asks which frameworks the project owner can run and clarifies on the effective one', async (t) => {
@@ -101,4 +101,66 @@ test('personal settings keep a default clarification framework and save it throu
   app.evaluate(`state.currentUser={...state.currentUser,clarifyModel:'claude-code:claude-opus-5'};state.data.users[0]=state.currentUser;renderCredentialPanel()`);
   await settle(3);
   assert.match(row().textContent, /已失效，当前用 CodeBuddy/, '失效的默认值要显式标出来');
+});
+
+test('the wizard menu is grouped by framework and a framework that cannot run cannot be picked', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const me = Number(app.evaluate('Number(state.currentUser?.id)||0'));
+  app.router.get(/^\/api\/clarify-engines/, {
+    responsibleUserId: me, responsibleUserName: '我', default: 'codex:gpt-5.5', defaultStale: false, engines: engineEngines,
+  });
+  await app.evaluate('openRequirementWizard()');
+  await new Promise(resolve => setTimeout(resolve, 120));
+  await settle(3);
+  const picker = app.document.querySelector('#reqClarifyModelPicker');
+  picker.querySelector('[data-model-toggle]').click();
+  await settle(3);
+  const groups = [...picker.querySelectorAll('.ai-model-group')];
+  assert.ok(groups.length >= 3, `菜单要按框架分组，实际 ${groups.length} 组`);
+  assert.ok(groups.some(group => /Claude Code/.test(group.textContent) && /请先在个人配置中配置/.test(group.textContent)),
+    '跑不了的框架要整组置灰并写明原因');
+  const disabled = [...picker.querySelectorAll('.ai-model-option')].filter(option => option.disabled);
+  assert.deepEqual(disabled.map(option => option.dataset.id), ['claude-code:claude-opus-5']);
+  disabled.forEach(option => option.click());
+  assert.equal(picker.querySelector('[data-clarify-model-value]').value, 'codex:gpt-5.5', '禁用项点了不算选');
+  const other = [...picker.querySelectorAll('.ai-model-option')].find(option => option.dataset.id === 'glm-a');
+  other.click();
+  await settle(3);
+  assert.equal(picker.querySelector('[data-clarify-model-value]').value, 'glm-a', '可用项点得动');
+});
+
+test('switching framework inside the issue drawer sends the new one and leaves other items alone', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false}`);
+  app.router.get(/^\/api\/clarify-engines/, {
+    responsibleUserId: 1, responsibleUserName: '我', default: 'glm-a', engines: engineEngines,
+  });
+  const issue = { ...app.evaluate('structuredClone(state.data.issues[0])'), id: 'issue-2',
+    clarification: { status: 'in_progress', modelId: 'codex:gpt-5.5', questions: [] } };
+  app.router.post('/api/issues/issue-2/chat-clarify', {
+    issue: { ...issue, clarification: { ...issue.clarification, status: 'ready', summary: 'Clarified', modelId: 'glm-a' } }, ready: true,
+  });
+  app.evaluate(`state.data.issues=[${JSON.stringify(issue)}];
+    state.issueDetailData={issue:state.data.issues[0],comments:[],run:null,task:null,requirement:null};
+    state.issueDetailTab='clarify';state.drawerOpen=true;renderIssueDetailTab()`);
+  await new Promise(resolve => setTimeout(resolve, 120));
+  await settle(3);
+
+  const picker = app.document.querySelector('.clarify-workspace [data-clarify-model]');
+  assert.equal(picker.querySelector('[data-clarify-model-value]').value, 'codex:gpt-5.5', '一开始显示这张单记住的框架');
+  picker.querySelector('[data-model-toggle]').click();
+  await settle(3);
+  const target = [...picker.querySelectorAll('.ai-model-option')].find(option => option.dataset.id === 'glm-a');
+  assert.ok(target && !target.disabled, 'CodeBuddy 的模型要能选');
+  target.click();
+  await settle(3);
+  assert.equal(app.evaluate(`localStorage.getItem('agentflow.clarifyModel.issue-2')`), 'glm-a', '换框架只记在这张单上');
+  assert.equal(app.evaluate(`localStorage.getItem('agentflow.clarifyModel')`), null, '不能顺手改掉全局偏好');
+
+  await app.evaluate(`sendIssueClarification('换框架继续')`);
+  await settle(4);
+  const call = app.router.calls.filter(c => c.path === '/api/issues/issue-2/chat-clarify').at(-1);
+  assert.equal(call.body.model, 'glm-a', '显式换框架后必须真的发给新框架');
 });

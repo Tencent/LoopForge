@@ -267,3 +267,29 @@ func TestClarifyEnginesIncludeTheFullEngineSet(t *testing.T) {
 		t.Fatalf("claude-code = %+v, want available because the platform installs it on first use", claude)
 	}
 }
+
+// Key 还在但控制面没装这个 CLI：默认要算失效并回退，不能每一轮都报错卡住澄清。
+func TestClarifyEnginesMarksStaleDefaultWhenCLIsMissing(t *testing.T) {
+	st, g, client := clarifyEnginesFixture(t)
+	if err := st.PutUser(domain.User{LoginName: "nocli", CodexAPIKey: "sk-codex", ClarifyModel: "codex:gpt-5.5"}); err != nil {
+		t.Fatal(err)
+	}
+	project := clarifyEngineProjectFor(t, st, "nocli")
+	catalog := decodeClarifyEngineCatalog(t, getClarifyEngines(t, st, g, client, "nocli", "?projectId="+project))
+	codex := clarifyEngineOptionOf(t, catalog, "codex")
+	if codex.Available || !strings.Contains(codex.Reason, "Codex") {
+		t.Fatalf("codex = %+v, want unavailable because the CLI is missing", codex)
+	}
+	if catalog.Default != clarifyDefaultModel || !catalog.DefaultStale {
+		t.Fatalf("default = %q stale=%v, want the CodeBuddy fallback flagged", catalog.Default, catalog.DefaultStale)
+	}
+	engine, err := (&streamHandlers{}).clarifyChoice(chatClarifyRequest{}, domain.Issue{
+		Clarification: domain.ClarificationAssessment{ModelID: "codex:gpt-5.5"},
+	}, domain.User{CodexAPIKey: "sk-codex"})
+	if err != nil {
+		t.Fatalf("stale history must fall back, got %v", err)
+	}
+	if engine.ID != assistantEngineCodeBuddy {
+		t.Fatalf("engine = %+v, want the fallback", engine)
+	}
+}

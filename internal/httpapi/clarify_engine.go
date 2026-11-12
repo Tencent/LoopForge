@@ -173,10 +173,21 @@ func clarifySubmitOnlySupported(engine clarifyEngine) bool {
 // CLI 自己说找不到 conversation。调用方据此改为重放已有历史。
 var errClarifySessionMissing = errors.New("澄清会话不存在，无法续接")
 
+// clarifyEngineRunnable 判断这台控制面现在能不能起这个引擎。Claude Code 不算「没装」：
+// 它不在镜像里，平台在首次使用时从 npm 安装（clarifyEngineBin 走同一条路）。
+func clarifyEngineRunnable(engineID string) bool {
+	if engineID == assistantEngineClaude {
+		return true
+	}
+	_, err := resolveAssistantEngineBin(engineID)
+	return err == nil
+}
+
 // clarifyChoice 决定这一轮澄清用哪个框架：本次请求的选择 > 这张单已经记住的框架 >
 // 责任人的个人默认 > CodeBuddy。只有第一项不许回退——用户当场选的框架缺凭据就报错，
-// 因为静默换回 CodeBuddy 正是这次要拆掉的东西。后两项是历史数据与偏好配置，失效了就用
-// 默认值，由 /api/clarify-engines 以 defaultStale 报给界面。
+// 因为静默换回 CodeBuddy 正是这次要拆掉的东西。后两项是历史数据与偏好配置，缺 Key、缺
+// Base URL 或这台机器上跑不起来时都回退到下一档，由 /api/clarify-engines 以 defaultStale
+// 报给界面。
 func (h *streamHandlers) clarifyChoice(request chatClarifyRequest, issue domain.Issue, responsible domain.User) (clarifyEngine, error) {
 	if raw := strings.TrimSpace(request.Model); raw != "" {
 		return clarifyResolveModel(raw, responsible)
@@ -188,9 +199,11 @@ func (h *streamHandlers) clarifyChoice(request chatClarifyRequest, issue domain.
 		if fallback == "" {
 			continue
 		}
-		if engine, err := clarifyResolveModel(fallback, responsible); err == nil {
-			return engine, nil
+		engine, err := clarifyResolveModel(fallback, responsible)
+		if err != nil || !clarifyEngineRunnable(engine.ID) {
+			continue
 		}
+		return engine, nil
 	}
 	return clarifyResolveModel("", responsible)
 }
@@ -315,9 +328,10 @@ func clarifyEngineCatalogFor(ctx context.Context, responsible domain.User, spons
 		Default:             clarifyDefaultModel,
 		Engines:             clarifyEngineAvailability(ctx, responsible, sponsored),
 	}
-	// 个人默认失效不报错，只标记：由界面显式说明「已失效，当前用 CodeBuddy」。
+	// 个人默认失效（缺 Key，或这台机器现在跑不起来）不报错，只标记：界面要显式说
+	// 「已失效，当前用 CodeBuddy」，不能静默换。
 	if raw := strings.TrimSpace(responsible.ClarifyModel); raw != "" {
-		if engine, err := clarifyResolveModel(raw, responsible); err == nil {
+		if engine, err := clarifyResolveModel(raw, responsible); err == nil && clarifyEngineRunnable(engine.ID) {
 			catalog.Default = engine.ModelID
 		} else {
 			catalog.DefaultStale = true

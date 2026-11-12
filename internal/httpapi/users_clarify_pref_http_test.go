@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -112,7 +114,18 @@ func TestClarifyModelPreferenceAPI(t *testing.T) {
 	}
 }
 
+// fakeClarifyEngineBin 造一个可执行文件，让「这台机器装了该引擎」成为可控前提。
+func fakeClarifyEngineBin(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "engine")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestClarifyChoiceUsesPersonalDefaultBeforeFallingBack(t *testing.T) {
+	t.Setenv("AGENTFLOW_CODEX_BIN", fakeClarifyEngineBin(t))
 	user := domain.User{CodexAPIKey: "sk-x", ClarifyModel: "codex:gpt-5.5"}
 	h := &streamHandlers{}
 

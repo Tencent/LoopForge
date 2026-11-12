@@ -675,9 +675,14 @@ function paintRequirementComposerChrome(){
     bindClarifyModelPicker(picker,scope);
     const api=window.AgentFlowAssistantModels,toggle=picker.querySelector('[data-model-toggle]');
     if(!api||!toggle)return;
-    api.paint(toggle, clarifyEffectiveModel(clarifyEngineCatalogCached(scope),null));
-    // 可用性到了才能把标签刷成真正会用的那个框架。
-    if(scope)clarifyEngineCatalog(scope).then(catalog=>{if(catalog)api.paint(toggle, clarifyEffectiveModel(catalog,null))});
+    const paint=catalog=>{
+      api.paint(toggle, clarifyEffectiveModel(catalog,null));
+      const name=clarifyResponsibleName(catalog);
+      // 向导草稿的责任人是项目 Owner：工具条太窄，把「用谁的凭据」挂在悬停上。
+      toggle.title=name?`澄清将使用这位责任人的凭据：${name}`:'';
+    };
+    paint(clarifyEngineCatalogCached(scope));
+    if(scope)clarifyEngineCatalog(scope).then(paint);
   }
 }
 function resetRequirementComposerState(){

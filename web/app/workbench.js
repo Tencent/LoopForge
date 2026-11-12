@@ -604,7 +604,7 @@ function clarifyPreferenceLabel(user,modelId){
 }
 function clarifyPreferenceRowHTML(user){
   const selected=(user&&user.clarifyModel)||'';
-  return `<div class="credential-row clarify-pref-row" data-clarify-pref><div class="credential-row-main"><div class="credential-row-who"><b>需求澄清 · 默认框架与模型<span>偏好</span></b><small>新建需求和需求详情里的澄清默认用它；澄清时可以临时改，临时选择不写回这里。</small></div><div class="credential-row-end"><span class="clarify-pref-state">${escapeHTML(clarifyPreferenceLabel(user,selected))}</span>${clarifyPreferenceStaleNote(user)}<div class="clarify-model-field" id="clarifyPrefPicker" data-clarify-pref-picker><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="other">AI</span><span data-model-label>选择框架</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div></div></div>`;
+  return `<div class="credential-row clarify-pref-row" data-clarify-pref><div class="credential-row-main"><div class="credential-row-who"><b>需求澄清 · 默认框架与模型<span>偏好</span></b><small>你是需求责任人（或项目 Owner）时，澄清默认用它；澄清时可以临时改，临时选择不写回这里。</small></div><div class="credential-row-end"><span class="clarify-pref-state">${escapeHTML(clarifyPreferenceLabel(user,selected))}</span>${clarifyPreferenceStaleNote(user)}<div class="clarify-model-field" id="clarifyPrefPicker" data-clarify-pref-picker><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="other">AI</span><span data-model-label>选择框架</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div></div></div>`;
 }
 async function saveClarifyPreference(modelId){
   const user=state.currentUser;
@@ -755,6 +755,8 @@ function setCredentialButtonBusy(button,label){
 function storeCredentialUser(saved){
   const users=state.data.users||(state.data.users=[]),index=users.findIndex(u=>Number(u.id)===Number(saved.id));
   if(index>=0)users[index]=saved;else users.push(saved);
+  // 凭据一变，「哪个框架能跑」就不再是刚才那个答案了；清掉缓存，下次打开菜单重新问。
+  if(typeof resetClarifyEngineCatalogCache==='function')resetClarifyEngineCatalogCache();
 }
 function notifyCredentialsChanged(){$('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin)}
 async function saveCredential(key,values={},options={}){
