@@ -32,7 +32,7 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 		}
 		entries[id] = entry
 	}
-	if err := runtime.WriteAgentCLIMCPConfig(kind, filepath.Join(o.Root, "home"), entries, runtime.AgentCLIMCPOptions{ReadOnly: true}); err != nil {
+	if err := runtime.WriteAgentCLIMCPConfig(kind, runtime.AgentCLIHome{Base: o.Root, Rel: "home"}, entries, runtime.AgentCLIMCPOptions{ReadOnly: true}); err != nil {
 		return assistantCLIInvocation{}, err
 	}
 	resume := ""
