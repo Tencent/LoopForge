@@ -245,7 +245,15 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if v.DefaultBranch == "" {
 		v.DefaultBranch = "master"
 	}
+	if domain.URLHasCredentials(v.WebURL) {
+		c.JSON(400, map[string]string{"error": "webUrl 不能包含账号、密码或 Token，请去掉 @ 前的部分"})
+		return
+	}
 	if v.CloneURL != "" {
+		if domain.URLHasCredentials(v.CloneURL) {
+			c.JSON(400, map[string]string{"error": "cloneUrl 不能包含账号、密码或 Token，请去掉 @ 前的部分，并在个人配置中填写 Git Token"})
+			return
+		}
 		if err := gitwork.ValidateRemoteURL(v.CloneURL, !authRequired() || h.isPlatformAdmin(c.Request)); err != nil {
 			c.JSON(400, map[string]string{"error": "cloneUrl 无效：" + err.Error()})
 			return

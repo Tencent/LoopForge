@@ -1223,7 +1223,7 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	ctx = procwatch.WithObserver(ctx, func(event procwatch.Event) { log.Printf("runner checkout: %s", event.Message) })
 	tail, err := gitwork.Watch(repositoryGitContext(ctx, *repo), workspace, watch, args...)
 	if err != nil {
-		return fmt.Errorf("git clone %s: %w (%s)", repo.CloneURL, err, cloneOutput([]byte(tail), repo.GitToken))
+		return fmt.Errorf("git clone %s: %w (%s)", domain.StripURLCredentials(repo.CloneURL), err, cloneOutput([]byte(tail), repo.GitToken))
 	}
 	// The branch steps below keep the bound they always had.
 	cloneCtx := ctx
