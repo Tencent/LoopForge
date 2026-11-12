@@ -144,7 +144,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			respond(c, err)
 			return
 		}
-		c.JSON(201, v)
+		c.JSON(201, publicRun(v, false))
 		return
 	}
 }

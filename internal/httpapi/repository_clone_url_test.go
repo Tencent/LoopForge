@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -94,5 +95,28 @@ func TestLegacyCloneURLCredentialsStayOutOfPromptAndRunViews(t *testing.T) {
 		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "s3cret-token") || !strings.Contains(rec.Body.String(), "https://github.com/acme/app.git") {
 			t.Fatalf("GET %s = %d leaks or drops the clone URL: %s", path, rec.Code, rec.Body.String())
 		}
+	}
+
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-generic", Name: "Legacy generic", Generic: true, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	project, ok := f.s.Project("platform")
+	if !ok {
+		t.Fatal("platform project missing")
+	}
+	project.DefaultRepositoryID = "legacy-run"
+	if err := f.s.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	rec = cvBRequest(t, f, http.MethodPost, "/api/runs", map[string]any{"workflowId": "legacy-generic", "input": "x", "projectId": "platform"}, true)
+	if rec.Code != http.StatusCreated || strings.Contains(rec.Body.String(), "s3cret-token") || !strings.Contains(rec.Body.String(), "https://github.com/acme/app.git") {
+		t.Fatalf("POST /api/runs = %d leaks or drops the clone URL: %s", rec.Code, rec.Body.String())
+	}
+	var started domain.Run
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	if stored, ok := f.s.Run(started.ID); !ok || len(stored.Repositories) == 0 || stored.Repositories[0].CloneURL != legacyURL {
+		t.Fatalf("stored manual run must keep the clone URL it clones with: %+v", stored.Repositories)
 	}
 }
