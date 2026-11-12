@@ -1,0 +1,37 @@
+name: apt-dns-check
+
+# Temporary diagnostic for the 2026-11-11 runner failure. Do not merge.
+# `playwright install --with-deps` dies when these hosts do not resolve.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Resolve Ubuntu archive hosts and try apt
+        run: |
+          set +e
+          echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          fail=0
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com packages.microsoft.com; do
+            echo "-- ${host}"
+            getent hosts "${host}"
+            code=$?
+            echo "getent_exit:${code}"
+            if [ "${code}" -ne 0 ] && [ "${host}" != "packages.microsoft.com" ]; then
+              fail=1
+            fi
+          done
+          echo "=== apt-get update ==="
+          sudo apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          apt_code=$?
+          echo "apt_exit:${apt_code}"
+          if [ "${apt_code}" -ne 0 ]; then
+            fail=1
+          fi
+          exit "${fail}"
