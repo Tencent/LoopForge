@@ -49,6 +49,24 @@ func TestPublicRunnerTaskScrubsMultiRepositoryTokens(t *testing.T) {
 	}
 }
 
+func TestPublicRunnerTaskStripsCloneURLCredentials(t *testing.T) {
+	const legacyURL = "https://user:s3cret-token@github.com/acme/app.git"
+	task := RunnerTask{ID: "task-legacy", Invocation: &RunnerInvocation{
+		Repository:   &RunnerRepository{CloneURL: legacyURL},
+		Repositories: []RunnerRepository{{CloneURL: legacyURL}, {CloneURL: "https://ghp_tokenAsUser@github.com/acme/b.git"}},
+	}}
+	inv := PublicRunnerTask(task).Invocation
+	if inv.Repository.CloneURL != "https://github.com/acme/app.git" {
+		t.Fatalf("repository clone URL = %q", inv.Repository.CloneURL)
+	}
+	if inv.Repositories[0].CloneURL != "https://github.com/acme/app.git" || inv.Repositories[1].CloneURL != "https://github.com/acme/b.git" {
+		t.Fatalf("repositories clone URLs = %+v", inv.Repositories)
+	}
+	if task.Invocation.Repository.CloneURL != legacyURL || task.Invocation.Repositories[0].CloneURL != legacyURL {
+		t.Fatal("the claiming runner still needs the stored clone URL")
+	}
+}
+
 func TestAgentCLIRuntimeAuthModeIsPersonal(t *testing.T) {
 	r := Runner{Runtimes: []RunnerRuntime{
 		{Provider: "opencode", AuthMode: RuntimeAuthLocal},

@@ -349,9 +349,6 @@ func normalizeAssistantTask(in assistantTask, existing assistantTask) (assistant
 	if len([]rune(in.Name)) > 80 {
 		return in, errors.New("任务名称过长")
 	}
-	if len(in.Prompt) > 4000 {
-		return in, errors.New("任务指令过长")
-	}
 	if in.Cron != "" {
 		if _, err := parseAssistantCron(in.Cron); err != nil {
 			return in, errors.New("Cron 表达式无效，需为 5 段（分 时 日 月 周，东八区），例如 0 * * * *")

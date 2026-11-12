@@ -16,6 +16,7 @@ Fallback（仍发 main）的场景：
 """
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,25 +71,88 @@ FALLBACK_EVENTS = {
 }
 
 
-def _read_config() -> dict:
-    """读取 devflow 配置，合并 defaults + 用户覆写。"""
-    root = Path(_project_root())
-    defaults_path = root / ".codebuddy" / "assets" / "devflow.defaults.yaml"
-    config_path = root / ".codebuddy" / "devflow.config.yaml"
+def _read_auto_mode_without_yaml(text: str):
+    """Read only a plain multi.auto_mode block without a YAML dependency.
 
-    config = {}
-    for p in [defaults_path, config_path]:
-        if not p.is_file():
+    Unsupported syntax raises ValueError. Manual gates then stay with main.
+    """
+    in_multi = False
+    seen_multi = False
+    mode = None
+    child_indent = None
+    for raw in text.splitlines():
+        if raw.lstrip().startswith("#"):
             continue
+        line = re.split(r"\s+#", raw, maxsplit=1)[0].rstrip()
+        if not line.strip():
+            continue
+        if "\t" in line:
+            raise ValueError("Unsupported YAML indentation")
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0:
+            match = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9-]*):(?:\s+(.*))?", line)
+            if not match:
+                raise ValueError("Unsupported YAML mapping")
+            in_multi = match.group(1) == "multi"
+            if in_multi:
+                if seen_multi or match.group(2):
+                    raise ValueError("Unsupported multi mapping")
+                seen_multi = True
+                child_indent = None
+            continue
+        if not in_multi:
+            continue
+        # Complex multi settings need a full YAML parser.
+        if any(char in line for char in "&*|>{}[]"):
+            raise ValueError("Unsupported multi syntax")
+        if child_indent is None:
+            child_indent = indent
+        if indent != child_indent:
+            raise ValueError("Unsupported multi indentation")
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9-]*):(?:\s+(.*))?", line.strip())
+        if not match:
+            raise ValueError("Unsupported multi setting")
+        if match.group(1) == "auto_mode":
+            value = (match.group(2) or "").lower()
+            if mode is not None or value not in ("true", "false", "yes", "no", "on", "off"):
+                raise ValueError("Invalid auto_mode")
+            mode = value in ("true", "yes", "on")
+    return mode
+
+
+def _read_auto_mode() -> bool:
+    """Read defaults and the project override. Read errors reach the caller."""
+    root = Path(_project_root())
+    paths = [root / ".codebuddy/assets/devflow.defaults.yaml",
+             root / ".codebuddy/devflow.config.yaml"]
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        yaml = None
+
+    auto_mode = True
+    for path in paths:
         try:
-            import yaml  # type: ignore
-            with open(p, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-                if isinstance(data, dict):
-                    config.update(data)
-        except Exception:
-            pass
-    return config
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        if yaml is None:
+            mode = _read_auto_mode_without_yaml(text)
+        else:
+            data = yaml.safe_load(text)
+            if data is None:
+                continue
+            if not isinstance(data, dict):
+                raise ValueError("Config must be a mapping")
+            multi = data.get("multi", {})
+            if not isinstance(multi, dict):
+                raise ValueError("multi must be a mapping")
+            mode = multi.get("auto_mode")
+            if "auto_mode" in multi and not isinstance(mode, bool):
+                raise ValueError("auto_mode must be a boolean")
+        if mode is not None:
+            auto_mode = mode
+    return auto_mode
 
 
 def _append_decision(state_path: str, event: str, action: str) -> None:
@@ -212,9 +276,17 @@ def main() -> int:
         return 0
 
     # 4. 读配置：检查 auto_mode 和 manual_gates
-    config = _read_config()
-    multi_cfg = config.get("multi", {}) or {}
-    auto_mode = multi_cfg.get("auto_mode", True)
+    try:
+        auto_mode = _read_auto_mode()
+    except Exception:
+        auto_mode = False
+        if event in MANUAL_GATES:
+            _log_hook({
+                "decision": "fallback_to_main", "reason": "config_unreadable",
+                "sender": sender, "recipient": original_recipient, "event": event,
+            })
+            print(json.dumps({"continue": True}))
+            return 0
 
     # auto_mode=false 时，manual_gates 事件需回 main 等用户确认
     if not auto_mode and event in MANUAL_GATES:

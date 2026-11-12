@@ -54,6 +54,7 @@
 - 流程设计页 SOP 名称旁有一枚不占视觉重心的复制按钮（`#copyWorkflowName`，Harness `copy`，14px，默认弱化色）。它只把当前 SOP 名称写入剪贴板；点击不打开切换菜单。没有打开流程时按钮隐藏。悬停提示只用 `data-tip` 一处，不再同时写浏览器 `title`。切换列表里每个 SOP 名称右侧也有同样的复制按钮（`.fd-pop-copy`），只复制该行名称，不切换 SOP、不关闭菜单；这一处只用 `title`。
 - 设置模式与工作台模式切换通过共享过渡控制器衔接；过渡副本不得接受点击、键盘焦点或提交操作。
 - 凭据定位等跳转应在目标页面挂载后聚焦；用户已切换到其他页面时取消旧的焦点请求。
+- 对话失败如果是因为当前服务器没有安装所选 CLI，错误写明「没有安装」，并在同一条提示里提供「安装」按钮。点击后按钮变为「自动安装」，刷新页面也保持这个状态，直到安装结束。安装完成后，原来的「没有安装」或「AI 助手生成失败」改为可以重新发送。按钮只安装平台允许的 CLI。安装在服务器上继续，关闭页面也不会中断。
 - 个人配置里，Codex、Claude Code，以及带协议的 Agent CLI，可以维护模型目录：获取可用模型，勾选、排序、修改显示名。目录为空时，未填 Base URL 或协议是 Gemini 官方 API 则使用该 CLI 自带模型，填写了 Base URL 则跟随服务公布的模型。保存过的目录在官方服务和自定义地址上都生效。Cursor CLI 只使用官方模型。
 - 主题入口在左下角头像卡片（`#userProfilePopover`）的「外观」行：「浅色 / 深色 / 跟随系统」三段开关（`.upp-theme-seg`，`role="radiogroup"`），访客与登录卡片都显示，选项文案与 chatbot 设置一致，偏好写入共享键 `agentflow.theme.v3`。三段前分别是 Harness `sun`、`moon`、`monitor` 图标，悬停、聚焦或点击时播放一次动效；选中滑块由 SlidingTabs 驱动，卡片展开时立即对准当前选项。切换时页面颜色约 280ms 渐变，减少动态效果时直接切换。
 - 顶栏 `#themeToggle` 只在宽度 ≤1000px（图标栏隐藏）时显示，作为浅色、深色一键切换的兜底；宽屏下仅隐藏，DOM 节点保留给 AI 助手按钮定位。
@@ -132,7 +133,7 @@
 
 ### 启用视图与设置区容器
 
-按钮、页头、输入的映射只对登记视图生效：`#issuesView`、`#approvalsView`、`#assetsView`、`#mcpView`、`#botsView`、`#knowledgeView` 以及设置区各视图（`#settingsView`、`#projectsView`、`#runnersView`、`#agentsView`、`#metricsView`、`#businessDomainsView`、`#guideView`、`#platformView`、`#businessDomainManagementView`），外加挂到 `<body>` 的 `#agentModal`、`#customMcpModal`、`.pw-root`、`#kbDrawer`。
+按钮、页头、输入的映射只对登记视图生效：`#issuesView`、`#approvalsView`、`#assetsView`、`#mcpView`、`#botsView`、`#assistantView`、`#knowledgeView` 以及设置区各视图（`#settingsView`、`#projectsView`、`#runnersView`、`#agentsView`、`#metricsView`、`#businessDomainsView`、`#guideView`、`#platformView`、`#businessDomainManagementView`），外加挂到 `<body>` 的 `#agentModal`、`#customMcpModal`、`.pw-root`、`#kbDrawer`。
 
 设置区视图的外层内容统一居中、最大宽 1200px（`.page-view.active` 的直接子元素），页面不再各自限宽。流程设计（`#flowView`）、工作区页面、图标栏、侧栏与顶栏不受影响。
 
@@ -169,7 +170,7 @@
 - 当前环节使用 Status Badge，颜色由环节类型和文字共同决定：运行中蓝色呼吸点、排队中蓝色时钟、待澄清与待确认琥珀色、失败红色、已合入与已完成绿色、已关闭与未开始灰色。映射在 `issueStageTone()`。
 - 四个筛选由 `hui-select.js` 以触发器模式增强为 Harness Selector：原生 `select` 仍在 DOM 中负责取值和 `change`，增强层通过 MutationObserver 和 `value` 写入同步选项与文字。选项超过 5 个时显示搜索框，选了非默认值时触发器显示淡紫底。
 - 「更多」菜单、筛选面板和行内「⋯」共用同一套面板规格：8px 圆角、细边框、面板阴影，选项 36px，同一时刻只开一个浮层。
-- 需求的「删除需求」入口始终保留；不可删除时置灰，在菜单和详情中直接显示后端返回的具体原因，并提供查看澄清、相关运行或需求详情的入口。批量选择禁用不可删项，同时提供可展开的原因列表；未知删除条件提示刷新，不猜测执行历史。删除限制和服务端最终校验保持不变。
+- 需求的菜单和详情显示「删除需求」。有已结束的任务或运行记录、或需求已完成时，入口显示「强制删除」，危险操作确认框说明会一并清理执行数据。批量删除包含这类需求时，确认框显示需要强制删除的条数。澄清或执行尚未结束时，入口置灰并显示后端返回的原因和处理入口。未知删除条件提示刷新，服务端按完整历史校验。
 - 优先级使用信号格图标，紧急使用闪电图标；责任人前显示首字头像，Agent 用机器人图标，未指定用人像占位。超长编号单行截断，列宽上限 120px，悬停显示完整编号。
 - 窗口 1200px 以下搜索框、筛选按钮和项目数据块同步收窄，1024px 下筛选栏保持一行；960px 以下标题区、项目条和筛选栏改为上下堆叠。
 
@@ -330,6 +331,10 @@ Logo 默认 64px，小屏或短屏为 52px；标题为 36px，小屏为 30px。�
 
 行首图标块为中性灰：SOP 运行用 `workflow`，自由协作（`collaborationMode==='group'`）用 `chat`；自由协作行的进度显示「—」，不显示耗时。查看（`eye`）和删除（`trash`）图标按钮在悬停或键盘聚焦到行时显示，删除悬停变红；不可删除的行不输出删除按钮也不留占位。整行点击或按 Enter 进入详情。列表周期刷新时保留行或按钮上的键盘焦点。
 
+### 节点当前活动
+
+运行详情中，选中节点实际执行时，状态文字旁显示转圈，当前活动文字以约 2.4 秒一轮从左向右扫过高光。标签、模型信息与布局保持静止；实时日志只更新文本与状态类，避免重建元素打断动效。已完成、失败、取消、暂停、等待人工确认及子 SOP 待确认时均为静态。明暗主题沿用 Harness 文字令牌，长活动文字省略；减少动态效果或强制颜色模式下关闭两种动画，保留可读文字与静态状态图形。
+
 ## Bot 管理
 
 Bot 管理页（`#botsView`）按需求列表与运行记录列表的 Harness 先例绘制，接口、权限、三步引导和表单字段不变。令牌与共享组件见「设计规范」；动效只引用 `--bot-*` 时长与曲线令牌，曲线不在令牌以外重复声明。
@@ -357,6 +362,14 @@ Bot 管理页（`#botsView`）按需求列表与运行记录列表的 Harness �
 | 已取消 | 中性灰 | `close` |
 
 发送状态轮询（`botPatchDeliveryRow`）保留原徽标节点，只替换 `data-tone` 和内部图形，颜色因此可以过渡。
+
+## AI 助手设置
+
+界面上称「AI 助手」，避免和「Bot 管理」里的企业微信机器人混淆。设置页、SOP 建议卡片和子 Agent 面板都用这个名字。
+
+AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管理与记录」下紧跟 Bot 管理，图标为 Harness `sparkles`。页头只有 H1 和一句说明（先讲它是谁，再讲能设置什么）；内容和其他设置页一样铺满 1200px 居中容器，两块 14px 圆角面板：「主动派发」里是「主动派角色」「主动走 SOP」两行（默认关闭，面板说明写明打开后更主动，以及角色直接派、SOP 先确认），左侧标题 + 说明，右侧 `role="switch"` 开关；「自定义规则」是一个可纵向拉伸的输入框，右下角显示「N / 4000」。底部「保存」是页面唯一的实心按钮，没有改动或保存中时禁用；未登录只显示提示。样式在 `web/app/assistant-settings.css`，规则限定在 `#assistantView` 内，只引用 `--hui-*` 令牌。
+
+没有 @ SOP、也没有点名要走 SOP 时，AI 助手自己决定交给 SOP 的事是建议。每次批准由用户在卡片上确认；帮我批准由独立审查决定，未通过时同样变成建议卡片；完全权限下直接启动。角色始终直接派发，不弹卡片。`timing=start` 的建议 3 分钟无人处理就超时，服务端把事情交回 AI 助手自己做，不依赖浏览器还开着。决定通过 `POST /api/assistant/sessions/{id}/proposals` 提交。开关和自定义规则按用户存在 `assistant_preferences`，由 AutoMigrate 建表，接口是 `GET` / `PUT /api/assistant/preferences`。
 
 ## 角色定义弹窗
 
@@ -450,6 +463,7 @@ Bot 管理页（`#botsView`）按需求列表与运行记录列表的 Harness �
 | `web/knowledge.js`、`web/knowledge.css` | 知识中心的概览指标（`kbMetricsHTML`）、四个标签的面板与行模板（`kbPanel`、`kbRow`、`kbBadge`）、通用右侧抽屉 |
 | `web/app/runs.js`、`web/product-v4.css`（运行记录列表区段） | 运行记录列表的面板、标签计数、状态徽标和行模板 |
 | `web/app.js`（视图切换）、`web/product-v4.css`（`.page-context`） | 按视图是否自带页头切换 `body.view-has-heading`，隐藏重复的顶栏标题 |
+| `web/app/assistant-settings.js`、`web/app/assistant-settings.css` | AI 助手设置页的开关、自定义规则与保存 |
 | `web/app/bots.js`、`web/bots.css` | Bot 管理页的面板头（标签 / 面包屑）、列表行、状态徽标、引导编辑器与记录 |
 | `web/app/hui-controls.css` | Selector 面板，复选 / 单选 / 开关，确认对话框，日期浮层，上传区和 Tooltip 样式 |
 | `web/app/hui-date.js`、`hui-upload.js`、`hui-tooltip.js` | 日期浮层、上传拖拽区、`title` 接管的 Tooltip |

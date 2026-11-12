@@ -278,6 +278,15 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 				}
 				continue
 			}
+			if ref.Type == pageElementReference {
+				canonical, text, err := pageElementContext(ref)
+				if err != nil {
+					return err
+				}
+				m.References[j] = canonical
+				context.WriteString("引用（数据）：" + text + "\n")
+				continue
+			}
 			if req.RunID != "" {
 				r, ok := h.repo.RunState(req.RunID)
 				if !ok || !h.taskReferenceAllowed(r, ref.Type, ref.ID) {
@@ -320,9 +329,23 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 			req.attachmentOwners[a.ID] = attachmentOwner
 		}
 	}
+	prefs := h.repo.AssistantPreferences(user.ID)
 	if len(req.roles) > 0 {
-		context.WriteString("本项目的角色已作为子 Agent 提供（Agent 工具的 subagent_type=role-<角色ID>），各自带着角色的 prompt、规则和技能。任务明显属于某个角色的职责、或需要它的规则和技能时，可以自行派给它；简单问题自己处理。子 Agent 看不到本对话，派发的 prompt 要写清背景、要做什么、工作区里相关的仓库和文件路径。同一角色在本对话里已经派过（前几轮，或本轮早先 Agent 结果里的 Agent ID），默认传 resume=<agent ID> 复用那个子 Agent，让它带着之前的上下文继续；只有用户要求新开、新任务与它之前做的事无关、或要与它并行时才不传 resume。resume 失败时直接新开。\n")
+		context.WriteString("本项目的角色已作为子 Agent 提供（Agent 工具的 subagent_type=role-<角色ID>），各自带着角色的 prompt、规则和技能。")
+		if !prefs.ProactiveRoles {
+			context.WriteString("任务明显属于某个角色的职责、或需要它的规则和技能时，可以自行派给它；简单问题自己处理。")
+		}
+		context.WriteString("子 Agent 看不到本对话，派发的 prompt 要写清背景、要做什么、工作区里相关的仓库和文件路径。同一角色在本对话里已经派过（前几轮，或本轮早先 Agent 结果里的 Agent ID），默认传 resume=<agent ID> 复用那个子 Agent，让它带着之前的上下文继续；只有用户要求新开、新任务与它之前做的事无关、或要与它并行时才不传 resume。resume 失败时直接新开。\n")
 	}
+	hasSOP := false
+	for _, wf := range h.repo.Workflows() {
+		if req.ProjectID != "" && wf.ProjectID == req.ProjectID {
+			hasSOP = true
+			break
+		}
+	}
+	context.WriteString(delegationContext(req, prefs, normalizeAssistantApprovalMode(req.ApprovalMode), hasSOP))
+	context.WriteString(assistantInstructionsContext(prefs))
 	if len(req.roles) > 0 {
 		if stored, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok {
 			ids := roleAgentIDs(stored.Messages)

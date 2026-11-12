@@ -4,7 +4,6 @@ import (
 	"agentflow/internal/observability"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -43,6 +42,36 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
+	}
+	// Validate every private-home component before any credential binding can
+	// write configuration. The sandbox may have replaced a parent with a symlink.
+	if command.PrivateHome {
+		provider := PrivateHomeName(command)
+		hostHome, err := EnsureControlDirectory(workspace, "private-home", provider)
+		if err != nil {
+			return CommandSpec{}, fmt.Errorf("create private home: %w", err)
+		}
+		hostTmp, err := EnsureControlDirectory(workspace, "tmp", provider)
+		if err != nil {
+			return CommandSpec{}, fmt.Errorf("create private temp: %w", err)
+		}
+		if sandboxDriver(sandbox) == "docker" {
+			bound.environment["HOME"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "private-home", provider))
+			bound.environment["TMPDIR"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "tmp", provider))
+		} else {
+			bound.environment["HOME"] = hostHome
+			bound.environment["TMPDIR"] = hostTmp
+		}
+		if command.Provider == "codex" || command.Provider == "claude-code" {
+			dir, key := ".codex", "CODEX_HOME"
+			if command.Provider == "claude-code" {
+				dir, key = ".claude", "CLAUDE_CONFIG_DIR"
+			}
+			if _, err := EnsureControlDirectory(workspace, "private-home", provider, dir); err != nil {
+				return CommandSpec{}, err
+			}
+			bound.environment[key] = filepath.ToSlash(filepath.Join(bound.environment["HOME"], dir))
+		}
 	}
 	for _, binding := range command.CredentialBindings {
 		switch binding {
@@ -99,13 +128,16 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			}
 			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
 		case BindAgentCLI:
-			home, homeEnv := privateHomePaths(sandbox, workspace, command)
-			if !command.PrivateHome {
-				home = command.environment["HOME"]
-				homeEnv = home
-			}
-			if strings.TrimSpace(home) == "" {
-				return CommandSpec{}, fmt.Errorf("%s 需要独立的 HOME 目录", AgentCLILabel(command.Provider))
+			var home AgentCLIHome
+			homeEnv := bound.environment["HOME"]
+			if command.PrivateHome {
+				home = WorkspaceAgentCLIHome(workspace, PrivateHomeName(command))
+			} else {
+				homeEnv = command.environment["HOME"]
+				if strings.TrimSpace(homeEnv) == "" {
+					return CommandSpec{}, fmt.Errorf("%s 需要独立的 HOME 目录", AgentCLILabel(command.Provider))
+				}
+				home = HostAgentCLIHome(homeEnv)
 			}
 			argv, env, err := ApplyAgentCLICredential(command.Provider, credentials.AgentCLI[command.Provider], command.AgentCLI, home, homeEnv, bound.Argv)
 			if err != nil {
@@ -137,34 +169,6 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		bound.environment["OTEL_LOG_TOOL_DETAILS"] = "1"
 		bound.environment["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
 	}
-	if command.PrivateHome {
-		provider := PrivateHomeName(command)
-		hostHome := filepath.Join(workspace, ".agentflow", "private-home", provider)
-		hostTmp := filepath.Join(workspace, ".agentflow", "tmp", provider)
-		if err := os.MkdirAll(hostHome, 0o700); err != nil {
-			return CommandSpec{}, fmt.Errorf("create private home: %w", err)
-		}
-		if err := os.MkdirAll(hostTmp, 0o700); err != nil {
-			return CommandSpec{}, fmt.Errorf("create private temp: %w", err)
-		}
-		if sandboxDriver(sandbox) == "docker" {
-			bound.environment["HOME"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "private-home", provider))
-			bound.environment["TMPDIR"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "tmp", provider))
-		} else {
-			bound.environment["HOME"] = hostHome
-			bound.environment["TMPDIR"] = hostTmp
-		}
-		if command.Provider == "codex" || command.Provider == "claude-code" {
-			dir, key := ".codex", "CODEX_HOME"
-			if command.Provider == "claude-code" {
-				dir, key = ".claude", "CLAUDE_CONFIG_DIR"
-			}
-			if err := os.MkdirAll(filepath.Join(hostHome, dir), 0o700); err != nil {
-				return CommandSpec{}, err
-			}
-			bound.environment[key] = filepath.ToSlash(filepath.Join(bound.environment["HOME"], dir))
-		}
-	}
 	return bound, nil
 }
 
@@ -194,14 +198,17 @@ func AgentCLIPrivateHomeKey(kind, agentID string) string {
 // run in that HOME, sandboxed or not, because their MCP configuration is there.
 func BindAgentCLICommand(sandbox Sandbox, workspace string, command CommandSpec, cred ProviderCredential, argv []string) ([]string, map[string]string, error) {
 	name := PrivateHomeName(command)
-	home, homeEnv := privateHomePaths(sandbox, workspace, command)
-	tmp := filepath.Join(workspace, ".agentflow", "tmp", name)
-	for _, dir := range []string{home, tmp} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, nil, fmt.Errorf("create private home: %w", err)
-		}
+	_, homeEnv := privateHomePaths(sandbox, workspace, command)
+	// Every level is Lstat-checked: the workspace is writable from the sandbox,
+	// so .agentflow, private-home or the home itself may have become a symlink.
+	if _, err := EnsureControlDirectory(workspace, "private-home", name); err != nil {
+		return nil, nil, fmt.Errorf("create private home: %w", err)
 	}
-	argv, bound, err := ApplyAgentCLICredential(command.Provider, cred, command.AgentCLI, home, homeEnv, argv)
+	tmp, err := EnsureControlDirectory(workspace, "tmp", name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create private temp: %w", err)
+	}
+	argv, bound, err := ApplyAgentCLICredential(command.Provider, cred, command.AgentCLI, WorkspaceAgentCLIHome(workspace, name), homeEnv, argv)
 	if err != nil {
 		return nil, nil, err
 	}

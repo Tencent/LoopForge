@@ -23,7 +23,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -67,8 +67,10 @@ jobs:
           {
             echo "tag=${TAG}"
             echo "version=${version}"
+            echo "sha=$(git rev-parse HEAD)"
             echo "image=${image}"
             echo "prerelease=${prerelease}"
+            echo "commit=${tag_commit}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Select the preceding published stable platform release
@@ -112,7 +114,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
-            type=sha,prefix=sha-,format=long
+            type=raw,value=sha-${{ steps.release.outputs.sha }}
             type=raw,value=latest,enable=${{ steps.release.outputs.prerelease == 'false' }}
 
       - uses: docker/build-push-action@v7
@@ -121,6 +123,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            LOOPFORGE_COMMIT=${{ steps.release.outputs.commit }}
           # Make the version available for the real installer. Promote the
           # mutable X.Y/latest tags only after clean-install AND upgrade tests.
           tags: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
@@ -166,6 +170,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
           IMAGE: ${{ steps.release.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           notes_file="$RUNNER_TEMP/release-notes.md"
@@ -179,6 +184,10 @@ jobs:
           \`\`\`
 
           Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`).
+
+          Digest: \`${IMAGE}@${DIGEST}\`.
+
+          Where \`ghcr.io\` is slow, set \`MIRROR\` to a registry host that replaces it (for example \`MIRROR=ghcr.nju.edu.cn ./start.sh\`). This trusts that host: the download is tagged as the pinned name. Check it with \`docker image inspect --format '{{index .RepoDigests 0}}' ${IMAGE}:${VERSION}\` and compare the digest after \`@\`.
 
           ## Upgrade an existing installation
 

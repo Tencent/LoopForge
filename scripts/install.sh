@@ -10,6 +10,7 @@ cd "$(dirname "$0")/.."
 fail() { printf '\n✗ %s\n' "$1" >&2; exit 1; }
 step() { printf '\n▸ %s\n' "$1"; }
 source scripts/docker-access.sh
+source scripts/ghcr-mirror.sh
 
 confirm() {
   [[ "${LOOPFORGE_YES:-}" == 1 ]] && return 0
@@ -178,11 +179,27 @@ PY
 fi
 
 if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
-  step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
-  docker_access compose --profile platform pull --policy "${LOOPFORGE_PULL_POLICY:-missing}" platform mysql
+  pull_policy="${LOOPFORGE_PULL_POLICY:-missing}"
+  if mirror_published_ghcr "$pull_policy"; then
+    # The platform name is already local. Pull it with missing so Compose does
+    # not contact ghcr.io; MySQL keeps the requested policy.
+    if [[ "$pull_policy" == always ]]; then
+      docker_access compose --profile platform pull --policy missing platform
+      docker_access compose --profile platform pull --policy always mysql
+    else
+      docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+    fi
+  else
+    step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
+    docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+  fi
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
   step 'Building LoopForge from source (first install takes several minutes; frontend, Go and runtime stages build in parallel)'
+  if [[ -z "${LOOPFORGE_COMMIT:-}" ]]; then
+    LOOPFORGE_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+    export LOOPFORGE_COMMIT
+  fi
   # Download MySQL while the platform image builds instead of afterwards.
   docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
   mysql_pull=$!

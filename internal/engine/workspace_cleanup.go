@@ -314,6 +314,9 @@ func (e *Engine) DeleteRun(runID string) error {
 	if run.Status == "running" || run.Status == "waiting" || run.Status == "queued" {
 		return fmt.Errorf("run %s is %s: cancel it before deleting", runID, run.Status)
 	}
+	if hasRunningNode(run) {
+		return fmt.Errorf("运行 %s 仍有未结束的节点，请先停止后再删除", runID)
+	}
 	token, err := e.beginWorkspaceUseAfterCleanup(context.Background(), runID)
 	if err != nil {
 		return err
@@ -358,8 +361,7 @@ func (e *Engine) settleDeletedRunTasks(run domain.Run) error {
 		if task.Status == status {
 			continue
 		}
-		task.Status = status
-		if err := e.repo.PutTask(task); err != nil {
+		if err := e.repo.UpdateTaskStatus(task, status); err != nil {
 			return fmt.Errorf("settle task %s before deleting run %s: %w", task.ID, run.ID, err)
 		}
 	}

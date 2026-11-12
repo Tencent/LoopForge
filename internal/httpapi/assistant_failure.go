@@ -74,5 +74,10 @@ func assistantGenerationFailure(ctx context.Context, err error) (int, string) {
 	if errors.Is(err, errAssistantMissingResult) {
 		return http.StatusBadGateway, "AI 助手生成中断，未返回完整回答，请重试"
 	}
-	return http.StatusBadGateway, "AI 助手生成失败，请稍后重试"
+	return http.StatusBadGateway, assistantGenerationFailedMessage
 }
+
+// assistantGenerationFailedMessage is the generic generation failure. A CLI
+// that was missing is reported separately, and a finished install replaces
+// both that report and this generic text.
+const assistantGenerationFailedMessage = "AI 助手生成失败，请稍后重试"
