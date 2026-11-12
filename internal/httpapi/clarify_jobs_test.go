@@ -424,7 +424,7 @@ func TestPersistClarifyKeepsSessionID(t *testing.T) {
 	if stored.Clarification.SessionUserID != 1 {
 		t.Fatalf("sessionUserId=%d", stored.Clarification.SessionUserID)
 	}
-	h.rememberClarifySession("iss-session", "new-session", 13)
+	h.rememberClarifySession("iss-session", "new-session", 13, "")
 	updated, _ := s.Issue("iss-session")
 	if updated.Clarification.SessionID != "new-session" || updated.Clarification.SessionUserID != 13 {
 		t.Fatalf("session binding not updated: %+v", updated.Clarification)

@@ -146,16 +146,19 @@ func (i Issue) WorkBranchForRepository(repositoryID string) string {
 }
 
 type ClarificationAssessment struct {
-	Summary              string                  `json:"summary,omitempty"`
-	Status               string                  `json:"status,omitempty"` // analyzing, in_progress, ready, needs_user
-	History              []ClarificationMessage  `json:"history,omitempty"`
-	Questions            []ClarificationQuestion `json:"questions,omitempty"`
-	SessionID            string                  `json:"sessionId,omitempty"`
-	SessionUserID        int64                   `json:"sessionUserId,omitempty"`
-	WriteBackStatus      string                  `json:"writeBackStatus,omitempty"` // pending, succeeded, failed, skipped
-	WriteBackError       string                  `json:"writeBackError,omitempty"`
-	WriteBackFingerprint string                  `json:"writeBackFingerprint,omitempty"`
-	WriteBackAt          time.Time               `json:"writeBackAt,omitempty"`
+	Summary       string                  `json:"summary,omitempty"`
+	Status        string                  `json:"status,omitempty"` // analyzing, in_progress, ready, needs_user
+	History       []ClarificationMessage  `json:"history,omitempty"`
+	Questions     []ClarificationQuestion `json:"questions,omitempty"`
+	SessionID     string                  `json:"sessionId,omitempty"`
+	SessionUserID int64                   `json:"sessionUserId,omitempty"`
+	// ModelID 记住这张单的澄清是用哪个框架和模型跑的（带引擎前缀，CodeBuddy 不带）。
+	// 换了框架就必须换会话：各家的 conversation 互不相通。
+	ModelID              string    `json:"modelId,omitempty"`
+	WriteBackStatus      string    `json:"writeBackStatus,omitempty"` // pending, succeeded, failed, skipped
+	WriteBackError       string    `json:"writeBackError,omitempty"`
+	WriteBackFingerprint string    `json:"writeBackFingerprint,omitempty"`
+	WriteBackAt          time.Time `json:"writeBackAt,omitempty"`
 	// StartedAt is the first observed start of clarification, including
 	// pre-issue composer analysis when its server timestamp is carried over.
 	StartedAt time.Time `json:"startedAt,omitempty"`

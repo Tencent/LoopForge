@@ -132,15 +132,106 @@ func TestCanResumeClarifySessionUsesResponsibleUserHome(t *testing.T) {
 		{"owner mismatch even with file", ownerHome, 13, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := canResumeClarifySession(tc.home, "old-session", tc.owner, tc.user); got != tc.want {
+			if got := canResumeClarifySession(tc.home, "codebuddy", "old-session", tc.owner, tc.user); got != tc.want {
 				t.Fatalf("canResume=%v, want %v", got, tc.want)
 			}
 		})
 	}
 	for _, id := range []string{"", "../old-session", "*", "old-session?", ".."} {
-		if canResumeClarifySession(ownerHome, id, 1, 1) {
+		if canResumeClarifySession(ownerHome, "codebuddy", id, 1, 1) {
 			t.Fatalf("invalid session ID accepted: %q", id)
 		}
+	}
+}
+
+func TestCanResumeClarifySessionPerEngine(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		name   string
+		engine string
+		want   bool
+	}{
+		{"codex without a recorded thread", "codex", false},
+		{"opencode without a recorded session", "opencode", false},
+	} {
+		if got := canResumeClarifySession(home, tc.engine, "af-1", 1, 1); got != tc.want {
+			t.Fatalf("%s: canResume=%v, want %v", tc.name, got, tc.want)
+		}
+	}
+	// Claude Code derives its session UUID from the platform ID, so there is no
+	// bookkeeping file to consult; a missing transcript surfaces as an error the
+	// caller recovers from by replaying the history.
+	if !canResumeClarifySession(home, "claude-code", "af-1", 1, 1) {
+		t.Fatal("claude-code must be treated as resumable from its stable session ID")
+	}
+	// An engine the platform does not know must never resume.
+	if canResumeClarifySession(home, "foobar", "af-1", 1, 1) {
+		t.Fatal("unknown engine must not resume")
+	}
+
+	mustWriteClarifyFile(t, codexThreadsPath(home), `{"af-1":"thread-1"}`)
+	if !canResumeClarifySession(home, "codex", "af-1", 1, 1) {
+		t.Fatal("codex must resume once its thread is recorded")
+	}
+	if canResumeClarifySession(home, "codex", "af-2", 1, 1) {
+		t.Fatal("a different clarification session must not borrow the recorded thread")
+	}
+
+	mustWriteClarifyFile(t, agentCLISessionsPath(home), `{"opencode:af-1":"native-1"}`)
+	if !canResumeClarifySession(home, "opencode", "af-1", 1, 1) {
+		t.Fatal("opencode must resume once its native session is recorded")
+	}
+	if canResumeClarifySession(home, "cursor", "af-1", 1, 1) {
+		t.Fatal("another CLI must not reuse opencode's native session")
+	}
+}
+
+func TestClarifySessionReusableRejectsEngineSwitch(t *testing.T) {
+	home := t.TempDir()
+	mustWriteClarifyFile(t, filepath.Join(home, ".codebuddy", "projects", "repo", "af-1.jsonl"), "conversation\n")
+	issue := domain.Issue{ID: "iss-1", Clarification: domain.ClarificationAssessment{
+		SessionID: "af-1", SessionUserID: 1, ModelID: "codex:gpt-5.5",
+	}}
+	if clarifySessionReusable(issue, clarifyEngineOf("default"), home, 1) {
+		t.Fatal("a CodeBuddy turn must not resume the session Codex started")
+	}
+	mustWriteClarifyFile(t, codexThreadsPath(home), `{"af-1":"thread-1"}`)
+	if !clarifySessionReusable(issue, clarifyEngineOf("codex:gpt-5.5"), home, 1) {
+		t.Fatal("staying on the engine that started the session must keep resuming")
+	}
+	legacy := domain.Issue{ID: "iss-2", Clarification: domain.ClarificationAssessment{
+		SessionID: "af-1", SessionUserID: 1,
+	}}
+	if !clarifySessionReusable(legacy, clarifyEngineOf("default"), home, 1) {
+		t.Fatal("assessments saved before engine pinning keep resuming on their transcript")
+	}
+}
+
+func TestRememberClarifySessionStoresModelID(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.PutIssue(domain.Issue{ID: "iss-remember", ProjectID: "platform", Title: "记住引擎"}); err != nil {
+		t.Fatal(err)
+	}
+	h := &streamHandlers{deps: &deps{repo: st}}
+	h.rememberClarifySession("iss-remember", "af-1", 7, "codex:gpt-5.5")
+	stored, ok := st.Issue("iss-remember")
+	if !ok {
+		t.Fatal("issue missing")
+	}
+	if stored.Clarification.SessionID != "af-1" || stored.Clarification.SessionUserID != 7 {
+		t.Fatalf("session bookkeeping = %+v", stored.Clarification)
+	}
+	if stored.Clarification.ModelID != "codex:gpt-5.5" {
+		t.Fatalf("ModelID = %q, want codex:gpt-5.5", stored.Clarification.ModelID)
+	}
+	// An empty model ID must not erase the engine a running turn already recorded.
+	h.rememberClarifySession("iss-remember", "af-2", 7, "")
+	if stored, _ = st.Issue("iss-remember"); stored.Clarification.ModelID != "codex:gpt-5.5" {
+		t.Fatalf("empty model ID overwrote the pinned engine: %q", stored.Clarification.ModelID)
 	}
 }
 

@@ -29,25 +29,46 @@ func clarifyCLIHome(userID int64) string {
 	return filepath.Join(clarifySessionBase(), strconv.FormatInt(userID, 10), "home")
 }
 
-// Older assessments have no owner metadata. Only resume those when the
-// conversation actually exists inside the current responsible user's HOME.
-func canResumeClarifySession(homeDir, sessionID string, sessionUserID, userID int64) bool {
+// 旧数据没有归属信息，只有在当前责任人的 HOME 里确实存在会话时才续跑。
+// 每个引擎自己保管自己的 conversation，所以探测也按引擎分派：CodeBuddy 在 .codebuddy
+// 下留 transcript，Codex 记 thread，agent CLI 记 native session ID。Claude Code 的
+// session UUID 由平台 ID 稳定推导，没有可探测的登记，会话缺失会以错误形式出现，由调用方
+// 改为重放历史。
+func canResumeClarifySession(homeDir, engineID, sessionID string, sessionUserID, userID int64) bool {
 	if sessionUserID != 0 && sessionUserID != userID {
 		return false
 	}
 	if sessionID == "" || strings.ContainsAny(sessionID, `/\\*?[]`) || sessionID == "." || sessionID == ".." {
 		return false
 	}
-	files, err := filepath.Glob(filepath.Join(homeDir, ".codebuddy", "projects", "*", sessionID+".jsonl"))
-	if err != nil {
-		return false
-	}
-	for _, file := range files {
-		if info, err := os.Stat(file); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
-			return true
+	switch {
+	case engineID == assistantEngineClaude:
+		return true
+	case engineID == assistantEngineCodex:
+		return readCodexThread(homeDir, sessionID) != ""
+	case runtime.IsAgentCLI(engineID):
+		return readAgentCLISession(homeDir, engineID, sessionID) != ""
+	case engineID == "" || engineID == assistantEngineCodeBuddy:
+		files, err := filepath.Glob(filepath.Join(homeDir, ".codebuddy", "projects", "*", sessionID+".jsonl"))
+		if err != nil {
+			return false
+		}
+		for _, file := range files {
+			if info, err := os.Stat(file); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// clarifySessionReusable 判断这张单已存的澄清会话能否被这个引擎接着用。换引擎就是换
+// conversation，接错会直接读不到上下文，因此宁可重放历史也不复用。
+func clarifySessionReusable(issue domain.Issue, engine clarifyEngine, homeDir string, userID int64) bool {
+	if stored := strings.TrimSpace(issue.Clarification.ModelID); stored != "" && clarifyEngineOf(stored).ID != engine.ID {
+		return false
+	}
+	return canResumeClarifySession(homeDir, engine.ID, issue.Clarification.SessionID, issue.Clarification.SessionUserID, userID)
 }
 
 // CodeBuddy can report a missing resume conversation but still exit with 0.

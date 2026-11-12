@@ -526,7 +526,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		sessionID = strings.TrimSpace(issue.Clarification.SessionID)
 	}
 	resume := sessionID != ""
-	if resume && !canResumeClarifySession(homeDir, sessionID, issue.Clarification.SessionUserID, responsible.ID) {
+	if resume && !canResumeClarifySession(homeDir, assistantEngineCodeBuddy, sessionID, issue.Clarification.SessionUserID, responsible.ID) {
 		emit("thought", map[string]string{"kind": "status", "text": "分析环境已变化，正在结合已有回答重新分析…"})
 		sessionID = ""
 	}
@@ -635,7 +635,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		}
 	}
 	sessionContext := userMsg
-	h.rememberClarifySession(issue.ID, sessionID, responsible.ID)
+	h.rememberClarifySession(issue.ID, sessionID, responsible.ID, "")
 	if repoInfo == nil {
 		repoInfo = map[string]any{}
 	}
@@ -651,7 +651,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		if captured != "" {
 			sessionID = captured
 			repoInfo["sessionId"] = sessionID
-			h.rememberClarifySession(issue.ID, sessionID, responsible.ID)
+			h.rememberClarifySession(issue.ID, sessionID, responsible.ID, "")
 		}
 		if err != nil && resume {
 			// Never reuse the missing/incompatible session ID when starting over.
@@ -665,7 +665,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			if captured != "" {
 				sessionID = captured
 				repoInfo["sessionId"] = sessionID
-				h.rememberClarifySession(issue.ID, sessionID, responsible.ID)
+				h.rememberClarifySession(issue.ID, sessionID, responsible.ID, "")
 			}
 		}
 		if parsed, raw, ok := takeNativeClarification(toolSession, turnRaw); ok {
@@ -697,7 +697,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 }
 
-func (h *streamHandlers) rememberClarifySession(issueID, sessionID string, userID int64) {
+func (h *streamHandlers) rememberClarifySession(issueID, sessionID string, userID int64, modelID string) {
 	if h == nil || h.repo == nil {
 		return
 	}
@@ -709,6 +709,10 @@ func (h *streamHandlers) rememberClarifySession(issueID, sessionID string, userI
 	_, _ = h.repo.PatchIssue(issueID, func(issue *domain.Issue) error {
 		issue.Clarification.SessionID = sessionID
 		issue.Clarification.SessionUserID = userID
+		// 空 modelID 表示这一轮没有新的引擎信息，不能抹掉已经记住的框架。
+		if model := strings.TrimSpace(modelID); model != "" {
+			issue.Clarification.ModelID = model
+		}
 		return nil
 	})
 }

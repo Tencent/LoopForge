@@ -566,7 +566,7 @@ func TestStreamExecuteDirectorySessionAndTerminalErrors(t *testing.T) {
 	}
 
 	var nilHandler *streamHandlers
-	nilHandler.rememberClarifySession("issue", "session", user.ID)
+	nilHandler.rememberClarifySession("issue", "session", user.ID, "")
 }
 
 func TestStreamRunClarifyTurnOutputAndFailure(t *testing.T) {
