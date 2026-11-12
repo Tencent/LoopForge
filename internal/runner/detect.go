@@ -137,6 +137,9 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 			// Inspect the installed CLI's subcommands only when asked to update.
 			capabilities = append(capabilities, domain.RuntimeCapabilityNativeUpdate)
 		}
+		if spec.Kind == "codex" {
+			capabilities = append(capabilities, domain.RunnerCapabilityDeepSeek)
+		}
 		out = append(out, domain.RunnerRuntime{
 			Provider:     spec.Kind,
 			BinaryPath:   path,

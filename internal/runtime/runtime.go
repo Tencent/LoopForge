@@ -50,7 +50,6 @@ type RunCredentials struct {
 	Codex      ProviderCredential
 	ClaudeCode ProviderCredential
 	AgentCLI   map[string]ProviderCredential
-	DeepSeek   ProviderCredential
 	GitToken   string
 	GitSSHKeys map[string]string `json:"-"`
 	// GitSSHHostKeys maps "host:port" to the requester's private key for a

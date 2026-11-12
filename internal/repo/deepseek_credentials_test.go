@@ -19,7 +19,7 @@ func TestDeepSeekCredentialsPersistAndRemainPrivate(t *testing.T) {
 	}
 	u, _ := st.UserByLoginName("deepseek-user")
 	var update UserCredentialUpdate
-	if err := json.Unmarshal([]byte(`{"deepSeekApiKey":"deepseek-test-secret","deepSeekBaseUrl":"https://gateway.example/anthropic"}`), &update); err != nil {
+	if err := json.Unmarshal([]byte(`{"agentCliCredentials":{"deepseek":{"apiKey":"deepseek-test-secret","baseUrl":"https://gateway.example/v1"}}}`), &update); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.UpdateUserCredentials(u.ID, update); err != nil {
@@ -32,37 +32,29 @@ func TestDeepSeekCredentialsPersistAndRemainPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	saved, _ := st.User(u.ID)
-	data, _ := json.Marshal(saved)
-	var fields map[string]any
-	if err := json.Unmarshal(data, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if fields["deepSeekApiKey"] != "deepseek-test-secret" || fields["deepSeekBaseUrl"] != "https://gateway.example/anthropic" {
+	cred := saved.AgentCLICredentials["deepseek"]
+	if cred.APIKey != "deepseek-test-secret" || cred.BaseURL != "https://gateway.example/v1" {
 		t.Fatal("DeepSeek credentials did not survive persistence and partial updates")
 	}
-	public, _ := json.Marshal(domain.PublicUser(saved))
-	if strings.Contains(string(public), "secret") || strings.Contains(string(public), "existing-claude-key") {
-		t.Fatal("public user exposed credentials")
-	}
-	if err := json.Unmarshal(public, &fields); err != nil {
+	public := domain.PublicUser(saved)
+	data, err := json.Marshal(public)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if fields["deepSeekApiKeyConfigured"] != true {
+	if strings.Contains(string(data), "secret") || strings.Contains(string(data), "existing-claude-key") {
+		t.Fatal("public user exposed credentials")
+	}
+	if !public.AgentCLICredentials["deepseek"].APIKeyConfigured {
 		t.Fatal("public user is missing the DeepSeek configured flag")
 	}
-	if err := json.Unmarshal([]byte(`{"deepSeekApiKeyClear":true,"deepSeekBaseUrl":""}`), &update); err != nil {
+	if err := json.Unmarshal([]byte(`{"agentCliCredentials":{"deepseek":{"apiKeyClear":true,"baseUrl":"","models":[]}}}`), &update); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.UpdateUserCredentials(u.ID, update); err != nil {
 		t.Fatal(err)
 	}
 	cleared, _ := st.User(u.ID)
-	data, _ = json.Marshal(cleared)
-	fields = nil
-	if err := json.Unmarshal(data, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if fields["deepSeekApiKey"] != nil || fields["deepSeekBaseUrl"] != nil || cleared.ClaudeCodeAPIKey != "existing-claude-key" || cleared.GitToken != "git-test-secret" {
+	if _, ok := cleared.AgentCLICredentials["deepseek"]; ok || cleared.ClaudeCodeAPIKey != "existing-claude-key" || cleared.GitToken != "git-test-secret" {
 		t.Fatal("clearing DeepSeek changed another provider or retained its credentials")
 	}
 }

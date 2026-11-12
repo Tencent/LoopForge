@@ -502,7 +502,7 @@ const count = (html, needle) => html.split(needle).length - 1;
 // Groups list credentials in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'deepSeekApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'agentCli.deepseek', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
@@ -516,7 +516,7 @@ assert.ok(!html.includes('credential-grid') && !html.includes('credential-saveba
 assert.equal(count(html, 'data-credential-act="setup"'), 11);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
-for (const key of ['codeBuddyApiKey', 'deepSeekApiKey', 'claudeCodeApiKey']) {
+for (const key of ['codeBuddyApiKey', 'agentCli.deepseek', 'claudeCodeApiKey']) {
   const row = credentialRowHTML(cred.kind(key), user);
   assert.ok(row.includes('去配置') && !row.includes('credential-editor-form') && !row.includes('is-configured'), key);
   // The whole row is a hoverable button that opens the wizard; it has nothing to expand.

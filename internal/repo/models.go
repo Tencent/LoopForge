@@ -33,8 +33,6 @@ type userRow struct {
 func (userRow) TableName() string { return "users" }
 
 type userConfigRow struct {
-	DeepSeekAPIKey               *string    `gorm:"column:deepseek_api_key;type:text"`
-	DeepSeekBaseURL              *string    `gorm:"column:deepseek_base_url;type:text"`
 	UserID                       int64      `gorm:"column:user_id;primaryKey"`
 	GitToken                     *string    `gorm:"column:git_token;type:text"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token;type:text"`
