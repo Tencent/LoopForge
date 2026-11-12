@@ -112,7 +112,7 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 
 <br>
 
-- **执行器。** 在首页输入框旁从 10 种 CLI 中选择一种，再选择模型。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清和通知 AI 汇总目前使用 CodeBuddy；定时助手任务使用任务所选的执行器。
+- **执行器。** 在首页输入框旁从 10 种 CLI 中选择一种，再选择模型。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清、通知 AI 汇总、Bot 回复和运行评测目前使用 CodeBuddy，这些入口的模型列表只列 CodeBuddy 模型，服务端收到其他 CLI 的模型会直接拒绝并说明原因，不会悄悄换成 CodeBuddy；定时助手任务使用任务所选的执行器。
 
   | 执行器 | 凭据 | 安装方式 |
   | --- | --- | --- |
