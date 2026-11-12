@@ -1,6 +1,16 @@
 # Changelog
 
-Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`, mirrored to `ccr.ccs.tencentyun.com/loopforge/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+
+## 0.3.7 — Tencent Cloud image mirror
+
+- Platform releases also push `ccr.ccs.tencentyun.com/loopforge/loopforge` with the same tags as `ghcr.io/tencent/loopforge`. `compose.yaml` still pins GHCR. Install from Tencent Cloud with `LOOPFORGE_IMAGE=ccr.ccs.tencentyun.com/loopforge/loopforge:0.3.7 ./start.sh`.
+- A running SOP node animates its activity on the graph.
+- Approving a run reloads the queue from the server, so the waiting card disappears once execution continues.
+- LoopForge Local's Classic CodeBuddy hook keeps manual gates when PyYAML is not installed.
+- The TKE node-pool tool keeps the SDK error and CAM hint when its fallback query fails.
+
+No migrations are required.
 
 ## 0.3.6 — a default sandbox on an uninitialized catalog
 
