@@ -221,6 +221,19 @@ chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 			if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"status":"installed"`) {
 				t.Fatalf("after install: %d %s", status.Code, status.Body.String())
 			}
+			// A finished install does not outlive its executable: once it is
+			// removed the status is missing again, so the button can reinstall.
+			cliInstallJobsMu.Lock()
+			job := cliInstallJobs["dsh"]
+			cliInstallJobsMu.Unlock()
+			<-job.done
+			if err := os.RemoveAll(filepath.Join(root, "dsh", "current")); err != nil {
+				t.Fatal(err)
+			}
+			status = getCLIInstall(t, h, user, "dsh")
+			if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"status":"missing"`) {
+				t.Fatalf("after the executable was removed: %d %s", status.Code, status.Body.String())
+			}
 			return
 		}
 		time.Sleep(50 * time.Millisecond)

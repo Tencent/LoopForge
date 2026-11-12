@@ -97,7 +97,9 @@ func (h *assistantHandlers) cliInstallState(engine string) (string, string) {
 		if job.err != nil {
 			return "failed", job.err.Error()
 		}
-		return "installed", ""
+		// The executable was resolved above and is gone now (removed after a
+		// successful install): report it missing so the button can reinstall.
+		return "missing", ""
 	default:
 		return "installing", ""
 	}
