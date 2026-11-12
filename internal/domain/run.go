@@ -61,6 +61,29 @@ const ConversationWorkspaceWorkflowID = "conversation-workspace"
 // IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
+// LiveWorkspace reports a chat workspace that is open for edits. It has no SOP
+// graph to pause, so Main Bot and people in the IDE edit it side by side and
+// rely on expectedSha256 to catch conflicting writes.
+func (r Run) LiveWorkspace() bool {
+	return r.IsWorkspace() && !r.CancelRequested && r.WorkspaceCleanedAt.IsZero() && (r.Status == "running" || r.Status == "waiting")
+}
+
+// HumanEditable reports whether people may edit the workspace in the IDE. Like
+// an AI IDE they edit at any time, also while SOP agents run: nothing pauses,
+// expectedSha256 catches conflicting writes and agents re-read what changed.
+func (r Run) HumanEditable() bool {
+	if !r.WorkspaceCleanedAt.IsZero() {
+		return false
+	}
+	switch r.Status {
+	case "succeeded", "failed", "cancelled":
+		return true
+	case "running", "waiting":
+		return !r.CancelRequested
+	}
+	return false
+}
+
 // HistoricalGroup is a record of the retired role groups. It has no SOP graph
 // that could be resumed or retried.
 func (r Run) HistoricalGroup() bool {

@@ -218,7 +218,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload = json.RawMessage(`{"ok":true}`)
 				break
 			}
-			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run.ID, &e.workspaceTerminals, scope, *request.Terminal, request.TerminalOwner)
+			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run, &e.workspaceTerminals, scope, *request.Terminal, request.TerminalOwner)
 			result.Payload, _ = json.Marshal(value)
 			if err != nil {
 				result.Error = err.Error()

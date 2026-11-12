@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -372,8 +374,9 @@ func TestWorkspaceMoreEditAuthorizationAndErrors(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = authedRequest(t, httptest.NewRequest(http.MethodGet, "/", nil), f.user)
+		// People edit at any time, also while agents run.
 		got := h.workspaceWritable(c, probe)
-		want := status != "running"
+		want := true
 		if got != want {
 			t.Errorf("workspaceWritable(%s) = %v want %v", status, got, want)
 		}
@@ -460,5 +463,73 @@ func TestWorkspaceDeletedFileCancelledSearchAndTimeout(t *testing.T) {
 	results, truncated, err := searchWorkspace(context.Background(), searchRoot, "needle")
 	if err != nil || !truncated || len(results) != 1 || len([]rune(results[0].Preview)) > 241 {
 		t.Fatalf("large search = %#v truncated=%v err=%v", results, truncated, err)
+	}
+}
+
+// The chat side panel embeds the same IDE on a conversation workspace. Enabling
+// edit there must not pause it: Main Bot keeps working beside the person.
+func TestConversationWorkspaceIDEEditsWithoutPausing(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	run := domain.Run{ID: "cvb-chat-ws", Kind: domain.RunKindWorkspace, WorkflowID: domain.ConversationWorkspaceWorkflowID, Status: "waiting", ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{}}
+	if err := f.s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	cvBWrite(t, filepath.Join(f.e.RunWorkspace(run.ID), "note.txt"), []byte("old"))
+
+	rec := cvBRequest(t, f, http.MethodGet, "/api/runs/"+run.ID+"/workspace", nil, true)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"readOnly":false`) {
+		t.Fatalf("workspace info = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := cvBRequest(t, f, http.MethodPost, "/api/runs/"+run.ID+"/workspace/takeover", nil, true); rec.Code != http.StatusOK {
+		t.Fatalf("takeover = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got, _ := f.s.RunState(run.ID); got.PauseRequested || got.Status != "waiting" {
+		t.Fatalf("takeover paused the conversation workspace: status=%s pause=%v", got.Status, got.PauseRequested)
+	}
+	sum := sha256.Sum256([]byte("old"))
+	body := map[string]any{"path": "note.txt", "content": "new", "expectedSha256": hex.EncodeToString(sum[:])}
+	if rec := cvBRequest(t, f, http.MethodPut, "/api/runs/"+run.ID+"/workspace/file", body, true); rec.Code != http.StatusOK {
+		t.Fatalf("write = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	cancelled := run
+	cancelled.ID, cancelled.CancelRequested = "cvb-chat-ws-cancel", true
+	if err := f.s.PutRun(cancelled); err != nil {
+		t.Fatal(err)
+	}
+	if rec := cvBRequest(t, f, http.MethodPut, "/api/runs/"+cancelled.ID+"/workspace/file", body, true); rec.Code == http.StatusOK {
+		t.Fatalf("cancelling workspace accepted a write: %s", rec.Body.String())
+	}
+}
+
+// Like an AI IDE, people edit a running SOP's workspace without pausing it.
+func TestRunningSOPWorkspaceEditableWithoutPausing(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	run := domain.Run{ID: "cvb-sop-live", Status: "running", ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{"build": {Status: "running"}}}
+	if err := f.s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	cvBWrite(t, filepath.Join(f.e.RunWorkspace(run.ID), "note.txt"), []byte("old"))
+	if rec := cvBRequest(t, f, http.MethodGet, "/api/runs/"+run.ID+"/workspace", nil, true); !strings.Contains(rec.Body.String(), `"readOnly":false`) {
+		t.Fatalf("workspace info = %d: %s", rec.Code, rec.Body.String())
+	}
+	sum := sha256.Sum256([]byte("old"))
+	body := map[string]any{"path": "note.txt", "content": "new", "expectedSha256": hex.EncodeToString(sum[:])}
+	if rec := cvBRequest(t, f, http.MethodPut, "/api/runs/"+run.ID+"/workspace/file", body, true); rec.Code != http.StatusOK {
+		t.Fatalf("write = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := cvBRequest(t, f, http.MethodPut, "/api/runs/"+run.ID+"/workspace/file", body, true); rec.Code != http.StatusConflict {
+		t.Fatalf("stale write = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got, _ := f.s.RunState(run.ID); got.PauseRequested || got.Status != "running" {
+		t.Fatalf("editing paused the SOP: status=%s pause=%v", got.Status, got.PauseRequested)
+	}
+	queued := run
+	queued.ID, queued.Status, queued.Nodes = "cvb-sop-queued", "queued", map[string]*domain.NodeRun{}
+	if err := f.s.PutRun(queued); err != nil {
+		t.Fatal(err)
+	}
+	if rec := cvBRequest(t, f, http.MethodPost, "/api/runs/"+queued.ID+"/workspace/takeover", nil, true); rec.Code != http.StatusConflict {
+		t.Fatalf("queued takeover = %d: %s", rec.Code, rec.Body.String())
 	}
 }

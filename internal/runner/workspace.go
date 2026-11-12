@@ -167,9 +167,21 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		return runnerWorkspacePayload(d.runnerWorkspacePreparationStatus(ctx, root, request))
 	}
 
-	workspaceWrite := request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
+	liveWorkspace := request.RunKind == domain.RunKindWorkspace && (request.RunStatus == "running" || request.RunStatus == "waiting")
+	// A person editing from the IDE only shares the workspace with running
+	// agent tasks (gate readers). Preparation, restore and checkpoints hold the
+	// gate exclusively and must still exclude the edit.
+	concurrentEdit := request.ConcurrentEdit && !liveWorkspace
+	workspaceWrite := liveWorkspace || concurrentEdit
 	switch request.Operation {
 	case domain.RunnerWorkspaceOperationArtifacts:
+		if concurrentEdit {
+			gate := d.requestGate(request)
+			if !gate.TryRLock() {
+				return workspaceBusyResponse("workspace is still in use")
+			}
+			defer gate.RUnlock()
+		}
 		if !workspaceWrite {
 			gate := d.requestGate(request)
 			if !gate.TryLock() {
@@ -220,7 +232,15 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	case domain.RunnerWorkspaceOperationWrite:
 		// The same human may save files while their terminal holds the fence.
 		scope := fmt.Sprintf("%s:%d", request.RunID, request.TerminalOwner)
-		if !workspaceWrite && (request.TerminalOwner <= 0 || !d.workspaceTerminals.HasScope(scope)) {
+		ownTerminal := request.TerminalOwner > 0 && d.workspaceTerminals.HasScope(scope)
+		if concurrentEdit && !ownTerminal {
+			gate := d.requestGate(request)
+			if !gate.TryRLock() {
+				return workspaceBusyResponse("workspace is being prepared, restored or saved")
+			}
+			defer gate.RUnlock()
+		}
+		if !workspaceWrite && !ownTerminal {
 			gate := d.requestGate(request)
 			if !gate.TryLock() {
 				return workspaceBusyResponse("execution is still stopping")
@@ -641,7 +661,7 @@ func runnerCollectWorkspaceChanges(ctx context.Context, root string, repositorie
 		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
 			continue
 		}
-		out, err := exec.CommandContext(ctx, "git", "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all").Output()
+		out, err := exec.CommandContext(ctx, "git", "--no-optional-locks", "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all").Output()
 		if err != nil {
 			return changes, "Git 状态读取失败"
 		}
@@ -687,7 +707,9 @@ func runnerReadWorkspaceDiff(ctx context.Context, root string, repositories []do
 			}
 			rel = strings.TrimPrefix(raw, prefix)
 		}
-		args := []string{"-C", repository.path, "diff", "--no-ext-diff", "--no-color", "HEAD", "--"}
+		// Browsing must never take .git/index.lock: a concurrent preparation
+		// or commit would otherwise fail with "index.lock: File exists".
+		args := []string{"--no-optional-locks", "-C", repository.path, "diff", "--no-ext-diff", "--no-color", "HEAD", "--"}
 		if rel != "" {
 			args = append(args, filepath.FromSlash(rel))
 		}
