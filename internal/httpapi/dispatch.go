@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -30,8 +31,16 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		return domain.Task{}, HTTPError{http.StatusConflict, err.Error()}
 	}
 	if issue.AssigneeUserID == 0 {
-		issue.AssigneeUserID = responsible.ID
-		if err := d.repo.PutIssue(issue); err != nil {
+		issue, err = d.repo.PatchIssue(issue.ID, func(current *domain.Issue) error {
+			if current.AssigneeUserID == 0 {
+				current.AssigneeUserID = responsible.ID
+			}
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, repo.ErrIssueNotFound) {
+				return domain.Task{}, HTTPError{http.StatusNotFound, err.Error()}
+			}
 			return domain.Task{}, err
 		}
 	}
@@ -172,8 +181,11 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		displayRepository = repositories[0]
 	}
 	task := domain.Task{ID: taskID, IssueID: issue.ID, AgentID: issue.AssigneeID, WorkflowID: workflowID, Status: "queued", Repository: displayRepository, DispatchMode: dispatchMode, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID), TriggerOrigin: triggerOrigin}
-	stored, created, err := d.repo.CreateTask(task)
+	stored, created, err := d.repo.ReserveIssueDispatch(task)
 	if err != nil {
+		if errors.Is(err, repo.ErrIssueNotFound) {
+			return domain.Task{}, HTTPError{http.StatusNotFound, err.Error()}
+		}
 		return domain.Task{}, err
 	}
 	if !created {

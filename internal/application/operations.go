@@ -37,7 +37,7 @@ func PublicOperations() []Operation {
 		{Name: "issues_list", Description: "List issues and requirements. Query: projectId, status, source, q, limit, offset. Omit limit to get Issue[]; with limit returns {items,total,offset,limit,hasMore} (max 200).", Method: "GET", Path: "/api/issues", ReadOnly: true},
 		{Name: "issues_save", Description: "Create or update an issue or requirement", Method: "PUT", Path: "/api/issues"},
 		{Name: "issues_get", Description: "Get one issue and its comments", Method: "GET", Path: "/api/issues/{id}", ReadOnly: true},
-		{Name: "issues_delete", Description: "Delete a local issue and failed/cancelled execution history; reject successful or active runs", Method: "DELETE", Path: "/api/issues/{id}"},
+		{Name: "issues_delete", Description: "Delete a local issue. Query force=true also deletes settled execution history, including successful runs, and is required for issues with history or a completed status. Active work blocks deletion.", Method: "DELETE", Path: "/api/issues/{id}"},
 		{Name: "issues_comments_add", Description: "Add a comment to an issue", Method: "POST", Path: "/api/issues/{id}/comments"},
 		{Name: "issues_runs_list", Description: "List runs belonging to an issue", Method: "GET", Path: "/api/issues/{id}/runs", ReadOnly: true},
 		{Name: "issues_chat_clarify", Description: "Run AI clarification for an existing issue. The job keeps running after the client disconnects; GET the same path with Accept: text/event-stream to resume SSE.", Method: "POST", Path: "/api/issues/{id}/chat-clarify"},
