@@ -76,6 +76,55 @@ Install Git for Windows for checkout operations and shell workflow nodes. Add
 the CLI, Git and any project build tools to that account's `PATH`, or supply their
 directories with `-CliDirectory` and `-PathEntries`.
 
+### Connect from the platform page without a source checkout
+
+On a platform built with Windows support, open **Settings > Execution machines >
+Connect a new machine** and select the **Windows · PowerShell** tab. Copy the
+connection command while its binding code is valid, then run it in Windows
+PowerShell 5.1 or PowerShell 7 under the account that owns the installed CLI login.
+The **macOS / Linux** tab remains the first and default selection on every
+operating system. Switching tabs updates the instructions and commands together.
+
+The Windows command downloads `/runners/install.ps1` from that platform and saves
+it to a temporary file before execution. The installer downloads the matching
+Runner and Gate MCP executables, checks their SHA-256 digests and Windows
+architecture, and starts the Runner in the background. No repository checkout,
+Go toolchain or Docker installation is required for native execution. SOPs using
+a Docker sandbox still require their configured Docker environment. The
+platform must provide both binaries for Windows amd64 or arm64; the installer
+does not install the coding CLI, Git or project build tools.
+
+The default installation is stored under
+`%LOCALAPPDATA%\LoopForge\runners\<platform-url-hash>`. It keeps configuration,
+binding and session state, logs, a process record, and the default workspaces.
+Treat this directory as sensitive local state. Each platform URL gets a separate
+installation. Use an explicit `-InstallDirectory` when multiple bindings to the
+same platform are needed; an existing binding cannot silently change accounts.
+
+After stopping the Runner, use the page's Windows start command to download the
+current binaries and start it with saved options. The stop command retains the
+binding, configuration and workspaces. Repeating the connection command while
+the Runner is running leaves that process unchanged. Custom CLI/tool directories,
+workspace root, name and concurrency can be passed to the downloaded script and
+are remembered. For example:
+
+```powershell
+# Use the same platform URL as the page's command.
+powershell -NoProfile -ExecutionPolicy Bypass -File $lfInstaller `
+  -ServerUrl 'https://loopforge.example.com' `
+  -BindCode '<binding-code>' -CliDirectory 'C:\Tools\CodingCLI' `
+  -WorkspaceRoot 'C:\Work\LoopForge'
+```
+
+`$lfInstaller` is the downloaded script path set by the page's command. Stop an
+existing Runner before changing these options. The saved `install.ps1` in its
+installation directory also accepts `-InstallDirectory '<installation-path>'
+-Stop`, without downloading a new script. Connecting the machine enables assigned
+SOP tasks; it does not move the homepage assistant or requirement clarification
+to the local machine. Their existing server-side credential requirements remain.
+
+### Use the source checkout launcher manually
+
 Obtain the matching Windows Runner and Gate MCP binaries from a platform built
 with Windows support, or build them from this checkout with Go. The example uses
 Windows amd64. For Windows arm64, build for `GOARCH=arm64` and pass the resulting
@@ -154,4 +203,14 @@ environment without starting Docker containers or a real Runner.
 
 ```powershell
 python .\scripts\test-windows-startup.py
+```
+
+The standalone installer suite covers raw HTTP downloads and PowerShell parsing,
+binary checksums and architecture, saved bindings, process identity and retained
+workspaces. It uses fixture downloads and processes, without account credentials:
+
+```powershell
+python .\scripts\test-windows-installer.py
+$env:LOOPFORGE_TEST_POWERSHELL = 'pwsh'
+python .\scripts\test-windows-installer.py
 ```

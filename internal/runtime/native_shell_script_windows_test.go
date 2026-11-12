@@ -51,7 +51,7 @@ func TestWindowsHostShellPreservesLongSourceAndInput(t *testing.T) {
 }
 
 func TestWindowsHostShellLeavesSmallCommandsAndProviders(t *testing.T) {
-	for _, argv := range [][]string{{"sh", "-lc", "printf ok"}, {"codex", "exec", strings.Repeat("x", 25000)}} {
+	for _, argv := range [][]string{{windowsTestShell(t), "-lc", "printf ok"}, {"codex", "exec", strings.Repeat("x", 25000)}} {
 		command := CommandSpec{Argv: argv}
 		got, cleanup, err := PrepareHostShellCommand(command)
 		if err != nil {
@@ -61,5 +61,36 @@ func TestWindowsHostShellLeavesSmallCommandsAndProviders(t *testing.T) {
 		if !reflect.DeepEqual(got.Argv, argv) {
 			t.Fatal("small shell or provider invocation was changed")
 		}
+	}
+}
+
+func TestWindowsHostShellRejectsWSLAliasesAndPrefersGit(t *testing.T) {
+	root := t.TempDir()
+	aliases := filepath.Join(root, "WindowsApps")
+	gitBin := filepath.Join(root, "Git", "bin")
+	for _, directory := range []string{aliases, gitBin} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "sh.exe"), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", aliases)
+	t.Setenv("ProgramFiles", filepath.Join(root, "missing"))
+	t.Setenv("ProgramFiles(x86)", "")
+	t.Setenv("LOCALAPPDATA", "")
+	if _, err := findWindowsHostShell("sh"); err == nil {
+		t.Fatal("WSL alias was selected as a host shell")
+	}
+	t.Setenv("ProgramFiles", root)
+	command := CommandSpec{Argv: []string{"sh", "-lc", "printf ok"}}
+	prepared, cleanup, err := PrepareHostShellCommand(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if prepared.Argv[0] != filepath.Join(gitBin, "sh.exe") || command.Argv[0] != "sh" {
+		t.Fatalf("host shell did not select Git without mutating argv: %v", prepared.Argv)
 	}
 }

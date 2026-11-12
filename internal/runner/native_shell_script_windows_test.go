@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,25 @@ import (
 
 	"agentflow/internal/domain"
 )
+
+// TestWindowsSOPShellRunsNodeAndCollectsOutputs covers the actual terminal-node execution path.
+func TestWindowsSOPShellRunsNodeAndCollectsOutputs(t *testing.T) {
+	if _, err := exec.LookPath("node.exe"); err != nil {
+		t.Skip("Node.js is not installed")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}, client: NewClient(server.URL), controls: map[string]chan string{}, pendingControls: map[string]string{}}
+	task := domain.RunnerTask{ID: "windows-shell-node", Workspace: "task", Command: `node -e 'require("fs").writeFileSync("sop-result.txt", "Windows SOP completed"); console.log("node-step-ok")'`}
+	result := d.executeTerminal(context.Background(), task)
+	if result.status != domain.RunnerTaskSuccess || !strings.Contains(result.result, "node-step-ok") {
+		t.Fatalf("Windows SOP node failed: status=%s error=%s output=%s", result.status, result.errMsg, result.result)
+	}
+	content, err := os.ReadFile(filepath.Join(d.taskWorkspace(task), "sop-result.txt"))
+	if err != nil || string(content) != "Windows SOP completed" {
+		t.Fatalf("Windows SOP artifact missing: content=%q err=%v", content, err)
+	}
+}
 
 func TestWindowsTerminalLongScriptCleansUpOnCancel(t *testing.T) {
 	gitBin := `C:\Program Files\Git\bin`

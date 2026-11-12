@@ -43,5 +43,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:LOOPFORGE_TEST_POWERSHELL = 'pwsh'
           python scripts/test-windows-startup.py -v
+      - name: Test standalone installer downloads with Windows PowerShell 5.1
+        env:
+          LOOPFORGE_TEST_POWERSHELL: powershell
+        run: python scripts/test-windows-installer.py -v
+      - name: Test standalone installer downloads with PowerShell 7
+        env:
+          LOOPFORGE_TEST_POWERSHELL: pwsh
+        run: python scripts/test-windows-installer.py -v
       - name: Vet Windows packages
         run: go vet ./internal/processgroup ./internal/procwatch ./internal/runtime ./internal/runner ./internal/httpapi ./internal/preview ./cmd/agentflow-runner

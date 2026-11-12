@@ -16,7 +16,6 @@ import (
 	stdsync "sync"
 	"time"
 
-	deployassets "agentflow/deploy"
 	apidocs "agentflow/docs/api"
 	"agentflow/internal/application"
 	"agentflow/internal/auth"
@@ -590,6 +589,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// login. Public install assets are read-only; daemon APIs authenticate with
 	// one-time bind codes or runner session tokens instead of a user identity.
 	g.GET("/runners/install.sh", serveBindCLIScript)
+	g.GET("/runners/install.ps1", serveBindCLIWindowsScript)
 	g.GET("/runners/agentflow-runner", serveRunnerBinary)
 	g.GET("/runners/agentflow-gate-mcp", serveGateMCPBinary)
 	g.GET("/runners/health", api.health)
@@ -608,6 +608,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/runners/previews/:previewId/content", api.runners.runnerPreviewContent)
 	g.POST("/runners/previews/:previewId/complete", api.runners.runnerPreviewComplete)
 	g.GET("/deploy/bind-cli.sh", serveBindCLIScript)
+	g.GET("/deploy/bind-cli.ps1", serveBindCLIWindowsScript)
 	g.GET("/deploy/agentflow-runner", serveRunnerBinary)
 	g.GET("/deploy/agentflow-gate-mcp", serveGateMCPBinary)
 	mcpHandler := mcpserver.New(mcpserver.LocalInvoker{Handler: g}).HTTPHandler()
@@ -653,19 +654,6 @@ func schedulerEnabled() bool {
 	}
 	enabled, err := strconv.ParseBool(raw)
 	return err != nil || enabled
-}
-
-// serveBindCLIScript serves the machine-facing bind-cli installer so onboarding
-// is a single copy-pasted curl command (个人 → 执行器 页面).
-func serveBindCLIScript(c *gin.Context) {
-	script := deployassets.BindCLIScript()
-	if len(script) == 0 {
-		c.Status(http.StatusNotFound)
-		return
-	}
-	c.Header("Content-Type", "text/x-shellscript; charset=utf-8")
-	c.Header("Cache-Control", "no-store")
-	_, _ = c.Writer.Write(script)
 }
 
 func (s *Server) health(c *gin.Context) {
