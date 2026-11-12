@@ -33,6 +33,7 @@
   <link rel="stylesheet" href="/app/mcp.css">
   <link rel="stylesheet" href="/app/flow-canvas.css?v=20261109cli">
   <link rel="stylesheet" href="/app/page-feedback.css">
+  <link rel="stylesheet" href="/app/assistant-settings.css">
   <link rel="stylesheet" href="/preferences.css">
   <link rel="stylesheet" href="/app/issues-list.css">
   <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261031req1">
@@ -139,6 +140,7 @@
       <div id="configurationNav" class="management-navigation">
       <button class="nav management-back" data-jump="collaboration"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="chevron-left" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"/></svg></span><span class="nav-label">返回工作台</span></button>
       <button class="nav" data-view="settings"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="user" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="head" cx="12" cy="8" r="4"/><path class="body" d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="nav-label">个人配置</span></button>
+      <button class="nav" data-view="assistant" aria-label="AI 助手" title="AI 助手"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="sparkles" data-icon-motion="idle" width="15" height="15" aria-hidden="true" focusable="false"></svg></span><span class="nav-label">AI 助手</span></button>
       <p>项目</p>
       <button class="nav" data-view="projects"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="users" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="team-front"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1"/></g><g class="team-back"><path d="M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/></g></svg></span><span class="nav-label">项目配置</span></button>
       <button class="nav" data-view="bots" aria-label="通道管理" title="通道管理"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="robot" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="8" width="16" height="11" rx="2"/><path class="antenna" d="M12 3v5"/><path class="eyes" d="M8 13h.01M16 13h.01"/><path class="mouth" d="M9 17h6"/></svg></span><span class="nav-label">通道管理</span></button>
@@ -308,6 +310,12 @@
         <div class="heading-actions"><button id="botNew" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>添加通道</button></div>
       </div>
       <div id="botsContent"></div>
+    </section>
+    <section id="assistantView" class="view page-view">
+      <div class="page-heading">
+        <div><h1>AI 助手</h1><p>AI 工作台里和你对话、帮你动手的助手。设置它什么时候主动把事情交给角色或 SOP，以及每次对话都要遵守的规则；只对你自己生效。</p></div>
+      </div>
+      <div id="assistantContent"></div>
     </section>
     <!-- 运行记录 -->
     <section id="runsView" class="view page-view">
@@ -1299,6 +1307,7 @@
   <script src="/app/shared-schedules.js"></script>
   <script src="/app/notification-editor.js"></script>
   <script src="/app/bots.js"></script>
+  <script src="/app/assistant-settings.js"></script>
   <script src="/app/flow-history.js?v=20261030fd2"></script>
   <script src="/app/flow-viewport.js?v=20261030fd2"></script>
   <script src="/app/flow-palette.js?v=20261030fd2"></script>

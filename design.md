@@ -132,7 +132,7 @@
 
 ### 启用视图与设置区容器
 
-按钮、页头、输入的映射只对登记视图生效：`#issuesView`、`#approvalsView`、`#assetsView`、`#mcpView`、`#botsView`、`#knowledgeView` 以及设置区各视图（`#settingsView`、`#projectsView`、`#runnersView`、`#agentsView`、`#metricsView`、`#businessDomainsView`、`#guideView`、`#platformView`、`#businessDomainManagementView`），外加挂到 `<body>` 的 `#agentModal`、`#customMcpModal`、`.pw-root`、`#kbDrawer`。
+按钮、页头、输入的映射只对登记视图生效：`#issuesView`、`#approvalsView`、`#assetsView`、`#mcpView`、`#botsView`、`#assistantView`、`#knowledgeView` 以及设置区各视图（`#settingsView`、`#projectsView`、`#runnersView`、`#agentsView`、`#metricsView`、`#businessDomainsView`、`#guideView`、`#platformView`、`#businessDomainManagementView`），外加挂到 `<body>` 的 `#agentModal`、`#customMcpModal`、`.pw-root`、`#kbDrawer`。
 
 设置区视图的外层内容统一居中、最大宽 1200px（`.page-view.active` 的直接子元素），页面不再各自限宽。流程设计（`#flowView`）、工作区页面、图标栏、侧栏与顶栏不受影响。
 
@@ -362,6 +362,14 @@ Bot 管理页（`#botsView`）按需求列表与运行记录列表的 Harness �
 
 发送状态轮询（`botPatchDeliveryRow`）保留原徽标节点，只替换 `data-tone` 和内部图形，颜色因此可以过渡。
 
+## AI 助手设置
+
+界面上称「AI 助手」，避免和「Bot 管理」里的企业微信机器人混淆。设置页、SOP 建议卡片和子 Agent 面板都用这个名字。
+
+AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管理与记录」下紧跟 Bot 管理，图标为 Harness `sparkles`。页头只有 H1 和一句说明（先讲它是谁，再讲能设置什么）；内容和其他设置页一样铺满 1200px 居中容器，两块 14px 圆角面板：「主动派发」里是「主动派角色」「主动走 SOP」两行（默认关闭，面板说明写明打开后更主动，以及角色直接派、SOP 先确认），左侧标题 + 说明，右侧 `role="switch"` 开关；「自定义规则」是一个可纵向拉伸的输入框，右下角显示「N / 4000」。底部「保存」是页面唯一的实心按钮，没有改动或保存中时禁用；未登录只显示提示。样式在 `web/app/assistant-settings.css`，规则限定在 `#assistantView` 内，只引用 `--hui-*` 令牌。
+
+没有 @ SOP、也没有点名要走 SOP 时，AI 助手自己决定交给 SOP 的事是建议。每次批准由用户在卡片上确认；帮我批准由独立审查决定，未通过时同样变成建议卡片；完全权限下直接启动。角色始终直接派发，不弹卡片。`timing=start` 的建议 3 分钟无人处理就超时，服务端把事情交回 AI 助手自己做，不依赖浏览器还开着。决定通过 `POST /api/assistant/sessions/{id}/proposals` 提交。开关和自定义规则按用户存在 `assistant_preferences`，由 AutoMigrate 建表，接口是 `GET` / `PUT /api/assistant/preferences`。
+
 ## 角色定义弹窗
 
 角色定义的新建与编辑共用 `#agentModal`（`web/index.html`，面板在 `web/app/flows.js`、`web/app/agents.js`），样式在 `web/product-v4.css` 的 `#agentModal` 段。
@@ -454,6 +462,7 @@ Bot 管理页（`#botsView`）按需求列表与运行记录列表的 Harness �
 | `web/knowledge.js`、`web/knowledge.css` | 知识中心的概览指标（`kbMetricsHTML`）、四个标签的面板与行模板（`kbPanel`、`kbRow`、`kbBadge`）、通用右侧抽屉 |
 | `web/app/runs.js`、`web/product-v4.css`（运行记录列表区段） | 运行记录列表的面板、标签计数、状态徽标和行模板 |
 | `web/app.js`（视图切换）、`web/product-v4.css`（`.page-context`） | 按视图是否自带页头切换 `body.view-has-heading`，隐藏重复的顶栏标题 |
+| `web/app/assistant-settings.js`、`web/app/assistant-settings.css` | AI 助手设置页的开关、自定义规则与保存 |
 | `web/app/bots.js`、`web/bots.css` | Bot 管理页的面板头（标签 / 面包屑）、列表行、状态徽标、引导编辑器与记录 |
 | `web/app/hui-controls.css` | Selector 面板，复选 / 单选 / 开关，确认对话框，日期浮层，上传区和 Tooltip 样式 |
 | `web/app/hui-date.js`、`hui-upload.js`、`hui-tooltip.js` | 日期浮层、上传拖拽区、`title` 接管的 Tooltip |
