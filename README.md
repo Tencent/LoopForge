@@ -195,6 +195,9 @@ See the [local guide](docs/local/usage.md) for each host's entry point and [edit
 
 ## FAQ
 
+**When should I deploy LoopForge on a cloud server?**
+A cloud deployment gives your team a shared place to review run logs and artifacts and approve SOP steps from a browser. Scheduled jobs and SOPs running on the server can continue when your laptop is off. Cloud workers can take builds and tests off your laptop, and a connected runner can handle tasks that need local tools or access to a private network. See [Deployment](docs/deployment.md).
+
 **Do I need an API key to try it?**
 No. The demo SOP uses only a script and a human gate. Chat and agent steps need a key for the executor you pick. Model usage is not included; you bring your own credentials.
 

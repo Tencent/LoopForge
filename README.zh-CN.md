@@ -193,6 +193,9 @@ npx -y loopforge-cli@latest install claude
 
 ## 常见问题
 
+**什么时候适合把 LoopForge 部署到云端？**
+部署到云端后，团队可以用浏览器查看同一份运行日志和产物，也可以直接审批 SOP 节点。即使关掉开发机，云端的定时任务和 SOP 仍能运行。构建和测试可以交给云端 Worker，需要本地工具或内网访问的任务则可以交给接入平台的 Runner。详见[部署指南](docs/deployment.md)。
+
 **体验需要 API Key 吗？**
 不需要。体验 SOP 只包含脚本和人工审批。对话和 Agent 步骤需要所选执行器的 Key。平台不附带模型额度，凭据由你自己配置。
 
