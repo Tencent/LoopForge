@@ -44,10 +44,14 @@ func TestAssistantTaskValidationPersistenceAndDue(t *testing.T) {
 	if err != nil || got.ID == "" || got.LastStatus != "idle" || got.CreatedAt.IsZero() {
 		t.Fatalf("normalize new = %+v, %v", got, err)
 	}
+	longPrompt := strings.Repeat("p", 8000)
+	long, err := normalizeAssistantTask(assistantTask{Name: "n", Prompt: longPrompt, ProjectID: "p", IntervalSec: 60}, assistantTask{})
+	if err != nil || long.Prompt != longPrompt {
+		t.Fatalf("long prompt rejected: %+v %v", long, err)
+	}
 	for _, tc := range []assistantTask{
 		{Prompt: "p", ProjectID: "p", IntervalSec: 60},
 		{Name: strings.Repeat("名", 81), Prompt: "p", ProjectID: "p", IntervalSec: 60},
-		{Name: "n", Prompt: strings.Repeat("p", 4001), ProjectID: "p", IntervalSec: 60},
 		{Name: "n", Prompt: "p", ProjectID: "p", IntervalSec: 59},
 		{Name: "n", Prompt: "p", ProjectID: "p", IntervalSec: assistantTaskMaxInterval + 1},
 		{Name: "n", Prompt: "p", ProjectID: "p", Cron: "bad cron"},

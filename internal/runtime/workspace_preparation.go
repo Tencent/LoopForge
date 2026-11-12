@@ -439,6 +439,14 @@ func RecordWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	return state, nil
 }
 
+// WorkspacePreparationTrivial reports a recipe with nothing to prepare. A live
+// environment serves it as is, even if no run ever stamped it ready: SOP
+// nodes skip preparation entirely when their workflow has no such steps.
+func WorkspacePreparationTrivial(wf domain.WorkflowDefinition) bool {
+	nodes, err := preparationNodes(WorkspacePreparationWorkflow(wf))
+	return err == nil && len(nodes) == 0
+}
+
 func WorkspacePreparationReusable(state WorkspacePreparationStatus, wf domain.WorkflowDefinition, repositories []domain.RepositoryContext, epoch string) bool {
 	wf = WorkspacePreparationWorkflow(wf)
 	if state.Status != "ready" || state.Environment != epoch {

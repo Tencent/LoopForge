@@ -79,7 +79,15 @@ cd LoopForge
 
 `./start.sh` pulls the GHCR release image pinned in `compose.yaml` without building locally (`bash scripts/install.sh` does the same). It creates the MySQL and platform services, generates configuration and session secrets, and installs the built-in sandboxes, starter SOPs and welcome project. Host Go and Node.js installations are not required. Configure model API keys and GitHub authorization after startup. Use `./start.sh logs`, `stop`, `restart` or `pull` to manage it, and `./start.sh dev` to build the checkout from source.
 
+If downloads from `ghcr.io` stall, set `MIRROR` to a registry host that can stand in for `ghcr.io`. `./start.sh` pulls from that host and tags the image back to the name pinned in `compose.yaml`. Setting `MIRROR` trusts that host, because the download is tagged with the official name. The GitHub Release records the digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. Without `MIRROR`, `./start.sh` still pulls `ghcr.io` directly, and `compose.yaml` stays unchanged. Upgrade with the same variable and `./start.sh pull`. [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr) is one such host. A Docker `registry-mirrors` entry such as `https://docker.nju.edu.cn` only accelerates Docker Hub and is not a value for `MIRROR`.
+
+```bash
+MIRROR=ghcr.nju.edu.cn ./start.sh
+```
+
 Open the address printed by the installer and create your account; the first one becomes the administrator. The service listens on `0.0.0.0:8090` by default. On a cloud host, the installer reads the public IP from the provider's metadata service and prints it; allow the port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
+
+For GitLab, Gitea, Gogs and other Git hosts, [set up Git SSH](docs/deployment.md#git-repositories-over-ssh) to check out and push branches with a personal key. PR/MR and Issue automation requires a hosting API token or a separately configured MCP.
 
 ### Try it without an API key
 

@@ -6,7 +6,7 @@ import { test, expect, watchErrors } from './fixtures.mjs';
 // Keep in sync with viewTitles() in web/app.js; a renamed or dropped view is
 // a visible product change the suite should notice.
 const TITLES = {
-  collaboration: 'AI 工作台', issues: '需求列表', aiSchedules: '定时任务', bots: '通道管理', runs: '运行记录',
+  collaboration: 'AI 工作台', issues: '需求列表', aiSchedules: '定时任务', bots: '通道管理', assistant: 'AI 助手', runs: '运行记录',
   approvals: '待我确认', sops: '流程模板', flow: '流程设计', agents: '角色定义', mcp: '能力资产', rules: '能力资产', skills: '能力资产',
   dockerfiles: '环境资产', environments: '环境资产', sandboxes: '环境资产', observability: '统计', projects: '项目配置',
   platform: '平台管理', runners: '执行机器', settings: '个人配置', guide: '访问密钥',

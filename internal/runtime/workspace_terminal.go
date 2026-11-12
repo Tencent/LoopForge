@@ -65,17 +65,37 @@ func (p *TerminalPool) Handle(root, scope string, req domain.WorkspaceTerminalRe
 // On a failed open release is NOT called; the caller still owns that cleanup.
 // Non-open operations do not need a sandbox and ignore release.
 func (p *TerminalPool) HandleSandbox(ctx context.Context, sandbox Sandbox, scope string, req domain.WorkspaceTerminalRequest, release func()) (TerminalResult, error) {
+	return p.HandleSandboxWithGitSSH(ctx, sandbox, scope, req, release, nil)
+}
+
+// HandleSandboxWithGitSSH gives the terminal its caller's SSH identity when the
+// sandbox can keep it private to this terminal (see BindTerminalGitSSH). The
+// pool owns the agent for the same lifetime as the terminal, including expiry.
+func (p *TerminalPool) HandleSandboxWithGitSSH(ctx context.Context, sandbox Sandbox, scope string, req domain.WorkspaceTerminalRequest, release func(), keys map[string]string) (TerminalResult, error) {
 	if req.Operation != "open" {
 		return p.handle(scope, req, nil, nil)
 	}
 	if _, err := terminalTTL(req); err != nil {
 		return TerminalResult{}, err
 	}
-	cmd, home, err := sandboxTerminalCommand(ctx, sandbox)
+	stopSSH := func() {}
+	var bind func(*CommandSpec) error
+	if len(keys) > 0 && sandbox != nil {
+		bind = func(command *CommandSpec) error {
+			stop, err := BindTerminalGitSSH(sandbox, command, keys)
+			if err == nil {
+				stopSSH = stop
+			}
+			return err
+		}
+	}
+	cmd, home, err := sandboxTerminalCommandWithBinding(ctx, sandbox, bind)
 	if err != nil {
+		stopSSH()
 		return TerminalResult{}, err
 	}
 	ownedRelease := func() {
+		stopSSH()
 		sandboxTerminalCleanup(sandbox, home)
 		if release != nil {
 			release()
@@ -83,6 +103,7 @@ func (p *TerminalPool) HandleSandbox(ctx context.Context, sandbox Sandbox, scope
 	}
 	result, err := p.handle(scope, req, ownedRelease, func() (*exec.Cmd, string, error) { return cmd, home, nil })
 	if err != nil {
+		stopSSH()
 		sandboxTerminalCleanup(sandbox, home)
 		_ = removeTerminalHome(home)
 	}

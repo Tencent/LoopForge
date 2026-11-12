@@ -45,6 +45,7 @@ type RunCredentials struct {
 	ClaudeCode   ProviderCredential
 	AgentCLI     map[string]ProviderCredential
 	GitToken     string
+	GitSSHKeys   map[string]string `json:"-"`
 	GitUserName  string
 	GitUserEmail string
 	MCPServers   []domain.MCPServerDefinition
@@ -86,6 +87,9 @@ type CommandSpec struct {
 	// Codex chat uses it for the app-server JSON-RPC session.
 	Stdin       io.Reader
 	environment map[string]string
+	// privateBinds are host directories bwrap binds into this one process
+	// only (for example a terminal's own SSH agent).
+	privateBinds []string
 }
 
 // WithPrivateHomeDir keeps CodeBuddy/Claude isolated from the operator HOME

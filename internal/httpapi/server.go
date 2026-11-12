@@ -275,6 +275,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// 工蜂 Git Token 校验：只允许当前登录用户校验自己的令牌。
 	g.GET("/api/users/:id/git-token/verify", api.users.verifyGitToken)
 	g.POST("/api/users/:id/git-token/verify", api.users.verifyGitToken)
+	g.GET("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
+	g.PUT("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
+	g.DELETE("/api/users/:id/git-ssh-keys/:keyID", api.users.gitSSHKeys)
 	g.POST("/api/users/:id/cli-models/probe", api.users.probeCLIModels)
 	g.Any("/api/users/:id", func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -300,7 +303,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/assistant/sessions/:id/generation", asst.generation)
 	g.POST("/api/assistant/sessions/:id/generation/cancel", asst.generation)
 	g.POST("/api/assistant/sessions/:id/generation/steer", asst.steerGeneration)
+	g.POST("/api/assistant/sessions/:id/proposals", asst.decideProposal)
+	g.GET("/api/assistant/preferences", asst.preferences)
+	g.PUT("/api/assistant/preferences", asst.preferences)
 	g.GET("/api/assistant/models", asst.models)
+	g.POST("/api/assistant/cli-install", asst.installCLI)
+	g.GET("/api/assistant/cli-install", asst.cliInstallStatus)
 	g.POST("/api/assistant/attachments", asst.uploadAttachment)
 	g.GET("/api/assistant/attachments/:id", asst.downloadAttachment)
 	g.GET("/api/assistant/references", asst.workbenchReferences)

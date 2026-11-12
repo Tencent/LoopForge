@@ -16,6 +16,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/managedcli"
 	"agentflow/internal/runtime"
 
@@ -224,7 +225,10 @@ func resolveCodeBuddyBin() (string, error) {
 			return c, nil
 		}
 	}
-	return "", fmt.Errorf("codebuddy 可执行文件未找到（PATH 及常见安装路径均无）；可设置 AGENTFLOW_CODEBUDDY_BIN 指定绝对路径")
+	if path, ok := runtime.OnDemandCLIPath("codebuddy"); ok {
+		return path, nil
+	}
+	return "", assistantCLIMissingError{engine: assistantEngineCodeBuddy, binary: "codebuddy"}
 }
 
 // fileExecutable reports whether path is a regular file with an executable bit.
@@ -305,7 +309,20 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	}
 	// Resolve the configured default before choosing a cache. Changing a
 	// repository's main branch must not reuse its previous branch's checkout.
-	identity := sha256.Sum256([]byte(repo.ID + "\x00" + resolvedBranch))
+	cacheKey := repo.ID + "\x00" + resolvedBranch
+	ssh := repo.Provider == domain.RepositoryProviderSSH
+	if ssh {
+		keys := h.repo.GitSSHKeysForRemotes(responsibleUserID, []string{repo.CloneURL})
+		key := keys[repo.CloneURL]
+		if key == "" {
+			return "", false, gitwork.ErrSSHKeyRequired.Error()
+		}
+		ctx = gitwork.WithSSHKeys(ctx, keys)
+		// A private SSH checkout is never shared across users, changed
+		// repository bindings, or a removed or replaced key.
+		cacheKey += fmt.Sprintf("\x00%d\x00%s\x00%x", responsibleUserID, repo.CloneURL, sha256.Sum256([]byte(key)))
+	}
+	identity := sha256.Sum256([]byte(cacheKey))
 	dirName += fmt.Sprintf("-%x", identity[:8])
 	cacheDir := filepath.Join(clarifyRepoCacheRoot(), dirName)
 
@@ -316,7 +333,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	hadCheckout := statDir(filepath.Join(cacheDir, ".git"))
 
 	// Reuse an existing checkout without refreshing on later turns.
-	if hadCheckout && !refresh {
+	if hadCheckout && !refresh && !ssh {
 		return cacheDir, true, ""
 	}
 
@@ -325,7 +342,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	defer cancel()
 
 	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, token); err != nil {
-		if hadCheckout && baseBranch == "" {
+		if hadCheckout && baseBranch == "" && !ssh {
 			// Degrade to the previous (possibly stale) checkout.
 			return cacheDir, true, ""
 		}
@@ -338,6 +355,9 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 // Git checkouts are cloned before selecting a branch. Never switch the user's
 // original checkout to the configured main branch.
 func clarifyRepositorySource(repository domain.Repository, selectedBaseBranch string) (domain.Repository, bool) {
+	if repository.Provider == domain.RepositoryProviderSSH {
+		return repository, false
+	}
 	localPath := strings.TrimSpace(repository.LocalPath)
 	if localPath != "" && statDir(localPath) {
 		if _, err := os.Stat(filepath.Join(localPath, ".git")); err == nil {

@@ -2234,7 +2234,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .obs-card>.pager{margin:10px 0 2px;border:0;background:transparent;padding:8px 0 0}
 
 /* ================= 个人凭证（harness-ui 设计语言） ================= */
-#personalSettingsContent,.credential-scrim,.github-connect{
+#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog{
   --cr-accent:var(--hui-accent);--cr-accent-hover:var(--hui-accent-hover);
   --cr-surface:var(--hui-surface);--cr-canvas:var(--hui-canvas);--cr-elevated:var(--hui-soft);
   --cr-text:var(--hui-text);--cr-text-2:var(--hui-secondary);--cr-muted:var(--hui-muted);--cr-tertiary:var(--hui-tertiary);
@@ -2384,6 +2384,28 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-input select:focus{border-color:color-mix(in srgb,var(--cr-accent) 55%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--cr-accent) 12%,transparent)}
 .credential-input{position:relative;display:flex;align-items:center}
 .credential-input input{width:100%;height:36px;margin:0;padding:0 36px 0 11px;border:1px solid var(--cr-line);border-radius:8px;background:var(--cr-surface);color:var(--cr-text);font:inherit;font-size:13px;outline:none;box-shadow:none;transition:border-color .16s,box-shadow .25s var(--cr-flow)}
+.credential-input textarea{width:100%;min-height:110px;resize:vertical;font-family:ui-monospace,monospace}
+.git-ssh-dialog{width:min(600px,calc(100vw - 32px));max-height:calc(100dvh - 48px);margin:auto;padding:22px;border:1px solid var(--hui-border);border-radius:14px;background:var(--hui-surface);color:var(--hui-text);box-shadow:var(--hui-popover-shadow);overflow:auto}
+.git-ssh-dialog::backdrop{background:var(--hui-scrim)}
+.git-ssh-dialog[open]{animation:gitSSHDialogIn .18s ease-out}
+@keyframes gitSSHDialogIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.git-ssh-dialog[open]{animation:none}}
+.git-ssh-dialog [hidden]{display:none}
+.git-ssh-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.git-ssh-dialog h2,.git-ssh-dialog h3{margin:0;font-weight:600}
+.git-ssh-dialog h2{font-size:18px}.git-ssh-dialog h3{font-size:14px}
+.git-ssh-description,.git-ssh-status{margin:8px 0 12px;color:var(--hui-muted);font-size:13px}
+.git-ssh-status.is-error{color:var(--hui-error)}
+.git-ssh-key-list:not(:empty){margin-bottom:14px;border:1px solid var(--hui-border);border-radius:9px}
+.git-ssh-key-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:9px 10px}
+.git-ssh-key-row+.git-ssh-key-row{border-top:1px solid var(--hui-border)}
+.git-ssh-key-summary{flex:1 1 170px;min-width:0;display:grid;gap:3px;font-size:13px}
+.git-ssh-key-summary small{color:var(--hui-muted);overflow-wrap:anywhere}
+.git-ssh-key-form{display:grid;gap:12px;padding-top:8px}
+.git-ssh-form-actions{display:flex;flex-wrap:wrap;gap:8px}
+.git-ssh-missing{margin:8px 0 0;color:var(--hui-error);font-size:12px;line-height:1.6}
+.git-ssh-form-actions{justify-content:flex-end}
+.git-ssh-dialog textarea{padding:8px 11px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font-size:12px}
 .credential-input.is-plain input{padding-right:11px}
 .credential-input input::placeholder{color:var(--cr-tertiary)}
 .credential-input input:hover{border-color:var(--cr-line-strong)}

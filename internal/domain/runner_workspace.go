@@ -36,7 +36,10 @@ const (
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	RunKind            string                       `json:"runKind,omitempty"`
+	RunKind string `json:"runKind,omitempty"`
+	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
+	// opens terminals beside running tasks instead of waiting for their fence.
+	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`
 	CheckpointTransfer *WorkspaceCheckpointTransfer `json:"checkpointTransfer,omitempty"`
 	// Only the control plane may allow a clean checkout to be refreshed, before
 	// any non-preparation node has run. Later nodes keep their frozen baseline.
@@ -53,6 +56,7 @@ type RunnerWorkspaceRequest struct {
 	Checkpoint            []byte                    `json:"checkpoint,omitempty"`
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
+	TerminalGitSSHKeys    map[string]string         `json:"terminalGitSshKeys,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to
 	// identify this run's independent sandbox, terminal scope and locks.
 	Browser         *BrowserRequest     `json:"browser,omitempty"`

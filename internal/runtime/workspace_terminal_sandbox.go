@@ -50,6 +50,10 @@ exec "$SHELL" -i
 // sandboxTerminalCommand deliberately supports only concrete platform drivers.
 // An unknown Sandbox must fail closed instead of silently opening a host shell.
 func sandboxTerminalCommand(ctx context.Context, sandbox Sandbox) (*exec.Cmd, string, error) {
+	return sandboxTerminalCommandWithBinding(ctx, sandbox, nil)
+}
+
+func sandboxTerminalCommandWithBinding(ctx context.Context, sandbox Sandbox, bind func(*CommandSpec) error) (*exec.Cmd, string, error) {
 	if sandbox == nil {
 		return nil, "", fmt.Errorf("工作区执行环境不可用")
 	}
@@ -84,7 +88,7 @@ func sandboxTerminalCommand(ctx context.Context, sandbox Sandbox) (*exec.Cmd, st
 printf '%s\n' "$$" > "$HOME/.terminal-pid" || exit
 ` + terminalShellLaunch
 	}
-	cmd, err := sandboxTerminalCommandBound(ctx, sandbox, command, terminalBaseEnvironment(home))
+	cmd, err := sandboxTerminalCommandBound(ctx, sandbox, command, terminalBaseEnvironment(home), bind)
 	if err != nil {
 		_ = removeTerminalHome(home)
 		return nil, "", err
@@ -96,12 +100,11 @@ printf '%s\n' "$$" > "$HOME/.terminal-pid" || exit
 	return cmd, home, nil
 }
 
-func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command CommandSpec, base []string) (*exec.Cmd, error) {
+func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command CommandSpec, base []string, bind func(*CommandSpec) error) (*exec.Cmd, error) {
 	// A terminal is user-directed and needs the run's Git binding, never its model
 	// provider keys. Overlay variables are the same explicit sandbox configuration
 	// that SOP commands receive; unrelated server environment is not inherited.
-	switch s := sandbox.(type) {
-	case *managedSandbox:
+	if s, ok := sandbox.(*managedSandbox); ok {
 		s.credentialsMu.RLock()
 		credentials := s.credentials
 		s.credentialsMu.RUnlock()
@@ -110,7 +113,14 @@ func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command C
 		if err != nil {
 			return nil, err
 		}
-		return sandboxTerminalCommandBound(ctx, s.Sandbox, bound, base)
+		return sandboxTerminalCommandBound(ctx, s.Sandbox, bound, base, bind)
+	}
+	if bind != nil {
+		if err := bind(&command); err != nil {
+			return nil, err
+		}
+	}
+	switch s := sandbox.(type) {
 	case *localSandbox:
 		return s.command(context.Background(), command, base)
 	case *processSandbox:

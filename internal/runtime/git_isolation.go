@@ -157,6 +157,25 @@ func updateProjectAgentGitIndex(ctx context.Context, workspace, driver, mode str
 		return fmt.Errorf("git update-index %s: %w: %s (resolve index lock: %v)", mode, err, strings.TrimSpace(string(output)), lockErr)
 	}
 	inUse, confirmed, inspectErr := gitIndexLockInUse(ctx, lockPath)
+	// A live holder is usually a short git command (a reader refreshing the
+	// index, an agent's commit). Wait for it briefly instead of failing the
+	// whole preparation on the first collision.
+	for deadline := time.Now().Add(gitIndexLockWait); inspectErr == nil && confirmed && inUse && time.Now().Before(deadline); {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(gitIndexLockPoll):
+		}
+		if _, statErr := os.Stat(lockPath); os.IsNotExist(statErr) {
+			if output, err = run(); err == nil {
+				return nil
+			}
+			if !isGitIndexLockConflict(output) {
+				return fmt.Errorf("git update-index %s: %w: %s", mode, err, strings.TrimSpace(string(output)))
+			}
+		}
+		inUse, confirmed, inspectErr = gitIndexLockInUse(ctx, lockPath)
+	}
 	if inspectErr != nil || !confirmed {
 		return fmt.Errorf("git update-index %s: %w: %s (cannot safely inspect index lock: %v)", mode, err, strings.TrimSpace(string(output)), inspectErr)
 	}
@@ -172,6 +191,13 @@ func updateProjectAgentGitIndex(ctx context.Context, workspace, driver, mode str
 	}
 	return nil
 }
+
+// How long a preparation waits for another live git process to release
+// .git/index.lock before giving up; variables so tests can shorten them.
+var (
+	gitIndexLockWait = 15 * time.Second
+	gitIndexLockPoll = 200 * time.Millisecond
+)
 
 func isGitIndexLockConflict(output []byte) bool {
 	message := strings.ToLower(string(output))

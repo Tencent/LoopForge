@@ -84,6 +84,12 @@ func (r Runner) SupportsConversationWorkspace() bool {
 // it directly, without a Gongfeng MR.
 const RunnerVersionSharedPush = "0.9.0"
 
+const RunnerVersionGitSSH = "0.9.3"
+
+func (r Runner) SupportsGitSSH() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitSSH)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -379,15 +385,19 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIAPIKey = ""
 	copyInvocation.AgentCLIBaseURL = ""
 	copyInvocation.AgentCLIProtocol = ""
+	copyInvocation.GitSSHUserID = 0
+	copyInvocation.GitSSHKeys = nil
 	if copyInvocation.Repository != nil {
 		copyRepository := *copyInvocation.Repository
 		copyRepository.GitToken = ""
+		copyRepository.CloneURL = StripURLCredentials(copyRepository.CloneURL)
 		copyInvocation.Repository = &copyRepository
 	}
 	if len(copyInvocation.Repositories) > 0 {
 		copyRepositories := make([]RunnerRepository, len(copyInvocation.Repositories))
 		for i, repository := range copyInvocation.Repositories {
 			repository.GitToken = ""
+			repository.CloneURL = StripURLCredentials(repository.CloneURL)
 			copyRepositories[i] = repository
 		}
 		copyInvocation.Repositories = copyRepositories
@@ -451,6 +461,10 @@ type RunnerInvocation struct {
 	// the task workspace, so the sandbox and workspace live on that machine.
 	// Legacy single-repository field; Repositories is authoritative when set.
 	Repository *RunnerRepository `json:"repository,omitempty"`
+	// Only the user reference is stored in the queue. GitSSHKeys is filled on
+	// authenticated claim or on the outbound workspace control connection.
+	GitSSHUserID int64             `json:"gitSshUserId,omitempty"`
+	GitSSHKeys   map[string]string `json:"gitSshKeys,omitempty"` // clone URL to private key
 	// Repositories lists every repository the run touches (multi-repository
 	// support). Each entry checks out into its Dir under the task workspace.
 	Repositories []RunnerRepository `json:"repositories,omitempty"`
@@ -466,6 +480,7 @@ type RunnerRepository struct {
 	Ref          string `json:"ref,omitempty"`
 	WorkBranch   string `json:"workBranch,omitempty"`
 	GitToken     string `json:"gitToken,omitempty"`
+	UseSSH       bool   `json:"useSsh,omitempty"`
 	// RequireExistingWorkBranch keeps explicit continuation on an existing
 	// remote head. Missing/deleted heads are errors, never branch creation.
 	RequireExistingWorkBranch bool `json:"requireExistingWorkBranch,omitempty"`
@@ -491,6 +506,21 @@ type RunnerRepository struct {
 	// DefaultBranch is set only on align_baseline: the branch merged into
 	// IntegrateBranch.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
+}
+
+func (inv *RunnerInvocation) GitSSHRemotes() []string {
+	var remotes []string
+	if inv != nil {
+		for _, repository := range inv.Repositories {
+			if repository.UseSSH {
+				remotes = append(remotes, repository.CloneURL)
+			}
+		}
+		if len(inv.Repositories) == 0 && inv.Repository != nil && inv.Repository.UseSSH {
+			remotes = append(remotes, inv.Repository.CloneURL)
+		}
+	}
+	return remotes
 }
 
 // RunnerInputFile is one file written into the task workspace before a run.
