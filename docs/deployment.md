@@ -50,7 +50,7 @@ The platform listens on `LOOPFORGE_BIND`, `0.0.0.0` by default, without promptin
 Enterprise authentication gateways can sign users in by header with `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`. This option is off by default. The API then accepts `Staffname` / `x-staff-name` only from a loopback peer, and only when it can tell the request came from the gateway:
 
 - Set `AGENTFLOW_IDENTITY_HEADER_SECRET` to a random value, and have the gateway send it in `X-AgentFlow-Gateway-Secret`. The gateway must overwrite, never pass through, the client's `Staffname`, `Staffid`, `x-staff-name` and `X-AgentFlow-Gateway-Secret` headers.
-- Without a secret, any request carrying `X-Forwarded-For`, `Forwarded` or `X-Real-IP` is treated as a forwarded client, and its identity headers are ignored. A same-host reverse proxy therefore cannot mint sessions from headers sent by clients.
+- Without a secret, any request carrying `X-Forwarded-For`, `Forwarded` or `X-Real-IP` is treated as a forwarded client, and its identity headers are ignored. This only protects proxies that add one of those headers: a same-host proxy that passes client headers through without adding them (for example nginx `proxy_pass` without `proxy_set_header X-Forwarded-For`), and any other process on the host, can still sign in as any user. Set the secret whenever header sign-in is on; the platform logs a warning at startup when it is missing.
 
 ### Docker sandboxes
 
