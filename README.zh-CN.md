@@ -77,6 +77,14 @@ cd LoopForge
 
 `./start.sh` 直接拉取 `compose.yaml` 中 pin 的 GHCR 发布镜像，不在本地构建（`bash scripts/install.sh` 效果相同）。安装流程会创建 MySQL 和平台服务，生成配置与会话密钥，并导入内置沙箱、通用 SOP 和体验项目；无需在宿主机安装 Go 或 Node.js。模型 API Key 和 GitHub 授权在启动后由用户配置。用 `./start.sh logs`、`stop`、`restart`、`pull` 管理服务；需要从源码构建时用 `./start.sh dev`。
 
+国内拉取 `ghcr.io` 经常中断。按[南京大学 GHCR 镜像](https://doc.nju.edu.cn/books/e1654/page/ghcr)的用法，把地址里的 `ghcr.io` 换成 `ghcr.nju.edu.cn`，下载后再改回 `compose.yaml` 里的原名。本地已经有这个名字时，`./start.sh` 不会再去连 GitHub。版本号要和 `compose.yaml` 里的 pin 一致。升级时先对新版本重复前两行，再执行 `./start.sh`。`./start.sh pull` 会直接访问 `ghcr.io`。Docker 引擎里的 `registry-mirrors`（包括 `https://docker.nju.edu.cn`）只加速 Docker Hub。
+
+```bash
+docker pull ghcr.nju.edu.cn/tencent/loopforge:0.3.7
+docker tag ghcr.nju.edu.cn/tencent/loopforge:0.3.7 ghcr.io/tencent/loopforge:0.3.7
+./start.sh
+```
+
 打开安装脚本输出的地址创建账号，第一个账号自动成为管理员。服务默认监听 `0.0.0.0:8090`；在云主机上，安装脚本会从云厂商的元数据服务读取公网 IP 并直接打印出来，放通安全组端口即可访问，或配置 HTTPS 反向代理；管理员账号创建前，建议只允许你的 IP 访问。首页的「快速接入」会带你配置模型凭据、绑定仓库并选好默认 SOP。
 
 ### 免 API Key 体验

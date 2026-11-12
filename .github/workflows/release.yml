@@ -24,13 +24,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    outputs:
-      digest: ${{ steps.push.outputs.digest }}
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
-      sha: ${{ steps.release.outputs.sha }}
-      image: ${{ steps.release.outputs.image }}
-      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -93,29 +86,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Personal TCR. TCR_REGISTRY is the host only, for example
-      # ccr.ccs.tencentyun.com. The namespace and repository are loopforge/loopforge.
-      - name: Check TCR credentials
-        id: tcr
-        env:
-          TCR_REGISTRY: ${{ secrets.TCR_REGISTRY }}
-          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
-          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
-        run: |
-          if [[ -z "${TCR_USERNAME}" || -z "${TCR_PASSWORD}" ]]; then
-            echo "TCR_USERNAME and TCR_PASSWORD repository secrets are required" >&2
-            exit 1
-          fi
-          registry="$(printf '%s' "${TCR_REGISTRY}" | tr -d '[:space:]')"
-          if [[ ! "${registry}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?$ ]]; then
-            echo "TCR_REGISTRY must be the registry host, for example ccr.ccs.tencentyun.com" >&2
-            exit 1
-          fi
-          {
-            echo "registry=${registry}"
-            echo "image=${registry}/loopforge/loopforge"
-          } >> "$GITHUB_OUTPUT"
-
       - uses: docker/metadata-action@v5
         id: metadata
         with:
@@ -148,71 +118,14 @@ jobs:
       - if: failure()
         run: docker compose logs platform | tail -200
 
-  mirror:
-    needs: release
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.release.outputs.tag }}
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ${{ secrets.TCR_REGISTRY }}
-          username: ${{ secrets.TCR_USERNAME }}
-          password: ${{ secrets.TCR_PASSWORD }}
-
-      # Keep the registry host in this job. Job outputs that contain a secret
-      # are dropped before the next job starts.
-      - name: Mirror the published image to TCR
-        env:
-          TCR_REGISTRY: ${{ secrets.TCR_REGISTRY }}
-          SRC_IMAGE: ${{ needs.release.outputs.image }}
-          DIGEST: ${{ needs.release.outputs.digest }}
-          VERSION: ${{ needs.release.outputs.version }}
-          SHA: ${{ needs.release.outputs.sha }}
-          PRERELEASE: ${{ needs.release.outputs.prerelease }}
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y skopeo
-          registry="$(printf '%s' "${TCR_REGISTRY}" | tr -d '[:space:]')"
-          if [[ ! "${registry}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?$ ]]; then
-            echo "TCR_REGISTRY must be the registry host, for example ccr.ccs.tencentyun.com" >&2
-            exit 1
-          fi
-          tcr_image="${registry}/loopforge/loopforge"
-          echo "TCR_IMAGE=${tcr_image}" >> "$GITHUB_ENV"
-          src="docker://${SRC_IMAGE}@${DIGEST}"
-          auth="${HOME}/.docker/config.json"
-          copy() {
-            echo "mirroring ${src} -> ${tcr_image}:$1"
-            skopeo copy --all --retry-times 3 \
-              --src-authfile "${auth}" --dest-authfile "${auth}" \
-              "${src}" "docker://${tcr_image}:$1"
-          }
-          copy "${VERSION}"
-          copy "sha-${SHA}"
-          if [[ "${PRERELEASE}" != "true" ]]; then
-            copy "${VERSION%.*}"
-            copy latest
-          fi
-
       - name: Create or update GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release.outputs.tag }}
-          VERSION: ${{ needs.release.outputs.version }}
-          IMAGE: ${{ needs.release.outputs.image }}
-          PRERELEASE: ${{ needs.release.outputs.prerelease }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          IMAGE: ${{ steps.release.outputs.image }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           notes="$(cat <<EOF
           ## Install
@@ -223,7 +136,7 @@ jobs:
           ./start.sh
           \`\`\`
 
-          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Tencent Cloud mirror: \`${TCR_IMAGE}:${VERSION}\`. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
+          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Where \`ghcr.io\` is slow, pull the same tag from \`ghcr.nju.edu.cn\` and tag it back to that name before \`./start.sh\`. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
           EOF
           )"
           if gh release view "${TAG}" >/dev/null 2>&1; then
