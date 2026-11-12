@@ -135,14 +135,18 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	// Every message shows when it was sent. The server clock stamps the new
 	// question, so a skewed or missing browser clock cannot misdate it.
 	sentAt := time.Now().UTC()
+	// The new question carries the generation ID from the moment it is sent,
+	// so it can be copied for troubleshooting before the reply arrives.
+	generationID := newAssistantSessionID()
 	for i := len(old.Messages); i < len(req.Messages); i++ {
 		if req.Messages[i].Role == "user" {
 			req.Messages[i].AuthorID = user.ID
 			req.Messages[i].AuthorName = user.LoginName
 			req.Messages[i].CreatedAt = sentAt
+			req.Messages[i].TraceID = generationID
 		}
 	}
-	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
+	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: generationID, SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	pending := assistantConversation{ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
@@ -184,7 +188,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		defer done()
 		h.executeGeneration(parent, req, g, current)
 	}()
-	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status})
+	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status, "messageCount": g.MessageCount})
 }
 func (h *assistantHandlers) generation(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -463,7 +467,8 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 		}
 		last := len(session.Messages) - 1
 		if last < 0 || session.Messages[last].Role != "user" || session.Messages[last].Content != content {
-			session.Messages = append(session.Messages, domain.AssistantMessage{Role: "user", Content: content, AuthorID: steer.ActorID, AuthorName: steer.ActorName, CreatedAt: time.Now().UTC(), Attachments: steer.Attachments, References: steer.References, Trigger: firstNonEmpty(steer.Trigger, "steer")})
+			// followSteer starts the next generation under this ID.
+			session.Messages = append(session.Messages, domain.AssistantMessage{TraceID: newAssistantSessionID(), Role: "user", Content: content, AuthorID: steer.ActorID, AuthorName: steer.ActorName, CreatedAt: time.Now().UTC(), Attachments: steer.Attachments, References: steer.References, Trigger: firstNonEmpty(steer.Trigger, "steer")})
 			changed = true
 		}
 	}
@@ -500,7 +505,7 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 		}
 		req.workspaceToken = token
 	}
-	next := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: steer.ActorID, ActorName: steer.ActorName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: prev.UserID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
+	next := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: steer.ActorID, ActorName: steer.ActorName, ID: steerGenerationID(prev, session.Messages), SessionID: req.SessionID, UserID: prev.UserID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	if err := h.repo.BeginAssistantGeneration(next, session); err != nil {
 		if req.workspaceToken != "" && h.engine != nil {
 			_ = h.engine.EndConversationWorkspaceUse(parent, req.RunID, req.workspaceToken)
@@ -508,4 +513,15 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 		return
 	}
 	h.executeGeneration(parent, req, next, actor)
+}
+
+// steerGenerationID reuses the trace ID stamped on the redirecting question,
+// so the question and the reply it starts share one ID.
+func steerGenerationID(prev domain.AssistantGeneration, messages []domain.AssistantMessage) string {
+	if n := len(messages); n > 0 && messages[n-1].Role == "user" {
+		if id := strings.TrimSpace(messages[n-1].TraceID); id != "" && id != prev.ID {
+			return id
+		}
+	}
+	return newAssistantSessionID()
 }
