@@ -460,7 +460,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	prompt.WriteString(clarifyRoundBudgetHint(clarifyAssistantRounds(request.History)))
 	prompt.WriteString("\n请基于以上对话继续澄清，只围绕「## 需求」本身，完成后调用 submit_clarification。")
-	binPath, binErr := resolveAssistantEngineBin(engine.ID)
+	binPath, binErr := clarifyEngineBin(ctx, engine.ID)
 	if binErr != nil {
 		return nil, "", nil, binErr
 	}

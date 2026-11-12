@@ -89,6 +89,7 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `POST` | `/api/issues/{issueId}/dispatch` |
 | `POST` | `/api/chat-clarify` |
 | `POST` | `/api/chat-clarify/cancel` |
+| `GET` | `/api/clarify-engines` |
 | `GET` | `/api/tasks` |
 | `GET` | `/api/tasks/{id}` |
 

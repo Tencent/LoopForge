@@ -1429,6 +1429,79 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/clarify-engines:
+    get:
+      tags: [Issues]
+      operationId: clarifyEngineAvailability
+      description: Lists every agent framework the platform offers for requirement clarification, with the availability and the usable models of each, judged from the issue's responsible user (clarification runs on that user's credentials). Booleans, reasons and model ids only — no API key or Base URL value is ever returned.
+      parameters:
+        - name: issueId
+          in: query
+          required: false
+          schema: {type: string}
+          description: Judge the framework availability of this issue's responsible user (assignee, else project owner)
+        - name: projectId
+          in: query
+          required: false
+          schema: {type: string}
+          description: "No issue yet (the new-requirement wizard): judge the project owner. Ignored when issueId is present."
+      responses:
+        "200":
+          description: Engine catalog for the responsible user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  responsibleUserId: {type: integer, format: int64}
+                  responsibleUserName: {type: string}
+                  default:
+                    type: string
+                    description: Effective default model id for a new clarification round
+                  defaultStale:
+                    type: boolean
+                    description: The personal default names a framework this user cannot run right now, so the default fell back to CodeBuddy
+                  engines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        configured: {type: boolean}
+                        available: {type: boolean}
+                        reason:
+                          type: string
+                          description: Why the framework cannot be chosen yet; empty when available
+                        credential:
+                          type: string
+                          description: The personal-settings credential field that enables this framework
+                        models:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id: {type: string}
+                              name: {type: string}
+                              engine: {type: string}
+        "400":
+          description: No issueId or projectId, or the issue has no responsible user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown issueId or projectId
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
   /api/chat-clarify:
     post:
       tags: [Issues]
@@ -4997,6 +5070,9 @@ components:
           type: string
         message:
           type: string
+        model:
+          type: string
+          description: Prefixed model id choosing the agent framework for this clarification round ("codex:gpt-5.5", "opencode:glm-4"; unprefixed ids are CodeBuddy). Empty uses the framework this issue was clarified with, then the responsible user's personal default, then CodeBuddy. An unknown framework, a missing API key or a missing Base URL returns 400; nothing is silently rewritten to CodeBuddy.
         history:
           type: array
           items:

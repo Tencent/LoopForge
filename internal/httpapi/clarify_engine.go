@@ -6,14 +6,17 @@ package httpapi
 // 澄清不再固定跑在 CodeBuddy 上。一个带引擎前缀的模型 ID（"codex:gpt-5.5"）同时表达
 // 「用哪个智能体框架」和「用它的哪个模型」，前缀规则与 AI 对话共用 assistantModelEngine；
 // 凭据取需求责任人在个人配置里对应那一项。
-
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
+
+	"github.com/gin-gonic/gin"
 )
 
 // clarifyEngine 是一轮澄清所用的 CLI 与其模型。
@@ -206,6 +209,15 @@ func clarifyEngineCredential(credentials runtime.RunCredentials, engineID string
 	return runtime.ProviderCredential{}
 }
 
+// clarifyEngineBin 定位这个引擎的可执行文件。Claude Code 不在镜像里，由平台在首次使用时
+// 从 npm 安装（AI 对话也是同一处理），所以澄清走同一条路，不会因为「镜像没有」而失败。
+func clarifyEngineBin(ctx context.Context, engineID string) (string, error) {
+	if engineID == assistantEngineClaude {
+		return runtime.ResolveClaudeCode(ctx)
+	}
+	return resolveAssistantEngineBin(engineID)
+}
+
 // clarifyToolVocabulary 给出这个引擎里「读代码的那几个工具」的说法。Read/Grep/Glob 是
 // CodeBuddy 与 Claude Code 的工具名；其它引擎用了只会去调不存在的工具。
 func clarifyToolVocabulary(engineID string) string {
@@ -224,4 +236,150 @@ func clarifyApplyToolVocabulary(text, engineID string) string {
 		return text
 	}
 	return strings.ReplaceAll(text, codebuddyReadTools, vocabulary)
+}
+
+// clarifyEngineOption 是选择器里一个框架分组：能不能选、为什么不能选、能选哪些模型。
+type clarifyEngineOption struct {
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	Configured bool             `json:"configured"`
+	Available  bool             `json:"available"`
+	Reason     string           `json:"reason,omitempty"`
+	Credential string           `json:"credential"`
+	Models     []assistantModel `json:"models,omitempty"`
+}
+
+// clarifyEngineCatalog 是按需求责任人算出来的整套可用性。
+type clarifyEngineCatalog struct {
+	ResponsibleUserID   int64                 `json:"responsibleUserId"`
+	ResponsibleUserName string                `json:"responsibleUserName"`
+	Default             string                `json:"default"`
+	DefaultStale        bool                  `json:"defaultStale,omitempty"`
+	Engines             []clarifyEngineOption `json:"engines"`
+}
+
+// clarifyEngines 告诉界面：这张单（或这个项目）的澄清能选哪些框架。可用性按**需求责任人**
+// 判定——澄清是以责任人的凭据跑的，别人的 Key 不算数。接口只输出布尔状态、原因和模型 ID，
+// 绝不带出任何 Key 或 Base URL。
+func (h *streamHandlers) clarifyEngines(c *gin.Context) {
+	if _, ok := h.requestUser(c.Request, false); !ok {
+		c.JSON(http.StatusForbidden, map[string]string{"error": "请先登录"})
+		return
+	}
+	responsible, code, message := h.clarifyEngineResponsible(c)
+	if code != 0 {
+		c.JSON(code, map[string]string{"error": message})
+		return
+	}
+	_, shared := (&assistantHandlers{deps: h.deps}).assistantSharedKey()
+	catalog := clarifyEngineCatalogFor(c.Request.Context(), responsible, shared && strings.TrimSpace(responsible.CodeBuddyAPIKey) == "")
+	c.JSON(http.StatusOK, catalog)
+}
+
+// clarifyEngineResponsible 从 issueId 或 projectId 解析出需求责任人。
+func (h *streamHandlers) clarifyEngineResponsible(c *gin.Context) (domain.User, int, string) {
+	issueID := strings.TrimSpace(c.Query("issueId"))
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	switch {
+	case issueID != "":
+		issue, ok := h.repo.Issue(issueID)
+		if !ok {
+			return domain.User{}, http.StatusNotFound, "需求不存在"
+		}
+		responsible, err := h.repo.ResponsibleUser(issue)
+		if err != nil {
+			return domain.User{}, http.StatusBadRequest, err.Error()
+		}
+		return responsible, 0, ""
+	case projectID != "":
+		if _, ok := h.repo.Project(projectID); !ok {
+			return domain.User{}, http.StatusNotFound, "项目不存在"
+		}
+		responsible, err := h.repo.ResponsibleUser(domain.Issue{ProjectID: projectID})
+		if err != nil {
+			return domain.User{}, http.StatusBadRequest, err.Error()
+		}
+		return responsible, 0, ""
+	}
+	return domain.User{}, http.StatusBadRequest, "需要 issueId 或 projectId"
+}
+
+func clarifyEngineCatalogFor(ctx context.Context, responsible domain.User, sponsored bool) clarifyEngineCatalog {
+	name := strings.TrimSpace(responsible.ChineseName)
+	if name == "" {
+		name = responsible.LoginName
+	}
+	catalog := clarifyEngineCatalog{
+		ResponsibleUserID:   responsible.ID,
+		ResponsibleUserName: name,
+		Default:             clarifyDefaultModel,
+		Engines:             clarifyEngineAvailability(ctx, responsible, sponsored),
+	}
+	// 个人默认失效不报错，只标记：由界面显式说明「已失效，当前用 CodeBuddy」。
+	if raw := strings.TrimSpace(responsible.ClarifyModel); raw != "" {
+		if engine, err := clarifyResolveModel(raw, responsible); err == nil {
+			catalog.Default = engine.ModelID
+		} else {
+			catalog.DefaultStale = true
+		}
+	}
+	return catalog
+}
+
+// clarifyEngineAvailability 列出平台提供的每个框架（配置与否都列），并算出它的可选模型。
+func clarifyEngineAvailability(ctx context.Context, user domain.User, sponsored bool) []clarifyEngineOption {
+	engineModels := assistantEngineModels(ctx, user)
+	options := assistantEngineOptions(user, sponsored)
+	out := make([]clarifyEngineOption, 0, len(options))
+	for _, option := range options {
+		entry := clarifyEngineOption{ID: option.ID, Name: option.Name, Configured: option.Configured, Credential: option.Credential}
+		if option.ID == assistantEngineCodeBuddy {
+			entry.Models = assistantKnownCatalog().Models
+		} else {
+			for _, model := range engineModels {
+				if model.Engine == option.ID {
+					entry.Models = append(entry.Models, model)
+				}
+			}
+			// opencode / pi 的内置目录是空的，但允许自定义模型：给一项默认模型，
+			// 不能因为目录空就把这个框架判死。
+			if len(entry.Models) == 0 && executorModelCatalogs()[clarifyEngineCatalogKey(option.ID)].CustomModel {
+				entry.Models = []assistantModel{{ID: option.ID + ":default", Name: "CLI 默认模型", Family: "other", Engine: option.ID}}
+			}
+		}
+		entry.Reason = clarifyEngineUnavailableReason(option.ID, user, option.Configured, entry.Models)
+		entry.Available = entry.Reason == ""
+		out = append(out, entry)
+	}
+	return out
+}
+
+// clarifyEngineUnavailableReason 按「缺 Key → 缺 Base URL → 没装 CLI → 没有可选模型」的顺序
+// 给出第一个原因；空串表示可用。Claude Code 不算「没装」：它不在镜像里，平台在首次使用时
+// 从 npm 安装，装不上时由那一轮的错误说明原因。
+func clarifyEngineUnavailableReason(engine string, user domain.User, configured bool, models []assistantModel) string {
+	if !configured {
+		return assistantEngineMissingKey(engine)
+	}
+	if _, baseURL := assistantEngineCredential(user, engine); runtime.AgentCLINeedsBaseURL(engine, assistantEngineProtocol(user, engine)) && baseURL == "" {
+		return fmt.Sprintf("%s 需要在个人配置中填写 Base URL", assistantEngineLabel(engine))
+	}
+	if _, err := resolveAssistantEngineBin(engine); err != nil {
+		if engine == assistantEngineClaude {
+			return ""
+		}
+		return err.Error()
+	}
+	if len(models) == 0 {
+		return "该框架暂无可用模型，请先在个人配置里添加"
+	}
+	return ""
+}
+
+// clarifyEngineCatalogKey 把引擎 ID 换成内置模型目录的键名（claude-code 那边叫 claude）。
+func clarifyEngineCatalogKey(engine string) string {
+	if engine == assistantEngineClaude {
+		return "claude"
+	}
+	return engine
 }

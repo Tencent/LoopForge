@@ -401,6 +401,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/chat-clarify", api.stream.chatClarify)
 	g.GET("/api/chat-clarify", api.stream.attachChatClarify)
 	g.POST("/api/chat-clarify/cancel", api.stream.chatClarifyCancel)
+	g.GET("/api/clarify-engines", api.stream.clarifyEngines)
 	g.GET("/api/tasks", api.tasks.tasks)
 	g.GET("/api/tasks/:id", api.tasks.task)
 	g.GET("/api/agents", api.catalog.agents)
