@@ -13,8 +13,8 @@ ZCode 从项目级 `.zcode/skills/` 原生发现 Portable Skill，安装器不�
 
 1. `spawn(role, prompt) -> executor_id`：调用 `Agent` 工具，`subagent_type: "general-purpose"`，传入简短 `description` 与完整阶段 `prompt`。
    新子会话不继承父会话聊天历史，但宿主仍会注入工作区 `AGENTS.md`；返回结果中的 `agentId` 就是 `executor_id`。
-2. `wait(executor_id)`：前台调用同步返回子会话报告。前台调用超时会转后台，此时结束本轮，等待宿主投递的
-   `<task-notification>` 完成通知，不得提前 `finish`。
+2. `wait(executor_id)`：前台调用同步返回子会话报告；若明确转入异步后台执行，此时结束本轮并等待宿主投递的
+   `<task-notification>` 完成通知，不得提前 `finish`。若调用超时、取消或报错失败，走错误恢复与重试，不得推定后台仍在运行。
 3. `close(executor_id)`：子 Agent 完成后由宿主回收；后台任务需中止时用 `TaskStop`。
 4. `spawn_helper(role, bounded_prompt) -> executor_id`：调用 `Agent` 并指定 `subagent_type: "Explore"`，提示中限定只读边界，
    以 `devflow-code-explorer` 或 `devflow-knowledge-retriever` 为审计角色，用 `helper --executor-type dynamic --dispatch-tool agent` 登记返回的 `agentId`。
