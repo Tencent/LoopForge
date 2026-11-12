@@ -91,7 +91,7 @@ agent CLI（opencode、cursor、agy、kimi、pi、dsh、zcode），包含原生 
   报错，不退回。
 - **一个值表达引擎 + 模型**：沿用现有带前缀的模型 ID（`codex:gpt-5.5`、`opencode:…`，
   解析规则 `assistantModelEngine`，`assistant_engines.go:38-45`）。临时选择继续存
-  `localStorage['agentflow.clarifyModel']`；个人默认存 users 新增列（空 = 用 CodeBuddy）。
+  `localStorage['agentflow.clarifyModel']`；个人默认存 `user_configs.clarify_model`（空 = 用 CodeBuddy）。
 - **置灰原因枚举**（菜单里必须能看懂为什么不能选）：未配置 API Key；需要 Base URL 但未填；
   控制面未安装该 CLI；dsh 缺少 MCP 扩展依赖；该引擎无任何可选模型。opencode / pi 内置模型
   目录为空但允许自定义模型（`customModel:true`），这种情况给一项「CLI 默认模型」，不算不可用。
@@ -151,7 +151,8 @@ agent CLI（opencode、cursor、agy、kimi、pi、dsh、zcode），包含原生 
     设置页那一行偏好、两处入口联动、单张需求记住引擎的展示。
 11. **API 与持久化**：`chatClarifyRequest.model` 的语义扩展为带引擎前缀的 ID；Issue 的
     `Clarification` 需要记录本轮澄清所用引擎（与已有 `SessionID`/`SessionUserID` 同层）；
-    个人默认存 users 新列（归 `UsersRepo`，gorm AutoMigrate 补列）。另需一个「按需求或项目
+    个人默认存 `user_configs` 侧表的 `clarify_model` 列（归 `UsersRepo`，gorm AutoMigrate 补列，并附
+    `migrations/028_clarify_model_preference.sql`）。另需一个「按需求或项目
     解析责任人引擎可用性」的查询端点，返回每个引擎的可用状态与不可用原因供选择器置灰；它读的
     是责任人的凭据配置与控制面 CLI 安装状态，绝不返回 Key 本身。
 12. **文档**：`README.zh-CN.md:103`（「需求澄清和通知 AI 汇总目前使用 CodeBuddy」）、

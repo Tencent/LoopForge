@@ -38,8 +38,11 @@ type User struct {
 	CodeBuddyAPIKey              string    `json:"codeBuddyApiKey,omitempty"`
 	CodeBuddyAPIKeyConfigured    bool      `json:"codeBuddyApiKeyConfigured,omitempty"`
 	CodeBuddyInternetEnvironment string    `json:"codeBuddyInternetEnvironment,omitempty"`
-	CreatedAt                    time.Time `json:"createdAt"`
-	UpdatedAt                    time.Time `json:"updatedAt"`
+	// ClarifyModel 是需求澄清的默认框架与模型（带引擎前缀，CodeBuddy 不带）；空表示没得
+	// 选，沿用 CodeBuddy。它是偏好不是密钥，所以 PublicUser 原样带出。
+	ClarifyModel string    `json:"clarifyModel,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 const PlatformRoleAdmin = "admin"

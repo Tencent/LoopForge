@@ -27,6 +27,7 @@ type userWithConfig struct {
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment"`
+	ClarifyModel                 string     `gorm:"column:clarify_model"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url"`
 	CodexModels                  *string    `gorm:"column:codex_models"`
@@ -40,7 +41,7 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment, COALESCE(c.clarify_model, '') AS clarify_model,
 	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
@@ -49,7 +50,7 @@ func (r userWithConfig) toDomain() domain.User {
 	u := domain.User{
 		ID: r.ID, StaffID: r.StaffID, LoginName: r.LoginName, ChineseName: r.ChineseName,
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
-		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment,
+		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment, ClarifyModel: r.ClarifyModel,
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
@@ -230,7 +231,8 @@ func userHasConfig(user domain.User) bool {
 		user.ClaudeCodeAPIKey != "" ||
 		user.ClaudeCodeBaseURL != "" ||
 		len(user.ClaudeCodeModels) > 0 ||
-		len(user.AgentCLICredentials) > 0
+		len(user.AgentCLICredentials) > 0 ||
+		user.ClarifyModel != ""
 }
 
 type UserCredentialUpdate struct {
@@ -250,6 +252,8 @@ type UserCredentialUpdate struct {
 	// AgentCLICredentials updates the agent CLIs by kind; absent fields keep
 	// the stored value. CodeBuddy, Codex and Claude Code stay on their own columns.
 	AgentCLICredentials map[string]AgentCLICredentialUpdate `json:"agentCliCredentials"`
+	// ClarifyModel 是需求澄清的默认框架与模型；指针缺席保持原值，空串清除。
+	ClarifyModel *string `json:"clarifyModel"`
 }
 
 type AgentCLICredentialUpdate struct {
@@ -300,6 +304,9 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	if update.ClaudeCodeBaseURL != nil {
 		user.ClaudeCodeBaseURL = strings.TrimSpace(*update.ClaudeCodeBaseURL)
 	}
+	if update.ClarifyModel != nil {
+		user.ClarifyModel = strings.TrimSpace(*update.ClarifyModel)
+	}
 	if update.CodexModels != nil {
 		models, err := normalizeCLIModels(*update.CodexModels)
 		if err != nil {
@@ -347,8 +354,8 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 		"git_token":              nullableString(v.GitToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
-		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
-		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL), "codex_models": encodeCLIModels(v.CodexModels),
+		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment, "clarify_model": v.ClarifyModel,
+		"codex_api_key": nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL), "codex_models": encodeCLIModels(v.CodexModels),
 		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL), "claude_code_models": encodeCLIModels(v.ClaudeCodeModels),
 		"agent_cli_credentials": encodeAgentCLICredentials(v.AgentCLICredentials),
 		"created_at":            timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),

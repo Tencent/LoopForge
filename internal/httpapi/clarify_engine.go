@@ -171,15 +171,21 @@ func clarifySubmitOnlySupported(engine clarifyEngine) bool {
 var errClarifySessionMissing = errors.New("澄清会话不存在，无法续接")
 
 // clarifyChoice 决定这一轮澄清用哪个框架：本次请求的选择 > 这张单已经记住的框架 >
-// CodeBuddy。只有第一项不许回退——用户当场选的框架缺凭据就报错，因为静默换回
-// CodeBuddy 正是这次要拆掉的东西。第二项是历史数据，失效了就用默认值，由
-// /api/clarify-engines 以 defaultStale 报给界面。
+// 责任人的个人默认 > CodeBuddy。只有第一项不许回退——用户当场选的框架缺凭据就报错，
+// 因为静默换回 CodeBuddy 正是这次要拆掉的东西。后两项是历史数据与偏好配置，失效了就用
+// 默认值，由 /api/clarify-engines 以 defaultStale 报给界面。
 func (h *streamHandlers) clarifyChoice(request chatClarifyRequest, issue domain.Issue, responsible domain.User) (clarifyEngine, error) {
 	if raw := strings.TrimSpace(request.Model); raw != "" {
 		return clarifyResolveModel(raw, responsible)
 	}
-	if stored := strings.TrimSpace(issue.Clarification.ModelID); stored != "" {
-		if engine, err := clarifyResolveModel(stored, responsible); err == nil {
+	for _, fallback := range []string{
+		strings.TrimSpace(issue.Clarification.ModelID),
+		strings.TrimSpace(responsible.ClarifyModel),
+	} {
+		if fallback == "" {
+			continue
+		}
+		if engine, err := clarifyResolveModel(fallback, responsible); err == nil {
 			return engine, nil
 		}
 	}

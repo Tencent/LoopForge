@@ -39,6 +39,7 @@ type userConfigRow struct {
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key;type:text"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment;size:64"`
+	ClarifyModel                 string     `gorm:"column:clarify_model;size:191"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key;type:text"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url;type:text"`
 	CodexModels                  *string    `gorm:"column:codex_models;type:text"`

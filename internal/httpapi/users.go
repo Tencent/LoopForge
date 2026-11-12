@@ -47,6 +47,16 @@ func (h *usersHandlers) user(c *gin.Context) {
 		}
 		body.CodeBuddyInternetEnvironment = &environment
 	}
+	// 澄清默认框架是一个偏好，但只有责任人的 Key 真的能跑它才有意义：设不了就要当场说清
+	// 原因，不能收下一个永远用不上的值。
+	if raw := body.ClarifyModel; raw != nil && strings.TrimSpace(*raw) != "" {
+		if owner, ok := h.repo.User(id); ok {
+			if _, err := clarifyResolveModel(*raw, owner); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+	}
 	baseURLs := []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL}
 	for _, cred := range body.AgentCLICredentials {
 		baseURLs = append(baseURLs, cred.BaseURL)
