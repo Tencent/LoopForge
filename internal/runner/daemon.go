@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -883,7 +884,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	for key, value := range credentialEnv {
 		commandEnv[key] = value
 	}
-	if hasCredentialBinding(prepared.Command.CredentialBindings, runtime.BindGit) {
+	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindGit) {
 		gitEnv, gitErr := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(inv))
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
@@ -897,7 +898,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 			commandEnv[key] = value
 		}
 	}
-	if hasCredentialBinding(prepared.Command.CredentialBindings, runtime.BindMCP) {
+	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindMCP) {
 		servers := inv.MCPCallServers
 		if len(servers) == 0 {
 			servers = boundAssets.MCPServers
@@ -1098,15 +1099,6 @@ func invocationGitToken(inv *domain.RunnerInvocation) string {
 		return strings.TrimSpace(inv.Repository.GitToken)
 	}
 	return ""
-}
-
-func hasCredentialBinding(bindings []runtime.CredentialBinding, want runtime.CredentialBinding) bool {
-	for _, binding := range bindings {
-		if binding == want {
-			return true
-		}
-	}
-	return false
 }
 
 // checkoutInvocationRepositories checks out every repository the invocation
