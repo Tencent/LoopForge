@@ -31,8 +31,6 @@ jobs:
       sha: ${{ steps.release.outputs.sha }}
       image: ${{ steps.release.outputs.image }}
       prerelease: ${{ steps.release.outputs.prerelease }}
-      tcr_image: ${{ steps.tcr.outputs.image }}
-      tcr_registry: ${{ steps.tcr.outputs.registry }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -168,28 +166,37 @@ jobs:
 
       - uses: docker/login-action@v4
         with:
-          registry: ${{ needs.release.outputs.tcr_registry }}
+          registry: ${{ secrets.TCR_REGISTRY }}
           username: ${{ secrets.TCR_USERNAME }}
           password: ${{ secrets.TCR_PASSWORD }}
 
+      # Keep the registry host in this job. Job outputs that contain a secret
+      # are dropped before the next job starts.
       - name: Mirror the published image to TCR
         env:
+          TCR_REGISTRY: ${{ secrets.TCR_REGISTRY }}
           SRC_IMAGE: ${{ needs.release.outputs.image }}
           DIGEST: ${{ needs.release.outputs.digest }}
-          TCR_IMAGE: ${{ needs.release.outputs.tcr_image }}
           VERSION: ${{ needs.release.outputs.version }}
           SHA: ${{ needs.release.outputs.sha }}
           PRERELEASE: ${{ needs.release.outputs.prerelease }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y skopeo
+          registry="$(printf '%s' "${TCR_REGISTRY}" | tr -d '[:space:]')"
+          if [[ ! "${registry}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?$ ]]; then
+            echo "TCR_REGISTRY must be the registry host, for example ccr.ccs.tencentyun.com" >&2
+            exit 1
+          fi
+          tcr_image="${registry}/loopforge/loopforge"
+          echo "TCR_IMAGE=${tcr_image}" >> "$GITHUB_ENV"
           src="docker://${SRC_IMAGE}@${DIGEST}"
           auth="${HOME}/.docker/config.json"
           copy() {
-            echo "mirroring ${src} -> ${TCR_IMAGE}:$1"
+            echo "mirroring ${src} -> ${tcr_image}:$1"
             skopeo copy --all --retry-times 3 \
               --src-authfile "${auth}" --dest-authfile "${auth}" \
-              "${src}" "docker://${TCR_IMAGE}:$1"
+              "${src}" "docker://${tcr_image}:$1"
           }
           copy "${VERSION}"
           copy "sha-${SHA}"
@@ -205,7 +212,6 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
           VERSION: ${{ needs.release.outputs.version }}
           IMAGE: ${{ needs.release.outputs.image }}
-          TCR_IMAGE: ${{ needs.release.outputs.tcr_image }}
           PRERELEASE: ${{ needs.release.outputs.prerelease }}
         run: |
           notes="$(cat <<EOF
