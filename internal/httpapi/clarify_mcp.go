@@ -22,10 +22,6 @@ var (
 	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
 )
 
-func clarifyAllowedModel(id string) string {
-	return assistantAllowedModel(id, assistantKnownCatalog())
-}
-
 func asStringKeyMap(v any) map[string]any {
 	m, ok := v.(map[string]any)
 	if !ok || m == nil {

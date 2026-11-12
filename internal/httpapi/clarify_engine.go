@@ -49,9 +49,9 @@ func clarifyEngineKnown(engine string) bool {
 }
 
 // clarifyResolveModel 按需求责任人的配置校验一个模型 ID。它绝不静默改写：框架不认识、
-// 缺 API Key、缺 Base URL 或模型非法都返回错误，由调用方原样显示给用户。旧的
-// clarifyAllowedModel 会把任何非法值换成 CodeBuddy 默认模型，那正是「澄清被绑死在
-// CodeBuddy」的表现。空模型 ID 表示用户没有选择，沿用 CodeBuddy 默认。
+// 缺 API Key、缺 Base URL 或模型非法都返回错误，由调用方原样显示给用户。改造前的
+// 实现会把任何非法值换成 CodeBuddy 默认模型，那正是「澄清被绑死在 CodeBuddy」
+// 的表现。空模型 ID 表示用户没有选择，沿用 CodeBuddy 默认。
 func clarifyResolveModel(modelID string, user domain.User) (clarifyEngine, error) {
 	raw := strings.TrimSpace(modelID)
 	if raw == "" {
@@ -164,4 +164,58 @@ func prepareClarifyInvocation(engine clarifyEngine, o clarifyInvocationOpts) (cl
 // Codex 的护栏是 PreToolUse 脚本、agent CLI 只有整体只读档，两者都没有逐工具开关。
 func clarifySubmitOnlySupported(engine clarifyEngine) bool {
 	return engine.ID == assistantEngineCodeBuddy || engine.ID == assistantEngineClaude
+}
+
+// errClarifySessionMissing 是这个引擎接不上上一次的会话：引擎换了、thread 没记下来、
+// CLI 自己说找不到 conversation。调用方据此改为重放已有历史。
+var errClarifySessionMissing = errors.New("澄清会话不存在，无法续接")
+
+// clarifyChoice 决定这一轮澄清用哪个框架：本次请求的选择 > 这张单已经记住的框架 >
+// CodeBuddy。只有第一项不许回退——用户当场选的框架缺凭据就报错，因为静默换回
+// CodeBuddy 正是这次要拆掉的东西。第二项是历史数据，失效了就用默认值，由
+// /api/clarify-engines 以 defaultStale 报给界面。
+func (h *streamHandlers) clarifyChoice(request chatClarifyRequest, issue domain.Issue, responsible domain.User) (clarifyEngine, error) {
+	if raw := strings.TrimSpace(request.Model); raw != "" {
+		return clarifyResolveModel(raw, responsible)
+	}
+	if stored := strings.TrimSpace(issue.Clarification.ModelID); stored != "" {
+		if engine, err := clarifyResolveModel(stored, responsible); err == nil {
+			return engine, nil
+		}
+	}
+	return clarifyResolveModel("", responsible)
+}
+
+// clarifyEngineCredential 从整套凭据里取出这个引擎那一份，供各引擎的 builder 使用。
+func clarifyEngineCredential(credentials runtime.RunCredentials, engineID string) runtime.ProviderCredential {
+	switch engineID {
+	case assistantEngineCodex:
+		return credentials.Codex
+	case assistantEngineClaude:
+		return credentials.ClaudeCode
+	}
+	if runtime.IsAgentCLI(engineID) {
+		return credentials.AgentCLI[engineID]
+	}
+	return runtime.ProviderCredential{}
+}
+
+// clarifyToolVocabulary 给出这个引擎里「读代码的那几个工具」的说法。Read/Grep/Glob 是
+// CodeBuddy 与 Claude Code 的工具名；其它引擎用了只会去调不存在的工具。
+func clarifyToolVocabulary(engineID string) string {
+	switch engineID {
+	case "", assistantEngineCodeBuddy, assistantEngineClaude:
+		return "Read/Grep/Glob"
+	}
+	return "内置的读文件和搜索工具"
+}
+
+// clarifyApplyToolVocabulary 把提示词里的 CodeBuddy 工具名换成当前引擎的说法。
+func clarifyApplyToolVocabulary(text, engineID string) string {
+	const codebuddyReadTools = "Read/Grep/Glob"
+	vocabulary := clarifyToolVocabulary(engineID)
+	if vocabulary == codebuddyReadTools {
+		return text
+	}
+	return strings.ReplaceAll(text, codebuddyReadTools, vocabulary)
 }

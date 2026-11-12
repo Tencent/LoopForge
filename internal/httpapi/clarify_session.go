@@ -85,7 +85,7 @@ func clarifySessionOutputError(output string) error {
 		}
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "sessionnotfounderror") || strings.Contains(lower, "no conversation found with session id") {
-			return fmt.Errorf("澄清会话不存在，无法续接")
+			return errClarifySessionMissing
 		}
 	}
 	return nil

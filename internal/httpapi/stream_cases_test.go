@@ -581,11 +581,12 @@ printf '%s\n' '{"type":"assistant","session_id":"captured-session","message":{"c
 	}
 	var emitted []any
 	h := &streamHandlers{}
-	_, raw, captured, err := h.runClarifyTurn(
-		context.Background(), root, success, "claude-sonnet-4", "prompt", "run",
-		"initial", "", false, runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: "cvb-test-key"}},
-		func(_ string, payload any) { emitted = append(emitted, payload) }, clarifyTurnOpts{Native: true},
-	)
+	_, raw, captured, err := h.runClarifyTurn(context.Background(), clarifyTurn{
+		WorkDir: root, Engine: clarifyEngineOf("claude-sonnet-4"), Bin: success, Prompt: "prompt",
+		RunID: "run", SessionID: "initial",
+		Credentials: runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: "cvb-test-key"}},
+		Opts:        clarifyTurnOpts{Native: true},
+	}, func(_ string, payload any) { emitted = append(emitted, payload) })
 	if err != nil || !strings.Contains(raw, "plain output") || captured != "captured-session" || len(emitted) == 0 {
 		t.Fatalf("successful turn = %q, %q, %#v, %v", raw, captured, emitted, err)
 	}
@@ -594,10 +595,12 @@ printf '%s\n' '{"type":"assistant","session_id":"captured-session","message":{"c
 	if err := os.WriteFile(failure, []byte("#!/bin/sh\nexit 7\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := h.runClarifyTurn(
-		context.Background(), root, failure, "claude-sonnet-4", "prompt", "run",
-		"session", "", false, runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: "cvb-test-key"}}, nil, clarifyTurnOpts{Native: true},
-	); err == nil {
+	if _, _, _, err := h.runClarifyTurn(context.Background(), clarifyTurn{
+		WorkDir: root, Engine: clarifyEngineOf("claude-sonnet-4"), Bin: failure, Prompt: "prompt",
+		RunID: "run", SessionID: "session",
+		Credentials: runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: "cvb-test-key"}},
+		Opts:        clarifyTurnOpts{Native: true},
+	}, nil); err == nil {
 		t.Fatal("failed command unexpectedly succeeded")
 	}
 }

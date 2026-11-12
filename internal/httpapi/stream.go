@@ -397,6 +397,12 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		workItemType = "Issue"
 		focus = "实际现象、复现条件、期望行为和怎样验证已修复"
 	}
+	// 先定框架再开工：责任人缺 Key 或控制面没装 CLI 要立刻失败，不要先拉仓库再报错，
+	// 也不要静默换回 CodeBuddy。
+	engine, engineErr := h.clarifyChoice(request, issue, responsible)
+	if engineErr != nil {
+		return nil, "", nil, engineErr
+	}
 	modelCtx, cancelModel := context.WithCancel(ctx)
 	defer cancelModel()
 	var toolSession *AgentToolSession
@@ -423,7 +429,10 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	systemPrompt := clarifySystemPrompt(intro, mcpStep, focus)
 	var prompt strings.Builder
-	prompt.WriteString(systemPrompt)
+	if engine.ID == assistantEngineCodeBuddy {
+		// CodeBuddy 只吃一条 prompt，分析师指令拼在正文前；其余引擎有自己的 system prompt 通道。
+		prompt.WriteString(systemPrompt)
+	}
 	prompt.WriteString("\n\n## 需求\n标题：")
 	prompt.WriteString(issue.Title)
 	prompt.WriteString("\n描述：")
@@ -451,9 +460,9 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	prompt.WriteString(clarifyRoundBudgetHint(clarifyAssistantRounds(request.History)))
 	prompt.WriteString("\n请基于以上对话继续澄清，只围绕「## 需求」本身，完成后调用 submit_clarification。")
-	cbPath, cbErr := resolveCodeBuddyBin()
-	if cbErr != nil {
-		return nil, "", nil, cbErr
+	binPath, binErr := resolveAssistantEngineBin(engine.ID)
+	if binErr != nil {
+		return nil, "", nil, binErr
 	}
 	workDir := ""
 	repoInfo := map[string]any{"analyzed": false, "reason": "该 Issue 未绑定代码仓库"}
@@ -526,7 +535,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		sessionID = strings.TrimSpace(issue.Clarification.SessionID)
 	}
 	resume := sessionID != ""
-	if resume && !canResumeClarifySession(homeDir, assistantEngineCodeBuddy, sessionID, issue.Clarification.SessionUserID, responsible.ID) {
+	if resume && !clarifySessionReusable(issue, engine, homeDir, responsible.ID) {
 		emit("thought", map[string]string{"kind": "status", "text": "分析环境已变化，正在结合已有回答重新分析…"})
 		sessionID = ""
 	}
@@ -616,13 +625,14 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	if mcpHint := h.clarifyMCPInstructionsFor(issue, responsible, len(request.History) > 0, extras...); mcpHint != "" {
 		prompt.WriteString(mcpHint)
 	}
-	userMsg := prompt.String()
-	clarifyID := fmt.Sprintf("clarify-%d", time.Now().UnixNano())
-	modelID := clarifyAllowedModel(request.Model)
-	credentials := runtime.RunCredentials{
-		CodeBuddy: runtime.CodeBuddyCredential{APIKey: strings.TrimSpace(responsible.CodeBuddyAPIKey), InternetEnvironment: strings.TrimSpace(responsible.CodeBuddyInternetEnvironment)},
-		GitToken:  strings.TrimSpace(h.repo.GitCredential(ctx, responsible.ID)),
+	userMsg := clarifyApplyToolVocabulary(prompt.String(), engine.ID)
+	engineSystemPrompt := ""
+	if engine.ID != assistantEngineCodeBuddy {
+		engineSystemPrompt = clarifyApplyToolVocabulary(systemPrompt, engine.ID)
 	}
+	clarifyID := fmt.Sprintf("clarify-%d", time.Now().UnixNano())
+	credentials := assistantProviderCredentials(responsible)
+	credentials.GitToken = strings.TrimSpace(h.repo.GitCredential(ctx, responsible.ID))
 	turnPrompt := userMsg
 	if resume {
 		turnPrompt = clarifyResumeTurnPrompt(issue.Title, request.Message, clarifyAssistantRounds(request.History))
@@ -631,27 +641,30 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		}
 		if len(analyzedRepos) == 0 {
 			reason, _ := repoInfo["reason"].(string)
-			turnPrompt += "\n\n本轮未能读取代码仓库（原因：" + reason + "）。不要使用 Read/Grep/Glob 或声称已分析当前代码；请仅基于需求与已有回答继续，并在 summary 开头注明「未基于代码分析」。"
+			turnPrompt += clarifyApplyToolVocabulary("\n\n本轮未能读取代码仓库（原因："+reason+"）。不要使用 Read/Grep/Glob 或声称已分析当前代码；请仅基于需求与已有回答继续，并在 summary 开头注明「未基于代码分析」。", engine.ID)
 		}
 	}
 	sessionContext := userMsg
-	h.rememberClarifySession(issue.ID, sessionID, responsible.ID, "")
+	h.rememberClarifySession(issue.ID, sessionID, responsible.ID, engine.ModelID)
 	if repoInfo == nil {
 		repoInfo = map[string]any{}
 	}
 	repoInfo["sessionId"] = sessionID
-	emit("open", map[string]any{"repository": repoInfo, "model": modelID, "sessionId": sessionID})
+	emit("open", map[string]any{"repository": repoInfo, "engine": engine.ID, "model": engine.ModelID, "sessionId": sessionID})
 	emit("thought", map[string]string{"kind": "status", "text": "正在分析需求…"})
-	turnOpts := clarifyTurnOpts{Native: true, MCPConfig: toolFiles.MCPConfig, Settings: toolFiles.Settings}
+	turnOpts := clarifyTurnOpts{Native: true, MCPConfig: toolFiles.MCPConfig, Settings: toolFiles.Settings, SystemPrompt: engineSystemPrompt}
 	jsonRetries := 0
 	var recoveredParsed any
 	var recoveredRaw string
 	for follow := 0; ; follow++ {
-		_, turnRaw, captured, err := h.runClarifyTurn(modelCtx, workDir, cbPath, modelID, turnPrompt, clarifyID, sessionID, homeDir, resume, credentials, emit, turnOpts)
+		_, turnRaw, captured, err := h.runClarifyTurn(modelCtx, clarifyTurn{
+			WorkDir: workDir, Engine: engine, Bin: binPath, Prompt: turnPrompt, RunID: clarifyID,
+			SessionID: sessionID, HomeDir: homeDir, Resume: resume, Credentials: credentials, Opts: turnOpts,
+		}, emit)
 		if captured != "" {
 			sessionID = captured
 			repoInfo["sessionId"] = sessionID
-			h.rememberClarifySession(issue.ID, sessionID, responsible.ID, "")
+			h.rememberClarifySession(issue.ID, sessionID, responsible.ID, engine.ModelID)
 		}
 		if err != nil && resume {
 			// Never reuse the missing/incompatible session ID when starting over.
@@ -660,12 +673,15 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			if turnPrompt != userMsg && !strings.Contains(sessionContext, turnPrompt) {
 				fallbackPrompt = sessionContext + "\n" + turnPrompt
 			}
-			_, turnRaw, captured, err = h.runClarifyTurn(modelCtx, workDir, cbPath, modelID, fallbackPrompt, clarifyID, sessionID, homeDir, false, credentials, emit, turnOpts)
+			_, turnRaw, captured, err = h.runClarifyTurn(modelCtx, clarifyTurn{
+				WorkDir: workDir, Engine: engine, Bin: binPath, Prompt: fallbackPrompt, RunID: clarifyID,
+				SessionID: sessionID, HomeDir: homeDir, Resume: false, Credentials: credentials, Opts: turnOpts,
+			}, emit)
 			resume = false
 			if captured != "" {
 				sessionID = captured
 				repoInfo["sessionId"] = sessionID
-				h.rememberClarifySession(issue.ID, sessionID, responsible.ID, "")
+				h.rememberClarifySession(issue.ID, sessionID, responsible.ID, engine.ModelID)
 			}
 		}
 		if parsed, raw, ok := takeNativeClarification(toolSession, turnRaw); ok {
@@ -692,7 +708,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		if err != nil {
 			return nil, "", repoInfo, err
 		}
-		logAgentProtocolFailure(AgentToolClarify, modelID, "missing_terminal", fmt.Errorf("submit_clarification not called"))
+		logAgentProtocolFailure(AgentToolClarify, engine.ModelID, "missing_terminal", fmt.Errorf("submit_clarification not called"))
 		return nil, "", repoInfo, fmt.Errorf("本轮未生成可回答的澄清问题，请重新分析或补充说明后再试")
 	}
 }
@@ -717,18 +733,53 @@ func (h *streamHandlers) rememberClarifySession(issueID, sessionID string, userI
 	})
 }
 
-func (h *streamHandlers) runClarifyTurn(ctx context.Context, workDir, cbPath, model, prompt, runID, sessionID, homeDir string, resume bool, credentials runtime.RunCredentials, emit func(event string, payload any), opts clarifyTurnOpts) (any, string, string, error) {
-	command, err := prepareClarifyCommandWith(clarifyCommandOpts{
-		Bin: cbPath, Model: model, Prompt: prompt, RunID: runID, SessionID: sessionID, Resume: resume,
-		Native: opts.Native, MCPConfig: opts.MCPConfig, Settings: opts.Settings, SubmitOnly: opts.SubmitOnly,
+// clarifyTurn 是一次澄清进程需要的东西：引擎、二进制、会话位置和已装配好的全套凭据。
+type clarifyTurn struct {
+	WorkDir     string
+	Engine      clarifyEngine
+	Bin         string
+	Prompt      string
+	RunID       string
+	SessionID   string
+	HomeDir     string
+	Resume      bool
+	Credentials runtime.RunCredentials
+	Opts        clarifyTurnOpts
+}
+
+func (h *streamHandlers) runClarifyTurn(ctx context.Context, turn clarifyTurn, emit func(event string, payload any)) (any, string, string, error) {
+	if emit == nil {
+		emit = func(string, any) {}
+	}
+	invocation, err := prepareClarifyInvocation(turn.Engine, clarifyInvocationOpts{
+		Bin: turn.Bin, Root: turn.HomeDir, Config: turn.Opts.MCPConfig, Settings: turn.Opts.Settings,
+		Prompt: turn.Prompt, Model: turn.Engine.Model, SystemPrompt: turn.Opts.SystemPrompt,
+		SessionID: turn.SessionID, RunID: turn.RunID, Resume: turn.Resume, SubmitOnly: turn.Opts.SubmitOnly,
+		User: clarifyEngineCredential(turn.Credentials, turn.Engine.ID),
 	})
 	if err != nil {
-		return nil, "", sessionID, err
+		return nil, "", turn.SessionID, err
 	}
-	if strings.TrimSpace(homeDir) != "" {
-		command = command.WithPrivateHomeDir(homeDir)
+	if invocation.ResumeMissing {
+		// 这个引擎接不上上一次的会话：报错让调用方重放历史，而不是带着坏 ID 起进程。
+		return nil, "", turn.SessionID, errClarifySessionMissing
 	}
-	captured := sessionID
+	command := invocation.Command
+	if strings.TrimSpace(turn.HomeDir) != "" {
+		command = command.WithPrivateHomeDir(turn.HomeDir)
+	}
+	captured := turn.SessionID
+	// 每个引擎的行都先归一成 CodeBuddy 风格的 stream-json，会话 ID、思考流和结论兜底都只看
+	// 归一后的行；否则 Codex 的 JSON-RPC 和 agent CLI 的原生格式一律读不出东西。
+	handle := func(line string) {
+		if sid := captureClarifySessionID(line); sid != "" {
+			captured = sid
+		}
+		for _, ui := range clarifyStreamEvents(line) {
+			emit("thought", ui)
+		}
+	}
+	var normalized strings.Builder
 	sink := func(ev domain.TelemetryEvent) {
 		if ev.Name != "process.stdout" {
 			return
@@ -737,21 +788,33 @@ func (h *streamHandlers) runClarifyTurn(ctx context.Context, workDir, cbPath, mo
 		if line == "" || line[0] != '{' {
 			return
 		}
-		if sid := captureClarifySessionID(line); sid != "" {
-			captured = sid
+		if invocation.Translate == nil {
+			normalized.WriteString(line)
+			normalized.WriteByte('\n')
+			handle(line)
+			return
 		}
-		for _, ui := range clarifyStreamEvents(line) {
-			emit("thought", ui)
+		for _, out := range invocation.Translate(line) {
+			normalized.WriteString(out)
+			normalized.WriteByte('\n')
+			handle(out)
 		}
 	}
-	output, err := runtime.ExecuteLocalCommand(ctx, workDir, command, credentials, sink)
+	output, err := runtime.ExecuteLocalCommand(ctx, turn.WorkDir, command, turn.Credentials, sink)
+	if invocation.Finish != nil {
+		invocation.Finish(err == nil)
+	}
 	if err != nil {
 		return nil, "", captured, err
 	}
-	if err := clarifySessionOutputError(output); err != nil {
-		return nil, output, captured, err
+	turnRaw := output
+	if invocation.Translate != nil {
+		turnRaw = normalized.String()
 	}
-	return nil, strings.TrimSpace(output), captured, nil
+	if sessionErr := clarifySessionOutputError(turnRaw); sessionErr != nil {
+		return nil, output, captured, sessionErr
+	}
+	return nil, strings.TrimSpace(turnRaw), captured, nil
 }
 
 func takeNativeClarification(session *AgentToolSession, turnRaw string) (any, string, bool) {
@@ -778,6 +841,9 @@ type clarifyTurnOpts struct {
 	Native              bool
 	MCPConfig, Settings string
 	SubmitOnly          bool
+	// SystemPrompt 只对非 CodeBuddy 引擎有意义：它们有自己的 system prompt 通道，
+	// CodeBuddy 的分析师指令仍然拼在主 prompt 前面。
+	SystemPrompt string
 }
 
 // clarifyStreamEvents decodes a single stream-json line into zero or more
