@@ -27,7 +27,6 @@ type analyticsAccumulator struct {
 	retriedNodes     int
 	reworkNodes      int
 	models           map[string]int
-	versions         map[string]int
 	nodeTypes        map[string]int
 	nodeCount        int
 	issueIDs         map[string]struct{}
