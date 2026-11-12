@@ -845,6 +845,11 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			c.JSON(http.StatusOK, map[string]bool{"taskAvailable": true})
 			return
 		}
+		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
+			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
+			task.Invocation.GitSSHUserID = 0
+			c.Header("Cache-Control", "no-store")
+		}
 		c.JSON(http.StatusOK, map[string]any{"task": resolveRunnerTaskSandbox(task, runner.OS)})
 	}
 	deadline := time.Now().Add(runnerLongPollTimeout())

@@ -23,14 +23,17 @@ type userWithConfig struct {
 	DeptName                     string     `gorm:"column:dept_name"`
 	PlatformRole                 string     `gorm:"column:platform_role"`
 	GitToken                     *string    `gorm:"column:git_token"`
+	GitSSHKeyConfigured          bool       `gorm:"column:git_ssh_key_configured"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url"`
+	CodexModels                  *string    `gorm:"column:codex_models"`
 	ClaudeCodeAPIKey             *string    `gorm:"column:claude_code_api_key"`
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url"`
+	ClaudeCodeModels             *string    `gorm:"column:claude_code_models"`
 	AgentCLICredentials          *string    `gorm:"column:agent_cli_credentials"`
 	Created                      *time.Time `gorm:"column:created_at"`
 	Updated                      *time.Time `gorm:"column:updated_at"`
@@ -38,8 +41,9 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
-	c.codex_api_key, c.codex_base_url, c.claude_code_api_key, c.claude_code_base_url,
+	c.git_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
+	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
 
@@ -48,6 +52,7 @@ func (r userWithConfig) toDomain() domain.User {
 		ID: r.ID, StaffID: r.StaffID, LoginName: r.LoginName, ChineseName: r.ChineseName,
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
 		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment,
+		GitSSHKeyConfigured:          r.GitSSHKeyConfigured,
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
@@ -67,12 +72,14 @@ func (r userWithConfig) toDomain() domain.User {
 	if r.CodexBaseURL != nil {
 		u.CodexBaseURL = *r.CodexBaseURL
 	}
+	u.CodexModels = decodeCLIModels(r.CodexModels)
 	if r.ClaudeCodeAPIKey != nil {
 		u.ClaudeCodeAPIKey = *r.ClaudeCodeAPIKey
 	}
 	if r.ClaudeCodeBaseURL != nil {
 		u.ClaudeCodeBaseURL = *r.ClaudeCodeBaseURL
 	}
+	u.ClaudeCodeModels = decodeCLIModels(r.ClaudeCodeModels)
 	if r.AgentCLICredentials != nil {
 		_ = json.Unmarshal([]byte(*r.AgentCLICredentials), &u.AgentCLICredentials)
 	}
@@ -148,8 +155,8 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		v.GitToken = old.GitToken
 		v.GongfengRefreshToken = old.GongfengRefreshToken
 		v.GongfengTokenExpiresAt = old.GongfengTokenExpiresAt
-		v.CodexAPIKey, v.CodexBaseURL = old.CodexAPIKey, old.CodexBaseURL
-		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL
+		v.CodexAPIKey, v.CodexBaseURL, v.CodexModels = old.CodexAPIKey, old.CodexBaseURL, old.CodexModels
+		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL, v.ClaudeCodeModels = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL, old.ClaudeCodeModels
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
 		v.CodeBuddyInternetEnvironment = old.CodeBuddyInternetEnvironment
 		v.AgentCLICredentials = old.AgentCLICredentials
@@ -222,23 +229,27 @@ func userHasConfig(user domain.User) bool {
 		user.CodeBuddyInternetEnvironment != "" ||
 		user.CodexAPIKey != "" ||
 		user.CodexBaseURL != "" ||
+		len(user.CodexModels) > 0 ||
 		user.ClaudeCodeAPIKey != "" ||
 		user.ClaudeCodeBaseURL != "" ||
+		len(user.ClaudeCodeModels) > 0 ||
 		len(user.AgentCLICredentials) > 0
 }
 
 type UserCredentialUpdate struct {
-	GitToken                     string  `json:"gitToken"`
-	GitTokenClear                bool    `json:"gitTokenClear"`
-	CodeBuddyAPIKey              string  `json:"codeBuddyApiKey"`
-	CodeBuddyAPIKeyClear         bool    `json:"codeBuddyApiKeyClear"`
-	CodeBuddyInternetEnvironment *string `json:"codeBuddyInternetEnvironment"`
-	CodexAPIKey                  string  `json:"codexApiKey"`
-	CodexAPIKeyClear             bool    `json:"codexApiKeyClear"`
-	CodexBaseURL                 *string `json:"codexBaseUrl"`
-	ClaudeCodeAPIKey             string  `json:"claudeCodeApiKey"`
-	ClaudeCodeAPIKeyClear        bool    `json:"claudeCodeApiKeyClear"`
-	ClaudeCodeBaseURL            *string `json:"claudeCodeBaseUrl"`
+	GitToken                     string             `json:"gitToken"`
+	GitTokenClear                bool               `json:"gitTokenClear"`
+	CodeBuddyAPIKey              string             `json:"codeBuddyApiKey"`
+	CodeBuddyAPIKeyClear         bool               `json:"codeBuddyApiKeyClear"`
+	CodeBuddyInternetEnvironment *string            `json:"codeBuddyInternetEnvironment"`
+	CodexAPIKey                  string             `json:"codexApiKey"`
+	CodexAPIKeyClear             bool               `json:"codexApiKeyClear"`
+	CodexBaseURL                 *string            `json:"codexBaseUrl"`
+	CodexModels                  *[]domain.CLIModel `json:"codexModels"`
+	ClaudeCodeAPIKey             string             `json:"claudeCodeApiKey"`
+	ClaudeCodeAPIKeyClear        bool               `json:"claudeCodeApiKeyClear"`
+	ClaudeCodeBaseURL            *string            `json:"claudeCodeBaseUrl"`
+	ClaudeCodeModels             *[]domain.CLIModel `json:"claudeCodeModels"`
 	// AgentCLICredentials updates the agent CLIs by kind; absent fields keep
 	// the stored value. CodeBuddy, Codex and Claude Code stay on their own columns.
 	AgentCLICredentials map[string]AgentCLICredentialUpdate `json:"agentCliCredentials"`
@@ -292,6 +303,20 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	if update.ClaudeCodeBaseURL != nil {
 		user.ClaudeCodeBaseURL = strings.TrimSpace(*update.ClaudeCodeBaseURL)
 	}
+	if update.CodexModels != nil {
+		models, err := normalizeCLIModels(*update.CodexModels)
+		if err != nil {
+			return domain.User{}, err
+		}
+		user.CodexModels = models
+	}
+	if update.ClaudeCodeModels != nil {
+		models, err := normalizeCLIModels(*update.ClaudeCodeModels)
+		if err != nil {
+			return domain.User{}, err
+		}
+		user.ClaudeCodeModels = models
+	}
 	if err := applyAgentCLICredentialUpdates(&user, update.AgentCLICredentials); err != nil {
 		return domain.User{}, err
 	}
@@ -320,17 +345,18 @@ func (r *UsersRepo) SaveGongfengOAuth(id int64, accessToken, refreshToken string
 }
 
 func (r *UsersRepo) writeUserConfig(v domain.User) error {
-	return upsert(r.DB, "user_configs", map[string]any{
+	values := map[string]any{
 		"user_id":                v.ID,
 		"git_token":              nullableString(v.GitToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
-		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL),
-		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL),
+		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL), "codex_models": encodeCLIModels(v.CodexModels),
+		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL), "claude_code_models": encodeCLIModels(v.ClaudeCodeModels),
 		"agent_cli_credentials": encodeAgentCLICredentials(v.AgentCLICredentials),
 		"created_at":            timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
-	})
+	}
+	return upsert(r.DB, "user_configs", values)
 }
 
 func nullableString(v string) any {
@@ -405,6 +431,28 @@ const (
 	maxCLIModelIDLen    = 128
 	maxCLIModelNameRune = 64
 )
+
+func decodeCLIModels(raw *string) []domain.CLIModel {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil
+	}
+	var models []domain.CLIModel
+	if json.Unmarshal([]byte(*raw), &models) != nil {
+		return nil
+	}
+	return models
+}
+
+func encodeCLIModels(models []domain.CLIModel) any {
+	if len(models) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(models)
+	if err != nil {
+		return nil
+	}
+	return string(raw)
+}
 
 func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 	if len(models) > maxCLIModels {

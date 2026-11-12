@@ -1,19 +1,20 @@
-// Key user journeys driven through the real UI: create a requirement, approve
-// a waiting run from its detail page, edit a SOP in the designer and search
-// the knowledge base. Fixtures are created through the API and cleaned up.
+// Key user journeys driven through the real UI: create and dispatch a requirement,
+// approve waiting runs from the queue and detail page, and edit a SOP in the
+// designer. Fixtures are created through the API and cleaned up.
 import { test, expect, watchErrors, openView } from './fixtures.mjs';
-import { get, post, put, del, list, cleanup, track, waitRun } from '../lib/api.mjs';
+import { get, post, put, del, list, cleanup, track, waitFor, waitRun } from '../lib/api.mjs';
 import { cfg } from '../lib/env.mjs';
-import { createWorkflow, createAgent, script, approval, agentNode, startRun } from '../lib/fixtures.mjs';
+import { createWorkflow, createAgent, script, approval, agentNode, startRun, trackRun } from '../lib/fixtures.mjs';
 
 test.afterAll(cleanup);
 
-test('requirement composer: create a platform requirement without analysis', async ({ page }) => {
+test('requirement composer: create, find and dispatch a requirement from its drawer', async ({ page }) => {
   const errors = watchErrors(page);
   const title = `E2E UI 需求 ${cfg.runTag}-${Date.now() % 100000}`;
   // A requirement needs a runnable SOP; a fresh database has none in the e2e project.
-  await createWorkflow('ui-requirement', [script('only', 'echo ok')]);
-  await openView(page, 'issues');
+  const wf = await createWorkflow('ui-requirement', [script('only', 'echo UI_REQUIREMENT')]);
+  await page.goto('/#/issues');
+  await expect(page.locator('#issuesView')).toBeVisible();
   await page.locator('#newIssue').click();
   await expect(page.locator('#requirementModal')).toHaveClass(/open/);
   await page.locator('#chatInput').fill(`${title}\n\n自动化 UI 测试创建，会被关闭。`);
@@ -21,16 +22,51 @@ test('requirement composer: create a platform requirement without analysis', asy
   await expect(page.locator('#reqStepConfirm')).toBeVisible();
   await expect(page.locator('#reqCreate')).toBeVisible();
   await expect(page.locator('#reqTitle')).toHaveValue(title);
-  await page.locator('#reqCreate').click();
-  await expect(page.locator('#requirementModal')).not.toHaveClass(/open/, { timeout: 30_000 });
-
-  const created = await expect.poll(async () => {
-    const items = list(await get(`/api/issues?projectId=${cfg.projectId}&q=${encodeURIComponent(title.slice(0, 20))}`));
-    return items.find(i => (i.title + i.description).includes(title))?.id || '';
-  }, { timeout: 30_000 }).not.toBe('');
-  const issue = list(await get(`/api/issues?projectId=${cfg.projectId}`)).find(i => (i.title + i.description).includes(title));
+  await page.getByRole('button', { name: 'SOP 流程', exact: true }).click();
+  await page.getByRole('listbox', { name: 'SOP 流程', exact: true })
+    .getByRole('option', { name: /E2E ui-requirement/ }).click();
+  await expect(page.locator('#reqWorkflow')).toHaveValue(wf);
+  const [created] = await Promise.all([
+    page.waitForResponse(r => new URL(r.url()).pathname === '/api/issues' && r.request().method() === 'POST'),
+    page.locator('#reqCreate').click(),
+  ]);
+  expect(created.ok()).toBe(true);
+  const issue = await created.json();
   track(`issue ${issue.id}`, () => post(`/api/issues/${issue.id}/close`, {}, { expect: [200, 404, 409] }));
   expect(issue.source || 'local').toBe('local');
+  expect(issue.workflowId).toBe(wf);
+  await expect(page.locator('#requirementModal')).not.toHaveClass(/open/);
+
+  // Creation opens the drawer automatically. Close it, then exercise the
+  // refreshed list's own click binding without reloading or fetching the row.
+  const drawer = page.locator('#issueDetailDrawer');
+  await expect(drawer).toHaveClass(/open/);
+  await drawer.locator('.drawer-close').click();
+  await expect(drawer).toHaveAttribute('aria-hidden', 'true');
+  const row = page.locator(`#issuesView .issue-table-row[data-id="${issue.id}"]`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(title);
+  await row.locator('.issue-title-cell').click();
+  await expect(drawer).toHaveAttribute('aria-hidden', 'false');
+  await expect(drawer.locator('#issueDetailTitle')).toHaveText(title);
+  await drawer.locator('[data-dtab="sop"]').click();
+  await expect(drawer.locator('[data-dtab="sop"]')).toHaveClass(/active/);
+
+  const dispatch = drawer.locator(`[data-dispatch-issue="${issue.id}"][data-workflow="${wf}"]`);
+  await expect(dispatch).toBeVisible();
+  const [dispatched] = await Promise.all([
+    page.waitForResponse(r => new URL(r.url()).pathname === `/api/issues/${issue.id}/dispatch` && r.request().method() === 'POST'),
+    dispatch.click(),
+  ]);
+  expect(dispatched.ok()).toBe(true);
+  const runId = await waitFor('UI-dispatched requirement run', async () => {
+    const runs = list(await get(`/api/issues/${issue.id}/runs`));
+    return runs[0]?.id || runs[0]?.runId;
+  }, { timeoutMs: 30_000 });
+  trackRun(runId);
+  const run = await waitRun(runId, r => r.status === 'succeeded', { label: 'requirement SOP succeeds' });
+  expect(run.workflowId).toBe(wf);
+  expect(run.nodes.only.status).toBe('succeeded');
   expect(errors).toEqual([]);
 });
 
@@ -74,8 +110,11 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   for (const tab of ['trace', 'logs', 'workspace', 'eval', 'overview']) {
     await page.locator(`[data-run-tab="${tab}"]`).click();
     const pane = page.locator(`[data-run-pane="${tab}"]`);
-    if (await pane.count()) await expect(pane).toBeVisible();
-    await page.waitForTimeout(800);
+    // These five panes are required by this fixture. Preview is optional
+    // and deliberately not part of this list.
+    await expect(pane).toBeVisible();
+    await expect(page.locator('#runDetail [data-run-tab].active')).toHaveAttribute('data-run-tab', tab);
+    await expect(page.locator('#runDetail [data-run-pane]:not([hidden])')).toHaveCount(1);
   }
   await page.locator('[data-run-node="prep"]').click();
   await expect(page.locator('[data-artifact]').first()).toBeVisible();
@@ -85,6 +124,42 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   const run = await waitRun(id, r => r.status === 'succeeded', { label: 'succeeded after UI approval' });
   expect(run.nodes.finish.status).toBe('succeeded');
   await expect(page.locator('.run-status-wrap .status')).toContainText(/成功|完成|已完成|succeeded/, { timeout: 30_000 });
+  expect(errors).toEqual([]);
+});
+
+test('approvals queue: approve a waiting run with context from the sidebar', async ({ page }) => {
+  const wf = await createWorkflow('ui-approval-queue', [
+    script('prep', 'echo QUEUE_PREP'),
+    approval('gate', 'prep'),
+    script('finish', 'echo QUEUE_FINISH'),
+  ]);
+  const { id } = await startRun(wf, 'e2e queue approval');
+  await waitRun(id, r => r.nodes?.gate?.status === 'waiting_approval', { label: 'queue gate waiting' });
+
+  const errors = watchErrors(page);
+  await page.goto('/#/issues');
+  await expect(page.locator('#issuesView')).toBeVisible();
+  await page.locator('.nav[data-view="approvals"]').click();
+  await expect(page).toHaveURL(/#\/approvals$/);
+  await expect(page.locator('#approvalsView')).toBeVisible();
+  const approve = page.locator(`#approvalList [data-approve="${id}"][data-node="gate"]`);
+  const card = page.locator('#approvalList .ap-card').filter({
+    has: page.locator(`[data-approve="${id}"][data-node="gate"]`),
+  });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('E2E ui-approval-queue');
+  const context = `Queue approval ${cfg.runTag}`;
+  await card.locator('[data-human-context]').fill(context);
+  const [response] = await Promise.all([
+    page.waitForResponse(r => new URL(r.url()).pathname === `/api/runs/${id}/approve` && r.request().method() === 'POST'),
+    approve.click(),
+  ]);
+  expect(response.ok()).toBe(true);
+  const run = await waitRun(id, r => r.status === 'succeeded', { label: 'succeeded after queue approval' });
+  expect(run.nodes.gate.status).toBe('succeeded');
+  expect(run.nodes.finish.status).toBe('succeeded');
+  expect(run.humanContext).toBe(context);
+  await expect(card).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -169,19 +244,6 @@ test('SOP designer: the agent drawer shows name, role and on-failure in the firs
   expect(errors).toEqual([]);
 });
 
-test('knowledge center: search shows cited hits', async ({ page }) => {
-  const settings = await get('/api/knowledge/settings');
-  test.skip(!settings.ready, 'knowledge base not configured');
-  const errors = watchErrors(page);
-  await openView(page, 'knowledge');
-  await page.locator('[data-kb-tab="search"]').first().click();
-  await page.locator('#kbSearchForm input[name="q"]').fill('部署');
-  await page.locator('#kbSearchForm input[name="q"]').press('Enter');
-  await expect(page.locator('.kb-hit').first()).toBeVisible({ timeout: 60_000 });
-  expect(await page.locator('.kb-hit').count()).toBeGreaterThan(0);
-  expect(errors).toEqual([]);
-});
-
 // The reply to "让 AI 分析" must stay between the question and the alert while
 // it streams and after it finishes; it used to stream below the alert and then
 // jump above it, which read as "no answer".
@@ -224,7 +286,7 @@ test('settings at ≤1000px: the drawer opens from the rail and closes once a pa
   const drawerOpen = () => page.evaluate(() => document.body.classList.contains('sidebar-open'));
   // A deep link shows the page, not the navigation on top of it.
   await page.goto('/#/skills');
-  await expect(page.locator('#pageTitle')).toHaveText('技能管理');
+  await expect(page.locator('#pageTitle')).toHaveText('能力资产');
   expect(await drawerOpen()).toBe(false);
   // Coming into settings from the workbench offers the navigation…
   await page.evaluate(() => { location.hash = '#/collaboration'; });

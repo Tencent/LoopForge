@@ -264,7 +264,7 @@ func (h *scheduleHandlers) guardScheduledBaseline(job domain.ScheduleJob, issues
 			}
 			continue
 		}
-		err := h.engine.AlignBaseline(ctx, engine.ResolveClarifyGitToken(h.repo, responsible.ID))
+		err := h.engine.AlignBaselineForUser(ctx, responsible.ID)
 		if err == nil {
 			h.cancelStaleAlignRuns(repo.ID)
 			continue

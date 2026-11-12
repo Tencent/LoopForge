@@ -63,6 +63,9 @@ type ProjectMember struct {
 	Role   string `json:"role"` // maintainer, member, viewer
 }
 
+// RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
+const RepositoryProviderSSH = "ssh"
+
 type Repository struct {
 	ID                 string    `json:"id"`
 	ProjectID          string    `json:"projectId"`

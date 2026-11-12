@@ -8,9 +8,10 @@ import React, {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import "../../web/app/git-ssh.js";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
-import { api, canChatInProject, write } from "./api";
+import { api, canChatInProject, canManageProjectRepos, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
 import {
   CODEBUDDY_ENVIRONMENTS,
@@ -548,7 +549,7 @@ function parseGitHubRepo(raw) {
     .replace(/^['"]+|['"]+$/g, "")
     .replace(/^git\s+clone\s+/i, "")
     .replace(/^github:/i, "https://github.com/")
-    .replace(/^git@github\.com:/i, "https://github.com/");
+    .replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/i, "https://github.com/");
   if (/^github\.com\//i.test(value)) value = `https://${value}`;
   let url;
   try {
@@ -577,8 +578,11 @@ function parseGitHubRepo(raw) {
   };
 }
 
-// GitHub first; self-hosted legacy repositories keep the git.example.com form.
+// SSH preview first (it leaves github.com to the GitHub parser, matching the
+// server); self-hosted legacy repositories keep the git.example.com form.
 export function parseGongfengRepo(raw) {
+  const sshInfo = globalThis.LoopForgeGitSSH(raw);
+  if (sshInfo) return sshInfo;
   const github = parseGitHubRepo(raw);
   if (github) return github;
   const original = String(raw || "")
@@ -771,11 +775,13 @@ export default function QuickAccessWizard({
   sponsoredModels = [],
   onClose,
   onCompleted,
+  onCredentialsSaved,
   onOpenView,
 }) {
   const [step, setStep] = useState(0);
   const [phase, setPhase] = useState("wizard");
   const [storedUser, setStoredUser] = useState(user);
+  const [sshCredentials, setSSHCredentials] = useState({ userId: null, keys: null, error: false });
   const [catalogProjects, setCatalogProjects] = useState(projects);
   const [repositories, setRepositories] = useState([]);
   const [workflows, setWorkflows] = useState([]);
@@ -853,6 +859,13 @@ export default function QuickAccessWizard({
       null,
     [editableProjects, selectedProjectId],
   );
+
+  // A member can work in a shared project (e.g. the welcome project) without
+  // owning it; binding a repository there would only fail at the last step.
+  const repoBindBlocked =
+    projectMode === "existing" &&
+    Boolean(currentProject) &&
+    !canManageProjectRepos(currentProject, storedUser || user);
 
   const projectRepos = useMemo(
     () =>
@@ -1030,6 +1043,33 @@ export default function QuickAccessWizard({
   }, [open, projectId, projects, user]);
 
   useEffect(() => {
+    if (!open || !user?.id || user.isGuest) return undefined;
+    let active = true;
+    let generation = 0;
+    const refresh = () => {
+      const version = ++generation;
+      api(`/api/users/${encodeURIComponent(user.id)}/git-ssh-keys`)
+        .then((keys) => {
+          if (active && version === generation) setSSHCredentials({ userId: user.id, keys: Array.isArray(keys) ? keys : [], error: false });
+        })
+        .catch(() => {
+          if (active && version === generation) setSSHCredentials({ userId: user.id, keys: [], error: true });
+        });
+    };
+    const credentialsChanged = (event) => {
+      if (event.origin === location.origin && event.source === window.parent && event.data?.type === "agentflow-credentials-changed") refresh();
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("message", credentialsChanged);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("message", credentialsChanged);
+    };
+  }, [open, user?.id, user?.isGuest]);
+
+  useEffect(() => {
     if (!open || !selectedWorkflowId) return undefined;
     // Only platform templates have template roles; a project SOP would 404.
     const known = (workflows || []).find((w) => w.id === selectedWorkflowId);
@@ -1144,6 +1184,14 @@ export default function QuickAccessWizard({
   const activeStep = STEPS[activeStepIndex] || STEPS[0];
   const wizardStepCount = STEPS.length - 1;
   const gitReady = Boolean(storedUser?.gitTokenConfigured || gitToken.trim());
+  const hasSSHKeys = Boolean(storedUser?.gitSshKeyConfigured);
+  const selectedSSHRepo = parsedRepo || parseGongfengRepo(defaultRepo?.cloneUrl);
+  const sshKeysLoaded = sshCredentials.userId === user?.id && sshCredentials.keys !== null;
+  const hasSSHKey = (remote) => sshKeysLoaded && !sshCredentials.error && sshCredentials.keys.some(
+    (key) => globalThis.LoopForgeGitSSHHost(key.host) === remote?.host,
+  );
+  const sshReady = hasSSHKey(selectedSSHRepo);
+  const sshRepository = (parsedRepo || defaultRepo)?.provider === "ssh";
   const codeBuddyReady = Boolean(
     storedUser?.codeBuddyApiKeyConfigured || codeBuddyApiKey.trim(),
   );
@@ -1193,6 +1241,7 @@ export default function QuickAccessWizard({
     setGitToken("");
     setCodeBuddyApiKey("");
     setCodeBuddyEnvChoice(null);
+    void onCredentialsSaved?.();
     window.parent !== window &&
       window.parent.postMessage(
         { type: "agentflow-credentials-changed" },
@@ -1229,8 +1278,8 @@ export default function QuickAccessWizard({
     if (saving) return;
     setError("");
     if (activeStep.id === "auth") {
-      if (!gitReady && !codeBuddyReady && !sponsoredModel) {
-        setError("请至少填写 GitHub Git Token 与 CodeBuddy API Key 中的一项。");
+      if (!gitReady && !hasSSHKeys && !codeBuddyReady && !sponsoredModel) {
+        setError("请先配置 GitHub Git Token、Git SSH 密钥或 CodeBuddy API Key。");
         return;
       }
       setSaving(true);
@@ -1263,9 +1312,15 @@ export default function QuickAccessWizard({
         setError("请选择一个项目，或切换到新建项目。");
         return;
       }
+      if (bindRepoNow && repoUrl.trim() && repoBindBlocked) {
+        setError(
+          `你不是「${currentProject?.name || "该项目"}」的 Owner，不能为它绑定仓库。请新建自己的项目并绑定，或关闭「绑定仓库」继续体验。`,
+        );
+        return;
+      }
       if (bindRepoNow && repoUrl.trim() && !parsedRepo) {
         setError(
-          "仓库地址无法识别，请粘贴 GitHub 仓库链接（https://github.com/owner/repo）或 github:owner/repo。",
+          "请输入 GitHub 仓库链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。",
         );
         return;
       }
@@ -1320,21 +1375,24 @@ export default function QuickAccessWizard({
       }
 
       let boundRepo = defaultRepo;
-      if (bindRepoNow && parsedRepo && targetProject?.id) {
+      if (bindRepoNow && parsedRepo && targetProject?.id && !repoBindBlocked) {
         const existingRepo = (repositories || []).find(
           (repo) =>
             repo.projectId === targetProject.id &&
-            (repo.gongfengProjectId === parsedRepo.project ||
-              repo.webUrl === parsedRepo.webUrl),
+            (parsedRepo.provider === "ssh"
+              ? repo.cloneUrl === parsedRepo.cloneUrl
+              : repo.gongfengProjectId === parsedRepo.project ||
+                repo.webUrl === parsedRepo.webUrl),
         );
         if (existingRepo) {
           boundRepo = await write(
             "/api/repositories",
             {
               ...existingRepo,
+              provider: parsedRepo.provider,
               name: parsedRepo.name,
               gongfengProjectId: parsedRepo.project,
-              webUrl: parsedRepo.webUrl,
+              webUrl: parsedRepo.webUrl || existingRepo.webUrl,
               cloneUrl: parsedRepo.cloneUrl,
               defaultBranch: repoBranch.trim() || "main",
               repoUrl: repoUrl.trim(),
@@ -1451,7 +1509,7 @@ export default function QuickAccessWizard({
         repository: boundRepo,
         workflow: provisionedWorkflow || activeWorkflow,
         rolesCount: roles.length,
-        gitReady: Boolean(latestUser?.gitTokenConfigured),
+        gitReady: Boolean(boundRepo?.provider === "ssh" ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl)) : latestUser?.gitTokenConfigured),
         codeBuddyReady: Boolean(
           latestUser?.codeBuddyApiKeyConfigured ||
             storedUser?.codeBuddyApiKeyConfigured,
@@ -1626,7 +1684,7 @@ export default function QuickAccessWizard({
                             size={14}
                           />
                           <span>
-                            GitHub 访问：
+                            {completedSummary?.repository?.provider === "ssh" ? "Git SSH 访问：" : "GitHub 访问："}
                             {completedSummary?.gitReady
                               ? "已就绪"
                               : "未配置，克隆/推送私有仓库前可在个人配置补齐"}
@@ -1771,6 +1829,7 @@ export default function QuickAccessWizard({
                             {storedUser?.gitTokenConfigured ? "管理 GitHub 授权" : "连接 GitHub"}
                           </button>
                           <p className="qa-hint">在个人配置中完成授权，返回后继续；无需手动复制令牌。</p>
+                          <p className="qa-hint">GitLab 等 SSH 仓库：<button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("gitSshKey")}>{hasSSHKeys ? "管理 Git SSH 密钥" : "配置 Git SSH 密钥"}</button></p>
                           <details>
                             <summary>使用访问令牌（高级）</summary>
                           <div className="qa-input-row">
@@ -1957,7 +2016,7 @@ export default function QuickAccessWizard({
                                             /^https?:\/\//,
                                             "",
                                           )
-                                        : repo.gongfengProjectId || repo.webUrl}
+                                        : repo.gongfengProjectId || repo.webUrl || repo.cloneUrl}
                                     </code>
                                     <small>
                                       {repo.defaultBranch || "main"}
@@ -2041,14 +2100,14 @@ export default function QuickAccessWizard({
                                   ? "旧项目可直接追加新仓库，复用已有流程与角色；留空则沿用现有仓库"
                                   : "沿用项目现有仓库与流程"
                                 : bindRepoNow
-                                  ? "粘贴 GitHub 仓库链接，自动设为项目默认仓库"
+                                  ? "粘贴 GitHub 链接或 Git SSH 地址，自动设为项目默认仓库"
                                   : "已跳过，可在派发需求或项目配置中再绑定"}
                             </span>
                           </div>
                           <HarnessSwitch
                             checked={bindRepoNow}
                             onChange={setBindRepoNow}
-                            label="添加或绑定 GitHub 仓库"
+                            label="添加或绑定代码仓库"
                           />
                         </header>
 
@@ -2059,13 +2118,46 @@ export default function QuickAccessWizard({
                         >
                           <div className="qa-collapse-inner">
                             <div className="qa-cred-body">
+                              {repoBindBlocked ? (
+                                <div
+                                  className="qa-hint is-warn qa-repo-permission"
+                                  role="note"
+                                >
+                                  <p>
+                                    「{currentProject?.name}」是已有项目，只有它的
+                                    Owner 或平台管理员可以绑定仓库。你可以：
+                                  </p>
+                                  <div className="qa-repo-permission-actions">
+                                    <button
+                                      type="button"
+                                      className="qa-link-btn"
+                                      onClick={() => {
+                                        setError("");
+                                        setProjectMode("create");
+                                      }}
+                                    >
+                                      新建自己的项目并绑定
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="qa-link-btn"
+                                      onClick={() => {
+                                        setError("");
+                                        setBindRepoNow(false);
+                                      }}
+                                    >
+                                      跳过绑定，继续体验
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
                               <div className="qa-repo-grid">
                                 <label className="qa-field">
                                   <span className="qa-label">
                                     {projectMode === "existing" &&
                                     projectRepos.length
-                                      ? "新增 GitHub 仓库地址（可选）"
-                                      : "GitHub 仓库地址"}
+                                      ? "新增仓库地址（可选）"
+                                      : "GitHub 链接或 Git SSH 地址"}
                                   </span>
                                   <input
                                     className="qa-input qa-mono"
@@ -2112,12 +2204,14 @@ export default function QuickAccessWizard({
                                 </p>
                               ) : (
                                 <p key="help" className="qa-hint">
-                                  支持粘贴 GitHub 仓库链接、
-                                  <code>
-                                    git@github.com:owner/repo.git
-                                  </code> 或 <code>github:owner/repo</code>。
+                                  支持 GitHub 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
                                 </p>
                               )}
+                              {selectedSSHRepo?.provider === "ssh" && sshKeysLoaded && !sshReady ? (
+                                <p className="qa-hint is-error" role="alert">
+                                  {sshCredentials.error ? "无法读取 SSH 密钥配置，请稍后重试。" : `尚未配置 ${selectedSSHRepo.host} 的 SSH 密钥，可稍后在「个人配置 → Git SSH 密钥」添加。`}
+                                </p>
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -2242,10 +2336,10 @@ export default function QuickAccessWizard({
                             <dt>凭据</dt>
                             <dd>
                               <span
-                                className={`qa-dot ${gitReady && (codeBuddyReady || sponsoredModel) ? "is-ok" : ""}`}
+                                className={`qa-dot ${(sshRepository ? sshReady : gitReady) && (codeBuddyReady || sponsoredModel) ? "is-ok" : ""}`}
                               />
                               <span>
-                                GitHub {gitReady ? "已配置" : "未配置"} ·
+                                {sshRepository ? "Git SSH" : "GitHub"} {(sshRepository ? sshReady : gitReady) ? "已配置" : "未配置"} ·
                                 CodeBuddy{" "}
                                 {codeBuddyReady
                                   ? "已配置"
@@ -2261,11 +2355,11 @@ export default function QuickAccessWizard({
                               <span className="qa-dot is-ok" />
                               <span>
                                 {projectMode === "create"
-                                  ? newProjectName || "新项目"
-                                  : currentProject?.name || "当前项目"}
+                                  ? `新建项目「${newProjectName || "新项目"}」`
+                                  : `使用已有项目「${currentProject?.name || "当前项目"}」`}
                                 {" · "}
-                                {bindRepoNow && parsedRepo
-                                  ? parsedRepo.name
+                                {bindRepoNow && parsedRepo && !repoBindBlocked
+                                  ? `绑定 ${parsedRepo.name}`
                                   : defaultRepo?.name || "运行时指定仓库"}
                               </span>
                             </dd>

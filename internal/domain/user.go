@@ -14,8 +14,8 @@ type User struct {
 	ClaudeCodeAPIKeyConfigured bool   `json:"claudeCodeApiKeyConfigured,omitempty"`
 	ClaudeCodeBaseURL          string `json:"claudeCodeBaseUrl,omitempty"`
 	// CodexModels and ClaudeCodeModels are the model catalogs AI 对话 offers
-	// for that CLI, in display order. Empty means the models the Base URL's
-	// /models endpoint publishes.
+	// for that CLI, in display order. Empty follows the CLI's built-in models
+	// on the official endpoint, or the models the Base URL publishes.
 	CodexModels      []CLIModel `json:"codexModels,omitempty"`
 	ClaudeCodeModels []CLIModel `json:"claudeCodeModels,omitempty"`
 	// AgentCLICredentials holds the credentials of the agent CLIs
@@ -33,6 +33,7 @@ type User struct {
 	GitToken                     string    `json:"gitToken,omitempty"`
 	GitTokenConfigured           bool      `json:"gitTokenConfigured,omitempty"`
 	GitTokenOAuth                bool      `json:"gitTokenOAuth,omitempty"`
+	GitSSHKeyConfigured          bool      `json:"gitSshKeyConfigured,omitempty"`
 	GongfengRefreshToken         string    `json:"-"`
 	GongfengTokenExpiresAt       time.Time `json:"-"`
 	CodeBuddyAPIKey              string    `json:"codeBuddyApiKey,omitempty"`
@@ -43,6 +44,13 @@ type User struct {
 }
 
 const PlatformRoleAdmin = "admin"
+
+// GitSSHKey is the public description of a personal SSH credential.
+type GitSSHKey struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Host string `json:"host"`
+}
 
 // NormalizeCodeBuddyInternetEnvironment maps a network environment chosen in
 // personal settings to the CODEBUDDY_INTERNET_ENVIRONMENT value: "" for the

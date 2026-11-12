@@ -163,6 +163,10 @@ func controlledBaseEnvironment(base []string) []string {
 		"GIT_CONFIG_VALUE_",
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
+		"SSH_AUTH_SOCK=",
+		"GIT_SSH=",
+		"GIT_SSH_COMMAND=",
+		"GIT_SSH_VARIANT=",
 	}
 	filtered := make([]string, 0, len(base))
 	for _, entry := range base {
@@ -244,6 +248,7 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		if err != nil {
 			return nil, err
 		}
+		args = bwrapPrivateBinds(args, command.privateBinds)
 		args = append(args, command.Argv...)
 		cmd = exec.CommandContext(ctx, s.binary, args...)
 	default:
@@ -410,6 +415,20 @@ func ensureBunFSMountPoint() bool {
 
 func bwrapArgsRequirements(workspace string, requirements SandboxRequirements) ([]string, error) {
 	return bwrapArgsCommand(workspace, requirements, true)
+}
+
+// bwrapPrivateBinds adds per-process binds before the "--" that ends the
+// bwrap options. They come after --tmpfs /tmp, so a directory under the host
+// /tmp is visible to this process only.
+func bwrapPrivateBinds(args, binds []string) []string {
+	if len(binds) == 0 || len(args) == 0 || args[len(args)-1] != "--" {
+		return args
+	}
+	out := append([]string{}, args[:len(args)-1]...)
+	for _, dir := range binds {
+		out = append(out, "--bind", dir, dir)
+	}
+	return append(out, "--")
 }
 
 func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAgentConfig bool) ([]string, error) {

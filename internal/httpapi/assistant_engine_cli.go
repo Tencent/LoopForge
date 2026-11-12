@@ -57,7 +57,7 @@ func assistantEngineConfigDir(engine string) string {
 
 // resolveAssistantEngineBin locates the codex / claude executable the same
 // way resolveCodeBuddyBin does: explicit override, managed inventory, PATH,
-// then well-known install locations.
+// well-known install locations, then a CLI installed from a failed conversation.
 func resolveAssistantEngineBin(engine string) (string, error) {
 	if engine == assistantEngineCodeBuddy {
 		return resolveCodeBuddyBin()
@@ -90,6 +90,9 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 			return candidate, nil
 		}
 	}
+	if path, ok := runtime.OnDemandCLIPath(engine); ok {
+		return path, nil
+	}
 	return "", assistantCLIMissingError{engine: engine, binary: binary}
 }
 
@@ -101,7 +104,10 @@ type assistantCLIMissingError struct{ engine, binary string }
 
 func (e assistantCLIMissingError) Error() string {
 	label := assistantEngineLabel(e.engine)
-	return fmt.Sprintf("服务器未安装 %s CLI（%s），请联系管理员安装后再使用 %s 模型", label, e.binary, label)
+	if runtime.OnDemandInstallable(e.engine) {
+		return fmt.Sprintf("%s（%s）没有安装在当前服务器上。安装后即可在对话里使用。", label, e.engine)
+	}
+	return fmt.Sprintf("服务器没有安装 %s（%s）。请联系管理员安装后再使用。", label, e.binary)
 }
 
 func (e assistantCLIMissingError) Is(target error) bool {

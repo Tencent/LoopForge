@@ -55,7 +55,20 @@ func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 	if cb.Models[0].Credits != "" {
 		t.Fatal("unconfigured public model must not claim a private price")
 	}
-
+	codex := catalogs["codex"]
+	if len(codex.Models) < 2 || codex.Models[0].ID != "gpt-6.1-sol" || codex.Models[1].ID != "gpt-6.1-terra" || codex.Models[1].Name != "GPT-6.1 Terra" {
+		t.Fatalf("codex catalog = %+v", codex.Models)
+	}
+	claude := catalogs["claude"]
+	haiku := -1
+	for i, model := range claude.Models {
+		if model.ID == "claude-haiku-5-5" {
+			haiku = i
+		}
+	}
+	if haiku < 0 || haiku+1 >= len(claude.Models) || claude.Models[haiku].Name != "Claude Haiku 5.5" || claude.Models[haiku+1].ID != "claude-haiku-4-5" {
+		t.Fatalf("claude catalog = %+v", claude.Models)
+	}
 }
 
 func TestEnvironmentAssetsAreFilteredByProjectAndSharedScope(t *testing.T) {

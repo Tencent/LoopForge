@@ -27,6 +27,7 @@ import {
   elapsedSeconds,
   formatElapsed,
   confirmationCaption,
+  isProposalTimeout,
   canChatInProject,
   projectPickerOptions,
 } from "./api";
@@ -46,13 +47,16 @@ import { runProblems, useConversationRuns } from "./runs.js";
 import { reconcileOperation, visibleSidebarArtifact } from "./platform.js";
 import { isGeneratedArtifact, shouldRevealArtifactPanel } from "./artifact-autoreveal.js";
 import { IconButton, Dialog, Menu, SelectMenu, CredentialAction } from "./ui";
+import { CLIInstallAction } from "./cli-install.jsx";
 import { credentialHint, openCredentialSettings } from "./credentials";
 import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
-import { runSessionState, sessionReplyStatus, sessionTooltip } from "./session-status.js";
+import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
+import { unreadReply, useReadReplies } from "./session-unread.js";
 import MentionPicker from "./MentionPicker";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
 import { mentionAt, insertMention } from "./mentions.js";
+import { elementTitle } from "./element-context.js";
 import HarnessIcon from "./HarnessIcon";
 import QueuedMessages from "./QueuedMessages";
 import "./message-queue.css";
@@ -363,6 +367,14 @@ export default function App() {
     composerPreviews = useRef(new Map());
   const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || "new:" + chat.projectId}`;
   useEffect(() => setMention(null), [draftKey]);
+  // The open conversation's reply is reported read; the history list dots
+  // the replies the server still counts as unread.
+  const readReplies = useReadReplies({
+    enabled: realChat.ready,
+    sessions: realChat.sessions,
+    activeId: realChat.activeId,
+    generation: realChat.generation,
+  });
   const conversationRuns = useConversationRuns(chat.session, runsRefresh);
   // The workspace of this conversation (opened by workbench_workspace_open).
   // Its git state drives the "改动" view of the side panel.
@@ -805,6 +817,16 @@ export default function App() {
     closeMenu();
     input.current?.focus();
   }
+  // addElementReference takes an element picked in the native preview: it
+  // rides along as a reference chip, without a token in the text.
+  function addElementReference(ref) {
+    if (references.length >= 12) {
+      chat.setError("每轮最多引用 12 个对象。");
+      return;
+    }
+    setReferences((old) => [...old, ref]);
+    requestAnimationFrame(() => input.current?.focus());
+  }
   function addReference(ref) {
     if (
       references.length >= 12 &&
@@ -910,10 +932,13 @@ export default function App() {
     };
   }
   const renderSession = (s, options = {}) => {
-    const status = sessionReplyStatus(s, s.id === chat.activeId ? {
-      generation: chat.generation,
-      busy: chat.busy,
-    } : undefined);
+    const status = sidebarReplyStatus(
+      sessionReplyStatus(s, s.id === chat.activeId ? {
+        generation: chat.generation,
+        busy: chat.busy,
+      } : undefined),
+      unreadReply(s, { activeId: chat.activeId, read: readReplies }),
+    );
     const runState = runSessionState(s);
     return (
     <div
@@ -975,9 +1000,13 @@ export default function App() {
         {pinned.includes(s.id) ? (
           <HarnessIcon name="pin" size={12} className="pin-mark" />
         ) : null}
-        {status.icon ? (
+        {status.icon || status.dot ? (
           <span className="session-status" data-session-status={status.state} role="img" aria-label={status.label} title={status.label}>
-            <HarnessIcon name={status.icon} size={15} motion={status.busy ? "busy" : "idle"} />
+            {status.icon ? (
+              <HarnessIcon name={status.icon} size={15} motion={status.busy ? "busy" : "idle"} />
+            ) : (
+              <span className="session-unread-dot" aria-hidden="true" />
+            )}
           </span>
         ) : null}
       </button>
@@ -1443,7 +1472,7 @@ export default function App() {
                 <div className="loading-session">正在恢复对话…</div>
               ) : null}
               {messages.map((message, index) =>
-                confirmationCaption(message, messages[index - 1]) ? (
+                isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
                     key={index}
                     className="confirmation-note"
@@ -1493,8 +1522,16 @@ export default function App() {
                           {message.references?.length ? (
                             <div className="message-references">
                               {message.references.map((ref) => (
-                                <span key={ref.type + ref.id}>
-                                  @{ref.name || ref.id}
+                                <span
+                                  key={ref.type + ref.id}
+                                  title={ref.type === "element" ? elementTitle(ref) : undefined}
+                                >
+                                  {ref.type === "element" ? (
+                                    <HarnessIcon name="crosshair" size={12} />
+                                  ) : (
+                                    "@"
+                                  )}
+                                  {ref.name || ref.id}
                                 </span>
                               ))}
                             </div>
@@ -1563,6 +1600,12 @@ export default function App() {
                                 artifact={a}
                                 context={operationContext}
                                 onApply={chat.readOnly ? null : chat.applyDraft}
+                                onDecide={
+                                  chat.readOnly
+                                    ? null
+                                    : (messageIndex, draftIndex, decision) =>
+                                        chat.decideProposal(messageIndex, draftIndex, decision, approval)
+                                }
                                 onPreview={openArtifact}
                               />
                             ))}
@@ -1634,6 +1677,7 @@ export default function App() {
               <div role="alert" className="chat-error">
                 <span>{chat.error}</span>
                 <CredentialAction text={chat.error} />
+                <CLIInstallAction text={chat.error} onResult={chat.adoptCLIInstall} />
                 <IconButton label="关闭提示" onClick={() => chat.setError("")}>
                   <HarnessIcon name="close" size={15} />
                 </IconButton>
@@ -1827,9 +1871,15 @@ export default function App() {
                       {references.map((ref) => (
                         <span
                           key={ref.type + ref.id}
-                          className="composer-attachment-file"
+                          className={`composer-attachment-file${ref.type === "element" ? " is-element" : ""}`}
+                          title={ref.type === "element" ? elementTitle(ref) : undefined}
                         >
-                          @{ref.name || ref.id}
+                          {ref.type === "element" ? (
+                            <HarnessIcon name="crosshair" size={13} />
+                          ) : (
+                            "@"
+                          )}
+                          {ref.name || ref.id}
                           <button
                             aria-label={`移除引用 ${ref.name || ref.id}`}
                             onClick={() => {
@@ -2118,6 +2168,7 @@ export default function App() {
           workspaceRunId={workspaceRunId}
           browserRequest={browserRequest}
           onBrowserRequestHandled={browserRequestHandled}
+          onAddElement={chat.readOnly ? null : addElementReference}
           onClose={() => setPanel(false)}
         />
       ) : null}
@@ -2343,6 +2394,7 @@ export default function App() {
         sponsoredModels={chat.sponsoredModels}
         onClose={() => setQuickAccessOpen(false)}
         onOpenView={(view) => navigate(view)}
+        onCredentialsSaved={chat.refreshUser}
         onCompleted={async (nextProjectId) => {
           await chat.refresh();
           if (nextProjectId) await chat.selectProject(nextProjectId);
