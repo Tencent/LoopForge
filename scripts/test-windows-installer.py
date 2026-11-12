@@ -1,4 +1,5 @@
 """Exercise the standalone Windows installer with fake downloads and Runner processes."""
+import ctypes
 import hashlib
 import http.server
 import json
@@ -179,6 +180,29 @@ $initial=@{ServerUrl='https://platform.example.test';BindCode='fixture-binding-c
                 worker.join(timeout=5)
 
     def test_standalone_downloads_match_platform_and_keep_local_login(self):
+        self.assert_standalone_installation()
+
+    def test_standalone_installation_with_short_path_alias(self):
+        get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        get_short_path.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        get_short_path.restype = ctypes.c_uint32
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_short_path(str(self.root), buffer, len(buffer))
+        if not length:
+            raise ctypes.WinError(ctypes.get_last_error())
+        self.assertLess(length, len(buffer), "temporary directory alias exceeded the path buffer")
+        alias = Path(buffer.value)
+        if os.path.normcase(str(alias)) == os.path.normcase(str(self.root)):
+            self.skipTest("the temporary volume does not provide an 8.3 path alias")
+        # TemporaryDirectory retains its original path for cleanup.
+        self.root = alias
+        self.install = alias / "installation"
+        self.installer = alias / "downloaded installer.ps1"
+        self.mock = alias / "mock.ps1"
+        self.environment["LOOPFORGE_TEST_ROOT"] = str(alias)
+        self.assert_standalone_installation()
+
+    def assert_standalone_installation(self):
         self.run_ps(r'''
 & $installer @initial
 Assert-RestoredEnvironment
@@ -198,10 +222,10 @@ if($global:testLaunches -ne 2){throw 'saved installation did not restart'}
         self.assertEqual(config["ServerUrl"], "https://platform.example.test")
         self.assertEqual(config["Concurrency"], 3)
         self.assertEqual(config["Name"], "Fixture runner")
-        self.assertEqual(config["CliDirectory"], str(self.root / "custom cli"))
+        self.assertTrue(Path(config["CliDirectory"]).samefile(self.root / "custom cli"))
         for name, field in (("agentflow-runner", "RunnerBinary"), ("agentflow-gate-mcp", "GateBinary")):
             self.assertEqual(hashlib.sha256(Path(config[field]).read_bytes()).hexdigest(), self.artifacts[name])
-            self.assertTrue(Path(config[field]).is_relative_to(self.install / "bin"))
+            self.assertTrue(Path(config[field]).resolve().is_relative_to((self.install / "bin").resolve()))
         self.assertEqual((self.install / "install.ps1").read_bytes(), self.installer.read_bytes())
 
     def test_bad_checksum_preserves_installed_files_and_configuration(self):
