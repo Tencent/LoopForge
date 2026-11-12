@@ -23,7 +23,16 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
+      image: ${{ steps.release.outputs.image }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      tcr_image: ${{ steps.tcr.outputs.image }}
+      tcr_registry: ${{ steps.tcr.outputs.registry }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -67,6 +76,7 @@ jobs:
           {
             echo "tag=${TAG}"
             echo "version=${version}"
+            echo "sha=$(git rev-parse HEAD)"
             echo "image=${image}"
             echo "prerelease=${prerelease}"
           } >> "$GITHUB_OUTPUT"
@@ -108,23 +118,15 @@ jobs:
             echo "image=${registry}/loopforge/loopforge"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/login-action@v4
-        with:
-          registry: ${{ steps.tcr.outputs.registry }}
-          username: ${{ secrets.TCR_USERNAME }}
-          password: ${{ secrets.TCR_PASSWORD }}
-
       - uses: docker/metadata-action@v5
         id: metadata
         with:
-          images: |
-            ${{ steps.release.outputs.image }}
-            ${{ steps.tcr.outputs.image }}
+          images: ${{ steps.release.outputs.image }}
           flavor: latest=false
           tags: |
             type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
-            type=sha,prefix=sha-,format=long
+            type=raw,value=sha-${{ steps.release.outputs.sha }}
             type=raw,value=latest,enable=${{ steps.release.outputs.prerelease == 'false' }}
 
       - uses: docker/build-push-action@v7
@@ -148,15 +150,63 @@ jobs:
       - if: failure()
         run: docker compose logs platform | tail -200
 
+  mirror:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release.outputs.tag }}
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ needs.release.outputs.tcr_registry }}
+          username: ${{ secrets.TCR_USERNAME }}
+          password: ${{ secrets.TCR_PASSWORD }}
+
+      - name: Mirror the published image to TCR
+        env:
+          SRC_IMAGE: ${{ needs.release.outputs.image }}
+          DIGEST: ${{ needs.release.outputs.digest }}
+          TCR_IMAGE: ${{ needs.release.outputs.tcr_image }}
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA: ${{ needs.release.outputs.sha }}
+          PRERELEASE: ${{ needs.release.outputs.prerelease }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+          src="docker://${SRC_IMAGE}@${DIGEST}"
+          auth="${HOME}/.docker/config.json"
+          copy() {
+            echo "mirroring ${src} -> ${TCR_IMAGE}:$1"
+            skopeo copy --all --retry-times 3 \
+              --src-authfile "${auth}" --dest-authfile "${auth}" \
+              "${src}" "docker://${TCR_IMAGE}:$1"
+          }
+          copy "${VERSION}"
+          copy "sha-${SHA}"
+          if [[ "${PRERELEASE}" != "true" ]]; then
+            copy "${VERSION%.*}"
+            copy latest
+          fi
+
       - name: Create or update GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.release.outputs.tag }}
-          VERSION: ${{ steps.release.outputs.version }}
-          IMAGE: ${{ steps.release.outputs.image }}
-          TCR_IMAGE: ${{ steps.tcr.outputs.image }}
-          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+          IMAGE: ${{ needs.release.outputs.image }}
+          TCR_IMAGE: ${{ needs.release.outputs.tcr_image }}
+          PRERELEASE: ${{ needs.release.outputs.prerelease }}
         run: |
           notes="$(cat <<EOF
           ## Install
