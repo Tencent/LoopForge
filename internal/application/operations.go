@@ -68,7 +68,7 @@ func PublicOperations() []Operation {
 		{Name: "mcp_servers_save", Description: "Create or update an external MCP server asset", Method: "PUT", Path: "/api/mcp-servers"},
 		{Name: "mcp_servers_import", Description: "Import external MCP server definitions from JSON", Method: "POST", Path: "/api/mcp-servers/import"},
 		{Name: "executors_list", Description: "List executor definitions", Method: "GET", Path: "/api/executors", ReadOnly: true},
-		{Name: "executor_models_list", Description: "List the selectable model IDs, default model and reasoning-effort levels of each built-in CLI (codebuddy, codex, claude). Use a listed id as an Agent's model.", Method: "GET", Path: "/api/executor-models", ReadOnly: true},
+		{Name: "executor_models_list", Description: "List the selectable model IDs, default model and reasoning-effort levels of each built-in CLI. Use a listed id as an Agent's model.", Method: "GET", Path: "/api/executor-models", ReadOnly: true},
 		{Name: "dockerfiles_list", Description: "List Dockerfile assets", Method: "GET", Path: "/api/dockerfiles", ReadOnly: true},
 		{Name: "dockerfiles_save", Description: "Create or update a Dockerfile asset", Method: "PUT", Path: "/api/dockerfiles"},
 		{Name: "dockerfiles_delete", Description: "Delete a Dockerfile that is not shared and not referenced by any sandbox", Method: "DELETE", Path: "/api/dockerfiles"},
