@@ -56,7 +56,9 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 		}
 	}
 	ctx = withGitToken(ctx, token)
-	if repo.Provider == "gitlab" {
+	if repo.Provider == "gitlab" && !isLocalGitDir(cloneURL) {
+		// Configured localPath sources are cloned without credentials; only
+		// remote http(s) GitLab URLs get a host-scoped credential.
 		parsed, err := url.Parse(cloneURL)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return "", fmt.Errorf("GitLab 仓库地址无效")
@@ -150,4 +152,10 @@ func ResolveClarifyGitTokenForRepository(s *repo.Store, userID int64, repository
 		return ""
 	}
 	return strings.TrimSpace(user.GitLabToken)
+}
+
+// isLocalGitDir reports whether cloneURL points at an existing local directory.
+func isLocalGitDir(cloneURL string) bool {
+	info, err := os.Stat(cloneURL)
+	return err == nil && info.IsDir()
 }

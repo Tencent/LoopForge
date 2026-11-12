@@ -320,6 +320,11 @@ func BindGitLabEnvironment(env map[string]string, base, token string) error {
 	}
 	n, _ := strconv.Atoi(env["GIT_CONFIG_COUNT"])
 	helper := `!f() { test "$1" = get || exit 0; printf 'username=oauth2\npassword=%s\n' "$AGENTFLOW_GITLAB_TOKEN"; }; f`
+	// Reset helpers inherited from the executor's git config first (for example
+	// credential.helper=store) so a successful auth never persists the PAT.
+	env[fmt.Sprintf("GIT_CONFIG_KEY_%d", n)] = "credential.helper"
+	env[fmt.Sprintf("GIT_CONFIG_VALUE_%d", n)] = ""
+	n++
 	env[fmt.Sprintf("GIT_CONFIG_KEY_%d", n)] = "credential." + base + ".helper"
 	env[fmt.Sprintf("GIT_CONFIG_VALUE_%d", n)] = helper
 	n++

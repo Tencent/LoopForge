@@ -180,3 +180,16 @@ func TestPrepareRepositorySeedsAnEmptyRemote(t *testing.T) {
 		t.Fatal("a non-empty remote without the base branch was seeded")
 	}
 }
+
+func TestClarifyGitLabLocalPathClonesWithoutHostCredential(t *testing.T) {
+	t.Parallel()
+	source, _ := selectedBranchTestRemote(t)
+	cache := filepath.Join(t.TempDir(), "checkout")
+	repository := domain.Repository{ID: "gitlab-local", Provider: "gitlab", CloneURL: source, DefaultBranch: "master"}
+	if _, err := PrepareClarifyWorkspace(context.Background(), cache, repository, ""); err != nil {
+		t.Fatalf("GitLab repository with a local path must be analyzable: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cache, "master-only.txt")); err != nil {
+		t.Fatalf("local GitLab checkout missing master content: %v", err)
+	}
+}
