@@ -81,22 +81,7 @@ func (r *RoomsRepo) Messages(roomID string, limit int) []domain.ChatMessage {
 	if err := r.DB.Table("chat_messages").Where("room_id = ?", roomID).Order("created_at desc").Order("id desc").Limit(limit).Find(&rows).Error; err != nil {
 		return []domain.ChatMessage{}
 	}
-	out := make([]domain.ChatMessage, 0, len(rows))
-	for i := len(rows) - 1; i >= 0; i-- {
-		row := rows[i]
-		var item domain.ChatMessage
-		if json.Unmarshal(row.Payload, &item) != nil {
-			continue
-		}
-		if item.ID == "" {
-			item.ID = row.ID
-		}
-		if item.RoomID == "" {
-			item.RoomID = row.RoomID
-		}
-		out = append(out, item)
-	}
-	return out
+	return decodeChatMessagesReversed(rows)
 }
 
 // DispatchMessage finds the dispatch card in roomID that started runID, even
@@ -111,17 +96,9 @@ func (r *RoomsRepo) DispatchMessage(roomID, runID string) (domain.ChatMessage, b
 		return domain.ChatMessage{}, false
 	}
 	for _, row := range rows {
-		var item domain.ChatMessage
-		if json.Unmarshal(row.Payload, &item) != nil || item.RunID != runID {
-			continue
+		if item, ok := decodeChatMessage(row); ok && item.RunID == runID {
+			return item, true
 		}
-		if item.ID == "" {
-			item.ID = row.ID
-		}
-		if item.RoomID == "" {
-			item.RoomID = row.RoomID
-		}
-		return item, true
 	}
 	return domain.ChatMessage{}, false
 }
@@ -169,21 +146,7 @@ func (r *RoomsRepo) TimelineMessages(roomID, threadID string, limit int) []domai
 	if err := q.Order("created_at desc").Order("id desc").Limit(limit).Find(&rows).Error; err != nil {
 		return []domain.ChatMessage{}
 	}
-	out := make([]domain.ChatMessage, 0, len(rows))
-	for i := len(rows) - 1; i >= 0; i-- {
-		var item domain.ChatMessage
-		if json.Unmarshal(rows[i].Payload, &item) != nil {
-			continue
-		}
-		if item.ID == "" {
-			item.ID = rows[i].ID
-		}
-		if item.RoomID == "" {
-			item.RoomID = rows[i].RoomID
-		}
-		out = append(out, item)
-	}
-	return out
+	return decodeChatMessagesReversed(rows)
 }
 
 // ThreadMessageCounts returns how many messages each thread of roomID holds.
@@ -267,6 +230,12 @@ func (r *RoomsRepo) Message(roomID, id string) (domain.ChatMessage, bool) {
 	if err := r.DB.Table("chat_messages").Where("id = ? AND room_id = ?", strings.TrimSpace(id), strings.TrimSpace(roomID)).Take(&row).Error; err != nil {
 		return domain.ChatMessage{}, false
 	}
+	return decodeChatMessage(row)
+}
+
+// decodeChatMessage unmarshals a stored message, backfilling ID and RoomID
+// from the row when the payload omits them.
+func decodeChatMessage(row chatMessageRow) (domain.ChatMessage, bool) {
 	var item domain.ChatMessage
 	if json.Unmarshal(row.Payload, &item) != nil {
 		return domain.ChatMessage{}, false
@@ -278,6 +247,18 @@ func (r *RoomsRepo) Message(roomID, id string) (domain.ChatMessage, bool) {
 		item.RoomID = row.RoomID
 	}
 	return item, true
+}
+
+// decodeChatMessagesReversed decodes a newest-first page into oldest-first
+// order, skipping rows whose payload does not decode.
+func decodeChatMessagesReversed(rows []chatMessageRow) []domain.ChatMessage {
+	out := make([]domain.ChatMessage, 0, len(rows))
+	for i := len(rows) - 1; i >= 0; i-- {
+		if item, ok := decodeChatMessage(rows[i]); ok {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (r *RoomsRepo) PutMessage(v domain.ChatMessage) error {
