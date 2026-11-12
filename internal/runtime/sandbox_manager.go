@@ -433,5 +433,10 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	if err != nil {
 		return "", err
 	}
+	cleanup, err := bindCommandGitSSH(s.Sandbox, s.workspace, bound, credentials)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
 	return s.Sandbox.Exec(ctx, bound, sink)
 }

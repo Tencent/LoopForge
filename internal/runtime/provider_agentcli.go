@@ -25,8 +25,11 @@ func (p agentCLIProvider) Materialize(ctx *providerMaterializeContext) error {
 	if err != nil {
 		return err
 	}
-	home := filepath.Join(ctx.Workspace, ".agentflow", "private-home", AgentCLIPrivateHomeKey(p.kind, ctx.AgentID))
-	if err := WriteAgentCLIMCPConfig(p.kind, home, entries, AgentCLIMCPOptions{}); err != nil {
+	name := AgentCLIPrivateHomeKey(p.kind, ctx.AgentID)
+	if _, err := EnsureControlDirectory(ctx.Workspace, "private-home", name); err != nil {
+		return err
+	}
+	if err := WriteAgentCLIMCPConfig(p.kind, WorkspaceAgentCLIHome(ctx.Workspace, name), entries, AgentCLIMCPOptions{}); err != nil {
 		return err
 	}
 	ctx.Compiled.SystemPrompt = string(ctx.Content)

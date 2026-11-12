@@ -1,6 +1,24 @@
 # Changelog
 
-Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`, mirrored to `ccr.ccs.tencentyun.com/loopforge/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+
+## 0.3.8 — header sign-in hardening and a GHCR mirror option
+
+- With `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`, identity headers such as `Staffname` are ignored on requests that carry `X-Forwarded-For`, `Forwarded` or `X-Real-IP`, unless the gateway also sends `X-AgentFlow-Gateway-Secret` matching the new `AGENTFLOW_IDENTITY_HEADER_SECRET`. A client behind a pass-through reverse proxy could otherwise sign in as any account. Deployments with the option off are unaffected.
+- MCP, REST and quick-access snippets copied from an HTTPS studio use `https://` endpoints, so agents no longer send their Bearer token over cleartext HTTP.
+- `MIRROR=<host> ./start.sh` pulls `<host>/tencent/loopforge:<version>` and tags it back to the name pinned in `compose.yaml`. `ghcr.nju.edu.cn` is one such host. Unset `MIRROR` still pulls `ghcr.io` directly. `MIRROR=<host> ./start.sh pull` refreshes through the same host. Setting `MIRROR` trusts that host. The published image stays on GHCR, and the GitHub Release records its digest. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub.
+- The release workflow publishes GHCR only. It no longer copies the image to `ccr.ccs.tencentyun.com`.
+- The assistant asks before handing a requirement to an SOP, does not run a rejected proposal, and no longer runs the same draft twice after a timeout.
+- The side browser renders sandbox dev servers natively instead of through screencast frames.
+- The workbench shows the image's short git commit in the corner.
+- The AI orchestrator's canvas build animations are back, and follow the dark theme.
+- The chatbot clears the missing-key notice once quick access saves a key.
+- Sandbox Git cleanup keeps `index.lock` while a process holds it through a bind-mounted or hard-linked path.
+- Tool messages and executor output are clipped on UTF-8 character boundaries.
+
+Before upgrading a deployment that signs users in by header behind a proxy adding forwarding headers, set `AGENTFLOW_IDENTITY_HEADER_SECRET` and have the gateway send it in `X-AgentFlow-Gateway-Secret`; otherwise header sign-in falls back to guest after the upgrade. See `docs/deployment.md`.
+
+No migrations are required.
 
 ## 0.3.7 — Tencent Cloud image mirror
 

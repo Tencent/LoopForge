@@ -23,7 +23,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -67,8 +67,10 @@ jobs:
           {
             echo "tag=${TAG}"
             echo "version=${version}"
+            echo "sha=$(git rev-parse HEAD)"
             echo "image=${image}"
             echo "prerelease=${prerelease}"
+            echo "commit=${tag_commit}"
           } >> "$GITHUB_OUTPUT"
 
       # arm64 lets Apple silicon and arm servers pull the image; only the final
@@ -85,46 +87,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Personal TCR. TCR_REGISTRY is the host only, for example
-      # ccr.ccs.tencentyun.com. The namespace and repository are loopforge/loopforge.
-      - name: Check TCR credentials
-        id: tcr
-        env:
-          TCR_REGISTRY: ${{ secrets.TCR_REGISTRY }}
-          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
-          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
-        run: |
-          if [[ -z "${TCR_USERNAME}" || -z "${TCR_PASSWORD}" ]]; then
-            echo "TCR_USERNAME and TCR_PASSWORD repository secrets are required" >&2
-            exit 1
-          fi
-          registry="$(printf '%s' "${TCR_REGISTRY}" | tr -d '[:space:]')"
-          if [[ ! "${registry}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?$ ]]; then
-            echo "TCR_REGISTRY must be the registry host, for example ccr.ccs.tencentyun.com" >&2
-            exit 1
-          fi
-          {
-            echo "registry=${registry}"
-            echo "image=${registry}/loopforge/loopforge"
-          } >> "$GITHUB_OUTPUT"
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ${{ steps.tcr.outputs.registry }}
-          username: ${{ secrets.TCR_USERNAME }}
-          password: ${{ secrets.TCR_PASSWORD }}
-
       - uses: docker/metadata-action@v5
         id: metadata
         with:
-          images: |
-            ${{ steps.release.outputs.image }}
-            ${{ steps.tcr.outputs.image }}
+          images: ${{ steps.release.outputs.image }}
           flavor: latest=false
           tags: |
             type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
-            type=sha,prefix=sha-,format=long
+            type=raw,value=sha-${{ steps.release.outputs.sha }}
             type=raw,value=latest,enable=${{ steps.release.outputs.prerelease == 'false' }}
 
       - uses: docker/build-push-action@v7
@@ -133,6 +104,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            LOOPFORGE_COMMIT=${{ steps.release.outputs.commit }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
@@ -155,7 +128,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
           IMAGE: ${{ steps.release.outputs.image }}
-          TCR_IMAGE: ${{ steps.tcr.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           notes="$(cat <<EOF
@@ -167,7 +140,11 @@ jobs:
           ./start.sh
           \`\`\`
 
-          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Tencent Cloud mirror: \`${TCR_IMAGE}:${VERSION}\`. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
+          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`).
+
+          Digest: \`${IMAGE}@${DIGEST}\`.
+
+          Where \`ghcr.io\` is slow, set \`MIRROR\` to a registry host that replaces it (for example \`MIRROR=ghcr.nju.edu.cn ./start.sh\`). This trusts that host: the download is tagged as the pinned name. Check it with \`docker image inspect --format '{{index .RepoDigests 0}}' ${IMAGE}:${VERSION}\` and compare the digest after \`@\`. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
           EOF
           )"
           if gh release view "${TAG}" >/dev/null 2>&1; then

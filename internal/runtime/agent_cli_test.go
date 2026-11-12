@@ -83,18 +83,18 @@ func TestAgentCLICommandAgyEffortSuffix(t *testing.T) {
 
 func TestApplyAgentCLICredential(t *testing.T) {
 	home := t.TempDir()
-	if _, _, err := ApplyAgentCLICredential(AgentCLIOpenCode, ProviderCredential{}, AgentCLIOptions{Model: "m"}, home, home, nil); err == nil || !strings.Contains(err.Error(), "API Key") {
+	if _, _, err := ApplyAgentCLICredential(AgentCLIOpenCode, ProviderCredential{}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(home), home, nil); err == nil || !strings.Contains(err.Error(), "API Key") {
 		t.Fatalf("missing key: %v", err)
 	}
-	if _, _, err := ApplyAgentCLICredential(AgentCLIPi, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: "m"}, home, home, nil); err == nil || !strings.Contains(err.Error(), "Base URL") {
+	if _, _, err := ApplyAgentCLICredential(AgentCLIPi, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(home), home, nil); err == nil || !strings.Contains(err.Error(), "Base URL") {
 		t.Fatalf("pi without Base URL: %v", err)
 	}
-	if _, _, err := ApplyAgentCLICredential(AgentCLIKimi, ProviderCredential{APIKey: "k"}, AgentCLIOptions{}, home, home, nil); err == nil || !strings.Contains(err.Error(), "模型") {
+	if _, _, err := ApplyAgentCLICredential(AgentCLIKimi, ProviderCredential{APIKey: "k"}, AgentCLIOptions{}, HostAgentCLIHome(home), home, nil); err == nil || !strings.Contains(err.Error(), "模型") {
 		t.Fatalf("kimi without model: %v", err)
 	}
 
 	// The key travels in the environment; config files only name the variable.
-	_, env, err := ApplyAgentCLICredential(AgentCLIOpenCode, ProviderCredential{APIKey: "secret-key", BaseURL: "https://gw.example/", Protocol: "messages"}, AgentCLIOptions{Model: "m"}, home, home, []string{"opencode", "run", "x"})
+	_, env, err := ApplyAgentCLICredential(AgentCLIOpenCode, ProviderCredential{APIKey: "secret-key", BaseURL: "https://gw.example/", Protocol: "messages"}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(home), home, []string{"opencode", "run", "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestApplyAgentCLICredential(t *testing.T) {
 		t.Fatalf("opencode env: %v", env)
 	}
 
-	_, env, err = ApplyAgentCLICredential(AgentCLIKimi, ProviderCredential{APIKey: "secret-key", BaseURL: "https://api.example/v1", Protocol: "responses"}, AgentCLIOptions{Model: "m"}, home, "/w/home", nil)
+	_, env, err = ApplyAgentCLICredential(AgentCLIKimi, ProviderCredential{APIKey: "secret-key", BaseURL: "https://api.example/v1", Protocol: "responses"}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(home), "/w/home", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestApplyAgentCLICredential(t *testing.T) {
 	}
 
 	// Chat on Antigravity adds deny rules inline, repeating the provider.
-	argv, env, err := ApplyAgentCLICredential(AgentCLIAntigravity, ProviderCredential{APIKey: "g"}, AgentCLIOptions{ReadOnly: true}, home, home, []string{"agy", "--output-format", "stream-json", "-p", "hi"})
+	argv, env, err := ApplyAgentCLICredential(AgentCLIAntigravity, ProviderCredential{APIKey: "g"}, AgentCLIOptions{ReadOnly: true}, HostAgentCLIHome(home), home, []string{"agy", "--output-format", "stream-json", "-p", "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +129,11 @@ func TestApplyAgentCLICredential(t *testing.T) {
 	if err := json.Unmarshal([]byte(argv[i+1]), &settings); err != nil || settings.ModelProvider != "gemini" || !slices.Contains(settings.Permissions.Deny, "command(*)") {
 		t.Fatalf("agy inline settings: %s (%v)", argv[i+1], err)
 	}
-	if argv, _, _ := ApplyAgentCLICredential(AgentCLIAntigravity, ProviderCredential{APIKey: "g"}, AgentCLIOptions{}, home, home, []string{"agy", "-p", "hi"}); slices.Contains(argv, "--settings") {
+	if argv, _, _ := ApplyAgentCLICredential(AgentCLIAntigravity, ProviderCredential{APIKey: "g"}, AgentCLIOptions{}, HostAgentCLIHome(home), home, []string{"agy", "-p", "hi"}); slices.Contains(argv, "--settings") {
 		t.Fatalf("SOP agy argv carries chat settings: %q", argv)
 	}
 
-	argv, _, err = ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{APIKey: "d"}, AgentCLIOptions{Model: "deepseek-v4-flash"}, home, "/h", []string{"dsh", "--profile", "headless", "--json", "x"})
+	argv, _, err = ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{APIKey: "d"}, AgentCLIOptions{Model: "deepseek-v4-flash"}, HostAgentCLIHome(home), "/h", []string{"dsh", "--profile", "headless", "--json", "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestWriteAgentCLIMCPConfigChat(t *testing.T) {
 		return doc
 	}
 	home := t.TempDir()
-	if err := WriteAgentCLIMCPConfig(AgentCLICursor, home, entries, AgentCLIMCPOptions{ReadOnly: true}); err != nil {
+	if err := WriteAgentCLIMCPConfig(AgentCLICursor, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
 	if deny := read(home, ".cursor/cli-config.json")["permissions"].(map[string]any)["deny"].([]any); !slices.Contains(deny, any("Shell(**)")) {
@@ -167,13 +167,13 @@ func TestWriteAgentCLIMCPConfigChat(t *testing.T) {
 		t.Fatalf("cursor mcp: %v", server)
 	}
 	// An SOP invocation in the same home lifts the chat rules again.
-	if err := WriteAgentCLIMCPConfig(AgentCLICursor, home, entries, AgentCLIMCPOptions{}); err != nil {
+	if err := WriteAgentCLIMCPConfig(AgentCLICursor, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if deny := read(home, ".cursor/cli-config.json")["permissions"].(map[string]any)["deny"].([]any); len(deny) != 0 {
 		t.Fatalf("cursor SOP deny: %v", deny)
 	}
-	if err := WriteAgentCLIMCPConfig(AgentCLIOpenCode, home, entries, AgentCLIMCPOptions{ReadOnly: true}); err != nil {
+	if err := WriteAgentCLIMCPConfig(AgentCLIOpenCode, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
 	doc := read(home, ".config/opencode/opencode.json")
@@ -183,7 +183,7 @@ func TestWriteAgentCLIMCPConfigChat(t *testing.T) {
 	if server := doc["mcp"].(map[string]any)["gw"].(map[string]any); server["type"] != "remote" {
 		t.Fatalf("opencode mcp: %v", server)
 	}
-	if err := WriteAgentCLIMCPConfig(AgentCLIAntigravity, home, entries, AgentCLIMCPOptions{}); err != nil {
+	if err := WriteAgentCLIMCPConfig(AgentCLIAntigravity, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if server := read(home, ".gemini/config/mcp_config.json")["mcpServers"].(map[string]any)["gw"].(map[string]any); server["serverUrl"] == nil {
@@ -226,5 +226,192 @@ func TestAgentCLIUserCredentials(t *testing.T) {
 	}
 	if AgentCLIUserCredentials(domain.User{}) != nil {
 		t.Fatal("empty user has agent CLI credentials")
+	}
+}
+
+func TestWriteAgentCLIFileSecurity(t *testing.T) {
+	home := t.TempDir()
+	data := []byte(`{"test":true}`)
+
+	// Normal write within home subdirectories
+	if err := writeAgentCLIFile(HostAgentCLIHome(home), ".cursor/cli-config.json", data); err != nil {
+		t.Fatalf("valid write failed: %v", err)
+	}
+	readBack, err := os.ReadFile(filepath.Join(home, ".cursor", "cli-config.json"))
+	if err != nil || string(readBack) != string(data) {
+		t.Fatalf("read back content mismatch: %q, %v", readBack, err)
+	}
+
+	// Traversal attacks must be rejected
+	for _, invalid := range []string{
+		"../escape.json",
+		"../../escape.json",
+		"sub/../../escape.json",
+		"/etc/passwd",
+		filepath.Join("..", "foo.json"),
+	} {
+		if err := writeAgentCLIFile(HostAgentCLIHome(home), invalid, data); err == nil {
+			t.Errorf("path %q was accepted, expected error", invalid)
+		}
+	}
+}
+
+func TestWriteAgentCLIFileRejectsSymlinkedHome(t *testing.T) {
+	outside := t.TempDir()
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(outside, home); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAgentCLIFile(HostAgentCLIHome(home), ".kimi-code/config.toml", []byte("x")); err == nil {
+		t.Fatal("write through a symlinked home was accepted")
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("files written outside home: %v", entries)
+	}
+}
+
+func TestBindCommandRejectsSymlinkedParentsBeforeWritingCredentials(t *testing.T) {
+	for _, kind := range []string{AgentCLIKimi, AgentCLIZCode} {
+		for _, component := range []string{".agentflow", "private-home", "tmp", "home"} {
+			t.Run(kind+"/"+component, func(t *testing.T) {
+				workspace, outside := t.TempDir(), t.TempDir()
+				command := AgentCLICommand(kind, AgentCLICommandOptions{Model: "m", Prompt: "p"})
+				command.PrivateHome, command.PrivateHomeKey = true, kind+"-agent-1"
+				command.CredentialBindings = []CredentialBinding{BindAgentCLI}
+				link := filepath.Join(workspace, ".agentflow")
+				if component != ".agentflow" {
+					link = filepath.Join(link, component)
+					if component == "home" {
+						link = filepath.Join(workspace, ".agentflow", "private-home", command.PrivateHomeKey)
+					}
+				}
+				if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, link); err != nil {
+					t.Fatal(err)
+				}
+				sb := &localSandbox{workspace: workspace, environment: map[string]string{}}
+				credentials := RunCredentials{AgentCLI: map[string]ProviderCredential{
+					kind: {APIKey: "fake-test-key", BaseURL: "https://example.test"},
+				}}
+				if _, err := bindCommand(sb, workspace, command, credentials); err == nil {
+					t.Fatal("symlinked private-home component was accepted")
+				}
+				entries, err := os.ReadDir(outside)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("credential files written outside the workspace: %v", entries)
+				}
+			})
+		}
+	}
+}
+
+func TestBindAgentCLICommandRejectsSymlinkedPrivateHome(t *testing.T) {
+	for _, kind := range []string{AgentCLIKimi, AgentCLIZCode} {
+		t.Run(kind, func(t *testing.T) {
+			workspace, outside := t.TempDir(), t.TempDir()
+			command := AgentCLICommand(kind, AgentCLICommandOptions{Model: "m", Prompt: "p"})
+			command.PrivateHome, command.PrivateHomeKey = true, kind+"-agent-1"
+			parent := filepath.Join(workspace, ".agentflow", "private-home")
+			if err := os.MkdirAll(parent, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(parent, command.PrivateHomeKey)); err != nil {
+				t.Fatal(err)
+			}
+			sb := &localSandbox{workspace: workspace, environment: map[string]string{}}
+			if _, _, err := BindAgentCLICommand(sb, workspace, command, ProviderCredential{APIKey: "secret-key", BaseURL: "https://example.test"}, command.Argv); err == nil {
+				t.Fatal("symlinked private home was accepted")
+			}
+			if _, err := bindCommand(sb, workspace, command, RunCredentials{}); err == nil {
+				t.Fatal("bindCommand accepted a symlinked private home")
+			}
+			if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+				t.Fatalf("files written outside the workspace: %v", entries)
+			}
+		})
+	}
+}
+
+// Every component below the trusted base is checked, not only the HOME
+// itself: a symlinked ancestor must not redirect mkdir or the config write.
+func TestWriteAgentCLIMCPConfigRejectsSymlinkedAncestors(t *testing.T) {
+	entries := map[string]any{"gw": map[string]any{"type": "http", "url": "http://127.0.0.1:1/mcp"}}
+	for _, kind := range []string{AgentCLIKimi, AgentCLIZCode, AgentCLICursor} {
+		for _, component := range []string{".agentflow", "private-home", "home"} {
+			t.Run(kind+"/"+component, func(t *testing.T) {
+				workspace, outside := t.TempDir(), t.TempDir()
+				name := AgentCLIPrivateHomeKey(kind, "agent-1")
+				link := map[string]string{
+					".agentflow":   filepath.Join(workspace, ".agentflow"),
+					"private-home": filepath.Join(workspace, ".agentflow", "private-home"),
+					"home":         filepath.Join(workspace, ".agentflow", "private-home", name),
+				}[component]
+				if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, link); err != nil {
+					t.Fatal(err)
+				}
+				if err := WriteAgentCLIMCPConfig(kind, WorkspaceAgentCLIHome(workspace, name), entries, AgentCLIMCPOptions{}); err == nil {
+					t.Fatal("write through a symlinked ancestor was accepted")
+				}
+				// Cursor's credential lives in the environment only; the others write files.
+				if _, _, err := ApplyAgentCLICredential(kind, ProviderCredential{APIKey: "fake-test-key", BaseURL: "https://example.test"}, AgentCLIOptions{Model: "m"}, WorkspaceAgentCLIHome(workspace, name), "/h", []string{kind}); err == nil && kind != AgentCLICursor {
+					t.Fatal("credential write through a symlinked ancestor was accepted")
+				}
+				if got, _ := os.ReadDir(outside); len(got) != 0 {
+					t.Fatalf("files written outside the workspace: %v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestBindAgentCLICommandRejectsSymlinkedPrivateHomeParent(t *testing.T) {
+	for _, kind := range []string{AgentCLIKimi, AgentCLIZCode} {
+		t.Run(kind, func(t *testing.T) {
+			workspace, outside := t.TempDir(), t.TempDir()
+			command := AgentCLICommand(kind, AgentCLICommandOptions{Model: "m", Prompt: "p"})
+			command.PrivateHome, command.PrivateHomeKey = true, kind+"-agent-1"
+			if err := os.MkdirAll(filepath.Join(workspace, ".agentflow"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(workspace, ".agentflow", "private-home")); err != nil {
+				t.Fatal(err)
+			}
+			sb := &localSandbox{workspace: workspace, environment: map[string]string{}}
+			if _, _, err := BindAgentCLICommand(sb, workspace, command, ProviderCredential{APIKey: "fake-test-key", BaseURL: "https://example.test"}, command.Argv); err == nil {
+				t.Fatal("symlinked private-home parent was accepted")
+			}
+			if got, _ := os.ReadDir(outside); len(got) != 0 {
+				t.Fatalf("files written outside the workspace: %v", got)
+			}
+		})
+	}
+}
+
+// The trusted base may itself be reached through a symlink (macOS temp
+// directories are); only components below it are refused.
+func TestOpenAgentCLIHomeTrustsBase(t *testing.T) {
+	real := t.TempDir()
+	base := filepath.Join(t.TempDir(), "base")
+	if err := os.Symlink(real, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAgentCLIFile(AgentCLIHome{Base: base, Rel: "a/home"}, ".kimi-code/config.toml", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(real, "a", "home", ".kimi-code", "config.toml")); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"", ".", "..", "../x", "/abs"} {
+		if _, err := openAgentCLIHome(AgentCLIHome{Base: base, Rel: rel}); err == nil {
+			t.Errorf("rel %q was accepted", rel)
+		}
 	}
 }

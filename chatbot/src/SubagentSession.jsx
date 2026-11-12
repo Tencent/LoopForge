@@ -92,7 +92,7 @@ export function SubagentSession({ agent, live = false, artifacts = [], onOpenArt
                       className="node-message node-message-user"
                       aria-label="收到的任务"
                     >
-                      <span className="node-message-sender">Main Bot</span>
+                      <span className="node-message-sender">AI 助手</span>
                       <RichContent message={step.input || step.detail} />
                     </article>
                   ) : null}

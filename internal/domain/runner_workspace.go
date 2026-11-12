@@ -53,6 +53,7 @@ type RunnerWorkspaceRequest struct {
 	Checkpoint            []byte                    `json:"checkpoint,omitempty"`
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
+	TerminalGitSSHKeys    map[string]string         `json:"terminalGitSshKeys,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to
 	// identify this run's independent sandbox, terminal scope and locks.
 	Browser         *BrowserRequest     `json:"browser,omitempty"`
@@ -141,6 +142,50 @@ type BrowserRequest struct {
 	WithSnapshot bool `json:"withSnapshot,omitempty"`
 	// Ensure starts the run browser when none is running yet.
 	Ensure bool `json:"ensure,omitempty"`
+	// HTTP carries one request to a dev server port inside the run sandbox
+	// (operation "http"), so the user's own browser renders the page natively.
+	HTTP *BrowserHTTPRequest `json:"http,omitempty"`
+	// File is the absolute path of a workspace file as the run browser sees
+	// it (operation "file"), served so the user's browser renders file://
+	// pages natively. The response comes back in BrowserState.HTTP.
+	File string `json:"file,omitempty"`
+	// Point is where the panel inspects the page (operation "inspect"), as a
+	// fraction of the viewport like input events; Detail asks for the full
+	// element description rather than just its box and label.
+	Point  *BrowserPoint `json:"point,omitempty"`
+	Detail bool          `json:"detail,omitempty"`
+}
+
+// BrowserPoint is a position as a fraction of the viewport (0..1).
+type BrowserPoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// BrowserInspection is the element under a point of the Agent browser page.
+// Rect is in CSS pixels of the top-level viewport.
+type BrowserInspection struct {
+	Label    string                `json:"label"`
+	Rect     ElementRect           `json:"rect"`
+	Viewport ElementRect           `json:"viewport"`
+	Element  *AssistantPageElement `json:"element,omitempty"`
+}
+
+// BrowserHTTPRequest is one proxied request to http://localhost:Port in the
+// run's network namespace. Path keeps the query string.
+type BrowserHTTPRequest struct {
+	Port   int                 `json:"port"`
+	Method string              `json:"method"`
+	Path   string              `json:"path"`
+	Header map[string][]string `json:"header,omitempty"`
+	Body   []byte              `json:"body,omitempty"`
+}
+
+// BrowserHTTPResponse is the dev server's answer to a BrowserHTTPRequest.
+type BrowserHTTPResponse struct {
+	Status int                 `json:"status"`
+	Header map[string][]string `json:"header,omitempty"`
+	Body   []byte              `json:"body,omitempty"`
 }
 
 // BrowserInputEvent coordinates are normalized to the frame (0..1).
@@ -169,19 +214,29 @@ type BrowserTab struct {
 }
 
 type BrowserState struct {
-	Available    bool             `json:"available"`
-	Reason       string           `json:"reason,omitempty"`
-	Kind         string           `json:"kind,omitempty"`
-	Seq          int64            `json:"seq"`
-	Frame        string           `json:"frame,omitempty"`
-	Width        float64          `json:"width,omitempty"`
-	Height       float64          `json:"height,omitempty"`
-	URL          string           `json:"url,omitempty"`
-	Title        string           `json:"title,omitempty"`
-	CanGoBack    bool             `json:"canGoBack,omitempty"`
-	CanGoForward bool             `json:"canGoForward,omitempty"`
-	Tabs         []BrowserTab     `json:"tabs,omitempty"`
-	Snapshot     *BrowserSnapshot `json:"snapshot,omitempty"`
+	Available bool    `json:"available"`
+	Reason    string  `json:"reason,omitempty"`
+	Kind      string  `json:"kind,omitempty"`
+	Seq       int64   `json:"seq"`
+	Frame     string  `json:"frame,omitempty"`
+	Width     float64 `json:"width,omitempty"`
+	Height    float64 `json:"height,omitempty"`
+	URL       string  `json:"url,omitempty"`
+	Title     string  `json:"title,omitempty"`
+	// ScrollX/Y and ContentWidth/Height (CSS px) bound how far the panel may
+	// slide a frame ahead of the page when it predicts a scroll.
+	ScrollX       float64          `json:"scrollX,omitempty"`
+	ScrollY       float64          `json:"scrollY,omitempty"`
+	ContentWidth  float64          `json:"contentWidth,omitempty"`
+	ContentHeight float64          `json:"contentHeight,omitempty"`
+	CanGoBack     bool             `json:"canGoBack,omitempty"`
+	CanGoForward  bool             `json:"canGoForward,omitempty"`
+	Tabs          []BrowserTab     `json:"tabs,omitempty"`
+	Snapshot      *BrowserSnapshot `json:"snapshot,omitempty"`
+	// HTTP answers operation "http"; Reason explains a missing answer.
+	HTTP *BrowserHTTPResponse `json:"http,omitempty"`
+	// Inspect answers operation "inspect"; nil when nothing is at the point.
+	Inspect *BrowserInspection `json:"inspect,omitempty"`
 }
 
 // BrowserSnapshot is a text view of the active page for language models.

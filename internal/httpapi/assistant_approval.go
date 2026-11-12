@@ -64,6 +64,7 @@ func (h *assistantHandlers) resolveAssistantDrafts(ctx context.Context, user dom
 	for _, draft := range drafts {
 		// Review receipts are host-generated, never accepted from model output.
 		draft.Review = nil
+		draft.Decision = ""
 		draft.Body = injectAssistantDraftProjectID(draft.Tool, draft.Body, projectID)
 		draft.Warnings = h.assistantDraftWarnings(draft)
 		// 存在警告（依赖冲突、节点未绑定角色等必然失败或残缺）的草稿，

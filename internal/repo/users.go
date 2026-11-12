@@ -23,6 +23,7 @@ type userWithConfig struct {
 	DeptName                     string     `gorm:"column:dept_name"`
 	PlatformRole                 string     `gorm:"column:platform_role"`
 	GitToken                     *string    `gorm:"column:git_token"`
+	GitSSHKeyConfigured          bool       `gorm:"column:git_ssh_key_configured"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
@@ -40,7 +41,8 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.git_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
+	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
@@ -50,6 +52,7 @@ func (r userWithConfig) toDomain() domain.User {
 		ID: r.ID, StaffID: r.StaffID, LoginName: r.LoginName, ChineseName: r.ChineseName,
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
 		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment,
+		GitSSHKeyConfigured:          r.GitSSHKeyConfigured,
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
@@ -342,7 +345,7 @@ func (r *UsersRepo) SaveGongfengOAuth(id int64, accessToken, refreshToken string
 }
 
 func (r *UsersRepo) writeUserConfig(v domain.User) error {
-	return upsert(r.DB, "user_configs", map[string]any{
+	values := map[string]any{
 		"user_id":                v.ID,
 		"git_token":              nullableString(v.GitToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
@@ -352,7 +355,8 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL), "claude_code_models": encodeCLIModels(v.ClaudeCodeModels),
 		"agent_cli_credentials": encodeAgentCLICredentials(v.AgentCLICredentials),
 		"created_at":            timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
-	})
+	}
+	return upsert(r.DB, "user_configs", values)
 }
 
 func nullableString(v string) any {
