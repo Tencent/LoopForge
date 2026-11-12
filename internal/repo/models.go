@@ -523,6 +523,17 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
+// assistantPreferenceRow: a missing row means both switches are off.
+type assistantPreferenceRow struct {
+	UserID         int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProactiveRoles bool       `gorm:"column:proactive_roles;not null;default:false"`
+	ProactiveSOPs  bool       `gorm:"column:proactive_sops;not null;default:false"`
+	Instructions   string     `gorm:"column:instructions;type:text"`
+	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+}
+
+func (assistantPreferenceRow) TableName() string { return "assistant_preferences" }
+
 type assistantSessionRow struct {
 	ID        string     `gorm:"column:id;primaryKey;size:64"`
 	UserID    int64      `gorm:"column:user_id;index:idx_assistant_sessions_user_updated"`
@@ -689,7 +700,7 @@ func allModels() []any {
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},
 		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{},
-		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{},
+		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{}, assistantPreferenceRow{},
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},

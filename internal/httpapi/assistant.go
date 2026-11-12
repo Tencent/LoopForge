@@ -34,6 +34,10 @@ type assistantDraft struct {
 	Warnings  []string                 `json:"warnings,omitempty"`
 	SaveError string                   `json:"saveError,omitempty"`
 	Review    *assistantApprovalReview `json:"review,omitempty"`
+	// Proposal marks a draft the assistant offers on its own to hand work to a
+	// SOP; Decision is the server-recorded answer to it.
+	Proposal *assistantProposal `json:"proposal,omitempty"`
+	Decision string             `json:"decision,omitempty"`
 }
 type assistantReply struct {
 	SpeakerName    string                       `json:"speakerName,omitempty"`
@@ -251,6 +255,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.RunID = req.RunID
 		sess.ChatSessionID = req.SessionID
 		sess.ChatOwnerID = ownerID
+		sess.turnMessages = append([]assistantMessage(nil), req.Messages...)
 		if saved, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
 			sess.SandboxProfileID = saved.SandboxProfileID
 		}
@@ -541,6 +546,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				draftCtx = withConversationSession(ctx, req.SessionID)
 			}
 			reply.Drafts = h.resolveAssistantDrafts(draftCtx, user, req.ProjectID, reply.Drafts, approvalMode)
+			var deadline time.Time
+			if sink != nil && req.RunID == "" {
+				deadline = time.Now().Add(assistantProposalTimeout)
+			}
+			stampProposalDeadlines(reply.Drafts, deadline)
 		}
 		{
 			stored := append([]assistantMessage{}, req.Messages...)
@@ -564,6 +574,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				saveErr = saveAssistantConversation(h.repo, ownerID, conversation)
 			}
 			if saveErr != nil {
+				log.Printf("assistant save session=%s: %v", req.SessionID, saveErr)
 				fail(500, "保存对话失败，请重试")
 				return
 			}
@@ -952,6 +963,9 @@ func validateAssistantDraft(d *assistantDraft, projectID string) error {
 	d.Tool = strings.TrimSpace(d.Tool)
 	if d.Tool == "" {
 		return errors.New("drafts 中每个草稿都必须提供 tool 字段，例如 tool=issues_save 或 tool=issues_dispatch；同时保留对应的 body/path/query 参数")
+	}
+	if err := validateAssistantProposal(d); err != nil {
+		return err
 	}
 	if d.Tool == "assistant_tasks_save" {
 		var task assistantTask
