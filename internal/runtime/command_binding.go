@@ -43,6 +43,38 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
 	}
+	// Validate every private-home component before any credential binding can
+	// write configuration. The sandbox may have replaced a parent with a symlink.
+	var hostHome string
+	if command.PrivateHome {
+		provider := PrivateHomeName(command)
+		var err error
+		hostHome, err = EnsureControlDirectory(workspace, "private-home", provider)
+		if err != nil {
+			return CommandSpec{}, fmt.Errorf("create private home: %w", err)
+		}
+		hostTmp, err := EnsureControlDirectory(workspace, "tmp", provider)
+		if err != nil {
+			return CommandSpec{}, fmt.Errorf("create private temp: %w", err)
+		}
+		if sandboxDriver(sandbox) == "docker" {
+			bound.environment["HOME"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "private-home", provider))
+			bound.environment["TMPDIR"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "tmp", provider))
+		} else {
+			bound.environment["HOME"] = hostHome
+			bound.environment["TMPDIR"] = hostTmp
+		}
+		if command.Provider == "codex" || command.Provider == "claude-code" {
+			dir, key := ".codex", "CODEX_HOME"
+			if command.Provider == "claude-code" {
+				dir, key = ".claude", "CLAUDE_CONFIG_DIR"
+			}
+			if _, err := EnsureControlDirectory(workspace, "private-home", provider, dir); err != nil {
+				return CommandSpec{}, err
+			}
+			bound.environment[key] = filepath.ToSlash(filepath.Join(bound.environment["HOME"], dir))
+		}
+	}
 	for _, binding := range command.CredentialBindings {
 		switch binding {
 		case BindCodeBuddy:
@@ -98,7 +130,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			}
 			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
 		case BindAgentCLI:
-			home, homeEnv := privateHomePaths(sandbox, workspace, command)
+			home, homeEnv := hostHome, bound.environment["HOME"]
 			if !command.PrivateHome {
 				home = command.environment["HOME"]
 				homeEnv = home
@@ -135,34 +167,6 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		bound.environment["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = observability.CollectorTracesURL()
 		bound.environment["OTEL_LOG_TOOL_DETAILS"] = "1"
 		bound.environment["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
-	}
-	if command.PrivateHome {
-		provider := PrivateHomeName(command)
-		hostHome, err := EnsureControlDirectory(workspace, "private-home", provider)
-		if err != nil {
-			return CommandSpec{}, fmt.Errorf("create private home: %w", err)
-		}
-		hostTmp, err := EnsureControlDirectory(workspace, "tmp", provider)
-		if err != nil {
-			return CommandSpec{}, fmt.Errorf("create private temp: %w", err)
-		}
-		if sandboxDriver(sandbox) == "docker" {
-			bound.environment["HOME"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "private-home", provider))
-			bound.environment["TMPDIR"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "tmp", provider))
-		} else {
-			bound.environment["HOME"] = hostHome
-			bound.environment["TMPDIR"] = hostTmp
-		}
-		if command.Provider == "codex" || command.Provider == "claude-code" {
-			dir, key := ".codex", "CODEX_HOME"
-			if command.Provider == "claude-code" {
-				dir, key = ".claude", "CLAUDE_CONFIG_DIR"
-			}
-			if _, err := EnsureControlDirectory(workspace, "private-home", provider, dir); err != nil {
-				return CommandSpec{}, err
-			}
-			bound.environment[key] = filepath.ToSlash(filepath.Join(bound.environment["HOME"], dir))
-		}
 	}
 	return bound, nil
 }

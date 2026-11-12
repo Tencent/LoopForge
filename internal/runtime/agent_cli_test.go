@@ -270,6 +270,46 @@ func TestWriteAgentCLIFileRejectsSymlinkedHome(t *testing.T) {
 	}
 }
 
+func TestBindCommandRejectsSymlinkedParentsBeforeWritingCredentials(t *testing.T) {
+	for _, kind := range []string{AgentCLIKimi, AgentCLIZCode} {
+		for _, component := range []string{".agentflow", "private-home", "tmp", "home"} {
+			t.Run(kind+"/"+component, func(t *testing.T) {
+				workspace, outside := t.TempDir(), t.TempDir()
+				command := AgentCLICommand(kind, AgentCLICommandOptions{Model: "m", Prompt: "p"})
+				command.PrivateHome, command.PrivateHomeKey = true, kind+"-agent-1"
+				command.CredentialBindings = []CredentialBinding{BindAgentCLI}
+				link := filepath.Join(workspace, ".agentflow")
+				if component != ".agentflow" {
+					link = filepath.Join(link, component)
+					if component == "home" {
+						link = filepath.Join(workspace, ".agentflow", "private-home", command.PrivateHomeKey)
+					}
+				}
+				if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, link); err != nil {
+					t.Fatal(err)
+				}
+				sb := &localSandbox{workspace: workspace, environment: map[string]string{}}
+				credentials := RunCredentials{AgentCLI: map[string]ProviderCredential{
+					kind: {APIKey: "fake-test-key", BaseURL: "https://example.test"},
+				}}
+				if _, err := bindCommand(sb, workspace, command, credentials); err == nil {
+					t.Fatal("symlinked private-home component was accepted")
+				}
+				entries, err := os.ReadDir(outside)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("credential files written outside the workspace: %v", entries)
+				}
+			})
+		}
+	}
+}
+
 func TestBindAgentCLICommandRejectsSymlinkedPrivateHome(t *testing.T) {
 	for _, kind := range []string{AgentCLIKimi, AgentCLIZCode} {
 		t.Run(kind, func(t *testing.T) {
