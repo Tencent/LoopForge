@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const Module = require('node:module');
 
 function harness() {
-  const commands = new Map(), errors = [], documents = [], requests = [], updates = [], messages = [];
+  const commands = new Map(), errors = [], documents = [], requests = [], updates = [], messages = [], secretOps = [];
   let provider, visibilityListener, configurationListener, input = ['Implement this', 'looks good'], picks = [], run;
   const folder = { name: 'project', uri: { fsPath: '/project', scheme: 'file' } };
   const values = { serverUrl: 'https://example.test', projectId: 'project-1', workflowId: 'workflow-1', pollInterval: 300 };
@@ -56,9 +56,9 @@ function harness() {
     else return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   };
-  const context = { subscriptions: [], secrets: { get: async () => '', store: async () => {}, delete: async () => {} } };
+  const context = { subscriptions: [], secrets: { get: async () => '', store: async (key, value) => { secretOps.push(['store', key, value]); }, delete: async key => { secretOps.push(['delete', key]); } } };
   extension.activate(context);
-  return { commands, errors, documents, requests, updates, messages, values, vscode, get provider() { return provider; }, setVisible: visible => visibilityListener({ visible }), changeConfig: name => configurationListener({ affectsConfiguration: key => key === name }), setInput: value => { input = value; }, setPicks: value => { picks = value; }, advanceRun() { run = { ...run, nodes: { gate: { ...run.nodes.gate, attempt: 2, reworkCount: 1 } } }; }, dispose() { context.subscriptions.forEach(item => item.dispose()); globalThis.fetch = oldFetch; } };
+  return { commands, errors, documents, requests, updates, messages, values, secretOps, vscode, get provider() { return provider; }, setVisible: visible => visibilityListener({ visible }), changeConfig: name => configurationListener({ affectsConfiguration: key => key === name }), setInput: value => { input = value; }, setPicks: value => { picks = value; }, advanceRun() { run = { ...run, nodes: { gate: { ...run.nodes.gate, attempt: 2, reworkCount: 1 } } }; }, dispose() { context.subscriptions.forEach(item => item.dispose()); globalThis.fetch = oldFetch; } };
 }
 
 test('starts a run with multiline selection, shows approval and opens artifact by ID', async () => {
@@ -201,5 +201,126 @@ test('start failures are reported to the user', async () => {
     globalThis.fetch = async () => { throw new Error('offline'); };
     await h.commands.get('loopforge.startWorkflow')();
     assert.match(h.errors[0], /Cannot connect to LoopForge/);
+  } finally { h.dispose(); }
+});
+
+// Serves the run-workspace endpoints on top of the harness server so the
+// diff/file commands can be exercised; full URLs are kept to check queries.
+function withWorkspace(h, workspace, { diff = {}, files = {} } = {}) {
+  const base = globalThis.fetch, urls = [];
+  globalThis.fetch = async (url, options) => {
+    const parsed = new URL(url);
+    urls.push(parsed.pathname + parsed.search);
+    const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (parsed.pathname === '/api/runs/run-1/workspace') return json(workspace);
+    if (parsed.pathname === '/api/runs/run-1/workspace/diff') return json(diff[parsed.searchParams.get('path') || ''] || { diff: '' });
+    if (parsed.pathname === '/api/runs/run-1/workspace/file') return json(files[parsed.searchParams.get('path')] || {});
+    return base(url, options);
+  };
+  return urls;
+}
+
+test('openDiff shows a side-by-side diff for a single changed file', async () => {
+  const h = harness();
+  try {
+    await h.commands.get('loopforge.startWorkflow')();
+    const urls = withWorkspace(h, { available: true, changes: [{ path: 'repo/src/a.go', repository: 'repo' }] }, { diff: { 'repo/src/a.go': { original: 'old', modified: 'new' } } });
+    await h.commands.get('loopforge.openDiff')();
+    assert.ok(urls.includes('/api/runs/run-1/workspace/diff?path=repo%2Fsrc%2Fa.go'));
+    assert.deepEqual(h.documents.slice(-2), [{ language: 'go', content: 'old' }, { language: 'go', content: 'new' }]);
+    const diffCommand = h.requests.find(item => item.command?.[0] === 'vscode.diff');
+    assert.equal(diffCommand.command[3], 'LoopForge: repo/src/a.go');
+    assert.deepEqual(h.errors, []);
+  } finally { h.dispose(); }
+});
+
+test('openDiff asks which change to show and stops when the pick is cancelled', async () => {
+  const h = harness();
+  try {
+    await h.commands.get('loopforge.startWorkflow')();
+    const changes = [{ path: 'a/x.md', repository: 'a' }, { path: 'b/y.json', repository: 'b' }];
+    let urls = withWorkspace(h, { available: true, changes }, { diff: { 'b/y.json': { original: '{}', modified: '{"a":1}' } } });
+    h.setPicks([{ change: changes[1] }]);
+    await h.commands.get('loopforge.openDiff')();
+    assert.ok(urls.includes('/api/runs/run-1/workspace/diff?path=b%2Fy.json'));
+    assert.equal(h.documents.at(-1).language, 'json');
+
+    const before = h.documents.length;
+    urls = withWorkspace(h, { available: true, changes });
+    // showQuickPick resolves undefined when the user dismisses the picker.
+    const pick = h.vscode.window.showQuickPick;
+    h.vscode.window.showQuickPick = async () => undefined;
+    try { await h.commands.get('loopforge.openDiff')(); } finally { h.vscode.window.showQuickPick = pick; }
+    assert.ok(!urls.some(url => url.includes('/workspace/diff')));
+    assert.equal(h.documents.length, before);
+  } finally { h.dispose(); }
+});
+
+test('openDiff falls back to the whole-workspace diff when no file is listed', async () => {
+  const h = harness();
+  try {
+    await h.commands.get('loopforge.startWorkflow')();
+    const urls = withWorkspace(h, { available: true, changes: [] }, { diff: { '': { diff: 'diff --git a b' } } });
+    const before = h.documents.length;
+    await h.commands.get('loopforge.openDiff')();
+    assert.ok(urls.includes('/api/runs/run-1/workspace/diff'));
+    assert.equal(h.documents.length, before);
+    assert.deepEqual(h.errors, []);
+  } finally { h.dispose(); }
+});
+
+for (const command of ['openDiff', 'openFile']) {
+  test(`${command} reports an unavailable workspace with the server reason`, async () => {
+    const h = harness();
+    try {
+      await h.commands.get('loopforge.startWorkflow')();
+      withWorkspace(h, { available: false, reason: '工作区已清理' });
+      await h.commands.get(`loopforge.${command}`)();
+      assert.deepEqual(h.errors, ['工作区已清理']);
+      withWorkspace(h, { available: false });
+      await h.commands.get(`loopforge.${command}`)();
+      assert.equal(h.errors[1], 'Run workspace is unavailable.');
+    } finally { h.dispose(); }
+  });
+}
+
+test('openFile opens the only changed file and rejects runs without changes', async () => {
+  const h = harness();
+  try {
+    await h.commands.get('loopforge.startWorkflow')();
+    let urls = withWorkspace(h, { available: true, changes: [{ path: 'repo/main.py' }] }, { files: { 'repo/main.py': { content: 'print(1)' } } });
+    await h.commands.get('loopforge.openFile')();
+    assert.ok(urls.includes('/api/runs/run-1/workspace/file?path=repo%2Fmain.py'));
+    assert.ok(h.documents.some(doc => doc.language === 'python' && doc.content === 'print(1)'));
+
+    urls = withWorkspace(h, { available: true, changes: [] });
+    await h.commands.get('loopforge.openFile')();
+    assert.deepEqual(h.errors, ['This run has no readable changed files.']);
+    assert.ok(!urls.some(url => url.includes('/workspace/file')));
+  } finally { h.dispose(); }
+});
+
+test('openFile lets the user choose among several changed files', async () => {
+  const h = harness();
+  try {
+    await h.commands.get('loopforge.startWorkflow')();
+    const changes = [{ path: 'a/one.sh' }, { path: 'b/two.yml' }];
+    const urls = withWorkspace(h, { available: true, changes }, { files: { 'b/two.yml': { content: 'k: v' } } });
+    h.setPicks([{ change: changes[1] }]);
+    await h.commands.get('loopforge.openFile')();
+    assert.ok(urls.includes('/api/runs/run-1/workspace/file?path=b%2Ftwo.yml'));
+    assert.ok(h.documents.some(doc => doc.language === 'yaml' && doc.content === 'k: v'));
+  } finally { h.dispose(); }
+});
+
+test('configureToken stores a trimmed token, clears on empty input and ignores cancel', async () => {
+  const h = harness();
+  try {
+    h.setInput(['  lf_token  ', '   ', undefined]);
+    await h.commands.get('loopforge.configureToken')();
+    await h.commands.get('loopforge.configureToken')();
+    await h.commands.get('loopforge.configureToken')();
+    assert.deepEqual(h.secretOps, [['store', 'loopforge.apiToken', 'lf_token'], ['delete', 'loopforge.apiToken']]);
+    assert.deepEqual(h.messages, ['LoopForge API Token 已安全保存。', 'LoopForge API Token 已清除。']);
   } finally { h.dispose(); }
 });
