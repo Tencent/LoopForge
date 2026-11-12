@@ -125,17 +125,9 @@ func (c *Client) CallToolContext(ctx context.Context, name string, args map[stri
 		return "", err
 	}
 
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(body))
+	httpReq, err := c.newRPCRequest(ctx, body)
 	if err != nil {
 		return "", err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json, text/event-stream")
-	for k, v := range c.hdrs {
-		httpReq.Header.Set(k, v)
 	}
 
 	resp, err := c.http.Do(httpReq)
@@ -223,17 +215,9 @@ func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
 	if err != nil {
 		return nil, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(body))
+	httpReq, err := c.newRPCRequest(ctx, body)
 	if err != nil {
 		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json, text/event-stream")
-	for k, v := range c.hdrs {
-		httpReq.Header.Set(k, v)
 	}
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -287,14 +271,9 @@ func (c *Client) ensureInit() error {
 		},
 	}
 	body, _ := json.Marshal(req)
-	httpReq, err := http.NewRequest("POST", c.url, bytes.NewReader(body))
+	httpReq, err := c.newRPCRequest(context.Background(), body)
 	if err != nil {
 		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json, text/event-stream")
-	for k, v := range c.hdrs {
-		httpReq.Header.Set(k, v)
 	}
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -319,18 +298,32 @@ func (c *Client) ensureInit() error {
 		Method:  "notifications/initialized",
 	}
 	notifBody, _ := json.Marshal(notifReq)
-	notifHTTP, _ := http.NewRequest("POST", c.url, bytes.NewReader(notifBody))
-	notifHTTP.Header.Set("Content-Type", "application/json")
-	notifHTTP.Header.Set("Accept", "application/json, text/event-stream")
-	for k, v := range c.hdrs {
-		notifHTTP.Header.Set(k, v)
-	}
-	notifResp, err := c.http.Do(notifHTTP)
-	if err == nil {
-		notifResp.Body.Close()
+	if notifHTTP, err := c.newRPCRequest(context.Background(), notifBody); err == nil {
+		if notifResp, err := c.http.Do(notifHTTP); err == nil {
+			notifResp.Body.Close()
+		}
 	}
 	c.init = true
 	return nil
+}
+
+// newRPCRequest builds a JSON-RPC POST to the gateway with the standard
+// Streamable HTTP headers plus the client's custom headers. A nil ctx falls
+// back to context.Background().
+func (c *Client) newRPCRequest(ctx context.Context, body []byte) (*http.Request, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	for k, v := range c.hdrs {
+		req.Header.Set(k, v)
+	}
+	return req, nil
 }
 
 func (c *Client) readResponse(resp *http.Response) ([]byte, error) {
