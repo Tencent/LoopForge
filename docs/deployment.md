@@ -126,9 +126,19 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Observability schema
 
-After the base tables have been created, explicitly run `bash scripts/install-observability-schema.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`. The local development installer calls this step before installing templates. It can be repeated without reapplying existing columns. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog. Both steps can be repeated without touching existing rows. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads. Application startup does not run data migrations.
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
+
+### Which migrations an upgrade needs
+
+`migrations/` holds three kinds of script. Check the release notes for the files a given version adds, then read the script's own header before running it.
+
+| Kind | Example | What an operator does |
+| --- | --- | --- |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql` | Nothing; the script above covers it |
+| Must run once when upgrading | `009_bot_interactions_utf8mb4.sql` (`CONVERT TO` an existing table), new tables and columns added by hand | Run it on the database after reviewing prerequisites |
+| Backfills and one-time rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run it if the history matters; skipping it changes no schema but leaves old rows unconverted |
 
 ## Updating existing public SOPs
 

@@ -32,10 +32,11 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
         (self.root / 'migrations/seed').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh'):
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        (self.root / 'migrations/seed/001_test.sql').write_text('SELECT 1;\n')
+        (self.root / 'migrations/001_run_obs_generated_columns.sql').write_text((ROOT / 'migrations/001_run_obs_generated_columns.sql').read_text())
+        (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
 printf '%s %s\\n' "${MOCK_PRIVILEGED:-0}" "$*" >> "$MOCK_LOG"
@@ -52,8 +53,8 @@ if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; the
 if [[ "$*" == *'exec -T mysql'* ]]; then
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
   query=$(cat)
-  if [[ "$query" == *'information_schema.columns'* ]]; then echo 1; fi
-  if [[ "$*" == *'count(*) from users'* ]]; then echo 0; fi
+  printf '%s\n' "$query" >> "$MOCK_SQL_LOG"
+  if [[ "$query" == *'information_schema.columns'* ]]; then printf '%s\n' "${MOCK_COLUMN_COUNT:-1}"; fi
 fi
 ''')
         self.executable('id', '#!/usr/bin/env bash\nif [[ "$1" == -u ]]; then echo "${MOCK_USER:-0}"; else /usr/bin/id "$@"; fi\n')
@@ -64,9 +65,10 @@ fi
 export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
-        self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
+        self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'mysql.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
         for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL'):
             self.environ.pop(name, None)
+        self.environ.pop('MOCK_COLUMN_COUNT', None)
 
     def executable(self, name, contents):
         target = self.root / 'mock' / name
@@ -188,6 +190,28 @@ exec "$@"
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull --ignore-buildable --policy always', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
+
+    def test_start_pull_reapplies_schema_extensions_after_containers_are_up(self):
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='0'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        sql = (self.root / 'mysql.log').read_text()
+        self.assertIn('Installed: run_telemetry.adapter', result.stdout)
+        self.assertIn('Installed: run_logs.level', result.stdout)
+        self.assertIn('ALTER TABLE run_telemetry', sql)
+        self.assertIn('ALTER TABLE run_logs', sql)
+        self.assertIn('INSERT IGNORE', sql)
+        # Recreated containers come first; the old volume then gets the columns.
+        self.assertLess(log.index('up -d --no-build --wait'), log.index('exec -T mysql'))
+
+    def test_start_pull_names_the_migration_when_columns_cannot_be_checked(self):
+        self.assert_success(self.install())
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='?'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not inspect run_telemetry.adapter', result.stderr)
+        self.assertIn('migrations/001_run_obs_generated_columns.sql', result.stderr)
 
     def test_start_pull_with_nju_mirror_does_not_contact_ghcr_for_platform(self):
         self.use_compose_file()
