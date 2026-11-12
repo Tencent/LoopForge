@@ -27,7 +27,7 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ./start.sh stop        # stop; ./start.sh down removes containers but keeps data volumes
 ./start.sh restart     # restart the platform container
 ./start.sh pull        # refresh images and recreate changed containers
-MIRROR=NJU ./start.sh  # same install; pull the ghcr.io image via ghcr.nju.edu.cn
+MIRROR=ghcr.nju.edu.cn ./start.sh  # same install; replace the ghcr.io host with this registry
 ./start.sh dev         # build this checkout instead (compose.dev.yaml)
 ./start.sh release     # switch a source build back to the published image
 ```
@@ -38,11 +38,11 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.3.7`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
-Where `ghcr.io` downloads stall, set `MIRROR=NJU`. `./start.sh` and `./start.sh pull` then follow the [NJU GHCR cache](https://doc.nju.edu.cn/books/e1654/page/ghcr): replace `ghcr.io` with `ghcr.nju.edu.cn`, pull that reference, and tag it back to the name in `compose.yaml`. The pull policy stays `missing` on install, so a local image is kept; `./start.sh pull` refreshes it from the same cache. Leaving `MIRROR` unset preserves the direct `ghcr.io` pull. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
+Where `ghcr.io` downloads stall, set `MIRROR` to the registry host that replaces `ghcr.io`. `./start.sh` and `./start.sh pull` pull that reference and tag it back to the name in `compose.yaml`. The pull policy stays `missing` on install, so a local image is kept; `./start.sh pull` refreshes it from the same host. Leaving `MIRROR` unset preserves the direct `ghcr.io` pull. [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr) is one compatible host. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
 
 ```bash
-MIRROR=NJU ./start.sh
-MIRROR=NJU ./start.sh pull
+MIRROR=ghcr.nju.edu.cn ./start.sh
+MIRROR=ghcr.nju.edu.cn ./start.sh pull
 ```
 
 `./start.sh dev` (or `LOOPFORGE_BUILD_FROM_SOURCE=1 bash scripts/install.sh`) builds this checkout as `loopforge-platform:local` from `compose.dev.yaml`. It saves `COMPOSE_FILE=compose.yaml:compose.dev.yaml` in `.env`, so later runs and plain `docker compose` commands keep using the source build until `./start.sh release`. Source builds reuse npm, Go module and Go compiler caches.

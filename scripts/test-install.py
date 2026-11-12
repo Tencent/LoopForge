@@ -126,42 +126,57 @@ exec "$@"
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn("LOOPFORGE_IMAGE=''", (self.root / '.env').read_text())
 
-    def test_nju_mirror_pulls_and_tags_the_pinned_name(self):
+    def test_mirror_host_replaces_ghcr_and_tags_the_pinned_name(self):
         self.use_compose_file()
         image = self.pinned_image()
-        mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
-        self.assert_success(self.install(MIRROR='NJU'))
-        log = (self.root / 'docker.log').read_text()
-        self.assertLess(log.index(f'pull {mirror}'), log.index(f'tag {mirror} {image}'))
-        self.assertLess(log.index(f'tag {mirror} {image}'), log.index('pull --policy missing platform mysql'))
-        self.assertNotIn('MIRROR=', (self.root / '.env').read_text())
+        for mirror_env, host in (('GHCR.NJU.EDU.CN', 'ghcr.nju.edu.cn'), ('mirror.example.test:5000', 'mirror.example.test:5000')):
+            with self.subTest(host=host):
+                if (self.root / 'docker.log').exists():
+                    (self.root / 'docker.log').unlink()
+                mirror = host + '/' + image[len('ghcr.io/'):]
+                self.assert_success(self.install(MIRROR=mirror_env))
+                log = (self.root / 'docker.log').read_text()
+                self.assertLess(log.index(f'pull {mirror}'), log.index(f'tag {mirror} {image}'))
+                self.assertLess(log.index(f'tag {mirror} {image}'), log.index('pull --policy missing platform mysql'))
+                self.assertNotIn('MIRROR=', (self.root / '.env').read_text())
 
-    def test_nju_mirror_keeps_a_local_image(self):
+    def test_mirror_keeps_a_local_image(self):
         self.use_compose_file()
-        result = self.install(MIRROR='nju', MOCK_IMAGE_PRESENT='1')
+        result = self.install(MIRROR='ghcr.nju.edu.cn', MOCK_IMAGE_PRESENT='1')
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn('pull --policy missing platform mysql', log)
         self.assertIn('Using local image', result.stdout)
 
-    def test_nju_mirror_always_refreshes_from_the_cache(self):
+    def test_mirror_always_refreshes_from_the_configured_host(self):
         self.use_compose_file()
-        self.assert_success(self.install(MIRROR='NJU', LOOPFORGE_PULL_POLICY='always', MOCK_IMAGE_PRESENT='1'))
+        self.assert_success(self.install(MIRROR='mirror.example.test', LOOPFORGE_PULL_POLICY='always', MOCK_IMAGE_PRESENT='1'))
         log = (self.root / 'docker.log').read_text()
         image = self.pinned_image()
-        mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
+        mirror = 'mirror.example.test/' + image[len('ghcr.io/'):]
         self.assertIn(f'pull {mirror}', log)
         self.assertIn('pull --policy missing platform', log)
         self.assertIn('pull --policy always mysql', log)
         self.assertNotIn('pull --policy always platform', log)
 
-    def test_unknown_mirror_fails_before_pull(self):
+    def test_upstream_mirror_host_keeps_the_direct_pull(self):
         self.use_compose_file()
-        result = self.install(MIRROR='dockerhub')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('MIRROR=NJU', result.stderr)
-        self.assertNotIn('pull --policy', (self.root / 'docker.log').read_text())
+        self.assert_success(self.install(MIRROR='ghcr.io'))
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertNotIn(' tag ', log)
+
+    def test_invalid_mirror_fails_before_pull(self):
+        self.use_compose_file()
+        for mirror in ('NJU', 'https://ghcr.nju.edu.cn', 'ghcr.nju.edu.cn/tencent'):
+            with self.subTest(mirror=mirror):
+                if (self.root / 'docker.log').exists():
+                    (self.root / 'docker.log').unlink()
+                result = self.install(MIRROR=mirror)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('ghcr.nju.edu.cn', result.stderr)
+                self.assertNotIn('pull --policy', (self.root / 'docker.log').read_text())
 
     def test_start_pull_without_mirror_is_unchanged(self):
         self.assert_success(self.install())
@@ -176,7 +191,7 @@ exec "$@"
         self.use_compose_file()
         self.assert_success(self.install())
         (self.root / 'docker.log').unlink()
-        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='NJU'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='ghcr.nju.edu.cn'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         image = self.pinned_image()
         mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
@@ -188,7 +203,7 @@ exec "$@"
 
     def test_source_build_ignores_nju_mirror(self):
         self.use_compose_file()
-        self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1', MIRROR='NJU'))
+        self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1', MIRROR='ghcr.nju.edu.cn'))
         log = (self.root / 'docker.log').read_text()
         self.assertIn('build platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)

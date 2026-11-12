@@ -1,10 +1,10 @@
 # Changelog
 
-Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Where that host is slow, `MIRROR=NJU ./start.sh` pulls the same tag from `ghcr.nju.edu.cn` and tags it back to the `ghcr.io` name. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Where that host is slow, set `MIRROR` to a replacement registry host (for example `MIRROR=ghcr.nju.edu.cn ./start.sh`); the image is tagged back to the `ghcr.io` name. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
 ## 0.3.7 — Nanjing University pull mirror
 
-- `MIRROR=NJU ./start.sh` pulls `ghcr.nju.edu.cn/tencent/loopforge:<version>` and tags it back to the name pinned in `compose.yaml`. Unset `MIRROR` still pulls `ghcr.io` directly. `MIRROR=NJU ./start.sh pull` refreshes through the same cache. The published image stays on GHCR. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub.
+- `MIRROR=<host> ./start.sh` pulls `<host>/tencent/loopforge:<version>` and tags it back to the name pinned in `compose.yaml`. `ghcr.nju.edu.cn` is one such host. Unset `MIRROR` still pulls `ghcr.io` directly. `MIRROR=<host> ./start.sh pull` refreshes through the same host. The published image stays on GHCR. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub.
 - A running SOP node animates its activity on the graph.
 - Approving a run reloads the queue from the server, so the waiting card disappears once execution continues.
 - LoopForge Local's Classic CodeBuddy hook keeps manual gates when PyYAML is not installed.
