@@ -202,15 +202,10 @@ func (c *Client) FetchPhoto(ctx context.Context, rawUsername string, rawSpec int
 	}
 	reqURL := fmt.Sprintf("%s%s/%d/%s.png", c.cfg.AuthHost, photoPath, spec, url.PathEscape(username))
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	req, err := c.newRIORequest(ctx, reqURL, "image/png,image/*;q=0.8,*/*;q=0.5")
 	if err != nil {
 		return nil, "", fmt.Errorf("create photo request failed: %w", err)
 	}
-
-	for k, v := range c.GenerateRIOHeaders() {
-		req.Header.Set(k, v)
-	}
-	req.Header.Set("Accept", "image/png,image/*;q=0.8,*/*;q=0.5")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
