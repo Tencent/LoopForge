@@ -1,10 +1,15 @@
 # Changelog
 
-Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Where that host is slow, set `MIRROR` to a replacement registry host (for example `MIRROR=ghcr.nju.edu.cn ./start.sh`); the image is tagged back to the `ghcr.io` name. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
-## 0.3.7 — Nanjing University pull mirror
+## Unreleased
 
-- `MIRROR=<host> ./start.sh` pulls `<host>/tencent/loopforge:<version>` and tags it back to the name pinned in `compose.yaml`. `ghcr.nju.edu.cn` is one such host. Unset `MIRROR` still pulls `ghcr.io` directly. `MIRROR=<host> ./start.sh pull` refreshes through the same host. The published image stays on GHCR. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub.
+- `MIRROR=<host> ./start.sh` pulls `<host>/tencent/loopforge:<version>` and tags it back to the name pinned in `compose.yaml`. `ghcr.nju.edu.cn` is one such host. Unset `MIRROR` still pulls `ghcr.io` directly. `MIRROR=<host> ./start.sh pull` refreshes through the same host. Setting `MIRROR` trusts that host. The published image stays on GHCR, and the GitHub Release records its digest. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub. The existing `v0.3.7` tag does not include this script.
+- The release workflow publishes GHCR only. It no longer copies the image to `ccr.ccs.tencentyun.com`.
+
+## 0.3.7 — Tencent Cloud image mirror
+
+- Platform releases also push `ccr.ccs.tencentyun.com/loopforge/loopforge` with the same tags as `ghcr.io/tencent/loopforge`. `compose.yaml` still pins GHCR. Install from Tencent Cloud with `LOOPFORGE_IMAGE=ccr.ccs.tencentyun.com/loopforge/loopforge:0.3.7 ./start.sh`.
 - A running SOP node animates its activity on the graph.
 - Approving a run reloads the queue from the server, so the waiting card disappears once execution continues.
 - LoopForge Local's Classic CodeBuddy hook keeps manual gates when PyYAML is not installed.

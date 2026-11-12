@@ -201,6 +201,20 @@ exec "$@"
         self.assertIn('pull --policy always mysql', log)
         self.assertNotIn('pull --ignore-buildable --policy always', log)
 
+    def test_mirror_uses_the_last_image_assignment_in_env(self):
+        self.use_compose_file()
+        self.assert_success(self.install())
+        env = self.root / '.env'
+        env.write_text(env.read_text() + 'LOOPFORGE_IMAGE=ghcr.io/example/ignored:1\nLOOPFORGE_IMAGE=ghcr.io/example/chosen:9\n')
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='ghcr.nju.edu.cn'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/example/chosen:9', log)
+        self.assertIn('tag ghcr.nju.edu.cn/example/chosen:9 ghcr.io/example/chosen:9', log)
+        self.assertNotIn('example/ignored', log)
+        self.assertNotIn('ghcr.nju.edu.cn/tencent/loopforge', log)
+
     def test_source_build_ignores_nju_mirror(self):
         self.use_compose_file()
         self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1', MIRROR='ghcr.nju.edu.cn'))

@@ -37,9 +37,9 @@ def stored(name):
         return quoted(current)
     path = pathlib.Path('.env')
     if path.is_file():
-        match = re.search(r'(?m)^%s=(.*)$' % re.escape(name), path.read_text())
-        if match:
-            return quoted(match.group(1))
+        matches = re.findall(r'(?m)^%s=(.*)$' % re.escape(name), path.read_text())
+        if matches:
+            return quoted(matches[-1])
     return ''
 
 if stored('COMPOSE_FILE') == 'compose.yaml:compose.dev.yaml':

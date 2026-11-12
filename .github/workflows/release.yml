@@ -125,6 +125,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
           IMAGE: ${{ steps.release.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           notes="$(cat <<EOF
@@ -136,7 +137,11 @@ jobs:
           ./start.sh
           \`\`\`
 
-          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Where \`ghcr.io\` is slow, set \`MIRROR\` to a registry host that replaces it (for example \`MIRROR=ghcr.nju.edu.cn ./start.sh\`); the image is tagged back to that name. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
+          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`).
+
+          Digest: \`${IMAGE}@${DIGEST}\`.
+
+          Where \`ghcr.io\` is slow, set \`MIRROR\` to a registry host that replaces it (for example \`MIRROR=ghcr.nju.edu.cn ./start.sh\`). This trusts that host: the download is tagged as the pinned name. Check it with \`docker image inspect --format '{{index .RepoDigests 0}}' ${IMAGE}:${VERSION}\` and compare the digest after \`@\`. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
           EOF
           )"
           if gh release view "${TAG}" >/dev/null 2>&1; then
