@@ -219,7 +219,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				result = json.RawMessage(response.Payload)
 				return nil
 			}
-			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req)
+			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, user)
 			result = r
 			return err
 		})

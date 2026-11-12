@@ -1547,7 +1547,7 @@ function mountNativeChat(){
         }).catch(()=>{});
       }
       if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(message.view)){
-        if(message.view==='settings'&&CREDENTIAL_FIELDS[message.credential])gotoCredential(message.credential);
+        if(message.view==='settings'&&CREDENTIAL_FIELDS[message.credential])gotoCredential(message.credential,message.sshRemote);
         else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
         else switchView(message.view);
