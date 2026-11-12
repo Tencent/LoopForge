@@ -95,6 +95,13 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 		}
 		release = free
 		execution, err = d.workspaceExecutionSandbox(ctx, sb, request)
+		if err != nil {
+			return err
+		}
+		// Docker acquisition is lazy. Materialize the execution environment here
+		// so image builds use the build deadline, before initialization starts
+		// its separate, shorter deadline in EnsureWorkspacePreparation.
+		_, err = runtime.SandboxEnvironmentIdentity(ctx, execution)
 		return err
 	})
 	if release != nil {
