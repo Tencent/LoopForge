@@ -136,7 +136,7 @@ jobs:
           ./start.sh
           \`\`\`
 
-          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Where \`ghcr.io\` is slow, pull the same tag from \`ghcr.nju.edu.cn\` and tag it back to that name before \`./start.sh\`. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
+          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Where \`ghcr.io\` is slow, run \`MIRROR=NJU ./start.sh\`; it pulls the same tag from \`ghcr.nju.edu.cn\` and tags it back to that name. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
           EOF
           )"
           if gh release view "${TAG}" >/dev/null 2>&1; then

@@ -32,7 +32,7 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
         (self.root / 'migrations/seed').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh'):
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         (self.root / 'migrations/seed/001_test.sql').write_text('SELECT 1;\n')
@@ -43,6 +43,7 @@ if [[ "$1" == info ]]; then
   [[ "${MOCK_USER:-0}" == 0 || "${MOCK_PRIVILEGED:-0}" == 1 || "${MOCK_DIRECT:-0}" == 1 ]]
   exit
 fi
+if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; then exit 1; fi
 if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
@@ -62,7 +63,7 @@ export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
         self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED'):
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT'):
             self.environ.pop(name, None)
 
     def executable(self, name, contents):
@@ -109,12 +110,88 @@ exec "$@"
         self.assertIn('sudo -v', result.stderr)
         self.assertNotIn('up -d --no-build', (self.root / 'docker.log').read_text())
 
+    def pinned_image(self):
+        text = (ROOT / 'compose.yaml').read_text()
+        import re
+        return re.search(r'image:\s*\$\{LOOPFORGE_IMAGE:-([^}]+)\}', text).group(1).strip()
+
+    def use_compose_file(self):
+        shutil.copyfile(ROOT / 'compose.yaml', self.root / 'compose.yaml')
+
     def test_default_install_pulls_pinned_release(self):
         self.assert_success(self.install())
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull --policy missing platform mysql', log)
         self.assertNotIn('build platform', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn("LOOPFORGE_IMAGE=''", (self.root / '.env').read_text())
+
+    def test_nju_mirror_pulls_and_tags_the_pinned_name(self):
+        self.use_compose_file()
+        image = self.pinned_image()
+        mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
+        self.assert_success(self.install(MIRROR='NJU'))
+        log = (self.root / 'docker.log').read_text()
+        self.assertLess(log.index(f'pull {mirror}'), log.index(f'tag {mirror} {image}'))
+        self.assertLess(log.index(f'tag {mirror} {image}'), log.index('pull --policy missing platform mysql'))
+        self.assertNotIn('MIRROR=', (self.root / '.env').read_text())
+
+    def test_nju_mirror_keeps_a_local_image(self):
+        self.use_compose_file()
+        result = self.install(MIRROR='nju', MOCK_IMAGE_PRESENT='1')
+        self.assert_success(result)
+        log = (self.root / 'docker.log').read_text()
+        self.assertNotIn('ghcr.nju.edu.cn', log)
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('Using local image', result.stdout)
+
+    def test_nju_mirror_always_refreshes_from_the_cache(self):
+        self.use_compose_file()
+        self.assert_success(self.install(MIRROR='NJU', LOOPFORGE_PULL_POLICY='always', MOCK_IMAGE_PRESENT='1'))
+        log = (self.root / 'docker.log').read_text()
+        image = self.pinned_image()
+        mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
+        self.assertIn(f'pull {mirror}', log)
+        self.assertIn('pull --policy missing platform', log)
+        self.assertIn('pull --policy always mysql', log)
+        self.assertNotIn('pull --policy always platform', log)
+
+    def test_unknown_mirror_fails_before_pull(self):
+        self.use_compose_file()
+        result = self.install(MIRROR='dockerhub')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('MIRROR=NJU', result.stderr)
+        self.assertNotIn('pull --policy', (self.root / 'docker.log').read_text())
+
+    def test_start_pull_without_mirror_is_unchanged(self):
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull --ignore-buildable --policy always', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
+
+    def test_start_pull_with_nju_mirror_does_not_contact_ghcr_for_platform(self):
+        self.use_compose_file()
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='NJU'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        image = self.pinned_image()
+        mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn(f'pull {mirror}', log)
+        self.assertIn(f'tag {mirror} {image}', log)
+        self.assertIn('pull --policy always mysql', log)
+        self.assertNotIn('pull --ignore-buildable --policy always', log)
+
+    def test_source_build_ignores_nju_mirror(self):
+        self.use_compose_file()
+        self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1', MIRROR='NJU'))
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('build platform', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
 
     def test_source_build_persists_dev_compose_file(self):
         self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1'))
