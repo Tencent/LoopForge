@@ -36,20 +36,22 @@ func TestDeepSeekCredentialIsolationAndDefaultEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials := RunCredentials{DeepSeek: ProviderCredential{APIKey: "actor-deepseek-secret"}, ClaudeCode: ProviderCredential{APIKey: "other-claude-secret"}}
+	deepseek := ProviderCredential{APIKey: "actor-deepseek-secret"}
+	credentials := RunCredentials{AgentCLI: map[string]ProviderCredential{"deepseek": deepseek}, ClaudeCode: ProviderCredential{APIKey: "other-claude-secret"}}
 	bound, err := bindCommand(sandbox, workspace, command, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound.environment["CODEX_API_KEY"] != credentials.DeepSeek.APIKey || !strings.Contains(strings.Join(bound.Argv, " "), domain.DeepSeekDefaultBaseURL) || !strings.Contains(strings.Join(bound.Argv, " "), `wire_api="responses"`) || bound.environment["DEEPSEEK_API_KEY"] != "" {
+	if bound.environment["CODEX_API_KEY"] != deepseek.APIKey || !strings.Contains(strings.Join(bound.Argv, " "), domain.DeepSeekDefaultBaseURL) || !strings.Contains(strings.Join(bound.Argv, " "), `wire_api="responses"`) || bound.environment["DEEPSEEK_API_KEY"] != "" {
 		t.Fatal("DeepSeek did not bind only the responsible actor's credentials")
 	}
 	if strings.Contains(strings.Join(bound.Argv, " "), "secret") || !strings.Contains(bound.environment["CODEX_HOME"], "deepseek") {
 		t.Fatal("DeepSeek credentials or CLI state are not isolated")
 	}
-	credentials.DeepSeek.BaseURL = "https://gateway.example/edge-b"
+	deepseek.BaseURL = "https://gateway.example/edge-b"
+	credentials.AgentCLI["deepseek"] = deepseek
 	bound, err = bindCommand(sandbox, workspace, command, credentials)
-	if err != nil || !strings.Contains(strings.Join(bound.Argv, " "), credentials.DeepSeek.BaseURL) {
+	if err != nil || !strings.Contains(strings.Join(bound.Argv, " "), deepseek.BaseURL) {
 		t.Fatal("DeepSeek custom endpoint was not applied")
 	}
 	if _, err := bindCommand(sandbox, workspace, command, RunCredentials{ClaudeCode: credentials.ClaudeCode}); err == nil {

@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -127,9 +128,6 @@ const RunnerVersionExistingWorkBranch = "0.7.0"
 // branch out instead.
 const RunnerVersionCreateNewWorkBranch = "0.9.1"
 
-// RunnerVersionDeepSeek is the first runner that can claim DeepSeek tasks.
-const RunnerVersionDeepSeek = "0.9.3"
-
 type Runner struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
@@ -251,18 +249,18 @@ func versionAtLeast(have, want string) bool {
 // does not target it explicitly.
 func (r Runner) SupportsProvider(provider string) bool {
 	provider = strings.TrimSpace(provider)
-	if strings.EqualFold(provider, "deepseek") {
-		if !versionAtLeast(r.RunnerVersion, RunnerVersionDeepSeek) {
-			return false
-		}
-		provider = "codex"
-	}
 	if provider == "" {
 		return false
 	}
+	deepseek := strings.EqualFold(provider, "deepseek")
+	if deepseek {
+		provider = "codex"
+	}
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) && rt.Status != RuntimeStatusDisabled {
-			return true
+			if !deepseek || slices.Contains(rt.Capabilities, RunnerCapabilityDeepSeek) {
+				return true
+			}
 		}
 	}
 	return false
@@ -301,6 +299,9 @@ const (
 	RuntimeAuthLocal      = "local"
 	RuntimeAuthPersonal   = "personal"
 )
+
+// RunnerCapabilityDeepSeek marks a Codex runtime whose daemon can run DeepSeek tasks.
+const RunnerCapabilityDeepSeek = "deepseek"
 
 // RunnerRuntime is one discovered Agent CLI on the runner machine. Credentials
 // for the CLI stay on that machine; the control plane only learns the binary
@@ -412,8 +413,6 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.CodeBuddyInternetEnvironment = ""
 	copyInvocation.CodexAPIKey = ""
 	copyInvocation.CodexBaseURL = ""
-	copyInvocation.DeepSeekAPIKey = ""
-	copyInvocation.DeepSeekBaseURL = ""
 	copyInvocation.ClaudeCodeAPIKey = ""
 	copyInvocation.ClaudeCodeBaseURL = ""
 	copyInvocation.AgentCLIAPIKey = ""
@@ -477,8 +476,6 @@ type RunnerInvocation struct {
 	CodeBuddyInternetEnvironment string   `json:"codebuddyInternetEnvironment,omitempty"`
 	CodexAPIKey                  string   `json:"codexApiKey,omitempty"`
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
-	DeepSeekAPIKey               string   `json:"deepSeekApiKey,omitempty"`
-	DeepSeekBaseURL              string   `json:"deepSeekBaseUrl,omitempty"`
 	ClaudeCodeAPIKey             string   `json:"claudeCodeApiKey,omitempty"`
 	ClaudeCodeBaseURL            string   `json:"claudeCodeBaseUrl,omitempty"`
 	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`

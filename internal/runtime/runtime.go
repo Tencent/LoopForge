@@ -45,7 +45,6 @@ type RunCredentials struct {
 	Codex        ProviderCredential
 	ClaudeCode   ProviderCredential
 	AgentCLI     map[string]ProviderCredential
-	DeepSeek     ProviderCredential
 	GitToken     string
 	GitSSHKeys   map[string]string `json:"-"`
 	GitUserName  string

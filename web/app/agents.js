@@ -117,7 +117,7 @@ function syncAgentTabIndicators(){$$('#agentsView .agent-tabs, #agentModal .agen
 if(typeof document!=='undefined'&&document.fonts?.ready)document.fonts.ready.then(()=>syncAgentTabIndicators()).catch(()=>{});
 function pickerHTML(items,selected,prefix){return `<input class="input picker-filter" data-picker-filter="${prefix}" placeholder="筛选名称或说明…">${(items||[]).map(x=>`<label class="asset-check"><input type="checkbox" name="${prefix}" value="${x.id}" ${(selected||[]).includes(x.id)?'checked':''}><span>${escapeHTML(x.name)}<small>${escapeHTML(x.description||x.id)}</small></span></label>`).join('')||'<span class="type-label">暂无可用资产，请先到对应的资产管理页面添加</span>'}`}
 function bindPickerFilters(root){(root||document).querySelectorAll('[data-picker-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.parentElement.querySelectorAll('.asset-check').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))})}
-function executorOptions(selected){const allowed=new Set(['codebuddy','codex','claude','opencode','cursor','agy','kimi','pi','dsh','zcode','deepseek']),items=(state.data.executors||[]).filter(x=>allowed.has(x.id)),legacy=selected&&!allowed.has(selected)?`<option value="${escapeHTML(selected)}" selected disabled>历史执行器 ${escapeHTML(selected)}（请重新选择 CLI）</option>`:'';return legacy+items.map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===selected?'selected':''}>${escapeHTML(x.name||x.id)}</option>`).join('')}
+function executorOptions(selected){const allowed=new Set(['codebuddy','codex','claude','opencode','cursor','agy','kimi','pi','dsh','zcode','deepseek']),items=(state.data.executors||[]).filter(x=>allowed.has(x.id)),legacy=selected&&!allowed.has(selected)?`<option value="${escapeHTML(selected)}" selected disabled>历史执行器 ${escapeHTML(selected)}（请重新选择 CLI）</option>`:'';return legacy+items.map(x=>`<option value="${escapeHTML(x.id)}"${x.id==='deepseek'?' data-meta="via Codex"':''} ${x.id===selected?'selected':''}>${escapeHTML(x.name||x.id)}</option>`).join('')}
 const AGENT_CUSTOM_MODEL='__custom__';
 function executorModelCatalogs(){return window.AgentFlowExecutorModels||{}}
 async function loadExecutorModelCatalogs(){
@@ -133,7 +133,9 @@ async function loadExecutorModelCatalogs(){
 function agentModelAPI(){return window.AgentFlowAssistantModels}
 function currentAgentExecutorId(){return $('#agentForm')?.elements?.executorId?.value||'codebuddy'}
 function agentModelItems(executorId,current){
-  const cat=executorModelCatalogs()[executorId]||{},items=(cat.models||[]).slice();
+  const cat=executorModelCatalogs()[executorId]||{};
+  const personal=executorId==='deepseek'?userById(state.currentUser?.id)?.agentCliCredentials?.deepseek?.models:null;
+  const items=personal?.length?personal.map(model=>({id:model.id,name:model.name||model.id})):(cat.models||[]).slice();
   if(current&&current!==AGENT_CUSTOM_MODEL&&!items.some(m=>m.id===current))items.push({id:current,name:`${current}（历史模型）`,family:'other'});
   if(cat.customModel)items.push({id:AGENT_CUSTOM_MODEL,name:'手动输入模型 ID…',icon:false});
   return items;
@@ -192,7 +194,7 @@ function applyAgentModelUI(executorId,model,effort){
   const picker=$('#agentModelPicker');if(!picker||!$('#agentEffortPicker'))return;
   const cat=executorModelCatalogs()[executorId]||{};
   let choice=model||'';
-  if(choice&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
+  if(choice&&cat.customModel&&!agentModelItems(executorId,'').some(m=>m.id===choice))choice=AGENT_CUSTOM_MODEL;
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
   if(customInput&&choice===AGENT_CUSTOM_MODEL)customInput.value=model||'';

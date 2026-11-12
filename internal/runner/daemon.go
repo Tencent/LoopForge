@@ -350,7 +350,7 @@ func (d *Daemon) availableProviders() []string {
 	for _, rt := range d.currentRuntimes() {
 		if rt.Status != domain.RuntimeStatusDisabled {
 			providers = append(providers, rt.Provider)
-			if rt.Provider == "codex" {
+			if rt.Provider == "codex" && slices.Contains(rt.Capabilities, domain.RunnerCapabilityDeepSeek) {
 				providers = append(providers, "deepseek")
 			}
 		}
@@ -1046,7 +1046,7 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 			}
 			key, baseURL, label, defaultURL := inv.CodexAPIKey, inv.CodexBaseURL, "Codex", "https://api.openai.com/v1"
 			if binding == runtime.BindDeepSeek {
-				key, baseURL, label, defaultURL = inv.DeepSeekAPIKey, inv.DeepSeekBaseURL, "DeepSeek", domain.DeepSeekDefaultBaseURL
+				key, baseURL, label, defaultURL = inv.AgentCLIAPIKey, inv.AgentCLIBaseURL, "DeepSeek", domain.DeepSeekDefaultBaseURL
 			}
 			key = strings.TrimSpace(key)
 			if key == "" {

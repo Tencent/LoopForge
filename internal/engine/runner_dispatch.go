@@ -199,35 +199,38 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	if strings.TrimSpace(options.GateResultPath) != "" {
 		invocation.Artifacts = append(invocation.Artifacts, gateResultContract(options.GateResultPath))
 	}
+	credentials := sb.credentialSnapshot()
 	if authMode == domain.RuntimeAuthPersonal {
 		switch ex.Kind {
 		case "codex":
-			if strings.TrimSpace(sb.credentialSnapshot().Codex.APIKey) == "" {
+			if strings.TrimSpace(credentials.Codex.APIKey) == "" {
 				return "", errors.New("当前责任人未配置 Codex API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
-			invocation.CodexAPIKey = sb.credentialSnapshot().Codex.APIKey
-			invocation.CodexBaseURL = sb.credentialSnapshot().Codex.BaseURL
+			invocation.CodexAPIKey = credentials.Codex.APIKey
+			invocation.CodexBaseURL = credentials.Codex.BaseURL
 		case "deepseek":
-			if strings.TrimSpace(sb.credentialSnapshot().DeepSeek.APIKey) == "" {
+			// DeepSeek always uses the responsible user's credentials, even when Codex uses local login.
+			cred := credentials.AgentCLI[ex.Kind]
+			if strings.TrimSpace(cred.APIKey) == "" {
 				return "", errors.New("当前责任人未配置 DeepSeek API Key：请先在个人配置中配置")
 			}
-			invocation.DeepSeekAPIKey = sb.credentialSnapshot().DeepSeek.APIKey
-			invocation.DeepSeekBaseURL = sb.credentialSnapshot().DeepSeek.BaseURL
+			invocation.AgentCLIAPIKey = cred.APIKey
+			invocation.AgentCLIBaseURL = cred.BaseURL
 		case "claude-code":
-			if strings.TrimSpace(sb.credentialSnapshot().ClaudeCode.APIKey) == "" {
+			if strings.TrimSpace(credentials.ClaudeCode.APIKey) == "" {
 				return "", errors.New("当前责任人未配置 Claude Code API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
-			invocation.ClaudeCodeAPIKey = sb.credentialSnapshot().ClaudeCode.APIKey
-			invocation.ClaudeCodeBaseURL = sb.credentialSnapshot().ClaudeCode.BaseURL
+			invocation.ClaudeCodeAPIKey = credentials.ClaudeCode.APIKey
+			invocation.ClaudeCodeBaseURL = credentials.ClaudeCode.BaseURL
 		case "codebuddy":
-			if strings.TrimSpace(sb.credentialSnapshot().CodeBuddy.APIKey) == "" {
+			if strings.TrimSpace(credentials.CodeBuddy.APIKey) == "" {
 				return "", errors.New("当前责任人未配置 CodeBuddy API Key：请先在个人配置中配置")
 			}
-			invocation.CodeBuddyAPIKey = sb.credentialSnapshot().CodeBuddy.APIKey
-			invocation.CodeBuddyInternetEnvironment = sb.credentialSnapshot().CodeBuddy.InternetEnvironment
+			invocation.CodeBuddyAPIKey = credentials.CodeBuddy.APIKey
+			invocation.CodeBuddyInternetEnvironment = credentials.CodeBuddy.InternetEnvironment
 		default:
 			if runtime.IsAgentCLI(ex.Kind) {
-				cred := sb.credentialSnapshot().AgentCLI[ex.Kind]
+				cred := credentials.AgentCLI[ex.Kind]
 				if strings.TrimSpace(cred.APIKey) == "" {
 					return "", fmt.Errorf("当前责任人未配置 %s API Key：请先在个人配置中配置", runtime.AgentCLILabel(ex.Kind))
 				}
@@ -237,7 +240,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			}
 		}
 	}
-	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
+	bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitUserName, credentials.GitUserEmail)
 	reported := sb.reportedOutputs(node.ID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -868,7 +871,7 @@ func (e *Engine) requireRunnerProvider(runnerID, provider string) error {
 		return fmt.Errorf("执行器 %s（%s）当前离线，无法路由 %s 任务", runnerID, runner.Name, provider)
 	}
 	if provider == "deepseek" && !runner.SupportsProvider(provider) {
-		return fmt.Errorf("runner %s (%s) requires version %s or later and an enabled Codex runtime to execute DeepSeek", runnerID, runner.Name, domain.RunnerVersionDeepSeek)
+		return fmt.Errorf("执行器 %s（%s）不支持 DeepSeek：请更新 Runner 并启用 Codex CLI", runnerID, runner.Name)
 	}
 	if !runner.SupportsProvider(provider) {
 		return fmt.Errorf("执行器 %s（%s）未启用 %s CLI：请在执行器页面开启或改用云端 API Key 模式", runnerID, runner.Name, provider)

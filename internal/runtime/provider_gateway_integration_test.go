@@ -106,7 +106,7 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			creds := RunCredentials{DeepSeek: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL}, Codex: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL + "/v1"}, ClaudeCode: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL}}
+			creds := RunCredentials{AgentCLI: map[string]ProviderCredential{"deepseek": {APIKey: "local-gateway-test-key", BaseURL: server.URL}}, Codex: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL + "/v1"}, ClaudeCode: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL}}
 			sb := &localSandbox{workspace: workspace}
 			bound, err := bindCommand(sb, workspace, command, creds)
 			if err != nil {

@@ -97,7 +97,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 		case BindCodex, BindDeepSeek:
 			credential, label, defaultURL := credentials.Codex, "Codex", "https://api.openai.com/v1"
 			if binding == BindDeepSeek {
-				credential, label, defaultURL = credentials.DeepSeek, "DeepSeek", domain.DeepSeekDefaultBaseURL
+				credential, label, defaultURL = credentials.AgentCLI["deepseek"], "DeepSeek", domain.DeepSeekDefaultBaseURL
 			}
 			bound.environment["CODEX_API_KEY"] = strings.TrimSpace(credential.APIKey)
 			if bound.environment["CODEX_API_KEY"] == "" {

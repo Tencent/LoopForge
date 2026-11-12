@@ -93,6 +93,8 @@ func assistantEngineLabel(engine string) string {
 		return "Claude Code"
 	case assistantEngineCodeBuddy, "":
 		return "CodeBuddy"
+	case "deepseek":
+		return "DeepSeek"
 	}
 	return runtime.AgentCLILabel(engine)
 }
@@ -107,7 +109,7 @@ func assistantEngineCredential(user domain.User, engine string) (apiKey, baseURL
 		return strings.TrimSpace(user.CodeBuddyAPIKey), ""
 	}
 	cred := user.AgentCLICredentials[engine]
-	if runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor {
+	if engine == "deepseek" || (runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor) {
 		baseURL = strings.TrimSpace(cred.BaseURL)
 	}
 	return strings.TrimSpace(cred.APIKey), baseURL

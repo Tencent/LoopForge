@@ -47,7 +47,7 @@ func (h *usersHandlers) user(c *gin.Context) {
 		}
 		body.CodeBuddyInternetEnvironment = &environment
 	}
-	baseURLs := []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL, body.DeepSeekBaseURL}
+	baseURLs := []*string{body.CodexBaseURL, body.ClaudeCodeBaseURL}
 	for _, cred := range body.AgentCLICredentials {
 		baseURLs = append(baseURLs, cred.BaseURL)
 	}
