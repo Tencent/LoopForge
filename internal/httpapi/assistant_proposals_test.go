@@ -2,8 +2,11 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -322,6 +325,13 @@ func TestSOPDraftsNeedAProposalUnlessTheUserAskedForTheSOP(t *testing.T) {
 	if err := vet(dispatch); err == nil || !strings.Contains(err.Error(), "关闭") {
 		t.Fatalf("an earlier accept or request outlived the mute: %v", err)
 	}
+	// The stored transcript still ends at the mute. A direct chat carries the
+	// new request only on the turn, and that request is what counts.
+	session.turnMessages = append(append([]domain.AssistantMessage{}, thread...), domain.AssistantMessage{Role: "user", Content: "还是走 SOP 吧"})
+	if err := vet(dispatch); err != nil {
+		t.Fatalf("the unsaved request after a mute was blocked: %v", err)
+	}
+	session.turnMessages = nil
 	seed(append(thread, domain.AssistantMessage{Role: "user", Content: "还是走 SOP 吧"})...)
 	if err := vet(dispatch); err != nil {
 		t.Fatalf("asking after the mute was blocked: %v", err)
@@ -426,4 +436,101 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 	if req := contextFor(AssistantApprovalConfirm); !strings.Contains(req.contextText, "- 走 SOP：") || !strings.Contains(req.contextText, askSOP) || !strings.Contains(req.contextText, asBefore) {
 		t.Fatalf("confirm with SOPs on: %s", req.contextText)
 	}
+}
+
+// A direct chat, including SSE, stores the personal session after the reply.
+// The proposal gate has to see the user message on that request, or a named
+// SOP is refused as if Main Bot had suggested it.
+func TestDirectChatSeesTheSOPTheUserJustAskedFor(t *testing.T) {
+	h, u := workbenchFixture(t)
+	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{ID: "delivery", Name: "交付流水线", ProjectID: "workbench", Status: "published"}); err != nil {
+		t.Fatal(err)
+	}
+	const asked = "请走 SOP 交付流水线实现新功能"
+	dispatch := json.RawMessage(`{"message":"交给交付流水线","drafts":[{"tool":"issues_dispatch","path":{"id":"i1"},"body":{}}]}`)
+	gateway := &agentToolGateway{deps: h.deps}
+	chat := func(t *testing.T, sessionID string, messages []domain.AssistantMessage, accept, want string) {
+		t.Helper()
+		var once sync.Once
+		var toolText string
+		var toolErr bool
+		var called bool
+		h.generate = func(context.Context, string, domain.User) (string, error) {
+			once.Do(func() {
+				called = true
+				session := assistantToolSessionForChat(sessionID)
+				if session == nil {
+					t.Error("chat did not open a tool session")
+					return
+				}
+				result, err := gateway.callTerminal(session, submitAssistantReplyTool, dispatch)
+				if err != nil {
+					toolText, toolErr = err.Error(), true
+					return
+				}
+				toolErr, _ = result["isError"].(bool)
+				toolText = mcpToolResultText(result)
+			})
+			return `{"message":"好","drafts":[]}`, nil
+		}
+		body, err := json.Marshal(map[string]any{"sessionId": sessionID, "projectId": "workbench", "messages": messages})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, rec := workbenchContext(u, http.MethodPost, "/api/assistant/chat", bytes.NewBuffer(body))
+		if accept != "" {
+			c.Request.Header.Set("Accept", accept)
+		}
+		h.chat(c)
+		if !called {
+			t.Fatalf("chat never reached the model: %d %s", rec.Code, rec.Body.String())
+		}
+		if want == "" {
+			if toolErr || !strings.Contains(toolText, "提交成功") {
+				t.Fatalf("a named SOP was refused: err=%v %s http=%d %s", toolErr, toolText, rec.Code, rec.Body.String())
+			}
+			if rec.Code >= 400 {
+				t.Fatalf("chat failed after accepting the SOP: %d %s", rec.Code, rec.Body.String())
+			}
+			return
+		}
+		if !toolErr || !strings.Contains(toolText, want) {
+			t.Fatalf("an unnamed SOP passed: err=%v %s", toolErr, toolText)
+		}
+	}
+	chat(t, "direct-json", []domain.AssistantMessage{{Role: "user", Content: asked}}, "", "")
+	chat(t, "direct-sse", []domain.AssistantMessage{{Role: "user", Content: asked}}, "text/event-stream", "")
+
+	muted := sopDraft("i2", "start")
+	muted.Decision = domain.AssistantProposalMuted
+	prior := []domain.AssistantMessage{
+		{Role: "user", Content: "先看看这个需求"},
+		{Role: "assistant", Content: proposalReply(t, muted)},
+	}
+	if err := h.repo.PutAssistantSession(u.ID, domain.AssistantSession{ID: "direct-muted", ProjectID: "workbench", Messages: prior}); err != nil {
+		t.Fatal(err)
+	}
+	again := append(append([]domain.AssistantMessage{}, prior...), domain.AssistantMessage{Role: "user", Content: asked})
+	chat(t, "direct-muted", again, "", "")
+	chat(t, "direct-unnamed", []domain.AssistantMessage{{Role: "user", Content: "积分转赠这个需求帮我推进一下"}}, "", "proposal")
+}
+
+func assistantToolSessionForChat(sessionID string) *AgentToolSession {
+	agentToolSessions.mu.Lock()
+	defer agentToolSessions.mu.Unlock()
+	for _, session := range agentToolSessions.sessions {
+		if session.ChatSessionID == sessionID && session.Mode == AgentToolAssistant {
+			return session
+		}
+	}
+	return nil
+}
+
+func mcpToolResultText(result map[string]any) string {
+	content, _ := result["content"].([]map[string]any)
+	if len(content) == 0 {
+		return ""
+	}
+	text, _ := content[0]["text"].(string)
+	return text
 }

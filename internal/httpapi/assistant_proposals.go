@@ -244,8 +244,13 @@ func (h *assistantHandlers) vetProposalDrafts(session *AgentToolSession, reply *
 	var history *assistantProposalHistory
 	load := func() *assistantProposalHistory {
 		if history == nil {
-			if conv, ok := h.repo.AssistantSession(session.ChatOwnerID, session.ChatSessionID); ok {
-				messages = conv.Messages
+			// Prefer the request. A new personal session is stored after the
+			// reply, so an SOP the user just named is only here.
+			messages = append([]assistantMessage(nil), session.turnMessages...)
+			if len(messages) == 0 {
+				if conv, ok := h.repo.AssistantSession(session.ChatOwnerID, session.ChatSessionID); ok {
+					messages = conv.Messages
+				}
 			}
 			loaded := proposalHistory(messages)
 			history = &loaded

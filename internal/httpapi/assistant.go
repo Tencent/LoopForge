@@ -255,6 +255,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.RunID = req.RunID
 		sess.ChatSessionID = req.SessionID
 		sess.ChatOwnerID = ownerID
+		sess.turnMessages = append([]assistantMessage(nil), req.Messages...)
 		if saved, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
 			sess.SandboxProfileID = saved.SandboxProfileID
 		}
