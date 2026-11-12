@@ -19,6 +19,7 @@ func TestRunnerManagementAndMachineLifecycle(t *testing.T) {
 	runnerID, session := registerTestRunner(t, f.h)
 	runner, _ := f.s.Runner(runnerID)
 	runner.OwnerUserID = f.user.ID
+	runner.RunnerVersion = domain.RunnerVersionDefaultSelection
 	if err := f.s.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}

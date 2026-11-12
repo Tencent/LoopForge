@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"path"
 	"strconv"
 	"strings"
@@ -77,6 +78,28 @@ const RunnerVersionConversationWorkspace = "0.8.0"
 
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
+}
+
+// RunnerVersionDefaultSelection is the oldest runner a user may pick as the
+// default execution machine. Older daemons cannot open conversation
+// workspaces, so new tasks routed to them would fail.
+const RunnerVersionDefaultSelection = RunnerVersionConversationWorkspace
+
+// DefaultSelectionBlocker explains why the runner cannot become a user's
+// default execution machine, or returns "" when it can. The runners page
+// disables「设为默认」with the same rules.
+func (r Runner) DefaultSelectionBlocker() string {
+	if r.Status != RunnerStatusOnline {
+		return "机器离线，不能设为默认执行机器，请先在该机器上启动执行机器服务"
+	}
+	if !versionAtLeast(r.RunnerVersion, RunnerVersionDefaultSelection) {
+		version := strings.TrimSpace(r.RunnerVersion)
+		if version == "" {
+			version = "未知"
+		}
+		return fmt.Sprintf("执行机器版本 %s 过低，需升级至 %s 及以上才能设为默认", version, RunnerVersionDefaultSelection)
+	}
+	return ""
 }
 
 // RunnerVersionSharedPush is the first runner that merges the work branch into
