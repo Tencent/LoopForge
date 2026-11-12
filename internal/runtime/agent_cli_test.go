@@ -255,3 +255,44 @@ func TestWriteAgentCLIFileSecurity(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteAgentCLIFileRejectsSymlinkedHome(t *testing.T) {
+	outside := t.TempDir()
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(outside, home); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte("x")); err == nil {
+		t.Fatal("write through a symlinked home was accepted")
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("files written outside home: %v", entries)
+	}
+}
+
+func TestBindAgentCLICommandRejectsSymlinkedPrivateHome(t *testing.T) {
+	for _, kind := range []string{AgentCLIKimi, AgentCLIZCode} {
+		t.Run(kind, func(t *testing.T) {
+			workspace, outside := t.TempDir(), t.TempDir()
+			command := AgentCLICommand(kind, AgentCLICommandOptions{Model: "m", Prompt: "p"})
+			command.PrivateHome, command.PrivateHomeKey = true, kind+"-agent-1"
+			parent := filepath.Join(workspace, ".agentflow", "private-home")
+			if err := os.MkdirAll(parent, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(parent, command.PrivateHomeKey)); err != nil {
+				t.Fatal(err)
+			}
+			sb := &localSandbox{workspace: workspace, environment: map[string]string{}}
+			if _, _, err := BindAgentCLICommand(sb, workspace, command, ProviderCredential{APIKey: "secret-key", BaseURL: "https://example.test"}, command.Argv); err == nil {
+				t.Fatal("symlinked private home was accepted")
+			}
+			if _, err := bindCommand(sb, workspace, command, RunCredentials{}); err == nil {
+				t.Fatal("bindCommand accepted a symlinked private home")
+			}
+			if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+				t.Fatalf("files written outside the workspace: %v", entries)
+			}
+		})
+	}
+}

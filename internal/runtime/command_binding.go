@@ -4,7 +4,6 @@ import (
 	"agentflow/internal/observability"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -139,12 +138,12 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	}
 	if command.PrivateHome {
 		provider := PrivateHomeName(command)
-		hostHome := filepath.Join(workspace, ".agentflow", "private-home", provider)
-		hostTmp := filepath.Join(workspace, ".agentflow", "tmp", provider)
-		if err := os.MkdirAll(hostHome, 0o700); err != nil {
+		hostHome, err := EnsureControlDirectory(workspace, "private-home", provider)
+		if err != nil {
 			return CommandSpec{}, fmt.Errorf("create private home: %w", err)
 		}
-		if err := os.MkdirAll(hostTmp, 0o700); err != nil {
+		hostTmp, err := EnsureControlDirectory(workspace, "tmp", provider)
+		if err != nil {
 			return CommandSpec{}, fmt.Errorf("create private temp: %w", err)
 		}
 		if sandboxDriver(sandbox) == "docker" {
@@ -159,7 +158,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			if command.Provider == "claude-code" {
 				dir, key = ".claude", "CLAUDE_CONFIG_DIR"
 			}
-			if err := os.MkdirAll(filepath.Join(hostHome, dir), 0o700); err != nil {
+			if _, err := EnsureControlDirectory(workspace, "private-home", provider, dir); err != nil {
 				return CommandSpec{}, err
 			}
 			bound.environment[key] = filepath.ToSlash(filepath.Join(bound.environment["HOME"], dir))
@@ -195,11 +194,14 @@ func AgentCLIPrivateHomeKey(kind, agentID string) string {
 func BindAgentCLICommand(sandbox Sandbox, workspace string, command CommandSpec, cred ProviderCredential, argv []string) ([]string, map[string]string, error) {
 	name := PrivateHomeName(command)
 	home, homeEnv := privateHomePaths(sandbox, workspace, command)
-	tmp := filepath.Join(workspace, ".agentflow", "tmp", name)
-	for _, dir := range []string{home, tmp} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, nil, fmt.Errorf("create private home: %w", err)
-		}
+	// Every level is Lstat-checked: the workspace is writable from the sandbox,
+	// so .agentflow, private-home or the home itself may have become a symlink.
+	if _, err := EnsureControlDirectory(workspace, "private-home", name); err != nil {
+		return nil, nil, fmt.Errorf("create private home: %w", err)
+	}
+	tmp, err := EnsureControlDirectory(workspace, "tmp", name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create private temp: %w", err)
 	}
 	argv, bound, err := ApplyAgentCLICredential(command.Provider, cred, command.AgentCLI, home, homeEnv, argv)
 	if err != nil {

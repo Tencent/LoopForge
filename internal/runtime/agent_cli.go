@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -253,10 +254,7 @@ func writeAgentCLIFile(home, rel string, data []byte) error {
 	if !filepath.IsLocal(rel) || filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") {
 		return fmt.Errorf("invalid agent CLI file path %q", rel)
 	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(home)
+	root, err := openAgentCLIHome(home)
 	if err != nil {
 		return err
 	}
@@ -268,6 +266,37 @@ func writeAgentCLIFile(home, rel string, data []byte) error {
 		}
 	}
 	return root.WriteFile(rel, data, 0o600)
+}
+
+// openAgentCLIHome opens home as an os.Root, creating it when missing. home
+// itself must be a real directory: a private HOME lives in the workspace that
+// sandboxed Agents can write, so a previous run may have replaced it with a
+// symlink to anywhere on the host, and os.OpenRoot would follow it.
+func openAgentCLIHome(home string) (*os.Root, error) {
+	info, err := os.Lstat(home)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(home, 0o700); err != nil {
+			return nil, err
+		}
+		info, err = os.Lstat(home)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("agent CLI home is not a real directory: %s", home)
+	}
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return nil, err
+	}
+	// home may have been swapped for a symlink between Lstat and OpenRoot.
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		root.Close()
+		return nil, fmt.Errorf("agent CLI home changed while opening: %s", home)
+	}
+	return root, nil
 }
 
 // ApplyAgentCLICredential writes the credential-dependent model configuration of an

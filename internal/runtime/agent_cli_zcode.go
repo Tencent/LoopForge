@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 )
@@ -120,7 +118,12 @@ func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, a
 // keeping whatever the MCP configuration put there.
 func addZCodeKeyCleanupHook(home string) error {
 	document := map[string]any{}
-	data, err := os.ReadFile(filepath.Join(home, filepath.FromSlash(zcodeConfigPath)))
+	root, err := openAgentCLIHome(home)
+	if err != nil {
+		return err
+	}
+	data, err := root.ReadFile(zcodeConfigPath)
+	root.Close()
 	if err == nil {
 		err = json.Unmarshal(data, &document)
 	}
