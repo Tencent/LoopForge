@@ -274,4 +274,17 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 			t.Fatalf("%s references = %#v, want [%q]", name, got, want)
 		}
 	}
+	// 删除被引用的资产时，草稿告警要列出引用方（经共用的引用方查询 helper）。
+	for tool, tc := range map[string]struct{ id, want string }{
+		"rules_delete":        {"rule-ref", "规则仍被 1 个角色引用（Agent Ref）"},
+		"skills_delete":       {"skill-ref", "技能仍被 1 个角色引用（Agent Ref）"},
+		"dockerfiles_delete":  {"docker-ref", "Dockerfile仍被 1 个沙箱引用（Sandbox Ref）"},
+		"environments_delete": {"env-ref", "环境安装脚本仍被 1 个沙箱引用（Env Sandbox Ref）"},
+		"sandboxes_delete":    {"sandbox-ref", "沙箱仍被 1 个流程引用（Workflow Ref）"},
+	} {
+		d := assistantDraft{Tool: tool, Body: json.RawMessage(`{"id":"` + tc.id + `"}`)}
+		if got := h.assistantDraftWarnings(d); len(got) != 1 || !strings.Contains(got[0], tc.want) {
+			t.Fatalf("%s warnings=%v, want %q", tool, got, tc.want)
+		}
+	}
 }
