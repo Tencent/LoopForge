@@ -73,7 +73,7 @@ func requirementConversation(issue domain.Issue, runs []domain.Run) *domain.Requ
 		}
 		workspaces++
 		for _, rc := range run.RepositoryContexts() {
-			branch := domain.RequirementBranch{Repository: rc.Name, WebURL: rc.WebURL, BaseBranch: rc.BaseBranch, WorkBranch: rc.WorkBranch}
+			branch := domain.RequirementBranch{Repository: rc.Name, WebURL: domain.StripURLCredentials(rc.WebURL), BaseBranch: rc.BaseBranch, WorkBranch: rc.WorkBranch}
 			key := branch.Repository + "\x00" + branch.WorkBranch
 			if branch.Repository == "" || seen[key] {
 				continue

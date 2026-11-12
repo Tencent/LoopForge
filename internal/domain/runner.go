@@ -390,12 +390,14 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	if copyInvocation.Repository != nil {
 		copyRepository := *copyInvocation.Repository
 		copyRepository.GitToken = ""
+		copyRepository.CloneURL = StripURLCredentials(copyRepository.CloneURL)
 		copyInvocation.Repository = &copyRepository
 	}
 	if len(copyInvocation.Repositories) > 0 {
 		copyRepositories := make([]RunnerRepository, len(copyInvocation.Repositories))
 		for i, repository := range copyInvocation.Repositories {
 			repository.GitToken = ""
+			repository.CloneURL = StripURLCredentials(repository.CloneURL)
 			copyRepositories[i] = repository
 		}
 		copyInvocation.Repositories = copyRepositories
