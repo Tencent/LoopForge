@@ -84,3 +84,51 @@ func TestMergeLatestIntegrationAutoResolvesSOPDeliverableConflict(t *testing.T) 
 		t.Fatal("SOP-only integration conflict left the merge in progress")
 	}
 }
+
+func TestMergeLatestIntegrationCompletesRepairedConflictOnNextCall(t *testing.T) {
+	_, work := mergeOriginFixture(t, "file.txt")
+	ctx := context.Background()
+	if conflicts, err := MergeLatestIntegration(ctx, work, "work", "main", "test"); err != nil || len(conflicts) != 1 {
+		t.Fatalf("first integration merge = %#v, %v", conflicts, err)
+	}
+	// A repair agent resolves and stages the conflict in the same checkout but
+	// leaves the merge uncommitted; the next call must finish it.
+	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("resolved\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cvSRunGit(t, "-C", work, "add", "file.txt")
+	conflicts, err := MergeLatestIntegration(ctx, work, "work", "main", "test")
+	if err != nil || len(conflicts) != 0 {
+		t.Fatalf("repaired integration merge = %#v, %v", conflicts, err)
+	}
+	if mergeInProgress(t, work) {
+		t.Fatal("repaired merge is still in progress")
+	}
+	if _, ok := RevParse(ctx, work, "HEAD^2"); !ok {
+		t.Fatal("repaired merge was not committed as a merge commit")
+	}
+	if got, err := os.ReadFile(filepath.Join(work, "file.txt")); err != nil || string(got) != "resolved\n" {
+		t.Fatalf("resolved content = %q, %v", got, err)
+	}
+}
+
+func TestMergeOriginBranchFetchFailureReturnsError(t *testing.T) {
+	_, work := mergeOriginFixture(t, "file.txt")
+	ctx := context.Background()
+	before, ok := RevParse(ctx, work, "HEAD")
+	if !ok {
+		t.Fatal("missing HEAD")
+	}
+	if conflicts, err := MergeLatestRemoteBranch(ctx, work, "missing-branch"); err == nil || conflicts != nil {
+		t.Fatalf("remote merge of missing branch = %#v, %v", conflicts, err)
+	}
+	if conflicts, err := MergeLatestIntegration(ctx, work, "work", "missing-branch", "test"); err == nil || conflicts != nil {
+		t.Fatalf("integration merge of missing branch = %#v, %v", conflicts, err)
+	}
+	if after, _ := RevParse(ctx, work, "HEAD"); after != before {
+		t.Fatalf("fetch failure moved HEAD from %s to %s", before, after)
+	}
+	if mergeInProgress(t, work) {
+		t.Fatal("fetch failure left a merge in progress")
+	}
+}
