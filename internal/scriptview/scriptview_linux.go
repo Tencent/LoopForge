@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,27 +118,9 @@ func removeMasks(targets []string) error {
 		return fmt.Errorf("open script instruction mask root: %w", err)
 	}
 	defer root.Close()
-	sources := make([]unix.Stat_t, 0, 2)
-	for _, name := range []string{".agentflow/isolation/empty-file", ".agentflow/isolation/empty-dir"} {
-		source, err := root.Open(name)
-		if err != nil {
-			return fmt.Errorf("open platform instruction mask source: %w", err)
-		}
-		var stat unix.Stat_t
-		var fs unix.Statfs_t
-		statErr := unix.Fstat(int(source.Fd()), &stat)
-		fsErr := unix.Fstatfs(int(source.Fd()), &fs)
-		_ = source.Close()
-		if statErr != nil {
-			return fmt.Errorf("inspect platform instruction mask source: %w", statErr)
-		}
-		if fsErr != nil {
-			return fmt.Errorf("inspect platform instruction mask source: %w", fsErr)
-		}
-		if fs.Flags&unix.ST_RDONLY == 0 {
-			return fmt.Errorf("platform instruction mask source is not read-only")
-		}
-		sources = append(sources, stat)
+	sources, err := maskSources(root)
+	if err != nil {
+		return err
 	}
 	// /proc/self refers to the Go process leader, which still belongs to the
 	// helper's original namespace. Only the locked calling thread entered the
@@ -147,16 +130,8 @@ func removeMasks(targets []string) error {
 		return fmt.Errorf("read workspace script mounts: %w", err)
 	}
 	defer file.Close()
-	mounts := make(map[string]bool)
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 4096), 1024*1024)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) >= 6 {
-			mounts[decodeMountPath(fields[4])] = true
-		}
-	}
-	if err := scanner.Err(); err != nil {
+	mounts, err := mountTargets(file)
+	if err != nil {
 		return fmt.Errorf("read workspace script mounts: %w", err)
 	}
 	for _, target := range targets {
@@ -166,27 +141,9 @@ func removeMasks(targets []string) error {
 			// although it no longer exists at this path in the namespace.
 			continue
 		}
-		file, err := root.Open(strings.TrimPrefix(target, "/workspace/"))
+		owned, err := ownedMask(root, target, sources)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("inspect script instruction mask %s: %w", target, err)
-		}
-		var stat unix.Stat_t
-		var fs unix.Statfs_t
-		statErr := unix.Fstat(int(file.Fd()), &stat)
-		fsErr := unix.Fstatfs(int(file.Fd()), &fs)
-		_ = file.Close()
-		if statErr != nil || fsErr != nil {
-			return fmt.Errorf("inspect script instruction mask %s: %w", target, errors.Join(statErr, fsErr))
-		}
-		owned := false
-		for _, source := range sources {
-			if stat.Dev == source.Dev && stat.Ino == source.Ino && stat.Mode&unix.S_IFMT == source.Mode&unix.S_IFMT && fs.Flags&unix.ST_RDONLY != 0 {
-				owned = true
-				break
-			}
+			return err
 		}
 		if !owned {
 			// A stale dentry or unrelated user-provided mount is not ours to
@@ -200,6 +157,77 @@ func removeMasks(targets []string) error {
 		}
 	}
 	return nil
+}
+
+// maskSources returns the stat of the platform's read-only empty file and
+// empty directory that every instruction mask is bind-mounted from.
+func maskSources(root *os.Root) ([]unix.Stat_t, error) {
+	sources := make([]unix.Stat_t, 0, 2)
+	for _, name := range []string{".agentflow/isolation/empty-file", ".agentflow/isolation/empty-dir"} {
+		source, err := root.Open(name)
+		if err != nil {
+			return nil, fmt.Errorf("open platform instruction mask source: %w", err)
+		}
+		var stat unix.Stat_t
+		var fs unix.Statfs_t
+		statErr := unix.Fstat(int(source.Fd()), &stat)
+		fsErr := unix.Fstatfs(int(source.Fd()), &fs)
+		_ = source.Close()
+		if statErr != nil {
+			return nil, fmt.Errorf("inspect platform instruction mask source: %w", statErr)
+		}
+		if fsErr != nil {
+			return nil, fmt.Errorf("inspect platform instruction mask source: %w", fsErr)
+		}
+		if fs.Flags&unix.ST_RDONLY == 0 {
+			return nil, fmt.Errorf("platform instruction mask source is not read-only")
+		}
+		sources = append(sources, stat)
+	}
+	return sources, nil
+}
+
+// mountTargets collects the decoded mount points listed in a mountinfo stream.
+func mountTargets(mountinfo io.Reader) (map[string]bool, error) {
+	mounts := make(map[string]bool)
+	scanner := bufio.NewScanner(mountinfo)
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 6 {
+			mounts[decodeMountPath(fields[4])] = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return mounts, nil
+}
+
+// ownedMask reports whether target is still a read-only bind of one of the
+// platform mask sources. A target that no longer exists is not owned.
+func ownedMask(root *os.Root, target string, sources []unix.Stat_t) (bool, error) {
+	file, err := root.Open(strings.TrimPrefix(target, "/workspace/"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect script instruction mask %s: %w", target, err)
+	}
+	var stat unix.Stat_t
+	var fs unix.Statfs_t
+	statErr := unix.Fstat(int(file.Fd()), &stat)
+	fsErr := unix.Fstatfs(int(file.Fd()), &fs)
+	_ = file.Close()
+	if statErr != nil || fsErr != nil {
+		return false, fmt.Errorf("inspect script instruction mask %s: %w", target, errors.Join(statErr, fsErr))
+	}
+	for _, source := range sources {
+		if stat.Dev == source.Dev && stat.Ino == source.Ino && stat.Mode&unix.S_IFMT == source.Mode&unix.S_IFMT && fs.Flags&unix.ST_RDONLY != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func applyMasks(targets []string) error {
