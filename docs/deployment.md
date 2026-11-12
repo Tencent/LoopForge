@@ -120,6 +120,8 @@ studio.example.com, preview.example.net {
 
 Configure DNS and TLS for both names. Compose forwards both variables; restart with `./start.sh` after changing `.env`. Native deployments export the same variables. For local HTTP development, use `http://localhost:8090` for previews and `http://127.0.0.1:8090` for the studio, listing the latter in `FRAME_ANCESTORS`.
 
+The studio's iframe policy allows the validated preview origin. Preview frames, copied links and standalone windows use the server-issued URL unchanged. When the studio uses HTTPS, configure an HTTPS preview URL too; browsers block HTTP frames as mixed content.
+
 The server serves preview tokens only on the preview hostname and returns 404 for platform pages/APIs there. Session creation fails with a configuration error until an isolated origin and the requesting studio hostname are configured. Archiving and the authenticated ZIP download API remain available. Existing same-origin preview links stop working; reopen the preview after configuring the isolated host. No SQL migration or runner upgrade is needed.
 
 Preview bundles can use ES modules, local styles/assets and the existing History API routing shim. Bundle external scripts, styles and fonts locally. CSP blocks nested frames, workers/service workers, and resource requests to the studio; backend connections require a configured backend URL on a non-studio hostname and that backend's CORS support. Preview/backend cookies and storage are separate from studio credentials. The optional backend interceptor is a convenience, not an isolation boundary. Previews share their dedicated origin with each other; this does not provide isolation between preview producers.

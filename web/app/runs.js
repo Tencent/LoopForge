@@ -662,50 +662,6 @@ function shouldPatchRunLive(run){
   if(runPreviewDeclared(run)&&!host.querySelector('[data-run-tab="preview"]'))return false;
   return true;
 }
-function previewCandidateHttpsURL(rawUrl){
-  if(!rawUrl)return '';
-  try{
-    const u=new URL(rawUrl,window.location.href);
-    if(u.protocol==='http:'){
-      u.protocol='https:';
-      if(u.port==='80')u.port='';
-    }
-    return u.href;
-  }catch(e){
-    return rawUrl;
-  }
-}
-async function resolvePreviewSessionURL(rawUrl){
-  if(!rawUrl)return '';
-  try{
-    const parsed=new URL(rawUrl,window.location.href);
-    if(parsed.protocol==='https:')return parsed.href;
-    const httpsCandidate=previewCandidateHttpsURL(rawUrl);
-    if(httpsCandidate===rawUrl)return rawUrl;
-
-    const controller=typeof AbortController!=='undefined'?new AbortController():null;
-    const timer=controller?setTimeout(()=>controller.abort(),2500):null;
-    try{
-      const resp=await fetch(httpsCandidate,{
-        method:'HEAD',
-        signal:controller?.signal,
-        credentials:'omit'
-      });
-      if(timer)clearTimeout(timer);
-      if(resp.ok||resp.status<500){
-        return httpsCandidate;
-      }
-    }catch(err){
-      if(timer)clearTimeout(timer);
-      if(window.location.protocol!=='https:'){
-        return rawUrl;
-      }
-    }
-    return httpsCandidate;
-  }catch(e){
-    return rawUrl;
-  }
-}
 function previewPaneHTML(run){
   const pv=state.runPreview;
   if(!runPreviewDeclared(run)&&!(pv&&pv.runId===run.id&&pv.info)){
@@ -734,7 +690,8 @@ function previewPaneHTML(run){
   const backend=String(session.backendUrl||pv.backendUrl||pv.info?.backendUrl||'').trim();
   const backendLabel=backend?`<code title="${escapeHTML(backend)}">${escapeHTML(backend)}</code>`:'<em>未设置</em>';
   const backendAction=backend?'更改':'设置';
-  const frameUrl=window.location.protocol==='https:'?previewCandidateHttpsURL(session.url):session.url;
+  // The server signs a URL on the configured preview origin; do not probe or rewrite it.
+  const frameUrl=session.url;
   return `<section class="run-preview-pane"><div class="run-preview-toolbar"><span>预览 · ${escapeHTML(info.entryFile||'index.html')} · ${info.fileCount||0} 个文件</span><div class="run-preview-backend"><small>当前后端</small>${backendLabel}<button type="button" class="button ghost small" data-preview-backend-edit>${backendAction}</button></div><div><button type="button" class="button ghost small" data-preview-download title="下载完整静态站点 ZIP 包">下载静态文件</button><button class="button ghost small" data-preview-refresh>刷新</button><button class="button ghost small" data-preview-copy>复制地址</button><button class="button ghost small" data-preview-open>独立窗口</button></div></div><iframe data-preview-frame data-run-id="${escapeHTML(run.id)}" title="前端预览" src="${escapeHTML(frameUrl)}" sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-same-origin" referrerpolicy="no-referrer"></iframe></section>`;
 }
 function stopPreviewPoll(){
@@ -783,9 +740,6 @@ async function loadRunPreview(runId,opts){
     const needRenew=!!(opts?.renewSession||!session||session.previewId!==info.id||String(session.backendUrl||'').trim()!==backend);
     if(info.status==='ready'&&needRenew){
       session=await api(`/api/runs/${encodeURIComponent(runId)}/preview/session`,{method:'POST',body:JSON.stringify({backendUrl:backend}),silent:!!silent});
-    }
-    if(session?.url){
-      session.url=await resolvePreviewSessionURL(session.url);
     }
     if(state.activeRun?.id!==runId)return;
     persistPreviewBackend(runId, session?.backendUrl||backend);
@@ -873,10 +827,7 @@ async function editPreviewBackend(run){
       body:JSON.stringify({backendUrl:next})
     });
     persistPreviewBackend(run.id, next);
-    let session=res?.session||null;
-    if(session?.url){
-      session.url=await resolvePreviewSessionURL(session.url);
-    }
+    const session=res?.session||null;
     const info=res?.preview||state.runPreview?.info||null;
     state.runPreview={
       runId:run.id,

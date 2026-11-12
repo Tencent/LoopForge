@@ -2147,35 +2147,16 @@ assert.ok(code.includes("r.status==='failed'&&!gongfengIssueClosed(ctx.issue)"))
 	}
 }
 
-func TestPreviewIframeHttpsFallback(t *testing.T) {
+func TestPreviewSessionURL(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node not installed; skipping preview https fallback test")
+		t.Skip("node not installed")
 	}
-	script := `
-const assert = require('node:assert/strict');
-const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-assert.ok(code.includes('function previewCandidateHttpsURL('), 'must declare previewCandidateHttpsURL');
-assert.ok(code.includes('async function resolvePreviewSessionURL('), 'must declare resolvePreviewSessionURL');
-assert.ok(code.includes('session.url=await resolvePreviewSessionURL(session.url)'), 'loadRunPreview must resolve session url');
-
-// Test previewCandidateHttpsURL logic
-const start = code.indexOf('function previewCandidateHttpsURL(');
-const end = code.indexOf('async function resolvePreviewSessionURL(');
-assert.ok(start >= 0 && end > start);
-eval(code.slice(start, end));
-
-global.window = { location: { href: 'https://loopforge-test.example.com/runs', protocol: 'https:' } };
-assert.equal(previewCandidateHttpsURL('http://loopforge-test.example.com/preview/token/'), 'https://loopforge-test.example.com/preview/token/');
-assert.equal(previewCandidateHttpsURL('http://loopforge-test.example.com:80/preview/token/'), 'https://loopforge-test.example.com/preview/token/');
-assert.equal(previewCandidateHttpsURL('https://loopforge-test.example.com/preview/token/'), 'https://loopforge-test.example.com/preview/token/');
-assert.equal(previewCandidateHttpsURL(''), '');
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("preview https fallback check failed: %v\n%s", err, out)
+	if out, err := exec.Command(node, "preview_session_test.js").CombinedOutput(); err != nil {
+		t.Fatalf("preview session URL interaction: %v\n%s", err, out)
 	}
 }
+
 func TestClarifyOptionToggleLogic(t *testing.T) {
 	app, err := readAppBundle()
 	if err != nil {

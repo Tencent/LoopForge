@@ -704,11 +704,12 @@ func (s *Service) DeleteForRun(runID string) error {
 }
 
 func (s *Service) PublicURL(token string, _ *http.Request) string {
-	if _, _, err := s.isolatedOrigins(); err != nil {
+	origin := s.PublicOrigin()
+	if origin == "" {
 		return ""
 	}
 	// The serving origin is deployment configuration, never a request header.
-	return s.cfg.PublicScheme + "://" + s.cfg.PublicHost + PreviewBasePath(token) + "/"
+	return origin + PreviewBasePath(token) + "/"
 }
 
 func (s *Service) event(runID, typ, msg string) {

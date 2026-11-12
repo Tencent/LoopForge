@@ -12,6 +12,19 @@ import (
 
 var ErrIsolatedOriginRequired = errors.New("preview requires AGENTFLOW_PREVIEW_PUBLIC_URL on a separate hostname and explicit studio origins in AGENTFLOW_PREVIEW_FRAME_ANCESTORS")
 
+// PublicOrigin returns the validated serving origin for the studio's frame-src
+// policy. Reuse the gateway's isolation checks; invalid config must not widen CSP.
+func (s *Service) PublicOrigin() string {
+	if !s.Enabled() {
+		return ""
+	}
+	public, _, err := s.isolatedOrigins()
+	if err != nil {
+		return ""
+	}
+	return public.Scheme + "://" + public.Host
+}
+
 // isolatedOrigins accepts only explicit origins. In particular, a different
 // port on the studio hostname does not isolate its host-only session cookie.
 func (s *Service) isolatedOrigins() (*url.URL, []*url.URL, error) {

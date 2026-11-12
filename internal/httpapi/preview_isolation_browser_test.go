@@ -19,10 +19,13 @@ import (
 	"agentflow/internal/preview"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
+
+	"github.com/gin-gonic/gin"
 )
 
 // This exercises a real archived bundle through the platform's preview
-// middleware. The parent has a real signed viewer cookie, not a mock API.
+// middleware. The fixture parent uses the studio root's production middleware
+// (including its CSP) and a real signed viewer cookie, not a mock API.
 func TestPreviewIsolationBrowser(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
@@ -109,13 +112,19 @@ parent.postMessage(result, studio);`,
 	var previewURL string
 	var currentPreviewURL atomic.Value
 	var tokenRequests atomic.Int32
-	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host == server.Listener.Addr().String() && r.URL.Path == "/viewer" {
-			http.SetCookie(w, &http.Cookie{Name: authCookieName, Value: signed, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
-			w.Header().Set("Content-Type", "text/html")
-			urlJSON, _ := json.Marshal(currentPreviewURL.Load().(string))
-			fmt.Fprintf(w, `<html><body><pre id="result">pending</pre><script>
+	// Register the fixture on New's router so it cannot bypass securityHeaders.
+	// Use an external script, as the studio CSP deliberately forbids inline JS.
+	handler.GET("/", func(c *gin.Context) {
+		http.SetCookie(c.Writer, &http.Cookie{Name: authCookieName, Value: signed, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+		c.Data(http.StatusOK, "text/html", []byte(`<html><body><pre id="result">pending</pre><script src="/preview-test.js"></script></body></html>`))
+	})
+	handler.GET("/preview-test.js", func(c *gin.Context) {
+		urlJSON, _ := json.Marshal(currentPreviewURL.Load().(string))
+		c.Data(http.StatusOK, "application/javascript", []byte(fmt.Sprintf(`
 (async () => {
+  addEventListener('securitypolicyviolation', e => {
+    document.querySelector('#result').textContent = 'parent CSP blocked ' + e.effectiveDirective;
+  });
   const current = await fetch('/api/auth/current').then(r => r.json());
   if (current.user?.loginName !== 'preview-viewer') { document.querySelector('#result').textContent = 'viewer not authenticated'; return; }
   const url = %s;
@@ -127,9 +136,9 @@ parent.postMessage(result, studio);`,
   frame.sandbox = 'allow-scripts allow-forms allow-modals allow-downloads allow-same-origin';
   frame.src = url;
   document.body.append(frame);
-})();</script></body></html>`, urlJSON)
-			return
-		}
+})();`, urlJSON)))
+	})
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host == server.Listener.Addr().String() && r.URL.Path == "/api/auth/tokens" {
 			tokenRequests.Add(1)
 		}
@@ -153,7 +162,7 @@ parent.postMessage(result, studio);`,
 			t.Fatal(err)
 		}
 		currentPreviewURL.Store(previewURL)
-		for _, target := range []string{studio + "/viewer", previewURL} {
+		for _, target := range []string{studio + "/", previewURL} {
 			state, err := runtime.HandleBrowser(ctx, browserID, domain.BrowserRequest{Operation: "navigate", URL: target, WithSnapshot: true})
 			if err != nil {
 				t.Fatal(err)

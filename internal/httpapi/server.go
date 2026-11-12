@@ -210,7 +210,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		}
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
-	g.Use(logging(), securityHeaders(), cors(), gzipMaybe())
+	g.Use(logging(), securityHeaders(e.Preview()), cors(), gzipMaybe())
 	g.Use(api.tokens.userAccessAuth())
 	if basicUser != "" && basicPass != "" {
 		g.Use(basicAuth(basicUser, basicPass))
