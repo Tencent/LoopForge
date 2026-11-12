@@ -54,6 +54,7 @@ import MentionPicker from "./MentionPicker";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
 import { mentionAt, insertMention } from "./mentions.js";
+import { elementTitle } from "./element-context.js";
 import HarnessIcon from "./HarnessIcon";
 import QueuedMessages from "./QueuedMessages";
 import "./message-queue.css";
@@ -814,6 +815,16 @@ export default function App() {
     closeMenu();
     input.current?.focus();
   }
+  // addElementReference takes an element picked in the native preview: it
+  // rides along as a reference chip, without a token in the text.
+  function addElementReference(ref) {
+    if (references.length >= 12) {
+      chat.setError("每轮最多引用 12 个对象。");
+      return;
+    }
+    setReferences((old) => [...old, ref]);
+    requestAnimationFrame(() => input.current?.focus());
+  }
   function addReference(ref) {
     if (
       references.length >= 12 &&
@@ -1509,8 +1520,16 @@ export default function App() {
                           {message.references?.length ? (
                             <div className="message-references">
                               {message.references.map((ref) => (
-                                <span key={ref.type + ref.id}>
-                                  @{ref.name || ref.id}
+                                <span
+                                  key={ref.type + ref.id}
+                                  title={ref.type === "element" ? elementTitle(ref) : undefined}
+                                >
+                                  {ref.type === "element" ? (
+                                    <HarnessIcon name="crosshair" size={12} />
+                                  ) : (
+                                    "@"
+                                  )}
+                                  {ref.name || ref.id}
                                 </span>
                               ))}
                             </div>
@@ -1843,9 +1862,15 @@ export default function App() {
                       {references.map((ref) => (
                         <span
                           key={ref.type + ref.id}
-                          className="composer-attachment-file"
+                          className={`composer-attachment-file${ref.type === "element" ? " is-element" : ""}`}
+                          title={ref.type === "element" ? elementTitle(ref) : undefined}
                         >
-                          @{ref.name || ref.id}
+                          {ref.type === "element" ? (
+                            <HarnessIcon name="crosshair" size={13} />
+                          ) : (
+                            "@"
+                          )}
+                          {ref.name || ref.id}
                           <button
                             aria-label={`移除引用 ${ref.name || ref.id}`}
                             onClick={() => {
@@ -2134,6 +2159,7 @@ export default function App() {
           workspaceRunId={workspaceRunId}
           browserRequest={browserRequest}
           onBrowserRequestHandled={browserRequestHandled}
+          onAddElement={chat.readOnly ? null : addElementReference}
           onClose={() => setPanel(false)}
         />
       ) : null}
