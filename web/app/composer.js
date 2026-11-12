@@ -671,9 +671,13 @@ function clearRequirementComposer(){
 function paintRequirementComposerChrome(){
   const picker=$('#reqClarifyModelPicker');
   if(picker){
-    bindClarifyModelPicker(picker);
+    const scope=clarifyScopeForComposer();
+    bindClarifyModelPicker(picker,scope);
     const api=window.AgentFlowAssistantModels,toggle=picker.querySelector('[data-model-toggle]');
-    if(api&&toggle)api.paint(toggle, selectedClarifyModel());
+    if(!api||!toggle)return;
+    api.paint(toggle, clarifyEffectiveModel(clarifyEngineCatalogCached(scope),null));
+    // 可用性到了才能把标签刷成真正会用的那个框架。
+    if(scope)clarifyEngineCatalog(scope).then(catalog=>{if(catalog)api.paint(toggle, clarifyEffectiveModel(catalog,null))});
   }
 }
 function resetRequirementComposerState(){
@@ -855,6 +859,7 @@ async function sendChatClarify(retry, explicit){
   persistRequirementComposer();
   try{
     const project=currentProject();
+    const clarifyModel=await clarifyModelForSend(clarifyScopeForComposer(),null);
     const resp=await fetch('/api/chat-clarify',{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({
       projectId:project.id,
       repositoryId:selectedReqRepositoryId(),
@@ -863,7 +868,7 @@ async function sendChatClarify(retry, explicit){
       title:chatHistory[0]?.content?.slice(0,80)||msg.slice(0,80),
       description:chatHistory.filter(h=>h.role==='user').map(h=>h.content).join('\n\n'),
       message:msg,
-      model:selectedClarifyModel(),
+      model:clarifyModel,
       sessionId:chatClarifySessionId,
       jobId:chatClarifyJobId,
       history:chatHistory

@@ -100,7 +100,7 @@ vm.runInContext(moduleSource, ctx);
   assert.equal(api.catalog().models.length, 2, 'catalog adopts /api/assistant/models');
 
   // Pull the real picker helpers out of the bundle and bind them to the stub host.
-  for (const name of ['selectedClarifyModel', 'setClarifyModel', 'bindClarifyModelPicker']) {
+  for (const name of ['selectedClarifyModel', 'setClarifyModel', 'clarifyEngineCacheKey', 'clarifyEngineCatalogCached', 'clarifyPickerGroups', 'clarifyEffectiveModel', 'bindClarifyModelPicker']) {
     const start = bundle.search(new RegExp('^function ' + name + '\\(', 'm'));
     assert.ok(start >= 0, `${name} is missing from the app bundle`);
     const rest = bundle.slice(start);

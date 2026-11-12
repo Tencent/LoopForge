@@ -2358,6 +2358,13 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-chevron{display:inline-flex;color:var(--cr-tertiary);transition:transform .3s var(--cr-fold),color .16s}
 .credential-row.is-open .credential-chevron{color:var(--cr-text);transform:rotate(180deg)}
 
+/* 需求澄清的默认框架行：状态文字 + 失效提示 + 一个框架选择器。 */
+.clarify-pref-row .credential-row-end{gap:8px}
+.clarify-pref-state{color:var(--cr-muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.clarify-pref-stale{color:#b45309;background:rgba(251,191,36,.16);border-radius:99px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap}
+.clarify-pref-row .clarify-model-field{width:auto!important;min-width:0!important}
+.clarify-pref-row .clarify-model-field .ai-model-menu{left:auto;right:0;top:calc(100% + 6px);bottom:auto}
+
 /* StatusBadge: .hui-badge from app/harness-ui.css */
 .credential-status.is-swap{animation:credentialSwap .5s var(--cr-spring)}
 @keyframes credentialSwap{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:none}}

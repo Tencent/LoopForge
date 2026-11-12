@@ -160,6 +160,31 @@ function restoreIssueClarifyDraft(host,draft){
     if(input){input.focus?.();restoreIssueClarifySelection(input,draft.focus.sel)}
   }
 }
+// paintIssueClarifyAvailability 只局部刷新责任人提示和选择器标签：重绘整块会抹掉用户
+// 正在输入的答案（renderIssueDetailTab 里那个跳过重绘的保护就是为这个）。
+function paintIssueClarifyAvailability(issue){
+  const host=$('#issueDetailBody');
+  if(!host||!issue)return;
+  const workspace=host.querySelector('.clarify-workspace');
+  if(!workspace)return;
+  const catalog=clarifyEngineCatalogCached(clarifyScopeForIssue(issue));
+  if(!catalog)return;
+  const existing=workspace.querySelector('.clarify-responsible-hint');
+  const hintHTML=clarifyResponsibleHint(catalog);
+  if(!hintHTML){
+    if(existing)existing.remove();
+  }else if(existing){
+    existing.outerHTML=hintHTML;
+  }else{
+    const intro=workspace.querySelector('.clarify-intro');
+    if(intro)intro.insertAdjacentHTML('afterend',hintHTML);
+    else workspace.insertAdjacentHTML('afterbegin',hintHTML);
+  }
+  const toggle=workspace.querySelector('[data-clarify-model] .ai-model-toggle');
+  if(toggle&&!issue.clarification?.modelId&&window.AgentFlowAssistantModels){
+    window.AgentFlowAssistantModels.paint(toggle, clarifyEffectiveModel(catalog,null));
+  }
+}
 function renderIssueDetailTab(){
   const data=state.issueDetailData;const host=$('#issueDetailBody');if(!data||!host)return;
   const issue=data.issue;if(!issue){host.innerHTML='<div class="detail-empty">未找到该需求</div>';renderedIssueClarifyKey='';return}
@@ -219,7 +244,11 @@ function renderIssueDetailTab(){
       if(!wasSelected)b.classList.add('selected');
     }
   });
-  host.querySelectorAll('[data-clarify-model]').forEach(bindClarifyModelPicker);
+  host.querySelectorAll('[data-clarify-model]').forEach(el=>bindClarifyModelPicker(el, clarifyScopeForIssue(issue), issue.clarification?.modelId||''));
+  const clarifyScope=clarifyScopeForIssue(issue);
+  if(clarifyScope&&!clarifyEngineCatalogCached(clarifyScope))clarifyEngineCatalog(clarifyScope).then(()=>{
+    if(state.issueDetailData?.issue?.id===issue.id&&state.issueDetailTab==='clarify')paintIssueClarifyAvailability(issue);
+  });
   bindWaitingActions(host);
   if(state.issueDetailTab==='clarify'&&issueClarifying(issue.id))restoreIssueClarifyThinking(issue.id);
   if(clarifyDraft)restoreIssueClarifyDraft(host,clarifyDraft);
@@ -421,7 +450,7 @@ async function sendIssueClarification(initialMessage=''){
   renderIssueDetailTab();
   renderIssues();
   try{
-    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model:selectedClarifyModel()}),signal:abort.signal});
+    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model:await clarifyModelForSend(clarifyScopeForIssue(issue),issue)}),signal:abort.signal});
     if(!resp.ok){let em=`HTTP ${resp.status}`;try{const d=await resp.json();em=d.error||em}catch{}throw new Error(em)}
     const data=(resp.headers.get('Content-Type')||'').includes('text/event-stream')?await consumeIssueClarifyStream(resp,issueId):await resp.json();
     await applyIssueClarifyDone(issueId,data);
@@ -584,7 +613,7 @@ function clarifyPane(issue,project){
   const submittedHTML=analyzing?clarifySubmittedHTML(saved?.reply):'';
   if(c.status!=='in_progress'&&!analyzing){
     const intro=`<div class="clarify-orb">?</div><h3>描述不够清楚？一起问明白</h3><p>可选步骤。分析师只围绕这张单本身，结合本项目代码问清阻塞开工的细节；不澄清也可以直接触发 SOP。</p>`;
-    return `<div class="clarify-workspace clarify-empty">${intro}<div class="clarify-start-row">${clarifyModelPickerHTML(false)}<button class="button primary" data-start-clarify>开始澄清</button></div></div>`;
+    return `<div class="clarify-workspace clarify-empty">${intro}${clarifyResponsibleHint(clarifyEngineCatalogCached(clarifyScopeForIssue(issue)))}<div class="clarify-start-row">${clarifyModelPickerHTML(false,clarifyEffectiveModel(clarifyEngineCatalogCached(clarifyScopeForIssue(issue)),issue))}<button class="button primary" data-start-clarify>开始澄清</button></div></div>`;
   }
   const lastError=(!analyzing&&c.lastError)?`<div class="clarify-error req-clarify-retry"><span>${escapeHTML(c.lastError)}</span><button type="button" class="button primary small" data-retry-clarify-turn>重新分析</button></div>`:'';
   const rounds=(c.history||[]).filter(m=>m.role==='assistant').length;
@@ -592,7 +621,7 @@ function clarifyPane(issue,project){
   const roundNote=(!analyzing&&!c.lastError)?`已澄清 ${rounds||0} 轮。`:'';
   const nextHint=analyzing?'正在后台分析，关闭详情不会中断':(c.lastError?'上次分析未完成，可重新分析':'回答后点「继续澄清」。分析师确认够用后会给出结论；也可以随时直接触发 SOP。');
   const composerInput=analyzing?'':`<textarea id="issueClarifyInput" rows="3" placeholder="${questions.length?'点选上面的答案，或补充说明':'补充你认为重要的信息'}">${escapeHTML(saved?.extra||'')}</textarea>`;
-  return `<div class="clarify-workspace"><div class="clarify-intro"><span>AI</span><div><b>${analyzing?'正在分析这张':'继续完善这张'}${issue.source==='gongfeng'?' Issue':'需求'}</b><small>${analyzing?'关闭详情不会中断，再打开可继续看过程':'每轮只问最关键的 1–3 个问题，只围绕这张单本身'}</small></div>${clarifyModelPickerHTML(analyzing)}</div>${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary compact">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${clarifyHistoryHTML(c)}${submittedHTML}${questionHTML}${lastError}<div id="issueClarifyThinking" class="req-thinking-stream" hidden></div><div class="issue-clarify-composer">${composerInput}<div><span id="issueClarifyHint">${nextHint}${roundNote?` <span>${roundNote}</span>`:''}</span><span><button class="button ghost small" data-stop-clarify ${analyzing?'':'hidden'}>停止</button> <button class="button primary small" data-continue-clarify${analyzing?' disabled':''}>${analyzing?'分析中…':(c.lastError?'重新分析':'继续澄清')}</button></span></div></div></div>`;
+  return `<div class="clarify-workspace"><div class="clarify-intro"><span>AI</span><div><b>${analyzing?'正在分析这张':'继续完善这张'}${issue.source==='gongfeng'?' Issue':'需求'}</b><small>${analyzing?'关闭详情不会中断，再打开可继续看过程':'每轮只问最关键的 1–3 个问题，只围绕这张单本身'}</small></div>${clarifyModelPickerHTML(analyzing,clarifyEffectiveModel(clarifyEngineCatalogCached(clarifyScopeForIssue(issue)),issue))}</div>${clarifyResponsibleHint(clarifyEngineCatalogCached(clarifyScopeForIssue(issue)))}${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary compact">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${clarifyHistoryHTML(c)}${submittedHTML}${questionHTML}${lastError}<div id="issueClarifyThinking" class="req-thinking-stream" hidden></div><div class="issue-clarify-composer">${composerInput}<div><span id="issueClarifyHint">${nextHint}${roundNote?` <span>${roundNote}</span>`:''}</span><span><button class="button ghost small" data-stop-clarify ${analyzing?'':'hidden'}>停止</button> <button class="button primary small" data-continue-clarify${analyzing?' disabled':''}>${analyzing?'分析中…':(c.lastError?'重新分析':'继续澄清')}</button></span></div></div></div>`;
 }
 function latestClarifyParsed(c){
   const rows=[...(c?.history||[])].reverse();

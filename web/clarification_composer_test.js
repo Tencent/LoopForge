@@ -17,6 +17,7 @@ const ctx = {
   escapeHTML:s=>String(s),clarifyRepoNoticeHTML:()=>'',
   clarifyThinkingReset:()=>{},persistRequirementComposer:()=>{persisted++},renderReqFooter:()=>{footer++},renderReqAnswerHistory:()=>{},
   selectedReqRepositoryId:()=>'r1',selectedReqRepositoryIds:()=>['r1'],selectedReqBaseBranch:()=>'feature/existing',selectedClarifyModel:()=>'test',
+  clarifyScopeForComposer:()=>({projectId:'p'}),clarifyModelForSend:async()=>'test',
   reqCurrentRepoSnapshot:()=>({ids:['r1'],baseBranch:'feature/existing'}),
   AbortController,
   fetch:async (url,init)=>{requests.push({url,body:JSON.parse(init.body)});return {ok:true}},

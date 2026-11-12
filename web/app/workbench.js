@@ -572,9 +572,77 @@ function credentialRowHTML(kind,user){
   const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key;
   return `<div class="credential-row${on?' is-configured':''}${open?' is-open':''}" data-credential-row="${kind.key}">${credentialRowMainHTML(kind,user)}<div class="credential-editor"><div><div class="credential-editor-inner">${on?credentialEditorHTML(kind,user):''}</div></div></div></div>`;
 }
+// 需求澄清的默认框架：一个偏好，不是凭据，所以走同一张凭据表的 PUT 接口保存，
+// 但单独占一行放在「模型与执行」组顶部。可用性与 AI 对话共用同一份引擎目录（当前用户的），
+// 选了跑不起来的组合由服务端在保存时拒绝并说明原因。
+function clarifySharedModelAPI(){return (typeof window!=='undefined'&&window.AgentFlowAssistantModels)||null}
+function clarifySettingsEngineGroups(){
+  const api=clarifySharedModelAPI(),catalog=api?.catalog?.()||{models:[],engines:[]};
+  const engines=(catalog.engines&&catalog.engines.length)?catalog.engines:[{id:'codebuddy',name:'CodeBuddy',configured:true}];
+  return engines.map(engine=>({
+    id:engine.id,
+    name:engine.name||engine.id,
+    reason:engine.configured?'':`请先在个人配置中配置 ${engine.name||engine.id} API Key`,
+    disabled:!engine.configured,
+    models:(catalog.models||[]).filter(model=>(api?.engineOf?.(model.id)||'codebuddy')===engine.id)
+  }));
+}
+function clarifyPreferenceStaleNote(user){
+  const model=(user&&user.clarifyModel)||'';
+  if(!model)return '';
+  const api=clarifySharedModelAPI();
+  const engine=api?.engineOf?.(model)||'codebuddy';
+  if(engine==='codebuddy')return '';
+  const option=(api?.catalog?.().engines||[]).find(item=>item.id===engine);
+  return option?.configured?'':`<span class="clarify-pref-stale">已失效，当前用 CodeBuddy</span>`;
+}
+function clarifyPreferenceLabel(user,modelId){
+  const api=clarifySharedModelAPI();
+  if(!modelId)return 'CodeBuddy 默认';
+  const listed=(api?.catalog?.().models||[]).find(model=>model.id===modelId);
+  return listed?.name||modelId;
+}
+function clarifyPreferenceRowHTML(user){
+  const selected=(user&&user.clarifyModel)||'';
+  return `<div class="credential-row clarify-pref-row" data-clarify-pref><div class="credential-row-main"><div class="credential-row-who"><b>需求澄清 · 默认框架与模型<span>偏好</span></b><small>新建需求和需求详情里的澄清默认用它；澄清时可以临时改，临时选择不写回这里。</small></div><div class="credential-row-end"><span class="clarify-pref-state">${escapeHTML(clarifyPreferenceLabel(user,selected))}</span>${clarifyPreferenceStaleNote(user)}<div class="clarify-model-field" id="clarifyPrefPicker" data-clarify-pref-picker><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="other">AI</span><span data-model-label>选择框架</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div></div></div>`;
+}
+async function saveClarifyPreference(modelId){
+  const user=state.currentUser;
+  if(!user?.id||!modelId)return;
+  try{
+    const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify({clarifyModel:modelId})});
+    storeCredentialUser(saved);
+    notifyCredentialsChanged();
+    toast('已保存需求澄清的默认框架','ok');
+  }catch(err){
+    toast(err.message||'保存失败','err');
+  }
+  renderCredentialPanel();
+}
+function bindClarifyPreferencePicker(){
+  const host=$('#clarifyPrefPicker');
+  if(!host)return;
+  const api=clarifySharedModelAPI(),toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
+  if(!api||!toggle||!menu)return;
+  const user=credentialUser(),selected=user.clarifyModel||'';
+  if(selected)api.paint(toggle,selected);
+  toggle.onclick=async e=>{
+    e.stopPropagation();
+    const open=menu.hidden;
+    menu.hidden=!open;
+    toggle.setAttribute('aria-expanded',open?'true':'false');
+    if(!open)return;
+    await api.load?.().catch(()=>{});
+    api.renderGrouped(menu, clarifySettingsEngineGroups(), selected||api.DEFAULT, id=>{
+      menu.hidden=true;
+      toggle.setAttribute('aria-expanded','false');
+      saveClarifyPreference(id);
+    });
+  };
+}
 function credentialGroupHTML(group,user){
   const kinds=CREDENTIAL_KINDS.filter(kind=>kind.group===group.id),done=kinds.filter(kind=>credentialConfigured(kind,user)).length,closed=!!credentialUI().closed[group.id];
-  return `<section class="credential-group" data-credential-group="${group.id}"><button type="button" class="credential-group-head credential-ink" aria-expanded="${!closed}">${credentialGlyph(group.icon,16)}<strong>${escapeHTML(group.name)}</strong><span class="credential-group-sub">${escapeHTML(group.sub)}</span><span class="credential-group-meta">${done} / ${kinds.length}</span><span class="credential-group-chevron">${credentialGlyph('chevron-down',15)}</span></button><div class="credential-fold${closed?' is-closed':''}"><div><div class="credential-rows">${kinds.map(kind=>credentialRowHTML(kind,user)).join('')}<p class="credential-empty" hidden></p></div></div></div></section>`;
+  return `<section class="credential-group" data-credential-group="${group.id}"><button type="button" class="credential-group-head credential-ink" aria-expanded="${!closed}">${credentialGlyph(group.icon,16)}<strong>${escapeHTML(group.name)}</strong><span class="credential-group-sub">${escapeHTML(group.sub)}</span><span class="credential-group-meta">${done} / ${kinds.length}</span><span class="credential-group-chevron">${credentialGlyph('chevron-down',15)}</span></button><div class="credential-fold${closed?' is-closed':''}"><div><div class="credential-rows">${group.id==='model'?clarifyPreferenceRowHTML(user):''}${kinds.map(kind=>credentialRowHTML(kind,user)).join('')}<p class="credential-empty" hidden></p></div></div></div></section>`;
 }
 function credentialProgressHTML(user){
   const done=CREDENTIAL_KINDS.filter(kind=>credentialConfigured(kind,user)).length,next=credentialNextKind(user);
@@ -610,6 +678,7 @@ function renderCredentialPanel(){
   if(typeof hydrateGitHubConnections==='function')hydrateGitHubConnections(panel);
   applyCredentialFilter(panel,user);
   hydrateCredentialIcons(panel);
+  bindClarifyPreferencePicker();
 }
 function repaintCredentialRow(key){
   const row=$(`#credentialPanel [data-credential-row="${key}"]`),kind=credentialKind(key);if(!row||!kind)return;

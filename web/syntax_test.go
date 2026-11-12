@@ -41,7 +41,7 @@ func TestClarifyModelPickerAndMCPPrompt(t *testing.T) {
 		"agentflow.clarifyModel",
 		"selectedClarifyModel",
 		"data-clarify-model",
-		"model:selectedClarifyModel()",
+		"model:clarifyModel,",
 	} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("clarify model picker is missing %q", want)
@@ -62,6 +62,11 @@ func TestClarifyEnginePickerChrome(t *testing.T) {
 		"/api/clarify-engines",
 		"clarifyResponsibleHint",
 		"clarifyEffectiveModel",
+		"clarifyModelForSend",
+		"clarifyScopeForIssue",
+		"paintIssueClarifyAvailability",
+		"saveClarifyPreference",
+		"clarifyPreferenceRowHTML",
 	} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("clarify engine picker is missing %q", want)

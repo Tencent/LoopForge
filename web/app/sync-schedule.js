@@ -108,8 +108,8 @@ function setClarifyModel(id){
   localStorage.setItem('agentflow.clarifyModel',id);
   $$('[data-clarify-model-value]').forEach(el=>{el.value=id});
 }
-function clarifyModelPickerHTML(disabled){
-  const id=escapeHTML(selectedClarifyModel());
+function clarifyModelPickerHTML(disabled,modelId){
+  const id=escapeHTML(modelId||selectedClarifyModel());
   return `<div class="clarify-model-field" data-clarify-model><input type="hidden" data-clarify-model-value value="${id}"><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"${disabled?' disabled':''}><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div>`;
 }
 // 澄清的框架可用性按需求责任人算：这张单（或这个项目）能选哪些框架、为什么不能选。
@@ -164,11 +164,29 @@ function clarifyResponsibleHint(catalog){
   if(!me||Number(catalog.responsibleUserId)===me)return '';
   return `<div class="clarify-responsible-hint"><span>澄清将使用这位责任人的凭据：</span><b>${escapeHTML(catalog.responsibleUserName||'')}</b></div>`;
 }
-function bindClarifyModelPicker(host,scope){
+// clarifyScopeForComposer / clarifyScopeForIssue：可用性要按「这张单的责任人」问，
+// 所以每个入口都得带上自己的作用域。
+function clarifyScopeForComposer(){
+  const project=(typeof currentProject==='function'?currentProject():null)||null;
+  const id=(project&&project.id)||'';
+  return id?{projectId:id}:null;
+}
+function clarifyScopeForIssue(issue){
+  const id=(issue&&issue.id)||(state?.issueDetailData?.issue?.id)||'';
+  return id?{issueId:id}:null;
+}
+// clarifyModelForSend：这张单记住的框架优先，其次浏览器里的临时选择，再次接口给的默认。
+async function clarifyModelForSend(scope,issue){
+  const stored=issue&&issue.clarification&&issue.clarification.modelId;
+  if(stored)return stored;
+  const catalog=await clarifyEngineCatalog(scope);
+  return clarifyEffectiveModel(catalog,issue);
+}
+function bindClarifyModelPicker(host,scope,pinned){
   if(!host)return;
   const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
   if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paint(toggle,keep)};
+  const paint=()=>{const keep=pinned||clarifyEffectiveModel(scope?clarifyEngineCatalogCached(scope):null,null);const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paint(toggle,keep)};
   api.load?.().then(paint).catch(paint);
   if(!bindClarifyModelPicker.docBound){
     bindClarifyModelPicker.docBound=true;
@@ -190,11 +208,12 @@ function bindClarifyModelPicker(host,scope){
     toggle.setAttribute('aria-expanded','false');
   };
   const render=catalog=>{
+    const current=pinned||clarifyEffectiveModel(catalog,null);
     if(catalog&&catalog.engines&&catalog.engines.length){
-      api.renderGrouped(menu, clarifyPickerGroups(catalog), clarifyEffectiveModel(catalog,null), choose);
+      api.renderGrouped(menu, clarifyPickerGroups(catalog), current, choose);
       return;
     }
-    api.renderList(menu, selectedClarifyModel(), choose);
+    api.renderList(menu, current, choose);
   };
   toggle.onclick=e=>{
     e.stopPropagation();
