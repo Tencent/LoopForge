@@ -69,8 +69,8 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 **Why deploy to the cloud?**
 
+- **Collaborate from anywhere.** Teammates sign in to the same cloud workspace from their own browsers. One person files a requirement, another starts a shared project SOP, and a reviewer checks the artifacts and approves the work or sends it back. Everyone follows the same progress, approvals and PR from that requirement.
 - **Close your laptop and let runs continue.** Start an SOP before signing off and the cloud server can run it up to the approval gate. Scheduled jobs can start overnight, too.
-- **Hand off work from a browser.** Teammates can open the same requirement, see its progress, logs and artifacts, and approve a step or send it back for changes.
 - **Free up your development machine.** Run builds and tests for multiple SOPs in parallel, each in its own cloud Docker sandbox. Connect a runner for tasks that need local tools or private network access.
 
 See the [deployment guide](docs/deployment.md) for HTTPS and runner setup.
