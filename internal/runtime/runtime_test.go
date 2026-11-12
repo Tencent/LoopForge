@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -2471,5 +2472,42 @@ func TestProjectAgentGitIndexWaitsForBriefLiveLock(t *testing.T) {
 	}()
 	if err := ProtectProjectAgentGitIndex(context.Background(), workspace, "docker"); err != nil {
 		t.Fatalf("brief live lock failed preparation: %v", err)
+	}
+}
+
+// Cancelling the preparation (pause, run cancel) stops waiting on a live
+// .git/index.lock instead of holding the caller for the whole wait window.
+func TestProjectAgentGitIndexLockWaitStopsOnCancel(t *testing.T) {
+	workspace := t.TempDir()
+	testRuntimeGit(t, workspace, "init", "-b", "main")
+	testRuntimeGit(t, workspace, "config", "user.email", "agentflow@test.local")
+	testRuntimeGit(t, workspace, "config", "user.name", "AgentFlow Test")
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testRuntimeGit(t, workspace, "add", "AGENTS.md")
+	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
+	wait, poll := gitIndexLockWait, gitIndexLockPoll
+	gitIndexLockWait, gitIndexLockPoll = time.Minute, 20*time.Millisecond
+	defer func() { gitIndexLockWait, gitIndexLockPoll = wait, poll }()
+	lockPath := filepath.Join(workspace, ".git", "index.lock")
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(lockPath)
+	defer lock.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err = ProtectProjectAgentGitIndex(ctx, workspace, "docker")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cancelled wait error = %v, want context deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("cancelled wait took %s", elapsed)
+	}
+	if _, statErr := os.Stat(lockPath); statErr != nil {
+		t.Fatalf("live index lock was removed: %v", statErr)
 	}
 }
