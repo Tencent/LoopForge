@@ -248,16 +248,30 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 		t.Fatalf("shared warnings=%v", got)
 	}
 	const projectID = assistantAcceptanceProjectID
-	_ = st.PutRule(domain.RuleDefinition{ID: "rule-ref", Name: "Rule", ProjectID: projectID})
-	_ = st.PutSkill(domain.SkillDefinition{ID: "skill-ref", Name: "Skill", ProjectID: projectID})
-	_ = st.PutAgent(domain.AgentDefinition{ID: "agent-ref", Name: "Agent Ref", ProjectID: projectID, Rules: []string{"rule-ref"}, Skills: []string{"skill-ref"}})
-	_ = st.PutDockerfile(domain.DockerfileDefinition{ID: "docker-ref", Name: "Docker", ProjectID: projectID})
-	_ = st.PutEnvironment(domain.EnvironmentDefinition{ID: "env-ref", Name: "Env", ProjectID: projectID})
-	_ = st.PutSandbox(domain.SandboxProfile{ID: "sandbox-ref", Name: "Sandbox Ref", ProjectID: projectID, DockerfileID: "docker-ref", EnvironmentID: "env-ref"})
-	_ = st.PutWorkflow(domain.WorkflowDefinition{ID: "workflow-ref", Name: "Workflow Ref", ProjectID: projectID, SandboxProfileID: "sandbox-ref"})
-	_ = h.agentNamesReferencing("rule", "rule-ref")
-	_ = h.agentNamesReferencing("skill", "skill-ref")
-	_ = h.sandboxNamesReferencing("dockerfile", "docker-ref")
-	_ = h.sandboxNamesReferencing("environment", "env-ref")
-	_ = h.workflowNamesReferencingSandbox("sandbox-ref")
+	for _, err := range []error{
+		st.PutRule(domain.RuleDefinition{ID: "rule-ref", Name: "Rule", ProjectID: projectID}),
+		st.PutSkill(domain.SkillDefinition{ID: "skill-ref", Name: "Skill", ProjectID: projectID}),
+		st.PutAgent(domain.AgentDefinition{ID: "agent-ref", Name: "Agent Ref", ProjectID: projectID, Rules: []string{"rule-ref"}, Skills: []string{"skill-ref"}}),
+		st.PutDockerfile(domain.DockerfileDefinition{ID: "docker-ref", Name: "Docker", ProjectID: projectID, Content: "FROM scratch"}),
+		st.PutEnvironment(domain.EnvironmentDefinition{ID: "env-ref", Name: "Env", ProjectID: projectID}),
+		st.PutSandbox(domain.SandboxProfile{ID: "sandbox-ref", Name: "Sandbox Ref", ProjectID: projectID, Driver: "docker", DockerfileID: "docker-ref"}),
+		st.PutSandbox(domain.SandboxProfile{ID: "sandbox-env-ref", Name: "Env Sandbox Ref", ProjectID: projectID, Driver: "bwrap", EnvironmentID: "env-ref"}),
+		st.PutWorkflow(domain.WorkflowDefinition{ID: "workflow-ref", Name: "Workflow Ref", ProjectID: projectID, SandboxProfileID: "sandbox-ref"}),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, got := range map[string][]string{
+		"rule":        agentNamesReferencing(h.repo, "rule", "rule-ref"),
+		"skill":       agentNamesReferencing(h.repo, "skill", "skill-ref"),
+		"dockerfile":  sandboxNamesReferencing(h.repo, "dockerfile", "docker-ref"),
+		"environment": sandboxNamesReferencing(h.repo, "environment", "env-ref"),
+		"sandbox":     workflowNamesReferencingSandbox(h.repo, "sandbox-ref"),
+	} {
+		want := map[string]string{"rule": "Agent Ref", "skill": "Agent Ref", "dockerfile": "Sandbox Ref", "environment": "Env Sandbox Ref", "sandbox": "Workflow Ref"}[name]
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("%s references = %#v, want [%q]", name, got, want)
+		}
+	}
 }
