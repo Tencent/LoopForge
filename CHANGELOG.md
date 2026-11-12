@@ -1,6 +1,6 @@
 # Changelog
 
-Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
+Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. NLForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
 ## Unreleased
 
@@ -12,7 +12,7 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 - Platform releases also push `ccr.ccs.tencentyun.com/loopforge/loopforge` with the same tags as `ghcr.io/tencent/loopforge`. `compose.yaml` still pins GHCR. Install from Tencent Cloud with `LOOPFORGE_IMAGE=ccr.ccs.tencentyun.com/loopforge/loopforge:0.3.7 ./start.sh`.
 - A running SOP node animates its activity on the graph.
 - Approving a run reloads the queue from the server, so the waiting card disappears once execution continues.
-- LoopForge Local's Classic CodeBuddy hook keeps manual gates when PyYAML is not installed.
+- NLForge Local's Classic CodeBuddy hook keeps manual gates when PyYAML is not installed.
 - The TKE node-pool tool keeps the SDK error and CAM hint when its fallback query fails.
 
 No migrations are required.
@@ -45,7 +45,7 @@ No migrations are required.
 - Saving an unchanged workflow no longer creates a revision, and publishing the same content keeps the current version.
 - Malformed sign-ups no longer spend the per-IP login budget, and each server keeps its own password-attempt limits.
 - The image builds with Go 1.26.11 (GO-2026-6859). `scripts/install.sh` offers to install missing curl, Python and the Docker Compose plugin with apt, dnf, yum or Homebrew.
-- LoopForge Local supports DeepSeek Harness (DSH) and Hermes Agent.
+- NLForge Local supports DeepSeek Harness (DSH) and Hermes Agent.
 
 Existing installations may apply `migrations/026_assistant_session_reads.sql` and `migrations/027_cli_model_catalog.sql`; the platform also adds these tables and columns on startup.
 
@@ -84,11 +84,11 @@ Existing source-built installations switch to the published image on the next `.
 
 - Add the self-hosted platform implementation, including Main Bot workspace editing, durable workspace checkpoints, idle reclamation, and task-group SOP completion/reopening.
 - Add public password accounts, explicit catalog installation, GitHub issue/PR adapters, actor-scoped GitHub MCP credentials, language and theme preferences, local deployment and public acceptance checks.
-- Connect GitHub by copying a PIN and approving the built-in LoopForge application, then pick repositories; PAT entry remains available.
+- Connect GitHub by copying a PIN and approving the built-in NLForge application, then pick repositories; PAT entry remains available.
 - Choose the branch mode, base branch and per-repository branches when opening a conversation workspace; role dispatches report their collected deliverables.
 - Install as an ordinary Linux user through sudo, install from a published platform image, and reuse that image for default sandboxes.
 - Validate repository remote URLs and restrict SSO return URLs to the same site.
-- Integrate the original workflows as LoopForge Local under `local/`, with unified documentation, project policies and release history.
+- Integrate the original workflows as NLForge Local under `local/`, with unified documentation, project policies and release history.
 
 Existing installations apply `migrations/022_auth_integrations.sql` and `migrations/023_role_prompt.sql`. Creating a named workspace branch on a connected runner requires runner 0.9.1 or later.
 
@@ -110,7 +110,7 @@ The following releases predate the platform edition.
 
 ### 0.2.1
 
-- Added `tools/tcmcp`, a Tencent Cloud read-only MCP Initializr that is documented and run separately from `loopforge install`. LoopForge version tags also publish `ghcr.io/tencent/loopforge-tcmcp`.
+- Added `tools/tcmcp`, a Tencent Cloud read-only MCP Initializr that is documented and run separately from `loopforge install`. NLForge version tags also publish `ghcr.io/tencent/loopforge-tcmcp`.
 
 ### 0.2.0
 

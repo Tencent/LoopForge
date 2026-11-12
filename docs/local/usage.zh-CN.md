@@ -1,8 +1,8 @@
-# LoopForge Local 使用指南
+# NLForge Local 使用指南
 
 [English](usage.md) | 简体中文
 
-LoopForge Local 在已有的编程助手中运行本地开发工作流，无需启动平台。当前支持内置的 Classic 和 Portable 工作流；平台 SOP 导出和独立执行尚未实现。平台部署见[部署指南](../deployment.md)。
+NLForge Local 在已有的编程助手中运行本地开发工作流，无需启动平台。当前支持内置的 Classic 和 Portable 工作流；平台 SOP 导出和独立执行尚未实现。平台部署见[部署指南](../deployment.md)。
 
 ## 快速开始
 
@@ -44,7 +44,7 @@ Pi、DeepSeek Harness 和 Hermes Agent 通过 [Portable Edition](#portable-editi
 4. **用证据说明结果**：需求、方案、代码变更、审查意见和测试结果都会落盘，方便检查、复盘和交接。
 5. **中断后继续执行**：流程状态会被保存，下次可以从未完成的阶段继续，不必重新来过。
 
-LoopForge 会根据任务复杂度选择路径：小改动走精简的单角色路径，避免为简单任务引入额外流程；中大型任务才启用完整的角色分工流程。
+NLForge 会根据任务复杂度选择路径：小改动走精简的单角色路径，避免为简单任务引入额外流程；中大型任务才启用完整的角色分工流程。
 
 ```text
 你的需求
@@ -96,11 +96,11 @@ Classic 工作流中断后，CodeBuddy、Cursor 和 Claude Code 使用 `/resume-
 
 CodeBuddy 的 Classic Edition 内置本地可观测看板。它把落盘的流程证据变成可视化视图，集中呈现会话活动、Token 与成本趋势、Skill/Rule 使用情况、角色派发，以及 Devflow 阶段归因，方便定位高成本运行、确认自动化是否真正生效，并复盘任务如何在不同角色之间流转。
 
-![使用演示数据的 LoopForge 本地 Agent 可观测看板](assets/agent-observability-dashboard.png)
+![使用演示数据的 NLForge 本地 Agent 可观测看板](assets/agent-observability-dashboard.png)
 
 _看板示例使用合成演示数据。_
 
-看板的数据聚合和页面服务都在本机完成，不依赖外部遥测服务。运行日志可能包含工具参数和输出片段，因此 LoopForge 默认将它们排除在 Git 之外；未经检查不应对外分享原始日志。
+看板的数据聚合和页面服务都在本机完成，不依赖外部遥测服务。运行日志可能包含工具参数和输出片段，因此 NLForge 默认将它们排除在 Git 之外；未经检查不应对外分享原始日志。
 
 <details>
 <summary>打开本地看板</summary>
@@ -118,7 +118,7 @@ python3 -m http.server 8765 --directory .codebuddy/skills/agent-observability/sc
 
 ## 什么时候适合使用
 
-LoopForge 尤其适合这些任务：
+NLForge 尤其适合这些任务：
 
 - 需求还比较模糊，需要先把目标和边界讨论清楚；
 - 改动涉及多个模块，希望先形成方案再实施；
@@ -126,11 +126,11 @@ LoopForge 尤其适合这些任务：
 - 任务可能跨越多个会话，需要保留状态并断点续跑；
 - 团队希望留下可检查、可复盘的交付记录。
 
-如果只是一次性的代码补全或非常明确的微小修改，直接使用编码 Agent 通常已经足够；LoopForge 会为进入其工作流的简单任务选择精简路径。
+如果只是一次性的代码补全或非常明确的微小修改，直接使用编码 Agent 通常已经足够；NLForge 会为进入其工作流的简单任务选择精简路径。
 
 ## Portable Edition
 
-“快速开始”安装的 Classic Edition 适合大多数用户。如果只希望安装基于 Agent Skills 的可移植工作流，可以使用 Portable Edition。为避免同一个 Coding Agent 同时加载两套工作流，以及状态和产物相互冲突，LoopForge 在每个项目中只允许为同一 Coding Agent 启用一种 Edition。如需切换，可重新安装并添加 `--force`。
+“快速开始”安装的 Classic Edition 适合大多数用户。如果只希望安装基于 Agent Skills 的可移植工作流，可以使用 Portable Edition。为避免同一个 Coding Agent 同时加载两套工作流，以及状态和产物相互冲突，NLForge 在每个项目中只允许为同一 Coding Agent 启用一种 Edition。如需切换，可重新安装并添加 `--force`。
 
 | Agent | 安装 | 启动工作流 |
 | --- | --- | --- |
@@ -182,7 +182,7 @@ pipx install ./local
 cd local/tools/tcmcp
 ```
 
-再按 [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md) 启动。云 API 密钥不会写入生成的 zip 或容器镜像，只留在拉取资源或安装 MCP 客户端的本机。LoopForge Local 以 `local-vX.Y.Z` tag 发版时会发布 `ghcr.io/tencent/loopforge-tcmcp:<version>`。
+再按 [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md) 启动。云 API 密钥不会写入生成的 zip 或容器镜像，只留在拉取资源或安装 MCP 客户端的本机。NLForge Local 以 `local-vX.Y.Z` tag 发版时会发布 `ghcr.io/tencent/loopforge-tcmcp:<version>`。
 
 ## 权限与安全
 

@@ -1,8 +1,8 @@
-# LoopForge Local
+# NLForge Local
 
-LoopForge 的本地工作流组件，在 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness 或 Hermes Agent 中使用，无需启动平台。
+NLForge 的本地工作流组件，在 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness 或 Hermes Agent 中使用，无需启动平台。
 
-Local workflows for LoopForge, running inside an existing coding assistant without the platform server.
+Local workflows for NLForge, running inside an existing coding assistant without the platform server.
 
 Requires **Node.js 20+ and Python 3.8+**, plus a supported coding assistant. This npm package installs Local workflows, not the Docker platform.
 

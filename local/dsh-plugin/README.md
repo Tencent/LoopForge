@@ -1,7 +1,7 @@
-# LoopForge DSH 插件
+# NLForge DSH 插件
 
 这个插件是一个适用于 DSH 0.2.1 及后续 bundle-compatible 版本的 Host bundle，把
-LoopForge Local 接入 DeepSeek Harness（DSH）Profile。它复用项目中
+NLForge Local 接入 DeepSeek Harness（DSH）Profile。它复用项目中
 `.dsh/skills/devflow` 的 Portable 工作流，不复制工作流规则或产物模板。
 
 ## 本地安装

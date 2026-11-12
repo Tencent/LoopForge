@@ -1,4 +1,4 @@
-# LoopForge Local architecture
+# NLForge Local architecture
 
 `local/` 包含两个明确分离的工作流实现和一个统一安装控制面。下述源码路径均相对于 `local/`，开发命令也在该目录内执行。平台架构见[总体架构](../architecture.md)。
 

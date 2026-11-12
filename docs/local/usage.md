@@ -1,8 +1,8 @@
-# LoopForge Local usage
+# NLForge Local usage
 
 English | [简体中文](usage.zh-CN.md)
 
-LoopForge Local runs development workflows inside an existing coding assistant without starting the platform. It currently supports the built-in Classic and Portable workflows. Importing and independently executing platform SOP exports is not implemented yet. See [deployment](../deployment.md) for the platform.
+NLForge Local runs development workflows inside an existing coding assistant without starting the platform. It currently supports the built-in Classic and Portable workflows. Importing and independently executing platform SOP exports is not implemented yet. See [deployment](../deployment.md) for the platform.
 
 ## Quick start
 
@@ -44,7 +44,7 @@ Pi, DeepSeek Harness and Hermes Agent are supported through the [Portable Editio
 4. **Show evidence, not just a diff**: requirements, plans, changes, review findings, and test results are saved for inspection, handoff, and retrospectives.
 5. **Continue after interruption**: workflow state is persisted so the next session can resume at the unfinished stage instead of starting over.
 
-LoopForge picks the path by task complexity. Small changes take a streamlined single-role path; the full role-based workflow is reserved for medium and large tasks that benefit from it.
+NLForge picks the path by task complexity. Small changes take a streamlined single-role path; the full role-based workflow is reserved for medium and large tasks that benefit from it.
 
 ```text
 Your request
@@ -69,11 +69,11 @@ Your request
 | DeepSeek Harness | — | ✓ |
 | Hermes Agent | — | ✓ |
 
-LoopForge enables only one edition per coding agent in each project. See [Edition selection](editions.md) for the differences and directory layout.
+NLForge enables only one edition per coding agent in each project. See [Edition selection](editions.md) for the differences and directory layout.
 
 ## What you get
 
-At the end of a task, you get the code changes together with the confirmed requirement, technical design, independent review findings, test results, and delivery summary. LoopForge saves this history under `artifacts/{task_slug}/` by default for inspection, handoff, and retrospectives.
+At the end of a task, you get the code changes together with the confirmed requirement, technical design, independent review findings, test results, and delivery summary. NLForge saves this history under `artifacts/{task_slug}/` by default for inspection, handoff, and retrospectives.
 
 <details>
 <summary>View the default artifact layout</summary>
@@ -97,11 +97,11 @@ Resume an interrupted Classic workflow with `/resume-devflow {task_slug}` on Cod
 
 The Classic Edition for CodeBuddy includes a local observability dashboard. It turns the workflow evidence into a view of session activity, Token and cost trends, Skill/Rule usage, role dispatch, and Devflow stage attribution—useful for finding expensive runs, checking whether automation is actually being used, and reviewing how work moved between roles.
 
-![LoopForge local agent observability dashboard with demonstration data](assets/agent-observability-dashboard.png)
+![NLForge local agent observability dashboard with demonstration data](assets/agent-observability-dashboard.png)
 
 _Dashboard example using synthetic demonstration data._
 
-The dashboard is generated and served locally; it does not require an external telemetry service. Runtime logs can contain tool arguments and output excerpts, so LoopForge excludes them from Git by default and they should not be shared without review.
+The dashboard is generated and served locally; it does not require an external telemetry service. Runtime logs can contain tool arguments and output excerpts, so NLForge excludes them from Git by default and they should not be shared without review.
 
 <details>
 <summary>Open the local dashboard</summary>
@@ -117,9 +117,9 @@ Open `http://localhost:8765`. See the [observability quickstart](../../local/.co
 
 </details>
 
-## When LoopForge is useful
+## When NLForge is useful
 
-LoopForge is especially useful when:
+NLForge is especially useful when:
 
 - the request is still ambiguous and the goal or boundaries need clarification;
 - a change crosses multiple modules and should be designed before implementation;
@@ -127,11 +127,11 @@ LoopForge is especially useful when:
 - work may span multiple sessions and needs resumable state;
 - the team wants an inspectable delivery record for handoff or retrospectives.
 
-For one-off code completion or a tiny, fully specified edit, using a coding agent directly is often enough. Simple tasks that do enter LoopForge use its streamlined path.
+For one-off code completion or a tiny, fully specified edit, using a coding agent directly is often enough. Simple tasks that do enter NLForge use its streamlined path.
 
 ## Portable Edition
 
-The Classic Edition from the quick start is the right choice for most users. If you only want the portable Agent Skills workflow, use the Portable Edition. To prevent one coding agent from loading two workflows and mixing their state or artifacts, LoopForge enables only one edition per coding agent in each project. To switch editions, run the new install command with `--force`.
+The Classic Edition from the quick start is the right choice for most users. If you only want the portable Agent Skills workflow, use the Portable Edition. To prevent one coding agent from loading two workflows and mixing their state or artifacts, NLForge enables only one edition per coding agent in each project. To switch editions, run the new install command with `--force`.
 
 | Agent | Install | Start a workflow |
 | --- | --- | --- |
@@ -169,7 +169,7 @@ loopforge skills uninstall <agent>
 
 Installation state is stored in `.devflow/install-state.json`. An update stops instead of overwriting user-modified or conflicting files. Use `--force` only when you intend to replace conflicts or switch editions, preferably after inspecting `loopforge plan`.
 
-If you have cloned this repository, install the LoopForge CLI from the current source tree by running this in the repository root:
+If you have cloned this repository, install the NLForge CLI from the current source tree by running this in the repository root:
 
 ```bash
 pipx install ./local
@@ -183,10 +183,10 @@ pipx install ./local
 cd local/tools/tcmcp
 ```
 
-Then follow [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md). Cloud API keys are not written into generated zips or the container image; they stay on the machine that lists resources or installs the MCP client. LoopForge Local `local-vX.Y.Z` releases publish `ghcr.io/tencent/loopforge-tcmcp:<version>`.
+Then follow [`tools/tcmcp/README.md`](../../local/tools/tcmcp/README.md). Cloud API keys are not written into generated zips or the container image; they stay on the machine that lists resources or installs the MCP client. NLForge Local `local-vX.Y.Z` releases publish `ghcr.io/tencent/loopforge-tcmcp:<version>`.
 
 ## Permissions and security
 
-Some Classic host configurations enable automatic execution or high-permission agent modes. Use LoopForge only in trusted projects. Before installation, inspect planned files with `loopforge plan codebuddy`, `loopforge plan codex`, `loopforge plan cursor`, or `loopforge plan claude`. Do not put credentials, private endpoints, or production operations configuration in workflow templates.
+Some Classic host configurations enable automatic execution or high-permission agent modes. Use NLForge only in trusted projects. Before installation, inspect planned files with `loopforge plan codebuddy`, `loopforge plan codex`, `loopforge plan cursor`, or `loopforge plan claude`. Do not put credentials, private endpoints, or production operations configuration in workflow templates.
 
 See [Security policy](../../SECURITY.md) and report vulnerabilities privately through GitHub Security Advisories.

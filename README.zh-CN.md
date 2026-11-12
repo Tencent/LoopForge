@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-zh-dark.svg">
-    <img src="docs/assets/readme/hero-zh.svg" alt="LoopForge —— 从想法，到合入的代码。在沙箱对话工作区里与编码 Agent 协作，用 SOP 固化交付流程，关键节点由人把关。" width="100%">
+    <img src="docs/assets/readme/hero-zh.svg" alt="NLForge —— 从想法，到合入的代码。在沙箱对话工作区里与编码 Agent 协作，用 SOP 固化交付流程，关键节点由人把关。" width="100%">
   </picture>
 </p>
 
@@ -31,9 +31,9 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 <p align="center"><sub>80 秒产品演示（1080p，有声）。</sub></p>
 
-**LoopForge** 是一个可自主部署的团队工作台，让你和编程 Agent 一起交付软件。在对话里把需求告诉 **Main Bot**：它会按需打开 Docker 沙箱、检出项目仓库、把任务分派给项目角色，最后提交 PR。某种做法被验证有效后，把它存成 **SOP**（由 Agent、脚本和人工关口组成的标准交付流程），下一个需求就按同样的方式交付，评审和验收都在流程里。
+**NLForge** 是一个可自主部署的团队工作台，让你和编程 Agent 一起交付软件。在对话里把需求告诉 **Main Bot**：它会按需打开 Docker 沙箱、检出项目仓库、把任务分派给项目角色，最后提交 PR。某种做法被验证有效后，把它存成 **SOP**（由 Agent、脚本和人工关口组成的标准交付流程），下一个需求就按同样的方式交付，评审和验收都在流程里。
 
-干活的是 CodeBuddy、Codex 和 Claude Code；LoopForge 负责它们外面的角色、沙箱、检查点和留痕，全部运行在你自己的环境里，MIT 开源。
+干活的是 CodeBuddy、Codex 和 Claude Code；NLForge 负责它们外面的角色、沙箱、检查点和留痕，全部运行在你自己的环境里，MIT 开源。
 
 ## 两种工作方式
 
@@ -49,13 +49,13 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/chat-home-dark.svg">
-    <img src="docs/assets/readme/chat-home.svg" alt="LoopForge 对话工作台：在输入框中描述需求，@ 面板列出角色、技能、需求和 SOP" width="100%">
+    <img src="docs/assets/readme/chat-home.svg" alt="NLForge 对话工作台：在输入框中描述需求，@ 面板列出角色、技能、需求和 SOP" width="100%">
   </picture>
 </p>
 
 <p align="center"><sub>对话首页：描述需求，用 <code>@</code> 引用角色、技能、需求、SOP 或仓库；每个会话可单独选择执行器、模型和确认模式。</sub></p>
 
-## 为什么需要 LoopForge
+## 为什么需要 NLForge
 
 让编程 Agent "修一下这个 Bug"，结果往往取决于这一次的运行：可能跳过方案，可能忘了跑测试，可能自己评审自己的代码，也可能做到一半停下而没人发现。做演示没问题，但团队交付不能这样。
 
@@ -87,7 +87,7 @@ MIRROR=ghcr.nju.edu.cn ./start.sh
 
 ### 免 API Key 体验
 
-新注册的账号会自动加入 **LoopForge 体验项目**，其中有一条只包含脚本和人工审批的 SOP：
+新注册的账号会自动加入 **NLForge 体验项目**，其中有一条只包含脚本和人工审批的 SOP：
 
 1. 切换到体验项目，打开 **流程模板**，进入 **平台验收 · 脚本与审批**。
 2. 点击 **运行流程**。真实脚本会生成一份报告，然后在审批节点等你确认。
@@ -108,11 +108,11 @@ MIRROR=ghcr.nju.edu.cn ./start.sh
 
 - **执行器。** 在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清和通知 AI 汇总目前使用 CodeBuddy；定时助手任务使用任务所选的执行器。Docker 镜像内置 CodeBuddy 和 Codex；Claude Code 在首次使用时从 npm 安装并缓存，需要能访问 npm；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
-- **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库（已内置 LoopForge 授权应用，无需申请 PAT，仍可手动填写 PAT），再配置执行器凭据（或绑定本机执行机器），之后既可以运行一条项目 SOP，也可以直接让 Main Bot 修改代码并提交 PR/MR。
+- **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库（已内置 NLForge 授权应用，无需申请 PAT，仍可手动填写 PAT），再配置执行器凭据（或绑定本机执行机器），之后既可以运行一条项目 SOP，也可以直接让 Main Bot 修改代码并提交 PR/MR。
 - **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
 - **账号与访问。** 新安装默认监听所有网卡（已有安装保留原配置），面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
 - **远程访问、HTTPS、独立 Worker。** 见[部署指南](docs/deployment.md)。
-- **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.11+）。
+- **参与 NLForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.11+）。
 
 </details>
 
@@ -128,7 +128,7 @@ MIRROR=ghcr.nju.edu.cn ./start.sh
 </p>
 
 <p align="center">
-  <img src="docs/assets/readme/designer-zh.svg" alt="LoopForge 流程设计器：内置缺陷修复 SOP，选中「独立评审」节点，右侧检查器显示角色、执行器与失败策略" width="100%">
+  <img src="docs/assets/readme/designer-zh.svg" alt="NLForge 流程设计器：内置缺陷修复 SOP，选中「独立评审」节点，右侧检查器显示角色、执行器与失败策略" width="100%">
 </p>
 
 <p align="center"><sub>流程设计器中的内置缺陷修复 SOP。每个步骤选择一个角色；检查失败时可以打回到前面的步骤。</sub></p>
@@ -144,7 +144,7 @@ MIRROR=ghcr.nju.edu.cn ./start.sh
 每个节点声明自己的产物和依赖，依赖完成后引擎自动推进下一步。从内置 SOP 起步，按项目调整角色、规则和执行环境，随着流程演进发布新版本。
 
 <p align="center">
-  <img src="docs/assets/readme/run-approval-zh.svg" alt="LoopForge 运行详情：报告脚本已完成，流程停在人工关口，提供确认通过、补充信息重跑、退回上游三种操作" width="100%">
+  <img src="docs/assets/readme/run-approval-zh.svg" alt="NLForge 运行详情：报告脚本已完成，流程停在人工关口，提供确认通过、补充信息重跑、退回上游三种操作" width="100%">
 </p>
 
 <p align="center"><sub>停在人工关口的运行：确认通过继续下游、补充信息重跑当前节点，或退回上游重做。</sub></p>
@@ -172,9 +172,9 @@ MIRROR=ghcr.nju.edu.cn ./start.sh
 
 <p align="center"><sub>内置 SOP 是平台维护的只读蓝图，复制到本项目后即可运行和修改。</sub></p>
 
-## LoopForge Local
+## NLForge Local
 
-不想部署服务端？**LoopForge Local** 把内置交付工作流直接带进你正在用的编程助手：
+不想部署服务端？**NLForge Local** 把内置交付工作流直接带进你正在用的编程助手：
 
 ```bash
 # 在目标项目目录中执行，例如安装到 Claude Code
@@ -209,10 +209,10 @@ npx -y loopforge-cli@latest install claude
 探索和迭代用对话，Main Bot 同样可以提交 PR。当你希望每个需求都按同一套做法交付，有固定的评审、测试和签字环节，就把它做成 SOP。Main Bot 可以启动、暂停和接管 SOP 运行，两种方式可以配合使用。
 
 **和 Dify、n8n、Flowise 有什么区别？**
-它们是通用的 AI / 自动化工作流搭建平台。LoopForge 专注于 **用编程 Agent 做软件交付**：实现者与评审者等角色分工、带真实仓库的 Docker 沙箱、GitHub 交付、人工验收关口和运行证据。
+它们是通用的 AI / 自动化工作流搭建平台。NLForge 专注于 **用编程 Agent 做软件交付**：实现者与评审者等角色分工、带真实仓库的 Docker 沙箱、GitHub 交付、人工验收关口和运行证据。
 
 **和直接用 Claude Code / Codex / CodeBuddy 有什么区别？**
-LoopForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对话都运行这些 CLI 之一；LoopForge 补上外面的部分：谁来做、在哪个沙箱里、按什么顺序、经过哪些检查、由谁签字。
+NLForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对话都运行这些 CLI 之一；NLForge 补上外面的部分：谁来做、在哪个沙箱里、按什么顺序、经过哪些检查、由谁签字。
 
 **可以直接暴露到公网吗？**
 新安装默认监听所有网卡，面向可信团队。开放前请阅读[账号与访问边界](docs/deployment.md#accounts)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
@@ -223,7 +223,7 @@ LoopForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对
 | --- | --- |
 | 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.md) |
 | 对话工作区、AI 定时任务与 Token 成本口径 | [对话工作区](docs/conversation-workspaces.md) · [AI 定时任务](docs/ai-scheduled-task-capabilities.md) · [Token 成本统计](docs/token-pricing.md) |
-| 本地工作流的安装、使用与版本选择 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
+| 本地工作流的安装、使用与版本选择 | [NLForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
 | 扩展平台或接入 HTTP / MCP API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) · [共享定时任务 API](docs/api/shared-schedules.md) |
 | 参与前端开发 | [前端设计约定](design.md) |
 | 功能覆盖与发布就绪情况 | [实测记录](docs/validation.md) · [验收矩阵](docs/testing/acceptance-matrix.md) · [发布评审](docs/release-readiness.md) |
@@ -231,15 +231,15 @@ LoopForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对
 
 ## 交流群
 
-扫描二维码加入 LoopForge 交流群。
+扫描二维码加入 NLForge 交流群。
 
-<img src="docs/community-wecom-qr.png" alt="LoopForge 交流群二维码" width="200" />
+<img src="docs/community-wecom-qr.png" alt="NLForge 交流群二维码" width="200" />
 
 ## 参与贡献
 
 欢迎通过 Issue 和 PR 分享使用场景、报告问题，或改进流程、工具适配和平台体验。请先阅读[贡献指南](CONTRIBUTING.zh-CN.md)；安全问题请按[安全政策](SECURITY.zh-CN.md)私密报告。
 
-如果 LoopForge 对你有帮助，欢迎点个 Star，让更多人看到它。
+如果 NLForge 对你有帮助，欢迎点个 Star，让更多人看到它。
 
 <a href="https://star-history.com/#Tencent/LoopForge&Date">
   <img src="https://api.star-history.com/svg?repos=Tencent/LoopForge&type=Date" alt="Star history" width="600">

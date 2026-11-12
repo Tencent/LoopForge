@@ -16,12 +16,12 @@ DSH 通过 `subagent` 工具创建独立阶段执行器。每个阶段必须使�
 4. `spawn_helper(role, bounded_prompt) -> executor_id`：同样使用 `subagent`，只读范围
    由提示明确限制。
 
-DSH 没有 LoopForge 专用的 send/close 生命周期 API。不要伪造 executor ID，也不要把
+DSH 没有 NLForge 专用的 send/close 生命周期 API。不要伪造 executor ID，也不要把
 普通当前上下文工作标记为 isolated；如果当前会话没有 `subagent` 工具，必须用具体
 原因降级为 `single-context` 并记录 `fallback_reason`。
 
 ## 使用入口
 
-安装 Portable Skill 后，在 DSH 中使用 `/devflow <需求>`，或通过 LoopForge DSH 插件的
+安装 Portable Skill 后，在 DSH 中使用 `/devflow <需求>`，或通过 NLForge DSH 插件的
 `/loopforge start <需求>` 初始化任务。任务状态和产物保存在项目的
 `artifacts/<task_slug>/` 下；需要人工确认时，插件会显示待批准阶段和批准命令。

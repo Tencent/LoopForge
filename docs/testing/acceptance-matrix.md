@@ -44,7 +44,7 @@ Which automated cases protect each user-facing capability, and what they need. "
 | Repository write permissions | `internal/httpapi/repository_authz_test.go` | — |
 | Invocation cleanup preserves unrelated active runs | `e2e/api/05-cleanup-scope.test.mjs` | — |
 | Deterministic route edges: validation, unknown resources, and missing credentials | `e2e/api/90-route-sweep.test.mjs` | No model, knowledge write, or external ticket |
-| LoopForge Local workflows, installers, dashboard | `local/tests/e2e/` | Python · CodeBuddy for live host runs |
+| NLForge Local workflows, installers, dashboard | `local/tests/e2e/` | Python · CodeBuddy for live host runs |
 
 ## Not covered automatically
 

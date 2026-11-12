@@ -1,7 +1,7 @@
-# LoopForge Hermes plugin
+# NLForge Hermes plugin
 
 This native Hermes Agent plugin adds `/loopforge` controls for a project that
-already has the LoopForge Hermes Skill installed:
+already has the NLForge Hermes Skill installed:
 
 ```text
 /loopforge start <request>
@@ -24,7 +24,7 @@ hermes plugins doctor ./local/hermes-plugin
 
 For a local Hermes profile, copy the directory to the profile's plugin folder
 and restart Hermes. The copy is intentionally explicit so an existing plugin
-directory is never overwritten by LoopForge:
+directory is never overwritten by NLForge:
 
 ```bash
 plugin_dir="${HERMES_HOME:-$HOME/.hermes}/plugins/loopforge"

@@ -1,6 +1,6 @@
 # Contributing
 
-LoopForge has a platform at the repository root and a complementary local workflow edition in `local/`. Read the applicable `AGENTS.md` before changing either.
+NLForge has a platform at the repository root and a complementary local workflow edition in `local/`. Read the applicable `AGENTS.md` before changing either.
 
 For platform changes, preserve upstream engine, repository and handler boundaries. Keep identity, provider and deployment adaptations explicit. Add a regression test for a behavioral fix and document schema or runner-protocol compatibility changes.
 
@@ -20,7 +20,7 @@ Run the [public browser acceptance suite](e2e/public/README.md) for authenticati
 
 Platform pull requests run the `core`, `browser`, and `first-run` jobs. The stable check `platform-required` fails unless all three succeed. A repository administrator has to mark `platform-required` as a required status check in GitHub branch protection. This repository does not change that GitHub setting.
 
-For LoopForge Local, work inside `local/` and follow [local agent instructions](local/AGENTS.md). Identify whether a change affects Classic, Portable or shared behavior contracts. Keep these workflow assets independent from the platform and each other. Change Portable assets in `local/skills/`; rebuild generated Classic Cursor/Claude bundles with `python3 scripts/build-classic-hosts.py --write` from `local/`. Keep workflow templates generic; optional tools under `local/tools/` are distributed separately.
+For NLForge Local, work inside `local/` and follow [local agent instructions](local/AGENTS.md). Identify whether a change affects Classic, Portable or shared behavior contracts. Keep these workflow assets independent from the platform and each other. Change Portable assets in `local/skills/`; rebuild generated Classic Cursor/Claude bundles with `python3 scripts/build-classic-hosts.py --write` from `local/`. Keep workflow templates generic; optional tools under `local/tools/` are distributed separately.
 
 Run local checks from `local/`:
 

@@ -1,6 +1,6 @@
 # Agent Compatibility and Verification
 
-本文针对 LoopForge Local；源码路径和开发命令均以 `local/` 为起点。
+本文针对 NLForge Local；源码路径和开发命令均以 `local/` 为起点。
 
 ## 支持面
 

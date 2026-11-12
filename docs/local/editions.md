@@ -1,6 +1,6 @@
-# LoopForge Local: Classic / Portable
+# NLForge Local: Classic / Portable
 
-LoopForge Local 内置两套工作流，源码位于 `local/`。为避免同一宿主同时加载两套工作流，以及状态和
+NLForge Local 内置两套工作流，源码位于 `local/`。为避免同一宿主同时加载两套工作流，以及状态和
 产物相互冲突，安装器在每个项目中只允许为同一宿主启用一种 edition；需要切换时
 使用 `install --force`。这里的区分是发布合同，不是额外复制一层运行文件。
 

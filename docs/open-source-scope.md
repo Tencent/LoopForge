@@ -1,6 +1,6 @@
 # Public adaptation scope
 
-This repository contains the self-hosted platform and LoopForge Local. Detailed source synchronization records are maintained privately by the maintainers, not distributed with the public source. Deployment secrets, production data and private infrastructure are excluded.
+This repository contains the self-hosted platform and NLForge Local. Detailed source synchronization records are maintained privately by the maintainers, not distributed with the public source. Deployment secrets, production data and private infrastructure are excluded.
 
 | Area | Public behavior |
 | --- | --- |
@@ -12,10 +12,10 @@ This repository contains the self-hosted platform and LoopForge Local. Detailed 
 | MCP | Explicit installation; public GitHub entry; actor-scoped token binding |
 | Catalog | Public backend/frontend/product/bug-fix definitions; real script approval demo |
 | Model defaults | CLI default and operator-configured model list; CodeBuddy/Codex/Claude selection in Main Bot and SOP roles, actor-scoped credentials |
-| Git author identity | Local account name and a non-deliverable LoopForge email; no inferred corporate affiliation |
+| Git author identity | Local account name and a non-deliverable NLForge email; no inferred corporate affiliation |
 | Language | Translation mechanism/dictionary with public UI copy; Chinese/English preference |
 | Theme | Upstream light/dark styles; preference applied before first paint and persisted |
-| LoopForge Local | Built-in workflows, host integrations, installers and tests under `local/`; guides under `docs/local/`; project policies and history at the repository root |
+| NLForge Local | Built-in workflows, host integrations, installers and tests under `local/`; guides under `docs/local/`; project policies and history at the repository root |
 
 Legacy organization-specific tracker and authentication protocol code remains as optional compatibility code with example endpoints; it is not automatically configured, and its Web entry points (external tracker sync fields, TAPD import/push) stay hidden so the default UI only offers GitHub and platform-local requirements. Public defaults never install enterprise MCP servers or contact corporate identity/market services. GitHub Enterprise and non-GitHub public hosting require additional provider configuration/adapters; the initial public adapter targets github.com.
 

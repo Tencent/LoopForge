@@ -26,7 +26,7 @@ REQUIREMENT → DESIGN → IMPLEMENT → REVIEW → TEST → [KNOWLEDGE] → SUM
 
 ## 安装
 
-推荐使用 LoopForge Local 提供的统一 CLI。以下源码安装命令在仓库根目录执行；Portable edition 使用独立的 `skills` 命令组：
+推荐使用 NLForge Local 提供的统一 CLI。以下源码安装命令在仓库根目录执行；Portable edition 使用独立的 `skills` 命令组：
 
 ```bash
 pipx install ./local

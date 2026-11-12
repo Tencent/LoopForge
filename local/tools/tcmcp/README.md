@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-MIT. Copyright (C) 2026 Tencent. This directory is an optional LoopForge tool; the repository root [`LICENSE`](../../LICENSE) applies.
+MIT. Copyright (C) 2026 Tencent. This directory is an optional NLForge tool; the repository root [`LICENSE`](../../LICENSE) applies.
 
 A [start.spring.io](https://start.spring.io/)-style service: pick Tencent Cloud products and **real resources**, then download a scoped Python MCP project.
 
@@ -33,7 +33,7 @@ cd web && npm run dev       # UI :5173, proxies /api
 
 ## Docker
 
-LoopForge Local `local-vX.Y.Z` releases also publish this image to GHCR (same version as the CLI):
+NLForge Local `local-vX.Y.Z` releases also publish this image to GHCR (same version as the CLI):
 
 ```bash
 docker pull ghcr.io/tencent/loopforge-tcmcp:0.2.1

@@ -1,4 +1,4 @@
-# LoopForge HTTP API
+# NLForge HTTP API
 
 本文档以 `internal/httpapi/server.go`、`dispatch.go`、`schedule.go` 的当前实现为准。接口按领域拆分：
 

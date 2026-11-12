@@ -1,6 +1,6 @@
 # Maintenance and source synchronization
 
-LoopForge is maintained as a public core with deployment-specific adapters. Community changes are reviewed and tested in this repository; contributors do not need access to private source repositories or audit manifests.
+NLForge is maintained as a public core with deployment-specific adapters. Community changes are reviewed and tested in this repository; contributors do not need access to private source repositories or audit manifests.
 
 ## Public contribution checks
 
