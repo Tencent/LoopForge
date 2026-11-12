@@ -1,6 +1,6 @@
 # 需求澄清开放多执行器（智能体框架）方案
 
-状态：设计建议，尚未修改澄清执行链路。
+状态：已实现（后端引擎解析、按引擎命令构造与续跑、可用性端点、分组选择器、个人默认）。真机验证范围见文末「验证记录」。
 
 ## 意图与背景
 
@@ -175,3 +175,16 @@ agent CLI（opencode、cursor、agy、kimi、pi、dsh、zcode），包含原生 
   该引擎 Key 时该项置灰并写明原因，不会让人先选中、跑起来才失败。
 - 真机验证覆盖 Codex、Claude Code 与一个 agent CLI（opencode 或 cursor）；其余引擎按同一套
   映射交付，未验证的事实在 CHANGELOG 与本文如实标注。
+
+## 验证记录
+
+- **自动化已覆盖**（本机 `go test` / node / jsdom）：CodeBuddy、Codex、Claude Code 与 agent CLI（opencode、cursor、pi）的命令构造与各家方言、缺 Key / 缺 Base URL / 没装 CLI 三类失败、换框架必须换新会话且不复用旧 transcript、可用性按需求责任人判定且响应不含任何 Key 或 Base URL、个人默认的读写与失效标记、分组菜单与置灰原因、两处入口实际发出的 `model`、设置页那行的保存请求。MySQL 下 `user_configs.clarify_model` 可写可读。
+- **未做真机验证**：需要真实凭据和装好 CLI 的控制面机器。按计划清单执行 Codex、Claude Code 与一个 agent CLI（opencode 或 cursor）各一轮完整澄清；其余 agent CLI 与 AI 对话共用同一批 builder，属于「镜像实现」，交付说明里如实标注未真机跑过。
+- **本机既有失败（与本改动无关，在分支基线上同样失败）**：`internal/httpapi` 的 `TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply`、`TestInsightIngressPermissionsAndValidation`；`internal/repo` 在 MySQL 下的 `TestMySQLReadsObserveExternalChangesWithoutReload`；`chatbot` 的 `tests/app-render.test.jsx`。
+
+## 交付时的取舍（实现方决定）
+
+- 澄清的命令行、协议翻译、续跑簿记复用 AI 对话已有的 per-engine builder，不新写一套；澄清专属的差异只有「重试时把工具收窄到只剩提交」这一条，且只有 CodeBuddy 与 Claude Code 有等价开关，其余引擎保持整体只读并靠重试提示词收敛。
+- 提示词里点名的读工具按引擎换说法（`clarifyToolVocabulary`），避免指挥 Codex / agent CLI 去调用不存在的 `Read/Grep/Glob`。
+- 设置页那行的可用性来自 AI 对话的引擎目录（按当前用户），因为澄清的可用性端点需要 issue 或项目作用域才能解析责任人；选了当时跑不了的组合由服务端在保存时拒绝。
+- 新增 `GET /api/clarify-engines` 会被 e2e 的路由覆盖率分母统计到，当前没有对应的 e2e 用例。

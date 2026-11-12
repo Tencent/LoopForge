@@ -81,7 +81,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 - `priority`、`kind`（`requirement|issue`）、`assigneeType`、`assigneeId`
 - `workflowId`、`repositoryId`、`repositoryIds`、`baseBranch`、`repositoryBranches`、`latestTaskId`
 - `source`（`local|gongfeng|tapd`）、`externalRef`
-- `clarification`：`summary`、`status`（`analyzing|in_progress|ready`；历史数据可能是 `needs_user`）、`history`、`questions`、写回字段。澄清是可选步骤，不打分、不自动开始，也不阻止派发 SOP。
+- `clarification`：`summary`、`status`（`analyzing|in_progress|ready`；历史数据可能是 `needs_user`）、`history`、`questions`、`modelId`（这张单的澄清用的框架与模型，带引擎前缀；换框架就换会话）、写回字段。澄清是可选步骤，不打分、不自动开始，也不阻止派发 SOP。
 - 交付字段 `deliveryState`、`deliveryMrUrl`、`deliveryMrState`、`deliveryMrs`、`deliveryUpdatedAt`。`deliveryMrs` 每个仓库一项（`repositoryId`、`repository`、`project`、`iid`、`url`、`state`、`targetBranch`），由 SOP 成功时按仓库工作分支向工蜂查询 MR 得出，查不到才回退到 MR 类产物里同项目的链接；`deliveryMrUrl` 为第一项，`deliveryMrState` 为聚合状态（全部合入默认分支才是 `merged`）。
 
 ### `GET /api/issues`
@@ -159,6 +159,22 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "history":[{"role":"user","content":"..."},{"role":"assistant","content":"..."}]
 }
 ```
+
+请求里的 `model` 决定这一轮用哪个框架：带引擎前缀的模型 ID（`"codex:gpt-5.5"`、`"opencode:glm-4"`；不带前缀就是 CodeBuddy）。留空时按「这张单已经记住的框架 → 需求责任人的个人默认 → CodeBuddy」决定。**不会静默改写**：框架不认识、责任人没配该框架的 Key、或该框架需要 Base URL 却没填，一律 `400` 并说明缺什么。
+
+### `GET /api/clarify-engines`
+
+`?issueId=` 或 `?projectId=`（前者优先）。按需求责任人（无责任人则项目 Owner）算出每个框架能不能用，供澄清选择器分组置灰；只返回布尔状态、原因和模型 ID，不返回任何 Key 或 Base URL。`default` 是这一轮真正会用的模型 ID；`defaultStale=true` 表示个人默认指向的框架现在跑不了、这一轮已回退 CodeBuddy。需求或项目不存在 `404`，两个参数都不给 `400`。
+
+```json
+{"responsibleUserId":12,"responsibleUserName":"张三","default":"codex:gpt-5.5","defaultStale":false,
+ "engines":[{"id":"codebuddy","name":"CodeBuddy","configured":true,"available":true,"credential":"codeBuddyApiKey",
+             "models":[{"id":"glm-5.3-flash-ioa","name":"GLM-5.3-Flash"}]},
+            {"id":"claude-code","name":"Claude Code","configured":false,"available":false,
+             "reason":"请先在个人配置中配置 Claude Code API Key 后再使用 Claude Code 模型","credential":"claudeCodeApiKey","models":[]}]}
+```
+
+个人默认存在 `user_configs.clarify_model`，用 `PUT /api/users/{id}/credentials` 的 `clarifyModel` 字段写入（空串清除，指针缺席保持原值）；写入前按同一套规则校验，跑不了的组合返回 `400`。
 
 ### `POST /api/issues/{issueId}/chat-clarify`
 

@@ -2,6 +2,16 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## 0.3.7 — requirement clarification on the framework you choose
+
+- Requirement clarification no longer runs only on CodeBuddy. The picker groups every framework the platform offers by engine — CodeBuddy, Codex, Claude Code and the agent CLIs — and the clarification really runs on the one you pick, using the matching credential from personal settings.
+- Availability is judged from the issue's responsible user, because clarification runs on their credentials. A framework that cannot run is still listed, greyed out as a whole group, with the reason shown: no API key, no Base URL where one is required, the CLI is not installed on this host, or no model is available yet.
+- Personal settings keep a default clarification framework at the top of the 模型与执行 group. Each clarification can switch for this round without writing that default back, and a default whose key was removed is labelled as no longer available instead of being used silently.
+- An item keeps the framework its clarification started with, so later rounds resume the same session; switching on purpose starts a new session and replays the questions already answered instead of failing to resume.
+- Nothing changes for deployments that select no framework: CodeBuddy stays the default, its model catalog stays validated as before, and AI notification summaries still use CodeBuddy.
+
+Existing installations may apply `migrations/028_clarify_model_preference.sql`; the platform also adds these tables and columns on startup.
+
 ## 0.3.6 — a default sandbox on an uninitialized catalog
 
 - A database without sandbox catalog rows, for example after a plain `docker compose --profile platform up` without the installer, now offers the built-in 默认运行沙箱 (`local`). Creating a blank SOP no longer fails with `sandbox profile not found`. The default is not written to the database, a saved `local` profile takes priority, and it cannot be deleted. Compose still runs it in a separate Docker container.
