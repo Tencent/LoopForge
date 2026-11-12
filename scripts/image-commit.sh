@@ -32,7 +32,7 @@ fi
 case "$commit" in
   *[!0-9a-fA-F]*) commit= ;;
 esac
-if [ "${#commit}" -lt 7 ] || [ "${#commit}" -gt 40 ]; then
+if [ "${#commit}" -lt 7 ] || [ "${#commit}" -gt 64 ]; then
   commit=
 fi
 printf '%s' "$commit" > "$out"

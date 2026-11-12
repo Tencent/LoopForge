@@ -207,6 +207,18 @@ func TestStudioPagesShowCommitBakedByDockerBuild(t *testing.T) {
 	}
 }
 
+func TestStudioPagesShowSHA256BuildCommit(t *testing.T) {
+	t.Setenv("LOOPFORGE_COMMIT", strings.Repeat("60fc455a", 8))
+	static := fstest.MapFS{
+		"index.html": {Data: []byte(`<html><body></body></html>`)},
+	}
+	rec := httptest.NewRecorder()
+	studioFileServer(static).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(rec.Body.String(), `>60fc455</span>`) {
+		t.Fatalf("a 64-character commit should show in the corner: %s", rec.Body.String())
+	}
+}
+
 func TestStudioPagesOmitUnsafeOrMissingBuildCommit(t *testing.T) {
 	t.Setenv("LOOPFORGE_COMMIT_FILE", filepath.Join(t.TempDir(), "missing"))
 	static := fstest.MapFS{

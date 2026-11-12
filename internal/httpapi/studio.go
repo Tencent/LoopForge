@@ -43,15 +43,16 @@ func stampStudioIndex(static fs.FS, raw []byte) []byte {
 	return []byte(html)
 }
 
-// defaultBuildCommitFile is written by docker build from git HEAD when no
-// LOOPFORGE_COMMIT build-arg was passed.
+// defaultBuildCommitFile is written by docker build from the LOOPFORGE_COMMIT
+// build-arg, or from git HEAD when none was passed.
 const defaultBuildCommitFile = "/app/loopforge-commit"
 
 // buildCommit is the git SHA baked into a published image. A short label in
 // the corner is enough to tell two images apart.
 func buildCommit() (short, full string) {
 	raw := strings.ToLower(strings.TrimSpace(commitSource()))
-	if len(raw) < 7 || len(raw) > 40 {
+	// 64 covers SHA-256 repositories.
+	if len(raw) < 7 || len(raw) > 64 {
 		return "", ""
 	}
 	for _, r := range raw {

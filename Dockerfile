@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # The chatbot bundle and the Go binaries are architecture independent to build,
 # so those stages run on the builder's own platform and Go cross-compiles for
 # TARGETARCH. Only the final stage runs as the target (emulated for arm64 on an
@@ -18,7 +19,8 @@ ARG LOOPFORGE_BUILD_JOBS=
 ENV LOOPFORGE_BUILD_JOBS=${LOOPFORGE_BUILD_JOBS}
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY . .
+# Ref updates must not invalidate the Go build cache.
+COPY --exclude=.git . .
 # Helpers do not embed the web UI, so they compile while the chatbot stage builds.
 # The runner and gate binaries are built for every OS/arch regardless; GOOS and
 # GOARCH pick the architecture of the binaries that run inside this image.
@@ -39,7 +41,6 @@ ENV PATH="/app/bin:${PATH}"
 # An explicit LOOPFORGE_COMMIT wins. Otherwise read HEAD from the build context
 # so `docker build` stamps the same corner label as the release workflow.
 ARG LOOPFORGE_COMMIT=
-ENV LOOPFORGE_COMMIT=${LOOPFORGE_COMMIT}
 RUN --mount=type=bind,source=.,target=/ctx,ro \
     sh /ctx/scripts/image-commit.sh /ctx /app/loopforge-commit
 EXPOSE 8080
