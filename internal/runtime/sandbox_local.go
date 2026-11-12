@@ -88,5 +88,10 @@ func ExecuteLocalCommand(ctx context.Context, workspace string, command CommandS
 	if err != nil {
 		return "", err
 	}
+	stopSSH, err := bindCommandGitSSH(sandbox, workspace, bound, credentials)
+	if err != nil {
+		return "", err
+	}
+	defer stopSSH()
 	return sandbox.Exec(ctx, bound, sink)
 }

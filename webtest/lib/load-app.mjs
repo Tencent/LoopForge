@@ -69,6 +69,7 @@ function defaultPayload(pathname, method) {
   };
   if (pathname === '/api/bootstrap') return sampleBootstrap();
   if (pathname === '/api/assistant/sessions') return [];
+  if (/\/users\/[^/]+\/git-ssh-keys$/.test(pathname)) return [];
   if (/\/workflows\/metrics$/.test(pathname)) return sampleBootstrap().workflowMetrics;
   if (pathname === '/api/workflow-metrics') return sampleBootstrap().workflowMetrics;
   if (pathname === '/api/notification-bots') return sampleBootstrap().bots;

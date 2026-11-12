@@ -163,6 +163,10 @@ func controlledBaseEnvironment(base []string) []string {
 		"GIT_CONFIG_VALUE_",
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
+		"SSH_AUTH_SOCK=",
+		"GIT_SSH=",
+		"GIT_SSH_COMMAND=",
+		"GIT_SSH_VARIANT=",
 	}
 	filtered := make([]string, 0, len(base))
 	for _, entry := range base {

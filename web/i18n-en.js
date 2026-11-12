@@ -122,3 +122,32 @@ Object.assign(window.LF_I18N_EN,{
 "默认运行沙箱不能删除；可编辑配置或新建其他沙箱":"The default sandbox cannot be deleted; edit its settings or create another sandbox."
 });
 Object.assign(window.LF_I18N_EN,{"平台目录":"Platform catalog","通用模板按名称绑定这些 MCP，添加到本项目后即可使用。":"Generic templates bind these MCPs by name. Add one to this project to use it.","已添加到当前项目":"Added to this project","添加中…":"Adding…"});
+Object.assign(window.LF_I18N_EN,{
+  "Git SSH 密钥":"Git SSH keys",
+  "按 SSH 主机管理个人密钥，仓库自动匹配":"Manage personal keys by SSH host; repositories match automatically",
+  "管理密钥":"Manage keys",
+  "每个 SSH 主机配置一把个人密钥，同一主机的仓库自动共用。":"Configure one personal key per SSH host. Repositories on the same host share it automatically.",
+  "密钥名称":"Key name",
+  "例如 GitLab 或 Gitea":"For example, GitLab or Gitea",
+  "SSH 主机":"SSH host",
+  "不填写端口时使用 22。":"The default port is 22.",
+  "gitlab.com 或 git.example.org:2222":"gitlab.com or git.example.org:2222",
+  "SSH 私钥":"SSH private key",
+  "粘贴完整的 OpenSSH 或 PEM 私钥":"Paste the complete OpenSSH or PEM private key",
+  "留空保留现有私钥":"Leave blank to keep the current private key",
+  "把对应公钥添加到代码托管账号，并授予仓库访问权限。推送需要写权限。":"Add the public key to your hosting account and grant repository access. Pushing requires write access.",
+  "正在读取密钥…":"Loading keys…",
+  "还没有配置 Git SSH 密钥":"No Git SSH keys configured yet",
+  "无法读取 SSH 密钥配置，请稍后重试。":"Unable to load SSH key settings. Please try again later.",
+  "添加密钥":"Add key",
+  "编辑密钥":"Edit key",
+  "保存密钥":"Save key",
+  "密钥已保存":"Key saved",
+  "删除这把密钥？":"Delete this key?",
+  "密钥已删除":"Key deleted",
+  "GitHub 链接或 Git SSH 地址":"GitHub link or Git SSH address",
+  "仓库网页地址":"Repository web URL",
+  "配置 Git SSH 密钥":"Configure Git SSH key",
+  "请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。":"Enter a GitHub link or a Git SSH clone address. CNB supports HTTPS with an access token.",
+  "粘贴 GitHub 链接或 Git SSH 地址":"Paste a GitHub link or Git SSH address"
+});

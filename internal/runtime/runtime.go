@@ -45,6 +45,7 @@ type RunCredentials struct {
 	ClaudeCode   ProviderCredential
 	AgentCLI     map[string]ProviderCredential
 	GitToken     string
+	GitSSHKeys   map[string]string `json:"-"`
 	GitUserName  string
 	GitUserEmail string
 	MCPServers   []domain.MCPServerDefinition

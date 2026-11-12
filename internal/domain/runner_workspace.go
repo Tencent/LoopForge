@@ -53,6 +53,7 @@ type RunnerWorkspaceRequest struct {
 	Checkpoint            []byte                    `json:"checkpoint,omitempty"`
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
+	TerminalGitSSHKeys    map[string]string         `json:"terminalGitSshKeys,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to
 	// identify this run's independent sandbox, terminal scope and locks.
 	Browser         *BrowserRequest     `json:"browser,omitempty"`

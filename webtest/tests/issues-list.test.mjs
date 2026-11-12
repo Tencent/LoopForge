@@ -37,7 +37,7 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
       parseGongfengRepoURL('https://evil.example/team/repo'),
       parseGongfengRepoURL('../secret')
     ];
-    const fill={name:''};const filled=fillRepositoryFromLink('ssh://git@git.example.com/team/api.git',fill);
+    const fill={name:''};const filled=fillRepositoryFromLink('ssh://git@gitlab.example.org:2222/team/api.git',fill);
     const title=issueTitleMarkup('[Bug] 【前端】 broken <button>');
     const keys=[issueKeyColumnWidth([{id:'x',projectId:'project-1',number:1}]),
       issueKeyColumnWidth([{source:'tapd',externalRef:{externalId:'1234567890'}}])];
@@ -61,8 +61,8 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
   assert.equal(result.parsed[4], null);
   assert.equal(result.filled, true);
   assert.deepEqual(result.fill, {
-    name: 'api', gongfengProjectId: 'team/api', webUrl: 'https://git.example.com/team/api',
-    cloneUrl: 'git@git.example.com:team/api.git'
+    name: 'api', gongfengProjectId: '', webUrl: '',
+    cloneUrl: 'ssh://git@gitlab.example.org:2222/team/api.git'
   });
   assert.match(result.title, /tone-danger/);
   assert.match(result.title, /tone-cyan/);

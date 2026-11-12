@@ -26,9 +26,10 @@ const PUBLIC_BASE_URL = typeof window !== 'undefined' && (window.__AGENTFLOW_APP
   : 'http://loopforge.example.com';
 function accessViewActive(){return !!$('#guideView')?.classList.contains('active')}
 let credentialFocusRequest=0;
-function gotoCredential(name){
+function gotoCredential(name,sshRemote){
   const request=++credentialFocusRequest;
   if(!CREDENTIAL_FIELDS[name]){switchView('settings');return}
+  if(name==='gitSshKey')return openGitSSHKeys(sshRemote);
   switchView('settings');
   const requestedRoute=settingsRouteTransition;
   const focusAfter=performance.now()+150;
@@ -53,11 +54,12 @@ function gotoCredential(name){
 }
 // Personal credential fields and the errors they cause. Keep the rules in
 // sync with chatbot/src/credentials.js.
-const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token'};
+const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥'};
 const CREDENTIAL_RULES=[
   ['codexApiKey',/Codex[^。\n]{0,16}API Key/i],
   ['claudeCodeApiKey',/Claude Code[^。\n]{0,16}API Key/i],
   ['codeBuddyApiKey',/CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key/i],
+  ['gitSshKey',/Git SSH (?:密钥|私钥)/i],
   ['gitToken',/Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i],
 ];
 function credentialHint(text){
