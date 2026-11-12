@@ -39,7 +39,57 @@ func stampStudioIndex(static fs.FS, raw []byte) []byte {
 		tag := fmt.Sprintf(`<meta name="agentflow-app-domain" content="%s"></head>`, htmlpkg.EscapeString(domain))
 		html = strings.Replace(html, "</head>", tag, 1)
 	}
+	html = injectBuildCommit(html)
 	return []byte(html)
+}
+
+// defaultBuildCommitFile is written by docker build from git HEAD when no
+// LOOPFORGE_COMMIT build-arg was passed.
+const defaultBuildCommitFile = "/app/loopforge-commit"
+
+// buildCommit is the git SHA baked into a published image. A short label in
+// the corner is enough to tell two images apart.
+func buildCommit() (short, full string) {
+	raw := strings.ToLower(strings.TrimSpace(commitSource()))
+	if len(raw) < 7 || len(raw) > 40 {
+		return "", ""
+	}
+	for _, r := range raw {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return "", ""
+		}
+	}
+	return raw[:7], raw
+}
+
+func commitSource() string {
+	if raw := strings.TrimSpace(os.Getenv("LOOPFORGE_COMMIT")); raw != "" {
+		return raw
+	}
+	path := strings.TrimSpace(os.Getenv("LOOPFORGE_COMMIT_FILE"))
+	if path == "" {
+		path = defaultBuildCommitFile
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(body))
+}
+
+func injectBuildCommit(html string) string {
+	short, full := buildCommit()
+	if short == "" || !strings.Contains(html, "</body>") {
+		return html
+	}
+	// Inline style: login and vscode pages do not share the workbench stylesheet.
+	// The CSP allows style-src 'unsafe-inline' and forbids inline scripts.
+	label := fmt.Sprintf(
+		`<style>.loopforge-build{position:fixed;right:12px;bottom:8px;z-index:35;margin:0;font:11px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.02em;color:#7c7c82;user-select:text}</style><span class="loopforge-build" title="%s">%s</span></body>`,
+		htmlpkg.EscapeString("镜像版本 "+full),
+		htmlpkg.EscapeString(short),
+	)
+	return strings.Replace(html, "</body>", label, 1)
 }
 
 func studioFileServer(static fs.FS) http.Handler {
@@ -50,6 +100,18 @@ func studioFileServer(static fs.FS) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/chatbot/") {
 			w.Header().Set("Cache-Control", "no-store")
 			nativeFiles.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == "/login.html" {
+			raw, err := fs.ReadFile(static, "login.html")
+			if err != nil {
+				files.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(injectBuildCommit(string(raw))))
 			return
 		}
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" || r.URL.Path == "/vscode.html" {

@@ -1,4 +1,19 @@
-.git
+# Objects, config and logs stay out. HEAD and refs stay in so a plain
+# `docker build` can stamp the commit without a --build-arg.
+.git/objects
+.git/logs
+.git/hooks
+.git/info
+.git/modules
+.git/worktrees
+.git/lfs
+.git/config
+.git/index
+.git/COMMIT_EDITMSG
+.git/FETCH_HEAD
+.git/ORIG_HEAD
+.git/description
+.git/cursor
 .env*
 .local
 upstream.json

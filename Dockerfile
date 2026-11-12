@@ -36,5 +36,11 @@ COPY --from=build /out/ /app/bin/
 COPY LICENSE THIRD_PARTY_NOTICES.md /app/
 COPY third_party/go/ /app/third_party/go/
 ENV PATH="/app/bin:${PATH}"
+# An explicit LOOPFORGE_COMMIT wins. Otherwise read HEAD from the build context
+# so `docker build` stamps the same corner label as the release workflow.
+ARG LOOPFORGE_COMMIT=
+ENV LOOPFORGE_COMMIT=${LOOPFORGE_COMMIT}
+RUN --mount=type=bind,source=.,target=/ctx,ro \
+    sh /ctx/scripts/image-commit.sh /ctx /app/loopforge-commit
 EXPOSE 8080
 ENTRYPOINT ["/app/bin/agentflow"]

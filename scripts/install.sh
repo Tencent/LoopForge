@@ -166,6 +166,10 @@ if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
   step 'Building LoopForge from source (first install takes several minutes; frontend, Go and runtime stages build in parallel)'
+  if [[ -z "${LOOPFORGE_COMMIT:-}" ]]; then
+    LOOPFORGE_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+    export LOOPFORGE_COMMIT
+  fi
   # Download MySQL while the platform image builds instead of afterwards.
   docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
   mysql_pull=$!

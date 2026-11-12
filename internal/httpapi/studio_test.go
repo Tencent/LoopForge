@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,6 +162,66 @@ func TestStudioIndexInjectsAppDomain(t *testing.T) {
 	// The CSP forbids inline scripts, so nothing may be injected as one.
 	if strings.Contains(html, "<script>") {
 		t.Fatalf("index.html carries an inline script the CSP would block: %s", snippet(html, "<script>"))
+	}
+}
+
+func TestStudioPagesShowShortBuildCommit(t *testing.T) {
+	t.Setenv("LOOPFORGE_COMMIT", "60FC455aabbccddeeff001122334455667788990")
+	static := fstest.MapFS{
+		"index.html":  {Data: []byte(`<html><head></head><body><div id="app"></div></body></html>`)},
+		"login.html":  {Data: []byte(`<html><body class="login-page"></body></html>`)},
+		"vscode.html": {Data: []byte(`<html><body><div id="workbench"></div></body></html>`)},
+	}
+	h := studioFileServer(static)
+	want := `class="loopforge-build" title="镜像版本 60fc455aabbccddeeff001122334455667788990">60fc455</span>`
+	for _, path := range []string{"/", "/login.html", "/vscode.html"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, want) || strings.Contains(body, "<script>") {
+			t.Fatalf("%s should show the short commit without an inline script: %s", path, body)
+		}
+		if !strings.Contains(body, "position:fixed;right:12px;bottom:8px") {
+			t.Fatalf("%s commit label should sit in the corner: %s", path, body)
+		}
+	}
+}
+
+func TestStudioPagesShowCommitBakedByDockerBuild(t *testing.T) {
+	t.Setenv("LOOPFORGE_COMMIT", "")
+	path := filepath.Join(t.TempDir(), "loopforge-commit")
+	if err := os.WriteFile(path, []byte("60fc455aabbccddeeff001122334455667788990\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOOPFORGE_COMMIT_FILE", path)
+	static := fstest.MapFS{
+		"index.html": {Data: []byte(`<html><body></body></html>`)},
+	}
+	rec := httptest.NewRecorder()
+	studioFileServer(static).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(rec.Body.String(), `>60fc455</span>`) {
+		t.Fatalf("docker-build commit file should show in the corner: %s", rec.Body.String())
+	}
+}
+
+func TestStudioPagesOmitUnsafeOrMissingBuildCommit(t *testing.T) {
+	t.Setenv("LOOPFORGE_COMMIT_FILE", filepath.Join(t.TempDir(), "missing"))
+	static := fstest.MapFS{
+		"index.html": {Data: []byte(`<html><body></body></html>`)},
+	}
+	h := studioFileServer(static)
+	for _, commit := range []string{"", "60fc45", "<img src=x onerror=alert(1)>", "60fc455;rm", "not-a-sha"} {
+		t.Run(commit, func(t *testing.T) {
+			t.Setenv("LOOPFORGE_COMMIT", commit)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			if strings.Contains(rec.Body.String(), "loopforge-build") || strings.Contains(rec.Body.String(), "onerror") {
+				t.Fatalf("commit %q must not be rendered: %s", commit, rec.Body.String())
+			}
+		})
 	}
 }
 
