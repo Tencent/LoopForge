@@ -118,3 +118,78 @@ func TestValidateRemoteURLRejectsHostLocalDestinations(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateRemoteURLRejectsOtherReservedHosts(t *testing.T) {
+	for _, raw := range []string{
+		"http://0.1.2.3/repo.git",
+		"http://0/repo.git",
+		"http://[ff02::1]/repo.git",
+		"http://[ff01::1]/repo.git",
+		"http://239.1.2.3/repo.git",
+		"http://169.254.1.1/repo.git",
+		"git@[fe80::1]:a/b.git",
+		"ssh://git@[::1]/a/b.git",
+		"http://0X7F.1/repo.git",
+	} {
+		if err := ValidateRemoteURL(raw, false); err == nil {
+			t.Errorf("ValidateRemoteURL(%q, false) accepted a reserved destination", raw)
+		}
+	}
+}
+
+func TestParseLegacyIPv4(t *testing.T) {
+	for raw, want := range map[string]string{
+		"127.1":        "127.0.0.1",
+		"127.0.1":      "127.0.0.1",
+		"2130706433":   "127.0.0.1",
+		"0x7f.0.0.1":   "127.0.0.1",
+		"0X7F.0.0.1":   "127.0.0.1",
+		"0177.0.0.1":   "127.0.0.1",
+		"0":            "0.0.0.0",
+		"10.0.65535":   "10.0.255.255",
+		"169.16689662": "169.254.169.254",
+	} {
+		if got := parseLegacyIPv4(raw); got == nil || got.String() != want {
+			t.Errorf("parseLegacyIPv4(%q) = %v, want %s", raw, got, want)
+		}
+	}
+	for _, raw := range []string{
+		"1.2.3.4.5",   // more than four parts
+		"127..1",      // empty part
+		"127.0.0.",    // trailing empty part
+		"0x7g.0.0.1",  // bad hex digit
+		"089.0.0.1",   // bad octal digit
+		"256.0.0.1",   // leading part above 0xff
+		"1.256.0.1",   // middle part above 0xff
+		"1.2.3.256",   // last part overflows one byte
+		"1.2.65536",   // last part overflows two bytes
+		"1.16777216",  // last part overflows three bytes
+		"4294967296",  // above 32 bits
+		"git.example", // a name
+		"0x",          // prefix without digits
+	} {
+		if got := parseLegacyIPv4(raw); got != nil {
+			t.Errorf("parseLegacyIPv4(%q) = %v, want nil", raw, got)
+		}
+	}
+}
+
+func TestScpHostBracketedIPv6(t *testing.T) {
+	for raw, want := range map[string]string{
+		"git@[::1]:a/b.git":            "::1",
+		"git@[fe80::1%eth0]:a/b.git":   "fe80::1%eth0",
+		"git@[2001:db8::1]:team/r.git": "2001:db8::1",
+	} {
+		if got, ok := scpHost(raw); !ok || got != want {
+			t.Errorf("scpHost(%q) = %q, %v; want %q", raw, got, ok, want)
+		}
+	}
+	// A slash before "@[" means a local path, not an scp-like remote.
+	if _, ok := scpHost("./dir/git@[::1]:a/b.git"); ok {
+		t.Error("scpHost treated a path containing @[ as an scp-like remote")
+	}
+	// Private IPv6 ranges stay allowed for self-hosted servers.
+	if err := ValidateRemoteURL("git@[fd00::5]:team/repo.git", false); err != nil {
+		t.Errorf("ValidateRemoteURL(unique-local IPv6) = %v", err)
+	}
+}
