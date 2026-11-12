@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"agentflow/internal/engine"
 	"agentflow/internal/repo"
@@ -49,6 +50,50 @@ func TestStudioIndexStampsAssetsWithContentHash(t *testing.T) {
 	}
 	if strings.Contains(html, "/app.js?v=20260820s6") || strings.Contains(html, "/app.js?v=20260820s5") {
 		t.Fatal("hand-edited cache-bust versions should be replaced")
+	}
+	css, err := fs.ReadFile(static, "observability.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssHash := sha256.Sum256(css)
+	if want := `/observability.css?v=` + hex.EncodeToString(cssHash[:8]) + `"`; !strings.Contains(html, want) {
+		t.Fatalf("served index must use the activity stylesheet's content hash: want %s, got %s", want, snippet(html, "observability.css"))
+	}
+}
+
+func TestStudioStylesheetChangesInvalidateURLWithoutEditingIndex(t *testing.T) {
+	const index = `<html><head><link rel="stylesheet" href="/observability.css?v=20261031metrics2"></head></html>`
+	static := fstest.MapFS{
+		"index.html":        {Data: []byte(index)},
+		"observability.css": {Data: []byte(`.node-activity-inline{color:gray}`)},
+	}
+	h := studioFileServer(static)
+	previousURL := ""
+	for _, css := range []string{
+		`.node-activity-inline{color:gray}`,
+		`.node-activity-inline.is-running{animation:shimmer 2.4s infinite}`,
+	} {
+		// The deployment changes only the stylesheet; keep the same HTML and handler.
+		static["observability.css"].Data = []byte(css)
+		sum := sha256.Sum256([]byte(css))
+		url := "/observability.css?v=" + hex.EncodeToString(sum[:8])
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-cache" {
+			t.Fatalf("index must be revalidated: status=%d cache=%q", rec.Code, rec.Header().Get("Cache-Control"))
+		}
+		if !strings.Contains(rec.Body.String(), `href="`+url+`"`) || strings.Contains(rec.Body.String(), "20261031metrics2") {
+			t.Fatalf("handwritten version must be replaced by the current stylesheet hash: %s", rec.Body.String())
+		}
+		if url == previousURL {
+			t.Fatal("changed stylesheet reused its immutable URL")
+		}
+		asset := httptest.NewRecorder()
+		h.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, url, nil))
+		if asset.Code != http.StatusOK || asset.Body.String() != css {
+			t.Fatalf("stamped URL must serve the matching stylesheet: status=%d body=%q", asset.Code, asset.Body.String())
+		}
+		previousURL = url
 	}
 }
 
