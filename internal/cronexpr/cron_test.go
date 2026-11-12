@@ -131,3 +131,50 @@ func TestNextReportsImpossibleSchedules(t *testing.T) {
 		t.Fatal("parse errors should propagate")
 	}
 }
+
+func TestParseErrorNamesTheFailingField(t *testing.T) {
+	cases := map[string]string{
+		"60 * * * *":   "分钟: 超出 0-59",
+		"* 24 * * *":   "小时: 超出 0-23",
+		"* * 0 * *":    "日: 超出 1-31",
+		"* * * 13 *":   "月: 超出 1-12",
+		"* * * * 8":    "周: 超出 0-7",
+		"*/0 * * * *":  "分钟: 步长无效",
+		"a * * * *":    "分钟: 不是数字",
+		"1-x * * * *":  "分钟: 范围无效",
+		"1,,2 * * * *": "分钟: 无效分段",
+	}
+	for expr, want := range cases {
+		_, err := Parse(expr)
+		if err == nil || err.Error() != want {
+			t.Errorf("Parse(%q) error = %v, want %q", expr, err, want)
+		}
+	}
+}
+
+func TestParseFieldValueSets(t *testing.T) {
+	cases := []struct {
+		raw      string
+		min, max int
+		want     []int
+	}{
+		{"*", 0, 3, []int{0, 1, 2, 3}},
+		{"*/2", 0, 5, []int{0, 2, 4}},
+		{"5/15", 0, 59, []int{5}},
+		{"10-20/5", 0, 59, []int{10, 15, 20}},
+		{" 1 , 3 ", 0, 5, []int{1, 3}},
+	}
+	for _, tc := range cases {
+		got, err := parseField(tc.raw, tc.min, tc.max)
+		if err != nil {
+			t.Fatalf("parseField(%q) error: %v", tc.raw, err)
+		}
+		var want uint64
+		for _, n := range tc.want {
+			want |= 1 << uint(n)
+		}
+		if got != want {
+			t.Errorf("parseField(%q) = %b, want %b", tc.raw, got, want)
+		}
+	}
+}
