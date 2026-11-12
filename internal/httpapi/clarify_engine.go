@@ -89,3 +89,79 @@ func codebuddyListsModel(model string) bool {
 	}
 	return false
 }
+
+// clarifyReadOnlyTools 是「只剩提交」重试里要关掉的读工具；CodeBuddy 与 Claude Code
+// 用同名工具，其它引擎没有这个开关。
+const clarifyReadOnlyTools = "Read,Grep,Glob"
+
+// clarifyInvocationOpts 是一次澄清进程需要的输入。Root 是该用户专属的澄清会话目录，
+// Config 是会话 MCP 网关的 CodeBuddy 风格配置，由各引擎按自己的格式改写。
+type clarifyInvocationOpts struct {
+	Bin, Root, Config, Settings, Prompt, Model, SystemPrompt, SessionID, RunID string
+	Resume                                                                     bool
+	SubmitOnly                                                                 bool
+	User                                                                       runtime.ProviderCredential
+}
+
+// clarifyInvocation 是各引擎统一后的结果。凭据不在这里装配：executeClarify 按需求责任人
+// 给出全套凭据，CommandSpec.CredentialBindings 决定哪一个真正被绑定。
+type clarifyInvocation struct {
+	Command   runtime.CommandSpec
+	Translate func(string) []string // nil = 这个 CLI 本身就说 stream-json
+	// ResumeMissing 表示这个引擎接不上上一次的会话（Codex 没记下 thread、agent CLI 的
+	// native session 失效），调用方应改走「重放历史」的新会话。
+	ResumeMissing bool
+	// Finish 在进程退出后调用；ok 表示这一轮拿到了可用结果。
+	Finish func(ok bool)
+}
+
+// prepareClarifyInvocation 为指定引擎准备好一条可执行命令：CodeBuddy 延用原有的澄清 argv，
+// 其余引擎复用 AI 对话已经验证过的 builder。
+func prepareClarifyInvocation(engine clarifyEngine, o clarifyInvocationOpts) (clarifyInvocation, error) {
+	if engine.ID == assistantEngineCodeBuddy {
+		command, err := prepareClarifyCommandWith(clarifyCommandOpts{
+			Bin: o.Bin, Model: o.Model, Prompt: o.Prompt, RunID: o.RunID, SessionID: o.SessionID,
+			Engine: engine.ID, Resume: o.Resume, Native: true,
+			MCPConfig: o.Config, Settings: o.Settings, SubmitOnly: o.SubmitOnly,
+		})
+		if err != nil {
+			return clarifyInvocation{}, err
+		}
+		return clarifyInvocation{Command: command}, nil
+	}
+	opts := assistantEngineInvocationOpts{
+		Bin: o.Bin, Root: o.Root, Config: o.Config, Prompt: o.Prompt, Model: o.Model,
+		SessionID: o.SessionID, SystemPrompt: o.SystemPrompt, Resume: o.Resume, User: o.User,
+	}
+	var (
+		prepared assistantCLIInvocation
+		err      error
+	)
+	switch {
+	case engine.ID == assistantEngineClaude:
+		prepared, err = prepareAssistantClaudeInvocation(opts)
+	case engine.ID == assistantEngineCodex:
+		prepared, err = prepareAssistantCodexInvocation(opts)
+	case runtime.IsAgentCLI(engine.ID):
+		prepared, err = prepareAssistantAgentCLIInvocation(engine.ID, opts)
+	default:
+		return clarifyInvocation{}, fmt.Errorf("%w：%s", errClarifyEngineUnknown, engine.ID)
+	}
+	if err != nil {
+		return clarifyInvocation{}, err
+	}
+	if prepared.resumeMissing {
+		return clarifyInvocation{ResumeMissing: true}, nil
+	}
+	invocation := clarifyInvocation{Command: prepared.command, Translate: prepared.translate, Finish: prepared.finish}
+	if o.SubmitOnly && clarifySubmitOnlySupported(engine) {
+		invocation.Command.Argv = appendDisallowedTools(invocation.Command.Argv, clarifyReadOnlyTools)
+	}
+	return invocation, nil
+}
+
+// clarifySubmitOnlySupported 判断这个引擎能否在重试时把工具收窄到只剩提交。
+// Codex 的护栏是 PreToolUse 脚本、agent CLI 只有整体只读档，两者都没有逐工具开关。
+func clarifySubmitOnlySupported(engine clarifyEngine) bool {
+	return engine.ID == assistantEngineCodeBuddy || engine.ID == assistantEngineClaude
+}

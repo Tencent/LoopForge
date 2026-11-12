@@ -204,6 +204,7 @@ func copyClarifyFile(src, dest string) error {
 
 type clarifyCommandOpts struct {
 	Bin, Model, Prompt, RunID, SessionID string
+	Engine                               string // 空串等价 "codebuddy"
 	Resume                               bool
 	Native                               bool
 	MCPConfig, Settings                  string
@@ -215,6 +216,10 @@ func prepareClarifyCommand(bin, model, prompt, runID, sessionID string, resume b
 }
 
 func prepareClarifyCommandWith(opts clarifyCommandOpts) (runtime.CommandSpec, error) {
+	engineKind := strings.TrimSpace(opts.Engine)
+	if engineKind == "" {
+		engineKind = "codebuddy"
+	}
 	args := []string{"-p", "--max-turns", "500", "--output-format", "stream-json", "--include-partial-messages"}
 	if strings.TrimSpace(opts.MCPConfig) != "" {
 		args = append(args, "--mcp-config", opts.MCPConfig, "--strict-mcp-config")
@@ -228,14 +233,14 @@ func prepareClarifyCommandWith(opts clarifyCommandOpts) (runtime.CommandSpec, er
 	} else if strings.TrimSpace(opts.SessionID) != "" {
 		args = append(args, "--session-id", opts.SessionID)
 	}
-	ex := domain.ExecutorDefinition{Kind: "codebuddy", Binary: opts.Bin, Model: opts.Model, Args: args}
+	ex := domain.ExecutorDefinition{Kind: engineKind, Binary: opts.Bin, Model: opts.Model, Args: args}
 	command, err := runtime.PrepareProviderCommand(ex, opts.Prompt, "local", inv)
 	if err != nil {
 		return runtime.CommandSpec{}, err
 	}
 	command.Argv = applyNativeToolSafety(command.Argv, AgentToolClarify)
 	if opts.SubmitOnly {
-		command.Argv = appendDisallowedTools(command.Argv, "Read,Grep,Glob")
+		command.Argv = appendDisallowedTools(command.Argv, clarifyReadOnlyTools)
 	}
 	if strings.TrimSpace(opts.MCPConfig) != "" {
 		command = command.WithMCPStartupWait(agentToolSessionMCPStartupWait)
