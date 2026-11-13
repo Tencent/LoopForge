@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -63,6 +64,33 @@ func TestDeleteFailedRunDestroysLocalWorkspace(t *testing.T) {
 	}
 	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
 		t.Fatalf("workspace still exists after delete: %v", err)
+	}
+}
+
+func TestDeleteRunRefusesTerminalRunWithUnfinishedNode(t *testing.T) {
+	t.Parallel()
+	for _, nodeStatus := range []string{"running", "pending_input"} {
+		t.Run(nodeStatus, func(t *testing.T) {
+			st, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(st.Close)
+			e := New(st, runtime.NewManager(t.TempDir()))
+			run := domain.Run{ID: "failed-with-" + nodeStatus, Status: "failed", Nodes: map[string]*domain.NodeRun{
+				"done": {Status: "succeeded"},
+				"busy": {Status: nodeStatus},
+			}}
+			if err := st.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.DeleteRun(run.ID); err == nil || !strings.Contains(err.Error(), "仍有未结束的节点") {
+				t.Fatalf("DeleteRun error = %v, want unfinished node refusal", err)
+			}
+			if _, ok := st.Run(run.ID); !ok {
+				t.Fatal("run with an unfinished node was deleted")
+			}
+		})
 	}
 }
 

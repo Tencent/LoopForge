@@ -96,6 +96,40 @@ func shouldSelfCorrect(onFailure string) bool {
 	return resolveGateOnFailure(onFailure, "") == "loop"
 }
 
+// loopRetroSignals counts one node's telemetry for the loop retro.
+type loopRetroSignals struct {
+	completed, missingResult, gatePass, gateFail, loopStarts, toolFinishes int
+	// loopIssues holds one "- Loop：" line per agent.loop event, in order.
+	loopIssues []string
+}
+
+func collectLoopRetroSignals(run domain.Run, nodeID string) loopRetroSignals {
+	var s loopRetroSignals
+	for _, event := range run.Telemetry {
+		if event.NodeID != nodeID {
+			continue
+		}
+		switch {
+		case event.Name == "agent.completed":
+			s.completed++
+		case event.Category == "process" && event.Name == "process.finished" && event.Source.Layer == "executor" && !strings.Contains(event.Message, "失败"):
+			if s.completed == 0 {
+				s.missingResult++
+			}
+		case event.Category == "verification" && event.Name == "process.finished" && event.Level != "error":
+			s.gatePass++
+		case event.Category == "verification" && event.Name == "process.finished" && event.Level == "error":
+			s.gateFail++
+		case event.Name == "agent.loop":
+			s.loopStarts++
+			s.loopIssues = append(s.loopIssues, "- Loop："+event.Message)
+		case event.Category == "tool" && event.Name == "tool.call" && event.Phase == "finish":
+			s.toolFinishes++
+		}
+	}
+	return s
+}
+
 func buildLoopRetro(run domain.Run, nodeID string, iterations int, lastErr error, onFailure string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Loop 复盘 — `%s`\n\n", nodeID)
@@ -105,31 +139,9 @@ func buildLoopRetro(run domain.Run, nodeID string, iterations int, lastErr error
 	} else {
 		b.WriteString("- 最终结果：通过\n\n")
 	}
-	var completed, missingResult, gatePass, gateFail, loopStarts, toolFinishes int
-	var issues []string
-	for _, event := range run.Telemetry {
-		if event.NodeID != nodeID {
-			continue
-		}
-		switch {
-		case event.Name == "agent.completed":
-			completed++
-		case event.Category == "process" && event.Name == "process.finished" && event.Source.Layer == "executor" && !strings.Contains(event.Message, "失败"):
-			if completed == 0 {
-				missingResult++
-			}
-		case event.Category == "verification" && event.Name == "process.finished" && event.Level != "error":
-			gatePass++
-		case event.Category == "verification" && event.Name == "process.finished" && event.Level == "error":
-			gateFail++
-		case event.Name == "agent.loop":
-			loopStarts++
-			issues = append(issues, "- Loop："+event.Message)
-		case event.Category == "tool" && event.Name == "tool.call" && event.Phase == "finish":
-			toolFinishes++
-		}
-	}
-	if missingResult > 0 {
+	signals := collectLoopRetroSignals(run, nodeID)
+	issues := signals.loopIssues
+	if signals.missingResult > 0 {
 		if lastErr != nil && strings.Contains(lastErr.Error(), "without a terminal result") {
 			issues = append(issues, "- 执行器退出 0，但 stream-json 没有 `type:result` / `agent.completed`（协议中断，不是门禁失败，也不要先当成 max-turns）")
 		} else {
@@ -148,7 +160,7 @@ func buildLoopRetro(run domain.Run, nodeID string, iterations int, lastErr error
 	} else if lastErr != nil && strings.Contains(lastErr.Error(), "No such file") {
 		issues = append(issues, "- 产物未落地或会话提前结束")
 	}
-	fmt.Fprintf(&b, "## 信号\n\n- agent.completed：%d\n- 门禁通过 / 失败：%d / %d\n- 工具调用（finish）：%d\n- 进入自修正：%d\n\n", completed, gatePass, gateFail, toolFinishes, loopStarts)
+	fmt.Fprintf(&b, "## 信号\n\n- agent.completed：%d\n- 门禁通过 / 失败：%d / %d\n- 工具调用（finish）：%d\n- 进入自修正：%d\n\n", signals.completed, signals.gatePass, signals.gateFail, signals.toolFinishes, signals.loopStarts)
 	b.WriteString("## 问题\n\n")
 	if len(issues) == 0 {
 		b.WriteString("- 本节点未发现需要改 Loop 的异常。\n")

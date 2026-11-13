@@ -55,6 +55,9 @@ type ProviderCredential struct {
 	APIKey   string
 	BaseURL  string
 	Protocol string
+	// Models is the user's saved model catalog for an agent CLI; Cursor
+	// resolves folded families from it (CursorModelID).
+	Models []domain.CLIModel
 }
 
 type InvocationOptions struct {
@@ -71,6 +74,10 @@ type InvocationOptions struct {
 // and a sandbox. Callers can request known credential bindings and runtime
 // features, but cannot supply arbitrary environment variables.
 type CommandSpec struct {
+	// WorkingDir and OwnProcessGroup are used by durable conversation processes.
+	// The cwd is mounted at the same absolute path in host and Docker modes.
+	WorkingDir         string
+	OwnProcessGroup    bool
 	Argv               []string
 	Provider           string
 	CredentialBindings []CredentialBinding
@@ -83,13 +90,14 @@ type CommandSpec struct {
 	AgentCLI   AgentCLIOptions
 	HookOutput string
 	Telemetry  *InvocationOptions
-	// Stdin feeds the process on the control-plane local sandbox only.
-	// Codex chat uses it for the app-server JSON-RPC session.
+	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
 	// privateBinds are host directories bwrap binds into this one process
 	// only (for example a terminal's own SSH agent).
 	privateBinds []string
+	// Conversation preparation binds credentials before acknowledging start.
+	bindingsPrepared bool
 }
 
 // WithPrivateHomeDir keeps CodeBuddy/Claude isolated from the operator HOME

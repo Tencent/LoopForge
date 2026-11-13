@@ -211,6 +211,9 @@ func (d *Daemon) runnerWorkspacePreparationStatus(ctx context.Context, root stri
 		state.Error = "上次工作区准备已中断，请重新准备"
 	}
 	if state.Status != "ready" {
+		if state.Status != "preparing" && request.Workflow != nil && runtime.WorkspacePreparationTrivial(*request.Workflow) {
+			return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}}
+		}
 		return state
 	}
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
@@ -236,7 +239,7 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 	release := onceRelease(releaseSandbox, gate.RUnlock)
 	state := runtime.ReadWorkspacePreparationStatus(root, sb.ID())
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
-	if err != nil || !runtime.WorkspacePreparationReusable(state, *request.Workflow, request.Repositories, epoch) {
+	if !runtime.WorkspacePreparationTrivial(*request.Workflow) && (err != nil || !runtime.WorkspacePreparationReusable(state, *request.Workflow, request.Repositories, epoch)) {
 		release()
 		return runtime.TerminalResult{}, fmt.Errorf("workspace environment changed; wait until active execution finishes before preparing")
 	}

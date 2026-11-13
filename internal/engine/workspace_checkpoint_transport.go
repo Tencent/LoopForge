@@ -143,7 +143,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid terminal request", 400)
 		return
 	}
-	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.IsWorkspace() || run.Status != "running" && run.Status != "queued" && !hasRunningNode(run))
+	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.IsWorkspace() || run.Status != "running" && run.Status != "queued" && !run.HasActiveNode())
 	interactive := request.Operation == domain.RunnerWorkspaceOperationPreparationRecord || request.Operation == domain.RunnerWorkspaceOperationPrepare || request.Operation == domain.RunnerWorkspaceOperationPreparationStatus || request.Operation == domain.RunnerWorkspaceOperationTerminal
 	transferAux := transfer && request.Operation != domain.RunnerWorkspaceOperationCheckpointExport && request.Operation != domain.RunnerWorkspaceOperationCheckpointCommit
 	if !probe && !interactive && (sharesWorkspace(run) || !artifactsAllowed && !transferAux && !e.conversationWorkspaceIdle(run)) {
@@ -218,7 +218,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload = json.RawMessage(`{"ok":true}`)
 				break
 			}
-			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run.ID, &e.workspaceTerminals, scope, *request.Terminal, request.TerminalOwner)
+			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run, &e.workspaceTerminals, scope, *request.Terminal, request.TerminalOwner)
 			result.Payload, _ = json.Marshal(value)
 			if err != nil {
 				result.Error = err.Error()

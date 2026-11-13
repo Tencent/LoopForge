@@ -280,11 +280,15 @@ func (e *Engine) EnsureWorkspaceReady(ctx context.Context, id string) (runtime.W
 	if current, ok := e.repo.RunState(id); ok {
 		run = current
 	}
-	if hasRunningNode(run) || env.activeExecutions.Load() > 0 || e.workspaceTerminals.HasRunScope(id) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
+	if run.HasActiveNode() || env.activeExecutions.Load() > 0 || e.workspaceTerminals.HasRunScope(id) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
 		state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 		epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
-		if run.IsWorkspace() && err == nil && runtime.WorkspacePreparationReusable(state, workspacePreparationPlan(run), run.RepositoryContexts(), epoch) {
+		// The environment agents already run in serves the IDE terminal too.
+		if err == nil && runtime.WorkspacePreparationReusable(state, workspacePreparationPlan(run), run.RepositoryContexts(), epoch) {
 			return state, nil
+		}
+		if state.Status != "preparing" && runtime.WorkspacePreparationTrivial(workspacePreparationPlan(run)) {
+			return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}}, nil
 		}
 		return runtime.WorkspacePreparationStatus{Status: "unprepared", Error: "成员或终端正在使用工作区，请结束当前操作后重新准备", Steps: []runtime.WorkspacePreparationStep{}}, fmt.Errorf("成员或终端正在使用工作区，请结束当前操作后重新准备")
 	}
@@ -333,10 +337,18 @@ func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *r
 			return runtime.TerminalResult{}, err
 		}
 	}
-	return e.HandlePreparedWorkspaceTerminal(ctx, id, pool, scope, req, actorID)
+	run, _ := e.repo.RunState(id)
+	run.ID = id
+	return e.HandlePreparedWorkspaceTerminal(ctx, run, pool, scope, req, actorID)
 }
 
-func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, id string, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
+// HandlePreparedWorkspaceTerminal takes the run from its caller, which may
+// hold the run row locked: reading it again here would wait on that lock.
+// The run must carry its node states (RunState, not a bare locked row):
+// without them every succeeded preparation step looks pending and the
+// readiness check would be skipped as if there were nothing to prepare.
+func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain.Run, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
+	id := run.ID
 	if req.Operation != "open" {
 		return pool.HandleSandbox(ctx, nil, scope, req, nil)
 	}
@@ -349,7 +361,8 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, id string,
 
 	state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
-	if err != nil || state.Status != "ready" || state.Environment != epoch {
+	trivial := len(run.WorkflowSnapshot.Nodes) > 0 && runtime.WorkspacePreparationTrivial(workspacePreparationPlan(run))
+	if !trivial && (err != nil || state.Status != "ready" || state.Environment != epoch) {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区执行环境已变化，请重新准备后打开终端")
 	}
 	sshKeys := env.credentialSnapshot().GitSSHKeys

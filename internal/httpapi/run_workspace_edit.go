@@ -29,14 +29,7 @@ func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bo
 	// Conversation tools inherit project access from their authenticated entry
 	// point; the separate task-panel editor policy does not apply to them.
 	if mainBotWorkspaceRun(c.Request.Context()) != run.ID {
-		project, ok := h.repo.Project(run.ExecutionContext.ProjectID)
-		allowed := h.isPlatformAdmin(c.Request) || ok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
-		for _, member := range project.Members {
-			if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
-				allowed = true
-			}
-		}
-		if !allowed {
+		if !h.workspaceEditAllowed(c.Request, run, user.ID) {
 			c.JSON(403, gin.H{"error": "无权编辑该任务工作区"})
 			return run, 0, false
 		}
@@ -59,20 +52,8 @@ func (h *runsHandlers) workspaceTakeover(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// Enabling edit implicitly pauses agents; callers no longer need a separate pause click.
-	if run.Status == "running" || (run.Status == "waiting" && !run.PauseRequested) {
-		if err := h.engine.Pause(run.ID); err != nil {
-			c.JSON(409, gin.H{"error": err.Error()})
-			return
-		}
-		run, _ = h.repo.RunState(run.ID)
-	}
-	tasks, err := h.repo.ActiveRunnerTasksForRun(run.ID)
-	if err != nil || len(tasks) > 0 {
-		c.JSON(409, gin.H{"error": "正在停止执行，请稍后重试启用编辑"})
-		return
-	}
-	if err = h.repo.AcquireWorkspaceEditor(run.ID, user); err != nil {
+	// Kept for older clients. People edit at any time, so this pauses nothing.
+	if err := h.repo.AcquireWorkspaceEditor(run.ID, user); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
@@ -112,7 +93,7 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 			}
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 			defer cancel()
-			response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: runnerWorkspaceRunID(locked), RunStatus: locked.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, RunKind: mainBotWorkspaceMode(c, locked), Operation: domain.RunnerWorkspaceOperationWrite, Path: req.Path, Content: req.Content, ExpectedSHA256: req.ExpectedSHA, TerminalOwner: user})
+			response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{RunID: runnerWorkspaceRunID(locked), RunStatus: locked.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, RunKind: mainBotWorkspaceMode(c, locked), ConcurrentEdit: humanWorkspaceEdit(c, locked), Operation: domain.RunnerWorkspaceOperationWrite, Path: req.Path, Content: req.Content, ExpectedSHA256: req.ExpectedSHA, TerminalOwner: user})
 			if err != nil {
 				return fmt.Errorf("执行端写入失败：%w", err)
 			}
@@ -146,6 +127,28 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 	c.JSON(200, gin.H{"sha256": sha})
 }
 
+// workspaceEditAllowed reports whether userID may edit run's task workspace
+// from the task panel: platform admins, the project owner, anyone on an
+// unowned project without members, and non-viewer project members.
+func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, userID int64) bool {
+	if h.isPlatformAdmin(r) {
+		return true
+	}
+	project, ok := h.repo.Project(run.ExecutionContext.ProjectID)
+	if !ok {
+		return false
+	}
+	if project.OwnerID == userID || project.OwnerID == 0 && len(project.Members) == 0 {
+		return true
+	}
+	for _, member := range project.Members {
+		if member.UserID == userID && !strings.EqualFold(member.Role, "viewer") {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 	// Read-only probe: never write HTTP errors here (browse handlers still return the payload).
 	if engine.WorkspaceRunID(run) != run.ID {
@@ -155,14 +158,11 @@ func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 	if !ok {
 		return false
 	}
-	project, pok := h.repo.Project(run.ExecutionContext.ProjectID)
-	allowed := mainBotWorkspaceRun(c.Request.Context()) == run.ID || h.isPlatformAdmin(c.Request) || pok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
-	for _, member := range project.Members {
-		if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
-			allowed = true
-		}
+	allowed := mainBotWorkspaceRun(c.Request.Context()) == run.ID || h.workspaceEditAllowed(c.Request, run, user.ID)
+	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
+		return run.LiveWorkspace() || (run.Status == "waiting" && run.PauseRequested && !run.CancelRequested) || domain.TerminalRunStatus(run.Status)
 	}
-	return allowed && ((run.Status == "waiting" && run.PauseRequested && !run.CancelRequested) || run.Status == "succeeded" || run.Status == "failed" || run.Status == "cancelled")
+	return allowed && run.HumanEditable()
 }
 
 func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
@@ -194,6 +194,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 			trustedRequest.RunStatus = locked.Status
 			trustedRequest.WorkspaceLayout = locked.ExecutionContext.RunnerWorkspaceLayout
 			trustedRequest.RunKind = mainBotWorkspaceMode(c, locked)
+			trustedRequest.ConcurrentEdit = humanWorkspaceEdit(c, locked)
 			if runnerID != "" {
 				if h.runnerControls == nil {
 					return fmt.Errorf("执行端未连接")
@@ -227,7 +228,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				result = json.RawMessage(response.Payload)
 				return nil
 			}
-			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run.ID, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, user)
+			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, user)
 			result = r
 			return err
 		})
@@ -298,6 +299,16 @@ func (h *runsHandlers) withWorkspaceWriter(c *gin.Context, runID string, user in
 	}
 	return h.repo.WithWorkspaceEditor(runID, user, fn)
 }
+
+// humanWorkspaceEdit marks IDE requests on runs that may still have agents
+// running, which the runner serves beside those tasks (sharing their gate)
+// instead of waiting for their fence. Finished runs keep the exclusive fence.
+func humanWorkspaceEdit(c *gin.Context, run domain.Run) bool {
+	return mainBotWorkspaceRun(c.Request.Context()) != run.ID && run.HumanEditable() && !domain.TerminalRunStatus(run.Status)
+}
+
+// mainBotWorkspaceMode tells the runner to apply the live-workspace rule to
+// Main Bot (no SOP fence on its conversation workspace).
 func mainBotWorkspaceMode(c *gin.Context, run domain.Run) string {
 	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
 		return run.Kind

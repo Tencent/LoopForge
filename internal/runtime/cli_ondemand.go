@@ -11,14 +11,20 @@ import (
 	"sync"
 )
 
-// CLIs the published platform image does not guarantee. Codex and CodeBuddy
-// are baked into that image; the rest are installed only after a person asks
-// from a failed conversation. Package names and installer URLs are fixed:
+// CLIs the published platform image does not guarantee. Codex, CodeBuddy and
+// DeepSeek Harness are baked into that image; the rest are installed only after
+// a person asks from a failed conversation. Package names and installer URLs are fixed:
 // the request may choose an engine, never a URL or a package.
 const (
 	cursorInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 https://cursor.com/install | bash"
 	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 https://antigravity.google/cli/install.sh | bash"
 )
+
+// DeepSeekHarnessVersion is the dsh release the Dockerfile bundles and an
+// installation without it downloads. It must be named explicitly: every dsh
+// release is a prerelease requiring a newer Node than the image ships, so a
+// bare package name resolves to no version at all.
+const DeepSeekHarnessVersion = "0.2.2-rc.1"
 
 type onDemandCLI struct {
 	Engine       string
@@ -26,21 +32,24 @@ type onDemandCLI struct {
 	Package      string
 	Script       string
 	RelaxEngines bool
+	// Bundled CLIs ship in the published image, so its sandboxes never
+	// install them.
+	Bundled bool
 }
 
 var onDemandInstallMu sync.Mutex
 
 func onDemandCLICatalog() map[string]onDemandCLI {
 	return map[string]onDemandCLI{
-		"codex":       {Engine: "codex", Binary: "codex", Package: "@openai/codex"},
-		"codebuddy":   {Engine: "codebuddy", Binary: "codebuddy", Package: "@tencent-ai/codebuddy-code"},
+		"codex":       {Engine: "codex", Binary: "codex", Package: "@openai/codex", Bundled: true},
+		"codebuddy":   {Engine: "codebuddy", Binary: "codebuddy", Package: "@tencent-ai/codebuddy-code", Bundled: true},
 		"claude-code": {Engine: "claude-code", Binary: "claude"},
 		"opencode":    {Engine: "opencode", Binary: "opencode", Package: "opencode-ai"},
 		"cursor":      {Engine: "cursor", Binary: "cursor-agent", Script: cursorInstallScript},
 		"agy":         {Engine: "agy", Binary: "agy", Script: agyInstallScript},
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
-		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh", RelaxEngines: true},
+		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true, Bundled: true},
 	}
 }
 
@@ -144,21 +153,31 @@ func installNPMCLI(ctx context.Context, spec onDemandCLI) (string, error) {
 	if err := os.Chmod(stage, 0o755); err != nil {
 		return "", err
 	}
+	cmd := exec.CommandContext(ctx, "npm", npmCLIInstallArgs(stage, spec)...)
+	cmd.Dir = stage
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", errors.New(installCommandError(ctx, err, out))
+	}
+	return activateNPMStage(parent, stage, spec.Binary)
+}
+
+// npmCLIInstallArgs builds the npm install argv for installing spec into stage.
+func npmCLIInstallArgs(stage string, spec onDemandCLI) []string {
 	args := []string{"install", "--prefix", stage, "--no-audit", "--no-fund", "--omit=dev", "--save-exact"}
 	if spec.RelaxEngines {
 		args = append(args, "--engine-strict=false")
 	} else {
 		args = append(args, "--engine-strict")
 	}
-	args = append(args, spec.Package)
-	cmd := exec.CommandContext(ctx, "npm", args...)
-	cmd.Dir = stage
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", errors.New(installCommandError(ctx, err, out))
-	}
-	staged := filepath.Join(stage, "node_modules", ".bin", spec.Binary)
+	return append(args, spec.Package)
+}
+
+// activateNPMStage verifies the staged binary, replaces parent/current with
+// stage and returns the binary path inside the activated directory.
+func activateNPMStage(parent, stage, binary string) (string, error) {
+	staged := filepath.Join(stage, "node_modules", ".bin", binary)
 	if !fileIsExecutable(staged) {
-		return "", fmt.Errorf("安装后没有找到可执行文件 %s", spec.Binary)
+		return "", fmt.Errorf("安装后没有找到可执行文件 %s", binary)
 	}
 	target := filepath.Join(parent, "current")
 	if err := os.RemoveAll(target); err != nil {
@@ -167,7 +186,7 @@ func installNPMCLI(ctx context.Context, spec onDemandCLI) (string, error) {
 	if err := os.Rename(stage, target); err != nil {
 		return "", fmt.Errorf("启用安装结果失败：%w", err)
 	}
-	return filepath.Join(target, "node_modules", ".bin", spec.Binary), nil
+	return filepath.Join(target, "node_modules", ".bin", binary), nil
 }
 
 func installScriptCLI(ctx context.Context, spec onDemandCLI) (string, error) {

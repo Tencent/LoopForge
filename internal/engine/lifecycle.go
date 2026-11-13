@@ -52,30 +52,12 @@ func resetInFlightNodesForResume(r *domain.Run, activity string) {
 	}
 }
 
-func isTerminalRunStatus(status string) bool {
-	switch status {
-	case "succeeded", "failed", "cancelled":
-		return true
-	default:
-		return false
-	}
-}
-
-func hasRunningNode(r domain.Run) bool {
-	for _, nr := range r.Nodes {
-		if nr != nil && (nr.Status == "running" || nr.Status == "pending_input") {
-			return true
-		}
-	}
-	return false
-}
-
 // settleStatusForCompletedGraph reports the terminal run status when every
 // snapshot node is already finished and nothing is in flight. An empty graph
 // is not settled: ResumeInterruptedRuns uses that case to recover orphans
 // whose workflow snapshot was never frozen.
 func settleStatusForCompletedGraph(wf domain.WorkflowDefinition, r domain.Run) (status, msg string, ok bool) {
-	if wf.CollaborationMode == "group" || len(wf.Nodes) == 0 || hasRunningNode(r) {
+	if wf.CollaborationMode == "group" || len(wf.Nodes) == 0 || r.HasActiveNode() {
 		return "", "", false
 	}
 	if allSucceeded(wf, r) {
@@ -158,7 +140,7 @@ func (e *Engine) forceTerminate(runID, status, msg string) {
 				nr.FinishedAt = now
 			}
 		}
-		if status == "cancelled" || !isTerminalRunStatus(r.Status) {
+		if status == "cancelled" || !domain.TerminalRunStatus(r.Status) {
 			r.Status = status
 			e.event(r, "", "run."+status, msg)
 		}
