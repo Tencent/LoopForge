@@ -2,6 +2,7 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -87,7 +88,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		default:
 		}
 		r, ok := e.repo.RunState(runID)
-		if !ok || isTerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
+		if !ok || domain.TerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
 			return
 		}
 		if r.CancelRequested {
@@ -463,8 +464,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		return sb.Exec(ctx, runtime.CommandSpec{Argv: []string{"sh", "-lc", bindExecutionTarget(command, target)}, Provider: "verification", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, gateSink)
 	}
 	current, _ = e.repo.RunState(runID)
-	gitTok := sb.credentialSnapshot().GitToken
+	gitCredentials := sb.credentialSnapshot()
+	gitTok := gitCredentials.GitToken
 	ctx = withGitToken(ctx, gitTok)
+	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	// Repository checkout and Agent-configuration index isolation belong to the
 	// run environment, not to each node. The same checkout and .git/index are
@@ -755,7 +758,11 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 				return result, dispatchErr
 			}
-			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{GitToken: sb.credentialSnapshot().GitToken, RequireCredentials: true})
+			repositories := current.RepositoryContexts()
+			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{
+				GitToken: gitTok, RequireCredentials: true,
+				SSHRepositoriesOnly: len(repositories) > 0 && len(sshRepositoryURLs(repositories)) == len(repositories),
+			})
 			for _, warning := range skipped {
 				warnMCPSkipped(warning)
 			}

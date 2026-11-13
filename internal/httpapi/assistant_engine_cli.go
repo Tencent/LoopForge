@@ -37,7 +37,7 @@ type assistantCLIInvocation struct {
 
 type assistantEngineInvocationOpts struct {
 	Bin, Root, Config, Prompt, Model, Effort, SessionID, SystemPrompt string
-	Resume                                                            bool
+	Resume, Workspace                                                 bool
 	// ReviewOnly is a one-shot call without MCP servers or session history,
 	// such as a title summary.
 	ReviewOnly bool
@@ -57,10 +57,14 @@ func assistantEngineConfigDir(engine string) string {
 
 // resolveAssistantEngineBin locates the codex / claude executable the same
 // way resolveCodeBuddyBin does: explicit override, managed inventory, PATH,
-// then well-known install locations.
+// well-known install locations, then a CLI installed from a failed conversation.
 func resolveAssistantEngineBin(engine string) (string, error) {
 	if engine == assistantEngineCodeBuddy {
-		return resolveCodeBuddyBin()
+		bin, err := resolveCodeBuddyBin()
+		if err != nil && (strings.Contains(err.Error(), "未找到") || strings.Contains(err.Error(), "尚未安装")) {
+			return "", assistantCLIMissingError{engine: engine, binary: "codebuddy"}
+		}
+		return bin, err
 	}
 	binary, override, managed := "codex", "AGENTFLOW_CODEX_BIN", "codex"
 	if engine == assistantEngineClaude {
@@ -90,6 +94,9 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 			return candidate, nil
 		}
 	}
+	if path, ok := runtime.OnDemandCLIPath(engine); ok {
+		return path, nil
+	}
 	return "", assistantCLIMissingError{engine: engine, binary: binary}
 }
 
@@ -101,7 +108,10 @@ type assistantCLIMissingError struct{ engine, binary string }
 
 func (e assistantCLIMissingError) Error() string {
 	label := assistantEngineLabel(e.engine)
-	return fmt.Sprintf("服务器未安装 %s CLI（%s），请联系管理员安装后再使用 %s 模型", label, e.binary, label)
+	if runtime.OnDemandInstallable(e.engine) {
+		return fmt.Sprintf("%s（%s）没有安装在当前服务器上。安装后即可在对话里使用。", label, e.engine)
+	}
+	return fmt.Sprintf("服务器没有安装 %s（%s）。请联系管理员安装后再使用。", label, e.binary)
 }
 
 func (e assistantCLIMissingError) Is(target error) bool {
@@ -169,7 +179,11 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	mcpPath := filepath.Join(o.Root, "claude-mcp.json")
 	settingsPath := filepath.Join(o.Root, "claude-settings.json")
 	mcp, _ := json.Marshal(map[string]any{"mcpServers": servers})
-	settings, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": strings.Split(claudeAssistantDisallowedTools, ",")}})
+	settingsDoc := map[string]any{"permissions": map[string]any{"deny": strings.Split(claudeAssistantDisallowedTools, ",")}}
+	if o.Workspace {
+		settingsDoc = map[string]any{}
+	}
+	settings, _ := json.Marshal(settingsDoc)
 	if err := os.WriteFile(mcpPath, mcp, 0o600); err != nil {
 		return assistantCLIInvocation{}, err
 	}
@@ -180,8 +194,11 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	argv := []string{o.Bin, "-p", "--verbose", "--output-format", "stream-json", "--include-partial-messages",
 		"--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", o.SystemPrompt,
 		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", "user",
-		"--permission-mode", "bypassPermissions", "--disallowedTools", claudeAssistantDisallowedTools,
+		"--permission-mode", "bypassPermissions",
 		"--model", o.Model}
+	if !o.Workspace {
+		argv = append(argv, "--disallowedTools", claudeAssistantDisallowedTools)
+	}
 	if effort := strings.TrimSpace(o.Effort); effort != "" {
 		argv = append(argv, "--effort", effort)
 	}
@@ -214,13 +231,12 @@ var codexAssistantDisabledFeatures = []string{
 	"tool_suggest", "skill_search", "view_image", "goals", "collab", "sleep_tool", "worktrees",
 }
 
-// codexAssistantGuardArgs forces the PreToolUse denial hook. app-server has
-// no --dangerously-bypass-hook-trust flag; hooks.bypass_hook_trust is the
-// config override it accepts.
+// codexAssistantGuardArgs installs the platform's PreToolUse denial hook.
+// codexAppServer activates its trust in each thread's own config.
 func codexAssistantGuardArgs(guardPath string) []string {
 	command := "python3 " + strconv.Quote(guardPath)
 	hook := "hooks.PreToolUse=[{hooks=[{type=\"command\",command=" + strconv.Quote(command) + ",timeout=5}]}]"
-	return []string{"-c", "features.hooks=true", "-c", "hooks.bypass_hook_trust=true", "-c", hook}
+	return []string{"-c", "features.hooks=true", "-c", hook}
 }
 
 var codexConfigKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)

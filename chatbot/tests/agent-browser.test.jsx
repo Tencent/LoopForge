@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import AgentBrowser from "../src/AgentBrowser.jsx";
 import ArtifactPanel from "../src/ArtifactPanel.jsx";
 import { RichContent } from "../src/RichContent.jsx";
-import { AgentBrowserLinks, agentBrowserTarget } from "../src/agent-browser-links.js";
+import { AgentBrowserLinks, agentBrowserTarget, devServerAddress, devServerTarget } from "../src/agent-browser-links.js";
 
 class FakeSocket {
   static OPEN = 1;
@@ -56,6 +56,26 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+describe("devServerTarget", () => {
+  test("maps plain-HTTP execution machine addresses to a port and path", () => {
+    expect(devServerTarget("http://localhost:5173/a/b?c=1#d")).toEqual({ port: 5173, path: "/a/b?c=1#d" });
+    expect(devServerTarget("http://127.0.0.1:3000")).toEqual({ port: 3000, path: "/" });
+    expect(devServerTarget("http://localhost/")).toEqual({ port: 80, path: "/" });
+    for (const value of ["https://localhost:5173/", "http://example.com:5173/", "localhost:5173", "file:///", "file://host/a.html"])
+      expect(devServerTarget(value)).toBeNull();
+    expect(devServerAddress("run-1", 5173, { pathname: "/devpreview/run-1/5173/x", search: "?q", hash: "" })).toBe("http://localhost:5173/x?q");
+    expect(devServerAddress("run-1", 5173, { pathname: "/x", search: "", hash: "" })).toBe("http://localhost:5173/x");
+  });
+
+  test("maps workspace files to the file channel", () => {
+    expect(devServerTarget("file:///workspace/demo.html#top")).toEqual({ port: "file", path: "/workspace/demo.html#top" });
+    expect(devServerTarget("file:///workspace/页面.html")).toEqual({ port: "file", path: "/workspace/%E9%A1%B5%E9%9D%A2.html" });
+    expect(devServerAddress("run-1", "file", { pathname: "/devpreview/run-1/file/workspace/site/", search: "", hash: "" })).toBe(
+      "file:///workspace/site/",
+    );
+  });
+});
+
 describe("agentBrowserTarget", () => {
   test("accepts only addresses on the execution machine", () => {
     expect(agentBrowserTarget("http://localhost:5173/sidebar-demo-2.html")).toBe("http://localhost:5173/sidebar-demo-2.html");
@@ -83,7 +103,7 @@ describe("AgentBrowser", () => {
   test("streams the workspace browser and opens requested links", async () => {
     const handled = vi.fn();
     const { rerender, container } = render(
-      <AgentBrowser runId="run-1" request={{ id: "r1", url: "file:///workspace/demo.html" }} onRequestHandled={handled} />,
+      <AgentBrowser runId="run-1" request={{ id: "r1", url: "https://example.org/demo.html" }} onRequestHandled={handled} />,
     );
     const socket = lastSocket();
     expect(socket.url).toBe(`ws://${location.host}/api/runs/run-1/browser/stream`);
@@ -91,7 +111,7 @@ describe("AgentBrowser", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [path, init] = fetchMock.mock.calls[0];
     expect(path).toBe("/api/runs/run-1/browser");
-    expect(JSON.parse(init.body)).toMatchObject({ operation: "navigate", url: "file:///workspace/demo.html", ensure: true });
+    expect(JSON.parse(init.body)).toMatchObject({ operation: "navigate", url: "https://example.org/demo.html", ensure: true });
     expect(handled).toHaveBeenCalledWith("r1");
 
     act(() => {
@@ -117,12 +137,12 @@ describe("AgentBrowser", () => {
     expect(socket.sent).toContainEqual({ operation: "activate", targetId: "t2" });
 
     rerender(
-      <AgentBrowser runId="run-1" request={{ id: "r2", url: "http://localhost:5173/" }} onRequestHandled={handled} />,
+      <AgentBrowser runId="run-1" request={{ id: "r2", url: "https://example.com/" }} onRequestHandled={handled} />,
     );
-    expect(socket.sent).toContainEqual({ operation: "navigate", url: "http://localhost:5173/" });
+    expect(socket.sent).toContainEqual({ operation: "navigate", url: "https://example.com/" });
     expect(handled).toHaveBeenCalledWith("r2");
     rerender(
-      <AgentBrowser runId="run-1" request={{ id: "r2", url: "http://localhost:5173/" }} onRequestHandled={handled} />,
+      <AgentBrowser runId="run-1" request={{ id: "r2", url: "https://example.com/" }} onRequestHandled={handled} />,
     );
     expect(socket.sent.filter((m) => m.operation === "navigate")).toHaveLength(1);
 
@@ -131,6 +151,72 @@ describe("AgentBrowser", () => {
     expect(socket.sent.at(-1)).toMatchObject({ operation: "input", events: [{ type: "key", action: "down", key: "a", text: "a" }] });
     // Escape goes to the page; the side panel only closes on unhandled Escape.
     expect(fireEvent.keyDown(ime, { key: "Escape", code: "Escape", keyCode: 27 })).toBe(false);
+  });
+
+  test("opens dev server addresses natively and switches back to the screencast", async () => {
+    const handled = vi.fn();
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { container } = render(
+      <AgentBrowser runId="run-5" request={{ id: "n1", url: "http://localhost:5173/admin?tab=2" }} onRequestHandled={handled} />,
+    );
+    expect(handled).toHaveBeenCalledWith("n1");
+    const frame = container.querySelector("iframe.agent-browser-frame");
+    expect(frame).toHaveAttribute("src", "/devpreview/run-5/5173/admin?tab=2");
+    expect(screen.getByLabelText("网址")).toHaveValue("http://localhost:5173/admin?tab=2");
+    // No screencast while the page renders natively.
+    expect(FakeSocket.instances).toHaveLength(0);
+    fireEvent.click(screen.getByLabelText("在新窗口打开"));
+    expect(open).toHaveBeenCalledWith(expect.stringContaining("/devpreview/run-5/5173/"), "_blank", "noopener");
+    fireEvent.click(screen.getByLabelText("切换到 Agent 浏览器画面"));
+    expect(container.querySelector("iframe.agent-browser-frame")).toBeNull();
+    expect(lastSocket().url).toContain("/api/runs/run-5/browser/stream");
+  });
+
+  test("opens workspace files natively", async () => {
+    const handled = vi.fn();
+    const { container } = render(
+      <AgentBrowser runId="run-6" request={{ id: "f1", url: "file:///workspace/demo.html" }} onRequestHandled={handled} />,
+    );
+    expect(handled).toHaveBeenCalledWith("f1");
+    expect(container.querySelector("iframe.agent-browser-frame")).toHaveAttribute("src", "/devpreview/run-6/file/workspace/demo.html");
+    expect(screen.getByLabelText("网址")).toHaveValue("file:///workspace/demo.html");
+    expect(screen.getByText("原生预览 · 工作区文件")).toBeInTheDocument();
+    expect(FakeSocket.instances).toHaveLength(0);
+  });
+
+  test("the panel in use takes the shared viewport back and never slides the frame", () => {
+    const { container } = render(<AgentBrowser runId="run-5" />);
+    const socket = lastSocket();
+    const stage = container.querySelector(".agent-browser-stage");
+    const img = container.querySelector(".agent-browser-screen");
+    // A tall panel; another viewer last sized the browser to 1024×866.
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 1200, right: 600, bottom: 1200, x: 0, y: 0 });
+    img.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 507, right: 600, bottom: 507, x: 0, y: 0 });
+    act(() => {
+      socket.open();
+      socket.state({ ...live, width: 1024, height: 866 });
+    });
+    const resizes = () => socket.sent.filter((m) => m.operation === "resize");
+    fireEvent.wheel(stage, { deltaY: 120 });
+    expect(resizes()).toEqual([expect.objectContaining({ width: 1024, height: 2000 })]);
+    expect(img.style.transform).toBe("");
+    // Not again while the resize is on its way.
+    fireEvent.wheel(stage, { deltaY: 120 });
+    expect(resizes()).toHaveLength(1);
+  });
+
+  test("a panel whose size already fits leaves the viewport alone", () => {
+    const { container } = render(<AgentBrowser runId="run-6" />);
+    const socket = lastSocket();
+    const stage = container.querySelector(".agent-browser-stage");
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1024, height: 866, right: 1024, bottom: 866, x: 0, y: 0 });
+    act(() => {
+      socket.open();
+      // Frames count the page's 15px scrollbar the resize left out.
+      socket.state({ ...live, width: 1039, height: 866 });
+    });
+    fireEvent.wheel(stage, { deltaY: 120 });
+    expect(socket.sent.filter((m) => m.operation === "resize")).toHaveLength(0);
   });
 
   test("project viewers watch the browser without driving it", async () => {
@@ -240,6 +326,44 @@ describe("side panel browser tab", () => {
     render(panel({ view: "artifacts" }));
     expect(screen.getByRole("tab", { name: /浏览器/ })).toBeDisabled();
     expect(FakeSocket.instances).toHaveLength(0);
+  });
+
+  test("a compact panel goes back to the chat after adding an element", () => {
+    // A narrow window: the panel covers the conversation.
+    const measure = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue({ left: 0, top: 0, width: 600, height: 800, right: 600, bottom: 800, x: 0, y: 0 });
+    const onAddElement = vi.fn();
+    const onClose = vi.fn();
+    const props = {
+      view: "browser",
+      workspaceRunId: "run-9",
+      browserRequest: { id: "b1", url: "http://localhost:5173/" },
+      onBrowserRequestHandled: vi.fn(),
+      onAddElement,
+      onClose,
+    };
+    try {
+      const { container } = render(panel(props));
+      expect(screen.getByRole("button", { name: "返回聊天" })).toBeInTheDocument();
+      const frame = container.querySelector("iframe.agent-browser-frame");
+      const doc = frame.contentDocument;
+      doc.open();
+      doc.write(`<!doctype html><html><body><button>提交</button></body></html>`);
+      doc.close();
+      act(() => {
+        fireEvent.load(frame);
+      });
+      fireEvent.click(screen.getByRole("button", { name: "标记元素" }));
+      act(() => {
+        doc.querySelector("button").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      fireEvent.click(screen.getByText("加入对话框"));
+      expect(onAddElement).toHaveBeenCalledWith(expect.objectContaining({ type: "element" }));
+      expect(onClose).toHaveBeenCalled();
+    } finally {
+      measure.mockRestore();
+    }
   });
 
   test("shows the workspace browser", async () => {

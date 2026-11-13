@@ -34,6 +34,7 @@ func alignBaseline(ctx context.Context, dir string, inv *domain.RunnerInvocation
 		return domain.RunnerAlignResult{}, errors.New("align_baseline needs exactly one repository")
 	}
 	repo := inv.Repositories[0]
+	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
 	integrate, def := strings.TrimSpace(repo.IntegrateBranch), strings.TrimSpace(repo.DefaultBranch)
 	if integrate == "" || def == "" {
 		return domain.RunnerAlignResult{}, errors.New("align_baseline needs integrate and default branches")
@@ -47,7 +48,7 @@ func alignBaseline(ctx context.Context, dir string, inv *domain.RunnerInvocation
 	if err := checkoutRepository(ctx, dir, &clone); err != nil {
 		return domain.RunnerAlignResult{}, err
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := repositoryGitContext(ctx, repo)
 	gitwork.EnsureIdentity(repoCtx, dir)
 	conflicts, err := gitwork.MergeLatestRemoteBranch(repoCtx, dir, def)
 	if err != nil {

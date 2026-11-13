@@ -9,6 +9,12 @@ function issueDeletionBlock(issue){
   if(issueCanDelete(issue))return null;
   return issue?.deletionBlock?.reason?issue.deletionBlock:{code:'unknown',reason:'暂时无法确认删除条件，请刷新后重试'};
 }
+function issueDeletePath(id,force){
+  return `/api/issues/${encodeURIComponent(id)}${force?'?force=true':''}`;
+}
+function issueDeletionWarning(force,external){
+  return `需求、评论和澄清记录将被删除。${force?'关联的任务、运行记录、日志、产物和执行工作区将一并清理。':''}删除后无法恢复。${external?'外部原单会保留，后续同步可能重新导入。':''}`;
+}
 function issueDeletionContextHTML(issue,{menu=false}={}){
   const block=issueDeletionBlock(issue);
   if(!block)return '';
@@ -18,7 +24,8 @@ function issueDeletionContextHTML(issue,{menu=false}={}){
 function issueDeleteControlHTML(issue,{menu=false}={}){
   const block=issueDeletionBlock(issue),cls=menu?'issue-popover-item':'button ghost small';
   const reasonId=`issue-delete-reason-${menu?'menu':'detail'}-${issue.id}`;
-  const button=`<button type="button" class="${cls}${block?'':' danger'}" ${menu?'data-action="delete"':`data-delete-issue="${escapeHTML(issue.id)}"`}${block?` disabled aria-describedby="${escapeHTML(reasonId)}"`:''}>${menu?huiIcon('trash','popover-icon'):''}删除需求</button>`;
+  const label=!block&&issue.deletionRequiresForce?'强制删除':'删除需求';
+  const button=`<button type="button" class="${cls}${block?'':' danger'}" ${menu?'data-action="delete"':`data-delete-issue="${escapeHTML(issue.id)}"`}${block?` disabled aria-describedby="${escapeHTML(reasonId)}"`:''}>${menu?huiIcon('trash','popover-icon'):''}${label}</button>`;
   if(!block)return button;
   return `<div class="issue-delete-control">${button}<p class="issue-delete-reason" id="${escapeHTML(reasonId)}">${escapeHTML(block.reason)}</p>${issueDeletionContextHTML(issue,{menu})}</div>`;
 }

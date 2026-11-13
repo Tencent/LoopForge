@@ -131,3 +131,37 @@ func TestNextReportsImpossibleSchedules(t *testing.T) {
 		t.Fatal("parse errors should propagate")
 	}
 }
+
+func TestParseErrorNamesTheFailingField(t *testing.T) {
+	cases := []struct {
+		expr string
+		want string
+	}{
+		{"60 * * * *", "分钟: 超出 0-59"},
+		{"* 24 * * *", "小时: 超出 0-23"},
+		{"* * 0 * *", "日: 超出 1-31"},
+		{"* * * 13 *", "月: 超出 1-12"},
+		{"* * * * 8", "周: 超出 0-7"},
+		{"*/0 * * * *", "分钟: 步长无效"},
+		{"* x * * *", "小时: 不是数字"},
+		{"* * 1-2-3 * *", "日: 范围无效"},
+		{"* * * 1,,2 *", "月: 无效分段"},
+	}
+	for _, tc := range cases {
+		_, err := Parse(tc.expr)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("Parse(%q) error = %v, want %q", tc.expr, err, tc.want)
+		}
+	}
+}
+
+func TestParseSetsEveryFieldInOrder(t *testing.T) {
+	sched, err := Parse("5 6 7 8 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Schedule{min: 1 << 5, hour: 1 << 6, day: 1 << 7, month: 1 << 8, dow: 1 << 2}
+	if sched != want {
+		t.Fatalf("Parse = %+v, want %+v", sched, want)
+	}
+}

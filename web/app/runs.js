@@ -272,7 +272,9 @@ function showRunDetail(id){
     state.activeRun=summary;
     renderRunDetail(summary);
   }
-  api(`/api/runs/${encodeURIComponent(id)}`,{silent:!!summary}).then(r=>{
+  api(`/api/runs/${encodeURIComponent(id)}`,{silent:!!summary}).then(async r=>{
+    if(state.selectedRun!==id)return;
+    await loadRunMachineMetadata(r);
     if(state.selectedRun!==id)return;
     state.activeRun=r;
     if(shouldPatchRunLive(r))patchRunLive(r);else renderRunDetail(r);
@@ -303,7 +305,9 @@ function selectRun(id,keepPages=false){
     renderRunDetail(summary);
     if(['queued','running','waiting'].includes(summary.status))startLiveRun(id);else stopLiveRun();
   }
-  api(`/api/runs/${encodeURIComponent(id)}`,{silent:!!summary}).then(r=>{
+  api(`/api/runs/${encodeURIComponent(id)}`,{silent:!!summary}).then(async r=>{
+    if(state.selectedRun!==id)return;
+    await loadRunMachineMetadata(r);
     if(state.selectedRun!==id)return;
     state.activeRun=r;
     renderRuns();
@@ -656,7 +660,7 @@ function workspacePaneHTML(run){
   if(ws.error)return `<div class="workspace-unavailable"><span>!</span><b>工作区加载失败</b><p>${escapeHTML(ws.error)}</p><button class="button ghost small" data-workspace-refresh>重试</button></div>`;
   if(!ws.info?.available)return workspaceUnavailableHTML(ws.info?.reason);
   const maximized=!!ws.maximized;
-  return `<section class="run-workspace vscode-embed${maximized?' maximized':''}"><iframe data-vscode-frame data-run-id="${escapeHTML(run.id)}" title="VS Code" src="${escapeHTML(vscodeWorkbenchURL(run.id,{embed:true}))}" allow="clipboard-read; clipboard-write"></iframe></section>`;
+  return `<section class="run-workspace vscode-embed${maximized?' maximized':''}"><iframe data-vscode-frame data-run-id="${escapeHTML(run.id)}" aria-label="VS Code" src="${escapeHTML(vscodeWorkbenchURL(run.id,{embed:true}))}" allow="clipboard-read; clipboard-write"></iframe></section>`;
 }
 function runPreviewDeclared(run){
   return !!(run?.workflowSnapshot?.preview&&run.workflowSnapshot.preview.enabled);
@@ -1201,7 +1205,8 @@ function defaultRunEval(){return{enabled:true,version:1,threshold:70,dimensions:
   {id:'recovery',name:'错误恢复',question:'相同错误是否反复出现？',weight:10},
   {id:'delivery',name:'交付完整',question:'终态、产物和验证信号是否齐全？',weight:10}
 ]}}
-function runEvalModel(){return state.runEvalModel||localStorage.getItem('agentflow.runEvalModel')||(window.AgentFlowAssistantModels&&window.AgentFlowAssistantModels.DEFAULT)||'default'}
+// Run evals run on CodeBuddy only; a saved "codex:…" id falls back.
+function runEvalModel(){const api=window.AgentFlowAssistantModels,stored=state.runEvalModel||localStorage.getItem('agentflow.runEvalModel')||'';if(api?.codeBuddyModel)return api.codeBuddyModel(stored);return stored||(api&&api.DEFAULT)||'default'}
 function setRunEvalModel(id){state.runEvalModel=id;localStorage.setItem('agentflow.runEvalModel',id)}
 function runEvalHasKey(){return !!(userById(state.currentUser?.id)||state.currentUser||{}).codeBuddyApiKeyConfigured}
 function runEvalApplyable(rec){if(!rec||rec.status==='applied')return false;const action=((rec.target||'')+'.'+(rec.action||'')).replace(/^\./,'').toLowerCase();const full=rec.action&&rec.action.includes('.')?rec.action.toLowerCase():action;return ['workflow.update_node','agent.upsert_gate','agent.remove_gate','agent.append_instructions','agent.append_task_prompt'].includes(full)}
@@ -1301,7 +1306,7 @@ function bindRunEvalModelPicker(host){
     const open=menu.hidden;
     menu.hidden=!open;
     toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open)api.renderList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
+    if(open)api.renderCodeBuddyList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
   };
   document.addEventListener('click',e=>{if(host.contains(e.target))return;menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
 }
@@ -1453,6 +1458,14 @@ async function runAction(id,action,body){
     await refreshRuns(true);
     toast(action==='cancel'&&run.status==='cancelled'?(run.admissionState==='unstarted'?'已取消排队':'运行已取消'):runControlToast(run,action==='approve'?'已批准，流程继续':action==='reject'?'已打回，开始返工':action==='retry'?'已从中断处继续':'已选择不重试'));
   }catch(e){toast(e.message)}
+}
+async function loadRunMachineMetadata(r){
+  if(r.executionContext?.executionMode!=='runner')return;
+  // Unlike refreshRunners, this read-only lookup does not create a binding code.
+  try{
+    const runners=await api('/api/runners?mine=1',{silent:true});
+    if(state.selectedRun===r.id)state.runners=runners||[];
+  }catch{} // Machine metadata must not prevent displaying the run.
 }
 function runExecutionChipHTML(r){
   const ec=r.executionContext||{};

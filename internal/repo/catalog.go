@@ -319,6 +319,9 @@ func (r *CatalogRepo) DeleteEnvironment(id string) error {
 
 func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
 	profiles := payloadList[domain.SandboxProfile](r.DB, "sandboxes", "")
+	for i := range profiles {
+		profiles[i] = platformSandboxProfile(profiles[i])
+	}
 	for _, profile := range profiles {
 		if profile.ID == DefaultSandboxProfileID {
 			return profiles
@@ -342,7 +345,17 @@ func (r *CatalogRepo) Sandbox(id string) (domain.SandboxProfile, bool) {
 	if err != nil || json.Unmarshal(row.Payload, &profile) != nil {
 		return domain.SandboxProfile{}, false
 	}
-	return profile, true
+	return platformSandboxProfile(profile), true
+}
+
+// platformSandboxProfile keeps the built-in generic Docker sandbox shared:
+// conversation workspaces fall back to it, and rows seeded before it carried
+// the shared flag would otherwise hide it from every project.
+func platformSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfile {
+	if profile.ID == GenericDockerSandboxID {
+		profile.Shared = true
+	}
+	return profile
 }
 
 func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {

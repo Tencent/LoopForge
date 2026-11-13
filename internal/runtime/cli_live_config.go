@@ -83,7 +83,7 @@ func redactLive(text string) string {
 func clipLive(text string) string {
 	text = strings.TrimSpace(text)
 	if len(text) > 700 {
-		return text[:700] + "…"
+		return clipOnRuneBoundary(text, 700) + "…"
 	}
 	return text
 }

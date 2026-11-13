@@ -32,10 +32,12 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
         (self.root / 'migrations/seed').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh'):
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        (self.root / 'migrations/seed/001_test.sql').write_text('SELECT 1;\n')
+        for name in ('001_run_obs_generated_columns.sql', '031_generic_backend_openssh.sql'):
+            (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
+        (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
 printf '%s %s\\n' "${MOCK_PRIVILEGED:-0}" "$*" >> "$MOCK_LOG"
@@ -43,14 +45,17 @@ if [[ "$1" == info ]]; then
   [[ "${MOCK_USER:-0}" == 0 || "${MOCK_PRIVILEGED:-0}" == 1 || "${MOCK_DIRECT:-0}" == 1 ]]
   exit
 fi
+if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; then exit 1; fi
+if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
+if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
 if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
 if [[ "$*" == *'exec -T mysql'* ]]; then
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
   query=$(cat)
-  if [[ "$query" == *'information_schema.columns'* ]]; then echo 1; fi
-  if [[ "$*" == *'count(*) from users'* ]]; then echo 0; fi
+  printf '%s\n' "$query" >> "$MOCK_SQL_LOG"
+  if [[ "$query" == *'information_schema.columns'* ]]; then printf '%s\n' "${MOCK_COLUMN_COUNT:-1}"; fi
 fi
 ''')
         self.executable('id', '#!/usr/bin/env bash\nif [[ "$1" == -u ]]; then echo "${MOCK_USER:-0}"; else /usr/bin/id "$@"; fi\n')
@@ -61,9 +66,10 @@ fi
 export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
-        self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED'):
+        self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'mysql.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL'):
             self.environ.pop(name, None)
+        self.environ.pop('MOCK_COLUMN_COUNT', None)
 
     def executable(self, name, contents):
         target = self.root / 'mock' / name
@@ -109,12 +115,174 @@ exec "$@"
         self.assertIn('sudo -v', result.stderr)
         self.assertNotIn('up -d --no-build', (self.root / 'docker.log').read_text())
 
+    def pinned_image(self):
+        text = (ROOT / 'compose.yaml').read_text()
+        import re
+        return re.search(r'image:\s*\$\{LOOPFORGE_IMAGE:-([^}]+)\}', text).group(1).strip()
+
+    def use_compose_file(self):
+        shutil.copyfile(ROOT / 'compose.yaml', self.root / 'compose.yaml')
+
     def test_default_install_pulls_pinned_release(self):
         self.assert_success(self.install())
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull --policy missing platform mysql', log)
         self.assertNotIn('build platform', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn("LOOPFORGE_IMAGE=''", (self.root / '.env').read_text())
+
+    def test_mirror_host_replaces_ghcr_and_tags_the_pinned_name(self):
+        self.use_compose_file()
+        image = self.pinned_image()
+        for mirror_env, host in (('GHCR.NJU.EDU.CN', 'ghcr.nju.edu.cn'), ('mirror.example.test:5000', 'mirror.example.test:5000')):
+            with self.subTest(host=host):
+                if (self.root / 'docker.log').exists():
+                    (self.root / 'docker.log').unlink()
+                mirror = host + '/' + image[len('ghcr.io/'):]
+                self.assert_success(self.install(MIRROR=mirror_env))
+                log = (self.root / 'docker.log').read_text()
+                self.assertLess(log.index(f'pull {mirror}'), log.index(f'tag {mirror} {image}'))
+                self.assertLess(log.index(f'tag {mirror} {image}'), log.index('pull --policy missing platform mysql'))
+                self.assertNotIn('MIRROR=', (self.root / '.env').read_text())
+
+    def test_mirror_keeps_a_local_image(self):
+        self.use_compose_file()
+        result = self.install(MIRROR='ghcr.nju.edu.cn', MOCK_IMAGE_PRESENT='1')
+        self.assert_success(result)
+        log = (self.root / 'docker.log').read_text()
+        self.assertNotIn('ghcr.nju.edu.cn', log)
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('Using local image', result.stdout)
+
+    def test_mirror_always_refreshes_from_the_configured_host(self):
+        self.use_compose_file()
+        self.assert_success(self.install(MIRROR='mirror.example.test', LOOPFORGE_PULL_POLICY='always', MOCK_IMAGE_PRESENT='1'))
+        log = (self.root / 'docker.log').read_text()
+        image = self.pinned_image()
+        mirror = 'mirror.example.test/' + image[len('ghcr.io/'):]
+        self.assertIn(f'pull {mirror}', log)
+        self.assertIn('pull --policy missing platform', log)
+        self.assertIn('pull --policy always mysql', log)
+        self.assertNotIn('pull --policy always platform', log)
+
+    def test_upstream_mirror_host_keeps_the_direct_pull(self):
+        self.use_compose_file()
+        self.assert_success(self.install(MIRROR='ghcr.io'))
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertNotIn(' tag ', log)
+
+    def test_invalid_mirror_fails_before_pull(self):
+        self.use_compose_file()
+        for mirror in ('NJU', 'https://ghcr.nju.edu.cn', 'ghcr.nju.edu.cn/tencent'):
+            with self.subTest(mirror=mirror):
+                if (self.root / 'docker.log').exists():
+                    (self.root / 'docker.log').unlink()
+                result = self.install(MIRROR=mirror)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('ghcr.nju.edu.cn', result.stderr)
+                self.assertNotIn('pull --policy', (self.root / 'docker.log').read_text())
+
+    def test_start_pull_without_mirror_is_unchanged(self):
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull --ignore-buildable --policy always', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
+
+    def test_start_pull_reapplies_schema_extensions_after_containers_are_up(self):
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='0'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        sql = (self.root / 'mysql.log').read_text()
+        self.assertIn('Installed: run_telemetry.adapter', result.stdout)
+        self.assertIn('Installed: run_logs.level', result.stdout)
+        self.assertIn('ALTER TABLE run_telemetry', sql)
+        self.assertIn('ALTER TABLE run_logs', sql)
+        self.assertIn('INSERT IGNORE', sql)
+        # Recreated containers come first; the old volume then gets the columns.
+        self.assertLess(log.index('up -d --no-build --wait'), log.index('exec -T mysql'))
+
+    def test_start_pull_names_the_migration_when_columns_cannot_be_checked(self):
+        self.assert_success(self.install())
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='?'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not inspect run_telemetry.adapter', result.stderr)
+        self.assertIn('migrations/001_run_obs_generated_columns.sql', result.stderr)
+
+    def test_start_pull_with_nju_mirror_does_not_contact_ghcr_for_platform(self):
+        self.use_compose_file()
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='ghcr.nju.edu.cn'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        image = self.pinned_image()
+        mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn(f'pull {mirror}', log)
+        self.assertIn(f'tag {mirror} {image}', log)
+        self.assertIn('pull --policy always mysql', log)
+        self.assertNotIn('pull --ignore-buildable --policy always', log)
+
+    def test_mirror_uses_the_last_image_assignment_in_env(self):
+        self.use_compose_file()
+        self.assert_success(self.install())
+        env = self.root / '.env'
+        env.write_text(env.read_text() + 'LOOPFORGE_IMAGE=ghcr.io/example/ignored:1\nLOOPFORGE_IMAGE=ghcr.io/example/chosen:9\n')
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='ghcr.nju.edu.cn'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/example/chosen:9', log)
+        self.assertIn('tag ghcr.nju.edu.cn/example/chosen:9 ghcr.io/example/chosen:9', log)
+        self.assertNotIn('example/ignored', log)
+        self.assertNotIn('ghcr.nju.edu.cn/tencent/loopforge', log)
+
+    def test_failed_mirror_pull_does_not_retag_or_start(self):
+        self.use_compose_file()
+        result = self.install(MIRROR='ghcr.nju.edu.cn', MOCK_PULL_FAIL='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not pull', result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
+        self.assertNotIn(' tag ', log)
+        self.assertNotIn('up -d --no-build', log)
+
+    def test_failed_mirror_refresh_does_not_retag_a_cached_image(self):
+        self.use_compose_file()
+        self.assert_success(self.install())
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(
+            ['bash', 'start.sh', 'pull'], cwd=self.root,
+            env=dict(self.environ, MIRROR='ghcr.nju.edu.cn', MOCK_PULL_FAIL='1', MOCK_IMAGE_PRESENT='1'),
+            text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Could not pull', result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
+        self.assertNotIn(' tag ', log)
+        self.assertNotIn('up -d --no-build', log)
+
+    def test_failed_mirror_tag_stops_before_startup(self):
+        self.use_compose_file()
+        result = self.install(MIRROR='ghcr.nju.edu.cn', MOCK_TAG_FAIL='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not tag', result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
+        self.assertIn(' tag ', log)
+        self.assertNotIn('up -d --no-build', log)
+
+    def test_source_build_ignores_nju_mirror(self):
+        self.use_compose_file()
+        self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1', MIRROR='ghcr.nju.edu.cn'))
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('build platform', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
 
     def test_source_build_persists_dev_compose_file(self):
         self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1'))

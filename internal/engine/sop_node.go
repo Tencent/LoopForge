@@ -233,7 +233,7 @@ func (e *Engine) waitChildRun(ctx context.Context, parentID, childID string) (do
 			if !ok {
 				return domain.Run{}, fmt.Errorf("子 SOP 运行消失")
 			}
-			if isTerminalRunStatus(child.Status) {
+			if domain.TerminalRunStatus(child.Status) {
 				return child, nil
 			}
 		}

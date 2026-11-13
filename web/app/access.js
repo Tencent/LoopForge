@@ -15,20 +15,32 @@ function accessMcpAgentPrompt(spec,base,token){
 }
 // 对外展示的固定接入地址：优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
 function getPublicBaseURL(){
-  const domain = (typeof window !== 'undefined' && (window.__AGENTFLOW_APP_DOMAIN__ || window.__AGENTFLOW_PUBLIC_BASE_URL__))
-    || (typeof state !== 'undefined' && state?.appDomain ? state.appDomain : '')
-    || (typeof window !== 'undefined' && window.location?.host ? window.location.host : '')
-    || 'loopforge.example.com';
-  return 'http://' + domain;
+  const configured = (typeof window !== 'undefined' && (window.__AGENTFLOW_APP_DOMAIN__ || window.__AGENTFLOW_PUBLIC_BASE_URL__))
+    || (typeof state !== 'undefined' && state?.appDomain ? state.appDomain : '');
+  return accessPublicBaseURL(configured, typeof window !== 'undefined' ? window.location : null);
 }
-const PUBLIC_BASE_URL = typeof window !== 'undefined' && (window.__AGENTFLOW_APP_DOMAIN__ || window.location?.host)
-  ? ('http://' + (window.__AGENTFLOW_APP_DOMAIN__ || window.location.host))
-  : 'http://loopforge.example.com';
+// 接入片段会携带 Bearer Token：配置里显式的协议优先，否则跟随当前页面；
+// HTTPS 页面生成的地址不降级为 http://。只有配置显式写了 http:// 和非 443 端口时
+// 保留 http，因为把只提供 HTTP 的端口改成 https:// 会指向一个没有 TLS 的端口。
+function accessPublicBaseURL(configured, page){
+  const secure = page?.protocol === 'https:';
+  const fallback = (secure ? 'https:' : 'http:') + '//' + (page?.host || 'loopforge.example.com');
+  const raw = String(configured || '').trim();
+  if(!raw) return fallback;
+  const explicitScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
+  let url;
+  try{ url = new URL(explicitScheme ? raw : (secure ? 'https://' : 'http://') + raw) }catch(_){ return fallback }
+  if(!['http:','https:'].includes(url.protocol) || !url.host) return fallback;
+  const explicitHTTPPort = explicitScheme && url.protocol === 'http:' && url.port && url.port !== '443';
+  if(secure && !explicitHTTPPort) url.protocol = 'https:';
+  return url.protocol + '//' + url.host + url.pathname.replace(/\/+$/, '');
+}
 function accessViewActive(){return !!$('#guideView')?.classList.contains('active')}
 let credentialFocusRequest=0;
-function gotoCredential(name){
+function gotoCredential(name,sshRemote){
   const request=++credentialFocusRequest;
   if(!CREDENTIAL_FIELDS[name]){switchView('settings');return}
+  if(name==='gitSshKey')return openGitSSHKeys(sshRemote);
   switchView('settings');
   const requestedRoute=settingsRouteTransition;
   const focusAfter=performance.now()+150;
@@ -53,11 +65,12 @@ function gotoCredential(name){
 }
 // Personal credential fields and the errors they cause. Keep the rules in
 // sync with chatbot/src/credentials.js.
-const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token'};
+const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥'};
 const CREDENTIAL_RULES=[
   ['codexApiKey',/Codex[^。\n]{0,16}API Key/i],
   ['claudeCodeApiKey',/Claude Code[^。\n]{0,16}API Key/i],
   ['codeBuddyApiKey',/CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key/i],
+  ['gitSshKey',/Git SSH (?:密钥|私钥)/i],
   ['gitToken',/Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i],
 ];
 function credentialHint(text){

@@ -130,6 +130,11 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 }
 
 func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
+	if v.Invocation != nil && len(v.Invocation.GitSSHKeys) > 0 {
+		invocation := *v.Invocation
+		invocation.GitSSHKeys = nil
+		v.Invocation = &invocation
+	}
 	return mustJSON(runnerTaskPayload{
 		Prompt: v.Prompt, Workspace: v.Workspace, Args: v.Args, ExitCode: v.ExitCode,
 		Result: v.Result, Error: v.Error, StartedAt: newRunnerTaskTime(v.StartedAt),
@@ -671,6 +676,8 @@ func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
 	task.Invocation.ClaudeCodeBaseURL = ""
 	task.Invocation.AgentCLIAPIKey = ""
 	task.Invocation.AgentCLIBaseURL = ""
+	task.Invocation.GitSSHUserID = 0
+	task.Invocation.GitSSHKeys = nil
 	if task.Invocation.Repository != nil {
 		task.Invocation.Repository.GitToken = ""
 	}
@@ -877,15 +884,6 @@ func (r *RunnersRepo) SetDefaultRunner(userID int64, runnerID string, now time.T
 }
 
 // ---------- helpers ----------
-
-func containsFold(values []string, want string) bool {
-	for _, v := range values {
-		if strings.EqualFold(v, want) {
-			return true
-		}
-	}
-	return false
-}
 
 func nullableInt64(v int64) any {
 	if v == 0 {

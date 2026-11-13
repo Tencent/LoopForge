@@ -62,6 +62,8 @@ const CREDENTIAL_KINDS=[
     guide:[['打开 GitHub「Settings → Developer settings → Personal access tokens」','https://github.com/settings/tokens','前往 GitHub 申请个人访问令牌'],['新建令牌，为目标仓库授予 <code>Contents</code> 和 <code>Pull requests</code> 的读写权限'],['复制令牌粘贴到下方，保存前会自动校验权限']],
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
     impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
+  {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
+    use:'按 SSH 主机管理个人密钥，仓库自动匹配'},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
     use:'AI 对话与 SOP 的 CodeBuddy 执行器',
     description:'AI 对话（含 Claude、GPT 等模型）和 SOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',
@@ -299,7 +301,7 @@ function closeCredentialCatalogProbe(catalog){
 }
 async function probeCredentialCatalog(row,catalog,button){
   const kind=credentialKind(row.dataset.credentialRow),form=row.querySelector('.credential-editor-form'),panel=catalog.querySelector('[data-catalog-probe]');
-  const extra=form.querySelector('input[name="extra"]'),secret=form.querySelector('input[name="secret"]')?.value.trim()||'',protocol=form.querySelector('select[name="protocol"]')?.value;
+  const extra=form.querySelector('input[name="extra"]'),secret=form.querySelector('[name="secret"]')?.value.trim()||'',protocol=form.querySelector('select[name="protocol"]')?.value;
   const extraError=extra?credentialExtraError(kind,extra.value,protocol):'';
   if(extraError){toast(extraError,'err');extra.focus();return}
   const token=(catalog.probeToken||0)+1;catalog.probeToken=token;catalog.probe=null;
@@ -382,7 +384,7 @@ function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
 function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon harness-icon${cls?' '+cls:''}" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
 function credentialSpinner(size=14){return credentialGlyph('arc-spinner',size,'credential-spin')}
-function credentialLogo(kind,cls=''){return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}"><img src="/images/credentials/${kind.logo}.svg" alt=""></span>`}
+function credentialLogo(kind,cls=''){return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}">${kind.icon?credentialGlyph(kind.icon,18):`<img src="/images/credentials/${kind.logo}.svg" alt="">`}</span>`}
 function hydrateCredentialIcons(root){if(root)window.AgentFlowHarnessIcons?.hydrate?.(root)}
 function credentialNextKind(user){return CREDENTIAL_RECOMMENDED.map(credentialKind).find(kind=>!credentialConfigured(kind,user))||null}
 function credentialSecretError(kind,value){
@@ -495,7 +497,8 @@ function credentialSubline(kind,user){
   }
   return use;
 }
-function credentialFieldHTML({label,note='',name,type='password',value='',placeholder='',hint='',hintTone='',id=''}){
+function credentialFieldHTML({label,note='',name,type='password',value='',placeholder='',hint='',hintTone='',id='',multiline=false}){
+  if(multiline)return `<label class="credential-field"><span>${escapeHTML(label)}${note?`<em>${escapeHTML(note)}</em>`:''}</span><div class="credential-input"><textarea${id?` id="${id}"`:''} name="${name}" rows="5" maxlength="16384" spellcheck="false" autocomplete="off" placeholder="${escapeHTML(placeholder)}"></textarea></div><small data-credential-hint="${name}" class="${hintTone?'is-'+hintTone:''}">${escapeHTML(hint)}</small></label>`;
   const secret=type==='password';
   // Secrets are never serialized into markup; callers assign input.value after rendering.
   return `<label class="credential-field"><span>${escapeHTML(label)}${note?`<em>${escapeHTML(note)}</em>`:''}</span><div class="credential-input${secret?'':' is-plain'}${hintTone?' is-'+(hintTone==='err'?'bad':hintTone==='ok'?'good':hintTone):''}"><input${id?` id="${id}"`:''} name="${name}" type="${type}" ${secret?'autocomplete="new-password"':'autocomplete="off" spellcheck="false"'}${secret?'':` value="${escapeHTML(value)}"`} placeholder="${escapeHTML(placeholder)}">${secret?`<button type="button" class="credential-eye" data-credential-eye aria-label="显示">${credentialGlyph('eye',15)}</button>`:''}</div>${hint!==null?`<small data-credential-hint="${name}"${hintTone?` class="is-${hintTone}"`:''}>${escapeHTML(hint)}</small>`:''}</label>`;
@@ -562,15 +565,17 @@ function credentialEditorHTML(kind,user){
   </div>`;
 }
 function credentialRowMainHTML(kind,user){
-  const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
-  const end=on
+  const ssh=kind.key==='gitSshKey',on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
+  const end=on&&!ssh
     ?`${credentialBadgeHTML(status)}${kind.key==='gitToken'?`<span class="credential-tip" data-tip="重新校验"><button type="button" class="credential-btn ghost icon credential-ink git-token-verify" data-credential-act="verify" aria-label="重新校验"${status==='busy'?' disabled':''}>${credentialGlyph('refresh',15)}</button></span>`:''}<span class="credential-chevron">${credentialGlyph('chevron-down',16)}</span>`
-    :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup">去配置<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
-  return `<div class="credential-row-main credential-ink" role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
+    :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup"${ssh?' aria-haspopup="dialog"':''}>${ssh?'管理密钥':'去配置'}<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
+  const interaction=ssh?'':` role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}`;
+  return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
 }
 function credentialRowHTML(kind,user){
   const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key;
-  return `<div class="credential-row${on?' is-configured':''}${open?' is-open':''}" data-credential-row="${kind.key}">${credentialRowMainHTML(kind,user)}<div class="credential-editor"><div><div class="credential-editor-inner">${on?credentialEditorHTML(kind,user):''}</div></div></div></div>`;
+  const editor=on&&kind.key!=='gitSshKey'?credentialEditorHTML(kind,user):'';
+  return `<div class="credential-row${on?' is-configured':''}${open?' is-open':''}" data-credential-row="${kind.key}">${credentialRowMainHTML(kind,user)}<div class="credential-editor"><div><div class="credential-editor-inner">${editor}</div></div></div></div>`;
 }
 function credentialGroupHTML(group,user){
   const kinds=CREDENTIAL_KINDS.filter(kind=>kind.group===group.id),done=kinds.filter(kind=>credentialConfigured(kind,user)).length,closed=!!credentialUI().closed[group.id];
@@ -641,7 +646,7 @@ function setCredentialRowOpen(key,open){
   }
 }
 function resetCredentialEditor(row){
-  row.querySelectorAll('input[name="secret"]').forEach(input=>{input.value='';input.type='password'});
+  row.querySelectorAll('[name="secret"]').forEach(input=>{input.value='';if(input.tagName==='INPUT')input.type='password'});
   const form=row.querySelector('.credential-editor-form');if(!form)return;
   const extra=form.querySelector('[name="extra"]');if(extra)extra.value=form.dataset.original||'';
   if(extra?.tagName==='SELECT')refreshCredentialEnvironmentLinks(form,extra.value);
@@ -659,9 +664,9 @@ function toggleCredentialRow(key,open){
   ui.open=next?key:null;
   setCredentialRowOpen(key,next);
   // 代码仓库 opens on its read-only detail; the token input only appears after 手动更换令牌.
-  if(next&&key!=='gitToken')setTimeout(()=>$(`#credentialPanel [data-credential-row="${key}"] input[name="secret"]`)?.focus({preventScroll:true}),200);
+  if(next&&key!=='gitToken')setTimeout(()=>$(`#credentialPanel [data-credential-row="${key}"] [name="secret"]`)?.focus({preventScroll:true}),200);
 }
-const CREDENTIAL_PANE_FOCUS={form:'input[name="secret"]',confirm:'[data-credential-act="undelete"]'};
+const CREDENTIAL_PANE_FOCUS={form:'[name="secret"]',confirm:'[data-credential-act="undelete"]'};
 // 代码仓库 swaps bar / form / confirm; the other kinds swap foot / confirm. Unknown names fall back to the first pane.
 function showCredentialPane(row,name,focus=CREDENTIAL_PANE_FOCUS[name]){
   const panes=['bar','foot','form','confirm'].map(pane=>row.querySelector(`[data-credential-pane="${pane}"]`)).filter(Boolean);if(!panes.length)return;
@@ -670,11 +675,11 @@ function showCredentialPane(row,name,focus=CREDENTIAL_PANE_FOCUS[name]){
   if(focus)setTimeout(()=>target.querySelector(focus)?.focus({preventScroll:true}),60);
 }
 function updateCredentialEditorDirty(form){
-  const secret=form.querySelector('input[name="secret"]')?.value.trim()||'',extra=form.querySelector('[name="extra"]'),protocol=form.querySelector('select[name="protocol"]'),save=form.querySelector('[data-credential-act="save"]');
+  const secret=form.querySelector('[name="secret"]')?.value.trim()||'',extra=form.querySelector('[name="extra"]'),protocol=form.querySelector('select[name="protocol"]'),save=form.querySelector('[data-credential-act="save"]');
   if(save&&!save.dataset.busy)save.disabled=!secret&&!form.dataset.legacy&&!(extra&&extra.value.trim()!==(form.dataset.original||''))&&!(protocol&&protocol.value!==(form.dataset.originalProtocol||''))&&!credentialCatalogDirty(form.querySelector('[data-credential-catalog]'));
 }
 function setCredentialHint(scope,name,text,tone=''){
-  const hint=scope.querySelector(`[data-credential-hint="${name}"]`),box=scope.querySelector(`input[name="${name}"]`)?.closest('.credential-input');
+  const hint=scope.querySelector(`[data-credential-hint="${name}"]`),box=scope.querySelector(`[name="${name}"]`)?.closest('.credential-input');
   if(hint){hint.textContent=text;hint.className=tone?'is-'+tone:''}
   if(box){box.classList.toggle('is-bad',tone==='err');box.classList.toggle('is-good',tone==='ok');box.classList.toggle('is-warn',tone==='warn');if(tone==='err'){box.classList.remove('is-shake');void box.offsetWidth;box.classList.add('is-shake')}}
 }
@@ -738,7 +743,7 @@ function credentialSaved(key,message){
 }
 async function submitCredentialEditor(row,button){
   const key=row.dataset.credentialRow,kind=credentialKind(key),form=row.querySelector('.credential-editor-form');
-  const secret=form.querySelector('input[name="secret"]').value.trim(),extra=form.querySelector('[name="extra"]'),protocol=form.querySelector('[name="protocol"]');
+  const secret=form.querySelector('[name="secret"]').value.trim(),extra=form.querySelector('[name="extra"]'),protocol=form.querySelector('[name="protocol"]');
   const secretError=credentialSecretError(kind,secret),extraError=extra?credentialExtraError(kind,extra.value,protocol?.value):'';
   if(secretError){setCredentialHint(form,'secret',secretError,'err');return}
   if(extraError){toast(extraError,'err');extra.focus();return}
@@ -810,6 +815,7 @@ function toggleCredentialGroup(head){
 }
 function activateCredentialRow(row){
   const key=row.dataset.credentialRow;
+  if(key==='gitSshKey')return openGitSSHKeys();
   return row.classList.contains('is-configured')?toggleCredentialRow(key):openCredentialWizard(key);
 }
 function bindCredentialPanel(panel){
@@ -864,7 +870,7 @@ function revealCredentialRow(key){
   const group=row.closest('[data-credential-group]'),head=group?.querySelector('.credential-group-head');
   if(head&&credentialUI().closed[group.dataset.credentialGroup])toggleCredentialGroup(head);
   if(credentialUI().open!==key)toggleCredentialRow(key,true);
-  else if(key!=='gitToken')setTimeout(()=>row.querySelector('input[name="secret"]')?.focus({preventScroll:true}),200);
+  else if(key!=='gitToken')setTimeout(()=>row.querySelector('[name="secret"]')?.focus({preventScroll:true}),200);
   row.scrollIntoView({block:'center',behavior:'smooth'});
   row.classList.add('credential-highlight');
   setTimeout(()=>row.classList.remove('credential-highlight'),2400);
@@ -876,6 +882,7 @@ function credentialWizardDefaults(kind,user){return kind?.extra?credentialExtraV
 function openCredentialWizard(key){
   const user=credentialUser();
   if(!state.currentUser||state.currentUser.isGuest||!$('#credentialPanel'))return;
+  if(key==='gitSshKey')return openGitSSHKeys();
   const preset=key?credentialKind(key):null;
   if(preset&&credentialConfigured(preset,user))return revealCredentialRow(key);
   const kind=preset||CREDENTIAL_RECOMMENDED.map(credentialKind).find(k=>!credentialConfigured(k,user))||CREDENTIAL_KINDS.find(k=>!credentialConfigured(k,user))||null;
@@ -931,7 +938,7 @@ function credentialWizardStepOneHTML(user){
   const wizard=credentialWizard,all=CREDENTIAL_KINDS.every(kind=>credentialConfigured(kind,user));
   const groups=CREDENTIAL_GROUPS.map(group=>`<p class="credential-opt-label">${escapeHTML(group.name)}</p><div class="credential-opts" role="radiogroup" aria-label="${escapeHTML(group.name)}">${CREDENTIAL_KINDS.filter(kind=>kind.group===group.id).map((kind,index)=>{
     const on=credentialConfigured(kind,user),selected=wizard.kind===kind.key;
-    return `<button type="button" class="credential-opt${selected?' is-selected':''}" style="--i:${index}" role="radio" aria-checked="${selected}" data-wizard-kind="${kind.key}"${on?' disabled':''}><span class="credential-radio">${credentialGlyph('check',10)}</span>${credentialLogo(kind)}<span class="credential-opt-text"><b>${escapeHTML(kind.name)}</b><small>${escapeHTML(kind.short)}</small></span>${on?'<span class="credential-pill is-ok">已配置</span>':CREDENTIAL_RECOMMENDED.includes(kind.key)?'<span class="credential-pill">推荐</span>':''}</button>`;
+    return `<button type="button" class="credential-opt${selected?' is-selected':''}" style="--i:${index}" role="radio" aria-checked="${selected}" data-wizard-kind="${kind.key}"${on&&kind.key!=='gitSshKey'?' disabled':''}><span class="credential-radio">${credentialGlyph('check',10)}</span>${credentialLogo(kind)}<span class="credential-opt-text"><b>${escapeHTML(kind.name)}</b><small>${escapeHTML(kind.short)}</small></span>${on?'<span class="credential-pill is-ok">已配置</span>':CREDENTIAL_RECOMMENDED.includes(kind.key)?'<span class="credential-pill">推荐</span>':''}</button>`;
   }).join('')}</div>`).join('');
   return `<div class="credential-question">${credentialGlyph('key',16)}<span>要添加哪一项凭证？</span><small>选择一项 · 已配置的可在列表中编辑</small></div>${groups}${all?`<div class="credential-note">${credentialGlyph('check',14)}<span>已全部配置，可在列表中编辑。</span></div>`:''}`;
 }
@@ -977,7 +984,7 @@ function credentialWizardFootHTML(){
     ?'<span class="credential-kbd"><kbd>Esc</kbd> 关闭</span>'
     :`<button type="button" class="credential-btn ghost credential-ink" data-wizard-back${wizard.saving?' disabled':''}><span class="credential-nudge is-left">${credentialGlyph('arrow-left',13)}</span>上一步</button>`;
   if(wizard.step<3){
-    const ok=wizard.step===1?!!wizard.kind&&!credentialConfigured(credentialKind(wizard.kind),credentialUser()):credentialWizardValid().ok;
+    const ok=wizard.step===1?!!wizard.kind&&(wizard.kind==='gitSshKey'||!credentialConfigured(credentialKind(wizard.kind),credentialUser())):credentialWizardValid().ok;
     return `${back}<button type="button" class="credential-btn secondary credential-ink" data-wizard-next${ok?'':' disabled'}>下一步<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
   }
   const gongfeng=wizard.kind==='gitToken';
@@ -995,10 +1002,10 @@ function paintCredentialWizard(direction){
   const pane=document.createElement('div');
   pane.className='credential-pane'+(direction>0?' is-forward':direction<0?' is-back':'');
   pane.innerHTML=credentialWizardPaneHTML();
-  if(old&&direction){old.className=`credential-pane is-leaving ${direction>0?'is-forward':'is-back'}`;old.querySelectorAll('input').forEach(input=>{input.value=''});setTimeout(()=>old.remove(),180)}
+  if(old&&direction){old.className=`credential-pane is-leaving ${direction>0?'is-forward':'is-back'}`;old.querySelectorAll('input,textarea').forEach(input=>{input.value=''});setTimeout(()=>old.remove(),180)}
   else old?.remove();
   body.append(pane);
-  const secretInput=pane.querySelector('input[name="secret"]');if(secretInput)secretInput.value=wizard.secret||'';
+  const secretInput=pane.querySelector('[name="secret"]');if(secretInput)secretInput.value=wizard.secret||'';
   if(before&&direction){body.style.height=before+'px';requestAnimationFrame(()=>{body.style.height=pane.offsetHeight+'px';setTimeout(()=>{body.style.height=''},300)})}
   scrim.querySelectorAll('.credential-dots span').forEach((dot,index)=>{dot.className=wizard.done||index+1<wizard.step?'is-done':index+1===wizard.step?'is-current':''});
   scrim.querySelector('[data-wizard-step]').textContent=wizard.done?'已完成':`${wizard.step} / 3`;
@@ -1017,7 +1024,7 @@ function focusCredentialWizard(){
   const pane=$('#credentialWizard .credential-pane:not(.is-leaving)');
   // Deferred calls must not pull focus back once the user is already in this pane, or typing lands in the wrong field.
   if(pane?.contains(document.activeElement))return;
-  (pane?.querySelector('input, .credential-opt.is-selected:not(:disabled), .credential-opt:not(:disabled)')
+  (pane?.querySelector('input, textarea, .credential-opt.is-selected:not(:disabled), .credential-opt:not(:disabled)')
     ||$('#credentialWizard [data-wizard-next]:not(:disabled), #credentialWizard [data-wizard-done]')
     ||$('#credentialWizard [data-wizard-close]:not(:disabled)')
     ||$('#credentialWizard .credential-dialog'))?.focus({preventScroll:true});
@@ -1086,7 +1093,11 @@ function credentialWizardClick(event){
 async function advanceCredentialWizard(){
   const wizard=credentialWizard;if(!wizard||wizard.saving||wizard.done)return;
   if(wizard.step===1){
-    if(!wizard.kind||credentialConfigured(credentialKind(wizard.kind),credentialUser()))return;
+    if(!wizard.kind||(wizard.kind!=='gitSshKey'&&credentialConfigured(credentialKind(wizard.kind),credentialUser())))return;
+    if(wizard.kind==='gitSshKey'){
+      closeCredentialWizard(true);
+      return openGitSSHKeys();
+    }
     wizard.step=2;paintCredentialWizard(1);setTimeout(focusCredentialWizard,220);return;
   }
   if(wizard.step===2){

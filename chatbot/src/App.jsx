@@ -10,6 +10,7 @@ import { useChat } from "./useChat";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
+import GenerationDiagnostics from "./GenerationDiagnostics";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
   activityForReply,
@@ -27,6 +28,7 @@ import {
   elapsedSeconds,
   formatElapsed,
   confirmationCaption,
+  isProposalTimeout,
   canChatInProject,
   projectPickerOptions,
 } from "./api";
@@ -46,6 +48,7 @@ import { runProblems, useConversationRuns } from "./runs.js";
 import { reconcileOperation, visibleSidebarArtifact } from "./platform.js";
 import { isGeneratedArtifact, shouldRevealArtifactPanel } from "./artifact-autoreveal.js";
 import { IconButton, Dialog, Menu, SelectMenu, CredentialAction } from "./ui";
+import { CLIInstallAction } from "./cli-install.jsx";
 import { credentialHint, openCredentialSettings } from "./credentials";
 import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
 import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
@@ -54,6 +57,7 @@ import MentionPicker from "./MentionPicker";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
 import { mentionAt, insertMention } from "./mentions.js";
+import { elementTitle } from "./element-context.js";
 import HarnessIcon from "./HarnessIcon";
 import QueuedMessages from "./QueuedMessages";
 import "./message-queue.css";
@@ -76,6 +80,7 @@ import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
 import SandboxPicker from "./SandboxPicker";
+import ExecutionMachinePicker from "./ExecutionMachinePicker";
 import { shouldRevealTitle, titleRevealTiming } from "./title-reveal.js";
 import {
   THEME_KEY,
@@ -221,7 +226,7 @@ function ReplyHeading({ message, steps }) {
     </div>
   );
 }
-function AssistantTurn({ message, steps, assets, projectId }) {
+function AssistantTurn({ message, steps, assets, projectId, sessionId, local, readOnly, onCLIInstall }) {
   const reply = parseReply(message);
   const answer = hasTextSegments(steps)
     ? finalReply(reply.message, steps)
@@ -240,7 +245,9 @@ function AssistantTurn({ message, steps, assets, projectId }) {
       <div className="message-body">
         <RichContent message={answer} assets={assets} projectId={projectId} />
       </div>
-      {message.unfinished ? (
+      {message.failure && message.generationId && !local ? (
+        <GenerationDiagnostics sessionId={sessionId} generationId={message.generationId} failure={message.failure} onCLIInstall={onCLIInstall} readOnly={readOnly} />
+      ) : message.unfinished ? (
         <p className="reply-stopped">本轮未完成 · {message.unfinished}</p>
       ) : reply.stopped ? (
         <p className="reply-stopped">已停止，以上是停止前的内容。</p>
@@ -248,7 +255,7 @@ function AssistantTurn({ message, steps, assets, projectId }) {
     </>
   );
 }
-function LiveMessage({ live, generation, finished = false }) {
+function LiveMessage({ live, generation, finished = false, local = false, readOnly = false }) {
   const steps = live.activity || [];
   const textual = hasTextSegments(steps);
   // A streamed paragraph followed by tool calls stays in the process above;
@@ -285,6 +292,7 @@ function LiveMessage({ live, generation, finished = false }) {
         </div>
       )}
       {answer ? <RichContent message={answer} /> : null}
+      {!finished && !local && !readOnly && generation?.id ? <GenerationDiagnostics sessionId={generation.sessionId} generationId={generation.id} compact /> : null}
       {finished ? (
         <p className="reply-stopped">
           {generation?.status === "failed" && generation?.error
@@ -814,6 +822,16 @@ export default function App() {
     closeMenu();
     input.current?.focus();
   }
+  // addElementReference takes an element picked in the native preview: it
+  // rides along as a reference chip, without a token in the text.
+  function addElementReference(ref) {
+    if (references.length >= 12) {
+      chat.setError("每轮最多引用 12 个对象。");
+      return;
+    }
+    setReferences((old) => [...old, ref]);
+    requestAnimationFrame(() => input.current?.focus());
+  }
   function addReference(ref) {
     if (
       references.length >= 12 &&
@@ -1159,6 +1177,7 @@ export default function App() {
         <div className="header-actions">
           {chat.session ? (
             <>
+              {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
               {projectName ? (
                 <div className="menu-anchor conversation-project-anchor">
                   {/* The conversation's project; picking another one opens a
@@ -1459,7 +1478,7 @@ export default function App() {
                 <div className="loading-session">正在恢复对话…</div>
               ) : null}
               {messages.map((message, index) =>
-                confirmationCaption(message, messages[index - 1]) ? (
+                isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
                     key={index}
                     className="confirmation-note"
@@ -1484,6 +1503,10 @@ export default function App() {
                         )}
                         assets={artifactList}
                         projectId={chat.session?.projectId}
+                        sessionId={chat.session?.id}
+                        local={chat.local}
+                        readOnly={chat.readOnly}
+                        onCLIInstall={chat.adoptCLIInstall}
                       />
                     ) : null}
                     {message.role === "user" ? (
@@ -1509,8 +1532,16 @@ export default function App() {
                           {message.references?.length ? (
                             <div className="message-references">
                               {message.references.map((ref) => (
-                                <span key={ref.type + ref.id}>
-                                  @{ref.name || ref.id}
+                                <span
+                                  key={ref.type + ref.id}
+                                  title={ref.type === "element" ? elementTitle(ref) : undefined}
+                                >
+                                  {ref.type === "element" ? (
+                                    <HarnessIcon name="crosshair" size={12} />
+                                  ) : (
+                                    "@"
+                                  )}
+                                  {ref.name || ref.id}
                                 </span>
                               ))}
                             </div>
@@ -1579,6 +1610,12 @@ export default function App() {
                                 artifact={a}
                                 context={operationContext}
                                 onApply={chat.readOnly ? null : chat.applyDraft}
+                                onDecide={
+                                  chat.readOnly
+                                    ? null
+                                    : (messageIndex, draftIndex, decision) =>
+                                        chat.decideProposal(messageIndex, draftIndex, decision, approval)
+                                }
                                 onPreview={openArtifact}
                               />
                             ))}
@@ -1594,6 +1631,7 @@ export default function App() {
                             label="复制回复"
                           />
                           <MessageInfo message={message} />
+                          {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
                       </>
                     ) : null}
@@ -1603,7 +1641,7 @@ export default function App() {
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1613,8 +1651,12 @@ export default function App() {
                   live={chat.live}
                   generation={chat.generation}
                   finished
+                  local={chat.local}
+                  readOnly={chat.readOnly}
                 />
               ) : null}
+              {!chat.local && !chat.busy && chat.generation?.failure && !messages.some((m) => m.generationId === chat.generation.id && m.failure) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} failure={chat.generation.failure} onCLIInstall={chat.adoptCLIInstall} readOnly={chat.readOnly} /> : null}
+              {!chat.local && !chat.readOnly && !chat.busy && chat.generation?.id && chat.generation.status === "cancelled" && !chat.generation.failure && !messages.some((m) => m.generationId === chat.generation.id) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} compact /> : null}
               <RunAlerts
                 runs={conversationRuns}
                 user={chat.user}
@@ -1646,10 +1688,11 @@ export default function App() {
         )}
         <div className="composer-region">
           <div className="composer-column">
-            {chat.error ? (
+            {chat.error && !(chat.generation?.failure && chat.error === chat.generation.error) ? (
               <div role="alert" className="chat-error">
                 <span>{chat.error}</span>
                 <CredentialAction text={chat.error} />
+                <CLIInstallAction text={chat.error} onResult={chat.adoptCLIInstall} />
                 <IconButton label="关闭提示" onClick={() => chat.setError("")}>
                   <HarnessIcon name="close" size={15} />
                 </IconButton>
@@ -1700,16 +1743,7 @@ export default function App() {
               >
                 {!conversationStarted ? (
                 <div className="composer-context">
-                  <span
-                    className="context-pill host-status"
-                    title="对话在 LoopForge 云端运行"
-                  >
-                    <HarnessIcon name="server" size={13} interactive={false} />
-                    <span>LoopForge 云端</span>
-                    <i
-                      className={`connection-dot ${chat.ready ? "online" : ""}`}
-                    />
-                  </span>
+                  <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} />
                   <ChevronRightSmall />
                   <div className="menu-anchor">
                     <button
@@ -1843,9 +1877,15 @@ export default function App() {
                       {references.map((ref) => (
                         <span
                           key={ref.type + ref.id}
-                          className="composer-attachment-file"
+                          className={`composer-attachment-file${ref.type === "element" ? " is-element" : ""}`}
+                          title={ref.type === "element" ? elementTitle(ref) : undefined}
                         >
-                          @{ref.name || ref.id}
+                          {ref.type === "element" ? (
+                            <HarnessIcon name="crosshair" size={13} />
+                          ) : (
+                            "@"
+                          )}
+                          {ref.name || ref.id}
                           <button
                             aria-label={`移除引用 ${ref.name || ref.id}`}
                             onClick={() => {
@@ -2046,7 +2086,7 @@ export default function App() {
                         aria-label="停止生成"
                         title="停止并保留已经生成的内容；排队的消息会暂停发送"
                         disabled={
-                          chat.submitting || chat.generation?.status !== "running"
+                          chat.submitting || chat.stopping || chat.generation?.status !== "running"
                         }
                         onClick={chat.stop}
                       >
@@ -2061,6 +2101,7 @@ export default function App() {
                         disabled={
                           !chat.ready ||
                           chat.submitting ||
+                          chat.machineSaving ||
                           (chat.activeId && chat.session?.id !== chat.activeId) ||
                           (!text.trim() && !attachments.length) ||
                           uploading
@@ -2134,6 +2175,7 @@ export default function App() {
           workspaceRunId={workspaceRunId}
           browserRequest={browserRequest}
           onBrowserRequestHandled={browserRequestHandled}
+          onAddElement={chat.readOnly ? null : addElementReference}
           onClose={() => setPanel(false)}
         />
       ) : null}
@@ -2359,6 +2401,7 @@ export default function App() {
         sponsoredModels={chat.sponsoredModels}
         onClose={() => setQuickAccessOpen(false)}
         onOpenView={(view) => navigate(view)}
+        onCredentialsSaved={chat.refreshUser}
         onCompleted={async (nextProjectId) => {
           await chat.refresh();
           if (nextProjectId) await chat.selectProject(nextProjectId);

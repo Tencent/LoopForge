@@ -119,3 +119,27 @@ func TestRunTimingFallsBackToNodeRows(t *testing.T) {
 		t.Fatalf("unexpected timing %+v", got)
 	}
 }
+
+func TestRunTimingWallClockStopsOnlyForTerminalRuns(t *testing.T) {
+	t0 := time.Date(2026, 9, 21, 11, 0, 0, 0, time.UTC)
+	now := t0.Add(time.Hour)
+	for _, status := range []string{"succeeded", "failed", "cancelled"} {
+		events := timingEvents(t0,
+			time.Minute, "a", "node.started",
+			4*time.Minute, "a", "node.succeeded",
+			5*time.Minute, "", "run."+status)
+		got := ComputeRunTiming(Run{Status: status, CreatedAt: t0}, events, now)
+		if got.WallMs != (5*time.Minute).Milliseconds() || got.ExecutionMs != (3*time.Minute).Milliseconds() {
+			t.Fatalf("%s run timing %+v", status, got)
+		}
+	}
+	for _, status := range []string{"queued", "running", "waiting"} {
+		events := timingEvents(t0,
+			time.Minute, "a", "node.started",
+			4*time.Minute, "a", "node.succeeded")
+		got := ComputeRunTiming(Run{Status: status, CreatedAt: t0}, events, now)
+		if got.WallMs != time.Hour.Milliseconds() {
+			t.Fatalf("%s run should accrue wall clock until now: %+v", status, got)
+		}
+	}
+}

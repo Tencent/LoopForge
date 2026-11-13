@@ -32,6 +32,7 @@
   <link rel="stylesheet" href="/app/sliding-tabs.css">
   <link rel="stylesheet" href="/app/mcp.css">
   <link rel="stylesheet" href="/app/flow-canvas.css?v=20261109cli">
+  <link rel="stylesheet" href="/app/assistant-settings.css">
   <link rel="stylesheet" href="/preferences.css">
   <link rel="stylesheet" href="/app/issues-list.css">
   <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261031req1">
@@ -138,6 +139,7 @@
       <div id="configurationNav" class="management-navigation">
       <button class="nav management-back" data-jump="collaboration"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="chevron-left" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"/></svg></span><span class="nav-label">返回工作台</span></button>
       <button class="nav" data-view="settings"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="user" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="head" cx="12" cy="8" r="4"/><path class="body" d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="nav-label">个人配置</span></button>
+      <button class="nav" data-view="assistant" aria-label="AI 助手" title="AI 助手"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="sparkles" data-icon-motion="idle" width="15" height="15" aria-hidden="true" focusable="false"></svg></span><span class="nav-label">AI 助手</span></button>
       <p>项目</p>
       <button class="nav" data-view="projects"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="users" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="team-front"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1"/></g><g class="team-back"><path d="M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/></g></svg></span><span class="nav-label">项目配置</span></button>
       <button class="nav" data-view="bots" aria-label="通道管理" title="通道管理"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="robot" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="8" width="16" height="11" rx="2"/><path class="antenna" d="M12 3v5"/><path class="eyes" d="M8 13h.01M16 13h.01"/><path class="mouth" d="M9 17h6"/></svg></span><span class="nav-label">通道管理</span></button>
@@ -307,6 +309,12 @@
         <div class="heading-actions"><button id="botNew" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>添加通道</button></div>
       </div>
       <div id="botsContent"></div>
+    </section>
+    <section id="assistantView" class="view page-view">
+      <div class="page-heading">
+        <div><h1>AI 助手</h1><p>AI 工作台里和你对话、帮你动手的助手。设置它什么时候主动把事情交给角色或 SOP，以及每次对话都要遵守的规则；只对你自己生效。</p></div>
+      </div>
+      <div id="assistantContent"></div>
     </section>
     <!-- 运行记录 -->
     <section id="runsView" class="view page-view">
@@ -999,13 +1007,17 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">GitHub 仓库地址</span>
+          <label class="pa-field"><span class="pa-field-l">GitHub 链接或 Git SSH 地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
-            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@github.com:owner/repo.git</code><code>git clone …</code></span>
-            <span class="pa-field-e" id="repoDrawerUrlError" hidden>无法识别为 GitHub 仓库链接，请粘贴 github.com 的 Web / SSH / clone 地址。</span>
+            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
+            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
           </label>
           <div class="pa-detect" id="repoDrawerDetect" hidden><span class="pa-detect-ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div class="pa-detect-m"><b id="repoDrawerDetectName"></b><code id="repoDrawerDetectPath"></code></div><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
           <label class="pa-field" id="repoDrawerNameField" hidden><span class="pa-field-l">仓库名称</span><input class="pa-input mono" name="name" placeholder="留空则自动取项目路径末段"></label>
+          <div id="repoDrawerSSH" hidden>
+            <label class="pa-field"><span class="pa-field-l">仓库网页地址 <i>可选</i></span><input class="pa-input mono" name="webUrl" placeholder="https://gitlab.com/group/repo" autocomplete="off"></label>
+            <p id="repoDrawerSSHMissing" class="git-ssh-missing" role="alert" hidden></p>
+          </div>
         </div>
         <div class="pa-fs">
           <h5>分支</h5>
@@ -1154,7 +1166,7 @@
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>
-              <textarea name="assistantPrompt" class="input" rows="4" maxlength="4000" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
+              <textarea name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
               <p class="schedule-field-hint">到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 SOP、操作工作区及浏览器。</p>
             </div>
           </div>
@@ -1174,7 +1186,7 @@
         <input name="sourceJobId" type="hidden"><input name="sourceProjectId" type="hidden"><input name="baseVersion" type="hidden">
         <label>共享名称<input class="input" name="name" required maxlength="255"></label>
         <label>用途说明<textarea class="input" name="description" rows="2" maxlength="2000"></textarea></label>
-        <label>提示词模板<textarea class="input" name="prompt" required rows="6" maxlength="4000"></textarea></label>
+        <label>提示词模板<textarea class="input" name="prompt" required rows="6"></textarea></label>
         <p class="schedule-field-hint">用 {{params.days}} 引用下方参数，例如“检查超过 {{params.days}} 天未更新的需求”。发布内容对平台登录用户可见。</p>
         <div class="shared-schedule-section-head"><b>业务参数</b><button id="sharedScheduleAddParameter" type="button" class="button ghost small">添加参数</button></div>
         <div id="sharedScheduleParameterRows" class="shared-schedule-parameter-rows"></div>
@@ -1292,12 +1304,14 @@
   <script src="/app/hui-date.js"></script>
   <script src="/app/hui-upload.js"></script>
   <script src="/app/hui-tooltip.js"></script>
+  <script src="/app/git-ssh.js"></script>
   <script src="/app/issues.js"></script>
   <script src="/app/issue-bulk-delete.js"></script>
   <script src="/app/sync-schedule.js"></script>
   <script src="/app/shared-schedules.js"></script>
   <script src="/app/notification-editor.js"></script>
   <script src="/app/bots.js"></script>
+  <script src="/app/assistant-settings.js"></script>
   <script src="/app/flow-history.js?v=20261030fd2"></script>
   <script src="/app/flow-viewport.js?v=20261030fd2"></script>
   <script src="/app/flow-palette.js?v=20261030fd2"></script>
@@ -1310,6 +1324,7 @@
   <script src="/app/runs.js"></script>
   <script src="/app/run-activation.js"></script>
   <script src="/app/workbench.js?v=20261030theme1"></script>
+  <script src="/app/git-ssh-keys.js"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>

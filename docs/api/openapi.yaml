@@ -1630,7 +1630,7 @@ paths:
       tags: [Assets]
       operationId: upsertRule
       requestBody:
-        $ref: "#/components/requestBodies/Asset"
+        $ref: "#/components/requestBodies/RuleAsset"
       responses:
         "200":
           $ref: "#/components/responses/Ok"
@@ -1668,7 +1668,7 @@ paths:
       tags: [Assets]
       operationId: upsertSkill
       requestBody:
-        $ref: "#/components/requestBodies/Asset"
+        $ref: "#/components/requestBodies/SkillAsset"
       responses:
         "200":
           $ref: "#/components/responses/Ok"
@@ -1872,7 +1872,7 @@ paths:
       tags: [Assets]
       operationId: upsertMcpServer
       requestBody:
-        $ref: "#/components/requestBodies/Asset"
+        $ref: "#/components/requestBodies/MCPServerAsset"
       responses:
         "200":
           $ref: "#/components/responses/Ok"
@@ -1964,7 +1964,7 @@ paths:
     get:
       tags: [Assets]
       operationId: listExecutors
-      description: Returns the fixed CodeBuddy, Codex, and Claude Code CLI catalog. Executors are not user-configurable.
+      description: Returns the read-only built-in CLI catalog. Executors are not user-configurable.
       responses:
         "200":
           $ref: "#/components/responses/AssetList"
@@ -1974,7 +1974,7 @@ paths:
     get:
       tags: [Assets]
       operationId: listExecutorModels
-      description: Returns, per built-in CLI (codebuddy, codex, claude), the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
+      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
       responses:
         "200":
           description: Model catalog keyed by CLI id
@@ -1995,7 +1995,7 @@ paths:
       tags: [Assets]
       operationId: upsertDockerfile
       requestBody:
-        $ref: "#/components/requestBodies/Asset"
+        $ref: "#/components/requestBodies/DockerfileAsset"
       responses:
         "200":
           $ref: "#/components/responses/Ok"
@@ -2033,7 +2033,7 @@ paths:
       tags: [Assets]
       operationId: upsertEnvironment
       requestBody:
-        $ref: "#/components/requestBodies/Asset"
+        $ref: "#/components/requestBodies/EnvironmentAsset"
       responses:
         "200":
           $ref: "#/components/responses/Ok"
@@ -2071,7 +2071,7 @@ paths:
       tags: [Assets]
       operationId: upsertSandboxProfile
       requestBody:
-        $ref: "#/components/requestBodies/Asset"
+        $ref: "#/components/requestBodies/SandboxProfile"
       responses:
         "200":
           $ref: "#/components/responses/Ok"
@@ -3501,12 +3501,42 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/AgentDefinition"
-    Asset:
+    RuleAsset:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/OpenObject"
+            $ref: "#/components/schemas/RuleAsset"
+    SkillAsset:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SkillAsset"
+    MCPServerAsset:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MCPServerAsset"
+    DockerfileAsset:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DockerfileAsset"
+    EnvironmentAsset:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvironmentAsset"
+    SandboxProfile:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SandboxProfile"
     Workflow:
       required: true
       content:
@@ -3703,6 +3733,96 @@ components:
     OpenObject:
       type: object
       additionalProperties: true
+    RuleAsset:
+      type: object
+      required: [id, name, content]
+      additionalProperties: true
+      properties:
+        id: {type: string}
+        name: {type: string}
+        projectId: {type: string, description: Owning project}
+        shared: {type: boolean, description: Visible to every project}
+        description: {type: string}
+        content: {type: string, description: Rule text injected into bound roles}
+        priority: {type: integer}
+        global: {type: boolean, description: Apply to every node of the workflows in workflowIds}
+        workflowIds: {type: array, items: {type: string}}
+    SkillAsset:
+      type: object
+      required: [id, name, content]
+      additionalProperties: true
+      properties:
+        id: {type: string}
+        name: {type: string}
+        projectId: {type: string}
+        shared: {type: boolean}
+        description: {type: string}
+        content: {type: string, description: SKILL.md body}
+        files: {type: object, additionalProperties: {type: string}, description: Extra text files keyed by relative path}
+    MCPServerAsset:
+      type: object
+      required: [id, name, transport]
+      additionalProperties: true
+      properties:
+        id: {type: string}
+        name: {type: string}
+        projectId: {type: string}
+        scope: {type: string, enum: [project, personal]}
+        description: {type: string}
+        transport: {type: string, enum: [stdio, http]}
+        command: {type: string, description: stdio executable}
+        args: {type: array, items: {type: string}}
+        url: {type: string, description: http endpoint}
+        environment: {type: object, additionalProperties: {type: string}}
+        headers: {type: object, additionalProperties: {type: string}}
+        installScript: {type: string}
+        workingDirectory: {type: string}
+        pathEntries: {type: array, items: {type: string}}
+        authType: {type: string, enum: ["", github-token]}
+        timeoutSec: {type: integer}
+    DockerfileAsset:
+      type: object
+      required: [id, name, projectId, content]
+      additionalProperties: true
+      properties:
+        id: {type: string}
+        name: {type: string}
+        projectId: {type: string}
+        shared: {type: boolean}
+        description: {type: string}
+        content: {type: string, description: Dockerfile text}
+        files: {type: object, additionalProperties: {type: string}, description: Build-context files keyed by relative path}
+    EnvironmentAsset:
+      type: object
+      required: [id, name, projectId]
+      additionalProperties: true
+      properties:
+        id: {type: string}
+        name: {type: string}
+        projectId: {type: string}
+        shared: {type: boolean}
+        description: {type: string}
+        variables: {type: object, additionalProperties: {type: string}}
+        pathEntries: {type: array, items: {type: string}}
+        installScript: {type: string, description: Runs once with PREFIX set to the isolated environment root}
+    SandboxProfile:
+      type: object
+      required: [id, name, projectId, driver]
+      additionalProperties: true
+      description: >-
+        Execution environment for SOP runs and conversation workspaces. Conversation workspaces
+        need driver=docker with an existing dockerfileId; the built-in shared generic-docker
+        profile already satisfies this, so create a new profile only for a different toolchain.
+      properties:
+        id: {type: string}
+        name: {type: string}
+        projectId: {type: string, description: Owning project (required)}
+        shared: {type: boolean, description: Visible to every project}
+        driver: {type: string, enum: [local, native, docker]}
+        dockerfileId: {type: string, description: Required for driver=docker; see dockerfiles_list}
+        environmentId: {type: string, description: Toolchain for native/local drivers; see environments_list}
+        readOnlyRootFS: {type: boolean}
+        environment: {type: object, additionalProperties: {type: string}}
     APIToken:
       type: object
       required: [id, userId, name, prefix, createdAt]

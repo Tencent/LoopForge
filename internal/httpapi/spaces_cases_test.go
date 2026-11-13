@@ -235,9 +235,6 @@ func TestSpaceLaneProjectionAndUtilityBranches(t *testing.T) {
 	if ws = h.laneWorkspace(run); ws.State != "cleaned" {
 		t.Fatalf("cleaned workspace: %+v", ws)
 	}
-	if maxInt64(1, 2) != 2 || maxInt64(2, 1) != 2 || maxFloat(1, 2) != 2 || maxFloat(2, 1) != 2 || maxInt(1, 2) != 2 || maxInt(2, 1) != 2 {
-		t.Fatal("max helpers")
-	}
 	if got := withInputs(strings.Repeat("x", 7990), []string{"line"}); len([]rune(got)) > 8000 || !strings.HasSuffix(got, "…") {
 		t.Fatalf("withInputs clipping len=%d suffix=%q", len([]rune(got)), got[len(got)-3:])
 	}

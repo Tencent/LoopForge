@@ -84,12 +84,8 @@ func prependSkillFrontmatter(raw []byte, id, description string) []byte {
 }
 
 func hasClosedFrontmatter(raw []byte) bool {
-	trimmed := strings.TrimSpace(string(raw))
-	if !strings.HasPrefix(trimmed, "---") {
-		return false
-	}
-	rest := strings.TrimLeft(trimmed[3:], "\r\n")
-	return strings.Contains(rest, "\n---")
+	_, _, ok := splitFrontmatter(raw)
+	return ok
 }
 
 func setFrontmatterField(raw []byte, key, value string) []byte {

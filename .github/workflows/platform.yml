@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      REAL_BROWSER_TESTS: '^(TestMainBotBrowserStartsAndDrivesRunBrowser|TestBrowserStreamPushesFramesAndRunsCommands|TestRunnerStartsPanelBrowserInRunSandbox|TestBrowserAgentOperationsDriveRealChromium)$'
+      REAL_BROWSER_TESTS: '^(TestMainBotBrowserStartsAndDrivesRunBrowser|TestBrowserStreamPushesFramesAndRunsCommands|TestRunnerStartsPanelBrowserInRunSandbox|TestBrowserAgentOperationsDriveRealChromium|TestBrowserScrollEndsOnASharpFrame)$'
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v6
@@ -110,11 +110,44 @@ jobs:
           if(!response.ok)throw new Error('Acceptance signup: HTTP '+response.status);
           const {user,admin}=await response.json();
           if(admin)throw new Error('Acceptance account must be an ordinary member');
-          const cookie=response.headers.get('set-cookie').split(';')[0];
+          const cookie=(response.headers.get('set-cookie')||'').split(';')[0];
+          if(!cookie)throw new Error('Acceptance signup: HTTP '+response.status+' without a session cookie');
           const project=await fetch(base+'/api/projects/welcome',{headers:{Cookie:cookie}}).then(r=>r.json());
           if(!project.members?.some(member=>member.userId===user.id))throw new Error('Acceptance account did not join the welcome project');
           JS
       - run: node e2e/setup-auth.mjs
+      # Mirror e2e/local.sh: a disposable bare remote enables the
+      # repository-bound API tests (repoSkip), and the ordinary member's token
+      # enables the second-user cases (tokenBSkip). The API runs on this host,
+      # so it can clone the local path.
+      - name: Provision disposable repository and second-user token
+        run: |
+          repo="$RUNNER_TEMP/e2e-repo"
+          mkdir -p "$repo/src"
+          git -C "$repo/src" init -q -b main
+          echo baseline > "$repo/src/README.md"
+          git -C "$repo/src" -c user.name=e2e -c user.email=e2e@local add README.md
+          git -C "$repo/src" -c user.name=e2e -c user.email=e2e@local commit -qm baseline
+          git clone -q --bare "$repo/src" "$repo/remote.git"
+          echo "AGENTFLOW_E2E_REPO_CLONE_URL=$repo/remote.git" >> "$GITHUB_ENV"
+          echo "AGENTFLOW_E2E_REPO_BRANCH=main" >> "$GITHUB_ENV"
+          token_b=$(node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const base=process.env.AGENTFLOW_E2E_BASE || 'http://127.0.0.1:8090';
+          const password=fs.readFileSync(process.env.LOOPFORGE_UNCONFIGURED_PASSWORD_FILE,'utf8').trim();
+          const login=await fetch(base+'/api/auth/password',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({login:process.env.LOOPFORGE_UNCONFIGURED_USER,password})});
+          if(!login.ok)throw new Error('Second-user login: HTTP '+login.status);
+          const cookie=(login.headers.get('set-cookie')||'').split(';')[0];
+          if(!cookie)throw new Error('Second-user login: HTTP '+login.status+' without a session cookie');
+          const created=await fetch(base+'/api/auth/tokens',{method:'POST',headers:{Origin:base,Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({name:'e2e-second-user',expiresInDays:1})});
+          if(!created.ok)throw new Error('Second-user token: HTTP '+created.status);
+          const {token}=await created.json();
+          if(!token)throw new Error('Second-user token response has no token');
+          process.stdout.write(token);
+          JS
+          )
+          echo "::add-mask::$token_b"
+          echo "AGENTFLOW_E2E_TOKEN_B=$token_b" >> "$GITHUB_ENV"
       - run: node --test --test-concurrency=1 --test-reporter=spec e2e/api/*.test.mjs
       - run: npx playwright test --config playwright.config.mjs
         working-directory: e2e
