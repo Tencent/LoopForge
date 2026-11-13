@@ -626,19 +626,62 @@ function bindClarifyPreferencePicker(){
   if(!api||!toggle||!menu)return;
   const user=credentialUser(),selected=user.clarifyModel||'';
   if(selected)api.paint(toggle,selected);
-  toggle.onclick=async e=>{
+  // 弹层由 placeClarifyPrefMenu 以 fixed 摆放：product-v4 的通用 .clarify-model-field
+  // 规则强制 absolute 向上弹，会被 .credential-fold>div 的 overflow:hidden 裁掉、
+  // 被上方的组头/工具栏遮住。fixed 逃逸裁切，方向按视口剩余空间翻转。
+  const dismiss=e=>{
+    if(e.type==='scroll'&&menu.contains(e.target))return;
+    if(e.type==='click'&&host.contains(e.target))return;
+    close();
+  };
+  const onKey=e=>{if(e.key==='Escape')close()};
+  const close=()=>{
+    if(menu.hidden)return;
+    menu.hidden=true;
+    toggle.setAttribute('aria-expanded','false');
+    document.removeEventListener('scroll',dismiss,true);
+    document.removeEventListener('resize',dismiss);
+    document.removeEventListener('click',dismiss,true);
+    document.removeEventListener('keydown',onKey);
+  };
+  toggle.onclick=e=>{
     e.stopPropagation();
     const open=menu.hidden;
-    menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
+    close();
     if(!open)return;
-    await api.load?.().catch(()=>{});
-    api.renderGrouped(menu, clarifySettingsEngineGroups(), selected||api.DEFAULT, id=>{
-      menu.hidden=true;
-      toggle.setAttribute('aria-expanded','false');
-      saveClarifyPreference(id);
-    });
+    menu.hidden=false;
+    toggle.setAttribute('aria-expanded','true');
+    placeClarifyPrefMenu(toggle,menu);
+    document.addEventListener('scroll',dismiss,true);
+    document.addEventListener('resize',dismiss);
+    document.addEventListener('click',dismiss,true);
+    document.addEventListener('keydown',onKey);
+    void(async()=>{
+      await api.load?.().catch(()=>{});
+      api.renderGrouped(menu, clarifySettingsEngineGroups(), selected||api.DEFAULT, id=>{
+        close();
+        saveClarifyPreference(id);
+      });
+      placeClarifyPrefMenu(toggle,menu);
+    })();
   };
+}
+// 与 placeScheduleModelMenu 同款：按渲染后的实际高度摆放，右缘对齐触发按钮。
+// product-v4 给 left/top/bottom 等写了 !important，所以这里用 inline !important 覆盖。
+function placeClarifyPrefMenu(toggle,menu){
+  const at=toggle.getBoundingClientRect();
+  const width=Math.min(Math.max(at.width,360),window.innerWidth-24,460);
+  menu.style.setProperty('width',width+'px','important');
+  menu.style.setProperty('left',Math.max(12,Math.min(at.right-width,window.innerWidth-width-12))+'px','important');
+  menu.style.setProperty('right','auto','important');
+  menu.style.setProperty('max-height','none','important');
+  const need=Math.min(menu.scrollHeight,320,window.innerHeight-24);
+  const below=window.innerHeight-at.bottom-12,above=at.top-12;
+  const down=below>=need||below>=above;
+  const room=Math.max(120,Math.min(need,down?below:above));
+  menu.style.setProperty('max-height',room+'px','important');
+  menu.style.setProperty('top',(down?at.bottom+6:Math.max(12,at.top-room-6))+'px','important');
+  menu.style.setProperty('bottom','auto','important');
 }
 function credentialGroupHTML(group,user){
   const kinds=CREDENTIAL_KINDS.filter(kind=>kind.group===group.id),done=kinds.filter(kind=>credentialConfigured(kind,user)).length,closed=!!credentialUI().closed[group.id];
@@ -1240,7 +1283,14 @@ async function renderPersonalSettings(){
   bindCredentialPanel(panel);
   renderCredentialPanel();
   hydrateCredentialIcons(host);
-  setTimeout(()=>panel.classList.remove('is-entering'),900);
+  // A finished animation with fill:both keeps its final keyframe applied:
+  // identity transform + blur(0) would linger, and any applied transform or
+  // filter turns the section into the containing block of position:fixed
+  // descendants (the 选择框架 menu). Drop the classes once the entrance is over.
+  setTimeout(()=>{
+    panel.classList.remove('is-entering','credential-enter');
+    host.querySelector('.credential-account')?.classList.remove('credential-enter');
+  },900);
   // Offer the OAuth shortcut only when the server has a Gongfeng application.
   api('/api/auth/gongfeng',{silent:true}).then(capability=>{state.gongfengOAuthEnabled=!!capability?.enabled;document.querySelectorAll('[data-gongfeng-oauth]').forEach(el=>{el.hidden=!state.gongfengOAuthEnabled})}).catch(()=>{});
   if(storedUser.gitTokenConfigured){

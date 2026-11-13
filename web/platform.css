@@ -2363,7 +2363,7 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .clarify-pref-state{color:var(--cr-muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 .clarify-pref-stale{color:#b45309;background:rgba(251,191,36,.16);border-radius:99px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap}
 .clarify-pref-row .clarify-model-field{width:auto!important;min-width:0!important}
-.clarify-pref-row .clarify-model-field .ai-model-menu{left:auto;right:0;top:calc(100% + 6px);bottom:auto}
+.clarify-pref-row .clarify-model-field .ai-model-menu{position:fixed}
 
 /* StatusBadge: .hui-badge from app/harness-ui.css */
 .credential-status.is-swap{animation:credentialSwap .5s var(--cr-spring)}
