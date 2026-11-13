@@ -225,34 +225,7 @@ func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
 		if header.Size < 0 || expanded > workspaceCheckpointExpandedMax {
 			return fmt.Errorf("checkpoint expanded size exceeds limit")
 		}
-		if err = base.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return err
-		}
-		switch header.Typeflag {
-		case tar.TypeDir:
-			err = base.MkdirAll(path, os.FileMode(header.Mode)&0777)
-		case tar.TypeReg:
-			var file *os.File
-			file, err = base.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, os.FileMode(header.Mode)&0777)
-			if err == nil {
-				_, err = io.CopyN(file, reader, header.Size)
-				if err == nil {
-					err = file.Sync()
-				}
-				closeErr := file.Close()
-				if err == nil {
-					err = closeErr
-				}
-			}
-		case tar.TypeSymlink:
-			// The target is restored as inert data, exactly like git checkout
-			// does. os.Root refuses to traverse any link leaving the staging
-			// root, so later entries can never be written through it.
-			err = base.Symlink(header.Linkname, path)
-		default:
-			return fmt.Errorf("unsupported checkpoint entry")
-		}
-		if err != nil {
+		if err = restoreCheckpointEntry(base, path, header, reader); err != nil {
 			return err
 		}
 	}
@@ -264,6 +237,41 @@ func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
 		return fmt.Errorf("checkpoint expanded size exceeds limit")
 	}
 	return os.Rename(stage, root)
+}
+
+// restoreCheckpointEntry materializes one validated tar entry at path inside
+// the staging root. Regular file content is read from reader, which must be
+// positioned at the entry body.
+func restoreCheckpointEntry(base *os.Root, path string, header *tar.Header, reader io.Reader) error {
+	if err := base.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	mode := os.FileMode(header.Mode) & 0777
+	switch header.Typeflag {
+	case tar.TypeDir:
+		return base.MkdirAll(path, mode)
+	case tar.TypeReg:
+		file, err := base.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err != nil {
+			return err
+		}
+		_, err = io.CopyN(file, reader, header.Size)
+		if err == nil {
+			err = file.Sync()
+		}
+		closeErr := file.Close()
+		if err == nil {
+			err = closeErr
+		}
+		return err
+	case tar.TypeSymlink:
+		// The target is restored as inert data, exactly like git checkout
+		// does. os.Root refuses to traverse any link leaving the staging
+		// root, so later entries can never be written through it.
+		return base.Symlink(header.Linkname, path)
+	default:
+		return fmt.Errorf("unsupported checkpoint entry")
+	}
 }
 
 func EmptyWorkspaceCheckpoint() []byte {
