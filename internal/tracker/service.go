@@ -584,14 +584,9 @@ func (s *Service) CreateGongfengIssue(store IssueStoreAdapter, issue domain.Issu
 		return issue, err
 	}
 
-	var gi gongfengIssue
-	if err := json.Unmarshal([]byte(raw), &gi); err != nil {
-		var arr []gongfengIssue
-		if err2 := json.Unmarshal([]byte(raw), &arr); err2 == nil && len(arr) > 0 {
-			gi = arr[0]
-		} else {
-			return issue, fmt.Errorf("decode created issue: %w", err)
-		}
+	gi, err := decodeCreatedRecord[gongfengIssue](raw)
+	if err != nil {
+		return issue, fmt.Errorf("decode created issue: %w", err)
 	}
 
 	issue.Source = "gongfeng"
@@ -1338,14 +1333,9 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 		return issue, err
 	}
 
-	var st tapdStory
-	if err := json.Unmarshal([]byte(raw), &st); err != nil {
-		var arr []tapdStory
-		if err2 := json.Unmarshal([]byte(raw), &arr); err2 == nil && len(arr) > 0 {
-			st = arr[0]
-		} else if extracted := extractTAPDStory(raw); extracted.ID != "" {
-			st = extracted
-		} else {
+	st, err := decodeCreatedRecord[tapdStory](raw)
+	if err != nil {
+		if st = extractTAPDStory(raw); st.ID == "" {
 			return issue, fmt.Errorf("decode created story: %w", err)
 		}
 	}
@@ -1549,6 +1539,24 @@ func collectTAPDStories(value any) []tapdStory {
 	}
 	walk(value)
 	return out
+}
+
+// decodeCreatedRecord decodes the payload a tracker MCP create tool returns:
+// a single object, or an array whose first element is the created record.
+// When neither shape fits it returns the zero value and the error from
+// decoding the payload as a single object.
+func decodeCreatedRecord[T any](raw string) (T, error) {
+	var record T
+	err := json.Unmarshal([]byte(raw), &record)
+	if err == nil {
+		return record, nil
+	}
+	var records []T
+	if json.Unmarshal([]byte(raw), &records) == nil && len(records) > 0 {
+		return records[0], nil
+	}
+	var zero T
+	return zero, err
 }
 
 func extractTAPDStory(raw string) tapdStory {
