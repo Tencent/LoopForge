@@ -44,7 +44,8 @@ services:
       HOME: ${LOOPFORGE_DATA_DIR:?Run scripts/configure.sh first}/home
       AGENTFLOW_RUNNER_BINARY: /app/bin/agentflow-runner-{os}-{arch}
       AGENTFLOW_GATE_MCP_BINARY: /app/bin/agentflow-gate-mcp-{os}-{arch}
-      # Claude Code is not bundled; it is installed from npm here on first use.
+      # CodeBuddy, Codex, Pi and DeepSeek Harness ship in the image. Claude Code
+      # is not bundled; it is installed into this directory on first use.
       AGENTFLOW_RUNTIME_CLI_DIR: ${LOOPFORGE_DATA_DIR}/cli
     command: ["-workspaces", "${LOOPFORGE_DATA_DIR}/workspaces"]
     volumes:

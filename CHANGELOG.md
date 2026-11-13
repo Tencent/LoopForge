@@ -9,6 +9,7 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 - Personal settings keep a default clarification framework at the top of the 模型与执行 group. Each clarification can switch for this round without writing that default back, and a default whose key was removed is labelled as no longer available instead of being used silently.
 - An item keeps the framework its clarification started with, so later rounds resume the same session; switching on purpose starts a new session and replays the questions already answered instead of failing to resume.
 - Nothing changes for deployments that select no framework: CodeBuddy stays the default, its model catalog stays validated as before, and AI notification summaries still use CodeBuddy.
+- The production image now bundles the Pi and DeepSeek Harness CLIs next to CodeBuddy and Codex, so a key configured in personal settings is enough to clarify with them; DeepSeek Harness needs the image's Node.js 24 runtime. Claude Code keeps its on-demand npm install.
 
 Existing installations may apply `migrations/028_clarify_model_preference.sql`; the platform also adds these tables and columns on startup.
 

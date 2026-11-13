@@ -24,5 +24,9 @@ unzip -v >/dev/null
 codex --version
 if command -v claude >/dev/null; then printf 'Claude Code must not be bundled; it installs on first use.\n' >&2; exit 1; fi
 codebuddy --version
+# Requirement clarification runs these on the platform host, so both ship in
+# the image alongside codex and codebuddy.
+pi --version
+dsh --version
 printf 'Runtime image compatibility checks passed.\n'
 CHECK
