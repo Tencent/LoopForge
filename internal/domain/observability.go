@@ -24,8 +24,9 @@ type TelemetrySource struct {
 
 // TelemetryContext correlates all three platform layers plus product context.
 type TelemetryContext struct {
-	ProjectID string `json:"projectId,omitempty"`
-	IssueID   string `json:"issueId,omitempty"`
+	ExecutionPinned bool   `json:"executionPinned,omitempty"`
+	ProjectID       string `json:"projectId,omitempty"`
+	IssueID         string `json:"issueId,omitempty"`
 	// TAPDID is the external requirement key; local IssueID may differ across imports.
 	TAPDID            string `json:"tapdId,omitempty"`
 	ResponsibleUserID int64  `json:"responsibleUserId,omitempty"`

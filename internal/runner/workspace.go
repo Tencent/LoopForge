@@ -114,6 +114,9 @@ func (d *Daemon) handleRunnerWorkspaceBrowser(ctx context.Context, request domai
 }
 
 func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+	if request.Operation == "conversation_process" {
+		return d.conversationProcess(ctx, request)
+	}
 	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
 		return d.handleRunnerWorkspaceBrowser(ctx, request)
 	}

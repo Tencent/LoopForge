@@ -63,6 +63,18 @@ func TestAssistantGenerationFailurePreservesCancellationAndDeadline(t *testing.T
 	}
 }
 
+func TestAssistantExecutionUnavailablePreservesSafeRecoveryMessage(t *testing.T) {
+	for _, cause := range []error{
+		errAssistantExecutionUnavailable,
+		fmt.Errorf("%w: %w: private-diagnostic", runtime.ErrConversationNotStarted, errAssistantExecutionUnavailable),
+	} {
+		status, message := assistantGenerationFailure(context.Background(), cause)
+		if status != http.StatusServiceUnavailable || !strings.Contains(message, "等待原机器恢复") || strings.Contains(message, "private-diagnostic") {
+			t.Fatalf("status=%d message=%q", status, message)
+		}
+	}
+}
+
 func TestPrivateAssistantReportsExecutionFailureWithoutReplayingTools(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string

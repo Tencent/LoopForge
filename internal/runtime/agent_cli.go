@@ -78,7 +78,8 @@ func agentCLIModelOptional(kind, baseURL string) bool {
 // AgentCLIOptions carries the per-invocation facts the credential binding
 // needs to render a CLI's model configuration.
 type AgentCLIOptions struct {
-	Model string
+	ApprovalCommand string
+	Model           string
 	// Effort is the reasoning effort chosen for Model; Cursor resolves the
 	// pair to one model ID with the owner's catalog.
 	Effort string
@@ -445,6 +446,11 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		lines = append(lines, "api_key_env = "+strconv.Quote(agentCLIKeyEnv), "",
 			"[models.agentflow]", `provider = "agentflow"`, "model = "+strconv.Quote(model),
 			"max_context_size = 262144", `capabilities = ["thinking", "tool_use"]`, "")
+		if hook := options.ApprovalCommand; hook != "" {
+			// Kimi validates 1–600 seconds and allows the tool on timeout; the
+			// hook's own retry budget ends well before that.
+			lines = append(lines, "[[hooks]]", `event = "PreToolUse"`, "command = "+strconv.Quote(hook), "timeout = 600", "")
+		}
 		if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte(strings.Join(lines, "\n"))); err != nil {
 			return nil, nil, err
 		}

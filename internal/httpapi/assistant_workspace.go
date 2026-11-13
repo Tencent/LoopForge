@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agentflow/internal/domain"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -78,7 +79,10 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	if len(mainBotWorkspaceTools(s)) == 0 {
 		return "", errAgentToolForbidden
 	}
-	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != "workbench_workspace_read" && name != "workbench_workspace_attach" {
+	if name == "workbench_workspace_submit_mr" && !s.ExecMode.AutoWrite {
+		return "", fmt.Errorf("提交 MR 或推送分支需要外部写入授权，请切换到「帮我批准」或「完全权限」后继续")
+	}
+	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != "workbench_workspace_read" && name != "workbench_workspace_attach" && name != "workbench_workspace_open" && name != "workbench_platform_mode" {
 		// Commands are always reviewed: arbitrary shell text can mutate state.
 		ctx = withAssistantApprovalReviewer(ctx, s.approvalReviewer)
 		review := reviewAssistantAction(ctx, name, "当前项目工作区操作，文件写入、命令执行或提交 MR 会产生副作用", map[string]any{"runId": s.workspaceRun(), "arguments": args})
@@ -86,7 +90,15 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 			return "", assistantReviewRefusal(name, review)
 		}
 	}
+	if name == "workbench_platform_mode" {
+		s.requestMode(domain.AssistantModePlatform)
+		raw, _ := json.Marshal(map[string]any{"mode": "platform", "handoff": true, "notice": "工作区保留，准备切回平台模式。" + assistantHandoffNotice})
+		return string(raw), nil
+	}
 	if name == "workbench_workspace_open" {
+		if s.RuntimeMode == domain.AssistantModeWorkspace {
+			return "", fmt.Errorf("切换工作区前先调用 workbench_platform_mode，等待原生进程退出后再打开工作区")
+		}
 		// Only Main Bot picks the workspace. A subagent calls through the same
 		// gateway, so while any dispatch runs the binding stays as it is.
 		if s.dispatchRunning() {
@@ -216,9 +228,9 @@ func (h *agentToolGateway) mainBotWorkspaceLease(ctx context.Context, s *AgentTo
 			return ctx, nil, release, err
 		}
 		release = func() {
-			saveCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer stop()
-			_ = h.engine.EndConversationWorkspaceUse(saveCtx, runID, token)
+			if result, err := h.engine.EndConversationWorkspaceUseAsync(ctx, runID, token); err == nil {
+				trackAssistantWorkspaceSave(runID, result)
+			}
 		}
 	}
 	restored, err := h.engine.PrepareConversationWorkspace(ctx, runID, token)
@@ -233,7 +245,11 @@ func (h *agentToolGateway) invokeMainBotWorkspace(ctx context.Context, s *AgentT
 	if runID == "" {
 		runID = s.workspaceRun()
 	}
-	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: method, Path: "/api/runs/{id}/workspace/" + endpoint}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: query, Body: body})
+	path := "/api/runs/{id}/workspace"
+	if endpoint != "" {
+		path += "/" + endpoint
+	}
+	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: method, Path: path}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: query, Body: body})
 	if err != nil {
 		return "", err
 	}
