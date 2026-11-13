@@ -36,7 +36,7 @@ func TestConversationNativeCacheLinksDoNotBlockNextTurn(t *testing.T) {
 }
 
 func TestConversationPlatformPathsRejectLinks(t *testing.T) {
-	paths := []string{"home", "ws", "attachments", "session.json", "session.lock", "codex-threads.json", "agent-cli-sessions.json", "native-approval.py", "kimi-native-loader.mjs", "current-settings.json", "home/tmp", "home/.codebuddy", "home/.config", "home/.config/opencode/plugins", "home/.agents/skills/x/run.sh"}
+	paths := []string{"home", "ws", "attachments", "session.json", "session.lock", "codex-threads.json", "agent-cli-sessions.json", "native-approval.py", "current-settings.json", "home/tmp", "home/.codebuddy", "home/.config", "home/.config/opencode/plugins", "home/.agents/skills/x/run.sh"}
 	paths = append(paths, conversationAssetTrees...)
 	paths = append(paths, conversationGuardFiles...)
 	paths = append(paths, conversationManagedFiles...)

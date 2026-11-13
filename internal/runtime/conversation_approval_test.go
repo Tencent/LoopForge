@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -173,6 +174,127 @@ func TestNativeHookRetriesTransportAndPollsOneInvocation(t *testing.T) {
 		if id != ids[0] {
 			t.Fatal("network retry created another invocation", ids)
 		}
+	}
+}
+
+func TestNativeHookDeniesWhenGatewayStaysUnavailable(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 unavailable")
+	}
+	for name, respond := range map[string]http.HandlerFunc{
+		"unreachable": func(w http.ResponseWriter, r *http.Request) { http.Error(w, "relay down", http.StatusBadGateway) },
+		"pending": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"result":{"pending":true}}`))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(respond)
+			defer server.Close()
+			script := filepath.Join(t.TempDir(), "hook.py")
+			short := strings.Replace(conversationApprovalPython, "time.monotonic()+"+conversationApprovalRetrySeconds, "time.monotonic()+1", 1)
+			if short == conversationApprovalPython {
+				t.Fatal("retry budget not found in hook")
+			}
+			if err := os.WriteFile(script, []byte(short), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("python3", script)
+			cmd.Env = append(os.Environ(), "AGENTFLOW_NATIVE_APPROVAL_URL="+server.URL)
+			cmd.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"unsafe"}}`)
+			began := time.Now()
+			output, err := cmd.CombinedOutput()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(output), `"permissionDecision": "deny"`) {
+				t.Fatalf("hook did not deny after its budget: %s %v", output, err)
+			}
+			if elapsed := time.Since(began); elapsed > 5*time.Second {
+				t.Fatalf("hook outlived its retry budget: %s", elapsed)
+			}
+		})
+	}
+}
+
+func TestJavaScriptApprovalDeniesWhenGatewayStaysUnavailable(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node unavailable")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "relay down", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	short := strings.Replace(conversationPiApproval, "Date.now()+"+conversationApprovalRetrySeconds+"*1000", "Date.now()+1000", 1)
+	if short == conversationPiApproval {
+		t.Fatal("retry budget not found in plugin")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "approval.mjs"), []byte(short), 0600); err != nil {
+		t.Fatal(err)
+	}
+	probe := `import assert from 'node:assert/strict';
+import install from './approval.mjs';
+let hook; install({on:(_,handler)=>{hook=handler}});
+const denied=await hook({toolName:'write',input:{path:'never.txt'}},{});
+assert.equal(denied.block,true);assert.match(denied.reason,/长时间不可用/);
+`
+	path := filepath.Join(dir, "probe.mjs")
+	if err := os.WriteFile(path, []byte(probe), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("node", path)
+	cmd.Env = append(os.Environ(), "AGENTFLOW_NATIVE_APPROVAL_URL="+server.URL)
+	cmd.WaitDelay = 3 * time.Second
+	began := time.Now()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("plugin did not deny after its budget: %s: %v", output, err)
+	}
+	if elapsed := time.Since(began); elapsed > 5*time.Second {
+		t.Fatalf("plugin outlived its retry budget: %s", elapsed)
+	}
+}
+
+func TestKimiHookCommandBlocksOnEveryHookFailure(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"allow":true}}`))
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	command, err := InstallConversationApproval(root, AgentCLIKimi, CommandSpec{Argv: []string{"kimi"}, Provider: AgentCLIKimi})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Kimi runs the hook through a shell and allows every exit except 2.
+	run := func(path string) int {
+		cmd := exec.Command("/bin/sh", "-c", command.AgentCLI.ApprovalCommand)
+		cmd.Env = []string{"PATH=" + path, "AGENTFLOW_NATIVE_APPROVAL_URL=" + server.URL}
+		cmd.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"true"}}`)
+		err := cmd.Run()
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return exit.ExitCode()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return 0
+	}
+	pythonDir := filepath.Dir(python)
+	if code := run(pythonDir); code != 0 {
+		t.Fatalf("allowed action exited %d", code)
+	}
+	if code := run(t.TempDir()); code != 2 {
+		t.Fatalf("missing interpreter exited %d", code)
+	}
+	if err := os.WriteFile(filepath.Join(root, "native-approval.py"), []byte("raise RuntimeError('crash')\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(pythonDir); code != 2 {
+		t.Fatalf("crashed hook exited %d", code)
 	}
 }
 

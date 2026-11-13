@@ -8,10 +8,14 @@ import (
 	"strconv"
 )
 
-// Command-hook APIs require a numeric watchdog. This is the largest whole
-// second value safe for Node's signed 32-bit millisecond timer. Human approval
-// state has no TTL; a CLI exit or cancellation revokes its phase instead.
+// Command-hook APIs require a numeric watchdog. Several CLIs allow the tool
+// when it fires, so use the largest whole second value safe for Node's signed
+// 32-bit millisecond timer and let the hook end itself first.
 const conversationApprovalHookWatchdog = 2147483
+
+// Hooks deny once the gateway stays unreachable this long. Must stay below
+// every CLI-enforced hook timeout; Kimi caps its timeout at 600 seconds.
+const conversationApprovalRetrySeconds = "120"
 
 // InstallConversationApproval installs only provider-owned hooks. Generated
 // scripts contain no credentials; their private gateway capability is supplied
@@ -73,11 +77,9 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		entry := "hooks.PreToolUse=[{hooks=[{type=\"command\",command=" + strconv.Quote(launch) + ",timeout=" + strconv.Itoa(conversationApprovalHookWatchdog) + "}]}]"
 		command.Argv = append(command.Argv[:len(command.Argv)-1], "-c", "features.hooks=true", "-c", entry, command.Argv[len(command.Argv)-1])
 	case AgentCLIKimi:
-		command.AgentCLI.ApprovalCommand = launch
-		if err := os.WriteFile(filepath.Join(root, "kimi-native-loader.mjs"), []byte(conversationKimiApprovalLoader), 0600); err != nil {
-			return command, err
-		}
-		command = WithCommandEnvironment(command, map[string]string{"AGENTFLOW_KIMI_APPROVAL_COMMAND": launch})
+		// Kimi blocks only on exit code 2 and allows any other exit,
+		// including an interpreter that is missing or crashed.
+		command.AgentCLI.ApprovalCommand = launch + " || exit 2"
 	case AgentCLIPi:
 		if err := writeAgentCLIFile(home, ".pi/agent/extensions/loopforge-approval.ts", []byte(conversationPiApproval)); err != nil {
 			return command, err
@@ -129,6 +131,9 @@ func conversationReplaceFlag(argv []string, name, value string) []string {
 const conversationApprovalPython = `import json,os,sys,time,uuid,urllib.request,urllib.error
 allowed=False
 reason="原生工具审批服务不可用，操作未执行"
+deadline=time.monotonic()+` + conversationApprovalRetrySeconds + `
+def wait():
+    time.sleep(max(0,min(1,deadline-time.monotonic())))
 try:
     event=json.load(sys.stdin)
     name=event.get("tool_name") or event.get("toolName") or event.get("tool",{}).get("name") or event.get("toolCall",{}).get("name") or event.get("hook_event_name","")
@@ -136,22 +141,26 @@ try:
     payload={"jsonrpc":"2.0","id":1,"method":"agentflow/nativeApproval","params":{"id":uuid.uuid4().hex,"name":name,"input":arguments}}
     url=os.environ["AGENTFLOW_NATIVE_APPROVAL_URL"]
     while True:
+        remaining=deadline-time.monotonic()
+        if remaining<=0:
+            reason="平台网关长时间不可用，操作未执行"
+            break
         try:
             request=urllib.request.Request(url,json.dumps(payload).encode(),{"Content-Type":"application/json"})
-            with urllib.request.urlopen(request,timeout=20) as response: rpc=json.load(response)
+            with urllib.request.urlopen(request,timeout=min(20,remaining)) as response: rpc=json.load(response)
         except urllib.error.HTTPError as error:
             if error.code not in (408,429,502,503,504): break
-            time.sleep(1)
+            wait()
             continue
         except (urllib.error.URLError,TimeoutError,OSError):
-            time.sleep(1)
+            wait()
             continue
         result=rpc.get("result",{})
         if rpc.get("error"):
             reason="本阶段已结束，审批已失效"
             break
         if result.get("pending") is True:
-            time.sleep(1)
+            wait()
             continue
         allowed=result.get("allow") is True
         reason=result.get("reason",reason)
@@ -172,11 +181,14 @@ if not allowed:
 const conversationApprovalJS = `import {randomUUID} from "node:crypto";
 async function approve(name,input,signal) {
   const payload=JSON.stringify({jsonrpc:"2.0",id:1,method:"agentflow/nativeApproval",params:{id:randomUUID(),name,input}});
+  const deadline=Date.now()+` + conversationApprovalRetrySeconds + `*1000;
   for(;;) {
     if(signal?.aborted) throw new Error("本轮已停止");
+    const remaining=deadline-Date.now();
+    if(remaining<=0) throw new Error("平台网关长时间不可用，操作未执行");
     let rpc;
     try {
-      const timeout=AbortSignal.timeout(20000);
+      const timeout=AbortSignal.timeout(Math.min(20000,remaining));
       const response=await fetch(process.env.AGENTFLOW_NATIVE_APPROVAL_URL,{method:"POST",headers:{"content-type":"application/json"},body:payload,signal:signal?AbortSignal.any([signal,timeout]):timeout});
       if(!response.ok) {
         if(![408,429,502,503,504].includes(response.status)) throw Object.assign(new Error("本阶段已结束，审批已失效"),{terminal:true});
@@ -192,7 +204,7 @@ async function approve(name,input,signal) {
         return;
       }
     }
-    await new Promise(resolve=>setTimeout(resolve,1000));
+    await new Promise(resolve=>setTimeout(resolve,Math.max(0,Math.min(1000,deadline-Date.now()))));
   }
 }
 `
