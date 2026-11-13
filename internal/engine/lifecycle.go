@@ -52,15 +52,6 @@ func resetInFlightNodesForResume(r *domain.Run, activity string) {
 	}
 }
 
-func isTerminalRunStatus(status string) bool {
-	switch status {
-	case "succeeded", "failed", "cancelled":
-		return true
-	default:
-		return false
-	}
-}
-
 func hasRunningNode(r domain.Run) bool {
 	for _, nr := range r.Nodes {
 		if nr != nil && (nr.Status == "running" || nr.Status == "pending_input") {
@@ -158,7 +149,7 @@ func (e *Engine) forceTerminate(runID, status, msg string) {
 				nr.FinishedAt = now
 			}
 		}
-		if status == "cancelled" || !isTerminalRunStatus(r.Status) {
+		if status == "cancelled" || !domain.TerminalRunStatus(r.Status) {
 			r.Status = status
 			e.event(r, "", "run."+status, msg)
 		}

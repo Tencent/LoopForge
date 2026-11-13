@@ -106,7 +106,7 @@ func (e *Engine) takePendingObservations(runID string) []pendingObservation {
 }
 
 func (e *Engine) applyObservation(r *domain.Run, nodeID string, observation domain.TelemetryEvent) {
-	if isTerminalRunStatus(r.Status) && observation.Name != "sandbox.closed" {
+	if domain.TerminalRunStatus(r.Status) && observation.Name != "sandbox.closed" {
 		return
 	}
 	// Worker/OTLP retries must be idempotent. Preserve a producer supplied ID
