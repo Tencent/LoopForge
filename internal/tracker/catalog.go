@@ -101,7 +101,7 @@ func bindProjectUserTrackerMCP(kind string, cfg domain.SyncConfig, servers []dom
 	if strings.TrimSpace(binding.URL) == "" {
 		return binding, fmt.Errorf("项目 %s 未配置 %s MCP 地址", projectID, trackerDisplayName(kind))
 	}
-	if !hasAuthorizationHeader(binding.Headers) {
+	if !headerHas(binding.Headers, "Authorization") {
 		return binding, fmt.Errorf("项目 %s 的 %s MCP 未配置认证：请在 MCP Headers 中提供 Authorization（%s %s）", projectID, trackerDisplayName(kind), role, strings.TrimSpace(user.LoginName))
 	}
 	binding.Headers = maps.Clone(binding.Headers)
@@ -196,9 +196,11 @@ func bearerHeader(value string) string {
 	return "Bearer " + value
 }
 
+// headerHas reports whether headers carries a non-blank value for name,
+// matching the key case-insensitively and ignoring surrounding whitespace.
 func headerHas(headers map[string]string, name string) bool {
 	for k, v := range headers {
-		if strings.EqualFold(k, name) && strings.TrimSpace(v) != "" {
+		if strings.EqualFold(strings.TrimSpace(k), name) && strings.TrimSpace(v) != "" {
 			return true
 		}
 	}
@@ -212,13 +214,4 @@ func sameMCPHost(a, b string) bool {
 		return false
 	}
 	return strings.EqualFold(ua.Host, ub.Host)
-}
-
-func hasAuthorizationHeader(headers map[string]string) bool {
-	for key, value := range headers {
-		if strings.EqualFold(strings.TrimSpace(key), "authorization") && strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
 }

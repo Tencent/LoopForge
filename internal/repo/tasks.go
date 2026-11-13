@@ -37,15 +37,22 @@ func (r *TasksRepo) PutTask(v domain.Task) error {
 	})
 }
 
-// CreateTask inserts a task exactly once. Primary dispatches use a stable task
-// ID, so the tasks primary key is also the cross-instance idempotency key.
-func (r *TasksRepo) CreateTask(v domain.Task) (domain.Task, bool, error) {
+// UpdateTaskStatus reconciles an existing task without re-creating it if its
+// issue and execution history were deleted in the meantime.
+func (r *TasksRepo) UpdateTaskStatus(v domain.Task, status string) error {
+	v.Status, v.UpdatedAt = status, time.Now().UTC()
+	return r.DB.Model(&taskRow{}).Where("id = ? AND issue_id = ? AND COALESCE(run_id, '') = ?", v.ID, v.IssueID, v.RunID).
+		Updates(map[string]any{"status": v.Status, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt)}).Error
+}
+
+// createTask uses the task's primary key as the cross-instance idempotency key.
+func (r *TasksRepo) createTask(tx *gorm.DB, v domain.Task) (domain.Task, bool, error) {
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.IssueID) == "" {
 		return domain.Task{}, false, fmt.Errorf("task id and issue id are required")
 	}
 	now := time.Now().UTC()
 	v.CreatedAt, v.UpdatedAt = now, now
-	created, err := insertIgnore(r.DB, "tasks", map[string]any{
+	created, err := insertIgnore(tx, "tasks", map[string]any{
 		"id": v.ID, "issue_id": v.IssueID, "run_id": v.RunID, "status": v.Status,
 		"payload": mustJSON(v), "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
 	})
@@ -55,7 +62,7 @@ func (r *TasksRepo) CreateTask(v domain.Task) (domain.Task, bool, error) {
 	if err != nil && !errors.Is(err, gorm.ErrDuplicatedKey) {
 		return domain.Task{}, false, err
 	}
-	existing, ok := r.Task(v.ID)
+	existing, ok := payloadOne[domain.Task](tx, "tasks", v.ID)
 	if !ok {
 		return domain.Task{}, false, fmt.Errorf("task reservation was not persisted")
 	}

@@ -593,20 +593,33 @@ func (p *piStream) translate(s *ClaudeStream, raw map[string]any) []string {
 }
 
 // dshStream: `dsh --profile headless --json` run events.
-type dshStream struct{ failure string }
+// dshStream: `dsh --json` caps every event string at 8 KiB and flags the event
+// `truncated`; only the terminal `final` carries the whole answer. A truncated
+// text is held back so `final` can replace it instead of being appended to it.
+type dshStream struct{ failure, truncatedText string }
 
 func (d *dshStream) translate(s *ClaudeStream, raw map[string]any) []string {
-	switch stringValue(raw["type"]) {
+	kind := stringValue(raw["type"])
+	var out []string
+	if d.truncatedText != "" && (kind == "thinking" || kind == "text" || kind == "tool_call" || kind == "tool_result") {
+		out = s.Text(d.truncatedText)
+		d.truncatedText = ""
+	}
+	switch kind {
 	case "session":
-		return s.Init(stringValue(raw["sessionId"]), "")
+		return append(out, s.Init(stringValue(raw["sessionId"]), "")...)
 	case "thinking":
-		return s.Thinking(stringValue(raw["text"]))
+		return append(out, s.Thinking(stringValue(raw["text"]))...)
 	case "text":
-		return s.Text(stringValue(raw["text"]))
+		if raw["truncated"] == true {
+			d.truncatedText = stringValue(raw["text"])
+			return out
+		}
+		return append(out, s.Text(stringValue(raw["text"]))...)
 	case "tool_call":
-		return s.ToolUse(stringValue(raw["callId"]), stringValue(raw["tool"]), raw["input"])
+		return append(out, s.ToolUse(stringValue(raw["callId"]), stringValue(raw["tool"]), raw["input"])...)
 	case "tool_result":
-		return s.ToolResult(stringValue(raw["callId"]), stringValue(raw["status"]) != "completed", jsonText(raw["result"]))
+		return append(out, s.ToolResult(stringValue(raw["callId"]), stringValue(raw["status"]) != "completed", jsonText(raw["result"]))...)
 	case "status":
 		if stringValue(raw["phase"]) == "step_end" {
 			usage, _ := raw["usage"].(map[string]any)
@@ -621,12 +634,19 @@ func (d *dshStream) translate(s *ClaudeStream, raw map[string]any) []string {
 		reason, _ := raw["reason"].(map[string]any)
 		failed := stringValue(reason["kind"]) != "completed"
 		text := stringValue(raw["text"])
+		if held := d.truncatedText; held != "" {
+			d.truncatedText = ""
+			if strings.HasPrefix(text, held) {
+				held = text
+			}
+			out = append(out, s.Text(held)...)
+		}
 		if failed && text == "" {
 			if text = d.failure; text == "" {
 				text = "DeepSeek Harness 运行结束：" + stringValue(reason["kind"])
 			}
 		}
-		return s.Result(text, failed)
+		return append(out, s.Result(text, failed)...)
 	}
-	return nil
+	return out
 }

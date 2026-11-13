@@ -14,9 +14,18 @@ import (
 // fallback: the CLI clamps xhigh/max to high when no capability is known.
 // Keep this snapshot alongside the fixed chat model catalog when updating it.
 // Empty effort always leaves the model's native default untouched.
-func assistantModelEfforts(model string) []string {
+//
+// user's saved Cursor catalog resolves the Cursor families folded out of
+// their CLI's own model list (runtime.FoldCursorCLIModels).
+func assistantModelEfforts(user domain.User, model string) []string {
+	return assistantModelEffortsIn(model, assistantCursorCatalog(user))
+}
+
+// assistantModelEffortsIn is assistantModelEfforts with the Cursor catalog
+// given directly.
+func assistantModelEffortsIn(model string, cursor []domain.CLIModel) []string {
 	if engine, id := assistantModelEngine(model); engine == runtime.AgentCLICursor {
-		return runtime.CursorModelEfforts(id)
+		return runtime.CursorModelEfforts(id, cursor)
 	} else if engine == runtime.AgentCLIAntigravity {
 		return runtime.AgyModelEfforts(id)
 	} else if runtime.IsAgentCLI(engine) {
@@ -38,12 +47,18 @@ func assistantModelEfforts(model string) []string {
 	}
 }
 
-func validateAssistantEffort(model, effort string) error {
+func validateAssistantEffort(user domain.User, model, effort string) error {
 	if effort == "" {
 		return nil
 	}
-	if !slices.Contains(assistantModelEfforts(model), effort) {
-		return fmt.Errorf("模型 %s 不支持思考强度 %q，可选：默认、%s", model, effort, strings.Join(assistantModelEfforts(model), "、"))
+	efforts := assistantModelEfforts(user, model)
+	if !slices.Contains(efforts, effort) {
+		return fmt.Errorf("模型 %s 不支持思考强度 %q，可选：默认、%s", model, effort, strings.Join(efforts, "、"))
 	}
 	return nil
+}
+
+// assistantCursorCatalog is the user's saved Cursor model list.
+func assistantCursorCatalog(user domain.User) []domain.CLIModel {
+	return user.AgentCLICredentials[runtime.AgentCLICursor].Models
 }

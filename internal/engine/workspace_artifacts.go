@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -30,16 +31,8 @@ func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.Works
 		if !excluded[n.ID] {
 			continue
 		}
-		for _, out := range n.ArtifactOutputs {
-			if normalizeExecutionScope(n.ExecutionScope) == domain.ExecutionScopeRepositories {
-				for _, rc := range run.RepositoryContexts() {
-					if p, ok := artifactRelPath(rc.WorkspaceDir, out.Path); ok {
-						excludedPaths[p] = true
-					}
-				}
-			} else if p, ok := artifactRelPath("", out.Path); ok {
-				excludedPaths[p] = true
-			}
+		for _, p := range artifactOutputFiles(run, n) {
+			excludedPaths[p] = true
 		}
 	}
 	latest := map[string]domain.Artifact{}
@@ -62,13 +55,7 @@ func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.Works
 		if rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
 			continue
 		}
-		hidden := false
-		for _, part := range strings.Split(rel, "/") {
-			if strings.HasPrefix(part, ".") {
-				hidden = true
-			}
-		}
-		if hidden {
+		if hasHiddenPathSegment(rel) {
 			continue
 		}
 		old, exists := latest[rel]
@@ -93,6 +80,14 @@ func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.Works
 	return files
 }
 
+// hasHiddenPathSegment reports whether any slash-separated segment of rel
+// starts with "." (dotfiles and dot-directories are never refilled).
+func hasHiddenPathSegment(rel string) bool {
+	return slices.ContainsFunc(strings.Split(rel, "/"), func(part string) bool {
+		return strings.HasPrefix(part, ".")
+	})
+}
+
 func (e *Engine) restoreArchivedWorkspaceFiles(ctx context.Context, run domain.Run) ([]string, error) {
 	return e.restoreWorkspaceFiles(ctx, run, archivedWorkspaceFiles(run, ""))
 }
@@ -106,6 +101,12 @@ func (e *Engine) restoreWorkspaceFiles(ctx context.Context, run domain.Run, file
 			return nil, err
 		}
 		if result.Error != "" {
+			// An open IDE terminal or a snapshot holds the fence. Refilling only
+			// adds missing archived files, so it waits for the next use instead
+			// of failing the save or terminal input that asked for it.
+			if runnerWorkspaceBusy(result) {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("补回归档产物失败（执行机器需支持 restore_artifacts）：%s", result.Error)
 		}
 		var report struct {

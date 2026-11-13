@@ -211,10 +211,33 @@ func (v *browserView) screenshot(ctx context.Context) (string, error) {
 	if session == "" {
 		return "", errors.New("没有可操作的标签页")
 	}
+	// The browser renders at a high device scale for the panel; the model
+	// gets CSS-pixel screenshots, which carry the same content in a quarter
+	// of the image.
+	params := map[string]any{"format": "jpeg", "quality": 75}
+	var metrics struct {
+		CSSVisualViewport struct {
+			PageX        float64 `json:"pageX"`
+			PageY        float64 `json:"pageY"`
+			ClientWidth  float64 `json:"clientWidth"`
+			ClientHeight float64 `json:"clientHeight"`
+		} `json:"cssVisualViewport"`
+	}
+	var ratio struct {
+		Result struct {
+			Value float64 `json:"value"`
+		} `json:"result"`
+	}
+	if v.client.call(ctx, session, "Page.getLayoutMetrics", nil, &metrics) == nil &&
+		v.client.call(ctx, session, "Runtime.evaluate", map[string]any{"expression": "window.devicePixelRatio", "returnByValue": true}, &ratio) == nil &&
+		ratio.Result.Value > 1 && metrics.CSSVisualViewport.ClientWidth > 0 {
+		vp := metrics.CSSVisualViewport
+		params["clip"] = map[string]any{"x": vp.PageX, "y": vp.PageY, "width": vp.ClientWidth, "height": vp.ClientHeight, "scale": 1 / ratio.Result.Value}
+	}
 	var shot struct {
 		Data string `json:"data"`
 	}
-	if err := v.client.call(ctx, session, "Page.captureScreenshot", map[string]any{"format": "jpeg", "quality": 75}, &shot); err != nil {
+	if err := v.client.call(ctx, session, "Page.captureScreenshot", params, &shot); err != nil {
 		return "", err
 	}
 	return shot.Data, nil

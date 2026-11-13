@@ -74,23 +74,22 @@ func LoadConfig() Config {
 }
 
 func intFromEnv(key string, fallback int) int {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return fallback
-	}
-	return n
+	return int(positiveIntFromEnv(key, int64(fallback), strconv.IntSize))
 }
 
 func int64FromEnv(key string, fallback int64) int64 {
+	return positiveIntFromEnv(key, fallback, 64)
+}
+
+// positiveIntFromEnv reads a positive base-10 integer of the given bit size
+// from the environment, returning fallback when unset, malformed, out of range
+// or not positive.
+func positiveIntFromEnv(key string, fallback int64, bitSize int) int64 {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
 		return fallback
 	}
-	n, err := strconv.ParseInt(raw, 10, 64)
+	n, err := strconv.ParseInt(raw, 10, bitSize)
 	if err != nil || n <= 0 {
 		return fallback
 	}

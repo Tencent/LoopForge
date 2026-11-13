@@ -3,6 +3,7 @@ package gitwork
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,7 +15,12 @@ import (
 // Env. Output is trimmed and redacted; on failure it is part of the error.
 func Run(ctx context.Context, workspace string, args ...string) (string, error) {
 	token := TokenFrom(ctx)
-	out, err := command(ctx, workspace, token, args).CombinedOutput()
+	sshEnv, cleanup, err := sshCommandEnvironment(ctx, args)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	out, err := command(ctx, workspace, token, sshEnv, args).CombinedOutput()
 	text := Redact(strings.TrimSpace(string(out)), token)
 	if err != nil {
 		if text != "" {
@@ -37,19 +43,38 @@ const (
 // is killed, and the error carries only the last lines of output.
 func Watch(ctx context.Context, workspace string, opts procwatch.Options, args ...string) (string, error) {
 	token := TokenFrom(ctx)
+	sshEnv, cleanup, err := sshCommandEnvironment(ctx, args)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
 	opts.Redact = func(line string) string { return Redact(line, token) }
-	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd { return command(ctx, workspace, token, args) }, opts)
+	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd { return command(ctx, workspace, token, sshEnv, args) }, opts)
 	if err != nil && text != "" {
 		return text, fmt.Errorf("%w: %s", err, text)
 	}
 	return text, err
 }
 
-func command(ctx context.Context, workspace, token string, args []string) *exec.Cmd {
+func command(ctx context.Context, workspace, token string, sshEnv map[string]string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
+	if len(sshEnv) > 0 {
+		token = ""
+	}
 	cmd := exec.CommandContext(ctx, "git", append(AuthConfigArgs(token), args...)...)
 	cmd.Dir = dir
 	cmd.Env = WithEnvValue(Env(token), "PWD", dir)
+	if len(sshEnv) > 0 {
+		// Do not let URL rewrites switch a managed SSH operation to another
+		// transport. SSH itself only connects to the requested pinned host.
+		cmd.Env = WithEnvValue(cmd.Env, "GIT_ALLOW_PROTOCOL", "ssh")
+		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
+		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_NOSYSTEM", "1")
+		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_PARAMETERS", "")
+		for k, v := range sshEnv {
+			cmd.Env = WithEnvValue(cmd.Env, k, v)
+		}
+	}
 	// A run without a checkout must not discover the platform's own .git
 	// when the operator keeps workspaces below a source checkout.
 	if absolute, err := filepath.Abs(dir); err == nil {

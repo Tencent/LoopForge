@@ -638,7 +638,7 @@ func collectWorkspaceChanges(ctx context.Context, root string, run domain.Run) (
 		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
 			continue
 		}
-		out, err := exec.CommandContext(ctx, "git", "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all").Output()
+		out, err := exec.CommandContext(ctx, "git", "--no-optional-locks", "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all").Output()
 		if err != nil {
 			return changes, "Git 状态读取失败"
 		}
@@ -684,7 +684,9 @@ func readWorkspaceDiff(ctx context.Context, root string, run domain.Run, raw str
 			}
 			rel = strings.TrimPrefix(raw, prefix)
 		}
-		args := []string{"-C", repository.path, "diff", "--no-ext-diff", "--no-color", "HEAD", "--"}
+		// Browsing must never take .git/index.lock: a concurrent preparation
+		// or commit would otherwise fail with "index.lock: File exists".
+		args := []string{"--no-optional-locks", "-C", repository.path, "diff", "--no-ext-diff", "--no-color", "HEAD", "--"}
 		if rel != "" {
 			args = append(args, filepath.FromSlash(rel))
 		}

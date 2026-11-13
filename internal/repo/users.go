@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type userWithConfig struct {
 	DeptName                     string     `gorm:"column:dept_name"`
 	PlatformRole                 string     `gorm:"column:platform_role"`
 	GitToken                     *string    `gorm:"column:git_token"`
+	GitSSHKeyConfigured          bool       `gorm:"column:git_ssh_key_configured"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
@@ -40,7 +42,8 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.git_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
+	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
@@ -50,6 +53,7 @@ func (r userWithConfig) toDomain() domain.User {
 		ID: r.ID, StaffID: r.StaffID, LoginName: r.LoginName, ChineseName: r.ChineseName,
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
 		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment,
+		GitSSHKeyConfigured:          r.GitSSHKeyConfigured,
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
@@ -342,7 +346,7 @@ func (r *UsersRepo) SaveGongfengOAuth(id int64, accessToken, refreshToken string
 }
 
 func (r *UsersRepo) writeUserConfig(v domain.User) error {
-	return upsert(r.DB, "user_configs", map[string]any{
+	values := map[string]any{
 		"user_id":                v.ID,
 		"git_token":              nullableString(v.GitToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
@@ -352,7 +356,8 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL), "claude_code_models": encodeCLIModels(v.ClaudeCodeModels),
 		"agent_cli_credentials": encodeAgentCLICredentials(v.AgentCLICredentials),
 		"created_at":            timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
-	})
+	}
+	return upsert(r.DB, "user_configs", values)
 }
 
 func nullableString(v string) any {
@@ -376,10 +381,16 @@ func applyAgentCLICredentialUpdates(user *domain.User, updates map[string]AgentC
 			return fmt.Errorf("不支持的 CLI：%s", kind)
 		}
 		cred := merged[kind]
+		previousKey := cred.APIKey
 		if update.APIKeyClear {
 			cred.APIKey = ""
 		} else if value := strings.TrimSpace(update.APIKey); value != "" {
 			cred.APIKey = value
+		}
+		// Cursor's catalog is the list the key's plan offered (saved by the
+		// chat model list); another key starts from that key's own list.
+		if kind == "cursor" && cred.APIKey != previousKey && update.Models == nil {
+			cred.Models = nil
 		}
 		if update.BaseURL != nil {
 			cred.BaseURL = strings.TrimSpace(*update.BaseURL)
@@ -458,16 +469,8 @@ func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 	seen := map[string]bool{}
 	for _, model := range models {
 		id, name := strings.TrimSpace(model.ID), strings.TrimSpace(model.Name)
-		if id == "" {
-			return nil, errors.New("模型 ID 不能为空")
-		}
-		if len(id) > maxCLIModelIDLen {
-			return nil, fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
-		}
-		for _, r := range id {
-			if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
-				return nil, fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
-			}
+		if err := validCLIModelID(id); err != nil {
+			return nil, err
 		}
 		if seen[id] {
 			return nil, fmt.Errorf("模型 ID %s 重复", id)
@@ -484,7 +487,52 @@ func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 		if name == id {
 			name = ""
 		}
-		out = append(out, domain.CLIModel{ID: id, Name: name})
+		efforts, defaultEffort, err := normalizeCLIModelEfforts(model.Efforts, model.DefaultEffort)
+		if err != nil {
+			return nil, fmt.Errorf("模型 %s：%w", id, err)
+		}
+		out = append(out, domain.CLIModel{ID: id, Name: name, Efforts: efforts, DefaultEffort: defaultEffort})
 	}
 	return out, nil
+}
+
+func validCLIModelID(id string) error {
+	if id == "" {
+		return errors.New("模型 ID 不能为空")
+	}
+	if len(id) > maxCLIModelIDLen {
+		return fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
+	}
+	for _, r := range id {
+		if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
+			return fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
+		}
+	}
+	return nil
+}
+
+// normalizeCLIModelEfforts checks the effort→model ID mapping of a Cursor
+// model family: efforts are Cursor's levels and every target is a valid
+// model ID. A default outside the mapping is dropped.
+func normalizeCLIModelEfforts(efforts map[string]string, defaultEffort string) (map[string]string, string, error) {
+	if len(efforts) == 0 {
+		return nil, "", nil
+	}
+	levels := domain.ExecutorEffortLevels["cursor"]
+	out := make(map[string]string, len(efforts))
+	for effort, raw := range efforts {
+		effort, raw = strings.TrimSpace(effort), strings.TrimSpace(raw)
+		if !slices.Contains(levels, effort) {
+			return nil, "", fmt.Errorf("不支持思考强度 %q", effort)
+		}
+		if err := validCLIModelID(raw); err != nil {
+			return nil, "", err
+		}
+		out[effort] = raw
+	}
+	defaultEffort = strings.TrimSpace(defaultEffort)
+	if _, ok := out[defaultEffort]; !ok {
+		defaultEffort = ""
+	}
+	return out, defaultEffort, nil
 }

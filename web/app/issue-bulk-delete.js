@@ -45,7 +45,8 @@ function renderIssueBulkActions(visibleIssues){
   if(!state.issueSelectionMode){host.innerHTML='';return}
   const selected=state.issueSelection.size,busy=state.issueBulkDeleting,progress=state.issueBulkDeleteProgress,result=state.issueBulkDeleteResult;
   const scope=state.issueView==='kanban'?'全选当前可删除需求':'全选本页可删除需求';
-  const buttonText=busy?(progress?`正在删除 ${progress.completed}/${progress.total}…`:'等待确认…'):'删除所选';
+  const force=(state.data.issues||[]).some(i=>state.issueSelection.has(i.id)&&i.deletionRequiresForce===true);
+  const buttonText=busy?(progress?`正在删除 ${progress.completed}/${progress.total}…`:'等待确认…'):force?'强制删除所选':'删除所选';
   const blocked=visibleIssues.filter(i=>!issueCanDelete(i));
   const reasonsOpen=host.querySelector('.issue-bulk-blocked')?.open;
   host.innerHTML=`<div class="issue-bulk-toolbar">
@@ -100,11 +101,14 @@ async function deleteSelectedIssues(){
   const issues=filtered.filter(i=>state.issueSelection.has(i.id));
   if(!issues.length)return toast('请先选择可删除的需求');
   const scope=issueSelectionFilterKey(),external=issues.some(i=>i.source==='tapd'||i.source==='gongfeng');
+  const forceIDs=new Set(issues.filter(i=>i.deletionRequiresForce===true).map(i=>i.id));
   const names=issues.slice(0,5).map(i=>`「${i.title||i.id}」`).join('、')+(issues.length>5?'等':'');
+  const forceNotice=forceIDs.size?`其中 ${forceIDs.size} 条已有执行记录或已完成，将强制删除。`:'';
   state.issueBulkDeleting=true;
   renderIssues();
   try{
-    if(!await afConfirm({title:'批量删除需求',message:`确定删除选中的 ${issues.length} 条需求（${names}）？需求、评论、澄清记录以及失败／取消的历史任务、运行记录、日志、产物和执行工作区将一并清理，且不可恢复。澄清或执行中、已有成功运行的需求不允许删除。${external?'此操作仅删除本地记录，不会删除 TAPD／工蜂原单，后续同步可能重新导入。':''}`,danger:true,confirmText:`确认删除 ${issues.length} 条需求`}))return;
+    const action=forceIDs.size?'确认强制删除':'确认删除';
+    if(!await afConfirm({title:'批量删除需求',message:`确定删除选中的 ${issues.length} 条需求（${names}）？${forceNotice}${issueDeletionWarning(forceIDs.size>0,external)}`,danger:true,confirmText:`${action} ${issues.length} 条需求`}))return;
     if(scope!==issueSelectionFilterKey())return toast('筛选条件已变化，请重新选择需求','info');
     const result={deleted:0,failures:[]};
     state.issueBulkDeleteResult=result;
@@ -113,7 +117,7 @@ async function deleteSelectedIssues(){
     // checks and full engine cleanup. One conflict must not abort the batch.
     for(const issue of issues){
       try{
-        await api(`/api/issues/${encodeURIComponent(issue.id)}`,{method:'DELETE'});
+        await api(issueDeletePath(issue.id,forceIDs.has(issue.id)),{method:'DELETE'});
         result.deleted++;
         state.issueSelection.delete(issue.id);
         state.data.issues=(state.data.issues||[]).filter(i=>i.id!==issue.id);

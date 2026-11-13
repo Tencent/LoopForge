@@ -32,16 +32,17 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 		prompt += "\n\n## 本次运行输入\n\n{{input}}"
 	}
 	prompt = strings.ReplaceAll(prompt, "{{input}}", run.Input)
-	repository := "未绑定代码仓库"
-	if run.Repository.RepositoryID != "" {
-		repository = fmt.Sprintf("%s (%s), 最新远端基线 %s, 本次工作分支 %s", run.Repository.Name, run.Repository.GongfengProjectID, run.Repository.BaseBranch, run.Repository.WorkBranch)
-	}
-	prompt = strings.ReplaceAll(prompt, "{{repository}}", repository)
+	prompt = strings.ReplaceAll(prompt, "{{repository}}", promptRepositoryLine(run))
 	pipelineURL := "未配置 Pipeline"
 	if run.Repository.PipelineURLPattern != "" {
 		pipelineURL = strings.ReplaceAll(run.Repository.PipelineURLPattern, "{build_id}", "current")
 	}
 	prompt = strings.ReplaceAll(prompt, "{{pipelineUrl}}", pipelineURL)
+	if !strings.Contains(prompt, "{{existingMR}}") {
+		if hint := sshDeliveryHint(run); hint != "" {
+			prompt += "\n\n## Git SSH 仓库交付\n\n" + hint
+		}
+	}
 	prompt = strings.ReplaceAll(prompt, "{{existingMR}}", existingMRBlurb(st, run))
 	rejectTo := node.RejectTo
 	if rejectTo == "" {
@@ -75,14 +76,7 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 			}
 		}
 	}
-	upstream := []string{}
-	for _, edge := range wf.Edges {
-		if edge.Target == node.ID {
-			if source := run.Nodes[edge.Source]; source != nil && source.Output != "" {
-				upstream = append(upstream, fmt.Sprintf("[%s]\n%s", edge.Source, source.Output))
-			}
-		}
-	}
+	upstream := upstreamNodeOutputs(wf, node, run)
 	if len(upstream) > 0 && !strings.Contains(prompt, "{{upstream}}") {
 		prompt += "\n\n## 上游节点输出\n\n{{upstream}}"
 	}
@@ -99,10 +93,64 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	return prompt
 }
 
+// promptRepositoryLine renders the {{repository}} placeholder value for the
+// run's primary repository.
+func promptRepositoryLine(run domain.Run) string {
+	if run.Repository.RepositoryID == "" {
+		return "未绑定代码仓库"
+	}
+	identity := run.Repository.GongfengProjectID
+	if run.Repository.Provider == domain.RepositoryProviderSSH {
+		identity = "Git SSH"
+	}
+	return fmt.Sprintf("%s (%s), 最新远端基线 %s, 本次工作分支 %s", run.Repository.Name, identity, run.Repository.BaseBranch, run.Repository.WorkBranch)
+}
+
+// upstreamNodeOutputs collects, in edge order, the non-empty outputs of the
+// nodes feeding into node, each labelled with its source node ID.
+func upstreamNodeOutputs(wf domain.WorkflowDefinition, node domain.WorkflowNode, run domain.Run) []string {
+	upstream := []string{}
+	for _, edge := range wf.Edges {
+		if edge.Target != node.ID {
+			continue
+		}
+		if source := run.Nodes[edge.Source]; source != nil && source.Output != "" {
+			upstream = append(upstream, fmt.Sprintf("[%s]\n%s", edge.Source, source.Output))
+		}
+	}
+	return upstream
+}
+
+func sshDeliveryHint(run domain.Run) string {
+	var sshRepos []string
+	for _, repository := range run.RepositoryContexts() {
+		if repository.Provider == domain.RepositoryProviderSSH {
+			sshRepos = append(sshRepos, repository.Name)
+		}
+	}
+	if len(sshRepos) == 0 {
+		return ""
+	}
+	return "Git SSH 仓库（" + strings.Join(sshRepos, "、") + "）：负责交付的节点在用户要求推送时只推本轮工作分支，并报告分支名和提交 SHA。需要 PR/MR 时，可使用另行配置的托管平台 MCP，或请用户到托管平台手动创建。"
+}
+
 func existingMRBlurb(st *repo.Store, run domain.Run) string {
+	hint := sshDeliveryHint(run)
+	if hint == "" {
+		return hostedMRBlurb(st, run)
+	}
+	for _, repository := range run.RepositoryContexts() {
+		if repository.Provider != domain.RepositoryProviderSSH {
+			return hint + "\n其它仓库：" + hostedMRBlurb(st, run)
+		}
+	}
+	return hint
+}
+
+func hostedMRBlurb(st *repo.Store, run domain.Run) string {
 	var continued []string
 	for _, repository := range run.RepositoryContexts() {
-		if repository.RequireExistingWorkBranch {
+		if repository.Provider != domain.RepositoryProviderSSH && repository.RequireExistingWorkBranch {
 			continued = append(continued, fmt.Sprintf("%s：继续已有分支 %s，MR 目标主分支 %s", repository.Name, repository.WorkBranch, repositoryBaseBranch(repository)))
 		}
 	}

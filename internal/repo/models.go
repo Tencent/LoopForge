@@ -52,6 +52,16 @@ type userConfigRow struct {
 
 func (userConfigRow) TableName() string { return "user_configs" }
 
+type gitSSHKeyRow struct {
+	UserID     int64  `gorm:"primaryKey;autoIncrement:false"`
+	ID         string `gorm:"primaryKey;size:64"`
+	Name       string `gorm:"size:80;not null"`
+	Host       string `gorm:"type:text;not null"`
+	PrivateKey string `gorm:"type:text;not null"`
+}
+
+func (gitSSHKeyRow) TableName() string { return "user_git_ssh_keys" }
+
 type apiTokenRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	UserID     int64      `gorm:"column:user_id;index:idx_api_tokens_user"`
@@ -523,6 +533,17 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
+// assistantPreferenceRow: a missing row means both switches are off.
+type assistantPreferenceRow struct {
+	UserID         int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProactiveRoles bool       `gorm:"column:proactive_roles;not null;default:false"`
+	ProactiveSOPs  bool       `gorm:"column:proactive_sops;not null;default:false"`
+	Instructions   string     `gorm:"column:instructions;type:text"`
+	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+}
+
+func (assistantPreferenceRow) TableName() string { return "assistant_preferences" }
+
 type assistantSessionRow struct {
 	ID        string     `gorm:"column:id;primaryKey;size:64"`
 	UserID    int64      `gorm:"column:user_id;index:idx_assistant_sessions_user_updated"`
@@ -678,7 +699,7 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
-		userRow{}, localAccountRow{}, userConfigRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
+		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
@@ -689,7 +710,7 @@ func allModels() []any {
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},
 		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{},
-		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{},
+		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{}, assistantPreferenceRow{}, assistantDiagnosticsRow{},
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
