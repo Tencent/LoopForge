@@ -144,7 +144,7 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 	return out, err
 }
 
-func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
 	if trustedScriptCommand(command) {
 		return s.execScript(ctx, command, sink)
 	}
@@ -176,12 +176,14 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 	processFile := ""
 	if command.OwnProcessGroup {
 		processFile = filepath.Join(s.requirements.ConversationRoot, "home", "tmp", fmt.Sprintf("process-%d.pid", time.Now().UnixNano()))
-		// setsid keeps the CLI and its normal descendants in one owned group.
-		argv = append([]string{"sh", "-c", dockerConversationProcessLaunch, "conversation-process", processFile}, argv...)
+		argv = dockerConversationProcessArgv(processFile, argv)
 		defer func() {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			_ = exec.CommandContext(stopCtx, "docker", "exec", s.name, "sh", "-c", `if [ -f "$1" ]; then kill -KILL -$(cat "$1") 2>/dev/null || true; rm -f "$1"; fi`, "conversation-stop", processFile).Run()
+			stopArgs := append([]string{"exec", s.name}, dockerConversationStopArgv(processFile)...)
+			if stopErr := exec.CommandContext(stopCtx, "docker", stopArgs...).Run(); stopErr != nil {
+				err = errors.Join(err, fmt.Errorf("停止 CLI 子进程失败: %w", stopErr))
+			}
 		}()
 	}
 	args = append(args, argv...)
@@ -189,11 +191,6 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 	cmd.Stdin = command.Stdin
 	return runCommand(cmd, sink)
 }
-
-// POSIX shells redirect an asynchronous command's stdin to /dev/null before
-// applying its redirections. Preserve the original descriptor before spawning
-// the process group so interactive protocols keep their input pipe.
-const dockerConversationProcessLaunch = `file="$1"; shift; exec 3<&0; setsid "$@" <&3 3<&- & child=$!; exec 3<&-; echo "$child" > "$file"; wait "$child"`
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.
 // runc treats a failed getcwd after -w as exit 126 ("cwd outside mount namespace").

@@ -13,13 +13,12 @@ import (
 )
 
 func TestDockerConversationProcessPreservesInteractiveInput(t *testing.T) {
-	if _, err := exec.LookPath("setsid"); err != nil {
-		t.Skip("setsid is required by the Linux Docker process wrapper")
-	}
+	requireConversationSubreaper(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pid := filepath.Join(t.TempDir(), "owned-process.pid")
-	cmd := exec.CommandContext(ctx, "sh", "-c", dockerConversationProcessLaunch, "conversation-process", pid, "sh", "-c", `read first; read second; printf '%s/%s' "$first" "$second"`)
+	argv := dockerConversationProcessArgv(pid, []string{"sh", "-c", `read first; read second; printf '%s/%s' "$first" "$second"`})
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdin = strings.NewReader("initialize\nthread/resume\n")
 	output, err := cmd.CombinedOutput()
 	if err != nil || string(output) != "initialize/thread/resume" {

@@ -99,7 +99,7 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider string
 	// runs as the service UID. Native CLI execution keeps the container's user.
 	output, err := exec.CommandContext(ctx, "docker", "exec", "--user", "0:0", "--workdir", "/", s.name, "sh", "-lc", setup).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("准备 %s 原生CLI失败（工作区镜像需支持 Node.js/npm、Python3 和 setsid）：%w: %s", provider, err, conversationSetupOutput(output))
+		return "", fmt.Errorf("准备 %s 原生CLI失败（工作区镜像需支持 Node.js/npm 和 Python3）：%w: %s", provider, err, conversationSetupOutput(output))
 	}
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	path := strings.TrimSpace(lines[len(lines)-1])
@@ -134,10 +134,10 @@ func conversationCLISetup(provider, binary string) (string, error) {
 	return "set -eu\n" +
 		`PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH
 export PATH
-if ! command -v python3 >/dev/null 2>&1 || ! command -v setsid >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then apt-get update >&2 && apt-get install -y python3 util-linux >&2
-  elif command -v apk >/dev/null 2>&1; then apk add --no-cache python3 util-linux >&2
-  else echo 'Python3 and setsid are required for native CLI hooks' >&2; exit 1; fi
+if ! command -v python3 >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then apt-get update >&2 && apt-get install -y python3 >&2
+  elif command -v apk >/dev/null 2>&1; then apk add --no-cache python3 >&2
+  else echo 'Python3 is required for native CLI hooks and process supervision' >&2; exit 1; fi
 fi
 ` + "if ! command -v " + shellSingleQuote(binary) + " >/dev/null 2>&1; then\nmkdir -p /opt/loopforge/conversation-cli/bin\n" + installer + "\nfi\n" +
 		"python3 -c 'import json,urllib.request'\ncommand -v " + shellSingleQuote(binary) + "\n", nil
