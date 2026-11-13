@@ -30,22 +30,13 @@ func NormalizePhotoSpec(spec int) int {
 	switch {
 	case spec <= 0:
 		return 100
-	case spec <= 48:
+	case spec <= 74:
 		return 48
-	case spec <= 100:
-		if spec <= 74 {
-			return 48
-		}
+	case spec <= 125:
 		return 100
-	case spec <= 150:
-		if spec <= 125 {
-			return 100
-		}
+	case spec <= 300:
 		return 150
 	default:
-		if spec <= 300 {
-			return 150
-		}
 		return 500
 	}
 }
