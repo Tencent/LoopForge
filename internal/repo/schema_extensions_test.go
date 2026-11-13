@@ -116,3 +116,23 @@ func TestMySQLSchemaExtensionsLookupReadOnly(t *testing.T) {
 		t.Fatalf("schema extension lookup failed: %v", err)
 	}
 }
+
+// The column must match a whole quoted name on a 1054 error: a longer column
+// that merely contains a required name, or another MySQL error that quotes
+// one, is not a missing generated column.
+func TestAsSchemaExtensionErrorMatchesOnlyQuotedColumnOn1054(t *testing.T) {
+	for _, err := range []error{
+		&mysql.MySQLError{Number: 1054, Message: "Unknown column 'adapter_id' in 'field list'"},
+		&mysql.MySQLError{Number: 1054, Message: "Unknown column 'loglevel' in 'where clause'"},
+		&mysql.MySQLError{Number: 1064, Message: "You have an error in your SQL syntax near 'level' at line 1"},
+	} {
+		if got := asSchemaExtensionError(err); got != err {
+			t.Fatalf("asSchemaExtensionError(%v) = %v, want it unchanged", err, got)
+		}
+	}
+	got := asSchemaExtensionError(&mysql.MySQLError{Number: 1054, Message: "Unknown column 'level' in 'where clause'"})
+	ae, ok := apperr.As(got)
+	if !ok || ae.Kind != apperr.Unavailable || !strings.Contains(ae.Message, "run_logs.level") || strings.Contains(ae.Message, "run_telemetry.adapter") {
+		t.Fatalf("got %v, want an Unavailable apperr naming only run_logs.level", got)
+	}
+}
