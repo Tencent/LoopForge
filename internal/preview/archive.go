@@ -257,23 +257,19 @@ func InspectTarZst(src io.Reader, indexFile string, limits Limits) (Result, erro
 		if err != nil {
 			return Result{}, fmt.Errorf("read preview tar: %w", err)
 		}
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			continue
-		case tar.TypeReg, tar.TypeRegA:
-		default:
-			return Result{}, fmt.Errorf("%w: tar type %v", ErrUnsupportedEntry, hdr.Typeflag)
-		}
-		name, err := SanitizeArchiveMember(hdr.Name)
+		name, skip, err := tarRegularMember(hdr)
 		if err != nil {
 			return Result{}, err
+		}
+		if skip {
+			continue
 		}
 		if hdr.Linkname != "" {
 			return Result{}, fmt.Errorf("%w: link %s", ErrUnsupportedEntry, name)
 		}
 		files++
-		if limits.MaxFiles > 0 && files > limits.MaxFiles {
-			return Result{}, fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(files, limits); err != nil {
+			return Result{}, err
 		}
 		expanded += hdr.Size
 		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
@@ -337,19 +333,16 @@ func ExtractTarZst(src io.Reader, dest string, limits Limits) error {
 		if err != nil {
 			return err
 		}
-		if hdr.Typeflag == tar.TypeDir {
-			continue
-		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
-			return fmt.Errorf("%w: tar type %v", ErrUnsupportedEntry, hdr.Typeflag)
-		}
-		name, err := SanitizeArchiveMember(hdr.Name)
+		name, skip, err := tarRegularMember(hdr)
 		if err != nil {
 			return err
 		}
+		if skip {
+			continue
+		}
 		files++
-		if limits.MaxFiles > 0 && files > limits.MaxFiles {
-			return fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(files, limits); err != nil {
+			return err
 		}
 		expanded += hdr.Size
 		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
@@ -382,6 +375,33 @@ func ExtractTarZst(src io.Reader, dest string, limits Limits) error {
 	return nil
 }
 
+// tarRegularMember validates one entry read from a preview tar. Directories are
+// reported as skip; anything other than a regular file is rejected with
+// ErrUnsupportedEntry. For regular files it returns the sanitized member name.
+func tarRegularMember(hdr *tar.Header) (name string, skip bool, err error) {
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		return "", true, nil
+	case tar.TypeReg, tar.TypeRegA:
+	default:
+		return "", false, fmt.Errorf("%w: tar type %v", ErrUnsupportedEntry, hdr.Typeflag)
+	}
+	name, err = SanitizeArchiveMember(hdr.Name)
+	if err != nil {
+		return "", false, err
+	}
+	return name, false, nil
+}
+
+// checkTarFileCount enforces limits.MaxFiles (0 means unlimited) after files
+// regular members have been seen.
+func checkTarFileCount(files int, limits Limits) error {
+	if limits.MaxFiles > 0 && files > limits.MaxFiles {
+		return fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+	}
+	return nil
+}
+
 // ReadTarZstMember extracts one regular file from a compressed archive into
 // memory. The rest of the tree is never written to disk.
 func ReadTarZstMember(src io.Reader, name string, limits Limits) ([]byte, error) {
@@ -404,19 +424,16 @@ func ReadTarZstMember(src io.Reader, name string, limits Limits) ([]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		if hdr.Typeflag == tar.TypeDir {
-			continue
-		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
-			return nil, fmt.Errorf("%w: tar type %v", ErrUnsupportedEntry, hdr.Typeflag)
-		}
-		member, err := SanitizeArchiveMember(hdr.Name)
+		member, skip, err := tarRegularMember(hdr)
 		if err != nil {
 			return nil, err
 		}
+		if skip {
+			continue
+		}
 		files++
-		if limits.MaxFiles > 0 && files > limits.MaxFiles {
-			return nil, fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(files, limits); err != nil {
+			return nil, err
 		}
 		if member != want {
 			if _, err := io.Copy(io.Discard, io.LimitReader(tr, hdr.Size+1)); err != nil {
@@ -463,8 +480,8 @@ func UsesHistoryAPI(src io.Reader, limits Limits) (bool, error) {
 			continue
 		}
 		files++
-		if limits.MaxFiles > 0 && files > limits.MaxFiles {
-			return false, fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(files, limits); err != nil {
+			return false, err
 		}
 		switch strings.ToLower(path.Ext(hdr.Name)) {
 		case ".js", ".mjs", ".cjs", ".html", ".htm":
