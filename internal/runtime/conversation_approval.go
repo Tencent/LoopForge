@@ -8,6 +8,11 @@ import (
 	"strconv"
 )
 
+// Command-hook APIs require a numeric watchdog. This is the largest whole
+// second value safe for Node's signed 32-bit millisecond timer. Human approval
+// state has no TTL; a CLI exit or cancellation revokes its phase instead.
+const conversationApprovalHookWatchdog = 2147483
+
 // InstallConversationApproval installs only provider-owned hooks. Generated
 // scripts contain no credentials; their private gateway capability is supplied
 // in the process environment and forwarded through the runner's control link.
@@ -17,7 +22,7 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		return command, err
 	}
 	launch := "python3 " + shellSingleQuote(hook)
-	hooks := map[string]any{"PreToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch, "timeout": 60}}}}}
+	hooks := map[string]any{"PreToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch, "timeout": conversationApprovalHookWatchdog, "onFailure": "block"}}}}}
 	home := AgentCLIHome{Base: root, Rel: "home"}
 	switch provider {
 	case "codebuddy", "claude-code":
@@ -57,7 +62,7 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		if events == nil {
 			events = map[string]any{}
 		}
-		events["PreToolUse"] = []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch, "timeout": 60, "onError": "deny"}}}}
+		events["PreToolUse"] = []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch, "timeout": conversationApprovalHookWatchdog, "onError": "deny"}}}}
 		configured["enabled"], configured["events"] = true, events
 		document["hooks"] = configured
 		data, _ = json.Marshal(document)
@@ -65,10 +70,14 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 			return command, err
 		}
 	case "codex":
-		entry := "hooks.PreToolUse=[{hooks=[{type=\"command\",command=" + strconv.Quote(launch) + ",timeout=60}]}]"
+		entry := "hooks.PreToolUse=[{hooks=[{type=\"command\",command=" + strconv.Quote(launch) + ",timeout=" + strconv.Itoa(conversationApprovalHookWatchdog) + "}]}]"
 		command.Argv = append(command.Argv[:len(command.Argv)-1], "-c", "features.hooks=true", "-c", entry, command.Argv[len(command.Argv)-1])
 	case AgentCLIKimi:
 		command.AgentCLI.ApprovalCommand = launch
+		if err := os.WriteFile(filepath.Join(root, "kimi-native-loader.mjs"), []byte(conversationKimiApprovalLoader), 0600); err != nil {
+			return command, err
+		}
+		command = WithCommandEnvironment(command, map[string]string{"AGENTFLOW_KIMI_APPROVAL_COMMAND": launch})
 	case AgentCLIPi:
 		if err := writeAgentCLIFile(home, ".pi/agent/extensions/loopforge-approval.ts", []byte(conversationPiApproval)); err != nil {
 			return command, err
@@ -79,12 +88,12 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		}
 	case AgentCLICursor:
 		// Cursor's preToolUse hook covers native reads, edits and shell alike.
-		data, _ := json.Marshal(map[string]any{"version": 1, "hooks": map[string]any{"preToolUse": []any{map[string]any{"command": launch + " cursor", "timeout": 60, "failClosed": true}}}})
+		data, _ := json.Marshal(map[string]any{"version": 1, "hooks": map[string]any{"preToolUse": []any{map[string]any{"command": launch + " cursor", "timeout": conversationApprovalHookWatchdog, "failClosed": true}}}})
 		if err := writeAgentCLIFile(home, ".cursor/hooks.json", data); err != nil {
 			return command, err
 		}
 	case AgentCLIAntigravity:
-		agyHooks := map[string]any{"loopforge-approval": map[string]any{"PreToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch + " agy", "timeout": 60}}}}}}
+		agyHooks := map[string]any{"loopforge-approval": map[string]any{"PreToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch + " agy", "timeout": conversationApprovalHookWatchdog}}}}}}
 		data, _ := json.Marshal(agyHooks)
 		if err := writeAgentCLIFile(home, ".gemini/config/hooks.json", data); err != nil {
 			return command, err
@@ -117,19 +126,36 @@ func conversationReplaceFlag(argv []string, name, value string) []string {
 	return append(argv[:1], append([]string{name, value}, argv[1:]...)...)
 }
 
-const conversationApprovalPython = `import json,os,sys,urllib.request
+const conversationApprovalPython = `import json,os,sys,time,uuid,urllib.request,urllib.error
 allowed=False
 reason="原生工具审批服务不可用，操作未执行"
 try:
     event=json.load(sys.stdin)
     name=event.get("tool_name") or event.get("toolName") or event.get("tool",{}).get("name") or event.get("toolCall",{}).get("name") or event.get("hook_event_name","")
     arguments=event.get("tool_input",event.get("toolInput",event.get("input",event.get("arguments",event.get("toolCall",{}).get("args",{})))))
-    payload={"jsonrpc":"2.0","id":1,"method":"agentflow/nativeApproval","params":{"name":name,"input":arguments}}
+    payload={"jsonrpc":"2.0","id":1,"method":"agentflow/nativeApproval","params":{"id":uuid.uuid4().hex,"name":name,"input":arguments}}
     url=os.environ["AGENTFLOW_NATIVE_APPROVAL_URL"]
-    request=urllib.request.Request(url,json.dumps(payload).encode(),{"Content-Type":"application/json"})
-    with urllib.request.urlopen(request,timeout=50) as response: result=json.load(response).get("result",{})
-    allowed=result.get("allow") is True
-    reason=result.get("reason",reason)
+    while True:
+        try:
+            request=urllib.request.Request(url,json.dumps(payload).encode(),{"Content-Type":"application/json"})
+            with urllib.request.urlopen(request,timeout=20) as response: rpc=json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code not in (408,429,502,503,504): break
+            time.sleep(1)
+            continue
+        except (urllib.error.URLError,TimeoutError,OSError):
+            time.sleep(1)
+            continue
+        result=rpc.get("result",{})
+        if rpc.get("error"):
+            reason="本阶段已结束，审批已失效"
+            break
+        if result.get("pending") is True:
+            time.sleep(1)
+            continue
+        allowed=result.get("allow") is True
+        reason=result.get("reason",reason)
+        break
 except Exception:
     pass
 if len(sys.argv)>1 and sys.argv[1]=="agy":
@@ -143,11 +169,31 @@ if not allowed:
     sys.exit(2)
 `
 
-const conversationApprovalJS = `async function approve(name,input,signal) {
-  const response=await fetch(process.env.AGENTFLOW_NATIVE_APPROVAL_URL,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"agentflow/nativeApproval",params:{name,input}}),signal:signal??AbortSignal.timeout(50000)});
-  if(!response.ok) throw new Error("原生工具审批服务不可用");
-  const rpc=await response.json();
-  if(rpc.result?.allow!==true) throw new Error(rpc.result?.reason||"操作未批准");
+const conversationApprovalJS = `import {randomUUID} from "node:crypto";
+async function approve(name,input,signal) {
+  const payload=JSON.stringify({jsonrpc:"2.0",id:1,method:"agentflow/nativeApproval",params:{id:randomUUID(),name,input}});
+  for(;;) {
+    if(signal?.aborted) throw new Error("本轮已停止");
+    let rpc;
+    try {
+      const timeout=AbortSignal.timeout(20000);
+      const response=await fetch(process.env.AGENTFLOW_NATIVE_APPROVAL_URL,{method:"POST",headers:{"content-type":"application/json"},body:payload,signal:signal?AbortSignal.any([signal,timeout]):timeout});
+      if(!response.ok) {
+        if(![408,429,502,503,504].includes(response.status)) throw Object.assign(new Error("本阶段已结束，审批已失效"),{terminal:true});
+      } else { rpc=await response.json(); }
+    } catch(error) {
+      if(error.terminal) throw error;
+      if(signal?.aborted) throw new Error("本轮已停止");
+    }
+    if(rpc) {
+      if(rpc.error) throw new Error("本阶段已结束，审批已失效");
+      if(rpc.result?.pending!==true) {
+        if(rpc.result?.allow!==true) throw new Error(rpc.result?.reason||"操作未批准");
+        return;
+      }
+    }
+    await new Promise(resolve=>setTimeout(resolve,1000));
+  }
 }
 `
 const conversationPiApproval = conversationApprovalJS + `

@@ -103,12 +103,13 @@ type AgentToolSession struct {
 	// dispatches are the Agent calls still running this turn. A subagent
 	// works in the bound workspace, so it is not switched under it.
 	// The value is the subagent id once the stream reports it.
-	dispatches  map[string]string
-	closed      atomic.Bool
-	committed   atomic.Bool
-	ctx         context.Context
-	stopContext func() bool // protected by mu
-	CancelModel context.CancelFunc
+	dispatches        map[string]string
+	nativePhaseClosed atomic.Bool
+	closed            atomic.Bool
+	committed         atomic.Bool
+	ctx               context.Context
+	stopContext       func() bool // protected by mu
+	CancelModel       context.CancelFunc
 }
 
 type agentReplyFile struct {

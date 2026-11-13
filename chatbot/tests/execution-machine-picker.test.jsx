@@ -36,6 +36,11 @@ async function openPicker() {
 }
 
 describe("execution machine picker", () => {
+  test("an existing empty cloud draft still offers machine selection", async () => {
+    render(<ExecutionMachinePicker chat={fixture({session:{id:"draft",messages:[],executionTarget:{pool:"cloud"}}})} />);
+    const { user } = await openPicker();
+    await user.click(screen.getByRole("option", { name: /测试 Linux 离线/ }));
+  });
   test("shows the real personal default, searches bound machines and persists the choice", async () => {
     const chat = fixture();
     render(<ExecutionMachinePicker chat={chat} />);

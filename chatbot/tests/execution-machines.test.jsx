@@ -115,6 +115,19 @@ describe("personal execution machine selection", () => {
     await waitFor(() => expect(result.current.defaultRunnerId).toBe(""));
   });
 
+  test("keeps an explicit cloud choice through refresh, and resets only for a new draft", async () => {
+    const { result } = renderHook(() => useExecutionMachines(1, false, false, vi.fn(), bindMock));
+    await waitFor(() => expect(result.current.machinesReady).toBe(true));
+    await act(() => result.current.selectMachine(""));
+    await act(() => result.current.refreshMachines());
+    expect(result.current.defaultRunnerId).toBe("");
+    await act(() => result.current.selectMachine("mac"));
+    await act(() => result.current.selectMachine(""));
+    expect(writeMock).not.toHaveBeenCalled();
+    act(() => result.current.resetMachine());
+    expect(result.current.defaultRunnerId).toBe("mac");
+  });
+
   test("a failed initial load stays unknown and can be retried", async () => {
     apiMock.mockRejectedValueOnce(Error("网络中断"));
     const { result } = renderHook(() =>

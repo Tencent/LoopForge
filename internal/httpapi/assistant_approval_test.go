@@ -242,7 +242,13 @@ func TestAssistantSystemPromptForMode(t *testing.T) {
 	if !strings.Contains(auto, "一次性完成") || !strings.Contains(auto, "不要把写入放进 drafts") {
 		t.Fatal("auto prompt must require one-shot direct execution without drafts")
 	}
-	for name, prompt := range map[string]string{"confirm": base, "assisted": assisted, "auto": auto} {
+	for name, prompt := range map[string]string{"confirm": base, "assisted": assisted, "auto": auto, "workspace": assistantWorkspaceSystemPrompt, "platform reminder": assistantPlatformExecutionReminder} {
+		if !strings.Contains(prompt, assistantModePresentationPrompt) {
+			t.Fatalf("%s prompt must keep mode internals private before and after tool calls", name)
+		}
+		if name == "workspace" || name == "platform reminder" {
+			continue
+		}
 		if !strings.Contains(prompt, "结束本阶段") || !strings.Contains(prompt, "CLI 原生文件、补丁和命令工具") {
 			t.Fatalf("%s prompt must explain native workspace handoff", name)
 		}

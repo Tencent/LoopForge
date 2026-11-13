@@ -14,6 +14,7 @@ import { reviewedOperation, operationError } from "./operations.js";
 import { credentialHint } from "./credentials.js";
 import { cliFailureSettles } from "./cli-install.jsx";
 import { useExecutionMachines } from "./useExecutionMachines.js";
+import { executionLocked } from "./execution-target.js";
 import { modelEffort } from "./effort.js";
 import { conversationEngine, engineModels } from "./engines.js";
 import {
@@ -118,6 +119,7 @@ export function useChat() {
     !!session?.readOnly,
     setError,
     bindExecutionMachine,
+    session?.executionTarget,
   );
   const currentId = useRef(activeId),
     sessionRef = useRef(session),
@@ -173,6 +175,7 @@ export function useChat() {
       setGeneration(null);
       setLive({ answer: "", thinking: "", tools: [] });
       setSession(null);
+      executionMachines.resetMachine();
       // A new conversation starts on the platform default, not on whatever
       // model the previously opened conversation used.
       if (!id) {
@@ -189,7 +192,7 @@ export function useChat() {
       if (id) setRevealId(id);
       changeURL(id);
     },
-    [changeURL, models],
+    [changeURL, models, executionMachines.resetMachine],
   );
   const newChat = useCallback(() => {
     setDraftIssueId("");
@@ -738,6 +741,10 @@ export function useChat() {
     }
     if (sandboxBusyRef.current) { setError("运行环境仍在保存，请稍后发送。"); return false; }
     if (executionMachines.machineSavingRef.current) { setError("执行机器仍在保存，请稍后发送。"); return false; }
+    if (!executionLocked(sessionRef.current) && !executionMachines.machinesReady) {
+      setError(executionMachines.machineError || "执行机器仍在加载，请稍后发送。");
+      return false;
+    }
     // Without a key (and no sponsored model) the server rejects every message.
     // Say so before creating an empty conversation that would swallow the
     // typed question. Re-check first in case the key was saved elsewhere since
@@ -811,6 +818,10 @@ export function useChat() {
             : s.participants,
       });
       setLive({ answer: "", thinking: "", tools: [] });
+      const executionTarget = executionLocked(s) ? s.executionTarget : {
+        pool: executionMachines.defaultRunnerId ? "runner" : "cloud",
+        runnerId: executionMachines.defaultRunnerId || "",
+      };
       const g = await write("/api/assistant/generations", {
         sessionId: s.id,
         projectId: s.projectId || "",
@@ -819,9 +830,14 @@ export function useChat() {
         model: activeModel,
         effort: activeEffort,
         approvalMode,
+        executionTarget,
         messages,
       });
-      if (currentId.current === s.id) setGeneration(g);
+      if (currentId.current === s.id) {
+        setSession((old) => old?.id === s.id ? { ...old, executionTargetLocked: true,
+          executionTarget: g.executionTarget || executionTarget } : old);
+        setGeneration(g);
+      }
       await refreshSessions();
       return true;
     } catch (e) {
@@ -1112,15 +1128,8 @@ export function useChat() {
     }
   }
   async function bindExecutionMachine(runnerId) {
-    if (currentId.current || sessionRef.current) throw new Error("会话执行机器已固定，请新建对话。");
-    const id = newId();
-    const saved = await write(sessionPath(id), {
-      id, projectId: projectRef.current, issueId: draftIssueId, sandboxProfileId,
-      model: activeModel, effort: activeEffort, title: "新对话", messages: [],
-      executionTarget: {pool: runnerId ? "runner" : "cloud", runnerId},
-    }, "PUT");
-    sessionRef.current = saved; setSession(saved); currentId.current = id;
-    setActiveId(id); changeURL(id); await refreshSessions();
+    if (submittingRef.current || executionLocked(sessionRef.current)) throw new Error("会话执行机器已固定，请新建对话。");
+    if (currentId.current && !sessionRef.current) throw new Error("会话仍在加载，请稍后选择。");
     return {runnerId};
   }
   async function switchRuntimeMode(mode) {

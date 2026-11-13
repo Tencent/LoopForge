@@ -63,6 +63,7 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 		}
 		if len(pending) > 0 {
 			next := pending[0]
+			next.ExecutionTargetLocked = true
 			old := decodeAssistantSession(session)
 			if next.IssueID != old.IssueID {
 				return fmt.Errorf("关联需求已更新，请重新发送")
@@ -82,6 +83,12 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 			base.DB = tx
 			scoped.deps = &base
 			if err := scoped.putAssistantSession(g.UserID, next); err != nil {
+				return err
+			}
+		} else if session.ID != "" {
+			item := decodeAssistantSession(session)
+			item.ExecutionTargetLocked = true
+			if err := tx.Model(&assistantSessionRow{}).Where("id = ?", session.ID).UpdateColumn("payload", mustJSON(item)).Error; err != nil {
 				return err
 			}
 		}
@@ -110,13 +117,16 @@ func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGenerati
 		if err != nil {
 			return fmt.Errorf("生成状态已变化")
 		}
-		var current domain.AssistantGeneration
-		_ = json.Unmarshal(row.Payload, &current)
+		current := generationPayload(row)
 		if g.Steer == nil && current.Steer != nil {
 			g.Steer = current.Steer
 		}
+		current.AssistantGeneration = g
+		if g.Status != "running" || row.CancelRequested {
+			current.NativeApprovals = nil
+		}
 		now := time.Now().UTC()
-		changes := map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": now}
+		changes := map[string]any{"status": g.Status, "payload": mustJSON(current), "updated_at": now}
 		if g.Status != "running" {
 			changes["finished_at"] = now
 		}

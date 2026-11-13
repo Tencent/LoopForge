@@ -70,6 +70,24 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
+  test("renders native approval after the live reply inside the scrolling conversation", async () => {
+    const previous = {...chat}, originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url) => new Response(JSON.stringify(
+      String(url).endsWith("/native-approvals") ? [{id:"op",actorId:"u1",tool:"Bash",input:{command:"pwd"}}] : []
+    ), {status:200,headers:{"Content-Type":"application/json"}}));
+    Object.assign(chat,{activeId:"approval-chat",busy:true,session:{id:"approval-chat",messages:[{role:"user",content:"检查目录"}]}});
+    let view;
+    try {
+      view=render(<App />);
+      const panel=await screen.findByRole("region",{name:"待确认的原生操作"});
+      expect(panel.closest(".message-scroll")).not.toBeNull();
+      expect(panel.previousElementSibling).toHaveClass("message");
+      expect(panel.closest(".header-actions")).toBeNull();
+      expect(document.querySelector(".composer-region").contains(panel)).toBe(false);
+    } finally {
+      view?.unmount();globalThis.fetch=originalFetch;Object.assign(chat,previous);
+    }
+  });
   test("offers execution machine selection on the home page and moves it into the conversation header", async () => {
     const previous = { ...chat };
     const selectMachine = vi.fn();
@@ -91,9 +109,10 @@ describe("App", () => {
       view.rerender(<App />);
       expect(screen.getAllByRole("button", { name: "执行机器：开发 Mac" })).toHaveLength(1);
       chat.session.messages = [{ role: "user", content: "检查项目" }];
+      chat.session.executionTarget = {pool:"runner",runnerId:"mac"};
       view.rerender(<App />);
-      trigger = screen.getByRole("button", { name: "执行机器：开发 Mac" });
-      expect(trigger.closest(".header-actions")).not.toBeNull();
+      expect(screen.queryByRole("button", { name: "执行机器：开发 Mac" })).not.toBeInTheDocument();
+      expect(screen.getByText("开发 Mac").closest(".header-actions")).not.toBeNull();
     } finally {
       view?.unmount();
       for (const key of Object.keys(chat)) if (!(key in previous)) delete chat[key];

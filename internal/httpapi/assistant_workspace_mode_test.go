@@ -9,6 +9,39 @@ import (
 	"time"
 )
 
+func TestRuntimeModeSwitchDoesNotNarrateInternalHandoff(t *testing.T) {
+	s := &AgentToolSession{}
+	var filter assistantModeEventFilter
+	if !filter.visible(s, assistantStreamEvent{Kind: "answer", Text: "task progress"}) {
+		t.Fatal("normal reply hidden")
+	}
+	if !filter.visible(s, assistantStreamEvent{Kind: "tool", ID: "workspace-open", Tool: "workbench_workspace_open"}) {
+		t.Fatal("workspace-opening tool hidden")
+	}
+	s.requestMode(domain.AssistantModeWorkspace)
+	for _, kind := range []string{"answer", "text", "thinking", "thinkingStart", "status"} {
+		if filter.visible(s, assistantStreamEvent{Kind: kind, Text: "internal transition"}) {
+			t.Fatalf("%s transition exposed", kind)
+		}
+	}
+	if !filter.visible(s, assistantStreamEvent{Kind: "toolDone", ID: "workspace-open"}) {
+		t.Fatal("lost tool completion")
+	}
+	for _, ev := range []assistantStreamEvent{
+		{Kind: "tool", ID: "old-write", Tool: "workbench_workspace_write"},
+		{Kind: "toolDone", ID: "old-write", Failed: true},
+		{Kind: "toolDone", ID: "workspace-open"},
+	} {
+		if filter.visible(s, ev) {
+			t.Fatalf("internal stale-CLI event exposed: %+v", ev)
+		}
+	}
+	s.requestMode("")
+	if !filter.visible(s, assistantStreamEvent{Kind: "tool", ID: "native-write", Tool: "Write"}) || !filter.visible(s, assistantStreamEvent{Kind: "toolDone", ID: "native-write"}) {
+		t.Fatal("new phase native operation hidden")
+	}
+}
+
 func TestWorkspaceCatalogAndCallRejectPlatformCapabilities(t *testing.T) {
 	h, a, _, _, conv := sharedWorkbenchFixture(t)
 	s := &AgentToolSession{Mode: AgentToolAssistant, UserID: a.ID, User: a, ChatOwnerID: a.ID, ChatSessionID: conv.ID, ProjectID: conv.ProjectID, RuntimeMode: domain.AssistantModeWorkspace, ExpiresAt: time.Now().Add(time.Minute), ctx: context.Background()}
@@ -84,64 +117,60 @@ func TestNativeApprovalAllowsPlatformReadsAndRejectsEffects(t *testing.T) {
 	h, a, _, _, conv := sharedWorkbenchFixture(t)
 	g := &agentToolGateway{deps: h.deps}
 	s := &AgentToolSession{UserID: a.ID, User: a, ChatOwnerID: a.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModePlatform, ctx: context.Background()}
-	if yes, _ := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"Read","input":{"path":"SKILL.md"}}`)); !yes {
+	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"Read","input":{"path":"SKILL.md"}}`)); !result.Allow {
 		t.Fatal("platform skill read denied")
 	}
-	if yes, _ := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"Bash","input":{"command":"echo unsafe"}}`)); yes {
+	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"Bash","input":{"command":"echo unsafe"}}`)); result.Allow {
 		t.Fatal("platform native shell permitted")
 	}
 }
 
 func TestNativeApprovalRequiresExactInitiatingActorAndNewAction(t *testing.T) {
 	h, a, b, _, conv := sharedWorkbenchFixture(t)
-	g := &agentToolGateway{deps: h.deps}
-	ctx, cancel := context.WithCancel(context.Background())
+	gateway := &agentToolGateway{deps: h.deps}
+	generation := domain.AssistantGeneration{ID: "native-generation", UserID: a.ID, SessionID: conv.ID, ActorID: a.ID, Status: "running"}
+	if err := h.repo.BeginAssistantGeneration(generation); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), assistantControlScopeKey{}, assistantControlScope{GenerationID: generation.ID}))
 	defer cancel()
-	s := &AgentToolSession{UserID: a.ID, User: a, ChatOwnerID: a.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModeWorkspace, ctx: ctx}
-	result := make(chan bool, 1)
-	go func() {
-		yes, _ := g.approveNativeTool(ctx, s, json.RawMessage(`{"name":"Write","input":{"path":"approved.txt","content":"exact"}}`))
-		result <- yes
-	}()
-	var item domain.AssistantNativeApproval
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		items := h.repo.PendingNativeApprovals(a.ID, conv.ID)
-		if len(items) > 0 {
-			item = items[0]
-			break
+	s := &AgentToolSession{Token: "native-phase", UserID: a.ID, User: a, ChatOwnerID: a.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModeWorkspace, ctx: ctx}
+	input := json.RawMessage(`{"id":"one","name":"Write","input":{"path":"approved.txt","content":"exact"}}`)
+	for i := 0; i < 3; i++ {
+		if result := gateway.approveNativeTool(ctx, s, input); !result.Pending || result.Allow {
+			t.Fatal(result)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	if item.ID == "" {
-		t.Fatal("native approval not persisted")
+	items := h.repo.PendingNativeApprovals(a.ID, conv.ID)
+	if len(items) != 1 {
+		t.Fatalf("transport polls duplicated request: %v", items)
 	}
+	item := items[0]
 	if err := h.repo.DecideNativeApproval(a.ID, b.ID, conv.ID, item.ID, "allow"); err == nil {
 		t.Fatal("different actor approved")
 	}
 	if err := h.repo.DecideNativeApproval(a.ID, a.ID, conv.ID, item.ID, "allow"); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case yes := <-result:
-		if !yes {
-			t.Fatal("approved exact action denied")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("approval not delivered")
+	if result := gateway.approveNativeTool(ctx, s, input); !result.Allow || result.Pending {
+		t.Fatal("approved exact action denied", result)
 	}
-	go func() {
-		yes, _ := g.approveNativeTool(ctx, s, json.RawMessage(`{"name":"Write","input":{"path":"different.txt","content":"new"}}`))
-		result <- yes
-	}()
+	changed := json.RawMessage(`{"id":"one","name":"Write","input":{"path":"different.txt","content":"exact"}}`)
+	if result := gateway.approveNativeTool(ctx, s, changed); result.Allow || result.Pending {
+		t.Fatal("invocation ID reused for different input", result)
+	}
+	changed = json.RawMessage(`{"id":"two","name":"Write","input":{"path":"different.txt","content":"new"}}`)
+	if result := gateway.approveNativeTool(ctx, s, changed); !result.Pending || result.Allow {
+		t.Fatal("old receipt authorized new action", result)
+	}
+	s.nativePhaseClosed.Store(true)
+	if result := gateway.approveNativeTool(ctx, s, input); result.Allow || result.Pending {
+		t.Fatal("exited CLI kept its authorization", result)
+	}
+	s.nativePhaseClosed.Store(false)
 	cancel()
-	select {
-	case yes := <-result:
-		if yes {
-			t.Fatal("old receipt approved another action")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("cancelled approval blocked")
+	if result := gateway.approveNativeTool(context.Background(), s, input); result.Allow || result.Pending {
+		t.Fatal("cancelled turn kept its authorization", result)
 	}
 }
 
@@ -179,8 +208,8 @@ func TestNativeApprovalRecognizesCLIGatewayAliases(t *testing.T) {
 		`{"name":"CallMcpTool","input":{"server":"agentflow_session","toolName":"workbench_workspace_open","arguments":{}}}`,
 		`{"name":"MCP:workbench_workspace_open","input":{}}`,
 	} {
-		if allowed, reason := g.approveNativeTool(context.Background(), s, json.RawMessage(raw)); !allowed {
-			t.Fatalf("gateway alias blocked: %s: %s", raw, reason)
+		if result := g.approveNativeTool(context.Background(), s, json.RawMessage(raw)); !result.Allow {
+			t.Fatalf("gateway alias blocked: %s: %s", raw, result.Reason)
 		}
 	}
 	for _, raw := range []string{
@@ -194,7 +223,7 @@ func TestNativeApprovalRecognizesCLIGatewayAliases(t *testing.T) {
 		`{"name":"run_command","input":{"command":"touch effect.txt"}}`,
 		`{"name":"Write","input":{"path":"effect.txt","content":"unsafe"}}`,
 	} {
-		if allowed, _ := g.approveNativeTool(context.Background(), s, json.RawMessage(raw)); allowed {
+		if result := g.approveNativeTool(context.Background(), s, json.RawMessage(raw)); result.Allow {
 			t.Fatalf("non-gateway action allowed: %s", raw)
 		}
 	}
@@ -203,7 +232,7 @@ func TestNativeApprovalRecognizesCLIGatewayAliases(t *testing.T) {
 	}
 	// A persisted MCP alias can pass the native hook, but an old platform tool
 	// must still be rejected by the current gateway at the actual call entry.
-	if allowed, _ := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"agentflow_session_agents_save","input":{}}`)); !allowed {
+	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"agentflow_session_agents_save","input":{}}`)); !result.Allow {
 		t.Fatal("gateway transport blocked")
 	}
 	if _, err := g.callTool(withAgentToolToken(context.Background(), s.Token), s, json.RawMessage(`{"name":"agents_save","arguments":{}}`)); err == nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -100,6 +101,9 @@ func TestZCodeConversationApprovalPreservesMCPAndCredentialCleanup(t *testing.T)
 		t.Fatalf("lost approval, MCP or credential cleanup: %+v", config)
 	}
 	guard := events["PreToolUse"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if guard["timeout"] != float64(conversationApprovalHookWatchdog) {
+		t.Fatal("ZCode must not time out human approval after one minute")
+	}
 	if guard["onError"] != "deny" {
 		t.Fatal("ZCode hook failures must block native effects")
 	}
@@ -112,6 +116,127 @@ func TestZCodeConversationApprovalPreservesMCPAndCredentialCleanup(t *testing.T)
 	events = hooks["events"].(map[string]any)
 	if hooks["enabled"] != true || events["PreToolUse"] == nil || events["SessionStart"] == nil {
 		t.Fatal("credential binding replaced the native approval guard")
+	}
+}
+
+func TestNativeHookRetriesTransportAndPollsOneInvocation(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 unavailable")
+	}
+	var mu sync.Mutex
+	var ids []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				ID    string          `json:"id"`
+				Name  string          `json:"name"`
+				Input json.RawMessage `json:"input"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		mu.Lock()
+		ids = append(ids, request.Params.ID)
+		count := len(ids)
+		mu.Unlock()
+		var compact bytes.Buffer
+		_ = json.Compact(&compact, request.Params.Input)
+		if request.Params.Name != "Write" || compact.String() != `{"path":"waiting.txt"}` {
+			t.Error("callback changed exact operation")
+		}
+		if count == 1 {
+			http.Error(w, "temporary relay disconnect", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"pending": count < 4, "allow": count >= 4}})
+	}))
+	defer server.Close()
+	script := filepath.Join(t.TempDir(), "hook.py")
+	if err := os.WriteFile(script, []byte(conversationApprovalPython), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("python3", script)
+	cmd.Env = append(os.Environ(), "AGENTFLOW_NATIVE_APPROVAL_URL="+server.URL)
+	cmd.Stdin = strings.NewReader(`{"tool_name":"Write","tool_input":{"path":"waiting.txt"}}`)
+	if output, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(output), `"permissionDecision": "allow"`) {
+		t.Fatalf("polling hook: %s: %v", output, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ids) != 4 || ids[0] == "" {
+		t.Fatal("callback did not poll", ids)
+	}
+	for _, id := range ids {
+		if id != ids[0] {
+			t.Fatal("network retry created another invocation", ids)
+		}
+	}
+}
+
+func TestJavaScriptApprovalPollsAndHonorsCancellation(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node unavailable")
+	}
+	var mu sync.Mutex
+	ids := map[string][]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		mu.Lock()
+		ids[request.Params.Name] = append(ids[request.Params.Name], request.Params.ID)
+		count := len(ids[request.Params.Name])
+		mu.Unlock()
+		if count == 1 && request.Params.Name == "write" {
+			http.Error(w, "reconnect", 503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		allow := request.Params.Name == "write" && count >= 3
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"pending": !allow, "allow": allow}})
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "approval.mjs"), []byte(conversationPiApproval), 0600); err != nil {
+		t.Fatal(err)
+	}
+	probe := `import assert from 'node:assert/strict';
+import install from './approval.mjs';
+let hook; install({on:(_,handler)=>{hook=handler}});
+assert.equal(await hook({toolName:'write',input:{path:'waiting.txt'}},{}),undefined);
+const controller=new AbortController();setTimeout(()=>controller.abort(),200);
+const cancelled=await hook({toolName:'cancelled-write',input:{path:'never.txt'}},{signal:controller.signal});
+assert.equal(cancelled.block,true);assert.match(cancelled.reason,/本轮已停止/);
+`
+	path := filepath.Join(dir, "probe.mjs")
+	if err := os.WriteFile(path, []byte(probe), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("node", path)
+	cmd.Env = append(os.Environ(), "AGENTFLOW_NATIVE_APPROVAL_URL="+server.URL)
+	cmd.WaitDelay = 3 * time.Second
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("polling plugin: %s: %v", output, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ids["write"]) != 3 {
+		t.Fatal("plugin did not retry and poll", ids)
+	}
+	for _, id := range ids["write"] {
+		if id == "" || id != ids["write"][0] {
+			t.Fatal("plugin lost invocation identity", ids)
+		}
 	}
 }
 

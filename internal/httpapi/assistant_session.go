@@ -284,7 +284,8 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		}
 		conv := body.assistantConversation
 		conv.RuntimeMode = existing.Mode()
-		if existing.ID != "" {
+		conv.ExecutionTargetLocked = existing.ExecutionLocked()
+		if existing.ID != "" && existing.ExecutionLocked() {
 			if conv.ExecutionTarget != nil && *conv.ExecutionTarget != existing.Execution() {
 				c.JSON(409, gin.H{"error": repo.ErrAssistantExecutionLocked.Error()})
 				return
@@ -292,7 +293,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.ExecutionTarget = existing.ExecutionTarget
 		} else {
 			var targetErr error
-			conv.ExecutionTarget, targetErr = h.newExecutionTarget(current.ID, conv.ProjectID, conv.ExecutionTarget)
+			conv.ExecutionTarget, targetErr = h.newExecutionTarget(current.ID, conv.ProjectID, draftExecutionTarget(existing, conv.ExecutionTarget))
 			if targetErr != nil {
 				c.JSON(400, gin.H{"error": targetErr.Error()})
 				return

@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
 import { SelectMenu } from "./ui";
+import { executionLocked } from "./execution-target";
 import "./execution-machine-picker.css";
 
 export default function ExecutionMachinePicker({ chat, onManage }) {
   const trigger = useRef(null);
   const [open, setOpen] = useState(false);
-  const locked = !!chat.session?.executionTarget;
+  const locked = executionLocked(chat.session);
   const disabled = !!(
     chat.busy ||
     chat.machineSaving ||
@@ -44,7 +45,7 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
         : true);
   const title = locked
     ? loadError || `当前会话执行机器：${label}。会话已绑定，后续运行始终使用此机器。`
-    : chat.machineError || "为新会话选择执行机器，选定后固定";
+    : chat.machineError || "选择执行机器，发送首条消息后固定";
 
   if (locked)
     return (

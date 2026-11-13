@@ -62,7 +62,14 @@ func (r *AssistantRepo) assistantSessionSummaries() *gorm.DB {
 	if r.DB.Dialector.Name() != "sqlite" {
 		summary = "CAST((" + r.assistantParticipantSummarySQL() + ") AS JSON)"
 	}
-	return r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.participantSummaryMessages', " + summary + ") AS payload")
+	return r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', " + r.assistantExecutionMessageCountSQL() + ", '$.participantSummaryMessages', " + summary + ") AS payload")
+}
+
+func (r *AssistantRepo) assistantExecutionMessageCountSQL() string {
+	if r.DB.Dialector.Name() == "sqlite" {
+		return "COALESCE(JSON_ARRAY_LENGTH(payload, '$.messages'), 0)"
+	}
+	return "COALESCE(JSON_LENGTH(JSON_EXTRACT(payload, '$.messages')), 0)"
 }
 
 // noSummaryProjection is process-wide: production has a single datasource.
@@ -95,7 +102,7 @@ func (r *AssistantRepo) findAssistantSessionSummaries(where string, args ...any)
 	var err error
 	fallback := func() ([]assistantSessionRow, error) {
 		var out []assistantSessionRow
-		err := r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload").Where(where, args...).Find(&out).Error
+		err := r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', "+r.assistantExecutionMessageCountSQL()+") AS payload").Where(where, args...).Find(&out).Error
 		sortAssistantSessionRows(out)
 		return out, err
 	}
@@ -279,10 +286,13 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 	old, exists := r.AssistantSession(userID, v.ID)
 	if exists {
 		target := old.Execution()
-		if v.ExecutionTarget != nil && *v.ExecutionTarget != target {
+		if old.ExecutionLocked() && v.ExecutionTarget != nil && *v.ExecutionTarget != target {
 			return ErrAssistantExecutionLocked
 		}
-		v.ExecutionTarget = &target
+		if old.ExecutionLocked() || v.ExecutionTarget == nil {
+			v.ExecutionTarget = &target
+		}
+		v.ExecutionTargetLocked = old.ExecutionLocked() || v.ExecutionTargetLocked
 		v.RuntimeMode = old.Mode()
 	} else {
 		if v.ExecutionTarget == nil {
@@ -367,6 +377,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 	// The latest reply and its read state are projections for the history
 	// list, recomputed on every listing; a saved transcript never stores them.
 	v.GenerationID, v.Unread = "", false
+	v.ExecutionTargetLocked = v.ExecutionLocked()
 	deriveAssistantParticipants(&v, v.Messages)
 	return upsert(r.DB, "assistant_sessions", map[string]any{
 		"id":         v.ID,
@@ -436,9 +447,6 @@ func (r *AssistantRepo) DeleteAssistantSession(userID int64, id string) error {
 		}
 		if res.RowsAffected == 0 {
 			return fmt.Errorf("assistant session not found")
-		}
-		if err := tx.Where("session_id = ? AND user_id = ?", id, userID).Delete(&assistantNativeApprovalRow{}).Error; err != nil {
-			return err
 		}
 		if err := tx.Where("session_id = ?", id).Delete(&assistantSessionReadRow{}).Error; err != nil {
 			return err
@@ -593,6 +601,11 @@ func (r *AssistantRepo) taskByID(id string) (domain.AssistantTask, bool) {
 func decodeAssistantSession(row assistantSessionRow) domain.AssistantSession {
 	var item domain.AssistantSession
 	_ = json.Unmarshal(row.Payload, &item)
+	var summary struct {
+		MessageCount int `json:"executionMessageCount"`
+	}
+	_ = json.Unmarshal(row.Payload, &summary)
+	item.ExecutionTargetLocked = item.ExecutionLocked() || summary.MessageCount > 0
 	item.ID = row.ID
 	item.UserID = row.UserID
 	if item.ExecutionTarget == nil {

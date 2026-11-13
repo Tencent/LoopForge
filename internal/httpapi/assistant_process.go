@@ -44,6 +44,18 @@ func helperCLIExecution(ctx context.Context, root string) func(context.Context, 
 // CLI, its descendants and its durable native HOME in both execution modes.
 func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root string) func(context.Context, string, runtime.CommandSpec, runtime.RunCredentials, runtime.EventSink) (string, error) {
 	return func(ctx context.Context, _ string, command runtime.CommandSpec, credentials runtime.RunCredentials, sink runtime.EventSink) (output string, err error) {
+		s.nativePhaseClosed.Store(false)
+		phase := nativeApprovalPhase(s.Token)
+		generation := ""
+		if s.ctx != nil {
+			generation = assistantControlScopeFrom(s.ctx).GenerationID
+		}
+		defer func() {
+			s.nativePhaseClosed.Store(true)
+			if h.repo != nil && generation != "" {
+				_ = h.repo.ReleaseNativeApprovals(s.ChatOwnerID, s.ChatSessionID, generation, phase)
+			}
+		}()
 		preparing := true
 		defer func() {
 			if err != nil && preparing {

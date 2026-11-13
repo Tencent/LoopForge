@@ -6,6 +6,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// A cloud runner in a saved draft was allocated by the server. Resolve the
+// pool again when the first turn starts instead of treating it as client input.
+func draftExecutionTarget(old domain.AssistantSession, requested *domain.AssistantExecutionTarget) *domain.AssistantExecutionTarget {
+	if requested == nil {
+		requested = old.ExecutionTarget
+	}
+	if requested != nil && old.ID != "" && *requested == old.Execution() && requested.Pool == domain.ExecutionModeCloud {
+		return &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+	}
+	return requested
+}
+
 func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, requested *domain.AssistantExecutionTarget) (*domain.AssistantExecutionTarget, error) {
 	target := domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
 	if requested != nil {

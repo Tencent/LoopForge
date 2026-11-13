@@ -137,19 +137,36 @@ describe("conversation hooks", () => {
     expect(writeMock).toHaveBeenCalledWith("/api/assistant/sessions/new-session", expect.objectContaining({ sandboxProfileId: "business-docker" }), "PUT");
   });
 
-  test("does not send or create a conversation while an execution machine selection is saving", async () => {
+  test("keeps machine choices local and binds the final choice on the first send", async () => {
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.machinesReady).toBe(true));
-    let resolve;
-    writeMock.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
-    let selecting;
-    act(() => { selecting = result.current.selectMachine("mac"); });
-    await act(async () => expect(await result.current.send({ text: "改代码" })).toBe(false));
-    expect(result.current.error).toBe("执行机器仍在保存，请稍后发送。");
-    expect(writeMock).toHaveBeenCalledTimes(1);
-    expect(writeMock).toHaveBeenCalledWith("/api/assistant/sessions/new-session", expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"},messages:[]}), "PUT");
-    await act(async () => { resolve({ id:"new-session",executionTarget:{pool:"runner",runnerId:"mac"},messages:[] }); await selecting; });
+    await act(() => result.current.selectMachine(""));
+    await act(() => result.current.selectMachine("mac"));
+    await act(() => result.current.refreshMachines());
     expect(result.current.defaultRunnerId).toBe("mac");
+    expect(result.current.session).toBeNull();
+    expect(result.current.activeId).toBeNull();
+    expect(location.search).not.toContain("session=");
+    expect(writeMock).not.toHaveBeenCalled();
+    await act(() => result.current.send({text:"开始"}));
+    expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
+    await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+  });
+
+  test("waits for the personal machine default before allowing the first send", async () => {
+    const original=apiMock.getMockImplementation();
+    let release;
+    const delayed=new Promise(resolve=>{release=resolve;});
+    apiMock.mockImplementation((path,opts)=>path==="/api/runners/default"?delayed:original(path,opts));
+    try {
+      const {result}=renderHook(()=>useChat());
+      await waitFor(()=>expect(result.current.ready).toBe(true));
+      await act(async()=>expect(await result.current.send({text:"开始"})).toBe(false));
+      expect(result.current.error).toBe("执行机器仍在加载，请稍后发送。");
+      expect(writeMock).not.toHaveBeenCalled();
+      await act(async()=>{release({runnerId:"mac"});});
+      await waitFor(()=>expect(result.current.defaultRunnerId).toBe("mac"));
+    } finally {apiMock.mockImplementation(original);release({runnerId:"mac"});}
   });
 
   test("loads chat and exercises conversation commands", async () => {

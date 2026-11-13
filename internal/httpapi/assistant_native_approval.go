@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"agentflow/internal/domain"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"strings"
 	"time"
@@ -55,96 +57,105 @@ func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
 	c.JSON(200, gin.H{"decision": body.Decision})
 }
 
-// The private nativeApproval RPC is called by CLI hooks before native effects.
-// It is deliberately absent from tools/list and never grants a reusable permit.
-func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSession, raw json.RawMessage) (bool, string) {
+// Native callbacks poll this private RPC. Each callback keeps one invocation
+// ID across transport retries, so reconnects neither create another approval
+// nor change the exact action being approved. Nothing waits on a browser inside
+// an HTTP request and human decisions have no deadline.
+type nativeToolApprovalResult struct {
+	Allow   bool   `json:"allow"`
+	Pending bool   `json:"pending,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+func nativeApprovalPhase(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSession, raw json.RawMessage) nativeToolApprovalResult {
+	deny := func(reason string) nativeToolApprovalResult { return nativeToolApprovalResult{Reason: reason} }
 	var action struct {
+		ID    string          `json:"id"`
 		Name  string          `json:"name"`
 		Input json.RawMessage `json:"input"`
 	}
-	if len(raw) > 256<<10 || json.Unmarshal(raw, &action) != nil || strings.TrimSpace(action.Name) == "" {
-		return false, "原生工具审批参数无效"
+	if len(raw) > 256<<10 || json.Unmarshal(raw, &action) != nil || strings.TrimSpace(action.Name) == "" || len(action.ID) > 128 {
+		return deny("原生工具审批参数无效")
 	}
 	if !h.nativeToolTurnActive(ctx, s) {
-		return false, "会话正在停止或交接，请结束本阶段"
+		return deny("会话正在停止或交接，请结束本阶段")
 	}
 	if h.nativeGatewayTool(ctx, s, action.Name, action.Input) {
-		return true, ""
-	} // Gateway enforces its own exact capability set.
+		return nativeToolApprovalResult{Allow: true}
+	}
 	switch strings.ToLower(action.Name) {
 	case "skill", "read", "read_file", "readfile", "glob", "grep", "list", "ls", "list_directory", "list_resources", "view_image", "todowrite", "todo_read", "todoread":
-		return true, ""
+		return nativeToolApprovalResult{Allow: true}
 	}
 	if s.RuntimeMode != domain.AssistantModeWorkspace {
-		return false, "平台模式禁用原生命令和写入工具，请先打开工作区"
+		return deny("平台模式禁用原生命令和写入工具，请先打开工作区")
+	}
+	if len(action.Input) == 0 {
+		action.Input = json.RawMessage(`{}`)
+	}
+	var compact bytes.Buffer
+	if json.Compact(&compact, action.Input) != nil {
+		return deny("原生工具审批参数无效")
+	}
+	action.Input = compact.Bytes()
+	generation := ""
+	if s.ctx != nil {
+		generation = assistantControlScopeFrom(s.ctx).GenerationID
+	}
+	phase := nativeApprovalPhase(s.Token)
+	id := nativeApprovalPhase(s.Token + "/" + action.ID)
+	// Resolve an existing exact invocation before considering the policy again.
+	// A declined request must not turn into a new permit on the next poll.
+	if h.repo != nil && action.ID != "" {
+		if old, ok := h.repo.NativeApproval(s.ChatOwnerID, s.ChatSessionID, id); ok {
+			if old.GenerationID != generation || old.ActorID != s.UserID || old.Tool != action.Name || old.InputDigest != nativeApprovalPhase(string(action.Input)) {
+				return deny("审批调用标识已被其他操作使用")
+			}
+			switch old.Decision {
+			case "allow":
+				return nativeToolApprovalResult{Allow: true}
+			case "deny":
+				return deny("用户拒绝了本次操作")
+			default:
+				return nativeToolApprovalResult{Pending: true}
+			}
+		}
 	}
 	if s.ExecMode.AutoWrite && !s.ExecMode.ReviewWrites {
-		return true, ""
+		return nativeToolApprovalResult{Allow: true}
 	}
 	if s.ExecMode.ReviewWrites {
-		// Leave time for a manual decision inside the shortest CLI hook
-		// deadline (60s); the hook's HTTP budget is 50s.
 		reviewCtx, cancelReview := context.WithTimeout(ctx, 12*time.Second)
 		args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
 		review := reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区 CLI 原生工具，将在绑定的 Docker 工作区中执行", args)
 		cancelReview()
 		if review.allows() {
 			if !h.nativeToolTurnActive(ctx, s) {
-				return false, "本轮已结束，审批已失效"
+				return deny("本轮已结束，审批已失效")
 			}
-			return true, review.Rationale
+			return nativeToolApprovalResult{Allow: true, Reason: review.Rationale}
 		}
 	}
-	if h.repo == nil || s.ChatSessionID == "" || s.ChatOwnerID == 0 {
-		return false, "缺少审批上下文"
+	if h.repo == nil || s.ChatSessionID == "" || s.ChatOwnerID == 0 || generation == "" || action.ID == "" {
+		return deny("缺少审批上下文或调用标识")
 	}
-	sessionCtx := s.ctx
-	if sessionCtx == nil {
-		sessionCtx = ctx
+	item := domain.AssistantNativeApproval{ID: id, GenerationID: generation, ActorID: s.UserID, Tool: action.Name, Input: action.Input}
+	if err := h.repo.CreateNativeApproval(s.ChatOwnerID, s.ChatSessionID, phase, item); err != nil {
+		return deny("无法保存审批请求")
 	}
-	item := domain.AssistantNativeApproval{ID: newAssistantSessionID(), GenerationID: assistantControlScopeFrom(sessionCtx).GenerationID, ActorID: s.UserID, Tool: action.Name, Input: action.Input, ExpiresAt: time.Now().UTC().Add(30 * time.Second)}
-	if len(item.Input) == 0 {
-		item.Input = json.RawMessage(`{}`)
-	}
-	if err := h.repo.CreateNativeApproval(s.ChatOwnerID, s.ChatSessionID, item); err != nil {
-		return false, "无法保存审批请求"
+	if !h.nativeToolTurnActive(ctx, s) {
+		_ = h.repo.ReleaseNativeApprovals(s.ChatOwnerID, s.ChatSessionID, generation, phase)
+		return deny("本阶段已结束，审批已失效")
 	}
 	if s.Notify != nil {
 		s.Notify("native_approval", map[string]string{"id": item.ID})
 	}
-	ticker := time.NewTicker(300 * time.Millisecond)
-	defer ticker.Stop()
-	defer func() {
-		_ = h.repo.DecideNativeApproval(s.ChatOwnerID, s.UserID, s.ChatSessionID, item.ID, "deny")
-		if s.Notify != nil {
-			s.Notify("native_approval", map[string]string{"id": item.ID})
-		}
-	}()
-	for {
-		select {
-		case <-ctx.Done():
-			return false, "审批已取消"
-		case <-sessionCtx.Done():
-			return false, "本轮已停止"
-		case <-ticker.C:
-		}
-		if time.Now().After(item.ExpiresAt) {
-			return false, "审批等待超时"
-		}
-		current, ok := h.repo.NativeApproval(s.ChatOwnerID, s.ChatSessionID, item.ID)
-		if !ok {
-			return false, "审批已失效"
-		}
-		switch current.Decision {
-		case "allow":
-			if !h.nativeToolTurnActive(ctx, s) {
-				return false, "本轮已结束，审批已失效"
-			}
-			return true, "用户已批准本次具体操作"
-		case "deny":
-			return false, fmt.Sprintf("用户拒绝了 %s 操作", action.Name)
-		}
-	}
+	return nativeToolApprovalResult{Pending: true}
 }
 
 // Native hooks see the CLI's local MCP name, not necessarily the wire name.
@@ -191,7 +202,7 @@ func (h *agentToolGateway) nativeGatewayTool(ctx context.Context, s *AgentToolSe
 }
 
 func (h *agentToolGateway) nativeToolTurnActive(ctx context.Context, s *AgentToolSession) bool {
-	if ctx.Err() != nil || s.closed.Load() || s.ctx != nil && s.ctx.Err() != nil || s.requestedMode() != "" {
+	if ctx.Err() != nil || s.nativePhaseClosed.Load() || s.closed.Load() || s.ctx != nil && s.ctx.Err() != nil || s.requestedMode() != "" {
 		return false
 	}
 	if s.ctx == nil {

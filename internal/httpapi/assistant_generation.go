@@ -132,7 +132,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
-	if old.ID != "" {
+	if old.ID != "" && old.ExecutionLocked() {
 		if req.ExecutionTarget != nil && *req.ExecutionTarget != old.Execution() {
 			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换"})
 			return
@@ -140,7 +140,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		req.ExecutionTarget = old.ExecutionTarget
 	} else {
 		var targetErr error
-		req.ExecutionTarget, targetErr = h.newExecutionTarget(user.ID, req.ProjectID, req.ExecutionTarget)
+		req.ExecutionTarget, targetErr = h.newExecutionTarget(user.ID, req.ProjectID, draftExecutionTarget(old, req.ExecutionTarget))
 		if targetErr != nil {
 			c.JSON(400, gin.H{"error": targetErr.Error()})
 			return
@@ -198,7 +198,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		defer done()
 		h.executeGeneration(parent, req, g, current)
 	}()
-	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status})
+	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status, "executionTarget": req.ExecutionTarget})
 }
 func (h *assistantHandlers) generation(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)

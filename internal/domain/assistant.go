@@ -141,6 +141,14 @@ func (s AssistantSession) Execution() AssistantExecutionTarget {
 	return AssistantExecutionTarget{Pool: ExecutionModeCloud}
 }
 
+// A draft can change machines until its first turn starts. Keep the explicit
+// fence after history edits, and infer it for conversations predating the flag.
+func (s AssistantSession) ExecutionLocked() bool {
+	return s.ExecutionTargetLocked || len(s.Messages) > 0 || s.RunID != "" ||
+		s.WorkspaceRunID != "" || len(s.OwnWorkspaceRunIDs) > 0 ||
+		s.ParentSessionID != "" || s.TaskID != ""
+}
+
 func (s AssistantSession) Mode() string {
 	if s.RuntimeMode != "" {
 		return s.RuntimeMode
@@ -149,8 +157,9 @@ func (s AssistantSession) Mode() string {
 }
 
 type AssistantSession struct {
-	ExecutionTarget *AssistantExecutionTarget `json:"executionTarget,omitempty"`
-	RuntimeMode     string                    `json:"runtimeMode,omitempty"`
+	ExecutionTarget       *AssistantExecutionTarget `json:"executionTarget,omitempty"`
+	ExecutionTargetLocked bool                      `json:"executionTargetLocked"`
+	RuntimeMode           string                    `json:"runtimeMode,omitempty"`
 	// Source separates ordinary chats, SOP run conversations and scheduled
 	// task runs. Legacy rows leave it empty and are inferred when read.
 	// TaskID is the scheduled job or assistant task that produced the session,
@@ -228,6 +237,6 @@ type AssistantNativeApproval struct {
 	ActorID      int64           `json:"actorId"`
 	Tool         string          `json:"tool"`
 	Input        json.RawMessage `json:"input"`
+	InputDigest  string          `json:"-"`
 	Decision     string          `json:"decision"`
-	ExpiresAt    time.Time       `json:"expiresAt"`
 }

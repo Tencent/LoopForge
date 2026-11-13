@@ -434,7 +434,8 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		command.Argv[0] = binary
 	}
 	if sb == nil {
-		if _, err := exec.LookPath(command.Argv[0]); err != nil {
+		binary, lookupErr := exec.LookPath(command.Argv[0])
+		if lookupErr != nil {
 			cancel()
 			if release != nil {
 				release()
@@ -442,8 +443,9 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			if proc.closeRelay != nil {
 				proc.closeRelay()
 			}
-			return ConversationProcessResult{}, fmt.Errorf("执行机器未安装 CLI %s：%w", command.Provider, err)
+			return ConversationProcessResult{}, fmt.Errorf("执行机器未安装 CLI %s：%w", command.Provider, lookupErr)
 		}
+		command.Argv[0] = binary
 	}
 	bindSandbox := sb
 	bindWorkspace := filepath.Join(root, "ws")
@@ -468,6 +470,12 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		command.Argv = conversationZCodeResumeArgv(root, nativeArgv, command.Argv)
 	}
 	command.bindingsPrepared = true
+	if command.Provider == AgentCLIKimi {
+		// Keep the CLI's own session and complete native tool pipeline. Kimi's
+		// command-hook API otherwise times out after at most 600s and allows
+		// execution on failure. Only our exact hook gets the owned executor.
+		command.Argv = append([]string{"node", "--import", filepath.Join(root, "kimi-native-loader.mjs")}, command.Argv...)
+	}
 	if req.Command.Interactive {
 		input, writer, err := os.Pipe()
 		if err != nil {

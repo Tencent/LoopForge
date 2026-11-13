@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
-// The personal default suggests the initial choice. Choosing a machine binds
-// this conversation once; it never changes the personal default.
-export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine) {
+// Machine selection belongs to the local draft until its first turn starts.
+export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine, draftTarget) {
   const [machines, setMachines] = useState([]);
   const [defaultRunnerId, setDefaultRunnerId] = useState("");
   const [cloudPool, setCloudPool] = useState(null);
@@ -12,6 +11,18 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
   const [machineSaving, setMachineSaving] = useState(false);
   const machineSavingRef = useRef(false);
   const revision = useRef(0);
+  const chosen = useRef(false);
+  const suggestedRunner = useRef("");
+  const targetRef = useRef(draftTarget);
+  targetRef.current = draftTarget;
+  const resetMachine = useCallback(() => {
+    chosen.current = false;
+    setDefaultRunnerId(suggestedRunner.current);
+  }, []);
+  useEffect(() => {
+    if (draftTarget && !chosen.current)
+      setDefaultRunnerId(draftTarget.pool === "runner" ? draftTarget.runnerId || "" : "");
+  }, [draftTarget]);
 
   const refreshMachines = useCallback(async () => {
     if (!userId || machineSavingRef.current) return;
@@ -23,7 +34,11 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
       ]);
       if (request !== revision.current) return;
       setMachines(Array.isArray(rows) ? rows : []);
-      setDefaultRunnerId(selected.runnerId || "");
+      suggestedRunner.current = selected.runnerId || "";
+      if (!chosen.current) {
+        const target = targetRef.current;
+        setDefaultRunnerId(target ? target.pool === "runner" ? target.runnerId || "" : "" : suggestedRunner.current);
+      }
       setCloudPool(selected.cloudPool || null);
       setMachinesReady(true);
       setMachineError("");
@@ -36,6 +51,8 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     setMachinesReady(false);
     setMachines([]);
     setDefaultRunnerId("");
+    chosen.current = false;
+    suggestedRunner.current = "";
     setCloudPool(null);
     setMachineError("");
     void refreshMachines();
@@ -72,6 +89,7 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     try {
       const selected = await bindMachine(runnerId);
       if (request !== revision.current) return false;
+      chosen.current = true;
       setDefaultRunnerId(selected.runnerId || "");
       setMachineError("");
       return true;
@@ -94,5 +112,6 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     machineSavingRef,
     selectMachine,
     refreshMachines,
+    resetMachine,
   };
 }

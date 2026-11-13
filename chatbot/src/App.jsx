@@ -1172,7 +1172,6 @@ export default function App() {
           ) : null}
         </div>
         <div className="header-actions">
-          <NativeApprovalPanel chat={chat} />
           {chat.session ? (
             <>
               {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
@@ -1649,6 +1648,10 @@ export default function App() {
                   finished
                 />
               ) : null}
+              <NativeApprovalPanel chat={chat} onChange={() => {
+                if (follow.current && scroll.current)
+                  scroll.current.scrollTop = scroll.current.scrollHeight;
+              }} />
               <RunAlerts
                 runs={conversationRuns}
                 user={chat.user}

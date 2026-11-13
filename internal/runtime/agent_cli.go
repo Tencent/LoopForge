@@ -426,6 +426,8 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 			"[models.agentflow]", `provider = "agentflow"`, "model = "+strconv.Quote(model),
 			"max_context_size = 262144", `capabilities = ["thinking", "tool_use"]`, "")
 		if hook := options.ApprovalCommand; hook != "" {
+			// Kimi validates 1–600 seconds. The conversation loader supplies a
+			// fail-closed executor without a timer for this exact owned hook.
 			lines = append(lines, "[[hooks]]", `event = "PreToolUse"`, "command = "+strconv.Quote(hook), "timeout = 600", "")
 		}
 		if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte(strings.Join(lines, "\n"))); err != nil {

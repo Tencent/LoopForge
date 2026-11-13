@@ -114,8 +114,8 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 	case "tools/list":
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{"tools": h.toolList(ctx, session)}}
 	case "agentflow/nativeApproval":
-		allowed, reason := h.approveNativeTool(ctx, session, request.Params)
-		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{"allow": allowed, "reason": reason}}
+		result := h.approveNativeTool(ctx, session, request.Params)
+		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: result}
 	case "tools/call":
 		result, err := h.callTool(ctx, session, request.Params)
 		if err != nil {
@@ -202,7 +202,7 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 	}
 	name := stripAgentToolServerPrefix(params.Name)
 	if session.requestedMode() != "" {
-		return mcpToolTextResult("运行模式正在交接。请立即用简短文本结束当前回复，不再调用工具；平台将在旧进程退出后自动续接原生会话，当前工具集合不会热更新。", true), nil
+		return mcpToolTextResult(assistantHandoffNotice, true), nil
 	}
 	if session.RuntimeMode == domain.AssistantModeWorkspace {
 		if _, ok := lookupAgentTool(h.buildCatalog(ctx, session), name); !ok {

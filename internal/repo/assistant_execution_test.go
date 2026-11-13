@@ -4,7 +4,6 @@ import (
 	"agentflow/internal/domain"
 	"errors"
 	"testing"
-	"time"
 )
 
 func TestConversationExecutionBindingIsImmutableAndLegacyIsCloud(t *testing.T) {
@@ -13,7 +12,7 @@ func TestConversationExecutionBindingIsImmutableAndLegacyIsCloud(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	legacy := domain.AssistantSession{ID: "legacy-machine", UserID: 41}
+	legacy := domain.AssistantSession{ID: "legacy-machine", UserID: 41, Messages: []domain.AssistantMessage{{Role: "user", Content: "started"}}}
 	if err = st.DB.Create(&assistantSessionRow{ID: legacy.ID, UserID: 41, Payload: mustJSON(legacy)}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +40,72 @@ func TestConversationExecutionBindingIsImmutableAndLegacyIsCloud(t *testing.T) {
 	if err = st.PutAssistantSession(41, got); !errors.Is(err, ErrAssistantExecutionLocked) {
 		t.Fatalf("remote rebind: %v", err)
 	}
+}
+
+func TestConversationDraftSelectsUntilFirstGenerationAndKeepsFenceAfterHistoryClear(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := domain.AssistantSession{ID: "draft-machine", ExecutionTarget: &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}}
+	if err = st.PutAssistantSession(41, s); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = st.AssistantSession(41, s.ID)
+	if s.ExecutionLocked() {
+		t.Fatal("blank draft locked")
+	}
+	s.ExecutionTarget = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: "remote"}
+	if err = st.PutAssistantSession(41, s); err != nil {
+		t.Fatal(err)
+	}
+	s.ExecutionTarget = nil
+	if err = st.PutAssistantSession(41, s); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = st.AssistantSession(41, s.ID)
+	if s.Execution().RunnerID != "remote" || s.ExecutionLocked() {
+		t.Fatal("draft binding lost or locked")
+	}
+	s.ExecutionTarget = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+	s.Messages = []domain.AssistantMessage{{Role: "user", Content: "first turn"}}
+	if err = st.BeginAssistantGeneration(domain.AssistantGeneration{ID: "first", SessionID: s.ID, UserID: 41}, s); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = st.AssistantSession(41, s.ID)
+	if !s.ExecutionLocked() || s.Execution().Pool != domain.ExecutionModeCloud {
+		t.Fatal("first generation did not bind final choice")
+	}
+	s.Messages = nil
+	s.ExecutionTargetLocked = false
+	if err = st.PutAssistantSession(41, s); err != nil {
+		t.Fatal(err)
+	}
+	s.ExecutionTarget = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: "remote"}
+	if err = st.PutAssistantSession(41, s); !errors.Is(err, ErrAssistantExecutionLocked) {
+		t.Fatalf("history clear removed fence: %v", err)
+	}
+}
+
+func TestConversationSummaryRetainsLegacyExecutionFence(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	legacy := domain.AssistantSession{ID: "legacy-list", UserID: 41, Messages: []domain.AssistantMessage{{Role: "user", Content: "hello"}}}
+	if err = st.DB.Create(&assistantSessionRow{ID: legacy.ID, UserID: 41, Payload: mustJSON(legacy)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, fallback := range []bool{false, true} {
+		noSummaryProjection.Store(fallback)
+		rows := st.ListAssistantSessions(41)
+		if len(rows) != 1 || !rows[0].ExecutionLocked() || rows[0].Messages != nil {
+			t.Fatalf("fallback=%v: %+v", fallback, rows)
+		}
+	}
+	noSummaryProjection.Store(false)
 }
 
 func TestConversationModeSharesGenerationFence(t *testing.T) {
@@ -85,8 +150,8 @@ func TestNativeApprovalIsExactActorAndLiveGeneration(t *testing.T) {
 	if err = st.BeginAssistantGeneration(g); err != nil {
 		t.Fatal(err)
 	}
-	item := domain.AssistantNativeApproval{ID: "a1", ActorID: 42, GenerationID: g.ID, Tool: "Bash", Input: []byte(`{"command":"printf approved"}`), ExpiresAt: time.Now().Add(time.Minute)}
-	if err = st.CreateNativeApproval(41, s.ID, item); err != nil {
+	item := domain.AssistantNativeApproval{ID: "a1", ActorID: 42, GenerationID: g.ID, Tool: "Bash", Input: []byte(`{"command":"printf approved"}`)}
+	if err = st.CreateNativeApproval(41, s.ID, "phase", item); err != nil {
 		t.Fatal(err)
 	}
 	if err = st.DecideNativeApproval(41, 41, s.ID, item.ID, "allow"); err == nil {
@@ -99,7 +164,7 @@ func TestNativeApprovalIsExactActorAndLiveGeneration(t *testing.T) {
 		t.Fatal("approval changed decision")
 	}
 	item.ID = "a2"
-	if err = st.CreateNativeApproval(41, s.ID, item); err != nil {
+	if err = st.CreateNativeApproval(41, s.ID, "phase", item); err != nil {
 		t.Fatal(err)
 	}
 	if err = st.CancelAssistantGeneration(41, s.ID, g.ID); err != nil {
@@ -113,12 +178,8 @@ func TestNativeApprovalIsExactActorAndLiveGeneration(t *testing.T) {
 	}
 	item.ID = "a3"
 	item.GenerationID = ""
-	item.ExpiresAt = time.Now().Add(-time.Second)
-	if err = st.CreateNativeApproval(41, s.ID, item); err != nil {
-		t.Fatal(err)
-	}
-	if err = st.DecideNativeApproval(41, 42, s.ID, item.ID, "allow"); err == nil {
-		t.Fatal("expired action approved")
+	if err = st.CreateNativeApproval(41, s.ID, "phase", item); err == nil {
+		t.Fatal("unbound action created")
 	}
 }
 
