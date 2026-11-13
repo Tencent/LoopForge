@@ -96,7 +96,7 @@ func runDiffCoverageWorkflow(t *testing.T, gate domain.VerificationGate) (domain
 				ID: "change", Name: "Change", Type: "script", ScriptLanguage: "shell",
 				ExecutionScope: domain.ExecutionScopeRepositories,
 				Script: `printf '\n// added 1\n// added 2\n// added 3\n// added 4\n// added 5\n// added 6\n// added 7\n// added 8\n// added 9\n// added 10\n' >> calc.go` +
-					` && git add calc.go && git commit -qm 'add lines'`,
+					` && git add calc.go && git -c user.email=coverage-test@example.com -c user.name='Coverage Test' commit -qm 'add lines'`,
 				MaxAttempts: 1,
 			},
 			{ID: "judge", Name: "Judge", Type: "agent", AgentID: "coverage-validator", ExecutorID: "mock", MaxAttempts: 1},
