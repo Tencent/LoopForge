@@ -300,9 +300,19 @@ func TestRunnerInternalHelperBranches(t *testing.T) {
 	waiters.notify([]string{"mock"})
 	waiters.notify([]string{"mock"})
 	waiters.unregister(w)
-	if !containsStringFold([]string{"A"}, "a") || containsStringFold([]string{"A"}, "b") {
-		t.Fatal("containsStringFold")
+	accepting := &runnerWaiter{providers: []string{"A", "Codex"}}
+	if !accepting.accepts([]string{"x", "a"}) || !accepting.accepts([]string{"CODEX"}) ||
+		accepting.accepts([]string{"b"}) || accepting.accepts(nil) {
+		t.Fatal("runnerWaiter.accepts")
 	}
+	other := waiters.register([]string{"codex"})
+	waiters.notify([]string{"mock"})
+	select {
+	case <-other.ch:
+		t.Fatal("waiter notified for a provider it does not poll")
+	default:
+	}
+	waiters.unregister(other)
 	for path, want := range map[string]bool{
 		"/runners/x": true, "/api/runners/register": true, "/api/runners/tasks/id": true,
 		"/api/runners/tasks/id/start": true, "/api/runners/tasks/id/cancel": false,

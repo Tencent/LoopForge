@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -131,25 +132,22 @@ func (r *runnerWaiterRegistry) notify(providers []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, w := range r.waiters {
-		for _, p := range providers {
-			if containsStringFold(w.providers, p) {
-				select {
-				case w.ch <- struct{}{}:
-				default:
-				}
-				break
-			}
+		if !w.accepts(providers) {
+			continue
+		}
+		select {
+		case w.ch <- struct{}{}:
+		default:
 		}
 	}
 }
 
-func containsStringFold(values []string, want string) bool {
-	for _, v := range values {
-		if strings.EqualFold(v, want) {
-			return true
-		}
-	}
-	return false
+// accepts reports whether any of providers matches one the waiter is polling
+// for, compared case-insensitively.
+func (w *runnerWaiter) accepts(providers []string) bool {
+	return slices.ContainsFunc(providers, func(p string) bool {
+		return slices.ContainsFunc(w.providers, func(v string) bool { return strings.EqualFold(v, p) })
+	})
 }
 
 // ---------- background sweeper ----------
