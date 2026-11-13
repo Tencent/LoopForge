@@ -1233,6 +1233,26 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 	return out
 }
 
+// overlayIssueMRState merges the state the work item itself recorded for
+// the MR at url into the looked-up state: an empty/unknown lookup falls back
+// to the recorded state, otherwise the recorded state may only upgrade it
+// (see domain.EffectiveAnalyticsMRState).
+func overlayIssueMRState(state, url string, own []domain.DeliveryMR) string {
+	for _, mr := range own {
+		if !domain.SameGongfengMR(mr.URL, url) {
+			continue
+		}
+		if state == "" || state == "unknown" {
+			if mr.State != "" {
+				return mr.State
+			}
+			return state
+		}
+		return domain.EffectiveAnalyticsMRState(state, mr.State)
+	}
+	return state
+}
+
 func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, mrsByIssue map[string][]mrRef, issues map[string]domain.Issue) {
 	if len(items) == 0 {
 		return
@@ -1293,6 +1313,7 @@ func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, m
 				preferProject, preferIID = p, iid
 			}
 		}
+		own := issues[items[i].IssueID].DeliveryMRList()
 		var best *mrRef
 		bestState := ""
 		items[i].MRs = nil
@@ -1307,18 +1328,7 @@ func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, m
 			if ok {
 				mr.State = classify(st)
 			}
-			for _, own := range issues[items[i].IssueID].DeliveryMRList() {
-				if domain.SameGongfengMR(own.URL, mr.URL) {
-					if mr.State == "" || mr.State == "unknown" {
-						if own.State != "" {
-							mr.State = own.State
-						}
-					} else {
-						mr.State = domain.EffectiveAnalyticsMRState(mr.State, own.State)
-					}
-					break
-				}
-			}
+			mr.State = overlayIssueMRState(mr.State, mr.URL, own)
 			key := domain.MRDeliveryKey{Project: strings.ToLower(ref.project), IID: ref.iid}
 			if !seen[key] {
 				items[i].MRs = append(items[i].MRs, mr)
