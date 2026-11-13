@@ -135,3 +135,47 @@ func TestReclaimForeignWorkspace(t *testing.T) {
 		})
 	}
 }
+
+// cleanupWorkspace must route an already-cleaned run through
+// rearmCleanedRunnerWorkspace with the run's own execution Runner; the helper
+// tests above call it directly and would not notice the sweep skipping it.
+func TestCleanupWorkspaceRearmsCleanedRunnerRun(t *testing.T) {
+	t.Parallel()
+	const runnerID = "runner-sweep-rearm"
+	for _, tc := range []struct {
+		name        string
+		taskStatus  string
+		wantCleaned bool
+	}{
+		{name: "missing task rearms", wantCleaned: false},
+		{name: "failed task rearms", taskStatus: domain.RunnerTaskFailed, wantCleaned: false},
+		{name: "queued task keeps cleaned", taskStatus: domain.RunnerTaskQueued, wantCleaned: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e, store := newCleanupSplitEngine(t)
+			if err := store.PutRunner(domain.Runner{ID: runnerID, Name: "sweep runner", Status: domain.RunnerStatusOffline}); err != nil {
+				t.Fatal(err)
+			}
+			run := domain.Run{
+				ID: "run-sweep-rearm", Status: "succeeded",
+				ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runnerID},
+			}
+			putCleanedRun(t, store, run)
+			if tc.taskStatus != "" {
+				task := domain.RunnerTask{ID: "rt-cleanup-" + safeRunnerPath(run.ID), RunnerID: runnerID, Provider: "terminal", Action: domain.RunnerTaskActionCleanupRun, RunID: run.ID, Status: tc.taskStatus}
+				if err := store.PutRunnerTask(task); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stored, ok := store.RunState(run.ID)
+			if !ok {
+				t.Fatal("run missing")
+			}
+			e.cleanupWorkspace(stored, time.Now().UTC())
+			if got := workspaceStillCleaned(t, store, run.ID); got != tc.wantCleaned {
+				t.Fatalf("cleaned = %v, want %v", got, tc.wantCleaned)
+			}
+		})
+	}
+}
