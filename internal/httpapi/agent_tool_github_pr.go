@@ -25,13 +25,13 @@ const (
 	githubIssueMaxComments   = 30
 )
 
-// githubWriteAllowed 拒绝在「每次确认」模式下执行合并、审查、关闭：这些
+// githubWriteAllowed 拒绝在「请求批准」模式下执行合并、审查、关闭：这些
 // 操作没有可供用户确认的草稿，执行后只能在 GitHub 上手动撤销。
 func githubWriteAllowed(s *AgentToolSession, name string) error {
 	if s.ExecMode.AutoWrite {
 		return nil
 	}
-	return fmt.Errorf("%s 会直接修改 GitHub，当前「每次确认」模式没有可确认的草稿，不能执行。请让用户把审批模式切到「完全权限」或「帮我批准」后再试，或告诉用户在 GitHub 上手动完成", name)
+	return fmt.Errorf("%s 会直接修改 GitHub，当前「请求批准」模式没有可确认的草稿，不能执行。请让用户把审批模式切到「完全权限」或「帮我批准」后再试，或告诉用户在 GitHub 上手动完成", name)
 }
 
 func githubArgString(args map[string]any, key string) string {

@@ -85,7 +85,7 @@ func TestGitHubMergeReviewCloseNeedDirectWriteMode(t *testing.T) {
 		{mainBotGitHubIssueClose, `{"repository":"app","number":3}`},
 	} {
 		text, isErr := callGitHubTool(t, f, tc.name, tc.args)
-		if !isErr || !strings.Contains(text, "「每次确认」") || !strings.Contains(text, "「完全权限」") {
+		if !isErr || !strings.Contains(text, "「请求批准」") || !strings.Contains(text, "「完全权限」") {
 			t.Fatalf("%s in confirm mode = %s (error=%t)", tc.name, text, isErr)
 		}
 	}
@@ -250,7 +250,7 @@ func TestGitHubIssueCreateAndPRClose(t *testing.T) {
 	if text, isErr = callGitHubTool(t, f, mainBotGitHubIssueCreate, `{"repository":"app","title":" "}`); !isErr {
 		t.Fatalf("blank title accepted: %s", text)
 	}
-	if text, isErr = callGitHubTool(t, f, mainBotGitHubPRClose, `{"repository":"app","number":7}`); !isErr || !strings.Contains(text, "「每次确认」") {
+	if text, isErr = callGitHubTool(t, f, mainBotGitHubPRClose, `{"repository":"app","number":7}`); !isErr || !strings.Contains(text, "「请求批准」") {
 		t.Fatalf("pr close in confirm mode = %s", text)
 	}
 	f.session.ExecMode = assistantExecModeForApproval(AssistantApprovalAuto)
