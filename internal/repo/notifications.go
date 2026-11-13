@@ -2,8 +2,6 @@ package repo
 
 import (
 	"agentflow/internal/domain"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
@@ -308,8 +306,7 @@ func (r *NotificationsRepo) enqueueNotification(tx *gorm.DB, key string, binding
 	if !bot.Enabled || bot.Target == nil || bot.ProjectID != item.ProjectID {
 		return nil
 	}
-	sum := sha256.Sum256([]byte(key))
-	item.ID = hex.EncodeToString(sum[:])
+	item.ID = hexSHA256(key)
 	item.TargetID = bot.Target.ID
 	item.TargetName = bot.Target.Name
 	item.TargetType = bot.Target.Type
