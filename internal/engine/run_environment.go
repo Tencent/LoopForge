@@ -15,8 +15,9 @@ import (
 )
 
 // runEnvironment owns the single sandbox/workspace assigned to a workflow run.
-// SOP nodes serialize complete executions. Group tasks hold nodeMu only while
-// preparing the shared environment and use independent invocation configuration.
+// SOP nodes and group tasks hold nodeMu only while preparing the shared
+// environment (checkout, preparation scripts, inputs); parallel branches then
+// execute concurrently and are counted in activeExecutions.
 type runEnvironment struct {
 	sandbox              runtime.Sandbox
 	nodeMu               sync.Mutex
@@ -223,6 +224,7 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 		CodeBuddy: resolveCodeBuddyCredential(e.repo, userID),
 		GitToken:  resolveGitToken(e.repo, userID),
 	}
+	credentials.GitSSHKeys = e.repo.GitSSHKeysForRemotes(userID, sshRepositoryURLs(run.RepositoryContexts()))
 	identity := resolveGitIdentity(e.repo, userID)
 	credentials.GitUserName = identity.name
 	credentials.GitUserEmail = identity.email

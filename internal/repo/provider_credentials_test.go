@@ -94,7 +94,9 @@ func TestProviderUserCredentials(t *testing.T) {
 			}
 			u, _ := st.UserByLoginName(login)
 			codexURL, claudeURL := "https://codex.example/v1", "https://claude.example"
-			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKey: "codex-secret", CodexBaseURL: &codexURL, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: &claudeURL})
+			codexModels := []domain.CLIModel{{ID: "gpt-5.5", Name: "gpt-5.5"}}
+			claudeModels := []domain.CLIModel{{ID: "claude-sonnet", Name: "Sonnet"}}
+			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKey: "codex-secret", CodexBaseURL: &codexURL, CodexModels: &codexModels, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: &claudeURL, ClaudeCodeModels: &claudeModels})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,8 +109,8 @@ func TestProviderUserCredentials(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, ok := st.User(u.ID)
-			if !ok || got.CodexAPIKey != "codex-secret" || got.ClaudeCodeAPIKey != "claude-secret" || got.CodexBaseURL != codexURL || got.ClaudeCodeBaseURL != claudeURL {
-				t.Fatal("credentials did not survive refresh and partial update")
+			if !ok || got.CodexAPIKey != "codex-secret" || got.ClaudeCodeAPIKey != "claude-secret" || got.CodexBaseURL != codexURL || got.ClaudeCodeBaseURL != claudeURL || len(got.CodexModels) != 1 || got.CodexModels[0].ID != "gpt-5.5" || got.CodexModels[0].Name != "" || len(got.ClaudeCodeModels) != 1 || got.ClaudeCodeModels[0].Name != "Sonnet" {
+				t.Fatalf("credentials did not survive refresh and partial update: %+v %+v", got.CodexModels, got.ClaudeCodeModels)
 			}
 			{
 				var configRows int
@@ -134,14 +136,69 @@ func TestProviderUserCredentials(t *testing.T) {
 				t.Fatal("public user leaked credentials or lost configured state")
 			}
 			empty := ""
-			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKeyClear: true, ClaudeCodeAPIKeyClear: true, CodexBaseURL: &empty, ClaudeCodeBaseURL: &empty})
+			noModels := []domain.CLIModel{}
+			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKeyClear: true, ClaudeCodeAPIKeyClear: true, CodexBaseURL: &empty, ClaudeCodeBaseURL: &empty, CodexModels: &noModels, ClaudeCodeModels: &noModels})
 			if err != nil {
 				t.Fatal(err)
 			}
 			cleared, _ := st.User(u.ID)
-			if cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || cleared.GitToken != "git-secret" {
+			if cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || len(cleared.CodexModels) != 0 || len(cleared.ClaudeCodeModels) != 0 || cleared.GitToken != "git-secret" {
 				t.Fatal("clear operation did not isolate providers")
 			}
 		})
+	}
+}
+
+func TestCursorFamilyEffortsRoundTrip(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.PutUser(domain.User{LoginName: "cursor-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("cursor-owner")
+	models := []domain.CLIModel{
+		{ID: "widget", Name: "Widget", Efforts: map[string]string{"low": "widget-low", "medium": "widget", "xhigh": "widget-extra-high"}, DefaultEffort: "medium"},
+		{ID: "solo", Efforts: map[string]string{"ultra": "solo-ultra"}, DefaultEffort: "high"},
+		{ID: "plain-model"},
+	}
+	if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"cursor": {APIKey: "crsr_secret", Models: &models},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.User(user.ID)
+	saved := got.AgentCLICredentials["cursor"].Models
+	if len(saved) != 3 || saved[0].Efforts["xhigh"] != "widget-extra-high" || saved[0].DefaultEffort != "medium" || saved[1].DefaultEffort != "" || saved[2].Efforts != nil {
+		t.Fatalf("saved cursor catalog = %+v", saved)
+	}
+	// The catalog came from this key's plan; a new key drops it.
+	if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"cursor": {APIKey: "crsr_secret"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.User(user.ID); len(got.AgentCLICredentials["cursor"].Models) != 3 {
+		t.Fatal("saving the same key dropped the catalog")
+	}
+	if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"cursor": {APIKey: "crsr_other"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.User(user.ID); got.AgentCLICredentials["cursor"].Models != nil {
+		t.Fatalf("new key kept the old catalog: %+v", got.AgentCLICredentials["cursor"])
+	}
+	for name, bad := range map[string]domain.CLIModel{
+		"unknown effort": {ID: "widget", Efforts: map[string]string{"turbo": "widget-turbo"}},
+		"bad target":     {ID: "widget", Efforts: map[string]string{"low": "widget low"}},
+	} {
+		if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+			"cursor": {Models: &[]domain.CLIModel{bad}},
+		}}); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
 	}
 }

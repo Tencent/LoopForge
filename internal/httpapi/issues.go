@@ -130,9 +130,6 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		return
 	}
 	stored, _ := h.repo.Issue(issue.ID)
-	if stored.ID != "" {
-		go h.stream.autoClarifyIssue(stored.ID)
-	}
 	c.JSON(http.StatusOK, stored)
 }
 
@@ -292,9 +289,8 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			respond(c, err)
 			return
 		}
-		// Import scoring and auto-clarify are owned by TAPD import / create,
-		// not by issues_save. Binding SOP or repositories on a synced ticket
-		// must not gate it as "待澄清".
+		// Clarification is optional: saving a ticket never scores it or starts
+		// a round. Binding SOP or repositories must not invent a status.
 		if found {
 			keepExistingTrackerBinding(&v, existing)
 		} else {
@@ -317,7 +313,6 @@ func (h issuesHandlers) issues(c *gin.Context) {
 						return
 					}
 					stored, _ = h.repo.Issue(stored.ID)
-					go h.stream.autoClarifyIssue(stored.ID)
 				}
 				h.writeIssueView(c, 200, stored)
 				return
@@ -397,7 +392,7 @@ func mergeIssueEdit(v, existing domain.Issue) domain.Issue {
 	if v.PlaybookID == "" {
 		v.PlaybookID = existing.PlaybookID
 	}
-	if v.Clarification.Score == 0 && !v.Clarification.Passed && len(v.Clarification.Answers) == 0 {
+	if v.Clarification.Status == "" && strings.TrimSpace(v.Clarification.Summary) == "" && len(v.Clarification.History) == 0 {
 		v.Clarification = existing.Clarification
 	}
 	v.Operations = append([]domain.IssueOperation(nil), existing.Operations...)
@@ -432,7 +427,6 @@ var issueRoutes = map[string]issueRoute{
 	"/api/issues/:id":                     {handle: issuesHandlers.issueDetail, methods: []string{http.MethodGet, http.MethodDelete}},
 	"/api/issues/:id/comments":            {handle: issuesHandlers.addIssueComment, methods: []string{http.MethodPost}},
 	"/api/issues/:id/runs":                {handle: issuesHandlers.issueRuns, methods: []string{http.MethodGet}},
-	"/api/issues/:id/clarify":             {handle: issuesHandlers.assessIssueClarification, methods: []string{http.MethodPost}},
 	"/api/issues/:id/clarification":       {handle: issuesHandlers.submitIssueClarification, methods: []string{http.MethodPost}},
 	"/api/issues/:id/chat-clarify":        {handle: issuesHandlers.chatClarifyIssue, methods: []string{http.MethodGet, http.MethodPost}},
 	"/api/issues/:id/chat-clarify/cancel": {handle: issuesHandlers.cancelChatClarifyIssue, methods: []string{http.MethodPost}},
@@ -613,10 +607,6 @@ func clarificationComment(issue domain.Issue, summary string) string {
 	return fmt.Sprintf("%s\n\n%s\n\n---\n来源：%s `%s`，由 LoopForge 基于当前描述和用户回答生成。", clarificationHeading, strings.TrimSpace(summary), source, issue.ID)
 }
 
-func assessClarification(policy domain.ClarificationPolicy, answers map[string]string) domain.ClarificationAssessment {
-	return domain.AssessClarificationAnswers(policy, answers)
-}
-
 func (h issuesHandlers) bindIssueRepositories(v *domain.Issue) error {
 	ids := v.EffectiveRepositoryIDs()
 	if len(ids) == 0 {
@@ -652,6 +642,7 @@ type issueListQuery struct {
 
 func filterIssues(items []domain.Issue, q issueListQuery) []domain.Issue {
 	out := make([]domain.Issue, 0, len(items))
+	needle := strings.ToLower(strings.TrimSpace(q.Q))
 	for _, item := range items {
 		if q.ProjectID != "" && item.ProjectID != q.ProjectID {
 			continue
@@ -662,32 +653,11 @@ func filterIssues(items []domain.Issue, q issueListQuery) []domain.Issue {
 		if !csvContainsFold(q.Source, item.Source) {
 			continue
 		}
-		if q.Assignee != "" {
-			if strings.EqualFold(q.Assignee, "unassigned") {
-				if item.AssigneeUserID != 0 || strings.TrimSpace(item.AssigneeID) != "" {
-					continue
-				}
-			} else {
-				matched := false
-				if item.AssigneeUserID > 0 && strconv.FormatInt(item.AssigneeUserID, 10) == q.Assignee {
-					matched = true
-				} else if strings.EqualFold(item.AssigneeID, q.Assignee) {
-					matched = true
-				}
-				if !matched {
-					continue
-				}
-			}
+		if q.Assignee != "" && !issueMatchesAssignee(item, q.Assignee) {
+			continue
 		}
-		if q.Q != "" {
-			needle := strings.ToLower(strings.TrimSpace(q.Q))
-			hay := strings.ToLower(item.Title + " " + item.ID + " " + strconv.Itoa(item.Number) + " " + item.RequirementTAPDID())
-			if item.ExternalRef != nil {
-				hay += " " + strings.ToLower(item.ExternalRef.ExternalID)
-			}
-			if !strings.Contains(hay, needle) && !fuzzyIssueTitleMatch(item.Title, needle) {
-				continue
-			}
+		if q.Q != "" && !issueMatchesQuery(item, needle) {
+			continue
 		}
 		out = append(out, item)
 	}
@@ -701,6 +671,29 @@ func filterIssues(items []domain.Issue, q issueListQuery) []domain.Issue {
 		return out[i].ID > out[j].ID
 	})
 	return out
+}
+
+// issueMatchesAssignee reports whether item matches a non-empty assignee
+// filter: "unassigned" (case-insensitive) selects issues with no assignee,
+// otherwise the value matches the numeric user ID or the AssigneeID.
+func issueMatchesAssignee(item domain.Issue, assignee string) bool {
+	if strings.EqualFold(assignee, "unassigned") {
+		return item.AssigneeUserID == 0 && strings.TrimSpace(item.AssigneeID) == ""
+	}
+	if item.AssigneeUserID > 0 && strconv.FormatInt(item.AssigneeUserID, 10) == assignee {
+		return true
+	}
+	return strings.EqualFold(item.AssigneeID, assignee)
+}
+
+// issueMatchesQuery reports whether the lower-cased, trimmed needle appears in
+// the issue's searchable text or fuzzily matches its title.
+func issueMatchesQuery(item domain.Issue, needle string) bool {
+	hay := strings.ToLower(item.Title + " " + item.ID + " " + strconv.Itoa(item.Number) + " " + item.RequirementTAPDID())
+	if item.ExternalRef != nil {
+		hay += " " + strings.ToLower(item.ExternalRef.ExternalID)
+	}
+	return strings.Contains(hay, needle) || fuzzyIssueTitleMatch(item.Title, needle)
 }
 
 func fuzzyIssueTitleMatch(title, query string) bool {

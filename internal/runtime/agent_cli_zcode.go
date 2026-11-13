@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 )
@@ -73,7 +71,7 @@ func nonEmpty(value any) bool {
 // applyZCodeCredential gives ZCode the key as a personal provider file that
 // exists only until ZCode has read it: ZCode accepts a literal key and
 // nothing else, and the key must not stay on disk.
-func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
+func applyZCodeCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
 	// The private provider has no model of its own, so "CLI default" (sent as
 	// "default") must name a real one: BigModel's coding model on the default
 	// endpoint, while a custom endpoint has no model we could guess.
@@ -118,9 +116,14 @@ func applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model string, a
 
 // addZCodeKeyCleanupHook merges a SessionStart hook into ZCode's config,
 // keeping whatever the MCP configuration put there.
-func addZCodeKeyCleanupHook(home string) error {
+func addZCodeKeyCleanupHook(home AgentCLIHome) error {
 	document := map[string]any{}
-	data, err := os.ReadFile(filepath.Join(home, filepath.FromSlash(zcodeConfigPath)))
+	root, err := openAgentCLIHome(home)
+	if err != nil {
+		return err
+	}
+	data, err := root.ReadFile(zcodeConfigPath)
+	root.Close()
 	if err == nil {
 		err = json.Unmarshal(data, &document)
 	}
@@ -138,6 +141,7 @@ func addZCodeKeyCleanupHook(home string) error {
 	sessionStart, _ := events["SessionStart"].([]any)
 	events["SessionStart"] = append(sessionStart, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": zcodeRemoveKeyFile}}})
 	hooks["events"] = events
+	hooks["enabled"] = true
 	document["hooks"] = hooks
 	data, err = json.MarshalIndent(document, "", "  ")
 	if err != nil {

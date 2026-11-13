@@ -11,19 +11,8 @@ function renderProjectContext(projectIssues){
   $('#projectContextName').textContent=project?.name||'暂无项目';$('#projectContextDescription').textContent=project?.description||'工作台数据会按项目整体切换';
   const active=projectIssues.filter(i=>issueRunHealth(i)==='active').length,attention=projectIssues.filter(i=>issueRunHealth(i)==='attention').length,pendingMRs=projectIssues.reduce((n,i)=>n+pendingDeliveryMRCount(i),0),repo=(state.data.repositories||[]).find(r=>r.id===project?.defaultRepositoryId);
   const repoCount=(state.data.repositories||[]).filter(r=>r.projectId===project?.id).length;
-  $('#projectContextMetrics').innerHTML=`<button type="button" data-issue-filter="" class="${!state.issueRunFilter?'on':''}"><span>工作项</span><b>${projectIssues.length}</b></button><button type="button" data-issue-filter="active" class="${state.issueRunFilter==='active'?'on':''}"><span>正在推进</span><b>${active}</b></button><button type="button" data-issue-filter="attention" class="${attention?'danger':''} ${state.issueRunFilter==='attention'?'on':''}" title="点此只看澄清未达标、门禁失败、运行失败或已中断的工作项"><span>需要介入</span><b>${attention}</b></button><button type="button" data-issue-filter="mr" class="${state.issueRunFilter==='mr'?'on':''}" title="已提 MR 但还没合入的 MR 数（按 MR 计，点击只看涉及的需求）"><span>待处理 MR</span><b>${pendingMRs}</b></button><div class="project-default-sop"><span>代码仓库（${repoCount}）</span><b title="${escapeHTML(repo?.gongfengProjectId||'未绑定')}">默认：${escapeHTML(repo?.name||'未绑定')}</b></div>`;
+  $('#projectContextMetrics').innerHTML=`<button type="button" data-issue-filter="" class="${!state.issueRunFilter?'on':''}"><span>工作项</span><b>${projectIssues.length}</b></button><button type="button" data-issue-filter="active" class="${state.issueRunFilter==='active'?'on':''}"><span>正在推进</span><b>${active}</b></button><button type="button" data-issue-filter="attention" class="${attention?'danger':''} ${state.issueRunFilter==='attention'?'on':''}" title="点此只看待确认澄清结论、门禁失败、运行失败或已中断的工作项"><span>需要介入</span><b>${attention}</b></button><button type="button" data-issue-filter="mr" class="${state.issueRunFilter==='mr'?'on':''}" title="已提 MR 但还没合入的 MR 数（按 MR 计，点击只看涉及的需求）"><span>待处理 MR</span><b>${pendingMRs}</b></button><div class="project-default-sop"><span>代码仓库（${repoCount}）</span><b title="${escapeHTML(repo?.gongfengProjectId||'未绑定')}">默认：${escapeHTML(repo?.name||'未绑定')}</b></div>`;
   $('#projectContextMetrics').querySelectorAll('[data-issue-filter]').forEach(btn=>btn.onclick=()=>setIssueRunFilter(btn.dataset.issueFilter));
-}
-function defaultClarification(){return{enabled:true,skillId:'requirement-clarification',threshold:80,dimensions:[{id:'goal',name:'目标与价值',question:'要解决什么问题，预期产生什么业务价值？',weight:20,minLength:30},{id:'user',name:'用户与场景',question:'谁会在什么场景下使用？',weight:15,minLength:20},{id:'scope',name:'范围与边界',question:'本次包含什么、不包含什么？',weight:20,minLength:30},{id:'acceptance',name:'验收标准',question:'如何用可测试的条件判断需求完成？',weight:25,minLength:40},{id:'constraints',name:'约束与依赖',question:'有哪些技术约束、依赖、风险或截止时间？',weight:20,minLength:25}]}}
-function clarificationPolicy(project){return project?.clarification?.dimensions?.length?project.clarification:defaultClarification()}
-function requirementNeedsClarification(i){
-  if(!i||i.kind!=='requirement')return false;
-  if(!i.clarification?.gated)return false;
-  if(i.clarification?.status==='analyzing'||i.clarification?.status==='ready')return false;
-  if(latestIssueTask(i)||latestIssueRun(i))return false;
-  const project=(state.data.projects||[]).find(p=>p.id===i.projectId);
-  if(!clarificationPolicy(project).enabled)return false;
-  return !i.clarification?.passed;
 }
 function clarificationNeedsConfirm(i){
   const c=i?.clarification||{};
@@ -115,7 +104,7 @@ function parseProjectAdminRoute(hash){
 }
 function projectAdminHash(id,tab){return id?`#/projects/${encodeURIComponent(id)}${id!=='new'&&tab&&tab!=='basic'?'/'+tab:''}`:'#/projects'}
 function projectPeopleIds(p){return [...new Set([p?.ownerId,...(p?.members||[]).map(m=>m.userId)].map(Number).filter(Boolean))]}
-function blankProjectDraft(){return {id:'',key:'',name:'',description:'',color:PROJECT_SWATCHES[0],ownerId:Number(state.currentUser?.id)||'',workflowId:'generic-backend-delivery',defaultRepositoryId:'',businessDomainId:'',members:[],clarification:defaultClarification(),runEval:defaultRunEval(),tapdWorkspaceId:'',tapdIterationId:'',tapdClear:false}}
+function blankProjectDraft(){return {id:'',key:'',name:'',description:'',color:PROJECT_SWATCHES[0],ownerId:Number(state.currentUser?.id)||'',workflowId:'generic-backend-delivery',defaultRepositoryId:'',businessDomainId:'',members:[],runEval:defaultRunEval(),tapdWorkspaceId:'',tapdIterationId:'',tapdClear:false}}
 function projectDraftFrom(project){const d=clone(project)||{};d.members=(d.members||[]).filter(m=>Number(m.userId)!==Number(d.ownerId)).map(m=>({userId:Number(m.userId)||0,role:'member'}));d.tapdClear=false;return d}
 function projectDraftSignature(d){
   d=d||{};
@@ -170,7 +159,7 @@ function projectColorHTML(color){
   return `<div class="pa-swatches">${PROJECT_SWATCHES.map(c=>`<button type="button" class="pa-sw${c===String(cur).toLowerCase()?' on':''}" data-pa-color="${c}" style="background:${c};color:${c}" aria-label="品牌色 ${c}" aria-pressed="${c===String(cur).toLowerCase()}"></button>`).join('')}<label class="pa-sw pa-sw-custom${preset?'':' on'}" title="自定义颜色" style="color:${cur}${preset?'':`;background:${cur}`}"><input type="color" data-pa-color-custom value="${cur.length===7?cur:'#536dfe'}" aria-label="自定义品牌色"></label><code class="pa-sw-hex" data-pa-color-hex>${escapeHTML(String(cur).toUpperCase())}</code><input type="hidden" name="color" value="${escapeHTML(cur)}"></div>`;
 }
 function repoCardHTML(r,isDefault){
-  const info=parseGongfengRepoURL(r.webUrl||r.cloneUrl||r.gongfengProjectId||''),path=info?.project||r.gongfengProjectId||'',web=info?.webUrl||'',name=r.name||info?.name||path||r.id;
+  const info=parseGongfengRepoURL(r.provider==='ssh'?r.cloneUrl:r.webUrl||r.cloneUrl||r.gongfengProjectId||''),path=info?.project||r.gongfengProjectId||'',web=r.provider==='ssh'?r.webUrl||'':info?.webUrl||'',name=r.name||info?.name||path||r.id;
   const updated=typeof knownTime==='function'?knownTime(r.updatedAt):null;
   return `<article class="pa-rc" data-repo-card="${escapeHTML(r.id)}">
     <div class="pa-rc-top"><span class="pa-rc-ic">${paIcon('repo',15)}</span><div class="pa-rc-m"><h4 title="${escapeHTML(name)}">${escapeHTML(name)}</h4><code title="${escapeHTML(repoDisplayPath(info,path))}">${escapeHTML(repoDisplayPath(info,path))}</code></div><div class="pa-rc-acts"><button type="button" class="pa-icon-btn" data-repo-edit="${escapeHTML(r.id)}" title="编辑" aria-label="编辑仓库 ${escapeHTML(name)}">${paIcon('edit')}</button><button type="button" class="pa-icon-btn danger" data-repo-delete="${escapeHTML(r.id)}" title="删除" aria-label="删除仓库 ${escapeHTML(name)}">${paIcon('trash')}</button></div></div>
@@ -179,7 +168,7 @@ function repoCardHTML(r,isDefault){
   </article>`;
 }
 function projectRepoListHTML(repos,defaultId){
-  if(!repos.length)return projectAdminEmptyHTML('repo','还没有绑定代码仓库','绑定后，Agent 执行 SOP 时会自动克隆仓库并在工作分支上提交。第一个仓库会自动设为默认。',`<ol class="pa-steps"><li><span>1</span>粘贴 GitHub 仓库地址</li><li><span>2</span>确认分支</li><li><span>3</span>保存即生效</li></ol><button type="button" class="button primary" data-repo-add>＋ 添加第一个仓库</button>`);
+  if(!repos.length)return projectAdminEmptyHTML('repo','还没有绑定代码仓库','绑定后，Agent 执行 SOP 时会自动克隆仓库并在工作分支上提交。第一个仓库会自动设为默认。',`<ol class="pa-steps"><li><span>1</span>粘贴 GitHub 链接或 Git SSH 地址</li><li><span>2</span>确认分支</li><li><span>3</span>保存即生效</li></ol><button type="button" class="button primary" data-repo-add>＋ 添加第一个仓库</button>`);
   return `<div class="pa-rgrid">${repos.map(r=>repoCardHTML(r,r.id===defaultId)).join('')}<button type="button" class="pa-rc-add" data-repo-add><i>${paIcon('plus',14)}</i><b>添加仓库</b></button></div>`;
 }
 function projectAdminFormHTML(d,ctx){
@@ -196,7 +185,6 @@ function projectAdminFormHTML(d,ctx){
       ${creating&&!Number(state.currentUser?.id)?paRow('项目 Owner','项目的默认责任人，创建后可在「项目成员」中调整。',userCombobox('ownerId',d.ownerId,'请选择项目 Owner'),{required:true}):''}
       ${paRow('默认 SOP','用于新需求的默认流程；已关联 SOP 的需求保留原绑定。',projectDefaultSOPField(d),{required:true})}
       ${paRow('默认代码仓库',repoDesc,`<select name="defaultRepositoryId" class="select" ${repos.length?'':'disabled'}><option value="">暂未绑定</option>${repoOptions}</select>`)}
-      ${paRow('主业务域','用于业务域交付报表归类。',projectBusinessDomainField(d))}
     </div>`);
   const owner=userById(d.ownerId);
   const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><span class="member-kind">成员</span>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
@@ -278,7 +266,7 @@ function syncProjectIdentity(){
 function captureProjectAdminForm(){
   const form=$('#projectAdminForm'),d=state.projectDraft;if(!form||!d||form.dataset.projectFor!==state.projectDraftFor)return;
   const el=form.elements;
-  ['name','description','color','workflowId','defaultRepositoryId','businessDomainId','tapdWorkspaceId','tapdIterationId','key'].forEach(n=>{if(el[n])d[n]=el[n].value});
+  ['name','description','color','workflowId','defaultRepositoryId','tapdWorkspaceId','tapdIterationId','key'].forEach(n=>{if(el[n])d[n]=el[n].value});
   if(state.projectAdminDetailId==='new'&&el.id)d.id=el.id.value.trim();
   if(el.tapdClear)d.tapdClear=!!el.tapdClear.checked;
   if(el.ownerId){
@@ -519,7 +507,7 @@ function applyProjectDefaultSOP(project,workflowId){
 function buildProjectPayload(base,fields={}){
   base=base||{};
   const ownerId=Number(fields.ownerId??base.ownerId)||0,id=String(fields.id??base.id??'').trim(),rawDefault=String(fields.defaultRepositoryId??base.defaultRepositoryId??'');
-  const value={...base,id,key:String(fields.key??base.key??'').trim().toUpperCase(),name:String(fields.name??base.name??'').trim(),description:fields.description??base.description??'',color:fields.color||base.color||PROJECT_SWATCHES[0],ownerId,workflowId:fields.workflowId??base.workflowId??'',defaultRepositoryId:rawDefault&&(state.data.repositories||[]).some(r=>r.id===rawDefault&&r.projectId===id)?rawDefault:'',members:(fields.members??base.members??[]).map(m=>({userId:Number(m.userId)||0,role:'member'})).filter(m=>m.userId!==ownerId),clarification:base.clarification||defaultClarification(),runEval:base.runEval,tapdWorkspaceId:String(fields.tapdWorkspaceId??base.tapdWorkspaceId??'').trim(),tapdIterationId:String(fields.tapdIterationId??base.tapdIterationId??'').trim()};
+  const value={...base,id,key:String(fields.key??base.key??'').trim().toUpperCase(),name:String(fields.name??base.name??'').trim(),description:fields.description??base.description??'',color:fields.color||base.color||PROJECT_SWATCHES[0],ownerId,workflowId:fields.workflowId??base.workflowId??'',defaultRepositoryId:rawDefault&&(state.data.repositories||[]).some(r=>r.id===rawDefault&&r.projectId===id)?rawDefault:'',members:(fields.members??base.members??[]).map(m=>({userId:Number(m.userId)||0,role:'member'})).filter(m=>m.userId!==ownerId),runEval:base.runEval,tapdWorkspaceId:String(fields.tapdWorkspaceId??base.tapdWorkspaceId??'').trim(),tapdIterationId:String(fields.tapdIterationId??base.tapdIterationId??'').trim()};
   applyProjectDefaultSOP(value,value.workflowId);
   for(const k of ['businessDomainId','tapdClear','repoRows','repoDrafts','gitToken','codeBuddyApiKey','codeBuddyInternetEnvironment'])delete value[k];
   if(fields.tapdClear)value.tapdClear=true;
@@ -543,51 +531,22 @@ function storeSavedProject(result,value){
   const i=projects.findIndex(p=>p.id===stored.id);if(i>=0)projects[i]=stored;else projects.push(stored);
   return stored;
 }
-// Returns an error message; the project itself is already saved when this runs.
-async function saveProjectBusinessDomain(projectId,targetDomainId,expectedDomainId){
-  if(targetDomainId===expectedDomainId)return '';
-  try{
-    const assigned=await api('/api/projects/'+encodeURIComponent(projectId)+'/business-domain',{method:'PUT',body:JSON.stringify({businessDomainId:targetDomainId,expectedDomainId})});
-    const projects=state.data.projects||[],pi=projects.findIndex(p=>p.id===projectId);if(pi>=0&&assigned&&assigned.id)projects[pi]=assigned;
-    businessState.report=null;businessState.seq++;return '';
-  }catch(err){return err.message||String(err)}
-}
 async function saveProjectAdmin(e){
   e.preventDefault();
   const f=e.currentTarget,el=f.elements,projects=state.data.projects||[],creating=state.projectAdminDetailId==='new';
   const projectId=String(el.id?.value||'').trim(),saved=projects.find(p=>p.id===projectId);
   const base=clone(state.projectDraft||saved||{});
   const value=buildProjectPayload(base,{id:projectId,key:el.key?.value||'',name:el.name?.value||'',description:el.description?.value,color:el.color?.value,ownerId:el.ownerId?el.ownerId.value:undefined,workflowId:el.workflowId?.value,defaultRepositoryId:el.defaultRepositoryId?.value||'',tapdWorkspaceId:el.tapdWorkspaceId?.value,tapdIterationId:el.tapdIterationId?.value,tapdClear:!!el.tapdClear?.checked});
-  const expectedDomainId=saved?.businessDomainId||'',targetDomainId=el.businessDomainId?.value??expectedDomainId;
   const invalid=validateProjectPayload(value,{creating,projects,workflows:state.data.workflows||[],saved});
   if(invalid)return invalid.field?projectAdminFail(f,invalid.field,invalid.message):toast(invalid.message,'err');
   const submit=f.querySelector?.('[data-pa-submit]');if(submit)submit.disabled=true;
   try{
     const result=await api('/api/projects',{method:creating?'POST':'PUT',body:JSON.stringify(value)});
     const savedProjectId=storeSavedProject(result,value).id||value.id;
-    const domainFailure=await saveProjectBusinessDomain(savedProjectId,targetDomainId,expectedDomainId),domainError=domainFailure?'项目设置已保存，业务域保存失败：'+domainFailure:'';
     if(!state.projectFilter){state.projectFilter=savedProjectId;localStorage.setItem('agentflow.activeProject',savedProjectId)}
     projectAdminAfterSave(savedProjectId,creating);
     renderAll();
-    toast(domainError||(creating?'项目已创建，下一步绑定代码仓库':'项目设置已保存'),domainError?'err':'ok');
+    toast(creating?'项目已创建，下一步绑定代码仓库':'项目设置已保存','ok');
   }catch(err){toast(err.message,'err')}
   finally{if(submit)submit.disabled=false}
-}
-
-// Project attribution is edited here; the business-domain page owns the catalog and reports.
-function projectBusinessDomainField(project){
-  const saved=(state.data.projects||[]).find(p=>p.id===project.id);
-  const admin=!state.authRequired||isPlatformAdmin();
-  const uid=Number(state.currentUser?.id)||0;
-  const canSetInitialDomain=uid>0&&(!saved||(!saved.businessDomainId&&Number(saved.ownerId)===uid));
-  const canAssign=admin||canSetInitialDomain;
-  const current=project.businessDomainId||'';
-  const domains=state.data.businessDomains||[];
-  const options=domains
-    .filter(d=>d.active||d.id===current)
-    .map(d=>`<option value="${escapeHTML(d.id)}" ${d.id===current?'selected':''}>${escapeHTML(d.name)}${d.active?'':'（已停用）'}</option>`)
-    .join('');
-  const missing=current&&!domains.some(d=>d.id===current)
-    ?`<option value="${escapeHTML(current)}" selected>${escapeHTML(current)}</option>`:'';
-  return `<select id="projectBusinessDomainSelect" name="businessDomainId" class="select" ${canAssign?'':'disabled'}><option value="">未分类</option>${options}${missing}</select>`;
 }

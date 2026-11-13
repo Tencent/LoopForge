@@ -31,8 +31,10 @@ if (typeof window !== "undefined") {
   globalThis.requestAnimationFrame ??= (callback) =>
     setTimeout(() => callback(performance.now()), 0);
   globalThis.cancelAnimationFrame ??= clearTimeout;
-  URL.createObjectURL ??= () => "blob:test";
-  URL.revokeObjectURL ??= () => {};
+  // Vitest 4 exposes Node's native Blob URL store, which returns a
+  // non-deterministic blob:nodedata URL. Tests assert a stable object URL.
+  URL.createObjectURL = () => "blob:test";
+  URL.revokeObjectURL = () => {};
   Element.prototype.animate ??= () => ({
     cancel() {},
     finish() {},

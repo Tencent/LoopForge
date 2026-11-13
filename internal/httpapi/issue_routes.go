@@ -50,44 +50,14 @@ func (h issuesHandlers) issueRuns(c *gin.Context, issue domain.Issue) {
 	c.JSON(200, runSummaries(issueRuns))
 }
 
-func (h issuesHandlers) assessIssueClarification(c *gin.Context, issue domain.Issue) {
-	var request struct {
-		Answers map[string]string `json:"answers"`
-	}
-	if !decode(c, &request) {
-		return
-	}
-	project, found := h.repo.Project(issue.ProjectID)
-	if !found {
-		c.JSON(400, map[string]string{"error": "project not found"})
-		return
-	}
-	assessment := assessClarification(project.Clarification, request.Answers)
-	if !issue.Clarification.StartedAt.IsZero() {
-		assessment.StartedAt = issue.Clarification.StartedAt
-	} else {
-		assessment.StartedAt = time.Now().UTC()
-	}
-	assessment.Gated = true
-	issue.Kind = "requirement"
-	issue.Clarification = assessment
-	if err := h.repo.PutIssue(issue); err != nil {
-		respond(c, err)
-		return
-	}
-	c.JSON(200, assessment)
-}
-
 // clarificationSubmission is the clarify panel's save payload: a draft
 // (Ready false), a final summary (Ready true), or a write-back retry.
 type clarificationSubmission struct {
-	Summary    string                         `json:"summary"`
-	Ready      bool                           `json:"ready"`
-	History    []domain.ClarificationMessage  `json:"history"`
-	Questions  []domain.ClarificationQuestion `json:"questions"`
-	Dimensions map[string]int                 `json:"dimensions"`
-	Missing    []string                       `json:"missing"`
-	Retry      bool                           `json:"retry"`
+	Summary   string                         `json:"summary"`
+	Ready     bool                           `json:"ready"`
+	History   []domain.ClarificationMessage  `json:"history"`
+	Questions []domain.ClarificationQuestion `json:"questions"`
+	Retry     bool                           `json:"retry"`
 }
 
 func (h issuesHandlers) submitIssueClarification(c *gin.Context, issue domain.Issue) {
@@ -95,8 +65,7 @@ func (h issuesHandlers) submitIssueClarification(c *gin.Context, issue domain.Is
 	if !decode(c, &request) {
 		return
 	}
-	project, found := h.repo.Project(issue.ProjectID)
-	issue, err := applyClarificationSubmission(issue, project, found, request, time.Now().UTC())
+	issue, err := applyClarificationSubmission(issue, request)
 	if err != nil {
 		respond(c, err)
 		return
@@ -138,11 +107,11 @@ func (h issuesHandlers) submitIssueClarification(c *gin.Context, issue domain.Is
 }
 
 // applyClarificationSubmission updates the issue's clarification state for a
-// submission: drafts only record progress, a final summary is scored against
-// the project's policy and appended to the description, and final/retry
+// submission: drafts only record progress, a final summary is appended to the
+// description, and final/retry
 // submissions mark tracker write-back pending unless this exact summary was
 // already written back.
-func applyClarificationSubmission(issue domain.Issue, project domain.Project, projectFound bool, request clarificationSubmission, now time.Time) (domain.Issue, error) {
+func applyClarificationSubmission(issue domain.Issue, request clarificationSubmission) (domain.Issue, error) {
 	summary := strings.TrimSpace(request.Summary)
 	if request.Ready && !request.Retry && summary == "" {
 		return issue, HTTPError{Status: http.StatusBadRequest, Message: "clarification summary is required"}
@@ -154,29 +123,6 @@ func applyClarificationSubmission(issue domain.Issue, project domain.Project, pr
 		assessment.Questions = request.Questions
 		if request.Ready {
 			assessment.Status = domain.ClarificationReady
-			dimensions := clarificationRatingDimensions(issue, project, projectFound)
-			score, rated := scoreClarificationDimensions(dimensions, request.Dimensions)
-			assessment.Score = score
-			assessment.Dimensions = rated
-			assessment.Missing = trimClarificationMissing(request.Missing)
-			if len(assessment.Missing) == 0 {
-				for _, dim := range dimensions {
-					if rated[dim.ID] < 100 {
-						assessment.Missing = append(assessment.Missing, dim.ID)
-					}
-				}
-			}
-			if isBugStyleWorkItem(issue) {
-				assessment.Passed = true
-			} else {
-				policy := domain.DefaultClarificationPolicy()
-				if projectFound {
-					policy = domain.EffectiveClarificationPolicy(project.Clarification)
-				}
-				assessment.Passed = domain.ClarificationPassed(policy, score)
-				assessment.Gated = true
-			}
-			assessment.AssessedAt = now
 			promoteClarifiedIssueTodo(&issue)
 		} else {
 			assessment.Status = "in_progress"
@@ -378,17 +324,21 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 		detail = "重新运行 SOP"
 	}
 	_, _ = h.appendStoredOperation(c, issue.ID, "dispatch", detail)
-	c.JSON(201, task)
+	c.JSON(201, publicTask(task))
 }
 
-// deleteIssue checks the complete history before cleaning failed/cancelled runs.
+// deleteIssue checks all execution history before cleaning any settled run.
 func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
+	mode := repo.IssueDeleteNormal
+	if c.Query("force") == "true" {
+		mode = repo.IssueDeleteForce
+	}
 	// Same as close: Task status trails a just-cancelled Run until the next
 	// sync, which would answer 409 "正在执行 SOP" for a stopped requirement.
 	if h.tasks != nil {
 		h.tasks.settleIssueTasks(issue.ID)
 	}
-	ids, err := h.repo.IssueDeletionRuns(issue.ID)
+	ids, err := h.repo.IssueDeletionRuns(issue.ID, mode)
 	if err == nil {
 		for _, id := range ids {
 			if err = h.engine.DeleteRun(id); err != nil {
@@ -397,12 +347,24 @@ func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
 		}
 	}
 	if err == nil {
-		err = h.repo.DeleteIssue(issue.ID)
+		err = h.repo.DeleteIssueAfterRunCleanup(issue.ID, mode)
 	}
 	if err != nil {
 		switch {
-		case errors.Is(err, repo.ErrIssueBusy), errors.Is(err, repo.ErrIssueSucceeded):
-			c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+		case errors.Is(err, repo.ErrIssueForceRequired):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "deletionRequiresForce": true})
+		case errors.Is(err, repo.ErrIssueBusy):
+			// Report the same concrete reason shown by list/detail affordances,
+			// including when execution history changed after the menu was opened.
+			if current, ok := h.repo.Issue(issue.ID); ok {
+				if states, checkErr := h.repo.IssueDeletionStates([]domain.Issue{current}); checkErr == nil {
+					if block := states[issue.ID].Block; block != nil {
+						c.JSON(http.StatusConflict, gin.H{"error": block.Reason, "deletionBlock": block})
+						return
+					}
+				}
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		case errors.Is(err, repo.ErrIssueNotFound):
 			c.JSON(http.StatusNotFound, map[string]string{"error": "issue not found"})
 		default:

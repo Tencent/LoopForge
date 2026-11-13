@@ -9,15 +9,13 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
     const issue={...state.data.issues[0],source:'tapd',status:'backlog',priority:'high',
       externalRef:{externalId:'T-1',externalUrl:'https://tapd.example/T-1'},
       repositoryIds:['repo-1'],baseBranch:'feature/chart',
-      clarification:{status:'in_progress',score:65,dimensions:{goal:80,scope:55},
-        missing:['scope'],questions:[
+      clarification:{status:'in_progress',questions:[
           {question:'Browser?',options:['Chrome','Safari'],multiSelect:false},
           {question:'Checks?',options:['Unit','E2E'],multiSelect:true}],
         history:[
           {role:'assistant',content:JSON.stringify({questions:[{question:'Browser?'}]})},
           {role:'user',content:'Safari'}]}};
-    const project={...state.data.projects[0],clarificationPolicy:{threshold:75,dimensions:[
-      {id:'goal',name:'目标'},{id:'scope',name:'范围'}]}};
+    const project={...state.data.projects[0]};
     state.data.projects=[project];
     state.issueDetailData={issue,comments:[
       {authorType:'agent',body:'Automated note',createdAt:'2026-01-01T01:02:03Z'}],
@@ -40,7 +38,7 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
       visible:clarifyVisibleSummary(protocol),
       hidden:clarifyThoughtShouldHide(protocol),
       recovered:recoverClarifyView({status:'in_progress',summary:protocol,questions:[]}),
-      score:clarifyScoreHTML(issue,project),
+      pane:clarifyPane(issue,project),
       overview:clarificationOverviewCard(issue),
       operations:operationsPane({...issue,createdAt:'2026-01-01',operations:[
         {at:'2026-01-03',action:'update',actor:'Alice',detail:'changed title'}]}),
@@ -49,8 +47,6 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
         {id:'a1',nodeId:'n1',name:'Report',path:'report.md',attempt:2,size:2048,sha256:'abcdef123456'}]}}),
       delivery:deliveryPane(issue,state.issueDetailData),
       acceptance:acceptancePane(issue,state.issueDetailData),
-      dimensions:issueClarifyDimensions({...issue,source:'gongfeng'},project).map(x=>x.id),
-      levels:[clarifyScoreLevel(90),clarifyScoreLevel(70),clarifyScoreLevel(20)],
       labels:[activityEventLabel('node.failed'),activityEventLabel('run.custom'),issueOperationLabel('reopen')],
       badTime:formatActivityTime('not-a-date')
     };
@@ -64,8 +60,8 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
   assert.equal(result.visible, 'prefix');
   assert.equal(result.hidden, true);
   assert.equal(result.recovered.questions[0].question, 'OS?');
-  assert.match(result.score, /65/);
-  assert.match(result.score, /范围/);
+  assert.doesNotMatch(result.pane, /信息完整度|准入线|clarify-score/);
+  assert.match(result.pane, /只围绕这张单本身/);
   assert.match(result.overview, /继续/);
   assert.match(result.operations, /编辑需求|changed title/);
   assert.match(result.activity, /Automated note/);
@@ -73,10 +69,69 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
   assert.match(result.artifacts, /Report/);
   assert.match(result.delivery, /feature\/chart/);
   assert.match(result.acceptance, /门禁失败/);
-  assert.deepEqual(result.dimensions, ['phenomenon','impact','expected','acceptance','constraints']);
-  assert.deepEqual(result.levels, ['good','fair','weak']);
   assert.deepEqual(result.labels, ['节点失败','运行 · custom','重新打开']);
   assert.equal(result.badTime, '—');
+});
+
+test('acceptance gates follow the SOP edges, so a node inserted by a SOP update shows where it runs', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const result = structuredClone(app.evaluate(`(() => {
+    // SOP v2 inserted "preview" between "test" and "accept"; the editor appended
+    // it to the nodes array, and refresh-sop keeps that array order.
+    const wf={id:'flow-1',
+      nodes:[{id:'design',name:'方案设计',type:'agent'},{id:'test',name:'测试验证',type:'agent'},
+        {id:'accept',name:'人工验收',type:'approval'},{id:'summary',name:'交付汇总',type:'agent'},
+        {id:'preview',name:'构建静态站点',type:'agent'}],
+      edges:[{source:'design',target:'test'},{source:'test',target:'preview'},
+        {source:'preview',target:'accept'},{source:'accept',target:'summary'}]};
+    const run={id:'run-v2',status:'waiting',workflowId:'flow-1',workflowSnapshot:wf,
+      nodes:{design:{status:'succeeded'},test:{status:'succeeded'},preview:{status:'succeeded'},
+        accept:{status:'waiting_approval'},summary:{status:'pending'}}};
+    const issue={...state.data.issues[0],source:'manual'};
+    const html=acceptancePane(issue,{issue,run,task:null,requirement:null});
+    const names=html.split('<span class="node-name">').slice(1).map(part=>part.split('<')[0]);
+    const cyclic={...wf,edges:[...wf.edges,{source:'summary',target:'design'}]};
+    return {names,
+      unordered:nodesInExecutionOrder({nodes:wf.nodes}).map(n=>n.id),
+      cyclic:nodesInExecutionOrder(cyclic).map(n=>n.id)};
+  })()`));
+  assert.deepEqual(result.names, ['方案设计','测试验证','构建静态站点','人工验收','交付汇总']);
+  assert.deepEqual(result.unordered, ['design','test','accept','summary','preview']);
+  assert.equal(result.cyclic.length, 5);
+  assert.deepEqual([...result.cyclic].sort(), ['accept','design','preview','summary','test']);
+});
+
+test('acceptance gate ordering ignores self-loops and edges to deleted nodes, and keeps degenerate SOPs as stored', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const result = structuredClone(app.evaluate(`(() => {
+    const ids=wf=>nodesInExecutionOrder(wf).map(n=>n.id);
+    const nodes=[{id:'c'},{id:'a'},{id:'b'}];
+    return {
+      // A self-loop and an edge from/to a node removed in a later SOP version
+      // must not block the real order a -> b -> c.
+      dangling:ids({nodes,edges:[{source:'a',target:'b'},{source:'b',target:'c'},
+        {source:'a',target:'a'},{source:'gone',target:'a'},{source:'a',target:'gone'}]}),
+      // Only ignorable edges: stable array order.
+      onlyIgnored:ids({nodes,edges:[{source:'b',target:'b'},{source:'gone',target:'c'}]}),
+      // Diamond: ties are broken by array order.
+      diamond:ids({nodes:[{id:'end'},{id:'right'},{id:'left'},{id:'start'}],
+        edges:[{source:'start',target:'left'},{source:'start',target:'right'},
+          {source:'left',target:'end'},{source:'right',target:'end'}]}),
+      single:ids({nodes:[{id:'only'}],edges:[{source:'x',target:'only'}]}),
+      missingID:ids({nodes:[{id:'b'},{name:'no id'},{id:'a'}],edges:[{source:'a',target:'b'}]}).map(id=>id??null),
+      empty:ids(undefined),
+      noNodes:ids({edges:[{source:'a',target:'b'}]}),
+    };
+  })()`));
+  assert.deepEqual(result.dangling, ['a', 'b', 'c']);
+  assert.deepEqual(result.onlyIgnored, ['c', 'a', 'b']);
+  assert.deepEqual(result.diamond, ['start', 'right', 'left', 'end']);
+  assert.deepEqual(result.single, ['only']);
+  assert.deepEqual(result.missingID, ['b', null, 'a']);
+  assert.deepEqual(result.empty, []);
+  assert.deepEqual(result.noNodes, []);
 });
 
 test('drawer actions write back clarification and resync TAPD with API payloads', async (t) => {
@@ -90,7 +145,7 @@ test('drawer actions write back clarification and resync TAPD with API payloads'
   app.router.post('/api/issues/issue-1/clarification', written);
   app.router.post('/api/issues/issue-1/resync-tapd', synced);
   app.router.post('/api/issues/issue-1/chat-clarify', {
-    issue: { ...written, clarification: { status: 'ready', score: 88, summary: 'Clarified', writeBackStatus: 'succeeded' } },
+    issue: { ...written, clarification: { status: 'ready', summary: 'Clarified', writeBackStatus: 'succeeded' } },
     ready: true
   });
   app.router.get('/api/issues/issue-1/chat-clarify', {}, 404);

@@ -233,10 +233,21 @@
 .chat-shell .session-status[data-session-status="completed"] { color: #29815d; }
 .chat-shell .session-status[data-session-status="failed"] { color: #ce4444; }
 .chat-shell .session-status[data-session-status="interrupted"] { color: #b87819; }
+.chat-shell .session-status[data-session-status="unread"] { color: #3b82f6; }
 [data-theme="dark"] .chat-shell .session-status[data-session-status="running"] { color: #9cafff; }
 [data-theme="dark"] .chat-shell .session-status[data-session-status="completed"] { color: #65bd98; }
 [data-theme="dark"] .chat-shell .session-status[data-session-status="failed"] { color: #f38989; }
 [data-theme="dark"] .chat-shell .session-status[data-session-status="interrupted"] { color: #e7b76b; }
+[data-theme="dark"] .chat-shell .session-status[data-session-status="unread"] { color: #6ea2ff; }
+/* A completed reply the reader has not opened yet (Codex's unread dot). */
+.chat-shell .session-unread-dot {
+  display: block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .chat-shell .session-link > .pin-mark {
   flex: none;
   margin: 0;

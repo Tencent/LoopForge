@@ -19,12 +19,11 @@ type Project struct {
 	SOPPlaybooks []SOPPlaybook `json:"sopPlaybooks,omitempty"`
 	// SOPBindings is the legacy single playbook. Empty SOPPlaybooks still
 	// expose it as the default combo so old projects keep working.
-	SOPBindings         []IssueSOPBinding   `json:"sopBindings,omitempty"`
-	DefaultRepositoryID string              `json:"defaultRepositoryId,omitempty"`
-	OwnerID             int64               `json:"ownerId,omitempty"`
-	Members             []ProjectMember     `json:"members,omitempty"`
-	Clarification       ClarificationPolicy `json:"clarification"`
-	RunEval             RunEvalPolicy       `json:"runEval,omitempty"`
+	SOPBindings         []IssueSOPBinding `json:"sopBindings,omitempty"`
+	DefaultRepositoryID string            `json:"defaultRepositoryId,omitempty"`
+	OwnerID             int64             `json:"ownerId,omitempty"`
+	Members             []ProjectMember   `json:"members,omitempty"`
+	RunEval             RunEvalPolicy     `json:"runEval,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`
@@ -64,20 +63,8 @@ type ProjectMember struct {
 	Role   string `json:"role"` // maintainer, member, viewer
 }
 
-type ClarificationDimension struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Question  string `json:"question"`
-	Weight    int    `json:"weight"`
-	MinLength int    `json:"minLength"`
-}
-
-type ClarificationPolicy struct {
-	Enabled    bool                     `json:"enabled"`
-	SkillID    string                   `json:"skillId,omitempty"`
-	Threshold  int                      `json:"threshold"`
-	Dimensions []ClarificationDimension `json:"dimensions,omitempty"`
-}
+// RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
+const RepositoryProviderSSH = "ssh"
 
 type Repository struct {
 	ID                 string    `json:"id"`
@@ -104,7 +91,18 @@ type Repository struct {
 func PublicRepository(r Repository) Repository {
 	r.GitTokenConfigured = false
 	r.GitToken = ""
+	// Rows saved before credentials were rejected may still embed them.
+	r.CloneURL = StripURLCredentials(r.CloneURL)
+	r.WebURL = StripURLCredentials(r.WebURL)
 	return r
+}
+
+// PublicRepositoryContext drops URL credentials from a run or task snapshot
+// shown to readers; the stored snapshot keeps them so legacy clones work.
+func PublicRepositoryContext(rc RepositoryContext) RepositoryContext {
+	rc.CloneURL = StripURLCredentials(rc.CloneURL)
+	rc.WebURL = StripURLCredentials(rc.WebURL)
+	return rc
 }
 
 func PublicRepositories(items []Repository) []Repository {

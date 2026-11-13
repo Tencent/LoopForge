@@ -16,6 +16,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/managedcli"
 	"agentflow/internal/runtime"
 
@@ -224,7 +225,10 @@ func resolveCodeBuddyBin() (string, error) {
 			return c, nil
 		}
 	}
-	return "", fmt.Errorf("codebuddy 可执行文件未找到（PATH 及常见安装路径均无）；可设置 AGENTFLOW_CODEBUDDY_BIN 指定绝对路径")
+	if path, ok := runtime.OnDemandCLIPath("codebuddy"); ok {
+		return path, nil
+	}
+	return "", assistantCLIMissingError{engine: assistantEngineCodeBuddy, binary: "codebuddy"}
 }
 
 // fileExecutable reports whether path is a regular file with an executable bit.
@@ -305,7 +309,20 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	}
 	// Resolve the configured default before choosing a cache. Changing a
 	// repository's main branch must not reuse its previous branch's checkout.
-	identity := sha256.Sum256([]byte(repo.ID + "\x00" + resolvedBranch))
+	cacheKey := repo.ID + "\x00" + resolvedBranch
+	ssh := repo.Provider == domain.RepositoryProviderSSH
+	if ssh {
+		keys := h.repo.GitSSHKeysForRemotes(responsibleUserID, []string{repo.CloneURL})
+		key := keys[repo.CloneURL]
+		if key == "" {
+			return "", false, gitwork.ErrSSHKeyRequired.Error()
+		}
+		ctx = gitwork.WithSSHKeys(ctx, keys)
+		// A private SSH checkout is never shared across users, changed
+		// repository bindings, or a removed or replaced key.
+		cacheKey += fmt.Sprintf("\x00%d\x00%s\x00%x", responsibleUserID, repo.CloneURL, sha256.Sum256([]byte(key)))
+	}
+	identity := sha256.Sum256([]byte(cacheKey))
 	dirName += fmt.Sprintf("-%x", identity[:8])
 	cacheDir := filepath.Join(clarifyRepoCacheRoot(), dirName)
 
@@ -316,7 +333,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	hadCheckout := statDir(filepath.Join(cacheDir, ".git"))
 
 	// Reuse an existing checkout without refreshing on later turns.
-	if hadCheckout && !refresh {
+	if hadCheckout && !refresh && !ssh {
 		return cacheDir, true, ""
 	}
 
@@ -325,7 +342,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	defer cancel()
 
 	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, token); err != nil {
-		if hadCheckout && baseBranch == "" {
+		if hadCheckout && baseBranch == "" && !ssh {
 			// Degrade to the previous (possibly stale) checkout.
 			return cacheDir, true, ""
 		}
@@ -338,6 +355,9 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 // Git checkouts are cloned before selecting a branch. Never switch the user's
 // original checkout to the configured main branch.
 func clarifyRepositorySource(repository domain.Repository, selectedBaseBranch string) (domain.Repository, bool) {
+	if repository.Provider == domain.RepositoryProviderSSH {
+		return repository, false
+	}
 	localPath := strings.TrimSpace(repository.LocalPath)
 	if localPath != "" && statDir(localPath) {
 		if _, err := os.Stat(filepath.Join(localPath, ".git")); err == nil {
@@ -354,11 +374,34 @@ func clarifyRepositorySource(repository domain.Repository, selectedBaseBranch st
 }
 
 func (h *streamHandlers) runChatClarify(c *gin.Context, issue domain.Issue, request chatClarifyRequest) {
+	if err := clarifyModelEngineError(request.Model); err != nil {
+		c.JSON(400, map[string]string{"error": err.Error()})
+		return
+	}
 	if strings.TrimSpace(issue.ID) != "" {
 		h.handleIssueClarify(c, issue, request)
 		return
 	}
 	h.handleComposerClarify(c, issue, request)
+}
+
+// isBugStyleWorkItem reports whether the work item is a bug (Gongfeng issue)
+// rather than a requirement; the clarification focus differs.
+func isBugStyleWorkItem(issue domain.Issue) bool {
+	return strings.EqualFold(issue.Source, "gongfeng") || strings.EqualFold(issue.Kind, "issue")
+}
+
+func clarifyAssistantRounds(history []struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}) int {
+	n := 0
+	for _, item := range history {
+		if strings.EqualFold(strings.TrimSpace(item.Role), "assistant") {
+			n++
+		}
+	}
+	return n
 }
 
 func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue, request chatClarifyRequest, emit func(event string, payload any)) (any, string, map[string]any, error) {
@@ -373,13 +416,11 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	extras := clarifyRequestTexts(request)
 	hydrateClarifyIssueFromText(&issue, extras...)
 	workItemType := "需求"
-	focus := "目标、范围、用户场景、约束和可验证的验收标准"
+	focus := "这条需求具体要改什么、改到什么程度、怎样验收"
 	if isBugStyleWorkItem(issue) {
 		workItemType = "Issue"
-		focus = "实际现象、复现条件、期望行为、影响范围、约束和可验证的验收标准"
+		focus = "实际现象、复现条件、期望行为和怎样验证已修复"
 	}
-	ratingProject, ratingProjectFound := h.repo.Project(issue.ProjectID)
-	ratingPrompt := clarificationRatingPrompt(clarificationRatingDimensions(issue, ratingProject, ratingProjectFound))
 	modelCtx, cancelModel := context.WithCancel(ctx)
 	defer cancelModel()
 	var toolSession *AgentToolSession
@@ -404,7 +445,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			mcpStep = "2. 若下文列出了可用 MCP 工具：描述或对话里出现外部需求、Issue 或文档链接时必须先调用对应工具读取，并同步读评论。没有链接不要为了找原单去 list。不要声称看不到评论或文档。"
 		}
 	}
-	systemPrompt := clarifySystemPrompt(intro, mcpStep, focus, ratingPrompt)
+	systemPrompt := clarifySystemPrompt(intro, mcpStep, focus)
 	var prompt strings.Builder
 	prompt.WriteString(systemPrompt)
 	prompt.WriteString("\n\n## 需求\n标题：")
@@ -432,7 +473,8 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		prompt.WriteString(request.Message)
 		prompt.WriteString("\n")
 	}
-	prompt.WriteString("\n请基于以上对话继续澄清，完成后调用 submit_clarification。")
+	prompt.WriteString(clarifyRoundBudgetHint(clarifyAssistantRounds(request.History)))
+	prompt.WriteString("\n请基于以上对话继续澄清，只围绕「## 需求」本身，完成后调用 submit_clarification。")
 	cbPath, cbErr := resolveCodeBuddyBin()
 	if cbErr != nil {
 		return nil, "", nil, cbErr
@@ -579,7 +621,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 				fmt.Fprintf(&b, "\n- %s: 目录 %s", a.name, a.dir)
 			}
 		}
-		b.WriteString("\n澄清问题与 summary 需覆盖以上所有仓库的协同改动，分别说明每个仓库各自需要什么。")
+		b.WriteString("\n只澄清本需求实际要改动的仓库；summary 分别说明涉及的每个仓库各自需要什么，不涉及的仓库不必展开。")
 		for _, a := range analyses {
 			if a.analyzed && a.dirName != "" {
 				continue
@@ -593,7 +635,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		prompt.WriteString(b.String())
 	} else if len(analyzedRepos) == 1 && len(analyses) > 1 {
 		a := analyzedRepos[0]
-		prompt.WriteString(fmt.Sprintf("\n\n## 多仓库范围\n本次需求还涉及其他仓库，但仅 %s 成功检出（当前工作目录），其余未能分析，请勿声称已阅读其代码。澄清问题与 summary 需说明多仓库协同的范围。", a.name))
+		prompt.WriteString(fmt.Sprintf("\n\n## 多仓库范围\n本次需求还涉及其他仓库，但仅 %s 成功检出（当前工作目录），其余未能分析，请勿声称已阅读其代码。summary 需说明本需求涉及的其他仓库各自需要什么。", a.name))
 	}
 	if mcpHint := h.clarifyMCPInstructionsFor(issue, responsible, len(request.History) > 0, extras...); mcpHint != "" {
 		prompt.WriteString(mcpHint)
@@ -607,7 +649,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	turnPrompt := userMsg
 	if resume {
-		turnPrompt = clarifyResumeTurnPrompt(request.Message)
+		turnPrompt = clarifyResumeTurnPrompt(issue.Title, request.Message, clarifyAssistantRounds(request.History))
 		if len(codeBaselines) > 0 {
 			turnPrompt += "\n\n本次各仓库代码基准为 " + strings.Join(codeBaselines, "；") + "。请重新确认当前工作目录的代码，不要沿用其他分支的代码结论。"
 		}
@@ -801,11 +843,7 @@ func clarifyStreamEvents(line string) []map[string]string {
 }
 
 func clarifyThoughtShouldHide(s string) bool {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	s = strings.TrimSuffix(s, "```")
-	s = strings.TrimSpace(s)
+	s = stripJSONFence(s)
 	if s == "" {
 		return false
 	}
@@ -831,11 +869,7 @@ func clarifyThoughtShouldHide(s string) bool {
 }
 
 func extractClarifyProtocolObject(s string) map[string]any {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	s = strings.TrimSuffix(s, "```")
-	s = strings.TrimSpace(s)
+	s = stripJSONFence(s)
 	start, end := strings.Index(s, "{"), strings.LastIndex(s, "}")
 	if start < 0 || end <= start {
 		return nil
@@ -934,27 +968,35 @@ func (h *streamHandlers) chatClarifyCancel(c *gin.Context) {
 	c.JSON(200, map[string]bool{"cancelled": true})
 }
 
+// stripJSONFence trims surrounding whitespace and a Markdown code fence
+// (```json or ```) that agents often wrap around JSON replies.
+func stripJSONFence(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "```json")
+	s = strings.TrimPrefix(s, "```")
+	s = strings.TrimSuffix(s, "```")
+	return strings.TrimSpace(s)
+}
+
+// parseStreamJSONObject decodes the outermost {...} span of s (after removing
+// any code fence) and unwraps a stream-json envelope when present.
+func parseStreamJSONObject(s string) (any, bool) {
+	s = stripJSONFence(s)
+	start, end := strings.Index(s, "{"), strings.LastIndex(s, "}")
+	if start < 0 || end <= start {
+		return nil, false
+	}
+	var v any
+	if json.Unmarshal([]byte(s[start:end+1]), &v) != nil {
+		return nil, false
+	}
+	return unwrapStreamJSONEnvelope(v)
+}
+
 func extractClarifyResultJSON(raw string) (any, string) {
 	raw = strings.TrimSpace(raw)
-	try := func(s string) (any, bool) {
-		s = strings.TrimSpace(s)
-		s = strings.TrimPrefix(s, "```json")
-		s = strings.TrimPrefix(s, "```")
-		s = strings.TrimSuffix(s, "```")
-		s = strings.TrimSpace(s)
-		start, end := strings.Index(s, "{"), strings.LastIndex(s, "}")
-		if start < 0 || end <= start {
-			return nil, false
-		}
-		s = s[start : end+1]
-		var v any
-		if json.Unmarshal([]byte(s), &v) != nil {
-			return nil, false
-		}
-		return unwrapStreamJSONEnvelope(v)
-	}
 	protocol := func(s string) (any, bool) {
-		v, ok := try(s)
+		v, ok := parseStreamJSONObject(s)
 		if !ok || !isClarifyProtocolObject(v) {
 			return nil, false
 		}
@@ -1012,23 +1054,6 @@ func extractClarifyResultJSON(raw string) (any, string) {
 
 func extractJSONObject(raw string) (any, string) {
 	raw = strings.TrimSpace(raw)
-	try := func(s string) (any, bool) {
-		s = strings.TrimSpace(s)
-		s = strings.TrimPrefix(s, "```json")
-		s = strings.TrimPrefix(s, "```")
-		s = strings.TrimSuffix(s, "```")
-		s = strings.TrimSpace(s)
-		start, end := strings.Index(s, "{"), strings.LastIndex(s, "}")
-		if start < 0 || end <= start {
-			return nil, false
-		}
-		s = s[start : end+1]
-		var v any
-		if json.Unmarshal([]byte(s), &v) != nil {
-			return nil, false
-		}
-		return unwrapStreamJSONEnvelope(v)
-	}
 
 	var resultVal any
 	var resultRaw string
@@ -1045,7 +1070,7 @@ func extractJSONObject(raw string) (any, string) {
 		}
 		if fmt.Sprint(event["type"]) == "result" {
 			if msg, ok := event["result"].(string); ok {
-				if v, ok := try(msg); ok {
+				if v, ok := parseStreamJSONObject(msg); ok {
 					resultVal, resultRaw = v, msg
 				} else if strings.TrimSpace(msg) != "" {
 					resultVal = map[string]any{"summary": msg, "questions": []any{}, "ready": false}
@@ -1059,18 +1084,18 @@ func extractJSONObject(raw string) (any, string) {
 			continue
 		}
 		if msg, ok := event["message"].(map[string]any); ok {
-			if v, src, ok := extractClarifyJSONFromEvent(msg, try); ok {
+			if v, src, ok := extractClarifyJSONFromEvent(msg, parseStreamJSONObject); ok {
 				fallback, fallbackRaw = v, src
 			}
 		}
-		if v, src, ok := extractClarifyJSONFromEvent(event, try); ok {
+		if v, src, ok := extractClarifyJSONFromEvent(event, parseStreamJSONObject); ok {
 			fallback, fallbackRaw = v, src
 		}
 	}
 	if resultVal != nil {
 		return resultVal, resultRaw
 	}
-	if v, ok := try(raw); ok {
+	if v, ok := parseStreamJSONObject(raw); ok {
 		return v, raw
 	}
 	if fallback != nil {

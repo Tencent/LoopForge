@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -107,6 +108,52 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.LocalPath = existing.LocalPath
 		}
 	}
+	primary := strings.TrimSpace(body.RepoURL)
+	if primary == "" {
+		primary = strings.TrimSpace(body.URL)
+	}
+	sshReference := primary
+	if sshReference == "" {
+		sshReference = v.CloneURL
+	}
+	// GitHub and the optional legacy host keep their existing token flow (and
+	// GitHub's automatic pull requests) for SSH-style addresses unless the
+	// caller explicitly selects SSH authentication.
+	legacySSH := false
+	if v.Provider != domain.RepositoryProviderSSH {
+		if remote, err := gitwork.ParseSSHRemote(sshReference); err == nil {
+			legacySSH = remote.Port == "22" && (remote.Host == domain.GongfengRepoHost || remote.Host == "github.com")
+		}
+	}
+	githubShorthand := primary != "" && strings.HasPrefix(strings.TrimPrefix(primary, "git clone "), "github:")
+	if v.Provider == domain.RepositoryProviderSSH || (gitwork.IsSSHReference(sshReference) && !legacySSH && !githubShorthand) {
+		remote, err := gitwork.ParseSSHRemote(sshReference)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// Repository definitions can be saved before SSH is configured. Actual
+		// Git operations validate the user's key and the pinned host keys.
+		if body.RepoURL != "" && body.URL != "" {
+			if other, err := gitwork.ParseSSHRemote(body.URL); err != nil || other.URL != remote.URL {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "repoUrl 与 url 指向不同仓库"})
+				return
+			}
+		}
+		if !validCLIBaseURL(v.WebURL) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库网页地址必须是无凭据的 HTTP(S) 地址"})
+			return
+		}
+		v.Provider, v.CloneURL, v.GongfengProjectID = domain.RepositoryProviderSSH, remote.URL, ""
+		if v.Name == "" {
+			v.Name = strings.TrimSuffix(remote.Path[strings.LastIndex(remote.Path, "/")+1:], ".git")
+		}
+		if v.DefaultBranch == "" {
+			v.DefaultBranch = "main"
+		}
+		h.saveRepository(c, v)
+		return
+	}
 	// One pasted repository reference (web / SSH / clone / git clone / group/repo)
 	// is enough. Prefer repoUrl so an SSH paste keeps an SSH clone URL.
 	var parsed domain.GongfengRepoInfo
@@ -119,14 +166,10 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	}
 	// An explicit pasted URL is authoritative. Generated identity/web/clone
 	// fields must not silently redirect a correct URL to another repository.
-	primary := strings.TrimSpace(body.RepoURL)
-	if primary == "" {
-		primary = strings.TrimSpace(body.URL)
-	}
 	if primary != "" {
 		info, ok := domain.ParseRepositoryURL(primary)
 		if !ok {
-			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供有效的 GitHub 仓库地址"})
+			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供 GitHub 链接或 Git SSH 克隆地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {
@@ -181,10 +224,6 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		c.JSON(400, map[string]string{"error": "请提供 projectId 和 GitHub 仓库地址 repoUrl，名称和仓库标识会自动识别"})
 		return
 	}
-	if _, ok := h.repo.Project(v.ProjectID); !ok {
-		c.JSON(400, map[string]string{"error": "project not found"})
-		return
-	}
 	if strings.HasPrefix(v.GongfengProjectID, "github:") {
 		v.Provider = "github"
 		if v.DefaultBranch == "" {
@@ -201,11 +240,27 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if v.DefaultBranch == "" {
 		v.DefaultBranch = "master"
 	}
+	if domain.URLHasCredentials(v.WebURL) {
+		c.JSON(400, map[string]string{"error": "webUrl 不能包含账号、密码或 Token，请去掉 @ 前的部分"})
+		return
+	}
 	if v.CloneURL != "" {
+		if domain.URLHasCredentials(v.CloneURL) {
+			c.JSON(400, map[string]string{"error": "cloneUrl 不能包含账号、密码或 Token，请去掉 @ 前的部分，并在个人配置中填写 Git Token"})
+			return
+		}
 		if err := gitwork.ValidateRemoteURL(v.CloneURL, !authRequired() || h.isPlatformAdmin(c.Request)); err != nil {
 			c.JSON(400, map[string]string{"error": "cloneUrl 无效：" + err.Error()})
 			return
 		}
+	}
+	h.saveRepository(c, v)
+}
+
+func (h *catalogHandlers) saveRepository(c *gin.Context, v domain.Repository) {
+	if _, ok := h.repo.Project(v.ProjectID); !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project not found"})
+		return
 	}
 	if err := h.repo.PutRepository(v); err != nil {
 		respond(c, err)
@@ -262,7 +317,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			}
 			builtIn, ok := repo.BuiltInExecutor(v.ExecutorID)
 			if !ok {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + v.ExecutorID})
 				return
 			}
 			if err := domain.ValidateAgentEffort(v.Effort, builtIn.Kind); err != nil {
@@ -543,13 +598,7 @@ func (h *catalogHandlers) rules(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
 		items := h.repo.Rules()
 		if projectID := strings.TrimSpace(c.Query("projectId")); projectID != "" {
-			filtered := make([]domain.RuleDefinition, 0, len(items))
-			for _, item := range items {
-				if item.ProjectID == projectID {
-					filtered = append(filtered, item)
-				}
-			}
-			items = filtered
+			items = filterOwnedByProject(items, projectID, func(item domain.RuleDefinition) string { return item.ProjectID })
 		}
 		c.JSON(200, items)
 		return
@@ -592,13 +641,7 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
 		items := h.repo.Skills()
 		if projectID := strings.TrimSpace(c.Query("projectId")); projectID != "" {
-			filtered := make([]domain.SkillDefinition, 0, len(items))
-			for _, item := range items {
-				if item.ProjectID == projectID {
-					filtered = append(filtered, item)
-				}
-			}
-			items = filtered
+			items = filterOwnedByProject(items, projectID, func(item domain.SkillDefinition) string { return item.ProjectID })
 		}
 		c.JSON(200, items)
 		return
@@ -658,10 +701,8 @@ func (h *catalogHandlers) sharedAgentReferences(kind, id string) bool {
 		if kind == "skill" {
 			refs = agent.Skills
 		}
-		for _, ref := range refs {
-			if ref == id {
-				return true
-			}
+		if slices.Contains(refs, id) {
+			return true
 		}
 	}
 	return false
@@ -855,7 +896,20 @@ func filterEnvironmentAssets[T any](items []T, projectID string, scope func(T) (
 	out := make([]T, 0, len(items))
 	for _, item := range items {
 		owner, shared := scope(item)
-		if owner == projectID || (owner != "" && shared) {
+		if owner == projectID || shared {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// filterOwnedByProject keeps only items owned by projectID. Unlike
+// filterEnvironmentAssets it does not admit shared items from other projects.
+// The result is never nil so list endpoints keep returning [] instead of null.
+func filterOwnedByProject[T any](items []T, projectID string, owner func(T) string) []T {
+	out := make([]T, 0, len(items))
+	for _, item := range items {
+		if owner(item) == projectID {
 			out = append(out, item)
 		}
 	}
@@ -1174,7 +1228,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		builtIn, ok := repo.BuiltInExecutor(agent.ExecutorID)
 		if !ok {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + agent.ExecutorID})
 			return
 		}
 		if err := domain.ValidateAgentEffort(agent.Effort, builtIn.Kind); err != nil {
@@ -1209,13 +1263,11 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			c.JSON(200, stored)
 			return
 		}
-		v.Status = "published"
-		v.Version++
-		if err := h.repo.PutWorkflow(v); err != nil {
+		stored, err := h.repo.PublishWorkflow(id)
+		if err != nil {
 			respond(c, err)
 			return
 		}
-		stored, _ := h.repo.Workflow(id)
 		c.JSON(200, stored)
 	case "/api/workflows/:id/clone":
 		var req struct {

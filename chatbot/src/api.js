@@ -249,6 +249,16 @@ export function canChatInProject(project, user) {
     project.ownerId === user.id || members.some((m) => m.userId === user.id)
   );
 }
+// Mirrors canManageProjectRepositories on the server: only the project owner
+// or a platform admin may bind repositories. Without a signed-in user the
+// server decides (open deployments allow it), so this only says no when it
+// knows the answer.
+export function canManageProjectRepos(project, user) {
+  if (!project || !user || user.isGuest) return true;
+  if (user.isPlatformAdmin) return true;
+  if (String(user.platformRole || "").toLowerCase() === "admin") return true;
+  return Boolean(project.ownerId) && Number(project.ownerId) === Number(user.id);
+}
 export const UNJOINED_PROJECTS_SECTION = "未加入的项目";
 // Projects the user can chat in keep their original order; the rest follow
 // under their own section without a per-row explanation.
@@ -380,8 +390,31 @@ export function restoreStream(snapshot) {
 // Keep the confirmation acknowledgement visible without presenting an internal
 // model-resume instruction as something the user typed. Validate the preceding
 // saved receipt; ordinary user text must never be hidden by a prefix match.
+// Mirrors assistantProposalDeclinedText and assistantProposalExpiredText.
+const PROPOSAL_DECLINED = "不走 SOP，这件事由你直接完成。";
+const PROPOSAL_EXPIRED = "SOP 建议超时未确认，这件事由你直接完成。";
+// The card already says it timed out, so the turn that hands the work back
+// is not shown.
+export function isProposalTimeout(message, previous) {
+  return (
+    message?.role === "user" &&
+    message.trigger === "proposal_timeout" &&
+    message.content === PROPOSAL_EXPIRED &&
+    previous?.role === "assistant" &&
+    (parseReply(previous).drafts || []).some(
+      (d) => d.proposal && d.decision === "expired",
+    )
+  );
+}
+
 export function confirmationCaption(message, previous) {
   if (message?.role !== "user" || previous?.role !== "assistant") return "";
+  if (message.content === PROPOSAL_DECLINED)
+    return (parseReply(previous).drafts || []).some(
+      (d) => d.proposal && ["declined", "muted"].includes(d.decision),
+    )
+      ? "不走 SOP，让 AI 助手自己做"
+      : "";
   const match =
     /^已确认并执行 ([a-z_]+)。请核对这条草稿的保存回执，继续完成原始请求；不要重复刚才的写入，下一项需要确认时提交草稿，全部完成时总结实际结果。$/.exec(
       message.content || "",

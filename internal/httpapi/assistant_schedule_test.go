@@ -15,7 +15,8 @@ import (
 	"agentflow/internal/tracker"
 )
 
-func TestScheduledAssistantReceives180MinuteDeadline(t *testing.T) {
+// A scheduled run, like a chat turn, has no time limit.
+func TestScheduledAssistantHasNoDeadline(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -29,10 +30,8 @@ func TestScheduledAssistantReceives180MinuteDeadline(t *testing.T) {
 	stopped := errors.New("stop test generation")
 	h := &assistantHandlers{deps: &deps{repo: st}, generate: func(ctx context.Context, _ string, _ domain.User) (string, error) {
 		called = true
-		deadline, ok := ctx.Deadline()
-		remaining := time.Until(deadline)
-		if !ok || remaining > 180*time.Minute || remaining < 179*time.Minute {
-			t.Fatalf("scheduled generation deadline: ok=%v remaining=%s", ok, remaining)
+		if deadline, ok := ctx.Deadline(); ok {
+			t.Fatalf("scheduled generation has a deadline: %s", time.Until(deadline))
 		}
 		return "", stopped
 	}}
@@ -57,6 +56,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 				t.Fatal(err)
 			}
 			user, _ := st.UserByLoginName("auto-owner")
+			joinScheduledProject(t, st, "platform", user.ID)
 			if err := st.PutIssue(domain.Issue{ID: "scheduled-issue", ProjectID: "platform", Title: "keep", Source: "tapd", Status: "backlog"}); err != nil {
 				t.Fatal(err)
 			}

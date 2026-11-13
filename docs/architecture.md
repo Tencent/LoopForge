@@ -7,7 +7,7 @@ The platform keeps the upstream Go module name `agentflow`, package boundaries a
 | `cmd/agentflow` | API, worker or combined process |
 | `cmd/agentflow-runner` | Personal and pool execution machines |
 | `cmd/agentflow-mcp`, `cmd/agentflow-gate-mcp` | Public MCP and structured gate results |
-| `internal/engine` | SOP graph, leases, scheduling, sandbox lifecycle and delivery |
+| `internal/engine` | SOP graph, leases, scheduling, sandbox lifecycle and delivery. Ready branches execute together in the run workspace; rerunning one branch after a cancel restores cancelled siblings |
 | `internal/repo` | MySQL persistence, one repository per business domain |
 | `internal/httpapi` | HTTP/MCP handlers, one handler per business domain |
 | `internal/runtime`, `internal/runner` | Executor protocols, credentials, isolation and artifacts |

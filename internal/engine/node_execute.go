@@ -2,6 +2,7 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -50,11 +51,28 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 					cancel()
 					return
 				}
+				e.reconcileNodeExecutions(runID)
 			}
 		}
 	}()
+	// Branches run as soon as their dependencies succeed; no wave waits for
+	// its slowest member. inflight is shared with the node goroutines, which
+	// remove themselves and wake the loop when they finish.
+	var (
+		inflightMu sync.Mutex
+		inflight   = map[string]bool{}
+		nodesWG    sync.WaitGroup
+		wake       = make(chan struct{}, 1)
+	)
+	// stopNodes cancels and drains in-flight nodes before the run settles, so a
+	// terminal or paused status is never written under a running branch.
+	stopNodes := func() {
+		cancel()
+		nodesWG.Wait()
+	}
 	defer func() {
 		cancel()
+		nodesWG.Wait()
 		<-heartbeatDone
 		_ = e.repo.ReleaseRunLease(runID, e.instanceID, generation)
 		e.mu.Lock()
@@ -64,19 +82,22 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 	for {
 		select {
 		case <-ctx.Done():
+			nodesWG.Wait()
 			e.finishInterruptedAt(runID, generation)
 			return
 		default:
 		}
 		r, ok := e.repo.RunState(runID)
-		if !ok || isTerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
+		if !ok || domain.TerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
 			return
 		}
 		if r.CancelRequested {
+			stopNodes()
 			e.finishAt(runID, generation, "cancelled", "流水线已取消")
 			return
 		}
 		if r.PauseRequested {
+			stopNodes()
 			e.pauseAt(runID, generation, "运行已由用户暂停")
 			return
 		}
@@ -84,7 +105,26 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 			return
 		}
 		wf := workflowForRun(e.repo, r)
-		ready := readyNodes(wf, r)
+		e.reconcileNodeExecutions(runID)
+		inflightMu.Lock()
+		var ready []domain.WorkflowNode
+		for _, node := range readyNodes(wf, r) {
+			if !inflight[node.ID] {
+				ready = append(ready, node)
+			}
+		}
+		running := len(inflight)
+		inflightMu.Unlock()
+		if len(ready) == 0 && running > 0 {
+			// A sibling is still running: its result may unblock more nodes, and
+			// a failed or waiting branch must not settle the run under it.
+			select {
+			case <-wake:
+			case <-ctx.Done():
+			case <-time.After(500 * time.Millisecond):
+			}
+			continue
+		}
 		if len(ready) == 0 {
 			if allSucceeded(wf, r) {
 				rework, err := e.integrateScheduledRun(runID)
@@ -114,16 +154,35 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 				e.finishAt(runID, generation, "failed", pipelineFailedMessage)
 				return
 			}
+			if node, ok := cancelledNode(wf, r); ok {
+				// Nothing reschedules a cancelled node by itself; waiting here
+				// would leave the run "running" forever.
+				e.finishAt(runID, generation, "failed", "节点「"+node.Name+"」已取消，流水线无法继续；请从该节点重跑")
+				return
+			}
 			time.Sleep(80 * time.Millisecond)
 			continue
 		}
-		var wg sync.WaitGroup
 		for _, node := range ready {
 			node := node
-			wg.Add(1)
-			go func() { defer wg.Done(); e.executeNode(ctx, runID, wf, node) }()
+			inflightMu.Lock()
+			inflight[node.ID] = true
+			inflightMu.Unlock()
+			nodesWG.Add(1)
+			go func() {
+				defer nodesWG.Done()
+				defer func() {
+					inflightMu.Lock()
+					delete(inflight, node.ID)
+					inflightMu.Unlock()
+					select {
+					case wake <- struct{}{}:
+					default:
+					}
+				}()
+				e.executeNode(ctx, runID, wf, node)
+			}()
 		}
-		wg.Wait()
 	}
 }
 
@@ -259,7 +318,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if !ok || !e.ownsRun(currentLease) {
 		return
 	}
-	unlock := e.lockRunExec(runID)
+	// Sibling branches run concurrently; only another execution of this same
+	// node (a resume, rework or takeover racing a winding-down attempt) waits.
+	unlock := e.lockNodeExec(runID, node.ID)
 	defer unlock()
 	executionGeneration := currentLease.Generation
 	executionAttempt := 0
@@ -288,6 +349,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if !started {
 		return
 	}
+	ctx, cancelNode := context.WithCancel(ctx)
+	defer cancelNode()
+	defer e.registerNodeExecution(runID, node.ID, executionAttempt, cancelNode)()
 	failNode := func(err error, allowReject bool) {
 		if err == nil {
 			return
@@ -400,8 +464,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		return sb.Exec(ctx, runtime.CommandSpec{Argv: []string{"sh", "-lc", bindExecutionTarget(command, target)}, Provider: "verification", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, gateSink)
 	}
 	current, _ = e.repo.RunState(runID)
-	gitTok := sb.credentialSnapshot().GitToken
+	gitCredentials := sb.credentialSnapshot()
+	gitTok := gitCredentials.GitToken
 	ctx = withGitToken(ctx, gitTok)
+	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	// Repository checkout and Agent-configuration index isolation belong to the
 	// run environment, not to each node. The same checkout and .git/index are
@@ -510,6 +576,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(preparationErr, nodeRejects(node))
 		return
 	}
+	// The environment is ready and this node's inputs are in place; parallel
+	// branches execute from here on without holding the environment lock.
+	preparing = false
+	sb.nodeMu.Unlock()
+	sb.activeExecutions.Add(1)
+	defer sb.activeExecutions.Add(-1)
 	var output string
 	defaultFailure := "fail"
 	if nodeRejects(node) {
@@ -607,7 +679,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			maxIterations = max(1, agent.Loop.MaxIterations)
 			loopOnExhausted = agent.Loop.OnExhausted
 		}
+		agentLockOwner := workspaceRunID(current)
 		runOnce = func(feedback string) (string, error) {
+			// Same-role nodes share the Agent's control directories in this
+			// checkout, so their CLI invocations take turns.
+			releaseAgent := e.lockAgentInvocation(agentLockOwner, agent.ID)
+			defer releaseAgent()
 			if reported != nil {
 				reported.reset()
 			}
@@ -626,7 +703,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					resumeSessionID = strings.TrimSpace(nr.SessionID)
 				}
 			}
-			invocationID := fmt.Sprintf("%s-%d-%d", node.ID, attempt, invocationSeq)
+			invocationID := fmt.Sprintf("%s-%d-%d", nodeControlKey(current, node.ID), attempt, invocationSeq)
 			rendered := renderPromptWithStore(e.repo, wf, effectiveNode, current)
 			hadCatalog := strings.Contains(rendered, "{{artifacts}}")
 			prompt := strings.ReplaceAll(rendered, "{{artifacts}}", artifactContext)
@@ -659,7 +736,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			options := runtime.InvocationOptions{RunID: runID, NodeID: node.ID, ResumeSessionID: resumeSessionID, Repositories: current.RepositoryContexts()}
 			if requiresSubmit {
-				options.GateResultPath = gateResultPath(node.ID, attempt)
+				options.GateResultPath = gateResultPath(nodeControlKey(current, node.ID), attempt)
 			}
 			ex := ex
 			if cb := sb.credentialSnapshot().CodeBuddy; ex.Kind == "codebuddy" && cb.Sponsored {
@@ -681,7 +758,11 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 				return result, dispatchErr
 			}
-			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{GitToken: sb.credentialSnapshot().GitToken, RequireCredentials: true})
+			repositories := current.RepositoryContexts()
+			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{
+				GitToken: gitTok, RequireCredentials: true,
+				SSHRepositoriesOnly: len(repositories) > 0 && len(sshRepositoryURLs(repositories)) == len(repositories),
+			})
 			for _, warning := range skipped {
 				warnMCPSkipped(warning)
 			}
@@ -700,7 +781,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	lastIteration := 0
 	submitPath := ""
 	if requiresSubmit {
-		submitPath = gateResultPath(node.ID, executionAttempt)
+		submitPath = gateResultPath(nodeControlKey(current, node.ID), executionAttempt)
 	}
 	for iteration := 1; iteration <= maxIterations; iteration++ {
 		lastIteration = iteration
@@ -881,6 +962,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if isMaxTurnsErr(err) {
 			e.updateRun(runID, func(r *domain.Run) {
 				nr := r.Nodes[node.ID]
+				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false) {
+					return
+				}
 				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "对话轮次用尽，等待确认是否重试", time.Now().UTC()
 				e.event(r, node.ID, "agent.turns.exhausted", "对话轮次已用尽，请确认是否重试本节点")
 			})
@@ -889,6 +973,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if failedAction == "human" {
 			e.updateRun(runID, func(r *domain.Run) {
 				nr := r.Nodes[node.ID]
+				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false) {
+					return
+				}
 				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "等待人工确认", time.Now().UTC()
 				message := "Agent 请求人工确认"
 				if nr.GateResult != nil && strings.TrimSpace(nr.GateResult.ActionRequired) != "" {
@@ -903,6 +990,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if maxIterations > 1 && loopOnExhausted == "human" {
 			e.updateRun(runID, func(r *domain.Run) {
 				nr := r.Nodes[node.ID]
+				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false) {
+					return
+				}
 				nr.Output, nr.Error, nr.Status, nr.FinishedAt = output, err.Error(), "waiting_approval", time.Now().UTC()
 				e.event(r, node.ID, "agent.loop.exhausted", "Agent 自修正次数已耗尽，转人工判断："+err.Error())
 			})

@@ -97,10 +97,6 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 				job.IssueStatuses = append([]string{}, domain.DefaultScheduleIssueStatuses...)
 			}
 		}
-		if len(job.AssistantPrompt) > 4000 {
-			c.JSON(400, map[string]string{"error": "assistantPrompt is too long"})
-			return
-		}
 		if job.WorkflowID != "" {
 			if _, ok := h.repo.Workflow(job.WorkflowID); !ok {
 				c.JSON(400, map[string]string{"error": "workflow not found"})
@@ -117,7 +113,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			job.IntervalSec = 300
 		}
 		if job.SkipDispatch {
-			job.AssistantModel = assistantAllowedModel(job.AssistantModel, loadAssistantModels(c.Request.Context(), ""))
+			job.AssistantModel = assistantScheduledModel(job.AssistantModel, loadAssistantModels(c.Request.Context(), ""))
 		}
 		if job.ProjectID == "" {
 			job.ProjectID = "platform"
@@ -264,7 +260,7 @@ func (h *scheduleHandlers) guardScheduledBaseline(job domain.ScheduleJob, issues
 			}
 			continue
 		}
-		err := h.engine.AlignBaseline(ctx, engine.ResolveClarifyGitToken(h.repo, responsible.ID))
+		err := h.engine.AlignBaselineForUser(ctx, responsible.ID)
 		if err == nil {
 			h.cancelStaleAlignRuns(repo.ID)
 			continue

@@ -58,7 +58,7 @@ func (e *Engine) Cancel(runID string) error {
 		return fmt.Errorf("run not found")
 	}
 	if !isLiveStatus(r.Status) {
-		if isTerminalRunStatus(r.Status) && hasRunningNode(r) {
+		if domain.TerminalRunStatus(r.Status) && r.HasActiveNode() {
 			e.forceTerminate(runID, "cancelled", "流水线已取消")
 			return nil
 		}
@@ -315,9 +315,17 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 	reset[target] = true
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	var stale []string
+	interrupted := map[string]bool{}
 	for id := range reset {
 		if nr := r.Nodes[id]; nr != nil {
 			stale = append(stale, nr.ChildRunID)
+			if nr.Status == "running" || nr.Status == "pending_input" {
+				// A parallel sibling still running inside the reset range: its
+				// attempt is abandoned, and the rerun must count as a new attempt
+				// rather than continue the interrupted one.
+				interrupted[id] = true
+				nr.Activity = ""
+			}
 			nr.Status = "pending"
 			nr.Error = ""
 			nr.Output = ""
@@ -335,7 +343,11 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 	appendControlTelemetry(&r, req.NodeID, "gate.rejected", fmt.Sprintf("打回到 %s：%s", target, req.Reason))
 	r.Status = "running"
 	e.cancelLiveChildRuns(stale)
-	return e.persistControlDecision(runID, r, expected...)
+	if err := e.persistControlDecision(runID, r, expected...); err != nil {
+		return err
+	}
+	e.cancelNodeExecutions(runID, interrupted)
+	return nil
 }
 
 // Retry reopens a stopped workflow from a selected
@@ -467,7 +479,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	nodeStatus := r.Nodes[nodeID].Status
 	waitingRetry := r.Status == "waiting" && nodeStatus == "waiting_approval"
 	replaySucceeded := r.Status == "succeeded"
-	if r.Status == "running" || hasRunningNode(r) {
+	if r.Status == "running" || r.HasActiveNode() {
 		return fmt.Errorf("run is still active")
 	}
 	if r.Status != "waiting" && r.Status != "failed" && r.Status != "cancelled" && !replaySucceeded {
@@ -541,6 +553,23 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 		}
 		e.sandboxes.DiscardRunContainer(context.Background(), runID)
 	}
+	// Parallel branches stopped together with this one by a cancel are not
+	// failures of their own: resume them as well, or nothing would schedule
+	// them again and the run would never settle. This happens after the
+	// whole-SOP check above so reviving siblings never discards the checkout.
+	var revived []string
+	for _, node := range r.WorkflowSnapshot.Nodes {
+		if reset[node.ID] {
+			continue
+		}
+		if nr := r.Nodes[node.ID]; nr != nil && nr.Status == "cancelled" {
+			revived = append(revived, node.Name)
+			reset[node.ID] = true
+			for id := range descendants(r.WorkflowSnapshot, node.ID) {
+				reset[id] = true
+			}
+		}
+	}
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	for _, node := range r.WorkflowSnapshot.Nodes {
 		if node.ID == nodeID && isScriptNode(node) {
@@ -575,6 +604,9 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 		retryLabel = "从指定节点重跑"
 	}
 	e.event(&r, nodeID, "node.retry_requested", retryLabel+"："+note)
+	if len(revived) > 0 {
+		e.event(&r, "", "node.retry_requested", "一并恢复被取消的并行分支："+strings.Join(revived, "、"))
+	}
 	appendControlTelemetry(&r, nodeID, "node.retry_requested", retryLabel+"："+strings.TrimSpace(reason))
 	r.CancelRequested = false
 	r.PauseRequested = false
@@ -790,7 +822,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if !ok {
 		return fmt.Errorf("run not found")
 	}
-	if r.Status == "running" || hasRunningNode(r) || (r.Status != "waiting" && !isTerminalRunStatus(r.Status)) {
+	if r.Status == "running" || r.HasActiveNode() || (r.Status != "waiting" && !domain.TerminalRunStatus(r.Status)) {
 		return fmt.Errorf("only a stopped run can update its SOP")
 	}
 	if e.executes() {

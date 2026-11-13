@@ -346,7 +346,7 @@ func (h *assistantHandlers) callAssistantMCP(user domain.User, projectID string,
 	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
 		return "", fmt.Errorf("MCP %s 的 URL 无效", server.Name)
 	}
-	client := mcpclient.New(bound.URL, bound.Headers).WithTimeout(assistantChatTimeout)
+	client := mcpclient.New(bound.URL, bound.Headers).WithTimeout(assistantMCPCallTimeout)
 	tool := strings.TrimSpace(call.Tool)
 	if tool == "" || tool == "tools/list" {
 		tools, err := client.ListTools()

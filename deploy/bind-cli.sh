@@ -17,7 +17,8 @@
 #   --download-url <URL>   从指定 URL 下载二进制（含 {os} {arch} 占位符）
 #   --source <目录>        平台未分发二进制时，从本地 AgentFlow 源码构建（需要 Go）
 #   --strict-https         禁止在 HTTPS 网络不可达时降级到 HTTP
-#   --service              安装 launchd (macOS) / systemd (Linux) 常驻服务
+#   --service              安装 launchd (macOS) / systemd (Linux) 常驻服务。
+#                          Linux 上没有用户会话时会自动拉起 systemd 用户实例。
 #   --no-start             只安装配置，不立即启动
 #   --no-auto-update       禁止从平台自动更新（自定义二进制默认禁用）
 #   --upgrade              原地升级已绑定的 runner，保留配置、机器绑定和工作区
@@ -72,6 +73,100 @@ fi
 fail() { echo "[bind-cli] 错误: $*" >&2; exit 1; }
 info() { echo "[bind-cli] $*"; }
 
+# systemctl --user 走用户 D-Bus。SSH 进 CVM、以 root 执行，或当前 shell
+# 没有登录会话时，这条总线还不存在，会报 Failed to connect to bus。
+# 系统总线这时通常仍可用：用它启用 linger 并启动 user@<uid>，再把
+# XDG_RUNTIME_DIR 指到 /run/user/<uid>，用户总线就会出现。
+prepare_systemd_user_env() {
+  local uid runtime
+  uid="$(id -u)"
+  runtime="/run/user/${uid}"
+  if [[ -z "${XDG_RUNTIME_DIR:-}" && -d "${runtime}" ]]; then
+    export XDG_RUNTIME_DIR="${runtime}"
+  fi
+  if [[ -n "${XDG_RUNTIME_DIR:-}" && -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -S "${XDG_RUNTIME_DIR}/bus" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+  fi
+}
+
+systemd_user_reachable() {
+  systemctl --user show-environment >/dev/null 2>&1
+}
+
+# 先以当前用户执行。失败后再试免密 sudo：安装命令常通过 curl|bash 进入，
+# 没有终端可以输入密码。
+run_privileged() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    SYSTEMD_ASK_PASSWORD=0 "$@"
+    return
+  fi
+  if SYSTEMD_ASK_PASSWORD=0 "$@" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    sudo -n "$@"
+    return
+  fi
+  return 1
+}
+
+# 参数 quiet：连上总线，但不打印说明。返回 0 表示 systemctl --user 可用。
+ensure_systemd_user_bus() {
+  local announce="${1:-announce}" uid runtime user_name linger_ok attempt
+  uid="$(id -u)"
+  user_name="$(id -un)"
+  runtime="/run/user/${uid}"
+  linger_ok=0
+  command -v systemctl >/dev/null 2>&1 || return 1
+  SYSTEMD_ASK_PASSWORD=0 systemctl show --property=Version >/dev/null 2>&1 || return 1
+  prepare_systemd_user_env
+  if systemd_user_reachable; then
+    return 0
+  fi
+  if [[ "${announce}" == announce ]]; then
+    info "当前没有 systemd 用户总线，正在为 ${user_name} 启动用户实例..."
+  fi
+  if command -v loginctl >/dev/null 2>&1 && run_privileged loginctl enable-linger "${user_name}" >/dev/null 2>&1; then
+    linger_ok=1
+  fi
+  run_privileged systemctl start "user@${uid}.service" >/dev/null 2>&1 || true
+  if [[ -z "${XDG_RUNTIME_DIR:-}" || -S "${runtime}/bus" ]]; then
+    export XDG_RUNTIME_DIR="${runtime}"
+  fi
+  attempt=0
+  while [[ "${attempt}" -lt 10 ]]; do
+    attempt=$((attempt + 1))
+    if [[ -S "${runtime}/bus" && -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+      export DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime}/bus"
+    fi
+    if systemd_user_reachable; then
+      if [[ "${announce}" == announce ]]; then
+        if [[ "${linger_ok}" -eq 1 ]]; then
+          info "已接通 systemd 用户总线；退出登录后服务仍会保持运行"
+        else
+          info "已接通 systemd 用户总线"
+        fi
+      fi
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+require_systemd_user_bus() {
+  if ensure_systemd_user_bus; then
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1 || ! SYSTEMD_ASK_PASSWORD=0 systemctl show --property=Version >/dev/null 2>&1; then
+    fail "当前系统没有可用的 systemd，不能安装常驻服务。去掉 --service 可以在当前终端前台运行"
+  fi
+  if [[ "$(id -u)" -eq 0 ]]; then
+    fail "无法启动 systemd 用户实例。请确认 systemd-logind 正在运行后重新安装"
+  fi
+  fail "无法连接 systemd 用户总线。请在终端执行：sudo loginctl enable-linger $(id -un)，然后再运行安装命令"
+}
+
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -98,6 +193,7 @@ if [[ "$UNINSTALL" == "1" ]]; then
   if [[ "$OS" == "darwin" ]]; then
     [[ -f "$PLIST" ]] && launchctl unload "$PLIST" >/dev/null 2>&1 || true
   else
+    ensure_systemd_user_bus quiet || true
     systemctl --user stop agentflow-runner.service >/dev/null 2>&1 || true
   fi
   pkill -f 'agentflow-runner -server' >/dev/null 2>&1 || true
@@ -131,6 +227,7 @@ if [[ "$UNINSTALL" == "1" ]]; then
       info "已移除 launchd 服务"
     fi
   else
+    ensure_systemd_user_bus quiet || true
     systemctl --user disable --now agentflow-runner.service >/dev/null 2>&1 || true
     rm -f "$UNIT"
     systemctl --user daemon-reload >/dev/null 2>&1 || true
@@ -339,6 +436,7 @@ if [[ "$UPGRADE" == "1" ]]; then
     launchctl load "$PLIST"
     info "已原地升级并重启 launchd 服务；机器绑定和工作区保持不变"
   elif [[ "$OS" == "linux" && -f "$UNIT" ]]; then
+    require_systemd_user_bus
     systemctl --user restart agentflow-runner.service
     info "已原地升级并重启 systemd 服务；机器绑定和工作区保持不变"
   else
@@ -423,6 +521,7 @@ EOF
       echo "[Install]"
       echo "WantedBy=default.target"
     } > "$UNIT"
+    require_systemd_user_bus
     systemctl --user daemon-reload
     systemctl --user enable agentflow-runner.service
     systemctl --user restart agentflow-runner.service

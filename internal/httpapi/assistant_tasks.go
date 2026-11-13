@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -129,17 +131,22 @@ func (h *assistantHandlers) runTaskNow(c *gin.Context) {
 		return
 	}
 	user, ok := h.repo.User(current.ID)
-	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		c.JSON(400, gin.H{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
+	task, err := loadAssistantTask(h.repo, current.ID, c.Param("id"))
+	engine, _ := assistantModelEngine(task.Model)
+	if key, _ := assistantEngineCredential(user, engine); !ok || key == "" {
+		msg := "请先在个人配置中配置自己的 CodeBuddy API Key"
+		if engine != assistantEngineCodeBuddy {
+			msg = assistantEngineMissingKey(engine)
+		}
+		c.JSON(400, gin.H{"error": msg})
 		return
 	}
-	task, err := loadAssistantTask(h.repo, current.ID, c.Param("id"))
 	if err != nil {
 		c.JSON(404, gin.H{"error": "定时任务不存在"})
 		return
 	}
-	if _, loaded := h.active.Load(current.ID); loaded {
-		c.JSON(429, gin.H{"error": "已有对话正在生成，请稍后重试"})
+	if _, loaded := h.active.Load(assistantTaskActiveKey(task.ID, current.ID)); loaded {
+		c.JSON(429, gin.H{"error": "该定时任务正在运行，请稍后重试"})
 		return
 	}
 	go h.runStoredAssistantTask(user, task)
@@ -174,9 +181,7 @@ func (h *assistantHandlers) tickAssistantTasks() {
 
 func (h *assistantHandlers) runStoredAssistantTask(user domain.User, task assistantTask) {
 	defer inflightTasks.Add()()
-	ctx, cancel := context.WithTimeout(context.Background(), assistantChatTimeout)
-	defer cancel()
-	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, task.ID)
+	ctx := withAssistantSessionOrigin(context.Background(), domain.AssistantSourceScheduled, task.ID)
 	if err := h.executeAssistantTask(ctx, user, &task); err != nil {
 		if errors.Is(err, errAssistantBusy) {
 			return
@@ -186,13 +191,13 @@ func (h *assistantHandlers) runStoredAssistantTask(user domain.User, task assist
 	_ = h.repo.SaveAssistantTaskResult(user.ID, task)
 }
 
+// executeAssistantTask runs one scheduled task as an ordinary chat turn: it
+// opens a conversation with the task's prompt as the user message, runs it
+// through the same generation path as the chat page (streaming, stop/steer,
+// skills, CLIs, retries, drafts) and reads the outcome back into the task.
+// Only the trigger lives here: who runs it, what is asked, the session's
+// metadata and how the result is reported.
 func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domain.User, task *assistantTask) error {
-	if _, loaded := h.active.LoadOrStore(user.ID, true); loaded {
-		return errAssistantBusy
-	}
-	defer h.active.Delete(user.ID)
-	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
-	mode := assistantExecModeFrom(ctx)
 	origin := assistantSessionOriginFrom(ctx)
 	if origin.Source == "" {
 		origin.Source = domain.AssistantSourceScheduled
@@ -200,6 +205,15 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if origin.TaskID == "" {
 		origin.TaskID = strings.TrimSpace(task.ID)
 	}
+	// Each task runs in its own conversation, so one owner's loops run side
+	// by side; only the same task is kept from overlapping itself.
+	activeKey := assistantTaskActiveKey(origin.TaskID, user.ID)
+	if _, loaded := h.active.LoadOrStore(activeKey, true); loaded {
+		return errAssistantBusy
+	}
+	defer h.active.Delete(activeKey)
+	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
+	mode := assistantExecModeFrom(ctx)
 
 	task.NotificationResult = ""
 	task.LastStatus = "running"
@@ -208,179 +222,120 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if strings.TrimSpace(task.ID) != "" {
 		_ = saveAssistantTask(h.repo, user.ID, *task)
 	}
-
-	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		task.LastStatus = "error"
-		task.LastError = "未配置 CodeBuddy API Key"
-		return errors.New(task.LastError)
+	fail := func(msg string) error {
+		task.LastStatus, task.LastError = "error", msg
+		return errors.New(msg)
 	}
-	catalog := loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment)
-	model := assistantAllowedModel(task.Model, catalog)
+
+	// The task's model picks the CLI; a scheduled run needs the runner's own
+	// key for it (no sponsor), checked before a conversation is opened.
+	engine, _ := assistantModelEngine(task.Model)
+	if key, _ := assistantEngineCredential(user, engine); key == "" {
+		if engine != assistantEngineCodeBuddy {
+			return fail(assistantEngineMissingKey(engine))
+		}
+		return fail("未配置 CodeBuddy API Key")
+	}
+	model, err := scheduledRunModel(ctx, task.Model, user)
+	if err != nil {
+		return fail(err.Error())
+	}
+	cliEngine, _ := assistantModelEngine(model)
 	prevSession := strings.TrimSpace(task.SessionID)
 	sessionID := newAssistantSessionID()
-	sourceRoot := h.resolvedSourceRoot()
-	modelCtx, cancelModel := context.WithCancel(ctx)
-	defer cancelModel()
+	now := time.Now().UTC()
 	req := assistantRequest{
 		ApprovalMode: AssistantApprovalAuto,
 		ProjectID:    task.ProjectID,
 		SessionID:    sessionID,
 		Model:        model,
-		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode)}},
+		Executor:     cliEngine,
+		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}},
 	}
-	// Workspace tools persist their binding on the conversation while running.
-	// Create it before opening the gateway, including for failed generations.
-	conversation := assistantConversation{
-		ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID,
-		Model: model, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages,
-	}
-	if err := saveAssistantConversation(h.repo, user.ID, conversation); err != nil {
-		task.LastStatus, task.LastError = "error", "无法创建定时任务会话"
+	g := domain.AssistantGeneration{StartedAt: now, ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: sessionID, UserID: user.ID, ProjectID: task.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
+	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages}
+	if err := h.repo.BeginAssistantGeneration(g, pending); err != nil {
+		_ = fail("无法创建定时任务会话")
 		return err
-	}
-	task.SessionID = sessionID
-	resultSaved := false
-	defer func() {
-		if task.LastStatus == "error" && !resultSaved {
-			conversation.Messages = append(req.Messages, assistantMessage{Role: "assistant", Content: jsonObject(gin.H{"message": task.LastError})})
-			if err := saveAssistantConversation(h.repo, user.ID, conversation); err != nil {
-				log.Printf("assistant failed task session save task=%s: %v", origin.TaskID, err)
-			}
-		}
-	}()
-	var toolFiles agentToolFiles
-	var toolSession *AgentToolSession
-	if h.generate == nil {
-		sess, files, err := h.openScheduledToolSession(modelCtx, user, task.ProjectID, sessionID, cancelModel)
-		if err != nil {
-			logAgentToolEvent("session-fallback", "mode=scheduled", "err="+truncateRunes(err.Error(), 160))
-			task.LastStatus = "error"
-			task.LastError = "无法启动工具会话"
-			return err
-		}
-		toolFiles = files
-		toolSession = sess
-		defer sess.Close()
-		defer files.Cleanup()
-		if h.engine != nil {
-			sess.workspaceTurn = newAssistantWorkspaceTurn(h.engine, cancelModel)
-			defer func() {
-				if err := sess.workspaceTurn.close(ctx); err != nil {
-					log.Printf("scheduled assistant workspace session=%s: %v", sessionID, err)
-				}
-			}()
-		}
-	}
-	// Scheduled runs are unattended. Keep the turn reminder aligned with
-	// the auto-write gateway and scheduled system prompt.
-	fullPrompt := h.turnPrompt(req, sourceRoot, false)
-	turn := fullPrompt
-	systemPrompt := assistantScheduledSystemPromptText(mode)
-	generate := h.generate
-	if generate == nil {
-		resume := false
-		generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
-			cliReq := assistantCLIRequest{Prompt: prompt, Model: model, SessionID: sessionID, Resume: resume, UserID: u.ID, SystemPrompt: systemPrompt, Native: true, MCPConfig: toolFiles.MCPConfig, Settings: toolFiles.Settings}
-			raw, _, err := runAssistantCLI(ctx, cliReq, u, nil)
-			resume = true
-			return raw, err
-		}
-	}
-	failGenerate := func(err error) error {
-		task.LastStatus = "error"
-		task.LastError = "生成失败或超时"
-		if ctx.Err() != nil {
-			task.LastError = "生成已取消或超时"
-		}
-		if msg := strings.TrimSpace(err.Error()); msg != "" {
-			task.LastError += "：" + msg
-		}
-		log.Printf("assistant task %s generate failed: %v", task.ID, err)
-		return err
-	}
-	var reply assistantReply
-	if ctx.Err() != nil {
-		task.LastStatus = "error"
-		task.LastError = "生成已取消或超时"
-		return ctx.Err()
-	}
-	raw, err := generate(modelCtx, turn, user)
-	if final, ok := toolSession.takeFinal(); ok && final.Assistant != nil {
-		// Terminal submission cancels the CLI after committing a valid reply.
-		reply = *final.Assistant
-		raw, err = reply.Message, nil
-	}
-	if err != nil {
-		return failGenerate(err)
-	}
-	message := strings.TrimSpace(redactAssistantSecrets(strings.ReplaceAll(raw, user.CodeBuddyAPIKey, "[redacted]"), user))
-	if message == "" {
-		task.LastStatus = "error"
-		task.LastError = "未返回结果"
-		return errors.New(task.LastError)
-	}
-	notificationResult := message
-	_, cleaned, hasNotification := domain.ParseNotificationResult(message)
-	if hasNotification && strings.TrimSpace(cleaned) != "" {
-		message = cleaned
-	}
-	reply.Message, reply.SessionID = message, sessionID
-	reply.Images = append(reply.Images, saveAgentReplyFiles(user.ID, toolSession.takeReplyFiles(), task.ProjectID)...)
-	if strings.TrimSpace(reply.Message) == "" && len(reply.Drafts) == 0 {
-		if task.LastStatus == "error" {
-			return errors.New(task.LastError)
-		}
-		task.LastStatus = "error"
-		task.LastError = "未返回结果"
-		return errors.New(task.LastError)
-	}
-	if len(reply.Drafts) > 0 {
-		reply.Drafts = h.applyAssistantDrafts(ctx, user, req.ProjectID, reply.Drafts)
-		for _, draft := range reply.Drafts {
-			if !draft.Saved {
-				task.LastStatus = "error"
-				task.LastError = "部分平台写入未落库"
-				break
-			}
-		}
-	}
-	stored := append([]assistantMessage{}, req.Messages...)
-	stored = append(stored, assistantMessage{Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts, "images": reply.Images})})
-	if saveErr := saveAssistantConversation(h.repo, user.ID, assistantConversation{
-		ID:        sessionID,
-		Title:     "定时 · " + task.Name,
-		ProjectID: task.ProjectID,
-		Model:     model,
-		Source:    origin.Source,
-		TaskID:    origin.TaskID,
-		Messages:  stored,
-	}); saveErr != nil {
-		log.Printf("assistant task session save failed task=%s: %v", origin.TaskID, saveErr)
-	} else {
-		resultSaved = true
-		if prevSession != "" && prevSession != sessionID {
-			_ = h.deleteConversation(user.ID, prevSession)
-		}
-		if origin.TaskID != "" {
-			h.deleteScheduledSessionsExcept(origin.TaskID, sessionID)
-		}
 	}
 	task.SessionID = sessionID
 	task.Model = model
-	if task.LastStatus != "error" {
-		task.LastStatus = "ok"
-		task.LastError = ""
+
+	// Like a chat turn, a scheduled run has no time limit: it ends when the
+	// CLI finishes or someone stops it from the conversation page.
+	h.executeGeneration(ctx, req, g, domainUserToAuth(user))
+	return h.readScheduledTurn(user, task, g, len(req.Messages), prevSession, origin.TaskID)
+}
+
+// readScheduledTurn reports the finished turn back onto the task. The reply
+// is the message right after the prompt; a steer from the page may have
+// continued the conversation after it, which does not change this outcome.
+func (h *assistantHandlers) readScheduledTurn(user domain.User, task *assistantTask, g domain.AssistantGeneration, prompts int, prevSession, taskID string) error {
+	fail := func(msg string) error {
+		task.LastStatus, task.LastError = "error", msg
+		return errors.New(msg)
 	}
-	task.NotificationResult = domain.NotificationText(notificationResult, 18000)
-	task.LastMessage = truncateRunes(reply.Message, 400)
-	if task.LastStatus == "error" {
-		return errors.New(task.LastError)
+	session, ok := h.repo.AssistantSession(user.ID, g.SessionID)
+	var reply *assistantMessage
+	if ok && len(session.Messages) > prompts && session.Messages[prompts].Role == "assistant" {
+		reply = &session.Messages[prompts]
+	}
+	if reply == nil || reply.Unfinished != "" {
+		msg := ""
+		if reply != nil {
+			msg = reply.Unfinished
+		}
+		if latest, found := h.repo.AssistantGeneration(user.ID, g.SessionID); found && latest.ID == g.ID {
+			msg = firstNonEmpty(msg, latest.Error)
+		}
+		return fail(firstNonEmpty(strings.TrimSpace(msg), "未返回结果"))
+	}
+	var content struct {
+		Message string           `json:"message"`
+		Drafts  []assistantDraft `json:"drafts"`
+	}
+	_ = json.Unmarshal([]byte(reply.Content), &content)
+	raw := strings.TrimSpace(content.Message)
+	message := raw
+	// The notification block is for the Bot; the transcript keeps the prose.
+	if _, cleaned, has := domain.ParseNotificationResult(raw); has && strings.TrimSpace(cleaned) != "" {
+		message = strings.TrimSpace(cleaned)
+		var payload map[string]any
+		if json.Unmarshal([]byte(reply.Content), &payload) == nil {
+			payload["message"] = message
+			reply.Content = jsonObject(payload)
+			if err := saveAssistantConversation(h.repo, user.ID, session); err != nil {
+				log.Printf("scheduled assistant notification strip session=%s: %v", g.SessionID, err)
+			}
+		}
+	}
+	task.NotificationResult = domain.NotificationText(raw, 18000)
+	task.LastMessage = truncateRunes(message, 400)
+	if message == "" && len(content.Drafts) == 0 {
+		return fail("未返回结果")
+	}
+	// Nobody confirms an unattended run: a write left as a card failed.
+	for _, draft := range content.Drafts {
+		if !draft.Saved {
+			return fail("部分平台写入未落库")
+		}
+	}
+	task.LastStatus, task.LastError = "ok", ""
+	if prevSession != "" && prevSession != g.SessionID {
+		_ = h.deleteConversation(user.ID, prevSession)
+	}
+	if taskID != "" {
+		h.deleteScheduledSessionsExcept(taskID, g.SessionID)
 	}
 	return nil
 }
 
 func scheduledAssistantPrompt(task assistantTask, mode assistantExecMode) string {
-	prefix := "这是当前项目「" + task.ProjectID + "」下的无人值守定时任务「" + task.Name + "」。直接调用当前项目和个人已安装的 MCP，以及 agentflow__* 平台工具，读写立即生效。issues_save 把需求 id 放在 body.id（也可同时放 path.id）。全部完成后用自然语言汇报结果。"
+	prefix := "这是当前项目「" + task.ProjectID + "」下的无人值守定时任务「" + task.Name + "」。直接调用当前项目和个人已安装的 MCP，以及 agentflow__* 平台工具，读写立即生效。issues_save 把需求 id 放在 body.id（也可同时放 path.id）。" +
+		"运行期间没有人回答问题或确认操作：不要向用户提问或等待确认，有歧义时按最合理、影响最小的理解执行并在汇报里写明假设；某项条件不满足时跳过该项并说明原因，继续处理其余项。" +
+		"除非提示词明确要求，不要为完成任务新建或修改沙箱、角色、SOP、项目等平台配置。" +
+		"GitHub 的查看、审查、合并 PR 和关闭 Issue 使用 workbench_github_* 工具，不要在终端里读取令牌直接调用 GitHub API。" +
+		"全部完成后用自然语言汇报结果。"
 	if mode.DeferSOP {
 		prefix += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"
 	} else {
@@ -404,9 +359,6 @@ func normalizeAssistantTask(in assistantTask, existing assistantTask) (assistant
 	}
 	if len([]rune(in.Name)) > 80 {
 		return in, errors.New("任务名称过长")
-	}
-	if len(in.Prompt) > 4000 {
-		return in, errors.New("任务指令过长")
 	}
 	if in.Cron != "" {
 		if _, err := parseAssistantCron(in.Cron); err != nil {
@@ -452,6 +404,13 @@ func normalizeAssistantTask(in assistantTask, existing assistantTask) (assistant
 	return in, nil
 }
 
+func assistantTaskActiveKey(taskID string, userID int64) string {
+	if taskID = strings.TrimSpace(taskID); taskID != "" {
+		return "task/" + taskID
+	}
+	return "task-user/" + strconv.FormatInt(userID, 10)
+}
+
 func newAssistantTaskID() string {
 	return "at" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
@@ -467,6 +426,26 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// scheduledRunModel resolves the model a scheduled run uses. The CodeBuddy
+// model list is an in-memory cache that is empty after a restart, so it is
+// refreshed with the owner's key before a model is rejected. A run never
+// silently switches to another, possibly more expensive, model.
+func scheduledRunModel(ctx context.Context, requested string, user domain.User) (string, error) {
+	requested = strings.TrimSpace(requested)
+	env := user.CodeBuddyInternetEnvironment
+	model := assistantAllowedUserModel(requested, loadAssistantModels(ctx, env), user)
+	if requested == "" || model == requested {
+		return model, nil
+	}
+	if engine, _ := assistantModelEngine(requested); engine == assistantEngineCodeBuddy {
+		refreshCLIModels(ctx, env, user.CodeBuddyAPIKey)
+		if model = assistantAllowedUserModel(requested, loadAssistantModels(ctx, env), user); model == requested {
+			return model, nil
+		}
+	}
+	return "", fmt.Errorf("定时任务指定的模型 %s 在负责人的账号下不可用，本次没有运行；请在定时任务里改选可用的模型", requested)
 }
 
 func truncateRunes(text string, max int) string {

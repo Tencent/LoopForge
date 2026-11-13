@@ -335,7 +335,7 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 	if err := e.ResumePaused(run.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	got := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return isTerminalRunStatus(got.Status) })
+	got := waitRun(t, s, run.ID, 5*time.Second, func(got domain.Run) bool { return domain.TerminalRunStatus(got.Status) })
 	if got.Status != "succeeded" {
 		t.Fatalf("parent = %s", got.Status)
 	}
@@ -527,7 +527,7 @@ func TestSOPNodeFollowsCancelledChildOnResume(t *testing.T) {
 	if err := e.ResumePaused(parentID, ""); err != nil {
 		t.Fatal(err)
 	}
-	got := waitRun(t, s, parentID, 5*time.Second, func(got domain.Run) bool { return isTerminalRunStatus(got.Status) })
+	got := waitRun(t, s, parentID, 5*time.Second, func(got domain.Run) bool { return domain.TerminalRunStatus(got.Status) })
 	if got.Status != "failed" || childRunsOf(s, parentID) != 1 {
 		t.Fatalf("parent=%s children=%d, want failed with the one cancelled child", got.Status, childRunsOf(s, parentID))
 	}
@@ -550,7 +550,7 @@ func TestSOPRetryEarlierNodeCancelsLiveChild(t *testing.T) {
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := waitRun(t, s, parentID, 5*time.Second, func(got domain.Run) bool { return isTerminalRunStatus(got.Status) })
+	got := waitRun(t, s, parentID, 5*time.Second, func(got domain.Run) bool { return domain.TerminalRunStatus(got.Status) })
 	if got.Status != "succeeded" || got.Nodes["sub"].ChildRunID == oldChild {
 		t.Fatalf("parent=%s child=%s", got.Status, got.Nodes["sub"].ChildRunID)
 	}

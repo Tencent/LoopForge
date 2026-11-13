@@ -137,6 +137,38 @@ describe("conversation hooks", () => {
     expect(writeMock).toHaveBeenCalledWith("/api/assistant/sessions/new-session", expect.objectContaining({ sandboxProfileId: "business-docker" }), "PUT");
   });
 
+  test("keeps machine choices local and binds the final choice on the first send", async () => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.machinesReady).toBe(true));
+    await act(() => result.current.selectMachine(""));
+    await act(() => result.current.selectMachine("mac"));
+    await act(() => result.current.refreshMachines());
+    expect(result.current.defaultRunnerId).toBe("mac");
+    expect(result.current.session).toBeNull();
+    expect(result.current.activeId).toBeNull();
+    expect(location.search).not.toContain("session=");
+    expect(writeMock).not.toHaveBeenCalled();
+    await act(() => result.current.send({text:"开始"}));
+    expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
+    await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+  });
+
+  test("waits for the personal machine default before allowing the first send", async () => {
+    const original=apiMock.getMockImplementation();
+    let release;
+    const delayed=new Promise(resolve=>{release=resolve;});
+    apiMock.mockImplementation((path,opts)=>path==="/api/runners/default"?delayed:original(path,opts));
+    try {
+      const {result}=renderHook(()=>useChat());
+      await waitFor(()=>expect(result.current.ready).toBe(true));
+      await act(async()=>expect(await result.current.send({text:"开始"})).toBe(false));
+      expect(result.current.error).toBe("执行机器仍在加载，请稍后发送。");
+      expect(writeMock).not.toHaveBeenCalled();
+      await act(async()=>{release({runnerId:"mac"});});
+      await waitFor(()=>expect(result.current.defaultRunnerId).toBe("mac"));
+    } finally {apiMock.mockImplementation(original);release({runnerId:"mac"});}
+  });
+
   test("loads chat and exercises conversation commands", async () => {
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.ready).toBe(true));
@@ -210,6 +242,67 @@ describe("conversation hooks", () => {
       if (original) Object.defineProperty(window, "parent", original);
       else delete window.parent;
     }
+  });
+
+  test("a proposal card accepts before it runs, and a timed-out one never runs", async () => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 SOP", timing: "start" } };
+    const withDraft = (extra = {}) => ({
+      id: "s1",
+      projectId: "p1",
+      messages: [{ role: "assistant", content: JSON.stringify({ message: "建议", drafts: [{ ...draft, ...extra }] }) }],
+    });
+    const original = writeMock.getMockImplementation();
+    const mcpCalls = () => apiMock.mock.calls.filter(([path]) => path === "/mcp");
+    try {
+      writeMock.mockImplementation((path, body, method) =>
+        path.endsWith("/proposals")
+          ? Promise.reject(Object.assign(Error("这条建议已经处理过"), { status: 409 }))
+          : original(path, body, method),
+      );
+      apiMock.mockResolvedValueOnce(withDraft());
+      await act(() => expect(result.current.applyDraft(0, 0, { approved: true })).rejects.toThrow("已经处理过"));
+      expect(mcpCalls()).toHaveLength(0);
+
+      writeMock.mockImplementation((path, body, method) =>
+        path.endsWith("/proposals")
+          ? Promise.resolve({ session: withDraft({ decision: "accepted" }), followUp: null })
+          : original(path, body, method),
+      );
+      apiMock.mockResolvedValueOnce(withDraft());
+      await act(() => result.current.applyDraft(0, 0, { approved: true }));
+      const accept = writeMock.mock.calls.findIndex(([path]) => path.endsWith("/proposals"));
+      const mcp = apiMock.mock.calls.findIndex(([path]) => path === "/mcp");
+      expect(writeMock.mock.invocationCallOrder[accept]).toBeLessThan(apiMock.mock.invocationCallOrder[mcp]);
+      const saved = writeMock.mock.calls.find(([path, , method]) => path === "/api/assistant/sessions/s1" && method === "PUT");
+      expect(JSON.parse(saved[1].messages[0].content).drafts[0]).toMatchObject({ decision: "accepted", saved: true });
+    } finally {
+      writeMock.mockImplementation(original);
+    }
+  });
+
+  test.each(["declined", "muted", "expired"])("a %s proposal decision refreshes a stale card without writing", async (decision) => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 SOP", timing: "start" } };
+    const withDraft = (value) => ({
+      ...result.current.session,
+      messages: [{ role: "assistant", content: JSON.stringify({ message: "建议", drafts: [value] }) }],
+    });
+    act(() => result.current.setSession(withDraft(draft)));
+    const latest = withDraft({ ...draft, decision });
+    apiMock.mockResolvedValueOnce(latest);
+
+    await act(() => expect(result.current.applyDraft(0, 0, { approved: true })).rejects.toThrow("这条建议已经处理过"));
+
+    expect(apiMock).not.toHaveBeenCalledWith("/mcp", expect.anything());
+    expect(writeMock).not.toHaveBeenCalled();
+    expect(result.current.session).toEqual(latest);
   });
 
   test("provides local fixture conversations and completes a local reply", async () => {

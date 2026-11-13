@@ -32,8 +32,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/projects"
   "codeBuddyApiKey":"",
   "codeBuddyApiKeyClear":false,
   "codeBuddyInternetEnvironmentClear":false,
-  "tapdClear":false,
-  "clarification":{"enabled":true,"threshold":80,"dimensions":[]}
+  "tapdClear":false
 }
 ```
 
@@ -42,7 +41,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" "$AGENTFLOW_URL/api/projects"
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
   -H 'Content-Type: application/json' \
-  -d '{"id":"platform","name":"平台研发","clarification":{"enabled":false,"threshold":0}}' \
+  -d '{"id":"platform","name":"平台研发"}' \
   "$AGENTFLOW_URL/api/projects"
 ```
 
@@ -82,7 +81,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 - `priority`、`kind`（`requirement|issue`）、`assigneeType`、`assigneeId`
 - `workflowId`、`repositoryId`、`repositoryIds`、`baseBranch`、`repositoryBranches`、`latestTaskId`
 - `source`（`local|gongfeng|tapd`）、`externalRef`
-- `clarification`：`score`、`passed`、`answers`、`dimensions`、`missing`、`status`（`in_progress|ready|needs_user`）、`assessedAt`。导入 TAPD 需求时立刻按标题+描述打分；`needs_user` 表示未达项目准入线，手动派发 SOP 会被 409。
+- `clarification`：`summary`、`status`（`analyzing|in_progress|ready`；历史数据可能是 `needs_user`）、`history`、`questions`、写回字段。澄清是可选步骤，不打分、不自动开始，也不阻止派发 SOP。
 - 交付字段 `deliveryState`、`deliveryMrUrl`、`deliveryMrState`、`deliveryMrs`、`deliveryUpdatedAt`。`deliveryMrs` 每个仓库一项（`repositoryId`、`repository`、`project`、`iid`、`url`、`state`、`targetBranch`），由 SOP 成功时按仓库工作分支向工蜂查询 MR 得出，查不到才回退到 MR 类产物里同项目的链接；`deliveryMrUrl` 为第一项，`deliveryMrState` 为聚合状态（全部合入默认分支才是 `merged`）。
 
 ### `GET /api/issues`
@@ -144,16 +143,6 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 返回该 Issue 的 run 摘要数组，按时间倒序，`200`；Issue 不存在 `404`。摘要省略 artifacts 内容、遥测、日志、事件和 workflow snapshot，并截断部分文本。
 
-### `POST /api/issues/{issueId}/clarify`
-
-按项目配置的澄清维度计算分数：
-
-```json
-{"answers":{"scope":"仅修改 API 层并补充测试","acceptance":"所有接口测试通过"}}
-```
-
-成功 `200` 返回 `ClarificationAssessment` 并把 Issue `kind` 设为 `requirement`；项目不存在/存储错误 `400`，Issue 不存在 `404`。分数按维度字数加权，未达标时 `passed=false` 且 `status=needs_user`。
-
 ## AI 多轮澄清
 
 ### `POST /api/chat-clarify`
@@ -175,7 +164,9 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 请求结构相同，使用已保存 Issue 作为上下文；Issue 不存在 `404`。
 
-已保存 Issue 的澄清在**服务端后台任务**中执行：浏览器断开、关闭网页或点抽屉外都不会取消。前台仍可用 SSE 看思考过程；`GET` 同一路径（`Accept: text/event-stream`）可重新接入正在跑的任务。`POST /api/issues/{issueId}/chat-clarify/cancel` 只取消这一张单。手动导入 TAPD 或新建需求评分未达标时会自动排队澄清；外部同步进来的需求不评分、不自动澄清。
+已保存 Issue 的澄清在**服务端后台任务**中执行：浏览器断开、关闭网页或点抽屉外都不会取消。前台仍可用 SSE 看思考过程；`GET` 同一路径（`Accept: text/event-stream`）可重新接入正在跑的任务。`POST /api/issues/{issueId}/chat-clarify/cancel` 只取消这一张单。澄清只由用户发起，导入、新建、同步都不会自动开始；服务重启时只续跑重启前正在分析的那一轮。
+
+澄清只围绕这张工作项本身：标题和描述就是范围边界，代码里看到的相邻功能、用户回答带出的新诉求都不会被追问，只在结论的「不在本次范围」里列一句。剩余细节能按现有代码惯例假设时直接给出结论（`ready=true`），连续多轮后会主动收敛。
 
 最长 10 分钟。响应模式：
 

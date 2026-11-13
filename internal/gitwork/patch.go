@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // MaxPatchBytes bounds one repository-patch inventory; it matches the
@@ -45,37 +46,7 @@ func RecordBaseline(workspace, baseBranch string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	var sha []byte
-	// The ref travels on stdin so a branch name never reaches git's argument list.
-	resolve := func(ref string) ([]byte, error) {
-		if strings.ContainsAny(ref, "\r\n") {
-			return nil, fmt.Errorf("invalid ref %q", ref)
-		}
-		cmd := exec.Command("git", "cat-file", "--batch-check=%(objectname)")
-		cmd.Dir = workspace
-		cmd.Stdin = strings.NewReader(ref + "^{commit}\n")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-		}
-		sha := strings.TrimSpace(string(out))
-		if !isObjectID(sha) {
-			return nil, fmt.Errorf("resolve %s: %s", ref, sha)
-		}
-		return []byte(sha), nil
-	}
-	if ref := strings.TrimSpace(baseBranch); ref != "" {
-		sha, err = resolve("origin/" + ref)
-	}
-	if err != nil || len(bytes.TrimSpace(sha)) == 0 {
-		sha, err = resolve("origin/master")
-	}
-	if err != nil {
-		sha, err = resolve("origin/main")
-	}
-	if err != nil {
-		sha, err = resolve("HEAD")
-	}
+	sha, err := resolveBaselineSHA(workspace, baseBranch)
 	if err != nil {
 		return fmt.Errorf("resolve repository baseline: %w", err)
 	}
@@ -88,7 +59,7 @@ func RecordBaseline(workspace, baseBranch string) error {
 	if err != nil {
 		return fmt.Errorf("record repository baseline: %w", err)
 	}
-	_, err = file.WriteString(strings.TrimSpace(string(sha)))
+	_, err = file.WriteString(sha)
 	closeErr := file.Close()
 	if err != nil {
 		return fmt.Errorf("record repository baseline: %w", err)
@@ -99,6 +70,45 @@ func RecordBaseline(workspace, baseBranch string) error {
 	return nil
 }
 
+// resolveBaselineSHA picks the first resolvable baseline candidate:
+// origin/<baseBranch> (when set), origin/master, origin/main, then HEAD.
+// When none resolves, the error of the last candidate is returned.
+func resolveBaselineSHA(workspace, baseBranch string) (string, error) {
+	var refs []string
+	if ref := strings.TrimSpace(baseBranch); ref != "" {
+		refs = append(refs, "origin/"+ref)
+	}
+	refs = append(refs, "origin/master", "origin/main", "HEAD")
+	var err error
+	for _, ref := range refs {
+		var sha string
+		if sha, err = resolveCommitSHA(workspace, ref); err == nil {
+			return sha, nil
+		}
+	}
+	return "", err
+}
+
+// resolveCommitSHA resolves ref to a commit object ID. The ref travels on
+// stdin so a branch name never reaches git's argument list.
+func resolveCommitSHA(workspace, ref string) (string, error) {
+	if strings.ContainsAny(ref, "\r\n") {
+		return "", fmt.Errorf("invalid ref %q", ref)
+	}
+	cmd := exec.Command("git", "cat-file", "--batch-check=%(objectname)")
+	cmd.Dir = workspace
+	cmd.Stdin = strings.NewReader(ref + "^{commit}\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	sha := strings.TrimSpace(string(out))
+	if !isObjectID(sha) {
+		return "", fmt.Errorf("resolve %s: %s", ref, sha)
+	}
+	return sha, nil
+}
+
 // PatchInventory lists workspace changes against the nearest current
 // baseline (usually origin/integrate or origin/<base>). A run shares one git
 // workspace across nodes, so the next node reads the files there; the
@@ -106,6 +116,10 @@ func RecordBaseline(workspace, baseBranch string) error {
 // and SOP deliverable markdown are excluded. Untracked source files are
 // intent-added so they appear in the list. No recorded baseline yields nil.
 func PatchInventory(workspace string) ([]byte, error) {
+	// Parallel branches finishing together inventory the same checkout;
+	// StageUntracked's git add -N would race on .git/index.lock.
+	unlock := lockPatchWorkspace(workspace)
+	defer unlock()
 	baseline, err := os.ReadFile(BaselinePath(workspace))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -256,76 +270,108 @@ func RenderPatchInventory(files []PatchFileSummary) string {
 	return strings.TrimSpace(b.String())
 }
 
+// ParseNameStatusNumstat merges `git diff --name-status` and
+// `git diff --numstat` output into one summary per path, sorted by path.
 func ParseNameStatusNumstat(nameStatus, numstat []byte) []PatchFileSummary {
-	type rec struct {
-		file  PatchFileSummary
-		order int
-	}
-	best := map[string]rec{}
-	next := 0
-	put := func(path string, update func(*PatchFileSummary)) {
-		path = filepath.ToSlash(UnquoteLsFilesPath(path))
-		if path == "" {
-			return
-		}
-		item, ok := best[path]
-		if !ok {
-			item = rec{file: PatchFileSummary{Path: path, Status: "M"}, order: next}
-			next++
-		}
-		update(&item.file)
-		item.file.Path = path
-		if item.file.Status == "" {
-			item.file.Status = "M"
-		}
-		best[path] = item
-	}
+	files := map[string]*PatchFileSummary{}
 	for _, line := range strings.Split(string(nameStatus), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
+		path, status, from, ok := parseNameStatusLine(line)
+		if !ok {
 			continue
 		}
-		parts := strings.Split(line, "\t")
-		if len(parts) < 2 || parts[0] == "" {
-			continue
-		}
-		letter := string(parts[0][0])
-		path := parts[len(parts)-1]
-		from := ""
-		if (letter == "R" || letter == "C") && len(parts) >= 3 {
-			from = filepath.ToSlash(UnquoteLsFilesPath(parts[1]))
-			path = parts[2]
-		}
-		put(path, func(f *PatchFileSummary) {
-			f.Status = letter
+		if f := patchSummaryFor(files, path); f != nil {
+			f.Status = status
 			f.RenameFrom = from
-		})
+		}
 	}
 	for _, line := range strings.Split(string(numstat), "\n") {
-		line = strings.TrimRight(line, "\r")
-		parts := strings.Split(line, "\t")
-		if len(parts) < 3 {
+		path, added, deleted, binary, ok := parseNumstatLine(line)
+		if !ok {
 			continue
 		}
-		path := parts[len(parts)-1]
-		put(path, func(f *PatchFileSummary) {
-			if parts[0] == "-" || parts[1] == "-" {
-				f.Binary = true
-				if f.Status == "M" || f.Status == "" {
-					f.Status = "B"
-				}
-				return
+		f := patchSummaryFor(files, path)
+		if f == nil {
+			continue
+		}
+		if binary {
+			f.Binary = true
+			if f.Status == "M" {
+				f.Status = "B"
 			}
-			f.Added, _ = strconv.Atoi(parts[0])
-			f.Deleted, _ = strconv.Atoi(parts[1])
-		})
+			continue
+		}
+		f.Added, f.Deleted = added, deleted
 	}
-	out := make([]PatchFileSummary, 0, len(best))
-	for _, item := range best {
-		out = append(out, item.file)
+	out := make([]PatchFileSummary, 0, len(files))
+	for _, f := range files {
+		out = append(out, *f)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// patchSummaryFor returns the summary for the normalized path, creating a
+// modified ("M") entry on first sight; it returns nil for an empty path.
+func patchSummaryFor(files map[string]*PatchFileSummary, rawPath string) *PatchFileSummary {
+	path := filepath.ToSlash(UnquoteLsFilesPath(rawPath))
+	if path == "" {
+		return nil
+	}
+	f, ok := files[path]
+	if !ok {
+		f = &PatchFileSummary{Path: path, Status: "M"}
+		files[path] = f
+	}
+	return f
+}
+
+// parseNameStatusLine parses one `--name-status` line into its raw path, the
+// single-letter status and, for renames/copies, the normalized source path.
+func parseNameStatusLine(line string) (path, status, from string, ok bool) {
+	line = strings.TrimRight(line, "\r")
+	if strings.TrimSpace(line) == "" {
+		return "", "", "", false
+	}
+	parts := strings.Split(line, "\t")
+	if len(parts) < 2 || parts[0] == "" {
+		return "", "", "", false
+	}
+	status = string(parts[0][0])
+	path = parts[len(parts)-1]
+	if (status == "R" || status == "C") && len(parts) >= 3 {
+		from = filepath.ToSlash(UnquoteLsFilesPath(parts[1]))
+		path = parts[2]
+	}
+	return path, status, from, true
+}
+
+// parseNumstatLine parses one `--numstat` line; binary files report "-" for
+// both counts. Unparseable counts read as zero.
+func parseNumstatLine(line string) (path string, added, deleted int, binary, ok bool) {
+	parts := strings.Split(strings.TrimRight(line, "\r"), "\t")
+	if len(parts) < 3 {
+		return "", 0, 0, false, false
+	}
+	path = parts[len(parts)-1]
+	if parts[0] == "-" || parts[1] == "-" {
+		return path, 0, 0, true, true
+	}
+	added, _ = strconv.Atoi(parts[0])
+	deleted, _ = strconv.Atoi(parts[1])
+	return path, added, deleted, false, true
+}
+
+var patchWorkspaceLocks sync.Map // cleaned absolute path -> *sync.Mutex
+
+func lockPatchWorkspace(workspace string) func() {
+	key := filepath.Clean(workspace)
+	if abs, err := filepath.Abs(key); err == nil {
+		key = abs
+	}
+	value, _ := patchWorkspaceLocks.LoadOrStore(key, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func isObjectID(s string) bool {

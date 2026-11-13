@@ -25,7 +25,10 @@ async function openIssueDetail(id,tab){
   $('#issueDetailBody').innerHTML='<div class="detail-empty">正在加载需求详情…</div>';
   try{
     const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);const issue=detail.issue;const comments=detail.comments||[];
-    const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);if(localIssue)Object.assign(issue,localIssue);
+    const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);
+    // Keep local view state, but deletion feedback must come from this fresh detail response.
+    const permissions={deletionAllowed:issue.deletionAllowed,deletionRequiresForce:issue.deletionRequiresForce,deletionBlock:issue.deletionBlock,closureAllowed:issue.closureAllowed};
+    if(localIssue){Object.assign(issue,localIssue,permissions);Object.assign(localIssue,permissions)}
     const task=latestIssueTask(issue);
     const runId=task?.runId||latestIssueRun(issue, task)?.id;
     let requirement=null;
@@ -41,43 +44,35 @@ async function openIssueDetail(id,tab){
         if(['queued','running','waiting'].includes(run.status))startLiveRun(run.id);
       }
     }
-    state.issueDetailData={issue,comments,run,task,requirement};
-    const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsClarify=requirementNeedsClarification(issue),needsConfirm=clarificationNeedsConfirm(issue);
-    state.issueDetailTab=tab||(issueClarifying(issueId)||needsClarify||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
+    let deletionTask=null;
+    if(issue.deletionBlock?.taskId&&!issue.deletionBlock.runId){
+      try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
+      if(deletionTask?.issueId!==issueId)deletionTask=null;
+    }
+    state.issueDetailData={issue,comments,run,task,requirement,deletionTask};
+    const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
+    state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
     $$('#issueDetailTabs .drawer-tab').forEach(b=>b.classList.toggle('active',b.dataset.dtab===state.issueDetailTab));
     renderIssueDetailTab();
     if(issueClarifying(issueId)){
       restoreIssueClarifyThinking(issueId);
       attachIssueClarifyStream(issueId);
     }
-    if(state.autoStartClarify&&(needsClarify||issueClarifying(issueId))){
-      state.autoStartClarify=false;
-      if(!issueClarifying(issueId))openIssueClarification(true);
-      else{setIssueClarifyTab();renderIssueDetailTab();attachIssueClarifyStream(issueId)}
-    }else{state.autoStartClarify=false}
-  }catch(e){state.autoStartClarify=false;$('#issueDetailBody').innerHTML=`<div class="detail-empty">加载失败：${escapeHTML(e.message)}</div>`}
+  }catch(e){$('#issueDetailBody').innerHTML=`<div class="detail-empty">加载失败：${escapeHTML(e.message)}</div>`}
 }
 function issueClarifyViewKey(issue,project){
   const c=issue?.clarification||{};
-  const policy=clarificationPolicy(project);
   return JSON.stringify({
     analyzing:!!issueClarifying(issue?.id),
     status:c.status||'',
-    score:c.score||0,
-    passed:!!c.passed,
-    gated:!!c.gated,
     lastError:c.lastError||'',
     summary:c.summary||'',
     writeBack:c.writeBackStatus||'',
     writeBackError:c.writeBackError||'',
     questions:(c.questions||[]).map(q=>({question:q.question||'',multi:!!q.multiSelect,options:clarifyQuestionOptions(q)})),
-    missing:c.missing||[],
-    dimensions:c.dimensions||{},
     history:(c.history||[]).map(h=>({role:h.role||'',content:h.content||''})),
-    threshold:policy?.threshold||0,
     source:issue?.source||'',
     external:issue?.externalRef?.externalUrl||'',
-    needs:!!requirementNeedsClarification(issue),
     confirm:!!clarificationNeedsConfirm(issue),
     blocked:issueExecutionBlocked(issue)||''
   });
@@ -196,6 +191,7 @@ function renderIssueDetailTab(){
   host.querySelectorAll('[data-resync-tapd]').forEach(b=>b.onclick=()=>resyncTAPDIssueById(b.dataset.resyncTapd));
   host.querySelectorAll('[data-reopen-issue]').forEach(b=>b.onclick=()=>reopenDeliveredIssue(b.dataset.reopenIssue));
   host.querySelectorAll('[data-delete-issue]').forEach(b=>b.onclick=()=>deleteIssueById(b.dataset.deleteIssue||issue.id));
+  bindIssueDeletionContext(host);
   host.querySelectorAll('[data-close-issue]').forEach(b=>b.onclick=()=>closeIssueById(b.dataset.closeIssue||issue.id));
   host.querySelectorAll('[data-resume-run]').forEach(b=>b.onclick=()=>resumeRun(b.dataset.resumeRun,b));
   host.querySelectorAll('[data-pause-run]').forEach(b=>b.onclick=()=>pauseRun(b.dataset.pauseRun));
@@ -231,23 +227,18 @@ function renderIssueDetailTab(){
 function drawerFact(label,value,title){return `<div class="detail-fact"><span>${label}</span><b title="${escapeHTML(title||value||'')}">${value===''||value==null?'—':value}</b></div>`}
 function clarificationOverviewCard(issue){
   const c=issue.clarification||{},source=issue.source==='gongfeng'?'工蜂':issue.source==='tapd'?'TAPD':'LoopForge';
-  const score=c.score||0;
   if(issueClarifying(issue.id)||c.status==='analyzing'){
     return `<div class="clarify-overview"><span>…</span><div><b>澄清正在后台分析</b><small>关闭网页也不会中断，点查看可回到分析过程</small></div><button class="button ghost small" data-start-clarify>查看</button></div>`;
-  }
-  if(requirementNeedsClarification(issue)&&c.status!=='in_progress'&&c.status!=='ready'){
-    return `<div class="clarify-overview needs-user"><span>!</span><div><b>导入评分 ${score} 分，需要你处理</b><small>未达项目准入线，点这里开始澄清后再触发 SOP</small></div><button class="button primary small" data-start-clarify>去澄清</button></div>`;
   }
   if(c.status==='ready'&&c.summary){
     const failed=c.writeBackStatus==='failed';
     const pending=c.writeBackStatus==='pending';
-    const scoreLabel=score?` · ${score} 分`:'';
     const cls=failed||pending?'failed':'ready';
-    const title=failed?`澄清已完成${scoreLabel}，写回失败`:pending?`澄清已完成${scoreLabel}，待确认写回`:`已澄清${scoreLabel} · ${c.writeBackStatus==='succeeded'?`已写回 ${source}`:'结论已保存'}`;
+    const title=failed?'澄清已完成，写回失败':pending?'澄清已完成，待确认写回':`已澄清 · ${c.writeBackStatus==='succeeded'?`已写回 ${source}`:'结论已保存'}`;
     return `<div class="clarify-overview ${cls}"><span>${failed||pending?'!':'✓'}</span><div><b>${title}</b><small>${escapeHTML((c.summary||'').slice(0,120))}${c.summary&&c.summary.length>120?'…':''}</small></div><button class="button ghost small" data-start-clarify>查看</button></div>`;
   }
   if(c.status==='in_progress'){
-    return `<div class="clarify-overview"><span>…</span><div><b>澄清尚未完成</b><small>继续回答关键问题，进度已经保存</small></div><button class="button ghost small" data-start-clarify>继续</button></div>`;
+    return `<div class="clarify-overview"><span>…</span><div><b>澄清尚未完成</b><small>继续回答关键问题，进度已经保存；不影响直接触发 SOP</small></div><button class="button ghost small" data-start-clarify>继续</button></div>`;
   }
   return `<div class="clarify-overview"><span>?</span><div><b>描述不够清楚？</b><small>结合原单和代码问清关键细节</small></div><button class="button ghost small" data-start-clarify>帮我问清楚</button></div>`;
 }
@@ -518,7 +509,7 @@ function issueProgressActionsHTML(issue,run,{includeIssueActions=false}={}){
     issueActions.push('<button class="button ghost small" data-edit-issue>编辑需求</button>');
     if(issueCanPushTAPD(issue))issueActions.push(`<button class="button ghost small" data-push-tapd="${escapeHTML(issue.id)}">同步到 TAPD</button>`);
     if(issueCanClose(issue)&&issue.status!=='done'&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&!deliveryLocked(issue))issueActions.push(`<button class="button ghost small" data-close-issue="${escapeHTML(issue.id)}">关闭需求</button>`);
-    if(issueCanDelete(issue))issueActions.push(`<button class="button ghost small danger" data-delete-issue="${escapeHTML(issue.id)}">删除需求</button>`);
+    issueActions.push(issueDeleteControlHTML(issue));
     if(issue.externalRef?.externalUrl)issueActions.push(`<a class="button ghost small" href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer">打开外部链接 ↗</a>`);
     if(issue.source==='tapd'&&issue.externalRef?.externalId)issueActions.push(`<button class="button ghost small" data-resync-tapd="${escapeHTML(issue.id)}">从 TAPD 同步</button>`);
   }
@@ -550,34 +541,6 @@ function overviewPane(issue,data){
   const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':escapeHTML(workflow?.name||'未关联'))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
   return `<div class="detail-section">${banner}${facts}${issue.description?`<div class="detail-desc" style="margin-top:12px">${escapeHTML(issue.description)}</div>`:''}${clarificationOverviewCard(issue)}</div>`;
 }
-// Bug-style items are rated on reproduction quality; requirements use the
-// project's configurable policy. Mirrors clarificationRatingDimensions in Go.
-function issueClarifyDimensions(issue,project){
-  if(issue.source==='gongfeng'||issue.kind==='issue')return[
-    {id:'phenomenon',name:'现象与复现'},{id:'impact',name:'影响范围'},{id:'expected',name:'期望行为'},
-    {id:'acceptance',name:'验收标准'},{id:'constraints',name:'约束与依赖'}];
-  return clarificationPolicy(project).dimensions||[];
-}
-function clarifyScoreLevel(score){return score>=80?'good':score>=60?'fair':'weak'}
-function clarifyScoreHTML(issue,project){
-  const c=issue.clarification||{},ratings=c.dimensions||{};
-  if(!Object.keys(ratings).length)return'';
-  const dims=issueClarifyDimensions(issue,project),threshold=clarificationPolicy(project).threshold||0;
-  const bars=dims.filter(d=>ratings[d.id]!==undefined).map(d=>{
-    const v=ratings[d.id]||0;
-    return `<div class="clarify-rate"><span>${escapeHTML(d.name||d.id)}</span><i><b class="${clarifyScoreLevel(v)}" style="width:${v}%"></b></i><em>${v}</em></div>`;
-  }).join('');
-  const missingNames=(c.missing||[]).map(m=>{
-    const dim=dims.find(d=>d.id===m);
-    return dim?dim.name:m;
-  });
-  const missing=missingNames.map(name=>`<span class="clarify-missing-chip"><i></i>${escapeHTML(name)}</span>`).join('');
-  const missingBlock=missing?`<div class="clarify-missing"><div class="clarify-missing-head"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg><b>仍未确认 · ${missingNames.length} 项</b></div><div class="clarify-missing-list">${missing}</div></div>`:'';
-  return `<div class="clarify-score">
-    <div class="clarify-score-total ${clarifyScoreLevel(c.score||0)}"><b>${c.score||0}</b><span>信息完整度</span></div>
-    <div class="clarify-score-body">${bars}${threshold?`<small>${c.status==='ready'||c.passed?`信息完整度 ${c.score||0} 分，澄清完成后可触发 SOP。`:`项目准入线 ${threshold} 分；未达标需先完成澄清。`}</small>`:''}</div>
-  </div>${missingBlock}`;
-}
 function clarifyHistoryHTML(c){
   const rows=[];
   (c.history||[]).forEach(msg=>{
@@ -603,16 +566,16 @@ function clarifyPane(issue,project){
     const retry=c.writeBackStatus==='failed'?`<button class="button primary small" data-retry-clarify>重试写回原单</button>`:'';
     const confirm=pending?`<button class="button primary small" data-retry-clarify title="确认写回原单（追加评论）之后，即可开始触发需求">确认写回原单（追加评论）</button>`:'';
     const external=issue.externalRef?.externalUrl?`<a class="button ghost small" href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer">打开原单 ↗</a>`:'';
-    const trigger=!pending&&!issueExecutionBlocked(issue)?`<button class="button primary small" data-dispatch-issue="${escapeHTML(issue.id)}" title="需求已具备进入研发准入条件，点击直接触发 SOP">触发需求</button>`:'';
+    const trigger=!pending&&!issueExecutionBlocked(issue)?`<button class="button primary small" data-dispatch-issue="${escapeHTML(issue.id)}" title="按澄清结论触发 SOP">触发需求</button>`:'';
     const blockedHint=!pending&&issueExecutionBlocked(issue)?(issueTrackerClosed(issue)&&!issueManuallyClosed(issue)?closedTrackerHint(issue):deliveredHint(issue)):'';
     const stepGuide=pending?`<div class="clarify-next-step-callout"><div class="clarify-step-badge active"><span class="step-num">1</span><span>确认写回原单（追加评论）</span></div><span class="clarify-step-arrow">➔</span><div class="clarify-step-badge"><span class="step-num">2</span><span>触发需求执行 SOP</span></div></div>`:'';
     const head=pending
       ?`<div class="clarify-ready-head"><span class="clarify-check warn">!</span><div><b>请确认澄清结论并写回原单</b><small>结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 SOP（不会修改原单描述）</small></div></div>${stepGuide}`
-      :`<div class="clarify-ready-head"><span class="clarify-check">✓</span><div><b>澄清已完成${c.writeBackStatus==='succeeded'?` · 已写回 ${source} 评论`:''}</b><small class="${c.writeBackStatus==='failed'?'danger':''}">${escapeHTML(writeBack||'结论已保存到平台说明')}，已满足准入条件，可直接触发需求执行 SOP</small></div></div>`;
+      :`<div class="clarify-ready-head"><span class="clarify-check">✓</span><div><b>澄清已完成${c.writeBackStatus==='succeeded'?` · 已写回 ${source} 评论`:''}</b><small class="${c.writeBackStatus==='failed'?'danger':''}">${escapeHTML(writeBack||'结论已保存到平台说明')}，可直接触发需求执行 SOP</small></div></div>`;
     const actionTip=pending
       ?`<div class="clarify-action-hint">确认写回原单（追加评论）后，即可开始触发需求</div>`
-      :(trigger?`<div class="clarify-action-hint ok">已写回原单并满足准入条件，可直接点击「触发需求」开始执行</div>`:'');
-    return `<div class="clarify-workspace">${head}${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${clarifyScoreHTML(issue,project)}${c.writeBackError?`<div class="clarify-error">${escapeHTML(c.writeBackError)}</div>`:''}${clarifyHistoryHTML(c)}<div class="clarify-actions">${confirm}${trigger}${blockedHint}${retry}${external}<button class="button ghost small" data-reclarify>再问一轮</button>${actionTip}</div></div>`;
+      :(trigger?`<div class="clarify-action-hint ok">可直接点击「触发需求」开始执行</div>`:'');
+    return `<div class="clarify-workspace">${head}${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${c.writeBackError?`<div class="clarify-error">${escapeHTML(c.writeBackError)}</div>`:''}${clarifyHistoryHTML(c)}<div class="clarify-actions">${confirm}${trigger}${blockedHint}${retry}${external}<button class="button ghost small" data-reclarify>再问一轮</button>${actionTip}</div></div>`;
   }
   const questions=c.questions||[];
   const analyzing=issueClarifying(issue.id);
@@ -620,22 +583,16 @@ function clarifyPane(issue,project){
   const questionHTML=analyzing?'':clarifyQuestionCardsHTML(questions,saved);
   const submittedHTML=analyzing?clarifySubmittedHTML(saved?.reply):'';
   if(c.status!=='in_progress'&&!analyzing){
-    const scored=c.score||Object.keys(c.dimensions||{}).length;
-    const need=requirementNeedsClarification(issue);
-    const intro=need
-      ?`<div class="clarify-orb">!</div><h3>导入评分 ${c.score||0} 分，需要你补充</h3><p>未达项目准入线。分析师会结合这张单和本项目代码提出关键问题，补齐后再触发 SOP。</p>`
-      :`<div class="clarify-orb">?</div><h3>描述不够清楚？一起问明白</h3><p>分析师会结合这张单和本项目代码提出关键问题。确认信息够用后，这里会出现「澄清已完成」，才能触发需求。</p>`;
-    const legacy=scored&&!need?`<div class="clarify-summary compact">已有结构化澄清：${c.score||0}/100 · ${c.passed?'已通过':'未通过'}。</div>`:'';
-    return `<div class="clarify-workspace clarify-empty">${legacy}${intro}${need?clarifyScoreHTML(issue,project):''}<div class="clarify-start-row">${clarifyModelPickerHTML(false)}<button class="button primary" data-start-clarify>${need?'开始澄清':'开始澄清'}</button></div></div>`;
+    const intro=`<div class="clarify-orb">?</div><h3>描述不够清楚？一起问明白</h3><p>可选步骤。分析师只围绕这张单本身，结合本项目代码问清阻塞开工的细节；不澄清也可以直接触发 SOP。</p>`;
+    return `<div class="clarify-workspace clarify-empty">${intro}<div class="clarify-start-row">${clarifyModelPickerHTML(false)}<button class="button primary" data-start-clarify>开始澄清</button></div></div>`;
   }
   const lastError=(!analyzing&&c.lastError)?`<div class="clarify-error req-clarify-retry"><span>${escapeHTML(c.lastError)}</span><button type="button" class="button primary small" data-retry-clarify-turn>重新分析</button></div>`:'';
   const rounds=(c.history||[]).filter(m=>m.role==='assistant').length;
-  const lastParsed=latestClarifyParsed(c);
-  const progressIssue={...issue,clarification:{...c,...((!c.score&&lastParsed?.assessment)?{dimensions:lastParsed.assessment.dimensions||{},missing:lastParsed.assessment.missing||[]}:{})}};
-  const scoreBlock=clarifyScoreHTML(progressIssue,project);
-  const nextHint=analyzing?'正在后台分析，关闭详情不会中断':(c.lastError?'上次分析未完成，可重新分析':`回答后点「继续澄清」。分析师确认够用后会出现「澄清已完成」，才能触发需求。已澄清 ${rounds||0} 轮。`);
+  // Own text node so the sentence matches an English entry; a trailing count does not.
+  const roundNote=(!analyzing&&!c.lastError)?`已澄清 ${rounds||0} 轮。`:'';
+  const nextHint=analyzing?'正在后台分析，关闭详情不会中断':(c.lastError?'上次分析未完成，可重新分析':'回答后点「继续澄清」。分析师确认够用后会给出结论；也可以随时直接触发 SOP。');
   const composerInput=analyzing?'':`<textarea id="issueClarifyInput" rows="3" placeholder="${questions.length?'点选上面的答案，或补充说明':'补充你认为重要的信息'}">${escapeHTML(saved?.extra||'')}</textarea>`;
-  return `<div class="clarify-workspace"><div class="clarify-intro"><span>AI</span><div><b>${analyzing?'正在分析这张':'继续完善这张'}${issue.source==='gongfeng'?' Issue':'需求'}</b><small>${analyzing?'关闭详情不会中断，再打开可继续看过程':'每轮只问最关键的 1–3 个问题；确认够用前不会出现「触发需求」'}</small></div>${clarifyModelPickerHTML(analyzing)}</div>${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary compact">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${scoreBlock}${clarifyHistoryHTML(c)}${submittedHTML}${questionHTML}${lastError}<div id="issueClarifyThinking" class="req-thinking-stream" hidden></div><div class="issue-clarify-composer">${composerInput}<div><span id="issueClarifyHint">${nextHint}</span><span><button class="button ghost small" data-stop-clarify ${analyzing?'':'hidden'}>停止</button> <button class="button primary small" data-continue-clarify${analyzing?' disabled':''}>${analyzing?'分析中…':(c.lastError?'重新分析':'继续澄清')}</button></span></div></div></div>`;
+  return `<div class="clarify-workspace"><div class="clarify-intro"><span>AI</span><div><b>${analyzing?'正在分析这张':'继续完善这张'}${issue.source==='gongfeng'?' Issue':'需求'}</b><small>${analyzing?'关闭详情不会中断，再打开可继续看过程':'每轮只问最关键的 1–3 个问题，只围绕这张单本身'}</small></div>${clarifyModelPickerHTML(analyzing)}</div>${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary compact">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${clarifyHistoryHTML(c)}${submittedHTML}${questionHTML}${lastError}<div id="issueClarifyThinking" class="req-thinking-stream" hidden></div><div class="issue-clarify-composer">${composerInput}<div><span id="issueClarifyHint">${nextHint}${roundNote?` <span>${roundNote}</span>`:''}</span><span><button class="button ghost small" data-stop-clarify ${analyzing?'':'hidden'}>停止</button> <button class="button primary small" data-continue-clarify${analyzing?' disabled':''}>${analyzing?'分析中…':(c.lastError?'重新分析':'继续澄清')}</button></span></div></div></div>`;
 }
 function latestClarifyParsed(c){
   const rows=[...(c?.history||[])].reverse();
@@ -643,7 +600,7 @@ function latestClarifyParsed(c){
     if(msg.role!=='assistant')continue;
     try{
       const parsed=JSON.parse(msg.content||'');
-      if(parsed&&typeof parsed==='object'&&(parsed.questions||parsed.ready||parsed.assessment))return parsed;
+      if(parsed&&typeof parsed==='object'&&(parsed.questions||parsed.ready))return parsed;
     }catch{}
   }
   return null;
@@ -834,8 +791,8 @@ function sopPane(issue,data){
     const nodeRows=stageRows(plannedSOPNodes(lane,wf),0);
     const singleSOP=effectiveIssueSOPBindings(issue).length<=1;
     const actionWorkflow=singleSOP&&String(issue.workflowId||'').trim()?issue.workflowId:lane.workflowId;
-    const canStart=actionWorkflow&&!issueExecutionBlocked(issue)&&!clarificationNeedsConfirm(issue)&&!requirementNeedsClarification(issue)&&!lane.started;
-    const canRetriggerLane=actionWorkflow&&lane.started&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&!clarificationNeedsConfirm(issue)&&!requirementNeedsClarification(issue);
+    const canStart=actionWorkflow&&!issueExecutionBlocked(issue)&&!clarificationNeedsConfirm(issue)&&!lane.started;
+    const canRetriggerLane=actionWorkflow&&lane.started&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&!clarificationNeedsConfirm(issue);
     const trigger=canStart?`<button class="button primary small" data-dispatch-issue="${escapeHTML(issue.id)}" data-workflow="${escapeHTML(actionWorkflow)}">触发</button>`:(canRetriggerLane?`<button class="button ghost small" data-retrigger-issue="${escapeHTML(issue.id)}" data-workflow="${escapeHTML(actionWorkflow)}">重新触发</button>`:'');
     const ownerName=userDisplay(userById(lane.assigneeUserId||issue.assigneeUserId))||'需求跟进人';
     const hint=lane.started?`${lane.runCount||0} 次 · ${formatTokens(lane.tokens||0)}`:'展开可看节点';
@@ -891,6 +848,29 @@ function sopDeliveryPane(issue,data){
   const runFacts=`<div class="detail-grid">${drawerFact('Run ID',run?run.id.slice(-14):'—')}${drawerFact('Task ID',data.task?data.task.id.slice(-10):'—')}${drawerFact('触发方式',escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('状态',run?`<span class="status ${runDisplayStatusClass(run)}">${runDisplayStatus(run)}</span>`:'—')}${drawerFact('执行仓库',escapeHTML(frozen.map(r=>r.name).filter(Boolean).join('、')||'—'))}${drawerFact('冻结目标主分支',escapeHTML(frozenBranches.join('、')||'—'))}${drawerFact('Trace ID',ctx?.traceId?ctx.traceId.slice(-14):'—')}</div>`;
   return `<div class="detail-section"><h3>代码仓库与分支${repos.length>1?`<span class="sub">${repos.length} 个仓库</span>`:''}</h3>${repoFacts}</div><div class="detail-section"><h3>交付运行上下文<span class="sub">发起时冻结的仓库与 Trace 关联</span></h3>${run?runFacts+'<div style="margin-top:10px"><button class="button ghost small" data-open-run="'+escapeHTML(run.id)+'">查看运行详情与产物 →</button></div>':'<div class="detail-empty">尚未发起交付运行</div>'}</div>${run?.input?`<div class="detail-section"><h3>任务输入</h3><div class="detail-desc">${escapeHTML(run.input)}</div></div>`:''}`;
 }
+// Execution order of a SOP's nodes, same rule as orderNodesByEdges in
+// internal/repo/requirement.go: stable topological sort over the edges, array
+// order breaks ties, cycles fall back to array order. The editor appends a node
+// added in a later SOP version to the end of the array, so without this a gate
+// inserted mid-flow is listed after the last node.
+function nodesInExecutionOrder(wf){
+  const nodes=wf?.nodes||[],edges=wf?.edges||[];
+  if(nodes.length<2||!edges.length||nodes.some(n=>!n?.id))return nodes;
+  const known=new Set(nodes.map(n=>n.id)),indegree=new Map(),children=new Map();
+  for(const e of edges){
+    if(e.source===e.target||!known.has(e.source)||!known.has(e.target))continue;
+    indegree.set(e.target,(indegree.get(e.target)||0)+1);
+    children.set(e.source,[...(children.get(e.source)||[]),e.target]);
+  }
+  const placed=new Set(),out=[];
+  while(out.length<nodes.length){
+    const next=nodes.find(n=>!placed.has(n.id)&&!(indegree.get(n.id)>0));
+    if(!next){for(const n of nodes)if(!placed.has(n.id)){out.push(n);placed.add(n.id)}break}
+    out.push(next);placed.add(next.id);
+    for(const c of children.get(next.id)||[])indegree.set(c,indegree.get(c)-1);
+  }
+  return out;
+}
 function acceptancePane(issue,data){
   const run=data.run;
   if(conversationWorkspaceIssue(issue,run)){
@@ -900,7 +880,7 @@ function acceptancePane(issue,data){
   if(!run)return '<div class="detail-empty">尚未执行，暂无验收信息。</div>';
   const wf=run.workflowSnapshot||(state.data.workflows||[]).find(w=>w.id===run.workflowId);
   const nodes=wf?.nodes||[];
-  const gates=nodes.map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
+  const gates=nodesInExecutionOrder(wf).map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
     if(nr.status==='succeeded')verdict=isApproval?'已批准':(commands.length||manual)?'门禁通过':'完成';
     if(nr.status==='waiting_approval')verdict=turnsExhausted(nr)?'等待确认是否重试':(isApproval?'等待人工判断':'等待人工验收');
     if(nr.status==='failed')verdict='门禁失败';
@@ -954,7 +934,9 @@ function activityPane(issue,data){
   const comments=data.comments||[],task=data.task,run=data.run;
   const commentHtml=comments.slice().reverse().map(c=>`<div class="comment-row"><div class="muted">${c.authorType==='agent'?'Agent':c.authorId||'成员'} · ${new Date(c.createdAt).toLocaleString()}</div><p>${escapeHTML(c.body)}</p></div>`).join('')||'<div class="detail-empty compact">暂无讨论</div>';
   const items=[];
-  if(task)items.push({t:new Date(task.createdAt).getTime(),type:'task.created',label:'创建任务',detail:`${taskStatusLabel(task.status)}${task.agentId?' · '+task.agentId:''}`});
+  for(const item of [task,data.deletionTask].filter((t,i,all)=>t&&all.findIndex(x=>x?.id===t.id)===i)){
+    items.push({t:new Date(item.createdAt).getTime(),type:'task.created',label:item.id===data.deletionTask?.id?'阻止删除的任务':'创建任务',detail:`${taskStatusLabel(item.status)} · ${item.id}${item.agentId?' · '+item.agentId:''}`});
+  }
   for(const e of run?.events||[])items.push({t:new Date(e.timestamp).getTime(),type:e.type||'',label:activityEventLabel(e.type),detail:e.message||''});
   items.sort((a,b)=>b.t-a.t);
   const rows=items.map(e=>{
@@ -971,11 +953,13 @@ async function deleteIssueById(issueId){
   if(state.issueBulkDeleting)return toast('正在批量删除需求，请稍候','info');
   const issue=(state.data.issues||[]).find(i=>i.id===issueId)||state.issueDetailData?.issue;
   if(!issue||issue.id!==issueId)return toast('未找到需求单');
-  if(issueClarifying(issueId))return toast('需求正在澄清，请先停止后再删除','err');
+  if(!issueCanDelete(issue))return toast(issueDeletionBlock(issue).reason,'err');
+  const force=issue.deletionRequiresForce===true;
+  const title=force?'强制删除需求':'删除需求';
   const external=issue.source==='tapd'||issue.source==='gongfeng';
-  if(!await afConfirm({title:'删除需求',message:`确定删除需求「${issue.title||issue.id}」？需求、评论、澄清记录以及失败／取消的历史任务、运行记录、日志、产物和执行工作区将一并清理，且不可恢复。已有成功运行的需求不允许删除。${external?'此操作仅删除本地记录，不会删除 TAPD／工蜂原单，后续同步可能重新导入。':''}`,danger:true,confirmText:'确认删除'}))return;
+  if(!await afConfirm({title,message:`确定${title}「${issue.title||issue.id}」？${issueDeletionWarning(force,external)}`,danger:true,confirmText:force?'确认强制删除':'确认删除'}))return;
   try{
-    await api(`/api/issues/${encodeURIComponent(issueId)}`,{method:'DELETE'});
+    await api(issueDeletePath(issueId,force),{method:'DELETE'});
     state.data.issues=(state.data.issues||[]).filter(i=>i.id!==issueId);
     state.issueSelection?.delete(issueId);
     if(state.issueDetailData?.issue?.id===issueId){closeIssueDrawer();state.issueDetailData=null;state.selectedIssue=null;}
@@ -983,7 +967,10 @@ async function deleteIssueById(issueId){
     await refreshRuns();
     renderIssues();
     toast('需求已删除','ok');
-  }catch(err){toast(err.message,'err')}
+  }catch(err){
+    toast(err.message,'err');
+    await refreshIssues();
+  }
 }
 
 // Association does not expose private conversations to other project members.
