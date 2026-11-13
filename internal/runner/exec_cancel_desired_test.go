@@ -75,20 +75,6 @@ func deliverControl(t *testing.T, d *Daemon, ch chan string, taskID, desiredStat
 	}
 }
 
-func waitForFile(t *testing.T, path string) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s was not created", path)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
 func TestExecuteProcessIgnoresNonCancelDesiredState(t *testing.T) {
 	d, cancelLines := platformCancelTestDaemon(t)
 	const taskID = "ignore-run-state"
