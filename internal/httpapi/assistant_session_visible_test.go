@@ -65,3 +65,16 @@ func TestVisibleAssistantConversationsDoesNotResetGenerationFields(t *testing.T)
 		t.Fatalf("filter must leave generation fields untouched for listSessions to reset, got %+v", got)
 	}
 }
+
+// A shared record that names no project must stay hidden on the project-ID
+// guard alone, even when its run is unbound too and the caller's access map
+// would otherwise let the empty project through.
+func TestVisibleAssistantConversationsHidesSharedRecordWithoutProject(t *testing.T) {
+	candidates := []assistantConversation{{ID: "shared-unbound", Shared: true, RunID: "run-unbound"}}
+	sharedIDs := map[string]bool{"shared-unbound": true}
+	runProjects := map[string]string{"run-unbound": ""}
+	allowedProjects := map[string]bool{"": true}
+	if got := visibleAssistantConversations(candidates, 1, sharedIDs, runProjects, allowedProjects); len(got) != 0 {
+		t.Fatalf("shared record without a project must be hidden, got %+v", got)
+	}
+}
