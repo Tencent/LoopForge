@@ -19,9 +19,6 @@ var errProcessNotStarted = errors.New("process was not started")
 func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	var buf bytes.Buffer
 	var mu sync.Mutex
-	if sink != nil {
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Phase: "start", Message: compactCommand(cmd.Args)})
-	}
 	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info"}
 	stderr := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stderr", level: "error"}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -31,13 +28,27 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	// at 100ms a busy host (CI running Go and JS tests together) dropped the
 	// tail of a 50KB failure log, which is the part users need.
 	cmd.WaitDelay = processWaitDelay
-	err := cmd.Run()
+	// Start launches the stdout/stderr copy goroutines. Hold the writers' lock
+	// until process.started is delivered so the sink stays serialized and the
+	// event always precedes the first output line.
+	mu.Lock()
+	err := cmd.Start()
+	if err == nil && sink != nil {
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args), Attributes: map[string]any{"pid": cmd.Process.Pid}})
+	}
+	mu.Unlock()
+	if err == nil {
+		err = cmd.Wait()
+	} else if sink != nil {
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})
+	}
 	if err != nil && cmd.Process == nil {
 		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
 	}
 	if cmd.Process != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
+	outputIncomplete := errors.Is(err, exec.ErrWaitDelay)
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil
 	}
@@ -48,7 +59,18 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 		if err != nil {
 			level = "error"
 		}
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.finished", Phase: phase, Level: level, Message: commandResult(err)})
+		attrs := map[string]any{"outputIncomplete": outputIncomplete}
+		if state := cmd.ProcessState; state != nil {
+			attrs["pid"], attrs["exitCode"] = state.Pid(), state.ExitCode()
+			attrs["userCpuMs"], attrs["systemCpuMs"] = state.UserTime().Milliseconds(), state.SystemTime().Milliseconds()
+			if status, ok := state.Sys().(interface {
+				Signaled() bool
+				Signal() syscall.Signal
+			}); ok && status.Signaled() {
+				attrs["signal"] = status.Signal().String()
+			}
+		}
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.finished", Timestamp: time.Now().UTC(), Phase: phase, Level: level, Message: commandResult(err), Attributes: attrs})
 	}
 	return buf.String(), err
 }

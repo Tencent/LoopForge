@@ -139,7 +139,10 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		// still approves the MCP tools.
 		argv = []string{binary, "-p", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force", "--approve-mcps"}
 		if model != "" {
-			argv = append(argv, "--model", CursorModelID(model, effort))
+			// ApplyAgentCLICredential re-resolves this against the owner's
+			// saved catalog, which only the credential carries.
+			argv = append(argv, "--model", CursorModelID(model, effort, nil))
+			options.Effort = effort
 		}
 		if resume != "" {
 			argv = append(argv, "--resume", resume)

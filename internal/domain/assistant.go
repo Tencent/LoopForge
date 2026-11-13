@@ -61,7 +61,9 @@ type AssistantMessage struct {
 	Attachments    []AssistantAttachment    `json:"attachments,omitempty"`
 	// Unfinished names why a reply stopped early (stopped, failed, timed out
 	// or interrupted). The reply keeps its partial answer and activity.
-	Unfinished string `json:"unfinished,omitempty"`
+	Unfinished   string            `json:"unfinished,omitempty"`
+	GenerationID string            `json:"generationId,omitempty"`
+	Failure      *AssistantFailure `json:"failure,omitempty"`
 }
 
 type AssistantAssetRef struct {

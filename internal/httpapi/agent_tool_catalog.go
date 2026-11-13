@@ -321,6 +321,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 		tools, err := h.listUpstreamTools(ctx, session, server)
 		if err != nil {
 			logAgentToolEvent("catalog-hide", "mode="+string(session.Mode), "kind="+kind, "err="+truncateRunes(err.Error(), 120))
+			session.diagnostics().platform("mcp.upstream_catalog_failed", "外部 MCP 服务 "+server.Name+"（"+kind+"）拉取工具列表失败："+err.Error(), session.User)
 			continue
 		}
 		for _, tool := range tools {

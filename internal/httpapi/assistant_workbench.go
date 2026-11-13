@@ -674,10 +674,22 @@ func recentDeckPathsIn(root string, since, until time.Time) []string {
 	var out []string
 	out = append(out, deckFilesUnder(filepath.Join(root, "ws"), 0)...)
 	out = append(out, deckFilesUnder(filepath.Join(root, "home", "tmp"), 0)...)
-	entries, err := os.ReadDir(os.TempDir())
+	tmp, err := tempDirDeckFiles()
 	if err != nil {
 		return uniquePaths(out)
 	}
+	out = append(out, tmp...)
+	return filterRecentRegularFiles(uniquePaths(out), since, until)
+}
+
+// tempDirDeckFiles collects pptx files directly under the system temp dir and
+// inside temp subdirectories whose names look deck-related.
+func tempDirDeckFiles() ([]string, error) {
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		return nil, err
+	}
+	var out []string
 	for _, entry := range entries {
 		name := entry.Name()
 		path := filepath.Join(os.TempDir(), name)
@@ -693,8 +705,14 @@ func recentDeckPathsIn(root string, since, until time.Time) []string {
 		}
 		out = append(out, deckFilesUnder(path, 0)...)
 	}
+	return out, nil
+}
+
+// filterRecentRegularFiles keeps regular files modified within
+// [since-30s, until]; a zero since/until leaves that side unbounded.
+func filterRecentRegularFiles(paths []string, since, until time.Time) []string {
 	var fresh []string
-	for _, path := range uniquePaths(out) {
+	for _, path := range paths {
 		info, err := os.Lstat(path)
 		if err != nil || !info.Mode().IsRegular() {
 			continue

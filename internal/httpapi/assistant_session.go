@@ -386,7 +386,8 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Model == "" {
 			conv.Model = existing.Model
 		}
-		if err := validateAssistantEffort(conv.Model, conv.Effort); err != nil {
+		editor, _ := h.repo.User(current.ID)
+		if err := validateAssistantEffort(editor, conv.Model, conv.Effort); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}

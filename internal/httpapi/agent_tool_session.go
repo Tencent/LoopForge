@@ -482,3 +482,10 @@ func (s *AgentToolSession) dispatchRunning() bool {
 	defer s.mu.Unlock()
 	return len(s.dispatches) > 0
 }
+
+func (s *AgentToolSession) diagnostics() *assistantDiagnosticsCollector {
+	if s == nil || s.ctx == nil {
+		return nil
+	}
+	return assistantDiagnosticsFrom(s.ctx)
+}

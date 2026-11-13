@@ -46,7 +46,14 @@ func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (dom
 		g := decodeGeneration(row)
 		g.Status = "interrupted"
 		g.Error = "服务端生成已中断，请检查已执行操作后重试"
-		_ = r.DB.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g)}).Error
+		g.Failure = &domain.AssistantFailure{Code: "EXECUTION_INTERRUPTED", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作后再重试；可下载诊断信息交给管理员排查。"}
+		_ = r.DB.Transaction(func(tx *gorm.DB) error {
+			res := tx.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g)})
+			if res.Error != nil || res.RowsAffected != 1 {
+				return res.Error
+			}
+			return checkpointAssistantDiagnostics(tx, g, nil)
+		})
 		if err := r.DB.Where("session_id = ? AND user_id = ?", sessionID, userID).Take(&row).Error; err != nil {
 			return domain.AssistantGeneration{}, false
 		}
@@ -102,15 +109,32 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 			if old.Status == "running" {
 				return fmt.Errorf("此会话正在生成，请等待完成或停止")
 			}
-			return tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil}).Error
+			if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil}).Error; err != nil {
+				return err
+			}
+			return checkpointAssistantDiagnostics(tx, g, nil)
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		return tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error
+		if err := tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error; err != nil {
+			return err
+		}
+		return checkpointAssistantDiagnostics(tx, g, nil)
 	})
 }
-func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration) error {
+func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration, diagnostics ...domain.AssistantDiagnostics) error {
+	return r.checkpointAssistantGeneration(g, true, diagnostics)
+}
+
+// HeartbeatAssistantGeneration records a running checkpoint whose diagnostic
+// evidence has not changed since it was last stored, so the diagnostic payload
+// is not rewritten.
+func (r *AssistantRepo) HeartbeatAssistantGeneration(g domain.AssistantGeneration) error {
+	return r.checkpointAssistantGeneration(g, false, nil)
+}
+
+func (r *AssistantRepo) checkpointAssistantGeneration(g domain.AssistantGeneration, withDiagnostics bool, diagnostics []domain.AssistantDiagnostics) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var row assistantGenerationRow
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Take(&row).Error
@@ -137,7 +161,10 @@ func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGenerati
 		if res.RowsAffected != 1 {
 			return fmt.Errorf("生成状态已变化")
 		}
-		return nil
+		if !withDiagnostics {
+			return nil
+		}
+		return checkpointAssistantDiagnostics(tx, g, diagnostics)
 	})
 }
 

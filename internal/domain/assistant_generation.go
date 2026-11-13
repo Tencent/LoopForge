@@ -20,6 +20,7 @@ type AssistantGeneration struct {
 	RuntimeMode      string                     `json:"runtimeMode,omitempty"`
 	WorkspaceWarning string                     `json:"workspaceWarning,omitempty"`
 	Error            string                     `json:"error,omitempty"`
+	Failure          *AssistantFailure          `json:"failure,omitempty"`
 	Events           []AssistantGenerationEvent `json:"events"`
 	Stream           *AssistantStreamSnapshot   `json:"stream,omitempty"`
 	Reply            json.RawMessage            `json:"reply,omitempty"`

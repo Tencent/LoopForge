@@ -28,7 +28,7 @@ func TestAssistantCLIReportsTerminalFailuresWithoutResult(t *testing.T) {
 		{"structured auth event", `{"type":"error","error":{"message":"Invalid API key: test-private-key"}}`, "凭据无效或已过期"},
 		{"auth result", `{"type":"result","is_error":true,"result":"Unauthorized: test-private-key"}`, "凭据无效或已过期"},
 		{"missing result", `{"type":"assistant","message":{"content":[{"type":"text","text":"正在检查代码"}]}}`, "未返回完整回答"},
-		{"other event", `{"type":"error","error":"upstream unavailable: test-private-key"}`, "生成失败，请稍后重试"},
+		{"other event", `{"type":"error","error":"upstream unavailable: test-private-key"}`, "模型服务暂时不可用"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -83,7 +83,7 @@ func TestPrivateAssistantReportsExecutionFailureWithoutReplayingTools(t *testing
 		{"max turns", "执行轮数上限", runtime.ErrMaxTurns},
 		{"missing result", "未返回完整回答", errAssistantMissingResult},
 		{"credentials", "凭据无效或已过期", errors.New("HTTP 401: test-only")},
-		{"process", "生成失败，请稍后重试", errors.New("network interrupted: test-only")},
+		{"process", "连接失败或连接中断", errors.New("network interrupted: test-only")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, actor := workbenchFixture(t)
@@ -149,7 +149,7 @@ func TestFailedSharedGenerationSnapshotKeepsCauseAndRetryHistory(t *testing.T) {
 		{"max turns", "执行轮数上限", runtime.ErrMaxTurns},
 		{"missing terminal result", "未返回完整回答", errAssistantMissingResult},
 		{"credentials", "凭据无效或已过期", errors.New("HTTP 401: test-only")},
-		{"process", "生成失败，请稍后重试", errors.New("exit status 1; stderr=network interrupted test-only")},
+		{"process", "连接失败或连接中断", errors.New("exit status 1; stderr=network interrupted test-only")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, actor, _, _, session := sharedWorkbenchFixture(t)
@@ -189,15 +189,22 @@ func TestFailedSharedGenerationSnapshotKeepsCauseAndRetryHistory(t *testing.T) {
 				t.Fatalf("wrong persisted failure: %s", w.Body.String())
 			}
 			saved, _ := h.repo.AssistantSession(actor.ID, session.ID)
-			if last := saved.Messages[len(saved.Messages)-1]; last.Role != "user" || last.AuthorID != actor.ID {
-				t.Fatalf("retry history lost its accepted user: %+v", last)
+			if user := saved.Messages[len(saved.Messages)-2]; user.Role != "user" || user.AuthorID != actor.ID {
+				t.Fatalf("retry history lost its accepted user: %+v", user)
+			}
+			failed := saved.Messages[len(saved.Messages)-1]
+			if failed.GenerationID != snapshot.ID || failed.Failure == nil {
+				t.Fatalf("failure has no durable diagnostic reference: %+v", failed)
 			}
 			h.generate = func(context.Context, string, domain.User) (string, error) { return "核查完成", nil }
-			start(saved.Messages)
+			start(append(saved.Messages, assistantMessage{Role: "user", Content: "请重试"}))
 			wait("completed")
 			saved, _ = h.repo.AssistantSession(actor.ID, session.ID)
-			if len(saved.Messages) != len(messages)+1 || saved.Messages[len(saved.Messages)-1].Role != "assistant" {
+			if len(saved.Messages) != len(messages)+3 || saved.Messages[len(saved.Messages)-1].Role != "assistant" {
 				t.Fatalf("retry duplicated the user turn or lost the answer: %+v", saved.Messages)
+			}
+			if report, ok := h.repo.AssistantDiagnostics(actor.ID, session.ID, snapshot.ID); !ok || report.Status != "failed" || report.Failure == nil {
+				t.Fatalf("retry overwrote diagnostics: %+v", report)
 			}
 		})
 	}

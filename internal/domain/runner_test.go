@@ -122,3 +122,26 @@ func TestRunnerSupportsExistingWorkBranch(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicRunnerRepositoryScrubsCredentialsOnly(t *testing.T) {
+	source := RunnerRepository{
+		RepositoryID: "repo-1",
+		Name:         "app",
+		CloneURL:     "https://user:s3cret@github.com/acme/app.git",
+		Ref:          "main",
+		WorkBranch:   "feature/x",
+		GitToken:     "token",
+		UseSSH:       true,
+		Dir:          "app",
+	}
+	got := publicRunnerRepository(source)
+	want := source
+	want.GitToken = ""
+	want.CloneURL = "https://github.com/acme/app.git"
+	if got != want {
+		t.Fatalf("publicRunnerRepository() = %+v, want %+v", got, want)
+	}
+	if source.GitToken != "token" || source.CloneURL != "https://user:s3cret@github.com/acme/app.git" {
+		t.Fatal("publicRunnerRepository must not mutate its argument")
+	}
+}

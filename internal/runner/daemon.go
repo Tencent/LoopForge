@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -863,7 +862,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	if runtime.IsAgentCLI(prepared.Command.Provider) {
-		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol}
+		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol, Models: inv.AgentCLIModels}
 		var agentEnv map[string]string
 		argv, agentEnv, err = runtime.BindAgentCLICommand(sandbox, workspace, prepared.Command, cred, argv)
 		if err != nil {
@@ -1049,24 +1048,11 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 				return nil, nil, errors.New("Codex 个人 API Key 未配置")
 			}
 			env["CODEX_API_KEY"] = key
-			baseURL := strings.TrimSpace(inv.CodexBaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.openai.com/v1"
+			withProvider, err := runtime.CodexUserProviderArgv(argv, inv.CodexBaseURL)
+			if err != nil {
+				return nil, nil, err
 			}
-			if len(argv) < 2 {
-				return nil, nil, errors.New("invalid Codex invocation")
-			}
-			config := []string{
-				"-c", `model_provider="agentflow_user"`,
-				"-c", `model_providers.agentflow_user.name="User API"`,
-				"-c", "model_providers.agentflow_user.base_url=" + strconv.Quote(baseURL),
-				"-c", `model_providers.agentflow_user.env_key="CODEX_API_KEY"`,
-				"-c", `model_providers.agentflow_user.wire_api="responses"`,
-				"-c", "model_providers.agentflow_user.requires_openai_auth=false",
-			}
-			args := append([]string{}, argv[:len(argv)-1]...)
-			args = append(args, config...)
-			argv = append(args, argv[len(argv)-1])
+			argv = withProvider
 		case runtime.BindClaudeCode:
 			if !personal {
 				continue

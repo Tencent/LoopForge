@@ -468,6 +468,9 @@ func (r *AssistantRepo) DeleteAssistantSession(userID int64, id string) error {
 		if err := tx.Where("session_id = ?", id).Delete(&assistantSessionReadRow{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("session_id = ? AND user_id = ?", id, userID).Delete(&assistantDiagnosticsRow{}).Error; err != nil {
+			return err
+		}
 		return tx.Where("session_id = ? AND user_id = ?", id, userID).Delete(&assistantGenerationRow{}).Error
 	})
 }

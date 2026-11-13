@@ -184,7 +184,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
+	if err := validateAssistantEffort(user, req.Model, req.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -257,24 +257,27 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	defer cancelModel()
 	chatCompleted := false
 	if shared && sink == nil {
-		job, finish, err := h.claimDirectSharedGeneration(ctx, req, ownerID, user, cancelModel)
+		job, diagnostics, finish, err := h.claimDirectSharedGeneration(ctx, req, ownerID, user, cancelModel)
 		if err != nil {
 			c.JSON(409, gin.H{"error": err.Error()})
 			return
 		}
 		defer func() { finish(chatCompleted) }()
+		modelCtx = context.WithValue(modelCtx, assistantDiagnosticsKey{}, diagnostics)
 		modelCtx = context.WithValue(modelCtx, assistantControlScopeKey{}, assistantControlScope{RunID: req.RunID, SessionID: req.SessionID, GenerationID: job.ID, MessageIndex: len(req.Messages) - 1})
 	}
 	var toolSession *AgentToolSession
 	var toolFiles agentToolFiles
 	if sess, files, err := h.openAssistantToolSession(modelCtx, user, req.ProjectID, assistantExecModeForApproval(approvalMode), cancelModel); err != nil {
+		assistantDiagnosticsFrom(modelCtx).fail(modelCtx, err, user)
 		logAgentToolEvent("session-fallback", "mode=assistant", "err="+truncateRunes(err.Error(), 160))
 		if modelCtx.Err() != nil {
 			status, message := assistantGenerationFailure(modelCtx, err)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
-		c.JSON(502, gin.H{"error": "无法启动工具会话，请重试"})
+		failure := &domain.AssistantFailure{Code: "TOOL_SESSION_FAILED", Phase: "setup", Message: "无法启动工具会话，请重试", Suggestion: "请下载诊断信息，检查工具服务配置与连接。"}
+		c.JSON(502, gin.H{"error": failure.Message, "failure": failure})
 		return
 	} else {
 		toolSession = sess
@@ -375,11 +378,15 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		emit("thought", assistantStreamEvent{Kind: "status", Text: "正在调用模型…"})
 	}
 	fail := func(status int, msg string) {
+		payload := gin.H{"error": msg}
+		if failure := assistantDiagnosticsFrom(modelCtx).failureForMessage(msg); failure != nil {
+			payload["failure"] = failure
+		}
 		if streaming {
-			emit("error", gin.H{"error": msg})
+			emit("error", payload)
 			return
 		}
-		c.JSON(status, gin.H{"error": msg})
+		c.JSON(status, payload)
 	}
 	var nativeSession *assistantNativeSession
 	// Every conversation runs in its own CLI root; shared ones switch to the
@@ -568,18 +575,21 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			err = modelCtx.Err()
 		}
 		if errors.Is(err, errAssistantCredentialRejected) {
-			fail(400, err.Error())
+			failure := assistantDiagnosticsFrom(modelCtx).fail(ctx, err, user)
+			fail(400, failure.Message)
 			return
 		}
 		if errors.Is(err, errAssistantCLIMissing) {
-			fail(503, err.Error())
+			failure := assistantDiagnosticsFrom(modelCtx).fail(ctx, err, user)
+			fail(503, failure.Message)
 			return
 		}
 		if err != nil && !(toolSession != nil && toolSession.finished()) {
 			// A failed process may already have executed tools. Report the cause
 			// instead of treating it as a missing draft submission and rerunning it.
-			status, msg := assistantGenerationFailure(ctx, err)
-			fail(status, msg)
+			status, _ := assistantGenerationFailure(ctx, err)
+			failure := assistantDiagnosticsFrom(modelCtx).fail(ctx, err, user)
+			fail(status, failure.Message)
 			return
 		}
 		var reply assistantReply
@@ -596,6 +606,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			logAgentProtocolFailure(AgentToolAssistant, req.Model, "missing_terminal", fmt.Errorf("submit_assistant_reply not called"))
 			if jsonRetries < nativeTerminalMaxRetries {
 				jsonRetries++
+				assistantDiagnosticsFrom(modelCtx).platform("orchestration.retry_terminal", fmt.Sprintf("未收到提交工具调用，发起第 %d 次补交重试", jsonRetries), user)
 				if streaming {
 					emit("thought", assistantStreamEvent{Kind: "status", Text: "正在提交回答…"})
 				}
@@ -617,6 +628,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					return
 				}
 				presentationRetries++
+				assistantDiagnosticsFrom(modelCtx).platform("orchestration.retry_slides", fmt.Sprintf("演示文稿页数不符（期望 %d，实际 %d），发起重写重试", want, got), user)
 				if streaming {
 					emit("thought", assistantStreamEvent{Kind: "answerReset"})
 					emit("thought", assistantStreamEvent{Kind: "status", Text: fmt.Sprintf("正在调整为要求的 %d 页…", want)})
@@ -631,6 +643,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				return
 			}
 			progressRetries++
+			assistantDiagnosticsFrom(modelCtx).platform("orchestration.retry_progress", fmt.Sprintf("模型仅返回进度说明，发起第 %d 次续跑重试", progressRetries), user)
 			if streaming {
 				emit("thought", assistantStreamEvent{Kind: "status", Text: "继续执行尚未完成的步骤…"})
 			}
@@ -683,7 +696,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				assets = append(assets, toolSession.assets...)
 				toolSession.mu.Unlock()
 			}
-			stored = append(stored, assistantMessage{Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images})
+			stored = append(stored, assistantMessage{Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})
 			conversation := assistantConversation{Shared: shared, ID: req.SessionID, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: stored}
 			if toolSession != nil {
 				conversation.WorkspaceRunID = toolSession.conversationWorkspace()
@@ -1334,7 +1347,7 @@ type assistantCLIRequest struct {
 	OnUsage func(domain.TokenUsage)
 }
 
-func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.User, onEvent func(assistantStreamEvent)) (string, string, error) {
+func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.User, onEvent func(assistantStreamEvent)) (output string, returnedSessionID string, returnedErr error) {
 	req.Model = assistantRequestModel(req.Executor, req.Model)
 	if req.Execute == nil {
 		if execute := helperCLIExecution(ctx, req.SessionRoot); execute != nil {
@@ -1343,6 +1356,8 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		}
 	}
 	engine, engineModel := assistantModelEngine(req.Model)
+	attempt := assistantDiagnosticsFrom(ctx).begin(engine, engineModel, req.Resume, user)
+	defer func() { attempt.finish(returnedErr) }()
 	if engine != assistantEngineCodeBuddy && (req.ReportOnly || (!req.Native && !req.ReviewOnly)) {
 		return "", "", errAssistantEngineUnsupported
 	}
@@ -1357,6 +1372,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		log.Printf("assistant CLI resolve failed: %v", err)
 		return "", "", err
 	}
+	attempt.configure(bin, req)
 	root := req.SessionRoot
 	if root == "" {
 		root = assistantSessionRoot(user.ID)
@@ -1434,7 +1450,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
+		attempt.process(event)
 		if event.Name == "process.stderr" {
+			attempt.stderr(event.Message)
 			if line := strings.TrimSpace(event.Message); line != "" {
 				missingSession = missingSession || strings.Contains(line, missingText)
 				stderrTail = append(stderrTail, line)
@@ -1447,6 +1465,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		if event.Name != "process.stdout" {
 			return
 		}
+		attempt.protocol(event.Message)
 		if inv.translate == nil {
 			handle(event.Message)
 			return
@@ -1457,6 +1476,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	handle = func(line string) {
 		line = strings.TrimSpace(line)
+		attempt.tools(line)
 		if failure := assistantCLIStreamFailure(line); failure != nil {
 			streamError = failure
 		}
@@ -1501,7 +1521,12 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if execute == nil {
 		execute = runtime.ExecuteLocalCommand
 	}
+	attempt.phase("execution")
 	_, err = execute(ctx, workspace, command, inv.credentials, sink)
+	attempt.exited(err)
+	if err == nil {
+		attempt.phase("protocol")
+	}
 	if req.OnUsage != nil && assistantUsageReported(usage) {
 		req.OnUsage(usage)
 	}
@@ -1525,7 +1550,11 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	out, err := decodeAssistantCLIResult(final, resultError, err, stderrTail)
 	if err != nil {
-		log.Printf("assistant CLI session=%s: %s", sessionID, redactAssistantSecrets(err.Error(), user))
+		diagnosticID := ""
+		if attempt != nil {
+			diagnosticID = attempt.id
+		}
+		log.Printf("assistant CLI diagnostic=%s session=%s: %s", diagnosticID, sessionID, sanitizeAssistantDiagnostic(err.Error(), user, 4096))
 		return "", sessionID, err
 	}
 	return out, sessionID, nil

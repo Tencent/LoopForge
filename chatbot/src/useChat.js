@@ -1190,18 +1190,26 @@ export function useChat() {
   const adoptCLIInstall = useCallback((message) => {
     setError(message);
     setGeneration((current) =>
-      current?.error && cliFailureSettles(current.error)
-        ? { ...current, error: message }
+      (current?.error && cliFailureSettles(current.error)) ||
+      (current?.failure?.message && cliFailureSettles(current.failure.message))
+        ? { ...current, error: message, failure: null }
         : current,
     );
     setSession((current) => {
-      if (!current?.messages?.some((item) => cliFailureSettles(item.unfinished)))
+      if (
+        !current?.messages?.some(
+          (item) =>
+            cliFailureSettles(item.unfinished) ||
+            cliFailureSettles(item.failure?.message),
+        )
+      )
         return current;
       return {
         ...current,
         messages: current.messages.map((item) =>
-          cliFailureSettles(item.unfinished)
-            ? { ...item, unfinished: message }
+          cliFailureSettles(item.unfinished) ||
+          cliFailureSettles(item.failure?.message)
+            ? { ...item, unfinished: message, failure: null }
             : item,
         ),
       };

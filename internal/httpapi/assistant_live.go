@@ -91,10 +91,11 @@ func assistantDraftMessagePrefix(raw string) string {
 }
 
 type assistantLiveGeneration struct {
-	mu      sync.Mutex
-	changed chan struct{}
-	read    func() domain.AssistantGeneration
-	cancel  context.CancelFunc
+	mu          sync.Mutex
+	changed     chan struct{}
+	read        func() domain.AssistantGeneration
+	diagnostics func() domain.AssistantDiagnostics
+	cancel      context.CancelFunc
 }
 
 var assistantLiveGenerations sync.Map
@@ -151,19 +152,9 @@ func serveAssistantGenerationStream(c *gin.Context, persisted domain.AssistantGe
 			first = false
 		} else {
 			g.Stream = nil
-			events := make([]domain.AssistantGenerationEvent, 0)
-			for _, e := range g.Events {
-				if e.Sequence > cursor {
-					events = append(events, e)
-				}
-			}
-			g.Events = events
+			g.Events = assistantEventsAfter(g.Events, cursor)
 		}
-		for _, e := range g.Events {
-			if e.Sequence > cursor {
-				cursor = e.Sequence
-			}
-		}
+		cursor = latestAssistantEventSequence(g.Events, cursor)
 		writeAssistantSSE(c, g)
 		if g.Status != "running" {
 			return
@@ -184,11 +175,7 @@ func streamPersistedAssistantGeneration(c *gin.Context, g domain.AssistantGenera
 	if g.Stream != nil {
 		cursor = g.Stream.Sequence
 	}
-	for _, e := range g.Events {
-		if e.Sequence > cursor {
-			cursor = e.Sequence
-		}
-	}
+	cursor = latestAssistantEventSequence(g.Events, cursor)
 	writeAssistantSSE(c, g)
 	id := g.ID
 	cancelRequested := g.CancelRequested
@@ -221,13 +208,8 @@ func streamPersistedAssistantGeneration(c *gin.Context, g domain.AssistantGenera
 			g.Events = nil
 		} else {
 			g.Stream = nil
-			events := make([]domain.AssistantGenerationEvent, 0)
-			for _, e := range g.Events {
-				if e.Sequence > cursor {
-					events = append(events, e)
-					cursor = e.Sequence
-				}
-			}
+			events := assistantEventsAfter(g.Events, cursor)
+			cursor = latestAssistantEventSequence(events, cursor)
 			g.Events = events
 			if len(events) == 0 && g.Status == "running" && g.CancelRequested == cancelRequested {
 				continue
@@ -239,4 +221,24 @@ func streamPersistedAssistantGeneration(c *gin.Context, g domain.AssistantGenera
 			return
 		}
 	}
+}
+
+// assistantEventsAfter returns the events whose sequence is past cursor. The
+// result is never nil so an empty batch still serializes as [].
+func assistantEventsAfter(events []domain.AssistantGenerationEvent, cursor int) []domain.AssistantGenerationEvent {
+	out := make([]domain.AssistantGenerationEvent, 0)
+	for _, e := range events {
+		if e.Sequence > cursor {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// latestAssistantEventSequence advances cursor to the highest event sequence.
+func latestAssistantEventSequence(events []domain.AssistantGenerationEvent, cursor int) int {
+	for _, e := range events {
+		cursor = max(cursor, e.Sequence)
+	}
+	return cursor
 }

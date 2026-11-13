@@ -78,10 +78,10 @@ func TestCursorModelFamilies(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("families=%+v", got)
 	}
-	if efforts := assistantModelEfforts("cursor:gpt-5.6-sol"); !slices.Equal(efforts, []string{"none", "low", "medium", "high", "xhigh", "max"}) {
+	if efforts := assistantModelEfforts(domain.User{}, "cursor:gpt-5.6-sol"); !slices.Equal(efforts, []string{"none", "low", "medium", "high", "xhigh", "max"}) {
 		t.Fatalf("cursor family efforts: %v", efforts)
 	}
-	if err := validateAssistantEffort("cursor:kimi-k3", "medium"); err == nil {
+	if err := validateAssistantEffort(domain.User{}, "cursor:kimi-k3", "medium"); err == nil {
 		t.Fatal("chat must offer only the family's own efforts")
 	}
 }

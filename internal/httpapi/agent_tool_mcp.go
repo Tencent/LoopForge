@@ -103,6 +103,7 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 	}
 	switch request.Method {
 	case "initialize":
+		session.diagnostics().platform("mcp.gateway_initialized", "CLI 已连接平台会话 MCP 网关", session.User)
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{
 			"protocolVersion": agentToolProtocolVersion(request.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
@@ -112,7 +113,10 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 	case "ping":
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{}}
 	case "tools/list":
-		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{"tools": h.toolList(ctx, session)}}
+		started := time.Now()
+		tools := h.toolList(ctx, session)
+		session.diagnostics().platform("mcp.tools_listed", fmt.Sprintf("平台网关返回 %d 个工具（耗时 %dms）", len(tools), time.Since(started).Milliseconds()), session.User)
+		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{"tools": tools}}
 	case "agentflow/nativeApproval":
 		result := h.approveNativeTool(ctx, session, request.Params)
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: result}
@@ -175,7 +179,7 @@ func (h *agentToolGateway) toolList(ctx context.Context, session *AgentToolSessi
 	return out
 }
 
-func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSession, raw json.RawMessage) (map[string]any, error) {
+func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSession, raw json.RawMessage) (res map[string]any, retErr error) {
 	session.toolsMu.RLock()
 	defer session.toolsMu.RUnlock()
 	if session.finished() {
@@ -201,6 +205,24 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		return nil, err
 	}
 	name := stripAgentToolServerPrefix(params.Name)
+	diag := session.diagnostics()
+	attemptID := diag.currentAttemptID()
+	diagToolID := diag.toolStart("gateway", "", name, "", attemptID, session.User)
+	defer func() {
+		if diagToolID == "" {
+			return
+		}
+		failed := retErr != nil || (res != nil && res["isError"] == true)
+		errMsg := ""
+		if retErr != nil {
+			errMsg = retErr.Error()
+		} else if failed {
+			if data, err := json.Marshal(res["content"]); err == nil {
+				errMsg = diagnosticErrorText(data)
+			}
+		}
+		diag.toolEnd("gateway", diagToolID, attemptID, errMsg, failed, nil, session.User)
+	}()
 	if session.requestedMode() != "" {
 		return mcpToolTextResult(assistantHandoffNotice, true), nil
 	}
