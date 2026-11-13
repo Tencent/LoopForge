@@ -138,6 +138,21 @@ func validateInputValue(schema map[string]any, value any, path string) error {
 	if schema["type"] == nil && (schema["required"] != nil || schema["properties"] != nil) {
 		schema["type"] = "object"
 	}
+	if err := validateComposition(schema, value, path); err != nil {
+		return err
+	}
+	if err := validateTypedValue(schema, value, path); err != nil {
+		return err
+	}
+	if err := validateEnumValue(schema, value, path); err != nil {
+		return err
+	}
+	return validateAdditionalProperties(schema, value, path)
+}
+
+// validateComposition enforces allOf/anyOf/oneOf: allOf returns the first
+// failing branch, anyOf needs a match and oneOf needs exactly one.
+func validateComposition(schema map[string]any, value any, path string) error {
 	for _, kind := range []string{"allOf", "anyOf", "oneOf"} {
 		choices, _ := schema[kind].([]any)
 		if len(choices) == 0 {
@@ -155,94 +170,134 @@ func validateInputValue(schema map[string]any, value any, path string) error {
 			return fmt.Errorf("%s must satisfy one of the documented input shapes", path)
 		}
 	}
+	return nil
+}
+
+// validateTypedValue checks value against schema["type"]; unknown or missing
+// types accept anything.
+func validateTypedValue(schema map[string]any, value any, path string) error {
 	switch schema["type"] {
 	case "object":
-		fields, ok := value.(map[string]any)
-		if !ok {
-			return fmt.Errorf("%s must be an object", path)
-		}
-		required := []string{}
-		switch names := schema["required"].(type) {
-		case []string:
-			required = names
-		case []any:
-			for _, name := range names {
-				if n, ok := name.(string); ok {
-					required = append(required, n)
-				}
-			}
-		}
-		for _, name := range required {
-			v, exists := fields[name]
-			if !exists || v == nil || (func() bool { v, ok := v.(string); return ok && strings.TrimSpace(v) == "" })() {
-				return fmt.Errorf("%s.%s is required", path, name)
-			}
-		}
-		for name, definition := range contractObject(schema["properties"]) {
-			if v, ok := fields[name]; ok && v != nil {
-				if err := validateInputValue(contractObject(definition), v, path+"."+name); err != nil {
-					return err
-				}
-			}
-		}
+		return validateObjectValue(schema, value, path)
 	case "array":
-		if items, ok := value.([]any); ok {
-			for i, item := range items {
-				if err := validateInputValue(contractObject(schema["items"]), item, fmt.Sprintf("%s[%d]", path, i)); err != nil {
-					return err
-				}
-			}
-		} else {
+		items, ok := value.([]any)
+		if !ok {
 			return fmt.Errorf("%s must be an array", path)
+		}
+		for i, item := range items {
+			if err := validateInputValue(contractObject(schema["items"]), item, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
 		}
 	case "string":
 		if _, ok := value.(string); !ok {
 			return fmt.Errorf("%s must be a string", path)
 		}
 	case "integer", "number":
-		var number float64
-		switch n := value.(type) {
-		case float64:
-			number = n
-		case json.Number:
-			parsed, err := n.Float64()
-			if err != nil {
-				return fmt.Errorf("%s must be numeric", path)
-			}
-			number = parsed
-		default:
-			return fmt.Errorf("%s must be numeric", path)
-		}
-		if schema["type"] == "integer" && math.Trunc(number) != number {
-			return fmt.Errorf("%s must be an integer", path)
-		}
+		return validateNumericValue(schema["type"] == "integer", value, path)
 	case "boolean":
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf("%s must be a boolean", path)
 		}
 	}
-	if values, ok := schema["enum"].([]any); ok {
-		raw, _ := json.Marshal(value)
-		matched := false
-		for _, allowed := range values {
-			b, _ := json.Marshal(allowed)
-			if string(raw) == string(b) {
-				matched = true
-			}
-		}
-		if !matched {
-			return fmt.Errorf("%s has an undocumented value", path)
-		}
-	}
-	if forbidden, ok := schema["additionalProperties"].(bool); ok && !forbidden {
-		fields, _ := value.(map[string]any)
-		props := contractObject(schema["properties"])
-		for key := range fields {
-			if _, ok := props[key]; !ok {
-				return fmt.Errorf("%s.%s is not a documented parameter; put HTTP payload fields in body", path, key)
-			}
-		}
-	}
+	return nil
+}
 
+func validateObjectValue(schema map[string]any, value any, path string) error {
+	fields, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s must be an object", path)
+	}
+	for _, name := range requiredFieldNames(schema["required"]) {
+		if isMissingRequiredValue(fields, name) {
+			return fmt.Errorf("%s.%s is required", path, name)
+		}
+	}
+	for name, definition := range contractObject(schema["properties"]) {
+		if v, ok := fields[name]; ok && v != nil {
+			if err := validateInputValue(contractObject(definition), v, path+"."+name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// requiredFieldNames accepts both []string (built in Go) and []any (decoded
+// from JSON/YAML) forms of the "required" keyword.
+func requiredFieldNames(raw any) []string {
+	switch names := raw.(type) {
+	case []string:
+		return names
+	case []any:
+		required := []string{}
+		for _, name := range names {
+			if n, ok := name.(string); ok {
+				required = append(required, n)
+			}
+		}
+		return required
+	}
+	return nil
+}
+
+// isMissingRequiredValue treats absent, null and blank-string fields as missing.
+func isMissingRequiredValue(fields map[string]any, name string) bool {
+	v, exists := fields[name]
+	if !exists || v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && strings.TrimSpace(s) == ""
+}
+
+func validateNumericValue(integer bool, value any, path string) error {
+	var number float64
+	switch n := value.(type) {
+	case float64:
+		number = n
+	case json.Number:
+		parsed, err := n.Float64()
+		if err != nil {
+			return fmt.Errorf("%s must be numeric", path)
+		}
+		number = parsed
+	default:
+		return fmt.Errorf("%s must be numeric", path)
+	}
+	if integer && math.Trunc(number) != number {
+		return fmt.Errorf("%s must be an integer", path)
+	}
+	return nil
+}
+
+// validateEnumValue compares JSON encodings so numbers and strings match the
+// documented literals regardless of their Go representation.
+func validateEnumValue(schema map[string]any, value any, path string) error {
+	values, ok := schema["enum"].([]any)
+	if !ok {
+		return nil
+	}
+	raw, _ := json.Marshal(value)
+	for _, allowed := range values {
+		b, _ := json.Marshal(allowed)
+		if string(raw) == string(b) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s has an undocumented value", path)
+}
+
+func validateAdditionalProperties(schema map[string]any, value any, path string) error {
+	if forbidden, ok := schema["additionalProperties"].(bool); !ok || forbidden {
+		return nil
+	}
+	fields, _ := value.(map[string]any)
+	props := contractObject(schema["properties"])
+	for key := range fields {
+		if _, ok := props[key]; !ok {
+			return fmt.Errorf("%s.%s is not a documented parameter; put HTTP payload fields in body", path, key)
+		}
+	}
 	return nil
 }
