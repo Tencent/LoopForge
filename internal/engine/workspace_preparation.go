@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/procwatch"
@@ -183,6 +184,7 @@ func (e *Engine) remoteWorkspacePreparation(ctx context.Context, run domain.Run,
 	if err != nil {
 		return runtime.WorkspacePreparationStatus{}, err
 	}
+	request.CheckpointLease, _ = ctx.Value(nodeCheckpointLeaseKey{}).(string)
 	response, err := e.requestWorkspaceCheckpoint(ctx, run, request)
 	if err != nil {
 		return runtime.WorkspacePreparationStatus{}, err
@@ -387,6 +389,21 @@ func (e *Engine) TrustedWorkspaceRequest(id string, request domain.RunnerWorkspa
 }
 
 func (e *Engine) WorkspaceRemoteHost(run domain.Run) bool { return e.foreignWorkspaceBind(run) }
+
+func (e *Engine) holdRemoteTerminalLease(runID, token string) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	defer e.repo.FinishWorkspaceUse(runID, token, time.Now().UTC(), nil, "")
+	for range ticker.C {
+		if !e.workspaceTerminals.HasRunScope(runID) {
+			return
+		}
+		if e.repo.RenewWorkspaceUse(runID, token, time.Now().UTC()) != nil {
+			e.workspaceTerminals.CloseRunScope(runID)
+			return
+		}
+	}
+}
 func (e *Engine) ForwardWorkspaceRequest(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
 	trusted, err := e.preparedWorkspaceRequest(run, request)
 	if err != nil {
@@ -457,6 +474,7 @@ func (e *Engine) recordNodeWorkspacePreparation(ctx context.Context, run domain.
 		if err != nil {
 			return err
 		}
+		request.CheckpointLease, _ = ctx.Value(nodeCheckpointLeaseKey{}).(string)
 		response, err := e.requestWorkspaceCheckpoint(ctx, run, request)
 		if err != nil {
 			return err

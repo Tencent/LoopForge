@@ -31,25 +31,26 @@ type Daemon struct {
 	client   *Client
 	executor *runtime.ExecutorRunner
 
-	mu                   sync.Mutex
-	state                daemonState
-	runtimes             []domain.RunnerRuntime
-	running              int32
-	registerMu           sync.Mutex
-	controlMu            sync.RWMutex
-	controls             map[string]chan string
-	pendingControls      map[string]string
-	wsOnline             atomic.Bool
-	updateMu             sync.RWMutex
-	updateReady          atomic.Bool
-	runSandboxMu         sync.Mutex
-	runSandboxes         map[string]*runSandbox
-	managedTasks         map[string]*managedTask
-	workspacePreparing   sync.Map // run ID -> active environment preflight, not historical file stamp
-	workspacePreparation sync.Map
-	workspaceTerminals   runtime.TerminalPool
-	checkpointTransfers  runtime.CheckpointTransfers
-	workspaceGates       sync.Map // run ID -> *sync.RWMutex; fences manual writes locally
+	mu                         sync.Mutex
+	state                      daemonState
+	runtimes                   []domain.RunnerRuntime
+	running                    int32
+	registerMu                 sync.Mutex
+	controlMu                  sync.RWMutex
+	controls                   map[string]chan string
+	pendingControls            map[string]string
+	wsOnline                   atomic.Bool
+	updateMu                   sync.RWMutex
+	updateReady                atomic.Bool
+	runSandboxMu               sync.Mutex
+	runSandboxes               map[string]*runSandbox
+	managedTasks               map[string]*managedTask
+	workspacePreparing         sync.Map // run ID -> active environment preflight, not historical file stamp
+	workspacePreparation       sync.Map
+	workspaceTerminals         runtime.TerminalPool
+	checkpointTransfers        runtime.CheckpointTransfers
+	workspaceGates             sync.Map // run ID -> *sync.RWMutex; fences manual writes locally
+	nodeCheckpointReservations sync.Map // workspace owner -> checkpoint lease token
 }
 
 type Config struct {
@@ -519,8 +520,13 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	releaseGate := func() {}
 	if task.RunID != "" {
 		gate := d.workspaceGate(d.taskGateKey(task))
-		gate.RLock()
-		releaseGate = onceRelease(gate.RUnlock)
+		if task.Action == domain.RunnerTaskActionNodeCheckpointCreate {
+			gate.Lock()
+			releaseGate = onceRelease(gate.Unlock)
+		} else {
+			gate.RLock()
+			releaseGate = onceRelease(gate.RUnlock)
+		}
 	}
 	defer releaseGate()
 	d.registerTaskControl(task.ID)
@@ -530,9 +536,14 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	var result execResult
 	var artifacts map[string]string
 	managed := d.managedTaskState(task.ID)
+	reserved, hasReservation := d.nodeCheckpointReservations.Load(d.taskGateKey(task))
 	switch {
 	case managed != nil && managed.err != nil:
 		result = execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("pin managed CLI inventory: %v", managed.err)}
+	case hasReservation && task.Action != domain.RunnerTaskActionNodeCheckpointCreate && (task.NodeCheckpointLease == "" || reserved != task.NodeCheckpointLease):
+		result = execResult{status: domain.RunnerTaskFailed, errMsg: "workspace is reserved for another node attempt"}
+	case task.NodeCheckpointLease != "" && task.Action != domain.RunnerTaskActionNodeCheckpointCreate && !hasReservation:
+		result = execResult{status: domain.RunnerTaskFailed, errMsg: "checkpoint workspace reservation is missing"}
 	case task.Action == domain.RunnerTaskActionCleanupRun:
 		result = d.executeRunCleanup(ctx, task)
 	case task.Action == domain.RunnerTaskActionArchivePreview:
@@ -543,6 +554,8 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 		result = d.executeIntegrate(ctx, task)
 	case task.Action == domain.RunnerTaskActionAlignBaseline:
 		result = d.executeAlignBaseline(ctx, task)
+	case task.Action == domain.RunnerTaskActionNodeCheckpointCreate:
+		result = d.executeNodeCheckpointCreate(ctx, task)
 	case task.Action != "":
 		// Never fall through to the shell/Agent paths for an action this
 		// build does not know.
@@ -1400,7 +1413,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionGitSSH
+var runnerVersion = domain.RunnerVersionNodeCheckpoints
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

@@ -67,6 +67,7 @@ var guardedRunWrites = map[string]bool{
 	"/api/runs/:id/workspace/takeover": true,
 	"/api/runs/:id/workspace/release":  true,
 	"/api/runs/:id/workspace/restore":  true,
+	"/api/runs/:id/workspace/rewind":   true,
 	"/api/runs/:id/workspace/file":     true,
 	"/api/runs/:id/workspace/terminal": true,
 	"/api/runs/:id/preview/backend":    true,

@@ -21,6 +21,7 @@ func TestWorkspaceTerminalRequiresProjectMembership(t *testing.T) {
 	h.engine = engine.New(h.repo, runtime.NewManager(root))
 	r, _ := h.repo.RunState("shared-run")
 	r.PauseRequested = true
+	r.ExecutionContext.NodeCheckpointsEnabled = true
 	if err := h.repo.PutRun(r); err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +77,9 @@ func TestWorkspaceTerminalRequiresProjectMembership(t *testing.T) {
 		t.Fatal("owner terminal", code, opened)
 	}
 	defer h.terminals.CloseScope(fmt.Sprintf("%s:%d", r.ID, owner.ID))
+	if code, _ := call(owner, "read", opened.ID); code != 200 {
+		t.Fatal("owner cannot read fenced terminal", code)
+	}
 	if code, _ := call(peer, "read", opened.ID); code != 409 {
 		t.Fatal("peer used owner's shell", code)
 	}

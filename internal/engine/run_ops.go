@@ -306,6 +306,14 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 	if r.Nodes[target] == nil {
 		return fmt.Errorf("reject target not found")
 	}
+	if req.RestoreWorkspace {
+		if !r.ExecutionContext.NodeCheckpointsEnabled {
+			return fmt.Errorf("node checkpoints are disabled")
+		}
+		if _, ok := firstNodeCheckpoint(r, target); !ok {
+			return fmt.Errorf("target node checkpoint not found")
+		}
+	}
 	for _, n := range wf.Nodes {
 		if n.ID == req.NodeID && n.MaxReworks > 0 && r.Nodes[target].ReworkCount >= n.MaxReworks {
 			return fmt.Errorf("rework limit reached")
@@ -332,6 +340,7 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 			nr.ChildRunID = ""
 			nr.FinishedAt = time.Time{}
 			if id == target {
+				nr.RestoreCheckpoint = req.RestoreWorkspace
 				nr.ReworkCount++
 				nr.Feedback = recordHumanContext(&r, req.NodeID, req.Reason, req.Context)
 			} else {

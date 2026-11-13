@@ -159,6 +159,70 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		}
 		return runnerWorkspaceError(statErr)
 	}
+	if request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointCreate || request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointRestore || request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointDiff || request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointRelease || request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointReserve {
+		if d.workspaceTerminals.HasRunScope(request.RunID) {
+			return workspaceTerminalActiveResponse("workspace terminal is still active")
+		}
+		gate := d.requestGate(request)
+		if !gate.TryLock() {
+			return workspaceBusyResponse("workspace is still in use")
+		}
+		defer gate.Unlock()
+		if request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointReserve {
+			key := requestGateKey(request)
+			if request.CheckpointLease == "" {
+				return workspaceBusyResponse("checkpoint workspace lease is required")
+			}
+			if d.client == nil || d.client.ValidateCheckpointLease(ctx, request.RunID, request.CheckpointLease) != nil {
+				return workspaceBusyResponse("checkpoint workspace lease is no longer valid")
+			}
+			d.nodeCheckpointReservations.Store(key, request.CheckpointLease)
+			return runnerWorkspacePayload(map[string]bool{"reserved": true})
+		}
+		if request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointRelease {
+			key := requestGateKey(request)
+			if reserved, ok := d.nodeCheckpointReservations.Load(key); ok && request.CheckpointLease != "" && reserved == request.CheckpointLease {
+				d.nodeCheckpointReservations.Delete(key)
+			}
+			return runnerWorkspacePayload(map[string]bool{"released": true})
+		}
+		if request.Operation != domain.RunnerWorkspaceOperationNodeCheckpointDiff {
+			if reserved, ok := d.nodeCheckpointReservations.Load(requestGateKey(request)); !ok || request.CheckpointLease == "" || reserved != request.CheckpointLease {
+				return workspaceBusyResponse("checkpoint workspace lease does not match")
+			}
+		}
+		if request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointCreate {
+			checkpoint, err := runtime.CreateNodeWorkspaceCheckpoint(ctx, root, request.Repositories, request.NodeCheckpointAttempt)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			return runnerWorkspacePayload(checkpoint)
+		}
+		if request.NodeCheckpoint == nil {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "checkpoint is required"}
+		}
+		if request.Operation == domain.RunnerWorkspaceOperationNodeCheckpointDiff {
+			if request.NodeCheckpointEnd == nil {
+				return domain.RunnerWorkspaceResponse{Status: 400, Error: "end checkpoint is required"}
+			}
+			diff, truncated, err := runtime.DiffNodeWorkspaceCheckpoints(ctx, root, *request.NodeCheckpoint, *request.NodeCheckpointEnd, 1<<20)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			files, err := runtime.NodeWorkspaceCheckpointChangedFiles(ctx, root, *request.NodeCheckpoint, *request.NodeCheckpointEnd)
+			if err != nil {
+				return runnerWorkspaceError(err)
+			}
+			return runnerWorkspacePayload(map[string]any{"diff": diff, "truncated": truncated, "files": files})
+		}
+		if request.NodeCheckpointEnd == nil {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "recovery checkpoint is required"}
+		}
+		if err := runtime.RestoreNodeWorkspaceCheckpointWithRecovery(ctx, root, *request.NodeCheckpoint, *request.NodeCheckpointEnd); err != nil {
+			return runnerWorkspaceError(err)
+		}
+		return runnerWorkspacePayload(map[string]bool{"restored": true})
+	}
 
 	if request.Operation == domain.RunnerWorkspaceOperationPreparationRecord {
 		return d.recordRunnerWorkspacePreparation(ctx, root, request)
@@ -171,7 +235,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	// A person editing from the IDE only shares the workspace with running
 	// agent tasks (gate readers). Preparation, restore and checkpoints hold the
 	// gate exclusively and must still exclude the edit.
-	concurrentEdit := request.ConcurrentEdit && !liveWorkspace
+	concurrentEdit := request.ConcurrentEdit && !liveWorkspace && !request.NodeCheckpointsEnabled
 	workspaceWrite := liveWorkspace || concurrentEdit
 	switch request.Operation {
 	case domain.RunnerWorkspaceOperationArtifacts:
@@ -220,7 +284,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 		if !workspaceWrite && request.RunStatus != "waiting" && request.RunStatus != "succeeded" && request.RunStatus != "failed" && request.RunStatus != "cancelled" {
 			return domain.RunnerWorkspaceResponse{Status: 409, Error: "stop execution before editing"}
 		}
-		result, err := d.handleRunnerWorkspaceTerminal(ctx, root, scope, request, workspaceWrite)
+		result, err := d.handleRunnerWorkspaceTerminal(ctx, root, scope, request, workspaceWrite && !request.NodeCheckpointsEnabled)
 		if err != nil {
 			if isWorkspaceBusyError(err) {
 				return workspaceBusyResponse(err.Error())
@@ -240,12 +304,15 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			}
 			defer gate.RUnlock()
 		}
-		if !workspaceWrite && !ownTerminal {
+		if (!workspaceWrite || request.NodeCheckpointsEnabled) && !ownTerminal && !concurrentEdit {
 			gate := d.requestGate(request)
 			if !gate.TryLock() {
 				return workspaceBusyResponse("execution is still stopping")
 			}
 			defer gate.Unlock()
+		}
+		if _, reserved := d.nodeCheckpointReservations.Load(requestGateKey(request)); reserved && !ownTerminal {
+			return workspaceBusyResponse("workspace is reserved for a node checkpoint")
 		}
 		if !workspaceWrite && request.RunStatus != "waiting" && request.RunStatus != "succeeded" && request.RunStatus != "failed" && request.RunStatus != "cancelled" {
 			return domain.RunnerWorkspaceResponse{Status: 409, Error: "run must be paused before editing"}

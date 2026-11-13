@@ -112,6 +112,31 @@ func (r *RunsRepo) Runs() []domain.Run {
 	return out
 }
 
+// WorkspaceRuns returns every run sharing an owner's workspace, including
+// nested SOPs, and reports read errors so safety checks can fail closed.
+func (r *RunsRepo) WorkspaceRuns(owner string) ([]domain.Run, error) {
+	var rows []runRow
+	if err := r.DB.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	var result []domain.Run
+	for _, row := range rows {
+		run := runFromRow(row)
+		workspace := run.ExecutionContext.WorkspaceRunID
+		if workspace == "" {
+			workspace = run.ID
+		}
+		if workspace != owner {
+			continue
+		}
+		if err := r.loadRunNodes(&run); err != nil {
+			return nil, err
+		}
+		result = append(result, run)
+	}
+	return result, nil
+}
+
 // RunSummaries returns list-safe Run data. The database removes large node
 // output and workflow snapshots before transfer instead of loading them just to
 // discard them in the HTTP layer.
@@ -952,6 +977,15 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 		}
 		current, err := r.takeRunForUpdate(tx, run.ID)
 		if err == nil {
+			if run.Status == "running" || run.Status == "queued" {
+				active, checkErr := nodeRewindActive(tx, run.ID, time.Now().UTC())
+				if checkErr != nil {
+					return checkErr
+				}
+				if active {
+					return ErrWorkspaceInUse
+				}
+			}
 			if len(expectedRevision) > 0 && current.Revision != expectedRevision[0] {
 				return ErrRunDecisionStale
 			}
@@ -1129,6 +1163,11 @@ func (r *RunsRepo) TryAcquireRunLease(runID, instanceID string, generation int, 
 			return fmt.Errorf("run cannot be leased")
 		}
 		now := time.Now().UTC()
+		if active, err := nodeRewindActive(tx, runID, now); err != nil {
+			return err
+		} else if active {
+			return ErrWorkspaceInUse
+		}
 		if current.OwnerInstanceID != "" && current.OwnerInstanceID != instanceID && current.LeaseUntil != nil && current.LeaseUntil.After(now) {
 			return ErrRunLeaseHeld
 		}
@@ -1899,6 +1938,11 @@ func (r *RunsRepo) ClearRunControl(id string) error {
 		if err != nil {
 			return err
 		}
+		if active, err := nodeRewindActive(tx, id, time.Now().UTC()); err != nil {
+			return err
+		} else if active {
+			return ErrWorkspaceInUse
+		}
 		return tx.Model(&runRow{}).Where("id = ?", id).Updates(map[string]any{
 			"cancel_requested": false, "pause_requested": false,
 			"workspace_editor_id": 0, "workspace_edit_until": nil,
@@ -1909,7 +1953,7 @@ func (r *RunsRepo) ClearRunControl(id string) error {
 func (r *RunsRepo) requestRunControl(id string, cancelRequested, pauseRequested bool) (domain.Run, error) {
 	now := time.Now().UTC()
 	allowed := "status IN ('running', 'waiting')"
-	res := r.DB.Model(&runRow{}).Where("id = ? AND "+allowed, id).Updates(map[string]any{
+	res := r.DB.Model(&runRow{}).Where("id = ? AND "+allowed+" AND NOT EXISTS (SELECT 1 FROM run_workspace_checkpoints WHERE run_id = ? AND (lease_handoff_id IN ? OR (lease_handoff_id = ? AND lease_until > ?)))", id, id, []string{"node-rewind-pending", "node-auto-restore-pending"}, "node-rewind", now).Updates(map[string]any{
 		"cancel_requested": cancelRequested,
 		"pause_requested":  pauseRequested,
 		"revision":         gorm.Expr("revision + 1"),

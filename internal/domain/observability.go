@@ -40,13 +40,14 @@ type TelemetryContext struct {
 	// RunnerWorkspaceLayout freezes how a self-hosted runner maps workflow
 	// nodes to disk. Empty is the legacy per-node layout; shared gives every
 	// node in a new Run the same repository and Git index.
-	RunnerWorkspaceLayout string `json:"runnerWorkspaceLayout,omitempty"`
-	IssueNumber           int    `json:"issueNumber,omitempty"`
-	TaskID                string `json:"taskId,omitempty"`
-	ScheduleJobID         string `json:"scheduleJobId,omitempty"`
-	RunID                 string `json:"runId"`
-	ParentRunID           string `json:"parentRunId,omitempty"`
-	ParentNodeID          string `json:"parentNodeId,omitempty"`
+	RunnerWorkspaceLayout  string `json:"runnerWorkspaceLayout,omitempty"`
+	NodeCheckpointsEnabled bool   `json:"nodeCheckpointsEnabled,omitempty"`
+	IssueNumber            int    `json:"issueNumber,omitempty"`
+	TaskID                 string `json:"taskId,omitempty"`
+	ScheduleJobID          string `json:"scheduleJobId,omitempty"`
+	RunID                  string `json:"runId"`
+	ParentRunID            string `json:"parentRunId,omitempty"`
+	ParentNodeID           string `json:"parentNodeId,omitempty"`
 	// WorkspaceRunID names the run that owns the workspace a child SOP works
 	// in: the top-level run of its SOP chain. Empty means the run owns its
 	// own workspace.

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -204,6 +205,29 @@ func (h *runnersHandlers) runnerSessionAuth(c *gin.Context) (domain.Runner, bool
 		c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid runner session"})
 	}
 	return runner, ok
+}
+
+// runnerCheckpointLease validates a transient workspace lease on behalf of
+// the connected execution machine. It never exposes the current token.
+func (h *runnersHandlers) runnerCheckpointLease(c *gin.Context) {
+	runner, ok := h.runnerSessionAuth(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		RunID string `json:"runId"`
+		Token string `json:"token"`
+	}
+	if !decode(c, &request) {
+		return
+	}
+	run, ok := h.repo.RunState(request.RunID)
+	if !ok || h.engine.RunExecutionRunner(run) != runner.ID || h.repo.ValidateWorkspaceUse(engine.WorkspaceRunID(run), request.Token, time.Now().UTC()) != nil {
+		c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Status(http.StatusNoContent)
 }
 
 func newRunnerSessionToken() (string, string, error) {

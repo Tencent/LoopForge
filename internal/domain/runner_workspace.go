@@ -6,40 +6,49 @@ import (
 )
 
 const (
-	RunnerWorkspaceOperationCheckpointStatus  = "checkpoint_status"
-	RunnerWorkspaceOperationCheckpointExport  = "checkpoint_export"
-	RunnerWorkspaceOperationCheckpointRead    = "checkpoint_read"
-	RunnerWorkspaceOperationCheckpointClose   = "checkpoint_close"
-	RunnerWorkspaceOperationCheckpointUpload  = "checkpoint_upload"
-	RunnerWorkspaceOperationCheckpointAppend  = "checkpoint_append"
-	RunnerWorkspaceOperationCheckpointCommit  = "checkpoint_commit"
-	RunnerWorkspaceOperationArtifacts         = "restore_artifacts" // additive, never replaces existing files
-	RunnerWorkspaceOperationReclaim           = "reclaim"           // service-only worker reclamation
-	RunnerWorkspaceOperationCheckpoint        = "checkpoint"
-	RunnerWorkspaceOperationRestore           = "restore"
-	RunnerWorkspaceOperationPrepare           = "prepare"
-	RunnerWorkspaceOperationPreparationStatus = "preparation_status"
-	RunnerWorkspaceOperationPreparationRecord = "preparation_record"
-	RunnerWorkspaceOperationTerminal          = "terminal"
-	RunnerWorkspaceOperationWrite             = "write"
-	RunnerWorkspaceOperationInfo              = "info"
-	RunnerWorkspaceOperationTree              = "tree"
-	RunnerWorkspaceOperationFile              = "file"
-	RunnerWorkspaceOperationDiff              = "diff"
-	RunnerWorkspaceOperationSearch            = "search"
-	RunnerWorkspaceOperationLog               = "log"
-	RunnerWorkspaceOperationCommit            = "commit"
-	RunnerWorkspaceOperationBrowser           = "browser"
+	RunnerWorkspaceOperationCheckpointStatus      = "checkpoint_status"
+	RunnerWorkspaceOperationCheckpointExport      = "checkpoint_export"
+	RunnerWorkspaceOperationCheckpointRead        = "checkpoint_read"
+	RunnerWorkspaceOperationCheckpointClose       = "checkpoint_close"
+	RunnerWorkspaceOperationCheckpointUpload      = "checkpoint_upload"
+	RunnerWorkspaceOperationCheckpointAppend      = "checkpoint_append"
+	RunnerWorkspaceOperationCheckpointCommit      = "checkpoint_commit"
+	RunnerWorkspaceOperationArtifacts             = "restore_artifacts" // additive, never replaces existing files
+	RunnerWorkspaceOperationReclaim               = "reclaim"           // service-only worker reclamation
+	RunnerWorkspaceOperationCheckpoint            = "checkpoint"
+	RunnerWorkspaceOperationRestore               = "restore"
+	RunnerWorkspaceOperationPrepare               = "prepare"
+	RunnerWorkspaceOperationPreparationStatus     = "preparation_status"
+	RunnerWorkspaceOperationPreparationRecord     = "preparation_record"
+	RunnerWorkspaceOperationTerminal              = "terminal"
+	RunnerWorkspaceOperationWrite                 = "write"
+	RunnerWorkspaceOperationInfo                  = "info"
+	RunnerWorkspaceOperationTree                  = "tree"
+	RunnerWorkspaceOperationFile                  = "file"
+	RunnerWorkspaceOperationDiff                  = "diff"
+	RunnerWorkspaceOperationSearch                = "search"
+	RunnerWorkspaceOperationLog                   = "log"
+	RunnerWorkspaceOperationCommit                = "commit"
+	RunnerWorkspaceOperationBrowser               = "browser"
+	RunnerWorkspaceOperationNodeCheckpointCreate  = "node_checkpoint_create"
+	RunnerWorkspaceOperationNodeCheckpointRestore = "node_checkpoint_restore"
+	RunnerWorkspaceOperationNodeCheckpointDiff    = "node_checkpoint_diff"
+	RunnerWorkspaceOperationNodeCheckpointRelease = "node_checkpoint_release"
+	RunnerWorkspaceOperationNodeCheckpointReserve = "node_checkpoint_reserve"
 )
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	RunKind string `json:"runKind,omitempty"`
+	NodeCheckpoint        *NodeCheckpoint `json:"nodeCheckpoint,omitempty"`
+	NodeCheckpointEnd     *NodeCheckpoint `json:"nodeCheckpointEnd,omitempty"`
+	NodeCheckpointAttempt int             `json:"nodeCheckpointAttempt,omitempty"`
+	RunKind               string          `json:"runKind,omitempty"`
 	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
 	// opens terminals beside running tasks instead of waiting for their fence.
 	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`
+	NodeCheckpointsEnabled bool                     `json:"nodeCheckpointsEnabled,omitempty"`
 	CheckpointTransfer *WorkspaceCheckpointTransfer `json:"checkpointTransfer,omitempty"`
 	// Only the control plane may allow a clean checkout to be refreshed, before
 	// any non-preparation node has run. Later nodes keep their frozen baseline.

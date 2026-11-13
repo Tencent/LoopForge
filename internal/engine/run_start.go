@@ -155,6 +155,10 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		Repository: firstRepository, ExecutionContext: executionContext, Nodes: map[string]*domain.NodeRun{},
 		CreatedAt: now, UpdatedAt: now,
 	}
+	// Checkpoint execution remains disabled while the rewind and cross-process
+	// writer fencing are incomplete. Do not expose a partial restore path that
+	// can discard concurrent work.
+	r.ExecutionContext.NodeCheckpointsEnabled = false
 	if len(repositories) > 0 {
 		r.Repositories = append([]domain.RepositoryContext(nil), repositories...)
 	}

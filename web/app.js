@@ -206,6 +206,8 @@ function afNextDialog(){
   $('#confirmPromptWrap').hidden=true;
   const rerunFields=$('#rerunFromNodeFields');
   if(rerunFields)rerunFields.hidden=true;
+  const rejectFields=$('#rejectCheckpointFields');
+  if(rejectFields)rejectFields.hidden=true;
   const okBtn=$('#confirmOkBtn'),cancelBtn=$('#confirmCancelBtn');
   cancelBtn.hidden=false;
   let opened;
