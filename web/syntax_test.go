@@ -128,235 +128,6 @@ assert.ok(!code.includes('data-rerun-from-node-issue'));
 	}
 }
 
-func TestMetricsPhaseAverageExcludesMissingSamples(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed")
-	}
-	script := `
-const assert = require('node:assert/strict');
-const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-eval(code.slice(code.indexOf('function metricsDeliveryPhases('), code.indexOf('function metricsDashboardModel(')));
-const rows = [
-  {phases:{testing:0,samples:{testing:0}}},
-  {phases:{testing:60000,samples:{testing:1}}},
-  {phases:{testing:0,samples:{testing:1}}},
-];
-assert.deepEqual(metricsPhaseAverage(rows, 'testing'), {value:30000,samples:2});
-assert.deepEqual(metricsPhaseAverage(rows.slice(0,1), 'testing'), {value:null,samples:0});
-const missingStage=metricsDeliveryPhases({clarificationDurationMs:3600000,developmentDurationMs:1200000,cycleDurationMs:9000000,phaseSamples:{clarification:1,development:1}});
-assert.deepEqual(missingStage.samples, {clarification:1,development:1,testing:0,total:1});
-assert.equal(missingStage.total, 4800000);
-const complete=metricsDeliveryPhases({clarificationDurationMs:3600000,developmentDurationMs:1200000,testDurationMs:600000,cycleDurationMs:9000000,phaseSamples:{clarification:1,development:1,testing:1}});
-assert.equal(complete.total, complete.clarification+complete.development+complete.testing);
-assert.equal(complete.total, 5400000);
-assert.deepEqual(metricsPhaseAverage([{phases:missingStage},{phases:complete}], 'total'), {value:5100000,samples:2});
-const unmeasured=metricsDeliveryPhases({cycleDurationMs:9000000,phaseSamples:{}});
-assert.equal(unmeasured.total, null);
-assert.equal(unmeasured.samples.total, 0);
-const observedZero=metricsDeliveryPhases({phaseSamples:{clarification:1,development:1,testing:1}});
-assert.equal(observedZero.total, 0);
-assert.equal(metricsPhaseAverage([{phases:observedZero}], 'total').value, 0);
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("phase sample behavior failed: %v\n%s", err, out)
-	}
-}
-
-func TestMetricsDashboardIncludesIssuesAndPartialPhases(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed")
-	}
-	script := `
-const assert = require('node:assert/strict');
-const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-const METRICS_WINDOWS = {'7d':{days:7,label:'近 7 天',grain:'day'}};
-const now = new Date().toISOString();
-const issues = [
-  {id:'issue-1',projectId:'project',source:'local',kind:'requirement',status:'done',createdAt:now,updatedAt:now},
-  {id:'issue-2',projectId:'project',source:'gongfeng',kind:'issue',status:'closed',createdAt:now,updatedAt:now},
-];
-const deliveries = [
-  {issueId:'issue-1',lastRunAt:now,firstRunAt:now,clarificationDurationMs:600000,developmentDurationMs:1200000,testDurationMs:1800000,cycleDurationMs:7200000,phaseSamples:{clarification:1,development:1,testing:1}},
-  {issueId:'issue-2',lastRunAt:now,firstRunAt:now,clarificationDurationMs:2400000,developmentDurationMs:3000000,cycleDurationMs:18000000,phaseSamples:{clarification:1,development:1,testing:0}},
-];
-const state = {metricsRange:'7d',metricsData:{deliveries,runTraces:[],nodes:[],summary:{}},metricsIssues:issues};
-function currentProject(){return {id:'project'}}
-eval(code.slice(code.indexOf('function metricsWindow('), code.indexOf('function metricsMs(')));
-const model = metricsDashboardModel();
-assert.equal(model.delivered, 2);
-assert.deepEqual(model.phaseTotalValues, [3600000,5400000]);
-assert.equal(model.averagePhaseTotalMs, 4500000);
-assert.deepEqual(model.phaseAverages.total, {value:4500000,samples:2});
-assert.deepEqual(model.phaseAverages.testing, {value:1800000,samples:1});
-assert.equal(model.requirements.find(item=>item.issueId==='issue-2').phases.total, 5400000);
-assert.equal(model.phaseTrend.at(-1).total, 4500000);
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("dashboard phase total check failed: %v\n%s", err, out)
-	}
-}
-
-func TestMetricsMergesUseLocalMergeDayIndependentlyOfDeliveries(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed")
-	}
-	script := `
-process.env.TZ='Asia/Shanghai';
-const assert=require('node:assert/strict');
-const code=require('node:fs').readFileSync('` + appBundlePath(t) + `','utf8');
-const METRICS_WINDOWS={};
-const state={metricsRange:'custom',metricsDateFrom:'2026-10-20',metricsDateTo:'2026-10-21',metricsIssues:[],metricsData:{summary:{mergedMrs:2,mergedMrsMissingTime:3},deliveries:[],mrMerges:[
-  {mrProject:'org/frontend',mrIid:1,mrUrl:'https://git.example.com/org/frontend/merge_requests/1',targetBranch:'agentflow/integration',issueId:'old-requirement',title:'Earlier delivery',mergedAt:'2026-10-19T16:30:00Z'},
-  {mrProject:'org/backend',mrIid:1,mrUrl:'https://git.example.com/org/backend/merge_requests/1',targetBranch:'master',issueId:'old-requirement',title:'Earlier delivery',mergedAt:'2026-10-20T16:30:00Z'},
-]}};
-function currentProject(){return {id:'project'}}
-function metricsProjectId(){return 'project'}
-function obsCategoryLabel(value){return value}
-const escapeHTML=value=>String(value);
-const safeURL=value=>value;
-eval(code.slice(code.indexOf('function metricsWindow('),code.indexOf('function metricsMs(')));
-const model=metricsDashboardModel();
-assert.equal(model.delivered,0);
-assert.equal(model.mergedMRs,2);
-assert.equal(model.mergedMRsMissingTime,3);
-assert.deepEqual(model.mrMergeTrend.map(x=>[x.key,x.mergedMrs]),[['2026-10-20',1],['2026-10-21',1]]);
-assert.equal(metricsBucketKey('2026-10-18T16:30:00Z','week'),'2026-W43','local Monday belongs to its new week');
-assert.equal(metricsBucketKey('2026-10-18T15:30:00Z','week'),'2026-W42','local Sunday stays in the previous week');
-assert.equal(metricsBucketKey('2026-10-31T16:30:00Z','month'),'2026-11');
-const display=metricsDisplayModel(model);
-assert.equal(display.mergedMRs,2);
-assert.equal(display.mrMergeTrend,model.mrMergeTrend);
-eval(code.slice(code.indexOf('function metricsMRMergeTable('),code.indexOf('function metricsSectionHead(')));
-eval(code.slice(code.indexOf('function formatTimestamp('),code.indexOf('function duration(')));
-const table=metricsMRMergeTable(model.mrMerges);
-assert.ok(table.includes('合入时间'));
-assert.ok(table.includes('org/frontend !1'));
-assert.ok(table.includes(new Date('2026-10-19T16:30:00Z').toLocaleString()));
-assert.ok(metricsMRMergeTable([]).includes('当前日期范围暂无已合入 MR'));
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("MR merge dashboard failed: %v\n%s", err, out)
-	}
-}
-
-func TestMetricsCachedDataStaysWithinSelectedProject(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed")
-	}
-	script := `
-const assert = require('node:assert/strict');
-const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-const state = {
-  projectFilter:'project-b', metricsRange:'30d', metricsData:{deliveries:[]},
-  metricsDataKey:'project-a|30d||', metricsLoading:false, metricsError:'',
-};
-function metricsProjectId(){return state.projectFilter}
-function metricsQueryKey(){return [state.projectFilter,state.metricsRange,'',''].join('|')}
-function metricsWindow(){return {label:'近 30 天'}}
-function bindMetricsDateControls(){}
-function obsCategoryLabel(value){return value}
-const body={innerHTML:''},live={innerHTML:''};
-function $(selector){return selector==='#metricsBody'?body:selector==='#metricsLiveState'?live:null}
-function metricsDashboardModel(){throw new Error('stale data must not be rendered')}
-eval(code.slice(code.indexOf('function metricsDisplayModel('),code.indexOf('function metricsMs(')));
-const empty={delivered:0,requirementIssues:[],aiIssueIds:new Set(),trend:[],completed:[],firstPass:[],terminal:0,averagePhaseTotalMs:null,firstPassRate:0,runSuccessRate:0,coverageRate:0,averageTokens:0,reworkRate:0,data:{categories:[]}};
-const display=metricsDisplayModel(empty);
-assert.equal(display.deliveryCount,0);
-assert.equal(display.firstPassRate,null);
-assert.equal(display.coverageRate,null);
-assert.equal(display.averageTokens,null);
-assert.equal(display.qualityTitle,'交付质量');
-assert.match(display.storyFoot,/当前项目/);
-eval(code.slice(code.indexOf('function renderMetricsDashboard('),code.indexOf('let metricsRequestSeq=')));
-renderMetricsDashboard();
-assert.match(body.innerHTML,/正在切换到当前项目的数据/);
-state.metricsLoading=true;
-renderMetricsDashboard();
-assert.match(body.innerHTML,/正在加载当前项目的研发效能数据/);
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("metrics project isolation failed: %v\n%s", err, out)
-	}
-}
-
-func TestMetricsRefreshIgnoresPreviousProjectResponse(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed")
-	}
-	script := `
-const assert = require('node:assert/strict');
-const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-const state={projectFilter:'project-a',metricsRange:'30d',metricsDateFrom:'',metricsDateTo:'',metricsData:null,metricsIssues:[],metricsLoading:false,metricsError:''};
-function currentProject(){return {id:state.projectFilter}}
-function metricsWindow(){return {from:new Date('2026-09-01T00:00:00Z'),to:new Date('2026-10-01T00:00:00Z'),grain:'day'}}
-function renderMetricsDashboard(){}
-function metricsDemoEnabled(){return false}
-const calls=[];let resolveOld;
-function api(path){calls.push(path);if(path.startsWith('/api/analytics?')&&path.includes('projectId=project-a'))return new Promise(resolve=>{resolveOld=resolve});if(path.startsWith('/api/analytics?'))return Promise.resolve({deliveries:[{issueId:'new-project'}]});if(path.startsWith('/api/issues?'))return Promise.resolve([]);throw new Error('unexpected request '+path)}
-eval(code.slice(code.indexOf('let metricsRequestSeq='),code.indexOf('function metricHealth(')));
-async function check(){
-  const old=refreshMetrics();
-  state.projectFilter='project-b';invalidateMetricsForProjectChange();
-  resolveOld({deliveries:[{issueId:'old-project'}]});
-  await old;
-  assert.equal(state.metricsData,null);
-  await refreshMetrics();
-  assert.equal(state.metricsData.deliveries[0].issueId,'new-project');
-  assert.equal(state.metricsDataKey,'project-b|30d||');
-  assert.deepEqual(calls.map(path=>path.split('?')[0]),['/api/analytics','/api/issues','/api/analytics','/api/issues']);
-  state.projectFilter='project-a';invalidateMetricsForProjectChange();
-  assert.equal(state.metricsData,null);
-}
-check().catch(error=>{console.error(error);process.exitCode=1});
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("metrics request isolation failed: %v\n%s", err, out)
-	}
-}
-
-func TestPlatformMetricsRequirementIdentity(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed")
-	}
-	script := `
-const assert = require('node:assert/strict');
-const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-eval(code.slice(code.indexOf('function metricsIssueSource('), code.indexOf('function metricsIssueDone(')));
-const unbound = {id:'local-1',projectId:'p',source:'local',kind:'requirement'};
-const bound = {id:'local-2',projectId:'p',source:'local',kind:'requirement',tapdId:'1001'};
-const synced = {id:'tapd-1',projectId:'p',source:'tapd',kind:'requirement',externalRef:{source:'tapd',externalId:'1001'}};
-assert.equal(metricsRequirementIssue(unbound), true);
-assert.equal(metricsRequirementKey(unbound), 'issue:local-1');
-assert.equal(metricsRequirementKey(bound), metricsRequirementKey(synced));
-assert.equal(metricsRequirementIssue({id:'bug',source:'gongfeng',kind:'issue'}), true);
-assert.equal(metricsRequirementKey({id:'bug',source:'gongfeng',kind:'issue',tapdId:'1001'}), 'issue:bug');
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("platform requirement metrics behavior failed: %v\n%s", err, out)
-	}
-	page, err := fs.ReadFile(Files, "index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`name="syncTarget" value="local"`, `name="tapdId"`} {
-		if !strings.Contains(string(page), want) {
-			t.Fatalf("platform requirement editor is missing %q", want)
-		}
-	}
-}
-
 func TestNodeShowsRoleValidation(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -523,48 +294,6 @@ func TestMCPUploadPathHelpIsPrepared(t *testing.T) {
 	}
 }
 
-func TestMCPClientConfigsAreClientNative(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed; skipping MCP client config check")
-	}
-	script := `
-const assert = require('node:assert/strict');
-const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-eval(code.slice(code.indexOf('function accessMcpClientSpec('), code.indexOf('// 对外展示的固定接入地址')));
-const base = 'http://loopforge.example.com';
-const token = '<YOUR_PERSONAL_TOKEN>';
-const claude = accessMcpClientSpec('claude', base, token);
-assert.equal(claude.location, 'Claude CLI（用户级配置写入 ~/.claude.json）');
-assert.ok(claude.code.includes('claude mcp add --transport http --scope user'));
-assert.ok(claude.code.includes('--header "Authorization: Bearer <YOUR_PERSONAL_TOKEN>"'));
-const codex = accessMcpClientSpec('codex', base, token);
-assert.equal(codex.location, '~/.codex/config.toml');
-assert.ok(codex.code.includes('[mcp_servers.agentflow]'));
-assert.ok(codex.code.includes('http_headers = { Authorization ='));
-assert.ok(!codex.code.includes('mcpServers'));
-const cursor = accessMcpClientSpec('cursor', base, token);
-assert.ok(cursor.code.includes('"mcpServers"'));
-const prompt = accessMcpAgentPrompt(codex, base, token);
-assert.equal(prompt, '');
-const readyPrompt = accessMcpAgentPrompt(codex, base, 'afp_test_token');
-assert.ok(readyPrompt.includes('使用 curl 下载 安装流程文件, 禁止使用 fetch：http://loopforge.example.com/mcp-setup.txt'));
-assert.ok(!readyPrompt.includes('当前客户端'));
-assert.ok(readyPrompt.includes('验证好 LoopForge MCP'));
-assert.ok(!readyPrompt.includes('AgentFlow'));
-assert.ok(readyPrompt.includes('API_TOKEN = afp_test_token'));
-assert.ok(readyPrompt.includes('ENDPOINT = http://loopforge.example.com/mcp'));
-assert.ok(code.includes('async function createQuickAccessPrompt('));
-assert.ok(code.includes('MCP 快速接入 · ${spec.label}'));
-assert.ok(code.includes('expiresInDays:90'));
-assert.ok(code.includes("data-create-token-first]')?.addEventListener('click',e=>createQuickAccessPrompt"));
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("MCP client config check failed: %v\n%s", err, out)
-	}
-}
-
 func TestMCPSetupInstructionsAreEmbedded(t *testing.T) {
 	setup, err := os.ReadFile("mcp-setup.txt")
 	if err != nil {
@@ -588,28 +317,6 @@ func TestMCPSetupInstructionsAreEmbedded(t *testing.T) {
 	}
 }
 
-func TestAccessCapabilitiesGroupingIsCallableAndFailuresAreVisible(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed; skipping capabilities UI check")
-	}
-	script := `
-const assert = require('node:assert/strict');
-const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-assert.ok(!code.includes('+function accessGroup('));
-eval(code.slice(code.indexOf('function accessGroup('), code.indexOf('function accessCode(')));
-assert.equal(accessGroup({name: 'runs_get'}), '运行与审批');
-assert.equal(accessGroup({name: 'projects_list'}), '项目与仓库');
-assert.ok(code.includes('能力清单加载失败'));
-assert.ok(code.includes('data-retry-capabilities'));
-assert.ok(code.includes('正在加载能力清单'));
-`
-	out, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("capabilities UI check failed: %v\n%s", err, out)
-	}
-}
-
 func TestAccessGuideIsTheSingleOnboardingEntry(t *testing.T) {
 	html, err := os.ReadFile("index.html")
 	if err != nil {
@@ -619,10 +326,13 @@ func TestAccessGuideIsTheSingleOnboardingEntry(t *testing.T) {
 	if strings.Contains(page, `id="accessView"`) || strings.Contains(page, `data-view="access"`) {
 		t.Fatal("legacy access page or navigation entry is still present")
 	}
-	for _, want := range []string{`id="guideView"`, `data-access-tab="mcp">MCP 快速接入`, `data-access-tab="tokens"`, `data-access-tab="capabilities"`, `data-access-tab="api"`} {
+	for _, want := range []string{`id="guideView"`, `<h1>访问密钥</h1>`, `id="accessBody"`} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("unified guide is missing %q", want)
+			t.Fatalf("token management page is missing %q", want)
 		}
+	}
+	if strings.Contains(page, `data-access-tab=`) {
+		t.Fatal("接入指南 collapsed into 访问密钥; MCP/能力/API tabs must not come back")
 	}
 	if strings.Contains(page, `data-access-tab="stdio"`) {
 		t.Fatal("stdio bridge must not be advertised in the onboarding UI")
@@ -789,21 +499,21 @@ eval(code.slice(code.indexOf('const CREDENTIAL_GROUPS='), code.indexOf('// 谁�
   ';globalThis.cred={CREDENTIAL_KINDS,CREDENTIAL_GROUPS,kind:credentialKind,get wizard(){return credentialWizard},set wizard(v){credentialWizard=v}};');
 const count = (html, needle) => html.split(needle).length - 1;
 
-// Two groups list all four kinds in a fixed order.
+// Groups list credentials in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 11 已配置'));
+assert.ok(html.includes('<b>2</b> / 12 已配置'));
 assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 1') && html.includes('1 / 10'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>9</span>'));
-assert.equal(count(html, 'data-credential-row='), 11);
+assert.ok(html.includes('1 / 2') && html.includes('1 / 10'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>10</span>'));
+assert.equal(count(html, 'data-credential-row='), 12);
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 9);
+assert.equal(count(html, 'data-credential-act="setup"'), 10);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
 for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
@@ -820,11 +530,46 @@ assert.equal(credentialNextKind({}).key, 'gitToken');
 
 // Each kind saves and deletes only its own fields.
 assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '}), {gitToken: 'ghp_1'});
+const sshRow = credentialRowHTML(cred.kind('gitSshKey'), {...user, gitSshKeyConfigured: true});
+assert.match(sshRow, /aria-haspopup="dialog">管理密钥/);
+assert.ok(!sshRow.includes('credential-editor-form'));
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'ioa'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'ioa'});
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: ''}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: ''});
 assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: 'sk-1'}), {codexApiKey: 'sk-1'});
-assert.deepEqual(credentialClearPayload(cred.kind('codexApiKey')), {codexApiKeyClear: true, codexBaseUrl: ''});
-assert.deepEqual(credentialClearPayload(cred.kind('claudeCodeApiKey')), {claudeCodeApiKeyClear: true, claudeCodeBaseUrl: ''});
+assert.deepEqual(credentialSavePayload(cred.kind('claudeCodeApiKey'), {secret: '', extra: '', models: [{id: ' hy4 ', name: '混元 4'}, {id: 'glm-5', name: 'glm-5'}]}), {claudeCodeApiKey: '', claudeCodeBaseUrl: '', claudeCodeModels: [{id: 'hy4', name: '混元 4'}, {id: 'glm-5'}]});
+assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: '', extra: '', models: []}), {codexApiKey: '', codexBaseUrl: '', codexModels: []}, '恢复默认 sends an empty catalog');
+assert.deepEqual(credentialSavePayload(cred.kind('agentCli.opencode'), {secret: 'k', extra: 'https://gw.example/v1', protocol: 'messages', models: [{id: 'a', name: 'A'}]}), {agentCliCredentials: {opencode: {apiKey: 'k', baseUrl: 'https://gw.example/v1', protocol: 'messages', models: [{id: 'a', name: 'A'}]}}});
+assert.equal(cred.kind('agentCli.cursor').models, undefined, 'Cursor stays on its official models');
+assert.equal(cred.kind('agentCli.zcode').models.engine, 'zcode');
+assert.ok(credentialSubline(cred.kind('codexApiKey'), {codexApiKeyConfigured: true, codexModels: [{id: 'hy4'}, {id: 'gpt-5.5'}]}).includes('2 个自定义模型'));
+assert.deepEqual(credentialClearPayload(cred.kind('codexApiKey')), {codexApiKeyClear: true, codexBaseUrl: '', codexModels: []});
+assert.deepEqual(credentialClearPayload(cred.kind('claudeCodeApiKey')), {claudeCodeApiKeyClear: true, claudeCodeBaseUrl: '', claudeCodeModels: []});
+assert.deepEqual(credentialClearPayload(cred.kind('agentCli.opencode')), {agentCliCredentials: {opencode: {apiKeyClear: true, baseUrl: '', protocol: '', models: []}}});
+assert.deepEqual(credentialClearPayload(cred.kind('agentCli.cursor')), {agentCliCredentials: {cursor: {apiKeyClear: true, baseUrl: '', protocol: ''}}});
+const catalogUser = {codexApiKeyConfigured: true, codexBaseUrl: 'https://gw.example/v1', codexModels: [{id: 'hy4', name: '混元 4'}, {id: 'gpt-5.5'}]};
+const catalogHTML = credentialCatalogHTML(cred.kind('codexApiKey'), catalogUser);
+assert.equal(count(catalogHTML, 'data-catalog-row'), 2);
+assert.ok(catalogHTML.indexOf('value="hy4"') < catalogHTML.indexOf('value="gpt-5.5"') && catalogHTML.includes('value="混元 4"'));
+assert.ok(catalogHTML.includes('data-catalog-act="probe"') && catalogHTML.includes('data-catalog-act="add"') && catalogHTML.includes('data-catalog-grip'));
+assert.ok(catalogHTML.includes('data-catalog-source="https://gw.example/v1"'));
+assert.equal(credentialCatalogSource(' https://gw.example/v1/ '), credentialCatalogSource('https://gw.example/v1'));
+assert.ok(catalogHTML.includes('data-catalog-empty hidden') && catalogHTML.includes('2 个模型') && catalogHTML.includes('data-catalog-body>') && !catalogHTML.includes('data-catalog-body hidden'));
+const emptyCatalog = credentialCatalogHTML(cred.kind('claudeCodeApiKey'), {claudeCodeBaseUrl: 'https://gw.example'});
+assert.ok(emptyCatalog.includes('跟随服务发布的模型') && emptyCatalog.includes('/v1/models') && emptyCatalog.includes('data-catalog-foot hidden') && emptyCatalog.includes('未自定义'));
+const officialCatalog = credentialCatalogHTML(cred.kind('codexApiKey'), {codexModels: [{id: 'hy4'}]});
+assert.ok(officialCatalog.includes('value="hy4"') && officialCatalog.includes('data-catalog-act="probe"') && officialCatalog.includes('改回使用自带的模型') && !officialCatalog.includes('data-catalog-body hidden'), 'an official key keeps its custom catalog editable');
+const officialEmpty = credentialCatalogHTML(cred.kind('codexApiKey'), {});
+assert.ok(officialEmpty.includes('使用 Codex 自带的模型') && officialEmpty.includes('data-catalog-act="add"') && !officialEmpty.includes('data-catalog-body hidden'));
+const geminiCatalog = credentialCatalogHTML(cred.kind('agentCli.agy'), {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
+assert.ok(geminiCatalog.includes('使用 Antigravity 自带的模型') && geminiCatalog.includes('data-catalog-act="probe"') && !geminiCatalog.includes('data-catalog-body hidden'), 'Gemini official API can still keep a custom catalog');
+assert.ok(credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('data-credential-catalog') && credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('has-catalog'));
+assert.ok(!credentialEditorHTML(cred.kind('agentCli.cursor'), {agentCliCredentials: {cursor: {apiKeyConfigured: true}}}).includes('data-credential-catalog'));
+assert.equal(credentialCatalogKey([{id: 'a', name: 'a'}, {id: '', name: ''}]), credentialCatalogKey([{id: 'a'}]));
+assert.equal(credentialCatalogError([{id: 'a'}, {id: 'b', name: 'B'}]), null);
+assert.deepEqual(credentialCatalogError([{id: 'a'}, {id: '', name: 'x'}]), {index: 1, field: 'id', error: '模型 ID 不能为空'});
+assert.ok(credentialCatalogError([{id: 'a b'}]).error.includes('空格'));
+assert.ok(credentialCatalogError([{id: 'a'}, {id: 'a'}]).error.includes('重复'));
+assert.equal(credentialCatalogError([{id: 'a', name: 'n'.repeat(65)}]).field, 'name');
 assert.deepEqual(credentialClearPayload(cred.kind('codeBuddyApiKey')), {codeBuddyApiKeyClear: true});
 assert.deepEqual(credentialClearPayload(cred.kind('gitToken')), {gitTokenClear: true});
 assert.equal(credentialSecretError(cred.kind('gitToken'), 'github_pat_1'), '');
@@ -881,7 +626,7 @@ assert.equal(calls.length, 0);
 
 (async () => {
   await deleteCredential('codexApiKey');
-  assert.deepEqual(calls.at(-1).body, {codexApiKeyClear: true, codexBaseUrl: ''});
+  assert.deepEqual(calls.at(-1).body, {codexApiKeyClear: true, codexBaseUrl: '', codexModels: []});
 
   // 添加凭证 starts at step 1 with configured kinds disabled.
   cred.wizard = {step: 1, kind: null, direct: false, secret: '', extra: '', guide: {}, error: ''};
@@ -1403,16 +1148,16 @@ func TestTAPDImportUI(t *testing.T) {
 	if dashImport < 0 || dashNew < 0 || dashImport > dashNew {
 		t.Fatal("工作总览 must place 导入 TAPD to the left of 新建需求")
 	}
-	daily := strings.Index(page, `>日常工作<`)
+	projectGroup := strings.Index(page, `<p>项目</p>`)
+	flowGroup := strings.Index(page, `<p>流程与任务</p>`)
+	agentGroup := strings.Index(page, `<p>Agent 能力</p>`)
 	runsNav := strings.Index(page, `data-view="runs"`)
 	projectsNav := strings.Index(page, `data-view="projects"`)
-	flowConfig := strings.Index(page, `>流程配置<`)
-	insights := strings.Index(page, `>数据洞察<`)
-	if daily < 0 || runsNav < 0 || insights < 0 || !(daily < runsNav && runsNav < insights) {
-		t.Fatal("运行记录 must sit under 日常工作, not 数据洞察")
+	if flowGroup < 0 || agentGroup < 0 || !(flowGroup < runsNav && runsNav < agentGroup) {
+		t.Fatal("运行记录 must sit under 流程与任务")
 	}
-	if projectsNav < 0 || flowConfig < 0 || !(daily < projectsNav && projectsNav < flowConfig) {
-		t.Fatal("项目配置 must sit under 日常工作, before 流程配置")
+	if projectGroup < 0 || !(projectGroup < projectsNav && projectsNav < flowGroup) {
+		t.Fatal("项目配置 must sit under 项目, before 流程与任务")
 	}
 	js, err := readAppBundle()
 	if err != nil {
@@ -2319,9 +2064,9 @@ func TestPlatformAdminLivesOnItsOwnView(t *testing.T) {
 			t.Fatalf("app.js is missing the platform view wiring %q", want)
 		}
 	}
-	// 入口只对平台或业务域管理员渲染，未授权的 #/platform 要被挡回去；
+	// 入口只对平台管理员渲染，未授权的 #/platform 要被挡回去；
 	// 后端的 403 是底线，但不能靠它来当第一道门。
-	if !strings.Contains(source, "group.hidden=!canAccessPlatformManagement()") {
+	if !strings.Contains(source, "group.hidden=!isPlatformAdmin()") {
 		t.Fatal("the platform nav entry is rendered for non-admins")
 	}
 	if !strings.Contains(source, "if(name==='platform'&&!isPlatformAdmin())name='collaboration'") {
@@ -2434,57 +2179,6 @@ assert.equal(previewCandidateHttpsURL(''), '');
 		t.Fatalf("preview https fallback check failed: %v\n%s", err, out)
 	}
 }
-func TestResearchEfficiencyDashboardUI(t *testing.T) {
-	html, err := os.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page := string(html)
-	for _, want := range []string{`data-view="metrics"`, `id="metricsView"`, `id="metricsBody"`, `data-metrics-range="7d"`, `data-metrics-range="30d"`, `data-metrics-range="90d"`, `data-metrics-range="365d"`, `id="metricsDateFrom"`, `id="metricsDateTo"`, `metrics-dashboard.css`} {
-		if !strings.Contains(page, want) {
-			t.Fatalf("研发效能看板缺少 %q", want)
-		}
-	}
-	js, err := readAppBundle()
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := string(js)
-	for _, want := range []string{"renderMetricsDashboard", "refreshMetrics", "metricsDisplayModel", "metricsTrendSVG", "metricsPhaseTrendSVG", "metricsRequirementTable", "metricsDonut", "metricsDemoEnabled", "metricsDemoSnapshot", "演示数据", "交付数（含 Issue）", "平均已采集耗时", "已采集耗时", "每条需求 / Issue 耗时明细", "平均澄清耗时", "平均研发耗时", "平均测试耗时", "AI 工作项覆盖率", "Run 成功率"} {
-		if !strings.Contains(code, want) {
-			t.Fatalf("研发效能看板脚本缺少 %q", want)
-		}
-	}
-	if strings.Contains(code, "第一阶段指标口径") {
-		t.Fatal("研发效能看板不应展示指标口径表")
-	}
-	for _, want := range []string{`id="metricsExpand"`, `class="obs-seg metrics-period"`, "口径说明"} {
-		if !strings.Contains(page, want) {
-			t.Fatalf("研发效能页头缺少 %q", want)
-		}
-	}
-	start := strings.Index(code, "function renderMetricsDashboard(")
-	end := strings.Index(code, "let metricsRequestSeq=")
-	if start < 0 || end <= start {
-		t.Fatal("找不到 renderMetricsDashboard")
-	}
-	render := code[start:end]
-	for _, want := range []string{"metricsReleaseCharts(body)", "obsMountCharts(body)", "obsPhaseStackOption", "metricsInsights(m,win)", "obsKpiGroup("} {
-		if !strings.Contains(render, want) {
-			t.Fatalf("renderMetricsDashboard 缺少 %q", want)
-		}
-	}
-	keys := regexp.MustCompile(`(?:obsChartSlot|obsCard|metricsTrendCard|metricsDonutBlock)\('([^']+)'`).FindAllStringSubmatch(render, -1)
-	if len(keys) < 8 {
-		t.Fatalf("研发效能图表卡片数量异常: %d", len(keys))
-	}
-	for _, key := range keys {
-		if !strings.HasPrefix(key[1], "metrics-") {
-			t.Fatalf("研发效能图表键 %q 需要 metrics- 前缀，避免与统计页冲突", key[1])
-		}
-	}
-}
-
 func TestClarifyOptionToggleLogic(t *testing.T) {
 	app, err := readAppBundle()
 	if err != nil {
@@ -2618,7 +2312,7 @@ func TestRunElapsedShowsExecutionTimeNotWallClock(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-eval(code.slice(code.indexOf('function duration('), code.indexOf('function metricsDemoEnabled(')));
+eval(code.slice(code.indexOf('function duration('), code.indexOf('function metricsIssueSource(')));
 eval(code.slice(code.indexOf('function runFinishedAt('), code.indexOf('function relativeTime(')));
 const hour = 3600000, created = new Date(Date.now() - 45 * hour).toISOString();
 const settled = {status:'succeeded', createdAt:created, timing:{executionMs:5*hour, wallMs:45*hour, waitingMs:40*hour, asOf:new Date(Date.now()-hour).toISOString()}};
@@ -2838,12 +2532,21 @@ func TestCodexStyleLeftMiniRailLayout(t *testing.T) {
 		t.Fatal("#platformRail must sit before .platform-sidebar in DOM")
 	}
 
-	// 2. 左侧小栏保留日常工作入口；设置打开侧栏，执行机器在设置导航里。
-	for _, view := range []string{"collaboration", "observability", "issues", "approvals", "sops", "runs", "settings"} {
+	// 2. 左侧小栏只留 4 个日常入口和设置；流程模板、运行记录、定时任务收进设置导航。
+	for _, view := range []string{"collaboration", "observability", "issues", "approvals", "settings"} {
 		needle := `data-view="` + view + `"`
 		sub := page[railIdx:sidebarIdx]
 		if !strings.Contains(sub, needle) {
 			t.Fatalf("#platformRail must contain %s nav button", needle)
+		}
+	}
+	for _, view := range []string{"sops", "runs", "aiSchedules"} {
+		needle := `data-view="` + view + `"`
+		if strings.Contains(page[railIdx:sidebarIdx], needle) {
+			t.Fatalf("#platformRail must not contain %s; it lives in the settings navigation", needle)
+		}
+		if !strings.Contains(page[sidebarIdx:], needle) {
+			t.Fatalf("settings navigation must contain %s", needle)
 		}
 	}
 	// 图标栏第 2 位仍是统计；需求列表紧跟其后，两者都是日常工作入口。
@@ -2933,16 +2636,18 @@ func TestCodexStyleLeftMiniRailLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	appJs := string(appJsBytes)
-	if !strings.Contains(appJs, "'issues', 'runs'") && !strings.Contains(appJs, "'issues','runs'") {
-		t.Fatal("app.js must include issues and runs in noSidebarViews")
-	}
-	if !strings.Contains(appJs, "const noSidebarViews = ['issues', 'runs', 'approvals', 'sops', 'observability', 'aiSchedules'];") {
-		t.Fatal("app.js must hide the sidebar on the 统计 and AI 定时任务 pages")
+	if !strings.Contains(appJs, "const noSidebarViews = ['issues', 'approvals', 'observability'];") {
+		t.Fatal("app.js must hide the sidebar on the rail-only pages: 需求列表, 待我确认, 统计")
 	}
 	managed := appJs[strings.Index(appJs, "const settingsManagementViews="):]
 	managed = managed[:strings.Index(managed, "\n")]
 	if strings.Contains(managed, "'observability'") {
 		t.Fatal("统计 must not enter settings management mode")
+	}
+	for _, view := range []string{"'sops'", "'runs'", "'aiSchedules'", "'bots'"} {
+		if !strings.Contains(managed, view) {
+			t.Fatalf("%s moved into the settings sidebar and must enter settings management mode", view)
+		}
 	}
 	if !strings.Contains(appJs, "observability:'统计'") {
 		t.Fatal("viewTitles.observability must be 统计")

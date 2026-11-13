@@ -754,6 +754,11 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
 		}
+		cleanup, err := runtime.BindGitSSH(sandbox, workspace, gitEnv, task.Invocation.GitSSHKeys)
+		if err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
+		}
+		defer cleanup()
 		command = runtime.WithCommandEnvironment(command, gitEnv)
 	}
 	var result execResult
@@ -810,7 +815,10 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		}
 		defer release()
 	}
-	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, d.mcpTarget(true, invocationGitToken(inv)))
+	target := d.mcpTarget(true, invocationGitToken(inv))
+	sshRepoCount := len(inv.GitSSHRemotes())
+	target.SSHRepositoriesOnly = sshRepoCount > 0 && sshRepoCount == max(len(inv.Repositories), 1)
+	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, target)
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("bind MCP credentials: %v", err)}, nil
 	}
@@ -881,6 +889,11 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
+		cleanup, gitErr := runtime.BindGitSSH(sandbox, workspace, gitEnv, inv.GitSSHKeys)
+		if gitErr != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
+		}
+		defer cleanup()
 		for key, value := range gitEnv {
 			commandEnv[key] = value
 		}
@@ -1106,6 +1119,7 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 	if inv == nil {
 		return nil
 	}
+	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
 	repos := inv.Repositories
 	if len(repos) == 0 && inv.Repository != nil {
 		if strings.TrimSpace(inv.Repository.CloneURL) == "" {
@@ -1190,6 +1204,10 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	if repo.RequireExistingWorkBranch && strings.TrimSpace(repo.WorkBranch) == "" {
 		return fmt.Errorf("继续已有分支时必须指定工作分支")
 	}
+	if info, err := os.Stat(workspace); err != nil || !info.IsDir() {
+		return fmt.Errorf("clone workspace is not a directory: %s", workspace)
+	}
+	ctx = repositoryGitContext(ctx, *repo)
 	watch := runnerCloneWatch(repo)
 	if err := workspaceprep.Do(ctx, "clone", "正在克隆仓库："+repo.Dir, func(ctx context.Context) error {
 		url := strings.TrimSpace(repo.CloneURL)
@@ -1198,18 +1216,13 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 		}
 		// `-c` auth is scoped to this command, so origin stays the clean URL and
 		// the token never lands in .git/config.
-		args := append(gitwork.AuthConfigArgs(repo.GitToken), "clone", "--progress")
+		args := []string{"clone", "--progress"}
 		if ref := strings.TrimSpace(repo.Ref); ref != "" {
 			args = append(args, "--branch", ref)
 		}
 		args = append(args, "--", url, ".")
 		ctx = procwatch.WithAdditionalObserver(ctx, func(event procwatch.Event) { log.Printf("runner checkout: %s", event.Message) })
-		tail, err := procwatch.Run(workspaceprep.Observe(ctx), func(ctx context.Context) *exec.Cmd {
-			cmd := exec.CommandContext(ctx, "git", args...)
-			cmd.Dir = workspace
-			cmd.Env = gitwork.Env(repo.GitToken)
-			return cmd
-		}, watch)
+		tail, err := gitwork.Watch(ctx, workspace, watch, args...)
 		if err != nil {
 			return fmt.Errorf("git clone %s: %w (%s)", gitwork.Redact(repo.CloneURL, repo.GitToken), err, cloneOutput([]byte(tail), repo.GitToken))
 		}
@@ -1234,16 +1247,23 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 		}
 		if workBranch := strings.TrimSpace(repo.WorkBranch); workBranch != "" && workBranch != strings.TrimSpace(repo.Ref) {
 			remoteRef := "refs/remotes/origin/" + workBranch
-			if _, err := gitwork.C(gitwork.WithToken(ctx, repo.GitToken), workspace, "show-ref", "--verify", "--quiet", remoteRef); err == nil {
-				if out, err := gitwork.C(gitwork.WithToken(ctx, repo.GitToken), workspace, "checkout", "--quiet", "-b", workBranch, "--track", "origin/"+workBranch); err != nil {
+			if _, err := gitwork.C(ctx, workspace, "show-ref", "--verify", "--quiet", remoteRef); err == nil {
+				if out, err := gitwork.C(ctx, workspace, "checkout", "--quiet", "-b", workBranch, "--track", "origin/"+workBranch); err != nil {
 					return fmt.Errorf("git checkout work branch %s: %v (%s)", workBranch, err, cloneOutput([]byte(out), repo.GitToken))
 				}
-			} else if out, err := gitwork.C(gitwork.WithToken(ctx, repo.GitToken), workspace, "checkout", "--quiet", "-b", workBranch); err != nil {
+			} else if out, err := gitwork.C(ctx, workspace, "checkout", "--quiet", "-b", workBranch); err != nil {
 				return fmt.Errorf("git create work branch %s: %v (%s)", workBranch, err, cloneOutput([]byte(out), repo.GitToken))
 			}
 		}
 		return nil
 	})
+}
+
+func repositoryGitContext(ctx context.Context, repo domain.RunnerRepository) context.Context {
+	if repo.UseSSH {
+		return gitwork.WithSSHRemote(ctx, repo.CloneURL)
+	}
+	return gitwork.WithToken(ctx, repo.GitToken)
 }
 
 // checkoutExistingRepositoryBranch validates the remote head even when the
@@ -1254,7 +1274,7 @@ func checkoutExistingRepositoryBranch(ctx context.Context, workspace string, rep
 	if branch == "" {
 		return fmt.Errorf("继续已有分支时必须指定工作分支")
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := repositoryGitContext(ctx, *repo)
 	trackingRef := "refs/remotes/origin/" + branch
 	if _, err := gitwork.C(repoCtx, workspace, "fetch", "--no-tags", "origin", "+refs/heads/"+branch+":"+trackingRef); err != nil {
 		return fmt.Errorf("无法读取已有远端分支 %s，请确认分支存在且有访问权限: %w", branch, err)
@@ -1283,7 +1303,7 @@ func createNewRepositoryBranch(ctx context.Context, workspace string, repo *doma
 	if branch == "" {
 		return fmt.Errorf("新建分支时必须指定工作分支")
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := repositoryGitContext(ctx, *repo)
 	out, err := gitwork.C(repoCtx, workspace, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
 	if err != nil {
 		return fmt.Errorf("无法确认远端分支 %s 是否存在: %w", branch, err)
@@ -1294,7 +1314,7 @@ func createNewRepositoryBranch(ctx context.Context, workspace string, repo *doma
 			return fmt.Errorf("远端已存在分支 %s，不能按新建分支处理；继续该分支请用 branchMode=continue", branch)
 		}
 	}
-	if out, err := gitwork.C(gitwork.WithToken(ctx, repo.GitToken), workspace, "checkout", "--quiet", "-b", branch); err != nil {
+	if out, err := gitwork.C(repoCtx, workspace, "checkout", "--quiet", "-b", branch); err != nil {
 		return fmt.Errorf("git create work branch %s: %v (%s)", branch, err, cloneOutput([]byte(out), repo.GitToken))
 	}
 	return nil
@@ -1307,7 +1327,7 @@ func checkoutCreatedRepositoryBranch(ctx context.Context, workspace string, repo
 	if branch == "" {
 		return fmt.Errorf("新建分支时必须指定工作分支")
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := repositoryGitContext(ctx, *repo)
 	if current, _ := gitwork.C(repoCtx, workspace, "branch", "--show-current"); strings.TrimSpace(current) == branch {
 		return nil
 	}
@@ -1387,7 +1407,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = "0.9.2"
+var runnerVersion = domain.RunnerVersionGitSSH
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

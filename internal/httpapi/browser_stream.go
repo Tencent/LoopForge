@@ -29,9 +29,10 @@ const (
 	browserStreamPing       = 20 * time.Second
 	browserStreamRunRefresh = 10 * time.Second
 	browserStreamRetry      = 4 * time.Second
-	// An animated page screencasts at display rate; 25 fps is enough to
-	// follow the agent and keeps a busy page from saturating the link.
-	browserStreamFrameInterval = 40 * time.Millisecond
+	// Frame long-polls kept waiting at the browser. Three cover a round trip
+	// of a few frame intervals at the rates a sandbox browser renders.
+	browserStreamFramePulls = 3
+	browserStreamPullGap    = 15 * time.Millisecond
 )
 
 type browserStreamMessage struct {
@@ -169,37 +170,104 @@ func (s *browserStream) execute(ctx context.Context, cancel context.CancelFunc, 
 }
 
 func (s *browserStream) frames(ctx context.Context, cancel context.CancelFunc) {
-	var last time.Time
-	for ctx.Err() == nil {
-		if wait := browserStreamFrameInterval - time.Since(last); wait > 0 {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(wait):
-			}
-		}
-		last = time.Now()
-		s.mu.Lock()
-		after := s.seq
-		s.mu.Unlock()
+	pull := func(ctx context.Context, after int64) json.RawMessage {
 		payload, _ := s.h.dispatch(ctx, s.currentRun(false), domain.BrowserRequest{Operation: "frame", After: after, WaitMs: 3000})
-		if ctx.Err() != nil {
-			return
-		}
-		available, err := s.publish(payload)
-		if err != nil {
-			cancel()
-			return
-		}
-		if available {
-			continue
-		}
+		return payload
+	}
+	err := pipelineFrames(ctx, browserStreamFramePulls, pull, s.publish, func() int64 {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.seq
+	}, func() bool {
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-time.After(browserStreamRetry):
 		}
 		s.currentRun(true)
+		return true
+	})
+	if err != nil {
+		cancel()
+	}
+}
+
+// pipelineFrames keeps pulls frame long-polls waiting at the browser, each
+// for a later frame than the latest shown (latest, latest+1, …). A frame
+// then leaves the moment it is captured instead of one round trip after the
+// previous one arrived: a single poll delivered about half the frames a
+// scrolling page produced.
+//
+// Thresholds always count from the latest frame shown, never from earlier
+// polls: a poll that times out on an idle page is sent again for the same
+// frame. Counting up per poll ran the thresholds ahead of the browser while
+// nothing moved, and the runtime only returns an image newer than the
+// threshold, so the next frames were never shown.
+//
+// publish reports whether the browser is available; while it is not, the
+// polls drain and retry waits before the next round.
+func pipelineFrames(
+	ctx context.Context,
+	pulls int,
+	pull func(context.Context, int64) json.RawMessage,
+	publish func(json.RawMessage) (bool, error),
+	latest func() int64,
+	retry func() bool,
+) error {
+	type answer struct {
+		after   int64
+		payload json.RawMessage
+	}
+	results := make(chan answer, pulls)
+	var issued time.Time
+	waiting := map[int64]bool{}
+	down := false
+	for {
+		for !down && len(waiting) < pulls && ctx.Err() == nil {
+			// A spaced start keeps a runtime that answers at once (no frame
+			// wait) from turning this into a hot loop.
+			if wait := browserStreamPullGap - time.Since(issued); wait > 0 {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(wait):
+				}
+			}
+			issued = time.Now()
+			after := latest()
+			for waiting[after] {
+				after++
+			}
+			waiting[after] = true
+			go func() {
+				payload := pull(ctx, after)
+				select {
+				case results <- answer{after, payload}:
+				case <-ctx.Done():
+				}
+			}()
+		}
+		if len(waiting) == 0 {
+			if ctx.Err() != nil || !retry() {
+				return nil
+			}
+			down = false
+			continue
+		}
+		var got answer
+		select {
+		case <-ctx.Done():
+			return nil
+		case got = <-results:
+		}
+		delete(waiting, got.after)
+		available, err := publish(got.payload)
+		if err != nil {
+			return err
+		}
+		if !available {
+			down = true
+		}
 	}
 }
 

@@ -67,7 +67,7 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 ## Quick start
 
-Requires **Git, curl, Docker (with Compose)** and **Python 3**. On a fresh Ubuntu host, start with `sudo apt-get update && sudo apt-get install -y git curl python3`. The installer offers to install Docker if it is missing. Ordinary Linux users are supported through Docker group access or sudo.
+Install **Git** and clone the repository first. The installer checks Docker, Compose, Python 3 and curl and offers to install missing components. Python/curl installation supports apt, dnf and yum on Linux; the Compose plugin supports x86_64/arm64 and verifies the official release SHA-256. macOS needs a working Python 3 and Docker Desktop; Homebrew can install missing components. Ordinary Linux users are supported through Docker group access or sudo. Set `LOOPFORGE_YES=1` to accept installation prompts. Package and image downloads require internet access.
 
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
@@ -75,9 +75,17 @@ cd LoopForge
 ./start.sh
 ```
 
-`./start.sh` pulls the GHCR release image pinned in `compose.yaml` without building locally (`bash scripts/install.sh` does the same). Use `./start.sh logs`, `stop`, `restart` or `pull` to manage it, and `./start.sh dev` to build the checkout from source.
+`./start.sh` pulls the GHCR release image pinned in `compose.yaml` without building locally (`bash scripts/install.sh` does the same). It creates the MySQL and platform services, generates configuration and session secrets, and installs the built-in sandboxes, starter SOPs and welcome project. Host Go and Node.js installations are not required. Configure model API keys and GitHub authorization after startup. Use `./start.sh logs`, `stop`, `restart` or `pull` to manage it, and `./start.sh dev` to build the checkout from source.
+
+If downloads from `ghcr.io` stall, set `MIRROR` to a registry host that can stand in for `ghcr.io`. `./start.sh` pulls from that host and tags the image back to the name pinned in `compose.yaml`. Setting `MIRROR` trusts that host, because the download is tagged with the official name. The GitHub Release records the digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. Without `MIRROR`, `./start.sh` still pulls `ghcr.io` directly, and `compose.yaml` stays unchanged. Upgrade with the same variable and `./start.sh pull`. [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr) is one such host. A Docker `registry-mirrors` entry such as `https://docker.nju.edu.cn` only accelerates Docker Hub and is not a value for `MIRROR`.
+
+```bash
+MIRROR=ghcr.nju.edu.cn ./start.sh
+```
 
 Open the address printed by the installer and create your account; the first one becomes the administrator. The service listens on `0.0.0.0:8090` by default. On a cloud host, the installer reads the public IP from the provider's metadata service and prints it; allow the port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
+
+For GitLab, Gitea, Gogs and other Git hosts, [set up Git SSH](docs/deployment.md#git-repositories-over-ssh) to check out and push branches with a personal key. PR/MR and Issue automation requires a hosting API token or a separately configured MCP.
 
 ### Try it without an API key
 
@@ -100,13 +108,13 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 
 <br>
 
-- **Executors.** Pick **CodeBuddy, Codex or Claude Code** beside the home composer, then a model. Each executor uses its own credentials from personal settings, and every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, scheduled assistant tasks and AI notification summaries currently use CodeBuddy. The Docker image ships all three CLIs; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
+- **Executors.** Pick **CodeBuddy, Codex or Claude Code** beside the home composer, then a model. Each executor uses its own credentials from personal settings, and every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification and AI notification summaries currently use CodeBuddy; scheduled assistant tasks run on the CLI the task selects. The Docker image ships CodeBuddy and Codex; Claude Code installs from npm on first use and is cached, so that first run requires npm access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, and new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
 - **Delivering to a repository.** Choose **Connect GitHub** in personal settings, approve the device code on GitHub and pick your repository (the LoopForge OAuth App is built in; no PAT required, manual PAT entry still works). Set executor credentials (or bind a local execution machine), then either run a project SOP or ask Main Bot to change the code and submit a PR/MR.
 - **Sandboxes.** In the default Compose installation, SOP runs and conversation workspaces both use Docker sandbox containers started through the host Docker socket. Default sandboxes reuse the installed runtime image, so nothing extra is built after installation; custom Dockerfiles still build their own images. Docker socket access grants control of the host daemon, so this setup is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
 - **Accounts and access.** New installations listen on all interfaces (existing bind settings are kept) and are designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
 - **Remote access, HTTPS, separate workers.** See [Deployment](docs/deployment.md).
-- **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.10+).
+- **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.11+).
 
 </details>
 

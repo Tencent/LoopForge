@@ -215,9 +215,42 @@ paths:
                     shared: {type: boolean}
                     runId: {type: string}
                     generationStatus: {type: string}
+                    generationId: {type: string, description: "Latest reply of the conversation"}
+                    unread: {type: boolean, description: "The latest reply completed after the caller last opened the conversation (sidebar blue dot). Only for conversations the caller takes part in; replies that ended before read tracking existed are never unread."}
                     updatedAt: {type: string, format: date-time}
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/assistant/sessions/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [Assistant]
+      operationId: markAssistantSessionRead
+      summary: Record the reply the caller has seen in a conversation
+      description: Clears the conversation's unread mark for the caller on every device. Only the conversation's latest reply is recorded; an older generationId changes nothing and returns recorded=false. Stored in MySQL `assistant_session_reads`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [generationId]
+              properties:
+                generationId: {type: string, maxLength: 64}
+      responses:
+        "200":
+          description: "`{ok: true, recorded: boolean}`"
+        "400":
+          description: Missing or invalid generationId
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/runs/{id}/conversation:
     parameters:
       - name: id
@@ -4206,6 +4239,24 @@ components:
           type: boolean
           readOnly: true
           description: Whether deletion is currently permitted, computed from complete task and run history on list and detail responses.
+        deletionBlock:
+          type: object
+          readOnly: true
+          description: Present when deletion is blocked. Uses complete execution history; clarification and unfinished work take precedence over historical success and completed issue status. The DELETE conflict response uses the same reason.
+          required: [code, reason]
+          properties:
+            code:
+              type: string
+              enum: [clarifying, active, succeeded, completed]
+            reason:
+              type: string
+              description: Human-readable explanation suitable for direct display.
+            runId:
+              type: string
+              description: Existing run responsible for the restriction, including legacy task-linked runs outside the current run list.
+            taskId:
+              type: string
+              description: Task responsible for the restriction when there is no corresponding blocking run.
         id:
           type: string
         projectId:

@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 ## 快速开始
 
-需要 **Git、curl、Docker（含 Compose）** 和 **Python 3**。全新 Ubuntu 可先运行 `sudo apt-get update && sudo apt-get install -y git curl python3`。没装 Docker 时，安装脚本会询问并帮你安装。支持普通用户运行，需要时通过 docker 组或 sudo 操作 Docker。
+先准备 **Git** 并克隆仓库。安装脚本会检查 Docker、Compose、Python 3 和 curl，并在获得确认后补装缺少的组件：Linux 的 Python/curl 支持 apt、dnf、yum，Compose 插件支持 x86_64/arm64 并校验官方发行文件的 SHA-256；macOS 需要可运行的 Python 3 和 Docker Desktop，可通过 Homebrew 补装缺少的组件。支持普通用户运行，需要时通过 Docker 组或 sudo 操作 Docker。设置 `LOOPFORGE_YES=1` 可接受安装提示；安装和拉取镜像需要可用的外网连接。
 
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
@@ -75,9 +75,17 @@ cd LoopForge
 ./start.sh
 ```
 
-`./start.sh` 直接拉取 `compose.yaml` 中 pin 的 GHCR 发布镜像，不在本地构建（`bash scripts/install.sh` 效果相同）。用 `./start.sh logs`、`stop`、`restart`、`pull` 管理服务；需要从源码构建时用 `./start.sh dev`。
+`./start.sh` 直接拉取 `compose.yaml` 中 pin 的 GHCR 发布镜像，不在本地构建（`bash scripts/install.sh` 效果相同）。安装流程会创建 MySQL 和平台服务，生成配置与会话密钥，并导入内置沙箱、通用 SOP 和体验项目；无需在宿主机安装 Go 或 Node.js。模型 API Key 和 GitHub 授权在启动后由用户配置。用 `./start.sh logs`、`stop`、`restart`、`pull` 管理服务；需要从源码构建时用 `./start.sh dev`。
+
+国内拉取 `ghcr.io` 经常中断。把 `MIRROR` 设成可以替换 `ghcr.io` 的镜像站主机名，`./start.sh` 会用它拉取，再改回 `compose.yaml` 里的原名。设置 `MIRROR` 表示信任该主机，因为下载结果会被标成官方镜像名。发布说明里有 digest，可用 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` 核对，`@` 后面的摘要应一致。不设置时仍直接从 `ghcr.io` 拉取。`compose.yaml` 不用改。升级时带上同一个变量执行 `./start.sh pull`。南京大学的 GHCR 镜像站是 [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr)。Docker 引擎里的 `registry-mirrors`（包括 `https://docker.nju.edu.cn`）只加速 Docker Hub，不能填在这里。
+
+```bash
+MIRROR=ghcr.nju.edu.cn ./start.sh
+```
 
 打开安装脚本输出的地址创建账号，第一个账号自动成为管理员。服务默认监听 `0.0.0.0:8090`；在云主机上，安装脚本会从云厂商的元数据服务读取公网 IP 并直接打印出来，放通安全组端口即可访问，或配置 HTTPS 反向代理；管理员账号创建前，建议只允许你的 IP 访问。首页的「快速接入」会带你配置模型凭据、绑定仓库并选好默认 SOP。
+
+GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-repositories-over-ssh)，用个人密钥检出和推送分支。Issue 与 PR/MR 自动化需要托管平台的 API Token 或另行配置的 MCP。[CNB 官方仅支持 HTTPS + 访问令牌](https://docs.cnb.cool/zh/guide/git-access.html)。
 
 ### 免 API Key 体验
 
@@ -100,13 +108,13 @@ cd LoopForge
 
 <br>
 
-- **执行器。** 在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清、定时助手任务和通知 AI 汇总目前使用 CodeBuddy。Docker 镜像内置三个 CLI；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
+- **执行器。** 在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清和通知 AI 汇总目前使用 CodeBuddy；定时助手任务使用任务所选的执行器。Docker 镜像内置 CodeBuddy 和 Codex；Claude Code 在首次使用时从 npm 安装并缓存，需要能访问 npm；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
 - **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库（已内置 LoopForge 授权应用，无需申请 PAT，仍可手动填写 PAT），再配置执行器凭据（或绑定本机执行机器），之后既可以运行一条项目 SOP，也可以直接让 Main Bot 修改代码并提交 PR/MR。
 - **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
 - **账号与访问。** 新安装默认监听所有网卡（已有安装保留原配置），面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
 - **远程访问、HTTPS、独立 Worker。** 见[部署指南](docs/deployment.md)。
-- **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.10+）。
+- **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.11+）。
 
 </details>
 

@@ -34,7 +34,11 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	prompt = strings.ReplaceAll(prompt, "{{input}}", run.Input)
 	repository := "未绑定代码仓库"
 	if run.Repository.RepositoryID != "" {
-		repository = fmt.Sprintf("%s (%s), 最新远端基线 %s, 本次工作分支 %s", run.Repository.Name, run.Repository.GongfengProjectID, run.Repository.BaseBranch, run.Repository.WorkBranch)
+		identity := run.Repository.GongfengProjectID
+		if run.Repository.Provider == domain.RepositoryProviderSSH {
+			identity = "Git SSH"
+		}
+		repository = fmt.Sprintf("%s (%s), 最新远端基线 %s, 本次工作分支 %s", run.Repository.Name, identity, run.Repository.BaseBranch, run.Repository.WorkBranch)
 	}
 	prompt = strings.ReplaceAll(prompt, "{{repository}}", repository)
 	pipelineURL := "未配置 Pipeline"
@@ -42,6 +46,11 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 		pipelineURL = strings.ReplaceAll(run.Repository.PipelineURLPattern, "{build_id}", "current")
 	}
 	prompt = strings.ReplaceAll(prompt, "{{pipelineUrl}}", pipelineURL)
+	if !strings.Contains(prompt, "{{existingMR}}") {
+		if hint := sshDeliveryHint(run); hint != "" {
+			prompt += "\n\n## Git SSH 仓库交付\n\n" + hint
+		}
+	}
 	prompt = strings.ReplaceAll(prompt, "{{existingMR}}", existingMRBlurb(st, run))
 	rejectTo := node.RejectTo
 	if rejectTo == "" {
@@ -99,10 +108,36 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	return prompt
 }
 
+func sshDeliveryHint(run domain.Run) string {
+	var sshRepos []string
+	for _, repository := range run.RepositoryContexts() {
+		if repository.Provider == domain.RepositoryProviderSSH {
+			sshRepos = append(sshRepos, repository.Name)
+		}
+	}
+	if len(sshRepos) == 0 {
+		return ""
+	}
+	return "Git SSH 仓库（" + strings.Join(sshRepos, "、") + "）：负责交付的节点在用户要求推送时只推本轮工作分支，并报告分支名和提交 SHA。需要 PR/MR 时，可使用另行配置的托管平台 MCP，或请用户到托管平台手动创建。"
+}
+
 func existingMRBlurb(st *repo.Store, run domain.Run) string {
+	hint := sshDeliveryHint(run)
+	if hint == "" {
+		return hostedMRBlurb(st, run)
+	}
+	for _, repository := range run.RepositoryContexts() {
+		if repository.Provider != domain.RepositoryProviderSSH {
+			return hint + "\n其它仓库：" + hostedMRBlurb(st, run)
+		}
+	}
+	return hint
+}
+
+func hostedMRBlurb(st *repo.Store, run domain.Run) string {
 	var continued []string
 	for _, repository := range run.RepositoryContexts() {
-		if repository.RequireExistingWorkBranch {
+		if repository.Provider != domain.RepositoryProviderSSH && repository.RequireExistingWorkBranch {
 			continued = append(continued, fmt.Sprintf("%s：继续已有分支 %s，MR 目标主分支 %s", repository.Name, repository.WorkBranch, repositoryBaseBranch(repository)))
 		}
 	}

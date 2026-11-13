@@ -96,6 +96,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	if repository.RepositoryID == "" {
 		return nil
 	}
+	ctx = withRepositoryGit(ctx, repository)
 	if repository.RequireExistingWorkBranch && !existingDevelopmentBranch(repository) {
 		return fmt.Errorf("continuing an existing branch requires a development branch distinct from the main and integration branches")
 	}
@@ -185,7 +186,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 			}
 			// Clone into the existing directory (`.`) so git cannot unlink and
 			// recreate `workspace`. That inode is the Docker bind-mount source.
-			args = append(args, "--", gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), ".")
+			args = append(args, "--", cloneRemoteForGit(ctx, remote), ".")
 			if _, err := gitwork.Watch(ctx, workspace, watch, args...); err != nil {
 				return fmt.Errorf("git clone: %w", err)
 			}
@@ -204,6 +205,9 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 			if procwatch.Stopped(err) || ctx.Err() != nil {
 				return err
 			}
+			if gitwork.UsesSSH(ctx) && !localIsGit {
+				return err
+			}
 			if clearErr := reset(workspace); clearErr != nil {
 				return clearErr
 			}
@@ -217,7 +221,10 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 				if procwatch.Stopped(retryErr) || ctx.Err() != nil {
 					return retryErr
 				}
-				if seeded, seedErr := seedEmptyRepository(ctx, workspace, gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx)), repository.DefaultBranch, baseBranch, reset); seeded {
+				if gitwork.UsesSSH(ctx) {
+					return retryErr // An SSH checkout never initializes a remote branch.
+				}
+				if seeded, seedErr := seedEmptyRepository(ctx, workspace, cloneRemoteForGit(ctx, remote), repository.DefaultBranch, baseBranch, reset); seeded {
 					if seedErr != nil {
 						return seedErr
 					}
@@ -420,7 +427,9 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 	}
 	if _, err := gitC(ctx, workspace, "remote", "get-url", "origin"); err == nil {
 		if _, err := gitC(ctx, workspace, "fetch", "--prune", "origin", baseBranch); err != nil {
-			_, _ = gitC(ctx, workspace, "fetch", "--prune", "origin")
+			if _, fallbackErr := gitC(ctx, workspace, "fetch", "--prune", "origin"); fallbackErr != nil && gitwork.UsesSSH(ctx) {
+				return fmt.Errorf("git fetch: %w", fallbackErr)
+			}
 		}
 		if repository.WorkBranch != "" {
 			if err := fetchRepositoryWorkBranch(ctx, workspace, repository); err != nil {
@@ -434,6 +443,14 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		checkout := func() error { return checkoutWorkBranch(ctx, workspace, repository.WorkBranch, baseBranch, false) }
 		if repository.RequireExistingWorkBranch {
 			checkout = func() error { return checkoutContinuedWorkBranch(ctx, workspace, repository.WorkBranch) }
+		} else if repository.CreateNewWorkBranch {
+			// A local branch in this cached workspace is the one this run created
+			// (and may have pushed), so it is resumed. Without it the branch is
+			// still to be created here, and a same-named remote branch belongs to
+			// someone else: refuse it exactly as a fresh clone does.
+			if _, created := gitRevParse(ctx, workspace, "refs/heads/"+strings.TrimSpace(repository.WorkBranch)); !created {
+				checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
+			}
 		}
 		if err := checkout(); err != nil {
 			return err

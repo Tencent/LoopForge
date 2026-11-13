@@ -2,6 +2,66 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- Repository clone URLs no longer carry credentials. Saving a `cloneUrl` with a user name or password, such as `https://user:token@github.com/acme/app.git`, is rejected with a pointer to the Git token in personal settings; the repositories API, bootstrap payload, run, task and requirement views, and the runner task management list strip credentials from `cloneUrl` and `webUrl` of rows saved earlier; a `webUrl` with credentials is rejected on save; runner clone errors and redacted Git output mask them. `ssh://git@host/...` and `git@host:path` remotes are still accepted.
+
+Repositories saved earlier with a token in `cloneUrl` keep cloning until they are saved again. Saving one from the studio stores the URL without the token, so first put the Git token in 个人配置, then save the repository. Until then the token also lands in each workspace's `.git/config`, where the agent can read it, so re-save such repositories soon after upgrading.
+
+## 0.3.8 — header sign-in hardening and a GHCR mirror option
+
+- With `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`, identity headers such as `Staffname` are ignored on requests that carry `X-Forwarded-For`, `Forwarded` or `X-Real-IP`, unless the gateway also sends `X-AgentFlow-Gateway-Secret` matching the new `AGENTFLOW_IDENTITY_HEADER_SECRET`. A client behind a pass-through reverse proxy could otherwise sign in as any account. Deployments with the option off are unaffected.
+- MCP, REST and quick-access snippets copied from an HTTPS studio use `https://` endpoints, so agents no longer send their Bearer token over cleartext HTTP.
+- `MIRROR=<host> ./start.sh` pulls `<host>/tencent/loopforge:<version>` and tags it back to the name pinned in `compose.yaml`. `ghcr.nju.edu.cn` is one such host. Unset `MIRROR` still pulls `ghcr.io` directly. `MIRROR=<host> ./start.sh pull` refreshes through the same host. Setting `MIRROR` trusts that host. The published image stays on GHCR, and the GitHub Release records its digest. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub.
+- The release workflow publishes GHCR only. It no longer copies the image to `ccr.ccs.tencentyun.com`.
+- The assistant asks before handing a requirement to an SOP, does not run a rejected proposal, and no longer runs the same draft twice after a timeout.
+- The side browser renders sandbox dev servers natively instead of through screencast frames.
+- The workbench shows the image's short git commit in the corner.
+- The AI orchestrator's canvas build animations are back, and follow the dark theme.
+- The chatbot clears the missing-key notice once quick access saves a key.
+- Sandbox Git cleanup keeps `index.lock` while a process holds it through a bind-mounted or hard-linked path.
+- Tool messages and executor output are clipped on UTF-8 character boundaries.
+
+Before upgrading a deployment that signs users in by header behind a proxy adding forwarding headers, set `AGENTFLOW_IDENTITY_HEADER_SECRET` and have the gateway send it in `X-AgentFlow-Gateway-Secret`; otherwise header sign-in falls back to guest after the upgrade. See `docs/deployment.md`.
+
+No migrations are required.
+
+## 0.3.7 — Tencent Cloud image mirror
+
+- Platform releases also push `ccr.ccs.tencentyun.com/loopforge/loopforge` with the same tags as `ghcr.io/tencent/loopforge`. `compose.yaml` still pins GHCR. Install from Tencent Cloud with `LOOPFORGE_IMAGE=ccr.ccs.tencentyun.com/loopforge/loopforge:0.3.7 ./start.sh`.
+- A running SOP node animates its activity on the graph.
+- Approving a run reloads the queue from the server, so the waiting card disappears once execution continues.
+- LoopForge Local's Classic CodeBuddy hook keeps manual gates when PyYAML is not installed.
+- The TKE node-pool tool keeps the SDK error and CAM hint when its fallback query fails.
+
+No migrations are required.
+
+## 0.3.6 — a default sandbox on an uninitialized catalog
+
+- A database without sandbox catalog rows, for example after a plain `docker compose --profile platform up` without the installer, now offers the built-in 默认运行沙箱 (`local`). Creating a blank SOP no longer fails with `sandbox profile not found`. The default is not written to the database, a saved `local` profile takes priority, and it cannot be deleted. Compose still runs it in a separate Docker container.
+- The new-SOP wizard picks the run sandbox from the project's, shared and global profiles, keeps a template's sandbox when it is available, asks for a replacement when it is not, and can refresh the list without losing the entered fields.
+- Project sandbox lists include globally shared profiles.
+
+No migrations are required.
+
+## 0.3.5 — more agent CLIs, parallel SOP branches and a smaller settings menu
+
+- Chat and SOP roles can run ZCode with a personal API key. Personal settings keep a model catalog for Codex, Claude Code and the agent CLIs behind a custom Base URL: fetch the models the service publishes, then pick, reorder and rename them.
+- The SOP orchestration assistant chooses its own CLI and model, and scheduled tasks run as ordinary chat turns on the CLI they were created with, using the project owner's key.
+- SOP branches whose dependencies are ready run together, and rerunning one cancelled branch restores its cancelled siblings without rerunning their upstream.
+- Requirement clarification is optional: new, imported and synced issues no longer start a clarification round, and 待澄清 no longer blocks triggering an SOP.
+- Main Bot lists issues and pull requests, checks PR status, comments and adds labels on GitHub without opening a workspace.
+- The icon rail keeps only daily work; 流程模板, 运行记录 and 定时任务 move into a two-level settings sidebar, MCP, rules and skills share one 能力资产 page, and personal tokens are called 访问密钥.
+- The conversation sidebar marks a reply that finished while you were elsewhere with a blue dot.
+- Opening a workspace reports clone and image-build progress and stops a step that has stopped moving. A failed or interrupted restore is no longer reported as ready, a checkpoint operation that meets an open terminal fails at once, and resuming a new work branch refuses a remote branch someone else published.
+- Quick access explains before the last step when a member cannot bind repositories to the selected project. Issues that cannot be deleted say why, and stages that have not started show no duration.
+- Saving an unchanged workflow no longer creates a revision, and publishing the same content keeps the current version.
+- Malformed sign-ups no longer spend the per-IP login budget, and each server keeps its own password-attempt limits.
+- The image builds with Go 1.26.11 (GO-2026-6859). `scripts/install.sh` offers to install missing curl, Python and the Docker Compose plugin with apt, dnf, yum or Homebrew.
+- LoopForge Local supports DeepSeek Harness (DSH) and Hermes Agent.
+
+Existing installations may apply `migrations/026_assistant_session_reads.sql` and `migrations/027_cli_model_catalog.sql`; the platform also adds these tables and columns on startup.
+
 ## 0.3.4 — ARM64 platform images and shared CodeBuddy keys
 
 - Platform administrators create accounts and reset passwords under 平台管理 → 成员账号, so teams that turn off self sign-up no longer need the `loopforge-account` command.

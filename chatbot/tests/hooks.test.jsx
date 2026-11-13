@@ -212,6 +212,67 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("a proposal card accepts before it runs, and a timed-out one never runs", async () => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 SOP", timing: "start" } };
+    const withDraft = (extra = {}) => ({
+      id: "s1",
+      projectId: "p1",
+      messages: [{ role: "assistant", content: JSON.stringify({ message: "建议", drafts: [{ ...draft, ...extra }] }) }],
+    });
+    const original = writeMock.getMockImplementation();
+    const mcpCalls = () => apiMock.mock.calls.filter(([path]) => path === "/mcp");
+    try {
+      writeMock.mockImplementation((path, body, method) =>
+        path.endsWith("/proposals")
+          ? Promise.reject(Object.assign(Error("这条建议已经处理过"), { status: 409 }))
+          : original(path, body, method),
+      );
+      apiMock.mockResolvedValueOnce(withDraft());
+      await act(() => expect(result.current.applyDraft(0, 0, { approved: true })).rejects.toThrow("已经处理过"));
+      expect(mcpCalls()).toHaveLength(0);
+
+      writeMock.mockImplementation((path, body, method) =>
+        path.endsWith("/proposals")
+          ? Promise.resolve({ session: withDraft({ decision: "accepted" }), followUp: null })
+          : original(path, body, method),
+      );
+      apiMock.mockResolvedValueOnce(withDraft());
+      await act(() => result.current.applyDraft(0, 0, { approved: true }));
+      const accept = writeMock.mock.calls.findIndex(([path]) => path.endsWith("/proposals"));
+      const mcp = apiMock.mock.calls.findIndex(([path]) => path === "/mcp");
+      expect(writeMock.mock.invocationCallOrder[accept]).toBeLessThan(apiMock.mock.invocationCallOrder[mcp]);
+      const saved = writeMock.mock.calls.find(([path, , method]) => path === "/api/assistant/sessions/s1" && method === "PUT");
+      expect(JSON.parse(saved[1].messages[0].content).drafts[0]).toMatchObject({ decision: "accepted", saved: true });
+    } finally {
+      writeMock.mockImplementation(original);
+    }
+  });
+
+  test.each(["declined", "muted", "expired"])("a %s proposal decision refreshes a stale card without writing", async (decision) => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 SOP", timing: "start" } };
+    const withDraft = (value) => ({
+      ...result.current.session,
+      messages: [{ role: "assistant", content: JSON.stringify({ message: "建议", drafts: [value] }) }],
+    });
+    act(() => result.current.setSession(withDraft(draft)));
+    const latest = withDraft({ ...draft, decision });
+    apiMock.mockResolvedValueOnce(latest);
+
+    await act(() => expect(result.current.applyDraft(0, 0, { approved: true })).rejects.toThrow("这条建议已经处理过"));
+
+    expect(apiMock).not.toHaveBeenCalledWith("/mcp", expect.anything());
+    expect(writeMock).not.toHaveBeenCalled();
+    expect(result.current.session).toEqual(latest);
+  });
+
   test("provides local fixture conversations and completes a local reply", async () => {
     history.replaceState({}, "", "/?localPreview=1");
     vi.useFakeTimers();

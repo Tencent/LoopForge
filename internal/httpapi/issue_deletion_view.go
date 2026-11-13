@@ -2,21 +2,21 @@ package httpapi
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
+
 	"github.com/gin-gonic/gin"
 )
 
 type issueDeletionView struct {
 	domain.Issue
-	DeletionAllowed bool `json:"deletionAllowed"`
-	ClosureAllowed  bool `json:"closureAllowed"`
+	DeletionAllowed       bool                     `json:"deletionAllowed"`
+	DeletionRequiresForce bool                     `json:"deletionRequiresForce,omitempty"`
+	DeletionBlock         *repo.IssueDeletionBlock `json:"deletionBlock,omitempty"`
+	ClosureAllowed        bool                     `json:"closureAllowed"`
 }
 
 func (h issuesHandlers) issueDeletionViews(issues []domain.Issue) ([]issueDeletionView, error) {
-	allowed, err := h.repo.IssueDeletionAllowed(issues)
-	if err != nil {
-		return nil, err
-	}
-	closed, err := h.repo.IssueClosureAllowed(issues)
+	states, err := h.repo.IssueDeletionStates(issues)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +25,14 @@ func (h issuesHandlers) issueDeletionViews(issues []domain.Issue) ([]issueDeleti
 	}
 	out := make([]issueDeletionView, 0, len(issues))
 	for _, issue := range issues {
-		out = append(out, issueDeletionView{Issue: issue, DeletionAllowed: allowed[issue.ID], ClosureAllowed: closed[issue.ID]})
+		state := states[issue.ID]
+		out = append(out, issueDeletionView{
+			Issue:                 issue,
+			DeletionAllowed:       state.Block == nil,
+			DeletionRequiresForce: state.RequiresForce(),
+			DeletionBlock:         state.Block,
+			ClosureAllowed:        state.Block == nil,
+		})
 	}
 	return out, nil
 }

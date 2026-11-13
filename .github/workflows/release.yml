@@ -23,7 +23,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -67,8 +67,10 @@ jobs:
           {
             echo "tag=${TAG}"
             echo "version=${version}"
+            echo "sha=$(git rev-parse HEAD)"
             echo "image=${image}"
             echo "prerelease=${prerelease}"
+            echo "commit=${tag_commit}"
           } >> "$GITHUB_OUTPUT"
 
       # arm64 lets Apple silicon and arm servers pull the image; only the final
@@ -93,7 +95,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
-            type=sha,prefix=sha-,format=long
+            type=raw,value=sha-${{ steps.release.outputs.sha }}
             type=raw,value=latest,enable=${{ steps.release.outputs.prerelease == 'false' }}
 
       - uses: docker/build-push-action@v7
@@ -102,6 +104,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            LOOPFORGE_COMMIT=${{ steps.release.outputs.commit }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
@@ -124,6 +128,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
           IMAGE: ${{ steps.release.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           notes="$(cat <<EOF
@@ -135,7 +140,11 @@ jobs:
           ./start.sh
           \`\`\`
 
-          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`). Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
+          Platform image: \`${IMAGE}:${VERSION}\` (pinned in \`compose.yaml\`).
+
+          Digest: \`${IMAGE}@${DIGEST}\`.
+
+          Where \`ghcr.io\` is slow, set \`MIRROR\` to a registry host that replaces it (for example \`MIRROR=ghcr.nju.edu.cn ./start.sh\`). This trusts that host: the download is tagged as the pinned name. Check it with \`docker image inspect --format '{{index .RepoDigests 0}}' ${IMAGE}:${VERSION}\` and compare the digest after \`@\`. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
           EOF
           )"
           if gh release view "${TAG}" >/dev/null 2>&1; then

@@ -106,6 +106,12 @@ func (e *Engine) restoreWorkspaceFiles(ctx context.Context, run domain.Run, file
 			return nil, err
 		}
 		if result.Error != "" {
+			// An open IDE terminal or a snapshot holds the fence. Refilling only
+			// adds missing archived files, so it waits for the next use instead
+			// of failing the save or terminal input that asked for it.
+			if runnerWorkspaceBusy(result) {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("补回归档产物失败（执行机器需支持 restore_artifacts）：%s", result.Error)
 		}
 		var report struct {

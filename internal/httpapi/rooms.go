@@ -329,7 +329,7 @@ func (h *roomsHandlers) dispatchToIssue(c *gin.Context, room domain.ChatRoom, st
 		} else {
 			msg.TaskID = task.ID
 			msg.RunID = task.RunID
-			result.Tasks = append(result.Tasks, task)
+			result.Tasks = append(result.Tasks, publicTask(task))
 			name := workflowNames[i]
 			_, _ = h.repo.PatchIssue(stored.ID, func(iss *domain.Issue) error {
 				iss.AppendOperation(domain.IssueOperation{Actor: author, ActorUserID: userID, Action: "dispatch", Detail: "协作群派发 SOP「" + name + "」"})

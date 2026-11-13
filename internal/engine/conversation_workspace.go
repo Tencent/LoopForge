@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/workspaceprep"
 )
@@ -168,8 +169,10 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	defer env.nodeMu.Unlock()
 	// Same checkout as an SOP node: the responsible user's Git Token, the
 	// frozen base branch, and a fresh work branch.
-	gitToken := env.credentialSnapshot().GitToken
+	credentials := env.credentialSnapshot()
+	gitToken := credentials.GitToken
 	ctx = withGitToken(e.withPreparationProgress(ctx, run.ID), gitToken)
+	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
 	return env.prepareRepositoriesOnce(func() error {
 		if err := prepareRepositories(ctx, env.Workspace(), run.RepositoryContexts()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitToken) != "")

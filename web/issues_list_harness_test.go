@@ -33,20 +33,20 @@ func TestIssueHeadingMenuKeepsLegacyControls(t *testing.T) {
 	}
 	menu := actions[menuStart:]
 	menu = menu[:strings.Index(menu, "</div>")]
-	for _, want := range []string{`role="menu"`, `id="openSyncModal"`, `id="syncBadge"`, `id="newScheduleJob"`, `id="scheduleJobCount"`, `id="importGitHubIssues"`, `id="importTAPDIssue"`} {
+	for _, want := range []string{`role="menu"`, `id="openSyncModal"`, `id="syncBadge"`, `id="importGitHubIssues"`, `id="importTAPDIssue"`} {
 		if !strings.Contains(menu, want) {
 			t.Fatalf("#issueHeadingMenu is missing %s", want)
 		}
 	}
-	if got := strings.Count(menu, `role="menuitem"`); got != 4 {
-		t.Fatalf("#issueHeadingMenu should hold 4 menu items, got %d", got)
+	if got := strings.Count(menu, `role="menuitem"`); got != 3 {
+		t.Fatalf("#issueHeadingMenu should hold 3 menu items, got %d", got)
 	}
 	if !regexp.MustCompile(`id="importTAPDIssue"[^>]*data-legacy-tracker hidden`).MatchString(menu) {
 		t.Fatal("the TAPD import item must stay hidden behind the legacy tracker flag")
 	}
 
-	if strings.Contains(menu, `schedule-job-count">0</span> 个`) {
-		t.Fatal("the trigger configuration item shows a state, not a job count")
+	if strings.Contains(menu, `id="newScheduleJob"`) {
+		t.Fatal("SOP trigger configuration lives in 定时任务 › SOP 触发, not the issue list menu")
 	}
 	if got := strings.Count(page, `id="importTAPDIssue"`); got != 1 {
 		t.Fatalf("the TAPD import must exist once, as the hidden legacy menu item; got %d", got)
