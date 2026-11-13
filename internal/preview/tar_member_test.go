@@ -51,3 +51,17 @@ func TestCheckTarFileCount(t *testing.T) {
 		t.Fatalf("over limit err = %v", err)
 	}
 }
+
+func TestCheckExpandedSize(t *testing.T) {
+	t.Parallel()
+	if err := checkExpandedSize(1<<40, Limits{}); err != nil {
+		t.Fatalf("zero MaxExpanded must mean unlimited: %v", err)
+	}
+	if err := checkExpandedSize(10, Limits{MaxExpanded: 10}); err != nil {
+		t.Fatalf("size equal to limit must pass: %v", err)
+	}
+	err := checkExpandedSize(11, Limits{MaxExpanded: 10})
+	if !errors.Is(err, ErrLimitExceeded) || err.Error() != ErrLimitExceeded.Error()+": expanded size" {
+		t.Fatalf("over limit err = %v", err)
+	}
+}
