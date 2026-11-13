@@ -172,3 +172,131 @@ test('run detail topology shows each stage time window beside its stage label', 
   assert.ok(runtime, 'node inspector should keep the runtime details row');
   assert.doesNotMatch(runtime.textContent, /\u2192/, 'time window is no longer repeated under the node output');
 });
+
+test('a stage that has not started or finished hides the zero default time', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const workflow = app.evaluate('structuredClone(state.data.workflows[0])');
+  const [first, second] = workflow.nodes;
+  const nodes = {
+    [first.id]: { status: 'pending', startedAt: '0001-01-01T00:00:00Z', finishedAt: '0001-01-01T00:00:00Z' },
+    [second.id]: { status: 'running', startedAt: '2026-10-21T10:04:00Z', finishedAt: '0001-01-01T00:00:00Z' },
+  };
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'), status: 'running',
+    workflowSnapshot: workflow, nodes,
+  };
+  app.router.get('/api/runs/run-1', run);
+  app.evaluate(`state.data.runs=[${JSON.stringify(run)}];state.selectedRun='run-1';state.activeRun=state.data.runs[0]`);
+  app.evaluate(`switchView('runs');showRunDetail('run-1')`);
+  await settle(6);
+  const labels = [...app.document.querySelectorAll('#runsView .graph-stage-label')];
+  const times = labels.map((label) => label.querySelector('.graph-stage-time')?.textContent || '');
+  assert.ok(times.some((text) => text === ''), 'an unstarted stage has no duration');
+  assert.ok(times.some((text) => text.includes('现在') && !text.includes('0001')), `an open stage shows now, not year 1: ${times.join(' | ')}`);
+  assert.ok(times.every((text) => !text.includes('0001')), times.join(' | '));
+});
+
+/** 渲染正在执行的节点，保留真实详情页与实时更新入口。 */
+function renderActivityFixture(app) {
+  app.evaluate(`
+    state.activeRun={...state.data.runs[0],status:'running',pauseRequested:false,cancelRequested:false,
+      workflowSnapshot:structuredClone(state.data.workflows[0]),artifacts:[],
+      nodes:{'node-1':{status:'running',attempt:1,activity:'正在分析需求'},'node-2':{status:'pending'}}};
+    state.selectedRun=state.activeRun.id;state.selectedRunNode='node-1';
+    renderRunDetail(state.activeRun);
+  `);
+}
+
+/** 同时检查活动文字与节点状态的动态反馈。 */
+function assertInspectorMotion(app, active, message) {
+  for (const selector of ['.node-activity-inline', '.node-inspector-status']) {
+    const element = app.document.querySelector(`#runDetail ${selector}`);
+    assert.ok(element, selector);
+    assert.equal(element.classList.contains('is-running'), active, `${message}: ${selector}`);
+  }
+}
+
+test('running node activity keeps its DOM and motion across streamed text updates', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  renderActivityFixture(app);
+  assertInspectorMotion(app, true, 'initial running node');
+  const activity = app.document.querySelector('#runDetail .node-activity-inline');
+  const text = activity.querySelector('b');
+  const status = app.document.querySelector('#runDetail .node-inspector-status');
+  assert.equal(activity.hidden, false);
+  app.evaluate(`startLiveRun(state.activeRun.id)`);
+  const stream = app.evaluate('state.runStream');
+  const next = '正在读取 <component> & 接口规范';
+  stream.emit({ run: { id: 'run-1', status: 'running', nodes: { 'node-1': { activity: next } } } }, 'run');
+  assert.equal(app.document.querySelector('#runDetail .node-activity-inline'), activity);
+  assert.equal(activity.querySelector('b'), text, 'streamed text should not replace the animated element');
+  assert.equal(app.document.querySelector('#runDetail .node-inspector-status'), status);
+  assert.equal(text.textContent, next);
+  assert.equal(text.children.length, 0, 'activity stays escaped text');
+  assertInspectorMotion(app, true, 'streamed activity');
+  stream.emit({ run: { id: 'run-1', status: 'running', nodes: {
+    'node-1': { status: 'succeeded' }, 'node-2': { status: 'running' },
+  } } }, 'run');
+  assertInspectorMotion(app, false, 'selected completed node while another node runs');
+  assert.equal(activity.querySelector('b').textContent, next, 'completed activity remains readable');
+});
+
+test('terminal, human-waiting, paused and cancelling runs stop inspector motion', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  for (const [label, runPatch, nodeStatus] of [
+    ['completed', { status: 'succeeded' }, 'succeeded'],
+    ['failed', { status: 'failed' }, 'failed'],
+    ['cancelled', { status: 'cancelled' }, 'cancelled'],
+    ['human approval', { status: 'waiting' }, 'waiting_approval'],
+    ['paused', { status: 'paused' }, 'running'],
+    ['pause requested', { pauseRequested: true }, 'running'],
+    ['cancel requested', { cancelRequested: true }, 'running'],
+  ]) {
+    renderActivityFixture(app);
+    app.evaluate(`Object.assign(state.activeRun,${JSON.stringify(runPatch)});
+      state.activeRun.nodes['node-1'].status=${JSON.stringify(nodeStatus)};patchRunLive(state.activeRun)`);
+    assertInspectorMotion(app, false, label);
+    assert.equal(app.document.querySelector('#runDetail .node-activity-inline b').textContent, '正在分析需求', label);
+  }
+});
+
+test('a parent node only animates while its child SOP is executing', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  renderActivityFixture(app);
+  app.evaluate(`
+    state.activeRun.nodes['node-1'].childRunId='child-activity';
+    state.childRuns={'child-activity':{at:Date.now(),run:{id:'child-activity',status:'waiting',
+      workflowSnapshot:{nodes:[{id:'review',name:'Review'}]},nodes:{review:{status:'waiting_approval'}}}}};
+    renderRunDetail(state.activeRun);
+  `);
+  assertInspectorMotion(app, false, 'child waits for human approval on first render');
+  app.evaluate(`state.childRuns['child-activity'].run.status='running';
+    state.childRuns['child-activity'].run.nodes.review.status='running';patchRunLive(state.activeRun)`);
+  assertInspectorMotion(app, true, 'child resumes execution');
+  app.evaluate(`state.childRuns['child-activity'].run.nodes.review.status='waiting_approval';patchRunLive(state.activeRun)`);
+  assertInspectorMotion(app, false, 'child approval node overrides its stale running status');
+});
+
+test('child pause and cancellation polling refreshes motion without parent stream events', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  renderActivityFixture(app);
+  const child = { id: 'child-activity', status: 'running', pauseRequested: false, cancelRequested: false,
+    workflowSnapshot: { nodes: [{ id: 'work', name: 'Work' }] }, nodes: { work: { status: 'running' } } };
+  app.evaluate(`state.activeRun.nodes['node-1'].childRunId='child-activity';
+    state.childRuns={'child-activity':{at:Date.now(),run:${JSON.stringify(child)}}};renderRunDetail(state.activeRun)`);
+  assertInspectorMotion(app, true, 'initial child execution');
+  for (const flag of ['pauseRequested', 'cancelRequested']) {
+    for (const requested of [true, false]) {
+      app.router.get('/api/runs/child-activity', { ...child, [flag]: requested });
+      app.evaluate(`state.childRuns['child-activity'].at=0;refreshChildRuns(state.activeRun)`);
+      await settle(3);
+      assert.equal(app.evaluate(`state.childRuns['child-activity'].run.${flag}`), requested);
+      assertInspectorMotion(app, !requested, `${flag}=${requested} from child polling`);
+    }
+  }
+});

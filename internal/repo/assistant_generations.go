@@ -19,6 +19,10 @@ type assistantGenerationRow struct {
 	CancelRequested bool
 	Payload         []byte `gorm:"type:json"`
 	UpdatedAt       time.Time
+	// FinishedAt is set when a turn ends through a checkpoint and cleared when
+	// the next turn starts. Rows that ended before the column existed keep
+	// NULL, which is how read tracking leaves older history unmarked.
+	FinishedAt *time.Time
 }
 
 func (assistantGenerationRow) TableName() string { return "assistant_generations" }
@@ -42,83 +46,130 @@ func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (dom
 		g := decodeGeneration(row)
 		g.Status = "interrupted"
 		g.Error = "服务端生成已中断，请检查已执行操作后重试"
-		_ = r.DB.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g)}).Error
+		g.Failure = &domain.AssistantFailure{Code: "EXECUTION_INTERRUPTED", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作后再重试；可下载诊断信息交给管理员排查。"}
+		_ = r.DB.Transaction(func(tx *gorm.DB) error {
+			res := tx.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g)})
+			if res.Error != nil || res.RowsAffected != 1 {
+				return res.Error
+			}
+			return checkpointAssistantDiagnostics(tx, g, nil)
+		})
 		if err := r.DB.Where("session_id = ? AND user_id = ?", sessionID, userID).Take(&row).Error; err != nil {
 			return domain.AssistantGeneration{}, false
 		}
 	}
 	return decodeGeneration(row), true
 }
+
+// BeginAssistantGeneration may lock a session that does not exist yet; two
+// first messages to new sessions can deadlock on that gap and are retried.
 func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, pending ...domain.AssistantSession) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var session assistantSessionRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", g.SessionID).Take(&session).Error; err == nil && session.UserID != g.UserID {
-			return fmt.Errorf("无权访问会话")
-		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if len(pending) > 0 {
-			next := pending[0]
-			old := decodeAssistantSession(session)
-			if next.IssueID != old.IssueID {
-				return fmt.Errorf("关联需求已更新，请重新发送")
-			}
-			if len(next.Messages) < len(old.Messages) {
-				return fmt.Errorf("会话已更新，请重新打开后发送")
-			}
-			for i, m := range old.Messages {
-				a, _ := json.Marshal(m)
-				b, _ := json.Marshal(next.Messages[i])
-				if !bytes.Equal(a, b) {
-					return fmt.Errorf("会话已更新，请重新打开后发送")
-				}
-			}
-			scoped := *r
-			base := *r.deps
-			base.DB = tx
-			scoped.deps = &base
-			if err := scoped.putAssistantSession(g.UserID, next); err != nil {
+	return r.retryAssistantDeadlock(func() error {
+		return r.DB.Transaction(func(tx *gorm.DB) error {
+			var session assistantSessionRow
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", g.SessionID).Take(&session).Error; err == nil && session.UserID != g.UserID {
+				return fmt.Errorf("无权访问会话")
+			} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
 			}
-		}
+			if len(pending) > 0 {
+				next := pending[0]
+				next.ExecutionTargetLocked = true
+				old := decodeAssistantSession(session)
+				if next.IssueID != old.IssueID {
+					return fmt.Errorf("关联需求已更新，请重新发送")
+				}
+				if len(next.Messages) < len(old.Messages) {
+					return fmt.Errorf("会话已更新，请重新打开后发送")
+				}
+				for i, m := range old.Messages {
+					a, _ := json.Marshal(m)
+					b, _ := json.Marshal(next.Messages[i])
+					if !bytes.Equal(a, b) {
+						return fmt.Errorf("会话已更新，请重新打开后发送")
+					}
+				}
+				scoped := *r
+				base := *r.deps
+				base.DB = tx
+				scoped.deps = &base
+				if err := scoped.putAssistantSession(g.UserID, next); err != nil {
+					return err
+				}
+			} else if session.ID != "" {
+				item := decodeAssistantSession(session)
+				item.ExecutionTargetLocked = true
+				if err := tx.Model(&assistantSessionRow{}).Where("id = ?", session.ID).UpdateColumn("payload", mustJSON(item)).Error; err != nil {
+					return err
+				}
+			}
 
-		var old assistantGenerationRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", g.SessionID).Take(&old).Error
-		if err == nil {
-			if old.UserID != g.UserID {
-				return fmt.Errorf("无权访问会话")
+			var old assistantGenerationRow
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", g.SessionID).Take(&old).Error
+			if err == nil {
+				if old.UserID != g.UserID {
+					return fmt.Errorf("无权访问会话")
+				}
+				if old.Status == "running" {
+					return fmt.Errorf("此会话正在生成，请等待完成或停止")
+				}
+				if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil}).Error; err != nil {
+					return err
+				}
+				return checkpointAssistantDiagnostics(tx, g, nil)
 			}
-			if old.Status == "running" {
-				return fmt.Errorf("此会话正在生成，请等待完成或停止")
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
 			}
-			return tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC()}).Error
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		return tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error
+			if err := tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error; err != nil {
+				return err
+			}
+			return checkpointAssistantDiagnostics(tx, g, nil)
+		})
 	})
 }
-func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration) error {
+func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration, diagnostics ...domain.AssistantDiagnostics) error {
+	return r.checkpointAssistantGeneration(g, true, diagnostics)
+}
+
+// HeartbeatAssistantGeneration records a running checkpoint whose diagnostic
+// evidence has not changed since it was last stored, so the diagnostic payload
+// is not rewritten.
+func (r *AssistantRepo) HeartbeatAssistantGeneration(g domain.AssistantGeneration) error {
+	return r.checkpointAssistantGeneration(g, false, nil)
+}
+
+func (r *AssistantRepo) checkpointAssistantGeneration(g domain.AssistantGeneration, withDiagnostics bool, diagnostics []domain.AssistantDiagnostics) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var row assistantGenerationRow
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Take(&row).Error
 		if err != nil {
 			return fmt.Errorf("生成状态已变化")
 		}
-		var current domain.AssistantGeneration
-		_ = json.Unmarshal(row.Payload, &current)
+		current := generationPayload(row)
 		if g.Steer == nil && current.Steer != nil {
 			g.Steer = current.Steer
 		}
-		res := tx.Model(&row).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": time.Now().UTC()})
+		current.AssistantGeneration = g
+		if g.Status != "running" || row.CancelRequested {
+			current.NativeApprovals = nil
+		}
+		now := time.Now().UTC()
+		changes := map[string]any{"status": g.Status, "payload": mustJSON(current), "updated_at": now}
+		if g.Status != "running" {
+			changes["finished_at"] = now
+		}
+		res := tx.Model(&row).Updates(changes)
 		if res.Error != nil {
 			return res.Error
 		}
 		if res.RowsAffected != 1 {
 			return fmt.Errorf("生成状态已变化")
 		}
-		return nil
+		if !withDiagnostics {
+			return nil
+		}
+		return checkpointAssistantDiagnostics(tx, g, diagnostics)
 	})
 }
 
@@ -145,13 +196,40 @@ func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id st
 	return nil
 }
 
-func (r *AssistantRepo) AssistantGenerationStatuses(ids []string) map[string]string {
-	out := map[string]string{}
+// AssistantGenerationState is the latest reply of a conversation as the
+// history list shows it to one reader.
+type AssistantGenerationState struct {
+	ID     string
+	Status string
+	// FinishedAt is when the reply ended. Replies that ended before it was
+	// recorded have none, so read tracking leaves older history unmarked.
+	FinishedAt *time.Time
+	// Seen reports that the reader has opened the conversation since this
+	// reply (see MarkAssistantSessionRead).
+	Seen bool
+}
+
+// AssistantGenerationStatuses reads the latest reply of each conversation
+// and whether the reader has seen it, in one query for the whole list.
+func (r *AssistantRepo) AssistantGenerationStatuses(readerID int64, ids []string) map[string]AssistantGenerationState {
+	out := map[string]AssistantGenerationState{}
 	if len(ids) == 0 {
 		return out
 	}
-	var rows []assistantGenerationRow
-	if r.DB.Select("session_id,status,updated_at").Where("session_id IN ?", ids).Find(&rows).Error != nil {
+	var rows []struct {
+		SessionID    string
+		GenerationID string
+		Status       string
+		UpdatedAt    time.Time
+		FinishedAt   *time.Time
+		ReadID       *string
+	}
+	err := r.DB.Table("assistant_generations AS g").
+		Select("g.session_id, g.generation_id, g.status, g.updated_at, g.finished_at, r.generation_id AS read_id").
+		Joins("LEFT JOIN assistant_session_reads AS r ON r.session_id = g.session_id AND r.user_id = ?", readerID).
+		Where("g.session_id IN ?", ids).
+		Scan(&rows).Error
+	if err != nil {
 		return out
 	}
 	for _, row := range rows {
@@ -159,7 +237,12 @@ func (r *AssistantRepo) AssistantGenerationStatuses(ids []string) map[string]str
 		if status == "running" && time.Since(row.UpdatedAt) > 45*time.Second {
 			status = "interrupted"
 		}
-		out[row.SessionID] = status
+		out[row.SessionID] = AssistantGenerationState{
+			ID:         row.GenerationID,
+			Status:     status,
+			FinishedAt: row.FinishedAt,
+			Seen:       row.ReadID != nil && *row.ReadID == row.GenerationID,
+		}
 	}
 	return out
 }

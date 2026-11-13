@@ -22,6 +22,8 @@ const (
 	// Repository clone and push need both scopes. The application must allow them.
 	RepositoryScope = "read_repository write_repository"
 	defaultTTL      = 2 * time.Hour
+	// maxResponseBytes caps how much of any Gongfeng response body is read.
+	maxResponseBytes = 64 << 10
 )
 
 // httpClient bounds every call to the Gongfeng OAuth endpoints. A refresh runs
@@ -137,17 +139,12 @@ func Username(ctx context.Context, cfg Config, accessToken string) (string, erro
 		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("无法连接工蜂：%v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	status, body, err := do(req)
 	if err != nil {
 		return "", err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("工蜂用户信息返回 HTTP %d", resp.StatusCode)
+	if status != http.StatusOK {
+		return "", fmt.Errorf("工蜂用户信息返回 HTTP %d", status)
 	}
 	var user struct {
 		Username string `json:"username"`
@@ -168,17 +165,12 @@ func requestToken(ctx context.Context, cfg Config, form url.Values) (Token, erro
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return Token{}, fmt.Errorf("无法连接工蜂：%v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	status, body, err := do(req)
 	if err != nil {
 		return Token{}, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return Token{}, fmt.Errorf("工蜂令牌接口返回 HTTP %d：%s", resp.StatusCode, redact(cfg, truncate(string(body), 180)))
+	if status != http.StatusOK {
+		return Token{}, fmt.Errorf("工蜂令牌接口返回 HTTP %d：%s", status, redact(cfg, truncate(string(body), 180)))
 	}
 	var raw struct {
 		AccessToken  string `json:"access_token"`
@@ -201,6 +193,22 @@ func requestToken(ctx context.Context, cfg Config, form url.Values) (Token, erro
 		return Token{}, fmt.Errorf("工蜂没有返回访问令牌：%s", redact(cfg, msg))
 	}
 	return Token{AccessToken: raw.AccessToken, RefreshToken: raw.RefreshToken, ExpiresIn: raw.ExpiresIn}, nil
+}
+
+// do sends req with the bounded client and returns the status code and at
+// most maxResponseBytes of the body. Transport failures are reported as a
+// connection error so callers only handle status and payload.
+func do(req *http.Request) (int, []byte, error) {
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("无法连接工蜂：%v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 func redact(cfg Config, msg string) string {

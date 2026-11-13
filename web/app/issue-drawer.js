@@ -25,7 +25,10 @@ async function openIssueDetail(id,tab){
   $('#issueDetailBody').innerHTML='<div class="detail-empty">正在加载需求详情…</div>';
   try{
     const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);const issue=detail.issue;const comments=detail.comments||[];
-    const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);if(localIssue)Object.assign(issue,localIssue);
+    const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);
+    // Keep local view state, but deletion feedback must come from this fresh detail response.
+    const permissions={deletionAllowed:issue.deletionAllowed,deletionRequiresForce:issue.deletionRequiresForce,deletionBlock:issue.deletionBlock,closureAllowed:issue.closureAllowed};
+    if(localIssue){Object.assign(issue,localIssue,permissions);Object.assign(localIssue,permissions)}
     const task=latestIssueTask(issue);
     const runId=task?.runId||latestIssueRun(issue, task)?.id;
     let requirement=null;
@@ -41,7 +44,12 @@ async function openIssueDetail(id,tab){
         if(['queued','running','waiting'].includes(run.status))startLiveRun(run.id);
       }
     }
-    state.issueDetailData={issue,comments,run,task,requirement};
+    let deletionTask=null;
+    if(issue.deletionBlock?.taskId&&!issue.deletionBlock.runId){
+      try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
+      if(deletionTask?.issueId!==issueId)deletionTask=null;
+    }
+    state.issueDetailData={issue,comments,run,task,requirement,deletionTask};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
     $$('#issueDetailTabs .drawer-tab').forEach(b=>b.classList.toggle('active',b.dataset.dtab===state.issueDetailTab));
@@ -183,6 +191,7 @@ function renderIssueDetailTab(){
   host.querySelectorAll('[data-resync-tapd]').forEach(b=>b.onclick=()=>resyncTAPDIssueById(b.dataset.resyncTapd));
   host.querySelectorAll('[data-reopen-issue]').forEach(b=>b.onclick=()=>reopenDeliveredIssue(b.dataset.reopenIssue));
   host.querySelectorAll('[data-delete-issue]').forEach(b=>b.onclick=()=>deleteIssueById(b.dataset.deleteIssue||issue.id));
+  bindIssueDeletionContext(host);
   host.querySelectorAll('[data-close-issue]').forEach(b=>b.onclick=()=>closeIssueById(b.dataset.closeIssue||issue.id));
   host.querySelectorAll('[data-resume-run]').forEach(b=>b.onclick=()=>resumeRun(b.dataset.resumeRun,b));
   host.querySelectorAll('[data-pause-run]').forEach(b=>b.onclick=()=>pauseRun(b.dataset.pauseRun));
@@ -500,7 +509,7 @@ function issueProgressActionsHTML(issue,run,{includeIssueActions=false}={}){
     issueActions.push('<button class="button ghost small" data-edit-issue>编辑需求</button>');
     if(issueCanPushTAPD(issue))issueActions.push(`<button class="button ghost small" data-push-tapd="${escapeHTML(issue.id)}">同步到 TAPD</button>`);
     if(issueCanClose(issue)&&issue.status!=='done'&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&!deliveryLocked(issue))issueActions.push(`<button class="button ghost small" data-close-issue="${escapeHTML(issue.id)}">关闭需求</button>`);
-    if(issueCanDelete(issue))issueActions.push(`<button class="button ghost small danger" data-delete-issue="${escapeHTML(issue.id)}">删除需求</button>`);
+    issueActions.push(issueDeleteControlHTML(issue));
     if(issue.externalRef?.externalUrl)issueActions.push(`<a class="button ghost small" href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer">打开外部链接 ↗</a>`);
     if(issue.source==='tapd'&&issue.externalRef?.externalId)issueActions.push(`<button class="button ghost small" data-resync-tapd="${escapeHTML(issue.id)}">从 TAPD 同步</button>`);
   }
@@ -839,6 +848,29 @@ function sopDeliveryPane(issue,data){
   const runFacts=`<div class="detail-grid">${drawerFact('Run ID',run?run.id.slice(-14):'—')}${drawerFact('Task ID',data.task?data.task.id.slice(-10):'—')}${drawerFact('触发方式',escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('状态',run?`<span class="status ${runDisplayStatusClass(run)}">${runDisplayStatus(run)}</span>`:'—')}${drawerFact('执行仓库',escapeHTML(frozen.map(r=>r.name).filter(Boolean).join('、')||'—'))}${drawerFact('冻结目标主分支',escapeHTML(frozenBranches.join('、')||'—'))}${drawerFact('Trace ID',ctx?.traceId?ctx.traceId.slice(-14):'—')}</div>`;
   return `<div class="detail-section"><h3>代码仓库与分支${repos.length>1?`<span class="sub">${repos.length} 个仓库</span>`:''}</h3>${repoFacts}</div><div class="detail-section"><h3>交付运行上下文<span class="sub">发起时冻结的仓库与 Trace 关联</span></h3>${run?runFacts+'<div style="margin-top:10px"><button class="button ghost small" data-open-run="'+escapeHTML(run.id)+'">查看运行详情与产物 →</button></div>':'<div class="detail-empty">尚未发起交付运行</div>'}</div>${run?.input?`<div class="detail-section"><h3>任务输入</h3><div class="detail-desc">${escapeHTML(run.input)}</div></div>`:''}`;
 }
+// Execution order of a SOP's nodes, same rule as orderNodesByEdges in
+// internal/repo/requirement.go: stable topological sort over the edges, array
+// order breaks ties, cycles fall back to array order. The editor appends a node
+// added in a later SOP version to the end of the array, so without this a gate
+// inserted mid-flow is listed after the last node.
+function nodesInExecutionOrder(wf){
+  const nodes=wf?.nodes||[],edges=wf?.edges||[];
+  if(nodes.length<2||!edges.length||nodes.some(n=>!n?.id))return nodes;
+  const known=new Set(nodes.map(n=>n.id)),indegree=new Map(),children=new Map();
+  for(const e of edges){
+    if(e.source===e.target||!known.has(e.source)||!known.has(e.target))continue;
+    indegree.set(e.target,(indegree.get(e.target)||0)+1);
+    children.set(e.source,[...(children.get(e.source)||[]),e.target]);
+  }
+  const placed=new Set(),out=[];
+  while(out.length<nodes.length){
+    const next=nodes.find(n=>!placed.has(n.id)&&!(indegree.get(n.id)>0));
+    if(!next){for(const n of nodes)if(!placed.has(n.id)){out.push(n);placed.add(n.id)}break}
+    out.push(next);placed.add(next.id);
+    for(const c of children.get(next.id)||[])indegree.set(c,indegree.get(c)-1);
+  }
+  return out;
+}
 function acceptancePane(issue,data){
   const run=data.run;
   if(conversationWorkspaceIssue(issue,run)){
@@ -848,7 +880,7 @@ function acceptancePane(issue,data){
   if(!run)return '<div class="detail-empty">尚未执行，暂无验收信息。</div>';
   const wf=run.workflowSnapshot||(state.data.workflows||[]).find(w=>w.id===run.workflowId);
   const nodes=wf?.nodes||[];
-  const gates=nodes.map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
+  const gates=nodesInExecutionOrder(wf).map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
     if(nr.status==='succeeded')verdict=isApproval?'已批准':(commands.length||manual)?'门禁通过':'完成';
     if(nr.status==='waiting_approval')verdict=turnsExhausted(nr)?'等待确认是否重试':(isApproval?'等待人工判断':'等待人工验收');
     if(nr.status==='failed')verdict='门禁失败';
@@ -902,7 +934,9 @@ function activityPane(issue,data){
   const comments=data.comments||[],task=data.task,run=data.run;
   const commentHtml=comments.slice().reverse().map(c=>`<div class="comment-row"><div class="muted">${c.authorType==='agent'?'Agent':c.authorId||'成员'} · ${new Date(c.createdAt).toLocaleString()}</div><p>${escapeHTML(c.body)}</p></div>`).join('')||'<div class="detail-empty compact">暂无讨论</div>';
   const items=[];
-  if(task)items.push({t:new Date(task.createdAt).getTime(),type:'task.created',label:'创建任务',detail:`${taskStatusLabel(task.status)}${task.agentId?' · '+task.agentId:''}`});
+  for(const item of [task,data.deletionTask].filter((t,i,all)=>t&&all.findIndex(x=>x?.id===t.id)===i)){
+    items.push({t:new Date(item.createdAt).getTime(),type:'task.created',label:item.id===data.deletionTask?.id?'阻止删除的任务':'创建任务',detail:`${taskStatusLabel(item.status)} · ${item.id}${item.agentId?' · '+item.agentId:''}`});
+  }
   for(const e of run?.events||[])items.push({t:new Date(e.timestamp).getTime(),type:e.type||'',label:activityEventLabel(e.type),detail:e.message||''});
   items.sort((a,b)=>b.t-a.t);
   const rows=items.map(e=>{
@@ -919,11 +953,13 @@ async function deleteIssueById(issueId){
   if(state.issueBulkDeleting)return toast('正在批量删除需求，请稍候','info');
   const issue=(state.data.issues||[]).find(i=>i.id===issueId)||state.issueDetailData?.issue;
   if(!issue||issue.id!==issueId)return toast('未找到需求单');
-  if(issueClarifying(issueId))return toast('需求正在澄清，请先停止后再删除','err');
+  if(!issueCanDelete(issue))return toast(issueDeletionBlock(issue).reason,'err');
+  const force=issue.deletionRequiresForce===true;
+  const title=force?'强制删除需求':'删除需求';
   const external=issue.source==='tapd'||issue.source==='gongfeng';
-  if(!await afConfirm({title:'删除需求',message:`确定删除需求「${issue.title||issue.id}」？需求、评论、澄清记录以及失败／取消的历史任务、运行记录、日志、产物和执行工作区将一并清理，且不可恢复。已有成功运行的需求不允许删除。${external?'此操作仅删除本地记录，不会删除 TAPD／工蜂原单，后续同步可能重新导入。':''}`,danger:true,confirmText:'确认删除'}))return;
+  if(!await afConfirm({title,message:`确定${title}「${issue.title||issue.id}」？${issueDeletionWarning(force,external)}`,danger:true,confirmText:force?'确认强制删除':'确认删除'}))return;
   try{
-    await api(`/api/issues/${encodeURIComponent(issueId)}`,{method:'DELETE'});
+    await api(issueDeletePath(issueId,force),{method:'DELETE'});
     state.data.issues=(state.data.issues||[]).filter(i=>i.id!==issueId);
     state.issueSelection?.delete(issueId);
     if(state.issueDetailData?.issue?.id===issueId){closeIssueDrawer();state.issueDetailData=null;state.selectedIssue=null;}
@@ -931,7 +967,10 @@ async function deleteIssueById(issueId){
     await refreshRuns();
     renderIssues();
     toast('需求已删除','ok');
-  }catch(err){toast(err.message,'err')}
+  }catch(err){
+    toast(err.message,'err');
+    await refreshIssues();
+  }
 }
 
 // Association does not expose private conversations to other project members.

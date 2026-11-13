@@ -162,8 +162,7 @@ func TestRoomRunProjectionCacheAndTargets(t *testing.T) {
 	if len(projected) != 3 || projected[0].Author != "Agent Name" || projected[2].Body != "运行失败" {
 		t.Fatalf("projected: %#v", projected)
 	}
-	if !roomRunTerminal("succeeded") || roomRunTerminal("running") ||
-		roomProgressID("a") != roomProgressID("a") || roomTrim("abc", 2) != "ab…" ||
+	if roomProgressID("a") != roomProgressID("a") || roomTrim("abc", 2) != "ab…" ||
 		roomRejectTarget(wf, "approve") != "bad" {
 		t.Fatal("room run helpers")
 	}

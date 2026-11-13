@@ -54,8 +54,31 @@ func TestSharedScheduleParameters(t *testing.T) {
 		}
 	}
 	long := v
-	long.Prompt = strings.Repeat("{{params.team}}", 10)
-	if _, _, err := long.Render(map[string]string{"team": strings.Repeat("x", 500)}); err == nil {
-		t.Fatal("expanded prompt limit not enforced")
+	long.Prompt = strings.Repeat("{{params.team}}", 10) + strings.Repeat("说明", 2000)
+	got, _, err := long.Render(map[string]string{"team": strings.Repeat("x", 500)})
+	want := strings.Repeat(strings.Repeat("x", 500), 10) + strings.Repeat("说明", 2000)
+	if err != nil || got != want {
+		t.Fatalf("long prompt rejected: %v len=%d", err, len(got))
+	}
+}
+
+// Prompts no longer have a length cap, but the name and blank checks remain.
+func TestSharedScheduleVersionValidatePromptLength(t *testing.T) {
+	long := SharedScheduleVersion{Name: "巡检", Prompt: strings.Repeat("提示", 5000)}
+	if err := long.Validate(); err != nil {
+		t.Fatalf("long prompt rejected: %v", err)
+	}
+	for name, v := range map[string]SharedScheduleVersion{
+		"blank prompt": {Name: "巡检", Prompt: " \n\t "},
+		"empty prompt": {Name: "巡检"},
+		"blank name":   {Name: "  ", Prompt: "p"},
+		"long name":    {Name: strings.Repeat("n", 256), Prompt: strings.Repeat("p", 5000)},
+	} {
+		if v.Validate() == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if err := (SharedScheduleVersion{Name: strings.Repeat("n", 255), Prompt: "p"}).Validate(); err != nil {
+		t.Fatalf("255-byte name rejected: %v", err)
 	}
 }

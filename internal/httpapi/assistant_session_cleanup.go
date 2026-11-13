@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +46,9 @@ func (h *assistantHandlers) startSessionJanitor(ctx context.Context) {
 			case <-timer.C:
 				if n := h.pruneScheduledAssistantSessions(time.Now().UTC()); n > 0 {
 					log.Printf("assistant session cleanup: removed %d scheduled conversations", n)
+				}
+				if n := h.pruneOrphanSharedRoots(time.Now()); n > 0 {
+					log.Printf("assistant session cleanup: removed %d orphaned shared conversation roots", n)
 				}
 				timer.Reset(assistantSessionJanitorEvery)
 			}
@@ -93,6 +98,55 @@ func (h *assistantHandlers) pruneScheduledAssistantSessions(now time.Time) int {
 		}
 	}
 	return removed
+}
+
+// sharedRootOrphanAge leaves a root alone while the conversation that owns it
+// may still be in the middle of being saved.
+const sharedRootOrphanAge = 24 * time.Hour
+
+// pruneOrphanSharedRoots removes shared native roots whose conversation no
+// longer exists. Deleting a conversation used to leave its shared root behind,
+// and each one holds a full CLI home. An unreadable session list skips the run.
+func (h *assistantHandlers) pruneOrphanSharedRoots(now time.Time) int {
+	if h == nil || h.repo == nil {
+		return 0
+	}
+	base := filepath.Dir(assistantSharedSessionRoot("-"))
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return 0
+	}
+	ids, err := h.repo.AssistantSessionIDs()
+	if err != nil {
+		log.Printf("assistant shared root cleanup skipped: %v", err)
+		return 0
+	}
+	live := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		live[filepath.Base(assistantSharedSessionRoot(id))] = true
+	}
+	removed := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() || live[name] || !sharedRootName(name) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || now.Sub(info.ModTime()) < sharedRootOrphanAge {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(base, name)); err != nil {
+			log.Printf("assistant shared root cleanup %s: %v", name, err)
+			continue
+		}
+		removed++
+	}
+	return removed
+}
+
+func sharedRootName(name string) bool {
+	_, err := hex.DecodeString(name)
+	return err == nil && len(name) == 64 && strings.ToLower(name) == name
 }
 
 // deleteScheduledSessions removes every conversation a deleted scheduled task

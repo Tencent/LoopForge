@@ -324,17 +324,21 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 		detail = "重新运行 SOP"
 	}
 	_, _ = h.appendStoredOperation(c, issue.ID, "dispatch", detail)
-	c.JSON(201, task)
+	c.JSON(201, publicTask(task))
 }
 
-// deleteIssue checks the complete history before cleaning failed/cancelled runs.
+// deleteIssue checks all execution history before cleaning any settled run.
 func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
+	mode := repo.IssueDeleteNormal
+	if c.Query("force") == "true" {
+		mode = repo.IssueDeleteForce
+	}
 	// Same as close: Task status trails a just-cancelled Run until the next
 	// sync, which would answer 409 "正在执行 SOP" for a stopped requirement.
 	if h.tasks != nil {
 		h.tasks.settleIssueTasks(issue.ID)
 	}
-	ids, err := h.repo.IssueDeletionRuns(issue.ID)
+	ids, err := h.repo.IssueDeletionRuns(issue.ID, mode)
 	if err == nil {
 		for _, id := range ids {
 			if err = h.engine.DeleteRun(id); err != nil {
@@ -343,12 +347,24 @@ func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
 		}
 	}
 	if err == nil {
-		err = h.repo.DeleteIssue(issue.ID)
+		err = h.repo.DeleteIssueAfterRunCleanup(issue.ID, mode)
 	}
 	if err != nil {
 		switch {
-		case errors.Is(err, repo.ErrIssueBusy), errors.Is(err, repo.ErrIssueSucceeded):
-			c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+		case errors.Is(err, repo.ErrIssueForceRequired):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "deletionRequiresForce": true})
+		case errors.Is(err, repo.ErrIssueBusy):
+			// Report the same concrete reason shown by list/detail affordances,
+			// including when execution history changed after the menu was opened.
+			if current, ok := h.repo.Issue(issue.ID); ok {
+				if states, checkErr := h.repo.IssueDeletionStates([]domain.Issue{current}); checkErr == nil {
+					if block := states[issue.ID].Block; block != nil {
+						c.JSON(http.StatusConflict, gin.H{"error": block.Reason, "deletionBlock": block})
+						return
+					}
+				}
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		case errors.Is(err, repo.ErrIssueNotFound):
 			c.JSON(http.StatusNotFound, map[string]string{"error": "issue not found"})
 		default:

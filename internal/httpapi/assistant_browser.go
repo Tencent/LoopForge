@@ -45,7 +45,7 @@ func mainBotBrowserTools(s *AgentToolSession) []agentToolDescriptor {
 		{"click", "用真实鼠标点击快照中的元素。返回点击后的新快照（ref 会刷新）。", `{"type":"object","properties":{"ref":{"type":"string"}},"required":["ref"],"additionalProperties":false}`},
 		{"type", "清空并在快照中的输入元素里输入文本；submit=true 时随后按回车。返回新快照。", `{"type":"object","properties":{"ref":{"type":"string"},"text":{"type":"string"},"submit":{"type":"boolean"}},"required":["ref","text"],"additionalProperties":false}`},
 		{"press", "在当前焦点按键：Enter、Tab、Escape、Backspace、Delete、Space、ArrowUp/Down/Left/Right、PageUp、PageDown、Home、End。返回新快照。", `{"type":"object","properties":{"key":{"type":"string"}},"required":["key"],"additionalProperties":false}`},
-		{"screenshot", "截取当前标签页画面（图像），用于确认布局、样式或快照无法表达的内容。截图会自动附在本轮回复里给用户看（显示在正文下方，每轮保留最近 4 张）。用户还能在对话侧栏「浏览器」页签实时查看和操作这个浏览器：回复里写出页面地址（file:///workspace/… 或 http://localhost:端口/…），用户点击即在该页签打开。", `{"type":"object","properties":{},"additionalProperties":false}`},
+		{"screenshot", "截取当前标签页画面（图像），用于确认布局、样式或快照无法表达的内容。截图会自动附在本轮回复里给用户看（显示在正文下方，每轮保留最近 4 张）。用户还能在对话侧栏「浏览器」页签实时查看和操作这个浏览器：回复里写出页面地址（file:///workspace/… 或 http://localhost:端口/…），用户点击即在该页签打开；工作区文件和 http://localhost:端口 的开发服务器都由平台转发、在用户自己的浏览器里原生渲染（可在新窗口打开；开发服务器暂不支持热更新，改动后让用户刷新）。", `{"type":"object","properties":{},"additionalProperties":false}`},
 		{"tabs", "管理标签页：list 列出，switch 切换到 tabId，new 新建，close 关闭 tabId（缺省当前页）。", `{"type":"object","properties":{"action":{"type":"string","enum":["list","switch","new","close"]},"tabId":{"type":"string"}},"required":["action"],"additionalProperties":false}`},
 	}
 	out := make([]agentToolDescriptor, 0, len(descriptors))

@@ -49,6 +49,24 @@ func TestPublicRunnerTaskScrubsMultiRepositoryTokens(t *testing.T) {
 	}
 }
 
+func TestPublicRunnerTaskStripsCloneURLCredentials(t *testing.T) {
+	const legacyURL = "https://user:s3cret-token@github.com/acme/app.git"
+	task := RunnerTask{ID: "task-legacy", Invocation: &RunnerInvocation{
+		Repository:   &RunnerRepository{CloneURL: legacyURL},
+		Repositories: []RunnerRepository{{CloneURL: legacyURL}, {CloneURL: "https://ghp_tokenAsUser@github.com/acme/b.git"}},
+	}}
+	inv := PublicRunnerTask(task).Invocation
+	if inv.Repository.CloneURL != "https://github.com/acme/app.git" {
+		t.Fatalf("repository clone URL = %q", inv.Repository.CloneURL)
+	}
+	if inv.Repositories[0].CloneURL != "https://github.com/acme/app.git" || inv.Repositories[1].CloneURL != "https://github.com/acme/b.git" {
+		t.Fatalf("repositories clone URLs = %+v", inv.Repositories)
+	}
+	if task.Invocation.Repository.CloneURL != legacyURL || task.Invocation.Repositories[0].CloneURL != legacyURL {
+		t.Fatal("the claiming runner still needs the stored clone URL")
+	}
+}
+
 func TestAgentCLIRuntimeAuthModeIsPersonal(t *testing.T) {
 	r := Runner{Runtimes: []RunnerRuntime{
 		{Provider: "opencode", AuthMode: RuntimeAuthLocal},
@@ -76,6 +94,14 @@ func TestRunnerSupportsWorkBranchSync(t *testing.T) {
 	}
 }
 
+func TestRunnerSupportsConversationCLIWithInterruptibleSnapshots(t *testing.T) {
+	for version, want := range map[string]bool{"": false, "dev": false, "0.9.9": false, "0.10.0": false, "0.10.1": true, "v0.10.1": true, "0.11.0": true} {
+		if got := (Runner{RunnerVersion: version}).SupportsConversationCLI(); got != want {
+			t.Errorf("SupportsConversationCLI(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
 func TestRunnerSupportsCreateNewWorkBranch(t *testing.T) {
 	for version, want := range map[string]bool{
 		"": false, "dev": false, "0.9.0": false, "0.9.1": true, "0.10.0": true, "1.0.0": true,
@@ -94,5 +120,28 @@ func TestRunnerSupportsExistingWorkBranch(t *testing.T) {
 		if got := (Runner{RunnerVersion: version}).SupportsExistingWorkBranch(); got != want {
 			t.Errorf("SupportsExistingWorkBranch(%q) = %v, want %v", version, got, want)
 		}
+	}
+}
+
+func TestPublicRunnerRepositoryScrubsCredentialsOnly(t *testing.T) {
+	source := RunnerRepository{
+		RepositoryID: "repo-1",
+		Name:         "app",
+		CloneURL:     "https://user:s3cret@github.com/acme/app.git",
+		Ref:          "main",
+		WorkBranch:   "feature/x",
+		GitToken:     "token",
+		UseSSH:       true,
+		Dir:          "app",
+	}
+	got := publicRunnerRepository(source)
+	want := source
+	want.GitToken = ""
+	want.CloneURL = "https://github.com/acme/app.git"
+	if got != want {
+		t.Fatalf("publicRunnerRepository() = %+v, want %+v", got, want)
+	}
+	if source.GitToken != "token" || source.CloneURL != "https://user:s3cret@github.com/acme/app.git" {
+		t.Fatal("publicRunnerRepository must not mutate its argument")
 	}
 }

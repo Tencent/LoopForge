@@ -70,13 +70,66 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
-  test("labels the conversation host as LoopForge cloud in text and hover hint", () => {
-    const view = render(<App />);
-    const host = view.container.querySelector(".composer-context .host-status");
-    expect(host).toHaveTextContent("LoopForge 云端");
-    expect(host).toHaveAttribute("title", "对话在 LoopForge 云端运行");
-    expect(view.container.querySelector(".composer-context")).not.toHaveTextContent("AgentFlow");
-    view.unmount();
+  test("pauses without showing an intermediate stopping state", () => {
+    const previous = { ...chat };
+    Object.assign(chat, { activeId: "stopping-chat", busy: true, stopping: true,
+      generation: { id: "g-stop", status: "running" },
+      session: { id: "stopping-chat", messages: [{ role: "user", content: "检查目录" }] } });
+    let view;
+    try {
+      view = render(<App />);
+      expect(screen.queryByText(/正在停止/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "停止生成" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "发送消息" })).not.toBeInTheDocument();
+      Object.assign(chat, { busy: false, stopping: false, generation: { id: "g-stop", status: "cancelled" } });
+      view.rerender(<App />);
+      expect(screen.queryByText("正在停止…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "发送消息" })).toBeInTheDocument();
+    } finally {
+      view?.unmount();
+      for (const key of Object.keys(chat)) if (!(key in previous)) delete chat[key];
+      Object.assign(chat, previous);
+    }
+  });
+  test("does not ask for per-command native approval in a working conversation", () => {
+    const previous = {...chat};
+    Object.assign(chat,{activeId:"workspace-chat",busy:true,session:{id:"workspace-chat",runtimeMode:"workspace",messages:[{role:"user",content:"检查目录"}]}});
+    let view;
+    try {
+      view=render(<App />);
+      expect(screen.queryByRole("region",{name:"待确认的原生操作"})).not.toBeInTheDocument();
+    } finally { view?.unmount(); Object.assign(chat,previous); }
+  });
+  test("offers execution machine selection on the home page and moves it into the conversation header", async () => {
+    const previous = { ...chat };
+    const selectMachine = vi.fn();
+    Object.assign(chat, {
+      machinesReady: true, defaultRunnerId: "mac", machines: [{ id: "mac", name: "开发 Mac", status: "online" }],
+      selectMachine, refreshMachines: vi.fn(),
+    });
+    const user = userEvent.setup();
+    let view;
+    try {
+      view = render(<App />);
+      let trigger = screen.getByRole("button", { name: "执行机器：开发 Mac" });
+      expect(trigger.closest(".composer-context")).not.toBeNull();
+      trigger.getBoundingClientRect = () => ({ top: 500, bottom: 528, left: 200, right: 400, width: 200, height: 28 });
+      await user.click(trigger);
+      await user.click(screen.getByRole("option", { name: /LoopForge 云端/ }));
+      expect(selectMachine).toHaveBeenCalledWith("");
+      Object.assign(chat, { activeId: "s1", session: { id: "s1", messages: [] } });
+      view.rerender(<App />);
+      expect(screen.getAllByRole("button", { name: "执行机器：开发 Mac" })).toHaveLength(1);
+      chat.session.messages = [{ role: "user", content: "检查项目" }];
+      chat.session.executionTarget = {pool:"runner",runnerId:"mac"};
+      view.rerender(<App />);
+      expect(screen.queryByRole("button", { name: "执行机器：开发 Mac" })).not.toBeInTheDocument();
+      expect(screen.getByText("开发 Mac").closest(".header-actions")).not.toBeNull();
+    } finally {
+      view?.unmount();
+      for (const key of Object.keys(chat)) if (!(key in previous)) delete chat[key];
+      Object.assign(chat, previous);
+    }
   });
 
   test("hides environments by default and remembers each user's advanced preference", async () => {
@@ -665,6 +718,60 @@ describe("sidebar conversation filter", () => {
       expect(screen.getAllByText("同事独自发起的会话").length).toBeGreaterThan(0);
     } finally {
       view.unmount();
+      Object.assign(chat, previous);
+    }
+  });
+});
+
+describe("sidebar reply status", () => {
+  test("an unread completed reply shows a blue dot, a running one spins, a failed one warns", async () => {
+    const user = userEvent.setup();
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, recorded: true }) }));
+    const now = new Date().toISOString();
+    const row = (id, title, generationStatus, generationId, unread = false) => ({
+      id, title, projectId: "p1", userId: "u1", generationStatus, generationId, unread, updatedAt: now, messages: [],
+    });
+    Object.assign(chat, {
+      activeId: null,
+      session: null,
+      projectId: "p1",
+      sessions: [
+        row("unread", "完成未读", "completed", "g2", true),
+        row("read", "完成已读", "completed", "g3"),
+        row("busy", "正在生成", "running", "g4"),
+        row("broken", "生成出错", "failed", "g5"),
+      ],
+    });
+    const view = render(<App />);
+    try {
+      const showSidebar = screen.queryByLabelText("显示会话侧边栏");
+      if (showSidebar) await user.click(showSidebar);
+      const status = (title) =>
+        screen.getAllByText(title)[0].closest(".session-link").querySelector(".session-status");
+      await waitFor(() => expect(status("完成未读")).toHaveAttribute("data-session-status", "unread"));
+      expect(status("完成未读")).toHaveAccessibleName("有新回复未读");
+      expect(status("完成未读").querySelector(".session-unread-dot")).not.toBeNull();
+      expect(status("完成已读")).toBeNull();
+      expect(status("正在生成").querySelector('[data-icon="arc-spinner"]')).not.toBeNull();
+      expect(status("生成出错").querySelector('[data-icon="alert"]')).not.toBeNull();
+
+      // Opening the conversation reports the reply read and clears its dot.
+      Object.assign(chat, { activeId: "unread" });
+      view.rerender(<App />);
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          "/api/assistant/sessions/unread/read",
+          expect.objectContaining({ method: "POST", body: JSON.stringify({ generationId: "g2" }) }),
+        ),
+      );
+      Object.assign(chat, { activeId: null });
+      view.rerender(<App />);
+      await waitFor(() => expect(status("完成未读")).toBeNull());
+    } finally {
+      view.unmount();
+      globalThis.fetch = originalFetch;
       Object.assign(chat, previous);
     }
   });
