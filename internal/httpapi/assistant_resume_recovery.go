@@ -8,6 +8,17 @@ import (
 	"agentflow/internal/runtime"
 )
 
+// freshPhasePrompt rebuilds the full transcript for a fresh native session.
+// req.workspaceMode follows the current phase, so a fallback after a handoff
+// describes the new mode rather than the one the turn started in.
+func (h *assistantHandlers) freshPhasePrompt(req assistantRequest, sourceRoot string, switches int) string {
+	prompt := h.turnPrompt(req, sourceRoot, false)
+	if switches > 0 {
+		prompt += "\n本轮之前的阶段已执行过操作。先核对工作区实际文件与状态，避免重复执行。"
+	}
+	return prompt
+}
+
 // assistantResumeRejectedRe matches providers refusing a replayed native
 // journal: a 400/422, or the wording CodeBuddy and OpenAI-compatible
 // gateways use for a transcript whose structure they reject.
