@@ -34,6 +34,13 @@ func TestDiffCoverageCommandRunsTestsBeforeEmittingPayload(t *testing.T) {
 	if !strings.HasPrefix(cmd, "set -e") {
 		t.Fatalf("a failing test run must stop before emitting a payload:\n%s", cmd)
 	}
+	// The markers are printed by echo; a bare marker line would be executed as
+	// a command and fail the gate under set -e.
+	for _, line := range strings.Split(cmd, "\n") {
+		if line == diffCoverageMarker || line == diffCoverageReportMarker {
+			t.Fatalf("markers must be echoed, not run as commands:\n%s", cmd)
+		}
+	}
 }
 
 func TestDiffCoverageCommandUsesConfiguredBaseBranch(t *testing.T) {

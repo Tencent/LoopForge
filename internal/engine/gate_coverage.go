@@ -53,11 +53,11 @@ func diffCoverageCommand(gate domain.VerificationGate, commands string) (string,
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString(commands)
-	b.WriteString("\n" + diffCoverageMarker + "\n")
+	fmt.Fprintf(&b, "\necho %s\n", shellSingleQuote(diffCoverageMarker))
 	fmt.Fprintf(&b, "git fetch -q origin %s >/dev/null 2>&1 || true\n", branch)
 	fmt.Fprintf(&b, "base_ref=$(git merge-base %s HEAD 2>/dev/null || git rev-parse %s 2>/dev/null)\n", branch, branch)
 	b.WriteString("if [ -n \"$base_ref\" ]; then git --no-pager diff -U0 \"$base_ref\" -- . ; fi\n")
-	b.WriteString(diffCoverageReportMarker + "\n")
+	fmt.Fprintf(&b, "echo %s\n", shellSingleQuote(diffCoverageReportMarker))
 	fmt.Fprintf(&b, "if [ -f %s ]; then cat %s; fi\n", shellSingleQuote(report), shellSingleQuote(report))
 	return b.String(), nil
 }
