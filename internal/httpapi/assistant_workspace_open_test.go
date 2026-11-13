@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 
+	"github.com/creack/pty"
 	"github.com/gin-gonic/gin"
 )
 
@@ -576,5 +578,47 @@ func TestWorkspaceOpenSchemaDescribesBranchModes(t *testing.T) {
 	}
 	if !strings.Contains(workspaceOpenDescriptor().Description, "branchMode") {
 		t.Fatal("tool description does not explain branchMode")
+	}
+}
+
+// The workspace terminal is a TTY nobody types into: `git log` must not open a
+// pager and a command reading stdin must not wait for a key.
+func TestWorkspaceCommandInputNeverWaitsForKeys(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required")
+	}
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	begin, marker := "__main_bot_begin_tok", "__main_bot_exit_tok:"
+	shell := exec.Command("/bin/sh")
+	shell.Dir = dir
+	shell.Env = append(os.Environ(), "PAGER=less", "GIT_PAGER=", "LESS=")
+	tty, err := pty.Start(shell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = shell.Process.Kill(); _ = tty.Close() }()
+	if _, err := io.WriteString(tty, workspaceCommandInput("git log --oneline; read line || echo no-input", begin, marker)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan string, 1)
+	go func() {
+		raw, _ := io.ReadAll(tty)
+		done <- string(raw)
+	}()
+	select {
+	case raw := <-done:
+		out, code, err := workspaceCommandOutput(raw, begin, marker)
+		if err != nil || code != 0 || !strings.Contains(out, "first") || !strings.Contains(out, "no-input") {
+			t.Fatalf("output=%q code=%d err=%v", out, code, err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("command waited for terminal input")
 	}
 }
