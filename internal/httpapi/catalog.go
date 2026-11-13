@@ -597,13 +597,7 @@ func (h *catalogHandlers) rules(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
 		items := h.repo.Rules()
 		if projectID := strings.TrimSpace(c.Query("projectId")); projectID != "" {
-			filtered := make([]domain.RuleDefinition, 0, len(items))
-			for _, item := range items {
-				if item.ProjectID == projectID {
-					filtered = append(filtered, item)
-				}
-			}
-			items = filtered
+			items = filterOwnedByProject(items, projectID, func(item domain.RuleDefinition) string { return item.ProjectID })
 		}
 		c.JSON(200, items)
 		return
@@ -646,13 +640,7 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
 		items := h.repo.Skills()
 		if projectID := strings.TrimSpace(c.Query("projectId")); projectID != "" {
-			filtered := make([]domain.SkillDefinition, 0, len(items))
-			for _, item := range items {
-				if item.ProjectID == projectID {
-					filtered = append(filtered, item)
-				}
-			}
-			items = filtered
+			items = filterOwnedByProject(items, projectID, func(item domain.SkillDefinition) string { return item.ProjectID })
 		}
 		c.JSON(200, items)
 		return
@@ -910,6 +898,19 @@ func filterEnvironmentAssets[T any](items []T, projectID string, scope func(T) (
 	for _, item := range items {
 		owner, shared := scope(item)
 		if owner == projectID || shared {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// filterOwnedByProject keeps only items owned by projectID. Unlike
+// filterEnvironmentAssets it does not admit shared items from other projects.
+// The result is never nil so list endpoints keep returning [] instead of null.
+func filterOwnedByProject[T any](items []T, projectID string, owner func(T) string) []T {
+	out := make([]T, 0, len(items))
+	for _, item := range items {
+		if owner(item) == projectID {
 			out = append(out, item)
 		}
 	}
