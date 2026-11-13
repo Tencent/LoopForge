@@ -201,25 +201,24 @@ func (s *processSandbox) Close(context.Context) error {
 }
 
 func createSeatbelt(id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
-	if goruntime.GOOS != "darwin" {
-		return nil, fmt.Errorf("seatbelt sandbox requires macOS")
-	}
-	binary, err := exec.LookPath("sandbox-exec")
-	if err != nil {
-		return nil, fmt.Errorf("seatbelt sandbox unavailable: %w", err)
-	}
-	return &processSandbox{id: id, workspace: workspace, driver: "seatbelt", profile: profile, requirements: requirements, binary: binary}, nil
+	return createProcessSandbox("seatbelt", "darwin", "macOS", "sandbox-exec", id, workspace, profile, requirements)
 }
 
 func createBwrap(id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
-	if goruntime.GOOS != "linux" {
-		return nil, fmt.Errorf("bwrap sandbox requires Linux")
+	return createProcessSandbox("bwrap", "linux", "Linux", "bwrap", id, workspace, profile, requirements)
+}
+
+// createProcessSandbox builds a processSandbox for driver once the host runs
+// requiredOS (named osName in errors) and binaryName is on PATH.
+func createProcessSandbox(driver, requiredOS, osName, binaryName, id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
+	if goruntime.GOOS != requiredOS {
+		return nil, fmt.Errorf("%s sandbox requires %s", driver, osName)
 	}
-	binary, err := exec.LookPath("bwrap")
+	binary, err := exec.LookPath(binaryName)
 	if err != nil {
-		return nil, fmt.Errorf("bwrap sandbox unavailable: %w", err)
+		return nil, fmt.Errorf("%s sandbox unavailable: %w", driver, err)
 	}
-	return &processSandbox{id: id, workspace: workspace, driver: "bwrap", profile: profile, requirements: requirements, binary: binary}, nil
+	return &processSandbox{id: id, workspace: workspace, driver: driver, profile: profile, requirements: requirements, binary: binary}, nil
 }
 
 func (s *processSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
