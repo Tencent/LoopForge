@@ -152,10 +152,7 @@ func (r *IssuesRepo) issueDeletionStates(db *gorm.DB, issues []domain.Issue) (ma
 		}
 	}
 
-	expr := "json_extract(execution_context, '$.issueId')"
-	if r.isMySQL() {
-		expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-	}
+	expr := r.sqlExecutionContextJSONText("issueId")
 	q := db.Table("runs").Select("id, status, "+expr+" AS issue_id, "+
 		"EXISTS (SELECT 1 FROM run_nodes WHERE run_id = runs.id AND status IN ('running', 'pending_input')) AS active_nodes").
 		Where(expr+" IN ?", ids)
