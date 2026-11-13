@@ -239,7 +239,15 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if v.DefaultBranch == "" {
 		v.DefaultBranch = "master"
 	}
+	if domain.URLHasCredentials(v.WebURL) {
+		c.JSON(400, map[string]string{"error": "webUrl 不能包含账号、密码或 Token，请去掉 @ 前的部分"})
+		return
+	}
 	if v.CloneURL != "" {
+		if domain.URLHasCredentials(v.CloneURL) {
+			c.JSON(400, map[string]string{"error": "cloneUrl 不能包含账号、密码或 Token，请去掉 @ 前的部分，并在个人配置中填写 Git Token"})
+			return
+		}
 		if err := gitwork.ValidateRemoteURL(v.CloneURL, !authRequired() || h.isPlatformAdmin(c.Request)); err != nil {
 			c.JSON(400, map[string]string{"error": "cloneUrl 无效：" + err.Error()})
 			return
@@ -308,7 +316,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			}
 			builtIn, ok := repo.BuiltInExecutor(v.ExecutorID)
 			if !ok {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + v.ExecutorID})
 				return
 			}
 			if err := domain.ValidateAgentEffort(v.Effort, builtIn.Kind); err != nil {
@@ -1220,7 +1228,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		builtIn, ok := repo.BuiltInExecutor(agent.ExecutorID)
 		if !ok {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + agent.ExecutorID})
 			return
 		}
 		if err := domain.ValidateAgentEffort(agent.Effort, builtIn.Kind); err != nil {

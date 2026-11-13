@@ -5,13 +5,29 @@
   const host = document.getElementById('workbench') || document.body;
   if (embedded) document.body.classList.add('embed');
   const toolbar=document.createElement('header');toolbar.className='vscode-toolbar';
-  const status=document.createElement('span'),edit=document.createElement('button'),terminal=document.createElement('button');
-  status.textContent='任务 IDE';edit.textContent='启用编辑';terminal.textContent='+ 终端';terminal.disabled=true;toolbar.append(status,edit,terminal);host.before(toolbar);
+  // Like an AI IDE, the workspace is editable whenever the server allows it,
+  // also while SOP agents run; there is no separate "enable edit" step.
+  // The toolbar reads as VS Code chrome (Dark Modern title bar, ghost action
+  // buttons). Codicon glyphs only exist after the workbench boots, so the
+  // icons are inline SVGs drawn in the same 16px style.
+  const svg=d=>`<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const ICONS={
+    terminal:svg('<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6l2 2-2 2M8 10.5h3.5"/>'),
+    popout:svg('<path d="M9 2.5h4.5V7M13.5 2.5L7.5 8.5M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>')
+  };
+  function toolbarAction(icon,label,title){const b=document.createElement('button');b.type='button';b.className='vscode-action';b.title=title;b.setAttribute('aria-label',title);b.innerHTML=ICONS[icon]+'<span>'+label+'</span>';return b}
+  const status=document.createElement('span');status.className='vscode-toolbar-status';status.textContent='任务 IDE';status.setAttribute('aria-live','polite');
+  const actions=document.createElement('div');actions.className='vscode-toolbar-actions';
+  const terminal=toolbarAction('terminal','终端','新建终端');terminal.disabled=true;actions.append(terminal);
+  // Opening the IDE in its own window used to hide behind the status bar
+  // corner; embedded views now offer it right in the toolbar.
+  if(embedded){const popout=toolbarAction('popout','新窗口打开','在新窗口打开 VS Code');popout.onclick=()=>postParent('popout');actions.append(popout)}
+  toolbar.append(status,actions);host.before(toolbar);
   const environment=document.createElement('section');environment.className='vscode-environment';environment.setAttribute('aria-live','polite');environment.hidden=true;toolbar.after(environment);
   let environmentState=null,preparingEnvironment=false,environmentPoll=0,environmentEpoch=0,environmentRetry=0;
   function paintEnvironment(info){
     environmentState=info;environment.hidden=info.status!=='failed';environment.replaceChildren();
-    terminal.disabled=!editing||preparingEnvironment||info.status==='preparing'||info.status==='busy';
+    paintToolbar();
     if(environment.hidden)return;
     const copy=document.createElement('div'),heading=document.createElement('b'),detail=document.createElement('span');heading.textContent='工作区准备失败';detail.textContent=info.error||'请重试，现有文件仍可浏览';copy.append(heading,detail);environment.append(copy);
     const retry=document.createElement('button');retry.type='button';retry.textContent='重试';retry.disabled=!editing||preparingEnvironment;retry.onclick=prepareEnvironment;environment.append(retry);
@@ -26,9 +42,20 @@
     environmentPoll=setInterval(()=>refreshEnvironment().catch(()=>{}),1500);
     try{const result=await action('preparation');environmentEpoch++;paintEnvironment(result)}catch(err){environmentEpoch++;if(err.code==='workspace_busy'){paintEnvironment({status:'busy'});environmentRetry=setTimeout(()=>prepareEnvironment(),Math.min(5000,Math.max(1000,Number(err.retryAfterMs)||2000)))}else{paintEnvironment({status:'failed',error:err.message})}}finally{preparingEnvironment=false;clearInterval(environmentPoll);if(environmentState)paintEnvironment(environmentState)}
   }
-  let currentInfo={},editing=false;
+  let currentInfo=null,editing=false;
   async function action(name,body={}){const res=await fetch('/api/runs/'+encodeURIComponent(runId)+'/workspace/'+name,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json().catch(()=>({}));if(!res.ok){const err=new Error(data.error||'操作失败');err.code=data.code;err.retryAfterMs=data.retryAfterMs;throw err}return data}
-  function paintEditing(info){currentInfo=info;editing=info.readOnly===false;status.textContent=editing?'任务 IDE · 可编辑':'任务 IDE · 只读';status.textContent+=' · 空闲 1 小时后回收';if(info.checkpointWarning)status.textContent+=' · '+info.checkpointWarning;edit.textContent=editing?'刷新':'启用编辑';terminal.disabled=!editing;}
+  function paintToolbar() {
+    const busy = environmentState?.status === 'busy';
+    const preparing = preparingEnvironment || environmentState?.status === 'preparing';
+    terminal.disabled = !editing || !window.agentflowIDEWorkbench || busy || preparing;
+    const details = [editing ? '任务 IDE · 可编辑' : '任务 IDE · 只读'];
+    if (editing && busy) details.push('等待工作区空闲…');
+    else if (editing && preparing) details.push('正在准备终端环境…');
+    details.push('空闲 1 小时后回收');
+    if (currentInfo.checkpointWarning) details.push(currentInfo.checkpointWarning);
+    const summary = details.join(' · ');
+    if (status.textContent !== summary) status.textContent = summary;
+  }
   async function releaseEdit(keepalive=false){
     if(!editing)return;
     const opts={method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'};
@@ -36,19 +63,6 @@
     try{await fetch('/api/runs/'+encodeURIComponent(runId)+'/workspace/release',opts)}catch(_){/* page is closing */}
     editing=false;
   }
-  edit.onclick=async()=>{edit.disabled=true;try{
-    if(editing){location.reload();return}
-    // takeover pauses agents server-side; retry while the runner drains
-    let lastErr;
-    for(let i=0;i<40;i++){
-      try{await action('takeover');location.reload();return}catch(err){
-        lastErr=err;
-        if(!/停止|稍后|仍有任务/.test(String(err.message||err)))throw err;
-        await new Promise(resolve=>setTimeout(resolve,300));
-      }
-    }
-    throw lastErr||new Error('角色仍在停止，请稍后重试');
-  }catch(err){status.textContent=err.message;edit.disabled=false}};
   terminal.onclick=()=>window.agentflowIDEWorkbench?.commands.executeCommand('agentflow.newTerminal');
   window.addEventListener('pagehide',()=>{clearInterval(environmentPoll);clearTimeout(environmentRetry);releaseEdit(true)});
 
@@ -134,9 +148,15 @@
         return;
       }
       await action('use').catch(()=>{});
-      workspaceReadOnly = info.readOnly !== false;paintEditing(info);
-      refreshEnvironment().then(()=>{if(!workspaceReadOnly)prepareEnvironment()}).catch(err=>paintEnvironment({status:'failed',error:err.message}));
-      // No edit lease to renew; writable once the run is paused.
+      currentInfo = info;
+      workspaceReadOnly = info.readOnly !== false;
+      editing = !workspaceReadOnly;
+      paintToolbar();
+      // Opening a shell revalidates the environment on the server.
+      refreshEnvironment().then(state => {
+        if (state.status !== 'ready') return prepareEnvironment();
+      }).catch(err => paintEnvironment({ status: 'failed', error: err.message }));
+      // No edit lease to renew; writable whenever the server says so.
       workspaceChanges = Array.isArray(info.changes) ? info.changes : [];
       const names = new Set();
       for (const name of info.repositories || []) {
@@ -191,7 +211,7 @@
       });
       const extensionUri = URI.parse(`${location.origin}/extensions/agentflow-workspace`);
       host.replaceChildren();
-      window.agentflowIDEWorkbench=workbench;workbench.create(host, {
+      workbench.create(host, {
         additionalBuiltinExtensions: [extensionUri],
         folderUri,
         workspaceProvider: {
@@ -231,7 +251,7 @@
         },
         windowIndicator: {
           label: `$(remote) SOP ${runId.slice(-12)}`,
-          tooltip: workspaceReadOnly ? '任务工作区 · 只读，点击启用编辑' : '任务工作区 · 可读写及交互式终端',
+          tooltip: workspaceReadOnly ? '任务工作区 · 只读' : '任务工作区 · 可读写及交互式终端',
           command: embedded ? 'agentflow.popout' : undefined
         },
         commands: [
@@ -252,6 +272,8 @@
           }
         ]
       });
+      window.agentflowIDEWorkbench = workbench;
+      paintToolbar();
     }, err => {
       showError('VS Code 启动失败', err?.message || String(err));
     });

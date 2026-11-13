@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -229,8 +230,30 @@ func RewriteRemoteForToken(remote, token string) string {
 	return u.String()
 }
 
-// Redact masks tokens (and the host-level EnvToken) in git output.
+// urlUserinfo matches the userinfo of a URL anywhere in free text.
+var urlUserinfo = regexp.MustCompile(`(?i)\b(https?|git|ssh|git\+ssh|ssh\+git)://([^\s/@]+)@`)
+
+// redactURLUserinfo masks credentials embedded in URLs, including ones that
+// were never passed in as tokens (for example pasted into a clone URL).
+// HTTP(S) and git:// userinfo is masked whole; an ssh user name is kept.
+func redactURLUserinfo(s string) string {
+	return urlUserinfo.ReplaceAllStringFunc(s, func(match string) string {
+		parts := urlUserinfo.FindStringSubmatch(match)
+		scheme, info := parts[1], parts[2]
+		if strings.HasPrefix(strings.ToLower(scheme), "ssh") || strings.HasSuffix(strings.ToLower(scheme), "+ssh") {
+			if user, _, hasPassword := strings.Cut(info, ":"); hasPassword {
+				return scheme + "://" + user + ":***@"
+			}
+			return match
+		}
+		return scheme + "://***@"
+	})
+}
+
+// Redact masks tokens (and the host-level EnvToken) in git output, plus any
+// credentials embedded in URLs.
 func Redact(s string, tokens ...string) string {
+	s = redactURLUserinfo(s)
 	seen := map[string]struct{}{}
 	for _, raw := range append(tokens, EnvToken()) {
 		for _, candidate := range []string{strings.TrimSpace(raw), func() string { _, sec := SplitToken(raw); return sec }()} {

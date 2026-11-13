@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -887,7 +888,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	for key, value := range credentialEnv {
 		commandEnv[key] = value
 	}
-	if hasCredentialBinding(prepared.Command.CredentialBindings, runtime.BindGit) {
+	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindGit) {
 		gitEnv, gitErr := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(inv))
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
@@ -901,7 +902,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 			commandEnv[key] = value
 		}
 	}
-	if hasCredentialBinding(prepared.Command.CredentialBindings, runtime.BindMCP) {
+	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindMCP) {
 		servers := inv.MCPCallServers
 		if len(servers) == 0 {
 			servers = boundAssets.MCPServers
@@ -1104,15 +1105,6 @@ func invocationGitToken(inv *domain.RunnerInvocation) string {
 	return ""
 }
 
-func hasCredentialBinding(bindings []runtime.CredentialBinding, want runtime.CredentialBinding) bool {
-	for _, binding := range bindings {
-		if binding == want {
-			return true
-		}
-	}
-	return false
-}
-
 // checkoutInvocationRepositories checks out every repository the invocation
 // carries: each into its Dir under the task workspace. Empty Dir is only
 // kept for persisted legacy invocations that already checked out at the
@@ -1227,7 +1219,7 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	ctx = procwatch.WithObserver(ctx, func(event procwatch.Event) { log.Printf("runner checkout: %s", event.Message) })
 	tail, err := gitwork.Watch(repositoryGitContext(ctx, *repo), workspace, watch, args...)
 	if err != nil {
-		return fmt.Errorf("git clone %s: %w (%s)", repo.CloneURL, err, cloneOutput([]byte(tail), repo.GitToken))
+		return fmt.Errorf("git clone %s: %w (%s)", domain.StripURLCredentials(repo.CloneURL), err, cloneOutput([]byte(tail), repo.GitToken))
 	}
 	// The branch steps below keep the bound they always had.
 	cloneCtx := ctx

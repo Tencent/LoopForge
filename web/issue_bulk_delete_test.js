@@ -2,6 +2,8 @@ const fs = require('fs');
 const vm = require('vm');
 const assert = require('assert/strict');
 const source = fs.readFileSync(process.argv[2], 'utf8');
+const model = fs.readFileSync(require('path').join(require('path').dirname(process.argv[2]), 'issue-model.js'), 'utf8');
+const helpers = model.slice(model.indexOf('function issueDeletePath('), model.indexOf('function issueDeletionContextHTML('));
 const issue = (id, extra = {}) => ({id, title: `需求 ${id}`, deletionAllowed: true, ...extra});
 const ids = items => Array.from(items, i => typeof i === 'string' ? i : i.id);
 const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -26,7 +28,7 @@ function setup(items, options = {}) {
     api:async (path,opts) => {calls.push([path,opts.method]);if(options.fail?.(path)) throw new Error('<conflict>');},
     refreshRuns:async () => calls.push(['refresh']), closeIssueDrawer:() => calls.push(['close'])};
   vm.createContext(c);
-  vm.runInContext(source,c);
+  vm.runInContext(helpers+'\n'+source,c);
   c.renderIssues = () => {c.syncIssueSelection(c.filteredIssues()); c.renderIssueBulkActions(c.filteredIssues());};
   c.renderIssues();
   return {c,state,calls,notices,host,root,buttons};
@@ -97,13 +99,14 @@ const deletes = f => f.calls.filter(call => call[1] === 'DELETE');
   assert.equal(f.state.issueSelectionMode,true, 'cancelling confirmation preserves multi-select');
 
   // One confirmation deletes all selected items, encodes IDs, and refreshes history once.
-  f = setup([issue('a/1',{source:'tapd'}),issue('b'),issue('keep')]);select(f,'a/1','b');
+  f = setup([issue('a/1',{source:'tapd',deletionRequiresForce:true}),issue('b'),issue('keep')]);select(f,'a/1','b');
   f.state.issueDetailData={issue:f.state.data.issues[0]};f.state.selectedIssue='a/1';
   await f.c.deleteSelectedIssues();
-  assert.deepEqual(deletes(f),[['/api/issues/a%2F1','DELETE'],['/api/issues/b','DELETE']]);
+  assert.deepEqual(deletes(f),[['/api/issues/a%2F1?force=true','DELETE'],['/api/issues/b','DELETE']]);
   assert.equal(f.calls.filter(c => c[0] === 'confirm').length,1);
   assert.match(f.calls[0][1].message,/后续同步可能重新导入/);
-  assert.match(f.calls[0][1].confirmText,/2 条需求/);
+  assert.match(f.calls[0][1].message,/其中 1 条.*工作区将一并清理/);
+  assert.equal(f.calls[0][1].confirmText,'确认强制删除 2 条需求');
   assert.equal(f.calls.filter(c => c[0] === 'refresh').length,1);
   assert.equal(f.calls.filter(c => c[0] === 'close').length,1);
   assert.equal(f.state.issueDetailData,null);

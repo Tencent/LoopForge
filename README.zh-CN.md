@@ -14,6 +14,10 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/300138?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-300138" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/300138" alt="Tencent%2FLoopForge | Trendshift" width="250" height="55"/></a>
+</p>
+
+<p align="center">
   <a href="README.md">English</a> · <b>简体中文</b>
 </p>
 

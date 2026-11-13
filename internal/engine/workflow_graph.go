@@ -124,40 +124,32 @@ func allSucceeded(wf domain.WorkflowDefinition, r domain.Run) bool {
 	return true
 }
 
-func hasWaiting(wf domain.WorkflowDefinition, r domain.Run) bool {
+// firstNodeWithStatus returns the first node, in workflow definition order,
+// whose run state has the given status. Run nodes absent from the definition
+// are ignored.
+func firstNodeWithStatus(wf domain.WorkflowDefinition, r domain.Run, status string) (domain.WorkflowNode, bool) {
 	for _, definition := range wf.Nodes {
-		if n := r.Nodes[definition.ID]; n != nil && n.Status == "waiting_approval" {
-			return true
-		}
-	}
-	return false
-}
-
-// cancelledNode returns a node stopped by a cancel that nothing will run
-// again unless an operator resumes it.
-func cancelledNode(wf domain.WorkflowDefinition, r domain.Run) (domain.WorkflowNode, bool) {
-	for _, definition := range wf.Nodes {
-		if n := r.Nodes[definition.ID]; n != nil && n.Status == "cancelled" {
+		if n := r.Nodes[definition.ID]; n != nil && n.Status == status {
 			return definition, true
 		}
 	}
 	return domain.WorkflowNode{}, false
 }
 
-func hasFailed(wf domain.WorkflowDefinition, r domain.Run) bool {
-	for _, definition := range wf.Nodes {
-		if n := r.Nodes[definition.ID]; n != nil && n.Status == "failed" {
-			return true
-		}
-	}
-	return false
+func hasWaiting(wf domain.WorkflowDefinition, r domain.Run) bool {
+	_, ok := firstNodeWithStatus(wf, r, "waiting_approval")
+	return ok
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+// cancelledNode returns a node stopped by a cancel that nothing will run
+// again unless an operator resumes it.
+func cancelledNode(wf domain.WorkflowDefinition, r domain.Run) (domain.WorkflowNode, bool) {
+	return firstNodeWithStatus(wf, r, "cancelled")
+}
+
+func hasFailed(wf domain.WorkflowDefinition, r domain.Run) bool {
+	_, ok := firstNodeWithStatus(wf, r, "failed")
+	return ok
 }
 
 func validate(wf domain.WorkflowDefinition) error {
