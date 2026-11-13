@@ -45,3 +45,59 @@ func TestMCPCallConfigServersEmptyMarshalsAsArray(t *testing.T) {
 		t.Fatalf("config = %s, want empty servers array", raw)
 	}
 }
+
+func TestMCPCallConfigServersCarriesIdentityEnvironmentAndWorkingDirectory(t *testing.T) {
+	t.Setenv("LOOPFORGE_TEST_MCP_CALL_TOKEN", "tok-123")
+	servers := []domain.MCPServerDefinition{
+		{
+			ID:               "mcp-github-1",
+			Name:             "GitHub",
+			MarketID:         "market-github",
+			Command:          "/bin/github-mcp",
+			WorkingDirectory: "tools/../srv",
+			Environment: map[string]string{
+				"PLAIN":   "value",
+				"TOKEN":   "Bearer ${secret:LOOPFORGE_TEST_MCP_CALL_TOKEN}",
+				"MISSING": "${secret:LOOPFORGE_TEST_MCP_CALL_UNSET}",
+			},
+		},
+		{
+			ID:               "Files.Server",
+			Command:          "bin/files-mcp",
+			WorkingDirectory: "data",
+			FileRefs:         []domain.MCPFileRef{{Path: "bin/files-mcp"}},
+		},
+	}
+	got := mcpCallConfigServers(servers)
+	if len(got) != 2 {
+		t.Fatalf("servers = %+v, want 2 entries", got)
+	}
+	gh, files := got[0], got[1]
+	if gh.Name != "GitHub" || gh.MarketID != "market-github" {
+		t.Fatalf("identity = name %q market %q, want GitHub / market-github", gh.Name, gh.MarketID)
+	}
+	if gh.CWD != "srv" {
+		t.Fatalf("cwd = %q, want cleaned working directory srv", gh.CWD)
+	}
+	if len(gh.Environment) != 2 || gh.Environment["PLAIN"] != "value" || gh.Environment["TOKEN"] != "Bearer tok-123" {
+		t.Fatalf("environment = %v, want PLAIN and resolved TOKEN only", gh.Environment)
+	}
+	if _, ok := gh.Environment["MISSING"]; ok {
+		t.Fatalf("unresolved secret leaked into environment: %v", gh.Environment)
+	}
+	wantAliases := []string{"mcp-github-1", "market-github", "GitHub"}
+	if len(gh.Aliases) < len(wantAliases) {
+		t.Fatalf("aliases = %v, want prefix %v", gh.Aliases, wantAliases)
+	}
+	for i, alias := range wantAliases {
+		if gh.Aliases[i] != alias {
+			t.Fatalf("aliases = %v, want prefix %v", gh.Aliases, wantAliases)
+		}
+	}
+	if files.CWD != ".agentflow/mcp/filesserver/data" {
+		t.Fatalf("file-backed cwd = %q, want .agentflow/mcp/filesserver/data", files.CWD)
+	}
+	if len(files.Environment) != 0 {
+		t.Fatalf("environment without definitions = %v, want none", files.Environment)
+	}
+}
