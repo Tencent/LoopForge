@@ -139,6 +139,7 @@ async function loadScheduleReferenceOptions(){
       }
       renderScheduleReferences();
       loadScheduleReferenceOptions();
+      $('#scheduleReferenceQuery')?.focus();
     });
   }catch(err){
     if(request===scheduleReferenceRequest&&modalVersion===scheduleModalVersion&&projectId===state.projectFilter)host.innerHTML=`<div class="schedule-field-hint">读取项目资产失败：${escapeHTML(err.message)}</div>`
@@ -160,9 +161,10 @@ function bindScheduleReferencePicker(){
     const next=event.key==='Home'?0:event.key==='End'?items.length-1:Math.max(0,(current+(event.key==='ArrowDown'?1:-1)+items.length)%items.length);
     items[next]?.focus();
   });
-  picker.addEventListener('keydown',event=>{
-    if(event.key!=='Escape')return;
+  (picker.closest('.schedule-references')||picker).addEventListener('keydown',event=>{
+    if(event.key!=='Escape'||picker.hidden)return;
     event.preventDefault();
+    event.stopPropagation();
     picker.hidden=true;
     add.setAttribute('aria-expanded','false');
     add.focus();

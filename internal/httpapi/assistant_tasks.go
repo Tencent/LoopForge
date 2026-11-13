@@ -79,6 +79,10 @@ func (h *assistantHandlers) putTask(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "项目不存在"})
 		return
 	}
+	if !h.workbenchProjectAllowed(c, task.ProjectID, current.ID) {
+		c.JSON(403, gin.H{"error": "无权访问项目"})
+		return
+	}
 	if len(task.References) > 0 {
 		refs, err := h.normalizeScheduledReferences(task.ProjectID, task.References)
 		if err != nil {
