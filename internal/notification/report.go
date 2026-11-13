@@ -80,29 +80,13 @@ func (s *Service) generateReport(ctx context.Context, item *domain.NotificationD
 		if !ok {
 			return errors.New("汇报对应的运行已删除")
 		}
-		if s.GenerateReport == nil {
-			err = errors.New("独立汇报服务不可用")
-		} else {
-			reportCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-			ai, generationErr := s.GenerateReport(reportCtx, run, item.ReportModel, ReportPrompt(run, request))
-			cancel()
-			err = generationErr
-			if err == nil && strings.TrimSpace(ai.Body) == "" {
-				err = errors.New("AI 未返回有效整体报告")
-			}
-			if err == nil {
-				raw, _ := json.Marshal(ai)
-				_, plain, _ := domain.ParseNotificationResult(request.Context.Result)
-				request.Context.Result = plain + "\n\n```notification\n" + string(raw) + "\n```"
-				content, source, renderErr := domain.RenderNotification(request.Binding, request.Context)
-				err = renderErr
-				if err == nil {
-					item.Content = content
-					item.ContentSource = source
-					item.ReportState = "generated"
-					return nil
-				}
-			}
+		var content, source string
+		content, source, err = s.renderAIReport(ctx, run, item.ReportModel, request)
+		if err == nil {
+			item.Content = content
+			item.ContentSource = source
+			item.ReportState = "generated"
+			return nil
 		}
 	}
 	if ctx.Err() != nil {
@@ -113,4 +97,26 @@ func (s *Service) generateReport(ctx context.Context, item *domain.NotificationD
 	item.ReportError = reportFailureReason(err)
 	item.Content = fmt.Sprintf("需求「%s」的 SOP「%s」已完成。\n整体 AI 汇报暂不可用，请查看运行结果。\n%s", domain.NotificationText(request.Context.Values["issue.title"], 200), domain.NotificationText(item.SourceName, 200), domain.NotificationURLMarker)
 	return nil
+}
+
+// renderAIReport asks the independent report generator for an overall run
+// summary and renders it through the binding template. Any error means the
+// caller should fall back to the standard completion message.
+func (s *Service) renderAIReport(ctx context.Context, run domain.Run, model string, request domain.NotificationReportRequest) (string, string, error) {
+	if s.GenerateReport == nil {
+		return "", "", errors.New("独立汇报服务不可用")
+	}
+	reportCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	ai, err := s.GenerateReport(reportCtx, run, model, ReportPrompt(run, request))
+	cancel()
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(ai.Body) == "" {
+		return "", "", errors.New("AI 未返回有效整体报告")
+	}
+	raw, _ := json.Marshal(ai)
+	_, plain, _ := domain.ParseNotificationResult(request.Context.Result)
+	request.Context.Result = plain + "\n\n```notification\n" + string(raw) + "\n```"
+	return domain.RenderNotification(request.Binding, request.Context)
 }

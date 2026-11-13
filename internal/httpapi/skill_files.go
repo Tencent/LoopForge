@@ -111,16 +111,13 @@ func (h *catalogHandlers) skillFiles(c *gin.Context) {
 	for i, part := range plain {
 		plainNames[i] = part.path
 	}
-	if _, nested := sharedTopDir(plainNames); nested {
-		for i := range plain {
-			stripped := strings.Join(strings.Split(plain[i].path, "/")[1:], "/")
-			clean, err := cleanUploadPath(stripped)
-			if err != nil {
-				reject(err)
-				return
-			}
-			plain[i].path = clean
-		}
+	plainNames, err := stripUploadTopDir(plainNames)
+	if err != nil {
+		reject(err)
+		return
+	}
+	for i := range plain {
+		plain[i].path = plainNames[i]
 	}
 
 	for _, part := range plain {
@@ -340,6 +337,24 @@ func skillZipEntries(reader *zip.Reader, label string) ([]string, map[string]*zi
 		names = stripped
 	}
 	return names, files, nil
+}
+
+// stripUploadTopDir removes the shared top-level directory from plain
+// (non-zip) upload paths, re-validating each shortened path. Paths without a
+// common top-level directory are returned unchanged.
+func stripUploadTopDir(paths []string) ([]string, error) {
+	if _, nested := sharedTopDir(paths); !nested {
+		return paths, nil
+	}
+	out := make([]string, len(paths))
+	for i, name := range paths {
+		clean, err := cleanUploadPath(strings.Join(strings.Split(name, "/")[1:], "/"))
+		if err != nil {
+			return nil, err
+		}
+		out[i] = clean
+	}
+	return out, nil
 }
 
 func top(name string) string {

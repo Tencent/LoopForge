@@ -80,6 +80,17 @@ func prepareSandboxEnvironment(workspace string, profile domain.SandboxProfile, 
 		}
 		root = discovered
 	}
+	overlay, err := environmentOverlay(workspace, root, envID, profile, catalog)
+	if err != nil {
+		return activatedEnvironment{}, err
+	}
+	return activatedEnvironment{Overlay: overlay, Root: root, InstallRel: installRel, InstallScript: catalog.InstallScript}, nil
+}
+
+// environmentOverlay builds the variables layered over a process sandbox for
+// an activated environment rooted at root, writing login-shell PATH hooks into
+// the workspace when the environment contributes PATH directories.
+func environmentOverlay(workspace, root, envID string, profile domain.SandboxProfile, catalog domain.EnvironmentDefinition) (map[string]string, error) {
 	id := envID
 	if id == "" {
 		id = workspaceEnvironmentID
@@ -106,7 +117,7 @@ func prepareSandboxEnvironment(workspace string, profile domain.SandboxProfile, 
 		overlay["PATH"] = strings.Join(append(append([]string{}, pathDirs...), basePath), string(os.PathListSeparator))
 		zdot, bashEnv, err := writeEnvironmentShellHooks(workspace, root, pathDirs)
 		if err != nil {
-			return activatedEnvironment{}, err
+			return nil, err
 		}
 		// Codex/Claude tool calls often use `zsh -lc` / `bash -lc`. Login shells
 		// rebuild PATH (macOS path_helper, ~/.zshrc) and would otherwise hide
@@ -116,7 +127,7 @@ func prepareSandboxEnvironment(workspace string, profile domain.SandboxProfile, 
 		overlay["BASH_ENV"] = bashEnv
 		overlay["ENV"] = bashEnv
 	}
-	return activatedEnvironment{Overlay: overlay, Root: root, InstallRel: installRel, InstallScript: catalog.InstallScript}, nil
+	return overlay, nil
 }
 
 func catalogDirName(id string) (string, error) {

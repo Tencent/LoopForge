@@ -468,35 +468,42 @@ func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
 	for _, v := range h.repo.Repositories() {
 		add("repository", v.ID, v.Name, v.ProjectID, false)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-		if out[i].Type != out[j].Type {
-			return out[i].Type < out[j].Type
-		}
-		return out[i].ID < out[j].ID
-	})
-	offset, _ := strconv.Atoi(c.Query("offset"))
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > len(out) {
-		offset = len(out)
-	}
-	end := offset + 30
-	if end > len(out) {
-		end = len(out)
-	}
+	sortAssistantReferences(out)
 	if global {
-		next := 0
-		if end < len(out) {
-			next = end
-		}
-		c.JSON(200, gin.H{"items": out[offset:end], "nextOffset": next})
+		offset, _ := strconv.Atoi(c.Query("offset"))
+		items, next := pageAssistantReferences(out, offset, workbenchReferencePageSize)
+		c.JSON(200, gin.H{"items": items, "nextOffset": next})
 		return
 	}
 	c.JSON(200, out)
+}
+
+// workbenchReferencePageSize is the page size of the global reference picker.
+const workbenchReferencePageSize = 30
+
+// sortAssistantReferences orders references by name, then type, then ID.
+func sortAssistantReferences(refs []domain.AssistantReference) {
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Name != refs[j].Name {
+			return refs[i].Name < refs[j].Name
+		}
+		if refs[i].Type != refs[j].Type {
+			return refs[i].Type < refs[j].Type
+		}
+		return refs[i].ID < refs[j].ID
+	})
+}
+
+// pageAssistantReferences returns the page starting at offset (clamped into
+// range) and the offset of the next page, or 0 when this is the last page.
+func pageAssistantReferences(refs []domain.AssistantReference, offset, size int) ([]domain.AssistantReference, int) {
+	offset = max(0, min(offset, len(refs)))
+	end := min(offset+size, len(refs))
+	next := 0
+	if end < len(refs) {
+		next = end
+	}
+	return refs[offset:end], next
 }
 
 func workbenchAttachmentDir(userID int64) string {
