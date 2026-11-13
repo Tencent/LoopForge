@@ -29,14 +29,7 @@ func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bo
 	// Conversation tools inherit project access from their authenticated entry
 	// point; the separate task-panel editor policy does not apply to them.
 	if mainBotWorkspaceRun(c.Request.Context()) != run.ID {
-		project, ok := h.repo.Project(run.ExecutionContext.ProjectID)
-		allowed := h.isPlatformAdmin(c.Request) || ok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
-		for _, member := range project.Members {
-			if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
-				allowed = true
-			}
-		}
-		if !allowed {
+		if !h.workspaceEditAllowed(c.Request, run, user.ID) {
 			c.JSON(403, gin.H{"error": "无权编辑该任务工作区"})
 			return run, 0, false
 		}
@@ -134,6 +127,28 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 	c.JSON(200, gin.H{"sha256": sha})
 }
 
+// workspaceEditAllowed reports whether userID may edit run's task workspace
+// from the task panel: platform admins, the project owner, anyone on an
+// unowned project without members, and non-viewer project members.
+func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, userID int64) bool {
+	if h.isPlatformAdmin(r) {
+		return true
+	}
+	project, ok := h.repo.Project(run.ExecutionContext.ProjectID)
+	if !ok {
+		return false
+	}
+	if project.OwnerID == userID || project.OwnerID == 0 && len(project.Members) == 0 {
+		return true
+	}
+	for _, member := range project.Members {
+		if member.UserID == userID && !strings.EqualFold(member.Role, "viewer") {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 	// Read-only probe: never write HTTP errors here (browse handlers still return the payload).
 	if engine.WorkspaceRunID(run) != run.ID {
@@ -143,13 +158,7 @@ func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 	if !ok {
 		return false
 	}
-	project, pok := h.repo.Project(run.ExecutionContext.ProjectID)
-	allowed := mainBotWorkspaceRun(c.Request.Context()) == run.ID || h.isPlatformAdmin(c.Request) || pok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
-	for _, member := range project.Members {
-		if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
-			allowed = true
-		}
-	}
+	allowed := mainBotWorkspaceRun(c.Request.Context()) == run.ID || h.workspaceEditAllowed(c.Request, run, user.ID)
 	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
 		return run.LiveWorkspace() || (run.Status == "waiting" && run.PauseRequested && !run.CancelRequested) || domain.TerminalRunStatus(run.Status)
 	}
