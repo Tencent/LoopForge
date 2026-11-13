@@ -106,60 +106,65 @@ func spanEvent(span otlpSpan, attrs map[string]string) domain.TelemetryEvent {
 	if name == "" {
 		name = "span"
 	}
-	category, eventName, phase := "lifecycle", name, "finish"
-	msg := name
-	switch strings.ToLower(spanType) {
-	case "tool", "mcp_call":
-		category, eventName, phase = "tool", "tool.call", "finish"
-		tool := firstNonEmpty(attrs["tool.name"], attrs["gen_ai.mcp.tool_name"], name)
-		detail := firstNonEmpty(attrs["command"], attrs["file.path"], attrs["tool_input"], attrs["tool.parameters"])
-		if detail != "" {
-			msg = clip(tool+" "+strings.Join(strings.Fields(detail), " "), 180)
-		} else {
-			msg = tool
-		}
-	case "model_stream", "model_request", "llm":
-		category, eventName, phase = "model", "model.request", "finish"
-		msg = firstNonEmpty(attrs["gen_ai.model_name"], attrs["model"], name)
-	case "interaction", "subagent", "agent":
-		category, eventName = "lifecycle", "agent.span"
-	}
+	category, eventName, msg := classifySpan(spanType, name, attrs)
+	level := "info"
 	if span.Status.Code == 2 {
-		phase = "finish"
+		level = "error"
 		if span.Status.Message != "" {
 			msg = clip(name+" 失败: "+span.Status.Message, 180)
 		}
 	}
+	return domain.TelemetryEvent{
+		Category:   category,
+		Name:       eventName,
+		Phase:      "finish",
+		Level:      level,
+		Message:    msg,
+		Timestamp:  unixNano(span.EndTimeUnixNano),
+		ParentID:   span.ParentSpanID,
+		Source:     domain.TelemetrySource{Layer: "executor", Adapter: AdapterOTEL, Provider: "codebuddy", Protocol: "otlp"},
+		Attributes: spanAttributes(span, attrs),
+	}
+}
+
+// classifySpan maps an OTLP span type to its telemetry category, event name
+// and display message. Unknown types are reported as lifecycle spans.
+func classifySpan(spanType, name string, attrs map[string]string) (category, eventName, msg string) {
+	switch strings.ToLower(spanType) {
+	case "tool", "mcp_call":
+		tool := firstNonEmpty(attrs["tool.name"], attrs["gen_ai.mcp.tool_name"], name)
+		detail := firstNonEmpty(attrs["command"], attrs["file.path"], attrs["tool_input"], attrs["tool.parameters"])
+		if detail == "" {
+			return "tool", "tool.call", tool
+		}
+		return "tool", "tool.call", clip(tool+" "+strings.Join(strings.Fields(detail), " "), 180)
+	case "model_stream", "model_request", "llm":
+		return "model", "model.request", firstNonEmpty(attrs["gen_ai.model_name"], attrs["model"], name)
+	case "interaction", "subagent", "agent":
+		return "lifecycle", "agent.span", name
+	}
+	return "lifecycle", name, name
+}
+
+// spanAttributes converts span attributes into event attributes, recording the
+// span duration (also written back to attrs) and the OTEL trace/span IDs.
+func spanAttributes(span otlpSpan, attrs map[string]string) map[string]any {
 	start := unixNano(span.StartTimeUnixNano)
 	end := unixNano(span.EndTimeUnixNano)
 	if end.After(start) && !start.IsZero() {
 		attrs["durationMs"] = strconv.FormatInt(end.Sub(start).Milliseconds(), 10)
 	}
-	attrAny := map[string]any{}
+	out := map[string]any{}
 	for k, v := range attrs {
-		attrAny[k] = v
+		out[k] = v
 	}
 	if span.TraceID != "" {
-		attrAny["otel.traceId"] = span.TraceID
+		out["otel.traceId"] = span.TraceID
 	}
 	if span.SpanID != "" {
-		attrAny["otel.spanId"] = span.SpanID
+		out["otel.spanId"] = span.SpanID
 	}
-	level := "info"
-	if span.Status.Code == 2 {
-		level = "error"
-	}
-	return domain.TelemetryEvent{
-		Category:   category,
-		Name:       eventName,
-		Phase:      phase,
-		Level:      level,
-		Message:    msg,
-		Timestamp:  end,
-		ParentID:   span.ParentSpanID,
-		Source:     domain.TelemetrySource{Layer: "executor", Adapter: AdapterOTEL, Provider: "codebuddy", Protocol: "otlp"},
-		Attributes: attrAny,
-	}
+	return out
 }
 
 func kvMap(kvs []otlpKV) map[string]string {
