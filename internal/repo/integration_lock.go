@@ -2,9 +2,7 @@ package repo
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -60,6 +58,5 @@ func integrationLockName(repositoryID string) string {
 	if len(name) <= 64 {
 		return name
 	}
-	sum := sha256.Sum256([]byte(id))
-	return "agentflow:integrate:" + hex.EncodeToString(sum[:])[:40]
+	return "agentflow:integrate:" + hexSHA256(id)[:40]
 }

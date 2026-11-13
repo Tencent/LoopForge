@@ -477,38 +477,7 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 	count := 0
 	for _, gi := range issues {
 		existing, found := findGongfengIssue(store, repo, gi)
-		issueID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
-		if found {
-			issueID = existing.ID
-		}
-		issue := domain.Issue{
-			ID:           issueID,
-			ProjectID:    repo.ProjectID,
-			RepositoryID: repo.ID,
-			Kind:         "issue",
-			Title:        gi.Title,
-			Description:  gi.Description,
-			Priority:     gongfengPriority(gi.Priority),
-			Status:       gongfengStateToStatus(gi.State),
-			CloseSource:  closeSourceForStatus(gongfengStateToStatus(gi.State)),
-			Source:       "gongfeng",
-			ExternalRef: &domain.ExternalRef{
-				Source:        "gongfeng",
-				ExternalID:    fmt.Sprintf("%d", gi.ID),
-				ExternalIID:   gi.IID,
-				ExternalURL:   strings.TrimSuffix(repo.WebURL, "/") + fmt.Sprintf("/issues/%d", gi.IID),
-				ExternalState: gi.State,
-				ExternalType:  "issue",
-				SyncedAt:      time.Now().UTC(),
-			},
-		}
-		if found {
-			applyExistingIssue(&issue, existing)
-		} else {
-			issue.Number = gi.IID
-			issue.CreatedAt = parseTime(gi.CreatedAt)
-		}
-		issue.UpdatedAt = time.Now().UTC()
+		issue := gongfengSyncedIssue(repo, gi, existing, found)
 		if err := store.PutSyncedIssue(issue); err != nil {
 			log.Printf("sync gongfeng issue %d: %v", gi.IID, err)
 			continue
@@ -524,6 +493,46 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 		StartedAt: started, FinishedAt: time.Now().UTC(),
 	})
 	return count, nil
+}
+
+// gongfengSyncedIssue maps one Gongfeng issue onto the local work item that
+// a pull stores. When the work item already exists, platform-owned fields
+// (ID, status, number, assignment, ...) are kept via applyExistingIssue.
+func gongfengSyncedIssue(repo domain.Repository, gi gongfengIssue, existing domain.Issue, found bool) domain.Issue {
+	issueID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
+	if found {
+		issueID = existing.ID
+	}
+	status := gongfengStateToStatus(gi.State)
+	issue := domain.Issue{
+		ID:           issueID,
+		ProjectID:    repo.ProjectID,
+		RepositoryID: repo.ID,
+		Kind:         "issue",
+		Title:        gi.Title,
+		Description:  gi.Description,
+		Priority:     gongfengPriority(gi.Priority),
+		Status:       status,
+		CloseSource:  closeSourceForStatus(status),
+		Source:       "gongfeng",
+		ExternalRef: &domain.ExternalRef{
+			Source:        "gongfeng",
+			ExternalID:    fmt.Sprintf("%d", gi.ID),
+			ExternalIID:   gi.IID,
+			ExternalURL:   strings.TrimSuffix(repo.WebURL, "/") + fmt.Sprintf("/issues/%d", gi.IID),
+			ExternalState: gi.State,
+			ExternalType:  "issue",
+			SyncedAt:      time.Now().UTC(),
+		},
+	}
+	if found {
+		applyExistingIssue(&issue, existing)
+	} else {
+		issue.Number = gi.IID
+		issue.CreatedAt = parseTime(gi.CreatedAt)
+	}
+	issue.UpdatedAt = time.Now().UTC()
+	return issue
 }
 
 func parseGongfengIssues(raw string) ([]gongfengIssue, error) {
@@ -969,37 +978,16 @@ func (s *Service) ImportTAPDStory(store IssueStoreAdapter, projectID, rawURL str
 		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "import_story", Status: "failed", Message: actionableAuthError("TAPD", err), ProjectID: projectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 		return domain.Issue{}, err
 	}
-	toolName, fields := tapdReadTool(ref.Kind)
-	raw, err := client.CallTool("proxy_execute_tool", map[string]any{
-		"tool_name": toolName,
-		"tool_args": map[string]any{
-			"workspace_id": ref.WorkspaceID,
-			"id":           ref.StoryID,
-			"limit":        1,
-			"page":         1,
-			"fields":       fields,
-		},
-	})
+	raw, err := callTAPDRecordGet(client, ref.Kind, ref.WorkspaceID, ref.StoryID)
 	if err != nil {
 		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "import_story", Status: "failed", Message: actionableAuthError("TAPD", err), ProjectID: projectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 		return domain.Issue{}, err
 	}
-	records, err := parseTAPDRecords(raw, ref.Kind+"s")
+	st, err := pickTAPDRecord(raw, ref.Kind, ref.StoryID)
 	if err != nil {
 		return domain.Issue{}, err
 	}
-	st, ok := pickTAPDStory(records, ref.StoryID)
-	if !ok {
-		return domain.Issue{}, fmt.Errorf("未找到 TAPD %s %s", tapdRecordLabel(ref.Kind), ref.StoryID)
-	}
-	var issue domain.Issue
-	if ref.Kind == "task" {
-		issue, err = s.upsertTAPDTask(store, projectID, ref.WorkspaceID, st, fallbackUserID, true)
-	} else if ref.Kind == "bug" {
-		issue, err = s.upsertTAPDBug(store, projectID, ref.WorkspaceID, st, fallbackUserID, true)
-	} else {
-		issue, err = s.upsertTAPDStory(store, projectID, ref.WorkspaceID, st, fallbackUserID, true)
-	}
+	issue, err := s.upsertTAPDByKind(store, ref.Kind, projectID, ref.WorkspaceID, st, fallbackUserID, true)
 	if err != nil {
 		return domain.Issue{}, err
 	}
@@ -1037,43 +1025,64 @@ func (s *Service) ResyncTAPDIssue(store IssueStoreAdapter, issue domain.Issue) (
 		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "resync", Status: "failed", Message: actionableAuthError("TAPD", err), ProjectID: issue.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 		return domain.Issue{}, err
 	}
-	toolName, fields := tapdReadTool(kind)
-	raw, err := client.CallTool("proxy_execute_tool", map[string]any{
-		"tool_name": toolName,
-		"tool_args": map[string]any{
-			"workspace_id": workspaceID,
-			"id":           ref.ExternalID,
-			"limit":        1,
-			"page":         1,
-			"fields":       fields,
-		},
-	})
+	raw, err := callTAPDRecordGet(client, kind, workspaceID, ref.ExternalID)
 	if err != nil {
 		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "resync", Status: "failed", Message: actionableAuthError("TAPD", err), ProjectID: issue.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 		return domain.Issue{}, err
 	}
-	records, err := parseTAPDRecords(raw, kind+"s")
+	st, err := pickTAPDRecord(raw, kind, ref.ExternalID)
 	if err != nil {
 		return domain.Issue{}, err
 	}
-	st, ok := pickTAPDStory(records, ref.ExternalID)
-	if !ok {
-		return domain.Issue{}, fmt.Errorf("未找到 TAPD %s %s", tapdRecordLabel(kind), ref.ExternalID)
-	}
-	var updated domain.Issue
-	if kind == "task" {
-		updated, err = s.upsertTAPDTask(store, issue.ProjectID, workspaceID, st, 0, false)
-	} else if kind == "bug" {
-		updated, err = s.upsertTAPDBug(store, issue.ProjectID, workspaceID, st, 0, false)
-	} else {
-		updated, err = s.upsertTAPDStory(store, issue.ProjectID, workspaceID, st, 0, false)
-	}
+	updated, err := s.upsertTAPDByKind(store, kind, issue.ProjectID, workspaceID, st, 0, false)
 	if err != nil {
 		return domain.Issue{}, err
 	}
 	recordLabel := tapdRecordLabel(kind)
 	s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "resync", Status: "success", Count: 1, Message: fmt.Sprintf("重新同步 TAPD %s %s: %s", recordLabel, st.ID, st.Name), ProjectID: issue.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 	return updated, nil
+}
+
+// callTAPDRecordGet fetches the single TAPD story/bug/task id through the
+// kind-specific *_get tool and returns the raw tool result.
+func callTAPDRecordGet(client *MCPClient, kind, workspaceID, id string) (string, error) {
+	toolName, fields := tapdReadTool(kind)
+	return client.CallTool("proxy_execute_tool", map[string]any{
+		"tool_name": toolName,
+		"tool_args": map[string]any{
+			"workspace_id": workspaceID,
+			"id":           id,
+			"limit":        1,
+			"page":         1,
+			"fields":       fields,
+		},
+	})
+}
+
+// pickTAPDRecord decodes a callTAPDRecordGet result and returns the record id.
+func pickTAPDRecord(raw, kind, id string) (tapdStory, error) {
+	records, err := parseTAPDRecords(raw, kind+"s")
+	if err != nil {
+		return tapdStory{}, err
+	}
+	st, ok := pickTAPDStory(records, id)
+	if !ok {
+		return tapdStory{}, fmt.Errorf("未找到 TAPD %s %s", tapdRecordLabel(kind), id)
+	}
+	return st, nil
+}
+
+// upsertTAPDByKind stores st with the upsert matching its TAPD record kind;
+// anything other than task or bug is treated as a story.
+func (s *Service) upsertTAPDByKind(store IssueStoreAdapter, kind, projectID, workspaceID string, st tapdStory, fallbackUserID int64, gateClarification bool) (domain.Issue, error) {
+	switch kind {
+	case "task":
+		return s.upsertTAPDTask(store, projectID, workspaceID, st, fallbackUserID, gateClarification)
+	case "bug":
+		return s.upsertTAPDBug(store, projectID, workspaceID, st, fallbackUserID, gateClarification)
+	default:
+		return s.upsertTAPDStory(store, projectID, workspaceID, st, fallbackUserID, gateClarification)
+	}
 }
 
 func tapdReadTool(kind string) (string, string) {

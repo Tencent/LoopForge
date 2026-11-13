@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -316,7 +317,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			}
 			builtIn, ok := repo.BuiltInExecutor(v.ExecutorID)
 			if !ok {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + v.ExecutorID})
 				return
 			}
 			if err := domain.ValidateAgentEffort(v.Effort, builtIn.Kind); err != nil {
@@ -597,13 +598,7 @@ func (h *catalogHandlers) rules(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
 		items := h.repo.Rules()
 		if projectID := strings.TrimSpace(c.Query("projectId")); projectID != "" {
-			filtered := make([]domain.RuleDefinition, 0, len(items))
-			for _, item := range items {
-				if item.ProjectID == projectID {
-					filtered = append(filtered, item)
-				}
-			}
-			items = filtered
+			items = filterOwnedByProject(items, projectID, func(item domain.RuleDefinition) string { return item.ProjectID })
 		}
 		c.JSON(200, items)
 		return
@@ -646,13 +641,7 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
 		items := h.repo.Skills()
 		if projectID := strings.TrimSpace(c.Query("projectId")); projectID != "" {
-			filtered := make([]domain.SkillDefinition, 0, len(items))
-			for _, item := range items {
-				if item.ProjectID == projectID {
-					filtered = append(filtered, item)
-				}
-			}
-			items = filtered
+			items = filterOwnedByProject(items, projectID, func(item domain.SkillDefinition) string { return item.ProjectID })
 		}
 		c.JSON(200, items)
 		return
@@ -712,10 +701,8 @@ func (h *catalogHandlers) sharedAgentReferences(kind, id string) bool {
 		if kind == "skill" {
 			refs = agent.Skills
 		}
-		for _, ref := range refs {
-			if ref == id {
-				return true
-			}
+		if slices.Contains(refs, id) {
+			return true
 		}
 	}
 	return false
@@ -910,6 +897,19 @@ func filterEnvironmentAssets[T any](items []T, projectID string, scope func(T) (
 	for _, item := range items {
 		owner, shared := scope(item)
 		if owner == projectID || shared {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// filterOwnedByProject keeps only items owned by projectID. Unlike
+// filterEnvironmentAssets it does not admit shared items from other projects.
+// The result is never nil so list endpoints keep returning [] instead of null.
+func filterOwnedByProject[T any](items []T, projectID string, owner func(T) string) []T {
+	out := make([]T, 0, len(items))
+	for _, item := range items {
+		if owner(item) == projectID {
 			out = append(out, item)
 		}
 	}
@@ -1228,7 +1228,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		builtIn, ok := repo.BuiltInExecutor(agent.ExecutorID)
 		if !ok {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + agent.ExecutorID})
 			return
 		}
 		if err := domain.ValidateAgentEffort(agent.Effort, builtIn.Kind); err != nil {

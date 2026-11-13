@@ -17,8 +17,10 @@ type AssistantGeneration struct {
 	UserID           int64                      `json:"-"`
 	ProjectID        string                     `json:"projectId"`
 	Status           string                     `json:"status"`
+	RuntimeMode      string                     `json:"runtimeMode,omitempty"`
 	WorkspaceWarning string                     `json:"workspaceWarning,omitempty"`
 	Error            string                     `json:"error,omitempty"`
+	Failure          *AssistantFailure          `json:"failure,omitempty"`
 	Events           []AssistantGenerationEvent `json:"events"`
 	Stream           *AssistantStreamSnapshot   `json:"stream,omitempty"`
 	Reply            json.RawMessage            `json:"reply,omitempty"`
@@ -26,7 +28,7 @@ type AssistantGeneration struct {
 	// turn keeps what it already wrote, then continues from that point.
 	Steer           *AssistantSteer `json:"steer,omitempty"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
-	CancelRequested bool            `json:"-"`
+	CancelRequested bool            `json:"cancelRequested,omitempty"`
 	// MessageCount is the transcript length this turn answers; an interrupted
 	// reply is appended only while the transcript still ends there.
 	MessageCount int `json:"messageCount,omitempty"`

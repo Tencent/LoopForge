@@ -52,7 +52,7 @@ func (h *tasksHandlers) settleIssueTasks(issueID string) {
 			continue
 		}
 		run, ok := h.repo.RunView(task.RunID)
-		if !ok || runHasActiveNode(run) {
+		if !ok || run.HasActiveNode() {
 			continue
 		}
 		status := taskStatusFromRun(run.Status)
@@ -152,15 +152,6 @@ func rejectBlockedIssueRun(d *deps, c *gin.Context, runID string) bool {
 
 func taskStatusFromRun(runStatus string) string {
 	return map[string]string{"queued": "queued", "running": "running", "waiting": "running", "succeeded": "completed", "failed": "failed", "cancelled": "cancelled"}[runStatus]
-}
-
-func runHasActiveNode(run domain.Run) bool {
-	for _, nr := range run.Nodes {
-		if nr != nil && (nr.Status == "running" || nr.Status == "pending_input") {
-			return true
-		}
-	}
-	return false
 }
 
 func issueStatusFromLatestTask(issue domain.Issue, taskStatus string) string {

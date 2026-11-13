@@ -36,7 +36,8 @@ const (
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	RunKind string `json:"runKind,omitempty"`
+	Conversation json.RawMessage `json:"conversation,omitempty"`
+	RunKind      string          `json:"runKind,omitempty"`
 	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
 	// opens terminals beside running tasks instead of waiting for their fence.
 	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`
@@ -71,6 +72,17 @@ type RunnerWorkspaceRequest struct {
 	Query           string              `json:"query,omitempty"`
 	Ref             string              `json:"ref,omitempty"`
 	Repositories    []RepositoryContext `json:"repositories,omitempty"`
+}
+
+// RunnerToolRequest is forwarded over the same instance-owned control socket
+// as the conversation process, avoiding loopback and load-balancer affinity.
+type RunnerToolRequest struct {
+	Token string          `json:"token"`
+	Body  json.RawMessage `json:"body"`
+}
+type RunnerToolResponse struct {
+	Body  json.RawMessage `json:"body,omitempty"`
+	Error string          `json:"error,omitempty"`
 }
 
 type WorkspaceCheckpointTransfer struct {
