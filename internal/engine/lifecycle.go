@@ -81,6 +81,9 @@ func settleStatusForCompletedGraph(wf domain.WorkflowDefinition, r domain.Run) (
 	if allSucceeded(wf, r) {
 		return "succeeded", "流水线执行完成", true
 	}
+	if allRoutingFinished(wf, r) {
+		return "failed", "所有终点节点均被跳过，流程无法完成", true
+	}
 	if hasWaiting(wf, r) {
 		return "", "", false
 	}

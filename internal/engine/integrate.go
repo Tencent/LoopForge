@@ -265,6 +265,7 @@ func (e *Engine) requeueIntegrationConflict(id, targetBranch string, files []str
 			if nr := c.Nodes[n]; nr != nil {
 				stale = append(stale, nr.ChildRunID)
 				nr.Status = "pending"
+				nr.RouteDecision, nr.SkipReason = nil, ""
 				nr.Error = ""
 				nr.Output = ""
 				nr.ChildRunID = ""

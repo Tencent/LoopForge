@@ -2,6 +2,34 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp } from '../lib/load-app.mjs';
 
+test('designer configures routing conditions and join behavior', async (t) => {
+  const app = await loadApp(); t.after(app.close);
+  app.evaluate(`switchView('flow');state.workflow={id:'route',projectId:'project-1',name:'Routing',status:'draft',sandboxProfileId:'local',nodes:[
+    {id:'route',name:'Route',type:'script',script:'echo ok',position:{x:20,y:30}},
+    {id:'small',name:'Small',type:'script',script:'echo small',position:{x:300,y:30}},
+    {id:'large',name:'Large',type:'script',script:'echo large',position:{x:300,y:150}},
+    {id:'join',name:'Join',type:'script',script:'echo join',position:{x:600,y:80}}
+  ],edges:[{id:'small-edge',source:'route',target:'small',when:'success'},{id:'large-edge',source:'route',target:'large',when:'success'},{id:'sj',source:'small',target:'join',when:'success'},{id:'lj',source:'large',target:'join',when:'success'}]};state.selectedNode='route';renderCanvas();renderProperties()`);
+  let type=app.document.querySelector('[data-route-edge="small-edge"] [data-route-field="type"]');
+  type.value='route';type.dispatchEvent(new app.window.Event('change'));
+  const labels=app.document.querySelector('[data-route-edge="small-edge"] [data-route-field="values"]');
+  labels.value='small, medium';labels.dispatchEvent(new app.window.Event('change'));
+  assert.deepEqual(Array.from(app.evaluate(`state.workflow.edges[0].condition.values`)),['small','medium']);
+  assert.match(app.document.querySelector('#edges').textContent,/route: small/);
+  app.evaluate(`state.selectedNode='join';renderProperties()`);
+  const join=app.document.querySelector('#properties [data-p="joinRule"]');
+  assert.match(app.document.querySelector('#properties').textContent,/汇合条件分支/);
+  assert.equal(app.evaluate(`flowDiagnostics().some(x=>x.title==='Join'&&x.detail.includes('汇合条件分支'))`),true);
+  join.value='none_failed_min_one_success';join.dispatchEvent(new app.window.Event('input'));
+  assert.equal(app.evaluate(`state.workflow.nodes.find(n=>n.id==='join').joinRule`),'none_failed_min_one_success');
+  app.evaluate(`state.selectedNode='route';renderProperties()`);
+  const fallback=app.document.querySelector('#properties [data-p="defaultTarget"]');
+  fallback.value='large';fallback.dispatchEvent(new app.window.Event('input'));
+  assert.equal(app.evaluate(`state.workflow.nodes[0].defaultTarget`),'large');
+  app.evaluate(`state.workflow.edges[0].condition={type:'artifact',artifact:'classification',pointer:'/size',equals:null};renderProperties()`);
+  assert.equal(app.document.querySelector('[data-route-edge="small-edge"] [data-route-field="equals"]').value,'null');
+});
+
 test('flow editor manages preview contracts, nodes, connections, diagnostics, and properties', async (t) => {
   const app = await loadApp();
   t.after(app.close);

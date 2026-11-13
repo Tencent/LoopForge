@@ -339,6 +339,10 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			e.event(r, "", "run.finish_ignored", "失败节点已被打回，忽略过期的失败收尾")
 			return
 		}
+		if status == "failed" && msg == "所有终点节点均被跳过，流程无法完成" && (!allRoutingFinished(workflowForRun(e.repo, *r), *r) || allSucceeded(workflowForRun(e.repo, *r), *r)) {
+			ignored = true
+			return
+		}
 		if status == "failed" {
 			for _, nr := range r.Nodes {
 				if nr != nil && (nr.Status == "running" || nr.Status == "waiting_approval" || nr.Status == "pending_input") {

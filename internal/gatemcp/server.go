@@ -27,11 +27,12 @@ type finding struct {
 }
 
 type gateResult struct {
-	Decision       string    `json:"decision"`
-	Reason         string    `json:"reason"`
-	ActionRequired string    `json:"actionRequired"`
-	Summary        string    `json:"summary"`
-	Findings       []finding `json:"findings"`
+	Decision       string          `json:"decision"`
+	Reason         string          `json:"reason"`
+	ActionRequired string          `json:"actionRequired"`
+	Summary        string          `json:"summary"`
+	Findings       []finding       `json:"findings"`
+	Route          json.RawMessage `json:"route,omitempty"`
 }
 
 var inputSchema = map[string]any{
@@ -43,6 +44,7 @@ var inputSchema = map[string]any{
 		"reason":         map[string]any{"type": "string", "minLength": 1, "maxLength": 4000},
 		"actionRequired": map[string]any{"type": "string", "maxLength": 4000},
 		"summary":        map[string]any{"type": "string", "maxLength": 4000},
+		"route":          map[string]any{"oneOf": []any{map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, map[string]any{"type": "array", "maxItems": 50, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}}}},
 		"findings": map[string]any{
 			"type": "array", "maxItems": 50,
 			"items": map[string]any{
@@ -144,7 +146,7 @@ func decodeResult(raw json.RawMessage) (gateResult, string) {
 	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return gateResult{}, "arguments must be an object"
 	}
-	allowed := map[string]bool{"decision": true, "reason": true, "actionRequired": true, "summary": true, "findings": true}
+	allowed := map[string]bool{"decision": true, "reason": true, "actionRequired": true, "summary": true, "findings": true, "route": true}
 	var unknown []string
 	for key := range fields {
 		if !allowed[key] {
@@ -172,6 +174,23 @@ func decodeResult(raw json.RawMessage) (gateResult, string) {
 	var result gateResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return gateResult{}, "arguments must match the submit_gate_result schema"
+	}
+	if len(result.Route) > 0 {
+		var labels []string
+		var label string
+		if json.Unmarshal(result.Route, &label) == nil {
+			labels = []string{label}
+		} else if json.Unmarshal(result.Route, &labels) != nil || string(result.Route) == "null" {
+			return gateResult{}, "route must be a string or an array of strings"
+		}
+		if len(labels) > 50 {
+			return gateResult{}, "route has too many labels"
+		}
+		for _, label := range labels {
+			if strings.TrimSpace(label) == "" || len(label) > 128 {
+				return gateResult{}, "route labels must be non-empty strings of at most 128 characters"
+			}
+		}
 	}
 	if result.Findings == nil {
 		result.Findings = []finding{}

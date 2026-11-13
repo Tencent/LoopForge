@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 
@@ -1041,6 +1042,10 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				return
 			}
 			if err := domain.ValidateWorkflowMetricStages(v); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := engine.ValidateWorkflowRouting(v); err != nil {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}

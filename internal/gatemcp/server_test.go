@@ -61,3 +61,17 @@ func TestWriteResultExclusiveAllowsOneSubmission(t *testing.T) {
 		t.Fatalf("successful submissions=%d, want 1", got)
 	}
 }
+
+func TestDecodeRouteValues(t *testing.T) {
+	for _, raw := range []string{`{"decision":"pass","reason":"ok","route":"small"}`, `{"decision":"pass","reason":"ok","route":["small","frontend"]}`} {
+		result, problem := decodeResult([]byte(raw))
+		if problem != "" || len(result.Route) == 0 {
+			t.Fatalf("decode %s: %q", raw, problem)
+		}
+	}
+	for _, raw := range []string{`{"decision":"pass","reason":"ok","route":null}`, `{"decision":"pass","reason":"ok","route":[5]}`, `{"decision":"pass","reason":"ok","route":""}`} {
+		if _, problem := decodeResult([]byte(raw)); problem == "" {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+}

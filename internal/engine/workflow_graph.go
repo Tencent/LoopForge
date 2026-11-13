@@ -9,21 +9,12 @@ import (
 )
 
 func readyNodes(wf domain.WorkflowDefinition, r domain.Run) []domain.WorkflowNode {
-	deps := map[string][]string{}
-	for _, e := range wf.Edges {
-		deps[e.Target] = append(deps[e.Target], e.Source)
-	}
 	out := []domain.WorkflowNode{}
 	for _, n := range wf.Nodes {
-		if r.Nodes[n.ID].Status != "pending" {
+		if r.Nodes[n.ID] == nil || r.Nodes[n.ID].Status != "pending" {
 			continue
 		}
-		ready := true
-		for _, d := range deps[n.ID] {
-			if r.Nodes[d].Status != "succeeded" {
-				ready = false
-			}
-		}
+		ready, _, _ := nodeReadiness(wf, r, n)
 		if ready {
 			out = append(out, n)
 		}
@@ -94,6 +85,15 @@ func descendants(wf domain.WorkflowDefinition, start string) map[string]bool {
 }
 
 func replayUpstreamSucceeded(run domain.Run, nodeID string) bool {
+	for _, n := range run.WorkflowSnapshot.Nodes {
+		if n.ID == nodeID {
+			ready, _, _ := nodeReadiness(run.WorkflowSnapshot, run, n)
+			if !ready {
+				return false
+			}
+			break
+		}
+	}
 	seen := map[string]bool{nodeID: true}
 	queue := []string{nodeID}
 	for len(queue) > 0 {
@@ -104,7 +104,7 @@ func replayUpstreamSucceeded(run domain.Run, nodeID string) bool {
 				continue
 			}
 			upstream := run.Nodes[edge.Source]
-			if upstream == nil || upstream.Status != "succeeded" {
+			if upstream == nil || (upstream.Status != "succeeded" && upstream.Status != "skipped") {
 				return false
 			}
 			seen[edge.Source] = true
@@ -115,9 +115,30 @@ func replayUpstreamSucceeded(run domain.Run, nodeID string) bool {
 }
 
 func allSucceeded(wf domain.WorkflowDefinition, r domain.Run) bool {
+	successfulSink := false
+	hasOutgoing := map[string]bool{}
+	for _, edge := range wf.Edges {
+		hasOutgoing[edge.Source] = true
+	}
 	for _, definition := range wf.Nodes {
 		n := r.Nodes[definition.ID]
-		if n == nil || n.Status != "succeeded" {
+		if n == nil || (n.Status != "succeeded" && n.Status != "skipped") {
+			return false
+		}
+		if n.Status == "succeeded" && !hasOutgoing[definition.ID] {
+			successfulSink = true
+		}
+	}
+	return len(wf.Nodes) == 0 || successfulSink
+}
+
+func allRoutingFinished(wf domain.WorkflowDefinition, r domain.Run) bool {
+	if len(wf.Nodes) == 0 {
+		return false
+	}
+	for _, node := range wf.Nodes {
+		nr := r.Nodes[node.ID]
+		if nr == nil || (nr.Status != "succeeded" && nr.Status != "skipped") {
 			return false
 		}
 	}
@@ -212,6 +233,9 @@ func validate(wf domain.WorkflowDefinition) error {
 		if n.RetryStrategy != "" && n.RetryStrategy != "targeted_fix" && n.RetryStrategy != "full_redo" {
 			return fmt.Errorf("node %s has invalid retryStrategy %q", n.ID, n.RetryStrategy)
 		}
+		if n.JoinRule != "" && n.JoinRule != "all_success" && n.JoinRule != "none_failed_min_one_success" {
+			return fmt.Errorf("node %s has invalid joinRule %q", n.ID, n.JoinRule)
+		}
 		artifactNames := map[string]bool{}
 		for _, contract := range n.ArtifactOutputs {
 			clean := filepath.Clean(contract.Path)
@@ -240,6 +264,9 @@ func validate(wf domain.WorkflowDefinition) error {
 		}
 		indegree[e.Target]++
 		adj[e.Source] = append(adj[e.Source], e.Target)
+	}
+	if err := validateRouting(wf); err != nil {
+		return err
 	}
 	q := []string{}
 	for id := range ids {

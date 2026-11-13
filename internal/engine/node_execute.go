@@ -6,12 +6,21 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
+
+func scriptRouteFile(run domain.Run, nodeID string, attempt int) string {
+	sum := sha256.Sum256([]byte(nodeControlKey(run, nodeID)))
+	return fmt.Sprintf(".agentflow/routes/%x/attempt-%d.json", sum, attempt)
+}
 
 func (e *Engine) execute(ctx context.Context, runID string) {
 	r, ok := e.repo.RunState(runID)
@@ -106,6 +115,37 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		wf := workflowForRun(e.repo, r)
 		e.reconcileNodeExecutions(runID)
+		// Derive skip transitions under the same state lock used by node outcomes.
+		// Re-read afterwards so a concurrent completion or rework cannot be lost.
+		probe := r
+		probe.Nodes = make(map[string]*domain.NodeRun, len(r.Nodes))
+		for id, nr := range r.Nodes {
+			if nr != nil {
+				copy := *nr
+				probe.Nodes[id] = &copy
+			}
+		}
+		if propagateSkipped(wf, &probe) {
+			e.updateRunAt(runID, false, func(current *domain.Run) {
+				if current.Generation != generation || !e.ownsRun(*current) {
+					return
+				}
+				before := map[string]string{}
+				for id, nr := range current.Nodes {
+					if nr != nil {
+						before[id] = nr.Status
+					}
+				}
+				if propagateSkipped(wf, current) {
+					for id, nr := range current.Nodes {
+						if nr != nil && nr.Status == "skipped" && before[id] == "pending" {
+							e.event(current, id, "node.skipped", nr.SkipReason)
+						}
+					}
+				}
+			})
+			continue
+		}
 		inflightMu.Lock()
 		var ready []domain.WorkflowNode
 		for _, node := range readyNodes(wf, r) {
@@ -136,6 +176,10 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 					continue
 				}
 				e.finishAt(runID, generation, "succeeded", "流水线执行完成")
+				return
+			}
+			if allRoutingFinished(wf, r) {
+				e.finishAt(runID, generation, "failed", "所有终点节点均被跳过，流程无法完成")
 				return
 			}
 			if hasWaiting(wf, r) {
@@ -344,6 +388,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		executionAttempt = nr.Attempt
 		nr.StartedAt = time.Now().UTC()
 		nr.GateResult = nil
+		nr.RouteDecision = nil
+		nr.SkipReason = ""
 		e.event(r, node.ID, "node.started", node.Name+" 开始执行")
 	})
 	if !started {
@@ -613,13 +659,20 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if language == "python" {
 				command = "python3 -c " + shellSingleQuote(script)
 			}
+			routeFile := ""
+			outputContracts := effectiveNode.ArtifactOutputs
+			if len(routeLabels(wf, node.ID)) > 0 {
+				routeFile = scriptRouteFile(current, node.ID, executionAttempt)
+				command = "mkdir -p " + shellSingleQuote(filepath.Dir(routeFile)) + " && rm -f " + shellSingleQuote(routeFile) + " && export LOOPFORGE_ROUTE_FILE=\"$PWD/" + routeFile + "\"\n" + command
+				outputContracts = append(append([]domain.ArtifactContract{}, outputContracts...), domain.ArtifactContract{Name: "__loopforge_route", Path: routeFile})
+			}
 			rawOutput, runErr := executeForTargets(current, node.ExecutionScope, func(target executionTarget) (string, error) {
 				bound := bindExecutionTarget(command, target)
 				targetSink := executionTargetSink(sink, target)
 				scriptAssets := e.resolveScriptMCPAssets(current.ExecutionContext.ProjectID, current.ExecutionContext.ResponsibleUserID)
 				if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 					workspace := runnerWorkspaceRel(current, node.ID)
-					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), effectiveNode.ArtifactOutputs, sb, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
+					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), outputContracts, sb, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
 				}
 				if err := runtime.ProvisionMCPAssets(ctx, sb, sb.Workspace(), scriptAssets, targetSink); err != nil {
 					return "", err
@@ -726,6 +779,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			if requiresSubmit {
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
+				if labels := routeLabels(wf, node.ID); len(labels) > 0 {
+					prompt += fmt.Sprintf("\n\n本节点负责选择下游分支。提交 pass 时，在 route 中提交一个或多个路由标签，可选值：%s。", strings.Join(labels, ", "))
+				}
 			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
 			warnMCPSkipped := func(message string) {
@@ -1017,15 +1073,44 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(fmt.Errorf("artifact contract: %w", err), nodeRejects(node))
 		return
 	}
+	var route domain.RouteValues
+	if nr := current.Nodes[node.ID]; nr != nil && nr.GateResult != nil {
+		route = nr.GateResult.Route
+	}
+	if (node.Type == "script" || node.Type == "command") && len(routeLabels(wf, node.ID)) > 0 {
+		routeFile := scriptRouteFile(current, node.ID, executionAttempt)
+		raw, readErr := outputs.readFile(routeFile)
+		if readErr == nil {
+			var result struct {
+				Route domain.RouteValues `json:"route"`
+			}
+			if err := json.Unmarshal(raw, &result); err != nil {
+				failNode(fmt.Errorf("路由文件无效: %w", err), false)
+				return
+			}
+			route = result.Route
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			failNode(fmt.Errorf("读取路由文件: %w", readErr), false)
+			return
+		}
+	}
+	decision, routeErr := decideRoute(wf, node, route, artifacts)
+	if routeErr != nil {
+		failNode(routeErr, false)
+		return
+	}
 	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true) {
 		return
 	}
+	committed := false
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
 			return
 		}
+		committed = true
 		r.Artifacts = append(r.Artifacts, artifacts...)
+		nr.RouteDecision = decision
 		nr.Output = output
 		nr.Error = ""
 		if manualGateName != "" {
@@ -1038,6 +1123,18 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
 		}
 	})
+	if !committed {
+		return
+	}
+	if decision != nil {
+		var selected []domain.WorkflowEdge
+		for i, edge := range wf.Edges {
+			if decision.SelectedEdges[fmt.Sprint(i)] {
+				selected = append(selected, edge)
+			}
+		}
+		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "route.decided", Phase: "finish", Message: fmt.Sprintf("路由决策：%v", decision.Values), Attributes: map[string]any{"route": decision.Values, "selectedEdges": decision.SelectedEdges, "matchedEdges": selected}})
+	}
 	for _, artifact := range artifacts {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
 	}

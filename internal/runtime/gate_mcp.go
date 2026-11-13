@@ -186,6 +186,9 @@ func mockGateResult(agent domain.AgentDefinition, resultPath string) domain.Gate
 		ActionRequired: mockDirective(agent.Prompt, "action"),
 		Summary:        mockDirective(agent.Prompt, "summary"),
 	}
+	if value := mockDirective(agent.Prompt, "route"); value != "" {
+		result.Route = domain.RouteValues(strings.Split(value, ","))
+	}
 	if result.Reason == "" {
 		result.Reason = "mock executor called submit_gate_result with " + decision
 	}
