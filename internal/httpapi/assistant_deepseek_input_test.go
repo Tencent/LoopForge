@@ -16,20 +16,6 @@ import (
 	"agentflow/internal/runtime"
 )
 
-// longHistoryMessages builds a synthetic conversation well above 128 KiB while
-// keeping every message under the per-message replay cap.
-func longHistoryMessages() []assistantMessage {
-	block := strings.Repeat("历史正文", 500)
-	history := []assistantMessage{{Role: "user", Content: "history-start " + block}}
-	for i := 0; i < 40; i++ {
-		history = append(history,
-			assistantMessage{Role: "assistant", Content: block},
-			assistantMessage{Role: "user", Content: block},
-		)
-	}
-	return append(history, assistantMessage{Role: "assistant", Content: block + " history-end"})
-}
-
 func TestDeepSeekChatRebuildsLongHistory(t *testing.T) {
 	for _, mode := range []string{"new", "branch", "missing-native-session", "project", "project-branch", "project-missing-native-session"} {
 		t.Run(mode, func(t *testing.T) {
@@ -39,15 +25,11 @@ func TestDeepSeekChatRebuildsLongHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			user = updated
-			// This test covers process transport, not prompt budgeting: keep the
-			// fixture above MAX_ARG_STRLEN instead of letting the default budget
-			// compact it.
-			t.Setenv(assistantPromptBudgetEnv, "524288")
 			dir := t.TempDir()
 			capture := filepath.Join(dir, "calls")
 			bin := filepath.Join(dir, "dsh")
 			quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
-			script := "#!/bin/sh\ncat >> " + quote(capture) + "\nprintf '\\036' >> " + quote(capture) + `
+			script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.2.2-rc.1\\n'; exit 0; fi\ncat >> " + quote(capture) + "\nprintf '\\036' >> " + quote(capture) + `
 previous=''
 for arg in "$@"; do
   if [ "$previous" = '--session-id' ] && [ "$arg" = 'missing_native' ]; then
@@ -62,9 +44,7 @@ printf '%s\n' '{"type":"session","sessionId":"native_test"}' '{"type":"final","s
 				t.Fatal(err)
 			}
 			t.Setenv("AGENTFLOW_DSH_BIN", bin)
-			// A long conversation is many ordinary messages, not one oversized
-			// blob: the per-message cap would (correctly) shrink the latter.
-			history := longHistoryMessages()
+			history := []assistantMessage{{Role: "user", Content: "history-start " + strings.Repeat("历史正文", 10000) + " HISTORY-MIDDLE-MARKER " + strings.Repeat("历史正文", 10000) + " history-end"}, {Role: "assistant", Content: "previous answer"}}
 			session := domain.AssistantSession{ID: "long_history", Executor: "dsh", Model: "dsh:deepseek-v4-flash", Messages: history}
 			if strings.HasPrefix(mode, "project") {
 				session.ProjectID = "workbench"
@@ -134,7 +114,7 @@ printf '%s\n' '{"type":"session","sessionId":"native_test"}' '{"type":"final","s
 				t.Fatalf("calls=%d want=%d", len(calls), wantCalls)
 			}
 			rebuilt := calls[len(calls)-1]
-			if len(rebuilt) <= 128<<10 || !strings.Contains(rebuilt, "history-start") || !strings.Contains(rebuilt, "history-end") || !strings.Contains(rebuilt, "latest question") {
+			if len(rebuilt) <= 128<<10 || !strings.Contains(rebuilt, "history-start") || !strings.Contains(rebuilt, "HISTORY-MIDDLE-MARKER") || !strings.Contains(rebuilt, "history-end") || !strings.Contains(rebuilt, "latest question") {
 				t.Fatal("rebuild lost history or did not exercise a large input")
 			}
 			if strings.Contains(mode, "missing-native-session") && strings.Contains(calls[0], "history-start") {
@@ -149,19 +129,22 @@ printf '%s\n' '{"type":"session","sessionId":"native_test"}' '{"type":"final","s
 func TestDeepSeekChatLongPromptStdin(t *testing.T) {
 	for _, mode := range []string{"new", "branch", "missing-native-session"} {
 		t.Run(mode, func(t *testing.T) {
-			// Transport coverage: the fixture must stay above MAX_ARG_STRLEN.
-			t.Setenv(assistantPromptBudgetEnv, "524288")
 			root := t.TempDir()
 			bin := filepath.Join(root, "dsh")
 			capture := filepath.Join(root, "input")
 			quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
-			script := "#!/bin/sh\ncat > " + quote(capture) + "\nprintf '%s\\n' '{\"type\":\"session\",\"sessionId\":\"native_test\"}' '{\"type\":\"final\",\"sessionId\":\"native_test\",\"text\":\"ok\",\"reason\":{\"kind\":\"completed\"}}'\n"
+			script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.2.2-rc.1\\n'; exit 0; fi\ncat > " + quote(capture) + "\nprintf '%s\\n' '{\"type\":\"session\",\"sessionId\":\"native_test\"}' '{\"type\":\"final\",\"sessionId\":\"native_test\",\"text\":\"ok\",\"reason\":{\"kind\":\"completed\"}}'\n"
 			if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("AGENTFLOW_DSH_BIN", bin)
 			h := &assistantHandlers{}
-			req := assistantRequest{SessionID: "chat_test", Model: "dsh:deepseek-v4-flash", Messages: append(longHistoryMessages(), assistantMessage{Role: "user", Content: "latest question"})}
+			longQuestion := "latest-start " + strings.Repeat("最近问题", 16000) + " LATEST-MIDDLE-MARKER " + strings.Repeat("最近问题", 16000) + " latest-end"
+			req := assistantRequest{SessionID: "chat_test", Model: "dsh:deepseek-v4-flash", Messages: []assistantMessage{
+				{Role: "user", Content: "history-start " + strings.Repeat("历史正文", 20000) + " history-end"},
+				{Role: "assistant", Content: "previous answer"},
+				{Role: "user", Content: longQuestion},
+			}}
 			prompt := h.turnPrompt(req, "", false)
 			if len(prompt) <= 128<<10 {
 				t.Fatal("fixture does not exceed Linux argument limit")
@@ -192,6 +175,9 @@ func TestDeepSeekChatLongPromptStdin(t *testing.T) {
 			want := runtime.AgentCLITaskPrompt(system, "", prompt)
 			if string(data) != want {
 				t.Fatalf("stdin changed: got %d bytes, want %d", len(data), len(want))
+			}
+			if !strings.Contains(string(data), "LATEST-MIDDLE-MARKER") {
+				t.Fatal("the middle of the latest user message was dropped")
 			}
 			// A following turn must still resume the native session normally.
 			cliReq.Resume, cliReq.Prompt = true, "follow-up"

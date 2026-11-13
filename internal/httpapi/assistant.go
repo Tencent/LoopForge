@@ -627,21 +627,8 @@ func assistantModeTurnReminder(mode string) string {
 
 func (h *assistantHandlers) turnPrompt(req assistantRequest, sourceRoot string, resume bool) string {
 	context := assistantTurnContext(req)
-	budget := assistantPromptBudget()
 	if resume {
-		// A resumed turn only repeats the interrupted paragraph, but a steered
-		// follow-up embeds the previous reply, which can be arbitrarily long.
-		head := context + assistantUnfinishedTurnNote(req.Messages) + "\n用户：\n"
-		tail := lastAssistantUserContent(req.Messages)
-		limit := budget - len(head) - len(tail)
-		if limit < assistantPromptBudgetFloor {
-			limit = assistantPromptBudgetFloor
-		}
-		steer := assistantSteerPrefix(req.Messages)
-		if len(steer) > limit {
-			steer = assistantTruncate(steer, limit)
-		}
-		return head + steer + tail
+		return context + assistantUnfinishedTurnNote(req.Messages) + "\n用户：\n" + assistantSteerPrefix(req.Messages) + lastAssistantUserContent(req.Messages)
 	}
 	sourceInfo := "源码快照未配置，不得声称已阅读代码。"
 	if files, err := assistantSourceFiles(sourceRoot); err == nil {
@@ -651,28 +638,8 @@ func (h *assistantHandlers) turnPrompt(req assistantRequest, sourceRoot string, 
 		}
 		sourceInfo = "当前版本源码文件列表仅作参考：" + string(data)
 	}
-	history := assistantPromptMessages(req.Messages)
-	// The first turn, a branch and a rebuilt native session all replay the full
-	// history, so the budget is applied here rather than at the call sites.
-	limit := budget - len(sourceInfo) - len(context) - len("对话：\n") - 512
-	for attempt := 0; attempt < 4; attempt++ {
-		if limit < assistantPromptBudgetFloor {
-			limit = assistantPromptBudgetFloor
-		}
-		kept, digest := fitAssistantHistory(history, limit)
-		data, _ := json.Marshal(kept)
-		if digest == "" {
-			return sourceInfo + "\n" + context + "\n对话：\n" + string(data)
-		}
-		prompt := sourceInfo + "\n" + context + "\n" + digest + "对话：\n" + string(data)
-		if len(prompt) <= budget {
-			return prompt
-		}
-		limit -= len(prompt) - budget + 1024
-	}
-	kept, digest := fitAssistantHistory(history, assistantPromptBudgetFloor)
-	data, _ := json.Marshal(kept)
-	return sourceInfo + "\n" + context + "\n" + digest + "对话：\n" + string(data)
+	history, _ := json.Marshal(assistantPromptMessages(req.Messages))
+	return sourceInfo + "\n" + context + "\n对话：\n" + string(history)
 }
 
 func lastAssistantUserContent(messages []assistantMessage) string {
@@ -1257,6 +1224,11 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if err != nil {
 		log.Printf("assistant CLI resolve failed: %v", err)
 		return "", "", err
+	}
+	if engine == runtime.AgentCLIDeepSeek {
+		if err := ensureAssistantDSHVersion(ctx, bin); err != nil {
+			return "", "", err
+		}
 	}
 	root := req.SessionRoot
 	if root == "" {
