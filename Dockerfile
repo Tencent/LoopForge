@@ -31,6 +31,14 @@ FROM node:22-bookworm
 RUN --mount=type=cache,target=/root/.npm apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client bash curl python3 ripgrep \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @openai/codex@0.162.1 @tencent-ai/codebuddy-code@2.167.0 @deepseek-ai/dsh@0.2.2-rc.1
+# A relocatable Python that sandboxes of images without python3 mount for the
+# native CLI hooks (internal/runtime/toolchain.go).
+ARG TARGETARCH
+ARG PYTHON_STANDALONE=20261110/cpython-3.12.16+20261110
+RUN case "${TARGETARCH:-amd64}" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; esac \
+ && mkdir -p /opt/loopforge \
+ && curl -fsSL "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_STANDALONE}-${arch}-unknown-linux-gnu-install_only_stripped.tar.gz" | tar -xz -C /opt/loopforge \
+ && /opt/loopforge/python/bin/python3 -c 'import json,urllib.request,ctypes'
 COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker:27-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 WORKDIR /app

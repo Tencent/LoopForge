@@ -167,6 +167,11 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	if cliPath != "" {
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
 	}
+	toolchain, err := s.toolchainExecEnv()
+	if err != nil {
+		return "", err
+	}
+	args = append(args, toolchain...)
 	args = append(args, s.name)
 	argv := dockerWorkspaceExecArgv(command.Argv)
 	if command.WorkingDir != "" {
@@ -180,7 +185,7 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 		defer func() {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			stopArgs := append([]string{"exec", s.name}, dockerConversationStopArgv(processFile)...)
+			stopArgs := append(append(append([]string{"exec"}, toolchain...), s.name), dockerConversationStopArgv(processFile)...)
 			if stopErr := exec.CommandContext(stopCtx, "docker", stopArgs...).Run(); stopErr != nil {
 				err = errors.Join(err, fmt.Errorf("停止 CLI 子进程失败: %w", stopErr))
 			}
@@ -214,7 +219,7 @@ if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH
   PATH=$PATH:$AGENTFLOW_RUNTIME_CLI_PATH
   export PATH
 fi
-`
+` + toolchainPathSetup
 
 // onDemandCLIPath installs a CLI the published runtime image does not bundle
 // (Claude Code and the npm agent CLIs) for sandboxes of that image, and returns
@@ -719,7 +724,7 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		return err
 	}
 	args = append(args, stateArgs...)
-	if cliDir := RuntimeCLIDir(); cliDir != "" && image == isolatedRuntimeImage(s.dockerfile) {
+	if cliDir := RuntimeCLIDir(); cliDir != "" {
 		if err := os.MkdirAll(cliDir, 0o755); err != nil {
 			return fmt.Errorf("prepare runtime CLI directory: %w", err)
 		}
