@@ -13,6 +13,7 @@ import {
 import { reviewedOperation, operationError } from "./operations.js";
 import { credentialHint } from "./credentials.js";
 import { cliFailureSettles } from "./cli-install.jsx";
+import { useExecutionMachines } from "./useExecutionMachines.js";
 import { modelEffort } from "./effort.js";
 import { conversationEngine, engineModels } from "./engines.js";
 import {
@@ -77,6 +78,8 @@ export function useChat() {
     [sandboxProfileId, setSandboxProfileId] = useState(""),
     [sandboxBusy, setSandboxBusy] = useState(false),
     [workspaceSandbox, setWorkspaceSandbox] = useState(null),
+    [workspaceExecution, setWorkspaceExecution] = useState(null),
+    [workspaceExecutionError, setWorkspaceExecutionError] = useState(""),
     [users, setUsers] = useState([]),
     [draftIssueId, setDraftIssueId] = useState(
       new URLSearchParams(location.search).get("issueId") || "",
@@ -109,6 +112,12 @@ export function useChat() {
     // A queued message sent with "send now": it interrupts the running reply
     // and stays on screen until the server's follow-up turn has started.
     [steering, setSteering] = useState(null);
+  const executionMachines = useExecutionMachines(
+    user?.isGuest ? null : user?.id,
+    submitting || generation?.status === "running",
+    !!session?.readOnly,
+    setError,
+  );
   const currentId = useRef(activeId),
     sessionRef = useRef(session),
     projectRef = useRef(projectId),
@@ -724,6 +733,7 @@ export function useChat() {
       return true;
     }
     if (sandboxBusyRef.current) { setError("运行环境仍在保存，请稍后发送。"); return false; }
+    if (executionMachines.machineSavingRef.current) { setError("执行机器仍在保存，请稍后发送。"); return false; }
     // Without a key (and no sponsored model) the server rejects every message.
     // Say so before creating an empty conversation that would swallow the
     // typed question. Re-check first in case the key was saved elsewhere since
@@ -1117,13 +1127,21 @@ export function useChat() {
   useEffect(() => {
     let current = true;
     setWorkspaceSandbox(null);
+    setWorkspaceExecution(null);
+    setWorkspaceExecutionError("");
     const id = session?.workspaceRunId || session?.runId;
     if (id) void api(`/api/runs/${encodeURIComponent(id)}`).then((run) => {
-      if (current) setWorkspaceSandbox(run.workflowSnapshot?.sandboxSnapshot?.profile || { id: run.workflowSnapshot?.sandboxProfileId });
-    }).catch(() => {});
+      if (current) {
+        setWorkspaceSandbox(run.workflowSnapshot?.sandboxSnapshot?.profile || { id: run.workflowSnapshot?.sandboxProfileId });
+        setWorkspaceExecution(run.executionContext || {});
+      }
+    }).catch(() => {
+      if (current) setWorkspaceExecutionError("无法加载工作区执行机器");
+    });
     return () => { current = false; };
   }, [session?.workspaceRunId, session?.runId]);
   async function refresh() {
+    await executionMachines.refreshMachines();
     const sandboxRows = await api("/api/sandboxes").catch(() => null);
     if (Array.isArray(sandboxRows)) setSandboxes(sandboxRows);
     const projectRows = await api("/api/projects").catch(() => null);
@@ -1166,6 +1184,9 @@ export function useChat() {
     sandboxLocked: !!session?.runId,
     sandboxBusy,
     workspaceSandbox,
+    workspaceExecution,
+    workspaceExecutionError,
+    ...executionMachines,
     selectSandbox,
     models: executorModels,
     executor,

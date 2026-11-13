@@ -70,13 +70,35 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
-  test("labels the conversation host as LoopForge cloud in text and hover hint", () => {
-    const view = render(<App />);
-    const host = view.container.querySelector(".composer-context .host-status");
-    expect(host).toHaveTextContent("LoopForge 云端");
-    expect(host).toHaveAttribute("title", "对话在 LoopForge 云端运行");
-    expect(view.container.querySelector(".composer-context")).not.toHaveTextContent("AgentFlow");
-    view.unmount();
+  test("offers execution machine selection on the home page and moves it into the conversation header", async () => {
+    const previous = { ...chat };
+    const selectMachine = vi.fn();
+    Object.assign(chat, {
+      machinesReady: true, defaultRunnerId: "mac", machines: [{ id: "mac", name: "开发 Mac", status: "online" }],
+      selectMachine, refreshMachines: vi.fn(),
+    });
+    const user = userEvent.setup();
+    let view;
+    try {
+      view = render(<App />);
+      let trigger = screen.getByRole("button", { name: "执行机器：开发 Mac" });
+      expect(trigger.closest(".composer-context")).not.toBeNull();
+      trigger.getBoundingClientRect = () => ({ top: 500, bottom: 528, left: 200, right: 400, width: 200, height: 28 });
+      await user.click(trigger);
+      await user.click(screen.getByRole("option", { name: /LoopForge 云端/ }));
+      expect(selectMachine).toHaveBeenCalledWith("");
+      Object.assign(chat, { activeId: "s1", session: { id: "s1", messages: [] } });
+      view.rerender(<App />);
+      expect(screen.getAllByRole("button", { name: "执行机器：开发 Mac" })).toHaveLength(1);
+      chat.session.messages = [{ role: "user", content: "检查项目" }];
+      view.rerender(<App />);
+      trigger = screen.getByRole("button", { name: "执行机器：开发 Mac" });
+      expect(trigger.closest(".header-actions")).not.toBeNull();
+    } finally {
+      view?.unmount();
+      for (const key of Object.keys(chat)) if (!(key in previous)) delete chat[key];
+      Object.assign(chat, previous);
+    }
   });
 
   test("hides environments by default and remembers each user's advanced preference", async () => {

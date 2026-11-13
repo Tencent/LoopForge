@@ -137,6 +137,21 @@ describe("conversation hooks", () => {
     expect(writeMock).toHaveBeenCalledWith("/api/assistant/sessions/new-session", expect.objectContaining({ sandboxProfileId: "business-docker" }), "PUT");
   });
 
+  test("does not send or create a conversation while an execution machine selection is saving", async () => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.machinesReady).toBe(true));
+    let resolve;
+    writeMock.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    let selecting;
+    act(() => { selecting = result.current.selectMachine("mac"); });
+    await act(async () => expect(await result.current.send({ text: "改代码" })).toBe(false));
+    expect(result.current.error).toBe("执行机器仍在保存，请稍后发送。");
+    expect(writeMock).toHaveBeenCalledTimes(1);
+    expect(writeMock).toHaveBeenCalledWith("/api/runners/default", { runnerId: "mac" }, "PUT");
+    await act(async () => { resolve({ runnerId: "mac" }); await selecting; });
+    expect(result.current.defaultRunnerId).toBe("mac");
+  });
+
   test("loads chat and exercises conversation commands", async () => {
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.ready).toBe(true));
