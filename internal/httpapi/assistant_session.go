@@ -448,12 +448,22 @@ func assistantSessionRoot(userID int64) string {
 	return filepath.Join(assistantSessionBase(), strconv.FormatInt(userID, 10))
 }
 
+// assistantConversationBase holds the native conversation roots. They are
+// bind-mounted into Docker workspaces, so a platform that reaches the daemon
+// through docker.sock must keep them at a path the daemon's host has too.
+func assistantConversationBase() string {
+	if override := strings.TrimSpace(os.Getenv("AGENTFLOW_CONVERSATION_DIR")); override != "" {
+		return override
+	}
+	return assistantSessionBase()
+}
+
 // assistantConversationRoot is the CLI root (home and ws) of one personal
 // conversation. It is keyed by owner and session, so a reused session ID can
 // never reach another user's native state.
 func assistantConversationRoot(userID int64, sessionID string) string {
 	sum := sha256.Sum256([]byte(strconv.FormatInt(userID, 10) + "/" + sessionID))
-	return filepath.Join(assistantSessionBase(), "conversations", hex.EncodeToString(sum[:]))
+	return filepath.Join(assistantConversationBase(), "conversations", hex.EncodeToString(sum[:]))
 }
 
 func assistantCLIHome(userID int64) string {

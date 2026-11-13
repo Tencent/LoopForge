@@ -61,6 +61,53 @@ printf '%s\n' '{"type":"result","result":"好"}'
 	}
 }
 
+func TestConversationRootsFollowConversationDir(t *testing.T) {
+	sessions, conversations := t.TempDir(), t.TempDir()
+	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", sessions)
+	under := func(root, base, kind string) bool {
+		return filepath.Base(filepath.Dir(root)) == kind && filepath.Dir(filepath.Dir(root)) == base
+	}
+	for _, unset := range []string{"", "  "} {
+		t.Setenv("AGENTFLOW_CONVERSATION_DIR", unset)
+		if root := assistantConversationRoot(7, "s"); !under(root, sessions, "conversations") {
+			t.Fatalf("personal root with AGENTFLOW_CONVERSATION_DIR=%q = %s", unset, root)
+		}
+		if root := assistantSharedSessionRoot("s"); !under(root, sessions, "shared") {
+			t.Fatalf("shared root with AGENTFLOW_CONVERSATION_DIR=%q = %s", unset, root)
+		}
+	}
+	t.Setenv("AGENTFLOW_CONVERSATION_DIR", conversations)
+	if root := assistantConversationRoot(7, "s"); !under(root, conversations, "conversations") {
+		t.Fatalf("personal root = %s, want under %s", root, conversations)
+	}
+	if root := assistantSharedSessionRoot("s"); !under(root, conversations, "shared") {
+		t.Fatalf("shared root = %s, want under %s", root, conversations)
+	}
+	for _, path := range []string{assistantSessionRoot(7), assistantCLIHome(7), workbenchAttachmentDir(7)} {
+		if !strings.HasPrefix(path, sessions+string(filepath.Separator)) {
+			t.Fatalf("per-user state %s left AGENTFLOW_ASSISTANT_SESSION_DIR", path)
+		}
+	}
+
+	native := filepath.Join(assistantConversationRoot(7, "s"), "home", "state")
+	attachment := filepath.Join(workbenchAttachmentDir(7), "kept.bin")
+	for _, file := range []string{native, attachment} {
+		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deleteAssistantCLISession(7, "s")
+	if _, err := os.Stat(assistantConversationRoot(7, "s")); !os.IsNotExist(err) {
+		t.Fatalf("deleting the conversation left its root: %v", err)
+	}
+	if _, err := os.Stat(attachment); err != nil {
+		t.Fatalf("deleting the conversation removed per-user state: %v", err)
+	}
+}
+
 func TestProjectConversationIsolatesReferencesAndOffersProjectRoles(t *testing.T) {
 	h, u := workbenchFixture(t)
 	h.repo.PutProject(domain.Project{ID: "other", Name: "Other", OwnerID: u.ID})
