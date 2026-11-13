@@ -356,9 +356,9 @@ func githubIssueClose(ctx context.Context, token, path string, args map[string]a
 	if reason != "completed" && reason != "not_planned" {
 		return "", fmt.Errorf("reason 只能是 completed 或 not_planned")
 	}
-	comment := githubArgString(args, "comment")
-	if len([]rune(comment)) > 10000 {
-		return "", fmt.Errorf("comment must be at most 10000 characters")
+	comment, err := githubCloseCommentArg(args)
+	if err != nil {
+		return "", err
 	}
 	client := githubHTTPClient()
 	resp, raw, err := githubRequest(ctx, client, http.MethodGet, fmt.Sprintf("%s/repos/%s/issues/%d", githubAPIBase, path, number), token, nil)
@@ -385,15 +385,9 @@ func githubIssueClose(ctx context.Context, token, path string, args map[string]a
 	}
 	commentURL := ""
 	if comment != "" {
-		added, err := githubIssueCommentAdd(ctx, token, path, number, comment)
-		if err != nil {
+		if commentURL, err = githubAddCloseComment(ctx, token, path, number, comment); err != nil {
 			return "", err
 		}
-		var c struct {
-			URL string `json:"url"`
-		}
-		_ = json.Unmarshal([]byte(added), &c)
-		commentURL = c.URL
 	}
 	payload, _ := json.Marshal(map[string]string{"state": "closed", "state_reason": reason})
 	resp, raw, err = githubRequest(ctx, client, http.MethodPatch, fmt.Sprintf("%s/repos/%s/issues/%d", githubAPIBase, path, number), token, payload)
@@ -460,9 +454,9 @@ func githubPRClose(ctx context.Context, token, path string, args map[string]any)
 	if err != nil {
 		return "", err
 	}
-	comment := githubArgString(args, "comment")
-	if len([]rune(comment)) > 10000 {
-		return "", fmt.Errorf("comment must be at most 10000 characters")
+	comment, err := githubCloseCommentArg(args)
+	if err != nil {
+		return "", err
 	}
 	client := githubHTTPClient()
 	prURL := fmt.Sprintf("%s/repos/%s/pulls/%d", githubAPIBase, path, number)
@@ -490,15 +484,11 @@ func githubPRClose(ctx context.Context, token, path string, args map[string]any)
 	}
 	out := map[string]any{"repository": path, "number": number, "state": "closed", "url": current.HTMLURL}
 	if comment != "" {
-		added, err := githubIssueCommentAdd(ctx, token, path, number, comment)
+		commentURL, err := githubAddCloseComment(ctx, token, path, number, comment)
 		if err != nil {
 			return "", err
 		}
-		var c struct {
-			URL string `json:"url"`
-		}
-		_ = json.Unmarshal([]byte(added), &c)
-		out["commentUrl"] = c.URL
+		out["commentUrl"] = commentURL
 	}
 	payload, _ := json.Marshal(map[string]string{"state": "closed"})
 	resp, raw, err = githubRequest(ctx, client, http.MethodPatch, prURL, token, payload)
@@ -510,6 +500,29 @@ func githubPRClose(ctx context.Context, token, path string, args map[string]any)
 	}
 	result, _ := json.Marshal(out)
 	return string(result), nil
+}
+
+// githubCloseCommentArg reads the optional comment left before closing an
+// issue or PR.
+func githubCloseCommentArg(args map[string]any) (string, error) {
+	comment := githubArgString(args, "comment")
+	if len([]rune(comment)) > 10000 {
+		return "", fmt.Errorf("comment must be at most 10000 characters")
+	}
+	return comment, nil
+}
+
+// githubAddCloseComment posts the closing comment and returns its URL.
+func githubAddCloseComment(ctx context.Context, token, path string, number int, comment string) (string, error) {
+	added, err := githubIssueCommentAdd(ctx, token, path, number, comment)
+	if err != nil {
+		return "", err
+	}
+	var c struct {
+		URL string `json:"url"`
+	}
+	_ = json.Unmarshal([]byte(added), &c)
+	return c.URL, nil
 }
 
 func githubErrorDetail(raw []byte) string {
