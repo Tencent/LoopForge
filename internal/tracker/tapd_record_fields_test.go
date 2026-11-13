@@ -67,3 +67,27 @@ func TestAllocateTAPDIssueID(t *testing.T) {
 		})
 	}
 }
+
+func TestUpsertTAPDRecordRejectsOccupiedLocalIDs(t *testing.T) {
+	svc := NewService()
+	store := &memIssueStore{projects: map[string]domain.Project{"dp": {ID: "dp"}}}
+	// Local, non-TAPD issues hold both candidate IDs, so the record is not
+	// "found" and allocation must fail instead of overwriting either issue.
+	for _, id := range []string{"tapd-1001", "tapd-10000000-bug-1001"} {
+		if err := store.PutIssue(domain.Issue{ID: id, ProjectID: "dp", Title: "local " + id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := svc.upsertTAPDRecord(store, "dp", "10000000", tapdStory{ID: "1001", Name: "remote bug"}, "bug", 0, true)
+	if err == nil || !strings.Contains(err.Error(), "本地 ID 已被占用") {
+		t.Fatalf("want occupied error, got issue=%+v err=%v", got, err)
+	}
+	if n := len(store.Issues()); n != 2 {
+		t.Fatalf("occupied IDs must not create another issue, got %d: %+v", n, store.Issues())
+	}
+	for _, id := range []string{"tapd-1001", "tapd-10000000-bug-1001"} {
+		if issue, ok := store.Issue(id); !ok || issue.Title != "local "+id || issue.Source != "" {
+			t.Fatalf("local issue %s was overwritten: %+v", id, issue)
+		}
+	}
+}
