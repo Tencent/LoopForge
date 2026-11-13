@@ -186,8 +186,10 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	argv := []string{o.Bin, "-p", "--verbose", "--output-format", "stream-json", "--include-partial-messages",
 		"--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", o.SystemPrompt,
 		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", "user",
-		"--permission-mode", "bypassPermissions", "--disallowedTools", claudeAssistantDisallowedTools,
-		"--model", o.Model}
+		"--permission-mode", "bypassPermissions", "--disallowedTools", claudeAssistantDisallowedTools}
+	if model := strings.TrimSpace(o.Model); model != "" {
+		argv = append(argv, "--model", model)
+	}
 	if effort := strings.TrimSpace(o.Effort); effort != "" {
 		argv = append(argv, "--effort", effort)
 	}

@@ -339,3 +339,83 @@ func TestAssistantCodexAppServerDisablesNativeTools(t *testing.T) {
 		t.Fatalf("guard script = %q err=%v", guard, err)
 	}
 }
+
+// The "CLI default" catalog entry is a placeholder; a non-CodeBuddy CLI must
+// keep its own model instead of receiving the literal "default" (#461).
+func TestAssistantCLIModelArgDropsDefaultPlaceholder(t *testing.T) {
+	engine, model := assistantModelEngine(assistantRequestModel("dsh", assistantDefaultModel))
+	if engine != "dsh" || model != assistantDefaultModel {
+		t.Fatalf("dsh default = %q %q", engine, model)
+	}
+	for in, want := range map[string]string{"default": "", " Default ": "", "": "", "deepseek-flash": "deepseek-flash", " gpt-5.5 ": "gpt-5.5"} {
+		if got := assistantCLIModelArg(in); got != want {
+			t.Fatalf("assistantCLIModelArg(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAssistantClaudeOmitsEmptyModel(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "mcp.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := prepareAssistantClaudeInvocation(assistantEngineInvocationOpts{Bin: "claude", Root: root, Config: config, Prompt: "p", SessionID: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range inv.command.Argv {
+		if arg == "--model" {
+			t.Fatalf("Claude argv names a model without one: %q", inv.command.Argv)
+		}
+	}
+	inv, err = prepareAssistantClaudeInvocation(assistantEngineInvocationOpts{Bin: "claude", Root: root, Config: config, Prompt: "p", Model: "claude-haiku-5.5", SessionID: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if argv := strings.Join(inv.command.Argv, "\x00"); !strings.Contains(argv, "\x00--model\x00claude-haiku-5.5") {
+		t.Fatalf("Claude argv lost its model: %q", inv.command.Argv)
+	}
+}
+
+func TestAssistantCodexThreadOmitsEmptyModel(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  any
+	}{{"", nil}, {"gpt-5.5", "gpt-5.5"}} {
+		dir := t.TempDir()
+		config := filepath.Join(dir, "mcp.json")
+		if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		inv, err := prepareAssistantCodexInvocation(assistantEngineInvocationOpts{Bin: "codex", Root: dir, Config: config, Prompt: "hi", Model: tc.model, SessionID: "s1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		inv.translate(`{"id":1,"result":{}}`)
+		// Every request is already in the pipe; one read drains it.
+		buf := make([]byte, 1<<16)
+		n, err := inv.command.Stdin.(*os.File).Read(buf)
+		inv.finish(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data := buf[:n]
+		var start map[string]any
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			var message struct {
+				Method string         `json:"method"`
+				Params map[string]any `json:"params"`
+			}
+			if json.Unmarshal([]byte(line), &message) == nil && message.Method == "thread/start" {
+				start = message.Params
+			}
+		}
+		if start == nil {
+			t.Fatalf("no thread/start request in %q", data)
+		}
+		if got, ok := start["model"]; tc.want == nil && ok || tc.want != nil && got != tc.want {
+			t.Fatalf("model %q: thread/start params = %v", tc.model, start)
+		}
+	}
+}

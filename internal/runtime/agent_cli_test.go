@@ -468,3 +468,17 @@ func TestOpenAgentCLIHomeTrustsBase(t *testing.T) {
 		}
 	}
 }
+
+// On the official endpoint dsh picks its own model when chat sends none, so
+// the "CLI default" choice must not patch an agent-default-model (#461).
+func TestDeepSeekWithoutModelKeepsCLIDefault(t *testing.T) {
+	home := t.TempDir()
+	argv, _, err := ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{APIKey: "d"}, AgentCLIOptions{}, HostAgentCLIHome(home), "/h", []string{"dsh", "--profile", "headless", "--json", "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".dsh", "agentflow-model.json"))
+	if err == nil && strings.Contains(string(data), "agent-default-model") {
+		t.Fatalf("dsh model patch without a model: %s (argv %q)", data, argv)
+	}
+}

@@ -180,7 +180,11 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 			return s.fail("Codex app-server 初始化失败：" + failure)
 		}
 		s.write(map[string]any{"method": "initialized", "params": map[string]any{}})
-		params := map[string]any{"model": s.opts.Model, "developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never"}
+		params := map[string]any{"developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never"}
+		if model := strings.TrimSpace(s.opts.Model); model != "" {
+			// Without a model the app server uses Codex's configured default.
+			params["model"] = model
+		}
 		if s.resume != "" {
 			params["threadId"] = s.resume
 			s.request("thread/resume", params)

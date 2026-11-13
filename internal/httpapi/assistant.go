@@ -1220,6 +1220,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if engine != assistantEngineCodeBuddy && (req.ReportOnly || (!req.Native && !req.ReviewOnly)) {
 		return "", "", errAssistantEngineUnsupported
 	}
+	if engine != assistantEngineCodeBuddy {
+		engineModel = assistantCLIModelArg(engineModel)
+	}
 	bin, err := resolveAssistantEngineBin(engine)
 	if err != nil {
 		log.Printf("assistant CLI resolve failed: %v", err)

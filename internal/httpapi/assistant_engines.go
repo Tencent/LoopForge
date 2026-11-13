@@ -45,6 +45,18 @@ func assistantModelEngine(id string) (engine, model string) {
 	return assistantEngineCodeBuddy, id
 }
 
+// assistantCLIModelArg is the model a non-CodeBuddy CLI is started with.
+// "default" is the catalog's "CLI default" placeholder, not a model ID: it
+// becomes empty so the CLI keeps its own configured model instead of sending
+// "default" to the provider.
+func assistantCLIModelArg(model string) string {
+	model = strings.TrimSpace(model)
+	if strings.EqualFold(model, assistantDefaultModel) {
+		return ""
+	}
+	return model
+}
+
 // assistantEngineOption is one entry of the chat composer's CLI switch.
 // Credential names the 个人配置 field that enables it.
 type assistantEngineOption struct {
