@@ -58,36 +58,45 @@ func ArchiveDir(workspace, sourcePath, indexFile string, limits Limits, dst io.W
 		return Result{}, fmt.Errorf("%w: %s", ErrMissingIndex, indexFile)
 	}
 
+	sum, compressed, err := writeTarZst(dst, entries, limits.MaxCompressed)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{
+		StorageKey:     ContentKey(sum),
+		SHA256:         sum,
+		CompressedSize: compressed,
+		ExpandedSize:   expanded,
+		FileCount:      len(entries),
+		EntryFile:      indexFile,
+	}, nil
+}
+
+// writeTarZst streams entries as a tar.zst into dst and returns the hex SHA-256
+// and byte count of the compressed stream. maxCompressed > 0 caps that count.
+func writeTarZst(dst io.Writer, entries []fileEntry, maxCompressed int64) (string, int64, error) {
 	hash := sha256.New()
-	counter := &countWriter{w: io.MultiWriter(dst, hash), limit: limits.MaxCompressed}
+	counter := &countWriter{w: io.MultiWriter(dst, hash), limit: maxCompressed}
 	enc, err := zstd.NewWriter(counter, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
-		return Result{}, fmt.Errorf("zstd encoder: %w", err)
+		return "", 0, fmt.Errorf("zstd encoder: %w", err)
 	}
 	tw := tar.NewWriter(enc)
 	for _, item := range entries {
 		if err := writeTarFile(tw, item); err != nil {
 			_ = tw.Close()
 			_ = enc.Close()
-			return Result{}, err
+			return "", 0, err
 		}
 	}
 	if err := tw.Close(); err != nil {
 		_ = enc.Close()
-		return Result{}, err
+		return "", 0, err
 	}
 	if err := enc.Close(); err != nil {
-		return Result{}, err
+		return "", 0, err
 	}
-	sum := hex.EncodeToString(hash.Sum(nil))
-	return Result{
-		StorageKey:     ContentKey(sum),
-		SHA256:         sum,
-		CompressedSize: counter.n,
-		ExpandedSize:   expanded,
-		FileCount:      len(entries),
-		EntryFile:      indexFile,
-	}, nil
+	return hex.EncodeToString(hash.Sum(nil)), counter.n, nil
 }
 
 type fileEntry struct {
