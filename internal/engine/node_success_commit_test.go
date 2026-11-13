@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -136,5 +138,59 @@ func TestCommitNodeSuccessWithoutLeaseDoesNotPublish(t *testing.T) {
 	}
 	if n := publishedArtifactObservations(other, r.ID); n != 0 {
 		t.Fatalf("artifact.published observations = %d, want 0", n)
+	}
+}
+
+func TestCommitNodeSuccessClearsStaleErrorAndStampsFinish(t *testing.T) {
+	t.Parallel()
+	for _, gate := range []string{"", "人工验收"} {
+		t.Run("gate="+gate, func(t *testing.T) {
+			s, _ := repo.OpenTest()
+			defer s.Close()
+			e := leaseEngine(t, s, "owner")
+			r := leaseRun(t, s, "run-commit-fields", "running", "running")
+			leased, err := e.acquireLease(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A previous attempt left an error on the node; the landed success
+			// must clear it and record when the node finished.
+			if !e.updateRunAt(r.ID, false, func(r *domain.Run) { r.Nodes["node"].Error = "上一次尝试失败" }) {
+				t.Fatal("seed error not stored")
+			}
+			before := time.Now().UTC()
+			node := domain.WorkflowNode{ID: "node", Name: "方案设计", Type: "agent"}
+			if !e.commitNodeSuccess(r.ID, node, leased.Generation, 1, "done", nil, gate) {
+				t.Fatal("commit must land")
+			}
+			got, _ := s.RunState(r.ID)
+			nr := got.Nodes["node"]
+			if nr.Error != "" {
+				t.Fatalf("stale error survived the successful commit: %q", nr.Error)
+			}
+			if nr.FinishedAt.IsZero() || nr.FinishedAt.Before(before.Add(-time.Second)) {
+				t.Fatalf("FinishedAt = %v, want stamped at commit (>= %v)", nr.FinishedAt, before)
+			}
+		})
+	}
+}
+
+func TestNodeCommitRejectionNamesTheFence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		run  domain.Run
+		nr   *domain.NodeRun
+		want string
+	}{
+		{"missing node", domain.Run{Generation: 3}, nil, "node is missing from the run"},
+		{"generation moved", domain.Run{Generation: 4}, &domain.NodeRun{Status: "running"}, "run generation moved from 3 to 4"},
+		{"node not in flight", domain.Run{Generation: 3}, &domain.NodeRun{Status: "pending"}, "node is pending, not in flight"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nodeCommitRejection(tc.run, tc.nr, 3); !strings.Contains(got, tc.want) {
+				t.Fatalf("nodeCommitRejection = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
