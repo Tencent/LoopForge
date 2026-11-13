@@ -131,11 +131,15 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 func conversationCLISetup(provider, binary string) (string, error) {
 	packages := map[string]string{
 		"codebuddy": "@tencent-ai/codebuddy-code", "codex": "@openai/codex", "claude-code": "@anthropic-ai/claude-code",
-		AgentCLIOpenCode: "opencode-ai", AgentCLIKimi: "@moonshot-ai/kimi-code", AgentCLIPi: "@earendil-works/pi-coding-agent", AgentCLIDeepSeek: "@deepseek-ai/dsh",
+		AgentCLIOpenCode: "opencode-ai", AgentCLIKimi: "@moonshot-ai/kimi-code", AgentCLIPi: "@earendil-works/pi-coding-agent", AgentCLIDeepSeek: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion,
 	}
 	installer := ""
 	if pkg := packages[provider]; pkg != "" {
-		installer = "npm install --no-audit --no-fund --prefix /opt/loopforge/conversation-cli " + shellSingleQuote(pkg) + " >&2\nln -sf ../node_modules/.bin/" + shellSingleQuote(binary) + " /opt/loopforge/conversation-cli/bin/" + shellSingleQuote(binary)
+		flags := ""
+		if provider == AgentCLIDeepSeek {
+			flags = "--engine-strict=false "
+		}
+		installer = "npm install --no-audit --no-fund " + flags + "--prefix /opt/loopforge/conversation-cli " + shellSingleQuote(pkg) + " >&2\nln -sf ../node_modules/.bin/" + shellSingleQuote(binary) + " /opt/loopforge/conversation-cli/bin/" + shellSingleQuote(binary)
 	} else {
 		switch provider {
 		case AgentCLIZCode:
@@ -150,9 +154,12 @@ func conversationCLISetup(provider, binary string) (string, error) {
 			return "", fmt.Errorf("不支持的会话CLI %s", provider)
 		}
 	}
+	// Setup runs as root in a --cap-drop=ALL container, where GNU tar's default
+	// of restoring archive owners fails with EPERM.
 	return "set -eu\n" +
 		`PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH
-export PATH
+TAR_OPTIONS=--no-same-owner
+export PATH TAR_OPTIONS
 if ! command -v python3 >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then apt-get update >&2 && apt-get install -y python3 >&2
   elif command -v apk >/dev/null 2>&1; then apk add --no-cache python3 >&2
