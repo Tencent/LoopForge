@@ -64,6 +64,16 @@ function runnerPersonalCredentialConfigured(provider){
   if(provider==='codebuddy')return !!user.codeBuddyApiKeyConfigured;
   return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;
 }
+// CodeBuddy on a runner always uses the personal API Key, so the card shows
+// the same network environment as 个人配置 → CodeBuddy. An iOA key used with
+// the wrong environment fails with 401 on the machine.
+function runnerCodeBuddyAuthHTML(credentialReady){
+  if(!credentialReady)return '<span class="runner-auth-fixed missing" title="到个人配置补充 CodeBuddy API Key 并选择网络环境">个人凭证（未配置）</span>';
+  const user=userById(state.currentUser?.id)||{};
+  const raw=String(user.codeBuddyInternetEnvironment||'').trim(),env=codeBuddyEnvironment(raw);
+  if(!env)return `<span class="runner-auth-fixed missing" title="网络环境「${escapeHTML(raw)}」无法识别，CodeBuddy 会按国际站连接。到个人配置重新选择网络环境">个人凭证 · 网络环境无法识别</span>`;
+  return `<span class="runner-auth-fixed" title="CodeBuddy 使用个人配置中保存的 API Key，网络环境：${escapeHTML(env.label)}">个人凭证 · ${escapeHTML(env.label)}</span>`;
+}
 function runnerLastSeen(value){
   if(!value)return '尚无心跳';
   const seconds=Math.max(0,Math.round((Date.now()-new Date(value).getTime())/1000));
@@ -133,7 +143,7 @@ function renderRunnersView(){
       const personalLabel=credentialReady?'个人凭证':'个人凭证（未配置）';
       const credentialMissing=authMode==='personal'&&!credentialReady;
       const authControl=rt.provider==='codebuddy'
-        ?`<span class="runner-auth-fixed ${credentialReady?'':'missing'}" title="CodeBuddy 使用个人配置中保存的 API Key">${personalLabel}</span>`
+        ?runnerCodeBuddyAuthHTML(credentialReady)
         :`<select class="runner-auth-select ${credentialMissing?'missing':''}" data-runner-auth="${escapeHTML(r.id)}|${escapeHTML(rt.provider)}" aria-label="${runnerCLILabels[rt.provider]} 认证来源"${credentialMissing?` title="到个人配置补充 ${runnerCLILabels[rt.provider]} API Key"`:''}>
             <option value="local" ${authMode==='local'?'selected':''}>本机登录</option>
             <option value="personal" ${authMode==='personal'?'selected':''}>${personalLabel}</option>
