@@ -162,16 +162,7 @@ func githubPRFiles(ctx context.Context, token, path string, args map[string]any)
 				break
 			}
 			f := fileOut{Filename: it.Filename, Status: it.Status, Additions: it.Additions, Deletions: it.Deletions}
-			patch := it.Patch
-			if len([]rune(patch)) > githubPRFilePatchRunes {
-				patch = string([]rune(patch)[:githubPRFilePatchRunes]) + "\n…（该文件 diff 过长已截断）"
-			}
-			if n := len([]rune(patch)); n > 0 && n <= budget {
-				f.Patch = patch
-				budget -= n
-			} else if n > 0 {
-				f.PatchOmitted = true
-			}
+			f.Patch, f.PatchOmitted, budget = githubPRFilePatch(it.Patch, budget)
 			out = append(out, f)
 		}
 		if hasMore || len(items) < githubListPageSize {
@@ -183,6 +174,21 @@ func githubPRFiles(ctx context.Context, token, path string, args map[string]any)
 	}
 	body, _ := json.Marshal(map[string]any{"repository": path, "number": number, "files": out, "count": len(out), "hasMore": hasMore})
 	return string(body), nil
+}
+
+// githubPRFilePatch 先把单个文件的 diff 截到 githubPRFilePatchRunes 以内，
+// 再按剩余的总预算决定是否保留：放得下就保留并扣减预算，放不下就标记省略，
+// 空 diff 既不保留也不标记。返回保留的 diff、是否省略和扣减后的预算。
+func githubPRFilePatch(patch string, budget int) (kept string, omitted bool, remaining int) {
+	if len([]rune(patch)) > githubPRFilePatchRunes {
+		patch = string([]rune(patch)[:githubPRFilePatchRunes]) + "\n…（该文件 diff 过长已截断）"
+	}
+	if n := len([]rune(patch)); n > 0 && n <= budget {
+		return patch, false, budget - n
+	} else if n > 0 {
+		return "", true, budget
+	}
+	return "", false, budget
 }
 
 func githubPRReview(ctx context.Context, token, path string, args map[string]any) (string, error) {
