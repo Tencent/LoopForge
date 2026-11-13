@@ -83,3 +83,38 @@ func TestPreviewStudioCSP(t *testing.T) {
 		})
 	}
 }
+
+// TestPreviewStudioCSPAfterLateSetPreview attaches the preview service only
+// after New has built the routes. The studio page must still allow the
+// preview origin in frame-src, otherwise the embedded preview iframe is
+// blocked by the platform's own CSP.
+func TestPreviewStudioCSPAfterLateSetPreview(t *testing.T) {
+	t.Setenv("AGENTFLOW_SCHEDULER_ENABLED", "false")
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "false")
+	t.Setenv("AGENTFLOW_PREVIEW_PUBLIC_URL", "https://preview.example")
+	t.Setenv("AGENTFLOW_PREVIEW_FRAME_ANCESTORS", "https://studio.example")
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	en := engine.New(st, runtime.NewManager(t.TempDir()))
+	handler := New(st, en, nil, "", "")
+	frameSrc := func() string {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://studio.example/", nil))
+		for _, directive := range strings.Split(rec.Header().Get("Content-Security-Policy"), ";") {
+			if name, value, ok := strings.Cut(strings.TrimSpace(directive), " "); ok && name == "frame-src" {
+				return value
+			}
+		}
+		return ""
+	}
+	if got := frameSrc(); got != "'self' blob:" {
+		t.Fatalf("frame-src before SetPreview = %q, want %q", got, "'self' blob:")
+	}
+	en.SetPreview(preview.NewService(st, nil, preview.LoadConfig()))
+	if got, want := frameSrc(), "'self' blob: https://preview.example"; got != want {
+		t.Fatalf("frame-src after SetPreview = %q, want %q", got, want)
+	}
+}
