@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"slices"
 	"time"
 )
 
@@ -281,12 +282,7 @@ func (r *NotificationsRepo) notificationProjectName(tx *gorm.DB, id string) stri
 	return id
 }
 func notificationEventSelected(binding domain.NotificationBinding, event string) bool {
-	for _, selected := range binding.Events {
-		if selected == event {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(binding.Events, event)
 }
 func notificationStatus(trigger, scope string) string {
 	switch trigger {
