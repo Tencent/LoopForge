@@ -277,92 +277,110 @@ func (v *browserView) notify() {
 func (v *browserView) onEvent(msg cdpMessage) {
 	switch msg.Method {
 	case "Target.targetCreated", "Target.targetInfoChanged":
-		var ev struct {
-			TargetInfo cdpTargetInfo `json:"targetInfo"`
-		}
-		if json.Unmarshal(msg.Params, &ev) != nil || ev.TargetInfo.Type != "page" {
-			return
-		}
-		v.mu.Lock()
-		t := v.targets[ev.TargetInfo.TargetID]
-		created := t == nil
-		if created {
-			t = &browserTarget{ID: ev.TargetInfo.TargetID, created: time.Now()}
-			v.targets[t.ID] = t
-		}
-		t.Title, t.URL = ev.TargetInfo.Title, ev.TargetInfo.URL
-		follow := created && v.follow && msg.Method == "Target.targetCreated"
-		v.notify()
-		v.mu.Unlock()
-		if follow {
-			// Follow tabs the agent opens so the panel shows what it works on.
-			go func(id string) {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				_ = v.attach(ctx, id)
-			}(t.ID)
-		}
+		v.onTargetInfo(msg)
 	case "Target.targetDestroyed":
-		var ev struct {
-			TargetID string `json:"targetId"`
-		}
-		if json.Unmarshal(msg.Params, &ev) != nil {
-			return
-		}
-		v.mu.Lock()
-		delete(v.targets, ev.TargetID)
-		wasActive := v.active == ev.TargetID
-		if wasActive {
-			v.active, v.session = "", ""
-		}
-		v.notify()
-		v.mu.Unlock()
-		if wasActive {
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				if next := v.latestTarget(); next != "" {
-					_ = v.attach(ctx, next)
-				}
-			}()
-		}
+		v.onTargetDestroyed(msg)
 	case "Page.screencastFrame":
-		var ev struct {
-			Data      string `json:"data"`
-			SessionID int64  `json:"sessionId"`
-			Metadata  struct {
-				DeviceWidth     float64 `json:"deviceWidth"`
-				DeviceHeight    float64 `json:"deviceHeight"`
-				ScrollOffsetX   float64 `json:"scrollOffsetX"`
-				ScrollOffsetY   float64 `json:"scrollOffsetY"`
-				PageScaleFactor float64 `json:"pageScaleFactor"`
-			} `json:"metadata"`
-		}
-		if json.Unmarshal(msg.Params, &ev) != nil {
-			return
-		}
-		v.mu.Lock()
-		current := msg.SessionID == v.session
-		refresh := false
-		if current {
-			v.frame, v.width, v.height = ev.Data, ev.Metadata.DeviceWidth, ev.Metadata.DeviceHeight
-			v.scrollX, v.scrollY = ev.Metadata.ScrollOffsetX, ev.Metadata.ScrollOffsetY
-			v.seq++
-			v.notify()
-			if !v.contentBusy && time.Since(v.contentAt) > browserContentRefresh {
-				v.contentBusy, refresh = true, true
-			}
-		}
-		v.mu.Unlock()
-		if refresh {
-			go v.refreshContentSize(msg.SessionID)
-		}
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		v.onScreencastFrame(msg)
+	}
+}
+
+// onTargetInfo records a created or changed page target and follows tabs
+// the agent opens when following is enabled.
+func (v *browserView) onTargetInfo(msg cdpMessage) {
+	var ev struct {
+		TargetInfo cdpTargetInfo `json:"targetInfo"`
+	}
+	if json.Unmarshal(msg.Params, &ev) != nil || ev.TargetInfo.Type != "page" {
+		return
+	}
+	v.mu.Lock()
+	t := v.targets[ev.TargetInfo.TargetID]
+	created := t == nil
+	if created {
+		t = &browserTarget{ID: ev.TargetInfo.TargetID, created: time.Now()}
+		v.targets[t.ID] = t
+	}
+	t.Title, t.URL = ev.TargetInfo.Title, ev.TargetInfo.URL
+	follow := created && v.follow && msg.Method == "Target.targetCreated"
+	v.notify()
+	v.mu.Unlock()
+	if follow {
+		// Follow tabs the agent opens so the panel shows what it works on.
+		go func(id string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			_ = v.client.call(ctx, msg.SessionID, "Page.screencastFrameAck", map[string]any{"sessionId": ev.SessionID}, nil)
+			_ = v.attach(ctx, id)
+		}(t.ID)
+	}
+}
+
+// onTargetDestroyed forgets a closed target and, when it was the active
+// page, attaches the most recent remaining one.
+func (v *browserView) onTargetDestroyed(msg cdpMessage) {
+	var ev struct {
+		TargetID string `json:"targetId"`
+	}
+	if json.Unmarshal(msg.Params, &ev) != nil {
+		return
+	}
+	v.mu.Lock()
+	delete(v.targets, ev.TargetID)
+	wasActive := v.active == ev.TargetID
+	if wasActive {
+		v.active, v.session = "", ""
+	}
+	v.notify()
+	v.mu.Unlock()
+	if wasActive {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if next := v.latestTarget(); next != "" {
+				_ = v.attach(ctx, next)
+			}
 		}()
 	}
+}
+
+// onScreencastFrame stores the active page's frame, throttles content size
+// refreshes and acknowledges the frame.
+func (v *browserView) onScreencastFrame(msg cdpMessage) {
+	var ev struct {
+		Data      string `json:"data"`
+		SessionID int64  `json:"sessionId"`
+		Metadata  struct {
+			DeviceWidth     float64 `json:"deviceWidth"`
+			DeviceHeight    float64 `json:"deviceHeight"`
+			ScrollOffsetX   float64 `json:"scrollOffsetX"`
+			ScrollOffsetY   float64 `json:"scrollOffsetY"`
+			PageScaleFactor float64 `json:"pageScaleFactor"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal(msg.Params, &ev) != nil {
+		return
+	}
+	v.mu.Lock()
+	current := msg.SessionID == v.session
+	refresh := false
+	if current {
+		v.frame, v.width, v.height = ev.Data, ev.Metadata.DeviceWidth, ev.Metadata.DeviceHeight
+		v.scrollX, v.scrollY = ev.Metadata.ScrollOffsetX, ev.Metadata.ScrollOffsetY
+		v.seq++
+		v.notify()
+		if !v.contentBusy && time.Since(v.contentAt) > browserContentRefresh {
+			v.contentBusy, refresh = true, true
+		}
+	}
+	v.mu.Unlock()
+	if refresh {
+		go v.refreshContentSize(msg.SessionID)
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = v.client.call(ctx, msg.SessionID, "Page.screencastFrameAck", map[string]any{"sessionId": ev.SessionID}, nil)
+	}()
 }
 
 // browserContentRefresh bounds layout metric reads: content size changes
