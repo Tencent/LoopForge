@@ -7,6 +7,7 @@ import (
 
 	"agentflow/internal/domain"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Separate from the current-generation slot: a retry must not replace the
@@ -26,17 +27,25 @@ func initialAssistantDiagnostics(g domain.AssistantGeneration) domain.AssistantD
 }
 
 func checkpointAssistantDiagnostics(tx *gorm.DB, g domain.AssistantGeneration, reports []domain.AssistantDiagnostics) error {
+	now := time.Now().UTC()
+	if len(reports) > 0 {
+		// The caller owns the full report, so nothing needs to be read back:
+		// one upsert replaces the previous checkpoint.
+		report := reports[0]
+		report.LastCheckpointAt = &now
+		report.GenerationID, report.SessionID = g.ID, g.SessionID
+		report.Status, report.Failure, report.UpdatedAt = g.Status, g.Failure, now
+		domain.AnalyzeAssistantDiagnostics(&report)
+		row := assistantDiagnosticsRow{GenerationID: g.ID, SessionID: g.SessionID, UserID: g.UserID, Payload: mustJSON(report), UpdatedAt: now}
+		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "generation_id"}}, DoUpdates: clause.AssignmentColumns([]string{"payload", "updated_at"})}).Create(&row).Error
+	}
 	var row assistantDiagnosticsRow
 	err := tx.Where("generation_id = ? AND session_id = ? AND user_id = ?", g.ID, g.SessionID, g.UserID).Take(&row).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	now := time.Now().UTC()
 	report := initialAssistantDiagnostics(g)
-	if len(reports) > 0 {
-		report = reports[0]
-		report.LastCheckpointAt = &now
-	} else if err == nil {
+	if err == nil {
 		_ = json.Unmarshal(row.Payload, &report)
 		if report.LastCheckpointAt == nil && !row.UpdatedAt.IsZero() {
 			prev := row.UpdatedAt.UTC()

@@ -205,4 +205,27 @@ describe("generation diagnostics", () => {
     expect(screen.getByText("tapd__stories_list")).toBeInTheDocument();
     expect(screen.getByText(/执行时间线 · 1 条记录/)).toBeInTheDocument();
   });
+  test("read-only viewers see the failure without detail actions", () => {
+    const { container, rerender } = render(
+      <GenerationDiagnostics
+        sessionId="session-one"
+        generationId="turn-one"
+        failure={failure}
+        readOnly
+      />,
+    );
+    expect(screen.getByText(failure.message)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看详情" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "下载诊断" })).toBeNull();
+    rerender(
+      <GenerationDiagnostics
+        sessionId="session-one"
+        generationId="turn-two"
+        compact
+        readOnly
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    expect(read).not.toHaveBeenCalled();
+  });
 });

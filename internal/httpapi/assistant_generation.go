@@ -304,7 +304,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 					cancel()
 				}
 				snapshot := rec.snapshot()
-				if err := h.repo.CheckpointAssistantGeneration(snapshot, rec.diagnostics.snapshot(snapshot)); err != nil {
+				if err := h.checkpointRunningGeneration(snapshot, rec.diagnostics); err != nil {
 					rec.diagnostics.terminate("CHECKPOINT_FAILED", "保存生成检查点失败："+err.Error(), diagUser)
 					cancel()
 				}

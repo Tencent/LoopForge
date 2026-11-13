@@ -99,9 +99,10 @@ func (a *assistantDiagnosticAttempt) configure(bin string, req assistantCLIReque
 		credential := a.user.AgentCLICredentials[engine]
 		endpoint, protocol = credential.BaseURL, credential.Protocol
 	}
+	// Gateways may put a key in the path (/v1/<key>/…); host is enough to
+	// tell which service the CLI talked to.
 	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
-		u.User, u.RawQuery, u.Fragment = nil, "", ""
-		endpoint = u.String()
+		endpoint = (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
 	}
 	binarySource := "discovered"
 	key := "AGENTFLOW_" + strings.ToUpper(strings.ReplaceAll(engine, "-", "_")) + "_BIN"

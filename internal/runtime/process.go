@@ -26,11 +26,16 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	// at 100ms a busy host (CI running Go and JS tests together) dropped the
 	// tail of a 50KB failure log, which is the part users need.
 	cmd.WaitDelay = processWaitDelay
+	// Start launches the stdout/stderr copy goroutines. Hold the writers' lock
+	// until process.started is delivered so the sink stays serialized and the
+	// event always precedes the first output line.
+	mu.Lock()
 	err := cmd.Start()
+	if err == nil && sink != nil {
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args), Attributes: map[string]any{"pid": cmd.Process.Pid}})
+	}
+	mu.Unlock()
 	if err == nil {
-		if sink != nil {
-			sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args), Attributes: map[string]any{"pid": cmd.Process.Pid}})
-		}
 		err = cmd.Wait()
 	} else if sink != nil {
 		sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})

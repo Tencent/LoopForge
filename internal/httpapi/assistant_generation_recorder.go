@@ -87,3 +87,17 @@ func (r *assistantGenerationRecorder) activity() []domain.AssistantActivityEvent
 	defer r.mu.Unlock()
 	return r.projection.activity.snapshot()
 }
+
+// checkpointRunningGeneration renews a running turn's lease every tick but
+// rewrites its diagnostic payload only when the evidence changed or the
+// rewrite interval elapsed.
+func (h *assistantHandlers) checkpointRunningGeneration(g domain.AssistantGeneration, d *assistantDiagnosticsCollector) error {
+	if d == nil {
+		return h.repo.CheckpointAssistantGeneration(g)
+	}
+	report, write := d.checkpointSnapshot(g)
+	if !write {
+		return h.repo.HeartbeatAssistantGeneration(g)
+	}
+	return h.repo.CheckpointAssistantGeneration(g, report)
+}

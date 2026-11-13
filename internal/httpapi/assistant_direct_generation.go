@@ -46,7 +46,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 					cancel()
 					return
 				}
-				if err := h.repo.CheckpointAssistantGeneration(g, diagnostics.snapshot(g)); err != nil {
+				if err := h.checkpointRunningGeneration(g, diagnostics); err != nil {
 					diagnostics.terminate("CHECKPOINT_FAILED", "保存生成检查点失败："+err.Error(), actor)
 					cancel()
 					return

@@ -117,6 +117,17 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 	})
 }
 func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration, diagnostics ...domain.AssistantDiagnostics) error {
+	return r.checkpointAssistantGeneration(g, true, diagnostics)
+}
+
+// HeartbeatAssistantGeneration records a running checkpoint whose diagnostic
+// evidence has not changed since it was last stored, so the diagnostic payload
+// is not rewritten.
+func (r *AssistantRepo) HeartbeatAssistantGeneration(g domain.AssistantGeneration) error {
+	return r.checkpointAssistantGeneration(g, false, nil)
+}
+
+func (r *AssistantRepo) checkpointAssistantGeneration(g domain.AssistantGeneration, withDiagnostics bool, diagnostics []domain.AssistantDiagnostics) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var row assistantGenerationRow
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Take(&row).Error
@@ -139,6 +150,9 @@ func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGenerati
 		}
 		if res.RowsAffected != 1 {
 			return fmt.Errorf("生成状态已变化")
+		}
+		if !withDiagnostics {
+			return nil
 		}
 		return checkpointAssistantDiagnostics(tx, g, diagnostics)
 	})

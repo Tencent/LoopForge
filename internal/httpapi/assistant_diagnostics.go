@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os/exec"
 	"regexp"
@@ -25,7 +27,16 @@ type assistantDiagnosticsCollector struct {
 	sequence         int
 	timelineSequence int
 	toolSequence     int
+	// persisted fingerprints the evidence last written by a running
+	// checkpoint, so unchanged evidence is not rewritten every tick.
+	persisted   [sha256.Size]byte
+	persistedAt time.Time
 }
+
+// assistantDiagnosticsRewriteInterval bounds how long a running turn's stored
+// evidence may go without a rewrite; it must stay well below the 45s after
+// which a silent row is reported as CHECKPOINT_LOST.
+const assistantDiagnosticsRewriteInterval = 10 * time.Second
 
 func newAssistantDiagnosticsCollector(g domain.AssistantGeneration) *assistantDiagnosticsCollector {
 	environment := assistantDiagnosticEnvironment()
@@ -54,6 +65,24 @@ func (d *assistantDiagnosticsCollector) snapshot(g domain.AssistantGeneration) d
 	return out
 }
 
+// checkpointSnapshot returns the report for a running checkpoint and whether it
+// must be written: evidence changed, or the rewrite interval elapsed.
+func (d *assistantDiagnosticsCollector) checkpointSnapshot(g domain.AssistantGeneration) (domain.AssistantDiagnostics, bool) {
+	report := d.snapshot(g)
+	stable := report
+	stable.UpdatedAt, stable.LastCheckpointAt = time.Time{}, nil
+	raw, _ := json.Marshal(stable)
+	sum := sha256.Sum256(raw)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := time.Now()
+	if g.Status == "running" && sum == d.persisted && now.Sub(d.persistedAt) < assistantDiagnosticsRewriteInterval {
+		return report, false
+	}
+	d.persisted, d.persistedAt = sum, now
+	return report, true
+}
+
 func (d *assistantDiagnosticsCollector) fail(ctx context.Context, err error, user domain.User) domain.AssistantFailure {
 	f := classifyAssistantFailure(ctx, err)
 	if d == nil {
@@ -61,29 +90,16 @@ func (d *assistantDiagnosticsCollector) fail(ctx context.Context, err error, use
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	// Some adapters return only an exit error. Prefer the explicit provider
-	// failure metadata captured before translation in that case.
-	if f.Code == "GENERATION_FAILED" || f.Code == "CLI_EXIT_NONZERO" || f.Code == "MISSING_RESULT" {
-		for i := len(d.report.Attempts) - 1; i >= 0; i-- {
-			attempt := d.report.Attempts[i]
-			candidates := append([]domain.AssistantDiagnosticEvent{}, attempt.Events...)
-			if attempt.FirstError != nil {
-				candidates = append(candidates, *attempt.FirstError)
-			}
-			for j := len(candidates) - 1; j >= 0; j-- {
-				e := candidates[j]
-				if e.Kind == "provider.metadata" {
-					continue
-				}
-				candidate := classifyAssistantFailure(ctx, fmt.Errorf("%s %s http %d", e.Code, e.Message, e.StatusCode))
-				if candidate.Code != "GENERATION_FAILED" {
-					f = candidate
-					break
-				}
-			}
-			if f.Code != "GENERATION_FAILED" && f.Code != "CLI_EXIT_NONZERO" && f.Code != "MISSING_RESULT" {
-				break
-			}
+	// Unless the error itself names the cause, prefer the structured provider
+	// failure captured before translation over keywords in the stderr tail:
+	// the newest error event is the one that ended the turn.
+	specific := false
+	if err != nil && ctx.Err() == nil {
+		_, specific = classifyAssistantFailureParts(domain.AssistantFailure{Code: "GENERATION_FAILED"}, err)
+	}
+	if !specific && (assistantFailureGeneric(f.Code) || f.Phase == "provider" || f.Phase == "connection") {
+		if candidate, ok := d.structuredFailureLocked(ctx); ok {
+			f = candidate
 		}
 	}
 	if f.Code == "AUTHENTICATION_FAILED" && len(d.report.Attempts) > 0 {
@@ -98,6 +114,35 @@ func (d *assistantDiagnosticsCollector) fail(ctx context.Context, err error, use
 	}
 	d.appendTimelineLocked(domain.AssistantDiagnosticEvent{Kind: "generation.failed", Source: "platform", Code: f.Code, Phase: f.Phase, Message: d.report.Error})
 	return f
+}
+
+// structuredFailureLocked classifies the newest CLI error event, falling back
+// to its HTTP status when the provider text matches no known wording.
+func (d *assistantDiagnosticsCollector) structuredFailureLocked(ctx context.Context) (domain.AssistantFailure, bool) {
+	for i := len(d.report.Attempts) - 1; i >= 0; i-- {
+		attempt := d.report.Attempts[i]
+		candidates := append([]domain.AssistantDiagnosticEvent{}, attempt.Events...)
+		if attempt.FirstError != nil {
+			candidates = append([]domain.AssistantDiagnosticEvent{*attempt.FirstError}, candidates...)
+		}
+		for j := len(candidates) - 1; j >= 0; j-- {
+			e := candidates[j]
+			if e.Kind == "provider.metadata" || !(e.StatusCode >= 400 || strings.Contains(e.Kind, "error") || strings.Contains(e.Kind, "fail")) {
+				continue
+			}
+			candidate := classifyAssistantFailure(ctx, fmt.Errorf("%s %s", e.Code, e.Message))
+			if assistantFailureGeneric(candidate.Code) && e.StatusCode >= 400 {
+				candidate = classifyAssistantFailure(ctx, fmt.Errorf("http %d", e.StatusCode))
+				if assistantFailureGeneric(candidate.Code) && e.StatusCode == http.StatusNotFound {
+					candidate = classifyAssistantFailure(ctx, errors.New("model_not_found"))
+				}
+			}
+			if !assistantFailureGeneric(candidate.Code) {
+				return candidate, true
+			}
+		}
+	}
+	return domain.AssistantFailure{}, false
 }
 
 func (d *assistantDiagnosticsCollector) failureForMessage(message string) *domain.AssistantFailure {

@@ -59,6 +59,7 @@ export default function GenerationDiagnostics({
   failure,
   onCLIInstall,
   compact = false,
+  readOnly = false,
 }) {
   const [open, setOpen] = useState(false);
   const [report, setReport] = useState(null);
@@ -75,7 +76,9 @@ export default function GenerationDiagnostics({
     setError("");
     setLoading(false);
   }, [identity]);
-  if (!sessionId || !generationId) return null;
+  // Read-only viewers (shared conversation links) cannot read the report, so
+  // they only see the fixed failure summary without detail actions.
+  if (!sessionId || !generationId || (readOnly && compact)) return null;
   const path = `${sessionPath(sessionId)}/generations/${encodeURIComponent(generationId)}/diagnostics`;
 
   async function load() {
@@ -130,38 +133,40 @@ export default function GenerationDiagnostics({
           <CLIInstallAction text={shown.message} onResult={onCLIInstall} />
         </>
       ) : null}
-      <div className="diagnostic-actions">
-        <button
-          type="button"
-          onClick={toggle}
-          aria-expanded={open}
-          disabled={loading}
-        >
-          <HarnessIcon
-            name={open ? "chevron-down" : "chevron-right"}
-            size={14}
-            aria-hidden="true"
-          />
-          {compact ? "诊断信息" : "查看详情"}
-        </button>
-        {!compact || open ? (
-          <>
-            <button type="button" onClick={copy} disabled={loading}>
-              <HarnessIcon name="copy" size={14} aria-hidden="true" />
-              复制诊断
-            </button>
-            <a href={`${path}?download=1`} download>
-              <HarnessIcon name="download" size={14} aria-hidden="true" />
-              下载诊断
-            </a>
-          </>
-        ) : null}
-        {loading ? (
-          <span role="status">读取中…</span>
-        ) : notice ? (
-          <span role="status">{notice}</span>
-        ) : null}
-      </div>
+      {readOnly ? null : (
+        <div className="diagnostic-actions">
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={open}
+            disabled={loading}
+          >
+            <HarnessIcon
+              name={open ? "chevron-down" : "chevron-right"}
+              size={14}
+              aria-hidden="true"
+            />
+            {compact ? "诊断信息" : "查看详情"}
+          </button>
+          {!compact || open ? (
+            <>
+              <button type="button" onClick={copy} disabled={loading}>
+                <HarnessIcon name="copy" size={14} aria-hidden="true" />
+                复制诊断
+              </button>
+              <a href={`${path}?download=1`} download>
+                <HarnessIcon name="download" size={14} aria-hidden="true" />
+                下载诊断
+              </a>
+            </>
+          ) : null}
+          {loading ? (
+            <span role="status">读取中…</span>
+          ) : notice ? (
+            <span role="status">{notice}</span>
+          ) : null}
+        </div>
+      )}
       {error ? (
         <p className="diagnostic-fetch-error" role="alert">
           {error}

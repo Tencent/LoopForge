@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -94,7 +95,37 @@ func classifyAssistantFailure(ctx context.Context, err error) domain.AssistantFa
 		f.Code, f.Phase, f.Message, f.Suggestion = "CLI_NOT_INSTALLED", "setup", missing.Error(), "请管理员检查执行器的安装与配置。"
 		return f
 	}
-	message := strings.ToLower(err.Error())
+	// The process error usually carries the CLI's stderr tail. Classify the
+	// error itself first so unrelated stderr words (an earlier retry warning,
+	// sandbox notices) cannot outrank the real cause; stderr is the fallback.
+	f, _ = classifyAssistantFailureParts(f, err)
+	return f
+}
+
+// assistantFailureGeneric reports codes that only say "the CLI failed" and
+// leave room for a more specific cause from stderr or structured events.
+func assistantFailureGeneric(code string) bool {
+	return code == "GENERATION_FAILED" || code == "CLI_EXIT_NONZERO" || code == "MISSING_RESULT"
+}
+
+// classifyAssistantFailureParts classifies the error text before its stderr
+// tail first; specific reports whether that part alone named the cause.
+func classifyAssistantFailureParts(f domain.AssistantFailure, err error) (domain.AssistantFailure, bool) {
+	head, tail, _ := strings.Cut(err.Error(), "; stderr=")
+	c := classifyAssistantFailureText(f, err, head)
+	if !assistantFailureGeneric(c.Code) || tail == "" {
+		return c, !assistantFailureGeneric(c.Code)
+	}
+	if t := classifyAssistantFailureText(f, err, tail); !assistantFailureGeneric(t.Code) {
+		return t, false
+	}
+	return c, false
+}
+
+var assistantModelMissingRe = regexp.MustCompile("(?i)\\bmodel\\s+[`'\"]?[^\\s`'\"]*[`'\"]?\\s*(?:does not exist|not found|is not available)")
+
+func classifyAssistantFailureText(f domain.AssistantFailure, err error, text string) domain.AssistantFailure {
+	message := strings.ToLower(text)
 	has := func(parts ...string) bool {
 		for _, p := range parts {
 			if strings.Contains(message, p) {
@@ -121,7 +152,7 @@ func classifyAssistantFailure(ctx context.Context, err error) domain.AssistantFa
 		f.Code, f.Phase, f.Message, f.Suggestion = "PERMISSION_DENIED", "provider", "模型服务拒绝访问（403）", "请检查 API Key 的权限及模型访问范围。"
 	case has("context_length", "context window", "maximum context", "prompt is too long", "too many tokens"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "CONTEXT_LIMIT_EXCEEDED", "provider", "对话内容超过模型的上下文上限", "请缩短输入、开启新对话，或使用上下文更大的模型。"
-	case has("model_not_found", "model not found", "unknown model", "model does not exist"):
+	case has("model_not_found", "model not found", "unknown model", "model does not exist") || assistantModelMissingRe.MatchString(text):
 		f.Code, f.Phase, f.Message, f.Suggestion = "MODEL_UNAVAILABLE", "provider", "所选模型不存在或当前账号无权使用", "请检查模型名称和访问权限，或切换模型。"
 	case has("upstream unavailable", "service unavailable", "bad gateway", "gateway timeout", "http 502", "http 503", "http 504", "status 502", "status 503", "status 504", "status code 502", "status code 503", "status code 504", "overloaded", "servers are currently busy"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "UPSTREAM_UNAVAILABLE", "provider", "模型服务暂时不可用", "请稍后再试，或切换模型服务。"

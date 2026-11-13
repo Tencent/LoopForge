@@ -24,7 +24,7 @@ GET /api/assistant/sessions/:id/generations/:generationId/diagnostics?download=1
 
 1. **环境与实例（`environment` + 调用级配置）**
    - 平台侧：`platformVersion`、`revision`、`modified`、`goVersion`、`os`、`arch`、`instanceId`、`instanceStartedAt`。服务端关键诊断日志统一携带 `diagnostic=<generationId> instance=<instanceId>`，多副本部署可秒级关联后台日志。
-   - 调用侧（`attempts[]`）：`cliVersion`、`versionSource`（`managed_inventory` / `package_metadata` / `native_handshake` / `not_reported`）、`binarySource`（`explicit_override` / `managed_inventory` / `discovered`）、脱敏后的 `endpoint`、`protocol`、`effort`、`nativeSessionId`、`nativeTurnId`。
+   - 调用侧（`attempts[]`）：`cliVersion`、`versionSource`（`managed_inventory` / `package_metadata` / `native_handshake` / `not_reported`）、`binarySource`（`explicit_override` / `managed_inventory` / `discovered`）、只保留 scheme 与 host 的 `endpoint`（不含路径、凭据和查询参数）、`protocol`、`effort`、`nativeSessionId`、`nativeTurnId`。
 2. **CLI 进程现场（`attempts[].process`）**
    - 记录 `pid`、`state`（`not_started` / `running` / `start_failed` / `exited` / `unknown_after_interruption`）、`startedAt`、`finishedAt`、`signal`（捕获 SIGKILL/SIGTERM 等系统信号）、`userCpuMs`、`systemCpuMs`、`stdoutLines`、`stderrLines`、`firstStdoutAt`、`lastStdoutAt`、`firstStderrAt`、`lastStderrAt`。
    - 结合时间线的 `cli.initialized`、`model.turn_started`、`model.first_output_delta`、`protocol.result_received`，无需采集正文即可区分“卡在进程启动”、“卡在握手/MCP 列表”、“卡在等待模型首包”或“流式中途断流”。
