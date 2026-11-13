@@ -46,8 +46,15 @@ jobs:
             echo "Checkout does not match the release tag commit" >&2
             exit 1
           fi
-          if ! git merge-base --is-ancestor "${tag_commit}" origin/main; then
-            echo "Release tag ${TAG} is not on main" >&2
+          on_release_branch=false
+          for ref in origin/main $(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/release/*'); do
+            if git merge-base --is-ancestor "${tag_commit}" "${ref}"; then
+              on_release_branch=true
+              break
+            fi
+          done
+          if [[ "${on_release_branch}" != true ]]; then
+            echo "Release tag ${TAG} is not on main or a release/* branch" >&2
             exit 1
           fi
           ci="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow platform.yml --commit "${tag_commit}" \
