@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -273,8 +274,9 @@ func TestAgentCLITranslatorDeepSeekReplacesTruncatedTextWithFinal(t *testing.T) 
 }
 
 func TestAgentCLIUserCredentials(t *testing.T) {
-	creds := AgentCLIUserCredentials(domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "k", BaseURL: "u", Protocol: "messages"}}})
-	if creds["kimi"] != (ProviderCredential{APIKey: "k", BaseURL: "u", Protocol: "messages"}) {
+	models := []domain.CLIModel{{ID: "widget", Efforts: map[string]string{"low": "widget-low"}}}
+	creds := AgentCLIUserCredentials(domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "k", BaseURL: "u", Protocol: "messages", Models: models}}})
+	if !reflect.DeepEqual(creds["kimi"], ProviderCredential{APIKey: "k", BaseURL: "u", Protocol: "messages", Models: models}) {
 		t.Fatalf("credentials: %+v", creds)
 	}
 	if AgentCLIUserCredentials(domain.User{}) != nil {

@@ -101,7 +101,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
+	if err := validateAssistantEffort(user, req.Model, req.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -428,7 +428,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		model = forced
 	}
 	model = assistantAllowedModel(model, h.chatCatalog(c.Request.Context(), user))
-	if err := validateAssistantEffort(model, body.Effort); err != nil {
+	if err := validateAssistantEffort(user, model, body.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

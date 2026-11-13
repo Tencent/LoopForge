@@ -120,7 +120,7 @@ func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID 
 // effort; the gateway behind a Base URL may serve nothing else.
 func assistantTitleModel(ctx context.Context, user domain.User, model string, shared []string) (string, string) {
 	if engine, _ := assistantModelEngine(model); engine != assistantEngineCodeBuddy {
-		if efforts := assistantModelEfforts(model); len(efforts) > 0 {
+		if efforts := assistantModelEfforts(user, model); len(efforts) > 0 {
 			return model, efforts[0]
 		}
 		return model, ""
