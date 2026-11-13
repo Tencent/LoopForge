@@ -49,12 +49,20 @@ multi-repository run each repository is judged and reported separately.
 1. The commands run in the repository checkout (sandbox or execution machine,
    same as other gates) with `AGENTFLOW_BASE_BRANCH` exported.
 2. The platform reads `git diff -U0 $(git merge-base <base> HEAD)` for the
-   changed line ranges. Deleted files and pure deletions contribute nothing;
-   renames keep the new path.
+   changed line ranges, plus untracked files the node created (diffed against
+   `/dev/null`, honouring `.gitignore`; the index is not touched). Deleted
+   files and pure deletions contribute nothing; renames keep the new path. The
+   merge-base is taken against `origin/<base>` first, then the local branch;
+   if neither exists the gate fails with “找不到基线分支 <base>” instead of a
+   bare exit status.
 3. It parses the report into *file → executable line → hit count*.
 4. Changed lines that the report does not mark executable (comments, blanks,
    declarations) are ignored. Changed lines in files the report never mentions
-   count as uncovered — that is the “tests never ran for this file” case.
+   count as uncovered — that is the “tests never ran for this file” case — but
+   only when the file is written in the report's language: `*.go` for
+   `go_coverprofile`, and for `lcov`/`cobertura` the extensions of the files
+   the report lists. `CHANGELOG.md`, `*.yaml`, `go.mod` and similar files are
+   therefore never judged.
 5. If the covered fraction is below the threshold, the node fails with the
    gate's `onFailure` policy and the agent receives the file names and line
    ranges, for example:
@@ -64,6 +72,12 @@ multi-repository run each repository is judged and reported separately.
    请为以下未覆盖的改动行补充测试： calc.go L14-L15,L19-L22；
    不要通过删除代码、扩大 exclude 或给这些行加忽略标记来规避。
    ```
+
+Only the diff's file and hunk headers, and for `go_coverprofile` only the
+profile blocks of changed files, travel back from the executor. A CLI Runner
+returns at most the last 32 KiB of a command's output; if the payload still
+does not fit (a large lcov or cobertura report), the gate fails with a message
+saying the output was truncated rather than misreading a partial report.
 
 An empty diff (nothing changed since the base) and an unparsable or missing
 report are treated differently on purpose: empty diff passes as “not

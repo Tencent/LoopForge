@@ -21,8 +21,9 @@ func TestDiffCoverageCommandRunsTestsBeforeEmittingPayload(t *testing.T) {
 
 	markerIdx := strings.Index(cmd, diffCoverageMarker)
 	reportIdx := strings.Index(cmd, diffCoverageReportMarker)
-	catIdx := strings.Index(cmd, "cat 'coverage.out'")
-	if testIdx < 0 || markerIdx < testIdx || reportIdx < markerIdx || catIdx < reportIdx {
+	readIdx := strings.Index(cmd, "if [ -f 'coverage.out' ]")
+	endIdx := strings.Index(cmd, diffCoverageEndMarker)
+	if testIdx < 0 || markerIdx < testIdx || reportIdx < markerIdx || readIdx < reportIdx || endIdx < readIdx {
 		t.Fatalf("commands must run first and the report must be emitted last:\n%s", cmd)
 	}
 	if !strings.Contains(cmd, "git --no-pager diff -U0") || !strings.Contains(cmd, "merge-base") {
@@ -31,13 +32,13 @@ func TestDiffCoverageCommandRunsTestsBeforeEmittingPayload(t *testing.T) {
 	if !strings.Contains(cmd, "${AGENTFLOW_BASE_BRANCH:-main}") || strings.Contains(cmd, "'${AGENTFLOW_BASE_BRANCH") {
 		t.Fatalf("the gate should fall back to the repository base branch:\n%s", cmd)
 	}
-	if !strings.HasPrefix(cmd, "set -e") {
+	if !strings.HasPrefix(cmd, "set -e") || strings.Index(cmd, "set +e") < markerIdx {
 		t.Fatalf("a failing test run must stop before emitting a payload:\n%s", cmd)
 	}
 	// The markers are printed by echo; a bare marker line would be executed as
 	// a command and fail the gate under set -e.
 	for _, line := range strings.Split(cmd, "\n") {
-		if line == diffCoverageMarker || line == diffCoverageReportMarker {
+		if line == diffCoverageMarker || line == diffCoverageReportMarker || line == diffCoverageEndMarker {
 			t.Fatalf("markers must be echoed, not run as commands:\n%s", cmd)
 		}
 	}
@@ -144,6 +145,35 @@ func TestDiffCoverageTaskLineStatesThreshold(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Fatalf("task line %q should mention %q", line, want)
 		}
+	}
+}
+
+func TestExtractDiffCoveragePayloadDetectsTruncation(t *testing.T) {
+	full := "ok tests\n" + diffCoverageMarker + "\n+++ b/x.go\n@@ -1,0 +1,1 @@\n" + diffCoverageReportMarker + "\nmode: set\nx.go:1.1,1.2 1 1\n" + diffCoverageEndMarker + "\n"
+	payload, err := extractDiffCoveragePayload(full)
+	if err != nil || strings.Contains(payload, diffCoverageEndMarker) || !strings.HasSuffix(payload, "x.go:1.1,1.2 1 1") {
+		t.Fatalf("complete output: payload=%q err=%v", payload, err)
+	}
+	// A CLI Runner keeps only the tail: the start marker is gone.
+	tail := full[strings.Index(full, "@@"):]
+	if _, err := extractDiffCoveragePayload(tail); err == nil || !strings.Contains(err.Error(), "截断") {
+		t.Fatalf("a tail-truncated payload must say it was truncated: %v", err)
+	}
+	// Head-truncated output (visible text cut at the limit) loses the end.
+	head := full[:strings.Index(full, diffCoverageReportMarker)+10]
+	if _, err := extractDiffCoveragePayload(head); err == nil || !strings.Contains(err.Error(), "截断") {
+		t.Fatalf("a head-truncated payload must say it was truncated: %v", err)
+	}
+	if _, err := extractDiffCoveragePayload("plain log"); err == nil || !strings.Contains(err.Error(), "未输出覆盖率数据") {
+		t.Fatalf("output without any marker: %v", err)
+	}
+}
+
+func TestJudgeDiffCoveragePayloadReportsMissingBaseBranch(t *testing.T) {
+	gate := domain.VerificationGate{ID: "cov", Mode: domain.GateModeDiffCoverage, Coverage: coverageGateSpec()}
+	payload := diffCoverageErrorMarker + "找不到基线分支 develop（本地和 origin 都没有），无法计算改动行\n" + diffCoverageReportMarker + "\nmode: set\nx.go:1.1,1.2 1 1\n"
+	if _, err := judgeDiffCoveragePayload(gate, payload); err == nil || !strings.Contains(err.Error(), "找不到基线分支 develop") {
+		t.Fatalf("a missing base branch must be named: %v", err)
 	}
 }
 

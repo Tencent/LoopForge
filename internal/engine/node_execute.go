@@ -959,9 +959,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 							failures = append(failures, fmt.Sprintf("%s门禁命令失败: %v (%s)", target.label(), verifyErr, detail))
 							continue
 						}
-						_, payload, found := splitDiffCoverageOutput(verifyOutput)
-						if !found {
-							failures = append(failures, target.label()+"门禁未输出覆盖率数据")
+						payload, payloadErr := extractDiffCoveragePayload(verifyOutput)
+						if payloadErr != nil {
+							failures = append(failures, target.label()+payloadErr.Error())
 							continue
 						}
 						verdict, judgeErr := judgeDiffCoveragePayload(gate, payload)

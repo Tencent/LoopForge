@@ -273,6 +273,53 @@ func TestJudgeDiffCoverageUnreportedFileCountsAsUncovered(t *testing.T) {
 	}
 }
 
+func TestJudgeDiffCoverageIgnoresUnreportedFilesOutsideReportLanguage(t *testing.T) {
+	// The review repro: calc.go fully covered, plus CHANGELOG.md, config.yaml
+	// and go.mod changes the Go profile can never mention.
+	report, err := ParseCoverageReport(GateCoverageFormatGoCoverprofile, strings.NewReader(`mode: set
+agentflow/calc.go:1.1,6.2 6 1
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := ChangedLines{
+		"calc.go":      {{Start: 1, End: 6}},
+		"CHANGELOG.md": {{Start: 1, End: 3}},
+		"config.yaml":  {{Start: 1, End: 2}},
+		"go.mod":       {{Start: 3, End: 3}},
+	}
+	spec := GateCoverageSpec{ReportPath: "coverage.out", ReportFormat: GateCoverageFormatGoCoverprofile}
+	verdict := JudgeDiffCoverage(spec, changed, report)
+	if !verdict.Applicable || !verdict.Passed() || verdict.CoveragePct != 100 || verdict.ChangedLines != 6 {
+		t.Fatalf("non-Go files must not count against a Go profile: %+v", verdict)
+	}
+	if len(verdict.UnreportedFiles) != 0 {
+		t.Fatalf("non-code files must not be reported as untested: %+v", verdict.UnreportedFiles)
+	}
+
+	// A new Go file the profile never saw still counts as uncovered.
+	changed["internal/new.go"] = []LineRange{{Start: 1, End: 4}}
+	verdict = JudgeDiffCoverage(spec, changed, report)
+	if verdict.Passed() || len(verdict.UnreportedFiles) != 1 || verdict.UnreportedFiles[0] != "internal/new.go" {
+		t.Fatalf("an unreported Go file must still fail the gate: %+v", verdict)
+	}
+
+	// lcov is language neutral: the extensions the report mentions decide.
+	lcov, err := ParseCoverageReport(GateCoverageFormatLCOV, strings.NewReader("SF:/repo/src/a.ts\nDA:1,1\nDA:2,1\nend_of_record\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed = ChangedLines{
+		"src/a.ts":     {{Start: 1, End: 2}},
+		"src/b.ts":     {{Start: 1, End: 3}},
+		"package.json": {{Start: 1, End: 5}},
+	}
+	verdict = JudgeDiffCoverage(GateCoverageSpec{ReportPath: "lcov.info", ReportFormat: GateCoverageFormatLCOV, MinChangedLines: iptr(1)}, changed, lcov)
+	if verdict.ChangedLines != 5 || len(verdict.UnreportedFiles) != 1 || verdict.UnreportedFiles[0] != "src/b.ts" {
+		t.Fatalf("lcov should judge unreported .ts but not package.json: %+v", verdict)
+	}
+}
+
 func TestJudgeDiffCoverageExcludesTestsAndGeneratedCode(t *testing.T) {
 	report, _ := ParseCoverageReport(GateCoverageFormatGoCoverprofile, strings.NewReader(`mode: set
 agentflow/internal/domain/a_test.go:5.1,5.2 1 0

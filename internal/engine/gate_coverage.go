@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -15,9 +16,21 @@ const diffCoverageMarker = "::loopforge-diff-coverage::"
 
 // diffCoverageReportMarker separates the diff from the coverage report body so
 // the split does not depend on each format's header shape.
+const diffCoverageReportMarker = "::loopforge-coverage-report::"
+
+// diffCoverageEndMarker closes the payload. A CLI Runner only returns the tail
+// of a command's output (internal/runner resultTailBytes); a payload missing
+// either end marker was cut and must not be judged as if it were complete.
+const diffCoverageEndMarker = "::loopforge-coverage-end::"
+
+// diffCoverageErrorMarker carries a payload-side failure (no base branch) the
+// shell detected, so the verdict names the cause instead of an exit status.
+const diffCoverageErrorMarker = "::loopforge-coverage-error::"
+
 const diffCoverageBaseBranchFallback = "${AGENTFLOW_BASE_BRANCH:-main}"
 
-const diffCoverageReportMarker = "::loopforge-coverage-report::"
+// diffCoverageTruncatedHint explains the only way a payload loses its markers.
+const diffCoverageTruncatedHint = "门禁输出超过执行器回传上限（约 32 KiB）被截断，无法判定覆盖率；请让门禁命令只对改动涉及的包生成覆盖率报告，或减少测试命令的输出"
 
 // isDiffCoverageGate reports whether the gate judges changed-line coverage
 // instead of a bare command exit code.
@@ -28,7 +41,13 @@ func isDiffCoverageGate(gate domain.VerificationGate) bool {
 // diffCoverageCommand appends the payload emitter to the configured commands.
 // The commands still decide the exit code: a failing test run fails the gate
 // as it would in a plain command gate, and the payload is only printed when
-// they succeed (set -e + &&) so stale reports are never judged.
+// they succeed (set -e) so stale reports are never judged. After the marker
+// the emitter runs with set +e: a missing base branch is reported in the
+// payload rather than as a bare exit status.
+//
+// The payload is kept small because a CLI Runner only returns the tail of the
+// output: the diff is reduced to the file and hunk headers the parser reads,
+// and a Go coverprofile is reduced to the changed files.
 func diffCoverageCommand(gate domain.VerificationGate, commands string) (string, error) {
 	spec := gate.Coverage
 	if spec == nil {
@@ -45,22 +64,53 @@ func diffCoverageCommand(gate domain.VerificationGate, commands string) (string,
 		return "", fmt.Errorf("diff_coverage gate %s has no coverage report path", gate.ID)
 	}
 	// The fallback needs the shell to expand AGENTFLOW_BASE_BRANCH, so it is
-	// emitted unquoted; a configured branch is quoted.
+	// emitted in double quotes; a configured branch is single-quoted.
 	branch := shellSingleQuote(base)
 	if base == diffCoverageBaseBranchFallback {
 		branch = `"` + base + `"`
 	}
+	quotedReport := shellSingleQuote(report)
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString(commands)
 	fmt.Fprintf(&b, "\necho %s\n", shellSingleQuote(diffCoverageMarker))
-	fmt.Fprintf(&b, "git fetch -q origin %s >/dev/null 2>&1 || true\n", branch)
-	fmt.Fprintf(&b, "base_ref=$(git merge-base %s HEAD 2>/dev/null || git rev-parse %s 2>/dev/null)\n", branch, branch)
-	b.WriteString("if [ -n \"$base_ref\" ]; then git --no-pager diff -U0 \"$base_ref\" -- . ; fi\n")
+	b.WriteString("set +e\n")
+	fmt.Fprintf(&b, "lf_base=%s\n", branch)
+	b.WriteString("git fetch -q origin \"$lf_base\" >/dev/null 2>&1\n")
+	b.WriteString("lf_ref=$(git merge-base \"origin/$lf_base\" HEAD 2>/dev/null || git merge-base \"$lf_base\" HEAD 2>/dev/null || git rev-parse -q --verify \"$lf_base^{commit}\" 2>/dev/null)\n")
+	b.WriteString("if [ -z \"$lf_ref\" ]; then\n")
+	fmt.Fprintf(&b, "  echo %s\"找不到基线分支 $lf_base（本地和 origin 都没有），无法计算改动行\"\n", shellSingleQuote(diffCoverageErrorMarker))
+	b.WriteString("else\n")
+	// Files created by this node are not in the index yet (artifact
+	// collection intent-adds them later), so `git diff <base>` alone would
+	// miss exactly the new code this gate exists for. Diff them against
+	// /dev/null without touching the index.
+	b.WriteString("  lf_diff=$( { git --no-pager diff -U0 \"$lf_ref\" -- . ; git ls-files -z --others --exclude-standard -- . | xargs -0 -r -n1 git --no-pager diff --no-index -U0 -- /dev/null ; } 2>/dev/null | grep -E '^(diff --git |\\+\\+\\+ |@@ )')\n")
+	b.WriteString("  printf '%s\\n' \"$lf_diff\"\n")
+	b.WriteString("fi\n")
 	fmt.Fprintf(&b, "echo %s\n", shellSingleQuote(diffCoverageReportMarker))
-	fmt.Fprintf(&b, "if [ -f %s ]; then cat %s; fi\n", shellSingleQuote(report), shellSingleQuote(report))
+	if strings.EqualFold(strings.TrimSpace(spec.ReportFormat), domain.GateCoverageFormatGoCoverprofile) {
+		fmt.Fprintf(&b, "if [ -f %s ]; then printf '%%s\\n' \"$lf_diff\" | awk %s - %s; fi\n", quotedReport, shellSingleQuote(goCoverprofileFilterAwk), quotedReport)
+	} else {
+		fmt.Fprintf(&b, "if [ -f %s ]; then cat %s; fi\n", quotedReport, quotedReport)
+	}
+	fmt.Fprintf(&b, "echo %s\n", shellSingleQuote(diffCoverageEndMarker))
 	return b.String(), nil
 }
+
+// goCoverprofileFilterAwk keeps the mode line and the profile blocks of files
+// named in the diff (first input). Import paths end with the repository path,
+// so a suffix match is enough. When no block matches, one unrelated block is
+// kept so the profile still parses; it cannot affect the verdict because only
+// changed files are judged.
+const goCoverprofileFilterAwk = `NR == FNR { if (substr($0, 1, 6) == "+++ b/") want[substr($0, 7)] = 1; next }
+/^mode:/ { print; next }
+{
+  f = $0; sub(/:[^:]*$/, "", f); keep = 0
+  for (w in want) if (f == w || (length(f) > length(w) && substr(f, length(f) - length(w)) == "/" w)) { keep = 1; break }
+  if (keep) { print; kept = 1 } else if (first == "") first = $0
+}
+END { if (!kept && first != "") print first }`
 
 // splitDiffCoverageOutput separates test output from the payload tail.
 func splitDiffCoverageOutput(output string) (testOutput, payload string, ok bool) {
@@ -69,6 +119,24 @@ func splitDiffCoverageOutput(output string) (testOutput, payload string, ok bool
 		return output, "", false
 	}
 	return output[:idx], strings.TrimSpace(output[idx+len(diffCoverageMarker):]), true
+}
+
+// extractDiffCoveragePayload returns the payload between the start and end
+// markers. Output that carries only one of them was truncated by the
+// executor, which is reported as such instead of "no coverage data".
+func extractDiffCoveragePayload(output string) (string, error) {
+	_, payload, found := splitDiffCoverageOutput(output)
+	if !found {
+		if strings.Contains(output, diffCoverageEndMarker) || strings.Contains(output, diffCoverageReportMarker) {
+			return "", errors.New(diffCoverageTruncatedHint)
+		}
+		return "", errors.New("门禁未输出覆盖率数据")
+	}
+	end := strings.LastIndex(payload, diffCoverageEndMarker)
+	if end < 0 {
+		return "", errors.New(diffCoverageTruncatedHint)
+	}
+	return strings.TrimSpace(payload[:end]), nil
 }
 
 // judgeDiffCoveragePayload parses the diff and the report from the payload and
@@ -80,6 +148,10 @@ func judgeDiffCoveragePayload(gate domain.VerificationGate, payload string) (dom
 	// sits between the two markers. A payload without the diff marker means the
 	// diff command printed nothing.
 	payload = strings.TrimSpace(payload)
+	if idx := strings.Index(payload, diffCoverageErrorMarker); idx >= 0 {
+		reason, _, _ := strings.Cut(strings.TrimSpace(payload[idx+len(diffCoverageErrorMarker):]), "\n")
+		return domain.DiffCoverageVerdict{}, errors.New(strings.TrimSpace(reason))
+	}
 	reportText := ""
 	diffText := payload
 	if idx := strings.Index(payload, diffCoverageReportMarker); idx >= 0 {

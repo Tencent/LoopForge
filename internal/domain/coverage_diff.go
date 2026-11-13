@@ -219,9 +219,16 @@ func JudgeDiffCoverage(spec GateCoverageSpec, changed ChangedLines, report cover
 	thresholdPct, minChangedLines := spec.CoverageDefaults()
 	verdict := DiffCoverageVerdict{ThresholdPct: thresholdPct}
 
+	languageExts := reportLanguageExtensions(spec.ReportFormat, report)
 	var judged []string
 	for file := range changed {
 		if spec.PathExcluded(file) {
+			continue
+		}
+		if _, found := lookupCoverageSection(report, file); !found && !languageExts[coverageFileExt(file)] {
+			// A file the report does not mention and that is not written in
+			// the report's language (CHANGELOG.md, config.yaml, go.mod next
+			// to a Go profile) is not code this report could ever cover.
 			continue
 		}
 		judged = append(judged, file)
@@ -275,6 +282,29 @@ func JudgeDiffCoverage(spec GateCoverageSpec, changed ChangedLines, report cover
 	verdict.Applicable = true
 	verdict.CoveragePct = 100 * float64(verdict.CoveredLines) / float64(verdict.ChangedLines)
 	return verdict
+}
+
+// reportLanguageExtensions is the set of file extensions a report speaks for.
+// A Go coverprofile only ever covers *.go; lcov and cobertura are language
+// neutral, so the extensions of the files they mention stand in for the
+// language. Changed files outside this set are not judged when the report
+// does not name them.
+func reportLanguageExtensions(format string, report coverageReport) map[string]bool {
+	exts := map[string]bool{}
+	if strings.EqualFold(strings.TrimSpace(format), GateCoverageFormatGoCoverprofile) {
+		exts[".go"] = true
+		return exts
+	}
+	for name := range report {
+		if ext := coverageFileExt(name); ext != "" {
+			exts[ext] = true
+		}
+	}
+	return exts
+}
+
+func coverageFileExt(file string) string {
+	return strings.ToLower(path.Ext(normalizeCoveragePath(file)))
 }
 
 func appendLine(ranges []LineRange, line int) []LineRange {

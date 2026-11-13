@@ -821,7 +821,7 @@ function applyGateField(gate,el){
   else if(key.startsWith('coverage.')){
     const field=key.slice('coverage.'.length);
     gate.coverage=gate.coverage||{};
-    if(field==='thresholdPct'){const n=Number(el.value);gate.coverage.thresholdPct=Number.isFinite(n)?Math.min(100,Math.max(0,n)):undefined;if(gate.coverage.thresholdPct===undefined)delete gate.coverage.thresholdPct;}
+    if(field==='thresholdPct'){const raw=String(el.value||'').trim();const n=raw===''?NaN:Number(raw);gate.coverage.thresholdPct=Number.isFinite(n)?Math.min(100,Math.max(0,n)):undefined;if(gate.coverage.thresholdPct===undefined)delete gate.coverage.thresholdPct;}
     else if(field==='minChangedLines'){const n=parseInt(el.value,10);gate.coverage.minChangedLines=Number.isFinite(n)&&n>=0?n:undefined;if(gate.coverage.minChangedLines===undefined)delete gate.coverage.minChangedLines;}
     else gate.coverage[field]=el.value;
   }
