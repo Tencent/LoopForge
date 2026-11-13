@@ -106,27 +106,10 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 		if err != nil {
 			return err
 		}
-		link := ""
-		if info.Mode()&os.ModeSymlink != 0 {
-			// Links are archived verbatim, including absolute or external targets
-			// that a repository checkout can legitimately contain. Rejecting them
-			// left such workspaces unsaved and therefore never reclaimed.
-			link, err = base.Readlink(path)
-			if err != nil {
-				return err
-			}
-		} else if !info.IsDir() && !info.Mode().IsRegular() {
-			return fmt.Errorf("unsupported checkpoint file: %s", path)
-		}
-		header, err := tar.FileInfoHeader(info, link)
+		header, err := checkpointEntryHeader(base, path, info)
 		if err != nil {
 			return err
 		}
-		header.Name = filepath.ToSlash(path)
-		header.Uid = 0
-		header.Gid = 0
-		header.Uname = ""
-		header.Gname = ""
 		expanded += header.Size
 		if expanded > workspaceCheckpointExpandedMax {
 			return fmt.Errorf("workspace checkpoint exceeds expanded size limit")
@@ -138,18 +121,7 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 			return fmt.Errorf("external Git worktree metadata cannot be checkpointed: %s", path)
 		}
 		if info.Mode().IsRegular() {
-			file, err := base.Open(path)
-			if err != nil {
-				return err
-			}
-			_, copyErr := io.CopyN(writer, file, header.Size)
-			closeErr := file.Close()
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
+			return copyCheckpointFile(base, writer, path, header.Size)
 		}
 		return nil
 	})
@@ -166,6 +138,52 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 	}
 	return nil
 }
+
+// checkpointEntryHeader builds the tar header for one workspace entry: symlink
+// targets are recorded verbatim, entries other than directories, regular files
+// and symlinks are rejected, and ownership is cleared so archives do not depend
+// on the host's users.
+func checkpointEntryHeader(base *os.Root, path string, info fs.FileInfo) (*tar.Header, error) {
+	link := ""
+	if info.Mode()&os.ModeSymlink != 0 {
+		// Links are archived verbatim, including absolute or external targets
+		// that a repository checkout can legitimately contain. Rejecting them
+		// left such workspaces unsaved and therefore never reclaimed.
+		var err error
+		link, err = base.Readlink(path)
+		if err != nil {
+			return nil, err
+		}
+	} else if !info.IsDir() && !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("unsupported checkpoint file: %s", path)
+	}
+	header, err := tar.FileInfoHeader(info, link)
+	if err != nil {
+		return nil, err
+	}
+	header.Name = filepath.ToSlash(path)
+	header.Uid = 0
+	header.Gid = 0
+	header.Uname = ""
+	header.Gname = ""
+	return header, nil
+}
+
+// copyCheckpointFile streams size bytes of the regular file at path into
+// writer, reporting a copy failure before a close failure.
+func copyCheckpointFile(base *os.Root, writer io.Writer, path string, size int64) error {
+	file, err := base.Open(path)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.CopyN(writer, file, size)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
 func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 	if len(content) == 0 || len(content) > WorkspaceCheckpointMaxBytes {
 		return fmt.Errorf("invalid workspace checkpoint size")
