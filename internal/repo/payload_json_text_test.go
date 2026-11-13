@@ -49,3 +49,35 @@ func TestSQLPayloadJSONTextMySQL(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLExecutionContextJSONText(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	sqlite := &deps{DB: s.DB}
+	mysqlDB, err := gorm.Open(mysql.New(mysql.Config{
+		DSN:                       "user:pass@tcp(127.0.0.1:1)/agentflow",
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	my := &deps{DB: mysqlDB}
+	cases := []struct {
+		d    *deps
+		path string
+		want string
+	}{
+		{sqlite, "issueId", "json_extract(execution_context, '$.issueId')"},
+		{sqlite, "projectId", "json_extract(execution_context, '$.projectId')"},
+		{my, "issueId", "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"},
+		{my, "projectId", "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"},
+	}
+	for _, c := range cases {
+		if got := c.d.sqlExecutionContextJSONText(c.path); got != c.want {
+			t.Fatalf("sqlExecutionContextJSONText(%q) = %q, want %q", c.path, got, c.want)
+		}
+	}
+}
