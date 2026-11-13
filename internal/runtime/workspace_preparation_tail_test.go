@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"agentflow/internal/domain"
 )
 
 func TestTailAtRuneBoundaryKeepsShortInputUnchanged(t *testing.T) {
@@ -42,5 +45,30 @@ func TestPreparationFailureDetailTailStaysWithinLimit(t *testing.T) {
 	detail := preparationFailureDetail(strings.Repeat("错", 3000))
 	if !strings.HasPrefix(detail, "…\n") || len(detail) > 2<<10 || !utf8.ValidString(detail) {
 		t.Fatalf("detail is not a valid bounded tail: len=%d prefix=%q", len(detail), detail[:min(len(detail), 8)])
+	}
+}
+
+func TestRecordWorkspacePreparationBoundsStoredOutput(t *testing.T) {
+	root := t.TempDir()
+	sb := &localSandbox{id: "record-limit", workspace: root}
+	wf := domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "setup", Name: "setup", Type: "script", RunOnWorkspaceRebuild: true, Script: "true"}}}
+	ctx := context.Background()
+	exact := strings.Repeat("a", preparationOutputLimit)
+	if _, err := RecordWorkspacePreparation(ctx, sb, wf, nil, "setup", exact); err != nil {
+		t.Fatal(err)
+	}
+	if state := ReadWorkspacePreparationStatus(root, sb.ID()); len(state.Steps) != 1 || state.Steps[0].Output != exact {
+		t.Fatalf("output at the limit was altered: %d steps", len(state.Steps))
+	}
+	long := "head-" + strings.Repeat("b", preparationOutputLimit) + "-tail"
+	if _, err := RecordWorkspacePreparation(ctx, sb, wf, nil, "setup", long); err != nil {
+		t.Fatal(err)
+	}
+	state := ReadWorkspacePreparationStatus(root, sb.ID())
+	if len(state.Steps) != 1 {
+		t.Fatalf("record replaced the step into %d steps", len(state.Steps))
+	}
+	if got := state.Steps[0].Output; got != long[:preparationOutputLimit] {
+		t.Fatalf("recorded output not bounded to the first %d bytes: len=%d", preparationOutputLimit, len(got))
 	}
 }
