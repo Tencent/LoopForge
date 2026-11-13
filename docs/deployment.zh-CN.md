@@ -2,6 +2,8 @@
 
 [English](deployment.md) | 简体中文
 
+> **注意：** 本译文基于较早版本的英文指南，尚未同步后来新增的内容（如当前镜像版本、升级步骤、`MIRROR`、Git SSH、升级需要哪些迁移等）。内容不一致时以[英文版](deployment.md)为准。
+
 ## 原生开发
 
 `bash scripts/dev.sh` 会显式生成本地密钥，只启动当前检出目录的 MySQL 服务，构建平台，创建 `admin` 账号，通过显式脚本补齐缺失的可观测生成列，导入 `migrations/seed/*.sql`，并在 8090 端口启动服务。已有的目录定义通过 `INSERT IGNORE` 保留。`.env`、`.local/` 和数据库卷不要纳入版本控制。

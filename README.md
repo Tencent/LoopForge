@@ -134,14 +134,14 @@ Then add `AGENTFLOW_SECURE_COOKIES=true` to `LoopForge/.env` and run `./start.sh
 
 <br>
 
-To upgrade, run the following in the `LoopForge` directory. The script pulls the image pinned by the new version and recreates the containers; your data is kept:
+To upgrade, back up first (below), then check out the target release tag in the `LoopForge` directory and refresh the containers. The release's `compose.yaml` pins the matching image, migrations and seeds; your data is kept:
 
 ```bash
-git pull
-./start.sh
+git fetch --tags && git checkout vX.Y.Z   # replace with the target release tag
+./start.sh pull
 ```
 
-Data migration scripts under `migrations/` that ship with a new version are not applied automatically; review them and apply them by hand as described in the [deployment guide](docs/deployment.md).
+Do not use `git pull`: it fails on a release-tag checkout, and on `main` it can bring in unreleased commits that do not match the pinned image. If `.env` sets `LOOPFORGE_IMAGE`, update it to the same release. Data migration scripts under `migrations/` that ship with a new version are not applied automatically; see [Which migrations an upgrade needs](docs/deployment.md#which-migrations-an-upgrade-needs) and the [deployment guide](docs/deployment.md#container-installation).
 
 To back up the database (do it before each upgrade, or schedule it with cron):
 

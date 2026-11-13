@@ -134,14 +134,14 @@ sudo systemctl reload caddy
 
 <br>
 
-升级：在 `LoopForge` 目录执行下面的命令。脚本会拉取新版本固定的镜像并重建容器，数据会保留：
+升级：先按下面的方法备份，再在 `LoopForge` 目录检出目标发布 tag 并刷新容器。发布版本的 `compose.yaml` 固定了配套的镜像、迁移脚本和种子数据，数据会保留：
 
 ```bash
-git pull
-./start.sh
+git fetch --tags && git checkout vX.Y.Z   # 替换为目标发布版本
+./start.sh pull
 ```
 
-新版本如果附带 `migrations/` 下的数据迁移脚本，不会自动执行，请按[部署指南](docs/deployment.zh-CN.md)审阅后手动导入。
+不要用 `git pull`：从发布 tag 检出（detached HEAD）时会直接报错；在 `main` 分支上则可能拉到未发布的提交，和固定的镜像版本对不上。如果 `.env` 里设置了 `LOOPFORGE_IMAGE`，也要改成同一版本。新版本如果附带 `migrations/` 下的数据迁移脚本，不会自动执行，请按部署指南的[升级需要哪些迁移](docs/deployment.md#which-migrations-an-upgrade-needs)审阅后手动导入，升级步骤详见[部署指南](docs/deployment.md#container-installation)（英文）。
 
 备份数据库（建议升级前做一次，也可以放进 cron 定时执行）：
 
@@ -154,7 +154,7 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -
 
 </details>
 
-> **中国大陆云主机：** 部分机器从 GitHub 拉取仓库很慢，克隆超时会导致对话工作区打不开。目前可以先为 git 配置代理，见[慢网络说明](docs/deployment.zh-CN.md#慢网络下的克隆与镜像构建限制)。后续我们会提供 CNB、镜像仓库等加速方式。
+> **中国大陆云主机：** 部分机器从 GitHub 拉取仓库很慢，克隆超时会导致对话工作区打不开。目前可以先为 git 配置代理，见[慢网络说明](docs/deployment.md#slow-networks-clone-and-image-build-limits)（英文）。后续我们会提供 CNB、镜像仓库等加速方式。
 
 ### 免 API Key 体验
 
@@ -298,13 +298,13 @@ npx -y loopforge-cli@latest install claude
 LoopForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对话都运行这些 CLI 之一；LoopForge 补上外面的部分：谁来做、在哪个沙箱里、按什么顺序、经过哪些检查、由谁签字。
 
 **可以直接暴露到公网吗？**
-新安装默认监听所有网卡，面向可信团队。开放前请阅读[账号与访问边界](docs/deployment.zh-CN.md#账号)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
+新安装默认监听所有网卡，面向可信团队。开放前请阅读[账号与访问边界](docs/deployment.md#accounts)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
 
 ## 文档
 
 | 我想了解 | 从这里开始 |
 | --- | --- |
-| 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.zh-CN.md) |
+| 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.md) |
 | 对话工作区、AI 定时任务与 Token 成本口径 | [对话工作区](docs/conversation-workspaces.md) · [AI 定时任务](docs/ai-scheduled-task-capabilities.md) · [Token 成本统计](docs/token-pricing.md) |
 | 本地工作流的安装、使用与版本选择 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
 | 扩展平台或接入 HTTP / MCP API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) · [共享定时任务 API](docs/api/shared-schedules.md) |
