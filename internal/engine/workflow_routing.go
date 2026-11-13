@@ -28,6 +28,24 @@ func routeLabels(wf domain.WorkflowDefinition, nodeID string) []string {
 	return values
 }
 
+// missingRouteDecision identifies an inconsistent frozen graph without
+// treating sources that are still executing or waiting for approval as errors.
+func missingRouteDecision(wf domain.WorkflowDefinition, run domain.Run) string {
+	for _, edge := range wf.Edges {
+		if edge.Condition == nil {
+			continue
+		}
+		if node := run.Nodes[edge.Source]; node != nil && node.Status == "succeeded" && node.RouteDecision == nil {
+			return edge.Source
+		}
+	}
+	return ""
+}
+
+func missingRouteDecisionMessage(nodeID string) string {
+	return fmt.Sprintf("节点「%s」已成功但缺少路由决策，请从该节点重新运行", nodeID)
+}
+
 func decideRoute(wf domain.WorkflowDefinition, node domain.WorkflowNode, route domain.RouteValues, artifacts []domain.Artifact) (*domain.RouteDecision, error) {
 	labels := routeLabels(wf, node.ID)
 	allowed := map[string]bool{}

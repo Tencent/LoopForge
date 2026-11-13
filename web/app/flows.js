@@ -82,6 +82,7 @@ function syncPreviewBuildGraph(){
     agentId:PREVIEW_BUILD_AGENT_ID,
     executorId:'codebuddy',
     executionScope:'run',
+    joinRule:'none_failed_min_one_success',
     onFailure:'fail',
     retryStrategy:'targeted_fix',
     maxAttempts:2,
@@ -195,7 +196,7 @@ function addNode(type,opts={}){
     if(existing){state.selectedNode=existing.id;renderCanvas();renderProperties();return toast('预览节点已存在，可拖拽连线调整它的位置')}
     flowHistory.record();
     ensurePreviewContract();
-    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:'codebuddy',executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
+    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:'codebuddy',executionScope:'run',joinRule:'none_failed_min_one_success',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
     state.selectedNode=PREVIEW_BUILD_NODE_ID;
     dirty();renderCanvas();renderProperties();
     return;

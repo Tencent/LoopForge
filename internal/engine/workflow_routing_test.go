@@ -2,6 +2,7 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,76 @@ func TestConditionalRoutingScriptEndToEnd(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConditionalRoutingWithAutomaticPreview(t *testing.T) {
+	for _, route := range []string{"small", "large"} {
+		t.Run(route, func(t *testing.T) {
+			s, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			wf := routingWorkflow(route)
+			// Leave two separate sinks so that preview must join a selected and
+			// an unselected branch, as in the reported reproduction.
+			wf.Nodes = wf.Nodes[:4]
+			wf.Edges = wf.Edges[:3]
+			wf.Preview = &domain.PreviewContract{Enabled: true}
+			if err := s.PutWorkflow(wf); err != nil {
+				t.Fatal(err)
+			}
+			e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+			r, err := e.Start(wf.ID, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, s, r.ID, "succeeded")
+			got, _ := s.Run(r.ID)
+			preview := got.Nodes[domain.PreviewBuildNodeID]
+			if preview == nil || preview.Status != "succeeded" || preview.Attempt != 1 {
+				t.Fatalf("preview must execute after selected branch: %+v", preview)
+			}
+			skipped := "large"
+			if route == "large" {
+				skipped = "small"
+			}
+			if got.Nodes[skipped].Status != "skipped" {
+				t.Fatalf("unselected branch = %+v", got.Nodes[skipped])
+			}
+		})
+	}
+}
+
+func TestConditionalRoutingWithExistingLegacyPreviewNode(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := routingWorkflow("small")
+	wf.Nodes = wf.Nodes[:4]
+	wf.Edges = wf.Edges[:3]
+	wf.Preview = &domain.PreviewContract{Enabled: true}
+	preview := domain.PreviewBuildNode(wf)
+	preview.JoinRule = "" // A preview node saved before the new join rule existed.
+	wf.Nodes = append(wf.Nodes, preview)
+	wf.Edges = append(wf.Edges,
+		domain.WorkflowEdge{ID: "preview-small", Source: "small", Target: preview.ID},
+		domain.WorkflowEdge{ID: "preview-large", Source: "implement", Target: preview.ID})
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "succeeded")
+	got, _ := s.Run(r.ID)
+	if nr := got.Nodes[preview.ID]; nr == nil || nr.Status != "succeeded" || nr.Attempt != 1 {
+		t.Fatalf("legacy preview did not run: %+v", nr)
 	}
 }
 
@@ -366,6 +437,81 @@ func TestConditionalRoutingAgentRejectsInvalidRoute(t *testing.T) {
 	}
 	if got.Nodes["small"].Attempt != 0 || got.Nodes["large"].Attempt != 0 {
 		t.Fatal("downstream started after invalid Agent route")
+	}
+}
+
+func TestConditionalRoutingRefreshRejectsNewConditionsOnCompletedNode(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := domain.WorkflowDefinition{ID: "refresh-routing", Name: "refresh", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+		{ID: "classify", Type: "script", Script: "echo initial", MaxAttempts: 1},
+		{ID: "approval", Type: "approval", MaxAttempts: 1},
+		{ID: "small", Type: "script", Script: "echo small", MaxAttempts: 1},
+	}, Edges: []domain.WorkflowEdge{{ID: "a", Source: "classify", Target: "approval"}, {ID: "b", Source: "approval", Target: "small"}}}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "waiting")
+	old, _ := s.Run(r.ID)
+	if old.Nodes["classify"].Status != "succeeded" || old.Nodes["classify"].RouteDecision != nil {
+		t.Fatalf("initial completed source = %+v", old.Nodes["classify"])
+	}
+	latest, _ := s.Workflow(wf.ID)
+	latest.Version++
+	latest.Nodes = append(latest.Nodes, domain.WorkflowNode{ID: "large", Type: "script", Script: "echo large", MaxAttempts: 1})
+	latest.Edges = append(latest.Edges, domain.WorkflowEdge{ID: "conditional", Source: "classify", Target: "large", Condition: &domain.WorkflowCondition{Type: "route", Values: []string{"large"}}})
+	if err := s.PutWorkflow(latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RefreshRunSOP(r.ID); err == nil || !strings.Contains(err.Error(), "classify") || !strings.Contains(err.Error(), "路由决策") {
+		t.Fatalf("expected actionable refresh error, got %v", err)
+	}
+	unchanged, _ := s.Run(r.ID)
+	if unchanged.WorkflowSnapshot.Version != old.WorkflowSnapshot.Version || unchanged.Nodes["large"] != nil || unchanged.Nodes["approval"].Status != "waiting_approval" {
+		t.Fatalf("rejected refresh changed run: %+v", unchanged)
+	}
+	if err := e.Approve(r.ID, "approval", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "succeeded")
+}
+
+func TestConditionalRoutingMissingDecisionFailsInsteadOfHanging(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := routingWorkflow("small")
+	r := domain.Run{ID: "missing-route-decision", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "running", Nodes: map[string]*domain.NodeRun{}}
+	for _, node := range wf.Nodes {
+		r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
+	}
+	r.Nodes["classify"].Status = "succeeded"
+	if err := s.PutRun(r); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	if _, err := e.acquireLease(r); err != nil {
+		t.Fatal(err)
+	}
+	e.execute(context.Background(), r.ID)
+	got, _ := s.Run(r.ID)
+	if got.Status != "failed" || got.Nodes["classify"].Status != "failed" || !strings.Contains(got.Nodes["classify"].Error, "缺少路由决策") {
+		t.Fatalf("inconsistent state did not fail clearly: run=%s node=%+v", got.Status, got.Nodes["classify"])
+	}
+	for _, id := range []string{"small", "large"} {
+		if got.Nodes[id].Attempt != 0 {
+			t.Fatalf("downstream %s started without a routing decision", id)
+		}
 	}
 }
 

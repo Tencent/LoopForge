@@ -74,6 +74,7 @@ test('flow editor manages preview contracts, nodes, connections, diagnostics, an
   assert.equal(result.contract.enabled, true);
   assert.equal(result.contract.kind, 'static');
   assert.equal(result.preview.agentId, 'af-preview-builder');
+  assert.equal(result.preview.joinRule, 'none_failed_min_one_success');
   assert.equal(result.sinks, 2);
   assert.equal(result.cycle.ok, true);
   assert.equal(result.back.ok, false);

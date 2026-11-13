@@ -115,6 +115,23 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		wf := workflowForRun(e.repo, r)
 		e.reconcileNodeExecutions(runID)
+		if nodeID := missingRouteDecision(wf, r); nodeID != "" {
+			// Recheck under the state lock: a concurrent retry may already have
+			// reset the source node and made its old outcome irrelevant.
+			e.updateRunAt(runID, false, func(current *domain.Run) {
+				if current.Generation != generation || !e.ownsRun(*current) {
+					return
+				}
+				id := missingRouteDecision(workflowForRun(e.repo, *current), *current)
+				if id == "" {
+					return
+				}
+				nr := current.Nodes[id]
+				nr.Status, nr.Error, nr.FinishedAt = "failed", missingRouteDecisionMessage(id), time.Now().UTC()
+				e.event(current, id, "node.failed", nr.Error)
+			})
+			continue
+		}
 		// Derive skip transitions under the same state lock used by node outcomes.
 		// Re-read afterwards so a concurrent completion or rework cannot be lost.
 		probe := r

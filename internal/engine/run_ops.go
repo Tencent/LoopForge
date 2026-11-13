@@ -863,6 +863,9 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if err != nil {
 		return err
 	}
+	if nodeID := missingRouteDecision(latest, r); nodeID != "" {
+		return fmt.Errorf("无法刷新 SOP：已完成的节点「%s」在新版 SOP 中需要路由决策，请创建新 Run 或调整 SOP", nodeID)
+	}
 	for _, node := range latest.Nodes {
 		if r.Nodes[node.ID] == nil {
 			r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
