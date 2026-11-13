@@ -5,6 +5,7 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 ## Unreleased
 
 - The platform image bundles DeepSeek Harness `@deepseek-ai/dsh@0.2.2-rc.1` next to Codex and CodeBuddy, so a DeepSeek key works in conversations and SOP roles without an install step. 0.3.8 had no `dsh` and answered a DeepSeek Harness chat with “AI 助手生成失败，请稍后重试”. The image download grows by about 180 MB. An installation without the image installs the same pinned version from the conversation: every dsh release is a prerelease requiring Node 24.9, and npm on Node 22 found no version for the bare package name.
+- A DeepSeek Harness reply longer than 8 KB (about 2,700 Chinese characters) is shown in full. `dsh --json` cuts every event string at 8 KiB and only its `final` event carries the whole answer, so the chat stopped mid-sentence while the saved reply was complete.
 - SOP sandboxes of the published image install OpenCode, Kimi Code and Pi on first use, as they already did for Claude Code. An SOP role on one of these CLIs used to fail with `exec: <cli>: not found` (exit 127) even after a conversation installed it.
 - Run logs and telemetry redact every environment variable ending in `_API_KEY`, `_TOKEN`, `_SECRET` or `_PASSWORD`. Agent CLI keys such as `DEEPSEEK_API_KEY`, and `AGENTFLOW_CLI_API_KEY` used with a custom Base URL, used to appear in clear text in the `docker exec` line of an SOP run log, readable by project members. Rotate a key that ran an SOP role before this release.
 
