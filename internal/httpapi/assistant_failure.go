@@ -15,6 +15,7 @@ import (
 )
 
 var errAssistantMissingResult = errors.New("CodeBuddy did not emit type=result")
+var errAssistantExecutionUnavailable = errors.New("conversation execution machine unavailable")
 
 func assistantCLIMaxTurns(text string) bool {
 	text = strings.ToLower(strings.TrimSpace(text))
@@ -67,7 +68,9 @@ func assistantCLIStreamFailure(line string) error {
 func assistantGenerationFailure(ctx context.Context, err error) (int, string) {
 	failure := classifyAssistantFailure(ctx, err)
 	status := http.StatusBadGateway
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if failure.Code == "EXECUTION_MACHINE_UNAVAILABLE" {
+		status = http.StatusServiceUnavailable
+	} else if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		status = http.StatusGatewayTimeout
 	}
 	return status, failure.Message
@@ -88,6 +91,10 @@ func classifyAssistantFailure(ctx context.Context, err error) domain.AssistantFa
 	}
 	if errors.Is(err, runtime.ErrMaxTurns) || assistantCLIMaxTurns(err.Error()) {
 		f.Code, f.Message = "EXECUTION_LIMIT", "AI 助手已达到执行轮数上限，未能完成回答，请重试"
+		return f
+	}
+	if errors.Is(err, errAssistantExecutionUnavailable) {
+		f.Code, f.Phase, f.Message, f.Suggestion = "EXECUTION_MACHINE_UNAVAILABLE", "setup", "会话绑定的执行机器暂不可用，请等待原机器恢复后重试", "会话已固定在原执行机器上，请确认该 Runner 在线后再重试。"
 		return f
 	}
 	var missing assistantCLIMissingError

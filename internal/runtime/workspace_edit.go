@@ -100,6 +100,12 @@ func resolveWorkspaceEditPath(root, path, expected string) (string, error) {
 		if os.IsNotExist(err) && current == rel && expected == "missing" {
 			continue
 		}
+		if os.IsNotExist(err) && current == rel {
+			return "", fmt.Errorf("文件 %s 不存在：新建文件时 expectedSha256 传 \"missing\"", filepath.ToSlash(rel))
+		}
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("目录 %s 不存在：先在终端里 mkdir -p 创建目录，再新建文件", filepath.ToSlash(current))
+		}
 		if err != nil {
 			return "", err
 		}

@@ -287,13 +287,16 @@ func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user do
 }
 
 // assistantScheduledModel normalizes the model of an AI scheduled task on
-// save. The run uses the project owner's keys, not the editor's, so a
-// well-formed CLI model is kept as-is; the owner's key for that CLI is
-// checked when it runs.
+// save. The run uses the project owner's keys and CodeBuddy environment, not
+// the editor's, so a well-formed model is kept as-is; it is checked against
+// the owner's account when it runs (see scheduledRunModel).
 func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 	engine, model := assistantModelEngine(id)
 	if engine != assistantEngineCodeBuddy && assistantValidEngineModel(model) {
 		return engine + ":" + model
+	}
+	if engine == assistantEngineCodeBuddy && assistantValidEngineModel(model) {
+		return model
 	}
 	return assistantAllowedModel(id, catalog)
 }
@@ -564,8 +567,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 // CLI session from the full transcript, so switching back never continues a
 // transcript that misses the turns in between.
 type assistantEngineState struct {
-	Engine    string `json:"engine"`
-	SessionID string `json:"sessionId"`
+	// Edited history starts a new journal once; errors resume that revision.
+	HistoryRevision int    `json:"historyRevision,omitempty"`
+	Engine          string `json:"engine"`
+	SessionID       string `json:"sessionId"`
+	Unstarted       bool   `json:"unstarted,omitempty"`
 }
 
 func readAssistantEngineState(root string) assistantEngineState {

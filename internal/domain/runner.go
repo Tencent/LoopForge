@@ -76,6 +76,15 @@ const RunnerVersionWorkspaceOwnerPreparation = "0.7.1"
 
 const RunnerVersionConversationWorkspace = "0.8.0"
 
+// Conversation CLI execution includes cancellation of preemptible workspace
+// exports and addressable startup cancellation, so stopping cannot strand a
+// queued CLI or block a following turn behind a previous background save.
+const RunnerVersionConversationCLI = "0.10.1"
+
+func (r Runner) SupportsConversationCLI() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
+}
+
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
 }

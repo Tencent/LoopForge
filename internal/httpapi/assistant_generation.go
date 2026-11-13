@@ -132,6 +132,20 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
+	if old.ID != "" && old.ExecutionLocked() {
+		if req.ExecutionTarget != nil && *req.ExecutionTarget != old.Execution() {
+			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换"})
+			return
+		}
+		req.ExecutionTarget = old.ExecutionTarget
+	} else {
+		var targetErr error
+		req.ExecutionTarget, targetErr = h.newExecutionTarget(user.ID, req.ProjectID, draftExecutionTarget(old, req.ExecutionTarget))
+		if targetErr != nil {
+			c.JSON(400, gin.H{"error": targetErr.Error()})
+			return
+		}
+	}
 	// Every message shows when it was sent. The server clock stamps the new
 	// question, so a skewed or missing browser clock cannot misdate it.
 	sentAt := time.Now().UTC()
@@ -143,7 +157,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
+	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
 	} else {
@@ -169,7 +183,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	beginErr := h.repo.BeginAssistantGeneration(g, pending)
 	if err := beginErr; err != nil {
 		if req.workspaceToken != "" {
-			_ = h.engine.EndConversationWorkspaceUse(c.Request.Context(), req.RunID, req.workspaceToken)
+			_ = h.repo.FinishWorkspaceUse(req.RunID, req.workspaceToken, time.Now().UTC(), nil, "")
 		}
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
@@ -178,13 +192,13 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
 	_, sharedModels, _ := h.assistantChatUser(stored)
-	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
+	h.scheduleAssistantTitle(h.helperExecutionContext(parent, ownerID, req.ExecutionTarget), ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
 	done := inflightTasks.Add()
 	go func() {
 		defer done()
 		h.executeGeneration(parent, req, g, current)
 	}()
-	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status})
+	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status, "executionTarget": req.ExecutionTarget})
 }
 func (h *assistantHandlers) generation(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -212,6 +226,11 @@ func (h *assistantHandlers) generation(c *gin.Context) {
 		if err := h.repo.CancelAssistantGeneration(ownerID, g.SessionID, c.Query("generationId")); err != nil {
 			c.JSON(409, gin.H{"error": err.Error()})
 			return
+		}
+		if value, ok := assistantLiveGenerations.Load(g.ID); ok {
+			if stop := value.(*assistantLiveGeneration).cancel; stop != nil {
+				stop()
+			}
 		}
 		c.JSON(200, gin.H{"ok": true})
 		return
@@ -256,7 +275,7 @@ func (w *generationHTTPWriter) Flush() {}
 func (h *assistantHandlers) executeGeneration(parent context.Context, req assistantRequest, g domain.AssistantGeneration, actor *auth.User) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	rec := newAssistantGenerationRecorder(g)
+	rec := newAssistantGenerationRecorder(g, cancel)
 	defer rec.close()
 	ctx = context.WithValue(ctx, assistantDiagnosticsKey{}, rec.diagnostics)
 	diagUser, _ := h.repo.User(g.UserID)
@@ -291,17 +310,17 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 				}
 				if !ok || old.ID != g.ID {
 					rec.diagnostics.terminate("GENERATION_SUPERSEDED", "当前生成记录已被替换或移除", diagUser)
-					cancel()
+					rec.live.cancel()
 				} else if old.Status != "running" {
 					rec.diagnostics.terminate("GENERATION_STATUS_CHANGED", "生成状态已变更为 "+old.Status, diagUser)
-					cancel()
+					rec.live.cancel()
 				} else if old.CancelRequested {
 					if old.Steer != nil {
 						rec.diagnostics.terminate("USER_STEER", "用户在生成途中发送新指令转向下一轮", diagUser)
 					} else {
 						rec.diagnostics.terminate("USER_CANCELLED", "用户主动停止了本轮生成", diagUser)
 					}
-					cancel()
+					rec.live.cancel()
 				}
 				snapshot := rec.snapshot()
 				if err := h.checkpointRunningGeneration(snapshot, rec.diagnostics); err != nil {
@@ -333,16 +352,22 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 		router.POST("/api/assistant/chat", h.chat)
 		router.ServeHTTP(writer, request)
 	}()
+	// Stop renewal before handing the use lease to the asynchronous save.
+	// The turn is complete once its execution has exited, without archive I/O.
 	close(stopped)
 	<-done
+	workspaceWarning := ""
+	if req.workspaceToken != "" {
+		if result, err := h.engine.EndConversationWorkspaceUseAsync(ctx, req.RunID, req.workspaceToken); err != nil {
+			workspaceWarning = "工作区保存未完成，暂缓回收：" + err.Error()
+		} else {
+			trackAssistantWorkspaceSave(req.RunID, result)
+		}
+	}
 	rec.mu.Lock()
 	g = rec.g
-	if req.workspaceToken != "" {
-		saveCtx, stop := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
-		if err := h.engine.EndConversationWorkspaceUse(saveCtx, req.RunID, req.workspaceToken); err != nil {
-			g.WorkspaceWarning = "工作区保存未完成，暂缓回收：" + err.Error()
-		}
-		stop()
+	if workspaceWarning != "" {
+		g.WorkspaceWarning = workspaceWarning
 	}
 	if writer.status >= 400 && g.Error == "" {
 		var result struct {
@@ -538,7 +563,7 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 	next := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: steer.ActorID, ActorName: steer.ActorName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: prev.UserID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	if err := h.repo.BeginAssistantGeneration(next, session); err != nil {
 		if req.workspaceToken != "" && h.engine != nil {
-			_ = h.engine.EndConversationWorkspaceUse(parent, req.RunID, req.workspaceToken)
+			_ = h.repo.FinishWorkspaceUse(req.RunID, req.workspaceToken, time.Now().UTC(), nil, "")
 		}
 		return
 	}

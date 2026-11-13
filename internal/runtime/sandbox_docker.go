@@ -145,7 +145,7 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 	return out, err
 }
 
-func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
 	if trustedScriptCommand(command) {
 		return s.execScript(ctx, command, sink)
 	}
@@ -155,6 +155,9 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		}
 	}
 	args := []string{"exec"}
+	if command.Stdin != nil {
+		args = append(args, "-i")
+	}
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
 		args = append(args, "-e", environment)
 	}
@@ -166,8 +169,28 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
 	}
 	args = append(args, s.name)
-	args = append(args, dockerWorkspaceExecArgv(command.Argv)...)
-	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
+	argv := dockerWorkspaceExecArgv(command.Argv)
+	if command.WorkingDir != "" {
+		argv = append([]string{"sh", "-lc", dockerMCPCallLaunch + `PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH; export PATH
+cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLoginFlag(command.Argv)...)
+	}
+	processFile := ""
+	if command.OwnProcessGroup {
+		processFile = filepath.Join(s.requirements.ConversationRoot, "home", "tmp", fmt.Sprintf("process-%d.pid", time.Now().UnixNano()))
+		argv = dockerConversationProcessArgv(processFile, argv)
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			stopArgs := append([]string{"exec", s.name}, dockerConversationStopArgv(processFile)...)
+			if stopErr := exec.CommandContext(stopCtx, "docker", stopArgs...).Run(); stopErr != nil {
+				err = errors.Join(err, fmt.Errorf("停止 CLI 子进程失败: %w", stopErr))
+			}
+		}()
+	}
+	args = append(args, argv...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdin = command.Stdin
+	return runCommand(cmd, sink)
 }
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.
@@ -665,10 +688,29 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 			args = append(args, "--user", fmt.Sprintf("%d:%d", os.Geteuid(), os.Getegid()))
 		}
 	}
-	if network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); network != "" {
+	if network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); network != "" && s.requirements.ConversationRoot == "" {
 		args = append(args, "--network", network)
 	}
-	maskArgs, err := dockerAgentConfigMasks(workspace)
+	if root := s.requirements.ConversationRoot; root != "" {
+		_, network, err := conversationDockerAccess(ctx)
+		if err != nil {
+			return err
+		}
+		if network != "" {
+			args = append(args, "--network", network)
+		}
+		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
+		guards, err := conversationGuardMounts(root)
+		if err != nil {
+			return err
+		}
+		args = append(args, guards...)
+	}
+	var aliases []string
+	if root := s.requirements.ConversationRoot; root != "" {
+		aliases = append(aliases, filepath.Join(root, "ws"))
+	}
+	maskArgs, err := dockerAgentConfigMasks(workspace, aliases...)
 	if err != nil {
 		return err
 	}

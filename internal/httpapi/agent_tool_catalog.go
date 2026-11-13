@@ -266,6 +266,35 @@ func tapdInnerToolAllowed(mode AgentToolMode, name string) bool {
 }
 
 func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolSession) []agentToolDescriptor {
+	if session != nil && session.RuntimeMode == domain.AssistantModeWorkspace {
+		out := workspaceIntegrationCatalog(session)
+		for i, tool := range out {
+			if tool.Name == "workbench_workspace_open" {
+				out[i] = h.workspaceOpenDescriptorFor(session)
+			}
+		}
+		for _, server := range session.MCPServers {
+			if !session.SelectedMCPIDs[server.ID] {
+				continue
+			}
+			kind := classifyClarifyMCP(server)
+			if kind == "agentflow" {
+				continue
+			}
+			prefix := kind
+			if kind == "other" {
+				prefix = sanitizeAgentToolNamespace(server.ID, server.Name)
+			}
+			tools, err := h.listUpstreamTools(ctx, session, server)
+			if err != nil {
+				continue
+			}
+			for _, tool := range tools {
+				out = append(out, agentToolDescriptor{Name: namespaceAgentTool(prefix, tool.Name), Description: tool.Description, InputSchema: defaultToolSchema(tool.InputSchema), OutputSchema: tool.OutputSchema, Annotations: tool.Annotations, Kind: kind, ServerID: server.ID, UpstreamName: tool.Name})
+			}
+		}
+		return out
+	}
 	if session == nil {
 		return nil
 	}

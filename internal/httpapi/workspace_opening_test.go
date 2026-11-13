@@ -70,18 +70,56 @@ func TestRunnerWorkspaceProgressIsRequestScopedAndCancellationIsForwarded(t *tes
 	}
 }
 
+func TestWorkspaceCancellationWaitsForBusyControlWriter(t *testing.T) {
+	for _, operation := range []string{domain.RunnerWorkspaceOperationPrepare, domain.RunnerWorkspaceOperationCheckpointExport, domain.RunnerWorkspaceOperationCheckpoint} {
+		t.Run(operation, func(t *testing.T) {
+			hub := quietRunnerHub()
+			conn := testRunnerConn("busy-writer")
+			conn.send = make(chan runnerControlMessage)
+			registerTestConn(hub, conn)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{RunKind: domain.RunKindWorkspace, Operation: operation})
+				done <- err
+			}()
+			request := <-conn.send
+			cancel()
+			// Simulate a writer occupied with another message. The cancellation
+			// must wait briefly instead of being silently discarded.
+			select {
+			case err := <-done:
+				t.Fatalf("dropped cancellation while writer was busy: %v", err)
+			case <-time.After(30 * time.Millisecond):
+			}
+			select {
+			case stop := <-conn.send:
+				if stop.Type != "workspace.cancel" || stop.RequestID != request.RequestID {
+					t.Fatalf("wrong cancellation: %+v", stop)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("remote cancellation was lost")
+			}
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancel result: %v", err)
+			}
+		})
+	}
+}
+
 func TestWorkspaceOpeningFailureKeepsBindingAndRetryUsesSameRun(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	if err := h.repo.PutRepository(domain.Repository{ID: "repo-web", ProjectID: "workbench", Name: "web", CloneURL: "https://git.example.com/team/web.git", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{ID: "chat-retry", ProjectID: "workbench"}); err != nil {
+	if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{
+		ID: "chat-retry", ProjectID: "workbench",
+		ExecutionTarget: &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud, RunnerID: "cloud-runner"},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.repo.PutRunner(domain.Runner{ID: "cloud-runner", RunnerVersion: domain.RunnerVersionConversationWorkspace, Status: domain.RunnerStatusOnline}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.repo.SetDefaultRunner(owner.ID, "cloud-runner", time.Now().UTC()); err != nil {
+	if err := h.repo.PutRunner(domain.Runner{ID: "cloud-runner", RunnerVersion: domain.RunnerVersionConversationCLI, Status: domain.RunnerStatusOnline}); err != nil {
 		t.Fatal(err)
 	}
 	en := engine.New(h.repo, runtime.NewManager(t.TempDir()))
@@ -102,7 +140,7 @@ func TestWorkspaceOpeningFailureKeepsBindingAndRetryUsesSameRun(t *testing.T) {
 		return domain.RunnerWorkspaceResponse{Payload: []byte(`{"entries":[],"status":"ready"}`)}
 	})
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: owner.ID, User: owner, ChatSessionID: "chat-retry", ChatOwnerID: owner.ID}
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{"goal": "修复 README"}); err == nil || !strings.Contains(err.Error(), "已保留绑定") {
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{"goal": "修复 README"}); err == nil || !strings.Contains(err.Error(), "已保留绑定") || !strings.Contains(err.Error(), "apt mirror unreachable") {
 		t.Fatalf("failure not actionable: %v", err)
 	}
 	first := s.workspaceRunID

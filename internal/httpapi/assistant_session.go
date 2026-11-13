@@ -283,6 +283,22 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		conv := body.assistantConversation
+		conv.RuntimeMode = existing.Mode()
+		conv.ExecutionTargetLocked = existing.ExecutionLocked()
+		if existing.ID != "" && existing.ExecutionLocked() {
+			if conv.ExecutionTarget != nil && *conv.ExecutionTarget != existing.Execution() {
+				c.JSON(409, gin.H{"error": repo.ErrAssistantExecutionLocked.Error()})
+				return
+			}
+			conv.ExecutionTarget = existing.ExecutionTarget
+		} else {
+			var targetErr error
+			conv.ExecutionTarget, targetErr = h.newExecutionTarget(current.ID, conv.ProjectID, draftExecutionTarget(existing, conv.ExecutionTarget))
+			if targetErr != nil {
+				c.JSON(400, gin.H{"error": targetErr.Error()})
+				return
+			}
+		}
 		// Origin markers are server-owned: a transcript update cannot relabel a
 		// scheduled conversation as chat (or the other way around).
 		conv.Source = existing.Source
@@ -382,6 +398,10 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			saveErr = saveAssistantConversation(h.repo, ownerID, conv)
 		}
 		if saveErr != nil {
+			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) {
+				c.JSON(409, gin.H{"error": saveErr.Error()})
+				return
+			}
 			c.JSON(500, gin.H{"error": "保存对话失败"})
 			return
 		}

@@ -249,13 +249,17 @@ func TestStreamFilterKeepsCompletedAgentCall(t *testing.T) {
 // the code is and that the task outranks the role's SOP-node conventions.
 func TestRoleAgentFileExplainsChatWork(t *testing.T) {
 	file := roleAgentFile(roleSubagent{Role: domain.AgentDefinition{ID: "fe", Name: "前端", Prompt: "产出 brief.md 到 {{output}}"}})
-	for _, want := range []string{"以 Main Bot 交给你的任务为准", "workbench_workspace_tree/read/write/command", "不要用本地 Read/Grep/Glob", "产出 brief.md 到 （运行时提供）"} {
+	for _, want := range []string{"以 Main Bot 交给你的任务为准", "当前是平台模式", "先打开 Docker 工作区并交接模式", "产出 brief.md 到 （运行时提供）"} {
 		if !strings.Contains(file, want) {
 			t.Fatalf("role file lacks %q:\n%s", want, file)
 		}
 	}
 	if strings.Index(file, "在对话里工作") > strings.Index(file, "产出 brief.md") {
 		t.Fatal("chat notes must come before the role prompt")
+	}
+	workspace := conversationRoleAgentFile(roleSubagent{Role: domain.AgentDefinition{ID: "fe", Name: "前端", Prompt: "检查文件"}}, true)
+	if !strings.Contains(workspace, "同一 Docker 工作区，使用原生文件和命令工具") || strings.Contains(workspace, "当前是平台模式") || !strings.Contains(workspace, "  - mcp__agentflow_session__workbench_platform_mode\n") {
+		t.Fatalf("workspace subagent lacks current native tool rules:\n%s", workspace)
 	}
 }
 

@@ -22,10 +22,11 @@ import (
 const (
 	Argument      = "--workspace-script-view"
 	ProbeArgument = "--workspace-script-view-version"
-	Version       = "agentflow-script-view-v2"
+	Version       = "agentflow-script-view-v3"
 )
 
 type Config struct {
+	Aliases []string `json:"aliases,omitempty"`
 	Masks   []string `json:"masks"`
 	Hide    []string `json:"hide,omitempty"`
 	Argv    []string `json:"argv"`
@@ -69,7 +70,12 @@ func parseConfig(raw string) (Config, error) {
 	if err := validateConfigMode(config); err != nil {
 		return config, err
 	}
-	if err := validateMaskLists(config.Masks, config.Hide); err != nil {
+	for _, alias := range config.Aliases {
+		if !strings.HasPrefix(alias, "/") || path.Clean(alias) != alias || !strings.HasSuffix(alias, "/ws") || strings.ContainsAny(alias, "\x00\n\r") {
+			return config, fmt.Errorf("invalid workspace alias %q", alias)
+		}
+	}
+	if err := validateAliasedMaskLists(config.Aliases, config.Masks, config.Hide); err != nil {
 		return config, err
 	}
 	// Children must be detached before their parent when a legacy container has
@@ -104,10 +110,16 @@ func validateConfigMode(config Config) error {
 
 // validateMaskLists rejects invalid or duplicate entries within each list.
 func validateMaskLists(lists ...[]string) error {
+	return validateAliasedMaskLists(nil, lists...)
+}
+
+// validateAliasedMaskLists is validateMaskLists for a view whose workspace is
+// also mounted at the given conversation aliases.
+func validateAliasedMaskLists(aliases []string, lists ...[]string) error {
 	for _, list := range lists {
 		seen := make(map[string]bool, len(list))
 		for _, target := range list {
-			if !ValidMask(target) || seen[target] {
+			if !ValidMask(target, aliases...) || seen[target] {
 				return fmt.Errorf("invalid or duplicate workspace instruction mask %q", target)
 			}
 			seen[target] = true
@@ -132,11 +144,12 @@ func maskOrder(longestFirst bool) func(a, b string) int {
 
 // ValidMask accepts only repository instruction paths that the platform masks.
 // Runtime state, the workspace root and arbitrary mounts are never eligible.
-func ValidMask(target string) bool {
-	if !strings.HasPrefix(target, "/workspace/") || path.Clean(target) != target || strings.ContainsAny(target, "\x00\n\r") {
+func ValidMask(target string, aliases ...string) bool {
+	base := maskBase(target, aliases)
+	if base == "" || path.Clean(target) != target || strings.ContainsAny(target, "\x00\n\r") {
 		return false
 	}
-	parts := strings.Split(strings.TrimPrefix(target, "/workspace/"), "/")
+	parts := strings.Split(strings.TrimPrefix(target, base+"/"), "/")
 	for _, part := range parts[:len(parts)-1] {
 		if part == ".agentflow" || part == ".git" {
 			return false
@@ -147,4 +160,13 @@ func ValidMask(target string) bool {
 		return true
 	}
 	return false
+}
+
+func maskBase(target string, aliases []string) string {
+	for _, base := range append([]string{"/workspace"}, aliases...) {
+		if strings.HasPrefix(target, base+"/") {
+			return base
+		}
+	}
+	return ""
 }

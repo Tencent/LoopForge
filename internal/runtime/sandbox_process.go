@@ -534,7 +534,7 @@ func dockerIsolationMaskRoot(workspace string) string {
 	return filepath.Join(filepath.Dir(workspace), ".isolation-masks", filepath.Base(workspace))
 }
 
-func dockerAgentConfigMasks(workspace string) ([]string, error) {
+func dockerAgentConfigMasks(workspace string, aliases ...string) ([]string, error) {
 	// Docker Desktop cannot create missing nested mount targets on a VirtioFS share.
 	if _, err := EnsureControlDirectory(workspace, "isolation", "empty-dir"); err != nil {
 		return nil, err
@@ -590,6 +590,9 @@ func dockerAgentConfigMasks(workspace string) ([]string, error) {
 		}
 		containerTarget := filepath.ToSlash(filepath.Join("/workspace", rel))
 		args = append(args, "--mount", "type=bind,src="+source+",dst="+containerTarget+",readonly")
+		for _, alias := range aliases {
+			args = append(args, "--mount", "type=bind,src="+source+",dst="+filepath.ToSlash(filepath.Join(alias, rel))+",readonly")
+		}
 	}
 	return args, nil
 }

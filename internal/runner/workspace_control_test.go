@@ -2,15 +2,19 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 	"github.com/gorilla/websocket"
 )
 
@@ -149,6 +153,33 @@ func TestWorkspaceOpeningStreamsProgressAndCancelsOnlyItsRequest(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "opening-started")); err != nil {
 		t.Fatal("preparation did not start", err)
 	}
+	// Tool traffic shares the socket with live opening progress. Leave a
+	// tool call pending while cancelling preparation; it must survive.
+	d.conversationMu.Lock()
+	forward := d.conversationForward
+	d.conversationMu.Unlock()
+	if forward == nil {
+		t.Fatal("conversation forwarder is unavailable")
+	}
+	toolCtx, stopTool := context.WithTimeout(ctx, 5*time.Second)
+	defer stopTool()
+	toolResult := make(chan error, 1)
+	go func() {
+		body, err := forward(toolCtx, "fixture-token", []byte(`{"method":"ping"}`))
+		if err == nil && string(body) != `{"result":{}}` {
+			err = fmt.Errorf("unexpected tool response: %s", body)
+		}
+		toolResult <- err
+	}()
+	var tool controlMessage
+	for tool.Type != "agent_tool.request" {
+		if err := peer.ReadJSON(&tool); err != nil {
+			t.Fatal("tool request blocked by workspace preparation", err)
+		}
+	}
+	if tool.ToolRequest == nil || tool.ToolRequest.Token != "fixture-token" || string(tool.ToolRequest.Body) != `{"method":"ping"}` {
+		t.Fatalf("incorrect forwarded request: %+v", tool)
+	}
 	if err := peer.WriteJSON(controlMessage{Type: "workspace.cancel", RequestID: "opening"}); err != nil {
 		t.Fatal(err)
 	}
@@ -175,4 +206,151 @@ func TestWorkspaceOpeningStreamsProgressAndCancelsOnlyItsRequest(t *testing.T) {
 	if err := peer.ReadJSON(&response); err != nil || response.RequestID != "status-after-cancel" {
 		t.Fatalf("cancel closed shared connection: %+v %v", response, err)
 	}
+	if err := peer.WriteJSON(controlMessage{Type: "agent_tool.response", RequestID: tool.RequestID, ToolResponse: &domain.RunnerToolResponse{Body: []byte(`{"result":{}}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-toolResult; err != nil {
+		t.Fatal("workspace cancellation interrupted the conversation gateway", err)
+	}
+}
+
+func TestWorkspaceControlConversationProcessOutlivesStartRequest(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh unavailable")
+	}
+	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir(), ExtraBinaries: map[string]string{"fixture-cli": shell}}}
+	peers := make(chan *websocket.Conn, 1)
+	releasePeer := make(chan struct{})
+	conn := controlTestServer(t, func(peer *websocket.Conn) { peers <- peer; <-releasePeer })
+	defer close(releasePeer)
+	peer := <-peers
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	finished := make(chan error, 1)
+	go func() { finished <- d.readControls(ctx, conn) }()
+	defer func() { cancel(); <-finished }()
+	_ = peer.SetReadDeadline(time.Now().Add(5 * time.Second))
+	call := func(id string, req runtime.ConversationProcessRequest) runtime.ConversationProcessResult {
+		t.Helper()
+		req.SessionKey = strings.Repeat("c", 64)
+		request := domain.RunnerWorkspaceRequest{Operation: "conversation_process", Conversation: conversationRequest(t, req)}
+		if err := peer.WriteJSON(controlMessage{Type: "workspace.request", RequestID: id, WorkspaceRequest: &request}); err != nil {
+			t.Fatal(err)
+		}
+		var response controlMessage
+		if err := peer.ReadJSON(&response); err != nil {
+			t.Fatal(err)
+		}
+		if response.RequestID != id || response.WorkspaceResponse == nil || response.WorkspaceResponse.Status != 200 {
+			t.Fatalf("conversation RPC failed: %+v", response)
+		}
+		var result runtime.ConversationProcessResult
+		if err := json.Unmarshal(response.WorkspaceResponse.Payload, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	started := call("start", runtime.ConversationProcessRequest{Operation: "start", Command: &runtime.ConversationCommand{
+		Provider: "fixture-cli", Interactive: true,
+		Argv: []string{"fixture-cli", "-c", `read line; printf 'survived:%s' "$line"`},
+	}})
+	call("write", runtime.ConversationProcessRequest{Operation: "write", ID: started.ID, Data: "next RPC\n"})
+	var output strings.Builder
+	var after int64
+	for {
+		result := call("poll", runtime.ConversationProcessRequest{Operation: "poll", ID: started.ID, After: after})
+		for _, event := range result.Events {
+			output.WriteString(event.Message)
+		}
+		after = result.Sequence
+		if result.Done {
+			if result.Error != "" || !strings.Contains(output.String(), "survived:next RPC") {
+				t.Fatalf("start RPC cancelled persistent process: error=%s output=%s", result.Error, output.String())
+			}
+			break
+		}
+	}
+}
+
+func TestCheckpointCancellationReleasesRunnerWorkspaceForNextTurn(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "runs", "slow-export", "workspace")
+	if err := os.MkdirAll(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(filepath.Join(workspace, "slow.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Truncate(512 << 20); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	file.Close()
+	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: root}}
+	request := domain.RunnerWorkspaceRequest{RunID: "slow-export", RunStatus: "succeeded", WorkspaceLayout: domain.RunnerWorkspaceLayoutShared, Operation: domain.RunnerWorkspaceOperationCheckpointExport}
+	result := make(chan error, 1)
+	conn := controlTestServer(t, func(peer *websocket.Conn) {
+		if err := peer.WriteJSON(controlMessage{Type: "workspace.request", RequestID: "export", WorkspaceRequest: &request}); err != nil {
+			result <- err
+			return
+		}
+		gate := d.requestGate(request)
+		deadline := time.Now().Add(2 * time.Second)
+		for gate.TryLock() {
+			gate.Unlock()
+			if time.Now().After(deadline) {
+				result <- fmt.Errorf("export never acquired workspace fence")
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if err := peer.WriteJSON(controlMessage{Type: "workspace.cancel", RequestID: "export"}); err != nil {
+			result <- err
+			return
+		}
+		_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var response controlMessage
+		if err := peer.ReadJSON(&response); err != nil {
+			result <- err
+			return
+		}
+		if response.WorkspaceResponse == nil || !strings.Contains(response.WorkspaceResponse.Error, "context canceled") {
+			result <- fmt.Errorf("export did not stop: %+v", response)
+			return
+		}
+		if !gate.TryLock() {
+			result <- fmt.Errorf("stopped export retained workspace fence")
+			return
+		}
+		gate.Unlock()
+		request.Operation = domain.RunnerWorkspaceOperationTree
+		if err := peer.WriteJSON(controlMessage{Type: "workspace.request", RequestID: "next-turn", WorkspaceRequest: &request}); err != nil {
+			result <- err
+			return
+		}
+		if err := peer.ReadJSON(&response); err != nil {
+			result <- err
+			return
+		}
+		if response.RequestID != "next-turn" || response.WorkspaceResponse == nil || response.WorkspaceResponse.Status != 200 {
+			result <- fmt.Errorf("next turn blocked: %+v", response)
+			return
+		}
+		result <- nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- d.readControls(ctx, conn) }()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("remote checkpoint cancellation timed out")
+	}
+	cancel()
+	<-finished
 }
