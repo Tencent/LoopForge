@@ -41,10 +41,6 @@ var runIntervalClosers = map[string]bool{
 
 var runTerminalEvents = map[string]bool{"run.failed": true, "run.cancelled": true, "run.succeeded": true}
 
-func runTerminal(status string) bool {
-	return status == "succeeded" || status == "failed" || status == "cancelled"
-}
-
 // ComputeRunTiming derives timing from the run event log. Node rows only keep
 // the latest attempt, and approval waits leave FinishedAt at the decision
 // time, so the event log is the only source that covers every attempt. Runs
@@ -151,7 +147,7 @@ func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []R
 // open, otherwise the terminal run event, falling back to the last event, the
 // run's UpdatedAt, and finally now.
 func runTimingEnd(run Run, terminalAt, lastEvent, now time.Time) time.Time {
-	if !runTerminal(run.Status) {
+	if !TerminalRunStatus(run.Status) {
 		return now
 	}
 	for _, at := range []time.Time{terminalAt, lastEvent, run.UpdatedAt} {
