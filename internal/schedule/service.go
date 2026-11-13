@@ -272,17 +272,7 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 	}
 	matched := s.matchingIssues(job)
 	job.LastPulled = len(matched)
-	var eligible []domain.Issue
-	for _, issue := range matched {
-		workflowID := job.ResolveWorkflow(issue)
-		if workflowID == "" {
-			continue
-		}
-		if s.repo.IssueHasTask(issue.ID) || issue.DeliveryLocked() || issue.GongfengClosed() || issue.Status == "done" || issue.Status == "closed" || issue.Status == "cancelled" || issue.AutomationState == "ignored" {
-			continue
-		}
-		eligible = append(eligible, issue)
-	}
+	eligible := s.eligibleIssues(job, matched)
 	blocked := map[string]domain.ScheduleJobBlocker{}
 	if s.guard != nil && len(eligible) > 0 {
 		var guardErr error
@@ -302,16 +292,7 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 		if dispatched >= limit {
 			break
 		}
-		// A multi-repository issue must wait when any of its repositories has
-		// an integration blocker.
-		waiting := false
-		for _, repoID := range issueRepositoryIDs(s.repo, issue) {
-			if _, isBlocked := blocked[repoID]; isBlocked {
-				waiting = true
-				break
-			}
-		}
-		if waiting {
+		if issueBlocked(s.repo, issue, blocked) {
 			continue
 		}
 		if err := s.dispatch(job, issue, triggerOrigin); err != nil {
@@ -340,6 +321,34 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 	job.Blockers = nil
 	job = s.saveResult(job)
 	return job, nil
+}
+
+// eligibleIssues keeps the matched issues the job may dispatch: a workflow
+// resolves for them, they have no task yet, and they are neither locked,
+// closed, finished nor ignored by automation.
+func (s *Service) eligibleIssues(job domain.ScheduleJob, matched []domain.Issue) []domain.Issue {
+	var eligible []domain.Issue
+	for _, issue := range matched {
+		if job.ResolveWorkflow(issue) == "" {
+			continue
+		}
+		if s.repo.IssueHasTask(issue.ID) || issue.DeliveryLocked() || issue.GongfengClosed() || issue.Status == "done" || issue.Status == "closed" || issue.Status == "cancelled" || issue.AutomationState == "ignored" {
+			continue
+		}
+		eligible = append(eligible, issue)
+	}
+	return eligible
+}
+
+// issueBlocked reports whether the issue must wait: a multi-repository issue
+// waits when any of its repositories has an integration blocker.
+func issueBlocked(st *repo.Store, issue domain.Issue, blocked map[string]domain.ScheduleJobBlocker) bool {
+	for _, repoID := range issueRepositoryIDs(st, issue) {
+		if _, ok := blocked[repoID]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // issueRepositoryIDs lists every repository a scheduled issue touches:

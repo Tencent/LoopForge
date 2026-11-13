@@ -272,7 +272,9 @@ function showRunDetail(id){
     state.activeRun=summary;
     renderRunDetail(summary);
   }
-  api(`/api/runs/${encodeURIComponent(id)}`,{silent:!!summary}).then(r=>{
+  api(`/api/runs/${encodeURIComponent(id)}`,{silent:!!summary}).then(async r=>{
+    if(state.selectedRun!==id)return;
+    await loadRunMachineMetadata(r);
     if(state.selectedRun!==id)return;
     state.activeRun=r;
     if(shouldPatchRunLive(r))patchRunLive(r);else renderRunDetail(r);
@@ -303,7 +305,9 @@ function selectRun(id,keepPages=false){
     renderRunDetail(summary);
     if(['queued','running','waiting'].includes(summary.status))startLiveRun(id);else stopLiveRun();
   }
-  api(`/api/runs/${encodeURIComponent(id)}`,{silent:!!summary}).then(r=>{
+  api(`/api/runs/${encodeURIComponent(id)}`,{silent:!!summary}).then(async r=>{
+    if(state.selectedRun!==id)return;
+    await loadRunMachineMetadata(r);
     if(state.selectedRun!==id)return;
     state.activeRun=r;
     renderRuns();
@@ -1453,6 +1457,14 @@ async function runAction(id,action,body){
     await refreshRuns(true);
     toast(action==='cancel'&&run.status==='cancelled'?(run.admissionState==='unstarted'?'已取消排队':'运行已取消'):runControlToast(run,action==='approve'?'已批准，流程继续':action==='reject'?'已打回，开始返工':action==='retry'?'已从中断处继续':'已选择不重试'));
   }catch(e){toast(e.message)}
+}
+async function loadRunMachineMetadata(r){
+  if(r.executionContext?.executionMode!=='runner')return;
+  // Unlike refreshRunners, this read-only lookup does not create a binding code.
+  try{
+    const runners=await api('/api/runners?mine=1',{silent:true});
+    if(state.selectedRun===r.id)state.runners=runners||[];
+  }catch{} // Machine metadata must not prevent displaying the run.
 }
 function runExecutionChipHTML(r){
   const ec=r.executionContext||{};

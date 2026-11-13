@@ -715,11 +715,6 @@ func (r *DeliveryRepo) ListMRDeliveryStates() ([]domain.MRDeliveryState, error) 
 
 // DiscoverMRDeliveryStatesFromArtifacts registers MR links found in run artifacts.
 func (r *DeliveryRepo) DiscoverMRDeliveryStatesFromArtifacts() error {
-	type artifactHit struct {
-		runID  string
-		name   string
-		nodeID string
-	}
 	var rows []struct {
 		ExecutionContext string `gorm:"column:execution_context"`
 		Name             string `gorm:"column:name"`

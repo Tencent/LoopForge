@@ -153,13 +153,6 @@ func hasFailed(wf domain.WorkflowDefinition, r domain.Run) bool {
 	return false
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func validate(wf domain.WorkflowDefinition) error {
 	if err := domain.ValidateWorkflowPreparation(wf); err != nil {
 		return err
