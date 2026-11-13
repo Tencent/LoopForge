@@ -13,7 +13,7 @@ var ExecutorEffortLevels = map[string][]string{
 	"codebuddy":   {"low", "medium", "high", "xhigh", "max", "ultracode"},
 	"codex":       {"low", "medium", "high", "xhigh", "max", "ultra"},
 	"opencode":    {"low", "medium", "high"},
-	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max"},
+	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
 	"agy":         {"low", "medium", "high", "xhigh", "max"},
 	"pi":          {"minimal", "low", "medium", "high", "xhigh", "max"},
 }

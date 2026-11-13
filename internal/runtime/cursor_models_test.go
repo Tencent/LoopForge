@@ -42,9 +42,14 @@ func TestCursorModelID(t *testing.T) {
 		{"gemini-4-argon", "max", "gemini-4-argon-high"},
 		{"composer-2.5", "high", "composer-2.5"},
 		{"auto", "", "auto"},
-		// Raw IDs and unknown models pass through.
+		{"gemini-4-carbon", "", "gemini-4-carbon-medium"},
+		{"gemini-4-carbon", "high", "gemini-4-carbon-high"},
+		{"gemini-4-hydrogen", "xhigh", "gemini-4-hydrogen-xhigh"},
+		{"gemini-4-hydrogen", "max", "gemini-4-hydrogen-xhigh"},
+		// A raw effort ID keeps that effort. A bare unknown family gains the suffix.
 		{"claude-opus-5-high", "low", "claude-opus-5-high"},
-		{"some-new-model", "high", "some-new-model"},
+		{"some-new-model", "high", "some-new-model-high"},
+		{"some-new-model", "", "some-new-model"},
 	}
 	for _, c := range cases {
 		if got := CursorModelID(c.id, c.effort); got != c.want {
@@ -57,11 +62,62 @@ func TestCursorModelID(t *testing.T) {
 	if got := CursorModelEfforts("composer-2.5"); got != nil {
 		t.Errorf("composer efforts: %v", got)
 	}
+	if !slices.Equal(CursorModelEfforts("gemini-4-carbon"), []string{"low", "medium", "high"}) {
+		t.Errorf("carbon efforts: %v", CursorModelEfforts("gemini-4-carbon"))
+	}
+	if !slices.Equal(CursorModelEfforts("gemini-4-hydrogen"), []string{"low", "medium", "high", "xhigh"}) {
+		t.Errorf("hydrogen efforts: %v", CursorModelEfforts("gemini-4-hydrogen"))
+	}
 	if family, ok := CursorModelFamily("gpt-5.6-terra-xhigh-fast"); !ok || family.ID != "gpt-5.6-terra-fast" {
 		t.Errorf("family of a fast variant: %+v %v", family, ok)
 	}
 	argv := AgentCLICommand(AgentCLICursor, AgentCLICommandOptions{Model: "claude-opus-4-8-thinking", Effort: "xhigh", Prompt: "p"}).Argv
 	if i := slices.Index(argv, "--model"); i < 0 || argv[i+1] != "claude-opus-4-8-thinking-xhigh" {
 		t.Errorf("cursor argv: %q", argv)
+	}
+}
+
+func TestFoldCursorCLIModels(t *testing.T) {
+	got := FoldCursorCLIModels([]domain.CLIModel{
+		{ID: "gemini-4-carbon-high", Name: "Gemini 4 Carbon High"},
+		{ID: "gemini-4-carbon-low", Name: "Gemini 4 Carbon Low"},
+		{ID: "gemini-4-carbon-medium", Name: "Gemini 4 Carbon Medium"},
+		{ID: "gemini-4-hydrogen-xhigh", Name: "Gemini 4 Hydrogen Extra High"},
+		{ID: "widget-extra-high", Name: "Widget Extra High"},
+		{ID: "widget-low", Name: "Widget Low"},
+		{ID: "widget", Name: "Widget"},
+		{ID: "widget-low-fast", Name: "Widget Low Fast"},
+		{ID: "widget-high-fast", Name: "Widget High Fast"},
+		{ID: "plain-model", Name: "Plain Model"},
+		{ID: "solo-ultra", Name: "Solo Ultra"},
+	})
+	want := []domain.CLIModel{
+		{ID: "gemini-4-carbon", Name: "Gemini 4 Carbon"},
+		{ID: "gemini-4-hydrogen", Name: "Gemini 4 Hydrogen"},
+		{ID: "widget", Name: "Widget"},
+		{ID: "widget-fast", Name: "Widget Fast"},
+		{ID: "plain-model", Name: "Plain Model"},
+		{ID: "solo", Name: "Solo"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("folded models:\n got %v\nwant %v", got, want)
+	}
+	if got := CursorModelID("widget", "xhigh"); got != "widget-extra-high" {
+		t.Errorf("widget xhigh = %q", got)
+	}
+	if got := CursorModelID("widget", ""); got != "widget" {
+		t.Errorf("widget default = %q", got)
+	}
+	if got := CursorModelID("widget-fast", "high"); got != "widget-high-fast" {
+		t.Errorf("widget fast high = %q", got)
+	}
+	if got := CursorModelID("solo", ""); got != "solo-ultra" {
+		t.Errorf("solo default = %q", got)
+	}
+	if !slices.Equal(CursorModelEfforts("widget"), []string{"low", "medium", "xhigh"}) {
+		t.Errorf("widget efforts: %v", CursorModelEfforts("widget"))
+	}
+	if !slices.Equal(CursorModelEfforts("solo"), []string{"ultra"}) {
+		t.Errorf("solo efforts: %v", CursorModelEfforts("solo"))
 	}
 }

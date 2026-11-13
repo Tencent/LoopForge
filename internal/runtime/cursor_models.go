@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"slices"
+	"strings"
+	"sync"
 
 	"agentflow/internal/domain"
 )
@@ -82,6 +84,8 @@ var cursorModels = []CursorModel{
 	{ID: "gpt-5.2-fast", Name: "GPT-5.2 Fast", Default: "medium", Variants: map[string]string{"low": "gpt-5.2-low-fast", "medium": "gpt-5.2-fast", "high": "gpt-5.2-high-fast", "xhigh": "gpt-5.2-xhigh-fast"}},
 	{ID: "gpt-5.1", Name: "GPT-5.1", Default: "medium", Variants: map[string]string{"low": "gpt-5.1-low", "medium": "gpt-5.1", "high": "gpt-5.1-high"}},
 	{ID: "gpt-5-mini", Name: "GPT-5 Mini", Default: "", Variants: map[string]string{"": "gpt-5-mini"}},
+	{ID: "gemini-4-carbon", Name: "Gemini 4 Carbon", Default: "medium", Variants: map[string]string{"low": "gemini-4-carbon-low", "medium": "gemini-4-carbon-medium", "high": "gemini-4-carbon-high"}},
+	{ID: "gemini-4-hydrogen", Name: "Gemini 4 Hydrogen", Default: "medium", Variants: map[string]string{"low": "gemini-4-hydrogen-low", "medium": "gemini-4-hydrogen-medium", "high": "gemini-4-hydrogen-high", "xhigh": "gemini-4-hydrogen-xhigh"}},
 	{ID: "gemini-4-argon", Name: "Gemini 4 Argon", Default: "medium", Variants: map[string]string{"low": "gemini-4-argon-low", "medium": "gemini-4-argon-medium", "high": "gemini-4-argon-high"}},
 	{ID: "gemini-3.8-flash", Name: "Gemini 3.8 Flash", Default: "medium", Variants: map[string]string{"low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high"}},
 	{ID: "gemini-3.7-flash", Name: "Gemini 3.7 Flash", Default: "high", Variants: map[string]string{"low": "gemini-3.7-flash-low", "medium": "gemini-3.7-flash-medium", "high": "gemini-3.7-flash-high"}},
@@ -118,11 +122,15 @@ func CursorModelFamily(id string) (CursorModel, bool) {
 }
 
 // CursorModelEfforts lists the efforts of a family, weakest first; nil for
-// a model ID outside the table or without effort variants.
+// a model ID outside the known families or without effort variants.
 func CursorModelEfforts(id string) []string {
+	model, ok := lookupCursorFamily(id)
+	if !ok {
+		return nil
+	}
 	var out []string
 	for _, effort := range domain.ExecutorEffortLevels[AgentCLICursor] {
-		if _, ok := cursorModelByID[id].Variants[effort]; ok {
+		if _, ok := model.Variants[effort]; ok {
 			out = append(out, effort)
 		}
 	}
@@ -131,13 +139,20 @@ func CursorModelEfforts(id string) []string {
 
 // CursorModelID resolves a family and effort to the cursor-agent model ID.
 // An empty effort takes the family default and an effort the family lacks
-// the closest one (the stronger on a tie); IDs outside the table, including
-// raw cursor-agent IDs, pass through.
+// the closest one (the stronger on a tie). A raw cursor-agent ID that
+// already names one effort passes through. A bare family ID outside the
+// table gains the effort suffix.
 func CursorModelID(id, effort string) string {
-	model, ok := cursorModelByID[id]
-	if !ok {
+	if model, ok := lookupCursorFamily(id); ok {
+		return cursorVariantID(model, effort)
+	}
+	if _, _, suffixed := splitCursorEffortID(id); suffixed || cursorEffortToken(effort) == "" {
 		return id
 	}
+	return appendCursorEffort(id, effort)
+}
+
+func cursorVariantID(model CursorModel, effort string) string {
 	if raw, ok := model.Variants[""]; ok {
 		return raw
 	}
@@ -163,4 +178,214 @@ func abs(n int) int {
 		return -n
 	}
 	return n
+}
+
+// cursorEffortSuffixes are the trailing tokens cursor-agent appends to a
+// family ID. Longer tokens come first so xhigh is not read as high.
+// extra-high is the spelling some models use for xhigh.
+var cursorEffortSuffixes = []struct{ token, effort string }{
+	{"extra-high", "xhigh"},
+	{"minimal", "minimal"},
+	{"medium", "medium"},
+	{"xhigh", "xhigh"},
+	{"ultra", "ultra"},
+	{"high", "high"},
+	{"none", "none"},
+	{"max", "max"},
+	{"low", "low"},
+}
+
+var cursorEffortNameSuffixes = []string{"Extra High", "Minimal", "Medium", "Xhigh", "Ultra", "High", "None", "Max", "Low"}
+
+// inferredCursorModels remembers families folded out of a live CLI list so a
+// later effort selection resolves to the ID cursor-agent actually printed.
+var inferredCursorModels sync.Map
+
+func lookupCursorFamily(id string) (CursorModel, bool) {
+	if model, ok := cursorModelByID[id]; ok {
+		return model, true
+	}
+	if value, ok := inferredCursorModels.Load(id); ok {
+		return value.(CursorModel), true
+	}
+	return CursorModel{}, false
+}
+
+func cursorEffortToken(effort string) string {
+	switch strings.TrimSpace(effort) {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+		return effort
+	default:
+		return ""
+	}
+}
+
+// splitCursorEffortID reports the family and effort of a cursor-agent model
+// ID. A trailing -fast stays on the family: speed is its own family.
+func splitCursorEffortID(id string) (family, effort string, ok bool) {
+	fast := false
+	if base, found := strings.CutSuffix(id, "-fast"); found && base != "" {
+		id, fast = base, true
+	}
+	for _, suffix := range cursorEffortSuffixes {
+		base, found := strings.CutSuffix(id, "-"+suffix.token)
+		if !found || base == "" {
+			continue
+		}
+		if fast {
+			base += "-fast"
+		}
+		return base, suffix.effort, true
+	}
+	return "", "", false
+}
+
+func appendCursorEffort(id, effort string) string {
+	token := cursorEffortToken(effort)
+	if token == "" {
+		return id
+	}
+	if base, found := strings.CutSuffix(id, "-fast"); found && base != "" {
+		return base + "-" + token + "-fast"
+	}
+	return id + "-" + token
+}
+
+func stripCursorEffortName(name string) string {
+	name = strings.TrimSpace(name)
+	fast := false
+	if base, found := strings.CutSuffix(name, " Fast"); found && strings.TrimSpace(base) != "" {
+		name, fast = strings.TrimSpace(base), true
+	}
+	for _, suffix := range cursorEffortNameSuffixes {
+		if len(name) <= len(suffix)+1 || name[len(name)-len(suffix)-1] != ' ' {
+			continue
+		}
+		if strings.EqualFold(name[len(name)-len(suffix):], suffix) {
+			name = strings.TrimSpace(name[:len(name)-len(suffix)])
+			break
+		}
+	}
+	if fast {
+		return name + " Fast"
+	}
+	return name
+}
+
+func inferredCursorDefault(variants map[string]string) string {
+	if _, ok := variants["medium"]; ok {
+		return "medium"
+	}
+	levels := domain.ExecutorEffortLevels[AgentCLICursor]
+	want := slices.Index(levels, "medium")
+	best, distance, bestIndex := "", len(levels)+1, -1
+	for i, level := range levels {
+		if _, ok := variants[level]; !ok {
+			continue
+		}
+		gap := abs(i - want)
+		if best == "" || gap < distance || (gap == distance && i > bestIndex) {
+			best, distance, bestIndex = level, gap, i
+		}
+	}
+	return best
+}
+
+// FoldCursorCLIModels collapses cursor-agent's per-effort IDs into one row
+// per family. Families in the built-in table keep that table's name and
+// order. Other IDs ending in a recognized effort suffix fold the same way,
+// and the rest stay as the CLI listed them.
+func FoldCursorCLIModels(models []domain.CLIModel) []domain.CLIModel {
+	present := map[string]bool{}
+	type group struct {
+		name     string
+		variants map[string]string
+	}
+	groups := map[string]*group{}
+	type slot struct {
+		family bool
+		id     string
+		plain  domain.CLIModel
+	}
+	var tail []slot
+	seen := map[string]bool{}
+	for _, model := range models {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		if family, ok := CursorModelFamily(id); ok {
+			present[family.ID] = true
+			continue
+		}
+		if familyID, effort, ok := splitCursorEffortID(id); ok {
+			if _, known := cursorModelByID[familyID]; known {
+				present[familyID] = true
+				continue
+			}
+			g := groups[familyID]
+			if g == nil {
+				g = &group{variants: map[string]string{}}
+				groups[familyID] = g
+				if !seen["family:"+familyID] {
+					seen["family:"+familyID] = true
+					tail = append(tail, slot{family: true, id: familyID})
+				}
+			}
+			if _, exists := g.variants[effort]; !exists {
+				g.variants[effort] = id
+			}
+			if stripped := stripCursorEffortName(model.Name); stripped != "" && (g.name == "" || effort == "medium") {
+				g.name = stripped
+			}
+			continue
+		}
+		if seen["plain:"+id] {
+			continue
+		}
+		seen["plain:"+id] = true
+		tail = append(tail, slot{id: id, plain: domain.CLIModel{ID: id, Name: strings.TrimSpace(model.Name)}})
+	}
+	var dynamic []slot
+	for _, item := range tail {
+		if item.family {
+			dynamic = append(dynamic, item)
+			continue
+		}
+		g := groups[item.id]
+		if g == nil {
+			dynamic = append(dynamic, item)
+			continue
+		}
+		if _, ok := g.variants["medium"]; !ok {
+			g.variants["medium"] = item.id
+			if item.plain.Name != "" {
+				g.name = item.plain.Name
+			}
+		}
+	}
+	out := make([]domain.CLIModel, 0, len(present)+len(dynamic))
+	for _, family := range cursorModels {
+		if present[family.ID] {
+			out = append(out, domain.CLIModel{ID: family.ID, Name: family.Name})
+		}
+	}
+	for _, item := range dynamic {
+		if !item.family {
+			out = append(out, item.plain)
+			continue
+		}
+		g := groups[item.id]
+		name := g.name
+		if name == "" {
+			name = item.id
+		}
+		variants := make(map[string]string, len(g.variants))
+		for effort, raw := range g.variants {
+			variants[effort] = raw
+		}
+		inferredCursorModels.Store(item.id, CursorModel{ID: item.id, Name: name, Default: inferredCursorDefault(variants), Variants: variants})
+		out = append(out, domain.CLIModel{ID: item.id, Name: name})
+	}
+	return out
 }
