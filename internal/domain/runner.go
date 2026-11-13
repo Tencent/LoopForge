@@ -75,6 +75,12 @@ const RunnerVersionWorkspaceOwnerPreparation = "0.7.1"
 
 const RunnerVersionConversationWorkspace = "0.8.0"
 
+const RunnerVersionConversationCLI = "0.10.0"
+
+func (r Runner) SupportsConversationCLI() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
+}
+
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
 }

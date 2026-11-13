@@ -117,6 +117,7 @@ export function useChat() {
     submitting || generation?.status === "running",
     !!session?.readOnly,
     setError,
+    bindExecutionMachine,
   );
   const currentId = useRef(activeId),
     sessionRef = useRef(session),
@@ -359,6 +360,9 @@ export function useChat() {
       accumulated = mergeEvents(accumulated, events);
       setLive(accumulated);
       setGeneration(g);
+	  if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
+	    setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
+	  }
       if (g.status !== "running" && loaded !== g.id) {
         source?.close();
         source = null;
@@ -770,6 +774,7 @@ export function useChat() {
             projectId: projectRef.current,
             issueId: draftIssueId,
             sandboxProfileId,
+            executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
             model: activeModel,
             effort: activeEffort,
             executor,
@@ -1106,6 +1111,27 @@ export function useChat() {
       return false;
     }
   }
+  async function bindExecutionMachine(runnerId) {
+    if (currentId.current || sessionRef.current) throw new Error("会话执行机器已固定，请新建对话。");
+    const id = newId();
+    const saved = await write(sessionPath(id), {
+      id, projectId: projectRef.current, issueId: draftIssueId, sandboxProfileId,
+      model: activeModel, effort: activeEffort, title: "新对话", messages: [],
+      executionTarget: {pool: runnerId ? "runner" : "cloud", runnerId},
+    }, "PUT");
+    sessionRef.current = saved; setSession(saved); currentId.current = id;
+    setActiveId(id); changeURL(id); await refreshSessions();
+    return {runnerId};
+  }
+  async function switchRuntimeMode(mode) {
+    const current = sessionRef.current;
+    if (!current || submittingRef.current || generation?.status === "running") return false;
+    try {
+      const saved = await write(`${sessionPath(current.id)}/mode`, {mode}, "PUT");
+      if (currentId.current === current.id) { sessionRef.current = saved; setSession(saved); }
+      return true;
+    } catch (e) { setError(e.message); return false; }
+  }
   async function selectSandbox(id) {
     const current = sessionRef.current;
     if (submittingRef.current || sandboxBusyRef.current || generation?.status === "running") return false;
@@ -1188,6 +1214,7 @@ export function useChat() {
     workspaceExecutionError,
     ...executionMachines,
     selectSandbox,
+    switchRuntimeMode,
     models: executorModels,
     executor,
     executors: EXECUTORS,

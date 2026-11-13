@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	// AssistantSourceChat is an ordinary conversation.
@@ -118,7 +121,36 @@ type AssistantParticipant struct {
 	Name string `json:"name,omitempty"`
 }
 
+const (
+	AssistantModePlatform  = "platform"
+	AssistantModeWorkspace = "workspace"
+)
+
+// AssistantExecutionTarget is selected once, independently of a workspace.
+// An empty RunnerID in the cloud pool means the built-in execution host.
+type AssistantExecutionTarget struct {
+	Pool     string `json:"pool"`
+	RunnerID string `json:"runnerId,omitempty"`
+}
+
+func (s AssistantSession) Execution() AssistantExecutionTarget {
+	if s.ExecutionTarget != nil {
+		return *s.ExecutionTarget
+	}
+	// Conversations created before execution selection all ran in the cloud.
+	return AssistantExecutionTarget{Pool: ExecutionModeCloud}
+}
+
+func (s AssistantSession) Mode() string {
+	if s.RuntimeMode != "" {
+		return s.RuntimeMode
+	}
+	return AssistantModePlatform
+}
+
 type AssistantSession struct {
+	ExecutionTarget *AssistantExecutionTarget `json:"executionTarget,omitempty"`
+	RuntimeMode     string                    `json:"runtimeMode,omitempty"`
 	// Source separates ordinary chats, SOP run conversations and scheduled
 	// task runs. Legacy rows leave it empty and are inferred when read.
 	// TaskID is the scheduled job or assistant task that produced the session,
@@ -187,4 +219,15 @@ type AssistantTask struct {
 	LastRunAt            time.Time             `json:"lastRunAt,omitempty"`
 	CreatedAt            time.Time             `json:"createdAt"`
 	UpdatedAt            time.Time             `json:"updatedAt"`
+}
+
+// AssistantNativeApproval names one immutable native tool invocation.
+type AssistantNativeApproval struct {
+	ID           string          `json:"id"`
+	GenerationID string          `json:"generationId,omitempty"`
+	ActorID      int64           `json:"actorId"`
+	Tool         string          `json:"tool"`
+	Input        json.RawMessage `json:"input"`
+	Decision     string          `json:"decision"`
+	ExpiresAt    time.Time       `json:"expiresAt"`
 }

@@ -128,6 +128,7 @@ func TestConversationWorkspaceOpensBindsAndIsReused(t *testing.T) {
 	}
 	var opened struct {
 		RunID        string `json:"runId"`
+		Handoff      bool   `json:"handoff"`
 		Repositories []struct {
 			Name       string `json:"name"`
 			Dir        string `json:"dir"`
@@ -136,7 +137,7 @@ func TestConversationWorkspaceOpensBindsAndIsReused(t *testing.T) {
 		Reused     bool `json:"reused"`
 		WorkBranch string
 	}
-	if err = json.Unmarshal([]byte(raw), &opened); err != nil || opened.RunID == "" || len(opened.Repositories) != 2 || opened.Reused || !strings.Contains(raw, "web/README.md") || !strings.Contains(raw, "api/README.md") {
+	if err = json.Unmarshal([]byte(raw), &opened); err != nil || !opened.Handoff || s.requestedMode() != domain.AssistantModeWorkspace || opened.RunID == "" || len(opened.Repositories) != 2 || opened.Reused || !strings.Contains(raw, "web/README.md") || !strings.Contains(raw, "api/README.md") {
 		t.Fatalf("open result = %s (%v)", raw, err)
 	}
 	for _, r := range opened.Repositories {

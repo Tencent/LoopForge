@@ -78,7 +78,8 @@ func agentCLIModelOptional(kind, baseURL string) bool {
 // AgentCLIOptions carries the per-invocation facts the credential binding
 // needs to render a CLI's model configuration.
 type AgentCLIOptions struct {
-	Model string
+	ApprovalCommand string
+	Model           string
 	// SystemPromptFile is the system prompt path as the process sees it
 	// (relative paths resolve against the working directory).
 	SystemPromptFile string
@@ -424,6 +425,9 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		lines = append(lines, "api_key_env = "+strconv.Quote(agentCLIKeyEnv), "",
 			"[models.agentflow]", `provider = "agentflow"`, "model = "+strconv.Quote(model),
 			"max_context_size = 262144", `capabilities = ["thinking", "tool_use"]`, "")
+		if hook := options.ApprovalCommand; hook != "" {
+			lines = append(lines, "[[hooks]]", `event = "PreToolUse"`, "command = "+strconv.Quote(hook), "timeout = 600", "")
+		}
 		if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte(strings.Join(lines, "\n"))); err != nil {
 			return nil, nil, err
 		}

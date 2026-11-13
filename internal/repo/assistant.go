@@ -276,6 +276,21 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 	if existing, ok := r.sessionByID(v.ID); ok && existing.UserID != userID {
 		return errors.New("assistant session belongs to another user")
 	}
+	old, exists := r.AssistantSession(userID, v.ID)
+	if exists {
+		target := old.Execution()
+		if v.ExecutionTarget != nil && *v.ExecutionTarget != target {
+			return ErrAssistantExecutionLocked
+		}
+		v.ExecutionTarget = &target
+		v.RuntimeMode = old.Mode()
+	} else {
+		if v.ExecutionTarget == nil {
+			v.ExecutionTarget = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+		}
+		v.RuntimeMode = domain.AssistantModePlatform
+	}
+
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	if old, ok := r.AssistantSession(userID, v.ID); ok && !old.CreatedAt.IsZero() {
 		v.CreatedAt = old.CreatedAt
@@ -421,6 +436,9 @@ func (r *AssistantRepo) DeleteAssistantSession(userID int64, id string) error {
 		}
 		if res.RowsAffected == 0 {
 			return fmt.Errorf("assistant session not found")
+		}
+		if err := tx.Where("session_id = ? AND user_id = ?", id, userID).Delete(&assistantNativeApprovalRow{}).Error; err != nil {
+			return err
 		}
 		if err := tx.Where("session_id = ?", id).Delete(&assistantSessionReadRow{}).Error; err != nil {
 			return err
@@ -577,6 +595,12 @@ func decodeAssistantSession(row assistantSessionRow) domain.AssistantSession {
 	_ = json.Unmarshal(row.Payload, &item)
 	item.ID = row.ID
 	item.UserID = row.UserID
+	if item.ExecutionTarget == nil {
+		item.ExecutionTarget = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+	}
+	if item.RuntimeMode == "" {
+		item.RuntimeMode = domain.AssistantModePlatform
+	}
 	if item.ProjectID == "" {
 		item.ProjectID = row.ProjectID
 	}

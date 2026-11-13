@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, write } from "./api";
+import { api } from "./api";
 
-// This is the same personal default used by Settings → 执行机器. Existing
-// workspaces keep the target frozen in their run's executionContext.
-export function useExecutionMachines(userId, busy, readOnly, onError) {
+// The personal default suggests the initial choice. Choosing a machine binds
+// this conversation once; it never changes the personal default.
+export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine) {
   const [machines, setMachines] = useState([]);
   const [defaultRunnerId, setDefaultRunnerId] = useState("");
   const [cloudPool, setCloudPool] = useState(null);
@@ -70,7 +70,7 @@ export function useExecutionMachines(userId, busy, readOnly, onError) {
     const request = ++revision.current;
     onError("");
     try {
-      const selected = await write("/api/runners/default", { runnerId }, "PUT");
+      const selected = await bindMachine(runnerId);
       if (request !== revision.current) return false;
       setDefaultRunnerId(selected.runnerId || "");
       setMachineError("");

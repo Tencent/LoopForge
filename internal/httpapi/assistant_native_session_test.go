@@ -247,13 +247,14 @@ func TestSharedNativeBranchHasIndependentContinuableState(t *testing.T) {
 	}
 }
 
-func TestSharedNativeSessionRecoversMissingTranscriptButDoesNotReplayModelErrors(t *testing.T) {
+func TestSharedNativeSessionPreservesIdentityAfterInterruptedTurn(t *testing.T) {
 	for _, mode := range []string{"missing", "fail", "progress-missing"} {
 		t.Run(mode, func(t *testing.T) {
 			h, a, b, _, session := sharedWorkbenchFixture(t)
 			dir, calls := nativeCLIRecorder(t)
 			session = sendNativeTurn(t, h, a, session, "恢复时需要的历史")
-			if err := os.WriteFile(filepath.Join(dir, mode), nil, 0o600); err != nil {
+			id := calls()[0].flag("--session-id")
+			if err := os.WriteFile(filepath.Join(dir, mode), nil, 0600); err != nil {
 				t.Fatal(err)
 			}
 			messages := append(append([]assistantMessage(nil), session.Messages...), assistantMessage{Role: "user", Content: "本轮新问题"})
@@ -261,31 +262,17 @@ func TestSharedNativeSessionRecoversMissingTranscriptButDoesNotReplayModelErrors
 			c, w := workbenchContext(b, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
 			h.chat(c)
 			got := calls()
-			if mode == "missing" {
-				if w.Code != 200 || len(got) != 3 || got[2].flag("--session-id") == "" || got[2].flag("--session-id") == got[0].flag("--session-id") {
-					t.Fatalf("missing transcript recovery: status=%d calls=%d", w.Code, len(got))
-				}
-				if !strings.Contains(got[2].prompt(), "恢复时需要的历史") || !strings.Contains(got[2].prompt(), "本轮新问题") {
-					t.Fatal("recovery omitted authoritative chat history")
-				}
-				session, _ = h.repo.SharedAssistantSession(session.ID)
-				sendNativeTurn(t, h, a, session, "恢复后继续")
-				if calls()[3].flag("--resume") != got[2].flag("--session-id") {
-					t.Fatal("recovered session was not retained")
-				}
-			} else {
-				if w.Code != 502 || len(got) != 2 {
-					t.Fatalf("model error replayed: status=%d calls=%d", w.Code, len(got))
-				}
-				job, _ := h.repo.AssistantGeneration(session.UserID, session.ID)
-				if job.Status != "failed" {
-					t.Fatalf("model failure was classified as %s", job.Status)
-				}
-				session, _ = h.repo.SharedAssistantSession(session.ID)
-				sendNativeTurn(t, h, b, session, "")
-				if calls()[2].flag("--resume") != "" {
-					t.Fatal("failed native turn was treated as a committed checkpoint")
-				}
+			if w.Code != 502 || len(got) != 2 || got[1].flag("--resume") != id {
+				t.Fatalf("failure silently restarted native session: status=%d calls=%d", w.Code, len(got))
+			}
+			job, _ := h.repo.AssistantGeneration(session.UserID, session.ID)
+			if job.Status != "failed" {
+				t.Fatalf("model failure was classified as %s", job.Status)
+			}
+			session, _ = h.repo.SharedAssistantSession(session.ID)
+			sendNativeTurn(t, h, b, session, "")
+			if calls()[2].flag("--resume") != id || calls()[2].flag("--session-id") != "" {
+				t.Fatal("retry discarded the interrupted native checkpoint")
 			}
 		})
 	}

@@ -52,6 +52,13 @@ func (r *assistantGenerationRecorder) sink(kind string, value any) {
 	defer func() { r.mu.Unlock(); r.live.publish() }()
 	raw, _ := json.Marshal(value)
 	switch kind {
+	case "runtime_mode":
+		var update struct {
+			Mode string `json:"mode"`
+		}
+		if json.Unmarshal(raw, &update) == nil && (update.Mode == domain.AssistantModePlatform || update.Mode == domain.AssistantModeWorkspace) {
+			r.g.RuntimeMode = update.Mode
+		}
 	case "thought":
 		if len(raw) > 256<<10 {
 			return

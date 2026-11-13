@@ -8,10 +8,13 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 const processWaitDelay = time.Second
+
+var errProcessNotStarted = errors.New("process was not started")
 
 func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	var buf bytes.Buffer
@@ -29,6 +32,12 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	// tail of a 50KB failure log, which is the part users need.
 	cmd.WaitDelay = processWaitDelay
 	err := cmd.Run()
+	if err != nil && cmd.Process == nil {
+		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
+	if cmd.Process != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil
 	}

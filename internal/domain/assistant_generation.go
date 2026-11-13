@@ -17,6 +17,7 @@ type AssistantGeneration struct {
 	UserID           int64                      `json:"-"`
 	ProjectID        string                     `json:"projectId"`
 	Status           string                     `json:"status"`
+	RuntimeMode      string                     `json:"runtimeMode,omitempty"`
 	WorkspaceWarning string                     `json:"workspaceWarning,omitempty"`
 	Error            string                     `json:"error,omitempty"`
 	Events           []AssistantGenerationEvent `json:"events"`

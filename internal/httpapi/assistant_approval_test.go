@@ -243,8 +243,11 @@ func TestAssistantSystemPromptForMode(t *testing.T) {
 		t.Fatal("auto prompt must require one-shot direct execution without drafts")
 	}
 	for name, prompt := range map[string]string{"confirm": base, "assisted": assisted, "auto": auto} {
-		if !strings.Contains(prompt, "只能使用上述 workbench_workspace_* 工具") || !strings.Contains(prompt, "路径不匹配") {
-			t.Fatalf("%s prompt must route workspace search to workbench_workspace_* instead of local Grep", name)
+		if !strings.Contains(prompt, "结束本阶段") || !strings.Contains(prompt, "CLI 原生文件、补丁和命令工具") {
+			t.Fatalf("%s prompt must explain native workspace handoff", name)
+		}
+		if strings.Contains(prompt, "workbench_workspace_command") || strings.Contains(prompt, "控制面主机") || strings.Contains(prompt, "仅通过已提供的 workbench_workspace_*") {
+			t.Fatalf("%s prompt retained obsolete workspace tool instructions", name)
 		}
 		if strings.Contains(prompt, "没有浏览器") || !strings.Contains(prompt, "workbench_browser_*") {
 			t.Fatalf("%s prompt must point page viewing at the Agent browser instead of denying it exists", name)

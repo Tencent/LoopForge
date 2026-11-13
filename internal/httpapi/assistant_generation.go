@@ -132,6 +132,20 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
+	if old.ID != "" {
+		if req.ExecutionTarget != nil && *req.ExecutionTarget != old.Execution() {
+			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换"})
+			return
+		}
+		req.ExecutionTarget = old.ExecutionTarget
+	} else {
+		var targetErr error
+		req.ExecutionTarget, targetErr = h.newExecutionTarget(user.ID, req.ProjectID, req.ExecutionTarget)
+		if targetErr != nil {
+			c.JSON(400, gin.H{"error": targetErr.Error()})
+			return
+		}
+	}
 	// Every message shows when it was sent. The server clock stamps the new
 	// question, so a skewed or missing browser clock cannot misdate it.
 	sentAt := time.Now().UTC()
@@ -143,7 +157,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
+	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
 	} else {
@@ -178,7 +192,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
 	_, sharedModels, _ := h.assistantChatUser(stored)
-	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
+	h.scheduleAssistantTitle(h.helperExecutionContext(parent, ownerID, req.ExecutionTarget), ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
 	done := inflightTasks.Add()
 	go func() {
 		defer done()

@@ -3,12 +3,32 @@ package runtime
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 )
+
+func TestDockerConversationProcessPreservesInteractiveInput(t *testing.T) {
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid is required by the Linux Docker process wrapper")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pid := filepath.Join(t.TempDir(), "owned-process.pid")
+	cmd := exec.CommandContext(ctx, "sh", "-c", dockerConversationProcessLaunch, "conversation-process", pid, "sh", "-c", `read first; read second; printf '%s/%s' "$first" "$second"`)
+	cmd.Stdin = strings.NewReader("initialize\nthread/resume\n")
+	output, err := cmd.CombinedOutput()
+	if err != nil || string(output) != "initialize/thread/resume" {
+		t.Fatalf("interactive process lost input: %q %v", output, err)
+	}
+	if data, err := os.ReadFile(pid); err != nil || strings.TrimSpace(string(data)) == "" {
+		t.Fatalf("process ownership PID not recorded: %q %v", data, err)
+	}
+}
 
 func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	workspace := t.TempDir()
@@ -257,7 +277,7 @@ if [ "${1-}" = inspect ] && [ "${2-}" = --format ]; then
   esac
 fi
 case " $* " in
-  *" --workspace-script-view-version "*) echo agentflow-script-view-v2; exit 0 ;;
+  *" --workspace-script-view-version "*) echo agentflow-script-view-v3; exit 0 ;;
 esac
 case "$*" in
   "image inspect --format {{.Architecture}} "*) echo amd64; exit 0 ;;

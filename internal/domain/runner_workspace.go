@@ -36,6 +36,7 @@ const (
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
+	Conversation       json.RawMessage              `json:"conversation,omitempty"`
 	RunKind            string                       `json:"runKind,omitempty"`
 	CheckpointTransfer *WorkspaceCheckpointTransfer `json:"checkpointTransfer,omitempty"`
 	// Only the control plane may allow a clean checkout to be refreshed, before
@@ -68,6 +69,17 @@ type RunnerWorkspaceRequest struct {
 	Query           string              `json:"query,omitempty"`
 	Ref             string              `json:"ref,omitempty"`
 	Repositories    []RepositoryContext `json:"repositories,omitempty"`
+}
+
+// RunnerToolRequest is forwarded over the same instance-owned control socket
+// as the conversation process, avoiding loopback and load-balancer affinity.
+type RunnerToolRequest struct {
+	Token string          `json:"token"`
+	Body  json.RawMessage `json:"body"`
+}
+type RunnerToolResponse struct {
+	Body  json.RawMessage `json:"body,omitempty"`
+	Error string          `json:"error,omitempty"`
 }
 
 type WorkspaceCheckpointTransfer struct {

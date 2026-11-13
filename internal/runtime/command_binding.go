@@ -30,6 +30,9 @@ func upsertEnv(env []string, key, value string) []string {
 }
 
 func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (CommandSpec, error) {
+	if command.bindingsPrepared {
+		return command, nil
+	}
 	bound := command
 	bound.environment = make(map[string]string, len(command.environment)+16)
 	for key, value := range command.environment {

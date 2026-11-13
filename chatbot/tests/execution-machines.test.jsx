@@ -8,6 +8,7 @@ const { apiMock, writeMock } = vi.hoisted(() => ({
 vi.mock("../src/api.js", () => ({ api: apiMock, write: writeMock }));
 import { useExecutionMachines } from "../src/useExecutionMachines";
 
+const bindMock = vi.fn();
 const machines = [{ id: "mac", name: "Mac", status: "online" }];
 function pending() {
   let resolve, reject;
@@ -22,27 +23,26 @@ describe("personal execution machine selection", () => {
   beforeEach(() => {
     apiMock.mockReset();
     writeMock.mockReset();
+    bindMock.mockReset();
+    bindMock.mockImplementation(async (runnerId) => ({runnerId}));
     apiMock.mockImplementation(async (path) =>
       path.includes("?mine=1") ? machines : { runnerId: "mac" },
     );
     writeMock.mockImplementation(async (_path, body) => body);
   });
 
-  test("loads only the current user's bound machines and saves through the existing default API", async () => {
+  test("loads only the current user's bound machines and binds the conversation without updating the personal default", async () => {
     const error = vi.fn();
     const { result } = renderHook(() =>
-      useExecutionMachines(1, false, false, error),
+      useExecutionMachines(1, false, false, error, bindMock),
     );
     await waitFor(() => expect(result.current.machinesReady).toBe(true));
     expect(result.current.machines).toEqual(machines);
     expect(result.current.defaultRunnerId).toBe("mac");
     expect(apiMock).toHaveBeenCalledWith("/api/runners?mine=1");
     await act(() => result.current.selectMachine(""));
-    expect(writeMock).toHaveBeenCalledWith(
-      "/api/runners/default",
-      { runnerId: "" },
-      "PUT",
-    );
+    expect(bindMock).toHaveBeenCalledWith("");
+    expect(writeMock).not.toHaveBeenCalled();
     expect(result.current.defaultRunnerId).toBe("");
   });
 
@@ -50,10 +50,10 @@ describe("personal execution machine selection", () => {
     const error = vi.fn(),
       save = pending();
     const { result } = renderHook(() =>
-      useExecutionMachines(1, false, false, error),
+      useExecutionMachines(1, false, false, error, bindMock),
     );
     await waitFor(() => expect(result.current.machinesReady).toBe(true));
-    writeMock.mockReturnValueOnce(save.promise);
+    bindMock.mockReturnValueOnce(save.promise);
     let saving;
     act(() => {
       saving = result.current.selectMachine("");
@@ -64,7 +64,7 @@ describe("personal execution machine selection", () => {
     await act(async () =>
       expect(await result.current.selectMachine("other")).toBe(false),
     );
-    expect(writeMock).toHaveBeenCalledTimes(1);
+    expect(bindMock).toHaveBeenCalledTimes(1);
     await act(async () => {
       save.reject(Error("没有权限"));
       await saving;
@@ -76,7 +76,7 @@ describe("personal execution machine selection", () => {
 
   test("a late refresh cannot overwrite a saved selection", async () => {
     const { result } = renderHook(() =>
-      useExecutionMachines(1, false, false, vi.fn()),
+      useExecutionMachines(1, false, false, vi.fn(), bindMock),
     );
     await waitFor(() => expect(result.current.machinesReady).toBe(true));
     const stale = pending();
@@ -97,7 +97,7 @@ describe("personal execution machine selection", () => {
 
   test("refreshes the default after returning from settings", async () => {
     const { result } = renderHook(() =>
-      useExecutionMachines(1, false, false, vi.fn()),
+      useExecutionMachines(1, false, false, vi.fn(), bindMock),
     );
     await waitFor(() => expect(result.current.machinesReady).toBe(true));
     apiMock.mockImplementation(async (path) =>
@@ -118,7 +118,7 @@ describe("personal execution machine selection", () => {
   test("a failed initial load stays unknown and can be retried", async () => {
     apiMock.mockRejectedValueOnce(Error("网络中断"));
     const { result } = renderHook(() =>
-      useExecutionMachines(1, false, false, vi.fn()),
+      useExecutionMachines(1, false, false, vi.fn(), bindMock),
     );
     await waitFor(() => expect(result.current.machineError).toBe("网络中断"));
     expect(result.current.machinesReady).toBe(false);

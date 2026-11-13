@@ -1,3 +1,4 @@
+import NativeApprovalPanel from "./NativeApprovalPanel";
 import React, {
   useCallback,
   useEffect,
@@ -1171,6 +1172,7 @@ export default function App() {
           ) : null}
         </div>
         <div className="header-actions">
+          <NativeApprovalPanel chat={chat} />
           {chat.session ? (
             <>
               {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
@@ -1216,6 +1218,9 @@ export default function App() {
               <Participants session={chat.session} users={chat.users} />
             </>
           ) : null}
+          {conversationStarted && workspaceRunId ? <button type="button" className="context-pill" disabled={chat.busy || chat.readOnly} onClick={() => chat.switchRuntimeMode(chat.session?.runtimeMode === "workspace" ? "platform" : "workspace")} title="在同一执行机器续接原生会话，保留工作区">
+            {chat.session?.runtimeMode === "workspace" ? "切回平台模式" : "进入工作区模式"}
+          </button> : null}
           {conversationStarted && workspaceRunId ? (
             <button
               type="button"

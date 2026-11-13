@@ -516,8 +516,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 // CLI session from the full transcript, so switching back never continues a
 // transcript that misses the turns in between.
 type assistantEngineState struct {
-	Engine    string `json:"engine"`
-	SessionID string `json:"sessionId"`
+	// Edited history starts a new journal once; errors resume that revision.
+	HistoryRevision int    `json:"historyRevision,omitempty"`
+	Engine          string `json:"engine"`
+	SessionID       string `json:"sessionId"`
+	Unstarted       bool   `json:"unstarted,omitempty"`
 }
 
 func readAssistantEngineState(root string) assistantEngineState {

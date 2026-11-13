@@ -78,7 +78,7 @@ describe("execution machine picker", () => {
       <ExecutionMachinePicker
         chat={fixture({
           defaultRunnerId: "linux",
-          session: { workspaceRunId: "workspace-1" },
+          session: { workspaceRunId: "workspace-1", executionTarget:{pool:"runner",runnerId:"mac"} },
           workspaceExecution: {
             executionMode: "runner",
             executionRunnerId: "mac",
@@ -97,7 +97,7 @@ describe("execution machine picker", () => {
     render(
       <ExecutionMachinePicker
         chat={fixture({
-          session: { runId: "run-1" },
+          session: { runId: "run-1",executionTarget:{pool:"cloud",runnerId:"platform-1"} },
           workspaceExecution: {
             executionMode: "runner",
             executionPool: "cloud",

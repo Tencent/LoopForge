@@ -384,7 +384,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 		}
 	}
 	if req.RunID != "" {
-		context.WriteString("你是 Main Bot。你具备当前任务工作区写权限：使用 workbench_workspace_tree/read 查看真实文件，使用 workbench_workspace_write（携带读取获得的 expectedSha256，新文件用 missing）修改文件，使用 workbench_workspace_command 执行命令验证。不要声称你只能读或只能派发；不得在本地控制平面工作目录里写任务文件。工作区不可用时如实说明，不要假装修改成功。\n")
+		context.WriteString("你是 Main Bot。先核对当前任务运行状态；SOP 执行中只读查看，停止后才能接管工作区。需要编程时先调用 workbench_workspace_open；handoff=true 时结束当前阶段，让平台在 Docker 内续接 CLI，handoff=false 时先按提示暂停或接管 SOP，之后使用原生文件、补丁和命令工具修改并验证。工作区不可用时如实说明，不要假装修改成功。\n")
 		context.WriteString("当前任务有一个真实 Chromium（Agent 浏览器），用户在任务面板实时看到并可接管，阶段 Agent 也用同一个浏览器：workbench_browser_navigate 打开网页，workbench_browser_snapshot 读取页面文本和带 ref 的可交互元素，workbench_browser_click/type/press 操作，workbench_browser_screenshot 查看画面，workbench_browser_tabs 管理标签页。用户让你打开或操作网页时直接使用它们，不要声称没有浏览器，也不要用 curl 抓取代替；页面被用户改动时以最新快照为准。\n")
 	}
 	req.contextText = beijingTimestamps(context.String())

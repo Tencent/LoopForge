@@ -154,6 +154,9 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		}
 	}
 	args := []string{"exec"}
+	if command.Stdin != nil {
+		args = append(args, "-i")
+	}
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
 		args = append(args, "-e", environment)
 	}
@@ -165,9 +168,32 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
 	}
 	args = append(args, s.name)
-	args = append(args, dockerWorkspaceExecArgv(command.Argv)...)
-	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
+	argv := dockerWorkspaceExecArgv(command.Argv)
+	if command.WorkingDir != "" {
+		argv = append([]string{"sh", "-lc", dockerMCPCallLaunch + `PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH; export PATH
+cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLoginFlag(command.Argv)...)
+	}
+	processFile := ""
+	if command.OwnProcessGroup {
+		processFile = filepath.Join(s.requirements.ConversationRoot, "home", "tmp", fmt.Sprintf("process-%d.pid", time.Now().UnixNano()))
+		// setsid keeps the CLI and its normal descendants in one owned group.
+		argv = append([]string{"sh", "-c", dockerConversationProcessLaunch, "conversation-process", processFile}, argv...)
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = exec.CommandContext(stopCtx, "docker", "exec", s.name, "sh", "-c", `if [ -f "$1" ]; then kill -KILL -$(cat "$1") 2>/dev/null || true; rm -f "$1"; fi`, "conversation-stop", processFile).Run()
+		}()
+	}
+	args = append(args, argv...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdin = command.Stdin
+	return runCommand(cmd, sink)
 }
+
+// POSIX shells redirect an asynchronous command's stdin to /dev/null before
+// applying its redirections. Preserve the original descriptor before spawning
+// the process group so interactive protocols keep their input pipe.
+const dockerConversationProcessLaunch = `file="$1"; shift; exec 3<&0; setsid "$@" <&3 3<&- & child=$!; exec 3<&-; echo "$child" > "$file"; wait "$child"`
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.
 // runc treats a failed getcwd after -w as exit 126 ("cwd outside mount namespace").
@@ -652,10 +678,29 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 			args = append(args, "--user", fmt.Sprintf("%d:%d", os.Geteuid(), os.Getegid()))
 		}
 	}
-	if network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); network != "" {
+	if network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); network != "" && s.requirements.ConversationRoot == "" {
 		args = append(args, "--network", network)
 	}
-	maskArgs, err := dockerAgentConfigMasks(workspace)
+	if root := s.requirements.ConversationRoot; root != "" {
+		_, network, err := conversationDockerAccess(ctx)
+		if err != nil {
+			return err
+		}
+		if network != "" {
+			args = append(args, "--network", network)
+		}
+		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
+		guards, err := conversationGuardMounts(root)
+		if err != nil {
+			return err
+		}
+		args = append(args, guards...)
+	}
+	var aliases []string
+	if root := s.requirements.ConversationRoot; root != "" {
+		aliases = append(aliases, filepath.Join(root, "ws"))
+	}
+	maskArgs, err := dockerAgentConfigMasks(workspace, aliases...)
 	if err != nil {
 		return err
 	}

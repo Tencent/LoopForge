@@ -60,6 +60,23 @@ func (e *Engine) cloudPoolRunner(projectID string) (domain.Runner, bool) {
 	return e.pickPoolRunner(pool.Label)
 }
 
+// ConversationCloudRunner allocates once. Later turns use the conversation's
+// stored target and never pick another runner after an outage.
+func (e *Engine) ConversationCloudRunner(projectID string) (string, error) {
+	e.mu.Lock()
+	pool := e.cloudPool
+	e.mu.Unlock()
+	if pool.Label == "" || !cloudPoolServes(pool.Projects, projectID) {
+		return "", nil
+	}
+	for _, runner := range e.repo.Runners() {
+		if poolRunnerEligible(runner, pool.Label) && runner.SupportsConversationCLI() {
+			return runner.ID, nil
+		}
+	}
+	return "", fmt.Errorf("云端暂无支持对话的在线执行机器，请升级 Runner 后重试")
+}
+
 func (e *Engine) pickPoolRunner(label string) (domain.Runner, bool) {
 	var candidates []domain.Runner
 	for _, runner := range e.repo.Runners() {
@@ -140,6 +157,14 @@ func isPoolRun(run domain.Run) bool {
 // machine to return before continuing. Runs on a user's own machine are left
 // alone.
 func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID string) (domain.Run, error) {
+	if run.ExecutionContext.ExecutionPinned {
+		if id := run.ExecutionContext.ExecutionRunnerID; id != "" {
+			if r, ok := e.repo.Runner(id); !ok || r.Status != domain.RunnerStatusOnline {
+				return run, fmt.Errorf("会话绑定的执行机器暂不可用，请等待原机器恢复")
+			}
+		}
+		return run, nil
+	}
 	// Parallel first nodes bind together: the first picks the machine, the
 	// others re-read the run and follow it.
 	release := e.lockPoolBinding(run.ID)

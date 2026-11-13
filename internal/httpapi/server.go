@@ -285,7 +285,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
-	asst := &assistantHandlers{deps: d, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
+	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
 	api.runs.assistant = asst
 	api.schedule.assistant = asst
 	api.notifications.service.GenerateReport = asst.generateSOPReport
@@ -324,6 +324,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
+	g.PUT("/api/assistant/sessions/:id/mode", asst.sessionMode)
+	g.GET("/api/assistant/sessions/:id/native-approvals", asst.nativeApprovals)
+	g.POST("/api/assistant/sessions/:id/native-approvals/:approvalId", asst.nativeApprovals)
 	g.PUT("/api/assistant/sessions/:id", asst.session)
 	g.DELETE("/api/assistant/sessions/:id", asst.session)
 	g.GET("/api/assistant/tasks", asst.listTasks)

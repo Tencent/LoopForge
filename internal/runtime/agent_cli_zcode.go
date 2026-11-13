@@ -141,6 +141,7 @@ func addZCodeKeyCleanupHook(home AgentCLIHome) error {
 	sessionStart, _ := events["SessionStart"].([]any)
 	events["SessionStart"] = append(sessionStart, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": zcodeRemoveKeyFile}}})
 	hooks["events"] = events
+	hooks["enabled"] = true
 	document["hooks"] = hooks
 	data, err = json.MarshalIndent(document, "", "  ")
 	if err != nil {

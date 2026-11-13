@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agentflow/internal/domain"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -86,7 +87,15 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 			return "", assistantReviewRefusal(name, review)
 		}
 	}
+	if name == "workbench_platform_mode" {
+		s.requestMode(domain.AssistantModePlatform)
+		raw, _ := json.Marshal(map[string]any{"mode": "platform", "handoff": true, "notice": "工作区保留，准备切回平台模式。" + assistantHandoffNotice})
+		return string(raw), nil
+	}
 	if name == "workbench_workspace_open" {
+		if s.RuntimeMode == domain.AssistantModeWorkspace {
+			return "", fmt.Errorf("切换工作区前先调用 workbench_platform_mode，等待原生进程退出后再打开工作区")
+		}
 		// Only Main Bot picks the workspace. A subagent calls through the same
 		// gateway, so while any dispatch runs the binding stays as it is.
 		if s.dispatchRunning() {
@@ -233,7 +242,11 @@ func (h *agentToolGateway) invokeMainBotWorkspace(ctx context.Context, s *AgentT
 	if runID == "" {
 		runID = s.workspaceRun()
 	}
-	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: method, Path: "/api/runs/{id}/workspace/" + endpoint}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: query, Body: body})
+	path := "/api/runs/{id}/workspace"
+	if endpoint != "" {
+		path += "/" + endpoint
+	}
+	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: method, Path: path}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: query, Body: body})
 	if err != nil {
 		return "", err
 	}

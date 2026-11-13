@@ -11,6 +11,7 @@ import (
 )
 
 var errAssistantMissingResult = errors.New("CodeBuddy did not emit type=result")
+var errAssistantExecutionUnavailable = errors.New("conversation execution machine unavailable")
 
 func assistantCLIMaxTurns(text string) bool {
 	text = strings.ToLower(strings.TrimSpace(text))
@@ -66,6 +67,9 @@ func assistantGenerationFailure(ctx context.Context, err error) (int, string) {
 	}
 	if errors.Is(err, runtime.ErrMaxTurns) || assistantCLIMaxTurns(err.Error()) {
 		return http.StatusBadGateway, "AI 助手已达到执行轮数上限，未能完成回答，请重试"
+	}
+	if errors.Is(err, errAssistantExecutionUnavailable) {
+		return http.StatusServiceUnavailable, "会话绑定的执行机器暂不可用，请等待原机器恢复后重试"
 	}
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, "unauthorized") || strings.Contains(message, "invalid api key") || strings.Contains(message, "api key expired") || strings.Contains(message, "invalid credential") || strings.Contains(message, "status code 401") || strings.Contains(message, "http 401") {

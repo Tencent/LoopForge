@@ -51,13 +51,20 @@ type AgentTerminalResult struct {
 // The token is CSPRNG random and is never logged or returned to
 // the browser.
 type AgentToolSession struct {
-	Token          string
-	UserID         int64
-	ProjectID      string
-	Mode           AgentToolMode
-	IssueID        string
-	WorkspaceToken string
-	RunID          string
+	toolsMu           sync.RWMutex
+	pendingMode       string
+	modeAction        func(context.Context) error
+	SelectedMCPIDs    map[string]bool
+	ExecutionRunnerID string
+	RuntimeMode       string
+	Notify            func(string, any)
+	Token             string
+	UserID            int64
+	ProjectID         string
+	Mode              AgentToolMode
+	IssueID           string
+	WorkspaceToken    string
+	RunID             string
 	// ChatSessionID/ChatOwnerID identify the ordinary conversation this turn
 	// belongs to, so Main Bot can open and bind a temporary workspace there.
 	ChatSessionID string

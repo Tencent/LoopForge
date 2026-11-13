@@ -6,7 +6,7 @@ import "./execution-machine-picker.css";
 export default function ExecutionMachinePicker({ chat, onManage }) {
   const trigger = useRef(null);
   const [open, setOpen] = useState(false);
-  const locked = !!(chat.session?.workspaceRunId || chat.session?.runId);
+  const locked = !!chat.session?.executionTarget;
   const disabled = !!(
     chat.busy ||
     chat.machineSaving ||
@@ -19,15 +19,15 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
     if (disabled || locked) setOpen(false);
   }, [disabled, locked]);
 
-  const execution = chat.workspaceExecution;
+  const execution = chat.session?.executionTarget;
   const runnerId = locked
-    ? execution?.executionPool === "cloud"
+    ? execution?.pool === "cloud"
       ? ""
-      : execution?.executionRunnerId || ""
+      : execution?.runnerId || ""
     : chat.defaultRunnerId || "";
   const machine = chat.machines?.find((row) => row.id === runnerId);
   const known = locked ? !!execution : chat.machinesReady;
-  const loadError = locked ? chat.workspaceExecutionError : chat.machineError;
+  const loadError = locked ? "" : chat.machineError;
   const label = !known
     ? loadError
       ? "执行机器加载失败"
@@ -43,8 +43,8 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
         ? chat.cloudPool.online > 0
         : true);
   const title = locked
-    ? loadError || `当前工作区执行机器：${label}。工作区创建后使用固定机器。`
-    : chat.machineError || "选择默认执行机器，用于后续新建的任务和工作区";
+    ? loadError || `当前会话执行机器：${label}。会话已绑定，后续运行始终使用此机器。`
+    : chat.machineError || "为新会话选择执行机器，选定后固定";
 
   if (locked)
     return (
@@ -102,7 +102,7 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
       </button>
       <SelectMenu
         open={open}
-        label="默认执行机器"
+        label="会话执行机器"
         value={chat.defaultRunnerId || ""}
         options={options}
         onSelect={(id) => void chat.selectMachine(id)}

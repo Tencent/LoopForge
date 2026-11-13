@@ -147,8 +147,8 @@ describe("conversation hooks", () => {
     await act(async () => expect(await result.current.send({ text: "改代码" })).toBe(false));
     expect(result.current.error).toBe("执行机器仍在保存，请稍后发送。");
     expect(writeMock).toHaveBeenCalledTimes(1);
-    expect(writeMock).toHaveBeenCalledWith("/api/runners/default", { runnerId: "mac" }, "PUT");
-    await act(async () => { resolve({ runnerId: "mac" }); await selecting; });
+    expect(writeMock).toHaveBeenCalledWith("/api/assistant/sessions/new-session", expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"},messages:[]}), "PUT");
+    await act(async () => { resolve({ id:"new-session",executionTarget:{pool:"runner",runnerId:"mac"},messages:[] }); await selecting; });
     expect(result.current.defaultRunnerId).toBe("mac");
   });
 
