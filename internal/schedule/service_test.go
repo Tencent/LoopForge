@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -459,16 +460,16 @@ func TestRunJobHonorsSourceFilter(t *testing.T) {
 	}
 }
 
-func TestRunJobSkipsUnmetRequirementClarification(t *testing.T) {
+func TestRunJobDispatchesRequirementsWithoutClarificationGate(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
 	for _, issue := range []domain.Issue{
-		{ID: "thin-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Score: 20, Status: domain.ClarificationNeedsUser, Gated: true}},
-		{ID: "sync-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Score: 0, Status: domain.ClarificationNeedsUser}},
-		{ID: "ready-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Passed: true, Score: 90, Gated: true}},
+		{ID: "thin-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser, Gated: true}},
+		{ID: "sync-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser}},
+		{ID: "ready-req", ProjectID: "platform", Kind: "requirement", Source: "tapd", Status: "todo", WorkflowID: "wf", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationReady, Gated: true}},
 		{ID: "bug", ProjectID: "platform", Kind: "issue", Source: "gongfeng", Status: "todo", WorkflowID: "wf"},
 	} {
 		if err := st.PutIssue(issue); err != nil {
@@ -488,14 +489,14 @@ func TestRunJobSkipsUnmetRequirementClarification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.LastStatus != "success" || result.LastDispatched != 3 {
+	if result.LastStatus != "success" || result.LastDispatched != 4 {
 		t.Fatalf("result=%+v dispatched=%v", result, dispatched)
 	}
 	seen := map[string]bool{}
 	for _, id := range dispatched {
 		seen[id] = true
 	}
-	if seen["thin-req"] || !seen["sync-req"] || !seen["ready-req"] || !seen["bug"] {
+	if !seen["thin-req"] || !seen["sync-req"] || !seen["ready-req"] || !seen["bug"] {
 		t.Fatalf("dispatched=%v", dispatched)
 	}
 }
@@ -589,7 +590,9 @@ func TestStartNowReturnsBeforeCompletion(t *testing.T) {
 	}
 }
 
-func TestStartNowRejectsOverlap(t *testing.T) {
+// Loops are long-running AI jobs: one must not block another job, while the
+// same job never overlaps itself.
+func TestStartNowRunsDifferentJobsConcurrently(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -603,44 +606,94 @@ func TestStartNowRejectsOverlap(t *testing.T) {
 	if err := st.PutScheduleJob(second); err != nil {
 		t.Fatal(err)
 	}
-	started := make(chan struct{})
+	started := make(chan string, 2)
 	release := make(chan struct{})
 	svc := New(st, tracker.NewService(), nil)
-	svc.SetAssistantPrep(func(domain.ScheduleJob) (string, error) {
-		select {
-		case <-started:
-		default:
-			close(started)
-		}
+	svc.SetAssistantPrep(func(job domain.ScheduleJob) (string, error) {
+		started <- job.ID
 		<-release
 		return "ok", nil
 	})
 	if _, err := svc.StartNow(first.ID); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first job did not start")
+	if _, err := svc.StartNow(second.ID); err != nil {
+		t.Fatalf("a running job blocked another job: %v", err)
 	}
-	got, err := svc.StartNow(second.ID)
-	if !errors.Is(err, ErrAlreadyRunning) {
-		t.Fatalf("overlap err=%v job=%+v", err, got)
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case id := <-started:
+			seen[id] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("jobs did not run concurrently: %v", seen)
+		}
 	}
-	if got.ID != first.ID || got.LastStatus != "running" {
-		t.Fatalf("conflict should return the running job: %+v", got)
+	got, err := svc.StartNow(first.ID)
+	if !errors.Is(err, ErrAlreadyRunning) || got.ID != first.ID || got.LastStatus != "running" {
+		t.Fatalf("same job overlap err=%v job=%+v", err, got)
 	}
 	close(release)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		current, _ := st.ScheduleJob(first.ID)
-		if current.LastStatus == "success" {
+		a, _ := st.ScheduleJob(first.ID)
+		b, _ := st.ScheduleJob(second.ID)
+		if a.LastStatus == "success" && b.LastStatus == "success" {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("first job did not finish: %+v", current)
+			t.Fatalf("jobs did not finish: %+v %+v", a, b)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestDispatchIsSerializedAcrossJobs(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	wf := domain.WorkflowDefinition{ID: "wf", ProjectID: "platform", Name: "wf", Version: 1, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Name: "n", Type: "approval", MaxAttempts: 1}}}
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutIssue(domain.Issue{ID: "shared-issue", ProjectID: "platform", Title: "t", Status: "todo"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"trigger-a", "trigger-b"} {
+		if err := st.PutScheduleJob(domain.ScheduleJob{ID: id, ProjectID: "platform", Enabled: true, WorkflowID: wf.ID, IssueStatuses: []string{"todo"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var mu sync.Mutex
+	active, maxActive := 0, 0
+	svc := New(st, tracker.NewService(), func(domain.ScheduleJob, domain.Issue, string) error {
+		mu.Lock()
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+		mu.Lock()
+		active--
+		mu.Unlock()
+		return nil
+	})
+	var wg sync.WaitGroup
+	for _, id := range []string{"trigger-a", "trigger-b"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if _, err := svc.RunNow(id); err != nil {
+				t.Error(err)
+			}
+		}(id)
+	}
+	wg.Wait()
+	if maxActive != 1 {
+		t.Fatalf("dispatch ran concurrently across jobs: max=%d", maxActive)
 	}
 }
 
@@ -705,17 +758,18 @@ func TestCronDropsOccurrencesDuringRun(t *testing.T) {
 				}
 			}
 			svc := New(st, tracker.NewService(), nil)
-			svc.lastFinishedAt = finish
-			for _, id := range []string{job.ID, neverRun.ID} {
-				for _, now := range []time.Time{finish, start.Add(179 * time.Minute)} {
-					if _, err := svc.claimJob(id, now); !errors.Is(err, errNotDue) {
-						t.Fatalf("missed cron must not run: id=%s now=%s err=%v", id, now, err)
-					}
+			svc.lastFinishedAt[job.ID] = finish
+			for _, now := range []time.Time{finish, start.Add(179 * time.Minute)} {
+				if _, err := svc.claimJob(job.ID, now); !errors.Is(err, errNotDue) {
+					t.Fatalf("missed cron must not run: now=%s err=%v", now, err)
 				}
-				if _, err := svc.claimJob(id, start.Add(180*time.Minute)); err != nil {
-					t.Fatalf("next cron must run: id=%s err=%v", id, err)
-				}
-				svc.runningJob = ""
+			}
+			if _, err := svc.claimJob(job.ID, start.Add(180*time.Minute)); err != nil {
+				t.Fatalf("next cron must run: err=%v", err)
+			}
+			// Another job's run does not delay a job that never ran.
+			if _, err := svc.claimJob(neverRun.ID, finish); err != nil {
+				t.Fatalf("other job must not wait for this one: err=%v", err)
 			}
 			got, _ := st.ScheduleJob(job.ID)
 			if got.LastRunAt.Equal(start) {
@@ -743,7 +797,7 @@ func TestTimerRunsAsyncAndSkipsOverlap(t *testing.T) {
 		deadline := time.Now().Add(2 * time.Second)
 		for {
 			svc.mu.Lock()
-			running := svc.runningJob != ""
+			running := len(svc.running) > 0
 			svc.mu.Unlock()
 			if !running {
 				break

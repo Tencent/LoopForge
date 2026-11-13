@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "id": "dsh",
+  "compatibility": {
+    "verified_on": "2026-11-09",
+    "version_policy": "Current stable DSH releases exposing the subagent tool; profiles without it use the recorded single-context fallback",
+    "documentation": "https://github.com/deepseek-ai/deepseek-harness"
+  },
+  "dispatch_tool": "subagent",
+  "topology": "spawn",
+  "stage_executor": "subagent",
+  "research_executor": "subagent",
+  "required_tools": ["subagent"]
+}

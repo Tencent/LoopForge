@@ -155,7 +155,7 @@ function renderIssues(){
     return;
   }
   const emptyTitle=state.issueRunFilter==='attention'?'没有需要介入的工作项':state.issueRunFilter==='mr'?'没有待处理 MR 的需求':'当前项目没有匹配的工作项';
-  const emptyHint=state.issueRunFilter==='attention'?'澄清未达标、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
+  const emptyHint=state.issueRunFilter==='attention'?'待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
   const keyWidth=issueKeyColumnWidth(paged.items);
   const pager=pagerHTML('issues',paged)||(paged.total?`<nav class="pager pager-summary" aria-label="分页"><span class="pager-meta">共 ${paged.total} 条</span></nav>`:'');
   board.innerHTML=`<div class="issue-table-card"><div class="issue-table-scroll"><div class="issue-table${state.issueSelectionMode?' issue-table-selectable':''}" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectAllCheckbox('全选本页可删除的需求')}</div>`:''}<span>编号</span><span>标题</span><span>来源</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 SOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div></div>${pager}</div>`;
@@ -245,14 +245,14 @@ function bindIssueKanban(){
 function issueStatusLabel(value){return ({backlog:'待规划',todo:'待处理',in_progress:'进行中',in_review:'评审中',done:'已完成',blocked:'已阻塞',cancelled:'已取消',closed:'已关闭'}[value]||value||'—')}
 function issueStatusIcon(value){return ({backlog:'circle',todo:'clock',in_progress:'user-hold',in_review:'pending-review',done:'check',closed:'close',blocked:'alert',cancelled:'close'}[value]||'circle')}
 function huiIcon(name,cls=''){return `<svg class="agent-icon harness-icon${cls?` ${cls}`:''}" data-icon="${escapeHTML(name)}" width="14" height="14" aria-hidden="true" focusable="false"></svg>`}
-// stage.key alone is not enough: 「待澄清」 shares attention with failures and
-// 「已关闭」 shares closed with merged deliveries.
+// stage.key alone is not enough: 「已关闭」 shares closed with merged deliveries.
 function issueStageTone(stage){
   const key=stage?.key||'',label=String(stage?.label||'');
   if(key==='active')return /排队/.test(label)?{tone:'info',icon:'clock'}:{tone:'info',icon:'lamp'};
   if(key==='waiting')return {tone:'warn',icon:'user-hold'};
   if(key==='confirm')return {tone:'warn',icon:'pending-review'};
-  if(key==='attention')return label.startsWith('待澄清')?{tone:'warn',icon:'user-hold'}:{tone:'error',icon:'alert'};
+  if(key==='clarifying')return {tone:'warn',icon:'user-hold'};
+  if(key==='attention')return {tone:'error',icon:'alert'};
   if(key==='closed')return ['已完成','交付闭环','MR 已合入','已合入基线'].includes(label)?{tone:'success',icon:'check'}:{tone:'neutral',icon:'close'};
   return {tone:'neutral',icon:'circle'};
 }
@@ -301,7 +301,7 @@ function issueWaitingToExecute(i){
   // 已阻塞必须留在各自的状态筛选中，即使它们暂时没有 Run。
   if(status!=='backlog')return false;
   const stage=issueCurrentStage(i);
-  return stage.key==='not_started'||stage.label==='等待执行';
+  return stage.key==='not_started'||stage.key==='clarifying'||stage.label==='等待执行';
 }
 function issueFinished(i){
   if(!i)return false;
@@ -385,7 +385,6 @@ function issueRow(i){
   const convo=conversationIssueProgress(i,run);
   const isFailed=!conversationWorkspaceIssue(i,run)&&Boolean(run&&(['failed','cancelled'].includes(run.status)||issueHasFailedNode(run)));
   const needsConfirm=clarificationNeedsConfirm(i);
-  const needsClarify=requirementNeedsClarification(i);
   let progressText=`${progress.pct}%`;
   let progressCls='';
   let progressTitle=`${progress.done}/${progress.total||0} 节点`;
@@ -403,13 +402,8 @@ function issueRow(i){
   }else if(needsConfirm){
     progressText='需要确认结论';
     progressCls=' confirm';
-    trackWidth=Math.min(100,Math.max(20,i.clarification?.score||100));
-    progressTitle=`澄清已完成（${i.clarification?.score||80} 分），需要确认结论后再触发 SOP`;
-  }else if(needsClarify){
-    progressText='待澄清';
-    progressCls=' warn';
-    trackWidth=0;
-    progressTitle=`信息完整度 ${i.clarification?.score||0} 分，未达准入线，需先澄清`;
+    trackWidth=100;
+    progressTitle='澄清已完成，需要确认结论后再触发 SOP';
   }else if(progress.pct>=100){
     progressCls=' done';
   }
@@ -549,10 +543,11 @@ function issueFromForm(){
 // 工蜂链接（web / ssh / scp / 纯项目路径）解析成统一的仓库信息，让"粘一个链接"
 // 就能完成仓库配置。
 // repoDisplayPath shows host/path for a parsed repository, e.g. github.com/owner/name.
-function repoDisplayPath(info,fallback=''){return info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
-function repoProviderLabel(info){return info?.provider==='github'?'GitHub':'工蜂'}
+function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.project||info.cloneUrl||fallback):info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
+function repoProviderLabel(info){return info?.provider==='ssh'?'Git SSH':info?.provider==='github'?'GitHub':'工蜂'}
 function parseGongfengRepoURL(raw){
-  let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^git@github.com:/,'https://github.com/');
+  const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
+  let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/,'https://github.com/');
   if(publicURL.startsWith('github.com/'))publicURL='https://'+publicURL;
   try{const u=new URL(publicURL);if(u.hostname==='github.com'&&!u.username&&!u.password&&['http:','https:'].includes(u.protocol)){const parts=u.pathname.split('/').filter(Boolean),owner=parts[0],name=(parts[1]||'').replace(/\.git$/,'');if(parts.length>=2&&/^[A-Za-z0-9_.-]+$/.test(owner)&&/^[A-Za-z0-9_.-]+$/.test(name)&&!['.','..'].includes(owner)&&!['.','..'].includes(name))return {project:'github:'+owner+'/'+name,name,webUrl:'https://github.com/'+owner+'/'+name,cloneUrl:'https://github.com/'+owner+'/'+name+'.git',provider:'github'}}}catch(_){}
 
@@ -590,15 +585,22 @@ function parseGongfengRepoURL(raw){
 function fillRepositoryFromLink(url,fill){
   const info=parseGongfengRepoURL(url);
   if(!info)return false;
-  fill.gongfengProjectId=info.project;
+  fill.gongfengProjectId=info.provider==='ssh'?'':info.project;
   if(!String(fill.name||'').trim())fill.name=info.name;
-  fill.webUrl=info.webUrl;
+  fill.webUrl=info.provider==='ssh'&&fill.cloneUrl===info.cloneUrl?fill.webUrl:info.webUrl;
   fill.cloneUrl=info.cloneUrl;
   return true;
 }
 function renderRepositoryCredentialHint(){
   const host=$('#repositoryCredentialHint');if(!host)return;
-  const configured=!!(userById(state.currentUser?.id)||{}).gitTokenConfigured;
+  const remote=parseGongfengRepoURL($('#repositoryForm')?.elements.repoUrl?.value),ssh=remote?.provider==='ssh',user=userById(state.currentUser?.id)||{};
+  host.classList.toggle('git-ssh-missing',ssh);
+  host.classList.toggle('repository-credential-hint',!ssh);
+  if(ssh){host.setAttribute('role','alert');return renderGitSSHMissingHint(host,remote)}
+  host.sshHintVersion=(host.sshHintVersion||0)+1;
+  host.hidden=false;
+  host.removeAttribute('role');
+  const configured=!!user.gitTokenConfigured;
   const title=configured?'已配置 GitHub Token':'仓库可以先保存，代码任务还需要 Token';
   const message=configured?'请确认 Token 已获得目标仓库的访问和写入权限。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。':'使用仓库进行需求分析、访问私有代码或提交 PR 前，请先配置 GitHub Token。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。';
   host.dataset.configured=String(configured);
@@ -607,11 +609,11 @@ function renderRepositoryCredentialHint(){
     $('#repositoryModal').classList.remove('open');gotoCredential('gitToken');
   };
 }
-function renderRepositoryList(){renderRepositoryCredentialHint();const project=(state.data.projects||[]).find(p=>p.id===state.projectFilter),repos=(state.data.repositories||[]).filter(r=>r.projectId===state.projectFilter);$('#repositoryProjectHint').textContent=`当前项目：${project?.name||'—'}。粘贴任意一种 GitHub 地址即可；集成分支用于检查多个 SOP 执行后是否存在合并冲突，可留空。`;$('#repositoryList').innerHTML=repos.map(r=>`<button type="button" data-edit-repo="${escapeHTML(r.id)}"><b>${escapeHTML(r.name)}</b><span>${escapeHTML(r.gongfengProjectId)} · 主分支 ${escapeHTML(r.defaultBranch||'master')} · 集成分支 ${escapeHTML(r.integrateBranch||'未配置')}</span><em>${project?.defaultRepositoryId===r.id?'默认仓库':'编辑'}</em></button>`).join('')||'<p>当前项目还没有绑定代码仓库。</p>';$('#repositoryList').querySelectorAll('[data-edit-repo]').forEach(b=>b.onclick=()=>fillRepositoryForm((state.data.repositories||[]).find(r=>r.id===b.dataset.editRepo)))}
-function fillRepositoryForm(repo={}){const f=$('#repositoryForm');['id','name','gongfengProjectId','webUrl','cloneUrl','localPath'].forEach(k=>{if(f.elements[k])f.elements[k].value=repo[k]||''});if(f.elements.repoUrl)f.elements.repoUrl.value=repo.webUrl||repo.cloneUrl||repo.gongfengProjectId||'';
-  const nameField=$('#repositoryNameField');if(nameField)nameField.hidden=!repo.id;f.elements.defaultBranch.value=repo.defaultBranch||'master';f.elements.integrateBranch.value=repo.integrateBranch||'';const project=(state.data.projects||[]).find(p=>p.id===state.projectFilter);f.elements.makeDefault.checked=!project?.defaultRepositoryId||project.defaultRepositoryId===repo.id;if(f.elements.repoUrl)f.elements.repoUrl.onchange=()=>{const form=f.elements,fill={name:form.name.value,gongfengProjectId:form.gongfengProjectId.value,webUrl:form.webUrl.value,cloneUrl:form.cloneUrl.value};if(fillRepositoryFromLink(form.repoUrl.value,fill)){form.name.value=fill.name;form.gongfengProjectId.value=fill.gongfengProjectId;form.webUrl.value=fill.webUrl;form.cloneUrl.value=fill.cloneUrl}}}
-function openRepositoryModal(){if(!state.projectFilter)return toast('请先选择项目');fillRepositoryForm();renderRepositoryList();$('#repositoryModal').classList.add('open')}
-async function saveRepository(e){e.preventDefault();const f=e.currentTarget,project=(state.data.projects||[]).find(p=>p.id===state.projectFilter);if(f.elements.repoUrl){const fill={name:f.elements.name.value,gongfengProjectId:f.elements.gongfengProjectId.value,webUrl:f.elements.webUrl.value,cloneUrl:f.elements.cloneUrl.value};if(fillRepositoryFromLink(f.elements.repoUrl.value,fill)){f.elements.name.value=fill.name;f.elements.gongfengProjectId.value=fill.gongfengProjectId;f.elements.webUrl.value=fill.webUrl;f.elements.cloneUrl.value=fill.cloneUrl}}const payload={id:f.elements.id.value,projectId:state.projectFilter,provider:(parseGongfengRepoURL(f.elements.repoUrl?.value)?.provider||'gongfeng'),name:f.elements.name.value.trim(),gongfengProjectId:f.elements.gongfengProjectId.value.trim(),webUrl:f.elements.webUrl.value.trim(),cloneUrl:f.elements.cloneUrl.value.trim(),defaultBranch:f.elements.defaultBranch.value.trim(),integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl?f.elements.repoUrl.value.trim():''};try{const repo=await api('/api/repositories',{method:payload.id?'PUT':'POST',body:JSON.stringify(payload)}),idx=(state.data.repositories||[]).findIndex(r=>r.id===repo.id);if(idx>=0)state.data.repositories[idx]=repo;else(state.data.repositories||(state.data.repositories=[])).push(repo);if(f.elements.makeDefault.checked&&project){const saved=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,defaultRepositoryId:repo.id})});if(saved&&saved.id){const pi=(state.data.projects||[]).findIndex(p=>p.id===saved.id);if(pi>=0)state.data.projects[pi]=saved;project.defaultRepositoryId=repo.id}else project.defaultRepositoryId=repo.id}fillRepositoryForm(repo);renderRepositoryList();renderIssues();toast((userById(state.currentUser?.id)||{}).gitTokenConfigured?'Git 仓库绑定已保存':'仓库已保存；配置 GitHub Token 后才能进行代码交付。')}catch(err){toast(err.message)}}
+function renderRepositoryList(){renderRepositoryCredentialHint();const project=(state.data.projects||[]).find(p=>p.id===state.projectFilter),repos=(state.data.repositories||[]).filter(r=>r.projectId===state.projectFilter);$('#repositoryProjectHint').textContent=`当前项目：${project?.name||'—'}。粘贴 GitHub 链接或 Git SSH 地址；集成分支用于检查多个 SOP 执行后是否存在合并冲突，可留空。`;$('#repositoryList').innerHTML=repos.map(r=>`<button type="button" data-edit-repo="${escapeHTML(r.id)}"><b>${escapeHTML(r.name)}</b><span>${escapeHTML(r.gongfengProjectId||r.cloneUrl)} · 主分支 ${escapeHTML(r.defaultBranch||'master')} · 集成分支 ${escapeHTML(r.integrateBranch||'未配置')}</span><em>${project?.defaultRepositoryId===r.id?'默认仓库':'编辑'}</em></button>`).join('')||'<p>当前项目还没有绑定代码仓库。</p>';$('#repositoryList').querySelectorAll('[data-edit-repo]').forEach(b=>b.onclick=()=>fillRepositoryForm((state.data.repositories||[]).find(r=>r.id===b.dataset.editRepo)))}
+function fillRepositoryForm(repo={}){const f=$('#repositoryForm');['id','name','gongfengProjectId','webUrl','cloneUrl','localPath'].forEach(k=>{if(f.elements[k])f.elements[k].value=repo[k]||''});if(f.elements.repoUrl)f.elements.repoUrl.value=repo.provider==='ssh'?repo.cloneUrl:repo.webUrl||repo.cloneUrl||repo.gongfengProjectId||'';
+  const nameField=$('#repositoryNameField');if(nameField)nameField.hidden=!repo.id;f.elements.defaultBranch.value=repo.defaultBranch||'master';f.elements.integrateBranch.value=repo.integrateBranch||'';const project=(state.data.projects||[]).find(p=>p.id===state.projectFilter);f.elements.makeDefault.checked=!project?.defaultRepositoryId||project.defaultRepositoryId===repo.id;if(f.elements.repoUrl){f.elements.repoUrl.oninput=renderRepositoryCredentialHint;f.elements.repoUrl.onchange=()=>{renderRepositoryCredentialHint();const form=f.elements,fill={name:form.name.value,gongfengProjectId:form.gongfengProjectId.value,webUrl:form.webUrl.value,cloneUrl:form.cloneUrl.value};if(fillRepositoryFromLink(form.repoUrl.value,fill)){form.name.value=fill.name;form.gongfengProjectId.value=fill.gongfengProjectId;form.webUrl.value=fill.webUrl;form.cloneUrl.value=fill.cloneUrl}}};renderRepositoryCredentialHint()}
+function openRepositoryModal(){if(!state.projectFilter)return toast('请先选择项目');gitSSHKeyCache=null;fillRepositoryForm();renderRepositoryList();$('#repositoryModal').classList.add('open')}
+async function saveRepository(e){e.preventDefault();const f=e.currentTarget,project=(state.data.projects||[]).find(p=>p.id===state.projectFilter);if(f.elements.repoUrl){const fill={name:f.elements.name.value,gongfengProjectId:f.elements.gongfengProjectId.value,webUrl:f.elements.webUrl.value,cloneUrl:f.elements.cloneUrl.value};if(fillRepositoryFromLink(f.elements.repoUrl.value,fill)){f.elements.name.value=fill.name;f.elements.gongfengProjectId.value=fill.gongfengProjectId;f.elements.webUrl.value=fill.webUrl;f.elements.cloneUrl.value=fill.cloneUrl}}const payload={id:f.elements.id.value,projectId:state.projectFilter,provider:(parseGongfengRepoURL(f.elements.repoUrl?.value)?.provider||'gongfeng'),name:f.elements.name.value.trim(),gongfengProjectId:f.elements.gongfengProjectId.value.trim(),webUrl:f.elements.webUrl.value.trim(),cloneUrl:f.elements.cloneUrl.value.trim(),defaultBranch:f.elements.defaultBranch.value.trim(),integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl?f.elements.repoUrl.value.trim():''};try{const repo=await api('/api/repositories',{method:payload.id?'PUT':'POST',body:JSON.stringify(payload)}),idx=(state.data.repositories||[]).findIndex(r=>r.id===repo.id);if(idx>=0)state.data.repositories[idx]=repo;else(state.data.repositories||(state.data.repositories=[])).push(repo);if(f.elements.makeDefault.checked&&project){const saved=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,defaultRepositoryId:repo.id})});if(saved&&saved.id){const pi=(state.data.projects||[]).findIndex(p=>p.id===saved.id);if(pi>=0)state.data.projects[pi]=saved;project.defaultRepositoryId=repo.id}else project.defaultRepositoryId=repo.id}fillRepositoryForm(repo);renderRepositoryList();renderIssues();toast(repo.provider==='ssh'?'仓库已保存；检出和推送使用 Git SSH 密钥。':(userById(state.currentUser?.id)||{}).gitTokenConfigured?'Git 仓库绑定已保存':'仓库已保存；配置 GitHub Token 后才能进行代码交付。')}catch(err){toast(err.message)}}
 function fillImportTAPDWorkflow(){
   const select=$('#importTAPDWorkflow');
   if(!select)return;
@@ -684,14 +686,8 @@ async function importTAPDStory(e){
     if(idx>=0)state.data.issues[idx]=issue;else (state.data.issues||(state.data.issues=[])).unshift(issue);
     $('#importTAPDModal').classList.remove('open');
     renderIssues();
-    if(requirementNeedsClarification(issue)){
-      state.autoStartClarify=true;
-      toast(`已导入：${issue.title||issue.id}。评分 ${issue.clarification?.score||0} 分，需要你补充澄清`,'ok');
-      openIssueDetail(issue.id,'clarify');
-    }else{
-      toast(`已导入 TAPD 工作项：${issue.title||issue.id}`,'ok');
-      if(issue.id)openIssueDetail(issue.id);
-    }
+    toast(`已导入 TAPD 工作项：${issue.title||issue.id}`,'ok');
+    if(issue.id)openIssueDetail(issue.id);
   }catch(err){toast(err.message)}
   finally{if(button){button.disabled=false;button.textContent='导入'}}
 }
@@ -727,7 +723,7 @@ async function persistIssue(issue){
 async function saveIssue(e){e.preventDefault();const button=e.currentTarget.querySelector('button[type="submit"]');try{button.disabled=true;button.textContent='正在保存…';const saved=await persistIssue(issueFromForm());state.selectedIssue=saved.id;$('#issueModal').classList.remove('open');renderIssues();toast('需求已保存')}catch(err){toast(err.message)}finally{button.disabled=false;button.textContent='保存'}}
 async function dispatchIssue(){try{let issue=issueFromForm();const blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);const current=latestIssueTask(issue),rerun=!!current;if(current&&!await afConfirm({title:'重新运行确认',message:['queued','dispatched','running'].includes(current.status)?'该需求已有进行中的任务，确定额外发起一次重新运行吗？':'该需求已经处理过，确定整条 SOP 重新运行吗？',confirmText:'确认重新运行'}))return;const button=$('#dispatchIssue');button.disabled=true;button.textContent='正在调度…';issue=await persistIssue(issue);const task=await api(`/api/issues/${issue.id}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId:issue.workflowId||''})});issue.latestTaskId=task.id;issue.status='in_progress';const idx=state.data.issues.findIndex(i=>i.id===issue.id);if(idx>=0)state.data.issues[idx]=issue;if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}$('#issueModal').classList.remove('open');renderIssues();await openIssueDetail(issue.id,'sop');toast(rerun?'已创建重新运行':'已创建执行任务并启动工作流','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});}catch(err){toast(err.message)}finally{const button=$('#dispatchIssue');button.disabled=false;button.textContent='启动 SOP'}}
 async function dispatchIssueById(issueId,rerun=false,workflowId=''){try{const issue=(state.data.issues||[]).find(i=>i.id===issueId),blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);if(clarificationNeedsConfirm(issue)){openIssueDetail(issueId,'clarify');return toast('请先确认澄清结论后再触发 SOP')}
-    if(requirementNeedsClarification(issue)){state.autoStartClarify=true;openIssueDetail(issueId,'clarify');return toast('需求澄清未达标，请先补充关键信息')}const task=await api(`/api/issues/${issueId}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId})});if(issue){issue.latestTaskId=task.id;issue.status='in_progress'}if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}renderIssues();await openIssueDetail(issueId,'sop');toast(rerun?'已创建重新运行':'已启动 SOP','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});setTimeout(()=>refreshIssues(),2000);setTimeout(()=>refreshIssues(),10000);}catch(err){if(/澄清/.test(err.message||'')){state.issueDetailTab='clarify';openIssueDetail(issueId,'clarify')}toast(err.message,'err')}}
+const task=await api(`/api/issues/${issueId}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId})});if(issue){issue.latestTaskId=task.id;issue.status='in_progress'}if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}renderIssues();await openIssueDetail(issueId,'sop');toast(rerun?'已创建重新运行':'已启动 SOP','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});setTimeout(()=>refreshIssues(),2000);setTimeout(()=>refreshIssues(),10000);}catch(err){if(/澄清/.test(err.message||'')){state.issueDetailTab='clarify';openIssueDetail(issueId,'clarify')}toast(err.message,'err')}}
 function defaultSOPForIssue(issue){
   const projectId=issue?.projectId||state.projectFilter;
   const project=(state.data.projects||[]).find(p=>p.id===projectId);
@@ -778,11 +774,6 @@ async function triggerIssue(issueId,workflowId){
   const issue=(state.data.issues||[]).find(i=>i.id===issueId);
   if(!issue)return toast('未找到工作项');
   const blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);
-  if(requirementNeedsClarification(issue)){
-    state.autoStartClarify=true;
-    openIssueDetail(issue.id,'clarify');
-    return toast('需求澄清未达标，请先补充关键信息');
-  }
   const targetWorkflow=String(workflowId||'').trim()||issue.workflowId||defaultSOPForIssue(issue);
   const laneTask=(state.data.tasks||[]).find(t=>t.issueId===issue.id&&t.workflowId===targetWorkflow);
   const latestRun=laneTask?latestIssueRun(issue,laneTask):null;
@@ -842,9 +833,9 @@ async function retriggerIssue(issueId,workflowId){
   if(!issue)return toast('未找到工作项');
   if(issueTrackerClosed(issue))return toast('外部工作项已关闭，请先在外部系统重新打开');
   if(issueManuallyClosed(issue))return toast('请先重新打开该需求，再触发 SOP');
-  if(requirementNeedsClarification(issue)||clarificationNeedsConfirm(issue)){
+  if(clarificationNeedsConfirm(issue)){
     openIssueDetail(issue.id,'clarify');
-    return toast('请先完成澄清再重新触发');
+    return toast('请先确认澄清结论再重新触发');
   }
   if(!await afConfirm({title:'重新触发确认',message:'会整条 SOP 从头再开一条新运行，已完成步骤也会重做，旧记录还在。失败时若只想从失败点继续，请用「重试」。',confirmText:'确认重新触发'}))return;
   try{

@@ -14,6 +14,8 @@ Requires Node.js 20+ and Python 3.8+. The commands below install the default Cla
 | Codex | `npx -y loopforge-cli@latest install codex` | `$devflow-codex "<request>"` |
 | Cursor | `npx -y loopforge-cli@latest install cursor` | `/start-devflow "<request>"` |
 | Claude Code | `npx -y loopforge-cli@latest install claude` | `/start-devflow "<request>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<request>"` |
+| Hermes Agent | `npx -y loopforge-cli@latest skills install hermes` then `hermes skills trust .` | `/devflow "<request>"` |
 
 For example, with Claude Code:
 
@@ -32,7 +34,7 @@ Check any installation with `npx -y loopforge-cli@latest status <agent>`. If ins
 npx -y loopforge-cli@latest doctor
 ```
 
-Pi is supported through the [Portable Edition](#portable-edition).
+Pi, DeepSeek Harness and Hermes Agent are supported through the [Portable Edition](#portable-edition). DSH has an optional [plugin](../../local/dsh-plugin/README.md) for task controls, status, artifacts and approval gates. Hermes uses its project-local Agent Skills discovery and `delegate_task` tool; it does not modify `~/.hermes/config.yaml`. Hermes users can optionally install the native [Hermes plugin](../../local/hermes-plugin/README.md) for the same `/loopforge status`, `/loopforge result` and `/loopforge approve` controls.
 
 ## How it works
 
@@ -64,6 +66,8 @@ Your request
 | Cursor | ✓ | ✓ |
 | Claude Code | ✓ | ✓ |
 | Pi | — | ✓ |
+| DeepSeek Harness | — | ✓ |
+| Hermes Agent | — | ✓ |
 
 LoopForge enables only one edition per coding agent in each project. See [Edition selection](editions.md) for the differences and directory layout.
 
@@ -136,6 +140,8 @@ The Classic Edition from the quick start is the right choice for most users. If 
 | Cursor | `npx -y loopforge-cli@latest skills install cursor` | `/devflow "<request>"` |
 | Claude Code | `npx -y loopforge-cli@latest skills install claude` | `/devflow "<request>"` |
 | Pi | `npx -y loopforge-cli@latest skills install pi`, then `pi install npm:pi-subagents` | `/skill:devflow "<request>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<request>"` |
+| Hermes Agent | `npx -y loopforge-cli@latest skills install hermes`, then `hermes skills trust .` | `/devflow "<request>"` (optional plugin: `/loopforge`) |
 
 See [Edition selection](editions.md) for the complete boundaries and directory layout.
 
@@ -147,7 +153,7 @@ For ongoing use, install the CLI globally:
 npm install --global loopforge-cli
 ```
 
-Then maintain an installation with the same agent names as above (`codebuddy`, `codex`, `cursor`, `claude`, and `pi` for the Portable Edition):
+Then maintain an installation with the same agent names as above (`codebuddy`, `codex`, `cursor`, `claude`, `pi`, `dsh`, and `hermes` for the Portable Edition):
 
 ```bash
 # Classic Edition

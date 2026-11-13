@@ -146,6 +146,8 @@ def main(argv=None) -> int:
             )
             if args.host == "pi" and args.edition == "portable":
                 print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
+            if args.host == "hermes" and args.edition == "portable":
+                print("Note: Hermes must trust this project before loading .hermes/skills: hermes skills trust .")
             return 0
         if args.command == "skills":
             if args.skills_command in {"install", "update"}:
@@ -168,6 +170,8 @@ def main(argv=None) -> int:
                 )
                 if args.host == "pi":
                     print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
+                if args.host == "hermes":
+                    print("Note: Hermes must trust this project before loading .hermes/skills: hermes skills trust .")
                 return 0
             if args.skills_command == "status":
                 rows = [

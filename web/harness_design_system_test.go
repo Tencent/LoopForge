@@ -99,7 +99,6 @@ func TestStatusBadgesShareOneImplementation(t *testing.T) {
 		"app/issues.js":    `class="hui-badge" data-tone=`,
 		"app/runs.js":      `class="hui-badge" data-size="sm" data-tone=`,
 		"app/bots.js":      `class="hui-badge" data-size="sm" data-tone=`,
-		"knowledge.js":     `class="hui-badge" data-size="sm" data-tone=`,
 		"app/workbench.js": `class="hui-badge credential-status" data-size="sm" data-tone=`,
 	} {
 		raw, err := os.ReadFile(path)
@@ -125,7 +124,7 @@ func TestHarnessStylesheetLoadOrder(t *testing.T) {
 	if base := slices.Index(links, "/product-v4.css"); shared < 0 || base < 0 || shared < base {
 		t.Fatalf("/%s must load after /product-v4.css, got %v", harnessUICSS, links)
 	}
-	for _, page := range []string{"/bots.css", "/knowledge.css", "/metrics-dashboard.css", "/business-domains.css", "/app/mcp.css", "/app/issues-list.css", "/app/assets-harness.css", "/app/observability-harness.css", "/app/approvals-harness.css"} {
+	for _, page := range []string{"/bots.css", "/app/mcp.css", "/app/issues-list.css", "/app/assets-harness.css", "/app/observability-harness.css", "/app/approvals-harness.css"} {
 		if at := slices.Index(links, page); at < 0 || at < shared {
 			t.Errorf("%s must load after /%s, got %v", page, harnessUICSS, links)
 		}
@@ -139,7 +138,7 @@ func TestSettingsAreaUsesOneCenteredContainer(t *testing.T) {
 		t.Fatalf("%s is missing the settings container rule", harnessUICSS)
 	}
 	views := container[1]
-	for _, view := range []string{"#settingsView", "#botsView", "#projectsView", "#runnersView", "#agentsView", "#mcpView", "#assetsView", "#knowledgeView", "#metricsView", "#businessDomainsView", "#guideView", "#platformView", "#businessDomainManagementView"} {
+	for _, view := range []string{"#settingsView", "#botsView", "#projectsView", "#runnersView", "#agentsView", "#mcpView", "#assetsView", "#guideView", "#platformView"} {
 		if !strings.Contains(views, view) {
 			t.Errorf("settings container must include %s", view)
 		}
@@ -156,7 +155,7 @@ func TestSettingsAreaUsesOneCenteredContainer(t *testing.T) {
 	}
 
 	privateCap := regexp.MustCompile(`[{;]\s*max-width:\s*(?:920|1160|1180|1280)px`)
-	for _, path := range []string{"platform.css", "product-v4.css", "knowledge.css", "access.css", "app/assets-harness.css", "app/mcp.css", "bots.css"} {
+	for _, path := range []string{"platform.css", "product-v4.css", "access.css", "app/assets-harness.css", "app/mcp.css", "bots.css"} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

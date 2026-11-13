@@ -117,6 +117,11 @@ var assistantCredentialRules = []struct {
 		"到 LoopForge「个人配置 → CodeBuddy API Key」选择同一网络环境，粘贴 Key 并保存；DeepSeek、OpenAI 等第三方模型的 Key 不能用作 CodeBuddy Key",
 		"回到运行重试失败节点",
 	}},
+	{"gitSshKey", "Git SSH 密钥", regexp.MustCompile(`Git SSH (密钥|私钥)`), "", []string{
+		"把公钥添加到代码托管账号，并按需授予仓库写权限",
+		"到 LoopForge「个人配置 → Git SSH 密钥」为该主机添加无口令私钥，同一主机的仓库自动共用",
+		"请管理员信任仓库的 SSH 主机，然后重试",
+	}},
 	{"gitToken", "GitHub Git Token", regexp.MustCompile(`(?i)Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]`), "https://github.com/settings/tokens", []string{
 		"打开 GitHub「Settings → Developer settings → Personal access tokens」新建令牌",
 		"为目标仓库授予 Contents 和 Pull requests 的读写权限，创建后立即复制 token",
@@ -327,6 +332,9 @@ func assistantRunProblems(run domain.Run, owner string, limit int) []assistantRu
 			out = append(out, assistantRunProblem{NodeID: id, NodeName: name, Kind: "waiting_approval", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
 		}
 	}
+	if run.IsWorkspace() {
+		out = append(out, workspacePreparationProblems(run, owner, limit)...)
+	}
 	if len(out) == 0 && run.Status == "failed" {
 		reason := "运行失败，但没有节点记录错误"
 		for i := len(run.Events) - 1; i >= 0; i-- {
@@ -336,6 +344,51 @@ func assistantRunProblems(run domain.Run, owner string, limit int) []assistantRu
 			}
 		}
 		out = append(out, assistantRunProblem{Kind: "failed", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
+	}
+	return out
+}
+
+// workspacePreparationStages are the steps the engine records on a run as
+// workspace.<stage>.<started|progress|completed|failed> events, in the order
+// they run.
+var workspacePreparationStages = []struct{ key, name string }{
+	{"clone", "克隆仓库"},
+	{"image", "构建沙箱镜像"},
+	{"preparation", "工作区准备脚本"},
+}
+
+// workspacePreparationProblems reports each preparation stage whose latest
+// attempt failed. A conversation workspace has no nodes, so without this a
+// failed clone or image build left problems empty. A later start or success
+// of the same stage clears the failure.
+func workspacePreparationProblems(run domain.Run, owner string, limit int) []assistantRunProblem {
+	failed := map[string]string{}
+	for _, event := range run.Events {
+		rest, ok := strings.CutPrefix(event.Type, "workspace.")
+		if !ok {
+			continue
+		}
+		stage, kind, ok := strings.Cut(rest, ".")
+		if !ok {
+			continue
+		}
+		switch kind {
+		case "failed":
+			failed[stage] = strings.TrimSpace(event.Message)
+		case "started", "completed":
+			delete(failed, stage)
+		}
+	}
+	var out []assistantRunProblem
+	for _, stage := range workspacePreparationStages {
+		reason, ok := failed[stage.key]
+		if !ok {
+			continue
+		}
+		if reason == "" {
+			reason = stage.name + "失败"
+		}
+		out = append(out, assistantRunProblem{NodeName: stage.name, Kind: "failed", Reason: truncateRunes(reason, limit), Credential: assistantCredentialProblem(reason, owner)})
 	}
 	return out
 }

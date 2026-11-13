@@ -1,6 +1,7 @@
 // Shared AI model catalog for the classic SPA. The SOP preview, role, Bot,
 // scheduler, run-eval and requirement-clarification pickers all read
 // window.AgentFlowAssistantModels, so this file must load before them.
+// Pickers for entries that only run on CodeBuddy use renderCodeBuddyList.
 // Only the picker chrome lives here; per-feature selections stay in the
 // callers (localStorage keys, hidden inputs, form fields).
 (() => {
@@ -36,6 +37,15 @@
     if (v.startsWith('mimo') || v.startsWith('xiaomi')) return 'mimo';
     if (v === 'echo') return 'echo';
     return 'other';
+  }
+  // engineOf names the CLI that runs a model: catalog entries carry it, and a
+  // saved "codex:…" id that the viewer cannot list still keeps its prefix.
+  function engineOf(id) {
+    const listed = (catalog.models || []).find(m => m.id === id);
+    if (listed) return listed.engine || 'codebuddy';
+    const value = String(id || '');
+    const prefix = value.slice(0, Math.max(0, value.indexOf(':')));
+    return (catalog.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
   }
   function modelMeta(id) {
     return (catalog.models || []).find(m => m.id === id) || {id: id || DEFAULT_MODEL, family: familyOf(id), name: id || DEFAULT_MODEL};
@@ -113,6 +123,23 @@
   function renderList(menu, selectedId, onPick) {
     renderOptions(menu, catalog.models || [], selectedId, onPick);
   }
+  // Requirement clarification, Bot replies, run evals and the SOP preview
+  // build run on CodeBuddy only, so their pickers list CodeBuddy models and
+  // never offer a "codex:…" id the server would have to refuse.
+  function codeBuddyModels() {
+    return (catalog.models || []).filter(m => (m.engine || 'codebuddy') === 'codebuddy');
+  }
+  function renderCodeBuddyList(menu, selectedId, onPick) {
+    renderOptions(menu, codeBuddyModels(), selectedId, onPick);
+  }
+  // codeBuddyModel keeps a CodeBuddy id and turns an empty id, or a saved id
+  // of another CLI, into the CLI default the server resolves itself.
+  function codeBuddyModel(id) {
+    const value = String(id || '').trim();
+    // The catalog may not have landed yet; the built-in CLI prefixes still count.
+    if (!value || /^(codex|claude-code):/.test(value) || engineOf(value) !== 'codebuddy') return DEFAULT_MODEL;
+    return value;
+  }
   async function fetchCatalog() {
     const resp = await fetch('/api/assistant/models', {headers: {Accept: 'application/json'}, credentials: 'same-origin'});
     if (!resp.ok) throw new Error(`模型列表加载失败（${resp.status}）`);
@@ -123,7 +150,7 @@
   function load() {
     if (!loading) {
       loading = fetchCatalog().then(data => {
-        if (data?.models?.length) catalog = {default: data.default || DEFAULT_MODEL, models: data.models};
+        if (data?.models?.length) catalog = {default: data.default || DEFAULT_MODEL, models: data.models, engines: data.engines || []};
         return catalog;
       }).catch(() => catalog).finally(() => { loading = null; });
     }
@@ -132,9 +159,13 @@
   window.AgentFlowAssistantModels = {
     DEFAULT: DEFAULT_MODEL,
     catalog: () => catalog,
+    codeBuddyModel,
+    codeBuddyModels,
+    engineOf,
     load,
     paint,
     paintItem,
+    renderCodeBuddyList,
     renderList,
     renderOptions
   };

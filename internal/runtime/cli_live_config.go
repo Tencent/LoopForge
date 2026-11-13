@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var liveCLIOrder = []string{"codebuddy", "codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh"}
+var liveCLIOrder = []string{"codebuddy", "codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode"}
 
 type liveCLIConfig struct {
 	Key         string `json:"key"`
@@ -83,7 +83,7 @@ func redactLive(text string) string {
 func clipLive(text string) string {
 	text = strings.TrimSpace(text)
 	if len(text) > 700 {
-		return text[:700] + "…"
+		return clipOnRuneBoundary(text, 700) + "…"
 	}
 	return text
 }

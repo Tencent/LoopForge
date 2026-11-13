@@ -1090,11 +1090,19 @@ def command_resume(args: argparse.Namespace) -> int:
                     "executor_role": STAGE_ROLES[next_stage],
                     "executor_type": (
                         "coordinator" if STAGE_EXECUTION[next_stage] == "coordinator"
-                        else expected_executor_type(data)
+                        else (
+                            "single-context"
+                            if data.get("execution_mode") == "single-context"
+                            else expected_executor_type(data)
+                        )
                     ),
                     "executor_topology": (
                         "coordinator" if STAGE_EXECUTION[next_stage] == "coordinator"
-                        else TOPOLOGIES.get(data.get("host_adapter"))
+                        else (
+                            "single-context"
+                            if data.get("execution_mode") == "single-context"
+                            else TOPOLOGIES.get(data.get("host_adapter"))
+                        )
                     ),
                     "team_name": (
                         data.get("team_name") if STAGE_EXECUTION[next_stage] != "coordinator"
@@ -1105,6 +1113,12 @@ def command_resume(args: argparse.Namespace) -> int:
                     action.update(action="prepare", **common)
                 elif STAGE_EXECUTION[next_stage] == "coordinator":
                     action.update(action="start-coordinator", **common)
+                elif data.get("execution_mode") == "single-context":
+                    action.update(
+                        action="start-single-context",
+                        message="宿主没有独立 Agent 生命周期 API；在当前上下文执行本阶段并记录降级原因",
+                        **common,
+                    )
                 elif not stage.get("executor_id"):
                     action.update(
                         action="spawn-and-assign",

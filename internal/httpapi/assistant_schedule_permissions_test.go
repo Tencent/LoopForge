@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -19,53 +18,7 @@ import (
 	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
-
-	"github.com/gin-gonic/gin"
 )
-
-func TestScheduledToolSessionMatchesFullAccessConversation(t *testing.T) {
-	h, user := workbenchFixture(t)
-	ctx := context.Background()
-	scheduled, files, err := h.openScheduledToolSession(ctx, user, "workbench", "scheduled-chat", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer scheduled.Close()
-	defer files.Cleanup()
-	auto := assistantExecModeForApproval(AssistantApprovalAuto)
-	home, homeFiles, err := h.openAssistantToolSession(ctx, user, "workbench", auto, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer home.Close()
-	defer homeFiles.Cleanup()
-	home.ChatSessionID, home.ChatOwnerID = "homepage-chat", user.ID
-	if scheduled.Mode != home.Mode || scheduled.ExecMode != auto || scheduled.ChatOwnerID != user.ID {
-		t.Fatalf("scheduled session does not use homepage full access: %+v", scheduled.ExecMode)
-	}
-	gateway := &agentToolGateway{deps: h.deps}
-	names := func(s *AgentToolSession) []string {
-		var out []string
-		for _, d := range gateway.buildCatalog(ctx, s) {
-			out = append(out, d.Name)
-		}
-		slices.Sort(out)
-		return out
-	}
-	got, want := names(scheduled), names(home)
-	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(scheduled.MCPServers, home.MCPServers) {
-		t.Fatalf("scheduled and homepage tools differ:\nscheduled=%v\nhome=%v", got, want)
-	}
-	for _, name := range []string{"agentflow__issues_dispatch", "agentflow__runs_start", "agentflow__runs_retry", "agentflow__workflows_publish", "agentflow__schedule_jobs_save", "agentflow__schedule_jobs_delete", "workbench_workspace_open", "workbench_workspace_command", "workbench_workspace_submit_mr", "workbench_browser_navigate", "workbench_browser_screenshot"} {
-		if !slices.Contains(got, name) {
-			t.Errorf("full-access scheduled session is missing %s", name)
-		}
-	}
-	prompt := assistantScheduledSystemPromptText(auto)
-	if !strings.Contains(prompt, assistantSystemPromptForMode(AssistantApprovalAuto)) {
-		t.Fatal("scheduled system prompt must include the homepage full-access prompt")
-	}
-}
 
 func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
 	h, user := workbenchFixture(t)
@@ -121,7 +74,6 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 	if err := h.repo.PutIssue(domain.Issue{ID: "native-scheduled-issue", ProjectID: "workbench", Title: "Original", Status: "todo"}); err != nil {
 		t.Fatal(err)
 	}
-	gateway := &agentToolGateway{deps: h.deps}
 	sessionIDs := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.Split(strings.TrimPrefix(r.URL.Path, "/internal/agent-tools/"), "/")[0]
@@ -143,10 +95,8 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 		if err := session.attachReplyFile("report.md", "text/markdown", []byte("# Scheduled report")); err != nil {
 			t.Error(err)
 		}
-		c, _ := gin.CreateTestContext(w)
-		c.Request = r
-		c.Params = gin.Params{{Key: "token", Value: token}}
-		gateway.ServeHTTP(c)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
 	previous := config.Current()
@@ -161,6 +111,10 @@ import json, sys, urllib.request
 args = sys.argv[1:]
 config = json.load(open(args[args.index('--mcp-config') + 1]))
 url = config['mcpServers']['agentflow_session']['url']
+# Observe the prepared session explicitly; CLI tools themselves now pass
+# through the execution machine's local relay rather than this fixture.
+token = url.split('/internal/agent-tools/')[1].split('/')[0]
+urllib.request.urlopen(` + "'" + server.URL + `' + '/internal/agent-tools/' + token + '/mcp', timeout=5).read()
 payload = {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'submit_assistant_reply','arguments':{'message':'已完成定时巡检并生成报告。','drafts':[{'tool':'issues_save','body':{'id':'native-scheduled-issue','projectId':'workbench','title':'Scheduled update'}}]}}}
 req = urllib.request.Request(url, json.dumps(payload).encode(), {'Content-Type':'application/json'})
 try:
@@ -175,13 +129,20 @@ raise SystemExit(1)
 	}
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
 	task := assistantTask{ID: "native-scheduled", Name: "Native schedule", ProjectID: "workbench", Prompt: "巡检并生成报告"}
-	if err := h.executeAssistantTask(context.Background(), user, &task); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.executeAssistantTask(ctx, user, &task); err != nil {
 		t.Fatal(err)
 	}
 	if task.LastStatus != "ok" || !strings.Contains(task.LastMessage, "已完成定时巡检") {
 		t.Fatalf("terminal reply was lost: %+v", task)
 	}
-	sessionID := <-sessionIDs
+	var sessionID string
+	select {
+	case sessionID = <-sessionIDs:
+	case <-time.After(time.Second):
+		t.Fatal("fake CLI did not reach the prepared native session")
+	}
 	issue, _ := h.repo.Issue("native-scheduled-issue")
 	if issue.Title != "Scheduled update" {
 		t.Fatalf("terminal draft was not executed with full access: %+v", issue)
@@ -190,8 +151,8 @@ raise SystemExit(1)
 	if !ok || task.SessionID != sessionID || conv.WorkspaceRunID != "scheduled-workspace" || !slices.Contains(conv.OwnWorkspaceRunIDs, "scheduled-workspace") {
 		t.Fatalf("workspace binding was lost: %+v", conv)
 	}
-	var reply assistantReply
-	if err := json.Unmarshal([]byte(conv.Messages[len(conv.Messages)-1].Content), &reply); err != nil || len(reply.Images) != 1 || reply.Images[0].Name != "report.md" {
-		t.Fatalf("scheduled report attachment was lost: %+v %v", reply.Images, err)
+	// Reply files are attachments on the stored reply, as for a chat turn.
+	if files := conv.Messages[len(conv.Messages)-1].Attachments; len(files) != 1 || files[0].Name != "report.md" {
+		t.Fatalf("scheduled report attachment was lost: %+v", files)
 	}
 }

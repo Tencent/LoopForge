@@ -3,6 +3,147 @@ let aiBuild = null;
 let aiAbort = null;
 const aiHistory = {};
 
+const aiOrchestratorCLIBrands = {codebuddy:'codebuddy', codex:'codex', 'claude-code':'claude', opencode:'opencode', cursor:'cursor', agy:'gemini', kimi:'kimi', pi:'pi', dsh:'deepseek', zcode:'glm'};
+
+function aiOrchestratorEngine(model) {
+  const listed = window.AgentFlowAssistantModels?.catalog().models.find(item => item.id === model);
+  return listed?.engine || (String(model || '').includes(':') ? model.split(':')[0] : 'codebuddy');
+}
+
+function selectedAIOrchestratorModel() {
+  return localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel') || window.AgentFlowAssistantModels?.catalog().default || '';
+}
+
+function aiOrchestratorModels(engine = aiOrchestratorEngine(selectedAIOrchestratorModel())) {
+  return (window.AgentFlowAssistantModels?.catalog().models || []).filter(model => aiOrchestratorEngine(model.id) === engine);
+}
+
+function aiOrchestratorEngines() {
+  const catalog = window.AgentFlowAssistantModels?.catalog() || {};
+  if (catalog.engines?.length) return catalog.engines;
+  return [...new Set((catalog.models || []).map(model => aiOrchestratorEngine(model.id)))].map(id => ({id, name: id === 'codebuddy' ? 'CodeBuddy' : id, configured: true}));
+}
+
+function selectAIOrchestratorModel(id) {
+  const previous = selectedAIOrchestratorModel();
+  const engine = aiOrchestratorEngine(id);
+  localStorage.setItem('agentflow.orchestratorModel.' + aiOrchestratorEngine(previous), previous);
+  if (engine !== aiOrchestratorEngine(previous)) resetAIOrchestrator();
+  localStorage.setItem('agentflow.orchestratorModel', id);
+  localStorage.setItem('agentflow.orchestratorModel.' + engine, id);
+}
+
+function bindAIOrchestratorModelPicker() {
+  const api = window.AgentFlowAssistantModels;
+  const runtime = $('#aiOrchestratorRuntime');
+  if (!runtime || !api || runtime.dataset.bound) return;
+  runtime.dataset.bound = '1';
+  const painters = [];
+  const paintAll = () => painters.forEach(paint => paint());
+  const paintCLIIcon = (icon, engine) => {
+    const brand = aiOrchestratorCLIBrands[engine];
+    icon.dataset.cli = engine;
+    if (brand) icon.innerHTML = `<img src="/images/credentials/${brand}.svg" alt="">`;
+    else icon.textContent = engine.slice(0, 1).toUpperCase();
+  };
+
+  function bindPicker(host, cli) {
+    const toggle = host.querySelector('[data-model-toggle]');
+    const menu = host.querySelector('.ai-model-menu');
+    const search = host.querySelector('[data-model-search]');
+    const list = host.querySelector('[role="listbox"]');
+    const selected = () => cli ? aiOrchestratorEngine(selectedAIOrchestratorModel()) : selectedAIOrchestratorModel();
+    const items = () => cli ? aiOrchestratorEngines().map(engine => ({...engine, icon: false, disabled: engine.configured === false || !aiOrchestratorModels(engine.id).length})) : aiOrchestratorModels();
+    const paint = () => {
+      const id = selected();
+      const item = items().find(item => item.id === id) || {id, name: id};
+      api.paintItem(toggle, item);
+      if (cli) paintCLIIcon(toggle.querySelector('.ai-model-icon'), id);
+    };
+    painters.push(paint);
+    const close = (focus = false) => {
+      menu.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+      window.HuiPopover?.release(close);
+      if (focus) toggle.focus();
+    };
+    const render = () => {
+      const focused = list.contains(document.activeElement) ? document.activeElement.dataset.id : '';
+      const query = search.value.trim().toLowerCase();
+      const choices = items().filter(item => `${item.id} ${item.name} ${item.family || ''}`.toLowerCase().includes(query));
+      host.querySelector('[data-model-empty]').hidden = choices.length > 0;
+      list.hidden = false;
+      api.renderOptions(list, choices, selected(), id => {
+        if (toggle.disabled || choices.find(item => item.id === id)?.disabled) return;
+        let model = id;
+        if (cli) {
+          const models = aiOrchestratorModels(id);
+          const remembered = localStorage.getItem('agentflow.orchestratorModel.' + id);
+          model = models.find(item => item.id === (id === selected() ? selectedAIOrchestratorModel() : remembered))?.id || models.find(item => item.id === api.catalog().default)?.id || models[0]?.id;
+        }
+        if (!model) return;
+        selectAIOrchestratorModel(model);
+        paintAll();
+        close(true);
+      });
+      list.querySelectorAll('[role="option"]').forEach(option => {
+        const item = choices.find(item => item.id === option.dataset.id);
+        option.disabled = !!item.disabled;
+        option.setAttribute('aria-selected', String(item.id === selected()));
+        if (cli) {
+          const icon = document.createElement('span');
+          icon.className = 'ai-model-icon';
+          paintCLIIcon(icon, item.id);
+          option.insertBefore(icon, option.firstChild);
+          option.querySelector('.ai-model-credits').textContent = item.configured === false ? '未配置' : item.disabled ? '暂无模型' : '';
+        }
+        const check = document.createElement('span');
+        check.className = 'ai-orchestrator-option-check';
+        check.textContent = item.id === selected() ? '✓' : '';
+        check.setAttribute('aria-hidden', 'true');
+        option.append(check);
+      });
+      window.HuiPopover?.place(toggle, menu, {width: 280, maxHeight: 380});
+      menu.style.maxHeight = Math.min(380, parseFloat(menu.style.maxHeight) || 380) + 'px';
+      if (focused) [...list.querySelectorAll('[role="option"]')].find(option => option.dataset.id === focused)?.focus();
+    };
+    toggle.onclick = () => {
+      if (!menu.hidden) return close();
+      menu.hidden = false;
+      toggle.setAttribute('aria-expanded', 'true');
+      search.value = '';
+      window.HuiPopover?.claim(close, target => host.contains(target));
+      render();
+      search.focus();
+      api.load().then(() => { paintAll(); if (!menu.hidden) render(); });
+    };
+    search.oninput = render;
+    host.addEventListener('keydown', event => {
+      if (menu.hidden || event.isComposing) return;
+      if (event.key === 'Escape' || event.key === 'Tab') {
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); }
+        close(true);
+      } else if (event.key === 'Enter' && event.target === search) {
+        event.preventDefault();
+        [...list.querySelectorAll('[role="option"]')].find(option => !option.disabled)?.click();
+      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && !(event.target === search && ['Home', 'End'].includes(event.key))) {
+        event.preventDefault();
+        const options = [...list.querySelectorAll('[role="option"]')].filter(option => !option.disabled);
+        const at = options.indexOf(document.activeElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : at < 0 ? (event.key === 'ArrowDown' ? 0 : options.length - 1) : (at + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length;
+        options[next]?.focus();
+        options[next]?.scrollIntoView({block: 'nearest'});
+      }
+    });
+    document.addEventListener('click', event => { if (!host.contains(event.target)) close(); });
+    window.visualViewport?.addEventListener('resize', () => { if (!menu.hidden) render(); });
+  }
+  bindPicker($('#aiOrchestratorCLIPicker'), true);
+  bindPicker($('#aiOrchestratorModelPicker'), false);
+  paintAll();
+  api.load().then(paintAll);
+}
+
 function layoutAIGraph(nodes, edges) {
   const ids = nodes.map(node => node.id);
   const indegree = new Map(ids.map(id => [id, 0]));
@@ -204,6 +345,7 @@ function setAIOrchestratorOpen(open) {
       : '告诉我你的目标，我来搞定…';
   }
   if (open) input?.focus();
+  else window.HuiPopover?.closeAll();
 }
 
 function openAIOrchestrator() {
@@ -235,6 +377,7 @@ function bindOrchestrator() {
   const form = $('#aiOrchestratorForm');
   if (!open || open.dataset.bound) return;
   open.dataset.bound = '1';
+  bindAIOrchestratorModelPicker();
   open.onclick = () => setAIOrchestratorOpen($('#aiOrchestrator')?.hidden !== false);
   $('#closeAIOrchestrator').onclick = () => setAIOrchestratorOpen(false);
   $('#aiOrchestratorReset').onclick = resetAIOrchestrator;
@@ -813,15 +956,20 @@ async function runAIOrchestrator() {
   const button = $('#aiOrchestratorForm')?.querySelector('button[type="submit"]');
   if (button?.disabled) return;
   const project = state.projectFilter;
-  const history = aiHistory[project] || {sessionId: '', messages: []};
   const editing = !!state.workflow && (state.workflow.nodes || []).length > 0 && !aiWantsFreshWorkflow(goal);
   const canvas = editing ? aiClone(state.workflow) : null;
   const referenced = aiReferencedWorkflows(goal).filter(wf => !canvas || wf.id !== canvas.id);
   const build = await beginAIOrchestration(goal);
   if (!build) return;
+  const model = selectedAIOrchestratorModel();
+  const previous = aiHistory[project];
+  const history = previous && aiOrchestratorEngine(previous.model) === aiOrchestratorEngine(model) ? previous : {sessionId: '', messages: []};
   build.goal = goal;
   build.referenced = referenced;
   if (button) button.disabled = true;
+  const modelToggles = [...document.querySelectorAll('#aiOrchestratorRuntime [data-model-toggle]')];
+  modelToggles.forEach(toggle => { toggle.disabled = true; });
+  window.HuiPopover?.closeAll();
   input.value = '';
   appendOrchestratorNote(goal, 'mine');
   setAIBuildStatus(editing ? '正在按当前流程修改，画布先保持原样' : '正在连接 AI…');
@@ -833,7 +981,7 @@ async function runAIOrchestrator() {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
       signal: aiAbort.signal,
-      body: JSON.stringify({projectId: project, sessionId: history.sessionId, model: localStorage.getItem('agentflow.assistantModel') || '', approvalMode: 'confirm', messages})
+      body: JSON.stringify({projectId: project, sessionId: history.sessionId, model, approvalMode: 'confirm', messages})
     });
     if (!res.ok) {
       let msg = 'HTTP ' + res.status;
@@ -842,7 +990,7 @@ async function runAIOrchestrator() {
     }
     const reply = (res.headers.get('Content-Type') || '').includes('text/event-stream') ? await readAssistantSSE(res, pushAIThought) : await res.json();
     if (build.token !== aiBuildToken) return;
-    aiHistory[project] = {sessionId: reply.sessionId || history.sessionId, messages: messages.concat([{role: 'assistant', content: reply.message || '已提交草稿'}]).slice(-8)};
+    aiHistory[project] = {sessionId: reply.sessionId || history.sessionId, model, messages: messages.concat([{role: 'assistant', model, content: reply.message || '已提交草稿'}]).slice(-8)};
     document.querySelectorAll('.ai-live-thought.live').forEach(box => box.classList.remove('live'));
     if (reply.message) appendOrchestratorNote(reply.message, '');
     const draft = (reply.drafts || []).find(item => item.tool === 'workflows_save' && item.body);
@@ -864,6 +1012,7 @@ async function runAIOrchestrator() {
     }
   } finally {
     if (button) button.disabled = false;
+    modelToggles.forEach(toggle => { toggle.disabled = false; });
     aiAbort = null;
   }
 }

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -30,8 +31,16 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		return domain.Task{}, HTTPError{http.StatusConflict, err.Error()}
 	}
 	if issue.AssigneeUserID == 0 {
-		issue.AssigneeUserID = responsible.ID
-		if err := d.repo.PutIssue(issue); err != nil {
+		issue, err = d.repo.PatchIssue(issue.ID, func(current *domain.Issue) error {
+			if current.AssigneeUserID == 0 {
+				current.AssigneeUserID = responsible.ID
+			}
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, repo.ErrIssueNotFound) {
+				return domain.Task{}, HTTPError{http.StatusNotFound, err.Error()}
+			}
 			return domain.Task{}, err
 		}
 	}
@@ -43,10 +52,6 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	scheduled := strings.TrimSpace(req.ScheduleJobID) != ""
 	project, _ := d.repo.Project(issue.ProjectID)
-	policy := domain.EffectiveClarificationPolicy(project.Clarification)
-	if domain.RequirementSOPBlocked(issue, policy) {
-		return domain.Task{}, HTTPError{http.StatusConflict, fmt.Sprintf("需求澄清未达标：当前 %d 分，需要 %d 分", issue.Clarification.Score, policy.Threshold)}
-	}
 	workflowID := strings.TrimSpace(req.WorkflowID)
 	if workflowID == "" {
 		workflowID = issue.WorkflowID
@@ -135,16 +140,6 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	if summary := strings.TrimSpace(issue.Clarification.Summary); summary != "" {
 		input += "\n\nClarification summary:\n" + summary
 	}
-	if issue.Kind == "requirement" && len(issue.Clarification.Answers) > 0 {
-		input += fmt.Sprintf("\n\nClarification score: %d/100 (passed=%t)", issue.Clarification.Score, issue.Clarification.Passed)
-		if p, ok := d.repo.Project(issue.ProjectID); ok {
-			for _, d := range p.Clarification.Dimensions {
-				if a := issue.Clarification.Answers[d.ID]; a != "" {
-					input += "\n- " + d.Name + ": " + a
-				}
-			}
-		}
-	}
 	if len(repositories) > 0 {
 		if len(repositories) == 1 {
 			input += "\n\nRepository context (frozen): the repository is checked out in a first-level subdirectory; SOP deliverables stay at the workspace root"
@@ -152,7 +147,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 			input += "\n\nRepository context (frozen, multi-repository): every repository below is checked out side by side; treat them as equals"
 		}
 		for _, rc := range repositories {
-			input += fmt.Sprintf("\n- repository: %s (%s)\n  - provider: %s\n  - base branch: %s\n  - clone URL: %s\n  - local directory: ./%s (code changes for this repository MUST be written inside this directory)", rc.Name, rc.GongfengProjectID, rc.Provider, rc.BaseBranch, rc.CloneURL, rc.WorkspaceDir)
+			input += fmt.Sprintf("\n- repository: %s (%s)\n  - provider: %s\n  - base branch: %s\n  - clone URL: %s\n  - local directory: ./%s (code changes for this repository MUST be written inside this directory)", rc.Name, rc.GongfengProjectID, rc.Provider, rc.BaseBranch, domain.StripURLCredentials(rc.CloneURL), rc.WorkspaceDir)
 			input += fmt.Sprintf("\n  - merge request target branch: %s", rc.BaseBranch)
 			if rc.RequireExistingWorkBranch {
 				input += fmt.Sprintf("\n  - existing work branch: %s (continue directly on this remote branch; do not create or rename a work branch; fail if the branch does not exist; create or update its MR targeting %s)", rc.WorkBranch, rc.BaseBranch)
@@ -186,8 +181,11 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		displayRepository = repositories[0]
 	}
 	task := domain.Task{ID: taskID, IssueID: issue.ID, AgentID: issue.AssigneeID, WorkflowID: workflowID, Status: "queued", Repository: displayRepository, DispatchMode: dispatchMode, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID), TriggerOrigin: triggerOrigin}
-	stored, created, err := d.repo.CreateTask(task)
+	stored, created, err := d.repo.ReserveIssueDispatch(task)
 	if err != nil {
+		if errors.Is(err, repo.ErrIssueNotFound) {
+			return domain.Task{}, HTTPError{http.StatusNotFound, err.Error()}
+		}
 		return domain.Task{}, err
 	}
 	if !created {

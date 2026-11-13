@@ -32,11 +32,57 @@ const ExternalLink = (props) => (
   <HarnessIcon name="preview-expand" {...props} />
 );
 
-export function DraftCard({ artifact, onApply, onPreview, context = {} }) {
+function useCountdown(expiresAt) {
+  const deadline = expiresAt ? Date.parse(expiresAt) : NaN;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (Number.isNaN(deadline)) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [deadline]);
+  if (Number.isNaN(deadline)) return null;
+  return Math.max(0, Math.ceil((deadline - now) / 1000));
+}
+
+function formatCountdown(seconds) {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+export function DraftCard({
+  artifact,
+  onApply,
+  onDecide,
+  onPreview,
+  context = {},
+}) {
   const [busy, setBusy] = useState(false),
     [uncertain, setUncertain] = useState(false),
     [error, setError] = useState("");
   const draft = artifact.draft;
+  const declined = ["declined", "muted", "expired"].includes(draft.decision);
+  const answerable =
+    !!draft.proposal &&
+    !draft.inherited &&
+    !draft.saved &&
+    !draft.decision &&
+    !!onDecide;
+  const remaining = useCountdown(
+    answerable && draft.proposal.timing === "start"
+      ? draft.proposal.expiresAt
+      : "",
+  );
+  const decide = async (decision) => {
+    setBusy(true);
+    setError("");
+    try {
+      await onDecide(artifact.messageIndex, artifact.draftIndex, decision);
+    } catch (e) {
+      setError(operationError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const [repositories, setRepositories] = useState([]),
     [selectedRepositories, setSelectedRepositories] = useState(null),
     [repositoryError, setRepositoryError] = useState(""),
@@ -114,18 +160,41 @@ export function DraftCard({ artifact, onApply, onPreview, context = {} }) {
             {artifact.name !== actionName(draft.tool)
               ? `${actionName(draft.tool)} · `
               : ""}
-            {draft.saved
+            {declined
+              ? draft.decision === "muted"
+                ? "未采纳，本会话不再建议"
+                : draft.decision === "expired"
+                  ? "已超时"
+                  : "未采纳"
+              : draft.saved
               ? "已执行"
               : draft.resolved
                 ? "已完成"
                 : draft.inherited
                   ? "继承的历史记录"
-                  : "待确认"}
+                  : draft.proposal
+                    ? "AI 助手的建议"
+                    : "待确认"}
           </small>
         </span>
         {target ? <ExternalLink size={16} /> : <ChevronRight size={16} />}
       </Title>
       <div className="operation-summary">
+        {draft.proposal?.reason ? (
+          <p className="proposal-reason">
+            {draft.proposal.timing !== "start"
+              ? "可选的后续工作"
+              : "建议整件事走 SOP"}
+            ：{draft.proposal.reason}
+          </p>
+        ) : null}
+        {remaining !== null ? (
+          <p className="proposal-countdown" role="timer">
+            {remaining > 0
+              ? `${formatCountdown(remaining)} 后未确认，AI 助手将直接执行`
+              : "已超时，AI 助手即将直接执行"}
+          </p>
+        ) : null}
         {draft.review ? (
           <p className="muted">帮我批准 · {draft.review.model || "AI 审查"}：{draft.review.rationale}</p>
         ) : null}
@@ -207,7 +276,12 @@ export function DraftCard({ artifact, onApply, onPreview, context = {} }) {
         </p>
       ))}
       {error ? <p className="error">{error}</p> : null}
-      {!draft.inherited && !target && onApply ? (
+      {draft.decision === "expired" && !draft.inherited ? (
+        <button type="button" className="quiet-button" disabled>
+          已超时，AI 助手直接执行
+        </button>
+      ) : null}
+      {!draft.inherited && !target && onApply && !declined ? (
         <button
           className={draft.saved ? "quiet-button" : "primary-button"}
           disabled={
@@ -243,10 +317,32 @@ export function DraftCard({ artifact, onApply, onPreview, context = {} }) {
             </>
           ) : busy ? (
             "执行中…"
+          ) : draft.proposal ? (
+            draft.tool === "issues_save" ? "建需求并走 SOP" : "走 SOP"
           ) : (
             `确认${summary.title}`
           )}
         </button>
+      ) : null}
+      {answerable ? (
+        <div className="proposal-actions">
+          <button
+            type="button"
+            className="quiet-button"
+            disabled={busy}
+            onClick={() => decide("declined")}
+          >
+            {draft.proposal.timing === "start" ? "让 AI 助手自己做" : "不需要"}
+          </button>
+          <button
+            type="button"
+            className="proposal-mute"
+            disabled={busy}
+            onClick={() => decide("muted")}
+          >
+            本会话不再建议
+          </button>
+        </div>
       ) : null}
       {savedIssue?.id &&
       context.onLinkIssue &&

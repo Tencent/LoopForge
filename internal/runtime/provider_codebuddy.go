@@ -16,22 +16,31 @@ func (codeBuddyProvider) Materialize(ctx *providerMaterializeContext) error {
 	if err := materializeClaudePlugin(ctx); err != nil {
 		return err
 	}
-	if _, err := resetControlDirectory(ctx.Workspace, "hooks", "codebuddy"); err != nil {
-		return err
-	}
-	if err := writeManagedFile(ctx.Workspace, filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"), nil, 0o600); err != nil {
+	// The hook bridge is static and shared by every CodeBuddy Agent in the
+	// checkout, and a parallel branch may be running it: keep the directory
+	// and rewrite only changed files. The settings, which merge this Agent's
+	// own hooks, are per Agent so parallel roles do not overwrite each other.
+	if _, err := EnsureControlDirectory(ctx.Workspace, "hooks", "codebuddy"); err != nil {
 		return err
 	}
 	if err := observability.WriteCodeBuddyHookBridgeAt(ctx.Workspace, filepath.Join(".agentflow", "hooks", "codebuddy")); err != nil {
 		return err
 	}
-	if err := mergeHookSettings(ctx.Workspace, filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"), ctx.Compiled.Hooks); err != nil {
+	base, err := readWorkspaceFile(ctx.Workspace, filepath.Join(ctx.Workspace, ".agentflow", "hooks", "codebuddy-settings.json"))
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(ctx.ConfigRoot, "codebuddy-settings.json")
+	if err := writeManagedFile(ctx.Workspace, settingsPath, base, 0o600); err != nil {
+		return err
+	}
+	if err := mergeHookSettings(ctx.Workspace, settingsPath, ctx.Compiled.Hooks); err != nil {
 		return err
 	}
 	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "hooks"), filepath.Join("..", "hooks", "codebuddy")); err != nil {
 		return err
 	}
-	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "codebuddy-settings.json"), filepath.Join("..", "hooks", "codebuddy-settings.json")); err != nil {
+	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "codebuddy-settings.json"), filepath.Join("..", "config", ctx.AgentID, "codebuddy-settings.json")); err != nil {
 		return err
 	}
 	ctx.Compiled.Args = append(ctx.Compiled.Args,
@@ -90,31 +99,10 @@ func isolateCodeBuddyFlags(args []string) []string {
 }
 
 func isolateCodeBuddyFlagsWithSource(args []string, settingSource string) []string {
-	start := 0
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		start = 1
+	out := dropArgWithValue(args, "--setting-sources", "--permission-mode", "--plugin-dir")
+	if !hasArg(out, "-y") && !hasArg(out, "--dangerously-skip-permissions") {
+		out = append(out, "-y")
 	}
-	head := append([]string{}, args[:start]...)
-	rest := make([]string, 0, len(args)-start+4)
-	skipNext := false
-	for _, arg := range args[start:] {
-		if skipNext {
-			skipNext = false
-			continue
-		}
-		if arg == "--setting-sources" || arg == "--permission-mode" || arg == "--plugin-dir" {
-			skipNext = true
-			continue
-		}
-		if strings.HasPrefix(arg, "--setting-sources=") || strings.HasPrefix(arg, "--permission-mode=") || strings.HasPrefix(arg, "--plugin-dir=") {
-			continue
-		}
-		rest = append(rest, arg)
-	}
-	if !hasArg(rest, "-y") && !hasArg(rest, "--dangerously-skip-permissions") {
-		rest = append(rest, "-y")
-	}
-	rest = append(rest, "--permission-mode", "bypassPermissions")
-	rest = append(rest, "--setting-sources", settingSource)
-	return append(head, rest...)
+	out = append(out, "--permission-mode", "bypassPermissions")
+	return append(out, "--setting-sources", settingSource)
 }

@@ -165,3 +165,42 @@ func TestWorkspaceSubmitMRGuards(t *testing.T) {
 		t.Fatal("Main Bot must see workbench_workspace_submit_mr")
 	}
 }
+
+func TestWorkspaceDeliveryRequiresExternalWriteAuthorization(t *testing.T) {
+	h, _, session, gateway, _ := workspaceTurnFixture(t)
+	defer session.workspaceTurn.close(context.Background())
+	reviews := 0
+	allow := false
+	session.approvalReviewer = func(context.Context, string, string, map[string]any) assistantApprovalReview {
+		reviews++
+		outcome := "deny"
+		if allow {
+			outcome = "allow"
+		}
+		return assistantApprovalReview{Outcome: outcome, RiskLevel: "low", UserAuthorization: "high", Rationale: "delivery authorization"}
+	}
+	for _, mode := range []string{"mr", "direct"} {
+		session.ExecMode = assistantExecModeForApproval(AssistantApprovalConfirm)
+		if _, err := gateway.callMainBotWorkspace(context.Background(), session, "workbench_workspace_submit_mr", map[string]any{"title": "authorized change", "mode": mode, "targetBranch": "preview"}); err == nil || !strings.Contains(err.Error(), "外部写入授权") {
+			t.Fatalf("confirm allowed %s: %v", mode, err)
+		}
+	}
+	if reviews != 0 {
+		t.Fatal("confirm unexpectedly invoked AI review")
+	}
+	session.ExecMode = assistantExecModeForApproval(AssistantApprovalAssisted)
+	if _, err := gateway.callMainBotWorkspace(context.Background(), session, "workbench_workspace_submit_mr", map[string]any{"title": "authorized change"}); err == nil || !strings.Contains(err.Error(), "未执行") {
+		t.Fatalf("denied review executed: %v", err)
+	}
+	allow = true
+	for _, mode := range []string{AssistantApprovalAssisted, AssistantApprovalAuto} {
+		session.ExecMode = assistantExecModeForApproval(mode)
+		if _, err := gateway.callMainBotWorkspace(context.Background(), session, "workbench_workspace_submit_mr", map[string]any{"title": "authorized change"}); err == nil || !strings.Contains(err.Error(), "Git Token") {
+			t.Fatalf("%s did not reach credential validation: %v", mode, err)
+		}
+	}
+	if reviews != 2 {
+		t.Fatalf("incorrect review calls: %d", reviews)
+	}
+	_ = h
+}

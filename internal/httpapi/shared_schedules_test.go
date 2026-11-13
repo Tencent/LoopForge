@@ -19,6 +19,14 @@ import (
 func TestSharedScheduleSubscriptionUsesPinnedVersionAndTargetOwner(t *testing.T) {
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "shared-schedules-test-secret")
+	oldDiscover := discoverCLIModels
+	discoverCLIModels = func(context.Context, string, string) []string { return []string{"glm-5.3-flash-ioa"} }
+	t.Cleanup(func() {
+		discoverCLIModels = oldDiscover
+		cliModelMu.Lock()
+		cliModelCache = map[string]cliModelEntry{}
+		cliModelMu.Unlock()
+	})
 	h, sourceOwner := workbenchFixture(t)
 	st := h.repo
 	for _, login := range []string{"subscriber", "outsider", "viewer"} {

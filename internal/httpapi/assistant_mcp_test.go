@@ -231,6 +231,7 @@ func TestScheduledTaskKeepsPlaintextAndDoesNotParseJSON(t *testing.T) {
 	if !ok {
 		t.Fatal("user")
 	}
+	joinScheduledProject(t, st, "platform", user.ID)
 	if err := st.PutIssue(domain.Issue{
 		ID: "iss-native", ProjectID: "platform", Title: "keep", Status: "backlog", Source: "tapd",
 	}); err != nil {

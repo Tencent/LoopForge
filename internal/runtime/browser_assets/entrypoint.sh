@@ -10,7 +10,8 @@ mkdir -p "$profile" "$output"
     chromium --headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu \
       --no-first-run --no-default-browser-check --disable-background-networking \
       --remote-debugging-address=127.0.0.1 --remote-debugging-port="${AGENTFLOW_BROWSER_CDP_PORT:-9222}" \
-      --user-data-dir="$profile" --window-size=1280,800 --lang=zh-CN about:blank >/tmp/chromium.log 2>&1
+      --user-data-dir="$profile" --window-size=1280,800 --lang=zh-CN \
+      --force-device-scale-factor="${AGENTFLOW_BROWSER_SCALE:-2}" about:blank >/tmp/chromium.log 2>&1
     sleep 1
   done
 ) &

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/procwatch"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
@@ -67,7 +68,18 @@ func (e *Engine) preparationSink(runID string) runtime.EventSink {
 	}
 }
 
+// withPreparationProgress records clone and image-build steps on the run while
+// they happen. A conversation workspace has no nodes, so these events are the
+// only place a slow or failed checkout or build shows up.
+func (e *Engine) withPreparationProgress(ctx context.Context, runID string) context.Context {
+	return procwatch.WithObserver(ctx, func(event procwatch.Event) {
+		e.AppendRunEvent(runID, "workspace."+event.Stage+"."+string(event.Kind), event.Message)
+	})
+}
+
 func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, env *runEnvironment) (runtime.WorkspacePreparationStatus, error) {
+	// The first sandbox call below builds the Docker image when it is missing.
+	ctx = e.withPreparationProgress(ctx, run.ID)
 	env.preparing.Store(true)
 	defer env.preparing.Store(false)
 	// Caller owns env.nodeMu so reconstruction is serialized without turning
@@ -82,7 +94,8 @@ func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, en
 }
 
 func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceRequest, error) {
-	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
+	runnerID := e.defaultExecutionRunner(run)
+	if runnerID != "" {
 		if run.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared && len(runtime.PreparationNodes(runtime.WorkspacePreparationWorkflow(run.WorkflowSnapshot))) > 0 {
 			return request, fmt.Errorf("此历史运行使用逐节点工作区，不能自动重建共享环境；请重新发起一次运行")
 		}
@@ -126,10 +139,24 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	credentials := e.resolveRunCredentials(run)
 	invocation := &domain.RunnerInvocation{}
 	bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitUserName, credentials.GitUserEmail)
+	invocation.GitSSHUserID = 0
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers
 	request.PreparationInvocation = invocation
+	// Status and terminal I/O don't need keys. A separate platform instance
+	// can also resolve its own credentials from the shared store.
+	request.TerminalGitSSHKeys = nil
+	terminalOpen := request.Operation == domain.RunnerWorkspaceOperationTerminal && request.Terminal != nil && request.Terminal.Operation == "open"
+	sshRemotes := invocation.GitSSHRemotes()
+	if runnerID != "" && len(sshRemotes) > 0 {
+		if request.Operation == domain.RunnerWorkspaceOperationPrepare || terminalOpen {
+			invocation.GitSSHKeys = credentials.GitSSHKeys
+		}
+		if terminalOpen {
+			request.TerminalGitSSHKeys = e.repo.GitSSHKeysForRemotes(request.TerminalOwner, sshRemotes)
+		}
+	}
 	request.RunStatus = run.Status
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
 	return request, nil
@@ -253,11 +280,15 @@ func (e *Engine) EnsureWorkspaceReady(ctx context.Context, id string) (runtime.W
 	if current, ok := e.repo.RunState(id); ok {
 		run = current
 	}
-	if hasRunningNode(run) || env.activeExecutions.Load() > 0 || e.workspaceTerminals.HasRunScope(id) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
+	if run.HasActiveNode() || env.activeExecutions.Load() > 0 || e.workspaceTerminals.HasRunScope(id) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
 		state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 		epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
-		if run.IsWorkspace() && err == nil && runtime.WorkspacePreparationReusable(state, workspacePreparationPlan(run), run.RepositoryContexts(), epoch) {
+		// The environment agents already run in serves the IDE terminal too.
+		if err == nil && runtime.WorkspacePreparationReusable(state, workspacePreparationPlan(run), run.RepositoryContexts(), epoch) {
 			return state, nil
+		}
+		if state.Status != "preparing" && runtime.WorkspacePreparationTrivial(workspacePreparationPlan(run)) {
+			return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}}, nil
 		}
 		return runtime.WorkspacePreparationStatus{Status: "unprepared", Error: "成员或终端正在使用工作区，请结束当前操作后重新准备", Steps: []runtime.WorkspacePreparationStep{}}, fmt.Errorf("成员或终端正在使用工作区，请结束当前操作后重新准备")
 	}
@@ -300,16 +331,24 @@ func (e *Engine) PrepareNodeWorkspace(ctx context.Context, run domain.Run, env *
 
 // HandleWorkspaceTerminal uses exactly the same environment and preparation
 // contract as SOP execution. The pool owns the PTY, the Engine owns the sandbox.
-func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest) (runtime.TerminalResult, error) {
+func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
 	if req.Operation == "open" {
 		if _, err := e.EnsureWorkspaceReady(ctx, id); err != nil {
 			return runtime.TerminalResult{}, err
 		}
 	}
-	return e.HandlePreparedWorkspaceTerminal(ctx, id, pool, scope, req)
+	run, _ := e.repo.RunState(id)
+	run.ID = id
+	return e.HandlePreparedWorkspaceTerminal(ctx, run, pool, scope, req, actorID)
 }
 
-func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, id string, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest) (runtime.TerminalResult, error) {
+// HandlePreparedWorkspaceTerminal takes the run from its caller, which may
+// hold the run row locked: reading it again here would wait on that lock.
+// The run must carry its node states (RunState, not a bare locked row):
+// without them every succeeded preparation step looks pending and the
+// readiness check would be skipped as if there were nothing to prepare.
+func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain.Run, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
+	id := run.ID
 	if req.Operation != "open" {
 		return pool.HandleSandbox(ctx, nil, scope, req, nil)
 	}
@@ -322,8 +361,17 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, id string,
 
 	state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
-	if err != nil || state.Status != "ready" || state.Environment != epoch {
+	trivial := len(run.WorkflowSnapshot.Nodes) > 0 && runtime.WorkspacePreparationTrivial(workspacePreparationPlan(run))
+	if !trivial && (err != nil || state.Status != "ready" || state.Environment != epoch) {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区执行环境已变化，请重新准备后打开终端")
+	}
+	sshKeys := env.credentialSnapshot().GitSSHKeys
+	if len(sshKeys) > 0 {
+		remotes := make([]string, 0, len(sshKeys))
+		for remote := range sshKeys {
+			remotes = append(remotes, remote)
+		}
+		return pool.HandleSandboxWithGitSSH(ctx, env.sandbox, scope, req, nil, e.repo.GitSSHKeysForRemotes(actorID, remotes))
 	}
 	return pool.HandleSandbox(ctx, env.sandbox, scope, req, nil)
 }
@@ -418,10 +466,10 @@ func (e *Engine) recordNodeWorkspacePreparation(ctx context.Context, run domain.
 		}
 		return nil
 	}
-	if run.IsWorkspace() {
-		env.nodeMu.Lock()
-		defer env.nodeMu.Unlock()
-	}
+	// The receipt is read-modify-written; parallel branches no longer hold
+	// nodeMu while executing, so take it for the record itself.
+	env.nodeMu.Lock()
+	defer env.nodeMu.Unlock()
 	_, err := runtime.RecordWorkspacePreparation(ctx, env.sandbox, runtime.WorkspacePreparationWorkflow(run.WorkflowSnapshot), run.RepositoryContexts(), node.ID, output)
 	return err
 }

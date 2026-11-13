@@ -12,6 +12,9 @@ import {
 } from "./api";
 import { reviewedOperation, operationError } from "./operations.js";
 import { credentialHint } from "./credentials.js";
+import { cliFailureSettles } from "./cli-install.jsx";
+import { useExecutionMachines } from "./useExecutionMachines.js";
+import { executionLocked } from "./execution-target.js";
 import { modelEffort } from "./effort.js";
 import { conversationEngine, engineModels } from "./engines.js";
 import {
@@ -35,6 +38,7 @@ export const EXECUTORS = [
   { id: "kimi", icon: "sparkles", label: "Kimi Code", detail: "使用 Kimi Code 与个人 API Key。" },
   { id: "pi", icon: "terminal", label: "Pi", detail: "使用 Pi 与个人 API Key。" },
   { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "使用 DeepSeek Harness 与个人 API Key。" },
+  { id: "zcode", icon: "terminal", label: "ZCode", detail: "使用 ZCode 与个人 API Key。" },
 ];
 const EXECUTOR_KEY = "loopforge.assistant.executor";
 function knownExecutor(id) {
@@ -69,12 +73,15 @@ const PROJECT_LIST_TOOLS = new Set([
 const initialProject =
   new URLSearchParams(location.search).get("projectId") || "";
 export function useChat() {
+  const stopRequestRef = useRef(null);
   const [user, setUser] = useState(null),
     [projects, setProjects] = useState([]),
     [sandboxes, setSandboxes] = useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
     [sandboxBusy, setSandboxBusy] = useState(false),
     [workspaceSandbox, setWorkspaceSandbox] = useState(null),
+    [workspaceExecution, setWorkspaceExecution] = useState(null),
+    [workspaceExecutionError, setWorkspaceExecutionError] = useState(""),
     [users, setUsers] = useState([]),
     [draftIssueId, setDraftIssueId] = useState(
       new URLSearchParams(location.search).get("issueId") || "",
@@ -95,6 +102,7 @@ export function useChat() {
     [executor, setExecutorState] = useState(storedExecutor),
     [providerCatalogs, setProviderCatalogs] = useState({}),
     [generation, setGeneration] = useState(null),
+    [stopRequest, setStopRequest] = useState(null),
     [live, setLive] = useState({ answer: "", thinking: "", tools: [] }),
     [error, setError] = useState(""),
     [ready, setReady] = useState(false),
@@ -107,6 +115,14 @@ export function useChat() {
     // A queued message sent with "send now": it interrupts the running reply
     // and stays on screen until the server's follow-up turn has started.
     [steering, setSteering] = useState(null);
+  const executionMachines = useExecutionMachines(
+    user?.isGuest ? null : user?.id,
+    submitting || generation?.status === "running",
+    !!session?.readOnly,
+    setError,
+    bindExecutionMachine,
+    session?.executionTarget,
+  );
   const currentId = useRef(activeId),
     sessionRef = useRef(session),
     projectRef = useRef(projectId),
@@ -161,6 +177,7 @@ export function useChat() {
       setGeneration(null);
       setLive({ answer: "", thinking: "", tools: [] });
       setSession(null);
+      executionMachines.resetMachine();
       // A new conversation starts on the platform default, not on whatever
       // model the previously opened conversation used.
       if (!id) {
@@ -177,7 +194,7 @@ export function useChat() {
       if (id) setRevealId(id);
       changeURL(id);
     },
-    [changeURL, models],
+    [changeURL, models, executionMachines.resetMachine],
   );
   const newChat = useCallback(() => {
     setDraftIssueId("");
@@ -348,6 +365,10 @@ export function useChat() {
       accumulated = mergeEvents(accumulated, events);
       setLive(accumulated);
       setGeneration(g);
+      if (g.status !== "running") setStopRequest((old) => old?.generationId === g.id ? null : old);
+      if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
+        setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
+      }
       if (g.status !== "running" && loaded !== g.id) {
         source?.close();
         source = null;
@@ -545,11 +566,10 @@ export function useChat() {
     },
     [sponsored, sponsoredModels, executorModels],
   );
-  useEffect(() => {
-    if (!ready) return;
-    // Credential flags are omitted when false, so drop the old ones before
-    // merging; otherwise a cleared key would still look configured.
-    const refresh = () =>
+  // Credential flags are omitted when false, so drop the old ones before
+  // merging; otherwise a cleared key would still look configured.
+  const refreshUser = useCallback(
+    () =>
       api("/api/users")
         .then((rows) => {
           setUsers(rows || []);
@@ -568,22 +588,26 @@ export function useChat() {
             return hint && fresh?.[`${hint.field}Configured`] ? "" : old;
           });
         })
-        .catch(() => {});
+        .catch(() => {}),
+    [],
+  );
+  useEffect(() => {
+    if (!ready) return;
     const onMessage = (e) => {
       if (
         e.source === window.parent &&
         e.origin === location.origin &&
         e.data?.type === "agentflow-credentials-changed"
       )
-        void refresh();
+        void refreshUser();
     };
     window.addEventListener("message", onMessage);
-    if (missingKey) window.addEventListener("focus", refresh);
+    if (missingKey) window.addEventListener("focus", refreshUser);
     return () => {
       window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", refreshUser);
     };
-  }, [ready, missingKey]);
+  }, [ready, missingKey, refreshUser]);
   useEffect(() => writeQueues(queues), [queues]);
   useEffect(() => {
     const s = steeringRef.current;
@@ -719,6 +743,11 @@ export function useChat() {
       return true;
     }
     if (sandboxBusyRef.current) { setError("运行环境仍在保存，请稍后发送。"); return false; }
+    if (executionMachines.machineSavingRef.current) { setError("执行机器仍在保存，请稍后发送。"); return false; }
+    if (!executionLocked(sessionRef.current) && !executionMachines.machinesReady) {
+      setError(executionMachines.machineError || "执行机器仍在加载，请稍后发送。");
+      return false;
+    }
     // Without a key (and no sponsored model) the server rejects every message.
     // Say so before creating an empty conversation that would swallow the
     // typed question. Re-check first in case the key was saved elsewhere since
@@ -755,6 +784,7 @@ export function useChat() {
             projectId: projectRef.current,
             issueId: draftIssueId,
             sandboxProfileId,
+            executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
             model: activeModel,
             effort: activeEffort,
             executor,
@@ -791,6 +821,10 @@ export function useChat() {
             : s.participants,
       });
       setLive({ answer: "", thinking: "", tools: [] });
+      const executionTarget = executionLocked(s) ? s.executionTarget : {
+        pool: executionMachines.defaultRunnerId ? "runner" : "cloud",
+        runnerId: executionMachines.defaultRunnerId || "",
+      };
       const g = await write("/api/assistant/generations", {
         sessionId: s.id,
         projectId: s.projectId || "",
@@ -799,9 +833,14 @@ export function useChat() {
         model: activeModel,
         effort: activeEffort,
         approvalMode,
+        executionTarget,
         messages,
       });
-      if (currentId.current === s.id) setGeneration(g);
+      if (currentId.current === s.id) {
+        setSession((old) => old?.id === s.id ? { ...old, executionTargetLocked: true,
+          executionTarget: g.executionTarget || executionTarget } : old);
+        setGeneration(g);
+      }
       await refreshSessions();
       return true;
     } catch (e) {
@@ -826,7 +865,11 @@ export function useChat() {
     }
   }
   async function stop() {
-    if (!activeId) return;
+    if (!activeId || generation?.status !== "running" || generation.cancelRequested ||
+      (stopRequestRef.current?.sessionId === activeId && stopRequestRef.current.generationId === generation.id)) return;
+    const request = { sessionId: activeId, generationId: generation.id };
+    stopRequestRef.current = request;
+    setStopRequest(request);
     // Stopping means "wait for me": queued messages stay, but do not go out.
     setQueues((old) => holdQueue(old, activeId, true));
     try {
@@ -834,9 +877,11 @@ export function useChat() {
         `${sessionPath(activeId)}/generation/cancel?generationId=${encodeURIComponent(generation?.id || "")}`,
         {},
       );
-      setError("");
+      if (currentId.current === request.sessionId) setError("");
     } catch (e) {
-      setError(e.message);
+      if (stopRequestRef.current === request) stopRequestRef.current = null;
+      setStopRequest((old) => old === request ? null : old);
+      if (currentId.current === request.sessionId) setError(e.message);
     }
   }
   async function rename(id, title) {
@@ -923,18 +968,42 @@ export function useChat() {
     applyingRef.current.add(key);
     let executed = false;
     try {
-      const stored = await api(sessionPath(id));
-      const reply = JSON.parse(stored.messages[messageIndex].content);
-      const draft = reply.drafts[draftIndex];
+      let stored = await api(sessionPath(id));
+      let reply = JSON.parse(stored.messages[messageIndex].content);
+      let draft = reply.drafts[draftIndex];
       if (draft.saved || draft.inherited) return null;
+      if (generation?.status === "running")
+        throw Error("请等待回复结束后再确认操作。");
+      if (draft.proposal && !draft.decision) {
+        // Accept before running it: once the timeout has handed the work to
+        // the assistant, the accept fails and the operation must not run.
+        try {
+          stored = (
+            await write(`${sessionPath(id)}/proposals`, {
+              messageIndex,
+              draftIndex,
+              decision: "accepted",
+            })
+          ).session;
+        } catch (error) {
+          void api(sessionPath(id))
+            .then((latest) => currentId.current === id && setSession(latest))
+            .catch(() => {});
+          throw error;
+        }
+        reply = JSON.parse(stored.messages[messageIndex].content);
+        draft = reply.drafts[draftIndex];
+      }
+      if (draft.proposal && draft.decision !== "accepted") {
+        if (currentId.current === id) setSession(stored);
+        throw Error("这条建议已经处理过，不能执行。");
+      }
       try {
         Object.assign(draft, reviewedOperation(draft, review));
       } catch (error) {
         if (error.draftChanged && currentId.current === id) setSession(stored);
         throw error;
       }
-      if (generation?.status === "running")
-        throw Error("请等待回复结束后再确认操作。");
       // The session header lets a confirmed SOP continue in this
       // conversation's workspace.
       const result = await api("/mcp", {
@@ -1001,6 +1070,36 @@ export function useChat() {
       applyingRef.current.delete(key);
     }
   }
+  // Answers an assistant proposal card. Declining work the assistant had not
+  // started continues with the turn the server returns.
+  async function decideProposal(messageIndex, draftIndex, decision, approvalMode = "confirm") {
+    const id = activeId;
+    if (generation?.status === "running")
+      throw Error("请等待回复结束后再处理建议。");
+    const key = `${id}:${messageIndex}:${draftIndex}`;
+    if (applyingRef.current.has(key)) throw Error("这条建议正在处理，请稍候。");
+    applyingRef.current.add(key);
+    try {
+      const result = await write(`${sessionPath(id)}/proposals`, {
+        messageIndex,
+        draftIndex,
+        decision,
+      });
+      if (currentId.current !== id) return;
+      setSession(result.session);
+      if (result.followUp)
+        await send({
+          text: result.followUp.text,
+          messagesOverride: result.session.messages,
+          approvalMode,
+        });
+    } catch (e) {
+      setError(e.message);
+      throw e;
+    } finally {
+      applyingRef.current.delete(key);
+    }
+  }
   async function linkIssue(issueId) {
     if (submittingRef.current || generation?.status === "running") {
       setError("请等待回复结束或停止生成，再关联需求。");
@@ -1037,6 +1136,11 @@ export function useChat() {
       return false;
     }
   }
+  async function bindExecutionMachine(runnerId) {
+    if (submittingRef.current || executionLocked(sessionRef.current)) throw new Error("会话执行机器已固定，请新建对话。");
+    if (currentId.current && !sessionRef.current) throw new Error("会话仍在加载，请稍后选择。");
+    return {runnerId};
+  }
   async function selectSandbox(id) {
     const current = sessionRef.current;
     if (submittingRef.current || sandboxBusyRef.current || generation?.status === "running") return false;
@@ -1058,13 +1162,21 @@ export function useChat() {
   useEffect(() => {
     let current = true;
     setWorkspaceSandbox(null);
+    setWorkspaceExecution(null);
+    setWorkspaceExecutionError("");
     const id = session?.workspaceRunId || session?.runId;
     if (id) void api(`/api/runs/${encodeURIComponent(id)}`).then((run) => {
-      if (current) setWorkspaceSandbox(run.workflowSnapshot?.sandboxSnapshot?.profile || { id: run.workflowSnapshot?.sandboxProfileId });
-    }).catch(() => {});
+      if (current) {
+        setWorkspaceSandbox(run.workflowSnapshot?.sandboxSnapshot?.profile || { id: run.workflowSnapshot?.sandboxProfileId });
+        setWorkspaceExecution(run.executionContext || {});
+      }
+    }).catch(() => {
+      if (current) setWorkspaceExecutionError("无法加载工作区执行机器");
+    });
     return () => { current = false; };
   }, [session?.workspaceRunId, session?.runId]);
   async function refresh() {
+    await executionMachines.refreshMachines();
     const sandboxRows = await api("/api/sandboxes").catch(() => null);
     if (Array.isArray(sandboxRows)) setSandboxes(sandboxRows);
     const projectRows = await api("/api/projects").catch(() => null);
@@ -1075,8 +1187,37 @@ export function useChat() {
     }
     await refreshSessions();
   }
+  const adoptCLIInstall = useCallback((message) => {
+    setError(message);
+    setGeneration((current) =>
+      (current?.error && cliFailureSettles(current.error)) ||
+      (current?.failure?.message && cliFailureSettles(current.failure.message))
+        ? { ...current, error: message, failure: null }
+        : current,
+    );
+    setSession((current) => {
+      if (
+        !current?.messages?.some(
+          (item) =>
+            cliFailureSettles(item.unfinished) ||
+            cliFailureSettles(item.failure?.message),
+        )
+      )
+        return current;
+      return {
+        ...current,
+        messages: current.messages.map((item) =>
+          cliFailureSettles(item.unfinished) ||
+          cliFailureSettles(item.failure?.message)
+            ? { ...item, unfinished: message, failure: null }
+            : item,
+        ),
+      };
+    });
+  }, []);
   return {
     user,
+    refreshUser,
     users,
     issueId: session?.issueId || (!activeId ? draftIssueId : ""),
     linkIssue,
@@ -1086,6 +1227,9 @@ export function useChat() {
     sandboxLocked: !!session?.runId,
     sandboxBusy,
     workspaceSandbox,
+    workspaceExecution,
+    workspaceExecutionError,
+    ...executionMachines,
     selectSandbox,
     models: executorModels,
     executor,
@@ -1108,6 +1252,8 @@ export function useChat() {
     ready,
     submitting,
     busy: submitting || generation?.status === "running",
+    stopping: generation?.status === "running" && (generation.cancelRequested ||
+      (stopRequest?.sessionId === activeId && stopRequest.generationId === generation.id)),
     queue: (activeId && queues[activeId]?.items) || [],
     queueHeld: !!(activeId && queues[activeId]?.held),
     removeQueued: removeQueuedMessage,
@@ -1116,6 +1262,7 @@ export function useChat() {
     steering: (steering?.sessionId === activeId && steering.item) || null,
     readOnly: !!session?.readOnly,
     setError,
+    adoptCLIInstall,
     setModel: chooseModel,
     setSession,
     open,
@@ -1129,6 +1276,7 @@ export function useChat() {
     edit,
     regenerate,
     applyDraft,
+    decideProposal,
     refresh,
     refreshSessions,
   };

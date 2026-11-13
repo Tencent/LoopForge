@@ -1842,8 +1842,6 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
 .clarify-overview>div{min-width:0;flex:1}.clarify-overview b,.clarify-overview small{display:block}.clarify-overview small{margin-top:2px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .clarify-overview.ready{border-color:color-mix(in srgb,#34d399 35%,var(--line));background:color-mix(in srgb,#34d399 7%,var(--panel))}
 .clarify-overview.ready>span{background:color-mix(in srgb,#34d399 16%,transparent);color:#16a36a}
-.clarify-overview.needs-user{border-color:color-mix(in srgb,#fbbf24 55%,var(--line));background:color-mix(in srgb,#fbbf24 10%,var(--panel))}
-.clarify-overview.needs-user>span{background:color-mix(in srgb,#fbbf24 22%,transparent);color:#b76e00}
 .clarify-check.warn{background:color-mix(in srgb,#fbbf24 22%,transparent);color:#b76e00}
 .clarify-workspace{max-width:760px;margin:0 auto;padding:4px 0 28px}.clarify-workspace.clarify-empty{text-align:center;padding:48px 28px}
 .clarify-orb{display:grid;place-items:center;width:54px;height:54px;margin:0 auto 14px;border-radius:18px;background:linear-gradient(135deg,var(--blue-soft),color-mix(in srgb,#8b5cf6 18%,transparent));color:var(--blue);font-size:25px;font-weight:800}
@@ -2000,12 +1998,6 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
 .issue-clarify-other{width:100%;box-sizing:border-box;margin-top:9px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text)}
 .issue-clarify-composer{margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}.issue-clarify-composer textarea{width:100%;box-sizing:border-box;resize:vertical;border:0;outline:0;background:transparent;color:var(--text);font:inherit}.issue-clarify-composer>div{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px}.issue-clarify-composer span{color:var(--muted);font-size:11px}
 /* Clarification quality: informational only, never a gate. */
-.clarify-score{display:flex;gap:14px;margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
-.clarify-score-total{display:grid;place-content:center;flex:0 0 78px;height:78px;border-radius:12px;background:var(--panel-2);text-align:center}
-.clarify-score-total b{font-size:26px;line-height:1.1}.clarify-score-total span{display:block;margin-top:2px;color:var(--muted-2);font-size:10px}
-.clarify-score-total.good b{color:#16a36a}.clarify-score-total.fair b{color:#b76e00}.clarify-score-total.weak b{color:#dc5151}
-.clarify-score-body{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:7px}
-.clarify-score-body>small{color:var(--muted-2);font-size:11px}
 .clarify-bar{display:flex;align-items:center;gap:8px;font-size:12px}.clarify-bar>span{flex:0 0 92px;color:var(--muted)}.clarify-bar>i{flex:1;height:6px;border-radius:999px;background:var(--panel-3);overflow:hidden}.clarify-bar>i>b{display:block;height:100%;background:var(--blue)}.clarify-bar>em{flex:0 0 28px;text-align:right;font-style:normal;font-variant-numeric:tabular-nums}
 /* ==================== 智能评测与架构巡检 面板 2.0 ==================== */
 .run-eval-section {
@@ -2666,19 +2658,6 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
     grid-template-columns: 1fr;
   }
 }
-.clarify-rate{display:flex;align-items:center;gap:10px;font-size:12px}
-.clarify-rate>span{flex:0 0 86px;color:var(--muted)}
-.clarify-rate>i{flex:1;height:6px;border-radius:999px;background:var(--panel-3);overflow:hidden}
-.clarify-rate>i>b{display:block;height:100%;border-radius:999px;background:#34d399}
-.clarify-rate>i>b.fair{background:#fbbf24}.clarify-rate>i>b.weak{background:#f87171}
-.clarify-rate>em{flex:0 0 26px;text-align:right;font-style:normal;color:var(--muted);font-variant-numeric:tabular-nums}
-.clarify-missing{margin-top:10px;padding:12px 14px;border:1px solid color-mix(in srgb,#fbbf24 35%,var(--line));border-radius:12px;background:color-mix(in srgb,#fbbf24 7%,var(--panel))}
-.clarify-missing-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;color:#b76e00}
-html[data-theme="dark"] .clarify-missing-head{color:var(--amber,#fbbf24)}
-.clarify-missing-head b{font-size:12px;font-weight:650;color:var(--text)}
-.clarify-missing-list{display:flex;flex-wrap:wrap;gap:8px}
-.clarify-missing-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:var(--panel);border:1px solid color-mix(in srgb,#fbbf24 40%,var(--line));font-size:12px;color:var(--text);line-height:1.3}
-.clarify-missing-chip i{width:6px;height:6px;border-radius:50%;background:#f59e0b;flex-shrink:0}
 .clarify-history{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 .clarify-history>summary{padding:11px 14px;color:var(--muted);font-size:12px;cursor:pointer;list-style:none}
 .clarify-history>summary::-webkit-details-marker{display:none}
@@ -2724,9 +2703,17 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 #runnersView .runner-steps b{display:block;color:var(--rv-text);font-size:13px;font-weight:500}
 #runnersView .runner-steps small{display:block;color:var(--rv-muted);font-size:12px}
 #runnersView .runner-command-box{display:flex;align-items:center;gap:12px;padding:6px 6px 6px 16px;border:0;border-radius:10px;background:var(--rv-term)}
-#runnersView .runner-command-box pre{flex:1;min-width:0;margin:0;padding:8px 0;overflow-x:auto;overflow-y:hidden;white-space:nowrap;word-break:normal;border:0;background:transparent;color:var(--rv-term-text);font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;scrollbar-width:none}
-#runnersView .runner-command-box pre::-webkit-scrollbar{display:none}
-#runnersView .runner-command-box:hover pre{scrollbar-width:thin;scrollbar-color:#3f3f46 transparent}
+#runnersView .runner-command-box pre{flex:1;min-width:0;margin:0;padding:8px 0;overflow-x:auto;overflow-y:hidden;white-space:nowrap;word-break:normal;border:0;background:transparent;color:var(--rv-term-text);font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+/* The scrollbar track is always reserved and only the thumb colour changes on hover:
+   toggling scrollbar-width on :hover resized the box under the pointer and made the page jump (#193). */
+#runnersView .runner-command-box pre::-webkit-scrollbar{height:6px}
+#runnersView .runner-command-box pre::-webkit-scrollbar-track{background:transparent}
+#runnersView .runner-command-box pre::-webkit-scrollbar-thumb{border-radius:3px;background:transparent}
+#runnersView .runner-command-box:hover pre::-webkit-scrollbar-thumb{background:#3f3f46}
+@supports not selector(::-webkit-scrollbar){
+  #runnersView .runner-command-box pre{scrollbar-width:thin;scrollbar-color:transparent transparent}
+  #runnersView .runner-command-box:hover pre{scrollbar-color:#3f3f46 transparent}
+}
 #runnersView .runner-command-box pre::before{content:"$ ";color:var(--rv-term-dim);user-select:none}
 #runnersView #bindToken{color:var(--rv-accent)}
 #runnersView .runner-command-box .button{flex:none;justify-content:center;min-width:84px;height:28px;padding:0 10px;border:1px solid #fff;border-radius:7px;background:#fff;color:#252529;font-size:12px;font-weight:500;box-shadow:none;transition:background-color .16s,border-color .16s,color .16s}

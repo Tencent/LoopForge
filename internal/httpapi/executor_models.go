@@ -74,6 +74,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 			CustomModel: true,
 			Models: []executorModelInfo{
 				{ID: "gpt-6.1-sol", Name: "GPT-6.1 Sol"},
+				{ID: "gpt-6.1-terra", Name: "GPT-6.1 Terra"},
 				{ID: "gpt-6-astra", Name: "GPT-6 Astra"},
 				{ID: "gpt-6-sol", Name: "GPT-6 Sol"},
 				{ID: "gpt-6-luna", Name: "GPT-6 Luna"},
@@ -98,6 +99,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 				{ID: "claude-sonnet-5", Name: "Claude Sonnet 5"},
 				{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
 				{ID: "claude-sonnet-4-5", Name: "Claude Sonnet 4.5"},
+				{ID: "claude-haiku-5-5", Name: "Claude Haiku 5.5"},
 				{ID: "claude-haiku-4-5", Name: "Claude Haiku 4.5"},
 			},
 			Efforts: effortOptions(domain.ExecutorEffortLevels["claude-code"]),
@@ -135,6 +137,13 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 			Models: []executorModelInfo{
 				{ID: "deepseek-flash", Name: "DeepSeek V4.1 Flash"},
 				{ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro"},
+			},
+		},
+		"zcode": {
+			CustomModel: true,
+			Models: []executorModelInfo{
+				{ID: "glm-5.3", Name: "GLM-5.3"},
+				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
 			},
 		},
 	}

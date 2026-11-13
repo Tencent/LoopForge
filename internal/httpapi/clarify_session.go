@@ -271,16 +271,37 @@ func captureClarifySessionID(line string) string {
 	return strings.TrimSpace(sid)
 }
 
-func clarifyResumeTurnPrompt(message string) string {
+// clarifyResumeTurnPrompt re-anchors every resumed round on the original
+// work item: long sessions otherwise drift toward whatever the latest answer
+// or the code just read happened to mention.
+func clarifyResumeTurnPrompt(title, message string, assistantRounds int) string {
 	msg := strings.TrimSpace(message)
 	if msg == "" {
 		msg = "请基于会话里已有信息继续澄清。"
 	}
-	return "这是用户对本轮澄清的回复。结合会话中已读过的代码、原单、评论和对话继续，不要重复已问过的问题，不要再读已经成功读过的同一原单/评论/文档。完成后调用 submit_clarification。\n用户：" + msg
+	var b strings.Builder
+	b.WriteString("这是用户对本轮澄清的回复。结合会话中已读过的代码、原单、评论和对话继续，不要重复已问过的问题，不要再读已经成功读过的同一原单/评论/文档。")
+	if title = strings.TrimSpace(title); title != "" {
+		b.WriteString("\n范围锚点：本次只澄清「" + title + "」本身，遵守首轮约定的范围规则；用户回答若带出这条需求以外的新诉求，不要沿着追问，写进 summary 的「不在本次范围」并建议另建需求。")
+	}
+	b.WriteString(clarifyRoundBudgetHint(assistantRounds))
+	b.WriteString("完成后调用 submit_clarification。\n用户：")
+	b.WriteString(msg)
+	return b.String()
+}
+
+// clarifyRoundBudgetHint nudges the model to conclude once several rounds
+// have passed; without a stop condition it keeps finding "new" questions,
+// and the only new ones left are about neighbouring features.
+func clarifyRoundBudgetHint(assistantRounds int) string {
+	if assistantRounds < 3 {
+		return ""
+	}
+	return fmt.Sprintf("\n已经澄清了 %d 轮：除非还有不回答就无法开工的缺口，本轮直接给出结论（ready=true），剩余不确定点按现有代码惯例做合理假设并写进 summary。", assistantRounds)
 }
 
 func clarifyNativeRetryPrompt() string {
-	return "刚才未成功提交有效的澄清结果，本轮尚未结束。请根据工具校验错误修正并重新调用 submit_clarification。ready=false 必须提供具体 questions，不能只有 summary 或 assessment.missing；选择题 options 至少包含两个不同选项，开放填写题设 freeText=true、options=[]。不要为了通过校验把尚缺关键信息的需求设为 ready=true。"
+	return "刚才未成功提交有效的澄清结果，本轮尚未结束。请根据工具校验错误修正并重新调用 submit_clarification。ready=false 必须提供具体 questions，不能只有 summary；选择题 options 至少包含两个不同选项，开放填写题设 freeText=true、options=[]。如果其实已经没有阻塞开工的缺口，就提交 ready=true 并给出 summary。"
 }
 
 func isClarifyProtocolObject(v any) bool {
@@ -322,20 +343,27 @@ func classifyClarifyProtocolError(err error) string {
 	}
 }
 
-func clarifySystemPrompt(intro, mcpStep, focus, ratingPrompt string) string {
+func clarifySystemPrompt(intro, mcpStep, focus string) string {
 	return fmt.Sprintf(`%s
-1. 用 Read/Grep/Glob 读取当前工作目录代码，理解相关模块和现有实现
+1. 用 Read/Grep/Glob 读取当前工作目录代码，定位这条工作项要改的位置和现有实现
 %s
-3. 围绕%s，基于代码、原单/评论和对话历史判断还缺什么关键信息
+3. 围绕%s，基于代码、原单/评论和对话历史判断还缺什么阻塞开工的信息
 4. 完成后调用 submit_clarification。只有调用该工具才算结束本轮。
 
+范围规则（最重要）：
+- 「## 需求」里的标题和描述就是本次范围的边界。只澄清把这一条需求做完所必需的信息，不负责规划整个模块或项目
+- 读代码是为了定位改动点、确认现有行为，不是为了寻找还能顺带做的事。代码里看到的相邻功能、历史问题、可优化点、未来扩展，都不要提问
+- 不要提出会扩大范围的问题或选项（例如「是否同时支持 X」「要不要顺便改 Y」「其他页面要不要一起改」）。确实值得提醒的相邻事项，只在 summary 的「不在本次范围」里列一句
+- 用户回答里带出这条需求以外的新诉求时，不要沿着追问，记入「不在本次范围」并建议另建需求
+- 不要为了凑问题而提问：能按现有代码惯例合理假设的细节直接假设，写进 summary；没有阻塞开工的缺口就设 ready=true
+
 问题要具体、基于代码：
-- 不问"范围是什么"，而是问"这个功能涉及 X 模块和 Y 模块，主要改哪个？"
-- 不问"优先级"，而是问"这个是 P0（阻塞发布）还是 P1（下版本）？"
-- 每轮只问 1-3 个最关键的新问题，放入 questions，不要只在 summary 或 assessment.missing 中列出缺口
-- ready=false 时必须有问题。选择题 options 至少提供两个不同、具体可操作的选项；需要用户填写路径、数量等内容时使用 freeText=true、options=[]、multiSelect=false，不编造选项
-- 工具校验失败时修正参数并重新提交，不要为了通过校验把尚缺关键信息的需求设为 ready=true
+- 不问"范围是什么"，而是问"需求说改 X，代码里 X 由 A 处理，是在 A 上改还是新增入口？"——问题必须落在需求原文已经提到的东西上
+- 每轮只问 1-3 个最关键的新问题，放入 questions，不要只在 summary 中列出缺口
+- ready=false 时必须有问题。选择题 options 至少提供两个不同、具体可操作的选项，选项都应在本需求范围内；需要用户填写路径、数量等内容时使用 freeText=true、options=[]、multiSelect=false，不编造选项
+- ready=true 时 summary 按「本次范围 / 不在本次范围 / 验收标准 / 假设」分段给出结论
+- 工具校验失败时修正参数并重新提交
 - TAPD 的 id、workspace_id、entry_id 必须用字符串
 - 思考用中文对用户说正在读代码或原单
-%s`, intro, mcpStep, focus, ratingPrompt)
+`, intro, mcpStep, focus)
 }

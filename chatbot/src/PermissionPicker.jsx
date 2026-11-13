@@ -5,11 +5,12 @@ import { usePanelPresence } from "./usePanelPresence";
 import "./permission-picker.css";
 
 const modes = [
-  { id: "confirm", icon: "gate", label: "每次确认", detail: "平台写入先生成草稿，由你确认执行。" },
-  { id: "assisted", icon: "confirmation-check", label: "帮我批准", detail: "AI 审查具体操作与对话授权，通过后执行；未通过时交给你确认。" },
-  { id: "auto", icon: "priority-bolt", label: "完全权限", tone: "danger", detail: "使用当前账号权限直接执行模型提出的平台操作。" },
+  { id: "confirm", icon: "gate", label: "请求批准", detail: "工作区文件和命令自动执行；平台写入由你确认，外部工具写入需要授权。" },
+  { id: "assisted", icon: "confirmation-check", label: "帮我批准", detail: "工作区文件和命令自动执行；AI 审查平台及外部操作，未通过时交给你确认。" },
+  { id: "auto", icon: "priority-bolt", label: "完全权限", tone: "danger", detail: "工作区文件和命令自动执行；平台及外部操作使用当前账号权限直接执行。" },
 ];
 
+// `glyph` is a rendered brand mark. Options that only set `icon` keep the Harness icon.
 export default function PermissionPicker({ value, onSelect, open, onOpenChange, label = "操作确认方式", icon, options = modes }) {
   const trigger = useRef(null);
   const panel = useRef(null);
@@ -170,7 +171,7 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
           } else if (open && ["Escape", "Tab"].includes(event.key)) keyDown(event);
         }}
       >
-        <HarnessIcon name={icon || current.icon} size={16} aria-hidden="true" />
+        {current.glyph || <HarnessIcon name={icon || current.icon} size={16} aria-hidden="true" />}
         <span>{current.label}</span>
         <HarnessIcon name="chevron-down" size={12} aria-hidden="true" />
       </button>
@@ -201,7 +202,7 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
               tabIndex={mode.id === current.id ? 0 : -1}
               onClick={() => choose(mode.id)}
             >
-              <HarnessIcon name={mode.icon} size={16} aria-hidden="true" />
+              {mode.glyph || <HarnessIcon name={mode.icon} size={16} aria-hidden="true" />}
               <span className="permission-menu-copy">
                 <strong>{mode.label}</strong>
                 <small id={`${identity}-${mode.id}-detail`}>{mode.detail}</small>

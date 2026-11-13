@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
@@ -20,6 +21,10 @@ func prepareInvocationWorkspace(workspace string, inv *domain.RunnerInvocation) 
 	if inv == nil {
 		return nil
 	}
+	// Parallel branches consuming the same upstream artifact write the same
+	// input file; chmod/write/chmod must not interleave.
+	unlock := lockInvocationWorkspace(workspace)
+	defer unlock()
 	if _, err := runtime.RestoreMissingWorkspaceArtifacts(workspace, inv.ArchivedFiles); err != nil {
 		return fmt.Errorf("restore archived outputs: %w", err)
 	}
@@ -37,6 +42,19 @@ func prepareInvocationWorkspace(workspace string, inv *domain.RunnerInvocation) 
 		}
 	}
 	return nil
+}
+
+var invocationWorkspaceLocks sync.Map // cleaned absolute workspace -> *sync.Mutex
+
+func lockInvocationWorkspace(workspace string) func() {
+	key := filepath.Clean(workspace)
+	if abs, err := filepath.Abs(key); err == nil {
+		key = abs
+	}
+	value, _ := invocationWorkspaceLocks.LoadOrStore(key, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func writeInputFile(workspace string, input domain.RunnerInputFile) error {
@@ -74,7 +92,18 @@ func collectTaskOutputs(workspace string, inv *domain.RunnerInvocation) *domain.
 	if inv.RecoverOutputs {
 		out.Recovered = recoverOutputFiles(workspace, inv.OutputFiles)
 	}
-	for _, rel := range inv.OutputFiles {
+	out.Files, out.TooLarge = readOutputFiles(workspace, inv.OutputFiles)
+	out.Patches = collectPatchInventories(workspace, patchInventoryDirs(inv))
+	frontend, evidence := domain.DetectFrontendProject(workspace)
+	out.Facts = &domain.RunnerWorkspaceFacts{Frontend: frontend, FrontendEvidence: evidence}
+	return out
+}
+
+// readOutputFiles reads every safe, regular output file within the upload
+// limit. Oversized files are reported by path instead; both results stay nil
+// when nothing qualifies.
+func readOutputFiles(workspace string, rels []string) (files map[string]string, tooLarge []string) {
+	for _, rel := range rels {
 		if !domain.SafeWorkspaceRelPath(rel) {
 			continue
 		}
@@ -84,38 +113,51 @@ func collectTaskOutputs(workspace string, inv *domain.RunnerInvocation) *domain.
 			continue
 		}
 		if info.Size() > maxArtifactUploadBytes {
-			out.TooLarge = append(out.TooLarge, rel)
+			tooLarge = append(tooLarge, rel)
 			continue
 		}
 		data, err := os.ReadFile(full)
 		if err != nil {
 			continue
 		}
-		if out.Files == nil {
-			out.Files = map[string]string{}
+		if files == nil {
+			files = map[string]string{}
 		}
-		out.Files[rel] = string(data)
+		files[rel] = string(data)
 	}
-	dirs := []string{""}
-	if repositories := invocationRepositoryContexts(inv); len(repositories) > 0 {
-		dirs = dirs[:0]
-		for _, repository := range repositories {
-			dirs = append(dirs, filepath.ToSlash(safeRunnerRepoDir(repository.WorkspaceDir)))
-		}
+	return files, tooLarge
+}
+
+// patchInventoryDirs lists the workspace-relative checkout directories whose
+// patch inventory is reported: the workspace root without repositories,
+// otherwise each repository's checkout directory.
+func patchInventoryDirs(inv *domain.RunnerInvocation) []string {
+	repositories := invocationRepositoryContexts(inv)
+	if len(repositories) == 0 {
+		return []string{""}
 	}
+	dirs := make([]string, 0, len(repositories))
+	for _, repository := range repositories {
+		dirs = append(dirs, filepath.ToSlash(safeRunnerRepoDir(repository.WorkspaceDir)))
+	}
+	return dirs
+}
+
+// collectPatchInventories maps each directory with a non-empty patch
+// inventory to it; the map stays nil when no directory has changes.
+func collectPatchInventories(workspace string, dirs []string) map[string]string {
+	var patches map[string]string
 	for _, dir := range dirs {
 		patch, err := gitwork.PatchInventory(filepath.Join(workspace, filepath.FromSlash(dir)))
 		if err != nil || len(patch) == 0 {
 			continue
 		}
-		if out.Patches == nil {
-			out.Patches = map[string]string{}
+		if patches == nil {
+			patches = map[string]string{}
 		}
-		out.Patches[dir] = string(patch)
+		patches[dir] = string(patch)
 	}
-	frontend, evidence := domain.DetectFrontendProject(workspace)
-	out.Facts = &domain.RunnerWorkspaceFacts{Frontend: frontend, FrontendEvidence: evidence}
-	return out
+	return patches
 }
 
 // recoverOutputFiles moves a missing root-level output into place when the

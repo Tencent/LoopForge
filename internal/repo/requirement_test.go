@@ -277,3 +277,11 @@ func TestRequirementSnapshotHTTPStore(t *testing.T) {
 		t.Fatalf("frontend lane=%#v", frontend)
 	}
 }
+
+func TestRequirementConversationBranchesDropURLCredentials(t *testing.T) {
+	run := domain.Run{Kind: domain.RunKindWorkspace, Repositories: []domain.RepositoryContext{{RepositoryID: "app", Name: "app", WebURL: "https://user:s3cret-token@github.com/acme/app", WorkBranch: "feature/x"}}}
+	conv := requirementConversation(domain.Issue{ID: "iss-1"}, []domain.Run{run})
+	if conv == nil || len(conv.Branches) != 1 || conv.Branches[0].WebURL != "https://github.com/acme/app" {
+		t.Fatalf("branches = %+v", conv)
+	}
+}

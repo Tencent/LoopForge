@@ -22,36 +22,38 @@ type Schedule struct {
 	dayStar, dowStar bool
 }
 
+// fieldSpecs lists the five cron fields in expression order with their
+// display name (used to prefix parse errors) and inclusive value range.
+var fieldSpecs = [5]struct {
+	name     string
+	min, max int
+}{
+	{"分钟", 0, 59},
+	{"小时", 0, 23},
+	{"日", 1, 31},
+	{"月", 1, 12},
+	{"周", 0, 7},
+}
+
 func Parse(expr string) (Schedule, error) {
 	fields := strings.Fields(strings.TrimSpace(expr))
-	if len(fields) != 5 {
+	if len(fields) != len(fieldSpecs) {
 		return Schedule{}, fmt.Errorf("cron 需为 5 段（分 时 日 月 周），例如 0 * * * *")
 	}
-	min, err := parseField(fields[0], 0, 59)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("分钟: %w", err)
+	var bits [len(fieldSpecs)]uint64
+	for i, spec := range fieldSpecs {
+		b, err := parseField(fields[i], spec.min, spec.max)
+		if err != nil {
+			return Schedule{}, fmt.Errorf("%s: %w", spec.name, err)
+		}
+		bits[i] = b
 	}
-	hour, err := parseField(fields[1], 0, 23)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("小时: %w", err)
-	}
-	day, err := parseField(fields[2], 1, 31)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("日: %w", err)
-	}
-	month, err := parseField(fields[3], 1, 12)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("月: %w", err)
-	}
-	dow, err := parseField(fields[4], 0, 7)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("周: %w", err)
-	}
+	dow := bits[4]
 	if dow&(1<<7) != 0 {
 		dow |= 1 << 0
 	}
 	return Schedule{
-		min: min, hour: hour, day: day, month: month, dow: dow,
+		min: bits[0], hour: bits[1], day: bits[2], month: bits[3], dow: dow,
 		dayStar: strings.HasPrefix(fields[2], "*"),
 		dowStar: strings.HasPrefix(fields[4], "*"),
 	}, nil

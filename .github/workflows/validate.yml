@@ -53,6 +53,19 @@ jobs:
         working-directory: local/tools/tcmcp/web
         run: npm ci && npm run build
 
+  curl-install:
+    # Once per workflow, outside the Python 3.8/3.12 matrix. The script
+    # installs Classic and Portable from a local fake release and does not
+    # contact github.com.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: local
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Smoke-test curl install against a local fake release
+        run: bash scripts/smoke-curl-install.sh
+
   secrets:
     runs-on: ubuntu-latest
     steps:
@@ -60,3 +73,5 @@ jobs:
         with:
           fetch-depth: 0
       - run: bash scripts/scan-secrets.sh
+        env:
+          LOOPFORGE_GITLEAKS_TOKEN: ${{ github.token }}

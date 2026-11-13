@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,8 +23,8 @@ import (
 // workbench_workspace_submit_mr delivers a conversation workspace without
 // an SOP delivery node: it commits and pushes the work branch, then opens a
 // GitHub pull request (or a merge request on the optional legacy Gongfeng
-// host). Both use the requesting user's own Git Token, so the push and the
-// request are attributed to them and limited by their repository permissions.
+// host). SSH repositories use the requesting user's Git SSH key and return
+// the branch and commit without calling a hosting API.
 // SOP runs keep delivering through nodes.
 
 const gongfengWebBase = "https://git.example.com"
@@ -40,27 +41,29 @@ var (
 )
 
 type workspaceMRResult struct {
-	Repository   string `json:"repository"`
-	SourceBranch string `json:"sourceBranch"`
-	TargetBranch string `json:"targetBranch"`
-	BaseBranch   string `json:"baseBranch,omitempty"`
-	Warning      string `json:"warning,omitempty"`
-	Commit       string `json:"commit,omitempty"`
-	Pushed       bool   `json:"pushed"`
-	Direct       bool   `json:"direct,omitempty"`
-	MRURL        string `json:"mrUrl,omitempty"`
-	MRIID        int64  `json:"mrIid,omitempty"`
-	Existing     bool   `json:"existing,omitempty"`
-	Updated      bool   `json:"updated,omitempty"`
-	UpdateError  string `json:"updateError,omitempty"`
-	CreateURL    string `json:"createUrl,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Repository    string `json:"repository"`
+	SourceBranch  string `json:"sourceBranch"`
+	TargetBranch  string `json:"targetBranch"`
+	BaseBranch    string `json:"baseBranch,omitempty"`
+	Warning       string `json:"warning,omitempty"`
+	Commit        string `json:"commit,omitempty"`
+	Pushed        bool   `json:"pushed"`
+	Direct        bool   `json:"direct,omitempty"`
+	PushOnly      bool   `json:"pushOnly,omitempty"`
+	RepositoryURL string `json:"repositoryUrl,omitempty"`
+	MRURL         string `json:"mrUrl,omitempty"`
+	MRIID         int64  `json:"mrIid,omitempty"`
+	Existing      bool   `json:"existing,omitempty"`
+	Updated       bool   `json:"updated,omitempty"`
+	UpdateError   string `json:"updateError,omitempty"`
+	CreateURL     string `json:"createUrl,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 func workspaceSubmitMRDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_submit_mr",
-		Description: "把当前工作区（任务，或本对话打开的临时工作区）的改动提交到工作分支、用请求人自己的 Git Token 推送，并发起 Pull Request（GitHub 仓库）或 MR（工蜂仓库），返回链接 mrUrl。调用前先用 workbench_workspace_command 跑通相关测试。title 写清改了什么；description 用 Markdown 写改动摘要和验证结果。工作分支已有打开的 PR/MR 时会推送新提交，并用本次 title、description 更新它，所以 description 要概括整个 PR/MR 的改动，不只是这次的增量。targetBranch 默认是工作区打开时的 baseBranch（工作分支的起点）；打向别的分支时 PR/MR 会带上两个分支之间的差异提交，结果里会给出 warning，要打 release 这类分支应在 workbench_workspace_open 时就传 baseBranch。只提交工作区记录的工作分支：手工 git checkout 到别的分支时会拒绝提交并说明原因；只读检出（branchMode=readonly）的仓库不会提交。默认 mode=mr；用户要把改动合并进 preview/test 这类共享分支并直接推送、不要 PR/MR（例如「先合到 preview 再推」「本地合并然后推送」）时传 mode=direct，它把工作分支 merge --no-ff 进 targetBranch 并直推（目标必须已在远端存在、且不是可写仓库的基线分支）；直推不产生 PR/MR。",
+		Description: "提交并推送当前工作区的工作分支。GitHub / 工蜂使用请求人的 Git Token 发起或更新 PR/MR，返回 mrUrl；Git SSH 仓库使用请求人的 SSH 密钥推送，返回 sourceBranch 和 commit。调用前先跑通相关测试。title 写改动标题；description 用 Markdown 概括整个交付的改动和验证结果。targetBranch 默认是工作分支的起点 baseBranch；不同则会给出 warning。只读仓库不会提交，手工切换到其它分支时会拒绝提交。默认 mode=mr；用户明确要合并到 preview/test 等已有共享分支时传 mode=direct 和 targetBranch，直接推送合并结果（目标不能是基线分支）。",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","maxLength":20000},"targetBranch":{"type":"string","maxLength":200,"description":"PR/MR 的目标分支，默认是工作区打开时的 baseBranch；与起点不同时结果带 warning。mode=direct 时必填，写要直推的共享分支"},"mode":{"type":"string","enum":["mr","direct"],"description":"mr（默认）推工作分支并发起或更新 PR/MR；direct 把工作分支 merge --no-ff 进 targetBranch 后直推，不发 MR"}},"required":["title"],"additionalProperties":false}`),
 		Kind:        "workspace",
 	}
@@ -125,7 +128,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	}
 	gitToken := strings.TrimSpace(h.repo.GitCredential(ctx, s.User.ID))
 	_, apiToken := gitwork.SplitToken(gitToken)
-	if apiToken == "" {
+	if apiToken == "" && !slices.ContainsFunc(run.RepositoryContexts(), func(rc domain.RepositoryContext) bool { return rc.Provider == domain.RepositoryProviderSSH }) {
 		return "", fmt.Errorf("你还没有配置 Git Token，无法推送和发起 PR。请到「个人配置 → 个人凭证」配置：打开 https://github.com/settings/tokens 新建令牌，为目标仓库授予 Contents 和 Pull requests 的读写权限，复制后粘贴并点校验")
 	}
 	if h.engine == nil {
@@ -155,7 +158,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	if len(run.RepositoryContexts()) == 0 {
 		return "", fmt.Errorf("这个工作区没有检出代码仓库，没有可提交的内容")
 	}
-	heads, err := h.engine.PushConversationWorkspace(ctx, run.ID, gitToken, login, email, title, directTarget)
+	heads, err := h.engine.PushConversationWorkspace(ctx, run.ID, s.User.ID, gitToken, login, email, title, directTarget)
 	if err != nil {
 		return "", errors.New(redactAgentToolResult(err.Error(), requester))
 	}
@@ -179,7 +182,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 		if result.TargetBranch == "" {
 			result.TargetBranch = base
 		}
-		if !direct && base != "" && result.TargetBranch != base {
+		if !direct && rc.Provider != domain.RepositoryProviderSSH && base != "" && result.TargetBranch != base {
 			result.Warning = fmt.Sprintf("工作分支从 %s 拉出，MR 却打向 %s：%s 有而 %s 没有的提交会一起出现在这个 MR 里。要只带本次改动，用 workbench_workspace_open new + baseBranch=%s 新开工作区，把改动搬过去再提交", base, result.TargetBranch, base, result.TargetBranch, result.TargetBranch)
 		}
 		if direct {
@@ -188,6 +191,11 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			if head.SharedHead != "" {
 				result.Commit = head.SharedHead
 			}
+			results = append(results, result)
+			continue
+		}
+		if rc.Provider == domain.RepositoryProviderSSH {
+			result.PushOnly, result.RepositoryURL = true, rc.WebURL
 			results = append(results, result)
 			continue
 		}
@@ -243,7 +251,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	if len(results) == 0 {
 		return "", fmt.Errorf("工作区里的仓库都没有相对基线分支的改动，没有可提交的内容")
 	}
-	note := "PR/MR 已发起，把 mrUrl 发给用户。没有改动的仓库不会发起。"
+	note := "把每个仓库的交付结果发给用户。PR/MR 使用 mrUrl。"
 	if direct {
 		note = "已把工作分支直接合并推送到共享分支（没有开 PR/MR）：把每个仓库的 targetBranch 和 commit 发给用户，说明共享分支已更新到该提交；直推没有 PR/MR，需求不会自动完成，需要人工确认收尾。"
 	}
@@ -253,8 +261,14 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 		}
 	}
 	for _, r := range results {
-		if r.MRURL == "" && !r.Direct {
+		if r.MRURL == "" && !r.Direct && !r.PushOnly {
 			note = "部分仓库没能自动发起 PR/MR：如实告诉用户 error，并给出 createUrl 让用户手动发起（源分支 sourceBranch、目标分支 targetBranch）。"
+		}
+	}
+	for _, r := range results {
+		if r.PushOnly {
+			note += "Git SSH 仓库已推送工作分支：请告知 sourceBranch 和 commit。有 repositoryUrl 时可到托管平台手动创建 PR/MR，也可使用另行配置的托管平台 MCP。"
+			break
 		}
 	}
 	for _, r := range results {
@@ -304,6 +318,9 @@ var githubRepoPathPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+
 // githubRepoPath returns "owner/name" for github.com repositories and "" for
 // anything else, so the token is only ever sent to GitHub.
 func githubRepoPath(rc domain.RepositoryContext) string {
+	if rc.Provider == domain.RepositoryProviderSSH {
+		return ""
+	}
 	path, ok := strings.CutPrefix(strings.TrimSpace(rc.GongfengProjectID), "github:")
 	if !ok {
 		path = hostedRepoPath(rc, "github.com", githubRepoPathPattern)
@@ -315,6 +332,9 @@ func githubRepoPath(rc domain.RepositoryContext) string {
 }
 
 func hostedRepoPath(rc domain.RepositoryContext, host string, valid *regexp.Regexp) string {
+	if rc.Provider == domain.RepositoryProviderSSH {
+		return ""
+	}
 	for _, raw := range []string{rc.CloneURL, rc.WebURL} {
 		raw = strings.TrimSpace(raw)
 		path := ""

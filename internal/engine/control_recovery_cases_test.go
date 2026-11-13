@@ -158,7 +158,7 @@ func TestRunRecoveryAndSchedulerBookkeeping(t *testing.T) {
 	if e.ActiveRunCount() != 1 || !e.isRunSchedulerActive("bookkeeping") {
 		t.Fatal("active scheduler missing")
 	}
-	unlock := e.lockRunExec("bookkeeping")
+	unlock := e.lockNodeExec("bookkeeping", "node")
 	unlock()
 	e.clearRunning("bookkeeping")
 	if e.ActiveRunCount() != 0 {

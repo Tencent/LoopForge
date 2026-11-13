@@ -2,13 +2,15 @@
 # One-command container installation from the published GHCR image pinned in
 # compose.yaml (LOOPFORGE_BUILD_FROM_SOURCE=1 builds this checkout instead).
 # Installs Docker when it is missing (Linux, or macOS with Homebrew) and needs
-# Python 3. Re-running is safe: secrets, data and catalog edits are kept.
+# Python 3 and curl (apt/dnf/yum, or Homebrew). Re-running is safe: secrets,
+# data and catalog edits are kept.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 fail() { printf '\n✗ %s\n' "$1" >&2; exit 1; }
 step() { printf '\n▸ %s\n' "$1"; }
 source scripts/docker-access.sh
+source scripts/ghcr-mirror.sh
 
 confirm() {
   [[ "${LOOPFORGE_YES:-}" == 1 ]] && return 0
@@ -16,6 +18,62 @@ confirm() {
   read -r -p "$1 [Y/n] " answer
   [[ -z "$answer" || "$answer" =~ ^[Yy] ]]
 }
+
+usable_python() {
+  command -v python3 >/dev/null && python3 -c 'import sys; sys.exit(sys.version_info < (3, 6))' >/dev/null 2>&1
+}
+
+install_prerequisites() {
+  local missing=()
+  usable_python || missing+=(python3)
+  command -v curl >/dev/null || missing+=(curl ca-certificates)
+  [[ ${#missing[@]} -gt 0 ]] || return 0
+  confirm "Required packages are missing: ${missing[*]}. Install them now?" \
+    || fail 'Install Python 3 and curl, then rerun this script; or rerun with LOOPFORGE_YES=1 to accept installation.'
+  if command -v apt-get >/dev/null; then
+    as_root apt-get update
+    if [[ ${LOOPFORGE_YES:-0} == 1 ]]; then
+      as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+        apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "${missing[@]}"
+    else
+      as_root apt-get install -y "${missing[@]}"
+    fi
+  elif command -v dnf >/dev/null; then
+    as_root dnf install -y "${missing[@]}"
+  elif command -v yum >/dev/null; then
+    as_root yum install -y "${missing[@]}"
+  elif [[ $(uname -s) == Darwin ]] && command -v brew >/dev/null; then
+    brew install "${missing[@]}"
+  else
+    fail 'Automatic prerequisite installation requires apt, dnf, yum or Homebrew. Install Python 3 and curl, then rerun this script.'
+  fi
+  usable_python && command -v curl >/dev/null \
+    || fail 'A working Python 3 or curl is still unavailable after package installation. Check the package manager output and rerun.'
+}
+
+install_compose() (
+  [[ $(uname -s) == Linux ]] \
+    || fail 'Docker Compose is unavailable. Install or update Docker Desktop, then rerun this script.'
+  confirm 'Docker Compose is missing. Install the official checksum-verified plugin now?' \
+    || fail 'Docker Compose is required. Install the plugin or rerun with LOOPFORGE_YES=1.'
+  local temporary plugin_dir
+  temporary=$(mktemp -d)
+  trap 'rm -rf "$temporary"' EXIT
+  if ! python3 scripts/install-compose.py "$temporary/docker-compose" "$(uname -m)"; then
+    fail 'Docker Compose download failed. Check access to GitHub, or install the Compose plugin manually and rerun.'
+  fi
+  if [[ ${LOOPFORGE_DOCKER_USE_SUDO:-0} == 1 || $(id -u) -eq 0 ]]; then
+    plugin_dir=/usr/local/lib/docker/cli-plugins
+    if ! { as_root install -d "$plugin_dir" && as_root install -m 0755 "$temporary/docker-compose" "$plugin_dir/docker-compose"; }; then
+      fail "Could not install Docker Compose in $plugin_dir. Check directory permissions and rerun."
+    fi
+  else
+    plugin_dir="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins"
+    if ! { install -d "$plugin_dir" && install -m 0755 "$temporary/docker-compose" "$plugin_dir/docker-compose"; }; then
+      fail "Could not install Docker Compose in $plugin_dir. Check directory permissions and rerun."
+    fi
+  fi
+)
 
 install_docker() {
   case "$(uname -s)" in
@@ -45,14 +103,7 @@ wait_for_docker() {
 }
 
 step 'Checking prerequisites'
-if ! command -v python3 >/dev/null; then
-  if command -v apt-get >/dev/null && confirm 'Python 3 is required. Install it now?'; then
-    as_root apt-get update
-    as_root apt-get install -y python3
-  else
-    fail 'Install Python 3, then rerun this script. No deployment has been started.'
-  fi
-fi
+install_prerequisites
 command -v docker >/dev/null || install_docker
 if ! select_docker_access; then
   case "$(uname -s)" in
@@ -61,7 +112,8 @@ if ! select_docker_access; then
   esac
   wait_for_docker || fail 'Docker is installed but not running, or this user cannot access it (try: sudo usermod -aG docker "$USER", then log in again).'
 fi
-docker_access compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is required (the "docker compose" command).'
+docker_access compose version >/dev/null 2>&1 || install_compose
+docker_access compose version >/dev/null 2>&1 || fail 'Docker Compose is still unavailable. Check the Docker CLI plugin configuration and rerun.'
 
 requested_public_url="${LOOPFORGE_PUBLIC_URL:-}"
 [[ ! -e .env || -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
@@ -110,11 +162,27 @@ PY
 fi
 
 if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
-  step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
-  docker_access compose --profile platform pull --policy "${LOOPFORGE_PULL_POLICY:-missing}" platform mysql
+  pull_policy="${LOOPFORGE_PULL_POLICY:-missing}"
+  if mirror_published_ghcr "$pull_policy"; then
+    # The platform name is already local. Pull it with missing so Compose does
+    # not contact ghcr.io; MySQL keeps the requested policy.
+    if [[ "$pull_policy" == always ]]; then
+      docker_access compose --profile platform pull --policy missing platform
+      docker_access compose --profile platform pull --policy always mysql
+    else
+      docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+    fi
+  else
+    step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
+    docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+  fi
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
   step 'Building LoopForge from source (first install takes several minutes; frontend, Go and runtime stages build in parallel)'
+  if [[ -z "${LOOPFORGE_COMMIT:-}" ]]; then
+    LOOPFORGE_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+    export LOOPFORGE_COMMIT
+  fi
   # Download MySQL while the platform image builds instead of afterwards.
   docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
   mysql_pull=$!
@@ -124,8 +192,7 @@ else
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 fi
 step 'Installing the schema extensions and the starter catalog'
-bash scripts/install-observability-schema.sh
-cat migrations/seed/*.sql | docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'
+bash scripts/install-schema-extensions.sh
 
 python3 scripts/install-address.py "$port"
 users=$(docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -N -u loopforge loopforge -e "select count(*) from users"' 2>/dev/null || echo 0)

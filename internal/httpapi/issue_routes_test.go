@@ -5,32 +5,30 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"agentflow/internal/domain"
 )
 
 func TestApplyClarificationSubmissionDraftAndFinal(t *testing.T) {
-	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	issue := domain.Issue{ID: "i", ProjectID: "p", Kind: "requirement", Description: "原始描述"}
 
-	draft, err := applyClarificationSubmission(issue, domain.Project{}, false, clarificationSubmission{Summary: " 草稿 "}, now)
+	draft, err := applyClarificationSubmission(issue, clarificationSubmission{Summary: " 草稿 "})
 	if err != nil || draft.Clarification.Status != "in_progress" || draft.Clarification.Summary != "草稿" || draft.Description != "原始描述" {
 		t.Fatalf("draft should only record progress: %+v %v", draft.Clarification, err)
 	}
 
-	_, err = applyClarificationSubmission(issue, domain.Project{}, false, clarificationSubmission{Ready: true}, now)
+	_, err = applyClarificationSubmission(issue, clarificationSubmission{Ready: true})
 	var he HTTPError
 	if !errors.As(err, &he) || he.Status != http.StatusBadRequest {
 		t.Fatalf("final submission without summary should be rejected, got %v", err)
 	}
 
-	final, err := applyClarificationSubmission(issue, domain.Project{}, false, clarificationSubmission{Summary: "结论", Ready: true}, now)
+	final, err := applyClarificationSubmission(issue, clarificationSubmission{Summary: "结论", Ready: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := final.Clarification
-	if a.Status != domain.ClarificationReady || !a.Gated || !a.AssessedAt.Equal(now) || a.WriteBackStatus != "pending" || a.WriteBackFingerprint == "" {
+	if a.Status != domain.ClarificationReady || a.WriteBackStatus != "pending" || a.WriteBackFingerprint == "" {
 		t.Fatalf("final submission state: %+v", a)
 	}
 	if !strings.Contains(final.Description, "结论") || !strings.HasPrefix(final.Description, "原始描述") {
@@ -39,20 +37,20 @@ func TestApplyClarificationSubmissionDraftAndFinal(t *testing.T) {
 
 	written := final
 	written.Clarification.WriteBackStatus = "succeeded"
-	retried, err := applyClarificationSubmission(written, domain.Project{}, false, clarificationSubmission{Retry: true}, now)
+	retried, err := applyClarificationSubmission(written, clarificationSubmission{Retry: true})
 	if err != nil || retried.Clarification.WriteBackStatus != "succeeded" {
 		t.Fatalf("retrying an already written summary should not reset write-back: %+v %v", retried.Clarification, err)
 	}
-	_, err = applyClarificationSubmission(issue, domain.Project{}, false, clarificationSubmission{Retry: true}, now)
+	_, err = applyClarificationSubmission(issue, clarificationSubmission{Retry: true})
 	if !errors.As(err, &he) {
 		t.Fatalf("retry without any saved summary should be rejected, got %v", err)
 	}
 }
 
-func TestApplyClarificationSubmissionBugsAlwaysPass(t *testing.T) {
+func TestApplyClarificationSubmissionBugsFinish(t *testing.T) {
 	bug := domain.Issue{ID: "b", Kind: "issue"}
-	out, err := applyClarificationSubmission(bug, domain.Project{}, false, clarificationSubmission{Summary: "复现步骤", Ready: true}, time.Now())
-	if err != nil || !out.Clarification.Passed || out.Clarification.Gated {
+	out, err := applyClarificationSubmission(bug, clarificationSubmission{Summary: "复现步骤", Ready: true})
+	if err != nil || out.Clarification.Status != domain.ClarificationReady || out.Clarification.Gated {
 		t.Fatalf("bug-style items pass without gating: %+v %v", out.Clarification, err)
 	}
 }
@@ -98,7 +96,7 @@ func TestIssueRoutesCoverRegisteredPaths(t *testing.T) {
 			t.Fatalf("%s: incomplete route", path)
 		}
 	}
-	if len(issueRoutes) != 13 {
-		t.Fatalf("expected 13 issue sub-routes, got %d", len(issueRoutes))
+	if len(issueRoutes) != 12 {
+		t.Fatalf("expected 12 issue sub-routes, got %d", len(issueRoutes))
 	}
 }

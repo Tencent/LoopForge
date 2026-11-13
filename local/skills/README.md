@@ -5,7 +5,7 @@
 - `devflow/`：任务分级、需求澄清、方案、计划、实现、审查、测试、知识沉淀和总结。
 - `devflow-clarify-requirements/`：需求阶段使用的澄清 Skill，由主协调 Agent 在当前会话中调用。
 
-脚本只依赖 Python 3.8+ 标准库。当前支持 CodeBuddy、Codex、Cursor 和 Claude Code。
+脚本只依赖 Python 3.8+ 标准库。当前支持 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness 和 Hermes Agent。
 
 ## 流程
 
@@ -34,7 +34,15 @@ loopforge skills install codebuddy
 loopforge skills install codex
 loopforge skills install cursor
 loopforge skills install claude
+loopforge skills install hermes
 ```
+
+Hermes Agent 使用项目级 `.hermes/skills/`，安装后在项目根目录执行
+`hermes skills trust .`，然后使用 `/devflow <软件交付需求>`。Hermes 的 medium/large
+阶段通过公开的 `delegate_task` 工具创建独立子 Agent；缺少该工具时必须记录原因并降级为
+`single-context`。安装器不会改动 `~/.hermes/config.yaml` 或用户 profile。需要独立的
+状态、结果和审批命令时，可按 [`hermes-plugin/README.md`](../hermes-plugin/README.md)
+安装可选原生插件，使用 `/loopforge status|result|approve`；`/devflow` 仍是工作流入口。
 
 `loopforge skills status/update/uninstall <host>` 和 `loopforge doctor` 使用
 `.devflow/install-state.json` 保护用户文件。下面的 adapter 命令只保留为开发和

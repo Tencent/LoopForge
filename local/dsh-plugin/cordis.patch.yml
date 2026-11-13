@@ -1,0 +1,3 @@
+- insert:
+    - id: loopforge-dsh
+      name: '@tencent/loopforge-dsh'

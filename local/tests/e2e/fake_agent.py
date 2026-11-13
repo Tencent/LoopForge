@@ -34,6 +34,8 @@ HOST_SKILL_DIRS = {
     "cursor": ".cursor/skills",
     "claude": ".claude/skills",
     "pi": ".pi/skills",
+    "dsh": ".dsh/skills",
+    "hermes": ".hermes/skills",
 }
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 EXIT_COMPLETED, EXIT_CONTRACT, EXIT_WAITING, EXIT_BLOCKED, EXIT_INTERRUPTED = 0, 2, 3, 4, 75
@@ -175,11 +177,13 @@ class FakeAgent:
                 self.log("spawned", stage=action["stage"], executor_id=executor_id,
                          executor_type=action["executor_type"],
                          dispatch_tool=action["dispatch_tool"])
-            elif kind in ("start-assigned", "start-coordinator"):
+            elif kind in ("start-assigned", "start-coordinator", "start-single-context"):
                 self.run("start", "--state", self.state_path(), "--stage", action["stage"])
                 if self.args.crash_in == action["stage"]:
                     self.log("crash", stage=action["stage"])
                     return EXIT_INTERRUPTED
+                if kind == "start-single-context":
+                    self.log("fallback", stage=action["stage"], reason=self.state().get("fallback_reason"))
                 self.execute_stage(action["stage"])
             elif kind == "continue-executor":
                 self.execute_stage(action["stage"])

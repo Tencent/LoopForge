@@ -14,8 +14,8 @@ type User struct {
 	ClaudeCodeAPIKeyConfigured bool   `json:"claudeCodeApiKeyConfigured,omitempty"`
 	ClaudeCodeBaseURL          string `json:"claudeCodeBaseUrl,omitempty"`
 	// CodexModels and ClaudeCodeModels are the model catalogs AI 对话 offers
-	// for that CLI, in display order. Empty means the models the Base URL's
-	// /models endpoint publishes.
+	// for that CLI, in display order. Empty follows the CLI's built-in models
+	// on the official endpoint, or the models the Base URL publishes.
 	CodexModels      []CLIModel `json:"codexModels,omitempty"`
 	ClaudeCodeModels []CLIModel `json:"claudeCodeModels,omitempty"`
 	// AgentCLICredentials holds the credentials of the agent CLIs
@@ -33,6 +33,7 @@ type User struct {
 	GitToken                     string    `json:"gitToken,omitempty"`
 	GitTokenConfigured           bool      `json:"gitTokenConfigured,omitempty"`
 	GitTokenOAuth                bool      `json:"gitTokenOAuth,omitempty"`
+	GitSSHKeyConfigured          bool      `json:"gitSshKeyConfigured,omitempty"`
 	GongfengRefreshToken         string    `json:"-"`
 	GongfengTokenExpiresAt       time.Time `json:"-"`
 	CodeBuddyAPIKey              string    `json:"codeBuddyApiKey,omitempty"`
@@ -43,6 +44,13 @@ type User struct {
 }
 
 const PlatformRoleAdmin = "admin"
+
+// GitSSHKey is the public description of a personal SSH credential.
+type GitSSHKey struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Host string `json:"host"`
+}
 
 // NormalizeCodeBuddyInternetEnvironment maps a network environment chosen in
 // personal settings to the CODEBUDDY_INTERNET_ENVIRONMENT value: "" for the
@@ -93,9 +101,17 @@ func PublicUser(u User) User {
 
 // CLIModel is one entry of a CLI model catalog. ID is passed to the CLI
 // as-is; an empty Name shows the ID.
+//
+// Efforts is set on a Cursor model family folded out of the CLI's own model
+// list: it maps each reasoning effort onto the model ID cursor-agent printed
+// for it, and DefaultEffort is the effort an empty choice runs. They are
+// saved with the catalog so the family resolves for its owner on any
+// instance and after a restart.
 type CLIModel struct {
-	ID   string `json:"id"`
-	Name string `json:"name,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name,omitempty"`
+	Efforts       map[string]string `json:"efforts,omitempty"`
+	DefaultEffort string            `json:"defaultEffort,omitempty"`
 }
 
 // AgentCLICredential is the personal configuration of one agent CLI. An
@@ -124,6 +140,7 @@ var AgentCLIProtocolOptions = map[string][]string{
 	"kimi":     {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
 	"pi":       {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
 	"dsh":      {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
+	"zcode":    {AgentCLIProtocolMessages, AgentCLIProtocolChat, AgentCLIProtocolResponses},
 	"agy":      {AgentCLIProtocolGemini, AgentCLIProtocolChat},
 }
 

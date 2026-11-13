@@ -38,7 +38,6 @@ type Service struct {
 	mrStopCh              chan struct{}
 	deliveryReconcileOnce sync.Once
 	projectAuth           ProjectAuthStore
-	OnRequirementImported func(issue domain.Issue)
 }
 
 type syncConfigHolder struct {
@@ -482,38 +481,7 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 	count := 0
 	for _, gi := range issues {
 		existing, found := findGongfengIssue(store, repo, gi)
-		issueID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
-		if found {
-			issueID = existing.ID
-		}
-		issue := domain.Issue{
-			ID:           issueID,
-			ProjectID:    repo.ProjectID,
-			RepositoryID: repo.ID,
-			Kind:         "issue",
-			Title:        gi.Title,
-			Description:  gi.Description,
-			Priority:     gongfengPriority(gi.Priority),
-			Status:       gongfengStateToStatus(gi.State),
-			CloseSource:  closeSourceForStatus(gongfengStateToStatus(gi.State)),
-			Source:       "gongfeng",
-			ExternalRef: &domain.ExternalRef{
-				Source:        "gongfeng",
-				ExternalID:    fmt.Sprintf("%d", gi.ID),
-				ExternalIID:   gi.IID,
-				ExternalURL:   strings.TrimSuffix(repo.WebURL, "/") + fmt.Sprintf("/issues/%d", gi.IID),
-				ExternalState: gi.State,
-				ExternalType:  "issue",
-				SyncedAt:      time.Now().UTC(),
-			},
-		}
-		if found {
-			applyExistingIssue(&issue, existing)
-		} else {
-			issue.Number = gi.IID
-			issue.CreatedAt = parseTime(gi.CreatedAt)
-		}
-		issue.UpdatedAt = time.Now().UTC()
+		issue := gongfengSyncedIssue(repo, gi, existing, found)
 		if err := store.PutSyncedIssue(issue); err != nil {
 			log.Printf("sync gongfeng issue %d: %v", gi.IID, err)
 			continue
@@ -529,6 +497,46 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 		StartedAt: started, FinishedAt: time.Now().UTC(),
 	})
 	return count, nil
+}
+
+// gongfengSyncedIssue maps one Gongfeng issue onto the local work item that
+// a pull stores. When the work item already exists, platform-owned fields
+// (ID, status, number, assignment, ...) are kept via applyExistingIssue.
+func gongfengSyncedIssue(repo domain.Repository, gi gongfengIssue, existing domain.Issue, found bool) domain.Issue {
+	issueID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
+	if found {
+		issueID = existing.ID
+	}
+	status := gongfengStateToStatus(gi.State)
+	issue := domain.Issue{
+		ID:           issueID,
+		ProjectID:    repo.ProjectID,
+		RepositoryID: repo.ID,
+		Kind:         "issue",
+		Title:        gi.Title,
+		Description:  gi.Description,
+		Priority:     gongfengPriority(gi.Priority),
+		Status:       status,
+		CloseSource:  closeSourceForStatus(status),
+		Source:       "gongfeng",
+		ExternalRef: &domain.ExternalRef{
+			Source:        "gongfeng",
+			ExternalID:    fmt.Sprintf("%d", gi.ID),
+			ExternalIID:   gi.IID,
+			ExternalURL:   strings.TrimSuffix(repo.WebURL, "/") + fmt.Sprintf("/issues/%d", gi.IID),
+			ExternalState: gi.State,
+			ExternalType:  "issue",
+			SyncedAt:      time.Now().UTC(),
+		},
+	}
+	if found {
+		applyExistingIssue(&issue, existing)
+	} else {
+		issue.Number = gi.IID
+		issue.CreatedAt = parseTime(gi.CreatedAt)
+	}
+	issue.UpdatedAt = time.Now().UTC()
+	return issue
 }
 
 func parseGongfengIssues(raw string) ([]gongfengIssue, error) {
@@ -580,14 +588,9 @@ func (s *Service) CreateGongfengIssue(store IssueStoreAdapter, issue domain.Issu
 		return issue, err
 	}
 
-	var gi gongfengIssue
-	if err := json.Unmarshal([]byte(raw), &gi); err != nil {
-		var arr []gongfengIssue
-		if err2 := json.Unmarshal([]byte(raw), &arr); err2 == nil && len(arr) > 0 {
-			gi = arr[0]
-		} else {
-			return issue, fmt.Errorf("decode created issue: %w", err)
-		}
+	gi, err := decodeCreatedRecord[gongfengIssue](raw)
+	if err != nil {
+		return issue, fmt.Errorf("decode created issue: %w", err)
 	}
 
 	issue.Source = "gongfeng"
@@ -974,37 +977,16 @@ func (s *Service) ImportTAPDStory(store IssueStoreAdapter, projectID, rawURL str
 		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "import_story", Status: "failed", Message: actionableAuthError("TAPD", err), ProjectID: projectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 		return domain.Issue{}, err
 	}
-	toolName, fields := tapdReadTool(ref.Kind)
-	raw, err := client.CallTool("proxy_execute_tool", map[string]any{
-		"tool_name": toolName,
-		"tool_args": map[string]any{
-			"workspace_id": ref.WorkspaceID,
-			"id":           ref.StoryID,
-			"limit":        1,
-			"page":         1,
-			"fields":       fields,
-		},
-	})
+	raw, err := callTAPDRecordGet(client, ref.Kind, ref.WorkspaceID, ref.StoryID)
 	if err != nil {
 		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "import_story", Status: "failed", Message: actionableAuthError("TAPD", err), ProjectID: projectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 		return domain.Issue{}, err
 	}
-	records, err := parseTAPDRecords(raw, ref.Kind+"s")
+	st, err := pickTAPDRecord(raw, ref.Kind, ref.StoryID)
 	if err != nil {
 		return domain.Issue{}, err
 	}
-	st, ok := pickTAPDStory(records, ref.StoryID)
-	if !ok {
-		return domain.Issue{}, fmt.Errorf("未找到 TAPD %s %s", tapdRecordLabel(ref.Kind), ref.StoryID)
-	}
-	var issue domain.Issue
-	if ref.Kind == "task" {
-		issue, err = s.upsertTAPDTask(store, projectID, ref.WorkspaceID, st, fallbackUserID, true)
-	} else if ref.Kind == "bug" {
-		issue, err = s.upsertTAPDBug(store, projectID, ref.WorkspaceID, st, fallbackUserID, true)
-	} else {
-		issue, err = s.upsertTAPDStory(store, projectID, ref.WorkspaceID, st, fallbackUserID, true)
-	}
+	issue, err := s.upsertTAPDByKind(store, ref.Kind, projectID, ref.WorkspaceID, st, fallbackUserID, true)
 	if err != nil {
 		return domain.Issue{}, err
 	}
@@ -1042,43 +1024,64 @@ func (s *Service) ResyncTAPDIssue(store IssueStoreAdapter, issue domain.Issue) (
 		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "resync", Status: "failed", Message: actionableAuthError("TAPD", err), ProjectID: issue.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 		return domain.Issue{}, err
 	}
-	toolName, fields := tapdReadTool(kind)
-	raw, err := client.CallTool("proxy_execute_tool", map[string]any{
-		"tool_name": toolName,
-		"tool_args": map[string]any{
-			"workspace_id": workspaceID,
-			"id":           ref.ExternalID,
-			"limit":        1,
-			"page":         1,
-			"fields":       fields,
-		},
-	})
+	raw, err := callTAPDRecordGet(client, kind, workspaceID, ref.ExternalID)
 	if err != nil {
 		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "resync", Status: "failed", Message: actionableAuthError("TAPD", err), ProjectID: issue.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 		return domain.Issue{}, err
 	}
-	records, err := parseTAPDRecords(raw, kind+"s")
+	st, err := pickTAPDRecord(raw, kind, ref.ExternalID)
 	if err != nil {
 		return domain.Issue{}, err
 	}
-	st, ok := pickTAPDStory(records, ref.ExternalID)
-	if !ok {
-		return domain.Issue{}, fmt.Errorf("未找到 TAPD %s %s", tapdRecordLabel(kind), ref.ExternalID)
-	}
-	var updated domain.Issue
-	if kind == "task" {
-		updated, err = s.upsertTAPDTask(store, issue.ProjectID, workspaceID, st, 0, false)
-	} else if kind == "bug" {
-		updated, err = s.upsertTAPDBug(store, issue.ProjectID, workspaceID, st, 0, false)
-	} else {
-		updated, err = s.upsertTAPDStory(store, issue.ProjectID, workspaceID, st, 0, false)
-	}
+	updated, err := s.upsertTAPDByKind(store, kind, issue.ProjectID, workspaceID, st, 0, false)
 	if err != nil {
 		return domain.Issue{}, err
 	}
 	recordLabel := tapdRecordLabel(kind)
 	s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "resync", Status: "success", Count: 1, Message: fmt.Sprintf("重新同步 TAPD %s %s: %s", recordLabel, st.ID, st.Name), ProjectID: issue.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
 	return updated, nil
+}
+
+// callTAPDRecordGet fetches the single TAPD story/bug/task id through the
+// kind-specific *_get tool and returns the raw tool result.
+func callTAPDRecordGet(client *MCPClient, kind, workspaceID, id string) (string, error) {
+	toolName, fields := tapdReadTool(kind)
+	return client.CallTool("proxy_execute_tool", map[string]any{
+		"tool_name": toolName,
+		"tool_args": map[string]any{
+			"workspace_id": workspaceID,
+			"id":           id,
+			"limit":        1,
+			"page":         1,
+			"fields":       fields,
+		},
+	})
+}
+
+// pickTAPDRecord decodes a callTAPDRecordGet result and returns the record id.
+func pickTAPDRecord(raw, kind, id string) (tapdStory, error) {
+	records, err := parseTAPDRecords(raw, kind+"s")
+	if err != nil {
+		return tapdStory{}, err
+	}
+	st, ok := pickTAPDStory(records, id)
+	if !ok {
+		return tapdStory{}, fmt.Errorf("未找到 TAPD %s %s", tapdRecordLabel(kind), id)
+	}
+	return st, nil
+}
+
+// upsertTAPDByKind stores st with the upsert matching its TAPD record kind;
+// anything other than task or bug is treated as a story.
+func (s *Service) upsertTAPDByKind(store IssueStoreAdapter, kind, projectID, workspaceID string, st tapdStory, fallbackUserID int64, gateClarification bool) (domain.Issue, error) {
+	switch kind {
+	case "task":
+		return s.upsertTAPDTask(store, projectID, workspaceID, st, fallbackUserID, gateClarification)
+	case "bug":
+		return s.upsertTAPDBug(store, projectID, workspaceID, st, fallbackUserID, gateClarification)
+	default:
+		return s.upsertTAPDStory(store, projectID, workspaceID, st, fallbackUserID, gateClarification)
+	}
 }
 
 func tapdReadTool(kind string) (string, string) {
@@ -1203,9 +1206,6 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 		issue.CreatedAt = parseTime(st.Created)
 		issue.AssigneeUserID = s.resolveTAPDAssignee(store, projectID, assignee, fallbackUserID)
 	}
-	if gateClarification {
-		scoreStoredRequirement(store, &issue)
-	}
 	issue.UpdatedAt = time.Now().UTC()
 	if err := store.PutSyncedIssue(issue); err != nil {
 		return domain.Issue{}, err
@@ -1291,27 +1291,6 @@ func (s *Service) resolveTAPDAssignee(store IssueStoreAdapter, projectID, owner 
 	return 0
 }
 
-func (s *Service) notifyRequirementImported(issue domain.Issue) {
-	if s == nil || s.OnRequirementImported == nil {
-		return
-	}
-	if !domain.ShouldAutoStartClarification(issue) {
-		return
-	}
-	s.OnRequirementImported(issue)
-}
-
-func scoreStoredRequirement(store IssueStoreAdapter, issue *domain.Issue) {
-	if issue == nil || !strings.EqualFold(issue.Kind, "requirement") {
-		return
-	}
-	policy := domain.DefaultClarificationPolicy()
-	if p, ok := store.Project(issue.ProjectID); ok {
-		policy = domain.EffectiveClarificationPolicy(p.Clarification)
-	}
-	issue.Clarification = domain.ScoreRequirementIssue(*issue, policy)
-}
-
 func tapdWorkspaceFromURL(raw string) string {
 	ref, err := ParseTAPDStoryURL(raw)
 	if err != nil {
@@ -1358,22 +1337,13 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 		return issue, err
 	}
 
-	var st tapdStory
-	if err := json.Unmarshal([]byte(raw), &st); err != nil {
-		var arr []tapdStory
-		if err2 := json.Unmarshal([]byte(raw), &arr); err2 == nil && len(arr) > 0 {
-			st = arr[0]
-		} else if extracted := extractTAPDStory(raw); extracted.ID != "" {
-			st = extracted
-		} else {
+	st, err := decodeCreatedRecord[tapdStory](raw)
+	if err != nil {
+		if st = extractTAPDStory(raw); st.ID == "" {
 			return issue, fmt.Errorf("decode created story: %w", err)
 		}
 	}
 
-	existed := false
-	if id := strings.TrimSpace(issue.ID); id != "" {
-		_, existed = store.Issue(id)
-	}
 	if issue.Kind == "" {
 		issue.Kind = "requirement"
 	}
@@ -1395,14 +1365,7 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 			_ = store.DeleteIssue(oldID)
 		}
 	}
-	// Intake scoring belongs to brand-new TAPD stories (import / 新建并同步).
-	// Pushing an existing platform ticket must keep its description and
-	// clarification; 直接创建 explicitly skipped analysis.
-	if !existed {
-		scoreStoredRequirement(store, &issue)
-	}
 	_ = store.PutIssue(issue)
-	s.notifyRequirementImported(issue)
 
 	s.addLog(domain.SyncLog{
 		ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "push", Source: "tapd",
@@ -1580,6 +1543,24 @@ func collectTAPDStories(value any) []tapdStory {
 	}
 	walk(value)
 	return out
+}
+
+// decodeCreatedRecord decodes the payload a tracker MCP create tool returns:
+// a single object, or an array whose first element is the created record.
+// When neither shape fits it returns the zero value and the error from
+// decoding the payload as a single object.
+func decodeCreatedRecord[T any](raw string) (T, error) {
+	var record T
+	err := json.Unmarshal([]byte(raw), &record)
+	if err == nil {
+		return record, nil
+	}
+	var records []T
+	if json.Unmarshal([]byte(raw), &records) == nil && len(records) > 0 {
+		return records[0], nil
+	}
+	var zero T
+	return zero, err
 }
 
 func extractTAPDStory(raw string) tapdStory {
@@ -2083,7 +2064,7 @@ func mergeIssueKeep(keeper, extra domain.Issue) domain.Issue {
 	if keeper.RepositoryID == "" {
 		keeper.RepositoryID = extra.RepositoryID
 	}
-	if keeper.Clarification.Score == 0 && extra.Clarification.Score > 0 {
+	if clarificationEmpty(keeper.Clarification) && !clarificationEmpty(extra.Clarification) {
 		keeper.Clarification = extra.Clarification
 	}
 	if deliveryFieldsPresent(extra) {
@@ -2105,4 +2086,8 @@ func copyDeliveryFields(dst, src domain.Issue) domain.Issue {
 	dst.DeliveryMRs = src.DeliveryMRs
 	dst.DeliveryUpdatedAt = src.DeliveryUpdatedAt
 	return dst
+}
+
+func clarificationEmpty(a domain.ClarificationAssessment) bool {
+	return a.Status == "" && strings.TrimSpace(a.Summary) == "" && len(a.History) == 0
 }

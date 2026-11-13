@@ -9,7 +9,6 @@ export const actionNames = {
   issues_dispatch: "派发 SOP",
   issues_save: "保存需求",
   issues_import_tapd: "导入 TAPD 需求",
-  issues_clarify: "保存需求澄清",
   issues_chat_clarify: "发起 AI 需求澄清",
   issues_clarification_save: "保存并回写需求澄清",
   issues_delete: "删除需求",

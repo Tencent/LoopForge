@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -136,6 +137,13 @@ func TestCloseIssueRejectsActiveWork(t *testing.T) {
 			issue := domain.Issue{ID: "close-boundary", ProjectID: "platform", Title: "closure boundary", Status: "backlog"}
 			if status == "analyzing" {
 				issue.Clarification.Status = "analyzing"
+				// Startup recovery resumes the interrupted round; keep it
+				// running so the issue stays busy for the whole check.
+				setClarifyExecForTest(func(ctx context.Context, _ domain.Issue, _ chatClarifyRequest, _ func(string, any)) (any, string, map[string]any, error) {
+					<-ctx.Done()
+					return nil, "", nil, ctx.Err()
+				})
+				t.Cleanup(func() { setClarifyExecForTest(nil) })
 			}
 			if err := st.PutIssue(issue); err != nil {
 				t.Fatal(err)
@@ -230,7 +238,7 @@ func TestDeleteIssueSeesRunThatWasJustCancelled(t *testing.T) {
 	if err := st.PutRun(domain.Run{ID: "delete-after-cancel-run", Status: "cancelled"}); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodDelete, "/api/issues/delete-after-cancel", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/issues/delete-after-cancel?force=true", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
