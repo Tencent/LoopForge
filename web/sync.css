@@ -95,11 +95,12 @@
 .schedule-model-field .ai-model-menu{left:0;right:auto;top:auto;bottom:calc(100% + 6px);min-width:100%;width:max-content;max-width:min(440px,94vw);max-height:min(45vh,320px);z-index:20}
 .schedule-model-row{display:grid;grid-template-columns:minmax(140px,200px) minmax(0,1fr);gap:8px;align-items:center}
 .schedule-model-row .select{height:40px}
+.schedule-model-row:has(#scheduleEffort:not([hidden])){grid-template-columns:minmax(140px,200px) minmax(0,1fr) minmax(110px,150px)}
 /* Placed by placeScheduleModelMenu; fixed so the modal's scroll area cannot clip it. */
 #scheduleModelPicker .ai-model-menu{position:fixed;right:auto;bottom:auto;min-width:0;max-width:calc(100vw - 24px);z-index:100}
 @media (max-width: 640px){
   .schedule-timing-row{grid-template-columns:1fr}
-  .schedule-model-row{grid-template-columns:1fr}
+  .schedule-model-row,.schedule-model-row:has(#scheduleEffort:not([hidden])){grid-template-columns:1fr}
 }
 .button.danger{color:var(--red)}
 .schedule-job-item{display:flex;flex-direction:column;gap:6px}

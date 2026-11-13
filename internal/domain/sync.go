@@ -85,6 +85,7 @@ type ScheduleJob struct {
 	Cron                 string               `json:"cron,omitempty"`
 	AssistantPrompt      string               `json:"assistantPrompt,omitempty"`
 	AssistantModel       string               `json:"assistantModel,omitempty"`
+	AssistantEffort      string               `json:"assistantEffort,omitempty"` // empty keeps the model's own default
 	OwnerUserID          int64                `json:"ownerUserId,omitempty"`
 	LastRunAt            time.Time            `json:"lastRunAt,omitempty"`
 	LastStatus           string               `json:"lastStatus,omitempty"` // running, success, failed, waiting

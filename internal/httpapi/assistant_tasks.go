@@ -240,6 +240,12 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if err != nil {
 		return fail(err.Error())
 	}
+	// Like the model, a chosen effort the model no longer offers stops the run
+	// instead of quietly falling back to another level.
+	effort := strings.TrimSpace(task.Effort)
+	if err := validateAssistantEffort(user, model, effort); err != nil {
+		return fail("定时任务指定的思考强度不可用：" + err.Error() + "；请在定时任务里改选")
+	}
 	cliEngine, _ := assistantModelEngine(model)
 	prevSession := strings.TrimSpace(task.SessionID)
 	sessionID := newAssistantSessionID()
@@ -249,11 +255,12 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		ProjectID:    task.ProjectID,
 		SessionID:    sessionID,
 		Model:        model,
+		Effort:       effort,
 		Executor:     cliEngine,
 		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}},
 	}
 	g := domain.AssistantGeneration{StartedAt: now, ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: sessionID, UserID: user.ID, ProjectID: task.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages}
+	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Effort: effort, Executor: cliEngine, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages}
 	if err := h.repo.BeginAssistantGeneration(g, pending); err != nil {
 		_ = fail("无法创建定时任务会话")
 		return err
@@ -349,6 +356,7 @@ func normalizeAssistantTask(in assistantTask, existing assistantTask) (assistant
 	in.Name = strings.TrimSpace(in.Name)
 	in.Prompt = strings.TrimSpace(in.Prompt)
 	in.Model = strings.TrimSpace(in.Model)
+	in.Effort = strings.TrimSpace(in.Effort)
 	in.ProjectID = strings.TrimSpace(in.ProjectID)
 	in.Cron = strings.TrimSpace(in.Cron)
 	if in.Name == "" || in.Prompt == "" {

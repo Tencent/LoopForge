@@ -403,3 +403,56 @@ test('AI schedule model picker narrows models to the chosen CLI and keeps a save
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
   assert.match(doc.querySelector('#scheduleModelHint').textContent, /所选 CLI/);
 });
+
+test('AI schedule effort picker follows the chosen model and saves the chosen effort', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/assistant/models', () => ({
+    default: 'glm-test',
+    models: [
+      { id: 'glm-test', name: 'GLM Test', family: 'glm', efforts: ['low', 'high', 'max'] },
+      { id: 'cursor:opus', name: 'Opus', family: 'claude', engine: 'cursor', efforts: ['none', 'medium', 'ultra'] },
+      { id: 'kimi:k3', name: 'Kimi', family: 'kimi', engine: 'kimi', efforts: [] },
+    ],
+    engines: [
+      { id: 'codebuddy', name: 'CodeBuddy', configured: true },
+      { id: 'cursor', name: 'Cursor CLI', configured: true },
+      { id: 'kimi', name: 'Kimi CLI', configured: true },
+    ],
+  }));
+  app.router.post('/api/schedule-jobs', call => ({ ...call.body, id: 'effort-job' }));
+  // The saved effort survives the form filling in before the model list lands.
+  await app.evaluate(`(async () => {
+    fillScheduleJobForm({id:'effort-job',name:'深度巡检',skipDispatch:true,assistantPrompt:'检查',assistantModel:'cursor:opus',assistantEffort:'ultra'});
+    await loadScheduleModels();
+  })()`);
+  const doc = app.document;
+  const form = doc.querySelector('#scheduleJobForm');
+  const effort = doc.querySelector('#scheduleEffort');
+  const engine = doc.querySelector('#scheduleEngine');
+  assert.equal(effort.hidden, false);
+  assert.deepEqual([...effort.options].map(o => o.value), ['', 'none', 'medium', 'ultra']);
+  assert.equal(effort.options[3].textContent, '极致 ultra');
+  assert.equal(effort.value, 'ultra');
+
+  // A CLI without efforts hides the picker and sends no effort.
+  engine.value = 'kimi';
+  engine.dispatchEvent(new app.window.Event('change'));
+  assert.equal(form.elements.assistantModel.value, 'kimi:k3');
+  assert.equal(effort.hidden, true);
+  assert.equal(effort.value, '');
+
+  // Another model lists its own levels; one it lacks falls back to the default.
+  engine.value = 'codebuddy';
+  engine.dispatchEvent(new app.window.Event('change'));
+  assert.deepEqual([...effort.options].map(o => o.value), ['', 'low', 'high', 'max']);
+  assert.equal(effort.value, '');
+  effort.value = 'high';
+  effort.dispatchEvent(new app.window.Event('change'));
+
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const call = app.router.calls.find(c => c.path === '/api/schedule-jobs' && c.method !== 'GET');
+  assert.equal(call.body.assistantModel, 'glm-test');
+  assert.equal(call.body.assistantEffort, 'high');
+});

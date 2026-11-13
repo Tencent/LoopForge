@@ -18,7 +18,7 @@ const html = fs.readFileSync('index.html', 'utf8');
 const input = html.match(/<input[^>]*name="maxDispatch"[^>]*>/)[0];
 assert.ok(input.includes('type="number"') && input.includes('min="1"') && input.includes('max="10"'));
 assert.ok(!input.includes('required'), 'dispatch limit must be optional');
-const form = {elements: Object.fromEntries(['id','name','scheduleMode','jobKind','workflowId','useIssueWorkflow','source','maxDispatch','intervalSec','cron','assistantPrompt','assistantModel','enabled'].map(name => [name,{value:''}]))};
+const form = {elements: Object.fromEntries(['id','name','scheduleMode','jobKind','workflowId','useIssueWorkflow','source','maxDispatch','intervalSec','cron','assistantPrompt','assistantModel','assistantEffort','enabled'].map(name => [name,{value:''}]))};
 Object.assign(form.elements.name,{value:'trigger job'});
 form.elements.jobKind.value='dispatch';
 form.elements.workflowId.value='wf';
@@ -41,7 +41,10 @@ async function submit(value) {
   return saved;
 }
 (async()=>{
-  assert.ok(!Object.hasOwn(await submit(''),'maxDispatch'), 'blank must omit maxDispatch');
+  form.elements.assistantEffort.value='high';
+  const dispatch=await submit('');
+  assert.ok(!Object.hasOwn(dispatch,'maxDispatch'), 'blank must omit maxDispatch');
+  assert.equal(dispatch.assistantEffort,'', 'trigger jobs must not carry an effort');
   assert.equal((await submit('1')).maxDispatch,1);
   assert.equal((await submit('3')).maxDispatch,3);
   assert.equal((await submit('10')).maxDispatch,10);
@@ -52,7 +55,10 @@ async function submit(value) {
   assert.ok(!Object.hasOwn(await submit(''),'maxDispatch'), 'clearing a limit must restore the default');
   form.elements.jobKind.value='assistant';
   form.elements.assistantPrompt.value='report';
-  assert.ok(!Object.hasOwn(await submit('3'),'maxDispatch'), 'AI jobs must not include the dispatch limit');
+  form.elements.assistantEffort.value='high';
+  const ai=await submit('3');
+  assert.ok(!Object.hasOwn(ai,'maxDispatch'), 'AI jobs must not include the dispatch limit');
+  assert.equal(ai.assistantEffort,'high');
 })().catch(error=>{console.error(error);process.exit(1)});
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {

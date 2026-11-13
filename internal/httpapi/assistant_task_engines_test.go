@@ -93,6 +93,43 @@ func TestScheduledTaskRunsOnTaskCLI(t *testing.T) {
 	}
 }
 
+// A scheduled run uses the task's reasoning effort, and stops instead of
+// dropping an effort its model does not offer.
+func TestScheduledTaskRunsWithItsEffort(t *testing.T) {
+	st := cvAStore(t)
+	_ = st.PutProject(domain.Project{ID: "effort-project", Name: "Effort"})
+	_ = st.PutUser(domain.User{LoginName: "effort-owner", CodexAPIKey: "codex-secret"})
+	user, _ := st.UserByLoginName("effort-owner")
+	h := &assistantHandlers{deps: &deps{repo: st}}
+	h.generate = func(context.Context, string, domain.User) (string, error) { return "完成", nil }
+	task := assistantTask{ID: "effort-job", Name: "巡检", Prompt: "检查", ProjectID: "effort-project", Model: "codex:gpt-6-sol", Effort: "high", IntervalSec: 60, Enabled: true}
+	if err := h.executeAssistantTask(context.Background(), user, &task); err != nil {
+		t.Fatalf("effort task = %v %+v", err, task)
+	}
+	if session, _ := st.AssistantSession(user.ID, task.SessionID); session.Effort != "high" {
+		t.Fatalf("session effort = %q, want high", session.Effort)
+	}
+
+	task.Effort = "ultra"
+	if err := h.executeAssistantTask(context.Background(), user, &task); err == nil || !strings.Contains(task.LastError, "思考强度") {
+		t.Fatalf("unsupported effort = %v %q", err, task.LastError)
+	}
+
+	job := domain.ScheduleJob{ID: "effort-schedule", Name: "巡检", ProjectID: "effort-project", OwnerUserID: user.ID, AssistantPrompt: "检查", AssistantModel: "codex:gpt-6-sol", AssistantEffort: "low"}
+	if _, err := h.prepareScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	var efforts []string
+	for _, item := range st.ListAssistantSessions(user.ID) {
+		if item.TaskID == job.ID {
+			efforts = append(efforts, item.Effort)
+		}
+	}
+	if strings.Join(efforts, ",") != "low" {
+		t.Fatalf("schedule job session efforts = %v, want [low]", efforts)
+	}
+}
+
 func TestScheduleJobAssistantUserNeedsModelCLIKey(t *testing.T) {
 	st := cvAStore(t)
 	_ = st.PutUser(domain.User{LoginName: "owner-codex", CodexAPIKey: "k"})
