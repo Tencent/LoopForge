@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -160,12 +161,7 @@ func collectRegularFiles(workspace, root string, limits Limits) ([]fileEntry, in
 }
 
 func containsIndex(entries []fileEntry, indexFile string) bool {
-	for _, item := range entries {
-		if item.name == indexFile {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(entries, func(item fileEntry) bool { return item.name == indexFile })
 }
 
 func writeTarFile(tw *tar.Writer, item fileEntry) error {
