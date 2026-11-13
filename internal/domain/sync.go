@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -194,12 +195,7 @@ func (j ScheduleJob) MatchesIssueStatus(status string) bool {
 	if status == "" {
 		status = "backlog"
 	}
-	for _, want := range j.TriggerIssueStatuses() {
-		if want == status {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(j.TriggerIssueStatuses(), status)
 }
 
 // SyncLog records a single sync execution.

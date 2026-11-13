@@ -35,17 +35,6 @@
   color: inherit;
 }
 
-/* Conversations only run on LoopForge cloud, so the host is a status label. */
-.composer-stack > .composer-context .context-pill.host-status {
-  flex-shrink: 0;
-  cursor: default;
-}
-
-.composer-stack > .composer-context .context-pill.host-status:hover {
-  background: none;
-  color: var(--muted);
-}
-
 @media (max-width: 850px) {
   .composer-column .composer-stack > .composer-context {
     gap: 5px;

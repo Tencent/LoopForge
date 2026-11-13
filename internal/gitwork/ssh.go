@@ -94,38 +94,35 @@ func sshHostKeys(remotes []SSHRemote) ([]byte, error) {
 	return pinned.Bytes(), nil
 }
 
-// StartSSH adds one Git URL rewrite and one OpenSSH identity per repository.
-// Aliases bind each repository to its selected host key.
-// The filesystem contains a socket and public data only. clientRoot is the
-// mount path corresponding to root for a client in a container.
-func StartSSH(environment map[string]string, keys map[string]string, root, clientRoot string) (func(), error) {
-	if len(keys) == 0 {
-		return func() {}, nil
-	}
-	type binding struct {
-		remote SSHRemote
-		alias  string
-		key    string
-	}
+// sshBinding ties one repository remote to its host alias and private key.
+type sshBinding struct {
+	remote SSHRemote
+	alias  string
+	key    string
+}
+
+// bindSSHRemotes appends one Git URL rewrite per repository to environment in
+// sorted URL order and returns the repositories that have an assigned key.
+func bindSSHRemotes(environment map[string]string, keys map[string]string) ([]sshBinding, []SSHRemote, error) {
 	urls := make([]string, 0, len(keys))
 	for raw := range keys {
 		urls = append(urls, raw)
 	}
 	sort.Strings(urls)
-	var bindings []binding
+	var bindings []sshBinding
 	var remotes []SSHRemote
 	configCount, _ := strconv.Atoi(environment["GIT_CONFIG_COUNT"])
 	for _, raw := range urls {
 		remote, err := ParseSSHRemote(raw)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		destination := raw
 		if key := keys[raw]; key != "" {
 			sum := sha256.Sum256([]byte(remote.URL))
 			alias := fmt.Sprintf("lf-%x", sum[:16])
 			destination = remote.aliasURL(alias)
-			bindings = append(bindings, binding{remote: remote, alias: alias, key: key})
+			bindings = append(bindings, sshBinding{remote: remote, alias: alias, key: key})
 			remotes = append(remotes, remote)
 		}
 		// The exact URL takes priority over the legacy host-wide HTTPS
@@ -136,6 +133,21 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 		configCount++
 	}
 	environment["GIT_CONFIG_COUNT"] = strconv.Itoa(configCount)
+	return bindings, remotes, nil
+}
+
+// StartSSH adds one Git URL rewrite and one OpenSSH identity per repository.
+// Aliases bind each repository to its selected host key.
+// The filesystem contains a socket and public data only. clientRoot is the
+// mount path corresponding to root for a client in a container.
+func StartSSH(environment map[string]string, keys map[string]string, root, clientRoot string) (func(), error) {
+	if len(keys) == 0 {
+		return func() {}, nil
+	}
+	bindings, remotes, err := bindSSHRemotes(environment, keys)
+	if err != nil {
+		return nil, err
+	}
 	environment["GIT_SSH_VARIANT"] = "ssh"
 	if len(bindings) == 0 {
 		// Keep terminals usable for editing without using a host identity.

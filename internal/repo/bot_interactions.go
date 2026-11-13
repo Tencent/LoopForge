@@ -3,7 +3,6 @@ package repo
 import (
 	"agentflow/internal/domain"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"time"
@@ -15,12 +14,10 @@ import (
 type BotInteractionsRepo struct{ *deps }
 
 func BotConversationID(botID, kind, chatID string) string {
-	sum := sha256.Sum256([]byte(botID + "\x00" + kind + "\x00" + chatID))
-	return hex.EncodeToString(sum[:])
+	return hexSHA256(botID + "\x00" + kind + "\x00" + chatID)
 }
 func BotMessageID(botID, msgID string) string {
-	sum := sha256.Sum256([]byte(botID + "\x00" + msgID))
-	return hex.EncodeToString(sum[:])
+	return hexSHA256(botID + "\x00" + msgID)
 }
 func newBotSessionID() string {
 	var raw [16]byte

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -25,12 +26,7 @@ type businessDomainsHandlers struct {
 var businessDomainIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 func hasBusinessUser(ids []int64, id int64) bool {
-	for _, v := range ids {
-		if id > 0 && v == id {
-			return true
-		}
-	}
-	return false
+	return id > 0 && slices.Contains(ids, id)
 }
 func (h *businessDomainsHandlers) canView(d domain.BusinessDomain, id int64, admin bool) bool {
 	return admin || hasBusinessUser(d.ManagerIDs, id) || hasBusinessUser(d.ViewerIDs, id)

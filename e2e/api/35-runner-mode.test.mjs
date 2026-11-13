@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { api, get, post, put, list, cleanup, ensureProject, waitFor, waitRun, nodeStatus } from '../lib/api.mjs';
 import { cfg, uid } from '../lib/env.mjs';
+import { versionAtLeast } from '../lib/version.mjs';
 import { createWorkflow, script, startRun, repoSkip, childSOPHandoffScenario } from '../lib/fixtures.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'e2e-runner-'));
@@ -49,7 +50,7 @@ before(async () => {
     return found?.status === 'online' ? found : null;
   }, { timeoutMs: 60_000 }).catch(err => { throw new Error(`${err.message}\n${log.slice(-2000)}`); });
   runnerId = runner.id;
-  assert.ok(runner.runnerVersion >= '0.3.0', `runner ${runner.runnerVersion} predates reported outputs`);
+  assert.ok(versionAtLeast(runner.runnerVersion, '0.3.0'), `runner ${runner.runnerVersion} predates reported outputs`);
   await put('/api/runners/default', { runnerId });
 });
 

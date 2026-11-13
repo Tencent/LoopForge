@@ -1704,6 +1704,15 @@ func TestCompactCommandKeepsShortCommandsAndBoundsPrompts(t *testing.T) {
 	if strings.Contains(secret, "ck_secret") || strings.Contains(secret, "private:token") {
 		t.Fatalf("credential leaked into compact command: %s", secret)
 	}
+	agentCLI := compactCommand([]string{"docker", "exec", "-e", "DEEPSEEK_API_KEY=sk-deepseek", "-e", "AGENTFLOW_CLI_API_KEY=sk-gateway", "-e", "KIMI_API_KEY=sk-kimi", "-e", "CURSOR_AUTH_TOKEN=cursor-token", "-e", "DSH_HOME=/home/.dsh", "sandbox", "dsh"})
+	for _, leaked := range []string{"sk-deepseek", "sk-gateway", "sk-kimi", "cursor-token"} {
+		if strings.Contains(agentCLI, leaked) {
+			t.Fatalf("agent CLI credential leaked into compact command: %s", agentCLI)
+		}
+	}
+	if !strings.Contains(agentCLI, "DSH_HOME=/home/.dsh") {
+		t.Fatalf("non-secret environment was redacted: %s", agentCLI)
+	}
 }
 
 func TestAdaptersEmitVersionedPortableObservations(t *testing.T) {

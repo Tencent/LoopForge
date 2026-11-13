@@ -123,6 +123,17 @@ func nestedRunUsage(runID string, nested map[string][]domain.Run, depth int) (in
 	return tokens, cost
 }
 
+// withSOPBinding copies the binding-owned fields of an issue SOP binding onto
+// a requirement lane, leaving every other lane field untouched.
+func withSOPBinding(lane domain.RequirementLane, binding domain.IssueSOPBinding) domain.RequirementLane {
+	lane.BindingID = binding.ID
+	lane.AssigneeUserID = binding.AssigneeUserID
+	lane.Order = binding.Order
+	lane.DependsOn = binding.DependsOn
+	lane.Handoff = binding.Handoff
+	return lane
+}
+
 func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []domain.Run, nested map[string][]domain.Run, tasks []domain.Task, workflows map[string]domain.WorkflowDefinition, now time.Time) []domain.RequirementLane {
 	type wfAcc struct {
 		lane      domain.RequirementLane
@@ -222,11 +233,7 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 	bound := map[string]bool{}
 	for _, binding := range bindings {
 		bound[binding.WorkflowID] = true
-		lane := domain.RequirementLane{
-			BindingID: binding.ID, WorkflowID: binding.WorkflowID, Status: "not_started",
-			AssigneeUserID: binding.AssigneeUserID, Order: binding.Order,
-			DependsOn: binding.DependsOn, Handoff: binding.Handoff,
-		}
+		lane := withSOPBinding(domain.RequirementLane{WorkflowID: binding.WorkflowID, Status: "not_started"}, binding)
 		workflow := workflows[binding.WorkflowID]
 		lane.Lane = domain.InferSOPLane(workflow)
 		if workflow.ID == "" {
@@ -238,12 +245,7 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 		}
 		lane.Label = lane.WorkflowName
 		if acc := byWF[binding.WorkflowID]; acc != nil {
-			copied := acc.lane
-			copied.BindingID = binding.ID
-			copied.AssigneeUserID = binding.AssigneeUserID
-			copied.Order = binding.Order
-			copied.DependsOn = binding.DependsOn
-			copied.Handoff = binding.Handoff
+			copied := withSOPBinding(acc.lane, binding)
 			if copied.Label == "" {
 				copied.Label = lane.Label
 			}
@@ -275,13 +277,8 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 			if latest.lane.WorkflowID == bindings[0].WorkflowID {
 				return out
 			}
-			lane := latest.lane
+			lane := withSOPBinding(latest.lane, bindings[0])
 			lane.Orphan = false
-			lane.BindingID = bindings[0].ID
-			lane.AssigneeUserID = bindings[0].AssigneeUserID
-			lane.Order = bindings[0].Order
-			lane.DependsOn = bindings[0].DependsOn
-			lane.Handoff = bindings[0].Handoff
 			return []domain.RequirementLane{lane}
 		}
 	}

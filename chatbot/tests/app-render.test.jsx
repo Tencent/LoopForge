@@ -70,13 +70,66 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
-  test("labels the conversation host as LoopForge cloud in text and hover hint", () => {
-    const view = render(<App />);
-    const host = view.container.querySelector(".composer-context .host-status");
-    expect(host).toHaveTextContent("LoopForge 云端");
-    expect(host).toHaveAttribute("title", "对话在 LoopForge 云端运行");
-    expect(view.container.querySelector(".composer-context")).not.toHaveTextContent("AgentFlow");
-    view.unmount();
+  test("pauses without showing an intermediate stopping state", () => {
+    const previous = { ...chat };
+    Object.assign(chat, { activeId: "stopping-chat", busy: true, stopping: true,
+      generation: { id: "g-stop", status: "running" },
+      session: { id: "stopping-chat", messages: [{ role: "user", content: "检查目录" }] } });
+    let view;
+    try {
+      view = render(<App />);
+      expect(screen.queryByText(/正在停止/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "停止生成" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "发送消息" })).not.toBeInTheDocument();
+      Object.assign(chat, { busy: false, stopping: false, generation: { id: "g-stop", status: "cancelled" } });
+      view.rerender(<App />);
+      expect(screen.queryByText("正在停止…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "发送消息" })).toBeInTheDocument();
+    } finally {
+      view?.unmount();
+      for (const key of Object.keys(chat)) if (!(key in previous)) delete chat[key];
+      Object.assign(chat, previous);
+    }
+  });
+  test("does not ask for per-command native approval in a working conversation", () => {
+    const previous = {...chat};
+    Object.assign(chat,{activeId:"workspace-chat",busy:true,session:{id:"workspace-chat",runtimeMode:"workspace",messages:[{role:"user",content:"检查目录"}]}});
+    let view;
+    try {
+      view=render(<App />);
+      expect(screen.queryByRole("region",{name:"待确认的原生操作"})).not.toBeInTheDocument();
+    } finally { view?.unmount(); Object.assign(chat,previous); }
+  });
+  test("offers execution machine selection on the home page and moves it into the conversation header", async () => {
+    const previous = { ...chat };
+    const selectMachine = vi.fn();
+    Object.assign(chat, {
+      machinesReady: true, defaultRunnerId: "mac", machines: [{ id: "mac", name: "开发 Mac", status: "online" }],
+      selectMachine, refreshMachines: vi.fn(),
+    });
+    const user = userEvent.setup();
+    let view;
+    try {
+      view = render(<App />);
+      let trigger = screen.getByRole("button", { name: "执行机器：开发 Mac" });
+      expect(trigger.closest(".composer-context")).not.toBeNull();
+      trigger.getBoundingClientRect = () => ({ top: 500, bottom: 528, left: 200, right: 400, width: 200, height: 28 });
+      await user.click(trigger);
+      await user.click(screen.getByRole("option", { name: /LoopForge 云端/ }));
+      expect(selectMachine).toHaveBeenCalledWith("");
+      Object.assign(chat, { activeId: "s1", session: { id: "s1", messages: [] } });
+      view.rerender(<App />);
+      expect(screen.getAllByRole("button", { name: "执行机器：开发 Mac" })).toHaveLength(1);
+      chat.session.messages = [{ role: "user", content: "检查项目" }];
+      chat.session.executionTarget = {pool:"runner",runnerId:"mac"};
+      view.rerender(<App />);
+      expect(screen.queryByRole("button", { name: "执行机器：开发 Mac" })).not.toBeInTheDocument();
+      expect(screen.getByText("开发 Mac").closest(".header-actions")).not.toBeNull();
+    } finally {
+      view?.unmount();
+      for (const key of Object.keys(chat)) if (!(key in previous)) delete chat[key];
+      Object.assign(chat, previous);
+    }
   });
 
   test("hides environments by default and remembers each user's advanced preference", async () => {

@@ -76,6 +76,31 @@
   flex: 0 1 auto;
   min-width: 0;
 }
+/* The preview/source switch is a secondary control: size it like the 30px
+ * icon actions beside it instead of the 48px page-level segmented tabs. */
+.artifact-preview .artifact-preview-view-options.sliding-tabs[data-sliding-tabs] {
+  display: inline-flex !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 2px !important;
+  border-radius: 8px !important;
+}
+.artifact-preview
+  .artifact-preview-view-options.sliding-tabs[data-sliding-tabs]
+  > [data-sliding-indicator] {
+  border-radius: 6px;
+}
+.artifact-preview
+  .artifact-preview-view-options.sliding-tabs[data-sliding-tabs]
+  > [data-sliding-tab] {
+  flex: 0 0 auto;
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 10px !important;
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  line-height: 26px !important;
+}
 .artifact-preview .artifact-preview-actions {
   display: flex;
   min-width: 0;
@@ -141,6 +166,17 @@ html[data-theme="dark"] .artifact-preview .artifact-preview-actions a:hover {
     width: 36px;
     height: 36px;
     min-width: 36px;
+  }
+  .artifact-preview .artifact-preview-view-options.sliding-tabs[data-sliding-tabs] {
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+  .artifact-preview
+    .artifact-preview-view-options.sliding-tabs[data-sliding-tabs]
+    > [data-sliding-tab] {
+    height: 32px !important;
+    min-height: 32px !important;
+    line-height: 32px !important;
   }
   .artifact-preview .artifact-preview-stage {
     padding: 12px;

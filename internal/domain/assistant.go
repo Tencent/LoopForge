@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	// AssistantSourceChat is an ordinary conversation.
@@ -58,7 +61,9 @@ type AssistantMessage struct {
 	Attachments    []AssistantAttachment    `json:"attachments,omitempty"`
 	// Unfinished names why a reply stopped early (stopped, failed, timed out
 	// or interrupted). The reply keeps its partial answer and activity.
-	Unfinished string `json:"unfinished,omitempty"`
+	Unfinished   string            `json:"unfinished,omitempty"`
+	GenerationID string            `json:"generationId,omitempty"`
+	Failure      *AssistantFailure `json:"failure,omitempty"`
 }
 
 type AssistantAssetRef struct {
@@ -129,7 +134,45 @@ type AssistantParticipant struct {
 	Name string `json:"name,omitempty"`
 }
 
+const (
+	AssistantModePlatform  = "platform"
+	AssistantModeWorkspace = "workspace"
+)
+
+// AssistantExecutionTarget is selected once, independently of a workspace.
+// An empty RunnerID in the cloud pool means the built-in execution host.
+type AssistantExecutionTarget struct {
+	Pool     string `json:"pool"`
+	RunnerID string `json:"runnerId,omitempty"`
+}
+
+func (s AssistantSession) Execution() AssistantExecutionTarget {
+	if s.ExecutionTarget != nil {
+		return *s.ExecutionTarget
+	}
+	// Conversations created before execution selection all ran in the cloud.
+	return AssistantExecutionTarget{Pool: ExecutionModeCloud}
+}
+
+// A draft can change machines until its first turn starts. Keep the explicit
+// fence after history edits, and infer it for conversations predating the flag.
+func (s AssistantSession) ExecutionLocked() bool {
+	return s.ExecutionTargetLocked || len(s.Messages) > 0 || s.RunID != "" ||
+		s.WorkspaceRunID != "" || len(s.OwnWorkspaceRunIDs) > 0 ||
+		s.ParentSessionID != "" || s.TaskID != ""
+}
+
+func (s AssistantSession) Mode() string {
+	if s.RuntimeMode != "" {
+		return s.RuntimeMode
+	}
+	return AssistantModePlatform
+}
+
 type AssistantSession struct {
+	ExecutionTarget       *AssistantExecutionTarget `json:"executionTarget,omitempty"`
+	ExecutionTargetLocked bool                      `json:"executionTargetLocked"`
+	RuntimeMode           string                    `json:"runtimeMode,omitempty"`
 	// Source separates ordinary chats, SOP run conversations and scheduled
 	// task runs. Legacy rows leave it empty and are inferred when read.
 	// TaskID is the scheduled job or assistant task that produced the session,
@@ -199,4 +242,15 @@ type AssistantTask struct {
 	LastRunAt            time.Time             `json:"lastRunAt,omitempty"`
 	CreatedAt            time.Time             `json:"createdAt"`
 	UpdatedAt            time.Time             `json:"updatedAt"`
+}
+
+// AssistantNativeApproval names one immutable native tool invocation.
+type AssistantNativeApproval struct {
+	ID           string          `json:"id"`
+	GenerationID string          `json:"generationId,omitempty"`
+	ActorID      int64           `json:"actorId"`
+	Tool         string          `json:"tool"`
+	Input        json.RawMessage `json:"input"`
+	InputDigest  string          `json:"-"`
+	Decision     string          `json:"decision"`
 }

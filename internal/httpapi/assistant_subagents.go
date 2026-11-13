@@ -60,6 +60,10 @@ var roleSubagentUnsafe = regexp.MustCompile(`[^a-z0-9]+`)
 // with the subagent name, description and the role's skills (already written
 // to the CLI home), then the role's brief followed by its rules.
 func roleAgentFile(item roleSubagent) string {
+	return renderRoleAgentFile(item, false)
+}
+
+func renderRoleAgentFile(item roleSubagent, workspace bool) string {
 	role := item.Role
 	description := strings.TrimSpace(role.Description)
 	if description == "" {
@@ -89,6 +93,9 @@ func roleAgentFile(item roleSubagent) string {
 	b.WriteString(subagentChatNotes)
 	b.WriteString(subagentRolePrompt(role.Prompt) + subagentRules(item.Rules) + "\n")
 	// The body is rendered by the CLI on the control plane like a skill.
+	if workspace {
+		return b.String()
+	}
 	return runtime.InertCLIText(b.String())
 }
 
@@ -105,7 +112,7 @@ var subagentBlockedTools = []string{
 const subagentChatNotes = `## 在对话里工作
 
 - 这是对话里的派发，不是 SOP 节点：以 Main Bot 交给你的任务为准。角色定义里要求的交付物文件照常写到工作区根目录下对应的路径（如 archive.md），你结束后平台会自动收集并展示给用户，不用再附加；只有 Main Bot 的任务明确说不要写文件时才不写。产物校验脚本、门禁命令和 {{…}} 输入输出是 SOP 节点才有的，对话里不适用。
-- 代码在执行机器的工作区里，只能用 workbench_workspace_tree/read/write/command 访问，路径相对工作区根目录（如 file:///workspace/<仓库>/…）；在 workbench_workspace_command 里跑 grep 检索。你的本地 cwd 是控制面上的会话缓存目录，不是仓库，不要用本地 Read/Grep/Glob 找代码，本地没搜到不等于代码里没有。你不能打开或切换工作区（workbench_workspace_open 对你不可用）：你与 Main Bot 共享它已打开的那个工作区，直接在里面工作；工作区还没打开或需要别的工作区时如实汇报，交给 Main Bot 处理。
+- 当前是平台模式，CLI 在会话绑定机器的缓存目录内运行，不能在这里搜索或修改项目代码。需要读写代码或跑命令时请向 Main Bot 汇报，让它先打开 Docker 工作区并交接模式，再派发编程任务。你不能打开或切换工作区（workbench_workspace_open 对你不可用），也不能切换运行模式。SOP 执行中的文件可通过已提供的工作区只读工具查看。
 - 写操作被拒绝、提示需要用户确认或放入 drafts 时，不要自己提交回复或草稿：在汇报里写明要做的操作和完整参数，由 Main Bot 交给用户确认。
 
 `
@@ -176,6 +183,12 @@ var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 // subagents use them natively. A conversation without a project and without
 // mentioned shared roles gets empty directories.
 func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
+	if err := runtime.ValidateConversationRoot(root); err != nil {
+		return err
+	}
+	if err := writeConversationAttachments(root, req); err != nil {
+		return err
+	}
 	var skills []domain.SkillDefinition
 	files := map[string]map[string][]byte{}
 	seen := map[string]bool{}
@@ -213,8 +226,22 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 		}
 		add(skill, contents)
 	}
-	home := filepath.Join(root, "home", ".codebuddy")
-	if _, err := runtime.WriteInertSkillTree(filepath.Join(home, "skills"), skills, files); err != nil {
+	engine, _ := assistantModelEngine(req.Model)
+	home := filepath.Join(root, "home", assistantEngineConfigDir(engine))
+	if runtime.IsAgentCLI(engine) {
+		home = filepath.Join(root, "home", ".agents")
+	}
+	if engine == runtime.AgentCLIPi {
+		home = filepath.Join(root, "home", ".pi", "agent")
+	}
+	if engine == runtime.AgentCLIAntigravity {
+		home = filepath.Join(root, "home", ".gemini", "config")
+	}
+	writer := runtime.WriteInertSkillTree
+	if req.workspaceMode {
+		writer = runtime.WriteSkillTree
+	}
+	if _, err := writer(filepath.Join(home, "skills"), skills, files); err != nil {
 		return err
 	}
 	agents := filepath.Join(home, "agents")
@@ -229,7 +256,7 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 	}
 	for _, role := range req.roles {
 		name := roleSubagentName(role.Role.ID)
-		if err := os.WriteFile(filepath.Join(agents, name+".md"), []byte(roleAgentFile(role)), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(agents, name+".md"), []byte(conversationRoleAgentFile(role, req.workspaceMode)), 0o644); err != nil {
 			return err
 		}
 	}
@@ -280,4 +307,14 @@ func (h *assistantHandlers) collectRoleDeliverables(ctx context.Context, s *Agen
 		out = append(out, step, done)
 	}
 	return out
+}
+
+func conversationRoleAgentFile(role roleSubagent, workspace bool) string {
+	body := renderRoleAgentFile(role, workspace)
+	if !workspace {
+		return body
+	}
+	body = strings.Replace(body, subagentChatNotes, "你和 Main Bot 在同一 Docker 工作区，使用原生文件和命令工具直接执行；平台与外部操作遵守当前审批模式。不能打开或切换工作区，不能切回平台模式；需要切换时向 Main Bot 汇报。\n", 1)
+	body = strings.Replace(body, "  - mcp__agentflow_session__workbench_workspace_open\n", "  - mcp__agentflow_session__workbench_workspace_open\n  - mcp__agentflow_session__workbench_platform_mode\n", 1)
+	return body
 }
