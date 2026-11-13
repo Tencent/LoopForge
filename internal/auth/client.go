@@ -204,6 +204,19 @@ func (c *Client) GenerateRIOHeaders() map[string]string {
 	return GenerateRIOHeaders(c.cfg.PaaSID, c.cfg.AppToken, timestamp, nonce)
 }
 
+// newSignedGet 构造带 RIO 网关签名头与指定 Accept 头的 GET 请求。
+func (c *Client) newSignedGet(ctx context.Context, reqURL, accept string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range c.GenerateRIOHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Accept", accept)
+	return req, nil
+}
+
 // ExchangeCode 通过企业 SSO 认证网关将 code 换取员工信息。
 // 遵循降级设计：当网关不可用、未配置凭证或鉴权出错时，记录日志并优雅降级为访客，不抛出阻断异常。
 func (c *Client) ExchangeCode(ctx context.Context, code string) (*User, error) {
@@ -218,16 +231,11 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (*User, error) {
 	}
 
 	reqURL := fmt.Sprintf("%s%s?code=%s", c.cfg.AuthHost, c.cfg.AuthURI, url.QueryEscape(code))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	req, err := c.newSignedGet(ctx, reqURL, "application/json")
 	if err != nil {
 		log.Printf("[auth] create request failed: %v, fallback to guest", err)
 		return FallbackGuestUser(), nil
 	}
-
-	for k, v := range c.GenerateRIOHeaders() {
-		req.Header.Set(k, v)
-	}
-	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

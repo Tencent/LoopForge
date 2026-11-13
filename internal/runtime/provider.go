@@ -10,9 +10,11 @@ import (
 // SandboxRequirements describes the host state and runtime features a provider
 // needs before a Run sandbox is created.
 type SandboxRequirements struct {
-	CLIStates   []CLIStateRequirement
-	PrivateHome bool
-	BunFS       bool
+	// ConversationRoot is the private, persistent native CLI state directory.
+	ConversationRoot string
+	CLIStates        []CLIStateRequirement
+	PrivateHome      bool
+	BunFS            bool
 }
 
 type CLIStateRequirement struct {

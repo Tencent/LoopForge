@@ -47,7 +47,7 @@ func ParseGongfengMRs(text string) []GongfengMRRef {
 		if project == "" || iid <= 0 {
 			continue
 		}
-		key := strings.ToLower(project) + "#" + strconv.Itoa(iid)
+		key := gongfengMRKey(project, iid)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -135,14 +135,7 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 		}
 		merged := false
 		for _, mr := range list {
-			key := strings.TrimSpace(mr.URL)
-			project, iid := mr.Project, mr.IID
-			if p, n, _, ok := ParseGongfengMR(mr.URL); ok {
-				project, iid = p, n
-			}
-			if project != "" && iid > 0 {
-				key = strings.ToLower(project) + "#" + strconv.Itoa(iid)
-			}
+			key := analyticsMRKey(mr)
 			if key == "" {
 				continue
 			}
@@ -182,6 +175,24 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 		out.P95ExecutionDurationMs = analyticsPercentile(execValues, 95)
 	}
 	return out
+}
+
+// gongfengMRKey is the case-insensitive identity of a Gongfeng MR.
+func gongfengMRKey(project string, iid int) string {
+	return strings.ToLower(project) + "#" + strconv.Itoa(iid)
+}
+
+// analyticsMRKey dedups one delivery MR across URL forms: a parseable URL wins
+// over the stored project/iid, and the trimmed URL is the last resort.
+func analyticsMRKey(mr DeliveryMR) string {
+	project, iid := mr.Project, mr.IID
+	if p, n, _, ok := ParseGongfengMR(mr.URL); ok {
+		project, iid = p, n
+	}
+	if project != "" && iid > 0 {
+		return gongfengMRKey(project, iid)
+	}
+	return strings.TrimSpace(mr.URL)
 }
 
 // analyticsPercentile 取最近邻分位数，输入允许无序（内部排序副本）。

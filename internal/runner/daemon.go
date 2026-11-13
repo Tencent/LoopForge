@@ -11,7 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	goruntime "runtime"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,9 +27,13 @@ import (
 // only makes outbound connections: HTTPS for durable task data and one WSS
 // control channel for low-latency server push (cli-connect.md).
 type Daemon struct {
-	cfg      Config
-	client   *Client
-	executor *runtime.ExecutorRunner
+	conversationProcesses runtime.ConversationProcessPool
+	conversationMu        sync.Mutex
+	conversationForward   runtime.ConversationToolForward
+	conversationReplies   map[string]chan domain.RunnerToolResponse
+	cfg                   Config
+	client                *Client
+	executor              *runtime.ExecutorRunner
 
 	mu                   sync.Mutex
 	state                daemonState
@@ -871,7 +875,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	if runtime.IsAgentCLI(prepared.Command.Provider) {
-		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol}
+		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol, Models: inv.AgentCLIModels}
 		var agentEnv map[string]string
 		argv, agentEnv, err = runtime.BindAgentCLICommand(sandbox, workspace, prepared.Command, cred, argv)
 		if err != nil {
@@ -896,7 +900,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	for key, value := range credentialEnv {
 		commandEnv[key] = value
 	}
-	if hasCredentialBinding(prepared.Command.CredentialBindings, runtime.BindGit) {
+	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindGit) {
 		gitEnv, gitErr := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(inv))
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
@@ -910,7 +914,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 			commandEnv[key] = value
 		}
 	}
-	if hasCredentialBinding(prepared.Command.CredentialBindings, runtime.BindMCP) {
+	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindMCP) {
 		servers := inv.MCPCallServers
 		if len(servers) == 0 {
 			servers = boundAssets.MCPServers
@@ -978,14 +982,23 @@ func collectRunnerInvocationArtifacts(workspace string, inv *domain.RunnerInvoca
 	return artifacts
 }
 
+// invocationRepositories returns the repositories an invocation carries:
+// Repositories when set, otherwise the persisted legacy single Repository.
+func invocationRepositories(inv *domain.RunnerInvocation) []domain.RunnerRepository {
+	if inv == nil {
+		return nil
+	}
+	if len(inv.Repositories) == 0 && inv.Repository != nil {
+		return []domain.RunnerRepository{*inv.Repository}
+	}
+	return inv.Repositories
+}
+
 func invocationRepositoryContexts(inv *domain.RunnerInvocation) []domain.RepositoryContext {
 	if inv == nil {
 		return nil
 	}
-	repositories := inv.Repositories
-	if len(repositories) == 0 && inv.Repository != nil {
-		repositories = []domain.RunnerRepository{*inv.Repository}
-	}
+	repositories := invocationRepositories(inv)
 	out := make([]domain.RepositoryContext, 0, len(repositories))
 	for _, repository := range repositories {
 		out = append(out, domain.RepositoryContext{
@@ -1057,24 +1070,11 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 				return nil, nil, errors.New("Codex 个人 API Key 未配置")
 			}
 			env["CODEX_API_KEY"] = key
-			baseURL := strings.TrimSpace(inv.CodexBaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.openai.com/v1"
+			withProvider, err := runtime.CodexUserProviderArgv(argv, inv.CodexBaseURL)
+			if err != nil {
+				return nil, nil, err
 			}
-			if len(argv) < 2 {
-				return nil, nil, errors.New("invalid Codex invocation")
-			}
-			config := []string{
-				"-c", `model_provider="agentflow_user"`,
-				"-c", `model_providers.agentflow_user.name="User API"`,
-				"-c", "model_providers.agentflow_user.base_url=" + strconv.Quote(baseURL),
-				"-c", `model_providers.agentflow_user.env_key="CODEX_API_KEY"`,
-				"-c", `model_providers.agentflow_user.wire_api="responses"`,
-				"-c", "model_providers.agentflow_user.requires_openai_auth=false",
-			}
-			args := append([]string{}, argv[:len(argv)-1]...)
-			args = append(args, config...)
-			argv = append(args, argv[len(argv)-1])
+			argv = withProvider
 		case runtime.BindClaudeCode:
 			if !personal {
 				continue
@@ -1113,15 +1113,6 @@ func invocationGitToken(inv *domain.RunnerInvocation) string {
 	return ""
 }
 
-func hasCredentialBinding(bindings []runtime.CredentialBinding, want runtime.CredentialBinding) bool {
-	for _, binding := range bindings {
-		if binding == want {
-			return true
-		}
-	}
-	return false
-}
-
 // checkoutInvocationRepositories checks out every repository the invocation
 // carries: each into its Dir under the task workspace. Empty Dir is only
 // kept for persisted legacy invocations that already checked out at the
@@ -1132,13 +1123,7 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 		return nil
 	}
 	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
-	repos := inv.Repositories
-	if len(repos) == 0 && inv.Repository != nil {
-		if strings.TrimSpace(inv.Repository.CloneURL) == "" {
-			return nil
-		}
-		repos = []domain.RunnerRepository{*inv.Repository}
-	}
+	repos := invocationRepositories(inv)
 	for i := range repos {
 		repo := repos[i]
 		if strings.TrimSpace(repo.CloneURL) == "" {
@@ -1423,7 +1408,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionGitSSH
+var runnerVersion = "0.10.1"
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

@@ -55,18 +55,8 @@ func main() {
 		ManagedCLIRoot:         strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")),
 		DisableRunSandboxReuse: !*reuseSandbox,
 	}
-	if raw := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_CONCURRENCY")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			cfg.MaxConcurrency = parsed
-		}
-	}
-	if *labels != "" {
-		for _, label := range strings.Split(*labels, ",") {
-			if label = strings.TrimSpace(label); label != "" {
-				cfg.Labels = append(cfg.Labels, label)
-			}
-		}
-	}
+	cfg.MaxConcurrency = concurrencyFromEnv(cfg.MaxConcurrency)
+	cfg.Labels = parseLabels(*labels)
 
 	daemon, err := runner.New(cfg)
 	if err != nil {
@@ -89,6 +79,29 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("runner stopped")
+}
+
+// concurrencyFromEnv lets AGENTFLOW_RUNNER_CONCURRENCY override the flag value
+// when it holds a positive integer; anything else keeps fallback.
+func concurrencyFromEnv(fallback int) int {
+	if raw := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_CONCURRENCY")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+// parseLabels splits the comma-separated -labels flag, trimming blanks and
+// dropping empty entries. It returns nil when no label remains.
+func parseLabels(raw string) []string {
+	var labels []string
+	for _, label := range strings.Split(raw, ",") {
+		if label = strings.TrimSpace(label); label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 func firstNonEmpty(values ...string) string {

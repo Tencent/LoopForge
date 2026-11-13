@@ -58,7 +58,7 @@ func (e *Engine) Cancel(runID string) error {
 		return fmt.Errorf("run not found")
 	}
 	if !isLiveStatus(r.Status) {
-		if isTerminalRunStatus(r.Status) && hasRunningNode(r) {
+		if domain.TerminalRunStatus(r.Status) && hasRunningNode(r) {
 			e.forceTerminate(runID, "cancelled", "流水线已取消")
 			return nil
 		}
@@ -822,7 +822,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if !ok {
 		return fmt.Errorf("run not found")
 	}
-	if r.Status == "running" || hasRunningNode(r) || (r.Status != "waiting" && !isTerminalRunStatus(r.Status)) {
+	if r.Status == "running" || hasRunningNode(r) || (r.Status != "waiting" && !domain.TerminalRunStatus(r.Status)) {
 		return fmt.Errorf("only a stopped run can update its SOP")
 	}
 	if e.executes() {

@@ -1,25 +1,26 @@
 package runtime
 
 import (
-	"agentflow/internal/domain"
 	"bytes"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"agentflow/internal/domain"
 )
 
 const processWaitDelay = time.Second
+
+var errProcessNotStarted = errors.New("process was not started")
 
 func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	prepareCommandProcess(cmd)
 	var buf bytes.Buffer
 	var mu sync.Mutex
-	if sink != nil {
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Phase: "start", Message: compactCommand(cmd.Args)})
-	}
 	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info"}
 	stderr := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stderr", level: "error"}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -29,8 +30,26 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	// at 100ms a busy host (CI running Go and JS tests together) dropped the
 	// tail of a 50KB failure log, which is the part users need.
 	cmd.WaitDelay = processWaitDelay
-	err := runPreparedCommand(cmd)
-	if errors.Is(err, exec.ErrWaitDelay) {
+	// Start launches the stdout/stderr copy goroutines. Hold the writers' lock
+	// until process.started is delivered so the sink stays serialized and the
+	// event always precedes the first output line.
+	mu.Lock()
+	cleanup, err := startCommandProcess(cmd)
+	if err == nil && sink != nil {
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args), Attributes: map[string]any{"pid": cmd.Process.Pid}})
+	}
+	mu.Unlock()
+	if err == nil {
+		err = cmd.Wait()
+		cleanup()
+	} else {
+		if sink != nil {
+			sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})
+		}
+		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
+	outputIncomplete := errors.Is(err, exec.ErrWaitDelay)
+	if outputIncomplete {
 		err = nil
 	}
 	stdout.flush()
@@ -40,7 +59,18 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 		if err != nil {
 			level = "error"
 		}
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.finished", Phase: phase, Level: level, Message: commandResult(err)})
+		attrs := map[string]any{"outputIncomplete": outputIncomplete}
+		if state := cmd.ProcessState; state != nil {
+			attrs["pid"], attrs["exitCode"] = state.Pid(), state.ExitCode()
+			attrs["userCpuMs"], attrs["systemCpuMs"] = state.UserTime().Milliseconds(), state.SystemTime().Milliseconds()
+			if status, ok := state.Sys().(interface {
+				Signaled() bool
+				Signal() syscall.Signal
+			}); ok && status.Signaled() {
+				attrs["signal"] = status.Signal().String()
+			}
+		}
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.finished", Timestamp: time.Now().UTC(), Phase: phase, Level: level, Message: commandResult(err), Attributes: attrs})
 	}
 	return buf.String(), err
 }
@@ -118,12 +148,16 @@ func compactCommand(args []string) string {
 	return string(runes[:maxRunes]) + fmt.Sprintf(" … [arguments truncated, %d chars]", len(runes))
 }
 
+// sensitiveProcessEnvironmentKey matches by suffix so the key variable of a
+// newly added agent CLI is redacted without being listed here.
 func sensitiveProcessEnvironmentKey(key string) bool {
-	return key == "CODEBUDDY_API_KEY" ||
-		key == "OPENAI_API_KEY" || key == "CODEX_API_KEY" ||
-		key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "CLAUDE_CODE_OAUTH_TOKEN" ||
-		key == "AGENTFLOW_GIT_TOKEN" ||
-		strings.HasPrefix(key, "GIT_CONFIG_KEY_")
+	key = strings.ToUpper(key)
+	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD"} {
+		if strings.HasSuffix(key, suffix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(key, "GIT_CONFIG_KEY_")
 }
 
 func commandResult(err error) string {

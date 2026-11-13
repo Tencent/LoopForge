@@ -2,12 +2,11 @@ package repo
 
 import (
 	"agentflow/internal/domain"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"slices"
 	"time"
 )
 
@@ -281,12 +280,7 @@ func (r *NotificationsRepo) notificationProjectName(tx *gorm.DB, id string) stri
 	return id
 }
 func notificationEventSelected(binding domain.NotificationBinding, event string) bool {
-	for _, selected := range binding.Events {
-		if selected == event {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(binding.Events, event)
 }
 func notificationStatus(trigger, scope string) string {
 	switch trigger {
@@ -312,8 +306,7 @@ func (r *NotificationsRepo) enqueueNotification(tx *gorm.DB, key string, binding
 	if !bot.Enabled || bot.Target == nil || bot.ProjectID != item.ProjectID {
 		return nil
 	}
-	sum := sha256.Sum256([]byte(key))
-	item.ID = hex.EncodeToString(sum[:])
+	item.ID = hexSHA256(key)
 	item.TargetID = bot.Target.ID
 	item.TargetName = bot.Target.Name
 	item.TargetType = bot.Target.Type

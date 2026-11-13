@@ -209,9 +209,6 @@ func TestServerAuthBinaryAndSSEHelpers(t *testing.T) {
 
 func TestTrailingSlashAndMiddlewareBranches(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	if !containsMethod([]string{"GET", "POST"}, "POST") || containsMethod([]string{"GET"}, "DELETE") {
-		t.Fatal("containsMethod")
-	}
 	for _, tc := range []struct {
 		method string
 		path   string

@@ -25,11 +25,9 @@ func prepareCommandProcess(cmd *exec.Cmd) {
 	}
 }
 
-func runPreparedCommand(cmd *exec.Cmd) error {
-	cleanup, err := processgroup.Start(cmd)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	return cmd.Wait()
+// Every Windows command gets a Job regardless of OwnProcessGroup.
+func configureOwnedProcessGroup(cmd *exec.Cmd) {}
+
+func startCommandProcess(cmd *exec.Cmd) (func(), error) {
+	return processgroup.Start(cmd)
 }

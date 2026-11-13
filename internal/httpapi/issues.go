@@ -642,6 +642,7 @@ type issueListQuery struct {
 
 func filterIssues(items []domain.Issue, q issueListQuery) []domain.Issue {
 	out := make([]domain.Issue, 0, len(items))
+	needle := strings.ToLower(strings.TrimSpace(q.Q))
 	for _, item := range items {
 		if q.ProjectID != "" && item.ProjectID != q.ProjectID {
 			continue
@@ -652,32 +653,11 @@ func filterIssues(items []domain.Issue, q issueListQuery) []domain.Issue {
 		if !csvContainsFold(q.Source, item.Source) {
 			continue
 		}
-		if q.Assignee != "" {
-			if strings.EqualFold(q.Assignee, "unassigned") {
-				if item.AssigneeUserID != 0 || strings.TrimSpace(item.AssigneeID) != "" {
-					continue
-				}
-			} else {
-				matched := false
-				if item.AssigneeUserID > 0 && strconv.FormatInt(item.AssigneeUserID, 10) == q.Assignee {
-					matched = true
-				} else if strings.EqualFold(item.AssigneeID, q.Assignee) {
-					matched = true
-				}
-				if !matched {
-					continue
-				}
-			}
+		if q.Assignee != "" && !issueMatchesAssignee(item, q.Assignee) {
+			continue
 		}
-		if q.Q != "" {
-			needle := strings.ToLower(strings.TrimSpace(q.Q))
-			hay := strings.ToLower(item.Title + " " + item.ID + " " + strconv.Itoa(item.Number) + " " + item.RequirementTAPDID())
-			if item.ExternalRef != nil {
-				hay += " " + strings.ToLower(item.ExternalRef.ExternalID)
-			}
-			if !strings.Contains(hay, needle) && !fuzzyIssueTitleMatch(item.Title, needle) {
-				continue
-			}
+		if q.Q != "" && !issueMatchesQuery(item, needle) {
+			continue
 		}
 		out = append(out, item)
 	}
@@ -691,6 +671,29 @@ func filterIssues(items []domain.Issue, q issueListQuery) []domain.Issue {
 		return out[i].ID > out[j].ID
 	})
 	return out
+}
+
+// issueMatchesAssignee reports whether item matches a non-empty assignee
+// filter: "unassigned" (case-insensitive) selects issues with no assignee,
+// otherwise the value matches the numeric user ID or the AssigneeID.
+func issueMatchesAssignee(item domain.Issue, assignee string) bool {
+	if strings.EqualFold(assignee, "unassigned") {
+		return item.AssigneeUserID == 0 && strings.TrimSpace(item.AssigneeID) == ""
+	}
+	if item.AssigneeUserID > 0 && strconv.FormatInt(item.AssigneeUserID, 10) == assignee {
+		return true
+	}
+	return strings.EqualFold(item.AssigneeID, assignee)
+}
+
+// issueMatchesQuery reports whether the lower-cased, trimmed needle appears in
+// the issue's searchable text or fuzzily matches its title.
+func issueMatchesQuery(item domain.Issue, needle string) bool {
+	hay := strings.ToLower(item.Title + " " + item.ID + " " + strconv.Itoa(item.Number) + " " + item.RequirementTAPDID())
+	if item.ExternalRef != nil {
+		hay += " " + strings.ToLower(item.ExternalRef.ExternalID)
+	}
+	return strings.Contains(hay, needle) || fuzzyIssueTitleMatch(item.Title, needle)
 }
 
 func fuzzyIssueTitleMatch(title, query string) bool {

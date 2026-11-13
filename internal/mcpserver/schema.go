@@ -60,39 +60,8 @@ func ToolInputSchema(op application.Operation) map[string]any {
 		required = append(required, "path")
 	}
 	properties["query"] = map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}
-	// OpenAPI sometimes names a path parameter issueId where the manifest uses id.
-	paths := contractObject(contract["paths"])
-	var method map[string]any
-	var route map[string]any
-	for path, value := range paths {
-		if normalizeContractPath(path) == normalizeContractPath(op.Path) {
-			route = contractObject(value)
-			method = contractObject(route[strings.ToLower(op.Method)])
-			break
-		}
-	}
-	queryFields := map[string]any{}
-	queryRequired := []string{}
-	routeParameters, _ := route["parameters"].([]any)
-	methodParameters, _ := method["parameters"].([]any)
-	for _, raw := range append(routeParameters, methodParameters...) {
-		param := contractObject(resolveContract(raw, 0))
-		if param["in"] != "query" {
-			continue
-		}
-		name, _ := param["name"].(string)
-		if name == "" {
-			continue
-		}
-		field := map[string]any{"type": "string"}
-		if description, ok := param["description"].(string); ok {
-			field["description"] = description
-		}
-		queryFields[name] = field
-		if needed, _ := param["required"].(bool); needed {
-			queryRequired = append(queryRequired, name)
-		}
-	}
+	route, method := contractOperation(op)
+	queryFields, queryRequired := queryParameterSchema(route, method)
 	if len(queryFields) > 0 {
 		query := contractObject(properties["query"])
 		query["properties"] = queryFields
@@ -120,6 +89,49 @@ func ToolInputSchema(op application.Operation) map[string]any {
 	}
 	return schema
 }
+
+// contractOperation finds the OpenAPI route and method objects for op.
+// OpenAPI sometimes names a path parameter issueId where the manifest uses id,
+// so paths are compared with their parameter names erased.
+func contractOperation(op application.Operation) (route, method map[string]any) {
+	for path, value := range contractObject(contract["paths"]) {
+		if normalizeContractPath(path) == normalizeContractPath(op.Path) {
+			route = contractObject(value)
+			method = contractObject(route[strings.ToLower(op.Method)])
+			break
+		}
+	}
+	return route, method
+}
+
+// queryParameterSchema collects the documented query parameters from the
+// route-level and method-level parameter lists.
+func queryParameterSchema(route, method map[string]any) (fields map[string]any, required []string) {
+	fields = map[string]any{}
+	required = []string{}
+	routeParameters, _ := route["parameters"].([]any)
+	methodParameters, _ := method["parameters"].([]any)
+	for _, raw := range append(routeParameters, methodParameters...) {
+		param := contractObject(resolveContract(raw, 0))
+		if param["in"] != "query" {
+			continue
+		}
+		name, _ := param["name"].(string)
+		if name == "" {
+			continue
+		}
+		field := map[string]any{"type": "string"}
+		if description, ok := param["description"].(string); ok {
+			field["description"] = description
+		}
+		fields[name] = field
+		if needed, _ := param["required"].(bool); needed {
+			required = append(required, name)
+		}
+	}
+	return fields, required
+}
+
 func normalizeContractPath(path string) string {
 	parts := strings.Split(path, "/")
 	for i, p := range parts {

@@ -840,9 +840,21 @@ global.escapeHTML = value => String(value);
 global.state = {data: {executors: [
   {id: 'codebuddy', name: 'CodeBuddy'},
   {id: 'codex', name: 'Codex'},
-  {id: 'claude', name: 'Claude Code'}
+  {id: 'claude', name: 'Claude Code'},
+  {id: 'opencode', name: 'OpenCode'},
+  {id: 'cursor', name: 'Cursor CLI'},
+  {id: 'agy', name: 'Antigravity'},
+  {id: 'kimi', name: 'Kimi Code'},
+  {id: 'pi', name: 'Pi'},
+  {id: 'dsh', name: 'DeepSeek Harness'},
+  {id: 'zcode', name: 'ZCode'},
+  {id: 'mock', name: '演示执行器'}
 ]}};
 eval(code.slice(code.indexOf('function executorOptions('), code.indexOf('function selectAgent(')));
+for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode']) {
+  assert.ok(executorOptions(id).includes('value="' + id + '" selected'), id);
+}
+assert.ok(!executorOptions('codex').includes('value="mock"'));
 const legacy = executorOptions('legacy-codex');
 assert.ok(legacy.includes('历史执行器 legacy-codex'));
 assert.ok(legacy.includes('value="legacy-codex" selected disabled'));

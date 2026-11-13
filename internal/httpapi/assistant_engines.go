@@ -8,15 +8,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -313,18 +317,23 @@ func assistantEngineModels(ctx context.Context, user domain.User) []assistantMod
 		var listed []assistantDiscoveredModel
 		for _, model := range assistantEngineCustomModels(user, engine) {
 			if assistantValidEngineModel(model.ID) {
-				listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
+				listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
 			}
 		}
 		if len(listed) == 0 && baseURL != "" {
 			listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
 		}
+		// Cursor's list comes from the CLI; the saved one (the last list
+		// saveCursorCatalog kept) answers until a fresh one is cached.
 		if engine == runtime.AgentCLICursor {
-			listed = cachedCursorModels(key)
+			if fresh := cachedCursorModels(key); len(fresh) > 0 {
+				listed = fresh
+			}
 		}
 		if len(listed) == 0 {
 			listed = assistantEngineBuiltinModels(engine)
 		}
+		catalog := cliModelsOf(listed)
 		for _, model := range listed {
 			name := strings.TrimSpace(model.Name)
 			if name == "" {
@@ -336,7 +345,7 @@ func assistantEngineModels(ctx context.Context, user domain.User) []assistantMod
 				Name:    name,
 				Family:  assistantModelFamily(model.ID),
 				Engine:  engine,
-				Efforts: assistantModelEfforts(id),
+				Efforts: assistantModelEffortsIn(id, catalog),
 			})
 		}
 	}
@@ -346,6 +355,10 @@ func assistantEngineModels(ctx context.Context, user domain.User) []assistantMod
 type assistantDiscoveredModel struct {
 	ID   string
 	Name string
+	// Efforts and DefaultEffort describe a Cursor family folded out of the
+	// CLI's list (domain.CLIModel).
+	Efforts       map[string]string
+	DefaultEffort string
 }
 
 type assistantDiscoveryEntry struct {
@@ -416,7 +429,7 @@ func cachedCursorModels(apiKey string) []assistantDiscoveredModel {
 			var models []assistantDiscoveredModel
 			for _, model := range found {
 				if assistantValidEngineModel(model.ID) && len(models) < assistantDiscoveryMaxModels {
-					models = append(models, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
+					models = append(models, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
 				}
 			}
 			ttl := assistantDiscoveryTTL
@@ -427,6 +440,41 @@ func cachedCursorModels(apiKey string) []assistantDiscoveredModel {
 		}()
 	}
 	return stale
+}
+
+// saveCursorCatalog keeps the user's freshly listed Cursor models, folded
+// families with their effort→ID mapping included, in their Cursor
+// credential. Effort checks and the --model of chat turns and SOP nodes
+// resolve from that saved list, so a family keeps working on every instance
+// and after a restart, and each user resolves against their own CLI's list.
+func (h *assistantHandlers) saveCursorCatalog(user domain.User) {
+	if h == nil || h.repo == nil || user.ID <= 0 {
+		return
+	}
+	key, _ := assistantEngineCredential(user, runtime.AgentCLICursor)
+	if key == "" {
+		return
+	}
+	fresh := cachedCursorModels(key)
+	if len(fresh) == 0 {
+		return
+	}
+	models := cliModelsOf(fresh)
+	if cursorCatalogEqual(models, assistantCursorCatalog(user)) {
+		return
+	}
+	if _, err := h.repo.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{
+		AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{runtime.AgentCLICursor: {Models: &models}},
+	}); err != nil {
+		log.Printf("cursor model catalog save skipped user=%d: %v", user.ID, err)
+	}
+}
+
+func cursorCatalogEqual(a, b []domain.CLIModel) bool {
+	return slices.EqualFunc(a, b, func(x, y domain.CLIModel) bool {
+		return x.ID == y.ID && (x.Name == y.Name || x.Name == x.ID && y.Name == "" || y.Name == y.ID && x.Name == "") &&
+			x.DefaultEffort == y.DefaultEffort && maps.Equal(x.Efforts, y.Efforts)
+	})
 }
 
 // discoverAssistantEngineModels reads the OpenAI-style model list behind a
@@ -516,8 +564,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 // CLI session from the full transcript, so switching back never continues a
 // transcript that misses the turns in between.
 type assistantEngineState struct {
-	Engine    string `json:"engine"`
-	SessionID string `json:"sessionId"`
+	// Edited history starts a new journal once; errors resume that revision.
+	HistoryRevision int    `json:"historyRevision,omitempty"`
+	Engine          string `json:"engine"`
+	SessionID       string `json:"sessionId"`
+	Unstarted       bool   `json:"unstarted,omitempty"`
 }
 
 func readAssistantEngineState(root string) assistantEngineState {

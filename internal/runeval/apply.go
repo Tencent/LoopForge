@@ -113,6 +113,19 @@ func upsertAgentGate(agent *domain.AgentDefinition, rec domain.RunEvalRecommenda
 }
 
 func applyGateList(gates []domain.VerificationGate, rec domain.RunEvalRecommendation, remove bool) ([]domain.VerificationGate, error) {
+	id := recommendationGateID(rec)
+	if id == "" {
+		return nil, fmt.Errorf("gate id is required")
+	}
+	if remove {
+		return removeGate(gates, id)
+	}
+	return upsertGate(gates, id, rec)
+}
+
+// recommendationGateID resolves the target gate ID; an explicit Gate.ID wins
+// over set.gateId.
+func recommendationGateID(rec domain.RunEvalRecommendation) string {
 	id := ""
 	if rec.Set != nil {
 		id, _ = stringFrom(rec.Set, "gateId")
@@ -120,24 +133,26 @@ func applyGateList(gates []domain.VerificationGate, rec domain.RunEvalRecommenda
 	if rec.Gate != nil && strings.TrimSpace(rec.Gate.ID) != "" {
 		id = strings.TrimSpace(rec.Gate.ID)
 	}
-	if id == "" {
-		return nil, fmt.Errorf("gate id is required")
-	}
-	if remove {
-		out := gates[:0]
-		found := false
-		for _, gate := range gates {
-			if gate.ID == id {
-				found = true
-				continue
-			}
-			out = append(out, gate)
+	return id
+}
+
+func removeGate(gates []domain.VerificationGate, id string) ([]domain.VerificationGate, error) {
+	out := gates[:0]
+	found := false
+	for _, gate := range gates {
+		if gate.ID == id {
+			found = true
+			continue
 		}
-		if !found {
-			return gates, fmt.Errorf("gate %q not found", id)
-		}
-		return out, nil
+		out = append(out, gate)
 	}
+	if !found {
+		return gates, fmt.Errorf("gate %q not found", id)
+	}
+	return out, nil
+}
+
+func upsertGate(gates []domain.VerificationGate, id string, rec domain.RunEvalRecommendation) ([]domain.VerificationGate, error) {
 	gate := domain.VerificationGate{ID: id, Mode: "command", Required: true}
 	if rec.Gate != nil {
 		gate = *rec.Gate

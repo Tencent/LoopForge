@@ -124,30 +124,6 @@ type GroupTaskHistory struct {
 	State NodeRun      `json:"state"`
 }
 
-func (w WorkflowDefinition) GroupMemberIDs() []string {
-	if w.GroupMembers != nil {
-		return w.GroupMembers
-	}
-	// Legacy groups retain only roles actually associated with their frozen graph.
-	ids := []string{}
-	seen := map[string]bool{}
-	for _, n := range w.Nodes {
-		if n.AgentID != "" && !seen[n.AgentID] {
-			ids = append(ids, n.AgentID)
-			seen[n.AgentID] = true
-		}
-	}
-	return ids
-}
-func (w WorkflowDefinition) HasGroupMember(id string) bool {
-	for _, member := range w.GroupMemberIDs() {
-		if member == id {
-			return true
-		}
-	}
-	return false
-}
-
 // GroupSOPHandoff points at immutable, archived context for resumed SOP nodes.
 // It belongs to a run snapshot, never to the catalog template.
 type GroupSOPHandoff struct {
