@@ -388,22 +388,26 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
 	if copyInvocation.Repository != nil {
-		copyRepository := *copyInvocation.Repository
-		copyRepository.GitToken = ""
-		copyRepository.CloneURL = StripURLCredentials(copyRepository.CloneURL)
+		copyRepository := publicRunnerRepository(*copyInvocation.Repository)
 		copyInvocation.Repository = &copyRepository
 	}
 	if len(copyInvocation.Repositories) > 0 {
 		copyRepositories := make([]RunnerRepository, len(copyInvocation.Repositories))
 		for i, repository := range copyInvocation.Repositories {
-			repository.GitToken = ""
-			repository.CloneURL = StripURLCredentials(repository.CloneURL)
-			copyRepositories[i] = repository
+			copyRepositories[i] = publicRunnerRepository(repository)
 		}
 		copyInvocation.Repositories = copyRepositories
 	}
 	task.Invocation = &copyInvocation
 	return task
+}
+
+// publicRunnerRepository returns a copy of one checkout spec with its Git
+// credentials removed: the token field and any userinfo in the clone URL.
+func publicRunnerRepository(repository RunnerRepository) RunnerRepository {
+	repository.GitToken = ""
+	repository.CloneURL = StripURLCredentials(repository.CloneURL)
+	return repository
 }
 
 // RunnerInvocation is the self-contained package a runner daemon needs to
