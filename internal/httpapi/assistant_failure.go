@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"syscall"
 
 	"agentflow/internal/runtime"
 )
@@ -66,6 +67,9 @@ func assistantGenerationFailure(ctx context.Context, err error) (int, string) {
 	}
 	if errors.Is(err, runtime.ErrMaxTurns) || assistantCLIMaxTurns(err.Error()) {
 		return http.StatusBadGateway, "AI 助手已达到执行轮数上限，未能完成回答，请重试"
+	}
+	if errors.Is(err, syscall.E2BIG) {
+		return http.StatusBadGateway, "[ASSISTANT_ARGV_TOO_LARGE] 提示词超过执行器启动参数限制，请联系管理员升级执行器输入传输方式"
 	}
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, "unauthorized") || strings.Contains(message, "invalid api key") || strings.Contains(message, "api key expired") || strings.Contains(message, "invalid credential") || strings.Contains(message, "status code 401") || strings.Contains(message, "http 401") {

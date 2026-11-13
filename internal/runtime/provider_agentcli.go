@@ -3,6 +3,7 @@ package runtime
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,10 +114,17 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	// are independent processes that each receive it.
 	inline := !agentCLINativeSystemPrompt(kind) && !(o.Chat && kind == AgentCLIKimi)
 	if inline && !(o.Chat && resume != "") {
-		prompt = AgentCLITaskPrompt(o.SystemPrompt, o.SystemPromptFile, prompt)
+		systemFile := o.SystemPromptFile
+		if o.Chat && kind == AgentCLIDeepSeek {
+			// The complete chat task travels over stdin, so neither history nor
+			// system instructions need an argv-size workaround or a file read.
+			systemFile = ""
+		}
+		prompt = AgentCLITaskPrompt(o.SystemPrompt, systemFile, prompt)
 	}
 	extra := append([]string{}, o.Extra...)
 	var argv []string
+	var stdin io.Reader
 	options := AgentCLIOptions{Model: model, ReadOnly: o.Chat}
 	switch kind {
 	case AgentCLIOpenCode:
@@ -197,7 +205,15 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if resume != "" {
 			argv = append(argv, "--session-id", resume)
 		}
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if o.Chat {
+			// Headless dsh reads the task verbatim from stdin when no positional
+			// task is supplied. A single argv argument is limited to ~128 KiB on
+			// Linux, including when replaying a branch or a lost native session.
+			stdin = strings.NewReader(prompt)
+		} else {
+			argv = append(argv, prompt)
+		}
 	case AgentCLIZCode:
 		disallowed := zcodeSOPDisallowedTools
 		if o.Chat {
@@ -209,7 +225,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(argv, extra...)
 	}
-	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options, Stdin: stdin}
 }
 
 // AgyModelEfforts lists the efforts agy accepts for a model, weakest first.
