@@ -15,6 +15,8 @@ func TestMCPCallMayWriteClassifiesToolNames(t *testing.T) {
 		{"write verb segment by dash", "gongfeng", assistantMCPCall{Tool: "mr-approve"}, true},
 		{"write verb segment by dot", "gongfeng", assistantMCPCall{Tool: "label.remove"}, true},
 		{"write verb wins over read word", "gongfeng", assistantMCPCall{Tool: "merge_merge_request"}, true},
+		{"write verb dot segment beats read word", "gongfeng", assistantMCPCall{Tool: "detail.set"}, true},
+		{"write verb segment beats read word in same name", "gongfeng", assistantMCPCall{Tool: "list_add"}, true},
 		{"write verb is case-insensitive", "gongfeng", assistantMCPCall{Tool: "Issue_Close"}, true},
 		{"write verb only as substring is not a segment", "gongfeng", assistantMCPCall{Tool: "get_settings"}, false},
 		{"read word", "gongfeng", assistantMCPCall{Tool: "get_branch_list"}, false},
