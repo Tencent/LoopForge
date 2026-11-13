@@ -68,32 +68,7 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 			runtimeServers[i].Command = filepath.Join(workspace, filepath.FromSlash(runtimeServers[i].Command))
 		}
 	}
-	cfg := mcpCallConfigFile{Servers: make([]mcpCallServer, 0, len(runtimeServers))}
-	for _, server := range runtimeServers {
-		transport := strings.ToLower(strings.TrimSpace(server.Transport))
-		if transport == "" {
-			transport = "stdio"
-		}
-		if transport == "http" && strings.TrimSpace(server.URL) == "" {
-			continue
-		}
-		if transport == "stdio" && strings.TrimSpace(server.Command) == "" {
-			continue
-		}
-		cfg.Servers = append(cfg.Servers, mcpCallServer{
-			ID:        server.ID,
-			Name:      server.Name,
-			MarketID:  server.MarketID,
-			URL:       server.URL,
-			Transport: transport,
-			Command:   server.Command, Args: append([]string(nil), server.Args...),
-			CWD: MCPRuntimeWorkingDirectory(server), Environment: resolveMap(server.Environment),
-			AuthType:   server.AuthType,
-			Headers:    cloneHeaders(server.Headers),
-			TimeoutSec: server.TimeoutSec,
-			Aliases:    mcpCallAliases(server),
-		})
-	}
+	cfg := mcpCallConfigFile{Servers: mcpCallConfigServers(runtimeServers)}
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return nil, err
@@ -127,6 +102,41 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 		mcpCallConfigEnv: configEnv,
 		mcpCallBinEnv:    wrapperEnv,
 	}, nil
+}
+
+// mcpCallConfigServers converts runtime MCP server definitions into the
+// entries written to mcp-servers.json. The transport defaults to stdio, and
+// servers missing the URL (http) or command (stdio) they need are skipped.
+func mcpCallConfigServers(servers []domain.MCPServerDefinition) []mcpCallServer {
+	out := make([]mcpCallServer, 0, len(servers))
+	for _, server := range servers {
+		transport := strings.ToLower(strings.TrimSpace(server.Transport))
+		if transport == "" {
+			transport = "stdio"
+		}
+		if transport == "http" && strings.TrimSpace(server.URL) == "" {
+			continue
+		}
+		if transport == "stdio" && strings.TrimSpace(server.Command) == "" {
+			continue
+		}
+		out = append(out, mcpCallServer{
+			ID:          server.ID,
+			Name:        server.Name,
+			MarketID:    server.MarketID,
+			URL:         server.URL,
+			Transport:   transport,
+			Command:     server.Command,
+			Args:        append([]string(nil), server.Args...),
+			CWD:         MCPRuntimeWorkingDirectory(server),
+			Environment: resolveMap(server.Environment),
+			AuthType:    server.AuthType,
+			Headers:     cloneHeaders(server.Headers),
+			TimeoutSec:  server.TimeoutSec,
+			Aliases:     mcpCallAliases(server),
+		})
+	}
+	return out
 }
 
 func mcpCallWrapperScript(helperPath, fallback string) string {
