@@ -140,12 +140,12 @@ func collectRegularFiles(workspace, root string, limits Limits) ([]fileEntry, in
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("%w: %s", ErrUnsupportedEntry, rel)
 		}
-		if limits.MaxFiles > 0 && len(entries)+1 > limits.MaxFiles {
-			return fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(len(entries)+1, limits); err != nil {
+			return err
 		}
 		expanded += info.Size()
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(expanded, limits); err != nil {
+			return err
 		}
 		if _, err := filepath.Rel(workspace, abs); err != nil {
 			return fmt.Errorf("%w: %s", ErrUnsafePath, rel)
@@ -277,8 +277,8 @@ func InspectTarZst(src io.Reader, indexFile string, limits Limits) (Result, erro
 			return Result{}, err
 		}
 		expanded += hdr.Size
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return Result{}, fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(expanded, limits); err != nil {
+			return Result{}, err
 		}
 		copied, err := io.Copy(io.Discard, io.LimitReader(tr, hdr.Size+1))
 		if err != nil {
@@ -350,8 +350,8 @@ func ExtractTarZst(src io.Reader, dest string, limits Limits) error {
 			return err
 		}
 		expanded += hdr.Size
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(expanded, limits); err != nil {
+			return err
 		}
 		full := filepath.Join(tmp, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -407,6 +407,15 @@ func checkTarFileCount(files int, limits Limits) error {
 	return nil
 }
 
+// checkExpandedSize enforces limits.MaxExpanded (0 means unlimited) against the
+// uncompressed byte total seen so far.
+func checkExpandedSize(expanded int64, limits Limits) error {
+	if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
+		return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+	}
+	return nil
+}
+
 // ReadTarZstMember extracts one regular file from a compressed archive into
 // memory. The rest of the tree is never written to disk.
 func ReadTarZstMember(src io.Reader, name string, limits Limits) ([]byte, error) {
@@ -446,8 +455,8 @@ func ReadTarZstMember(src io.Reader, name string, limits Limits) ([]byte, error)
 			}
 			continue
 		}
-		if limits.MaxExpanded > 0 && hdr.Size > limits.MaxExpanded {
-			return nil, fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(hdr.Size, limits); err != nil {
+			return nil, err
 		}
 		body, err := io.ReadAll(io.LimitReader(tr, hdr.Size+1))
 		if err != nil {
