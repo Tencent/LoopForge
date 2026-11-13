@@ -84,6 +84,28 @@ func TestEnvironmentOverlayCatalogVariablesRequireCatalogID(t *testing.T) {
 	}
 }
 
+func TestEnvironmentOverlayPropagatesShellHookError(t *testing.T) {
+	workspace := t.TempDir()
+	root := mkEnvironmentRoot(t, workspace, "env")
+	// A regular file where the zdot hook directory belongs makes
+	// writeEnvironmentShellHooks fail; the overlay must surface that error
+	// instead of returning a PATH without the login-shell hooks.
+	if err := os.WriteFile(filepath.Join(root, environmentZdotDir), []byte("not a dir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	overlay, err := environmentOverlay(workspace, root, "env", domain.SandboxProfile{}, domain.EnvironmentDefinition{})
+	if err == nil {
+		t.Fatalf("expected shell hook error, got overlay %+v", overlay)
+	}
+	if !strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if overlay != nil {
+		t.Fatalf("overlay should be nil on error, got %+v", overlay)
+	}
+}
+
 func mkEnvironmentRoot(t *testing.T, workspace, name string) string {
 	t.Helper()
 	root := filepath.Join(workspace, name)
