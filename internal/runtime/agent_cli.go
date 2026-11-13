@@ -146,48 +146,12 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 		command, _ := entry["command"].(string)
 		headers := entry["headers"]
 		switch {
-		case kind == AgentCLIOpenCode && url != "":
-			server := map[string]any{"type": "remote", "url": url, "enabled": true, "timeout": 600000}
-			if headers != nil {
-				server["headers"] = headers
-			}
-			servers[id] = server
-		case kind == AgentCLIOpenCode && command != "":
-			argv := []any{command}
-			if args, ok := entry["args"].([]string); ok {
-				for _, arg := range args {
-					argv = append(argv, arg)
-				}
-			} else if args, ok := entry["args"].([]any); ok {
-				argv = append(argv, args...)
-			}
-			server := map[string]any{"type": "local", "command": argv, "enabled": true, "timeout": 600000}
-			if env := entry["env"]; env != nil {
-				server["environment"] = env
-			}
-			servers[id] = server
+		case kind == AgentCLIOpenCode && (url != "" || command != ""):
+			servers[id] = openCodeMCPServer(entry)
 		case kind == AgentCLIZCode && (url != "" || command != ""):
 			servers[id] = zcodeMCPServer(entry)
 		case kind == AgentCLIDeepSeek && (url != "" || command != ""):
-			name := dshServerNameRe.ReplaceAllString(id, "_")
-			if len(name) > 32 {
-				name = name[:32]
-			}
-			config := map[string]any{"serverName": name, "toolCallTimeoutMs": 600000}
-			if url != "" {
-				config["transport"], config["url"] = "streamable-http", url
-				if headers != nil {
-					config["headers"] = headers
-				}
-			} else {
-				config["transport"], config["command"] = "stdio", command
-				for _, key := range []string{"args", "env", "cwd"} {
-					if value := entry[key]; value != nil {
-						config[key] = value
-					}
-				}
-			}
-			dshInserts = append(dshInserts, map[string]any{"id": "agentflow-mcp-" + name, "name": "@deepseek-ai/dsh-mcp-client", "config": config})
+			dshInserts = append(dshInserts, deepSeekMCPInsert(id, entry))
 		case url != "":
 			key := "url"
 			if kind == AgentCLIAntigravity {
@@ -243,6 +207,57 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 		}
 	}
 	return writeAgentCLIFile(home, rel, data)
+}
+
+// openCodeMCPServer renders one MCP entry for OpenCode: a remote server for
+// a URL entry, otherwise a local server whose command is the argv array.
+func openCodeMCPServer(entry map[string]any) map[string]any {
+	if url, _ := entry["url"].(string); url != "" {
+		server := map[string]any{"type": "remote", "url": url, "enabled": true, "timeout": 600000}
+		if headers := entry["headers"]; headers != nil {
+			server["headers"] = headers
+		}
+		return server
+	}
+	command, _ := entry["command"].(string)
+	argv := []any{command}
+	if args, ok := entry["args"].([]string); ok {
+		for _, arg := range args {
+			argv = append(argv, arg)
+		}
+	} else if args, ok := entry["args"].([]any); ok {
+		argv = append(argv, args...)
+	}
+	server := map[string]any{"type": "local", "command": argv, "enabled": true, "timeout": 600000}
+	if env := entry["env"]; env != nil {
+		server["environment"] = env
+	}
+	return server
+}
+
+// deepSeekMCPInsert renders one MCP entry as a dsh-mcp-client plugin insert;
+// the server name is the sanitized id capped at 32 characters.
+func deepSeekMCPInsert(id string, entry map[string]any) map[string]any {
+	name := dshServerNameRe.ReplaceAllString(id, "_")
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	config := map[string]any{"serverName": name, "toolCallTimeoutMs": 600000}
+	if url, _ := entry["url"].(string); url != "" {
+		config["transport"], config["url"] = "streamable-http", url
+		if headers := entry["headers"]; headers != nil {
+			config["headers"] = headers
+		}
+	} else {
+		command, _ := entry["command"].(string)
+		config["transport"], config["command"] = "stdio", command
+		for _, key := range []string{"args", "env", "cwd"} {
+			if value := entry[key]; value != nil {
+				config[key] = value
+			}
+		}
+	}
+	return map[string]any{"id": "agentflow-mcp-" + name, "name": "@deepseek-ai/dsh-mcp-client", "config": config}
 }
 
 // agyChatPermissions are the Antigravity deny rules of AI 对话.
