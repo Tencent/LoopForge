@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -131,25 +132,22 @@ func (r *runnerWaiterRegistry) notify(providers []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, w := range r.waiters {
-		for _, p := range providers {
-			if containsStringFold(w.providers, p) {
-				select {
-				case w.ch <- struct{}{}:
-				default:
-				}
-				break
-			}
+		if !w.accepts(providers) {
+			continue
+		}
+		select {
+		case w.ch <- struct{}{}:
+		default:
 		}
 	}
 }
 
-func containsStringFold(values []string, want string) bool {
-	for _, v := range values {
-		if strings.EqualFold(v, want) {
-			return true
-		}
-	}
-	return false
+// accepts reports whether any of providers matches one the waiter is polling
+// for, compared case-insensitively.
+func (w *runnerWaiter) accepts(providers []string) bool {
+	return slices.ContainsFunc(providers, func(p string) bool {
+		return slices.ContainsFunc(w.providers, func(v string) bool { return strings.EqualFold(v, p) })
+	})
 }
 
 // ---------- background sweeper ----------
@@ -259,6 +257,9 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		"runner":    runner,
 		"online":    found && runner.Status == domain.RunnerStatusOnline,
 		"cloudPool": map[string]any{"configured": poolConfigured, "online": poolOnline},
+		// minRunnerVersion lets the runners page disable「设为默认」with the
+		// same rule PUT /api/runners/default enforces.
+		"minRunnerVersion": domain.RunnerVersionDefaultSelection,
 	})
 }
 
@@ -332,7 +333,8 @@ func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
 }
 
 // runnerDefaultSet selects or clears the user's default execution machine.
-// Only machines bound to the requesting user can be selected.
+// Only online machines bound to the requesting user, at or above
+// RunnerVersionDefaultSelection, can be selected.
 // 路由: g.PUT("/api/runners/default", h.runnerDefaultSet)
 func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -357,6 +359,10 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 			c.JSON(http.StatusForbidden, map[string]string{"error": "只能选择自己绑定的执行机器"})
 			return
 		}
+		if reason := runner.DefaultSelectionBlocker(); reason != "" {
+			c.JSON(http.StatusConflict, map[string]string{"error": reason})
+			return
+		}
 	}
 	if err := h.repo.SetDefaultRunner(user.ID, runnerID, time.Now().UTC()); err != nil {
 		if err == repo.ErrRunnerNotFound {
@@ -367,7 +373,7 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 		return
 	}
 	if runnerID == "" {
-		c.JSON(http.StatusOK, map[string]any{"runnerId": "", "message": "已恢复云端 API Key 模式"})
+		c.JSON(http.StatusOK, map[string]any{"runnerId": "", "message": "已切回云端执行"})
 	} else {
 		c.JSON(http.StatusOK, map[string]any{"runnerId": runnerID, "message": "已设为默认执行机器，你的任务和沙箱将在这台机器上执行"})
 	}

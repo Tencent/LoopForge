@@ -84,38 +84,60 @@ var frontMatterLine = regexp.MustCompile(`^([A-Za-z_]+)\s*:\s*(.*)$`)
 func ParseDistilled(content string) Distilled {
 	text := strings.ReplaceAll(content, "\r\n", "\n")
 	out := Distilled{Body: text}
-	if strings.HasPrefix(text, "---\n") {
-		if end := strings.Index(text[4:], "\n---"); end >= 0 {
-			header := text[4 : 4+end]
-			rest := text[4+end+4:]
-			out.Body = strings.TrimLeft(strings.TrimPrefix(rest, "\n"), "\n")
-			for _, line := range strings.Split(header, "\n") {
-				m := frontMatterLine.FindStringSubmatch(strings.TrimSpace(line))
-				if m == nil {
-					continue
-				}
-				value := strings.Trim(strings.TrimSpace(m[2]), `"'`)
-				switch strings.ToLower(m[1]) {
-				case "title":
-					out.Title = value
-				case "source":
-					out.Source = value
-				case "path":
-					out.Path = value
-				}
-			}
-		}
+	if header, body, ok := splitDistilledFrontMatter(text); ok {
+		out.Body = body
+		applyDistilledHeader(&out, header)
 	}
 	if out.Title == "" {
-		for _, line := range strings.Split(out.Body, "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "#") {
-				out.Title = strings.TrimSpace(strings.TrimLeft(line, "#"))
-				break
-			}
-		}
+		out.Title = firstMarkdownHeading(out.Body)
 	}
 	return out
+}
+
+// splitDistilledFrontMatter separates a leading "---" front matter block from
+// the body. ok is false when text has no closed front matter.
+func splitDistilledFrontMatter(text string) (header, body string, ok bool) {
+	if !strings.HasPrefix(text, "---\n") {
+		return "", text, false
+	}
+	end := strings.Index(text[4:], "\n---")
+	if end < 0 {
+		return "", text, false
+	}
+	rest := text[4+end+4:]
+	return text[4 : 4+end], strings.TrimLeft(strings.TrimPrefix(rest, "\n"), "\n"), true
+}
+
+// applyDistilledHeader copies the recognised title/source/path keys of a
+// front matter header into out; other lines are ignored.
+func applyDistilledHeader(out *Distilled, header string) {
+	for _, line := range strings.Split(header, "\n") {
+		m := frontMatterLine.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			continue
+		}
+		value := strings.Trim(strings.TrimSpace(m[2]), `"'`)
+		switch strings.ToLower(m[1]) {
+		case "title":
+			out.Title = value
+		case "source":
+			out.Source = value
+		case "path":
+			out.Path = value
+		}
+	}
+}
+
+// firstMarkdownHeading returns the text of the first "#" heading in body, or
+// "" when there is none.
+func firstMarkdownHeading(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			return strings.TrimSpace(strings.TrimLeft(line, "#"))
+		}
+	}
+	return ""
 }
 
 var unsafePathChars = regexp.MustCompile(`[^\p{L}\p{N}._/-]+`)

@@ -124,17 +124,7 @@ func SplitVerificationGates(gates []VerificationGate) []VerificationGate {
 			out = append(out, gate)
 			continue
 		}
-		var runCmds, repoCmds []string
-		for _, command := range gate.Commands {
-			if strings.TrimSpace(command) == "" {
-				continue
-			}
-			if CommandNeedsRepository(command) {
-				repoCmds = append(repoCmds, rewriteRepositoryWorkspaceRefs(command))
-				continue
-			}
-			runCmds = append(runCmds, command)
-		}
+		runCmds, repoCmds := partitionGateCommands(gate.Commands)
 		if len(runCmds) == 0 && len(repoCmds) == 0 {
 			out = append(out, gate)
 			continue
@@ -154,21 +144,45 @@ func SplitVerificationGates(gates []VerificationGate) []VerificationGate {
 		runGate := gate
 		runGate.Commands = runCmds
 		runGate.ExecutionScope = ExecutionScopeRun
-		repoGate := gate
-		baseID := strings.TrimSpace(gate.ID)
-		if baseID == "" {
-			baseID = "gate"
-		}
-		repoGate.ID = uniqueGateID(baseID+"-git", used)
-		used[repoGate.ID] = true
-		if name := strings.TrimSpace(gate.Name); name != "" {
-			repoGate.Name = name + " · Git 检查"
-		} else {
-			repoGate.Name = "Git 检查"
-		}
-		repoGate.Commands = repoCmds
-		repoGate.ExecutionScope = ExecutionScopeRepositories
+		repoGate := repositoryGitGate(gate, repoCmds, used)
 		out = append(out, runGate, repoGate)
 	}
 	return out
+}
+
+// partitionGateCommands drops blank commands and splits the rest into
+// run-scoped deliverable checks and repository-scoped git checks. Repository
+// commands are rewritten so run-root paths keep resolving from each repo.
+func partitionGateCommands(commands []string) (runCmds, repoCmds []string) {
+	for _, command := range commands {
+		if strings.TrimSpace(command) == "" {
+			continue
+		}
+		if CommandNeedsRepository(command) {
+			repoCmds = append(repoCmds, rewriteRepositoryWorkspaceRefs(command))
+			continue
+		}
+		runCmds = append(runCmds, command)
+	}
+	return runCmds, repoCmds
+}
+
+// repositoryGitGate derives the repositories-scoped companion of gate that
+// runs repoCmds, reserving its unique "-git" ID in used.
+func repositoryGitGate(gate VerificationGate, repoCmds []string, used map[string]bool) VerificationGate {
+	repoGate := gate
+	baseID := strings.TrimSpace(gate.ID)
+	if baseID == "" {
+		baseID = "gate"
+	}
+	repoGate.ID = uniqueGateID(baseID+"-git", used)
+	used[repoGate.ID] = true
+	if name := strings.TrimSpace(gate.Name); name != "" {
+		repoGate.Name = name + " · Git 检查"
+	} else {
+		repoGate.Name = "Git 检查"
+	}
+	repoGate.Commands = repoCmds
+	repoGate.ExecutionScope = ExecutionScopeRepositories
+	return repoGate
 }

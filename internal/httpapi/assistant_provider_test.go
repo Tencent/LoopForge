@@ -328,9 +328,10 @@ func TestAssistantCodexAppServerDisablesNativeTools(t *testing.T) {
 			t.Fatalf("missing features.%s=false:\n%s", feature, joined)
 		}
 	}
-	if !strings.Contains(joined, "features.hooks=true") || !strings.Contains(joined, "hooks.bypass_hook_trust=true") || !strings.Contains(joined, "hooks.PreToolUse=") {
+	if !strings.Contains(joined, "features.hooks=true") || !strings.Contains(joined, "hooks.PreToolUse=") {
 		t.Fatalf("guard hook missing:\n%s", joined)
 	}
+	// Hook trust is configured per thread and verified by TestCodexAppServerTurn.
 	if strings.Contains(joined, "--dangerously-bypass-hook-trust") {
 		t.Fatalf("app-server argv must not use the exec-only trust flag:\n%s", joined)
 	}

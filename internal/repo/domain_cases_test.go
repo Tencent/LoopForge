@@ -447,9 +447,6 @@ func TestKnowledgeMCPFilesSpacesAndAssistantTasks(t *testing.T) {
 }
 
 func TestRunnerUtilityAndEmptyQueryBranches(t *testing.T) {
-	if !containsFold([]string{"One", "TWO"}, "two") || containsFold([]string{"one"}, "three") {
-		t.Fatal("containsFold")
-	}
 	now := time.Now().UTC()
 	tasks := []domain.RunnerTask{{ID: "late", CreatedAt: now}, {ID: "early", CreatedAt: now.Add(-time.Minute)}}
 	sortRunnerTasksByCreated(tasks)

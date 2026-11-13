@@ -51,6 +51,8 @@ PY
       compose pull --ignore-buildable --policy always
     fi
     compose up -d --no-build --wait --wait-timeout 180
+    # A newer image may read generated columns the old volume never got.
+    bash scripts/install-schema-extensions.sh
     ;;
   logs) compose logs -f "${@:-platform}" ;;
   stop) compose stop ;;

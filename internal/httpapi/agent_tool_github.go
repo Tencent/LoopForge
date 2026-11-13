@@ -15,7 +15,8 @@ import (
 	"agentflow/internal/gitwork"
 )
 
-// Main Bot 的轻量 GitHub 工具：列 Issue/PR、查 PR 状态、加评论、加标签。
+// Main Bot 的轻量 GitHub 工具：列 Issue/PR、查 PR 状态与改动、加评论、加标签，
+// 以及审查、合并 PR 和关闭 Issue。
 //
 // 设计目标是不要求先 workbench_workspace_open 打开工作区（那条路径是为
 // "真的要改代码、推分支、开 PR" 准备的重路径），同时仍然复用
@@ -28,14 +29,21 @@ import (
 // 「帮我批准」（ExecMode.ReviewWrites）时，评论、加标签这两个写操作在调用
 // GitHub 之前先交给独立审查器逐项审查——它们对外公开可见，而列表工具会把
 // 不可信的 Issue/PR 标题带进上下文，正是最需要审查器把关的地方。
-// 操作范围限定在当前项目已绑定的 GitHub 仓库，写操作只开放评论和加标签，
-// 不提供关闭、合并、删除。
+// 操作范围限定在当前项目已绑定的 GitHub 仓库。审查、合并、关闭 Issue 只在
+// 会话允许直接写入时执行（见 githubWriteAllowed），不提供删除。
 const (
-	mainBotGitHubIssuesList = "workbench_github_issues_list"
-	mainBotGitHubPullsList  = "workbench_github_pulls_list"
-	mainBotGitHubPRStatus   = "workbench_github_pr_status"
-	mainBotGitHubCommentAdd = "workbench_github_comment_add"
-	mainBotGitHubLabelsAdd  = "workbench_github_labels_add"
+	mainBotGitHubIssuesList  = "workbench_github_issues_list"
+	mainBotGitHubIssueGet    = "workbench_github_issue_get"
+	mainBotGitHubPullsList   = "workbench_github_pulls_list"
+	mainBotGitHubPRStatus    = "workbench_github_pr_status"
+	mainBotGitHubPRFiles     = "workbench_github_pr_files"
+	mainBotGitHubCommentAdd  = "workbench_github_comment_add"
+	mainBotGitHubLabelsAdd   = "workbench_github_labels_add"
+	mainBotGitHubPRReview    = "workbench_github_pr_review"
+	mainBotGitHubPRMerge     = "workbench_github_pr_merge"
+	mainBotGitHubIssueClose  = "workbench_github_issue_close"
+	mainBotGitHubIssueCreate = "workbench_github_issue_create"
+	mainBotGitHubPRClose     = "workbench_github_pr_close"
 )
 
 const (
@@ -44,6 +52,8 @@ const (
 	// githubIssuesMaxPages 限制 issues_list 为凑够 limit 最多翻的页数：
 	// /issues 端点混有 PR，PR 多的仓库要往后翻才能凑够纯 Issue。
 	githubIssuesMaxPages = 5
+	// githubIssueListBodyRunes 是 issues_list 里每条正文摘要的长度。
+	githubIssueListBodyRunes = 300
 )
 
 // mainBotGitHubTools 只在普通 Main Bot 会话（AgentToolAssistant）且已知项目时
@@ -57,20 +67,32 @@ func mainBotGitHubTools(s *AgentToolSession) []agentToolDescriptor {
 	return []agentToolDescriptor{
 		{
 			Name:        mainBotGitHubIssuesList,
-			Description: "列出项目绑定的 GitHub 仓库里的 Issue（不包含 PR）。只读，不需要打开工作区，用请求人自己的 Git Token 直连 GitHub。结果里 hasMore=true 表示还有符合条件但没列出的 Issue，不能把本次结果当成完整列表。",
+			Description: "列出项目绑定的 GitHub 仓库里的 Issue（不包含 PR）。只读，不需要打开工作区，用请求人自己的 Git Token 直连 GitHub。body 只是正文开头，要按 Issue 干活先用 workbench_github_issue_get 读完整正文和评论。结果里 hasMore=true 表示还有符合条件但没列出的 Issue，不能把本次结果当成完整列表。",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,"state":{"type":"string","enum":["open","closed","all"],"description":"默认 open"},"labels":{"type":"string","description":"按标签过滤，逗号分隔的标签名"},"limit":{"type":"integer","minimum":1,"maximum":50,"description":"默认 20"}},"required":["repository"],"additionalProperties":false}`),
 			Kind:        "github",
 		},
 		{
+			Name:        mainBotGitHubIssueGet,
+			Description: "读取一个 Issue 的完整正文和最近的评论（最多 30 条，按时间先后）。只读，不需要打开工作区。按 Issue 修改代码或判断是否已处理前先读它：需求细节和验收要求通常写在正文和评论里，而不是标题。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `},"required":["repository","number"],"additionalProperties":false}`),
+			Kind:        "github",
+		},
+		{
 			Name:        mainBotGitHubPullsList,
-			Description: "列出项目绑定的 GitHub 仓库里的 Pull Request。只读，不需要打开工作区，用请求人自己的 Git Token 直连 GitHub。结果里 hasMore=true 表示还有没列出的 PR。",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,"state":{"type":"string","enum":["open","closed","all"],"description":"默认 open"},"limit":{"type":"integer","minimum":1,"maximum":50,"description":"默认 20"}},"required":["repository"],"additionalProperties":false}`),
+			Description: "列出项目绑定的 GitHub 仓库里的 Pull Request。只读，不需要打开工作区，用请求人自己的 Git Token 直连 GitHub。结果里 hasMore=true 表示还有没列出的 PR。改动行数、审查状态用 workbench_github_pr_status 查。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,"state":{"type":"string","enum":["open","closed","all"],"description":"默认 open"},"author":{"type":"string","description":"只列这个 GitHub 用户（login，忽略大小写）提交的 PR"},"limit":{"type":"integer","minimum":1,"maximum":50,"description":"默认 20"}},"required":["repository"],"additionalProperties":false}`),
 			Kind:        "github",
 		},
 		{
 			Name:        mainBotGitHubPRStatus,
-			Description: "查看一个 Pull Request 的详情（状态、是否可合并）和检查结果（CI checks / commit status）。只读，不需要打开工作区。checksState 为 unknown 时表示部分检查结果读取失败，原因见 checksWarnings。",
+			Description: "查看一个 Pull Request 的详情：作者、描述、改动规模（additions/deletions/changedFiles）、是否可合并（mergeable/mergeableState）、head sha、每位审查人的最新结论（reviews/approvals）和检查结果（CI checks / commit status）。只读，不需要打开工作区。checksState 为 unknown 时表示部分检查结果读取失败，原因见 checksWarnings。",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `},"required":["repository","number"],"additionalProperties":false}`),
+			Kind:        "github",
+		},
+		{
+			Name:        mainBotGitHubPRFiles,
+			Description: "列出一个 Pull Request 改动的文件及每个文件的 diff（patch，过长会截断），用于审查代码。只读，不需要打开工作区。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"limit":{"type":"integer","minimum":1,"maximum":100,"description":"最多返回的文件数，默认 50"}},"required":["repository","number"],"additionalProperties":false}`),
 			Kind:        "github",
 		},
 		{
@@ -83,6 +105,36 @@ func mainBotGitHubTools(s *AgentToolSession) []agentToolDescriptor {
 			Name:        mainBotGitHubLabelsAdd,
 			Description: "给一个 Issue 或 PR 加标签（标签必须在仓库里已存在，GitHub 不会自动创建）。用请求人自己的 Git Token 直接提交，不经过草稿确认（「帮我批准」模式下会先经自动审批）。",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"labels":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":20}},"required":["repository","number","labels"],"additionalProperties":false}`),
+			Kind:        "github",
+		},
+		{
+			Name:        mainBotGitHubPRReview,
+			Description: "对一个 Pull Request 提交审查：APPROVE 批准、REQUEST_CHANGES 要求修改、COMMENT 只留审查意见。用请求人自己的 Git Token 提交，对外公开可见。GitHub 不允许作者批准自己的 PR。需要「完全权限」或「帮我批准」模式。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"event":{"type":"string","enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","maxLength":10000,"description":"审查意见；REQUEST_CHANGES 和 COMMENT 必填"}},"required":["repository","number","event"],"additionalProperties":false}`),
+			Kind:        "github",
+		},
+		{
+			Name:        mainBotGitHubPRMerge,
+			Description: "合并一个 Pull Request。合并前先用 workbench_github_pr_status 确认状态、检查和审查结论，并把读到的 head sha 传入 sha，防止合并后来又被推送的改动。用请求人自己的 Git Token 执行，合并后只能在 GitHub 上手动回滚。需要「完全权限」或「帮我批准」模式。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"method":{"type":"string","enum":["merge","squash","rebase"],"description":"默认 merge；仓库不允许时按报错换一种"},"sha":{"type":"string","description":"期望的 PR head sha；与实际不符时 GitHub 拒绝合并"},"commitTitle":{"type":"string","maxLength":250},"commitMessage":{"type":"string","maxLength":10000}},"required":["repository","number"],"additionalProperties":false}`),
+			Kind:        "github",
+		},
+		{
+			Name:        mainBotGitHubIssueClose,
+			Description: "关闭一个 GitHub Issue（不能用来关闭 PR，关闭 PR 用 workbench_github_pr_close）。reason=completed 表示已解决，not_planned 表示不处理；可同时留一条说明评论（先评论再关闭）。已关闭的 Issue 直接返回 alreadyClosed。需要「完全权限」或「帮我批准」模式。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"reason":{"type":"string","enum":["completed","not_planned"],"description":"默认 completed"},"comment":{"type":"string","maxLength":10000,"description":"关闭前留下的说明，例如由哪个 PR 解决"}},"required":["repository","number"],"additionalProperties":false}`),
+			Kind:        "github",
+		},
+		{
+			Name:        mainBotGitHubIssueCreate,
+			Description: "在项目绑定的 GitHub 仓库里新建一个 Issue，对外公开可见，建好后只能关闭不能删除。用请求人自己的 Git Token 直接提交（「帮我批准」模式下会先经自动审批）。labels 必须是仓库里已存在的标签。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000,"description":"Markdown 正文：背景、要做什么、验收要求"},"labels":{"type":"array","items":{"type":"string"},"maxItems":20}},"required":["repository","title"],"additionalProperties":false}`),
+			Kind:        "github",
+		},
+		{
+			Name:        mainBotGitHubPRClose,
+			Description: "关闭一个 Pull Request 但不合并（例如过时、重复或被拒绝的 PR）；可同时留一条说明评论（先评论再关闭）。已合并的 PR 不能关闭，已关闭的直接返回 alreadyClosed。需要「完全权限」或「帮我批准」模式。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"comment":{"type":"string","maxLength":10000,"description":"关闭原因，会作为评论公开可见"}},"required":["repository","number"],"additionalProperties":false}`),
 			Kind:        "github",
 		},
 	}
@@ -113,16 +165,49 @@ func (h *agentToolGateway) callMainBotGitHub(ctx context.Context, session *Agent
 	switch name {
 	case mainBotGitHubIssuesList:
 		result, err = githubIssuesList(ctx, token, path, args)
+	case mainBotGitHubIssueGet:
+		result, err = githubIssueGet(ctx, token, path, args)
 	case mainBotGitHubPullsList:
 		result, err = githubPullsList(ctx, token, path, args)
 	case mainBotGitHubPRStatus:
 		result, err = githubPRStatus(ctx, token, path, args)
+	case mainBotGitHubPRFiles:
+		result, err = githubPRFiles(ctx, token, path, args)
+	case mainBotGitHubPRReview, mainBotGitHubPRMerge, mainBotGitHubIssueClose, mainBotGitHubPRClose:
+		if _, verr := githubArgNumber(args); verr != nil {
+			return "", verr
+		}
+		if werr := githubWriteAllowed(session, name); werr != nil {
+			return "", werr
+		}
+		if rerr := reviewGitHubWrite(ctx, session, name, path, args, githubWriteActions[name]); rerr != nil {
+			return "", rerr
+		}
+		switch name {
+		case mainBotGitHubPRReview:
+			result, err = githubPRReview(ctx, token, path, args)
+		case mainBotGitHubPRMerge:
+			result, err = githubPRMerge(ctx, token, path, args)
+		case mainBotGitHubPRClose:
+			result, err = githubPRClose(ctx, token, path, args)
+		default:
+			result, err = githubIssueClose(ctx, token, path, args)
+		}
+	case mainBotGitHubIssueCreate:
+		title, body, labels, verr := githubIssueCreateArgs(args)
+		if verr != nil {
+			return "", verr
+		}
+		if rerr := reviewGitHubWrite(ctx, session, name, path, args, githubWriteActions[name]); rerr != nil {
+			return "", rerr
+		}
+		result, err = githubIssueCreate(ctx, token, path, title, body, labels)
 	case mainBotGitHubCommentAdd:
 		number, body, verr := githubCommentArgs(args)
 		if verr != nil {
 			return "", verr
 		}
-		if rerr := reviewGitHubWrite(ctx, session, name, path, args); rerr != nil {
+		if rerr := reviewGitHubWrite(ctx, session, name, path, args, githubWriteActions[name]); rerr != nil {
 			return "", rerr
 		}
 		result, err = githubIssueCommentAdd(ctx, token, path, number, body)
@@ -131,7 +216,7 @@ func (h *agentToolGateway) callMainBotGitHub(ctx context.Context, session *Agent
 		if verr != nil {
 			return "", verr
 		}
-		if rerr := reviewGitHubWrite(ctx, session, name, path, args); rerr != nil {
+		if rerr := reviewGitHubWrite(ctx, session, name, path, args, githubWriteActions[name]); rerr != nil {
 			return "", rerr
 		}
 		result, err = githubIssueLabelsAdd(ctx, token, path, number, labels)
@@ -147,12 +232,23 @@ func (h *agentToolGateway) callMainBotGitHub(ctx context.Context, session *Agent
 // reviewGitHubWrite 和 callMainBotWorkspace 对写操作的处理一致：会话开启
 // 「帮我批准」时，先把这一项具体操作交给独立审查器，未获批准不调用 GitHub。
 // 没有可用的审查器时 reviewAssistantAction 返回 unavailable，同样拒绝执行。
-func reviewGitHubWrite(ctx context.Context, s *AgentToolSession, name, path string, args map[string]any) error {
+// githubWriteActions describes each write for the independent reviewer.
+var githubWriteActions = map[string]string{
+	mainBotGitHubCommentAdd:  "用请求人自己的 Git Token 向项目绑定的 GitHub 仓库写入评论，对外公开可见，执行后只能到 GitHub 上手动撤销",
+	mainBotGitHubLabelsAdd:   "用请求人自己的 Git Token 给项目绑定的 GitHub 仓库里的 Issue/PR 加标签，执行后只能到 GitHub 上手动撤销",
+	mainBotGitHubPRReview:    "用请求人自己的 Git Token 对项目绑定的 GitHub 仓库里的 PR 提交审查（批准/要求修改/评论），对外公开可见",
+	mainBotGitHubPRMerge:     "用请求人自己的 Git Token 合并项目绑定的 GitHub 仓库里的 PR，代码进入目标分支，执行后只能到 GitHub 上手动回滚",
+	mainBotGitHubIssueClose:  "用请求人自己的 Git Token 关闭项目绑定的 GitHub 仓库里的 Issue（可附说明评论），执行后需要到 GitHub 上手动重新打开",
+	mainBotGitHubIssueCreate: "用请求人自己的 Git Token 在项目绑定的 GitHub 仓库里新建 Issue，对外公开可见，建好后只能关闭不能删除",
+	mainBotGitHubPRClose:     "用请求人自己的 Git Token 关闭（不合并）项目绑定的 GitHub 仓库里的 PR（可附说明评论），执行后需要到 GitHub 上手动重新打开",
+}
+
+func reviewGitHubWrite(ctx context.Context, s *AgentToolSession, name, path string, args map[string]any, action string) error {
 	if !s.ExecMode.ReviewWrites {
 		return nil
 	}
 	ctx = withAssistantApprovalReviewer(ctx, s.approvalReviewer)
-	review := reviewAssistantAction(ctx, name, "用请求人自己的 Git Token 向项目绑定的 GitHub 仓库写入评论或标签，对外公开可见，执行后只能到 GitHub 上手动撤销", map[string]any{"projectId": s.ProjectID, "repository": path, "arguments": args})
+	review := reviewAssistantAction(ctx, name, action, map[string]any{"projectId": s.ProjectID, "repository": path, "arguments": args})
 	if !review.allows() {
 		return assistantReviewRefusal(name, review)
 	}
@@ -295,22 +391,7 @@ func githubHTTPClient() *http.Client {
 // githubToolError 按具体操作给出报错。githubPRError 是为提交 PR 写的，403
 // 一律提示 Pull requests 权限；这组工具各自需要的权限不同，单独说明。
 func githubToolError(action, permission string, status int, raw []byte) error {
-	var body struct {
-		Message string `json:"message"`
-		Errors  []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	_ = json.Unmarshal(raw, &body)
-	detail := strings.TrimSpace(body.Message)
-	for _, e := range body.Errors {
-		if e.Message != "" {
-			detail = strings.TrimSpace(detail + " " + e.Message)
-		}
-	}
-	if detail == "" {
-		detail = strings.TrimSpace(truncateRunes(string(raw), 300))
-	}
+	detail := githubErrorDetail(raw)
 	switch status {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("GitHub Git Token 无效或已过期（HTTP 401）：请到「个人配置 → 个人凭证」重新配置")
@@ -329,6 +410,7 @@ type githubIssueOut struct {
 	URL     string   `json:"url"`
 	Author  string   `json:"author"`
 	Labels  []string `json:"labels,omitempty"`
+	Body    string   `json:"body,omitempty"`
 	Created string   `json:"createdAt"`
 	Updated string   `json:"updatedAt"`
 }
@@ -336,6 +418,7 @@ type githubIssueOut struct {
 type githubIssueItem struct {
 	Number  int64  `json:"number"`
 	Title   string `json:"title"`
+	Body    string `json:"body"`
 	State   string `json:"state"`
 	HTMLURL string `json:"html_url"`
 	User    struct {
@@ -392,7 +475,7 @@ func githubIssuesList(ctx context.Context, token, path string, args map[string]a
 			for _, l := range it.Labels {
 				labels = append(labels, l.Name)
 			}
-			out = append(out, githubIssueOut{Number: it.Number, Title: it.Title, State: it.State, URL: it.HTMLURL, Author: it.User.Login, Labels: labels, Created: it.CreatedAt, Updated: it.UpdatedAt})
+			out = append(out, githubIssueOut{Number: it.Number, Title: it.Title, State: it.State, URL: it.HTMLURL, Author: it.User.Login, Labels: labels, Body: truncateRunes(it.Body, githubIssueListBodyRunes), Created: it.CreatedAt, Updated: it.UpdatedAt})
 		}
 		if hasMore || len(items) < githubListPageSize {
 			break
@@ -419,50 +502,73 @@ type githubPullOut struct {
 	Updated string `json:"updatedAt"`
 }
 
-// githubPullsList 列 PR。/pulls 不需要事后过滤，多取一条即可判断 hasMore。
+// githubPullsList 列 PR。不按作者过滤时多取一条即可判断 hasMore；按作者
+// 过滤发生在取回之后（/pulls 不支持 author 参数），像 issues_list 一样按满页
+// 翻页，最多 githubIssuesMaxPages 页。
 func githubPullsList(ctx context.Context, token, path string, args map[string]any) (string, error) {
 	state, err := githubArgState(args)
 	if err != nil {
 		return "", err
 	}
 	limit := githubArgLimit(args)
-	q := url.Values{"state": {state}, "per_page": {strconv.Itoa(limit + 1)}}
+	author, _ := args["author"].(string)
+	author = strings.TrimSpace(author)
+	perPage, maxPages := limit+1, 1
+	if author != "" {
+		perPage, maxPages = githubListPageSize, githubIssuesMaxPages
+	}
+	q := url.Values{"state": {state}, "per_page": {strconv.Itoa(perPage)}}
 	client := githubHTTPClient()
-	resp, raw, err := githubRequest(ctx, client, http.MethodGet, githubAPIBase+"/repos/"+path+"/pulls?"+q.Encode(), token, nil)
-	if err != nil {
-		return "", fmt.Errorf("无法连接 GitHub：%v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", githubToolError("读取 PR 列表", "Pull requests 读取", resp.StatusCode, raw)
-	}
-	var items []struct {
-		Number  int64  `json:"number"`
-		Title   string `json:"title"`
-		State   string `json:"state"`
-		Draft   bool   `json:"draft"`
-		HTMLURL string `json:"html_url"`
-		User    struct {
-			Login string `json:"login"`
-		} `json:"user"`
-		Head struct {
-			Ref string `json:"ref"`
-		} `json:"head"`
-		Base struct {
-			Ref string `json:"ref"`
-		} `json:"base"`
-		CreatedAt string `json:"created_at"`
-		UpdatedAt string `json:"updated_at"`
-	}
-	if json.Unmarshal(raw, &items) != nil {
-		return "", fmt.Errorf("GitHub 返回的 PR 列表无法解析")
-	}
-	hasMore := len(items) > limit
-	if hasMore {
-		items = items[:limit]
-	}
-	out := make([]githubPullOut, 0, len(items))
-	for _, it := range items {
-		out = append(out, githubPullOut{Number: it.Number, Title: it.Title, State: it.State, Draft: it.Draft, URL: it.HTMLURL, Author: it.User.Login, Head: it.Head.Ref, Base: it.Base.Ref, Created: it.CreatedAt, Updated: it.UpdatedAt})
+	out := make([]githubPullOut, 0, limit)
+	hasMore := false
+	for page := 1; page <= maxPages; page++ {
+		if author != "" {
+			q.Set("page", strconv.Itoa(page))
+		}
+		resp, raw, err := githubRequest(ctx, client, http.MethodGet, githubAPIBase+"/repos/"+path+"/pulls?"+q.Encode(), token, nil)
+		if err != nil {
+			return "", fmt.Errorf("无法连接 GitHub：%v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return "", githubToolError("读取 PR 列表", "Pull requests 读取", resp.StatusCode, raw)
+		}
+		var items []struct {
+			Number  int64  `json:"number"`
+			Title   string `json:"title"`
+			State   string `json:"state"`
+			Draft   bool   `json:"draft"`
+			HTMLURL string `json:"html_url"`
+			User    struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			Head struct {
+				Ref string `json:"ref"`
+			} `json:"head"`
+			Base struct {
+				Ref string `json:"ref"`
+			} `json:"base"`
+			CreatedAt string `json:"created_at"`
+			UpdatedAt string `json:"updated_at"`
+		}
+		if json.Unmarshal(raw, &items) != nil {
+			return "", fmt.Errorf("GitHub 返回的 PR 列表无法解析")
+		}
+		for _, it := range items {
+			if author != "" && !strings.EqualFold(it.User.Login, author) {
+				continue
+			}
+			if len(out) == limit {
+				hasMore = true
+				break
+			}
+			out = append(out, githubPullOut{Number: it.Number, Title: it.Title, State: it.State, Draft: it.Draft, URL: it.HTMLURL, Author: it.User.Login, Head: it.Head.Ref, Base: it.Base.Ref, Created: it.CreatedAt, Updated: it.UpdatedAt})
+		}
+		if hasMore || len(items) < perPage {
+			break
+		}
+		if page == maxPages && author != "" {
+			hasMore = true
+		}
 	}
 	body, _ := json.Marshal(map[string]any{"repository": path, "pulls": out, "count": len(out), "hasMore": hasMore})
 	return string(body), nil
@@ -597,39 +703,38 @@ func githubPRStatus(ctx context.Context, token, path string, args map[string]any
 	if resp.StatusCode != http.StatusOK {
 		return "", githubToolError("读取 PR 详情", "Pull requests 读取", resp.StatusCode, raw)
 	}
-	var pr struct {
-		Number         int64  `json:"number"`
-		Title          string `json:"title"`
-		State          string `json:"state"`
-		Draft          bool   `json:"draft"`
-		Merged         bool   `json:"merged"`
-		MergeableState string `json:"mergeable_state"`
-		HTMLURL        string `json:"html_url"`
-		Head           struct {
-			SHA string `json:"sha"`
-			Ref string `json:"ref"`
-		} `json:"head"`
-		Base struct {
-			Ref string `json:"ref"`
-		} `json:"base"`
-	}
+	var pr githubPRDetail
 	if json.Unmarshal(raw, &pr) != nil || pr.Number == 0 {
 		return "", fmt.Errorf("GitHub 返回的 PR 信息无法解析")
 	}
 	checks, checksState, warnings := githubCombinedChecks(ctx, client, token, path, pr.Head.SHA)
+	reviews, approvals, reviewsWarning := githubLatestReviews(ctx, client, token, path, number)
 	result := map[string]any{
 		"repository":     path,
 		"number":         pr.Number,
 		"title":          pr.Title,
+		"author":         pr.User.Login,
+		"body":           truncateRunes(pr.Body, githubPRBodyRunes),
 		"state":          pr.State,
 		"draft":          pr.Draft,
 		"merged":         pr.Merged,
+		"mergeable":      pr.Mergeable,
 		"mergeableState": pr.MergeableState,
 		"url":            pr.HTMLURL,
 		"head":           pr.Head.Ref,
+		"headSha":        pr.Head.SHA,
 		"base":           pr.Base.Ref,
+		"additions":      pr.Additions,
+		"deletions":      pr.Deletions,
+		"changedFiles":   pr.ChangedFiles,
+		"commits":        pr.Commits,
+		"reviews":        reviews,
+		"approvals":      approvals,
 		"checksState":    checksState,
 		"checks":         checks,
+	}
+	if reviewsWarning != "" {
+		result["reviewsWarning"] = reviewsWarning
 	}
 	if len(warnings) > 0 {
 		result["checksWarnings"] = warnings
