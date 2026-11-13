@@ -170,3 +170,42 @@ func TestWorkspaceOpeningFailureAppearsInProblemsWithoutNodes(t *testing.T) {
 		t.Fatalf("retry retained stale failure: %+v", problems)
 	}
 }
+
+// Only workspace-opening preparation is request-scoped. A run-preparation
+// request (RunKind other than workspace) keeps main's behaviour: cancelling
+// the waiter neither registers live progress nor tells the runner to stop.
+func TestRunPreparationIsNotRequestScoped(t *testing.T) {
+	hub := quietRunnerHub()
+	conn := testRunnerConn("runner-run-prepare")
+	registerTestConn(hub, conn)
+	updates := make(chan domain.WorkspaceOpening, 1)
+	hub.onWorkspaceProgress = func(_ string, p domain.WorkspaceOpening) { updates <- p }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{RunID: "task-run", Operation: domain.RunnerWorkspaceOperationPrepare})
+		done <- err
+	}()
+	request := <-conn.send
+	hub.resolveWorkspaceProgress(conn, request.RequestID, domain.WorkspaceOpening{State: "running", Phase: "clone"})
+	select {
+	case p := <-updates:
+		t.Fatalf("run preparation accepted workspace-opening progress: %+v", p)
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancel result: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request cancellation blocked")
+	}
+	select {
+	case unexpected := <-conn.send:
+		t.Fatalf("run preparation was cancelled on the runner: %+v", unexpected)
+	default:
+	}
+}

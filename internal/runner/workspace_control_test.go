@@ -354,3 +354,57 @@ func TestCheckpointCancellationReleasesRunnerWorkspaceForNextTurn(t *testing.T) 
 	cancel()
 	<-finished
 }
+
+// workspace.cancel only reaches requests that own their context. A
+// run-preparation request (RunKind other than workspace) runs on the daemon
+// context, so a stray cancel for its ID must not abort the preparation.
+func TestWorkspaceCancelDoesNotAbortRunPreparation(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	request.Workflow.Nodes[0].Script = "touch preparation-started; sleep 1; touch preparation-finished"
+	defer d.closeAllRunSandboxes(context.Background())
+	peers := make(chan *websocket.Conn, 1)
+	releasePeer := make(chan struct{})
+	conn := controlTestServer(t, func(peer *websocket.Conn) { peers <- peer; <-releasePeer })
+	defer close(releasePeer)
+	peer := <-peers
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	finished := make(chan error, 1)
+	go func() { finished <- d.readControls(ctx, conn) }()
+	defer func() { cancel(); <-finished }()
+	if err := peer.WriteJSON(controlMessage{Type: "workspace.request", RequestID: "run-prepare", WorkspaceRequest: &request}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(root, "preparation-started")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("preparation did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := peer.WriteJSON(controlMessage{Type: "workspace.cancel", RequestID: "run-prepare"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = peer.SetReadDeadline(time.Now().Add(8 * time.Second))
+	for {
+		var message controlMessage
+		if err := peer.ReadJSON(&message); err != nil {
+			t.Fatal(err)
+		}
+		if message.Type == "workspace.progress" {
+			t.Fatalf("run preparation streamed workspace-opening progress: %+v", message)
+		}
+		if message.Type != "workspace.response" {
+			continue
+		}
+		if message.RequestID != "run-prepare" || message.WorkspaceResponse == nil || message.WorkspaceResponse.Status != 200 {
+			t.Fatalf("run preparation was aborted by workspace.cancel: %+v", message.WorkspaceResponse)
+		}
+		break
+	}
+	if _, err := os.Stat(filepath.Join(root, "preparation-finished")); err != nil {
+		t.Fatal("preparation script did not run to completion", err)
+	}
+}
