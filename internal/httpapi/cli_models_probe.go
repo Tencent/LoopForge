@@ -42,15 +42,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		c.JSON(http.StatusForbidden, cliModelProbeResult{Error: "只能使用当前登录用户的凭据获取模型"})
 		return
 	}
-	var req struct {
-		Engine string `json:"engine"`
-		APIKey string `json:"apiKey"`
-		// BaseURL is the form's value; null falls back to the stored one,
-		// while "" means the official endpoint.
-		BaseURL *string `json:"baseUrl"`
-		// Protocol is the agent CLI's form value; null keeps the stored one.
-		Protocol *string `json:"protocol"`
-	}
+	var req cliModelProbeRequest
 	if !decode(c, &req) {
 		return
 	}
@@ -63,22 +55,14 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: errInvalidCLIBaseURL})
 		return
 	}
-	apiKey, baseURL, protocol := strings.TrimSpace(req.APIKey), "", ""
+	var (
+		stored    domain.User
+		hasStored bool
+	)
 	if h.repo != nil {
-		if stored, found := h.repo.User(id); found {
-			storedKey, storedURL := assistantEngineCredential(stored, engine)
-			if apiKey == "" {
-				apiKey = storedKey
-			}
-			baseURL, protocol = storedURL, assistantEngineProtocol(stored, engine)
-		}
+		stored, hasStored = h.repo.User(id)
 	}
-	if req.BaseURL != nil {
-		baseURL = strings.TrimSpace(*req.BaseURL)
-	}
-	if req.Protocol != nil && runtime.IsAgentCLI(engine) {
-		protocol = runtime.AgentCLIProtocol(engine, *req.Protocol)
-	}
+	apiKey, baseURL, protocol := cliProbeCredentials(req, engine, stored, hasStored)
 	if engine == runtime.AgentCLICursor {
 		h.probeCursorModels(c, apiKey)
 		return
@@ -106,6 +90,41 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(models), Source: "remote"})
+}
+
+// cliModelProbeRequest is the body of 「获取可用模型」: the CLI and the
+// form's unsaved credential values.
+type cliModelProbeRequest struct {
+	Engine string `json:"engine"`
+	APIKey string `json:"apiKey"`
+	// BaseURL is the form's value; null falls back to the stored one,
+	// while "" means the official endpoint.
+	BaseURL *string `json:"baseUrl"`
+	// Protocol is the agent CLI's form value; null keeps the stored one.
+	Protocol *string `json:"protocol"`
+}
+
+// cliProbeCredentials merges the probe form's unsaved values over the
+// user's stored credential for engine: a blank API Key falls back to the
+// stored one, a null Base URL or protocol keeps the stored value, and the
+// protocol only applies to agent CLIs. hasStored is false when the user has
+// no stored record.
+func cliProbeCredentials(req cliModelProbeRequest, engine string, stored domain.User, hasStored bool) (apiKey, baseURL, protocol string) {
+	apiKey = strings.TrimSpace(req.APIKey)
+	if hasStored {
+		storedKey, storedURL := assistantEngineCredential(stored, engine)
+		if apiKey == "" {
+			apiKey = storedKey
+		}
+		baseURL, protocol = storedURL, assistantEngineProtocol(stored, engine)
+	}
+	if req.BaseURL != nil {
+		baseURL = strings.TrimSpace(*req.BaseURL)
+	}
+	if req.Protocol != nil && runtime.IsAgentCLI(engine) {
+		protocol = runtime.AgentCLIProtocol(engine, *req.Protocol)
+	}
+	return apiKey, baseURL, protocol
 }
 
 // probeCursorModels asks cursor-agent itself: Cursor has no Base URL, and
