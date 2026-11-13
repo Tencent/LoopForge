@@ -220,6 +220,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 	}
 	if signedIn {
 		catalog.Models = append(catalog.Models, assistantEngineModels(c.Request.Context(), user)...)
+		h.saveCursorCatalog(user)
 		catalog.Engines = assistantEngineOptions(user, shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "")
 	}
 	c.JSON(200, catalog)
@@ -295,7 +296,7 @@ func assistantFixedCatalog() assistantModelCatalog {
 }
 
 func assistantListedModel(id, name, credits string) assistantModel {
-	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits, Efforts: assistantModelEfforts(id)}
+	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits, Efforts: assistantModelEfforts(domain.User{}, id)}
 }
 
 func assistantModelFamily(id string) string {

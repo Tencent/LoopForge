@@ -189,7 +189,7 @@ func parseCursorModels(output string) []domain.CLIModel {
 func cliModelsOf(models []assistantDiscoveredModel) []domain.CLIModel {
 	out := make([]domain.CLIModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name})
+		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
 	}
 	return out
 }

@@ -408,6 +408,7 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIAPIKey = ""
 	copyInvocation.AgentCLIBaseURL = ""
 	copyInvocation.AgentCLIProtocol = ""
+	copyInvocation.AgentCLIModels = nil
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
 	if copyInvocation.Repository != nil {
@@ -471,6 +472,9 @@ type RunnerInvocation struct {
 	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`
 	AgentCLIBaseURL              string   `json:"agentCliBaseUrl,omitempty"`
 	AgentCLIProtocol             string   `json:"agentCliProtocol,omitempty"`
+	// AgentCLIModels is the responsible user's saved catalog for the agent
+	// CLI; Cursor resolves the model's effort to an ID from it.
+	AgentCLIModels []CLIModel `json:"agentCliModels,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
 	// in scripts, verification gates, and Agent hooks. It is unbound; personal
 	// credentials are applied in memory on the runner. Agent Assets stay

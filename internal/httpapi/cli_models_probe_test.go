@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"slices"
+	"reflect"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -26,7 +26,7 @@ gemini-4-argon-high - Gemini 4 Argon High
 		{ID: "gemini-4-hydrogen", Name: "Gemini 4 Hydrogen"},
 		{ID: "gemini-4-argon", Name: "Gemini 4 Argon"},
 	}
-	if !slices.Equal(got, want) {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("families:\n got %v\nwant %v", got, want)
 	}
 }
