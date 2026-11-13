@@ -71,11 +71,12 @@ func uniqueGateID(base string, used map[string]bool) string {
 }
 
 // ValidateVerificationGate requires command gates to declare run or repositories.
-// Manual gates and empty command lists may omit the field.
+// Manual gates and empty command lists may omit the field. Diff-coverage gates
+// need repositories scope (they diff a checkout) plus a readable report spec.
 func ValidateVerificationGate(gate VerificationGate) error {
 	mode := gateMode(gate)
 	switch mode {
-	case "", "command", "manual":
+	case "", GateModeCommand, GateModeManual, GateModeDiffCoverage:
 	default:
 		return fmt.Errorf("verification gate %s has invalid mode %q", gate.ID, gate.Mode)
 	}
@@ -83,7 +84,13 @@ func ValidateVerificationGate(gate VerificationGate) error {
 	if scope != "" && scope != ExecutionScopeRun && scope != ExecutionScopeRepositories {
 		return fmt.Errorf("verification gate %s has invalid executionScope %q", gate.ID, gate.ExecutionScope)
 	}
-	if mode == "manual" || !commandHasContent(gate) {
+	if gate.Coverage != nil && mode != GateModeDiffCoverage {
+		return fmt.Errorf("verification gate %s only accepts coverage settings with mode %s", gate.ID, GateModeDiffCoverage)
+	}
+	if mode == GateModeDiffCoverage {
+		return validateDiffCoverageGate(gate, scope)
+	}
+	if mode == GateModeManual || !commandHasContent(gate) {
 		return nil
 	}
 	if scope == "" {
@@ -95,6 +102,50 @@ func ValidateVerificationGate(gate VerificationGate) error {
 			id = "unnamed"
 		}
 		return fmt.Errorf("verification gate %s requires executionScope %q or %q", id, ExecutionScopeRun, ExecutionScopeRepositories)
+	}
+	return nil
+}
+
+func validateDiffCoverageGate(gate VerificationGate, scope string) error {
+	id := strings.TrimSpace(gate.ID)
+	if id == "" {
+		id = strings.TrimSpace(gate.Name)
+	}
+	if id == "" {
+		id = "unnamed"
+	}
+	if scope != ExecutionScopeRepositories {
+		return fmt.Errorf("diff_coverage gate %s requires executionScope %q", id, ExecutionScopeRepositories)
+	}
+	if !commandHasContent(gate) {
+		return fmt.Errorf("diff_coverage gate %s requires commands that produce a coverage report", id)
+	}
+	spec := gate.Coverage
+	if spec == nil {
+		return fmt.Errorf("diff_coverage gate %s requires a coverage report spec", id)
+	}
+	if strings.TrimSpace(spec.ReportPath) == "" {
+		return fmt.Errorf("diff_coverage gate %s requires coverage.reportPath", id)
+	}
+	format := strings.ToLower(strings.TrimSpace(spec.ReportFormat))
+	if format == "" {
+		return fmt.Errorf("diff_coverage gate %s requires coverage.reportFormat (%s)", id, strings.Join(GateCoverageReportFormats, ", "))
+	}
+	known := false
+	for _, candidate := range GateCoverageReportFormats {
+		if format == candidate {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return fmt.Errorf("diff_coverage gate %s has invalid coverage.reportFormat %q, want one of %s", id, spec.ReportFormat, strings.Join(GateCoverageReportFormats, ", "))
+	}
+	if spec.ThresholdPct != nil && (*spec.ThresholdPct < 0 || *spec.ThresholdPct > 100) {
+		return fmt.Errorf("diff_coverage gate %s has invalid coverage.thresholdPct %v, want 0-100", id, *spec.ThresholdPct)
+	}
+	if spec.MinChangedLines != nil && *spec.MinChangedLines < 0 {
+		return fmt.Errorf("diff_coverage gate %s has invalid coverage.minChangedLines %d, want 0 or more", id, *spec.MinChangedLines)
 	}
 	return nil
 }

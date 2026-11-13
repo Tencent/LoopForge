@@ -920,6 +920,70 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					}
 					sink(event)
 				}
+				if isDiffCoverageGate(gate) {
+					// Diff-coverage gates run the same commands, then read the
+					// diff and the report the command left behind. The verdict is
+					// computed here, per repository, so the feedback names files
+					// and lines instead of a truncated command log.
+					if gate.Coverage == nil {
+						err = fmt.Errorf("verification %s: diff_coverage 门禁缺少覆盖率报告配置", gate.Name)
+						failedAction = candidate.onFailure
+						gateRejected = failedAction == "reject"
+						break
+					}
+					coverageCmd, buildErr := diffCoverageCommand(gate, gateCmd)
+					if buildErr != nil {
+						err = fmt.Errorf("verification %s: %w", gate.Name, buildErr)
+						failedAction = candidate.onFailure
+						gateRejected = failedAction == "reject"
+						break
+					}
+					targets, targetErr := executionTargets(current, gate.ExecutionScope)
+					if targetErr != nil {
+						err = fmt.Errorf("verification %s: %w", gate.Name, targetErr)
+						failedAction = candidate.onFailure
+						gateRejected = failedAction == "reject"
+						break
+					}
+					var failures []string
+					for _, target := range targets {
+						verifyOutput, verifyErr := gateExec(coverageCmd, target, executionTargetSink(gateSink, target))
+						if verifyErr != nil {
+							detail := strings.TrimSpace(verifyOutput)
+							if len(detail) > 2_000 {
+								detail = detail[len(detail)-2_000:]
+							}
+							if detail == "" {
+								detail = "no command output"
+							}
+							failures = append(failures, fmt.Sprintf("%s门禁命令失败: %v (%s)", target.label(), verifyErr, detail))
+							continue
+						}
+						_, payload, found := splitDiffCoverageOutput(verifyOutput)
+						if !found {
+							failures = append(failures, target.label()+"门禁未输出覆盖率数据")
+							continue
+						}
+						verdict, judgeErr := judgeDiffCoveragePayload(gate, payload)
+						if judgeErr != nil {
+							failures = append(failures, target.label()+judgeErr.Error())
+							continue
+						}
+						e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.coverage.judged", Phase: "finish", Message: fmt.Sprintf("%s改动行覆盖率 %s", target.label(), coverageVerdictSummary(verdict)), Attributes: map[string]any{"gateId": gate.ID, "applicable": verdict.Applicable, "thresholdPct": verdict.ThresholdPct, "coveragePct": verdict.CoveragePct, "changedLines": verdict.ChangedLines, "coveredLines": verdict.CoveredLines, "iteration": iteration}})
+						if !verdict.Passed() {
+							failures = append(failures, target.label()+verdict.Feedback())
+						}
+					}
+					if len(failures) > 0 {
+						err = fmt.Errorf("verification %s: %s", gate.Name, strings.Join(failures, "；"))
+						failedAction = candidate.onFailure
+						gateRejected = failedAction == "reject"
+					}
+					if err != nil {
+						break
+					}
+					continue
+				}
 				verifyOutput, verifyErr := executeForTargets(current, gate.ExecutionScope, func(target executionTarget) (string, error) {
 					return gateExec(gateCmd, target, executionTargetSink(gateSink, target))
 				})
