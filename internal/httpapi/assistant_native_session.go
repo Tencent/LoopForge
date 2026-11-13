@@ -41,7 +41,7 @@ type assistantNativeSession struct {
 
 func assistantSharedSessionRoot(id string) string {
 	sum := sha256.Sum256([]byte(id))
-	return filepath.Join(assistantSessionBase(), "shared", hex.EncodeToString(sum[:]))
+	return filepath.Join(assistantConversationBase(), "shared", hex.EncodeToString(sum[:]))
 }
 
 func assistantMessageHashes(messages []assistantMessage) []string {

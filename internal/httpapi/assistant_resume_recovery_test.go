@@ -25,6 +25,30 @@ func TestHandoffPromptsAskForAShortAckInsteadOfSilence(t *testing.T) {
 	}
 }
 
+// A fallback after a handoff runs in the new mode's tool set, so the replayed
+// context must describe that mode, not the one the turn started in.
+func TestFreshPhasePromptFollowsCurrentMode(t *testing.T) {
+	h := &assistantHandlers{}
+	req := assistantRequest{Messages: []assistantMessage{{Role: "user", Content: "改一下文案"}}}
+	platform := h.freshPhasePrompt(req, t.TempDir(), 0)
+	req.workspaceMode = true
+	workspace := h.freshPhasePrompt(req, t.TempDir(), 1)
+	if !strings.Contains(platform, assistantPlatformExecutionReminder) || strings.Contains(platform, "工作区原生文件、补丁和命令直接执行") {
+		t.Fatal("platform phase prompt does not describe platform mode")
+	}
+	if strings.Contains(workspace, assistantPlatformExecutionReminder) || !strings.Contains(workspace, "工作区原生文件、补丁和命令直接执行") {
+		t.Fatal("workspace phase prompt still describes platform mode")
+	}
+	for _, prompt := range []string{platform, workspace} {
+		if !strings.Contains(prompt, "改一下文案") {
+			t.Fatal("fresh phase prompt lost the transcript")
+		}
+	}
+	if strings.Contains(platform, "本轮之前的阶段已执行过操作") || !strings.Contains(workspace, "本轮之前的阶段已执行过操作") {
+		t.Fatal("prior-phase note does not follow the handoff count")
+	}
+}
+
 func TestHandoffOutlivesOldPhaseError(t *testing.T) {
 	s := &AgentToolSession{}
 	ctx := context.Background()

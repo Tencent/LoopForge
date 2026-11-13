@@ -113,11 +113,17 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 	}
 	// Provision outside the private workspace as root even when the container
 	// runs as the service UID. Native CLI execution keeps the container's user.
-	output, err := exec.CommandContext(ctx, "docker", "exec", "--user", "0:0", "--workdir", "/", s.name, "sh", "-lc", setup, "loopforge-cli-setup", ids[0], ids[1], home).CombinedOutput()
+	toolchain, err := s.toolchainCLIExecEnv(binary)
+	if err != nil {
+		return "", err
+	}
+	setupArgs := append(append([]string{"exec", "--user", "0:0", "--workdir", "/"}, toolchain...), s.name, "sh", "-lc", setup, "loopforge-cli-setup", ids[0], ids[1], home)
+	output, err := exec.CommandContext(ctx, "docker", setupArgs...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("准备 %s 原生CLI失败（工作区镜像需支持 Node.js/npm 和 Python3）：%w: %s", provider, err, conversationSetupOutput(output))
 	}
-	if check, err := exec.CommandContext(ctx, "docker", "exec", "--workdir", "/", s.name, "python3", "-c", "import os,pwd; pwd.getpwuid(os.geteuid())").CombinedOutput(); err != nil {
+	checkArgs := append(append(append([]string{"exec", "--workdir", "/"}, toolchain...), s.name), withToolchainPath([]string{"python3", "-c", "import os,pwd; pwd.getpwuid(os.geteuid())"})...)
+	if check, err := exec.CommandContext(ctx, "docker", checkArgs...).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("验证工作区 CLI 用户失败: %w: %s", err, conversationSetupOutput(check))
 	}
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
@@ -131,11 +137,15 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 func conversationCLISetup(provider, binary string) (string, error) {
 	packages := map[string]string{
 		"codebuddy": "@tencent-ai/codebuddy-code", "codex": "@openai/codex", "claude-code": "@anthropic-ai/claude-code",
-		AgentCLIOpenCode: "opencode-ai", AgentCLIKimi: "@moonshot-ai/kimi-code", AgentCLIPi: "@earendil-works/pi-coding-agent", AgentCLIDeepSeek: "@deepseek-ai/dsh",
+		AgentCLIOpenCode: "opencode-ai", AgentCLIKimi: "@moonshot-ai/kimi-code", AgentCLIPi: "@earendil-works/pi-coding-agent", AgentCLIDeepSeek: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion,
 	}
 	installer := ""
 	if pkg := packages[provider]; pkg != "" {
-		installer = "npm install --no-audit --no-fund --prefix /opt/loopforge/conversation-cli " + shellSingleQuote(pkg) + " >&2\nln -sf ../node_modules/.bin/" + shellSingleQuote(binary) + " /opt/loopforge/conversation-cli/bin/" + shellSingleQuote(binary)
+		flags := ""
+		if provider == AgentCLIDeepSeek {
+			flags = "--engine-strict=false "
+		}
+		installer = "npm install --no-audit --no-fund " + flags + "--prefix /opt/loopforge/conversation-cli " + shellSingleQuote(pkg) + " >&2\nln -sf ../node_modules/.bin/" + shellSingleQuote(binary) + " /opt/loopforge/conversation-cli/bin/" + shellSingleQuote(binary)
 	} else {
 		switch provider {
 		case AgentCLIZCode:
@@ -150,10 +160,13 @@ func conversationCLISetup(provider, binary string) (string, error) {
 			return "", fmt.Errorf("不支持的会话CLI %s", provider)
 		}
 	}
+	// Setup runs as root in a --cap-drop=ALL container, where GNU tar's default
+	// of restoring archive owners fails with EPERM.
 	return "set -eu\n" +
 		`PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH
-export PATH
-if ! command -v python3 >/dev/null 2>&1; then
+TAR_OPTIONS=--no-same-owner
+export PATH TAR_OPTIONS
+` + toolchainPathSetup + `if ! command -v python3 >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then apt-get update >&2 && apt-get install -y python3 >&2
   elif command -v apk >/dev/null 2>&1; then apk add --no-cache python3 >&2
   else echo 'Python3 is required for native CLI hooks and process supervision' >&2; exit 1; fi
