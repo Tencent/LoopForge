@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -476,10 +477,8 @@ func cleanSources(in []string) []string {
 }
 
 func appendUnique(list []string, v string) []string {
-	for _, existing := range list {
-		if existing == v {
-			return list
-		}
+	if slices.Contains(list, v) {
+		return list
 	}
 	return append(list, v)
 }

@@ -117,12 +117,16 @@ func compactCommand(args []string) string {
 	return string(runes[:maxRunes]) + fmt.Sprintf(" … [arguments truncated, %d chars]", len(runes))
 }
 
+// sensitiveProcessEnvironmentKey matches by suffix so the key variable of a
+// newly added agent CLI is redacted without being listed here.
 func sensitiveProcessEnvironmentKey(key string) bool {
-	return key == "CODEBUDDY_API_KEY" ||
-		key == "OPENAI_API_KEY" || key == "CODEX_API_KEY" ||
-		key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "CLAUDE_CODE_OAUTH_TOKEN" ||
-		key == "AGENTFLOW_GIT_TOKEN" ||
-		strings.HasPrefix(key, "GIT_CONFIG_KEY_")
+	key = strings.ToUpper(key)
+	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD"} {
+		if strings.HasSuffix(key, suffix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(key, "GIT_CONFIG_KEY_")
 }
 
 func commandResult(err error) string {

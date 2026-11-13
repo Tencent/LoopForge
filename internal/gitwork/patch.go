@@ -261,76 +261,95 @@ func RenderPatchInventory(files []PatchFileSummary) string {
 	return strings.TrimSpace(b.String())
 }
 
+// ParseNameStatusNumstat merges `git diff --name-status` and
+// `git diff --numstat` output into one summary per path, sorted by path.
 func ParseNameStatusNumstat(nameStatus, numstat []byte) []PatchFileSummary {
-	type rec struct {
-		file  PatchFileSummary
-		order int
-	}
-	best := map[string]rec{}
-	next := 0
-	put := func(path string, update func(*PatchFileSummary)) {
-		path = filepath.ToSlash(UnquoteLsFilesPath(path))
-		if path == "" {
-			return
-		}
-		item, ok := best[path]
-		if !ok {
-			item = rec{file: PatchFileSummary{Path: path, Status: "M"}, order: next}
-			next++
-		}
-		update(&item.file)
-		item.file.Path = path
-		if item.file.Status == "" {
-			item.file.Status = "M"
-		}
-		best[path] = item
-	}
+	files := map[string]*PatchFileSummary{}
 	for _, line := range strings.Split(string(nameStatus), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
+		path, status, from, ok := parseNameStatusLine(line)
+		if !ok {
 			continue
 		}
-		parts := strings.Split(line, "\t")
-		if len(parts) < 2 || parts[0] == "" {
-			continue
-		}
-		letter := string(parts[0][0])
-		path := parts[len(parts)-1]
-		from := ""
-		if (letter == "R" || letter == "C") && len(parts) >= 3 {
-			from = filepath.ToSlash(UnquoteLsFilesPath(parts[1]))
-			path = parts[2]
-		}
-		put(path, func(f *PatchFileSummary) {
-			f.Status = letter
+		if f := patchSummaryFor(files, path); f != nil {
+			f.Status = status
 			f.RenameFrom = from
-		})
+		}
 	}
 	for _, line := range strings.Split(string(numstat), "\n") {
-		line = strings.TrimRight(line, "\r")
-		parts := strings.Split(line, "\t")
-		if len(parts) < 3 {
+		path, added, deleted, binary, ok := parseNumstatLine(line)
+		if !ok {
 			continue
 		}
-		path := parts[len(parts)-1]
-		put(path, func(f *PatchFileSummary) {
-			if parts[0] == "-" || parts[1] == "-" {
-				f.Binary = true
-				if f.Status == "M" || f.Status == "" {
-					f.Status = "B"
-				}
-				return
+		f := patchSummaryFor(files, path)
+		if f == nil {
+			continue
+		}
+		if binary {
+			f.Binary = true
+			if f.Status == "M" {
+				f.Status = "B"
 			}
-			f.Added, _ = strconv.Atoi(parts[0])
-			f.Deleted, _ = strconv.Atoi(parts[1])
-		})
+			continue
+		}
+		f.Added, f.Deleted = added, deleted
 	}
-	out := make([]PatchFileSummary, 0, len(best))
-	for _, item := range best {
-		out = append(out, item.file)
+	out := make([]PatchFileSummary, 0, len(files))
+	for _, f := range files {
+		out = append(out, *f)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// patchSummaryFor returns the summary for the normalized path, creating a
+// modified ("M") entry on first sight; it returns nil for an empty path.
+func patchSummaryFor(files map[string]*PatchFileSummary, rawPath string) *PatchFileSummary {
+	path := filepath.ToSlash(UnquoteLsFilesPath(rawPath))
+	if path == "" {
+		return nil
+	}
+	f, ok := files[path]
+	if !ok {
+		f = &PatchFileSummary{Path: path, Status: "M"}
+		files[path] = f
+	}
+	return f
+}
+
+// parseNameStatusLine parses one `--name-status` line into its raw path, the
+// single-letter status and, for renames/copies, the normalized source path.
+func parseNameStatusLine(line string) (path, status, from string, ok bool) {
+	line = strings.TrimRight(line, "\r")
+	if strings.TrimSpace(line) == "" {
+		return "", "", "", false
+	}
+	parts := strings.Split(line, "\t")
+	if len(parts) < 2 || parts[0] == "" {
+		return "", "", "", false
+	}
+	status = string(parts[0][0])
+	path = parts[len(parts)-1]
+	if (status == "R" || status == "C") && len(parts) >= 3 {
+		from = filepath.ToSlash(UnquoteLsFilesPath(parts[1]))
+		path = parts[2]
+	}
+	return path, status, from, true
+}
+
+// parseNumstatLine parses one `--numstat` line; binary files report "-" for
+// both counts. Unparseable counts read as zero.
+func parseNumstatLine(line string) (path string, added, deleted int, binary, ok bool) {
+	parts := strings.Split(strings.TrimRight(line, "\r"), "\t")
+	if len(parts) < 3 {
+		return "", 0, 0, false, false
+	}
+	path = parts[len(parts)-1]
+	if parts[0] == "-" || parts[1] == "-" {
+		return path, 0, 0, true, true
+	}
+	added, _ = strconv.Atoi(parts[0])
+	deleted, _ = strconv.Atoi(parts[1])
+	return path, added, deleted, false, true
 }
 
 var patchWorkspaceLocks sync.Map // cleaned absolute path -> *sync.Mutex

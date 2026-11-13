@@ -228,7 +228,7 @@ func (h *spacesHandlers) lane(c *gin.Context) {
 	fillLane(&detail.spaceLane, run, h.agentNamer())
 	if view, ok := h.repo.RunView(runID); ok {
 		// RunState carries raw usage only; RunView aggregates it.
-		detail.Tokens, detail.CostUSD, detail.ToolCalls = maxInt64(detail.Tokens, view.Usage.TotalTokens), maxFloat(detail.CostUSD, view.Usage.CostUSD), maxInt(detail.ToolCalls, view.ToolCalls)
+		detail.Tokens, detail.CostUSD, detail.ToolCalls = max(detail.Tokens, view.Usage.TotalTokens), max(detail.CostUSD, view.Usage.CostUSD), max(detail.ToolCalls, view.ToolCalls)
 	}
 	detail.Workspace = h.laneWorkspace(run)
 	events := run.Events
@@ -242,27 +242,6 @@ func (h *spacesHandlers) lane(c *gin.Context) {
 		detail.Artifacts = append(detail.Artifacts, spaceLaneArtifact{ID: a.ID, NodeID: a.NodeID, Attempt: a.Attempt, Name: a.Name, MediaType: a.MediaType, Size: a.Size, CreatedAt: a.CreatedAt})
 	}
 	c.JSON(http.StatusOK, detail)
-}
-
-func maxInt64(a, b int64) int64 {
-	if b > a {
-		return b
-	}
-	return a
-}
-
-func maxFloat(a, b float64) float64 {
-	if b > a {
-		return b
-	}
-	return a
-}
-
-func maxInt(a, b int) int {
-	if b > a {
-		return b
-	}
-	return a
 }
 
 // startSOPs dispatches SOPs from the space. Inputs pin the artifact versions
