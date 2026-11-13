@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // AnalyticsFilter scopes platform analytics without coupling the store to HTTP.
 type AnalyticsFilter struct {
@@ -537,10 +540,5 @@ func (f AnalyticsFilter) MatchesProject(id string) bool {
 	if f.ProjectIDs == nil {
 		return true
 	}
-	for _, allowed := range f.ProjectIDs {
-		if id == allowed {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(f.ProjectIDs, id)
 }
