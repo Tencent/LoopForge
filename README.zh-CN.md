@@ -91,6 +91,71 @@ MIRROR=ghcr.nju.edu.cn ./start.sh
 
 GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-repositories-over-ssh)，用个人密钥检出和推送分支。Issue 与 PR/MR 自动化需要托管平台的 API Token 或另行配置的 MCP。[CNB 官方仅支持 HTTPS + 访问令牌](https://docs.cnb.cool/zh/guide/git-access.html)。
 
+### 在云服务器上安装
+
+1. **准备机器。** 一台 Linux 云服务器（推荐 Ubuntu 22.04 / 24.04，x86_64 或 arm64 都可以）。镜像和沙箱工作区比较占空间，磁盘建议预留 30 GB 以上。
+2. **放通安全组。** 入站放通 22（SSH）和 8090。创建管理员账号之前，8090 只对你自己的 IP 开放。
+3. **登录服务器。** 用 `ssh root@<公网IP>`（或云厂商默认的 `ubuntu` 用户）登录。很多云厂商默认禁止 root 用密码登录，密码正确也会提示 `Permission denied`，这时改用 SSH 密钥，或在控制台用网页终端登录。
+4. **安装并启动：**
+
+   ```bash
+   sudo apt-get update && sudo apt-get install -y git curl python3
+   git clone https://github.com/Tencent/LoopForge.git
+   cd LoopForge
+   ./start.sh
+   ```
+
+   没装 Docker 时脚本会询问并自动安装。完成后会打印 `http://<公网IP>:8090`。
+5. **创建管理员。** 在浏览器打开该地址，注册的第一个账号就是管理员。之后再按团队需要放开 8090 的访问范围。只给内部成员使用时，可在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 关闭自助注册，再重新执行 `./start.sh` 生效。
+
+<details>
+<summary><b>绑定域名并开启 HTTPS</b>（推荐用于公网访问）</summary>
+
+<br>
+
+把域名的 A 记录解析到服务器公网 IP，安全组放通 80 和 443。以 Caddy 为例（Ubuntu 24.04 / Debian 12 可直接用 apt 安装），它会自动申请和续期证书：
+
+```bash
+sudo apt-get install -y caddy
+sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
+loopforge.example.com {
+    reverse_proxy 127.0.0.1:8090
+}
+EOF
+sudo systemctl reload caddy
+```
+
+然后在 `LoopForge/.env` 中加入 `AGENTFLOW_SECURE_COOKIES=true`，并重新执行 `./start.sh`。确认能通过 `https://` 访问后，可以在安全组中关闭 8090，只保留 80 和 443。
+
+</details>
+
+<details>
+<summary><b>升级与备份</b></summary>
+
+<br>
+
+升级：在 `LoopForge` 目录执行下面的命令。脚本会拉取新版本固定的镜像并重建容器，数据会保留：
+
+```bash
+git pull
+./start.sh
+```
+
+新版本如果附带 `migrations/` 下的数据迁移脚本，不会自动执行，请按[部署指南](docs/deployment.zh-CN.md)审阅后手动导入。
+
+备份数据库（建议升级前做一次，也可以放进 cron 定时执行）：
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines --triggers --databases loopforge' \
+  | gzip > "loopforge-$(date +%F).sql.gz"
+```
+
+当前用户没有 Docker 权限时，在 `docker` 前加 `sudo`。
+
+</details>
+
+> **中国大陆云主机：** 部分机器从 GitHub 拉取仓库很慢，克隆超时会导致对话工作区打不开。目前可以先为 git 配置代理，见[慢网络说明](docs/deployment.zh-CN.md#慢网络下的克隆与镜像构建限制)。后续我们会提供 CNB、镜像仓库等加速方式。
+
 ### 免 API Key 体验
 
 新注册的账号会自动加入 **LoopForge 体验项目**，其中有一条只包含脚本和人工审批的 SOP：
