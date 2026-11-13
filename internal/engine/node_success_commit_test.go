@@ -141,6 +141,37 @@ func TestCommitNodeSuccessWithoutLeaseDoesNotPublish(t *testing.T) {
 	}
 }
 
+func TestCommitNodeSuccessStoreWriteFailureDoesNotPublish(t *testing.T) {
+	t.Parallel()
+	s, _ := repo.OpenTest()
+	defer s.Close()
+	e := leaseEngine(t, s, "owner")
+	r := leaseRun(t, s, "run-commit-put-fails", "running", "running")
+	leased, err := e.acquireLease(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fences all pass and the mutation runs, but PutRun fails: the node row
+	// refuses to become succeeded. The outcome must be reported as dropped and
+	// no artifact.published may be queued for the rolled-back write.
+	if err := s.DB.Exec(`CREATE TRIGGER fail_node_success BEFORE UPDATE ON run_nodes
+		WHEN NEW.run_id = 'run-commit-put-fails' AND NEW.status = 'succeeded'
+		BEGIN SELECT RAISE(ABORT, 'injected store failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	node := domain.WorkflowNode{ID: "node", Name: "方案设计", Type: "agent"}
+	if e.commitNodeSuccess(r.ID, node, leased.Generation, 1, "done", []domain.Artifact{{ID: "a1", Name: "design"}}, "") {
+		t.Fatal("a commit whose store write failed must be reported as dropped")
+	}
+	got, _ := s.RunState(r.ID)
+	if got.Nodes["node"].Status != "running" || len(got.Artifacts) != 0 {
+		t.Fatalf("failed write left run changed: status=%s artifacts=%d", got.Nodes["node"].Status, len(got.Artifacts))
+	}
+	if n := publishedArtifactObservations(e, r.ID); n != 0 {
+		t.Fatalf("artifact.published observations = %d, want 0", n)
+	}
+}
+
 func TestCommitNodeSuccessClearsStaleErrorAndStampsFinish(t *testing.T) {
 	t.Parallel()
 	for _, gate := range []string{"", "人工验收"} {
