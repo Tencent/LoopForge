@@ -50,7 +50,10 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 		if state := cmd.ProcessState; state != nil {
 			attrs["pid"], attrs["exitCode"] = state.Pid(), state.ExitCode()
 			attrs["userCpuMs"], attrs["systemCpuMs"] = state.UserTime().Milliseconds(), state.SystemTime().Milliseconds()
-			if status, ok := state.Sys().(interface{ Signaled() bool; Signal() syscall.Signal }); ok && status.Signaled() {
+			if status, ok := state.Sys().(interface {
+				Signaled() bool
+				Signal() syscall.Signal
+			}); ok && status.Signaled() {
 				attrs["signal"] = status.Signal().String()
 			}
 		}
