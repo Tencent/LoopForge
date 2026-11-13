@@ -382,12 +382,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	user, sharedModels, ok := h.assistantChatUser(stored)
-	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
-		return
-	}
-	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", user.ID)
+	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", stored.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
@@ -418,16 +413,35 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	model := body.Model
-	if sharedModels != nil {
-		forced, allowed := assistantSponsoredModelFor(sharedModels, model)
-		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel(sharedModels)})
-			return
+	// A steer continues the conversation on the CLI it is already running on.
+	// The page sends its active model; an empty one falls back to the
+	// conversation's own model. It must never be filtered down to the
+	// CodeBuddy default, which would silently move the follow-up turn onto the
+	// CodeBuddy key.
+	model := strings.TrimSpace(body.Model)
+	if model == "" {
+		model = strings.TrimSpace(session.Model)
+		// A reply saved before model prefixes carries its CLI on the session
+		// Executor instead.
+		if model != "" && !assistantModelHasEnginePrefix(model) {
+			model = assistantRequestModel(session.Executor, model)
 		}
-		model = forced
 	}
-	model = assistantAllowedModel(model, h.chatCatalog(c.Request.Context(), user))
+	user, model, refusal := h.assistantTurnUser(stored, model)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
+		return
+	}
+	catalogEngine, _ := assistantModelEngine(model)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	if catalogEngine == assistantEngineCodeBuddy {
+		catalog = h.chatCatalog(c.Request.Context(), user)
+	}
+	model = assistantAllowedUserModel(model, catalog, user)
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(session.Messages, session.Executor), model); refusal != "" {
+		c.JSON(409, gin.H{"error": refusal})
+		return
+	}
 	if err := validateAssistantEffort(model, body.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
