@@ -1,6 +1,12 @@
 package httpapi
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"agentflow/internal/domain"
+)
 
 func TestNativeMilestoneClassifiesProtocolEvents(t *testing.T) {
 	cases := []struct {
@@ -37,5 +43,51 @@ func TestNativeMilestoneClassifiesProtocolEvents(t *testing.T) {
 				t.Fatalf("nativeMilestone(%v) = (%q, %v), want (%q, %v)", tc.raw, milestone, dedupe, tc.milestone, tc.dedupe)
 			}
 		})
+	}
+}
+
+// nativeMetadata must keep honoring nativeMilestone's dedupe flag: one-shot
+// milestones are recorded once per attempt, repeating ones every time, and a
+// new attempt starts its own dedupe window.
+func TestNativeMetadataRecordsMilestonesWithPerAttemptDedupe(t *testing.T) {
+	g := domain.AssistantGeneration{ID: "milestone-turn", SessionID: "milestone-session", Status: "running", StartedAt: time.Now().UTC()}
+	d := newAssistantDiagnosticsCollector(g)
+	user := domain.User{ID: 1}
+	first := d.begin("codex", "model-a", false, user)
+	for _, line := range []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"system","subtype":"init"}`,
+		`{"method":"turn/started"}`,
+		`{"method":"item/agentMessage/delta"}`,
+		`{"method":"item/reasoning/textDelta"}`,
+		`{"method":"turn/completed"}`,
+		`{"method":"turn/started"}`,
+		`{"method":"item/agentMessage/delta"}`,
+		`{"method":"turn/completed"}`,
+		`{"type":"system","subtype":"status"}`,
+	} {
+		first.protocol(line)
+	}
+	second := d.begin("codex", "model-a", true, user)
+	second.protocol(`{"type":"system","subtype":"init"}`)
+	second.protocol(`{"method":"item/agentMessage/delta"}`)
+
+	counts := map[string]map[string]int{}
+	for _, e := range d.snapshot(g).Timeline {
+		if e.Source != "cli" {
+			continue
+		}
+		if counts[e.AttemptID] == nil {
+			counts[e.AttemptID] = map[string]int{}
+		}
+		counts[e.AttemptID][e.Kind]++
+	}
+	wantFirst := map[string]int{"cli.initialized": 1, "model.turn_started": 2, "model.first_output_delta": 1, "model.turn_finished": 2}
+	wantSecond := map[string]int{"cli.initialized": 1, "model.first_output_delta": 1}
+	if got := counts[first.id]; !reflect.DeepEqual(got, wantFirst) {
+		t.Fatalf("first attempt milestones = %v, want %v", got, wantFirst)
+	}
+	if got := counts[second.id]; !reflect.DeepEqual(got, wantSecond) {
+		t.Fatalf("second attempt milestones = %v, want %v", got, wantSecond)
 	}
 }
