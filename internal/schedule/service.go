@@ -15,9 +15,9 @@ import (
 	"agentflow/internal/tracker"
 )
 
-// ErrAlreadyRunning is returned when a second job is started while another
-// schedule job is still executing on this instance.
-var ErrAlreadyRunning = errors.New("已有定时任务正在运行")
+// ErrAlreadyRunning is returned when a job is started while that same job is
+// still executing on this instance. Different jobs run concurrently.
+var ErrAlreadyRunning = errors.New("该定时任务正在运行")
 
 var errNotDue = errors.New("schedule job is not due")
 
@@ -41,12 +41,15 @@ type Service struct {
 	mu             sync.Mutex
 	stopCh         chan struct{}
 	stopped        bool
-	runningJob     string
-	lastFinishedAt time.Time
+	running        map[string]bool
+	lastFinishedAt map[string]time.Time
+	// dispatchMu serializes issue scanning and SOP dispatch across jobs so two
+	// trigger jobs cannot both claim the same issue; AI prompts run outside it.
+	dispatchMu sync.Mutex
 }
 
 func New(st *repo.Store, sy *tracker.Service, d Dispatcher) *Service {
-	return &Service{repo: st, sync: sy, dispatch: d}
+	return &Service{repo: st, sync: sy, dispatch: d, running: map[string]bool{}, lastFinishedAt: map[string]time.Time{}}
 }
 
 func (s *Service) SetBaselineGuard(g BaselineGuard) {
@@ -180,7 +183,7 @@ func (s *Service) StartNow(id string) (domain.ScheduleJob, error) {
 
 func (s *Service) executeAsync(job domain.ScheduleJob, triggerOrigin string) {
 	go func() {
-		defer s.release()
+		defer s.release(job.ID)
 		if _, execErr := s.execute(job, triggerOrigin); execErr != nil {
 			log.Printf("schedule job %s: %v", job.ID, execErr)
 		}
@@ -192,7 +195,7 @@ func (s *Service) runJob(id, triggerOrigin string) (domain.ScheduleJob, error) {
 	if err != nil {
 		return job, err
 	}
-	defer s.release()
+	defer s.release(job.ID)
 	return s.execute(job, triggerOrigin)
 }
 
@@ -207,28 +210,22 @@ func (s *Service) claimJob(id string, dueAt time.Time) (domain.ScheduleJob, erro
 	if !ok {
 		return domain.ScheduleJob{}, fmt.Errorf("schedule job not found")
 	}
-	if s.runningJob != "" {
-		if current, ok := s.repo.ScheduleJob(s.runningJob); ok {
-			return current, ErrAlreadyRunning
-		}
-		return job, ErrAlreadyRunning
-	}
-	if job.LastStatus == "running" {
+	if s.running[id] || job.LastStatus == "running" {
 		return job, ErrAlreadyRunning
 	}
 	if !dueAt.IsZero() {
 		candidate := job
-		// Cron occurrences during any running job are dropped, not queued.
+		// Cron occurrences while this job runs are dropped, not queued.
 		// Use completion as the lower bound without changing LastRunAt,
 		// which continues to describe the actual execution shown in the UI.
-		if strings.TrimSpace(job.Cron) != "" && s.lastFinishedAt.After(candidate.LastRunAt) {
-			candidate.LastRunAt = s.lastFinishedAt
+		if finished := s.lastFinishedAt[id]; strings.TrimSpace(job.Cron) != "" && finished.After(candidate.LastRunAt) {
+			candidate.LastRunAt = finished
 		}
 		if !jobDue(candidate, dueAt) {
 			return job, errNotDue
 		}
 	}
-	s.runningJob = id
+	s.running[id] = true
 	job.LastRunAt = time.Now().UTC()
 	job.LastStatus = "running"
 	job.LastError = ""
@@ -239,10 +236,10 @@ func (s *Service) claimJob(id string, dueAt time.Time) (domain.ScheduleJob, erro
 	return s.saveResult(job), nil
 }
 
-func (s *Service) release() {
+func (s *Service) release(id string) {
 	s.mu.Lock()
-	s.runningJob = ""
-	s.lastFinishedAt = time.Now().UTC()
+	delete(s.running, id)
+	s.lastFinishedAt[id] = time.Now().UTC()
 	s.mu.Unlock()
 }
 
@@ -270,6 +267,8 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 		job = s.saveResult(job)
 		return job, nil
 	}
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
 	matched := s.matchingIssues(job)
 	job.LastPulled = len(matched)
 	eligible := s.eligibleIssues(job, matched)

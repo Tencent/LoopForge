@@ -348,39 +348,11 @@ func (h *streamHandlers) clarifyMCPInstructionsFor(issue domain.Issue, user doma
 			b.WriteString("）\n")
 		}
 	}
-	tapdTool := func(name string) string {
-		return "tapd__" + name
-	}
 	if len(tapd) > 0 && strings.EqualFold(strings.TrimSpace(issue.Source), "tapd") {
-		ws := clarifyTAPDWorkspace(issue, project)
-		entryType, entryID := clarifyTAPDEntry(issue)
-		getTool := "stories_get"
-		switch entryType {
-		case "bug":
-			getTool = "bugs_get"
-		case "task":
-			getTool = "tasks_get"
-		}
-		if resumed {
-			fmt.Fprintf(&b, "这是 TAPD %s。对话里已有此前分析，不要再重拉原单和评论。仅当出现尚未读取的新文档链接时才用对应 MCP 读取。\n", entryType)
-		} else {
-			fmt.Fprintf(&b, "这是 TAPD %s。先静默读取原单和评论。调用 %s：tool_name=%s，tool_args.workspace_id=%s，tool_args.id=%s（字符串），tool_args.limit=1。评论同样调用该工具，tool_name=comments_get，tool_args.workspace_id=%s，tool_args.entry_type=%s，tool_args.entry_id=%s。不要用 params，必须用 tool_args。\n",
-				entryType, tapdTool("proxy_execute_tool"), getTool, ws, entryID, ws, entryType, entryID)
-		}
+		b.WriteString(clarifyTAPDReadInstruction(issue, project, resumed))
 	}
 	if len(gongfeng) > 0 && strings.EqualFold(strings.TrimSpace(issue.Source), "gongfeng") {
-		gfProject := h.clarifyGongfengProjectID(issue)
-		issueID, issueIID := "", 0
-		if issue.ExternalRef != nil {
-			issueID = strings.TrimSpace(issue.ExternalRef.ExternalID)
-			issueIID = issue.ExternalRef.ExternalIID
-		}
-		if resumed {
-			b.WriteString("这是工蜂 Issue。对话里已有此前分析，不要再重拉原单和评论。\n")
-		} else {
-			fmt.Fprintf(&b, "这是工蜂 Issue。必须读取原单：调用 gongfeng__get_issue_detail（project_id=%s, issue_iid=%d），并同步 gongfeng__get_issue_notes（project_id=%s, issue_id=%s）看评论。\n",
-				gfProject, issueIID, gfProject, issueID)
-		}
+		b.WriteString(clarifyGongfengReadInstruction(issue, h.clarifyGongfengProjectID(issue), resumed))
 	}
 	if issue.ID == "" && issue.ExternalRef == nil && (len(tapd) > 0 || len(gongfeng) > 0) {
 		b.WriteString("这是尚未建单的需求草稿，没有原单可拉。描述或对话里出现上述工具能读取的链接时必须先读取后再出题；没有链接不要为了找原单去 list。\n")
@@ -390,6 +362,42 @@ func (h *streamHandlers) clarifyMCPInstructionsFor(issue domain.Issue, user doma
 	}
 	b.WriteString("资料足够后调用 submit_clarification。\n")
 	return b.String()
+}
+
+// clarifyTAPDReadInstruction tells the clarifier how to read a TAPD-sourced
+// issue and its comments via tapd__proxy_execute_tool. A resumed conversation
+// already holds the earlier analysis, so it is told not to fetch them again.
+func clarifyTAPDReadInstruction(issue domain.Issue, project domain.Project, resumed bool) string {
+	entryType, entryID := clarifyTAPDEntry(issue)
+	if resumed {
+		return fmt.Sprintf("这是 TAPD %s。对话里已有此前分析，不要再重拉原单和评论。仅当出现尚未读取的新文档链接时才用对应 MCP 读取。\n", entryType)
+	}
+	ws := clarifyTAPDWorkspace(issue, project)
+	getTool := "stories_get"
+	switch entryType {
+	case "bug":
+		getTool = "bugs_get"
+	case "task":
+		getTool = "tasks_get"
+	}
+	return fmt.Sprintf("这是 TAPD %s。先静默读取原单和评论。调用 tapd__proxy_execute_tool：tool_name=%s，tool_args.workspace_id=%s，tool_args.id=%s（字符串），tool_args.limit=1。评论同样调用该工具，tool_name=comments_get，tool_args.workspace_id=%s，tool_args.entry_type=%s，tool_args.entry_id=%s。不要用 params，必须用 tool_args。\n",
+		entryType, getTool, ws, entryID, ws, entryType, entryID)
+}
+
+// clarifyGongfengReadInstruction tells the clarifier how to read a
+// Gongfeng-sourced issue and its notes. gongfengProject is the project path or
+// ID already resolved by the caller.
+func clarifyGongfengReadInstruction(issue domain.Issue, gongfengProject string, resumed bool) string {
+	if resumed {
+		return "这是工蜂 Issue。对话里已有此前分析，不要再重拉原单和评论。\n"
+	}
+	issueID, issueIID := "", 0
+	if issue.ExternalRef != nil {
+		issueID = strings.TrimSpace(issue.ExternalRef.ExternalID)
+		issueIID = issue.ExternalRef.ExternalIID
+	}
+	return fmt.Sprintf("这是工蜂 Issue。必须读取原单：调用 gongfeng__get_issue_detail（project_id=%s, issue_iid=%d），并同步 gongfeng__get_issue_notes（project_id=%s, issue_id=%s）看评论。\n",
+		gongfengProject, issueIID, gongfengProject, issueID)
 }
 
 func clarifyMCPWriteName(name string) bool {

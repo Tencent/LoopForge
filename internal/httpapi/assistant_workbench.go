@@ -384,7 +384,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 		}
 	}
 	if req.RunID != "" {
-		context.WriteString("你是 Main Bot。你具备当前任务工作区写权限：使用 workbench_workspace_tree/read 查看真实文件，使用 workbench_workspace_write（携带读取获得的 expectedSha256，新文件用 missing）修改文件，使用 workbench_workspace_command 执行命令验证。不要声称你只能读或只能派发；不得在本地控制平面工作目录里写任务文件。工作区不可用时如实说明，不要假装修改成功。\n")
+		context.WriteString("你是 Main Bot。先核对当前任务运行状态；SOP 执行中只读查看，停止后才能接管工作区。需要编程时先调用 workbench_workspace_open；handoff=true 时只回复一句「好的。」并结束本阶段，不向用户解释交接等内部机制，让平台自动续接 CLI，handoff=false 时先按提示暂停或接管 SOP，之后使用原生文件、补丁和命令工具修改并验证。工作区不可用时如实说明，不要假装修改成功。\n")
 		context.WriteString("当前任务有一个真实 Chromium（Agent 浏览器），用户在任务面板实时看到并可接管，阶段 Agent 也用同一个浏览器：workbench_browser_navigate 打开网页，workbench_browser_snapshot 读取页面文本和带 ref 的可交互元素，workbench_browser_click/type/press 操作，workbench_browser_screenshot 查看画面，workbench_browser_tabs 管理标签页。用户让你打开或操作网页时直接使用它们，不要声称没有浏览器，也不要用 curl 抓取代替；页面被用户改动时以最新快照为准。\n")
 	}
 	req.contextText = beijingTimestamps(context.String())
@@ -468,35 +468,42 @@ func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
 	for _, v := range h.repo.Repositories() {
 		add("repository", v.ID, v.Name, v.ProjectID, false)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-		if out[i].Type != out[j].Type {
-			return out[i].Type < out[j].Type
-		}
-		return out[i].ID < out[j].ID
-	})
-	offset, _ := strconv.Atoi(c.Query("offset"))
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > len(out) {
-		offset = len(out)
-	}
-	end := offset + 30
-	if end > len(out) {
-		end = len(out)
-	}
+	sortAssistantReferences(out)
 	if global {
-		next := 0
-		if end < len(out) {
-			next = end
-		}
-		c.JSON(200, gin.H{"items": out[offset:end], "nextOffset": next})
+		offset, _ := strconv.Atoi(c.Query("offset"))
+		items, next := pageAssistantReferences(out, offset, workbenchReferencePageSize)
+		c.JSON(200, gin.H{"items": items, "nextOffset": next})
 		return
 	}
 	c.JSON(200, out)
+}
+
+// workbenchReferencePageSize is the page size of the global reference picker.
+const workbenchReferencePageSize = 30
+
+// sortAssistantReferences orders references by name, then type, then ID.
+func sortAssistantReferences(refs []domain.AssistantReference) {
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Name != refs[j].Name {
+			return refs[i].Name < refs[j].Name
+		}
+		if refs[i].Type != refs[j].Type {
+			return refs[i].Type < refs[j].Type
+		}
+		return refs[i].ID < refs[j].ID
+	})
+}
+
+// pageAssistantReferences returns the page starting at offset (clamped into
+// range) and the offset of the next page, or 0 when this is the last page.
+func pageAssistantReferences(refs []domain.AssistantReference, offset, size int) ([]domain.AssistantReference, int) {
+	offset = max(0, min(offset, len(refs)))
+	end := min(offset+size, len(refs))
+	next := 0
+	if end < len(refs) {
+		next = end
+	}
+	return refs[offset:end], next
 }
 
 func workbenchAttachmentDir(userID int64) string {

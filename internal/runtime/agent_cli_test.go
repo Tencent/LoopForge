@@ -27,7 +27,7 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 		want []string
 	}{
 		{AgentCLICursor, AgentCLICommandOptions{}, []string{"--force", "--approve-mcps", "--model", "m1"}},
-		{AgentCLIPi, AgentCLICommandOptions{SystemPromptFile: "/s.md"}, []string{"--exclude-tools", "bash,edit,write", "--append-system-prompt", "/s.md"}},
+		{AgentCLIPi, AgentCLICommandOptions{SystemPromptFile: "/s.md"}, []string{"--exclude-tools", "bash,edit,write", "--tools", "read,codemode", "--append-system-prompt", "/s.md"}},
 		{AgentCLIDeepSeek, AgentCLICommandOptions{}, []string{"--permission-mode", "read-only"}},
 		{AgentCLIKimi, AgentCLICommandOptions{AgentFile: "/a.md"}, []string{"--agent-file", "/a.md"}},
 		{AgentCLIOpenCode, AgentCLICommandOptions{Resume: "ses_1"}, []string{"-s", "ses_1", "-m", "agentflow/m1"}},
@@ -62,6 +62,12 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 	}
 	if argv := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{Prompt: "x"}).Argv; !slices.Contains(argv, "danger-full-access") {
 		t.Errorf("SOP dsh argv: %q", argv)
+	}
+	for _, resume := range []string{"", "native-session"} {
+		command := chat(AgentCLIPi, AgentCLICommandOptions{Workspace: true, Resume: resume})
+		if command.AgentCLI.ReadOnly || !slices.Contains(command.Argv, "read,bash,edit,write,codemode") || slices.Contains(command.Argv, "--exclude-tools") {
+			t.Fatalf("Pi workspace must reset the old read-only loadout on creation and resume: %q", command.Argv)
+		}
 	}
 }
 

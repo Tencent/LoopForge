@@ -80,6 +80,7 @@ import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
 import SandboxPicker from "./SandboxPicker";
+import ExecutionMachinePicker from "./ExecutionMachinePicker";
 import { shouldRevealTitle, titleRevealTiming } from "./title-reveal.js";
 import {
   THEME_KEY,
@@ -1176,6 +1177,7 @@ export default function App() {
         <div className="header-actions">
           {chat.session ? (
             <>
+              {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
               {projectName ? (
                 <div className="menu-anchor conversation-project-anchor">
                   {/* The conversation's project; picking another one opens a
@@ -1741,16 +1743,7 @@ export default function App() {
               >
                 {!conversationStarted ? (
                 <div className="composer-context">
-                  <span
-                    className="context-pill host-status"
-                    title="对话在 LoopForge 云端运行"
-                  >
-                    <HarnessIcon name="server" size={13} interactive={false} />
-                    <span>LoopForge 云端</span>
-                    <i
-                      className={`connection-dot ${chat.ready ? "online" : ""}`}
-                    />
-                  </span>
+                  <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} />
                   <ChevronRightSmall />
                   <div className="menu-anchor">
                     <button
@@ -2093,7 +2086,7 @@ export default function App() {
                         aria-label="停止生成"
                         title="停止并保留已经生成的内容；排队的消息会暂停发送"
                         disabled={
-                          chat.submitting || chat.generation?.status !== "running"
+                          chat.submitting || chat.stopping || chat.generation?.status !== "running"
                         }
                         onClick={chat.stop}
                       >
@@ -2108,6 +2101,7 @@ export default function App() {
                         disabled={
                           !chat.ready ||
                           chat.submitting ||
+                          chat.machineSaving ||
                           (chat.activeId && chat.session?.id !== chat.activeId) ||
                           (!text.trim() && !attachments.length) ||
                           uploading

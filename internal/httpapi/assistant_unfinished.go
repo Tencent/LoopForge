@@ -73,6 +73,11 @@ func (h *assistantHandlers) keepInterruptedReply(g domain.AssistantGeneration) {
 // only discovered here (as "interrupted"), so its partial reply is kept now.
 func (h *assistantHandlers) currentGeneration(ownerID int64, sessionID string) (domain.AssistantGeneration, bool) {
 	g, ok := h.repo.AssistantGeneration(ownerID, sessionID)
+	if ok {
+		if _, local := assistantLiveGenerations.Load(g.ID); !local {
+			h.settleLegacyWorkspaceNativeApprovals(g)
+		}
+	}
 	if ok && g.Status == "interrupted" {
 		g.UserID = ownerID
 		h.keepInterruptedReply(g)

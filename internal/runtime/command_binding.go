@@ -30,6 +30,9 @@ func upsertEnv(env []string, key, value string) []string {
 }
 
 func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (CommandSpec, error) {
+	if command.bindingsPrepared {
+		return command, nil
+	}
 	bound := command
 	bound.environment = make(map[string]string, len(command.environment)+16)
 	for key, value := range command.environment {
@@ -42,6 +45,12 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
+	}
+	if command.Provider == "codebuddy" {
+		// Every conversation and workspace gets its own CLI home, and CodeBuddy
+		// downloads its built-in plugin marketplaces (about 71 MB) into each one.
+		// LoopForge writes skills and agents itself and installs no plugins.
+		bound.environment["CODEBUDDY_SKIP_BUILTIN_MARKETPLACE"] = "1"
 	}
 	// Validate every private-home component before any credential binding can
 	// write configuration. The sandbox may have replaced a parent with a symlink.

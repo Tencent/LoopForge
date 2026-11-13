@@ -87,15 +87,13 @@ func (h *mcpHandlers) mcpFiles(c *gin.Context) {
 	for i, p := range plain {
 		names[i] = p.path
 	}
-	if _, nested := sharedTopDir(names); nested {
-		for i := range plain {
-			clean, err := cleanUploadPath(strings.Join(strings.Split(plain[i].path, "/")[1:], "/"))
-			if err != nil {
-				c.JSON(400, map[string]string{"error": err.Error()})
-				return
-			}
-			plain[i].path = clean
-		}
+	names, err := stripUploadTopDir(names)
+	if err != nil {
+		c.JSON(400, map[string]string{"error": err.Error()})
+		return
+	}
+	for i := range plain {
+		plain[i].path = names[i]
 	}
 	for _, part := range plain {
 		if seen[part.path] {

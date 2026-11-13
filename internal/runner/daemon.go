@@ -27,9 +27,13 @@ import (
 // only makes outbound connections: HTTPS for durable task data and one WSS
 // control channel for low-latency server push (cli-connect.md).
 type Daemon struct {
-	cfg      Config
-	client   *Client
-	executor *runtime.ExecutorRunner
+	conversationProcesses runtime.ConversationProcessPool
+	conversationMu        sync.Mutex
+	conversationForward   runtime.ConversationToolForward
+	conversationReplies   map[string]chan domain.RunnerToolResponse
+	cfg                   Config
+	client                *Client
+	executor              *runtime.ExecutorRunner
 
 	mu                   sync.Mutex
 	state                daemonState
@@ -1381,7 +1385,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionGitSSH
+var runnerVersion = "0.10.1"
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

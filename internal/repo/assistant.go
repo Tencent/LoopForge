@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -62,7 +63,14 @@ func (r *AssistantRepo) assistantSessionSummaries() *gorm.DB {
 	if r.DB.Dialector.Name() != "sqlite" {
 		summary = "CAST((" + r.assistantParticipantSummarySQL() + ") AS JSON)"
 	}
-	return r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.participantSummaryMessages', " + summary + ") AS payload")
+	return r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', " + r.assistantExecutionMessageCountSQL() + ", '$.participantSummaryMessages', " + summary + ") AS payload")
+}
+
+func (r *AssistantRepo) assistantExecutionMessageCountSQL() string {
+	if r.DB.Dialector.Name() == "sqlite" {
+		return "COALESCE(JSON_ARRAY_LENGTH(payload, '$.messages'), 0)"
+	}
+	return "COALESCE(JSON_LENGTH(JSON_EXTRACT(payload, '$.messages')), 0)"
 }
 
 // noSummaryProjection is process-wide: production has a single datasource.
@@ -95,7 +103,7 @@ func (r *AssistantRepo) findAssistantSessionSummaries(where string, args ...any)
 	var err error
 	fallback := func() ([]assistantSessionRow, error) {
 		var out []assistantSessionRow
-		err := r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload").Where(where, args...).Find(&out).Error
+		err := r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', "+r.assistantExecutionMessageCountSQL()+") AS payload").Where(where, args...).Find(&out).Error
 		sortAssistantSessionRows(out)
 		return out, err
 	}
@@ -217,18 +225,41 @@ func (r *AssistantRepo) backfillAssistantParticipants(rows []assistantSessionRow
 }
 
 func (r *AssistantRepo) PutAssistantSession(userID int64, v domain.AssistantSession) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var row assistantSessionRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", assistantRecordID(v.ID)).Take(&row).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	return r.retryAssistantDeadlock(func() error {
+		return r.DB.Transaction(func(tx *gorm.DB) error {
+			var row assistantSessionRow
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", assistantRecordID(v.ID)).Take(&row).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			scoped := *r
+			base := *r.deps
+			base.DB = tx
+			scoped.deps = &base
+			return scoped.putAssistantSession(userID, v)
+		})
+	})
+}
+
+// retryAssistantDeadlock runs a transaction that locks a possibly missing
+// session row. Locking two missing IDs can deadlock their shared InnoDB index
+// gap. MySQL has rolled back the entire victim transaction, so retry only that
+// explicit error; unknown commit/connection failures are not replayed.
+func (r *AssistantRepo) retryAssistantDeadlock(transaction func() error) error {
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		err = transaction()
+		var sqlErr *mysqldriver.MySQLError
+		if !errors.As(err, &sqlErr) || sqlErr.Number != 1213 || attempt == 5 {
 			return err
 		}
-		scoped := *r
-		base := *r.deps
-		base.DB = tx
-		scoped.deps = &base
-		return scoped.putAssistantSession(userID, v)
-	})
+		select {
+		case <-r.DB.Statement.Context.Done():
+			return r.DB.Statement.Context.Err()
+		case <-time.After(time.Duration(1<<attempt) * 5 * time.Millisecond):
+		}
+	}
+	return err
 }
 
 // SetAssistantSessionGeneratedTitle replaces a new session's prompt title
@@ -276,6 +307,24 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 	if existing, ok := r.sessionByID(v.ID); ok && existing.UserID != userID {
 		return errors.New("assistant session belongs to another user")
 	}
+	old, exists := r.AssistantSession(userID, v.ID)
+	if exists {
+		target := old.Execution()
+		if old.ExecutionLocked() && v.ExecutionTarget != nil && *v.ExecutionTarget != target {
+			return ErrAssistantExecutionLocked
+		}
+		if old.ExecutionLocked() || v.ExecutionTarget == nil {
+			v.ExecutionTarget = &target
+		}
+		v.ExecutionTargetLocked = old.ExecutionLocked() || v.ExecutionTargetLocked
+		v.RuntimeMode = old.Mode()
+	} else {
+		if v.ExecutionTarget == nil {
+			v.ExecutionTarget = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+		}
+		v.RuntimeMode = domain.AssistantModePlatform
+	}
+
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	if old, ok := r.AssistantSession(userID, v.ID); ok && !old.CreatedAt.IsZero() {
 		v.CreatedAt = old.CreatedAt
@@ -352,6 +401,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 	// The latest reply and its read state are projections for the history
 	// list, recomputed on every listing; a saved transcript never stores them.
 	v.GenerationID, v.Unread = "", false
+	v.ExecutionTargetLocked = v.ExecutionLocked()
 	deriveAssistantParticipants(&v, v.Messages)
 	return upsert(r.DB, "assistant_sessions", map[string]any{
 		"id":         v.ID,
@@ -578,8 +628,19 @@ func (r *AssistantRepo) taskByID(id string) (domain.AssistantTask, bool) {
 func decodeAssistantSession(row assistantSessionRow) domain.AssistantSession {
 	var item domain.AssistantSession
 	_ = json.Unmarshal(row.Payload, &item)
+	var summary struct {
+		MessageCount int `json:"executionMessageCount"`
+	}
+	_ = json.Unmarshal(row.Payload, &summary)
+	item.ExecutionTargetLocked = item.ExecutionLocked() || summary.MessageCount > 0
 	item.ID = row.ID
 	item.UserID = row.UserID
+	if item.ExecutionTarget == nil {
+		item.ExecutionTarget = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+	}
+	if item.RuntimeMode == "" {
+		item.RuntimeMode = domain.AssistantModePlatform
+	}
 	if item.ProjectID == "" {
 		item.ProjectID = row.ProjectID
 	}

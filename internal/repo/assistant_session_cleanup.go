@@ -21,6 +21,13 @@ func (r *AssistantRepo) ListAssistantSessionsBySource(source string) []domain.As
 	return r.assistantSessionsBy("source = ?", source)
 }
 
+// AssistantSessionIDs lists every stored conversation id.
+func (r *AssistantRepo) AssistantSessionIDs() ([]string, error) {
+	var ids []string
+	err := r.DB.Table("assistant_sessions").Pluck("id", &ids).Error
+	return ids, err
+}
+
 // ListAssistantSessionsByTask returns the conversations a scheduled task or
 // assistant task produced, so a new run can keep only its own.
 func (r *AssistantRepo) ListAssistantSessionsByTask(source, taskID string) []domain.AssistantSession {

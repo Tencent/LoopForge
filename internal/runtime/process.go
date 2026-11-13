@@ -14,6 +14,8 @@ import (
 
 const processWaitDelay = time.Second
 
+var errProcessNotStarted = errors.New("process was not started")
+
 func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	var buf bytes.Buffer
 	var mu sync.Mutex
@@ -39,6 +41,12 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 		err = cmd.Wait()
 	} else if sink != nil {
 		sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})
+	}
+	if err != nil && cmd.Process == nil {
+		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
+	if cmd.Process != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	outputIncomplete := errors.Is(err, exec.ErrWaitDelay)
 	if errors.Is(err, exec.ErrWaitDelay) {

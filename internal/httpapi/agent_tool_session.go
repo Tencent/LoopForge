@@ -51,13 +51,20 @@ type AgentTerminalResult struct {
 // The token is CSPRNG random and is never logged or returned to
 // the browser.
 type AgentToolSession struct {
-	Token          string
-	UserID         int64
-	ProjectID      string
-	Mode           AgentToolMode
-	IssueID        string
-	WorkspaceToken string
-	RunID          string
+	toolsMu           sync.RWMutex
+	pendingMode       string
+	modeAction        func(context.Context) error
+	SelectedMCPIDs    map[string]bool
+	ExecutionRunnerID string
+	RuntimeMode       string
+	Notify            func(string, any)
+	Token             string
+	UserID            int64
+	ProjectID         string
+	Mode              AgentToolMode
+	IssueID           string
+	WorkspaceToken    string
+	RunID             string
 	// ChatSessionID/ChatOwnerID identify the ordinary conversation this turn
 	// belongs to, so Main Bot can open and bind a temporary workspace there.
 	ChatSessionID string
@@ -96,12 +103,13 @@ type AgentToolSession struct {
 	// dispatches are the Agent calls still running this turn. A subagent
 	// works in the bound workspace, so it is not switched under it.
 	// The value is the subagent id once the stream reports it.
-	dispatches  map[string]string
-	closed      atomic.Bool
-	committed   atomic.Bool
-	ctx         context.Context
-	stopContext func() bool // protected by mu
-	CancelModel context.CancelFunc
+	dispatches        map[string]string
+	nativePhaseClosed atomic.Bool
+	closed            atomic.Bool
+	committed         atomic.Bool
+	ctx               context.Context
+	stopContext       func() bool // protected by mu
+	CancelModel       context.CancelFunc
 }
 
 type agentReplyFile struct {

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -23,10 +24,24 @@ type assistantGenerationRecorder struct {
 
 // newAssistantGenerationRecorder registers g as live; call close when the
 // turn's final state has been checkpointed.
-func newAssistantGenerationRecorder(g domain.AssistantGeneration) *assistantGenerationRecorder {
+func newAssistantGenerationRecorder(g domain.AssistantGeneration, cancel ...context.CancelFunc) *assistantGenerationRecorder {
 	r := &assistantGenerationRecorder{g: g, live: &assistantLiveGeneration{changed: make(chan struct{})}, diagnostics: newAssistantDiagnosticsCollector(g)}
 	r.live.read = r.snapshot
 	r.live.diagnostics = func() domain.AssistantDiagnostics { return r.diagnostics.snapshot(r.snapshot()) }
+	if len(cancel) > 0 {
+		r.live.cancel = func() {
+			r.mu.Lock()
+			running := r.g.Status == "running"
+			if running {
+				r.g.CancelRequested = true
+			}
+			r.mu.Unlock()
+			if running {
+				cancel[0]()
+				r.live.publish()
+			}
+		}
+	}
 	assistantLiveGenerations.Store(g.ID, r.live)
 	return r
 }
@@ -54,6 +69,13 @@ func (r *assistantGenerationRecorder) sink(kind string, value any) {
 	defer func() { r.mu.Unlock(); r.live.publish() }()
 	raw, _ := json.Marshal(value)
 	switch kind {
+	case "runtime_mode":
+		var update struct {
+			Mode string `json:"mode"`
+		}
+		if json.Unmarshal(raw, &update) == nil && (update.Mode == domain.AssistantModePlatform || update.Mode == domain.AssistantModeWorkspace) {
+			r.g.RuntimeMode = update.Mode
+		}
 	case "thought":
 		if len(raw) > 256<<10 {
 			return
