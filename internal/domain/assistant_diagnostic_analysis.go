@@ -20,33 +20,7 @@ func AnalyzeAssistantDiagnostics(d *AssistantDiagnostics) {
 	}
 	requestIDs := map[string]bool{}
 	traceIDs := map[string]bool{}
-	toolFailures, pending := 0, 0
-	firstFailedTool := ""
-	for i := range d.Tools {
-		t := &d.Tools[i]
-		if t.Status == "failed" {
-			toolFailures++
-			if firstFailedTool == "" {
-				firstFailedTool = fmt.Sprintf("%s（来源：%s）", t.Name, t.Source)
-			}
-		}
-		if t.Status == "running" || t.Status == "unfinished" {
-			if d.Status != "running" {
-				t.Status = "unfinished"
-			}
-			pending++
-			a.Evidence = append(a.Evidence, fmt.Sprintf("工具 %s（%s，来源：%s）有开始记录，未收到结束记录", t.Name, t.ID, t.Source))
-		}
-		if t.RequestID != "" {
-			requestIDs[t.RequestID] = true
-		}
-		if t.TraceID != "" {
-			traceIDs[t.TraceID] = true
-		}
-	}
-	if toolFailures > 0 {
-		a.Evidence = append(a.Evidence, fmt.Sprintf("记录到 %d 次工具失败（首个：%s）；工具错误本身不直接等同于整轮生成失败", toolFailures, firstFailedTool))
-	}
+	pending := analyzeDiagnosticTools(d, a, requestIDs, traceIDs)
 	hasEarlyError := false
 	for i := range d.Attempts {
 		attempt := &d.Attempts[i]
@@ -160,6 +134,40 @@ func AnalyzeAssistantDiagnostics(d *AssistantDiagnostics) {
 	if len(a.Unknowns) > 0 && d.Status != "completed" {
 		a.NextSteps = appendUniqueDiagnostic(a.NextSteps, "优先检查 firstError、失败/未完成工具（tools）、termination 和 timeline；无法确认的部分以 unknowns 为准。")
 	}
+}
+
+// analyzeDiagnosticTools records tool failure and unfinished-tool evidence,
+// collects tool request/trace IDs and returns the number of pending tools.
+// Tools still running after the generation stopped are marked unfinished.
+func analyzeDiagnosticTools(d *AssistantDiagnostics, a *AssistantDiagnosticAssessment, requestIDs, traceIDs map[string]bool) int {
+	toolFailures, pending := 0, 0
+	firstFailedTool := ""
+	for i := range d.Tools {
+		t := &d.Tools[i]
+		if t.Status == "failed" {
+			toolFailures++
+			if firstFailedTool == "" {
+				firstFailedTool = fmt.Sprintf("%s（来源：%s）", t.Name, t.Source)
+			}
+		}
+		if t.Status == "running" || t.Status == "unfinished" {
+			if d.Status != "running" {
+				t.Status = "unfinished"
+			}
+			pending++
+			a.Evidence = append(a.Evidence, fmt.Sprintf("工具 %s（%s，来源：%s）有开始记录，未收到结束记录", t.Name, t.ID, t.Source))
+		}
+		if t.RequestID != "" {
+			requestIDs[t.RequestID] = true
+		}
+		if t.TraceID != "" {
+			traceIDs[t.TraceID] = true
+		}
+	}
+	if toolFailures > 0 {
+		a.Evidence = append(a.Evidence, fmt.Sprintf("记录到 %d 次工具失败（首个：%s）；工具错误本身不直接等同于整轮生成失败", toolFailures, firstFailedTool))
+	}
+	return pending
 }
 
 func appendUniqueDiagnostic(items []string, value string) []string {
