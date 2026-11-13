@@ -62,6 +62,9 @@ func prepareRepositories(ctx context.Context, workspace string, repositories []d
 	}
 	for _, rc := range repositories {
 		if err := prepareRepository(ctx, repositoryWorkspacePath(workspace, rc), rc); err != nil {
+			if rc.Provider == domain.RepositoryProviderGitLab {
+				err = gitLabOperationError{cause: err}
+			}
 			return fmt.Errorf("repository %s: %w", rc.Name, err)
 		}
 	}
@@ -96,6 +99,11 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		return nil
 	}
 	ctx = withRepositoryGit(ctx, repository)
+	if credential, scoped := gitwork.HTTPSCredentialFrom(ctx); scoped {
+		if err := credential.Check(repository.CloneURL); err != nil {
+			return err
+		}
+	}
 	if repository.RequireExistingWorkBranch && !existingDevelopmentBranch(repository) {
 		return fmt.Errorf("continuing an existing branch requires a development branch distinct from the main and integration branches")
 	}

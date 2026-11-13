@@ -83,6 +83,16 @@ Cloning a repository and building a custom sandbox image report progress while t
 
 A clone that is stopped this way is not retried, since a retry would wait on the same network. When the execution host reaches GitHub or Debian mirrors slowly, point git at a proxy (`git config --global http.proxy`) and use a nearby package mirror in the Dockerfile rather than raising these limits.
 
+### GitLab repositories
+
+In **Personal settings → Personal credentials → GitLab**, enter your GitLab HTTPS instance URL (for example, `https://gitlab.com`) and a personal access token from that instance. Each LoopForge user can configure one instance, including a self-managed instance installed under a URL subpath. Search and checkout use `read_api` plus `read_repository`. Use `write_repository` in place of `read_repository` to push, or use a PAT with `api`. When token introspection is unavailable, LoopForge verifies the account and project listing through the GitLab REST API.
+
+In **Project settings → Code repositories → Add repository**, choose **From GitLab** to search and bind repositories using your GitLab permissions. LoopForge checks out the repositories selected for the requirement with the assigned account's PAT. A conversation submission uses the requester's PAT to push the work branch.
+
+For an existing database, `migrations/029_gitlab_credentials.sql` contains the additive schema changes. Apply it before starting the updated platform if you manage schema changes manually.
+
+The platform and execution machines must reach the instance and trust its TLS certificate. Managed checkout uses Git **2.37** or later. For remote execution, install or update the Runner from this LoopForge deployment. It sends `supportsGitLabPAT: true` on registration, heartbeat, and task claims. Omitting the field means no GitLab PAT support, regardless of the upstream version. Update the platform before replacing existing runners. For a private-network GitLab instance, the deployment administrator must list its exact hostname in `AGENTFLOW_GITLAB_PRIVATE_HOSTS` on the platform and machines performing managed Git operations. Multiple hostnames can be separated by commas.
+
 ### Git repositories over SSH
 
 Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other Git hosts that offer this transport. In **Project settings → Code repositories** or **Quick access**, enter the clone address, such as `git@gitlab.com:group/repo.git` or `ssh://git@git.example.org:2222/group/repo.git`, and select the existing default branch. GitHub HTTPS continues to use GitHub authorization or a PAT.

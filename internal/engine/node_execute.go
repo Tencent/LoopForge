@@ -2,7 +2,6 @@ package engine
 
 import (
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -466,8 +465,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	current, _ = e.repo.RunState(runID)
 	gitCredentials := sb.credentialSnapshot()
 	gitTok := gitCredentials.GitToken
-	ctx = withGitToken(ctx, gitTok)
-	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
+	ctx = withRunGitCredentials(ctx, gitCredentials)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	// Repository checkout and Agent-configuration index isolation belong to the
 	// run environment, not to each node. The same checkout and .git/index are
@@ -759,9 +757,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				return result, dispatchErr
 			}
 			repositories := current.RepositoryContexts()
+			gitHubOptional := len(repositories) > 0
+			for _, repository := range repositories {
+				gitHubOptional = gitHubOptional && repository.UsesGitTransportOnly()
+			}
 			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{
 				GitToken: gitTok, RequireCredentials: true,
-				SSHRepositoriesOnly: len(repositories) > 0 && len(sshRepositoryURLs(repositories)) == len(repositories),
+				GitHubOptional: gitHubOptional,
 			})
 			for _, warning := range skipped {
 				warnMCPSkipped(warning)

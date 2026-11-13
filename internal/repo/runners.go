@@ -130,9 +130,10 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 }
 
 func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
-	if v.Invocation != nil && len(v.Invocation.GitSSHKeys) > 0 {
+	if v.Invocation != nil && (len(v.Invocation.GitSSHKeys) > 0 || v.Invocation.GitLabURL != "" || v.Invocation.GitLabToken != "") {
 		invocation := *v.Invocation
 		invocation.GitSSHKeys = nil
+		invocation.GitLabURL, invocation.GitLabToken = "", ""
 		v.Invocation = &invocation
 	}
 	return mustJSON(runnerTaskPayload{
@@ -181,7 +182,8 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 	}
 	return upsert(r.DB, "runners", map[string]any{
 		"id": v.ID, "name": v.Name, "status": v.Status, "os": v.OS, "arch": v.Arch,
-		"runner_version": v.RunnerVersion, "labels": jsonBytes(v.Labels), "max_concurrency": v.MaxConcurrency,
+		"runner_version": v.RunnerVersion, "supports_gitlab_pat": v.SupportsGitLabPAT,
+		"labels": jsonBytes(v.Labels), "max_concurrency": v.MaxConcurrency,
 		"owner_user_id": nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
 		"session_expires_at": v.SessionExpiresAt, "runtimes": jsonBytes(v.Runtimes),
 		"last_seen_at": v.LastSeenAt, "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
@@ -234,7 +236,8 @@ func runnerFromRow(row runnerRow) domain.Runner {
 	v := domain.Runner{
 		ID: row.ID, Name: row.Name, Status: row.Status, OS: row.OS, Arch: row.Arch,
 		RunnerVersion: row.RunnerVersion, MaxConcurrency: row.MaxConcurrency,
-		SessionTokenHash: row.SessionTokenHash,
+		SupportsGitLabPAT: row.SupportsGitLabPAT,
+		SessionTokenHash:  row.SessionTokenHash,
 	}
 	if row.OwnerUserID != nil {
 		v.OwnerUserID = *row.OwnerUserID
@@ -297,7 +300,7 @@ func (r *RunnersRepo) RunnerSessionByHash(hash string) (domain.Runner, bool) {
 // RunnerHeartbeat records liveness and the latest runtime inventory. The
 // server-side disabled flag survives: a CLI disabled from the 执行器 page
 // stays disabled even though the daemon keeps reporting it online.
-func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime, version string, now, sessionExpiresAt time.Time) error {
+func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime, version string, supportsGitLabPAT bool, now, sessionExpiresAt time.Time) error {
 	current, ok := r.runnerRow(id)
 	disabled := map[string]bool{}
 	authModes := map[string]string{}
@@ -332,6 +335,7 @@ func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime
 	updates := map[string]any{
 		"status": domain.RunnerStatusOnline, "last_seen_at": now, "runtimes": string(raw),
 		"session_expires_at": sessionExpiresAt, "updated_at": now,
+		"supports_gitlab_pat": supportsGitLabPAT,
 	}
 	if version = strings.TrimSpace(version); version != "" {
 		updates["runner_version"] = version
@@ -500,8 +504,17 @@ func (r *RunnersRepo) RunnerTasks() []domain.RunnerTask {
 	return out
 }
 
+func (r *RunnersRepo) queuedRunnerTasks(db *gorm.DB, runnerID string, providers []string, supportsGitLabPAT bool) *gorm.DB {
+	query := db.Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, providers)
+	if !supportsGitLabPAT {
+		// gitLabUserId is omitted for tasks that don't require a GitLab PAT.
+		query = query.Where(r.sqlJSONText("$.invocation.gitLabUserId")+" IS NULL", "$.invocation.gitLabUserId")
+	}
+	return query
+}
+
 // RunnerTaskAvailable checks for eligible queued work without taking a lease.
-func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string) (bool, error) {
+func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string, supportsGitLabPAT bool) (bool, error) {
 	if strings.TrimSpace(runnerID) == "" || len(providers) == 0 {
 		return false, nil
 	}
@@ -515,7 +528,7 @@ func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string) (
 		return false, nil
 	}
 	var rows []runnerTaskRow
-	err := r.DB.Select("id").Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).Limit(1).Find(&rows).Error
+	err := r.queuedRunnerTasks(r.DB, runnerID, allowed, supportsGitLabPAT).Select("id").Limit(1).Find(&rows).Error
 	return len(rows) > 0, err
 }
 
@@ -523,7 +536,7 @@ func (r *RunnersRepo) RunnerTaskAvailable(runnerID string, providers []string) (
 // in the runner's available list and whose runner targeting (if any) matches.
 // The transactional claim guarantees exactly one winner even when several
 // runners wake up at the same time.
-func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now time.Time, leaseTTL time.Duration) (domain.RunnerTask, bool, error) {
+func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, supportsGitLabPAT bool, now time.Time, leaseTTL time.Duration) (domain.RunnerTask, bool, error) {
 	if strings.TrimSpace(runnerID) == "" {
 		return domain.RunnerTask{}, false, fmt.Errorf("runner id is required")
 	}
@@ -543,8 +556,7 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 	var found bool
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var rows []runnerTaskRow
-		if err := r.locking(tx).
-			Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).
+		if err := r.queuedRunnerTasks(r.locking(tx), runnerID, allowed, supportsGitLabPAT).
 			Order("created_at").Limit(1).
 			Find(&rows).Error; err != nil {
 			return err
@@ -678,6 +690,7 @@ func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
 	task.Invocation.AgentCLIBaseURL = ""
 	task.Invocation.GitSSHUserID = 0
 	task.Invocation.GitSSHKeys = nil
+	task.Invocation.GitLabUserID = 0
 	if task.Invocation.Repository != nil {
 		task.Invocation.Repository.GitToken = ""
 	}

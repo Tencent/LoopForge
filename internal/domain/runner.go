@@ -128,13 +128,14 @@ const RunnerVersionExistingWorkBranch = "0.7.0"
 const RunnerVersionCreateNewWorkBranch = "0.9.1"
 
 type Runner struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	OS             string   `json:"os"`
-	Arch           string   `json:"arch"`
-	RunnerVersion  string   `json:"runnerVersion"`
-	Labels         []string `json:"labels,omitempty"`
-	MaxConcurrency int      `json:"maxConcurrency"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	OS                string   `json:"os"`
+	Arch              string   `json:"arch"`
+	RunnerVersion     string   `json:"runnerVersion"`
+	SupportsGitLabPAT bool     `json:"supportsGitLabPAT,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+	MaxConcurrency    int      `json:"maxConcurrency"`
 	// RunLimit caps concurrently admitted top-level SOP runs on a personal
 	// machine, counted like the project limit. 0 means unlimited.
 	RunLimit   int             `json:"runLimit"`
@@ -410,6 +411,8 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIProtocol = ""
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
+	copyInvocation.GitLabUserID = 0
+	copyInvocation.GitLabURL, copyInvocation.GitLabToken = "", ""
 	if copyInvocation.Repository != nil {
 		copyRepository := *copyInvocation.Repository
 		copyRepository.GitToken = ""
@@ -488,6 +491,10 @@ type RunnerInvocation struct {
 	// authenticated claim or on the outbound workspace control connection.
 	GitSSHUserID int64             `json:"gitSshUserId,omitempty"`
 	GitSSHKeys   map[string]string `json:"gitSshKeys,omitempty"` // clone URL to private key
+	// GitLabToken is resolved at authenticated claim or workspace preparation.
+	GitLabUserID int64  `json:"gitLabUserId,omitempty"`
+	GitLabURL    string `json:"gitLabUrl,omitempty"`
+	GitLabToken  string `json:"gitLabToken,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository
 	// support). Each entry checks out into its Dir under the task workspace.
 	Repositories []RunnerRepository `json:"repositories,omitempty"`
@@ -504,6 +511,7 @@ type RunnerRepository struct {
 	WorkBranch   string `json:"workBranch,omitempty"`
 	GitToken     string `json:"gitToken,omitempty"`
 	UseSSH       bool   `json:"useSsh,omitempty"`
+	UseGitLab    bool   `json:"useGitLab,omitempty"`
 	// RequireExistingWorkBranch keeps explicit continuation on an existing
 	// remote head. Missing/deleted heads are errors, never branch creation.
 	RequireExistingWorkBranch bool `json:"requireExistingWorkBranch,omitempty"`

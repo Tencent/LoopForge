@@ -39,7 +39,7 @@ func TestRunnerTaskClaimIsExclusive(t *testing.T) {
 	putQueuedTask(t, s, "rt-1", "codex", "", 0)
 
 	now := time.Now().UTC()
-	first, claimed, err := s.ClaimRunnerTask("runner-a", []string{"codex"}, now, 2*time.Minute)
+	first, claimed, err := s.ClaimRunnerTask("runner-a", []string{"codex"}, false, now, 2*time.Minute)
 	if err != nil || !claimed {
 		t.Fatalf("first claim failed: claimed=%v err=%v", claimed, err)
 	}
@@ -50,7 +50,7 @@ func TestRunnerTaskClaimIsExclusive(t *testing.T) {
 		t.Fatalf("attempt = %d, want 1", first.Attempt)
 	}
 
-	_, claimed, err = s.ClaimRunnerTask("runner-b", []string{"codex"}, now, 2*time.Minute)
+	_, claimed, err = s.ClaimRunnerTask("runner-b", []string{"codex"}, false, now, 2*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestRunnerHeartbeatPreservesRuntimeAuthMode(t *testing.T) {
 	if err := s.SetRunnerRuntimeAuthMode("runner-auth", "codex", domain.RuntimeAuthPersonal, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RunnerHeartbeat("runner-auth", []domain.RunnerRuntime{{Provider: "codex", Status: domain.RuntimeStatusOnline}}, "", now.Add(time.Second), now.Add(30*24*time.Hour)); err != nil {
+	if err := s.RunnerHeartbeat("runner-auth", []domain.RunnerRuntime{{Provider: "codex", Status: domain.RuntimeStatusOnline}}, "", false, now.Add(time.Second), now.Add(30*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	runner, _ := s.Runner("runner-auth")
@@ -99,7 +99,7 @@ func TestAgentCLIHeartbeatForcesPersonalAuth(t *testing.T) {
 	if err := s.SetRunnerRuntimeAuthMode("runner-agy", "opencode", domain.RuntimeAuthLocal, now); err == nil {
 		t.Fatal("local auth accepted for opencode")
 	}
-	if err := s.RunnerHeartbeat("runner-agy", []domain.RunnerRuntime{{Provider: "opencode", Status: domain.RuntimeStatusOnline}}, "1", now, now.Add(time.Hour)); err != nil {
+	if err := s.RunnerHeartbeat("runner-agy", []domain.RunnerRuntime{{Provider: "opencode", Status: domain.RuntimeStatusOnline}}, "1", false, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	runner, _ = s.Runner("runner-agy")
@@ -116,7 +116,7 @@ func TestRunnerTaskClaimRespectsProviderAndTargeting(t *testing.T) {
 
 	now := time.Now().UTC()
 	// runner-a supports claude only: it must not see the codex tasks.
-	task, claimed, err := s.ClaimRunnerTask("runner-a", []string{"claude-code"}, now, time.Minute)
+	task, claimed, err := s.ClaimRunnerTask("runner-a", []string{"claude-code"}, false, now, time.Minute)
 	if err != nil || !claimed {
 		t.Fatalf("claude claim failed: claimed=%v err=%v", claimed, err)
 	}
@@ -125,7 +125,7 @@ func TestRunnerTaskClaimRespectsProviderAndTargeting(t *testing.T) {
 	}
 
 	// runner-b may take the untargeted codex task.
-	task, claimed, err = s.ClaimRunnerTask("runner-b", []string{"codex"}, now, time.Minute)
+	task, claimed, err = s.ClaimRunnerTask("runner-b", []string{"codex"}, false, now, time.Minute)
 	if err != nil || !claimed {
 		t.Fatalf("untargeted codex claim failed: claimed=%v err=%v", claimed, err)
 	}
@@ -135,14 +135,14 @@ func TestRunnerTaskClaimRespectsProviderAndTargeting(t *testing.T) {
 
 	// runner-c is the only one allowed to take the pinned codex task; another
 	// codex runner must not steal it.
-	_, claimed, err = s.ClaimRunnerTask("runner-d", []string{"codex"}, now, time.Minute)
+	_, claimed, err = s.ClaimRunnerTask("runner-d", []string{"codex"}, false, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if claimed {
 		t.Fatal("runner-d stole a task pinned to runner-c")
 	}
-	task, claimed, err = s.ClaimRunnerTask("runner-c", []string{"codex"}, now, time.Minute)
+	task, claimed, err = s.ClaimRunnerTask("runner-c", []string{"codex"}, false, now, time.Minute)
 	if err != nil || !claimed {
 		t.Fatalf("targeted claim failed: claimed=%v err=%v", claimed, err)
 	}
@@ -165,7 +165,7 @@ func TestRunnerTaskLeaseLifecycle(t *testing.T) {
 	}
 	now := time.Now().UTC()
 
-	task, claimed, _ := s.ClaimRunnerTask("runner-a", []string{"codex"}, now, time.Minute)
+	task, claimed, _ := s.ClaimRunnerTask("runner-a", []string{"codex"}, false, now, time.Minute)
 	if !claimed {
 		t.Fatal("claim failed")
 	}
@@ -233,11 +233,11 @@ func TestRunnerTaskExpireRequeuesOrFails(t *testing.T) {
 	putQueuedTask(t, s, "rt-final", "codex", "", 0)
 
 	now := time.Now().UTC()
-	if _, claimed, _ := s.ClaimRunnerTask("runner-a", []string{"codex"}, now, time.Second); !claimed {
+	if _, claimed, _ := s.ClaimRunnerTask("runner-a", []string{"codex"}, false, now, time.Second); !claimed {
 		t.Fatal("claim rt-retry failed")
 	}
 	// rt-final has max_attempts=1 and is already attempted once.
-	if _, claimed, _ := s.ClaimRunnerTask("runner-b", []string{"codex"}, now, time.Second); !claimed {
+	if _, claimed, _ := s.ClaimRunnerTask("runner-b", []string{"codex"}, false, now, time.Second); !claimed {
 		t.Fatal("claim rt-final failed")
 	}
 

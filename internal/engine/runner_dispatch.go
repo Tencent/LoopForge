@@ -122,6 +122,12 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 		return nil
 	}
 	for _, repository := range repositories {
+		if repository.Provider == domain.RepositoryProviderGitLab {
+			runner, ok := e.repo.Runner(runnerID)
+			if !ok || !runner.SupportsGitLabPAT {
+				return fmt.Errorf("GitLab 仓库需要支持 GitLab PAT 的 Runner，请从当前平台更新执行机器")
+			}
+		}
 		if repository.Provider == domain.RepositoryProviderSSH {
 			runner, ok := e.repo.Runner(runnerID)
 			if !ok || !runner.SupportsGitSSH() {
@@ -347,6 +353,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
 			GitToken:                  gitToken,
 			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH,
+			UseGitLab:                 run.Repository.Provider == domain.RepositoryProviderGitLab,
 		}
 	}
 	for _, rc := range run.RepositoryContexts() {
@@ -363,19 +370,26 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
 			GitToken:                  gitToken,
 			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH,
+			UseGitLab:                 rc.Provider == domain.RepositoryProviderGitLab,
 			Dir:                       rc.WorkspaceDir,
 		})
 	}
-	if len(invocation.GitSSHRemotes()) > 0 {
-		invocation.GitSSHUserID = run.ExecutionContext.ResponsibleUserID
-		if invocation.Repository != nil && invocation.Repository.UseSSH {
-			invocation.Repository.GitToken = ""
+	bindCredentials := func(repository *domain.RunnerRepository) {
+		if repository == nil {
+			return
 		}
-		for i := range invocation.Repositories {
-			if invocation.Repositories[i].UseSSH {
-				invocation.Repositories[i].GitToken = ""
-			}
+		if repository.UseSSH {
+			invocation.GitSSHUserID = run.ExecutionContext.ResponsibleUserID
+			repository.GitToken = ""
 		}
+		if repository.UseGitLab {
+			invocation.GitLabUserID = run.ExecutionContext.ResponsibleUserID
+			repository.GitToken = ""
+		}
+	}
+	bindCredentials(invocation.Repository)
+	for i := range invocation.Repositories {
+		bindCredentials(&invocation.Repositories[i])
 	}
 }
 

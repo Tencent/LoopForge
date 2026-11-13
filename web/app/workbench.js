@@ -62,6 +62,13 @@ const CREDENTIAL_KINDS=[
     guide:[['打开 GitHub「Settings → Developer settings → Personal access tokens」','https://github.com/settings/tokens','前往 GitHub 申请个人访问令牌'],['新建令牌，为目标仓库授予 <code>Contents</code> 和 <code>Pull requests</code> 的读写权限'],['复制令牌粘贴到下方，保存前会自动校验权限']],
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
     impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
+  {key:'gitLabToken',group:'platform',name:'GitLab',short:'GitLab PAT',logo:'gitlab',
+    use:'搜索并检出你有权限的仓库',
+    description:'用于绑定 GitLab 仓库，以及执行任务时拉取或推送代码。',
+    guide:[['在你的 GitLab 实例的个人设置中创建访问令牌'],['搜索和拉取需要 <code>read_api</code> 与 <code>read_repository</code>。需要推送时使用 <code>write_repository</code> 替代 <code>read_repository</code>；也可使用 <code>api</code>。']],
+    placeholder:'请输入 GitLab PAT',hint:'保存时会校验令牌权限',
+    extra:{name:'gitLabUrl',label:'GitLab 实例地址',placeholder:'https://gitlab.com',url:true,note:'必填 · HTTPS'},
+    impact:'依赖此凭证的 GitLab 仓库搜索、检出和推送将无法执行。'},
   {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
     use:'按 SSH 主机管理个人密钥，仓库自动匹配'},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
@@ -120,6 +127,7 @@ function agentCliCredentialKind(cli,o){
     impact:`AI 对话将不能再切换到 ${o.name}，以 ${o.name} 运行的 SOP 节点将无法执行${configurable?'，Base URL、协议与模型目录一并清空':''}。`};
 }
 function credentialValue(user,name){
+  if(name==='gitLabUrl')return state.data?.gitLabURL;
   const [scope,cli,field]=String(name).split('.');
   return scope==='agentCli'&&field?user?.agentCliCredentials?.[cli]?.[field]:user?.[name];
 }
@@ -388,7 +396,7 @@ function credentialLogo(kind,cls=''){return `<span class="credential-logo${kind.
 function hydrateCredentialIcons(root){if(root)window.AgentFlowHarnessIcons?.hydrate?.(root)}
 function credentialNextKind(user){return CREDENTIAL_RECOMMENDED.map(credentialKind).find(kind=>!credentialConfigured(kind,user))||null}
 function credentialSecretError(kind,value){
-  return '';
+  return kind?.key==='gitLabToken'&&!String(value||'').trim()?'请填写 GitLab 个人访问令牌':'';
 }
 // Advisory only: a third-party model key is accepted here but CodeBuddy answers it with 401.
 function credentialSecretWarning(kind,value){
@@ -424,6 +432,14 @@ function refreshCredentialEnvironmentLinks(scope,value){
 }
 function credentialExtraError(kind,value,protocol){
   const text=String(value||'').trim();
+  if(kind.key==='gitLabToken'){
+    if(!text)return '请填写 GitLab 实例地址';
+    try{
+      const url=new URL(text);
+      if(text.startsWith('https://')&&url.hostname&&!url.username&&!url.password&&!/[?#]/.test(text))return '';
+    }catch{}
+    return '请填写 GitLab HTTPS 实例地址';
+  }
   if(!text&&kind.extra?.required?.(protocol))return '请填写 Base URL';
   if(!kind.extra?.url||!text)return '';
   try{const url=new URL(text);if(url.protocol==='http:'||url.protocol==='https:')return ''}catch{}
@@ -550,12 +566,13 @@ function credentialEditorHTML(kind,user){
   const extraField=!kind.extra?''
     :kind.extra.options?credentialSelectFieldHTML(kind,extraStored,'与 Key 所在站点一致')
     :credentialFieldHTML({label:kind.extra.label,note:kind.extra.note||(kind.extra.url?'留空使用官方地址':''),name:'extra',type:kind.extra.url?'url':'text',value:extraValue,placeholder:kind.extra.placeholder,hint:null});
+  const gitLab=kind.key==='gitLabToken';
+  const secretField=credentialFieldHTML({label:kind.short,note:gitLab?'保存时填写 PAT':'已配置 · 留空则不改',name:'secret',placeholder:gitLab?kind.placeholder:'输入新值以替换',hint:kind.hint||''});
   const protocolValue=kind.protocol?credentialProtocol(kind,user):'';
   const protocolField=kind.protocol?credentialProtocolHTML(kind,protocolValue):'';
   const legacy=!!(kind.extra?.options&&codeBuddyEnvironmentLegacy(user[kind.extra.name]));
   return `<div class="credential-editor-form${kind.models?' has-catalog':''}"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}${kind.protocol?` data-original-protocol="${escapeHTML(protocolValue)}"`:''}${legacy?' data-legacy="true"':''}>
-    ${credentialFieldHTML({label:kind.short,note:'已配置 · 留空则不改',name:'secret',placeholder:'输入新值以替换',hint:kind.hint||''})}
-    ${extraField}
+    ${gitLab?extraField+secretField:secretField+extraField}
     ${protocolField}
     ${kind.models?credentialCatalogHTML(kind,user):''}
     <div class="credential-swap">
@@ -695,7 +712,10 @@ function storeCredentialUser(saved){
 function notifyCredentialsChanged(){$('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin)}
 async function saveCredential(key,values={},options={}){
   const user=state.currentUser,kind=credentialKind(key);
-  const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialSavePayload(kind,values))});
+  const saved=key==='gitLabToken'
+    ?await api('/api/gitlab/credential',{method:'PUT',body:JSON.stringify({url:values.extra,token:values.secret})})
+    :await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialSavePayload(kind,values))});
+  if(key==='gitLabToken')state.data.gitLabURL=saved.gitLabUrl;
   if(key==='gitToken'&&!options.verified)state.gitTokenVerify=null;
   storeCredentialUser(saved);
   notifyCredentialsChanged();
@@ -703,7 +723,10 @@ async function saveCredential(key,values={},options={}){
 }
 async function deleteCredential(key){
   const user=state.currentUser,kind=credentialKind(key);
-  const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialClearPayload(kind))});
+  const saved=key==='gitLabToken'
+    ?await api('/api/gitlab/credential',{method:'DELETE'})
+    :await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialClearPayload(kind))});
+  if(key==='gitLabToken')delete state.data.gitLabURL;
   if(key==='gitToken')state.gitTokenVerify=null;
   storeCredentialUser(saved);
   notifyCredentialsChanged();
@@ -962,7 +985,7 @@ function credentialWizardStepTwoHTML(kind){
   const protocolField=kind.protocol?credentialProtocolHTML(kind,wizard.protocol||credentialProtocol(kind,{})):'';
   // The network environment decides where the key comes from, so it is chosen first.
   return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
-    ${kind.extra?.options?extraField+secretField:secretField+extraField+protocolField}
+    ${(kind.extra?.options||kind.key==='gitLabToken')?extraField+secretField:secretField+extraField+protocolField}
   </div>`;
 }
 function credentialWizardStepThreeHTML(kind){

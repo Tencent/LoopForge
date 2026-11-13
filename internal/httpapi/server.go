@@ -70,6 +70,7 @@ type Server struct {
 	*deps
 	auth            *authHandlers // auth.go
 	github          *githubHandlers
+	gitlab          *gitlabHandlers
 	users           *usersHandlers // users.go
 	projects        *projectsHandlers
 	insights        *insightsHandlers
@@ -152,6 +153,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		notifications:   &notificationHandlers{deps: d, service: notifications},
 		auth:            &authHandlers{deps: d},
 		github:          newGitHubHandlers(d),
+		gitlab:          &gitlabHandlers{deps: d},
 		users:           &usersHandlers{deps: d},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
@@ -247,6 +249,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/auth/github/device", api.github.start)
 	g.POST("/api/auth/github/poll", api.github.poll)
 	g.GET("/api/auth/github/repositories", api.github.repositories)
+	g.PUT("/api/gitlab/credential", api.gitlab.credential)
+	g.DELETE("/api/gitlab/credential", api.gitlab.credential)
+	g.GET("/api/gitlab/repositories", api.gitlab.repositories)
 	g.GET("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/logout", api.auth.authLogout)
@@ -742,9 +747,19 @@ func (s *Server) bootstrap(c *gin.Context) {
 		return
 	}
 	var currentUserID int64
+	var gitLabURL string
 	if current, ok := s.requestUser(c.Request, true); ok {
 		currentUserID = current.ID
 	}
+	if current, ok := s.requestUser(c.Request, false); ok && current.ID > 0 {
+		for _, user := range users {
+			if user.ID == current.ID {
+				gitLabURL = user.GitLabURL
+				break
+			}
+		}
+	}
+	c.Header("Cache-Control", "no-store")
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
 	sharedModels := s.repo.SharedCodeBuddyModels()
 	sponsoredModel := ""
@@ -757,6 +772,7 @@ func (s *Server) bootstrap(c *gin.Context) {
 		"executors": executors, "dockerfiles": dockerfiles, "environments": environments, "sandboxes": sandboxes,
 		"workflows": workflows, "syncConfig": syncConfig, "scheduleJobs": scheduleJobs, "schedulerEnabled": schedulerEnabled(),
 		"users":        domain.PublicUsers(users),
+		"gitLabURL":    gitLabURL,
 		"storage":      s.repo.StorageInfo(),
 		"capabilities": map[string]bool{"docker": runtime.DockerReady()},
 		// Set when users without their own CodeBuddy API Key can still chat

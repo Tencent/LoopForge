@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 type EventSink func(event domain.TelemetryEvent)
@@ -45,7 +46,8 @@ type RunCredentials struct {
 	ClaudeCode   ProviderCredential
 	AgentCLI     map[string]ProviderCredential
 	GitToken     string
-	GitSSHKeys   map[string]string `json:"-"`
+	GitLab       gitwork.HTTPSCredential `json:"-"`
+	GitSSHKeys   map[string]string       `json:"-"`
 	GitUserName  string
 	GitUserEmail string
 	MCPServers   []domain.MCPServerDefinition

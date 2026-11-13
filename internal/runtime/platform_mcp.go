@@ -18,8 +18,8 @@ type MCPTarget struct {
 	// token. Agent invocations require it; scripts and gates bind
 	// opportunistically.
 	RequireCredentials bool
-	// SSH-only workflows can deliver branches without GitHub API access.
-	SSHRepositoriesOnly bool
+	// Workflows with only Git SSH and GitLab repositories can push without GitHub API access.
+	GitHubOptional bool
 }
 
 // PrepareMCPServers is the single place that turns a resolved asset bundle
@@ -28,12 +28,12 @@ type MCPTarget struct {
 // returned warnings name servers that had to be dropped.
 func PrepareMCPServers(assets domain.AgentAssetBundle, target MCPTarget) (domain.AgentAssetBundle, []string, error) {
 	var warnings []string
-	if target.SSHRepositoriesOnly && strings.TrimSpace(target.GitToken) == "" {
+	if target.GitHubOptional && strings.TrimSpace(target.GitToken) == "" {
 		servers := assets.MCPServers
 		assets.MCPServers = nil
 		for _, server := range servers {
 			if server.AuthType == "github-token" {
-				warnings = append(warnings, "Git SSH 仓库可直接推送分支；未配置 GitHub Token，已跳过 "+server.ID)
+				warnings = append(warnings, "未配置 GitHub Token，已跳过 "+server.ID)
 				continue
 			}
 			assets.MCPServers = append(assets.MCPServers, server)

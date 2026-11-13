@@ -935,6 +935,43 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .pa-drawer-head b{flex:1;font-size:14px;font-weight:600}
 .pa-drawer-body{flex:1;min-height:0;display:flex;flex-direction:column;gap:24px;padding:20px;overflow-y:auto}
 .pa-drawer-foot{flex:none;display:flex;justify-content:flex-end;gap:8px;padding:14px 16px;border-top:1px solid var(--line)}
+#repoDrawer .pa-drawer-body{gap:16px}
+.pa-repo-tabs{display:flex;gap:18px;margin-bottom:12px;border-bottom:1px solid var(--hui-border)}
+.pa-repo-tabs button{position:relative;padding:6px 2px 10px;border:0;border-radius:0;background:none;color:var(--hui-secondary);font:inherit;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer}
+.pa-repo-tabs button[aria-selected="true"]{color:var(--hui-text)}
+.pa-repo-tabs button[aria-selected="true"]::after{position:absolute;right:0;bottom:-1px;left:0;height:2px;background:var(--hui-accent);content:""}
+.pa-repo-tabs button:focus-visible,.pa-repo-result:focus-visible,.pa-repo-more:focus-visible,.pa-repo-retry:focus-visible{outline:2px solid var(--hui-accent);outline-offset:-2px}
+.pa-repo-instance{display:flex;align-items:center;gap:8px;min-width:0;margin-bottom:10px;color:var(--hui-secondary);font-size:12px}
+.pa-repo-instance span{flex:none;width:6px;height:6px;border-radius:50%;background:var(--hui-success)}
+.pa-repo-instance code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-repo-connect p{margin:0 0 10px;color:var(--hui-secondary);font-size:13px;line-height:1.5}
+.pa-repo-token{margin-top:8px}
+.pa-repo-search{position:relative;display:block}
+.pa-repo-search svg{position:absolute;top:50%;left:11px;transform:translateY(-50%);color:var(--hui-secondary);pointer-events:none}
+#repoDrawer .pa-repo-search input{width:100%;padding-left:35px}
+.pa-repo-results{margin-top:8px;border:1px solid var(--hui-border);border-radius:8px}
+.pa-repo-results [data-repo-rows]{display:grid;gap:2px;max-height:min(224px,32vh);overflow-y:auto;overscroll-behavior:contain;padding:3px}
+.pa-repo-results [data-repo-rows]:empty{display:none}
+.pa-repo-result{display:flex;align-items:center;gap:8px;width:100%;min-width:0;min-height:44px;padding:6px 8px;border:1px solid transparent;border-radius:6px;background:var(--hui-surface);color:var(--hui-text);text-align:left;cursor:pointer}
+.pa-repo-result:hover{background:var(--hui-soft)}
+.pa-repo-result[aria-pressed="true"]{border-color:color-mix(in srgb,var(--hui-accent) 30%,var(--hui-border));background:var(--hui-accent-soft)}
+.pa-repo-result-icon{display:grid;flex:none;width:27px;height:27px;place-items:center;border-radius:6px;background:var(--hui-soft);color:var(--hui-secondary)}
+.pa-repo-result-text{display:grid;flex:1;min-width:0;gap:2px;line-height:1.2}
+.pa-repo-result-text b,.pa-repo-result-text code,.pa-repo-result-branch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-repo-result-text b{font-size:13px;font-weight:600}
+.pa-repo-result-text code,.pa-repo-result-branch{font-size:11px;color:var(--hui-secondary)}
+.pa-repo-result-branch{max-width:26%;padding:3px 5px;border-radius:4px;background:var(--hui-soft)}
+.pa-repo-result>svg{flex:none;color:var(--hui-accent);visibility:hidden}
+.pa-repo-result[aria-pressed="true"]>svg{visibility:visible}
+.pa-repo-status{margin:0;padding:10px 12px;color:var(--hui-secondary);font-size:12px}
+.pa-repo-more,.pa-repo-retry{width:100%;padding:7px;border:0;border-top:1px solid var(--hui-border);border-radius:0 0 7px 7px;background:none;color:var(--hui-accent);font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.pa-repo-more:hover,.pa-repo-retry:hover{background:var(--hui-accent-soft)}
+.pa-repo-branches{padding-top:12px;border-top:1px solid var(--hui-border)}
+.pa-repo-branch-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}
+.pa-repo-branch-head h5{margin-bottom:0;color:var(--hui-text);font-size:13px;letter-spacing:0}
+.pa-repo-chosen{display:flex;align-items:center;gap:5px;min-width:0;margin-right:auto;color:var(--hui-secondary);font-size:11px;white-space:nowrap}
+.pa-repo-chosen code{overflow:hidden;text-overflow:ellipsis;color:var(--hui-text);font-size:11px}
+#repoDrawer .pa-drawer-foot button{flex:none}
 .pa-fs h5{margin:0 0 10px;color:var(--muted-2);font-size:11px;font-weight:600;letter-spacing:.04em}
 .pa-field{display:block}
 .pa-field+.pa-field,.pa-detect+.pa-field{margin-top:12px}

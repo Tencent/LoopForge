@@ -1033,6 +1033,69 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/gitlab/credential:
+    put:
+      tags: [Repositories]
+      operationId: saveGitLabCredential
+      summary: Verify and save the current user's GitLab instance URL and PAT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, token]
+              properties:
+                url: {type: string, format: uri, example: 'https://gitlab.com'}
+                token: {type: string, writeOnly: true}
+      responses:
+        "200":
+          description: Current user and GitLab credential status, including gitLabUrl if configured
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Repositories]
+      operationId: deleteGitLabCredential
+      summary: Clear the current user's GitLab instance URL and PAT
+      responses:
+        "200":
+          description: Current user and GitLab credential status, including gitLabUrl if configured
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/gitlab/repositories:
+    get:
+      tags: [Repositories]
+      operationId: searchGitLabRepositories
+      summary: Search GitLab repositories available to the current user
+      parameters:
+        - {name: q, in: query, schema: {type: string}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+      responses:
+        "200":
+          description: GitLab repository search results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repositories, hasMore, gitLabUrl]
+                properties:
+                  gitLabUrl: {type: string, format: uri}
+                  hasMore: {type: boolean}
+                  repositories:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: integer}
+                        name: {type: string}
+                        path_with_namespace: {type: string}
+                        web_url: {type: string}
+                        http_url_to_repo: {type: string}
+                        default_branch: {type: string}
+        "412":
+          description: The current user has not configured a GitLab instance URL and PAT
   /api/repositories:
     get:
       tags: [Repositories]
@@ -4145,6 +4208,7 @@ components:
         - required: [webUrl]
         - required: [cloneUrl]
         - required: [gongfengProjectId]
+        - required: [provider, gitLabProjectId]
       properties:
         id: {type: string}
         projectId: {type: string}
@@ -4156,7 +4220,9 @@ components:
         gongfengProjectId: {type: string, description: Legacy wire field for repository identity; GitHub uses github:owner/repo. Prefer repoUrl.}
         defaultBranch: {type: string}
         integrateBranch: {type: string}
-        provider: {type: string, description: GitHub is inferred from repoUrl; legacy provider values remain compatible, example: github}
+        gitLabProjectId: {type: integer, description: GitLab project ID returned by the repository search endpoint}
+        gitLabUrl: {type: string, format: uri, description: GitLab instance URL returned by the repository search endpoint}
+        provider: {type: string, description: Select gitlab when binding a GitLab project; GitHub is inferred from repoUrl, example: github}
         pipelineProjectId: {type: integer}
         pipelineDefId: {type: integer}
     Repository:
@@ -4169,10 +4235,15 @@ components:
           type: string
         provider:
           type: string
-          description: GitHub for public repositories; inferred from the repository URL
+          description: Repository hosting or transport provider
           example: github
         name:
           type: string
+        gitLabProjectId:
+          type: integer
+        gitLabUrl:
+          type: string
+          format: uri
         gongfengProjectId:
           type: string
         webUrl:
@@ -5290,6 +5361,7 @@ components:
         - schedulerEnabled
         - storage
       properties:
+        gitLabURL: {type: string, description: GitLab instance URL configured by the current browser user, or empty}
         projects:
           type: array
           items:

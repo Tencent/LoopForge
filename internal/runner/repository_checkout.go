@@ -13,6 +13,9 @@ import (
 )
 
 func checkoutRepositoryForPreparation(ctx context.Context, workspace string, repository *domain.RunnerRepository, refresh bool) error {
+	if err := checkRepositoryGitLab(ctx, *repository); err != nil {
+		return fmt.Errorf("%s: %w", repository.Name, err)
+	}
 	if repository.RequireExistingWorkBranch && strings.TrimSpace(repository.WorkBranch) == "" {
 		return fmt.Errorf("继续已有分支时必须指定工作分支")
 	}

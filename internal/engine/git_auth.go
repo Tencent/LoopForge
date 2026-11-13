@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 const gitTokenEnv = gitwork.TokenEnv
@@ -28,9 +30,20 @@ func withGitToken(ctx context.Context, token string) context.Context {
 
 func gitTokenFrom(ctx context.Context) string { return gitwork.TokenFrom(ctx) }
 
+type runGitLabCredentialKey struct{}
+
+func withRunGitCredentials(ctx context.Context, credentials runtime.RunCredentials) context.Context {
+	ctx = gitwork.WithSSHKeys(withGitToken(ctx, credentials.GitToken), credentials.GitSSHKeys)
+	return context.WithValue(ctx, runGitLabCredentialKey{}, credentials.GitLab)
+}
+
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
 	if repository.Provider == domain.RepositoryProviderSSH {
 		return gitwork.WithSSHRemote(ctx, repository.CloneURL)
+	}
+	if repository.Provider == domain.RepositoryProviderGitLab {
+		credential, _ := ctx.Value(runGitLabCredentialKey{}).(gitwork.HTTPSCredential)
+		return gitwork.WithHTTPSCredential(ctx, credential)
 	}
 	return ctx
 }
@@ -47,6 +60,9 @@ func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
 
 func cloneRemoteForGit(ctx context.Context, remote string) string {
 	if gitwork.UsesSSH(ctx) {
+		return remote
+	}
+	if _, scoped := gitwork.HTTPSCredentialFrom(ctx); scoped {
 		return remote
 	}
 	return gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx))
@@ -118,6 +134,11 @@ var (
 
 const gitTokenFixHint = "请责任人到「个人配置 → GitHub Git Token」配置：打开 https://github.com/settings/tokens 新建令牌，为目标仓库授予 Contents 和 Pull requests 的读写权限，复制后粘贴并点校验，然后重试本节点"
 
+type gitLabOperationError struct{ cause error }
+
+func (e gitLabOperationError) Error() string { return e.cause.Error() }
+func (e gitLabOperationError) Unwrap() error { return e.cause }
+
 // explainGitAuthFailure says what to fix when git rejects the clone or push.
 // SOP runs use the responsible user's Git Token, which git's own
 // "could not read Username" never mentions. The raw error stays appended.
@@ -126,7 +147,14 @@ func explainGitAuthFailure(err error, tokenConfigured bool) error {
 		return nil
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "Git Token") || !gitCommandFailure.MatchString(msg) || !gitAuthFailure.MatchString(msg) {
+	var gitLabErr gitLabOperationError
+	if errors.As(err, &gitLabErr) {
+		if gitAuthFailure.MatchString(msg) {
+			return fmt.Errorf("GitLab PAT 无效、已过期或权限不足，请检查本次执行账号的个人凭证和仓库权限：%w", err)
+		}
+		return err
+	}
+	if strings.Contains(msg, "GitLab PAT") || strings.Contains(msg, "Git Token") || !gitCommandFailure.MatchString(msg) || !gitAuthFailure.MatchString(msg) {
 		return err
 	}
 	if !tokenConfigured {

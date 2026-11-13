@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"fmt"
 	"net/url"
@@ -87,6 +88,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			if err := bindGitEnvironment(sandbox, workspace, bound.environment, credentials.GitToken); err != nil {
 				return CommandSpec{}, err
 			}
+			gitwork.BindHTTPSCredential(bound.environment, credentials.GitLab)
 		case BindMCP:
 			if err := bindMCPCallEnvironment(sandbox, workspace, bound.environment, credentials.MCPServers); err != nil {
 				return CommandSpec{}, err
