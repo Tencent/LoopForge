@@ -60,7 +60,11 @@ func assistantEngineConfigDir(engine string) string {
 // well-known install locations, then a CLI installed from a failed conversation.
 func resolveAssistantEngineBin(engine string) (string, error) {
 	if engine == assistantEngineCodeBuddy {
-		return resolveCodeBuddyBin()
+		bin, err := resolveCodeBuddyBin()
+		if err != nil && (strings.Contains(err.Error(), "未找到") || strings.Contains(err.Error(), "尚未安装")) {
+			return "", assistantCLIMissingError{engine: engine, binary: "codebuddy"}
+		}
+		return bin, err
 	}
 	binary, override, managed := "codex", "AGENTFLOW_CODEX_BIN", "codex"
 	if engine == assistantEngineClaude {

@@ -12,19 +12,21 @@ import (
 // its generation record and publishes them to live SSE readers. Chat turns and
 // scheduled runs share it so both stream to the conversation page the same way.
 type assistantGenerationRecorder struct {
-	mu         sync.Mutex
-	g          domain.AssistantGeneration
-	sequence   int
-	eventBytes int
-	projection assistantStreamProjection
-	live       *assistantLiveGeneration
+	mu          sync.Mutex
+	g           domain.AssistantGeneration
+	sequence    int
+	eventBytes  int
+	projection  assistantStreamProjection
+	live        *assistantLiveGeneration
+	diagnostics *assistantDiagnosticsCollector
 }
 
 // newAssistantGenerationRecorder registers g as live; call close when the
 // turn's final state has been checkpointed.
 func newAssistantGenerationRecorder(g domain.AssistantGeneration) *assistantGenerationRecorder {
-	r := &assistantGenerationRecorder{g: g, live: &assistantLiveGeneration{changed: make(chan struct{})}}
+	r := &assistantGenerationRecorder{g: g, live: &assistantLiveGeneration{changed: make(chan struct{})}, diagnostics: newAssistantDiagnosticsCollector(g)}
 	r.live.read = r.snapshot
+	r.live.diagnostics = func() domain.AssistantDiagnostics { return r.diagnostics.snapshot(r.snapshot()) }
 	assistantLiveGenerations.Store(g.ID, r.live)
 	return r
 }
@@ -70,10 +72,12 @@ func (r *assistantGenerationRecorder) sink(kind string, value any) {
 		r.g.WorkspaceWarning = fmt.Sprint(value)
 	case "error":
 		var e struct {
-			Error string `json:"error"`
+			Error   string                   `json:"error"`
+			Failure *domain.AssistantFailure `json:"failure"`
 		}
 		_ = json.Unmarshal(raw, &e)
 		r.g.Error = e.Error
+		r.g.Failure = e.Failure
 	}
 }
 

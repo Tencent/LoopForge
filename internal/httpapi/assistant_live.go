@@ -90,9 +90,10 @@ func assistantDraftMessagePrefix(raw string) string {
 }
 
 type assistantLiveGeneration struct {
-	mu      sync.Mutex
-	changed chan struct{}
-	read    func() domain.AssistantGeneration
+	mu          sync.Mutex
+	changed     chan struct{}
+	read        func() domain.AssistantGeneration
+	diagnostics func() domain.AssistantDiagnostics
 }
 
 var assistantLiveGenerations sync.Map
