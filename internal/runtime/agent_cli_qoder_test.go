@@ -16,7 +16,7 @@ import (
 
 // This fixture simulates the documented Qoder stream and MCP interaction. It
 // checks LoopForge's integration without pretending to exercise a real model.
-const fakeQoderCLI = `#!/usr/bin/python3
+const fakeQoderCLI = `#!/usr/bin/env python3
 import json, os, sys, urllib.request
 args = sys.argv[1:]
 def value(flag):

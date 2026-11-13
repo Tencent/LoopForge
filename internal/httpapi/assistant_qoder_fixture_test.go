@@ -17,7 +17,7 @@ import (
 
 // A simulated CLI checks the chat invocation boundary and its session mapping;
 // this does not exercise Qoder's own model or MCP implementation.
-const qoderChatFixture = `#!/usr/bin/python3
+const qoderChatFixture = `#!/usr/bin/env python3
 import json, os, sys, urllib.request
 args = sys.argv[1:]
 def value(flag): return args[args.index(flag)+1]
