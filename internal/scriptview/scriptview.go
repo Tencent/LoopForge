@@ -66,47 +66,68 @@ func parseConfig(raw string) (Config, error) {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return config, fmt.Errorf("workspace script view configuration must contain one JSON object")
 	}
+	if err := validateConfigMode(config); err != nil {
+		return config, err
+	}
+	if err := validateMaskLists(config.Masks, config.Hide); err != nil {
+		return config, err
+	}
+	// Children must be detached before their parent when a legacy container has
+	// both a directory mask and a file mask below it.
+	slices.SortFunc(config.Masks, maskOrder(true))
+	slices.SortFunc(config.Hide, maskOrder(false))
+	return config, nil
+}
+
+// validateConfigMode enforces that refresh requests never execute commands or
+// detach masks, and that script executions never modify canonical masks.
+func validateConfigMode(config Config) error {
 	if config.Refresh {
 		if len(config.Argv) != 0 || len(config.Masks) != 0 {
-			return config, fmt.Errorf("instruction mask refresh cannot execute commands or detach masks")
+			return fmt.Errorf("instruction mask refresh cannot execute commands or detach masks")
 		}
 	} else {
 		if len(config.Hide) != 0 {
-			return config, fmt.Errorf("workspace script commands cannot modify canonical instruction masks")
+			return fmt.Errorf("workspace script commands cannot modify canonical instruction masks")
 		}
 		if len(config.Argv) == 0 || config.Argv[0] == "" {
-			return config, fmt.Errorf("workspace script view command is empty")
+			return fmt.Errorf("workspace script view command is empty")
 		}
 	}
 	for _, argument := range config.Argv {
 		if strings.IndexByte(argument, 0) >= 0 {
-			return config, fmt.Errorf("workspace script view command contains a null byte")
+			return fmt.Errorf("workspace script view command contains a null byte")
 		}
 	}
-	for _, list := range [][]string{config.Masks, config.Hide} {
+	return nil
+}
+
+// validateMaskLists rejects invalid or duplicate entries within each list.
+func validateMaskLists(lists ...[]string) error {
+	for _, list := range lists {
 		seen := make(map[string]bool, len(list))
 		for _, target := range list {
 			if !ValidMask(target) || seen[target] {
-				return config, fmt.Errorf("invalid or duplicate workspace instruction mask %q", target)
+				return fmt.Errorf("invalid or duplicate workspace instruction mask %q", target)
 			}
 			seen[target] = true
 		}
 	}
-	// Children must be detached before their parent when a legacy container has
-	// both a directory mask and a file mask below it.
-	slices.SortFunc(config.Masks, func(a, b string) int {
+	return nil
+}
+
+// maskOrder sorts mask paths by length (longest or shortest first), breaking
+// ties lexically so the order is deterministic.
+func maskOrder(longestFirst bool) func(a, b string) int {
+	return func(a, b string) int {
 		if len(a) != len(b) {
-			return len(b) - len(a)
-		}
-		return strings.Compare(a, b)
-	})
-	slices.SortFunc(config.Hide, func(a, b string) int {
-		if len(a) != len(b) {
+			if longestFirst {
+				return len(b) - len(a)
+			}
 			return len(a) - len(b)
 		}
 		return strings.Compare(a, b)
-	})
-	return config, nil
+	}
 }
 
 // ValidMask accepts only repository instruction paths that the platform masks.
