@@ -19,7 +19,7 @@ func (e *Engine) event(r *domain.Run, nodeID, t, msg string) {
 }
 
 func (e *Engine) observe(runID, nodeID string, observation domain.TelemetryEvent) {
-	if current, ok := e.repo.RunState(runID); ok && isTerminalRunStatus(current.Status) && observation.Name != "sandbox.closed" {
+	if current, ok := e.repo.RunState(runID); ok && domain.TerminalRunStatus(current.Status) && observation.Name != "sandbox.closed" {
 		return
 	}
 	e.enqueueObservation(runID, nodeID, observation)

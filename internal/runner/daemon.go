@@ -969,14 +969,23 @@ func collectRunnerInvocationArtifacts(workspace string, inv *domain.RunnerInvoca
 	return artifacts
 }
 
+// invocationRepositories returns the repositories an invocation carries:
+// Repositories when set, otherwise the persisted legacy single Repository.
+func invocationRepositories(inv *domain.RunnerInvocation) []domain.RunnerRepository {
+	if inv == nil {
+		return nil
+	}
+	if len(inv.Repositories) == 0 && inv.Repository != nil {
+		return []domain.RunnerRepository{*inv.Repository}
+	}
+	return inv.Repositories
+}
+
 func invocationRepositoryContexts(inv *domain.RunnerInvocation) []domain.RepositoryContext {
 	if inv == nil {
 		return nil
 	}
-	repositories := inv.Repositories
-	if len(repositories) == 0 && inv.Repository != nil {
-		repositories = []domain.RunnerRepository{*inv.Repository}
-	}
+	repositories := invocationRepositories(inv)
 	out := make([]domain.RepositoryContext, 0, len(repositories))
 	for _, repository := range repositories {
 		out = append(out, domain.RepositoryContext{
@@ -1101,13 +1110,7 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 		return nil
 	}
 	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
-	repos := inv.Repositories
-	if len(repos) == 0 && inv.Repository != nil {
-		if strings.TrimSpace(inv.Repository.CloneURL) == "" {
-			return nil
-		}
-		repos = []domain.RunnerRepository{*inv.Repository}
-	}
+	repos := invocationRepositories(inv)
 	for i := range repos {
 		repo := repos[i]
 		if strings.TrimSpace(repo.CloneURL) == "" {

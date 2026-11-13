@@ -310,18 +310,46 @@ func inferredCursorDefault(variants map[string]string) string {
 // effort→ID mapping (Efforts, DefaultEffort); it is saved with the owner's
 // Cursor catalog, which CursorModelID and CursorModelEfforts resolve from.
 func FoldCursorCLIModels(models []domain.CLIModel) []domain.CLIModel {
+	present, groups, tail := scanCursorCLIModels(models)
+	dynamic := mergePlainCursorFamilies(tail, groups)
+	out := make([]domain.CLIModel, 0, len(present)+len(dynamic))
+	for _, family := range cursorModels {
+		if present[family.ID] {
+			out = append(out, domain.CLIModel{ID: family.ID, Name: family.Name})
+		}
+	}
+	for _, item := range dynamic {
+		if !item.family {
+			out = append(out, item.plain)
+			continue
+		}
+		out = append(out, cursorFamilyRow(item.id, groups[item.id]))
+	}
+	return out
+}
+
+// cursorFamilyGroup collects the effort variants of one family that is not
+// in the built-in table.
+type cursorFamilyGroup struct {
+	name     string
+	variants map[string]string
+}
+
+// cursorModelSlot keeps the CLI's listing order of a dynamic family or of a
+// plain model ID.
+type cursorModelSlot struct {
+	family bool
+	id     string
+	plain  domain.CLIModel
+}
+
+// scanCursorCLIModels sorts the listed IDs into built-in families (present),
+// dynamic families folded from effort suffixes (groups), and the listing
+// order of dynamic families and plain IDs (tail).
+func scanCursorCLIModels(models []domain.CLIModel) (map[string]bool, map[string]*cursorFamilyGroup, []cursorModelSlot) {
 	present := map[string]bool{}
-	type group struct {
-		name     string
-		variants map[string]string
-	}
-	groups := map[string]*group{}
-	type slot struct {
-		family bool
-		id     string
-		plain  domain.CLIModel
-	}
-	var tail []slot
+	groups := map[string]*cursorFamilyGroup{}
+	var tail []cursorModelSlot
 	seen := map[string]bool{}
 	for _, model := range models {
 		id := strings.TrimSpace(model.ID)
@@ -339,11 +367,11 @@ func FoldCursorCLIModels(models []domain.CLIModel) []domain.CLIModel {
 			}
 			g := groups[familyID]
 			if g == nil {
-				g = &group{variants: map[string]string{}}
+				g = &cursorFamilyGroup{variants: map[string]string{}}
 				groups[familyID] = g
 				if !seen["family:"+familyID] {
 					seen["family:"+familyID] = true
-					tail = append(tail, slot{family: true, id: familyID})
+					tail = append(tail, cursorModelSlot{family: true, id: familyID})
 				}
 			}
 			if _, exists := g.variants[effort]; !exists {
@@ -358,9 +386,16 @@ func FoldCursorCLIModels(models []domain.CLIModel) []domain.CLIModel {
 			continue
 		}
 		seen["plain:"+id] = true
-		tail = append(tail, slot{id: id, plain: domain.CLIModel{ID: id, Name: strings.TrimSpace(model.Name)}})
+		tail = append(tail, cursorModelSlot{id: id, plain: domain.CLIModel{ID: id, Name: strings.TrimSpace(model.Name)}})
 	}
-	var dynamic []slot
+	return present, groups, tail
+}
+
+// mergePlainCursorFamilies drops a plain ID that names a dynamic family and
+// records it as that family's medium variant unless one was listed; its name
+// then becomes the family name.
+func mergePlainCursorFamilies(tail []cursorModelSlot, groups map[string]*cursorFamilyGroup) []cursorModelSlot {
+	var dynamic []cursorModelSlot
 	for _, item := range tail {
 		if item.family {
 			dynamic = append(dynamic, item)
@@ -378,27 +413,19 @@ func FoldCursorCLIModels(models []domain.CLIModel) []domain.CLIModel {
 			}
 		}
 	}
-	out := make([]domain.CLIModel, 0, len(present)+len(dynamic))
-	for _, family := range cursorModels {
-		if present[family.ID] {
-			out = append(out, domain.CLIModel{ID: family.ID, Name: family.Name})
-		}
+	return dynamic
+}
+
+// cursorFamilyRow builds the saved row of a dynamic family, falling back to
+// the family ID when no name was found.
+func cursorFamilyRow(id string, g *cursorFamilyGroup) domain.CLIModel {
+	name := g.name
+	if name == "" {
+		name = id
 	}
-	for _, item := range dynamic {
-		if !item.family {
-			out = append(out, item.plain)
-			continue
-		}
-		g := groups[item.id]
-		name := g.name
-		if name == "" {
-			name = item.id
-		}
-		variants := make(map[string]string, len(g.variants))
-		for effort, raw := range g.variants {
-			variants[effort] = raw
-		}
-		out = append(out, domain.CLIModel{ID: item.id, Name: name, Efforts: variants, DefaultEffort: inferredCursorDefault(variants)})
+	variants := make(map[string]string, len(g.variants))
+	for effort, raw := range g.variants {
+		variants[effort] = raw
 	}
-	return out
+	return domain.CLIModel{ID: id, Name: name, Efforts: variants, DefaultEffort: inferredCursorDefault(variants)}
 }

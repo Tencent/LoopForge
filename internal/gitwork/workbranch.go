@@ -46,10 +46,7 @@ func pushWorkBranch(ctx context.Context, workspace, branch, message string, requ
 		return "", err
 	}
 	if exec.Command("git", "-C", workspace, "diff", "--cached", "--quiet").Run() != nil {
-		args := []string{"commit", "--no-verify", "-q", "-m", message}
-		if email, _ := C(ctx, workspace, "config", "user.email"); strings.TrimSpace(email) == "" {
-			args = append([]string{"-c", "user.name=LoopForge", "-c", "user.email=loopforge@local"}, args...)
-		}
+		args := withFallbackIdentity(ctx, workspace, []string{"commit", "--no-verify", "-q", "-m", message})
 		if _, err := C(ctx, workspace, args...); err != nil {
 			return "", fmt.Errorf("commit work branch: %w", err)
 		}
@@ -163,10 +160,7 @@ func pullWorkBranch(ctx context.Context, workspace, branch string, requireExisti
 		}
 		return remote, nil
 	}
-	args := []string{"rebase", "-q", "--autostash", trackingRef}
-	if email, _ := C(ctx, workspace, "config", "user.email"); strings.TrimSpace(email) == "" {
-		args = append([]string{"-c", "user.name=LoopForge", "-c", "user.email=loopforge@local"}, args...)
-	}
+	args := withFallbackIdentity(ctx, workspace, []string{"rebase", "-q", "--autostash", trackingRef})
 	if _, err := C(ctx, workspace, args...); err != nil {
 		_, _ = C(ctx, workspace, "rebase", "--abort")
 		return "", fmt.Errorf("远程工作分支 %s 与本机工作区已分叉且无法自动变基，拒绝覆盖（请检查是否有人手动推送过该分支）: %w", branch, err)
@@ -193,6 +187,16 @@ func verifyOffWorkBranch(ctx context.Context, workspace, branch string, requireE
 		return fmt.Errorf("工作区未检出已有工作分支 %s", branch)
 	}
 	return nil
+}
+
+// withFallbackIdentity prefixes args with the LoopForge commit identity when
+// the checkout has no user.email configured, so commits and rebases made on
+// the work branch never fail for a missing author.
+func withFallbackIdentity(ctx context.Context, workspace string, args []string) []string {
+	if email, _ := C(ctx, workspace, "config", "user.email"); strings.TrimSpace(email) == "" {
+		return append([]string{"-c", "user.name=LoopForge", "-c", "user.email=loopforge@local"}, args...)
+	}
+	return args
 }
 
 // fetchExistingWorkBranch fetches only refs/heads, never a same-named tag.

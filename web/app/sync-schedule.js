@@ -101,6 +101,8 @@ function scheduleModelAPI(){return window.AgentFlowAssistantModels}
 function selectedClarifyModel(){
   const api=window.AgentFlowAssistantModels;
   const stored=localStorage.getItem('agentflow.clarifyModel')||'';
+  // Clarification runs on CodeBuddy only; a saved "codex:…" id falls back.
+  if(api?.codeBuddyModel)return api.codeBuddyModel(stored);
   return stored||(api&&api.DEFAULT)||'default';
 }
 function setClarifyModel(id){
@@ -138,7 +140,7 @@ function bindClarifyModelPicker(host){
     menu.hidden=!open;
     toggle.setAttribute('aria-expanded',open?'true':'false');
     if(open){
-      api.renderList(menu, selectedClarifyModel(), id=>{
+      api.renderCodeBuddyList(menu, selectedClarifyModel(), id=>{
         setClarifyModel(id);
         api.paint(toggle, id);
         menu.hidden=true;
