@@ -16,9 +16,8 @@
   font-size:9px;font-weight:800;color:#fff;letter-spacing:0;overflow:hidden;
 }
 .ai-model-icon img{width:18px;height:18px;display:block;object-fit:contain;background:transparent}
-.ai-model-icon[data-family=claude],.ai-model-icon[data-family=gpt],.ai-model-icon[data-family=gemini],.ai-model-icon[data-family=deepseek],.ai-model-icon[data-family=minimax],.ai-model-icon[data-family=mimo]{background:#fff}
+.ai-model-icon[data-family=claude],.ai-model-icon[data-family=gpt],.ai-model-icon[data-family=gemini],.ai-model-icon[data-family=deepseek],.ai-model-icon[data-family=minimax],.ai-model-icon[data-family=mimo],.ai-model-icon[data-family=kimi]{background:#fff}
 .ai-model-icon[data-family=glm]{background:#3859FF}
-.ai-model-icon[data-family=kimi]{background:#111827}
 .ai-model-icon[data-family=hunyuan]{background:#0F766E}
 .ai-model-icon[data-family=echo],.ai-model-icon[data-family=other]{background:#64748b}
 .ai-model-menu{

@@ -96,7 +96,7 @@ const CREDENTIAL_KINDS=[
     note:'默认连接 Gemini 官方服务；选择 OpenAI 兼容网关时需要填写 Base URL。',extraNote:'OpenAI 兼容网关必填',
     guide:[['在 Google AI Studio 创建 Gemini API Key，或准备 OpenAI 兼容网关的 Key','https://aistudio.google.com/apikey','前往 Google AI Studio'],['走网关时记下网关地址'],['粘贴 Key，选择协议；保存后可在模型目录里挑选 AI 对话的模型']],
     protocols:[['gemini','Gemini 官方 API'],['chat','OpenAI 兼容网关（Chat Completions）']]}),
-  agentCliCredentialKind('kimi',{name:'Kimi Code',logo:'kimi',baseUrl:'https://api.moonshot.cn/v1',
+  agentCliCredentialKind('kimi',{name:'Kimi Code',logo:'kimi',darkLogo:'kimi-dark',baseUrl:'https://api.moonshot.cn/v1',
     note:'未填写 Base URL 时连接 Moonshot 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
   agentCliCredentialKind('pi',{name:'Pi',logo:'pi',monochrome:true,baseUrl:'https://api.example.com/v1',required:()=>true,
     note:'Pi 没有自己的模型服务，需要填写 Base URL。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
@@ -107,7 +107,7 @@ const CREDENTIAL_KINDS=[
 ];
 function agentCliCredentialKind(cli,o){
   const field=`agentCli.${cli}.`,configurable=!!o.protocols;
-  return {key:`agentCli.${cli}`,agentCli:cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,monochrome:!!o.monochrome,
+  return {key:`agentCli.${cli}`,agentCli:cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,darkLogo:o.darkLogo,monochrome:!!o.monochrome,
     use:`AI 对话的 ${o.name} 模型与以 ${o.name} 运行的 SOP 节点`,
     description:`AI 对话切换到 ${o.name} 后可选用它的模型，SOP 在执行机器上以 ${o.name} 运行的节点也使用它。${o.note||''}`,
     guide:o.guide||[['在模型服务商控制台创建 API Key'],['记下服务地址和它提供的接口协议'],['粘贴 Key，按需填写 Base URL 并选择协议；保存后可在模型目录里挑选 AI 对话的模型']],
@@ -384,7 +384,10 @@ function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
 function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon harness-icon${cls?' '+cls:''}" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
 function credentialSpinner(size=14){return credentialGlyph('arc-spinner',size,'credential-spin')}
-function credentialLogo(kind,cls=''){return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}">${kind.icon?credentialGlyph(kind.icon,18):`<img src="/images/credentials/${kind.logo}.svg" alt="">`}</span>`}
+function credentialLogo(kind,cls=''){
+  const mark=kind.icon?credentialGlyph(kind.icon,18):`<img class="for-light" src="/images/credentials/${kind.logo}.svg" alt="">${kind.darkLogo?`<img class="for-dark" src="/images/credentials/${kind.darkLogo}.svg" alt="">`:''}`;
+  return `<span class="credential-logo${kind.monochrome?' monochrome':''}${kind.darkLogo?' has-theme':''}${cls?' '+cls:''}">${mark}</span>`;
+}
 function hydrateCredentialIcons(root){if(root)window.AgentFlowHarnessIcons?.hydrate?.(root)}
 function credentialNextKind(user){return CREDENTIAL_RECOMMENDED.map(credentialKind).find(kind=>!credentialConfigured(kind,user))||null}
 function credentialSecretError(kind,value){

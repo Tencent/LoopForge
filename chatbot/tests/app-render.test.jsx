@@ -330,6 +330,28 @@ describe("App", () => {
     chat.executor = "codex";
     view.rerender(<App />);
     expect(screen.getByRole("button", { name: "思考强度" })).toBeInTheDocument();
+    // A saved reply locks the CLI: the switch leaves the composer and the
+    // title shows which CLI this conversation uses.
+    Object.assign(chat, {
+      session: {
+        id: "s1",
+        title: "已开始",
+        executor: "codex",
+        messages: [{ id: "a1", role: "assistant", model: "m1", content: "hi" }],
+      },
+    });
+    view.rerender(<App />);
+    expect(screen.queryByRole("button", { name: "CLI" })).not.toBeInTheDocument();
+    expect(document.querySelector(".conversation-engine")).toHaveTextContent("Codex");
+    // The first reply, still running, locks it the same way.
+    Object.assign(chat, {
+      busy: true,
+      executor: "codebuddy",
+      session: { id: "s2", title: "生成中", executor: "codebuddy", messages: [] },
+    });
+    view.rerender(<App />);
+    expect(screen.queryByRole("button", { name: "CLI" })).not.toBeInTheDocument();
+    expect(document.querySelector(".conversation-engine")).toHaveTextContent("CodeBuddy");
     Object.assign(chat, previous);
   });
 

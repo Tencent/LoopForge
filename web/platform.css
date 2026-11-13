@@ -2340,6 +2340,9 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .credential-row.is-open .credential-row-main{background:var(--cr-hover)}
 .credential-logo{display:grid;place-items:center;flex:none;width:34px;height:34px;border:1px solid color-mix(in srgb,var(--cr-line) 70%,transparent);border-radius:9px;background:var(--cr-elevated);transition:transform .4s var(--cr-spring),filter .3s,opacity .3s}
 .credential-logo img{display:block;width:20px;height:20px;object-fit:contain}
+.credential-logo.has-theme>.for-dark{display:none}
+html[data-theme="dark"] .credential-logo.has-theme>.for-light{display:none}
+html[data-theme="dark"] .credential-logo.has-theme>.for-dark{display:block}
 .credential-logo.is-dim{filter:grayscale(1);opacity:.55}
 .credential-logo.is-mini{width:18px;height:18px;border:0;background:none}
 .credential-logo.is-mini img{width:16px;height:16px}
