@@ -848,6 +848,29 @@ function sopDeliveryPane(issue,data){
   const runFacts=`<div class="detail-grid">${drawerFact('Run ID',run?run.id.slice(-14):'—')}${drawerFact('Task ID',data.task?data.task.id.slice(-10):'—')}${drawerFact('触发方式',escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('状态',run?`<span class="status ${runDisplayStatusClass(run)}">${runDisplayStatus(run)}</span>`:'—')}${drawerFact('执行仓库',escapeHTML(frozen.map(r=>r.name).filter(Boolean).join('、')||'—'))}${drawerFact('冻结目标主分支',escapeHTML(frozenBranches.join('、')||'—'))}${drawerFact('Trace ID',ctx?.traceId?ctx.traceId.slice(-14):'—')}</div>`;
   return `<div class="detail-section"><h3>代码仓库与分支${repos.length>1?`<span class="sub">${repos.length} 个仓库</span>`:''}</h3>${repoFacts}</div><div class="detail-section"><h3>交付运行上下文<span class="sub">发起时冻结的仓库与 Trace 关联</span></h3>${run?runFacts+'<div style="margin-top:10px"><button class="button ghost small" data-open-run="'+escapeHTML(run.id)+'">查看运行详情与产物 →</button></div>':'<div class="detail-empty">尚未发起交付运行</div>'}</div>${run?.input?`<div class="detail-section"><h3>任务输入</h3><div class="detail-desc">${escapeHTML(run.input)}</div></div>`:''}`;
 }
+// Execution order of a SOP's nodes, same rule as orderNodesByEdges in
+// internal/repo/requirement.go: stable topological sort over the edges, array
+// order breaks ties, cycles fall back to array order. The editor appends a node
+// added in a later SOP version to the end of the array, so without this a gate
+// inserted mid-flow is listed after the last node.
+function nodesInExecutionOrder(wf){
+  const nodes=wf?.nodes||[],edges=wf?.edges||[];
+  if(nodes.length<2||!edges.length||nodes.some(n=>!n?.id))return nodes;
+  const known=new Set(nodes.map(n=>n.id)),indegree=new Map(),children=new Map();
+  for(const e of edges){
+    if(e.source===e.target||!known.has(e.source)||!known.has(e.target))continue;
+    indegree.set(e.target,(indegree.get(e.target)||0)+1);
+    children.set(e.source,[...(children.get(e.source)||[]),e.target]);
+  }
+  const placed=new Set(),out=[];
+  while(out.length<nodes.length){
+    const next=nodes.find(n=>!placed.has(n.id)&&!(indegree.get(n.id)>0));
+    if(!next){for(const n of nodes)if(!placed.has(n.id)){out.push(n);placed.add(n.id)}break}
+    out.push(next);placed.add(next.id);
+    for(const c of children.get(next.id)||[])indegree.set(c,indegree.get(c)-1);
+  }
+  return out;
+}
 function acceptancePane(issue,data){
   const run=data.run;
   if(conversationWorkspaceIssue(issue,run)){
@@ -857,7 +880,7 @@ function acceptancePane(issue,data){
   if(!run)return '<div class="detail-empty">尚未执行，暂无验收信息。</div>';
   const wf=run.workflowSnapshot||(state.data.workflows||[]).find(w=>w.id===run.workflowId);
   const nodes=wf?.nodes||[];
-  const gates=nodes.map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
+  const gates=nodesInExecutionOrder(wf).map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
     if(nr.status==='succeeded')verdict=isApproval?'已批准':(commands.length||manual)?'门禁通过':'完成';
     if(nr.status==='waiting_approval')verdict=turnsExhausted(nr)?'等待确认是否重试':(isApproval?'等待人工判断':'等待人工验收');
     if(nr.status==='failed')verdict='门禁失败';

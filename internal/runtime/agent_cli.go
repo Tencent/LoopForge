@@ -78,7 +78,11 @@ func agentCLIModelOptional(kind, baseURL string) bool {
 // AgentCLIOptions carries the per-invocation facts the credential binding
 // needs to render a CLI's model configuration.
 type AgentCLIOptions struct {
-	Model string
+	ApprovalCommand string
+	Model           string
+	// Effort is the reasoning effort chosen for Model; Cursor resolves the
+	// pair to one model ID with the owner's catalog.
+	Effort string
 	// SystemPromptFile is the system prompt path as the process sees it
 	// (relative paths resolve against the working directory).
 	SystemPromptFile string
@@ -402,6 +406,9 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 	case AgentCLICursor:
 		env["CURSOR_API_KEY"] = key
+		if model != "" {
+			argv = withCursorModelArg(argv, CursorModelID(model, options.Effort, cred.Models))
+		}
 	case AgentCLIAntigravity:
 		settings := map[string]any{}
 		if protocol == AgentCLIProtocolChat {
@@ -439,6 +446,11 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		lines = append(lines, "api_key_env = "+strconv.Quote(agentCLIKeyEnv), "",
 			"[models.agentflow]", `provider = "agentflow"`, "model = "+strconv.Quote(model),
 			"max_context_size = 262144", `capabilities = ["thinking", "tool_use"]`, "")
+		if hook := options.ApprovalCommand; hook != "" {
+			// Kimi validates 1–600 seconds and allows the tool on timeout; the
+			// hook's own retry budget ends well before that.
+			lines = append(lines, "[[hooks]]", `event = "PreToolUse"`, "command = "+strconv.Quote(hook), "timeout = 600", "")
+		}
 		if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte(strings.Join(lines, "\n"))); err != nil {
 			return nil, nil, err
 		}
@@ -537,7 +549,7 @@ func AgentCLIUserCredentials(user domain.User) map[string]ProviderCredential {
 	}
 	out := make(map[string]ProviderCredential, len(user.AgentCLICredentials))
 	for kind, cred := range user.AgentCLICredentials {
-		out[kind] = ProviderCredential{APIKey: cred.APIKey, BaseURL: cred.BaseURL, Protocol: cred.Protocol}
+		out[kind] = ProviderCredential{APIKey: cred.APIKey, BaseURL: cred.BaseURL, Protocol: cred.Protocol, Models: cred.Models}
 	}
 	return out
 }
@@ -570,4 +582,19 @@ func AgentCLIBinary(kind string) string {
 		return "cursor-agent"
 	}
 	return kind
+}
+
+// withCursorModelArg replaces the value of the first --model option.
+func withCursorModelArg(argv []string, id string) []string {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "--model" {
+			if argv[i+1] == id {
+				return argv
+			}
+			out := append([]string{}, argv...)
+			out[i+1] = id
+			return out
+		}
+	}
+	return argv
 }

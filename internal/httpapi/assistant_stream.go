@@ -340,6 +340,44 @@ func assistantAgentReport(text string) string {
 	return strings.TrimSpace(assistantAgentTrailerRe.ReplaceAllString(text, ""))
 }
 
+// assistantWrappedToolParams returns the inner tool input carried by a
+// DeferExecuteTool/MCP wrapper: a string "params" is used verbatim, any other
+// value is re-encoded, and a missing "params" falls back to the wrapper input.
+func assistantWrappedToolParams(input json.RawMessage, m map[string]any) json.RawMessage {
+	nested, ok := m["params"]
+	if !ok {
+		return input
+	}
+	if text, ok := nested.(string); ok {
+		return json.RawMessage(text)
+	}
+	if raw, err := json.Marshal(nested); err == nil {
+		return raw
+	}
+	return input
+}
+
+// assistantToolSearchNames joins the non-blank entries of the first
+// non-empty "tool_names"/"queries" list of a ToolSearch input.
+func assistantToolSearchNames(m map[string]any) string {
+	for _, key := range []string{"tool_names", "queries"} {
+		values, ok := m[key].([]any)
+		if !ok {
+			continue
+		}
+		var names []string
+		for _, value := range values {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+				names = append(names, strings.TrimSpace(text))
+			}
+		}
+		if len(names) > 0 {
+			return strings.Join(names, ", ")
+		}
+	}
+	return ""
+}
+
 func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
 	name = assistantSessionToolName(name)
 	var m map[string]any
@@ -372,31 +410,13 @@ func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
 			// opaque DeferExecuteTool label that the filter would keep forever.
 			return "", ""
 		}
-		params := input
-		if nested, ok := m["params"]; ok {
-			if text, ok := nested.(string); ok {
-				params = json.RawMessage(text)
-			} else if raw, err := json.Marshal(nested); err == nil {
-				params = raw
-			}
-		}
-		return assistantToolDisplay(inner, params)
+		return assistantToolDisplay(inner, assistantWrappedToolParams(input, m))
 	case "ToolSearch":
 		if detail := str("query", "q", "search", "pattern"); detail != "" {
 			return name, detail
 		}
-		for _, key := range []string{"tool_names", "queries"} {
-			if values, ok := m[key].([]any); ok {
-				var names []string
-				for _, value := range values {
-					if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
-						names = append(names, strings.TrimSpace(text))
-					}
-				}
-				if len(names) > 0 {
-					return name, truncateRunes(strings.Join(names, ", "), 160)
-				}
-			}
+		if names := assistantToolSearchNames(m); names != "" {
+			return name, truncateRunes(names, 160)
 		}
 	}
 	if strings.Contains(strings.ToLower(name), "command") || strings.EqualFold(name, "bash") || strings.EqualFold(name, "shell") || strings.EqualFold(name, "exec") {

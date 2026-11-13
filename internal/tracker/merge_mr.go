@@ -211,29 +211,10 @@ func parseGongfengMRRecords(raw string) []gongfengListedMR {
 			out = append(out, item)
 		}
 	}
-	var wrapped struct {
-		Data  json.RawMessage    `json:"data"`
-		Items []gongfengListedMR `json:"items"`
-	}
-	if json.Unmarshal([]byte(raw), &wrapped) == nil {
-		var list []gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &list) == nil {
-			add(list)
-		}
-		var one gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &one) == nil {
-			add([]gongfengListedMR{one})
-		}
-		add(wrapped.Items)
-	}
-	var list []gongfengListedMR
-	if json.Unmarshal([]byte(raw), &list) == nil {
-		add(list)
-	}
-	var one gongfengListedMR
-	if json.Unmarshal([]byte(raw), &one) == nil {
-		add([]gongfengListedMR{one})
-	}
+	visitGongfengMRPayload(raw, func(items []gongfengListedMR) bool {
+		add(items)
+		return false
+	})
 	return out
 }
 
@@ -283,42 +264,40 @@ func parseGongfengOpenMR(raw, wantTarget string) (globalID, iid int, ok bool) {
 		}
 		return 0, 0, false
 	}
-	return decodeGongfengMRList(raw, first)
+	visitGongfengMRPayload(raw, func(items []gongfengListedMR) bool {
+		globalID, iid, ok = first(items)
+		return ok
+	})
+	return globalID, iid, ok
 }
 
-func decodeGongfengMRList(raw string, first func([]gongfengListedMR) (int, int, bool)) (globalID, iid int, ok bool) {
+// visitGongfengMRPayload hands each candidate MR list of a search_merge_request
+// payload to visit, in order: {"data":[...]}, {"data":{...}}, {"items":[...]},
+// a bare array, then a bare object. It stops as soon as visit returns true.
+func visitGongfengMRPayload(raw string, visit func([]gongfengListedMR) bool) {
 	var wrapped struct {
 		Data  json.RawMessage    `json:"data"`
 		Items []gongfengListedMR `json:"items"`
 	}
 	if json.Unmarshal([]byte(raw), &wrapped) == nil {
 		var list []gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &list) == nil {
-			if id, miid, found := first(list); found {
-				return id, miid, true
-			}
+		if json.Unmarshal(wrapped.Data, &list) == nil && visit(list) {
+			return
 		}
 		var one gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &one) == nil {
-			if id, miid, found := first([]gongfengListedMR{one}); found {
-				return id, miid, true
-			}
+		if json.Unmarshal(wrapped.Data, &one) == nil && visit([]gongfengListedMR{one}) {
+			return
 		}
-		if id, miid, found := first(wrapped.Items); found {
-			return id, miid, true
+		if visit(wrapped.Items) {
+			return
 		}
 	}
 	var list []gongfengListedMR
-	if json.Unmarshal([]byte(raw), &list) == nil {
-		if id, miid, found := first(list); found {
-			return id, miid, true
-		}
+	if json.Unmarshal([]byte(raw), &list) == nil && visit(list) {
+		return
 	}
 	var one gongfengListedMR
 	if json.Unmarshal([]byte(raw), &one) == nil {
-		if id, miid, found := first([]gongfengListedMR{one}); found {
-			return id, miid, true
-		}
+		visit([]gongfengListedMR{one})
 	}
-	return 0, 0, false
 }

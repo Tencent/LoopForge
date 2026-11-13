@@ -1127,8 +1127,8 @@ func accumulateVersion(values map[string]*analyticsVersionAccumulator, workflowI
 	}
 }
 
-// accumulateUserUsage 按"责任人 × 自然日"聚合用量。
-func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, day string, run domain.Run, duration int64, complete bool, execDuration int64) {
+// analyticsUserEntry 返回"责任人 × 自然日"的累加器，不存在时新建；空责任人归为 unassigned。
+func analyticsUserEntry(values map[string]*analyticsUserAccumulator, userID, day string) *analyticsUserAccumulator {
 	if userID == "" {
 		userID = "unassigned"
 	}
@@ -1138,6 +1138,12 @@ func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, da
 		value = &analyticsUserAccumulator{item: domain.AnalyticsUserUsage{UserID: userID, Date: day, CostKnown: true}}
 		values[key] = value
 	}
+	return value
+}
+
+// accumulateUserUsage 按"责任人 × 自然日"聚合用量。
+func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, day string, run domain.Run, duration int64, complete bool, execDuration int64) {
+	value := analyticsUserEntry(values, userID, day)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.InputTokens += run.Usage.InputTokens
@@ -1251,7 +1257,8 @@ func finalizeUserUsage(values map[string]*analyticsUserAccumulator) []domain.Ana
 	return out
 }
 
-func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, projectID, issueID string, run domain.Run) {
+// analyticsProjectEntry 返回项目的累加器，不存在时新建；空项目归为 unassigned。
+func analyticsProjectEntry(values map[string]*analyticsProjectAccumulator, projectID string) *analyticsProjectAccumulator {
 	if projectID == "" {
 		projectID = "unassigned"
 	}
@@ -1260,6 +1267,11 @@ func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, proj
 		value = &analyticsProjectAccumulator{item: domain.AnalyticsProjectUsage{ProjectID: projectID, CostKnown: true}, issues: map[string]struct{}{}}
 		values[projectID] = value
 	}
+	return value
+}
+
+func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, projectID, issueID string, run domain.Run) {
+	value := analyticsProjectEntry(values, projectID)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.CostUSD += run.Usage.CostUSD
@@ -1313,8 +1325,8 @@ func analyticsIssueSource(issue domain.Issue) string {
 	return source
 }
 
-// accumulateIssueSource 按需求来源聚合执行量、Token、成本与执行耗时。
-func accumulateIssueSource(values map[string]*analyticsAccumulator, source string, run domain.Run, execDuration int64) {
+// analyticsSourceEntry 返回需求来源的累加器，不存在时新建；空来源归为 local。
+func analyticsSourceEntry(values map[string]*analyticsAccumulator, source string) *analyticsAccumulator {
 	if source == "" {
 		source = "local"
 	}
@@ -1323,6 +1335,12 @@ func accumulateIssueSource(values map[string]*analyticsAccumulator, source strin
 		value = &analyticsAccumulator{item: domain.AnalyticsBreakdown{Key: source, Name: source}}
 		values[source] = value
 	}
+	return value
+}
+
+// accumulateIssueSource 按需求来源聚合执行量、Token、成本与执行耗时。
+func accumulateIssueSource(values map[string]*analyticsAccumulator, source string, run domain.Run, execDuration int64) {
+	value := analyticsSourceEntry(values, source)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.CostUSD += run.Usage.CostUSD
@@ -1439,43 +1457,21 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	if usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
 		return
 	}
-	userID := analyticsRunUserID(run, issue)
-	if userID == "" {
-		userID = "unassigned"
-	}
-	key := userID + "\x00" + at.Format("2006-01-02")
-	user := users[key]
-	if user == nil {
-		user = &analyticsUserAccumulator{item: domain.AnalyticsUserUsage{UserID: userID, Date: at.Format("2006-01-02"), CostKnown: true}}
-		users[key] = user
-	}
+	user := analyticsUserEntry(users, analyticsRunUserID(run, issue), at.Format("2006-01-02"))
 	user.item.Tokens += usage.TotalTokens
 	user.item.InputTokens += usage.InputTokens
 	user.item.OutputTokens += usage.OutputTokens
 	user.item.CacheReadTokens += usage.CacheReadTokens
 	user.item.CacheWriteTokens += usage.CacheWriteTokens
 	user.item.CostUSD += usage.CostUSD
-	projectID := domain.RunProjectID(run, issue.ProjectID)
-	if projectID == "" {
-		projectID = "unassigned"
-	}
-	project := projects[projectID]
-	if project == nil {
-		project = &analyticsProjectAccumulator{item: domain.AnalyticsProjectUsage{ProjectID: projectID, CostKnown: true}, issues: map[string]struct{}{}}
-		projects[projectID] = project
-	}
+	project := analyticsProjectEntry(projects, domain.RunProjectID(run, issue.ProjectID))
 	project.item.Tokens += usage.TotalTokens
 	project.item.CostUSD += usage.CostUSD
 	if issueID == "" {
 		return
 	}
 	project.issues[issueID] = struct{}{}
-	source := analyticsIssueSource(issue)
-	value := sources[source]
-	if value == nil {
-		value = &analyticsAccumulator{item: domain.AnalyticsBreakdown{Key: source, Name: source}}
-		sources[source] = value
-	}
+	value := analyticsSourceEntry(sources, analyticsIssueSource(issue))
 	value.item.Tokens += usage.TotalTokens
 	value.item.CostUSD += usage.CostUSD
 	value.inputTokens += usage.InputTokens

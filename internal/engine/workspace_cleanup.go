@@ -314,7 +314,7 @@ func (e *Engine) DeleteRun(runID string) error {
 	if run.Status == "running" || run.Status == "waiting" || run.Status == "queued" {
 		return fmt.Errorf("run %s is %s: cancel it before deleting", runID, run.Status)
 	}
-	if hasRunningNode(run) {
+	if run.HasActiveNode() {
 		return fmt.Errorf("运行 %s 仍有未结束的节点，请先停止后再删除", runID)
 	}
 	token, err := e.beginWorkspaceUseAfterCleanup(context.Background(), runID)

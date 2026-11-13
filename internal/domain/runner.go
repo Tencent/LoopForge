@@ -76,6 +76,15 @@ const RunnerVersionWorkspaceOwnerPreparation = "0.7.1"
 
 const RunnerVersionConversationWorkspace = "0.8.0"
 
+// Conversation CLI execution includes cancellation of preemptible workspace
+// exports and addressable startup cancellation, so stopping cannot strand a
+// queued CLI or block a following turn behind a previous background save.
+const RunnerVersionConversationCLI = "0.10.1"
+
+func (r Runner) SupportsConversationCLI() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
+}
+
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
 }
@@ -408,6 +417,7 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIAPIKey = ""
 	copyInvocation.AgentCLIBaseURL = ""
 	copyInvocation.AgentCLIProtocol = ""
+	copyInvocation.AgentCLIModels = nil
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
 	if copyInvocation.Repository != nil {
@@ -475,6 +485,9 @@ type RunnerInvocation struct {
 	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`
 	AgentCLIBaseURL              string   `json:"agentCliBaseUrl,omitempty"`
 	AgentCLIProtocol             string   `json:"agentCliProtocol,omitempty"`
+	// AgentCLIModels is the responsible user's saved catalog for the agent
+	// CLI; Cursor resolves the model's effort to an ID from it.
+	AgentCLIModels []CLIModel `json:"agentCliModels,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
 	// in scripts, verification gates, and Agent hooks. It is unbound; personal
 	// credentials are applied in memory on the runner. Agent Assets stay

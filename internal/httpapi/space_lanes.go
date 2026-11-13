@@ -181,7 +181,7 @@ func (h *spacesHandlers) laneWorkspace(run domain.Run) spaceLaneWorkspace {
 		break
 	}
 	switch {
-	case !roomRunTerminal(run.Status) && run.Status != "":
+	case !domain.TerminalRunStatus(run.Status) && run.Status != "":
 		ws.State = "running"
 	case !run.WorkspaceCleanedAt.IsZero():
 		ws.State = "cleaned"

@@ -374,6 +374,10 @@ func clarifyRepositorySource(repository domain.Repository, selectedBaseBranch st
 }
 
 func (h *streamHandlers) runChatClarify(c *gin.Context, issue domain.Issue, request chatClarifyRequest) {
+	if err := clarifyModelEngineError(request.Model); err != nil {
+		c.JSON(400, map[string]string{"error": err.Error()})
+		return
+	}
 	if strings.TrimSpace(issue.ID) != "" {
 		h.handleIssueClarify(c, issue, request)
 		return

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,5 +61,26 @@ func TestWriteTarZstPropagatesMissingSourceFile(t *testing.T) {
 	var buf bytes.Buffer
 	if _, _, err := writeTarZst(&buf, entries, 0); err == nil {
 		t.Fatal("expected error for missing source file")
+	}
+}
+
+func TestInspectTarZstEnforcesExpandedLimit(t *testing.T) {
+	entries := tarZstTestEntries(t)
+	var total int64
+	for _, entry := range entries {
+		total += entry.size
+	}
+	var buf bytes.Buffer
+	if _, _, err := writeTarZst(&buf, entries, 0); err != nil {
+		t.Fatal(err)
+	}
+	limits := Limits{MaxFiles: 10, MaxCompressed: 1 << 20, MaxExpanded: total}
+	if _, err := InspectTarZst(bytes.NewReader(buf.Bytes()), "index.html", limits); err != nil {
+		t.Fatalf("expanded size equal to limit must pass: %v", err)
+	}
+	limits.MaxExpanded = total - 1
+	_, err := InspectTarZst(bytes.NewReader(buf.Bytes()), "index.html", limits)
+	if !errors.Is(err, ErrLimitExceeded) || !strings.Contains(err.Error(), "expanded size") {
+		t.Fatalf("expected expanded size ErrLimitExceeded, got %v", err)
 	}
 }
