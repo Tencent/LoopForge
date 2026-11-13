@@ -176,52 +176,8 @@ func validate(wf domain.WorkflowDefinition) error {
 			return fmt.Errorf("duplicate node %s", n.ID)
 		}
 		ids[n.ID] = true
-		switch n.Type {
-		case "agent", "approval":
-		case "sop":
-			if strings.TrimSpace(n.SOPWorkflowID) == "" {
-				return fmt.Errorf("node %s sopWorkflowId is required", n.ID)
-			}
-			if strings.TrimSpace(n.SOPWorkflowID) == strings.TrimSpace(wf.ID) {
-				return fmt.Errorf("node %s cannot reference its own workflow", n.ID)
-			}
-		case "script", "command":
-			language := n.ScriptLanguage
-			script := n.Script
-			if n.Type == "command" {
-				language, script = "shell", n.Command
-			}
-			if language == "" {
-				language = "shell"
-			}
-			if language != "shell" && language != "python" {
-				return fmt.Errorf("node %s has invalid scriptLanguage %q", n.ID, language)
-			}
-			if strings.TrimSpace(script) == "" {
-				return fmt.Errorf("node %s script is required", n.ID)
-			}
-		default:
-			return fmt.Errorf("node %s has invalid type %q", n.ID, n.Type)
-		}
-		if n.OnFailure != "" && n.OnFailure != "fail" && n.OnFailure != "reject" && n.OnFailure != "human" && n.OnFailure != "loop" {
-			return fmt.Errorf("node %s has invalid onFailure %q", n.ID, n.OnFailure)
-		}
-		if scope := strings.TrimSpace(n.ExecutionScope); scope != "" && scope != domain.ExecutionScopeRun && scope != domain.ExecutionScopeRepositories {
-			return fmt.Errorf("node %s has invalid executionScope %q", n.ID, scope)
-		}
-		if n.RetryStrategy != "" && n.RetryStrategy != "targeted_fix" && n.RetryStrategy != "full_redo" {
-			return fmt.Errorf("node %s has invalid retryStrategy %q", n.ID, n.RetryStrategy)
-		}
-		artifactNames := map[string]bool{}
-		for _, contract := range n.ArtifactOutputs {
-			clean := filepath.Clean(contract.Path)
-			if contract.Name == "" || clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
-				return fmt.Errorf("node %s has invalid artifact contract %q", n.ID, contract.Name)
-			}
-			if artifactNames[contract.Name] {
-				return fmt.Errorf("node %s has duplicate artifact %s", n.ID, contract.Name)
-			}
-			artifactNames[contract.Name] = true
+		if err := validateNode(wf.ID, n); err != nil {
+			return err
 		}
 	}
 	for _, n := range wf.Nodes {
@@ -232,9 +188,69 @@ func validate(wf domain.WorkflowDefinition) error {
 			return fmt.Errorf("node %s reject target is required", n.ID)
 		}
 	}
+	return validateDAG(ids, wf.Edges)
+}
+
+// validateNode checks one node's own fields: its type-specific settings, the
+// onFailure/executionScope/retryStrategy enums and its artifact contracts.
+// workflowID guards sop nodes against referencing their own workflow.
+func validateNode(workflowID string, n domain.WorkflowNode) error {
+	switch n.Type {
+	case "agent", "approval":
+	case "sop":
+		if strings.TrimSpace(n.SOPWorkflowID) == "" {
+			return fmt.Errorf("node %s sopWorkflowId is required", n.ID)
+		}
+		if strings.TrimSpace(n.SOPWorkflowID) == strings.TrimSpace(workflowID) {
+			return fmt.Errorf("node %s cannot reference its own workflow", n.ID)
+		}
+	case "script", "command":
+		language := n.ScriptLanguage
+		script := n.Script
+		if n.Type == "command" {
+			language, script = "shell", n.Command
+		}
+		if language == "" {
+			language = "shell"
+		}
+		if language != "shell" && language != "python" {
+			return fmt.Errorf("node %s has invalid scriptLanguage %q", n.ID, language)
+		}
+		if strings.TrimSpace(script) == "" {
+			return fmt.Errorf("node %s script is required", n.ID)
+		}
+	default:
+		return fmt.Errorf("node %s has invalid type %q", n.ID, n.Type)
+	}
+	if n.OnFailure != "" && n.OnFailure != "fail" && n.OnFailure != "reject" && n.OnFailure != "human" && n.OnFailure != "loop" {
+		return fmt.Errorf("node %s has invalid onFailure %q", n.ID, n.OnFailure)
+	}
+	if scope := strings.TrimSpace(n.ExecutionScope); scope != "" && scope != domain.ExecutionScopeRun && scope != domain.ExecutionScopeRepositories {
+		return fmt.Errorf("node %s has invalid executionScope %q", n.ID, scope)
+	}
+	if n.RetryStrategy != "" && n.RetryStrategy != "targeted_fix" && n.RetryStrategy != "full_redo" {
+		return fmt.Errorf("node %s has invalid retryStrategy %q", n.ID, n.RetryStrategy)
+	}
+	artifactNames := map[string]bool{}
+	for _, contract := range n.ArtifactOutputs {
+		clean := filepath.Clean(contract.Path)
+		if contract.Name == "" || clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
+			return fmt.Errorf("node %s has invalid artifact contract %q", n.ID, contract.Name)
+		}
+		if artifactNames[contract.Name] {
+			return fmt.Errorf("node %s has duplicate artifact %s", n.ID, contract.Name)
+		}
+		artifactNames[contract.Name] = true
+	}
+	return nil
+}
+
+// validateDAG rejects edges that reference unknown node ids and, via Kahn's
+// topological sort, any cycle among the nodes in ids.
+func validateDAG(ids map[string]bool, edges []domain.WorkflowEdge) error {
 	indegree := map[string]int{}
 	adj := map[string][]string{}
-	for _, e := range wf.Edges {
+	for _, e := range edges {
 		if !ids[e.Source] || !ids[e.Target] {
 			return fmt.Errorf("edge references missing node")
 		}
