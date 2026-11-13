@@ -23,7 +23,8 @@ func analyticsPricedRun(run domain.Run) domain.Run {
 		}
 		node := *original
 		model := strings.ToLower(strings.TrimSpace(node.Model))
-		inclusive := node.Provider == "codex" || node.Provider == "openai" || strings.HasPrefix(model, "gpt-")
+		// DeepSeek uses the Codex adapter, whose input count includes cached tokens.
+		inclusive := node.Provider == "codex" || node.Provider == "deepseek" || node.Provider == "openai" || strings.HasPrefix(model, "gpt-")
 		node.Usage = domain.AnalyticsPricedUsage(node.Model, node.Usage, inclusive)
 		nodes[id] = &node
 		input += node.Usage.InputTokens

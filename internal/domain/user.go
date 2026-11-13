@@ -18,8 +18,8 @@ type User struct {
 	// on the official endpoint, or the models the Base URL publishes.
 	CodexModels      []CLIModel `json:"codexModels,omitempty"`
 	ClaudeCodeModels []CLIModel `json:"claudeCodeModels,omitempty"`
-	// AgentCLICredentials holds the credentials of the agent CLIs
-	// (AgentCLIExecutorKinds) by kind.
+	// AgentCLICredentials holds personal credentials for agent CLI executors
+	// and DeepSeek via Codex, by kind.
 	AgentCLICredentials map[string]AgentCLICredential `json:"agentCliCredentials,omitempty"`
 	ID                  int64                         `json:"id"`
 	StaffID             int                           `json:"staffId"`
@@ -131,6 +131,7 @@ var AgentCLIProtocolOptions = map[string][]string{
 	"opencode": {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
 	"kimi":     {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
 	"pi":       {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
+	"deepseek": {AgentCLIProtocolResponses},
 	"dsh":      {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
 	"zcode":    {AgentCLIProtocolMessages, AgentCLIProtocolChat, AgentCLIProtocolResponses},
 	"agy":      {AgentCLIProtocolGemini, AgentCLIProtocolChat},

@@ -683,6 +683,20 @@ paths:
                 claudeCodeApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
                 claudeCodeApiKeyClear: {type: boolean}
                 claudeCodeBaseUrl: {type: string, description: "HTTP(S) Anthropic-compatible service URL. Omitted preserves the value; empty uses the official endpoint."}
+                agentCliCredentials:
+                  type: object
+                  description: Credentials by executor kind. Use deepseek for DeepSeek via Codex. A blank DeepSeek baseUrl uses https://api.deepseek.com, and a custom URL must support Responses API.
+                  additionalProperties:
+                    type: object
+                    properties:
+                      apiKey: {type: string, writeOnly: true}
+                      apiKeyClear: {type: boolean}
+                      baseUrl: {type: string}
+                      protocol: {type: string}
+                      models:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CLIModel"
       responses:
         "200":
           description: Redacted saved user
@@ -4136,6 +4150,24 @@ components:
         claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}
         claudeCodeBaseUrl: {type: string}
         codeBuddyInternetEnvironment: {type: string}
+        agentCliCredentials:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              apiKeyConfigured: {type: boolean, readOnly: true}
+              baseUrl: {type: string}
+              protocol: {type: string}
+              models:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CLIModel"
+    CLIModel:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string}
+        name: {type: string}
     RepositoryInput:
       type: object
       required: [projectId]

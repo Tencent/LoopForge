@@ -175,7 +175,7 @@ func redactPreparationOutput(sb Sandbox, output string) string {
 		managed.credentialsMu.RLock()
 		credentials := managed.credentials
 		managed.credentialsMu.RUnlock()
-		secrets = append(secrets, credentials.GitToken, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		secrets = append(secrets, credentials.GitToken, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey, credentials.AgentCLI["deepseek"].APIKey)
 		for _, server := range credentials.MCPServers {
 			for _, value := range server.Headers {
 				secrets = append(secrets, value)

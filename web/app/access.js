@@ -65,10 +65,12 @@ function gotoCredential(name,sshRemote){
 }
 // Personal credential fields and the errors they cause. Keep the rules in
 // sync with chatbot/src/credentials.js.
-const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥'};
+const CREDENTIAL_FIELDS={'agentCli.dsh':'DeepSeek Harness API Key','agentCli.deepseek':'DeepSeek API Key',codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥'};
 const CREDENTIAL_RULES=[
   ['codexApiKey',/Codex[^。\n]{0,16}API Key/i],
   ['claudeCodeApiKey',/Claude Code[^。\n]{0,16}API Key/i],
+  ['agentCli.dsh',/DeepSeek Harness[^。\n]{0,20}(API Key|Key|凭据)/i],
+  ['agentCli.deepseek',/DeepSeek[^。\n]{0,20}(API Key|Key|凭据)/i],
   ['codeBuddyApiKey',/CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key/i],
   ['gitSshKey',/Git SSH (?:密钥|私钥)/i],
   ['gitToken',/Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i],

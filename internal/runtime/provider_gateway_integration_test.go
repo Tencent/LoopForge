@@ -21,7 +21,7 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 	if os.Getenv("AGENTFLOW_TEST_NATIVE_PROVIDERS") != "1" {
 		t.Skip("set AGENTFLOW_TEST_NATIVE_PROVIDERS=1 to exercise installed CLIs")
 	}
-	for _, kind := range []string{"codex", "claude-code"} {
+	for _, kind := range []string{"codex", "claude-code", "deepseek"} {
 		t.Run(kind, func(t *testing.T) {
 			binary := "codex"
 			if kind == "claude-code" {
@@ -53,6 +53,9 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 				requests++
 				expectedPath, header := "/v1/responses", r.Header.Get("Authorization")
 				expectedKey := "Bearer local-gateway-test-key"
+				if kind == "deepseek" {
+					expectedPath = "/responses"
+				}
 				if kind == "claude-code" {
 					expectedPath = "/v1/messages"
 					header = r.Header.Get("X-Api-Key")
@@ -67,7 +70,7 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 					raw, _ := json.Marshal(data)
 					fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, raw)
 				}
-				if kind == "codex" {
+				if kind != "claude-code" {
 					message := map[string]any{"id": "msg_test", "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "GATEWAY_OK", "annotations": []any{}}}}
 					response := map[string]any{"id": "resp_test", "object": "response", "status": "completed", "model": "gateway-test-model", "output": []any{message}, "usage": map[string]int{"input_tokens": 10, "output_tokens": 3, "total_tokens": 13}}
 					emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_test", "status": "in_progress", "output": []any{}}})
@@ -103,7 +106,7 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			creds := RunCredentials{Codex: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL + "/v1"}, ClaudeCode: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL}}
+			creds := RunCredentials{AgentCLI: map[string]ProviderCredential{"deepseek": {APIKey: "local-gateway-test-key", BaseURL: server.URL}}, Codex: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL + "/v1"}, ClaudeCode: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL}}
 			sb := &localSandbox{workspace: workspace}
 			bound, err := bindCommand(sb, workspace, command, creds)
 			if err != nil {

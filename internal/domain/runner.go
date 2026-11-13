@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -251,9 +252,15 @@ func (r Runner) SupportsProvider(provider string) bool {
 	if provider == "" {
 		return false
 	}
+	deepseek := strings.EqualFold(provider, "deepseek")
+	if deepseek {
+		provider = "codex"
+	}
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) && rt.Status != RuntimeStatusDisabled {
-			return true
+			if !deepseek || slices.Contains(rt.Capabilities, RunnerCapabilityDeepSeek) {
+				return true
+			}
 		}
 	}
 	return false
@@ -264,7 +271,7 @@ func (r Runner) SupportsProvider(provider string) bool {
 // they always use the responsible user's personal credential. Codex and
 // Claude Code default to local login.
 func (r Runner) RuntimeAuthMode(provider string) string {
-	if IsAgentCLIKind(provider) {
+	if IsAgentCLIKind(provider) || strings.EqualFold(strings.TrimSpace(provider), "deepseek") {
 		return RuntimeAuthPersonal
 	}
 	provider = strings.TrimSpace(provider)
@@ -292,6 +299,9 @@ const (
 	RuntimeAuthLocal      = "local"
 	RuntimeAuthPersonal   = "personal"
 )
+
+// RunnerCapabilityDeepSeek marks a Codex runtime whose daemon can run DeepSeek tasks.
+const RunnerCapabilityDeepSeek = "deepseek"
 
 // RunnerRuntime is one discovered Agent CLI on the runner machine. Credentials
 // for the CLI stay on that machine; the control plane only learns the binary

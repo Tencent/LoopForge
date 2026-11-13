@@ -55,7 +55,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		return
 	}
 	engine := strings.TrimSpace(req.Engine)
-	if engine == assistantEngineCodeBuddy || !slices.Contains(assistantCLIEngines(), engine) {
+	if engine != "deepseek" && (engine == assistantEngineCodeBuddy || !slices.Contains(assistantCLIEngines(), engine)) {
 		c.JSON(http.StatusBadRequest, cliModelProbeResult{Error: "不支持的 CLI：" + engine})
 		return
 	}

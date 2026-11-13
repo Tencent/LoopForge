@@ -192,7 +192,7 @@ func trustedScriptCommand(command CommandSpec) bool { return command.Provider ==
 // become visible after a script legitimately removes/reinstalls a package.
 func maskedAgentCommand(command CommandSpec) bool {
 	switch command.Provider {
-	case "codebuddy", "codex", "claude-code":
+	case "codebuddy", "codex", "claude-code", "deepseek":
 		return true
 	}
 	return false

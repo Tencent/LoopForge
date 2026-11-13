@@ -244,6 +244,7 @@ func BuiltInExecutors() []domain.ExecutorDefinition {
 		{ID: "pi", Name: "Pi", Kind: "pi", Binary: "pi", Protocol: "stream-json"},
 		{ID: "dsh", Name: "DeepSeek Harness", Kind: "dsh", Binary: "dsh", Protocol: "stream-json"},
 		{ID: "zcode", Name: "ZCode", Kind: "zcode", Binary: "zcode", Protocol: "stream-json"},
+		{ID: "deepseek", Name: "DeepSeek", Kind: "deepseek", Binary: "codex", Model: domain.DeepSeekDefaultModel, Args: []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"}, Protocol: "jsonl"},
 	}
 }
 

@@ -376,7 +376,7 @@ func applyAgentCLICredentialUpdates(user *domain.User, updates map[string]AgentC
 	}
 	for kind, update := range updates {
 		kind = strings.TrimSpace(kind)
-		if !domain.IsAgentCLIKind(kind) {
+		if kind != "deepseek" && !domain.IsAgentCLIKind(kind) {
 			return fmt.Errorf("不支持的 CLI：%s", kind)
 		}
 		cred := merged[kind]
