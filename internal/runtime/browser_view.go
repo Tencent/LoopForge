@@ -485,8 +485,9 @@ var browserMotionSettle = 400 * time.Millisecond
 
 // markMotion switches the screencast to light frames for scrolling and
 // dragging, and back once input has been quiet for browserMotionSettle.
-// Restarting the screencast makes Chromium send the current page again, so
-// the view ends on a sharp frame even when nothing moves afterwards.
+// Restarting the screencast usually makes Chromium send the current page
+// again; ensureSettledFrame covers the times it does not, so the view ends
+// on a sharp frame even when nothing moves afterwards.
 func (v *browserView) markMotion(ctx context.Context) {
 	v.mu.Lock()
 	v.motionGen++
@@ -496,6 +497,7 @@ func (v *browserView) markMotion(ctx context.Context) {
 	if start && session != "" {
 		v.restartScreencast(ctx, session)
 	}
+	frameWait := browserSettledFrameWait
 	time.AfterFunc(browserMotionSettle, func() {
 		v.mu.Lock()
 		if gen != v.motionGen || !v.motion {
@@ -511,7 +513,49 @@ func (v *browserView) markMotion(ctx context.Context) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		v.restartScreencast(ctx, session)
+		v.ensureSettledFrame(ctx, session, frameWait)
 	})
+}
+
+// browserSettledFrameWait is how long a restarted screencast gets to send the
+// current page before ensureSettledFrame captures it instead.
+var browserSettledFrameWait = 300 * time.Millisecond
+
+// ensureSettledFrame publishes a sharp screenshot when Chromium sends no frame
+// after the screencast returns to sharp. It captures only on repaint and does
+// not always re-send a page that stopped changing, which would leave the panel
+// on its last light frame.
+func (v *browserView) ensureSettledFrame(ctx context.Context, session string, wait time.Duration) {
+	v.mu.Lock()
+	seq := v.seq
+	v.mu.Unlock()
+	select {
+	case <-time.After(wait):
+	case <-ctx.Done():
+		return
+	}
+	stale := func() bool {
+		return v.session == session && v.seq == seq && !v.motion
+	}
+	v.mu.Lock()
+	ok := stale()
+	v.mu.Unlock()
+	if !ok {
+		return
+	}
+	var shot struct {
+		Data string `json:"data"`
+	}
+	if v.client.call(ctx, session, "Page.captureScreenshot", map[string]any{"format": "jpeg", "quality": 80}, &shot) != nil || shot.Data == "" {
+		return
+	}
+	v.mu.Lock()
+	if stale() {
+		v.frame = shot.Data
+		v.seq++
+		v.notify()
+	}
+	v.mu.Unlock()
 }
 
 func (v *browserView) restartScreencast(ctx context.Context, session string) {
