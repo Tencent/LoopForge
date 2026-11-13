@@ -1130,40 +1130,14 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 	if st.ID == "" {
 		return domain.Issue{}, fmt.Errorf("TAPD 需求缺少 ID")
 	}
-	externalType := "story"
-	issueKind := kind
-	if kind == "bug" || kind == "task" {
-		externalType = kind
-	}
-	if kind == "task" {
-		issueKind = "requirement"
-	}
-	// TAPD handlers are stored in owner for stories/tasks and current_owner for bugs.
-	assignee := st.Owner
-	if kind == "bug" {
-		assignee = st.CurrentOwner
-	}
-	status := tapdStatusToStatus(st.Status)
-	priority := tapdPriority(st.Priority)
-	if kind == "bug" {
-		status = tapdBugStatusToStatus(st.Status)
-	} else if kind == "task" {
-		status = tapdTaskStatusToStatus(st.Status)
-		priority = tapdTaskPriority(st.PriorityLabel)
-	}
+	fields := tapdRecordKindFields(st, kind)
+	externalType := fields.externalType
 	existing, found := findTAPDRecord(store, st.ID, externalType, workspaceID)
-	issueID := fmt.Sprintf("tapd-%s", st.ID)
-	if externalType == "task" {
-		issueID = "tapd-task-" + st.ID
-	}
-	if found {
-		issueID = existing.ID
-	} else if _, occupied := store.Issue(issueID); occupied {
-		// Preserve historic IDs while allowing another workspace or record
-		// type to use the same numeric TAPD ID without overwriting it.
-		issueID = fmt.Sprintf("tapd-%s-%s-%s", workspaceID, externalType, st.ID)
-		if _, occupied := store.Issue(issueID); occupied {
-			return domain.Issue{}, fmt.Errorf("TAPD 工作项 %s 的本地 ID 已被占用", st.ID)
+	issueID := existing.ID
+	if !found {
+		var err error
+		if issueID, err = allocateTAPDIssueID(store, workspaceID, externalType, st.ID); err != nil {
+			return domain.Issue{}, err
 		}
 	}
 	if workspaceID == "" && found && existing.ExternalRef != nil {
@@ -1174,10 +1148,10 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 		ProjectID:   projectID,
 		Title:       st.Name,
 		Description: st.Description,
-		Priority:    priority,
-		Status:      status,
-		CloseSource: closeSourceForStatus(status),
-		Kind:        issueKind,
+		Priority:    fields.priority,
+		Status:      fields.status,
+		CloseSource: closeSourceForStatus(fields.status),
+		Kind:        fields.issueKind,
 		Source:      "tapd",
 		ExternalRef: &domain.ExternalRef{
 			Source:        "tapd",
@@ -1192,11 +1166,11 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 	if found {
 		applyExistingIssue(&issue, existing)
 		if issue.AssigneeUserID == 0 {
-			issue.AssigneeUserID = s.resolveTAPDAssignee(store, projectID, assignee, fallbackUserID)
+			issue.AssigneeUserID = s.resolveTAPDAssignee(store, projectID, fields.assignee, fallbackUserID)
 		}
 	} else {
 		issue.CreatedAt = parseTime(st.Created)
-		issue.AssigneeUserID = s.resolveTAPDAssignee(store, projectID, assignee, fallbackUserID)
+		issue.AssigneeUserID = s.resolveTAPDAssignee(store, projectID, fields.assignee, fallbackUserID)
 	}
 	issue.UpdatedAt = time.Now().UTC()
 	if err := store.PutSyncedIssue(issue); err != nil {
@@ -1207,6 +1181,66 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 		return stored, nil
 	}
 	return issue, nil
+}
+
+// tapdRecordFields is the kind-dependent mapping of a TAPD record onto a
+// local issue: TAPD stories, bugs and tasks differ in external type, local
+// kind, handler field, status vocabulary and priority source.
+type tapdRecordFields struct {
+	externalType string
+	issueKind    string
+	assignee     string
+	status       string
+	priority     string
+}
+
+func tapdRecordKindFields(st tapdStory, kind string) tapdRecordFields {
+	// TAPD handlers are stored in owner for stories/tasks and current_owner for bugs.
+	switch kind {
+	case "bug":
+		return tapdRecordFields{
+			externalType: "bug",
+			issueKind:    kind,
+			assignee:     st.CurrentOwner,
+			status:       tapdBugStatusToStatus(st.Status),
+			priority:     tapdPriority(st.Priority),
+		}
+	case "task":
+		return tapdRecordFields{
+			externalType: "task",
+			issueKind:    "requirement",
+			assignee:     st.Owner,
+			status:       tapdTaskStatusToStatus(st.Status),
+			priority:     tapdTaskPriority(st.PriorityLabel),
+		}
+	default:
+		return tapdRecordFields{
+			externalType: "story",
+			issueKind:    kind,
+			assignee:     st.Owner,
+			status:       tapdStatusToStatus(st.Status),
+			priority:     tapdPriority(st.Priority),
+		}
+	}
+}
+
+// allocateTAPDIssueID picks the local ID for a TAPD record not yet synced.
+// Historic IDs (tapd-<id>, tapd-task-<id>) are kept when free; otherwise the
+// workspace and record type are folded in so another workspace or record type
+// can reuse the same numeric TAPD ID without overwriting it.
+func allocateTAPDIssueID(store IssueStoreAdapter, workspaceID, externalType, recordID string) (string, error) {
+	issueID := fmt.Sprintf("tapd-%s", recordID)
+	if externalType == "task" {
+		issueID = "tapd-task-" + recordID
+	}
+	if _, occupied := store.Issue(issueID); !occupied {
+		return issueID, nil
+	}
+	issueID = fmt.Sprintf("tapd-%s-%s-%s", workspaceID, externalType, recordID)
+	if _, occupied := store.Issue(issueID); occupied {
+		return "", fmt.Errorf("TAPD 工作项 %s 的本地 ID 已被占用", recordID)
+	}
+	return issueID, nil
 }
 
 type tapdUserDirectory interface {
