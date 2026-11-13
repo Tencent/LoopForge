@@ -547,6 +547,9 @@ func deleteAssistantConversation(st *repo.Store, userID int64, id string) error 
 	if err != nil {
 		return os.ErrNotExist
 	}
+	// Session ids are unique across owners, so once the owner's row is gone no
+	// participant can open the shared root again.
+	_ = os.RemoveAll(assistantSharedSessionRoot(id))
 	return nil
 }
 
