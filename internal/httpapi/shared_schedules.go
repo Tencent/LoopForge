@@ -66,6 +66,11 @@ func (h *scheduleHandlers) visibleScheduleJobs(r *http.Request, jobs []domain.Sc
 	out := make([]domain.ScheduleJob, 0, len(jobs))
 	for _, job := range jobs {
 		if h.scheduleJobAllowed(r, job, false) {
+			if h.assistant != nil && len(job.References) > 0 {
+				if refs, err := h.assistant.scheduledMessageReferences(job.ProjectID, job.References); err == nil {
+					job.References = refs
+				}
+			}
 			out = append(out, job)
 		}
 	}

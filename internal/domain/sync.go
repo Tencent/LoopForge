@@ -79,10 +79,14 @@ type ScheduleJob struct {
 	// Empty means backlog + todo. AI jobs leave this unused.
 	IssueStatuses []string `json:"issueStatuses,omitempty"`
 	// MaxDispatch caps successful SOP dispatches per execution. Zero defaults to 10.
-	MaxDispatch          int                  `json:"maxDispatch,omitempty"`
-	IntervalSec          int                  `json:"intervalSec"`
-	Cron                 string               `json:"cron,omitempty"`
-	AssistantPrompt      string               `json:"assistantPrompt,omitempty"`
+	MaxDispatch     int    `json:"maxDispatch,omitempty"`
+	IntervalSec     int    `json:"intervalSec"`
+	Cron            string `json:"cron,omitempty"`
+	AssistantPrompt string `json:"assistantPrompt,omitempty"`
+	// References are project assets selected for an AI scheduled task. The
+	// executor resolves them at run time so edits to the referenced assets are
+	// reflected on the next run.
+	References           []AssistantReference `json:"references,omitempty"`
 	AssistantModel       string               `json:"assistantModel,omitempty"`
 	OwnerUserID          int64                `json:"ownerUserId,omitempty"`
 	LastRunAt            time.Time            `json:"lastRunAt,omitempty"`

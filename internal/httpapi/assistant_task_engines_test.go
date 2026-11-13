@@ -121,14 +121,17 @@ func joinScheduledProject(t *testing.T, st *repo.Store, projectID string, userID
 func TestScheduledTaskRunsAsChatTurn(t *testing.T) {
 	st := cvAStore(t)
 	_ = st.PutProject(domain.Project{ID: "turn-project", Name: "Turn"})
+	_ = st.PutIssue(domain.Issue{ID: "turn-issue", ProjectID: "turn-project", Title: "最新需求标题", Description: "需求详情", Status: "todo"})
 	_ = st.PutUser(domain.User{LoginName: "turn-user", CodeBuddyAPIKey: "secret"})
 	user, _ := st.UserByLoginName("turn-user")
 	h := &assistantHandlers{deps: &deps{repo: st}}
-	task := assistantTask{ID: "turn-job", Name: "巡检", Prompt: "检查", ProjectID: "turn-project", IntervalSec: 60, Enabled: true}
+	task := assistantTask{ID: "turn-job", Name: "巡检", Prompt: "检查", ProjectID: "turn-project", IntervalSec: 60, Enabled: true, References: []domain.AssistantReference{{Type: "issue", ID: "turn-issue", Name: "客户端伪造名称"}}}
 
 	var during domain.AssistantGeneration
 	live := false
-	h.generate = func(context.Context, string, domain.User) (string, error) {
+	var generatedPrompt string
+	h.generate = func(_ context.Context, prompt string, _ domain.User) (string, error) {
+		generatedPrompt = prompt
 		during, _ = st.AssistantGeneration(user.ID, task.SessionID)
 		_, live = assistantLiveGenerations.Load(during.ID)
 		return "巡检完成\n\n```notification\n{\"title\":\"T\",\"summary\":\"S\",\"body\":\"B\"}\n```", nil
@@ -146,12 +149,18 @@ func TestScheduledTaskRunsAsChatTurn(t *testing.T) {
 	if task.LastStatus != "ok" || task.LastMessage != "巡检完成" || !strings.Contains(task.NotificationResult, "```notification") {
 		t.Fatalf("task result = %+v", task)
 	}
+	if !strings.Contains(generatedPrompt, "最新需求标题") || strings.Contains(generatedPrompt, "客户端伪造名称") {
+		t.Fatalf("scheduled reference context = %q", generatedPrompt)
+	}
 	session, _ := st.AssistantSession(user.ID, task.SessionID)
 	if session.Source != domain.AssistantSourceScheduled || session.TaskID != task.ID || session.Title != "定时 · 巡检" {
 		t.Fatalf("scheduled session metadata = source %q task %q title %q", session.Source, session.TaskID, session.Title)
 	}
 	if n := len(session.Messages); n != 2 || session.Messages[1].Model == "" || strings.Contains(session.Messages[1].Content, "```notification") {
 		t.Fatalf("stored transcript = %+v", session.Messages)
+	}
+	if len(session.Messages[0].References) != 1 || session.Messages[0].References[0].Name != "最新需求标题" {
+		t.Fatalf("resolved scheduled references = %+v", session.Messages[0].References)
 	}
 
 	first := task.SessionID

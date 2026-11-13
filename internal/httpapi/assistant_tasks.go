@@ -79,6 +79,14 @@ func (h *assistantHandlers) putTask(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "项目不存在"})
 		return
 	}
+	if len(task.References) > 0 {
+		refs, err := h.normalizeScheduledReferences(task.ProjectID, task.References)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		task.References = refs
+	}
 
 	if len(task.Notifications) > 0 || len(existing.Notifications) > 0 {
 		if h.notifications == nil || !h.notifications.access(c, task.ProjectID, true) {
@@ -201,6 +209,17 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		return errAssistantBusy
 	}
 	defer h.active.Delete(user.ID)
+	if refs, err := h.normalizeScheduledReferences(task.ProjectID, task.References); err != nil {
+		task.LastStatus, task.LastError = "error", err.Error()
+		return err
+	} else {
+		task.References = refs
+	}
+	messageReferences, err := h.scheduledMessageReferences(task.ProjectID, task.References)
+	if err != nil {
+		task.LastStatus, task.LastError = "error", err.Error()
+		return err
+	}
 	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
 	mode := assistantExecModeFrom(ctx)
 	origin := assistantSessionOriginFrom(ctx)
@@ -243,7 +262,7 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		SessionID:    sessionID,
 		Model:        model,
 		Executor:     cliEngine,
-		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}},
+		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now, References: messageReferences}},
 	}
 	g := domain.AssistantGeneration{StartedAt: now, ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: sessionID, UserID: user.ID, ProjectID: task.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages}
