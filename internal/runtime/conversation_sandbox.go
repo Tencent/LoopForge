@@ -117,11 +117,6 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 	if err != nil {
 		return "", err
 	}
-	if dir, _ := s.sandboxToolchain(); dir != "" {
-		if err := EnsureToolchainCLI(dir, binary); err != nil {
-			return "", err
-		}
-	}
 	setupArgs := append(append([]string{"exec", "--user", "0:0", "--workdir", "/"}, toolchain...), s.name, "sh", "-lc", setup, "loopforge-cli-setup", ids[0], ids[1], home)
 	output, err := exec.CommandContext(ctx, "docker", setupArgs...).CombinedOutput()
 	if err != nil {

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"agentflow/internal/domain"
 )
 
 func writeToolchainFixture(t *testing.T) string {
@@ -168,5 +170,63 @@ func TestToolchainConcurrentProcessesShareOneCopy(t *testing.T) {
 		if strings.HasPrefix(entry.Name(), ".stage-") {
 			t.Fatalf("leftover stage %s", entry.Name())
 		}
+	}
+}
+
+// A sandbox command only uses a published toolchain: it never copies one and
+// never fails without it.
+func TestToolchainExecEnvUsesOnlyPublishedToolchain(t *testing.T) {
+	prefix := writeToolchainFixture(t)
+	cliDir := t.TempDir()
+	useToolchainFixture(t, prefix, cliDir)
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", "loopforge:test")
+	custom := &dockerSandbox{dockerfile: domain.DockerfileDefinition{Content: "FROM debian:bookworm\n"}}
+	if env := custom.toolchainExecEnv(); env != nil {
+		t.Fatalf("unpublished toolchain exposed: %q", env)
+	}
+	if _, err := os.Stat(filepath.Join(cliDir, "toolchain")); !os.IsNotExist(err) {
+		t.Fatalf("a sandbox command started a toolchain copy: %v", err)
+	}
+	dir, err := RuntimeToolchainDir()
+	if err != nil || dir == "" {
+		t.Fatalf("dir=%q err=%v", dir, err)
+	}
+	if env := custom.toolchainExecEnv(); strings.Join(env, " ") != "-e "+toolchainEnv+"="+dir {
+		t.Fatalf("published toolchain env = %q", env)
+	}
+	platform := &dockerSandbox{dockerfile: domain.DockerfileDefinition{Content: IsolatedDockerfile}}
+	if env := platform.toolchainExecEnv(); env != nil {
+		t.Fatalf("platform image sandbox got the toolchain: %q", env)
+	}
+}
+
+func TestToolchainPathSetupRequiresItsLoader(t *testing.T) {
+	toolchain := t.TempDir()
+	run := func(interp string) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(toolchain, ".interp"), []byte(interp+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("sh", "-c", "set -eu\nPATH=/usr/bin:/bin\n"+toolchainPathSetup+`printf %s "$PATH"`)
+		cmd.Env = append(os.Environ(), toolchainEnv+"="+toolchain)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("setup failed: %v: %s", err, out)
+		}
+		return string(out)
+	}
+	if got, want := run("/bin/sh"), "/usr/bin:/bin:"+toolchain+"/bin:"+toolchain+"/python/bin"; got != want {
+		t.Fatalf("PATH with loader present = %q, want %q", got, want)
+	}
+	if got := run(filepath.Join(toolchain, "missing-ld.so")); got != "/usr/bin:/bin" {
+		t.Fatalf("PATH without loader = %q", got)
+	}
+	if err := os.Remove(filepath.Join(toolchain, ".interp")); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", "set -eu\nPATH=/usr/bin:/bin\n"+toolchainPathSetup+`printf %s "$PATH"`)
+	cmd.Env = append(os.Environ(), toolchainEnv+"="+toolchain)
+	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "/usr/bin:/bin" {
+		t.Fatalf("PATH without .interp = %q, %v", out, err)
 	}
 }

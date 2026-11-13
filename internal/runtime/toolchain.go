@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"debug/elf"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,14 +24,23 @@ const toolchainEnv = "AGENTFLOW_TOOLCHAIN"
 // Paths inside the platform image; tests point them at a fixture.
 var (
 	toolchainNodePrefix = "/usr/local"
-	toolchainPythonDir  = "/opt/loopforge/python"
+	toolchainPythonDir  = "/app/python"
 	toolchainCommitFile = "/app/loopforge-commit"
 )
 
-// toolchainPathSetup appends the mounted toolchain to PATH when exec passed it.
-const toolchainPathSetup = `if [ -n "${AGENTFLOW_TOOLCHAIN:-}" ] && [ -d "$AGENTFLOW_TOOLCHAIN" ]; then
-  PATH=$PATH:$AGENTFLOW_TOOLCHAIN/bin:$AGENTFLOW_TOOLCHAIN/python/bin
-  export PATH
+// toolchainPathSetup appends the mounted toolchain to PATH when exec passed it
+// and the container has the ELF interpreter its node needs. A musl (Alpine)
+// or foreign-architecture image keeps its PATH and installs CLIs and python3
+// with its own package manager, because `command -v` cannot tell that the
+// toolchain binaries would not start there.
+const toolchainPathSetup = `if [ -n "${AGENTFLOW_TOOLCHAIN:-}" ] && [ -r "$AGENTFLOW_TOOLCHAIN/.interp" ]; then
+  toolchain_interp=
+  read -r toolchain_interp < "$AGENTFLOW_TOOLCHAIN/.interp" || :
+  if [ -n "$toolchain_interp" ] && [ -e "$toolchain_interp" ]; then
+    PATH=$PATH:$AGENTFLOW_TOOLCHAIN/bin:$AGENTFLOW_TOOLCHAIN/python/bin
+    export PATH
+  fi
+  unset toolchain_interp
 fi
 `
 
@@ -66,13 +77,11 @@ func lockToolchain(parent string) (func(), error) {
 // first use. It returns "" when the CLI directory is not configured or the
 // process does not run in the platform image.
 func RuntimeToolchainDir() (string, error) {
-	root := RuntimeCLIDir()
-	node := filepath.Join(toolchainNodePrefix, "bin", "node")
-	if root == "" || !fileIsExecutable(node) {
+	dir, ok := toolchainLocation()
+	if !ok {
 		return "", nil
 	}
-	parent := filepath.Join(root, "toolchain")
-	dir := filepath.Join(parent, toolchainKey())
+	parent := filepath.Dir(dir)
 	ready := filepath.Join(dir, ".ready")
 	if _, err := os.Stat(ready); err == nil {
 		return dir, nil
@@ -109,6 +118,30 @@ func RuntimeToolchainDir() (string, error) {
 	return dir, nil
 }
 
+// toolchainLocation is where this build's toolchain lives; ok is false when
+// the CLI directory is not configured or the process does not run in the
+// platform image.
+func toolchainLocation() (string, bool) {
+	root := RuntimeCLIDir()
+	if root == "" || !fileIsExecutable(filepath.Join(toolchainNodePrefix, "bin", "node")) {
+		return "", false
+	}
+	return filepath.Join(root, "toolchain", toolchainKey()), true
+}
+
+// readyToolchainDir returns the toolchain only when it is already published.
+// It never copies, so a sandbox command does not wait for or fail on it.
+func readyToolchainDir() string {
+	dir, ok := toolchainLocation()
+	if !ok {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".ready")); err != nil {
+		return ""
+	}
+	return dir
+}
+
 func toolchainKey() string {
 	if data, err := os.ReadFile(toolchainCommitFile); err == nil {
 		if key := strings.TrimSpace(string(data)); key != "" && !strings.ContainsAny(key, "/\\ \t\r\n") {
@@ -139,6 +172,12 @@ func copyToolchain(stage string) error {
 	}
 	if err := copyPreserving(modules, filepath.Join(toolchainNodePrefix, "lib", "node_modules", "npm")); err != nil {
 		return err
+	}
+	// Without .interp the sandbox launch never adds the toolchain to PATH.
+	if interp := elfInterpreter(filepath.Join(prefixBin, "node")); interp != "" {
+		if err := os.WriteFile(filepath.Join(stage, ".interp"), []byte(interp+"\n"), 0o644); err != nil {
+			return err
+		}
 	}
 	if info, err := os.Stat(toolchainPythonDir); err == nil && info.IsDir() {
 		return copyPreserving(stage, toolchainPythonDir)
@@ -231,6 +270,31 @@ func toolchainPackage(link string) (string, bool) {
 	return parts[0], true
 }
 
+// elfInterpreter returns the dynamic loader an ELF executable requests, such
+// as /lib/ld-linux-aarch64.so.1, or "" when path is not a dynamic ELF file.
+func elfInterpreter(path string) string {
+	f, err := elf.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	for _, prog := range f.Progs {
+		if prog.Type != elf.PT_INTERP {
+			continue
+		}
+		data, err := io.ReadAll(prog.Open())
+		if err != nil {
+			return ""
+		}
+		interp := strings.TrimRight(string(data), "\x00")
+		if !strings.HasPrefix(interp, "/") || strings.ContainsAny(interp, "\r\n") {
+			return ""
+		}
+		return interp
+	}
+	return ""
+}
+
 func copyPreserving(dst string, sources ...string) error {
 	args := append([]string{"-a"}, sources...)
 	out, err := exec.Command("cp", append(args, dst+"/")...).CombinedOutput()
@@ -249,16 +313,22 @@ func (s *dockerSandbox) sandboxToolchain() (string, error) {
 	return RuntimeToolchainDir()
 }
 
-func (s *dockerSandbox) toolchainExecEnv() ([]string, error) {
-	dir, err := s.sandboxToolchain()
-	if err != nil || dir == "" {
-		return nil, err
+// toolchainExecEnv exposes an already published toolchain to a sandbox
+// command. The toolchain is only a fallback, so a command never copies it and
+// never fails because it is missing; native CLI preparation creates it.
+func (s *dockerSandbox) toolchainExecEnv() []string {
+	if isolatedRuntimeImage(s.dockerfile) != "" {
+		return nil
 	}
-	return []string{"-e", toolchainEnv + "=" + dir}, nil
+	dir := readyToolchainDir()
+	if dir == "" {
+		return nil
+	}
+	return []string{"-e", toolchainEnv + "=" + dir}
 }
 
-// toolchainCLIExecEnv is toolchainExecEnv after making binary available in
-// the toolchain when the platform image bundles it.
+// toolchainCLIExecEnv creates the toolchain, with binary when the platform
+// image bundles it, for native CLI preparation.
 func (s *dockerSandbox) toolchainCLIExecEnv(binary string) ([]string, error) {
 	dir, err := s.sandboxToolchain()
 	if err != nil || dir == "" {

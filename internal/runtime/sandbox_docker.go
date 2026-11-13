@@ -167,10 +167,7 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	if cliPath != "" {
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
 	}
-	toolchain, err := s.toolchainExecEnv()
-	if err != nil {
-		return "", err
-	}
+	toolchain := s.toolchainExecEnv()
 	args = append(args, toolchain...)
 	args = append(args, s.name)
 	argv := dockerWorkspaceExecArgv(command.Argv)
