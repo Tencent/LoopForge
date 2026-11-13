@@ -193,17 +193,29 @@ if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH
 fi
 `
 
-// onDemandCLIPath installs Claude Code for sandboxes of the published runtime
-// image, which does not bundle it, and returns the mounted bin directory. It is
-// appended to PATH so a CLI shipped by an older image still takes precedence.
+// onDemandCLIPath installs a CLI the published runtime image does not bundle
+// (Claude Code and the npm agent CLIs) for sandboxes of that image, and returns
+// the mounted bin directory. It is appended to PATH so a CLI shipped by an
+// older image still takes precedence.
 func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec) (string, error) {
-	if command.Provider != "claude-code" || len(command.Argv) == 0 || command.Argv[0] != "claude" || RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
+	if len(command.Argv) == 0 || RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
 		return "", nil
 	}
-	if _, err := EnsureClaudeCode(ctx); err != nil {
+	spec, ok := onDemandCLICatalog()[command.Provider]
+	if !ok || spec.Bundled || spec.Script != "" || command.Argv[0] != spec.Binary {
+		return "", nil
+	}
+	if spec.Engine == "claude-code" {
+		if _, err := EnsureClaudeCode(ctx); err != nil {
+			return "", err
+		}
+		return ClaudeCodeBinDir(), nil
+	}
+	path, err := InstallOnDemandCLI(ctx, spec.Engine)
+	if err != nil {
 		return "", err
 	}
-	return ClaudeCodeBinDir(), nil
+	return filepath.Dir(path), nil
 }
 
 func dropShellLoginFlag(argv []string) []string {

@@ -4,6 +4,10 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 
 ## Unreleased
 
+- DeepSeek Harness (`dsh`) installs from a conversation again. Every `@deepseek-ai/dsh` release is a prerelease requiring Node 24.9, so npm on the image's Node 22 found no version for the bare package name; the install now names `0.2.2-rc.1`.
+- SOP sandboxes of the published image install OpenCode, Kimi Code, Pi and DeepSeek Harness on first use, as they already did for Claude Code. An SOP role on one of these CLIs used to fail with `exec: dsh: not found` (exit 127) even after the conversation installed it.
+- Run logs and telemetry redact every environment variable ending in `_API_KEY`, `_TOKEN`, `_SECRET` or `_PASSWORD`. Agent CLI keys such as `DEEPSEEK_API_KEY`, and `AGENTFLOW_CLI_API_KEY` used with a custom Base URL, used to appear in clear text in the `docker exec` line of an SOP run log, readable by project members. Rotate a key that ran an SOP role before this release.
+
 - Repository clone URLs no longer carry credentials. Saving a `cloneUrl` with a user name or password, such as `https://user:token@github.com/acme/app.git`, is rejected with a pointer to the Git token in personal settings; the repositories API, bootstrap payload, run, task and requirement views, and the runner task management list strip credentials from `cloneUrl` and `webUrl` of rows saved earlier; a `webUrl` with credentials is rejected on save; runner clone errors and redacted Git output mask them. `ssh://git@host/...` and `git@host:path` remotes are still accepted.
 
 Repositories saved earlier with a token in `cloneUrl` keep cloning until they are saved again. Saving one from the studio stores the URL without the token, so first put the Git token in 个人配置, then save the repository. Until then the token also lands in each workspace's `.git/config`, where the agent can read it, so re-save such repositories soon after upgrading.

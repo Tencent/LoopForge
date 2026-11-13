@@ -20,27 +20,35 @@ const (
 	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 https://antigravity.google/cli/install.sh | bash"
 )
 
+// DeepSeekHarnessVersion must be named explicitly: every dsh release is a
+// prerelease requiring a newer Node than the image ships, so a bare package
+// name resolves to no version at all.
+const DeepSeekHarnessVersion = "0.2.2-rc.1"
+
 type onDemandCLI struct {
 	Engine       string
 	Binary       string
 	Package      string
 	Script       string
 	RelaxEngines bool
+	// Bundled CLIs ship in the published image, so its sandboxes never
+	// install them.
+	Bundled bool
 }
 
 var onDemandInstallMu sync.Mutex
 
 func onDemandCLICatalog() map[string]onDemandCLI {
 	return map[string]onDemandCLI{
-		"codex":       {Engine: "codex", Binary: "codex", Package: "@openai/codex"},
-		"codebuddy":   {Engine: "codebuddy", Binary: "codebuddy", Package: "@tencent-ai/codebuddy-code"},
+		"codex":       {Engine: "codex", Binary: "codex", Package: "@openai/codex", Bundled: true},
+		"codebuddy":   {Engine: "codebuddy", Binary: "codebuddy", Package: "@tencent-ai/codebuddy-code", Bundled: true},
 		"claude-code": {Engine: "claude-code", Binary: "claude"},
 		"opencode":    {Engine: "opencode", Binary: "opencode", Package: "opencode-ai"},
 		"cursor":      {Engine: "cursor", Binary: "cursor-agent", Script: cursorInstallScript},
 		"agy":         {Engine: "agy", Binary: "agy", Script: agyInstallScript},
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
-		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh", RelaxEngines: true},
+		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true},
 	}
 }
 
