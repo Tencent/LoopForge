@@ -431,7 +431,7 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env["KIMI_CODE_HOME"] = homeEnv + "/.kimi-code"
 		env["KIMI_DISABLE_TELEMETRY"] = "1"
 	case AgentCLIPi:
-		api := map[string]string{AgentCLIProtocolChat: "openai-completions", AgentCLIProtocolResponses: "openai-responses", AgentCLIProtocolMessages: "anthropic-messages"}[protocol]
+		api := agentCLIPiAPI(protocol)
 		models, _ := json.MarshalIndent(map[string]any{"providers": map[string]any{"agentflow": map[string]any{
 			"baseUrl": baseURL, "api": api, "apiKey": "$" + agentCLIKeyEnv,
 			"models": []map[string]any{{"id": model, "reasoning": true}},
@@ -442,49 +442,63 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env[agentCLIKeyEnv] = key
 		env["PI_CODING_AGENT_DIR"] = homeEnv + "/.pi/agent"
 	case AgentCLIDeepSeek:
-		patch := []any{}
-		if baseURL == "" {
-			env["DEEPSEEK_API_KEY"] = key
-			if model != "" {
-				patch = append(patch, map[string]any{"id": "agent-default-model", "config": map[string]any{"provider": "deepseek-official", "model": model}})
-			}
-		} else {
-			api := map[string]string{AgentCLIProtocolChat: "openai-completions", AgentCLIProtocolResponses: "openai-responses", AgentCLIProtocolMessages: "anthropic-messages"}[protocol]
-			env[agentCLIKeyEnv] = key
-			patch = []any{
-				map[string]any{"id": "llm-pi-ai", "config": map[string]any{"providers": map[string]any{"agentflow": map[string]any{
-					"displayName": "AgentFlow", "apiKeyEnv": agentCLIKeyEnv, "api": api, "baseURL": baseURL,
-					"models": []map[string]any{{"id": model}},
-				}}}},
-				map[string]any{"id": "agent-default-model", "config": map[string]any{"provider": "agentflow", "model": model}},
-			}
-		}
-		data, _ := json.MarshalIndent(patch, "", "  ")
-		if err := writeAgentCLIFile(home, ".dsh/agentflow-model.json", data); err != nil {
-			return nil, nil, err
-		}
-		env["DSH_HOME"] = homeEnv + "/.dsh"
-		// Launcher flags precede the profile's own arguments: dsh --profile <name> --patch … app-args.
-		if len(argv) < 3 {
-			return nil, nil, errors.New("invalid DeepSeek Harness invocation")
-		}
-		patches := []string{"--patch", homeEnv + "/.dsh/agentflow-model.json"}
-		root, err := openAgentCLIHome(home)
-		if err != nil {
-			return nil, nil, err
-		}
-		_, err = root.Stat(filepath.Join(".dsh", "agentflow-mcp.json"))
-		root.Close()
-		if err == nil {
-			patches = append(patches, "--patch", homeEnv+"/.dsh/agentflow-mcp.json")
-		}
-		head := append([]string{}, argv[:3]...)
-		argv = append(append(head, patches...), argv[3:]...)
+		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}
+	return argv, env, nil
+}
+
+// agentCLIPiAPI maps a wire protocol to the pi-ai api name shared by Pi and
+// DeepSeek Harness provider configs.
+func agentCLIPiAPI(protocol string) string {
+	return map[string]string{AgentCLIProtocolChat: "openai-completions", AgentCLIProtocolResponses: "openai-responses", AgentCLIProtocolMessages: "anthropic-messages"}[protocol]
+}
+
+// applyDeepSeekCredential writes the DeepSeek Harness model patch and puts the
+// launcher --patch flags ahead of the profile's own arguments.
+func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
+	env := map[string]string{}
+	patch := []any{}
+	if baseURL == "" {
+		env["DEEPSEEK_API_KEY"] = key
+		if model != "" {
+			patch = append(patch, map[string]any{"id": "agent-default-model", "config": map[string]any{"provider": "deepseek-official", "model": model}})
+		}
+	} else {
+		api := agentCLIPiAPI(protocol)
+		env[agentCLIKeyEnv] = key
+		patch = []any{
+			map[string]any{"id": "llm-pi-ai", "config": map[string]any{"providers": map[string]any{"agentflow": map[string]any{
+				"displayName": "AgentFlow", "apiKeyEnv": agentCLIKeyEnv, "api": api, "baseURL": baseURL,
+				"models": []map[string]any{{"id": model}},
+			}}}},
+			map[string]any{"id": "agent-default-model", "config": map[string]any{"provider": "agentflow", "model": model}},
+		}
+	}
+	data, _ := json.MarshalIndent(patch, "", "  ")
+	if err := writeAgentCLIFile(home, ".dsh/agentflow-model.json", data); err != nil {
+		return nil, nil, err
+	}
+	env["DSH_HOME"] = homeEnv + "/.dsh"
+	// Launcher flags precede the profile's own arguments: dsh --profile <name> --patch … app-args.
+	if len(argv) < 3 {
+		return nil, nil, errors.New("invalid DeepSeek Harness invocation")
+	}
+	patches := []string{"--patch", homeEnv + "/.dsh/agentflow-model.json"}
+	root, err := openAgentCLIHome(home)
+	if err != nil {
+		return nil, nil, err
+	}
+	_, err = root.Stat(filepath.Join(".dsh", "agentflow-mcp.json"))
+	root.Close()
+	if err == nil {
+		patches = append(patches, "--patch", homeEnv+"/.dsh/agentflow-mcp.json")
+	}
+	head := append([]string{}, argv[:3]...)
+	argv = append(append(head, patches...), argv[3:]...)
 	return argv, env, nil
 }
 
