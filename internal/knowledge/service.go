@@ -83,21 +83,9 @@ func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.Know
 	}
 	next := domain.KnowledgeSettings{
 		Enabled: input.Enabled, URL: rawURL, WriteEnabled: input.WriteEnabled,
-		DefaultSources: cleanSources(input.DefaultSources), UpdatedBy: actor,
-	}
-	if input.ProjectSources != nil {
-		next.ProjectSources = map[string][]string{}
-		for project, list := range input.ProjectSources {
-			if project = strings.TrimSpace(project); project != "" {
-				next.ProjectSources[project] = cleanSources(list)
-			}
-		}
-	}
-	switch token := strings.TrimSpace(input.Token); {
-	case token != "":
-		next.Token = stripBearer(token)
-	case !input.ClearToken:
-		next.Token = current.Token
+		Token:          resolveSettingsToken(input, current.Token),
+		DefaultSources: cleanSources(input.DefaultSources),
+		ProjectSources: cleanProjectSources(input.ProjectSources), UpdatedBy: actor,
 	}
 	if next.Enabled && (next.URL == "" || next.Token == "") {
 		return current, apperr.New(apperr.Invalid, "启用前需要填写知识库地址和 Token")
@@ -106,6 +94,33 @@ func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.Know
 		return current, err
 	}
 	return s.store.KnowledgeSettings(), nil
+}
+
+// cleanProjectSources normalizes the per-project source lists, dropping
+// blank project keys. A nil map stays nil so "no overrides" is preserved.
+func cleanProjectSources(in map[string][]string) map[string][]string {
+	if in == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	for project, list := range in {
+		if project = strings.TrimSpace(project); project != "" {
+			out[project] = cleanSources(list)
+		}
+	}
+	return out
+}
+
+// resolveSettingsToken picks the token to save: a new token (without its
+// Bearer prefix), else the current one unless the input asks to clear it.
+func resolveSettingsToken(input SettingsInput, current string) string {
+	switch token := strings.TrimSpace(input.Token); {
+	case token != "":
+		return stripBearer(token)
+	case !input.ClearToken:
+		return current
+	}
+	return ""
 }
 
 type CheckResult struct {
