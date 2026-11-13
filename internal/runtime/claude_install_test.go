@@ -142,16 +142,17 @@ func TestDockerSandboxInstallsNPMAgentCLIBeforeExec(t *testing.T) {
 	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", "loopforge-platform:tested")
 	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", root)
 	t.Setenv("NPM_TEST_LOG", log)
-	t.Setenv("NPM_TEST_BIN", "dsh")
+	t.Setenv("NPM_TEST_BIN", "pi")
 	useFakeCommands(t, map[string]string{"npm": genericFakeNPM})
 	sandbox := &dockerSandbox{dockerfile: domain.DockerfileDefinition{Content: IsolatedDockerfile}}
-	got, err := sandbox.onDemandCLIPath(context.Background(), CommandSpec{Provider: "dsh", Argv: []string{"dsh", "--profile", "headless"}})
-	if want := filepath.Join(root, "dsh", "current", "node_modules", ".bin"); err != nil || got != want {
-		t.Fatalf("dsh bin dir %q %v, want %q", got, err, want)
+	got, err := sandbox.onDemandCLIPath(context.Background(), CommandSpec{Provider: "pi", Argv: []string{"pi", "-p"}})
+	if want := filepath.Join(root, "pi", "current", "node_modules", ".bin"); err != nil || got != want {
+		t.Fatalf("pi bin dir %q %v, want %q", got, err, want)
 	}
 	for _, command := range []CommandSpec{
 		{Provider: "codex", Argv: []string{"codex", "exec"}},
 		{Provider: "codebuddy", Argv: []string{"codebuddy", "-p"}},
+		{Provider: "dsh", Argv: []string{"dsh", "--profile", "headless"}},
 		{Provider: "cursor", Argv: []string{"cursor-agent", "-p"}},
 		{Provider: "pi", Argv: []string{"/custom/pi"}},
 	} {
@@ -160,7 +161,17 @@ func TestDockerSandboxInstallsNPMAgentCLIBeforeExec(t *testing.T) {
 		}
 	}
 	calls, _ := os.ReadFile(log)
-	if strings.Count(string(calls), "\n") != 1 || !strings.Contains(string(calls), "@deepseek-ai/dsh@") {
+	if strings.Count(string(calls), "\n") != 1 || !strings.Contains(string(calls), "@earendil-works/pi-coding-agent") {
 		t.Fatalf("npm calls: %s", calls)
+	}
+}
+
+func TestDockerfileBundlesTheOnDemandDeepSeekHarnessRelease(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "@deepseek-ai/dsh@"+DeepSeekHarnessVersion+" ") && !strings.Contains(string(raw), "@deepseek-ai/dsh@"+DeepSeekHarnessVersion+"\n") {
+		t.Fatalf("Dockerfile must install @deepseek-ai/dsh@%s", DeepSeekHarnessVersion)
 	}
 }

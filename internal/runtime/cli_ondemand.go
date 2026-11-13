@@ -11,18 +11,19 @@ import (
 	"sync"
 )
 
-// CLIs the published platform image does not guarantee. Codex and CodeBuddy
-// are baked into that image; the rest are installed only after a person asks
-// from a failed conversation. Package names and installer URLs are fixed:
+// CLIs the published platform image does not guarantee. Codex, CodeBuddy and
+// DeepSeek Harness are baked into that image; the rest are installed only after
+// a person asks from a failed conversation. Package names and installer URLs are fixed:
 // the request may choose an engine, never a URL or a package.
 const (
 	cursorInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 https://cursor.com/install | bash"
 	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 https://antigravity.google/cli/install.sh | bash"
 )
 
-// DeepSeekHarnessVersion must be named explicitly: every dsh release is a
-// prerelease requiring a newer Node than the image ships, so a bare package
-// name resolves to no version at all.
+// DeepSeekHarnessVersion is the dsh release the Dockerfile bundles and an
+// installation without it downloads. It must be named explicitly: every dsh
+// release is a prerelease requiring a newer Node than the image ships, so a
+// bare package name resolves to no version at all.
 const DeepSeekHarnessVersion = "0.2.2-rc.1"
 
 type onDemandCLI struct {
@@ -48,7 +49,7 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 		"agy":         {Engine: "agy", Binary: "agy", Script: agyInstallScript},
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
-		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true},
+		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true, Bundled: true},
 	}
 }
 
