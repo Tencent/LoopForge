@@ -1,28 +1,40 @@
 package repo
 
 import (
-	"agentflow/internal/domain"
 	"errors"
 	"fmt"
+
+	"agentflow/internal/domain"
+
 	"gorm.io/gorm"
 )
 
 var ErrIssueBusy = errors.New("需求正在澄清或执行 SOP，请先停止后再删除")
 var ErrIssueSucceeded = errors.New("需求已有成功运行记录，不允许删除")
+var ErrIssueForceRequired = errors.New("需求已有执行记录或已完成，请确认强制删除")
 var ErrIssueNotFound = errors.New("issue not found")
 
+type IssueDeletionMode int
+
+const (
+	IssueDeleteNormal IssueDeletionMode = iota
+	IssueDeleteForce
+	// IssueDeleteUnsuccessful preserves the cleanup policy of internal callers.
+	IssueDeleteUnsuccessful
+)
+
 // IssueDeletionRuns checks every linked run before any destructive cleanup.
-func (r *IssuesRepo) IssueDeletionRuns(id string) ([]string, error) {
+func (r *IssuesRepo) IssueDeletionRuns(id string, mode IssueDeletionMode) ([]string, error) {
 	var ids []string
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var err error
-		ids, err = r.issueDeletionRuns(tx, id)
+		ids, err = r.issueDeletionRuns(tx, id, mode)
 		return err
 	})
 	return ids, err
 }
 
-func (r *IssuesRepo) issueDeletionRuns(tx *gorm.DB, id string) ([]string, error) {
+func (r *IssuesRepo) issueDeletionRuns(tx *gorm.DB, id string, mode IssueDeletionMode) ([]string, error) {
 	var row issueRow
 	if err := r.locking(tx.Where("id = ?", id)).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -34,56 +46,35 @@ func (r *IssuesRepo) issueDeletionRuns(tx *gorm.DB, id string) ([]string, error)
 	if err := jsonUnmarshal(row.Payload, &issue); err != nil {
 		return nil, err
 	}
-	if issue.Status == "done" {
-		return nil, ErrIssueSucceeded
+	states, err := r.issueDeletionStates(tx, []domain.Issue{issue})
+	if err != nil {
+		return nil, err
 	}
-	if issue.Clarification.Status == "analyzing" {
+	state := states[issue.ID]
+	if state.Block != nil {
 		return nil, ErrIssueBusy
 	}
-	var tasks []taskRow
-	if err := tx.Where("issue_id = ?", id).Find(&tasks).Error; err != nil {
-		return nil, err
+	if mode == IssueDeleteNormal && state.RequiresForce() {
+		return nil, ErrIssueForceRequired
 	}
-	for _, task := range tasks {
-		if task.Status == "completed" || task.Status == "succeeded" {
-			return nil, ErrIssueSucceeded
-		}
-		if task.Status != "failed" && task.Status != "cancelled" {
-			return nil, ErrIssueBusy
-		}
+	if mode == IssueDeleteUnsuccessful && state.successful {
+		return nil, ErrIssueSucceeded
 	}
-	expr := "json_extract(execution_context, '$.issueId')"
-	if r.isMySQL() {
-		expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-	}
-	// Include legacy runs associated only through their Task's RunID.
-	q := tx.Where(expr+" = ?", id).Or("id IN (?)", tx.Table("tasks").Select("run_id").Where("issue_id = ? AND run_id <> ''", id))
-	var runs []runRow
-	if err := q.Find(&runs).Error; err != nil {
-		return nil, err
-	}
-	for _, run := range runs {
-		if run.Status == "succeeded" {
-			return nil, ErrIssueSucceeded
-		}
-	}
-	ids := make([]string, 0, len(runs))
-	for _, run := range runs {
-		if run.Status != "failed" && run.Status != "cancelled" {
-			return nil, ErrIssueBusy
-		}
-		ids = append(ids, run.ID)
-	}
-	return ids, nil
+	return state.runIDs, nil
 }
 
-// DeleteIssue removes the issue, comments and failed/cancelled tasks atomically
-// after the engine has cleaned every linked run and execution environment.
+// DeleteIssue keeps the conservative policy used by sync and conversation cleanup.
 func (r *IssuesRepo) DeleteIssue(id string) error {
+	return r.DeleteIssueAfterRunCleanup(id, IssueDeleteUnsuccessful)
+}
+
+// DeleteIssueAfterRunCleanup rechecks the deletion conditions and removes the
+// issue, comments and tasks atomically after the engine has cleaned all runs.
+func (r *IssuesRepo) DeleteIssueAfterRunCleanup(id string, mode IssueDeletionMode) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		ids, err := r.issueDeletionRuns(tx, id)
+		ids, err := r.issueDeletionRuns(tx, id, mode)
 		if err != nil {
 			return err
 		}
@@ -100,13 +91,7 @@ func (r *IssuesRepo) DeleteIssue(id string) error {
 	})
 }
 
-// IssueDeletionAllowed computes list affordances from complete execution history
-// in two bulk queries, including runs omitted from the paginated UI run list.
-func (r *IssuesRepo) IssueDeletionAllowed(issues []domain.Issue) (map[string]bool, error) {
-	return r.issueActionAllowed(issues, false)
-}
-
-// IssueDeletionBlock explains a restriction using the complete execution history.
+// IssueDeletionBlock explains active work that prevents deleting a requirement.
 // RunID is only populated for an existing run, including legacy task-linked runs.
 type IssueDeletionBlock struct {
 	Code   string `json:"code"`
@@ -115,104 +100,129 @@ type IssueDeletionBlock struct {
 	TaskID string `json:"taskId,omitempty"`
 }
 
-func (r *IssuesRepo) IssueDeletionBlocks(issues []domain.Issue) (map[string]IssueDeletionBlock, error) {
-	return r.issueActionBlocks(issues, false)
+type IssueDeletionState struct {
+	Block      *IssueDeletionBlock
+	hasHistory bool
+	successful bool
+	runIDs     []string
 }
 
-// IssueClosureAllowed permits settled execution history, but no active work.
-func (r *IssuesRepo) IssueClosureAllowed(issues []domain.Issue) (map[string]bool, error) {
-	return r.issueActionAllowed(issues, true)
+func (s *IssueDeletionState) RequiresForce() bool {
+	return s.Block == nil && (s.hasHistory || s.successful)
 }
 
-func (r *IssuesRepo) issueActionAllowed(issues []domain.Issue, allowSuccess bool) (map[string]bool, error) {
-	blocks, err := r.issueActionBlocks(issues, allowSuccess)
-	if err != nil {
-		return nil, err
-	}
-	allowed := map[string]bool{}
-	for _, issue := range issues {
-		_, blocked := blocks[issue.ID]
-		allowed[issue.ID] = !blocked
-	}
-	return allowed, nil
+// IssueDeletionStates checks complete execution history in two bulk queries.
+func (r *IssuesRepo) IssueDeletionStates(issues []domain.Issue) (map[string]*IssueDeletionState, error) {
+	return r.issueDeletionStates(r.DB, issues)
 }
 
-func (r *IssuesRepo) issueActionBlocks(issues []domain.Issue, allowSuccess bool) (map[string]IssueDeletionBlock, error) {
-	blocks := map[string]IssueDeletionBlock{}
-	// Prefer actionable temporary blockers, then historical success, then status.
-	priority := map[string]int{"completed": 1, "succeeded": 2, "active": 3, "clarifying": 4}
-	block := func(id string, next IssueDeletionBlock) {
-		prev := blocks[id]
-		if priority[next.Code] > priority[prev.Code] || (next.Code == prev.Code && prev.RunID == "" && next.RunID != "") {
-			blocks[id] = next
-		}
+func (r *IssuesRepo) issueDeletionStates(db *gorm.DB, issues []domain.Issue) (map[string]*IssueDeletionState, error) {
+	states := make(map[string]*IssueDeletionState, len(issues))
+	if len(issues) == 0 {
+		return states, nil
 	}
 	ids := make([]string, 0, len(issues))
-	issueIDs := map[string]bool{}
 	for _, issue := range issues {
 		ids = append(ids, issue.ID)
-		issueIDs[issue.ID] = true
-		if !allowSuccess && issue.Status == "done" {
-			block(issue.ID, IssueDeletionBlock{Code: "completed", Reason: "需求已完成，当前不支持删除"})
-		}
+		state := &IssueDeletionState{successful: issue.Status == "done"}
 		if issue.Clarification.Status == "analyzing" {
-			block(issue.ID, IssueDeletionBlock{Code: "clarifying", Reason: "正在澄清，请先停止澄清后再删除"})
+			state.Block = &IssueDeletionBlock{Code: "clarifying", Reason: "正在澄清，请先停止澄清后再删除"}
 		}
-	}
-	if len(ids) == 0 {
-		return blocks, nil
+		states[issue.ID] = state
 	}
 	var tasks []taskRow
-	if err := r.DB.Select("id", "issue_id", "run_id", "status").Where("issue_id IN ?", ids).Find(&tasks).Error; err != nil {
+	if err := db.Select("id", "issue_id", "run_id", "status").Where("issue_id IN ?", ids).Find(&tasks).Error; err != nil {
 		return nil, err
 	}
-	runIssues := map[string][]string{}
-	runIDs := []string{}
+	// Legacy runs can be linked solely by their Task's RunID.
+	runIssues := map[string]map[string]bool{}
+	var runIDs []string
 	for _, task := range tasks {
-		if task.Status != "failed" && task.Status != "cancelled" && !(allowSuccess && (task.Status == "completed" || task.Status == "succeeded")) {
-			restriction := IssueDeletionBlock{Code: "active", Reason: "仍有未结束的任务，请先处理或停止后再删除", TaskID: task.ID}
-			if task.Status == "completed" || task.Status == "succeeded" {
-				restriction = IssueDeletionBlock{Code: "succeeded", Reason: "已有成功执行记录，当前不支持删除", TaskID: task.ID}
-			}
-			block(task.IssueID, restriction)
+		state := states[task.IssueID]
+		if state == nil {
+			return nil, fmt.Errorf("执行任务 %s 的需求编号与记录不一致", task.ID)
 		}
+		state.addTask(task.ID, task.Status)
 		if task.RunID != "" {
-			runIssues[task.RunID] = append(runIssues[task.RunID], task.IssueID)
-			runIDs = append(runIDs, task.RunID)
+			if runIssues[task.RunID] == nil {
+				runIssues[task.RunID] = map[string]bool{}
+				runIDs = append(runIDs, task.RunID)
+			}
+			runIssues[task.RunID][task.IssueID] = true
 		}
 	}
+
 	expr := "json_extract(execution_context, '$.issueId')"
 	if r.isMySQL() {
 		expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
 	}
-	q := r.DB.Select("id", "status", "execution_context").Where(expr+" IN ?", ids)
+	q := db.Table("runs").Select("id, status, "+expr+" AS issue_id, "+
+		"EXISTS (SELECT 1 FROM run_nodes WHERE run_id = runs.id AND status IN ('running', 'pending_input')) AS active_nodes").
+		Where(expr+" IN ?", ids)
 	if len(runIDs) > 0 {
 		q = q.Or("id IN ?", runIDs)
 	}
-	var runs []runRow
+	var runs []issueDeletionRun
 	if err := q.Find(&runs).Error; err != nil {
 		return nil, err
 	}
 	for _, run := range runs {
-		if run.Status == "failed" || run.Status == "cancelled" || (allowSuccess && run.Status == "succeeded") {
-			continue
+		linked := runIssues[run.ID]
+		for id := range linked {
+			states[id].addRun(run)
 		}
-		restriction := IssueDeletionBlock{Code: "active", Reason: "仍有未结束的运行，请先处理或停止后再删除", RunID: run.ID}
-		if run.Status == "succeeded" {
-			restriction = IssueDeletionBlock{Code: "succeeded", Reason: "已有成功执行记录，当前不支持删除", RunID: run.ID}
-		}
-		var ctx domain.TelemetryContext
-		if len(run.ExecutionContext) > 0 {
-			if err := jsonUnmarshal(run.ExecutionContext, &ctx); err != nil {
-				return nil, err
-			}
-		}
-		if issueIDs[ctx.IssueID] {
-			block(ctx.IssueID, restriction)
-		}
-		for _, id := range runIssues[run.ID] {
-			block(id, restriction)
+		if state := states[run.IssueID]; state != nil && !linked[run.IssueID] {
+			state.addRun(run)
 		}
 	}
-	return blocks, nil
+	return states, nil
+}
+
+// issueDeletionRun is a run linked to an issue, either through its execution
+// context or through a legacy task RunID.
+type issueDeletionRun struct {
+	ID, Status, IssueID string
+	ActiveNodes         bool
+}
+
+// addTask records one linked task: any task is history, a completed task
+// counts as success, and an unfinished task blocks deletion.
+func (s *IssueDeletionState) addTask(taskID, status string) {
+	s.hasHistory = true
+	switch status {
+	case "completed", "succeeded":
+		s.successful = true
+	case "failed", "cancelled":
+	default:
+		if s.Block == nil {
+			s.Block = &IssueDeletionBlock{Code: "active", Reason: "仍有未结束的任务，请先处理或停止后再删除", TaskID: taskID}
+		}
+	}
+}
+
+// addRun records one linked run and blocks deletion while it is still active.
+func (s *IssueDeletionState) addRun(run issueDeletionRun) {
+	s.hasHistory = true
+	s.successful = s.successful || run.Status == "succeeded"
+	s.runIDs = append(s.runIDs, run.ID)
+	if domain.TerminalRunStatus(run.Status) && !run.ActiveNodes {
+		return
+	}
+	// Prefer linking to the active run when the earlier reason was a task.
+	if s.Block == nil || (s.Block.Code == "active" && s.Block.RunID == "") {
+		s.Block = &IssueDeletionBlock{Code: "active", Reason: "仍有未结束的运行，请先处理或停止后再删除", RunID: run.ID}
+	}
+}
+
+// IssueClosureAllowed permits settled execution history, but no active work.
+func (r *IssuesRepo) IssueClosureAllowed(issues []domain.Issue) (map[string]bool, error) {
+	states, err := r.IssueDeletionStates(issues)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]bool, len(states))
+	for id, state := range states {
+		allowed[id] = state.Block == nil
+	}
+	return allowed, nil
 }

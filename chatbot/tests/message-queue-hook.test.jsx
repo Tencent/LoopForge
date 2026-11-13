@@ -131,6 +131,39 @@ describe("sending while a reply runs", () => {
     unmount();
   });
 
+  test("prevents repeated stop requests and waits for actual process exit", async () => {
+    const { result, unmount } = await openRunning();
+    let resolve;
+    writeMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    let request;
+    act(() => { request = result.current.stop(); });
+    expect(result.current.stopping).toBe(true);
+    expect(result.current.busy).toBe(true);
+    await act(() => result.current.stop());
+    expect(writeMock.mock.calls.filter(([path]) => path.includes("/generation/cancel"))).toHaveLength(1);
+    await act(async () => { resolve({}); await request; });
+    expect(result.current.stopping).toBe(true);
+    expect(result.current.busy).toBe(true);
+    await finish("cancelled");
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(result.current.stopping).toBe(false);
+    unmount();
+  });
+
+  test("reflects a stop requested from another client and allows retry after a failed request", async () => {
+    const { result, unmount } = await openRunning();
+    writeMock.mockRejectedValueOnce(new Error("cancel unavailable"));
+    await act(() => result.current.stop());
+    expect(result.current.stopping).toBe(false);
+    expect(result.current.busy).toBe(true);
+    expect(result.current.error).toBe("cancel unavailable");
+    await emit({ ...state.generation, cancelRequested: true });
+    expect(result.current.stopping).toBe(true);
+    await act(() => result.current.stop());
+    expect(writeMock.mock.calls.filter(([path]) => path.includes("/generation/cancel"))).toHaveLength(1);
+    unmount();
+  });
+
   test("a removed message is never sent", async () => {
     const { result, unmount } = await openRunning();
     await act(async () => {

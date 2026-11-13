@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -144,8 +145,8 @@ func (h *assistantHandlers) runTaskNow(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "定时任务不存在"})
 		return
 	}
-	if _, loaded := h.active.Load(current.ID); loaded {
-		c.JSON(429, gin.H{"error": "已有对话正在生成，请稍后重试"})
+	if _, loaded := h.active.Load(assistantTaskActiveKey(task.ID, current.ID)); loaded {
+		c.JSON(429, gin.H{"error": "该定时任务正在运行，请稍后重试"})
 		return
 	}
 	go h.runStoredAssistantTask(user, task)
@@ -197,12 +198,6 @@ func (h *assistantHandlers) runStoredAssistantTask(user domain.User, task assist
 // Only the trigger lives here: who runs it, what is asked, the session's
 // metadata and how the result is reported.
 func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domain.User, task *assistantTask) error {
-	if _, loaded := h.active.LoadOrStore(user.ID, true); loaded {
-		return errAssistantBusy
-	}
-	defer h.active.Delete(user.ID)
-	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
-	mode := assistantExecModeFrom(ctx)
 	origin := assistantSessionOriginFrom(ctx)
 	if origin.Source == "" {
 		origin.Source = domain.AssistantSourceScheduled
@@ -210,6 +205,15 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if origin.TaskID == "" {
 		origin.TaskID = strings.TrimSpace(task.ID)
 	}
+	// Each task runs in its own conversation, so one owner's loops run side
+	// by side; only the same task is kept from overlapping itself.
+	activeKey := assistantTaskActiveKey(origin.TaskID, user.ID)
+	if _, loaded := h.active.LoadOrStore(activeKey, true); loaded {
+		return errAssistantBusy
+	}
+	defer h.active.Delete(activeKey)
+	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
+	mode := assistantExecModeFrom(ctx)
 
 	task.NotificationResult = ""
 	task.LastStatus = "running"
@@ -232,7 +236,10 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		}
 		return fail("未配置 CodeBuddy API Key")
 	}
-	model := assistantAllowedUserModel(task.Model, loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment), user)
+	model, err := scheduledRunModel(ctx, task.Model, user)
+	if err != nil {
+		return fail(err.Error())
+	}
 	cliEngine, _ := assistantModelEngine(model)
 	prevSession := strings.TrimSpace(task.SessionID)
 	sessionID := newAssistantSessionID()
@@ -325,7 +332,11 @@ func (h *assistantHandlers) readScheduledTurn(user domain.User, task *assistantT
 }
 
 func scheduledAssistantPrompt(task assistantTask, mode assistantExecMode) string {
-	prefix := "这是当前项目「" + task.ProjectID + "」下的无人值守定时任务「" + task.Name + "」。直接调用当前项目和个人已安装的 MCP，以及 agentflow__* 平台工具，读写立即生效。issues_save 把需求 id 放在 body.id（也可同时放 path.id）。全部完成后用自然语言汇报结果。"
+	prefix := "这是当前项目「" + task.ProjectID + "」下的无人值守定时任务「" + task.Name + "」。直接调用当前项目和个人已安装的 MCP，以及 agentflow__* 平台工具，读写立即生效。issues_save 把需求 id 放在 body.id（也可同时放 path.id）。" +
+		"运行期间没有人回答问题或确认操作：不要向用户提问或等待确认，有歧义时按最合理、影响最小的理解执行并在汇报里写明假设；某项条件不满足时跳过该项并说明原因，继续处理其余项。" +
+		"除非提示词明确要求，不要为完成任务新建或修改沙箱、角色、SOP、项目等平台配置。" +
+		"GitHub 的查看、审查、合并 PR 和关闭 Issue 使用 workbench_github_* 工具，不要在终端里读取令牌直接调用 GitHub API。" +
+		"全部完成后用自然语言汇报结果。"
 	if mode.DeferSOP {
 		prefix += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"
 	} else {
@@ -349,9 +360,6 @@ func normalizeAssistantTask(in assistantTask, existing assistantTask) (assistant
 	}
 	if len([]rune(in.Name)) > 80 {
 		return in, errors.New("任务名称过长")
-	}
-	if len(in.Prompt) > 4000 {
-		return in, errors.New("任务指令过长")
 	}
 	if in.Cron != "" {
 		if _, err := parseAssistantCron(in.Cron); err != nil {
@@ -397,6 +405,13 @@ func normalizeAssistantTask(in assistantTask, existing assistantTask) (assistant
 	return in, nil
 }
 
+func assistantTaskActiveKey(taskID string, userID int64) string {
+	if taskID = strings.TrimSpace(taskID); taskID != "" {
+		return "task/" + taskID
+	}
+	return "task-user/" + strconv.FormatInt(userID, 10)
+}
+
 func newAssistantTaskID() string {
 	return "at" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
@@ -412,6 +427,26 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// scheduledRunModel resolves the model a scheduled run uses. The CodeBuddy
+// model list is an in-memory cache that is empty after a restart, so it is
+// refreshed with the owner's key before a model is rejected. A run never
+// silently switches to another, possibly more expensive, model.
+func scheduledRunModel(ctx context.Context, requested string, user domain.User) (string, error) {
+	requested = strings.TrimSpace(requested)
+	env := user.CodeBuddyInternetEnvironment
+	model := assistantAllowedUserModel(requested, loadAssistantModels(ctx, env), user)
+	if requested == "" || model == requested {
+		return model, nil
+	}
+	if engine, _ := assistantModelEngine(requested); engine == assistantEngineCodeBuddy {
+		refreshCLIModels(ctx, env, user.CodeBuddyAPIKey)
+		if model = assistantAllowedUserModel(requested, loadAssistantModels(ctx, env), user); model == requested {
+			return model, nil
+		}
+	}
+	return "", fmt.Errorf("定时任务指定的模型 %s 在负责人的账号下不可用，本次没有运行；请在定时任务里改选可用的模型", requested)
 }
 
 func truncateRunes(text string, max int) string {

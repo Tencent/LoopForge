@@ -21,19 +21,24 @@ const (
 )
 
 // turnTranscriptMessage builds the transcript entry for a turn that ended
-// without a stored reply. A turn that produced nothing visible is not kept.
+// without a stored reply. Failures also keep a diagnostic reference when the
+// CLI produced no visible output, so starting another turn cannot hide them.
 func turnTranscriptMessage(g domain.AssistantGeneration, model string, stopped bool) (domain.AssistantMessage, bool) {
-	if g.Stream == nil {
+	if g.Stream == nil && g.Failure == nil {
 		return domain.AssistantMessage{}, false
 	}
-	activity := g.Stream.Activity
-	text := assistantVisibleReply(g.Stream.Answer, activity)
-	if !transcriptWorthKeeping(text, activity) {
+	var activity []domain.AssistantActivityEvent
+	var text string
+	if g.Stream != nil {
+		activity = g.Stream.Activity
+		text = assistantVisibleReply(g.Stream.Answer, activity)
+	}
+	if !transcriptWorthKeeping(text, activity) && g.Failure == nil {
 		return domain.AssistantMessage{}, false
 	}
 	payload := map[string]any{"message": text, "drafts": []any{}}
 	started := g.StartedAt
-	message := domain.AssistantMessage{TraceID: g.ID, Role: "assistant", Activity: activity, StartedAt: &started, CreatedAt: time.Now().UTC(), Model: strings.TrimSpace(model)}
+	message := domain.AssistantMessage{TraceID: g.ID, Role: "assistant", Activity: activity, StartedAt: &started, CreatedAt: time.Now().UTC(), Model: strings.TrimSpace(model), GenerationID: g.ID, Failure: g.Failure}
 	if stopped {
 		payload["stopped"] = true
 		message.Unfinished = strings.TrimSpace(g.Error)
@@ -68,6 +73,11 @@ func (h *assistantHandlers) keepInterruptedReply(g domain.AssistantGeneration) {
 // only discovered here (as "interrupted"), so its partial reply is kept now.
 func (h *assistantHandlers) currentGeneration(ownerID int64, sessionID string) (domain.AssistantGeneration, bool) {
 	g, ok := h.repo.AssistantGeneration(ownerID, sessionID)
+	if ok {
+		if _, local := assistantLiveGenerations.Load(g.ID); !local {
+			h.settleLegacyWorkspaceNativeApprovals(g)
+		}
+	}
 	if ok && g.Status == "interrupted" {
 		g.UserID = ownerID
 		h.keepInterruptedReply(g)

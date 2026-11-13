@@ -92,3 +92,31 @@ func TestDefaultSandboxDoesNotMaskCorruptConfigurationOrDatabaseFailure(t *testi
 		t.Fatalf("database failure reported available sandboxes: %+v", profiles)
 	}
 }
+
+// The public catalog seed stored generic-docker without the shared flag; it is
+// still the platform fallback for conversation workspaces in every project.
+func TestSeededGenericDockerSandboxIsSharedForConversations(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	seeded := `{"id":"generic-docker","name":"Docker 隔离沙箱","driver":"docker","dockerfileId":"generic-backend","readOnlyRootFS":false}`
+	if err := s.DB.Table("sandboxes").Where("id = ?", GenericDockerSandboxID).Update("payload", seeded).Error; err != nil {
+		t.Fatal(err)
+	}
+	profile, ok := s.Sandbox(GenericDockerSandboxID)
+	if !ok || !profile.Shared {
+		t.Fatalf("seeded generic-docker is not shared: %+v", profile)
+	}
+	if got, err := s.ResolveConversationSandbox("any-project", ""); err != nil || got.ID != GenericDockerSandboxID {
+		t.Fatalf("default conversation sandbox = %+v, %v", got, err)
+	}
+	found := false
+	for _, candidate := range s.ConversationSandboxes("any-project") {
+		found = found || candidate.ID == GenericDockerSandboxID
+	}
+	if !found {
+		t.Fatal("generic-docker missing from the project's conversation sandboxes")
+	}
+}

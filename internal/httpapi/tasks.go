@@ -52,15 +52,14 @@ func (h *tasksHandlers) settleIssueTasks(issueID string) {
 			continue
 		}
 		run, ok := h.repo.RunView(task.RunID)
-		if !ok || runHasActiveNode(run) {
+		if !ok || run.HasActiveNode() {
 			continue
 		}
 		status := taskStatusFromRun(run.Status)
 		if (status != "completed" && status != "failed" && status != "cancelled") || status == task.Status {
 			continue
 		}
-		task.Status = status
-		_ = h.repo.PutTask(task)
+		_ = h.repo.UpdateTaskStatus(task, status)
 	}
 }
 
@@ -85,9 +84,8 @@ func (h *tasksHandlers) syncTasks() {
 			// run that can never appear.  A non-empty missing RunID is terminal;
 			// converge active task states so the issue can be dispatched again.
 			if strings.TrimSpace(task.RunID) != "" && (task.Status == "queued" || task.Status == "dispatched" || task.Status == "running") {
-				task.Status = "cancelled"
-				_ = h.repo.PutTask(task)
-				tasks[i] = task
+				_ = h.repo.UpdateTaskStatus(task, "cancelled")
+				tasks[i].Status = "cancelled"
 			}
 			continue
 		}
@@ -98,9 +96,8 @@ func (h *tasksHandlers) syncTasks() {
 		if status == "" || status == task.Status {
 			continue
 		}
-		task.Status = status
-		_ = h.repo.PutTask(task)
-		tasks[i] = task
+		_ = h.repo.UpdateTaskStatus(task, status)
+		tasks[i].Status = status
 	}
 	latest := map[string]domain.Task{}
 	for _, task := range tasks {
@@ -123,7 +120,11 @@ func (h *tasksHandlers) syncTasks() {
 		if next.LatestTaskID == issue.LatestTaskID && next.Status == issue.Status {
 			continue
 		}
-		_ = h.repo.PutIssue(next)
+		_, _ = h.repo.PatchIssue(issue.ID, func(current *domain.Issue) error {
+			current.LatestTaskID = task.ID
+			current.Status = issueStatusFromLatestTask(*current, task.Status)
+			return nil
+		})
 	}
 }
 
@@ -151,15 +152,6 @@ func rejectBlockedIssueRun(d *deps, c *gin.Context, runID string) bool {
 
 func taskStatusFromRun(runStatus string) string {
 	return map[string]string{"queued": "queued", "running": "running", "waiting": "running", "succeeded": "completed", "failed": "failed", "cancelled": "cancelled"}[runStatus]
-}
-
-func runHasActiveNode(run domain.Run) bool {
-	for _, nr := range run.Nodes {
-		if nr != nil && (nr.Status == "running" || nr.Status == "pending_input") {
-			return true
-		}
-	}
-	return false
 }
 
 func issueStatusFromLatestTask(issue domain.Issue, taskStatus string) string {

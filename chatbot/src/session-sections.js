@@ -4,6 +4,7 @@ import {
   sessionProjectName,
   sessionSearchText,
 } from "./session-history.js";
+import { executionLocked } from "./execution-target.js";
 
 export const PROJECT_PREVIEW_LIMIT = 6;
 
@@ -58,6 +59,8 @@ export function splitSidebarSections(
   const pinIds = new Set(pinned);
 
   const visible = (sessions || []).filter((session) => {
+    // Old versions persisted a blank conversation when choosing a machine.
+    if (session.executionTargetLocked === false && !executionLocked(session)) return false;
     if (!!session.archived !== !!archived) return false;
     if (mineOnly && !sessionIncludesUser(session, currentUserId)) return false;
     if (!needle) {

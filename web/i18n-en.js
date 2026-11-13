@@ -169,3 +169,14 @@ Object.assign(window.LF_I18N_EN,{
   "请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。":"Enter a GitHub link or a Git SSH clone address. CNB supports HTTPS with an access token.",
   "粘贴 GitHub 链接或 Git SSH 地址":"Paste a GitHub link or Git SSH address"
 });
+Object.assign(window.LF_I18N_EN,{
+  "强制删除":"Force delete",
+  "强制删除需求":"Force-delete requirement",
+  "强制删除所选":"Force-delete selected",
+  "确认强制删除":"Force delete",
+  "需求、评论和澄清记录将被删除。":"The requirement, its comments, and clarification history will be deleted.",
+  "关联的任务、运行记录、日志、产物和执行工作区将一并清理。":"Linked tasks, runs, logs, outputs, and workspaces will be removed as well.",
+  "删除后无法恢复。":"This cannot be undone.",
+  "外部原单会保留，后续同步可能重新导入。":"The original external record is kept, and a later sync may import it again.",
+  "需求已有执行记录或已完成，请确认强制删除":"This requirement has execution history or is already completed. Confirm force deletion."
+});

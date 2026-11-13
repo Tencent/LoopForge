@@ -374,6 +374,10 @@ func clarifyRepositorySource(repository domain.Repository, selectedBaseBranch st
 }
 
 func (h *streamHandlers) runChatClarify(c *gin.Context, issue domain.Issue, request chatClarifyRequest) {
+	if err := clarifyModelEngineError(request.Model); err != nil {
+		c.JSON(400, map[string]string{"error": err.Error()})
+		return
+	}
 	if strings.TrimSpace(issue.ID) != "" {
 		h.handleIssueClarify(c, issue, request)
 		return
@@ -839,11 +843,7 @@ func clarifyStreamEvents(line string) []map[string]string {
 }
 
 func clarifyThoughtShouldHide(s string) bool {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	s = strings.TrimSuffix(s, "```")
-	s = strings.TrimSpace(s)
+	s = stripJSONFence(s)
 	if s == "" {
 		return false
 	}
@@ -869,11 +869,7 @@ func clarifyThoughtShouldHide(s string) bool {
 }
 
 func extractClarifyProtocolObject(s string) map[string]any {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	s = strings.TrimSuffix(s, "```")
-	s = strings.TrimSpace(s)
+	s = stripJSONFence(s)
 	start, end := strings.Index(s, "{"), strings.LastIndex(s, "}")
 	if start < 0 || end <= start {
 		return nil
@@ -972,27 +968,35 @@ func (h *streamHandlers) chatClarifyCancel(c *gin.Context) {
 	c.JSON(200, map[string]bool{"cancelled": true})
 }
 
+// stripJSONFence trims surrounding whitespace and a Markdown code fence
+// (```json or ```) that agents often wrap around JSON replies.
+func stripJSONFence(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "```json")
+	s = strings.TrimPrefix(s, "```")
+	s = strings.TrimSuffix(s, "```")
+	return strings.TrimSpace(s)
+}
+
+// parseStreamJSONObject decodes the outermost {...} span of s (after removing
+// any code fence) and unwraps a stream-json envelope when present.
+func parseStreamJSONObject(s string) (any, bool) {
+	s = stripJSONFence(s)
+	start, end := strings.Index(s, "{"), strings.LastIndex(s, "}")
+	if start < 0 || end <= start {
+		return nil, false
+	}
+	var v any
+	if json.Unmarshal([]byte(s[start:end+1]), &v) != nil {
+		return nil, false
+	}
+	return unwrapStreamJSONEnvelope(v)
+}
+
 func extractClarifyResultJSON(raw string) (any, string) {
 	raw = strings.TrimSpace(raw)
-	try := func(s string) (any, bool) {
-		s = strings.TrimSpace(s)
-		s = strings.TrimPrefix(s, "```json")
-		s = strings.TrimPrefix(s, "```")
-		s = strings.TrimSuffix(s, "```")
-		s = strings.TrimSpace(s)
-		start, end := strings.Index(s, "{"), strings.LastIndex(s, "}")
-		if start < 0 || end <= start {
-			return nil, false
-		}
-		s = s[start : end+1]
-		var v any
-		if json.Unmarshal([]byte(s), &v) != nil {
-			return nil, false
-		}
-		return unwrapStreamJSONEnvelope(v)
-	}
 	protocol := func(s string) (any, bool) {
-		v, ok := try(s)
+		v, ok := parseStreamJSONObject(s)
 		if !ok || !isClarifyProtocolObject(v) {
 			return nil, false
 		}
@@ -1050,23 +1054,6 @@ func extractClarifyResultJSON(raw string) (any, string) {
 
 func extractJSONObject(raw string) (any, string) {
 	raw = strings.TrimSpace(raw)
-	try := func(s string) (any, bool) {
-		s = strings.TrimSpace(s)
-		s = strings.TrimPrefix(s, "```json")
-		s = strings.TrimPrefix(s, "```")
-		s = strings.TrimSuffix(s, "```")
-		s = strings.TrimSpace(s)
-		start, end := strings.Index(s, "{"), strings.LastIndex(s, "}")
-		if start < 0 || end <= start {
-			return nil, false
-		}
-		s = s[start : end+1]
-		var v any
-		if json.Unmarshal([]byte(s), &v) != nil {
-			return nil, false
-		}
-		return unwrapStreamJSONEnvelope(v)
-	}
 
 	var resultVal any
 	var resultRaw string
@@ -1083,7 +1070,7 @@ func extractJSONObject(raw string) (any, string) {
 		}
 		if fmt.Sprint(event["type"]) == "result" {
 			if msg, ok := event["result"].(string); ok {
-				if v, ok := try(msg); ok {
+				if v, ok := parseStreamJSONObject(msg); ok {
 					resultVal, resultRaw = v, msg
 				} else if strings.TrimSpace(msg) != "" {
 					resultVal = map[string]any{"summary": msg, "questions": []any{}, "ready": false}
@@ -1097,18 +1084,18 @@ func extractJSONObject(raw string) (any, string) {
 			continue
 		}
 		if msg, ok := event["message"].(map[string]any); ok {
-			if v, src, ok := extractClarifyJSONFromEvent(msg, try); ok {
+			if v, src, ok := extractClarifyJSONFromEvent(msg, parseStreamJSONObject); ok {
 				fallback, fallbackRaw = v, src
 			}
 		}
-		if v, src, ok := extractClarifyJSONFromEvent(event, try); ok {
+		if v, src, ok := extractClarifyJSONFromEvent(event, parseStreamJSONObject); ok {
 			fallback, fallbackRaw = v, src
 		}
 	}
 	if resultVal != nil {
 		return resultVal, resultRaw
 	}
-	if v, ok := try(raw); ok {
+	if v, ok := parseStreamJSONObject(raw); ok {
 		return v, raw
 	}
 	if fallback != nil {
