@@ -1,13 +1,14 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
+	"time"
 )
 
 // A sandbox of a custom image may lack Node.js, npm or Python 3, which the
@@ -16,11 +17,13 @@ import (
 // the CLIs bundled there and a relocatable Python into the host-visible CLI
 // directory once per platform build. Sandboxes mount it read-only and append
 // it to PATH, so a tool shipped by the image still wins.
-const (
+const toolchainEnv = "AGENTFLOW_TOOLCHAIN"
+
+// Paths inside the platform image; tests point them at a fixture.
+var (
 	toolchainNodePrefix = "/usr/local"
 	toolchainPythonDir  = "/opt/loopforge/python"
 	toolchainCommitFile = "/app/loopforge-commit"
-	toolchainEnv        = "AGENTFLOW_TOOLCHAIN"
 )
 
 // toolchainPathSetup appends the mounted toolchain to PATH when exec passed it.
@@ -30,7 +33,34 @@ const toolchainPathSetup = `if [ -n "${AGENTFLOW_TOOLCHAIN:-}" ] && [ -d "$AGENT
 fi
 `
 
-var toolchainMu sync.Mutex
+// toolchainLockTimeout bounds the wait for another process copying the
+// toolchain; a cold copy onto a slow data directory takes minutes.
+const toolchainLockTimeout = 15 * time.Minute
+
+// toolchainBeforeLock lets a test observe a caller that passed the unlocked
+// fast path and is about to wait for the lock.
+var toolchainBeforeLock = func() {}
+
+// lockToolchain serializes toolchain writers across every platform process
+// sharing the CLI directory. Writers recheck under the lock, so a directory
+// another process published is never replaced.
+func lockToolchain(parent string) (func(), error) {
+	toolchainBeforeLock()
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, fmt.Errorf("准备工具链目录失败：%w", err)
+	}
+	f, err := os.OpenFile(filepath.Join(parent, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), toolchainLockTimeout)
+	defer cancel()
+	if err := flockExclusive(ctx, f); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("等待工具链锁失败：%w", err)
+	}
+	return func() { _ = unlockFile(f) }, nil
+}
 
 // RuntimeToolchainDir returns this build's toolchain copy, creating it on
 // first use. It returns "" when the CLI directory is not configured or the
@@ -43,13 +73,17 @@ func RuntimeToolchainDir() (string, error) {
 	}
 	parent := filepath.Join(root, "toolchain")
 	dir := filepath.Join(parent, toolchainKey())
-	toolchainMu.Lock()
-	defer toolchainMu.Unlock()
-	if _, err := os.Stat(filepath.Join(dir, ".ready")); err == nil {
+	ready := filepath.Join(dir, ".ready")
+	if _, err := os.Stat(ready); err == nil {
 		return dir, nil
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", fmt.Errorf("准备工具链目录失败：%w", err)
+	unlock, err := lockToolchain(parent)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	if _, err := os.Stat(ready); err == nil {
+		return dir, nil
 	}
 	stage, err := os.MkdirTemp(parent, ".stage-")
 	if err != nil {
@@ -65,6 +99,7 @@ func RuntimeToolchainDir() (string, error) {
 	if err := os.WriteFile(filepath.Join(stage, ".ready"), nil, 0o644); err != nil {
 		return "", err
 	}
+	// Only a copy that never got its .ready marker can be here.
 	if err := os.RemoveAll(dir); err != nil {
 		return "", err
 	}
@@ -124,9 +159,16 @@ func EnsureToolchainCLI(dir, binary string) error {
 	if err != nil || !ok {
 		return nil
 	}
-	toolchainMu.Lock()
-	defer toolchainMu.Unlock()
-	if fileIsExecutable(filepath.Join(dir, "bin", binary)) {
+	launcher := filepath.Join(dir, "bin", binary)
+	if fileIsExecutable(launcher) {
+		return nil
+	}
+	unlock, err := lockToolchain(filepath.Dir(dir))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if fileIsExecutable(launcher) {
 		return nil
 	}
 	modules := filepath.Join(dir, "lib", "node_modules")
