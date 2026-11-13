@@ -353,29 +353,39 @@ func ExtractTarZst(src io.Reader, dest string, limits Limits) error {
 		if err := checkExpandedSize(expanded, limits); err != nil {
 			return err
 		}
-		full := filepath.Join(tmp, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := extractTarMember(tr, tmp, name, hdr.Size); err != nil {
 			return err
-		}
-		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
-		if err != nil {
-			return err
-		}
-		copied, copyErr := io.Copy(out, io.LimitReader(tr, hdr.Size))
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if copied != hdr.Size {
-			return fmt.Errorf("extracted %s size mismatch", name)
 		}
 	}
 	_ = os.RemoveAll(dest)
 	if err := os.Rename(tmp, dest); err != nil {
 		return err
+	}
+	return nil
+}
+
+// extractTarMember writes one sanitized regular member of size bytes from r to
+// root/name, creating parent directories. The file must not already exist, and
+// a short body is reported as a size mismatch.
+func extractTarMember(r io.Reader, root, name string, size int64) error {
+	full := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	copied, copyErr := io.Copy(out, io.LimitReader(r, size))
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if copied != size {
+		return fmt.Errorf("extracted %s size mismatch", name)
 	}
 	return nil
 }
