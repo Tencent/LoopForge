@@ -2,7 +2,9 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
-## Unreleased
+## 0.3.9-rc.1 — release candidate: DeepSeek Harness in the image and credential-free clone URLs
+
+This is a prerelease for testing before 0.3.9. The `latest` and `0.3` image tags stay on 0.3.8; install it with `git clone --branch v0.3.9-rc.1`.
 
 - The platform image bundles DeepSeek Harness `@deepseek-ai/dsh@0.2.2-rc.1` next to Codex and CodeBuddy, so a DeepSeek key works in conversations and SOP roles without an install step. 0.3.8 had no `dsh` and answered a DeepSeek Harness chat with “AI 助手生成失败，请稍后重试”. The image download grows by about 180 MB. An installation without the image installs the same pinned version from the conversation: every dsh release is a prerelease requiring Node 24.9, and npm on Node 22 found no version for the bare package name.
 - A DeepSeek Harness reply longer than 8 KB (about 2,700 Chinese characters) is shown in full. `dsh --json` cuts every event string at 8 KiB and only its `final` event carries the whole answer, so the chat stopped mid-sentence while the saved reply was complete.
@@ -16,6 +18,8 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 - Repository clone URLs no longer carry credentials. Saving a `cloneUrl` with a user name or password, such as `https://user:token@github.com/acme/app.git`, is rejected with a pointer to the Git token in personal settings; the repositories API, bootstrap payload, run, task and requirement views, and the runner task management list strip credentials from `cloneUrl` and `webUrl` of rows saved earlier; a `webUrl` with credentials is rejected on save; runner clone errors and redacted Git output mask them. `ssh://git@host/...` and `git@host:path` remotes are still accepted.
 
 Repositories saved earlier with a token in `cloneUrl` keep cloning until they are saved again. Saving one from the studio stores the URL without the token, so first put the Git token in 个人配置, then save the repository. Until then the token also lands in each workspace's `.git/config`, where the agent can read it, so re-save such repositories soon after upgrading.
+
+The platform creates the tables in `migrations/028_git_ssh_credentials.sql` and `migrations/029_assistant_diagnostics.sql` on startup. `migrations/030_generic_docker_shared.sql` is an optional backfill that marks the stored built-in `generic-docker` sandbox as shared.
 
 ## 0.3.8 — header sign-in hardening and a GHCR mirror option
 
