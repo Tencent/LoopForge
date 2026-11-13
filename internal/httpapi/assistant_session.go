@@ -76,38 +76,16 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 			allowedProjects[id] = workbenchProjectAllowsUser(project, current.ID, platformAdmin)
 		}
 	}
-	seen := map[string]bool{}
-	out := make([]assistantConversation, 0, len(items))
-	for _, item := range append(append(items, shared...), projectChats...) {
-		if seen[item.ID] {
-			continue
-		}
-		seen[item.ID] = true
-		if item.Shared {
-			// As in conversationScope, only valid shared records use project
-			// authorization; other owned rows retain the private-session fallback.
-			if sharedIDs[item.ID] && (item.ProjectID == "" || runProjects[item.RunID] != item.ProjectID || !allowedProjects[item.ProjectID]) {
-				continue
-			}
-		} else if item.RunID != "" {
-			if sharedIDs[repo.RunAssistantSessionID(item.RunID)] {
-				continue
-			}
-		} else if item.UserID != current.ID && !allowedProjects[item.ProjectID] {
-			// Other members' project conversations require current membership.
-			continue
-		}
-		item.GenerationStatus = "idle"
-		item.GenerationID = ""
-		item.Unread = false
-		out = append(out, item)
-	}
+	out := visibleAssistantConversations(append(append(items, shared...), projectChats...), current.ID, sharedIDs, runProjects, allowedProjects)
 	ids := make([]string, 0, len(out))
 	for _, item := range out {
 		ids = append(ids, item.ID)
 	}
 	statuses := h.repo.AssistantGenerationStatuses(current.ID, ids)
 	for i := range out {
+		out[i].GenerationStatus = "idle"
+		out[i].GenerationID = ""
+		out[i].Unread = false
 		if state, ok := statuses[out[i].ID]; ok {
 			out[i].GenerationStatus = state.Status
 			out[i].GenerationID = state.ID
@@ -134,6 +112,37 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
 	c.JSON(200, decorateRunSessions(h.repo, out))
+}
+
+// visibleAssistantConversations deduplicates candidates by ID (keeping the
+// first occurrence) and drops the ones userID may not see in the session list.
+// sharedIDs holds the IDs of cross-user shared records, runProjects maps a run
+// to its owning project and allowedProjects records project access.
+func visibleAssistantConversations(candidates []assistantConversation, userID int64, sharedIDs map[string]bool, runProjects map[string]string, allowedProjects map[string]bool) []assistantConversation {
+	seen := map[string]bool{}
+	out := make([]assistantConversation, 0, len(candidates))
+	for _, item := range candidates {
+		if seen[item.ID] {
+			continue
+		}
+		seen[item.ID] = true
+		if item.Shared {
+			// As in conversationScope, only valid shared records use project
+			// authorization; other owned rows retain the private-session fallback.
+			if sharedIDs[item.ID] && (item.ProjectID == "" || runProjects[item.RunID] != item.ProjectID || !allowedProjects[item.ProjectID]) {
+				continue
+			}
+		} else if item.RunID != "" {
+			if sharedIDs[repo.RunAssistantSessionID(item.RunID)] {
+				continue
+			}
+		} else if item.UserID != userID && !allowedProjects[item.ProjectID] {
+			// Other members' project conversations require current membership.
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (h *assistantHandlers) archiveSession(c *gin.Context) {
