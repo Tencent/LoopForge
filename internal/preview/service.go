@@ -635,8 +635,12 @@ func (s *Service) SetPreviewBackend(previewID, backendURL string) (domain.RunPre
 	if err != nil {
 		return domain.RunPreview{}, err
 	}
-	if err := s.validateBackendOrigin(normalized); err != nil {
-		return domain.RunPreview{}, err
+	// Clearing is always allowed, so a backend stored before an upgrade can be
+	// removed even while online previews are not configured.
+	if normalized != "" {
+		if err := s.validateBackendOrigin(normalized); err != nil {
+			return domain.RunPreview{}, err
+		}
 	}
 	if err := s.repo.UpdatePreviewBackendURL(preview.ID, normalized); err != nil {
 		return domain.RunPreview{}, err

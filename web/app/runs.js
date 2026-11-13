@@ -686,13 +686,26 @@ function previewPaneHTML(run){
     return `<div class="workspace-unavailable"><span>◇</span><b>预览尚未就绪</b><p>当前状态：${escapeHTML(info.status||'未知')}</p></div>`;
   }
   const session=pv.session;
-  if(!session?.url)return '<div class="workspace-loading"><span class="workspace-spinner"></span><b>正在签发预览会话</b></div>';
-  const backend=String(session.backendUrl||pv.backendUrl||pv.info?.backendUrl||'').trim();
+  // A failed session must not hide the archive: download and backend repair
+  // only need the ready bundle, not a signed preview URL.
+  if(!session?.url&&!pv.sessionError)return '<div class="workspace-loading"><span class="workspace-spinner"></span><b>正在签发预览会话</b></div>';
+  const backend=String(session?.backendUrl||pv.backendUrl||pv.info?.backendUrl||'').trim();
   const backendLabel=backend?`<code title="${escapeHTML(backend)}">${escapeHTML(backend)}</code>`:'<em>未设置</em>';
   const backendAction=backend?'更改':'设置';
+  const sessionActions=session?.url?'<button class="button ghost small" data-preview-copy>复制地址</button><button class="button ghost small" data-preview-open>独立窗口</button>':'';
+  const toolbar=`<div class="run-preview-toolbar"><span>预览 · ${escapeHTML(info.entryFile||'index.html')} · ${info.fileCount||0} 个文件</span><div class="run-preview-backend"><small>当前后端</small>${backendLabel}<button type="button" class="button ghost small" data-preview-backend-edit>${backendAction}</button></div><div><button type="button" class="button ghost small" data-preview-download title="下载完整静态站点 ZIP 包">下载静态文件</button><button class="button ghost small" data-preview-refresh>刷新</button>${sessionActions}</div></div>`;
+  if(!session?.url){
+    const code=pv.sessionErrorCode||'';
+    const hint=code==='preview_isolation_required'
+      ?'管理员尚未配置独立预览域名，暂时无法在线预览。仍可下载静态文件。'
+      :code==='preview_backend_on_studio'
+        ?'后端地址指向工作台域名，已被拒绝。请更改或清空后端后重试。'
+        :'暂时无法在线预览。仍可下载静态文件或更改后端。';
+    return `<section class="run-preview-pane">${toolbar}<div class="workspace-unavailable" data-preview-session-error="${escapeHTML(code)}"><span>!</span><b>无法打开在线预览</b><p>${escapeHTML(hint)}</p><small>${escapeHTML(pv.sessionError)}</small></div></section>`;
+  }
   // The server signs a URL on the configured preview origin; do not probe or rewrite it.
   const frameUrl=session.url;
-  return `<section class="run-preview-pane"><div class="run-preview-toolbar"><span>预览 · ${escapeHTML(info.entryFile||'index.html')} · ${info.fileCount||0} 个文件</span><div class="run-preview-backend"><small>当前后端</small>${backendLabel}<button type="button" class="button ghost small" data-preview-backend-edit>${backendAction}</button></div><div><button type="button" class="button ghost small" data-preview-download title="下载完整静态站点 ZIP 包">下载静态文件</button><button class="button ghost small" data-preview-refresh>刷新</button><button class="button ghost small" data-preview-copy>复制地址</button><button class="button ghost small" data-preview-open>独立窗口</button></div></div><iframe data-preview-frame data-run-id="${escapeHTML(run.id)}" title="前端预览" src="${escapeHTML(frameUrl)}" sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-same-origin" referrerpolicy="no-referrer"></iframe></section>`;
+  return `<section class="run-preview-pane">${toolbar}<iframe data-preview-frame data-run-id="${escapeHTML(run.id)}" title="前端预览" src="${escapeHTML(frameUrl)}" sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-same-origin" referrerpolicy="no-referrer"></iframe></section>`;
 }
 function stopPreviewPoll(){
   if(state.previewPoll){clearTimeout(state.previewPoll);state.previewPoll=null}
@@ -737,13 +750,23 @@ async function loadRunPreview(runId,opts){
       backend=String(info.backendUrl).trim();
     }
     let session=prior?.session||null;
+    let sessionError='',sessionErrorCode='';
     const needRenew=!!(opts?.renewSession||!session||session.previewId!==info.id||String(session.backendUrl||'').trim()!==backend);
     if(info.status==='ready'&&needRenew){
-      session=await api(`/api/runs/${encodeURIComponent(runId)}/preview/session`,{method:'POST',body:JSON.stringify({backendUrl:backend}),silent:!!silent});
+      // Keep the ready archive when only the session fails (isolation not
+      // configured, or a stored backend on the studio host): download and
+      // backend repair stay available.
+      try{
+        session=await api(`/api/runs/${encodeURIComponent(runId)}/preview/session`,{method:'POST',body:JSON.stringify({backendUrl:backend}),silent:!!silent});
+      }catch(err){
+        session=null;
+        sessionError=String(err?.message||err||'');
+        sessionErrorCode=String(err?.code||'');
+      }
     }
     if(state.activeRun?.id!==runId)return;
-    persistPreviewBackend(runId, session?.backendUrl||backend);
-    state.runPreview={runId,loading:false,error:'',info,session,backendUrl:session?.backendUrl||backend};
+    if(!sessionError)persistPreviewBackend(runId, session?.backendUrl||backend);
+    state.runPreview={runId,loading:false,error:'',info,session,sessionError,sessionErrorCode,backendUrl:session?.backendUrl||backend};
     schedulePreviewPoll(runId,info.status);
     renderPreviewPane(run);
   }catch(err){
@@ -829,16 +852,21 @@ async function editPreviewBackend(run){
     persistPreviewBackend(run.id, next);
     const session=res?.session||null;
     const info=res?.preview||state.runPreview?.info||null;
+    // The backend is saved even when no session follows; show why instead of
+    // waiting for a session that will not arrive.
+    const failed=!session&&info?.status==='ready';
     state.runPreview={
       runId:run.id,
       loading:false,
       error:'',
       info,
       session,
+      sessionError:failed?String(res?.sessionError?.error||'预览会话签发失败'):'',
+      sessionErrorCode:failed?String(res?.sessionError?.code||''):'',
       backendUrl:session?.backendUrl||next
     };
     renderPreviewPane(state.activeRun||run);
-    toast(next?'已应用到预览页':'已清除预览后端','ok');
+    toast(next?(session?'已应用到预览页':'已保存预览后端'):'已清除预览后端','ok');
   }catch(err){
     toast(err?.message||'设置后端地址失败','err');
   }

@@ -41,7 +41,9 @@ var jsRootAssetRe = regexp.MustCompile("([`'\"])(/(?:assets|static|chunks|media|
 var referrerMetaRe = regexp.MustCompile(`(?i)<meta\b[^>]*?\sname\s*=\s*(?:"referrer"|'referrer'|referrer\b)[^>]*>`)
 
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.IsPreviewHost(r) {
+	// The hostname stays reserved while the embedding settings are incomplete,
+	// but sessions are served only with a complete isolation configuration.
+	if !s.IsPreviewHost(r) || s.IsolationError() != nil {
 		http.NotFound(w, r)
 		return
 	}

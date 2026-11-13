@@ -87,10 +87,139 @@ async function testSession(studioProtocol, sessionURL) {
   assert.deepEqual(opened[1], [renewedURL, '_blank', 'noopener']);
 }
 
+// A failed session (isolation not configured: 409; a backend stored before the
+// upgrade on the studio host: 400) must keep the ready archive. Download and
+// backend repair stay available and the pane explains the specific problem.
+async function testSessionFailure({code, status, message, hint, storedBackend, repair}) {
+  const run = {id: 'preview-run', workflowSnapshot: {preview: {enabled: true}}};
+  const calls = [], notifications = [], persisted = [], downloads = [];
+  const clicks = {};
+  let html = '';
+  const pane = {
+    closest: () => ({dataset: {runId: run.id}}),
+    // Only buttons that were rendered can be bound and clicked.
+    querySelector: selector => {
+      if (selector.includes('iframe')) return null;
+      return html.includes(selector.slice(1, -1)) ? {addEventListener: (event, callback) => { clicks[selector] = callback; }} : null;
+    },
+    set innerHTML(value) { html = value; for (const key of Object.keys(clicks)) delete clicks[key]; }
+  };
+  const repairedURL = 'https://preview.example/preview/repaired/';
+  const context = {
+    state: {activeRun: run},
+    window: {open() {}},
+    $: () => ({querySelector: () => pane}),
+    escapeHTML: value => String(value),
+    readPreviewBackend: () => '', persistPreviewBackend: (...args) => persisted.push(args), schedulePreviewPoll() {}, stopPreviewPoll() {},
+    copyText() {}, downloadRunPreview: (...args) => downloads.push(args),
+    afPrompt: async () => '',
+    toast: (...args) => notifications.push(args),
+    api: async (path, options) => {
+      calls.push([path, options]);
+      if (path.endsWith('/session')) throw Object.assign(new Error(message), {code});
+      if (path.endsWith('/backend')) return repair === 'session'
+        ? {preview: {id: 'p', status: 'ready', fileCount: 2, backendUrl: ''}, session: {previewId: 'p', url: repairedURL, backendUrl: ''}}
+        : {preview: {id: 'p', status: 'ready', fileCount: 2, backendUrl: ''}, sessionError: {error: message, code}};
+      return {id: 'p', status: 'ready', fileCount: 2, backendUrl: storedBackend};
+    }
+  };
+  vm.createContext(context);
+  for (const name of ['runPreviewDeclared', 'previewPaneHTML', 'loadRunPreview', 'renderPreviewPane', 'bindPreviewPane', 'editPreviewBackend']) {
+    vm.runInContext(extract(name), context);
+  }
+  const label = `${status} ${code}`;
+  const assertArchiveActions = () => {
+    assert.equal(context.state.runPreview.info?.status, 'ready', `${label}: archive info dropped`);
+    assert.equal(context.state.runPreview.error, '', `${label}: whole pane failed`);
+    assert.equal(context.state.runPreview.session, null);
+    for (const action of ['[data-preview-download]', '[data-preview-backend-edit]', '[data-preview-refresh]']) {
+      assert.ok(clicks[action], `${label}: ${action} missing`);
+    }
+    for (const action of ['[data-preview-copy]', '[data-preview-open]']) {
+      assert.equal(clicks[action], undefined, `${label}: ${action} offered without a session`);
+    }
+    assert.doesNotMatch(html, /<iframe/);
+    assert.doesNotMatch(html, /预览加载失败/);
+    assert.match(html, new RegExp(`data-preview-session-error="${code}"`));
+    assert.ok(html.includes(hint), `${label}: hint missing`);
+  };
+
+  await context.loadRunPreview(run.id);
+  assert.deepEqual(calls.map(([path, options]) => [path, options?.method]), [
+    ['/api/runs/preview-run/preview', undefined], ['/api/runs/preview-run/preview/session', 'POST']]);
+  assert.deepEqual(JSON.parse(calls[1][1].body), {backendUrl: storedBackend});
+  assertArchiveActions();
+  assert.ok(html.includes(message), `${label}: server detail missing`);
+  assert.equal(context.state.runPreview.sessionErrorCode, code);
+  assert.deepEqual(persisted, [], `${label}: a rejected backend must not be remembered`);
+  if (storedBackend) assert.ok(html.includes(storedBackend), `${label}: stored backend hidden`);
+  clicks['[data-preview-download]']({currentTarget: 'button'});
+  assert.deepEqual(downloads, [[run.id, 'button']]);
+
+  // A background refresh retries the session and still keeps the archive.
+  await context.loadRunPreview(run.id, {silent: true});
+  assert.equal(calls.length, 4);
+  assert.equal(calls[3][0], '/api/runs/preview-run/preview/session');
+  assertArchiveActions();
+
+  // Repair from the pane: clear the backend.
+  await context.editPreviewBackend(run);
+  const put = calls[calls.length - 1];
+  assert.equal(put[0], '/api/runs/preview-run/preview/backend');
+  assert.equal(put[1].method, 'PUT');
+  assert.deepEqual(JSON.parse(put[1].body), {backendUrl: ''});
+  assert.deepEqual(notifications[notifications.length - 1], ['已清除预览后端', 'ok']);
+  if (repair === 'session') {
+    assert.equal(context.state.runPreview.session.url, repairedURL);
+    assert.equal(context.state.runPreview.sessionError, '');
+    assert.match(html, new RegExp(`<iframe[^>]+src="${repairedURL}"`));
+    assert.ok(clicks['[data-preview-open]'] && clicks['[data-preview-copy]']);
+  } else {
+    // The backend was saved but no session followed: explain instead of spinning.
+    assertArchiveActions();
+    assert.doesNotMatch(html, /正在签发预览会话/);
+  }
+}
+
+// Metadata failures still use the whole-pane error with a retry button.
+async function testMetadataFailure() {
+  const run = {id: 'preview-run', workflowSnapshot: {preview: {enabled: true}}};
+  let html = '';
+  const pane = {
+    closest: () => ({dataset: {runId: run.id}}),
+    querySelector: () => null,
+    set innerHTML(value) { html = value; }
+  };
+  const context = {
+    state: {activeRun: run}, $: () => ({querySelector: () => pane}), escapeHTML: value => String(value),
+    readPreviewBackend: () => '', persistPreviewBackend() {}, schedulePreviewPoll() {}, stopPreviewPoll() {},
+    api: async () => { throw new Error('preview metadata unavailable'); }
+  };
+  vm.createContext(context);
+  for (const name of ['runPreviewDeclared', 'previewPaneHTML', 'loadRunPreview', 'renderPreviewPane', 'bindPreviewPane']) {
+    vm.runInContext(extract(name), context);
+  }
+  await context.loadRunPreview(run.id);
+  assert.equal(context.state.runPreview.info, null);
+  assert.match(html, /预览加载失败/);
+  assert.match(html, /data-preview-refresh/);
+}
+
 (async () => {
   for (const studio of ['http:', 'https:']) {
     for (const preview of ['http://preview.example:8090/preview/token/', 'https://preview.example:8443/preview/token/']) {
       await testSession(studio, preview);
     }
   }
+  await testSessionFailure({
+    code: 'preview_isolation_required', status: 409, storedBackend: '', repair: 'sessionError',
+    message: 'preview requires AGENTFLOW_PREVIEW_PUBLIC_URL on a separate hostname (AGENTFLOW_PREVIEW_FRAME_ANCESTORS is empty)',
+    hint: '管理员尚未配置独立预览域名'
+  });
+  await testSessionFailure({
+    code: 'preview_backend_on_studio', status: 400, storedBackend: 'https://studio.example', repair: 'session',
+    message: 'invalid preview backend URL: preview backend must not use a studio hostname',
+    hint: '后端地址指向工作台域名'
+  });
+  await testMetadataFailure();
 })().catch(error => { console.error(error); process.exit(1); });

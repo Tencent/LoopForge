@@ -29,6 +29,7 @@ type Config struct {
 	PublicScheme        string
 	PublicURL           string
 	FrameAncestors      string
+	StudioURL           string // AGENTFLOW_PUBLIC_URL: never a preview host or backend
 	MaxFiles            int
 	MaxCompressed       int64
 	MaxExpanded         int64
@@ -42,6 +43,7 @@ func LoadConfig() Config {
 		PublicScheme:        strings.TrimSpace(os.Getenv("AGENTFLOW_PREVIEW_PUBLIC_SCHEME")),
 		PublicURL:           strings.TrimSpace(os.Getenv("AGENTFLOW_PREVIEW_PUBLIC_URL")),
 		FrameAncestors:      strings.TrimSpace(os.Getenv("AGENTFLOW_PREVIEW_FRAME_ANCESTORS")),
+		StudioURL:           strings.TrimSpace(os.Getenv("AGENTFLOW_PUBLIC_URL")),
 		MaxFiles:            intFromEnv("AGENTFLOW_PREVIEW_MAX_FILES", DefaultMaxFiles),
 		MaxCompressed:       int64FromEnv("AGENTFLOW_PREVIEW_MAX_COMPRESSED", DefaultMaxCompressed),
 		MaxExpanded:         int64FromEnv("AGENTFLOW_PREVIEW_MAX_EXPANDED", DefaultMaxExpanded),

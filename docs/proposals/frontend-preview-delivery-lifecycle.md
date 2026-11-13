@@ -383,7 +383,7 @@ Runner 离线时，preview 显示“等待执行机器上线”。超过 finaliz
 https://preview.example.net/preview/<session-token>/
 ```
 
-不要再引入 `AGENTFLOW_PREVIEW_ENABLED`、`AGENTFLOW_PREVIEW_ROOT`、`AGENTFLOW_PREVIEW_BASE_DOMAIN`。归档默认开启，静态包进 MySQL。在线预览必须配置独立的 `AGENTFLOW_PREVIEW_PUBLIC_URL`（如 `https://preview.example.net`），并在 `AGENTFLOW_PREVIEW_FRAME_ANCESTORS` 中列出完整工作台 origin（如 `https://studio.example.com`）。禁止同一 hostname 换端口、通配符或 `self`；部署配置见 [deployment](../deployment.md#isolated-preview-host)。未配置时不签发预览会话，归档和鉴权 ZIP 下载 API 仍可用。
+不要再引入 `AGENTFLOW_PREVIEW_ENABLED`、`AGENTFLOW_PREVIEW_ROOT`、`AGENTFLOW_PREVIEW_BASE_DOMAIN`。归档默认开启，静态包进 MySQL。在线预览必须配置独立的 `AGENTFLOW_PREVIEW_PUBLIC_URL`（如 `https://preview.example.net`），并在 `AGENTFLOW_PREVIEW_FRAME_ANCESTORS` 中列出完整工作台 origin（如 `https://studio.example.com`）。禁止同一 hostname 换端口、通配符或 `self`；部署配置见 [deployment](../deployment.md#isolated-preview-host)。未配置时不签发预览会话，归档和鉴权 ZIP 下载 API 仍可用。预览 hostname 的保留只取决于 `AGENTFLOW_PREVIEW_PUBLIC_URL`：`FRAME_ANCESTORS` 缺失或无效只停用会话，不会让该 hostname 重新提供平台页面与 API；已列为工作台（`FRAME_ANCESTORS` 或 `AGENTFLOW_PUBLIC_URL`）的 hostname 永不保留。会话签发失败时 Studio 保留 ZIP 下载与后端修改入口，并按错误码（`preview_isolation_required`、`preview_backend_on_studio`）提示原因。
 
 预览 HTML 仍是不可信内容。隔离依赖独立 origin、预览域名的平台路由拒绝和浏览器 CSP。短期 token 控制预览访问；运行时拦截 fetch/XHR 仅提供后端路径映射。
 
