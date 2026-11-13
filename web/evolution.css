@@ -1,0 +1,67 @@
+/* 进化中心：kb-* 面板、行、徽标、抽屉来自 knowledge.css 与 app/harness-ui.css（已登记 #evolutionView）。
+ * 这里只补四列看板、卡片、回放统计、正文 diff 与宽抽屉。 */
+#evolutionView .kb-head { align-items: center; }
+.evo-head-actions { display: flex; flex: none; gap: 8px; }
+
+/* 看板 */
+.evo-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.evo-col { display: flex; flex-direction: column; min-height: 160px; }
+#evolutionView .evo-col .kb-panel-head { flex-wrap: nowrap; }
+.evo-col-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#evolutionView .evo-col .kb-empty { padding: 36px 16px; }
+#evolutionView .evo-card { align-items: flex-start; padding: 12px 16px; }
+.evo-card .kb-row-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.evo-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; color: var(--hui-tertiary); font-size: 12px; }
+.evo-card-note { margin-top: 6px; overflow: hidden; color: var(--hui-muted); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.evo-progress { height: 4px; margin-top: 8px; overflow: hidden; border-radius: 2px; background: var(--hui-accent-soft); }
+.evo-progress > i { display: block; height: 100%; border-radius: 2px; background: var(--hui-accent); transition: width 220ms cubic-bezier(.16, 1, .3, 1); }
+
+/* 资产与策略 */
+#evolutionView .evo-asset-row { gap: 12px; }
+.evo-asset-main { padding: 4px 6px; margin: -4px -6px; border-radius: 8px; cursor: pointer; transition: background-color 150ms ease; }
+.evo-asset-main:hover { background: var(--kb-hover); }
+.evo-asset-main:focus-visible { outline: 2px solid var(--kb-focus); outline-offset: 0; }
+.evo-rate { width: 48px; text-align: right; }
+
+/* 抽屉 */
+#kbDrawer.evo-wide { width: min(760px, 96vw); }
+.evo-run-link { color: var(--hui-accent); text-decoration: none; }
+.evo-run-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.evo-chips { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; }
+.evo-verdict { margin-top: 16px; color: var(--hui-text); }
+.evo-rationale { margin: 4px 0 0; color: var(--hui-secondary); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.evo-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 6px 0 4px; }
+.evo-stats > div { padding: 8px 10px; border: 1px solid var(--hui-border-soft); border-radius: 8px; background: var(--hui-canvas); }
+.evo-stats span { display: block; color: var(--hui-tertiary); font-size: 12px; }
+.evo-stats b { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.evo-hash { color: var(--hui-tertiary); }
+#kbDrawer .evo-version.is-selected { background: var(--hui-accent-soft); }
+#kbDrawer .evo-version .kb-btn[aria-pressed="true"] { border-color: var(--hui-accent); color: var(--hui-accent); }
+.evo-content { max-height: 360px; overflow: auto; }
+
+/* 正文 diff */
+.evo-diff { margin-top: 4px; overflow: hidden; border: 1px solid var(--hui-border-soft); border-radius: 10px; background: var(--hui-canvas); font: 12.5px/1.7 var(--mono); }
+.evo-diff-line { display: flex; gap: 8px; padding: 0 12px; }
+.evo-diff-line > span { flex: none; width: 10px; color: var(--hui-tertiary); user-select: none; }
+.evo-diff-line > code { min-width: 0; color: var(--hui-text); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.evo-diff-line.add { background: color-mix(in srgb, var(--hui-success) 10%, transparent); }
+.evo-diff-line.add > span { color: var(--hui-success); }
+.evo-diff-line.del { background: color-mix(in srgb, var(--hui-error) 9%, transparent); }
+.evo-diff-line.del > span { color: var(--hui-error); }
+.evo-diff-line.del > code { color: var(--hui-secondary); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--hui-error) 45%, transparent); }
+.evo-diff-skip { padding: 2px 12px 2px 30px; color: var(--hui-tertiary); font-size: 12px; background: color-mix(in srgb, var(--hui-text) 3%, transparent); }
+
+/* 运行详情：回放标记 */
+.run-meta-chip.evo-replay-chip { border-color: color-mix(in srgb, var(--hui-accent) 30%, transparent); color: var(--hui-accent); }
+
+@media (max-width: 1280px) {
+  .evo-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .evo-board { grid-template-columns: minmax(0, 1fr); }
+  .evo-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #evolutionView .evo-asset-row { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .evo-progress > i, .evo-asset-main { transition: none; }
+}

@@ -657,6 +657,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = fmt.Errorf("agent %q not found", node.AgentID)
 			break
 		}
+		agent = applyReplayAgent(e.repo, agent, current)
 		ex, errResolve := resolveNodeExecutor(e.repo, node, agent)
 		if errResolve != nil {
 			err = errResolve
@@ -725,6 +726,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
 			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
+			applyReplayAssets(e.repo, &assets, current)
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
 			}

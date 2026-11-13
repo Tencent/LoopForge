@@ -64,6 +64,13 @@ type TelemetryContext struct {
 	TraceID         string `json:"traceId"`
 	SpanID          string `json:"spanId,omitempty"`
 	ParentSpanID    string `json:"parentSpanId,omitempty"`
+	// Purpose marks non-business runs. RunPurposeEvolutionReplay runs
+	// validate an asset candidate: they never deliver issues, send
+	// notifications, use platform MCP writes or count in analytics. Child
+	// SOP runs inherit it with the rest of the context.
+	Purpose string `json:"purpose,omitempty"`
+	// EvolutionReplayID names the replay whose asset overrides this run uses.
+	EvolutionReplayID string `json:"evolutionReplayId,omitempty"`
 }
 
 type MetricPoint struct {

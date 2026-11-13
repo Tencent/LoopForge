@@ -77,7 +77,7 @@ function kbDrawerClose(){
   kb.draft=null;
   const {opener,openerKey}=kb.drawer;
   kb.drawer.opener=null;kb.drawer.openerKey='';
-  if(!$('#knowledgeView')?.classList.contains('active'))return;
+  if(!$('#knowledgeView')?.classList.contains('active')){if(opener?.isConnected&&opener!==document.body)opener.focus?.({preventScroll:true});return}
   const target=opener?.isConnected&&opener!==document.body?opener:(openerKey&&$(`#knowledgeBody [data-kb-key="${CSS.escape(openerKey)}"]`))||$('#kbTabs [aria-selected="true"]');
   target?.focus?.();
 }

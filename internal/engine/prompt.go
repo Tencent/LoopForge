@@ -15,6 +15,7 @@ func renderPromptWithStore(st *repo.Store, wf domain.WorkflowDefinition, node do
 	var role *domain.AgentDefinition
 	if st != nil {
 		if agent, ok := workflowAgent(st, wf, node.AgentID); ok {
+			agent = applyReplayAgent(st, agent, run)
 			role = &agent
 		}
 	}

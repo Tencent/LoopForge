@@ -20,10 +20,11 @@
   <link rel="stylesheet" href="/access.css?v=20261031v1">
   <link rel="stylesheet" href="/product-v3.css?v=20261030runs1">
   <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
-  <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
+  <link rel="stylesheet" href="/app/harness-ui.css?v=20261113evo1">
   <link rel="stylesheet" href="/assistant-models.css">
   <link rel="stylesheet" href="/metrics-dashboard.css?v=20261030obs1">
-  <link rel="stylesheet" href="/knowledge.css?v=20261030r2">
+  <link rel="stylesheet" href="/knowledge.css?v=20261113evo1">
+  <link rel="stylesheet" href="/evolution.css?v=20261113evo1">
   <link rel="stylesheet" href="/business-domains.css">
   <link rel="stylesheet" href="/bots.css">
   <link rel="stylesheet" href="/app/frame.css">
@@ -181,6 +182,7 @@
         <button class="nav nav-child" data-view="sandboxes"><span class="nav-label">沙箱管理</span></button>
       </div>
       <button class="nav" data-view="knowledge"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="brain" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="left" d="M9.5 3A2.5 2.5 0 0 0 7 5.5v.1A3 3 0 0 0 4.6 10a3 3 0 0 0 .4 5.4A3 3 0 0 0 9.5 20a2.5 2.5 0 0 0 2.5-2.5v-12A2.5 2.5 0 0 0 9.5 3z"/><path class="right" d="M14.5 3A2.5 2.5 0 0 1 17 5.5v.1a3 3 0 0 1 2.4 4.4 3 3 0 0 1-.4 5.4 3 3 0 0 1-4.5 4.6 2.5 2.5 0 0 1-2.5-2.5"/></svg></span><span class="nav-label">知识中心</span></button>
+      <button class="nav" data-view="evolution"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="sparkles" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/></svg></span><span class="nav-label">进化中心</span></button>
 
       <p>数据洞察</p>
       <button class="nav" data-view="metrics"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="chart" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V9"/><path d="M12 17V7"/><path d="M16 17v-5"/></svg></span><span class="nav-label">研发效能</span></button>
@@ -768,6 +770,16 @@
         </header>
         <section id="kbMetrics" class="kb-metrics" aria-label="概览"></section>
         <div id="knowledgeBody"></div>
+      </div>
+    </section>
+    <section id="evolutionView" class="view page-view">
+      <div class="kb-page evo-page">
+        <header class="kb-head">
+          <div class="kb-head-main"><h1>进化中心</h1><p class="kb-head-desc">平台把失败、打回、低分评测和反馈归因到角色与规则，生成候选正文并回放验证，人工确认后发布</p></div>
+          <div class="evo-head-actions"><button id="evoDiagnose" class="kb-btn" type="button">重新诊断</button></div>
+        </header>
+        <section id="evoMetrics" class="kb-metrics" aria-label="概览"></section>
+        <div id="evolutionBody"></div>
       </div>
     </section>
     <div id="kbScrim" class="kb-scrim"></div>
@@ -1415,7 +1427,8 @@
   <script src="/app/sliding-tabs.js?v=20261031req1"></script>
   <script src="/app/page-feedback.js"></script>
   <script src="/app/start.js"></script>
-  <script src="/knowledge.js?v=20261030r2"></script>
+  <script src="/knowledge.js?v=20261113evo1"></script>
+  <script src="/evolution.js?v=20261113evo1"></script>
   </div>
   </div>
   <script src="/orchestrate.js?v=20261109cli"></script>

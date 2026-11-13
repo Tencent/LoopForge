@@ -127,7 +127,7 @@
 
 ### 启用视图与设置区容器
 
-按钮、页头、输入的映射只对登记视图生效：`#issuesView`、`#approvalsView`、`#assetsView`、`#mcpView`、`#botsView`、`#knowledgeView` 以及设置区各视图（`#settingsView`、`#projectsView`、`#runnersView`、`#agentsView`、`#metricsView`、`#businessDomainsView`、`#guideView`、`#platformView`、`#businessDomainManagementView`），外加挂到 `<body>` 的 `#agentModal`、`#customMcpModal`、`.pw-root`、`#kbDrawer`。
+按钮、页头、输入的映射只对登记视图生效：`#issuesView`、`#approvalsView`、`#assetsView`、`#mcpView`、`#botsView`、`#knowledgeView`、`#evolutionView` 以及设置区各视图（`#settingsView`、`#projectsView`、`#runnersView`、`#agentsView`、`#metricsView`、`#businessDomainsView`、`#guideView`、`#platformView`、`#businessDomainManagementView`），外加挂到 `<body>` 的 `#agentModal`、`#customMcpModal`、`.pw-root`、`#kbDrawer`。
 
 设置区视图的外层内容统一居中、最大宽 1200px（`.page-view.active` 的直接子元素），页面不再各自限宽。流程设计（`#flowView`）、工作区页面、图标栏、侧栏与顶栏不受影响。
 
@@ -295,6 +295,25 @@ Logo 默认 64px，小屏或短屏为 52px；标题为 36px，小屏为 30px。�
 
 响应式与动效：宽度 <1080px 时连接双栏上下堆叠、指标卡 2×2；<640px 时指标卡单列、输入行上下堆叠、隐藏来源占比条。减少动态效果时抽屉、开关和标签指示层直接呈现；悬停只改颜色，不改尺寸和位置。
 
+## 进化中心
+
+设置区的进化中心（`#evolutionView`，导航图标 Harness `sparkles`）沿用知识中心的页头、概览指标、下划线标签、面板、行与右侧抽屉，不另起一套组件：`#evolutionView` 已登记到 `harness-ui.css` 与 `knowledge.css` 的 kb-* 选择器，`web/evolution.css` 只补看板、卡片、回放统计与正文 diff。
+
+| 区域 | 约定 |
+| --- | --- |
+| 页头 | `.kb-head`：H1「进化中心」+ 一句说明；右侧「重新诊断」为白底强边框按钮。进入页面、切换项目、写操作成功后自动刷新；有提案在回放时每 15s 轮询概览，离开页面或标签页隐藏时停止 |
+| 概览指标 | `#evoMetrics` 4 张指标卡：待处理问题（脚注为高严重度个数）、回放中、待确认、近期已发布（脚注为概览生成时间） |
+| 标签 | 看板、资产与策略、回归样本；看板计数 = 问题 + 待确认 |
+| 看板 | `.evo-board` 四列面板：问题 / 验证中 / 待确认 / 最近。卡片标题最多两行，脚注为状态徽标与相对时间；验证中卡片带 4px 强调色进度条与「回放 n/m」。<1280px 两列，<720px 单列 |
+| 资产与策略 | 一个面板，每行是资产名（可点开版本抽屉）、问题徽标、近期成功率、L0 / L1 / L2 分段；请求期间分段禁用 |
+| 回归样本 | 钉选的运行列表，可移除；添加入口在运行详情页头的「钉为回归样本」 |
+| 抽屉 | 复用 `#kbDrawer`，打开时加 `.evo-owned`；提案与版本抽屉再加 `.evo-wide`（`min(760px, 96vw)`）。关闭或离开页面时两个类一起移除，不影响知识中心 |
+| 正文 diff | LCS 行级 diff，新增行淡绿底、删除行淡红底加删除线，未改动的连续行折叠为「… n 行未改动」，保留改动前后各 2 行上下文 |
+
+状态徽标沿用 `kbBadge`：生成中、回放中、阻塞、中严重度为琥珀；待确认、已发布、修好为绿；未通过、退化、高严重度为红；已驳回、已回滚、无变化、低严重度为中性灰。
+
+发布、驳回、回滚、强制发布都经 `afPrompt` 二次确认并可填备注；「确认发布」只在回放判定通过时可用，「强制发布」只对平台管理员、且只对带候选正文的未通过提案显示。回放运行在运行详情页头带「进化回放」标记，不显示反馈和钉选按钮。
+
 ## 运行记录列表
 
 列表页（`#runsView` 非详情态）采用一体化面板：标题行之下只有一个面板，依次是筛选头、列表和分页底栏。进入详情时标题行和面板一起隐藏，详情页布局不受列表样式影响。
@@ -443,6 +462,7 @@ Bot 管理页（`#botsView`）按需求列表与运行记录列表的 Harness �
 | `web/app/hui-select.js` | Harness Selector（原地与触发器两种模式），以及共用的 `HuiPopover`（浮层互斥与定位）和 `HuiAuto`（自动增强与移除清理） |
 | `web/app/business-domains.js`、`web/app/business-harness.css` | 业务领域报表页的模板（`businessReportHTML`）、图表 option（`businessDeliveryOption` 等）、`biz-` 图表挂载与释放、静态 SVG 导出与 Harness 样式 |
 | `web/knowledge.js`、`web/knowledge.css` | 知识中心的概览指标（`kbMetricsHTML`）、四个标签的面板与行模板（`kbPanel`、`kbRow`、`kbBadge`）、通用右侧抽屉 |
+| `web/evolution.js`、`web/evolution.css`、`internal/httpapi/evolution*.go` | 进化中心的看板、提案 / 版本抽屉、正文 diff（`evoLineDiff`）、策略分段，以及运行详情页的反馈 / 钉选入口（`evoDecorateRunDetail`）；后端 `/api/evolution/*` 接口与回放监视器 |
 | `web/app/runs.js`、`web/product-v4.css`（运行记录列表区段） | 运行记录列表的面板、标签计数、状态徽标和行模板 |
 | `web/app.js`（视图切换）、`web/product-v4.css`（`.page-context`） | 按视图是否自带页头切换 `body.view-has-heading`，隐藏重复的顶栏标题 |
 | `web/app/bots.js`、`web/bots.css` | Bot 管理页的面板头（标签 / 面包屑）、列表行、状态徽标、引导编辑器与记录 |

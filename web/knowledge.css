@@ -1,15 +1,16 @@
 /* 知识中心：Harness 面板语言（与 #botsView、#runsView 一致）+ 右侧抽屉。
- * --hui-* 令牌、按钮、徽标、面板与输入框外观来自 app/harness-ui.css；覆盖 sliding-tabs 的规则全部限定在 #knowledgeView。 */
-:is(#knowledgeView, #kbDrawer, #kbScrim) {
+ * --hui-* 令牌、按钮、徽标、面板与输入框外观来自 app/harness-ui.css；覆盖 sliding-tabs 的规则限定在 #knowledgeView / #evolutionView。
+ * 进化中心（app/evolution.js）复用本文件的 kb-* 面板、行、抽屉，只在 app/evolution.css 补看板与 diff。 */
+:is(#knowledgeView, #evolutionView, #kbDrawer, #kbScrim) {
   --kb-hover: color-mix(in srgb, var(--hui-text) 3%, transparent);
   --kb-focus: var(--hui-focus-ring);
   --kb-mark: color-mix(in srgb, var(--hui-warn) 14%, transparent);
   --kb-switch-off: var(--hui-border-strong);
   --kb-ease: 220ms cubic-bezier(.16, 1, .3, 1);
 }
-html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-off: #3a3a42; }
+html[data-theme="dark"] :is(#knowledgeView, #evolutionView, #kbDrawer, #kbScrim) { --kb-switch-off: #3a3a42; }
 
-#knowledgeView.page-view.active { background: var(--hui-surface); }
+:is(#knowledgeView, #evolutionView).page-view.active { background: var(--hui-surface); }
 .kb-page { box-sizing: border-box; width: 100%; padding: 0 0 64px; font-size: 14px; line-height: 1.5; }
 
 /* 页头 */
@@ -37,8 +38,8 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
 .kb-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* 下划线标签：覆盖 sliding-tabs 的分段底色，指示层只保留 2px 强调色下划线 */
-#knowledgeView .kb-tabs.sliding-tabs[data-sliding-tabs],
-#knowledgeView .kb-tabs {
+:is(#knowledgeView, #evolutionView) .kb-tabs.sliding-tabs[data-sliding-tabs],
+:is(#knowledgeView, #evolutionView) .kb-tabs {
   display: flex !important;
   gap: 28px !important;
   height: auto !important;
@@ -50,8 +51,8 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
   border-radius: 0 !important;
   background: transparent !important;
 }
-#knowledgeView .kb-tabs > button,
-#knowledgeView .kb-tabs.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
+:is(#knowledgeView, #evolutionView) .kb-tabs > button,
+:is(#knowledgeView, #evolutionView) .kb-tabs.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
   flex: 0 0 auto;
   height: auto !important;
   min-height: 0 !important;
@@ -65,16 +66,16 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
   line-height: 22px !important;
   cursor: pointer;
 }
-#knowledgeView .kb-tabs > button:hover { color: var(--hui-text) !important; }
-#knowledgeView .kb-tabs > button.active { color: var(--hui-text) !important; font-weight: 500 !important; }
-#knowledgeView .kb-tabs > button:focus-visible { outline: 0; box-shadow: inset 0 0 0 2px var(--kb-focus) !important; border-radius: 6px !important; }
-#knowledgeView .kb-tabs.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] {
+:is(#knowledgeView, #evolutionView) .kb-tabs > button:hover { color: var(--hui-text) !important; }
+:is(#knowledgeView, #evolutionView) .kb-tabs > button.active { color: var(--hui-text) !important; font-weight: 500 !important; }
+:is(#knowledgeView, #evolutionView) .kb-tabs > button:focus-visible { outline: 0; box-shadow: inset 0 0 0 2px var(--kb-focus) !important; border-radius: 6px !important; }
+:is(#knowledgeView, #evolutionView) .kb-tabs.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] {
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: inset 0 -2px 0 var(--hui-accent);
 }
-#knowledgeView .kb-tabs:not([data-sliding-tabs]) > button.active { box-shadow: inset 0 -2px 0 var(--hui-accent) !important; }
+:is(#knowledgeView, #evolutionView) .kb-tabs:not([data-sliding-tabs]) > button.active { box-shadow: inset 0 -2px 0 var(--hui-accent) !important; }
 .kb-count { margin-left: 5px; color: var(--hui-tertiary); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
 
 /* 面板 */
@@ -122,14 +123,14 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
 .kb-ok { color: var(--hui-success); }
 .kb-warn { color: var(--hui-warn); }
 .kb-err { color: var(--hui-error); }
-:is(#knowledgeView, #kbDrawer) .mono { font-family: var(--mono); font-size: 12.5px; }
+:is(#knowledgeView, #evolutionView, #kbDrawer) .mono { font-family: var(--mono); font-size: 12.5px; }
 
 /* 面板底部操作区 */
 .kb-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--hui-border); background: color-mix(in srgb, var(--hui-canvas) 60%, var(--hui-surface)); }
 .kb-hint { min-width: 0; margin-right: auto; overflow: hidden; color: var(--hui-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 输入 */
-:is(#knowledgeView, #kbDrawer) .kb-input {
+:is(#knowledgeView, #evolutionView, #kbDrawer) .kb-input {
   box-sizing: border-box;
   width: min(300px, 100%);
   max-width: 100%;
@@ -138,11 +139,11 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
   font-size: 13px;
   outline: none;
 }
-:is(#knowledgeView, #kbDrawer) .kb-input.mono { font-size: 12.5px; }
-:is(#knowledgeView, #kbDrawer) .kb-input:disabled { opacity: .6; cursor: not-allowed; }
-:is(#knowledgeView, #kbDrawer) textarea.kb-input { height: 260px; padding: 10px; font: 12.5px/1.7 var(--mono); resize: vertical; }
-#knowledgeView .kb-panel .kb-row.kb-stack > .kb-row-main { flex: 0 0 112px; }
-#knowledgeView .kb-panel .kb-row.kb-stack .kb-input { flex: 1 1 auto; width: auto; min-width: 0; }
+:is(#knowledgeView, #evolutionView, #kbDrawer) .kb-input.mono { font-size: 12.5px; }
+:is(#knowledgeView, #evolutionView, #kbDrawer) .kb-input:disabled { opacity: .6; cursor: not-allowed; }
+:is(#knowledgeView, #evolutionView, #kbDrawer) textarea.kb-input { height: 260px; padding: 10px; font: 12.5px/1.7 var(--mono); resize: vertical; }
+:is(#knowledgeView, #evolutionView) .kb-panel .kb-row.kb-stack > .kb-row-main { flex: 0 0 112px; }
+:is(#knowledgeView, #evolutionView) .kb-panel .kb-row.kb-stack .kb-input { flex: 1 1 auto; width: auto; min-width: 0; }
 
 /* 开关 */
 .kb-switch { position: relative; flex: none; width: 34px; height: 20px; padding: 0; border: 0; border-radius: 10px; background: var(--kb-switch-off); cursor: pointer; transition: background-color 150ms ease; }
@@ -156,12 +157,12 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
 /* 按钮：外观来自 app/harness-ui.css；这里只保留尺寸与 quiet 删除按钮 */
 .kb-btn { box-sizing: border-box; flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 16px; font: 500 13px/1 var(--hui-sans); text-decoration: none; white-space: nowrap; cursor: pointer; }
 .kb-btn.small { height: 28px; padding: 0 12px; font-size: 12.5px; }
-:is(#knowledgeView, #kbDrawer) .kb-btn.quiet { margin-right: auto; border-color: transparent; background: none; color: var(--hui-error); }
-:is(#knowledgeView, #kbDrawer) .kb-btn.quiet:hover:not(:disabled) { background: color-mix(in srgb, var(--hui-error) 7%, transparent); }
+:is(#knowledgeView, #evolutionView, #kbDrawer) .kb-btn.quiet { margin-right: auto; border-color: transparent; background: none; color: var(--hui-error); }
+:is(#knowledgeView, #evolutionView, #kbDrawer) .kb-btn.quiet:hover:not(:disabled) { background: color-mix(in srgb, var(--hui-error) 7%, transparent); }
 
 /* 分段控件：带轨道，复用 sliding-tabs 指示层作为选中底色 */
-#knowledgeView .kb-seg,
-#knowledgeView .kb-seg.sliding-tabs[data-sliding-tabs] {
+:is(#knowledgeView, #evolutionView) .kb-seg,
+:is(#knowledgeView, #evolutionView) .kb-seg.sliding-tabs[data-sliding-tabs] {
   display: inline-flex !important;
   gap: 2px !important;
   height: auto !important;
@@ -171,8 +172,8 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
   border-radius: 8px !important;
   background: var(--hui-canvas) !important;
 }
-#knowledgeView .kb-seg > button,
-#knowledgeView .kb-seg.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
+:is(#knowledgeView, #evolutionView) .kb-seg > button,
+:is(#knowledgeView, #evolutionView) .kb-seg.sliding-tabs[data-sliding-tabs] > [data-sliding-tab] {
   flex: 0 0 auto;
   height: 26px !important;
   min-height: 0 !important;
@@ -186,22 +187,22 @@ html[data-theme="dark"] :is(#knowledgeView, #kbDrawer, #kbScrim) { --kb-switch-o
   line-height: 26px !important;
   cursor: pointer;
 }
-#knowledgeView .kb-seg > button.active { color: var(--hui-text) !important; }
-#knowledgeView .kb-seg > button:disabled { cursor: not-allowed; }
-#knowledgeView .kb-seg > button:focus-visible { outline: 2px solid var(--kb-focus); outline-offset: -2px; }
-#knowledgeView .kb-seg:not([data-sliding-tabs]) > button.active { background: var(--hui-surface) !important; box-shadow: var(--hui-ind-shadow); }
-#knowledgeView .kb-seg.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] { border: 0; border-radius: 6px; background: var(--hui-surface); box-shadow: var(--hui-ind-shadow); }
+:is(#knowledgeView, #evolutionView) .kb-seg > button.active { color: var(--hui-text) !important; }
+:is(#knowledgeView, #evolutionView) .kb-seg > button:disabled { cursor: not-allowed; }
+:is(#knowledgeView, #evolutionView) .kb-seg > button:focus-visible { outline: 2px solid var(--kb-focus); outline-offset: -2px; }
+:is(#knowledgeView, #evolutionView) .kb-seg:not([data-sliding-tabs]) > button.active { background: var(--hui-surface) !important; box-shadow: var(--hui-ind-shadow); }
+:is(#knowledgeView, #evolutionView) .kb-seg.sliding-tabs[data-sliding-tabs] > [data-sliding-indicator] { border: 0; border-radius: 6px; background: var(--hui-surface); box-shadow: var(--hui-ind-shadow); }
 
 /* 检索框 */
 .kb-search { box-sizing: border-box; display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; height: 44px; padding: 0 14px; border: 1px solid var(--hui-border-strong); border-radius: 10px; background: var(--hui-surface); transition: border-color 150ms ease, box-shadow 150ms ease; }
 .kb-search:focus-within { border-color: var(--hui-accent); box-shadow: 0 0 0 3px var(--hui-accent-soft); }
 .kb-search > svg { flex: none; color: var(--hui-tertiary); }
-#knowledgeView .kb-search input,
-#knowledgeView .kb-search select { height: 100%; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; outline: none; }
-#knowledgeView .kb-search input { flex: 1; min-width: 0; color: var(--hui-text); font-size: 14px; }
-#knowledgeView .kb-search input::-webkit-search-cancel-button { display: none; }
-#knowledgeView .kb-search select { flex: none; max-width: min(40%, 180px); text-overflow: ellipsis; color: var(--hui-muted); font-size: 13px; cursor: pointer; }
-#knowledgeView .kb-search :disabled { cursor: not-allowed; }
+:is(#knowledgeView, #evolutionView) .kb-search input,
+:is(#knowledgeView, #evolutionView) .kb-search select { height: 100%; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; outline: none; }
+:is(#knowledgeView, #evolutionView) .kb-search input { flex: 1; min-width: 0; color: var(--hui-text); font-size: 14px; }
+:is(#knowledgeView, #evolutionView) .kb-search input::-webkit-search-cancel-button { display: none; }
+:is(#knowledgeView, #evolutionView) .kb-search select { flex: none; max-width: min(40%, 180px); text-overflow: ellipsis; color: var(--hui-muted); font-size: 13px; cursor: pointer; }
+:is(#knowledgeView, #evolutionView) .kb-search :disabled { cursor: not-allowed; }
 
 /* 抽屉 */
 .kb-scrim { position: fixed; inset: 0; z-index: 130; background: #00000000; pointer-events: none; transition: background-color var(--kb-ease); }
@@ -250,10 +251,10 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
   .kb-head { flex-wrap: wrap; align-items: flex-start; }
   .kb-head h1 { font-size: 22px; }
   .kb-metrics { grid-template-columns: minmax(0, 1fr); margin: 18px 0 22px; }
-  #knowledgeView .kb-tabs { gap: 20px !important; }
+  :is(#knowledgeView, #evolutionView) .kb-tabs { gap: 20px !important; }
   .kb-row.kb-stack { flex-direction: column; align-items: stretch; gap: 8px; }
-  #knowledgeView .kb-panel .kb-row.kb-stack > .kb-row-main { flex: none; }
-  #knowledgeView .kb-panel .kb-row.kb-stack .kb-input { flex: none; width: 100%; }
+  :is(#knowledgeView, #evolutionView) .kb-panel .kb-row.kb-stack > .kb-row-main { flex: none; }
+  :is(#knowledgeView, #evolutionView) .kb-panel .kb-row.kb-stack .kb-input { flex: none; width: 100%; }
   .kb-panel .kb-row, .kb-panel-head, .kb-foot, .kb-panel .kb-cap { padding-left: 14px; padding-right: 14px; }
   .kb-share { display: none; }
   .kb-drawer-head { padding: 16px 20px 12px; }
@@ -264,7 +265,7 @@ html[data-theme="dark"] .kb-scrim.open { background: #00000059; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :is(#knowledgeView, #kbDrawer, #kbScrim),
-  :is(#knowledgeView, #kbDrawer, #kbScrim) *,
-  :is(#knowledgeView, #kbDrawer, #kbScrim) *::after { transition: none !important; }
+  :is(#knowledgeView, #evolutionView, #kbDrawer, #kbScrim),
+  :is(#knowledgeView, #evolutionView, #kbDrawer, #kbScrim) *,
+  :is(#knowledgeView, #evolutionView, #kbDrawer, #kbScrim) *::after { transition: none !important; }
 }

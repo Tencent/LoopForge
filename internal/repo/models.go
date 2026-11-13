@@ -693,5 +693,6 @@ func allModels() []any {
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
 		pageFeedbackRow{}, pageFeedbackImageRow{},
+		evoPolicyRow{}, evoFindingRow{}, evoProposalRow{}, evoReplayRow{}, assetVersionRow{}, runAssetPinRow{}, evoSignalRow{}, evoSampleRow{},
 	}
 }

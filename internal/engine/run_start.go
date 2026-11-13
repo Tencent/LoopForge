@@ -194,6 +194,9 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if current, ok := e.repo.RunState(r.ID); ok {
 		r = current
 	}
+	if !workspace {
+		e.recordRunAssetPins(r)
+	}
 	e.publish(r.ID)
 	if !executeRuns || r.Status == "queued" || workspace {
 		return r, nil
