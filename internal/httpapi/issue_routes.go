@@ -149,7 +149,7 @@ func applyClarificationSubmission(issue domain.Issue, request clarificationSubmi
 // issueSyncedFromTracker reports whether clarification can be written back
 // to an external tracker ticket.
 func issueSyncedFromTracker(issue domain.Issue) bool {
-	return issue.ExternalRef != nil && (issue.Source == "gongfeng" || issue.Source == "tapd")
+	return issue.ExternalRef != nil && (issue.Source == "gongfeng" || issue.Source == "tapd" || issue.Source == "github")
 }
 
 func (h issuesHandlers) chatClarifyIssue(c *gin.Context, issue domain.Issue) {

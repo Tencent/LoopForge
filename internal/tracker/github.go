@@ -191,6 +191,16 @@ func (s *Service) githubMergeBranch(project, branch, target, title, description 
 	return p.ref(), nil
 }
 
+// githubCommentIssue appends a comment to a GitHub issue as the repository's
+// project owner, the same actor every other GitHub call uses.
+func (s *Service) githubCommentIssue(project string, number int, body string) error {
+	g, err := s.githubClient(project)
+	if err != nil {
+		return err
+	}
+	return g.request("POST", "/issues/"+strconv.Itoa(number)+"/comments", map[string]string{"body": body}, nil)
+}
+
 func (s *Service) pullGitHubIssues(store IssueStoreAdapter, repo domain.Repository) (int, error) {
 	g, err := s.githubClient(repo.GongfengProjectID)
 	if err != nil {

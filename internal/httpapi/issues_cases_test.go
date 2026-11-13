@@ -76,12 +76,20 @@ func TestClarificationSubmissionBranches(t *testing.T) {
 	if err != nil || bugFinal.Clarification.Status != domain.ClarificationReady {
 		t.Fatalf("bug clarification: %+v %v", bugFinal, err)
 	}
-	for _, issue := range []domain.Issue{
-		{},
-		{Source: "gongfeng", ExternalRef: &domain.ExternalRef{ExternalID: "1"}},
-		{Source: "tapd", ExternalRef: &domain.ExternalRef{ExternalID: "2"}},
+	for _, tc := range []struct {
+		issue domain.Issue
+		want  bool
+	}{
+		{domain.Issue{}, false},
+		{domain.Issue{Source: "github"}, false},
+		{domain.Issue{Source: "local", ExternalRef: &domain.ExternalRef{ExternalID: "0"}}, false},
+		{domain.Issue{Source: "gongfeng", ExternalRef: &domain.ExternalRef{ExternalID: "1"}}, true},
+		{domain.Issue{Source: "tapd", ExternalRef: &domain.ExternalRef{ExternalID: "2"}}, true},
+		{domain.Issue{Source: "github", ExternalRef: &domain.ExternalRef{ExternalID: "3", ExternalIID: 3}}, true},
 	} {
-		_ = issueSyncedFromTracker(issue)
+		if got := issueSyncedFromTracker(tc.issue); got != tc.want {
+			t.Errorf("issueSyncedFromTracker(source=%q, ref=%v) = %v, want %v", tc.issue.Source, tc.issue.ExternalRef != nil, got, tc.want)
+		}
 	}
 }
 

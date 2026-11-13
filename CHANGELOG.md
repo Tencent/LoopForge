@@ -2,6 +2,10 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- A clarified requirement imported from a GitHub issue can be written back to that issue as a comment, the same way 工蜂 and TAPD requirements already were. The clarification panel shows 确认写回原单（追加评论） for GitHub requirements, and the comment is posted with the project owner's Git token, which must be allowed to comment on the repository's issues. GitHub requirements clarified before this change were marked 仅保存到 LoopForge and are not written back retroactively (part of #542).
+
 ## 0.3.9-rc.1 — release candidate: DeepSeek Harness in the image and credential-free clone URLs
 
 This is a prerelease for testing before 0.3.9. The `latest` and `0.3` image tags stay on 0.3.8; install it with `git clone --branch v0.3.9-rc.1`.

@@ -603,6 +603,8 @@ func clarificationComment(issue domain.Issue, summary string) string {
 		source = "工蜂 Issue"
 	} else if issue.Source == "tapd" {
 		source = "TAPD 需求"
+	} else if issue.Source == "github" {
+		source = "GitHub Issue"
 	}
 	return fmt.Sprintf("%s\n\n%s\n\n---\n来源：%s `%s`，由 LoopForge 基于当前描述和用户回答生成。", clarificationHeading, strings.TrimSpace(summary), source, issue.ID)
 }

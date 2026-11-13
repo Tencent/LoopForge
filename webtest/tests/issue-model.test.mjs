@@ -114,7 +114,10 @@ test('issue model derives lanes, health, stages, outcomes, and action markup', a
     const triggers=[
       triggerSOPButton({...base,clarification:{status:'ready',writeBackStatus:'pending'},source:'tapd',
         externalRef:{externalId:'T-1'}}),
-      triggerSOPButton({...base,clarification:{status:'needs_user',gated:true}})
+      triggerSOPButton({...base,clarification:{status:'needs_user',gated:true}}),
+      triggerSOPButton({...base,clarification:{status:'ready',writeBackStatus:'pending'},source:'github',
+        externalRef:{externalId:'9001',externalIid:12}}),
+      triggerSOPButton({...base,clarification:{status:'ready',writeBackStatus:'pending'},source:'github'})
     ];
     return {stages,actionKinds,triggers,askedTrigger,externals:[
       issueExternalState({externalRef:{externalState:' 已关闭 '}}),
@@ -127,6 +130,8 @@ test('issue model derives lanes, health, stages, outcomes, and action markup', a
   assert.match(edge.actionKinds.join(' '), /更多操作/);
   assert.match(edge.triggers[0], /确认结论/);
   assert.match(edge.triggers[1], /触发/);
+  assert.match(edge.triggers[2], /确认结论/);
+  assert.match(edge.triggers[3], /data-dispatch-issue/);
   assert.deepEqual(edge.externals, ['已关闭',true,true]);
   app.evaluate(`
     state.data.issues=[{id:'menu-edge',projectId:'p1',title:'Menu issue',status:'backlog',

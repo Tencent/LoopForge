@@ -549,7 +549,7 @@ func (h *streamHandlers) persistClarifyOutcome(issueID string, parsed any, raw s
 	if stored.Clarification.Status != domain.ClarificationReady {
 		return stored, nil
 	}
-	if stored.ExternalRef == nil || (stored.Source != "gongfeng" && stored.Source != "tapd") || h.sync == nil {
+	if !issueSyncedFromTracker(stored) || h.sync == nil {
 		if stored.Clarification.WriteBackStatus == "pending" {
 			return h.repo.PatchIssue(issueID, func(issue *domain.Issue) error {
 				issue.Clarification.WriteBackStatus = "skipped"

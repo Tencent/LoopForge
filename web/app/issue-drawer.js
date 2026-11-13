@@ -226,7 +226,7 @@ function renderIssueDetailTab(){
 }
 function drawerFact(label,value,title){return `<div class="detail-fact"><span>${label}</span><b title="${escapeHTML(title||value||'')}">${value===''||value==null?'—':value}</b></div>`}
 function clarificationOverviewCard(issue){
-  const c=issue.clarification||{},source=issue.source==='gongfeng'?'工蜂':issue.source==='tapd'?'TAPD':'LoopForge';
+  const c=issue.clarification||{},source=issue.source==='gongfeng'?'工蜂':issue.source==='tapd'?'TAPD':issue.source==='github'?'GitHub':'LoopForge';
   if(issueClarifying(issue.id)||c.status==='analyzing'){
     return `<div class="clarify-overview"><span>…</span><div><b>澄清正在后台分析</b><small>关闭网页也不会中断，点查看可回到分析过程</small></div><button class="button ghost small" data-start-clarify>查看</button></div>`;
   }
@@ -558,11 +558,11 @@ function clarifyHistoryHTML(c){
   return `<details class="clarify-history"><summary>澄清过程（${rows.length} 条）</summary><div class="clarify-turns">${rows.join('')}</div></details>`;
 }
 function clarifyPane(issue,project){
-  const c=recoverClarifyView(issue.clarification||{}),source=issue.source==='gongfeng'?'工蜂 Issue':issue.source==='tapd'?'TAPD 需求':'工作项';
+  const c=recoverClarifyView(issue.clarification||{}),source=issue.source==='gongfeng'?'工蜂 Issue':issue.source==='tapd'?'TAPD 需求':issue.source==='github'?'GitHub Issue':'工作项';
   if(c.status==='ready'&&submittedClarifyDraft?.issueId===issue.id)submittedClarifyDraft=null;
   const writeBack=c.writeBackStatus==='succeeded'?`已写回 ${source}`:c.writeBackStatus==='failed'?'写回失败':c.writeBackStatus==='skipped'?'仅保存到 LoopForge':'';
   if(c.status==='ready'&&c.summary){
-    const pending=c.writeBackStatus==='pending'&&(issue.source==='tapd'||issue.source==='gongfeng')&&issue.externalRef;
+    const pending=c.writeBackStatus==='pending'&&(issue.source==='tapd'||issue.source==='gongfeng'||issue.source==='github')&&issue.externalRef;
     const retry=c.writeBackStatus==='failed'?`<button class="button primary small" data-retry-clarify>重试写回原单</button>`:'';
     const confirm=pending?`<button class="button primary small" data-retry-clarify title="确认写回原单（追加评论）之后，即可开始触发需求">确认写回原单（追加评论）</button>`:'';
     const external=issue.externalRef?.externalUrl?`<a class="button ghost small" href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer">打开原单 ↗</a>`:'';
