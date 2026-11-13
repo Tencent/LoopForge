@@ -178,8 +178,6 @@ func pullWorkBranch(ctx context.Context, workspace, branch string, requireExisti
 	return head, nil
 }
 
-// fetchExistingWorkBranch fetches only refs/heads, never a same-named tag.
-// It validates the current remote even if a stale tracking ref already exists.
 // verifyOffWorkBranch handles a workspace that is not on the work branch
 // (or has a merge/rebase in progress). Generated branches are skipped; an
 // explicitly chosen existing branch must still exist remotely and be the
@@ -197,6 +195,8 @@ func verifyOffWorkBranch(ctx context.Context, workspace, branch string, requireE
 	return nil
 }
 
+// fetchExistingWorkBranch fetches only refs/heads, never a same-named tag.
+// It validates the current remote even if a stale tracking ref already exists.
 func fetchExistingWorkBranch(ctx context.Context, workspace, branch string) (string, error) {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
