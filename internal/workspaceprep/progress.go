@@ -94,7 +94,7 @@ func Result(ctx context.Context, err error) {
 }
 
 var urlCredentials = regexp.MustCompile(`(?i)(https?://)[^\s/]+@`)
-var authHeader = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(?:basic|bearer)\s+[^\s'"<>]+`)
+var authHeader = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(?:basic|bearer|token)\s+[^\s'"<>]+`)
 var urlSecrets = regexp.MustCompile(`(?i)([?&](?:access_token|token|password|key)=)[^\s&#'"<>]+`)
 
 // Sanitize is also applied at the receiving control plane. Known Git tokens

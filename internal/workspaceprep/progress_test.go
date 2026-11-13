@@ -51,6 +51,11 @@ func TestSanitizeCredentialsAndUTF8(t *testing.T) {
 			t.Fatalf("secret leaked: %s", got)
 		}
 	}
+	for _, header := range []string{"Authorization: token ghp-pat-value", "http.extraHeader=Authorization: Basic dXNlcjpwYXQ="} {
+		if got := Sanitize(header); strings.Contains(got, "ghp-pat-value") || strings.Contains(got, "dXNlcjpwYXQ=") || !strings.Contains(got, "[redacted]") {
+			t.Fatalf("authorization scheme leaked: %s", got)
+		}
+	}
 	if !strings.Contains(got, "正在下载") {
 		t.Fatalf("lost UTF8: %s", got)
 	}
