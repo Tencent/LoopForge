@@ -143,12 +143,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.ensureRegistered(ctx); err != nil {
 		return err
 	}
+	// Some CLI version probes take several seconds. Establish the control
+	// connection while scanning, so registration remains responsive.
+	controlDone := make(chan struct{})
+	go func() { defer close(controlDone); d.controlLoop(ctx) }()
 	d.refreshRuntimes(ctx)
 	go d.rescanLoop(ctx)
 	heartbeatDone := make(chan struct{})
 	go func() { defer close(heartbeatDone); d.heartbeatLoop(ctx) }()
-	controlDone := make(chan struct{})
-	go func() { defer close(controlDone); d.controlLoop(ctx) }()
 	err := d.claimLoop(ctx)
 	// Workspace preparation runs on the control connection. Cancel and join it
 	// before closing shared sandboxes, including on an automatic-update exit.

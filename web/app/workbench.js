@@ -104,10 +104,13 @@ const CREDENTIAL_KINDS=[
     note:'未填写 Base URL 时连接 DeepSeek 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
   agentCliCredentialKind('zcode',{name:'ZCode',logo:'glm',baseUrl:'https://open.bigmodel.cn/api/anthropic',
     note:'未填写 Base URL 时连接智谱 BigModel 的 Anthropic 兼容服务（Messages）。',protocols:[['messages','Messages（Anthropic）'],['chat','Chat Completions'],['responses','Responses']]}),
+  agentCliCredentialKind('qoder',{name:'Qoder CLI',icon:'terminal',
+    note:'使用 Qoder 个人访问令牌（PAT）连接官方服务。',
+    guide:[['在 Qoder 账号的 Integrations 页面创建个人访问令牌','https://qoder.com/account/integrations','前往 Qoder 创建令牌'],['复制令牌并粘贴到下方保存']]}),
 ];
 function agentCliCredentialKind(cli,o){
   const field=`agentCli.${cli}.`,configurable=!!o.protocols;
-  return {key:`agentCli.${cli}`,agentCli:cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,monochrome:!!o.monochrome,
+  return {key:`agentCli.${cli}`,agentCli:cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,icon:o.icon,monochrome:!!o.monochrome,
     use:`AI 对话的 ${o.name} 模型与以 ${o.name} 运行的 SOP 节点`,
     description:`AI 对话切换到 ${o.name} 后可选用它的模型，SOP 在执行机器上以 ${o.name} 运行的节点也使用它。${o.note||''}`,
     guide:o.guide||[['在模型服务商控制台创建 API Key'],['记下服务地址和它提供的接口协议'],['粘贴 Key，按需填写 Base URL 并选择协议；保存后可在模型目录里挑选 AI 对话的模型']],

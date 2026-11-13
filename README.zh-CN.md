@@ -113,6 +113,8 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 <br>
 
 - **执行器。** 在首页输入框旁选择 **CodeBuddy、Codex 或 Claude Code**，再选择模型；不同执行器分别使用个人设置里的对应凭据。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清和通知 AI 汇总目前使用 CodeBuddy；定时助手任务使用任务所选的执行器。Docker 镜像内置 CodeBuddy 和 Codex；Claude Code 在首次使用时从 npm 安装并缓存，需要能访问 npm；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
+
+  AI 对话和 SOP 角色也支持 Qoder CLI。在 [Qoder Integrations](https://qoder.com/account/integrations) 创建个人访问令牌（PAT），并在个人配置中保存。平台可为对话和标准 Docker 沙箱按需从 npm 安装固定版本；原生执行机器和 Runner 需要在 PATH 中安装 `qodercli`。可用模型取决于 Qoder 账号。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
 - **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库（已内置 LoopForge 授权应用，无需申请 PAT，仍可手动填写 PAT），再配置执行器凭据（或绑定本机执行机器），之后既可以运行一条项目 SOP，也可以直接让 Main Bot 修改代码并提交 PR/MR。
 - **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。

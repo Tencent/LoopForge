@@ -107,7 +107,7 @@ func assistantEngineCredential(user domain.User, engine string) (apiKey, baseURL
 		return strings.TrimSpace(user.CodeBuddyAPIKey), ""
 	}
 	cred := user.AgentCLICredentials[engine]
-	if runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor {
+	if runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor && engine != runtime.AgentCLIQoder {
 		baseURL = strings.TrimSpace(cred.BaseURL)
 	}
 	return strings.TrimSpace(cred.APIKey), baseURL

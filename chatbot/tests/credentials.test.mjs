@@ -122,6 +122,7 @@ test("unknown credential errors do not point at a hidden credential", () => {
 
 test("MCP calls missing a GitHub token point at the Git token", () => {
   assert.equal(credentialHint("MCP GitHub 需要 GitHub Git Token：请先在个人凭证中配置")?.field, "gitToken");
+  assert.equal(credentialHint("需求责任人未配置 Qoder CLI API Key")?.field, "agentCli.qoder");
 });
 
 test("the Git token guide opens the GitHub connection settings", () => {

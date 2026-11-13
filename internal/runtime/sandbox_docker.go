@@ -197,6 +197,13 @@ fi
 // image, which does not bundle it, and returns the mounted bin directory. It is
 // appended to PATH so a CLI shipped by an older image still takes precedence.
 func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec) (string, error) {
+	if command.Provider == AgentCLIQoder && len(command.Argv) > 0 && command.Argv[0] == "qodercli" && RuntimeCLIDir() != "" && isolatedRuntimeImage(s.dockerfile) != "" {
+		binary, err := InstallOnDemandCLI(ctx, AgentCLIQoder)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Dir(binary), nil
+	}
 	if command.Provider != "claude-code" || len(command.Argv) == 0 || command.Argv[0] != "claude" || RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
 		return "", nil
 	}

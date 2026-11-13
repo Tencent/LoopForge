@@ -26,6 +26,7 @@ const (
 	AgentCLIPi          = "pi"
 	AgentCLIDeepSeek    = "dsh"
 	AgentCLIZCode       = "zcode"
+	AgentCLIQoder       = "qoder"
 )
 
 // AgentCLIKinds is the display order of the agent CLIs.
@@ -66,7 +67,7 @@ func AgentCLINeedsBaseURL(kind, protocol string) bool {
 // can, DeepSeek Harness on the official endpoint.
 func agentCLIModelOptional(kind, baseURL string) bool {
 	switch kind {
-	case AgentCLICursor, AgentCLIZCode:
+	case AgentCLICursor, AgentCLIZCode, AgentCLIQoder:
 		// ZCode resolves an unset model itself (applyZCodeCredential).
 		return true
 	case AgentCLIAntigravity, AgentCLIDeepSeek:
@@ -99,6 +100,8 @@ var agentCLIHostEnv = append([]string{
 	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE",
 	"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
 	"ZCODE_DATA_BASE_DIR", zcodePersonalFileEnv,
+	"QODER_PERSONAL_ACCESS_TOKEN", "QODER_CONFIG_DIR", "QODER_CONFIG_DIR_NAME", "QODER_CLI_HOME", "QODER_MODEL", "QODER_WORKING_DIR", "QODER_SESSION_ID", "QODER_SESSION_NAME", "QODER_PERMISSION_MODE", "QODER_APPEND_SYSTEM_PROMPT", "QODER_MCP_CONFIG", "QODER_SUBAGENT_MODEL",
+	"QODERCN_CONFIG_DIR", "QODERCN_CONFIG_DIR_NAME", "QODERCN_CLI_HOME",
 }, zcodeHostEnv...)
 
 // agentCLIConfigPaths are the HOME-relative files an agent CLI reads its MCP
@@ -111,6 +114,7 @@ var agentCLIMCPPaths = map[string]string{
 	AgentCLIPi:          ".pi/agent/mcp.json",
 	AgentCLIDeepSeek:    ".dsh/agentflow-mcp.json",
 	AgentCLIZCode:       zcodeConfigPath,
+	AgentCLIQoder:       ".qoder/agentflow-mcp.json",
 }
 
 // AgentCLIMCPOptions shapes the MCP configuration of one invocation.
@@ -194,6 +198,9 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 				key = "serverUrl"
 			}
 			server := map[string]any{key: url}
+			if kind == AgentCLIQoder {
+				server["type"] = "http"
+			}
 			if headers != nil {
 				server["headers"] = headers
 			}
@@ -482,6 +489,10 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		argv = append(append(head, patches...), argv[3:]...)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
+	case AgentCLIQoder:
+		env["QODER_PERSONAL_ACCESS_TOKEN"] = key
+		env["QODER_CONFIG_DIR"] = homeEnv + "/.qoder"
+		argv = insertBeforeFlag(argv, "-p", "--mcp-config", homeEnv+"/.qoder/agentflow-mcp.json", "--strict-mcp-config")
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}
@@ -530,6 +541,8 @@ func AgentCLILabel(kind string) string {
 		return "DeepSeek Harness"
 	case AgentCLIZCode:
 		return "ZCode"
+	case AgentCLIQoder:
+		return "Qoder CLI"
 	}
 	return kind
 }
@@ -539,6 +552,8 @@ func AgentCLIBinary(kind string) string {
 	switch kind {
 	case AgentCLICursor:
 		return "cursor-agent"
+	case AgentCLIQoder:
+		return "qodercli"
 	}
 	return kind
 }

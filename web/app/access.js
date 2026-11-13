@@ -65,8 +65,9 @@ function gotoCredential(name,sshRemote){
 }
 // Personal credential fields and the errors they cause. Keep the rules in
 // sync with chatbot/src/credentials.js.
-const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥'};
+const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key','agentCli.qoder':'Qoder CLI API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥'};
 const CREDENTIAL_RULES=[
+  ['agentCli.qoder',/Qoder CLI[^。\n]{0,20}(API Key|凭据)|QODER_PERSONAL_ACCESS_TOKEN[^\n]*rejected/i],
   ['codexApiKey',/Codex[^。\n]{0,16}API Key/i],
   ['claudeCodeApiKey',/Claude Code[^。\n]{0,16}API Key/i],
   ['codeBuddyApiKey',/CodeBuddy[^。\n]{0,20}(API Key|Key|凭据)|拒绝了你的 API Key/i],

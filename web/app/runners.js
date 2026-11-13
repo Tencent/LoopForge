@@ -53,8 +53,8 @@ function runnerStatusLabel(status){
     default:return `<span class="runner-status"><i></i>${escapeHTML(status||'unknown')}</span>`;
   }
 }
-const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
-const runnerCLIGlyphs={'claude-code':'C','codex':'X','codebuddy':'B',opencode:'O',cursor:'Cu',agy:'A',kimi:'K',pi:'P',dsh:'D',zcode:'Z'};
+const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode',qoder:'Qoder CLI'};
+const runnerCLIGlyphs={'claude-code':'C','codex':'X','codebuddy':'B',opencode:'O',cursor:'Cu',agy:'A',kimi:'K',pi:'P',dsh:'D',zcode:'Z',qoder:'Q'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
 function runnerPersonalCredentialConfigured(provider){
   const user=userById(state.currentUser?.id)||{};
