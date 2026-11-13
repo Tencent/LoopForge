@@ -296,36 +296,42 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 		}
 		return sharedAssetWarnings("沙箱", item.Shared, h.workflowNamesReferencingSandbox(id), "流程")
 	case "workflows_delete":
-		workflow, ok := h.repo.Workflow(id)
-		if !ok {
-			return []string{fmt.Sprintf("SOP %s 不存在，执行将失败", id)}
-		}
-		out := []string{}
-		if workflow.Generic {
-			out = append(out, "通用模板不可删除，如需修改请直接保存新版本")
-		}
-		running := 0
-		for _, run := range h.repo.Runs() {
-			if run.WorkflowID == id && (run.Status == "running" || run.Status == "waiting") {
-				running++
-			}
-		}
-		if running > 0 {
-			out = append(out, fmt.Sprintf("该 SOP 还有 %d 个进行中的运行，请先终止后再删除", running))
-		}
-		var boundIssues []string
-		for _, issue := range h.repo.Issues() {
-			if issue.WorkflowID == id && issue.Status != "closed" {
-				boundIssues = append(boundIssues, issue.ID)
-			}
-		}
-		if len(boundIssues) > 0 {
-			out = append(out, fmt.Sprintf("该 SOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, "、")))
-		}
-		return out
+		return h.workflowDeleteWarnings(id)
 	default:
 		return nil
 	}
+}
+
+// workflowDeleteWarnings 汇总删除 SOP 前的冲突：通用模板不可删、仍有进行中的
+// 运行、仍被未关闭的 Issue 绑定。
+func (h *assistantHandlers) workflowDeleteWarnings(id string) []string {
+	workflow, ok := h.repo.Workflow(id)
+	if !ok {
+		return []string{fmt.Sprintf("SOP %s 不存在，执行将失败", id)}
+	}
+	out := []string{}
+	if workflow.Generic {
+		out = append(out, "通用模板不可删除，如需修改请直接保存新版本")
+	}
+	running := 0
+	for _, run := range h.repo.Runs() {
+		if run.WorkflowID == id && (run.Status == "running" || run.Status == "waiting") {
+			running++
+		}
+	}
+	if running > 0 {
+		out = append(out, fmt.Sprintf("该 SOP 还有 %d 个进行中的运行，请先终止后再删除", running))
+	}
+	var boundIssues []string
+	for _, issue := range h.repo.Issues() {
+		if issue.WorkflowID == id && issue.Status != "closed" {
+			boundIssues = append(boundIssues, issue.ID)
+		}
+	}
+	if len(boundIssues) > 0 {
+		out = append(out, fmt.Sprintf("该 SOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, "、")))
+	}
+	return out
 }
 
 func sharedAssetWarnings(kind string, shared bool, refNames []string, refKind string) []string {
