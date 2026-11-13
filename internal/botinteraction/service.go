@@ -319,51 +319,17 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 			return err
 		}
 		if item.Action == "notification" {
-			delivery, lookupErr := s.Store.NotificationDelivery(item.DeliveryID)
-			valid := lookupErr == nil && len(ActionsForDelivery(s.Store, delivery)) > 0
-			if !valid {
-				if err = s.Store.ExpireBotCard(item.ID); err != nil {
-					return err
-				}
-				continue
-			}
-			var card map[string]any
-			if json.Unmarshal([]byte(item.Quote), &card) != nil {
-				return errors.New("通知卡片无效")
-			}
-			if item.Status != "ready" {
-				if err = s.Store.SaveBotReply(*item, "", ""); err != nil {
-					return err
-				}
-			}
-			// A task_id may not be reused by the same Bot across sent cards.
-			// Keep the delivery prefix for callback routing; suffix each send attempt.
-			taskID := item.DeliveryID + "_" + randomID()[:12]
-			card["task_id"] = taskID
-			if err = s.Store.SetBotCardTaskID(item.ID, taskID); err != nil {
-				return err
-			}
-			if err = ws.request(ctx, "aibot_send_msg", "", map[string]any{"chatid": conv.ChatID, "msgtype": "template_card", "template_card": card}); err != nil {
-				var business *ReplyError
-				if errors.As(err, &business) {
-					if err = s.Store.FailBotReply(item.ID, business.Error()); err != nil {
-						return err
-					}
-					continue
-				}
-				return err
-			}
-			if err = s.Store.MarkBotReplySent(item.ID); err != nil {
+			if err = s.sendNotificationCard(ctx, ws, item, conv); err != nil {
 				return err
 			}
 			continue
 		}
 		if item.Action == "notification_details" {
-			delivery, lookupErr := s.Store.NotificationDelivery(item.DeliveryID)
-			if lookupErr != nil || len(ActionsForDelivery(s.Store, delivery)) == 0 {
-				if err = s.Store.ExpireBotCard(item.ID); err != nil {
-					return err
-				}
+			expired, expireErr := s.expireInactiveNotification(item)
+			if expireErr != nil {
+				return expireErr
+			}
+			if expired {
 				continue
 			}
 		}
@@ -460,4 +426,48 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 			return err
 		}
 	}
+}
+
+// expireInactiveNotification expires item's card when its notification
+// delivery is gone or no longer offers any action, reporting whether it did.
+func (s *Service) expireInactiveNotification(item *domain.BotInteraction) (bool, error) {
+	delivery, lookupErr := s.Store.NotificationDelivery(item.DeliveryID)
+	if lookupErr == nil && len(ActionsForDelivery(s.Store, delivery)) > 0 {
+		return false, nil
+	}
+	return true, s.Store.ExpireBotCard(item.ID)
+}
+
+// sendNotificationCard pushes a claimed notification card to the chat. Stale
+// cards are expired and business rejections are recorded on the interaction;
+// only store and transport failures are returned.
+func (s *Service) sendNotificationCard(ctx context.Context, ws *socket, item *domain.BotInteraction, conv domain.BotConversation) error {
+	expired, err := s.expireInactiveNotification(item)
+	if err != nil || expired {
+		return err
+	}
+	var card map[string]any
+	if json.Unmarshal([]byte(item.Quote), &card) != nil {
+		return errors.New("通知卡片无效")
+	}
+	if item.Status != "ready" {
+		if err = s.Store.SaveBotReply(*item, "", ""); err != nil {
+			return err
+		}
+	}
+	// A task_id may not be reused by the same Bot across sent cards.
+	// Keep the delivery prefix for callback routing; suffix each send attempt.
+	taskID := item.DeliveryID + "_" + randomID()[:12]
+	card["task_id"] = taskID
+	if err = s.Store.SetBotCardTaskID(item.ID, taskID); err != nil {
+		return err
+	}
+	if err = ws.request(ctx, "aibot_send_msg", "", map[string]any{"chatid": conv.ChatID, "msgtype": "template_card", "template_card": card}); err != nil {
+		var business *ReplyError
+		if errors.As(err, &business) {
+			return s.Store.FailBotReply(item.ID, business.Error())
+		}
+		return err
+	}
+	return s.Store.MarkBotReplySent(item.ID)
 }
