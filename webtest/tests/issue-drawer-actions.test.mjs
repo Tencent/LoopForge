@@ -73,6 +73,35 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
   assert.equal(result.badTime, '—');
 });
 
+test('acceptance gates follow the SOP edges, so a node inserted by a SOP update shows where it runs', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const result = structuredClone(app.evaluate(`(() => {
+    // SOP v2 inserted "preview" between "test" and "accept"; the editor appended
+    // it to the nodes array, and refresh-sop keeps that array order.
+    const wf={id:'flow-1',
+      nodes:[{id:'design',name:'方案设计',type:'agent'},{id:'test',name:'测试验证',type:'agent'},
+        {id:'accept',name:'人工验收',type:'approval'},{id:'summary',name:'交付汇总',type:'agent'},
+        {id:'preview',name:'构建静态站点',type:'agent'}],
+      edges:[{source:'design',target:'test'},{source:'test',target:'preview'},
+        {source:'preview',target:'accept'},{source:'accept',target:'summary'}]};
+    const run={id:'run-v2',status:'waiting',workflowId:'flow-1',workflowSnapshot:wf,
+      nodes:{design:{status:'succeeded'},test:{status:'succeeded'},preview:{status:'succeeded'},
+        accept:{status:'waiting_approval'},summary:{status:'pending'}}};
+    const issue={...state.data.issues[0],source:'manual'};
+    const html=acceptancePane(issue,{issue,run,task:null,requirement:null});
+    const names=html.split('<span class="node-name">').slice(1).map(part=>part.split('<')[0]);
+    const cyclic={...wf,edges:[...wf.edges,{source:'summary',target:'design'}]};
+    return {names,
+      unordered:nodesInExecutionOrder({nodes:wf.nodes}).map(n=>n.id),
+      cyclic:nodesInExecutionOrder(cyclic).map(n=>n.id)};
+  })()`));
+  assert.deepEqual(result.names, ['方案设计','测试验证','构建静态站点','人工验收','交付汇总']);
+  assert.deepEqual(result.unordered, ['design','test','accept','summary','preview']);
+  assert.equal(result.cyclic.length, 5);
+  assert.deepEqual([...result.cyclic].sort(), ['accept','design','preview','summary','test']);
+});
+
 test('drawer actions write back clarification and resync TAPD with API payloads', async (t) => {
   const app = await loadApp();
   t.after(app.close);
