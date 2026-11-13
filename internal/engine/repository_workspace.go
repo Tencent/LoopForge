@@ -134,29 +134,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		}
 	}
 	if localIsDir && !localIsGit && cloneURL == "" {
-		if repository.RequireExistingWorkBranch {
-			return fmt.Errorf("cannot continue branch %q: local source is not a Git repository", repository.WorkBranch)
-		}
-		base := strings.TrimSpace(repository.BaseBranch)
-		defaultBranch := strings.TrimSpace(repository.DefaultBranch)
-		legacyDefault := defaultBranch == "" && (base == "master" || base == "main")
-		if base != "" && base != defaultBranch && !legacyDefault {
-			return fmt.Errorf("cannot check out base branch %q: local source is not a Git repository", base)
-		}
-		cmd := exec.CommandContext(ctx, "cp", "-a", filepath.Clean(localPath)+"/.", workspace)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("copy local source: %w: %s", err, strings.TrimSpace(string(output)))
-		}
-		for _, args := range [][]string{{"init", "-b", "agentflow-base"}, {"config", "user.email", "loopforge@local"}, {"config", "user.name", "LoopForge"}, {"add", "-A"}, {"commit", "-m", "LoopForge baseline", "--quiet"}} {
-			cmd = exec.CommandContext(ctx, "git", append([]string{"-C", workspace}, args...)...)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("snapshot local source: %w: %s", err, strings.TrimSpace(string(output)))
-			}
-		}
-		if err := applyWorkspaceGitIdentity(ctx, workspace); err != nil {
-			return err
-		}
-		return recordRepositoryBaseline(workspace, "")
+		return prepareLocalSnapshotRepository(ctx, workspace, localPath, repository)
 	}
 	remote := cloneURL
 	if remote == "" {
@@ -281,6 +259,36 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		}
 	}
 	return recordRepositoryBaseline(workspace, baseBranch)
+}
+
+// prepareLocalSnapshotRepository copies a non-Git local source directory into
+// workspace and commits it as a single baseline on agentflow-base. Such a
+// source has no branches, so continuing a work branch or checking out a custom
+// base branch is refused.
+func prepareLocalSnapshotRepository(ctx context.Context, workspace, localPath string, repository domain.RepositoryContext) error {
+	if repository.RequireExistingWorkBranch {
+		return fmt.Errorf("cannot continue branch %q: local source is not a Git repository", repository.WorkBranch)
+	}
+	base := strings.TrimSpace(repository.BaseBranch)
+	defaultBranch := strings.TrimSpace(repository.DefaultBranch)
+	legacyDefault := defaultBranch == "" && (base == "master" || base == "main")
+	if base != "" && base != defaultBranch && !legacyDefault {
+		return fmt.Errorf("cannot check out base branch %q: local source is not a Git repository", base)
+	}
+	cmd := exec.CommandContext(ctx, "cp", "-a", filepath.Clean(localPath)+"/.", workspace)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("copy local source: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	for _, args := range [][]string{{"init", "-b", "agentflow-base"}, {"config", "user.email", "loopforge@local"}, {"config", "user.name", "LoopForge"}, {"add", "-A"}, {"commit", "-m", "LoopForge baseline", "--quiet"}} {
+		cmd = exec.CommandContext(ctx, "git", append([]string{"-C", workspace}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("snapshot local source: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+	}
+	if err := applyWorkspaceGitIdentity(ctx, workspace); err != nil {
+		return err
+	}
+	return recordRepositoryBaseline(workspace, "")
 }
 
 // seedEmptyRepository handles a freshly created Gongfeng repository with no
