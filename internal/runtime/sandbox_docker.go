@@ -166,7 +166,7 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	}
 	args = append(args, s.name)
 	args = append(args, dockerWorkspaceExecArgv(command.Argv)...)
-	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
+	return runCommand(dockerExecCommand(ctx, args, command.environment), sink)
 }
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.

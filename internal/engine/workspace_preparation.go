@@ -140,6 +140,14 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	invocation := &domain.RunnerInvocation{}
 	bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitUserName, credentials.GitUserEmail)
 	invocation.GitSSHUserID = 0
+	if invocation.GitLabUserID > 0 {
+		invocation.GitLabUserID = 0
+		if request.Operation == domain.RunnerWorkspaceOperationPrepare ||
+			(request.Operation == domain.RunnerWorkspaceOperationTerminal && request.Terminal != nil && request.Terminal.Operation == "open") {
+			invocation.GitLabURL = credentials.GitLab.BaseURL
+			invocation.GitLabToken = credentials.GitLab.Token
+		}
+	}
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers

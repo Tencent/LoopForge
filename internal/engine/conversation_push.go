@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 )
 
 const (
@@ -31,12 +32,20 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	if WorkspaceRunID(run) != run.ID {
 		return nil, fmt.Errorf("子 SOP 共享父任务工作区，请从父任务提交")
 	}
+	credentials := runtime.RunCredentials{GitToken: gitToken}
 	var repositories []domain.RepositoryContext
 	for _, rc := range run.RepositoryContexts() {
 		if rc.ReadOnly || strings.TrimSpace(rc.CloneURL) == "" || strings.TrimSpace(rc.WorkBranch) == "" {
 			continue
 		}
-		if rc.Provider != domain.RepositoryProviderSSH && strings.TrimSpace(gitToken) == "" {
+		if rc.Provider == domain.RepositoryProviderGitLab {
+			if credentials.GitLab.BaseURL == "" {
+				credentials.GitLab = e.repo.GitLabCredential(requesterID)
+			}
+			if err := credentials.GitLab.Check(rc.CloneURL); err != nil {
+				return nil, fmt.Errorf("%s: %w", rc.Name, err)
+			}
+		} else if rc.Provider != domain.RepositoryProviderSSH && strings.TrimSpace(gitToken) == "" {
 			return nil, fmt.Errorf("%s: 未配置 Git Token，无法推送工作分支。%s", rc.Name, gitTokenFixHint)
 		}
 		repositories = append(repositories, rc)
@@ -58,8 +67,8 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	sharedTarget = strings.TrimSpace(sharedTarget)
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
-	ctx = withGitIdentity(withGitToken(ctx, gitToken), gitUserName, gitUserEmail)
-	ctx = gitwork.WithSSHKeys(ctx, sshKeys)
+	credentials.GitSSHKeys = sshKeys
+	ctx = withGitIdentity(withRunGitCredentials(ctx, credentials), gitUserName, gitUserEmail)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
 		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitToken, gitUserName, gitUserEmail, message, sharedTarget)
 	}
@@ -144,6 +153,9 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 		}
 	}
 	invocation.Repositories = kept
+	if invocation.GitLabUserID > 0 {
+		invocation.GitLabUserID = requesterID
+	}
 	if len(invocation.GitSSHRemotes()) > 0 {
 		invocation.GitSSHUserID = requesterID
 	} else {

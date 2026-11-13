@@ -175,12 +175,18 @@ func TestMySQLRunnerTaskCompletionScrubsCredentials(t *testing.T) {
 			Repository:       &domain.RunnerRepository{CloneURL: "https://example.com/repo.git", GitToken: "git-secret"},
 			GitSSHUserID:     42,
 			GitSSHKeys:       map[string]string{"git@gitlab.example.org:team/app.git": "ssh-key-must-not-be-queued"},
+			GitLabUserID:     42,
+			GitLabURL:        "https://gitlab.example.test",
+			GitLabToken:      "fixture-gitlab-pat",
 		},
 	}
 	if err := s.PutRunnerTask(task); err != nil {
 		t.Fatal(err)
 	}
-	claimed, ok, err := s.ClaimRunnerTask(runnerID, []string{"codex"}, time.Now().UTC(), time.Minute)
+	if _, ok, err := s.ClaimRunnerTask(runnerID, []string{"codex"}, false, time.Now().UTC(), time.Minute); err != nil || ok {
+		t.Fatalf("claim without GitLab PAT support: ok=%v err=%v", ok, err)
+	}
+	claimed, ok, err := s.ClaimRunnerTask(runnerID, []string{"codex"}, true, time.Now().UTC(), time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
@@ -190,6 +196,9 @@ func TestMySQLRunnerTaskCompletionScrubsCredentials(t *testing.T) {
 	if claimed.Invocation == nil || len(claimed.Invocation.GitSSHKeys) != 0 || claimed.Invocation.GitSSHUserID != 42 {
 		t.Fatal("queue must retain the SSH credential reference only")
 	}
+	if claimed.Invocation.GitLabUserID != 42 || claimed.Invocation.GitLabURL != "" || claimed.Invocation.GitLabToken != "" {
+		t.Fatal("queue must retain the GitLab credential reference only")
+	}
 	if err := s.CompleteRunnerTask(claimed.ID, runnerID, domain.RunnerTaskSuccess, nil, "done", "", nil, nil, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +206,7 @@ func TestMySQLRunnerTaskCompletionScrubsCredentials(t *testing.T) {
 	if err := s.DB.Raw(`SELECT payload FROM runner_tasks WHERE id=?`, taskID).Scan(&payload).Error; err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(payload, "codex-secret") || strings.Contains(payload, "git-secret") || strings.Contains(payload, "gateway.example") || strings.Contains(payload, "gitSsh") {
+	if strings.Contains(payload, "codex-secret") || strings.Contains(payload, "git-secret") || strings.Contains(payload, "gateway.example") || strings.Contains(payload, "gitSsh") || strings.Contains(payload, "gitLab") {
 		t.Fatalf("completed task retained credential material: %s", payload)
 	}
 }

@@ -241,7 +241,7 @@ func TestGitSSHRunnerClaimUsesTaskActorCredential(t *testing.T) {
 	runnerID, session := registerTestRunner(t, f.h)
 	registered, _ := f.s.Runner(runnerID)
 	now := time.Now().UTC()
-	if err := f.s.RunnerHeartbeat(runnerID, registered.Runtimes, domain.RunnerVersionGitSSH, now, now.Add(time.Hour)); err != nil {
+	if err := f.s.RunnerHeartbeat(runnerID, registered.Runtimes, domain.RunnerVersionGitSSH, false, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	task := domain.RunnerTask{ID: "ssh-task", RunnerID: runnerID, Provider: "mock", Status: domain.RunnerTaskQueued, MaxAttempts: 1, Invocation: &domain.RunnerInvocation{

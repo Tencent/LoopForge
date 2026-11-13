@@ -135,7 +135,7 @@ func (s *dockerSandbox) execScript(ctx context.Context, command CommandSpec, sin
 		args = append(args, "-e", environment)
 	}
 	args = append(args, dockerScriptContainerName(s.name), scriptViewBinary, "--workspace-script-view", string(config))
-	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
+	return runCommand(dockerExecCommand(ctx, args, command.environment), sink)
 }
 
 func (s *dockerSandbox) scriptMasks(ctx context.Context) ([]string, error) {

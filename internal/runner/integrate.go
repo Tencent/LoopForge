@@ -45,6 +45,7 @@ func integrateTaskRepositories(ctx context.Context, workspace string, inv *domai
 	if inv == nil {
 		return results, nil
 	}
+	ctx = gitwork.WithHTTPSCredential(gitwork.WithSSHKeys(ctx, inv.GitSSHKeys), invocationGitLab(inv))
 	for _, repo := range inv.Repositories {
 		work, integrate := strings.TrimSpace(repo.WorkBranch), strings.TrimSpace(repo.IntegrateBranch)
 		if work == "" || integrate == "" {
@@ -54,7 +55,10 @@ func integrateTaskRepositories(ctx context.Context, workspace string, inv *domai
 		if rel := safeRunnerRepoDir(repo.Dir); rel != "" {
 			dir = filepath.Join(workspace, rel)
 		}
-		repoCtx := repositoryGitContext(gitwork.WithSSHKeys(ctx, inv.GitSSHKeys), repo)
+		if err := checkRepositoryGitLab(ctx, repo); err != nil {
+			return results, err
+		}
+		repoCtx := repositoryGitContext(ctx, repo)
 		gitwork.EnsureIdentity(repoCtx, dir)
 		result := domain.RunnerIntegrationResult{RepositoryID: repo.RepositoryID, Name: repo.Name, WorkBranch: work, IntegrateBranch: integrate}
 		conflicts, err := gitwork.MergeLatestIntegration(repoCtx, dir, work, integrate, label)

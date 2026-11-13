@@ -101,6 +101,7 @@ func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command C
 	if s, ok := sandbox.(*managedSandbox); ok {
 		s.credentialsMu.RLock()
 		credentials := s.credentials
+		credentials.GitLab.Token = ""
 		s.credentialsMu.RUnlock()
 		command.CredentialBindings = []CredentialBinding{BindGit}
 		bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)

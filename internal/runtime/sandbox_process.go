@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 // projectAgentPaths are deliberately absent from the executor's filesystem
@@ -156,6 +157,7 @@ func controlledBaseEnvironment(base []string) []string {
 		"CLAUDE_CODE_USE_BEDROCK=", "CLAUDE_CODE_USE_VERTEX=", "CLAUDE_CODE_USE_FOUNDRY=",
 		"CODEBUDDY_INTERNET_ENVIRONMENT=",
 		"AGENTFLOW_GIT_TOKEN=",
+		gitwork.HTTPSCredentialTokenEnv + "=",
 		"AGENTFLOW_MCP_CONFIG=",
 		"AGENTFLOW_BIN=",
 		"GIT_CONFIG_COUNT=",

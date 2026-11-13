@@ -55,6 +55,11 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 			return "", fmt.Errorf("需求责任人未配置 Git Token（未指定责任人时用项目 Owner），请让该账号到「个人配置 → 个人凭证」填写。新建需求分析拉代码用的是责任人凭证，不是当前点击的人")
 		}
 	}
+	if credential, scoped := gitwork.HTTPSCredentialFrom(ctx); scoped {
+		if err := credential.Check(cloneURL); err != nil {
+			return "", err
+		}
+	}
 	ctx = withGitToken(ctx, token)
 
 	if _, err := os.Stat(filepath.Join(cacheDir, ".git")); err == nil {

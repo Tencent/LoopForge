@@ -278,14 +278,15 @@ func (d *Daemon) registerLocked(ctx context.Context, runnerID string) error {
 		name = "runner"
 	}
 	resp, err := d.client.Register(ctx, d.cfg.BootstrapToken, RegisterRequest{
-		RunnerID:       runnerID,
-		Name:           name,
-		OS:             goruntime.GOOS,
-		Arch:           goruntime.GOARCH,
-		Version:        runnerVersion,
-		Labels:         d.cfg.Labels,
-		MaxConcurrency: d.cfg.MaxConcurrency,
-		Runtimes:       d.currentRuntimes(),
+		RunnerID:          runnerID,
+		Name:              name,
+		OS:                goruntime.GOOS,
+		Arch:              goruntime.GOARCH,
+		Version:           runnerVersion,
+		SupportsGitLabPAT: true,
+		Labels:            d.cfg.Labels,
+		MaxConcurrency:    d.cfg.MaxConcurrency,
+		Runtimes:          d.currentRuntimes(),
 	})
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
@@ -379,10 +380,11 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 	// heartbeat interval while the worker resumes its runs.
 	for ctx.Err() == nil {
 		req := HeartbeatRequest{
-			Status:       "idle",
-			RunningTasks: int(atomic.LoadInt32(&d.running)),
-			Version:      runnerVersion,
-			Runtimes:     d.currentRuntimes(),
+			Status:            "idle",
+			RunningTasks:      int(atomic.LoadInt32(&d.running)),
+			Version:           runnerVersion,
+			SupportsGitLabPAT: true,
+			Runtimes:          d.currentRuntimes(),
 		}
 		if req.RunningTasks > 0 {
 			req.Status = "busy"
@@ -475,9 +477,10 @@ func (d *Daemon) claimLoop(ctx context.Context) error {
 // non-blocking: if another runner takes that task, wait for a fresh signal
 // before claiming a different task.
 func (d *Daemon) claimTaskUncoordinated(ctx context.Context, providers []string, capacity int) (*domain.RunnerTask, bool, error) {
+	req := ClaimRequest{AvailableRuntimes: providers, Capacity: capacity, SupportsGitLabPAT: true}
 	if !d.cfg.DisableAutoUpdate {
 		waitCtx, cancel := context.WithTimeout(ctx, d.cfg.LongPollTimeout+15*time.Second)
-		ready, legacyTask, err := d.client.WaitForTask(waitCtx, ClaimRequest{AvailableRuntimes: providers, Capacity: capacity})
+		ready, legacyTask, err := d.client.WaitForTask(waitCtx, req)
 		cancel()
 		if err != nil || !ready {
 			return nil, false, err
@@ -498,7 +501,8 @@ func (d *Daemon) claimTaskUncoordinated(ctx context.Context, providers []string,
 	}
 	claimCtx, cancel := context.WithTimeout(ctx, d.cfg.LongPollTimeout+15*time.Second)
 	defer cancel()
-	task, found, err := d.client.Claim(claimCtx, ClaimRequest{AvailableRuntimes: providers, Capacity: capacity, NoWait: !d.cfg.DisableAutoUpdate})
+	req.NoWait = !d.cfg.DisableAutoUpdate
+	task, found, err := d.client.Claim(claimCtx, req)
 	if found && task != nil && err == nil {
 		atomic.AddInt32(&d.running, 1)
 	}
@@ -754,6 +758,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
 		}
+		gitwork.BindHTTPSCredential(gitEnv, invocationGitLab(task.Invocation))
 		cleanup, err := runtime.BindGitSSH(sandbox, workspace, gitEnv, task.Invocation.GitSSHKeys)
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
@@ -816,8 +821,13 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		defer release()
 	}
 	target := d.mcpTarget(true, invocationGitToken(inv))
-	sshRepoCount := len(inv.GitSSHRemotes())
-	target.SSHRepositoriesOnly = sshRepoCount > 0 && sshRepoCount == max(len(inv.Repositories), 1)
+	target.GitHubOptional = len(inv.Repositories) > 0
+	for _, repository := range inv.Repositories {
+		target.GitHubOptional = target.GitHubOptional && (repository.UseSSH || repository.UseGitLab)
+	}
+	if len(inv.Repositories) == 0 && inv.Repository != nil {
+		target.GitHubOptional = inv.Repository.UseSSH || inv.Repository.UseGitLab
+	}
 	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, target)
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("bind MCP credentials: %v", err)}, nil
@@ -889,6 +899,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
+		gitwork.BindHTTPSCredential(gitEnv, invocationGitLab(inv))
 		cleanup, gitErr := runtime.BindGitSSH(sandbox, workspace, gitEnv, inv.GitSSHKeys)
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
@@ -1101,6 +1112,13 @@ func invocationGitToken(inv *domain.RunnerInvocation) string {
 	return ""
 }
 
+func invocationGitLab(inv *domain.RunnerInvocation) gitwork.HTTPSCredential {
+	if inv == nil {
+		return gitwork.HTTPSCredential{}
+	}
+	return gitwork.HTTPSCredential{BaseURL: inv.GitLabURL, Token: inv.GitLabToken}
+}
+
 // checkoutInvocationRepositories checks out every repository the invocation
 // carries: each into its Dir under the task workspace. Empty Dir is only
 // kept for persisted legacy invocations that already checked out at the
@@ -1111,6 +1129,7 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 		return nil
 	}
 	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
+	ctx = gitwork.WithHTTPSCredential(ctx, invocationGitLab(inv))
 	repos := inv.Repositories
 	if len(repos) == 0 && inv.Repository != nil {
 		if strings.TrimSpace(inv.Repository.CloneURL) == "" {
@@ -1215,6 +1234,9 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	ctx = procwatch.WithObserver(ctx, func(event procwatch.Event) { log.Printf("runner checkout: %s", event.Message) })
 	tail, err := gitwork.Watch(repositoryGitContext(ctx, *repo), workspace, watch, args...)
 	if err != nil {
+		if repo.UseGitLab {
+			return fmt.Errorf("GitLab PAT 克隆失败，请检查仓库权限：%w", err)
+		}
 		return fmt.Errorf("git clone %s: %w (%s)", domain.StripURLCredentials(repo.CloneURL), err, cloneOutput([]byte(tail), repo.GitToken))
 	}
 	// The branch steps below keep the bound they always had.
@@ -1243,7 +1265,19 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	return nil
 }
 
+func checkRepositoryGitLab(ctx context.Context, repo domain.RunnerRepository) error {
+	if repo.UseGitLab {
+		credential, _ := gitwork.HTTPSCredentialFrom(ctx)
+		return credential.Check(repo.CloneURL)
+	}
+	return nil
+}
+
 func repositoryGitContext(ctx context.Context, repo domain.RunnerRepository) context.Context {
+	if repo.UseGitLab {
+		return ctx
+	}
+	ctx = gitwork.WithoutHTTPSCredential(ctx)
 	if repo.UseSSH {
 		return gitwork.WithSSHRemote(ctx, repo.CloneURL)
 	}

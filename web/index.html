@@ -1006,35 +1006,41 @@
       <div class="pa-drawer-body">
         <input type="hidden" name="id">
         <div class="pa-fs">
-          <h5>仓库地址</h5>
-          <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">GitHub 链接或 Git SSH 地址</span>
-            <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
-            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
-            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
-          </label>
-          <div class="pa-detect" id="repoDrawerDetect" hidden><span class="pa-detect-ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div class="pa-detect-m"><b id="repoDrawerDetectName"></b><code id="repoDrawerDetectPath"></code></div><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
+          <div class="pa-repo-tabs" role="tablist" aria-label="仓库来源">
+            <button type="button" role="tab" id="repoGitLabTab" data-repo-source="gitlab" aria-controls="repoGitLabPanel" aria-selected="false" tabindex="-1">GitLab</button>
+            <button type="button" role="tab" id="repoGitHubTab" data-repo-source="github" aria-controls="repoGitHubPanel" aria-selected="false" tabindex="-1">GitHub</button>
+            <button type="button" role="tab" id="repoManualTab" data-repo-source="manual" aria-controls="repoManualPanel" aria-selected="true">手动输入</button>
+          </div>
+          <div id="repoGitLabPanel" role="tabpanel" aria-labelledby="repoGitLabTab" data-repo-panel="gitlab" hidden></div>
+          <div id="repoGitHubPanel" role="tabpanel" aria-labelledby="repoGitHubTab" data-repo-panel="github" hidden></div>
+          <div id="repoManualPanel" role="tabpanel" aria-labelledby="repoManualTab" data-repo-panel="manual">
+            <label class="pa-field"><span class="pa-field-l">仓库地址</span>
+              <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo" aria-describedby="repoDrawerUrlError">
+              <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
+              <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
+            </label>
+          </div>
           <label class="pa-field" id="repoDrawerNameField" hidden><span class="pa-field-l">仓库名称</span><input class="pa-input mono" name="name" placeholder="留空则自动取项目路径末段"></label>
           <div id="repoDrawerSSH" hidden>
             <label class="pa-field"><span class="pa-field-l">仓库网页地址 <i>可选</i></span><input class="pa-input mono" name="webUrl" placeholder="https://gitlab.com/group/repo" autocomplete="off"></label>
             <p id="repoDrawerSSHMissing" class="git-ssh-missing" role="alert" hidden></p>
           </div>
         </div>
-        <div class="pa-fs">
-          <h5>分支</h5>
+        <div class="pa-fs pa-repo-branches" id="repoDrawerBranches" hidden>
+          <div class="pa-repo-branch-head"><h5>分支设置</h5><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
           <div class="pa-g2">
             <label class="pa-field"><span class="pa-field-l">主分支</span><input class="pa-input mono" name="defaultBranch" placeholder="main"></label>
             <label class="pa-field"><span class="pa-field-l">集成分支 <i>可选</i></span><input class="pa-input mono" name="integrateBranch" placeholder="agentflow/integration"></label>
           </div>
-          <p class="pa-fs-hint">集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突；留空则跳过（部分仓库不允许创建 agentflow/ 分支）。</p>
+          <p class="pa-fs-hint">集成分支用于检查 SOP 工作分支之间的合并冲突，留空则跳过。</p>
         </div>
-        <div class="pa-fs"><div class="pa-toggle-card"><div><b>设为项目默认仓库</b><span>新需求默认在此仓库上执行。</span></div><button type="button" class="pa-switch" id="repoDrawerDefault" role="switch" aria-checked="false" aria-label="设为项目默认仓库"></button></div></div>
-        <details class="pa-fs pa-adv" id="repoDrawerAdvanced">
+        <div class="pa-fs" id="repoDrawerDefaultRow" hidden><div class="pa-toggle-card"><div><b>设为项目默认仓库</b><span>新需求默认在此仓库上执行。</span></div><button type="button" class="pa-switch" id="repoDrawerDefault" role="switch" aria-checked="false" aria-label="设为项目默认仓库"></button></div></div>
+        <details class="pa-fs pa-adv" id="repoDrawerAdvanced" hidden>
           <summary><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>高级设置</summary>
           <label class="pa-field"><span class="pa-field-l">本机源码路径</span><input class="pa-input mono" name="localPath" placeholder="/srv/project"><span class="pa-field-h">仅本机 Runner 使用；沙箱执行会忽略。</span></label>
         </details>
       </div>
-      <div class="pa-drawer-foot"><button type="button" class="button ghost" data-repo-drawer-close>取消</button><button type="submit" class="button primary" id="repoDrawerSave">保存仓库</button></div>
+      <div class="pa-drawer-foot"><span class="pa-repo-chosen" id="repoDrawerChosen" hidden>已选 <code></code></span><button type="button" class="button ghost" data-repo-drawer-close>取消</button><button type="submit" class="button primary" id="repoDrawerSave">保存仓库</button></div>
     </form>
   </aside>
 
@@ -1299,6 +1305,7 @@
   <script src="/app/projects.js"></script>
   <script src="/app/github-connect.js"></script>
   <script src="/app/project-wizard.js"></script>
+  <script src="/app/gitlab-repositories.js"></script>
   <script src="/app/repo_drawer.js"></script>
   <script src="/app/composer.js"></script>
   <script src="/app/hui-select.js"></script>

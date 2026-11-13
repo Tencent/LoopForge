@@ -82,7 +82,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		return
 	}
 	v := body.Repository
-	if v.ID == "" {
+	if v.ID == "" && v.Provider != domain.RepositoryProviderGitLab {
 		v.ID = fmt.Sprintf("repo-%d", time.Now().UnixNano())
 	}
 	v.ID = strings.TrimSpace(v.ID)
@@ -107,6 +107,11 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.LocalPath = existing.LocalPath
 		}
 	}
+	if v.Provider == domain.RepositoryProviderGitLab {
+		h.saveGitLabRepository(c, v)
+		return
+	}
+	v.GitLabProjectID, v.GitLabURL = 0, ""
 	primary := strings.TrimSpace(body.RepoURL)
 	if primary == "" {
 		primary = strings.TrimSpace(body.URL)

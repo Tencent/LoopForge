@@ -10,7 +10,7 @@ import (
 )
 
 func TestCredentialBrandAssetsEmbedded(t *testing.T) {
-	for _, name := range []string{"gongfeng.svg", "codebuddy.svg", "codex.svg", "claude.svg"} {
+	for _, name := range []string{"gongfeng.svg", "gitlab.svg", "codebuddy.svg", "codex.svg", "claude.svg"} {
 		data, err := fs.ReadFile(Files, "images/credentials/"+name)
 		if err != nil {
 			t.Fatalf("credential logo %s is not embedded: %v", name, err)
@@ -501,19 +501,28 @@ const count = (html, needle) => html.split(needle).length - 1;
 
 // Groups list credentials in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitLabToken', 'gitSshKey']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 12 已配置'));
+assert.ok(html.includes('<b>2</b> / 13 已配置'));
 assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 2') && html.includes('1 / 10'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>10</span>'));
-assert.equal(count(html, 'data-credential-row='), 12);
+assert.ok(html.includes('1 / 3') && html.includes('1 / 10'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>11</span>'));
+assert.equal(count(html, 'data-credential-row='), 13);
+assert.ok(html.includes('data-credential-row="gitLabToken"'));
+assert.equal(cred.kind('gitLabToken').extra.label, 'GitLab 实例地址');
+const gitLabLogo = '/images/credentials/gitlab.svg';
+assert.match(credentialRowHTML(cred.kind('gitLabToken'), user), /class="credential-logo is-dim"><img src="\/images\/credentials\/gitlab\.svg"/);
+const configuredGitLab = credentialRowHTML(cred.kind('gitLabToken'), {...user, gitLabTokenConfigured: true});
+assert.ok(configuredGitLab.includes('class="credential-logo"><img src="' + gitLabLogo + '"'));
+state.data.gitLabURL = 'https://gitlab.example.test';
+assert.ok(credentialSubline(cred.kind('gitLabToken'), {...user, gitLabTokenConfigured: true}).includes(state.data.gitLabURL));
+delete state.data.gitLabURL;
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 10);
+assert.equal(count(html, 'data-credential-act="setup"'), 11);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
 for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {

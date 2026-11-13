@@ -35,6 +35,8 @@ func (userRow) TableName() string { return "users" }
 type userConfigRow struct {
 	UserID                       int64      `gorm:"column:user_id;primaryKey"`
 	GitToken                     *string    `gorm:"column:git_token;type:text"`
+	GitLabToken                  *string    `gorm:"column:gitlab_token;type:text"`
+	GitLabURL                    *string    `gorm:"column:gitlab_url;type:text"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token;type:text"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key;type:text"`
@@ -478,22 +480,23 @@ type definitionRevisionRow struct {
 func (definitionRevisionRow) TableName() string { return "definition_revisions" }
 
 type runnerRow struct {
-	ID               string     `gorm:"column:id;primaryKey;size:64"`
-	Name             string     `gorm:"column:name;size:255"`
-	Status           string     `gorm:"column:status;index:idx_runners_status;size:32"`
-	OS               string     `gorm:"column:os;size:32"`
-	Arch             string     `gorm:"column:arch;size:32"`
-	RunnerVersion    string     `gorm:"column:runner_version;size:64"`
-	Labels           []byte     `gorm:"column:labels;type:json"`
-	MaxConcurrency   int        `gorm:"column:max_concurrency"`
-	RunLimit         *int       `gorm:"column:run_limit"`
-	OwnerUserID      *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
-	SessionTokenHash string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
-	SessionExpiresAt *time.Time `gorm:"column:session_expires_at"`
-	Runtimes         []byte     `gorm:"column:runtimes;type:json"`
-	LastSeenAt       *time.Time `gorm:"column:last_seen_at"`
-	Created          *time.Time `gorm:"column:created_at"`
-	Updated          *time.Time `gorm:"column:updated_at"`
+	ID                string     `gorm:"column:id;primaryKey;size:64"`
+	Name              string     `gorm:"column:name;size:255"`
+	Status            string     `gorm:"column:status;index:idx_runners_status;size:32"`
+	OS                string     `gorm:"column:os;size:32"`
+	Arch              string     `gorm:"column:arch;size:32"`
+	RunnerVersion     string     `gorm:"column:runner_version;size:64"`
+	SupportsGitLabPAT bool       `gorm:"column:supports_gitlab_pat;not null;default:false"`
+	Labels            []byte     `gorm:"column:labels;type:json"`
+	MaxConcurrency    int        `gorm:"column:max_concurrency"`
+	RunLimit          *int       `gorm:"column:run_limit"`
+	OwnerUserID       *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
+	SessionTokenHash  string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
+	SessionExpiresAt  *time.Time `gorm:"column:session_expires_at"`
+	Runtimes          []byte     `gorm:"column:runtimes;type:json"`
+	LastSeenAt        *time.Time `gorm:"column:last_seen_at"`
+	Created           *time.Time `gorm:"column:created_at"`
+	Updated           *time.Time `gorm:"column:updated_at"`
 }
 
 func (runnerRow) TableName() string { return "runners" }

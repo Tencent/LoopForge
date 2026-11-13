@@ -456,6 +456,14 @@ func TestDaemonRestartImmediatelyRestoresPresence(t *testing.T) {
 	if before.Status != domain.RunnerStatusOffline {
 		t.Fatal("daemon shutdown did not mark runner offline")
 	}
+	if !before.SupportsGitLabPAT || before.RunnerVersion != domain.RunnerVersionGitSSH {
+		t.Fatal("registration must report GitLab PAT support and the upstream version")
+	}
+	// Model an existing session created by a binary that did not report support.
+	before.SupportsGitLabPAT = false
+	if err := s.PutRunner(before); err != nil {
+		t.Fatal(err)
+	}
 	restarted, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +477,7 @@ func TestDaemonRestartImmediatelyRestoresPresence(t *testing.T) {
 	t.Cleanup(func() { cancel(); <-done })
 	waitFor(t, 2*time.Second, "immediate restart heartbeat", func() bool {
 		current, _ := s.Runner(first.runnerID())
-		return current.Status == domain.RunnerStatusOnline
+		return current.Status == domain.RunnerStatusOnline && current.SupportsGitLabPAT
 	})
 	if restarted.runnerID() != first.runnerID() || restarted.clientSession() != first.clientSession() || len(s.Runners()) != 1 {
 		t.Fatal("restart must retain the runner identity and session")
@@ -515,7 +523,7 @@ func TestDaemonExecuteProcessRunsRealCommand(t *testing.T) {
 	if err := s.PutRunnerTask(task); err != nil {
 		t.Fatal(err)
 	}
-	claimed, ok, err := s.ClaimRunnerTask(daemon.runnerID(), []string{"echo"}, time.Now().UTC(), time.Minute)
+	claimed, ok, err := s.ClaimRunnerTask(daemon.runnerID(), []string{"echo"}, false, time.Now().UTC(), time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
@@ -575,7 +583,7 @@ func TestExecuteProcessCapturesFastCommandStdout(t *testing.T) {
 		if err := s.PutRunnerTask(task); err != nil {
 			t.Fatal(err)
 		}
-		claimed, ok, err := s.ClaimRunnerTask(daemon.runnerID(), []string{"echo"}, time.Now().UTC(), time.Minute)
+		claimed, ok, err := s.ClaimRunnerTask(daemon.runnerID(), []string{"echo"}, false, time.Now().UTC(), time.Minute)
 		if err != nil || !ok {
 			t.Fatalf("claim %s: ok=%v err=%v", id, ok, err)
 		}
@@ -616,7 +624,7 @@ func TestExecuteProcessStoresVisibleTextNotStreamJSON(t *testing.T) {
 	if err := s.PutRunnerTask(task); err != nil {
 		t.Fatal(err)
 	}
-	claimed, ok, err := s.ClaimRunnerTask(daemon.runnerID(), []string{"codebuddy"}, time.Now().UTC(), time.Minute)
+	claimed, ok, err := s.ClaimRunnerTask(daemon.runnerID(), []string{"codebuddy"}, false, time.Now().UTC(), time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
@@ -654,7 +662,7 @@ func TestDaemonStreamsAndNormalizesSparseProviderOutput(t *testing.T) {
 	if err := s.PutRunnerTask(task); err != nil {
 		t.Fatal(err)
 	}
-	claimed, ok, err := s.ClaimRunnerTask(daemon.runnerID(), []string{"codex"}, time.Now().UTC(), time.Minute)
+	claimed, ok, err := s.ClaimRunnerTask(daemon.runnerID(), []string{"codex"}, false, time.Now().UTC(), time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}

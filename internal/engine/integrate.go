@@ -66,8 +66,7 @@ func (e *Engine) integrateScheduledRun(id string) (bool, error) {
 		return false, fmt.Errorf("run sandbox missing")
 	}
 	credentials := env.credentialSnapshot()
-	ctx := withGitIdentity(withGitToken(context.Background(), credentials.GitToken), credentials.GitUserName, credentials.GitUserEmail)
-	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
+	ctx := withGitIdentity(withRunGitCredentials(context.Background(), credentials), credentials.GitUserName, credentials.GitUserEmail)
 	runner, onRunner, err := e.integrationRunner(r)
 	if err != nil {
 		return false, err
@@ -158,7 +157,7 @@ func integrateLocally(ctx context.Context, r domain.Run, workspace string, rc do
 // integration branch through a Gongfeng MR, or with pushDirect when Gongfeng
 // is not configured.
 func (e *Engine) mergeWorkBranchIntoIntegrate(id string, r domain.Run, rc domain.RepositoryContext, work, integrate string, pushDirect func() error) error {
-	if rc.Provider != domain.RepositoryProviderSSH && e.MergeIntoBranch != nil && strings.TrimSpace(rc.GongfengProjectID) != "" {
+	if !rc.UsesGitTransportOnly() && e.MergeIntoBranch != nil && strings.TrimSpace(rc.GongfengProjectID) != "" {
 		title := integrateMRTitle(r, rc, work, integrate)
 		ref, err := e.MergeIntoBranch(rc.GongfengProjectID, work, integrate, title, integrateMRDescription(r, work, integrate))
 		if err != nil {

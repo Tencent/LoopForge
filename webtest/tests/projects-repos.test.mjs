@@ -95,7 +95,7 @@ test('repository drawer detects Git SSH URLs and persists a default repository',
   assert.equal(app.document.querySelector('#repoDrawerSSHMissing').hidden, false);
   assert.match(app.document.querySelector('#repoDrawerSSHMissing').textContent, /可稍后/);
   assert.equal(app.document.querySelector('#repoDrawerSave').disabled, false, 'a missing key is advisory and does not block saving');
-  assert.equal(app.document.querySelector('#repoDrawerDetect').hidden, false);
+  assert.equal(app.document.querySelector('#repoDrawerChosen').hidden, false);
   assert.equal(form.elements.name.value, 'payments');
   assert.equal(app.document.querySelector('#repoDrawerSSH').hidden, false);
   form.elements.webUrl.value = 'https://gitlab.example.org/platform/payments';
