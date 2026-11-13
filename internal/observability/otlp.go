@@ -228,66 +228,56 @@ func decodeOTLPProtobuf(body []byte) (otlpExport, bool) {
 	return otlpExport{ResourceSpans: spans}, true
 }
 
-func walkResourceSpans(body []byte) []otlpResourceSpans {
-	var out []otlpResourceSpans
-	rest := body
+// forEachProtoField calls fn for every top-level field of msg in order and
+// stops silently at the first malformed field, keeping what was parsed so far.
+func forEachProtoField(msg []byte, fn func(num, wire int, val []byte)) {
+	rest := msg
 	for len(rest) > 0 {
 		num, wire, val, next, ok := readProtoField(rest)
 		if !ok {
-			break
+			return
 		}
 		rest = next
+		fn(num, wire, val)
+	}
+}
+
+func walkResourceSpans(body []byte) []otlpResourceSpans {
+	var out []otlpResourceSpans
+	forEachProtoField(body, func(num, wire int, val []byte) {
 		if num == 1 && wire == 2 { // resource_spans
 			out = append(out, parseResourceSpans(val))
 		}
-	}
+	})
 	return out
 }
 
 func parseResourceSpans(msg []byte) otlpResourceSpans {
 	var rs otlpResourceSpans
-	rest := msg
-	for len(rest) > 0 {
-		num, wire, val, next, ok := readProtoField(rest)
-		if !ok {
-			break
-		}
-		rest = next
+	forEachProtoField(msg, func(num, wire int, val []byte) {
 		switch {
 		case num == 1 && wire == 2:
 			rs.Resource.Attributes = parseAttributes(val, 1)
 		case num == 2 && wire == 2:
 			rs.ScopeSpans = append(rs.ScopeSpans, parseScopeSpans(val))
 		}
-	}
+	})
 	return rs
 }
 
 func parseScopeSpans(msg []byte) otlpScopeSpan {
 	var ss otlpScopeSpan
-	rest := msg
-	for len(rest) > 0 {
-		num, wire, val, next, ok := readProtoField(rest)
-		if !ok {
-			break
-		}
-		rest = next
+	forEachProtoField(msg, func(num, wire int, val []byte) {
 		if num == 2 && wire == 2 {
 			ss.Spans = append(ss.Spans, parseSpan(val))
 		}
-	}
+	})
 	return ss
 }
 
 func parseSpan(msg []byte) otlpSpan {
 	var span otlpSpan
-	rest := msg
-	for len(rest) > 0 {
-		num, wire, val, next, ok := readProtoField(rest)
-		if !ok {
-			break
-		}
-		rest = next
+	forEachProtoField(msg, func(num, wire int, val []byte) {
 		switch {
 		case num == 1 && wire == 2:
 			span.TraceID = hex.EncodeToString(val)
@@ -306,7 +296,7 @@ func parseSpan(msg []byte) otlpSpan {
 		case num == 15 && wire == 2:
 			span.Status = parseStatus(val)
 		}
-	}
+	})
 	return span
 }
 
@@ -318,13 +308,7 @@ func parseStatus(msg []byte) struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	}
-	rest := msg
-	for len(rest) > 0 {
-		num, wire, val, next, ok := readProtoField(rest)
-		if !ok {
-			break
-		}
-		rest = next
+	forEachProtoField(msg, func(num, wire int, val []byte) {
 		if num == 2 && wire == 2 {
 			st.Message = string(val)
 		}
@@ -332,42 +316,30 @@ func parseStatus(msg []byte) struct {
 			n, _ := binary.Uvarint(val)
 			st.Code = int(n)
 		}
-	}
+	})
 	return st
 }
 
 func parseAttributes(msg []byte, fieldNum int) []otlpKV {
 	var out []otlpKV
-	rest := msg
-	for len(rest) > 0 {
-		num, wire, val, next, ok := readProtoField(rest)
-		if !ok {
-			break
-		}
-		rest = next
+	forEachProtoField(msg, func(num, wire int, val []byte) {
 		if num == fieldNum && wire == 2 {
 			out = append(out, parseKV(val)...)
 		}
-	}
+	})
 	return out
 }
 
 func parseKV(msg []byte) []otlpKV {
 	var kv otlpKV
-	rest := msg
-	for len(rest) > 0 {
-		num, wire, val, next, ok := readProtoField(rest)
-		if !ok {
-			break
-		}
-		rest = next
+	forEachProtoField(msg, func(num, wire int, val []byte) {
 		if num == 1 && wire == 2 {
 			kv.Key = string(val)
 		}
 		if num == 2 && wire == 2 {
 			kv.Value.StringValue = anyString(val)
 		}
-	}
+	})
 	if kv.Key == "" {
 		return nil
 	}
