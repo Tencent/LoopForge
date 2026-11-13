@@ -477,38 +477,7 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 	count := 0
 	for _, gi := range issues {
 		existing, found := findGongfengIssue(store, repo, gi)
-		issueID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
-		if found {
-			issueID = existing.ID
-		}
-		issue := domain.Issue{
-			ID:           issueID,
-			ProjectID:    repo.ProjectID,
-			RepositoryID: repo.ID,
-			Kind:         "issue",
-			Title:        gi.Title,
-			Description:  gi.Description,
-			Priority:     gongfengPriority(gi.Priority),
-			Status:       gongfengStateToStatus(gi.State),
-			CloseSource:  closeSourceForStatus(gongfengStateToStatus(gi.State)),
-			Source:       "gongfeng",
-			ExternalRef: &domain.ExternalRef{
-				Source:        "gongfeng",
-				ExternalID:    fmt.Sprintf("%d", gi.ID),
-				ExternalIID:   gi.IID,
-				ExternalURL:   strings.TrimSuffix(repo.WebURL, "/") + fmt.Sprintf("/issues/%d", gi.IID),
-				ExternalState: gi.State,
-				ExternalType:  "issue",
-				SyncedAt:      time.Now().UTC(),
-			},
-		}
-		if found {
-			applyExistingIssue(&issue, existing)
-		} else {
-			issue.Number = gi.IID
-			issue.CreatedAt = parseTime(gi.CreatedAt)
-		}
-		issue.UpdatedAt = time.Now().UTC()
+		issue := gongfengSyncedIssue(repo, gi, existing, found)
 		if err := store.PutSyncedIssue(issue); err != nil {
 			log.Printf("sync gongfeng issue %d: %v", gi.IID, err)
 			continue
@@ -524,6 +493,46 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 		StartedAt: started, FinishedAt: time.Now().UTC(),
 	})
 	return count, nil
+}
+
+// gongfengSyncedIssue maps one Gongfeng issue onto the local work item that
+// a pull stores. When the work item already exists, platform-owned fields
+// (ID, status, number, assignment, ...) are kept via applyExistingIssue.
+func gongfengSyncedIssue(repo domain.Repository, gi gongfengIssue, existing domain.Issue, found bool) domain.Issue {
+	issueID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
+	if found {
+		issueID = existing.ID
+	}
+	status := gongfengStateToStatus(gi.State)
+	issue := domain.Issue{
+		ID:           issueID,
+		ProjectID:    repo.ProjectID,
+		RepositoryID: repo.ID,
+		Kind:         "issue",
+		Title:        gi.Title,
+		Description:  gi.Description,
+		Priority:     gongfengPriority(gi.Priority),
+		Status:       status,
+		CloseSource:  closeSourceForStatus(status),
+		Source:       "gongfeng",
+		ExternalRef: &domain.ExternalRef{
+			Source:        "gongfeng",
+			ExternalID:    fmt.Sprintf("%d", gi.ID),
+			ExternalIID:   gi.IID,
+			ExternalURL:   strings.TrimSuffix(repo.WebURL, "/") + fmt.Sprintf("/issues/%d", gi.IID),
+			ExternalState: gi.State,
+			ExternalType:  "issue",
+			SyncedAt:      time.Now().UTC(),
+		},
+	}
+	if found {
+		applyExistingIssue(&issue, existing)
+	} else {
+		issue.Number = gi.IID
+		issue.CreatedAt = parseTime(gi.CreatedAt)
+	}
+	issue.UpdatedAt = time.Now().UTC()
+	return issue
 }
 
 func parseGongfengIssues(raw string) ([]gongfengIssue, error) {
