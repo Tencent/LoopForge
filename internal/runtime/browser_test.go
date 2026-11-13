@@ -355,28 +355,21 @@ func TestBrowserViewCapturesASharpFrameWhenTheSettledScreencastSendsNone(t *test
 	// A frame that arrives in time is kept and no screenshot is taken.
 	view, transport = newView()
 	defer view.client.close()
+	// Deliver the frame during the settle wait, right after seq was sampled.
+	resent := make(chan struct{})
+	view.settledFrameSampled = func() {
+		frame, _ := json.Marshal(map[string]any{"data": "RESENT", "sessionId": 1, "metadata": map[string]any{"deviceWidth": 1000, "deviceHeight": 500}})
+		view.onEvent(cdpMessage{Method: "Page.screencastFrame", SessionID: "page-1", Params: frame})
+		close(resent)
+	}
 	if err := view.input(context.Background(), wheel); err != nil {
 		t.Fatal(err)
 	}
-	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
-		transport.mu.Lock()
-		restarts := 0
-		for _, msg := range transport.sent {
-			if msg.Method == "Page.startScreencast" {
-				restarts++
-			}
-		}
-		transport.mu.Unlock()
-		if restarts == 2 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the screencast never returned to sharp frames")
-		}
+	select {
+	case <-resent:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the screencast never returned to sharp frames")
 	}
-	time.Sleep(browserSettledFrameWait / 4)
-	frame, _ := json.Marshal(map[string]any{"data": "RESENT", "sessionId": 1, "metadata": map[string]any{"deviceWidth": 1000, "deviceHeight": 500}})
-	view.onEvent(cdpMessage{Method: "Page.screencastFrame", SessionID: "page-1", Params: frame})
 	time.Sleep(browserSettledFrameWait * 2)
 	if got := view.state(0).Frame; got != "RESENT" || screenshots(transport) != 0 {
 		t.Fatalf("frame %q, screenshots %d", got, screenshots(transport))

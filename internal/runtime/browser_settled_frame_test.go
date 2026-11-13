@@ -113,16 +113,14 @@ func TestEnsureSettledFrameKeepsTheViewWhenItShouldNotCapture(t *testing.T) {
 			fake := newFakeCDPTransport()
 			fake.results = map[string]string{"Page.captureScreenshot": `{"data":"SHARP"}`}
 			view := newSettledFrameView(t, fake)
-			wait := 40 * time.Millisecond
-			go func() {
-				// Change the view during the wait, after seq was sampled.
-				time.Sleep(wait / 4)
+			// Change the view during the wait, right after seq was sampled.
+			view.settledFrameSampled = func() {
 				view.mu.Lock()
 				tc.setup(view)
 				view.mu.Unlock()
-			}()
+			}
 
-			view.ensureSettledFrame(context.Background(), "page-1", wait)
+			view.ensureSettledFrame(context.Background(), "page-1", time.Millisecond)
 
 			if n := cdpCalls(fake, "Page.captureScreenshot"); n != 0 {
 				t.Fatalf("screenshots: %d", n)

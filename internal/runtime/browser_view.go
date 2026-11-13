@@ -52,6 +52,9 @@ type browserView struct {
 	// lighter until the input settles (see markMotion).
 	motion    bool
 	motionGen int64
+	// settledFrameSampled, when set (tests only), runs once ensureSettledFrame
+	// has recorded the frame seq it waits on.
+	settledFrameSampled func()
 	// History flags are cached per active page URL: re-reading them on every
 	// frame would add a CDP round trip to each one.
 	historyKey              string
@@ -527,8 +530,11 @@ var browserSettledFrameWait = 300 * time.Millisecond
 // on its last light frame.
 func (v *browserView) ensureSettledFrame(ctx context.Context, session string, wait time.Duration) {
 	v.mu.Lock()
-	seq := v.seq
+	seq, sampled := v.seq, v.settledFrameSampled
 	v.mu.Unlock()
+	if sampled != nil {
+		sampled()
+	}
 	select {
 	case <-time.After(wait):
 	case <-ctx.Done():
