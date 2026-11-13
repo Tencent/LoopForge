@@ -76,7 +76,7 @@ func (e *Engine) conversationWorkspaceIdle(run domain.Run) bool {
 	if e.WorkspaceActive != nil && e.WorkspaceActive(run) {
 		return false
 	}
-	if run.Status == "running" || run.Status == "queued" || hasRunningNode(run) {
+	if run.Status == "running" || run.Status == "queued" || run.HasActiveNode() {
 		return false
 	}
 	if run.Status == "waiting" && !run.IsWorkspace() {
@@ -216,7 +216,7 @@ func (e *Engine) PrepareConversationWorkspace(ctx context.Context, id, token str
 	}
 	// Readers stay available during execution; never inject prior outputs while
 	// a node is currently expected to generate its own fresh deliverables.
-	if hasRunningNode(run) || !run.IsWorkspace() && (run.Status == "running" || run.Status == "queued") {
+	if run.HasActiveNode() || !run.IsWorkspace() && (run.Status == "running" || run.Status == "queued") {
 		return nil, nil
 	}
 	return e.restoreArchivedWorkspaceFiles(ctx, run)
