@@ -315,12 +315,7 @@ func executorReportedError(adapterResult, raw string) error {
 }
 
 func hasArg(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, wanted)
 }
 
 // dropArgWithValue removes every occurrence of the given flags together with
