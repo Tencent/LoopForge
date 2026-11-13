@@ -70,23 +70,35 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
-  test("renders native approval after the live reply inside the scrolling conversation", async () => {
-    const previous = {...chat}, originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn(async (url) => new Response(JSON.stringify(
-      String(url).endsWith("/native-approvals") ? [{id:"op",actorId:"u1",tool:"Bash",input:{command:"pwd"}}] : []
-    ), {status:200,headers:{"Content-Type":"application/json"}}));
-    Object.assign(chat,{activeId:"approval-chat",busy:true,session:{id:"approval-chat",messages:[{role:"user",content:"检查目录"}]}});
+  test("pauses without showing an intermediate stopping state", () => {
+    const previous = { ...chat };
+    Object.assign(chat, { activeId: "stopping-chat", busy: true, stopping: true,
+      generation: { id: "g-stop", status: "running" },
+      session: { id: "stopping-chat", messages: [{ role: "user", content: "检查目录" }] } });
+    let view;
+    try {
+      view = render(<App />);
+      expect(screen.queryByText(/正在停止/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "停止生成" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "发送消息" })).not.toBeInTheDocument();
+      Object.assign(chat, { busy: false, stopping: false, generation: { id: "g-stop", status: "cancelled" } });
+      view.rerender(<App />);
+      expect(screen.queryByText("正在停止…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "发送消息" })).toBeInTheDocument();
+    } finally {
+      view?.unmount();
+      for (const key of Object.keys(chat)) if (!(key in previous)) delete chat[key];
+      Object.assign(chat, previous);
+    }
+  });
+  test("does not ask for per-command native approval in a working conversation", () => {
+    const previous = {...chat};
+    Object.assign(chat,{activeId:"workspace-chat",busy:true,session:{id:"workspace-chat",runtimeMode:"workspace",messages:[{role:"user",content:"检查目录"}]}});
     let view;
     try {
       view=render(<App />);
-      const panel=await screen.findByRole("region",{name:"待确认的原生操作"});
-      expect(panel.closest(".message-scroll")).not.toBeNull();
-      expect(panel.previousElementSibling).toHaveClass("message");
-      expect(panel.closest(".header-actions")).toBeNull();
-      expect(document.querySelector(".composer-region").contains(panel)).toBe(false);
-    } finally {
-      view?.unmount();globalThis.fetch=originalFetch;Object.assign(chat,previous);
-    }
+      expect(screen.queryByRole("region",{name:"待确认的原生操作"})).not.toBeInTheDocument();
+    } finally { view?.unmount(); Object.assign(chat,previous); }
   });
   test("offers execution machine selection on the home page and moves it into the conversation header", async () => {
     const previous = { ...chat };

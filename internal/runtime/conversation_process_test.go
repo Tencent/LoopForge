@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -303,5 +304,25 @@ func TestConversationCancelledZCodeRemovesCredentialWithoutExitTrap(t *testing.T
 	}
 	if data, err := os.ReadFile(journal); err != nil || string(data) != "keep native history" {
 		t.Fatal("credential cleanup changed native history")
+	}
+}
+
+func TestConversationProcessPollReturnsCancellation(t *testing.T) {
+	for _, before := range []bool{true, false} {
+		t.Run(map[bool]string{true: "before", false: "during"}[before], func(t *testing.T) {
+			root := t.TempDir()
+			p := &ConversationProcessPool{entries: map[string]*conversationProcess{"poll": {root: root, wake: make(chan struct{}, 1)}}}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if before {
+				cancel()
+			} else {
+				time.AfterFunc(10*time.Millisecond, cancel)
+			}
+			_, err := p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "poll", ID: "poll"}, nil)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancelled poll returned %v", err)
+			}
+		})
 	}
 }

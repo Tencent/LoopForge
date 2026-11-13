@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -224,18 +225,34 @@ func (r *AssistantRepo) backfillAssistantParticipants(rows []assistantSessionRow
 }
 
 func (r *AssistantRepo) PutAssistantSession(userID int64, v domain.AssistantSession) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var row assistantSessionRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", assistantRecordID(v.ID)).Take(&row).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		err = r.DB.Transaction(func(tx *gorm.DB) error {
+			var row assistantSessionRow
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", assistantRecordID(v.ID)).Take(&row).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			scoped := *r
+			base := *r.deps
+			base.DB = tx
+			scoped.deps = &base
+			return scoped.putAssistantSession(userID, v)
+		})
+		// Locking two missing IDs can deadlock their shared InnoDB index gap.
+		// MySQL has rolled back the entire victim transaction, so retry only
+		// that explicit error; unknown commit/connection failures are not replayed.
+		var sqlErr *mysqldriver.MySQLError
+		if !errors.As(err, &sqlErr) || sqlErr.Number != 1213 || attempt == 5 {
 			return err
 		}
-		scoped := *r
-		base := *r.deps
-		base.DB = tx
-		scoped.deps = &base
-		return scoped.putAssistantSession(userID, v)
-	})
+		select {
+		case <-r.DB.Statement.Context.Done():
+			return r.DB.Statement.Context.Err()
+		case <-time.After(time.Duration(1<<attempt) * 5 * time.Millisecond):
+		}
+	}
+	return err
 }
 
 // SetAssistantSessionGeneratedTitle replaces a new session's prompt title

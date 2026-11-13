@@ -2,14 +2,12 @@ package httpapi
 
 import (
 	"agentflow/internal/domain"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"strings"
-	"time"
 )
 
 func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
@@ -57,10 +55,8 @@ func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
 	c.JSON(200, gin.H{"decision": body.Decision})
 }
 
-// Native callbacks poll this private RPC. Each callback keeps one invocation
-// ID across transport retries, so reconnects neither create another approval
-// nor change the exact action being approved. Nothing waits on a browser inside
-// an HTTP request and human decisions have no deadline.
+// Native callbacks use this private RPC to fence expired turns and platform
+// mode. The pending field remains compatible with callbacks from older CLIs.
 type nativeToolApprovalResult struct {
 	Allow   bool   `json:"allow"`
 	Pending bool   `json:"pending,omitempty"`
@@ -95,67 +91,10 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 	if s.RuntimeMode != domain.AssistantModeWorkspace {
 		return deny("平台模式禁用原生命令和写入工具，请先打开工作区")
 	}
-	if len(action.Input) == 0 {
-		action.Input = json.RawMessage(`{}`)
-	}
-	var compact bytes.Buffer
-	if json.Compact(&compact, action.Input) != nil {
-		return deny("原生工具审批参数无效")
-	}
-	action.Input = compact.Bytes()
-	generation := ""
-	if s.ctx != nil {
-		generation = assistantControlScopeFrom(s.ctx).GenerationID
-	}
-	phase := nativeApprovalPhase(s.Token)
-	id := nativeApprovalPhase(s.Token + "/" + action.ID)
-	// Resolve an existing exact invocation before considering the policy again.
-	// A declined request must not turn into a new permit on the next poll.
-	if h.repo != nil && action.ID != "" {
-		if old, ok := h.repo.NativeApproval(s.ChatOwnerID, s.ChatSessionID, id); ok {
-			if old.GenerationID != generation || old.ActorID != s.UserID || old.Tool != action.Name || old.InputDigest != nativeApprovalPhase(string(action.Input)) {
-				return deny("审批调用标识已被其他操作使用")
-			}
-			switch old.Decision {
-			case "allow":
-				return nativeToolApprovalResult{Allow: true}
-			case "deny":
-				return deny("用户拒绝了本次操作")
-			default:
-				return nativeToolApprovalResult{Pending: true}
-			}
-		}
-	}
-	if s.ExecMode.AutoWrite && !s.ExecMode.ReviewWrites {
-		return nativeToolApprovalResult{Allow: true}
-	}
-	if s.ExecMode.ReviewWrites {
-		reviewCtx, cancelReview := context.WithTimeout(ctx, 12*time.Second)
-		args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
-		review := reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区 CLI 原生工具，将在绑定的 Docker 工作区中执行", args)
-		cancelReview()
-		if review.allows() {
-			if !h.nativeToolTurnActive(ctx, s) {
-				return deny("本轮已结束，审批已失效")
-			}
-			return nativeToolApprovalResult{Allow: true, Reason: review.Rationale}
-		}
-	}
-	if h.repo == nil || s.ChatSessionID == "" || s.ChatOwnerID == 0 || generation == "" || action.ID == "" {
-		return deny("缺少审批上下文或调用标识")
-	}
-	item := domain.AssistantNativeApproval{ID: id, GenerationID: generation, ActorID: s.UserID, Tool: action.Name, Input: action.Input}
-	if err := h.repo.CreateNativeApproval(s.ChatOwnerID, s.ChatSessionID, phase, item); err != nil {
-		return deny("无法保存审批请求")
-	}
-	if !h.nativeToolTurnActive(ctx, s) {
-		_ = h.repo.ReleaseNativeApprovals(s.ChatOwnerID, s.ChatSessionID, generation, phase)
-		return deny("本阶段已结束，审批已失效")
-	}
-	if s.Notify != nil {
-		s.Notify("native_approval", map[string]string{"id": item.ID})
-	}
-	return nativeToolApprovalResult{Pending: true}
+	// The execution mode controls platform/external writes. Native development
+	// runs inside the bound Docker workspace in every approval mode; keep this
+	// hook as the live-turn and platform-mode fence, without human or AI review.
+	return nativeToolApprovalResult{Allow: true}
 }
 
 // Native hooks see the CLI's local MCP name, not necessarily the wire name.
@@ -217,4 +156,26 @@ func (h *agentToolGateway) nativeToolTurnActive(ctx context.Context, s *AgentToo
 	}
 	current, ok := h.repo.AssistantGeneration(s.ChatOwnerID, s.ChatSessionID)
 	return ok && current.ID == generation && current.Status == "running" && !current.CancelRequested
+}
+
+// A predecessor may still own a CLI blocked on its old per-command policy.
+// Apply the new workspace policy to those exact pending invocations so a UI
+// refresh during rolling deployment cannot strand an otherwise live turn.
+func (h *assistantHandlers) settleLegacyWorkspaceNativeApprovals(g domain.AssistantGeneration) {
+	if g.Status != "running" || g.CancelRequested {
+		return
+	}
+	items := h.repo.PendingNativeApprovals(g.UserID, g.SessionID)
+	if len(items) == 0 {
+		return
+	}
+	session, ok := h.repo.AssistantSession(g.UserID, g.SessionID)
+	if !ok || session.RuntimeMode != domain.AssistantModeWorkspace {
+		return
+	}
+	for _, item := range items {
+		if item.GenerationID == g.ID && item.ActorID == g.ActorID {
+			_ = h.repo.DecideNativeApproval(g.UserID, item.ActorID, g.SessionID, item.ID, "allow")
+		}
+	}
 }

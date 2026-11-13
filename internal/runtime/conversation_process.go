@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -86,7 +87,7 @@ type conversationAssetFence struct {
 	users int
 }
 
-func (p *ConversationProcessPool) lockAssets(root string) func() {
+func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (func(), error) {
 	p.mu.Lock()
 	if p.assets == nil {
 		p.assets = map[string]*conversationAssetFence{}
@@ -98,15 +99,28 @@ func (p *ConversationProcessPool) lockAssets(root string) func() {
 	}
 	fence.users++
 	p.mu.Unlock()
-	fence.mu.Lock()
-	return func() {
-		fence.mu.Unlock()
+	releaseRef := func() {
 		p.mu.Lock()
 		fence.users--
 		if fence.users == 0 {
 			delete(p.assets, root)
 		}
 		p.mu.Unlock()
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			releaseRef()
+			return nil, err
+		}
+		if fence.mu.TryLock() {
+			return func() { fence.mu.Unlock(); releaseRef() }, nil
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+		}
 	}
 }
 
@@ -134,10 +148,16 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	if err != nil {
 		return ConversationProcessResult{}, err
 	}
-	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" || req.Operation == "start" {
+	if req.Operation == "start" {
+		return p.start(ctx, root, workspace, sandbox, req, forward, factories...)
+	}
+	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" {
 		// Serialize asset writes with reservation of a new process. Checking
 		// roots and releasing the fence before a write allows start to race it.
-		unlock := p.lockAssets(root)
+		unlock, lockErr := p.lockAssets(ctx, root)
+		if lockErr != nil {
+			return ConversationProcessResult{}, lockErr
+		}
 		defer unlock()
 		p.mu.Lock()
 		active := p.roots[root] != ""
@@ -198,35 +218,56 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		}
 		return ConversationProcessResult{Root: root}, nil
 	}
-	if req.Operation == "start" {
-		return p.start(ctx, root, workspace, sandbox, req, forward, factories...)
-	}
 	p.mu.Lock()
 	proc := p.entries[req.ID]
+	if proc == nil && req.Operation == "stop" {
+		// Fence a dispatched start even if its goroutine has not registered yet.
+		// Expired IDs cannot start, so the tombstone can be safely reaped.
+		expires, idErr := conversationProcessIDExpiry(req.ID)
+		if idErr == nil {
+			if !time.Now().Before(expires) {
+				p.mu.Unlock()
+				return ConversationProcessResult{Done: true}, nil
+			}
+			proc = &conversationProcess{root: root, cancel: func() {}, done: true, wake: make(chan struct{}, 1), finished: make(chan struct{})}
+			close(proc.finished)
+			if p.entries == nil {
+				p.entries = map[string]*conversationProcess{}
+			}
+			p.entries[req.ID] = proc
+			p.reapProcessAfter(req.ID, proc, expires)
+		}
+	}
 	p.mu.Unlock()
 	if proc == nil || proc.root != root {
 		return ConversationProcessResult{}, fmt.Errorf("原生对话进程已断开，请重试以续接原会话")
 	}
 	switch req.Operation {
 	case "write":
-		if proc.input == nil {
+		proc.mu.Lock()
+		input := proc.input
+		proc.mu.Unlock()
+		if input == nil {
 			return ConversationProcessResult{}, fmt.Errorf("process has no stdin")
 		}
 		stopWrite := context.AfterFunc(ctx, func() {
 			proc.cancel()
-			_ = proc.input.Close()
+			_ = input.Close()
 		})
 		defer stopWrite()
 		if req.EOF {
-			err = proc.input.Close()
+			err = input.Close()
 		} else {
-			_, err = io.WriteString(proc.input, conversationRemap(req.Data, req.SourceRoot, root))
+			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
 		proc.cancel()
-		if proc.input != nil {
-			_ = proc.input.Close()
+		proc.mu.Lock()
+		input := proc.input
+		proc.mu.Unlock()
+		if input != nil {
+			_ = input.Close()
 		}
 		select {
 		case <-proc.finished:
@@ -235,6 +276,9 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 			return ConversationProcessResult{}, ctx.Err()
 		}
 	case "poll":
+		if err := ctx.Err(); err != nil {
+			return ConversationProcessResult{}, err
+		}
 		proc.mu.Lock()
 		proc.lastPoll = time.Now()
 		if len(proc.events) == 0 && !proc.done {
@@ -245,6 +289,8 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 			case <-wake:
 			case <-timer.C:
 			case <-ctx.Done():
+				timer.Stop()
+				return ConversationProcessResult{}, ctx.Err()
 			}
 			timer.Stop()
 			proc.mu.Lock()
@@ -281,43 +327,152 @@ func conversationAssetPath(root, target string) error {
 	return nil
 }
 
-func (p *ConversationProcessPool) start(ctx context.Context, root, workspace string, spec *domain.RunnerSandboxSpec, req ConversationProcessRequest, forward ConversationToolForward, factories ...ConversationSandboxFactory) (ConversationProcessResult, error) {
+// IDs are generated before dispatch, so cancellation can address a start whose
+// response is lost. Their bounded acceptance window lets us retire cancellation
+// tombstones without ever allowing the same delayed start to execute later.
+const conversationStartWindow = 5 * time.Minute
+
+func NewConversationProcessID() (string, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%016x", time.Now().UnixMilli()) + hex.EncodeToString(random[:]), nil
+}
+
+func conversationProcessIDExpiry(id string) (time.Time, error) {
+	if len(id) != 48 {
+		return time.Time{}, fmt.Errorf("invalid conversation process ID")
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return time.Time{}, fmt.Errorf("invalid conversation process ID")
+	}
+	stamp, err := strconv.ParseInt(id[:16], 16, 64)
+	issued := time.UnixMilli(stamp)
+	now := time.Now()
+	if err != nil || issued.After(now.Add(30*time.Second)) {
+		return time.Time{}, fmt.Errorf("expired conversation process ID")
+	}
+	return issued.Add(conversationStartWindow), nil
+}
+
+// Caller holds p.mu. Retain completed IDs throughout their start window.
+func (p *ConversationProcessPool) reapProcessAfter(id string, proc *conversationProcess, expires time.Time) {
+	time.AfterFunc(max(time.Until(expires), time.Minute), func() {
+		p.mu.Lock()
+		if p.entries[id] == proc {
+			delete(p.entries, id)
+		}
+		p.mu.Unlock()
+	})
+}
+
+func (p *ConversationProcessPool) start(ctx context.Context, root, workspace string, spec *domain.RunnerSandboxSpec, req ConversationProcessRequest, forward ConversationToolForward, factories ...ConversationSandboxFactory) (result ConversationProcessResult, err error) {
 	if req.Command == nil || len(req.Command.Argv) == 0 {
 		return ConversationProcessResult{}, fmt.Errorf("missing conversation command")
 	}
-	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
+	id := req.ID
+	if id == "" {
+		id, err = NewConversationProcessID()
+		if err != nil {
+			return ConversationProcessResult{}, err
+		}
+	}
+	expires, err := conversationProcessIDExpiry(id)
+	if err != nil {
 		return ConversationProcessResult{}, err
 	}
-	id := hex.EncodeToString(random[:])
 	procCtx, cancel := context.WithCancel(ctx)
 	proc := &conversationProcess{cancel: cancel, wake: make(chan struct{}, 1), finished: make(chan struct{}), root: root, lastPoll: time.Now()}
 	p.mu.Lock()
+	// Expiry and reservation share the same lock as stop's expired-ID reply.
+	// A start paused across its deadline must not register after stop said Done.
+	if !time.Now().Before(expires) {
+		p.mu.Unlock()
+		cancel()
+		return ConversationProcessResult{}, fmt.Errorf("expired conversation process ID")
+	}
+	if p.entries == nil {
+		p.entries = map[string]*conversationProcess{}
+	}
 	if p.roots == nil {
 		p.roots = map[string]string{}
 	}
-	if p.roots[root] != "" {
+	if p.entries[id] != nil || p.roots[root] != "" {
 		p.mu.Unlock()
 		cancel()
-		return ConversationProcessResult{}, fmt.Errorf("会话原生进程仍在运行")
+		return ConversationProcessResult{}, fmt.Errorf("会话原生进程仍在运行或启动已取消")
 	}
+	p.entries[id] = proc
 	p.roots[root] = id
 	p.mu.Unlock()
+	var sb Sandbox
+	var release func()
+	var stdin io.Closer
+	finish := func(runErr error, notStarted bool) {
+		cancel()
+		// Cancellation can skip the shell EXIT trap. Clean ephemeral ZCode
+		// credentials before publishing completion or releasing this root.
+		credentialCleanupErr := cleanupConversationCredentialFiles(root, req.Command.Provider)
+		if stdin != nil {
+			_ = stdin.Close()
+		}
+		if proc.closeRelay != nil {
+			proc.closeRelay()
+		}
+		if release != nil {
+			release()
+		}
+		proc.mu.Lock()
+		if proc.input != nil {
+			_ = proc.input.Close()
+		}
+		if credentialCleanupErr != nil {
+			proc.err = "清理 CLI 临时凭证失败"
+			proc.notStarted = notStarted
+		}
+		if runErr != nil && proc.err == "" {
+			proc.err = runErr.Error()
+			proc.notStarted = notStarted
+		}
+		proc.done = true
+		proc.mu.Unlock()
+		select {
+		case proc.wake <- struct{}{}:
+		default:
+		}
+		p.mu.Lock()
+		if p.roots[root] == id {
+			delete(p.roots, root)
+		}
+		p.reapProcessAfter(id, proc, expires)
+		p.mu.Unlock()
+		close(proc.finished)
+	}
 	started := false
 	defer func() {
 		if !started {
-			_ = cleanupConversationCredentialFiles(root, req.Command.Provider)
-			p.mu.Lock()
-			delete(p.roots, root)
-			p.mu.Unlock()
+			finish(err, true)
 		}
 	}()
-	var sb Sandbox
-	var release func()
-	var err error
+	unlock, err := p.lockAssets(procCtx, root)
+	if err != nil {
+		return ConversationProcessResult{}, err
+	}
+	defer unlock()
+	if err = procCtx.Err(); err != nil {
+		return ConversationProcessResult{}, err
+	}
+	if err = ValidateConversationRoot(root); err != nil {
+		return ConversationProcessResult{}, err
+	}
+	for _, dir := range []string{"home/tmp", "ws"} {
+		if err = os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+			return ConversationProcessResult{}, err
+		}
+	}
 	if spec != nil {
 		if spec.Profile.Driver != "docker" {
-			cancel()
 			return ConversationProcessResult{}, fmt.Errorf("对话工作区仅支持 Docker")
 		}
 		if len(factories) > 0 && factories[0] != nil {
@@ -336,14 +491,11 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			}
 		}
 		if err != nil {
-			cancel()
 			return ConversationProcessResult{}, err
 		}
-
 	} else if len(factories) > 0 && factories[0] != nil {
 		sb, release, err = factories[0](procCtx, root)
 		if err != nil {
-			cancel()
 			return ConversationProcessResult{}, err
 		}
 	}
@@ -366,10 +518,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	if forward != nil && req.Token != "" {
 		url, closeRelay, err := startConversationRelay(procCtx, req.Token, forward, spec != nil)
 		if err != nil {
-			cancel()
-			if release != nil {
-				release()
-			}
 			return ConversationProcessResult{}, err
 		}
 		proc.closeRelay = closeRelay
@@ -380,11 +528,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			command.environment[key] = strings.ReplaceAll(value, req.Gateway, url)
 		}
 		if err := replaceConversationGateway(root, req.Gateway, url); err != nil {
-			closeRelay()
-			cancel()
-			if release != nil {
-				release()
-			}
 			return ConversationProcessResult{}, err
 		}
 	}
@@ -393,13 +536,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	if spec == nil && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
 		check := exec.CommandContext(procCtx, "python3", "-c", "import json,urllib.request")
 		if err = check.Run(); err != nil {
-			cancel()
-			if release != nil {
-				release()
-			}
-			if proc.closeRelay != nil {
-				proc.closeRelay()
-			}
 			return ConversationProcessResult{}, fmt.Errorf("原生工具审批需要 Python3：%w", err)
 		}
 	}
@@ -409,26 +545,12 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	if spec != nil || command.Provider == AgentCLIKimi || command.Provider == AgentCLIPi || command.Provider == AgentCLIOpenCode || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode {
 		command, err = InstallConversationApproval(root, command.Provider, command)
 		if err != nil {
-			cancel()
-			if release != nil {
-				release()
-			}
-			if proc.closeRelay != nil {
-				proc.closeRelay()
-			}
 			return ConversationProcessResult{}, err
 		}
 	}
 	if spec != nil {
-		binary, err := ensureConversationCLI(procCtx, sb, command.Provider)
+		binary, err := ensureConversationCLI(procCtx, sb, command.Provider, filepath.Join(root, "home"))
 		if err != nil {
-			cancel()
-			if release != nil {
-				release()
-			}
-			if proc.closeRelay != nil {
-				proc.closeRelay()
-			}
 			return ConversationProcessResult{}, err
 		}
 		command.Argv[0] = binary
@@ -436,13 +558,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	if sb == nil {
 		binary, lookupErr := exec.LookPath(command.Argv[0])
 		if lookupErr != nil {
-			cancel()
-			if release != nil {
-				release()
-			}
-			if proc.closeRelay != nil {
-				proc.closeRelay()
-			}
 			return ConversationProcessResult{}, fmt.Errorf("执行机器未安装 CLI %s：%w", command.Provider, lookupErr)
 		}
 		command.Argv[0] = binary
@@ -457,13 +572,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	nativeArgv := append([]string(nil), command.Argv...)
 	command, err = bindCommand(bindSandbox, bindWorkspace, command, req.Command.Credentials)
 	if err != nil {
-		cancel()
-		if release != nil {
-			release()
-		}
-		if proc.closeRelay != nil {
-			proc.closeRelay()
-		}
 		return ConversationProcessResult{}, err
 	}
 	if command.Provider == AgentCLIZCode {
@@ -479,56 +587,21 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	if req.Command.Interactive {
 		input, writer, err := os.Pipe()
 		if err != nil {
-			cancel()
-			if release != nil {
-				release()
-			}
-			if proc.closeRelay != nil {
-				proc.closeRelay()
-			}
 			return ConversationProcessResult{}, err
 		}
+		proc.mu.Lock()
 		proc.input = writer
+		proc.mu.Unlock()
+		stdin = input
 		command.Stdin = input
 	}
-	p.mu.Lock()
-	if p.entries == nil {
-		p.entries = map[string]*conversationProcess{}
+	if err = procCtx.Err(); err != nil {
+		return ConversationProcessResult{}, err
 	}
-	p.entries[id] = proc
-	p.mu.Unlock()
 	started = true
 	go func() {
-		defer cancel()
-		if proc.closeRelay != nil {
-			defer proc.closeRelay()
-		}
-		defer func() {
-			// A cancelled process group may not run the shell's EXIT trap.
-			// Remove ephemeral ZCode keys before publishing phase completion.
-			if err := cleanupConversationCredentialFiles(root, command.Provider); err != nil {
-				proc.mu.Lock()
-				proc.err = "清理 CLI 临时凭证失败"
-				proc.mu.Unlock()
-			}
-			if release != nil {
-				release()
-			}
-			proc.mu.Lock()
-			proc.done = true
-			proc.mu.Unlock()
-			select {
-			case proc.wake <- struct{}{}:
-			default:
-			}
-			p.mu.Lock()
-			delete(p.roots, root)
-			p.mu.Unlock()
-			close(proc.finished)
-		}()
-		if closer, ok := command.Stdin.(io.Closer); ok {
-			defer closer.Close()
-		}
+		var runErr error
+		defer func() { finish(runErr, errors.Is(runErr, errProcessNotStarted)) }()
 		watchDone := make(chan struct{})
 		defer close(watchDone)
 		go func() {
@@ -569,24 +642,11 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			default:
 			}
 		}
-		var runErr error
 		if sb != nil {
 			_, runErr = WithSandboxCredentials(sb, req.Command.Credentials).Exec(procCtx, command, sink)
 		} else {
 			_, runErr = ExecuteLocalCommand(procCtx, filepath.Join(root, "ws"), command, req.Command.Credentials, sink)
 		}
-		proc.mu.Lock()
-
-		if runErr != nil && proc.err == "" {
-			proc.err = runErr.Error()
-			proc.notStarted = errors.Is(runErr, errProcessNotStarted)
-		}
-		proc.mu.Unlock()
-		select {
-		case proc.wake <- struct{}{}:
-		default:
-		}
-		time.AfterFunc(time.Minute, func() { p.mu.Lock(); delete(p.entries, id); p.mu.Unlock() })
 	}()
 	return ConversationProcessResult{Root: root, ID: id}, nil
 }

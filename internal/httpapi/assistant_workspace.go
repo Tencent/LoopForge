@@ -79,7 +79,10 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	if len(mainBotWorkspaceTools(s)) == 0 {
 		return "", errAgentToolForbidden
 	}
-	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != "workbench_workspace_read" && name != "workbench_workspace_attach" {
+	if name == "workbench_workspace_submit_mr" && !s.ExecMode.AutoWrite {
+		return "", fmt.Errorf("提交 MR 或推送分支需要外部写入授权，请切换到「帮我批准」或「完全权限」后继续")
+	}
+	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != "workbench_workspace_read" && name != "workbench_workspace_attach" && name != "workbench_workspace_open" && name != "workbench_platform_mode" {
 		// Commands are always reviewed: arbitrary shell text can mutate state.
 		ctx = withAssistantApprovalReviewer(ctx, s.approvalReviewer)
 		review := reviewAssistantAction(ctx, name, "当前项目工作区操作，文件写入、命令执行或提交 MR 会产生副作用", map[string]any{"runId": s.workspaceRun(), "arguments": args})
@@ -225,9 +228,9 @@ func (h *agentToolGateway) mainBotWorkspaceLease(ctx context.Context, s *AgentTo
 			return ctx, nil, release, err
 		}
 		release = func() {
-			saveCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer stop()
-			_ = h.engine.EndConversationWorkspaceUse(saveCtx, runID, token)
+			if result, err := h.engine.EndConversationWorkspaceUseAsync(ctx, runID, token); err == nil {
+				trackAssistantWorkspaceSave(runID, result)
+			}
 		}
 	}
 	restored, err := h.engine.PrepareConversationWorkspace(ctx, runID, token)

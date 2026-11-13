@@ -1,4 +1,3 @@
-import NativeApprovalPanel from "./NativeApprovalPanel";
 import React, {
   useCallback,
   useEffect,
@@ -1217,9 +1216,6 @@ export default function App() {
               <Participants session={chat.session} users={chat.users} />
             </>
           ) : null}
-          {conversationStarted && workspaceRunId ? <button type="button" className="context-pill" disabled={chat.busy || chat.readOnly} onClick={() => chat.switchRuntimeMode(chat.session?.runtimeMode === "workspace" ? "platform" : "workspace")} title="在同一执行机器续接原生会话，保留工作区">
-            {chat.session?.runtimeMode === "workspace" ? "切回平台模式" : "进入工作区模式"}
-          </button> : null}
           {conversationStarted && workspaceRunId ? (
             <button
               type="button"
@@ -1648,10 +1644,6 @@ export default function App() {
                   finished
                 />
               ) : null}
-              <NativeApprovalPanel chat={chat} onChange={() => {
-                if (follow.current && scroll.current)
-                  scroll.current.scrollTop = scroll.current.scrollHeight;
-              }} />
               <RunAlerts
                 runs={conversationRuns}
                 user={chat.user}
@@ -2081,7 +2073,7 @@ export default function App() {
                         aria-label="停止生成"
                         title="停止并保留已经生成的内容；排队的消息会暂停发送"
                         disabled={
-                          chat.submitting || chat.generation?.status !== "running"
+                          chat.submitting || chat.stopping || chat.generation?.status !== "running"
                         }
                         onClick={chat.stop}
                       >

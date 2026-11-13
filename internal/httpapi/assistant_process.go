@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -195,20 +196,28 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		if s.ExecutionRunnerID != "" {
 			wire.Argv[0] = assistantEngineBinary(command.Provider)
 		}
-		preparing = false
-		started, err := call(ctx, runtime.ConversationProcessRequest{Operation: "start", Command: wire, Token: s.Token, Gateway: config.Current().AgentToolGateway})
+		id, err := runtime.NewConversationProcessID()
 		if err != nil {
 			return "", err
 		}
 		var stopOnce sync.Once
 		stopProcess := func() {
 			stopOnce.Do(func() {
-				stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-				defer cancel()
-				_, _ = call(stopCtx, runtime.ConversationProcessRequest{Operation: "stop", ID: started.ID})
+				// The ID is addressable before start is dispatched. Stop also fences
+				// a queued start, so a lost response cannot leave a CLI running.
+				_ = waitConversationProcessStop(context.WithoutCancel(ctx), id, call, nil)
 			})
 		}
 		defer stopProcess()
+		preparing = false
+		started, err := call(ctx, runtime.ConversationProcessRequest{Operation: "start", ID: id, Command: wire, Token: s.Token, Gateway: config.Current().AgentToolGateway})
+		if err != nil {
+			if errors.Is(err, runtime.ErrConversationNotStarted) {
+				stopOnce.Do(func() {}) // confirmed failure before process execution
+			}
+			return "", err
+		}
+
 		ioCtx, stopIO := context.WithCancel(ctx)
 		defer stopIO()
 		inputErrors := make(chan error, 1)
@@ -251,7 +260,15 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		}
 		after := int64(0)
 		for {
+			if err := ioCtx.Err(); err != nil {
+				return "", err
+			}
 			result, pollErr := call(ioCtx, runtime.ConversationProcessRequest{Operation: "poll", ID: started.ID, After: after})
+			if pollErr == nil && result.Done {
+				// The final poll confirms Exec and descendant cleanup even if
+				// the trailing stdin write failed or the runner disconnects.
+				stopOnce.Do(func() {})
+			}
 			select {
 			case inputErr := <-inputErrors:
 				return "", inputErr
@@ -347,4 +364,37 @@ func stageConversationToolFiles(root string, files agentToolFiles) (string, stri
 		}
 	}
 	return config, settings, nil
+}
+
+// A stop timeout or an idle root cannot rule out a dispatched, queued start.
+// Retry the addressable stop across reconnects until the Runner confirms its
+// cancellation fence and actual process cleanup.
+func waitConversationProcessStop(ctx context.Context, id string, call func(context.Context, runtime.ConversationProcessRequest) (runtime.ConversationProcessResult, error), notify func(bool)) error {
+	waiting := false
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		result, err := call(stopCtx, runtime.ConversationProcessRequest{Operation: "stop", ID: id})
+		cancel()
+		if err == nil && result.Done {
+			break
+		}
+		if !waiting && notify != nil {
+			notify(true)
+		}
+		waiting = true
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		}
+	}
+	if waiting && notify != nil {
+		notify(false)
+	}
+	return nil
 }

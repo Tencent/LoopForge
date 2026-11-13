@@ -1404,7 +1404,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = "0.10.0"
+var runnerVersion = "0.10.1"
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

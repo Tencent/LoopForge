@@ -42,8 +42,10 @@ type assistantWorkspaceTurn struct {
 type assistantWorkspaceLeaseEngine interface {
 	BeginConversationWorkspaceUse(string) (string, error)
 	MaterializeConversationWorkspace(context.Context, string) error
+	EnsureConversationWorkspace(context.Context, string, string) error
 	RenewConversationWorkspaceUse(string, string) error
 	EndConversationWorkspaceUse(context.Context, string, string) error
+	EndConversationWorkspaceUseAsync(context.Context, string, string) (<-chan error, error)
 }
 
 func newAssistantWorkspaceTurn(en assistantWorkspaceLeaseEngine, cancel context.CancelFunc) *assistantWorkspaceTurn {
@@ -126,6 +128,11 @@ func (t *assistantWorkspaceTurn) lease(ctx context.Context, runID string) (conte
 		if err := t.engine.MaterializeConversationWorkspace(ctx, runID); err != nil {
 			return ctx, err
 		}
+		// A session can remain in workspace mode after idle reclamation. Restore
+		// its snapshot before the native CLI can mount or recreate that path.
+		if err := t.engine.EnsureConversationWorkspace(ctx, runID, engine.ConversationWorkspaceToken(ctx, runID)); err != nil {
+			return ctx, err
+		}
 		t.mu.Lock()
 		t.prepared = true
 		t.mu.Unlock()
@@ -188,10 +195,9 @@ func (t *assistantWorkspaceTurn) finishLocked(ctx context.Context) error {
 	if t.token == "" {
 		return nil
 	}
-	// Cancellation and timeouts still need to preserve edits made by tools.
-	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-	err := t.engine.EndConversationWorkspaceUse(saveCtx, t.runID, t.token)
+	// Only hand off the lease here. The background archive is interruptible by
+	// the next turn and must never delay a stop or stream completion.
+	done, err := t.engine.EndConversationWorkspaceUseAsync(ctx, t.runID, t.token)
 	if err != nil {
 		err = fmt.Errorf("工作区 %s：%w", t.runID, err)
 		if t.saveErrors == nil {
@@ -200,6 +206,7 @@ func (t *assistantWorkspaceTurn) finishLocked(ctx context.Context) error {
 		t.saveErrors[t.runID] = err
 	} else {
 		delete(t.saveErrors, t.runID)
+		trackAssistantWorkspaceSave(t.runID, done)
 	}
 	t.runID, t.token = "", ""
 	t.prepared = false
@@ -222,4 +229,16 @@ func (t *assistantWorkspaceTurn) close(ctx context.Context) error {
 	t.mu.Unlock()
 	<-t.done
 	return err
+}
+
+// Background failures are durable workspace metadata. Never write a late save
+// result into a completed generation or a subsequent turn's stream.
+func trackAssistantWorkspaceSave(runID string, result <-chan error) {
+	done := inflightTasks.Add()
+	go func() {
+		defer done()
+		if err := <-result; err != nil {
+			log.Printf("assistant background workspace save run=%s: %v", runID, err)
+		}
+	}()
 }

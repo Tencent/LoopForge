@@ -27,7 +27,7 @@ type AssistantGeneration struct {
 	// turn keeps what it already wrote, then continues from that point.
 	Steer           *AssistantSteer `json:"steer,omitempty"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
-	CancelRequested bool            `json:"-"`
+	CancelRequested bool            `json:"cancelRequested,omitempty"`
 	// MessageCount is the transcript length this turn answers; an interrupted
 	// reply is appended only while the transcript still ends there.
 	MessageCount int `json:"messageCount,omitempty"`

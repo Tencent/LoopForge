@@ -125,52 +125,52 @@ func TestNativeApprovalAllowsPlatformReadsAndRejectsEffects(t *testing.T) {
 	}
 }
 
-func TestNativeApprovalRequiresExactInitiatingActorAndNewAction(t *testing.T) {
-	h, a, b, _, conv := sharedWorkbenchFixture(t)
+func TestWorkspaceNativeToolsRunWithoutReviewInEveryApprovalMode(t *testing.T) {
+	h, actor, _, _, conv := sharedWorkbenchFixture(t)
 	gateway := &agentToolGateway{deps: h.deps}
-	generation := domain.AssistantGeneration{ID: "native-generation", UserID: a.ID, SessionID: conv.ID, ActorID: a.ID, Status: "running"}
+	generation := domain.AssistantGeneration{ID: "native-generation", UserID: actor.ID, SessionID: conv.ID, ActorID: actor.ID, Status: "running"}
 	if err := h.repo.BeginAssistantGeneration(generation); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), assistantControlScopeKey{}, assistantControlScope{GenerationID: generation.ID}))
 	defer cancel()
-	s := &AgentToolSession{Token: "native-phase", UserID: a.ID, User: a, ChatOwnerID: a.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModeWorkspace, ctx: ctx}
-	input := json.RawMessage(`{"id":"one","name":"Write","input":{"path":"approved.txt","content":"exact"}}`)
-	for i := 0; i < 3; i++ {
-		if result := gateway.approveNativeTool(ctx, s, input); !result.Pending || result.Allow {
-			t.Fatal(result)
+	s := &AgentToolSession{Token: "native-phase", UserID: actor.ID, User: actor, ChatOwnerID: actor.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModeWorkspace, ctx: ctx,
+		approvalReviewer: func(context.Context, string, string, map[string]any) assistantApprovalReview {
+			t.Fatal("native development invoked AI review")
+			return assistantApprovalReview{}
+		},
+	}
+	for _, mode := range []string{AssistantApprovalConfirm, AssistantApprovalAssisted, AssistantApprovalAuto} {
+		s.ExecMode = assistantExecModeForApproval(mode)
+		for _, input := range []string{
+			`{"id":"read","name":"Read","input":{"path":"note.txt"}}`,
+			`{"id":"write","name":"Write","input":{"path":"note.txt","content":"edit"}}`,
+			`{"id":"patch","name":"apply_patch","input":{"patch":"*** Begin Patch"}}`,
+			`{"id":"shell","name":"Bash","input":{"command":"pwd && npm test"}}`,
+		} {
+			if result := gateway.approveNativeTool(ctx, s, json.RawMessage(input)); !result.Allow || result.Pending {
+				t.Fatalf("%s: %s: %+v", mode, input, result)
+			}
 		}
 	}
-	items := h.repo.PendingNativeApprovals(a.ID, conv.ID)
-	if len(items) != 1 {
-		t.Fatalf("transport polls duplicated request: %v", items)
+	if items := h.repo.PendingNativeApprovals(actor.ID, conv.ID); len(items) != 0 {
+		t.Fatalf("native development created approvals: %+v", items)
 	}
-	item := items[0]
-	if err := h.repo.DecideNativeApproval(a.ID, b.ID, conv.ID, item.ID, "allow"); err == nil {
-		t.Fatal("different actor approved")
-	}
-	if err := h.repo.DecideNativeApproval(a.ID, a.ID, conv.ID, item.ID, "allow"); err != nil {
-		t.Fatal(err)
-	}
-	if result := gateway.approveNativeTool(ctx, s, input); !result.Allow || result.Pending {
-		t.Fatal("approved exact action denied", result)
-	}
-	changed := json.RawMessage(`{"id":"one","name":"Write","input":{"path":"different.txt","content":"exact"}}`)
-	if result := gateway.approveNativeTool(ctx, s, changed); result.Allow || result.Pending {
-		t.Fatal("invocation ID reused for different input", result)
-	}
-	changed = json.RawMessage(`{"id":"two","name":"Write","input":{"path":"different.txt","content":"new"}}`)
-	if result := gateway.approveNativeTool(ctx, s, changed); !result.Pending || result.Allow {
-		t.Fatal("old receipt authorized new action", result)
-	}
+	input := json.RawMessage(`{"name":"Bash","input":{"command":"pwd"}}`)
 	s.nativePhaseClosed.Store(true)
-	if result := gateway.approveNativeTool(ctx, s, input); result.Allow || result.Pending {
-		t.Fatal("exited CLI kept its authorization", result)
+	if result := gateway.approveNativeTool(ctx, s, input); result.Allow {
+		t.Fatal("exited phase retained native access")
 	}
 	s.nativePhaseClosed.Store(false)
+	if err := h.repo.CancelAssistantGeneration(actor.ID, conv.ID, generation.ID); err != nil {
+		t.Fatal(err)
+	}
+	if result := gateway.approveNativeTool(ctx, s, input); result.Allow {
+		t.Fatal("persisted cancellation retained native access")
+	}
 	cancel()
-	if result := gateway.approveNativeTool(context.Background(), s, input); result.Allow || result.Pending {
-		t.Fatal("cancelled turn kept its authorization", result)
+	if result := gateway.approveNativeTool(context.Background(), s, input); result.Allow {
+		t.Fatal("cancelled turn retained native access")
 	}
 }
 
@@ -237,5 +237,57 @@ func TestNativeApprovalRecognizesCLIGatewayAliases(t *testing.T) {
 	}
 	if _, err := g.callTool(withAgentToolToken(context.Background(), s.Token), s, json.RawMessage(`{"name":"agents_save","arguments":{}}`)); err == nil {
 		t.Fatal("native gateway exception bypassed workspace restrictions")
+	}
+}
+
+func TestRollingDeploymentSettlesOnlyLiveWorkspaceNativeRequests(t *testing.T) {
+	for _, state := range []string{"workspace", "platform", "cancelled"} {
+		t.Run(state, func(t *testing.T) {
+			h, actor, _, _, session := sharedWorkbenchFixture(t)
+			g := domain.AssistantGeneration{ID: "old-worker", SessionID: session.ID, UserID: actor.ID, ActorID: actor.ID, Status: "running"}
+			if err := h.repo.BeginAssistantGeneration(g); err != nil {
+				t.Fatal(err)
+			}
+			mode := domain.AssistantModeWorkspace
+			if state == "platform" {
+				mode = domain.AssistantModePlatform
+			}
+			if err := h.repo.SetAssistantRuntimeMode(actor.ID, session.ID, session.ProjectID, mode, g.ID); err != nil {
+				t.Fatal(err)
+			}
+			for _, decision := range []string{"pending", "deny"} {
+				if err := h.repo.CreateNativeApproval(actor.ID, session.ID, "old-phase", domain.AssistantNativeApproval{ID: decision, GenerationID: g.ID, ActorID: actor.ID, Tool: "Bash", Input: json.RawMessage(`{"command":"pwd"}`)}); err != nil {
+					t.Fatal(err)
+				}
+				if decision == "deny" {
+					if err := h.repo.DecideNativeApproval(actor.ID, actor.ID, session.ID, decision, "deny"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if state == "cancelled" {
+				if err := h.repo.CancelAssistantGeneration(actor.ID, session.ID, g.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, ok := h.currentGeneration(actor.ID, session.ID); !ok {
+				t.Fatal("generation missing")
+			}
+			if state == "cancelled" {
+				return
+			}
+			item, ok := h.repo.NativeApproval(actor.ID, session.ID, "pending")
+			want := "pending"
+			if state == "workspace" {
+				want = "allow"
+			}
+			if !ok || item.Decision != want {
+				t.Fatalf("legacy %s request: %+v", state, item)
+			}
+			denied, ok := h.repo.NativeApproval(actor.ID, session.ID, "deny")
+			if !ok || denied.Decision != "deny" {
+				t.Fatal("explicit old refusal changed")
+			}
+		})
 	}
 }

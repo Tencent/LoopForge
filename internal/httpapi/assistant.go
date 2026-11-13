@@ -331,7 +331,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		if req.RunID == "" && h.engine != nil {
 			sess.workspaceTurn = newAssistantWorkspaceTurn(h.engine, cancelModel)
 			defer func() {
-				if err := sess.workspaceTurn.close(ctx); err != nil {
+				if err := sess.workspaceTurn.close(modelCtx); err != nil {
 					warning := "工作区保存未完成，暂缓回收：" + err.Error()
 					log.Printf("assistant workspace session=%s: %v", req.SessionID, err)
 					if sink != nil {
@@ -736,7 +736,7 @@ func assistantModeTurnReminder(mode string) string {
 	case AssistantApprovalAuto:
 		return "当前审批模式为「完全权限」：平台写入工具直接调用即生效，不要提交 drafts，一次性完成全部步骤后汇总结果。"
 	case AssistantApprovalAssisted:
-		return "当前审批模式为「帮我批准」：具体平台写入和工作区编程操作由独立 AI 审查对话授权，通过才执行；未批准或审查不可用时，平台写入放入 drafts 供用户确认，工作区操作说明原因并等待明确授权，不要绕过审查。"
+		return "当前审批模式为「帮我批准」：Docker 工作区原生文件和命令直接执行；平台写入、提交 MR 等外部操作由独立 AI 审查对话授权，通过才执行；未批准或审查不可用时，平台写入放入 drafts 供用户确认，其它外部操作说明原因并等待明确授权，不要绕过审查。"
 	default:
 		return "当前审批模式为「每次确认」：平台写入工具不可直接调用，需要写入时提交 drafts（每轮 1 个）供用户确认，不要声称已保存。"
 	}
@@ -986,7 +986,7 @@ const assistantDraftProtocolPrompt = `写入先形成草稿：不要直接调用
 const assistantAutoWriteProtocolPrompt = `当前审批模式为「完全权限」：用户已授权平台写入工具调用即生效。直接按依赖顺序调用平台读写工具完成任务的全部步骤（环境/Dockerfile → 沙箱 → Rules/Skills/MCP → 角色 → SOP → 定时任务），不要把写入放进 drafts，不要请求用户确认，也不要让用户说"继续"：一次性完成全部步骤后，在 message 中按步骤汇总实际执行结果。构建 SOP 时每个 agent 类型节点必须绑定已存在的角色 id 并填写 prompt；所需角色不存在时先创建角色再保存 SOP。删除类操作前必须先用只读工具检查引用关系；平台返回冲突（如仍被引用）时如实说明并调整方案。不要用本地 Bash/Write/Edit 操作控制平面目录；代码任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生文件和命令工具操作。
 ` + assistantWorkflowDocumentPrompt
 
-const assistantAssistedProtocolPrompt = `当前审批模式为「帮我批准」：直接调用平台写入工具。编程任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生工具。每次具体写入、命令执行或提交 MR 前，平台会让独立审查模型根据本次操作、完整参数和当前用户的对话授权判断是否批准；通过才执行，不按工具名一概放行。收到未批准或审批不可用的提示后，解释具体原因，平台写入放入 drafts（每轮 1 个，含完整参数）供用户确认，工作区操作等待用户明确授权；不要绕过审查、换工具实现同一副作用或反复尝试。提交删除类草稿前先检查引用关系并携带目标 id。不要用本地 Bash/Write/Edit 操作控制平面目录。
+const assistantAssistedProtocolPrompt = `当前审批模式为「帮我批准」：直接调用平台写入工具。编程任务先打开工作区，明确开始交接后结束当前阶段，平台续接到 Docker 内后使用 CLI 原生工具。Docker 工作区原生文件、补丁和命令直接执行。平台写入、提交 MR 等外部操作前，平台会让独立审查模型根据本次操作、完整参数和当前用户的对话授权判断是否批准；通过才执行，不按工具名一概放行。收到未批准或审批不可用的提示后，解释具体原因，平台写入放入 drafts（每轮 1 个，含完整参数）供用户确认，其它外部操作等待用户明确授权；不要绕过审查、换工具实现同一副作用或反复尝试。提交删除类草稿前先检查引用关系并携带目标 id。不要用本地 Bash/Write/Edit 操作控制平面目录。
 ` + assistantWorkflowDocumentPrompt
 
 const assistantCommonTailPrompt = assistantModePresentationPrompt + "\n" + `普通问答和只读查询直接自然语言回复；只有提交待确认草稿时调用 mcp__agentflow_session__submit_assistant_reply。该工具成功后立即结束本轮，不能用来发送“稍等”“我先看看”等进度消息，不接受空 drafts。进度请用普通文本说明后继续调用工具：开始一组相关的工具调用或调整方向前，先用一两句中文告诉用户要查什么、刚发现了什么（例如“先查澄清面板的前端代码，确认模型选择器有没有被禁用。”），界面会把这些说明和随后折叠的工具步骤交替展示；不要每个工具调用前都写，不要复述命令本身或贴内部推理原文。用户要求执行时必须推进到实际执行结果、可确认的完整草稿或明确的阻塞原因，不能只承诺下一步就结束。模式切换工具明确开始交接后必须结束当前阶段，由平台自动续接并继续本轮任务。这是已直接提供的 MCP 终态工具，使用这个完整名称，不要把 submit_assistant_reply 裸名当成内置工具交给 DeferExecuteTool。若该工具不可用，不要反复搜索或尝试调用，不要声称草稿已提交。只使用当前项目；未选择项目时不要生成项目内资产。新建 ID 用项目 ID 前缀加语义英文短名。修改必须保留完整字段。不要把 shared 设为 true，不要填写 gitToken 等凭据。

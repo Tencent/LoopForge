@@ -234,6 +234,17 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	case <-conn.done:
 		return domain.RunnerWorkspaceResponse{}, true, errRunnerWorkspaceUnavailable
 	case <-ctx.Done():
+		// Chunked exports hold the runner's workspace fence. End the remote
+		// request too; cancelling only our waiter would strand the next turn.
+		if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
+			timer := time.NewTimer(time.Second)
+			select {
+			case conn.send <- runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}:
+			case <-conn.done:
+			case <-timer.C:
+			}
+			timer.Stop()
+		}
 		return domain.RunnerWorkspaceResponse{}, true, ctx.Err()
 	}
 }

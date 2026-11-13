@@ -73,6 +73,7 @@ const PROJECT_LIST_TOOLS = new Set([
 const initialProject =
   new URLSearchParams(location.search).get("projectId") || "";
 export function useChat() {
+  const stopRequestRef = useRef(null);
   const [user, setUser] = useState(null),
     [projects, setProjects] = useState([]),
     [sandboxes, setSandboxes] = useState([]),
@@ -101,6 +102,7 @@ export function useChat() {
     [executor, setExecutorState] = useState(storedExecutor),
     [providerCatalogs, setProviderCatalogs] = useState({}),
     [generation, setGeneration] = useState(null),
+    [stopRequest, setStopRequest] = useState(null),
     [live, setLive] = useState({ answer: "", thinking: "", tools: [] }),
     [error, setError] = useState(""),
     [ready, setReady] = useState(false),
@@ -363,6 +365,7 @@ export function useChat() {
       accumulated = mergeEvents(accumulated, events);
       setLive(accumulated);
       setGeneration(g);
+      if (g.status !== "running") setStopRequest((old) => old?.generationId === g.id ? null : old);
 	  if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
 	    setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
 	  }
@@ -862,7 +865,11 @@ export function useChat() {
     }
   }
   async function stop() {
-    if (!activeId) return;
+    if (!activeId || generation?.status !== "running" || generation.cancelRequested ||
+      (stopRequestRef.current?.sessionId === activeId && stopRequestRef.current.generationId === generation.id)) return;
+    const request = { sessionId: activeId, generationId: generation.id };
+    stopRequestRef.current = request;
+    setStopRequest(request);
     // Stopping means "wait for me": queued messages stay, but do not go out.
     setQueues((old) => holdQueue(old, activeId, true));
     try {
@@ -870,9 +877,11 @@ export function useChat() {
         `${sessionPath(activeId)}/generation/cancel?generationId=${encodeURIComponent(generation?.id || "")}`,
         {},
       );
-      setError("");
+      if (currentId.current === request.sessionId) setError("");
     } catch (e) {
-      setError(e.message);
+      if (stopRequestRef.current === request) stopRequestRef.current = null;
+      setStopRequest((old) => old === request ? null : old);
+      if (currentId.current === request.sessionId) setError(e.message);
     }
   }
   async function rename(id, title) {
@@ -1132,15 +1141,6 @@ export function useChat() {
     if (currentId.current && !sessionRef.current) throw new Error("会话仍在加载，请稍后选择。");
     return {runnerId};
   }
-  async function switchRuntimeMode(mode) {
-    const current = sessionRef.current;
-    if (!current || submittingRef.current || generation?.status === "running") return false;
-    try {
-      const saved = await write(`${sessionPath(current.id)}/mode`, {mode}, "PUT");
-      if (currentId.current === current.id) { sessionRef.current = saved; setSession(saved); }
-      return true;
-    } catch (e) { setError(e.message); return false; }
-  }
   async function selectSandbox(id) {
     const current = sessionRef.current;
     if (submittingRef.current || sandboxBusyRef.current || generation?.status === "running") return false;
@@ -1223,7 +1223,6 @@ export function useChat() {
     workspaceExecutionError,
     ...executionMachines,
     selectSandbox,
-    switchRuntimeMode,
     models: executorModels,
     executor,
     executors: EXECUTORS,
@@ -1245,6 +1244,8 @@ export function useChat() {
     ready,
     submitting,
     busy: submitting || generation?.status === "running",
+    stopping: generation?.status === "running" && (generation.cancelRequested ||
+      (stopRequest?.sessionId === activeId && stopRequest.generationId === generation.id)),
     queue: (activeId && queues[activeId]?.items) || [],
     queueHeld: !!(activeId && queues[activeId]?.held),
     removeQueued: removeQueuedMessage,

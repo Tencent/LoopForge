@@ -1,6 +1,9 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"time"
+
 	"bytes"
 	"context"
 	"errors"
@@ -180,5 +183,91 @@ func TestUnstartedSharedSessionRetainsIdentityAndUsesFullPrompt(t *testing.T) {
 	defer uncertain.Close()
 	if !uncertain.resume || uncertain.checkpoint.SessionID != id {
 		t.Fatal("uncertain start discarded its native session")
+	}
+}
+
+func TestConversationStopWaitsForConfirmedExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	attempts, notices := 0, []bool{}
+	call := func(ctx context.Context, req runtime.ConversationProcessRequest) (runtime.ConversationProcessResult, error) {
+		if ctx.Err() != nil {
+			t.Fatal("cleanup inherited cancelled turn")
+		}
+		if req.Operation != "stop" {
+			t.Fatal("only an addressable stop can rule out queued starts", req.Operation)
+		}
+		attempts++
+		if attempts == 1 {
+			return runtime.ConversationProcessResult{}, context.DeadlineExceeded
+		}
+		return runtime.ConversationProcessResult{Done: true}, nil
+	}
+	if err := waitConversationProcessStop(ctx, "process", call, func(waiting bool) { notices = append(notices, waiting) }); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(notices) != 2 || !notices[0] || notices[1] {
+		t.Fatalf("lost reply was treated as exit: %d %v", attempts, notices)
+	}
+}
+
+func TestConversationStopBeforeRemoteStartReplyConfirmsExit(t *testing.T) {
+	h, user := workbenchFixture(t)
+	const runnerID = "cancel-start-reply"
+	if err := h.repo.PutRunner(domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}); err != nil {
+		t.Fatal(err)
+	}
+	hub := quietRunnerHub()
+	h.runnerControls = hub
+	conn := testRunnerConn(runnerID)
+	registerTestConn(hub, conn)
+	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "lost-start", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	execute := h.conversationExecutor(s, t.TempDir())
+	remoteRoot := t.TempDir()
+	pool := &runtime.ConversationProcessPool{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := execute(ctx, "", runtime.CommandSpec{Argv: []string{"sh", "-c", "sleep 30"}, Provider: "codebuddy"}, runtime.RunCredentials{}, nil)
+		done <- err
+	}()
+	deadline := time.After(3 * time.Second)
+	var processID string
+	for {
+		var message runnerControlMessage
+		select {
+		case message = <-conn.send:
+		case err := <-done:
+			if processID == "" {
+				t.Fatal("executor exited before start", err)
+			}
+			result, pollErr := pool.Handle(context.Background(), remoteRoot, "", nil, runtime.ConversationProcessRequest{Operation: "poll", ID: processID}, nil)
+			if pollErr != nil || !result.Done {
+				t.Fatalf("executor returned with unacknowledged CLI still alive: %+v %v", result, pollErr)
+			}
+			return
+		case <-deadline:
+			t.Fatal("cancel did not promptly confirm process exit")
+		}
+		var req runtime.ConversationProcessRequest
+		if err := json.Unmarshal(message.WorkspaceRequest.Conversation, &req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Command != nil {
+			req.Command.Argv[0] = "sh"
+		}
+		result, err := pool.Handle(context.Background(), remoteRoot, "", nil, req, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Operation == "start" {
+			processID = result.ID
+			defer pool.Handle(context.Background(), remoteRoot, "", nil, runtime.ConversationProcessRequest{Operation: "stop", ID: processID}, nil)
+			cancel() // lose the response after Runner accepted the start
+			continue
+		}
+		payload, _ := json.Marshal(result)
+		hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
 	}
 }

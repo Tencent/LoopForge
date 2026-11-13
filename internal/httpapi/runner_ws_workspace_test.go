@@ -346,3 +346,45 @@ func TestRunnerWorkspaceHandoverDrainIsBounded(t *testing.T) {
 		t.Fatalf("stuck request: %v", got.err)
 	}
 }
+
+func TestRunnerCheckpointCancellationReachesExecutorOnlyForOneShotRequests(t *testing.T) {
+	for _, operation := range []string{domain.RunnerWorkspaceOperationCheckpointExport, "conversation_process"} {
+		t.Run(operation, func(t *testing.T) {
+			hub := quietRunnerHub()
+			conn := testRunnerConn("runner-cancel")
+			registerTestConn(hub, conn)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{Operation: operation})
+				done <- err
+			}()
+			request := <-conn.send
+			cancel()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("request cancellation blocked")
+			}
+			if operation == "conversation_process" {
+				select {
+				case unexpected := <-conn.send:
+					t.Fatalf("persistent CLI lifecycle cancelled by RPC: %+v", unexpected)
+				default:
+				}
+			} else {
+				select {
+				case stop := <-conn.send:
+					if stop.Type != "workspace.cancel" || stop.RequestID != request.RequestID {
+						t.Fatalf("wrong cancellation: %+v", stop)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("export cancellation not sent")
+				}
+			}
+		})
+	}
+}

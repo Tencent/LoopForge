@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -93,6 +94,7 @@ type assistantLiveGeneration struct {
 	mu      sync.Mutex
 	changed chan struct{}
 	read    func() domain.AssistantGeneration
+	cancel  context.CancelFunc
 }
 
 var assistantLiveGenerations sync.Map
@@ -189,6 +191,7 @@ func streamPersistedAssistantGeneration(c *gin.Context, g domain.AssistantGenera
 	}
 	writeAssistantSSE(c, g)
 	id := g.ID
+	cancelRequested := g.CancelRequested
 	poll := time.NewTicker(assistantPersistedPollInterval)
 	defer poll.Stop()
 	heartbeat := time.NewTicker(10 * time.Second)
@@ -226,10 +229,11 @@ func streamPersistedAssistantGeneration(c *gin.Context, g domain.AssistantGenera
 				}
 			}
 			g.Events = events
-			if len(events) == 0 && g.Status == "running" {
+			if len(events) == 0 && g.Status == "running" && g.CancelRequested == cancelRequested {
 				continue
 			}
 		}
+		cancelRequested = g.CancelRequested
 		writeAssistantSSE(c, g)
 		if g.Status != "running" {
 			return

@@ -84,6 +84,8 @@ func (d *Daemon) controlLoop(ctx context.Context) {
 func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var requests sync.WaitGroup
+	var checkpointMu sync.Mutex
+	checkpointCancels := map[string]context.CancelFunc{}
 	var writeMu sync.Mutex
 	writeMessage := func(message controlMessage) error {
 		writeMu.Lock()
@@ -160,6 +162,15 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 			}
 			continue
 		}
+		if message.Type == "workspace.cancel" {
+			checkpointMu.Lock()
+			stop := checkpointCancels[message.RequestID]
+			checkpointMu.Unlock()
+			if stop != nil {
+				stop()
+			}
+			continue
+		}
 		if message.Type == "task.control" {
 			d.signalTaskControl(message.TaskID, message.DesiredState)
 			continue
@@ -175,16 +186,30 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 				}
 				continue
 			}
+			requestCtx := ctx
+			stopRequest := func() {}
+			if domain.IsWorkspaceCheckpointTransferOperation(message.WorkspaceRequest.Operation) || message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationCheckpoint {
+				requestCtx, stopRequest = context.WithCancel(ctx)
+				checkpointMu.Lock()
+				checkpointCancels[message.RequestID] = stopRequest
+				checkpointMu.Unlock()
+			}
 			requests.Add(1)
-			go func(message controlMessage) {
+			go func(message controlMessage, requestCtx context.Context, stopRequest context.CancelFunc) {
 				defer requests.Done()
 				defer func() { <-slots }()
-				response := d.readRunnerWorkspace(ctx, *message.WorkspaceRequest)
+				defer func() {
+					stopRequest()
+					checkpointMu.Lock()
+					delete(checkpointCancels, message.RequestID)
+					checkpointMu.Unlock()
+				}()
+				response := d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
 				err := writeMessage(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})
 				if err != nil {
 					_ = conn.Close()
 				}
-			}(message)
+			}(message, requestCtx, stopRequest)
 		}
 	}
 }

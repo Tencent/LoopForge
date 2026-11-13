@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
 var conversationKeyPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -75,8 +77,8 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 	} else {
 		factory = func(envCtx context.Context, nativeRoot string) (runtime.Sandbox, func(), error) {
 			gate := d.requestGate(request)
-			if !gate.TryLock() {
-				return nil, nil, newWorkspaceBusyError("workspace is in use")
+			if err := lockConversationWorkspace(envCtx, gate); err != nil {
+				return nil, nil, err
 			}
 			task, err := d.workspaceSandboxTask(workspace, request)
 			if err != nil {
@@ -113,4 +115,28 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 		return runnerWorkspaceError(err)
 	}
 	return runnerWorkspacePayload(result)
+}
+
+// A cancelled background export may have been queued when the API preempted
+// it. Wait for that gate here, before any CLI is created; never replay start.
+func lockConversationWorkspace(ctx context.Context, gate *sync.RWMutex) error {
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if gate.TryLock() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return newWorkspaceBusyError("workspace is in use")
+		case <-ticker.C:
+		}
+	}
 }

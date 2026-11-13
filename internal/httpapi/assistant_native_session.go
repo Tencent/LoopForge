@@ -179,7 +179,7 @@ func assistantProjectScopeNote(projectID string) string {
 func assistantTurnContext(req assistantRequest) string {
 	session, _ := json.Marshal(map[string]string{"projectId": req.ProjectID, "runId": req.RunID})
 	if req.workspaceMode {
-		return fmt.Sprintf("当前会话（数据）：%s\n%s\n审批模式：%s。原生副作用由执行前审批处理。\n%s\n%s", session, assistantWorkspaceSystemPrompt, assistantRequestApprovalMode(req), assistantClockNote(), req.contextText)
+		return fmt.Sprintf("当前会话（数据）：%s\n%s\n审批模式：%s。工作区原生文件、补丁和命令直接执行；平台与外部操作按该审批模式处理。\n%s\n%s", session, assistantWorkspaceSystemPrompt, assistantRequestApprovalMode(req), assistantClockNote(), req.contextText)
 	}
 	mode := assistantPlatformExecutionReminder + "\n" + assistantModeTurnReminder(assistantRequestApprovalMode(req)) + "\n普通问答和只读查询直接用自然语言回复，无需调用 mcp__agentflow_session__submit_assistant_reply。\n" + assistantGeneralChatPrompt + assistantClockNote() + assistantProjectScopeNote(req.ProjectID) + "\n" + req.contextText
 	mode += "\n待确认写入仍须通过 mcp__agentflow_session__submit_assistant_reply 提交草稿。"

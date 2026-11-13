@@ -76,6 +76,14 @@ func TestRunnerSupportsWorkBranchSync(t *testing.T) {
 	}
 }
 
+func TestRunnerSupportsConversationCLIWithInterruptibleSnapshots(t *testing.T) {
+	for version, want := range map[string]bool{"": false, "dev": false, "0.9.9": false, "0.10.0": false, "0.10.1": true, "v0.10.1": true, "0.11.0": true} {
+		if got := (Runner{RunnerVersion: version}).SupportsConversationCLI(); got != want {
+			t.Errorf("SupportsConversationCLI(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
 func TestRunnerSupportsCreateNewWorkBranch(t *testing.T) {
 	for version, want := range map[string]bool{
 		"": false, "dev": false, "0.9.0": false, "0.9.1": true, "0.10.0": true, "1.0.0": true,

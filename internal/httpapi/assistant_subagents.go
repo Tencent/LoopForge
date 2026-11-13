@@ -314,7 +314,7 @@ func conversationRoleAgentFile(role roleSubagent, workspace bool) string {
 	if !workspace {
 		return body
 	}
-	body = strings.Replace(body, subagentChatNotes, "你和 Main Bot 在同一 Docker 工作区，使用原生文件和命令工具，遵守当前审批模式。不能打开或切换工作区，不能切回平台模式；需要切换时向 Main Bot 汇报。\n", 1)
+	body = strings.Replace(body, subagentChatNotes, "你和 Main Bot 在同一 Docker 工作区，使用原生文件和命令工具直接执行；平台与外部操作遵守当前审批模式。不能打开或切换工作区，不能切回平台模式；需要切换时向 Main Bot 汇报。\n", 1)
 	body = strings.Replace(body, "  - mcp__agentflow_session__workbench_workspace_open\n", "  - mcp__agentflow_session__workbench_workspace_open\n  - mcp__agentflow_session__workbench_platform_mode\n", 1)
 	return body
 }
