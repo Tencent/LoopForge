@@ -1225,6 +1225,11 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		log.Printf("assistant CLI resolve failed: %v", err)
 		return "", "", err
 	}
+	if engine == runtime.AgentCLIDeepSeek {
+		if err := ensureAssistantDSHVersion(ctx, bin); err != nil {
+			return "", "", err
+		}
+	}
 	root := req.SessionRoot
 	if root == "" {
 		root = assistantSessionRoot(user.ID)
