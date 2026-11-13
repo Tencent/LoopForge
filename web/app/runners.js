@@ -12,6 +12,7 @@ async function refreshRunners(silent){
     state.runners=runners||[];
     state.defaultRunnerId=def?.runnerId||'';
     state.cloudPool=def?.cloudPool||null;
+    state.minRunnerVersion=def?.minRunnerVersion||'';
     renderRunnersView();
   }catch(e){if(!silent)toast(e.message)}
 }
@@ -147,9 +148,10 @@ function renderRunnersView(){
     const cliSection=cliRows||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
     const shared=!(Number(r.ownerUserId)>0);
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
+    const defaultBlocker=isDefault?'':runnerDefaultBlocker(r);
     return `<article class="runner-card panel ${isDefault?'is-default':''}">
       <div class="runner-card-head">
-        <div class="runner-card-title"><div class="runner-card-name"><b title="${escapeHTML(r.id)}">${escapeHTML(r.name||r.id)}</b>${isDefault?'<span class="runner-tag default">默认</span>':''}${shared?'<span class="runner-tag">共享</span>':''}</div><small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · ${runnerLastSeenHTML(r.lastSeenAt)}</small></div>
+        <div class="runner-card-title"><div class="runner-card-name"><b title="${escapeHTML(r.id)}">${escapeHTML(r.name||r.id)}</b>${isDefault?'<span class="runner-tag default">默认</span>':''}${shared?'<span class="runner-tag">共享</span>':''}</div><small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · Runner ${escapeHTML(r.runnerVersion||'未知')} · ${runnerLastSeenHTML(r.lastSeenAt)}</small></div>
         ${runnerStatusLabel(r.status)}
       </div>
       <div class="runner-runtime-list">${cliSection}</div>
@@ -158,7 +160,7 @@ function renderRunnersView(){
         <span class="runner-card-spacer"></span>
         ${isDefault?'<button class="button ghost small runner-text-button" type="button" data-set-default="">切回云端</button>':''}
         ${r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
-        ${isDefault?'':`<button class="button hui-btn-soft small" type="button" ${r.status==='online'?'':'disabled title="机器离线"'} data-set-default="${escapeHTML(r.id)}">设为默认</button>`}
+        ${isDefault?'':`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为默认</button>`}
       </div>
     </article>`;
   }).join('')||'<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
@@ -189,6 +191,22 @@ async function removeRunner(runnerId){
     await api(`/api/runners/${encodeURIComponent(runnerId)}`,{method:'DELETE'});
     toast('已移除','ok');refreshRunners(true);
   }catch(err){toast(err.message)}
+}
+// Mirrors domain.Runner.DefaultSelectionBlocker so the page and
+// PUT /api/runners/default refuse the same machines with the same reason.
+function runnerVersionAtLeast(have,want){
+  const parse=v=>{const parts=String(v||'').trim().replace(/^v/,'').split('.');return parts.every(p=>/^\d+$/.test(p))?parts.map(Number):null};
+  const h=parse(have),w=parse(want);
+  if(!w)return true;
+  if(!h)return false;
+  for(let i=0;i<w.length;i++){const hv=h[i]||0;if(hv!==w[i])return hv>w[i]}
+  return true;
+}
+function runnerDefaultBlocker(r){
+  if(r.status!=='online')return '机器离线';
+  const min=state.minRunnerVersion||'';
+  if(min&&!runnerVersionAtLeast(r.runnerVersion,min))return `执行机器版本 ${r.runnerVersion||'未知'} 过低，需升级至 ${min} 及以上`;
+  return '';
 }
 async function setDefaultRunner(runnerId){
   try{
