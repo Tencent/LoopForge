@@ -153,21 +153,31 @@ func installNPMCLI(ctx context.Context, spec onDemandCLI) (string, error) {
 	if err := os.Chmod(stage, 0o755); err != nil {
 		return "", err
 	}
+	cmd := exec.CommandContext(ctx, "npm", npmCLIInstallArgs(stage, spec)...)
+	cmd.Dir = stage
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", errors.New(installCommandError(ctx, err, out))
+	}
+	return activateNPMStage(parent, stage, spec.Binary)
+}
+
+// npmCLIInstallArgs builds the npm install argv for installing spec into stage.
+func npmCLIInstallArgs(stage string, spec onDemandCLI) []string {
 	args := []string{"install", "--prefix", stage, "--no-audit", "--no-fund", "--omit=dev", "--save-exact"}
 	if spec.RelaxEngines {
 		args = append(args, "--engine-strict=false")
 	} else {
 		args = append(args, "--engine-strict")
 	}
-	args = append(args, spec.Package)
-	cmd := exec.CommandContext(ctx, "npm", args...)
-	cmd.Dir = stage
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", errors.New(installCommandError(ctx, err, out))
-	}
-	staged := filepath.Join(stage, "node_modules", ".bin", spec.Binary)
+	return append(args, spec.Package)
+}
+
+// activateNPMStage verifies the staged binary, replaces parent/current with
+// stage and returns the binary path inside the activated directory.
+func activateNPMStage(parent, stage, binary string) (string, error) {
+	staged := filepath.Join(stage, "node_modules", ".bin", binary)
 	if !fileIsExecutable(staged) {
-		return "", fmt.Errorf("安装后没有找到可执行文件 %s", spec.Binary)
+		return "", fmt.Errorf("安装后没有找到可执行文件 %s", binary)
 	}
 	target := filepath.Join(parent, "current")
 	if err := os.RemoveAll(target); err != nil {
@@ -176,7 +186,7 @@ func installNPMCLI(ctx context.Context, spec onDemandCLI) (string, error) {
 	if err := os.Rename(stage, target); err != nil {
 		return "", fmt.Errorf("启用安装结果失败：%w", err)
 	}
-	return filepath.Join(target, "node_modules", ".bin", spec.Binary), nil
+	return filepath.Join(target, "node_modules", ".bin", binary), nil
 }
 
 func installScriptCLI(ctx context.Context, spec onDemandCLI) (string, error) {
