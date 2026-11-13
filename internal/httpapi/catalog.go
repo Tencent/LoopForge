@@ -316,7 +316,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			}
 			builtIn, ok := repo.BuiltInExecutor(v.ExecutorID)
 			if !ok {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + v.ExecutorID})
 				return
 			}
 			if err := domain.ValidateAgentEffort(v.Effort, builtIn.Kind); err != nil {
@@ -1228,7 +1228,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		builtIn, ok := repo.BuiltInExecutor(agent.ExecutorID)
 		if !ok {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + agent.ExecutorID})
 			return
 		}
 		if err := domain.ValidateAgentEffort(agent.Effort, builtIn.Kind); err != nil {
