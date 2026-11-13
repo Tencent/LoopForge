@@ -35,70 +35,68 @@ func (f *assistantStreamFilter) accept(ev assistantStreamEvent) bool {
 		f.lastStatus = ev.Text
 		return true
 	case "answer":
-		if ev.Text == "" {
-			return false
-		}
-		if ev.Full {
-			// 增量已经流过同样的文本时丢弃整段重复块。
-			if f.answer != "" && strings.Contains(f.answer, strings.TrimSpace(ev.Text)) {
-				return false
-			}
-			f.answer += ev.Text
-			return true
-		}
-		f.answer += ev.Text
-		return true
+		return appendStreamText(&f.answer, ev)
 	case "tool":
 		f.inReply = false
-		if assistantProtocolTool(ev.Tool) {
-			return false
-		}
-		if ev.ID != "" {
-			if f.seenTools == nil {
-				f.seenTools = map[string]string{}
-			}
-			// The CLI announces a call with empty input and repeats it once
-			// the input is complete. Keep the repeat only when it adds
-			// something: the detail, or an Agent call's type and task.
-			seen := ev.Detail + "\x00" + ev.Subagent + "\x00" + ev.Input + "\x00" + ev.AgentID
-			if previous, ok := f.seenTools[ev.ID]; ok {
-				if seen == previous || (ev.Detail == "" && ev.Subagent == "" && ev.Input == "") {
-					return false
-				}
-			}
-			f.seenTools[ev.ID] = seen
-			f.lastTool, f.lastDetail = ev.Tool, ev.Detail
-			return true
-		}
-		if ev.Tool == "" {
-			return false
-		}
-		if ev.Tool == f.lastTool && ev.Detail == f.lastDetail {
-			return false
-		}
-		f.lastTool, f.lastDetail = ev.Tool, ev.Detail
-		return true
+		return f.acceptTool(ev)
 	case "thinkingStart":
 		f.inReply = false
 		return true
 	case "toolDone":
 		return ev.ID != ""
 	case "thinking":
-		if ev.Text == "" {
-			return false
-		}
-		if ev.Full {
-			if f.thinking != "" && strings.Contains(f.thinking, strings.TrimSpace(ev.Text)) {
-				return false
-			}
-			f.thinking += ev.Text
-			return true
-		}
-		f.thinking += ev.Text
-		return true
+		return appendStreamText(&f.thinking, ev)
 	default:
 		return ev.Text != "" || ev.Tool != ""
 	}
+}
+
+// appendStreamText accumulates an answer or thinking event into acc and
+// reports whether the event should be forwarded. Empty text is dropped, and a
+// Full block whose text the deltas already streamed is dropped as a repeat.
+func appendStreamText(acc *string, ev assistantStreamEvent) bool {
+	if ev.Text == "" {
+		return false
+	}
+	// 增量已经流过同样的文本时丢弃整段重复块。
+	if ev.Full && *acc != "" && strings.Contains(*acc, strings.TrimSpace(ev.Text)) {
+		return false
+	}
+	*acc += ev.Text
+	return true
+}
+
+// acceptTool dedupes tool announcements. Protocol tools are hidden; calls with
+// an ID are deduped per ID, and calls without one against the previous tool.
+func (f *assistantStreamFilter) acceptTool(ev assistantStreamEvent) bool {
+	if assistantProtocolTool(ev.Tool) {
+		return false
+	}
+	if ev.ID != "" {
+		if f.seenTools == nil {
+			f.seenTools = map[string]string{}
+		}
+		// The CLI announces a call with empty input and repeats it once
+		// the input is complete. Keep the repeat only when it adds
+		// something: the detail, or an Agent call's type and task.
+		seen := ev.Detail + "\x00" + ev.Subagent + "\x00" + ev.Input + "\x00" + ev.AgentID
+		if previous, ok := f.seenTools[ev.ID]; ok {
+			if seen == previous || (ev.Detail == "" && ev.Subagent == "" && ev.Input == "") {
+				return false
+			}
+		}
+		f.seenTools[ev.ID] = seen
+		f.lastTool, f.lastDetail = ev.Tool, ev.Detail
+		return true
+	}
+	if ev.Tool == "" {
+		return false
+	}
+	if ev.Tool == f.lastTool && ev.Detail == f.lastDetail {
+		return false
+	}
+	f.lastTool, f.lastDetail = ev.Tool, ev.Detail
+	return true
 }
 
 // assistantSessionToolPrefix namespaces the platform's own session MCP tools.
