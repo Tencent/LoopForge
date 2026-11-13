@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -22,25 +23,32 @@ const WorkspaceCheckpointArchiveMaxBytes = 512 << 20
 const WorkspaceCheckpointChunkBytes = 4 << 20
 const workspaceCheckpointExpandedMax = 2 << 30
 
-func checkpointExcluded(path string) bool {
+// checkpointRestoreExcludedNames are path components a restored archive must
+// never contain.
+var checkpointRestoreExcludedNames = []string{".agentflow", "node_modules", ".cache", "__pycache__"}
+
+// checkpointExcludedNames are skipped when capturing. Older valid archives can
+// contain .zvec-grep, so it is excluded from new captures only and must not
+// make those existing snapshots unrestorable.
+var checkpointExcludedNames = append(slices.Clone(checkpointRestoreExcludedNames), ".zvec-grep")
+
+func checkpointPathHasComponent(path string, names []string) bool {
 	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".agentflow" || part == "node_modules" || part == ".cache" || part == "__pycache__" || part == ".zvec-grep" {
+		if slices.Contains(names, part) {
 			return true
 		}
 	}
 	return false
 }
 
-// Older valid archives can contain .zvec-grep. Excluding it from new captures
-// must not make those existing snapshots unrestorable.
-func checkpointRestoreExcluded(path string) bool {
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".agentflow" || part == "node_modules" || part == ".cache" || part == "__pycache__" {
-			return true
-		}
-	}
-	return false
+func checkpointExcluded(path string) bool {
+	return checkpointPathHasComponent(path, checkpointExcludedNames)
 }
+
+func checkpointRestoreExcluded(path string) bool {
+	return checkpointPathHasComponent(path, checkpointRestoreExcludedNames)
+}
+
 func checkpointPath(path string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(path))
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
