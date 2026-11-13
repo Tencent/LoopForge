@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -474,6 +475,13 @@ func mcpCallName(kind string, call assistantMCPCall) string {
 	return strings.TrimSpace(call.Tool)
 }
 
+// mcpWriteVerbs mark a write when one is a whole _/-/. separated segment of
+// the tool name.
+var mcpWriteVerbs = []string{"add", "merge", "upload", "transition", "close", "reopen", "approve", "assign", "set", "remove", "publish", "send", "post", "submit", "comment"}
+
+// mcpReadWords mark a read when one appears anywhere in the tool name.
+var mcpReadWords = []string{"get", "list", "search", "query", "count", "lookup", "read", "fetch", "describe", "show", "info", "detail", "tree", "blame", "compare", "schema", "reference", "find", "view"}
+
 // mcpCallMayWrite treats a call as a write unless its name reads as a read.
 // The approval review is the safety net, so an unknown name such as
 // merge_merge_request is reviewed instead of passing as a read.
@@ -482,17 +490,9 @@ func mcpCallMayWrite(kind string, call assistantMCPCall) bool {
 	if name == "" || clarifyMCPWriteName(name) {
 		return name != ""
 	}
-	for _, word := range []string{"add", "merge", "upload", "transition", "close", "reopen", "approve", "assign", "set", "remove", "publish", "send", "post", "submit", "comment"} {
-		for _, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' }) {
-			if part == word {
-				return true
-			}
-		}
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' })
+	if slices.ContainsFunc(parts, func(part string) bool { return slices.Contains(mcpWriteVerbs, part) }) {
+		return true
 	}
-	for _, word := range []string{"get", "list", "search", "query", "count", "lookup", "read", "fetch", "describe", "show", "info", "detail", "tree", "blame", "compare", "schema", "reference", "find", "view"} {
-		if strings.Contains(name, word) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(mcpReadWords, func(word string) bool { return strings.Contains(name, word) })
 }
