@@ -271,3 +271,123 @@ func TestConversationStopBeforeRemoteStartReplyConfirmsExit(t *testing.T) {
 		hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
 	}
 }
+
+// A runner that disappears after the CLI started must not pin the turn in
+// stop retries forever: the stop gives up after its bound.
+func TestConversationStopGivesUpWhenRunnerStaysOffline(t *testing.T) {
+	previous := conversationProcessStopTimeout
+	conversationProcessStopTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { conversationProcessStopTimeout = previous })
+	h, user := workbenchFixture(t)
+	const runnerID = "offline-after-start"
+	runner := domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	hub := quietRunnerHub()
+	h.runnerControls = hub
+	conn := testRunnerConn(runnerID)
+	registerTestConn(hub, conn)
+	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "offline-stop", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	execute := h.conversationExecutor(s, t.TempDir())
+	remoteRoot := t.TempDir()
+	pool := &runtime.ConversationProcessPool{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := execute(ctx, "", runtime.CommandSpec{Argv: []string{"sh", "-c", "sleep 30"}, Provider: "codebuddy"}, runtime.RunCredentials{}, nil)
+		done <- err
+	}()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case message := <-conn.send:
+			var req runtime.ConversationProcessRequest
+			if err := json.Unmarshal(message.WorkspaceRequest.Conversation, &req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Command != nil {
+				req.Command.Argv[0] = "sh"
+			}
+			result, err := pool.Handle(context.Background(), remoteRoot, "", nil, req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if req.Operation == "start" {
+				defer pool.Handle(context.Background(), remoteRoot, "", nil, runtime.ConversationProcessRequest{Operation: "stop", ID: result.ID}, nil)
+			}
+			payload, _ := json.Marshal(result)
+			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+			if req.Operation == "start" {
+				runner.Status = domain.RunnerStatusOffline
+				if err := h.repo.PutRunner(runner); err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+			}
+		case err := <-done:
+			if err == nil {
+				t.Fatal("cancelled turn reported success")
+			}
+			return
+		case <-deadline:
+			t.Fatal("stop kept retrying an offline runner")
+		}
+	}
+}
+
+// A runner whose request slots are full answers 429 without handling the
+// request; the turn backs off and continues instead of failing.
+func TestConversationProcessRetriesBusyRunner(t *testing.T) {
+	h, user := workbenchFixture(t)
+	const runnerID = "busy-runner"
+	if err := h.repo.PutRunner(domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}); err != nil {
+		t.Fatal(err)
+	}
+	hub := quietRunnerHub()
+	h.runnerControls = hub
+	conn := testRunnerConn(runnerID)
+	registerTestConn(hub, conn)
+	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "busy", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	execute := h.conversationExecutor(s, t.TempDir())
+	remoteRoot := t.TempDir()
+	pool := &runtime.ConversationProcessPool{}
+	done := make(chan error, 1)
+	go func() {
+		_, err := execute(context.Background(), "", runtime.CommandSpec{Argv: []string{"sh", "-c", "echo ok"}, Provider: "codebuddy"}, runtime.RunCredentials{}, nil)
+		done <- err
+	}()
+	busy := 0
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case message := <-conn.send:
+			var req runtime.ConversationProcessRequest
+			if err := json.Unmarshal(message.WorkspaceRequest.Conversation, &req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Operation == "poll" && busy < 3 {
+				busy++
+				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 429, Error: "too many workspace requests"})
+				continue
+			}
+			if req.Command != nil {
+				req.Command.Argv[0] = "sh"
+			}
+			result, err := pool.Handle(context.Background(), remoteRoot, "", nil, req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, _ := json.Marshal(result)
+			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+		case err := <-done:
+			if err != nil || busy != 3 {
+				t.Fatalf("busy runner failed the turn: busy=%d err=%v", busy, err)
+			}
+			return
+		case <-deadline:
+			t.Fatal("busy runner never recovered")
+		}
+	}
+}

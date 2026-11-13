@@ -60,67 +60,72 @@ func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (dom
 	}
 	return decodeGeneration(row), true
 }
+
+// BeginAssistantGeneration may lock a session that does not exist yet; two
+// first messages to new sessions can deadlock on that gap and are retried.
 func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, pending ...domain.AssistantSession) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var session assistantSessionRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", g.SessionID).Take(&session).Error; err == nil && session.UserID != g.UserID {
-			return fmt.Errorf("无权访问会话")
-		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if len(pending) > 0 {
-			next := pending[0]
-			next.ExecutionTargetLocked = true
-			old := decodeAssistantSession(session)
-			if next.IssueID != old.IssueID {
-				return fmt.Errorf("关联需求已更新，请重新发送")
+	return r.retryAssistantDeadlock(func() error {
+		return r.DB.Transaction(func(tx *gorm.DB) error {
+			var session assistantSessionRow
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", g.SessionID).Take(&session).Error; err == nil && session.UserID != g.UserID {
+				return fmt.Errorf("无权访问会话")
+			} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
 			}
-			if len(next.Messages) < len(old.Messages) {
-				return fmt.Errorf("会话已更新，请重新打开后发送")
-			}
-			for i, m := range old.Messages {
-				a, _ := json.Marshal(m)
-				b, _ := json.Marshal(next.Messages[i])
-				if !bytes.Equal(a, b) {
+			if len(pending) > 0 {
+				next := pending[0]
+				next.ExecutionTargetLocked = true
+				old := decodeAssistantSession(session)
+				if next.IssueID != old.IssueID {
+					return fmt.Errorf("关联需求已更新，请重新发送")
+				}
+				if len(next.Messages) < len(old.Messages) {
 					return fmt.Errorf("会话已更新，请重新打开后发送")
 				}
+				for i, m := range old.Messages {
+					a, _ := json.Marshal(m)
+					b, _ := json.Marshal(next.Messages[i])
+					if !bytes.Equal(a, b) {
+						return fmt.Errorf("会话已更新，请重新打开后发送")
+					}
+				}
+				scoped := *r
+				base := *r.deps
+				base.DB = tx
+				scoped.deps = &base
+				if err := scoped.putAssistantSession(g.UserID, next); err != nil {
+					return err
+				}
+			} else if session.ID != "" {
+				item := decodeAssistantSession(session)
+				item.ExecutionTargetLocked = true
+				if err := tx.Model(&assistantSessionRow{}).Where("id = ?", session.ID).UpdateColumn("payload", mustJSON(item)).Error; err != nil {
+					return err
+				}
 			}
-			scoped := *r
-			base := *r.deps
-			base.DB = tx
-			scoped.deps = &base
-			if err := scoped.putAssistantSession(g.UserID, next); err != nil {
-				return err
-			}
-		} else if session.ID != "" {
-			item := decodeAssistantSession(session)
-			item.ExecutionTargetLocked = true
-			if err := tx.Model(&assistantSessionRow{}).Where("id = ?", session.ID).UpdateColumn("payload", mustJSON(item)).Error; err != nil {
-				return err
-			}
-		}
 
-		var old assistantGenerationRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", g.SessionID).Take(&old).Error
-		if err == nil {
-			if old.UserID != g.UserID {
-				return fmt.Errorf("无权访问会话")
+			var old assistantGenerationRow
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", g.SessionID).Take(&old).Error
+			if err == nil {
+				if old.UserID != g.UserID {
+					return fmt.Errorf("无权访问会话")
+				}
+				if old.Status == "running" {
+					return fmt.Errorf("此会话正在生成，请等待完成或停止")
+				}
+				if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil}).Error; err != nil {
+					return err
+				}
+				return checkpointAssistantDiagnostics(tx, g, nil)
 			}
-			if old.Status == "running" {
-				return fmt.Errorf("此会话正在生成，请等待完成或停止")
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
 			}
-			if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil}).Error; err != nil {
+			if err := tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error; err != nil {
 				return err
 			}
 			return checkpointAssistantDiagnostics(tx, g, nil)
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if err := tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error; err != nil {
-			return err
-		}
-		return checkpointAssistantDiagnostics(tx, g, nil)
+		})
 	})
 }
 func (r *AssistantRepo) CheckpointAssistantGeneration(g domain.AssistantGeneration, diagnostics ...domain.AssistantDiagnostics) error {

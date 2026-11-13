@@ -147,6 +147,16 @@ func (n *assistantNativeSession) begin() error {
 	return n.writeCheckpoint()
 }
 
+// restart abandons a journal that cannot be resumed (missing, or rejected by
+// the provider before anything ran) and records a fresh, unstarted identity
+// for the same submitted input.
+func (n *assistantNativeSession) restart() error {
+	n.resume = false
+	n.checkpoint.SessionID = newAssistantSessionID()
+	n.checkpoint.Unstarted = true
+	return n.begin()
+}
+
 func (n *assistantNativeSession) commit(messages []assistantMessage) error {
 	n.checkpoint.MessageHashes = assistantMessageHashes(messages)
 	n.checkpoint.Ready = true

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -155,6 +156,19 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			envelope := request
 			envelope.Conversation = raw
 			response, err := h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
+			// A 429 means the runner's request slots were full and it rejected
+			// the request before handling it, so every operation (including a
+			// write) can be sent again. Back off instead of failing the turn.
+			for delay := 50 * time.Millisecond; err == nil && response.Status == http.StatusTooManyRequests && delay <= conversationProcessBusyMaxDelay; delay *= 2 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-timer.C:
+				case <-callCtx.Done():
+					timer.Stop()
+					return runtime.ConversationProcessResult{}, callCtx.Err()
+				}
+				response, err = h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
+			}
 			if err != nil {
 				return runtime.ConversationProcessResult{}, fmt.Errorf("%w: %w", errAssistantExecutionUnavailable, err)
 			}
@@ -205,7 +219,15 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			stopOnce.Do(func() {
 				// The ID is addressable before start is dispatched. Stop also fences
 				// a queued start, so a lost response cannot leave a CLI running.
-				_ = waitConversationProcessStop(context.WithoutCancel(ctx), id, call, nil)
+				// Keep stopping after the turn is cancelled, but not forever: a
+				// runner that never returns would otherwise pin this generation
+				// and the conversation lock. The runner reaps the process when
+				// its control connection or the conversation lease ends.
+				stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), conversationProcessStopTimeout)
+				defer cancel()
+				if err := waitConversationProcessStop(stopCtx, id, call, nil); err != nil {
+					assistantDiagnosticsFrom(ctx).platform("cli.stop_abandoned", fmt.Sprintf("停止原生进程超过 %s 仍未确认（%v），放弃等待", conversationProcessStopTimeout, err), s.User)
+				}
 			})
 		}
 		defer stopProcess()
@@ -369,6 +391,14 @@ func stageConversationToolFiles(root string, files agentToolFiles) (string, stri
 // A stop timeout or an idle root cannot rule out a dispatched, queued start.
 // Retry the addressable stop across reconnects until the Runner confirms its
 // cancellation fence and actual process cleanup.
+// conversationProcessStopTimeout bounds how long a finished or cancelled turn
+// keeps asking an unreachable execution machine to stop its CLI.
+var conversationProcessStopTimeout = 30 * time.Second
+
+// conversationProcessBusyMaxDelay is the longest backoff step while a runner
+// reports its request slots as full (about 6s in total).
+var conversationProcessBusyMaxDelay = 3200 * time.Millisecond
+
 func waitConversationProcessStop(ctx context.Context, id string, call func(context.Context, runtime.ConversationProcessRequest) (runtime.ConversationProcessResult, error), notify func(bool)) error {
 	waiting := false
 	for {

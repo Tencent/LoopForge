@@ -366,9 +366,9 @@ export function useChat() {
       setLive(accumulated);
       setGeneration(g);
       if (g.status !== "running") setStopRequest((old) => old?.generationId === g.id ? null : old);
-	  if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
-	    setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
-	  }
+      if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
+        setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
+      }
       if (g.status !== "running" && loaded !== g.id) {
         source?.close();
         source = null;

@@ -85,6 +85,28 @@ if [ -f %s ]; then
 fi
 printf '%%s\n' '{"type":"result","result":"原生回复"}'
 `, quote(capture), quote(capture), quote(filepath.Join(dir, "fail")), quote(filepath.Join(dir, "fail")), quote(filepath.Join(dir, "progress-missing")), quote(filepath.Join(dir, "progress-missing")), quote(filepath.Join(dir, "missing")), quote(filepath.Join(dir, "missing")))
+	// "rejected" makes every resume fail the way a provider rejects a
+	// poisoned journal; "rejected-after-tool" fails one resume after a tool
+	// call, so the phase has side effects and must not be restarted.
+	resumed := `resumed=''
+previous=''
+for arg in "$@"; do
+  if [ "$previous" = '--resume' ]; then resumed=1; fi
+  previous="$arg"
+done
+if [ -f ` + quote(filepath.Join(dir, "rejected-always")) + ` ] || { [ -n "$resumed" ] && [ -f ` + quote(filepath.Join(dir, "rejected")) + ` ]; }; then
+  printf 'API Error: 400 the request parameters were rejected by the model provider\n' >&2
+  exit 1
+fi
+if [ -n "$resumed" ] && [ -f ` + quote(filepath.Join(dir, "rejected-after-tool")) + ` ]; then
+  rm ` + quote(filepath.Join(dir, "rejected-after-tool")) + `
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"echo hi"}}]}}'
+  printf 'API Error: 400 the request parameters were rejected by the model provider\n' >&2
+  exit 1
+fi
+`
+	final := `printf '%s\n' '{"type":"result","result":"原生回复"}'`
+	script = strings.Replace(script, final, resumed+final, 1)
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +270,7 @@ func TestSharedNativeBranchHasIndependentContinuableState(t *testing.T) {
 }
 
 func TestSharedNativeSessionPreservesIdentityAfterInterruptedTurn(t *testing.T) {
-	for _, mode := range []string{"missing", "fail", "progress-missing"} {
+	for _, mode := range []string{"fail", "progress-missing", "rejected-after-tool"} {
 		t.Run(mode, func(t *testing.T) {
 			h, a, b, _, session := sharedWorkbenchFixture(t)
 			dir, calls := nativeCLIRecorder(t)
@@ -275,6 +297,61 @@ func TestSharedNativeSessionPreservesIdentityAfterInterruptedTurn(t *testing.T) 
 				t.Fatal("retry discarded the interrupted native checkpoint")
 			}
 		})
+	}
+}
+
+// A journal that is missing, or that the provider rejects before the phase
+// produced anything, must not make the conversation permanently unusable:
+// the turn restarts once in a fresh native session from the full transcript,
+// and later turns resume that new session.
+func TestSharedNativeSessionRestartsAfterRejectedResume(t *testing.T) {
+	for _, mode := range []string{"missing", "rejected"} {
+		t.Run(mode, func(t *testing.T) {
+			h, a, b, _, session := sharedWorkbenchFixture(t)
+			dir, calls := nativeCLIRecorder(t)
+			session = sendNativeTurn(t, h, a, session, "恢复时需要的历史")
+			id := calls()[0].flag("--session-id")
+			marker := filepath.Join(dir, mode)
+			if err := os.WriteFile(marker, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			session = sendNativeTurn(t, h, b, session, "本轮新问题")
+			got := calls()
+			if len(got) != 3 || got[1].flag("--resume") != id {
+				t.Fatalf("turn did not try the existing journal first: calls=%d", len(got))
+			}
+			fresh := got[2].flag("--session-id")
+			if fresh == "" || fresh == id || got[2].flag("--resume") != "" {
+				t.Fatalf("rejected resume did not restart in a new native session: %q", got[2].args)
+			}
+			if prompt := got[2].prompt(); !strings.Contains(prompt, "恢复时需要的历史") || !strings.Contains(prompt, "本轮新问题") {
+				t.Fatal("fresh native session did not receive the full transcript")
+			}
+			_ = os.Remove(marker)
+			sendNativeTurn(t, h, a, session, "下一轮")
+			if next := calls()[3]; next.flag("--resume") != fresh {
+				t.Fatalf("next turn did not resume the fresh session: %q", next.args)
+			}
+		})
+	}
+}
+
+// A fresh session that the provider also rejects is reported as a failure:
+// the turn restarts at most once and never loops.
+func TestSharedNativeSessionRestartsRejectedResumeOnlyOnce(t *testing.T) {
+	h, a, b, _, session := sharedWorkbenchFixture(t)
+	dir, calls := nativeCLIRecorder(t)
+	session = sendNativeTurn(t, h, a, session, "第一轮")
+	if err := os.WriteFile(filepath.Join(dir, "rejected-always"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	messages := append(append([]assistantMessage(nil), session.Messages...), assistantMessage{Role: "user", Content: "第二轮"})
+	body, _ := json.Marshal(assistantRequest{ProjectID: session.ProjectID, RunID: session.RunID, SessionID: session.ID, Messages: messages})
+	c, w := workbenchContext(b, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+	h.chat(c)
+	got := calls()
+	if w.Code != 502 || len(got) != 3 || got[1].flag("--resume") == "" || got[2].flag("--session-id") == "" {
+		t.Fatalf("expected one rejected resume and one rejected fresh start: status=%d calls=%d", w.Code, len(got))
 	}
 }
 

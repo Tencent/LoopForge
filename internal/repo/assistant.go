@@ -225,9 +225,8 @@ func (r *AssistantRepo) backfillAssistantParticipants(rows []assistantSessionRow
 }
 
 func (r *AssistantRepo) PutAssistantSession(userID int64, v domain.AssistantSession) error {
-	var err error
-	for attempt := 0; attempt < 6; attempt++ {
-		err = r.DB.Transaction(func(tx *gorm.DB) error {
+	return r.retryAssistantDeadlock(func() error {
+		return r.DB.Transaction(func(tx *gorm.DB) error {
 			var row assistantSessionRow
 			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", assistantRecordID(v.ID)).Take(&row).Error
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -239,9 +238,17 @@ func (r *AssistantRepo) PutAssistantSession(userID int64, v domain.AssistantSess
 			scoped.deps = &base
 			return scoped.putAssistantSession(userID, v)
 		})
-		// Locking two missing IDs can deadlock their shared InnoDB index gap.
-		// MySQL has rolled back the entire victim transaction, so retry only
-		// that explicit error; unknown commit/connection failures are not replayed.
+	})
+}
+
+// retryAssistantDeadlock runs a transaction that locks a possibly missing
+// session row. Locking two missing IDs can deadlock their shared InnoDB index
+// gap. MySQL has rolled back the entire victim transaction, so retry only that
+// explicit error; unknown commit/connection failures are not replayed.
+func (r *AssistantRepo) retryAssistantDeadlock(transaction func() error) error {
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		err = transaction()
 		var sqlErr *mysqldriver.MySQLError
 		if !errors.As(err, &sqlErr) || sqlErr.Number != 1213 || attempt == 5 {
 			return err
