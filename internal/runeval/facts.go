@@ -1,6 +1,7 @@
 package runeval
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -239,10 +240,8 @@ func rankedErrors(bag map[string]*domain.RunEvalErrorFact) []domain.RunEvalError
 }
 
 func appendUnique(list []string, value string) []string {
-	for _, item := range list {
-		if item == value {
-			return list
-		}
+	if slices.Contains(list, value) {
+		return list
 	}
 	return append(list, value)
 }
