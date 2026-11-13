@@ -612,7 +612,7 @@ func (h *catalogHandlers) rules(c *gin.Context) {
 		h.deleteCatalogAsset(c, "规则", "rule not found", func(id string) (bool, bool) {
 			item, ok := h.repo.Rule(id)
 			return item.Shared, ok
-		}, func(id string) []string { return h.agentNamesReferencing("rule", id) }, "角色", h.repo.DeleteRule)
+		}, func(id string) []string { return agentNamesReferencing(h.repo, "rule", id) }, "角色", h.repo.DeleteRule)
 		return
 	}
 	if c.Request.Method == http.MethodPut {
@@ -661,7 +661,7 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 		h.deleteCatalogAsset(c, "技能", "skill not found", func(id string) (bool, bool) {
 			item, ok := h.repo.Skill(id)
 			return item.Shared, ok
-		}, func(id string) []string { return h.agentNamesReferencing("skill", id) }, "角色", h.repo.DeleteSkill)
+		}, func(id string) []string { return agentNamesReferencing(h.repo, "skill", id) }, "角色", h.repo.DeleteSkill)
 		return
 	}
 	if c.Request.Method == http.MethodPut {
@@ -755,43 +755,6 @@ func (h *catalogHandlers) deleteCatalogAsset(c *gin.Context, kind, notFound stri
 	c.Status(http.StatusNoContent)
 }
 
-func (h *catalogHandlers) agentNamesReferencing(kind, id string) []string {
-	var names []string
-	for _, agent := range h.repo.Agents() {
-		refs := agent.Rules
-		if kind == "skill" {
-			refs = agent.Skills
-		}
-		for _, ref := range refs {
-			if ref == id {
-				names = append(names, agent.Name)
-				break
-			}
-		}
-	}
-	return names
-}
-
-func (h *catalogHandlers) sandboxNamesReferencing(kind, id string) []string {
-	var names []string
-	for _, sandbox := range h.repo.Sandboxes() {
-		if (kind == "dockerfile" && sandbox.DockerfileID == id) || (kind == "environment" && sandbox.EnvironmentID == id) {
-			names = append(names, sandbox.Name)
-		}
-	}
-	return names
-}
-
-func (h *catalogHandlers) workflowNamesReferencingSandbox(id string) []string {
-	var names []string
-	for _, workflow := range h.repo.Workflows() {
-		if workflow.SandboxProfileID == id {
-			names = append(names, workflow.Name)
-		}
-	}
-	return names
-}
-
 func (h *catalogHandlers) executors(c *gin.Context) {
 	c.JSON(200, repo.BuiltInExecutors())
 }
@@ -808,7 +771,7 @@ func (h *catalogHandlers) dockerfiles(c *gin.Context) {
 		h.deleteCatalogAsset(c, "Dockerfile", "dockerfile not found", func(id string) (bool, bool) {
 			item, ok := h.repo.Dockerfile(id)
 			return item.Shared, ok
-		}, func(id string) []string { return h.sandboxNamesReferencing("dockerfile", id) }, "沙箱", h.repo.DeleteDockerfile)
+		}, func(id string) []string { return sandboxNamesReferencing(h.repo, "dockerfile", id) }, "沙箱", h.repo.DeleteDockerfile)
 		return
 	}
 	if c.Request.Method == http.MethodPut {
@@ -843,7 +806,7 @@ func (h *catalogHandlers) environments(c *gin.Context) {
 		h.deleteCatalogAsset(c, "环境安装脚本", "environment not found", func(id string) (bool, bool) {
 			item, ok := h.repo.Environment(id)
 			return item.Shared, ok
-		}, func(id string) []string { return h.sandboxNamesReferencing("environment", id) }, "沙箱", h.repo.DeleteEnvironment)
+		}, func(id string) []string { return sandboxNamesReferencing(h.repo, "environment", id) }, "沙箱", h.repo.DeleteEnvironment)
 		return
 	}
 	if c.Request.Method == http.MethodPut {
@@ -878,7 +841,7 @@ func (h *catalogHandlers) sandboxes(c *gin.Context) {
 		h.deleteCatalogAsset(c, "沙箱", "sandbox not found", func(id string) (bool, bool) {
 			item, ok := h.repo.Sandbox(id)
 			return item.Shared, ok
-		}, func(id string) []string { return h.workflowNamesReferencingSandbox(id) }, "流程", h.repo.DeleteSandbox)
+		}, func(id string) []string { return workflowNamesReferencingSandbox(h.repo, id) }, "流程", h.repo.DeleteSandbox)
 		return
 	}
 	if c.Request.Method == http.MethodPut {
