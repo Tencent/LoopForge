@@ -842,6 +842,7 @@ global.state = {data: {executors: [
 eval(code.slice(code.indexOf('function executorOptions('), code.indexOf('function selectAgent(')));
 for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode', 'qoder']) {
   assert.ok(executorOptions(id).includes('value="' + id + '" selected'), id);
+  assert.ok(!executorOptions(id).includes('历史执行器'), id);
 }
 assert.ok(!executorOptions('codex').includes('value="mock"'));
 const legacy = executorOptions('legacy-codex');
