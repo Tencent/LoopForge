@@ -238,6 +238,13 @@ func businessExecutionDuration(item businessIssueTiming, completedAt time.Time, 
 	if !observed {
 		return nil
 	}
+	value := unionDuration(intervals).Milliseconds()
+	return &value
+}
+
+// unionDuration returns the total length of the union of intervals: spans
+// that overlap or touch are counted once. intervals is sorted in place.
+func unionDuration(intervals []domain.RunExecutionInterval) time.Duration {
 	sort.Slice(intervals, func(i, j int) bool { return intervals[i].StartedAt.Before(intervals[j].StartedAt) })
 	var total time.Duration
 	for i := 0; i < len(intervals); {
@@ -251,8 +258,7 @@ func businessExecutionDuration(item businessIssueTiming, completedAt time.Time, 
 		}
 		total += span.FinishedAt.Sub(span.StartedAt)
 	}
-	value := total.Milliseconds()
-	return &value
+	return total
 }
 
 // populateBusinessDeliveryMetrics 计算业务域交付指标。prefetchedRuns/prefetchedEvents
