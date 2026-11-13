@@ -68,31 +68,53 @@ func pushWorkBranch(ctx context.Context, workspace, branch, message string, requ
 		// The exact lease additionally rejects a deleted or moved head.
 		pushArgs = []string{"push", "--force-with-lease=refs/heads/" + branch + ":" + expectedRemote, "origin", "HEAD:refs/heads/" + branch}
 	}
-	var pushErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(time.Duration(attempt) * 2 * time.Second):
-			}
+	stop, pushErr := retryPush(ctx, workspace, pushArgs, func(err error) error {
+		if !IsNonFastForward(err) && !(requireExisting && leaseRejected(err)) {
+			return nil
 		}
-		if _, pushErr = C(ctx, workspace, pushArgs...); pushErr == nil {
-			break
+		if requireExisting {
+			return fmt.Errorf("远程工作分支 %s 已变化或被删除，拒绝覆盖: %w", branch, err)
 		}
-		message := strings.ToLower(pushErr.Error())
-		if IsNonFastForward(pushErr) || (requireExisting && (strings.Contains(message, "stale info") || strings.Contains(message, "remote rejected"))) {
-			if requireExisting {
-				return "", fmt.Errorf("远程工作分支 %s 已变化或被删除，拒绝覆盖: %w", branch, pushErr)
-			}
-			return "", fmt.Errorf("远程工作分支 %s 有本机没有的提交，拒绝覆盖（请检查是否有人手动推送过该分支）: %w", branch, pushErr)
-		}
+		return fmt.Errorf("远程工作分支 %s 有本机没有的提交，拒绝覆盖（请检查是否有人手动推送过该分支）: %w", branch, err)
+	})
+	if stop != nil {
+		return "", stop
 	}
 	if pushErr != nil {
 		return "", fmt.Errorf("push work branch %s: %w", branch, pushErr)
 	}
 	_, _ = C(ctx, workspace, "update-ref", trackingRef, head)
 	return head, nil
+}
+
+// retryPush runs `git <args>` in dir up to three times, waiting attempt*2s
+// before each retry. reject sees every failed push; a non-nil result ends the
+// retries and is returned as stop, as is ctx.Err() when the wait is
+// cancelled. Otherwise pushErr is the last push error, or nil on success.
+func retryPush(ctx context.Context, dir string, args []string, reject func(error) error) (stop, pushErr error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err(), nil
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
+		}
+		if _, pushErr = C(ctx, dir, args...); pushErr == nil {
+			return nil, nil
+		}
+		if stop = reject(pushErr); stop != nil {
+			return stop, nil
+		}
+	}
+	return nil, pushErr
+}
+
+// leaseRejected reports whether a push failed because its
+// --force-with-lease expectation no longer matched the remote branch.
+func leaseRejected(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "stale info") || strings.Contains(message, "remote rejected")
 }
 
 // HasWork reports whether a checkout differs from its base branch: uncommitted
