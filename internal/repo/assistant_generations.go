@@ -83,8 +83,14 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 					return fmt.Errorf("会话已更新，请重新打开后发送")
 				}
 				for i, m := range old.Messages {
+					n := next.Messages[i]
+					// A regenerate re-stamps the unanswered trailing question with
+					// the new generation's trace ID; only that field may differ.
+					if i == len(old.Messages)-1 && len(next.Messages) == len(old.Messages) && m.Role == "user" {
+						m.TraceID, n.TraceID = "", ""
+					}
 					a, _ := json.Marshal(m)
-					b, _ := json.Marshal(next.Messages[i])
+					b, _ := json.Marshal(n)
 					if !bytes.Equal(a, b) {
 						return fmt.Errorf("会话已更新，请重新打开后发送")
 					}

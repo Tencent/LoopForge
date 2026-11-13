@@ -160,6 +160,13 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			req.Messages[i].TraceID = generationID
 		}
 	}
+	// Regenerating after an edit, a branch or a stopped turn sends no new
+	// message: the trailing question is answered by this generation, so it
+	// takes this generation's ID and stays paired with the reply. The stored
+	// transcript was already compared above, so re-stamping cannot cause 409.
+	if n := len(req.Messages); n > 0 && n == len(old.Messages) && req.Messages[n-1].Role == "user" {
+		req.Messages[n-1].TraceID = generationID
+	}
 	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: generationID, SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
 	if old.TitleEdited || old.TitleGenerated {

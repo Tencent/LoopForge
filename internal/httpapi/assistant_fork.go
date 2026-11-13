@@ -56,6 +56,9 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	edited := source.Messages[index]
 	edited.Attachments = append([]domain.AssistantAttachment(nil), edited.Attachments...)
 	edited.Content = strings.TrimSpace(body.Content)
+	// The edited question has not been answered yet; the next generation
+	// stamps its own trace ID on it (see startGeneration).
+	edited.TraceID = ""
 	edited.AuthorID = user.ID
 	edited.AuthorName = user.LoginName
 	edited.CreatedAt = time.Now().UTC()
@@ -181,6 +184,7 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 	}
 	edited := source.Messages[*body.MessageIndex]
 	edited.Content = strings.TrimSpace(body.Content)
+	edited.TraceID = ""
 	edited.AuthorID = user.ID
 	edited.AuthorName = user.LoginName
 	edited.CreatedAt = time.Now().UTC()
