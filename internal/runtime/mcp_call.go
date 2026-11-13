@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -621,41 +622,46 @@ func runStdioMCP(server mcpCallServer, method string, params any) (json.RawMessa
 	}()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
-	write := func(value any) error {
-		raw, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(stdin, "%s\n", raw)
-		return err
-	}
-	read := func(id int64) (json.RawMessage, error) {
-		for scanner.Scan() {
-			var resp stdioRPCResponse
-			if json.Unmarshal(scanner.Bytes(), &resp) != nil || resp.ID != id {
-				continue
-			}
-			if resp.Error != nil {
-				return nil, fmt.Errorf("mcp error [%d]: %s", resp.Error.Code, resp.Error.Message)
-			}
-			return resp.Result, nil
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("stdio MCP exited before response: %s", strings.TrimSpace(stderr.String()))
-	}
-	if err := write(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "agentflow-script", "version": "1"}}}); err != nil {
+	if err := writeStdioRPC(stdin, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "agentflow-script", "version": "1"}}}); err != nil {
 		return nil, err
 	}
-	if _, err := read(1); err != nil {
+	if _, err := readStdioRPCResult(ctx, scanner, &stderr, 1); err != nil {
 		return nil, fmt.Errorf("mcp init: %w", err)
 	}
-	if err := write(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized", "params": map[string]any{}}); err != nil {
+	if err := writeStdioRPC(stdin, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized", "params": map[string]any{}}); err != nil {
 		return nil, err
 	}
-	if err := write(map[string]any{"jsonrpc": "2.0", "id": 2, "method": method, "params": params}); err != nil {
+	if err := writeStdioRPC(stdin, map[string]any{"jsonrpc": "2.0", "id": 2, "method": method, "params": params}); err != nil {
 		return nil, err
 	}
-	return read(2)
+	return readStdioRPCResult(ctx, scanner, &stderr, 2)
+}
+
+// writeStdioRPC writes one newline-delimited JSON-RPC message.
+func writeStdioRPC(w io.Writer, value any) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "%s\n", raw)
+	return err
+}
+
+// readStdioRPCResult scans stdout lines until the response with id arrives,
+// skipping notifications, unparsable lines and responses to other requests.
+func readStdioRPCResult(ctx context.Context, scanner *bufio.Scanner, stderr *bytes.Buffer, id int64) (json.RawMessage, error) {
+	for scanner.Scan() {
+		var resp stdioRPCResponse
+		if json.Unmarshal(scanner.Bytes(), &resp) != nil || resp.ID != id {
+			continue
+		}
+		if resp.Error != nil {
+			return nil, fmt.Errorf("mcp error [%d]: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return resp.Result, nil
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return nil, fmt.Errorf("stdio MCP exited before response: %s", strings.TrimSpace(stderr.String()))
 }
