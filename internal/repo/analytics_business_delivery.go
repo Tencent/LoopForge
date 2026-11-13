@@ -121,12 +121,6 @@ func (r *AnalyticsRepo) businessDeliveryIssues(projectIDs []string) ([]domain.Is
 	if len(projectIDs) == 0 {
 		return nil, nil
 	}
-	extract := func(path string) string {
-		if r.isMySQL() {
-			return "JSON_UNQUOTE(JSON_EXTRACT(payload, '$." + path + "'))"
-		}
-		return "json_extract(payload, '$." + path + "')"
-	}
 	type lifecycleRow struct {
 		ID                     string
 		ProjectID              string
@@ -139,9 +133,9 @@ func (r *AnalyticsRepo) businessDeliveryIssues(projectIDs []string) ([]domain.Is
 	}
 	var rows []lifecycleRow
 	err := r.DB.Table("issues").Select("id", "project_id", "status", "kind", "source",
-		extract("completedAt")+" AS completed_at",
-		extract("clarification.startedAt")+" AS clarification_started_at",
-		extract("operations")+" AS operations",
+		r.sqlPayloadJSONText("completedAt")+" AS completed_at",
+		r.sqlPayloadJSONText("clarification.startedAt")+" AS clarification_started_at",
+		r.sqlPayloadJSONText("operations")+" AS operations",
 	).Where("project_id IN ?", projectIDs).Find(&rows).Error
 	if err != nil {
 		return nil, err
