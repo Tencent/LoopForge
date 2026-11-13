@@ -22,7 +22,8 @@ function workflowPreviewModel(wf){
 }
 function previewModelChoices(){
   const api=window.AgentFlowAssistantModels;
-  const models=api?.catalog?.()?.models;
+  // The preview build node runs on CodeBuddy (executorId codebuddy).
+  const models=api?.codeBuddyModels?.()||api?.catalog?.()?.models;
   if(models&&models.length)return models.map(m=>({id:m.id,name:m.name||m.id}));
   return PREVIEW_MODEL_FALLBACK.slice();
 }
