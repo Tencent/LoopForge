@@ -63,6 +63,84 @@ func TestConditionalRoutingScriptEndToEnd(t *testing.T) {
 	}
 }
 
+func TestConditionalRoutingBranchJoinThenDelivery(t *testing.T) {
+	for _, choice := range []string{"small", "large"} {
+		t.Run(choice, func(t *testing.T) {
+			s, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			wf := routingWorkflow(choice)
+			// The shared fixture's delivery node is the join. Add a distinct
+			// downstream delivery node to exercise the complete acceptance DAG.
+			wf.Nodes = append(wf.Nodes, domain.WorkflowNode{ID: "final-delivery", Type: "script", Script: "echo delivered", MaxAttempts: 1})
+			wf.Edges = append(wf.Edges, domain.WorkflowEdge{ID: "deliver", Source: "delivery", Target: "final-delivery"})
+			if err := s.PutWorkflow(wf); err != nil {
+				t.Fatal(err)
+			}
+			e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+			r, err := e.Start(wf.ID, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, s, r.ID, "succeeded")
+			got, _ := s.Run(r.ID)
+			wantSmall, wantLarge := "succeeded", "skipped"
+			if choice == "large" {
+				wantSmall, wantLarge = "skipped", "succeeded"
+			}
+			for id, want := range map[string]string{"small": wantSmall, "large": wantLarge, "implement": wantLarge, "delivery": "succeeded", "final-delivery": "succeeded"} {
+				if got.Nodes[id].Status != want {
+					t.Fatalf("%s: got %+v, want %s", id, got.Nodes[id], want)
+				}
+			}
+		})
+	}
+}
+
+func TestConditionalRoutingSkippedAgentDoesNotExecute(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, id := range []string{"selected-agent", "skipped-agent"} {
+		if err := s.PutAgent(domain.AgentDefinition{ID: id, Name: id, ExecutorID: "mock"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wf := routingWorkflow("small")
+	wf.Nodes[1] = domain.WorkflowNode{ID: "small", Name: "selected", Type: "agent", AgentID: "selected-agent", ExecutorID: "mock", MaxAttempts: 1}
+	wf.Nodes[2] = domain.WorkflowNode{ID: "large", Name: "skipped", Type: "agent", AgentID: "skipped-agent", ExecutorID: "mock", MaxAttempts: 1}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "succeeded")
+	got, _ := s.Run(r.ID)
+	selected, skipped := got.Nodes["small"], got.Nodes["large"]
+	if selected.Status != "succeeded" || selected.Attempt != 1 {
+		t.Fatalf("selected Agent did not execute: %+v", selected)
+	}
+	if skipped.Status != "skipped" || skipped.Attempt != 0 || skipped.SandboxID != "" || skipped.SessionID != "" || skipped.Provider != "" || skipped.Usage.TotalTokens != 0 || skipped.ToolCalls != 0 || !skipped.StartedAt.IsZero() {
+		t.Fatalf("skipped Agent has execution state: %+v", skipped)
+	}
+	page, err := s.QueryRunTelemetry(r.ID, "large", "", 0, 0, false, false, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range page.Events {
+		if event.Category == "sandbox" || event.Category == "model" || event.Name == "agent.progress" || event.Name == "process.started" {
+			t.Fatalf("skipped Agent produced execution telemetry: %+v", event)
+		}
+	}
+}
+
 func TestConditionalRoutingArtifactEndToEnd(t *testing.T) {
 	for _, tc := range []struct {
 		name, script, wantSmall, wantLarge string
@@ -258,6 +336,36 @@ func TestConditionalRoutingFailures(t *testing.T) {
 				t.Fatal("downstream started after invalid route")
 			}
 		})
+	}
+}
+
+func TestConditionalRoutingAgentRejectsInvalidRoute(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.PutAgent(domain.AgentDefinition{ID: "invalid-router", Name: "invalid router", ExecutorID: "mock", Prompt: "[[mock:route=unknown]]"}); err != nil {
+		t.Fatal(err)
+	}
+	wf := routingWorkflow("invalid-agent")
+	wf.Nodes[0] = domain.WorkflowNode{ID: "classify", Type: "agent", AgentID: "invalid-router", ExecutorID: "mock", MaxAttempts: 1}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	r, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, r.ID, "failed")
+	got, _ := s.Run(r.ID)
+	nr := got.Nodes["classify"]
+	if nr.Status != "failed" || !strings.Contains(nr.Error, "small") || !strings.Contains(nr.Error, "large") || !strings.Contains(nr.Error, "unknown") {
+		t.Fatalf("Agent invalid route error should include allowed and submitted labels: %+v", nr)
+	}
+	if got.Nodes["small"].Attempt != 0 || got.Nodes["large"].Attempt != 0 {
+		t.Fatal("downstream started after invalid Agent route")
 	}
 }
 
