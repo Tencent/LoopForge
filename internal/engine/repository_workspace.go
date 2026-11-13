@@ -629,7 +629,7 @@ func defaultWorkBranch(issueNumber int, issueID string, now time.Time) string {
 	if issueNumber > 0 {
 		branchOwner = fmt.Sprintf("fix-issue-%d", issueNumber)
 	} else if issueID != "" {
-		branchOwner = "fix-" + safeGitRefSegment(issueID)
+		branchOwner = "fix-" + domain.SafeGitRefSegment(issueID)
 	}
 	branch := "feature/" + branchOwner + "-" + now.In(time.Local).Format("20060102-1504")
 	if issueNumber <= 0 && issueID == "" {
@@ -647,25 +647,6 @@ func workBranchNonce() string {
 		return strconv.FormatInt(time.Now().UnixNano()%(1<<24), 36)
 	}
 	return hex.EncodeToString(b[:])
-}
-
-func safeGitRefSegment(value string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(value) {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-			b.WriteRune(r)
-		} else if b.Len() > 0 {
-			b.WriteByte('-')
-		}
-		if b.Len() >= 64 {
-			break
-		}
-	}
-	result := strings.Trim(b.String(), "-.")
-	if result == "" {
-		return "run"
-	}
-	return result
 }
 
 func recordRepositoryBaseline(workspace, baseBranch string) error {
