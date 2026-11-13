@@ -18,6 +18,7 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 - `docs/deployment.md` splits `migrations/` into scripts the installer already covers, scripts an upgrade must run once, and scripts that only backfill existing rows.
 - The 预览/源码 switch in the chat artifact preview now matches the 30px copy and download buttons beside it (36px on narrow screens) instead of using the 48px page-level tab size.
 - Requirement clarification, Bot replies, run evals and the SOP preview build list only CodeBuddy models, because they run on CodeBuddy. `POST /api/chat-clarify`, `POST /api/issues/{id}/chat-clarify` and `POST /api/runs/{id}/eval` answer 400 for a model of another CLI (such as `codex:…`) instead of switching it to the CodeBuddy default; a Codex model saved earlier in these pickers falls back to the CLI default (#228).
+- The floating page-feedback button is gone. The page-feedback API goes with it. Existing `page_feedbacks` and `page_feedback_images` tables are left in place and are no longer created for new databases.
 
 - Repository clone URLs no longer carry credentials. Saving a `cloneUrl` with a user name or password, such as `https://user:token@github.com/acme/app.git`, is rejected with a pointer to the Git token in personal settings; the repositories API, bootstrap payload, run, task and requirement views, and the runner task management list strip credentials from `cloneUrl` and `webUrl` of rows saved earlier; a `webUrl` with credentials is rejected on save; runner clone errors and redacted Git output mask them. `ssh://git@host/...` and `git@host:path` remotes are still accepted.
 
@@ -40,10 +41,6 @@ Repositories saved earlier with a token in `cloneUrl` keep cloning until they ar
 Before upgrading a deployment that signs users in by header behind a proxy adding forwarding headers, set `AGENTFLOW_IDENTITY_HEADER_SECRET` and have the gateway send it in `X-AgentFlow-Gateway-Secret`; otherwise header sign-in falls back to guest after the upgrade. See `docs/deployment.md`.
 
 No migrations are required.
-
-## Unreleased
-
-- The floating page-feedback button is gone. The page-feedback API goes with it. Existing `page_feedbacks` and `page_feedback_images` tables are left in place and are no longer created for new databases.
 
 ## 0.3.7 — Tencent Cloud image mirror
 
