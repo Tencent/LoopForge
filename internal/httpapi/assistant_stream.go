@@ -101,8 +101,17 @@ func (f *assistantStreamFilter) accept(ev assistantStreamEvent) bool {
 	}
 }
 
+// assistantSessionToolPrefix namespaces the platform's own session MCP tools.
+const assistantSessionToolPrefix = "mcp__agentflow_session__"
+
+// assistantSessionToolName returns name without surrounding space and the
+// session MCP prefix, so session tools compare by their bare tool name.
+func assistantSessionToolName(name string) string {
+	return strings.TrimPrefix(strings.TrimSpace(name), assistantSessionToolPrefix)
+}
+
 func assistantProtocolTool(name string) bool {
-	switch strings.TrimPrefix(strings.TrimSpace(name), "mcp__agentflow_session__") {
+	switch assistantSessionToolName(name) {
 	case "submit_assistant_reply", "submit_clarification":
 		return true
 	default:
@@ -203,7 +212,7 @@ func assistantLineEvents(line string) []assistantStreamEvent {
 		if evt.Event.Type == "content_block_start" {
 			switch evt.Event.ContentBlock.Type {
 			case "tool_use":
-				if strings.TrimPrefix(strings.TrimSpace(evt.Event.ContentBlock.Name), "mcp__agentflow_session__") == "submit_assistant_reply" {
+				if assistantSessionToolName(evt.Event.ContentBlock.Name) == "submit_assistant_reply" {
 					if subAgent {
 						return nil
 					}
@@ -268,7 +277,7 @@ func assistantCLINoticeText(text string) bool {
 }
 
 func assistantToolStreamEvent(id, name string, input json.RawMessage) (assistantStreamEvent, bool) {
-	name = strings.TrimPrefix(strings.TrimSpace(name), "mcp__agentflow_session__")
+	name = assistantSessionToolName(name)
 	if name == "" || assistantProtocolTool(name) {
 		return assistantStreamEvent{}, false
 	}
@@ -332,7 +341,7 @@ func assistantAgentReport(text string) string {
 }
 
 func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
-	name = strings.TrimPrefix(strings.TrimSpace(name), "mcp__agentflow_session__")
+	name = assistantSessionToolName(name)
 	var m map[string]any
 	if len(input) > 0 {
 		_ = json.Unmarshal(input, &m)
@@ -356,7 +365,7 @@ func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
 		}
 		return "发布产物", ""
 	case "DeferExecuteTool", "MCP":
-		inner := strings.TrimPrefix(str("toolName", "tool", "tool_name", "name", "mcp_tool"), "mcp__agentflow_session__")
+		inner := assistantSessionToolName(str("toolName", "tool", "tool_name", "name", "mcp_tool"))
 		if inner == "" || inner == name {
 			// CodeBuddy streams an empty wrapper input first. Wait for the
 			// complete snapshot instead of consuming its tool ID with an

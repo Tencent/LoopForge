@@ -32,7 +32,7 @@ func TestLifecycleResetSettleAndForceTerminate(t *testing.T) {
 	}
 	resetNodeForResume(&run, nil, "x")
 	resetNodeForResume(&run, run.Nodes["done"], "x")
-	if !isTerminalRunStatus("cancelled") || isTerminalRunStatus("waiting") || hasRunningNode(run) {
+	if !domain.TerminalRunStatus("cancelled") || domain.TerminalRunStatus("waiting") || hasRunningNode(run) {
 		t.Fatal("status helpers")
 	}
 	run.Nodes["script"].Status, run.Nodes["agent"].Status = "succeeded", "succeeded"

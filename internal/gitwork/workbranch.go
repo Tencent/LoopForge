@@ -30,17 +30,9 @@ func PushExistingWorkBranch(ctx context.Context, workspace, branch, message stri
 func pushWorkBranch(ctx context.Context, workspace, branch, message string, requireExisting bool) (string, error) {
 	branch = strings.TrimSpace(branch)
 	if !onWorkBranch(ctx, workspace, branch) {
-		if requireExisting {
-			if _, err := fetchExistingWorkBranch(ctx, workspace, branch); err != nil {
-				return "", err
-			}
-			if current, _ := C(ctx, workspace, "branch", "--show-current"); strings.TrimSpace(current) != branch {
-				return "", fmt.Errorf("工作区未检出已有工作分支 %s", branch)
-			}
-		}
 		// A merge/rebase in progress is left for its repair node, just as
-		// for generated branches. Strict mode still validated the remote.
-		return "", nil
+		// for generated branches. Strict mode still validates the remote.
+		return "", verifyOffWorkBranch(ctx, workspace, branch, requireExisting)
 	}
 	var expectedRemote string
 	if requireExisting {
@@ -145,15 +137,7 @@ func PullExistingWorkBranch(ctx context.Context, workspace, branch string) (stri
 func pullWorkBranch(ctx context.Context, workspace, branch string, requireExisting bool) (string, error) {
 	branch = strings.TrimSpace(branch)
 	if !onWorkBranch(ctx, workspace, branch) {
-		if requireExisting {
-			if _, err := fetchExistingWorkBranch(ctx, workspace, branch); err != nil {
-				return "", err
-			}
-			if current, _ := C(ctx, workspace, "branch", "--show-current"); strings.TrimSpace(current) != branch {
-				return "", fmt.Errorf("工作区未检出已有工作分支 %s", branch)
-			}
-		}
-		return "", nil
+		return "", verifyOffWorkBranch(ctx, workspace, branch, requireExisting)
 	}
 	trackingRef := "refs/remotes/origin/" + branch
 	if _, err := fetchExistingWorkBranch(ctx, workspace, branch); err != nil {
@@ -192,6 +176,23 @@ func pullWorkBranch(ctx context.Context, workspace, branch string, requireExisti
 		return "", fmt.Errorf("resolve HEAD")
 	}
 	return head, nil
+}
+
+// verifyOffWorkBranch handles a workspace that is not on the work branch
+// (or has a merge/rebase in progress). Generated branches are skipped; an
+// explicitly chosen existing branch must still exist remotely and be the
+// checked-out branch.
+func verifyOffWorkBranch(ctx context.Context, workspace, branch string, requireExisting bool) error {
+	if !requireExisting {
+		return nil
+	}
+	if _, err := fetchExistingWorkBranch(ctx, workspace, branch); err != nil {
+		return err
+	}
+	if current, _ := C(ctx, workspace, "branch", "--show-current"); strings.TrimSpace(current) != branch {
+		return fmt.Errorf("工作区未检出已有工作分支 %s", branch)
+	}
+	return nil
 }
 
 // fetchExistingWorkBranch fetches only refs/heads, never a same-named tag.

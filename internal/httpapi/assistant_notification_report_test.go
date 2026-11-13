@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -81,7 +82,7 @@ func TestSOPReportUsesResponsibleUserAndMCPSubmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if argvHasFlag(command.Argv, "--tools") || !argvHasFlag(command.Argv, "--strict-mcp-config") {
+	if slices.Contains(command.Argv, "--tools") || !slices.Contains(command.Argv, "--strict-mcp-config") {
 		t.Fatalf("MCP hidden: %v", command.Argv)
 	}
 	if !strings.Contains(strings.Join(command.Argv, " "), "Read,Grep,Glob") {

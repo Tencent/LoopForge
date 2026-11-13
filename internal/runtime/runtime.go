@@ -55,6 +55,9 @@ type ProviderCredential struct {
 	APIKey   string
 	BaseURL  string
 	Protocol string
+	// Models is the user's saved model catalog for an agent CLI; Cursor
+	// resolves folded families from it (CursorModelID).
+	Models []domain.CLIModel
 }
 
 type InvocationOptions struct {

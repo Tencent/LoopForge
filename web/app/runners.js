@@ -12,6 +12,7 @@ async function refreshRunners(silent){
     state.runners=runners||[];
     state.defaultRunnerId=def?.runnerId||'';
     state.cloudPool=def?.cloudPool||null;
+    state.minRunnerVersion=def?.minRunnerVersion||'';
     renderRunnersView();
   }catch(e){if(!silent)toast(e.message)}
 }
@@ -62,6 +63,16 @@ function runnerPersonalCredentialConfigured(provider){
   if(provider==='claude-code')return !!user.claudeCodeApiKeyConfigured;
   if(provider==='codebuddy')return !!user.codeBuddyApiKeyConfigured;
   return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;
+}
+// CodeBuddy on a runner always uses the personal API Key, so the card shows
+// the same network environment as 个人配置 → CodeBuddy. An iOA key used with
+// the wrong environment fails with 401 on the machine.
+function runnerCodeBuddyAuthHTML(credentialReady){
+  if(!credentialReady)return '<span class="runner-auth-fixed missing" title="到个人配置补充 CodeBuddy API Key 并选择网络环境">个人凭证（未配置）</span>';
+  const user=userById(state.currentUser?.id)||{};
+  const raw=String(user.codeBuddyInternetEnvironment||'').trim(),env=codeBuddyEnvironment(raw);
+  if(!env)return `<span class="runner-auth-fixed missing" title="网络环境「${escapeHTML(raw)}」无法识别，CodeBuddy 会按国际站连接。到个人配置重新选择网络环境">个人凭证 · 网络环境无法识别</span>`;
+  return `<span class="runner-auth-fixed" title="CodeBuddy 使用个人配置中保存的 API Key，网络环境：${escapeHTML(env.label)}">个人凭证 · ${escapeHTML(env.label)}</span>`;
 }
 function runnerLastSeen(value){
   if(!value)return '尚无心跳';
@@ -132,7 +143,7 @@ function renderRunnersView(){
       const personalLabel=credentialReady?'个人凭证':'个人凭证（未配置）';
       const credentialMissing=authMode==='personal'&&!credentialReady;
       const authControl=rt.provider==='codebuddy'
-        ?`<span class="runner-auth-fixed ${credentialReady?'':'missing'}" title="CodeBuddy 使用个人配置中保存的 API Key">${personalLabel}</span>`
+        ?runnerCodeBuddyAuthHTML(credentialReady)
         :`<select class="runner-auth-select ${credentialMissing?'missing':''}" data-runner-auth="${escapeHTML(r.id)}|${escapeHTML(rt.provider)}" aria-label="${runnerCLILabels[rt.provider]} 认证来源"${credentialMissing?` title="到个人配置补充 ${runnerCLILabels[rt.provider]} API Key"`:''}>
             <option value="local" ${authMode==='local'?'selected':''}>本机登录</option>
             <option value="personal" ${authMode==='personal'?'selected':''}>${personalLabel}</option>
@@ -147,9 +158,10 @@ function renderRunnersView(){
     const cliSection=cliRows||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
     const shared=!(Number(r.ownerUserId)>0);
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
+    const defaultBlocker=isDefault?'':runnerDefaultBlocker(r);
     return `<article class="runner-card panel ${isDefault?'is-default':''}">
       <div class="runner-card-head">
-        <div class="runner-card-title"><div class="runner-card-name"><b title="${escapeHTML(r.id)}">${escapeHTML(r.name||r.id)}</b>${isDefault?'<span class="runner-tag default">默认</span>':''}${shared?'<span class="runner-tag">共享</span>':''}</div><small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · ${runnerLastSeenHTML(r.lastSeenAt)}</small></div>
+        <div class="runner-card-title"><div class="runner-card-name"><b title="${escapeHTML(r.id)}">${escapeHTML(r.name||r.id)}</b>${isDefault?'<span class="runner-tag default">默认</span>':''}${shared?'<span class="runner-tag">共享</span>':''}</div><small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · Runner ${escapeHTML(r.runnerVersion||'未知')} · ${runnerLastSeenHTML(r.lastSeenAt)}</small></div>
         ${runnerStatusLabel(r.status)}
       </div>
       <div class="runner-runtime-list">${cliSection}</div>
@@ -158,7 +170,7 @@ function renderRunnersView(){
         <span class="runner-card-spacer"></span>
         ${isDefault?'<button class="button ghost small runner-text-button" type="button" data-set-default="">切回云端</button>':''}
         ${r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
-        ${isDefault?'':`<button class="button hui-btn-soft small" type="button" ${r.status==='online'?'':'disabled title="机器离线"'} data-set-default="${escapeHTML(r.id)}">设为默认</button>`}
+        ${isDefault?'':`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为默认</button>`}
       </div>
     </article>`;
   }).join('')||'<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
@@ -189,6 +201,22 @@ async function removeRunner(runnerId){
     await api(`/api/runners/${encodeURIComponent(runnerId)}`,{method:'DELETE'});
     toast('已移除','ok');refreshRunners(true);
   }catch(err){toast(err.message)}
+}
+// Mirrors domain.Runner.DefaultSelectionBlocker so the page and
+// PUT /api/runners/default refuse the same machines with the same reason.
+function runnerVersionAtLeast(have,want){
+  const parse=v=>{const parts=String(v||'').trim().replace(/^v/,'').split('.');return parts.every(p=>/^\d+$/.test(p))?parts.map(Number):null};
+  const h=parse(have),w=parse(want);
+  if(!w)return true;
+  if(!h)return false;
+  for(let i=0;i<w.length;i++){const hv=h[i]||0;if(hv!==w[i])return hv>w[i]}
+  return true;
+}
+function runnerDefaultBlocker(r){
+  if(r.status!=='online')return '机器离线';
+  const min=state.minRunnerVersion||'';
+  if(min&&!runnerVersionAtLeast(r.runnerVersion,min))return `执行机器版本 ${r.runnerVersion||'未知'} 过低，需升级至 ${min} 及以上`;
+  return '';
 }
 async function setDefaultRunner(runnerId){
   try{

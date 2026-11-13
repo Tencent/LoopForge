@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -22,25 +23,32 @@ const WorkspaceCheckpointArchiveMaxBytes = 512 << 20
 const WorkspaceCheckpointChunkBytes = 4 << 20
 const workspaceCheckpointExpandedMax = 2 << 30
 
-func checkpointExcluded(path string) bool {
+// checkpointRestoreExcludedNames are path components a restored archive must
+// never contain.
+var checkpointRestoreExcludedNames = []string{".agentflow", "node_modules", ".cache", "__pycache__"}
+
+// checkpointExcludedNames are skipped when capturing. Older valid archives can
+// contain .zvec-grep, so it is excluded from new captures only and must not
+// make those existing snapshots unrestorable.
+var checkpointExcludedNames = append(slices.Clone(checkpointRestoreExcludedNames), ".zvec-grep")
+
+func checkpointPathHasComponent(path string, names []string) bool {
 	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".agentflow" || part == "node_modules" || part == ".cache" || part == "__pycache__" || part == ".zvec-grep" {
+		if slices.Contains(names, part) {
 			return true
 		}
 	}
 	return false
 }
 
-// Older valid archives can contain .zvec-grep. Excluding it from new captures
-// must not make those existing snapshots unrestorable.
-func checkpointRestoreExcluded(path string) bool {
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".agentflow" || part == "node_modules" || part == ".cache" || part == "__pycache__" {
-			return true
-		}
-	}
-	return false
+func checkpointExcluded(path string) bool {
+	return checkpointPathHasComponent(path, checkpointExcludedNames)
 }
+
+func checkpointRestoreExcluded(path string) bool {
+	return checkpointPathHasComponent(path, checkpointRestoreExcludedNames)
+}
+
 func checkpointPath(path string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(path))
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
@@ -217,34 +225,7 @@ func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
 		if header.Size < 0 || expanded > workspaceCheckpointExpandedMax {
 			return fmt.Errorf("checkpoint expanded size exceeds limit")
 		}
-		if err = base.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return err
-		}
-		switch header.Typeflag {
-		case tar.TypeDir:
-			err = base.MkdirAll(path, os.FileMode(header.Mode)&0777)
-		case tar.TypeReg:
-			var file *os.File
-			file, err = base.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, os.FileMode(header.Mode)&0777)
-			if err == nil {
-				_, err = io.CopyN(file, reader, header.Size)
-				if err == nil {
-					err = file.Sync()
-				}
-				closeErr := file.Close()
-				if err == nil {
-					err = closeErr
-				}
-			}
-		case tar.TypeSymlink:
-			// The target is restored as inert data, exactly like git checkout
-			// does. os.Root refuses to traverse any link leaving the staging
-			// root, so later entries can never be written through it.
-			err = base.Symlink(header.Linkname, path)
-		default:
-			return fmt.Errorf("unsupported checkpoint entry")
-		}
-		if err != nil {
+		if err = restoreCheckpointEntry(base, path, header, reader); err != nil {
 			return err
 		}
 	}
@@ -256,6 +237,41 @@ func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
 		return fmt.Errorf("checkpoint expanded size exceeds limit")
 	}
 	return os.Rename(stage, root)
+}
+
+// restoreCheckpointEntry materializes one validated tar entry at path inside
+// the staging root. Regular file content is read from reader, which must be
+// positioned at the entry body.
+func restoreCheckpointEntry(base *os.Root, path string, header *tar.Header, reader io.Reader) error {
+	if err := base.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	mode := os.FileMode(header.Mode) & 0777
+	switch header.Typeflag {
+	case tar.TypeDir:
+		return base.MkdirAll(path, mode)
+	case tar.TypeReg:
+		file, err := base.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err != nil {
+			return err
+		}
+		_, err = io.CopyN(file, reader, header.Size)
+		if err == nil {
+			err = file.Sync()
+		}
+		closeErr := file.Close()
+		if err == nil {
+			err = closeErr
+		}
+		return err
+	case tar.TypeSymlink:
+		// The target is restored as inert data, exactly like git checkout
+		// does. os.Root refuses to traverse any link leaving the staging
+		// root, so later entries can never be written through it.
+		return base.Symlink(header.Linkname, path)
+	default:
+		return fmt.Errorf("unsupported checkpoint entry")
+	}
 }
 
 func EmptyWorkspaceCheckpoint() []byte {

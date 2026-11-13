@@ -1965,7 +1965,7 @@ paths:
     get:
       tags: [Assets]
       operationId: listExecutors
-      description: Returns the fixed CodeBuddy, Codex, and Claude Code CLI catalog. Executors are not user-configurable.
+      description: Returns the read-only built-in CLI catalog. Executors are not user-configurable.
       responses:
         "200":
           $ref: "#/components/responses/AssetList"
@@ -1975,7 +1975,7 @@ paths:
     get:
       tags: [Assets]
       operationId: listExecutorModels
-      description: Returns, per built-in CLI (codebuddy, codex, claude), the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
+      description: Returns, per built-in CLI, the selectable model IDs, the default model and the reasoning-effort levels. An Agent's model should be one of these IDs.
       responses:
         "200":
           description: Model catalog keyed by CLI id

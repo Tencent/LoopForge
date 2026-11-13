@@ -10,6 +10,7 @@ import { useChat } from "./useChat";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
+import GenerationDiagnostics from "./GenerationDiagnostics";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
   activityForReply,
@@ -225,7 +226,7 @@ function ReplyHeading({ message, steps }) {
     </div>
   );
 }
-function AssistantTurn({ message, steps, assets, projectId }) {
+function AssistantTurn({ message, steps, assets, projectId, sessionId, local, readOnly, onCLIInstall }) {
   const reply = parseReply(message);
   const answer = hasTextSegments(steps)
     ? finalReply(reply.message, steps)
@@ -244,7 +245,9 @@ function AssistantTurn({ message, steps, assets, projectId }) {
       <div className="message-body">
         <RichContent message={answer} assets={assets} projectId={projectId} />
       </div>
-      {message.unfinished ? (
+      {message.failure && message.generationId && !local ? (
+        <GenerationDiagnostics sessionId={sessionId} generationId={message.generationId} failure={message.failure} onCLIInstall={onCLIInstall} readOnly={readOnly} />
+      ) : message.unfinished ? (
         <p className="reply-stopped">本轮未完成 · {message.unfinished}</p>
       ) : reply.stopped ? (
         <p className="reply-stopped">已停止，以上是停止前的内容。</p>
@@ -252,7 +255,7 @@ function AssistantTurn({ message, steps, assets, projectId }) {
     </>
   );
 }
-function LiveMessage({ live, generation, finished = false }) {
+function LiveMessage({ live, generation, finished = false, local = false, readOnly = false }) {
   const steps = live.activity || [];
   const textual = hasTextSegments(steps);
   // A streamed paragraph followed by tool calls stays in the process above;
@@ -289,6 +292,7 @@ function LiveMessage({ live, generation, finished = false }) {
         </div>
       )}
       {answer ? <RichContent message={answer} /> : null}
+      {!finished && !local && !readOnly && generation?.id ? <GenerationDiagnostics sessionId={generation.sessionId} generationId={generation.id} compact /> : null}
       {finished ? (
         <p className="reply-stopped">
           {generation?.status === "failed" && generation?.error
@@ -1502,6 +1506,10 @@ export default function App() {
                         )}
                         assets={artifactList}
                         projectId={chat.session?.projectId}
+                        sessionId={chat.session?.id}
+                        local={chat.local}
+                        readOnly={chat.readOnly}
+                        onCLIInstall={chat.adoptCLIInstall}
                       />
                     ) : null}
                     {message.role === "user" ? (
@@ -1626,6 +1634,7 @@ export default function App() {
                             label="复制回复"
                           />
                           <MessageInfo message={message} />
+                          {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
                       </>
                     ) : null}
@@ -1635,7 +1644,7 @@ export default function App() {
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1645,8 +1654,12 @@ export default function App() {
                   live={chat.live}
                   generation={chat.generation}
                   finished
+                  local={chat.local}
+                  readOnly={chat.readOnly}
                 />
               ) : null}
+              {!chat.local && !chat.busy && chat.generation?.failure && !messages.some((m) => m.generationId === chat.generation.id && m.failure) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} failure={chat.generation.failure} onCLIInstall={chat.adoptCLIInstall} readOnly={chat.readOnly} /> : null}
+              {!chat.local && !chat.readOnly && !chat.busy && chat.generation?.id && chat.generation.status === "cancelled" && !chat.generation.failure && !messages.some((m) => m.generationId === chat.generation.id) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} compact /> : null}
               <WorkspaceOpening
                 sessionId={chat.session?.id}
                 runId={workspaceRunId}
@@ -1689,7 +1702,7 @@ export default function App() {
         )}
         <div className="composer-region">
           <div className="composer-column">
-            {chat.error ? (
+            {chat.error && !(chat.generation?.failure && chat.error === chat.generation.error) ? (
               <div role="alert" className="chat-error">
                 <span>{chat.error}</span>
                 <CredentialAction text={chat.error} />

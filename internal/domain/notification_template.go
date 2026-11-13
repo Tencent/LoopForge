@@ -155,18 +155,7 @@ func RenderNotification(binding NotificationBinding, ctx NotificationContext) (s
 		values["ai.summary"] = NotificationText(ai.Summary, 2000)
 		values["ai.body"] = NotificationText(ai.Body, 8000)
 	}
-	template := binding.Template
-	if strings.TrimSpace(template) == "" {
-		if binding.ContentMode == "ai" {
-			template = "### {{ai.title}}\n\n{{ai.body}}\n\n触发时状态：{{status}}\n\n{{url}}"
-		} else if binding.Scope == "run" {
-			template = "### 需求「{{issue.title}}」的 SOP 已完成\n\n{{result}}\n\n{{url}}"
-		} else if ctx.SourceType == "schedule_job" || ctx.SourceType == "assistant_task" {
-			template = "### {{task.name}} · {{status}}\n\n{{url}}"
-		} else {
-			template = "### {{status}}\n项目：{{project}}\n流程：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}"
-		}
-	}
+	template := notificationTemplate(binding, ctx.SourceType)
 	// Expand once, so text inside AI/output values cannot inject further variables.
 	content := notificationVariable.ReplaceAllStringFunc(template, func(match string) string { return values[notificationVariable.FindStringSubmatch(match)[1]] })
 	if len(content) == 0 || len(content) > 19000 {
@@ -174,6 +163,25 @@ func RenderNotification(binding NotificationBinding, ctx NotificationContext) (s
 	}
 	return content, source, nil
 }
+
+// notificationTemplate returns the binding's own template, or the built-in
+// default for its content mode, scope and source type when it has none.
+func notificationTemplate(binding NotificationBinding, sourceType string) string {
+	if strings.TrimSpace(binding.Template) != "" {
+		return binding.Template
+	}
+	switch {
+	case binding.ContentMode == "ai":
+		return "### {{ai.title}}\n\n{{ai.body}}\n\n触发时状态：{{status}}\n\n{{url}}"
+	case binding.Scope == "run":
+		return "### 需求「{{issue.title}}」的 SOP 已完成\n\n{{result}}\n\n{{url}}"
+	case sourceType == "schedule_job" || sourceType == "assistant_task":
+		return "### {{task.name}} · {{status}}\n\n{{url}}"
+	default:
+		return "### {{status}}\n项目：{{project}}\n流程：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}"
+	}
+}
+
 func NotificationAIInstructions(bindings []NotificationBinding) string {
 	lines := []string{}
 	seen := map[string]bool{}

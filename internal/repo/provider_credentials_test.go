@@ -148,3 +148,57 @@ func TestProviderUserCredentials(t *testing.T) {
 		})
 	}
 }
+
+func TestCursorFamilyEffortsRoundTrip(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.PutUser(domain.User{LoginName: "cursor-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("cursor-owner")
+	models := []domain.CLIModel{
+		{ID: "widget", Name: "Widget", Efforts: map[string]string{"low": "widget-low", "medium": "widget", "xhigh": "widget-extra-high"}, DefaultEffort: "medium"},
+		{ID: "solo", Efforts: map[string]string{"ultra": "solo-ultra"}, DefaultEffort: "high"},
+		{ID: "plain-model"},
+	}
+	if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"cursor": {APIKey: "crsr_secret", Models: &models},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.User(user.ID)
+	saved := got.AgentCLICredentials["cursor"].Models
+	if len(saved) != 3 || saved[0].Efforts["xhigh"] != "widget-extra-high" || saved[0].DefaultEffort != "medium" || saved[1].DefaultEffort != "" || saved[2].Efforts != nil {
+		t.Fatalf("saved cursor catalog = %+v", saved)
+	}
+	// The catalog came from this key's plan; a new key drops it.
+	if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"cursor": {APIKey: "crsr_secret"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.User(user.ID); len(got.AgentCLICredentials["cursor"].Models) != 3 {
+		t.Fatal("saving the same key dropped the catalog")
+	}
+	if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+		"cursor": {APIKey: "crsr_other"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.User(user.ID); got.AgentCLICredentials["cursor"].Models != nil {
+		t.Fatalf("new key kept the old catalog: %+v", got.AgentCLICredentials["cursor"])
+	}
+	for name, bad := range map[string]domain.CLIModel{
+		"unknown effort": {ID: "widget", Efforts: map[string]string{"turbo": "widget-turbo"}},
+		"bad target":     {ID: "widget", Efforts: map[string]string{"low": "widget low"}},
+	} {
+		if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
+			"cursor": {Models: &[]domain.CLIModel{bad}},
+		}}); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}

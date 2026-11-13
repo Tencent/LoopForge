@@ -303,6 +303,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/chat", asst.chat)
 	g.POST("/api/assistant/generations", asst.startGeneration)
 	g.GET("/api/assistant/sessions/:id/generation", asst.generation)
+	g.GET("/api/assistant/sessions/:id/generations/:generationId/diagnostics", asst.generationDiagnostics)
 	g.POST("/api/assistant/sessions/:id/generation/cancel", asst.generation)
 	g.POST("/api/assistant/sessions/:id/generation/steer", asst.steerGeneration)
 	g.POST("/api/assistant/sessions/:id/proposals", asst.decideProposal)

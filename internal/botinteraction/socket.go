@@ -68,6 +68,29 @@ type socket struct {
 	cancel  context.CancelFunc
 }
 
+// logFrameKeys logs the sorted JSON keys of a frame body, its event and its
+// template card event to help diagnose unexpected WeCom frames.
+func logFrameKeys(f Frame) {
+	keys, body := sortedJSONKeys(f.Body)
+	eventKeys, event := sortedJSONKeys(body["event"])
+	cardKeys, _ := sortedJSONKeys(event["template_card_event"])
+	log.Printf("wecom frame cmd=%s body_keys=%v event_keys=%v card_keys=%v", f.Cmd, keys, eventKeys, cardKeys)
+}
+
+// sortedJSONKeys decodes raw as a JSON object and returns its keys in sorted
+// order together with the decoded fields. Invalid or empty input yields an
+// empty (non-nil) key slice and a nil map.
+func sortedJSONKeys(raw json.RawMessage) ([]string, map[string]json.RawMessage) {
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	keys := []string{}
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys, fields
+}
+
 func dial(ctx context.Context, url, botID, secret string, onFrame func(*socket, Frame)) (*socket, error) {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
 	if err != nil {
@@ -89,28 +112,7 @@ func dial(ctx context.Context, url, botID, secret string, onFrame func(*socket, 
 			ack := s.pending[f.Headers.RequestID]
 			s.mu.Unlock()
 			if f.Cmd != "" && f.Cmd != "aibot_msg_callback" {
-				var body map[string]json.RawMessage
-				_ = json.Unmarshal(f.Body, &body)
-				keys := []string{}
-				for key := range body {
-					keys = append(keys, key)
-				}
-				sort.Strings(keys)
-				var event map[string]json.RawMessage
-				_ = json.Unmarshal(body["event"], &event)
-				eventKeys := []string{}
-				for key := range event {
-					eventKeys = append(eventKeys, key)
-				}
-				sort.Strings(eventKeys)
-				var cardEvent map[string]json.RawMessage
-				_ = json.Unmarshal(event["template_card_event"], &cardEvent)
-				cardKeys := []string{}
-				for key := range cardEvent {
-					cardKeys = append(cardKeys, key)
-				}
-				sort.Strings(cardKeys)
-				log.Printf("wecom frame cmd=%s body_keys=%v event_keys=%v card_keys=%v", f.Cmd, keys, eventKeys, cardKeys)
+				logFrameKeys(f)
 			}
 			if f.Cmd == "aibot_msg_callback" || f.Cmd == "aibot_event_callback" {
 				onFrame(s, f)
