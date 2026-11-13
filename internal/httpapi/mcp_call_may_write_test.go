@@ -31,3 +31,29 @@ func TestMCPCallMayWriteClassifiesToolNames(t *testing.T) {
 		})
 	}
 }
+
+// Every name below also contains a read word, so it only classifies as a
+// write when the whole-segment write-verb check runs before the read-word
+// fallback and honours each separator.
+func TestMCPCallMayWriteWriteVerbSegmentBeatsReadWord(t *testing.T) {
+	cases := []struct {
+		name string
+		kind string
+		call assistantMCPCall
+		want bool
+	}{
+		{"underscore segment beats read word", "gongfeng", assistantMCPCall{Tool: "merge_request_info"}, true},
+		{"dash segment beats read word", "gongfeng", assistantMCPCall{Tool: "review-approve-detail"}, true},
+		{"dot segment beats read word", "gongfeng", assistantMCPCall{Tool: "issue.close.view"}, true},
+		{"tapd inner write segment beats read word", "tapd", assistantMCPCall{Tool: "proxy_execute_tool", Arguments: map[string]any{"tool_name": "comment_search"}}, true},
+		{"write verb inside a segment is still a read", "gongfeng", assistantMCPCall{Tool: "list_merged_requests"}, false},
+		{"write verb joined by another separator is still a read", "gongfeng", assistantMCPCall{Tool: "issue:close:view"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mcpCallMayWrite(tc.kind, tc.call); got != tc.want {
+				t.Fatalf("mcpCallMayWrite(%q, %+v)=%v, want %v", tc.kind, tc.call, got, tc.want)
+			}
+		})
+	}
+}
