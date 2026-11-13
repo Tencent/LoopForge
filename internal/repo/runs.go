@@ -1719,7 +1719,7 @@ func (r *RunsRepo) queryJSONSeqPage(table, runID, nodeWhere string, nodeArgs []a
 	args = append(args, limit+1)
 	var raws [][]byte
 	if err := r.DB.Raw(b.String(), args...).Scan(&raws).Error; err != nil {
-		return nil, false, err
+		return nil, false, asSchemaExtensionError(err)
 	}
 	hasMore := len(raws) > limit
 	if hasMore {

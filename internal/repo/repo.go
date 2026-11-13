@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -242,6 +243,11 @@ func Open(dsn string) (*Store, error) {
 	if err := autoMigrateIncremental(s.DB); err != nil {
 		s.Close()
 		return nil, fmt.Errorf("auto migrate: %w", err)
+	}
+	if warning, err := schemaExtensionsWarning(s.deps); err != nil {
+		log.Printf("schema extension check skipped: %v", err)
+	} else if warning != "" {
+		log.Printf("WARNING: %s", warning)
 	}
 	return s, nil
 }

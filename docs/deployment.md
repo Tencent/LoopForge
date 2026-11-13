@@ -128,7 +128,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog. Both steps can be repeated without touching existing rows. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads. Application startup does not run data migrations.
 
-For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
+For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly. The platform checks for these columns at startup and logs `WARNING: 数据库缺少生成列 …` naming each missing column and the script to run; startup continues, because a fresh Compose install adds them only after the platform has created the base tables. Until they exist, the run telemetry endpoint answers 503 with the same instruction instead of `Error 1054 Unknown column 'adapter'`.
 
 ### Which migrations an upgrade needs
 
