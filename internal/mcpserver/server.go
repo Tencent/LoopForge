@@ -332,7 +332,7 @@ func (s *Server) toolList() []map[string]any {
 		tools = append(tools, map[string]any{
 			"name":        op.Name,
 			"description": op.Description + " (" + op.Method + " " + op.Path + ")",
-			"inputSchema": toolInputSchema(op),
+			"inputSchema": ToolInputSchema(op),
 			"annotations": map[string]any{
 				"readOnlyHint":    op.ReadOnly,
 				"destructiveHint": !op.ReadOnly && (op.Method == "DELETE" || strings.Contains(op.Name, "reject") || strings.Contains(op.Name, "cancel")),
@@ -342,8 +342,6 @@ func (s *Server) toolList() []map[string]any {
 	}
 	return tools
 }
-
-func toolInputSchema(op application.Operation) map[string]any { return ToolInputSchema(op) }
 
 func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (map[string]any, error) {
 	var params struct {

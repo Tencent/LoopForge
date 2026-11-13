@@ -42,7 +42,7 @@ func TestBotBindingRequiresBothIdentitiesAndRejectsReplay(t *testing.T) {
 		t.Fatal("cross-Bot confirmation")
 	}
 	var challenge domain.BotBindingChallenge
-	s.DB.First(&challenge, "id = ?", botBindingHash(token))
+	s.DB.First(&challenge, "id = ?", hexSHA256(token))
 	if challenge.CodeHash == code || challenge.ID == token {
 		t.Fatal("plaintext challenge stored")
 	}
@@ -182,7 +182,7 @@ func TestBotBindingMySQLConcurrentConfirmation(t *testing.T) {
 		t.Fatal("MySQL duplicate confirmation", winners)
 	}
 
-	expired := domain.BotBindingChallenge{ID: botBindingHash(bot + "-old"), BindingID: id, Status: "expired", ExpiresAt: now.Add(-25 * time.Hour)}
+	expired := domain.BotBindingChallenge{ID: hexSHA256(bot + "-old"), BindingID: id, Status: "expired", ExpiresAt: now.Add(-25 * time.Hour)}
 	if err := s.DB.Create(&expired).Error; err != nil {
 		t.Fatal(err)
 	}

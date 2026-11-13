@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -25,7 +27,7 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 		want []string
 	}{
 		{AgentCLICursor, AgentCLICommandOptions{}, []string{"--force", "--approve-mcps", "--model", "m1"}},
-		{AgentCLIPi, AgentCLICommandOptions{SystemPromptFile: "/s.md"}, []string{"--exclude-tools", "bash,edit,write", "--append-system-prompt", "/s.md"}},
+		{AgentCLIPi, AgentCLICommandOptions{SystemPromptFile: "/s.md"}, []string{"--exclude-tools", "bash,edit,write", "--tools", "read,codemode", "--append-system-prompt", "/s.md"}},
 		{AgentCLIDeepSeek, AgentCLICommandOptions{}, []string{"--permission-mode", "read-only"}},
 		{AgentCLIKimi, AgentCLICommandOptions{AgentFile: "/a.md"}, []string{"--agent-file", "/a.md"}},
 		{AgentCLIOpenCode, AgentCLICommandOptions{Resume: "ses_1"}, []string{"-s", "ses_1", "-m", "agentflow/m1"}},
@@ -60,6 +62,12 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 	}
 	if argv := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{Prompt: "x"}).Argv; !slices.Contains(argv, "danger-full-access") {
 		t.Errorf("SOP dsh argv: %q", argv)
+	}
+	for _, resume := range []string{"", "native-session"} {
+		command := chat(AgentCLIPi, AgentCLICommandOptions{Workspace: true, Resume: resume})
+		if command.AgentCLI.ReadOnly || !slices.Contains(command.Argv, "read,bash,edit,write,codemode") || slices.Contains(command.Argv, "--exclude-tools") {
+			t.Fatalf("Pi workspace must reset the old read-only loadout on creation and resume: %q", command.Argv)
+		}
 	}
 }
 
@@ -219,9 +227,62 @@ func TestAgentCLITranslatorPiNestedTools(t *testing.T) {
 	}
 }
 
+func TestAgentCLITranslatorDeepSeekReplacesTruncatedTextWithFinal(t *testing.T) {
+	texts := func(lines []string) []string {
+		var out []string
+		for _, line := range lines {
+			var event struct {
+				Type    string
+				Message struct{ Content []struct{ Type, Text string } }
+			}
+			if json.Unmarshal([]byte(line), &event) == nil && event.Type == "assistant" {
+				for _, block := range event.Message.Content {
+					if block.Type == "text" {
+						out = append(out, block.Text)
+					}
+				}
+			}
+		}
+		return out
+	}
+	full := strings.Repeat("长篇正文", 1000) + "（全文完）"
+	preview := full[:8190]
+	translate := NewAgentCLITranslator(AgentCLIDeepSeek)
+	var lines []string
+	for _, raw := range []string{
+		`{"type":"session","sessionId":"s-1"}`,
+		`{"type":"text","truncated":true,"text":` + strconv.Quote(preview) + `}`,
+		`{"type":"status","phase":"step_end","usage":{"inputTokens":1,"outputTokens":2}}`,
+		`{"type":"status","phase":"turn_end","reason":{"kind":"completed"}}`,
+		`{"type":"final","sessionId":"s-1","reason":{"kind":"completed"},"text":` + strconv.Quote(full) + `}`,
+	} {
+		lines = append(lines, translate(raw)...)
+	}
+	if got := texts(lines); len(got) != 1 || got[0] != full {
+		t.Fatalf("answer blocks %d, first %d bytes; want the whole final text once", len(got), len(got[0]))
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, `"type":"result"`) || !strings.Contains(last, "（全文完）") {
+		t.Fatalf("result: %.200s", last)
+	}
+
+	translate = NewAgentCLITranslator(AgentCLIDeepSeek)
+	lines = nil
+	for _, raw := range []string{
+		`{"type":"text","text":"短回复"}`,
+		`{"type":"text","truncated":true,"text":"被截断的说明"}`,
+		`{"type":"tool_call","callId":"c1","tool":"read","input":{}}`,
+	} {
+		lines = append(lines, translate(raw)...)
+	}
+	if got := texts(lines); !slices.Equal(got, []string{"短回复", "被截断的说明"}) || !strings.Contains(lines[len(lines)-1], `"tool_use"`) {
+		t.Fatalf("texts before a tool call: %q\n%s", got, strings.Join(lines, "\n"))
+	}
+}
+
 func TestAgentCLIUserCredentials(t *testing.T) {
-	creds := AgentCLIUserCredentials(domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "k", BaseURL: "u", Protocol: "messages"}}})
-	if creds["kimi"] != (ProviderCredential{APIKey: "k", BaseURL: "u", Protocol: "messages"}) {
+	models := []domain.CLIModel{{ID: "widget", Efforts: map[string]string{"low": "widget-low"}}}
+	creds := AgentCLIUserCredentials(domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "k", BaseURL: "u", Protocol: "messages", Models: models}}})
+	if !reflect.DeepEqual(creds["kimi"], ProviderCredential{APIKey: "k", BaseURL: "u", Protocol: "messages", Models: models}) {
 		t.Fatalf("credentials: %+v", creds)
 	}
 	if AgentCLIUserCredentials(domain.User{}) != nil {

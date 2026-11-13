@@ -558,11 +558,14 @@ func TestAgentAPIOnlyAcceptsBuiltInCLIs(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 
-	requestJSON[map[string]string](t, h, http.MethodPut, "/api/agents", map[string]any{"id": "custom-cli", "name": "Custom CLI", "projectId": "platform", "executorId": "custom"}, http.StatusBadRequest)
-	for _, executorID := range []string{"codebuddy", "codex", "claude"} {
-		created := requestJSON[domain.AgentDefinition](t, h, http.MethodPut, "/api/agents", map[string]any{"id": "agent-" + executorID, "name": executorID, "projectId": "platform", "executorId": executorID}, http.StatusOK)
-		if created.ExecutorID != executorID {
-			t.Fatalf("agent CLI = %q, want %q", created.ExecutorID, executorID)
+	rejected := requestJSON[map[string]string](t, h, http.MethodPut, "/api/agents", map[string]any{"id": "custom-cli", "name": "Custom CLI", "projectId": "platform", "executorId": "custom"}, http.StatusBadRequest)
+	if !strings.Contains(rejected["error"], "不支持的 CLI") {
+		t.Fatalf("unknown CLI error = %q", rejected["error"])
+	}
+	for _, executor := range repo.BuiltInExecutors() {
+		created := requestJSON[domain.AgentDefinition](t, h, http.MethodPut, "/api/agents", map[string]any{"id": "agent-" + executor.ID, "name": executor.Name, "projectId": "platform", "executorId": executor.ID}, http.StatusOK)
+		if created.ExecutorID != executor.ID {
+			t.Fatalf("agent CLI = %q, want %q", created.ExecutorID, executor.ID)
 		}
 	}
 }

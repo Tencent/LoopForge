@@ -228,6 +228,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 				invocation.AgentCLIAPIKey = cred.APIKey
 				invocation.AgentCLIBaseURL = cred.BaseURL
 				invocation.AgentCLIProtocol = cred.Protocol
+				invocation.AgentCLIModels = cred.Models
 			}
 		}
 	}

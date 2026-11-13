@@ -307,7 +307,7 @@ func TestRetryAfterCancelResumesCancelledParallelSibling(t *testing.T) {
 	if err := e.Cancel(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	cancelled := waitRun(t, s, run.ID, 30*time.Second, func(r domain.Run) bool { return r.Status == "cancelled" && !hasRunningNode(r) })
+	cancelled := waitRun(t, s, run.ID, 30*time.Second, func(r domain.Run) bool { return r.Status == "cancelled" && !r.HasActiveNode() })
 	if cancelled.Nodes["left"].Status != "cancelled" || cancelled.Nodes["right"].Status != "cancelled" {
 		t.Fatalf("cancel left left=%s right=%s", cancelled.Nodes["left"].Status, cancelled.Nodes["right"].Status)
 	}
