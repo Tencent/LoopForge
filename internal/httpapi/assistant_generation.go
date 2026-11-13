@@ -258,6 +258,13 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	defer cancel()
 	rec := newAssistantGenerationRecorder(g)
 	defer rec.close()
+	ctx = context.WithValue(ctx, assistantDiagnosticsKey{}, rec.diagnostics)
+	diagUser, _ := h.repo.User(g.UserID)
+	if actor != nil && actor.ID != 0 && actor.ID != g.UserID {
+		if u, ok := h.repo.User(actor.ID); ok {
+			diagUser = u
+		}
+	}
 	sink := rec.sink
 	stopped := make(chan struct{})
 	done := make(chan struct{})
@@ -272,6 +279,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			case <-ticker.C:
 				if req.workspaceToken != "" {
 					if err := h.engine.RenewConversationWorkspaceUse(req.RunID, req.workspaceToken); err != nil {
+						rec.diagnostics.terminate("WORKSPACE_LEASE_LOST", "会话工作区续租失败："+err.Error(), diagUser)
 						cancel()
 					}
 				}
@@ -281,10 +289,23 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 					rec.g.Steer = old.Steer
 					rec.mu.Unlock()
 				}
-				if !ok || old.ID != g.ID || old.Status != "running" || old.CancelRequested {
+				if !ok || old.ID != g.ID {
+					rec.diagnostics.terminate("GENERATION_SUPERSEDED", "当前生成记录已被替换或移除", diagUser)
+					cancel()
+				} else if old.Status != "running" {
+					rec.diagnostics.terminate("GENERATION_STATUS_CHANGED", "生成状态已变更为 "+old.Status, diagUser)
+					cancel()
+				} else if old.CancelRequested {
+					if old.Steer != nil {
+						rec.diagnostics.terminate("USER_STEER", "用户在生成途中发送新指令转向下一轮", diagUser)
+					} else {
+						rec.diagnostics.terminate("USER_CANCELLED", "用户主动停止了本轮生成", diagUser)
+					}
 					cancel()
 				}
-				if err := h.repo.CheckpointAssistantGeneration(rec.snapshot()); err != nil {
+				snapshot := rec.snapshot()
+				if err := h.checkpointRunningGeneration(snapshot, rec.diagnostics); err != nil {
+					rec.diagnostics.terminate("CHECKPOINT_FAILED", "保存生成检查点失败："+err.Error(), diagUser)
 					cancel()
 				}
 			}
@@ -294,7 +315,9 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	func() {
 		defer func() {
 			if recover() != nil {
-				sink("error", gin.H{"error": "生成异常中断，请重试"})
+				rec.diagnostics.terminate("SERVER_PANIC", "服务端处理生成时发生未捕获异常", diagUser)
+				failure := &domain.AssistantFailure{Code: "INTERNAL_ERROR", Phase: "server", Message: "生成异常中断，请重试", Suggestion: "请携带诊断编号联系管理员排查服务端日志。"}
+				sink("error", gin.H{"error": failure.Message, "failure": failure})
 			}
 		}()
 		body, _ := json.Marshal(req)
@@ -323,10 +346,12 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	}
 	if writer.status >= 400 && g.Error == "" {
 		var result struct {
-			Error string `json:"error"`
+			Error   string                   `json:"error"`
+			Failure *domain.AssistantFailure `json:"failure"`
 		}
 		_ = json.Unmarshal(writer.body.Bytes(), &result)
 		g.Error = result.Error
+		g.Failure = result.Failure
 	}
 	if len(g.Reply) > 0 {
 		g.Status = "completed"
@@ -336,9 +361,19 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			g.Error = "生成未完成，请重试"
 		}
 		if ctx.Err() != nil {
-			g.Status = "cancelled"
-			g.Error = "生成已停止"
+			if term := rec.diagnostics.termination(); term != nil && term.Code == "WORKSPACE_LEASE_LOST" {
+				g.Status = "failed"
+				g.Error = "会话工作区续租失败，生成已中断"
+				g.Failure = &domain.AssistantFailure{Code: "WORKSPACE_LEASE_LOST", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作及工作区状态后再重试；可下载诊断信息排查。"}
+			} else {
+				g.Status = "cancelled"
+				g.Error = "生成已停止"
+				g.Failure = nil
+			}
 		}
+	}
+	if g.Status == "failed" && g.Failure == nil {
+		g.Failure = rec.diagnostics.failureForMessage(g.Error)
 	}
 	rec.g = g
 	g = rec.snapshotLocked()
@@ -360,7 +395,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			steer = nil
 		}
 	}
-	if err := h.repo.CheckpointAssistantGeneration(g); err != nil {
+	if err := h.repo.CheckpointAssistantGeneration(g, rec.diagnostics.snapshot(g)); err != nil {
 		fmt.Printf("assistant generation checkpoint failed: %T\n", err)
 	}
 	rec.live.publish()
