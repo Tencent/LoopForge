@@ -46,37 +46,7 @@ func RecordBaseline(workspace, baseBranch string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	var sha []byte
-	// The ref travels on stdin so a branch name never reaches git's argument list.
-	resolve := func(ref string) ([]byte, error) {
-		if strings.ContainsAny(ref, "\r\n") {
-			return nil, fmt.Errorf("invalid ref %q", ref)
-		}
-		cmd := exec.Command("git", "cat-file", "--batch-check=%(objectname)")
-		cmd.Dir = workspace
-		cmd.Stdin = strings.NewReader(ref + "^{commit}\n")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-		}
-		sha := strings.TrimSpace(string(out))
-		if !isObjectID(sha) {
-			return nil, fmt.Errorf("resolve %s: %s", ref, sha)
-		}
-		return []byte(sha), nil
-	}
-	if ref := strings.TrimSpace(baseBranch); ref != "" {
-		sha, err = resolve("origin/" + ref)
-	}
-	if err != nil || len(bytes.TrimSpace(sha)) == 0 {
-		sha, err = resolve("origin/master")
-	}
-	if err != nil {
-		sha, err = resolve("origin/main")
-	}
-	if err != nil {
-		sha, err = resolve("HEAD")
-	}
+	sha, err := resolveBaselineSHA(workspace, baseBranch)
 	if err != nil {
 		return fmt.Errorf("resolve repository baseline: %w", err)
 	}
@@ -89,7 +59,7 @@ func RecordBaseline(workspace, baseBranch string) error {
 	if err != nil {
 		return fmt.Errorf("record repository baseline: %w", err)
 	}
-	_, err = file.WriteString(strings.TrimSpace(string(sha)))
+	_, err = file.WriteString(sha)
 	closeErr := file.Close()
 	if err != nil {
 		return fmt.Errorf("record repository baseline: %w", err)
@@ -98,6 +68,45 @@ func RecordBaseline(workspace, baseBranch string) error {
 		return closeErr
 	}
 	return nil
+}
+
+// resolveBaselineSHA picks the first resolvable baseline candidate:
+// origin/<baseBranch> (when set), origin/master, origin/main, then HEAD.
+// When none resolves, the error of the last candidate is returned.
+func resolveBaselineSHA(workspace, baseBranch string) (string, error) {
+	var refs []string
+	if ref := strings.TrimSpace(baseBranch); ref != "" {
+		refs = append(refs, "origin/"+ref)
+	}
+	refs = append(refs, "origin/master", "origin/main", "HEAD")
+	var err error
+	for _, ref := range refs {
+		var sha string
+		if sha, err = resolveCommitSHA(workspace, ref); err == nil {
+			return sha, nil
+		}
+	}
+	return "", err
+}
+
+// resolveCommitSHA resolves ref to a commit object ID. The ref travels on
+// stdin so a branch name never reaches git's argument list.
+func resolveCommitSHA(workspace, ref string) (string, error) {
+	if strings.ContainsAny(ref, "\r\n") {
+		return "", fmt.Errorf("invalid ref %q", ref)
+	}
+	cmd := exec.Command("git", "cat-file", "--batch-check=%(objectname)")
+	cmd.Dir = workspace
+	cmd.Stdin = strings.NewReader(ref + "^{commit}\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	sha := strings.TrimSpace(string(out))
+	if !isObjectID(sha) {
+		return "", fmt.Errorf("resolve %s: %s", ref, sha)
+	}
+	return sha, nil
 }
 
 // PatchInventory lists workspace changes against the nearest current
