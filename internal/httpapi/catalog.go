@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -700,10 +701,8 @@ func (h *catalogHandlers) sharedAgentReferences(kind, id string) bool {
 		if kind == "skill" {
 			refs = agent.Skills
 		}
-		for _, ref := range refs {
-			if ref == id {
-				return true
-			}
+		if slices.Contains(refs, id) {
+			return true
 		}
 	}
 	return false
