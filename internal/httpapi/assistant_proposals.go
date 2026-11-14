@@ -383,35 +383,13 @@ func (h *assistantHandlers) decideProposal(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "对话不存在"})
 		return
 	}
-	if body.MessageIndex < 0 || body.MessageIndex >= len(existing.Messages) || existing.Messages[body.MessageIndex].Role != "assistant" {
-		c.JSON(400, gin.H{"error": "建议不存在"})
+	messages, draft, err := recordProposalDecision(existing.Messages, body.MessageIndex, body.DraftIndex, body.Decision)
+	if err != nil {
+		respond(c, err)
 		return
 	}
-	var content map[string]any
-	if json.Unmarshal([]byte(existing.Messages[body.MessageIndex].Content), &content) != nil {
-		c.JSON(400, gin.H{"error": "建议不存在"})
-		return
-	}
-	drafts, _ := content["drafts"].([]any)
-	if body.DraftIndex < 0 || body.DraftIndex >= len(drafts) {
-		c.JSON(400, gin.H{"error": "建议不存在"})
-		return
-	}
-	raw, _ := drafts[body.DraftIndex].(map[string]any)
-	encoded, _ := json.Marshal(raw)
-	var draft assistantDraft
-	if raw == nil || json.Unmarshal(encoded, &draft) != nil || draft.Proposal == nil {
-		c.JSON(400, gin.H{"error": "这不是派发建议"})
-		return
-	}
-	if draft.Decision != "" {
-		c.JSON(409, gin.H{"error": "这条建议已经处理过"})
-		return
-	}
-	raw["decision"] = body.Decision
 	next := existing
-	next.Messages = append([]assistantMessage(nil), existing.Messages...)
-	next.Messages[body.MessageIndex].Content = jsonObject(content)
+	next.Messages = messages
 	var saveErr error
 	if shared {
 		saveErr = h.repo.PutSharedAssistantReceipt(ownerID, next, existing)
@@ -432,6 +410,38 @@ func (h *assistantHandlers) decideProposal(c *gin.Context) {
 		followUp = &assistantProposalFollowUp{Text: assistantProposalDeclinedText}
 	}
 	c.JSON(200, gin.H{"session": stored, "followUp": followUp})
+}
+
+// recordProposalDecision locates the proposal draft at messageIndex/draftIndex,
+// checks it is an unanswered proposal and writes decision into it. It returns a
+// copy of messages carrying the updated reply (messages itself is untouched, so
+// the caller can still save against it) and the draft as it was before the
+// answer. Failures are HTTPErrors carrying the status the handler answers with.
+func recordProposalDecision(messages []assistantMessage, messageIndex, draftIndex int, decision string) ([]assistantMessage, assistantDraft, error) {
+	if messageIndex < 0 || messageIndex >= len(messages) || messages[messageIndex].Role != "assistant" {
+		return nil, assistantDraft{}, HTTPError{Status: 400, Message: "建议不存在"}
+	}
+	var content map[string]any
+	if json.Unmarshal([]byte(messages[messageIndex].Content), &content) != nil {
+		return nil, assistantDraft{}, HTTPError{Status: 400, Message: "建议不存在"}
+	}
+	drafts, _ := content["drafts"].([]any)
+	if draftIndex < 0 || draftIndex >= len(drafts) {
+		return nil, assistantDraft{}, HTTPError{Status: 400, Message: "建议不存在"}
+	}
+	raw, _ := drafts[draftIndex].(map[string]any)
+	encoded, _ := json.Marshal(raw)
+	var draft assistantDraft
+	if raw == nil || json.Unmarshal(encoded, &draft) != nil || draft.Proposal == nil {
+		return nil, assistantDraft{}, HTTPError{Status: 400, Message: "这不是派发建议"}
+	}
+	if draft.Decision != "" {
+		return nil, assistantDraft{}, HTTPError{Status: 409, Message: "这条建议已经处理过"}
+	}
+	raw["decision"] = decision
+	next := append([]assistantMessage(nil), messages...)
+	next[messageIndex].Content = jsonObject(content)
+	return next, draft, nil
 }
 
 const assistantProposalDeclinedText = "不走 SOP，这件事由你直接完成。"
