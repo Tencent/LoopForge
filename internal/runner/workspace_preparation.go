@@ -74,6 +74,12 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 		return workspaceBusyResponse("workspace is in use; preparation waits for active execution or terminal to finish")
 	}
 	defer gate.Unlock()
+	if err := d.orphanNodeCheckpointFence(key); err != nil {
+		return workspaceBusyResponse(err.Error())
+	}
+	if reserved, ok := d.nodeCheckpointReservations.Load(key); ok && (request.CheckpointLease == "" || reserved != request.CheckpointLease) {
+		return workspaceBusyResponse("workspace is reserved for a node checkpoint")
+	}
 	d.workspacePreparing.Store(key, true)
 	defer d.workspacePreparing.Delete(key)
 	if err := os.MkdirAll(root, 0700); err != nil {
@@ -120,6 +126,14 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 		return runtime.TerminalResult{}, newWorkspaceBusyError("workspace is in use; finish active execution before preparing the terminal")
 	}
 	unlock := onceRelease(gate.Unlock)
+	if err := d.orphanNodeCheckpointFence(key); err != nil {
+		unlock()
+		return runtime.TerminalResult{}, newWorkspaceBusyError(err.Error())
+	}
+	if _, reserved := d.nodeCheckpointReservations.Load(key); reserved {
+		unlock()
+		return runtime.TerminalResult{}, newWorkspaceBusyError("workspace is reserved for a node checkpoint")
+	}
 	d.workspacePreparing.Store(key, true)
 	defer d.workspacePreparing.Delete(key)
 	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, runnerTaskSandboxDriver(task)); err != nil {
@@ -268,6 +282,9 @@ func (d *Daemon) recordRunnerWorkspacePreparation(ctx context.Context, root stri
 		return workspaceBusyResponse("workspace preparation is in progress")
 	}
 	defer gate.RUnlock()
+	if reserved, ok := d.nodeCheckpointReservations.Load(requestGateKey(request)); ok && (request.CheckpointLease == "" || reserved != request.CheckpointLease) {
+		return workspaceBusyResponse("workspace is reserved for a node checkpoint")
+	}
 	sb, release := d.acquireExistingTaskSandbox(task)
 	if sb == nil {
 		return domain.RunnerWorkspaceResponse{Status: 409, Error: "the script execution environment is no longer available; cannot record it as prepared"}

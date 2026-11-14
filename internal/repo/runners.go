@@ -22,23 +22,26 @@ var (
 )
 
 type runnerTaskPayload struct {
-	Prompt            string                           `json:"prompt"`
-	Workspace         string                           `json:"workspace,omitempty"`
-	Args              []string                         `json:"args,omitempty"`
-	ExitCode          *int                             `json:"exitCode,omitempty"`
-	Result            string                           `json:"result,omitempty"`
-	Error             string                           `json:"error,omitempty"`
-	StartedAt         *runnerTaskTime                  `json:"startedAt,omitempty"`
-	CompletedAt       *runnerTaskTime                  `json:"completedAt,omitempty"`
-	RunID             string                           `json:"runId,omitempty"`
-	NodeID            string                           `json:"nodeId,omitempty"`
-	Invocation        *domain.RunnerInvocation         `json:"invocation,omitempty"`
-	Sandbox           *domain.RunnerSandboxSpec        `json:"sandbox,omitempty"`
-	Command           string                           `json:"command,omitempty"`
-	Action            string                           `json:"action,omitempty"`
-	PreviewArchive    *domain.RunnerPreviewArchiveSpec `json:"previewArchive,omitempty"`
-	WorkBranchMessage string                           `json:"workBranchMessage,omitempty"`
-	IntegrationLabel  string                           `json:"integrationLabel,omitempty"`
+	Prompt                string                           `json:"prompt"`
+	Workspace             string                           `json:"workspace,omitempty"`
+	Args                  []string                         `json:"args,omitempty"`
+	ExitCode              *int                             `json:"exitCode,omitempty"`
+	Result                string                           `json:"result,omitempty"`
+	Error                 string                           `json:"error,omitempty"`
+	StartedAt             *runnerTaskTime                  `json:"startedAt,omitempty"`
+	CompletedAt           *runnerTaskTime                  `json:"completedAt,omitempty"`
+	RunID                 string                           `json:"runId,omitempty"`
+	NodeID                string                           `json:"nodeId,omitempty"`
+	Invocation            *domain.RunnerInvocation         `json:"invocation,omitempty"`
+	Sandbox               *domain.RunnerSandboxSpec        `json:"sandbox,omitempty"`
+	Command               string                           `json:"command,omitempty"`
+	Action                string                           `json:"action,omitempty"`
+	NodeCheckpointAttempt int                              `json:"nodeCheckpointAttempt,omitempty"`
+	NodeCheckpointRunID   string                           `json:"nodeCheckpointRunId,omitempty"`
+	NodeCheckpointLease   string                           `json:"nodeCheckpointLease,omitempty"`
+	PreviewArchive        *domain.RunnerPreviewArchiveSpec `json:"previewArchive,omitempty"`
+	WorkBranchMessage     string                           `json:"workBranchMessage,omitempty"`
+	IntegrationLabel      string                           `json:"integrationLabel,omitempty"`
 	// Artifacts holds artifact content uploaded by the runner at completion
 	// (name → file content) so the engine can write them into the run
 	// workspace and reuse the existing verification/handoff pipeline.
@@ -120,6 +123,9 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 		t.Sandbox = p.Sandbox
 		t.Command = p.Command
 		t.Action = p.Action
+		t.NodeCheckpointAttempt = p.NodeCheckpointAttempt
+		t.NodeCheckpointRunID = p.NodeCheckpointRunID
+		t.NodeCheckpointLease = p.NodeCheckpointLease
 		t.PreviewArchive = p.PreviewArchive
 		t.WorkBranchMessage = p.WorkBranchMessage
 		t.IntegrationLabel = p.IntegrationLabel
@@ -140,6 +146,7 @@ func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
 		Result: v.Result, Error: v.Error, StartedAt: newRunnerTaskTime(v.StartedAt),
 		CompletedAt: newRunnerTaskTime(v.CompletedAt), RunID: v.RunID, NodeID: v.NodeID,
 		Invocation: v.Invocation, Sandbox: v.Sandbox, Command: v.Command, Action: v.Action,
+		NodeCheckpointAttempt: v.NodeCheckpointAttempt, NodeCheckpointRunID: v.NodeCheckpointRunID, NodeCheckpointLease: v.NodeCheckpointLease,
 		PreviewArchive: v.PreviewArchive, WorkBranchMessage: v.WorkBranchMessage, Artifacts: v.Artifacts,
 		Outputs: v.Outputs, IntegrationLabel: v.IntegrationLabel,
 	})
@@ -588,6 +595,9 @@ func (r *RunnersRepo) StartRunnerTask(id, runnerID string, now time.Time) error 
 			return ErrRunnerTaskLeaseLost
 		}
 		task := runnerTaskFromRow(row)
+		if err := validateRunnerCheckpointLease(tx, task, now); err != nil {
+			return err
+		}
 		task.Status = domain.RunnerTaskRunning
 		if task.StartedAt == nil {
 			started := now
@@ -598,6 +608,24 @@ func (r *RunnersRepo) StartRunnerTask(id, runnerID string, now time.Time) error 
 			"status": task.Status, "payload": runnerTaskPayloadBytes(task), "updated_at": now,
 		}).Error
 	})
+}
+
+func validateRunnerCheckpointLease(tx *gorm.DB, task domain.RunnerTask, now time.Time) error {
+	if task.NodeCheckpointLease == "" {
+		return nil
+	}
+	owner := task.NodeCheckpointRunID
+	if owner == "" {
+		owner = task.RunID
+	}
+	var count int64
+	if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", owner, task.NodeCheckpointLease, now).Count(&count).Error; err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrRunnerTaskLeaseLost
+	}
+	return nil
 }
 
 // takeRunnerTaskForLease loads a task that must currently be leased by runnerID.
@@ -619,6 +647,9 @@ func (r *RunnersRepo) RenewRunnerTaskLease(id, runnerID string, ttl time.Duratio
 		row, ok := r.takeRunnerTaskForLease(tx, id, runnerID)
 		if !ok {
 			return ErrRunnerTaskLeaseLost
+		}
+		if err := validateRunnerCheckpointLease(tx, runnerTaskFromRow(row), now); err != nil {
+			return err
 		}
 		if err := tx.Model(&runnerTaskRow{}).Where("id = ?", id).Updates(map[string]any{
 			"lease_until": now.Add(ttl), "updated_at": now,
@@ -665,7 +696,11 @@ func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *
 }
 
 func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
-	if task == nil || task.Invocation == nil {
+	if task == nil {
+		return
+	}
+	task.NodeCheckpointLease = ""
+	if task.Invocation == nil {
 		return
 	}
 	task.Invocation.CodeBuddyAPIKey = ""
@@ -915,6 +950,49 @@ func (r *RunnersRepo) ActiveRunnerTasksForRun(runID string) ([]domain.RunnerTask
 		}
 	}
 	return out, nil
+}
+
+// ActiveRunnerTasksForWorkspace includes child SOP tasks using the same
+// checkout. A cancelled task must stop before a new checkpoint can start.
+func (r *RunnersRepo) ActiveRunnerTasksForWorkspace(owner string) ([]domain.RunnerTask, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil, nil
+	}
+	var rows []runnerTaskRow
+	if err := r.DB.Where("status IN ?", []string{domain.RunnerTaskQueued, domain.RunnerTaskLeased, domain.RunnerTaskRunning}).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	var result []domain.RunnerTask
+	for _, row := range rows {
+		var payload runnerTaskPayload
+		if err := json.Unmarshal(row.Payload, &payload); err != nil {
+			return nil, fmt.Errorf("decode active runner task %s: %w", row.ID, err)
+		}
+		task := runnerTaskFromRow(row)
+		matches := task.NodeCheckpointRunID == owner || task.NodeCheckpointRunID == "" && task.RunID == owner
+		// Legacy tasks may not carry NodeCheckpointRunID. Derive shared
+		// ownership from their persisted run instead of overlooking a child.
+		if !matches && task.NodeCheckpointRunID == "" && task.RunID != "" {
+			var run runRow
+			if err := r.DB.Select("id", "execution_context").Where("id = ?", task.RunID).Take(&run).Error; err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, err
+				}
+				// An orphan task with unknown ownership cannot be ruled out.
+				return nil, fmt.Errorf("active runner task %s has no owning run", task.ID)
+			}
+			var execution domain.TelemetryContext
+			if err := json.Unmarshal(run.ExecutionContext, &execution); err != nil && len(run.ExecutionContext) != 0 {
+				return nil, fmt.Errorf("decode workspace owner for run %s: %w", run.ID, err)
+			}
+			matches = execution.WorkspaceRunID == owner
+		}
+		if matches {
+			result = append(result, task)
+		}
+	}
+	return result, nil
 }
 
 // CancelRunnerTasksForRun interrupts all active remote work for a Run. Queued

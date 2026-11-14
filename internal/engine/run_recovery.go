@@ -122,6 +122,24 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 		if listed.IsWorkspace() || listed.HistoricalGroup() {
 			continue
 		}
+		if listed.Status == "running" {
+			if parked, err := e.repo.ParkOrphanNodeCheckpointRestore(listed.ID, workspaceRunID(listed), time.Now().UTC()); err != nil {
+				log.Printf("park interrupted node restore %s: %v", listed.ID, err)
+				continue
+			} else if parked {
+				e.publish(listed.ID)
+				continue
+			}
+			if listed.ExecutionContext.NodeCheckpointsEnabled {
+				if parked, err := e.repo.ParkAfterSharedNodeRestore(listed.ID, workspaceRunID(listed), "", listed.Generation, time.Now().UTC()); err != nil {
+					log.Printf("park shared workspace run %s: %v", listed.ID, err)
+					continue
+				} else if parked {
+					e.publish(listed.ID)
+					continue
+				}
+			}
+		}
 		// Approval and operator-paused Runs normally have no scheduler. A cancel
 		// request that raced with the last worker write must therefore be claimed
 		// and settled by the recovery loop instead of waiting forever.

@@ -367,6 +367,18 @@ func cloneRunNodes(nodes map[string]*domain.NodeRun) map[string]*domain.NodeRun 
 			continue
 		}
 		cp := *node
+		cp.Checkpoints = append([]domain.NodeCheckpoint(nil), node.Checkpoints...)
+		for i := range cp.Checkpoints {
+			cp.Checkpoints[i].Repositories = append([]domain.NodeRepositoryCheckpoint(nil), node.Checkpoints[i].Repositories...)
+			cp.Checkpoints[i].End = append([]domain.NodeRepositoryCheckpoint(nil), node.Checkpoints[i].End...)
+			cp.Checkpoints[i].ChangedFiles = append([]string(nil), node.Checkpoints[i].ChangedFiles...)
+		}
+		cp.RecoveryCheckpoints = append([]domain.NodeCheckpoint(nil), node.RecoveryCheckpoints...)
+		for i := range cp.RecoveryCheckpoints {
+			cp.RecoveryCheckpoints[i].Repositories = append([]domain.NodeRepositoryCheckpoint(nil), node.RecoveryCheckpoints[i].Repositories...)
+			cp.RecoveryCheckpoints[i].End = append([]domain.NodeRepositoryCheckpoint(nil), node.RecoveryCheckpoints[i].End...)
+			cp.RecoveryCheckpoints[i].ChangedFiles = append([]string(nil), node.RecoveryCheckpoints[i].ChangedFiles...)
+		}
 		out[id] = &cp
 	}
 	return out

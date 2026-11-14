@@ -154,7 +154,7 @@ func sandboxResourcesFromSnapshot(snapshot *domain.RunnerSandboxSpec) runtime.Sa
 func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, profile domain.SandboxProfile, requirements runtime.SandboxRequirements, onWorkspaceBusy ...func()) (*runEnvironment, bool, error) {
 	needsRestore := !run.WorkspaceCleanedAt.IsZero()
 	if !needsRestore && !sharesWorkspace(run) && e.defaultExecutionRunner(run) == "" {
-		if _, saved := e.repo.WorkspaceCheckpoint(run.ID); saved {
+		if _, exists := e.repo.WorkspaceCheckpoint(run.ID); exists {
 			_, err := os.Stat(e.sandboxes.RunWorkspace(run.ID))
 			needsRestore = os.IsNotExist(err)
 		}

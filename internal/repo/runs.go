@@ -1,7 +1,6 @@
 package repo
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,6 +109,37 @@ func (r *RunsRepo) Runs() []domain.Run {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out
+}
+
+// WorkspaceRuns returns every run sharing an owner's workspace, including
+// nested SOPs, and reports read errors so safety checks can fail closed.
+func (r *RunsRepo) WorkspaceRuns(owner string) ([]domain.Run, error) {
+	var rows []runRow
+	if err := r.DB.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	var result []domain.Run
+	for _, row := range rows {
+		// A malformed execution context must not make a shared run disappear
+		// from the set used to decide whether restoring files is safe.
+		var execution domain.TelemetryContext
+		if err := json.Unmarshal(row.ExecutionContext, &execution); err != nil && len(row.ExecutionContext) != 0 {
+			return nil, fmt.Errorf("decode workspace owner for run %s: %w", row.ID, err)
+		}
+		run := runFromRow(row)
+		workspace := execution.WorkspaceRunID
+		if workspace == "" {
+			workspace = run.ID
+		}
+		if workspace != owner {
+			continue
+		}
+		if err := r.loadRunNodes(&run); err != nil {
+			return nil, err
+		}
+		result = append(result, run)
+	}
+	return result, nil
 }
 
 // RunSummaries returns list-safe Run data. The database removes large node
@@ -925,18 +955,53 @@ func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
 }
 
 func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision ...int) error {
-	var opts []*sql.TxOptions
-	if lockKey != "" {
-		opts = r.admissionTxOptions()
-	}
+	// The initial lookup must not establish a stale MySQL snapshot before the
+	// owner lock is acquired. The workspace owner is immutable after creation.
+	opts := r.admissionTxOptions()
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		if lockKey != "" {
 			if err := lockAdmissionGate(r.deps, tx, lockKey); err != nil {
 				return err
 			}
 		}
+		var existing runRow
+		lookupErr := tx.Select("id", "execution_context").Where("id = ?", run.ID).Take(&existing).Error
+		if lookupErr == nil {
+			var execution domain.TelemetryContext
+			if err := json.Unmarshal(existing.ExecutionContext, &execution); err != nil && len(existing.ExecutionContext) != 0 {
+				return err
+			}
+			if execution.WorkspaceRunID != run.ExecutionContext.WorkspaceRunID {
+				return fmt.Errorf("workspace owner cannot be changed")
+			}
+		} else if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			return lookupErr
+		}
+		if owner := run.ExecutionContext.WorkspaceRunID; owner != "" && owner != run.ID {
+			if _, err := r.takeRunForUpdate(tx, owner); err != nil && !(errors.Is(err, gorm.ErrRecordNotFound) && !run.ExecutionContext.NodeCheckpointsEnabled) {
+				return err
+			}
+		} else if err := r.lockWorkspaceOwnerForRun(tx, run.ID); err != nil {
+			return err
+		}
 		current, err := r.takeRunForUpdate(tx, run.ID)
 		if err == nil {
+			var execution domain.TelemetryContext
+			if err := json.Unmarshal(current.ExecutionContext, &execution); err != nil && len(current.ExecutionContext) != 0 {
+				return err
+			}
+			if execution.WorkspaceRunID != run.ExecutionContext.WorkspaceRunID {
+				return fmt.Errorf("workspace owner cannot be changed")
+			}
+			if run.Status == "running" || run.Status == "queued" {
+				active, checkErr := nodeRewindActive(tx, run.ID, time.Now().UTC())
+				if checkErr != nil {
+					return checkErr
+				}
+				if active {
+					return ErrWorkspaceInUse
+				}
+			}
 			if len(expectedRevision) > 0 && current.Revision != expectedRevision[0] {
 				return ErrRunDecisionStale
 			}
@@ -958,6 +1023,13 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 			}
 		} else if err != gorm.ErrRecordNotFound {
 			return err
+		} else if owner := run.ExecutionContext.WorkspaceRunID; owner != "" && owner != run.ID && (run.Status == "running" || run.Status == "queued") {
+			var count int64
+			if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND (lease_handoff_id IN ? OR (lease_handoff_id = ? AND lease_until > ?))", owner, []string{"node-rewind-pending", "node-auto-restore-pending"}, "node-rewind", time.Now().UTC()).Count(&count).Error; err != nil {
+				return err
+			} else if count != 0 {
+				return ErrWorkspaceInUse
+			}
 		}
 		if len(expectedRevision) > 0 {
 			if err != nil {
@@ -1098,11 +1170,38 @@ func (r *RunsRepo) takeRunForUpdate(tx *gorm.DB, id string) (runRow, error) {
 	return row, err
 }
 
+// Serialize child activation with operations that fence the shared checkout.
+// The workspace owner is always locked before a child run.
+func (r *RunsRepo) lockWorkspaceOwnerForRun(tx *gorm.DB, id string) error {
+	var current runRow
+	if err := tx.Select("id", "execution_context").Where("id = ?", id).Take(&current).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	var execution domain.TelemetryContext
+	if err := json.Unmarshal(current.ExecutionContext, &execution); err != nil && len(current.ExecutionContext) != 0 {
+		return err
+	}
+	if execution.WorkspaceRunID != "" && execution.WorkspaceRunID != id {
+		_, err := r.takeRunForUpdate(tx, execution.WorkspaceRunID)
+		if errors.Is(err, gorm.ErrRecordNotFound) && !execution.NodeCheckpointsEnabled {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func (r *RunsRepo) TryAcquireRunLease(runID, instanceID string, generation int, ttl time.Duration) error {
 	if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
 		return ErrRunLeaseLost
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := r.lockWorkspaceOwnerForRun(tx, runID); err != nil {
+			return err
+		}
 		current, err := r.takeRunForUpdate(tx, runID)
 		if err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -1114,6 +1213,11 @@ func (r *RunsRepo) TryAcquireRunLease(runID, instanceID string, generation int, 
 			return fmt.Errorf("run cannot be leased")
 		}
 		now := time.Now().UTC()
+		if active, err := nodeRewindActive(tx, runID, now); err != nil {
+			return err
+		} else if active {
+			return ErrWorkspaceInUse
+		}
 		if current.OwnerInstanceID != "" && current.OwnerInstanceID != instanceID && current.LeaseUntil != nil && current.LeaseUntil.After(now) {
 			return ErrRunLeaseHeld
 		}
@@ -1884,12 +1988,20 @@ func (r *RunsRepo) RunControlRequested(id string) bool {
 // observed by the run's owner instance.
 func (r *RunsRepo) ClearRunControl(id string) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := r.lockWorkspaceOwnerForRun(tx, id); err != nil {
+			return err
+		}
 		_, err := r.takeRunForUpdate(tx, id)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("run not found")
 		}
 		if err != nil {
 			return err
+		}
+		if active, err := nodeRewindActive(tx, id, time.Now().UTC()); err != nil {
+			return err
+		} else if active {
+			return ErrWorkspaceInUse
 		}
 		return tx.Model(&runRow{}).Where("id = ?", id).Updates(map[string]any{
 			"cancel_requested": false, "pause_requested": false,
@@ -1900,21 +2012,33 @@ func (r *RunsRepo) ClearRunControl(id string) error {
 
 func (r *RunsRepo) requestRunControl(id string, cancelRequested, pauseRequested bool) (domain.Run, error) {
 	now := time.Now().UTC()
-	allowed := "status IN ('running', 'waiting')"
-	res := r.DB.Model(&runRow{}).Where("id = ? AND "+allowed, id).Updates(map[string]any{
-		"cancel_requested": cancelRequested,
-		"pause_requested":  pauseRequested,
-		"revision":         gorm.Expr("revision + 1"),
-		"updated_at":       now,
-	})
-	if res.Error != nil {
-		return domain.Run{}, fmt.Errorf("request run control: %w", res.Error)
-	}
-	if res.RowsAffected == 0 {
-		if _, ok := takeRun(r.DB, id); !ok {
-			return domain.Run{}, fmt.Errorf("run not found")
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := r.lockWorkspaceOwnerForRun(tx, id); err != nil {
+			return err
 		}
-		return domain.Run{}, fmt.Errorf("run is not active")
+		row, err := r.takeRunForUpdate(tx, id)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("run not found")
+		}
+		if err != nil {
+			return err
+		}
+		if row.Status != "running" && row.Status != "waiting" {
+			return fmt.Errorf("run is not active")
+		}
+		if active, err := nodeRewindActive(tx, id, now); err != nil {
+			return err
+		} else if active {
+			return ErrWorkspaceInUse
+		}
+		return tx.Model(&runRow{}).Where("id = ?", id).Updates(map[string]any{
+			"cancel_requested": cancelRequested,
+			"pause_requested":  pauseRequested,
+			"revision":         gorm.Expr("revision + 1"), "updated_at": now,
+		}).Error
+	}, r.admissionTxOptions()...)
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("request run control: %w", err)
 	}
 	row, ok := takeRun(r.DB, id)
 	if !ok {

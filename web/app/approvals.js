@@ -14,6 +14,20 @@ function withHumanContext(payload){
   const reason=String(payload.reason||'').trim();
   return {...payload, context, reason:reason?`${reason}\n\n人工补充上下文：\n${context}`:context};
 }
+function promptRejectCheckpoint(run,targetName){
+  return afOpenDialog(modal=>{
+    $('#confirmTitle').textContent=`退回上游「${targetName}」重做`;
+    $('#confirmMessage').textContent=`将重置「${targetName}」及其下游节点。请输入返工原因：`;
+    const wrap=$('#confirmPromptWrap'),input=$('#confirmPromptInput'),multi=$('#confirmPromptMultiline');
+    wrap.hidden=false;input.hidden=false;multi.hidden=true;input.value='验证未通过，请上游修复后重新提交';
+    $('#confirmPromptLabel').textContent='返工原因';$('#confirmPromptLabel').htmlFor=input.id;
+    let fields=$('#rejectCheckpointFields');
+    if(!fields){fields=document.createElement('div');fields.id='rejectCheckpointFields';fields.className='confirm-prompt-wrap';fields.innerHTML='<label class="toggle-row"><input type="checkbox" data-reject-restore> 回到目标节点开始前的代码</label><small>如果节点结束后工作区有其他修改，将拒绝恢复。</small>';wrap.insertAdjacentElement('afterend',fields)}
+    fields.hidden=!run?.executionContext?.nodeCheckpointsEnabled;fields.querySelector('input').checked=false;
+    $('#confirmOkBtn').textContent='确认打回';$('#confirmOkBtn').className='button primary';$('#confirmCancelBtn').textContent='取消';setConfirmIcon('info','edit');
+    return {focus:input,select:true,value:ok=>ok?{reason:input.value,restoreWorkspace:!fields.hidden&&fields.querySelector('input').checked}:null};
+  });
+}
 function reworkTarget(node,nodes){
   const id=String(node?.rejectTo||'').trim();
   if(!id)return null;
@@ -351,7 +365,7 @@ async function cancelRunFlow(runId){
   try{await api(`/api/runs/${encodeURIComponent(runId)}/cancel`,{method:'POST'});toast('流程已取消','ok');renderApprovals(true)}catch(e){toast(e.message,'err')}
 }
 async function approveRun(runId,nodeId,fromEl){if(queuedRunActionBlocked(runId))return;try{await api(`/api/runs/${runId}/approve`,{method:'POST',body:JSON.stringify(withHumanContext({nodeId,context:readHumanContext(fromEl)}))});toast('已批准，流程继续','ok');await renderApprovals();if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
-async function rejectRun(runId,nodeId,fromEl){if(queuedRunActionBlocked(runId))return;const target=String(fromEl?.dataset?.target||'').trim(),targetName=String(fromEl?.dataset?.targetName||target).trim();if(!target)return toast('当前节点没有配置上游返工目标','err');const reason=await afPrompt({title:`退回上游「${targetName}」重做`,message:`将重置「${targetName}」及其全部下游节点。请输入返工原因：`,defaultValue:'验证未通过，请上游修复后重新提交'});if(reason===null||reason===undefined)return;try{await api(`/api/runs/${runId}/reject`,{method:'POST',body:JSON.stringify(withHumanContext({nodeId,targetId:target,reason,context:readHumanContext(fromEl)}))});toast(`已退回「${targetName}」，开始重跑后续流程`,'ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
+async function rejectRun(runId,nodeId,fromEl){if(queuedRunActionBlocked(runId))return;const target=String(fromEl?.dataset?.target||'').trim(),targetName=String(fromEl?.dataset?.targetName||target).trim();if(!target)return toast('当前节点没有配置上游返工目标','err');const decision=await promptRejectCheckpoint(cachedRun(runId),targetName);if(!decision)return;try{await api(`/api/runs/${runId}/reject`,{method:'POST',body:JSON.stringify(withHumanContext({nodeId,targetId:target,...decision,context:readHumanContext(fromEl)}))});toast(`已退回「${targetName}」，开始重跑后续流程`,'ok');renderApprovals(true);if(state.drawerOpen&&state.issueDetailData?.issue)openIssueDetail(state.issueDetailData.issue.id,'sop')}catch(e){toast(e.message,'err')}}
 function approvalStatusBadgeHTML(paused){
   const [tone,icon,label]=paused?['neutral','pause','已暂停']:['warn','pending-review','待确认'];
   return `<span class="hui-badge" data-tone="${tone}" data-stage-icon="${icon}">${huiIcon(icon)}<span class="hui-badge-label">${label}</span></span>`;

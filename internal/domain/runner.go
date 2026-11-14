@@ -36,13 +36,14 @@ const (
 // RunnerTaskDesiredState is carried on lease renewal responses so a cancel
 // reaches the runner without an extra polling channel.
 const (
-	RunnerTaskDesiredCancel        = "cancel"
-	RunnerTaskActionCleanupRun     = "cleanup_run"
-	RunnerTaskActionArchivePreview = "archive_preview"
-	RunnerTaskActionPullWorkBranch = "pull_work_branch"
-	RunnerTaskActionPushWorkBranch = "push_work_branch"
-	RunnerTaskActionIntegrate      = "integrate"
-	RunnerTaskActionAlignBaseline  = "align_baseline"
+	RunnerTaskDesiredCancel              = "cancel"
+	RunnerTaskActionCleanupRun           = "cleanup_run"
+	RunnerTaskActionArchivePreview       = "archive_preview"
+	RunnerTaskActionPullWorkBranch       = "pull_work_branch"
+	RunnerTaskActionPushWorkBranch       = "push_work_branch"
+	RunnerTaskActionIntegrate            = "integrate"
+	RunnerTaskActionAlignBaseline        = "align_baseline"
+	RunnerTaskActionNodeCheckpointCreate = "node_checkpoint_create"
 )
 
 // RunnerVersionWorkBranchSync is the first runner version that executes the
@@ -117,6 +118,12 @@ func (r Runner) DefaultSelectionBlocker() string {
 const RunnerVersionSharedPush = "0.9.0"
 
 const RunnerVersionGitSSH = "0.9.3"
+
+const RunnerVersionNodeCheckpoints = "0.10.2"
+
+func (r Runner) SupportsNodeCheckpoints() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionNodeCheckpoints)
+}
 
 func (r Runner) SupportsGitSSH() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitSSH)
@@ -361,7 +368,10 @@ type RunnerTask struct {
 	// is a JSON []RunnerIntegrationResult. align_baseline merges the
 	// DefaultBranch of the single Invocation.Repositories entry into its
 	// IntegrateBranch in a throwaway clone; Result is a JSON RunnerAlignResult.
-	Action string `json:"action,omitempty"`
+	Action                string `json:"action,omitempty"`
+	NodeCheckpointAttempt int    `json:"nodeCheckpointAttempt,omitempty"`
+	NodeCheckpointRunID   string `json:"nodeCheckpointRunId,omitempty"`
+	NodeCheckpointLease   string `json:"nodeCheckpointLease,omitempty"`
 	// WorkBranchMessage is the commit message for push_work_branch.
 	WorkBranchMessage string `json:"workBranchMessage,omitempty"`
 	// IntegrationLabel names the run in integrate commit messages.
@@ -399,6 +409,7 @@ type RunnerSandboxSpec struct {
 // PublicRunnerTask strips task-scoped credentials from management responses.
 // The authenticated claiming runner receives the original task payload.
 func PublicRunnerTask(task RunnerTask) RunnerTask {
+	task.NodeCheckpointLease = ""
 	if task.PreviewArchive != nil {
 		copySpec := *task.PreviewArchive
 		copySpec.UploadToken = ""

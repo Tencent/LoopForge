@@ -19,11 +19,12 @@ type Project struct {
 	SOPPlaybooks []SOPPlaybook `json:"sopPlaybooks,omitempty"`
 	// SOPBindings is the legacy single playbook. Empty SOPPlaybooks still
 	// expose it as the default combo so old projects keep working.
-	SOPBindings         []IssueSOPBinding `json:"sopBindings,omitempty"`
-	DefaultRepositoryID string            `json:"defaultRepositoryId,omitempty"`
-	OwnerID             int64             `json:"ownerId,omitempty"`
-	Members             []ProjectMember   `json:"members,omitempty"`
-	RunEval             RunEvalPolicy     `json:"runEval,omitempty"`
+	SOPBindings             []IssueSOPBinding `json:"sopBindings,omitempty"`
+	DefaultRepositoryID     string            `json:"defaultRepositoryId,omitempty"`
+	OwnerID                 int64             `json:"ownerId,omitempty"`
+	Members                 []ProjectMember   `json:"members,omitempty"`
+	RunEval                 RunEvalPolicy     `json:"runEval,omitempty"`
+	NodeCheckpointsDisabled bool              `json:"nodeCheckpointsDisabled,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`

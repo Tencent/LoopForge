@@ -134,7 +134,7 @@ func (p *CheckpointTransfers) handle(ctx context.Context, root string, req domai
 		item.info.ID = hex.EncodeToString(raw)
 		if op == domain.RunnerWorkspaceOperationCheckpointExport {
 			hash := sha256.New()
-			if err = CreateWorkspaceCheckpointTo(root, checkpointContextWriter{ctx, io.MultiWriter(f, hash)}); err != nil {
+			if err = CreateWorkspaceCheckpointToFiltered(root, checkpointContextWriter{ctx, io.MultiWriter(f, hash)}, req.DiscardNodeCheckpoints); err != nil {
 				return nil, err
 			}
 			stat, err := f.Stat()

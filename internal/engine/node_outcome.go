@@ -59,8 +59,7 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 		nr.FinishedAt = time.Now().UTC()
 		reworkBudget := node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount >= max(1, node.MaxReworks)
 		if shouldRetryFailedAttempt(node, nr.Attempt, err) && !gateReworkReject(allowReject, nr) {
-			// The retry gets a clean workspace, so carry the concrete failure into
-			// {{feedback}} instead of making the next attempt rediscover it.
+			// Carry the concrete failure into {{feedback}} for the next attempt.
 			nr.Feedback = err.Error()
 			nr.Status = "pending"
 			nr.ChildRunID = ""

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -10,11 +11,65 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestNodeCheckpointArchiveIsFilteredOnlyAfterCleanupClaim(t *testing.T) {
+	e, id := checkpointFixture(t)
+	root := e.RunWorkspace(id)
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(root, "init", "-q")
+	git(root, "add", ".")
+	git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base")
+	if _, err := gitwork.CreateNodeCheckpoint(context.Background(), root, "0123456789abcdef0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	run, _ := e.repo.RunState(id)
+	run.ExecutionContext.NodeCheckpointsEnabled = true
+	if err := e.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := e.repo.RunState(id)
+	if err := e.repo.PutRun(stale); err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, _, err := e.claimIdleConversationWorkspace(stale, time.Now().UTC()); err != nil || claimed {
+		t.Fatalf("stale cleanup: claimed=%v err=%v", claimed, err)
+	}
+	assertArchiveRefs := func(want bool) {
+		t.Helper()
+		archive, err := e.repo.WorkspaceCheckpointArchive(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dest := filepath.Join(t.TempDir(), "restored")
+		if err := runtime.RestoreWorkspaceCheckpoint(dest, archive); err != nil {
+			t.Fatal(err)
+		}
+		if got := git(dest, "for-each-ref", "--format=%(refname)", "refs/loopforge"); (got != "") != want {
+			t.Fatalf("archived refs = %q, want present=%v", got, want)
+		}
+	}
+	assertArchiveRefs(true)
+	current, _ := e.repo.RunState(id)
+	_, claimed, release, err := e.claimIdleConversationWorkspace(current, time.Now().UTC())
+	if err != nil || !claimed {
+		t.Fatalf("cleanup: claimed=%v err=%v", claimed, err)
+	}
+	defer release()
+	assertArchiveRefs(false)
+}
 
 func checkpointFixture(t *testing.T) (*Engine, string) {
 	t.Helper()

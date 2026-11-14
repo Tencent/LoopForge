@@ -411,6 +411,14 @@ func (r *RunsRepo) promoteBucket(key string) ([]string, error) {
 				break
 			}
 			now := time.Now().UTC()
+			if err := r.lockWorkspaceOwnerForRun(tx, row.ID); err != nil {
+				return err
+			}
+			if active, err := nodeRewindActive(tx, row.ID, now); err != nil {
+				return err
+			} else if active {
+				continue
+			}
 			// A concurrent cancel holds the run row; re-check the status here.
 			res := tx.Model(&runRow{}).Where("id = ? AND status = ?", row.ID, "queued").Updates(map[string]any{
 				"status": "running", "admission_state": "held", "revision": gorm.Expr("revision + 1"), "updated_at": now,

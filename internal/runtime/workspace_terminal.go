@@ -283,6 +283,20 @@ func (p *TerminalPool) CloseScope(scope string) {
 	}
 }
 
+// CloseRunScope ends every terminal using a run's workspace when its
+// workspace lease can no longer be renewed.
+func (p *TerminalPool) CloseRunScope(runID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for id, s := range p.sessions {
+		if strings.HasPrefix(s.scope, runID+":") {
+			delete(p.sessions, id)
+			s.timer.Stop()
+			s.stop()
+		}
+	}
+}
+
 func (p *TerminalPool) HasScope(scope string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

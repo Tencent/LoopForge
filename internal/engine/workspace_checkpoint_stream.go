@@ -17,7 +17,10 @@ import (
 	"time"
 )
 
+type discardNodeCheckpointArchiveKey struct{}
+
 func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, token string) error {
+	discard, _ := ctx.Value(discardNodeCheckpointArchiveKey{}).(bool)
 	file, err := os.CreateTemp("", "agentflow-checkpoint-save-")
 	if err != nil {
 		return err
@@ -38,7 +41,7 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 		if reason != "" {
 			return fmt.Errorf("%s", reason)
 		}
-		err = runtime.CreateWorkspaceCheckpointTo(root, workspaceCheckpointContextWriter{ctx, file})
+		err = runtime.CreateWorkspaceCheckpointToFiltered(root, workspaceCheckpointContextWriter{ctx, file}, discard)
 		if os.IsNotExist(err) && run.WorkspaceHost == "" {
 			if err = file.Truncate(0); err != nil {
 				return err
@@ -107,14 +110,15 @@ func (e *Engine) checkpointTransferRequest(ctx context.Context, run domain.Run, 
 	return result, nil
 }
 func (e *Engine) beginCheckpointExport(ctx context.Context, run domain.Run) (domain.RunnerWorkspaceResponse, error) {
-	response, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpointExport})
+	discard, _ := ctx.Value(discardNodeCheckpointArchiveKey{}).(bool)
+	response, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpointExport, DiscardNodeCheckpoints: discard})
 	if err != nil {
 		return response, err
 	}
 	// Compatibility with runners predating chunked transfers. They can still
 	// save small workspaces; a large archive is never retried as a huge RPC.
 	if response.Status == 400 || strings.Contains(response.Error, "unsupported") {
-		response, err = e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpoint})
+		response, err = e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpoint, DiscardNodeCheckpoints: discard})
 		if err != nil {
 			return response, err
 		}

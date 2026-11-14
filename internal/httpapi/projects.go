@@ -24,7 +24,8 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 	if r.Method == http.MethodPut || r.Method == http.MethodPost {
 		var body struct {
 			domain.Project
-			TAPDClear bool `json:"tapdClear"`
+			TAPDClear               bool  `json:"tapdClear"`
+			NodeCheckpointsDisabled *bool `json:"nodeCheckpointsDisabled"`
 		}
 		if !decode(c, &body) {
 			return
@@ -35,6 +36,11 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 		}
 		v := body.Project
 		existing, exists := h.repo.Project(v.ID)
+		if body.NodeCheckpointsDisabled != nil {
+			v.NodeCheckpointsDisabled = *body.NodeCheckpointsDisabled
+		} else if exists {
+			v.NodeCheckpointsDisabled = existing.NodeCheckpointsDisabled
+		}
 		if v.BusinessDomainID != "" && (!exists || v.BusinessDomainID != existing.BusinessDomainID) {
 			c.JSON(400, gin.H{"error": "请通过业务域归属接口调整项目归属"})
 			return
