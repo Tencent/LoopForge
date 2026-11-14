@@ -229,28 +229,7 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 	}
 	preserveStatus := fromSync && ok
 	if ok {
-		if preserveStatus {
-			v.Status = old.Status
-			v.CloseSource = old.CloseSource
-			v.AutomationState = old.AutomationState
-		}
-		v.CreatedAt = old.CreatedAt
-		if v.Number == 0 {
-			v.Number = old.Number
-		}
-		if strings.TrimSpace(v.AutomationState) == "" {
-			v.AutomationState = old.AutomationState
-		}
-		if len(v.Operations) == 0 && len(old.Operations) > 0 {
-			v.Operations = old.Operations
-		}
-		if strings.TrimSpace(v.ConversationSessionID) == "" {
-			v.ConversationSessionID = old.ConversationSessionID
-		}
-		if !old.Clarification.StartedAt.IsZero() && (v.Clarification.StartedAt.IsZero() || v.Clarification.StartedAt.After(old.Clarification.StartedAt)) {
-			v.Clarification.StartedAt = old.Clarification.StartedAt
-		}
-		preserveIssueDeliveryFields(&v, old)
+		inheritStoredIssueFields(&v, old, preserveStatus)
 	} else {
 		v.CreatedAt = now
 		if v.Number == 0 {
@@ -265,29 +244,7 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 		}
 	}
 	if !preserveStatus {
-		if v.TrackerClosed() && v.Status != "closed" {
-			v.Status = "closed"
-			v.CloseSource = "external"
-		}
-		if v.Status == "closed" {
-			if v.CloseSource == "" {
-				if ok && old.Status == "closed" {
-					v.CloseSource = old.CloseSource
-					if v.CloseSource == "" {
-						v.CloseSource = "manual" // pre-CloseSource manual close
-					}
-				} else if v.TrackerClosed() {
-					v.CloseSource = "external"
-				} else {
-					v.CloseSource = "manual"
-				}
-			}
-		} else {
-			v.CloseSource = ""
-		}
-		if v.Status == "done" || v.Status == "closed" || v.Status == "cancelled" || v.GongfengClosed() {
-			v.AutomationState = "ignored"
-		}
+		normalizeIssueClosure(&v, old, ok)
 	}
 	if v.AssigneeUserID == 0 {
 		if project, found := r.projects.Project(v.ProjectID); found {
@@ -314,6 +271,62 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 		return result.Error
 	}
 	return r.writeIssue(v)
+}
+
+// inheritStoredIssueFields carries fields from the stored issue that an update
+// must not lose. preserveStatus keeps the stored lifecycle state for tracker
+// syncs, which must not overwrite a local close or automation decision.
+func inheritStoredIssueFields(v *domain.Issue, old domain.Issue, preserveStatus bool) {
+	if preserveStatus {
+		v.Status = old.Status
+		v.CloseSource = old.CloseSource
+		v.AutomationState = old.AutomationState
+	}
+	v.CreatedAt = old.CreatedAt
+	if v.Number == 0 {
+		v.Number = old.Number
+	}
+	if strings.TrimSpace(v.AutomationState) == "" {
+		v.AutomationState = old.AutomationState
+	}
+	if len(v.Operations) == 0 && len(old.Operations) > 0 {
+		v.Operations = old.Operations
+	}
+	if strings.TrimSpace(v.ConversationSessionID) == "" {
+		v.ConversationSessionID = old.ConversationSessionID
+	}
+	if !old.Clarification.StartedAt.IsZero() && (v.Clarification.StartedAt.IsZero() || v.Clarification.StartedAt.After(old.Clarification.StartedAt)) {
+		v.Clarification.StartedAt = old.Clarification.StartedAt
+	}
+	preserveIssueDeliveryFields(v, old)
+}
+
+// normalizeIssueClosure derives Status, CloseSource and AutomationState from
+// the tracker state and the stored issue (hadOld reports whether old exists).
+func normalizeIssueClosure(v *domain.Issue, old domain.Issue, hadOld bool) {
+	if v.TrackerClosed() && v.Status != "closed" {
+		v.Status = "closed"
+		v.CloseSource = "external"
+	}
+	if v.Status == "closed" {
+		if v.CloseSource == "" {
+			if hadOld && old.Status == "closed" {
+				v.CloseSource = old.CloseSource
+				if v.CloseSource == "" {
+					v.CloseSource = "manual" // pre-CloseSource manual close
+				}
+			} else if v.TrackerClosed() {
+				v.CloseSource = "external"
+			} else {
+				v.CloseSource = "manual"
+			}
+		}
+	} else {
+		v.CloseSource = ""
+	}
+	if v.Status == "done" || v.Status == "closed" || v.Status == "cancelled" || v.GongfengClosed() {
+		v.AutomationState = "ignored"
+	}
 }
 
 func (r *IssuesRepo) writeIssue(v domain.Issue) error {
