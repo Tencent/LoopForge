@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // MergeWorkIntoSharedBranch merges workBranch into an existing target branch
@@ -83,22 +82,14 @@ func MergeWorkIntoSharedBranch(ctx context.Context, workspace, workBranch, targe
 		"origin",
 		"HEAD:refs/heads/" + targetBranch,
 	}
-	var pushErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return "", nil, ctx.Err()
-			case <-time.After(time.Duration(attempt) * 2 * time.Second):
-			}
+	stop, pushErr := retryPush(ctx, tmp, pushArgs, func(err error) error {
+		if IsNonFastForward(err) || leaseRejected(err) {
+			return fmt.Errorf("共享分支 %s 已被别人推送，拒绝覆盖（重新提交即可基于最新分支再合一次）: %w", targetBranch, err)
 		}
-		if _, pushErr = C(ctx, tmp, pushArgs...); pushErr == nil {
-			break
-		}
-		lowered := strings.ToLower(pushErr.Error())
-		if IsNonFastForward(pushErr) || strings.Contains(lowered, "stale info") || strings.Contains(lowered, "remote rejected") {
-			return "", nil, fmt.Errorf("共享分支 %s 已被别人推送，拒绝覆盖（重新提交即可基于最新分支再合一次）: %w", targetBranch, pushErr)
-		}
+		return nil
+	})
+	if stop != nil {
+		return "", nil, stop
 	}
 	if pushErr != nil {
 		return "", nil, fmt.Errorf("推送共享分支 %s 失败: %w", targetBranch, pushErr)
