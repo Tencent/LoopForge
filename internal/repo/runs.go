@@ -598,6 +598,7 @@ func (r *RunsRepo) runNodeSummaries(ids []string) (map[string]map[string]*domain
 		'provider', JSON_EXTRACT(payload, '$.provider'),
 		'model', JSON_EXTRACT(payload, '$.model'),
 		'childRunId', JSON_EXTRACT(payload, '$.childRunId'),
+		'waitReason', JSON_EXTRACT(payload, '$.waitReason'),
 		'usage', JSON_EXTRACT(payload, '$.usage'),
 		'toolCalls', JSON_EXTRACT(payload, '$.toolCalls'),
 		'startedAt', JSON_EXTRACT(payload, '$.startedAt'),
@@ -634,8 +635,8 @@ func summarizeNode(node domain.NodeRun, nodeID, status string, attempt int) doma
 	summary := domain.NodeRun{
 		NodeID: nodeID, Status: status, Attempt: attempt,
 		ReworkCount: node.ReworkCount, Provider: node.Provider, Model: node.Model,
-		ChildRunID: node.ChildRunID,
-		Usage:      node.Usage, ToolCalls: node.ToolCalls,
+		ChildRunID: node.ChildRunID, WaitReason: node.WaitReason,
+		Usage: node.Usage, ToolCalls: node.ToolCalls,
 		StartedAt: node.StartedAt, FinishedAt: node.FinishedAt,
 	}
 	if len(node.Error) > 160 {

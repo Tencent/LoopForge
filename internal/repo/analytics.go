@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -10,6 +11,41 @@ import (
 	"agentflow/internal/domain"
 	"gorm.io/gorm"
 )
+
+func (r *AnalyticsRepo) analyticsModelErrors(runIDs []string) []domain.AnalyticsModelError {
+	counts := map[string]*domain.AnalyticsModelError{}
+	for start := 0; start < len(runIDs); start += 500 {
+		var rows []runEventRow
+		batch := runIDs[start:min(start+500, len(runIDs))]
+		if err := r.DB.Select("type", "payload").Where("run_id IN ? AND type IN ?", batch, []string{"model.error", "model.retry_waiting"}).Find(&rows).Error; err != nil {
+			continue
+		}
+		for _, row := range rows {
+			var event domain.RunEvent
+			if json.Unmarshal(row.Payload, &event) != nil {
+				continue
+			}
+			class, _ := event.Attributes["class"].(string)
+			if class == "" {
+				continue
+			}
+			if counts[class] == nil {
+				counts[class] = &domain.AnalyticsModelError{Class: class}
+			}
+			if row.Type == "model.error" {
+				counts[class].Failures++
+			} else {
+				counts[class].Retries++
+			}
+		}
+	}
+	result := make([]domain.AnalyticsModelError, 0, len(counts))
+	for _, count := range counts {
+		result = append(result, *count)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Class < result[j].Class })
+	return result
+}
 
 type analyticsAccumulator struct {
 	item          domain.AnalyticsBreakdown
@@ -484,6 +520,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	// Tool outcome and human-decision facts live in append-only event tables,
 	// not in Run summary columns. Load only matching tool-finish telemetry and
 	// compact control events, then join them back to each auditable Run row.
+	out.ModelErrors = r.analyticsModelErrors(includedRunIDs)
 	signals := r.analyticsRunSignals(includedRunIDs)
 	for runID, signal := range signals {
 		index, ok := runTraceIndex[runID]

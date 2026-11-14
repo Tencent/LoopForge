@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -79,6 +80,13 @@ func (o *ProtocolObserver) ModelFailureClass() ModelErrorClass {
 		return ""
 	}
 	return classifyModelFailure(o.adapter.Result())
+}
+
+func (o *ProtocolObserver) ModelRetryAfter() time.Duration {
+	if o == nil || o.adapter == nil || !o.adapter.Failed() {
+		return 0
+	}
+	return parseModelRetryAfter(o.adapter.Result())
 }
 
 func (o *ProtocolObserver) Finalize(success bool) {

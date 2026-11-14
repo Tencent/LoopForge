@@ -309,7 +309,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		}
 		failure := explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitToken) != "")
 		if class := runtime.ModelErrorClass(final.ModelErrorClass); runtime.ValidModelErrorClass(class) {
-			failure = &runtime.ModelError{Class: class, Err: failure}
+			failure = &runtime.ModelError{Class: class, Err: failure, RetryAfter: time.Duration(final.ModelRetryAfterSeconds) * time.Second}
 		}
 		return "", failure
 	case domain.RunnerTaskCanceled:

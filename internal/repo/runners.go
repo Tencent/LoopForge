@@ -22,24 +22,25 @@ var (
 )
 
 type runnerTaskPayload struct {
-	Prompt            string                           `json:"prompt"`
-	Workspace         string                           `json:"workspace,omitempty"`
-	Args              []string                         `json:"args,omitempty"`
-	ExitCode          *int                             `json:"exitCode,omitempty"`
-	Result            string                           `json:"result,omitempty"`
-	Error             string                           `json:"error,omitempty"`
-	ModelErrorClass   string                           `json:"modelErrorClass,omitempty"`
-	StartedAt         *runnerTaskTime                  `json:"startedAt,omitempty"`
-	CompletedAt       *runnerTaskTime                  `json:"completedAt,omitempty"`
-	RunID             string                           `json:"runId,omitempty"`
-	NodeID            string                           `json:"nodeId,omitempty"`
-	Invocation        *domain.RunnerInvocation         `json:"invocation,omitempty"`
-	Sandbox           *domain.RunnerSandboxSpec        `json:"sandbox,omitempty"`
-	Command           string                           `json:"command,omitempty"`
-	Action            string                           `json:"action,omitempty"`
-	PreviewArchive    *domain.RunnerPreviewArchiveSpec `json:"previewArchive,omitempty"`
-	WorkBranchMessage string                           `json:"workBranchMessage,omitempty"`
-	IntegrationLabel  string                           `json:"integrationLabel,omitempty"`
+	Prompt                 string                           `json:"prompt"`
+	Workspace              string                           `json:"workspace,omitempty"`
+	Args                   []string                         `json:"args,omitempty"`
+	ExitCode               *int                             `json:"exitCode,omitempty"`
+	Result                 string                           `json:"result,omitempty"`
+	Error                  string                           `json:"error,omitempty"`
+	ModelErrorClass        string                           `json:"modelErrorClass,omitempty"`
+	ModelRetryAfterSeconds int64                            `json:"modelRetryAfterSeconds,omitempty"`
+	StartedAt              *runnerTaskTime                  `json:"startedAt,omitempty"`
+	CompletedAt            *runnerTaskTime                  `json:"completedAt,omitempty"`
+	RunID                  string                           `json:"runId,omitempty"`
+	NodeID                 string                           `json:"nodeId,omitempty"`
+	Invocation             *domain.RunnerInvocation         `json:"invocation,omitempty"`
+	Sandbox                *domain.RunnerSandboxSpec        `json:"sandbox,omitempty"`
+	Command                string                           `json:"command,omitempty"`
+	Action                 string                           `json:"action,omitempty"`
+	PreviewArchive         *domain.RunnerPreviewArchiveSpec `json:"previewArchive,omitempty"`
+	WorkBranchMessage      string                           `json:"workBranchMessage,omitempty"`
+	IntegrationLabel       string                           `json:"integrationLabel,omitempty"`
 	// Artifacts holds artifact content uploaded by the runner at completion
 	// (name → file content) so the engine can write them into the run
 	// workspace and reuse the existing verification/handoff pipeline.
@@ -114,6 +115,7 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 		t.Result = p.Result
 		t.Error = p.Error
 		t.ModelErrorClass = p.ModelErrorClass
+		t.ModelRetryAfterSeconds = p.ModelRetryAfterSeconds
 		t.StartedAt = p.StartedAt.toTime()
 		t.CompletedAt = p.CompletedAt.toTime()
 		t.RunID = p.RunID
@@ -139,7 +141,7 @@ func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
 	}
 	return mustJSON(runnerTaskPayload{
 		Prompt: v.Prompt, Workspace: v.Workspace, Args: v.Args, ExitCode: v.ExitCode,
-		Result: v.Result, Error: v.Error, ModelErrorClass: v.ModelErrorClass, StartedAt: newRunnerTaskTime(v.StartedAt),
+		Result: v.Result, Error: v.Error, ModelErrorClass: v.ModelErrorClass, ModelRetryAfterSeconds: v.ModelRetryAfterSeconds, StartedAt: newRunnerTaskTime(v.StartedAt),
 		CompletedAt: newRunnerTaskTime(v.CompletedAt), RunID: v.RunID, NodeID: v.NodeID,
 		Invocation: v.Invocation, Sandbox: v.Sandbox, Command: v.Command, Action: v.Action,
 		PreviewArchive: v.PreviewArchive, WorkBranchMessage: v.WorkBranchMessage, Artifacts: v.Artifacts,
@@ -636,7 +638,7 @@ func (r *RunnersRepo) RenewRunnerTaskLease(id, runnerID string, ttl time.Duratio
 // CompleteRunnerTask finalizes a task. Only the lease owner may complete it.
 // artifacts (legacy, by contract name) and outputs carry what the runner
 // reported about its workspace; either may be nil.
-func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *int, result, errMsg string, artifacts map[string]string, outputs *domain.RunnerTaskOutputs, now time.Time, modelErrorClass ...string) error {
+func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *int, result, errMsg string, artifacts map[string]string, outputs *domain.RunnerTaskOutputs, now time.Time, modelError ...domain.RunnerTask) error {
 	if status != domain.RunnerTaskSuccess && status != domain.RunnerTaskFailed && status != domain.RunnerTaskCanceled {
 		return fmt.Errorf("invalid final task status %q", status)
 	}
@@ -650,8 +652,9 @@ func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *
 		task.ExitCode = exitCode
 		task.Result = result
 		task.Error = errMsg
-		if len(modelErrorClass) != 0 {
-			task.ModelErrorClass = modelErrorClass[0]
+		if len(modelError) != 0 {
+			task.ModelErrorClass = modelError[0].ModelErrorClass
+			task.ModelRetryAfterSeconds = modelError[0].ModelRetryAfterSeconds
 		}
 		if artifacts != nil {
 			task.Artifacts = artifacts

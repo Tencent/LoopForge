@@ -49,16 +49,16 @@ func TestProcessModelFailureCompletion(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("claim: %v", err)
 	}
-	result := daemon.executeProcess(ctx, claimed, []string{"/bin/sh", "-c", `printf '%s\n' '{"type":"result","is_error":true,"result":"HTTP 429 Too Many Requests"}'`})
-	if result.status != domain.RunnerTaskFailed || result.modelErrorClass != "rate_limited" {
+	result := daemon.executeProcess(ctx, claimed, []string{"/bin/sh", "-c", `printf '%s\n' '{"type":"result","is_error":true,"result":"HTTP 429 Too Many Requests; Retry-After: 42"}'`})
+	if result.status != domain.RunnerTaskFailed || result.modelErrorClass != "rate_limited" || result.modelRetryAfterSeconds != 42 {
 		t.Fatalf("result: %+v", result)
 	}
 	exit := result.exitCode
-	if err := daemon.client.Complete(ctx, task.ID, CompleteRequest{Status: result.status, ExitCode: &exit, Result: result.result, Error: result.errMsg, ModelErrorClass: result.modelErrorClass}); err != nil {
+	if err := daemon.client.Complete(ctx, task.ID, CompleteRequest{Status: result.status, ExitCode: &exit, Result: result.result, Error: result.errMsg, ModelErrorClass: result.modelErrorClass, ModelRetryAfterSeconds: result.modelRetryAfterSeconds}); err != nil {
 		t.Fatal(err)
 	}
 	stored, ok := store.RunnerTask(task.ID)
-	if !ok || stored.Status != domain.RunnerTaskFailed || stored.ModelErrorClass != "rate_limited" {
+	if !ok || stored.Status != domain.RunnerTaskFailed || stored.ModelErrorClass != "rate_limited" || stored.ModelRetryAfterSeconds != 42 {
 		t.Fatalf("stored: %+v", stored)
 	}
 }

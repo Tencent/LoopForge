@@ -22,6 +22,7 @@ function reworkTarget(node,nodes){
 function queuedRunActionBlocked(runId){if(cachedRun(runId)?.status!=='queued')return false;toast('运行正在排队，请先取消排队','err');return true}
 function waitingActionButtons(runId,nodeId,nr,node,nodes){
   if(cachedRun(runId)?.status==='queued')return '';
+  if(nr?.waitReason==='model_credentials')return `<button class="button primary small" data-retry-node="${escapeHTML(runId)}" data-node="${escapeHTML(nodeId)}">处理完成，重新执行</button>`;
   if(turnsExhausted(nr))return `<button class="button primary small" data-retry-node="${escapeHTML(runId)}" data-node="${escapeHTML(nodeId)}">重试本节点</button><button class="button danger-outline small" data-decline-retry="${escapeHTML(runId)}" data-node="${escapeHTML(nodeId)}">不重试</button>`;
   const target=reworkTarget(node,nodes);
   const rework=target?`<button class="button ghost small" data-reject="${escapeHTML(runId)}" data-node="${escapeHTML(nodeId)}" data-target="${escapeHTML(target.id)}" data-target-name="${escapeHTML(target.name)}">${lfT('退回上游「'+escapeHTML(target.name)+'」并重跑后续','Send back to “'+escapeHTML(target.name)+'” and rerun downstream')}</button>`:'';
@@ -49,6 +50,7 @@ function approvalWaitReason(run,nodeId){
   return text;
 }
 function humanGateSectionsHTML(nr,run,node){
+  if(nr?.waitReason==='model_credentials')return `<div class="callout-section"><strong class="callout-label">需要处理</strong><p class="callout-text">${escapeHTML(nr.activity||'请更新模型凭据或额度后重新执行。')}</p></div>`;
   if(turnsExhausted(nr)){
     return `<div class="callout-section"><strong class="callout-label">说明</strong><p class="callout-text">${escapeHTML(nr?.error||'请确认是否重试本节点。不重试则本节点失败。')}</p></div>`;
   }
@@ -237,6 +239,7 @@ function approvalCalloutHTML(node,nr,nodes){
   nodes=nodes||state.activeRun?.workflowSnapshot?.nodes||[];
   const field=isScriptWorkflowNode(node)?'':humanContextFieldHTML();
   const nodeTitle=escapeHTML(node?.name||node?.id||'当前节点');
+  if(nr?.waitReason==='model_credentials')return `<div class="approval-callout human"><div class="callout-head"><div class="callout-title-row"><span class="callout-badge human">待处理</span><b class="callout-title">模型服务需要处理</b><span class="callout-node-name">步骤：<b>${nodeTitle}</b></span></div></div><div class="callout-content">${humanGateSectionsHTML(nr)}</div><div class="ap-buttons"><button class="button primary" data-retry-node="${escapeHTML(node.id)}">处理完成，重新执行</button></div></div>`;
   const gate=nr?.gateResult;
   const target=reworkTarget(node,nodes);
   const rework=turnsExhausted(nr)?'':(target?`<button class="button ghost" data-reject="${node.id}" data-target="${escapeHTML(target.id)}" data-target-name="${escapeHTML(target.name)}">${lfT('退回上游「'+escapeHTML(target.name)+'」并重跑后续','Send back to “'+escapeHTML(target.name)+'” and rerun downstream')}</button>`:'');

@@ -317,26 +317,27 @@ type RunnerRuntime struct {
 }
 
 type RunnerTask struct {
-	ID              string     `json:"id"`
-	RunnerID        string     `json:"runnerId,omitempty"` // empty = any compatible runner
-	Provider        string     `json:"provider"`
-	Prompt          string     `json:"prompt"`
-	Workspace       string     `json:"workspace,omitempty"` // relative to the runner workspace root, or an absolute path
-	Args            []string   `json:"args,omitempty"`      // optional extra CLI args before the prompt
-	Status          string     `json:"status"`
-	DesiredState    string     `json:"desiredState,omitempty"`
-	LeaseOwner      string     `json:"leaseOwner,omitempty"`
-	LeaseUntil      *time.Time `json:"leaseUntil,omitempty"`
-	Attempt         int        `json:"attempt"`
-	MaxAttempts     int        `json:"maxAttempts"`
-	ExitCode        *int       `json:"exitCode,omitempty"`
-	Result          string     `json:"result,omitempty"`
-	Error           string     `json:"error,omitempty"`
-	ModelErrorClass string     `json:"modelErrorClass,omitempty"`
-	StartedAt       *time.Time `json:"startedAt,omitempty"`
-	CompletedAt     *time.Time `json:"completedAt,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ID                     string     `json:"id"`
+	RunnerID               string     `json:"runnerId,omitempty"` // empty = any compatible runner
+	Provider               string     `json:"provider"`
+	Prompt                 string     `json:"prompt"`
+	Workspace              string     `json:"workspace,omitempty"` // relative to the runner workspace root, or an absolute path
+	Args                   []string   `json:"args,omitempty"`      // optional extra CLI args before the prompt
+	Status                 string     `json:"status"`
+	DesiredState           string     `json:"desiredState,omitempty"`
+	LeaseOwner             string     `json:"leaseOwner,omitempty"`
+	LeaseUntil             *time.Time `json:"leaseUntil,omitempty"`
+	Attempt                int        `json:"attempt"`
+	MaxAttempts            int        `json:"maxAttempts"`
+	ExitCode               *int       `json:"exitCode,omitempty"`
+	Result                 string     `json:"result,omitempty"`
+	Error                  string     `json:"error,omitempty"`
+	ModelErrorClass        string     `json:"modelErrorClass,omitempty"`
+	ModelRetryAfterSeconds int64      `json:"modelRetryAfterSeconds,omitempty"`
+	StartedAt              *time.Time `json:"startedAt,omitempty"`
+	CompletedAt            *time.Time `json:"completedAt,omitempty"`
+	CreatedAt              time.Time  `json:"createdAt"`
+	UpdatedAt              time.Time  `json:"updatedAt"`
 	// RunID/NodeID link a task to a workflow execution. Runner events for a
 	// linked task are bridged into the run timeline (adapter runner-v1).
 	RunID      string            `json:"runId,omitempty"`

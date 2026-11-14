@@ -45,6 +45,7 @@ func TestRunnerDispatchReturnsModelError(t *testing.T) {
 				cvEFinishQueuedTask(t, e, domain.RunnerTaskFailed, "", "exit status 1", nil)
 				task := e.repo.RunnerTasks()[0]
 				task.ModelErrorClass = class
+				task.ModelRetryAfterSeconds = 42
 				if err := e.repo.PutRunnerTask(task); err != nil {
 					t.Fatal(err)
 				}
@@ -55,6 +56,9 @@ func TestRunnerDispatchReturnsModelError(t *testing.T) {
 			var modelErr *runtime.ModelError
 			if errors.As(err, &modelErr) != (class == "rate_limited") {
 				t.Fatalf("class %q: %v", class, err)
+			}
+			if modelErr != nil && modelErr.RetryAfter != 42*time.Second {
+				t.Fatalf("retry after = %s", modelErr.RetryAfter)
 			}
 			if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 				t.Fatalf("lost original error: %v", err)

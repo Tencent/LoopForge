@@ -257,12 +257,13 @@ func (b *eventBatcher) taskResult(rawFallback string) string {
 
 // execResult is the outcome reported to the control plane.
 type execResult struct {
-	status          string
-	exitCode        int
-	result          string
-	errMsg          string
-	modelErrorClass string
-	outputs         *domain.RunnerTaskOutputs
+	status                 string
+	exitCode               int
+	result                 string
+	errMsg                 string
+	modelErrorClass        string
+	modelRetryAfterSeconds int64
+	outputs                *domain.RunnerTaskOutputs
 }
 
 // A recognized terminal protocol failure overrides exit 0. Unknown protocol
@@ -277,6 +278,7 @@ func (b *eventBatcher) withModelFailure(result execResult) execResult {
 	}
 	result.status = domain.RunnerTaskFailed
 	result.modelErrorClass = string(class)
+	result.modelRetryAfterSeconds = int64(b.observer.ModelRetryAfter() / time.Second)
 	if result.errMsg == "" {
 		result.errMsg = "executor reported a model error: " + string(class)
 	}

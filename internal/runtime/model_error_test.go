@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -34,6 +35,22 @@ func TestClassifyModelFailure(t *testing.T) {
 				t.Fatalf("classifyModelFailure(%q) = %q; want %q", tc.message, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseModelRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want time.Duration
+	}{
+		{"HTTP 429 Too Many Requests\nRetry-After: 90", 90 * time.Second},
+		{"retry-after: 86401", 0},
+		{"retry-after: invalid", 0},
+		{"retry after: 20", 0},
+	} {
+		if got := parseModelRetryAfter(tc.text); got != tc.want {
+			t.Fatalf("%q: %s", tc.text, got)
+		}
 	}
 }
 

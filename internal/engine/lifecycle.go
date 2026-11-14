@@ -63,7 +63,7 @@ func settleStatusForCompletedGraph(wf domain.WorkflowDefinition, r domain.Run) (
 	if allSucceeded(wf, r) {
 		return "succeeded", "流水线执行完成", true
 	}
-	if hasWaiting(wf, r) {
+	if hasWaiting(wf, r) || hasModelRetry(r) {
 		return "", "", false
 	}
 	if hasFailed(wf, r) {
@@ -128,7 +128,7 @@ func (e *Engine) forceTerminate(runID, status, msg string) {
 				continue
 			}
 			switch nr.Status {
-			case "running", "pending_input", "waiting_approval":
+			case "running", "pending_input", "waiting_approval", "waiting_retry":
 				if status == "cancelled" {
 					nr.Status = "cancelled"
 					nr.Error = ""

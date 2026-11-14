@@ -139,27 +139,39 @@ func (r *Run) UnmarshalJSON(raw []byte) error {
 }
 
 type NodeRun struct {
-	NodeID          string      `json:"nodeId"`
-	Status          string      `json:"status"`
-	Attempt         int         `json:"attempt"`
-	ReworkCount     int         `json:"reworkCount"`
-	SandboxID       string      `json:"sandboxId,omitempty"`
-	Output          string      `json:"output,omitempty"`
-	Error           string      `json:"error,omitempty"`
-	Provider        string      `json:"provider,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	SessionID       string      `json:"sessionId,omitempty"`
-	ResumeSessionID string      `json:"resumeSessionId,omitempty"`
-	Activity        string      `json:"activity,omitempty"`
-	Feedback        string      `json:"feedback,omitempty"`
-	Usage           TokenUsage  `json:"usage"`
-	UsageSessionID  string      `json:"usageSessionId,omitempty"`
-	UsageCursor     TokenUsage  `json:"usageCursor,omitempty"`
-	ToolCalls       int         `json:"toolCalls"`
-	GateResult      *GateResult `json:"gateResult,omitempty"`
-	ChildRunID      string      `json:"childRunId,omitempty"`
-	StartedAt       time.Time   `json:"startedAt,omitzero"`
-	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+	NodeID                 string            `json:"nodeId"`
+	Status                 string            `json:"status"`
+	Attempt                int               `json:"attempt"`
+	ReworkCount            int               `json:"reworkCount"`
+	TransientRetries       int               `json:"transientRetries,omitempty"`
+	ModelTransientErrors   int               `json:"modelTransientErrors,omitempty"`
+	NextRetryAt            time.Time         `json:"nextRetryAt,omitzero"`
+	ModelErrorClass        string            `json:"modelErrorClass,omitempty"`
+	WaitReason             string            `json:"waitReason,omitempty"`
+	RetrySameAttempt       bool              `json:"retrySameAttempt,omitempty"`
+	ExecutionSequence      int               `json:"executionSequence,omitempty"`
+	FallbackModelIndex     int               `json:"fallbackModelIndex,omitempty"`
+	ActiveModel            string            `json:"activeModel,omitempty"`
+	ModelPolicyInitialized bool              `json:"modelPolicyInitialized,omitempty"`
+	FallbackModels         []string          `json:"fallbackModels,omitempty"`
+	ModelRetry             *ModelRetryPolicy `json:"modelRetry,omitempty"`
+	SandboxID              string            `json:"sandboxId,omitempty"`
+	Output                 string            `json:"output,omitempty"`
+	Error                  string            `json:"error,omitempty"`
+	Provider               string            `json:"provider,omitempty"`
+	Model                  string            `json:"model,omitempty"`
+	SessionID              string            `json:"sessionId,omitempty"`
+	ResumeSessionID        string            `json:"resumeSessionId,omitempty"`
+	Activity               string            `json:"activity,omitempty"`
+	Feedback               string            `json:"feedback,omitempty"`
+	Usage                  TokenUsage        `json:"usage"`
+	UsageSessionID         string            `json:"usageSessionId,omitempty"`
+	UsageCursor            TokenUsage        `json:"usageCursor,omitempty"`
+	ToolCalls              int               `json:"toolCalls"`
+	GateResult             *GateResult       `json:"gateResult,omitempty"`
+	ChildRunID             string            `json:"childRunId,omitempty"`
+	StartedAt              time.Time         `json:"startedAt,omitzero"`
+	FinishedAt             time.Time         `json:"finishedAt,omitzero"`
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
@@ -220,12 +232,13 @@ type TelemetryEvent struct {
 }
 
 type RunEvent struct {
-	ID        string    `json:"id"`
-	RunID     string    `json:"runId"`
-	NodeID    string    `json:"nodeId,omitempty"`
-	Type      string    `json:"type"`
-	Message   string    `json:"message"`
-	Timestamp time.Time `json:"timestamp"`
+	ID         string         `json:"id"`
+	RunID      string         `json:"runId"`
+	NodeID     string         `json:"nodeId,omitempty"`
+	Type       string         `json:"type"`
+	Message    string         `json:"message"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+	Timestamp  time.Time      `json:"timestamp"`
 }
 
 // Artifact is an immutable, attempt-scoped snapshot. Keeping old attempts makes

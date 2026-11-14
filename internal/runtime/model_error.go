@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // ModelErrorClass identifies a model-service failure when the CLI has
@@ -23,8 +25,9 @@ const (
 // remain available to existing callers. Classification alone does not change
 // the engine's retry policy.
 type ModelError struct {
-	Class ModelErrorClass
-	Err   error
+	Class      ModelErrorClass
+	Err        error
+	RetryAfter time.Duration
 }
 
 func (e *ModelError) Error() string { return e.Err.Error() }
@@ -40,6 +43,19 @@ func ValidModelErrorClass(class ModelErrorClass) bool {
 }
 
 var modelHTTPStatus = regexp.MustCompile(`\b(?:http(?: status)?|status code|error code)\s*[:=]?\s*(400|401|403|408|429|500|502|503|504|529)\b|\b(400|401|403|408|429|503|504|529)\s+(?:bad request|unauthorized|forbidden|request timeout|too many requests|service unavailable|gateway timeout|overloaded)\b`)
+var retryAfterSeconds = regexp.MustCompile(`(?i)\bretry-after\s*:\s*(\d+)\b`)
+
+func parseModelRetryAfter(message string) time.Duration {
+	match := retryAfterSeconds.FindStringSubmatch(message)
+	if len(match) != 2 {
+		return 0
+	}
+	seconds, err := strconv.ParseInt(match[1], 10, 64)
+	if err != nil || seconds > 86400 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
 
 // classifyModelFailure only accepts text from a terminal provider error, not
 // raw transcripts, assistant messages or tool output. Specific error codes
