@@ -1398,6 +1398,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if engine != assistantEngineCodeBuddy && (req.ReportOnly || (!req.Native && !req.ReviewOnly)) {
 		return "", "", errAssistantEngineUnsupported
 	}
+	if engine != assistantEngineCodeBuddy {
+		engineModel = assistantCLIModelArg(engineModel)
+	}
 	var bin string
 	var err error
 	if req.RemoteBinary {
