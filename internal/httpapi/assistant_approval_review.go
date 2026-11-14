@@ -110,12 +110,22 @@ func assistantApprovalReviewModels(catalog assistantModelCatalog) []string {
 	return models
 }
 
-func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.User, notify func(assistantStreamEvent)) assistantApprovalReviewer {
+const (
+	// assistantApprovalMaxMessages is how many recent conversation messages
+	// the reviewer sees as authorization evidence.
+	assistantApprovalMaxMessages = 24
+	// assistantApprovalMaxMessageRunes caps each evidence message.
+	assistantApprovalMaxMessageRunes = 4000
+)
+
+// approvalReviewInput builds the action-independent review evidence: the
+// recent conversation window, truncated, attributed and redacted for user.
+func approvalReviewInput(req assistantRequest, user domain.User) assistantApprovalInput {
 	input := assistantApprovalInput{ActorID: user.ID, ProjectID: req.ProjectID, RunID: req.RunID}
-	start := max(0, len(req.Messages)-24)
+	start := max(0, len(req.Messages)-assistantApprovalMaxMessages)
 	input.Truncated = start > 0
 	for _, message := range req.Messages[start:] {
-		content := truncateRunes(message.Content, 4000)
+		content := truncateRunes(message.Content, assistantApprovalMaxMessageRunes)
 		input.Truncated = input.Truncated || content != message.Content
 		role := message.Role
 		// Other participants' instructions cannot authorize the current actor.
@@ -124,6 +134,11 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 		}
 		input.Messages = append(input.Messages, assistantApprovalMessage{Role: role, AuthorID: message.AuthorID, Content: redactAgentToolResult(content, user)})
 	}
+	return input
+}
+
+func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.User, notify func(assistantStreamEvent)) assistantApprovalReviewer {
+	input := approvalReviewInput(req, user)
 	var catalog assistantModelCatalog
 	if h.reviewCatalog != nil {
 		catalog = h.reviewCatalog(user.CodeBuddyInternetEnvironment)
