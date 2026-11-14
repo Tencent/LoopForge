@@ -57,6 +57,7 @@ type AgentToolSession struct {
 	SelectedMCPIDs    map[string]bool
 	ExecutionRunnerID string
 	RuntimeMode       string
+	Executor          string
 	Notify            func(string, any)
 	Token             string
 	UserID            int64

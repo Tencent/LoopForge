@@ -121,7 +121,7 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
   | **Claude Code** | 个人 Key；已连接的执行机器可使用本机登录 | 首次使用时从 npm 安装并缓存 |
   | **OpenCode · Kimi Code · Pi** | 仅个人 Key | 首次使用时从 npm 安装并缓存 |
   | **DeepSeek Harness** | 仅个人 Key | Docker 镜像内置 |
-  | **Qoder CLI** | 在 [Qoder Integrations](https://qoder.com/account/integrations) 创建个人访问令牌；可用模型取决于 Qoder 账号 | 首次使用时从 npm 安装固定版本并缓存；工作区对话禁用原生文件和命令工具，通过 MCP 使用工具 |
+  | **Qoder CLI** | 在 [Qoder Integrations](https://qoder.com/account/integrations) 创建个人访问令牌；可用模型取决于 Qoder 账号 | 首次使用时从 npm 安装固定版本并缓存；暂不支持对话工作区，修改代码请切换执行器或使用 SOP |
   | **Cursor CLI · Antigravity** | 仅个人 Key | 首次在对话中使用时通过厂商安装脚本安装；不会装进 SOP 沙箱 |
   | **ZCode** | 仅个人 Key | 未内置，需安装到服务或执行机器的 PATH 中 |
 

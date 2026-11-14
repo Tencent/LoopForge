@@ -10,8 +10,9 @@ test('Qoder personal token is saved for the Qoder CLI', async (t) => {
   await app.evaluate(`renderPersonalSettings()`);
   app.evaluate(`openCredentialWizard('agentCli.qoder')`);
   const wizard = app.document.querySelector('#credentialWizard');
-  assert.match(wizard.textContent, /Qoder/);
+  assert.match(wizard.textContent, /Qoder CLI 个人访问令牌（PAT）/);
   const secret = wizard.querySelector('input[name="secret"]');
+  assert.equal(secret.placeholder, '请输入 Qoder CLI 个人访问令牌（PAT）');
   secret.value = 'test-pat';
   secret.dispatchEvent(new app.window.Event('input', { bubbles: true }));
   wizard.querySelector('[data-wizard-next]').click();

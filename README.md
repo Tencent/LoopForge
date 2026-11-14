@@ -121,7 +121,7 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
   | **Claude Code** | Personal key; a connected execution machine can use its local login | Installed from npm on first use, then cached |
   | **OpenCode · Kimi Code · Pi** | Personal key only | Installed from npm on first use, then cached |
   | **DeepSeek Harness** | Personal key only | In the Docker image |
-  | **Qoder CLI** | Personal access token from [Qoder integrations](https://qoder.com/account/integrations); model availability depends on the Qoder account | Pinned version installed from npm on first use, then cached; workspace conversations disable native file and command tools and use MCP instead |
+  | **Qoder CLI** | Personal access token from [Qoder integrations](https://qoder.com/account/integrations); model availability depends on the Qoder account | Pinned version installed from npm on first use, then cached; conversation workspaces are not supported, so use another executor or an SOP to change code |
   | **Cursor CLI · Antigravity** | Personal key only | Provider installer on first chat use; not installed into SOP sandboxes |
   | **ZCode** | Personal key only | Not bundled; install it on the service or execution machine PATH |
 
