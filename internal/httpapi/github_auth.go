@@ -253,21 +253,7 @@ func (h *githubHandlers) poll(c *gin.Context) {
 	grant.busy = true
 	grant.next = time.Now().Add(grant.interval)
 	h.mu.Unlock()
-	var result struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	err := h.request(c, http.MethodPost, "https://github.com/login/oauth/access_token", "", url.Values{"client_id": {grant.clientID}, "device_code": {grant.code}, "grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}}, &result)
-	var identity struct {
-		Login string `json:"login"`
-	}
-	if err == nil && result.AccessToken != "" {
-		err = h.request(c, http.MethodGet, "https://api.github.com/user", result.AccessToken, nil, &identity)
-		if identity.Login == "" && err == nil {
-			err = errors.New("GitHub 未返回账号信息")
-		}
-	}
+	result, login, err := h.exchangeDeviceCode(c, grant.clientID, grant.code)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	grant.busy = false
@@ -307,7 +293,33 @@ func (h *githubHandlers) poll(c *gin.Context) {
 		respond(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "connected", "login": identity.Login, "user": domain.PublicUser(saved)})
+	c.JSON(http.StatusOK, gin.H{"status": "connected", "login": login, "user": domain.PublicUser(saved)})
+}
+
+// githubDeviceToken is GitHub's answer to a device-code poll. Error carries
+// OAuth states such as authorization_pending and slow_down.
+type githubDeviceToken struct {
+	AccessToken string `json:"access_token"`
+	Error       string `json:"error"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
+// exchangeDeviceCode asks GitHub whether the device code has been authorized
+// and, once a token is issued, resolves the account login it belongs to. It
+// performs network calls only, so callers must not hold h.mu.
+func (h *githubHandlers) exchangeDeviceCode(c *gin.Context, clientID, deviceCode string) (githubDeviceToken, string, error) {
+	var result githubDeviceToken
+	err := h.request(c, http.MethodPost, "https://github.com/login/oauth/access_token", "", url.Values{"client_id": {clientID}, "device_code": {deviceCode}, "grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}}, &result)
+	var identity struct {
+		Login string `json:"login"`
+	}
+	if err == nil && result.AccessToken != "" {
+		err = h.request(c, http.MethodGet, "https://api.github.com/user", result.AccessToken, nil, &identity)
+		if identity.Login == "" && err == nil {
+			err = errors.New("GitHub 未返回账号信息")
+		}
+	}
+	return result, identity.Login, err
 }
 
 func (h *githubHandlers) repositories(c *gin.Context) {
