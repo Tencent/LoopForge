@@ -288,6 +288,30 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	sink := rec.sink
 	stopped := make(chan struct{})
 	done := make(chan struct{})
+	renewed := make(chan struct{})
+	// The lease renews on its own ticker. A heartbeat commit that stalls on the
+	// generation row must not also stop the renewal: a replica that reaps this
+	// turn meanwhile releases its lease only once renewal has stopped for 45s.
+	go func() {
+		defer close(renewed)
+		if req.workspaceToken == "" {
+			return
+		}
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopped:
+				return
+			case <-ticker.C:
+				if err := h.engine.RenewConversationWorkspaceUse(req.RunID, req.workspaceToken); err != nil {
+					rec.diagnostics.terminate("WORKSPACE_LEASE_LOST", "会话工作区续租失败："+err.Error(), diagUser)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(500 * time.Millisecond)
@@ -297,12 +321,6 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			case <-stopped:
 				return
 			case <-ticker.C:
-				if req.workspaceToken != "" {
-					if err := h.engine.RenewConversationWorkspaceUse(req.RunID, req.workspaceToken); err != nil {
-						rec.diagnostics.terminate("WORKSPACE_LEASE_LOST", "会话工作区续租失败："+err.Error(), diagUser)
-						cancel()
-					}
-				}
 				old, ok := h.repo.PeekAssistantGeneration(g.UserID, g.SessionID)
 				if ok && old.ID == g.ID && old.Steer != nil {
 					rec.mu.Lock()
@@ -357,6 +375,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	// The turn is complete once its execution has exited, without archive I/O.
 	close(stopped)
 	<-done
+	<-renewed
 	workspaceWarning := ""
 	if req.workspaceToken != "" {
 		if result, err := h.engine.EndConversationWorkspaceUseAsync(ctx, req.RunID, req.workspaceToken); err != nil {

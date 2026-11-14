@@ -17,6 +17,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 		return g, nil, nil, err
 	}
 	diagnostics := newAssistantDiagnosticsCollector(g)
+	assistantDirectGenerations.Store(g.ID, struct{}{})
 	untrack := inflightTasks.Add()
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -56,6 +57,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 	}()
 	return g, diagnostics, func(completed bool) {
 		defer untrack()
+		defer assistantDirectGenerations.Delete(g.ID)
 		close(stop)
 		<-done
 		g.Status = "failed"

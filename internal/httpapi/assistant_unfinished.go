@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"agentflow/internal/domain"
@@ -78,6 +79,23 @@ func (h *assistantHandlers) readGeneration(ownerID int64, sessionID string) (dom
 	return readAssistantGeneration(h.repo, ownerID, sessionID)
 }
 
+// assistantDirectGenerations holds the synchronous shared turns this process
+// is executing. They have no live stream, so they are not in
+// assistantLiveGenerations, but their own readers must not reap them either.
+var assistantDirectGenerations sync.Map
+
+// generationExecutingHere reports whether this process is running the turn.
+func generationExecutingHere(id string) bool {
+	if id == "" {
+		return false
+	}
+	if _, ok := assistantLiveGenerations.Load(id); ok {
+		return true
+	}
+	_, ok := assistantDirectGenerations.Load(id)
+	return ok
+}
+
 // readAssistantGeneration is the one non-owner read of a turn. Every handler
 // that may meet a stale turn goes through it, so a turn this process is still
 // executing is never written as interrupted by its own readers.
@@ -90,7 +108,7 @@ func readAssistantGeneration(store *repo.Store, ownerID int64, sessionID string)
 	if !ok {
 		return domain.AssistantGeneration{}, false
 	}
-	if _, local := assistantLiveGenerations.Load(peek.ID); local {
+	if generationExecutingHere(peek.ID) {
 		return peek, true
 	}
 	g, lease, ok := store.ReapAssistantGeneration(ownerID, sessionID)

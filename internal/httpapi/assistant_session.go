@@ -91,10 +91,8 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 			// The list only projects a late heartbeat as interrupted; the row
 			// still says running. A turn this process is executing is running.
 			// A row actually written as interrupted is reported as stored.
-			if state.Stale {
-				if _, live := assistantLiveGenerations.Load(state.ID); live {
-					out[i].GenerationStatus = "running"
-				}
+			if state.Stale && generationExecutingHere(state.ID) {
+				out[i].GenerationStatus = "running"
 			}
 			out[i].GenerationID = state.ID
 			// A reply that completed while the reader was elsewhere stays
