@@ -239,56 +239,75 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 		inner, _ := raw["event"].(map[string]any)
 		a.handleAnthropicEvent(inner, sessionID, stringValue(raw["parent_tool_use_id"]))
 	case "assistant":
-		message, _ := raw["message"].(map[string]any)
-		var parts []string
-		for _, block := range sliceValue(message["content"]) {
-			content, _ := block.(map[string]any)
-			switch stringValue(content["type"]) {
-			case "text":
-				if text := stringValue(content["text"]); text != "" {
-					parts = append(parts, text)
-					a.emit(domain.TelemetryEvent{Category: "output", Name: "agent.output", Phase: "progress", Message: text, Model: stringValue(message["model"]), SessionID: sessionID})
-				}
-			case "tool_use":
-				a.emitToolStart(stringValue(content["id"]), stringValue(content["name"]), sessionID, "", content["input"])
-			}
-		}
-		if len(parts) > 0 {
-			a.noteOutput(strings.Join(parts, "\n"))
-		}
+		a.handleClaudeAssistant(raw, sessionID)
 	case "user":
-		message, _ := raw["message"].(map[string]any)
-		for _, value := range sliceValue(message["content"]) {
-			content, _ := value.(map[string]any)
-			if stringValue(content["type"]) != "tool_result" {
-				continue
-			}
-			failed, _ := content["is_error"].(bool)
-			success := !failed
-			id := stringValue(content["tool_use_id"])
-			name := a.toolName(id)
-			msg := summarizeToolResult(name, failed, content["content"])
-			a.emit(domain.TelemetryEvent{Category: "tool", Name: "tool.call", Phase: "finish", Level: map[bool]string{true: "error", false: "info"}[failed], Message: msg, SessionID: sessionID, ToolCallID: id, Tool: &domain.ToolObservation{Name: name, Operation: "tool.result", CallID: id, Success: &success}})
-		}
+		a.handleClaudeToolResults(raw, sessionID)
 	case "result":
-		result := stringValue(raw["result"])
-		failed, _ := raw["is_error"].(bool)
-		a.mu.Lock()
-		a.result = result
-		a.failed = failed
-		a.mu.Unlock()
-		a.once.Do(func() { close(a.done) })
-		usage := tokenUsage(raw["usage"])
-		usage.CostUSD = float64Value(raw["total_cost_usd"])
-		// 适配器显式上报成本时标记 reported，用于区分"真实零成本"与"成本未识别"。
-		if _, ok := raw["total_cost_usd"]; ok {
-			usage.CostStatus = "reported"
-		}
-		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"]}})
-		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Message: result, SessionID: sessionID})
+		a.handleClaudeResult(raw, sessionID)
 	default:
 		// File snapshots and provider-specific housekeeping events are intentionally hidden from the portable view.
 	}
+}
+
+// handleClaudeAssistant emits each assistant text block as output and each
+// tool_use block as a tool call start, remembering the joined text as the
+// latest visible output.
+func (a *protocolAdapter) handleClaudeAssistant(raw map[string]any, sessionID string) {
+	message, _ := raw["message"].(map[string]any)
+	var parts []string
+	for _, block := range sliceValue(message["content"]) {
+		content, _ := block.(map[string]any)
+		switch stringValue(content["type"]) {
+		case "text":
+			if text := stringValue(content["text"]); text != "" {
+				parts = append(parts, text)
+				a.emit(domain.TelemetryEvent{Category: "output", Name: "agent.output", Phase: "progress", Message: text, Model: stringValue(message["model"]), SessionID: sessionID})
+			}
+		case "tool_use":
+			a.emitToolStart(stringValue(content["id"]), stringValue(content["name"]), sessionID, "", content["input"])
+		}
+	}
+	if len(parts) > 0 {
+		a.noteOutput(strings.Join(parts, "\n"))
+	}
+}
+
+// handleClaudeToolResults turns the tool_result blocks of a user frame into
+// tool call finish events.
+func (a *protocolAdapter) handleClaudeToolResults(raw map[string]any, sessionID string) {
+	message, _ := raw["message"].(map[string]any)
+	for _, value := range sliceValue(message["content"]) {
+		content, _ := value.(map[string]any)
+		if stringValue(content["type"]) != "tool_result" {
+			continue
+		}
+		failed, _ := content["is_error"].(bool)
+		success := !failed
+		id := stringValue(content["tool_use_id"])
+		name := a.toolName(id)
+		msg := summarizeToolResult(name, failed, content["content"])
+		a.emit(domain.TelemetryEvent{Category: "tool", Name: "tool.call", Phase: "finish", Level: map[bool]string{true: "error", false: "info"}[failed], Message: msg, SessionID: sessionID, ToolCallID: id, Tool: &domain.ToolObservation{Name: name, Operation: "tool.result", CallID: id, Success: &success}})
+	}
+}
+
+// handleClaudeResult records the terminal result, marks the session done and
+// reports final usage and completion.
+func (a *protocolAdapter) handleClaudeResult(raw map[string]any, sessionID string) {
+	result := stringValue(raw["result"])
+	failed, _ := raw["is_error"].(bool)
+	a.mu.Lock()
+	a.result = result
+	a.failed = failed
+	a.mu.Unlock()
+	a.once.Do(func() { close(a.done) })
+	usage := tokenUsage(raw["usage"])
+	usage.CostUSD = float64Value(raw["total_cost_usd"])
+	// 适配器显式上报成本时标记 reported，用于区分"真实零成本"与"成本未识别"。
+	if _, ok := raw["total_cost_usd"]; ok {
+		usage.CostStatus = "reported"
+	}
+	a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"]}})
+	a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Message: result, SessionID: sessionID})
 }
 
 func (a *protocolAdapter) handleAnthropicEvent(event map[string]any, sessionID, parentID string) {
