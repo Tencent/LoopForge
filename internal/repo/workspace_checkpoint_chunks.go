@@ -56,38 +56,9 @@ func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.T
 		r.DB.Model(&WorkspaceCheckpoint{}).Select("COALESCE(archive_id, '')").Where("run_id = ?", runID)).Delete(&workspaceCheckpointChunk{}).Error; err != nil {
 		return err
 	}
-	hash := sha256.New()
-	var size int64
-	count := 0
-	buffer := make([]byte, workspaceCheckpointChunkBytes)
-	for {
-		n, err := io.ReadFull(source, buffer)
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return err
-		}
-		if n == 0 {
-			break
-		}
-		size += int64(n)
-		if size > workspaceCheckpointArchiveBytes {
-			return fmt.Errorf("workspace checkpoint exceeds archive size limit")
-		}
-		var active int64
-		if err := r.DB.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, time.Now().UTC()).Count(&active).Error; err != nil {
-			return err
-		}
-		if active != 1 {
-			return ErrWorkspaceInUse
-		}
-		chunk := workspaceCheckpointChunk{RunID: runID, ArchiveID: id, Sequence: count, Data: buffer[:n], CreatedAt: time.Now().UTC()}
-		if err := r.DB.Create(&chunk).Error; err != nil {
-			return err
-		}
-		hash.Write(buffer[:n])
-		count++
-		if err == io.ErrUnexpectedEOF {
-			break
-		}
+	size, count, sum, err := r.stageWorkspaceCheckpointChunks(runID, token, id, source)
+	if err != nil {
+		return err
 	}
 	if size == 0 {
 		return fmt.Errorf("empty workspace checkpoint")
@@ -98,7 +69,7 @@ func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.T
 		}
 		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, time.Now().UTC()).Updates(map[string]any{
 			"archive": nil, "archive_id": id, "archive_bytes": size, "archive_chunks": count,
-			"sha256": hex.EncodeToString(hash.Sum(nil)), "saved_at": now, "error": "", "save_failures": 0, "save_retry_at": nil,
+			"sha256": sum, "saved_at": now, "error": "", "save_failures": 0, "save_retry_at": nil,
 		})
 		if result.Error != nil {
 			return result.Error
@@ -110,6 +81,46 @@ func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.T
 	})
 	published = err == nil
 	return err
+}
+
+// stageWorkspaceCheckpointChunks copies source into bounded chunk rows of
+// archiveID, re-checking the lease before every row. It returns the staged
+// byte size, chunk count and hex SHA-256; publishing is left to the caller.
+func (r *RunsRepo) stageWorkspaceCheckpointChunks(runID, token, archiveID string, source io.Reader) (int64, int, string, error) {
+	digest := sha256.New()
+	var size int64
+	count := 0
+	buffer := make([]byte, workspaceCheckpointChunkBytes)
+	for {
+		n, err := io.ReadFull(source, buffer)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return 0, 0, "", err
+		}
+		if n == 0 {
+			break
+		}
+		size += int64(n)
+		if size > workspaceCheckpointArchiveBytes {
+			return 0, 0, "", fmt.Errorf("workspace checkpoint exceeds archive size limit")
+		}
+		var active int64
+		if err := r.DB.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, time.Now().UTC()).Count(&active).Error; err != nil {
+			return 0, 0, "", err
+		}
+		if active != 1 {
+			return 0, 0, "", ErrWorkspaceInUse
+		}
+		chunk := workspaceCheckpointChunk{RunID: runID, ArchiveID: archiveID, Sequence: count, Data: buffer[:n], CreatedAt: time.Now().UTC()}
+		if err := r.DB.Create(&chunk).Error; err != nil {
+			return 0, 0, "", err
+		}
+		digest.Write(buffer[:n])
+		count++
+		if err == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+	return size, count, hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func (r *RunsRepo) OpenWorkspaceCheckpointArchive(runID string) (io.ReadCloser, error) {
