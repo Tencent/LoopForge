@@ -1020,26 +1020,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true) {
 		return
 	}
-	e.updateRun(runID, func(r *domain.Run) {
-		nr := r.Nodes[node.ID]
-		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
-			return
-		}
-		r.Artifacts = append(r.Artifacts, artifacts...)
-		nr.Output = output
-		nr.Error = ""
-		if manualGateName != "" {
-			nr.Status = "waiting_approval"
-			nr.FinishedAt = time.Now().UTC()
-			e.event(r, node.ID, "gate.waiting", "等待人工验证："+manualGateName)
-		} else {
-			nr.Status = "succeeded"
-			nr.FinishedAt = time.Now().UTC()
-			e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
-		}
-	})
-	for _, artifact := range artifacts {
-		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
+	if !e.commitNodeSuccess(runID, node, executionGeneration, executionAttempt, output, artifacts, manualGateName) {
+		return
 	}
 	if manualGateName != "" {
 		return

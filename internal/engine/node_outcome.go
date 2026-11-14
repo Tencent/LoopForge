@@ -6,6 +6,7 @@ import (
 	"agentflow/internal/runtime"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -45,6 +46,58 @@ func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attem
 		return true
 	}
 	return nr.Attempt == attempt
+}
+
+// commitNodeSuccess writes a passed node's output and artifacts and reports
+// whether the write landed. artifact.published is only observed after it did:
+// the observation queue is flushed independently of the run row, so emitting it
+// for a dropped commit leaves a run log claiming the node published its output
+// while the node is still shown as running. A dropped commit is logged with the
+// fence that rejected it so operators can tell a lost lease from a stale result.
+func (e *Engine) commitNodeSuccess(runID string, node domain.WorkflowNode, generation, attempt int, output string, artifacts []domain.Artifact, manualGateName string) bool {
+	committed := false
+	reason := ""
+	stored := e.updateRunAt(runID, false, func(r *domain.Run) {
+		nr := r.Nodes[node.ID]
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, true) {
+			reason = nodeCommitRejection(*r, nr, generation)
+			return
+		}
+		r.Artifacts = append(r.Artifacts, artifacts...)
+		nr.Output = output
+		nr.Error = ""
+		nr.FinishedAt = time.Now().UTC()
+		if manualGateName != "" {
+			nr.Status = "waiting_approval"
+			e.event(r, node.ID, "gate.waiting", "等待人工验证："+manualGateName)
+		} else {
+			nr.Status = "succeeded"
+			e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
+		}
+		committed = true
+	})
+	if !stored || !committed {
+		if reason == "" {
+			reason = "run state was not written (lease not held or store write failed)"
+		}
+		log.Printf("run %s node %s: success outcome not committed: %s", runID, node.ID, reason)
+		return false
+	}
+	for _, artifact := range artifacts {
+		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
+	}
+	return true
+}
+
+func nodeCommitRejection(r domain.Run, nr *domain.NodeRun, generation int) string {
+	switch {
+	case nr == nil:
+		return "node is missing from the run"
+	case r.Generation != generation:
+		return fmt.Sprintf("run generation moved from %d to %d", generation, r.Generation)
+	default:
+		return fmt.Sprintf("node is %s, not in flight", nr.Status)
+	}
 }
 
 func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool) {
