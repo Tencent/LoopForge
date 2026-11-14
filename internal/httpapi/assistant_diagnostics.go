@@ -340,55 +340,7 @@ func (a *assistantDiagnosticAttempt) protocol(line string) {
 	}
 	a.nativeMetadata(raw)
 	e := domain.AssistantDiagnosticEvent{At: time.Now().UTC()}
-	var inspect func(map[string]any, int)
-	inspect = func(v map[string]any, depth int) {
-		if depth > 5 {
-			return
-		}
-		for _, key := range []string{"type", "method"} {
-			if s, _ := v[key].(string); s != "" && (strings.Contains(s, "error") || strings.Contains(s, "failed") || strings.Contains(s, "retry") || strings.Contains(s, "warning")) {
-				e.Kind = sanitizeAssistantDiagnostic(s, a.user, 120)
-			}
-		}
-		for _, field := range []struct {
-			key  string
-			dest *string
-		}{{"requestId", &e.RequestID}, {"request_id", &e.RequestID}, {"traceId", &e.TraceID}, {"trace_id", &e.TraceID}, {"errorCode", &e.Code}, {"providerErrorCode", &e.Code}, {"errorPhase", &e.Phase}} {
-			if s, _ := v[field.key].(string); s != "" {
-				*field.dest = sanitizeAssistantDiagnostic(s, a.user, 160)
-			}
-		}
-		if s, _ := v["code"].(string); s != "" && e.Code == "" {
-			e.Code = sanitizeAssistantDiagnostic(s, a.user, 160)
-		}
-		for _, key := range []string{"statusCode", "status_code", "httpStatusCode"} {
-			if n, ok := v[key].(float64); ok && n >= 100 && n <= 599 {
-				e.StatusCode = int(n)
-			}
-		}
-		for _, key := range []string{"retryable", "willRetry"} {
-			if b, ok := v[key].(bool); ok {
-				value := b
-				e.Retryable = &value
-			}
-		}
-		for _, key := range []string{"payload", "params", "data", "error", "attribution", "turn", "codexErrorInfo", "httpConnectionFailed", "responseStreamDisconnected", "responseStreamConnectionFailed"} {
-			if nested, ok := v[key].(map[string]any); ok {
-				if key == "error" {
-					e.Kind = "provider.error"
-				}
-				inspect(nested, depth+1)
-			}
-		}
-		if e.Kind != "" {
-			for _, key := range []string{"message", "providerErrorMessage", "error"} {
-				if s, _ := v[key].(string); s != "" {
-					e.Message = sanitizeAssistantDiagnostic(s, a.user, 1024)
-				}
-			}
-		}
-	}
-	inspect(raw, 0)
+	inspectProtocolMetadata(&e, raw, 0, a.user)
 	diagnosticTextMetadata(&e)
 	if e.Kind == "" && e.RequestID == "" && e.TraceID == "" && e.StatusCode == 0 {
 		return
@@ -397,6 +349,59 @@ func (a *assistantDiagnosticAttempt) protocol(line string) {
 		e.Kind = "provider.metadata"
 	}
 	a.recordEvent(e)
+}
+
+// inspectProtocolMetadata walks one protocol JSON object (and up to five levels
+// of known nested containers) and copies its diagnostic metadata into e:
+// error-like type/method names, request/trace IDs, codes, HTTP status,
+// retryability and, once a kind is known, the message. Every string is
+// sanitized for user before it is kept.
+func inspectProtocolMetadata(e *domain.AssistantDiagnosticEvent, v map[string]any, depth int, user domain.User) {
+	if depth > 5 {
+		return
+	}
+	for _, key := range []string{"type", "method"} {
+		if s, _ := v[key].(string); s != "" && (strings.Contains(s, "error") || strings.Contains(s, "failed") || strings.Contains(s, "retry") || strings.Contains(s, "warning")) {
+			e.Kind = sanitizeAssistantDiagnostic(s, user, 120)
+		}
+	}
+	for _, field := range []struct {
+		key  string
+		dest *string
+	}{{"requestId", &e.RequestID}, {"request_id", &e.RequestID}, {"traceId", &e.TraceID}, {"trace_id", &e.TraceID}, {"errorCode", &e.Code}, {"providerErrorCode", &e.Code}, {"errorPhase", &e.Phase}} {
+		if s, _ := v[field.key].(string); s != "" {
+			*field.dest = sanitizeAssistantDiagnostic(s, user, 160)
+		}
+	}
+	if s, _ := v["code"].(string); s != "" && e.Code == "" {
+		e.Code = sanitizeAssistantDiagnostic(s, user, 160)
+	}
+	for _, key := range []string{"statusCode", "status_code", "httpStatusCode"} {
+		if n, ok := v[key].(float64); ok && n >= 100 && n <= 599 {
+			e.StatusCode = int(n)
+		}
+	}
+	for _, key := range []string{"retryable", "willRetry"} {
+		if b, ok := v[key].(bool); ok {
+			value := b
+			e.Retryable = &value
+		}
+	}
+	for _, key := range []string{"payload", "params", "data", "error", "attribution", "turn", "codexErrorInfo", "httpConnectionFailed", "responseStreamDisconnected", "responseStreamConnectionFailed"} {
+		if nested, ok := v[key].(map[string]any); ok {
+			if key == "error" {
+				e.Kind = "provider.error"
+			}
+			inspectProtocolMetadata(e, nested, depth+1, user)
+		}
+	}
+	if e.Kind != "" {
+		for _, key := range []string{"message", "providerErrorMessage", "error"} {
+			if s, _ := v[key].(string); s != "" {
+				e.Message = sanitizeAssistantDiagnostic(s, user, 1024)
+			}
+		}
+	}
 }
 
 var (
