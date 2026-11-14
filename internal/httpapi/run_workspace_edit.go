@@ -128,8 +128,8 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 }
 
 // workspaceEditAllowed reports whether userID may edit run's task workspace
-// from the task panel: platform admins, the project owner, anyone on an
-// unowned project without members, and non-viewer project members.
+// from the task panel: platform admins, the project owner, authenticated
+// users on an unowned project without members, and non-viewer project members.
 func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, userID int64) bool {
 	if h.isPlatformAdmin(r) {
 		return true
@@ -138,7 +138,18 @@ func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, use
 	if !ok {
 		return false
 	}
-	if project.OwnerID == userID || project.OwnerID == 0 && len(project.Members) == 0 {
+	// Security fix: split owner check from unowned-project fallback.
+	// The original single-line condition suffered from Go operator precedence:
+	//   project.OwnerID == userID || project.OwnerID == 0 && len(project.Members) == 0
+	// evaluated as:
+	//   (project.OwnerID == userID) || (project.OwnerID == 0 && len(project.Members) == 0)
+	// The second clause is independent of userID, so ANY authenticated user
+	// (including guests with ID 0 matching OwnerID 0) could edit workspaces
+	// of unowned, memberless projects — a cross-tenant IDOR.
+	if project.OwnerID == userID {
+		return true
+	}
+	if userID > 0 && project.OwnerID == 0 && len(project.Members) == 0 {
 		return true
 	}
 	for _, member := range project.Members {
