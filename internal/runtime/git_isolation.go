@@ -294,27 +294,15 @@ func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confi
 		if _, err := strconv.Atoi(entry.Name()); err != nil {
 			continue
 		}
-		dir := filepath.Join(procRoot, entry.Name(), "fd")
-		fds, readErr := os.ReadDir(dir)
+		held, readErr := fdDirHoldsFile(filepath.Join(procRoot, entry.Name(), "fd"), want, lock)
 		if readErr != nil {
 			if foreignOwner && !errors.Is(readErr, os.ErrNotExist) && procMayOwnFile(filepath.Join(procRoot, entry.Name()), stat.Uid) {
 				uncertain = true
 			}
 			continue
 		}
-		for _, fd := range fds {
-			link := filepath.Join(dir, fd.Name())
-			target, linkErr := os.Readlink(link)
-			// Sockets, pipes and anonymous inodes are never the lock file.
-			if linkErr != nil || !strings.HasPrefix(target, "/") {
-				continue
-			}
-			if target == want {
-				return true, true, nil
-			}
-			if open, statErr := os.Stat(link); statErr == nil && os.SameFile(lock, open) {
-				return true, true, nil
-			}
+		if held {
+			return true, true, nil
 		}
 	}
 	if uncertain && time.Since(lock.ModTime()) >= gitIndexLockForeignStaleAfter {
@@ -324,6 +312,31 @@ func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confi
 }
 
 var gitIndexLockForeignStaleAfter = 30 * time.Minute
+
+// fdDirHoldsFile reports whether any descriptor in one process's fd directory
+// points at the lock file, either by path (want) or by inode (lock). The error
+// is only the failure to read the fd directory itself.
+func fdDirHoldsFile(dir, want string, lock os.FileInfo) (bool, error) {
+	fds, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, fd := range fds {
+		link := filepath.Join(dir, fd.Name())
+		target, linkErr := os.Readlink(link)
+		// Sockets, pipes and anonymous inodes are never the lock file.
+		if linkErr != nil || !strings.HasPrefix(target, "/") {
+			continue
+		}
+		if target == want {
+			return true, nil
+		}
+		if open, statErr := os.Stat(link); statErr == nil && os.SameFile(lock, open) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // procMayOwnFile reports whether the process may run as uid. Unknown state
 // counts as a match, so an unreadable process can only preserve the lock.
