@@ -44,4 +44,23 @@ assert.equal(saved.reportPath, 'coverage.out');
 assert.equal('thresholdPct' in saved, false, 'invalid threshold must not leak through the spread');
 assert.equal('minChangedLines' in saved, false, 'invalid min lines must not leak through the spread');
 assert.equal(build({reportPath: 'c', reportFormat: 'lcov', thresholdPct: 70, minChangedLines: 2}).coverage.thresholdPct, 70);
+// Saving a role keeps a diff_coverage gate as diff_coverage (the old code
+// hard-coded mode:'command') with its coverage block, and leaves command gates
+// as command gates without coverage.
+const vStart = agents.indexOf('draft.verification.map(');
+const vEnd = agents.indexOf('.filter(g=>g.commands.length)', vStart);
+assert.ok(vStart >= 0 && vEnd > vStart, 'verification mapping not found');
+const persistGates = new Function('draft', `return ${agents.slice(vStart, vEnd + '.filter(g=>g.commands.length)'.length)};`);
+const gates = persistGates({verification: [
+  {id: 'cov', name: '覆盖率', mode: 'diff_coverage', commands: ['go test -coverprofile=coverage.out ./...'], onFailure: 'loop', executionScope: 'run',
+    coverage: {reportPath: 'coverage.out', reportFormat: 'go_coverprofile', thresholdPct: 85, minChangedLines: 3, include: ['internal/**'], baseBranch: 'release/2.x'}},
+  {id: 'lint', name: 'lint', mode: 'command', commands: ['go vet ./...'], onFailure: 'fail', executionScope: 'repositories', coverage: {reportPath: 'stale'}},
+]});
+assert.equal(gates.length, 2);
+assert.equal(gates[0].mode, 'diff_coverage', 'saving a role must not reset a diff_coverage gate to command');
+assert.equal(gates[0].executionScope, 'repositories', 'diff_coverage gates always diff repository checkouts');
+assert.deepEqual(gates[0].coverage, {reportPath: 'coverage.out', reportFormat: 'go_coverprofile', thresholdPct: 85, minChangedLines: 3, include: ['internal/**'], baseBranch: 'release/2.x'});
+assert.equal(gates[1].mode, 'command');
+assert.equal('coverage' in gates[1], false, 'command gates must not carry coverage settings');
+assert.equal(gates[1].executionScope, 'repositories');
 console.log('diff coverage gate ui ok');

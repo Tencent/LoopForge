@@ -47,7 +47,11 @@ func isDiffCoverageGate(gate domain.VerificationGate) bool {
 //
 // The payload is kept small because a CLI Runner only returns the tail of the
 // output: the diff is reduced to the file and hunk headers the parser reads,
-// and a Go coverprofile is reduced to the changed files.
+// and a Go coverprofile or lcov report is reduced to the changed files.
+// The emitter first returns to the repository root, so a command that ran
+// `cd web && npm test` still yields root-relative paths for tracked and
+// untracked files alike, and the report path is read relative to the root as
+// documented. core.quotepath=off keeps non-ASCII file names unescaped.
 func diffCoverageCommand(gate domain.VerificationGate, commands string) (string, error) {
 	spec := gate.Coverage
 	if spec == nil {
@@ -75,6 +79,7 @@ func diffCoverageCommand(gate domain.VerificationGate, commands string) (string,
 	b.WriteString(commands)
 	fmt.Fprintf(&b, "\necho %s\n", shellSingleQuote(diffCoverageMarker))
 	b.WriteString("set +e\n")
+	b.WriteString("lf_top=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n \"$lf_top\" ] && cd \"$lf_top\"\n")
 	fmt.Fprintf(&b, "lf_base=%s\n", branch)
 	b.WriteString("git fetch -q origin \"$lf_base\" >/dev/null 2>&1\n")
 	b.WriteString("lf_ref=$(git merge-base \"origin/$lf_base\" HEAD 2>/dev/null || git merge-base \"$lf_base\" HEAD 2>/dev/null || git rev-parse -q --verify \"$lf_base^{commit}\" 2>/dev/null)\n")
@@ -85,13 +90,18 @@ func diffCoverageCommand(gate domain.VerificationGate, commands string) (string,
 	// collection intent-adds them later), so `git diff <base>` alone would
 	// miss exactly the new code this gate exists for. Diff them against
 	// /dev/null without touching the index.
-	b.WriteString("  lf_diff=$( { git --no-pager diff -U0 \"$lf_ref\" -- . ; git ls-files -z --others --exclude-standard -- . | xargs -0 -r -n1 git --no-pager diff --no-index -U0 -- /dev/null ; } 2>/dev/null | grep -E '^(diff --git |\\+\\+\\+ |@@ )')\n")
+	b.WriteString("  lf_diff=$( { git -c core.quotepath=off --no-pager diff -U0 \"$lf_ref\" -- . ; git -c core.quotepath=off ls-files -z --others --exclude-standard -- . | xargs -0 -r -n1 git -c core.quotepath=off --no-pager diff --no-index -U0 -- /dev/null ; } 2>/dev/null | grep -E '^(diff --git |\\+\\+\\+ |@@ )')\n")
 	b.WriteString("  printf '%s\\n' \"$lf_diff\"\n")
 	b.WriteString("fi\n")
 	fmt.Fprintf(&b, "echo %s\n", shellSingleQuote(diffCoverageReportMarker))
-	if strings.EqualFold(strings.TrimSpace(spec.ReportFormat), domain.GateCoverageFormatGoCoverprofile) {
+	switch strings.ToLower(strings.TrimSpace(spec.ReportFormat)) {
+	case domain.GateCoverageFormatGoCoverprofile:
 		fmt.Fprintf(&b, "if [ -f %s ]; then printf '%%s\\n' \"$lf_diff\" | awk %s - %s; fi\n", quotedReport, shellSingleQuote(goCoverprofileFilterAwk), quotedReport)
-	} else {
+	case domain.GateCoverageFormatLCOV:
+		fmt.Fprintf(&b, "if [ -f %s ]; then printf '%%s\\n' \"$lf_diff\" | awk %s - %s; fi\n", quotedReport, shellSingleQuote(lcovFilterAwk), quotedReport)
+	default:
+		// Cobertura XML is returned whole; see docs/diff-coverage-gate.md for
+		// the CLI Runner size limit this implies.
 		fmt.Fprintf(&b, "if [ -f %s ]; then cat %s; fi\n", quotedReport, quotedReport)
 	}
 	fmt.Fprintf(&b, "echo %s\n", shellSingleQuote(diffCoverageEndMarker))
@@ -103,7 +113,10 @@ func diffCoverageCommand(gate domain.VerificationGate, commands string) (string,
 // so a suffix match is enough. When no block matches, one unrelated block is
 // kept so the profile still parses; it cannot affect the verdict because only
 // changed files are judged.
-const goCoverprofileFilterAwk = `NR == FNR { if (substr($0, 1, 6) == "+++ b/") want[substr($0, 7)] = 1; next }
+//
+// git appends a TAB to "+++ b/<path>" when the path contains a space; it is
+// stripped so the key matches the profile path.
+const goCoverprofileFilterAwk = `NR == FNR { if (substr($0, 1, 6) == "+++ b/") { p = substr($0, 7); sub(/\t$/, "", p); want[p] = 1 }; next }
 /^mode:/ { print; next }
 {
   f = $0; sub(/:[^:]*$/, "", f); keep = 0
@@ -111,6 +124,36 @@ const goCoverprofileFilterAwk = `NR == FNR { if (substr($0, 1, 6) == "+++ b/") w
   if (keep) { print; kept = 1 } else if (first == "") first = $0
 }
 END { if (!kept && first != "") print first }`
+
+// lcovFilterAwk keeps the SF:...end_of_record records of files named in the
+// diff (first input), matched by path suffix like the Go filter, plus lines
+// outside records. lcov is language neutral and the judge infers the report's
+// languages from the extensions it lists, so for every other extension the
+// first record is reduced to its SF line and first DA line: a new file of a
+// language the report covers is still judged as unreported, while CHANGELOG.md
+// and friends stay out, exactly as with the unfiltered report.
+const lcovFilterAwk = `function flush(   g, n, ext, keep, w) {
+  if (!inrec) return
+  inrec = 0
+  g = f; gsub(/\\/, "/", g); sub(/^\.\//, "", g)
+  n = g; sub(/.*\//, "", n); ext = ""
+  if (match(n, /\.[^.]*$/)) ext = tolower(substr(n, RSTART))
+  keep = 0
+  for (w in want) if (g == w || (length(g) > length(w) && substr(g, length(g) - length(w)) == "/" w)) { keep = 1; break }
+  if (keep) { print rec; if (!ended) print "end_of_record"; seen[ext] = 1; return }
+  if (!(ext in seen) && da != "") { print "SF:" f; print da; print "end_of_record"; seen[ext] = 1 }
+}
+NR == FNR { if (substr($0, 1, 6) == "+++ b/") { p = substr($0, 7); sub(/\t$/, "", p); want[p] = 1 }; next }
+{ sub(/\r$/, "") }
+/^[ \t]*SF:/ { flush(); f = $0; sub(/^[ \t]*SF:[ \t]*/, "", f); sub(/[ \t]+$/, "", f); inrec = 1; ended = 0; rec = $0; da = ""; next }
+inrec {
+  rec = rec "\n" $0
+  if (da == "" && $0 ~ /^[ \t]*DA:/) da = $0
+  if ($0 ~ /^[ \t]*end_of_record/) { ended = 1; flush() }
+  next
+}
+{ print }
+END { flush() }`
 
 // splitDiffCoverageOutput separates test output from the payload tail.
 func splitDiffCoverageOutput(output string) (testOutput, payload string, ok bool) {

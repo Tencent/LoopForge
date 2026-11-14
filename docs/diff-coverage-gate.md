@@ -34,12 +34,12 @@ low coverage never blocks a run.
 | Field | Meaning |
 | --- | --- |
 | `commands` | Produce the coverage report. A non-zero exit fails the gate as a normal command gate would; the coverage judgement then never runs, so a stale report is never parsed. |
-| `coverage.reportPath` | Relative to the repository checkout. |
+| `coverage.reportPath` | Relative to the repository root, even when the commands `cd` into a subdirectory (for example `cd web && npm test` writing `web/coverage/lcov.info`). |
 | `coverage.reportFormat` | `go_coverprofile` (`go test -coverprofile`), `lcov` (`lcov.info`, `--coverage.reporter=lcov`), `cobertura` (`coverage.xml`, `pytest --cov-report=xml`, JaCoCo Cobertura output). |
 | `coverage.thresholdPct` | Minimum coverage of changed executable lines, 0–100. Default 80. |
 | `coverage.minChangedLines` | Below this many changed executable lines the gate is “not applicable” and passes without spending a self-correction round. Default 5. |
 | `coverage.baseBranch` | Overrides the repository target's base branch used for the merge-base. |
-| `coverage.include` / `exclude` | Path globs (`**` supported). Exclude wins; the built-in defaults (`*_test.go`, `testdata/`, `*_gen.go`, `*.pb.go`, `zz_generated*`, `vendor/`, `node_modules/`, build output) cannot be re-included. |
+| `coverage.include` / `exclude` | Path globs (`**` supported). Exclude wins; the built-in defaults (`*_test.go`, `*.test.*`, `*.spec.*`, `__tests__/`, `test_*.py`, `*_test.py`, `testdata/`, `*_gen.go`, `*.pb.go`, `zz_generated*`, `vendor/`, `node_modules/`, build output) cannot be re-included, so tests the agent adds never count as uncovered code. |
 
 `executionScope` must be `repositories`: the gate diffs a checkout, and on a
 multi-repository run each repository is judged and reported separately.
@@ -48,13 +48,16 @@ multi-repository run each repository is judged and reported separately.
 
 1. The commands run in the repository checkout (sandbox or execution machine,
    same as other gates) with `AGENTFLOW_BASE_BRANCH` exported.
-2. The platform reads `git diff -U0 $(git merge-base <base> HEAD)` for the
+2. After the commands finish, the gate returns to the repository root, so
+   every path below is repository-relative no matter where the commands
+   `cd`-ed. The platform reads `git diff -U0 $(git merge-base <base> HEAD)` for the
    changed line ranges, plus untracked files the node created (diffed against
    `/dev/null`, honouring `.gitignore`; the index is not touched). Deleted
    files and pure deletions contribute nothing; renames keep the new path. The
    merge-base is taken against `origin/<base>` first, then the local branch;
    if neither exists the gate fails with “找不到基线分支 <base>” instead of a
-   bare exit status.
+   bare exit status. Git runs with `core.quotepath=off`, so non-ASCII file
+   names are judged like any other.
 3. It parses the report into *file → executable line → hit count*.
 4. Changed lines that the report does not mark executable (comments, blanks,
    declarations) are ignored. Changed lines in files the report never mentions
@@ -73,11 +76,18 @@ multi-repository run each repository is judged and reported separately.
    不要通过删除代码、扩大 exclude 或给这些行加忽略标记来规避。
    ```
 
-Only the diff's file and hunk headers, and for `go_coverprofile` only the
-profile blocks of changed files, travel back from the executor. A CLI Runner
-returns at most the last 32 KiB of a command's output; if the payload still
-does not fit (a large lcov or cobertura report), the gate fails with a message
-saying the output was truncated rather than misreading a partial report.
+Only the diff's file and hunk headers travel back from the executor, and the
+report is reduced to the changed files: `go_coverprofile` keeps their profile
+blocks, `lcov` keeps their `SF:`…`end_of_record` records plus one minimal record
+per other file extension (so the report's languages are still known). A CLI
+Runner returns at most the last 32 KiB of a command's output; if the payload
+still does not fit, the gate fails with a message saying the output was
+truncated rather than misreading a partial report.
+
+**Limitation:** `cobertura` XML is returned whole. On a CLI Runner a cobertura
+report larger than about 32 KiB therefore fails the gate as truncated; generate
+the report only for the packages the change touches, or use `lcov` /
+`go_coverprofile` there.
 
 An empty diff (nothing changed since the base) and an unparsable or missing
 report are treated differently on purpose: empty diff passes as “not

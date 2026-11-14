@@ -26,7 +26,7 @@ func TestDiffCoverageCommandRunsTestsBeforeEmittingPayload(t *testing.T) {
 	if testIdx < 0 || markerIdx < testIdx || reportIdx < markerIdx || readIdx < reportIdx || endIdx < readIdx {
 		t.Fatalf("commands must run first and the report must be emitted last:\n%s", cmd)
 	}
-	if !strings.Contains(cmd, "git --no-pager diff -U0") || !strings.Contains(cmd, "merge-base") {
+	if !strings.Contains(cmd, "--no-pager diff -U0") || !strings.Contains(cmd, "merge-base") || !strings.Contains(cmd, "core.quotepath=off") {
 		t.Fatalf("diff ranges must come from merge-base..HEAD:\n%s", cmd)
 	}
 	if !strings.Contains(cmd, "${AGENTFLOW_BASE_BRANCH:-main}") || strings.Contains(cmd, "'${AGENTFLOW_BASE_BRANCH") {

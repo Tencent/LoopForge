@@ -308,3 +308,121 @@ func TestDiffCoverageScriptKeepsPayloadSmall(t *testing.T) {
 		t.Fatalf("payload must hold only hunk headers and changed-file profile blocks (%d bytes):\n%.2000s", len(payload), payload)
 	}
 }
+
+func writeRepoFile(t *testing.T, dir, name, body string) {
+	t.Helper()
+	full := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiffCoverageScriptFiltersLCOVToChangedFiles(t *testing.T) {
+	_, source := diffCoverageRepo(t, "web")
+	gitIn(t, source, "checkout", "-q", "-b", "feature/lcov")
+	writeRepoFile(t, source, "src/a.ts", "export function a(x: number) {\n  return x + 1\n}\n")
+	gitIn(t, source, "add", "src/a.ts")
+	gitIn(t, source, "commit", "-qm", "add a.ts")
+	// Untracked new source file the report never mentions, plus a changelog.
+	writeRepoFile(t, source, "src/new.ts", "export const n = 1\nexport const m = 2\nexport const k = 3\n")
+	writeRepoFile(t, source, "CHANGELOG.md", "- added a\n- added new\n")
+	// A report much larger than a CLI Runner returns: hundreds of untouched
+	// files plus the changed one, written by absolute path as vitest does.
+	var report strings.Builder
+	report.WriteString("TN:\n")
+	for i := 0; i < 800; i++ {
+		report.WriteString("SF:" + source + "/src/untouched" + itoa(i) + ".ts\n")
+		for line := 1; line <= 10; line++ {
+			report.WriteString("DA:" + itoa(line) + ",1\n")
+		}
+		report.WriteString("LF:10\nLH:10\nend_of_record\n")
+	}
+	report.WriteString("SF:" + source + "/src/a.ts\nDA:1,1\nDA:2,1\nDA:3,1\nLF:3\nLH:3\nend_of_record\n")
+	writeRepoFile(t, source, "coverage/lcov.info", report.String())
+	gitIn(t, source, "add", "coverage/lcov.info")
+	gitIn(t, source, "commit", "-qm", "report")
+	gate := domain.VerificationGate{
+		ID: "coverage", Mode: domain.GateModeDiffCoverage,
+		Commands: []string{`true`},
+		Coverage: &domain.GateCoverageSpec{ReportPath: "coverage/lcov.info", ReportFormat: domain.GateCoverageFormatLCOV, MinChangedLines: coverageIptr(1), Exclude: []string{"coverage/**"}},
+	}
+	output, verdict, err := runDiffCoverageScript(t, source, gate, "master")
+	if err != nil {
+		t.Fatalf("%v\n%.2000s", err, output)
+	}
+	payload, _ := extractDiffCoveragePayload(output)
+	if len(payload) > 4<<10 || strings.Count(payload, "untouched") > 1 {
+		t.Fatalf("lcov payload must keep only changed-file records and one sample (%d bytes):\n%.2000s", len(payload), payload)
+	}
+	if !verdict.Applicable || verdict.ChangedLines != 6 || verdict.CoveredLines != 3 {
+		t.Fatalf("a.ts covered 3/3 and the unreported new.ts 0/3 must both be judged: %+v\n%s", verdict, payload)
+	}
+	if len(verdict.UnreportedFiles) != 1 || verdict.UnreportedFiles[0] != "src/new.ts" {
+		t.Fatalf("only src/new.ts is unreported (CHANGELOG.md is not .ts): %+v", verdict.UnreportedFiles)
+	}
+}
+
+func TestDiffCoverageScriptKeepsGoBlocksOfFileNamesWithSpaces(t *testing.T) {
+	_, source := diffCoverageRepo(t, "calc")
+	gitIn(t, source, "checkout", "-q", "-b", "feature/space")
+	writeRepoFile(t, source, "dir/sub/new file.go", "package sub\n\nfunc F(a int) int {\n\tif a > 0 {\n\t\treturn a\n\t}\n\treturn -a\n}\n")
+	// other.go comes first so the filter's "keep one unrelated block"
+	// fallback cannot mask a dropped block.
+	writeRepoFile(t, source, "coverage.out", "mode: set\nexample.com/m/other.go:1.1,2.2 1 1\nexample.com/m/dir/sub/new file.go:3.14,8.2 3 1\n")
+	gate := domain.VerificationGate{
+		ID: "coverage", Mode: domain.GateModeDiffCoverage,
+		Commands: []string{`true`},
+		Coverage: &domain.GateCoverageSpec{ReportPath: "coverage.out", ReportFormat: domain.GateCoverageFormatGoCoverprofile, MinChangedLines: coverageIptr(1)},
+	}
+	output, verdict, err := runDiffCoverageScript(t, source, gate, "master")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	if !verdict.Applicable || !verdict.Passed() || verdict.ChangedLines != 6 || verdict.CoveredLines != 6 {
+		t.Fatalf("the profile block of a file name with a space must survive the filter: %+v\n%s", verdict, output)
+	}
+}
+
+func TestDiffCoverageScriptJudgesNonASCIIGoFileNames(t *testing.T) {
+	_, source := diffCoverageRepo(t, "calc")
+	gitIn(t, source, "checkout", "-q", "-b", "feature/unicode")
+	writeRepoFile(t, source, "ünï.go", "package calc\n\nfunc U(a int) int {\n\treturn a * 2\n}\n")
+	writeRepoFile(t, source, "coverage.out", "mode: set\nagentflow/calc.go:3.24,5.2 1 1\n")
+	gate := domain.VerificationGate{
+		ID: "coverage", Mode: domain.GateModeDiffCoverage,
+		Commands: []string{`true`},
+		Coverage: &domain.GateCoverageSpec{ReportPath: "coverage.out", ReportFormat: domain.GateCoverageFormatGoCoverprofile, MinChangedLines: coverageIptr(1)},
+	}
+	output, verdict, err := runDiffCoverageScript(t, source, gate, "master")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	if len(verdict.UnreportedFiles) != 1 || verdict.UnreportedFiles[0] != "ünï.go" || verdict.Passed() {
+		t.Fatalf("a non-ASCII Go file the profile never saw must be judged, not skipped: %+v\n%s", verdict, output)
+	}
+}
+
+func TestDiffCoverageScriptUsesRepositoryRootAfterCd(t *testing.T) {
+	_, source := diffCoverageRepo(t, "mono")
+	gitIn(t, source, "checkout", "-q", "-b", "feature/cd")
+	writeRepoFile(t, source, "web/a.ts", "export const a = 1\n")
+	gitIn(t, source, "add", "web/a.ts")
+	gitIn(t, source, "commit", "-qm", "add web/a.ts")
+	// The command cds into a subdirectory, creates a new untracked file there
+	// and writes the report; paths must still be repository-relative.
+	gate := domain.VerificationGate{
+		ID: "coverage", Mode: domain.GateModeDiffCoverage,
+		Commands: []string{`cd web && printf 'export const n = 1\nexport const m = 2\n' > n2.ts && mkdir -p coverage && printf 'SF:web/a.ts\nDA:1,1\nend_of_record\n' > coverage/lcov.info`},
+		Coverage: &domain.GateCoverageSpec{ReportPath: "web/coverage/lcov.info", ReportFormat: domain.GateCoverageFormatLCOV, MinChangedLines: coverageIptr(1), Include: []string{"web/**"}, Exclude: []string{"web/coverage/**"}},
+	}
+	output, verdict, err := runDiffCoverageScript(t, source, gate, "master")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	if !verdict.Applicable || verdict.ChangedLines != 3 || verdict.CoveredLines != 1 || len(verdict.UnreportedFiles) != 1 || verdict.UnreportedFiles[0] != "web/n2.ts" {
+		t.Fatalf("untracked files must be named relative to the repository root after cd: %+v\n%s", verdict, output)
+	}
+}

@@ -121,6 +121,14 @@ func (s GateCoverageSpec) CoverageDefaults() (thresholdPct float64, minChangedLi
 // globs from the gate spec are applied on top.
 var defaultCoverageExcludes = []string{
 	"**/*_test.go",
+	// JS/TS and Python test files: lcov/cobertura reports rarely list them,
+	// and their extensions are in the report's language, so without these
+	// a test the agent adds to satisfy the gate would count as uncovered.
+	"**/*.test.*",
+	"**/*.spec.*",
+	"**/__tests__/**",
+	"**/test_*.py",
+	"**/*_test.py",
 	"**/testdata/**",
 	"**/*_gen.go",
 	"**/*.pb.go",
