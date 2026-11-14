@@ -160,6 +160,16 @@ func devServerClientFor(ctx context.Context, runID string) (*http.Client, browse
 	if cached != nil {
 		cached.client.CloseIdleConnections()
 	}
+	client := newDevServerHTTPClient(endpoint)
+	devServerClients.items[runID] = &devServerClient{endpoint: endpoint, checked: now, used: now, client: client}
+	return client, endpoint, true
+}
+
+// newDevServerHTTPClient builds the client that forwards requests to the dev
+// server behind endpoint: every connection dials the requested port through
+// devServerDial, and redirects are returned to the browser instead of being
+// followed here.
+func newDevServerHTTPClient(endpoint browserEndpoint) *http.Client {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
 			_, rawPort, err := net.SplitHostPort(addr)
@@ -183,14 +193,12 @@ func devServerClientFor(ctx context.Context, runID string) (*http.Client, browse
 		ResponseHeaderTimeout: 2 * time.Minute,
 		ForceAttemptHTTP2:     false,
 	}
-	client := &http.Client{
+	return &http.Client{
 		Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	devServerClients.items[runID] = &devServerClient{endpoint: endpoint, checked: now, used: now, client: client}
-	return client, endpoint, true
 }
 
 func forgetDevServerEndpoint(runID string, endpoint browserEndpoint) {
