@@ -99,6 +99,12 @@ func (h *tasksHandlers) syncTasks() {
 		_ = h.repo.UpdateTaskStatus(task, status)
 		tasks[i].Status = status
 	}
+	h.syncIssuesToLatestTask(latestTaskByIssue(tasks))
+}
+
+// latestTaskByIssue picks each issue's newest task: the later CreatedAt wins,
+// and on a tie the larger ID wins. Tasks without an IssueID are skipped.
+func latestTaskByIssue(tasks []domain.Task) map[string]domain.Task {
 	latest := map[string]domain.Task{}
 	for _, task := range tasks {
 		if task.IssueID == "" {
@@ -109,6 +115,12 @@ func (h *tasksHandlers) syncTasks() {
 			latest[task.IssueID] = task
 		}
 	}
+	return latest
+}
+
+// syncIssuesToLatestTask points every issue at its latest task and derives the
+// issue status from it, patching only issues whose linkage or status changed.
+func (h *tasksHandlers) syncIssuesToLatestTask(latest map[string]domain.Task) {
 	for _, issue := range h.repo.Issues() {
 		task, ok := latest[issue.ID]
 		if !ok {
