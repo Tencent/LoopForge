@@ -38,39 +38,7 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		}
 		command.Argv = conversationReplaceFlag(command.Argv, "--settings", path)
 	case AgentCLIZCode:
-		if err := os.WriteFile(filepath.Join(root, "zcode-resume-model.py"), conversationZCodeResumeScript(), 0600); err != nil {
-			return command, err
-		}
-		// ZCode loads user hooks from this config; retain MCP and the
-		// SessionStart hook that removes the short-lived credential file.
-		root, err := openAgentCLIHome(home)
-		if err != nil {
-			return command, err
-		}
-		data, err := root.ReadFile(zcodeConfigPath)
-		root.Close()
-		document := map[string]any{}
-		if err != nil && !os.IsNotExist(err) {
-			return command, err
-		}
-		if err == nil {
-			if err = json.Unmarshal(data, &document); err != nil {
-				return command, err
-			}
-		}
-		configured, _ := document["hooks"].(map[string]any)
-		if configured == nil {
-			configured = map[string]any{}
-		}
-		events, _ := configured["events"].(map[string]any)
-		if events == nil {
-			events = map[string]any{}
-		}
-		events["PreToolUse"] = []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch, "timeout": conversationApprovalHookWatchdog, "onError": "deny"}}}}
-		configured["enabled"], configured["events"] = true, events
-		document["hooks"] = configured
-		data, _ = json.Marshal(document)
-		if err := writeAgentCLIFile(home, zcodeConfigPath, data); err != nil {
+		if err := installZCodeApproval(root, home, launch); err != nil {
 			return command, err
 		}
 	case "codex":
@@ -116,6 +84,50 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		return command, fmt.Errorf("CLI %s 缺少原生审批适配", provider)
 	}
 	return command, nil
+}
+
+// installZCodeApproval writes the ZCode resume script and adds the approval
+// hook to the existing ZCode config. ZCode loads user hooks from this config;
+// retain MCP and the SessionStart hook that removes the short-lived credential
+// file.
+func installZCodeApproval(root string, home AgentCLIHome, launch string) error {
+	if err := os.WriteFile(filepath.Join(root, "zcode-resume-model.py"), conversationZCodeResumeScript(), 0600); err != nil {
+		return err
+	}
+	configRoot, err := openAgentCLIHome(home)
+	if err != nil {
+		return err
+	}
+	data, err := configRoot.ReadFile(zcodeConfigPath)
+	configRoot.Close()
+	document := map[string]any{}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		if err = json.Unmarshal(data, &document); err != nil {
+			return err
+		}
+	}
+	mergeZCodeApprovalHook(document, launch)
+	data, _ = json.Marshal(document)
+	return writeAgentCLIFile(home, zcodeConfigPath, data)
+}
+
+// mergeZCodeApprovalHook enables hooks in a ZCode config document and replaces
+// its PreToolUse event with the approval hook, keeping every other entry.
+func mergeZCodeApprovalHook(document map[string]any, launch string) {
+	configured, _ := document["hooks"].(map[string]any)
+	if configured == nil {
+		configured = map[string]any{}
+	}
+	events, _ := configured["events"].(map[string]any)
+	if events == nil {
+		events = map[string]any{}
+	}
+	events["PreToolUse"] = []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch, "timeout": conversationApprovalHookWatchdog, "onError": "deny"}}}}
+	configured["enabled"], configured["events"] = true, events
+	document["hooks"] = configured
 }
 
 func conversationReplaceFlag(argv []string, name, value string) []string {
