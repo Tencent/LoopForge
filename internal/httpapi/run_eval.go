@@ -252,41 +252,12 @@ func (h *runsHandlers) applyRunEval(c *gin.Context) {
 		c.JSON(http.StatusConflict, map[string]string{"error": "评测尚未完成"})
 		return
 	}
-	wanted := map[string]bool{}
-	for _, item := range req.RecommendationIDs {
-		wanted[strings.TrimSpace(item)] = true
-	}
+	wanted := recommendationIDSet(req.RecommendationIDs)
 	if len(wanted) == 0 {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "请选择要应用的建议"})
 		return
 	}
-	projectID := run.ExecutionContext.ProjectID
-	changed := false
-	for i, item := range rec.Result.Recommendations {
-		if !wanted[item.ID] {
-			continue
-		}
-		if item.Status == domain.RunEvalRecApplied {
-			continue
-		}
-		if !item.Applyable() {
-			rec.Result.Recommendations[i].ApplyError = "这条建议只能查看，不能一键应用"
-			changed = true
-			continue
-		}
-		applied, err := h.applyOneRecommendation(run, projectID, item)
-		if err != nil {
-			rec.Result.Recommendations[i].ApplyError = err.Error()
-			changed = true
-			continue
-		}
-		now := time.Now().UTC()
-		applied.Status = domain.RunEvalRecApplied
-		applied.AppliedAt = &now
-		applied.ApplyError = ""
-		rec.Result.Recommendations[i] = applied
-		changed = true
-	}
+	changed := h.applySelectedRecommendations(run, run.ExecutionContext.ProjectID, rec.Result.Recommendations, wanted)
 	if changed {
 		if err := h.repo.PutRunEval(rec); err != nil {
 			respond(c, err)
@@ -294,6 +265,47 @@ func (h *runsHandlers) applyRunEval(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, rec)
+}
+
+// recommendationIDSet 把请求里选中的建议 ID 去掉首尾空白后收成集合。
+func recommendationIDSet(ids []string) map[string]bool {
+	wanted := map[string]bool{}
+	for _, item := range ids {
+		wanted[strings.TrimSpace(item)] = true
+	}
+	return wanted
+}
+
+// applySelectedRecommendations 逐条应用 wanted 中选中的建议，原地更新 recs
+// 里每条的状态或错误，返回是否有任何一条发生变化。
+func (h *runsHandlers) applySelectedRecommendations(run domain.Run, projectID string, recs []domain.RunEvalRecommendation, wanted map[string]bool) bool {
+	changed := false
+	for i, item := range recs {
+		if !wanted[item.ID] {
+			continue
+		}
+		if item.Status == domain.RunEvalRecApplied {
+			continue
+		}
+		if !item.Applyable() {
+			recs[i].ApplyError = "这条建议只能查看，不能一键应用"
+			changed = true
+			continue
+		}
+		applied, err := h.applyOneRecommendation(run, projectID, item)
+		if err != nil {
+			recs[i].ApplyError = err.Error()
+			changed = true
+			continue
+		}
+		now := time.Now().UTC()
+		applied.Status = domain.RunEvalRecApplied
+		applied.AppliedAt = &now
+		applied.ApplyError = ""
+		recs[i] = applied
+		changed = true
+	}
+	return changed
 }
 
 func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, rec domain.RunEvalRecommendation) (domain.RunEvalRecommendation, error) {
