@@ -17,6 +17,8 @@ var ExecutorEffortLevels = map[string][]string{
 	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
 	"agy":         {"low", "medium", "high", "xhigh", "max"},
 	"pi":          {"minimal", "low", "medium", "high", "xhigh", "max"},
+	// ZCode's built-in rules give GLM-5.3 (and Flash) these levels.
+	"zcode": {"low", "high", "max"},
 }
 
 // AgentCLIExecutorKinds are the agent CLIs beyond CodeBuddy / Codex / Claude

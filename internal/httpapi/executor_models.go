@@ -145,6 +145,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 				{ID: "glm-5.3", Name: "GLM-5.3"},
 				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
 			},
+			Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"]),
 		},
 	}
 }

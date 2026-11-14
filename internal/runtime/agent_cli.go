@@ -81,7 +81,8 @@ type AgentCLIOptions struct {
 	ApprovalCommand string
 	Model           string
 	// Effort is the reasoning effort chosen for Model; Cursor resolves the
-	// pair to one model ID with the owner's catalog.
+	// pair to one model ID with the owner's catalog, while ZCode writes it
+	// into its model configuration instead of a flag.
 	Effort string
 	// SystemPromptFile is the system prompt path as the process sees it
 	// (relative paths resolve against the working directory).
@@ -471,7 +472,7 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 	case AgentCLIDeepSeek:
 		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	case AgentCLIZCode:
-		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
+		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, options.Effort, argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}

@@ -71,7 +71,7 @@ func nonEmpty(value any) bool {
 // applyZCodeCredential gives ZCode the key as a personal provider file that
 // exists only until ZCode has read it: ZCode accepts a literal key and
 // nothing else, and the key must not stay on disk.
-func applyZCodeCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
+func applyZCodeCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, effort string, argv []string) ([]string, map[string]string, error) {
 	// The private provider has no model of its own, so "CLI default" (sent as
 	// "default") must name a real one: BigModel's coding model on the default
 	// endpoint, while a custom endpoint has no model we could guess.
@@ -85,6 +85,13 @@ func applyZCodeCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, mo
 	if baseURL == "" {
 		baseURL, apiType = zcodeDefaultBaseURL, "anthropic-messages"
 	}
+	// ZCode has no effort flag: the reasoning level rides on the model
+	// selection and becomes the request's output_config.effort. Unset, ZCode
+	// uses the model's strongest level.
+	selection := map[string]any{"providerId": "agentflow", "modelId": model}
+	if effort != "" {
+		selection["options"] = map[string]any{"reasoningLevel": effort}
+	}
 	providerConfig, err := json.MarshalIndent(map[string]any{"schemaVersion": 1, "config": map[string]any{
 		"providerConfigRules": map[string]any{"providerRules": []any{map[string]any{"providerId": "agentflow", "config": map[string]any{
 			"group":            "standard-personal",
@@ -93,7 +100,7 @@ func applyZCodeCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, mo
 			"personalModelIds": []string{model},
 		}}}},
 		"modelConfigRules":      map[string]any{"providerModelRules": []any{}, "manualProviderModelRules": []any{}},
-		"defaultModelSelection": map[string]any{"providerId": "agentflow", "modelId": model},
+		"defaultModelSelection": selection,
 	}}, "", "  ")
 	if err != nil {
 		return nil, nil, err

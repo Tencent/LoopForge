@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -25,6 +26,12 @@ func TestZCodeCommand(t *testing.T) {
 	}
 	if slices.Contains(sop, "--resume") || slices.Contains(sop, "--model") || strings.Contains(zcodeSOPDisallowedTools, "Bash") {
 		t.Errorf("sop argv: %q", sop)
+	}
+
+	// The effort has no flag; it travels to the provider file.
+	withEffort := AgentCLICommand(AgentCLIZCode, AgentCLICommandOptions{Prompt: "do it", Model: "glm-5.3", Effort: "low"})
+	if withEffort.AgentCLI.Effort != "low" || slices.Contains(withEffort.Argv, "low") {
+		t.Errorf("effort spec: %+v", withEffort)
 	}
 
 	chat := AgentCLICommand(AgentCLIZCode, AgentCLICommandOptions{Prompt: "hi", SystemPrompt: "SYS", Chat: true, Resume: "sess_1"})
@@ -144,6 +151,22 @@ func TestApplyZCodeCredential(t *testing.T) {
 	events := doc["hooks"].(map[string]any)["events"].(map[string]any)
 	if starts := events["SessionStart"].([]any); len(starts) != 2 || events["Stop"] == nil || doc["other"] != float64(1) {
 		t.Fatalf("merged config: %v", doc)
+	}
+}
+
+func TestApplyZCodeCredentialEffort(t *testing.T) {
+	for _, tc := range []struct {
+		effort string
+		want   any
+	}{{"", nil}, {"high", map[string]any{"reasoningLevel": "high"}}} {
+		home := t.TempDir()
+		if _, _, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: "k"}, AgentCLIOptions{Model: "glm-5.3", Effort: tc.effort}, HostAgentCLIHome(home), home, []string{"zcode"}); err != nil {
+			t.Fatal(err)
+		}
+		selection := readJSONFile(t, zcodeKeyFiles(t, home)[0])["config"].(map[string]any)["defaultModelSelection"].(map[string]any)
+		if got := selection["options"]; !reflect.DeepEqual(got, tc.want) || selection["modelId"] != "glm-5.3" {
+			t.Errorf("effort %q: selection %v", tc.effort, selection)
+		}
 	}
 }
 
