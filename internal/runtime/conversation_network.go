@@ -31,10 +31,27 @@ func conversationDockerAccess(ctx context.Context) (string, string, error) {
 		}
 		return host, network, nil
 	}
+	addresses, err := daemonIPv4Addresses()
+	if err != nil {
+		return "", "", err
+	}
+	ip, selected := findDaemonConversationNetwork(ctx, addresses, network)
+	if ip == "" {
+		return "", "", fmt.Errorf("无法确定工作区可访问的容器网络，请设置 AGENTFLOW_CONVERSATION_RELAY_HOST 和 AGENTFLOW_CONVERSATION_DOCKER_NETWORK")
+	}
+	if host == "" {
+		host = ip
+	}
+	return host, selected, nil
+}
+
+// daemonIPv4Addresses lists the global unicast IPv4 addresses of this
+// process's up, non-loopback interfaces.
+func daemonIPv4Addresses() (map[string]bool, error) {
 	addresses := map[string]bool{}
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
@@ -48,6 +65,13 @@ func conversationDockerAccess(ctx context.Context) (string, string, error) {
 			}
 		}
 	}
+	return addresses, nil
+}
+
+// findDaemonConversationNetwork asks docker which container network carries
+// one of the daemon's addresses: this container (by hostname) first, then
+// every running container.
+func findDaemonConversationNetwork(ctx context.Context, addresses map[string]bool, requested string) (string, string) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	inspect := func(ids []string) (string, string) {
@@ -56,7 +80,7 @@ func conversationDockerAccess(ctx context.Context) (string, string, error) {
 		if err != nil {
 			return "", ""
 		}
-		return matchConversationNetwork(string(data), addresses, network)
+		return matchConversationNetwork(string(data), addresses, requested)
 	}
 	hostname, _ := os.Hostname()
 	ip, selected := inspect([]string{hostname})
@@ -66,13 +90,7 @@ func conversationDockerAccess(ctx context.Context) (string, string, error) {
 			ip, selected = inspect(strings.Fields(string(ids)))
 		}
 	}
-	if ip == "" {
-		return "", "", fmt.Errorf("无法确定工作区可访问的容器网络，请设置 AGENTFLOW_CONVERSATION_RELAY_HOST 和 AGENTFLOW_CONVERSATION_DOCKER_NETWORK")
-	}
-	if host == "" {
-		host = ip
-	}
-	return host, selected, nil
+	return ip, selected
 }
 
 func matchConversationNetwork(data string, addresses map[string]bool, requested string) (string, string) {
