@@ -8,29 +8,31 @@ import (
 	"time"
 )
 
-func (e *Engine) updateRun(id string, mutate func(*domain.Run)) {
-	_ = e.updateRunAt(id, false, mutate)
+func (e *Engine) updateRun(id string, mutate func(*domain.Run)) error {
+	_, err := e.updateRunAt(id, false, mutate)
+	return err
 }
 
 func (e *Engine) updateRunSettling(id string, mutate func(*domain.Run)) bool {
-	return e.updateRunAt(id, true, mutate)
+	updated, _ := e.updateRunAt(id, true, mutate)
+	return updated
 }
 
-func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*domain.Run)) bool {
+func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*domain.Run)) (bool, error) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(id)
 	if !ok {
 		_ = e.takePendingObservations(id)
-		return false
+		return false, nil
 	}
 	if isLiveStatus(r.Status) && r.OwnerInstanceID != "" && !e.ownsRun(r) && !allowExpiredLease {
 		_ = e.takePendingObservations(id)
-		return false
+		return false, nil
 	}
 	pending := e.takePendingObservations(id)
 	if mutate == nil && len(pending) == 0 {
-		return true
+		return true, nil
 	}
 	for _, item := range pending {
 		e.applyObservation(&r, item.nodeID, item.event)
@@ -40,12 +42,12 @@ func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*dom
 	}
 	if err := e.repo.PutRun(r); err != nil {
 		log.Printf("put run %s: %v", id, err)
-		return false
+		return false, err
 	}
 	if current, ok := e.repo.RunStreamView(id); ok {
 		e.publishRun(current)
 	}
-	return true
+	return true, nil
 }
 
 // Subscribe provides provider-neutral live run snapshots. Slow clients receive
