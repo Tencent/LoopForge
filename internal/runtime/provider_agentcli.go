@@ -223,6 +223,22 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--resume", resume)
 		}
 		argv = append(argv, extra...)
+	case AgentCLIQoder:
+		argv = []string{binary, "--output-format", "stream-json", "--permission-mode", "bypass_permissions"}
+		if o.Chat {
+			// Disable every built-in tool; the explicitly configured MCP remains available.
+			argv = append(argv, "--tools", "")
+		}
+		if model != "" {
+			argv = append(argv, "--model", model)
+		}
+		if effort != "" {
+			argv = append(argv, "--reasoning-effort", effort)
+		}
+		if resume != "" {
+			argv = append(argv, "--resume", resume)
+		}
+		argv = append(append(argv, extra...), "-p", prompt)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
 }

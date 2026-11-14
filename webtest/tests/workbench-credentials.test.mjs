@@ -2,6 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
+test('Qoder personal token is saved for the Qoder CLI', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
+  app.router.put('/api/users/1/credentials', { id: 1, username: 'tester', agentCliCredentials: { qoder: { apiKeyConfigured: true } } });
+  await app.evaluate(`renderPersonalSettings()`);
+  app.evaluate(`openCredentialWizard('agentCli.qoder')`);
+  const wizard = app.document.querySelector('#credentialWizard');
+  assert.match(wizard.textContent, /Qoder CLI 个人访问令牌（PAT）/);
+  const secret = wizard.querySelector('input[name="secret"]');
+  assert.equal(secret.placeholder, '请输入 Qoder CLI 个人访问令牌（PAT）');
+  secret.value = 'test-pat';
+  secret.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  wizard.querySelector('[data-wizard-next]').click();
+  await settle(3);
+  wizard.querySelector('[data-wizard-next]').click();
+  await settle(6);
+  assert.deepEqual(app.router.calls.find(call => call.path === '/api/users/1/credentials').body, { agentCliCredentials: { qoder: { apiKey: 'test-pat' } } });
+});
+
 test('credential wizard selects a provider, validates input, saves, and finishes', async (t) => {
   const app = await loadApp();
   t.after(app.close);

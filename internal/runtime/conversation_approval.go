@@ -112,6 +112,11 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 			return command, err
 		}
 		command.Argv = append(append(append([]string{}, command.Argv[:3]...), "--patch", patchFile), command.Argv[3:]...)
+	case AgentCLIQoder:
+		// Qoder conversations use MCP tools only, including in workspaces.
+		// Keep native tools disabled until the pinned CLI's approval hook is verified.
+		command.Argv = dropArgWithValue(command.Argv, "--tools")
+		command.Argv = insertBeforeFlag(command.Argv, "-p", "--tools", "")
 	default:
 		return command, fmt.Errorf("CLI %s 缺少原生审批适配", provider)
 	}

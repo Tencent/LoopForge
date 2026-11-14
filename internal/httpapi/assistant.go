@@ -239,6 +239,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		req.ExecutionTarget = target
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
+	if req.workspaceMode && req.Executor == runtime.AgentCLIQoder {
+		c.JSON(400, gin.H{"error": qoderWorkspaceUnavailable})
+		return
+	}
 	sourceRoot := h.resolvedSourceRoot()
 	fullPrompt := h.turnPrompt(req, sourceRoot, false)
 	turn := fullPrompt
@@ -282,6 +286,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	} else {
 		toolSession = sess
+		sess.Executor = req.Executor
 		sess.approvalReviewer = reviewer
 		sess.RunID = req.RunID
 		sess.ChatSessionID = req.SessionID
