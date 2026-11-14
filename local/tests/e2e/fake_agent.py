@@ -36,6 +36,7 @@ HOST_SKILL_DIRS = {
     "pi": ".pi/skills",
     "dsh": ".dsh/skills",
     "hermes": ".hermes/skills",
+    "zcode": ".zcode/skills",
 }
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 EXIT_COMPLETED, EXIT_CONTRACT, EXIT_WAITING, EXIT_BLOCKED, EXIT_INTERRUPTED = 0, 2, 3, 4, 75

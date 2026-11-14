@@ -1,7 +1,7 @@
 {
   "name": "loopforge-cli",
   "version": "0.2.3",
-  "description": "LoopForge Local development workflows for CodeBuddy, Codex, Cursor, Claude Code, Pi, DeepSeek Harness and Hermes Agent",
+  "description": "LoopForge Local development workflows for CodeBuddy, Codex, Cursor, Claude Code, Pi, DeepSeek Harness, Hermes Agent and ZCode",
   "keywords": [
     "ai-agents",
     "multi-agent",
@@ -11,7 +11,8 @@
     "cursor",
     "codebuddy",
     "deepseek-harness",
-    "hermes-agent"
+    "hermes-agent",
+    "zcode"
   ],
   "repository": {
     "type": "git",

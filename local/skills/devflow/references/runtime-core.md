@@ -19,6 +19,7 @@
 - CodeBuddy 提供 `task|team_create|send_message|team_delete|use_skill`：加载 [adapters/codebuddy/adapter.md](../adapters/codebuddy/adapter.md)，使用 Team member 拓扑；不得把普通 task subagent 当成阶段执行者。
 - Codex 提供 `spawn_agent|send_message|wait_agent`：加载 [adapters/codex/adapter.md](../adapters/codex/adapter.md)。
 - Hermes Agent 提供 `delegate_task`：加载 [adapters/hermes/adapter.md](../adapters/hermes/adapter.md)，使用 delegation spawn 拓扑；只把宿主返回的 `delegation_id`（或等价句柄）登记为 executor ID。
+- ZCode（当前宿主确认为 ZCode，且本次 Skill 的 Base directory 为 `<PROJECT_ROOT>/.zcode/skills/devflow`）：加载 [adapters/zcode/adapter.md](../adapters/zcode/adapter.md)，使用 spawn 拓扑；只把宿主返回的 `agentId` 登记为 executor ID。不得仅凭存在 `Agent` 工具选择本项（Claude Code 同样提供 `Agent`），缺少能力时按该适配器停止或经用户明确授权降级。
 - 没有受支持的生命周期 API：先报告限制并记录 `fallback_reason`，之后才能使用 `single-context`。
 
 一个 isolated 流程只能选择一个适配器。除非适配器明确提供桥接，否则不要混用项目原生流程与本状态机。适配器只实现 `spawn/send/wait/close`，不得复制或改写核心状态、模板和规则语义。

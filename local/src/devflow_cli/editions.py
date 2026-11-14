@@ -4,7 +4,7 @@ from typing import Dict, Tuple
 
 
 DEFAULT_EDITION = "classic"
-HOSTS: Tuple[str, ...] = ("codebuddy", "codex", "cursor", "claude", "pi", "dsh", "hermes")
+HOSTS: Tuple[str, ...] = ("codebuddy", "codex", "cursor", "claude", "pi", "dsh", "hermes", "zcode")
 HOST_LABELS = {
     "codebuddy": "CodeBuddy",
     "codex": "Codex",
@@ -13,13 +13,14 @@ HOST_LABELS = {
     "pi": "Pi",
     "dsh": "DeepSeek Harness",
     "hermes": "Hermes Agent",
+    "zcode": "ZCode",
 }
 
 EDITION_SPECS: Dict[str, dict] = {
     "portable": {
         "description": "Agent Skills based portable workflow",
         "source_roots": ("skills/",),
-        "hosts": ("codebuddy", "codex", "cursor", "claude", "pi", "dsh", "hermes"),
+        "hosts": ("codebuddy", "codex", "cursor", "claude", "pi", "dsh", "hermes", "zcode"),
         "entrypoints": {
             "codebuddy": "/devflow",
             "codex": "$devflow",
@@ -28,6 +29,7 @@ EDITION_SPECS: Dict[str, dict] = {
             "pi": "/skill:devflow",
             "dsh": "/devflow",
             "hermes": "/devflow",
+            "zcode": "/skill devflow",
         },
     },
     "classic": {

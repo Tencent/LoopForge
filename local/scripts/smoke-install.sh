@@ -74,6 +74,12 @@ mkdir -p "$PI_PROJECT"
 "$VENV_DIR/bin/loopforge" skills install pi --project-root "$PI_PROJECT"
 test -f "$PI_PROJECT/.pi/skills/manifest.json"
 test -f "$PI_PROJECT/.pi/skills/devflow/SKILL.md"
+
+ZCODE_PROJECT="$TMP_DIR/zcode-project"
+mkdir -p "$ZCODE_PROJECT"
+"$VENV_DIR/bin/loopforge" skills install zcode --project-root "$ZCODE_PROJECT"
+test -f "$ZCODE_PROJECT/.zcode/skills/manifest.json"
+test -f "$ZCODE_PROJECT/.zcode/skills/devflow/SKILL.md"
 "$VENV_DIR/bin/python" \
   "$CODEBUDDY_PROJECT/.codebuddy/skills/devflow/scripts/install_adapter.py" \
   --adapter claude --project-root "$DOWNSTREAM_PROJECT" --copy-skills --refresh-managed
