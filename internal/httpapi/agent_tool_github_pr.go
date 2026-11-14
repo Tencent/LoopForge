@@ -316,32 +316,44 @@ func githubIssueGet(ctx context.Context, token, path string, args map[string]any
 	}
 	comments := []map[string]string{}
 	if it.Comments > 0 {
-		lastPage := (it.Comments + githubListPageSize - 1) / githubListPageSize
-		resp, raw, err := githubRequest(ctx, client, http.MethodGet, fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=%d&page=%d", githubAPIBase, path, number, githubListPageSize, lastPage), token, nil)
-		var items []struct {
-			Body string `json:"body"`
-			User struct {
-				Login string `json:"login"`
-			} `json:"user"`
-			CreatedAt string `json:"created_at"`
-		}
-		switch {
-		case err != nil:
-			out["commentsWarning"] = fmt.Sprintf("评论读取失败：无法连接 GitHub：%v", err)
-		case resp.StatusCode != http.StatusOK || json.Unmarshal(raw, &items) != nil:
-			out["commentsWarning"] = fmt.Sprintf("评论读取失败（HTTP %d）：%s", resp.StatusCode, githubErrorDetail(raw))
-		default:
-			if len(items) > githubIssueMaxComments {
-				items = items[len(items)-githubIssueMaxComments:]
-			}
-			for _, c := range items {
-				comments = append(comments, map[string]string{"author": c.User.Login, "createdAt": c.CreatedAt, "body": truncateRunes(c.Body, githubIssueCommentRunes)})
-			}
+		var warning string
+		comments, warning = githubIssueLatestComments(ctx, client, token, path, number, it.Comments)
+		if warning != "" {
+			out["commentsWarning"] = warning
 		}
 	}
 	out["comments"] = comments
 	body, _ := json.Marshal(out)
 	return string(body), nil
+}
+
+// githubIssueLatestComments reads the last page of an issue's total comments
+// and keeps the newest githubIssueMaxComments, each body truncated. A failed
+// read yields an empty list plus a warning instead of failing the whole tool.
+func githubIssueLatestComments(ctx context.Context, client *http.Client, token, path string, number, total int) ([]map[string]string, string) {
+	comments := []map[string]string{}
+	lastPage := (total + githubListPageSize - 1) / githubListPageSize
+	resp, raw, err := githubRequest(ctx, client, http.MethodGet, fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=%d&page=%d", githubAPIBase, path, number, githubListPageSize, lastPage), token, nil)
+	if err != nil {
+		return comments, fmt.Sprintf("评论读取失败：无法连接 GitHub：%v", err)
+	}
+	var items []struct {
+		Body string `json:"body"`
+		User struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		CreatedAt string `json:"created_at"`
+	}
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(raw, &items) != nil {
+		return comments, fmt.Sprintf("评论读取失败（HTTP %d）：%s", resp.StatusCode, githubErrorDetail(raw))
+	}
+	if len(items) > githubIssueMaxComments {
+		items = items[len(items)-githubIssueMaxComments:]
+	}
+	for _, c := range items {
+		comments = append(comments, map[string]string{"author": c.User.Login, "createdAt": c.CreatedAt, "body": truncateRunes(c.Body, githubIssueCommentRunes)})
+	}
+	return comments, ""
 }
 
 func githubIssueClose(ctx context.Context, token, path string, args map[string]any) (string, error) {
