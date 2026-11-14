@@ -23,12 +23,8 @@ func (h *mcpHandlers) editableMCP(c *gin.Context, id string) (domain.MCPServerDe
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "市场 MCP 不能上传自定义程序"})
 		return server, false
 	}
-	if server.Scope == "personal" {
-		current, authenticated := h.requestUser(c.Request, true)
-		if !authenticated || current.ID != server.OwnerUserID {
-			c.JSON(http.StatusForbidden, map[string]string{"error": "不能修改其他用户的个人 MCP"})
-			return server, false
-		}
+	if !h.requirePersonalMCPOwner(c, server, "不能修改其他用户的个人 MCP") {
+		return server, false
 	}
 	return server, true
 }
