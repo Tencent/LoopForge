@@ -249,11 +249,8 @@ func InspectTarZst(src io.Reader, indexFile string, limits Limits) (Result, erro
 	}
 	defer dec.Close()
 	tr := tar.NewReader(dec)
-	var (
-		files    int
-		expanded int64
-		found    bool
-	)
+	budget := tarBudget{limits: limits}
+	found := false
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -272,12 +269,7 @@ func InspectTarZst(src io.Reader, indexFile string, limits Limits) (Result, erro
 		if hdr.Linkname != "" {
 			return Result{}, fmt.Errorf("%w: link %s", ErrUnsupportedEntry, name)
 		}
-		files++
-		if err := checkTarFileCount(files, limits); err != nil {
-			return Result{}, err
-		}
-		expanded += hdr.Size
-		if err := checkExpandedSize(expanded, limits); err != nil {
+		if err := budget.admit(hdr.Size); err != nil {
 			return Result{}, err
 		}
 		copied, err := io.Copy(io.Discard, io.LimitReader(tr, hdr.Size+1))
@@ -302,8 +294,8 @@ func InspectTarZst(src io.Reader, indexFile string, limits Limits) (Result, erro
 		StorageKey:     ContentKey(sum),
 		SHA256:         sum,
 		CompressedSize: counter.n,
-		ExpandedSize:   expanded,
-		FileCount:      files,
+		ExpandedSize:   budget.expanded,
+		FileCount:      budget.files,
 		EntryFile:      indexFile,
 	}, nil
 }
@@ -326,10 +318,7 @@ func ExtractTarZst(src io.Reader, dest string, limits Limits) error {
 	}
 	defer dec.Close()
 	tr := tar.NewReader(dec)
-	var (
-		files    int
-		expanded int64
-	)
+	budget := tarBudget{limits: limits}
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -345,12 +334,7 @@ func ExtractTarZst(src io.Reader, dest string, limits Limits) error {
 		if skip {
 			continue
 		}
-		files++
-		if err := checkTarFileCount(files, limits); err != nil {
-			return err
-		}
-		expanded += hdr.Size
-		if err := checkExpandedSize(expanded, limits); err != nil {
+		if err := budget.admit(hdr.Size); err != nil {
 			return err
 		}
 		if err := extractTarMember(tr, tmp, name, hdr.Size); err != nil {
@@ -406,6 +390,26 @@ func tarRegularMember(hdr *tar.Header) (name string, skip bool, err error) {
 		return "", false, err
 	}
 	return name, false, nil
+}
+
+// tarBudget accumulates the regular-member count and expanded byte total of a
+// preview tar while it is being read, enforcing limits as members arrive.
+type tarBudget struct {
+	limits   Limits
+	files    int
+	expanded int64
+}
+
+// admit accounts for one regular member of size bytes. The file count is
+// checked before the expanded size, matching the order callers have always
+// reported limit errors in.
+func (b *tarBudget) admit(size int64) error {
+	b.files++
+	if err := checkTarFileCount(b.files, b.limits); err != nil {
+		return err
+	}
+	b.expanded += size
+	return checkExpandedSize(b.expanded, b.limits)
 }
 
 // checkTarFileCount enforces limits.MaxFiles (0 means unlimited) after files
