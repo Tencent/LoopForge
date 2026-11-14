@@ -54,7 +54,11 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	}
 	index := *body.MessageIndex
 	edited := source.Messages[index]
-	edited.Attachments = append([]domain.AssistantAttachment(nil), edited.Attachments...)
+	edited.Attachments, err = claimEditedAttachments(edited.Attachments, source.Messages[index].AuthorID, owner, user.ID, source.ProjectID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "无法复制原消息附件"})
+		return
+	}
 	edited.Content = strings.TrimSpace(body.Content)
 	edited.AuthorID = user.ID
 	edited.AuthorName = user.LoginName
@@ -63,20 +67,6 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	edited.SpeakerAgentID = ""
 	edited.Model = ""
 	edited.Usage = nil
-	for i, a := range edited.Attachments {
-		attachmentOwner := source.Messages[index].AuthorID
-		if attachmentOwner == 0 {
-			attachmentOwner = owner
-		}
-		if attachmentOwner != user.ID {
-			copied, err := copyForkAttachment(attachmentOwner, user.ID, a.ID, source.ProjectID)
-			if err != nil {
-				c.JSON(400, gin.H{"error": "无法复制原消息附件"})
-				return
-			}
-			edited.Attachments[i] = copied
-		}
-	}
 	// Inherited drafts are history only, never approval buttons in the new branch.
 	prefix := append([]domain.AssistantMessage(nil), source.Messages[:index]...)
 	for i, m := range prefix {
@@ -144,6 +134,28 @@ func copyForkAttachment(from, to int64, id, project string) (domain.AssistantAtt
 	return record.AssistantAttachment, nil
 }
 
+// claimEditedAttachments returns a private copy of an edited user turn's
+// attachments owned by userID. The original author (falling back to the
+// session owner for legacy turns without one) keeps its files; attachments
+// from anyone else are copied into userID's attachment store.
+func claimEditedAttachments(attachments []domain.AssistantAttachment, author, owner, userID int64, project string) ([]domain.AssistantAttachment, error) {
+	out := append([]domain.AssistantAttachment(nil), attachments...)
+	if author == 0 {
+		author = owner
+	}
+	if author == userID {
+		return out, nil
+	}
+	for i, a := range out {
+		copied, err := copyForkAttachment(author, userID, a.ID, project)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = copied
+	}
+	return out, nil
+}
+
 // editSession replaces the main transcript from the edited user turn onward.
 // Executed effects and their idempotency receipts remain in their own stores.
 func (h *assistantHandlers) editSession(c *gin.Context) {
@@ -184,20 +196,10 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 	edited.AuthorID = user.ID
 	edited.AuthorName = user.LoginName
 	edited.CreatedAt = time.Now().UTC()
-	edited.Attachments = append([]domain.AssistantAttachment(nil), edited.Attachments...)
-	for i, a := range edited.Attachments {
-		attachmentOwner := source.Messages[*body.MessageIndex].AuthorID
-		if attachmentOwner == 0 {
-			attachmentOwner = owner
-		}
-		if attachmentOwner != user.ID {
-			copy, err := copyForkAttachment(attachmentOwner, user.ID, a.ID, source.ProjectID)
-			if err != nil {
-				c.JSON(400, gin.H{"error": "无法复制消息附件"})
-				return
-			}
-			edited.Attachments[i] = copy
-		}
+	edited.Attachments, err = claimEditedAttachments(edited.Attachments, source.Messages[*body.MessageIndex].AuthorID, owner, user.ID, source.ProjectID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "无法复制消息附件"})
+		return
 	}
 	var target []domain.AssistantSession
 	resultOwner, resultID := owner, source.ID
