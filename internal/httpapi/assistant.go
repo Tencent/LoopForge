@@ -203,7 +203,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	sink, _ := c.Request.Context().Value(assistantGenerationSinkKey{}).(func(string, any))
 	if sink == nil {
-		if job, ok := h.repo.AssistantGeneration(ownerID, req.SessionID); ok && job.Status == "running" {
+		if job, ok := h.readGeneration(ownerID, req.SessionID); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "此会话正在后台生成"})
 			return
 		}

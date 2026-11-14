@@ -302,7 +302,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 						cancel()
 					}
 				}
-				old, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID)
+				old, ok := h.repo.PeekAssistantGeneration(g.UserID, g.SessionID)
 				if ok && old.ID == g.ID && old.Steer != nil {
 					rec.mu.Lock()
 					rec.g.Steer = old.Steer
@@ -405,7 +405,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	steer := g.Steer
 	rec.mu.Unlock()
 	if steer == nil {
-		if latest, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID); ok && latest.ID == g.ID && latest.Steer != nil {
+		if latest, ok := h.repo.PeekAssistantGeneration(g.UserID, g.SessionID); ok && latest.ID == g.ID && latest.Steer != nil {
 			rec.mu.Lock()
 			g.Steer = latest.Steer
 			steer = latest.Steer
@@ -464,7 +464,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	if content == "" {
 		content = "请阅读本轮附件并回答。"
 	}
-	g, ok := h.repo.AssistantGeneration(ownerID, c.Param("id"))
+	g, ok := h.readGeneration(ownerID, c.Param("id"))
 	if !ok || g.Status != "running" {
 		c.JSON(409, gin.H{"error": "当前没有进行中的回复"})
 		return

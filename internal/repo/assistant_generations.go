@@ -35,9 +35,31 @@ func decodeGeneration(row assistantGenerationRow) domain.AssistantGeneration {
 	g.UpdatedAt = row.UpdatedAt
 	return g
 }
-func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, bool) {
+
+// PeekAssistantGeneration reads the latest turn without declaring it dead.
+// The owner of a live turn must use this. AssistantGeneration also reaps a
+// turn whose heartbeat is older than 45 seconds, which is only safe once the
+// owning process is gone: a slow commit stores an old updated_at and the next
+// read would otherwise cancel a CLI that is still working.
+func (r *AssistantRepo) PeekAssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, bool) {
+	row, ok := r.loadAssistantGeneration(userID, sessionID)
+	if !ok {
+		return domain.AssistantGeneration{}, false
+	}
+	return decodeGeneration(row), true
+}
+
+func (r *AssistantRepo) loadAssistantGeneration(userID int64, sessionID string) (assistantGenerationRow, bool) {
 	var row assistantGenerationRow
 	if err := r.DB.Where("session_id = ? AND user_id = ?", sessionID, userID).Take(&row).Error; err != nil {
+		return assistantGenerationRow{}, false
+	}
+	return row, true
+}
+
+func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, bool) {
+	row, ok := r.loadAssistantGeneration(userID, sessionID)
+	if !ok {
 		return domain.AssistantGeneration{}, false
 	}
 	// A server that died cannot leave a conversation stuck forever. Never replay
@@ -48,17 +70,29 @@ func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (dom
 		g.Error = "服务端生成已中断，请检查已执行操作后重试"
 		g.Failure = &domain.AssistantFailure{Code: "EXECUTION_INTERRUPTED", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作后再重试；可下载诊断信息交给管理员排查。"}
 		_ = r.DB.Transaction(func(tx *gorm.DB) error {
-			res := tx.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g)})
+			res := tx.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": r.generationClock()})
 			if res.Error != nil || res.RowsAffected != 1 {
 				return res.Error
 			}
 			return checkpointAssistantDiagnostics(tx, g, nil)
 		})
-		if err := r.DB.Where("session_id = ? AND user_id = ?", sessionID, userID).Take(&row).Error; err != nil {
+		reloaded, ok := r.loadAssistantGeneration(userID, sessionID)
+		if !ok {
 			return domain.AssistantGeneration{}, false
 		}
+		row = reloaded
 	}
 	return decodeGeneration(row), true
+}
+
+// generationClock is the commit-time clock on MySQL. A Go timestamp captured
+// before a stalled commit is already older than the 45 second reap when it
+// becomes visible, so the next read interrupts a turn that just checked in.
+func (r *AssistantRepo) generationClock() any {
+	if r.isMySQL() {
+		return clause.Expr{SQL: "UTC_TIMESTAMP(3)"}
+	}
+	return time.Now().UTC()
 }
 
 // BeginAssistantGeneration may lock a session that does not exist yet; two
@@ -155,7 +189,7 @@ func (r *AssistantRepo) checkpointAssistantGeneration(g domain.AssistantGenerati
 			current.NativeApprovals = nil
 		}
 		now := time.Now().UTC()
-		changes := map[string]any{"status": g.Status, "payload": mustJSON(current), "updated_at": now}
+		changes := map[string]any{"status": g.Status, "payload": mustJSON(current), "updated_at": r.generationClock()}
 		if g.Status != "running" {
 			changes["finished_at"] = now
 		}
@@ -163,8 +197,17 @@ func (r *AssistantRepo) checkpointAssistantGeneration(g domain.AssistantGenerati
 		if res.Error != nil {
 			return res.Error
 		}
+		// MySQL counts changed rows. A heartbeat whose payload and clock match
+		// the stored row reports 0 even though the turn is still running.
+		// Treating that as "the turn disappeared" cancels a live CLI.
 		if res.RowsAffected != 1 {
-			return fmt.Errorf("生成状态已变化")
+			if g.Status != "running" {
+				return fmt.Errorf("生成状态已变化")
+			}
+			var again assistantGenerationRow
+			if err := tx.Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Take(&again).Error; err != nil {
+				return fmt.Errorf("生成状态已变化")
+			}
 		}
 		if !withDiagnostics {
 			return nil

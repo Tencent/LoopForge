@@ -8,6 +8,48 @@ import (
 	"time"
 )
 
+func TestReleaseAbandonedWorkspaceUseFreesForegroundLeaseOnly(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	for _, id := range []string{"abandoned-use", "background-save"} {
+		if err = s.PutRun(domain.Run{ID: id, Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	use, err := s.BeginWorkspaceUse("abandoned-use", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ReleaseAbandonedWorkspaceUse("abandoned-use", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.BeginWorkspaceUse("abandoned-use", now.Add(2*time.Second)); err != nil {
+		t.Fatal("abandoned foreground lease still blocked the next turn", err)
+	}
+	token, err := s.BeginWorkspaceUse("background-save", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	save, err := s.HandoffWorkspaceUseToSave("background-save", token, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ReleaseAbandonedWorkspaceUse("background-save", now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	kept, ok := s.WorkspaceCheckpoint("background-save")
+	if !ok || kept.LeaseToken != save {
+		t.Fatalf("background save lease dropped: %+v", kept)
+	}
+	if use == "" || save == "" {
+		t.Fatal("missing lease token")
+	}
+}
+
 func TestWorkspaceCheckpointLeaseCASAndDurableIdleDeadline(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {

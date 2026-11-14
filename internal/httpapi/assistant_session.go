@@ -88,6 +88,11 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		out[i].Unread = false
 		if state, ok := statuses[out[i].ID]; ok {
 			out[i].GenerationStatus = state.Status
+			if state.Status == "interrupted" {
+				if _, live := assistantLiveGenerations.Load(state.ID); live {
+					out[i].GenerationStatus = "running"
+				}
+			}
 			out[i].GenerationID = state.ID
 			// A reply that completed while the reader was elsewhere stays
 			// unread until they open the conversation (Codex's blue dot).

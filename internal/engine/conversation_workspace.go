@@ -90,7 +90,7 @@ func (e *Engine) conversationGenerationRunning(run domain.Run) bool {
 	if !ok {
 		return false
 	}
-	job, ok := e.repo.AssistantGeneration(session.UserID, session.ID)
+	job, ok := e.repo.PeekAssistantGeneration(session.UserID, session.ID)
 	return ok && job.Status == "running"
 }
 func (e *Engine) EndConversationWorkspaceUse(ctx context.Context, id, token string) error {

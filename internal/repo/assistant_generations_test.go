@@ -59,3 +59,32 @@ func TestAssistantGenerationClaimCheckpointAndPrivacy(t *testing.T) {
 		t.Fatal("orphan generation did not become interrupted")
 	}
 }
+
+func TestPeekAssistantGenerationLeavesStaleTurnRunning(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	g := domain.AssistantGeneration{ID: "live", SessionID: "live-chat", UserID: 11, Status: "running"}
+	if err = s.BeginAssistantGeneration(g); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB.Model(&assistantGenerationRow{}).Where("session_id = ?", "live-chat").Update("updated_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	peek, ok := s.PeekAssistantGeneration(11, "live-chat")
+	if !ok || peek.Status != "running" {
+		t.Fatalf("peek reaped a live turn: %+v", peek)
+	}
+	if err = s.HeartbeatAssistantGeneration(g); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.HeartbeatAssistantGeneration(g); err != nil {
+		t.Fatal(err)
+	}
+	peek, _ = s.PeekAssistantGeneration(11, "live-chat")
+	if peek.Status != "running" || time.Since(peek.UpdatedAt) > 5*time.Second {
+		t.Fatalf("heartbeat did not refresh the live turn: %+v", peek)
+	}
+}

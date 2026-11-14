@@ -69,10 +69,45 @@ func (h *assistantHandlers) keepInterruptedReply(g domain.AssistantGeneration) {
 	}
 }
 
+// readGeneration reaps a stale turn only when this process is not still
+// executing it. A poll or a follow-up message used to mark a live turn
+// interrupted after one slow heartbeat, and the next message then failed
+// immediately because the CLI and workspace lease were still held.
+func (h *assistantHandlers) readGeneration(ownerID int64, sessionID string) (domain.AssistantGeneration, bool) {
+	peek, ok := h.repo.PeekAssistantGeneration(ownerID, sessionID)
+	if !ok {
+		return domain.AssistantGeneration{}, false
+	}
+	if _, local := assistantLiveGenerations.Load(peek.ID); local {
+		return peek, true
+	}
+	g, ok := h.repo.AssistantGeneration(ownerID, sessionID)
+	if ok && peek.Status == "running" && g.Status == "interrupted" {
+		h.releaseAbandonedWorkspaceLease(ownerID, sessionID)
+	}
+	return g, ok
+}
+
+func (h *assistantHandlers) releaseAbandonedWorkspaceLease(ownerID int64, sessionID string) {
+	session, ok := h.repo.AssistantSession(ownerID, sessionID)
+	if !ok {
+		return
+	}
+	now := time.Now().UTC()
+	for _, runID := range []string{session.RunID, session.WorkspaceRunID} {
+		if strings.TrimSpace(runID) == "" {
+			continue
+		}
+		if err := h.repo.ReleaseAbandonedWorkspaceUse(runID, now); err != nil {
+			log.Printf("assistant release workspace lease session=%s run=%s: %v", sessionID, runID, err)
+		}
+	}
+}
+
 // currentGeneration reads a session's generation. A turn whose server died is
 // only discovered here (as "interrupted"), so its partial reply is kept now.
 func (h *assistantHandlers) currentGeneration(ownerID int64, sessionID string) (domain.AssistantGeneration, bool) {
-	g, ok := h.repo.AssistantGeneration(ownerID, sessionID)
+	g, ok := h.readGeneration(ownerID, sessionID)
 	if ok {
 		if _, local := assistantLiveGenerations.Load(g.ID); !local {
 			h.settleLegacyWorkspaceNativeApprovals(g)

@@ -30,7 +30,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				current, ok := h.repo.AssistantGeneration(ownerID, req.SessionID)
+				current, ok := h.repo.PeekAssistantGeneration(ownerID, req.SessionID)
 				if !ok || current.ID != g.ID {
 					diagnostics.terminate("GENERATION_SUPERSEDED", "当前生成记录已被替换或移除", actor)
 					cancel()

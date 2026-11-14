@@ -355,6 +355,39 @@ func holdsWorkspaceLease(tx *gorm.DB, runID, token string) error {
 	return nil
 }
 
+// ReleaseAbandonedWorkspaceUse drops a foreground use lease whose owner is
+// gone. A dead API process cannot finish the lease it held in memory, and the
+// next turn would fail for the rest of the 15 minute term. A background save
+// keeps its token: the next foreground use already preempts it.
+func (r *RunsRepo) ReleaseAbandonedWorkspaceUse(runID string, now time.Time) error {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		var item WorkspaceCheckpoint
+		if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&item).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if item.LeaseToken == "" || item.LeaseUntil == nil || !item.LeaseUntil.After(now) || strings.HasPrefix(item.LeaseToken, workspaceBackgroundSavePrefix) {
+			return nil
+		}
+		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, item.LeaseToken).Updates(map[string]any{
+			"lease_token": "", "lease_until": nil, "lease_handoff_id": "",
+		})
+		return result.Error
+	})
+}
+
 // ReleaseWorkspace marks a workspace no conversation is bound to any more, so
 // the idle sweep saves and reclaims it on its next pass.
 func (r *RunsRepo) ReleaseWorkspace(runID string, now time.Time) error {
