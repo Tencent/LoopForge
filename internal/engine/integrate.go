@@ -351,10 +351,47 @@ func patchNewFiles(diff string) []string {
 // MR. This check never mutates the workspace; it only surfaces the loss as
 // an explicit warning the operator can act on.
 func (e *Engine) verifyDeliveryCompleteness(r domain.Run, workspace string) []string {
-	// dir -> path -> producing node. Artifacts from a persisted legacy
-	// checkout (empty RepositoryDir) still map to the workspace root.
+	expected := expectedDeliveryFiles(r.Artifacts)
+	if len(expected) == 0 {
+		return nil
+	}
+	knownDirs := map[string]string{}
+	for _, rc := range r.RepositoryContexts() {
+		knownDirs[rc.WorkspaceDir] = repositoryWorkspacePath(workspace, rc)
+	}
+	var missing []string
+	for dir, paths := range expected {
+		repoWorkspace, ok := knownDirs[dir]
+		if !ok {
+			repoWorkspace = repositoryWorkspacePath(workspace, domain.RepositoryContext{WorkspaceDir: dir})
+		}
+		present, err := committedFiles(repoWorkspace)
+		if err != nil {
+			continue
+		}
+		for path, node := range paths {
+			if present[path] {
+				continue
+			}
+			label := path
+			if dir != "" {
+				label = dir + "/" + path
+			}
+			missing = append(missing, fmt.Sprintf("%s (produced by %s)", label, node))
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+// expectedDeliveryFiles maps repository dir -> new file path -> producing
+// node for every repository-patch artifact. Artifacts from a persisted legacy
+// checkout (empty RepositoryDir) still map to the workspace root. When several
+// nodes add the same file the first one wins, except the mr node which always
+// takes over.
+func expectedDeliveryFiles(artifacts []domain.Artifact) map[string]map[string]string {
 	expected := map[string]map[string]string{}
-	for _, a := range r.Artifacts {
+	for _, a := range artifacts {
 		body := repositoryPatchApplyBody(a)
 		if body == "" {
 			body = a.Content
@@ -372,40 +409,20 @@ func (e *Engine) verifyDeliveryCompleteness(r domain.Run, workspace string) []st
 			}
 		}
 	}
-	if len(expected) == 0 {
-		return nil
+	return expected
+}
+
+// committedFiles lists every file tracked at HEAD of the repository workspace.
+func committedFiles(workspace string) (map[string]bool, error) {
+	out, err := gitC(context.Background(), workspace, "ls-tree", "-r", "--name-only", "HEAD")
+	if err != nil {
+		return nil, err
 	}
-	knownDirs := map[string]string{}
-	for _, rc := range r.RepositoryContexts() {
-		knownDirs[rc.WorkspaceDir] = repositoryWorkspacePath(workspace, rc)
-	}
-	var missing []string
-	for dir, paths := range expected {
-		repoWorkspace, ok := knownDirs[dir]
-		if !ok {
-			repoWorkspace = repositoryWorkspacePath(workspace, domain.RepositoryContext{WorkspaceDir: dir})
-		}
-		out, err := gitC(context.Background(), repoWorkspace, "ls-tree", "-r", "--name-only", "HEAD")
-		if err != nil {
-			continue
-		}
-		present := map[string]bool{}
-		for _, line := range strings.Split(out, "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				present[line] = true
-			}
-		}
-		for path, node := range paths {
-			if present[path] {
-				continue
-			}
-			label := path
-			if dir != "" {
-				label = dir + "/" + path
-			}
-			missing = append(missing, fmt.Sprintf("%s (produced by %s)", label, node))
+	present := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			present[line] = true
 		}
 	}
-	sort.Strings(missing)
-	return missing
+	return present, nil
 }
