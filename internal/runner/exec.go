@@ -81,6 +81,14 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 	flushTicker := time.NewTicker(eventFlushInterval)
 	defer flushTicker.Stop()
 	canceled := false
+	requestPlatformCancel := func(desiredState string) {
+		if canceled || !runnerTaskCancelDesired(desiredState) {
+			return
+		}
+		canceled = true
+		batcher.addLine("system", "cancel requested by platform")
+		cancel()
+	}
 	ctxDone := ctx.Done()
 	for {
 		select {
@@ -114,28 +122,26 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 			renewCtx, renewCancel := context.WithTimeout(ctx, 20*time.Second)
 			resp, renewErr := d.client.RenewLease(renewCtx, task.ID)
 			renewCancel()
-			if renewErr == nil && resp != nil && strings.EqualFold(resp.DesiredState, domain.RunnerTaskDesiredCancel) && !canceled {
-				canceled = true
-				batcher.addLine("system", "cancel requested by platform")
-				cancel()
+			if renewErr == nil && resp != nil {
+				requestPlatformCancel(resp.DesiredState)
 			}
 		case <-controlTicker.C:
 			controlCtx, controlCancel := context.WithTimeout(ctx, 5*time.Second)
 			resp, controlErr := d.client.TaskControl(controlCtx, task.ID)
 			controlCancel()
-			if controlErr == nil && resp != nil && strings.EqualFold(resp.DesiredState, domain.RunnerTaskDesiredCancel) && !canceled {
-				canceled = true
-				batcher.addLine("system", "cancel requested by platform")
-				cancel()
+			if controlErr == nil && resp != nil {
+				requestPlatformCancel(resp.DesiredState)
 			}
 		case desiredState := <-controlCh:
-			if strings.EqualFold(desiredState, domain.RunnerTaskDesiredCancel) && !canceled {
-				canceled = true
-				batcher.addLine("system", "cancel requested by platform")
-				cancel()
-			}
+			requestPlatformCancel(desiredState)
 		}
 	}
+}
+
+// runnerTaskCancelDesired reports whether a platform desired state asks the
+// runner to cancel the task.
+func runnerTaskCancelDesired(desiredState string) bool {
+	return strings.EqualFold(desiredState, domain.RunnerTaskDesiredCancel)
 }
 
 func tailString(value string, limit int) string {
@@ -343,6 +349,14 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 	defer flushTicker.Stop()
 
 	canceled := false
+	requestPlatformCancel := func(desiredState string) {
+		if canceled || !runnerTaskCancelDesired(desiredState) {
+			return
+		}
+		canceled = true
+		batcher.addLine("system", "cancel requested by platform")
+		terminateProcessGroup(cmd, processDone)
+	}
 	ctxDone := ctx.Done()
 	for {
 		select {
@@ -394,10 +408,8 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 				}
 				continue
 			}
-			if resp != nil && strings.EqualFold(resp.DesiredState, domain.RunnerTaskDesiredCancel) && !canceled {
-				canceled = true
-				batcher.addLine("system", "cancel requested by platform")
-				terminateProcessGroup(cmd, processDone)
+			if resp != nil {
+				requestPlatformCancel(resp.DesiredState)
 			}
 		case <-controlTicker.C:
 			controlCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -406,17 +418,11 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 			if controlErr == ErrUnauthorized {
 				return execResult{status: domain.RunnerTaskFailed, errMsg: "runner session rejected"}
 			}
-			if controlErr == nil && resp != nil && strings.EqualFold(resp.DesiredState, domain.RunnerTaskDesiredCancel) && !canceled {
-				canceled = true
-				batcher.addLine("system", "cancel requested by platform")
-				terminateProcessGroup(cmd, processDone)
+			if controlErr == nil && resp != nil {
+				requestPlatformCancel(resp.DesiredState)
 			}
 		case desiredState := <-controlCh:
-			if strings.EqualFold(desiredState, domain.RunnerTaskDesiredCancel) && !canceled {
-				canceled = true
-				batcher.addLine("system", "cancel requested by platform")
-				terminateProcessGroup(cmd, processDone)
-			}
+			requestPlatformCancel(desiredState)
 		}
 	}
 }
