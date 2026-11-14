@@ -17,11 +17,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// errMaskOutsideWorkspace marks a mount target that names no path inside the
-// mounted workspace, so mask cleanup can treat it as not owned instead of
-// failing the whole workspace teardown.
-var errMaskOutsideWorkspace = errors.New("instruction mask outside workspace")
-
 type processIdentity struct {
 	uid, gid int
 	groups   []int
@@ -217,9 +212,9 @@ func mountTargets(mountinfo io.Reader) (map[string]bool, error) {
 func ownedMask(root *os.Root, target string, aliases []string, sources []unix.Stat_t) (bool, error) {
 	file, err := openMaskTarget(root, target, aliases)
 	if err != nil {
-		// A target that no longer exists, or that never named a path inside
-		// the workspace, is not ours to detach.
-		if os.IsNotExist(err) || errors.Is(err, errMaskOutsideWorkspace) {
+		// A target that no longer exists is not ours to detach; any other
+		// failure, including a target outside the workspace, fails closed.
+		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("inspect script instruction mask %s: %w", target, err)
@@ -358,7 +353,7 @@ func validateAliases(aliases []string) error {
 func openMaskTarget(root *os.Root, target string, aliases []string) (*os.File, error) {
 	base := maskBase(target, aliases)
 	if base == "" {
-		return nil, fmt.Errorf("instruction mask outside workspace: %s: %w", target, errMaskOutsideWorkspace)
+		return nil, fmt.Errorf("instruction mask outside workspace: %s", target)
 	}
 	if base == "/workspace" {
 		return root.Open(strings.TrimPrefix(target, base+"/"))

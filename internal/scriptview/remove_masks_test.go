@@ -56,7 +56,7 @@ func TestOwnedMaskIgnoresMissingAndForeignTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	if owned, err := ownedMask(root, "missing/AGENTS.md", nil, nil); err != nil || owned {
+	if owned, err := ownedMask(root, "/workspace/missing/AGENTS.md", nil, nil); err != nil || owned {
 		t.Fatalf("missing target = %v, %v", owned, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("x"), 0o644); err != nil {
@@ -67,10 +67,10 @@ func TestOwnedMaskIgnoresMissingAndForeignTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Same inode but on a writable filesystem: not a platform mask.
-	if owned, err := ownedMask(root, "AGENTS.md", nil, []unix.Stat_t{stat}); err != nil || owned {
+	if owned, err := ownedMask(root, "/workspace/AGENTS.md", nil, []unix.Stat_t{stat}); err != nil || owned {
 		t.Fatalf("writable target = %v, %v", owned, err)
 	}
-	if owned, err := ownedMask(root, "AGENTS.md", nil, nil); err != nil || owned {
+	if owned, err := ownedMask(root, "/workspace/AGENTS.md", nil, nil); err != nil || owned {
 		t.Fatalf("foreign target = %v, %v", owned, err)
 	}
 }
@@ -123,11 +123,13 @@ func TestOwnedMaskResolvesAliasRoots(t *testing.T) {
 	}
 	defer root.Close()
 	target := alias + "/AGENTS.md"
-	// Without the alias the target is outside the workspace and not owned; a
-	// missing file under an alias is likewise not owned, not an error.
-	if owned, err := ownedMask(root, target, nil, nil); err != nil || owned {
+	// Without the alias the target is outside the workspace: cleanup must
+	// fail closed rather than silently skip it, as removeMasks always did.
+	owned, err := ownedMask(root, target, nil, nil)
+	if err == nil || owned || !strings.Contains(err.Error(), "inspect script instruction mask "+target+": instruction mask outside workspace: "+target) {
 		t.Fatalf("alias target without alias = %v, %v", owned, err)
 	}
+	// A missing file under an alias is not owned, not an error.
 	if owned, err := ownedMask(root, alias+"/missing.md", []string{alias}, nil); err != nil || owned {
 		t.Fatalf("alias missing target = %v, %v", owned, err)
 	}
