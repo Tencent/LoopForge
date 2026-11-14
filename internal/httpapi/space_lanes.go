@@ -612,13 +612,7 @@ func (h *spacesHandlers) usage(c *gin.Context) {
 			if n.StartedAt.IsZero() {
 				continue
 			}
-			end := n.FinishedAt
-			if end.IsZero() {
-				end = time.Now().UTC()
-			}
-			if d := end.Sub(n.StartedAt); d > 0 {
-				lu.Seconds += int64(d.Seconds())
-			}
+			lu.Seconds += spaceNodeSeconds(n, time.Now().UTC())
 			n.Output, n.Error = "", ""
 			lu.Nodes = append(lu.Nodes, n)
 			day := n.StartedAt.Local().Format("2006-01-02")
@@ -633,13 +627,34 @@ func (h *spacesHandlers) usage(c *gin.Context) {
 		out.Seconds += lu.Seconds
 		out.Lanes = append(out.Lanes, lu)
 	}
+	out.Days = sortedSpaceUsageDays(days)
+	c.JSON(http.StatusOK, out)
+}
+
+// spaceNodeSeconds is how long a started node has run: up to now while it is
+// still running, and zero when the recorded interval is not positive.
+func spaceNodeSeconds(n spaceLaneNode, now time.Time) int64 {
+	end := n.FinishedAt
+	if end.IsZero() {
+		end = now
+	}
+	if d := end.Sub(n.StartedAt); d > 0 {
+		return int64(d.Seconds())
+	}
+	return 0
+}
+
+// sortedSpaceUsageDays lists the per-day token buckets in date order. It never
+// returns nil so the response always carries a JSON array.
+func sortedSpaceUsageDays(days map[string]map[string]int64) []spaceUsageDay {
 	keys := make([]string, 0, len(days))
 	for k := range days {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	out := make([]spaceUsageDay, 0, len(keys))
 	for _, k := range keys {
-		out.Days = append(out.Days, spaceUsageDay{Day: k, Lanes: days[k]})
+		out = append(out, spaceUsageDay{Day: k, Lanes: days[k]})
 	}
-	c.JSON(http.StatusOK, out)
+	return out
 }
