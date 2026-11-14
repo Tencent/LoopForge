@@ -485,14 +485,9 @@ func cursorCatalogEqual(a, b []domain.CLIModel) bool {
 // /v1) and {base}/v1/models for Anthropic ones. Gateways answer both with
 // {"data":[{"id":…,"display_name"|"name":…}]}.
 func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
-	endpoint := strings.TrimRight(baseURL, "/")
-	if anthropic {
-		endpoint += "/v1/models"
-	} else {
-		endpoint += "/models"
-	}
-	if !strings.HasPrefix(endpoint, "https://") && !strings.HasPrefix(endpoint, "http://") {
-		return nil, fmt.Errorf("Base URL 必须以 http:// 或 https:// 开头")
+	endpoint, err := assistantModelsEndpoint(baseURL, anthropic)
+	if err != nil {
+		return nil, err
 	}
 	schemes := []string{"bearer"}
 	if anthropic {
@@ -530,36 +525,58 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("%s 返回 HTTP %d", endpoint, resp.StatusCode)
 		}
-		var payload struct {
-			Data []struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				DisplayName string `json:"display_name"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			return nil, fmt.Errorf("%s 返回的不是模型列表", endpoint)
-		}
-		var out []assistantDiscoveredModel
-		seen := map[string]bool{}
-		for _, item := range payload.Data {
-			id := strings.TrimSpace(item.ID)
-			if !assistantValidEngineModel(id) || seen[id] {
-				continue
-			}
-			seen[id] = true
-			name := strings.TrimSpace(item.DisplayName)
-			if name == "" {
-				name = strings.TrimSpace(item.Name)
-			}
-			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64)})
-			if len(out) == assistantDiscoveryMaxModels {
-				break
-			}
-		}
-		return out, nil
+		return decodeAssistantDiscoveredModels(endpoint, body)
 	}
 	return nil, lastErr
+}
+
+// assistantModelsEndpoint returns the model-list URL behind baseURL:
+// {base}/v1/models for Anthropic and {base}/models for OpenAI-style Base URLs.
+func assistantModelsEndpoint(baseURL string, anthropic bool) (string, error) {
+	endpoint := strings.TrimRight(baseURL, "/")
+	if anthropic {
+		endpoint += "/v1/models"
+	} else {
+		endpoint += "/models"
+	}
+	if !strings.HasPrefix(endpoint, "https://") && !strings.HasPrefix(endpoint, "http://") {
+		return "", fmt.Errorf("Base URL 必须以 http:// 或 https:// 开头")
+	}
+	return endpoint, nil
+}
+
+// decodeAssistantDiscoveredModels parses a {"data":[{"id","display_name"|"name"}]}
+// model list. It drops invalid and duplicate IDs, prefers display_name over
+// name, and keeps at most assistantDiscoveryMaxModels entries.
+func decodeAssistantDiscoveredModels(endpoint string, body []byte) ([]assistantDiscoveredModel, error) {
+	var payload struct {
+		Data []struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("%s 返回的不是模型列表", endpoint)
+	}
+	var out []assistantDiscoveredModel
+	seen := map[string]bool{}
+	for _, item := range payload.Data {
+		id := strings.TrimSpace(item.ID)
+		if !assistantValidEngineModel(id) || seen[id] {
+			continue
+		}
+		seen[id] = true
+		name := strings.TrimSpace(item.DisplayName)
+		if name == "" {
+			name = strings.TrimSpace(item.Name)
+		}
+		out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64)})
+		if len(out) == assistantDiscoveryMaxModels {
+			break
+		}
+	}
+	return out, nil
 }
 
 // assistantEngineState records which CLI holds a personal conversation's
