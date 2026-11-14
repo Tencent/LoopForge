@@ -360,3 +360,36 @@ func TestFormatLineRanges(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestJudgeDiffCoverageSkipsJSAndPythonTestFiles(t *testing.T) {
+	// Review repro: src/a.ts fully covered plus a new src/a.test.ts the lcov
+	// report does not list. The test file used to count as 0/4 uncovered.
+	lcov, err := ParseCoverageReport(GateCoverageFormatLCOV, strings.NewReader("SF:/repo/src/a.ts\nDA:1,1\nDA:2,1\nDA:3,1\nDA:4,1\nDA:5,1\nend_of_record\nSF:/repo/app/calc.py\nDA:1,1\nend_of_record\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := ChangedLines{
+		"src/a.ts":                  {{Start: 1, End: 5}},
+		"src/a.test.ts":             {{Start: 1, End: 4}},
+		"src/b.spec.ts":             {{Start: 1, End: 4}},
+		"src/__tests__/c.ts":        {{Start: 1, End: 4}},
+		"app/test_calc.py":          {{Start: 1, End: 4}},
+		"app/calc_test.py":          {{Start: 1, End: 4}},
+		"app/tests/test_helpers.py": {{Start: 1, End: 4}},
+	}
+	spec := GateCoverageSpec{ReportPath: "coverage/lcov.info", ReportFormat: GateCoverageFormatLCOV}
+	verdict := JudgeDiffCoverage(spec, changed, lcov)
+	if !verdict.Applicable || !verdict.Passed() || verdict.ChangedLines != 5 || verdict.CoveragePct != 100 {
+		t.Fatalf("test files must not count as uncovered code: %+v", verdict)
+	}
+	if len(verdict.UnreportedFiles) != 0 {
+		t.Fatalf("test files must not be reported as untested: %+v", verdict.UnreportedFiles)
+	}
+
+	// A new source file next to them is still judged.
+	changed["src/new.ts"] = []LineRange{{Start: 1, End: 3}}
+	verdict = JudgeDiffCoverage(spec, changed, lcov)
+	if verdict.Passed() || len(verdict.UnreportedFiles) != 1 || verdict.UnreportedFiles[0] != "src/new.ts" {
+		t.Fatalf("an unreported source file must still count: %+v", verdict)
+	}
+}
