@@ -87,10 +87,45 @@ func TestModelRetryHonorsServerDelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := time.Now().UTC()
-	e.nodeFailedAt(run.ID, domain.WorkflowNode{ID: "n"}, 1, 1, &runtime.ModelError{Class: runtime.ModelErrorRateLimited, Err: errors.New("limited"), RetryAfter: time.Minute}, false)
+	e.nodeFailedAt(run.ID, domain.WorkflowNode{ID: "n"}, 1, 1, &runtime.ModelError{Class: runtime.ModelErrorRateLimited, Err: errors.New("limited"), RetryAfter: time.Minute}, false, 0)
 	got, _ := store.RunState(run.ID)
 	if got.Nodes["n"].NextRetryAt.Before(before.Add(time.Minute)) {
 		t.Fatalf("retry scheduled too early: %+v", got.Nodes["n"])
+	}
+}
+
+func TestModelRetryCapsServerDelay(t *testing.T) {
+	e, store := newRecoveryEngine(t)
+	maximum := 30
+	run := domain.Run{ID: "retry-after-cap", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {
+		NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 3,
+		ModelRetry: &domain.ModelRetryPolicy{MaxSeconds: &maximum},
+	}}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC()
+	e.nodeFailedAt(run.ID, domain.WorkflowNode{ID: "n"}, 1, 1, &runtime.ModelError{Class: runtime.ModelErrorRateLimited, Err: errors.New("limited"), RetryAfter: 24 * time.Hour}, false, 3)
+	after := time.Now().UTC()
+	got, _ := store.RunState(run.ID)
+	next := got.Nodes["n"].NextRetryAt
+	if next.Before(before.Add(30*time.Second)) || next.After(after.Add(30*time.Second)) {
+		t.Fatalf("retry = %s, want capped delay of 30s", next)
+	}
+}
+
+func TestModelRetryRejectsStaleSuccessAndInterruption(t *testing.T) {
+	e, store := newRecoveryEngine(t)
+	node := domain.WorkflowNode{ID: "n"}
+	run := domain.Run{ID: "stale-success", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 2}}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	e.completeSkippedPreviewBuild(run.ID, node, 1, 1, run, "", 1)
+	e.requeueInterruptedNode(run.ID, node.ID, 1, 1, 1)
+	got, _ := store.RunState(run.ID)
+	if n := got.Nodes[node.ID]; n.Status != "running" || n.Output != "" {
+		t.Fatalf("stale execution changed current node: %+v", n)
 	}
 }
 
@@ -155,7 +190,7 @@ func TestConsecutiveFailuresSwitchMultipleFallbackModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, want := range []string{"primary", "backup", "backup", "last"} {
-		e.nodeFailedAt(run.ID, node, 1, 1, &runtime.ModelError{Class: runtime.ModelErrorRateLimited, Err: errors.New("limited")}, false)
+		e.nodeFailedAt(run.ID, node, 1, 1, &runtime.ModelError{Class: runtime.ModelErrorRateLimited, Err: errors.New("limited")}, false, 0)
 		got, _ := store.RunState(run.ID)
 		n := got.Nodes["n"]
 		if n.ActiveModel != want || n.TransientRetries != i+1 || n.Attempt != 1 {
@@ -259,4 +294,39 @@ func TestModelRetryTwoRateLimitsThenRunnerSuccess(t *testing.T) {
 		t.Fatalf("retry events = %d", retries)
 	}
 	t.Logf("runner invocations=%d node attempt=%d workspace=%s final=%s", count, got.Nodes["n"].Attempt, workspaces[0], got.Status)
+}
+
+func TestModelRecoveryResetOnManualRetry(t *testing.T) {
+	for _, credentials := range []bool{false, true} {
+		t.Run(map[bool]string{false: "failed", true: "credentials"}[credentials], func(t *testing.T) {
+			e, store := cvEEngine(t)
+			e.executeRuns = false
+			maximum := 30
+			n := &domain.NodeRun{NodeID: "n", Status: "failed", Attempt: 1, WaitReason: "other", ModelErrorClass: "rate_limited", NextRetryAt: time.Now(), TransientRetries: 2, ModelTransientErrors: 1, RetrySameAttempt: true, ModelPolicyInitialized: true, ModelRetry: &domain.ModelRetryPolicy{MaxSeconds: &maximum}, FallbackModels: []string{"backup"}, FallbackModelIndex: 1, ActiveModel: "primary"}
+			status := "failed"
+			if credentials {
+				status, n.Status, n.WaitReason = "waiting", "waiting_approval", "model_credentials"
+			}
+			wf := domain.WorkflowDefinition{ID: "reset-wf", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent"}}}
+			run := domain.Run{ID: "reset", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: status, Nodes: map[string]*domain.NodeRun{"n": n}}
+			if err := store.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Retry(run.ID, "n", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := store.RunState(run.ID)
+			n = got.Nodes["n"]
+			if n.Status != "pending" || n.WaitReason != "" || n.ModelErrorClass != "" || !n.NextRetryAt.IsZero() || n.TransientRetries != 0 || n.ModelTransientErrors != 0 || n.RetrySameAttempt != credentials {
+				t.Fatalf("retry state: %+v", n)
+			}
+			if credentials {
+				if !n.ModelPolicyInitialized || n.ModelRetry == nil || len(n.FallbackModels) != 1 || n.FallbackModelIndex != 1 || n.ActiveModel != "primary" {
+					t.Fatalf("credential retry lost policy: %+v", n)
+				}
+			} else if n.ModelPolicyInitialized || n.ModelRetry != nil || len(n.FallbackModels) != 0 || n.FallbackModelIndex != 0 || n.ActiveModel != "" {
+				t.Fatalf("ordinary retry retained policy: %+v", n)
+			}
+		})
+	}
 }

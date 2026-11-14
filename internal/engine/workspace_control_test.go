@@ -102,7 +102,7 @@ func TestWorkspaceControlFailureDoesNotRetryOrRejectUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := fmt.Errorf("prepare: %w", ErrWorkspaceControlConfiguration)
-	e.nodeFailedAt(run.ID, node, 1, 1, failure, true)
+	e.nodeFailedAt(run.ID, node, 1, 1, failure, true, 0)
 	got, _ := st.RunState(run.ID)
 	if got.Nodes["design"].Status != "failed" || got.Nodes["design"].Attempt != 1 || got.Nodes["env"].Status != "succeeded" || got.Nodes["env"].ReworkCount != 0 {
 		t.Fatalf("configuration failure retried or rejected: %+v", got.Nodes)
@@ -120,7 +120,7 @@ func TestWorkspaceControlFailureDoesNotRetryOrRejectUpstream(t *testing.T) {
 	if err := st.PutRun(got); err != nil {
 		t.Fatal(err)
 	}
-	e.nodeFailedAt(run.ID, node, 1, 1, failure, true)
+	e.nodeFailedAt(run.ID, node, 1, 1, failure, true, 0)
 	got, _ = st.RunState(run.ID)
 	if got.Nodes["design"].Status != "failed" || got.Nodes["env"].ReworkCount != 3 {
 		t.Fatal("configuration error was treated as a rework verdict")

@@ -15,7 +15,7 @@ const maxSOPNesting = 6
 
 var errSOPArtifactWrite = errors.New("保存子 SOP 产物失败")
 
-func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, attempt, generation int) {
+func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, attempt, generation, sequence int) {
 	fail := func(err error) {
 		if err == nil {
 			return
@@ -23,7 +23,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		if ctx.Err() != nil {
 			return
 		}
-		e.nodeFailedAt(runID, node, attempt, generation, err, nodeRejects(node))
+		e.nodeFailedAt(runID, node, attempt, generation, err, nodeRejects(node), sequence)
 	}
 	parent, ok := e.repo.RunState(runID)
 	if !ok {
@@ -125,7 +125,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 	applied := false
 	err = e.updateRunErr(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
-		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, true) {
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, true, sequence) {
 			return
 		}
 		applied = true
@@ -142,7 +142,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 	}
 	if err != nil {
 		if ctx.Err() == nil {
-			e.nodeFailedAt(runID, node, attempt, generation, fmt.Errorf("%w：%w", errSOPArtifactWrite, err), false)
+			e.nodeFailedAt(runID, node, attempt, generation, fmt.Errorf("%w：%w", errSOPArtifactWrite, err), false, sequence)
 		}
 		return
 	}

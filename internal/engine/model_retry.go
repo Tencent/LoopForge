@@ -9,6 +9,24 @@ import (
 	"agentflow/internal/runtime"
 )
 
+// resetModelRecovery clears retry state and optionally retains the model policy
+// for a credential retry of the same execution attempt.
+func resetModelRecovery(nr *domain.NodeRun, keepPolicy bool) {
+	nr.WaitReason = ""
+	nr.ModelErrorClass = ""
+	nr.NextRetryAt = time.Time{}
+	nr.TransientRetries = 0
+	nr.ModelTransientErrors = 0
+	nr.RetrySameAttempt = false
+	if !keepPolicy {
+		nr.ModelPolicyInitialized = false
+		nr.ModelRetry = nil
+		nr.FallbackModels = nil
+		nr.FallbackModelIndex = 0
+		nr.ActiveModel = ""
+	}
+}
+
 func mergeModelRetryPolicy(agent, node *domain.ModelRetryPolicy) *domain.ModelRetryPolicy {
 	if agent == nil && node == nil {
 		return nil

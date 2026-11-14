@@ -20,14 +20,6 @@ func (e *Engine) waitApproval(runID string, node domain.WorkflowNode, msg string
 	})
 }
 
-func (e *Engine) nodeFailed(runID string, node domain.WorkflowNode, err error, allowReject bool) {
-	r, ok := e.repo.RunState(runID)
-	if !ok || r.Nodes[node.ID] == nil {
-		return
-	}
-	e.nodeFailedAt(runID, node, r.Nodes[node.ID].Attempt, r.Generation, err, allowReject)
-}
-
 // shouldCommitNodeOutcome is the exclusive-execute write fence for one node.
 // Generation mismatch means another instance took the lease. Either outcome
 // needs the node still in flight: with parallel branches a rework or retry can
@@ -35,14 +27,14 @@ func (e *Engine) nodeFailed(runID string, node domain.WorkflowNode, err error, a
 // overwrite the reset nor let it be scheduled twice. A successful outcome may
 // still land after retries bumped Attempt, so a live agent that passed gates
 // is not dropped for an attempt mismatch. Failures stay attempt-scoped.
-func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attempt int, success bool, sequence ...int) bool {
+func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attempt int, success bool, sequence int) bool {
 	if r.Generation != generation || nr == nil {
 		return false
 	}
 	if nr.Status != "running" && nr.Status != "pending_input" {
 		return false
 	}
-	if len(sequence) > 0 && nr.ExecutionSequence != sequence[0] {
+	if nr.ExecutionSequence != sequence {
 		return false
 	}
 	if success {
@@ -51,12 +43,12 @@ func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attem
 	return nr.Attempt == attempt
 }
 
-func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool, sequence ...int) {
+func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool, sequence int) {
 	shouldReject := false
 	configurationFailure := errors.Is(err, ErrWorkspaceControlConfiguration)
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
-		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false, sequence...) {
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false, sequence) {
 			return
 		}
 		nr.Error = err.Error()
@@ -77,8 +69,8 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 					}
 					base := modelRetryBase(initial, maximum, nr.TransientRetries)
 					delay := base - base/4 + time.Duration(rand.Int64N(int64(base/4)+1))
-					if modelErr.RetryAfter > delay {
-						delay = modelErr.RetryAfter
+					if retryAfter := min(modelErr.RetryAfter, maximum); retryAfter > delay {
+						delay = retryAfter
 					}
 					nr.NextRetryAt = time.Now().UTC().Add(delay)
 					nr.Status = "waiting_retry"
@@ -313,10 +305,10 @@ func (e *Engine) parkForResumeAt(runID string, generation int, message string) {
 	}
 }
 
-func (e *Engine) requeueInterruptedNode(runID, nodeID string, attempt, generation int, sequence ...int) {
+func (e *Engine) requeueInterruptedNode(runID, nodeID string, attempt, generation, sequence int) {
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[nodeID]
-		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false, sequence...) {
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false, sequence) {
 			return
 		}
 		if nr.Status != "running" && nr.Status != "pending_input" {

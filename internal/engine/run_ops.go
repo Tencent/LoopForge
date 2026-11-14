@@ -333,17 +333,7 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 				nr.Activity = ""
 			}
 			nr.Status = "pending"
-			nr.WaitReason = ""
-			nr.ModelErrorClass = ""
-			nr.NextRetryAt = time.Time{}
-			nr.TransientRetries = 0
-			nr.ModelTransientErrors = 0
-			nr.RetrySameAttempt = false
-			nr.ModelPolicyInitialized = false
-			nr.ModelRetry = nil
-			nr.FallbackModels = nil
-			nr.FallbackModelIndex = 0
-			nr.ActiveModel = ""
+			resetModelRecovery(nr, false)
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -603,19 +593,9 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 				stale = append(stale, nr.ChildRunID)
 			}
 			nr.Status = "pending"
-			nr.WaitReason = ""
-			nr.ModelErrorClass = ""
-			nr.NextRetryAt = time.Time{}
-			nr.TransientRetries = 0
-			nr.ModelTransientErrors = 0
-			nr.RetrySameAttempt = modelCredentialRetry && id == nodeID
-			if !modelCredentialRetry || id != nodeID {
-				nr.ModelPolicyInitialized = false
-				nr.ModelRetry = nil
-				nr.FallbackModels = nil
-				nr.FallbackModelIndex = 0
-				nr.ActiveModel = ""
-			}
+			keepPolicy := modelCredentialRetry && id == nodeID
+			resetModelRecovery(nr, keepPolicy)
+			nr.RetrySameAttempt = keepPolicy
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""

@@ -382,7 +382,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		e.nodeFailedAt(runID, node, executionAttempt, executionGeneration, err, allowReject, executionSequence)
 	}
 	if node.Type == "sop" {
-		e.executeSOPNode(ctx, runID, wf, node, executionAttempt, executionGeneration)
+		e.executeSOPNode(ctx, runID, wf, node, executionAttempt, executionGeneration, executionSequence)
 		return
 	}
 	if node.Type == "approval" {
@@ -1126,7 +1126,7 @@ func (e *Engine) archivePreviewAfterBuild(runID string) {
 	e.preview.ArchiveBuiltPreview(current)
 }
 
-func (e *Engine) completeSkippedPreviewBuild(runID string, node domain.WorkflowNode, executionGeneration, executionAttempt int, current domain.Run, evidence string, sequence ...int) {
+func (e *Engine) completeSkippedPreviewBuild(runID string, node domain.WorkflowNode, executionGeneration, executionAttempt int, current domain.Run, evidence string, sequence int) {
 	reason := "工作区没有前端工程，已跳过预览"
 	if extra := strings.TrimSpace(evidence); extra != "" {
 		reason = reason + "（" + extra + "）"
@@ -1143,7 +1143,7 @@ func (e *Engine) completeSkippedPreviewBuild(runID string, node domain.WorkflowN
 	})
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
-		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true, sequence...) {
+		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true, sequence) {
 			return
 		}
 		nr.Output = output
