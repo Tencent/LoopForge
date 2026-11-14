@@ -64,6 +64,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.Cron = strings.TrimSpace(job.Cron)
 		job.AssistantPrompt = strings.TrimSpace(job.AssistantPrompt)
 		job.AssistantModel = strings.TrimSpace(job.AssistantModel)
+		job.References = domain.CloneAssistantReferences(job.References)
 		job.WorkflowID = strings.TrimSpace(job.WorkflowID)
 		source, err := domain.NormalizeScheduleSource(job.Source)
 		if err != nil {
@@ -81,7 +82,20 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			job.IssueStatuses = nil
 			job.MaxDispatch = 0
 			job.Source = ""
+			if len(job.References) > 0 {
+				if h.assistant == nil {
+					c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "AI 定时任务引用功能未就绪"})
+					return
+				}
+				refs, err := h.assistant.normalizeScheduledReferences(job.ProjectID, job.References)
+				if err != nil {
+					c.JSON(400, map[string]string{"error": err.Error()})
+					return
+				}
+				job.References = refs
+			}
 		} else {
+			job.References = nil
 			if job.MaxDispatch < 0 || job.MaxDispatch > domain.MaxScheduleDispatch {
 				c.JSON(400, map[string]string{"error": "单次最多触发需求数必须为 1–10，不配置时默认为 10"})
 				return
@@ -183,6 +197,11 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			return
 		}
 		stored, _ := h.repo.ScheduleJob(job.ID)
+		visible := h.visibleScheduleJobs(c.Request, []domain.ScheduleJob{stored})
+		if len(visible) == 1 {
+			c.JSON(200, visible[0])
+			return
+		}
 		c.JSON(200, stored)
 	}
 }

@@ -1,4 +1,7 @@
 let scheduleNotificationBindings=[];
+let scheduleReferences=[];
+let scheduleReferenceRequest=0;
+let scheduleReferenceSearchTimer=null;
 let scheduleEditorKind='dispatch';
 let scheduleModalVersion=0;
 let scheduleModalOpener=null;
@@ -98,6 +101,80 @@ function scheduleIssueStatusValues(job){
   return ['backlog','todo'];
 }
 function scheduleModelAPI(){return window.AgentFlowAssistantModels}
+const scheduleReferenceLabels={agent:'角色',skill:'技能',sop:'SOP',issue:'需求',run:'运行',repository:'仓库'};
+function scheduleReferenceKey(ref){return `${ref?.type||''}/${ref?.id||''}`}
+function renderScheduleReferences(){
+  const host=$('#scheduleReferenceList');
+  if(!host)return;
+  host.innerHTML=scheduleReferences.length?scheduleReferences.map(ref=>`<span class="schedule-reference-chip"><span>${escapeHTML(scheduleReferenceLabels[ref.type]||ref.type)} · ${escapeHTML(ref.name||ref.id)}</span><button type="button" data-remove-schedule-reference="${escapeHTML(scheduleReferenceKey(ref))}" aria-label="移除 ${escapeHTML(ref.name||ref.id)}">×</button></span>`).join(''):'<span class="schedule-field-hint">尚未引用项目资产</span>';
+  host.querySelectorAll('[data-remove-schedule-reference]').forEach(button=>button.onclick=()=>{
+    const key=button.dataset.removeScheduleReference;
+    scheduleReferences=scheduleReferences.filter(ref=>scheduleReferenceKey(ref)!==key);
+    renderScheduleReferences();
+    loadScheduleReferenceOptions();
+  });
+}
+async function loadScheduleReferenceOptions(){
+  const host=$('#scheduleReferenceOptions');
+  if(!host)return;
+  const request=++scheduleReferenceRequest,modalVersion=scheduleModalVersion;
+  const projectId=state.projectFilter||'';
+  if(!projectId){host.innerHTML='<div class="schedule-field-hint">请先选择项目。</div>';return}
+  host.innerHTML='<div class="schedule-field-hint">读取项目资产…</div>';
+  try{
+    const params=new URLSearchParams({projectId,type:$('#scheduleReferenceType')?.value||'',q:$('#scheduleReferenceQuery')?.value.trim()||'',offset:'0'});
+    const data=await api('/api/assistant/references?'+params.toString());
+    if(request!==scheduleReferenceRequest||modalVersion!==scheduleModalVersion||projectId!==state.projectFilter)return;
+    const rows=data.items||data||[];
+    host.innerHTML=rows.length?rows.map(ref=>{
+      const selected=scheduleReferences.some(item=>scheduleReferenceKey(item)===scheduleReferenceKey(ref));
+      return `<button type="button" class="schedule-reference-option" role="option" aria-selected="${selected}" data-schedule-reference="${escapeHTML(scheduleReferenceKey(ref))}"><span>${escapeHTML(scheduleReferenceLabels[ref.type]||ref.type)} · ${escapeHTML(ref.name||ref.id)}</span><small>${selected?'已引用':escapeHTML(ref.projectName||ref.id)}</small></button>`;
+    }).join(''):'<div class="schedule-field-hint">没有找到可引用的项目资产。</div>';
+    host.querySelectorAll('[data-schedule-reference]').forEach(button=>button.onclick=()=>{
+      const ref=rows.find(item=>scheduleReferenceKey(item)===button.dataset.scheduleReference);
+      if(!ref)return;
+      if(!scheduleReferences.some(item=>scheduleReferenceKey(item)===scheduleReferenceKey(ref))){
+        if(scheduleReferences.length>=12)return toast('每个定时任务最多引用 12 个项目资产','warn');
+        scheduleReferences=[...scheduleReferences,ref];
+      }
+      renderScheduleReferences();
+      loadScheduleReferenceOptions();
+      $('#scheduleReferenceQuery')?.focus();
+    });
+  }catch(err){
+    if(request===scheduleReferenceRequest&&modalVersion===scheduleModalVersion&&projectId===state.projectFilter)host.innerHTML=`<div class="schedule-field-hint">读取项目资产失败：${escapeHTML(err.message)}</div>`
+  }
+}
+function bindScheduleReferencePicker(){
+  const add=$('#scheduleAddReference'),picker=$('#scheduleReferencePicker');
+  if(!add||!picker||add.dataset.bound)return;
+  add.dataset.bound='1';
+  add.onclick=()=>{picker.hidden=!picker.hidden;add.setAttribute('aria-expanded',String(!picker.hidden));if(!picker.hidden){loadScheduleReferenceOptions();$('#scheduleReferenceQuery')?.focus()}};
+  $('#scheduleReferenceType')?.addEventListener('change',loadScheduleReferenceOptions);
+  $('#scheduleReferenceQuery')?.addEventListener('input',()=>{clearTimeout(scheduleReferenceSearchTimer);scheduleReferenceSearchTimer=setTimeout(loadScheduleReferenceOptions,180)});
+  const options=$('#scheduleReferenceOptions');
+  options?.addEventListener('keydown',event=>{
+    const items=[...options.querySelectorAll('[data-schedule-reference]')];
+    if(!items.length||!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+    event.preventDefault();
+    const current=items.indexOf(document.activeElement);
+    const next=event.key==='Home'?0:event.key==='End'?items.length-1:Math.max(0,(current+(event.key==='ArrowDown'?1:-1)+items.length)%items.length);
+    items[next]?.focus();
+  });
+  (picker.closest('.schedule-references')||picker).addEventListener('keydown',event=>{
+    if(event.key!=='Escape'||picker.hidden)return;
+    event.preventDefault();
+    event.stopPropagation();
+    picker.hidden=true;
+    add.setAttribute('aria-expanded','false');
+    add.focus();
+  });
+  document.addEventListener('pointerdown',event=>{
+    if(picker.hidden||picker.contains(event.target)||event.target===add)return;
+    picker.hidden=true;
+    add.setAttribute('aria-expanded','false');
+  });
+}
 function selectedClarifyModel(){
   const api=window.AgentFlowAssistantModels;
   const stored=localStorage.getItem('agentflow.clarifyModel')||'';
@@ -298,6 +375,10 @@ function fillScheduleJobForm(job={}){
   if(!cron)f.elements.intervalSec.value=interval;
   f.elements.jobKind.value=job.id?scheduleJobKind(job):scheduleEditorKind;
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
+  scheduleReferences=Array.isArray(job.references)
+    ?job.references.filter(ref=>ref&&ref.type&&ref.id).slice(0,12).map(ref=>({type:String(ref.type),id:String(ref.id),name:String(ref.name||''),projectId:String(ref.projectId||''),projectName:String(ref.projectName||'')}))
+    :[];
+  renderScheduleReferences();
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;
   f.elements.maxDispatch.value=job.maxDispatch||'';
@@ -319,6 +400,13 @@ function projectTriggerJob(){return scheduleJobsInView(state.data.scheduleJobs,s
 function resetScheduleJobForm(){fillScheduleJobForm(scheduleEditorKind==='dispatch'?(projectTriggerJob()||{}):{})}
 function closeScheduleJobModal(){
   scheduleModalVersion++;
+  scheduleReferenceRequest++;
+  clearTimeout(scheduleReferenceSearchTimer);
+  scheduleReferences=[];
+  const picker=$('#scheduleReferencePicker');
+  if(picker)picker.hidden=true;
+  const addReference=$('#scheduleAddReference');
+  if(addReference)addReference.setAttribute('aria-expanded','false');
   const modal=$('#scheduleModal');
   if(!modal.classList.contains('open'))return;
   modal.classList.remove('open');
@@ -337,6 +425,18 @@ async function openScheduleJobModal(kind='dispatch',job){
   scheduleModalOpener=document.activeElement;
   if(scheduleModalOpener?.closest('#issueHeadingMenu'))scheduleModalOpener=$('#issueHeadingMore');
   const f=$('#scheduleJobForm');
+  bindScheduleReferencePicker();
+  scheduleReferences=[];
+  scheduleReferenceRequest++;
+  clearTimeout(scheduleReferenceSearchTimer);
+  const picker=$('#scheduleReferencePicker');
+  if(picker)picker.hidden=true;
+  const addReference=$('#scheduleAddReference');
+  if(addReference)addReference.setAttribute('aria-expanded','false');
+  const referenceQuery=$('#scheduleReferenceQuery');
+  if(referenceQuery)referenceQuery.value='';
+  const referenceType=$('#scheduleReferenceType');
+  if(referenceType)referenceType.value='';
   f.inert=false;
   f.querySelector('[type="submit"]').disabled=false;
   if(scheduleEditorKind==='assistant')fillScheduleJobForm(job||{});
@@ -496,6 +596,7 @@ async function saveScheduleJob(e){
     cron:cron?f.elements.cron.value.trim():'',
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
+    references:assistant?scheduleReferences.map(ref=>({type:ref.type,id:ref.id})):[],
     enabled:f.elements.enabled.checked
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));

@@ -1170,6 +1170,23 @@
               <textarea name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
               <p class="schedule-field-hint">到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 SOP、操作工作区及浏览器。</p>
             </div>
+            <div data-schedule-kind="assistant" class="schedule-references" hidden>
+              <label>引用项目资产</label>
+              <div id="scheduleReferenceList" class="schedule-reference-list"></div>
+              <button type="button" class="button ghost small" id="scheduleAddReference" aria-expanded="false" aria-controls="scheduleReferencePicker">＋ 引用项目资产</button>
+              <div id="scheduleReferencePicker" class="schedule-reference-picker" hidden>
+                <div class="schedule-reference-toolbar">
+                  <select id="scheduleReferenceType" class="select" aria-label="资产类型">
+                    <option value="">全部类型</option>
+                    <option value="agent">角色</option><option value="skill">技能</option><option value="sop">SOP</option>
+                    <option value="issue">需求</option><option value="run">运行</option><option value="repository">仓库</option>
+                  </select>
+                  <label class="sr-only" for="scheduleReferenceQuery">搜索项目资产</label><input id="scheduleReferenceQuery" class="input" type="search" placeholder="搜索项目资产" autocomplete="off">
+                </div>
+                <div id="scheduleReferenceOptions" class="asset-picker one-column" role="listbox" aria-label="项目资产"></div>
+                <small class="schedule-field-hint">任务运行时会读取所选资产的最新内容。</small>
+              </div>
+            </div>
           </div>
           <div data-schedule-kind="assistant" class="schedule-notifications" hidden><h3>Bot 通知</h3><p class="schedule-field-hint">可把执行结果、AI 摘要或自定义消息发送到项目 Bot。</p><div id="scheduleNotificationEditor"></div></div>
           <div class="schedule-form-actions"><label class="schedule-check"><input name="enabled" type="checkbox" checked> 启用</label><button type="submit" class="button dark small">保存触发配置</button></div>

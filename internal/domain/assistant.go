@@ -87,6 +87,17 @@ type AssistantReference struct {
 	Element *AssistantPageElement `json:"element,omitempty"`
 }
 
+// CloneAssistantReferences returns an independent copy for persisted task
+// payloads and message construction.
+func CloneAssistantReferences(refs []AssistantReference) []AssistantReference {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]AssistantReference, len(refs))
+	copy(out, refs)
+	return out
+}
+
 // AssistantPageElement is a page element picked in the native preview.
 type AssistantPageElement struct {
 	URL       string            `json:"url,omitempty"`
@@ -218,6 +229,7 @@ type AssistantTask struct {
 	UserID               int64                 `json:"userId,omitempty"`
 	Name                 string                `json:"name"`
 	Prompt               string                `json:"prompt"`
+	References           []AssistantReference  `json:"references,omitempty"`
 	Model                string                `json:"model,omitempty"`
 	ProjectID            string                `json:"projectId,omitempty"`
 	SessionID            string                `json:"sessionId,omitempty"`
