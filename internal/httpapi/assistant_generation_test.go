@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -157,5 +158,90 @@ func TestGenerationCompletedReplyAndSnapshot(t *testing.T) {
 			t.Fatal("completion timed out")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestStartGenerationAcceptsLargeRequestBody(t *testing.T) {
+	h, u := workbenchFixture(t)
+	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
+		return "回复", nil
+	}
+	largeActivityText := strings.Repeat("thinking step\n", 200000)
+	largeMessages := []assistantMessage{
+		{Role: "user", Content: "帮我做实验"},
+		{
+			Role:    "assistant",
+			Content: "好的，正在执行实验",
+			Activity: []domain.AssistantActivityEvent{
+				{Kind: "thinking", Text: largeActivityText},
+			},
+		},
+		{Role: "user", Content: "继续推进"},
+	}
+	_ = saveAssistantConversation(h.repo, u.ID, assistantConversation{
+		ID:        "large-session",
+		ProjectID: "workbench",
+		Messages:  largeMessages[:2],
+	})
+	reqBody, err := json.Marshal(assistantRequest{
+		ProjectID: "workbench",
+		SessionID: "large-session",
+		Messages:  largeMessages,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqBody) <= 2<<20 {
+		t.Fatalf("expected payload > 2MB, got %d", len(reqBody))
+	}
+	c, rec := workbenchContext(u, "POST", "/api/assistant/generations", bytes.NewBuffer(reqBody))
+	h.startGeneration(c)
+	if rec.Code != 202 {
+		t.Fatalf("expected 202 Accepted, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSessionUpdateAcceptsLargeRequestBody(t *testing.T) {
+	h, u := workbenchFixture(t)
+	largeActivityText := strings.Repeat("thinking step\n", 200000)
+	largeMessages := []assistantMessage{
+		{Role: "user", Content: "帮我做实验"},
+		{
+			Role:    "assistant",
+			Content: "好的，正在执行实验",
+			Activity: []domain.AssistantActivityEvent{
+				{Kind: "thinking", Text: largeActivityText},
+			},
+		},
+	}
+	_ = saveAssistantConversation(h.repo, u.ID, assistantConversation{
+		ID:        "large-session-put",
+		ProjectID: "workbench",
+		Title:     "原标题",
+		Messages:  largeMessages,
+	})
+	saved, _ := loadAssistantConversation(h.repo, u.ID, "large-session-put")
+	body := struct {
+		assistantConversation
+		Title string `json:"title"`
+	}{
+		assistantConversation: assistantConversation{
+			ID:        "large-session-put",
+			ProjectID: "workbench",
+			Title:     "新标题",
+			Messages:  largeMessages,
+			UpdatedAt: saved.UpdatedAt,
+		},
+		Title: "新标题",
+	}
+	reqBody, _ := json.Marshal(body)
+	if len(reqBody) <= 2<<20 {
+		t.Fatalf("expected payload > 2MB, got %d", len(reqBody))
+	}
+	c, rec := workbenchContext(u, "PUT", "/api/assistant/sessions/large-session-put", bytes.NewBuffer(reqBody))
+	c.Params = gin.Params{{Key: "id", Value: "large-session-put"}}
+	h.session(c)
+	if rec.Code != 200 {
+		t.Fatalf("expected 200 OK, got %d %s", rec.Code, rec.Body.String())
 	}
 }

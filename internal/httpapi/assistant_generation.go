@@ -29,9 +29,8 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 	var req assistantRequest
-	if !decode(c, &req) {
+	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
 		return
 	}
 	req.Model = assistantRequestModel(req.Executor, req.Model)

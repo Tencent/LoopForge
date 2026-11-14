@@ -12,25 +12,40 @@ func (e *Engine) updateRun(id string, mutate func(*domain.Run)) {
 	_ = e.updateRunAt(id, false, mutate)
 }
 
+// updateRunErr is updateRun for callers that must react to a failed write,
+// such as a SOP node whose artifact handoff did not reach the store.
+func (e *Engine) updateRunErr(id string, mutate func(*domain.Run)) error {
+	_, err := e.updateRunAtErr(id, false, mutate)
+	return err
+}
+
 func (e *Engine) updateRunSettling(id string, mutate func(*domain.Run)) bool {
 	return e.updateRunAt(id, true, mutate)
 }
 
 func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*domain.Run)) bool {
+	updated, _ := e.updateRunAtErr(id, allowExpiredLease, mutate)
+	return updated
+}
+
+// updateRunAtErr reports whether the run was stored and, when the store
+// rejected the write, that error. A skipped update (missing run or a lease
+// held elsewhere) is not an error.
+func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*domain.Run)) (bool, error) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(id)
 	if !ok {
 		_ = e.takePendingObservations(id)
-		return false
+		return false, nil
 	}
 	if isLiveStatus(r.Status) && r.OwnerInstanceID != "" && !e.ownsRun(r) && !allowExpiredLease {
 		_ = e.takePendingObservations(id)
-		return false
+		return false, nil
 	}
 	pending := e.takePendingObservations(id)
 	if mutate == nil && len(pending) == 0 {
-		return true
+		return true, nil
 	}
 	for _, item := range pending {
 		e.applyObservation(&r, item.nodeID, item.event)
@@ -40,12 +55,12 @@ func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*dom
 	}
 	if err := e.repo.PutRun(r); err != nil {
 		log.Printf("put run %s: %v", id, err)
-		return false
+		return false, err
 	}
 	if current, ok := e.repo.RunStreamView(id); ok {
 		e.publishRun(current)
 	}
-	return true
+	return true, nil
 }
 
 // Subscribe provides provider-neutral live run snapshots. Slow clients receive
