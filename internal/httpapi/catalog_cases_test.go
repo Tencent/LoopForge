@@ -501,10 +501,10 @@ func TestCatalogSmallDirectHelpers(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if names := h.agentNamesReferencing("rule", "r"); len(names) != 1 || names[0] != "Helper agent" {
+	if names := agentNamesReferencing(h.repo, "rule", "r"); len(names) != 1 || names[0] != "Helper agent" {
 		t.Fatalf("rule references = %#v", names)
 	}
-	if names := h.agentNamesReferencing("skill", "s"); len(names) != 1 {
+	if names := agentNamesReferencing(h.repo, "skill", "s"); len(names) != 1 {
 		t.Fatalf("skill references = %#v", names)
 	}
 	if err := f.s.PutDockerfile(domain.DockerfileDefinition{ID: "cvb-helper-df", Name: "DF", ProjectID: "cvb-helper", Content: "FROM scratch"}); err != nil {
@@ -525,11 +525,11 @@ func TestCatalogSmallDirectHelpers(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.sandboxNamesReferencing("dockerfile", "cvb-helper-df")) != 1 ||
-		len(h.sandboxNamesReferencing("environment", "cvb-helper-env")) != 1 {
+	if len(sandboxNamesReferencing(h.repo, "dockerfile", "cvb-helper-df")) != 1 ||
+		len(sandboxNamesReferencing(h.repo, "environment", "cvb-helper-env")) != 1 {
 		t.Fatal("sandbox dependency names were not found")
 	}
-	if len(h.workflowNamesReferencingSandbox("missing")) != 0 {
+	if len(workflowNamesReferencingSandbox(h.repo, "missing")) != 0 {
 		t.Fatal("missing sandbox unexpectedly referenced")
 	}
 }

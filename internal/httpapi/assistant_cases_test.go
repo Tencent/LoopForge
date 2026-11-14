@@ -258,16 +258,43 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 		t.Fatalf("shared warnings=%v", got)
 	}
 	const projectID = assistantAcceptanceProjectID
-	_ = st.PutRule(domain.RuleDefinition{ID: "rule-ref", Name: "Rule", ProjectID: projectID})
-	_ = st.PutSkill(domain.SkillDefinition{ID: "skill-ref", Name: "Skill", ProjectID: projectID})
-	_ = st.PutAgent(domain.AgentDefinition{ID: "agent-ref", Name: "Agent Ref", ProjectID: projectID, Rules: []string{"rule-ref"}, Skills: []string{"skill-ref"}})
-	_ = st.PutDockerfile(domain.DockerfileDefinition{ID: "docker-ref", Name: "Docker", ProjectID: projectID})
-	_ = st.PutEnvironment(domain.EnvironmentDefinition{ID: "env-ref", Name: "Env", ProjectID: projectID})
-	_ = st.PutSandbox(domain.SandboxProfile{ID: "sandbox-ref", Name: "Sandbox Ref", ProjectID: projectID, DockerfileID: "docker-ref", EnvironmentID: "env-ref"})
-	_ = st.PutWorkflow(domain.WorkflowDefinition{ID: "workflow-ref", Name: "Workflow Ref", ProjectID: projectID, SandboxProfileID: "sandbox-ref"})
-	_ = h.agentNamesReferencing("rule", "rule-ref")
-	_ = h.agentNamesReferencing("skill", "skill-ref")
-	_ = h.sandboxNamesReferencing("dockerfile", "docker-ref")
-	_ = h.sandboxNamesReferencing("environment", "env-ref")
-	_ = h.workflowNamesReferencingSandbox("sandbox-ref")
+	for _, err := range []error{
+		st.PutRule(domain.RuleDefinition{ID: "rule-ref", Name: "Rule", ProjectID: projectID}),
+		st.PutSkill(domain.SkillDefinition{ID: "skill-ref", Name: "Skill", ProjectID: projectID}),
+		st.PutAgent(domain.AgentDefinition{ID: "agent-ref", Name: "Agent Ref", ProjectID: projectID, Rules: []string{"rule-ref"}, Skills: []string{"skill-ref"}}),
+		st.PutDockerfile(domain.DockerfileDefinition{ID: "docker-ref", Name: "Docker", ProjectID: projectID, Content: "FROM scratch"}),
+		st.PutEnvironment(domain.EnvironmentDefinition{ID: "env-ref", Name: "Env", ProjectID: projectID}),
+		st.PutSandbox(domain.SandboxProfile{ID: "sandbox-ref", Name: "Sandbox Ref", ProjectID: projectID, Driver: "docker", DockerfileID: "docker-ref"}),
+		st.PutSandbox(domain.SandboxProfile{ID: "sandbox-env-ref", Name: "Env Sandbox Ref", ProjectID: projectID, Driver: "bwrap", EnvironmentID: "env-ref"}),
+		st.PutWorkflow(domain.WorkflowDefinition{ID: "workflow-ref", Name: "Workflow Ref", ProjectID: projectID, SandboxProfileID: "sandbox-ref"}),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, got := range map[string][]string{
+		"rule":        agentNamesReferencing(h.repo, "rule", "rule-ref"),
+		"skill":       agentNamesReferencing(h.repo, "skill", "skill-ref"),
+		"dockerfile":  sandboxNamesReferencing(h.repo, "dockerfile", "docker-ref"),
+		"environment": sandboxNamesReferencing(h.repo, "environment", "env-ref"),
+		"sandbox":     workflowNamesReferencingSandbox(h.repo, "sandbox-ref"),
+	} {
+		want := map[string]string{"rule": "Agent Ref", "skill": "Agent Ref", "dockerfile": "Sandbox Ref", "environment": "Env Sandbox Ref", "sandbox": "Workflow Ref"}[name]
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("%s references = %#v, want [%q]", name, got, want)
+		}
+	}
+	// 删除被引用的资产时，草稿告警要列出引用方（经共用的引用方查询 helper）。
+	for tool, tc := range map[string]struct{ id, want string }{
+		"rules_delete":        {"rule-ref", "规则仍被 1 个角色引用（Agent Ref）"},
+		"skills_delete":       {"skill-ref", "技能仍被 1 个角色引用（Agent Ref）"},
+		"dockerfiles_delete":  {"docker-ref", "Dockerfile仍被 1 个沙箱引用（Sandbox Ref）"},
+		"environments_delete": {"env-ref", "环境安装脚本仍被 1 个沙箱引用（Env Sandbox Ref）"},
+		"sandboxes_delete":    {"sandbox-ref", "沙箱仍被 1 个流程引用（Workflow Ref）"},
+	} {
+		d := assistantDraft{Tool: tool, Body: json.RawMessage(`{"id":"` + tc.id + `"}`)}
+		if got := h.assistantDraftWarnings(d); len(got) != 1 || !strings.Contains(got[0], tc.want) {
+			t.Fatalf("%s warnings=%v, want %q", tool, got, tc.want)
+		}
+	}
 }
