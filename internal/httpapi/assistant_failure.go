@@ -173,6 +173,10 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 			f.Code, f.Phase, f.Message, f.Suggestion = "CLI_START_FAILED", "setup", "CLI 启动或初始化失败", "请管理员检查 CLI 的安装、目录与文件权限。"
 		case errors.Is(err, errAssistantMissingResult):
 			f.Code, f.Phase, f.Message = "MISSING_RESULT", "protocol", "AI 助手生成中断，未返回完整回答，请重试"
+		case errors.Is(err, runtime.ErrConversationNotStarted):
+			// A sandbox or workspace step failed before the CLI was launched;
+			// calling that a CLI exit sends people hunting for CLI or key issues.
+			f.Code, f.Phase, f.Message, f.Suggestion = "WORKSPACE_SETUP_FAILED", "setup", "工作区执行环境准备失败，CLI 未启动", "可直接重试；仍失败时下载诊断信息，交给管理员检查执行机器上的 Docker 与工作区容器。"
 		case errors.As(err, &exit), has("exit status"):
 			f.Code, f.Message = "CLI_EXIT_NONZERO", "CLI 异常退出，未完成本轮回复"
 		}

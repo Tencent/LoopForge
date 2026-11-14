@@ -52,11 +52,11 @@ func (s *dockerSandbox) ensureScriptContainer(ctx context.Context) error {
 	if base.ID == "" || base.Image == "" {
 		return fmt.Errorf("script execution environment metadata is incomplete")
 	}
-	arch, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Architecture}}", base.Image).Output()
+	arch, err := dockerScriptArchitecture(ctx, s.name, base.Image)
 	if err != nil {
-		return fmt.Errorf("inspect script environment architecture: %w", err)
+		return err
 	}
-	binary, err := resolveGateMCPBinary("linux", strings.TrimSpace(string(arch)))
+	binary, err := resolveGateMCPBinary("linux", arch)
 	if err != nil {
 		return fmt.Errorf("script view helper unavailable: %w", err)
 	}
@@ -103,6 +103,41 @@ func (s *dockerSandbox) ensureScriptContainer(ctx context.Context) error {
 	}
 	ready = true
 	return nil
+}
+
+// dockerScriptArchitecture picks the helper architecture for the running
+// workspace container. Image metadata is preferred, but it can be missing
+// while the container still runs (the image was untagged or reclaimed after
+// it started), so the container's own uname is the fallback. Both failures are
+// reported with docker's stderr instead of a bare exit status.
+func dockerScriptArchitecture(ctx context.Context, container, image string) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Architecture}}", image).CombinedOutput()
+	if err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	imageErr := fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
+	machine, unameErr := exec.CommandContext(ctx, "docker", "exec", container, "uname", "-m").CombinedOutput()
+	if unameErr == nil {
+		if arch := dockerMachineArchitecture(string(machine)); arch != "" {
+			return arch, nil
+		}
+		unameErr = fmt.Errorf("unrecognized machine %q", strings.TrimSpace(string(machine)))
+	} else {
+		unameErr = fmt.Errorf("%w: %s", unameErr, strings.TrimSpace(string(machine)))
+	}
+	return "", fmt.Errorf("inspect script environment architecture: image %s: %s; container uname: %v", image, imageErr, unameErr)
+}
+
+// dockerMachineArchitecture maps `uname -m` to the Go architecture names the
+// helper binaries are published under.
+func dockerMachineArchitecture(machine string) string {
+	switch strings.TrimSpace(machine) {
+	case "x86_64", "amd64":
+		return "amd64"
+	case "aarch64", "arm64":
+		return "arm64"
+	}
+	return ""
 }
 
 func dockerScriptCreateArgs(name, base, workspace, image, owner string) []string {
