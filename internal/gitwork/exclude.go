@@ -480,17 +480,30 @@ func IsTestArtifactOrCachePath(rel string) bool {
 		return false
 	}
 
-	// 3. Exact matching for known test artifact & coverage basenames
+	// 3-5. Known test artifact & coverage file names
+	if isTestArtifactFileName(base, lowerBase, ext) {
+		return true
+	}
+
+	// 6. Check directory components
+	return hasTestArtifactDir(rel)
+}
+
+// isTestArtifactFileName matches test artifact and coverage output by file
+// name alone: known basenames, counter extensions and basename patterns.
+// lowerBase and ext must already be lower-cased.
+func isTestArtifactFileName(base, lowerBase, ext string) bool {
+	// Exact matching for known test artifact & coverage basenames
 	if testArtifactBasenames[base] || testArtifactBasenames[lowerBase] {
 		return true
 	}
 
-	// 4. Test artifact extensions (e.g. gcov/lcov counters)
+	// Test artifact extensions (e.g. gcov/lcov counters)
 	if testArtifactExtensions[ext] {
 		return true
 	}
 
-	// 5. Pattern matches for file basenames
+	// Pattern matches for file basenames
 	if strings.HasSuffix(lowerBase, ".phpunit.result.cache") ||
 		strings.HasSuffix(lowerBase, ".phpunit.cache") {
 		return true
@@ -508,7 +521,12 @@ func IsTestArtifactOrCachePath(rel string) bool {
 		}
 	}
 
-	// 6. Check directory components
+	return false
+}
+
+// hasTestArtifactDir reports whether any slash-separated component of rel is a
+// known test output directory, including tests/_output.
+func hasTestArtifactDir(rel string) bool {
 	parts := strings.Split(rel, "/")
 	for i, part := range parts {
 		if testArtifactDirNames[part] {
