@@ -180,13 +180,7 @@ var gongfengRepoSubpages = []string{
 //   - git.example.com/group/repository
 //   - group/repository (bare project path, no URL decoration)
 func ParseGongfengRepoURL(raw string) (GongfengRepoInfo, bool) {
-	s := strings.Trim(strings.TrimSpace(raw), `"'`)
-	if len(s) >= 10 && strings.EqualFold(s[:10], "git clone ") {
-		s = strings.Trim(strings.TrimSpace(s[10:]), `"'`)
-		if i := strings.IndexAny(s, " \t"); i >= 0 {
-			s = s[:i]
-		}
-	}
+	s := stripGitCloneCommand(strings.Trim(strings.TrimSpace(raw), `"'`))
 	if s == "" {
 		return GongfengRepoInfo{}, false
 	}
@@ -194,35 +188,8 @@ func ParseGongfengRepoURL(raw string) (GongfengRepoInfo, bool) {
 		return GongfengRepoInfo{}, false
 	}
 	sshClone := strings.HasPrefix(strings.ToLower(s), "git@") || strings.HasPrefix(strings.ToLower(s), "ssh://")
-	s = strings.TrimSuffix(s, "/")
-	// Strip scheme and userinfo so ssh / https / scp forms converge.
-	pathSource := s
-	if i := strings.Index(pathSource, "://"); i >= 0 {
-		pathSource = pathSource[i+3:]
-	}
-	if i := strings.LastIndex(pathSource, "@"); i >= 0 {
-		pathSource = pathSource[i+1:]
-	}
-	var path string
-	if !strings.Contains(s, "://") && !strings.Contains(s, "@") && !strings.Contains(pathSource, ":") {
-		// Bare project path (group/repository) pasted without URL decoration.
-		path = pathSource
-	} else if strings.Contains(pathSource, "/") {
-		host := pathSource[:strings.IndexAny(pathSource, "/:")]
-		if !strings.EqualFold(host, GongfengRepoHost) {
-			return GongfengRepoInfo{}, false
-		}
-		if pathSource[len(host)] == ':' {
-			// git.example.com:group/repo.git (scp) or git.example.com:22/group/repo.git
-			path = pathSource[len(host)+1:]
-			if j := strings.Index(path, "/"); j >= 0 && isAllDigits(path[:j]) {
-				path = path[j+1:]
-			}
-		} else {
-			path = pathSource[len(host)+1:]
-		}
-	} else {
-		// bare host without path is not a repository reference
+	path, ok := gongfengReferencePath(strings.TrimSuffix(s, "/"))
+	if !ok {
 		return GongfengRepoInfo{}, false
 	}
 	project := normalizeGongfengProjectPath(path)
@@ -237,6 +204,52 @@ func ParseGongfengRepoURL(raw string) (GongfengRepoInfo, bool) {
 		info.CloneURL = "git@" + GongfengRepoHost + ":" + project + ".git"
 	}
 	return info, true
+}
+
+// stripGitCloneCommand reduces a pasted "git clone <url> [dir]" command to the
+// repository reference; other inputs are returned unchanged.
+func stripGitCloneCommand(s string) string {
+	if len(s) >= 10 && strings.EqualFold(s[:10], "git clone ") {
+		s = strings.Trim(strings.TrimSpace(s[10:]), `"'`)
+		if i := strings.IndexAny(s, " \t"); i >= 0 {
+			s = s[:i]
+		}
+	}
+	return s
+}
+
+// gongfengReferencePath strips scheme, userinfo, host and port from a
+// repository reference (without trailing slash) so ssh / https / scp / bare
+// forms converge on the raw repository path. It reports false when the host is
+// not GongfengRepoHost or the reference has no path after the host.
+func gongfengReferencePath(s string) (string, bool) {
+	pathSource := s
+	if i := strings.Index(pathSource, "://"); i >= 0 {
+		pathSource = pathSource[i+3:]
+	}
+	if i := strings.LastIndex(pathSource, "@"); i >= 0 {
+		pathSource = pathSource[i+1:]
+	}
+	if !strings.Contains(s, "://") && !strings.Contains(s, "@") && !strings.Contains(pathSource, ":") {
+		// Bare project path (group/repository) pasted without URL decoration.
+		return pathSource, true
+	}
+	if !strings.Contains(pathSource, "/") {
+		// bare host without path is not a repository reference
+		return "", false
+	}
+	host := pathSource[:strings.IndexAny(pathSource, "/:")]
+	if !strings.EqualFold(host, GongfengRepoHost) {
+		return "", false
+	}
+	path := pathSource[len(host)+1:]
+	if pathSource[len(host)] == ':' {
+		// git.example.com:group/repo.git (scp) or git.example.com:22/group/repo.git
+		if j := strings.Index(path, "/"); j >= 0 && isAllDigits(path[:j]) {
+			path = path[j+1:]
+		}
+	}
+	return path, true
 }
 
 // normalizeGongfengProjectPath strips clone suffixes and sub page markers from
