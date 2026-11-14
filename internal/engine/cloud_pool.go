@@ -51,13 +51,17 @@ func ParseCloudRunnerProjects(raw string) []string {
 // It reports false when the pool is off for the project or has no runner
 // able to execute a run end to end; the run then executes on this host.
 func (e *Engine) cloudPoolRunner(projectID string) (domain.Runner, bool) {
+	return e.cloudPoolRunnerForCheckpoints(projectID, false)
+}
+
+func (e *Engine) cloudPoolRunnerForCheckpoints(projectID string, checkpoints bool) (domain.Runner, bool) {
 	e.mu.Lock()
 	pool := e.cloudPool
 	e.mu.Unlock()
 	if !pool.serves(projectID) {
 		return domain.Runner{}, false
 	}
-	return e.pickPoolRunner(pool.Label)
+	return e.pickPoolRunnerForCheckpoints(pool.Label, checkpoints)
 }
 
 // ConversationCloudRunner allocates once. Later turns use the conversation's
@@ -72,6 +76,7 @@ func (e *Engine) ConversationCloudRunner(projectID string) (string, error) {
 	for _, runner := range e.repo.Runners() {
 		if poolRunnerEligible(runner, pool.Label) && runner.SupportsConversationCLI() {
 			return runner.ID, nil
+
 		}
 	}
 	return "", fmt.Errorf("云端暂无支持对话的在线执行机器，请升级 Runner 后重试")
@@ -84,6 +89,23 @@ func (pool CloudRunnerPool) serves(projectID string) bool {
 
 func (e *Engine) pickPoolRunner(label string) (domain.Runner, bool) {
 	candidates := e.eligiblePoolRunners(label)
+	if len(candidates) == 0 {
+		return domain.Runner{}, false
+	}
+	return candidates[rand.Intn(len(candidates))], true
+}
+
+func (e *Engine) pickPoolRunnerForCheckpoints(label string, checkpoints bool) (domain.Runner, bool) {
+	candidates := e.eligiblePoolRunners(label)
+	if checkpoints {
+		filtered := candidates[:0]
+		for _, runner := range candidates {
+			if runner.SupportsNodeCheckpoints() {
+				filtered = append(filtered, runner)
+			}
+		}
+		candidates = filtered
+	}
 	if len(candidates) == 0 {
 		return domain.Runner{}, false
 	}
@@ -191,7 +213,7 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 	previous := strings.TrimSpace(ec.ExecutionRunnerID)
 	if previous != "" && !convert {
 		runner, ok := e.repo.Runner(previous)
-		if ok && runner.Status == domain.RunnerStatusOnline {
+		if ok && runner.Status == domain.RunnerStatusOnline && (!ec.NodeCheckpointsEnabled || runner.SupportsNodeCheckpoints()) {
 			return run, nil
 		}
 		// The checkout lives only on that machine: nodes do not push
@@ -214,7 +236,7 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 	announced := false
 	for {
 		var ok bool
-		if runner, ok = e.pickPoolRunner(label); ok {
+		if runner, ok = e.pickPoolRunnerForCheckpoints(label, ec.NodeCheckpointsEnabled); ok {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -276,7 +298,7 @@ func (e *Engine) waitForBoundPoolRunner(ctx context.Context, run domain.Run, nod
 			}
 			return run, fmt.Errorf("执行机器 %s 在 %d 分钟内未恢复在线，工作区和之前节点的代码改动仍保留在原机器上；请等该机器恢复后重试，或从头重跑", name, int(poolBindWait/time.Minute))
 		}
-		if runner, ok := e.repo.Runner(run.ExecutionContext.ExecutionRunnerID); ok && runner.Status == domain.RunnerStatusOnline {
+		if runner, ok := e.repo.Runner(run.ExecutionContext.ExecutionRunnerID); ok && runner.Status == domain.RunnerStatusOnline && (!run.ExecutionContext.NodeCheckpointsEnabled || runner.SupportsNodeCheckpoints()) {
 			e.updateRun(run.ID, func(c *domain.Run) {
 				e.event(c, nodeID, "execution.resumed", fmt.Sprintf("执行机器 %s 已恢复在线，继续使用原工作区", name))
 			})

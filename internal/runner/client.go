@@ -225,6 +225,10 @@ func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.do(ctx, http.MethodPost, "/runners/tasks/"+taskID+"/start", map[string]any{}, nil)
 }
 
+func (c *Client) ValidateCheckpointLease(ctx context.Context, runID, token string) error {
+	return c.do(ctx, http.MethodPost, "/runners/workspace/checkpoint-lease", map[string]string{"runId": runID, "token": token}, nil)
+}
+
 type RenewResponse struct {
 	LeaseUntil   time.Time `json:"leaseUntil"`
 	DesiredState string    `json:"desiredState"`

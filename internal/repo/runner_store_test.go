@@ -203,6 +203,57 @@ func TestRunnerTaskLeaseLifecycle(t *testing.T) {
 	}
 }
 
+func TestRunnerNodeCheckpointTaskLeaseFollowsWorkspaceLease(t *testing.T) {
+	s := newTestRunner(t)
+	run := domain.Run{ID: "checkpoint-owner", Status: "running", Nodes: map[string]*domain.NodeRun{}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	token, err := s.BeginWorkspaceUse(run.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := domain.RunnerTask{ID: "checkpoint-task", Provider: "codex", RunID: run.ID, NodeCheckpointAttempt: 3, NodeCheckpointRunID: run.ID, NodeCheckpointLease: token, MaxAttempts: 1}
+	if err := s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := s.ClaimRunnerTask("runner-a", []string{"codex"}, now, time.Minute)
+	if err != nil || !ok || claimed.NodeCheckpointAttempt != 3 || claimed.NodeCheckpointRunID != run.ID || claimed.NodeCheckpointLease != token {
+		t.Fatalf("checkpoint task payload: %+v, %v, %v", claimed, ok, err)
+	}
+	if err := s.StartRunnerTask(task.ID, "runner-a", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishWorkspaceUse(run.ID, token, now, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RenewRunnerTaskLease(task.ID, "runner-a", time.Minute, now); err != ErrRunnerTaskLeaseLost {
+		t.Fatalf("task kept lease after workspace lease ended: %v", err)
+	}
+}
+
+func TestActiveRunnerTasksForWorkspaceIncludesChildSOP(t *testing.T) {
+	s := newTestRunner(t)
+	if err := s.PutRun(domain.Run{ID: "legacy-child", Status: "running", ExecutionContext: domain.TelemetryContext{WorkspaceRunID: "parent"}, Nodes: map[string]*domain.NodeRun{}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []domain.RunnerTask{
+		{ID: "parent-task", RunID: "parent", Provider: "codex", NodeCheckpointRunID: "parent"},
+		{ID: "child-task", RunID: "child", Provider: "codex", NodeCheckpointRunID: "parent"},
+		{ID: "legacy-child-task", RunID: "legacy-child", Provider: "codex"},
+		{ID: "unrelated-task", RunID: "other", Provider: "codex", NodeCheckpointRunID: "other"},
+	} {
+		if err := s.PutRunnerTask(task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tasks, err := s.ActiveRunnerTasksForWorkspace("parent")
+	if err != nil || len(tasks) != 3 {
+		t.Fatalf("active shared tasks = %+v, %v", tasks, err)
+	}
+}
+
 func TestCanceledQueuedRunnerTaskScrubsCredentials(t *testing.T) {
 	s := newTestRunner(t)
 	task := putQueuedTask(t, s, "rt-cancel-secret", "claude-code", "", 0)

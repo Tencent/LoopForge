@@ -356,11 +356,12 @@ type IssueComment struct {
 }
 
 type RejectRequest struct {
-	Expected *NodeDecisionExpectation `json:"expected,omitempty"`
-	NodeID   string                   `json:"nodeId"`
-	TargetID string                   `json:"targetId"`
-	Reason   string                   `json:"reason"`
-	Context  string                   `json:"context,omitempty"`
+	Expected         *NodeDecisionExpectation `json:"expected,omitempty"`
+	NodeID           string                   `json:"nodeId"`
+	TargetID         string                   `json:"targetId"`
+	Reason           string                   `json:"reason"`
+	Context          string                   `json:"context,omitempty"`
+	RestoreWorkspace bool                     `json:"restoreWorkspace,omitempty"`
 }
 
 // HumanDecision is the shared payload for approve / retry so operators can

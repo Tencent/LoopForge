@@ -139,27 +139,52 @@ func (r *Run) UnmarshalJSON(raw []byte) error {
 }
 
 type NodeRun struct {
-	NodeID          string      `json:"nodeId"`
-	Status          string      `json:"status"`
-	Attempt         int         `json:"attempt"`
-	ReworkCount     int         `json:"reworkCount"`
-	SandboxID       string      `json:"sandboxId,omitempty"`
-	Output          string      `json:"output,omitempty"`
-	Error           string      `json:"error,omitempty"`
-	Provider        string      `json:"provider,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	SessionID       string      `json:"sessionId,omitempty"`
-	ResumeSessionID string      `json:"resumeSessionId,omitempty"`
-	Activity        string      `json:"activity,omitempty"`
-	Feedback        string      `json:"feedback,omitempty"`
-	Usage           TokenUsage  `json:"usage"`
-	UsageSessionID  string      `json:"usageSessionId,omitempty"`
-	UsageCursor     TokenUsage  `json:"usageCursor,omitempty"`
-	ToolCalls       int         `json:"toolCalls"`
-	GateResult      *GateResult `json:"gateResult,omitempty"`
-	ChildRunID      string      `json:"childRunId,omitempty"`
-	StartedAt       time.Time   `json:"startedAt,omitzero"`
-	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+	NodeID              string           `json:"nodeId"`
+	Status              string           `json:"status"`
+	Attempt             int              `json:"attempt"`
+	ReworkCount         int              `json:"reworkCount"`
+	SandboxID           string           `json:"sandboxId,omitempty"`
+	Output              string           `json:"output,omitempty"`
+	Error               string           `json:"error,omitempty"`
+	Provider            string           `json:"provider,omitempty"`
+	Model               string           `json:"model,omitempty"`
+	SessionID           string           `json:"sessionId,omitempty"`
+	ResumeSessionID     string           `json:"resumeSessionId,omitempty"`
+	Activity            string           `json:"activity,omitempty"`
+	Feedback            string           `json:"feedback,omitempty"`
+	Usage               TokenUsage       `json:"usage"`
+	UsageSessionID      string           `json:"usageSessionId,omitempty"`
+	UsageCursor         TokenUsage       `json:"usageCursor,omitempty"`
+	ToolCalls           int              `json:"toolCalls"`
+	GateResult          *GateResult      `json:"gateResult,omitempty"`
+	ChildRunID          string           `json:"childRunId,omitempty"`
+	StartedAt           time.Time        `json:"startedAt,omitzero"`
+	FinishedAt          time.Time        `json:"finishedAt,omitzero"`
+	Checkpoints         []NodeCheckpoint `json:"checkpoints,omitempty"`
+	RecoveryCheckpoints []NodeCheckpoint `json:"recoveryCheckpoints,omitempty"`
+	RestoreCheckpoint   bool             `json:"restoreCheckpoint,omitempty"`
+	Rewound             bool             `json:"rewound,omitempty"`
+}
+
+// NodeCheckpoint identifies one attempt's workspace state. Its private refs
+// live in the workspace and disappear with it.
+type NodeCheckpoint struct {
+	ID           string                     `json:"id,omitempty"`
+	Attempt      int                        `json:"attempt"`
+	CreatedAt    time.Time                  `json:"createdAt"`
+	Repositories []NodeRepositoryCheckpoint `json:"repositories,omitempty"`
+	End          []NodeRepositoryCheckpoint `json:"end,omitempty"`
+	ChangedFiles []string                   `json:"changedFiles,omitempty"`
+}
+
+type NodeRepositoryCheckpoint struct {
+	RepositoryID string `json:"repositoryId,omitempty"`
+	WorkspaceDir string `json:"workspaceDir,omitempty"`
+	Ref          string `json:"ref"`
+	Commit       string `json:"commit"`
+	Head         string `json:"head"`
+	Branch       string `json:"branch,omitempty"`
+	FileCount    int    `json:"fileCount"`
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
@@ -225,6 +250,7 @@ type RunEvent struct {
 	NodeID    string    `json:"nodeId,omitempty"`
 	Type      string    `json:"type"`
 	Message   string    `json:"message"`
+	ActorID   int64     `json:"actorId,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

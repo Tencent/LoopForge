@@ -104,6 +104,20 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		if r.Generation != generation || !e.ownsRun(r) {
 			return
 		}
+		if r.ExecutionContext.NodeCheckpointsEnabled {
+			failed, err := e.repo.FailedSharedNodeRestore(runID, workspaceRunID(r))
+			if err != nil {
+				stopNodes()
+				return
+			}
+			if failed {
+				stopNodes()
+				if parked, err := e.repo.ParkAfterSharedNodeRestore(runID, workspaceRunID(r), e.instanceID, generation, time.Now().UTC()); err == nil && parked {
+					e.publish(runID)
+				}
+				return
+			}
+		}
 		wf := workflowForRun(e.repo, r)
 		e.reconcileNodeExecutions(runID)
 		inflightMu.Lock()
@@ -322,6 +336,29 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// node (a resume, rework or takeover racing a winding-down attempt) waits.
 	unlock := e.lockNodeExec(runID, node.ID)
 	defer unlock()
+	if currentLease.ExecutionContext.NodeCheckpointsEnabled && node.Type != "sop" && node.Type != "approval" {
+		checkpointCtx, cancelCheckpoint := context.WithCancel(ctx)
+		defer cancelCheckpoint()
+		ctx = checkpointCtx
+		checkpointToken, releaseWorkspace, err := e.acquireNodeCheckpointWorkspace(ctx, currentLease, cancelCheckpoint)
+		if err != nil {
+			// Transition through the usual execution path so the reason is visible.
+			e.updateRun(runID, func(r *domain.Run) {
+				if nr := r.Nodes[node.ID]; nr != nil && nr.Status == "pending" {
+					nr.Status, nr.Error = "failed", "无法取得检查点工作区："+err.Error()
+				}
+			})
+			return
+		}
+		defer releaseWorkspace()
+		ctx = context.WithValue(ctx, nodeCheckpointLeaseKey{}, checkpointToken)
+	}
+	// Lock and lease acquisition can take longer than a run lease. Never use
+	// the stale generation captured before waiting to start a node.
+	currentLease, ok = e.repo.RunState(runID)
+	if !ok || !e.ownsRun(currentLease) || ctx.Err() != nil {
+		return
+	}
 	executionGeneration := currentLease.Generation
 	executionAttempt := 0
 	started := false
@@ -575,6 +612,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if preparationErr != nil {
 		failNode(preparationErr, nodeRejects(node))
 		return
+	}
+	if current.ExecutionContext.NodeCheckpointsEnabled {
+		if err := e.prepareNodeCheckpoint(ctx, current, node, executionAttempt, executionGeneration, sb); err != nil {
+			// A checkpoint failure cannot safely be retried as a model failure.
+			failNode(fmt.Errorf("%w: 节点检查点失败：%v", ErrWorkspaceControlConfiguration, err), false)
+			return
+		}
 	}
 	// The environment is ready and this node's inputs are in place; parallel
 	// branches execute from here on without holding the environment lock.
@@ -951,6 +995,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "agent.loop", Phase: "progress", Message: fmt.Sprintf("第 %d 轮未通过，进入自修正", iteration), Attributes: map[string]any{"iteration": iteration, "maxIterations": maxIterations, "feedback": loopFeedback}})
 	}
 	e.attachLoopRetro(runID, node.ID, retroWorkspace, lastIteration, err, failedAction)
+	if current.ExecutionContext.NodeCheckpointsEnabled && ctx.Err() == nil {
+		if checkpointErr := e.finishNodeCheckpoint(ctx, current, node, executionAttempt, executionGeneration, sb); checkpointErr != nil {
+			failNode(fmt.Errorf("%w: 保存节点结束检查点失败：%v", ErrWorkspaceControlConfiguration, checkpointErr), false)
+			return
+		}
+	}
 	if err != nil {
 		e.freezeAvailableArtifacts(runID, effectiveNode, sb.Workspace(), reported, output)
 		if ctx.Err() != nil || runtime.IsSandboxInterrupt(err) {

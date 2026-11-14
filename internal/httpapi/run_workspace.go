@@ -139,6 +139,10 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		c.JSON(http.StatusGone, map[string]string{"error": reason})
 		return
 	}
+	if c.FullPath() == "/api/runs/:id/workspace/diff" && (c.Query("node") != "" || c.Query("attempt") != "") {
+		h.nodeCheckpointDiff(c, run)
+		return
+	}
 	if runnerID := h.engine.RunExecutionRunner(run); runnerID != "" {
 		if _, exists := h.repo.Runner(runnerID); !exists {
 			reason := "执行机器 Daemon 已卸载，工作区已随之删除；重新连接执行机器也无法恢复此工作区"
@@ -445,21 +449,7 @@ func resolveWorkspacePath(root, raw string, wantDir bool) (string, string, error
 }
 
 func workspacePathSensitive(rel string) bool {
-	parts := strings.Split(strings.ToLower(filepath.ToSlash(rel)), "/")
-	for i, part := range parts {
-		switch part {
-		case ".git", ".agentflow", ".ssh", ".gnupg", ".netrc", ".npmrc", "id_rsa", "id_ed25519":
-			return true
-		case "private-home", "runtime":
-			if i > 0 && parts[i-1] == ".agentflow" {
-				return true
-			}
-		}
-		if part == ".env" || strings.HasPrefix(part, ".env.") && !strings.HasSuffix(part, ".example") {
-			return true
-		}
-	}
-	return false
+	return runtime.WorkspacePathSensitive(rel)
 }
 
 func workspaceTreeSkipped(rel string, d fs.DirEntry) bool {

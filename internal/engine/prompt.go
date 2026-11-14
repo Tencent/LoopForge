@@ -60,6 +60,15 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	feedback := ""
 	if current := run.Nodes[node.ID]; current != nil {
 		feedback = current.Feedback
+		if node.RetryStrategy == "targeted_fix" && len(current.Checkpoints) > 1 {
+			previous := current.Checkpoints[len(current.Checkpoints)-2]
+			if len(previous.ChangedFiles) > 0 {
+				feedback += "\n上一轮变更文件：\n- " + strings.Join(previous.ChangedFiles, "\n- ")
+			}
+		}
+	}
+	if strings.TrimSpace(feedback) != "" && !strings.Contains(prompt, "{{feedback}}") {
+		prompt += "\n\n## 上一轮反馈\n\n{{feedback}}"
 	}
 	prompt = strings.ReplaceAll(prompt, "{{feedback}}", feedback)
 	humanNote := strings.TrimSpace(run.HumanContext)

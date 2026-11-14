@@ -108,7 +108,7 @@ function blankProjectDraft(){return {id:'',key:'',name:'',description:'',color:P
 function projectDraftFrom(project){const d=clone(project)||{};d.members=(d.members||[]).filter(m=>Number(m.userId)!==Number(d.ownerId)).map(m=>({userId:Number(m.userId)||0,role:'member'}));d.tapdClear=false;return d}
 function projectDraftSignature(d){
   d=d||{};
-  return JSON.stringify({id:String(d.id||''),key:String(d.key||'').trim().toUpperCase(),name:String(d.name||'').trim(),description:String(d.description||''),color:String(d.color||'').toLowerCase(),ownerId:Number(d.ownerId)||0,workflowId:String(d.workflowId||''),defaultRepositoryId:String(d.defaultRepositoryId||''),businessDomainId:String(d.businessDomainId||''),tapdWorkspaceId:String(d.tapdWorkspaceId||'').trim(),tapdIterationId:String(d.tapdIterationId||'').trim(),tapdClear:!!d.tapdClear,members:(d.members||[]).map(m=>Number(m.userId)||0)});
+  return JSON.stringify({id:String(d.id||''),key:String(d.key||'').trim().toUpperCase(),name:String(d.name||'').trim(),description:String(d.description||''),color:String(d.color||'').toLowerCase(),ownerId:Number(d.ownerId)||0,workflowId:String(d.workflowId||''),defaultRepositoryId:String(d.defaultRepositoryId||''),businessDomainId:String(d.businessDomainId||''),nodeCheckpointsDisabled:!!d.nodeCheckpointsDisabled,tapdWorkspaceId:String(d.tapdWorkspaceId||'').trim(),tapdIterationId:String(d.tapdIterationId||'').trim(),tapdClear:!!d.tapdClear,members:(d.members||[]).map(m=>Number(m.userId)||0)});
 }
 function projectDraftDirty(draft,base){return !!draft&&!!base&&projectDraftSignature(draft)!==projectDraftSignature(base)}
 function projectAdminDirty(){return !!state.projectAdminDetailId&&state.projectDraftFor===state.projectAdminDetailId&&projectDraftDirty(state.projectDraft,state.projectDraftBase)}
@@ -185,6 +185,7 @@ function projectAdminFormHTML(d,ctx){
       ${creating&&!Number(state.currentUser?.id)?paRow('项目 Owner','项目的默认责任人，创建后可在「项目成员」中调整。',userCombobox('ownerId',d.ownerId,'请选择项目 Owner'),{required:true}):''}
       ${paRow('默认 SOP','用于新需求的默认流程；已关联 SOP 的需求保留原绑定。',projectDefaultSOPField(d),{required:true})}
       ${paRow('默认代码仓库',repoDesc,`<select name="defaultRepositoryId" class="select" ${repos.length?'':'disabled'}><option value="">暂未绑定</option>${repoOptions}</select>`)}
+      ${!creating?paRow('节点检查点','记录节点执行前后的代码状态，用于查看改动和回滚；大仓库可能增加执行耗时。',`<label class="pa-switch-wrap"><input type="checkbox" name="nodeCheckpointsEnabled" role="switch" ${d.nodeCheckpointsDisabled?'':'checked'} aria-label="启用节点检查点"><span class="pa-switch"></span></label>`,{attrs:' data-pa-row-inline'}):''}
     </div>`);
   const owner=userById(d.ownerId);
   const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><span class="member-kind">成员</span>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
@@ -269,6 +270,7 @@ function captureProjectAdminForm(){
   ['name','description','color','workflowId','defaultRepositoryId','tapdWorkspaceId','tapdIterationId','key'].forEach(n=>{if(el[n])d[n]=el[n].value});
   if(state.projectAdminDetailId==='new'&&el.id)d.id=el.id.value.trim();
   if(el.tapdClear)d.tapdClear=!!el.tapdClear.checked;
+  if(el.nodeCheckpointsEnabled)d.nodeCheckpointsDisabled=!el.nodeCheckpointsEnabled.checked;
   if(el.ownerId){
     d.ownerId=Number(el.ownerId.value)||0;
     d.members=[...form.querySelectorAll('[data-member-row]')].map(row=>({userId:Number(row.querySelector('input[type="hidden"]')?.value)||0,role:'member'}));
