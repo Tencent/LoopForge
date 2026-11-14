@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -52,11 +53,11 @@ func (s *dockerSandbox) ensureScriptContainer(ctx context.Context) error {
 	if base.ID == "" || base.Image == "" {
 		return fmt.Errorf("script execution environment metadata is incomplete")
 	}
-	arch, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Architecture}}", base.Image).Output()
+	arch, err := dockerScriptArchitecture(ctx, s.name, base.Image)
 	if err != nil {
-		return fmt.Errorf("inspect script environment architecture: %w", err)
+		return err
 	}
-	binary, err := resolveGateMCPBinary("linux", strings.TrimSpace(string(arch)))
+	binary, err := resolveGateMCPBinary("linux", arch)
 	if err != nil {
 		return fmt.Errorf("script view helper unavailable: %w", err)
 	}
@@ -103,6 +104,53 @@ func (s *dockerSandbox) ensureScriptContainer(ctx context.Context) error {
 	}
 	ready = true
 	return nil
+}
+
+// dockerScriptArchitecture picks the helper architecture for the running
+// workspace container. Image metadata is preferred, but it can be missing
+// while the container still runs (the image was untagged or reclaimed after
+// it started), so the container's own uname is the fallback. Both failures are
+// reported with docker's stderr instead of a bare exit status. Only stdout is
+// parsed: docker may print warnings to stderr even when a command succeeds.
+func dockerScriptArchitecture(ctx context.Context, container, image string) (string, error) {
+	out, imageErr := dockerStdout(ctx, "image", "inspect", "--format", "{{.Architecture}}", image)
+	if imageErr == nil {
+		return out, nil
+	}
+	machine, unameErr := dockerStdout(ctx, "exec", container, "uname", "-m")
+	if unameErr == nil {
+		if arch := dockerMachineArchitecture(machine); arch != "" {
+			return arch, nil
+		}
+		unameErr = fmt.Errorf("unrecognized machine %q", machine)
+	}
+	return "", fmt.Errorf("inspect script environment architecture: image %s: %v; container uname: %v", image, imageErr, unameErr)
+}
+
+// dockerStdout runs docker and returns its trimmed stdout. On failure the
+// error carries docker's stderr, which Output collects when Stderr is unset.
+func dockerStdout(ctx context.Context, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// dockerMachineArchitecture maps `uname -m` to the Go architecture names the
+// helper binaries are published under.
+func dockerMachineArchitecture(machine string) string {
+	switch strings.TrimSpace(machine) {
+	case "x86_64", "amd64":
+		return "amd64"
+	case "aarch64", "arm64":
+		return "arm64"
+	}
+	return ""
 }
 
 func dockerScriptCreateArgs(name, base, workspace, image, owner string) []string {

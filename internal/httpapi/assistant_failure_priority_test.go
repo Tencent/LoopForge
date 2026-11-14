@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 )
 
 func TestAssistantFailureClassifiesErrorBeforeStderrNoise(t *testing.T) {
@@ -21,6 +22,9 @@ func TestAssistantFailureClassifiesErrorBeforeStderrNoise(t *testing.T) {
 		{"openai model name in 404", errors.New("unexpected status 404 Not Found: The model `nope` does not exist"), "MODEL_UNAVAILABLE"},
 		{"quoted model name", errors.New(`The model "gpt-x" does not exist or you do not have access to it`), "MODEL_UNAVAILABLE"},
 		{"plain exit", errors.New("exit status 1"), "CLI_EXIT_NONZERO"},
+		// Issue #660: a docker setup step failed before the CLI was launched.
+		{"setup failed before launch", fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, fmt.Errorf("inspect script environment architecture: %w", errors.New("exit status 1"))), "WORKSPACE_SETUP_FAILED"},
+		{"provider cause still wins before launch", fmt.Errorf("%w: unexpected status 401 Unauthorized", runtime.ErrConversationNotStarted), "AUTHENTICATION_FAILED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := classifyAssistantFailure(context.Background(), tc.err).Code; got != tc.want {
