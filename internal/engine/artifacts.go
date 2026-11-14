@@ -295,45 +295,76 @@ func collectArtifactsMode(outputs nodeOutputs, run domain.Run, node domain.Workf
 	}
 	for _, rc := range contractTargets {
 		for _, contract := range contracts {
-			rel, ok := artifactRelPath(rc.WorkspaceDir, contract.Path)
-			if contract.Name == "" || !ok {
-				if bestEffort {
-					continue
-				}
-				return nil, fmt.Errorf("invalid artifact %q path %q", contract.Name, contract.Path)
-			}
-			clean := filepath.Clean(contract.Path)
-			content, err := outputs.readFile(rel)
+			artifact, ok, err := contractArtifact(outputs, run.ID, node.ID, attempt, rc, contract, bestEffort)
 			if err != nil {
-				if bestEffort || errors.Is(err, fs.ErrNotExist) && !contract.Required {
-					continue
-				}
-				if errors.Is(err, errOutputTooLarge) {
-					return nil, fmt.Errorf("%s exceeds %d bytes", contract.Name, maxArtifactBytes)
-				}
-				return nil, fmt.Errorf("%s (%s): %w", contract.Name, rc.WorkspaceDir, err)
+				return nil, err
 			}
-			if len(content) > maxArtifactBytes {
-				if bestEffort {
-					continue
-				}
-				return nil, fmt.Errorf("%s exceeds %d bytes", contract.Name, maxArtifactBytes)
+			if ok {
+				out = append(out, artifact)
 			}
-			mediaType := contract.MediaType
-			if mediaType == "" {
-				mediaType = "text/markdown"
-			}
-			artifact := newArtifact(run.ID, node.ID, attempt, contract.Name, clean, mediaType, content)
-			artifact.RepositoryDir = rc.WorkspaceDir
-			out = append(out, artifact)
 		}
 	}
+	patches, err := repositoryPatchArtifacts(outputs, run, node.ID, attempt, bestEffort)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, patches...)
+	if len(out) == 0 {
+		if bestEffort {
+			return nil, nil
+		}
+		out = append(out, newArtifact(run.ID, node.ID, attempt, "result", "result.md", "text/markdown", []byte(output)))
+	}
+	return out, nil
+}
+
+// contractArtifact reads one declared artifact output for one repository
+// context. ok=false means the contract was skipped: invalid, unreadable or
+// oversized outputs in best-effort mode, or a missing optional output.
+func contractArtifact(outputs nodeOutputs, runID, nodeID string, attempt int, rc domain.RepositoryContext, contract domain.ArtifactContract, bestEffort bool) (domain.Artifact, bool, error) {
+	rel, ok := artifactRelPath(rc.WorkspaceDir, contract.Path)
+	if contract.Name == "" || !ok {
+		if bestEffort {
+			return domain.Artifact{}, false, nil
+		}
+		return domain.Artifact{}, false, fmt.Errorf("invalid artifact %q path %q", contract.Name, contract.Path)
+	}
+	clean := filepath.Clean(contract.Path)
+	content, err := outputs.readFile(rel)
+	if err != nil {
+		if bestEffort || errors.Is(err, fs.ErrNotExist) && !contract.Required {
+			return domain.Artifact{}, false, nil
+		}
+		if errors.Is(err, errOutputTooLarge) {
+			return domain.Artifact{}, false, fmt.Errorf("%s exceeds %d bytes", contract.Name, maxArtifactBytes)
+		}
+		return domain.Artifact{}, false, fmt.Errorf("%s (%s): %w", contract.Name, rc.WorkspaceDir, err)
+	}
+	if len(content) > maxArtifactBytes {
+		if bestEffort {
+			return domain.Artifact{}, false, nil
+		}
+		return domain.Artifact{}, false, fmt.Errorf("%s exceeds %d bytes", contract.Name, maxArtifactBytes)
+	}
+	mediaType := contract.MediaType
+	if mediaType == "" {
+		mediaType = "text/markdown"
+	}
+	artifact := newArtifact(runID, nodeID, attempt, contract.Name, clean, mediaType, content)
+	artifact.RepositoryDir = rc.WorkspaceDir
+	return artifact, true, nil
+}
+
+// repositoryPatchArtifacts collects one non-empty patch per repository
+// context. Patch errors are skipped in best-effort mode.
+func repositoryPatchArtifacts(outputs nodeOutputs, run domain.Run, nodeID string, attempt int, bestEffort bool) ([]domain.Artifact, error) {
 	patchTargets := run.RepositoryContexts()
 	if len(patchTargets) == 0 {
 		// Runs without any repository context still collect a workspace-root
 		// patch so handoff between nodes keeps working.
 		patchTargets = []domain.RepositoryContext{{}}
 	}
+	var out []domain.Artifact
 	for _, rc := range patchTargets {
 		patch, err := outputs.repositoryPatch(rc.WorkspaceDir)
 		if err != nil {
@@ -349,15 +380,9 @@ func collectArtifactsMode(outputs nodeOutputs, run domain.Run, node domain.Workf
 		if rc.WorkspaceDir != "" {
 			name = fmt.Sprintf("repository-%s.patch", rc.WorkspaceDir)
 		}
-		artifact := newArtifact(run.ID, node.ID, attempt, "repository-patch", name, "text/plain", patch)
+		artifact := newArtifact(run.ID, nodeID, attempt, "repository-patch", name, "text/plain", patch)
 		artifact.RepositoryDir = rc.WorkspaceDir
 		out = append(out, artifact)
-	}
-	if len(out) == 0 {
-		if bestEffort {
-			return nil, nil
-		}
-		out = append(out, newArtifact(run.ID, node.ID, attempt, "result", "result.md", "text/markdown", []byte(output)))
 	}
 	return out, nil
 }
