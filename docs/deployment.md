@@ -58,7 +58,7 @@ MIRROR=ghcr.nju.edu.cn ./start.sh pull
 
 `./start.sh dev` (or `LOOPFORGE_BUILD_FROM_SOURCE=1 bash scripts/install.sh`) builds this checkout as `loopforge-platform:local` from `compose.dev.yaml`. It saves `COMPOSE_FILE=compose.yaml:compose.dev.yaml` in `.env`, so later runs and plain `docker compose` commands keep using the source build until `./start.sh release`. Source builds reuse npm, Go module and Go compiler caches.
 
-Pushing a `vX.Y.Z` tag on `main` runs the `release` workflow once the `platform` workflow has passed on that commit. The tagged `compose.yaml` must already pin `loopforge:X.Y.Z`. It publishes `ghcr.io/<owner>/loopforge` as `X.Y.Z`, `X.Y`, `latest` and `sha-<commit>`, smoke-tests the pushed digest with `./start.sh`, and creates the GitHub Release. Forks publish under their own owner; set the GHCR package visibility/access for your team before distributing the image. Images are pulled only when missing by default; use an immutable tag/digest, or set `LOOPFORGE_PULL_POLICY=always` when updating a mutable tag. Existing `.env` values take precedence; change the saved image or URL there when updating an installation. Compose waits for the API's health check with a bounded timeout before installing schema extensions and seeds.
+Pushing a `vX.Y.Z` tag on `main` runs the `release` workflow once the `platform` workflow has passed on that commit. The tagged `compose.yaml` must already pin `loopforge:X.Y.Z`. It pushes the versioned image, smoke-tests the pushed digest with `bash scripts/install.sh`, and verifies an upgrade from the preceding published stable platform release. Only after both checks pass does it promote the `X.Y`, `latest` and `sha-<commit>` image tags and create the GitHub Release (`latest` is omitted for prereleases). A failed check may leave the versioned image available, but does not promote mutable tags or create a Release. Forks publish under their own owner and must pin that owner's image in `compose.yaml`; set the GHCR package visibility/access for your team before distributing it. Images are pulled only when missing by default; use an immutable tag/digest, or set `LOOPFORGE_PULL_POLICY=always` when updating a mutable tag. Existing `.env` values take precedence; change the saved image or URL there when updating an installation. Compose waits for the API's health check with a bounded timeout before installing schema extensions and seeds.
 
 Open the platform and create the first account in the browser; it receives platform administration. Until that account exists the login page only offers this setup step.
 
@@ -105,6 +105,37 @@ Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other 
 Repositories automatically use the current user's key for their SSH host and port; repositories on the same host and port share that key. The repository form only shows a red warning when that host has no personal key. This reminder does not block saving the repository or completing setup; credentials and host trust can be configured before the first Git operation. There is no repository-specific or default fallback key. Checkout and SOP execution use the responsible user's keys. Conversation submission and the workspace terminal use the requesting user's keys. The temporary signing agent closes when the command or terminal ends. A terminal's agent never lives in the shared workspace: with the `bwrap` driver it sits in a private directory bound only into that terminal, and with the `local` driver (no isolation) it stays outside the workspace in a 0700 directory. Docker and seatbelt workspaces share one filesystem view among all their processes, so their terminals get no personal SSH key; push from there with the platform's submit action. `git@github.com:` and `ssh://git@github.com/` addresses are saved as GitHub repositories (HTTPS + token, automatic pull requests) unless `provider` is explicitly `ssh`. To rotate a key, replace it in settings and revoke the old public key at the host.
 
 SSH handles clone, fetch and push. A conversation delivery returns the branch and commit SHA. You can optionally add a repository web URL to open the host and create a PR/MR manually. Issue import and PR/MR automation need a hosting API credential. To automate those actions, add a hosting-specific MCP in **Settings → Assets → MCP**, give it its own scoped token, and attach it to the relevant agent or workflow. [CNB does not support Git SSH](https://docs.cnb.cool/en/guide/git-access.html); it uses HTTPS with a CNB access token, which is outside this integration.
+
+## Upgrading an existing installation
+
+For an installation created with `git clone https://github.com/Tencent/LoopForge.git` followed by `bash scripts/install.sh`, upgrade in that same directory as the installation owner. Back up the MySQL database, `.env` and the directory named by `LOOPFORGE_DATA_DIR` first. Review every intervening release in [CHANGELOG.md](../CHANGELOG.md); execute any required SQL migrations at the point specified by that release. The installer does not replay historical data migrations.
+
+```bash
+git fetch origin --tags
+git checkout vX.Y.Z   # replace with the published release you want
+bash scripts/install.sh
+./start.sh logs
+```
+
+The release checkout carries the matching image pin, installer and SQL files. Keep the original `.env`, `LOOPFORGE_DATA_DIR` and `COMPOSE_PROJECT_NAME` so the updated containers reuse the same database, conversations and workspaces. The installer waits for health before returning; container replacement briefly interrupts the service. Verify sign-in, existing conversations and a script/approval SOP after upgrading. `./start.sh` invokes the same installer.
+
+The container hostname identifies the host that owns a workspace. The installer saves it as `LOOPFORGE_WORKSPACE_HOST` in `.env` and keeps it across image changes. On the first upgrade of an older installation, it adopts the existing platform container's hostname, including when that container is stopped. Keep that container until the installer replaces it; if it has already been removed, set `LOOPFORGE_WORKSPACE_HOST` to the previous workspace host recorded on the runs before upgrading. Keep this setting stable on later upgrades.
+
+If `LOOPFORGE_IMAGE` in `.env` is nonempty, it overrides the checkout's image pin: update it to the target version/digest or clear it to use the release's default. A saved `COMPOSE_FILE=compose.yaml:compose.dev.yaml` selects a source build; use `./start.sh release` to switch back to published images. `./start.sh pull` pulls the configured image without changing its version. A database migration may prevent a simple image downgrade; restore the matching backups when a release requires it.
+
+### Release upgrade validation
+
+The tag workflow selects the greatest stable platform version below the target from published GitHub Releases. It excludes drafts, prereleases, the target itself, newer versions and the pre-platform Local history; a missing baseline fails the release except for the first platform release (`v0.3.0`).
+
+`scripts/test-upgrade.sh` clones the repository into a disposable directory and Compose project, checks out that previous release, runs `bash scripts/install.sh`, and creates real user data through the API. It then fetches tags, checks out the target and runs the same installer. It requires the running container to match the release job's pushed image digest, retains the original MySQL volume, container hostname and existing `.env` settings (adding the stable hostname for legacy installations), and checks the old login cookie/password, project, requirement/comment, customized seeded rule, conversation, attachment and run workspace. It resumes a SOP that waited for approval before the upgrade, completes a new SOP, and repeats installation to check idempotence. No model key is required. Only the fixture's containers, volumes and files are removed afterwards.
+
+To run it manually on a Docker-capable acceptance host with Node.js 22+, Git and Python 3 (both refs and the target image must exist):
+
+```bash
+bash scripts/test-upgrade.sh vOLD.VERSION.HERE vNEW.VERSION.HERE ghcr.io/tencent/loopforge:NEW.VERSION.HERE
+```
+
+The test covers the standard installer path, without automatically applying historical SQL files. When a release requires manual data migrations, add those explicit, reviewed steps to the upgrade fixture at the documented point before tagging, and include the commands in the changelog. A health check or startup DDL alone is not a substitute for checking the preserved user data.
 
 ## Accounts
 

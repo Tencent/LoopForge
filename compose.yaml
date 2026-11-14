@@ -19,6 +19,8 @@ services:
       retries: 60
   platform:
     profiles: [platform]
+    # Workspaces bind to the host name; keep it across container replacement.
+    hostname: ${LOOPFORGE_WORKSPACE_HOST:-loopforge-platform}
     # Published release stack: never builds. Bump the pinned tag (here and in
     # AGENTFLOW_ISOLATED_IMAGE) with each release; source builds use compose.dev.yaml.
     image: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.3.8}

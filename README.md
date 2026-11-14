@@ -91,6 +91,18 @@ Open the address printed by the installer and create your account; the first one
 
 For GitLab, Gitea, Gogs and other Git hosts, [set up Git SSH](docs/deployment.md#git-repositories-over-ssh) to check out and push branches with a personal key. PR/MR and Issue automation requires a hosting API token or a separately configured MCP.
 
+### Upgrading an existing installation
+
+If you installed with `git clone` and `bash scripts/install.sh` (or `./start.sh`), back up the database, `.env` and `LOOPFORGE_DATA_DIR`, then run in the original installation directory:
+
+```bash
+git fetch origin --tags
+git checkout vX.Y.Z   # replace with the target release tag
+bash scripts/install.sh
+```
+
+Keep the existing `.env`, data directory and Compose project name. If `.env` pins `LOOPFORGE_IMAGE`, update it or clear it to use the release's default. Check all intervening entries in [CHANGELOG.md](CHANGELOG.md) for required manual SQL migrations and their order. `./start.sh pull` refreshes the configured image; it does not select a newer release. See the [upgrade guide](docs/deployment.md#upgrading-an-existing-installation).
+
 ### Try it without an API key
 
 New accounts join the **LoopForge demo project**, which includes an SOP made only of a script and a human gate:

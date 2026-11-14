@@ -91,6 +91,18 @@ MIRROR=ghcr.nju.edu.cn ./start.sh
 
 GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-repositories-over-ssh)，用个人密钥检出和推送分支。Issue 与 PR/MR 自动化需要托管平台的 API Token 或另行配置的 MCP。[CNB 官方仅支持 HTTPS + 访问令牌](https://docs.cnb.cool/zh/guide/git-access.html)。
 
+### 升级已有安装
+
+通过 `git clone` 和 `bash scripts/install.sh`（或 `./start.sh`）安装的用户，先备份数据库、`.env` 和 `LOOPFORGE_DATA_DIR` 数据目录，再在**原安装目录**执行：
+
+```bash
+git fetch origin --tags
+git checkout vX.Y.Z   # 替换为目标发布版本
+bash scripts/install.sh
+```
+
+保留原来的 `.env`、数据目录和 Compose 项目名。如果 `.env` 固定了 `LOOPFORGE_IMAGE`，需要同步更新或清空，以使用该版本默认镜像。阅读 [CHANGELOG.md](CHANGELOG.md) 中跨过的各版本说明，按要求和顺序手动执行 SQL 迁移。`./start.sh pull` 只刷新已配置的镜像，不会自动选择新版本。详见[升级说明](docs/deployment.md#upgrading-an-existing-installation)。
+
 ### 免 API Key 体验
 
 新注册的账号会自动加入 **LoopForge 体验项目**，其中有一条只包含脚本和人工审批的 SOP：

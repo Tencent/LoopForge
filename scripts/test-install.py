@@ -3,6 +3,7 @@ import hashlib
 import io
 import os
 import pty
+import re
 import select
 import shlex
 from pathlib import Path
@@ -50,6 +51,8 @@ if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
 if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
 if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
+if [[ "$*" == *'ps --all --quiet platform'* && -n "${MOCK_PREVIOUS_HOSTNAME:-}" ]]; then echo previous-platform; fi
+if [[ "$1" == inspect && "$*" == *'{{.Config.Hostname}}'* ]]; then echo "${MOCK_PREVIOUS_HOSTNAME:-}"; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
 if [[ "$*" == *'exec -T mysql'* ]]; then
   if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
@@ -67,7 +70,7 @@ export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
         self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'mysql.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL'):
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'LOOPFORGE_WORKSPACE_HOST', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL', 'MOCK_PREVIOUS_HOSTNAME'):
             self.environ.pop(name, None)
         self.environ.pop('MOCK_COLUMN_COUNT', None)
 
@@ -87,9 +90,30 @@ exec "$@"
     def test_root_install_and_repeat_preserve_secrets(self):
         self.assert_success(self.install())
         secrets = (self.root / '.env').read_text()
+        self.assertRegex(secrets, r'(?m)^LOOPFORGE_WORKSPACE_HOST=[a-z0-9-]+$')
         self.assert_success(self.install())
         self.assertEqual((self.root / '.env').read_text(), secrets)
         self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
+
+    def test_upgrade_adopts_legacy_container_hostname_and_keeps_it(self):
+        self.assert_success(self.install())
+        config = self.root / '.env'
+        original = ''.join(line for line in config.read_text().splitlines(keepends=True) if not line.startswith('LOOPFORGE_WORKSPACE_HOST='))
+        config.write_text(original)
+        self.assert_success(self.install(MOCK_PREVIOUS_HOSTNAME='legacy-container-host'))
+        upgraded = config.read_text()
+        self.assertTrue(upgraded.startswith(original))
+        self.assertIn('LOOPFORGE_WORKSPACE_HOST=legacy-container-host', upgraded)
+        self.assertIn('ps --all --quiet platform', (self.root / 'docker.log').read_text())
+        self.assert_success(self.install(MOCK_PREVIOUS_HOSTNAME='different-host'))
+        self.assertEqual(config.read_text(), upgraded)
+
+    def test_upgrade_adopts_hostname_when_existing_setting_is_empty(self):
+        self.assert_success(self.install())
+        config = self.root / '.env'
+        config.write_text(re.sub(r'(?m)^LOOPFORGE_WORKSPACE_HOST=.*$', "LOOPFORGE_WORKSPACE_HOST=''", config.read_text()))
+        self.assert_success(self.install(MOCK_PREVIOUS_HOSTNAME='legacy-container-host'))
+        self.assertIn('LOOPFORGE_WORKSPACE_HOST=legacy-container-host', config.read_text())
 
     def test_non_root_without_docker_group_uses_sudo_everywhere(self):
         self.assert_success(self.install(MOCK_USER='1000'))
