@@ -360,8 +360,19 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "finish", Message: "model generation finished", SessionID: session})
 	case "turn.failed":
 		message := stringValue(raw["message"])
+		if detail, ok := raw["error"].(map[string]any); ok {
+			message = firstNonEmpty(stringValue(detail["message"]), message)
+		}
 		if message == "" {
 			message = "codex turn failed"
+		}
+		// Keep unknown failures on the existing path. A recognized model
+		// failure is terminal even when the CLI exits successfully.
+		if classifyModelFailure(message) != "" {
+			a.mu.Lock()
+			a.result, a.failed = message, true
+			a.mu.Unlock()
+			a.once.Do(func() { close(a.done) })
 		}
 		a.emit(domain.TelemetryEvent{Category: "error", Name: "model.error", Phase: "finish", Level: "error", Message: message, SessionID: session, Error: &domain.ErrorObservation{Type: "provider", Message: message}})
 	case "item.started", "item.completed", "item.updated":
