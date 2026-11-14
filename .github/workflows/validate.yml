@@ -13,6 +13,18 @@ defaults:
     working-directory: local
 
 jobs:
+  vscode-extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "22"
+      - run: npm test
+
   validate:
     runs-on: ubuntu-latest
     strategy:
