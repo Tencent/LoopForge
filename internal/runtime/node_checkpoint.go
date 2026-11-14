@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,14 +46,30 @@ func NodeCheckpointRepositoryRoot(root, directory string) (string, error) {
 	return current, nil
 }
 
-// CreateNodeWorkspaceCheckpoint snapshots all run repositories. On error,
-// partially-created refs are harmless and remain scoped to this workspace.
-func CreateNodeWorkspaceCheckpoint(ctx context.Context, root string, repositories []domain.RepositoryContext, attempt int) (domain.NodeCheckpoint, error) {
+// CreateNodeWorkspaceCheckpoint snapshots all run repositories. If a later
+// repository fails, remove the refs already created for this snapshot.
+func CreateNodeWorkspaceCheckpoint(ctx context.Context, root string, repositories []domain.RepositoryContext, attempt int) (result domain.NodeCheckpoint, resultErr error) {
 	var checkpointID [16]byte
 	if _, err := rand.Read(checkpointID[:]); err != nil {
 		return domain.NodeCheckpoint{}, err
 	}
-	result := domain.NodeCheckpoint{ID: hex.EncodeToString(checkpointID[:]), Attempt: attempt, CreatedAt: time.Now().UTC()}
+	result = domain.NodeCheckpoint{ID: hex.EncodeToString(checkpointID[:]), Attempt: attempt, CreatedAt: time.Now().UTC()}
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for _, item := range result.Repositories {
+			dir, err := NodeCheckpointRepositoryRoot(root, item.WorkspaceDir)
+			if err == nil {
+				_, err = gitwork.C(cleanup, dir, "update-ref", "-d", item.Ref, item.Commit)
+			}
+			if err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("remove partial checkpoint ref %s: %w", item.Ref, err))
+			}
+		}
+	}()
 	if len(repositories) == 0 {
 		repositories = []domain.RepositoryContext{{}}
 	}
