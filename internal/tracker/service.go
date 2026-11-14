@@ -297,57 +297,62 @@ func (s *Service) PullAll(store IssueStoreAdapter) error {
 	}
 	defer s.endSync()
 
-	cfg := s.cfg.Get()
 	var lastErr error
-	syncCount := 0
-
-	repositories := store.Repositories()
-	for _, repo := range repositories {
-		if repo.Provider == "github" {
-			started := time.Now().UTC()
-			n, err := s.pullGitHubIssues(store, repo)
-			status, message := "success", fmt.Sprintf("GitHub: imported %d work items", n)
-			if err != nil {
-				status = "failed"
-				message = err.Error()
-			}
-			s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "github", Action: "sync_issues", Status: status, Message: message, ProjectID: repo.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
-			syncCount += n
-			if err != nil {
-				lastErr = err
-			}
-			continue
-		}
-		if repo.Provider != "gongfeng" || repo.GongfengProjectID == "" {
-			continue
-		}
-		client, source, err := s.trackerClientForProject("gongfeng", repo.ProjectID)
-		if err != nil {
+	for _, repo := range store.Repositories() {
+		if err := s.pullRepositoryIssues(store, repo); err != nil {
 			lastErr = err
-			continue
 		}
-		n, err := s.pullGongfengIssues(client, store, repo)
-		if err != nil {
-			lastErr = fmt.Errorf("%s", s.authError("工蜂", source, err))
-		}
-		syncCount += n
 	}
 
-	n, err := s.pullTAPDStories(store)
-	if err != nil {
+	if _, err := s.pullTAPDStories(store); err != nil {
 		if lastErr == nil {
 			lastErr = err
 		} else {
 			lastErr = fmt.Errorf("%v；%v", lastErr, err)
 		}
 	}
-	syncCount += n
 
 	pruneDuplicateExternalIssues(store)
 	// Delivery transitions belong to the independent MR state sync. A tracker
 	// pull must not change local lifecycle via post-pull reconciliation either.
 
-	cfg = s.cfg.Get()
+	s.recordPullResult(store, lastErr)
+	return lastErr
+}
+
+// pullRepositoryIssues pulls one repository's issues according to its
+// provider. GitHub pulls also record a sync log; Gongfeng errors are wrapped
+// with the auth hint. Other providers, and Gongfeng repositories without a
+// project ID, are skipped.
+func (s *Service) pullRepositoryIssues(store IssueStoreAdapter, repo domain.Repository) error {
+	if repo.Provider == "github" {
+		started := time.Now().UTC()
+		n, err := s.pullGitHubIssues(store, repo)
+		status, message := "success", fmt.Sprintf("GitHub: imported %d work items", n)
+		if err != nil {
+			status = "failed"
+			message = err.Error()
+		}
+		s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "github", Action: "sync_issues", Status: status, Message: message, ProjectID: repo.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
+		return err
+	}
+	if repo.Provider != "gongfeng" || repo.GongfengProjectID == "" {
+		return nil
+	}
+	client, source, err := s.trackerClientForProject("gongfeng", repo.ProjectID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.pullGongfengIssues(client, store, repo); err != nil {
+		return fmt.Errorf("%s", s.authError("工蜂", source, err))
+	}
+	return nil
+}
+
+// recordPullResult stamps the outcome of a full pull onto the sync config and
+// persists it.
+func (s *Service) recordPullResult(store IssueStoreAdapter, lastErr error) {
+	cfg := s.cfg.Get()
 	cfg.LastSyncAt = time.Now().UTC()
 	if lastErr != nil {
 		cfg.LastSyncStatus = "failed"
@@ -358,8 +363,6 @@ func (s *Service) PullAll(store IssueStoreAdapter) error {
 	}
 	s.cfg.Set(cfg)
 	_ = store.PutSyncConfig(cfg)
-
-	return lastErr
 }
 
 func (s *Service) PullScheduleJob(store IssueStoreAdapter, job domain.ScheduleJob) (int, []string, error) {
