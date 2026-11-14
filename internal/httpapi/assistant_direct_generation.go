@@ -10,6 +10,10 @@ import (
 // Synchronous shared chat must occupy the same durable slot as /generations.
 // Otherwise a second process can save a pending turn while the first CLI writes
 // the shared transcript. A local file lock additionally fences stale writers.
+//
+// The caller must defer the returned finish right after a successful claim (as
+// chat does): it is the only place the turn leaves assistantDirectGenerations,
+// and a deferred call also runs when the handler panics.
 func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req assistantRequest, ownerID int64, actor domain.User, cancel context.CancelFunc) (domain.AssistantGeneration, *assistantDiagnosticsCollector, func(bool), error) {
 	g := domain.AssistantGeneration{ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ActorID: actor.ID, ActorName: actor.LoginName, ProjectID: req.ProjectID, Status: "running", StartedAt: time.Now().UTC()}
 	pending := assistantConversation{ID: req.SessionID, Shared: true, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, RunID: req.RunID, Messages: req.Messages}

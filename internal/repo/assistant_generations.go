@@ -88,13 +88,13 @@ func (r *AssistantRepo) ReapAssistantGeneration(userID int64, sessionID string) 
 	var lease AssistantGenerationLease
 	// A server that died cannot leave a conversation stuck forever. Never replay
 	// a model turn automatically, because its tools may already have written.
-	if row.Status == "running" && time.Since(row.UpdatedAt) > assistantHeartbeatTimeout {
+	if row.Status == "running" && r.heartbeatLate(r.DB, row.UpdatedAt) {
 		g := decodeGeneration(row)
 		g.Status = "interrupted"
 		g.Error = "服务端生成已中断，请检查已执行操作后重试"
 		g.Failure = &domain.AssistantFailure{Code: "EXECUTION_INTERRUPTED", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作后再重试；可下载诊断信息交给管理员排查。"}
 		_ = r.DB.Transaction(func(tx *gorm.DB) error {
-			res := tx.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": r.generationClock()})
+			res := r.lateHeartbeatOnly(tx.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ? AND status = ? AND updated_at = ?", sessionID, row.GenerationID, "running", row.UpdatedAt)).Updates(map[string]any{"status": g.Status, "payload": mustJSON(g), "updated_at": r.generationClock()})
 			if res.Error != nil || res.RowsAffected != 1 {
 				return res.Error
 			}
@@ -120,6 +120,39 @@ func (r *AssistantRepo) RecordAssistantGenerationWorkspaceLease(userID int64, se
 	return r.DB.Model(&assistantGenerationRow{}).
 		Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, generationID, "running").
 		UpdateColumns(map[string]any{"workspace_run_id": runID, "workspace_lease": token}).Error
+}
+
+// heartbeatNow is the clock a heartbeat's age is measured on. MySQL stamps
+// heartbeats with its own UTC_TIMESTAMP(3) (see generationClock), so their age
+// is measured on that same clock: comparing them with this machine's time.Now()
+// would turn any skew between the API host and the database into turns reaped
+// while alive, or never reaped. ok is false when the clock cannot be read, and
+// callers then treat the heartbeat as fresh rather than reap on a guess.
+func (r *AssistantRepo) heartbeatNow(db *gorm.DB) (time.Time, bool) {
+	if !r.isMySQL() {
+		return time.Now().UTC(), true
+	}
+	var now time.Time
+	if err := db.Raw("SELECT UTC_TIMESTAMP(3)").Scan(&now).Error; err != nil || now.IsZero() {
+		return time.Time{}, false
+	}
+	return now, true
+}
+
+// heartbeatLate reports a heartbeat older than assistantHeartbeatTimeout on
+// the heartbeat clock.
+func (r *AssistantRepo) heartbeatLate(db *gorm.DB, updatedAt time.Time) bool {
+	now, ok := r.heartbeatNow(db)
+	return ok && now.Sub(updatedAt) > assistantHeartbeatTimeout
+}
+
+// lateHeartbeatOnly lets the database itself confirm, when the reap commits,
+// that the heartbeat is still late on its own clock.
+func (r *AssistantRepo) lateHeartbeatOnly(q *gorm.DB) *gorm.DB {
+	if !r.isMySQL() {
+		return q
+	}
+	return q.Where("updated_at < UTC_TIMESTAMP(3) - INTERVAL ? MICROSECOND", assistantHeartbeatTimeout.Microseconds())
 }
 
 // generationClock is the commit-time clock on MySQL. A Go timestamp captured
@@ -184,7 +217,7 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 				if old.Status == "running" {
 					return fmt.Errorf("此会话正在生成，请等待完成或停止")
 				}
-				if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil, "workspace_run_id": "", "workspace_lease": ""}).Error; err != nil {
+				if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": r.generationClock(), "finished_at": nil, "workspace_run_id": "", "workspace_lease": ""}).Error; err != nil {
 					return err
 				}
 				return checkpointAssistantDiagnostics(tx, g, nil)
@@ -194,6 +227,12 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 			}
 			if err := tx.Create(&assistantGenerationRow{SessionID: g.SessionID, UserID: g.UserID, GenerationID: g.ID, Status: "running", Payload: mustJSON(g), UpdatedAt: time.Now().UTC()}).Error; err != nil {
 				return err
+			}
+			if r.isMySQL() {
+				// The first heartbeat is on the database clock like every later one.
+				if err := tx.Model(&assistantGenerationRow{}).Where("session_id = ?", g.SessionID).UpdateColumn("updated_at", r.generationClock()).Error; err != nil {
+					return err
+				}
 			}
 			return checkpointAssistantDiagnostics(tx, g, nil)
 		})
@@ -262,7 +301,7 @@ func (r *AssistantRepo) SteerAssistantGeneration(userID int64, sessionID, id str
 		}
 		g := decodeGeneration(row)
 		g.Steer = &steer
-		return tx.Model(&row).Updates(map[string]any{"cancel_requested": true, "payload": mustJSON(g), "updated_at": time.Now().UTC()}).Error
+		return tx.Model(&row).Updates(map[string]any{"cancel_requested": true, "payload": mustJSON(g), "updated_at": r.generationClock()}).Error
 	})
 }
 func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id string) error {
@@ -315,9 +354,10 @@ func (r *AssistantRepo) AssistantGenerationStatuses(readerID int64, ids []string
 	if err != nil {
 		return out
 	}
+	now, clockOK := r.heartbeatNow(r.DB)
 	for _, row := range rows {
 		status := row.Status
-		stale := status == "running" && time.Since(row.UpdatedAt) > assistantHeartbeatTimeout
+		stale := status == "running" && clockOK && now.Sub(row.UpdatedAt) > assistantHeartbeatTimeout
 		if stale {
 			status = "interrupted"
 		}
