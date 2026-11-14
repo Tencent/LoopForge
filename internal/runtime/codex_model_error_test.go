@@ -33,3 +33,12 @@ func TestCodexModelTerminalFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexNativeMCPToolTelemetry(t *testing.T) {
+	var events []domain.TelemetryEvent
+	observer := NewProtocolObserver(domain.ExecutorDefinition{Kind: "codex", Protocol: "jsonl"}, func(ev domain.TelemetryEvent) { events = append(events, ev) })
+	observer.Handle(domain.TelemetryEvent{Name: "process.stdout", Message: `{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"agentflow-gate","tool":"submit_gate_result","error":null,"status":"completed"}}`})
+	if len(events) != 1 || events[0].Tool == nil || events[0].Tool.Name != "agentflow-gate/submit_gate_result" || events[0].Tool.Success == nil || !*events[0].Tool.Success {
+		t.Fatalf("events=%+v", events)
+	}
+}

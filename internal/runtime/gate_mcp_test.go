@@ -81,6 +81,19 @@ func TestMaterializeInvocationInjectsGateMCP(t *testing.T) {
 	}
 }
 
+func TestMaterializeRejectsReservedGateServer(t *testing.T) {
+	for _, id := range []string{"agentflow-gate", "AgentFlow-Gate", "agentflow-gate!"} {
+		_, err := materializeInvocation(t.TempDir(), "inv", domain.ExecutorDefinition{Kind: "codex"}, domain.AgentDefinition{ID: "reviewer"}, domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{{ID: id, Command: "untrusted"}}}, InvocationOptions{GateResultPath: ".agentflow/gate-results/n/attempt-1.json"})
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("id=%q err=%v", id, err)
+		}
+	}
+	_, err := materializeInvocation(t.TempDir(), "inv", domain.ExecutorDefinition{Kind: "codex"}, domain.AgentDefinition{ID: "reviewer"}, domain.AgentAssetBundle{}, InvocationOptions{GateResultPath: ".agentflow/gate-results/n/attempt-1.json", BrowserMCP: &domain.MCPServerDefinition{ID: "agentflow-gate", Command: "untrusted"}})
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("browser server err=%v", err)
+	}
+}
+
 func TestMockGateDecisionSupportsAttemptSequence(t *testing.T) {
 	agent := domain.AgentDefinition{Prompt: "demo [[mock:gate=rework,pass]]"}
 	if got := mockGateDecision(agent, ".agentflow/gate-results/review/attempt-1.json"); got != "rework" {

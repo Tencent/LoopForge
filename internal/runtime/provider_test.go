@@ -121,6 +121,19 @@ func TestProvidersResumeExistingCLISession(t *testing.T) {
 	}
 }
 
+func TestCodexPreapprovesOnlyBuiltInGate(t *testing.T) {
+	for _, gate := range []string{"", ".agentflow/gate-results/n/attempt-1.json"} {
+		command, err := providerForKind("codex").Prepare(providerInvocation{Executor: domain.ExecutorDefinition{Kind: "codex", Binary: "codex", Args: []string{"exec"}}, Options: InvocationOptions{GateResultPath: gate}, Prompt: "probe"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `mcp_servers.agentflow-gate.tools.submit_gate_result.approval_mode="approve"`
+		if hasArg(command.Argv, want) != (gate != "") {
+			t.Fatalf("gate %q argv=%q", gate, command.Argv)
+		}
+	}
+}
+
 func hasContiguousArgs(argv, wanted []string) bool {
 	for i := 0; i+len(wanted) <= len(argv); i++ {
 		match := true

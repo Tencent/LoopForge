@@ -408,8 +408,14 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 			if name == "" {
 				name = stringValue(item["name"])
 			}
+			if name == "" && itemType == "mcp_tool_call" {
+				name = stringValue(item["tool"])
+				if server := stringValue(item["server"]); server != "" && name != "" {
+					name = server + "/" + name
+				}
+			}
 			msg := summarizeToolCall(name, item)
-			success := int64Value(item["exit_code"]) == 0 && stringValue(item["status"]) != "failed"
+			success := int64Value(item["exit_code"]) == 0 && stringValue(item["status"]) != "failed" && item["error"] == nil
 			if phase == "finish" {
 				out := firstNonEmpty(stringValue(item["aggregated_output"]), stringValue(item["output"]), stringValue(item["text"]))
 				msg = summarizeToolResult(name, !success, out)

@@ -160,15 +160,22 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	// Repository-local MCP configuration is intentionally not discovered. The
 	// Agent definition is the sole allowlist for tools in unattended runs.
 	mergedMCP := mergeMCPServers(assets.MCPServers, nil)
+	if options.BrowserMCP != nil {
+		mergedMCP = append(mergedMCP, *options.BrowserMCP)
+	}
 	if strings.TrimSpace(options.GateResultPath) != "" {
+		// The reserved name is the only MCP server whose terminal-decision
+		// tool Codex preapproves. Reject aliases that normalize to this name.
+		for _, m := range mergedMCP {
+			if safeID(m.ID) == gateMCPServerID {
+				return compiled, fmt.Errorf("MCP server ID %q is reserved for the workflow gate", m.ID)
+			}
+		}
 		gateServer, err := materializeGateMCP(workspace, configRoot, filepath.Join(".agentflow", "config", agentID, "gate-mcp"), options.GateResultPath, driver)
 		if err != nil {
 			return compiled, err
 		}
 		mergedMCP = append(mergedMCP, gateServer)
-	}
-	if options.BrowserMCP != nil {
-		mergedMCP = append(mergedMCP, *options.BrowserMCP)
 	}
 	compiled.HasMCP = len(mergedMCP) > 0
 	if hint := mcpUsageHint(mergedMCP); hint != "" {
