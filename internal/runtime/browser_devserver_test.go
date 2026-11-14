@@ -81,6 +81,15 @@ func TestHandleDevServerHTTPThroughEndpoint(t *testing.T) {
 	if _, err := HandleBrowser(context.Background(), "dev-run", domain.BrowserRequest{Operation: "http", HTTP: &domain.BrowserHTTPRequest{Port: port, Path: "no-slash"}}); err == nil {
 		t.Fatal("invalid path accepted")
 	}
+	if _, err := HandleBrowser(context.Background(), "dev-run", domain.BrowserRequest{Operation: "http", HTTP: &domain.BrowserHTTPRequest{Port: port, Path: "/a\r\nb: c"}}); err == nil {
+		t.Fatal("CRLF path accepted")
+	}
+	if _, err := HandleBrowser(context.Background(), "dev-run", domain.BrowserRequest{Operation: "http", HTTP: &domain.BrowserHTTPRequest{Port: port, Method: "INVALID", Path: "/"}}); err == nil {
+		t.Fatal("invalid method accepted")
+	}
+	if _, err := HandleBrowser(context.Background(), "dev-run", domain.BrowserRequest{Operation: "http", HTTP: &domain.BrowserHTTPRequest{Port: port, Method: "TRACE", Path: "/"}}); err == nil {
+		t.Fatal("TRACE method accepted")
+	}
 	devServerLookup = func(context.Context, string) (browserEndpoint, bool) { return browserEndpoint{}, false }
 	devServerClients.Lock()
 	delete(devServerClients.items, "other-run")
