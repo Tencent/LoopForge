@@ -56,45 +56,9 @@ func roomRunMessages(room domain.ChatRoom, dispatch domain.ChatMessage, run doma
 		if nr == nil {
 			continue
 		}
-		author := "SOP「" + wfName + "」"
-		if node.Type == "agent" && strings.TrimSpace(node.AgentID) != "" {
-			if name := agentName(node.AgentID); name != "" {
-				author = name
-			}
+		if msg, ok := roomNodeMessage(base, run, node, nr, wfName, agentName); ok {
+			out = append(out, msg)
 		}
-		msg := base
-		msg.Author = author
-		msg.NodeID = node.ID
-		msg.NodeName = fallbackName(node.Name, node.ID)
-		msg.NodeStatus = nr.Status
-		msg.Attempt = nr.Attempt
-		attempt := fmt.Sprint(nr.Attempt)
-		switch nr.Status {
-		case "succeeded":
-			// Finished steps stay on the dispatch card. The thread only
-			// gets failures, approvals, and the run's final result.
-			continue
-		case "failed":
-			msg.ID = roomProgressID(run.ID, node.ID, "failed", attempt)
-			msg.Kind = domain.ChatKindProgress
-			msg.Body = "「" + msg.NodeName + "」失败"
-			if e := roomTrim(nr.Error, 280); e != "" {
-				msg.Body += "：" + e
-			}
-			msg.CreatedAt = firstTime(nr.FinishedAt, nr.StartedAt, run.UpdatedAt)
-		case "waiting_approval":
-			msg.ID = roomProgressID(run.ID, node.ID, "approval", attempt)
-			msg.Kind = domain.ChatKindApproval
-			msg.Author = "SOP「" + wfName + "」"
-			msg.Body = "「" + msg.NodeName + "」等待审批，可以直接在群里批准"
-			if roomRejectTarget(run.WorkflowSnapshot, node.ID) != "" {
-				msg.Body += "或打回"
-			}
-			msg.CreatedAt = firstTime(nr.StartedAt, run.UpdatedAt)
-		default:
-			continue
-		}
-		out = append(out, msg)
 	}
 	if domain.TerminalRunStatus(run.Status) {
 		msg := base
@@ -106,16 +70,63 @@ func roomRunMessages(room domain.ChatRoom, dispatch domain.ChatMessage, run doma
 		msg.CreatedAt = firstTime(run.UpdatedAt)
 		out = append(out, msg)
 	}
-	// Node clocks can predate the card (the run starts before the card is
-	// saved); keep the thread order card -> steps -> result.
-	floor := dispatch.CreatedAt
+	orderRoomMessagesAfter(out, dispatch.CreatedAt)
+	return out
+}
+
+// roomNodeMessage builds the room message for one node run. Only failed
+// steps and pending approvals reach the thread; every other status reports
+// false.
+func roomNodeMessage(base domain.ChatMessage, run domain.Run, node domain.WorkflowNode, nr *domain.NodeRun, wfName string, agentName func(string) string) (domain.ChatMessage, bool) {
+	author := "SOP「" + wfName + "」"
+	if node.Type == "agent" && strings.TrimSpace(node.AgentID) != "" {
+		if name := agentName(node.AgentID); name != "" {
+			author = name
+		}
+	}
+	msg := base
+	msg.Author = author
+	msg.NodeID = node.ID
+	msg.NodeName = fallbackName(node.Name, node.ID)
+	msg.NodeStatus = nr.Status
+	msg.Attempt = nr.Attempt
+	attempt := fmt.Sprint(nr.Attempt)
+	switch nr.Status {
+	case "failed":
+		msg.ID = roomProgressID(run.ID, node.ID, "failed", attempt)
+		msg.Kind = domain.ChatKindProgress
+		msg.Body = "「" + msg.NodeName + "」失败"
+		if e := roomTrim(nr.Error, 280); e != "" {
+			msg.Body += "：" + e
+		}
+		msg.CreatedAt = firstTime(nr.FinishedAt, nr.StartedAt, run.UpdatedAt)
+	case "waiting_approval":
+		msg.ID = roomProgressID(run.ID, node.ID, "approval", attempt)
+		msg.Kind = domain.ChatKindApproval
+		msg.Author = "SOP「" + wfName + "」"
+		msg.Body = "「" + msg.NodeName + "」等待审批，可以直接在群里批准"
+		if roomRejectTarget(run.WorkflowSnapshot, node.ID) != "" {
+			msg.Body += "或打回"
+		}
+		msg.CreatedAt = firstTime(nr.StartedAt, run.UpdatedAt)
+	default:
+		// Finished steps stay on the dispatch card. The thread only
+		// gets failures, approvals, and the run's final result.
+		return domain.ChatMessage{}, false
+	}
+	return msg, true
+}
+
+// orderRoomMessagesAfter pushes message times past floor and keeps them
+// strictly increasing. Node clocks can predate the card (the run starts
+// before the card is saved); keep the thread order card -> steps -> result.
+func orderRoomMessagesAfter(out []domain.ChatMessage, floor time.Time) {
 	for i := range out {
 		if !floor.IsZero() && !out[i].CreatedAt.After(floor) {
 			out[i].CreatedAt = floor.Add(time.Duration(i+1) * time.Millisecond)
 		}
 		floor = out[i].CreatedAt
 	}
-	return out
 }
 
 // roomRunCacheSize bounds the per-process cache of run views used by the
