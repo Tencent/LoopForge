@@ -202,6 +202,10 @@ func compileTaskPrompt(node domain.WorkflowNode, roleName, rolePrompt string, ga
 	}
 	var criteria []string
 	for _, gate := range gates {
+		if isDiffCoverageGate(gate) {
+			criteria = append(criteria, diffCoverageTaskLine(gate))
+			continue
+		}
 		criteria = append(criteria, gate.Name+"必须通过，并保留真实命令证据")
 	}
 	writePromptList(&b, "交付物", deliverables)

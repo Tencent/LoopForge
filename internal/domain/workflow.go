@@ -10,14 +10,61 @@ import (
 type VerificationGate struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
-	Mode      string   `json:"mode"`            // command, manual
+	Mode      string   `json:"mode"`            // command, manual, diff_coverage
 	Stage     string   `json:"stage,omitempty"` // after_execution, before_publish
 	Commands  []string `json:"commands,omitempty"`
 	Required  bool     `json:"required"`
 	OnFailure string   `json:"onFailure,omitempty"` // loop, reject, fail, human
 	// ExecutionScope is required for command gates: run or repositories.
 	ExecutionScope string `json:"executionScope,omitempty"`
+	// Coverage configures mode=diff_coverage: commands produce a coverage
+	// report, and only the executable lines changed since the base branch are
+	// judged against threshold.
+	Coverage *GateCoverageSpec `json:"coverage,omitempty"`
 }
+
+// GateCoverageSpec describes how a diff_coverage gate reads a coverage report
+// and judges only the lines this change touched. Changes to code that existed
+// before the run never count, so a repository with low overall coverage can
+// still hold new code to a bar.
+type GateCoverageSpec struct {
+	// ReportPath is relative to the repository workspace root.
+	ReportPath string `json:"reportPath"`
+	// ReportFormat is one of GateCoverageReportFormats.
+	ReportFormat string `json:"reportFormat"`
+	// ThresholdPct is the minimum coverage of changed executable lines,
+	// 0-100. Empty means DefaultGateCoverageThresholdPct.
+	ThresholdPct *float64 `json:"thresholdPct,omitempty"`
+	// MinChangedLines skips the judgement when the change touches fewer
+	// executable lines, both to save noise on one-line edits and because a
+	// percentage over a handful of lines is meaningless. Empty means
+	// DefaultGateCoverageMinChangedLines.
+	MinChangedLines *int `json:"minChangedLines,omitempty"`
+	// BaseBranch overrides the repository target's base branch when diffing.
+	BaseBranch string `json:"baseBranch,omitempty"`
+	// Include and Exclude are path globs judged in addition to the built-in
+	// defaults. Exclude wins over Include.
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
+const (
+	GateModeCommand      = "command"
+	GateModeManual       = "manual"
+	GateModeDiffCoverage = "diff_coverage"
+
+	GateCoverageFormatGoCoverprofile = "go_coverprofile"
+	GateCoverageFormatLCOV           = "lcov"
+	GateCoverageFormatCobertura      = "cobertura"
+
+	DefaultGateCoverageThresholdPct    = 80.0
+	DefaultGateCoverageMinChangedLines = 5
+)
+
+// GateCoverageReportFormats lists the report formats a diff_coverage gate can
+// parse. The engine implements exactly these; anything else is a config error
+// rather than a silent pass.
+var GateCoverageReportFormats = []string{GateCoverageFormatGoCoverprofile, GateCoverageFormatLCOV, GateCoverageFormatCobertura}
 
 type Position struct {
 	X float64 `json:"x"`

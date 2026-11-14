@@ -792,14 +792,39 @@ function renderAgentArtifactEditors(d){
   host.querySelectorAll('[data-remove-artifact]').forEach(el=>el.onclick=()=>{d.artifactOutputs.splice(Number(el.dataset.removeArtifact),1);renderAgentGovernance(d);touch();dirty()});
   host.querySelector('#agentAddArtifact')?.addEventListener('click',()=>{d.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderAgentGovernance(d);touch();dirty()});
 }
+function gateCoverage(g){
+  return g.coverage||{};
+}
+function gateCoverageFields(g){
+  if(g.mode!=='diff_coverage')return '';
+  const c=gateCoverage(g),fmt=['go_coverprofile','lcov','cobertura'].includes(c.reportFormat)?c.reportFormat:'go_coverprofile';
+  const threshold=c.thresholdPct??80,minLines=c.minChangedLines??5;
+  return `<div class="gate-coverage"><label>覆盖率报告路径（相对仓库）</label><input data-gk="coverage.reportPath" value="${escapeHTML(c.reportPath||'')}" placeholder="例如 coverage.out、lcov.info、coverage.xml"><label>报告格式</label><select data-gk="coverage.reportFormat"><option value="go_coverprofile" ${fmt==='go_coverprofile'?'selected':''}>go_coverprofile（go test -coverprofile）</option><option value="lcov" ${fmt==='lcov'?'selected':''}>lcov（lcov.info / tracefile）</option><option value="cobertura" ${fmt==='cobertura'?'selected':''}>cobertura（coverage.xml，Python/Java 常用）</option></select><label>改动行覆盖率阈值（%）</label><input type="number" min="0" max="100" step="1" data-gk="coverage.thresholdPct" value="${escapeHTML(String(threshold))}"><label>改动少于多少行时不判定</label><input type="number" min="0" step="1" data-gk="coverage.minChangedLines" value="${escapeHTML(String(minLines))}"><p class="prop-hint">只统计本次改动新增/修改的可执行行，存量低覆盖率不阻断。未达标时会把未覆盖的文件和行号交回 Agent 补测试。命令必须生成上面这个报告文件（例如 <code>go test -coverprofile=coverage.out ./...</code>）。</p></div>`;
+}
 function gateFailureSelect(g){
   const v=['loop','reject','fail','human'].includes(g.onFailure)?g.onFailure:'loop',scope=g.executionScope==='repositories'?'repositories':'run';
-  return `<label>检查范围</label><select data-gk="executionScope"><option value="run" ${scope==='run'?'selected':''}>Run工作区（校验产物等场景）</option><option value="repositories" ${scope==='repositories'?'selected':''}>每个代码仓库</option></select><label>失败后怎么走</label><select data-gk="onFailure"><option value="loop" ${v==='loop'?'selected':''}>本节点自修正</option><option value="reject" ${v==='reject'?'selected':''}>打回上游</option><option value="fail" ${v==='fail'?'selected':''}>本节点失败</option><option value="human" ${v==='human'?'selected':''}>转人工确认</option></select><p class="prop-hint">范围必须显式选择。Run 工作区适合报告和产物；每个代码仓库适合测试和 Git 检查。保存后按所选范围执行，不会再根据命令是否以 git 开头自动切换目录。</p>`;
+  const mode=g.mode==='diff_coverage'?'diff_coverage':'command';
+  return `<label>判定方式</label><select data-gk="mode"><option value="command" ${mode==='command'?'selected':''}>命令退出码</option><option value="diff_coverage" ${mode==='diff_coverage'?'selected':''}>改动行覆盖率</option></select>${gateCoverageFields(g)}<label>检查范围</label><select data-gk="executionScope"><option value="run" ${scope==='run'?'selected':''}>Run工作区（校验产物等场景）</option><option value="repositories" ${scope==='repositories'?'selected':''}>每个代码仓库</option></select><label>失败后怎么走</label><select data-gk="onFailure"><option value="loop" ${v==='loop'?'selected':''}>本节点自修正</option><option value="reject" ${v==='reject'?'selected':''}>打回上游</option><option value="fail" ${v==='fail'?'selected':''}>本节点失败</option><option value="human" ${v==='human'?'selected':''}>转人工确认</option></select><p class="prop-hint">范围必须显式选择。Run 工作区适合报告和产物；每个代码仓库适合测试和 Git 检查（改动行覆盖率只能选每个代码仓库）。保存后按所选范围执行，不会再根据命令是否以 git 开头自动切换目录。</p>`;
 }
 function applyGateField(gate,el){
-  if(el.dataset.gk==='name')gate.name=el.value;
-  else if(el.dataset.gk==='onFailure')gate.onFailure=el.value;
-  else if(el.dataset.gk==='executionScope')gate.executionScope=el.value;
+  const key=el.dataset.gk;
+  if(key==='name')gate.name=el.value;
+  else if(key==='onFailure')gate.onFailure=el.value;
+  else if(key==='executionScope')gate.executionScope=el.value;
+  else if(key==='mode'){
+    gate.mode=el.value==='diff_coverage'?'diff_coverage':'command';
+    if(gate.mode==='diff_coverage'){
+      gate.executionScope='repositories';
+      gate.coverage=gate.coverage||{reportPath:'',reportFormat:'go_coverprofile'};
+    }else{delete gate.coverage}
+  }
+  else if(key.startsWith('coverage.')){
+    const field=key.slice('coverage.'.length);
+    gate.coverage=gate.coverage||{};
+    if(field==='thresholdPct'){const raw=String(el.value||'').trim();const n=raw===''?NaN:Number(raw);gate.coverage.thresholdPct=Number.isFinite(n)?Math.min(100,Math.max(0,n)):undefined;if(gate.coverage.thresholdPct===undefined)delete gate.coverage.thresholdPct;}
+    else if(field==='minChangedLines'){const n=parseInt(el.value,10);gate.coverage.minChangedLines=Number.isFinite(n)&&n>=0?n:undefined;if(gate.coverage.minChangedLines===undefined)delete gate.coverage.minChangedLines;}
+    else gate.coverage[field]=el.value;
+  }
   else gate.commands=el.value.split('\n').map(s=>s.trim()).filter(Boolean);
 }
 function renderAgentGateEditors(d){
@@ -813,7 +838,7 @@ function renderAgentGateEditors(d){
   }).join(''):'<div class="as-empty">还没有验收命令。可以先加一条检查文件在不在，例如 <code>test -f fix-plan.md</code>。</div>';
   host.insertAdjacentHTML('beforeend',`<button type="button" class="as-add" id="agentAddGate">+ 添加验收命令</button>`);
   const touch=()=>renderAgentSummary();
-  host.querySelectorAll('[data-gate-row]').forEach(row=>row.querySelectorAll('[data-gk]').forEach(el=>el.oninput=el.onchange=()=>{applyGateField(d.verification[Number(row.dataset.gateRow)],el);touch();dirty()}));
+  host.querySelectorAll('[data-gate-row]').forEach(row=>row.querySelectorAll('[data-gk]').forEach(el=>el.oninput=el.onchange=()=>{const gate=d.verification[Number(row.dataset.gateRow)];const isMode=el.dataset.gk==='mode';applyGateField(gate,el);if(isMode)renderAgentGateEditors(d);touch();dirty()}));
   host.querySelectorAll('[data-remove-gate]').forEach(el=>el.onclick=()=>{d.verification.splice(Number(el.dataset.removeGate),1);renderAgentGovernance(d);touch();dirty()});
   host.querySelector('#agentAddGate')?.addEventListener('click',()=>{d.verification.push({id:`gate-${d.verification.length+1}`,name:'',mode:'command',stage:'after_execution',commands:[''],required:true,onFailure:'loop',executionScope:'run'});renderAgentGovernance(d);touch();dirty()});
   host.querySelectorAll('[data-editor-agent-gate]').forEach(btn=>{
@@ -854,7 +879,7 @@ function nodeGatePane(n){
   const gates=roleGates(agent);
   const step=(i,title,sub,body)=>`<li class="fd-tl-step"><span class="fd-tl-n">${i}</span><div class="fd-tl-c"><div class="fd-tl-h"><b>${title}</b><small>${sub}</small></div>${body}</div></li>`;
   const artifactRows=artifacts.length?artifacts.map(a=>`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('file',13)}</span><span class="fd-tl-main"><b>${escapeHTML(a.name||a.path||'未命名产物')}</b><code>${escapeHTML(a.path||'未设置路径')}</code></span><span class="fd-tag${a.required?'':' soft'}">${a.required?'必须交':'可选'}</span></div>`).join(''):'<div class="fd-tl-none">这个节点没有声明需要校验的产物。</div>';
-  const gateRows=gates.length?gates.map(g=>{const cmds=(g.commands||[]).filter(Boolean);return `<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('terminal',13)}</span><span class="fd-tl-main"><b>${escapeHTML(g.name||g.id||'未命名门禁')}</b><code>${escapeHTML(cmds.join(' && ')||'人工确认')}</code><small>${g.executionScope==='repositories'?'每个代码仓库':'Run 工作区'} · 失败后 ${escapeHTML({loop:'本节点自修正',reject:'打回上游',human:'转人工确认',fail:'本节点失败'}[g.onFailure]||'按节点策略')}</small></span></div>`}).join(''):'<div class="fd-tl-none">这个节点没有额外门禁命令。</div>';
+  const gateRows=gates.length?gates.map(g=>{const cmds=(g.commands||[]).filter(Boolean);const cov=g.mode==='diff_coverage'?g.coverage||{}:null;const summary=cov?`改动行覆盖率 ≥ ${escapeHTML(String(cov.thresholdPct??80))}%（${escapeHTML(cov.reportPath||'未配置报告')}）`:escapeHTML(cmds.join(' && ')||'人工确认');return `<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('terminal',13)}</span><span class="fd-tl-main"><b>${escapeHTML(g.name||g.id||'未命名门禁')}</b><code>${summary}</code><small>${g.executionScope==='repositories'?'每个代码仓库':'Run 工作区'} · 失败后 ${escapeHTML({loop:'本节点自修正',reject:'打回上游',human:'转人工确认',fail:'本节点失败'}[g.onFailure]||'按节点策略')}</small></span></div>`}).join(''):'<div class="fd-tl-none">这个节点没有额外门禁命令。</div>';
   const terminal=n.type==='agent'?step(1,'先提交结构化终态','平台内建',`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('check',13)}</span><span class="fd-tl-main"><code>pass | rework | fail | human</code><small>Agent 完成任务后必须先调用 submit_gate_result 提交终态；缺失时自动恢复同一会话重试。</small></span></div>`):'';
   const base=n.type==='agent'?1:0;
   return `<p class="prop-hint">执行时 Agent 节点先提交结构化终态，随后校验产物，最后执行可选门禁命令。</p><ol class="fd-tl">${terminal}${step(base+1,'再校验产物',`${artifacts.length} 项`,artifactRows)}${step(base+2,'最后触发额外门禁',`${gates.length} 项`,gateRows)}</ol>${agent?'<button type="button" class="fd-btn ghost sm" id="openBoundAgentValidation">去角色定义编辑校验清单</button>':''}`;
