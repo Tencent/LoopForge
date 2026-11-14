@@ -121,3 +121,55 @@ func TestWriteBackClarificationFallsBackToOwnerWithoutAssignee(t *testing.T) {
 		t.Fatalf("source=%q", source)
 	}
 }
+
+func TestWriteBackClarificationToGitHubIssue(t *testing.T) {
+	var got map[string]string
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost || r.URL.Path != "/repos/example/repo/issues/12/comments" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer owner-token" {
+			t.Errorf("comment must use the project owner's Git token")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+	repository := domain.Repository{ID: "gh-repo", ProjectID: "alpha", Provider: "github", GongfengProjectID: "github:example/repo"}
+	svc := NewService()
+	svc.ConfigureWithStore(domain.SyncConfig{}, projectAuthFixture{
+		projects: map[string]domain.Project{"alpha": {ID: "alpha", OwnerID: 1}},
+		users:    map[int64]domain.User{1: {ID: 1, LoginName: "owner", GitToken: "owner-token"}},
+		repos:    []domain.Repository{repository},
+	})
+	svc.githubAPIBase = srv.URL
+	st := &memIssueStore{repositories: map[string]domain.Repository{"gh-repo": repository}}
+	issue := domain.Issue{ID: "gh-gh-repo-12", Source: "github", RepositoryID: "gh-repo", ExternalRef: &domain.ExternalRef{Source: "github", ExternalID: "9001", ExternalIID: 12}}
+	if err := svc.WriteBackClarification(st, issue, "## AgentFlow 澄清结论\n\n结论"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || got["body"] != "## AgentFlow 澄清结论\n\n结论" {
+		t.Fatalf("calls=%d body=%#v", calls, got)
+	}
+
+	missingNumber := issue
+	missingNumber.ExternalRef = &domain.ExternalRef{Source: "github", ExternalID: "9001"}
+	if err := svc.WriteBackClarification(st, missingNumber, "x"); err == nil {
+		t.Fatal("GitHub write-back without an issue number must fail")
+	}
+	unbound := issue
+	unbound.RepositoryID = "missing"
+	if err := svc.WriteBackClarification(st, unbound, "x"); err == nil {
+		t.Fatal("GitHub write-back without a bound GitHub repository must fail")
+	}
+	if calls != 1 {
+		t.Fatalf("invalid write-backs must not call GitHub, calls=%d", calls)
+	}
+}

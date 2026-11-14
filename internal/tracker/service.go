@@ -651,6 +651,15 @@ func (s *Service) WriteBackClarification(store IssueStoreAdapter, issue domain.I
 			"note_message": body,
 		})
 		return err
+	case "github":
+		repo, ok := store.Repository(issue.RepositoryID)
+		if !ok || repo.Provider != "github" || strings.TrimSpace(repo.GongfengProjectID) == "" {
+			return fmt.Errorf("issue must bind a valid GitHub repository")
+		}
+		if issue.ExternalRef.ExternalIID <= 0 {
+			return fmt.Errorf("GitHub issue number is missing")
+		}
+		return s.githubCommentIssue(repo.GongfengProjectID, issue.ExternalRef.ExternalIID, body)
 	case "tapd":
 		project, ok := store.Project(issue.ProjectID)
 		if !ok {

@@ -18,7 +18,7 @@ function clarificationNeedsConfirm(i){
   const c=i?.clarification||{};
   if(c.status!=='ready')return false;
   if(c.writeBackStatus!=='pending')return false;
-  return (i.source==='tapd'||i.source==='gongfeng')&&!!i.externalRef;
+  return (i.source==='tapd'||i.source==='gongfeng'||i.source==='github')&&!!i.externalRef;
 }
 function userCombobox(name,selected,emptyLabel='请选择用户',attributes=''){
   const current=userById(selected),label=current?userDisplay(current):emptyLabel;
