@@ -519,6 +519,14 @@ func readWorkspaceTree(root, raw string) ([]workspaceEntry, bool, error) {
 		entries = append(entries, workspaceEntry{Path: rel, Name: d.Name(), Type: kind, Size: info.Size(), Modified: info.ModTime()})
 		return nil
 	})
+	entries = pruneEmptyWorkspaceDirs(entries)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	return entries, truncated, err
+}
+
+// pruneEmptyWorkspaceDirs drops directory entries that have no visible file
+// beneath them, filtering entries in place and keeping the original order.
+func pruneEmptyWorkspaceDirs(entries []workspaceEntry) []workspaceEntry {
 	visibleParents := map[string]bool{}
 	for _, entry := range entries {
 		if entry.Type != "file" {
@@ -535,9 +543,7 @@ func readWorkspaceTree(root, raw string) ([]workspaceEntry, bool, error) {
 		}
 		visible = append(visible, entry)
 	}
-	entries = visible
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return entries, truncated, err
+	return visible
 }
 
 func readWorkspaceFile(root, raw string) (string, int64, error) {
