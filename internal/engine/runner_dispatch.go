@@ -711,51 +711,39 @@ func (e *Engine) subscribeRunnerTask(taskID string) (<-chan struct{}, func()) {
 func (e *Engine) awaitRunnerTask(ctx context.Context, taskID string, sink runtime.EventSink) (domain.RunnerTask, error) {
 	var lastEventSeq int64
 	lastStatus := ""
-	reportStatus := func(task domain.RunnerTask) {
-		if sink == nil || task.Status == lastStatus {
-			return
-		}
-		lastStatus = task.Status
-		switch task.Status {
-		case domain.RunnerTaskLeased:
-			sink(domain.TelemetryEvent{
-				Category: "sandbox", Name: "runner.claimed", Phase: "progress",
-				Message:  "执行机器已领取任务，正在准备工作区和沙箱",
-				Provider: task.Provider,
-				Source:   domain.TelemetrySource{Layer: "executor", Adapter: "runner-v1", Provider: task.Provider},
-			})
-		case domain.RunnerTaskRunning:
-			sink(domain.TelemetryEvent{
-				Category: "process", Name: "runner.started", Phase: "start",
-				Message:  "执行机器已启动任务",
-				Provider: task.Provider,
-				Source:   domain.TelemetrySource{Layer: "executor", Adapter: "runner-v1", Provider: task.Provider},
-			})
-		}
-	}
-	for {
+	// observe reads the durable task, forwards new runner events and the first
+	// sighting of each status to sink, and reports whether the task finished.
+	observe := func() (domain.RunnerTask, bool, error) {
 		current, ok := e.repo.RunnerTask(taskID)
 		if !ok {
-			return domain.RunnerTask{}, fmt.Errorf("runner task %s disappeared", taskID)
+			return domain.RunnerTask{}, false, fmt.Errorf("runner task %s disappeared", taskID)
 		}
 		lastEventSeq = bridgeRunnerEventsToSink(current, e.repo.RunnerTaskEventsAfter(taskID, lastEventSeq), lastEventSeq, sink)
-		reportStatus(current)
-		switch current.Status {
-		case domain.RunnerTaskSuccess, domain.RunnerTaskFailed, domain.RunnerTaskCanceled:
+		if sink != nil && current.Status != lastStatus {
+			lastStatus = current.Status
+			if event, ok := runnerTaskStatusEvent(current); ok {
+				sink(event)
+			}
+		}
+		return current, runnerTaskFinished(current.Status), nil
+	}
+	for {
+		current, finished, err := observe()
+		if err != nil {
+			return domain.RunnerTask{}, err
+		}
+		if finished {
 			e.flushAllObservations()
 			return current, nil
 		}
 		changed, unsubscribe := e.subscribeRunnerTask(taskID)
 		// Re-read after subscribing to close the check/subscribe race.
-		current, ok = e.repo.RunnerTask(taskID)
-		if !ok {
+		current, finished, err = observe()
+		if err != nil {
 			unsubscribe()
-			return domain.RunnerTask{}, fmt.Errorf("runner task %s disappeared", taskID)
+			return domain.RunnerTask{}, err
 		}
-		lastEventSeq = bridgeRunnerEventsToSink(current, e.repo.RunnerTaskEventsAfter(taskID, lastEventSeq), lastEventSeq, sink)
-		reportStatus(current)
-		switch current.Status {
-		case domain.RunnerTaskSuccess, domain.RunnerTaskFailed, domain.RunnerTaskCanceled:
+		if finished {
 			unsubscribe()
 			e.flushAllObservations()
 			return current, nil
@@ -777,6 +765,38 @@ func (e *Engine) awaitRunnerTask(ctx context.Context, taskID string, sink runtim
 		fallback.Stop()
 		unsubscribe()
 	}
+}
+
+// runnerTaskFinished reports whether a runner task reached a terminal status.
+func runnerTaskFinished(status string) bool {
+	switch status {
+	case domain.RunnerTaskSuccess, domain.RunnerTaskFailed, domain.RunnerTaskCanceled:
+		return true
+	}
+	return false
+}
+
+// runnerTaskStatusEvent maps the leased/running transitions of a runner task
+// to the progress events shown while awaiting it; other statuses have none.
+func runnerTaskStatusEvent(task domain.RunnerTask) (domain.TelemetryEvent, bool) {
+	source := domain.TelemetrySource{Layer: "executor", Adapter: "runner-v1", Provider: task.Provider}
+	switch task.Status {
+	case domain.RunnerTaskLeased:
+		return domain.TelemetryEvent{
+			Category: "sandbox", Name: "runner.claimed", Phase: "progress",
+			Message:  "执行机器已领取任务，正在准备工作区和沙箱",
+			Provider: task.Provider,
+			Source:   source,
+		}, true
+	case domain.RunnerTaskRunning:
+		return domain.TelemetryEvent{
+			Category: "process", Name: "runner.started", Phase: "start",
+			Message:  "执行机器已启动任务",
+			Provider: task.Provider,
+			Source:   source,
+		}, true
+	}
+	return domain.TelemetryEvent{}, false
 }
 
 // bridgeRunnerEventsToSink normalizes durable runner events in the process
