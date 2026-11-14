@@ -71,6 +71,14 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 ## 快速开始
 
+**部署到云端的优势**
+
+- **多人在线协作。** 团队成员在不同地点也能通过浏览器进入同一个云端工作台。产品同事提需求，开发启动项目共用的 SOP，评审查看产物并批准或打回。大家都能从同一条需求看到进度、审批记录和 PR。
+- **合上电脑，任务照跑。** 下班前发起一条 SOP，云服务器可以继续跑到人工审批环节，夜间的定时任务也能照常触发。
+- **开发机腾出算力。** 多条 SOP 可以在各自的云端 Docker 沙箱里并行构建和测试。需要本地工具或内网访问的任务，可以交给接入平台的 Runner。
+
+HTTPS 和 Runner 的配置见[部署指南](docs/deployment.md)。
+
 先准备 **Git** 并克隆仓库。安装脚本会检查 Docker、Compose、Python 3 和 curl，并在获得确认后补装缺少的组件：Linux 的 Python/curl 支持 apt、dnf、yum，Compose 插件支持 x86_64/arm64 并校验官方发行文件的 SHA-256；macOS 需要可运行的 Python 3 和 Docker Desktop，可通过 Homebrew 补装缺少的组件。支持普通用户运行，需要时通过 Docker 组或 sudo 操作 Docker。设置 `LOOPFORGE_YES=1` 可接受安装提示；安装和拉取镜像需要可用的外网连接。
 
 ```bash

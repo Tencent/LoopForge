@@ -71,6 +71,14 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 ## Quick start
 
+**Why deploy to the cloud?**
+
+- **Collaborate from anywhere.** Teammates sign in to the same cloud workspace from their own browsers. One person files a requirement, another starts a shared project SOP, and a reviewer checks the artifacts and approves the work or sends it back. Everyone follows the same progress, approvals and PR from that requirement.
+- **Close your laptop and let runs continue.** Start an SOP before signing off and the cloud server can run it up to the approval gate. Scheduled jobs can start overnight, too.
+- **Free up your development machine.** Run builds and tests for multiple SOPs in parallel, each in its own cloud Docker sandbox. Connect a runner for tasks that need local tools or private network access.
+
+See the [deployment guide](docs/deployment.md) for HTTPS and runner setup.
+
 Install **Git** and clone the repository first. The installer checks Docker, Compose, Python 3 and curl and offers to install missing components. Python/curl installation supports apt, dnf and yum on Linux; the Compose plugin supports x86_64/arm64 and verifies the official release SHA-256. macOS needs a working Python 3 and Docker Desktop; Homebrew can install missing components. Ordinary Linux users are supported through Docker group access or sudo. Set `LOOPFORGE_YES=1` to accept installation prompts. Package and image downloads require internet access.
 
 ```bash
