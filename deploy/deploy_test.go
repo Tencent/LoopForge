@@ -221,6 +221,55 @@ exit 0
 // Without systemd, --service keeps the runner in the background instead of
 // stopping with an init-system error.
 func TestBindCLIServiceRunsInBackgroundWithoutSystemd(t *testing.T) {
+	// A user without a crontab: `crontab -l` exits 1 with "no crontab for".
+	text, cronFile := runBindCLIWithoutSystemd(t, "#!/bin/sh\nif [ \"${1:-}\" = -l ]; then echo \"no crontab for $(id -un)\" >&2; exit 1; fi\ncat > \"$TEST_CRON_FILE\"\nexit 0\n")
+	if strings.Contains(text, "crontab") {
+		t.Fatalf("a missing crontab must not produce a crontab warning:\n%s", text)
+	}
+	cron, err := os.ReadFile(cronFile)
+	if err != nil || !strings.Contains(string(cron), "@reboot") || !strings.Contains(string(cron), "run-service.sh") {
+		t.Fatalf("reboot hook missing: %q %v", cron, err)
+	}
+}
+
+// Installing the reboot hook keeps every existing crontab entry.
+func TestBindCLIServiceKeepsExistingCrontabEntries(t *testing.T) {
+	text, cronFile := runBindCLIWithoutSystemd(t, "#!/bin/sh\nif [ \"${1:-}\" = -l ]; then printf '0 3 * * * /usr/local/bin/backup\\n@reboot /old/run-service.sh # agentflow-runner\\n'; exit 0; fi\ncat > \"$TEST_CRON_FILE\"\nexit 0\n")
+	if strings.Contains(text, "crontab") {
+		t.Fatalf("unexpected crontab warning:\n%s", text)
+	}
+	cron, err := os.ReadFile(cronFile)
+	if err != nil {
+		t.Fatalf("crontab not written: %v\n%s", err, text)
+	}
+	body := string(cron)
+	if !strings.Contains(body, "0 3 * * * /usr/local/bin/backup") {
+		t.Fatalf("existing entry dropped: %q", body)
+	}
+	if strings.Contains(body, "/old/run-service.sh") || strings.Count(body, "# agentflow-runner") != 1 {
+		t.Fatalf("stale reboot hook not replaced exactly once: %q", body)
+	}
+}
+
+// When `crontab -l` fails for any reason other than "no crontab", the
+// installer must not write a crontab: doing so would replace the user's
+// existing entries with only the runner hook.
+func TestBindCLIServiceLeavesCrontabAloneWhenReadFails(t *testing.T) {
+	text, cronFile := runBindCLIWithoutSystemd(t, "#!/bin/sh\nif [ \"${1:-}\" = -l ]; then echo 'crontab: cannot open spool file: Permission denied' >&2; exit 1; fi\ncat > \"$TEST_CRON_FILE\"\nexit 0\n")
+	if _, err := os.Stat(cronFile); !os.IsNotExist(err) {
+		body, _ := os.ReadFile(cronFile)
+		t.Fatalf("crontab was rewritten after a failed read: %q\n%s", body, text)
+	}
+	if !strings.Contains(text, "读取 crontab 失败") || !strings.Contains(text, "Permission denied") {
+		t.Fatalf("read failure not reported:\n%s", text)
+	}
+}
+
+// runBindCLIWithoutSystemd installs with --service on a machine whose
+// systemctl cannot reach a bus, using crontabScript as the fake crontab. It
+// returns the installer output and the file a `crontab -` write lands in.
+func runBindCLIWithoutSystemd(t *testing.T, crontabScript string) (string, string) {
+	t.Helper()
 	home := t.TempDir()
 	binDir := filepath.Join(home, "bin")
 	marker := filepath.Join(home, "started")
@@ -253,7 +302,7 @@ esac
 exit 22
 `,
 		"systemctl": "#!/bin/sh\necho 'Failed to connect to bus: Host is down' >&2\nexit 1\n",
-		"crontab":   "#!/bin/sh\nif [ \"${1:-}\" = -l ]; then exit 1; fi\ncat > \"$TEST_CRON_FILE\"\nexit 0\n",
+		"crontab":   crontabScript,
 	} {
 		if err := os.WriteFile(filepath.Join(fakeBin, name), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
@@ -304,10 +353,7 @@ exit 22
 	if _, err := os.Stat(filepath.Join(home, ".config/systemd/user/agentflow-runner.service")); !os.IsNotExist(err) {
 		t.Fatal("wrote a systemd unit on a machine without systemd")
 	}
-	cron, err := os.ReadFile(cronFile)
-	if err != nil || !strings.Contains(string(cron), "@reboot") || !strings.Contains(string(cron), "run-service.sh") {
-		t.Fatalf("reboot hook missing: %q %v", cron, err)
-	}
+	return text, cronFile
 }
 
 // A non-root user whose own loginctl call is refused still gets the bus

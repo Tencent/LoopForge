@@ -72,6 +72,7 @@ fi
 
 fail() { echo "[bind-cli] 错误: $*" >&2; exit 1; }
 info() { echo "[bind-cli] $*"; }
+warn() { echo "[bind-cli] 警告: $*" >&2; }
 
 # systemctl --user 走用户 D-Bus。SSH 进 CVM、以 root 执行，或当前 shell
 # 没有登录会话时，这条总线还不存在，会报 Failed to connect to bus。
@@ -191,25 +192,59 @@ stop_background_runner() {
   fi
 }
 
+# 读当前用户的 crontab 到 CRONTAB_CURRENT。读取成功，或明确是「还没有 crontab」时
+# 返回 0；其他失败（权限、spool 读不了等）返回 1 并把原因放进 CRONTAB_ERROR。
+# 调用方必须在失败时放弃改写：把读失败当成空表写回，会覆盖用户原有的定时任务。
+read_user_crontab() {
+  local err_file status=0
+  CRONTAB_CURRENT=""
+  CRONTAB_ERROR=""
+  err_file="$(mktemp "${TMPDIR:-/tmp}/bind-cli-crontab.XXXXXX")" || {
+    CRONTAB_ERROR="无法创建临时文件"
+    return 1
+  }
+  CRONTAB_CURRENT="$(crontab -l 2>"$err_file")" || status=$?
+  CRONTAB_ERROR="$(head -n 1 "$err_file" 2>/dev/null || true)"
+  rm -f "$err_file"
+  [[ "$status" -eq 0 ]] && return 0
+  CRONTAB_CURRENT=""
+  if [[ "$CRONTAB_ERROR" == *"no crontab for"* ]]; then
+    CRONTAB_ERROR=""
+    return 0
+  fi
+  [[ -n "$CRONTAB_ERROR" ]] || CRONTAB_ERROR="crontab -l 退出码 ${status}"
+  return 1
+}
+
 remove_background_reboot_hook() {
   command -v crontab >/dev/null 2>&1 || return 0
-  local current filtered
-  current="$(crontab -l 2>/dev/null || true)"
-  [[ "$current" == *"# agentflow-runner"* ]] || return 0
-  filtered="$(printf '%s\n' "$current" | grep -v '# agentflow-runner' || true)"
-  printf '%s\n' "$filtered" | crontab - >/dev/null 2>&1 || true
+  local filtered
+  if ! read_user_crontab; then
+    warn "读取 crontab 失败（${CRONTAB_ERROR}），未改动 crontab；如有 # agentflow-runner 开机项请手动删除"
+    return 0
+  fi
+  [[ "$CRONTAB_CURRENT" == *"# agentflow-runner"* ]] || return 0
+  filtered="$(printf '%s\n' "$CRONTAB_CURRENT" | grep -v '# agentflow-runner' || true)"
+  printf '%s\n' "$filtered" | crontab - >/dev/null 2>&1 ||
+    warn "写回 crontab 失败，请手动删除 # agentflow-runner 开机项"
 }
 
 install_background_reboot_hook() {
   command -v crontab >/dev/null 2>&1 || return 0
   [[ "$BACKGROUND_SCRIPT" != *" "* && "$RUNNER_HOME" != *" "* ]] || return 0
-  local current entry
-  current="$(crontab -l 2>/dev/null || true)"
+  local entry
+  if ! read_user_crontab; then
+    warn "读取 crontab 失败（${CRONTAB_ERROR}），为免覆盖已有定时任务，未安装开机自启；runner 本次仍在后台运行"
+    return 0
+  fi
   entry="@reboot ${BACKGROUND_SCRIPT} >> ${RUNNER_HOME}/runner.log 2>&1 # agentflow-runner"
   {
-    printf '%s\n' "$current" | grep -v '# agentflow-runner' || true
+    if [[ -n "$CRONTAB_CURRENT" ]]; then
+      printf '%s\n' "$CRONTAB_CURRENT" | grep -v '# agentflow-runner' || true
+    fi
     printf '%s\n' "$entry"
-  } | crontab - >/dev/null 2>&1 || true
+  } | crontab - >/dev/null 2>&1 ||
+    warn "写入 crontab 失败，未安装开机自启；runner 本次仍在后台运行"
 }
 
 launch_background_wrapper() {
