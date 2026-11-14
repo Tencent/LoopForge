@@ -101,6 +101,7 @@ func waitForFile(t *testing.T, path string) {
 
 // sendControl delivers a control frame like the WebSocket reader does, but
 // fails instead of blocking forever if the execution loop stopped reading.
+// It calls t.Fatalf, so it must only be used from the test goroutine.
 func sendControl(t *testing.T, ch chan<- string, desiredState string) {
 	t.Helper()
 	select {
@@ -133,6 +134,23 @@ func awaitResult(t *testing.T, ch <-chan platformCancelResult) platformCancelRes
 	case <-time.After(30 * time.Second):
 		t.Fatal("execution did not finish after platform cancel")
 		return platformCancelResult{}
+	}
+}
+
+func TestRunnerTaskCancelDesired(t *testing.T) {
+	cases := map[string]bool{
+		"cancel":  true,
+		"CANCEL":  true,
+		"Cancel":  true,
+		"":        false,
+		"run":     false,
+		"pause":   false,
+		" cancel": false,
+	}
+	for state, want := range cases {
+		if got := runnerTaskCancelDesired(state); got != want {
+			t.Errorf("runnerTaskCancelDesired(%q) = %v, want %v", state, got, want)
+		}
 	}
 }
 
@@ -178,7 +196,7 @@ func TestExecuteProcessIgnoresNonCancelControlFrames(t *testing.T) {
 	waitForFile(t, marker)
 	// The channel has capacity 1, so once the last send returns the loop has
 	// already consumed and handled every earlier frame.
-	for _, state := range []string{"pause", " cancel", "running", ""} {
+	for _, state := range []string{"run", "pause", " cancel", "running", ""} {
 		sendControl(t, controlCh, state)
 	}
 	if err := os.WriteFile(gate, nil, 0o600); err != nil {
@@ -292,7 +310,7 @@ func TestExecuteSandboxProcessIgnoresNonCancelControlFrames(t *testing.T) {
 		return d.executeSandboxProcess(context.Background(), domain.RunnerTask{ID: "sandbox-ws-ignore"}, sandbox, flowruntime.CommandSpec{Argv: []string{"x"}})
 	})
 	<-sandbox.started
-	for _, state := range []string{"pause", "cancelled", "running", ""} {
+	for _, state := range []string{"run", "pause", "cancelled", "running", ""} {
 		sendControl(t, controlCh, state)
 	}
 	close(sandbox.release)
