@@ -728,7 +728,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				assets = append(assets, toolSession.assets...)
 				toolSession.mu.Unlock()
 			}
-			stored = append(stored, assistantMessage{Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})
+			stored = append(stored, assistantMessage{TraceID: assistantControlScopeFrom(modelCtx).GenerationID, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID, Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images})
 			conversation := assistantConversation{Shared: shared, ID: req.SessionID, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: stored}
 			if toolSession != nil {
 				conversation.WorkspaceRunID = toolSession.conversationWorkspace()

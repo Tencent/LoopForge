@@ -42,6 +42,10 @@ type AssistantActivityEvent struct {
 }
 
 type AssistantMessage struct {
+	// TraceID is the generation that sent this question or wrote this reply.
+	// The question and its reply share it, so one ID finds the whole turn in
+	// assistant_generations and the server logs.
+	TraceID        string                   `json:"traceId,omitempty"`
 	Assets         []AssistantAssetRef      `json:"assets,omitempty"`
 	RunIDs         []string                 `json:"runIds,omitempty"`
 	Activity       []AssistantActivityEvent `json:"activity,omitempty"`

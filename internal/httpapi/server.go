@@ -685,7 +685,13 @@ func serveBindCLIScript(c *gin.Context) {
 }
 
 func (s *Server) health(c *gin.Context) {
-	c.JSON(http.StatusOK, map[string]any{"status": "ok", "role": "api", "pid": os.Getpid()})
+	body := map[string]any{"status": "ok", "role": "api", "pid": os.Getpid()}
+	// The chatbot copies this into troubleshooting notes; login.html already
+	// shows the same short commit to anonymous visitors.
+	if short, _ := buildCommit(); short != "" {
+		body["commit"] = short
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 func (s *Server) capabilities(c *gin.Context) {

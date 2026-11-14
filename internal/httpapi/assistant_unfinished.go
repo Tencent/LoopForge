@@ -38,7 +38,7 @@ func turnTranscriptMessage(g domain.AssistantGeneration, model string, stopped b
 	}
 	payload := map[string]any{"message": text, "drafts": []any{}}
 	started := g.StartedAt
-	message := domain.AssistantMessage{Role: "assistant", Activity: activity, StartedAt: &started, CreatedAt: time.Now().UTC(), Model: strings.TrimSpace(model), GenerationID: g.ID, Failure: g.Failure}
+	message := domain.AssistantMessage{TraceID: g.ID, Role: "assistant", Activity: activity, StartedAt: &started, CreatedAt: time.Now().UTC(), Model: strings.TrimSpace(model), GenerationID: g.ID, Failure: g.Failure}
 	if stopped {
 		payload["stopped"] = true
 		message.Unfinished = strings.TrimSpace(g.Error)
