@@ -1978,7 +1978,6 @@ function userAvatarHTML(userOrId, spec=100, extraClass=''){
 }
 
 function renderUserBadge(){
-  window.AgentFlowPageFeedback?.sync();
   const badge=$('#userBadge'), nameEl=$('#userName'), avatarEl=$('#userAvatarText');
   if(!badge) return;
   const user=state.currentUser;

@@ -1,7 +1,7 @@
--- Manual additive migration for the floating page feedback widget. Reports and
--- their images are standalone: no foreign keys to projects, issues or users.
--- gorm's incremental DDL creates the same objects on start; this script exists
--- for environments that apply DDL by hand.
+-- Historical DDL for the removed page-feedback widget. Do not apply this on a
+-- new database: the button and /api/page-feedback are gone, and startup no
+-- longer creates these tables. Existing rows are left in place; this script
+-- does not drop them.
 CREATE TABLE IF NOT EXISTS page_feedbacks (
   id VARCHAR(64) NOT NULL PRIMARY KEY,
   title VARCHAR(255),

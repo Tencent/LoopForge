@@ -429,20 +429,6 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 - 悬停只加深阴影（紫调 `0 12px 28px -16px`）并换强边框，显式覆盖 product-v3 / v4 / sops.css 的 `translateY`；键盘焦点为强调色边框 + 3px 淡紫外圈。主操作与「⋯」带 `data-hover-ink-control`，由 `hover-ink.js` 驱动落点 ink。
 - 减少动态效果时控制器跳过入场、FLIP 与退出节点，CSS 同时关闭卡片内动画、过渡和呼吸点。
 
-## 悬浮页面反馈
-
-登录用户（非访客）在所有页面右下角看到 44px 圆形反馈按钮，`renderUserBadge()` 调用 `AgentFlowPageFeedback.sync()` 按当前用户挂载或卸载。样式全部使用 `--hui-*` 令牌，类名统一为 `.fb-*`；层级为 110–117，低于对话框（120）。工作台返回按钮出现时按钮整体上移避让。
-
-| 区域 | 约定 |
-| --- | --- |
-| 卡片 | 宽 384px（≤1000px 时贴边），标题「帮助我们做得更好」、副标题「AI Native团队将在24小时以内快速响应」；只有一个输入框（占位「您的不知所措也是我们的问题」，上限 5000 字），首行非空文字即标题（≤120 字）。底部折叠显示自动附带的页面位置 |
-| 图片 | 选择、粘贴、拖入均可，最多 5 张、单张 ≤5MB，仅 PNG / JPEG / GIF / WebP；服务端按内容识别类型，不信任扩展名 |
-| 点选元素 | 「点选元素」进入拾取态：顶部提示条 + 高亮框；同源 iframe（工作台）内同样可选，捕获阶段拦截点击，不触发业务逻辑；Escape 退出 |
-| 提交 | `multipart/form-data` 发到 `POST /api/page-feedback`，提交人只取服务端会话；401 时保留草稿并提示重新登录。成功后显示完成态约 1.6s 再收起清空 |
-| 拖动与隐藏 | 长按 320ms 或移动超过 6px 开始拖动，底部中央出现回收区，进入 72px 半径变为激活态，松开即隐藏并给出可撤销提示。拖动中 Escape 或 `pointercancel` 回弹原位，拖动后的点击一律吞掉 |
-
-隐藏状态只保存在内存，刷新后恢复；组件不读写 localStorage、sessionStorage 或 cookie。URL 与 iframe 地址在上传前去掉 userinfo 与 token、code、signature 等敏感参数，服务端再清洗一次。减少动态效果时取消全部动画与过渡。
-
 ## 实现位置
 
 | 位置 | 职责 |
@@ -473,7 +459,6 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 | `web/app.js`（`afOpenDialog`、`afConfirm`、`afPrompt`、`afAlert`） | 确认对话框的排队、焦点管理和模板 |
 | `chatbot/src/HarnessSelect.jsx`、`harness-select-model.js`、`harness-controls.css` | 工作台的 React 下拉组件、可测试的选项 / 键盘 / 定位逻辑及样式 |
 | `web/app/sops.js`、`web/app/sop-catalog.css` | 流程模板卡片模板（`projectSOPCard`、`sharedSOPCard`、`genericSOPCard`）、徽标映射、「⋯」菜单浮层、`sopCatalogMotion` 入场 / FLIP / 退出动效 |
-| `web/app/page-feedback.js`、`web/app/page-feedback.css`、`internal/httpapi/page_feedback.go`、`internal/repo/page_feedback.go` | 悬浮反馈按钮、卡片、元素拾取与拖动隐藏；反馈提交 / 查询接口及 `page_feedbacks`、`page_feedback_images` 表 |
 
 ## 验证与交付
 

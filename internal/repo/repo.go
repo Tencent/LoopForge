@@ -186,7 +186,6 @@ type Store struct {
 	*RoomsRepo
 	*SpacesRepo
 	*KnowledgeRepo
-	*FeedbackRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
 }
@@ -218,7 +217,6 @@ func newStore(db *gorm.DB) *Store {
 	s.RoomsRepo = &RoomsRepo{deps: d}
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
-	s.FeedbackRepo = &FeedbackRepo{deps: d}
 	return s
 }
 
