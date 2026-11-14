@@ -39,28 +39,10 @@ func (e *Engine) EndConversationWorkspaceUseAsync(ctx context.Context, id, token
 		defer close(done)
 		defer cancel()
 		defer e.conversationSaves.Delete(saveToken)
-		watchDone := make(chan struct{})
-		go func() {
-			defer close(watchDone)
-			ticker := time.NewTicker(100 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-saveCtx.Done():
-					return
-				case <-ticker.C:
-					meta, exists := e.repo.WorkspaceCheckpoint(id)
-					if !exists || meta.LeaseToken != saveToken {
-						cancel()
-						return
-					}
-				}
-			}
-		}()
+		watchDone := e.watchWorkspaceSaveLease(saveCtx, id, saveToken, cancel)
 		for {
 			err = e.saveConversationWorkspaceAfterUse(saveCtx, id, saveToken)
-			meta, exists := e.repo.WorkspaceCheckpoint(id)
-			if !exists || meta.LeaseToken != saveToken {
+			if !e.workspaceSaveLeaseHeld(id, saveToken) {
 				err = nil // superseded: never publish an error or clear the new lease
 				break
 			}
@@ -89,6 +71,37 @@ func (e *Engine) EndConversationWorkspaceUseAsync(ctx context.Context, id, token
 		done <- err
 	}()
 	return done, nil
+}
+
+// workspaceSaveLeaseHeld reports whether the background save still owns the
+// workspace checkpoint lease identified by token.
+func (e *Engine) workspaceSaveLeaseHeld(id, token string) bool {
+	meta, exists := e.repo.WorkspaceCheckpoint(id)
+	return exists && meta.LeaseToken == token
+}
+
+// watchWorkspaceSaveLease cancels the background save as soon as another
+// instance takes over the lease. The returned channel closes when the watcher
+// exits, either after cancelling or once ctx is done.
+func (e *Engine) watchWorkspaceSaveLease(ctx context.Context, id, token string, cancel context.CancelFunc) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if !e.workspaceSaveLeaseHeld(id, token) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return done
 }
 
 func (e *Engine) waitForBackgroundWorkspaceSave(id string) error {
