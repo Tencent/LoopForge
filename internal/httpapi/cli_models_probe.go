@@ -168,27 +168,11 @@ func cursorAgentModels(ctx context.Context, apiKey string) ([]domain.CLIModel, e
 	return cursorModelFamilies(parseCursorModels(string(out))), nil
 }
 
-// cursorModelFamilies folds the effort variants cursor-agent lists into the
-// families of the built-in table, in table order; IDs outside it follow as
-// they are.
+// cursorModelFamilies folds the effort variants cursor-agent lists into one
+// row per family. The built-in table wins; other IDs ending in a recognized
+// effort suffix fold the same way.
 func cursorModelFamilies(models []domain.CLIModel) []domain.CLIModel {
-	present, seen := map[string]bool{}, map[string]bool{}
-	var unknown []domain.CLIModel
-	for _, model := range models {
-		if family, ok := runtime.CursorModelFamily(model.ID); ok {
-			present[family.ID] = true
-		} else if !seen[model.ID] {
-			seen[model.ID] = true
-			unknown = append(unknown, model)
-		}
-	}
-	out := []domain.CLIModel{}
-	for _, family := range runtime.CursorModels() {
-		if present[family.ID] {
-			out = append(out, domain.CLIModel{ID: family.ID, Name: family.Name})
-		}
-	}
-	return append(out, unknown...)
+	return runtime.FoldCursorCLIModels(models)
 }
 
 func parseCursorModels(output string) []domain.CLIModel {
@@ -205,7 +189,7 @@ func parseCursorModels(output string) []domain.CLIModel {
 func cliModelsOf(models []assistantDiscoveredModel) []domain.CLIModel {
 	out := make([]domain.CLIModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name})
+		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
 	}
 	return out
 }

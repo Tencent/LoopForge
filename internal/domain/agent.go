@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
@@ -13,7 +14,7 @@ var ExecutorEffortLevels = map[string][]string{
 	"codebuddy":   {"low", "medium", "high", "xhigh", "max", "ultracode"},
 	"codex":       {"low", "medium", "high", "xhigh", "max", "ultra"},
 	"opencode":    {"low", "medium", "high"},
-	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max"},
+	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
 	"agy":         {"low", "medium", "high", "xhigh", "max"},
 	"pi":          {"minimal", "low", "medium", "high", "xhigh", "max"},
 	"qoder":       {"low", "medium", "high", "xhigh", "max"},
@@ -26,12 +27,9 @@ var AgentCLIExecutorKinds = []string{"opencode", "cursor", "agy", "kimi", "pi", 
 
 func IsAgentCLIKind(kind string) bool {
 	kind = strings.TrimSpace(kind)
-	for _, k := range AgentCLIExecutorKinds {
-		if strings.EqualFold(k, kind) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(AgentCLIExecutorKinds, func(k string) bool {
+		return strings.EqualFold(k, kind)
+	})
 }
 
 // ValidateAgentEffort checks a role's reasoning-effort choice against the
@@ -45,10 +43,8 @@ func ValidateAgentEffort(effort, executorKind string) error {
 	if !ok {
 		return errors.New("当前 CLI 不支持设置思考强度")
 	}
-	for _, level := range levels {
-		if level == effort {
-			return nil
-		}
+	if slices.Contains(levels, effort) {
+		return nil
 	}
 	return errors.New("思考强度取值不被当前 CLI 支持")
 }

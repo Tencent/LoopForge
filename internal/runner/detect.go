@@ -109,38 +109,9 @@ func DetectRuntimes(ctx context.Context, extraBinaries map[string]string) []doma
 }
 
 func detectRuntimes(ctx context.Context, extraBinaries map[string]string, inventory managedcli.Inventory) []domain.RunnerRuntime {
-	specs := make([]providerSpec, 0, len(defaultProviders)+len(extraBinaries)+1)
-	seen := map[string]bool{}
-	for _, spec := range defaultProviders {
-		specs = append(specs, spec)
-		seen[spec.Kind] = true
-	}
-	kinds := make([]string, 0, len(extraBinaries))
-	for kind := range extraBinaries {
-		kinds = append(kinds, kind)
-	}
-	sort.Strings(kinds)
-	for _, kind := range kinds {
-		if !seen[kind] {
-			specs = append(specs, providerSpec{Kind: kind, Binary: extraBinaries[kind]})
-			seen[kind] = true
-		}
-	}
+	specs := runtimeProviderSpecs(extraBinaries)
 	out := make([]domain.RunnerRuntime, 0, len(specs)+2)
-	out = append(out, domain.RunnerRuntime{
-		Provider:     mockProviderKind,
-		BinaryPath:   "(builtin)",
-		Capabilities: []string{"non_interactive"},
-		Status:       domain.RuntimeStatusOnline,
-	})
-	// The terminal capability lets the platform run verification gates and
-	// sandbox-side commands on this machine.
-	out = append(out, domain.RunnerRuntime{
-		Provider:     terminalProviderKind,
-		BinaryPath:   "(builtin)",
-		Capabilities: []string{"terminal"},
-		Status:       domain.RuntimeStatusOnline,
-	})
+	out = append(out, builtinRuntimes()...)
 	for _, spec := range specs {
 		binary, managed := inventory.BinaryFor(spec.Kind)
 		if !managed {
@@ -170,6 +141,52 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 		})
 	}
 	return out
+}
+
+// runtimeProviderSpecs returns the CLIs to probe: every default provider in
+// declaration order, followed by extra kinds configured only through
+// extraBinaries in sorted order. An extra binary for a default kind does not
+// add a second spec; detectRuntimes applies it as an explicit override.
+func runtimeProviderSpecs(extraBinaries map[string]string) []providerSpec {
+	specs := make([]providerSpec, 0, len(defaultProviders)+len(extraBinaries))
+	seen := make(map[string]bool, len(defaultProviders)+len(extraBinaries))
+	for _, spec := range defaultProviders {
+		specs = append(specs, spec)
+		seen[spec.Kind] = true
+	}
+	kinds := make([]string, 0, len(extraBinaries))
+	for kind := range extraBinaries {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	for _, kind := range kinds {
+		if !seen[kind] {
+			specs = append(specs, providerSpec{Kind: kind, Binary: extraBinaries[kind]})
+			seen[kind] = true
+		}
+	}
+	return specs
+}
+
+// builtinRuntimes returns the in-process runtimes every runner reports
+// regardless of installed CLIs: the mock provider and the terminal
+// capability, which lets the platform run verification gates and
+// sandbox-side commands on this machine.
+func builtinRuntimes() []domain.RunnerRuntime {
+	return []domain.RunnerRuntime{
+		{
+			Provider:     mockProviderKind,
+			BinaryPath:   "(builtin)",
+			Capabilities: []string{"non_interactive"},
+			Status:       domain.RuntimeStatusOnline,
+		},
+		{
+			Provider:     terminalProviderKind,
+			BinaryPath:   "(builtin)",
+			Capabilities: []string{"terminal"},
+			Status:       domain.RuntimeStatusOnline,
+		},
+	}
 }
 
 func probeVersion(ctx context.Context, path string, flags []string, environments ...map[string]string) string {

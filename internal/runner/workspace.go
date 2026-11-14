@@ -92,24 +92,33 @@ func (d *Daemon) ensureRunnerBrowser(ctx context.Context, request domain.RunnerW
 	return ""
 }
 
+// handleRunnerWorkspaceBrowser serves the side-panel browser. It needs no
+// workspace root or gate, so readRunnerWorkspace dispatches it first.
+func (d *Daemon) handleRunnerWorkspaceBrowser(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+	if request.Browser == nil {
+		return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid browser request"}
+	}
+	if request.Browser.Ensure && !runtime.BrowserRunning(ctx, request.RunID) {
+		if reason := d.ensureRunnerBrowser(ctx, request); reason != "" {
+			return runnerWorkspacePayload(domain.BrowserState{Reason: reason})
+		}
+	}
+	if !runnerBrowserReads[request.Browser.Operation] {
+		d.touchRunSandboxes(request.RunID)
+	}
+	state, err := runtime.HandleBrowser(ctx, request.RunID, *request.Browser)
+	if err != nil {
+		return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
+	}
+	return runnerWorkspacePayload(state)
+}
+
 func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+	if request.Operation == "conversation_process" {
+		return d.conversationProcess(ctx, request)
+	}
 	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
-		if request.Browser == nil {
-			return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid browser request"}
-		}
-		if request.Browser.Ensure && !runtime.BrowserRunning(ctx, request.RunID) {
-			if reason := d.ensureRunnerBrowser(ctx, request); reason != "" {
-				return runnerWorkspacePayload(domain.BrowserState{Reason: reason})
-			}
-		}
-		if !runnerBrowserReads[request.Browser.Operation] {
-			d.touchRunSandboxes(request.RunID)
-		}
-		state, err := runtime.HandleBrowser(ctx, request.RunID, *request.Browser)
-		if err != nil {
-			return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
-		}
-		return runnerWorkspacePayload(state)
+		return d.handleRunnerWorkspaceBrowser(ctx, request)
 	}
 	root, err := d.runnerWorkspaceRoot(request)
 	if err != nil {

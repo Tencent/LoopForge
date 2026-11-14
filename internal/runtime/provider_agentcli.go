@@ -93,7 +93,8 @@ type AgentCLICommandOptions struct {
 	// Chat runs the CLI for AI 对话 on the control plane: MCP tools stay
 	// available, shell, file writes and web access do not. The MCP
 	// configuration (WriteAgentCLIMCPConfig ReadOnly) completes the policy.
-	Chat bool
+	Chat      bool
+	Workspace bool
 	// AgentFile is Kimi Code's chat agent definition (WriteKimiChatAgent).
 	AgentFile string
 }
@@ -117,7 +118,8 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	}
 	extra := append([]string{}, o.Extra...)
 	var argv []string
-	options := AgentCLIOptions{Model: model, ReadOnly: o.Chat}
+	readOnly := o.Chat && !o.Workspace
+	options := AgentCLIOptions{Model: model, ReadOnly: readOnly}
 	switch kind {
 	case AgentCLIOpenCode:
 		argv = []string{binary, "run", "--format", "json", "--thinking"}
@@ -137,7 +139,10 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		// still approves the MCP tools.
 		argv = []string{binary, "-p", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force", "--approve-mcps"}
 		if model != "" {
-			argv = append(argv, "--model", CursorModelID(model, effort))
+			// ApplyAgentCLICredential re-resolves this against the owner's
+			// saved catalog, which only the credential carries.
+			argv = append(argv, "--model", CursorModelID(model, effort, nil))
+			options.Effort = effort
 		}
 		if resume != "" {
 			argv = append(argv, "--resume", resume)
@@ -164,7 +169,8 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		argv = []string{binary, "--output-format", "stream-json"}
 		if resume != "" {
 			argv = append(argv, "-S", resume)
-		} else if o.AgentFile != "" {
+		}
+		if o.AgentFile != "" && resume == "" {
 			// The session keeps the agent, so resumed turns cannot pass it again.
 			argv = append(argv, "--agent-file", o.AgentFile)
 		}
@@ -185,12 +191,21 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--append-system-prompt", o.SystemPromptFile)
 		}
 		if o.Chat {
+			// Pi restores its last declared tool loadout from the journal when
+			// --tools is omitted. Explicitly reset it on every mode handoff.
+			tools := "read,codemode"
+			if o.Workspace {
+				tools = "read,bash,edit,write,codemode"
+			}
+			argv = append(argv, "--tools", tools)
+		}
+		if readOnly {
 			argv = append(argv, "--exclude-tools", "bash,edit,write")
 		}
 		argv = append(append(argv, extra...), prompt)
 	case AgentCLIDeepSeek:
 		mode := "danger-full-access"
-		if o.Chat {
+		if readOnly {
 			mode = "read-only"
 		}
 		argv = []string{binary, "--profile", "headless", "--json", "--permission-mode", mode, "--approval-policy", "never"}
@@ -200,7 +215,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		argv = append(append(argv, extra...), prompt)
 	case AgentCLIZCode:
 		disallowed := zcodeSOPDisallowedTools
-		if o.Chat {
+		if readOnly {
 			disallowed = zcodeChatDisallowedTools
 		}
 		argv = []string{binary, "--prompt", prompt, "--output-format", "stream-json", "--mode", "yolo", "--no-color", "--disallowed-tools", disallowed}
@@ -260,11 +275,19 @@ var kimiChatDisallowedTools = []string{"Bash", "Edit", "Write", "FetchURL", "Web
 // WriteKimiChatAgent writes the Kimi Code agent definition for AI 对话: the
 // system prompt as its body and the chat's tool restrictions.
 func WriteKimiChatAgent(path, systemPrompt string) error {
+	return WriteKimiConversationAgent(path, systemPrompt, true)
+}
+
+func WriteKimiConversationAgent(path, systemPrompt string, readOnly bool) error {
 	body := strings.TrimSpace(systemPrompt)
 	if body == "" {
 		body = "You are the AgentFlow assistant."
 	}
-	content := "---\nname: agentflow-chat\ndescription: AgentFlow AI 对话\ndisallowedTools: [" + strings.Join(kimiChatDisallowedTools, ", ") + "]\n---\n" + body + "\n"
+	denied := ""
+	if readOnly {
+		denied = strings.Join(kimiChatDisallowedTools, ", ")
+	}
+	content := "---\nname: agentflow-chat\ndescription: LoopForge AI 对话\ndisallowedTools: [" + denied + "]\n---\n" + body + "\n"
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}

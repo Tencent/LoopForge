@@ -70,38 +70,11 @@ func RestoreMissingWorkspaceArtifacts(root string, files []domain.WorkspaceArtif
 		}
 		// Stage privately, then link without replacing the destination. os.Root
 		// confines every operation even if a parent directory changes concurrently.
-		var temp string
-		for attempt := 0; attempt < 10; attempt++ {
-			candidate := filepath.Join(parent, fmt.Sprintf(".agentflow-artifact-%d-%d", os.Getpid(), artifactTempSequence.Add(1)))
-			out, err := base.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if os.IsExist(err) {
-				continue
-			}
-			if err != nil {
-				return restored, err
-			}
-			temp = candidate
-			_, err = out.WriteString(f.Content)
-			if err == nil {
-				err = out.Chmod(0644)
-			}
-			if err == nil {
-				err = out.Sync()
-			}
-			closeErr := out.Close()
-			if err == nil {
-				err = closeErr
-			}
-			if err != nil {
-				_ = base.Remove(temp)
-				return restored, err
-			}
-			break
+		temp, err := stageArchivedArtifact(base, parent, f.Content)
+		if err != nil {
+			return restored, err
 		}
-		if temp == "" {
-			return restored, fmt.Errorf("cannot stage archived artifact")
-		}
-		err := base.Link(temp, rel)
+		err = base.Link(temp, rel)
 		_ = base.Remove(temp)
 		if os.IsExist(err) {
 			continue
@@ -112,6 +85,39 @@ func RestoreMissingWorkspaceArtifacts(root string, files []domain.WorkspaceArtif
 		restored = append(restored, filepath.ToSlash(rel))
 	}
 	return restored, nil
+}
+
+// stageArchivedArtifact writes content to a fresh private temp file under
+// parent (0644 after sync) and returns its root-relative path. It retries name
+// collisions up to 10 times; any write failure removes the partial temp file.
+func stageArchivedArtifact(base *os.Root, parent, content string) (string, error) {
+	for attempt := 0; attempt < 10; attempt++ {
+		candidate := filepath.Join(parent, fmt.Sprintf(".agentflow-artifact-%d-%d", os.Getpid(), artifactTempSequence.Add(1)))
+		out, err := base.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, err = out.WriteString(content)
+		if err == nil {
+			err = out.Chmod(0644)
+		}
+		if err == nil {
+			err = out.Sync()
+		}
+		closeErr := out.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			_ = base.Remove(candidate)
+			return "", err
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("cannot stage archived artifact")
 }
 
 var artifactTempSequence atomic.Uint64

@@ -250,26 +250,36 @@ func validateInsightExecution(v *domain.InsightExecution, now time.Time) string 
 			return "同一 provider/model 请合并为一项"
 		}
 		seen[key] = true
-		for _, n := range []int64{u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.ReasoningTokens} {
-			if n < 0 || n > 1e12 {
-				return "Token 数须在 0–10^12 之间"
-			}
+		if reason := validateInsightUsageAmounts(u); reason != "" {
+			return reason
 		}
-		if u.CacheReadTokens+u.CacheWriteTokens > u.InputTokens || u.ReasoningTokens > u.OutputTokens {
-			return "缓存 Token 必须包含在输入中，推理 Token 必须包含在输出中"
+	}
+	return ""
+}
+
+// validateInsightUsageAmounts checks the token counts and cost of one usage
+// entry: every count within 0–10^12, cache tokens included in input,
+// reasoning tokens included in output, and a cost consistent with its status.
+func validateInsightUsageAmounts(u domain.InsightUsage) string {
+	for _, n := range []int64{u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.ReasoningTokens} {
+		if n < 0 || n > 1e12 {
+			return "Token 数须在 0–10^12 之间"
 		}
-		switch u.CostStatus {
-		case "unknown":
-			if u.CostUSD != nil {
-				return "未知成本必须为 null"
-			}
-		case "reported", "estimated":
-			if u.CostUSD == nil || math.IsNaN(*u.CostUSD) || math.IsInf(*u.CostUSD, 0) || *u.CostUSD < 0 || *u.CostUSD > 1e9 {
-				return "已知成本须为 0–10^9 USD"
-			}
-		default:
-			return "costStatus 必须为 reported、estimated 或 unknown"
+	}
+	if u.CacheReadTokens+u.CacheWriteTokens > u.InputTokens || u.ReasoningTokens > u.OutputTokens {
+		return "缓存 Token 必须包含在输入中，推理 Token 必须包含在输出中"
+	}
+	switch u.CostStatus {
+	case "unknown":
+		if u.CostUSD != nil {
+			return "未知成本必须为 null"
 		}
+	case "reported", "estimated":
+		if u.CostUSD == nil || math.IsNaN(*u.CostUSD) || math.IsInf(*u.CostUSD, 0) || *u.CostUSD < 0 || *u.CostUSD > 1e9 {
+			return "已知成本须为 0–10^9 USD"
+		}
+	default:
+		return "costStatus 必须为 reported、estimated 或 unknown"
 	}
 	return ""
 }

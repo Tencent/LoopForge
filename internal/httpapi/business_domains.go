@@ -9,8 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"net/http"
+	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -25,12 +27,7 @@ type businessDomainsHandlers struct {
 var businessDomainIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 func hasBusinessUser(ids []int64, id int64) bool {
-	for _, v := range ids {
-		if id > 0 && v == id {
-			return true
-		}
-	}
-	return false
+	return id > 0 && slices.Contains(ids, id)
 }
 func (h *businessDomainsHandlers) canView(d domain.BusinessDomain, id int64, admin bool) bool {
 	return admin || hasBusinessUser(d.ManagerIDs, id) || hasBusinessUser(d.ViewerIDs, id)
@@ -151,37 +148,9 @@ func (h *businessDomainsHandlers) report(c *gin.Context) {
 			return
 		}
 	}
-	filter := domain.AnalyticsFilter{ProjectIDs: []string{}, Grain: strings.TrimSpace(c.Query("grain"))}
-	filter.TimeZone = strings.TrimSpace(c.Query("timeZone"))
-	if filter.TimeZone == "" {
-		filter.TimeZone = "UTC"
-	}
-	if _, err := time.LoadLocation(filter.TimeZone); err != nil || filter.TimeZone == "Local" {
-		c.JSON(400, gin.H{"error": "timeZone 须为有效的 IANA 时区"})
-		return
-	}
-	if filter.Grain == "" {
-		filter.Grain = "day"
-	}
-	if filter.Grain != "day" && filter.Grain != "week" && filter.Grain != "month" {
-		c.JSON(400, gin.H{"error": "grain 必须为 day、week 或 month"})
-		return
-	}
-	for _, target := range []struct {
-		key   string
-		value *time.Time
-	}{{"from", &filter.From}, {"to", &filter.To}} {
-		if raw := c.Query(target.key); raw != "" {
-			at, err := time.Parse(time.RFC3339, raw)
-			if err != nil {
-				c.JSON(400, gin.H{"error": "时间须使用 RFC3339 格式"})
-				return
-			}
-			*target.value = at
-		}
-	}
-	if !filter.From.IsZero() && !filter.To.IsZero() && filter.From.After(filter.To) {
-		c.JSON(400, gin.H{"error": "开始时间不能晚于结束时间"})
+	filter, err := businessReportFilter(c.Request.URL.Query())
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	projects := h.repo.Projects()
@@ -200,6 +169,42 @@ func (h *businessDomainsHandlers) report(c *gin.Context) {
 		return
 	}
 	c.JSON(200, result)
+}
+
+// businessReportFilter 解析业务域汇总的查询参数：时区默认 UTC 且须为 IANA 时区，
+// 粒度默认 day 且只能是 day/week/month，from/to 为可选的 RFC3339 时间且不能倒序。
+// 返回的 ProjectIDs 为空切片，由调用方按可见范围填充。
+func businessReportFilter(query url.Values) (domain.AnalyticsFilter, error) {
+	filter := domain.AnalyticsFilter{ProjectIDs: []string{}, Grain: strings.TrimSpace(query.Get("grain"))}
+	filter.TimeZone = strings.TrimSpace(query.Get("timeZone"))
+	if filter.TimeZone == "" {
+		filter.TimeZone = "UTC"
+	}
+	if _, err := time.LoadLocation(filter.TimeZone); err != nil || filter.TimeZone == "Local" {
+		return filter, errors.New("timeZone 须为有效的 IANA 时区")
+	}
+	if filter.Grain == "" {
+		filter.Grain = "day"
+	}
+	if filter.Grain != "day" && filter.Grain != "week" && filter.Grain != "month" {
+		return filter, errors.New("grain 必须为 day、week 或 month")
+	}
+	for _, target := range []struct {
+		key   string
+		value *time.Time
+	}{{"from", &filter.From}, {"to", &filter.To}} {
+		if raw := query.Get(target.key); raw != "" {
+			at, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return filter, errors.New("时间须使用 RFC3339 格式")
+			}
+			*target.value = at
+		}
+	}
+	if !filter.From.IsZero() && !filter.To.IsZero() && filter.From.After(filter.To) {
+		return filter, errors.New("开始时间不能晚于结束时间")
+	}
+	return filter, nil
 }
 
 // businessReportCacheTTL 只用于合并同一瞬间的重复打开：报表本身仍由同一个

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -314,15 +315,12 @@ func executorReportedError(adapterResult, raw string) error {
 }
 
 func hasArg(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, wanted)
 }
 
-func dropArgWithValue(values []string, flag string) []string {
+// dropArgWithValue removes every occurrence of the given flags together with
+// their value, accepting both the "--flag value" and "--flag=value" forms.
+func dropArgWithValue(values []string, flags ...string) []string {
 	out := make([]string, 0, len(values))
 	skip := false
 	for _, value := range values {
@@ -330,11 +328,11 @@ func dropArgWithValue(values []string, flag string) []string {
 			skip = false
 			continue
 		}
-		if value == flag {
+		if slices.Contains(flags, value) {
 			skip = true
 			continue
 		}
-		if strings.HasPrefix(value, flag+"=") {
+		if slices.ContainsFunc(flags, func(flag string) bool { return strings.HasPrefix(value, flag+"=") }) {
 			continue
 		}
 		out = append(out, value)

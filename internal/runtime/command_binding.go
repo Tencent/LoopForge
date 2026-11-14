@@ -30,6 +30,9 @@ func upsertEnv(env []string, key, value string) []string {
 }
 
 func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (CommandSpec, error) {
+	if command.bindingsPrepared {
+		return command, nil
+	}
 	bound := command
 	bound.environment = make(map[string]string, len(command.environment)+16)
 	for key, value := range command.environment {
@@ -42,6 +45,12 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
+	}
+	if command.Provider == "codebuddy" {
+		// Every conversation and workspace gets its own CLI home, and CodeBuddy
+		// downloads its built-in plugin marketplaces (about 71 MB) into each one.
+		// LoopForge writes skills and agents itself and installs no plugins.
+		bound.environment["CODEBUDDY_SKIP_BUILTIN_MARKETPLACE"] = "1"
 	}
 	// Validate every private-home component before any credential binding can
 	// write configuration. The sandbox may have replaced a parent with a symlink.
@@ -97,26 +106,11 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			if bound.environment["CODEX_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key，请在个人配置中配置")
 			}
-			baseURL := strings.TrimSpace(credentials.Codex.BaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.openai.com/v1"
+			argv, err := CodexUserProviderArgv(bound.Argv, credentials.Codex.BaseURL)
+			if err != nil {
+				return CommandSpec{}, err
 			}
-			// The key stays in the process environment; only its variable name is
-			// written to argv. A dedicated provider prevents host login fallback.
-			config := []string{
-				"-c", `model_provider="agentflow_user"`,
-				"-c", `model_providers.agentflow_user.name="User API"`,
-				"-c", "model_providers.agentflow_user.base_url=" + strconv.Quote(baseURL),
-				"-c", `model_providers.agentflow_user.env_key="CODEX_API_KEY"`,
-				"-c", `model_providers.agentflow_user.wire_api="responses"`,
-				"-c", "model_providers.agentflow_user.requires_openai_auth=false",
-			}
-			if len(bound.Argv) < 2 {
-				return CommandSpec{}, fmt.Errorf("invalid Codex invocation")
-			}
-			args := append([]string{}, bound.Argv[:len(bound.Argv)-1]...)
-			args = append(args, config...)
-			bound.Argv = append(args, bound.Argv[len(bound.Argv)-1])
+			bound.Argv = argv
 		case BindClaudeCode:
 			bound.environment["ANTHROPIC_API_KEY"] = strings.TrimSpace(credentials.ClaudeCode.APIKey)
 			if bound.environment["ANTHROPIC_API_KEY"] == "" {
@@ -157,19 +151,54 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	if command.HookOutput != "" {
 		bound.environment["AGENTFLOW_HOOK_OUTPUT"] = command.HookOutput
 	}
-	if command.Telemetry != nil {
-		runID, nodeID := command.Telemetry.RunID, command.Telemetry.NodeID
-		bound.environment["AGENTFLOW_RUN_ID"] = runID
-		bound.environment["AGENTFLOW_NODE_ID"] = nodeID
-		bound.environment["CODEBUDDY_CODE_ENABLE_TELEMETRY"] = "1"
-		bound.environment["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
-		bound.environment["OTEL_TRACES_EXPORTER"] = "otlp"
-		bound.environment["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
-		bound.environment["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = observability.CollectorTracesURL()
-		bound.environment["OTEL_LOG_TOOL_DETAILS"] = "1"
-		bound.environment["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
-	}
+	bindTelemetryEnvironment(bound.environment, command.Telemetry)
 	return bound, nil
+}
+
+// bindTelemetryEnvironment points the child CLI's OpenTelemetry exporter at
+// the AgentFlow collector and tags its spans with the run and node. A nil
+// telemetry leaves env untouched.
+func bindTelemetryEnvironment(env map[string]string, telemetry *InvocationOptions) {
+	if telemetry == nil {
+		return
+	}
+	runID, nodeID := telemetry.RunID, telemetry.NodeID
+	env["AGENTFLOW_RUN_ID"] = runID
+	env["AGENTFLOW_NODE_ID"] = nodeID
+	env["CODEBUDDY_CODE_ENABLE_TELEMETRY"] = "1"
+	env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+	env["OTEL_TRACES_EXPORTER"] = "otlp"
+	env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
+	env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = observability.CollectorTracesURL()
+	env["OTEL_LOG_TOOL_DETAILS"] = "1"
+	env["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
+}
+
+// CodexUserProviderArgv inserts a dedicated "agentflow_user" model provider
+// before the final argv element (the prompt). An empty baseURL falls back to
+// the OpenAI API. The key stays in the process environment as CODEX_API_KEY;
+// only its variable name is written to argv, and the dedicated provider
+// prevents a fallback to the host login. The input slice is not modified.
+func CodexUserProviderArgv(argv []string, baseURL string) ([]string, error) {
+	if len(argv) < 2 {
+		return nil, fmt.Errorf("invalid Codex invocation")
+	}
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	config := []string{
+		"-c", `model_provider="agentflow_user"`,
+		"-c", `model_providers.agentflow_user.name="User API"`,
+		"-c", "model_providers.agentflow_user.base_url=" + strconv.Quote(baseURL),
+		"-c", `model_providers.agentflow_user.env_key="CODEX_API_KEY"`,
+		"-c", `model_providers.agentflow_user.wire_api="responses"`,
+		"-c", "model_providers.agentflow_user.requires_openai_auth=false",
+	}
+	out := make([]string, 0, len(argv)+len(config))
+	out = append(out, argv[:len(argv)-1]...)
+	out = append(out, config...)
+	return append(out, argv[len(argv)-1]), nil
 }
 
 // PrivateHomeName is the directory under .agentflow/private-home that a

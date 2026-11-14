@@ -39,6 +39,9 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 			if !strings.HasPrefix(home, workspace+string(os.PathSeparator)) {
 				t.Fatal("provider home not isolated")
 			}
+			if skip := bound.environment["CODEBUDDY_SKIP_BUILTIN_MARKETPLACE"]; (kind == "codebuddy") != (skip == "1") {
+				t.Fatalf("CODEBUDDY_SKIP_BUILTIN_MARKETPLACE = %q for %s", skip, kind)
+			}
 			if kind == "codebuddy" {
 				if bound.environment["CODEBUDDY_API_KEY"] != "codebuddy-user-secret" || bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] != "ioa" || bound.environment["CODEX_API_KEY"] != "" || bound.environment["ANTHROPIC_API_KEY"] != "" {
 					t.Fatal("CodeBuddy credential routing failed")
