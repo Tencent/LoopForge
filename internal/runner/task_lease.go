@@ -29,28 +29,10 @@ func (d *Daemon) keepTaskLease(parent context.Context, task domain.RunnerTask, i
 		defer ticker.Stop()
 		until := task.LeaseUntil
 		for {
-			deadline := time.Now().Add(20 * time.Second)
-			if until != nil && until.Before(deadline) {
-				deadline = *until
-			}
-			renewCtx, stop := context.WithDeadline(ctx, deadline)
-			response, err := d.client.RenewLease(renewCtx, task.ID)
-			stop()
-			if err == nil && response != nil {
-				if strings.EqualFold(response.DesiredState, domain.RunnerTaskDesiredCancel) {
-					cancel()
-					return
-				}
-				if !response.LeaseUntil.IsZero() {
-					next := response.LeaseUntil
-					until = &next
-				}
-			} else if err != nil && ctx.Err() == nil {
-				log.Printf("task %s renew lease: %v", task.ID, err)
-				if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrTaskLeaseLost) || (until != nil && !time.Now().Before(*until)) {
-					cancel()
-					return
-				}
+			var end bool
+			if until, end = d.renewTaskLease(ctx, task.ID, until); end {
+				cancel()
+				return
 			}
 			var expiry <-chan time.Time
 			var timer *time.Timer
@@ -78,4 +60,35 @@ func (d *Daemon) keepTaskLease(parent context.Context, task domain.RunnerTask, i
 		cancel()
 		<-done
 	}
+}
+
+// renewTaskLease sends one lease renewal, bounded by 20 seconds or the last
+// acknowledged expiry, whichever comes first. It returns the updated expiry
+// (unchanged unless the server acknowledged a new one) and whether the task
+// must stop: the server asked to cancel it, the lease was lost or the runner
+// session rejected, or a renewal failed after the last acknowledged expiry.
+// Errors after ctx is done are expected during shutdown and ignored.
+func (d *Daemon) renewTaskLease(ctx context.Context, taskID string, until *time.Time) (*time.Time, bool) {
+	deadline := time.Now().Add(20 * time.Second)
+	if until != nil && until.Before(deadline) {
+		deadline = *until
+	}
+	renewCtx, stop := context.WithDeadline(ctx, deadline)
+	response, err := d.client.RenewLease(renewCtx, taskID)
+	stop()
+	if err == nil && response != nil {
+		if strings.EqualFold(response.DesiredState, domain.RunnerTaskDesiredCancel) {
+			return until, true
+		}
+		if !response.LeaseUntil.IsZero() {
+			next := response.LeaseUntil
+			return &next, false
+		}
+	} else if err != nil && ctx.Err() == nil {
+		log.Printf("task %s renew lease: %v", taskID, err)
+		if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrTaskLeaseLost) || (until != nil && !time.Now().Before(*until)) {
+			return until, true
+		}
+	}
+	return until, false
 }
