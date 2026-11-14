@@ -886,7 +886,9 @@ function runNodeChoices(r){
       if(upstream?.status!=='succeeded')return false;
       const source=defs.find(n=>n.id===edge.source);
       if(edge.condition||source?.defaultTarget===id){
-        const decision=upstream.routeDecision,key=decision?.edgeKeyVersion? (edge.id?'id:'+edge.id:'index:'+edge.index):String(edge.index);
+        const decision=upstream.routeDecision;
+        if(!decision)return false;
+        const key=decision.edgeKeyVersion? (edge.id?'id:'+edge.id:'index:'+edge.index):String(edge.index);
         if(!decision?.selectedEdges?.[key]){skipped++;continue}
       }
       selected++;

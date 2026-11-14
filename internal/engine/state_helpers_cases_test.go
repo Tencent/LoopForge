@@ -36,21 +36,21 @@ func TestLifecycleResetSettleAndForceTerminate(t *testing.T) {
 		t.Fatal("status helpers")
 	}
 	run.Nodes["script"].Status, run.Nodes["agent"].Status = "succeeded", "succeeded"
-	status, msg, ok := settleStatusForCompletedGraph(wf, run)
+	status, msg, _, ok := settleStatusForCompletedGraph(wf, run)
 	if !ok || status != "succeeded" || msg == "" {
 		t.Fatalf("settle success = %q %q %v", status, msg, ok)
 	}
 	run.Nodes["agent"].Status = "waiting_approval"
-	if _, _, ok := settleStatusForCompletedGraph(wf, run); ok {
+	if _, _, _, ok := settleStatusForCompletedGraph(wf, run); ok {
 		t.Fatal("waiting graph settled")
 	}
 	run.Nodes["agent"].Status = "failed"
-	if status, _, ok := settleStatusForCompletedGraph(wf, run); !ok || status != "failed" {
+	if status, _, _, ok := settleStatusForCompletedGraph(wf, run); !ok || status != "failed" {
 		t.Fatal("failed graph not settled")
 	}
 	groupWF := wf
 	groupWF.CollaborationMode = "group"
-	if _, _, ok := settleStatusForCompletedGraph(groupWF, run); ok {
+	if _, _, _, ok := settleStatusForCompletedGraph(groupWF, run); ok {
 		t.Fatal("group graph settled")
 	}
 	scheduled := run

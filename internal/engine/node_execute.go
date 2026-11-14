@@ -29,9 +29,9 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		return
 	}
 	if !e.ownsRun(r) {
-		status, msg, done := settleStatusForCompletedGraph(workflowForRun(e.repo, r), r)
+		status, msg, reason, done := settleStatusForCompletedGraph(workflowForRun(e.repo, r), r)
 		if done && !(status == "succeeded" && scheduledIntegratePending(r)) {
-			e.finishAt(runID, r.Generation, status, msg)
+			e.finishAtReason(runID, r.Generation, status, msg, reason)
 		}
 		e.clearRunning(runID)
 		return
@@ -110,6 +110,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 			e.pauseAt(runID, generation, "运行已由用户暂停")
 			return
 		}
+		// Both routing update branches below continue through this ownership check.
 		if r.Generation != generation || !e.ownsRun(r) {
 			return
 		}
@@ -138,8 +139,8 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		probe.Nodes = make(map[string]*domain.NodeRun, len(r.Nodes))
 		for id, nr := range r.Nodes {
 			if nr != nil {
-				copy := *nr
-				probe.Nodes[id] = &copy
+				nodeCopy := *nr
+				probe.Nodes[id] = &nodeCopy
 			}
 		}
 		if propagateSkipped(wf, &probe) {
@@ -196,7 +197,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 				return
 			}
 			if allRoutingFinished(wf, r) {
-				e.finishAt(runID, generation, "failed", allSinksSkippedMessage)
+				e.finishAtReason(runID, generation, "failed", allSinksSkippedMessage, finishAllSinksSkipped)
 				return
 			}
 			if hasWaiting(wf, r) {
@@ -212,7 +213,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 				return
 			}
 			if hasFailed(wf, r) {
-				e.finishAt(runID, generation, "failed", pipelineFailedMessage)
+				e.finishAtReason(runID, generation, "failed", pipelineFailedMessage, finishFailedNode)
 				return
 			}
 			if node, ok := cancelledNode(wf, r); ok {
