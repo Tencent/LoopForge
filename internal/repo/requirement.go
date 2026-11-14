@@ -134,6 +134,29 @@ func withSOPBinding(lane domain.RequirementLane, binding domain.IssueSOPBinding)
 	return lane
 }
 
+// settledRequirementLane fills a lane's status and stages from its latest run.
+// Without a run, a lane with a task is active on its planned stages, and a lane
+// with neither has not started.
+func settledRequirementLane(lane domain.RequirementLane, latestRun domain.Run, workflows map[string]domain.WorkflowDefinition, nested map[string][]domain.Run, now time.Time) domain.RequirementLane {
+	if latestRun.ID != "" {
+		lane.Status = laneStatusFromRun(latestRun)
+		lane.Stages = laneNodeStages(latestRun, workflows, nested, now, 0)
+		if lane.Status == "active" && stagesWaitForHuman(lane.Stages) {
+			lane.Status = "waiting"
+		}
+	} else if lane.LatestTaskID != "" {
+		lane.Started = true
+		lane.Status = "active"
+		if len(lane.Stages) == 0 {
+			lane.Stages = plannedNodeStages(workflows[lane.WorkflowID], workflows, 0)
+		}
+	} else {
+		lane.Status = "not_started"
+		lane.Stages = plannedNodeStages(workflows[lane.WorkflowID], workflows, 0)
+	}
+	return lane
+}
+
 func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []domain.Run, nested map[string][]domain.Run, tasks []domain.Task, workflows map[string]domain.WorkflowDefinition, now time.Time) []domain.RequirementLane {
 	type wfAcc struct {
 		lane      domain.RequirementLane
@@ -203,22 +226,7 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 		}
 	}
 	for _, acc := range byWF {
-		if acc.latestRun.ID != "" {
-			acc.lane.Status = laneStatusFromRun(acc.latestRun)
-			acc.lane.Stages = laneNodeStages(acc.latestRun, workflows, nested, now, 0)
-			if acc.lane.Status == "active" && stagesWaitForHuman(acc.lane.Stages) {
-				acc.lane.Status = "waiting"
-			}
-		} else if acc.lane.LatestTaskID != "" {
-			acc.lane.Started = true
-			acc.lane.Status = "active"
-			if len(acc.lane.Stages) == 0 {
-				acc.lane.Stages = plannedNodeStages(workflows[acc.lane.WorkflowID], workflows, 0)
-			}
-		} else {
-			acc.lane.Status = "not_started"
-			acc.lane.Stages = plannedNodeStages(workflows[acc.lane.WorkflowID], workflows, 0)
-		}
+		acc.lane = settledRequirementLane(acc.lane, acc.latestRun, workflows, nested, now)
 	}
 	bindings := domain.ResolveSOPBindings(issue, project)
 	out := make([]domain.RequirementLane, 0, len(bindings)+len(byWF))

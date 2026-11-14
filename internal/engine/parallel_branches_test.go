@@ -232,10 +232,12 @@ func TestKeyedLocksSerializeOnlySameKey(t *testing.T) {
 	var locks keyedLocks
 	releaseA := locks.lock("a")
 	acquiredB := make(chan struct{})
+	releasedB := make(chan struct{})
 	go func() {
 		release := locks.lock("b")
 		close(acquiredB)
 		release()
+		close(releasedB)
 	}()
 	select {
 	case <-acquiredB:
@@ -243,10 +245,12 @@ func TestKeyedLocksSerializeOnlySameKey(t *testing.T) {
 		t.Fatal("different key blocked")
 	}
 	acquiredA := make(chan struct{})
+	releasedA := make(chan struct{})
 	go func() {
 		release := locks.lock("a")
 		close(acquiredA)
 		release()
+		close(releasedA)
 	}()
 	select {
 	case <-acquiredA:
@@ -258,6 +262,15 @@ func TestKeyedLocksSerializeOnlySameKey(t *testing.T) {
 	case <-acquiredA:
 	case <-time.After(2 * time.Second):
 		t.Fatal("same key never released")
+	}
+	// The goroutines signal acquisition before they release, so wait for both
+	// releases to finish before asserting that no lock entries remain.
+	for _, released := range []chan struct{}{releasedA, releasedB} {
+		select {
+		case <-released:
+		case <-time.After(2 * time.Second):
+			t.Fatal("lock holder never finished releasing")
+		}
 	}
 	locks.mu.Lock()
 	defer locks.mu.Unlock()
