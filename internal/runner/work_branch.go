@@ -75,19 +75,7 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 				return heads, fmt.Errorf("%s: %w", repo.Name, err)
 			}
 		}
-		var head string
-		var err error
-		if repo.RequireExistingWorkBranch {
-			if push {
-				head, err = gitwork.PushExistingWorkBranch(repoCtx, dir, repo.WorkBranch, message)
-			} else {
-				head, err = gitwork.PullExistingWorkBranch(repoCtx, dir, repo.WorkBranch)
-			}
-		} else if push {
-			head, err = gitwork.PushWorkBranch(repoCtx, dir, repo.WorkBranch, message)
-		} else {
-			head, err = gitwork.PullWorkBranch(repoCtx, dir, repo.WorkBranch)
-		}
+		head, err := syncWorkBranch(repoCtx, dir, repo.WorkBranch, message, push, repo.RequireExistingWorkBranch)
 		if err != nil {
 			return heads, fmt.Errorf("%s: %w", repo.Name, err)
 		}
@@ -99,16 +87,43 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		}
 		entry := domain.RunnerWorkBranchHead{RepositoryID: repo.RepositoryID, Name: repo.Name, WorkBranch: repo.WorkBranch, Head: head}
 		if push && strings.TrimSpace(repo.SharedPushTarget) != "" {
-			merged, conflicts, mergeErr := gitwork.MergeWorkIntoSharedBranch(repoCtx, dir, repo.WorkBranch, repo.SharedPushTarget)
-			if mergeErr != nil {
-				return heads, fmt.Errorf("%s: 直推 %s: %w", repo.Name, repo.SharedPushTarget, mergeErr)
-			}
-			if len(conflicts) > 0 {
-				return heads, fmt.Errorf("%s: 合并 %s 进 %s 有冲突，没有推送：%s", repo.Name, repo.WorkBranch, repo.SharedPushTarget, strings.Join(conflicts, ", "))
+			merged, err := pushSharedTarget(repoCtx, dir, repo)
+			if err != nil {
+				return heads, err
 			}
 			entry.SharedBranch, entry.SharedHead = repo.SharedPushTarget, merged
 		}
 		heads = append(heads, entry)
 	}
 	return heads, nil
+}
+
+// syncWorkBranch pulls or pushes one checkout's work branch. Explicitly
+// chosen branches (requireExisting) must already exist remotely, so neither
+// direction may create them.
+func syncWorkBranch(ctx context.Context, dir, branch, message string, push, requireExisting bool) (string, error) {
+	switch {
+	case requireExisting && push:
+		return gitwork.PushExistingWorkBranch(ctx, dir, branch, message)
+	case requireExisting:
+		return gitwork.PullExistingWorkBranch(ctx, dir, branch)
+	case push:
+		return gitwork.PushWorkBranch(ctx, dir, branch, message)
+	default:
+		return gitwork.PullWorkBranch(ctx, dir, branch)
+	}
+}
+
+// pushSharedTarget merges a pushed work branch into the repository's shared
+// push target and returns the merged head ("" when already up to date).
+// Conflicts are reported as errors: nothing is pushed in that case.
+func pushSharedTarget(ctx context.Context, dir string, repo domain.RunnerRepository) (string, error) {
+	merged, conflicts, err := gitwork.MergeWorkIntoSharedBranch(ctx, dir, repo.WorkBranch, repo.SharedPushTarget)
+	if err != nil {
+		return "", fmt.Errorf("%s: 直推 %s: %w", repo.Name, repo.SharedPushTarget, err)
+	}
+	if len(conflicts) > 0 {
+		return "", fmt.Errorf("%s: 合并 %s 进 %s 有冲突，没有推送：%s", repo.Name, repo.WorkBranch, repo.SharedPushTarget, strings.Join(conflicts, ", "))
+	}
+	return merged, nil
 }
