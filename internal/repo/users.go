@@ -280,24 +280,12 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 		user.GongfengRefreshToken = ""
 		user.GongfengTokenExpiresAt = time.Time{}
 	}
-	if update.CodeBuddyAPIKeyClear {
-		user.CodeBuddyAPIKey = ""
-	} else if value := strings.TrimSpace(update.CodeBuddyAPIKey); value != "" {
-		user.CodeBuddyAPIKey = value
-	}
+	user.CodeBuddyAPIKey = updatedSecret(user.CodeBuddyAPIKey, update.CodeBuddyAPIKey, update.CodeBuddyAPIKeyClear)
 	if update.CodeBuddyInternetEnvironment != nil {
 		user.CodeBuddyInternetEnvironment = strings.TrimSpace(*update.CodeBuddyInternetEnvironment)
 	}
-	if update.CodexAPIKeyClear {
-		user.CodexAPIKey = ""
-	} else if value := strings.TrimSpace(update.CodexAPIKey); value != "" {
-		user.CodexAPIKey = value
-	}
-	if update.ClaudeCodeAPIKeyClear {
-		user.ClaudeCodeAPIKey = ""
-	} else if value := strings.TrimSpace(update.ClaudeCodeAPIKey); value != "" {
-		user.ClaudeCodeAPIKey = value
-	}
+	user.CodexAPIKey = updatedSecret(user.CodexAPIKey, update.CodexAPIKey, update.CodexAPIKeyClear)
+	user.ClaudeCodeAPIKey = updatedSecret(user.ClaudeCodeAPIKey, update.ClaudeCodeAPIKey, update.ClaudeCodeAPIKeyClear)
 	if update.CodexBaseURL != nil {
 		user.CodexBaseURL = strings.TrimSpace(*update.CodexBaseURL)
 	}
@@ -367,6 +355,18 @@ func nullableString(v string) any {
 	return v
 }
 
+// updatedSecret applies a credential form update to a stored secret: clear
+// wins, a blank value keeps the stored one, anything else replaces it trimmed.
+func updatedSecret(current, value string, clear bool) string {
+	if clear {
+		return ""
+	}
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return current
+}
+
 func applyAgentCLICredentialUpdates(user *domain.User, updates map[string]AgentCLICredentialUpdate) error {
 	if len(updates) == 0 {
 		return nil
@@ -382,11 +382,7 @@ func applyAgentCLICredentialUpdates(user *domain.User, updates map[string]AgentC
 		}
 		cred := merged[kind]
 		previousKey := cred.APIKey
-		if update.APIKeyClear {
-			cred.APIKey = ""
-		} else if value := strings.TrimSpace(update.APIKey); value != "" {
-			cred.APIKey = value
-		}
+		cred.APIKey = updatedSecret(cred.APIKey, update.APIKey, update.APIKeyClear)
 		// Cursor's catalog is the list the key's plan offered (saved by the
 		// chat model list); another key starts from that key's own list.
 		if kind == "cursor" && cred.APIKey != previousKey && update.Models == nil {
