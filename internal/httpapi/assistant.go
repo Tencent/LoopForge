@@ -25,6 +25,10 @@ import (
 
 type assistantMessage = domain.AssistantMessage
 type assistantConversation = domain.AssistantSession
+
+// assistantRequestBodyLimit accommodates long multi-turn sessions with deep thinking and tool activities.
+const assistantRequestBodyLimit = 32 << 20
+
 type assistantDraft struct {
 	Tool      string                   `json:"tool"`
 	Path      map[string]any           `json:"path,omitempty"`
@@ -101,7 +105,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	var req assistantRequest
-	if !decode(c, &req) {
+	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
 		return
 	}
 	req.Executor = assistantExecutor(req.Executor)
