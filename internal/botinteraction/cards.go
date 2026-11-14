@@ -145,37 +145,7 @@ func actionLabel(action string) string {
 // Card text fields are plain text. Keep the reason visible above context rows,
 // instead of embedding a long Markdown notification in the clipped subtitle.
 func notificationCard(run domain.Run, item domain.NotificationDelivery, actions []map[string]any, content string) map[string]any {
-	reason, required := "", ""
-	node := run.Nodes[item.NodeID]
-	if node != nil {
-		if node.GateResult != nil {
-			reason = node.GateResult.Summary
-			if strings.TrimSpace(reason) == "" {
-				reason = node.GateResult.Reason
-			}
-			required = node.GateResult.ActionRequired
-		}
-		if strings.TrimSpace(reason) == "" {
-			reason = node.Error
-		}
-	}
-	if strings.TrimSpace(reason) == "" {
-		for _, line := range strings.Split(content, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "需求：") || strings.HasPrefix(line, "SOP：") || strings.HasPrefix(line, "节点：") || strings.HasPrefix(line, "查看详情：") {
-				continue
-			}
-			reason = line
-			break
-		}
-	}
-	if strings.TrimSpace(reason) == "" {
-		if item.EventType == "waiting" {
-			reason = "流程在此设置了人工确认，请确认后继续。"
-		} else {
-			reason = "节点执行失败，请查看运行详情。"
-		}
-	}
+	reason, required := notificationCardReason(run, item, content)
 	body := "原因：" + cardText(reason, 76)
 	if required != "" {
 		body += "\n待处理：" + cardText(required, 27)
@@ -208,6 +178,49 @@ func notificationCard(run domain.Run, item domain.NotificationDelivery, actions 
 	}
 	return card
 }
+
+// notificationCardReason picks the card's reason and required action. The
+// reason falls back from the gate summary, gate reason and node error to the
+// first plain line of the notification content, then to a per-event default.
+func notificationCardReason(run domain.Run, item domain.NotificationDelivery, content string) (reason, required string) {
+	if node := run.Nodes[item.NodeID]; node != nil {
+		if node.GateResult != nil {
+			reason = node.GateResult.Summary
+			if strings.TrimSpace(reason) == "" {
+				reason = node.GateResult.Reason
+			}
+			required = node.GateResult.ActionRequired
+		}
+		if strings.TrimSpace(reason) == "" {
+			reason = node.Error
+		}
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = notificationContentReason(content)
+	}
+	if strings.TrimSpace(reason) == "" {
+		if item.EventType == "waiting" {
+			reason = "流程在此设置了人工确认，请确认后继续。"
+		} else {
+			reason = "节点执行失败，请查看运行详情。"
+		}
+	}
+	return reason, required
+}
+
+// notificationContentReason returns the first content line that is neither a
+// heading nor one of the context lines the card already shows as rows.
+func notificationContentReason(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "需求：") || strings.HasPrefix(line, "SOP：") || strings.HasPrefix(line, "节点：") || strings.HasPrefix(line, "查看详情：") {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
 func notificationCardIssue(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		if issue, ok := strings.CutPrefix(strings.TrimSpace(line), "需求："); ok && strings.TrimSpace(issue) != "" {
