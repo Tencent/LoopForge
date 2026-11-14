@@ -331,56 +331,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		if !now.After(old.UpdatedAt) {
 			now = old.UpdatedAt.Add(time.Millisecond)
 		}
-		// Shared project replies are written without a title; keep the
-		// one set when the conversation started instead of blanking it.
-		if (old.TitleEdited && !v.TitleEdited) || strings.TrimSpace(v.Title) == "" {
-			v.Title = old.Title
-		}
-		// A background summary is not a user rename. Later saves that still
-		// carry the original prompt must not put that prompt back.
-		if old.TitleGenerated && !v.TitleGenerated && !v.TitleEdited {
-			v.Title = old.Title
-		}
-		v.TitleEdited = old.TitleEdited || v.TitleEdited
-		if v.TitleEdited {
-			v.TitleGenerated = false
-		} else {
-			v.TitleGenerated = old.TitleGenerated || v.TitleGenerated
-		}
-		v.HistoryRevision = old.HistoryRevision
-		v.ParentSessionID = old.ParentSessionID
-		v.RootSessionID = old.RootSessionID
-		v.ForkMessageIndex = old.ForkMessageIndex
-		if old.ParentSessionID != "" && !v.TitleEdited {
-			v.Title = old.Title
-		}
-		v.IssueID = old.IssueID
-		v.Archived = old.Archived
-		v.Shared = old.Shared
-		// Environment preferences are changed only by the dedicated, locked setter.
-		v.SandboxProfileID = old.SandboxProfileID
-		if v.WorkspaceRunID == "" {
-			v.WorkspaceRunID = old.WorkspaceRunID
-		}
-		v.OwnWorkspaceRunIDs = old.OwnWorkspaceRunIDs
-		if v.Source == "" {
-			v.Source = old.Source
-			if v.Source == "" {
-				v.Source = inferredAssistantSessionSource(old)
-			}
-		}
-		if v.TaskID == "" {
-			v.TaskID = old.TaskID
-		}
-		if old.Shared {
-			v.RunID = old.RunID
-			v.ProjectID = old.ProjectID
-			// The first generated title may replace a shared SOP label.
-			// Every other write keeps the title already stored.
-			if !(v.TitleGenerated && !old.TitleGenerated && !old.TitleEdited) {
-				v.Title = old.Title
-			}
-		}
+		inheritStoredAssistantSession(&v, old)
 	} else {
 		v.OwnWorkspaceRunIDs = nil
 		if v.CreatedAt.IsZero() {
@@ -415,6 +366,61 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		"created_at": timePtr(v.CreatedAt),
 		"updated_at": timePtr(v.UpdatedAt),
 	})
+}
+
+// inheritStoredAssistantSession carries the fields a save must keep from the
+// stored session: titles, fork lineage, sharing, environment and ownership.
+func inheritStoredAssistantSession(v *domain.AssistantSession, old domain.AssistantSession) {
+	// Shared project replies are written without a title; keep the
+	// one set when the conversation started instead of blanking it.
+	if (old.TitleEdited && !v.TitleEdited) || strings.TrimSpace(v.Title) == "" {
+		v.Title = old.Title
+	}
+	// A background summary is not a user rename. Later saves that still
+	// carry the original prompt must not put that prompt back.
+	if old.TitleGenerated && !v.TitleGenerated && !v.TitleEdited {
+		v.Title = old.Title
+	}
+	v.TitleEdited = old.TitleEdited || v.TitleEdited
+	if v.TitleEdited {
+		v.TitleGenerated = false
+	} else {
+		v.TitleGenerated = old.TitleGenerated || v.TitleGenerated
+	}
+	v.HistoryRevision = old.HistoryRevision
+	v.ParentSessionID = old.ParentSessionID
+	v.RootSessionID = old.RootSessionID
+	v.ForkMessageIndex = old.ForkMessageIndex
+	if old.ParentSessionID != "" && !v.TitleEdited {
+		v.Title = old.Title
+	}
+	v.IssueID = old.IssueID
+	v.Archived = old.Archived
+	v.Shared = old.Shared
+	// Environment preferences are changed only by the dedicated, locked setter.
+	v.SandboxProfileID = old.SandboxProfileID
+	if v.WorkspaceRunID == "" {
+		v.WorkspaceRunID = old.WorkspaceRunID
+	}
+	v.OwnWorkspaceRunIDs = old.OwnWorkspaceRunIDs
+	if v.Source == "" {
+		v.Source = old.Source
+		if v.Source == "" {
+			v.Source = inferredAssistantSessionSource(old)
+		}
+	}
+	if v.TaskID == "" {
+		v.TaskID = old.TaskID
+	}
+	if old.Shared {
+		v.RunID = old.RunID
+		v.ProjectID = old.ProjectID
+		// The first generated title may replace a shared SOP label.
+		// Every other write keeps the title already stored.
+		if !(v.TitleGenerated && !old.TitleGenerated && !old.TitleEdited) {
+			v.Title = old.Title
+		}
+	}
 }
 
 func (r *AssistantRepo) SetAssistantSessionArchived(userID int64, id string, archived bool) error {
