@@ -209,28 +209,9 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 	if label == "" {
 		return run, errors.New("云端执行池未配置，无法为该运行分配执行机器")
 	}
-	deadline := time.Now().Add(poolBindWait)
-	var runner domain.Runner
-	announced := false
-	for {
-		var ok bool
-		if runner, ok = e.pickPoolRunner(label); ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			return run, fmt.Errorf("云端执行池（%s）在 %d 分钟内没有在线的执行机器，请确认执行机器已启动并在线后重试", label, int(poolBindWait/time.Minute))
-		}
-		if !announced {
-			announced = true
-			e.updateRun(run.ID, func(c *domain.Run) {
-				e.event(c, nodeID, "execution.waiting", fmt.Sprintf("云端执行池（%s）暂无在线的执行机器，最多等待 %d 分钟", label, int(poolBindWait/time.Minute)))
-			})
-		}
-		select {
-		case <-ctx.Done():
-			return run, ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
+	runner, err := e.waitForPoolRunner(ctx, run.ID, nodeID, label)
+	if err != nil {
+		return run, err
 	}
 	e.updateRun(run.ID, func(c *domain.Run) {
 		c.ExecutionContext.ExecutionMode = domain.ExecutionModeRunner
@@ -256,6 +237,32 @@ func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID stri
 	// the old container would stay up on sleep infinity.
 	e.discardLocalSandbox(run.ID)
 	return bound, nil
+}
+
+// waitForPoolRunner polls the cloud pool for an online runner every two
+// seconds for up to poolBindWait, announcing the wait once on the run.
+func (e *Engine) waitForPoolRunner(ctx context.Context, runID, nodeID, label string) (domain.Runner, error) {
+	deadline := time.Now().Add(poolBindWait)
+	announced := false
+	for {
+		if runner, ok := e.pickPoolRunner(label); ok {
+			return runner, nil
+		}
+		if time.Now().After(deadline) {
+			return domain.Runner{}, fmt.Errorf("云端执行池（%s）在 %d 分钟内没有在线的执行机器，请确认执行机器已启动并在线后重试", label, int(poolBindWait/time.Minute))
+		}
+		if !announced {
+			announced = true
+			e.updateRun(runID, func(c *domain.Run) {
+				e.event(c, nodeID, "execution.waiting", fmt.Sprintf("云端执行池（%s）暂无在线的执行机器，最多等待 %d 分钟", label, int(poolBindWait/time.Minute)))
+			})
+		}
+		select {
+		case <-ctx.Done():
+			return domain.Runner{}, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // A worker can resume interrupted runs before the builtin runner reconnects
