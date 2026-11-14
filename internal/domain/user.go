@@ -34,6 +34,7 @@ type User struct {
 	GitTokenConfigured           bool      `json:"gitTokenConfigured,omitempty"`
 	GitTokenOAuth                bool      `json:"gitTokenOAuth,omitempty"`
 	GitSSHKeyConfigured          bool      `json:"gitSshKeyConfigured,omitempty"`
+	ForgeTokenConfigured         bool      `json:"forgeTokenConfigured,omitempty"`
 	GongfengRefreshToken         string    `json:"-"`
 	GongfengTokenExpiresAt       time.Time `json:"-"`
 	CodeBuddyAPIKey              string    `json:"codeBuddyApiKey,omitempty"`

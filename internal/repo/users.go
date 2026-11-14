@@ -25,6 +25,7 @@ type userWithConfig struct {
 	PlatformRole                 string     `gorm:"column:platform_role"`
 	GitToken                     *string    `gorm:"column:git_token"`
 	GitSSHKeyConfigured          bool       `gorm:"column:git_ssh_key_configured"`
+	ForgeTokenConfigured         bool       `gorm:"column:forge_token_configured"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
@@ -43,6 +44,7 @@ type userWithConfig struct {
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
 	c.git_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
+	EXISTS (SELECT 1 FROM user_forge_tokens t WHERE t.user_id = u.id) AS forge_token_configured,
 	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
 	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
@@ -54,6 +56,7 @@ func (r userWithConfig) toDomain() domain.User {
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
 		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment,
 		GitSSHKeyConfigured:          r.GitSSHKeyConfigured,
+		ForgeTokenConfigured:         r.ForgeTokenConfigured,
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken

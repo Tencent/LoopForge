@@ -62,6 +62,15 @@ type gitSSHKeyRow struct {
 
 func (gitSSHKeyRow) TableName() string { return "user_git_ssh_keys" }
 
+type forgeTokenRow struct {
+	UserID   int64  `gorm:"primaryKey;autoIncrement:false"`
+	ID       string `gorm:"primaryKey;size:64"`
+	Instance string `gorm:"size:255;not null"`
+	Token    string `gorm:"type:text;not null"`
+}
+
+func (forgeTokenRow) TableName() string { return "user_forge_tokens" }
+
 type apiTokenRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	UserID     int64      `gorm:"column:user_id;index:idx_api_tokens_user"`
@@ -699,7 +708,7 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
-		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
+		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, forgeTokenRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
