@@ -124,39 +124,58 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 		}
 		return reply(map[string]any{"tools": tools})
 	case "tools/call":
-		var params struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
+		result, rpcErr := h.callProxyTool(ctx, settings, claims, request.Params)
+		if rpcErr != nil {
+			return fail(rpcErr.Code, rpcErr.Message)
 		}
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			return fail(-32602, err.Error())
-		}
-		name := strings.TrimSpace(params.Name)
-		if i := strings.LastIndex(name, "__"); i >= 0 {
-			name = name[i+2:]
-		}
-		if !knowledge.IsReadOnlyTool(name) {
-			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索，新知识请写入 knowledge.md 等待审核", params.Name))
-		}
-		started := time.Now()
-		text, hits, err := h.callScoped(ctx, settings, claims.ProjectID, name, params.Arguments)
-		activity := knowledgeActivity{
-			At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
-			Query: truncateRunes(fmt.Sprint(valueOr(params.Arguments["query"], "")), 120), Hits: hits,
-			OK: err == nil, LatencyMS: time.Since(started).Milliseconds(),
-		}
-		if err != nil {
-			activity.Error = truncateRunes(err.Error(), 200)
-		}
-		h.activity.add(activity)
-		log.Printf("knowledge-proxy tool=%s project=%s agent=%s ok=%t latency=%dms", name, claims.ProjectID, claims.AgentID, err == nil, activity.LatencyMS)
-		if err != nil {
-			return reply(mcpToolTextResult(err.Error(), true))
-		}
-		return reply(mcpToolTextResult(text, false))
+		return reply(result)
 	default:
 		return fail(-32601, "method not found")
 	}
+}
+
+// callProxyTool handles one proxied tools/call: it decodes the params, rejects
+// anything but the read-only tools, runs the project-scoped upstream call and
+// records the activity. Tool failures are returned as an MCP error result;
+// only malformed or forbidden calls yield a JSON-RPC error.
+func (h *knowledgeHandlers) callProxyTool(ctx context.Context, settings domain.KnowledgeSettings, claims knowledge.ProxyClaims, raw json.RawMessage) (any, *agentToolRPCError) {
+	var params struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, &agentToolRPCError{Code: -32602, Message: err.Error()}
+	}
+	name := knowledgeProxyToolName(params.Name)
+	if !knowledge.IsReadOnlyTool(name) {
+		return nil, &agentToolRPCError{Code: -32602, Message: fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索，新知识请写入 knowledge.md 等待审核", params.Name)}
+	}
+	started := time.Now()
+	text, hits, err := h.callScoped(ctx, settings, claims.ProjectID, name, params.Arguments)
+	activity := knowledgeActivity{
+		At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
+		Query: truncateRunes(fmt.Sprint(valueOr(params.Arguments["query"], "")), 120), Hits: hits,
+		OK: err == nil, LatencyMS: time.Since(started).Milliseconds(),
+	}
+	if err != nil {
+		activity.Error = truncateRunes(err.Error(), 200)
+	}
+	h.activity.add(activity)
+	log.Printf("knowledge-proxy tool=%s project=%s agent=%s ok=%t latency=%dms", name, claims.ProjectID, claims.AgentID, err == nil, activity.LatencyMS)
+	if err != nil {
+		return mcpToolTextResult(err.Error(), true), nil
+	}
+	return mcpToolTextResult(text, false), nil
+}
+
+// knowledgeProxyToolName strips the MCP client's server prefix
+// (e.g. "mcp__agentflow-knowledge__kb_search") down to the upstream tool name.
+func knowledgeProxyToolName(name string) string {
+	name = strings.TrimSpace(name)
+	if i := strings.LastIndex(name, "__"); i >= 0 {
+		name = name[i+2:]
+	}
+	return name
 }
 
 func (h *knowledgeHandlers) proxyTools(ctx context.Context, settings domain.KnowledgeSettings) ([]map[string]any, error) {
