@@ -885,7 +885,10 @@ function runNodeChoices(r){
       if(upstream?.status==='skipped'){skipped++;continue}
       if(upstream?.status!=='succeeded')return false;
       const source=defs.find(n=>n.id===edge.source);
-      if(edge.condition||source?.defaultTarget===id){if(!upstream.routeDecision?.selectedEdges?.[edge.index]){skipped++;continue}}
+      if(edge.condition||source?.defaultTarget===id){
+        const decision=upstream.routeDecision,key=decision?.edgeKeyVersion? (edge.id?'id:'+edge.id:'index:'+edge.index):String(edge.index);
+        if(!decision?.selectedEdges?.[key]){skipped++;continue}
+      }
       selected++;
     }
     if(incoming.length&&(node?.joinRule==='none_failed_min_one_success'?selected===0:skipped>0))return false;

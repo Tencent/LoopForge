@@ -76,27 +76,8 @@ func ParseSSHRemote(raw string) (SSHRemote, error) {
 	if len(s) > 2048 || strings.ContainsAny(s, " \t\r\n%?#\\") {
 		return SSHRemote{}, invalid
 	}
-	var user, host, path string
-	port := "22"
-	if strings.HasPrefix(s, "ssh://") {
-		u, err := url.Parse(s)
-		if err != nil || u.User == nil || strings.HasSuffix(u.Host, ":") {
-			return SSHRemote{}, invalid
-		}
-		if _, hasPassword := u.User.Password(); hasPassword {
-			return SSHRemote{}, invalid
-		}
-		user, host, path = u.User.Username(), u.Hostname(), u.Path
-		if u.Port() != "" {
-			p, err := strconv.Atoi(u.Port())
-			if err != nil || p < 1 || p > 65535 {
-				return SSHRemote{}, invalid
-			}
-			port = strconv.Itoa(p)
-		}
-	} else if m := sshSCP.FindStringSubmatch(s); m != nil {
-		user, host, path = m[1], strings.Trim(m[2], "[]"), m[3]
-	} else {
+	user, host, path, port, ok := splitSSHRemote(s)
+	if !ok {
 		return SSHRemote{}, invalid
 	}
 	host = strings.ToLower(host)
@@ -105,15 +86,7 @@ func ParseSSHRemote(raw string) (SSHRemote, error) {
 	} else if !sshHost.MatchString(host) || strings.Contains(host, "..") {
 		return SSHRemote{}, invalid
 	}
-	if !sshUser.MatchString(user) || !sshPath.MatchString(path) {
-		return SSHRemote{}, invalid
-	}
-	for _, part := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
-		if part == "" || part == "." || part == ".." {
-			return SSHRemote{}, invalid
-		}
-	}
-	if strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".git") == "" {
+	if !sshUser.MatchString(user) || !validSSHRepoPath(path) {
 		return SSHRemote{}, invalid
 	}
 	// Preserve the distinction between an absolute SSH URL and a path
@@ -128,4 +101,46 @@ func ParseSSHRemote(raw string) (SSHRemote, error) {
 		s = user + "@" + hostPart + ":" + path
 	}
 	return SSHRemote{URL: s, User: user, Host: host, Path: path, Port: port}, nil
+}
+
+// splitSSHRemote extracts user, host, path and port from an ssh:// URL or an
+// scp-style address. It rejects passwords and out-of-range ports; the caller
+// validates and normalizes the returned parts.
+func splitSSHRemote(s string) (user, host, path, port string, ok bool) {
+	port = "22"
+	if strings.HasPrefix(s, "ssh://") {
+		u, err := url.Parse(s)
+		if err != nil || u.User == nil || strings.HasSuffix(u.Host, ":") {
+			return "", "", "", "", false
+		}
+		if _, hasPassword := u.User.Password(); hasPassword {
+			return "", "", "", "", false
+		}
+		if u.Port() != "" {
+			p, err := strconv.Atoi(u.Port())
+			if err != nil || p < 1 || p > 65535 {
+				return "", "", "", "", false
+			}
+			port = strconv.Itoa(p)
+		}
+		return u.User.Username(), u.Hostname(), u.Path, port, true
+	}
+	if m := sshSCP.FindStringSubmatch(s); m != nil {
+		return m[1], strings.Trim(m[2], "[]"), m[3], port, true
+	}
+	return "", "", "", "", false
+}
+
+// validSSHRepoPath reports whether path only uses safe characters, has no
+// empty, "." or ".." segments and names a repository.
+func validSSHRepoPath(path string) bool {
+	if !sshPath.MatchString(path) {
+		return false
+	}
+	for _, part := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".git") != ""
 }

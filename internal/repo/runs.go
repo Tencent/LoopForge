@@ -140,20 +140,14 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	}
 	q := r.DB
 	if filter.ProjectIDs != nil {
-		expr := "json_extract(execution_context, '$.projectId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("projectId")
 		q = q.Where(expr+" IN ? OR "+expr+" IS NULL OR "+expr+" = ''", filter.ProjectIDs)
 	}
 	if filter.WorkflowID != "" {
 		q = q.Where("workflow_id = ?", filter.WorkflowID)
 	}
 	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
-		expr := "json_extract(execution_context, '$.projectId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("projectId")
 		// Keep legacy rows with an empty project stamp; FilterRunsByProject
 		// still resolves those through the linked issue.
 		q = q.Where(expr+" = ? OR "+expr+" IS NULL OR "+expr+" = ''", projectID)
@@ -165,10 +159,7 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 		q = q.Where("created_at <= ? OR created_at IS NULL", filter.To)
 	}
 	if issueID != "" {
-		expr := "json_extract(execution_context, '$.issueId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("issueId")
 		q = q.Where(expr+" = ?", issueID)
 	}
 	var rows []runRow
@@ -447,10 +438,7 @@ func (r *RunsRepo) SupersededIssueRunIDs(issueID, keepRunID string) []string {
 	if issueID == "" {
 		return nil
 	}
-	expr := "json_extract(execution_context, '$.issueId')"
-	if r.isMySQL() {
-		expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-	}
+	expr := r.sqlExecutionContextJSONText("issueId")
 	var ids []string
 	q := r.DB.Model(&runRow{}).
 		Where(expr+" = ?", issueID).
@@ -757,10 +745,7 @@ func (r *RunsRepo) runTimingEvents(ids []string) (map[string][]domain.RunEvent, 
 // nodes, events or artifact content. Missing runs are absent from the map.
 func (r *RunsRepo) RunProjectIDs(ids []string) (map[string]string, error) {
 	out := make(map[string]string, len(ids))
-	project := "json_extract(execution_context, '$.projectId')"
-	if r.isMySQL() {
-		project = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-	}
+	project := r.sqlExecutionContextJSONText("projectId")
 	for start := 0; start < len(ids); start += 500 {
 		var rows []struct {
 			ID        string
@@ -1297,39 +1282,7 @@ func (r *RunsRepo) WorkflowMetricsFor(projectID string) []domain.WorkflowMetrics
 			m.LastRunAt = &createdAt
 			m.LastRunStatus = run.Status
 		}
-		index := map[string]int{}
-		for i := range m.NodeMetrics {
-			index[m.NodeMetrics[i].NodeID] = i + 1
-		}
-		for nodeID, node := range run.Nodes {
-			pos := index[nodeID] - 1
-			if pos < 0 {
-				name := nodeID
-				for _, definition := range workflowDefs[run.WorkflowID].Nodes {
-					if definition.ID == nodeID {
-						name = definition.Name
-					}
-				}
-				m.NodeMetrics = append(m.NodeMetrics, domain.WorkflowNodeMetric{NodeID: nodeID, Name: name})
-				pos = len(m.NodeMetrics) - 1
-			}
-			nm := &m.NodeMetrics[pos]
-			if node.Attempt > 0 {
-				nm.Executions += node.Attempt
-			}
-			switch node.Status {
-			case "succeeded":
-				nm.Succeeded++
-			case "failed":
-				nm.Failed++
-			case "waiting_approval":
-				nm.Waiting++
-			}
-			nm.Reworks += node.ReworkCount
-			if !node.StartedAt.IsZero() && !node.FinishedAt.IsZero() {
-				nodeDurations[run.WorkflowID][nodeID] += node.FinishedAt.Sub(node.StartedAt).Milliseconds()
-			}
-		}
+		accumulateNodeMetrics(m, run, workflowDefs[run.WorkflowID], nodeDurations[run.WorkflowID])
 	}
 	out := make([]domain.WorkflowMetrics, 0, len(metrics))
 	for id, m := range metrics {
@@ -1367,6 +1320,45 @@ func (r *RunsRepo) WorkflowMetricsFor(projectID string) []domain.WorkflowMetrics
 		return left.After(right)
 	})
 	return out
+}
+
+// accumulateNodeMetrics folds one run's node results into m.NodeMetrics,
+// appending a metric (named from def, falling back to the node ID) for nodes
+// not seen before, and adds finished node durations to durations by node ID.
+func accumulateNodeMetrics(m *domain.WorkflowMetrics, run domain.Run, def domain.WorkflowDefinition, durations map[string]int64) {
+	index := map[string]int{}
+	for i := range m.NodeMetrics {
+		index[m.NodeMetrics[i].NodeID] = i + 1
+	}
+	for nodeID, node := range run.Nodes {
+		pos := index[nodeID] - 1
+		if pos < 0 {
+			name := nodeID
+			for _, definition := range def.Nodes {
+				if definition.ID == nodeID {
+					name = definition.Name
+				}
+			}
+			m.NodeMetrics = append(m.NodeMetrics, domain.WorkflowNodeMetric{NodeID: nodeID, Name: name})
+			pos = len(m.NodeMetrics) - 1
+		}
+		nm := &m.NodeMetrics[pos]
+		if node.Attempt > 0 {
+			nm.Executions += node.Attempt
+		}
+		switch node.Status {
+		case "succeeded":
+			nm.Succeeded++
+		case "failed":
+			nm.Failed++
+		case "waiting_approval":
+			nm.Waiting++
+		}
+		nm.Reworks += node.ReworkCount
+		if !node.StartedAt.IsZero() && !node.FinishedAt.IsZero() {
+			durations[nodeID] += node.FinishedAt.Sub(node.StartedAt).Milliseconds()
+		}
+	}
 }
 
 // parallel waits for a set of concurrent loads and returns the first error.

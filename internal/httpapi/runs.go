@@ -132,12 +132,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 				c.JSON(http.StatusConflict, map[string]string{"error": "项目默认代码仓库无效，请重新绑定", "code": "repository_required"})
 				return
 			}
-			repositories = []domain.RepositoryContext{{
-				RepositoryID: repoDef.ID, Provider: repoDef.Provider, Name: repoDef.Name,
-				GongfengProjectID: repoDef.GongfengProjectID, WebURL: repoDef.WebURL, CloneURL: repoDef.CloneURL,
-				BaseBranch: repoDef.DefaultBranch, DefaultBranch: repoDef.DefaultBranch, LocalPath: repoDef.LocalPath,
-				PipelineProjectID: repoDef.PipelineProjectID, PipelineDefID: repoDef.PipelineDefID, PipelineURLPattern: repoDef.PipelineURLPattern,
-			}}
+			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
 		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID})
 		if err != nil {

@@ -74,11 +74,14 @@ func execute(config Config) error {
 	if err := unix.Chdir("/"); err != nil {
 		return fmt.Errorf("enter workspace container root: %w", err)
 	}
+	if err := validateAliases(config.Aliases); err != nil {
+		return err
+	}
 	if config.Refresh {
 		// This narrowly scoped operation may only ADD verified read-only masks
 		// to the canonical namespace. It never detaches a mount or runs user
 		// commands. Agents still execute in their original hardened container.
-		return applyMasks(config.Hide)
+		return applyMasks(config.Hide, config.Aliases...)
 	}
 	// Adopt the target root before copying its mount namespace: unshare then
 	// remaps root/cwd onto the copied mounts. Fchdir to the old root descriptor
@@ -92,7 +95,7 @@ func execute(config Config) error {
 	if err := unix.Chdir("/workspace"); err != nil {
 		return fmt.Errorf("enter workspace script directory: %w", err)
 	}
-	if err := removeMasks(config.Masks); err != nil {
+	if err := removeMasks(config.Masks, config.Aliases...); err != nil {
 		return err
 	}
 	if err := dropPrivileges(identity); err != nil {
@@ -108,7 +111,7 @@ func execute(config Config) error {
 	return nil
 }
 
-func removeMasks(targets []string) error {
+func removeMasks(targets []string, aliases ...string) error {
 	if len(targets) == 0 {
 		return nil
 	}
@@ -166,7 +169,7 @@ func removeMasks(targets []string) error {
 			// although it no longer exists at this path in the namespace.
 			continue
 		}
-		file, err := root.Open(strings.TrimPrefix(target, "/workspace/"))
+		file, err := openMaskTarget(root, target, aliases)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -202,7 +205,7 @@ func removeMasks(targets []string) error {
 	return nil
 }
 
-func applyMasks(targets []string) error {
+func applyMasks(targets []string, aliases ...string) error {
 	if len(targets) == 0 {
 		return nil
 	}
@@ -212,14 +215,14 @@ func applyMasks(targets []string) error {
 	}
 	defer root.Close()
 	for _, target := range targets {
-		if err := applyMask(root, target); err != nil {
+		if err := applyMask(root, target, aliases...); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func applyMask(root *os.Root, target string) error {
+func applyMask(root *os.Root, target string, aliases ...string) error {
 	resolved, err := filepath.EvalSymlinks(target)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -227,7 +230,7 @@ func applyMask(root *os.Root, target string) error {
 		}
 		return fmt.Errorf("resolve Agent instruction mask %s: %w", target, err)
 	}
-	if !ValidMask(resolved) {
+	if !ValidMask(resolved, aliases...) {
 		return fmt.Errorf("Agent instruction mask resolves outside the project configuration set: %s", target)
 	}
 	if info, err := os.Lstat(target); err != nil {
@@ -235,8 +238,7 @@ func applyMask(root *os.Root, target string) error {
 	} else if info.Mode()&os.ModeSymlink != 0 && instructionDirectory(filepath.Base(target)) {
 		return fmt.Errorf("refusing symlinked Agent instruction directory: %s", target)
 	}
-	relative := strings.TrimPrefix(resolved, "/workspace/")
-	destination, err := root.Open(relative)
+	destination, err := openMaskTarget(root, resolved, aliases)
 	if err != nil {
 		return fmt.Errorf("open Agent instruction mask %s: %w", target, err)
 	}
@@ -287,7 +289,7 @@ func applyMask(root *os.Root, target string) error {
 	if err := unix.Mount(sourcePath, targetPath, "", unix.MS_BIND, ""); err != nil {
 		return fmt.Errorf("apply Agent instruction mask %s: %w", target, err)
 	}
-	masked, err := root.Open(relative)
+	masked, err := openMaskTarget(root, resolved, aliases)
 	if err != nil {
 		return fmt.Errorf("verify Agent instruction mask %s: %w", target, err)
 	}
@@ -300,6 +302,38 @@ func applyMask(root *os.Root, target string) error {
 		return fmt.Errorf("Agent instruction mask did not remain read-only: %s", target)
 	}
 	return nil
+}
+
+// Aliases are platform supplied, but verify they name the same mounted
+// workspace before the privileged helper touches any instruction path.
+func validateAliases(aliases []string) error {
+	canonical, err := os.Stat("/workspace")
+	if err != nil {
+		return err
+	}
+	for _, alias := range aliases {
+		info, err := os.Stat(alias)
+		if err != nil || !os.SameFile(canonical, info) {
+			return fmt.Errorf("workspace alias does not name the workspace: %s", alias)
+		}
+	}
+	return nil
+}
+
+func openMaskTarget(root *os.Root, target string, aliases []string) (*os.File, error) {
+	base := maskBase(target, aliases)
+	if base == "" {
+		return nil, fmt.Errorf("instruction mask outside workspace: %s", target)
+	}
+	if base == "/workspace" {
+		return root.Open(strings.TrimPrefix(target, base+"/"))
+	}
+	aliasRoot, err := os.OpenRoot(base)
+	if err != nil {
+		return nil, err
+	}
+	defer aliasRoot.Close()
+	return aliasRoot.Open(strings.TrimPrefix(target, base+"/"))
 }
 
 func instructionDirectory(name string) bool {

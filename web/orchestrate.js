@@ -3,7 +3,7 @@ let aiBuild = null;
 let aiAbort = null;
 const aiHistory = {};
 
-const aiOrchestratorCLIBrands = {codebuddy:'codebuddy', codex:'codex', 'claude-code':'claude', opencode:'opencode', cursor:'cursor', agy:'gemini', kimi:'kimi', pi:'pi', dsh:'deepseek'};
+const aiOrchestratorCLIBrands = {codebuddy:'codebuddy', codex:'codex', 'claude-code':'claude', opencode:'opencode', cursor:'cursor', agy:'gemini', kimi:'kimi', pi:'pi', dsh:'deepseek', zcode:'glm'};
 
 function aiOrchestratorEngine(model) {
   const listed = window.AgentFlowAssistantModels?.catalog().models.find(item => item.id === model);

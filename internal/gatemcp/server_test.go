@@ -75,3 +75,35 @@ func TestDecodeRouteValues(t *testing.T) {
 		}
 	}
 }
+
+func TestRouteSchemaLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		route any
+		valid bool
+	}{
+		{"label at limit", strings.Repeat("界", maxRouteLabelLen), true},
+		{"label over limit", strings.Repeat("界", maxRouteLabelLen+1), false},
+		{"labels at limit", makeLabels(maxRouteLabels), true},
+		{"labels over limit", makeLabels(maxRouteLabels + 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{"decision": "pass", "reason": "ok", "route": tc.route})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, problem := decodeResult(raw)
+			if (problem == "") != tc.valid {
+				t.Fatalf("problem=%q", problem)
+			}
+		})
+	}
+}
+
+func makeLabels(n int) []string {
+	labels := make([]string, n)
+	for i := range labels {
+		labels[i] = "label"
+	}
+	return labels
+}

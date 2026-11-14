@@ -82,6 +82,13 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken str
 	if err != nil {
 		return err
 	}
+	return runnerAlignOutcome(final, integrate, strings.TrimSpace(repository.DefaultBranch))
+}
+
+// runnerAlignOutcome turns a finished align_baseline runner task into the
+// error alignBaseline reports: the runner's failure, a decode error, an
+// AlignConflictError when the branches diverged, or nil on a clean merge.
+func runnerAlignOutcome(final domain.RunnerTask, integrate, defaultBranch string) error {
 	if final.Status != domain.RunnerTaskSuccess {
 		msg := strings.TrimSpace(final.Error)
 		if msg == "" {
@@ -94,7 +101,7 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken str
 		return fmt.Errorf("decode align result: %w", err)
 	}
 	if len(result.Conflicts) > 0 {
-		return &AlignConflictError{Integrate: integrate, Default: strings.TrimSpace(repository.DefaultBranch), Files: result.Conflicts, Blocks: result.Blocks}
+		return &AlignConflictError{Integrate: integrate, Default: defaultBranch, Files: result.Conflicts, Blocks: result.Blocks}
 	}
 	return nil
 }

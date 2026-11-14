@@ -46,6 +46,21 @@ func missingRouteDecisionMessage(nodeID string) string {
 	return fmt.Sprintf("节点「%s」已成功但缺少路由决策，请从该节点重新运行", nodeID)
 }
 
+// Prefixed namespaces keep numeric IDs distinct from index fallbacks.
+func routeEdgeKey(edge domain.WorkflowEdge, index int) string {
+	if edge.ID != "" {
+		return "id:" + edge.ID
+	}
+	return "index:" + strconv.Itoa(index)
+}
+
+func routeEdgeSelected(decision *domain.RouteDecision, edge domain.WorkflowEdge, index int) bool {
+	if decision.EdgeKeyVersion == 0 {
+		return decision.SelectedEdges[strconv.Itoa(index)]
+	}
+	return decision.SelectedEdges[routeEdgeKey(edge, index)]
+}
+
 func decideRoute(wf domain.WorkflowDefinition, node domain.WorkflowNode, route domain.RouteValues, artifacts []domain.Artifact) (*domain.RouteDecision, error) {
 	labels := routeLabels(wf, node.ID)
 	allowed := map[string]bool{}
@@ -57,7 +72,7 @@ func decideRoute(wf domain.WorkflowDefinition, node domain.WorkflowNode, route d
 			return nil, fmt.Errorf("节点 %s 路由值无效：可选值 %v，实际提交 %v", node.ID, labels, route)
 		}
 	}
-	decision := &domain.RouteDecision{Values: route, SelectedEdges: map[string]bool{}}
+	decision := &domain.RouteDecision{Values: route, SelectedEdges: map[string]bool{}, EdgeKeyVersion: 1}
 	hasConditions, matched := false, false
 	for i, edge := range wf.Edges {
 		if edge.Source != node.ID || edge.Condition == nil {
@@ -96,7 +111,7 @@ func decideRoute(wf domain.WorkflowDefinition, node domain.WorkflowNode, route d
 		default:
 			return nil, fmt.Errorf("不支持的条件类型 %q", condition.Type)
 		}
-		decision.SelectedEdges[strconv.Itoa(i)] = selected
+		decision.SelectedEdges[routeEdgeKey(edge, i)] = selected
 		matched = matched || selected
 	}
 	if !hasConditions {
@@ -105,7 +120,7 @@ func decideRoute(wf domain.WorkflowDefinition, node domain.WorkflowNode, route d
 	if !matched && node.DefaultTarget != "" {
 		for i, edge := range wf.Edges {
 			if edge.Source == node.ID && edge.Target == node.DefaultTarget {
-				decision.SelectedEdges[strconv.Itoa(i)] = true
+				decision.SelectedEdges[routeEdgeKey(edge, i)] = true
 				matched = true
 			}
 		}
@@ -184,7 +199,7 @@ func nodeReadiness(wf domain.WorkflowDefinition, run domain.Run, node domain.Wor
 				if up.RouteDecision == nil {
 					return false, false, ""
 				}
-				if !up.RouteDecision.SelectedEdges[strconv.Itoa(i)] {
+				if !routeEdgeSelected(up.RouteDecision, edge, i) {
 					skipped++
 					if edge.Condition != nil && edge.Condition.Type == "artifact" {
 						reasons = append(reasons, fmt.Sprintf("%s 的产物 %s 字段 %s 未匹配条件 %s", edge.Source, edge.Condition.Artifact, edge.Condition.Pointer, edge.Condition.Equals))
@@ -213,13 +228,40 @@ func nodeReadiness(wf domain.WorkflowDefinition, run domain.Run, node domain.Wor
 	return false, true, strings.Join(reasons, "；")
 }
 
+func validateJoinRule(node domain.WorkflowNode) error {
+	if node.JoinRule != "" && node.JoinRule != "all_success" && node.JoinRule != "none_failed_min_one_success" {
+		return fmt.Errorf("node %s has invalid joinRule %q", node.ID, node.JoinRule)
+	}
+	return nil
+}
+
 func validateRouting(wf domain.WorkflowDefinition) error {
 	nodes := map[string]domain.WorkflowNode{}
 	for _, node := range wf.Nodes {
 		nodes[node.ID] = node
-		if node.JoinRule != "" && node.JoinRule != "all_success" && node.JoinRule != "none_failed_min_one_success" {
-			return fmt.Errorf("node %s has invalid joinRule %q", node.ID, node.JoinRule)
+		if err := validateJoinRule(node); err != nil {
+			return err
 		}
+	}
+	// A source's routing decisions must identify each outgoing edge uniquely.
+	routingSources := map[string]bool{}
+	for _, edge := range wf.Edges {
+		if edge.Condition != nil {
+			routingSources[edge.Source] = true
+		}
+	}
+	edgeIDs := map[string]map[string]bool{}
+	for _, edge := range wf.Edges {
+		if !routingSources[edge.Source] || edge.ID == "" {
+			continue
+		}
+		if edgeIDs[edge.Source] == nil {
+			edgeIDs[edge.Source] = map[string]bool{}
+		}
+		if edgeIDs[edge.Source][edge.ID] {
+			return fmt.Errorf("node %s has duplicate routing edge id %q", edge.Source, edge.ID)
+		}
+		edgeIDs[edge.Source][edge.ID] = true
 	}
 	labels := map[string]map[string]bool{}
 	conditions := map[string]bool{}

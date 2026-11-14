@@ -27,7 +27,6 @@ type analyticsAccumulator struct {
 	retriedNodes     int
 	reworkNodes      int
 	models           map[string]int
-	versions         map[string]int
 	nodeTypes        map[string]int
 	nodeCount        int
 	issueIDs         map[string]struct{}
@@ -1005,34 +1004,49 @@ func accumulateBreakdown(values map[string]*analyticsAccumulator, key, name stri
 	}
 	value.item.Runs++
 	value.item.Reworks += reworks
-	if !usageCostKnown(run.Usage) {
+	value.item.ToolCalls += run.ToolCalls
+	accumulateBreakdownUsage(value, run.Usage)
+	countBreakdownStatus(&value.item, run.Status, run.Status == "running" || run.Status == "waiting")
+	if complete {
+		accumulateBreakdownDuration(value, duration, execDuration)
+	}
+}
+
+// accumulateBreakdownUsage 把单次执行的用量累加到维度累加器：Token/成本总量、
+// 成本未识别计数与 Token 四分项。dimension 维度（SOP、节点、模型等）共用。
+func accumulateBreakdownUsage(value *analyticsAccumulator, usage domain.TokenUsage) {
+	if !usageCostKnown(usage) {
 		value.item.CostUnknownRuns++
 	}
-	value.item.Tokens += run.Usage.TotalTokens
-	value.item.CostUSD += run.Usage.CostUSD
-	value.item.ToolCalls += run.ToolCalls
-	value.inputTokens += run.Usage.InputTokens
-	value.outputTokens += run.Usage.OutputTokens
-	value.cacheReadTokens += run.Usage.CacheReadTokens
-	value.cacheWriteTokens += run.Usage.CacheWriteTokens
-	if run.Status == "succeeded" {
-		value.item.Succeeded++
+	value.item.Tokens += usage.TotalTokens
+	value.item.CostUSD += usage.CostUSD
+	value.inputTokens += usage.InputTokens
+	value.outputTokens += usage.OutputTokens
+	value.cacheReadTokens += usage.CacheReadTokens
+	value.cacheWriteTokens += usage.CacheWriteTokens
+}
+
+// countBreakdownStatus 按执行状态累加维度终态计数，active 由调用方按各自的状态词表判定。
+func countBreakdownStatus(item *domain.AnalyticsBreakdown, status string, active bool) {
+	switch status {
+	case "succeeded":
+		item.Succeeded++
+	case "failed":
+		item.Failed++
+	case "cancelled":
+		item.Cancelled++
 	}
-	if run.Status == "failed" {
-		value.item.Failed++
+	if active {
+		item.Active++
 	}
-	if run.Status == "cancelled" {
-		value.item.Cancelled++
-	}
-	if run.Status == "running" || run.Status == "waiting" {
-		value.item.Active++
-	}
-	if complete {
-		value.duration += duration
-		value.durations = append(value.durations, duration)
-		value.execDuration += execDuration
-		value.execDurations = append(value.execDurations, execDuration)
-	}
+}
+
+// accumulateBreakdownDuration 记录一次有效耗时样本，供均值与 P95 使用。
+func accumulateBreakdownDuration(value *analyticsAccumulator, duration, execDuration int64) {
+	value.duration += duration
+	value.durations = append(value.durations, duration)
+	value.execDuration += execDuration
+	value.execDurations = append(value.execDurations, execDuration)
 }
 
 func accumulateNode(values map[string]*analyticsAccumulator, key, name string, node *domain.NodeRun, duration int64, complete bool) {
@@ -1046,16 +1060,8 @@ func accumulateNode(values map[string]*analyticsAccumulator, key, name string, n
 	}
 	value.item.Runs++
 	value.item.Reworks += node.ReworkCount
-	if !usageCostKnown(node.Usage) {
-		value.item.CostUnknownRuns++
-	}
-	value.item.Tokens += node.Usage.TotalTokens
-	value.item.CostUSD += node.Usage.CostUSD
 	value.item.ToolCalls += node.ToolCalls
-	value.inputTokens += node.Usage.InputTokens
-	value.outputTokens += node.Usage.OutputTokens
-	value.cacheReadTokens += node.Usage.CacheReadTokens
-	value.cacheWriteTokens += node.Usage.CacheWriteTokens
+	accumulateBreakdownUsage(value, node.Usage)
 	value.nodeRuns++
 	if node.Attempt > 1 {
 		value.retriedNodes++
@@ -1069,22 +1075,13 @@ func accumulateNode(values map[string]*analyticsAccumulator, key, name string, n
 		}
 		value.models[node.Model]++
 	}
-	if node.Status == "succeeded" {
-		value.item.Succeeded++
-	}
+	countBreakdownStatus(&value.item, node.Status, node.Status == "running" || node.Status == "waiting_approval")
 	if node.Status == "failed" {
-		value.item.Failed++
 		value.item.FailedNodes++
 	}
-	if node.Status == "running" || node.Status == "waiting_approval" {
-		value.item.Active++
-	}
 	if complete {
-		value.duration += duration
-		value.durations = append(value.durations, duration)
 		// 节点耗时本身就是"执行耗时"，与双口径中的执行耗时同源。
-		value.execDuration += duration
-		value.execDurations = append(value.execDurations, duration)
+		accumulateBreakdownDuration(value, duration, duration)
 	}
 }
 
@@ -1128,8 +1125,8 @@ func accumulateVersion(values map[string]*analyticsVersionAccumulator, workflowI
 	}
 }
 
-// accumulateUserUsage 按"责任人 × 自然日"聚合用量。
-func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, day string, run domain.Run, duration int64, complete bool, execDuration int64) {
+// analyticsUserEntry 返回"责任人 × 自然日"的累加器，不存在时新建；空责任人归为 unassigned。
+func analyticsUserEntry(values map[string]*analyticsUserAccumulator, userID, day string) *analyticsUserAccumulator {
 	if userID == "" {
 		userID = "unassigned"
 	}
@@ -1139,6 +1136,12 @@ func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, da
 		value = &analyticsUserAccumulator{item: domain.AnalyticsUserUsage{UserID: userID, Date: day, CostKnown: true}}
 		values[key] = value
 	}
+	return value
+}
+
+// accumulateUserUsage 按"责任人 × 自然日"聚合用量。
+func accumulateUserUsage(values map[string]*analyticsUserAccumulator, userID, day string, run domain.Run, duration int64, complete bool, execDuration int64) {
+	value := analyticsUserEntry(values, userID, day)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.InputTokens += run.Usage.InputTokens
@@ -1252,7 +1255,8 @@ func finalizeUserUsage(values map[string]*analyticsUserAccumulator) []domain.Ana
 	return out
 }
 
-func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, projectID, issueID string, run domain.Run) {
+// analyticsProjectEntry 返回项目的累加器，不存在时新建；空项目归为 unassigned。
+func analyticsProjectEntry(values map[string]*analyticsProjectAccumulator, projectID string) *analyticsProjectAccumulator {
 	if projectID == "" {
 		projectID = "unassigned"
 	}
@@ -1261,6 +1265,11 @@ func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, proj
 		value = &analyticsProjectAccumulator{item: domain.AnalyticsProjectUsage{ProjectID: projectID, CostKnown: true}, issues: map[string]struct{}{}}
 		values[projectID] = value
 	}
+	return value
+}
+
+func accumulateProjectUsage(values map[string]*analyticsProjectAccumulator, projectID, issueID string, run domain.Run) {
+	value := analyticsProjectEntry(values, projectID)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.CostUSD += run.Usage.CostUSD
@@ -1314,8 +1323,8 @@ func analyticsIssueSource(issue domain.Issue) string {
 	return source
 }
 
-// accumulateIssueSource 按需求来源聚合执行量、Token、成本与执行耗时。
-func accumulateIssueSource(values map[string]*analyticsAccumulator, source string, run domain.Run, execDuration int64) {
+// analyticsSourceEntry 返回需求来源的累加器，不存在时新建；空来源归为 local。
+func analyticsSourceEntry(values map[string]*analyticsAccumulator, source string) *analyticsAccumulator {
 	if source == "" {
 		source = "local"
 	}
@@ -1324,6 +1333,12 @@ func accumulateIssueSource(values map[string]*analyticsAccumulator, source strin
 		value = &analyticsAccumulator{item: domain.AnalyticsBreakdown{Key: source, Name: source}}
 		values[source] = value
 	}
+	return value
+}
+
+// accumulateIssueSource 按需求来源聚合执行量、Token、成本与执行耗时。
+func accumulateIssueSource(values map[string]*analyticsAccumulator, source string, run domain.Run, execDuration int64) {
+	value := analyticsSourceEntry(values, source)
 	value.item.Runs++
 	value.item.Tokens += run.Usage.TotalTokens
 	value.item.CostUSD += run.Usage.CostUSD
@@ -1440,43 +1455,21 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	if usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
 		return
 	}
-	userID := analyticsRunUserID(run, issue)
-	if userID == "" {
-		userID = "unassigned"
-	}
-	key := userID + "\x00" + at.Format("2006-01-02")
-	user := users[key]
-	if user == nil {
-		user = &analyticsUserAccumulator{item: domain.AnalyticsUserUsage{UserID: userID, Date: at.Format("2006-01-02"), CostKnown: true}}
-		users[key] = user
-	}
+	user := analyticsUserEntry(users, analyticsRunUserID(run, issue), at.Format("2006-01-02"))
 	user.item.Tokens += usage.TotalTokens
 	user.item.InputTokens += usage.InputTokens
 	user.item.OutputTokens += usage.OutputTokens
 	user.item.CacheReadTokens += usage.CacheReadTokens
 	user.item.CacheWriteTokens += usage.CacheWriteTokens
 	user.item.CostUSD += usage.CostUSD
-	projectID := domain.RunProjectID(run, issue.ProjectID)
-	if projectID == "" {
-		projectID = "unassigned"
-	}
-	project := projects[projectID]
-	if project == nil {
-		project = &analyticsProjectAccumulator{item: domain.AnalyticsProjectUsage{ProjectID: projectID, CostKnown: true}, issues: map[string]struct{}{}}
-		projects[projectID] = project
-	}
+	project := analyticsProjectEntry(projects, domain.RunProjectID(run, issue.ProjectID))
 	project.item.Tokens += usage.TotalTokens
 	project.item.CostUSD += usage.CostUSD
 	if issueID == "" {
 		return
 	}
 	project.issues[issueID] = struct{}{}
-	source := analyticsIssueSource(issue)
-	value := sources[source]
-	if value == nil {
-		value = &analyticsAccumulator{item: domain.AnalyticsBreakdown{Key: source, Name: source}}
-		sources[source] = value
-	}
+	value := analyticsSourceEntry(sources, analyticsIssueSource(issue))
 	value.item.Tokens += usage.TotalTokens
 	value.item.CostUSD += usage.CostUSD
 	value.inputTokens += usage.InputTokens

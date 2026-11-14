@@ -97,7 +97,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		default:
 		}
 		r, ok := e.repo.RunState(runID)
-		if !ok || isTerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
+		if !ok || domain.TerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
 			return
 		}
 		if r.CancelRequested {
@@ -196,7 +196,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 				return
 			}
 			if allRoutingFinished(wf, r) {
-				e.finishAt(runID, generation, "failed", "所有终点节点均被跳过，流程无法完成")
+				e.finishAt(runID, generation, "failed", allSinksSkippedMessage)
 				return
 			}
 			if hasWaiting(wf, r) {
@@ -1146,7 +1146,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if decision != nil {
 		var selected []domain.WorkflowEdge
 		for i, edge := range wf.Edges {
-			if decision.SelectedEdges[fmt.Sprint(i)] {
+			if edge.Source == node.ID && routeEdgeSelected(decision, edge, i) {
 				selected = append(selected, edge)
 			}
 		}

@@ -249,6 +249,50 @@ func TestConditionalRoutingArtifactEndToEnd(t *testing.T) {
 	}
 }
 
+func TestRouteDecisionSurvivesEdgeReordering(t *testing.T) {
+	wf := routingWorkflow("small")
+	decision, err := decideRoute(wf, wf.Nodes[0], domain.RouteValues{"small"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{Nodes: map[string]*domain.NodeRun{"classify": {Status: "succeeded", RouteDecision: decision}}}
+	wf.Edges[0], wf.Edges[1] = wf.Edges[1], wf.Edges[0]
+	if ready, skip, _ := nodeReadiness(wf, run, wf.Nodes[1]); !ready || skip {
+		t.Fatal("selected branch lost after reorder")
+	}
+	if ready, skip, _ := nodeReadiness(wf, run, wf.Nodes[2]); ready || !skip {
+		t.Fatal("unselected branch changed after reorder")
+	}
+}
+
+func TestRouteDecisionLegacyAndIndexFallback(t *testing.T) {
+	wf := routingWorkflow("small")
+	wf.Edges[0].ID = ""
+	wf.Edges[1].ID = "index:0"
+	decision, err := decideRoute(wf, wf.Nodes[0], domain.RouteValues{"small"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.SelectedEdges["index:0"] || decision.SelectedEdges["id:index:0"] {
+		t.Fatalf("ambiguous keys: %+v", decision)
+	}
+	run := domain.Run{Nodes: map[string]*domain.NodeRun{"classify": {Status: "succeeded", RouteDecision: decision}}}
+	if ready, _, _ := nodeReadiness(wf, run, wf.Nodes[1]); !ready {
+		t.Fatal("index fallback not selected")
+	}
+	run.Nodes["classify"].RouteDecision = &domain.RouteDecision{SelectedEdges: map[string]bool{"0": true, "1": false}}
+	if ready, _, _ := nodeReadiness(wf, run, wf.Nodes[1]); !ready {
+		t.Fatal("legacy decision not selected")
+	}
+	if _, skip, _ := nodeReadiness(wf, run, wf.Nodes[2]); !skip {
+		t.Fatal("legacy unselected branch not skipped")
+	}
+	wf.Edges[0].ID = wf.Edges[1].ID
+	if err := validate(wf); err == nil || !strings.Contains(err.Error(), "duplicate routing edge id") {
+		t.Fatalf("duplicate IDs: %v", err)
+	}
+}
+
 func TestConditionalRoutingJoinAndArtifacts(t *testing.T) {
 	wf := routingWorkflow("small")
 	wf.Nodes[4].JoinRule = ""
@@ -267,7 +311,7 @@ func TestConditionalRoutingJoinAndArtifacts(t *testing.T) {
 	wf.Nodes[0].ArtifactOutputs = []domain.ArtifactContract{{Name: "classification", Path: "classification.json"}}
 	wf.Edges[0].Condition = &domain.WorkflowCondition{Type: "artifact", Artifact: "classification", Pointer: "/size", Equals: json.RawMessage(`"small"`)}
 	d, err = decideRoute(wf, wf.Nodes[0], nil, []domain.Artifact{{Name: "classification", Content: `{"size":"small"}`}})
-	if err != nil || !d.SelectedEdges["0"] {
+	if err != nil || !d.SelectedEdges["id:small-edge"] {
 		t.Fatalf("artifact condition: %+v %v", d, err)
 	}
 	_, err = decideRoute(wf, wf.Nodes[0], nil, []domain.Artifact{{Name: "classification", Content: `{}`}})
@@ -361,7 +405,7 @@ func TestConditionalRoutingDefaultAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, err := decideRoute(wf, wf.Nodes[0], nil, nil)
-	if err != nil || !d.SelectedEdges["5"] {
+	if err != nil || !d.SelectedEdges["id:default"] {
 		t.Fatalf("default: %+v %v", d, err)
 	}
 	if len(WorkflowRoutingWarnings(wf)) != 0 {

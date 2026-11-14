@@ -233,7 +233,7 @@ func (e *Engine) parkForResumeAt(runID string, generation int, message string) {
 		if r.Generation != generation || ((r.OwnerInstanceID != "" || r.Generation > 0) && !e.ownsRun(*r)) {
 			return
 		}
-		if isTerminalRunStatus(r.Status) {
+		if domain.TerminalRunStatus(r.Status) {
 			return
 		}
 		resetInFlightNodesForResume(r, "执行实例退出，等待恢复")
@@ -330,7 +330,7 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			ignored = true
 			return
 		}
-		if isTerminalRunStatus(r.Status) {
+		if domain.TerminalRunStatus(r.Status) {
 			ignored = true
 			return
 		}
@@ -339,7 +339,7 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			e.event(r, "", "run.finish_ignored", "失败节点已被打回，忽略过期的失败收尾")
 			return
 		}
-		if status == "failed" && msg == "所有终点节点均被跳过，流程无法完成" && (!allRoutingFinished(workflowForRun(e.repo, *r), *r) || allSucceeded(workflowForRun(e.repo, *r), *r)) {
+		if status == "failed" && msg == allSinksSkippedMessage && (!allRoutingFinished(workflowForRun(e.repo, *r), *r) || allSucceeded(workflowForRun(e.repo, *r), *r)) {
 			ignored = true
 			return
 		}

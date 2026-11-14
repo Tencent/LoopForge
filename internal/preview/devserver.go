@@ -124,18 +124,10 @@ func injectDevServerIntercept(html, prefix string, port int) string {
 	tag := `<script data-af-dev-server>` + script + `</script>`
 	// First thing in the document: module scripts and inline boot code must
 	// already see the patched fetch/WebSocket.
-	lower := strings.ToLower(html)
-	if i := strings.Index(lower, "<head>"); i >= 0 {
-		at := i + len("<head>")
-		return html[:at] + tag + html[at:]
+	if out, ok := insertAfterHeadOpen(html, tag); ok {
+		return out
 	}
-	if i := strings.Index(lower, "<head "); i >= 0 {
-		if end := strings.Index(html[i:], ">"); end >= 0 {
-			at := i + end + 1
-			return html[:at] + tag + html[at:]
-		}
-	}
-	if i := strings.Index(lower, "<html"); i >= 0 {
+	if i := strings.Index(strings.ToLower(html), "<html"); i >= 0 {
 		if end := strings.Index(html[i:], ">"); end >= 0 {
 			at := i + end + 1
 			return html[:at] + tag + html[at:]

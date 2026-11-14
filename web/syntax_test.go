@@ -107,6 +107,10 @@ assert.deepEqual(runNodeChoices({...chained,status:'waiting',nodes:{first:{statu
 assert.equal(canRerunFromHere({...chained,status:'waiting',nodes:{first:{status:'waiting_approval'},second:{status:'pending'}}},'second'),false);
 assert.deepEqual(runNodeChoices({...chained,nodes:{first:{status:'succeeded'},second:{status:'failed'}}}).map(n=>n.id),['first','second']);
 assert.equal(canRerunFromHere({...chained,nodes:{first:{status:'succeeded'},second:{status:'failed'}}},'second'),true);
+const branched={...run,workflowSnapshot:{id:'wf',nodes:[{id:'first'},{id:'yes'},{id:'no'}],edges:[{id:'no-edge',source:'first',target:'no',condition:{}},{id:'yes-edge',source:'first',target:'yes',condition:{}}]},nodes:{first:{status:'succeeded',routeDecision:{edgeKeyVersion:1,selectedEdges:{'id:yes-edge':true,'id:no-edge':false}}},yes:{status:'failed'},no:{status:'skipped'}}};
+assert.deepEqual(runNodeChoices(branched).map(n=>n.id),['first','yes']);
+branched.nodes.first.routeDecision={selectedEdges:{'0':false,'1':true}};
+assert.deepEqual(runNodeChoices(branched).map(n=>n.id),['first','yes']);
 const failed = issueActionButtons({id:'issue-1',run,stage:'failed'});
 assert.equal((failed.match(/class="issue-act /g)||[]).length, 1);
 assert.ok(failed.includes('处理失败'));
@@ -828,9 +832,21 @@ global.escapeHTML = value => String(value);
 global.state = {data: {executors: [
   {id: 'codebuddy', name: 'CodeBuddy'},
   {id: 'codex', name: 'Codex'},
-  {id: 'claude', name: 'Claude Code'}
+  {id: 'claude', name: 'Claude Code'},
+  {id: 'opencode', name: 'OpenCode'},
+  {id: 'cursor', name: 'Cursor CLI'},
+  {id: 'agy', name: 'Antigravity'},
+  {id: 'kimi', name: 'Kimi Code'},
+  {id: 'pi', name: 'Pi'},
+  {id: 'dsh', name: 'DeepSeek Harness'},
+  {id: 'zcode', name: 'ZCode'},
+  {id: 'mock', name: '演示执行器'}
 ]}};
 eval(code.slice(code.indexOf('function executorOptions('), code.indexOf('function selectAgent(')));
+for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode']) {
+  assert.ok(executorOptions(id).includes('value="' + id + '" selected'), id);
+}
+assert.ok(!executorOptions('codex').includes('value="mock"'));
 const legacy = executorOptions('legacy-codex');
 assert.ok(legacy.includes('历史执行器 legacy-codex'));
 assert.ok(legacy.includes('value="legacy-codex" selected disabled'));

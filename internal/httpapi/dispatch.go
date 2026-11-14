@@ -116,7 +116,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	var repositories []domain.RepositoryContext
 	for _, repo := range boundRepositories {
-		rc := domain.RepositoryContext{RepositoryID: repo.ID, Provider: repo.Provider, Name: repo.Name, GongfengProjectID: repo.GongfengProjectID, WebURL: repo.WebURL, CloneURL: repo.CloneURL, BaseBranch: repo.DefaultBranch, LocalPath: repo.LocalPath, PipelineProjectID: repo.PipelineProjectID, PipelineDefID: repo.PipelineDefID, PipelineURLPattern: repo.PipelineURLPattern, DefaultBranch: repo.DefaultBranch}
+		rc := repositoryRunContext(repo)
 		if selectedWorkBranch := branchSelection.WorkBranchForRepository(repo.ID); selectedWorkBranch != "" {
 			rc.WorkBranch = selectedWorkBranch
 			rc.RequireExistingWorkBranch = true

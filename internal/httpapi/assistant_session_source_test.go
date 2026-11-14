@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -156,6 +158,103 @@ func TestPruneScheduledSessionsKeepsLatestAndLeavesSOPAlone(t *testing.T) {
 	for _, id := range []string{"scheduled-old", "legacy-new", "legacy-old"} {
 		if _, ok := st.AssistantSession(user.ID, id); ok {
 			t.Fatalf("%s should be removed", id)
+		}
+	}
+}
+
+func writeSharedRoot(t *testing.T, id string, modified time.Time) string {
+	t.Helper()
+	root := assistantSharedSessionRoot(id)
+	file := filepath.Join(root, "home", ".codebuddy", "plugins", "marketplace.json")
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(root, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// A scheduled task deletes its previous run every time, so a shared root left
+// behind by each deletion grows the disk by a whole CLI home per run.
+func TestDeletingConversationRemovesItsSharedRoot(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", t.TempDir())
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	for _, login := range []string{"shared-owner", "shared-other"} {
+		if err := st.PutUser(domain.User{LoginName: login, CodeBuddyAPIKey: "test-key"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner, _ := st.UserByLoginName("shared-owner")
+	other, _ := st.UserByLoginName("shared-other")
+	now := time.Now()
+	for _, id := range []string{"run-1", "run-2"} {
+		if err := st.PutAssistantSession(owner.ID, domain.AssistantSession{ID: id, Source: domain.AssistantSourceScheduled, TaskID: "job-1", CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second := writeSharedRoot(t, "run-1", now), writeSharedRoot(t, "run-2", now)
+	h := &assistantHandlers{deps: &deps{repo: st}}
+
+	if err := h.deleteConversation(other.ID, "run-1"); err == nil {
+		t.Fatal("a user who does not own the conversation deleted it")
+	}
+	if _, err := os.Stat(first); err != nil {
+		t.Fatalf("a refused deletion removed the shared root: %v", err)
+	}
+	h.deleteScheduledSessionsExcept("job-1", "run-2")
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Fatalf("the deleted run left its shared root: %v", err)
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Fatalf("the kept run lost its shared root: %v", err)
+	}
+}
+
+func TestPruneOrphanSharedRootsKeepsLiveAndRecentRoots(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", t.TempDir())
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutUser(domain.User{LoginName: "orphan-owner", CodeBuddyAPIKey: "test-key"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := st.UserByLoginName("orphan-owner")
+	now := time.Now()
+	old := now.Add(-2 * sharedRootOrphanAge)
+	if err := st.PutAssistantSession(owner.ID, domain.AssistantSession{ID: "live", CreatedAt: old, UpdatedAt: old}); err != nil {
+		t.Fatal(err)
+	}
+	live := writeSharedRoot(t, "live", old)
+	orphan := writeSharedRoot(t, "deleted-long-ago", old)
+	recent := writeSharedRoot(t, "being-saved", now)
+	foreign := filepath.Join(filepath.Dir(live), "not-a-root")
+	if err := os.MkdirAll(foreign, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(foreign, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &assistantHandlers{deps: &deps{repo: st}}
+	if removed := h.pruneOrphanSharedRoots(now); removed != 1 {
+		t.Fatalf("removed = %d, want 1", removed)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("orphaned root kept: %v", err)
+	}
+	for _, path := range []string{live, recent, foreign} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s removed: %v", path, err)
 		}
 	}
 }
