@@ -386,6 +386,9 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 	// and low-capacity Runner disks bounded.
 	if status == "succeeded" || status == "cancelled" {
 		e.observe(id, "", domain.TelemetryEvent{Category: "sandbox", Name: "sandbox.closed", Phase: "finish", Message: "run sandbox released"})
+		if status == "succeeded" {
+			e.reportUndeliveredWork(id)
+		}
 		if status == "succeeded" && e.preview != nil {
 			if current, ok := e.repo.RunState(id); ok && e.preview.BeginFinalization(current) {
 				return
