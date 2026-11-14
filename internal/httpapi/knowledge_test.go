@@ -250,9 +250,21 @@ func TestKnowledgeSubmissionFromArtifactPublishes(t *testing.T) {
 	if dup := doJSON(t, h, http.MethodPost, "/api/knowledge/submissions", `{"runId":"run-1","artifactId":"art-1"}`, nil); dup.Code != http.StatusConflict {
 		t.Fatalf("duplicate artifact submission status = %d", dup.Code)
 	}
+	// A project submission remains available for review after its run is deleted.
+	if err := s.DeleteRun(run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doJSON(t, h, http.MethodGet, "/api/knowledge/submissions", "", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), item.ID) {
+		t.Fatalf("submission missing after run deletion: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(t, h, http.MethodGet, "/api/knowledge/submissions/"+item.ID, "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("submission detail after run deletion: %d %s", rec.Code, rec.Body.String())
+	}
 
 	// Sources outside the project scope cannot be published to.
-	doJSON(t, h, http.MethodPut, "/api/knowledge/submissions/"+item.ID, `{"title":"帕鲁断联","source":"b","path":"playbooks/palu.md"}`, nil)
+	if rec := doJSON(t, h, http.MethodPut, "/api/knowledge/submissions/"+item.ID, `{"title":"帕鲁断联","source":"b","path":"playbooks/palu.md"}`, nil); rec.Code != http.StatusOK {
+		t.Fatalf("edit after run deletion: %d %s", rec.Code, rec.Body.String())
+	}
 	if rec := doJSON(t, h, http.MethodPost, "/api/knowledge/submissions/"+item.ID+"/publish", "", nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("out-of-scope publish status = %d %s", rec.Code, rec.Body.String())
 	}
@@ -267,5 +279,48 @@ func TestKnowledgeSubmissionFromArtifactPublishes(t *testing.T) {
 	}
 	if rec := doJSON(t, h, http.MethodDelete, "/api/knowledge/submissions/"+item.ID, "", nil); rec.Code != http.StatusConflict {
 		t.Fatalf("published submission deletable: %d", rec.Code)
+	}
+}
+
+func TestKnowledgeSubmissionWithMissingRunIDRemainsAccessible(t *testing.T) {
+	s, h, _, _ := newKnowledgeTestServer(t)
+	item := domain.KnowledgeSubmission{ID: "legacy-artifact", ArtifactID: "artifact", Title: "legacy entry", Content: "content", Status: domain.KnowledgeSubmissionPending}
+	if err := s.PutKnowledgeSubmission(item); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/knowledge/submissions", "/api/knowledge/submissions/" + item.ID} {
+		if rec := doJSON(t, h, http.MethodGet, path, "", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), item.ID) {
+			t.Fatalf("legacy submission %s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := doJSON(t, h, http.MethodDelete, "/api/knowledge/submissions/"+item.ID, "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete legacy submission: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestKnowledgeSubmissionCanBeManagedAfterRunDeletion(t *testing.T) {
+	for _, action := range []string{"delete", "reject"} {
+		t.Run(action, func(t *testing.T) {
+			s, h, _, _ := newKnowledgeTestServer(t)
+			run := domain.Run{ID: "project-run", ExecutionContext: domain.TelemetryContext{ProjectID: "p1"}, Artifacts: []domain.Artifact{{ID: "artifact", RunID: "project-run", Content: "project knowledge"}}}
+			if err := s.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			rec := doJSON(t, h, http.MethodPost, "/api/knowledge/submissions", `{"runId":"project-run","artifactId":"artifact"}`, nil)
+			var item domain.KnowledgeSubmission
+			if err := json.Unmarshal(rec.Body.Bytes(), &item); err != nil || rec.Code != http.StatusOK || item.ID == "" {
+				t.Fatalf("create submission: %d %s (%v)", rec.Code, rec.Body.String(), err)
+			}
+			if err := s.DeleteRun(run.ID); err != nil {
+				t.Fatal(err)
+			}
+			method, path, body := http.MethodDelete, "/api/knowledge/submissions/"+item.ID, ""
+			if action == "reject" {
+				method, path, body = http.MethodPost, path+"/reject", `{}`
+			}
+			if rec := doJSON(t, h, method, path, body, nil); rec.Code != http.StatusOK {
+				t.Fatalf("%s after run deletion: %d %s", action, rec.Code, rec.Body.String())
+			}
+		})
 	}
 }

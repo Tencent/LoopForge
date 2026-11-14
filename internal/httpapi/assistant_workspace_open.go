@@ -13,12 +13,12 @@ import (
 	"agentflow/internal/domain"
 )
 
-const workspaceOpenSchema = `{"type":"object","properties":{"goal":{"type":"string","minLength":1,"maxLength":500,"description":"一句话说明要做什么"},"issueId":{"type":"string","maxLength":128,"description":"切到这个需求最近一次 SOP 运行的工作区；需求必须跑过 SOP"},"workspaceRunId":{"type":"string","maxLength":128,"description":"切回本对话之前开过的工作区，或某次 SOP 运行的工作区"},"new":{"type":"boolean","description":"新开一个对话工作区"},"sandboxProfileId":{"type":"string","maxLength":128,"description":"新开时的运行环境 id，按要改的代码选择；不填使用 generic-docker"},"repositories":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":200},"description":"新开时要检出的仓库名或 id；不填检出项目全部仓库；传空数组 [] 开一个不检出任何仓库的空工作区，只跑命令或开浏览器"},"branchMode":{"type":"string","enum":["auto","continue","create","readonly"],"description":"新开工作区时的分支语义：auto 由平台自动命名新建（默认，不要同时传 branch）；continue 继续已有远端分支，branch 必须已存在；create 按 branch 指定名字新建，远端同名分支已存在时报错；readonly 只读检出 branch（可以是 preview、master 等共享分支），能读、构建、跑测试，但不会提交。传了 branch/repositoryBranches 又省略本字段时按 continue 处理；repositoryBranches 里用对象写法可以给单个仓库覆盖"},"branch":{"type":"string","maxLength":255,"description":"单仓库时的分支名；配合 branchMode=continue 继续已有远端分支，create 新建分支，readonly 只读检出；只在开新工作区时可用"},"baseBranch":{"type":"string","maxLength":255,"description":"新开工作区时工作分支的起点，也是 submit_mr 的默认目标和改动比较基线，对本次检出的每个非只读仓库生效；不填用仓库配置的主分支。readonly 直接检出 branch 本身，不用起点，全部仓库都是 readonly 时不要传。hotfix 打 release、堆叠 MR 打父分支时填目标分支，例如 release/1.2；MR 要打向哪个分支，起点就要选哪个分支，否则 MR 会带上两个分支的差异提交"},"repositoryBranches":{"type":"object","additionalProperties":{"anyOf":[{"type":"string","maxLength":255},{"type":"object","properties":{"branch":{"type":"string","maxLength":255},"branchMode":{"type":"string","enum":["auto","continue","create","readonly"]},"baseBranch":{"type":"string","maxLength":255}},"additionalProperties":false}]},"description":"多个仓库分别指定分支，key 为仓库名或 id。值写分支名时使用顶层 branchMode；写对象 {branch, branchMode, baseBranch} 时这个仓库用自己的模式和起点，例如 {\"api\":{\"branch\":\"feature/review\",\"branchMode\":\"continue\"},\"web\":{\"branch\":\"feature/new\",\"branchMode\":\"create\"}}；只给 baseBranch 不给 branch 时自动命名新建。未列出的仓库按 auto 从 baseBranch（或主分支）新建工作分支；只在开新工作区时可用"},"requirement":{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200,"description":"一句话写清要交付的需求"},"description":{"type":"string","maxLength":20000,"description":"背景、要改什么、验收要点"}},"required":["title"],"additionalProperties":false,"description":"用户这次是要改代码交付一个新需求（修 bug、加功能、改文案等，最后会提交 MR），而本对话还没有关联未完成的需求时填写。系统会在项目需求列表里创建这个需求，关联到本对话、工作区和之后提交的 MR，并计入数据统计。只读评审、排查、问答不要填；切到 SOP 运行时不生效"}},"required":["goal"],"additionalProperties":false}`
+const workspaceOpenSchema = `{"type":"object","properties":{"goal":{"type":"string","minLength":1,"maxLength":500,"description":"一句话说明要做什么"},"issueId":{"type":"string","maxLength":128,"description":"切到这个需求最近一次 SOP 运行的工作区；需求必须跑过 SOP"},"workspaceRunId":{"type":"string","maxLength":128,"description":"切回本对话之前开过的工作区，或某次 SOP 运行的工作区"},"new":{"type":"boolean","description":"新开一个对话工作区"},"sandboxProfileId":{"type":"string","maxLength":128,"description":"新开时的运行环境 id，按要改的代码选择；不填使用 generic-docker"},"repositories":{"type":"array","maxItems":20,"items":{"type":"string","maxLength":200},"description":"新开时要检出的仓库名或 id；不填检出项目全部仓库；传空数组 [] 开一个不检出任何仓库的可写工作区，可创建文件、运行命令和预览"},"branchMode":{"type":"string","enum":["auto","continue","create","readonly"],"description":"新开工作区时的分支语义：auto 由平台自动命名新建（默认，不要同时传 branch）；continue 继续已有远端分支，branch 必须已存在；create 按 branch 指定名字新建，远端同名分支已存在时报错；readonly 只读检出 branch（可以是 preview、master 等共享分支），能读、构建、跑测试，但不会提交。传了 branch/repositoryBranches 又省略本字段时按 continue 处理；repositoryBranches 里用对象写法可以给单个仓库覆盖"},"branch":{"type":"string","maxLength":255,"description":"单仓库时的分支名；配合 branchMode=continue 继续已有远端分支，create 新建分支，readonly 只读检出；只在开新工作区时可用"},"baseBranch":{"type":"string","maxLength":255,"description":"新开工作区时工作分支的起点，也是 submit_mr 的默认目标和改动比较基线，对本次检出的每个非只读仓库生效；不填用仓库配置的主分支。readonly 直接检出 branch 本身，不用起点，全部仓库都是 readonly 时不要传。hotfix 打 release、堆叠 MR 打父分支时填目标分支，例如 release/1.2；MR 要打向哪个分支，起点就要选哪个分支，否则 MR 会带上两个分支的差异提交"},"repositoryBranches":{"type":"object","additionalProperties":{"anyOf":[{"type":"string","maxLength":255},{"type":"object","properties":{"branch":{"type":"string","maxLength":255},"branchMode":{"type":"string","enum":["auto","continue","create","readonly"]},"baseBranch":{"type":"string","maxLength":255}},"additionalProperties":false}]},"description":"多个仓库分别指定分支，key 为仓库名或 id。值写分支名时使用顶层 branchMode；写对象 {branch, branchMode, baseBranch} 时这个仓库用自己的模式和起点，例如 {\"api\":{\"branch\":\"feature/review\",\"branchMode\":\"continue\"},\"web\":{\"branch\":\"feature/new\",\"branchMode\":\"create\"}}；只给 baseBranch 不给 branch 时自动命名新建。未列出的仓库按 auto 从 baseBranch（或主分支）新建工作分支；只在开新工作区时可用"},"requirement":{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200,"description":"一句话写清要交付的需求"},"description":{"type":"string","maxLength":20000,"description":"背景、要改什么、验收要点"}},"required":["title"],"additionalProperties":false,"description":"用户这次是要改代码交付一个新需求（修 bug、加功能、改文案等，最后会提交 MR），而本对话还没有关联未完成的需求时填写。系统会在项目需求列表里创建这个需求，关联到本对话、工作区和之后提交的 MR，并计入数据统计。只读评审、排查、问答不要填；切到 SOP 运行时不生效"}},"required":["goal"],"additionalProperties":false}`
 
 func workspaceOpenDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_open",
-		Description: "打开或切换本对话绑定的工作区。用户要看代码、改代码（改文案、修小 bug、补测试等）或跑命令时调用。普通工作区或已停止的 SOP 返回 handoff=true，自动切换到工作区模式并续接同一原生会话，使用 CLI 原生文件、补丁与命令工具操作并验证；执行中的 SOP 返回 handoff=false，只读查看，暂停或接管完成后才交接。用户要提交时调用 workbench_workspace_submit_mr（只为有改动的仓库发起 MR）。不走 SOP，不需要用户另开会话。一个对话同一时间只绑定一个工作区，用哪个由你按用户当前实际要处理的需求决定（@ 只是线索）：issueId、workspaceRunId、new 最多传一个；都不传时继续用当前绑定的工作区，还没有就新开。issueId 切到该需求最近一次 SOP 运行的工作区（已回收的会恢复快照），SOP 执行中可用 workbench_workspace_sop 暂停、继续或接管；workspaceRunId 切回本对话之前开过的工作区；new 新开一个对话工作区，按 sandboxProfileId 和 repositories 检出、每个仓库各建新工作分支，环境和仓库创建后不再变化。没跑过 SOP 的新需求，当前工作区的仓库和环境合适就沿用，不合适就新开。切换后旧工作区解绑，空闲时保存快照并回收，切回时恢复。用户要改代码交付新需求时传 requirement，让需求进入需求列表和数据统计。新开时的分支语义由 branchMode 决定：auto（默认，不传 branch）由平台自动命名并从起点新建；continue 继续 branch 或 repositoryBranches（按仓库名或 id）指定的已有远端分支，分支必须已存在；create 按指定名字新建分支，远端同名分支已存在、或本对话之前的工作区建过同名分支时报错，不会静默继续或覆盖；readonly 只读检出指定分支（可以是 preview 这类共享分支），用来跑测试、复现问题，不会提交。多仓库可以在 repositoryBranches 里用对象给每个仓库单独指定 branchMode 和 baseBranch，比如一个仓库 continue 别人的分支评审、另一个仓库 create 新分支。baseBranch 是工作分支的起点，也是 MR 的默认目标：MR 要打向 release 这类非主分支时，开工作区就要把 baseBranch 设成它。省略 branchMode 但传了 branch 时按 continue 处理。分支选择只在开新工作区时生效，工作分支不能是主分支、集成分支或 baseBranch。不要在终端里 git checkout/switch 切换工作分支：submit_mr 只提交工作区记录的工作分支，检出的不是它时会拒绝提交；要换分支就 new 新开一个工作区。只想跑命令或开浏览器、不需要代码时传 repositories: [] 开空工作区。子 Agent 不能调用本工具：子 Agent 运行期间打开或切换工作区会被拒绝；子 Agent 共享 Main Bot 已打开的这个工作区，使用当前模式提供的文件与命令工具。",
+		Description: "打开或切换本对话绑定的工作区。用户要看代码、改代码（改文案、修小 bug、补测试等）或跑命令时调用。普通工作区或已停止的 SOP 返回 handoff=true，自动切换到工作区模式并续接同一原生会话，使用 CLI 原生文件、补丁与命令工具操作并验证；执行中的 SOP 返回 handoff=false，只读查看，暂停或接管完成后才交接。用户要提交时调用 workbench_workspace_submit_mr（只为有改动的仓库发起 MR）。不走 SOP，不需要用户另开会话。一个对话同一时间只绑定一个工作区，用哪个由你按用户当前实际要处理的需求决定（@ 只是线索）：issueId、workspaceRunId、new 最多传一个；都不传时继续用当前绑定的工作区，还没有就新开。issueId 切到该需求最近一次 SOP 运行的工作区（已回收的会恢复快照），SOP 执行中可用 workbench_workspace_sop 暂停、继续或接管；workspaceRunId 切回本对话之前开过的工作区；new 新开一个对话工作区，按 sandboxProfileId 和 repositories 检出、每个仓库各建新工作分支，环境和仓库创建后不再变化。没跑过 SOP 的新需求，当前工作区的仓库和环境合适就沿用，不合适就新开。切换后旧工作区解绑，空闲时保存快照并回收，切回时恢复。用户要改代码交付新需求时传 requirement，让需求进入需求列表和数据统计。新开时的分支语义由 branchMode 决定：auto（默认，不传 branch）由平台自动命名并从起点新建；continue 继续 branch 或 repositoryBranches（按仓库名或 id）指定的已有远端分支，分支必须已存在；create 按指定名字新建分支，远端同名分支已存在、或本对话之前的工作区建过同名分支时报错，不会静默继续或覆盖；readonly 只读检出指定分支（可以是 preview 这类共享分支），用来跑测试、复现问题，不会提交。多仓库可以在 repositoryBranches 里用对象给每个仓库单独指定 branchMode 和 baseBranch，比如一个仓库 continue 别人的分支评审、另一个仓库 create 新分支。baseBranch 是工作分支的起点，也是 MR 的默认目标：MR 要打向 release 这类非主分支时，开工作区就要把 baseBranch 设成它。省略 branchMode 但传了 branch 时按 continue 处理。分支选择只在开新工作区时生效，工作分支不能是主分支、集成分支或 baseBranch。不要在终端里 git checkout/switch 切换工作分支：submit_mr 只提交工作区记录的工作分支，检出的不是它时会拒绝提交；要换分支就 new 新开一个工作区。没有项目或项目未配置仓库时，默认打开不检出仓库的可写工作区；也可传 repositories: [] 创建。可以创建文件、运行命令和预览，用 workbench_workspace_attach 交付文件；没有仓库时不能提交 PR/MR。子 Agent 不能调用本工具：子 Agent 运行期间打开或切换工作区会被拒绝；子 Agent 共享 Main Bot 已打开的这个工作区，使用当前模式提供的文件与命令工具。",
 		InputSchema: json.RawMessage(workspaceOpenSchema),
 		Kind:        "workspace",
 	}
@@ -44,7 +44,7 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 	}
 	b.WriteString("\n\n项目仓库（repositories，只选这次要改或要运行的仓库，拿不准就不填、全部检出）：")
 	for _, r := range h.repo.Repositories() {
-		if r.ProjectID == s.ProjectID {
+		if s.ProjectID != "" && r.ProjectID == s.ProjectID {
 			fmt.Fprintf(&b, "\n- %s", r.Name)
 			if path := strings.Trim(r.GongfengProjectID, "/"); path != "" {
 				fmt.Fprintf(&b, "（%s）", path)
@@ -77,7 +77,7 @@ func selectConversationRepositories(project domain.Project, all []domain.Reposit
 	var candidates []domain.Repository
 	names := []string{}
 	for _, r := range all {
-		if r.ProjectID != project.ID {
+		if project.ID == "" || r.ProjectID != project.ID {
 			continue
 		}
 		if r.ID == project.DefaultRepositoryID {
@@ -86,9 +86,6 @@ func selectConversationRepositories(project domain.Project, all []domain.Reposit
 			candidates = append(candidates, r)
 		}
 		names = append(names, r.Name)
-	}
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("项目「%s」还没有配置代码仓库，无法检出代码；请项目 Owner 在项目设置里添加仓库。只想跑命令或开浏览器时传 repositories: [] 开一个空工作区", project.Name)
 	}
 	selected := map[string]bool{}
 	for _, w := range want {
@@ -341,7 +338,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 		fmt.Fprintf(&notice, "分支：%s。", strings.Join(bound.Branches, "；"))
 	}
 	if len(run.RepositoryContexts()) == 0 {
-		notice.WriteString("这是不检出任何仓库的空工作区，可以跑命令、起服务、开浏览器，没有可提交的代码。")
+		notice.WriteString("这是不检出仓库的可写工作区，可以创建文件、运行命令、预览并附加文件供用户下载；没有仓库，不能提交 MR。")
 	} else {
 		notice.WriteString("每个仓库检出在 repositories[].dir 目录下，文件路径和命令都相对工作区根目录（例如 cd <dir> && go test ./...）。")
 	}
@@ -362,7 +359,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 			notice.WriteString("这个工作区的环境已固定为 sandboxProfileId，本次选择的环境没有生效；需要别的环境时传 new 新开一个工作区。")
 		}
 	}
-	if run.IsWorkspace() {
+	if run.IsWorkspace() && s.ProjectID != "" {
 		issue, created, err := h.linkConversationRequirement(s, run, choice.Requirement, false)
 		if err != nil {
 			log.Printf("link conversation workspace %s to its requirement: %v", run.ID, err)
@@ -489,11 +486,31 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 	}
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
-	project, ok := h.repo.Project(s.ProjectID)
-	if !ok {
-		return conversationWorkspaceBinding{}, fmt.Errorf("项目不存在")
+	project := domain.Project{}
+	if s.ProjectID != "" {
+		var ok bool
+		project, ok = h.repo.Project(s.ProjectID)
+		if !ok {
+			return conversationWorkspaceBinding{}, fmt.Errorf("项目不存在")
+		}
 	}
-	conv, _ := h.repo.AssistantSession(s.ChatOwnerID, s.ChatSessionID)
+	conv, exists := h.repo.AssistantSession(s.ChatOwnerID, s.ChatSessionID)
+	if s.ProjectID == "" {
+		// Direct chat calls may open a workspace before their first transcript
+		// is saved. Reserve the private session so its binding can persist.
+		if !exists && s.ChatOwnerID == s.UserID && s.User.ID == s.UserID && s.UserID > 0 {
+			if err := h.repo.PutAssistantSession(s.UserID, domain.AssistantSession{ID: s.ChatSessionID}); err != nil {
+				return conversationWorkspaceBinding{}, errAgentToolForbidden
+			}
+			conv, exists = h.repo.AssistantSession(s.UserID, s.ChatSessionID)
+		}
+		if !exists || s.ChatOwnerID != s.UserID || s.User.ID != s.UserID || conv.ProjectID != "" || conv.Shared || conv.RunID != "" {
+			return conversationWorkspaceBinding{}, errAgentToolForbidden
+		}
+		if choice.IssueID != "" || len(choice.Repositories) > 0 || choice.branchSelected() || choice.Requirement != (conversationRequirement{}) {
+			return conversationWorkspaceBinding{}, fmt.Errorf("个人工作区没有项目仓库或需求，请先选择项目")
+		}
+	}
 	binding := conversationWorkspaceBinding{}
 	switch {
 	case choice.IssueID != "":

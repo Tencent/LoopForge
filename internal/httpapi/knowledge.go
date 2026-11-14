@@ -135,7 +135,27 @@ func (h *knowledgeHandlers) usage(c *gin.Context) {
 
 // 路由: g.GET("/api/knowledge/candidates", h.candidates)
 func (h *knowledgeHandlers) candidates(c *gin.Context) {
-	c.JSON(http.StatusOK, h.svc.Candidates(c.Query("projectId")))
+	items := h.svc.Candidates(c.Query("projectId"))
+	visible := items[:0]
+	for _, item := range items {
+		if !h.personalWorkspaceRun(item.Artifact.RunID) {
+			visible = append(visible, item)
+		}
+	}
+	c.JSON(http.StatusOK, visible)
+}
+
+// Knowledge submissions are platform-wide, so personal workspace artifacts
+// cannot safely enter that shared review queue.
+func (h *knowledgeHandlers) personalWorkspaceRun(id string) bool {
+	run, ok := h.repo.RunHeader(id)
+	return ok && run.IsWorkspace() && run.ExecutionContext.ProjectID == ""
+}
+
+// Existing submissions remain manageable after their source run is deleted.
+// Personal workspace artifacts are rejected when submissions are created.
+func (h *knowledgeHandlers) restrictedKnowledgeSubmission(item domain.KnowledgeSubmission) bool {
+	return item.RunID != "" && h.personalWorkspaceRun(item.RunID)
 }
 
 // 路由: g.GET("/api/knowledge/submissions", h.submissions)
@@ -143,12 +163,34 @@ func (h *knowledgeHandlers) candidates(c *gin.Context) {
 //	g.POST("/api/knowledge/submissions", h.submissions)
 func (h *knowledgeHandlers) submissions(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
-		c.JSON(http.StatusOK, h.svc.Submissions(c.Query("projectId"), c.Query("status")))
+		items := h.svc.Submissions(c.Query("projectId"), c.Query("status"))
+		visible := items[:0]
+		for _, item := range items {
+			if !h.restrictedKnowledgeSubmission(item) {
+				visible = append(visible, item)
+			}
+		}
+		c.JSON(http.StatusOK, visible)
 		return
 	}
 	var input knowledge.SubmissionInput
 	if !decode(c, &input) {
 		return
+	}
+	if input.ArtifactID != "" {
+		run, exists := h.repo.RunHeader(input.RunID)
+		if !exists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "运行产物不存在"})
+			return
+		}
+		if run.IsWorkspace() && run.ExecutionContext.ProjectID == "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "个人工作区产物不能提交到共享知识库"})
+			return
+		}
+		if _, ok := h.repo.Artifact(input.RunID, input.ArtifactID); !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "运行产物不存在"})
+			return
+		}
 	}
 	item, err := h.svc.Submit(input, h.actor(c.Request))
 	render(c, item, err)
@@ -160,6 +202,10 @@ func (h *knowledgeHandlers) submissions(c *gin.Context) {
 //	g.DELETE("/api/knowledge/submissions/:id", h.submission)
 func (h *knowledgeHandlers) submission(c *gin.Context) {
 	id := c.Param("id")
+	if item, err := h.svc.Submission(id); err == nil && h.restrictedKnowledgeSubmission(item) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "个人工作区产物不能提交到共享知识库"})
+		return
+	}
 	switch c.Request.Method {
 	case http.MethodGet:
 		item, err := h.svc.Submission(id)
@@ -184,14 +230,23 @@ func (h *knowledgeHandlers) submission(c *gin.Context) {
 
 // 路由: g.POST("/api/knowledge/submissions/:id/publish", h.publish)
 func (h *knowledgeHandlers) publish(c *gin.Context) {
+	if item, err := h.svc.Submission(c.Param("id")); err == nil && h.restrictedKnowledgeSubmission(item) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "个人工作区产物不能提交到共享知识库"})
+		return
+	}
 	item, err := h.svc.Publish(c.Request.Context(), c.Param("id"), h.actor(c.Request))
 	render(c, item, err)
 }
 
 // 路由: g.POST("/api/knowledge/submissions/:id/reject", h.reject)
 func (h *knowledgeHandlers) reject(c *gin.Context) {
-	if _, err := h.svc.Submission(c.Param("id")); err != nil {
+	item, err := h.svc.Submission(c.Param("id"))
+	if err != nil {
 		respond(c, err)
+		return
+	}
+	if h.restrictedKnowledgeSubmission(item) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "个人工作区产物不能提交到共享知识库"})
 		return
 	}
 	var input struct {
@@ -200,6 +255,6 @@ func (h *knowledgeHandlers) reject(c *gin.Context) {
 	if !decodeOptional(c, &input) {
 		return
 	}
-	item, err := h.svc.Reject(c.Param("id"), input.ReviewNote, h.actor(c.Request))
+	item, err = h.svc.Reject(c.Param("id"), input.ReviewNote, h.actor(c.Request))
 	render(c, item, err)
 }

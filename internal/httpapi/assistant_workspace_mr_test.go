@@ -119,7 +119,8 @@ func TestWorkspaceSubmitMRGuards(t *testing.T) {
 	user, _ := st.UserByLoginName("no-token")
 	for _, run := range []domain.Run{
 		{ID: "run-sop", Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf"}, ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{}},
-		{ID: "run-group", Kind: domain.RunKindWorkspace, Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID}, ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{}},
+		{ID: "run-group", Kind: domain.RunKindWorkspace, Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID}, ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Repositories: []domain.RepositoryContext{{RepositoryID: "repo-1", Name: "app"}}, Nodes: map[string]*domain.NodeRun{}},
+		{ID: "run-scratch", Kind: domain.RunKindWorkspace, Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID}, ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{}},
 		{ID: "run-repos", Kind: domain.RunKindWorkspace, Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID}, ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Repositories: []domain.RepositoryContext{{RepositoryID: "repo-1", Name: "app", BaseBranch: "master"}}, Nodes: map[string]*domain.NodeRun{}},
 	} {
 		if err := st.PutRun(run); err != nil {
@@ -132,6 +133,9 @@ func TestWorkspaceSubmitMRGuards(t *testing.T) {
 	}
 	if _, err := h.workspaceSubmitMR(context.Background(), session("run-sop"), map[string]any{"title": "x"}); err == nil || !strings.Contains(err.Error(), "SOP 运行请由交付节点提交") {
 		t.Fatalf("SOP runs must keep delivering through nodes: %v", err)
+	}
+	if _, err := h.workspaceSubmitMR(context.Background(), session("run-scratch"), map[string]any{"title": "x"}); err == nil || !strings.Contains(err.Error(), "没有检出仓库") || !strings.Contains(err.Error(), "workbench_workspace_attach") {
+		t.Fatalf("scratch workspace must offer file delivery: %v", err)
 	}
 	if _, err := h.workspaceSubmitMR(context.Background(), session("run-group"), map[string]any{"title": "x"}); err == nil || !strings.Contains(err.Error(), "Git Token") || !strings.Contains(err.Error(), "github.com/settings/tokens") {
 		t.Fatalf("missing token must point at settings: %v", err)
@@ -167,7 +171,7 @@ func TestWorkspaceSubmitMRGuards(t *testing.T) {
 }
 
 func TestWorkspaceDeliveryRequiresExternalWriteAuthorization(t *testing.T) {
-	h, _, session, gateway, _ := workspaceTurnFixture(t)
+	_, _, session, gateway, _ := workspaceTurnFixture(t)
 	defer session.workspaceTurn.close(context.Background())
 	reviews := 0
 	allow := false
@@ -195,12 +199,11 @@ func TestWorkspaceDeliveryRequiresExternalWriteAuthorization(t *testing.T) {
 	allow = true
 	for _, mode := range []string{AssistantApprovalAssisted, AssistantApprovalAuto} {
 		session.ExecMode = assistantExecModeForApproval(mode)
-		if _, err := gateway.callMainBotWorkspace(context.Background(), session, "workbench_workspace_submit_mr", map[string]any{"title": "authorized change"}); err == nil || !strings.Contains(err.Error(), "Git Token") {
-			t.Fatalf("%s did not reach credential validation: %v", mode, err)
+		if _, err := gateway.callMainBotWorkspace(context.Background(), session, "workbench_workspace_submit_mr", map[string]any{"title": "authorized change"}); err == nil || !strings.Contains(err.Error(), "没有检出仓库") {
+			t.Fatalf("%s did not reach repository validation: %v", mode, err)
 		}
 	}
 	if reviews != 2 {
 		t.Fatalf("incorrect review calls: %d", reviews)
 	}
-	_ = h
 }

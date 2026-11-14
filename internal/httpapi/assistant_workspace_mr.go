@@ -108,10 +108,13 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 		return "", fmt.Errorf("mode 只能是 mr 或 direct")
 	}
 	direct := mode == "direct"
+	if direct && target == "" {
+		return "", fmt.Errorf("mode=direct 时 targetBranch 必填：写要直推的共享分支，例如 preview")
+	}
+	if len(run.RepositoryContexts()) == 0 {
+		return "", fmt.Errorf("当前工作区没有检出仓库，不能提交 PR/MR；可用 workbench_workspace_attach 交付文件")
+	}
 	if direct {
-		if target == "" {
-			return "", fmt.Errorf("mode=direct 时 targetBranch 必填：写要直推的共享分支，例如 preview")
-		}
 		for _, rc := range run.RepositoryContexts() {
 			if rc.ReadOnly {
 				continue
