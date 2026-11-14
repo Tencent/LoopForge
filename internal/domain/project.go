@@ -66,6 +66,11 @@ type ProjectMember struct {
 // RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
 const RepositoryProviderSSH = "ssh"
 
+// RepositoryUsesSSH describes the Git transport independently of the hosting API.
+func RepositoryUsesSSH(provider string) bool {
+	return provider == RepositoryProviderSSH || IsForgeRepositoryProvider(provider)
+}
+
 type Repository struct {
 	ID                 string    `json:"id"`
 	ProjectID          string    `json:"projectId"`
