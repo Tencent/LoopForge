@@ -176,20 +176,53 @@ linux_has_systemd() {
 
 shell_quote() { printf '%q' "$1"; }
 
+# 判断 pid 是不是正在执行 run-service.sh 的进程：argv[0] 就是这个脚本，或 argv[0]
+# 是 bash/sh、argv[1] 是这个脚本。PID 文件可能是重启前留下的旧值，那个 PID 已被
+# 别的进程复用；查看或编辑这个脚本的进程（less、vim …）命令行里也带着路径，都不能算。
+is_background_runner_pid() {
+  local pid="$1"
+  local -a args=()
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  if [[ -r "/proc/${pid}/cmdline" ]]; then
+    mapfile -d '' -t args < "/proc/${pid}/cmdline" 2>/dev/null || return 1
+  else
+    read -r -a args <<< "$(ps -o args= -p "$pid" 2>/dev/null || true)" || true
+  fi
+  [[ "${#args[@]}" -gt 0 ]] || return 1
+  [[ "${args[0]}" == "$BACKGROUND_SCRIPT" ]] && return 0
+  case "${args[0]##*/}" in
+    bash|sh) [[ "${args[1]:-}" == "$BACKGROUND_SCRIPT" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# 只给核对过命令行的 run-service.sh 进程发信号。PID 文件里的旧 PID 不匹配时只删文件；
+# PID 文件丢失或过期时，再按 /proc 里的命令行找仍在运行的 run-service.sh。
 stop_background_runner() {
-  local pid=""
+  local pid="" proc
+  local -a pids=()
   if [[ -f "$BACKGROUND_PID" ]]; then
     pid="$(tr -d '[:space:]' < "$BACKGROUND_PID" 2>/dev/null || true)"
     rm -f "$BACKGROUND_PID"
   fi
-  if [[ -n "$pid" ]]; then
-    kill -TERM "$pid" >/dev/null 2>&1 || true
-    sleep 0.2
-    pkill -P "$pid" >/dev/null 2>&1 || true
+  if [[ -n "$pid" ]] && is_background_runner_pid "$pid"; then
+    pids+=("$pid")
   fi
-  if [[ -n "$BACKGROUND_SCRIPT" ]]; then
-    pkill -f "$BACKGROUND_SCRIPT" >/dev/null 2>&1 || true
+  if [[ -n "$BACKGROUND_SCRIPT" && -d /proc ]]; then
+    for proc in /proc/[0-9]*; do
+      proc="${proc#/proc/}"
+      [[ "$proc" == "$pid" || "$proc" == "$$" ]] && continue
+      is_background_runner_pid "$proc" && pids+=("$proc")
+    done
   fi
+  [[ "${#pids[@]}" -gt 0 ]] || return 0
+  for proc in "${pids[@]}"; do
+    kill -TERM "$proc" >/dev/null 2>&1 || true
+  done
+  sleep 0.2
+  for proc in "${pids[@]}"; do
+    pkill -P "$proc" >/dev/null 2>&1 || true
+  done
 }
 
 # 读当前用户的 crontab 到 CRONTAB_CURRENT。读取成功，或明确是「还没有 crontab」时
@@ -264,6 +297,9 @@ start_background_runner() {
   stop_background_runner
   {
     echo '#!/usr/bin/env bash'
+    # @reboot 直接执行本脚本、不经过 launch_background_wrapper，由脚本自己写 PID 文件，
+    # 重启后 PID 文件里也是当前进程。
+    echo "echo \$\$ > $(shell_quote "$BACKGROUND_PID")"
     echo "trap '' HUP"
     echo 'child=0'
     echo 'trap '\''if [[ "$child" != 0 ]]; then kill "$child" 2>/dev/null || true; fi; exit 0'\'' TERM INT'
