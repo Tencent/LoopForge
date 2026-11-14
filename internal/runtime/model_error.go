@@ -30,6 +30,15 @@ type ModelError struct {
 func (e *ModelError) Error() string { return e.Err.Error() }
 func (e *ModelError) Unwrap() error { return e.Err }
 
+// ValidModelErrorClass rejects unknown values received from a remote runner.
+func ValidModelErrorClass(class ModelErrorClass) bool {
+	switch class {
+	case ModelErrorRateLimited, ModelErrorOverloaded, ModelErrorTimeout, ModelErrorAuth, ModelErrorQuotaExhausted, ModelErrorContextOverflow, ModelErrorBadRequest:
+		return true
+	}
+	return false
+}
+
 var modelHTTPStatus = regexp.MustCompile(`\b(?:http(?: status)?|status code|error code)\s*[:=]?\s*(400|401|403|408|429|500|502|503|504|529)\b|\b(400|401|403|408|429|503|504|529)\s+(?:bad request|unauthorized|forbidden|request timeout|too many requests|service unavailable|gateway timeout|overloaded)\b`)
 
 // classifyModelFailure only accepts text from a terminal provider error, not

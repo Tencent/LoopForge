@@ -88,13 +88,16 @@ func TestRunnerManagementAndMachineLifecycle(t *testing.T) {
 		{http.MethodPost, "/runners/tasks/" + task.ID + "/events", map[string]any{"events": []any{map[string]any{"seq": 1, "data": "hello"}}}, 200},
 		{http.MethodGet, "/api/runners/tasks/" + task.ID + "/events", nil, 200},
 		{http.MethodGet, "/runners/tasks/" + task.ID + "/control", nil, 200},
-		{http.MethodPost, "/runners/tasks/" + task.ID + "/complete", map[string]any{"status": "success", "result": "done", "outputs": map[string]any{"files": map[string]string{"out.txt": "ok"}}}, 200},
+		{http.MethodPost, "/runners/tasks/" + task.ID + "/complete", map[string]any{"status": "failed", "error": "exit status 1", "modelErrorClass": "rate_limited", "outputs": map[string]any{"files": map[string]string{"out.txt": "ok"}}}, 200},
 	}
 	for i, tc := range machineCases {
 		rec := requestWithHeaders(t, f.h, tc.method, tc.path, tc.body, auth)
 		if rec.Code != tc.want {
 			t.Errorf("machine case %d %s = %d want %d: %s", i, tc.path, rec.Code, tc.want, rec.Body.String())
 		}
+	}
+	if stored, ok := f.s.RunnerTask(task.ID); !ok || stored.ModelErrorClass != "rate_limited" {
+		t.Fatalf("model error class was not persisted: %+v", stored)
 	}
 	if rec := requestWithHeaders(t, f.h, http.MethodPost, "/runners/disconnect", nil, auth); rec.Code != 200 {
 		t.Errorf("disconnect = %d: %s", rec.Code, rec.Body.String())

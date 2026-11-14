@@ -73,6 +73,14 @@ func (o *ProtocolObserver) VisibleOutput() string {
 	return o.adapter.VisibleOutput()
 }
 
+// ModelFailureClass reports only an explicit terminal protocol failure.
+func (o *ProtocolObserver) ModelFailureClass() ModelErrorClass {
+	if o == nil || o.adapter == nil || !o.adapter.Failed() {
+		return ""
+	}
+	return classifyModelFailure(o.adapter.Result())
+}
+
 func (o *ProtocolObserver) Finalize(success bool) {
 	if o == nil || o.adapter == nil || o.adapter.Finished() {
 		return
