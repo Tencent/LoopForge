@@ -74,6 +74,9 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 		return workspaceBusyResponse("workspace is in use; preparation waits for active execution or terminal to finish")
 	}
 	defer gate.Unlock()
+	if err := d.orphanNodeCheckpointFence(key); err != nil {
+		return workspaceBusyResponse(err.Error())
+	}
 	if reserved, ok := d.nodeCheckpointReservations.Load(key); ok && (request.CheckpointLease == "" || reserved != request.CheckpointLease) {
 		return workspaceBusyResponse("workspace is reserved for a node checkpoint")
 	}
@@ -123,6 +126,10 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 		return runtime.TerminalResult{}, newWorkspaceBusyError("workspace is in use; finish active execution before preparing the terminal")
 	}
 	unlock := onceRelease(gate.Unlock)
+	if err := d.orphanNodeCheckpointFence(key); err != nil {
+		unlock()
+		return runtime.TerminalResult{}, newWorkspaceBusyError(err.Error())
+	}
 	if _, reserved := d.nodeCheckpointReservations.Load(key); reserved {
 		unlock()
 		return runtime.TerminalResult{}, newWorkspaceBusyError("workspace is reserved for a node checkpoint")

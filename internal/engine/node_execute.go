@@ -104,6 +104,20 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		if r.Generation != generation || !e.ownsRun(r) {
 			return
 		}
+		if r.ExecutionContext.NodeCheckpointsEnabled {
+			failed, err := e.repo.FailedSharedNodeRestore(runID, workspaceRunID(r))
+			if err != nil {
+				stopNodes()
+				return
+			}
+			if failed {
+				stopNodes()
+				if parked, err := e.repo.ParkAfterSharedNodeRestore(runID, workspaceRunID(r), e.instanceID, generation, time.Now().UTC()); err == nil && parked {
+					e.publish(runID)
+				}
+				return
+			}
+		}
 		wf := workflowForRun(e.repo, r)
 		e.reconcileNodeExecutions(runID)
 		inflightMu.Lock()

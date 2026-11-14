@@ -17,13 +17,8 @@ func (e *Engine) RewindNodeWorkspace(ctx context.Context, runID, nodeID string, 
 	if !ok {
 		return fmt.Errorf("运行不存在")
 	}
-	if !run.ExecutionContext.NodeCheckpointsEnabled || workspaceRunID(run) != run.ID {
+	if !run.ExecutionContext.NodeCheckpointsEnabled {
 		return fmt.Errorf("此运行不支持节点回滚")
-	}
-	for _, node := range run.Nodes {
-		if node != nil && node.ChildRunID != "" {
-			return fmt.Errorf("包含子 SOP 的工作区暂不支持节点回滚")
-		}
 	}
 	nr := run.Nodes[nodeID]
 	if nr == nil {
@@ -49,11 +44,12 @@ func (e *Engine) RewindNodeWorkspace(ctx context.Context, runID, nodeID string, 
 	if !found {
 		return fmt.Errorf("检查点不存在")
 	}
-	token, err := e.repo.BeginNodeRewind(run.ID, time.Now().UTC())
+	owner := workspaceRunID(run)
+	token, err := e.repo.BeginSharedNodeRewind(run.ID, owner, time.Now().UTC())
 	if err != nil {
 		return err
 	}
-	defer e.repo.FinishWorkspaceUse(run.ID, token, time.Now().UTC(), nil, "")
+	defer e.repo.FinishWorkspaceUse(owner, token, time.Now().UTC(), nil, "")
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ctx = context.WithValue(ctx, nodeCheckpointLeaseKey{}, token)
@@ -67,7 +63,7 @@ func (e *Engine) RewindNodeWorkspace(ctx context.Context, runID, nodeID string, 
 			case <-done:
 				return
 			case <-ticker.C:
-				if e.repo.RenewWorkspaceUse(run.ID, token, time.Now().UTC()) != nil {
+				if e.repo.RenewWorkspaceUse(owner, token, time.Now().UTC()) != nil {
 					cancel()
 					return
 				}
@@ -78,16 +74,20 @@ func (e *Engine) RewindNodeWorkspace(ctx context.Context, runID, nodeID string, 
 	if !ok || current.Revision != run.Revision || current.Generation != run.Generation {
 		return fmt.Errorf("运行状态已变化，请重试")
 	}
-	if err := e.repo.ValidateNodeRewind(run.ID, token, time.Now().UTC()); err != nil {
+	if err := e.repo.ValidateNodeRewind(owner, token, time.Now().UTC()); err != nil {
 		return fmt.Errorf("工作区租约已失效：%w", err)
 	}
 	if err := e.checkpointHasNoOtherNodeChanges(ctx, current, nodeID, target, nil); err != nil {
 		return err
 	}
-	if e.workspaceTerminals.HasRunScope(run.ID) || e.WorkspaceActive != nil && e.WorkspaceActive(current) {
+	ownerRun, ok := e.repo.RunState(owner)
+	if !ok {
+		return fmt.Errorf("工作区所属运行不存在")
+	}
+	if e.workspaceTerminals.HasRunScope(owner) || e.WorkspaceActive != nil && e.WorkspaceActive(ownerRun) {
 		return fmt.Errorf("工作区终端正在使用")
 	}
-	if tasks, err := e.repo.ActiveRunnerTasksForRun(run.ID); err != nil {
+	if tasks, err := e.repo.ActiveRunnerTasksForWorkspace(owner); err != nil {
 		return fmt.Errorf("检查执行机器任务：%w", err)
 	} else if len(tasks) != 0 {
 		return fmt.Errorf("执行机器仍在停止任务，请稍后重试")
@@ -114,7 +114,7 @@ func (e *Engine) RewindNodeWorkspace(ctx context.Context, runID, nodeID string, 
 	}
 	e.stateMu.Lock()
 	current, ok = e.repo.RunState(run.ID)
-	if !ok || current.Nodes[nodeID] == nil || e.repo.ValidateNodeRewind(run.ID, token, time.Now().UTC()) != nil {
+	if !ok || current.Nodes[nodeID] == nil || e.repo.ValidateNodeRewind(owner, token, time.Now().UTC()) != nil {
 		e.stateMu.Unlock()
 		return fmt.Errorf("工作区租约已失效")
 	}
@@ -124,7 +124,7 @@ func (e *Engine) RewindNodeWorkspace(ctx context.Context, runID, nodeID string, 
 	if err != nil {
 		return fmt.Errorf("保存恢复记录：%w", err)
 	}
-	if err := e.repo.MarkNodeRewindPending(run.ID, token, time.Now().UTC()); err != nil {
+	if err := e.repo.MarkNodeRewindPending(owner, token, time.Now().UTC()); err != nil {
 		return fmt.Errorf("保存回滚状态：%w", err)
 	}
 	if err = e.restoreRewindCheckpoint(ctx, current, target, recovery, token); err != nil {
@@ -133,7 +133,7 @@ func (e *Engine) RewindNodeWorkspace(ctx context.Context, runID, nodeID string, 
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	current, ok = e.repo.RunState(run.ID)
-	if !ok || e.repo.ValidateNodeRewind(run.ID, token, time.Now().UTC()) != nil {
+	if !ok || e.repo.ValidateNodeRewind(owner, token, time.Now().UTC()) != nil {
 		return fmt.Errorf("恢复完成，但保存运行状态失败；恢复前检查点 %s 仍可用", recovery.ID)
 	}
 	reset := descendants(current.WorkflowSnapshot, nodeID)
@@ -178,7 +178,7 @@ func (e *Engine) createRewindCheckpoint(ctx context.Context, run domain.Run, att
 }
 
 func (e *Engine) restoreRewindCheckpoint(ctx context.Context, run domain.Run, checkpoint, recovery domain.NodeCheckpoint, token string) error {
-	if err := e.repo.ValidateNodeRewind(run.ID, token, time.Now().UTC()); err != nil {
+	if err := e.repo.ValidateNodeRewind(workspaceRunID(run), token, time.Now().UTC()); err != nil {
 		return err
 	}
 	if e.defaultExecutionRunner(run) == "" && !e.foreignWorkspaceBind(run) {

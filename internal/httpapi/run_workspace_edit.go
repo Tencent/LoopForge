@@ -16,6 +16,24 @@ import (
 )
 
 func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bool) {
+	run, actor, ok := h.workspaceCheckpointActor(c)
+	if !ok {
+		return run, actor, false
+	}
+	if engine.WorkspaceRunID(run) != run.ID {
+		c.JSON(409, gin.H{"error": "子 SOP 共享父任务工作区，请从父任务操作"})
+		return run, 0, false
+	}
+	for _, node := range run.Nodes {
+		if node != nil && node.ChildRunID != "" {
+			c.JSON(409, gin.H{"error": "请进入子 SOP 运行后再编辑对应工作区"})
+			return run, 0, false
+		}
+	}
+	return run, actor, true
+}
+
+func (h *runsHandlers) workspaceCheckpointActor(c *gin.Context) (domain.Run, int64, bool) {
 	run, ok := h.repo.RunState(c.Param("id"))
 	if !ok {
 		c.JSON(404, gin.H{"error": "运行不存在"})
@@ -29,25 +47,23 @@ func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bo
 	// Conversation tools inherit project access from their authenticated entry
 	// point; the separate task-panel editor policy does not apply to them.
 	if mainBotWorkspaceRun(c.Request.Context()) != run.ID {
-		project, ok := h.repo.Project(run.ExecutionContext.ProjectID)
-		allowed := h.isPlatformAdmin(c.Request) || ok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
-		for _, member := range project.Members {
-			if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
-				allowed = true
+		canEditProject := func(projectID string) bool {
+			project, ok := h.repo.Project(projectID)
+			allowed := h.isPlatformAdmin(c.Request) || ok && (project.OwnerID == user.ID || project.OwnerID == 0 && len(project.Members) == 0)
+			for _, member := range project.Members {
+				if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
+					allowed = true
+				}
 			}
+			return allowed
+		}
+		allowed := canEditProject(run.ExecutionContext.ProjectID)
+		if ownerID := engine.WorkspaceRunID(run); allowed && ownerID != run.ID {
+			owner, found := h.repo.RunState(ownerID)
+			allowed = found && canEditProject(owner.ExecutionContext.ProjectID)
 		}
 		if !allowed {
 			c.JSON(403, gin.H{"error": "无权编辑该任务工作区"})
-			return run, 0, false
-		}
-	}
-	if engine.WorkspaceRunID(run) != run.ID {
-		c.JSON(409, gin.H{"error": "子 SOP 共享父任务工作区，请从父任务操作"})
-		return run, 0, false
-	}
-	for _, node := range run.Nodes {
-		if node != nil && node.ChildRunID != "" {
-			c.JSON(409, gin.H{"error": "请进入子 SOP 运行后再编辑对应工作区"})
 			return run, 0, false
 		}
 	}

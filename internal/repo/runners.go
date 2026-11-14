@@ -974,8 +974,30 @@ func (r *RunnersRepo) ActiveRunnerTasksForWorkspace(owner string) ([]domain.Runn
 	}
 	var result []domain.RunnerTask
 	for _, row := range rows {
+		var payload runnerTaskPayload
+		if err := json.Unmarshal(row.Payload, &payload); err != nil {
+			return nil, fmt.Errorf("decode active runner task %s: %w", row.ID, err)
+		}
 		task := runnerTaskFromRow(row)
-		if task.NodeCheckpointRunID == owner || task.NodeCheckpointRunID == "" && task.RunID == owner {
+		matches := task.NodeCheckpointRunID == owner || task.NodeCheckpointRunID == "" && task.RunID == owner
+		// Legacy tasks may not carry NodeCheckpointRunID. Derive shared
+		// ownership from their persisted run instead of overlooking a child.
+		if !matches && task.NodeCheckpointRunID == "" && task.RunID != "" {
+			var run runRow
+			if err := r.DB.Select("id", "execution_context").Where("id = ?", task.RunID).Take(&run).Error; err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, err
+				}
+				// An orphan task with unknown ownership cannot be ruled out.
+				return nil, fmt.Errorf("active runner task %s has no owning run", task.ID)
+			}
+			var execution domain.TelemetryContext
+			if err := json.Unmarshal(run.ExecutionContext, &execution); err != nil && len(run.ExecutionContext) != 0 {
+				return nil, fmt.Errorf("decode workspace owner for run %s: %w", run.ID, err)
+			}
+			matches = execution.WorkspaceRunID == owner
+		}
+		if matches {
 			result = append(result, task)
 		}
 	}

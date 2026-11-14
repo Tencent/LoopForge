@@ -537,9 +537,15 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	var artifacts map[string]string
 	managed := d.managedTaskState(task.ID)
 	reserved, hasReservation := d.nodeCheckpointReservations.Load(d.taskGateKey(task))
+	var orphanFenceErr error
+	if task.RunID != "" && task.Action != domain.RunnerTaskActionCleanupRun {
+		orphanFenceErr = d.orphanNodeCheckpointFence(d.taskGateKey(task))
+	}
 	switch {
 	case managed != nil && managed.err != nil:
 		result = execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("pin managed CLI inventory: %v", managed.err)}
+	case orphanFenceErr != nil:
+		result = execResult{status: domain.RunnerTaskFailed, errMsg: orphanFenceErr.Error()}
 	case hasReservation && task.Action != domain.RunnerTaskActionNodeCheckpointCreate && (task.NodeCheckpointLease == "" || reserved != task.NodeCheckpointLease):
 		result = execResult{status: domain.RunnerTaskFailed, errMsg: "workspace is reserved for another node attempt"}
 	case task.NodeCheckpointLease != "" && task.Action != domain.RunnerTaskActionNodeCheckpointCreate && !hasReservation:
@@ -587,6 +593,12 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 		}
 	}
 
+	if task.NodeCheckpointLease != "" && task.Action == "" && (result.status == domain.RunnerTaskCanceled || ctx.Err() != nil) {
+		// Stopping the docker CLI or a shell does not prove that detached
+		// descendants have exited. Keep the durable fence after cancellation;
+		// the operator must first establish that the old writers are gone.
+		d.nodeCheckpointReservations.Delete(d.taskGateKey(task))
+	}
 	releaseGate()
 	completeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -617,6 +629,11 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) 
 	expected := filepath.Join("runs", task.RunID)
 	if err != nil || task.RunID == "" || filepath.Clean(rel) != filepath.Clean(expected) || rel == "." || strings.HasPrefix(rel, "..") {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("refusing unsafe runner workspace cleanup %q", target)}
+	}
+	if _, err := os.Lstat(d.nodeCheckpointFencePath(task.RunID)); err == nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: "checkpoint workspace fence is present; refusing workspace cleanup"}
+	} else if !os.IsNotExist(err) {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("check workspace fence: %v", err)}
 	}
 	d.closeRunSandboxes(ctx, task.RunID)
 	if task.Sandbox != nil && strings.EqualFold(task.Sandbox.Profile.Driver, "docker") {

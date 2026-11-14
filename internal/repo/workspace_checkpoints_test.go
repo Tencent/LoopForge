@@ -3,6 +3,7 @@ package repo
 import (
 	"agentflow/internal/domain"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -183,13 +184,13 @@ func TestOrphanAutomaticRestoreIsParkedForRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkNodeCheckpointRestorePending(run.ID, token, now); err != nil {
+	if err := s.MarkNodeCheckpointRestorePending(run.ID, run.ID, token, now); err != nil {
 		t.Fatal(err)
 	}
-	if parked, err := s.ParkOrphanNodeCheckpointRestore(run.ID, now.Add(time.Minute)); err != nil || parked {
+	if parked, err := s.ParkOrphanNodeCheckpointRestore(run.ID, run.ID, now.Add(time.Minute)); err != nil || parked {
 		t.Fatalf("live workspace lease: parked=%v err=%v", parked, err)
 	}
-	if parked, err := s.ParkOrphanNodeCheckpointRestore(run.ID, now.Add(16*time.Minute)); err != nil || !parked {
+	if parked, err := s.ParkOrphanNodeCheckpointRestore(run.ID, run.ID, now.Add(16*time.Minute)); err != nil || !parked {
 		t.Fatalf("expired workspace lease: parked=%v err=%v", parked, err)
 	}
 	current, _ := s.RunState(run.ID)
@@ -198,6 +199,189 @@ func TestOrphanAutomaticRestoreIsParkedForRecovery(t *testing.T) {
 	}
 	if _, err := s.BeginNodeRewind(run.ID, now.Add(16*time.Minute)); err != nil {
 		t.Fatalf("recovery rewind: %v", err)
+	}
+}
+
+func TestOrphanChildRestoreParksOnlyOwningRun(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	parent := domain.Run{ID: "restore-parent", Status: "running", Nodes: map[string]*domain.NodeRun{"p": {NodeID: "p", Status: "running"}}}
+	child := domain.Run{ID: "restore-child", Status: "running", ExecutionContext: domain.TelemetryContext{WorkspaceRunID: parent.ID}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 2}}}
+	for _, run := range []domain.Run{parent, child} {
+		if err := s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	token, err := s.BeginWorkspaceUse(parent.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNodeCheckpointRestorePending(parent.ID, child.ID, token, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ValidateNodeRewind(parent.ID, token, now); err != nil {
+		t.Fatalf("automatic restore lease rejected: %v", err)
+	}
+	if err := s.ValidateNodeRewind(parent.ID, "stale", now); !errors.Is(err, ErrWorkspaceInUse) {
+		t.Fatalf("automatic restore accepted stale lease: %v", err)
+	}
+	if err := s.TryAcquireRunLease(child.ID, "worker", 0, time.Minute); !errors.Is(err, ErrWorkspaceInUse) {
+		t.Fatalf("child bypassed workspace restore fence: %v", err)
+	}
+	when := now.Add(16 * time.Minute)
+	if parked, err := s.ParkOrphanNodeCheckpointRestore(parent.ID, parent.ID, when); err != nil || parked {
+		t.Fatalf("parent parked: %v, %v", parked, err)
+	}
+	if parked, err := s.ParkOrphanNodeCheckpointRestore(child.ID, parent.ID, when); err != nil || !parked {
+		t.Fatalf("child not parked: %v, %v", parked, err)
+	}
+	got, _ := s.RunState(child.ID)
+	if got.Status != "failed" || got.Nodes["n"].Status != "failed" {
+		t.Fatalf("child state = %+v", got)
+	}
+	if parked, err := s.ParkAfterSharedNodeRestore(parent.ID, parent.ID, "", parent.Generation, when); err != nil || !parked {
+		t.Fatalf("parent not parked after child: %v, %v", parked, err)
+	}
+	parent, _ = s.RunState(parent.ID)
+	if parent.Status != "failed" || parent.Nodes["p"].Status != "failed" {
+		t.Fatalf("parent state = %+v", parent)
+	}
+	if _, err := s.BeginSharedNodeRewind(child.ID, parent.ID, when); err != nil {
+		t.Fatalf("child recovery remains blocked: %v", err)
+	}
+}
+
+func TestNestedRestoreFailureWaitsForOtherRunLease(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	owner := domain.Run{ID: "nested-owner", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"sop": {NodeID: "sop", Status: "running"}}}
+	middle := domain.Run{ID: "nested-middle", Status: "running", Generation: 1, OwnerInstanceID: "worker", LeaseUntil: now.Add(time.Minute), ExecutionContext: domain.TelemetryContext{WorkspaceRunID: owner.ID}, Nodes: map[string]*domain.NodeRun{"sop": {NodeID: "sop", Status: "running"}}}
+	child := domain.Run{ID: "nested-child", Status: "running", Generation: 1, ExecutionContext: domain.TelemetryContext{WorkspaceRunID: owner.ID}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1}}}
+	for _, run := range []domain.Run{owner, middle, child} {
+		if err := s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	token, err := s.BeginWorkspaceUse(owner.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNodeCheckpointRestorePending(owner.ID, child.ID, token, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FailInterruptedNodeCheckpointRestore(child.ID, owner.ID, token, "n", 1, 1, "interrupted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishWorkspaceUse(owner.ID, token, now, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if parked, err := s.ParkAfterSharedNodeRestore(middle.ID, owner.ID, "", 1, now); err != nil || parked {
+		t.Fatalf("live middle lease parked: %v, %v", parked, err)
+	}
+	if parked, err := s.ParkAfterSharedNodeRestore(owner.ID, owner.ID, "", 1, now); err != nil || !parked {
+		t.Fatalf("owner not parked: %v, %v", parked, err)
+	}
+	if _, err := s.BeginSharedNodeRewind(child.ID, owner.ID, now); err == nil {
+		t.Fatal("rewind accepted an active nested sibling")
+	}
+	if parked, err := s.ParkAfterSharedNodeRestore(middle.ID, owner.ID, "", 1, now.Add(2*time.Minute)); err != nil || !parked {
+		t.Fatalf("expired middle lease not parked: %v, %v", parked, err)
+	}
+	if _, err := s.BeginSharedNodeRewind(child.ID, owner.ID, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("rewind after all runs stopped: %v", err)
+	}
+}
+
+func TestChildNodeRewindFencesSharedWorkspace(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	parent := domain.Run{ID: "rewind-owner", Status: "failed", Nodes: map[string]*domain.NodeRun{"sop": {NodeID: "sop", Status: "failed"}}}
+	child := domain.Run{ID: "rewind-child", Status: "waiting", ExecutionContext: domain.TelemetryContext{WorkspaceRunID: parent.ID}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "failed"}}}
+	sibling := domain.Run{ID: "rewind-sibling", Status: "running", ExecutionContext: domain.TelemetryContext{WorkspaceRunID: parent.ID}, Nodes: map[string]*domain.NodeRun{}}
+	for _, run := range []domain.Run{parent, child, sibling} {
+		if err := s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changedOwner := child
+	changedOwner.ExecutionContext.WorkspaceRunID = ""
+	if err := s.PutRun(changedOwner); err == nil {
+		t.Fatal("existing child changed workspace owner")
+	}
+	now := time.Now().UTC()
+	if _, err := s.BeginSharedNodeRewind(child.ID, parent.ID, now); err == nil {
+		t.Fatal("rewind accepted a running sibling")
+	}
+	sibling, _ = s.RunState(sibling.ID)
+	sibling.Status = "failed"
+	if err := s.PutRun(sibling); err != nil {
+		t.Fatal(err)
+	}
+	token, err := s.BeginSharedNodeRewind(child.ID, parent.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{parent.ID, child.ID, sibling.ID} {
+		run, _ := s.RunState(id)
+		if err := s.TryAcquireRunLease(id, "worker", run.Generation, time.Minute); !errors.Is(err, ErrWorkspaceInUse) {
+			t.Fatalf("run %s bypassed fence: %v", id, err)
+		}
+	}
+	if _, err := s.RequestRunPause(child.ID); !errors.Is(err, ErrWorkspaceInUse) {
+		t.Fatalf("child pause bypassed shared fence: %v", err)
+	}
+	newChild := domain.Run{ID: "new-child", Status: "running", ExecutionContext: domain.TelemetryContext{WorkspaceRunID: parent.ID}, Nodes: map[string]*domain.NodeRun{}}
+	if err := s.PutRun(newChild); !errors.Is(err, ErrWorkspaceInUse) {
+		t.Fatalf("new child bypassed fence: %v", err)
+	}
+	if err := s.MarkNodeRewindPending(parent.ID, token, now); err != nil {
+		t.Fatal(err)
+	}
+	child, _ = s.RunState(child.ID)
+	child.Nodes["n"].Status = "pending"
+	child.Events = append(child.Events, domain.RunEvent{ID: "rewind-event", RunID: child.ID, NodeID: "n", Type: "workspace.rewound", Timestamp: now})
+	if err := s.FinishNodeRewind(child, token, child.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishWorkspaceUse(parent.ID, token, time.Now().UTC(), nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	child, _ = s.RunState(child.ID)
+	if child.Nodes["n"].Status != "pending" || len(child.Events) != 1 || child.Events[0].Type != "workspace.rewound" {
+		t.Fatalf("child state: %+v", child)
+	}
+	meta, _ := s.WorkspaceCheckpoint(parent.ID)
+	if meta.NodeRestoreRunID != "" {
+		t.Fatal("restore owner was not cleared")
+	}
+}
+
+func TestWorkspaceRunsRejectsCorruptExecutionContext(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	run := domain.Run{ID: "corrupt-workspace-owner", Status: "failed", Nodes: map[string]*domain.NodeRun{}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Model(&runRow{}).Where("id = ?", run.ID).Update("execution_context", []byte("{")).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WorkspaceRuns("some-owner"); err == nil {
+		t.Fatal("corrupt workspace owner was silently ignored")
 	}
 }
 func TestWorkspaceCheckpointDetectsCorruptArchiveAndPreservesLastGoodSave(t *testing.T) {

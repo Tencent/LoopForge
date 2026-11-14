@@ -16,24 +16,25 @@ import (
 )
 
 type WorkspaceCheckpoint struct {
-	ArchiveID      string     `gorm:"size:64" json:"-"`
-	ArchiveBytes   int64      `json:"-"`
-	ArchiveChunks  int        `json:"-"`
-	SaveFailures   int        `json:"-"`
-	SaveRetryAt    *time.Time `json:"nextSaveAttemptAt,omitempty"`
-	RunID          string     `gorm:"primaryKey;size:64" json:"-"`
-	Archive        []byte     `gorm:"type:mediumblob" json:"-"`
-	SHA256         string     `gorm:"size:64" json:"-"`
-	LastUsedAt     time.Time  `json:"lastUsedAt"`
-	SavedAt        *time.Time `json:"savedAt,omitempty"`
-	FollowUp       bool       `json:"followUp"`
-	Error          string     `gorm:"type:text" json:"error,omitempty"`
-	LeaseHandoffID string     `gorm:"size:64" json:"-"`
-	LeaseToken     string     `gorm:"size:64" json:"-"`
-	LeaseUntil     *time.Time `json:"-"`
-	RestoreStatus  string     `gorm:"size:32" json:"-"`
-	RestoreStarted *time.Time `json:"-"`
-	RestoreError   string     `gorm:"type:text" json:"-"`
+	ArchiveID        string     `gorm:"size:64" json:"-"`
+	ArchiveBytes     int64      `json:"-"`
+	ArchiveChunks    int        `json:"-"`
+	SaveFailures     int        `json:"-"`
+	SaveRetryAt      *time.Time `json:"nextSaveAttemptAt,omitempty"`
+	RunID            string     `gorm:"primaryKey;size:64" json:"-"`
+	Archive          []byte     `gorm:"type:mediumblob" json:"-"`
+	SHA256           string     `gorm:"size:64" json:"-"`
+	LastUsedAt       time.Time  `json:"lastUsedAt"`
+	SavedAt          *time.Time `json:"savedAt,omitempty"`
+	FollowUp         bool       `json:"followUp"`
+	Error            string     `gorm:"type:text" json:"error,omitempty"`
+	LeaseHandoffID   string     `gorm:"size:64" json:"-"`
+	NodeRestoreRunID string     `gorm:"size:64" json:"-"`
+	LeaseToken       string     `gorm:"size:64" json:"-"`
+	LeaseUntil       *time.Time `json:"-"`
+	RestoreStatus    string     `gorm:"size:32" json:"-"`
+	RestoreStarted   *time.Time `json:"-"`
+	RestoreError     string     `gorm:"type:text" json:"-"`
 	// ReleasedAt is when a conversation switched away from the workspace; until
 	// it is used again it is reclaimed without waiting out the idle hour.
 	ReleasedAt *time.Time `json:"-"`
@@ -68,8 +69,8 @@ func (r *RunsRepo) BeginWorkspaceUse(runID string, now time.Time) (string, error
 
 // MarkNodeCheckpointRestorePending fences workspace use if an automatic
 // full-redo restore is interrupted before its new starting checkpoint is saved.
-func (r *RunsRepo) MarkNodeCheckpointRestorePending(runID, token string, now time.Time) error {
-	result := r.DB.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ? AND (lease_handoff_id = ? OR lease_handoff_id IS NULL)", runID, token, now, "").Update("lease_handoff_id", "node-auto-restore-pending")
+func (r *RunsRepo) MarkNodeCheckpointRestorePending(workspaceID, runID, token string, now time.Time) error {
+	result := r.DB.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ? AND (lease_handoff_id = ? OR lease_handoff_id IS NULL)", workspaceID, token, now, "").Updates(map[string]any{"lease_handoff_id": "node-auto-restore-pending", "node_restore_run_id": runID})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -122,9 +123,14 @@ func (r *RunsRepo) FailInterruptedNodeCheckpointRestore(runID, workspaceID, toke
 
 // ParkOrphanNodeCheckpointRestore makes a crashed automatic restore
 // recoverable after both the run and workspace leases have expired.
-func (r *RunsRepo) ParkOrphanNodeCheckpointRestore(runID string, now time.Time) (bool, error) {
+func (r *RunsRepo) ParkOrphanNodeCheckpointRestore(runID, workspaceID string, now time.Time) (bool, error) {
 	parked := false
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if workspaceID != runID {
+			if _, err := r.takeRunForUpdate(tx, workspaceID); err != nil {
+				return err
+			}
+		}
 		row, err := r.takeRunForUpdate(tx, runID)
 		if err != nil {
 			return err
@@ -133,7 +139,7 @@ func (r *RunsRepo) ParkOrphanNodeCheckpointRestore(runID string, now time.Time) 
 			return nil
 		}
 		var cp WorkspaceCheckpoint
-		if err := tx.Omit("archive").Where("run_id = ? AND lease_handoff_id = ?", runID, "node-auto-restore-pending").Take(&cp).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		if err := tx.Omit("archive").Where("run_id = ? AND lease_handoff_id = ? AND (node_restore_run_id = ? OR ((node_restore_run_id = ? OR node_restore_run_id IS NULL) AND run_id = ?))", workspaceID, "node-auto-restore-pending", runID, "", runID).Take(&cp).Error; errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		} else if err != nil {
 			return err
@@ -167,22 +173,175 @@ func (r *RunsRepo) ParkOrphanNodeCheckpointRestore(runID string, now time.Time) 
 	return parked, err
 }
 
+// FailedSharedNodeRestore reports a failed child restore that has left this
+// run's shared workspace fenced. A restore still in progress is not a reason
+// to interrupt its parent.
+func (r *RunsRepo) FailedSharedNodeRestore(runID, workspaceID string) (bool, error) {
+	var checkpoint WorkspaceCheckpoint
+	err := r.DB.Omit("archive").Where("run_id = ? AND lease_handoff_id = ?", workspaceID, "node-auto-restore-pending").Take(&checkpoint).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if checkpoint.NodeRestoreRunID == "" || checkpoint.NodeRestoreRunID == runID {
+		return false, nil
+	}
+	var child runRow
+	if err := r.DB.Select("status").Where("id = ?", checkpoint.NodeRestoreRunID).Take(&child).Error; err != nil {
+		return false, err
+	}
+	return child.Status == "failed", nil
+}
+
+// ParkAfterSharedNodeRestore is called only after this scheduler has drained
+// its own node goroutines, or after its run lease expired. Other runs retain
+// their own leases and must stop independently before rewind can begin.
+func (r *RunsRepo) ParkAfterSharedNodeRestore(runID, workspaceID, instanceID string, generation int, now time.Time) (bool, error) {
+	parked := false
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if workspaceID != runID {
+			if _, err := r.takeRunForUpdate(tx, workspaceID); err != nil {
+				return err
+			}
+		}
+		row, err := r.takeRunForUpdate(tx, runID)
+		if err != nil {
+			return err
+		}
+		if row.Status != "running" || row.Generation != generation {
+			return nil
+		}
+		if instanceID == "" {
+			if row.LeaseUntil != nil && row.LeaseUntil.After(now) {
+				return nil
+			}
+		} else if row.OwnerInstanceID != instanceID || row.LeaseUntil == nil || !row.LeaseUntil.After(now) {
+			return ErrRunLeaseLost
+		}
+		var cp WorkspaceCheckpoint
+		if err := tx.Omit("archive").Where("run_id = ? AND lease_handoff_id = ?", workspaceID, "node-auto-restore-pending").Take(&cp).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		if cp.NodeRestoreRunID == "" || cp.NodeRestoreRunID == runID {
+			return nil
+		}
+		var child runRow
+		if err := tx.Select("status").Where("id = ?", cp.NodeRestoreRunID).Take(&child).Error; err != nil {
+			return err
+		}
+		if child.Status != "failed" {
+			return nil
+		}
+		var nodes []runNodeRow
+		if err := tx.Where("run_id = ? AND status IN ?", runID, []string{"running", "pending_input"}).Find(&nodes).Error; err != nil {
+			return err
+		}
+		for _, node := range nodes {
+			var state domain.NodeRun
+			if err := json.Unmarshal(node.Payload, &state); err != nil {
+				return err
+			}
+			state.Status, state.Error, state.Activity, state.FinishedAt = "failed", "共享工作区的节点恢复中断，请先处理子运行的恢复", "", now
+			if err := tx.Model(&runNodeRow{}).Where("run_id = ? AND node_id = ?", runID, node.NodeID).Updates(map[string]any{"status": state.Status, "payload": mustJSON(state)}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&runRow{}).Where("id = ?", runID).Updates(map[string]any{"status": "failed", "owner_instance_id": "", "lease_until": nil, "revision": gorm.Expr("revision + 1"), "updated_at": now}).Error; err != nil {
+			return err
+		}
+		parked = true
+		return nil
+	}, r.admissionTxOptions()...)
+	return parked, err
+}
+
 // BeginNodeRewind fences both workspace users and run resumption while a
 // checkpoint is being restored. The state check and lease acquisition share
 // the same run-row lock as run updates.
 func (r *RunsRepo) BeginNodeRewind(runID string, now time.Time) (string, error) {
+	return r.beginNodeRewind(runID, runID, now)
+}
+
+// BeginSharedNodeRewind targets a child run while fencing its owner's checkout.
+func (r *RunsRepo) BeginSharedNodeRewind(runID, workspaceID string, now time.Time) (string, error) {
+	return r.beginNodeRewind(runID, workspaceID, now)
+}
+
+func (r *RunsRepo) beginNodeRewind(runID, workspaceID string, now time.Time) (string, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
 	token := hex.EncodeToString(raw)
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
-		row, err := r.takeRunForUpdate(tx, runID)
+		ownerRow, err := r.takeRunForUpdate(tx, workspaceID)
 		if err != nil {
 			return err
 		}
+		if workspaceID != runID {
+			owner := ownerRow
+			if owner.WorkspaceCleaned != nil || owner.CancelRequested || (owner.Status != "waiting" && owner.Status != "failed") || owner.OwnerInstanceID != "" && owner.LeaseUntil != nil && owner.LeaseUntil.After(now) {
+				return fmt.Errorf("父运行必须停止且工作区尚未回收")
+			}
+			var count int64
+			if err := tx.Model(&runNodeRow{}).Where("run_id = ? AND status IN ?", workspaceID, []string{"running", "pending_input"}).Count(&count).Error; err != nil {
+				return err
+			} else if count != 0 {
+				return fmt.Errorf("父运行仍有节点正在执行")
+			}
+		}
+		// All attempts to resume or create a child lock the owner row first.
+		// With that row held, no sibling can start while we inspect every run
+		// sharing the checkout and install its workspace fence.
+		var related []runRow
+		if err := tx.Select("id", "status", "owner_instance_id", "lease_until", "execution_context").Find(&related).Error; err != nil {
+			return err
+		}
+		for _, other := range related {
+			if other.ID == runID || other.ID == workspaceID {
+				continue
+			}
+			var execution domain.TelemetryContext
+			if err := json.Unmarshal(other.ExecutionContext, &execution); err != nil && len(other.ExecutionContext) != 0 {
+				return err
+			}
+			if execution.WorkspaceRunID != workspaceID {
+				continue
+			}
+			if other.Status == "running" || other.Status == "queued" || other.OwnerInstanceID != "" && other.LeaseUntil != nil && other.LeaseUntil.After(now) {
+				return fmt.Errorf("共享工作区的其他运行仍在执行")
+			}
+			var count int64
+			if err := tx.Model(&runNodeRow{}).Where("run_id = ? AND status IN ?", other.ID, []string{"running", "pending_input"}).Count(&count).Error; err != nil {
+				return err
+			} else if count != 0 {
+				return fmt.Errorf("共享工作区的其他节点仍在执行")
+			}
+		}
+		row := ownerRow
+		if workspaceID != runID {
+			row, err = r.takeRunForUpdate(tx, runID)
+			if err != nil {
+				return err
+			}
+		}
 		if row.WorkspaceCleaned != nil || row.CancelRequested || (row.Status != "waiting" && row.Status != "failed") {
 			return fmt.Errorf("运行必须暂停、等待人工确认或失败，且工作区尚未回收")
+		}
+		var execution domain.TelemetryContext
+		if err := json.Unmarshal(row.ExecutionContext, &execution); err != nil && len(row.ExecutionContext) != 0 {
+			return err
+		}
+		owner := execution.WorkspaceRunID
+		if owner == "" {
+			owner = runID
+		}
+		if owner != workspaceID {
+			return fmt.Errorf("工作区所属运行已变化")
 		}
 		if row.OwnerInstanceID != "" && row.LeaseUntil != nil && row.LeaseUntil.After(now) {
 			return fmt.Errorf("运行实例仍在退出，请稍后重试")
@@ -194,11 +353,19 @@ func (r *RunsRepo) BeginNodeRewind(runID string, now time.Time) (string, error) 
 		if count != 0 {
 			return fmt.Errorf("仍有节点正在执行")
 		}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&WorkspaceCheckpoint{RunID: runID, LastUsedAt: now}).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&WorkspaceCheckpoint{RunID: workspaceID, LastUsedAt: now}).Error; err != nil {
 			return err
 		}
-		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND (lease_until IS NULL OR lease_until < ?)", runID, now).Updates(map[string]any{
+		var fence WorkspaceCheckpoint
+		if err := tx.Omit("archive").Where("run_id = ?", workspaceID).Take(&fence).Error; err != nil {
+			return err
+		}
+		if (fence.LeaseHandoffID == "node-auto-restore-pending" || fence.LeaseHandoffID == "node-rewind-pending") && fence.NodeRestoreRunID != "" && fence.NodeRestoreRunID != runID {
+			return fmt.Errorf("另一运行的节点恢复尚未完成")
+		}
+		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND (lease_until IS NULL OR lease_until < ?)", workspaceID, now).Updates(map[string]any{
 			"lease_token": token, "lease_until": now.Add(15 * time.Minute), "lease_handoff_id": gorm.Expr("CASE WHEN lease_handoff_id IN ? THEN ? ELSE ? END", []string{"node-rewind-pending", "node-auto-restore-pending"}, "node-rewind-pending", "node-rewind"), "last_used_at": now,
+			"node_restore_run_id": runID,
 		})
 		if result.Error != nil {
 			return result.Error
@@ -207,13 +374,25 @@ func (r *RunsRepo) BeginNodeRewind(runID string, now time.Time) (string, error) 
 			return ErrWorkspaceInUse
 		}
 		return nil
-	})
+	}, r.admissionTxOptions()...)
 	return token, err
 }
 
 func nodeRewindActive(tx *gorm.DB, runID string, now time.Time) (bool, error) {
 	var count int64
-	err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND (lease_handoff_id IN ? OR (lease_handoff_id = ? AND lease_until > ?))", runID, []string{"node-rewind-pending", "node-auto-restore-pending"}, "node-rewind", now).Count(&count).Error
+	var row runRow
+	if err := tx.Select("id", "execution_context").Where("id = ?", runID).Take(&row).Error; err != nil {
+		return false, err
+	}
+	var execution domain.TelemetryContext
+	if err := json.Unmarshal(row.ExecutionContext, &execution); err != nil && len(row.ExecutionContext) != 0 {
+		return false, err
+	}
+	owner := execution.WorkspaceRunID
+	if owner == "" {
+		owner = runID
+	}
+	err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND (lease_handoff_id IN ? OR (lease_handoff_id = ? AND lease_until > ?))", owner, []string{"node-rewind-pending", "node-auto-restore-pending"}, "node-rewind", now).Count(&count).Error
 	return count != 0, err
 }
 
@@ -268,7 +447,7 @@ func (r *RunsRepo) CompleteNodeCheckpointRestore(runID, workspaceID, token, node
 				return err
 			}
 		}
-		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_handoff_id = ? AND lease_until > ?", workspaceID, token, "node-auto-restore-pending", time.Now().UTC()).Update("lease_handoff_id", "")
+		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_handoff_id = ? AND lease_until > ?", workspaceID, token, "node-auto-restore-pending", time.Now().UTC()).Updates(map[string]any{"lease_handoff_id": "", "node_restore_run_id": ""})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -281,7 +460,7 @@ func (r *RunsRepo) CompleteNodeCheckpointRestore(runID, workspaceID, token, node
 
 func (r *RunsRepo) ValidateNodeRewind(runID, token string, now time.Time) error {
 	var count int64
-	err := r.DB.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_handoff_id IN ? AND lease_until > ?", runID, token, []string{"node-rewind", "node-rewind-pending"}, now).Count(&count).Error
+	err := r.DB.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_handoff_id IN ? AND lease_until > ?", runID, token, []string{"node-rewind", "node-rewind-pending", "node-auto-restore-pending"}, now).Count(&count).Error
 	if err != nil {
 		return err
 	}
@@ -321,7 +500,16 @@ func (r *RunsRepo) CompleteNodeRewind(runID, token string, now time.Time) error 
 // FinishNodeRewind atomically publishes the node reset and its audit event
 // before removing the durable workspace fence.
 func (r *RunsRepo) FinishNodeRewind(run domain.Run, token string, revision int) error {
+	workspaceID := run.ExecutionContext.WorkspaceRunID
+	if workspaceID == "" {
+		workspaceID = run.ID
+	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if workspaceID != run.ID {
+			if _, err := r.takeRunForUpdate(tx, workspaceID); err != nil {
+				return err
+			}
+		}
 		row, err := r.takeRunForUpdate(tx, run.ID)
 		if err != nil {
 			return err
@@ -330,7 +518,7 @@ func (r *RunsRepo) FinishNodeRewind(run domain.Run, token string, revision int) 
 			return ErrRunDecisionStale
 		}
 		var lease WorkspaceCheckpoint
-		if err := tx.Omit("archive").Where("run_id = ? AND lease_token = ? AND lease_handoff_id = ? AND lease_until > ?", run.ID, token, "node-rewind-pending", time.Now().UTC()).Take(&lease).Error; err != nil {
+		if err := tx.Omit("archive").Where("run_id = ? AND lease_token = ? AND lease_handoff_id = ? AND node_restore_run_id = ? AND lease_until > ?", workspaceID, token, "node-rewind-pending", run.ID, time.Now().UTC()).Take(&lease).Error; err != nil {
 			return ErrWorkspaceInUse
 		}
 		for id, node := range run.Nodes {
@@ -358,7 +546,7 @@ func (r *RunsRepo) FinishNodeRewind(run domain.Run, token string, revision int) 
 		if err := tx.Model(&runRow{}).Where("id = ?", run.ID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()}).Error; err != nil {
 			return err
 		}
-		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_handoff_id = ? AND lease_until > ?", run.ID, token, "node-rewind-pending", time.Now().UTC()).Update("lease_handoff_id", "node-rewind")
+		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_handoff_id = ? AND node_restore_run_id = ? AND lease_until > ?", workspaceID, token, "node-rewind-pending", run.ID, time.Now().UTC()).Updates(map[string]any{"lease_handoff_id": "node-rewind", "node_restore_run_id": ""})
 		if result.Error != nil {
 			return result.Error
 		}

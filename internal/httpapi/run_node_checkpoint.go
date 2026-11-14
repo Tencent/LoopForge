@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
@@ -17,6 +18,16 @@ import (
 func (h *runsHandlers) nodeCheckpointDiff(c *gin.Context, run domain.Run) {
 	if _, ok := h.projectRunUser(c, run.ExecutionContext.ProjectID); !ok {
 		return
+	}
+	if ownerID := engine.WorkspaceRunID(run); ownerID != run.ID {
+		owner, found := h.repo.RunState(ownerID)
+		if !found {
+			c.JSON(http.StatusConflict, gin.H{"error": "工作区所属运行不存在"})
+			return
+		}
+		if _, ok := h.projectRunUser(c, owner.ExecutionContext.ProjectID); !ok {
+			return
+		}
 	}
 	nodeID := strings.TrimSpace(c.Query("node"))
 	attempt, err := strconv.Atoi(c.Query("attempt"))
@@ -40,11 +51,13 @@ func (h *runsHandlers) nodeCheckpointDiff(c *gin.Context, run domain.Run) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "checkpoint not found"})
 		return
 	}
-	if start.End == nil {
+	var end *domain.NodeCheckpoint
+	if start.End != nil {
+		end = &domain.NodeCheckpoint{Repositories: start.End}
+	} else if node.Attempt != attempt || node.Status != "running" && node.Status != "pending_input" {
 		c.JSON(http.StatusConflict, gin.H{"error": "attempt end checkpoint is not available"})
 		return
 	}
-	end := domain.NodeCheckpoint{Repositories: start.End}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 	if runnerID := h.engine.RunExecutionRunner(run); runnerID != "" || h.engine.WorkspaceRemoteHost(run) {
@@ -57,7 +70,7 @@ func (h *runsHandlers) nodeCheckpointDiff(c *gin.Context, run domain.Run) {
 			}
 			response, err = h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{
 				RunID: run.ID, WorkspaceRunID: runnerWorkspaceRunID(run), WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout,
-				Operation: domain.RunnerWorkspaceOperationNodeCheckpointDiff, NodeCheckpoint: start, NodeCheckpointEnd: &end,
+				Operation: domain.RunnerWorkspaceOperationNodeCheckpointDiff, NodeCheckpoint: start, NodeCheckpointEnd: end,
 			})
 		} else {
 			response, err = h.engine.DiffNodeCheckpoints(ctx, run, *start, end)
@@ -74,6 +87,7 @@ func (h *runsHandlers) nodeCheckpointDiff(c *gin.Context, run domain.Run) {
 			Diff      string   `json:"diff"`
 			Truncated bool     `json:"truncated"`
 			Files     []string `json:"files"`
+			Live      bool     `json:"live,omitempty"`
 		}
 		if err := json.Unmarshal(response.Payload, &payload); err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "invalid runner response"})
@@ -91,7 +105,18 @@ func (h *runsHandlers) nodeCheckpointDiff(c *gin.Context, run domain.Run) {
 		c.JSON(http.StatusConflict, gin.H{"error": reason})
 		return
 	}
-	files, err := runtime.NodeWorkspaceCheckpointChangedFiles(ctx, root, *start, end)
+	if end == nil {
+		diff, truncated, files, err := runtime.DiffNodeWorkspaceCurrent(ctx, root, *start, workspaceFileLimit)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprint(err)})
+		} else if checkpointHasSensitivePath(files) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "checkpoint diff contains a protected path"})
+		} else {
+			c.JSON(http.StatusOK, gin.H{"diff": diff, "truncated": truncated, "files": files, "live": true})
+		}
+		return
+	}
+	files, err := runtime.NodeWorkspaceCheckpointChangedFiles(ctx, root, *start, *end)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprint(err)})
 		return
@@ -100,7 +125,7 @@ func (h *runsHandlers) nodeCheckpointDiff(c *gin.Context, run domain.Run) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "checkpoint diff contains a protected path"})
 		return
 	}
-	diff, truncated, err := runtime.DiffNodeWorkspaceCheckpoints(ctx, root, *start, end, workspaceFileLimit)
+	diff, truncated, err := runtime.DiffNodeWorkspaceCheckpoints(ctx, root, *start, *end, workspaceFileLimit)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprint(err)})
 		return
@@ -118,7 +143,7 @@ func checkpointHasSensitivePath(files []string) bool {
 }
 
 func (h *runsHandlers) workspaceRewind(c *gin.Context) {
-	run, actor, ok := h.workspaceEditActor(c)
+	run, actor, ok := h.workspaceCheckpointActor(c)
 	if !ok {
 		return
 	}

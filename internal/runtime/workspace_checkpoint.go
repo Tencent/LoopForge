@@ -49,8 +49,12 @@ func checkpointPath(path string) (string, error) {
 	return clean, nil
 }
 func CreateWorkspaceCheckpoint(root string) ([]byte, error) {
+	return CreateWorkspaceCheckpointFiltered(root, false)
+}
+
+func CreateWorkspaceCheckpointFiltered(root string, discardNodeCheckpoints bool) ([]byte, error) {
 	var buffer bytes.Buffer
-	err := CreateWorkspaceCheckpointTo(root, &checkpointBoundedWriter{writer: &buffer, left: WorkspaceCheckpointMaxBytes})
+	err := CreateWorkspaceCheckpointToFiltered(root, &checkpointBoundedWriter{writer: &buffer, left: WorkspaceCheckpointMaxBytes}, discardNodeCheckpoints)
 	if err != nil {
 		return nil, err
 	}
@@ -58,6 +62,12 @@ func CreateWorkspaceCheckpoint(root string) ([]byte, error) {
 }
 
 func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
+	return CreateWorkspaceCheckpointToFiltered(root, destination, false)
+}
+
+// CreateWorkspaceCheckpointToFiltered omits private checkpoint refs from an
+// archive prepared for reclamation without modifying the live repository.
+func CreateWorkspaceCheckpointToFiltered(root string, destination io.Writer, discardNodeCheckpoints bool) error {
 	info, err := os.Lstat(root)
 	if err != nil {
 		return err
@@ -84,7 +94,8 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 		if path == "." {
 			return nil
 		}
-		if checkpointExcluded(path) {
+		gitPath := "/" + filepath.ToSlash(path)
+		if checkpointExcluded(path) || discardNodeCheckpoints && privateNodeRefPath(gitPath) {
 			if entry.IsDir() {
 				return fs.SkipDir
 			}
@@ -119,6 +130,31 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 		header.Gid = 0
 		header.Uname = ""
 		header.Gname = ""
+		var packedRefs []byte
+		if discardNodeCheckpoints && strings.HasSuffix(gitPath, "/.git/packed-refs") && info.Mode().IsRegular() {
+			file, err := base.Open(path)
+			if err != nil {
+				return err
+			}
+			packedRefs, err = io.ReadAll(io.LimitReader(file, 16<<20+1))
+			closeErr := file.Close()
+			if err != nil || closeErr != nil || len(packedRefs) > 16<<20 {
+				return fmt.Errorf("cannot filter packed Git refs: %s", path)
+			}
+			var filtered bytes.Buffer
+			skipPeeled := false
+			for _, line := range strings.SplitAfter(string(packedRefs), "\n") {
+				if strings.HasPrefix(line, "^") && skipPeeled {
+					continue
+				}
+				skipPeeled = strings.Contains(line, " refs/loopforge/")
+				if !skipPeeled {
+					filtered.WriteString(line)
+				}
+			}
+			packedRefs = filtered.Bytes()
+			header.Size = int64(len(packedRefs))
+		}
 		expanded += header.Size
 		if expanded > workspaceCheckpointExpandedMax {
 			return fmt.Errorf("workspace checkpoint exceeds expanded size limit")
@@ -130,6 +166,10 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 			return fmt.Errorf("external Git worktree metadata cannot be checkpointed: %s", path)
 		}
 		if info.Mode().IsRegular() {
+			if packedRefs != nil {
+				_, err := writer.Write(packedRefs)
+				return err
+			}
 			file, err := base.Open(path)
 			if err != nil {
 				return err
@@ -157,6 +197,15 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 		return closeZip
 	}
 	return nil
+}
+
+func privateNodeRefPath(path string) bool {
+	for _, prefix := range []string{"/.git/refs/loopforge", "/.git/logs/refs/loopforge"} {
+		if strings.HasSuffix(path, prefix) || strings.Contains(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 	if len(content) == 0 || len(content) > WorkspaceCheckpointMaxBytes {

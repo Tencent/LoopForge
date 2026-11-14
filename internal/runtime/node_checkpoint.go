@@ -86,6 +86,35 @@ func CreateNodeWorkspaceCheckpoint(ctx context.Context, root string, repositorie
 	return result, nil
 }
 
+// DiffNodeWorkspaceCurrent captures an approximate point-in-time view while a
+// node is still running. Concurrent writes can make Git reject the capture;
+// callers should allow retry. Temporary refs are removed after comparison.
+func DiffNodeWorkspaceCurrent(ctx context.Context, root string, start domain.NodeCheckpoint, limit int) (string, bool, []string, error) {
+	repositories := make([]domain.RepositoryContext, 0, len(start.Repositories))
+	for _, item := range start.Repositories {
+		repositories = append(repositories, domain.RepositoryContext{RepositoryID: item.RepositoryID, WorkspaceDir: item.WorkspaceDir})
+	}
+	end, err := CreateNodeWorkspaceCheckpoint(ctx, root, repositories, start.Attempt)
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for _, item := range end.Repositories {
+			if dir, e := NodeCheckpointRepositoryRoot(root, item.WorkspaceDir); e == nil {
+				_, _ = gitwork.C(cleanup, dir, "update-ref", "-d", item.Ref, item.Commit)
+			}
+		}
+	}()
+	if err != nil {
+		return "", false, nil, err
+	}
+	files, err := NodeWorkspaceCheckpointChangedFiles(ctx, root, start, end)
+	if err != nil {
+		return "", false, nil, err
+	}
+	diff, truncated, err := DiffNodeWorkspaceCheckpoints(ctx, root, start, end, limit)
+	return diff, truncated, files, err
+}
+
 // RestoreNodeWorkspaceCheckpointWithRecovery attempts to undo a partial
 // multi-repository restore if an I/O error occurs after preflight.
 func RestoreNodeWorkspaceCheckpointWithRecovery(ctx context.Context, root string, target, recovery domain.NodeCheckpoint) error {

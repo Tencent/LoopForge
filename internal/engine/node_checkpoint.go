@@ -262,7 +262,7 @@ func (e *Engine) prepareNodeCheckpoint(ctx context.Context, run domain.Run, node
 		if lease == "" {
 			return fmt.Errorf("无法安全恢复：工作区租约不存在")
 		}
-		if err := e.repo.MarkNodeCheckpointRestorePending(workspaceRunID(run), lease, time.Now().UTC()); err != nil {
+		if err := e.repo.MarkNodeCheckpointRestorePending(workspaceRunID(run), run.ID, lease, time.Now().UTC()); err != nil {
 			return fmt.Errorf("保存恢复状态：%w", err)
 		}
 		restorePending = true
@@ -401,10 +401,10 @@ func (e *Engine) nodeCheckpointChangedFiles(ctx context.Context, run domain.Run,
 }
 
 // DiffNodeCheckpoints forwards a read-only comparison to the workspace owner.
-func (e *Engine) DiffNodeCheckpoints(ctx context.Context, run domain.Run, start, end domain.NodeCheckpoint) (domain.RunnerWorkspaceResponse, error) {
+func (e *Engine) DiffNodeCheckpoints(ctx context.Context, run domain.Run, start domain.NodeCheckpoint, end *domain.NodeCheckpoint) (domain.RunnerWorkspaceResponse, error) {
 	return e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{
 		RunID: run.ID, WorkspaceRunID: workspaceRunID(run), WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout,
-		Operation: domain.RunnerWorkspaceOperationNodeCheckpointDiff, NodeCheckpoint: &start, NodeCheckpointEnd: &end,
+		Operation: domain.RunnerWorkspaceOperationNodeCheckpointDiff, NodeCheckpoint: &start, NodeCheckpointEnd: end,
 	})
 }
 

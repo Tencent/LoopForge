@@ -105,6 +105,13 @@ func TestNodeCheckpointHTTPPermissionsAndRewind(t *testing.T) {
 	if code, body := call(peer, "GET", "?node=a&attempt=1"); code != 200 || !bytes.Contains([]byte(body), []byte("+after")) {
 		t.Fatalf("diff: %d %s", code, body)
 	}
+	run.Nodes["a"].Status = "running"
+	run.Nodes["a"].Checkpoints[0].End = nil
+	if code, body := call(peer, "GET", "?node=a&attempt=1"); code != 200 || !bytes.Contains([]byte(body), []byte("+after")) || !bytes.Contains([]byte(body), []byte(`"live":true`)) {
+		t.Fatalf("live diff: %d %s", code, body)
+	}
+	run.Nodes["a"].Status = "succeeded"
+	run.Nodes["a"].Checkpoints[0].End = end.Repositories
 	if code, body := call(owner, "POST", ""); code != 409 {
 		t.Fatalf("running rewind: %d %s", code, body)
 	}
@@ -118,5 +125,74 @@ func TestNodeCheckpointHTTPPermissionsAndRewind(t *testing.T) {
 	}
 	if contents, err := os.ReadFile(file); err != nil || string(contents) != "before\n" {
 		t.Fatal(fmt.Sprintf("file %q: %v", contents, err))
+	}
+}
+
+func TestChildCheckpointRewindPermissions(t *testing.T) {
+	a, owner, _, outsider, _ := sharedWorkbenchFixture(t)
+	manager := runtime.NewManager(t.TempDir())
+	a.deps.engine = engine.New(a.repo, manager)
+	h := &runsHandlers{deps: a.deps}
+	parent, _ := a.repo.RunState("shared-run")
+	parent.Status = "failed"
+	parent.ExecutionContext.NodeCheckpointsEnabled = true
+	parent.Nodes = map[string]*domain.NodeRun{"sop": {NodeID: "sop", Status: "failed", ChildRunID: "http-child"}}
+	if err := a.repo.PutRun(parent); err != nil {
+		t.Fatal(err)
+	}
+	root := manager.RunWorkspace(parent.ID)
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cvBGit(t, root, "init", "-q")
+	file := filepath.Join(root, "file")
+	cvBWrite(t, file, []byte("before\n"))
+	cvBGit(t, root, "add", ".")
+	cvBGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base")
+	repository := domain.RepositoryContext{RepositoryID: "repo"}
+	cp, err := runtime.CreateNodeWorkspaceCheckpoint(context.Background(), root, []domain.RepositoryContext{repository}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cvBWrite(t, file, []byte("after\n"))
+	child := domain.Run{ID: "http-child", Status: "failed", Repository: repository, ExecutionContext: domain.TelemetryContext{ProjectID: parent.ExecutionContext.ProjectID, ParentRunID: parent.ID, WorkspaceRunID: parent.ID, NodeCheckpointsEnabled: true}, Nodes: map[string]*domain.NodeRun{"a": {NodeID: "a", Status: "failed", Attempt: 1, Checkpoints: []domain.NodeCheckpoint{cp}}}}
+	if err := a.repo.PutRun(child); err != nil {
+		t.Fatal(err)
+	}
+	call := func(user domain.User) (int, string) {
+		c, w := workbenchContext(user, http.MethodPost, "/api/runs/http-child/workspace/rewind", bytes.NewBufferString(`{"nodeId":"a","attempt":1}`))
+		c.Params = gin.Params{{Key: "id", Value: child.ID}}
+		h.workspaceRewind(c)
+		return w.Code, w.Body.String()
+	}
+	if code, body := call(outsider); code != http.StatusForbidden {
+		t.Fatalf("outsider: %d %s", code, body)
+	}
+	if err := a.repo.PutProject(domain.Project{ID: "child-project", OwnerID: outsider.ID}); err != nil {
+		t.Fatal(err)
+	}
+	child.ExecutionContext.ProjectID = "child-project"
+	if err := a.repo.PutRun(child); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := call(outsider); code != http.StatusForbidden {
+		t.Fatalf("child project owner without workspace access: %d %s", code, body)
+	}
+	{
+		c, w := workbenchContext(outsider, http.MethodGet, "/api/runs/http-child/workspace/diff?node=a&attempt=1", bytes.NewBuffer(nil))
+		h.nodeCheckpointDiff(c, child)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("child project owner read parent workspace diff: %d %s", w.Code, w.Body.String())
+		}
+	}
+	child.ExecutionContext.ProjectID = parent.ExecutionContext.ProjectID
+	if err := a.repo.PutRun(child); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := call(owner); code != http.StatusOK {
+		t.Fatalf("owner: %d %s", code, body)
+	}
+	if content, err := os.ReadFile(file); err != nil || string(content) != "before\n" {
+		t.Fatalf("restored file: %q, %v", content, err)
 	}
 }

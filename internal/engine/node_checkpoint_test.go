@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,6 +15,163 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
+
+func TestCheckpointAttemptCanReuseOwnWorkspaceLease(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	e := New(store, runtime.NewManager(t.TempDir()))
+	run := domain.Run{ID: "checkpoint-lease", Status: "running", Nodes: map[string]*domain.NodeRun{}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	token, err := store.BeginWorkspaceUse(run.ID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.restoreCheckpointBeforeExecution(context.Background(), run); !errors.Is(err, repo.ErrWorkspaceInUse) {
+		t.Fatalf("foreign workspace lease: %v", err)
+	}
+	ctx := context.WithValue(context.Background(), nodeCheckpointLeaseKey{}, token)
+	if err := e.restoreCheckpointBeforeExecution(ctx, run); err != nil {
+		t.Fatalf("own workspace lease: %v", err)
+	}
+}
+
+func TestStartNodeCheckpointsProjectAndChildPolicy(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	e := New(store, runtime.NewManager(t.TempDir()))
+	e.ConfigureExecution("control", "control", time.Minute, false)
+	wf := domain.WorkflowDefinition{ID: "checkpoint-policy", Name: "Checkpoint policy", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "script", ScriptLanguage: "shell", Script: "true"}}}
+	if err := store.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutProject(domain.Project{ID: "checkpoints-off", NodeCheckpointsDisabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	repositories := []domain.RepositoryContext{{RepositoryID: "repo"}}
+	for _, tc := range []struct {
+		name, project string
+		repositories  []domain.RepositoryContext
+		want          bool
+	}{{"default", "", repositories, true}, {"opt-out", "checkpoints-off", repositories, false}, {"no repository", "", nil, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			run, err := e.StartWithRepositoriesContext(wf.ID, "", tc.repositories, domain.TelemetryContext{ProjectID: tc.project})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if run.ExecutionContext.NodeCheckpointsEnabled != tc.want {
+				t.Fatalf("checkpoint policy = %v", run.ExecutionContext.NodeCheckpointsEnabled)
+			}
+		})
+	}
+	parent := domain.Run{ID: "checkpoint-policy-parent", Status: "running", ExecutionContext: domain.TelemetryContext{NodeCheckpointsEnabled: true}, Nodes: map[string]*domain.NodeRun{}}
+	if err := store.PutRun(parent); err != nil {
+		t.Fatal(err)
+	}
+	child, err := e.StartWithRepositoriesContext(wf.ID, "", repositories, domain.TelemetryContext{ParentRunID: parent.ID, WorkspaceRunID: parent.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !child.ExecutionContext.NodeCheckpointsEnabled {
+		t.Fatal("child did not inherit parent checkpoint policy")
+	}
+}
+
+func TestCheckpointAttemptRunsFromFreshCheckout(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q", "-b", "master"}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-qm", "base"}} {
+		if output, err := exec.Command("git", append([]string{"-C", source}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, output, err)
+		}
+	}
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	node := domain.WorkflowNode{ID: "write", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf written > result.txt", MaxAttempts: 1}
+	wf := domain.WorkflowDefinition{ID: "fresh-checkpoint", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{node}}
+	repository := domain.RepositoryContext{RepositoryID: "repo", Name: "repo", CloneURL: source, BaseBranch: "master", WorkBranch: "checkpoint-test", WorkspaceDir: "repo"}
+	run := domain.Run{ID: "fresh-checkpoint", Status: "running", Repository: repository, Repositories: []domain.RepositoryContext{repository}, WorkflowSnapshot: wf, ExecutionContext: domain.TelemetryContext{NodeCheckpointsEnabled: true}, Nodes: map[string]*domain.NodeRun{node.ID: {NodeID: node.ID, Status: "pending"}}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	e := New(store, runtime.NewManager(filepath.Join(root, "workspaces")))
+	if _, err := e.acquireLease(run); err != nil {
+		t.Fatal(err)
+	}
+	e.executeNode(context.Background(), run.ID, wf, node)
+	current, _ := store.RunState(run.ID)
+	result := current.Nodes[node.ID]
+	if result.Status != "succeeded" || len(result.Checkpoints) != 1 || result.Checkpoints[0].End == nil {
+		t.Fatalf("node state = %+v", result)
+	}
+	if content, err := os.ReadFile(filepath.Join(e.RunWorkspace(run.ID), "repo", "result.txt")); err != nil || string(content) != "written" {
+		t.Fatalf("script result = %q, %v", content, err)
+	}
+}
+
+func TestStartedRunCheckpointProjectPolicy(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q", "-b", "master"}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-qm", "base"}} {
+		if out, err := exec.Command("git", append([]string{"-C", source}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git: %s: %v", out, err)
+		}
+	}
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	wf := domain.WorkflowDefinition{ID: "checkpoint-e2e", Name: "Checkpoint e2e", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "write", Name: "Write", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf changed > result.txt", MaxAttempts: 1}}}
+	if err := store.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutProject(domain.Project{ID: "checkpoints-off", NodeCheckpointsDisabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	e := New(store, runtime.NewManager(filepath.Join(root, "workspaces")))
+	defer e.Drain(context.Background())
+	repository := domain.RepositoryContext{RepositoryID: "repo", Name: "repo", CloneURL: source, BaseBranch: "master", WorkBranch: "test", WorkspaceDir: "repo"}
+	for _, tc := range []struct {
+		name, project string
+		checkpoints   int
+	}{{"default", "", 1}, {"opt-out", "checkpoints-off", 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			run, err := e.StartWithRepositoriesContext(wf.ID, "", []domain.RepositoryContext{repository}, domain.TelemetryContext{ProjectID: tc.project})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+				current, ok := store.RunState(run.ID)
+				if !ok || current.Status == "running" || current.Status == "queued" {
+					continue
+				}
+				node := current.Nodes["write"]
+				if current.Status != "succeeded" || node == nil || len(node.Checkpoints) != tc.checkpoints || (tc.checkpoints > 0 && node.Checkpoints[0].End == nil) {
+					t.Fatalf("run did not follow checkpoint policy: status=%s node=%+v", current.Status, node)
+				}
+				return
+			}
+			t.Fatal("run did not finish")
+		})
+	}
+}
 
 func TestCheckpointRetryStrategies(t *testing.T) {
 	for _, strategy := range []string{"full_redo", "targeted_fix"} {
@@ -278,9 +436,13 @@ func TestNodeCheckpointDiffOnRemoteWorkspaceOwner(t *testing.T) {
 	}
 	serveWorkspaceRestoreWorker(t, worker, http.HandlerFunc(worker.HandleWorkspaceCheckpoint))
 	run, _ := worker.repo.RunState(id)
-	response, err := controller.DiffNodeCheckpoints(context.Background(), run, start, end)
+	response, err := controller.DiffNodeCheckpoints(context.Background(), run, start, &end)
 	if err != nil || response.Error != "" || !strings.Contains(string(response.Payload), "+remote change") {
 		t.Fatalf("remote diff: %+v, %v", response, err)
+	}
+	response, err = controller.DiffNodeCheckpoints(context.Background(), run, start, nil)
+	if err != nil || response.Error != "" || !strings.Contains(string(response.Payload), `"live":true`) || !strings.Contains(string(response.Payload), "+remote change") {
+		t.Fatalf("remote live diff: %+v, %v", response, err)
 	}
 	if err := worker.repo.ResetRunWorkspaceCleanup(id); err != nil {
 		t.Fatal(err)
@@ -297,6 +459,91 @@ func TestNodeCheckpointDiffOnRemoteWorkspaceOwner(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "change")); !os.IsNotExist(err) {
 		t.Fatalf("remote rewind did not restore files: %v", err)
+	}
+}
+
+func TestAutomaticNodeRestoreOnRemoteWorkspaceOwner(t *testing.T) {
+	worker, controller, id := remoteWorkspaceRestoreFixture(t, "sqlite")
+	root := worker.RunWorkspace(id)
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	git("init", "-q")
+	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-qm", "base")
+	start, err := runtime.CreateNodeWorkspaceCheckpoint(context.Background(), root, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "change")
+	if err := os.WriteFile(file, []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := runtime.CreateNodeWorkspaceCheckpoint(context.Background(), root, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveWorkspaceRestoreWorker(t, worker, http.HandlerFunc(worker.HandleWorkspaceCheckpoint))
+	run, _ := worker.repo.RunState(id)
+	token, err := worker.repo.BeginWorkspaceUse(id, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.repo.FinishWorkspaceUse(id, token, time.Now().UTC(), nil, "")
+	if err := worker.repo.MarkNodeCheckpointRestorePending(id, id, token, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	response, err := controller.requestWorkspaceCheckpoint(context.Background(), run, domain.RunnerWorkspaceRequest{RunID: id, Operation: domain.RunnerWorkspaceOperationNodeCheckpointRestore, NodeCheckpoint: &start, NodeCheckpointEnd: &recovery, CheckpointLease: token})
+	if err != nil || response.Error != "" || response.Status >= 400 {
+		t.Fatalf("remote automatic restore: %+v, %v", response, err)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("remote restore left new file: %v", err)
+	}
+}
+
+func TestFailedChildRestoreStopsParentScheduler(t *testing.T) {
+	e, store := newRecoveryEngine(t)
+	e.ConfigureExecution("parent-worker", "parent-host", time.Minute, true)
+	parent := domain.Run{ID: "parent-restore-failure", Status: "running", Generation: 1, OwnerInstanceID: "parent-worker", LeaseUntil: time.Now().Add(time.Minute), ExecutionContext: domain.TelemetryContext{NodeCheckpointsEnabled: true}, WorkflowSnapshot: domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "sop", Type: "sop"}}}, Nodes: map[string]*domain.NodeRun{"sop": {NodeID: "sop", Status: "running"}}}
+	child := domain.Run{ID: "child-restore-failure", Status: "running", Generation: 1, ExecutionContext: domain.TelemetryContext{NodeCheckpointsEnabled: true, WorkspaceRunID: parent.ID, ParentRunID: parent.ID}, Nodes: map[string]*domain.NodeRun{"node": {NodeID: "node", Status: "running", Attempt: 2}}}
+	for _, run := range []domain.Run{parent, child} {
+		if err := store.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	token, err := store.BeginWorkspaceUse(parent.ID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkNodeCheckpointRestorePending(parent.ID, child.ID, token, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FailInterruptedNodeCheckpointRestore(child.ID, parent.ID, token, "node", 2, 1, "restore interrupted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishWorkspaceUse(parent.ID, token, time.Now().UTC(), nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { e.execute(context.Background(), parent.ID); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("parent scheduler did not stop")
+	}
+	parent, _ = store.RunState(parent.ID)
+	if parent.Status != "failed" || parent.Nodes["sop"].Status != "failed" || parent.OwnerInstanceID != "" {
+		t.Fatalf("parent did not settle: %+v", parent)
+	}
+	if _, err := store.BeginSharedNodeRewind(child.ID, parent.ID, time.Now().UTC()); err != nil {
+		t.Fatalf("child recovery remains blocked: %v", err)
 	}
 }
 
@@ -339,6 +586,20 @@ func TestNodeRewindPreservesRecoveryAndResetsDownstream(t *testing.T) {
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
+	// A child task can still be exiting even if its own run is no longer
+	// active. It shares this checkout and must fence the parent's rewind.
+	if err := store.PutRunnerTask(domain.RunnerTask{ID: "rewind-child-task", RunID: "child", Provider: "codex", NodeCheckpointRunID: run.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RewindNodeWorkspace(context.Background(), run.ID, "a", 1, "", 42); err == nil {
+		t.Fatal("rewind accepted a live task in the shared workspace")
+	}
+	if got, err := os.ReadFile(file); err != nil || string(got) != "after" {
+		t.Fatalf("busy rewind changed file = %q, %v", got, err)
+	}
+	if err := store.CancelRunnerTask("rewind-child-task", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.RewindNodeWorkspace(context.Background(), run.ID, "a", 1, "", 42); err != nil {
 		t.Fatal(err)
 	}
@@ -358,6 +619,64 @@ func TestNodeRewindPreservesRecoveryAndResetsDownstream(t *testing.T) {
 	}
 	if got, err := os.ReadFile(file); err != nil || string(got) != "after" {
 		t.Fatalf("undo file = %q, %v", got, err)
+	}
+}
+
+func TestChildNodeRewindRestoresSharedWorkspace(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	manager := runtime.NewManager(t.TempDir())
+	e := New(store, manager)
+	root := manager.RunWorkspace("parent-rewind")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	git("init", "-q")
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("before"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base")
+	checkpoint, err := runtime.CreateNodeWorkspaceCheckpoint(context.Background(), root, []domain.RepositoryContext{{RepositoryID: "repo"}}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("after"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parent := domain.Run{ID: "parent-rewind", Status: "failed", ExecutionContext: domain.TelemetryContext{NodeCheckpointsEnabled: true}, Nodes: map[string]*domain.NodeRun{"sop": {NodeID: "sop", Status: "failed", ChildRunID: "child-rewind"}}}
+	child := domain.Run{ID: "child-rewind", Status: "failed", Repository: domain.RepositoryContext{RepositoryID: "repo"}, ExecutionContext: domain.TelemetryContext{NodeCheckpointsEnabled: true, ParentRunID: parent.ID, WorkspaceRunID: parent.ID}, Nodes: map[string]*domain.NodeRun{"work": {NodeID: "work", Status: "failed", Attempt: 1, Checkpoints: []domain.NodeCheckpoint{checkpoint}}}}
+	for _, run := range []domain.Run{parent, child} {
+		if err := store.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.RewindNodeWorkspace(context.Background(), child.ID, "work", 1, "", 42); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(file); err != nil || string(content) != "before" {
+		t.Fatalf("child rewind = %q, %v", content, err)
+	}
+	current, _ := store.RunState(child.ID)
+	if current.Nodes["work"].Status != "pending" || len(current.Nodes["work"].RecoveryCheckpoints) != 1 || len(current.Events) == 0 || current.Events[len(current.Events)-1].ActorID != 42 {
+		t.Fatalf("child rewind state = %+v", current)
+	}
+	recovery := current.Nodes["work"].RecoveryCheckpoints[0].ID
+	if err := e.RewindNodeWorkspace(context.Background(), child.ID, "work", 0, recovery, 42); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(file); err != nil || string(content) != "after" {
+		t.Fatalf("child undo = %q, %v", content, err)
 	}
 }
 

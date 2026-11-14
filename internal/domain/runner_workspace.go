@@ -41,15 +41,16 @@ const (
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	NodeCheckpoint        *NodeCheckpoint `json:"nodeCheckpoint,omitempty"`
-	NodeCheckpointEnd     *NodeCheckpoint `json:"nodeCheckpointEnd,omitempty"`
-	NodeCheckpointAttempt int             `json:"nodeCheckpointAttempt,omitempty"`
-	RunKind               string          `json:"runKind,omitempty"`
+	NodeCheckpoint         *NodeCheckpoint `json:"nodeCheckpoint,omitempty"`
+	NodeCheckpointEnd      *NodeCheckpoint `json:"nodeCheckpointEnd,omitempty"`
+	NodeCheckpointAttempt  int             `json:"nodeCheckpointAttempt,omitempty"`
+	DiscardNodeCheckpoints bool            `json:"discardNodeCheckpoints,omitempty"`
+	RunKind                string          `json:"runKind,omitempty"`
 	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
 	// opens terminals beside running tasks instead of waiting for their fence.
-	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`
-	NodeCheckpointsEnabled bool                     `json:"nodeCheckpointsEnabled,omitempty"`
-	CheckpointTransfer *WorkspaceCheckpointTransfer `json:"checkpointTransfer,omitempty"`
+	ConcurrentEdit         bool                         `json:"concurrentEdit,omitempty"`
+	NodeCheckpointsEnabled bool                         `json:"nodeCheckpointsEnabled,omitempty"`
+	CheckpointTransfer     *WorkspaceCheckpointTransfer `json:"checkpointTransfer,omitempty"`
 	// Only the control plane may allow a clean checkout to be refreshed, before
 	// any non-preparation node has run. Later nodes keep their frozen baseline.
 	RefreshCleanRepositories bool `json:"refreshCleanRepositories,omitempty"`

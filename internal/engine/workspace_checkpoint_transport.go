@@ -207,8 +207,17 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 					result.Error, result.Status = err.Error(), http.StatusConflict
 				}
 			case domain.RunnerWorkspaceOperationNodeCheckpointDiff:
-				if request.NodeCheckpoint == nil || request.NodeCheckpointEnd == nil {
-					result.Error, result.Status = "checkpoint and end required", http.StatusBadRequest
+				if request.NodeCheckpoint == nil {
+					result.Error, result.Status = "checkpoint required", http.StatusBadRequest
+					break
+				}
+				if request.NodeCheckpointEnd == nil {
+					diff, truncated, files, err := runtime.DiffNodeWorkspaceCurrent(r.Context(), root, *request.NodeCheckpoint, 1<<20)
+					if err != nil {
+						result.Error, result.Status = err.Error(), http.StatusConflict
+					} else {
+						result.Payload, _ = json.Marshal(map[string]any{"files": files, "diff": diff, "truncated": truncated, "live": true})
+					}
 					break
 				}
 				files, err := runtime.NodeWorkspaceCheckpointChangedFiles(r.Context(), root, *request.NodeCheckpoint, *request.NodeCheckpointEnd)
@@ -326,7 +335,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload, _ = json.Marshal(map[string]any{"restoredArtifacts": restored})
 			}
 		} else if request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
-			archive, err := runtime.CreateWorkspaceCheckpoint(root)
+			archive, err := runtime.CreateWorkspaceCheckpointFiltered(root, request.DiscardNodeCheckpoints)
 			if err != nil {
 				result.Error = err.Error()
 			} else {

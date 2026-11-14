@@ -128,11 +128,23 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
 	if executionContext.ParentRunID == "" {
+		// Workspace-only conversations have a separate lifecycle. A workflow
+		// without repositories has no Git checkout to checkpoint.
+		executionContext.NodeCheckpointsEnabled = !workspace && len(repositories) > 0
+		if project, ok := e.repo.Project(executionContext.ProjectID); ok && project.NodeCheckpointsDisabled {
+			executionContext.NodeCheckpointsEnabled = false
+		}
 		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
 		executionContext.WorkspaceRunID = ""
+	} else {
+		parent, ok := e.repo.RunState(executionContext.ParentRunID)
+		if !ok {
+			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
+		}
+		executionContext.NodeCheckpointsEnabled = parent.ExecutionContext.NodeCheckpointsEnabled
 	}
 	if executionContext.ExecutionRunnerID == "" {
-		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
+		if runner, ok := e.cloudPoolRunnerForCheckpoints(executionContext.ProjectID, executionContext.NodeCheckpointsEnabled); ok {
 			executionContext.ExecutionRunnerID = runner.ID
 			executionContext.ExecutionPool = domain.ExecutionModeCloud
 		} else if e.cloudPoolRequired(executionContext.ProjectID) {
@@ -149,16 +161,18 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
+	if executionContext.NodeCheckpointsEnabled && executionContext.ExecutionRunnerID != "" {
+		runner, ok := e.repo.Runner(executionContext.ExecutionRunnerID)
+		if !ok || !runner.SupportsNodeCheckpoints() {
+			return domain.Run{}, fmt.Errorf("节点检查点需要执行机器升级至 %s 或更新版本", domain.RunnerVersionNodeCheckpoints)
+		}
+	}
 	wf.SandboxSnapshot = resolvedSandboxSnapshot(profile, resources)
 	r := domain.Run{
 		ID: id, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
 		Repository: firstRepository, ExecutionContext: executionContext, Nodes: map[string]*domain.NodeRun{},
 		CreatedAt: now, UpdatedAt: now,
 	}
-	// Checkpoint execution remains disabled while the rewind and cross-process
-	// writer fencing are incomplete. Do not expose a partial restore path that
-	// can discard concurrent work.
-	r.ExecutionContext.NodeCheckpointsEnabled = false
 	if len(repositories) > 0 {
 		r.Repositories = append([]domain.RepositoryContext(nil), repositories...)
 	}

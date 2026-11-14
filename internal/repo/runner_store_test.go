@@ -235,9 +235,13 @@ func TestRunnerNodeCheckpointTaskLeaseFollowsWorkspaceLease(t *testing.T) {
 
 func TestActiveRunnerTasksForWorkspaceIncludesChildSOP(t *testing.T) {
 	s := newTestRunner(t)
+	if err := s.PutRun(domain.Run{ID: "legacy-child", Status: "running", ExecutionContext: domain.TelemetryContext{WorkspaceRunID: "parent"}, Nodes: map[string]*domain.NodeRun{}}); err != nil {
+		t.Fatal(err)
+	}
 	for _, task := range []domain.RunnerTask{
 		{ID: "parent-task", RunID: "parent", Provider: "codex", NodeCheckpointRunID: "parent"},
 		{ID: "child-task", RunID: "child", Provider: "codex", NodeCheckpointRunID: "parent"},
+		{ID: "legacy-child-task", RunID: "legacy-child", Provider: "codex"},
 		{ID: "unrelated-task", RunID: "other", Provider: "codex", NodeCheckpointRunID: "other"},
 	} {
 		if err := s.PutRunnerTask(task); err != nil {
@@ -245,7 +249,7 @@ func TestActiveRunnerTasksForWorkspaceIncludesChildSOP(t *testing.T) {
 		}
 	}
 	tasks, err := s.ActiveRunnerTasksForWorkspace("parent")
-	if err != nil || len(tasks) != 2 {
+	if err != nil || len(tasks) != 3 {
 		t.Fatalf("active shared tasks = %+v, %v", tasks, err)
 	}
 }

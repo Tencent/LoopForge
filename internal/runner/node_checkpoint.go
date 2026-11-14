@@ -23,11 +23,10 @@ func (d *Daemon) executeNodeCheckpointCreate(ctx context.Context, task domain.Ru
 	if task.NodeCheckpointLease == "" {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: "checkpoint workspace lease is required"}
 	}
-	// StartTask checked the token against the durable workspace lease. This
-	// task holds the exclusive runner gate, so a stale reservation can safely
-	// be replaced without racing an old writer on this daemon.
-	d.nodeCheckpointReservations.Store(key, task.NodeCheckpointLease)
 	workspace := d.taskWorkspace(task)
+	if err := d.reserveNodeCheckpointFence(key, task.NodeCheckpointLease); err != nil {
+		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+	}
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
 	}
