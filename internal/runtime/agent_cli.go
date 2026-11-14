@@ -377,103 +377,136 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		return nil, nil, fmt.Errorf("%s 需要指定模型", AgentCLILabel(kind))
 	}
 	homeEnv = filepath.ToSlash(homeEnv)
-	env := map[string]string{}
 	switch kind {
 	case AgentCLIOpenCode:
-		npm := map[string]string{AgentCLIProtocolChat: "@ai-sdk/openai-compatible", AgentCLIProtocolResponses: "@ai-sdk/openai", AgentCLIProtocolMessages: "@ai-sdk/anthropic"}[protocol]
-		endpoint := baseURL
-		if protocol == AgentCLIProtocolMessages && !strings.HasSuffix(endpoint, "/v1") {
-			// Base URLs follow the Claude Code convention; the AI SDK wants /v1.
-			endpoint += "/v1"
-		}
-		config := map[string]any{
-			"provider": map[string]any{"agentflow": map[string]any{
-				"npm":     npm,
-				"name":    "AgentFlow",
-				"options": map[string]any{"baseURL": endpoint, "apiKey": "{env:" + agentCLIKeyEnv + "}"},
-				"models":  map[string]any{model: map[string]any{"name": model}},
-			}},
-			"model":      "agentflow/" + model,
-			"autoupdate": false,
-			"share":      "disabled",
-		}
-		if prompt := strings.TrimSpace(options.SystemPromptFile); prompt != "" {
-			config["instructions"] = []string{prompt}
-		}
-		content, _ := json.Marshal(config)
-		env[agentCLIKeyEnv] = key
-		env["OPENCODE_CONFIG_CONTENT"] = string(content)
-		env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+		return applyOpenCodeCredential(key, baseURL, protocol, model, options.SystemPromptFile, argv)
 	case AgentCLICursor:
-		env["CURSOR_API_KEY"] = key
 		if model != "" {
 			argv = withCursorModelArg(argv, CursorModelID(model, options.Effort, cred.Models))
 		}
+		return argv, map[string]string{"CURSOR_API_KEY": key}, nil
 	case AgentCLIAntigravity:
-		settings := map[string]any{}
-		if protocol == AgentCLIProtocolChat {
-			env["AGY_LLM_GATEWAY_URL"] = baseURL
-			env["AGY_LLM_GATEWAY_API_KEY"] = key
-			env["AGY_LLM_GATEWAY_WIRE_PROTOCOL"] = "openai"
-			env["AGY_LLM_GATEWAY_MODELS"] = model
-		} else {
-			settings["modelProvider"] = "gemini"
-			env["GEMINI_API_KEY"] = key
-			if baseURL != "" {
-				env["GOOGLE_GEMINI_BASE_URL"] = baseURL
-				env["GEMINI_BASE_URL"] = baseURL
-			}
-		}
-		data, _ := json.Marshal(settings)
-		if err := writeAgentCLIFile(home, ".gemini/antigravity-cli/settings.json", data); err != nil {
-			return nil, nil, err
-		}
-		if options.ReadOnly {
-			// Inline settings replace the file's for the session, so they
-			// repeat the provider.
-			settings["permissions"] = agyChatPermissions
-			inline, _ := json.Marshal(settings)
-			argv = insertBeforeFlag(argv, "-p", "--settings", string(inline))
-		}
+		return applyAntigravityCredential(home, key, baseURL, protocol, model, options.ReadOnly, argv)
 	case AgentCLIKimi:
-		providerType := map[string]string{AgentCLIProtocolChat: "openai", AgentCLIProtocolResponses: "openai_responses", AgentCLIProtocolMessages: "anthropic"}[protocol]
-		lines := []string{`default_model = "agentflow"`, "", "[providers.agentflow]"}
-		if baseURL == "" {
-			lines = append(lines, `type = "kimi"`)
-		} else {
-			lines = append(lines, "type = "+strconv.Quote(providerType), "base_url = "+strconv.Quote(baseURL))
-		}
-		lines = append(lines, "api_key_env = "+strconv.Quote(agentCLIKeyEnv), "",
-			"[models.agentflow]", `provider = "agentflow"`, "model = "+strconv.Quote(model),
-			"max_context_size = 262144", `capabilities = ["thinking", "tool_use"]`, "")
-		if hook := options.ApprovalCommand; hook != "" {
-			// Kimi validates 1–600 seconds and allows the tool on timeout; the
-			// hook's own retry budget ends well before that.
-			lines = append(lines, "[[hooks]]", `event = "PreToolUse"`, "command = "+strconv.Quote(hook), "timeout = 600", "")
-		}
-		if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte(strings.Join(lines, "\n"))); err != nil {
-			return nil, nil, err
-		}
-		env[agentCLIKeyEnv] = key
-		env["KIMI_CODE_HOME"] = homeEnv + "/.kimi-code"
-		env["KIMI_DISABLE_TELEMETRY"] = "1"
+		return applyKimiCredential(home, homeEnv, key, baseURL, protocol, model, options.ApprovalCommand, argv)
 	case AgentCLIPi:
-		api := agentCLIPiAPI(protocol)
-		models, _ := json.MarshalIndent(map[string]any{"providers": map[string]any{"agentflow": map[string]any{
-			"baseUrl": baseURL, "api": api, "apiKey": "$" + agentCLIKeyEnv,
-			"models": []map[string]any{{"id": model, "reasoning": true}},
-		}}}, "", "  ")
-		if err := writeAgentCLIFile(home, ".pi/agent/models.json", models); err != nil {
-			return nil, nil, err
-		}
-		env[agentCLIKeyEnv] = key
-		env["PI_CODING_AGENT_DIR"] = homeEnv + "/.pi/agent"
+		return applyPiCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	case AgentCLIDeepSeek:
 		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
+	}
+}
+
+// applyOpenCodeCredential passes OpenCode its whole provider configuration
+// through OPENCODE_CONFIG_CONTENT.
+func applyOpenCodeCredential(key, baseURL, protocol, model, systemPromptFile string, argv []string) ([]string, map[string]string, error) {
+	npm := map[string]string{AgentCLIProtocolChat: "@ai-sdk/openai-compatible", AgentCLIProtocolResponses: "@ai-sdk/openai", AgentCLIProtocolMessages: "@ai-sdk/anthropic"}[protocol]
+	endpoint := baseURL
+	if protocol == AgentCLIProtocolMessages && !strings.HasSuffix(endpoint, "/v1") {
+		// Base URLs follow the Claude Code convention; the AI SDK wants /v1.
+		endpoint += "/v1"
+	}
+	config := map[string]any{
+		"provider": map[string]any{"agentflow": map[string]any{
+			"npm":     npm,
+			"name":    "AgentFlow",
+			"options": map[string]any{"baseURL": endpoint, "apiKey": "{env:" + agentCLIKeyEnv + "}"},
+			"models":  map[string]any{model: map[string]any{"name": model}},
+		}},
+		"model":      "agentflow/" + model,
+		"autoupdate": false,
+		"share":      "disabled",
+	}
+	if prompt := strings.TrimSpace(systemPromptFile); prompt != "" {
+		config["instructions"] = []string{prompt}
+	}
+	content, _ := json.Marshal(config)
+	env := map[string]string{
+		agentCLIKeyEnv:                key,
+		"OPENCODE_CONFIG_CONTENT":     string(content),
+		"OPENCODE_DISABLE_AUTOUPDATE": "1",
+	}
+	return argv, env, nil
+}
+
+// applyAntigravityCredential points Antigravity at the gateway (chat
+// protocol) or Gemini, and in read-only chat repeats the settings inline with
+// the deny rules.
+func applyAntigravityCredential(home AgentCLIHome, key, baseURL, protocol, model string, readOnly bool, argv []string) ([]string, map[string]string, error) {
+	env := map[string]string{}
+	settings := map[string]any{}
+	if protocol == AgentCLIProtocolChat {
+		env["AGY_LLM_GATEWAY_URL"] = baseURL
+		env["AGY_LLM_GATEWAY_API_KEY"] = key
+		env["AGY_LLM_GATEWAY_WIRE_PROTOCOL"] = "openai"
+		env["AGY_LLM_GATEWAY_MODELS"] = model
+	} else {
+		settings["modelProvider"] = "gemini"
+		env["GEMINI_API_KEY"] = key
+		if baseURL != "" {
+			env["GOOGLE_GEMINI_BASE_URL"] = baseURL
+			env["GEMINI_BASE_URL"] = baseURL
+		}
+	}
+	data, _ := json.Marshal(settings)
+	if err := writeAgentCLIFile(home, ".gemini/antigravity-cli/settings.json", data); err != nil {
+		return nil, nil, err
+	}
+	if readOnly {
+		// Inline settings replace the file's for the session, so they
+		// repeat the provider.
+		settings["permissions"] = agyChatPermissions
+		inline, _ := json.Marshal(settings)
+		argv = insertBeforeFlag(argv, "-p", "--settings", string(inline))
+	}
+	return argv, env, nil
+}
+
+// applyKimiCredential writes Kimi Code's config.toml with one agentflow
+// provider and model, plus the approval hook when there is one.
+func applyKimiCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, approvalCommand string, argv []string) ([]string, map[string]string, error) {
+	providerType := map[string]string{AgentCLIProtocolChat: "openai", AgentCLIProtocolResponses: "openai_responses", AgentCLIProtocolMessages: "anthropic"}[protocol]
+	lines := []string{`default_model = "agentflow"`, "", "[providers.agentflow]"}
+	if baseURL == "" {
+		lines = append(lines, `type = "kimi"`)
+	} else {
+		lines = append(lines, "type = "+strconv.Quote(providerType), "base_url = "+strconv.Quote(baseURL))
+	}
+	lines = append(lines, "api_key_env = "+strconv.Quote(agentCLIKeyEnv), "",
+		"[models.agentflow]", `provider = "agentflow"`, "model = "+strconv.Quote(model),
+		"max_context_size = 262144", `capabilities = ["thinking", "tool_use"]`, "")
+	if approvalCommand != "" {
+		// Kimi validates 1–600 seconds and allows the tool on timeout; the
+		// hook's own retry budget ends well before that.
+		lines = append(lines, "[[hooks]]", `event = "PreToolUse"`, "command = "+strconv.Quote(approvalCommand), "timeout = 600", "")
+	}
+	if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte(strings.Join(lines, "\n"))); err != nil {
+		return nil, nil, err
+	}
+	env := map[string]string{
+		agentCLIKeyEnv:           key,
+		"KIMI_CODE_HOME":         homeEnv + "/.kimi-code",
+		"KIMI_DISABLE_TELEMETRY": "1",
+	}
+	return argv, env, nil
+}
+
+// applyPiCredential writes Pi's models.json with one agentflow provider.
+func applyPiCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
+	api := agentCLIPiAPI(protocol)
+	models, _ := json.MarshalIndent(map[string]any{"providers": map[string]any{"agentflow": map[string]any{
+		"baseUrl": baseURL, "api": api, "apiKey": "$" + agentCLIKeyEnv,
+		"models": []map[string]any{{"id": model, "reasoning": true}},
+	}}}, "", "  ")
+	if err := writeAgentCLIFile(home, ".pi/agent/models.json", models); err != nil {
+		return nil, nil, err
+	}
+	env := map[string]string{
+		agentCLIKeyEnv:        key,
+		"PI_CODING_AGENT_DIR": homeEnv + "/.pi/agent",
 	}
 	return argv, env, nil
 }
