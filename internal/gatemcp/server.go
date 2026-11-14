@@ -13,6 +13,15 @@ import (
 
 const Version = "1.0.0"
 
+// Limits shared by inputSchema and decodeResult so the advertised schema and
+// the enforced validation cannot drift apart.
+const (
+	maxTextLen     = 4000
+	maxTitleLen    = 500
+	maxSeverityLen = 64
+	maxFindings    = 50
+)
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
@@ -40,17 +49,17 @@ var inputSchema = map[string]any{
 	"required":             []string{"decision", "reason"},
 	"properties": map[string]any{
 		"decision":       map[string]any{"type": "string", "enum": []string{"pass", "rework", "fail", "human"}},
-		"reason":         map[string]any{"type": "string", "minLength": 1, "maxLength": 4000},
-		"actionRequired": map[string]any{"type": "string", "maxLength": 4000},
-		"summary":        map[string]any{"type": "string", "maxLength": 4000},
+		"reason":         map[string]any{"type": "string", "minLength": 1, "maxLength": maxTextLen},
+		"actionRequired": map[string]any{"type": "string", "maxLength": maxTextLen},
+		"summary":        map[string]any{"type": "string", "maxLength": maxTextLen},
 		"findings": map[string]any{
-			"type": "array", "maxItems": 50,
+			"type": "array", "maxItems": maxFindings,
 			"items": map[string]any{
 				"type": "object", "additionalProperties": false, "required": []string{"title"},
 				"properties": map[string]any{
-					"severity": map[string]any{"type": "string", "maxLength": 64},
-					"title":    map[string]any{"type": "string", "minLength": 1, "maxLength": 500},
-					"evidence": map[string]any{"type": "string", "maxLength": 4000},
+					"severity": map[string]any{"type": "string", "maxLength": maxSeverityLen},
+					"title":    map[string]any{"type": "string", "minLength": 1, "maxLength": maxTitleLen},
+					"evidence": map[string]any{"type": "string", "maxLength": maxTextLen},
 				},
 			},
 		},
@@ -144,6 +153,25 @@ func decodeResult(raw json.RawMessage) (gateResult, string) {
 	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return gateResult{}, "arguments must be an object"
 	}
+	if problem := rejectUnknownFields(fields); problem != "" {
+		return gateResult{}, problem
+	}
+	var result gateResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return gateResult{}, "arguments must match the submit_gate_result schema"
+	}
+	if result.Findings == nil {
+		result.Findings = []finding{}
+	}
+	if problem := normalizeResult(&result); problem != "" {
+		return gateResult{}, problem
+	}
+	return result, ""
+}
+
+// rejectUnknownFields enforces additionalProperties=false on the raw arguments
+// and on every finding, before the struct decode silently drops extra keys.
+func rejectUnknownFields(fields map[string]json.RawMessage) string {
 	allowed := map[string]bool{"decision": true, "reason": true, "actionRequired": true, "summary": true, "findings": true}
 	var unknown []string
 	for key := range fields {
@@ -153,71 +181,79 @@ func decodeResult(raw json.RawMessage) (gateResult, string) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return gateResult{}, "unknown fields: " + strings.Join(unknown, ", ")
+		return "unknown fields: " + strings.Join(unknown, ", ")
 	}
-	if rawFindings, ok := fields["findings"]; ok {
-		var items []map[string]json.RawMessage
-		if string(rawFindings) == "null" || json.Unmarshal(rawFindings, &items) != nil {
-			return gateResult{}, "findings must be an array with at most 50 items"
-		}
-		allowedFinding := map[string]bool{"severity": true, "title": true, "evidence": true}
-		for _, item := range items {
-			for key := range item {
-				if !allowedFinding[key] {
-					return gateResult{}, "finding contains unknown fields"
-				}
+	rawFindings, ok := fields["findings"]
+	if !ok {
+		return ""
+	}
+	var items []map[string]json.RawMessage
+	if string(rawFindings) == "null" || json.Unmarshal(rawFindings, &items) != nil {
+		return "findings must be an array with at most 50 items"
+	}
+	allowedFinding := map[string]bool{"severity": true, "title": true, "evidence": true}
+	for _, item := range items {
+		for key := range item {
+			if !allowedFinding[key] {
+				return "finding contains unknown fields"
 			}
 		}
 	}
-	var result gateResult
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return gateResult{}, "arguments must match the submit_gate_result schema"
-	}
-	if result.Findings == nil {
-		result.Findings = []finding{}
-	}
+	return ""
+}
+
+// normalizeResult trims the text fields in place and checks them against the
+// submit_gate_result schema limits.
+func normalizeResult(result *gateResult) string {
 	switch result.Decision {
 	case "pass", "rework", "fail", "human":
 	default:
-		return gateResult{}, "decision must be pass, rework, fail, or human"
+		return "decision must be pass, rework, fail, or human"
 	}
 	result.Reason = strings.TrimSpace(result.Reason)
 	if result.Reason == "" {
-		return gateResult{}, "reason is required"
+		return "reason is required"
 	}
-	if len(result.Reason) > 4000 {
-		return gateResult{}, "reason is too long"
+	if len(result.Reason) > maxTextLen {
+		return "reason is too long"
 	}
 	result.ActionRequired = strings.TrimSpace(result.ActionRequired)
-	if len(result.ActionRequired) > 4000 {
-		return gateResult{}, "actionRequired must be a string with at most 4000 characters"
+	if len(result.ActionRequired) > maxTextLen {
+		return "actionRequired must be a string with at most 4000 characters"
 	}
 	if result.Decision == "human" && result.ActionRequired == "" {
-		return gateResult{}, "actionRequired is required when decision is human"
+		return "actionRequired is required when decision is human"
 	}
 	result.Summary = strings.TrimSpace(result.Summary)
-	if len(result.Summary) > 4000 {
-		return gateResult{}, "summary must be a string with at most 4000 characters"
+	if len(result.Summary) > maxTextLen {
+		return "summary must be a string with at most 4000 characters"
 	}
-	if len(result.Findings) > 50 {
-		return gateResult{}, "findings must be an array with at most 50 items"
+	if len(result.Findings) > maxFindings {
+		return "findings must be an array with at most 50 items"
 	}
 	for i := range result.Findings {
-		result.Findings[i].Title = strings.TrimSpace(result.Findings[i].Title)
-		if result.Findings[i].Title == "" {
-			return gateResult{}, "each finding requires a title"
-		}
-		if len(result.Findings[i].Title) > 500 {
-			return gateResult{}, "finding title is too long"
-		}
-		if len(result.Findings[i].Severity) > 64 {
-			return gateResult{}, "finding severity is invalid"
-		}
-		if len(result.Findings[i].Evidence) > 4000 {
-			return gateResult{}, "finding evidence is invalid"
+		if problem := normalizeFinding(&result.Findings[i]); problem != "" {
+			return problem
 		}
 	}
-	return result, ""
+	return ""
+}
+
+func normalizeFinding(item *finding) string {
+	item.Title = strings.TrimSpace(item.Title)
+	if item.Title == "" {
+		return "each finding requires a title"
+	}
+	if len(item.Title) > maxTitleLen {
+		return "finding title is too long"
+	}
+	if len(item.Severity) > maxSeverityLen {
+		return "finding severity is invalid"
+	}
+	if len(item.Evidence) > maxTextLen {
+		return "finding evidence is invalid"
+	}
+	return ""
 }
 
 func writeResultExclusive(path string, result gateResult) (err error) {
