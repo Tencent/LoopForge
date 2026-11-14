@@ -71,7 +71,7 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 ## Quick start
 
-Install **Git** and clone the repository first. The installer checks Docker, Compose, Python 3 and curl and offers to install missing components. Python/curl installation supports apt, dnf and yum on Linux; the Compose plugin supports x86_64/arm64 and verifies the official release SHA-256. macOS needs a working Python 3 and Docker Desktop; Homebrew can install missing components. Ordinary Linux users are supported through Docker group access or sudo. Set `LOOPFORGE_YES=1` to accept installation prompts. Package and image downloads require internet access.
+Runs on **macOS and Linux**; Windows is not supported for server deployment yet. Install **Git** and clone the repository first. The installer checks Docker, Compose, Python 3 and curl and offers to install missing components. Python/curl installation supports apt, dnf and yum on Linux; the Compose plugin supports x86_64/arm64 and verifies the official release SHA-256. macOS needs a working Python 3 and Docker Desktop; Homebrew can install missing components. Ordinary Linux users are supported through Docker group access or sudo. Set `LOOPFORGE_YES=1` to accept installation prompts. Package and image downloads require internet access.
 
 ```bash
 git clone https://github.com/Tencent/LoopForge.git
@@ -90,6 +90,71 @@ MIRROR=ghcr.nju.edu.cn ./start.sh
 Open the address printed by the installer and create your account; the first one becomes the administrator. The service listens on `0.0.0.0:8090` by default. On a cloud host, the installer reads the public IP from the provider's metadata service and prints it; allow the port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
 
 For GitLab, Gitea, Gogs and other Git hosts, [set up Git SSH](docs/deployment.md#git-repositories-over-ssh) to check out and push branches with a personal key. PR/MR and Issue automation requires a hosting API token or a separately configured MCP.
+
+### Install on a cloud server
+
+1. **Get a server.** Any Linux cloud server works (Ubuntu 22.04 / 24.04 recommended, x86_64 or arm64). Images and sandbox workspaces take space, so keep at least 30 GB of disk free.
+2. **Open the security group.** Allow inbound 22 (SSH) and 8090. Until the administrator account exists, allow 8090 only from your own IP.
+3. **Log in.** Use `ssh root@<public-ip>` (or your provider's default user, such as `ubuntu`). Many providers disable password login for root, so a correct password still gets `Permission denied`; use an SSH key or the provider's web console instead.
+4. **Install and start:**
+
+   ```bash
+   sudo apt-get update && sudo apt-get install -y git curl python3
+   git clone https://github.com/Tencent/LoopForge.git
+   cd LoopForge
+   ./start.sh
+   ```
+
+   The script offers to install Docker if it is missing, then prints `http://<public-ip>:8090`.
+5. **Create the administrator.** Open that address; the first account you register becomes the administrator. Then widen access to 8090 for your team. For a team-only installation, set `AGENTFLOW_ALLOW_SIGNUP=false` in `.env` to turn off self sign-up and run `./start.sh` again to apply it.
+
+<details>
+<summary><b>Use a domain with HTTPS</b> (recommended for public access)</summary>
+
+<br>
+
+Point your domain's A record at the server's public IP and allow 80 and 443 in the security group. With Caddy (available from apt on Ubuntu 24.04 / Debian 12), certificates are issued and renewed automatically:
+
+```bash
+sudo apt-get install -y caddy
+sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
+loopforge.example.com {
+    reverse_proxy 127.0.0.1:8090
+}
+EOF
+sudo systemctl reload caddy
+```
+
+Then add `AGENTFLOW_SECURE_COOKIES=true` to `LoopForge/.env` and run `./start.sh` again. Once `https://` works, you can close 8090 in the security group and keep only 80 and 443.
+
+</details>
+
+<details>
+<summary><b>Upgrades and backups</b></summary>
+
+<br>
+
+To upgrade, back up first (below), then check out the target release tag in the `LoopForge` directory and refresh the containers. The release's `compose.yaml` pins the matching image, migrations and seeds; your data is kept:
+
+```bash
+git fetch --tags && git checkout vX.Y.Z   # replace with the target release tag
+./start.sh pull
+```
+
+Do not use `git pull`: it fails on a release-tag checkout, and on `main` it can bring in unreleased commits that do not match the pinned image. If `.env` sets `LOOPFORGE_IMAGE`, update it to the same release. Data migration scripts under `migrations/` that ship with a new version are not applied automatically; see [Which migrations an upgrade needs](docs/deployment.md#which-migrations-an-upgrade-needs) and the [deployment guide](docs/deployment.md#container-installation).
+
+To back up the database (do it before each upgrade, or schedule it with cron):
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines --triggers --databases loopforge' \
+  | gzip > "loopforge-$(date +%F).sql.gz"
+```
+
+Prefix `docker` with `sudo` if your user cannot access Docker.
+
+</details>
+
+> **Cloud hosts in mainland China:** some hosts clone from GitHub very slowly, and a clone that times out leaves the conversation workspace unable to open. For now, point git at a proxy as described in [Slow networks](docs/deployment.md#slow-networks-clone-and-image-build-limits). Faster options such as CNB and a mirror repository are planned.
 
 ### Try it without an API key
 
