@@ -29,7 +29,7 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 	root := t.TempDir()
 	eng := engine.New(store, runtime.NewManager(filepath.Join(root, "workspaces")))
 	svc := preview.NewService(store, preview.NewDBStore(store), preview.Config{
-		PublicScheme: "http", FrameAncestors: "http://studio.test", MaxFiles: 20,
+		PublicScheme: "http", PublicHost: "preview.test", FrameAncestors: "http://studio.test", MaxFiles: 20,
 		MaxCompressed: 1 << 20, MaxExpanded: 1 << 20, DefaultRetention: time.Hour,
 		FinalizationTimeout: time.Minute, SessionTTL: time.Hour,
 	})
@@ -105,12 +105,29 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 	}
 
 	pageReq := httptest.NewRequest(http.MethodGet, "/preview/"+token+"/", nil)
-	pageReq.Host = "studio.test"
+	pageReq.Host = "preview.test"
 	pageReq.Header.Set("Accept", "text/html")
 	pageRec := httptest.NewRecorder()
 	h.ServeHTTP(pageRec, pageReq)
 	if pageRec.Code != 200 || !strings.Contains(pageRec.Body.String(), "hello") {
 		t.Fatalf("preview page %d %s", pageRec.Code, pageRec.Body.String())
+	}
+	// A token is valid only on the isolated host; conversely that host must
+	// never fall through to platform routes, including malformed preview URLs.
+	for _, target := range []string{
+		"http://studio.test" + u.Path,
+		"http://preview.test/", "http://preview.test/api/bootstrap",
+		"http://preview.test/api/auth/current", "http://preview.test/mcp",
+		"http://preview.test/preview/not-a-token/",
+		"http://preview.test:8090/api/bootstrap",
+	} {
+		r := httptest.NewRequest(http.MethodGet, target, nil)
+		r.Header.Set("X-Forwarded-Host", "studio.test")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("origin boundary %s = %d, want 404", target, w.Code)
+		}
 	}
 	if !strings.Contains(pageRec.Body.String(), `/preview/`+token+`/assets/app.js`) {
 		t.Fatalf("path hosting should prefix root-relative assets: %s", pageRec.Body.String())
@@ -125,7 +142,7 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 		t.Fatalf("a bundle without a router must keep the preview path from the start: %s", pageRec.Body.String())
 	}
 	routeReq := httptest.NewRequest(http.MethodGet, "/preview/"+token+"/skills/42", nil)
-	routeReq.Host = "studio.test"
+	routeReq.Host = "preview.test"
 	routeReq.Header.Set("Accept", "text/html")
 	routeRec := httptest.NewRecorder()
 	h.ServeHTTP(routeRec, routeReq)
@@ -139,10 +156,10 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 		t.Fatalf("referrer %q", got)
 	}
 	strayReq := httptest.NewRequest(http.MethodGet, "/login?next=%2Fskills", nil)
-	strayReq.Host = "studio.test"
+	strayReq.Host = "preview.test"
 	strayReq.Header.Set("Sec-Fetch-Mode", "navigate")
 	strayReq.Header.Set("Sec-Fetch-Site", "same-origin")
-	strayReq.Header.Set("Referer", "http://studio.test/preview/"+token+"/skills")
+	strayReq.Header.Set("Referer", "http://preview.test/preview/"+token+"/skills")
 	strayRec := httptest.NewRecorder()
 	h.ServeHTTP(strayRec, strayReq)
 	if strayRec.Code != http.StatusSeeOther || strayRec.Header().Get("Location") != "/preview/"+token+"/login?next=%2Fskills" {
@@ -160,7 +177,7 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 	}
 
 	assetReq := httptest.NewRequest(http.MethodGet, "/preview/"+token+"/assets/app.js", nil)
-	assetReq.Host = "studio.test"
+	assetReq.Host = "preview.test"
 	assetRec := httptest.NewRecorder()
 	h.ServeHTTP(assetRec, assetReq)
 	if assetRec.Code != 200 || !strings.Contains(assetRec.Body.String(), "console.log") {
@@ -168,7 +185,7 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 	}
 
 	guessReq := httptest.NewRequest(http.MethodGet, "/preview/deadbeefdeadbeefdeadbeefdeadbeef/", nil)
-	guessReq.Host = "studio.test"
+	guessReq.Host = "preview.test"
 	guessRec := httptest.NewRecorder()
 	h.ServeHTTP(guessRec, guessReq)
 	if guessRec.Code == 200 {
@@ -182,6 +199,18 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 	h.ServeHTTP(badRec, badReq)
 	if badRec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid backend %d %s", badRec.Code, badRec.Body.String())
+	}
+	for _, endpoint := range []struct{ method, path string }{
+		{http.MethodPost, "/session"}, {http.MethodPut, "/backend"},
+	} {
+		r := httptest.NewRequest(endpoint.method, "http://studio.test/api/runs/run-preview-api/preview"+endpoint.path,
+			strings.NewReader(`{"backendUrl":"http://studio.test:8090/api"}`))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("studio backend accepted on %s: %d %s", endpoint.path, w.Code, w.Body.String())
+		}
 	}
 
 	backendBody, _ := json.Marshal(map[string]string{"backendUrl": "https://api.example.com/v1"})
@@ -208,7 +237,7 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 		t.Fatalf("backend session url %s", backendSession.URL)
 	}
 	backedReq := httptest.NewRequest(http.MethodGet, "/preview/"+backendToken+"/", nil)
-	backedReq.Host = "studio.test"
+	backedReq.Host = "preview.test"
 	backedReq.Header.Set("Accept", "text/html")
 	backedRec := httptest.NewRecorder()
 	h.ServeHTTP(backedRec, backedReq)
@@ -290,7 +319,7 @@ func TestPreviewAPIAndPathGateway(t *testing.T) {
 		t.Fatalf("parse token failed from %s", otherSession.URL)
 	}
 	otherPageReq := httptest.NewRequest(http.MethodGet, "/preview/"+otherToken+"/", nil)
-	otherPageReq.Host = "studio.test"
+	otherPageReq.Host = "preview.test"
 	otherPageReq.Header.Set("Accept", "text/html")
 	otherPageRec := httptest.NewRecorder()
 	h.ServeHTTP(otherPageRec, otherPageReq)

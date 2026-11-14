@@ -408,10 +408,17 @@ func resolveWorkspaceRoot(override string) (string, error) {
 
 func attachPreviewStore(e *engine.Engine, s *repo.Store) {
 	cfg := preview.LoadConfig()
-	e.SetPreview(preview.NewService(s, preview.NewDBStore(s), cfg))
+	svc := preview.NewService(s, preview.NewDBStore(s), cfg)
+	e.SetPreview(svc)
 	if cfg.PublicHost != "" {
 		log.Printf("preview gateway path=/preview/{token}/ public=%s://%s", cfg.PublicScheme, cfg.PublicHost)
 	} else {
 		log.Printf("preview gateway path=/preview/{token}/")
+	}
+	if host := svc.ReservedHost(); host != "" {
+		log.Printf("preview host %s is reserved: studio pages and APIs return 404 there", host)
+	}
+	if err := svc.IsolationError(); err != nil {
+		log.Printf("WARNING: online previews disabled; archives and ZIP downloads remain available: %v", err)
 	}
 }

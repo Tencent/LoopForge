@@ -11,6 +11,7 @@ import (
 
 	"agentflow/internal/apperr"
 	"agentflow/internal/engine"
+	"agentflow/internal/preview"
 
 	"github.com/gin-gonic/gin"
 )
@@ -117,7 +118,10 @@ func cors() gin.HandlerFunc {
 	}
 }
 
-func securityHeaders() gin.HandlerFunc {
+// securityHeaders resolves the preview service on every request instead of
+// capturing it when routes are built, so a service attached through
+// Engine.SetPreview after New still lands in the studio's frame-src.
+func securityHeaders(previews func() *preview.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -125,6 +129,13 @@ func securityHeaders() gin.HandlerFunc {
 		path := c.Request.URL.Path
 		frameOptions := "DENY"
 		csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; frame-src 'self' blob:"
+		if path == "/" || path == "/index.html" {
+			// The studio must allow the same origin the preview gateway serves.
+			// Other resource policies and the preview's sandbox remain unchanged.
+			if previewOrigin := currentPreviewOrigin(previews); previewOrigin != "" {
+				csp += " " + previewOrigin
+			}
+		}
 		if strings.HasPrefix(path, "/chatbot/") {
 			frameOptions = "SAMEORIGIN"
 			csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; frame-src 'self' blob:; form-action 'self'"
@@ -156,6 +167,13 @@ func securityHeaders() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func currentPreviewOrigin(previews func() *preview.Service) string {
+	if previews == nil {
+		return ""
+	}
+	return previews().PublicOrigin()
 }
 
 type gzipWriter struct {

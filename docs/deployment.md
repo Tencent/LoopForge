@@ -135,6 +135,35 @@ A platform administrator can share one CodeBuddy API Key under **Platform admini
 
 Configure provider credentials in the platform UI, not the host's global CLI configuration. Credentials are bound to the responsible actor by the upstream runtime. The home composer and SOP roles each choose a built-in CLI independently. Select the executor beside the home model selector; its API key (and optional Codex/Claude base URL) comes from your personal settings. Changing the executor preserves the draft; saved conversations record the executor used. Main Bot writes still pass through the platform tool gateway and its approval checks. Requirement clarification and notifications continue to use CodeBuddy. A scheduled assistant task can select any supported CLI and runs as an ordinary chat turn; Codex and Claude Code still need that account's own credential. Live model tests are opt-in; set `AGENTFLOW_LIVE_TESTS=1` only for the acceptance suites that need to load local credentials.
 
+## Isolated preview host
+
+Archived frontend previews execute agent-produced HTML and JavaScript. Serve them on a dedicated hostname, separate from every studio hostname:
+
+```dotenv
+AGENTFLOW_PREVIEW_PUBLIC_URL=https://preview.example.net
+AGENTFLOW_PREVIEW_FRAME_ANCESTORS=https://studio.example.com
+```
+
+`FRAME_ANCESTORS` is a space-separated list of exact studio origins, including schemes and non-default ports. Wildcards and `'self'` are rejected. A different port on the same hostname is insufficient because cookies are not port-scoped. Prefer a separate registrable domain and keep studio cookies host-only. Do not configure studio APIs, authentication proxies, or other trusted applications on the preview hostname.
+
+Route both hostnames to the platform, preserving the original `Host`. For example, a Caddy reverse proxy on the platform host can use:
+
+```caddyfile
+studio.example.com, preview.example.net {
+    reverse_proxy 127.0.0.1:8090
+}
+```
+
+Configure DNS and TLS for both names. Compose forwards both variables and `AGENTFLOW_PUBLIC_URL`; restart with `./start.sh` after changing `.env`. Native deployments export the same variables. For local HTTP development, use `http://localhost:8090` for previews and `http://127.0.0.1:8090` for the studio, listing the latter in `FRAME_ANCESTORS`.
+
+The studio's iframe policy allows the validated preview origin. Preview frames, copied links and standalone windows use the server-issued URL unchanged. When the studio uses HTTPS, configure an HTTPS preview URL too; browsers block HTTP frames as mixed content.
+
+The server serves preview tokens only on the preview hostname and returns 404 for platform pages/APIs there. That hostname stays reserved even while `FRAME_ANCESTORS` is missing or invalid; such a configuration disables online previews but never reopens studio routes on the preview hostname. Session creation fails with a configuration error until an isolated origin and the requesting studio hostname are configured; meanwhile startup logs a warning and the preview hostname's 404 responses explain the configuration. The run's preview tab then explains the problem while keeping the ZIP download and backend settings available; archiving and the authenticated ZIP download API keep working. Existing same-origin preview links stop working; reopen the preview after configuring the isolated host. No SQL migration or runner upgrade is needed.
+
+Earlier releases described `AGENTFLOW_PREVIEW_PUBLIC_URL` as the studio's own public URL. A hostname listed in `FRAME_ANCESTORS`, or used by `AGENTFLOW_PUBLIC_URL`, is treated as a studio and never reserved. Any other hostname in `AGENTFLOW_PREVIEW_PUBLIC_URL` is reserved for previews, so before upgrading, point that variable at the dedicated preview hostname or remove it. A preview backend stored on a studio hostname is rejected; clear or change it from the run's preview tab.
+
+Preview bundles can use ES modules, local styles/assets and the existing History API routing shim. Bundle external scripts, styles and fonts locally. CSP blocks nested frames, workers/service workers, and resource requests to the studio; backend connections require a configured backend URL on a non-studio hostname and that backend's CORS support. Preview/backend cookies and storage are separate from studio credentials. The optional backend interceptor is a convenience, not an isolation boundary. Previews share their dedicated origin with each other; this does not provide isolation between preview producers.
+
 ## Observability schema
 
 After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog. Both steps can be repeated without touching existing rows. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads. Application startup does not run data migrations.

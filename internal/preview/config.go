@@ -29,6 +29,7 @@ type Config struct {
 	PublicScheme        string
 	PublicURL           string
 	FrameAncestors      string
+	StudioURL           string // AGENTFLOW_PUBLIC_URL: never a preview host or backend
 	MaxFiles            int
 	MaxCompressed       int64
 	MaxExpanded         int64
@@ -42,6 +43,7 @@ func LoadConfig() Config {
 		PublicScheme:        strings.TrimSpace(os.Getenv("AGENTFLOW_PREVIEW_PUBLIC_SCHEME")),
 		PublicURL:           strings.TrimSpace(os.Getenv("AGENTFLOW_PREVIEW_PUBLIC_URL")),
 		FrameAncestors:      strings.TrimSpace(os.Getenv("AGENTFLOW_PREVIEW_FRAME_ANCESTORS")),
+		StudioURL:           strings.TrimSpace(os.Getenv("AGENTFLOW_PUBLIC_URL")),
 		MaxFiles:            intFromEnv("AGENTFLOW_PREVIEW_MAX_FILES", DefaultMaxFiles),
 		MaxCompressed:       int64FromEnv("AGENTFLOW_PREVIEW_MAX_COMPRESSED", DefaultMaxCompressed),
 		MaxExpanded:         int64FromEnv("AGENTFLOW_PREVIEW_MAX_EXPANDED", DefaultMaxExpanded),
@@ -63,9 +65,6 @@ func LoadConfig() Config {
 	}
 	if cfg.PublicScheme == "" {
 		cfg.PublicScheme = "https"
-	}
-	if cfg.FrameAncestors == "" {
-		cfg.FrameAncestors = "'self'"
 	}
 	if scheme, host, ok := SplitPublicURL(cfg.PublicURL); ok {
 		cfg.PublicScheme = scheme
@@ -112,8 +111,8 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 	return d
 }
 
-// SplitPublicURL parses an optional preview serving origin such as
-// https://loopforge.example.com. Path and query are ignored; the gateway still
+// SplitPublicURL parses the dedicated preview serving origin, for example
+// https://preview.example.net. Path and query are ignored; the gateway still
 // serves /preview/{token}/ on that host.
 func SplitPublicURL(raw string) (scheme, host string, ok bool) {
 	raw = strings.TrimSpace(raw)
