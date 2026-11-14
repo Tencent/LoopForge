@@ -420,44 +420,7 @@ func (a *antigravityStream) translate(s *ClaudeStream, raw map[string]any) []str
 		return s.Init(stringValue(raw["conversation_id"]), stringValue(init["model"]))
 	case "step_update":
 		step, _ := raw["step_update"].(map[string]any)
-		index := int64Value(step["step_index"])
-		done := stringValue(step["state"]) == "DONE"
-		switch stringValue(step["step_type"]) {
-		case "agent_response":
-			delta := stringValue(step["text_delta"])
-			a.text.WriteString(delta)
-			out := s.Delta(fmt.Sprintf("text#%d", index), "text", delta)
-			if done {
-				if usage, ok := step["usage"].(map[string]any); ok {
-					s.AddUsage(int64Value(usage["input_tokens"]), int64Value(usage["output_tokens"]), int64Value(usage["cache_read_tokens"]), 0, int64Value(usage["thinking_tokens"]))
-				}
-				out = append(out, s.Text(a.text.String())...)
-				a.text.Reset()
-			}
-			return out
-		case "tool":
-			info, _ := step["tool_info"].(map[string]any)
-			id := fmt.Sprintf("%s#%d", stringValue(step["conversation_id"]), index)
-			name := stringValue(info["name"])
-			input := info["parameters"]
-			if params, ok := input.(map[string]any); ok && name == "call_mcp_tool" {
-				name, input = "mcp__"+stringValue(params["ServerName"])+"__"+stringValue(params["ToolName"]), params["Arguments"]
-			}
-			out := s.ToolUse(id, name, input)
-			if done {
-				failure := errorText(info["error"])
-				if failure != "" {
-					out = append(out, s.ToolResult(id, true, failure)...)
-				} else {
-					out = append(out, s.ToolResult(id, false, jsonText(info["output"]))...)
-				}
-			}
-			return out
-		case "error_message":
-			if text := errorText(step["error"]); text != "" {
-				a.failure = text
-			}
-		}
+		return a.translateStep(s, step)
 	case "result":
 		result, _ := raw["result"].(map[string]any)
 		failed := stringValue(result["status"]) != "SUCCESS"
@@ -476,6 +439,62 @@ func (a *antigravityStream) translate(s *ClaudeStream, raw map[string]any) []str
 		return s.Result(text, failed)
 	}
 	return nil
+}
+
+// translateStep dispatches one `step_update` payload by its step_type.
+// error_message steps only remember the failure for the final result.
+func (a *antigravityStream) translateStep(s *ClaudeStream, step map[string]any) []string {
+	index := int64Value(step["step_index"])
+	done := stringValue(step["state"]) == "DONE"
+	switch stringValue(step["step_type"]) {
+	case "agent_response":
+		return a.responseStep(s, step, index, done)
+	case "tool":
+		return antigravityToolStep(s, step, index, done)
+	case "error_message":
+		if text := errorText(step["error"]); text != "" {
+			a.failure = text
+		}
+	}
+	return nil
+}
+
+// responseStep streams the text delta and, once the step is DONE, records its
+// usage and emits the accumulated text as one block.
+func (a *antigravityStream) responseStep(s *ClaudeStream, step map[string]any, index int64, done bool) []string {
+	delta := stringValue(step["text_delta"])
+	a.text.WriteString(delta)
+	out := s.Delta(fmt.Sprintf("text#%d", index), "text", delta)
+	if done {
+		if usage, ok := step["usage"].(map[string]any); ok {
+			s.AddUsage(int64Value(usage["input_tokens"]), int64Value(usage["output_tokens"]), int64Value(usage["cache_read_tokens"]), 0, int64Value(usage["thinking_tokens"]))
+		}
+		out = append(out, s.Text(a.text.String())...)
+		a.text.Reset()
+	}
+	return out
+}
+
+// antigravityToolStep reports the tool call (unwrapping call_mcp_tool into the
+// mcp__<server>__<tool> name) and, once the step is DONE, its result.
+func antigravityToolStep(s *ClaudeStream, step map[string]any, index int64, done bool) []string {
+	info, _ := step["tool_info"].(map[string]any)
+	id := fmt.Sprintf("%s#%d", stringValue(step["conversation_id"]), index)
+	name := stringValue(info["name"])
+	input := info["parameters"]
+	if params, ok := input.(map[string]any); ok && name == "call_mcp_tool" {
+		name, input = "mcp__"+stringValue(params["ServerName"])+"__"+stringValue(params["ToolName"]), params["Arguments"]
+	}
+	out := s.ToolUse(id, name, input)
+	if done {
+		failure := errorText(info["error"])
+		if failure != "" {
+			out = append(out, s.ToolResult(id, true, failure)...)
+		} else {
+			out = append(out, s.ToolResult(id, false, jsonText(info["output"]))...)
+		}
+	}
+	return out
 }
 
 // kimiStream: `kimi -p --output-format stream-json` prints whole messages;
