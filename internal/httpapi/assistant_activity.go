@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+// Bounds of the persisted activity transcript: one event's text, the whole
+// log's payload bytes, and the number of events.
+const (
+	assistantActivityTextLimit  = 32000
+	assistantActivityByteLimit  = 512 << 10
+	assistantActivityEventLimit = 512
+)
+
 // Coalesce token deltas while retaining the order of thinking, tools and status.
 // Bound transcript metadata independently of the live generation event window.
 type assistantActivityLog struct {
@@ -47,12 +55,7 @@ func (l *assistantActivityLog) add(event assistantStreamEvent) {
 		if event.Full && strings.Contains(last.Text, strings.TrimSpace(event.Text)) {
 			return
 		}
-		if len(last.Text)+len(event.Text) > 32000 || l.bytes+len(event.Text) > 512<<10 {
-			l.truncated = true
-			return
-		}
-		last.Text += event.Text
-		l.bytes += len(event.Text)
+		l.appendToLastLocked(last, event.Text)
 		return
 	}
 	if event.Kind == "agentText" {
@@ -65,11 +68,11 @@ func (l *assistantActivityLog) add(event assistantStreamEvent) {
 	event.Input = truncateRunes(event.Input, 8000)
 	event.Output = truncateRunes(event.Output, 8000)
 	size := len(event.Text) + len(event.Detail) + len(event.Input) + len(event.Output)
-	if len(l.events) >= 512 || l.bytes+size > 512<<10 {
+	if len(l.events) >= assistantActivityEventLimit || l.bytes+size > assistantActivityByteLimit {
 		l.truncated = true
 		return
 	}
-	event.Text = truncateRunes(event.Text, 32000)
+	event.Text = truncateRunes(event.Text, assistantActivityTextLimit)
 	event.Detail = truncateRunes(event.Detail, 4000)
 	event.Full = false
 	l.events = append(l.events, event)
@@ -89,13 +92,7 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 		if len(l.events) == 0 || l.events[len(l.events)-1].Kind != "text" {
 			return
 		}
-		last := &l.events[len(l.events)-1]
-		if len(last.Text)+len(text) > 32000 || l.bytes+len(text) > 512<<10 {
-			l.truncated = true
-			return
-		}
-		last.Text += text
-		l.bytes += len(text)
+		l.appendToLastLocked(&l.events[len(l.events)-1], text)
 		return
 	}
 	// The CLI sends the finished block again after the tool that followed it.
@@ -116,7 +113,7 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 			return
 		}
 		if event.Full && strings.TrimSpace(last.Text) != "" && (strings.HasPrefix(trimmed, strings.TrimSpace(last.Text)) || strings.HasPrefix(replyCompact(trimmed), replyCompact(last.Text))) {
-			if len(text) > 32000 || l.bytes-len(last.Text)+len(text) > 512<<10 {
+			if len(text) > assistantActivityTextLimit || l.bytes-len(last.Text)+len(text) > assistantActivityByteLimit {
 				l.truncated = true
 				return
 			}
@@ -124,15 +121,10 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 			last.Text = text
 			return
 		}
-		if len(last.Text)+len(text) > 32000 || l.bytes+len(text) > 512<<10 {
-			l.truncated = true
-			return
-		}
-		last.Text += text
-		l.bytes += len(text)
+		l.appendToLastLocked(last, text)
 		return
 	}
-	if len(l.events) >= 512 || l.bytes+len(text) > 512<<10 {
+	if len(l.events) >= assistantActivityEventLimit || l.bytes+len(text) > assistantActivityByteLimit {
 		l.truncated = true
 		return
 	}
@@ -140,12 +132,24 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 	event.Full = false
 	event.Tool = ""
 	event.Detail = ""
-	event.Text = truncateRunes(text, 32000)
+	event.Text = truncateRunes(text, assistantActivityTextLimit)
 	if event.ID == "" {
 		event.ID = fmt.Sprintf("text-%d", len(l.events))
 	}
 	l.events = append(l.events, event)
 	l.bytes += len(event.Text)
+}
+
+// appendToLastLocked extends last, the log's final event, with text. When the
+// event or the whole log would exceed its bound it marks the log truncated and
+// leaves last unchanged.
+func (l *assistantActivityLog) appendToLastLocked(last *domain.AssistantActivityEvent, text string) {
+	if len(last.Text)+len(text) > assistantActivityTextLimit || l.bytes+len(text) > assistantActivityByteLimit {
+		l.truncated = true
+		return
+	}
+	last.Text += text
+	l.bytes += len(text)
 }
 
 func (l *assistantActivityLog) dropTextLocked() {
