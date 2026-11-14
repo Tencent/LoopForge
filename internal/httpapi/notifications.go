@@ -152,20 +152,12 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 	if req.InteractionEnabled != nil {
 		bot.InteractionEnabled = *req.InteractionEnabled
 	}
-	if req.Model != nil {
-		model := strings.TrimSpace(*req.Model)
-		if model == "" {
-			model = domain.DefaultNotificationReportModel
-		}
-		if assistantAllowedModel(model, assistantKnownCatalog()) != model {
-			c.JSON(400, gin.H{"error": "请选择有效的 CodeBuddy 模型"})
-			return
-		}
-		bot.Model = model
+	model, ok := notificationBotModel(req.Model, bot.Model)
+	if !ok {
+		c.JSON(400, gin.H{"error": "请选择有效的 CodeBuddy 模型"})
+		return
 	}
-	if bot.Model == "" {
-		bot.Model = domain.DefaultNotificationReportModel
-	}
+	bot.Model = model
 	if !h.access(c, bot.ProjectID, true) {
 		return
 	}
@@ -214,19 +206,12 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 				h.providerError(c, err)
 				return
 			}
-			found := false
-			for _, chat := range chats {
-				if chat.ID == *req.TargetID {
-					target := chat
-					bot.Target = &target
-					found = true
-					break
-				}
-			}
+			target, found := findNotificationTarget(chats, *req.TargetID)
 			if !found {
 				c.JSON(409, gin.H{"error": "目标会话已不可用，请刷新列表"})
 				return
 			}
+			bot.Target = target
 			bot.Health = "ready"
 			now := time.Now().UTC()
 			bot.LastCheckedAt = &now
@@ -246,6 +231,39 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		return
 	}
 	c.JSON(200, stored)
+}
+
+// notificationBotModel resolves the report model a saved bot should use. A
+// requested model (blank means the default) must be in the known catalog,
+// otherwise ok is false; without a request the current model is kept, and an
+// empty result falls back to the default.
+func notificationBotModel(requested *string, current string) (model string, ok bool) {
+	model = current
+	if requested != nil {
+		model = strings.TrimSpace(*requested)
+		if model == "" {
+			model = domain.DefaultNotificationReportModel
+		}
+		if assistantAllowedModel(model, assistantKnownCatalog()) != model {
+			return "", false
+		}
+	}
+	if model == "" {
+		model = domain.DefaultNotificationReportModel
+	}
+	return model, true
+}
+
+// findNotificationTarget returns a copy of the provider chat whose ID matches
+// targetID, so a target is only accepted from the freshly refreshed list.
+func findNotificationTarget(chats []domain.BotChat, targetID string) (*domain.BotChat, bool) {
+	for _, chat := range chats {
+		if chat.ID == targetID {
+			target := chat
+			return &target, true
+		}
+	}
+	return nil, false
 }
 func (h *notificationHandlers) sessions(c *gin.Context) {
 	bot, ok := h.find(c, true)
