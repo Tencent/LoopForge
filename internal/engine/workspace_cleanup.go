@@ -175,21 +175,7 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 	}
 	runnerID := e.defaultExecutionRunner(run)
 	if !run.WorkspaceCleanedAt.IsZero() {
-		if runnerID == "" {
-			return
-		}
-		task, exists := e.repo.RunnerTask("rt-cleanup-" + safeRunnerPath(run.ID))
-		if !exists {
-			// A removed Runner has already cleaned its workspace as part of
-			// deregistration; otherwise allow the request to be queued again.
-			if _, runnerExists := e.repo.Runner(runnerID); runnerExists {
-				_ = e.repo.ResetRunWorkspaceCleanup(run.ID)
-			}
-			return
-		}
-		if task.Status == domain.RunnerTaskFailed || task.Status == domain.RunnerTaskCanceled {
-			_ = e.repo.ResetRunWorkspaceCleanup(run.ID)
-		}
+		e.rearmCleanedRunnerWorkspace(run, runnerID)
 		return
 	}
 	claimed, err := checkpointClaimed, error(nil)
@@ -203,39 +189,70 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 	if !claimed {
 		return
 	}
-	reset := func(cleanupErr error) {
-		log.Printf("cleanup terminal workspace %s: %v", run.ID, cleanupErr)
-		if resetErr := e.repo.ResetRunWorkspaceCleanup(run.ID); resetErr != nil {
-			log.Printf("reset terminal workspace cleanup %s: %v", run.ID, resetErr)
-		}
-	}
 	if e.foreignWorkspaceBind(run) {
-		if !checkpointClaimed {
-			reset(fmt.Errorf("workspace belongs to %s:%s", run.WorkspaceHost, run.WorkspaceRoot))
-			return
-		}
-		meta, _ := e.repo.WorkspaceCheckpoint(run.ID)
-		ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
-		defer stop()
-		response, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, Operation: domain.RunnerWorkspaceOperationReclaim, CheckpointLease: meta.LeaseToken})
-		if err != nil {
-			reset(err)
-		} else if response.Error != "" {
-			reset(fmt.Errorf("%s", response.Error))
-		}
+		e.reclaimForeignWorkspace(run, checkpointClaimed)
 		return
 	}
 	if err := e.releaseRunEnvironment(run.ID, true); err != nil {
-		reset(err)
+		e.resetTerminalWorkspaceCleanup(run.ID, err)
 		return
 	}
 	if runnerID != "" {
 		if err := e.queueRunnerRunCleanup(run); err != nil {
-			reset(err)
+			e.resetTerminalWorkspaceCleanup(run.ID, err)
 			return
 		}
 	}
 	log.Printf("cleaned terminal workspace %s", run.ID)
+}
+
+// rearmCleanedRunnerWorkspace re-opens a run already marked cleaned when its
+// durable Runner cleanup task is missing (and the Runner still exists) or
+// ended without cleaning, so a later sweep can queue the request again.
+func (e *Engine) rearmCleanedRunnerWorkspace(run domain.Run, runnerID string) {
+	if runnerID == "" {
+		return
+	}
+	task, exists := e.repo.RunnerTask("rt-cleanup-" + safeRunnerPath(run.ID))
+	if !exists {
+		// A removed Runner has already cleaned its workspace as part of
+		// deregistration; otherwise allow the request to be queued again.
+		if _, runnerExists := e.repo.Runner(runnerID); runnerExists {
+			_ = e.repo.ResetRunWorkspaceCleanup(run.ID)
+		}
+		return
+	}
+	if task.Status == domain.RunnerTaskFailed || task.Status == domain.RunnerTaskCanceled {
+		_ = e.repo.ResetRunWorkspaceCleanup(run.ID)
+	}
+}
+
+// reclaimForeignWorkspace asks the host that owns a foreign workspace bind to
+// reclaim it. Without a claimed checkpoint the workspace is left alone.
+// Any failure resets the cleanup claim for a later sweep.
+func (e *Engine) reclaimForeignWorkspace(run domain.Run, checkpointClaimed bool) {
+	if !checkpointClaimed {
+		e.resetTerminalWorkspaceCleanup(run.ID, fmt.Errorf("workspace belongs to %s:%s", run.WorkspaceHost, run.WorkspaceRoot))
+		return
+	}
+	meta, _ := e.repo.WorkspaceCheckpoint(run.ID)
+	ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stop()
+	response, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, Operation: domain.RunnerWorkspaceOperationReclaim, CheckpointLease: meta.LeaseToken})
+	if err != nil {
+		e.resetTerminalWorkspaceCleanup(run.ID, err)
+	} else if response.Error != "" {
+		e.resetTerminalWorkspaceCleanup(run.ID, fmt.Errorf("%s", response.Error))
+	}
+}
+
+// resetTerminalWorkspaceCleanup logs a failed terminal cleanup and clears the
+// claim so the workspace becomes eligible for a later sweep.
+func (e *Engine) resetTerminalWorkspaceCleanup(runID string, cleanupErr error) {
+	log.Printf("cleanup terminal workspace %s: %v", runID, cleanupErr)
+	if resetErr := e.repo.ResetRunWorkspaceCleanup(runID); resetErr != nil {
+		log.Printf("reset terminal workspace cleanup %s: %v", runID, resetErr)
+	}
 }
 
 func (e *Engine) liveSandboxRunIDs() []string {
