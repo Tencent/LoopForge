@@ -5,7 +5,7 @@ export const CREDENTIALS = {
   codeBuddyApiKey: "CodeBuddy API Key",
   codexApiKey: "Codex API Key",
   claudeCodeApiKey: "Claude Code API Key",
-  "agentCli.qoder": "Qoder CLI API Key",
+  "agentCli.qoder": "Qoder CLI 个人访问令牌（PAT）",
   gitToken: "GitHub Git Token",
   gitSshKey: "Git SSH 密钥",
 };
@@ -144,7 +144,7 @@ export function credentialGuide(field, owner) {
 }
 
 const RULES = [
-  ["agentCli.qoder", /Qoder CLI[^。\n]{0,20}(API Key|凭据)|QODER_PERSONAL_ACCESS_TOKEN[^\n]*rejected/i],
+  ["agentCli.qoder", /Qoder CLI[^。\n]{0,20}(API Key|凭据|个人访问令牌|PAT)|QODER_PERSONAL_ACCESS_TOKEN[^\n]*rejected/i],
   ["codexApiKey", /Codex[^。\n]{0,16}API Key/i],
   ["claudeCodeApiKey", /Claude Code[^。\n]{0,16}API Key/i],
   [

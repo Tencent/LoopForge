@@ -26,6 +26,9 @@ const (
 // bare package name resolves to no version at all.
 const DeepSeekHarnessVersion = "0.2.2-rc.1"
 
+// QoderCLIVersion pins the same release for sandbox and conversation installs.
+const QoderCLIVersion = "1.1.88"
+
 type onDemandCLI struct {
 	Engine       string
 	Binary       string
@@ -50,7 +53,7 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
 		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true, Bundled: true},
-		"qoder":       {Engine: "qoder", Binary: "qodercli", Package: "@qoder-ai/qodercli@1.1.88"},
+		"qoder":       {Engine: "qoder", Binary: "qodercli", Package: "@qoder-ai/qodercli@" + QoderCLIVersion},
 	}
 }
 

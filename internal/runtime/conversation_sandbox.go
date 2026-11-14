@@ -137,7 +137,7 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 func conversationCLISetup(provider, binary string) (string, error) {
 	packages := map[string]string{
 		"codebuddy": "@tencent-ai/codebuddy-code", "codex": "@openai/codex", "claude-code": "@anthropic-ai/claude-code",
-		AgentCLIOpenCode: "opencode-ai", AgentCLIKimi: "@moonshot-ai/kimi-code", AgentCLIPi: "@earendil-works/pi-coding-agent", AgentCLIDeepSeek: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, AgentCLIQoder: "@qoder-ai/qodercli@1.1.88",
+		AgentCLIOpenCode: "opencode-ai", AgentCLIKimi: "@moonshot-ai/kimi-code", AgentCLIPi: "@earendil-works/pi-coding-agent", AgentCLIDeepSeek: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, AgentCLIQoder: "@qoder-ai/qodercli@" + QoderCLIVersion,
 	}
 	installer := ""
 	if pkg := packages[provider]; pkg != "" {
