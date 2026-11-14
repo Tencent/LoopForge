@@ -1,6 +1,7 @@
 package gitwork
 
 import (
+	"fmt"
 	"os/exec"
 	"testing"
 )
@@ -68,5 +69,59 @@ func TestUndeliveredChangesWithoutRemoteOrBaselineReportsOnlyEdits(t *testing.T)
 	}
 	if got := undeliveredPaths(files); got != "M README.md" {
 		t.Fatalf("files=%s, want only the uncommitted edit", got)
+	}
+}
+
+// The check is read-only: intent-adding untracked files for the diff must
+// happen in a scratch index, so `git status` of the checkout (and therefore
+// the workspace snapshot taken afterwards) is unchanged.
+func TestUndeliveredChangesLeavesCheckoutIndexUntouched(t *testing.T) {
+	_, checkout := workBranchFixture(t)
+	writeUndeliveredFile(t, checkout, "README.md", "baseline\nedited\n")
+	writeUndeliveredFile(t, checkout, "src/new.go", "package src\n")
+	before := workBranchGit(t, checkout, "status", "--porcelain")
+
+	files, err := UndeliveredChanges(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := undeliveredPaths(files); got != "M README.md,A src/new.go" {
+		t.Fatalf("files=%s", got)
+	}
+	if after := workBranchGit(t, checkout, "status", "--porcelain"); after != before {
+		t.Fatalf("git status changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// Many remote refs (ancestors, diverged siblings and unrelated tips) still
+// resolve to the closest delivered commit.
+func TestUndeliveredChangesWithManyRemoteRefs(t *testing.T) {
+	_, checkout := workBranchFixture(t)
+	writeUndeliveredFile(t, checkout, "pushed.txt", "on the remote\n")
+	workBranchGit(t, checkout, "add", "pushed.txt")
+	workBranchGit(t, checkout, "commit", "-qm", "pushed")
+	workBranchGit(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/feature/existing")
+	for i := 0; i < 30; i++ {
+		workBranchGit(t, checkout, "push", "-q", "origin", fmt.Sprintf("HEAD~1:refs/heads/old/%02d", i))
+	}
+	workBranchGit(t, checkout, "checkout", "-q", "-b", "sibling")
+	for i := 0; i < 5; i++ {
+		writeUndeliveredFile(t, checkout, fmt.Sprintf("sibling%d.txt", i), "x\n")
+		workBranchGit(t, checkout, "add", ".")
+		workBranchGit(t, checkout, "commit", "-qm", "sibling")
+		workBranchGit(t, checkout, "push", "-q", "origin", fmt.Sprintf("HEAD:refs/heads/sibling/%d", i))
+	}
+	workBranchGit(t, checkout, "checkout", "-q", "feature/existing")
+	workBranchGit(t, checkout, "fetch", "-q", "origin")
+	writeUndeliveredFile(t, checkout, "local.txt", "only here\n")
+	workBranchGit(t, checkout, "add", "local.txt")
+	workBranchGit(t, checkout, "commit", "-qm", "local only")
+
+	files, err := UndeliveredChanges(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := undeliveredPaths(files); got != "A local.txt" {
+		t.Fatalf("files=%s, want only the unpushed commit", got)
 	}
 }

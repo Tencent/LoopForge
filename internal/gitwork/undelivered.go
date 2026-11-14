@@ -22,14 +22,23 @@ func UndeliveredChanges(workspace string) ([]PatchFileSummary, error) {
 	if err != nil || base == "" {
 		return nil, err
 	}
-	if err := StageUntracked(workspace); err != nil {
+	// The check must not touch the checkout's index: the workspace snapshot
+	// taken afterwards should show exactly what the Agent left behind. The
+	// untracked files are therefore intent-added into a scratch copy of the
+	// index and every diff reads that copy through GIT_INDEX_FILE.
+	env, cleanup, err := scratchIndexEnv(workspace)
+	if err != nil {
 		return nil, err
 	}
-	nameStatus, err := diffAgainstBaseline(workspace, base, "--name-status")
+	defer cleanup()
+	if err := stageUntrackedEnv(workspace, env); err != nil {
+		return nil, err
+	}
+	nameStatus, err := diffAgainstBaselineEnv(workspace, env, base, "--name-status")
 	if err != nil || len(bytes.TrimSpace(nameStatus)) == 0 {
 		return nil, err
 	}
-	numstat, err := diffAgainstBaseline(workspace, base, "--numstat")
+	numstat, err := diffAgainstBaselineEnv(workspace, env, base, "--numstat")
 	if err != nil {
 		return nil, err
 	}
@@ -37,8 +46,8 @@ func UndeliveredChanges(workspace string) ([]PatchFileSummary, error) {
 }
 
 // deliveredBase is the newest commit of HEAD's history that a remote ref
-// already holds: HEAD itself once it was pushed, otherwise the closest remote
-// ancestor. Without any remote ancestor the recorded run baseline is used,
+// already holds: HEAD itself once it was pushed, otherwise the merge base of
+// HEAD and all remote tips. Without any remote ancestor the recorded run baseline is used,
 // and an unborn HEAD yields "" (nothing to compare against).
 func deliveredBase(workspace string) (string, error) {
 	headOut, err := exec.Command("git", "-C", workspace, "rev-parse", "--verify", "-q", "HEAD^{commit}").Output()
@@ -54,20 +63,19 @@ func deliveredBase(workspace string) (string, error) {
 	if strings.TrimSpace(string(unpushed)) == "0" {
 		return head, nil
 	}
-	best, bestCount := "", -1
-	refs, err := exec.Command("git", "-C", workspace, "for-each-ref", "--format=%(objectname)", "refs/remotes").Output()
-	if err == nil {
-		for _, sha := range strings.Fields(string(refs)) {
-			if exec.Command("git", "-C", workspace, "merge-base", "--is-ancestor", sha, head).Run() != nil {
-				continue
-			}
-			if n, ok := revListCount(workspace, sha, head); ok && (bestCount < 0 || n < bestCount) {
-				best, bestCount = sha, n
+	// One merge-base against every remote tip at once instead of one or two
+	// git processes per remote ref: the result is the newest commit of HEAD's
+	// history that some remote ref contains (a diverged remote branch
+	// contributes only its fork point). Exit status 1 means no common history.
+	if refs, err := exec.Command("git", "-C", workspace, "for-each-ref", "--format=%(objectname)", "refs/remotes").Output(); err == nil {
+		if tips := strings.Fields(string(refs)); len(tips) > 0 {
+			args := append([]string{"-C", workspace, "merge-base", head}, tips...)
+			if out, err := exec.Command("git", args...).Output(); err == nil {
+				if base := strings.TrimSpace(string(out)); base != "" {
+					return base, nil
+				}
 			}
 		}
-	}
-	if best != "" {
-		return best, nil
 	}
 	if recorded, err := resolveCommitSHA(workspace, readBaseline(workspace)); err == nil {
 		return recorded, nil
@@ -82,4 +90,48 @@ func readBaseline(workspace string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// scratchIndexEnv copies the checkout's index to a temporary file and returns
+// the GIT_INDEX_FILE environment pointing at it plus a cleanup func. A
+// checkout without an index file gets one read from HEAD.
+func scratchIndexEnv(workspace string) ([]string, func(), error) {
+	out, err := exec.Command("git", "-C", workspace, "rev-parse", "--path-format=absolute", "--git-path", "index").Output()
+	if err != nil {
+		return nil, nil, fmt.Errorf("git rev-parse index path: %w", err)
+	}
+	indexPath := strings.TrimSpace(string(out))
+	tmp, err := os.CreateTemp("", "loopforge-undelivered-index-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	data, readErr := os.ReadFile(indexPath)
+	if readErr == nil {
+		_, err = tmp.Write(data)
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	env := []string{"GIT_INDEX_FILE=" + tmpPath}
+	if readErr != nil {
+		if !os.IsNotExist(readErr) {
+			cleanup()
+			return nil, nil, readErr
+		}
+		// An empty file is not a valid index; let read-tree create it.
+		_ = os.Remove(tmpPath)
+		cmd := exec.Command("git", "-C", workspace, "read-tree", "HEAD")
+		cmd.Env = withGitEnv(env)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("git read-tree scratch index: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
+	return env, cleanup, nil
 }

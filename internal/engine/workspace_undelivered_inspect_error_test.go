@@ -28,11 +28,13 @@ func TestReportUndeliveredWorkContinuesAfterInspectionError(t *testing.T) {
 	}
 	workspace := e.RunWorkspace(run.ID)
 
-	// A held index lock makes staging the untracked file fail.
+	// A corrupt index makes listing the untracked files fail. (A held
+	// index.lock no longer does: the check works on a scratch copy of the
+	// index and never writes the checkout's own.)
 	locked := filepath.Join(workspace, "locked")
 	undeliveredCheckout(t, locked)
 	writeUndelivered(t, locked, "new.go", "package locked\n")
-	writeUndelivered(t, filepath.Join(locked, ".git"), "index.lock", "")
+	writeUndelivered(t, filepath.Join(locked, ".git"), "index", "not a git index\n")
 
 	app := filepath.Join(workspace, "app")
 	undeliveredCheckout(t, app)
