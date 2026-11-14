@@ -230,60 +230,65 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (*User, error) {
 		return FallbackGuestUser(), nil
 	}
 
+	data, err := c.fetchSSOProfile(ctx, code)
+	if err != nil {
+		log.Printf("[auth] %v, fallback to guest", err)
+		return FallbackGuestUser(), nil
+	}
+	return userFromSSOProfile(data, time.Now().UTC()), nil
+}
+
+// fetchSSOProfile 携带签名请求 SSO 网关，用 code 换取员工信息。
+// 任一环节（构造请求、网络、读取、HTTP 状态、JSON 解析、业务返回码）失败都返回描述性错误，由调用方决定降级。
+func (c *Client) fetchSSOProfile(ctx context.Context, code string) (*IOAAuthData, error) {
 	reqURL := fmt.Sprintf("%s%s?code=%s", c.cfg.AuthHost, c.cfg.AuthURI, url.QueryEscape(code))
 	req, err := c.newSignedGet(ctx, reqURL, "application/json")
 	if err != nil {
-		log.Printf("[auth] create request failed: %v, fallback to guest", err)
-		return FallbackGuestUser(), nil
+		return nil, fmt.Errorf("create request failed: %v", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		log.Printf("[auth] request SSO endpoint failed: %v, fallback to guest", err)
-		return FallbackGuestUser(), nil
+		return nil, fmt.Errorf("request SSO endpoint failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 限制 1MB
 	if err != nil {
-		log.Printf("[auth] read response body failed: %v, fallback to guest", err)
-		return FallbackGuestUser(), nil
+		return nil, fmt.Errorf("read response body failed: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[auth] unexpected status code %d from SSO, body: %s, fallback to guest", resp.StatusCode, string(body))
-		return FallbackGuestUser(), nil
+		return nil, fmt.Errorf("unexpected status code %d from SSO, body: %s", resp.StatusCode, string(body))
 	}
 
 	var authResp IOAAuthResponse
 	if err := json.Unmarshal(body, &authResp); err != nil {
-		log.Printf("[auth] decode auth response JSON failed: %v, body: %s, fallback to guest", err, string(body))
-		return FallbackGuestUser(), nil
+		return nil, fmt.Errorf("decode auth response JSON failed: %v, body: %s", err, string(body))
 	}
 
 	if authResp.Ret != 0 || authResp.Data == nil {
-		log.Printf("[auth] SSO returned failure: Ret=%d ErrCode=%d ErrMsg=%s, fallback to guest", authResp.Ret, authResp.ErrCode, authResp.ErrMsg)
-		return FallbackGuestUser(), nil
+		return nil, fmt.Errorf("SSO returned failure: Ret=%d ErrCode=%d ErrMsg=%s", authResp.Ret, authResp.ErrCode, authResp.ErrMsg)
 	}
+	return authResp.Data, nil
+}
 
-	chineseName := strings.TrimSpace(authResp.Data.ChineseName)
+// userFromSSOProfile 把 SSO 返回的员工信息映射为登录用户；中文名为空时回退为登录名。
+func userFromSSOProfile(data *IOAAuthData, authTime time.Time) *User {
+	loginName := strings.TrimSpace(data.LoginName)
+	chineseName := strings.TrimSpace(data.ChineseName)
 	if chineseName == "" {
-		chineseName = strings.TrimSpace(authResp.Data.LoginName)
+		chineseName = loginName
 	}
-
-	loginName := strings.TrimSpace(authResp.Data.LoginName)
-
-	user := &User{
-		StaffID:     authResp.Data.StaffId,
+	return &User{
+		StaffID:     data.StaffId,
 		LoginName:   loginName,
 		ChineseName: chineseName,
-		DeptID:      authResp.Data.DeptId,
-		DeptName:    strings.TrimSpace(authResp.Data.DeptName),
+		DeptID:      data.DeptId,
+		DeptName:    strings.TrimSpace(data.DeptName),
 		IsGuest:     false,
-		AuthTime:    time.Now().UTC(),
+		AuthTime:    authTime,
 	}
-
-	return user, nil
 }
 
 func getEnvAny(keys ...string) string {
