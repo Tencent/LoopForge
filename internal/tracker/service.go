@@ -765,13 +765,7 @@ func (s *Service) pullTAPDStories(store IssueStoreAdapter) (int, error) {
 		client, source, err := s.trackerClientForProject("tapd", pool.ProjectID)
 		if err != nil {
 			lastErr = err
-			s.addLog(domain.SyncLog{
-				ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd",
-				Action: "sync_stories", Status: "failed", Count: 0,
-				Message:   actionableAuthError("TAPD", err),
-				ProjectID: pool.ProjectID,
-				StartedAt: started, FinishedAt: time.Now().UTC(),
-			})
+			s.addTAPDStoriesLog(started, pool.ProjectID, "failed", 0, actionableAuthError("TAPD", err))
 			continue
 		}
 		n, err := s.pullTAPDPool(client, store, pool, seen)
@@ -782,13 +776,7 @@ func (s *Service) pullTAPDStories(store IssueStoreAdapter) (int, error) {
 			// unscoped aggregate would leak one project's misconfiguration
 			// into every other project's diagnostics).
 			lastErr = fmt.Errorf("项目 %s：%s", pool.ProjectID, s.authError("TAPD", source, err))
-			s.addLog(domain.SyncLog{
-				ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd",
-				Action: "sync_stories", Status: "failed", Count: n,
-				Message:   actionableAuthError("TAPD", err),
-				ProjectID: pool.ProjectID,
-				StartedAt: started, FinishedAt: time.Now().UTC(),
-			})
+			s.addTAPDStoriesLog(started, pool.ProjectID, "failed", n, actionableAuthError("TAPD", err))
 		}
 	}
 
@@ -806,13 +794,21 @@ func (s *Service) pullTAPDStories(store IssueStoreAdapter) (int, error) {
 		return total, lastErr
 	}
 
+	s.addTAPDStoriesLog(started, "", "success", total,
+		fmt.Sprintf("同步 %d 个需求池：拉取 %d 条（需求+缺陷），清理 %d 条", len(pools), total, removed))
+	return total, nil
+}
+
+// addTAPDStoriesLog records one TAPD "sync_stories" pull log entry. An empty
+// projectID keeps the entry platform-scoped (the cross-pool summary).
+func (s *Service) addTAPDStoriesLog(started time.Time, projectID, status string, count int, message string) {
 	s.addLog(domain.SyncLog{
 		ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd",
-		Action: "sync_stories", Status: "success", Count: total,
-		Message:   fmt.Sprintf("同步 %d 个需求池：拉取 %d 条（需求+缺陷），清理 %d 条", len(pools), total, removed),
+		Action: "sync_stories", Status: status, Count: count,
+		Message:   message,
+		ProjectID: projectID,
 		StartedAt: started, FinishedAt: time.Now().UTC(),
 	})
-	return total, nil
 }
 
 // pullScheduledTAPDPool is intentionally non-destructive: a job owns one
@@ -834,7 +830,7 @@ func (s *Service) pullScheduledTAPDPool(store IssueStoreAdapter, job domain.Sche
 	if err != nil {
 		status, message = "failed", actionableAuthError("TAPD", err)
 	}
-	s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "tapd", Action: "sync_stories", Status: status, Count: count, Message: message, ProjectID: projectID, StartedAt: started, FinishedAt: time.Now().UTC()})
+	s.addTAPDStoriesLog(started, projectID, status, count, message)
 	return count, scheduledTAPDIssueIDs(store, projectID, seen), err
 }
 
