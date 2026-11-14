@@ -31,7 +31,7 @@ func TestNoRepositoryWorkspaceReadWriteAndAttach(t *testing.T) {
 			h.deps.engine = en
 			gateway := &agentToolGateway{deps: h.deps}
 			gateway.api = New(h.repo, en, tracker.NewService(), "", "")
-			s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: projectID, UserID: owner.ID, User: owner, ChatSessionID: chat.ID, ChatOwnerID: owner.ID}
+			s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: projectID, UserID: owner.ID, User: owner, ChatSessionID: chat.ID, ChatOwnerID: owner.ID, ExecMode: assistantExecMode{AutoWrite: true}}
 			bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "write a report"})
 			if err != nil || len(bound.Run.RepositoryContexts()) != 0 {
 				t.Fatalf("allocate without repositories: %+v %v", bound, err)
@@ -249,6 +249,59 @@ func TestPersonalWorkspaceHTTPRejectsOtherUsers(t *testing.T) {
 				t.Fatalf("%s user %d: got %d want %d", path, tc.user.ID, rec.Code, tc.status)
 			}
 		}
+	}
+}
+
+func TestPersonalWorkspaceMCPRejectsForeignOpenAndSwitch(t *testing.T) {
+	resetAgentToolSessionsForTest()
+	t.Cleanup(resetAgentToolSessionsForTest)
+	h, owner := workbenchFixture(t)
+	if err := h.repo.PutUser(domain.User{LoginName: "mcp-outsider"}); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := h.repo.UserByLoginName("mcp-outsider")
+	run := domain.Run{ID: "mcp-private-run", Kind: domain.RunKindWorkspace, Status: "waiting", ExecutionContext: domain.TelemetryContext{ResponsibleUserID: owner.ID}}
+	if err := h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{ID: "mcp-owner-chat", WorkspaceRunID: run.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutAssistantSession(other.ID, domain.AssistantSession{ID: "mcp-other-chat"}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(h.repo, engine.New(h.repo, runtime.NewManager(t.TempDir())), tracker.NewService(), "", "")
+	for _, tc := range []struct {
+		name      string
+		chatID    string
+		chatOwner int64
+		arguments string
+		wantError string
+	}{
+		{"open foreign chat", "mcp-owner-chat", owner.ID, `{"goal":"open"}`, errAgentToolForbidden.Error()},
+		{"switch to foreign workspace", "mcp-other-chat", other.ID, `{"goal":"switch","workspaceRunId":"mcp-private-run"}`, "不是本对话开过的可用工作区"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &AgentToolSession{Mode: AgentToolAssistant, UserID: other.ID, User: other, ChatSessionID: tc.chatID, ChatOwnerID: tc.chatOwner, ExpiresAt: time.Now().Add(time.Minute)}
+			if err := agentToolSessions.create(session); err != nil {
+				t.Fatal(err)
+			}
+			body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"workbench_workspace_open","arguments":` + tc.arguments + `}}`
+			req := httptest.NewRequest(http.MethodPost, "/internal/agent-tools/"+session.Token+"/mcp", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			var response struct {
+				Result struct {
+					IsError bool `json:"isError"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || rec.Code != http.StatusOK || !response.Result.IsError || !strings.Contains(rec.Body.String(), tc.wantError) {
+				t.Fatalf("expected MCP tool rejection: status=%d body=%s err=%v", rec.Code, rec.Body.String(), err)
+			}
+			if session.workspaceRun() != "" {
+				t.Fatal("foreign workspace was bound despite rejection")
+			}
+		})
 	}
 }
 

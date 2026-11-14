@@ -171,7 +171,7 @@ func TestWorkspaceSubmitMRGuards(t *testing.T) {
 }
 
 func TestWorkspaceDeliveryRequiresExternalWriteAuthorization(t *testing.T) {
-	h, _, session, gateway, _ := workspaceTurnFixture(t)
+	_, _, session, gateway, _ := workspaceTurnFixture(t)
 	defer session.workspaceTurn.close(context.Background())
 	reviews := 0
 	allow := false
@@ -199,12 +199,11 @@ func TestWorkspaceDeliveryRequiresExternalWriteAuthorization(t *testing.T) {
 	allow = true
 	for _, mode := range []string{AssistantApprovalAssisted, AssistantApprovalAuto} {
 		session.ExecMode = assistantExecModeForApproval(mode)
-		if _, err := gateway.callMainBotWorkspace(context.Background(), session, "workbench_workspace_submit_mr", map[string]any{"title": "authorized change"}); err == nil || !strings.Contains(err.Error(), "Git Token") {
-			t.Fatalf("%s did not reach credential validation: %v", mode, err)
+		if _, err := gateway.callMainBotWorkspace(context.Background(), session, "workbench_workspace_submit_mr", map[string]any{"title": "authorized change"}); err == nil || !strings.Contains(err.Error(), "没有检出仓库") {
+			t.Fatalf("%s did not reach repository validation: %v", mode, err)
 		}
 	}
 	if reviews != 2 {
 		t.Fatalf("incorrect review calls: %d", reviews)
 	}
-	_ = h
 }
