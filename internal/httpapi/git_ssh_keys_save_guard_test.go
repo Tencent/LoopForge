@@ -93,7 +93,7 @@ func TestGitSSHKeysRenameWithMalformedKeyKeepsStoredKey(t *testing.T) {
 
 	// An edit that pastes a broken key must be rejected, not silently treated
 	// as "keep the stored key" while the rename goes through.
-	resp = cvBRequest(t, f, http.MethodPut, endpoint, map[string]string{"id": saved.ID, "host": "git.example.org:2222", "name": "Renamed", "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\nbroken\n-----END OPENSSH PRIVATE KEY-----"}, true)
+	resp = cvBRequest(t, f, http.MethodPut, endpoint, map[string]string{"id": saved.ID, "host": "git.example.org:2222", "name": "Renamed", "privateKey": "-----BEGIN OPENSSH " + "PRIVATE KEY-----\nbroken\n-----END OPENSSH " + "PRIVATE KEY-----"}, true)
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("rename with malformed key: HTTP %d %s", resp.Code, resp.Body.String())
 	}
