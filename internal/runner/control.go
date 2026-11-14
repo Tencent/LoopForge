@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/workspaceprep"
 
 	"github.com/gorilla/websocket"
 )
@@ -38,6 +39,7 @@ type controlMessage struct {
 	RequestID         string                          `json:"requestId,omitempty"`
 	WorkspaceRequest  *domain.RunnerWorkspaceRequest  `json:"workspaceRequest,omitempty"`
 	WorkspaceResponse *domain.RunnerWorkspaceResponse `json:"workspaceResponse,omitempty"`
+	WorkspaceProgress *domain.WorkspaceOpening        `json:"workspaceProgress,omitempty"`
 }
 
 // controlLoop maintains one outbound WebSocket for immediate server-to-runner
@@ -84,8 +86,8 @@ func (d *Daemon) controlLoop(ctx context.Context) {
 func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var requests sync.WaitGroup
-	var checkpointMu sync.Mutex
-	checkpointCancels := map[string]context.CancelFunc{}
+	var cancelMu sync.Mutex
+	cancellations := map[string]context.CancelFunc{}
 	var writeMu sync.Mutex
 	writeMessage := func(message controlMessage) error {
 		writeMu.Lock()
@@ -135,9 +137,9 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 			continue
 		}
 		if message.Type == "workspace.cancel" {
-			checkpointMu.Lock()
-			stop := checkpointCancels[message.RequestID]
-			checkpointMu.Unlock()
+			cancelMu.Lock()
+			stop := cancellations[message.RequestID]
+			cancelMu.Unlock()
 			if stop != nil {
 				stop()
 			}
@@ -160,11 +162,15 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 			}
 			requestCtx := ctx
 			stopRequest := func() {}
-			if domain.IsWorkspaceCheckpointTransferOperation(message.WorkspaceRequest.Operation) || message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationCheckpoint {
+			// Only one-shot preparation/checkpoint requests own their context.
+			// A native conversation process must outlive its start/poll RPC.
+			request := message.WorkspaceRequest
+			if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint ||
+				(request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace) {
 				requestCtx, stopRequest = context.WithCancel(ctx)
-				checkpointMu.Lock()
-				checkpointCancels[message.RequestID] = stopRequest
-				checkpointMu.Unlock()
+				cancelMu.Lock()
+				cancellations[message.RequestID] = stopRequest
+				cancelMu.Unlock()
 			}
 			requests.Add(1)
 			go func(message controlMessage, requestCtx context.Context, stopRequest context.CancelFunc) {
@@ -172,10 +178,17 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 				defer func() { <-slots }()
 				defer func() {
 					stopRequest()
-					checkpointMu.Lock()
-					delete(checkpointCancels, message.RequestID)
-					checkpointMu.Unlock()
+					cancelMu.Lock()
+					delete(cancellations, message.RequestID)
+					cancelMu.Unlock()
 				}()
+				if request := message.WorkspaceRequest; request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace {
+					requestCtx = workspaceprep.WithSink(requestCtx, func(progress domain.WorkspaceOpening) {
+						if err := writeMessage(controlMessage{Type: "workspace.progress", RequestID: message.RequestID, WorkspaceProgress: &progress}); err != nil {
+							stopRequest()
+						}
+					})
+				}
 				response := d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
 				err := writeMessage(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})
 				if err != nil {

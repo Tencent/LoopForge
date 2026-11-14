@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,8 @@ func TestRunnerWebsocketControlAndWorkspace(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	runnerID, session := registerTestRunner(t, f.h)
 	hub := newRunnerControlHub()
+	progress := make(chan domain.WorkspaceOpening, 1)
+	hub.onWorkspaceProgress = func(_ string, p domain.WorkspaceOpening) { progress <- p }
 	handler := &runnersHandlers{deps: &deps{repo: f.s, engine: f.e}, runnerControls: hub}
 	router := gin.New()
 	router.GET("/runners/ws", handler.runnerControlConnect)
@@ -56,7 +59,7 @@ func TestRunnerWebsocketControlAndWorkspace(t *testing.T) {
 	result := make(chan cvBWorkspaceResult, 1)
 	go func() {
 		response, err := hub.requestWorkspace(context.Background(), runnerID, domain.RunnerWorkspaceRequest{
-			RunID: "cvb-ws-run", Operation: domain.RunnerWorkspaceOperationTree,
+			RunID: "cvb-ws-run", RunKind: domain.RunKindWorkspace, Operation: domain.RunnerWorkspaceOperationPrepare,
 		})
 		result <- cvBWorkspaceResult{response: response, err: err}
 	}()
@@ -66,6 +69,50 @@ func TestRunnerWebsocketControlAndWorkspace(t *testing.T) {
 	}
 	if request.Type != "workspace.request" || request.RequestID == "" {
 		t.Fatalf("workspace request: %+v", request)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := client.WriteJSON(runnerControlMessage{Type: "workspace.progress", RequestID: request.RequestID,
+		WorkspaceProgress: &domain.WorkspaceOpening{State: "running", Phase: "clone", Output: "50 KiB/s"}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-progress:
+		if p.Output != "50 KiB/s" {
+			t.Fatalf("incorrect progress: %+v", p)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("websocket dropped workspace progress")
+	}
+	// A tool request must be serviced while preparation is still pending,
+	// and the session must remain bound to this authenticated runner.
+	for _, executionRunner := range []string{runnerID, "another-runner"} {
+		session := &AgentToolSession{Mode: AgentToolAssistant, ExecutionRunnerID: executionRunner, ExpiresAt: time.Now().Add(time.Minute)}
+		if err := agentToolSessions.create(session); err != nil {
+			t.Fatal(err)
+		}
+		defer agentToolSessions.delete(session.Token)
+		if err := client.WriteJSON(runnerControlMessage{Type: "agent_tool.request", RequestID: "tool-ping", ToolRequest: &domain.RunnerToolRequest{
+			Token: session.Token, Body: []byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`),
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		var tool runnerControlMessage
+		if err := client.ReadJSON(&tool); err != nil {
+			t.Fatal(err)
+		}
+		if tool.Type != "agent_tool.response" || tool.RequestID != "tool-ping" || tool.ToolResponse == nil {
+			t.Fatalf("tool response: %+v", tool)
+		}
+		if executionRunner != runnerID {
+			if tool.ToolResponse.Error != "invalid conversation gateway" {
+				t.Fatal("accepted a session belonging to another runner")
+			}
+		} else {
+			var rpc agentToolRPCResponse
+			if err := json.Unmarshal(tool.ToolResponse.Body, &rpc); err != nil || tool.ToolResponse.Error != "" || rpc.Error != nil || rpc.Result == nil {
+				t.Fatalf("tool call failed during preparation: %+v %v", tool.ToolResponse, err)
+			}
+		}
 	}
 	if err := client.WriteJSON(runnerControlMessage{
 		Type: "workspace.response", RequestID: request.RequestID,

@@ -394,7 +394,7 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 // log/telemetry bodies (those arrive as deltas).
 func publicLiveRun(run domain.Run) domain.Run {
 	run = publicRun(run, false)
-	if run.WorkflowSnapshot.CollaborationMode != "group" {
+	if run.WorkflowSnapshot.CollaborationMode != "group" && !run.IsWorkspace() {
 		run.Events = nil
 	}
 	run.Input = clipRunText(run.Input, 500)

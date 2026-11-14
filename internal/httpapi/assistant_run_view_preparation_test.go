@@ -54,3 +54,25 @@ func TestAssistantRunProblemsReportWorkspacePreparationFailures(t *testing.T) {
 		t.Fatalf("SOP run reported preparation events: %+v", got)
 	}
 }
+
+func TestWorkspaceOpeningProblemsReconcileCommandEvents(t *testing.T) {
+	for _, phase := range []struct{ phase, stage string }{{"clone", "clone"}, {"build", "image"}, {"prepare", "preparation"}} {
+		t.Run(phase.phase, func(t *testing.T) {
+			run := domain.Run{Kind: domain.RunKindWorkspace, Status: "waiting", Events: []domain.RunEvent{
+				{Type: "workspace." + phase.stage + ".failed", Message: "command failed"},
+				{Type: "workspace.opening.failed", WorkspaceOpening: &domain.WorkspaceOpening{State: "failed", Phase: phase.phase, Message: "opening failed"}},
+			}}
+			if got := assistantRunProblems(run, "", 300); len(got) != 1 || got[0].Reason != "opening failed" {
+				t.Fatalf("duplicate failure: %+v", got)
+			}
+			run.Events = append(run.Events, domain.RunEvent{Type: "workspace.opening.ready", WorkspaceOpening: &domain.WorkspaceOpening{State: "ready"}})
+			if got := assistantRunProblems(run, "", 300); len(got) != 0 {
+				t.Fatalf("successful retry retained failure: %+v", got)
+			}
+			run.Events = append(run.Events, domain.RunEvent{Type: "workspace.image.failed", Message: "later build failed"})
+			if got := assistantRunProblems(run, "", 300); len(got) != 1 || got[0].Reason != "later build failed" {
+				t.Fatalf("later failure hidden by opening: %+v", got)
+			}
+		})
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/procwatch"
+	"agentflow/internal/workspaceprep"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -111,7 +112,12 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		return fmt.Errorf("create repository directory: %w", err)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, ".git")); err == nil {
-		return resumeRepository(ctx, workspace, repository)
+		if _, valid := gitRevParse(ctx, workspace, "HEAD"); valid {
+			return workspaceprep.Do(ctx, "branch", "正在准备分支："+repository.Name, func(ctx context.Context) error { return resumeRepository(ctx, workspace, repository) })
+		}
+		if err := gitwork.RemoveIncompleteClone(ctx, workspace); err != nil {
+			return err
+		}
 	}
 	localPath := strings.TrimSpace(repository.LocalPath)
 	cloneURL := strings.TrimSpace(repository.CloneURL)
@@ -147,118 +153,136 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 		return fmt.Errorf("git clone: %w", err)
 	}
 	baseBranch := repositoryBaseBranch(repository)
-	clone := func(branch string, useReference bool) error {
-		// --progress: without a terminal git prints nothing until it finishes,
-		// which is what made a slow clone indistinguishable from a hung one.
-		args := []string{"clone", "--progress", "--no-hardlinks", "--single-branch", "--branch", branch}
-		watch := cloneWatch(repository)
-		if useReference && localIsGit && cloneURL != "" && localPath != cloneURL {
-			args = append(args, "--reference", localPath, "--dissociate")
-			// --dissociate repacks silently after the transfer; a large local
-			// cache can take minutes there without a byte of output.
-			watch.Stall = 0
+	if err := workspaceprep.Do(ctx, "clone", "正在克隆仓库："+repository.Name, func(ctx context.Context) error {
+		clone := func(branch string, useReference bool) error {
+			args := []string{"clone", "--progress", "--no-hardlinks", "--single-branch", "--branch", branch}
+			watch := cloneWatch(repository)
+			if useReference && localIsGit && cloneURL != "" && localPath != cloneURL {
+				args = append(args, "--reference", localPath, "--dissociate")
+				// --dissociate can repack silently for minutes after the transfer.
+				watch.Stall = 0
+			}
+			// Clone into the existing directory (`.`) so git cannot unlink and
+			// recreate `workspace`. That inode is the Docker bind-mount source.
+			args = append(args, "--", cloneRemoteForGit(ctx, remote), ".")
+			if _, err := gitwork.Watch(ctx, workspace, watch, args...); err != nil {
+				return fmt.Errorf("git clone: %w", err)
+			}
+			return nil
 		}
-		// Clone into the existing directory (`.`) so git cannot unlink and
-		// recreate `workspace`. That inode is the Docker bind-mount source.
-		args = append(args, "--", cloneRemoteForGit(ctx, remote), ".")
-		if _, err := gitwork.Watch(ctx, workspace, watch, args...); err != nil {
-			return fmt.Errorf("git clone: %w", err)
+		// Docker bind-mounts this directory. Replacing it (RemoveAll + MkdirAll)
+		// changes the inode; runc then rejects `docker exec -w /workspace`.
+		reset := resetCloneDestination
+		if liveDockerSandbox(workspace) {
+			reset = func(string) error { return nil }
+		}
+		if err := reset(workspace); err != nil {
+			return err
+		}
+		if err := clone(baseBranch, true); err != nil {
+			if procwatch.Stopped(err) || ctx.Err() != nil {
+				return err
+			}
+			if gitwork.UsesSSH(ctx) && !localIsGit {
+				return err
+			}
+			if clearErr := reset(workspace); clearErr != nil {
+				return clearErr
+			}
+			retryErr := err
+			// Only retry without --reference when a cache was actually used.
+			// A network failure must not immediately repeat a full download.
+			if localIsGit && cloneURL != "" && localPath != cloneURL {
+				retryErr = clone(baseBranch, false)
+			}
+			if retryErr != nil {
+				if procwatch.Stopped(retryErr) || ctx.Err() != nil {
+					return retryErr
+				}
+				if gitwork.UsesSSH(ctx) {
+					return retryErr // An SSH checkout never initializes a remote branch.
+				}
+				if seeded, seedErr := seedEmptyRepository(ctx, workspace, cloneRemoteForGit(ctx, remote), repository.DefaultBranch, baseBranch, reset); seeded {
+					if seedErr != nil {
+						return seedErr
+					}
+				} else if !shouldSeedIntegrateBranch(repository, baseBranch) {
+					return err
+				} else {
+					if mk := reset(workspace); mk != nil {
+						return mk
+					}
+					seed := strings.TrimSpace(repository.DefaultBranch)
+					if seed == "" {
+						seed = "master"
+					}
+					if seedErr := clone(seed, false); seedErr != nil {
+						if procwatch.Stopped(seedErr) || ctx.Err() != nil {
+							return seedErr
+						}
+						return err
+					}
+					if pub := publishIntegrateBranch(ctx, workspace, baseBranch); pub != nil {
+						if clearErr := reset(workspace); clearErr != nil {
+							return clearErr
+						}
+						if retry := clone(baseBranch, false); retry != nil {
+							if procwatch.Stopped(retry) || ctx.Err() != nil {
+								return retry
+							}
+							return fmt.Errorf("create integration branch %s: %w", baseBranch, pub)
+						}
+					}
+				}
+			}
 		}
 		return nil
-	}
-	// Docker bind-mounts this directory. Replacing it (RemoveAll + MkdirAll)
-	// changes the inode; runc then rejects `docker exec -w /workspace`.
-	reset := resetCloneDestination
-	if liveDockerSandbox(workspace) {
-		reset = func(string) error { return nil }
-	}
-	if err := reset(workspace); err != nil {
+	}); err != nil {
 		return err
 	}
-	if err := clone(baseBranch, true); err != nil {
-		// The retries below recover from a bad --reference cache or an empty
-		// remote. A clone that stalled, timed out or outlived the caller would
-		// only repeat the same wait on the same network.
-		if procwatch.Stopped(err) || ctx.Err() != nil {
+
+	return workspaceprep.Do(ctx, "branch", "正在准备分支："+repository.Name, func(ctx context.Context) error {
+
+		if err := applyWorkspaceGitAuth(ctx, workspace); err != nil {
 			return err
 		}
-		if gitwork.UsesSSH(ctx) && !localIsGit {
+		if err := applyWorkspaceGitIdentity(ctx, workspace); err != nil {
 			return err
 		}
-		if clearErr := reset(workspace); clearErr != nil {
-			return clearErr
-		}
-		if retryErr := clone(baseBranch, false); retryErr != nil {
-			if gitwork.UsesSSH(ctx) {
-				return retryErr // An SSH checkout never initializes a remote branch.
+		if origin := strings.TrimSpace(cloneURL); origin != "" {
+			if _, err := gitC(ctx, workspace, "remote", "set-url", "--", "origin", origin); err != nil {
+				return fmt.Errorf("set origin url: %w", err)
 			}
-			if seeded, seedErr := seedEmptyRepository(ctx, workspace, cloneRemoteForGit(ctx, remote), repository.DefaultBranch, baseBranch, reset); seeded {
-				if seedErr != nil {
-					return seedErr
-				}
-			} else if !shouldSeedIntegrateBranch(repository, baseBranch) {
+		}
+		if shouldSeedIntegrateBranch(repository, baseBranch) {
+			if err := fetchRemoteWorkBranch(ctx, workspace, baseBranch); err != nil {
 				return err
-			} else {
-				if mk := reset(workspace); mk != nil {
-					return mk
-				}
-				seed := strings.TrimSpace(repository.DefaultBranch)
-				if seed == "" {
-					seed = "master"
-				}
-				if seedErr := clone(seed, false); seedErr != nil {
-					return err
-				}
-				if pub := publishIntegrateBranch(ctx, workspace, baseBranch); pub != nil {
-					if clearErr := reset(workspace); clearErr != nil {
-						return clearErr
-					}
-					if retry := clone(baseBranch, false); retry != nil {
-						return fmt.Errorf("create integration branch %s: %w", baseBranch, pub)
-					}
-				}
 			}
 		}
-	}
-	if err := applyWorkspaceGitAuth(ctx, workspace); err != nil {
-		return err
-	}
-	if err := applyWorkspaceGitIdentity(ctx, workspace); err != nil {
-		return err
-	}
-	if origin := strings.TrimSpace(cloneURL); origin != "" {
-		if _, err := gitC(ctx, workspace, "remote", "set-url", "--", "origin", origin); err != nil {
-			return fmt.Errorf("set origin url: %w", err)
+		for _, gitArgs := range [][]string{{"fetch", "--prune", "origin", baseBranch}, {"checkout", "--force", "-B", "agentflow-base", "origin/" + baseBranch}, {"reset", "--hard", "origin/" + baseBranch}} {
+			if _, err := gitC(ctx, workspace, gitArgs...); err != nil {
+				return fmt.Errorf("refresh base branch %s: %w", baseBranch, err)
+			}
 		}
-	}
-	if shouldSeedIntegrateBranch(repository, baseBranch) {
-		if err := fetchRemoteWorkBranch(ctx, workspace, baseBranch); err != nil {
-			return err
+		if repository.WorkBranch != "" {
+			if err := fetchRepositoryWorkBranch(ctx, workspace, repository); err != nil {
+				return err
+			}
+			checkout := func() error { return checkoutWorkBranch(ctx, workspace, repository.WorkBranch, baseBranch, true) }
+			if repository.RequireExistingWorkBranch {
+				checkout = func() error { return checkoutContinuedWorkBranch(ctx, workspace, repository.WorkBranch) }
+			}
+			if repository.CreateNewWorkBranch {
+				// A freshly cloned workspace is where a named branch is created, so this
+				// is the one place that must refuse an already existing remote branch.
+				checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
+			}
+			if err := checkout(); err != nil {
+				return err
+			}
 		}
-	}
-	for _, gitArgs := range [][]string{{"fetch", "--prune", "origin", baseBranch}, {"checkout", "--force", "-B", "agentflow-base", "origin/" + baseBranch}, {"reset", "--hard", "origin/" + baseBranch}} {
-		if _, err := gitC(ctx, workspace, gitArgs...); err != nil {
-			return fmt.Errorf("refresh base branch %s: %w", baseBranch, err)
-		}
-	}
-	if repository.WorkBranch != "" {
-		if err := fetchRepositoryWorkBranch(ctx, workspace, repository); err != nil {
-			return err
-		}
-		checkout := func() error { return checkoutWorkBranch(ctx, workspace, repository.WorkBranch, baseBranch, true) }
-		if repository.RequireExistingWorkBranch {
-			checkout = func() error { return checkoutContinuedWorkBranch(ctx, workspace, repository.WorkBranch) }
-		}
-		if repository.CreateNewWorkBranch {
-			// A freshly cloned workspace is where a named branch is created, so this
-			// is the one place that must refuse an already existing remote branch.
-			checkout = func() error { return checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch) }
-		}
-		if err := checkout(); err != nil {
-			return err
-		}
-	}
-	return recordRepositoryBaseline(workspace, baseBranch)
+		return recordRepositoryBaseline(workspace, baseBranch)
+	})
 }
 
 // prepareLocalSnapshotRepository copies a non-Git local source directory into
@@ -391,6 +415,16 @@ func resumeRepository(ctx context.Context, workspace string, repository domain.R
 		_, _ = gitC(ctx, workspace, "remote", "set-url", "--", "origin", origin)
 	}
 	baseBranch := repositoryBaseBranch(repository)
+	if repository.CreateNewWorkBranch {
+		if _, err := os.Stat(filepath.Join(workspace, ".git", "agentflow-baseline")); os.IsNotExist(err) {
+			if _, exists := gitRevParse(ctx, workspace, "refs/heads/"+repository.WorkBranch); !exists {
+				if err := checkoutNewWorkBranch(ctx, workspace, repository.WorkBranch); err != nil {
+					return err
+				}
+				return recordRepositoryBaseline(workspace, baseBranch)
+			}
+		}
+	}
 	if repository.IntegrateBranch != "" && repository.WorkBranch != "" {
 		branch, _ := gitC(ctx, workspace, "branch", "--show-current")
 		if strings.TrimSpace(branch) == repository.WorkBranch {

@@ -140,6 +140,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		stream.clarifyRun = testClarifyExec
 	}
 	runnerControls := newRunnerControlHub()
+	runnerControls.onWorkspaceProgress = e.RecordWorkspaceOpening
 	runnerControls.successor = relayRunnerWorkspaceToSuccessor(e)
 	if bg != nil {
 		bg.runnerControls = runnerControls

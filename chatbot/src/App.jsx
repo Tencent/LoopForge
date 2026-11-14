@@ -44,6 +44,7 @@ import ArtifactPanel from "./ArtifactPanel";
 import { useWorkspaceChanges } from "./useWorkspaceChanges";
 import { localId } from "./local-id.js";
 import RunAlerts from "./RunAlerts";
+import WorkspaceOpening from "./WorkspaceOpening";
 import { runProblems, useConversationRuns } from "./runs.js";
 import { reconcileOperation, visibleSidebarArtifact } from "./platform.js";
 import { isGeneratedArtifact, shouldRevealArtifactPanel } from "./artifact-autoreveal.js";
@@ -387,6 +388,10 @@ export default function App() {
   // conversations bind the temporary workspace opened by Main Bot.
   const workspaceRunId =
     chat.session?.workspaceRunId || chat.session?.runId || "";
+  const followWorkspaceProgress = useCallback(() => {
+    if (follow.current && scroll.current)
+      scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, []);
   const workspaceChanges = useWorkspaceChanges(workspaceRunId, {
     active: panel && panelView === "changes",
   });
@@ -1657,6 +1662,17 @@ export default function App() {
               ) : null}
               {!chat.local && !chat.busy && chat.generation?.failure && !messages.some((m) => m.generationId === chat.generation.id && m.failure) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} failure={chat.generation.failure} onCLIInstall={chat.adoptCLIInstall} readOnly={chat.readOnly} /> : null}
               {!chat.local && !chat.readOnly && !chat.busy && chat.generation?.id && chat.generation.status === "cancelled" && !chat.generation.failure && !messages.some((m) => m.generationId === chat.generation.id) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} compact /> : null}
+              <WorkspaceOpening
+                sessionId={chat.session?.id}
+                runId={workspaceRunId}
+                busy={chat.busy}
+                readOnly={chat.readOnly}
+                onProgress={followWorkspaceProgress}
+                onRetry={(runId) => {
+                  setText(`重试打开当前工作区 ${runId}，复用已经完成的检出，不要新建工作区。`);
+                  document.querySelector('textarea[aria-label="消息"]')?.focus();
+                }}
+              />
               <RunAlerts
                 runs={conversationRuns}
                 user={chat.user}

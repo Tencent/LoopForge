@@ -220,12 +220,34 @@ type TelemetryEvent struct {
 }
 
 type RunEvent struct {
-	ID        string    `json:"id"`
-	RunID     string    `json:"runId"`
-	NodeID    string    `json:"nodeId,omitempty"`
-	Type      string    `json:"type"`
-	Message   string    `json:"message"`
-	Timestamp time.Time `json:"timestamp"`
+	ID               string            `json:"id"`
+	RunID            string            `json:"runId"`
+	NodeID           string            `json:"nodeId,omitempty"`
+	Type             string            `json:"type"`
+	Message          string            `json:"message"`
+	Timestamp        time.Time         `json:"timestamp"`
+	WorkspaceOpening *WorkspaceOpening `json:"workspaceOpening,omitempty"`
+}
+
+// WorkspaceOpening is persisted in the existing event payload, including for
+// idle workspaces with no SOP nodes. It does not change scheduler run status.
+type WorkspaceOpening struct {
+	State          string    `json:"state"`
+	Phase          string    `json:"phase,omitempty"`
+	Message        string    `json:"message"`
+	Output         string    `json:"output,omitempty"`
+	TimeoutSeconds int64     `json:"timeoutSeconds,omitempty"`
+	StartedAt      time.Time `json:"startedAt,omitempty"`
+	Warning        string    `json:"warning,omitempty"`
+}
+
+func (r Run) LatestWorkspaceOpening() *WorkspaceOpening {
+	for i := len(r.Events) - 1; i >= 0; i-- {
+		if p := r.Events[i].WorkspaceOpening; p != nil {
+			return p
+		}
+	}
+	return nil
 }
 
 // Artifact is an immutable, attempt-scoped snapshot. Keeping old attempts makes

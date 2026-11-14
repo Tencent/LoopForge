@@ -1,0 +1,21 @@
+.workspace-opening {
+  margin: 4px 0 16px;
+}
+.workspace-opening-time {
+  display: block;
+  color: var(--hui-muted);
+  font-size: 12px;
+}
+.workspace-opening p {
+  margin: 8px 0;
+}
+.workspace-opening-output {
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--hui-surface);
+  font-size: 12px;
+}
