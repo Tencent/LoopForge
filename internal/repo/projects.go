@@ -187,42 +187,57 @@ func (r *ProjectsRepo) writeProject(v domain.Project) error {
 		}); err != nil {
 			return err
 		}
-		if err := tx.Where("project_id = ?", v.ID).Delete(&projectMemberRow{}).Error; err != nil {
+		if err := replaceProjectMembers(tx, v.ID, v.Members); err != nil {
 			return err
 		}
-		for _, member := range v.Members {
-			if member.UserID <= 0 {
-				continue
-			}
-			role := strings.TrimSpace(member.Role)
-			if role == "" {
-				role = "member"
-			}
-			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&projectMemberRow{
-				ProjectID: v.ID, UserID: member.UserID, Role: role, Created: timePtr(time.Now().UTC()),
-			}).Error; err != nil {
-				return err
-			}
-		}
 		if v.OwnerID > 0 {
-			// Backfill issue responsibility for issues that have no assignee.
-			var issueRows []issueRow
-			if err := tx.Where("project_id = ? AND assignee_user_id IS NULL", v.ID).Find(&issueRows).Error; err != nil {
-				return err
-			}
-			for _, row := range issueRows {
-				var issue domain.Issue
-				if jsonUnmarshal(row.Payload, &issue) != nil {
-					continue
-				}
-				issue.AssigneeUserID = v.OwnerID
-				if err := tx.Model(&issueRow{}).Where("id = ?", row.ID).Updates(map[string]any{
-					"assignee_user_id": v.OwnerID, "payload": mustJSON(issue),
-				}).Error; err != nil {
-					return err
-				}
-			}
+			return backfillIssueAssignees(tx, v.ID, v.OwnerID)
 		}
 		return nil
 	})
+}
+
+// replaceProjectMembers rewrites the member rows of a project. Entries without
+// a user are skipped and an empty role is stored as "member".
+func replaceProjectMembers(tx *gorm.DB, projectID string, members []domain.ProjectMember) error {
+	if err := tx.Where("project_id = ?", projectID).Delete(&projectMemberRow{}).Error; err != nil {
+		return err
+	}
+	for _, member := range members {
+		if member.UserID <= 0 {
+			continue
+		}
+		role := strings.TrimSpace(member.Role)
+		if role == "" {
+			role = "member"
+		}
+		if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&projectMemberRow{
+			ProjectID: projectID, UserID: member.UserID, Role: role, Created: timePtr(time.Now().UTC()),
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// backfillIssueAssignees gives the project owner responsibility for the
+// project's issues that have no assignee.
+func backfillIssueAssignees(tx *gorm.DB, projectID string, ownerID int64) error {
+	var issueRows []issueRow
+	if err := tx.Where("project_id = ? AND assignee_user_id IS NULL", projectID).Find(&issueRows).Error; err != nil {
+		return err
+	}
+	for _, row := range issueRows {
+		var issue domain.Issue
+		if jsonUnmarshal(row.Payload, &issue) != nil {
+			continue
+		}
+		issue.AssigneeUserID = ownerID
+		if err := tx.Model(&issueRow{}).Where("id = ?", row.ID).Updates(map[string]any{
+			"assignee_user_id": ownerID, "payload": mustJSON(issue),
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
