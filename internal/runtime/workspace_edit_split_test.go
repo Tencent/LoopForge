@@ -67,3 +67,37 @@ func TestCreateWorkspaceFile(t *testing.T) {
 		t.Fatalf("existing file changed: %q", raw)
 	}
 }
+
+func TestReplaceWorkspaceFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "src", "main.go")
+	if err := os.WriteFile(target, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	base, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer base.Close()
+	rel := filepath.Join("src", "main.go")
+	if err = replaceWorkspaceFile(base, root, rel, "new", 0640); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(target)
+	if err != nil || string(raw) != "new" {
+		t.Fatalf("content %q, %v", raw, err)
+	}
+	info, err := os.Stat(target)
+	if err != nil || info.Mode().Perm() != 0640 {
+		t.Fatalf("mode %v, %v", info.Mode().Perm(), err)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(root, "src", ".agentflow-edit-*")); len(leftovers) != 0 {
+		t.Fatalf("temporary files left behind: %v", leftovers)
+	}
+	if err = replaceWorkspaceFile(base, root, filepath.Join("missing", "x.go"), "x", 0644); err == nil {
+		t.Fatal("replace into a missing directory succeeded")
+	}
+}

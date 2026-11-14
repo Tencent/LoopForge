@@ -53,13 +53,23 @@ func WriteWorkspaceFile(root, path, content, expected string) (string, error) {
 	if !utf8.Valid(previous) || strings.ContainsRune(string(previous), 0) {
 		return "", fmt.Errorf("二进制文件不可编辑")
 	}
+	if err := replaceWorkspaceFile(base, root, rel, content, info.Mode().Perm()); err != nil {
+		return "", err
+	}
+	return WorkspaceContentSHA(content), nil
+}
+
+// replaceWorkspaceFile atomically overwrites an existing file: content is
+// written and synced to a temporary file beside rel with the given permissions,
+// then renamed over rel inside base. The temporary file is always cleaned up.
+func replaceWorkspaceFile(base *os.Root, root, rel, content string, perm os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Join(root, filepath.Dir(rel)), ".agentflow-edit-*")
 	if err != nil {
-		return "", err
+		return err
 	}
 	temp := f.Name()
 	defer os.Remove(temp)
-	if err = f.Chmod(info.Mode().Perm()); err == nil {
+	if err = f.Chmod(perm); err == nil {
 		_, err = f.WriteString(content)
 	}
 	if err == nil {
@@ -70,16 +80,13 @@ func WriteWorkspaceFile(root, path, content, expected string) (string, error) {
 		err = closeErr
 	}
 	if err != nil {
-		return "", err
+		return err
 	}
 	tempRel, err := filepath.Rel(root, temp)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if err = base.Rename(tempRel, rel); err != nil {
-		return "", err
-	}
-	return WorkspaceContentSHA(content), nil
+	return base.Rename(tempRel, rel)
 }
 
 // resolveWorkspaceEditPath cleans path into a workspace-relative path and rejects
