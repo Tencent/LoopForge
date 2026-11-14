@@ -10,7 +10,7 @@ import (
 	"agentflow/internal/domain"
 )
 
-func checkoutWorkBranchT(t *testing.T, remote string, repository domain.RunnerRepository) string {
+func checkoutWorkBranchT(t *testing.T, repository domain.RunnerRepository) string {
 	t.Helper()
 	workspace := t.TempDir()
 	if err := checkoutRepository(context.Background(), workspace, &repository); err != nil {
@@ -27,7 +27,7 @@ func remoteHeadT(t *testing.T, remote, branch string) string {
 // 普通模式：推送会新建远程工作分支并返回推送的提交，拉取在远程没有新提交时返回空。
 func TestSyncWorkBranchPushThenPull(t *testing.T) {
 	remote := bareRemoteWithBaseline(t)
-	workspace := checkoutWorkBranchT(t, remote, domain.RunnerRepository{CloneURL: remote, Ref: "master", WorkBranch: "feature/sync"})
+	workspace := checkoutWorkBranchT(t, domain.RunnerRepository{CloneURL: remote, Ref: "master", WorkBranch: "feature/sync"})
 	if err := os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("work\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestSyncWorkBranchPushThenPull(t *testing.T) {
 // 严格模式（继续已有分支）：远程分支不存在时，推送和拉取都报错，且不会新建远程分支。
 func TestSyncWorkBranchStrictRefusesMissingRemote(t *testing.T) {
 	remote := bareRemoteWithBaseline(t)
-	workspace := checkoutWorkBranchT(t, remote, domain.RunnerRepository{CloneURL: remote, Ref: "master", WorkBranch: "feature/gone"})
+	workspace := checkoutWorkBranchT(t, domain.RunnerRepository{CloneURL: remote, Ref: "master", WorkBranch: "feature/gone"})
 	for _, push := range []bool{true, false} {
 		if _, err := syncWorkBranch(context.Background(), workspace, "feature/gone", "msg", push, true); err == nil {
 			t.Fatalf("strict sync push=%v accepted a missing remote branch", push)
@@ -69,7 +69,7 @@ func TestPushSharedTargetMergesWorkBranch(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_EMAIL", "t@t")
 	remote := bareRemoteWithBaseline(t)
 	repository := domain.RunnerRepository{Name: "app", CloneURL: remote, Ref: "master", WorkBranch: "feature/shared", SharedPushTarget: "master"}
-	workspace := checkoutWorkBranchT(t, remote, repository)
+	workspace := checkoutWorkBranchT(t, repository)
 	if err := os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("work\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestPushSharedTargetMergesWorkBranch(t *testing.T) {
 func TestPushSharedTargetReportsMissingTarget(t *testing.T) {
 	remote := bareRemoteWithBaseline(t)
 	repository := domain.RunnerRepository{Name: "app", CloneURL: remote, Ref: "master", WorkBranch: "feature/shared", SharedPushTarget: "release/missing"}
-	workspace := checkoutWorkBranchT(t, remote, repository)
+	workspace := checkoutWorkBranchT(t, repository)
 	_, err := pushSharedTarget(context.Background(), workspace, repository)
 	if err == nil || !strings.HasPrefix(err.Error(), "app: 直推 release/missing: ") {
 		t.Fatalf("err = %v", err)
