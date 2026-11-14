@@ -17,6 +17,58 @@ type assistantActivityLog struct {
 	truncated bool
 }
 
+const (
+	// activityTextLimit 是单个 text/thinking 事件保留的最大正文字节数。
+	activityTextLimit = 32000
+	// activityBytesLimit 是整个活动记录保留的正文总量上限。
+	activityBytesLimit = 512 << 10
+	// activityEventLimit 是活动记录保留的事件条数上限。
+	activityEventLimit = 512
+)
+
+// growTextLocked 把一个文本片段接到 last 后面，超出单条正文或总量上限时
+// 只置 truncated 不写入。返回是否写入。
+func (l *assistantActivityLog) growTextLocked(last *domain.AssistantActivityEvent, text string) bool {
+	if len(last.Text)+len(text) > activityTextLimit || l.bytes+len(text) > activityBytesLimit {
+		l.truncated = true
+		return false
+	}
+	last.Text += text
+	l.bytes += len(text)
+	return true
+}
+
+// replaceTextLocked 用整块正文替换 last 的正文，按替换后的长度做同样的上限判断。
+func (l *assistantActivityLog) replaceTextLocked(last *domain.AssistantActivityEvent, text string) bool {
+	if len(text) > activityTextLimit || l.bytes-len(last.Text)+len(text) > activityBytesLimit {
+		l.truncated = true
+		return false
+	}
+	l.bytes += len(text) - len(last.Text)
+	last.Text = text
+	return true
+}
+
+// reserveEventLocked 判断能否再追加一个占用 size 字节的新事件（条数与总量上限）。
+func (l *assistantActivityLog) reserveEventLocked(size int) bool {
+	if len(l.events) >= activityEventLimit || l.bytes+size > activityBytesLimit {
+		l.truncated = true
+		return false
+	}
+	return true
+}
+
+// containsTextLocked 判断已有 text 事件里是否已经出现过 text，用于丢掉
+// CLI 在工具调用之后重发的同一段正文。
+func (l *assistantActivityLog) containsTextLocked(text string) bool {
+	for _, existing := range l.events {
+		if existing.Kind == "text" && strings.Contains(existing.Text, text) {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *assistantActivityLog) add(event assistantStreamEvent) {
 	switch event.Kind {
 	case "answerReset":
@@ -47,12 +99,7 @@ func (l *assistantActivityLog) add(event assistantStreamEvent) {
 		if event.Full && strings.Contains(last.Text, strings.TrimSpace(event.Text)) {
 			return
 		}
-		if len(last.Text)+len(event.Text) > 32000 || l.bytes+len(event.Text) > 512<<10 {
-			l.truncated = true
-			return
-		}
-		last.Text += event.Text
-		l.bytes += len(event.Text)
+		l.growTextLocked(last, event.Text)
 		return
 	}
 	if event.Kind == "agentText" {
@@ -65,11 +112,10 @@ func (l *assistantActivityLog) add(event assistantStreamEvent) {
 	event.Input = truncateRunes(event.Input, 8000)
 	event.Output = truncateRunes(event.Output, 8000)
 	size := len(event.Text) + len(event.Detail) + len(event.Input) + len(event.Output)
-	if len(l.events) >= 512 || l.bytes+size > 512<<10 {
-		l.truncated = true
+	if !l.reserveEventLocked(size) {
 		return
 	}
-	event.Text = truncateRunes(event.Text, 32000)
+	event.Text = truncateRunes(event.Text, activityTextLimit)
 	event.Detail = truncateRunes(event.Detail, 4000)
 	event.Full = false
 	l.events = append(l.events, event)
@@ -90,24 +136,14 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 			return
 		}
 		last := &l.events[len(l.events)-1]
-		if len(last.Text)+len(text) > 32000 || l.bytes+len(text) > 512<<10 {
-			l.truncated = true
-			return
-		}
-		last.Text += text
-		l.bytes += len(text)
+		l.growTextLocked(last, text)
 		return
 	}
 	// The CLI sends the finished block again after the tool that followed it.
 	// That copy is already on screen; appending it would place the paragraph
 	// twice, once on each side of the tool.
-	if event.Full {
-		trimmed := strings.TrimSpace(text)
-		for _, existing := range l.events {
-			if existing.Kind == "text" && strings.Contains(existing.Text, trimmed) {
-				return
-			}
-		}
+	if event.Full && l.containsTextLocked(strings.TrimSpace(text)) {
+		return
 	}
 	if len(l.events) > 0 && l.events[len(l.events)-1].Kind == "text" {
 		last := &l.events[len(l.events)-1]
@@ -116,31 +152,20 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 			return
 		}
 		if event.Full && strings.TrimSpace(last.Text) != "" && (strings.HasPrefix(trimmed, strings.TrimSpace(last.Text)) || strings.HasPrefix(replyCompact(trimmed), replyCompact(last.Text))) {
-			if len(text) > 32000 || l.bytes-len(last.Text)+len(text) > 512<<10 {
-				l.truncated = true
-				return
-			}
-			l.bytes += len(text) - len(last.Text)
-			last.Text = text
+			l.replaceTextLocked(last, text)
 			return
 		}
-		if len(last.Text)+len(text) > 32000 || l.bytes+len(text) > 512<<10 {
-			l.truncated = true
-			return
-		}
-		last.Text += text
-		l.bytes += len(text)
+		l.growTextLocked(last, text)
 		return
 	}
-	if len(l.events) >= 512 || l.bytes+len(text) > 512<<10 {
-		l.truncated = true
+	if !l.reserveEventLocked(len(text)) {
 		return
 	}
 	event.Kind = "text"
 	event.Full = false
 	event.Tool = ""
 	event.Detail = ""
-	event.Text = truncateRunes(text, 32000)
+	event.Text = truncateRunes(text, activityTextLimit)
 	if event.ID == "" {
 		event.ID = fmt.Sprintf("text-%d", len(l.events))
 	}

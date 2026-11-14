@@ -101,3 +101,66 @@ JSON
 		}
 	}
 }
+
+func TestAssistantActivityTextBudgetHelpers(t *testing.T) {
+	if activityTextLimit != 32000 || activityBytesLimit != 512<<10 || activityEventLimit != 512 {
+		t.Fatalf("budget constants changed: %d %d %d", activityTextLimit, activityBytesLimit, activityEventLimit)
+	}
+
+	// 追加：单条正文超限时只置 truncated，原有正文不变。
+	var log assistantActivityLog
+	log.events = []domain.AssistantActivityEvent{{Kind: "text", Text: strings.Repeat("a", activityTextLimit)}}
+	last := &log.events[0]
+	log.bytes = activityTextLimit
+	if log.growTextLocked(last, "b") || !log.truncated || len(last.Text) != activityTextLimit {
+		t.Fatal("growTextLocked accepted text over the per-event limit")
+	}
+
+	// 追加：总量超限同样拒绝写入。
+	log = assistantActivityLog{events: []domain.AssistantActivityEvent{{Kind: "text"}}, bytes: activityBytesLimit}
+	last = &log.events[0]
+	if log.growTextLocked(last, "b") || !log.truncated || last.Text != "" {
+		t.Fatal("growTextLocked accepted text over the total limit")
+	}
+
+	// 追加：未超限时正文与总量同步增长。
+	var withRoom assistantActivityLog
+	withRoom.events = []domain.AssistantActivityEvent{{Kind: "text", Text: strings.Repeat("a", 1000)}}
+	withRoom.bytes = 1000
+	if !withRoom.growTextLocked(&withRoom.events[0], strings.Repeat("b", 1000)) {
+		t.Fatal("growTextLocked rejected text that fits")
+	}
+	if len(withRoom.events[0].Text) != 2000 || withRoom.bytes != 2000 {
+		t.Fatalf("growTextLocked bookkeeping: %d %d", len(withRoom.events[0].Text), withRoom.bytes)
+	}
+	// 替换：按替换后的总量判断，旧正文占用的字节要扣掉。
+	var replaced assistantActivityLog
+	replaced.events = []domain.AssistantActivityEvent{{Kind: "text", Text: strings.Repeat("a", 40000)}}
+	replaced.bytes = activityBytesLimit - 100
+	if !replaced.replaceTextLocked(&replaced.events[0], strings.Repeat("c", 30000)) {
+		t.Fatal("replaceTextLocked ignored the bytes freed by the replaced text")
+	}
+	if len(replaced.events[0].Text) != 30000 || replaced.bytes != activityBytesLimit-100-40000+30000 {
+		t.Fatalf("replaceTextLocked bookkeeping: %d %d", len(replaced.events[0].Text), replaced.bytes)
+	}
+
+	// 新事件：条数上限和总量上限都拦。
+	full := assistantActivityLog{events: make([]domain.AssistantActivityEvent, activityEventLimit)}
+	if full.reserveEventLocked(1) || !full.truncated {
+		t.Fatal("reserveEventLocked accepted an event over the count limit")
+	}
+	heavy := assistantActivityLog{bytes: activityBytesLimit}
+	if heavy.reserveEventLocked(1) || !heavy.truncated {
+		t.Fatal("reserveEventLocked accepted an event over the total limit")
+	}
+
+	// 重发去重只看 text 事件。
+	var seen assistantActivityLog
+	seen.events = []domain.AssistantActivityEvent{
+		{Kind: "thinking", Text: "只在思考里出现"},
+		{Kind: "text", Text: "已经展示的段落"},
+	}
+	if !seen.containsTextLocked("已经展示的段落") || seen.containsTextLocked("只在思考里出现") {
+		t.Fatal("containsTextLocked looked at non-text events or missed a text match")
+	}
+}
