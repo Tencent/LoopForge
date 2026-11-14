@@ -135,6 +135,36 @@ func assistantStreamEvents(line string) []assistantStreamEvent {
 	return events
 }
 
+// assistantStreamBlock is one content block of an assistant or user message.
+type assistantStreamBlock struct {
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	ToolUseID string          `json:"tool_use_id"`
+	IsError   bool            `json:"is_error"`
+	Thinking  string          `json:"thinking"`
+	Text      string          `json:"text"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	Content   json.RawMessage `json:"content"`
+}
+
+// assistantStreamPartial is the incremental event a stream_event line carries.
+type assistantStreamPartial struct {
+	Type         string `json:"type"`
+	ContentBlock struct {
+		Type  string          `json:"type"`
+		ID    string          `json:"id"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	} `json:"content_block"`
+	Delta struct {
+		Type        string `json:"type"`
+		Thinking    string `json:"thinking"`
+		Text        string `json:"text"`
+		PartialJSON string `json:"partial_json"`
+	} `json:"delta"`
+}
+
 func assistantLineEvents(line string) []assistantStreamEvent {
 	line = strings.TrimSpace(line)
 	if line == "" || line[0] != '{' {
@@ -146,33 +176,9 @@ func assistantLineEvents(line string) []assistantStreamEvent {
 		// Set on lines a sub-agent (Agent/Task tool) produced.
 		ParentToolUseID string `json:"parent_tool_use_id"`
 		Message         struct {
-			Content []struct {
-				Type      string          `json:"type"`
-				ID        string          `json:"id"`
-				ToolUseID string          `json:"tool_use_id"`
-				IsError   bool            `json:"is_error"`
-				Thinking  string          `json:"thinking"`
-				Text      string          `json:"text"`
-				Name      string          `json:"name"`
-				Input     json.RawMessage `json:"input"`
-				Content   json.RawMessage `json:"content"`
-			} `json:"content"`
+			Content []assistantStreamBlock `json:"content"`
 		} `json:"message"`
-		Event struct {
-			Type         string `json:"type"`
-			ContentBlock struct {
-				Type  string          `json:"type"`
-				ID    string          `json:"id"`
-				Name  string          `json:"name"`
-				Input json.RawMessage `json:"input"`
-			} `json:"content_block"`
-			Delta struct {
-				Type        string `json:"type"`
-				Thinking    string `json:"thinking"`
-				Text        string `json:"text"`
-				PartialJSON string `json:"partial_json"`
-			} `json:"delta"`
-		} `json:"event"`
+		Event assistantStreamPartial `json:"event"`
 	}
 	if json.Unmarshal([]byte(line), &evt) != nil {
 		return nil
@@ -182,87 +188,105 @@ func assistantLineEvents(line string) []assistantStreamEvent {
 	subAgent := strings.TrimSpace(evt.ParentToolUseID) != ""
 	switch evt.Type {
 	case "assistant":
-		var out []assistantStreamEvent
-		for _, block := range evt.Message.Content {
-			switch block.Type {
-			case "thinking":
-				if text := strings.TrimSpace(block.Thinking); text != "" {
-					out = append(out, assistantStreamEvent{Kind: "thinking", Text: text, Full: true})
-				}
-			case "text":
-				text := strings.TrimSpace(block.Text)
-				if text == "" || strings.HasPrefix(text, "{") || assistantCLINoticeText(text) {
-					continue
-				}
-				if subAgent {
-					out = append(out, assistantStreamEvent{Kind: "agentText", Text: text, Full: true})
-				} else {
-					out = append(out, assistantStreamEvent{Kind: "answer", Text: text, Full: true})
-				}
-			case "tool_use":
-				if ev, ok := assistantToolStreamEvent(block.ID, block.Name, block.Input); ok {
-					out = append(out, ev)
-				}
-			}
-		}
-		return out
+		return assistantMessageEvents(evt.Message.Content, subAgent)
 	case "stream_event":
-		if evt.Event.Type == "content_block_start" {
-			switch evt.Event.ContentBlock.Type {
-			case "tool_use":
-				if assistantSessionToolName(evt.Event.ContentBlock.Name) == "submit_assistant_reply" {
-					if subAgent {
-						return nil
-					}
-					// The reply arguments carry the drafts; stream them so the
-					// canvas can build a workflow while the model is still writing.
-					return []assistantStreamEvent{{Kind: "draftStart", ID: strings.TrimSpace(evt.Event.ContentBlock.ID)}}
-				}
-				if ev, ok := assistantToolStreamEvent(evt.Event.ContentBlock.ID, evt.Event.ContentBlock.Name, evt.Event.ContentBlock.Input); ok {
-					return []assistantStreamEvent{ev}
-				}
-			case "thinking":
-				// 每个思考块开一个新分段，避免多段思考拼进同一个框。
-				return []assistantStreamEvent{{Kind: "thinkingStart"}}
-			}
-		}
-		switch evt.Event.Delta.Type {
-		case "thinking_delta":
-			if evt.Event.Delta.Thinking != "" {
-				return []assistantStreamEvent{{Kind: "thinking", Text: evt.Event.Delta.Thinking}}
-			}
-		case "input_json_delta":
-			if evt.Event.Delta.PartialJSON != "" && !subAgent {
-				return []assistantStreamEvent{{Kind: "draftDelta", Detail: evt.Event.Delta.PartialJSON}}
-			}
-		case "text_delta":
-			// 最终回答按 token 增量流式输出（kind=answer）。
-			if evt.Event.Delta.Text != "" && !subAgent {
-				return []assistantStreamEvent{{Kind: "answer", Text: evt.Event.Delta.Text}}
-			}
-		}
+		return assistantPartialEvents(evt.Event, subAgent)
 	case "user":
-		// 工具结果（tool_result）标记对应调用结束，前端据此移除"正在调用"行。
-		var out []assistantStreamEvent
-		for _, block := range evt.Message.Content {
-			if block.Type == "tool_result" && strings.TrimSpace(block.ToolUseID) != "" {
-				// Forward only completion state, never tool results or draft
-				// arguments. An Agent result names the agent ID it can resume.
-				done := assistantStreamEvent{Kind: "toolDone", ID: strings.TrimSpace(block.ToolUseID), Failed: block.IsError}
-				// An Agent result is the subagent's report to Main Bot; it is
-				// kept for the side panel, other tool results are not.
-				if report := assistantResultText(block.Content); assistantAgentIDRe.MatchString(report) {
-					done.AgentID = assistantAgentIDRe.FindStringSubmatch(report)[1]
-					done.Output = truncateRunes(assistantAgentReport(report), 8000)
-				}
-				out = append(out, done)
-			}
-		}
-		return out
+		return assistantToolResultEvents(evt.Message.Content)
 	case "system":
 		return []assistantStreamEvent{{Kind: "status", Text: "已连接模型，开始思考…"}}
 	}
 	return nil
+}
+
+// assistantMessageEvents turns the blocks of a complete assistant message into
+// thinking, answer (agentText for a sub-agent) and tool events.
+func assistantMessageEvents(blocks []assistantStreamBlock, subAgent bool) []assistantStreamEvent {
+	var out []assistantStreamEvent
+	for _, block := range blocks {
+		switch block.Type {
+		case "thinking":
+			if text := strings.TrimSpace(block.Thinking); text != "" {
+				out = append(out, assistantStreamEvent{Kind: "thinking", Text: text, Full: true})
+			}
+		case "text":
+			text := strings.TrimSpace(block.Text)
+			if text == "" || strings.HasPrefix(text, "{") || assistantCLINoticeText(text) {
+				continue
+			}
+			if subAgent {
+				out = append(out, assistantStreamEvent{Kind: "agentText", Text: text, Full: true})
+			} else {
+				out = append(out, assistantStreamEvent{Kind: "answer", Text: text, Full: true})
+			}
+		case "tool_use":
+			if ev, ok := assistantToolStreamEvent(block.ID, block.Name, block.Input); ok {
+				out = append(out, ev)
+			}
+		}
+	}
+	return out
+}
+
+// assistantPartialEvents turns one incremental stream_event into a block-start
+// or delta event.
+func assistantPartialEvents(event assistantStreamPartial, subAgent bool) []assistantStreamEvent {
+	if event.Type == "content_block_start" {
+		switch event.ContentBlock.Type {
+		case "tool_use":
+			if assistantSessionToolName(event.ContentBlock.Name) == "submit_assistant_reply" {
+				if subAgent {
+					return nil
+				}
+				// The reply arguments carry the drafts; stream them so the
+				// canvas can build a workflow while the model is still writing.
+				return []assistantStreamEvent{{Kind: "draftStart", ID: strings.TrimSpace(event.ContentBlock.ID)}}
+			}
+			if ev, ok := assistantToolStreamEvent(event.ContentBlock.ID, event.ContentBlock.Name, event.ContentBlock.Input); ok {
+				return []assistantStreamEvent{ev}
+			}
+		case "thinking":
+			// 每个思考块开一个新分段，避免多段思考拼进同一个框。
+			return []assistantStreamEvent{{Kind: "thinkingStart"}}
+		}
+	}
+	switch event.Delta.Type {
+	case "thinking_delta":
+		if event.Delta.Thinking != "" {
+			return []assistantStreamEvent{{Kind: "thinking", Text: event.Delta.Thinking}}
+		}
+	case "input_json_delta":
+		if event.Delta.PartialJSON != "" && !subAgent {
+			return []assistantStreamEvent{{Kind: "draftDelta", Detail: event.Delta.PartialJSON}}
+		}
+	case "text_delta":
+		// 最终回答按 token 增量流式输出（kind=answer）。
+		if event.Delta.Text != "" && !subAgent {
+			return []assistantStreamEvent{{Kind: "answer", Text: event.Delta.Text}}
+		}
+	}
+	return nil
+}
+
+// assistantToolResultEvents marks each tool_result block's call as done.
+// 工具结果（tool_result）标记对应调用结束，前端据此移除"正在调用"行。
+func assistantToolResultEvents(blocks []assistantStreamBlock) []assistantStreamEvent {
+	var out []assistantStreamEvent
+	for _, block := range blocks {
+		if block.Type == "tool_result" && strings.TrimSpace(block.ToolUseID) != "" {
+			// Forward only completion state, never tool results or draft
+			// arguments. An Agent result names the agent ID it can resume.
+			done := assistantStreamEvent{Kind: "toolDone", ID: strings.TrimSpace(block.ToolUseID), Failed: block.IsError}
+			// An Agent result is the subagent's report to Main Bot; it is
+			// kept for the side panel, other tool results are not.
+			if report := assistantResultText(block.Content); assistantAgentIDRe.MatchString(report) {
+				done.AgentID = assistantAgentIDRe.FindStringSubmatch(report)[1]
+				done.Output = truncateRunes(assistantAgentReport(report), 8000)
+			}
+			out = append(out, done)
+		}
+	}
+	return out
 }
 
 // assistantCLINoticeRe matches the CLI's own error-recovery text, which it
