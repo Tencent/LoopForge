@@ -65,7 +65,7 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	if g, ok := h.repo.AssistantGeneration(owner, saved.ID); ok && g.Status == "running" {
+	if g, ok := h.readGeneration(owner, saved.ID); ok && g.Status == "running" {
 		c.JSON(409, gin.H{"error": "请先停止当前生成再切换模式"})
 		return
 	}

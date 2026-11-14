@@ -88,7 +88,10 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		out[i].Unread = false
 		if state, ok := statuses[out[i].ID]; ok {
 			out[i].GenerationStatus = state.Status
-			if state.Status == "interrupted" {
+			// The list only projects a late heartbeat as interrupted; the row
+			// still says running. A turn this process is executing is running.
+			// A row actually written as interrupted is reported as stored.
+			if state.Stale {
 				if _, live := assistantLiveGenerations.Load(state.ID); live {
 					out[i].GenerationStatus = "running"
 				}
@@ -267,7 +270,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		if !item.Shared && !readOnly {
-			if job, ok := h.repo.AssistantGeneration(ownerID, id); !ok || job.Status != "running" {
+			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
 					if err := saveAssistantConversation(h.repo, ownerID, item); err == nil {
 						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
@@ -284,7 +287,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		}
 		c.JSON(200, decorateRunSessionView(h.repo, item))
 	case "PUT":
-		if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
+		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "生成期间不能改写会话"})
 			return
 		}
@@ -433,7 +436,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 				return
 			}
 		}
-		if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
+		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "请先停止生成后删除会话"})
 			return
 		}

@@ -285,7 +285,7 @@ func (h *assistantHandlers) readScheduledTurn(user domain.User, task *assistantT
 		if reply != nil {
 			msg = reply.Unfinished
 		}
-		if latest, found := h.repo.AssistantGeneration(user.ID, g.SessionID); found && latest.ID == g.ID {
+		if latest, found := h.readGeneration(user.ID, g.SessionID); found && latest.ID == g.ID {
 			msg = firstNonEmpty(msg, latest.Error)
 		}
 		return fail(firstNonEmpty(strings.TrimSpace(msg), "未返回结果"))

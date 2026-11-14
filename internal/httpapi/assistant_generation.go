@@ -188,6 +188,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
+	h.recordGenerationWorkspaceLease(g, req.RunID, req.workspaceToken)
 	// Keep the authenticated identity, but disconnect model execution from the
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
@@ -567,5 +568,6 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 		}
 		return
 	}
+	h.recordGenerationWorkspaceLease(next, req.RunID, req.workspaceToken)
 	h.executeGeneration(parent, req, next, actor)
 }

@@ -8,45 +8,92 @@ import (
 	"time"
 )
 
-func TestReleaseAbandonedWorkspaceUseFreesForegroundLeaseOnly(t *testing.T) {
+// A reaped turn releases only the lease it recorded, and only once nothing
+// renews it any more. A live holder on any replica, a newer turn's lease and a
+// background save all keep theirs.
+func TestReleaseAbandonedWorkspaceUseFreesOnlyTheReapedTurnsLease(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 	now := time.Now().UTC()
-	for _, id := range []string{"abandoned-use", "background-save"} {
+	taken := now.Add(-2 * time.Minute)
+	for _, id := range []string{"abandoned-use", "renewed-use", "replaced-use", "background-save"} {
 		if err = s.PutRun(domain.Run{ID: id, Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	use, err := s.BeginWorkspaceUse("abandoned-use", now)
+	release := func(runID, token string) bool {
+		t.Helper()
+		released, err := s.ReleaseAbandonedWorkspaceUse(runID, token, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return released
+	}
+	leaseOf := func(runID string) string {
+		t.Helper()
+		item, _ := s.WorkspaceCheckpoint(runID)
+		return item.LeaseToken
+	}
+
+	abandoned, err := s.BeginWorkspaceUse("abandoned-use", taken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.ReleaseAbandonedWorkspaceUse("abandoned-use", now.Add(time.Second)); err != nil {
-		t.Fatal(err)
+	if !release("abandoned-use", abandoned) {
+		t.Fatal("an unrenewed lease of a reaped turn was kept")
 	}
-	if _, err = s.BeginWorkspaceUse("abandoned-use", now.Add(2*time.Second)); err != nil {
+	if release("abandoned-use", abandoned) {
+		t.Fatal("a lease was released twice")
+	}
+	if _, err = s.BeginWorkspaceUse("abandoned-use", now); err != nil {
 		t.Fatal("abandoned foreground lease still blocked the next turn", err)
 	}
-	token, err := s.BeginWorkspaceUse("background-save", now)
+
+	// Another replica still executing the turn renews its lease.
+	renewed, err := s.BeginWorkspaceUse("renewed-use", taken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	save, err := s.HandoffWorkspaceUseToSave("background-save", token, now.Add(time.Second))
+	if err = s.RenewWorkspaceUse("renewed-use", renewed, now.Add(-10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if release("renewed-use", renewed) || leaseOf("renewed-use") != renewed {
+		t.Fatal("a lease its holder still renews was released")
+	}
+
+	// The reaped turn's lease ended and a newer turn took the workspace
+	// before the reader released: the stale token must not free it.
+	old, err := s.BeginWorkspaceUse("replaced-use", taken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.ReleaseAbandonedWorkspaceUse("background-save", now.Add(2*time.Second)); err != nil {
+	if err = s.FinishWorkspaceUse("replaced-use", old, taken, nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	kept, ok := s.WorkspaceCheckpoint("background-save")
-	if !ok || kept.LeaseToken != save {
-		t.Fatalf("background save lease dropped: %+v", kept)
+	newer, err := s.BeginWorkspaceUse("replaced-use", taken)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if use == "" || save == "" {
-		t.Fatal("missing lease token")
+	if release("replaced-use", old) || leaseOf("replaced-use") != newer {
+		t.Fatal("a newer turn's lease was released with the reaped turn's token")
+	}
+
+	token, err := s.BeginWorkspaceUse("background-save", taken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	save, err := s.HandoffWorkspaceUseToSave("background-save", token, taken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release("background-save", token) || release("background-save", save) || leaseOf("background-save") != save {
+		t.Fatal("background save lease dropped")
+	}
+	if release("", abandoned) || release("missing-run", abandoned) {
+		t.Fatal("released a lease without a run")
 	}
 }
 

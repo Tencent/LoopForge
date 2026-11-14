@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 // commitTurnTranscript keeps a turn that is stopped, fails or times out. A turn
@@ -74,33 +75,46 @@ func (h *assistantHandlers) keepInterruptedReply(g domain.AssistantGeneration) {
 // interrupted after one slow heartbeat, and the next message then failed
 // immediately because the CLI and workspace lease were still held.
 func (h *assistantHandlers) readGeneration(ownerID int64, sessionID string) (domain.AssistantGeneration, bool) {
-	peek, ok := h.repo.PeekAssistantGeneration(ownerID, sessionID)
+	return readAssistantGeneration(h.repo, ownerID, sessionID)
+}
+
+// readAssistantGeneration is the one non-owner read of a turn. Every handler
+// that may meet a stale turn goes through it, so a turn this process is still
+// executing is never written as interrupted by its own readers.
+//
+// A turn owned by another replica is still reaped after the heartbeat timeout,
+// as before. Its workspace lease is released only when the reaped turn recorded
+// it and the lease itself stopped being renewed (see ReleaseAbandonedWorkspaceUse).
+func readAssistantGeneration(store *repo.Store, ownerID int64, sessionID string) (domain.AssistantGeneration, bool) {
+	peek, ok := store.PeekAssistantGeneration(ownerID, sessionID)
 	if !ok {
 		return domain.AssistantGeneration{}, false
 	}
 	if _, local := assistantLiveGenerations.Load(peek.ID); local {
 		return peek, true
 	}
-	g, ok := h.repo.AssistantGeneration(ownerID, sessionID)
-	if ok && peek.Status == "running" && g.Status == "interrupted" {
-		h.releaseAbandonedWorkspaceLease(ownerID, sessionID)
+	g, lease, ok := store.ReapAssistantGeneration(ownerID, sessionID)
+	if lease.Token != "" {
+		released, err := store.ReleaseAbandonedWorkspaceUse(lease.RunID, lease.Token, time.Now().UTC())
+		switch {
+		case err != nil:
+			log.Printf("assistant release workspace lease session=%s run=%s: %v", sessionID, lease.RunID, err)
+		case released:
+			log.Printf("assistant released abandoned workspace lease session=%s generation=%s run=%s", sessionID, g.ID, lease.RunID)
+		}
 	}
 	return g, ok
 }
 
-func (h *assistantHandlers) releaseAbandonedWorkspaceLease(ownerID int64, sessionID string) {
-	session, ok := h.repo.AssistantSession(ownerID, sessionID)
-	if !ok {
+// recordGenerationWorkspaceLease stores the foreground lease a running turn
+// holds. Without it a reaped turn keeps its workspace locked for the rest of
+// the lease term; with it only that exact lease can be released.
+func (h *assistantHandlers) recordGenerationWorkspaceLease(g domain.AssistantGeneration, runID, token string) {
+	if g.ID == "" || runID == "" || token == "" {
 		return
 	}
-	now := time.Now().UTC()
-	for _, runID := range []string{session.RunID, session.WorkspaceRunID} {
-		if strings.TrimSpace(runID) == "" {
-			continue
-		}
-		if err := h.repo.ReleaseAbandonedWorkspaceUse(runID, now); err != nil {
-			log.Printf("assistant release workspace lease session=%s run=%s: %v", sessionID, runID, err)
-		}
+	if err := h.repo.RecordAssistantGenerationWorkspaceLease(g.UserID, g.SessionID, g.ID, runID, token); err != nil {
+		log.Printf("assistant record workspace lease session=%s generation=%s run=%s: %v", g.SessionID, g.ID, runID, err)
 	}
 }
 

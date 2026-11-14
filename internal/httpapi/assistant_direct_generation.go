@@ -62,7 +62,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 		if completed {
 			g.Status = "completed"
 		} else {
-			current, ok := h.repo.AssistantGeneration(ownerID, req.SessionID)
+			current, ok := h.repo.PeekAssistantGeneration(ownerID, req.SessionID)
 			if ctx.Err() != nil || ok && current.ID == g.ID && current.CancelRequested {
 				g.Status = "cancelled"
 			}

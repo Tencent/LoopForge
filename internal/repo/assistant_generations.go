@@ -23,6 +23,21 @@ type assistantGenerationRow struct {
 	// the next turn starts. Rows that ended before the column existed keep
 	// NULL, which is how read tracking leaves older history unmarked.
 	FinishedAt *time.Time
+	// WorkspaceRunID and WorkspaceLease name the foreground workspace lease
+	// this turn holds. Only that exact token is released when the turn is
+	// reaped; a lease another turn took in the meantime never matches.
+	WorkspaceRunID string `gorm:"size:64"`
+	WorkspaceLease string `gorm:"size:64"`
+}
+
+// assistantHeartbeatTimeout is how long a running turn may go without a
+// durable heartbeat before a reader that does not own it declares it dead.
+const assistantHeartbeatTimeout = 45 * time.Second
+
+// AssistantGenerationLease is the workspace lease a reaped turn held.
+type AssistantGenerationLease struct {
+	RunID string
+	Token string
 }
 
 func (assistantGenerationRow) TableName() string { return "assistant_generations" }
@@ -58,13 +73,22 @@ func (r *AssistantRepo) loadAssistantGeneration(userID int64, sessionID string) 
 }
 
 func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, bool) {
+	g, _, ok := r.ReapAssistantGeneration(userID, sessionID)
+	return g, ok
+}
+
+// ReapAssistantGeneration reads a turn and, when its heartbeat is late,
+// records it as interrupted. The lease is returned only to the caller whose
+// update actually reaped the turn, so the lease is released at most once.
+func (r *AssistantRepo) ReapAssistantGeneration(userID int64, sessionID string) (domain.AssistantGeneration, AssistantGenerationLease, bool) {
 	row, ok := r.loadAssistantGeneration(userID, sessionID)
 	if !ok {
-		return domain.AssistantGeneration{}, false
+		return domain.AssistantGeneration{}, AssistantGenerationLease{}, false
 	}
+	var lease AssistantGenerationLease
 	// A server that died cannot leave a conversation stuck forever. Never replay
 	// a model turn automatically, because its tools may already have written.
-	if row.Status == "running" && time.Since(row.UpdatedAt) > 45*time.Second {
+	if row.Status == "running" && time.Since(row.UpdatedAt) > assistantHeartbeatTimeout {
 		g := decodeGeneration(row)
 		g.Status = "interrupted"
 		g.Error = "服务端生成已中断，请检查已执行操作后重试"
@@ -74,15 +98,28 @@ func (r *AssistantRepo) AssistantGeneration(userID int64, sessionID string) (dom
 			if res.Error != nil || res.RowsAffected != 1 {
 				return res.Error
 			}
-			return checkpointAssistantDiagnostics(tx, g, nil)
+			if err := checkpointAssistantDiagnostics(tx, g, nil); err != nil {
+				return err
+			}
+			lease = AssistantGenerationLease{RunID: row.WorkspaceRunID, Token: row.WorkspaceLease}
+			return nil
 		})
 		reloaded, ok := r.loadAssistantGeneration(userID, sessionID)
 		if !ok {
-			return domain.AssistantGeneration{}, false
+			return domain.AssistantGeneration{}, AssistantGenerationLease{}, false
 		}
 		row = reloaded
 	}
-	return decodeGeneration(row), true
+	return decodeGeneration(row), lease, true
+}
+
+// RecordAssistantGenerationWorkspaceLease remembers the foreground workspace
+// lease a running turn took, so a reader that reaps the turn after its process
+// died can release exactly that lease. The heartbeat clock is not touched.
+func (r *AssistantRepo) RecordAssistantGenerationWorkspaceLease(userID int64, sessionID, generationID, runID, token string) error {
+	return r.DB.Model(&assistantGenerationRow{}).
+		Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, generationID, "running").
+		UpdateColumns(map[string]any{"workspace_run_id": runID, "workspace_lease": token}).Error
 }
 
 // generationClock is the commit-time clock on MySQL. A Go timestamp captured
@@ -147,7 +184,7 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 				if old.Status == "running" {
 					return fmt.Errorf("此会话正在生成，请等待完成或停止")
 				}
-				if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil}).Error; err != nil {
+				if err := tx.Model(&old).Updates(map[string]any{"generation_id": g.ID, "status": "running", "cancel_requested": false, "payload": mustJSON(g), "updated_at": time.Now().UTC(), "finished_at": nil, "workspace_run_id": "", "workspace_lease": ""}).Error; err != nil {
 					return err
 				}
 				return checkpointAssistantDiagnostics(tx, g, nil)
@@ -250,6 +287,9 @@ type AssistantGenerationState struct {
 	// Seen reports that the reader has opened the conversation since this
 	// reply (see MarkAssistantSessionRead).
 	Seen bool
+	// Stale reports a turn still stored as running whose heartbeat is late.
+	// Status reads "interrupted" for it, but nothing has been written yet.
+	Stale bool
 }
 
 // AssistantGenerationStatuses reads the latest reply of each conversation
@@ -277,7 +317,8 @@ func (r *AssistantRepo) AssistantGenerationStatuses(readerID int64, ids []string
 	}
 	for _, row := range rows {
 		status := row.Status
-		if status == "running" && time.Since(row.UpdatedAt) > 45*time.Second {
+		stale := status == "running" && time.Since(row.UpdatedAt) > assistantHeartbeatTimeout
+		if stale {
 			status = "interrupted"
 		}
 		out[row.SessionID] = AssistantGenerationState{
@@ -285,6 +326,7 @@ func (r *AssistantRepo) AssistantGenerationStatuses(readerID int64, ids []string
 			Status:     status,
 			FinishedAt: row.FinishedAt,
 			Seen:       row.ReadID != nil && *row.ReadID == row.GenerationID,
+			Stale:      stale,
 		}
 	}
 	return out
