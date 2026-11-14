@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,23 +110,35 @@ func (s *dockerSandbox) ensureScriptContainer(ctx context.Context) error {
 // workspace container. Image metadata is preferred, but it can be missing
 // while the container still runs (the image was untagged or reclaimed after
 // it started), so the container's own uname is the fallback. Both failures are
-// reported with docker's stderr instead of a bare exit status.
+// reported with docker's stderr instead of a bare exit status. Only stdout is
+// parsed: docker may print warnings to stderr even when a command succeeds.
 func dockerScriptArchitecture(ctx context.Context, container, image string) (string, error) {
-	out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Architecture}}", image).CombinedOutput()
-	if err == nil {
-		return strings.TrimSpace(string(out)), nil
+	out, imageErr := dockerStdout(ctx, "image", "inspect", "--format", "{{.Architecture}}", image)
+	if imageErr == nil {
+		return out, nil
 	}
-	imageErr := fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
-	machine, unameErr := exec.CommandContext(ctx, "docker", "exec", container, "uname", "-m").CombinedOutput()
+	machine, unameErr := dockerStdout(ctx, "exec", container, "uname", "-m")
 	if unameErr == nil {
-		if arch := dockerMachineArchitecture(string(machine)); arch != "" {
+		if arch := dockerMachineArchitecture(machine); arch != "" {
 			return arch, nil
 		}
-		unameErr = fmt.Errorf("unrecognized machine %q", strings.TrimSpace(string(machine)))
-	} else {
-		unameErr = fmt.Errorf("%w: %s", unameErr, strings.TrimSpace(string(machine)))
+		unameErr = fmt.Errorf("unrecognized machine %q", machine)
 	}
-	return "", fmt.Errorf("inspect script environment architecture: image %s: %s; container uname: %v", image, imageErr, unameErr)
+	return "", fmt.Errorf("inspect script environment architecture: image %s: %v; container uname: %v", image, imageErr, unameErr)
+}
+
+// dockerStdout runs docker and returns its trimmed stdout. On failure the
+// error carries docker's stderr, which Output collects when Stderr is unset.
+func dockerStdout(ctx context.Context, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // dockerMachineArchitecture maps `uname -m` to the Go architecture names the

@@ -45,7 +45,9 @@ func installArchFallbackDocker(t *testing.T, workspace, machine, unameExit strin
 printf '%s\n' "$*" >> "$ARCH_FALLBACK_LOG"
 case "$*" in
   "image inspect --format {{.Architecture}} "*) echo "Error response from daemon: No such image: $5" >&2; exit 1 ;;
-  "exec box uname -m") printf '%s\n' "$ARCH_FALLBACK_MACHINE"; exit "$ARCH_FALLBACK_UNAME_EXIT" ;;
+  "exec box uname -m")
+    if [ "$ARCH_FALLBACK_UNAME_EXIT" = 0 ]; then printf '%s\n' "$ARCH_FALLBACK_MACHINE"; else printf '%s\n' "$ARCH_FALLBACK_MACHINE" >&2; fi
+    exit "$ARCH_FALLBACK_UNAME_EXIT" ;;
 esac
 exec "$ARCH_FALLBACK_INNER" "$@"
 `
