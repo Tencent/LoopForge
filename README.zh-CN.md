@@ -125,6 +125,7 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
   | **ZCode** | 仅个人 Key | 未内置，需安装到服务或执行机器的 PATH 中 |
 
   Claude Code 之后的 7 种 Agent CLI 每次运行都在私有 HOME 目录里生成模型和 MCP 配置，因此始终使用需求责任人在个人设置中填写的 Key 和 Base URL，即使在已连接的执行机器上也一样。团队推广时，每位成员需要各自配置凭据。首次安装需要能访问 npm 或对应厂商；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
+- **企业微信通知。** 从本 Dockerfile 构建的平台镜像内置 `wecom-cli`，发布镜像将在下个版本包含它；原生部署需要另行安装，详见[部署指南](docs/deployment.md#native-development)。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
 - **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库（已内置 LoopForge 授权应用，无需申请 PAT，仍可手动填写 PAT），再配置执行器凭据（或绑定本机执行机器），之后既可以运行一条项目 SOP，也可以直接让 Main Bot 修改代码并提交 PR/MR。
 - **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
