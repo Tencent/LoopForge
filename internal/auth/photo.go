@@ -204,6 +204,18 @@ func (c *Client) FetchPhoto(ctx context.Context, rawUsername string, rawSpec int
 	}
 	defer resp.Body.Close()
 
+	data, contentType, err := readPhotoResponse(resp)
+	if err != nil {
+		return nil, "", err
+	}
+
+	c.photoCache.set(cacheKey, data, contentType)
+	return data, contentType, nil
+}
+
+// readPhotoResponse 校验 SSO 头像响应状态码，限量读取头像字节并推断最终 Content-Type。
+// 404 或空响应体视为 ErrPhotoNotFound。调用方负责关闭 resp.Body。
+func readPhotoResponse(resp *http.Response) ([]byte, string, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, "", ErrPhotoNotFound
 	}
@@ -220,15 +232,18 @@ func (c *Client) FetchPhoto(ctx context.Context, rawUsername string, rawSpec int
 	if len(data) == 0 {
 		return nil, "", ErrPhotoNotFound
 	}
+	return data, photoContentType(resp.Header.Get("Content-Type"), data), nil
+}
 
-	contentType := resp.Header.Get("Content-Type")
+// photoContentType 在响应未声明类型、声明为文本或 JSON 时按内容嗅探，
+// 最终结果不是 image/* 时回退为 image/png。
+func photoContentType(declared string, data []byte) string {
+	contentType := declared
 	if contentType == "" || strings.Contains(contentType, "text/") || strings.Contains(contentType, "application/json") {
 		contentType = http.DetectContentType(data)
 	}
 	if !strings.HasPrefix(contentType, "image/") {
 		contentType = "image/png"
 	}
-
-	c.photoCache.set(cacheKey, data, contentType)
-	return data, contentType, nil
+	return contentType
 }
