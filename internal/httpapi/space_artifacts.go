@@ -236,6 +236,17 @@ func looksLikeLocalPath(s string) bool {
 	return strings.HasPrefix(s, "/") || strings.HasPrefix(s, "~/") || strings.Contains(s, ":\\")
 }
 
+// workbenchArtifactArgs is the argument payload of workbench_publish_artifact.
+type workbenchArtifactArgs struct {
+	Title       string `json:"title"`
+	Kind        string `json:"kind"`
+	Format      string `json:"format"`
+	Body        string `json:"body"`
+	URL         string `json:"url"`
+	Summary     string `json:"summary"`
+	ImageBase64 string `json:"imageBase64"`
+}
+
 // publishWorkbenchArtifact stores a demo, slide deck, image or document on
 // the conversation so the browser can open it. A path on this machine is not
 // something the user can see.
@@ -243,15 +254,7 @@ func (h *agentToolGateway) publishWorkbenchArtifact(session *AgentToolSession, r
 	if session == nil || session.Mode != AgentToolAssistant || strings.TrimSpace(session.SpaceID) == "" || session.terminalToolsOnly() {
 		return mcpToolTextResult("当前会话不能发布产物", true), nil
 	}
-	var args struct {
-		Title       string `json:"title"`
-		Kind        string `json:"kind"`
-		Format      string `json:"format"`
-		Body        string `json:"body"`
-		URL         string `json:"url"`
-		Summary     string `json:"summary"`
-		ImageBase64 string `json:"imageBase64"`
-	}
+	var args workbenchArtifactArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return mcpToolTextResult("参数不是 JSON", true), nil
 	}
@@ -263,58 +266,15 @@ func (h *agentToolGateway) publishWorkbenchArtifact(session *AgentToolSession, r
 	if title == "" {
 		return mcpToolTextResult("需要标题", true), nil
 	}
-	body, format, kind := args.Body, strings.TrimSpace(args.Format), strings.TrimSpace(args.Kind)
-	if strings.TrimSpace(args.ImageBase64) != "" {
-		img, err := decodeArtifactImage(args.ImageBase64)
-		if err != nil {
-			return mcpToolTextResult("imageBase64 不是有效的 png、jpeg、gif 或 webp", true), nil
-		}
-		if len(img) > 700<<10 {
-			return mcpToolTextResult("图片不能超过 700 KB，侧边栏才能直接打开", true), nil
-		}
-		sniffed := sniffImageFormat(img)
-		if sniffed == "" {
-			return mcpToolTextResult("只接受 png、jpeg、gif 或 webp", true), nil
-		}
-		body, format = base64.StdEncoding.EncodeToString(img), sniffed
-		if kind == "" {
-			kind = "file"
-		}
-	} else if looksLikeLocalPath(body) && strings.TrimSpace(args.URL) == "" {
-		return mcpToolTextResult("不要提交本机路径。把 HTML、Markdown 或图片内容本身传进来。", true), nil
-	}
-	if kind == "" {
-		if strings.TrimSpace(args.URL) != "" && strings.TrimSpace(body) == "" {
-			kind = "browser"
-		} else {
-			kind = "doc"
-		}
-	}
-	if format == "" {
-		switch kind {
-		case "prototype":
-			format = "html"
-		case "ppt":
-			format = "markdown"
-		default:
-			format = "markdown"
-		}
-	}
-	if !spaceArtifactFormats[format] {
-		return mcpToolTextResult("format 只能是 markdown、html、json、text 或图片", true), nil
-	}
-	author := strings.TrimSpace(session.User.ChineseName)
-	if author == "" {
-		author = strings.TrimSpace(session.User.LoginName)
-	}
-	if author == "" {
-		author = spaceAIAuthor
+	body, format, kind, reject := workbenchArtifactContent(args)
+	if reject != "" {
+		return mcpToolTextResult(reject, true), nil
 	}
 	item := domain.SpaceArtifact{
 		ID: newChatID("art"), SpaceID: room.ID, Kind: kind, Title: title,
 		Summary: roomTrim(strings.TrimSpace(args.Summary), 500), Format: format,
 		Body: body, URL: strings.TrimSpace(args.URL), AuthorID: session.UserID,
-		AuthorName: author, ByAI: true,
+		AuthorName: workbenchArtifactAuthor(session.User), ByAI: true,
 	}
 	if err := item.Validate(); err != nil {
 		return mcpToolTextResult(err.Error(), true), nil
@@ -334,4 +294,61 @@ func (h *agentToolGateway) publishWorkbenchArtifact(session *AgentToolSession, r
 	preview := "/api/spaces/" + room.ID + "/artifacts/" + saved.ID + "/raw"
 	text := fmt.Sprintf("已发布到当前会话，用户可以在侧边栏打开。\n标题：%s\n类型：%s\n预览：%s\n回复里只提标题，不要再给本机路径。", saved.Title, saved.Kind, preview)
 	return mcpToolTextResult(text, false), nil
+}
+
+// workbenchArtifactContent turns the publish arguments into the stored body,
+// format and kind: an imageBase64 payload is decoded, size-checked and
+// re-encoded; a bare local path is refused; kind and format fall back to
+// defaults; the format must be one the sidebar can open. A non-empty reject
+// is the message returned to the model instead of publishing.
+func workbenchArtifactContent(args workbenchArtifactArgs) (body, format, kind, reject string) {
+	body, format, kind = args.Body, strings.TrimSpace(args.Format), strings.TrimSpace(args.Kind)
+	if strings.TrimSpace(args.ImageBase64) != "" {
+		img, err := decodeArtifactImage(args.ImageBase64)
+		if err != nil {
+			return "", "", "", "imageBase64 不是有效的 png、jpeg、gif 或 webp"
+		}
+		if len(img) > 700<<10 {
+			return "", "", "", "图片不能超过 700 KB，侧边栏才能直接打开"
+		}
+		sniffed := sniffImageFormat(img)
+		if sniffed == "" {
+			return "", "", "", "只接受 png、jpeg、gif 或 webp"
+		}
+		body, format = base64.StdEncoding.EncodeToString(img), sniffed
+		if kind == "" {
+			kind = "file"
+		}
+	} else if looksLikeLocalPath(body) && strings.TrimSpace(args.URL) == "" {
+		return "", "", "", "不要提交本机路径。把 HTML、Markdown 或图片内容本身传进来。"
+	}
+	if kind == "" {
+		if strings.TrimSpace(args.URL) != "" && strings.TrimSpace(body) == "" {
+			kind = "browser"
+		} else {
+			kind = "doc"
+		}
+	}
+	if format == "" {
+		format = "markdown"
+		if kind == "prototype" {
+			format = "html"
+		}
+	}
+	if !spaceArtifactFormats[format] {
+		return "", "", "", "format 只能是 markdown、html、json、text 或图片"
+	}
+	return body, format, kind, ""
+}
+
+// workbenchArtifactAuthor names the publisher: Chinese name, then login name,
+// then the generic AI author.
+func workbenchArtifactAuthor(user domain.User) string {
+	if author := strings.TrimSpace(user.ChineseName); author != "" {
+		return author
+	}
+	if author := strings.TrimSpace(user.LoginName); author != "" {
+		return author
+	}
+	return spaceAIAuthor
 }
