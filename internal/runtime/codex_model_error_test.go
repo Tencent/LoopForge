@@ -14,6 +14,7 @@ func TestCodexModelTerminalFailure(t *testing.T) {
 		want       ModelErrorClass
 	}{
 		{"nested 429", `{"type":"turn.failed","error":{"message":"HTTP 429 Too Many Requests"}}`, ModelErrorRateLimited},
+		{"codex quota", `{"type":"turn.failed","error":{"message":"Quota exceeded. Check your plan and billing details."}}`, ModelErrorQuotaExhausted},
 		{"top level auth", `{"type":"turn.failed","message":"HTTP 401 Unauthorized"}`, ModelErrorAuth},
 		{"context overflow", `{"type":"turn.failed","error":{"message":"context_length_exceeded"}}`, ModelErrorContextOverflow},
 		{"unknown", `{"type":"turn.failed","error":{"message":"unknown failure"}}`, ""},

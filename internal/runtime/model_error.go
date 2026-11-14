@@ -71,7 +71,7 @@ func classifyModelFailure(message string) ModelErrorClass {
 		return false
 	}
 	switch {
-	case contains("insufficient_quota", "quota_exhausted", "quota exhausted", "insufficient balance", "credit balance is too low"):
+	case contains("insufficient_quota", "quota_exhausted", "quota exhausted", "quota exceeded", "insufficient balance", "credit balance is too low"):
 		return ModelErrorQuotaExhausted
 	case contains("context_length_exceeded", "context window exceeded", "context length exceeded", "maximum context length", "prompt is too long"):
 		return ModelErrorContextOverflow

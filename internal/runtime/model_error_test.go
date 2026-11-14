@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ func TestClassifyModelFailure(t *testing.T) {
 		{"Error: 401 Unauthorized", ModelErrorAuth},
 		{"HTTP status 403", ModelErrorAuth},
 		{"HTTP 429: insufficient_quota", ModelErrorQuotaExhausted},
+		{"Quota exceeded. Check your plan and billing details.", ModelErrorQuotaExhausted},
 		{"HTTP 400: context_length_exceeded", ModelErrorContextOverflow},
 		{"HTTP 400 Bad Request", ModelErrorBadRequest},
 		{"HTTP 504 Gateway Timeout", ModelErrorTimeout},
@@ -82,6 +84,9 @@ func TestExecutorClassifiesTerminalModelFailure(t *testing.T) {
 			}
 			if tc.processErr != nil && !errors.Is(err, tc.processErr) {
 				t.Fatalf("original error lost: %v", err)
+			}
+			if tc.name == "codebuddy quota with nonzero exit" && !strings.Contains(err.Error(), "insufficient_quota") {
+				t.Fatalf("provider error detail lost: %v", err)
 			}
 		})
 	}

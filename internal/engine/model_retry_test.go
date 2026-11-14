@@ -191,3 +191,72 @@ func TestModelRetryResumesAttemptWithoutResettingWorkspace(t *testing.T) {
 		t.Fatalf("node: %+v", got.Nodes["n"])
 	}
 }
+
+// Exercise the scheduler and Runner dispatch together: two terminal 429s
+// must not spend MaxAttempts or reset the Runner workspace before success.
+func TestModelRetryTwoRateLimitsThenRunnerSuccess(t *testing.T) {
+	e, store := newRecoveryEngine(t)
+	if err := store.PutAgent(domain.AgentDefinition{ID: "recovery-agent", Name: "Recovery Agent", ExecutorID: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutExecutor(domain.ExecutorDefinition{ID: "codex", Name: "Codex", Kind: "codex", Model: "primary"}); err != nil {
+		t.Fatal(err)
+	}
+	cvERunner(t, e, "recovery-runner", domain.RunnerStatusOnline, "terminal", "codex")
+	count := 0
+	var workspaces []string
+	e.SetRunnerDispatchNotify(func(string) {
+		tasks := e.repo.RunnerTasks()
+		var task domain.RunnerTask
+		for _, candidate := range tasks {
+			if candidate.Status == domain.RunnerTaskQueued {
+				task = candidate
+				break
+			}
+		}
+		if task.ID == "" {
+			t.Error("missing queued task")
+			return
+		}
+		count++
+		workspaces = append(workspaces, task.Workspace)
+		task.Attempt = 1
+		if count <= 2 {
+			task.Status = domain.RunnerTaskFailed
+			task.Error = "HTTP 429 Too Many Requests"
+			task.ModelErrorClass = "rate_limited"
+		} else {
+			task.Status = domain.RunnerTaskSuccess
+			task.Result = "done"
+			task.Outputs = &domain.RunnerTaskOutputs{Files: map[string]string{task.Invocation.GateResultPath: `{"decision":"pass","reason":"complete"}`}}
+		}
+		if err := e.repo.PutRunnerTask(task); err != nil {
+			t.Errorf("complete task: %v", err)
+		}
+	})
+	initial, maximum := 1, 1
+	wf := domain.WorkflowDefinition{ID: "real-scheduler", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "recovery-agent", MaxAttempts: 1, ModelRetry: &domain.ModelRetryPolicy{InitialSeconds: &initial, MaxSeconds: &maximum}}}}
+	run := domain.Run{ID: "two-limits", WorkflowID: wf.ID, Status: "running", WorkflowSnapshot: wf, ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "recovery-runner", RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "pending"}}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if resumed := e.ResumeInterruptedRuns(); len(resumed) != 1 {
+		t.Fatalf("resumed: %v", resumed)
+	}
+	waitFor(t, store, run.ID, "succeeded")
+	got, _ := store.Run(run.ID)
+	if count != 3 || got.Nodes["n"].Attempt != 1 || len(workspaces) != 3 || workspaces[0] != workspaces[1] || workspaces[1] != workspaces[2] {
+		t.Fatalf("calls=%d workspaces=%v node=%+v", count, workspaces, got.Nodes["n"])
+	}
+	retries := 0
+	for _, ev := range got.Events {
+		if ev.Type == "model.retry_waiting" {
+			retries++
+			t.Logf("retry: %s", ev.Message)
+		}
+	}
+	if retries != 2 {
+		t.Fatalf("retry events = %d", retries)
+	}
+	t.Logf("runner invocations=%d node attempt=%d workspace=%s final=%s", count, got.Nodes["n"].Attempt, workspaces[0], got.Status)
+}
