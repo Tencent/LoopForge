@@ -534,34 +534,40 @@ func dockerIsolationMaskRoot(workspace string) string {
 	return filepath.Join(filepath.Dir(workspace), ".isolation-masks", filepath.Base(workspace))
 }
 
-func dockerAgentConfigMasks(workspace string, aliases ...string) ([]string, error) {
-	// Docker Desktop cannot create missing nested mount targets on a VirtioFS share.
+// ensureDockerMaskTargets creates the in-workspace mount targets for the
+// isolation mask sources: Docker Desktop cannot create missing nested mount
+// targets on a VirtioFS share.
+func ensureDockerMaskTargets(workspace string) error {
 	if _, err := EnsureControlDirectory(workspace, "isolation", "empty-dir"); err != nil {
-		return nil, err
+		return err
 	}
 	target := filepath.Join(workspace, ".agentflow", "isolation", "empty-file")
 	root, rel, err := openWorkspacePath(workspace, target)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer root.Close()
 	file, err := root.OpenFile(rel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
-		if err := file.Close(); err != nil {
-			return nil, err
-		}
-	} else if os.IsExist(err) {
-		info, err := root.Lstat(rel)
-		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("sandbox mask target is not a regular file: %s", target)
-		}
-	} else {
+		return file.Close()
+	}
+	if !os.IsExist(err) {
+		return err
+	}
+	info, err := root.Lstat(rel)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("sandbox mask target is not a regular file: %s", target)
+	}
+	return nil
+}
+
+func dockerAgentConfigMasks(workspace string, aliases ...string) ([]string, error) {
+	if err := ensureDockerMaskTargets(workspace); err != nil {
 		return nil, err
 	}
-
 	emptyDir, emptyFile, err := isolationMaskSourcesAt(dockerIsolationMaskRoot(workspace))
 	if err != nil {
 		return nil, err

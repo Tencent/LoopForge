@@ -288,7 +288,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			assistantConversation
 			Effort *string `json:"effort"`
 		}
-		if !decode(c, &body) {
+		if !decodeLimit(c, &body, assistantRequestBodyLimit) {
 			return
 		}
 		conv := body.assistantConversation
