@@ -89,6 +89,9 @@ func bindExecutionTarget(command string, target executionTarget) string {
 		b.WriteString("\nexport AGENTFLOW_REPOSITORY_ID=" + shellSingleQuote(target.Repository.RepositoryID))
 		b.WriteString("\nexport AGENTFLOW_REPOSITORY_NAME=" + shellSingleQuote(target.Repository.Name))
 		b.WriteString("\nexport AGENTFLOW_REPOSITORY_DIR=" + shellSingleQuote(target.directory()))
+		if base := strings.TrimSpace(target.Repository.BaseBranch); base != "" {
+			b.WriteString("\nexport AGENTFLOW_BASE_BRANCH=" + shellSingleQuote(base))
+		}
 		if dir := target.directory(); dir != "" {
 			b.WriteString("\ncd -- " + shellSingleQuote(dir))
 		}

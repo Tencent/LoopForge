@@ -52,7 +52,7 @@ func PublicOperations() []Operation {
 		{Name: "tasks_list", Description: "List execution tasks", Method: "GET", Path: "/api/tasks", ReadOnly: true},
 		{Name: "tasks_get", Description: "Get one execution task", Method: "GET", Path: "/api/tasks/{id}", ReadOnly: true},
 		{Name: "agents_list", Description: "List Agent definitions", Method: "GET", Path: "/api/agents", ReadOnly: true},
-		{Name: "agents_save", Description: "Create or update an Agent definition", Method: "PUT", Path: "/api/agents"},
+		{Name: "agents_save", Description: "Create or update an Agent definition. verification[] gates: mode=command (default; commands' exit code decides, executionScope run or repositories), mode=diff_coverage (commands run the tests and write a coverage report; only lines changed since the merge-base are judged; requires executionScope=repositories and coverage {reportPath relative to the repository root, reportFormat go_coverprofile|lcov|cobertura, optional thresholdPct 0-100 default 80, minChangedLines default 5, baseBranch, include/exclude globs}), or mode=manual. See docs/diff-coverage-gate.md.", Method: "PUT", Path: "/api/agents"},
 		{Name: "agents_get", Description: "Get one Agent definition", Method: "GET", Path: "/api/agents/{id}", ReadOnly: true},
 		{Name: "agents_revisions_list", Description: "List Agent definition revisions", Method: "GET", Path: "/api/agents/{id}/revisions", ReadOnly: true},
 		{Name: "agents_revision_get", Description: "Get one Agent definition revision", Method: "GET", Path: "/api/agents/{id}/revisions/{revisionId}", ReadOnly: true},
