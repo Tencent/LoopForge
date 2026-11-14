@@ -49,7 +49,7 @@ func TestRealCodexEngineWaitsOnCredentials(t *testing.T) {
 	if _, err := store.UpdateUserCredentials(3, repo.UserCredentialUpdate{CodexAPIKey: "local-test-key", CodexBaseURL: &base}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutAgent(domain.AgentDefinition{ID: "codex-probe", Name: "Codex probe", ExecutorID: "codex", Model: "gpt-test"}); err != nil {
+	if err := store.PutAgent(domain.AgentDefinition{ID: "codex-probe", Name: "Codex probe", ExecutorID: "codex", Model: "gpt-test", ModelRetry: &domain.ModelRetryPolicy{}}); err != nil {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{ID: "codex-live", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "codex-probe", MaxAttempts: 1}}}
