@@ -131,19 +131,7 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 	invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: conversationPushNode}
 	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
 	invocation.Repository = nil
-	wanted := map[string]bool{}
-	for _, rc := range repositories {
-		wanted[rc.RepositoryID+"\x00"+rc.WorkspaceDir] = true
-	}
-	kept := invocation.Repositories[:0]
-	for _, repo := range invocation.Repositories {
-		if wanted[repo.RepositoryID+"\x00"+repo.Dir] {
-			repo.SyncWorkBranch = true
-			repo.SharedPushTarget = sharedTarget
-			kept = append(kept, repo)
-		}
-	}
-	invocation.Repositories = kept
+	invocation.Repositories = conversationPushRepositories(invocation.Repositories, repositories, sharedTarget)
 	if len(invocation.GitSSHRemotes()) > 0 {
 		invocation.GitSSHUserID = requesterID
 	} else {
@@ -170,6 +158,38 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 	if err != nil {
 		return nil, err
 	}
+	heads, err := conversationPushHeads(final)
+	if err != nil {
+		return nil, err
+	}
+	e.observeConversationPush(run.ID, heads, runnerID)
+	return heads, nil
+}
+
+// conversationPushRepositories keeps only the bound runner repositories the
+// caller asked to push (matched by repository ID and workspace directory) and
+// marks them for work-branch sync, optionally targeting a shared branch. It
+// filters bound in place, reusing its backing array.
+func conversationPushRepositories(bound []domain.RunnerRepository, selected []domain.RepositoryContext, sharedTarget string) []domain.RunnerRepository {
+	wanted := map[string]bool{}
+	for _, rc := range selected {
+		wanted[rc.RepositoryID+"\x00"+rc.WorkspaceDir] = true
+	}
+	kept := bound[:0]
+	for _, repo := range bound {
+		if wanted[repo.RepositoryID+"\x00"+repo.Dir] {
+			repo.SyncWorkBranch = true
+			repo.SharedPushTarget = sharedTarget
+			kept = append(kept, repo)
+		}
+	}
+	return kept
+}
+
+// conversationPushHeads interprets a finished work-branch push task: a
+// non-success status becomes a git push error, otherwise the task result is
+// decoded into the pushed branch heads.
+func conversationPushHeads(final domain.RunnerTask) ([]domain.RunnerWorkBranchHead, error) {
 	if final.Status != domain.RunnerTaskSuccess {
 		msg := strings.TrimSpace(final.Error)
 		if msg == "" {
@@ -183,7 +203,6 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 			return nil, fmt.Errorf("decode push result: %w", err)
 		}
 	}
-	e.observeConversationPush(run.ID, heads, runnerID)
 	return heads, nil
 }
 
