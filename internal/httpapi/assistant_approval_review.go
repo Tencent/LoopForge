@@ -134,6 +134,7 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 	var modelMu sync.Mutex
 	primaryUnavailable := false
 	return func(ctx context.Context, tool, description string, args map[string]any) assistantApprovalReview {
+		ctx = h.helperExecutionContext(ctx, user.ID, req.ExecutionTarget)
 		action := input
 		action.Tool, action.Description, action.Arguments = tool, description, args
 		var result assistantApprovalReview

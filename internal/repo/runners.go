@@ -920,15 +920,6 @@ func (r *RunnersRepo) SetDefaultRunner(userID int64, runnerID string, now time.T
 
 // ---------- helpers ----------
 
-func containsFold(values []string, want string) bool {
-	for _, v := range values {
-		if strings.EqualFold(v, want) {
-			return true
-		}
-	}
-	return false
-}
-
 func nullableInt64(v int64) any {
 	if v == 0 {
 		return nil

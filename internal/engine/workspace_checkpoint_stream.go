@@ -65,7 +65,11 @@ func (e *Engine) closeCheckpointTransfer(ctx context.Context, run domain.Run, id
 	if id == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	budget := 5 * time.Second
+	if ctx.Err() != nil {
+		budget = time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 	defer cancel()
 	_, _ = e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpointClose, CheckpointTransfer: &domain.WorkspaceCheckpointTransfer{ID: id}})
 }

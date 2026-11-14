@@ -232,7 +232,7 @@ func (e *Engine) parkForResumeAt(runID string, generation int, message string) {
 		if r.Generation != generation || ((r.OwnerInstanceID != "" || r.Generation > 0) && !e.ownsRun(*r)) {
 			return
 		}
-		if isTerminalRunStatus(r.Status) {
+		if domain.TerminalRunStatus(r.Status) {
 			return
 		}
 		resetInFlightNodesForResume(r, "执行实例退出，等待恢复")
@@ -329,7 +329,7 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			ignored = true
 			return
 		}
-		if isTerminalRunStatus(r.Status) {
+		if domain.TerminalRunStatus(r.Status) {
 			ignored = true
 			return
 		}

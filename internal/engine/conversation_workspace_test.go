@@ -528,3 +528,34 @@ func TestMaterializeRunnerConversationWorkspaceRequestsCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestConversationWorkspaceRetriesFailedSaveBeforeIdleReclamation(t *testing.T) {
+	e, id := checkpointFixture(t)
+	now := time.Now().UTC()
+	token, err := e.repo.BeginWorkspaceUse(id, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.repo.MarkWorkspaceFollowUp(id, token, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.repo.FinishWorkspaceUse(id, token, now, nil, "cancelled checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := e.repo.WorkspaceCheckpoint(id)
+	if meta.SaveRetryAt == nil {
+		t.Fatal("no retry scheduled")
+	}
+	run, _ := e.repo.RunState(id)
+	managed, claimed, _, err := e.claimIdleConversationWorkspace(run, meta.SaveRetryAt.Add(time.Second))
+	if err != nil || !managed || claimed {
+		t.Fatalf("retry/reclaim result: %v %v %v", managed, claimed, err)
+	}
+	meta, _ = e.repo.WorkspaceCheckpoint(id)
+	if meta.SavedAt == nil || meta.Error != "" || meta.LeaseToken != "" {
+		t.Fatalf("retry did not finish cleanly: %+v", meta)
+	}
+	if _, err = os.Stat(filepath.Join(e.RunWorkspace(id), "README.md")); err != nil {
+		t.Fatal("retry reclaimed active conversation files", err)
+	}
+}

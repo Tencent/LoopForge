@@ -88,7 +88,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		default:
 		}
 		r, ok := e.repo.RunState(runID)
-		if !ok || isTerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
+		if !ok || domain.TerminalRunStatus(r.Status) || r.IsWorkspace() || r.HistoricalGroup() {
 			return
 		}
 		if r.CancelRequested {

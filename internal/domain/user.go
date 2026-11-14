@@ -101,9 +101,17 @@ func PublicUser(u User) User {
 
 // CLIModel is one entry of a CLI model catalog. ID is passed to the CLI
 // as-is; an empty Name shows the ID.
+//
+// Efforts is set on a Cursor model family folded out of the CLI's own model
+// list: it maps each reasoning effort onto the model ID cursor-agent printed
+// for it, and DefaultEffort is the effort an empty choice runs. They are
+// saved with the catalog so the family resolves for its owner on any
+// instance and after a restart.
 type CLIModel struct {
-	ID   string `json:"id"`
-	Name string `json:"name,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name,omitempty"`
+	Efforts       map[string]string `json:"efforts,omitempty"`
+	DefaultEffort string            `json:"defaultEffort,omitempty"`
 }
 
 // AgentCLICredential is the personal configuration of one agent CLI. An

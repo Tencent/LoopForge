@@ -47,6 +47,26 @@ func (d *deps) sqlJSONText(path string) string {
 	return "json_extract(payload, ?)"
 }
 
+// sqlPayloadJSONText is the literal-path variant of sqlJSONText for SELECT
+// projections that cannot bind the path as a parameter. path is the JSON path
+// below "$." and must be a code constant, never user input.
+func (d *deps) sqlPayloadJSONText(path string) string {
+	if d.isMySQL() {
+		return "JSON_UNQUOTE(JSON_EXTRACT(payload, '$." + path + "'))"
+	}
+	return "json_extract(payload, '$." + path + "')"
+}
+
+// sqlExecutionContextJSONText is the execution_context-column counterpart of
+// sqlPayloadJSONText. path is the JSON path below "$." and must be a code
+// constant, never user input.
+func (d *deps) sqlExecutionContextJSONText(path string) string {
+	if d.isMySQL() {
+		return "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$." + path + "'))"
+	}
+	return "json_extract(execution_context, '$." + path + "')"
+}
+
 // locking returns the query with a row-lock clause on MySQL. sqlite serializes
 // writers already (single connection in tests), so no clause is needed there.
 func (d *deps) locking(q *gorm.DB) *gorm.DB {

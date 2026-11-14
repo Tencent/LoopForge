@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"path"
 	"strconv"
 	"strings"
@@ -76,8 +77,39 @@ const RunnerVersionWorkspaceOwnerPreparation = "0.7.1"
 
 const RunnerVersionConversationWorkspace = "0.8.0"
 
+// Conversation CLI execution includes cancellation of preemptible workspace
+// exports and addressable startup cancellation, so stopping cannot strand a
+// queued CLI or block a following turn behind a previous background save.
+const RunnerVersionConversationCLI = "0.10.1"
+
+func (r Runner) SupportsConversationCLI() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
+}
+
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
+}
+
+// RunnerVersionDefaultSelection is the oldest runner a user may pick as the
+// default execution machine. Older daemons cannot open conversation
+// workspaces, so new tasks routed to them would fail.
+const RunnerVersionDefaultSelection = RunnerVersionConversationWorkspace
+
+// DefaultSelectionBlocker explains why the runner cannot become a user's
+// default execution machine, or returns "" when it can. The runners page
+// disables「设为默认」with the same rules.
+func (r Runner) DefaultSelectionBlocker() string {
+	if r.Status != RunnerStatusOnline {
+		return "机器离线，不能设为默认执行机器，请先在该机器上启动执行机器服务"
+	}
+	if !versionAtLeast(r.RunnerVersion, RunnerVersionDefaultSelection) {
+		version := strings.TrimSpace(r.RunnerVersion)
+		if version == "" {
+			version = "未知"
+		}
+		return fmt.Sprintf("执行机器版本 %s 过低，需升级至 %s 及以上才能设为默认", version, RunnerVersionDefaultSelection)
+	}
+	return ""
 }
 
 // RunnerVersionSharedPush is the first runner that merges the work branch into
@@ -87,7 +119,7 @@ const RunnerVersionSharedPush = "0.9.0"
 
 const RunnerVersionGitSSH = "0.9.3"
 
-const RunnerVersionNodeCheckpoints = "0.10.0"
+const RunnerVersionNodeCheckpoints = "0.10.2"
 
 func (r Runner) SupportsNodeCheckpoints() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionNodeCheckpoints)
@@ -396,25 +428,30 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIAPIKey = ""
 	copyInvocation.AgentCLIBaseURL = ""
 	copyInvocation.AgentCLIProtocol = ""
+	copyInvocation.AgentCLIModels = nil
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
 	if copyInvocation.Repository != nil {
-		copyRepository := *copyInvocation.Repository
-		copyRepository.GitToken = ""
-		copyRepository.CloneURL = StripURLCredentials(copyRepository.CloneURL)
+		copyRepository := publicRunnerRepository(*copyInvocation.Repository)
 		copyInvocation.Repository = &copyRepository
 	}
 	if len(copyInvocation.Repositories) > 0 {
 		copyRepositories := make([]RunnerRepository, len(copyInvocation.Repositories))
 		for i, repository := range copyInvocation.Repositories {
-			repository.GitToken = ""
-			repository.CloneURL = StripURLCredentials(repository.CloneURL)
-			copyRepositories[i] = repository
+			copyRepositories[i] = publicRunnerRepository(repository)
 		}
 		copyInvocation.Repositories = copyRepositories
 	}
 	task.Invocation = &copyInvocation
 	return task
+}
+
+// publicRunnerRepository returns a copy of one checkout spec with its Git
+// credentials removed: the token field and any userinfo in the clone URL.
+func publicRunnerRepository(repository RunnerRepository) RunnerRepository {
+	repository.GitToken = ""
+	repository.CloneURL = StripURLCredentials(repository.CloneURL)
+	return repository
 }
 
 // RunnerInvocation is the self-contained package a runner daemon needs to
@@ -459,6 +496,9 @@ type RunnerInvocation struct {
 	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`
 	AgentCLIBaseURL              string   `json:"agentCliBaseUrl,omitempty"`
 	AgentCLIProtocol             string   `json:"agentCliProtocol,omitempty"`
+	// AgentCLIModels is the responsible user's saved catalog for the agent
+	// CLI; Cursor resolves the model's effort to an ID from it.
+	AgentCLIModels []CLIModel `json:"agentCliModels,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
 	// in scripts, verification gates, and Agent hooks. It is unbound; personal
 	// credentials are applied in memory on the runner. Agent Assets stay

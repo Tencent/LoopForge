@@ -47,6 +47,11 @@ func TestZCodeCommand(t *testing.T) {
 	if chat.Argv[2] != "hi" {
 		t.Fatalf("resumed prompt: %q", chat.Argv[2])
 	}
+	workspace := AgentCLICommand(AgentCLIZCode, AgentCLICommandOptions{Chat: true, Workspace: true, Prompt: "edit", Resume: "sess_1"})
+	i = slices.Index(workspace.Argv, "--disallowed-tools")
+	if workspace.AgentCLI.ReadOnly || i < 0 || workspace.Argv[i+1] != zcodeSOPDisallowedTools {
+		t.Fatalf("workspace retains platform native tool restrictions: %q", workspace.Argv)
+	}
 }
 
 func readJSONFile(t *testing.T, path string) map[string]any {

@@ -282,7 +282,7 @@ func (e *Engine) EnsureWorkspaceReady(ctx context.Context, id string) (runtime.W
 	if current, ok := e.repo.RunState(id); ok {
 		run = current
 	}
-	if hasRunningNode(run) || env.activeExecutions.Load() > 0 || e.workspaceTerminals.HasRunScope(id) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
+	if run.HasActiveNode() || env.activeExecutions.Load() > 0 || e.workspaceTerminals.HasRunScope(id) || e.WorkspaceActive != nil && e.WorkspaceActive(run) {
 		state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 		epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
 		// The environment agents already run in serves the IDE terminal too.

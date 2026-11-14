@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -135,13 +136,8 @@ func marketItem(id string) (mcpMarketItem, bool) {
 		return mcpMarketItem{}, false
 	}
 	for _, item := range mcpMarketItems {
-		if item.ID == id {
+		if item.ID == id || slices.Contains(item.Aliases, id) {
 			return item, true
-		}
-		for _, alias := range item.Aliases {
-			if alias == id {
-				return item, true
-			}
 		}
 	}
 	return mcpMarketItem{}, false

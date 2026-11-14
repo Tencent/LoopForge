@@ -62,7 +62,7 @@ type workspaceMRResult struct {
 func workspaceSubmitMRDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_submit_mr",
-		Description: "提交并推送当前工作区的工作分支。GitHub / 工蜂使用请求人的 Git Token 发起或更新 PR/MR，返回 mrUrl；Git SSH 仓库使用请求人的 SSH 密钥推送，返回 sourceBranch 和 commit。调用前先用 workbench_workspace_command 验证。title 写改动标题；description 用 Markdown 概括整个交付的改动和验证结果。targetBranch 默认是工作分支的起点 baseBranch；不同则会给出 warning。只读仓库不会提交，手工切换到其它分支时会拒绝提交。默认 mode=mr；用户明确要合并到 preview/test 等已有共享分支时传 mode=direct 和 targetBranch，直接推送合并结果（目标不能是基线分支）。",
+		Description: "提交并推送当前工作区的工作分支。GitHub / 工蜂使用请求人的 Git Token 发起或更新 PR/MR，返回 mrUrl；Git SSH 仓库使用请求人的 SSH 密钥推送，返回 sourceBranch 和 commit。调用前先跑通相关测试。title 写改动标题；description 用 Markdown 概括整个交付的改动和验证结果。targetBranch 默认是工作分支的起点 baseBranch；不同则会给出 warning。只读仓库不会提交，手工切换到其它分支时会拒绝提交。默认 mode=mr；用户明确要合并到 preview/test 等已有共享分支时传 mode=direct 和 targetBranch，直接推送合并结果（目标不能是基线分支）。",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","maxLength":20000},"targetBranch":{"type":"string","maxLength":200,"description":"PR/MR 的目标分支，默认是工作区打开时的 baseBranch；与起点不同时结果带 warning。mode=direct 时必填，写要直推的共享分支"},"mode":{"type":"string","enum":["mr","direct"],"description":"mr（默认）推工作分支并发起或更新 PR/MR；direct 把工作分支 merge --no-ff 进 targetBranch 后直推，不发 MR"}},"required":["title"],"additionalProperties":false}`),
 		Kind:        "workspace",
 	}

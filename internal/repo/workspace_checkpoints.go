@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -50,6 +51,8 @@ func (c WorkspaceCheckpoint) Released() bool {
 var ErrWorkspaceInUse = errors.New("工作区正在使用或保存，请稍后重试")
 var ErrWorkspaceCheckpointBackoff = errors.New("workspace checkpoint save is backing off")
 
+const workspaceBackgroundSavePrefix = "save:"
+
 func (r *RunsRepo) WorkspaceCheckpoint(runID string) (WorkspaceCheckpoint, bool) {
 	var item WorkspaceCheckpoint
 	err := r.DB.Omit("archive").Where("run_id = ?", runID).Take(&item).Error
@@ -64,7 +67,42 @@ func (r *RunsRepo) WorkspaceCheckpointArchive(runID string) ([]byte, error) {
 	return io.ReadAll(source)
 }
 func (r *RunsRepo) BeginWorkspaceUse(runID string, now time.Time) (string, error) {
-	return r.beginWorkspaceLease(runID, now, true, false)
+	token, _, err := r.BeginWorkspaceUsePreemptingSave(runID, now)
+	return token, err
+}
+
+// Foreground use can replace a background archive lease. Execution, restore
+// and maintenance/delete leases remain exclusive. The old save must still
+// publish and finish by token CAS, so it cannot affect the new use.
+func (r *RunsRepo) BeginWorkspaceUsePreemptingSave(runID string, now time.Time) (string, string, error) {
+	var previous string
+	token, err := r.beginWorkspaceLease(runID, now, true, false, &previous)
+	return token, previous, err
+}
+
+// HandoffWorkspaceUseToSave makes the archive interruptible without an unlocked
+// gap. SaveRetryAt also lets maintenance recover a crashed background save.
+func (r *RunsRepo) HandoffWorkspaceUseToSave(runID, token string, now time.Time) (string, error) {
+	if token == "" || strings.HasPrefix(token, workspaceBackgroundSavePrefix) {
+		return "", ErrWorkspaceInUse
+	}
+	saveToken := workspaceBackgroundSavePrefix + token
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
+			return err
+		}
+		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Updates(map[string]any{
+			"lease_token": saveToken, "lease_handoff_id": "", "last_used_at": now, "save_retry_at": now,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrWorkspaceInUse
+		}
+		return nil
+	})
+	return saveToken, err
 }
 
 // MarkNodeCheckpointRestorePending fences workspace use if an automatic
@@ -574,7 +612,7 @@ func (r *RunsRepo) ValidateWorkspaceUse(runID, token string, now time.Time) erro
 func (r *RunsRepo) BeginWorkspaceCheckpointSave(runID string, now time.Time) (string, error) {
 	return r.beginWorkspaceLease(runID, now, false, false)
 }
-func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, restoring bool) (string, error) {
+func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, restoring bool, preempted ...*string) (string, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -622,7 +660,20 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 			// then tell a stale outcome from a restore still in progress.
 			values["restore_status"], values["restore_error"] = "failed", WorkspaceRestoreInterrupted
 		}
-		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND (lease_until IS NULL OR lease_until < ?)", runID, now).Updates(values)
+		query := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ?", runID)
+		if touch && !restoring {
+			var current WorkspaceCheckpoint
+			if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&current).Error; err != nil {
+				return err
+			}
+			if strings.HasPrefix(current.LeaseToken, workspaceBackgroundSavePrefix) && len(preempted) > 0 {
+				*preempted[0] = current.LeaseToken
+			}
+			query = query.Where("lease_until IS NULL OR lease_until < ? OR lease_token LIKE ?", now, workspaceBackgroundSavePrefix+"%")
+		} else {
+			query = query.Where("lease_until IS NULL OR lease_until < ?", now)
+		}
+		result := query.Updates(values)
 		if result.Error != nil {
 			return result.Error
 		}

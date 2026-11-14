@@ -128,14 +128,14 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
 	if executionContext.ParentRunID == "" {
-		// Workspace-only conversations have a separate lifecycle. A workflow
-		// without repositories has no Git checkout to checkpoint.
 		executionContext.NodeCheckpointsEnabled = !workspace && len(repositories) > 0
 		if project, ok := e.repo.Project(executionContext.ProjectID); ok && project.NodeCheckpointsDisabled {
 			executionContext.NodeCheckpointsEnabled = false
 		}
-		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
-		executionContext.WorkspaceRunID = ""
+		if !executionContext.ExecutionPinned {
+			executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
+			executionContext.WorkspaceRunID = ""
+		}
 	} else {
 		parent, ok := e.repo.RunState(executionContext.ParentRunID)
 		if !ok {
@@ -143,7 +143,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		}
 		executionContext.NodeCheckpointsEnabled = parent.ExecutionContext.NodeCheckpointsEnabled
 	}
-	if executionContext.ExecutionRunnerID == "" {
+	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {
 		if runner, ok := e.cloudPoolRunnerForCheckpoints(executionContext.ProjectID, executionContext.NodeCheckpointsEnabled); ok {
 			executionContext.ExecutionRunnerID = runner.ID
 			executionContext.ExecutionPool = domain.ExecutionModeCloud

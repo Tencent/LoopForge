@@ -144,7 +144,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid terminal request", 400)
 		return
 	}
-	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.IsWorkspace() || run.Status != "running" && run.Status != "queued" && !hasRunningNode(run))
+	artifactsAllowed := request.Operation == domain.RunnerWorkspaceOperationArtifacts && (run.IsWorkspace() || run.Status != "running" && run.Status != "queued" && !run.HasActiveNode())
 	interactive := request.Operation == domain.RunnerWorkspaceOperationPreparationRecord || request.Operation == domain.RunnerWorkspaceOperationPrepare || request.Operation == domain.RunnerWorkspaceOperationPreparationStatus || request.Operation == domain.RunnerWorkspaceOperationTerminal
 	transferAux := transfer && request.Operation != domain.RunnerWorkspaceOperationCheckpointExport && request.Operation != domain.RunnerWorkspaceOperationCheckpointCommit
 	if !probe && !interactive && !nodeCheckpoint && (sharesWorkspace(run) || !artifactsAllowed && !transferAux && !e.conversationWorkspaceIdle(run)) {
