@@ -25,7 +25,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest, python-version: "3.8", node-version: "22"}
+          # Keep the minimum supported Python on an image with matching builds.
+          - {os: ubuntu-22.04, python-version: "3.8", node-version: "22"}
           - {os: ubuntu-latest, python-version: "3.12", node-version: "22"}
           - {os: ubuntu-latest, python-version: "3.12", node-version: "20"}
           - {os: macos-latest, python-version: "3.12", node-version: "22"}
@@ -43,7 +44,8 @@ jobs:
 
   e2e-browser:
     name: e2e-browser (dashboard in Chromium)
-    runs-on: ubuntu-latest
+    # The pinned Playwright 1.55 browser dependencies support Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1

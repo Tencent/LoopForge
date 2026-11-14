@@ -46,9 +46,10 @@ build() {
   local staging
   staging="$(mktemp -d "$output/.build.XXXXXX")"
   go build "${flags[@]}" -o "$staging/" "$@" || { rm -rf "$staging"; return 1; }
-  local package
+  local package extension=''
+  if [[ "${GOOS:-$(go env GOOS)}" == windows ]]; then extension='.exe'; fi
   for package in "$@"; do
-    mv "$staging/${package##*/}" "$output/${package##*/}$suffix"
+    mv "$staging/${package##*/}$extension" "$output/${package##*/}$suffix"
   done
   rmdir "$staging"
 }
@@ -57,7 +58,7 @@ printf 'Building with %s parallel jobs\n' "$jobs"
 if [[ $mode != platform ]]; then
   printf '\nBuilding agentflow-mcp and loopforge-account for the platform…\n'
   build '' ./cmd/agentflow-mcp ./cmd/loopforge-account
-  for target_os in linux darwin; do
+  for target_os in linux darwin windows; do
     for target_arch in amd64 arm64; do
       printf '\nBuilding agentflow-runner and agentflow-gate-mcp (%s/%s)…\n' "$target_os" "$target_arch"
       GOOS="$target_os" GOARCH="$target_arch" build "-$target_os-$target_arch" ./cmd/agentflow-runner ./cmd/agentflow-gate-mcp

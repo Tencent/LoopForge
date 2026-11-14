@@ -347,15 +347,27 @@ func TestAccessGuideIsTheSingleOnboardingEntry(t *testing.T) {
 	}
 }
 
-func TestRunnerBindCommandBootstrapsWithProtocolFallback(t *testing.T) {
+func TestRunnerBindCommandSupportsWindowsAndUnix(t *testing.T) {
 	html, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{"https://", "http://", "bindHttpsOrigin", "bindHttpOrigin", "--server", "bindServerHost"} {
+	for _, want := range []string{"runnerInstallPlatform", "Windows · PowerShell", "macOS / Linux", `role="tablist" aria-label="接入系统"`, `data-runner-platform="windows"`, `data-runner-platform="unix"`, `aria-controls="runnerInstallPanel"`, `id="runnerInstallPanel" role="tabpanel"`, "runnerShellHint", "runnerMaintenanceCommand"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("runner bind command is missing %q", want)
+		}
+	}
+	if strings.Contains(page, `<select id="runnerInstallPlatform"`) {
+		t.Fatal("runner platform selection must use tabs instead of a dropdown")
+	}
+	script, err := os.ReadFile("app/runners.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/runners/install.ps1", "-ServerUrl", "-BindCode", "/runners/install.sh", "--server", "--service"} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("runner installation command is missing %q", want)
 		}
 	}
 }

@@ -12,9 +12,15 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
+
+// TerminalResult describes a terminal response shared with the runner protocol.
+type TerminalResult struct {
+	ID     string `json:"id"`
+	Data   []byte `json:"data,omitempty"`
+	Exited bool   `json:"exited"`
+}
 
 func terminalBaseEnvironment(home string) []string {
 	return []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TERM=xterm-256color", "LANG=C.UTF-8"}
@@ -208,9 +214,9 @@ func filesystemEnvironmentIdentity(workspace, driver string, environment map[str
 	if err != nil {
 		return "", err
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", fmt.Errorf("workspace filesystem identity unavailable")
+	device, inode, err := filesystemObjectIdentity(workspace, info)
+	if err != nil {
+		return "", err
 	}
 	data, err := json.Marshal(struct {
 		Driver       string
@@ -219,7 +225,7 @@ func filesystemEnvironmentIdentity(workspace, driver string, environment map[str
 		Inode        uint64
 		Environment  map[string]string
 		ProcessEpoch string
-	}{driver, filepath.Clean(workspace), uint64(stat.Dev), stat.Ino, environment, terminalProcessEnvironmentEpoch()})
+	}{driver, filepath.Clean(workspace), device, inode, environment, terminalProcessEnvironmentEpoch()})
 	if err != nil {
 		return "", err
 	}

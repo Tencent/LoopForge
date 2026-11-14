@@ -4,33 +4,71 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/processgroup"
 )
 
+func TestHostBrowserEndpointPreservesWorkspace(t *testing.T) {
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	t.Setenv("TMP", temporary)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"Browser":"fixture"}`))
+	}))
+	defer server.Close()
+	record := hostBrowserRecord{PID: os.Getpid(), Owner: os.Getpid(), Port: server.Listener.Addr().(*net.TCPAddr).Port, WebSocket: "ws://127.0.0.1/fixture", Workspace: t.TempDir()}
+	dir := hostBrowserDir(t.Name())
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "endpoint.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	endpoint, ok := lookupBrowserEndpoint(context.Background(), t.Name())
+	if !ok || endpoint.Kind != "local" || endpoint.Workspace != record.Workspace || endpoint.WebSocket != record.WebSocket {
+		t.Fatalf("live host browser lost its workspace: %+v found=%v", endpoint, ok)
+	}
+}
+
 func TestReapOrphanHostBrowsersKillsBrowsersOfDeadOwners(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
-	dead := exec.Command("true")
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	t.Setenv("TMP", temporary)
+	dead := exec.Command(os.Args[0], "-test.run=^$")
 	if err := dead.Run(); err != nil {
 		t.Fatal(err)
 	}
-	orphan := exec.Command("sleep", "60")
-	orphan.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := orphan.Start(); err != nil {
+	orphan := exec.Command(os.Args[0], "-test.run=^TestOrphanBrowserProcessHelper$")
+	orphan.Env = append(os.Environ(), "AGENTFLOW_TEST_ORPHAN_BROWSER=1")
+	cleanup, err := processgroup.Start(orphan)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer cleanup()
 	exited := make(chan struct{})
 	go func() { _ = orphan.Wait(); close(exited) }()
-	defer func() { _ = orphan.Process.Kill() }()
+	defer func() {
+		_ = processgroup.Kill(orphan.Process.Pid)
+		<-exited
+	}()
 	write := func(runID string, record hostBrowserRecord) string {
 		dir := hostBrowserDir(runID)
 		raw, _ := json.Marshal(record)
@@ -55,6 +93,12 @@ func TestReapOrphanHostBrowsersKillsBrowsersOfDeadOwners(t *testing.T) {
 	}
 	if _, err := os.Stat(ownedDir); err != nil {
 		t.Fatalf("live owner's record removed: %v", err)
+	}
+}
+
+func TestOrphanBrowserProcessHelper(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_ORPHAN_BROWSER") == "1" {
+		time.Sleep(time.Minute)
 	}
 }
 

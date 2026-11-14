@@ -37,7 +37,7 @@ func TestConversationProcessBidirectionalAndRootFence(t *testing.T) {
 	defer cancel()
 	root := t.TempDir()
 	p := &ConversationProcessPool{}
-	req := ConversationProcessRequest{Operation: "start", SourceRoot: "/api-state", Command: &ConversationCommand{Argv: []string{"sh", "-c", "read line; printf 'out:%s\\n' \"$line\"; printf err >&2"}, Interactive: true}}
+	req := ConversationProcessRequest{Operation: "start", SourceRoot: "/api-state", Command: &ConversationCommand{Argv: []string{"sh", "-c", "read -r line; printf 'out:%s\\n' \"$line\"; printf err >&2"}, Interactive: true}}
 	r, err := p.Handle(ctx, root, "", nil, req, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestConversationProcessBidirectionalAndRootFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := conversationPoll(t, p, ctx, root, r.ID)
-	if !strings.Contains(output, filepath.Join(root, "ws/a")) || !strings.Contains(output, "err") {
+	if !strings.Contains(filepath.ToSlash(output), filepath.ToSlash(filepath.Join(root, "ws", "a"))) || !strings.Contains(output, "err") {
 		t.Fatalf("duplex output: %s", output)
 	}
 	if _, err = p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "prepare"}, nil); err != nil {

@@ -7,7 +7,6 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -19,11 +18,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/processgroup"
 )
 
 //go:embed browser_assets/Dockerfile browser_assets/entrypoint.sh browser_assets/cdp-relay.mjs
@@ -342,12 +341,12 @@ func ensureHostBrowser(ctx context.Context, workspace, runID string) (domain.MCP
 			args = append(args, "--no-sandbox", "--disable-dev-shm-usage")
 		}
 		cmd := exec.Command(binary, append(args, "about:blank")...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := cmd.Start(); err != nil {
+		cleanupProcess, err := processgroup.Start(cmd)
+		if err != nil {
 			return domain.MCPServerDefinition{}, fmt.Errorf("启动 Chromium 失败: %w", err)
 		}
 		b = &hostBrowser{cmd: cmd, workspace: workspace, dir: dir, exited: make(chan struct{})}
-		go func() { _ = cmd.Wait(); close(b.exited) }()
+		go func() { _ = cmd.Wait(); cleanupProcess(); close(b.exited) }()
 		port, path, err := waitDevToolsActivePort(ctx, profile, b.exited)
 		if err != nil {
 			b.stop()
@@ -399,11 +398,11 @@ func waitDevToolsActivePort(ctx context.Context, profile string, exited <-chan s
 
 func (b *hostBrowser) stop() {
 	if b.cmd.Process != nil {
-		_ = syscall.Kill(-b.cmd.Process.Pid, syscall.SIGTERM)
+		_ = processgroup.Terminate(b.cmd.Process.Pid)
 		select {
 		case <-b.exited:
 		case <-time.After(3 * time.Second):
-			_ = syscall.Kill(-b.cmd.Process.Pid, syscall.SIGKILL)
+			_ = processgroup.Kill(b.cmd.Process.Pid)
 		}
 	}
 	_ = os.RemoveAll(b.dir)
@@ -472,15 +471,14 @@ func reapOrphanHostBrowsers() {
 			continue
 		}
 		if record.PID > 0 && processAlive(record.PID) {
-			_ = syscall.Kill(-record.PID, syscall.SIGKILL)
+			_ = processgroup.Kill(record.PID)
 		}
 		_ = os.RemoveAll(dir)
 	}
 }
 
 func processAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return processgroup.Alive(pid)
 }
 
 // FindChromium locates a Chromium-family binary for host drivers.
@@ -521,7 +519,7 @@ func FindChromium() (string, error) {
 func lookupBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint, bool) {
 	if raw, err := os.ReadFile(filepath.Join(hostBrowserDir(runID), "endpoint.json")); err == nil {
 		var record hostBrowserRecord
-		if json.Unmarshal(raw, &record) == nil && record.PID > 0 && syscall.Kill(record.PID, 0) == nil && hostDevToolsAlive(ctx, record.Port) {
+		if json.Unmarshal(raw, &record) == nil && record.PID > 0 && processgroup.Alive(record.PID) && hostDevToolsAlive(ctx, record.Port) {
 			return browserEndpoint{Kind: "local", WebSocket: record.WebSocket, Workspace: record.Workspace}, true
 		}
 	}

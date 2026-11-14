@@ -35,7 +35,11 @@ func materializeGateMCP(workspace, configRoot, binaryRel, resultPath, driver str
 	if err != nil {
 		return domain.MCPServerDefinition{}, fmt.Errorf("read gate MCP binary: %w", err)
 	}
-	binaryPath := filepath.Join(configRoot, "gate-mcp")
+	suffix := gateMCPExecutableSuffix(targetOS)
+	binaryPath := filepath.Join(configRoot, "gate-mcp"+suffix)
+	if suffix != "" {
+		binaryRel += suffix
+	}
 	if err := writeManagedFile(workspace, binaryPath, raw, 0o700); err != nil {
 		return domain.MCPServerDefinition{}, err
 	}
@@ -55,7 +59,7 @@ func materializeGateMCP(workspace, configRoot, binaryRel, resultPath, driver str
 // cache the small helper on demand. A sidecar next to the current executable
 // is also accepted so installed runner machines need no Go toolchain.
 func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
-	if targetOS != "darwin" && targetOS != "linux" {
+	if targetOS != "darwin" && targetOS != "linux" && targetOS != "windows" {
 		return "", fmt.Errorf("unsupported gate MCP operating system %q", targetOS)
 	}
 	if targetArch != "amd64" && targetArch != "arm64" {
@@ -70,12 +74,13 @@ func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
 	}
 	if executable, err := os.Executable(); err == nil {
 		dir := filepath.Dir(executable)
+		suffix := gateMCPExecutableSuffix(targetOS)
 		for _, name := range []string{
-			fmt.Sprintf("agentflow-gate-mcp-%s-%s", targetOS, targetArch),
-			"agentflow-gate-mcp",
+			fmt.Sprintf("agentflow-gate-mcp-%s-%s%s", targetOS, targetArch, suffix),
+			"agentflow-gate-mcp" + suffix,
 		} {
 			path := filepath.Join(dir, name)
-			if validExecutableFile(path) && (name != "agentflow-gate-mcp" || targetOS == goruntime.GOOS && targetArch == goruntime.GOARCH) {
+			if validExecutableFile(path) && (name != "agentflow-gate-mcp"+suffix || targetOS == goruntime.GOOS && targetArch == goruntime.GOARCH) {
 				return path, nil
 			}
 		}
@@ -86,7 +91,7 @@ func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
 	}
 	gateMCPBuildMu.Lock()
 	defer gateMCPBuildMu.Unlock()
-	cache := filepath.Join(os.TempDir(), fmt.Sprintf("agentflow-gate-mcp-%s-%s", targetOS, targetArch))
+	cache := filepath.Join(os.TempDir(), fmt.Sprintf("agentflow-gate-mcp-%s-%s%s", targetOS, targetArch, gateMCPExecutableSuffix(targetOS)))
 	if !buildArtifactFresh(cache, root) {
 		build := exec.Command("go", "build", "-o", cache, "./cmd/agentflow-gate-mcp")
 		build.Dir = root
@@ -97,6 +102,13 @@ func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
 		}
 	}
 	return cache, nil
+}
+
+func gateMCPExecutableSuffix(targetOS string) string {
+	if targetOS == "windows" {
+		return ".exe"
+	}
+	return ""
 }
 
 func expandPlatformPath(pattern, targetOS, targetArch string) string {

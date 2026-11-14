@@ -7,21 +7,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/processgroup"
 )
 
 func TestTerminateProcessGroupPreservesWaitResult(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command("/bin/sh", "-c", `trap 'exit 23' TERM; touch "$1"; while :; do sleep 0.1; done`, "sh", ready)
-	setProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
+	cleanup, err := processgroup.Start(cmd)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	t.Cleanup(func() {
+		_ = processgroup.Kill(cmd.Process.Pid)
+		cleanup()
+	})
 	done := make(chan struct{})
 	var waitErr error
 	go func() { waitErr = cmd.Wait(); close(done) }()

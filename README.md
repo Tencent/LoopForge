@@ -71,6 +71,8 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 ## Quick start
 
+**Windows users** can use Docker Desktop and the PowerShell launchers in the [Windows setup guide](docs/windows.md).
+
 Install **Git** and clone the repository first. The installer checks Docker, Compose, Python 3 and curl and offers to install missing components. Python/curl installation supports apt, dnf and yum on Linux; the Compose plugin supports x86_64/arm64 and verifies the official release SHA-256. macOS needs a working Python 3 and Docker Desktop; Homebrew can install missing components. Ordinary Linux users are supported through Docker group access or sudo. Set `LOOPFORGE_YES=1` to accept installation prompts. Package and image downloads require internet access.
 
 ```bash

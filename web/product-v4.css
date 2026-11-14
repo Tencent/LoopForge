@@ -2693,9 +2693,14 @@ html[data-theme="dark"] .clarify-next-step-callout .step-num{background:var(--am
 html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 #runnersView .page-heading>div>p:last-child{max-width:680px}
 #runnersView .runner-onboarding{margin:0;padding:20px;border:1px solid var(--rv-line);border-radius:14px;background:var(--rv-surface);box-shadow:var(--hui-panel-shadow)}
-#runnersView .runner-onboarding .panel-heading{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 14px;padding:0;border:0}
+#runnersView .runner-onboarding .panel-heading{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin:0 0 14px;padding:0;border:0}
 #runnersView .runner-onboarding .panel-heading h2{margin:0;color:var(--rv-text);font-size:15px;font-weight:600}
-#runnersView .runner-platforms{color:var(--rv-muted-2);font-size:12px}
+#runnersView .runner-platforms{display:inline-flex;max-width:100%;min-width:0;align-items:center;gap:4px;padding:4px;border-radius:9px;background:var(--rv-fill)}
+#runnersView .runner-platforms>button{min-width:0;padding:6px 12px;border:0;border-radius:6px;background:transparent;color:var(--rv-muted);font-family:inherit;font-size:13px;line-height:1.4;white-space:nowrap;cursor:pointer}
+#runnersView .runner-platforms>button[aria-selected="true"]{background:var(--rv-surface);color:var(--rv-text)}
+#runnersView #runnerInstallPanel:focus-visible{outline:2px solid var(--hui-accent);outline-offset:4px;border-radius:8px}
+#runnersView .runner-shell-hint{margin:0 0 8px;color:var(--rv-muted);font-size:12px}
+#runnersView .runner-maintenance-hint{margin:12px 0 0;color:var(--rv-muted);font-size:12px}
 #runnersView .runner-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 12px;padding:0;list-style:none}
 #runnersView .runner-steps li{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-radius:10px;background:var(--rv-fill);list-style:none}
 #runnersView .runner-steps li::marker{content:""}
@@ -2715,7 +2720,8 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
   #runnersView .runner-command-box:hover pre{scrollbar-color:#3f3f46 transparent}
 }
 #runnersView .runner-command-box pre::before{content:"$ ";color:var(--rv-term-dim);user-select:none}
-#runnersView #bindToken{color:var(--rv-accent)}
+#runnersView .runner-command-box pre[data-shell="powershell"]{white-space:pre-wrap;overflow-wrap:anywhere}
+#runnersView .runner-command-box pre[data-shell="powershell"]::before{content:"PS> "}
 #runnersView .runner-command-box .button{flex:none;justify-content:center;min-width:84px;height:28px;padding:0 10px;border:1px solid #fff;border-radius:7px;background:#fff;color:#252529;font-size:12px;font-weight:500;box-shadow:none;transition:background-color .16s,border-color .16s,color .16s}
 #runnersView .runner-command-box .button:hover{background:#e4e4e7;border-color:#e4e4e7}
 #runnersView .runner-command-box .button.copied{background:#dcfce7;border-color:#dcfce7;color:#166534}
@@ -2802,6 +2808,14 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
   #runnersView .runner-grid{grid-template-columns:minmax(0,1fr)}
   #runnersView .runner-pool-status{flex-basis:100%;margin-left:0}
   #runnersView .runner-pool-status.warn{flex-basis:auto}
+}
+@media(max-width:600px){
+  #runnersView .runner-platforms{width:100%}
+  #runnersView .runner-platforms>button{flex:1}
+  #runnersView .runner-platforms.sliding-tabs[data-sliding-tabs]{height:48px!important;min-height:48px!important}
+  #runnersView .runner-platforms.sliding-tabs[data-sliding-tabs]>[data-sliding-tab]{flex:1 1 0;min-height:40px!important;height:40px!important;padding:4px 6px!important;font-size:12px!important;line-height:16px!important;white-space:normal}
+  #runnersView .runner-command-box{flex-direction:column;align-items:stretch;padding:10px}
+  #runnersView .runner-command-box .button{align-self:flex-end}
 }
 @media(prefers-reduced-motion:reduce){#runnersView *,#runnersView *::after{transition:none !important}}
 

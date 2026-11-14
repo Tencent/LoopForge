@@ -417,7 +417,7 @@ func TestRunnerOutputAndServerEndpointBranches(t *testing.T) {
 		want int
 	}{
 		{"/runners/agentflow-runner?os=linux&arch=amd64", 200},
-		{"/runners/agentflow-runner?os=windows&arch=amd64", 400},
+		{"/runners/agentflow-runner?os=freebsd&arch=amd64", 400},
 		{"/runners/agentflow-runner?os=linux&arch=mips", 400},
 	} {
 		rec := cvBRequest(t, f, http.MethodGet, tc.path, nil, false)

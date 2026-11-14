@@ -75,5 +75,9 @@ func serveGateMCPBinary(c *gin.Context) {
 }
 
 func serveGateMCPFile(c *gin.Context, path string) {
-	serveBinaryArtifact(c, path, "agentflow-gate-mcp")
+	name := "agentflow-gate-mcp"
+	if sanitizePlatformParam(c.Query("os")) == "windows" {
+		name += ".exe"
+	}
+	serveBinaryArtifact(c, path, name)
 }

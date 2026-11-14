@@ -748,25 +748,42 @@
       </div>
 
       <div class="runner-onboarding panel">
-        <div class="panel-heading"><h2>接入新机器</h2><span class="runner-platforms">macOS / Linux</span></div>
-        <ol class="runner-steps">
-          <li><span class="runner-step-no">1</span><div><b>安装 CLI</b><small>claude / codex 等</small></div></li>
-          <li><span class="runner-step-no">2</span><div><b>执行接入命令</b><small>绑定码 10 分钟有效</small></div></li>
-          <li><span class="runner-step-no">3</span><div><b>选择认证来源</b><small>本机登录或个人凭证</small></div></li>
-        </ol>
-        <div class="runner-command-box">
-          <pre id="bindCliCommand" class="mono">(curl -fsSL --connect-timeout 5 <span id="bindHttpsOrigin">https://</span>/runners/install.sh || curl -fsSL <span id="bindHttpOrigin">http://</span>/runners/install.sh) | bash -s -- --server <span id="bindServerHost"></span> --token <span id="bindToken">生成中…</span> --service</pre>
-          <button id="copyBindCommand" class="button dark small" type="button">复制命令</button>
+        <div class="panel-heading">
+          <h2>接入新机器</h2>
+          <div id="runnerInstallPlatform" class="runner-platforms" role="tablist" aria-label="接入系统">
+            <button id="runnerPlatformUnix" type="button" role="tab" data-runner-platform="unix" aria-selected="true" aria-controls="runnerInstallPanel" tabindex="0">macOS / Linux</button>
+            <button id="runnerPlatformWindows" type="button" role="tab" data-runner-platform="windows" aria-selected="false" aria-controls="runnerInstallPanel" tabindex="-1">Windows · PowerShell</button>
+          </div>
         </div>
-        <div class="runner-command-foot">
-          <p class="runner-command-note"><span aria-hidden="true">✓</span>仅主动连接平台，不开放本机端口</p>
-          <details class="runner-uninstall">
-            <summary>卸载执行器</summary>
-            <div class="runner-command-box compact">
-              <pre class="mono">(curl -fsSL --connect-timeout 5 <span id="uninstallHttpsOrigin">https://</span>/runners/install.sh || curl -fsSL <span id="uninstallHttpOrigin">http://</span>/runners/install.sh) | bash -s -- --uninstall</pre>
-              <button id="copyUninstallCommand" class="button ghost small" type="button">复制</button>
-            </div>
-          </details>
+        <div id="runnerInstallPanel" role="tabpanel" aria-labelledby="runnerPlatformUnix" tabindex="0">
+          <ol class="runner-steps">
+            <li><span class="runner-step-no">1</span><div><b>安装并登录 CLI</b><small id="runnerCLIInstallHint">在当前系统账号下登录 Codex / Claude Code</small></div></li>
+            <li><span class="runner-step-no">2</span><div><b>执行接入命令</b><small>绑定码 10 分钟有效</small></div></li>
+            <li><span class="runner-step-no">3</span><div><b>选择认证来源</b><small>Codex 选择「本机登录」即可复用 CLI 登录态</small></div></li>
+          </ol>
+          <p id="runnerShellHint" class="runner-shell-hint">请先选择执行命令的操作系统</p>
+          <div class="runner-command-box">
+            <pre id="bindCliCommand" class="mono">正在生成绑定码…</pre>
+            <button id="copyBindCommand" class="button dark small" type="button" disabled>复制命令</button>
+          </div>
+          <div class="runner-command-foot">
+            <p class="runner-command-note"><span aria-hidden="true">✓</span>仅主动连接平台，不开放本机端口</p>
+            <details class="runner-uninstall">
+              <summary id="runnerMaintenanceLabel">停止执行机器</summary>
+              <div id="runnerRestartControls" hidden>
+                <p class="runner-maintenance-hint">启动已绑定机器，沿用已有身份和工作区：</p>
+                <div class="runner-command-box compact">
+                  <pre id="runnerRestartCommand" class="mono" data-shell="powershell"></pre>
+                  <button id="copyRunnerRestartCommand" class="button ghost small" type="button">复制</button>
+                </div>
+              </div>
+              <p id="runnerStopHint" class="runner-maintenance-hint" hidden>停止当前平台的执行机器，保留配置和数据：</p>
+              <div class="runner-command-box compact">
+                <pre id="runnerMaintenanceCommand" class="mono"></pre>
+                <button id="copyUninstallCommand" class="button ghost small" type="button">复制</button>
+              </div>
+            </details>
+          </div>
         </div>
       </div>
 

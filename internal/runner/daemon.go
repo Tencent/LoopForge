@@ -68,7 +68,8 @@ type Config struct {
 	DefaultWorkspaceRoot string
 	HeartbeatInterval    time.Duration
 	LongPollTimeout      time.Duration
-	DisableAutoUpdate    bool
+	// DisableAutoUpdate is always enabled on Windows, where a running executable cannot be replaced.
+	DisableAutoUpdate bool
 	// DisableRunSandboxReuse gives every task its own sandbox instead of one
 	// per run and sandbox definition.
 	DisableRunSandboxReuse bool
@@ -96,6 +97,10 @@ func DefaultStatePath() (string, error) {
 func New(cfg Config) (*Daemon, error) {
 	cfg.ManagedCLIRoot = strings.TrimSpace(cfg.ManagedCLIRoot)
 	cfg.ServerURL = trimTrailingSlash(cfg.ServerURL)
+	if goruntime.GOOS == "windows" {
+		// Fence library callers as well as the CLI; Windows upgrades require a stopped Runner.
+		cfg.DisableAutoUpdate = true
+	}
 	if cfg.ServerURL == "" {
 		return nil, errors.New("server URL is required")
 	}
@@ -768,7 +773,12 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 	if sandbox != nil {
 		result = d.executeSandboxProcess(ctx, task, sandbox, command)
 	} else {
-		result = d.executeProcess(ctx, task, command.Argv, runtime.CommandEnvironment(command))
+		prepared, cleanup, err := runtime.PrepareHostShellCommand(command)
+		if err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+		}
+		defer cleanup()
+		result = d.executeProcess(ctx, task, prepared.Argv, runtime.CommandEnvironment(prepared))
 	}
 	result.outputs = collectTaskOutputs(workspace, task.Invocation)
 	return result
@@ -855,7 +865,10 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	}
 	argv := prepared.Command.Argv
 	if sandbox == nil || !strings.EqualFold(task.Sandbox.Profile.Driver, "docker") {
-		argv = resolveCommandPath(argv)
+		argv, err = resolveCommandPath(argv)
+		if err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		}
 	}
 	argv, credentialEnv, err := bindInvocationCredentials(inv, prepared.Command.CredentialBindings, argv)
 	if err != nil {
@@ -1358,14 +1371,24 @@ const maxArtifactUploadBytes = 1 << 20
 
 // resolveCommandPath turns a bare binary name into an absolute path so the
 // spawn cannot accidentally resolve against the daemon's own directory.
-func resolveCommandPath(argv []string) []string {
-	if len(argv) == 0 || argv[0] == "" || strings.ContainsRune(argv[0], os.PathSeparator) {
-		return argv
+func resolveCommandPath(argv []string) ([]string, error) {
+	if len(argv) == 0 || argv[0] == "" {
+		return argv, nil
 	}
-	if resolved, err := exec.LookPath(argv[0]); err == nil {
+	if goruntime.GOOS == "windows" {
+		resolved, ok := lookupCLI(argv[0])
+		if !ok {
+			return nil, fmt.Errorf("Windows Runner requires a native .exe for %q", argv[0])
+		}
 		argv[0] = resolved
+		return argv, nil
 	}
-	return argv
+	if !strings.ContainsRune(argv[0], os.PathSeparator) {
+		if resolved, err := exec.LookPath(argv[0]); err == nil {
+			argv[0] = resolved
+		}
+	}
+	return argv, nil
 }
 
 // executeMock serves the built-in mock provider: it echoes the prompt so the

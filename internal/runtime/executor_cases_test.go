@@ -364,7 +364,7 @@ func TestMaterializePathSafetyBranches(t *testing.T) {
 	}
 }
 
-func TestHookObservationAndTerminalPoolScopes(t *testing.T) {
+func TestHookObservation(t *testing.T) {
 	if stop := startHookObservation(context.Background(), compiledConfig{}, func(domain.TelemetryEvent) {}); stop == nil {
 		t.Fatal("empty hook stop missing")
 	} else {
@@ -376,13 +376,6 @@ func TestHookObservationAndTerminalPoolScopes(t *testing.T) {
 	}
 	stop := startHookObservation(context.Background(), compiledConfig{HookFile: hook}, func(domain.TelemetryEvent) {})
 	stop()
-	pool := TerminalPool{sessions: map[string]*workspaceTerminal{
-		"one": {scope: "run:1"},
-		"two": {scope: "other:1"},
-	}}
-	if !pool.HasRunScope("run") || pool.HasRunScope("missing") || !pool.HasScope("run:1") {
-		t.Fatal("terminal scope lookup")
-	}
 	if _, err := createBwrap("x", t.TempDir(), domain.SandboxProfile{}, SandboxRequirements{}); err == nil {
 		t.Log("bwrap is installed; creation branch covered")
 	}

@@ -27,6 +27,12 @@ type compiledConfig struct {
 	SystemPrompt string
 }
 
+// managedBinding describes a role-scoped view of a platform-managed asset.
+type managedBinding struct {
+	path   string
+	target string
+}
+
 func materialize(workspace, invocationID string, ex domain.ExecutorDefinition, a domain.AgentDefinition, assets domain.AgentAssetBundle) (compiledConfig, error) {
 	return materializeInvocation(workspace, invocationID, ex, a, assets, InvocationOptions{})
 }
@@ -102,15 +108,24 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	if err != nil {
 		return compiled, err
 	}
+	var bindings []managedBinding
+	bind := func(path, target string) error {
+		binding := managedBinding{path: path, target: target}
+		if err := stageManagedBinding(workspace, binding); err != nil {
+			return err
+		}
+		bindings = append(bindings, binding)
+		return nil
+	}
 	for _, kind := range []string{"skills", "rules", "mcp"} {
 		if err := os.Mkdir(filepath.Join(bindingRoot, kind), 0o700); err != nil {
 			return compiled, err
 		}
-		if err := replaceRelativeSymlink(filepath.Join(agentRoot, kind), filepath.Join("..", "bindings", agentID, kind)); err != nil {
+		if err := bind(filepath.Join(agentRoot, kind), filepath.Join("..", "bindings", agentID, kind)); err != nil {
 			return compiled, err
 		}
 	}
-	ruleLines, err := materializeAgentRules(workspace, bindingRoot, assets.Rules)
+	ruleLines, err := materializeAgentRules(workspace, bindingRoot, assets.Rules, bind)
 	if err != nil {
 		return compiled, err
 	}
@@ -139,7 +154,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	if err := os.WriteFile(agentSystemPath, content, 0o600); err != nil {
 		return compiled, err
 	}
-	if err := replaceRelativeSymlink(filepath.Join(agentRoot, "agent-system.md"), filepath.Join("..", "config", agentID, "agent-system.md")); err != nil {
+	if err := bind(filepath.Join(agentRoot, "agent-system.md"), filepath.Join("..", "config", agentID, "agent-system.md")); err != nil {
 		return compiled, err
 	}
 	var skillPaths []string
@@ -153,7 +168,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 			return compiled, err
 		}
 		skillPaths = append(skillPaths, item.root)
-		if err := replaceRelativeSymlink(filepath.Join(bindingRoot, "skills", item.id), filepath.Join("..", "..", "..", "skills", item.id)); err != nil {
+		if err := bind(filepath.Join(bindingRoot, "skills", item.id), filepath.Join("..", "..", "..", "skills", item.id)); err != nil {
 			return compiled, err
 		}
 	}
@@ -177,7 +192,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 			return compiled, err
 		}
 	}
-	if err := materializeMCPDefinitions(workspace, bindingRoot, mergedMCP); err != nil {
+	if err := materializeMCPDefinitions(workspace, bindingRoot, mergedMCP, bind); err != nil {
 		return compiled, err
 	}
 	runtimeMCP := prepareMCPServersForDriver(mergedMCP, driver)
@@ -189,7 +204,7 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 	if err := os.WriteFile(filepath.Join(configRoot, "mcp.json"), mcpRaw, 0o600); err != nil {
 		return compiled, err
 	}
-	if err := replaceRelativeSymlink(filepath.Join(agentRoot, "mcp.json"), filepath.Join("..", "config", agentID, "mcp.json")); err != nil {
+	if err := bind(filepath.Join(agentRoot, "mcp.json"), filepath.Join("..", "config", agentID, "mcp.json")); err != nil {
 		return compiled, err
 	}
 	provider := providerForKind(ex.Kind)
@@ -198,13 +213,16 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 		ConfigRoot: configRoot, AgentRoot: agentRoot, Content: content, SkillPaths: skillPaths,
 		MCPServers: runtimeMCP, Assets: assets, Compiled: &compiled,
 	})
-	return compiled, err
+	if err != nil {
+		return compiled, err
+	}
+	return compiled, finishManagedBindings(workspace, bindings)
 }
 
 // materializeAgentRules writes each rule into the shared .agentflow/rules
 // catalog, links it from the Agent's bindings, and returns the rule sections
 // for agent-system.md. Rules are sorted in place by descending priority.
-func materializeAgentRules(workspace, bindingRoot string, rules []domain.RuleDefinition) ([]string, error) {
+func materializeAgentRules(workspace, bindingRoot string, rules []domain.RuleDefinition, bind func(path, target string) error) ([]string, error) {
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Priority > rules[j].Priority })
 	var lines []string
 	for _, v := range rules {
@@ -216,7 +234,7 @@ func materializeAgentRules(workspace, bindingRoot string, rules []domain.RuleDef
 		if err := writeManagedFile(workspace, ruleFile, []byte(v.Content), 0o600); err != nil {
 			return nil, err
 		}
-		if err := replaceRelativeSymlink(filepath.Join(bindingRoot, "rules", ruleID+".md"), filepath.Join("..", "..", "..", "rules", ruleID+".md")); err != nil {
+		if err := bind(filepath.Join(bindingRoot, "rules", ruleID+".md"), filepath.Join("..", "..", "..", "rules", ruleID+".md")); err != nil {
 			return nil, err
 		}
 		lines = append(lines, "", "### "+v.Name, v.Content)
@@ -226,7 +244,7 @@ func materializeAgentRules(workspace, bindingRoot string, rules []domain.RuleDef
 
 // materializeMCPDefinitions writes each MCP server definition into the shared
 // .agentflow/mcp catalog and links it from the Agent's bindings.
-func materializeMCPDefinitions(workspace, bindingRoot string, servers []domain.MCPServerDefinition) error {
+func materializeMCPDefinitions(workspace, bindingRoot string, servers []domain.MCPServerDefinition, bind func(path, target string) error) error {
 	for _, server := range servers {
 		serverID := safeID(server.ID)
 		if serverID == "" {
@@ -236,7 +254,7 @@ func materializeMCPDefinitions(workspace, bindingRoot string, servers []domain.M
 		if err := writeManagedFile(workspace, filepath.Join(workspace, ".agentflow", "mcp", serverID+".json"), definition, 0o600); err != nil {
 			return err
 		}
-		if err := replaceRelativeSymlink(filepath.Join(bindingRoot, "mcp", serverID+".json"), filepath.Join("..", "..", "..", "mcp", serverID+".json")); err != nil {
+		if err := bind(filepath.Join(bindingRoot, "mcp", serverID+".json"), filepath.Join("..", "..", "..", "mcp", serverID+".json")); err != nil {
 			return err
 		}
 	}

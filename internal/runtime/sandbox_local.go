@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 )
 
 type localSandbox struct {
@@ -28,6 +27,11 @@ func (s *localSandbox) Close(context.Context) error {
 	return nil
 }
 func (s *localSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	command, cleanup, err := PrepareHostShellCommand(command)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
 	cmd, err := s.command(ctx, command, controlledBaseEnvironment(os.Environ()))
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
@@ -58,13 +62,7 @@ func (s *localSandbox) command(ctx context.Context, command CommandSpec, base []
 		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
 	}
 	if command.OwnProcessGroup {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error {
-			if cmd.Process == nil {
-				return nil
-			}
-			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
+		configureOwnedProcessGroup(cmd)
 	}
 	return cmd, nil
 }
