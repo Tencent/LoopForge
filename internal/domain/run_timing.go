@@ -66,59 +66,13 @@ func RunExecutionIntervals(run Run, events []RunEvent, now time.Time) ([]RunExec
 type timingInterval struct{ start, end time.Time }
 
 func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []RunExecutionInterval, bool) {
-	var intervals []timingInterval
-	open := map[string]time.Time{}
-	var lastEvent, terminalAt time.Time
-	started := false
-	closeNode := func(nodeID string, at time.Time) {
-		if start, ok := open[nodeID]; ok {
-			intervals = append(intervals, timingInterval{start, at})
-			delete(open, nodeID)
-		}
-	}
-	sorted := append([]RunEvent(nil), events...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Timestamp.Before(sorted[j].Timestamp) })
-	for _, ev := range sorted {
-		at := ev.Timestamp
-		if at.IsZero() {
-			continue
-		}
-		lastEvent = at
-		switch {
-		case ev.Type == "node.started" && ev.NodeID != "":
-			started = true
-			closeNode(ev.NodeID, at)
-			open[ev.NodeID] = at
-		case nodeIntervalClosers[ev.Type] && ev.NodeID != "":
-			closeNode(ev.NodeID, at)
-		case runIntervalClosers[ev.Type]:
-			for nodeID := range open {
-				closeNode(nodeID, at)
-			}
-		}
-		if runTerminalEvents[ev.Type] {
-			terminalAt = at
-		} else if ev.Type == "node.started" {
-			terminalAt = time.Time{}
-		}
-	}
+	scan := scanTimingEvents(events)
+	intervals, open, lastEvent := scan.intervals, scan.open, scan.lastEvent
 
 	out := RunTiming{AsOf: now}
-	end := runTimingEnd(run, terminalAt, lastEvent, now)
-	if !started {
-		intervals = intervals[:0]
-		open = map[string]time.Time{}
-		for nodeID, node := range run.Nodes {
-			if node == nil || node.StartedAt.IsZero() {
-				continue
-			}
-			switch {
-			case !node.FinishedAt.IsZero():
-				intervals = append(intervals, timingInterval{node.StartedAt, node.FinishedAt})
-			case node.Status == "running":
-				open[nodeID] = node.StartedAt
-			}
-		}
+	end := runTimingEnd(run, scan.terminalAt, lastEvent, now)
+	if !scan.started {
+		intervals, open = nodeRowIntervals(run.Nodes)
 	}
 	openEnd := lastEvent
 	if run.Status == "running" {
@@ -141,6 +95,78 @@ func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []R
 	}
 	out.WaitingMs = out.WallMs - out.ExecutionMs
 	return out, merged, known
+}
+
+// timingEventScan is what one pass over the run event log observed: closed
+// node execution intervals, nodes still open at the last event, the last and
+// terminal event times, and whether any node.started event was seen.
+type timingEventScan struct {
+	intervals             []timingInterval
+	open                  map[string]time.Time
+	lastEvent, terminalAt time.Time
+	started               bool
+}
+
+// scanTimingEvents walks events in timestamp order, opening an interval on
+// node.started and closing it on node closers or, for every open node, on run
+// closers. A later node.started clears an earlier terminal run event, so a
+// resumed run is not treated as finished. Events without a timestamp are
+// ignored.
+func scanTimingEvents(events []RunEvent) timingEventScan {
+	scan := timingEventScan{open: map[string]time.Time{}}
+	closeNode := func(nodeID string, at time.Time) {
+		if start, ok := scan.open[nodeID]; ok {
+			scan.intervals = append(scan.intervals, timingInterval{start, at})
+			delete(scan.open, nodeID)
+		}
+	}
+	sorted := append([]RunEvent(nil), events...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Timestamp.Before(sorted[j].Timestamp) })
+	for _, ev := range sorted {
+		at := ev.Timestamp
+		if at.IsZero() {
+			continue
+		}
+		scan.lastEvent = at
+		switch {
+		case ev.Type == "node.started" && ev.NodeID != "":
+			scan.started = true
+			closeNode(ev.NodeID, at)
+			scan.open[ev.NodeID] = at
+		case nodeIntervalClosers[ev.Type] && ev.NodeID != "":
+			closeNode(ev.NodeID, at)
+		case runIntervalClosers[ev.Type]:
+			for nodeID := range scan.open {
+				closeNode(nodeID, at)
+			}
+		}
+		if runTerminalEvents[ev.Type] {
+			scan.terminalAt = at
+		} else if ev.Type == "node.started" {
+			scan.terminalAt = time.Time{}
+		}
+	}
+	return scan
+}
+
+// nodeRowIntervals rebuilds execution intervals from node rows for runs whose
+// event log has no node.started events: finished nodes give a closed interval
+// and running nodes stay open from their StartedAt.
+func nodeRowIntervals(nodes map[string]*NodeRun) ([]timingInterval, map[string]time.Time) {
+	var intervals []timingInterval
+	open := map[string]time.Time{}
+	for nodeID, node := range nodes {
+		if node == nil || node.StartedAt.IsZero() {
+			continue
+		}
+		switch {
+		case !node.FinishedAt.IsZero():
+			intervals = append(intervals, timingInterval{node.StartedAt, node.FinishedAt})
+		case node.Status == "running":
+			open[nodeID] = node.StartedAt
+		}
+	}
+	return intervals, open
 }
 
 // runTimingEnd picks the instant a run's timing stops: now while the run is
