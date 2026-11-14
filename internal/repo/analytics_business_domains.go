@@ -25,14 +25,7 @@ func (r *AnalyticsRepo) BusinessDomainReport(filter domain.AnalyticsFilter, proj
 		return domain.BusinessDomainReport{}, errors.New(snap.DataErrors[0])
 	}
 	out := domain.BusinessDomainReport{Attribution: "current", GeneratedAt: snap.Summary.GeneratedAt, From: filter.From, To: filter.To, Summary: snap.Summary, Delivery: snap.Delivery, Trend: snap.Trend, Projects: []domain.BusinessDomainProjectUsage{}, BusinessDomains: []domain.BusinessDomainUsage{}}
-	groups := map[string]*domain.BusinessDomainUsage{}
-	order := []string{}
-	for _, d := range domains {
-		groups[d.ID] = &domain.BusinessDomainUsage{ID: d.ID, Name: d.Name, Active: d.Active, CostKnown: true}
-		order = append(order, d.ID)
-	}
-	groups[""] = &domain.BusinessDomainUsage{ID: "", Name: "未分类", Active: true, CostKnown: true}
-	order = append(order, "")
+	groups, order := newBusinessDomainGroups(domains)
 	usage := map[string]domain.AnalyticsProjectUsage{}
 	for _, u := range snap.ProjectUsage {
 		usage[u.ProjectID] = u
@@ -52,15 +45,7 @@ func (r *AnalyticsRepo) BusinessDomainReport(filter domain.AnalyticsFilter, proj
 		if g == nil {
 			continue
 		}
-		g.ProjectCount++
-		g.Runs += u.Runs
-		g.Success += u.Success
-		g.Failed += u.Failed
-		g.Tokens += u.Tokens
-		g.CostUSD += u.CostUSD
-		g.CostCNY += u.CostCNY
-		g.UniqueIssues += u.UniqueIssues
-		g.CostKnown = g.CostKnown && u.CostKnown
+		addBusinessDomainProjectUsage(g, u)
 	}
 	if err := r.addBusinessDeliveryCounts(snap.Deliveries, projectDomains, groups); err != nil {
 		return domain.BusinessDomainReport{}, err
@@ -75,6 +60,34 @@ func (r *AnalyticsRepo) BusinessDomainReport(filter domain.AnalyticsFilter, proj
 		return domain.BusinessDomainReport{}, err
 	}
 	return out, nil
+}
+
+// newBusinessDomainGroups builds one usage group per business domain in the
+// given order, followed by the "未分类" group (empty ID) for projects without a
+// domain. The returned order is the output order of the report.
+func newBusinessDomainGroups(domains []domain.BusinessDomain) (map[string]*domain.BusinessDomainUsage, []string) {
+	groups := map[string]*domain.BusinessDomainUsage{}
+	order := []string{}
+	for _, d := range domains {
+		groups[d.ID] = &domain.BusinessDomainUsage{ID: d.ID, Name: d.Name, Active: d.Active, CostKnown: true}
+		order = append(order, d.ID)
+	}
+	groups[""] = &domain.BusinessDomainUsage{ID: "", Name: "未分类", Active: true, CostKnown: true}
+	order = append(order, "")
+	return groups, order
+}
+
+// addBusinessDomainProjectUsage adds one project's usage to its business domain group.
+func addBusinessDomainProjectUsage(g *domain.BusinessDomainUsage, u domain.AnalyticsProjectUsage) {
+	g.ProjectCount++
+	g.Runs += u.Runs
+	g.Success += u.Success
+	g.Failed += u.Failed
+	g.Tokens += u.Tokens
+	g.CostUSD += u.CostUSD
+	g.CostCNY += u.CostCNY
+	g.UniqueIssues += u.UniqueIssues
+	g.CostKnown = g.CostKnown && u.CostKnown
 }
 
 // Resolve only delivered issues, then attribute each delivery once across all query batches.
