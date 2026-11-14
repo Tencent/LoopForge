@@ -157,10 +157,16 @@ func PatchInventory(workspace string) ([]byte, error) {
 }
 
 func diffAgainstBaseline(workspace, sha string, extra ...string) ([]byte, error) {
+	return diffAgainstBaselineEnv(workspace, nil, sha, extra...)
+}
+
+func diffAgainstBaselineEnv(workspace string, env []string, sha string, extra ...string) ([]byte, error) {
 	args := append([]string{"-C", workspace, "diff"}, extra...)
 	args = append(args, sha, "--", ".")
 	args = append(args, ExcludePathspecs...)
-	out, err := exec.Command("git", args...).CombinedOutput()
+	cmd := exec.Command("git", args...)
+	cmd.Env = withGitEnv(env)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() > 1 {
 			return nil, fmt.Errorf("git diff baseline: %w: %s", err, strings.TrimSpace(string(out)))

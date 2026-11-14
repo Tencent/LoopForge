@@ -2,6 +2,7 @@ package gitwork
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -553,7 +554,15 @@ func UnquoteLsFilesPath(rel string) string {
 // StageUntracked intent-adds untracked sources that are not Excluded, so they
 // show up in diffs and are picked up by `git add -u`.
 func StageUntracked(workspace string) error {
+	return stageUntrackedEnv(workspace, nil)
+}
+
+// stageUntrackedEnv is StageUntracked with extra environment for every git
+// child, e.g. GIT_INDEX_FILE so a read-only check intent-adds into a scratch
+// index instead of the checkout's own.
+func stageUntrackedEnv(workspace string, env []string) error {
 	cmd := exec.Command("git", "-C", workspace, "ls-files", "-z", "--others", "--exclude-standard")
+	cmd.Env = withGitEnv(env)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("list untracked files: %w: %s", err, strings.TrimSpace(string(out)))
@@ -572,8 +581,18 @@ func StageUntracked(workspace string) error {
 	payload := strings.Join(files, "\x00") + "\x00"
 	add := exec.Command("git", "-C", workspace, "add", "-N", "--pathspec-from-file=-", "--pathspec-file-nul")
 	add.Stdin = strings.NewReader(payload)
+	add.Env = withGitEnv(env)
 	if out, err := add.CombinedOutput(); err != nil {
 		return fmt.Errorf("intent-add untracked files: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// withGitEnv returns nil (inherit the parent environment) when extra is
+// empty, otherwise the parent environment followed by extra.
+func withGitEnv(extra []string) []string {
+	if len(extra) == 0 {
+		return nil
+	}
+	return append(os.Environ(), extra...)
 }
