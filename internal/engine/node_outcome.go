@@ -339,33 +339,13 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			e.event(r, "", "run.finish_ignored", "失败节点已被打回，忽略过期的失败收尾")
 			return
 		}
-		if status == "failed" {
-			for _, nr := range r.Nodes {
-				if nr != nil && (nr.Status == "running" || nr.Status == "waiting_approval" || nr.Status == "pending_input") {
-					ignored = true
-					e.event(r, "", "run.finish_ignored", "仍有活动节点，忽略过期的失败收尾")
-					return
-				}
-			}
+		if status == "failed" && hasActiveNode(*r) {
+			ignored = true
+			e.event(r, "", "run.finish_ignored", "仍有活动节点，忽略过期的失败收尾")
+			return
 		}
-		// 运行被取消或失败时，把仍停留在"执行中"的节点收敛为已取消。
-		// 否则一旦执行协程卡死（如子进程无超时阻塞），节点会残留在 running，
-		// 使后续重试的 resumeNodeID 既选不到失败/取消节点、也选不到就绪节点，
-		// 最终报 "retry node not found"。
 		if status == "cancelled" || status == "failed" {
-			for nodeID, nr := range r.Nodes {
-				if nr == nil || nr.Status != "running" {
-					continue
-				}
-				nr.Status = "cancelled"
-				if nr.FinishedAt.IsZero() {
-					nr.FinishedAt = time.Now().UTC()
-				}
-				if strings.TrimSpace(nr.Activity) == "" {
-					nr.Activity = "运行终止时仍在执行，已收敛为已取消"
-				}
-				e.event(r, nodeID, "node.cancelled", "运行终止，节点由执行中收敛为已取消")
-			}
+			e.cancelRunningNodes(r)
 		}
 		r.Status = status
 		e.event(r, "", "run."+status, msg)
@@ -392,5 +372,36 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			}
 		}
 		e.cleanupRunWorkspace(id)
+	}
+}
+
+// hasActiveNode reports whether any node is still executing or waiting on a
+// person, which makes a late failure settlement stale.
+func hasActiveNode(r domain.Run) bool {
+	for _, nr := range r.Nodes {
+		if nr != nil && (nr.Status == "running" || nr.Status == "waiting_approval" || nr.Status == "pending_input") {
+			return true
+		}
+	}
+	return false
+}
+
+// cancelRunningNodes 在运行被取消或失败时，把仍停留在"执行中"的节点收敛为已取消。
+// 否则一旦执行协程卡死（如子进程无超时阻塞），节点会残留在 running，
+// 使后续重试的 resumeNodeID 既选不到失败/取消节点、也选不到就绪节点，
+// 最终报 "retry node not found"。
+func (e *Engine) cancelRunningNodes(r *domain.Run) {
+	for nodeID, nr := range r.Nodes {
+		if nr == nil || nr.Status != "running" {
+			continue
+		}
+		nr.Status = "cancelled"
+		if nr.FinishedAt.IsZero() {
+			nr.FinishedAt = time.Now().UTC()
+		}
+		if strings.TrimSpace(nr.Activity) == "" {
+			nr.Activity = "运行终止时仍在执行，已收敛为已取消"
+		}
+		e.event(r, nodeID, "node.cancelled", "运行终止，节点由执行中收敛为已取消")
 	}
 }
