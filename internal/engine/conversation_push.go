@@ -69,49 +69,63 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	}
 	heads := []domain.RunnerWorkBranchHead{}
 	for _, rc := range repositories {
-		ctx := withRepositoryGit(ctx, rc)
-		dir := repositoryWorkspacePath(root, rc)
-		if !gitwork.HasWork(ctx, dir, repositoryBaseBranch(rc)) {
-			continue
-		}
-		if err := gitwork.RequireOnWorkBranch(ctx, dir, rc.WorkBranch); err != nil {
-			return heads, fmt.Errorf("%s: %w", rc.Name, err)
-		}
-		if err := applyWorkspaceGitAuth(ctx, dir); err != nil {
-			return heads, err
-		}
-		if err := applyWorkspaceGitIdentity(ctx, dir); err != nil {
-			return heads, err
-		}
-		ensureGitIdentity(ctx, dir)
-		var head string
-		var err error
-		if rc.RequireExistingWorkBranch {
-			head, err = gitwork.PushExistingWorkBranch(ctx, dir, rc.WorkBranch, message)
-		} else {
-			head, err = gitwork.PushWorkBranch(ctx, dir, rc.WorkBranch, message)
-		}
+		entry, pushed, err := pushLocalConversationRepository(ctx, root, rc, message, sharedTarget)
 		if err != nil {
-			return heads, explainGitAuthFailure(fmt.Errorf("%s: git push %s: %w", rc.Name, rc.WorkBranch, err), true)
+			return heads, err
 		}
-		if head == "" {
-			head, _ = gitwork.RevParse(ctx, dir, "HEAD")
+		if pushed {
+			heads = append(heads, entry)
 		}
-		entry := domain.RunnerWorkBranchHead{RepositoryID: rc.RepositoryID, Name: rc.Name, WorkBranch: rc.WorkBranch, Head: head}
-		if sharedTarget != "" {
-			merged, conflicts, mergeErr := gitwork.MergeWorkIntoSharedBranch(ctx, dir, rc.WorkBranch, sharedTarget)
-			if mergeErr != nil {
-				return heads, explainGitAuthFailure(fmt.Errorf("%s: 直推 %s: %w", rc.Name, sharedTarget, mergeErr), true)
-			}
-			if len(conflicts) > 0 {
-				return heads, fmt.Errorf("%s: 合并 %s 进 %s 有冲突，没有推送：%s", rc.Name, rc.WorkBranch, sharedTarget, strings.Join(conflicts, ", "))
-			}
-			entry.SharedBranch, entry.SharedHead = sharedTarget, merged
-		}
-		heads = append(heads, entry)
 	}
 	e.observeConversationPush(run.ID, heads, "")
 	return heads, nil
+}
+
+// pushLocalConversationRepository commits and pushes one repository checked
+// out under the local run workspace root, optionally merging the work branch
+// into sharedTarget. pushed is false when the checkout has no work against
+// its base branch, in which case nothing is pushed.
+func pushLocalConversationRepository(ctx context.Context, root string, rc domain.RepositoryContext, message, sharedTarget string) (domain.RunnerWorkBranchHead, bool, error) {
+	ctx = withRepositoryGit(ctx, rc)
+	dir := repositoryWorkspacePath(root, rc)
+	if !gitwork.HasWork(ctx, dir, repositoryBaseBranch(rc)) {
+		return domain.RunnerWorkBranchHead{}, false, nil
+	}
+	if err := gitwork.RequireOnWorkBranch(ctx, dir, rc.WorkBranch); err != nil {
+		return domain.RunnerWorkBranchHead{}, false, fmt.Errorf("%s: %w", rc.Name, err)
+	}
+	if err := applyWorkspaceGitAuth(ctx, dir); err != nil {
+		return domain.RunnerWorkBranchHead{}, false, err
+	}
+	if err := applyWorkspaceGitIdentity(ctx, dir); err != nil {
+		return domain.RunnerWorkBranchHead{}, false, err
+	}
+	ensureGitIdentity(ctx, dir)
+	var head string
+	var err error
+	if rc.RequireExistingWorkBranch {
+		head, err = gitwork.PushExistingWorkBranch(ctx, dir, rc.WorkBranch, message)
+	} else {
+		head, err = gitwork.PushWorkBranch(ctx, dir, rc.WorkBranch, message)
+	}
+	if err != nil {
+		return domain.RunnerWorkBranchHead{}, false, explainGitAuthFailure(fmt.Errorf("%s: git push %s: %w", rc.Name, rc.WorkBranch, err), true)
+	}
+	if head == "" {
+		head, _ = gitwork.RevParse(ctx, dir, "HEAD")
+	}
+	entry := domain.RunnerWorkBranchHead{RepositoryID: rc.RepositoryID, Name: rc.Name, WorkBranch: rc.WorkBranch, Head: head}
+	if sharedTarget != "" {
+		merged, conflicts, mergeErr := gitwork.MergeWorkIntoSharedBranch(ctx, dir, rc.WorkBranch, sharedTarget)
+		if mergeErr != nil {
+			return domain.RunnerWorkBranchHead{}, false, explainGitAuthFailure(fmt.Errorf("%s: 直推 %s: %w", rc.Name, sharedTarget, mergeErr), true)
+		}
+		if len(conflicts) > 0 {
+			return domain.RunnerWorkBranchHead{}, false, fmt.Errorf("%s: 合并 %s 进 %s 有冲突，没有推送：%s", rc.Name, rc.WorkBranch, sharedTarget, strings.Join(conflicts, ", "))
+		}
+		entry.SharedBranch, entry.SharedHead = sharedTarget, merged
+	}
+	return entry, true, nil
 }
 
 func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, run domain.Run, repositories []domain.RepositoryContext, requesterID int64, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
