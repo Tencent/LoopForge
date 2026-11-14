@@ -843,13 +843,7 @@ func requirementPhaseMeasurements(run domain.Run, fallback domain.WorkflowDefini
 		if definition.Type == "sop" {
 			continue
 		}
-		stage, source := strings.TrimSpace(definition.MetricStage), "explicit"
-		if !frozenDefinition {
-			source = "inferred"
-		}
-		if stage == "" {
-			stage, source = inferLegacyMetricStage(nodeID, definition.Name, lane), "inferred"
-		}
+		stage, source := nodeMetricStage(nodeID, definition, lane, frozenDefinition)
 		if stage == "clarification" && (result.clarificationStart.IsZero() || nodeRun.StartedAt.Before(result.clarificationStart)) {
 			result.clarificationStart, result.clarificationStartSource = nodeRun.StartedAt, source
 		}
@@ -890,6 +884,20 @@ func requirementPhaseMeasurements(run domain.Run, fallback domain.WorkflowDefini
 		return result.evidence[i].NodeID < result.evidence[j].NodeID
 	})
 	return result
+}
+
+// nodeMetricStage resolves which requirement phase a node counts toward and
+// where that answer came from. An explicit MetricStage is "explicit" only when
+// it was read from the Run's frozen workflow snapshot; a blank one falls back
+// to inferring the stage from the node ID, name and lane.
+func nodeMetricStage(nodeID string, definition domain.WorkflowNode, lane string, frozenDefinition bool) (stage, source string) {
+	if stage = strings.TrimSpace(definition.MetricStage); stage == "" {
+		return inferLegacyMetricStage(nodeID, definition.Name, lane), "inferred"
+	}
+	if !frozenDefinition {
+		return stage, "inferred"
+	}
+	return stage, "explicit"
 }
 
 func inferLegacyMetricStage(nodeID, name, lane string) string {

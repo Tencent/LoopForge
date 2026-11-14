@@ -133,18 +133,7 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 				out.DirectDelivered++
 			}
 		}
-		merged := false
-		for _, mr := range list {
-			key := analyticsMRKey(mr)
-			if key == "" {
-				continue
-			}
-			if state, ok := mrs[key]; !ok || AnalyticsMRRank(mr.State) > AnalyticsMRRank(state) {
-				mrs[key] = mr.State
-			}
-			merged = merged || mr.State == "merged"
-		}
-		if merged {
+		if recordDeliveryMRs(mrs, list) {
 			out.IssuesWithMergedMR++
 		}
 		if item.Delivered {
@@ -158,14 +147,7 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 		}
 	}
 	out.TotalMRs = len(mrs)
-	for _, state := range mrs {
-		switch state {
-		case "merged":
-			out.MRMerged++
-		case "integrated":
-			out.MRIntegrated++
-		}
-	}
+	out.MRMerged, out.MRIntegrated = countDeliveryMRStates(mrs)
 	if durationN > 0 {
 		out.AverageDurationMs = durationSum / durationN
 	}
@@ -175,6 +157,39 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 		out.P95ExecutionDurationMs = analyticsPercentile(execValues, 95)
 	}
 	return out
+}
+
+// recordDeliveryMRs folds one issue's MRs into mrs, the deduplicated
+// identity→best-state table, keeping the higher-ranked state for each MR. MRs
+// without a recognizable identity are skipped. It reports whether any
+// recorded MR of this issue is merged.
+func recordDeliveryMRs(mrs map[string]string, list []DeliveryMR) bool {
+	merged := false
+	for _, mr := range list {
+		key := analyticsMRKey(mr)
+		if key == "" {
+			continue
+		}
+		if state, ok := mrs[key]; !ok || AnalyticsMRRank(mr.State) > AnalyticsMRRank(state) {
+			mrs[key] = mr.State
+		}
+		merged = merged || mr.State == "merged"
+	}
+	return merged
+}
+
+// countDeliveryMRStates counts the merged and integrated MRs in the
+// deduplicated identity→state table built by recordDeliveryMRs.
+func countDeliveryMRStates(mrs map[string]string) (merged, integrated int) {
+	for _, state := range mrs {
+		switch state {
+		case "merged":
+			merged++
+		case "integrated":
+			integrated++
+		}
+	}
+	return merged, integrated
 }
 
 // gongfengMRKey is the case-insensitive identity of a Gongfeng MR.

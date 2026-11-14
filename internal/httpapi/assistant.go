@@ -552,10 +552,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 						cliSessionID = newAssistantSessionID()
 					}
 					resume = false
-					prompt = fullPrompt
-					if switches > 0 {
-						prompt += "\n本轮之前的阶段已执行过操作。先核对工作区实际文件与状态，避免重复执行。"
-					}
+					prompt = h.freshPhasePrompt(req, sourceRoot, switches)
 					continue
 				}
 				if err != nil {

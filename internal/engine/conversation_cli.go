@@ -19,7 +19,7 @@ func (e *Engine) AcquireConversationCLI(ctx context.Context, id, root string) (r
 		return nil, nil, err
 	}
 	env.nodeMu.Lock()
-	if env.activeExecutions.Load() > 0 || hasRunningNode(run) || e.workspaceTerminals.HasRunScope(id) {
+	if env.activeExecutions.Load() > 0 || run.HasActiveNode() || e.workspaceTerminals.HasRunScope(id) {
 		env.nodeMu.Unlock()
 		return nil, nil, fmt.Errorf("工作区仍有执行或终端占用，请结束后重试")
 	}

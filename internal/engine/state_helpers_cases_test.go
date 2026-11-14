@@ -32,7 +32,7 @@ func TestLifecycleResetSettleAndForceTerminate(t *testing.T) {
 	}
 	resetNodeForResume(&run, nil, "x")
 	resetNodeForResume(&run, run.Nodes["done"], "x")
-	if !domain.TerminalRunStatus("cancelled") || domain.TerminalRunStatus("waiting") || hasRunningNode(run) {
+	if !domain.TerminalRunStatus("cancelled") || domain.TerminalRunStatus("waiting") || run.HasActiveNode() {
 		t.Fatal("status helpers")
 	}
 	run.Nodes["script"].Status, run.Nodes["agent"].Status = "succeeded", "succeeded"
@@ -333,8 +333,8 @@ func TestSafeGitRefAndNodeFormattingHelpers(t *testing.T) {
 		"..bad.lock":            "bad-lock",
 		"":                      "run",
 	} {
-		if got := safeGitRefSegment(in); got != want {
-			t.Fatalf("safeGitRefSegment(%q)=%q want %q", in, got, want)
+		if got := domain.SafeGitRefSegment(in); got != want {
+			t.Fatalf("domain.SafeGitRefSegment(%q)=%q want %q", in, got, want)
 		}
 	}
 	if dockerImageBuildLabel(nil) != "沙箱镜像" {

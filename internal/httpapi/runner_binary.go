@@ -32,24 +32,8 @@ var runnerBinaryMu sync.Mutex
 //
 //	g.GET("/runners/agentflow-runner", serveRunnerBinary)
 func serveRunnerBinary(c *gin.Context) {
-	targetOS := sanitizePlatformParam(c.Query("os"))
-	targetArch := sanitizePlatformParam(c.Query("arch"))
-	if targetOS == "" {
-		targetOS = "darwin"
-	}
-	if targetArch == "" {
-		targetArch = "amd64"
-	}
-	switch targetOS {
-	case "darwin", "linux", "windows":
-	default:
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux, windows)", targetOS)})
-		return
-	}
-	switch targetArch {
-	case "amd64", "arm64":
-	default:
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported arch %q (amd64, arm64)", targetArch)})
+	targetOS, targetArch, ok := binaryDownloadPlatform(c)
+	if !ok {
 		return
 	}
 
@@ -108,6 +92,34 @@ func serveRunnerArtifact(c *gin.Context, path string) {
 		name += ".exe"
 	}
 	serveBinaryArtifact(c, path, name)
+}
+
+// binaryDownloadPlatform reads the os/arch query parameters shared by the
+// runner and gate MCP binary downloads. Empty values default to darwin/amd64.
+// Unsupported platforms are answered with 400 and ok=false, so callers simply
+// return.
+func binaryDownloadPlatform(c *gin.Context) (targetOS, targetArch string, ok bool) {
+	targetOS = sanitizePlatformParam(c.Query("os"))
+	targetArch = sanitizePlatformParam(c.Query("arch"))
+	if targetOS == "" {
+		targetOS = "darwin"
+	}
+	if targetArch == "" {
+		targetArch = "amd64"
+	}
+	switch targetOS {
+	case "darwin", "linux", "windows":
+	default:
+		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux, windows)", targetOS)})
+		return "", "", false
+	}
+	switch targetArch {
+	case "amd64", "arm64":
+	default:
+		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported arch %q (amd64, arm64)", targetArch)})
+		return "", "", false
+	}
+	return targetOS, targetArch, true
 }
 
 func sanitizePlatformParam(v string) string {

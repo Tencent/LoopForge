@@ -2708,9 +2708,17 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 #runnersView .runner-steps b{display:block;color:var(--rv-text);font-size:13px;font-weight:500}
 #runnersView .runner-steps small{display:block;color:var(--rv-muted);font-size:12px}
 #runnersView .runner-command-box{display:flex;align-items:center;gap:12px;padding:6px 6px 6px 16px;border:0;border-radius:10px;background:var(--rv-term)}
-#runnersView .runner-command-box pre{flex:1;min-width:0;margin:0;padding:8px 0;overflow-x:auto;overflow-y:hidden;white-space:nowrap;word-break:normal;border:0;background:transparent;color:var(--rv-term-text);font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;scrollbar-width:none}
-#runnersView .runner-command-box pre::-webkit-scrollbar{display:none}
-#runnersView .runner-command-box:hover pre{scrollbar-width:thin;scrollbar-color:#3f3f46 transparent}
+#runnersView .runner-command-box pre{flex:1;min-width:0;margin:0;padding:8px 0;overflow-x:auto;overflow-y:hidden;white-space:nowrap;word-break:normal;border:0;background:transparent;color:var(--rv-term-text);font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+/* The scrollbar track is always reserved and only the thumb colour changes on hover:
+   toggling scrollbar-width on :hover resized the box under the pointer and made the page jump (#193). */
+#runnersView .runner-command-box pre::-webkit-scrollbar{height:6px}
+#runnersView .runner-command-box pre::-webkit-scrollbar-track{background:transparent}
+#runnersView .runner-command-box pre::-webkit-scrollbar-thumb{border-radius:3px;background:transparent}
+#runnersView .runner-command-box:hover pre::-webkit-scrollbar-thumb{background:#3f3f46}
+@supports not selector(::-webkit-scrollbar){
+  #runnersView .runner-command-box pre{scrollbar-width:thin;scrollbar-color:transparent transparent}
+  #runnersView .runner-command-box:hover pre{scrollbar-color:#3f3f46 transparent}
+}
 #runnersView .runner-command-box pre::before{content:"$ ";color:var(--rv-term-dim);user-select:none}
 #runnersView .runner-command-box pre[data-shell="powershell"]{white-space:pre-wrap;overflow-wrap:anywhere}
 #runnersView .runner-command-box pre[data-shell="powershell"]::before{content:"PS> "}

@@ -1,11 +1,11 @@
 package runtime
 
 func dockerConversationProcessArgv(file string, argv []string) []string {
-	return append([]string{"python3", "-c", dockerConversationProcessSupervisor, file}, argv...)
+	return withToolchainPath(append([]string{"python3", "-c", dockerConversationProcessSupervisor, file}, argv...))
 }
 
 func dockerConversationStopArgv(file string) []string {
-	return []string{"python3", "-c", dockerConversationProcessStop, file}
+	return withToolchainPath([]string{"python3", "-c", dockerConversationProcessStop, file})
 }
 
 // A CLI may create new sessions for its native shell tools. Killing only its

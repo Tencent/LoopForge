@@ -140,20 +140,14 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	}
 	q := r.DB
 	if filter.ProjectIDs != nil {
-		expr := "json_extract(execution_context, '$.projectId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("projectId")
 		q = q.Where(expr+" IN ? OR "+expr+" IS NULL OR "+expr+" = ''", filter.ProjectIDs)
 	}
 	if filter.WorkflowID != "" {
 		q = q.Where("workflow_id = ?", filter.WorkflowID)
 	}
 	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
-		expr := "json_extract(execution_context, '$.projectId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("projectId")
 		// Keep legacy rows with an empty project stamp; FilterRunsByProject
 		// still resolves those through the linked issue.
 		q = q.Where(expr+" = ? OR "+expr+" IS NULL OR "+expr+" = ''", projectID)
@@ -165,10 +159,7 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 		q = q.Where("created_at <= ? OR created_at IS NULL", filter.To)
 	}
 	if issueID != "" {
-		expr := "json_extract(execution_context, '$.issueId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("issueId")
 		q = q.Where(expr+" = ?", issueID)
 	}
 	var rows []runRow
@@ -446,10 +437,7 @@ func (r *RunsRepo) SupersededIssueRunIDs(issueID, keepRunID string) []string {
 	if issueID == "" {
 		return nil
 	}
-	expr := "json_extract(execution_context, '$.issueId')"
-	if r.isMySQL() {
-		expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-	}
+	expr := r.sqlExecutionContextJSONText("issueId")
 	var ids []string
 	q := r.DB.Model(&runRow{}).
 		Where(expr+" = ?", issueID).
@@ -756,10 +744,7 @@ func (r *RunsRepo) runTimingEvents(ids []string) (map[string][]domain.RunEvent, 
 // nodes, events or artifact content. Missing runs are absent from the map.
 func (r *RunsRepo) RunProjectIDs(ids []string) (map[string]string, error) {
 	out := make(map[string]string, len(ids))
-	project := "json_extract(execution_context, '$.projectId')"
-	if r.isMySQL() {
-		project = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-	}
+	project := r.sqlExecutionContextJSONText("projectId")
 	for start := 0; start < len(ids); start += 500 {
 		var rows []struct {
 			ID        string

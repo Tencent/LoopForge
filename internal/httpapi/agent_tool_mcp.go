@@ -445,7 +445,7 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		// confirm mode cannot run it.
 		name := mcpCallName(kind, call)
 		if !session.ExecMode.AutoWrite {
-			return "", fmt.Errorf("%s 会写入外部系统，当前审批模式需要逐项确认，而外部 MCP 写入没有待确认草稿。请让用户把审批模式切到「自动」或「辅助」后再试，或告诉用户要做的改动由其手动完成", name)
+			return "", fmt.Errorf("%s 会写入外部系统，当前审批模式需要逐项确认，而外部 MCP 写入没有待确认草稿。请让用户把审批模式切到「完全权限」或「帮我批准」后再试，或告诉用户要做的改动由其手动完成", name)
 		}
 		if session.ExecMode.ReviewWrites {
 			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})

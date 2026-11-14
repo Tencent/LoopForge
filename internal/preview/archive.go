@@ -139,12 +139,12 @@ func collectRegularFiles(workspace, root string, limits Limits) ([]fileEntry, in
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("%w: %s", ErrUnsupportedEntry, rel)
 		}
-		if limits.MaxFiles > 0 && len(entries)+1 > limits.MaxFiles {
-			return fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(len(entries)+1, limits); err != nil {
+			return err
 		}
 		expanded += info.Size()
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(expanded, limits); err != nil {
+			return err
 		}
 		if _, err := filepath.Rel(workspace, abs); err != nil {
 			return fmt.Errorf("%w: %s", ErrUnsafePath, rel)
@@ -280,8 +280,8 @@ func InspectTarZst(src io.Reader, indexFile string, limits Limits) (Result, erro
 			return Result{}, err
 		}
 		expanded += hdr.Size
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return Result{}, fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(expanded, limits); err != nil {
+			return Result{}, err
 		}
 		copied, err := io.Copy(io.Discard, io.LimitReader(tr, hdr.Size+1))
 		if err != nil {
@@ -353,32 +353,42 @@ func ExtractTarZst(src io.Reader, dest string, limits Limits) error {
 			return err
 		}
 		expanded += hdr.Size
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
-		}
-		full := filepath.Join(tmp, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := checkExpandedSize(expanded, limits); err != nil {
 			return err
 		}
-		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
-		if err != nil {
+		if err := extractTarMember(tr, tmp, name, hdr.Size); err != nil {
 			return err
-		}
-		copied, copyErr := io.Copy(out, io.LimitReader(tr, hdr.Size))
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if copied != hdr.Size {
-			return fmt.Errorf("extracted %s size mismatch", name)
 		}
 	}
 	_ = os.RemoveAll(dest)
 	if err := os.Rename(tmp, dest); err != nil {
 		return err
+	}
+	return nil
+}
+
+// extractTarMember writes one sanitized regular member of size bytes from r to
+// root/name, creating parent directories. The file must not already exist, and
+// a short body is reported as a size mismatch.
+func extractTarMember(r io.Reader, root, name string, size int64) error {
+	full := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	copied, copyErr := io.Copy(out, io.LimitReader(r, size))
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if copied != size {
+		return fmt.Errorf("extracted %s size mismatch", name)
 	}
 	return nil
 }
@@ -406,6 +416,15 @@ func tarRegularMember(hdr *tar.Header) (name string, skip bool, err error) {
 func checkTarFileCount(files int, limits Limits) error {
 	if limits.MaxFiles > 0 && files > limits.MaxFiles {
 		return fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+	}
+	return nil
+}
+
+// checkExpandedSize enforces limits.MaxExpanded (0 means unlimited) against the
+// uncompressed byte total seen so far.
+func checkExpandedSize(expanded int64, limits Limits) error {
+	if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
+		return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
 	}
 	return nil
 }
@@ -449,8 +468,8 @@ func ReadTarZstMember(src io.Reader, name string, limits Limits) ([]byte, error)
 			}
 			continue
 		}
-		if limits.MaxExpanded > 0 && hdr.Size > limits.MaxExpanded {
-			return nil, fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(hdr.Size, limits); err != nil {
+			return nil, err
 		}
 		body, err := io.ReadAll(io.LimitReader(tr, hdr.Size+1))
 		if err != nil {
