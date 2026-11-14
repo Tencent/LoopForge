@@ -37,51 +37,17 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 			if !sources[artifact.NodeID] {
 				continue
 			}
-			repoWorkspace := repositoryWorkspacePath(workspace, domain.RepositoryContext{WorkspaceDir: artifact.RepositoryDir})
-			summary := repositoryPatchSummary(artifact)
-			if workspaceHasRepoWork(repoWorkspace) {
-				fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nSkipped applying; this run already owns the workspace. Read the files with git status / git diff.\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, summary)
-				continue
-			}
-			if body := repositoryPatchApplyBody(artifact); looksLikeGitDiff(body) {
-				if err := applyRepositoryPatch(repoWorkspace, body); err != nil {
-					return "", fmt.Errorf("apply repository-patch from %s (%s): %w", artifact.NodeID, artifact.RepositoryDir, err)
-				}
-				fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nApplied a legacy unified diff (sha %s).\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, artifact.SHA256, summary)
-				continue
-			}
-			fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nNo full diff is stored. The run workspace is the source of truth.\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, summary)
-			continue
-		}
-		nodeSegment := safePathSegment(nodeControlKey(run, artifact.NodeID))
-		controlSegments := []string{"inputs", nodeSegment}
-		if artifact.RepositoryDir != "" {
-			controlSegments = append(controlSegments, safePathSegment(artifact.RepositoryDir))
-		}
-		inputDir, err := runtime.EnsureControlDirectory(workspace, controlSegments...)
-		if err != nil {
-			return "", err
-		}
-		fileName := safePathSegment(artifact.Name) + extensionFor(artifact.MediaType)
-		rel := artifactInputRelPath(run, artifact)
-		target := filepath.Join(inputDir, fileName)
-		if info, err := os.Lstat(target); err == nil {
-			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-				return "", fmt.Errorf("artifact input path is not a regular file: %s", target)
-			}
-			if err := os.Chmod(target, 0o600); err != nil {
+			section, err := materializeRepositoryPatchInput(workspace, artifact)
+			if err != nil {
 				return "", err
 			}
-		} else if err != nil && !os.IsNotExist(err) {
+			manifest.WriteString(section)
+			continue
+		}
+		if err := writeArtifactInputFile(workspace, run, artifact); err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(target, []byte(artifact.Content), 0o600); err != nil {
-			return "", err
-		}
-		if err := os.Chmod(target, 0o444); err != nil {
-			return "", err
-		}
-		writeInputManifestEntry(&manifest, artifact, rel)
+		writeInputManifestEntry(&manifest, artifact, artifactInputRelPath(run, artifact))
 	}
 	handoffManifest, err := materializeSOPHandoffInputs(workspace, run)
 	if err != nil {
@@ -89,6 +55,54 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 	}
 	manifest.WriteString(handoffManifest)
 	return strings.TrimSpace(manifest.String()), nil
+}
+
+// materializeRepositoryPatchInput hands an upstream repository-patch to the
+// consuming node and returns its manifest section. A workspace that already
+// holds repository work is left untouched; otherwise a stored legacy unified
+// diff is applied, and summary-only patches just point at the workspace.
+func materializeRepositoryPatchInput(workspace string, artifact domain.Artifact) (string, error) {
+	repoWorkspace := repositoryWorkspacePath(workspace, domain.RepositoryContext{WorkspaceDir: artifact.RepositoryDir})
+	summary := repositoryPatchSummary(artifact)
+	if workspaceHasRepoWork(repoWorkspace) {
+		return fmt.Sprintf("## %s / repository-patch (%s)\n\nSkipped applying; this run already owns the workspace. Read the files with git status / git diff.\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, summary), nil
+	}
+	if body := repositoryPatchApplyBody(artifact); looksLikeGitDiff(body) {
+		if err := applyRepositoryPatch(repoWorkspace, body); err != nil {
+			return "", fmt.Errorf("apply repository-patch from %s (%s): %w", artifact.NodeID, artifact.RepositoryDir, err)
+		}
+		return fmt.Sprintf("## %s / repository-patch (%s)\n\nApplied a legacy unified diff (sha %s).\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, artifact.SHA256, summary), nil
+	}
+	return fmt.Sprintf("## %s / repository-patch (%s)\n\nNo full diff is stored. The run workspace is the source of truth.\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, summary), nil
+}
+
+// writeArtifactInputFile writes an upstream artifact as a read-only file below
+// the run's control inputs directory (see artifactInputRelPath). An existing
+// regular file is replaced; symlinks or other non-regular entries are refused.
+func writeArtifactInputFile(workspace string, run domain.Run, artifact domain.Artifact) error {
+	controlSegments := []string{"inputs", safePathSegment(nodeControlKey(run, artifact.NodeID))}
+	if artifact.RepositoryDir != "" {
+		controlSegments = append(controlSegments, safePathSegment(artifact.RepositoryDir))
+	}
+	inputDir, err := runtime.EnsureControlDirectory(workspace, controlSegments...)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(inputDir, safePathSegment(artifact.Name)+extensionFor(artifact.MediaType))
+	if info, err := os.Lstat(target); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("artifact input path is not a regular file: %s", target)
+		}
+		if err := os.Chmod(target, 0o600); err != nil {
+			return err
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.WriteFile(target, []byte(artifact.Content), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(target, 0o444)
 }
 
 // artifactInputRelPath is where an upstream artifact is mounted for the
