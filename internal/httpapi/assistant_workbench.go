@@ -1099,6 +1099,27 @@ func (h *assistantHandlers) uploadAttachment(c *gin.Context) {
 	}
 	c.JSON(201, record.AssistantAttachment)
 }
+
+// transcriptAttachmentOwner reports who uploaded attachmentID according to the
+// session transcript: the author of the message listing it, falling back to the
+// session owner for messages without an author. The last listing wins.
+func transcriptAttachmentOwner(session domain.AssistantSession, attachmentID string) (int64, bool) {
+	var owner int64
+	found := false
+	for _, message := range session.Messages {
+		for _, a := range message.Attachments {
+			if a.ID == attachmentID {
+				owner = message.AuthorID
+				if owner == 0 {
+					owner = session.UserID
+				}
+				found = true
+			}
+		}
+	}
+	return owner, found
+}
+
 func (h *assistantHandlers) downloadAttachment(c *gin.Context) {
 	u, ok := h.requestUser(c.Request, true)
 	if !ok {
@@ -1117,17 +1138,9 @@ func (h *assistantHandlers) downloadAttachment(c *gin.Context) {
 			readOnly = viewOnly
 			session, _ := h.repo.AssistantSession(owner, sessionID)
 			sessionProject = session.ProjectID
-			found := false
-			for _, message := range session.Messages {
-				for _, a := range message.Attachments {
-					if a.ID == c.Param("id") {
-						ownerID = message.AuthorID
-						if ownerID == 0 {
-							ownerID = session.UserID
-						}
-						found = true
-					}
-				}
+			transcriptOwner, found := transcriptAttachmentOwner(session, c.Param("id"))
+			if found {
+				ownerID = transcriptOwner
 			}
 			// The uploader may fetch a file the transcript does not list yet: a
 			// just-sent message renders its attachments while the generation request
