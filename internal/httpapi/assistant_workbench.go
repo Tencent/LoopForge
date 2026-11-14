@@ -181,43 +181,50 @@ var errForeignReference = fmt.Errorf("只能引用当前项目的需求、角色
 
 var errNotProjectMember = fmt.Errorf("你还不是这个项目的成员，不能在项目里对话。可以把项目切换为「个人对话」直接聊，或请项目 Owner 把你加入项目")
 
+// historicalAttachmentIDs collects attachments already stored in this project's
+// conversation. Existing personal attachments remain usable when an unassigned
+// conversation is explicitly bound to an authorized project; never infer
+// another user's files.
+func historicalAttachmentIDs(session domain.AssistantSession, found bool, projectID string) map[string]bool {
+	ids := map[string]bool{}
+	if !found || session.Shared || session.ProjectID != projectID {
+		return ids
+	}
+	for _, message := range session.Messages {
+		for _, attachment := range message.Attachments {
+			ids[attachment.ID] = true
+		}
+	}
+	return ids
+}
+
 func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
 	if !h.workbenchProjectAllowed(c, req.ProjectID, user.ID) {
 		return errNotProjectMember
 	}
-	if req.SessionID != "" {
-		if old, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && old.ProjectID != req.ProjectID {
-			return fmt.Errorf("会话属于其他项目，请新建会话")
-		}
+	stored, hasStored := h.storedAssistantSession(req.SessionID, user.ID)
+	if hasStored && stored.ProjectID != req.ProjectID {
+		return fmt.Errorf("会话属于其他项目，请新建会话")
 	}
-	// Existing personal attachments remain usable when an unassigned conversation
-	// is explicitly bound to an authorized project. Never infer another user's files.
-	historicalAttachments := map[string]bool{}
-	if old, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && !old.Shared && old.ProjectID == req.ProjectID {
-		for _, message := range old.Messages {
-			for _, attachment := range message.Attachments {
-				historicalAttachments[attachment.ID] = true
-			}
-		}
-	}
+	historicalAttachments := historicalAttachmentIDs(stored, hasStored, req.ProjectID)
 	req.attachmentIDs = map[string]bool{}
 	req.attachmentOwners = map[string]int64{}
 	if len(req.Messages) > 200 {
 		return fmt.Errorf("会话过长，请开启新会话")
 	}
 	var context strings.Builder
-	if s, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && s.IssueID != "" && req.RunID == "" {
-		if err := h.validateSessionIssue(c, req.ProjectID, s.IssueID, user.ID); err != nil {
+	if hasStored && stored.IssueID != "" && req.RunID == "" {
+		if err := h.validateSessionIssue(c, req.ProjectID, stored.IssueID, user.ID); err != nil {
 			return err
 		}
-		_, data, err := h.workbenchReference(domain.AssistantReference{Type: "issue", ID: s.IssueID}, req.ProjectID)
+		_, data, err := h.workbenchReference(domain.AssistantReference{Type: "issue", ID: stored.IssueID}, req.ProjectID)
 		if err != nil {
 			return fmt.Errorf("关联需求不可用，请更换或解除关联：%w", err)
 		}
 		context.WriteString("当前会话关联的主需求（每轮从平台读取的最新数据）：" + data + "\n这是持续的需求上下文；其他 @需求只供本条消息参考。关联不会自动创建或派发运行，也不会改变会话可见范围。\n")
 	}
 	context.WriteString("当前任务以 runId 为准；普通会话引用只提供上下文。@角色表示让该角色作为子 Agent 来做这件事。\n")
-	if branch, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && branch.ParentSessionID != "" {
+	if hasStored && stored.ParentSessionID != "" {
 		context.WriteString("这是编辑消息后的讨论分支。原会话后续执行过的文件修改和平台变更不会回退，可能已经存在；写入前先读取真实状态，避免重复导入、创建或派发。历史 inherited 草稿仅供参考，不可认为它们在当前分支重新执行。\n")
 	}
 	if req.RunID != "" {
@@ -314,7 +321,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 		}
 		for j, a := range m.Attachments {
 			attachmentOwner := user.ID
-			if stored, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && i < len(stored.Messages) {
+			if hasStored && i < len(stored.Messages) {
 				attachmentOwner = stored.Messages[i].AuthorID
 				if attachmentOwner == 0 {
 					attachmentOwner = stored.UserID
@@ -347,7 +354,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 	context.WriteString(delegationContext(req, prefs, normalizeAssistantApprovalMode(req.ApprovalMode), hasSOP))
 	context.WriteString(assistantInstructionsContext(prefs))
 	if len(req.roles) > 0 {
-		if stored, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok {
+		if hasStored {
 			ids := roleAgentIDs(stored.Messages)
 			var reuse strings.Builder
 			for _, role := range req.roles {
@@ -1257,7 +1264,7 @@ func runNodeAgentID(r domain.Run, id string) string {
 // bound to and which others it may switch to, so it picks the one for the work
 // the user actually means instead of following @ mentions mechanically.
 func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user domain.User) string {
-	session, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID)
+	session, ok := h.storedAssistantSession(req.SessionID, user.ID)
 	if !ok || session.Shared || session.RunID != "" {
 		return ""
 	}

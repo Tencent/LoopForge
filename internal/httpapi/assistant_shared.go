@@ -23,6 +23,16 @@ func assistantStorageOwner(st *repo.Store, id string, fallback int64) int64 {
 	return fallback
 }
 
+// storedAssistantSession reads a conversation through its storage owner: shared
+// and project sessions live under the user who opened them, so the caller's own
+// slot only holds private conversations.
+func (h *assistantHandlers) storedAssistantSession(id string, userID int64) (domain.AssistantSession, bool) {
+	if id == "" {
+		return domain.AssistantSession{}, false
+	}
+	return h.repo.AssistantSession(assistantStorageOwner(h.repo, id, userID), id)
+}
+
 // conversationScope returns the storage owner and whether the conversation is
 // multi-user. SOP run sessions and every conversation bound to a project are
 // shared with that project's members; only unbound conversations are private.
