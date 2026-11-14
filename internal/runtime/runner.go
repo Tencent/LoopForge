@@ -120,6 +120,16 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		if err == nil {
 			err = executorReportedError(adapter.Result(), raw)
 		}
+		// Only classify the protocol's terminal error, never the raw stream:
+		// transcripts can contain unrelated assistant text and tool results.
+		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if class := classifyModelFailure(adapter.Result()); class != "" {
+				if detail := executorReportedError(adapter.Result(), raw); detail != nil && !strings.Contains(err.Error(), detail.Error()) {
+					err = fmt.Errorf("%s: %w", detail, err)
+				}
+				err = &ModelError{Class: class, Err: err, RetryAfter: parseModelRetryAfter(adapter.Result())}
+			}
+		}
 		return clipExecutorOutput(output), err
 	}
 	if output != "" {

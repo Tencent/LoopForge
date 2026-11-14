@@ -85,6 +85,8 @@ type AgentDefinition struct {
 	Hooks           []AgentHook              `json:"hooks,omitempty"`
 	ExecutorID      string                   `json:"executorId,omitempty"`
 	Model           string                   `json:"model,omitempty"`
+	FallbackModels  []string                 `json:"fallbackModels,omitempty"`
+	ModelRetry      *ModelRetryPolicy        `json:"modelRetry,omitempty"`
 	Effort          string                   `json:"effort,omitempty"`
 	Loop            AgentLoopPolicy          `json:"loop"`
 	Interventions   []HumanInterventionPoint `json:"interventions,omitempty"`

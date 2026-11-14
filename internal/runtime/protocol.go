@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -71,6 +72,21 @@ func (o *ProtocolObserver) VisibleOutput() string {
 		return ""
 	}
 	return o.adapter.VisibleOutput()
+}
+
+// ModelFailureClass reports only an explicit terminal protocol failure.
+func (o *ProtocolObserver) ModelFailureClass() ModelErrorClass {
+	if o == nil || o.adapter == nil || !o.adapter.Failed() {
+		return ""
+	}
+	return classifyModelFailure(o.adapter.Result())
+}
+
+func (o *ProtocolObserver) ModelRetryAfter() time.Duration {
+	if o == nil || o.adapter == nil || !o.adapter.Failed() {
+		return 0
+	}
+	return parseModelRetryAfter(o.adapter.Result())
 }
 
 func (o *ProtocolObserver) Finalize(success bool) {
@@ -273,6 +289,15 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 	case "result":
 		result := stringValue(raw["result"])
 		failed, _ := raw["is_error"].(bool)
+		if failed && result == "" {
+			var details []string
+			for _, value := range sliceValue(raw["errors"]) {
+				if message := strings.TrimSpace(stringValue(value)); message != "" {
+					details = append(details, message)
+				}
+			}
+			result = strings.Join(details, "\n")
+		}
 		a.mu.Lock()
 		a.result = result
 		a.failed = failed
@@ -352,8 +377,19 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "finish", Message: "model generation finished", SessionID: session})
 	case "turn.failed":
 		message := stringValue(raw["message"])
+		if detail, ok := raw["error"].(map[string]any); ok {
+			message = firstNonEmpty(stringValue(detail["message"]), message)
+		}
 		if message == "" {
 			message = "codex turn failed"
+		}
+		// Keep unknown failures on the existing path. A recognized model
+		// failure is terminal even when the CLI exits successfully.
+		if classifyModelFailure(message) != "" {
+			a.mu.Lock()
+			a.result, a.failed = message, true
+			a.mu.Unlock()
+			a.once.Do(func() { close(a.done) })
 		}
 		a.emit(domain.TelemetryEvent{Category: "error", Name: "model.error", Phase: "finish", Level: "error", Message: message, SessionID: session, Error: &domain.ErrorObservation{Type: "provider", Message: message}})
 	case "item.started", "item.completed", "item.updated":

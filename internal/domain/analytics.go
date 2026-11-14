@@ -498,6 +498,7 @@ type AnalyticsActivityPoint struct {
 }
 
 type AnalyticsSnapshot struct {
+	ModelErrors   []AnalyticsModelError    `json:"modelErrors,omitempty"`
 	Activity      AnalyticsActivity        `json:"activity"`
 	ActivityTrend []AnalyticsActivityPoint `json:"activityTrend"`
 	DataErrors    []string                 `json:"dataErrors,omitempty"`
@@ -530,6 +531,12 @@ type AnalyticsSnapshot struct {
 	RunTraces []AnalyticsRunTrace  `json:"runTraces,omitempty"`
 	// WeekHour 按星期×小时聚合运行，时间口径与 Trend 相同，只含非零格。
 	WeekHour []AnalyticsWeekHourCell `json:"weekHour,omitempty"`
+}
+
+type AnalyticsModelError struct {
+	Class    string `json:"class"`
+	Failures int    `json:"failures"`
+	Retries  int    `json:"retries"`
 }
 
 // MatchesProject treats a non-nil empty scope as no projects, never as all projects.

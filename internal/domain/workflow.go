@@ -67,9 +67,17 @@ type WorkflowNode struct {
 	RetryStrategy         string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
 	CarryOver             []string           `json:"carryOver,omitempty"`
 	MaxAttempts           int                `json:"maxAttempts"`
+	ModelRetry            *ModelRetryPolicy  `json:"modelRetry,omitempty"`
 	MaxReworks            int                `json:"maxReworks"`
 	Notifications         []NodeNotification `json:"notifications,omitempty"`
 	Position              Position           `json:"position"`
+}
+
+// ModelRetryPolicy overrides defaults; nil fields inherit and zero retries disables retry.
+type ModelRetryPolicy struct {
+	InitialSeconds *int `json:"initialSeconds,omitempty"`
+	MaxSeconds     *int `json:"maxSeconds,omitempty"`
+	MaxRetries     *int `json:"maxRetries,omitempty"`
 }
 
 // ValidateWorkflowMetricStages prevents silently dropping a mistyped stage.

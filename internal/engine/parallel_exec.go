@@ -78,11 +78,12 @@ func (e *Engine) lockPoolBinding(runID string) func() {
 // cancel stops only that node, so a rework that resets a running sibling
 // does not wait for it to finish on its own.
 type nodeExecution struct {
-	attempt int
-	cancel  context.CancelFunc
+	attempt  int
+	sequence int
+	cancel   context.CancelFunc
 }
 
-func (e *Engine) registerNodeExecution(runID, nodeID string, attempt int, cancel context.CancelFunc) func() {
+func (e *Engine) registerNodeExecution(runID, nodeID string, attempt, sequence int, cancel context.CancelFunc) func() {
 	e.nodeExecMu.Lock()
 	if e.nodeExecs == nil {
 		e.nodeExecs = map[string]map[string]nodeExecution{}
@@ -90,11 +91,11 @@ func (e *Engine) registerNodeExecution(runID, nodeID string, attempt int, cancel
 	if e.nodeExecs[runID] == nil {
 		e.nodeExecs[runID] = map[string]nodeExecution{}
 	}
-	e.nodeExecs[runID][nodeID] = nodeExecution{attempt: attempt, cancel: cancel}
+	e.nodeExecs[runID][nodeID] = nodeExecution{attempt: attempt, sequence: sequence, cancel: cancel}
 	e.nodeExecMu.Unlock()
 	return func() {
 		e.nodeExecMu.Lock()
-		if current, ok := e.nodeExecs[runID][nodeID]; ok && current.attempt == attempt {
+		if current, ok := e.nodeExecs[runID][nodeID]; ok && current.attempt == attempt && current.sequence == sequence {
 			delete(e.nodeExecs[runID], nodeID)
 			if len(e.nodeExecs[runID]) == 0 {
 				delete(e.nodeExecs, runID)
@@ -106,8 +107,8 @@ func (e *Engine) registerNodeExecution(runID, nodeID string, attempt int, cancel
 
 // nodeExecutionLive reports whether the persisted node still belongs to the
 // execution that started it: same attempt and still in flight.
-func nodeExecutionLive(nr *domain.NodeRun, attempt int) bool {
-	return nr != nil && nr.Attempt == attempt && (nr.Status == "running" || nr.Status == "pending_input")
+func nodeExecutionLive(nr *domain.NodeRun, attempt, sequence int) bool {
+	return nr != nil && nr.Attempt == attempt && nr.ExecutionSequence == sequence && (nr.Status == "running" || nr.Status == "pending_input")
 }
 
 // reconcileNodeExecutions cancels executions whose node was reset or
@@ -135,7 +136,7 @@ func (e *Engine) reconcileNodeExecutions(runID string) {
 		return
 	}
 	for nodeID, execution := range registered {
-		if !nodeExecutionLive(r.Nodes[nodeID], execution.attempt) {
+		if !nodeExecutionLive(r.Nodes[nodeID], execution.attempt, execution.sequence) {
 			execution.cancel()
 		}
 	}

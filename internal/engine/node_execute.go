@@ -105,6 +105,10 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 			return
 		}
 		wf := workflowForRun(e.repo, r)
+		if modelRetryDue(r, time.Now().UTC()) {
+			e.updateRun(runID, func(current *domain.Run) { promoteDueModelRetries(current, time.Now().UTC()) })
+			continue
+		}
 		e.reconcileNodeExecutions(runID)
 		inflightMu.Lock()
 		var ready []domain.WorkflowNode
@@ -126,6 +130,13 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 			continue
 		}
 		if len(ready) == 0 {
+			if hasModelRetry(r) && !hasWaiting(wf, r) {
+				select {
+				case <-ctx.Done():
+				case <-time.After(500 * time.Millisecond):
+				}
+				continue
+			}
 			if allSucceeded(wf, r) {
 				rework, err := e.integrateScheduledRun(runID)
 				if err != nil {
@@ -139,7 +150,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 				return
 			}
 			if hasWaiting(wf, r) {
-				if alignOnlyRun(r) {
+				if alignRunWaitingApproval(r) {
 					e.updateRun(runID, func(current *domain.Run) {
 						if autoSucceedAlignApprovals(current, time.Now().UTC()) {
 							e.event(current, "", "gate.auto_approved", "基线对齐无需人工确认，已自动通过")
@@ -324,6 +335,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	defer unlock()
 	executionGeneration := currentLease.Generation
 	executionAttempt := 0
+	executionSequence := 0
 	started := false
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
@@ -338,10 +350,14 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		started = true
 		r.Status = "running"
 		nr.Status = "running"
-		if !continuingInterruptedAttempt(nr) {
+		if !nr.RetrySameAttempt && !continuingInterruptedAttempt(nr) {
 			nr.Attempt++
 		}
+		nr.RetrySameAttempt = false
+		nr.NextRetryAt = time.Time{}
 		executionAttempt = nr.Attempt
+		nr.ExecutionSequence++
+		executionSequence = nr.ExecutionSequence
 		nr.StartedAt = time.Now().UTC()
 		nr.GateResult = nil
 		e.event(r, node.ID, "node.started", node.Name+" 开始执行")
@@ -351,7 +367,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	ctx, cancelNode := context.WithCancel(ctx)
 	defer cancelNode()
-	defer e.registerNodeExecution(runID, node.ID, executionAttempt, cancelNode)()
+	defer e.registerNodeExecution(runID, node.ID, executionAttempt, executionSequence, cancelNode)()
 	failNode := func(err error, allowReject bool) {
 		if err == nil {
 			return
@@ -360,10 +376,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 		if runtime.IsSandboxInterrupt(err) {
-			e.requeueInterruptedNode(runID, node.ID, executionAttempt, executionGeneration)
+			e.requeueInterruptedNode(runID, node.ID, executionAttempt, executionGeneration, executionSequence)
 			return
 		}
-		e.nodeFailedAt(runID, node, executionAttempt, executionGeneration, err, allowReject)
+		e.nodeFailedAt(runID, node, executionAttempt, executionGeneration, err, allowReject, executionSequence)
 	}
 	if node.Type == "sop" {
 		e.executeSOPNode(ctx, runID, wf, node, executionAttempt, executionGeneration)
@@ -567,7 +583,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			found, evidence = domain.DetectFrontendProject(sb.Workspace())
 		}
 		if !found {
-			e.completeSkippedPreviewBuild(runID, node, executionGeneration, executionAttempt, current, evidence)
+			e.completeSkippedPreviewBuild(runID, node, executionGeneration, executionAttempt, current, evidence, executionSequence)
 			return
 		}
 	}
@@ -665,6 +681,30 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = errResolve
 			break
 		}
+		if cb := sb.credentialSnapshot().CodeBuddy; ex.Kind == "codebuddy" && cb.Sponsored {
+			ex = e.sponsoredExecutor(runID, ex, cb.SponsoredModels, sink)
+			// Shared credentials only permit the platform's approved model set.
+			allowed := map[string]bool{}
+			for _, model := range cb.SponsoredModels {
+				allowed[model] = true
+			}
+			filtered := make([]string, 0, len(agent.FallbackModels))
+			for _, model := range agent.FallbackModels {
+				if allowed[model] {
+					filtered = append(filtered, model)
+				}
+			}
+			agent.FallbackModels = filtered
+		}
+		e.updateRun(runID, func(r *domain.Run) {
+			nr := r.Nodes[node.ID]
+			if nr != nil && !nr.ModelPolicyInitialized {
+				nr.ActiveModel = ex.Model
+				nr.FallbackModels = uniqueFallbackModels(ex.Model, agent.FallbackModels)
+				nr.ModelPolicyInitialized = true
+				nr.ModelRetry = mergeModelRetryPolicy(agent.ModelRetry, node.ModelRetry)
+			}
+		})
 		effectiveNode.ArtifactOutputs = mergeArtifactContracts(agent.ArtifactOutputs, node.ArtifactOutputs)
 		gates = gates[:0]
 		for _, gate := range agent.Verification {
@@ -703,7 +743,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					resumeSessionID = strings.TrimSpace(nr.SessionID)
 				}
 			}
-			invocationID := fmt.Sprintf("%s-%d-%d", nodeControlKey(current, node.ID), attempt, invocationSeq)
+			effectiveExecutor := ex
+			if nr := current.Nodes[node.ID]; nr != nil && nr.ActiveModel != "" {
+				effectiveExecutor.Model = nr.ActiveModel
+			}
+			if cb := sb.credentialSnapshot().CodeBuddy; effectiveExecutor.Kind == "codebuddy" && cb.Sponsored {
+				effectiveExecutor = e.sponsoredExecutor(runID, effectiveExecutor, cb.SponsoredModels, sink)
+			}
+			invocationAgent := agent
+			invocationAgent.Model = effectiveExecutor.Model
+			invocationID := fmt.Sprintf("%s-%d-%d-%d", nodeControlKey(current, node.ID), attempt, executionSequence, invocationSeq)
 			rendered := renderPromptWithStore(e.repo, wf, effectiveNode, current)
 			hadCatalog := strings.Contains(rendered, "{{artifacts}}")
 			prompt := strings.ReplaceAll(rendered, "{{artifacts}}", artifactContext)
@@ -738,10 +787,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if requiresSubmit {
 				options.GateResultPath = gateResultPath(nodeControlKey(current, node.ID), attempt)
 			}
-			ex := ex
-			if cb := sb.credentialSnapshot().CodeBuddy; ex.Kind == "codebuddy" && cb.Sponsored {
-				ex = e.sponsoredExecutor(runID, ex, cb.SponsoredModels, sink)
-			}
+			ex := effectiveExecutor
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				// 执行机器 mode (bind-cli): the responsible user selected a default
 				// execution machine, so the compiled task book, asset bundle, and
@@ -750,7 +796,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				// user's platform API key. Gates follow on the same machine and
 				// workspace. An empty selection keeps the cloud mode below.
 				workspace := runnerWorkspaceRel(current, node.ID)
-				result, dispatchErr := e.dispatchRunnerTask(ctx, execMachine, current, effectiveNode, sb, workspace, ex, agent, assets, prompt, invocationID, options, sink)
+				result, dispatchErr := e.dispatchRunnerTask(ctx, execMachine, current, effectiveNode, sb, workspace, ex, invocationAgent, assets, prompt, invocationID, options, sink)
 				if dispatchErr == nil {
 					gateExec = func(command string, target executionTarget, gateSink runtime.EventSink) (string, error) {
 						return e.dispatchRunnerCommand(ctx, execMachine, runID, node.ID, workspace, bindExecutionTarget(command, target), gateSink)
@@ -769,7 +815,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if bindErr != nil {
 				return "", bindErr
 			}
-			return e.runner.Run(ctx, sb, invocationID, ex, agent, boundAssets, prompt, options, sink)
+			return e.runner.Run(ctx, sb, invocationID, ex, invocationAgent, boundAssets, prompt, options, sink)
 		}
 	}
 	if err != nil {
@@ -943,6 +989,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if err == nil || iteration == maxIterations || ctx.Err() != nil {
 			break
 		}
+		var modelFailure *runtime.ModelError
+		if errors.As(err, &modelFailure) {
+			break
+		}
 		if failedAction != "loop" {
 			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "agent.loop", Phase: "finish", Message: "门禁失败策略为 " + failedAction + "，跳过自修正", Attributes: map[string]any{"iteration": iteration, "onFailure": failedAction, "feedback": err.Error()}})
 			break
@@ -955,14 +1005,19 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		e.freezeAvailableArtifacts(runID, effectiveNode, sb.Workspace(), reported, output)
 		if ctx.Err() != nil || runtime.IsSandboxInterrupt(err) {
 			if ctx.Err() == nil {
-				e.requeueInterruptedNode(runID, node.ID, executionAttempt, executionGeneration)
+				e.requeueInterruptedNode(runID, node.ID, executionAttempt, executionGeneration, executionSequence)
 			}
+			return
+		}
+		var modelFailure *runtime.ModelError
+		if errors.As(err, &modelFailure) {
+			failNode(err, false)
 			return
 		}
 		if isMaxTurnsErr(err) {
 			e.updateRun(runID, func(r *domain.Run) {
 				nr := r.Nodes[node.ID]
-				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false) {
+				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false, executionSequence) {
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "对话轮次用尽，等待确认是否重试", time.Now().UTC()
@@ -973,7 +1028,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if failedAction == "human" {
 			e.updateRun(runID, func(r *domain.Run) {
 				nr := r.Nodes[node.ID]
-				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false) {
+				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false, executionSequence) {
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "等待人工确认", time.Now().UTC()
@@ -990,7 +1045,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if maxIterations > 1 && loopOnExhausted == "human" {
 			e.updateRun(runID, func(r *domain.Run) {
 				nr := r.Nodes[node.ID]
-				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false) {
+				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false, executionSequence) {
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.FinishedAt = output, err.Error(), "waiting_approval", time.Now().UTC()
@@ -1017,17 +1072,21 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(fmt.Errorf("artifact contract: %w", err), nodeRejects(node))
 		return
 	}
-	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true) {
+	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true, executionSequence) {
 		return
 	}
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
-		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
+		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true, executionSequence) {
 			return
 		}
 		r.Artifacts = append(r.Artifacts, artifacts...)
 		nr.Output = output
 		nr.Error = ""
+		nr.ModelErrorClass = ""
+		nr.WaitReason = ""
+		nr.TransientRetries = 0
+		nr.ModelTransientErrors = 0
 		if manualGateName != "" {
 			nr.Status = "waiting_approval"
 			nr.FinishedAt = time.Now().UTC()
@@ -1067,7 +1126,7 @@ func (e *Engine) archivePreviewAfterBuild(runID string) {
 	e.preview.ArchiveBuiltPreview(current)
 }
 
-func (e *Engine) completeSkippedPreviewBuild(runID string, node domain.WorkflowNode, executionGeneration, executionAttempt int, current domain.Run, evidence string) {
+func (e *Engine) completeSkippedPreviewBuild(runID string, node domain.WorkflowNode, executionGeneration, executionAttempt int, current domain.Run, evidence string, sequence ...int) {
 	reason := "工作区没有前端工程，已跳过预览"
 	if extra := strings.TrimSpace(evidence); extra != "" {
 		reason = reason + "（" + extra + "）"
@@ -1084,7 +1143,7 @@ func (e *Engine) completeSkippedPreviewBuild(runID string, node domain.WorkflowN
 	})
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
-		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
+		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true, sequence...) {
 			return
 		}
 		nr.Output = output

@@ -287,12 +287,14 @@ func (c *Client) SendEvents(ctx context.Context, taskID string, events []domain.
 }
 
 type CompleteRequest struct {
-	Status    string                    `json:"status"`
-	ExitCode  *int                      `json:"exitCode"`
-	Result    string                    `json:"result"`
-	Error     string                    `json:"error"`
-	Artifacts map[string]string         `json:"artifacts,omitempty"`
-	Outputs   *domain.RunnerTaskOutputs `json:"outputs,omitempty"`
+	Status                 string                    `json:"status"`
+	ExitCode               *int                      `json:"exitCode"`
+	Result                 string                    `json:"result"`
+	Error                  string                    `json:"error"`
+	ModelErrorClass        string                    `json:"modelErrorClass,omitempty"`
+	ModelRetryAfterSeconds int64                     `json:"modelRetryAfterSeconds,omitempty"`
+	Artifacts              map[string]string         `json:"artifacts,omitempty"`
+	Outputs                *domain.RunnerTaskOutputs `json:"outputs,omitempty"`
 }
 
 func (c *Client) Complete(ctx context.Context, taskID string, req CompleteRequest) error {
