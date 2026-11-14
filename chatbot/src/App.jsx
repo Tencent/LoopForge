@@ -11,6 +11,7 @@ import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
 import GenerationDiagnostics from "./GenerationDiagnostics";
+import TraceCopyButton from "./TraceCopyButton";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
   activityForReply,
@@ -1583,6 +1584,12 @@ export default function App() {
                               value={message.content}
                               label="复制消息"
                             />
+                            <TraceCopyButton
+                              messages={messages}
+                              index={index}
+                              generation={chat.generation}
+                              session={chat.session}
+                            />
                           </div>
                         </>
                     </div>
@@ -1632,6 +1639,12 @@ export default function App() {
                           />
                           <MessageInfo message={message} />
                           {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
+                          <TraceCopyButton
+                            messages={messages}
+                            index={index}
+                            generation={chat.generation}
+                            session={chat.session}
+                          />
                         </div>
                       </>
                     ) : null}

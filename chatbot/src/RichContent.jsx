@@ -34,7 +34,6 @@ import {
 import "./artifact-preview.css";
 
 const Check = (props) => <HarnessIcon name="check" {...props} />;
-const Copy = (props) => <HarnessIcon name="copy" {...props} />;
 const Download = (props) => <HarnessIcon name="download" {...props} />;
 const Expand = (props) => <HarnessIcon name="preview-expand" {...props} />;
 const Image = (props) => <HarnessIcon name="image" {...props} />;
@@ -59,10 +58,13 @@ export function download(name, content, type = "text/plain") {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-export function CopyButton({ value, label = "复制", className = "" }) {
+export function CopyButton({ value, label = "复制", className = "", icon = "copy" }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
+      // A function value is read at click time, so callers only gather what
+      // they copy when someone actually copies it.
+      if (typeof value === "function") value = value();
       if (navigator.clipboard?.writeText)
         await navigator.clipboard.writeText(value);
       else {
@@ -87,7 +89,7 @@ export function CopyButton({ value, label = "复制", className = "" }) {
       title={copied ? "已复制" : label}
       onClick={copy}
     >
-      {copied ? <Check size={15} /> : <Copy size={15} />}
+      {copied ? <Check size={15} /> : <HarnessIcon name={icon} size={15} />}
     </button>
   );
 }
