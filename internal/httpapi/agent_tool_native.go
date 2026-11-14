@@ -123,17 +123,48 @@ func nativeToolSettings() map[string]any {
 }
 
 func applyNativeToolSafety(argv []string, mode AgentToolMode) []string {
-	_ = mode
 	// --tools is a built-in allowlist. CodeBuddy also applies it to MCP tools,
 	// so listing Read/Grep/Glob or mcp__* globs hides submit_* and TAPD/工蜂.
 	argv = dropNativeArg(argv, "--tools")
-	if !slices.Contains(argv, "--disallowedTools") {
-		argv = appendNativeArgs(argv, "--disallowedTools", nativeDisallowedTools)
-	}
+	// Merge the canonical disallowed-tools list with any caller-supplied
+	// value (which may be stricter) so the final set is the union. Read
+	// both --disallowedTools VALUE and --disallowedTools=VALUE forms,
+	// drop both, then re-append the merged result.
+	existing := argvFlagValueAny(argv, "--disallowedTools")
+	argv = dropNativeArg(argv, "--disallowedTools")
+	argv = appendNativeArgs(argv, "--disallowedTools", mergeDisallowedTools(existing, nativeDisallowedTools))
 	if !slices.Contains(argv, "--strict-mcp-config") {
 		argv = appendNativeArgs(argv, "--strict-mcp-config")
 	}
 	return argv
+}
+
+// mergeDisallowedTools returns the union of two comma-separated tool lists.
+func mergeDisallowedTools(a, b string) string {
+	if a == "" {
+		return b
+	}
+	seen := make(map[string]struct{})
+	var merged []string
+	for _, s := range strings.Split(b, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		seen[s] = struct{}{}
+		merged = append(merged, s)
+	}
+	for _, s := range strings.Split(a, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			merged = append(merged, s)
+		}
+	}
+	return strings.Join(merged, ",")
 }
 
 // Provider commands terminate options with -- before the positional prompt.
@@ -199,6 +230,21 @@ func argvFlagValue(argv []string, flag string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// argvFlagValueAny reads the value of flag from argv, recognising both
+// "--flag VALUE" (space-separated) and "--flag=VALUE" (equals) forms.
+func argvFlagValueAny(argv []string, flag string) string {
+	prefix := flag + "="
+	for i, arg := range argv {
+		if arg == flag && i+1 < len(argv) {
+			return argv[i+1]
+		}
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix)
+		}
+	}
+	return ""
 }
 
 func nativeCommandContainsSecret(command runtime.CommandSpec, files agentToolFiles, token string) bool {
