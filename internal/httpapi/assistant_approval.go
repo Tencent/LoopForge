@@ -264,13 +264,13 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 		if !ok {
 			return []string{fmt.Sprintf("规则 %s 不存在，执行将失败", id)}
 		}
-		return sharedAssetWarnings("规则", rule.Shared, h.agentNamesReferencing("rule", id), "角色")
+		return sharedAssetWarnings("规则", rule.Shared, agentNamesReferencing(h.repo, "rule", id), "角色")
 	case "skills_delete":
 		skill, ok := h.repo.Skill(id)
 		if !ok {
 			return []string{fmt.Sprintf("技能 %s 不存在，执行将失败", id)}
 		}
-		return sharedAssetWarnings("技能", skill.Shared, h.agentNamesReferencing("skill", id), "角色")
+		return sharedAssetWarnings("技能", skill.Shared, agentNamesReferencing(h.repo, "skill", id), "角色")
 	case "dockerfiles_delete":
 		item, ok := h.repo.Dockerfile(id)
 		if !ok {
@@ -279,13 +279,13 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 		if id == repo.GenericBackendDockerfileID {
 			return []string{"内置 Dockerfile generic-backend 不能删除"}
 		}
-		return sharedAssetWarnings("Dockerfile", item.Shared, h.sandboxNamesReferencing("dockerfile", id), "沙箱")
+		return sharedAssetWarnings("Dockerfile", item.Shared, sandboxNamesReferencing(h.repo, "dockerfile", id), "沙箱")
 	case "environments_delete":
 		item, ok := h.repo.Environment(id)
 		if !ok {
 			return []string{fmt.Sprintf("环境安装脚本 %s 不存在，执行将失败", id)}
 		}
-		return sharedAssetWarnings("环境安装脚本", item.Shared, h.sandboxNamesReferencing("environment", id), "沙箱")
+		return sharedAssetWarnings("环境安装脚本", item.Shared, sandboxNamesReferencing(h.repo, "environment", id), "沙箱")
 	case "sandboxes_delete":
 		if id == "local" || id == repo.GenericDockerSandboxID {
 			return []string{fmt.Sprintf("内置沙箱 %s 不能删除", id)}
@@ -294,7 +294,7 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 		if !ok {
 			return []string{fmt.Sprintf("沙箱 %s 不存在，执行将失败", id)}
 		}
-		return sharedAssetWarnings("沙箱", item.Shared, h.workflowNamesReferencingSandbox(id), "流程")
+		return sharedAssetWarnings("沙箱", item.Shared, workflowNamesReferencingSandbox(h.repo, id), "流程")
 	case "workflows_delete":
 		return h.workflowDeleteWarnings(id)
 	default:
@@ -343,41 +343,4 @@ func sharedAssetWarnings(kind string, shared bool, refNames []string, refKind st
 		out = append(out, fmt.Sprintf("%s仍被 %d 个%s引用（%s），请先解除引用", kind, len(refNames), refKind, strings.Join(refNames, "、")))
 	}
 	return out
-}
-
-func (h *assistantHandlers) agentNamesReferencing(kind, id string) []string {
-	var names []string
-	for _, agent := range h.repo.Agents() {
-		refs := agent.Rules
-		if kind == "skill" {
-			refs = agent.Skills
-		}
-		for _, ref := range refs {
-			if ref == id {
-				names = append(names, agent.Name)
-				break
-			}
-		}
-	}
-	return names
-}
-
-func (h *assistantHandlers) sandboxNamesReferencing(kind, id string) []string {
-	var names []string
-	for _, sandbox := range h.repo.Sandboxes() {
-		if (kind == "dockerfile" && sandbox.DockerfileID == id) || (kind == "environment" && sandbox.EnvironmentID == id) {
-			names = append(names, sandbox.Name)
-		}
-	}
-	return names
-}
-
-func (h *assistantHandlers) workflowNamesReferencingSandbox(id string) []string {
-	var names []string
-	for _, workflow := range h.repo.Workflows() {
-		if workflow.SandboxProfileID == id {
-			names = append(names, workflow.Name)
-		}
-	}
-	return names
 }
