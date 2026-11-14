@@ -83,30 +83,11 @@ func refreshSharedControlDirectory(workspace string, build func(dir string) erro
 // sameDirectoryTree compares names, kinds, permission bits, file contents and
 // symlink targets of two trees.
 func sameDirectoryTree(a, b string) (bool, error) {
-	collect := func(root string) (map[string]fs.FileInfo, error) {
-		entries := map[string]fs.FileInfo{}
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			info, err := os.Lstat(path)
-			if err != nil {
-				return err
-			}
-			entries[rel] = info
-			return nil
-		})
-		return entries, err
-	}
-	left, err := collect(a)
+	left, err := collectDirectoryTree(a)
 	if err != nil {
 		return false, err
 	}
-	right, err := collect(b)
+	right, err := collectDirectoryTree(b)
 	if err != nil {
 		return false, err
 	}
@@ -115,41 +96,72 @@ func sameDirectoryTree(a, b string) (bool, error) {
 	}
 	for rel, li := range left {
 		ri, ok := right[rel]
-		if !ok || li.Mode().Type() != ri.Mode().Type() {
+		if !ok {
 			return false, nil
 		}
-		if rel != "." && li.Mode().Perm() != ri.Mode().Perm() {
+		if same, err := sameTreeEntry(a, b, rel, li, ri); err != nil || !same {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// collectDirectoryTree maps every path under root (relative to root, the root
+// itself being ".") to its Lstat info.
+func collectDirectoryTree(root string) (map[string]fs.FileInfo, error) {
+	entries := map[string]fs.FileInfo{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		entries[rel] = info
+		return nil
+	})
+	return entries, err
+}
+
+// sameTreeEntry compares the entry rel present in both trees a and b: its
+// kind, its permission bits (except for the roots) and, for regular files and
+// symlinks, its content or target.
+func sameTreeEntry(a, b, rel string, li, ri fs.FileInfo) (bool, error) {
+	if li.Mode().Type() != ri.Mode().Type() {
+		return false, nil
+	}
+	if rel != "." && li.Mode().Perm() != ri.Mode().Perm() {
+		return false, nil
+	}
+	switch {
+	case li.Mode().IsRegular():
+		if li.Size() != ri.Size() {
 			return false, nil
 		}
-		switch {
-		case li.Mode().IsRegular():
-			if li.Size() != ri.Size() {
-				return false, nil
-			}
-			lb, err := os.ReadFile(filepath.Join(a, rel))
-			if err != nil {
-				return false, err
-			}
-			rb, err := os.ReadFile(filepath.Join(b, rel))
-			if err != nil {
-				return false, err
-			}
-			if !bytes.Equal(lb, rb) {
-				return false, nil
-			}
-		case li.Mode()&os.ModeSymlink != 0:
-			lt, err := os.Readlink(filepath.Join(a, rel))
-			if err != nil {
-				return false, err
-			}
-			rt, err := os.Readlink(filepath.Join(b, rel))
-			if err != nil {
-				return false, err
-			}
-			if lt != rt {
-				return false, nil
-			}
+		lb, err := os.ReadFile(filepath.Join(a, rel))
+		if err != nil {
+			return false, err
 		}
+		rb, err := os.ReadFile(filepath.Join(b, rel))
+		if err != nil {
+			return false, err
+		}
+		return bytes.Equal(lb, rb), nil
+	case li.Mode()&os.ModeSymlink != 0:
+		lt, err := os.Readlink(filepath.Join(a, rel))
+		if err != nil {
+			return false, err
+		}
+		rt, err := os.Readlink(filepath.Join(b, rel))
+		if err != nil {
+			return false, err
+		}
+		return lt == rt, nil
 	}
 	return true, nil
 }
