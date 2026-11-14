@@ -206,66 +206,96 @@ func (h *tokenHandlers) authTokens(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, map[string]string{"error": "请先登录后管理个人 Token"})
 		return
 	}
-	if user.ID <= 0 {
-		if err := h.repo.PutUser(user.ToDomain()); err != nil {
-			c.JSON(http.StatusInternalServerError, map[string]string{"error": "保存登录用户失败"})
-			return
-		}
-		if stored, exists := h.repo.UserByLoginName(user.LoginName); exists {
-			user.ID = stored.ID
-		}
+	if err := h.ensureTokenOwnerID(user); err != nil {
+		c.JSON(http.StatusInternalServerError, map[string]string{"error": "保存登录用户失败"})
+		return
 	}
 
 	switch c.Request.Method {
 	case http.MethodGet:
 		c.JSON(http.StatusOK, h.repo.APITokens(user.ID))
 	case http.MethodPost:
-		var input struct {
-			Name          string `json:"name"`
-			ExpiresInDays int    `json:"expiresInDays"`
-		}
-		if !decode(c, &input) {
-			return
-		}
-		name := strings.TrimSpace(input.Name)
-		if name == "" {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "Token 名称不能为空"})
-			return
-		}
-		if len([]rune(name)) > 128 {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "Token 名称不能超过 128 个字符"})
-			return
-		}
-		days := input.ExpiresInDays
-		if days == 0 {
-			days = 90
-		}
-		if days < 1 || days > 365 {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "有效期必须在 1 到 365 天之间"})
-			return
-		}
-		plain, err := newAPIToken()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, map[string]string{"error": "生成 Token 失败"})
-			return
-		}
-		now := time.Now().UTC()
-		expires := now.Add(time.Duration(days) * 24 * time.Hour)
-		sum := sha256.Sum256([]byte(plain))
-		token := domain.APIToken{
-			ID:        "tok-" + randomID(),
-			UserID:    user.ID,
-			Name:      name,
-			Prefix:    tokenPrefix(plain),
-			TokenHash: hex.EncodeToString(sum[:]),
-			ExpiresAt: &expires,
-			CreatedAt: now,
-		}
-		if err := h.repo.PutAPIToken(token); err != nil {
-			c.JSON(http.StatusInternalServerError, map[string]string{"error": "保存 Token 失败"})
-			return
-		}
-		c.JSON(http.StatusCreated, map[string]any{"token": plain, "metadata": token})
+		h.createAPIToken(c, user.ID)
+	}
+}
+
+// ensureTokenOwnerID persists a session user that has no stored row yet so
+// the tokens it creates can be keyed by a real user ID.
+func (h *tokenHandlers) ensureTokenOwnerID(user *auth.User) error {
+	if user.ID > 0 {
+		return nil
+	}
+	if err := h.repo.PutUser(user.ToDomain()); err != nil {
+		return err
+	}
+	if stored, exists := h.repo.UserByLoginName(user.LoginName); exists {
+		user.ID = stored.ID
+	}
+	return nil
+}
+
+// createAPIToken handles POST /api/auth/tokens: it validates the request,
+// mints a plaintext token, stores only its hash and returns the plaintext once.
+func (h *tokenHandlers) createAPIToken(c *gin.Context, userID int64) {
+	var input struct {
+		Name          string `json:"name"`
+		ExpiresInDays int    `json:"expiresInDays"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	name, days, problem := normalizeAPITokenRequest(input.Name, input.ExpiresInDays)
+	if problem != "" {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": problem})
+		return
+	}
+	plain, err := newAPIToken()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, map[string]string{"error": "生成 Token 失败"})
+		return
+	}
+	token := newAPITokenRecord(userID, name, plain, time.Now().UTC(), days)
+	if err := h.repo.PutAPIToken(token); err != nil {
+		c.JSON(http.StatusInternalServerError, map[string]string{"error": "保存 Token 失败"})
+		return
+	}
+	c.JSON(http.StatusCreated, map[string]any{"token": plain, "metadata": token})
+}
+
+// normalizeAPITokenRequest trims the token name and applies the default and
+// allowed range of the lifetime. A non-empty problem is the user-facing reason
+// the request is rejected.
+func normalizeAPITokenRequest(rawName string, expiresInDays int) (name string, days int, problem string) {
+	name = strings.TrimSpace(rawName)
+	if name == "" {
+		return "", 0, "Token 名称不能为空"
+	}
+	if len([]rune(name)) > 128 {
+		return "", 0, "Token 名称不能超过 128 个字符"
+	}
+	days = expiresInDays
+	if days == 0 {
+		days = 90
+	}
+	if days < 1 || days > 365 {
+		return "", 0, "有效期必须在 1 到 365 天之间"
+	}
+	return name, days, ""
+}
+
+// newAPITokenRecord builds the stored metadata for plain; only its prefix and
+// SHA-256 hash are kept.
+func newAPITokenRecord(userID int64, name, plain string, now time.Time, days int) domain.APIToken {
+	expires := now.Add(time.Duration(days) * 24 * time.Hour)
+	sum := sha256.Sum256([]byte(plain))
+	return domain.APIToken{
+		ID:        "tok-" + randomID(),
+		UserID:    userID,
+		Name:      name,
+		Prefix:    tokenPrefix(plain),
+		TokenHash: hex.EncodeToString(sum[:]),
+		ExpiresAt: &expires,
+		CreatedAt: now,
 	}
 }
 
