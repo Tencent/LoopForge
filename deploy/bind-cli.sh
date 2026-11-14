@@ -167,7 +167,7 @@ require_systemd_user_bus() {
   fail "无法连接 systemd 用户总线。请在终端执行：sudo loginctl enable-linger $(id -un)，然后再运行安装命令"
 }
 
-# 容器和 devcloud 经常装着 systemctl，但 1 号进程不是 systemd。
+# 容器和云开发机里经常装着 systemctl，但 1 号进程不是 systemd。
 linux_has_systemd() {
   command -v systemctl >/dev/null 2>&1 || return 1
   SYSTEMD_ASK_PASSWORD=0 systemctl show --property=Version >/dev/null 2>&1
