@@ -393,11 +393,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		eventAt = eventAt.UTC()
 		day := eventAt.Format("2006-01-02")
 		bucket := analyticsTrendBucket(eventAt, filter.Grain)
-		point := trends[bucket]
-		if point == nil {
-			point = &domain.AnalyticsTrendPoint{Date: bucket}
-			trends[bucket] = point
-		}
+		point := analyticsTrendEntry(trends, bucket)
 		point.Runs++
 		if !usageCostKnown(run.Usage) {
 			point.CostUnknownRuns++
@@ -424,12 +420,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		cell.Runs++
 		cell.Tokens += run.Usage.TotalTokens
 		cell.CostUSD += run.Usage.CostUSD
-		if issueID != "" {
-			if trendIssues[bucket] == nil {
-				trendIssues[bucket] = map[string]struct{}{}
-			}
-			trendIssues[bucket][issueID] = struct{}{}
-		}
+		addAnalyticsTrendIssue(trendIssues, bucket, issueID)
 		accumulateUserUsage(users, analyticsRunUserID(run, issuesByID[issueID]), day, run, duration, complete, execDuration)
 		accumulateProjectUsage(projects, domain.RunProjectID(run, issuesByID[issueID].ProjectID), issueID, run)
 		if isExternal {
@@ -607,11 +598,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	out.MRMerges, out.Summary.MergedMRsMissingTime = r.mrMergeAnalytics(filter, issuesByID)
 	out.Summary.MergedMRs = len(out.MRMerges)
 	for _, mr := range out.MRMerges {
-		bucket := analyticsTrendBucket(mr.MergedAt, filter.Grain)
-		if trends[bucket] == nil {
-			trends[bucket] = &domain.AnalyticsTrendPoint{Date: bucket}
-		}
-		trends[bucket].MergedMRs++
+		analyticsTrendEntry(trends, analyticsTrendBucket(mr.MergedAt, filter.Grain)).MergedMRs++
 	}
 	for _, point := range trends {
 		if ids := trendIssues[point.Date]; ids != nil {
@@ -832,6 +819,27 @@ func analyticsTrendBucket(at time.Time, grain string) string {
 	default:
 		return at.Format("2006-01-02")
 	}
+}
+
+// analyticsTrendEntry 取用 bucket 对应的趋势点，缺失时新建并存回。
+func analyticsTrendEntry(trends map[string]*domain.AnalyticsTrendPoint, bucket string) *domain.AnalyticsTrendPoint {
+	point := trends[bucket]
+	if point == nil {
+		point = &domain.AnalyticsTrendPoint{Date: bucket}
+		trends[bucket] = point
+	}
+	return point
+}
+
+// addAnalyticsTrendIssue 把需求 ID 记入 bucket 的需求集合；issueID 为空时不登记。
+func addAnalyticsTrendIssue(trendIssues map[string]map[string]struct{}, bucket, issueID string) {
+	if issueID == "" {
+		return
+	}
+	if trendIssues[bucket] == nil {
+		trendIssues[bucket] = map[string]struct{}{}
+	}
+	trendIssues[bucket][issueID] = struct{}{}
 }
 
 // analyticsRunInWindow 保持与既有行为一致：按 Run 创建时间过滤。
@@ -1432,11 +1440,7 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	// Same timestamp the analytics window filters on.
 	at := run.CreatedAt.UTC()
 	bucket := analyticsTrendBucket(at, grain)
-	point := trends[bucket]
-	if point == nil {
-		point = &domain.AnalyticsTrendPoint{Date: bucket}
-		trends[bucket] = point
-	}
+	point := analyticsTrendEntry(trends, bucket)
 	point.Tokens += usage.TotalTokens
 	point.CostUSD += usage.CostUSD
 	point.ConversationWorkspaces++
@@ -1446,12 +1450,7 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	point.OutputTokens += usage.OutputTokens
 	point.CacheReadTokens += usage.CacheReadTokens
 	point.CacheWriteTokens += usage.CacheWriteTokens
-	if issueID != "" {
-		if trendIssues[bucket] == nil {
-			trendIssues[bucket] = map[string]struct{}{}
-		}
-		trendIssues[bucket][issueID] = struct{}{}
-	}
+	addAnalyticsTrendIssue(trendIssues, bucket, issueID)
 	if usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
 		return
 	}
