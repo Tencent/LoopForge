@@ -65,6 +65,8 @@ func TestExecutorClassifiesTerminalModelFailure(t *testing.T) {
 	}{
 		{"claude rate limit", "claude-code", `{"type":"result","result":"HTTP 429 Too Many Requests","is_error":true}`, nil, ModelErrorRateLimited},
 		{"codebuddy quota with nonzero exit", "codebuddy", `{"type":"result","result":"HTTP 429 insufficient_quota","is_error":true}`, processErr, ModelErrorQuotaExhausted},
+		{"codebuddy errors array", "codebuddy", `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["429 rate limit exceeded"]}`, nil, ModelErrorRateLimited},
+		{"codebuddy auth errors array", "codebuddy", `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["401 invalid_api_key"]}`, nil, ModelErrorAuth},
 		{"raw transcript is not error evidence", "claude-code", `{"type":"result","result":"tool failed","is_error":true}`, nil, ""},
 		{"cancelled", "claude-code", `{"type":"result","result":"HTTP 429 Too Many Requests","is_error":true}`, context.Canceled, ""},
 		{"success containing error text", "claude-code", `{"type":"result","result":"HTTP 429 Too Many Requests","is_error":false}`, nil, ""},

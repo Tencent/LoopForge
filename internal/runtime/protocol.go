@@ -289,6 +289,15 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 	case "result":
 		result := stringValue(raw["result"])
 		failed, _ := raw["is_error"].(bool)
+		if failed && result == "" {
+			var details []string
+			for _, value := range sliceValue(raw["errors"]) {
+				if message := strings.TrimSpace(stringValue(value)); message != "" {
+					details = append(details, message)
+				}
+			}
+			result = strings.Join(details, "\n")
+		}
 		a.mu.Lock()
 		a.result = result
 		a.failed = failed

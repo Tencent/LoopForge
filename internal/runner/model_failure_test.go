@@ -15,6 +15,7 @@ func TestBatcherModelFailure(t *testing.T) {
 	}{
 		{"terminal error overrides exit zero", `{"type":"result","is_error":true,"result":"HTTP 429 Too Many Requests"}`, domain.RunnerTaskSuccess, domain.RunnerTaskFailed, "rate_limited"},
 		{"nonzero exit keeps failure", `{"type":"result","is_error":true,"result":"HTTP 401 Unauthorized"}`, domain.RunnerTaskFailed, domain.RunnerTaskFailed, "auth"},
+		{"codebuddy errors array", `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["401 invalid_api_key"]}`, domain.RunnerTaskSuccess, domain.RunnerTaskFailed, "auth"},
 		{"success text is not failure", `{"type":"result","is_error":false,"result":"HTTP 429 Too Many Requests"}`, domain.RunnerTaskSuccess, domain.RunnerTaskSuccess, ""},
 		{"unknown error keeps legacy status", `{"type":"result","is_error":true,"result":"unknown"}`, domain.RunnerTaskSuccess, domain.RunnerTaskSuccess, ""},
 		{"tool failure is not model failure", `{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"HTTP 429 Too Many Requests"}]}}`, domain.RunnerTaskSuccess, domain.RunnerTaskSuccess, ""},
