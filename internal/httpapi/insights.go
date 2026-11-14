@@ -75,24 +75,12 @@ func (h *insightsHandlers) sources(c *gin.Context) {
 		return
 	}
 	project, _ := h.repo.Project(input.ProjectID)
-	for externalID, uid := range input.UserMappings {
-		member := uid > 0 && project.OwnerID == uid
-		for _, m := range project.Members {
-			if m.UserID == uid {
-				member = true
-			}
-		}
-		_, exists := h.repo.User(uid)
-		if strings.TrimSpace(externalID) == "" || len(externalID) > 128 || !exists || !member {
-			c.JSON(400, gin.H{"error": "外部用户须映射到本项目的现有成员或负责人"})
-			return
-		}
+	if !h.validInsightUserMappings(project, input.UserMappings) {
+		c.JSON(400, gin.H{"error": "外部用户须映射到本项目的现有成员或负责人"})
+		return
 	}
-	days := input.ExpiresInDays
-	if days == 0 {
-		days = 90
-	}
-	if days < 1 || days > 365 {
+	days, ok := insightSourceExpiryDays(input.ExpiresInDays)
+	if !ok {
 		c.JSON(400, gin.H{"error": "有效期须为 1–365 天"})
 		return
 	}
@@ -111,6 +99,35 @@ func (h *insightsHandlers) sources(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.JSON(201, gin.H{"source": source, "token": token})
 }
+
+// validInsightUserMappings reports whether every external ID is a non-empty
+// name of at most 128 bytes mapped to an existing user who owns or belongs to
+// the project.
+func (h *insightsHandlers) validInsightUserMappings(project domain.Project, mappings map[string]int64) bool {
+	for externalID, uid := range mappings {
+		member := uid > 0 && project.OwnerID == uid
+		for _, m := range project.Members {
+			if m.UserID == uid {
+				member = true
+			}
+		}
+		_, exists := h.repo.User(uid)
+		if strings.TrimSpace(externalID) == "" || len(externalID) > 128 || !exists || !member {
+			return false
+		}
+	}
+	return true
+}
+
+// insightSourceExpiryDays applies the 90-day default to an omitted lifetime
+// and reports whether the result lies within 1–365 days.
+func insightSourceExpiryDays(days int) (int, bool) {
+	if days == 0 {
+		days = 90
+	}
+	return days, days >= 1 && days <= 365
+}
+
 func (h *insightsHandlers) revokeSource(c *gin.Context) {
 	source, err := h.repo.InsightSource(c.Param("id"))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
