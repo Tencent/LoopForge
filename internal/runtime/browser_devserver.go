@@ -68,23 +68,8 @@ func handleDevServerHTTP(ctx context.Context, runID string, req *domain.BrowserH
 	if !ok {
 		return domain.BrowserState{Available: false, Reason: "Agent 浏览器尚未启动：开发服务器预览需要它所在的沙箱网络"}, nil
 	}
-	var method string
-	switch strings.ToUpper(strings.TrimSpace(req.Method)) {
-	case "", http.MethodGet:
-		method = http.MethodGet
-	case http.MethodHead:
-		method = http.MethodHead
-	case http.MethodPost:
-		method = http.MethodPost
-	case http.MethodPut:
-		method = http.MethodPut
-	case http.MethodPatch:
-		method = http.MethodPatch
-	case http.MethodDelete:
-		method = http.MethodDelete
-	case http.MethodOptions:
-		method = http.MethodOptions
-	default:
+	method, ok := devServerMethod(req.Method)
+	if !ok {
 		return domain.BrowserState{}, errors.New("无效或不支持的 HTTP 请求方法")
 	}
 	target := "http://localhost:" + strconv.Itoa(req.Port) + req.Path
@@ -104,21 +89,7 @@ func handleDevServerHTTP(ctx context.Context, runID string, req *domain.BrowserH
 	out.Host = "localhost:" + strconv.Itoa(req.Port)
 	res, err := client.Do(out)
 	if err != nil {
-		if errors.Is(err, ErrDevServerUnreachable) {
-			forgetDevServerEndpoint(runID, endpoint)
-		}
-		var unreachable devServerDialError
-		if errors.As(err, &unreachable) {
-			if devServerRefused(unreachable.err) {
-				return domain.BrowserState{Available: true, Kind: endpoint.Kind, Reason: fmt.Sprintf("端口 %d 上没有正在监听的开发服务器", req.Port)}, nil
-			}
-			log.Printf("browser dev server dial run=%s kind=%s container=%s port=%d: %v", runID, endpoint.Kind, endpoint.Container, req.Port, unreachable.err)
-			return domain.BrowserState{Available: true, Kind: endpoint.Kind, Reason: fmt.Sprintf("连接端口 %d 失败：%v", req.Port, unreachable.err)}, nil
-		}
-		if ctx.Err() != nil {
-			return domain.BrowserState{Available: true, Kind: endpoint.Kind, Reason: fmt.Sprintf("端口 %d 的开发服务器响应超时", req.Port)}, nil
-		}
-		return domain.BrowserState{Available: true, Kind: endpoint.Kind, Reason: "访问开发服务器失败：" + err.Error()}, nil
+		return devServerFailureState(ctx, runID, endpoint, req.Port, err), nil
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(res.Body, DevServerBodyLimit+1))
@@ -136,6 +107,43 @@ func handleDevServerHTTP(ctx context.Context, runID string, req *domain.BrowserH
 		header[name] = values
 	}
 	return domain.BrowserState{Available: true, Kind: endpoint.Kind, HTTP: &domain.BrowserHTTPResponse{Status: res.StatusCode, Header: header, Body: body}}, nil
+}
+
+// devServerMethod maps an allowed request method (any case, padded; empty
+// means GET) to its canonical name and reports false for everything else.
+func devServerMethod(raw string) (string, bool) {
+	switch method := strings.ToUpper(strings.TrimSpace(raw)); method {
+	case "":
+		return http.MethodGet, true
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodOptions:
+		return method, true
+	default:
+		return "", false
+	}
+}
+
+// devServerFailureState explains a forwarded request that got no response:
+// an unreachable endpoint is forgotten so the next request looks it up again.
+func devServerFailureState(ctx context.Context, runID string, endpoint browserEndpoint, port int, err error) domain.BrowserState {
+	if errors.Is(err, ErrDevServerUnreachable) {
+		forgetDevServerEndpoint(runID, endpoint)
+	}
+	state := domain.BrowserState{Available: true, Kind: endpoint.Kind}
+	var unreachable devServerDialError
+	dialFailed := errors.As(err, &unreachable)
+	switch {
+	case dialFailed && devServerRefused(unreachable.err):
+		state.Reason = fmt.Sprintf("端口 %d 上没有正在监听的开发服务器", port)
+	case dialFailed:
+		log.Printf("browser dev server dial run=%s kind=%s container=%s port=%d: %v", runID, endpoint.Kind, endpoint.Container, port, unreachable.err)
+		state.Reason = fmt.Sprintf("连接端口 %d 失败：%v", port, unreachable.err)
+	case ctx.Err() != nil:
+		state.Reason = fmt.Sprintf("端口 %d 的开发服务器响应超时", port)
+	default:
+		state.Reason = "访问开发服务器失败：" + err.Error()
+	}
+	return state
 }
 
 var devServerHop = map[string]bool{
