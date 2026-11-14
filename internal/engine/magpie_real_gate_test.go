@@ -1,3 +1,5 @@
+//go:build manual_cli
+
 package engine
 
 import (
@@ -12,7 +14,8 @@ import (
 )
 
 // This test spends real provider tokens. Run only with an explicitly configured
-// OpenAI-compatible Magpie gateway and the installed Codex CLI.
+// OpenAI-compatible Magpie gateway and the installed Codex CLI. The opt-in
+// test sets gate approval on its test executor; LoopForge does not preapprove it.
 func TestMagpieModelNativeGate(t *testing.T) {
 	if os.Getenv("LOOPFORGE_MAGPIE_REAL_TEST") != "1" {
 		t.Skip("set LOOPFORGE_MAGPIE_REAL_TEST=1 to use a real model")
@@ -26,6 +29,9 @@ func TestMagpieModelNativeGate(t *testing.T) {
 		t.Fatal("set LOOPFORGE_MAGPIE_BASE_URL and LOOPFORGE_MAGPIE_MODEL")
 	}
 	e, store := newRecoveryEngine(t)
+	if err := store.PutExecutor(domain.ExecutorDefinition{ID: "codex", Name: "Codex", Kind: "codex", Args: []string{"exec", "--json", "-c", `mcp_servers.agentflow-gate.tools.submit_gate_result.approval_mode="approve"`}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.PutUser(domain.User{ID: 3, LoginName: "magpie-gate-probe"}); err != nil {
 		t.Fatal(err)
 	}

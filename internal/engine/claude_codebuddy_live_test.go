@@ -1,3 +1,5 @@
+//go:build manual_cli
+
 package engine
 
 import (
