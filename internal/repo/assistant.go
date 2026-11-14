@@ -550,20 +550,7 @@ func (r *AssistantRepo) PutAssistantTask(userID int64, v domain.AssistantTask) e
 				return err
 			}
 		}
-		now := time.Now().UTC()
-		if prior.ID != "" {
-			v.CreatedAt = prior.CreatedAt
-		} else if v.CreatedAt.IsZero() {
-			v.CreatedAt = now
-		}
-		v.NotificationSnapshot = domain.CloneNotificationBindings(prior.NotificationSnapshot)
-		if v.LastStatus == "running" && (prior.LastStatus != "running" || prior.LastRunAt.UnixMilli() != v.LastRunAt.UnixMilli()) {
-			v.NotificationSnapshot = domain.CloneNotificationBindings(v.Notifications)
-		}
-		if v.UpdatedAt.IsZero() {
-			v.UpdatedAt = now
-		}
-		v.UserID = userID
+		v = stampAssistantTask(v, prior, userID, time.Now().UTC())
 		enabled := 0
 		if v.Enabled {
 			enabled = 1
@@ -582,16 +569,46 @@ func (r *AssistantRepo) PutAssistantTask(userID int64, v domain.AssistantTask) e
 		}); err != nil {
 			return err
 		}
-		trigger := map[string]string{"ok": "succeeded", "error": "failed"}[v.LastStatus]
-		if prior.ID != "" && prior.LastStatus == "running" && trigger != "" && !v.LastRunAt.IsZero() {
-			result := v.NotificationResult
-			if result == "" {
-				result = v.LastMessage
-			}
+		if trigger, result, ok := assistantTaskCompletion(prior, v); ok {
 			return r.notifications.enqueueTaskNotifications(tx, "assistant_task", v.ID, v.ProjectID, v.Name, trigger, v.LastRunAt, prior.NotificationSnapshot, result, v.LastError)
 		}
 		return nil
 	})
+}
+
+// stampAssistantTask fills the server-owned fields of a task about to be
+// written: creation time is inherited from the stored row (or defaulted to
+// now), the notification snapshot is carried over and refreshed whenever a
+// new run starts, the update time defaults to now and the owner is pinned.
+func stampAssistantTask(v, prior domain.AssistantTask, userID int64, now time.Time) domain.AssistantTask {
+	if prior.ID != "" {
+		v.CreatedAt = prior.CreatedAt
+	} else if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
+	}
+	v.NotificationSnapshot = domain.CloneNotificationBindings(prior.NotificationSnapshot)
+	if v.LastStatus == "running" && (prior.LastStatus != "running" || prior.LastRunAt.UnixMilli() != v.LastRunAt.UnixMilli()) {
+		v.NotificationSnapshot = domain.CloneNotificationBindings(v.Notifications)
+	}
+	if v.UpdatedAt.IsZero() {
+		v.UpdatedAt = now
+	}
+	v.UserID = userID
+	return v
+}
+
+// assistantTaskCompletion reports whether writing v over prior finishes a
+// running task, returning the notification trigger and the result text.
+func assistantTaskCompletion(prior, v domain.AssistantTask) (trigger, result string, ok bool) {
+	trigger = map[string]string{"ok": "succeeded", "error": "failed"}[v.LastStatus]
+	if prior.ID == "" || prior.LastStatus != "running" || trigger == "" || v.LastRunAt.IsZero() {
+		return "", "", false
+	}
+	result = v.NotificationResult
+	if result == "" {
+		result = v.LastMessage
+	}
+	return trigger, result, true
 }
 
 func (r *AssistantRepo) DeleteAssistantTask(userID int64, id string) error {
