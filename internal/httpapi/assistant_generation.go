@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"net/http"
@@ -478,17 +479,8 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	model := body.Model
-	if sharedModels != nil {
-		forced, allowed := assistantSponsoredModelFor(sharedModels, model)
-		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel(sharedModels)})
-			return
-		}
-		model = forced
-	}
-	model = assistantAllowedModel(model, h.chatCatalog(c.Request.Context(), user))
-	if err := validateAssistantEffort(user, model, body.Effort); err != nil {
+	model, err := h.resolveSteerModel(c.Request.Context(), user, sharedModels, body.Model, body.Effort)
+	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -504,6 +496,26 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})
+}
+
+// resolveSteerModel picks the model of a steering message. A shared-key turn
+// (sharedModels != nil) may only use the allowed models; the result is then
+// normalized against the caller's chat catalog and the effort is checked
+// against that model.
+func (h *assistantHandlers) resolveSteerModel(ctx context.Context, user domain.User, sharedModels []string, requested, effort string) (string, error) {
+	model := requested
+	if sharedModels != nil {
+		forced, allowed := assistantSponsoredModelFor(sharedModels, model)
+		if !allowed {
+			return "", errors.New(errAssistantSponsoredModel(sharedModels))
+		}
+		model = forced
+	}
+	model = assistantAllowedModel(model, h.chatCatalog(ctx, user))
+	if err := validateAssistantEffort(user, model, effort); err != nil {
+		return "", err
+	}
+	return model, nil
 }
 
 func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, steer *domain.AssistantSteer, stopped bool) error {
