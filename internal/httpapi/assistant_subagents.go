@@ -189,54 +189,9 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 	if err := writeConversationAttachments(root, req); err != nil {
 		return err
 	}
-	var skills []domain.SkillDefinition
-	files := map[string]map[string][]byte{}
-	seen := map[string]bool{}
-	add := func(skill domain.SkillDefinition, contents map[string][]byte) {
-		if seen[skill.ID] {
-			return
-		}
-		seen[skill.ID] = true
-		skills = append(skills, skill)
-		if len(contents) > 0 {
-			files[skill.ID] = contents
-		}
-	}
-	if project := strings.TrimSpace(req.ProjectID); project != "" {
-		for _, skill := range h.repo.Skills() {
-			if skill.ProjectID != project {
-				continue
-			}
-			var contents map[string][]byte
-			if len(skill.FileRefs) > 0 {
-				contents = h.repo.SkillFileContents(skill.ID)
-			}
-			add(skill, contents)
-		}
-	}
-	for _, role := range req.roles {
-		for _, skill := range role.Skills {
-			add(skill, role.SkillFiles[skill.ID])
-		}
-	}
-	for _, skill := range req.skills {
-		var contents map[string][]byte
-		if len(skill.FileRefs) > 0 {
-			contents = h.repo.SkillFileContents(skill.ID)
-		}
-		add(skill, contents)
-	}
+	skills, files := h.conversationSkills(req)
 	engine, _ := assistantModelEngine(req.Model)
-	home := filepath.Join(root, "home", assistantEngineConfigDir(engine))
-	if runtime.IsAgentCLI(engine) {
-		home = filepath.Join(root, "home", ".agents")
-	}
-	if engine == runtime.AgentCLIPi {
-		home = filepath.Join(root, "home", ".pi", "agent")
-	}
-	if engine == runtime.AgentCLIAntigravity {
-		home = filepath.Join(root, "home", ".gemini", "config")
-	}
+	home := conversationAssetHome(root, engine)
 	writer := runtime.WriteInertSkillTree
 	if req.workspaceMode {
 		writer = runtime.WriteSkillTree
@@ -261,6 +216,63 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 		}
 	}
 	return nil
+}
+
+// conversationSkills gathers the skills a conversation home receives: the
+// project's skills, then those of its roles, then the mentioned ones. The
+// first occurrence of a skill ID wins; file contents are read only for skills
+// that reference files.
+func (h *assistantHandlers) conversationSkills(req assistantRequest) ([]domain.SkillDefinition, map[string]map[string][]byte) {
+	var skills []domain.SkillDefinition
+	files := map[string]map[string][]byte{}
+	seen := map[string]bool{}
+	add := func(skill domain.SkillDefinition, contents map[string][]byte) {
+		if seen[skill.ID] {
+			return
+		}
+		seen[skill.ID] = true
+		skills = append(skills, skill)
+		if len(contents) > 0 {
+			files[skill.ID] = contents
+		}
+	}
+	stored := func(skill domain.SkillDefinition) map[string][]byte {
+		if len(skill.FileRefs) == 0 {
+			return nil
+		}
+		return h.repo.SkillFileContents(skill.ID)
+	}
+	if project := strings.TrimSpace(req.ProjectID); project != "" {
+		for _, skill := range h.repo.Skills() {
+			if skill.ProjectID == project {
+				add(skill, stored(skill))
+			}
+		}
+	}
+	for _, role := range req.roles {
+		for _, skill := range role.Skills {
+			add(skill, role.SkillFiles[skill.ID])
+		}
+	}
+	for _, skill := range req.skills {
+		add(skill, stored(skill))
+	}
+	return skills, files
+}
+
+// conversationAssetHome is the directory under a conversation root whose
+// skills/ and agents/ the given engine reads natively.
+func conversationAssetHome(root, engine string) string {
+	switch {
+	case engine == runtime.AgentCLIPi:
+		return filepath.Join(root, "home", ".pi", "agent")
+	case engine == runtime.AgentCLIAntigravity:
+		return filepath.Join(root, "home", ".gemini", "config")
+	case runtime.IsAgentCLI(engine):
+		return filepath.Join(root, "home", ".agents")
+	default:
+		return filepath.Join(root, "home", assistantEngineConfigDir(engine))
+	}
 }
 
 type roleDeliverableKey struct{}
