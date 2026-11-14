@@ -63,8 +63,9 @@ func uniqueFallbackModels(primary string, models []string) []string {
 }
 
 func modelRetrySettings(nr *domain.NodeRun) (time.Duration, time.Duration, int) {
-	initial, maximum, retries := 15, 240, 5
+	initial, maximum, retries := 15, 240, 0
 	if p := nr.ModelRetry; p != nil {
+		retries = 5
 		if p.InitialSeconds != nil {
 			initial = max(1, min(*p.InitialSeconds, 3600))
 		}
@@ -116,6 +117,16 @@ func hasModelRetry(r domain.Run) bool {
 		}
 	}
 	return false
+}
+
+func nextModelRetryAt(r domain.Run) time.Time {
+	var next time.Time
+	for _, n := range r.Nodes {
+		if n != nil && n.Status == "waiting_retry" && !n.NextRetryAt.IsZero() && (next.IsZero() || n.NextRetryAt.Before(next)) {
+			next = n.NextRetryAt
+		}
+	}
+	return next
 }
 
 func modelRetryDue(r domain.Run, now time.Time) bool {

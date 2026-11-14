@@ -58,60 +58,62 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 			nr.ModelErrorClass = string(modelErr.Class)
 			e.event(r, node.ID, "model.error", "模型服务错误："+string(modelErr.Class))
 			r.Events[len(r.Events)-1].Attributes = map[string]any{"class": string(modelErr.Class), "model": nr.ActiveModel}
-			switch modelErr.Class {
-			case runtime.ModelErrorRateLimited, runtime.ModelErrorOverloaded, runtime.ModelErrorTimeout:
-				initial, maximum, maxRetries := modelRetrySettings(nr)
-				if nr.TransientRetries < maxRetries {
-					nr.TransientRetries++
-					nr.ModelTransientErrors++
-					if nr.ModelTransientErrors >= 2 {
-						e.advanceFallbackModel(r, node.ID, nr, modelErr.Class)
+			if nr.ModelRetry != nil {
+				switch modelErr.Class {
+				case runtime.ModelErrorRateLimited, runtime.ModelErrorOverloaded, runtime.ModelErrorTimeout:
+					initial, maximum, maxRetries := modelRetrySettings(nr)
+					if nr.TransientRetries < maxRetries {
+						nr.TransientRetries++
+						nr.ModelTransientErrors++
+						if nr.ModelTransientErrors >= 2 {
+							e.advanceFallbackModel(r, node.ID, nr, modelErr.Class)
+						}
+						base := modelRetryBase(initial, maximum, nr.TransientRetries)
+						delay := base - base/4 + time.Duration(rand.Int64N(int64(base/4)+1))
+						if retryAfter := min(modelErr.RetryAfter, maximum); retryAfter > delay {
+							delay = retryAfter
+						}
+						nr.NextRetryAt = time.Now().UTC().Add(delay)
+						nr.Status = "waiting_retry"
+						nr.RetrySameAttempt = true
+						nr.Activity = fmt.Sprintf("模型服务暂时不可用，%s 后重试（%d/%d）", delay.Round(time.Second), nr.TransientRetries, maxRetries)
+						if nr.SessionID != "" {
+							nr.ResumeSessionID = nr.SessionID
+						}
+						e.event(r, node.ID, "model.retry_waiting", fmt.Sprintf("%s；将在 %s 后重试", modelErr.Class, delay.Round(time.Second)))
+						r.Events[len(r.Events)-1].Attributes = map[string]any{"class": string(modelErr.Class), "retry": nr.TransientRetries, "delayMs": delay.Milliseconds(), "nextRetryAt": nr.NextRetryAt}
+						return
 					}
-					base := modelRetryBase(initial, maximum, nr.TransientRetries)
-					delay := base - base/4 + time.Duration(rand.Int64N(int64(base/4)+1))
-					if retryAfter := min(modelErr.RetryAfter, maximum); retryAfter > delay {
-						delay = retryAfter
+					// Exhaustion must not fall through to the ordinary attempt budget.
+					nr.Status = "failed"
+					e.event(r, node.ID, "node.failed", "模型服务瞬时重试次数已用尽："+err.Error())
+					return
+				case runtime.ModelErrorContextOverflow:
+					if e.advanceFallbackModel(r, node.ID, nr, modelErr.Class) {
+						nr.Status = "pending"
+						nr.RetrySameAttempt = true
+						return
 					}
-					nr.NextRetryAt = time.Now().UTC().Add(delay)
-					nr.Status = "waiting_retry"
-					nr.RetrySameAttempt = true
-					nr.Activity = fmt.Sprintf("模型服务暂时不可用，%s 后重试（%d/%d）", delay.Round(time.Second), nr.TransientRetries, maxRetries)
+					nr.Status = "failed"
+					e.event(r, node.ID, "node.failed", "模型上下文超长且没有可用备选模型："+err.Error())
+					return
+				case runtime.ModelErrorBadRequest:
+					nr.Status = "failed"
+					e.event(r, node.ID, "node.failed", err.Error())
+					return
+				case runtime.ModelErrorAuth, runtime.ModelErrorQuotaExhausted:
+					nr.Status = "waiting_approval"
+					nr.WaitReason = "model_credentials"
+					nr.Activity = "模型凭据无效，请更新凭据后重新执行"
+					if modelErr.Class == runtime.ModelErrorQuotaExhausted {
+						nr.Activity = "模型额度已耗尽，请补充额度后重新执行"
+					}
 					if nr.SessionID != "" {
 						nr.ResumeSessionID = nr.SessionID
 					}
-					e.event(r, node.ID, "model.retry_waiting", fmt.Sprintf("%s；将在 %s 后重试", modelErr.Class, delay.Round(time.Second)))
-					r.Events[len(r.Events)-1].Attributes = map[string]any{"class": string(modelErr.Class), "retry": nr.TransientRetries, "delayMs": delay.Milliseconds(), "nextRetryAt": nr.NextRetryAt}
+					e.event(r, node.ID, "gate.waiting", nr.Activity+"："+string(modelErr.Class))
 					return
 				}
-				// Exhaustion must not fall through to the ordinary attempt budget.
-				nr.Status = "failed"
-				e.event(r, node.ID, "node.failed", "模型服务瞬时重试次数已用尽："+err.Error())
-				return
-			case runtime.ModelErrorContextOverflow:
-				if e.advanceFallbackModel(r, node.ID, nr, modelErr.Class) {
-					nr.Status = "pending"
-					nr.RetrySameAttempt = true
-					return
-				}
-				nr.Status = "failed"
-				e.event(r, node.ID, "node.failed", "模型上下文超长且没有可用备选模型："+err.Error())
-				return
-			case runtime.ModelErrorBadRequest:
-				nr.Status = "failed"
-				e.event(r, node.ID, "node.failed", err.Error())
-				return
-			case runtime.ModelErrorAuth, runtime.ModelErrorQuotaExhausted:
-				nr.Status = "waiting_approval"
-				nr.WaitReason = "model_credentials"
-				nr.Activity = "模型凭据无效，请更新凭据后重新执行"
-				if modelErr.Class == runtime.ModelErrorQuotaExhausted {
-					nr.Activity = "模型额度已耗尽，请补充额度后重新执行"
-				}
-				if nr.SessionID != "" {
-					nr.ResumeSessionID = nr.SessionID
-				}
-				e.event(r, node.ID, "gate.waiting", nr.Activity+"："+string(modelErr.Class))
-				return
 			}
 		}
 		reworkBudget := node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount >= max(1, node.MaxReworks)

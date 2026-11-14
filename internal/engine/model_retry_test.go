@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -24,7 +26,7 @@ func TestModelFailureRetryAndCredentialGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e, store := newRecoveryEngine(t)
 			node := domain.WorkflowNode{ID: "n", Type: "agent", MaxAttempts: 1}
-			run := domain.Run{ID: "model-failure", Status: "running", Generation: 1, WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Nodes: []domain.WorkflowNode{node}}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 7, SessionID: "session"}}}
+			run := domain.Run{ID: "model-failure", Status: "running", Generation: 1, WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Nodes: []domain.WorkflowNode{node}}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 7, SessionID: "session", ModelRetry: &domain.ModelRetryPolicy{}}}}
 			if err := store.PutRun(run); err != nil {
 				t.Fatal(err)
 			}
@@ -63,7 +65,7 @@ func TestModelFailureRetryAndCredentialGate(t *testing.T) {
 func TestModelRetryExecutionFenceAndExhaustion(t *testing.T) {
 	e, store := newRecoveryEngine(t)
 	node := domain.WorkflowNode{ID: "n", MaxAttempts: 9}
-	run := domain.Run{ID: "model-exhausted", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 2, TransientRetries: 5}}}
+	run := domain.Run{ID: "model-exhausted", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 2, TransientRetries: 5, ModelRetry: &domain.ModelRetryPolicy{}}}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +84,7 @@ func TestModelRetryExecutionFenceAndExhaustion(t *testing.T) {
 
 func TestModelRetryHonorsServerDelay(t *testing.T) {
 	e, store := newRecoveryEngine(t)
-	run := domain.Run{ID: "retry-after", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1}}}
+	run := domain.Run{ID: "retry-after", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ModelRetry: &domain.ModelRetryPolicy{}}}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +157,7 @@ func TestModelFallbackKeepsWorkspaceAndStartsNewSession(t *testing.T) {
 	e, store := newRecoveryEngine(t)
 	node := domain.WorkflowNode{ID: "n", MaxAttempts: 1}
 	run := domain.Run{ID: "fallback", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {
-		NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 1, ActiveModel: "primary", ModelPolicyInitialized: true,
+		NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 1, ActiveModel: "primary", ModelPolicyInitialized: true, ModelRetry: &domain.ModelRetryPolicy{},
 		FallbackModels: []string{"primary", "backup"}, SessionID: "old-session", ResumeSessionID: "old-session",
 	}}}
 	if err := store.PutRun(run); err != nil {
@@ -184,7 +186,7 @@ func TestConsecutiveFailuresSwitchMultipleFallbackModels(t *testing.T) {
 	e, store := newRecoveryEngine(t)
 	node := domain.WorkflowNode{ID: "n", MaxAttempts: 1}
 	run := domain.Run{ID: "fallback-many", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {
-		NodeID: "n", Status: "running", Attempt: 1, ActiveModel: "primary", FallbackModels: uniqueFallbackModels("primary", []string{"primary", "backup", "backup", "last"}),
+		NodeID: "n", Status: "running", Attempt: 1, ModelRetry: &domain.ModelRetryPolicy{}, ActiveModel: "primary", FallbackModels: uniqueFallbackModels("primary", []string{"primary", "backup", "backup", "last"}),
 	}}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -328,5 +330,71 @@ func TestModelRecoveryResetOnManualRetry(t *testing.T) {
 				t.Fatalf("ordinary retry retained policy: %+v", n)
 			}
 		})
+	}
+}
+
+func TestUnconfiguredModelErrorsKeepOrdinaryFailureBehavior(t *testing.T) {
+	for _, class := range []runtime.ModelErrorClass{runtime.ModelErrorRateLimited, runtime.ModelErrorOverloaded, runtime.ModelErrorTimeout, runtime.ModelErrorAuth, runtime.ModelErrorQuotaExhausted, runtime.ModelErrorContextOverflow, runtime.ModelErrorBadRequest} {
+		for _, maxAttempts := range []int{1, 2} {
+			t.Run(string(class)+"/attempts-"+fmt.Sprint(maxAttempts), func(t *testing.T) {
+				e, store := newRecoveryEngine(t)
+				node := domain.WorkflowNode{ID: "n", MaxAttempts: maxAttempts}
+				for _, id := range []string{"plain", "classified"} {
+					r := domain.Run{ID: id, Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 1, FallbackModels: []string{"backup"}}}}
+					if err := store.PutRun(r); err != nil {
+						t.Fatal(err)
+					}
+				}
+				err := errors.New("provider failure")
+				e.nodeFailedAt("plain", node, 1, 1, err, false, 1)
+				e.nodeFailedAt("classified", node, 1, 1, &runtime.ModelError{Class: class, Err: err}, false, 1)
+				plain, _ := store.RunState("plain")
+				classified, _ := store.RunState("classified")
+				a, b := plain.Nodes["n"], classified.Nodes["n"]
+				if a.Status != b.Status || a.Error != b.Error || a.Feedback != b.Feedback || b.WaitReason != "" || b.RetrySameAttempt || b.ActiveModel != "" || !b.NextRetryAt.IsZero() {
+					t.Fatalf("unconfigured recovery changed behavior: plain=%+v classified=%+v", a, b)
+				}
+			})
+		}
+	}
+}
+
+func TestDelayedRetryRunsWhileAnotherNodeWaitsForApproval(t *testing.T) {
+	e, store := newRecoveryEngine(t)
+	wf := domain.WorkflowDefinition{ID: "mixed-wait", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "retry", Type: "command", Command: "true"}, {ID: "gate", Type: "approval"}}}
+	run := domain.Run{ID: "mixed-wait", WorkflowID: wf.ID, Status: "waiting", WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{
+		"retry": {NodeID: "retry", Status: "waiting_retry", Attempt: 1, RetrySameAttempt: true, NextRetryAt: time.Now().Add(300 * time.Millisecond)},
+		"gate":  {NodeID: "gate", Status: "waiting_approval"},
+	}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.StartClaimLoop(ctx)
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		got, _ := store.RunState(run.ID)
+		if got.Nodes["retry"].Status == "succeeded" && got.Nodes["gate"].Status == "waiting_approval" && got.Status == "waiting" {
+			if got.Nodes["retry"].Attempt != 1 {
+				t.Fatalf("retry consumed ordinary attempt: %+v", got.Nodes["retry"])
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	got, _ := store.RunState(run.ID)
+	t.Fatalf("delayed branch did not resume alongside approval: %+v", got.Nodes)
+}
+
+func TestNextModelRetryAtUsesEarliestDeadline(t *testing.T) {
+	now := time.Now()
+	run := domain.Run{Nodes: map[string]*domain.NodeRun{
+		"later":   {Status: "waiting_retry", NextRetryAt: now.Add(time.Minute)},
+		"earlier": {Status: "waiting_retry", NextRetryAt: now.Add(time.Second)},
+		"other":   {Status: "pending", NextRetryAt: now},
+	}}
+	if got := nextModelRetryAt(run); !got.Equal(now.Add(time.Second)) {
+		t.Fatalf("next retry = %s", got)
 	}
 }

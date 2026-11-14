@@ -73,7 +73,7 @@ type WorkflowNode struct {
 	Position              Position           `json:"position"`
 }
 
-// ModelRetryPolicy overrides defaults; nil fields inherit and zero retries disables retry.
+// ModelRetryPolicy opts in to model recovery; nil fields inherit defaults and zero retries disables transient retries.
 type ModelRetryPolicy struct {
 	InitialSeconds *int `json:"initialSeconds,omitempty"`
 	MaxSeconds     *int `json:"maxSeconds,omitempty"`

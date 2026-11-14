@@ -131,10 +131,20 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		if len(ready) == 0 {
 			if hasModelRetry(r) && !hasWaiting(wf, r) {
+				next := nextModelRetryAt(r)
+				if next.IsZero() {
+					// A retry without a deadline cannot wake on its own; cancellation
+					// remains available through the run heartbeat.
+					<-ctx.Done()
+					continue
+				}
+				timer := time.NewTimer(time.Until(next))
 				select {
 				case <-ctx.Done():
-				case <-time.After(500 * time.Millisecond):
+				case <-wake:
+				case <-timer.C:
 				}
+				timer.Stop()
 				continue
 			}
 			if allSucceeded(wf, r) {
