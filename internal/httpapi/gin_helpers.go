@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -71,16 +70,16 @@ func appErrStatus(kind apperr.Kind) int {
 	}
 }
 
-func isMaxBytesReader(r io.Reader) bool {
-	return fmt.Sprintf("%T", r) == "*http.maxBytesReader"
+// decode binds the JSON request body, answering 400 on malformed input.
+// It always caps the body at 2 MiB; a handler that accepts more calls
+// decodeLimit with its own limit.
+func decode(c *gin.Context, v any) bool {
+	return decodeLimit(c, v, 2<<20)
 }
 
 // decodeLimit binds the JSON request body with an explicit size limit.
-// Passing limit <= 0 avoids wrapping Request.Body in a new MaxBytesReader.
 func decodeLimit(c *gin.Context, v any, limit int64) bool {
-	if limit > 0 {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
-	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	if err := json.NewDecoder(c.Request.Body).Decode(v); err != nil {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return false
@@ -88,35 +87,15 @@ func decodeLimit(c *gin.Context, v any, limit int64) bool {
 	return true
 }
 
-// decode binds the JSON request body, answering 400 on malformed input.
-// If the caller already wrapped Request.Body in http.MaxBytesReader, that limit
-// is preserved; otherwise the default 2 MiB limit is applied.
-func decode(c *gin.Context, v any) bool {
-	if isMaxBytesReader(c.Request.Body) {
-		return decodeLimit(c, v, 0)
-	}
-	return decodeLimit(c, v, 2<<20)
-}
-
-// decodeOptionalLimit behaves like decodeLimit but tolerates an empty body.
-func decodeOptionalLimit(c *gin.Context, v any, limit int64) bool {
-	if limit > 0 {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
-	}
+// decodeOptional behaves like decode but tolerates an empty body.
+func decodeOptional(c *gin.Context, v any) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
 	err := json.NewDecoder(c.Request.Body).Decode(v)
 	if err == nil || err == io.EOF {
 		return true
 	}
 	c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	return false
-}
-
-// decodeOptional behaves like decode but tolerates an empty body.
-func decodeOptional(c *gin.Context, v any) bool {
-	if isMaxBytesReader(c.Request.Body) {
-		return decodeOptionalLimit(c, v, 0)
-	}
-	return decodeOptionalLimit(c, v, 2<<20)
 }
 
 // ---------- 中间件（原 http 中间件的一一对应） ----------

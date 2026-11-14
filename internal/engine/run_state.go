@@ -8,17 +8,30 @@ import (
 	"time"
 )
 
-func (e *Engine) updateRun(id string, mutate func(*domain.Run)) error {
-	_, err := e.updateRunAt(id, false, mutate)
+func (e *Engine) updateRun(id string, mutate func(*domain.Run)) {
+	_ = e.updateRunAt(id, false, mutate)
+}
+
+// updateRunErr is updateRun for callers that must react to a failed write,
+// such as a SOP node whose artifact handoff did not reach the store.
+func (e *Engine) updateRunErr(id string, mutate func(*domain.Run)) error {
+	_, err := e.updateRunAtErr(id, false, mutate)
 	return err
 }
 
 func (e *Engine) updateRunSettling(id string, mutate func(*domain.Run)) bool {
-	updated, _ := e.updateRunAt(id, true, mutate)
+	return e.updateRunAt(id, true, mutate)
+}
+
+func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*domain.Run)) bool {
+	updated, _ := e.updateRunAtErr(id, allowExpiredLease, mutate)
 	return updated
 }
 
-func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*domain.Run)) (bool, error) {
+// updateRunAtErr reports whether the run was stored and, when the store
+// rejected the write, that error. A skipped update (missing run or a lease
+// held elsewhere) is not an error.
+func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*domain.Run)) (bool, error) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(id)

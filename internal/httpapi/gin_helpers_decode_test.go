@@ -32,7 +32,28 @@ func TestDecodeDefaultLimit(t *testing.T) {
 	}
 }
 
-func TestDecodePreservesExistingMaxBytesReader(t *testing.T) {
+// A handler that set a stricter limit before decode keeps it: decode wraps the
+// body again, and the inner reader still stops at the smaller limit.
+func TestDecodeKeepsCallerStricterLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	payload := fmt.Sprintf(`{"data":"%s"}`, strings.Repeat("a", 8<<10))
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("POST", "/test", strings.NewReader(payload))
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
+
+	var v map[string]string
+	if decode(c, &v) {
+		t.Fatal("expected decode to honour the caller's 4 KiB limit")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+// decode never inherits a larger limit from a pre-wrapped body; handlers that
+// accept more than 2 MiB must say so with decodeLimit.
+func TestDecodeDoesNotWidenToCallerLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	largeJSON := fmt.Sprintf(`{"data":"%s"}`, strings.Repeat("a", 2500000))
 	rec := httptest.NewRecorder()
@@ -41,11 +62,22 @@ func TestDecodePreservesExistingMaxBytesReader(t *testing.T) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 
 	var v map[string]string
-	if !decode(c, &v) {
-		t.Fatalf("expected decode to succeed for 2.5MB payload when pre-configured with 4MB limit, got: %s", rec.Body.String())
+	if decode(c, &v) {
+		t.Fatal("expected decode to keep its 2 MiB limit")
 	}
-	if len(v["data"]) != 2500000 {
-		t.Fatalf("data length mismatch: %d", len(v["data"]))
+}
+
+func TestDecodeOptionalAcceptsEmptyBodyWithinDefaultLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, body := range map[string]string{"empty": "", "large": fmt.Sprintf(`{"data":"%s"}`, strings.Repeat("a", 2500000))} {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest("POST", "/test", strings.NewReader(body))
+		var v map[string]string
+		ok := decodeOptional(c, &v)
+		if want := name == "empty"; ok != want {
+			t.Fatalf("%s body: decodeOptional = %t, want %t (%s)", name, ok, want, rec.Body.String())
+		}
 	}
 }
 

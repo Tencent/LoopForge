@@ -123,7 +123,7 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		return
 	}
 	applied := false
-	err = e.updateRun(runID, func(r *domain.Run) {
+	err = e.updateRunErr(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, true) {
 			return
