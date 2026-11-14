@@ -230,11 +230,24 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.DefaultBranch = "main"
 		}
 	}
+	if strings.HasPrefix(v.GongfengProjectID, "gitlab:") {
+		v.Provider = "gitlab"
+		if v.DefaultBranch == "" {
+			v.DefaultBranch = "main"
+		}
+	}
 	if v.Provider == "" {
 		v.Provider = "gongfeng"
 	}
-	if v.Provider != "gongfeng" && v.Provider != "github" {
-		c.JSON(400, map[string]string{"error": "provider must be github or gongfeng"})
+	if v.Provider != "gongfeng" && v.Provider != "github" && v.Provider != "gitlab" {
+		c.JSON(400, map[string]string{"error": "provider must be github, gitlab or gongfeng"})
+		return
+	}
+	// GitLab 仓库的标识必须带 gitlab: 前缀（host 进 ID）。裸工蜂路径配上
+	// provider=gitlab 会落成工蜂 URL，却走不了任何 GitLab 路径（MR/同步
+	// 都按前缀分发），必须在入口拒绝而不是静默落库。
+	if v.Provider == "gitlab" && !strings.HasPrefix(v.GongfengProjectID, "gitlab:") {
+		c.JSON(400, map[string]string{"error": "GitLab 仓库请使用 gitlab:<host>/<group>/<repo> 标识，或粘贴完整的 GitLab 仓库地址"})
 		return
 	}
 	if v.DefaultBranch == "" {

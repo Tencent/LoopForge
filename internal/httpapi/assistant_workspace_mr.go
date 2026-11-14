@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -213,6 +214,21 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			results = append(results, result)
 			continue
 		}
+		if base, path := gitlabRepoPath(rc); path != "" {
+			result.CreateURL = base + "/" + path + "/-/merge_requests/new"
+			mr, err := createGitLabMR(ctx, apiToken, base, path, result.SourceBranch, result.TargetBranch, title, body)
+			if err != nil {
+				result.Error = redactAgentToolResult(err.Error(), requester)
+			} else {
+				result.MRIID, result.Existing, result.Updated = mr.IID, mr.Existing, mr.Updated
+				if mr.UpdateError != "" {
+					result.UpdateError = redactAgentToolResult(mr.UpdateError, requester)
+				}
+				result.MRURL = fmt.Sprintf("%s/%s/-/merge_requests/%d", base, path, mr.IID)
+			}
+			results = append(results, result)
+			continue
+		}
 		path := gongfengProjectPath(rc)
 		if path == "" {
 			result.Error = "不是 GitHub 或已配置的工蜂仓库，请到代码平台手动发起 PR/MR"
@@ -338,6 +354,134 @@ func hostedRepoPath(rc domain.RepositoryContext, host string, valid *regexp.Rege
 		}
 	}
 	return ""
+}
+
+// gitlabRepoPath 从 "gitlab:<host>/<group>/<repo>" 标识取 (base, path)；
+// base 是 scheme://host——scheme 按仓库记录的 URL 对齐（默认 https），
+// 自托管 GitLab 的 MR 直连仓库所在实例的 API。
+func gitlabRepoPath(rc domain.RepositoryContext) (string, string) {
+	id := strings.TrimSpace(rc.GongfengProjectID)
+	rest, ok := strings.CutPrefix(id, "gitlab:")
+	if !ok {
+		return "", ""
+	}
+	slash := strings.Index(rest, "/")
+	if slash < 0 {
+		return "", ""
+	}
+	host, path := rest[:slash], strings.TrimSuffix(rest[slash+1:], ".git")
+	if host == "" || path == "" {
+		return "", ""
+	}
+	return domain.GitLabInstanceScheme(host, rc.CloneURL, rc.WebURL) + "://" + host, path
+}
+
+// createGitLabMR 在自托管 GitLab 上开 MR（v4 REST）。分支已有打开的 MR 时
+// 返回该 MR 并把标题/描述更新到本次提交的内容（对齐 createGongfengMR 语义）。
+func createGitLabMR(ctx context.Context, token, base, path, source, target, title, description string) (gongfengMR, error) {
+	// 不跟随重定向：PRIVATE-TOKEN 是凭证，302 到别的 origin 不能携带。
+	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	apiBase := base + "/api/v4/projects/" + url.PathEscape(path)
+	payload, _ := json.Marshal(map[string]string{"source_branch": source, "target_branch": target, "title": title, "description": description})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+"/merge_requests", bytes.NewReader(payload))
+	if err != nil {
+		return gongfengMR{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return gongfengMR{}, fmt.Errorf("无法连接 GitLab %s：%v", base, err)
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		var mr struct {
+			IID int64 `json:"iid"`
+		}
+		if json.Unmarshal(raw, &mr) == nil && mr.IID > 0 {
+			return gongfengMR{IID: mr.IID}, nil
+		}
+		return gongfengMR{}, fmt.Errorf("GitLab 返回的 MR 信息无法解析")
+	}
+	// 已有打开 MR：找出来并更新描述。
+	open, found := findOpenGitLabMR(ctx, client, token, apiBase, source, target)
+	if !found {
+		return gongfengMR{}, gitlabMRError(resp.StatusCode, raw)
+	}
+	result := gongfengMR{IID: open.IID, Existing: true}
+	if err := updateGitLabMR(ctx, client, token, apiBase, open.IID, title, description); err != nil {
+		result.UpdateError = err.Error()
+	} else {
+		result.Updated = true
+	}
+	return result, nil
+}
+
+func findOpenGitLabMR(ctx context.Context, client *http.Client, token, base, source, target string) (gongfengOpenMR, bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/merge_requests?state=opened&per_page=100", nil)
+	if err != nil {
+		return gongfengOpenMR{}, false
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return gongfengOpenMR{}, false
+	}
+	defer resp.Body.Close()
+	var list []gongfengOpenMR
+	if json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&list) != nil {
+		return gongfengOpenMR{}, false
+	}
+	for _, mr := range list {
+		if mr.SourceBranch == source && (target == "" || mr.TargetBranch == target) {
+			return mr, true
+		}
+	}
+	return gongfengOpenMR{}, false
+}
+
+func updateGitLabMR(ctx context.Context, client *http.Client, token, base string, iid int64, title, description string) error {
+	payload, _ := json.Marshal(map[string]string{"title": title, "description": description})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, base+"/merge_requests/"+strconv.FormatInt(iid, 10), bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("HTTP %d：%s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
+}
+
+func gitlabMRError(status int, raw []byte) error {
+	detail := ""
+	var parsed struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if json.Unmarshal(raw, &parsed) == nil {
+		detail = strings.TrimSpace(parsed.Message + " " + parsed.Error)
+	}
+	if detail == "" {
+		detail = strings.TrimSpace(truncateRunes(string(raw), 300))
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("GitLab Git Token 无效或已过期（HTTP 401）：请到「个人配置 → 个人凭证」重新配置")
+	case http.StatusForbidden:
+		return fmt.Errorf("GitLab 拒绝发起 MR（HTTP 403）：Git Token 需要目标仓库的 api 权限。%s", detail)
+	case http.StatusNotFound:
+		return fmt.Errorf("GitLab 找不到仓库或分支（HTTP 404）：%s", detail)
+	}
+	return fmt.Errorf("GitLab 发起 MR 失败（HTTP %d）：%s", status, detail)
 }
 
 // createGitHubPR opens a pull request. When the branches already have an open

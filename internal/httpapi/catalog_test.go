@@ -729,6 +729,39 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 			t.Fatalf("plain path %q must be stored as-is, got %q", good, stored.GongfengProjectID)
 		}
 	}
+
+	// 自托管 GitLab：gitlab: 前缀标识（host 进 ID，多实例靠 host 区分）与
+	// 可信内网 URL 都归一为前缀标识，provider=gitlab，默认分支 main。
+	gl := requestJSON[domain.Repository](t, h, http.MethodPost, "/api/repositories", map[string]any{
+		"projectId":         "linkproj",
+		"gongfengProjectId": "gitlab:gitlab.example.test/group/repo",
+	}, http.StatusOK)
+	if gl.GongfengProjectID != "gitlab:gitlab.example.test/group/repo" || gl.Provider != "gitlab" {
+		t.Fatalf("gitlab prefix id must keep prefix and set provider, got %+v", gl)
+	}
+	if gl.WebURL != "https://gitlab.example.test/group/repo" || gl.CloneURL != "https://gitlab.example.test/group/repo.git" {
+		t.Fatalf("gitlab urls must derive from the host in id: %+v", gl)
+	}
+	if gl.DefaultBranch != "main" {
+		t.Fatalf("gitlab repo default branch = %q, want main", gl.DefaultBranch)
+	}
+	fromURL := requestJSON[domain.Repository](t, h, http.MethodPost, "/api/repositories", map[string]any{
+		"projectId": "linkproj",
+		"repoUrl":   "http://172.20.0.10/team/svc.git",
+	}, http.StatusOK)
+	if fromURL.GongfengProjectID != "gitlab:172.20.0.10/team/svc" || fromURL.Provider != "gitlab" {
+		t.Fatalf("trusted gitlab url must normalize to prefixed id, got %+v", fromURL)
+	}
+	// 裸工蜂路径配 provider=gitlab 必须 400：落库后 MR/同步全按 gitlab: 前缀
+	// 分发，静默接受只会得到一个指向工蜂却声明为 GitLab 的坏仓库。
+	bare := requestJSON[map[string]string](t, h, http.MethodPost, "/api/repositories", map[string]any{
+		"projectId":         "linkproj",
+		"gongfengProjectId": "a/x",
+		"provider":          "gitlab",
+	}, http.StatusBadRequest)
+	if bare["error"] == "" {
+		t.Fatalf("bare gongfeng path with provider=gitlab must be rejected, got %+v", bare)
+	}
 }
 
 func TestGlobalRuleWorkflowBinding(t *testing.T) {
