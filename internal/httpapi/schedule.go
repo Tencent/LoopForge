@@ -64,6 +64,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.Cron = strings.TrimSpace(job.Cron)
 		job.AssistantPrompt = strings.TrimSpace(job.AssistantPrompt)
 		job.AssistantModel = strings.TrimSpace(job.AssistantModel)
+		job.AssistantEffort = strings.TrimSpace(job.AssistantEffort)
 		job.WorkflowID = strings.TrimSpace(job.WorkflowID)
 		source, err := domain.NormalizeScheduleSource(job.Source)
 		if err != nil {
@@ -92,6 +93,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			}
 			job.AssistantPrompt = ""
 			job.AssistantModel = ""
+			job.AssistantEffort = ""
 			job.IssueStatuses = domain.NormalizeScheduleIssueStatuses(job.IssueStatuses)
 			if len(job.IssueStatuses) == 0 {
 				job.IssueStatuses = append([]string{}, domain.DefaultScheduleIssueStatuses...)
@@ -124,6 +126,13 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			job.OwnerUserID = project.OwnerID
 		} else if job.SharedTaskID == "" {
 			job.OwnerUserID = existingJob.OwnerUserID
+		}
+		if job.SkipDispatch && job.AssistantEffort != "" {
+			owner, _ := h.repo.User(job.OwnerUserID)
+			if err := validateAssistantEffort(owner, job.AssistantModel, job.AssistantEffort); err != nil {
+				c.JSON(400, map[string]string{"error": err.Error()})
+				return
+			}
 		}
 		if job.ID == "" {
 			job.ID = "job-" + time.Now().UTC().Format("20060102150405.000000000")

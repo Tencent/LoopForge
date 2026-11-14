@@ -175,6 +175,25 @@ function paintScheduleEngines(selected){
   }));
   select.value=current;
 }
+const SCHEDULE_EFFORT_LABELS={none:'关闭 none',minimal:'最低 minimal',low:'低 low',medium:'中 medium',high:'高 high',xhigh:'超高 xhigh',max:'最大 max',ultra:'极致 ultra',ultracode:'极致 ultracode'};
+// paintScheduleEffort lists the chosen model's reasoning efforts. Pass the
+// saved effort to remember it; without an argument the remembered one is kept,
+// so switching models back and forth does not lose it. A model without efforts
+// hides the picker and the job keeps the model's own default.
+function paintScheduleEffort(effort){
+  const select=$('#scheduleEffort'),f=$('#scheduleJobForm');
+  if(!select||!f)return;
+  if(effort!==undefined)select.dataset.effort=effort||'';
+  const want=select.dataset.effort||'';
+  const model=(scheduleModelAPI()?.catalog?.().models||[]).find(m=>m.id===f.elements.assistantModel.value);
+  const efforts=[...(model?.efforts||[])];
+  // An unlisted model (catalog still loading, or no key here) keeps its saved effort.
+  if(!model&&want&&!efforts.includes(want))efforts.push(want);
+  select.replaceChildren(new Option('默认强度',''),...efforts.map(e=>new Option(SCHEDULE_EFFORT_LABELS[e]||e,e)));
+  select.value=efforts.includes(want)?want:'';
+  select.hidden=!efforts.length;
+  select.onchange=()=>{select.dataset.effort=select.value};
+}
 function closeScheduleModelMenu(){
   const host=$('#scheduleModelPicker');
   if(!host)return;
@@ -250,6 +269,7 @@ function paintScheduleModel(selected){
   f.elements.assistantModel.value=keep;
   api.paint(host.querySelector('[data-model-toggle]'), keep);
   paintScheduleEngines(keep);
+  paintScheduleEffort();
 }
 function syncScheduleJobTiming(){
   const f=$('#scheduleJobForm');if(!f)return;
@@ -299,6 +319,7 @@ function fillScheduleJobForm(job={}){
   f.elements.jobKind.value=job.id?scheduleJobKind(job):scheduleEditorKind;
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
+  paintScheduleEffort(job.assistantEffort||'');
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;
   f.elements.maxDispatch.value=job.maxDispatch||'';
   f.elements.enabled.checked=job.id?!!job.enabled:true;
@@ -496,6 +517,7 @@ async function saveScheduleJob(e){
     cron:cron?f.elements.cron.value.trim():'',
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
+    assistantEffort:assistant?(f.elements.assistantEffort?.value||''):'',
     enabled:f.elements.enabled.checked
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));

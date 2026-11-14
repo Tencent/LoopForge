@@ -219,6 +219,7 @@ type AssistantTask struct {
 	Name                 string                `json:"name"`
 	Prompt               string                `json:"prompt"`
 	Model                string                `json:"model,omitempty"`
+	Effort               string                `json:"effort,omitempty"`
 	ProjectID            string                `json:"projectId,omitempty"`
 	SessionID            string                `json:"sessionId,omitempty"`
 	Cron                 string                `json:"cron,omitempty"`

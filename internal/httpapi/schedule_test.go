@@ -112,6 +112,51 @@ func TestScheduleJobCRUD(t *testing.T) {
 	}
 }
 
+// An AI job keeps the reasoning effort chosen next to its model; an effort the
+// model does not offer is refused, and a dispatch job never carries one.
+func TestScheduleJobKeepsAssistantEffort(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "effort-wf", Name: "Effort", SandboxProfileID: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	saved := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "深度巡检", "projectId": "platform", "skipDispatch": true, "intervalSec": 3600,
+		"assistantPrompt": "检查失败的运行", "assistantModel": "glm-5.3-ioa", "assistantEffort": " max ",
+	}, http.StatusOK)
+	stored, _ := st.ScheduleJob(saved.ID)
+	if saved.AssistantEffort != "max" || stored.AssistantEffort != "max" {
+		t.Fatalf("effort: response=%q stored=%q", saved.AssistantEffort, stored.AssistantEffort)
+	}
+	refused := requestJSON[map[string]string](t, h, http.MethodPut, "/api/schedule-jobs", map[string]any{
+		"id": saved.ID, "name": "深度巡检", "projectId": "platform", "skipDispatch": true, "intervalSec": 3600,
+		"assistantPrompt": "检查失败的运行", "assistantModel": "glm-5.3-ioa", "assistantEffort": "medium",
+	}, http.StatusBadRequest)
+	if !strings.Contains(refused["error"], "思考强度") {
+		t.Fatalf("unsupported effort error = %q", refused["error"])
+	}
+	if stored, _ := st.ScheduleJob(saved.ID); stored.AssistantEffort != "max" {
+		t.Fatalf("refused save changed effort to %q", stored.AssistantEffort)
+	}
+	cleared := requestJSON[domain.ScheduleJob](t, h, http.MethodPut, "/api/schedule-jobs", map[string]any{
+		"id": saved.ID, "name": "深度巡检", "projectId": "platform", "skipDispatch": true, "intervalSec": 3600,
+		"assistantPrompt": "检查失败的运行", "assistantModel": "glm-5.3-ioa",
+	}, http.StatusOK)
+	if cleared.AssistantEffort != "" {
+		t.Fatalf("default effort = %q", cleared.AssistantEffort)
+	}
+	dispatch := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"projectId": "platform", "workflowId": "effort-wf", "intervalSec": 3600, "assistantEffort": "high",
+	}, http.StatusOK)
+	if dispatch.AssistantEffort != "" {
+		t.Fatalf("dispatch job kept effort %q", dispatch.AssistantEffort)
+	}
+}
+
 func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {

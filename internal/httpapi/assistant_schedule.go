@@ -35,6 +35,7 @@ func (h *assistantHandlers) prepareScheduleJob(job domain.ScheduleJob) (string, 
 		Name:          job.Name,
 		Prompt:        prompt,
 		Model:         strings.TrimSpace(job.AssistantModel),
+		Effort:        strings.TrimSpace(job.AssistantEffort),
 		ProjectID:     job.ProjectID,
 		Notifications: domain.CloneNotificationBindings(job.Notifications),
 	}
