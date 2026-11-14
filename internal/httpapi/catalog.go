@@ -144,6 +144,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库网页地址必须是无凭据的 HTTP(S) 地址"})
 			return
 		}
+		// SSH remotes are cloned from the executing host too, so they get the
+		// same host-local restriction as every other cloneUrl.
+		if err := gitwork.ValidateRemoteURL(remote.URL, !authRequired() || h.isPlatformAdmin(c.Request)); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cloneUrl 无效：" + err.Error()})
+			return
+		}
 		v.Provider, v.CloneURL, v.GongfengProjectID = domain.RepositoryProviderSSH, remote.URL, ""
 		if v.Name == "" {
 			v.Name = strings.TrimSuffix(remote.Path[strings.LastIndex(remote.Path, "/")+1:], ".git")
