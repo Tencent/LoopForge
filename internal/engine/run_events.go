@@ -61,69 +61,89 @@ func (e *Engine) IngestWorkerEnvelope(runID string, envelope domain.WorkerEnvelo
 	}
 	switch envelope.Type {
 	case "observation":
-		if envelope.Observation == nil {
-			return fmt.Errorf("observation is required")
-		}
-		if envelope.Observation.Source.Layer == "" || envelope.Observation.Source.Adapter == "" {
-			return fmt.Errorf("observation source.layer and source.adapter are required")
-		}
-		nodeID := envelope.Observation.Context.NodeID
-		if nodeID == "" {
-			nodeID = envelope.Observation.NodeID
-		}
-		if nodeID != "" {
-			if _, exists := run.Nodes[nodeID]; !exists {
-				return fmt.Errorf("node not found in run")
-			}
-		}
-		e.observe(runID, nodeID, *envelope.Observation)
-		e.flushAllObservations()
-		return nil
+		return e.ingestWorkerObservation(runID, run, envelope.Observation)
 	case "log":
-		if envelope.Log == nil {
-			return fmt.Errorf("log is required")
-		}
-		log := *envelope.Log
-		if log.Source.Layer == "" || log.Source.Adapter == "" {
-			return fmt.Errorf("log source.layer and source.adapter are required")
-		}
-		if log.Body == "" {
-			return fmt.Errorf("log body is required")
-		}
-		if len(log.Body) > 64*1024 {
-			return fmt.Errorf("log body exceeds 65536 bytes")
-		}
-		if log.Context.NodeID != "" {
-			if _, exists := run.Nodes[log.Context.NodeID]; !exists {
-				return fmt.Errorf("node not found in run")
-			}
-		}
-		e.updateRun(runID, func(r *domain.Run) {
-			now := time.Now().UTC()
-			r.LogSequence++
-			log.SpecVersion = domain.ObservabilitySpecVersion
-			log.ID = fmt.Sprintf("log-%d", now.UnixNano())
-			log.Sequence = r.LogSequence
-			if log.Timestamp.IsZero() {
-				log.Timestamp = now
-			}
-			log.Context.RunID = runID
-			log.Context.TraceID = runID
-			if log.Level == "" {
-				log.Level = "info"
-			}
-			if log.Stream == "" {
-				log.Stream = "worker"
-			}
-			r.Logs = append(r.Logs, log)
-			if len(r.Logs) > 8000 {
-				r.Logs = append([]domain.LogRecord(nil), r.Logs[len(r.Logs)-8000:]...)
-			}
-		})
-		return nil
+		return e.ingestWorkerLog(runID, run, envelope.Log)
 	default:
 		return fmt.Errorf("type must be observation or log")
 	}
+}
+
+// ingestWorkerObservation validates a worker observation and forwards it to
+// the observation queue, flushing immediately so it is visible to readers.
+func (e *Engine) ingestWorkerObservation(runID string, run domain.Run, observation *domain.TelemetryEvent) error {
+	if observation == nil {
+		return fmt.Errorf("observation is required")
+	}
+	if observation.Source.Layer == "" || observation.Source.Adapter == "" {
+		return fmt.Errorf("observation source.layer and source.adapter are required")
+	}
+	nodeID := observation.Context.NodeID
+	if nodeID == "" {
+		nodeID = observation.NodeID
+	}
+	if err := requireRunNode(run, nodeID); err != nil {
+		return err
+	}
+	e.observe(runID, nodeID, *observation)
+	e.flushAllObservations()
+	return nil
+}
+
+// ingestWorkerLog validates a worker log record, fills its run-scoped
+// identity and defaults, and appends it to the run's bounded log buffer.
+func (e *Engine) ingestWorkerLog(runID string, run domain.Run, record *domain.LogRecord) error {
+	if record == nil {
+		return fmt.Errorf("log is required")
+	}
+	log := *record
+	if log.Source.Layer == "" || log.Source.Adapter == "" {
+		return fmt.Errorf("log source.layer and source.adapter are required")
+	}
+	if log.Body == "" {
+		return fmt.Errorf("log body is required")
+	}
+	if len(log.Body) > 64*1024 {
+		return fmt.Errorf("log body exceeds 65536 bytes")
+	}
+	if err := requireRunNode(run, log.Context.NodeID); err != nil {
+		return err
+	}
+	e.updateRun(runID, func(r *domain.Run) {
+		now := time.Now().UTC()
+		r.LogSequence++
+		log.SpecVersion = domain.ObservabilitySpecVersion
+		log.ID = fmt.Sprintf("log-%d", now.UnixNano())
+		log.Sequence = r.LogSequence
+		if log.Timestamp.IsZero() {
+			log.Timestamp = now
+		}
+		log.Context.RunID = runID
+		log.Context.TraceID = runID
+		if log.Level == "" {
+			log.Level = "info"
+		}
+		if log.Stream == "" {
+			log.Stream = "worker"
+		}
+		r.Logs = append(r.Logs, log)
+		if len(r.Logs) > 8000 {
+			r.Logs = append([]domain.LogRecord(nil), r.Logs[len(r.Logs)-8000:]...)
+		}
+	})
+	return nil
+}
+
+// requireRunNode rejects a non-empty node ID that the run does not contain.
+// An empty node ID means the record is run-scoped and is always accepted.
+func requireRunNode(run domain.Run, nodeID string) error {
+	if nodeID == "" {
+		return nil
+	}
+	if _, exists := run.Nodes[nodeID]; !exists {
+		return fmt.Errorf("node not found in run")
+	}
+	return nil
 }
 
 func logAttributes(event domain.TelemetryEvent) map[string]any {
