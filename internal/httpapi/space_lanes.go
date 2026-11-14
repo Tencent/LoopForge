@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,6 +29,7 @@ type spaceLaneNode struct {
 	Activity    string    `json:"activity,omitempty"`
 	Output      string    `json:"output,omitempty"`
 	Error       string    `json:"error,omitempty"`
+	SkipReason  string    `json:"skipReason,omitempty"`
 	RejectTo    string    `json:"rejectTo,omitempty"`
 	Tokens      int64     `json:"tokens,omitempty"`
 	CostUSD     float64   `json:"costUsd,omitempty"`
@@ -37,9 +39,10 @@ type spaceLaneNode struct {
 }
 
 type spaceLaneEdge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	When   string `json:"when,omitempty"`
+	Source    string                    `json:"source"`
+	Target    string                    `json:"target"`
+	When      string                    `json:"when,omitempty"`
+	Condition *domain.WorkflowCondition `json:"condition,omitempty"`
 }
 
 type spaceLaneWorkspace struct {
@@ -154,6 +157,7 @@ func fillLane(lane *spaceLane, run domain.Run, agentName func(string) string) {
 		if nr := run.Nodes[node.ID]; nr != nil {
 			n.Status, n.Attempt, n.ReworkCount, n.Activity = nr.Status, nr.Attempt, nr.ReworkCount, nr.Activity
 			n.Output, n.Error = roomTrim(nr.Output, 1200), roomTrim(nr.Error, 600)
+			n.SkipReason = nr.SkipReason
 			n.Tokens, n.CostUSD, n.ToolCalls = nr.Usage.TotalTokens, nr.Usage.CostUSD, nr.ToolCalls
 			n.StartedAt, n.FinishedAt = nr.StartedAt, nr.FinishedAt
 			tokens += nr.Usage.TotalTokens
@@ -169,7 +173,7 @@ func fillLane(lane *spaceLane, run domain.Run, agentName func(string) string) {
 		lane.ToolCalls = tools
 	}
 	for _, e := range wf.Edges {
-		lane.Edges = append(lane.Edges, spaceLaneEdge{Source: e.Source, Target: e.Target, When: e.When})
+		lane.Edges = append(lane.Edges, spaceLaneEdge{Source: e.Source, Target: e.Target, When: e.When, Condition: e.Condition})
 	}
 }
 
@@ -395,14 +399,17 @@ func (h *spacesHandlers) catalog(c *gin.Context) {
 }
 
 type spaceFlowNode struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Type        string  `json:"type"` // agent, script, approval
-	AgentID     string  `json:"agentId"`
-	Script      string  `json:"script"`
-	MetricStage string  `json:"metricStage"`
-	X           float64 `json:"x"`
-	Y           float64 `json:"y"`
+	ID              string                    `json:"id"`
+	Name            string                    `json:"name"`
+	Type            string                    `json:"type"` // agent, script, approval
+	AgentID         string                    `json:"agentId"`
+	Script          string                    `json:"script"`
+	MetricStage     string                    `json:"metricStage"`
+	JoinRule        string                    `json:"joinRule,omitempty"`
+	DefaultTarget   string                    `json:"defaultTarget,omitempty"`
+	ArtifactOutputs []domain.ArtifactContract `json:"artifactOutputs,omitempty"`
+	X               float64                   `json:"x"`
+	Y               float64                   `json:"y"`
 }
 
 type spaceFlowRequest struct {
@@ -523,7 +530,7 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 			return wf, "步骤 ID 不能为空或重复"
 		}
 		ids[id] = true
-		node := domain.WorkflowNode{ID: id, Name: fallbackName(strings.TrimSpace(n.Name), id), Type: n.Type, MaxAttempts: 1, MaxReworks: 2}
+		node := domain.WorkflowNode{ID: id, Name: fallbackName(strings.TrimSpace(n.Name), id), Type: n.Type, MaxAttempts: 1, MaxReworks: 2, JoinRule: n.JoinRule, DefaultTarget: n.DefaultTarget, ArtifactOutputs: n.ArtifactOutputs}
 		node.Position.X, node.Position.Y = n.X, n.Y
 		switch n.Type {
 		case "agent":
@@ -567,7 +574,10 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 			}
 			continue
 		}
-		wf.Edges = append(wf.Edges, domain.WorkflowEdge{ID: fmt.Sprintf("e%d-%s-%s", i+1, e.Source, e.Target), Source: e.Source, Target: e.Target, When: when})
+		wf.Edges = append(wf.Edges, domain.WorkflowEdge{ID: fmt.Sprintf("e%d-%s-%s", i+1, e.Source, e.Target), Source: e.Source, Target: e.Target, When: when, Condition: e.Condition})
+	}
+	if err := engine.ValidateWorkflowRouting(wf); err != nil {
+		return wf, err.Error()
 	}
 	return wf, ""
 }

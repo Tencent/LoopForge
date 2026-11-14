@@ -9,9 +9,19 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 const Version = "1.0.0"
+
+const (
+	maxTextLen       = 4000
+	maxTitleLen      = 500
+	maxSeverityLen   = 64
+	maxFindings      = 50
+	maxRouteLabels   = 50
+	maxRouteLabelLen = 128
+)
 
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -27,11 +37,12 @@ type finding struct {
 }
 
 type gateResult struct {
-	Decision       string    `json:"decision"`
-	Reason         string    `json:"reason"`
-	ActionRequired string    `json:"actionRequired"`
-	Summary        string    `json:"summary"`
-	Findings       []finding `json:"findings"`
+	Decision       string          `json:"decision"`
+	Reason         string          `json:"reason"`
+	ActionRequired string          `json:"actionRequired"`
+	Summary        string          `json:"summary"`
+	Findings       []finding       `json:"findings"`
+	Route          json.RawMessage `json:"route,omitempty"`
 }
 
 var inputSchema = map[string]any{
@@ -40,17 +51,18 @@ var inputSchema = map[string]any{
 	"required":             []string{"decision", "reason"},
 	"properties": map[string]any{
 		"decision":       map[string]any{"type": "string", "enum": []string{"pass", "rework", "fail", "human"}},
-		"reason":         map[string]any{"type": "string", "minLength": 1, "maxLength": 4000},
-		"actionRequired": map[string]any{"type": "string", "maxLength": 4000},
-		"summary":        map[string]any{"type": "string", "maxLength": 4000},
+		"reason":         map[string]any{"type": "string", "minLength": 1, "maxLength": maxTextLen},
+		"actionRequired": map[string]any{"type": "string", "maxLength": maxTextLen},
+		"summary":        map[string]any{"type": "string", "maxLength": maxTextLen},
+		"route":          map[string]any{"oneOf": []any{map[string]any{"type": "string", "minLength": 1, "maxLength": maxRouteLabelLen}, map[string]any{"type": "array", "maxItems": maxRouteLabels, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": maxRouteLabelLen}}}},
 		"findings": map[string]any{
-			"type": "array", "maxItems": 50,
+			"type": "array", "maxItems": maxFindings,
 			"items": map[string]any{
 				"type": "object", "additionalProperties": false, "required": []string{"title"},
 				"properties": map[string]any{
-					"severity": map[string]any{"type": "string", "maxLength": 64},
-					"title":    map[string]any{"type": "string", "minLength": 1, "maxLength": 500},
-					"evidence": map[string]any{"type": "string", "maxLength": 4000},
+					"severity": map[string]any{"type": "string", "maxLength": maxSeverityLen},
+					"title":    map[string]any{"type": "string", "minLength": 1, "maxLength": maxTitleLen},
+					"evidence": map[string]any{"type": "string", "maxLength": maxTextLen},
 				},
 			},
 		},
@@ -144,7 +156,7 @@ func decodeResult(raw json.RawMessage) (gateResult, string) {
 	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return gateResult{}, "arguments must be an object"
 	}
-	allowed := map[string]bool{"decision": true, "reason": true, "actionRequired": true, "summary": true, "findings": true}
+	allowed := map[string]bool{"decision": true, "reason": true, "actionRequired": true, "summary": true, "findings": true, "route": true}
 	var unknown []string
 	for key := range fields {
 		if !allowed[key] {
@@ -173,51 +185,75 @@ func decodeResult(raw json.RawMessage) (gateResult, string) {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return gateResult{}, "arguments must match the submit_gate_result schema"
 	}
+	if problem := normalizeResult(&result); problem != "" {
+		return gateResult{}, problem
+	}
+	return result, ""
+}
+
+func normalizeResult(result *gateResult) string {
+	if len(result.Route) > 0 {
+		var labels []string
+		var label string
+		if json.Unmarshal(result.Route, &label) == nil {
+			labels = []string{label}
+		} else if json.Unmarshal(result.Route, &labels) != nil || string(result.Route) == "null" {
+			return "route must be a string or an array of strings"
+		}
+		if len(labels) > maxRouteLabels {
+			return "route has too many labels"
+		}
+		for _, label := range labels {
+			if strings.TrimSpace(label) == "" || utf8.RuneCountInString(label) > maxRouteLabelLen {
+				return "route labels must be non-empty strings of at most 128 characters"
+			}
+		}
+	}
 	if result.Findings == nil {
 		result.Findings = []finding{}
 	}
 	switch result.Decision {
 	case "pass", "rework", "fail", "human":
 	default:
-		return gateResult{}, "decision must be pass, rework, fail, or human"
+		return "decision must be pass, rework, fail, or human"
 	}
 	result.Reason = strings.TrimSpace(result.Reason)
 	if result.Reason == "" {
-		return gateResult{}, "reason is required"
+		return "reason is required"
 	}
-	if len(result.Reason) > 4000 {
-		return gateResult{}, "reason is too long"
+	if len(result.Reason) > maxTextLen {
+		return "reason is too long"
 	}
 	result.ActionRequired = strings.TrimSpace(result.ActionRequired)
-	if len(result.ActionRequired) > 4000 {
-		return gateResult{}, "actionRequired must be a string with at most 4000 characters"
+	if len(result.ActionRequired) > maxTextLen {
+		return "actionRequired must be a string with at most 4000 characters"
 	}
 	if result.Decision == "human" && result.ActionRequired == "" {
-		return gateResult{}, "actionRequired is required when decision is human"
+		return "actionRequired is required when decision is human"
 	}
 	result.Summary = strings.TrimSpace(result.Summary)
-	if len(result.Summary) > 4000 {
-		return gateResult{}, "summary must be a string with at most 4000 characters"
+	if len(result.Summary) > maxTextLen {
+		return "summary must be a string with at most 4000 characters"
 	}
-	if len(result.Findings) > 50 {
-		return gateResult{}, "findings must be an array with at most 50 items"
+	if len(result.Findings) > maxFindings {
+		return "findings must be an array with at most 50 items"
 	}
 	for i := range result.Findings {
 		result.Findings[i].Title = strings.TrimSpace(result.Findings[i].Title)
 		if result.Findings[i].Title == "" {
-			return gateResult{}, "each finding requires a title"
+			return "each finding requires a title"
 		}
-		if len(result.Findings[i].Title) > 500 {
-			return gateResult{}, "finding title is too long"
+		if len(result.Findings[i].Title) > maxTitleLen {
+			return "finding title is too long"
 		}
-		if len(result.Findings[i].Severity) > 64 {
-			return gateResult{}, "finding severity is invalid"
+		if len(result.Findings[i].Severity) > maxSeverityLen {
+			return "finding severity is invalid"
 		}
-		if len(result.Findings[i].Evidence) > 4000 {
-			return gateResult{}, "finding evidence is invalid"
+		if len(result.Findings[i].Evidence) > maxTextLen {
+			return "finding evidence is invalid"
 		}
 	}
-	return result, ""
+	return ""
 }
 
 func writeResultExclusive(path string, result gateResult) (err error) {

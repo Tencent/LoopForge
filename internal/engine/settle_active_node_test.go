@@ -15,11 +15,11 @@ func TestSettleStatusForCompletedGraphWaitsForActiveNodes(t *testing.T) {
 			"left":  {NodeID: "left", Status: "failed"},
 			"right": {NodeID: "right", Status: active},
 		}}
-		if status, _, ok := settleStatusForCompletedGraph(wf, run); ok {
+		if status, _, _, ok := settleStatusForCompletedGraph(wf, run); ok {
 			t.Fatalf("%s sibling: graph settled as %q while a node is active", active, status)
 		}
 		run.Nodes["right"].Status = "succeeded"
-		if status, _, ok := settleStatusForCompletedGraph(wf, run); !ok || status != "failed" {
+		if status, _, _, ok := settleStatusForCompletedGraph(wf, run); !ok || status != "failed" {
 			t.Fatalf("%s sibling: finished graph = %q %v, want failed", active, status, ok)
 		}
 	}
@@ -28,7 +28,7 @@ func TestSettleStatusForCompletedGraphWaitsForActiveNodes(t *testing.T) {
 		"right": {NodeID: "right", Status: "succeeded"},
 		"retry": {NodeID: "retry", Status: "running"},
 	}}
-	if _, _, ok := settleStatusForCompletedGraph(wf, extra); ok {
+	if _, _, _, ok := settleStatusForCompletedGraph(wf, extra); ok {
 		t.Fatal("graph settled while a node outside the snapshot is still running")
 	}
 }

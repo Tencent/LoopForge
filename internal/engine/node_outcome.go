@@ -217,9 +217,9 @@ func (e *Engine) finishInterruptedAt(runID string, generation int) {
 		return
 	}
 	if ok {
-		status, msg, done := settleStatusForCompletedGraph(workflowForRun(e.repo, current), current)
+		status, msg, reason, done := settleStatusForCompletedGraph(workflowForRun(e.repo, current), current)
 		if done && !(status == "succeeded" && scheduledIntegratePending(current)) {
-			e.finishAt(runID, generation, status, msg)
+			e.finishAtReason(runID, generation, status, msg, reason)
 			return
 		}
 	}
@@ -300,11 +300,10 @@ func (e *Engine) finish(id, status, msg string) {
 	e.finishAt(id, r.Generation, status, msg)
 }
 
-// stalePipelineFailure reports that a "graph failed" settle is looking at a
-// failure the rework has already cleared. Stopping the scheduler or writing
-// run.failed in that window aborts the rewind.
-func (e *Engine) stalePipelineFailure(id, status, msg string) bool {
-	if status != "failed" || msg != pipelineFailedMessage {
+// staleGraphFailure prevents an outdated graph outcome from stopping a
+// scheduler after a concurrent retry or completion changed the graph.
+func (e *Engine) staleGraphFailure(id string, reason graphFinishReason) bool {
+	if reason != finishFailedNode && reason != finishAllSinksSkipped {
 		return false
 	}
 	e.stateMu.Lock()
@@ -313,11 +312,19 @@ func (e *Engine) stalePipelineFailure(id, status, msg string) bool {
 	if !ok {
 		return false
 	}
-	return !hasFailed(workflowForRun(e.repo, current), current)
+	wf := workflowForRun(e.repo, current)
+	if reason == finishFailedNode {
+		return !hasFailed(wf, current)
+	}
+	return !allRoutingFinished(wf, current) || allSucceeded(wf, current)
 }
 
 func (e *Engine) finishAt(id string, generation int, status, msg string) {
-	if e.stalePipelineFailure(id, status, msg) {
+	e.finishAtReason(id, generation, status, msg, finishOther)
+}
+
+func (e *Engine) finishAtReason(id string, generation int, status, msg string, reason graphFinishReason) {
+	if e.staleGraphFailure(id, reason) {
 		return
 	}
 	e.stopRunScheduler(id)
@@ -334,9 +341,13 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 			ignored = true
 			return
 		}
-		if status == "failed" && msg == pipelineFailedMessage && !hasFailed(workflowForRun(e.repo, *r), *r) {
+		if reason == finishFailedNode && !hasFailed(workflowForRun(e.repo, *r), *r) {
 			ignored = true
 			e.event(r, "", "run.finish_ignored", "失败节点已被打回，忽略过期的失败收尾")
+			return
+		}
+		if reason == finishAllSinksSkipped && (!allRoutingFinished(workflowForRun(e.repo, *r), *r) || allSucceeded(workflowForRun(e.repo, *r), *r)) {
+			ignored = true
 			return
 		}
 		if status == "failed" {

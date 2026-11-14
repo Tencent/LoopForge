@@ -1,0 +1,670 @@
+[
+  {
+    "name": "reordered IDs selected",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": ""
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:a-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:b-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": true
+  },
+  {
+    "name": "all success rejects unselected",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": ""
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:a-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:b-edge": false
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": false
+  },
+  {
+    "name": "one success accepts unselected",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": "none_failed_min_one_success"
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:a-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:b-edge": false
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": true
+  },
+  {
+    "name": "one success rejects missing decision",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": "none_failed_min_one_success"
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:a-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "succeeded"
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": false
+  },
+  {
+    "name": "legacy index",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": ""
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "1": true
+          }
+        }
+      },
+      "b": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "0": true
+          }
+        }
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": true
+  },
+  {
+    "name": "skipped ancestor all success",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": ""
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:a-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "skipped"
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": false
+  },
+  {
+    "name": "skipped ancestor one success",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": "none_failed_min_one_success"
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:a-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "skipped"
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": true
+  },
+  {
+    "name": "running ancestor",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": "none_failed_min_one_success"
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:a-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "running"
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": false
+  },
+  {
+    "name": "no edge id index fallback",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": ""
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "source": "a",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "index:1": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:b-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": true
+  },
+  {
+    "name": "default edge selected",
+    "workflow": {
+      "id": "wf",
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent",
+          "defaultTarget": "target"
+        },
+        {
+          "id": "b",
+          "type": "agent"
+        },
+        {
+          "id": "target",
+          "type": "agent",
+          "joinRule": ""
+        }
+      ],
+      "edges": [
+        {
+          "id": "b-edge",
+          "source": "b",
+          "target": "target",
+          "condition": {
+            "type": "route",
+            "values": [
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a-edge",
+          "source": "a",
+          "target": "target"
+        }
+      ]
+    },
+    "nodes": {
+      "a": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:a-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "b": {
+        "status": "succeeded",
+        "routeDecision": {
+          "selectedEdges": {
+            "id:b-edge": true
+          },
+          "edgeKeyVersion": 1
+        }
+      },
+      "target": {
+        "status": "failed"
+      }
+    },
+    "target": "target",
+    "expected": true
+  }
+]

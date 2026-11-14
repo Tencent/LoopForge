@@ -246,6 +246,11 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	if !found || !isScriptNode(def) {
 		return fmt.Errorf("only a failed script node can be passed")
 	}
+	for _, edge := range wf.Edges {
+		if edge.Source == nodeID && edge.Condition != nil && n.RouteDecision == nil {
+			return fmt.Errorf("节点 %s 尚无有效路由决策，请重试节点而不是手动通过", nodeID)
+		}
+	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
 	n.Activity = "人工通过，未重新执行"
@@ -327,6 +332,7 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 				nr.Activity = ""
 			}
 			nr.Status = "pending"
+			nr.RouteDecision, nr.SkipReason = nil, ""
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -585,6 +591,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 				stale = append(stale, nr.ChildRunID)
 			}
 			nr.Status = "pending"
+			nr.RouteDecision, nr.SkipReason = nil, ""
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -840,6 +847,13 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if previousVersion == latest.Version && previousRevision == latest.Revision {
 		return nil
 	}
+	// A route decision refers to edges in the frozen snapshot. Replacing that
+	// graph while preserving completed nodes could activate the wrong branch.
+	for _, nr := range r.Nodes {
+		if nr != nil && nr.RouteDecision != nil {
+			return fmt.Errorf("cannot refresh SOP after a routing decision; start a new run")
+		}
+	}
 	// A graph/role update must not silently replace the environment underneath
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
@@ -848,6 +862,9 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	latest, err = domain.AttachPreviewBuild(latest)
 	if err != nil {
 		return err
+	}
+	if nodeID := missingRouteDecision(latest, r); nodeID != "" {
+		return fmt.Errorf("无法刷新 SOP：已完成的节点「%s」在新版 SOP 中需要路由决策，请创建新 Run 或调整 SOP", nodeID)
 	}
 	for _, node := range latest.Nodes {
 		if r.Nodes[node.ID] == nil {

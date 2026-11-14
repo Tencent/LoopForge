@@ -808,6 +808,51 @@ func TestWorkflowAgentNodeDispatchesToRunner(t *testing.T) {
 	cancel()
 }
 
+func TestWorkflowConditionalScriptRoutesOnRunner(t *testing.T) {
+	server, s, e := newDaemonTestServer(t)
+	daemon, err := New(Config{ServerURL: server.URL, BootstrapToken: "boot-secret", StatePath: filepath.Join(t.TempDir(), "state.json"), Name: "route-runner", MaxConcurrency: 1, HeartbeatInterval: time.Second, LongPollTimeout: 2 * time.Second, DefaultWorkspaceRoot: filepath.Join(t.TempDir(), "workspace")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = daemon.Run(ctx) }()
+	waitFor(t, 5*time.Second, "runner registration", func() bool { return len(s.Runners()) == 1 })
+	runner := s.Runners()[0]
+	runner.OwnerUserID = 42
+	if err := s.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDefaultRunner(42, runner.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	wf := domain.WorkflowDefinition{ID: "runner-route", Name: "route", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+		{ID: "route", Type: "script", Script: `printf '{"route":"small"}' > "$LOOPFORGE_ROUTE_FILE"`, MaxAttempts: 1},
+		{ID: "small", Type: "script", Script: "echo small", MaxAttempts: 1},
+		{ID: "large", Type: "script", Script: "echo large", MaxAttempts: 1},
+		{ID: "join", Type: "script", Script: "echo done", MaxAttempts: 1, JoinRule: "none_failed_min_one_success"},
+	}, Edges: []domain.WorkflowEdge{
+		{ID: "small", Source: "route", Target: "small", Condition: &domain.WorkflowCondition{Type: "route", Values: []string{"small"}}},
+		{ID: "large", Source: "route", Target: "large", Condition: &domain.WorkflowCondition{Type: "route", Values: []string{"large"}}},
+		{ID: "s-join", Source: "small", Target: "join"}, {ID: "l-join", Source: "large", Target: "join"},
+	}}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	run, err := e.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, domain.TelemetryContext{ResponsibleUserID: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 30*time.Second, "routing run completion", func() bool {
+		current, _ := s.Run(run.ID)
+		return current.Status == "succeeded" || current.Status == "failed"
+	})
+	got, _ := s.Run(run.ID)
+	if got.Status != "succeeded" || got.Nodes["small"].Status != "succeeded" || got.Nodes["large"].Status != "skipped" || got.Nodes["join"].Status != "succeeded" {
+		t.Fatalf("route run: status=%s nodes=%+v", got.Status, got.Nodes)
+	}
+}
+
 func TestRunnerPauseWaitsForRemoteStopAndRestartsScriptInSameWorkspace(t *testing.T) {
 	server, s, e := newDaemonTestServer(t)
 	workspaceRoot := filepath.Join(t.TempDir(), "workspace")

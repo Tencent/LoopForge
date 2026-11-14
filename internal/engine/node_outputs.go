@@ -173,7 +173,7 @@ func runnerArtifactInputs(wf domain.WorkflowDefinition, node domain.WorkflowNode
 	}
 	var manifest strings.Builder
 	var files []domain.RunnerInputFile
-	for _, artifact := range latestInputArtifacts(run.Artifacts, sources, ancestors(wf, node.ID)) {
+	for _, artifact := range latestInputArtifacts(activeRoutingArtifacts(run), sources, ancestors(wf, node.ID)) {
 		if artifact.Name == "repository-patch" {
 			if !sources[artifact.NodeID] {
 				continue
