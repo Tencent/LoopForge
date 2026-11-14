@@ -50,6 +50,9 @@ var ErrWorkspaceCheckpointBackoff = errors.New("workspace checkpoint save is bac
 
 const workspaceBackgroundSavePrefix = "save:"
 
+// workspaceUseTerm is how long a workspace lease lasts from its last renewal.
+const workspaceUseTerm = 15 * time.Minute
+
 func (r *RunsRepo) WorkspaceCheckpoint(runID string) (WorkspaceCheckpoint, bool) {
 	var item WorkspaceCheckpoint
 	err := r.DB.Omit("archive").Where("run_id = ?", runID).Take(&item).Error
@@ -128,7 +131,7 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		if !touch && checkpoint.SaveRetryAt != nil && now.Before(*checkpoint.SaveRetryAt) {
 			return ErrWorkspaceCheckpointBackoff
 		}
-		until := now.Add(15 * time.Minute)
+		until := now.Add(workspaceUseTerm)
 		lastUsed := now
 		if !touch && run.Updated != nil {
 			lastUsed = *run.Updated
@@ -187,7 +190,7 @@ func (r *RunsRepo) RenewWorkspaceUse(runID, token string, now time.Time) error {
 		}
 		// The row is locked through the run and was just read with this token;
 		// an unchanged lease_until (same-millisecond renewal) is still a renewal.
-		until := now.Add(15 * time.Minute)
+		until := now.Add(workspaceUseTerm)
 		return tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, token).Update("lease_until", until).Error
 	})
 }
@@ -353,6 +356,39 @@ func holdsWorkspaceLease(tx *gorm.DB, runID, token string) error {
 		return ErrWorkspaceInUse
 	}
 	return nil
+}
+
+// ReleaseAbandonedWorkspaceUse drops the foreground lease a reaped turn held.
+// A dead API process cannot finish the lease it held in memory, and the next
+// turn would fail for the rest of the 15 minute term.
+//
+// Two fences keep a live owner's lease in place. The token must be the one the
+// reaped turn recorded, so a lease another turn took after the reap never
+// matches. Its last renewal must also be older than the heartbeat timeout:
+// every holder renews well within it (generations every 500ms, workspace turns
+// every 30s), so a lease still being renewed by a process on any replica is
+// kept. A background save token never matches a foreground token.
+func (r *RunsRepo) ReleaseAbandonedWorkspaceUse(runID, token string, now time.Time) (bool, error) {
+	runID, token = strings.TrimSpace(runID), strings.TrimSpace(token)
+	if runID == "" || token == "" || strings.HasPrefix(token, workspaceBackgroundSavePrefix) {
+		return false, nil
+	}
+	released := false
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		renewedBefore := now.Add(workspaceUseTerm - assistantHeartbeatTimeout)
+		result := tx.Model(&WorkspaceCheckpoint{}).
+			Where("run_id = ? AND lease_token = ? AND lease_until > ? AND lease_until <= ?", runID, token, now, renewedBefore).
+			Updates(map[string]any{"lease_token": "", "lease_until": nil, "lease_handoff_id": ""})
+		released = result.RowsAffected == 1
+		return result.Error
+	})
+	return released, err
 }
 
 // ReleaseWorkspace marks a workspace no conversation is bound to any more, so

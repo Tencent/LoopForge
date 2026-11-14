@@ -17,6 +17,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 		return g, nil, nil, err
 	}
 	diagnostics := newAssistantDiagnosticsCollector(g)
+	assistantDirectGenerations.Store(g.ID, struct{}{})
 	untrack := inflightTasks.Add()
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -30,7 +31,7 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				current, ok := h.repo.AssistantGeneration(ownerID, req.SessionID)
+				current, ok := h.repo.PeekAssistantGeneration(ownerID, req.SessionID)
 				if !ok || current.ID != g.ID {
 					diagnostics.terminate("GENERATION_SUPERSEDED", "当前生成记录已被替换或移除", actor)
 					cancel()
@@ -56,13 +57,14 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 	}()
 	return g, diagnostics, func(completed bool) {
 		defer untrack()
+		defer assistantDirectGenerations.Delete(g.ID)
 		close(stop)
 		<-done
 		g.Status = "failed"
 		if completed {
 			g.Status = "completed"
 		} else {
-			current, ok := h.repo.AssistantGeneration(ownerID, req.SessionID)
+			current, ok := h.repo.PeekAssistantGeneration(ownerID, req.SessionID)
 			if ctx.Err() != nil || ok && current.ID == g.ID && current.CancelRequested {
 				g.Status = "cancelled"
 			}

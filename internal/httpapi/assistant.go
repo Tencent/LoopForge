@@ -203,7 +203,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	sink, _ := c.Request.Context().Value(assistantGenerationSinkKey{}).(func(string, any))
 	if sink == nil {
-		if job, ok := h.repo.AssistantGeneration(ownerID, req.SessionID); ok && job.Status == "running" {
+		if job, ok := h.readGeneration(ownerID, req.SessionID); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "此会话正在后台生成"})
 			return
 		}
@@ -334,6 +334,12 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		defer files.Cleanup()
 		if req.RunID == "" && h.engine != nil {
 			sess.workspaceTurn = newAssistantWorkspaceTurn(h.engine, cancelModel)
+			if scope := assistantControlScopeFrom(modelCtx); scope.GenerationID != "" {
+				generation := domain.AssistantGeneration{ID: scope.GenerationID, SessionID: req.SessionID, UserID: ownerID}
+				sess.workspaceTurn.recordLeases(func(runID, token string) {
+					h.recordGenerationWorkspaceLease(generation, runID, token)
+				})
+			}
 			defer func() {
 				if err := sess.workspaceTurn.close(modelCtx); err != nil {
 					warning := "工作区保存未完成，暂缓回收：" + err.Error()
