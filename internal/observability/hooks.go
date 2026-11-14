@@ -127,13 +127,45 @@ func HookEvent(raw []byte) (domain.TelemetryEvent, bool) {
 	}
 	name := firstString(payload, "hook_event_name", "hookEventName", "event")
 	tool := firstString(payload, "tool_name", "toolName")
-	msg := strings.TrimSpace(name)
-	category, eventName, phase := "lifecycle", "hook."+strings.ToLower(name), "progress"
+	category, eventName, phase, msg := hookLifecycle(name, tool, payload)
+	provider := firstString(payload, "_agentflow_provider")
+	if provider == "" {
+		provider = "codebuddy"
+	}
+	exec := readHookExecution(payload)
+	if exec.reported() {
+		category, eventName, phase = "hook", "hook."+exec.phase, exec.phase
+		msg = exec.summary(name)
+	} else if exec.name != "" {
+		msg = exec.name + " · " + msg
+	}
+	level := ""
+	if exec.failed() {
+		level = "error"
+	}
+	return domain.TelemetryEvent{
+		Category:   category,
+		Name:       eventName,
+		Phase:      phase,
+		Level:      level,
+		Message:    clip(msg, 180),
+		SessionID:  firstString(payload, "session_id", "sessionId"),
+		ToolCallID: firstString(payload, "tool_use_id", "toolUseId"),
+		Source:     domain.TelemetrySource{Layer: "executor", Adapter: AdapterHooks, Provider: provider, Protocol: "hooks"},
+		Attributes: hookAttributes(payload, name, tool, exec),
+	}, true
+}
+
+// hookLifecycle maps the agent hook event name to the telemetry category,
+// event name, phase and default message.
+func hookLifecycle(name, tool string, payload map[string]any) (category, eventName, phase, msg string) {
+	msg = strings.TrimSpace(name)
+	category, eventName, phase = "lifecycle", "hook."+strings.ToLower(name), "progress"
 	switch strings.ToLower(name) {
 	case "sessionstart":
 		msg, eventName, phase = "hook: session start", "agent.initialized", "start"
 	case "userpromptsubmit":
-		msg, category, eventName = "hook: prompt submitted", "lifecycle", "agent.prompt"
+		msg, eventName = "hook: prompt submitted", "agent.prompt"
 	case "pretooluse":
 		category, eventName, phase = "tool", "tool.call", "start"
 		msg = summarizeHookTool(tool, payload["tool_input"], payload["toolInput"], false)
@@ -146,42 +178,65 @@ func HookEvent(raw []byte) (domain.TelemetryEvent, bool) {
 	if msg == "" {
 		msg = "hook event"
 	}
-	provider := firstString(payload, "_agentflow_provider")
-	if provider == "" {
-		provider = "codebuddy"
+	return category, eventName, phase, msg
+}
+
+// hookExecution is the platform-injected record of one configured hook run
+// (the _agentflow_* payload fields).
+type hookExecution struct {
+	id, name, phase string
+	exitCode        int64
+	hasExitCode     bool
+	durationMS      int64
+	hasDuration     bool
+}
+
+func readHookExecution(payload map[string]any) hookExecution {
+	exec := hookExecution{
+		id:    firstString(payload, "_agentflow_hook_id"),
+		name:  firstString(payload, "_agentflow_hook_name"),
+		phase: firstString(payload, "_agentflow_execution_phase"),
 	}
-	hookID := firstString(payload, "_agentflow_hook_id")
-	hookName := firstString(payload, "_agentflow_hook_name")
-	executionPhase := firstString(payload, "_agentflow_execution_phase")
-	exitCode, hasExitCode := firstInt64(payload, "_agentflow_exit_code")
-	durationMS, hasDuration := firstInt64(payload, "_agentflow_duration_ms")
-	if hookID != "" && (executionPhase == "start" || executionPhase == "finish") {
-		category, eventName, phase = "hook", "hook."+executionPhase, executionPhase
-		label := hookName
-		if label == "" {
-			label = hookID
-		}
-		if executionPhase == "start" {
-			msg = label + " · " + name + " · 开始"
-		} else {
-			status := "成功"
-			if hasExitCode && exitCode != 0 {
-				status = fmt.Sprintf("失败（exit %d）", exitCode)
-			}
-			msg = label + " · " + name + " · " + status
-			if hasDuration {
-				msg += fmt.Sprintf(" · %d ms", durationMS)
-			}
-		}
-	} else if hookName != "" {
-		msg = hookName + " · " + msg
+	exec.exitCode, exec.hasExitCode = firstInt64(payload, "_agentflow_exit_code")
+	exec.durationMS, exec.hasDuration = firstInt64(payload, "_agentflow_duration_ms")
+	return exec
+}
+
+// reported reports whether the payload describes the start or finish of a
+// configured hook rather than a plain agent lifecycle event.
+func (h hookExecution) reported() bool {
+	return h.id != "" && (h.phase == "start" || h.phase == "finish")
+}
+
+func (h hookExecution) failed() bool { return h.hasExitCode && h.exitCode != 0 }
+
+// summary renders "label · event · status[ · N ms]" for a reported hook run.
+func (h hookExecution) summary(event string) string {
+	label := h.name
+	if label == "" {
+		label = h.id
 	}
+	if h.phase == "start" {
+		return label + " · " + event + " · 开始"
+	}
+	status := "成功"
+	if h.failed() {
+		status = fmt.Sprintf("失败（exit %d）", h.exitCode)
+	}
+	msg := label + " · " + event + " · " + status
+	if h.hasDuration {
+		msg += fmt.Sprintf(" · %d ms", h.durationMS)
+	}
+	return msg
+}
+
+func hookAttributes(payload map[string]any, name, tool string, exec hookExecution) map[string]any {
 	attributes := map[string]any{"hook": name, "tool": tool}
-	if hookID != "" {
-		attributes["hookId"] = hookID
+	if exec.id != "" {
+		attributes["hookId"] = exec.id
 	}
-	if hookName != "" {
-		attributes["hookName"] = hookName
+	if exec.name != "" {
+		attributes["hookName"] = exec.name
 	}
 	for source, target := range map[string]string{
 		"_agentflow_execution_phase": "executionPhase",
@@ -197,27 +252,13 @@ func HookEvent(raw []byte) (domain.TelemetryEvent, bool) {
 			attributes[target] = clip(value, 2000)
 		}
 	}
-	if hasExitCode {
-		attributes["exitCode"] = exitCode
+	if exec.hasExitCode {
+		attributes["exitCode"] = exec.exitCode
 	}
-	if hasDuration {
-		attributes["durationMs"] = durationMS
+	if exec.hasDuration {
+		attributes["durationMs"] = exec.durationMS
 	}
-	level := ""
-	if hasExitCode && exitCode != 0 {
-		level = "error"
-	}
-	return domain.TelemetryEvent{
-		Category:   category,
-		Name:       eventName,
-		Phase:      phase,
-		Level:      level,
-		Message:    clip(msg, 180),
-		SessionID:  firstString(payload, "session_id", "sessionId"),
-		ToolCallID: firstString(payload, "tool_use_id", "toolUseId"),
-		Source:     domain.TelemetrySource{Layer: "executor", Adapter: AdapterHooks, Provider: provider, Protocol: "hooks"},
-		Attributes: attributes,
-	}, true
+	return attributes
 }
 
 func firstInt64(m map[string]any, keys ...string) (int64, bool) {
