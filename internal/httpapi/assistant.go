@@ -1134,25 +1134,7 @@ func validateAssistantDraft(d *assistantDraft, projectID string) error {
 		return err
 	}
 	if d.Tool == "assistant_tasks_save" {
-		var task assistantTask
-		if json.Unmarshal(d.Body, &task) != nil || strings.TrimSpace(task.Name) == "" || strings.TrimSpace(task.Prompt) == "" {
-			return errors.New("invalid assistant task")
-		}
-		if strings.TrimSpace(task.Cron) != "" {
-			if _, err := parseAssistantCron(task.Cron); err != nil {
-				return errors.New("invalid assistant task")
-			}
-		} else if task.IntervalSec < 60 {
-			return errors.New("invalid assistant task")
-		}
-		task.ProjectID = strings.TrimSpace(task.ProjectID)
-		if task.ProjectID == "" {
-			return errors.New("invalid assistant task")
-		}
-		if projectID != "" && task.ProjectID != projectID {
-			return errors.New("invalid draft scope")
-		}
-		return nil
+		return validateAssistantTaskDraft(d.Body, projectID)
 	}
 	op, ok := assistantWriteOperations[d.Tool]
 	if !ok {
@@ -1217,6 +1199,29 @@ func validateAssistantDraft(d *assistantDraft, projectID string) error {
 		if json.Unmarshal(d.Body, &a) != nil {
 			return errors.New("invalid agent")
 		}
+	}
+	return nil
+}
+
+// validateAssistantTaskDraft 校验 assistant_tasks_save 定时任务草稿：名称、提示词、cron 或间隔以及项目归属。
+func validateAssistantTaskDraft(body json.RawMessage, projectID string) error {
+	var task assistantTask
+	if json.Unmarshal(body, &task) != nil || strings.TrimSpace(task.Name) == "" || strings.TrimSpace(task.Prompt) == "" {
+		return errors.New("invalid assistant task")
+	}
+	if strings.TrimSpace(task.Cron) != "" {
+		if _, err := parseAssistantCron(task.Cron); err != nil {
+			return errors.New("invalid assistant task")
+		}
+	} else if task.IntervalSec < 60 {
+		return errors.New("invalid assistant task")
+	}
+	task.ProjectID = strings.TrimSpace(task.ProjectID)
+	if task.ProjectID == "" {
+		return errors.New("invalid assistant task")
+	}
+	if projectID != "" && task.ProjectID != projectID {
+		return errors.New("invalid draft scope")
 	}
 	return nil
 }

@@ -206,30 +206,10 @@ func (r *DeliveryRepo) markIssueDelivered(issueID string, mrs []domain.DeliveryM
 	if !ok {
 		return nil
 	}
-	// A manually closed issue is an explicit terminal state. Background MR
-	// polling and stale SOP callbacks must not change it.
-	if issue.ManuallyClosed() {
-		return nil
-	}
 	if deliveredAt.IsZero() {
 		deliveredAt = time.Now().UTC()
 	}
-	// A human reopen must stay open until a new SOP succeeds. MR poll / reconcile
-	// uses "now" as checkedAt and would otherwise immediately lock the item again.
-	if strings.EqualFold(issue.DeliveryState, "reopened") && !fromSOP {
-		return nil
-	}
-	// Poll / reconcile may see leftover MRs from earlier SOP runs. Those rows
-	// stay in mr_delivery_states for analytics, but must not replace the
-	// work item's delivery MRs.
-	if !fromSOP {
-		for _, mr := range mrs {
-			if len(issue.DeliveryMRList()) > 0 && !issue.HasDeliveryMR(mr.URL) {
-				return nil
-			}
-		}
-	}
-	if issue.DeliveryState == "merged" && !deliveredAt.After(issue.DeliveryUpdatedAt) {
+	if issueDeliverySkipped(issue, mrs, deliveredAt, fromSOP) {
 		return nil
 	}
 	issue.DeliveryState = "merged"
@@ -258,6 +238,32 @@ func (r *DeliveryRepo) markIssueDelivered(issueID string, mrs []domain.DeliveryM
 	}
 	issue.AutomationState = "ignored"
 	return r.issues.PutIssue(issue)
+}
+
+// issueDeliverySkipped reports whether a delivery signal must leave the work
+// item untouched. deliveredAt must already be resolved (non-zero).
+func issueDeliverySkipped(issue domain.Issue, mrs []domain.DeliveryMR, deliveredAt time.Time, fromSOP bool) bool {
+	// A manually closed issue is an explicit terminal state. Background MR
+	// polling and stale SOP callbacks must not change it.
+	if issue.ManuallyClosed() {
+		return true
+	}
+	// A human reopen must stay open until a new SOP succeeds. MR poll / reconcile
+	// uses "now" as checkedAt and would otherwise immediately lock the item again.
+	if strings.EqualFold(issue.DeliveryState, "reopened") && !fromSOP {
+		return true
+	}
+	// Poll / reconcile may see leftover MRs from earlier SOP runs. Those rows
+	// stay in mr_delivery_states for analytics, but must not replace the
+	// work item's delivery MRs.
+	if !fromSOP {
+		for _, mr := range mrs {
+			if len(issue.DeliveryMRList()) > 0 && !issue.HasDeliveryMR(mr.URL) {
+				return true
+			}
+		}
+	}
+	return issue.DeliveryState == "merged" && !deliveredAt.After(issue.DeliveryUpdatedAt)
 }
 
 func (r *DeliveryRepo) ReopenDeliveredIssue(issueID string) (domain.Issue, error) {

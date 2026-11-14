@@ -64,19 +64,7 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "project not found"})
 		return
 	}
-	ids := make([]string, 0, len(req.RepositoryIDs)+1)
-	seen := map[string]bool{}
-	for _, id := range req.RepositoryIDs {
-		id = strings.TrimSpace(id)
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		ids = append(ids, id)
-	}
-	if id := strings.TrimSpace(req.RepositoryID); id != "" && !seen[id] {
-		ids = append([]string{id}, ids...)
-	}
+	ids := tapdImportRepositoryIDs(req.RepositoryID, req.RepositoryIDs)
 	if len(ids) == 0 {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "请至少选择一个代码仓库"})
 		return
@@ -109,17 +97,7 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		return
 	}
 	h.bindRequirementPlaybook(&issue)
-	if req.BaseBranch != nil || req.RepositoryBranches != nil || issue.RepositoryID != probe.RepositoryID {
-		issue.BaseBranch = probe.BaseBranch
-	}
-	issue.RepositoryIDs = probe.RepositoryIDs
-	issue.RepositoryID = probe.RepositoryID
-	if req.RepositoryBranches != nil || req.BaseBranch != nil {
-		issue.RepositoryBranches = probe.RepositoryBranches
-	} else {
-		h.inheritIssueRepositoryBranches(&issue, previous)
-		h.normalizeLegacyIssueBaseBranch(&issue)
-	}
+	h.applyTAPDImportRepositories(&issue, previous, probe, req.BaseBranch != nil || req.RepositoryBranches != nil)
 	if err := h.bindIssueRepositories(&issue); err != nil {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -131,6 +109,43 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 	}
 	stored, _ := h.repo.Issue(issue.ID)
 	c.JSON(http.StatusOK, stored)
+}
+
+// tapdImportRepositoryIDs trims and deduplicates the requested repositories,
+// keeping their order. The legacy single repository goes first when it is not
+// already listed.
+func tapdImportRepositoryIDs(primary string, ids []string) []string {
+	out := make([]string, 0, len(ids)+1)
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if id := strings.TrimSpace(primary); id != "" && !seen[id] {
+		out = append([]string{id}, out...)
+	}
+	return out
+}
+
+// applyTAPDImportRepositories writes the validated repository selection back
+// onto the imported issue. Explicit branches from the request win; otherwise
+// branches are inherited from the previously stored issue.
+func (h issuesHandlers) applyTAPDImportRepositories(issue *domain.Issue, previous, probe domain.Issue, explicitBranches bool) {
+	if explicitBranches || issue.RepositoryID != probe.RepositoryID {
+		issue.BaseBranch = probe.BaseBranch
+	}
+	issue.RepositoryIDs = probe.RepositoryIDs
+	issue.RepositoryID = probe.RepositoryID
+	if explicitBranches {
+		issue.RepositoryBranches = probe.RepositoryBranches
+	} else {
+		h.inheritIssueRepositoryBranches(issue, previous)
+		h.normalizeLegacyIssueBaseBranch(issue)
+	}
 }
 
 func (h issuesHandlers) issues(c *gin.Context) {
