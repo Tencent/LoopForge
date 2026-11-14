@@ -358,41 +358,47 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 		a.emit(domain.TelemetryEvent{Category: "error", Name: "model.error", Phase: "finish", Level: "error", Message: message, SessionID: session, Error: &domain.ErrorObservation{Type: "provider", Message: message}})
 	case "item.started", "item.completed", "item.updated":
 		item, _ := raw["item"].(map[string]any)
-		itemType := stringValue(item["type"])
-		phase := "progress"
-		if typ == "item.started" {
-			phase = "start"
-		} else if typ == "item.completed" {
-			phase = "finish"
-		}
-		id := stringValue(item["id"])
-		switch itemType {
-		case "command_execution", "mcp_tool_call", "tool_call":
-			name := stringValue(item["command"])
-			if name == "" {
-				name = stringValue(item["name"])
-			}
-			msg := summarizeToolCall(name, item)
-			success := int64Value(item["exit_code"]) == 0 && stringValue(item["status"]) != "failed"
-			if phase == "finish" {
-				out := firstNonEmpty(stringValue(item["aggregated_output"]), stringValue(item["output"]), stringValue(item["text"]))
-				msg = summarizeToolResult(name, !success, out)
-			}
-			e := domain.TelemetryEvent{Category: "tool", Name: "tool.call", Phase: phase, Message: msg, SessionID: session, ToolCallID: id, Attributes: map[string]any{"status": item["status"], "exitCode": item["exit_code"]}}
-			if phase == "finish" {
-				e.Tool = &domain.ToolObservation{Name: name, Operation: itemType, CallID: id, Success: &success}
-			}
-			a.emit(e)
-		case "agent_message":
-			if text := stringValue(item["text"]); strings.TrimSpace(text) != "" {
-				a.noteOutput(text)
-			}
-			a.emit(domain.TelemetryEvent{Category: "output", Name: "agent.output", Phase: phase, Message: stringValue(item["text"]), SessionID: session})
-		case "reasoning":
-			a.emit(domain.TelemetryEvent{Category: "reasoning", Name: "agent.reasoning", Phase: phase, Message: stringValue(item["text"]), SessionID: session})
-		}
+		a.handleCodexItem(typ, session, item)
 	default:
 		a.handleGenericJSON(raw)
+	}
+}
+
+// handleCodexItem maps one Codex item.started/item.updated/item.completed
+// frame to tool, output or reasoning events. Unknown item types emit nothing.
+func (a *protocolAdapter) handleCodexItem(eventType, session string, item map[string]any) {
+	itemType := stringValue(item["type"])
+	phase := "progress"
+	if eventType == "item.started" {
+		phase = "start"
+	} else if eventType == "item.completed" {
+		phase = "finish"
+	}
+	id := stringValue(item["id"])
+	switch itemType {
+	case "command_execution", "mcp_tool_call", "tool_call":
+		name := stringValue(item["command"])
+		if name == "" {
+			name = stringValue(item["name"])
+		}
+		msg := summarizeToolCall(name, item)
+		success := int64Value(item["exit_code"]) == 0 && stringValue(item["status"]) != "failed"
+		if phase == "finish" {
+			out := firstNonEmpty(stringValue(item["aggregated_output"]), stringValue(item["output"]), stringValue(item["text"]))
+			msg = summarizeToolResult(name, !success, out)
+		}
+		e := domain.TelemetryEvent{Category: "tool", Name: "tool.call", Phase: phase, Message: msg, SessionID: session, ToolCallID: id, Attributes: map[string]any{"status": item["status"], "exitCode": item["exit_code"]}}
+		if phase == "finish" {
+			e.Tool = &domain.ToolObservation{Name: name, Operation: itemType, CallID: id, Success: &success}
+		}
+		a.emit(e)
+	case "agent_message":
+		if text := stringValue(item["text"]); strings.TrimSpace(text) != "" {
+			a.noteOutput(text)
+		}
+		a.emit(domain.TelemetryEvent{Category: "output", Name: "agent.output", Phase: phase, Message: stringValue(item["text"]), SessionID: session})
+	case "reasoning":
+		a.emit(domain.TelemetryEvent{Category: "reasoning", Name: "agent.reasoning", Phase: phase, Message: stringValue(item["text"]), SessionID: session})
 	}
 }
 
