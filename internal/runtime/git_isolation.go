@@ -150,6 +150,13 @@ func updateProjectAgentGitIndex(ctx context.Context, workspace, driver, mode str
 	if err == nil {
 		return nil
 	}
+	return recoverGitIndexLockConflict(ctx, workspace, mode, run, output, err)
+}
+
+// recoverGitIndexLockConflict handles a failed git update-index run: when the
+// failure is an index.lock collision it waits briefly for a live holder,
+// removes a confirmed stale lock and retries; any other failure is reported.
+func recoverGitIndexLockConflict(ctx context.Context, workspace, mode string, run func() ([]byte, error), output []byte, err error) error {
 	if !isGitIndexLockConflict(output) {
 		return fmt.Errorf("git update-index %s: %w: %s", mode, err, strings.TrimSpace(string(output)))
 	}
