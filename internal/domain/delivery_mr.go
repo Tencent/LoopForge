@@ -180,60 +180,76 @@ func ResolveRunDeliveryMRs(run Run, byBranch func(RepositoryContext) (DeliveryMR
 		}
 	}
 	if len(repos) == 0 {
-		out := []DeliveryMR{}
-		seen := map[string]bool{}
-		add := func(mr DeliveryMR) {
-			project := strings.ToLower(mr.Project)
-			if !seen[project] {
-				seen[project] = true
-				out = append(out, mr)
-			}
-		}
-		if len(candidates) > 0 {
-			for _, candidate := range candidates {
-				add(candidate.mr)
-			}
-			return out
-		}
-		for _, obs := range run.Telemetry {
-			if url, ok := obs.Attributes["url"].(string); ok {
-				if project, iid, parsed, ok := ParseGongfengMR(url); ok {
-					add(DeliveryMR{Project: project, IID: iid, URL: parsed})
-				}
-			}
-		}
-		return out
+		return fallbackRunDeliveryMRs(run, candidates)
 	}
 	out := []DeliveryMR{}
 	for _, rc := range repos {
-		project := strings.TrimSpace(rc.GongfengProjectID)
-		var picked DeliveryMR
-		found := false
-		if byBranch != nil && strings.TrimSpace(rc.WorkBranch) != "" {
-			picked, found = byBranch(rc)
+		if picked, ok := pickRepositoryDeliveryMR(rc, candidates, byBranch); ok {
+			out = append(out, picked)
 		}
-		if !found {
-			for _, c := range candidates {
-				if strings.EqualFold(c.mr.Project, project) {
-					picked, found = c.mr, true
-					break
-				}
-			}
-		}
-		if !found {
-			continue
-		}
-		if picked.Project == "" {
-			picked.Project = project
-		}
-		if picked.URL == "" {
-			picked.URL = GongfengMRURL(picked.Project, picked.IID)
-		}
-		picked.RepositoryID = rc.RepositoryID
-		picked.Repository = rc.Name
-		out = append(out, picked)
 	}
 	return out
+}
+
+// fallbackRunDeliveryMRs serves runs without any Gongfeng repository: the best
+// artifact MR per project, or telemetry URLs when no artifact quotes an MR.
+// Projects are deduplicated case-insensitively, keeping the first MR seen.
+func fallbackRunDeliveryMRs(run Run, candidates []artifactMRCandidate) []DeliveryMR {
+	out := []DeliveryMR{}
+	seen := map[string]bool{}
+	add := func(mr DeliveryMR) {
+		project := strings.ToLower(mr.Project)
+		if !seen[project] {
+			seen[project] = true
+			out = append(out, mr)
+		}
+	}
+	if len(candidates) > 0 {
+		for _, candidate := range candidates {
+			add(candidate.mr)
+		}
+		return out
+	}
+	for _, obs := range run.Telemetry {
+		if url, ok := obs.Attributes["url"].(string); ok {
+			if project, iid, parsed, ok := ParseGongfengMR(url); ok {
+				add(DeliveryMR{Project: project, IID: iid, URL: parsed})
+			}
+		}
+	}
+	return out
+}
+
+// pickRepositoryDeliveryMR picks the delivery MR of one Gongfeng repository:
+// the work-branch lookup wins, otherwise the best artifact MR of the same
+// project. The result is completed with project, URL and repository identity.
+func pickRepositoryDeliveryMR(rc RepositoryContext, candidates []artifactMRCandidate, byBranch func(RepositoryContext) (DeliveryMR, bool)) (DeliveryMR, bool) {
+	project := strings.TrimSpace(rc.GongfengProjectID)
+	var picked DeliveryMR
+	found := false
+	if byBranch != nil && strings.TrimSpace(rc.WorkBranch) != "" {
+		picked, found = byBranch(rc)
+	}
+	if !found {
+		for _, c := range candidates {
+			if strings.EqualFold(c.mr.Project, project) {
+				picked, found = c.mr, true
+				break
+			}
+		}
+	}
+	if !found {
+		return DeliveryMR{}, false
+	}
+	if picked.Project == "" {
+		picked.Project = project
+	}
+	if picked.URL == "" {
+		picked.URL = GongfengMRURL(picked.Project, picked.IID)
+	}
+	picked.RepositoryID = rc.RepositoryID
+	picked.Repository = rc.Name
+	return picked, true
 }
 
 type artifactMRCandidate struct {
