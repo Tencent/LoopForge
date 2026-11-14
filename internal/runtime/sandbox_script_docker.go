@@ -52,20 +52,11 @@ func (s *dockerSandbox) ensureScriptContainer(ctx context.Context) error {
 	if base.ID == "" || base.Image == "" {
 		return fmt.Errorf("script execution environment metadata is incomplete")
 	}
-	arch, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Architecture}}", base.Image).Output()
-	if err != nil {
-		return fmt.Errorf("inspect script environment architecture: %w", err)
-	}
-	binary, err := resolveGateMCPBinary("linux", strings.TrimSpace(string(arch)))
-	if err != nil {
-		return fmt.Errorf("script view helper unavailable: %w", err)
-	}
-	contents, err := os.ReadFile(binary)
+	binary, digest, err := scriptViewHelper(ctx, base.Image)
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(contents)
-	owner := base.ID + "|" + base.State.StartedAt + "|" + scriptview.Version + "|" + hex.EncodeToString(sum[:])
+	owner := scriptViewOwner(base.ID, base.State.StartedAt, digest)
 	name := dockerScriptContainerName(s.name)
 	existing, probeErr := exec.CommandContext(ctx, "docker", "inspect", "--format", `{{.State.Running}}|{{index .Config.Labels "`+scriptViewLabel+`"}}`, name).CombinedOutput()
 	if probeErr == nil && strings.TrimSpace(string(existing)) == "true|"+owner {
@@ -103,6 +94,32 @@ func (s *dockerSandbox) ensureScriptContainer(ctx context.Context) error {
 	}
 	ready = true
 	return nil
+}
+
+// scriptViewHelper resolves the script view helper binary matching the
+// workspace image architecture and returns its path with a hex sha256 digest.
+func scriptViewHelper(ctx context.Context, image string) (string, string, error) {
+	arch, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Architecture}}", image).Output()
+	if err != nil {
+		return "", "", fmt.Errorf("inspect script environment architecture: %w", err)
+	}
+	binary, err := resolveGateMCPBinary("linux", strings.TrimSpace(string(arch)))
+	if err != nil {
+		return "", "", fmt.Errorf("script view helper unavailable: %w", err)
+	}
+	contents, err := os.ReadFile(binary)
+	if err != nil {
+		return "", "", err
+	}
+	sum := sha256.Sum256(contents)
+	return binary, hex.EncodeToString(sum[:]), nil
+}
+
+// scriptViewOwner builds the helper container label that ties it to one
+// workspace container generation and one helper build; any change forces a
+// recreate so stale preparation receipts cannot claim readiness.
+func scriptViewOwner(containerID, startedAt, helperDigest string) string {
+	return containerID + "|" + startedAt + "|" + scriptview.Version + "|" + helperDigest
 }
 
 func dockerScriptCreateArgs(name, base, workspace, image, owner string) []string {
