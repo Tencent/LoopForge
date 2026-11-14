@@ -15,6 +15,20 @@ type mcpHandlers struct {
 	*deps
 }
 
+// requirePersonalMCPOwner lets only the owner act on a personal MCP. Other
+// scopes pass through; a denied request gets a 403 with deniedMessage.
+func (h *mcpHandlers) requirePersonalMCPOwner(c *gin.Context, server domain.MCPServerDefinition, deniedMessage string) bool {
+	if server.Scope != "personal" {
+		return true
+	}
+	current, authenticated := h.requestUser(c.Request, true)
+	if !authenticated || current.ID != server.OwnerUserID {
+		c.JSON(http.StatusForbidden, map[string]string{"error": deniedMessage})
+		return false
+	}
+	return true
+}
+
 func (h *mcpHandlers) mcpServers(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
 		items := h.repo.MCPServers()
@@ -33,12 +47,8 @@ func (h *mcpHandlers) mcpServers(c *gin.Context) {
 			c.JSON(http.StatusNotFound, map[string]string{"error": "MCP 不存在"})
 			return
 		}
-		if server.Scope == "personal" {
-			current, authenticated := h.requestUser(c.Request, true)
-			if !authenticated || current.ID != server.OwnerUserID {
-				c.JSON(http.StatusForbidden, map[string]string{"error": "不能移除其他用户的个人 MCP"})
-				return
-			}
+		if !h.requirePersonalMCPOwner(c, server, "不能移除其他用户的个人 MCP") {
+			return
 		}
 		respond(c, h.repo.DeleteMCPServer(id))
 		return
@@ -53,12 +63,8 @@ func (h *mcpHandlers) mcpServers(c *gin.Context) {
 					c.JSON(http.StatusBadRequest, map[string]string{"error": "市场 MCP 不能直接修改，请移除后重新添加"})
 					return
 				}
-				if existing.Scope == "personal" {
-					current, authenticated := h.requestUser(c.Request, true)
-					if !authenticated || current.ID != existing.OwnerUserID {
-						c.JSON(http.StatusForbidden, map[string]string{"error": "不能修改其他用户的个人 MCP"})
-						return
-					}
+				if !h.requirePersonalMCPOwner(c, existing, "不能修改其他用户的个人 MCP") {
+					return
 				}
 				v.Scope, v.ProjectID, v.OwnerUserID = existing.Scope, existing.ProjectID, existing.OwnerUserID
 				v.MarketID, v.IconURL = "", ""
