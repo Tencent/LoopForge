@@ -618,69 +618,88 @@ func githubCombinedChecks(ctx context.Context, client *http.Client, token, path,
 	if strings.TrimSpace(sha) == "" {
 		return nil, "none", nil
 	}
+	out, warnings := githubCommitStatuses(ctx, client, token, path, sha)
+	runs, runWarnings := githubCheckRuns(ctx, client, token, path, sha)
+	out = append(out, runs...)
+	warnings = append(warnings, runWarnings...)
+	return out, githubChecksOverall(out, warnings), warnings
+}
+
+// githubCommitStatuses 读取旧的 commit status API，返回各检查项和读取告警。
+func githubCommitStatuses(ctx context.Context, client *http.Client, token, path, sha string) ([]githubCheckSummary, []string) {
+	resp, raw, err := githubRequest(ctx, client, http.MethodGet, fmt.Sprintf("%s/repos/%s/commits/%s/status?per_page=%d", githubAPIBase, path, sha, githubListPageSize), token, nil)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("commit status 读取失败：%v", err)}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, []string{githubChecksWarning("commit status", "Commit statuses", resp.StatusCode)}
+	}
+	var combined struct {
+		TotalCount int `json:"total_count"`
+		Statuses   []struct {
+			Context   string `json:"context"`
+			State     string `json:"state"`
+			TargetURL string `json:"target_url"`
+		} `json:"statuses"`
+	}
+	if json.Unmarshal(raw, &combined) != nil {
+		return nil, []string{"commit status 返回无法解析，这部分检查结果未计入"}
+	}
 	var out []githubCheckSummary
 	var warnings []string
-	resp, raw, err := githubRequest(ctx, client, http.MethodGet, fmt.Sprintf("%s/repos/%s/commits/%s/status?per_page=%d", githubAPIBase, path, sha, githubListPageSize), token, nil)
-	switch {
-	case err != nil:
-		warnings = append(warnings, fmt.Sprintf("commit status 读取失败：%v", err))
-	case resp.StatusCode != http.StatusOK:
-		warnings = append(warnings, githubChecksWarning("commit status", "Commit statuses", resp.StatusCode))
-	default:
-		var combined struct {
-			TotalCount int `json:"total_count"`
-			Statuses   []struct {
-				Context   string `json:"context"`
-				State     string `json:"state"`
-				TargetURL string `json:"target_url"`
-			} `json:"statuses"`
-		}
-		if json.Unmarshal(raw, &combined) != nil {
-			warnings = append(warnings, "commit status 返回无法解析，这部分检查结果未计入")
-			break
-		}
-		for _, s := range combined.Statuses {
-			out = append(out, githubCheckSummary{Name: s.Context, State: s.State, URL: s.TargetURL})
-		}
-		if combined.TotalCount > len(combined.Statuses) {
-			warnings = append(warnings, fmt.Sprintf("commit status 共 %d 项，只统计了前 %d 项", combined.TotalCount, len(combined.Statuses)))
-		}
+	for _, s := range combined.Statuses {
+		out = append(out, githubCheckSummary{Name: s.Context, State: s.State, URL: s.TargetURL})
 	}
-	resp, raw, err = githubRequest(ctx, client, http.MethodGet, fmt.Sprintf("%s/repos/%s/commits/%s/check-runs?per_page=%d", githubAPIBase, path, sha, githubListPageSize), token, nil)
-	switch {
-	case err != nil:
-		warnings = append(warnings, fmt.Sprintf("check runs 读取失败：%v", err))
-	case resp.StatusCode != http.StatusOK:
-		warnings = append(warnings, githubChecksWarning("check runs", "Checks", resp.StatusCode))
-	default:
-		var runs struct {
-			TotalCount int `json:"total_count"`
-			CheckRuns  []struct {
-				Name       string `json:"name"`
-				Status     string `json:"status"`
-				Conclusion string `json:"conclusion"`
-				HTMLURL    string `json:"html_url"`
-			} `json:"check_runs"`
-		}
-		if json.Unmarshal(raw, &runs) != nil {
-			warnings = append(warnings, "check runs 返回无法解析，这部分检查结果未计入")
-			break
-		}
-		for _, r := range runs.CheckRuns {
-			state := r.Status
-			if strings.TrimSpace(r.Conclusion) != "" {
-				state = r.Conclusion
-			}
-			out = append(out, githubCheckSummary{Name: r.Name, State: state, URL: r.HTMLURL})
-		}
-		if runs.TotalCount > len(runs.CheckRuns) {
-			warnings = append(warnings, fmt.Sprintf("check runs 共 %d 项，只统计了前 %d 项", runs.TotalCount, len(runs.CheckRuns)))
-		}
+	if combined.TotalCount > len(combined.Statuses) {
+		warnings = append(warnings, fmt.Sprintf("commit status 共 %d 项，只统计了前 %d 项", combined.TotalCount, len(combined.Statuses)))
 	}
+	return out, warnings
+}
+
+// githubCheckRuns 读取 check-runs API（GitHub Actions），有 conclusion 时以它为准。
+func githubCheckRuns(ctx context.Context, client *http.Client, token, path, sha string) ([]githubCheckSummary, []string) {
+	resp, raw, err := githubRequest(ctx, client, http.MethodGet, fmt.Sprintf("%s/repos/%s/commits/%s/check-runs?per_page=%d", githubAPIBase, path, sha, githubListPageSize), token, nil)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("check runs 读取失败：%v", err)}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, []string{githubChecksWarning("check runs", "Checks", resp.StatusCode)}
+	}
+	var runs struct {
+		TotalCount int `json:"total_count"`
+		CheckRuns  []struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			HTMLURL    string `json:"html_url"`
+		} `json:"check_runs"`
+	}
+	if json.Unmarshal(raw, &runs) != nil {
+		return nil, []string{"check runs 返回无法解析，这部分检查结果未计入"}
+	}
+	var out []githubCheckSummary
+	var warnings []string
+	for _, r := range runs.CheckRuns {
+		state := r.Status
+		if strings.TrimSpace(r.Conclusion) != "" {
+			state = r.Conclusion
+		}
+		out = append(out, githubCheckSummary{Name: r.Name, State: state, URL: r.HTMLURL})
+	}
+	if runs.TotalCount > len(runs.CheckRuns) {
+		warnings = append(warnings, fmt.Sprintf("check runs 共 %d 项，只统计了前 %d 项", runs.TotalCount, len(runs.CheckRuns)))
+	}
+	return out, warnings
+}
+
+// githubChecksOverall 汇总整体状态：任一失败即 failure，否则有未完成即
+// pending，全部成功才是 success，没有检查项为 none；有读取告警时不给出
+// none/success 这种"看起来没问题"的结论，改为 unknown。
+func githubChecksOverall(checks []githubCheckSummary, warnings []string) string {
 	overall := "none"
-	if len(out) > 0 {
+	if len(checks) > 0 {
 		overall = "success"
-		for _, c := range out {
+		for _, c := range checks {
 			switch githubCheckOutcome(c.State) {
 			case "failure":
 				overall = "failure"
@@ -694,7 +713,7 @@ func githubCombinedChecks(ctx context.Context, client *http.Client, token, path,
 	if len(warnings) > 0 && (overall == "none" || overall == "success") {
 		overall = "unknown"
 	}
-	return out, overall, warnings
+	return overall
 }
 
 func githubPRStatus(ctx context.Context, token, path string, args map[string]any) (string, error) {
