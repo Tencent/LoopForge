@@ -86,6 +86,29 @@ func (h *agentToolGateway) linkConversationRequirement(s *AgentToolSession, run 
 	if req.Title == "" {
 		return domain.Issue{}, false, nil
 	}
+	issue := conversationRequirementIssue(s, run, conv, req)
+	if err := h.repo.PutIssue(issue); err != nil {
+		return domain.Issue{}, false, err
+	}
+	if _, err := h.repo.LinkConversationRunIssue(run.ID, issue.ID); err != nil {
+		return issue, true, err
+	}
+	if s.ChatSessionID != "" && s.ChatOwnerID != 0 {
+		// A new conversation is saved only when its first turn ends;
+		// attributeConversationUsage links it then.
+		_, _ = h.repo.LinkAssistantSessionIssue(s.ChatOwnerID, s.ChatSessionID, issue.ID)
+	}
+	stored, ok := h.repo.Issue(issue.ID)
+	if !ok {
+		stored = issue
+	}
+	return stored, true, nil
+}
+
+// conversationRequirementIssue builds the requirement a conversation
+// workspace creates for req: the default status, source and assignee, the
+// run's repositories, and the create operation naming the conversation.
+func conversationRequirementIssue(s *AgentToolSession, run domain.Run, conv domain.AssistantSession, req conversationRequirement) domain.Issue {
 	issue := domain.Issue{
 		ID:                    fmt.Sprintf("issue-%d", time.Now().UnixNano()),
 		ProjectID:             s.ProjectID,
@@ -116,22 +139,7 @@ func (h *agentToolGateway) linkConversationRequirement(s *AgentToolSession, run 
 		detail = "对话「" + truncateRunes(title, 40) + "」中识别为需求并创建，在对话工作区 " + run.ID + " 直接改代码"
 	}
 	issue.AppendOperation(domain.IssueOperation{Actor: actor, ActorUserID: s.UserID, Action: "create", Detail: detail})
-	if err := h.repo.PutIssue(issue); err != nil {
-		return domain.Issue{}, false, err
-	}
-	if _, err := h.repo.LinkConversationRunIssue(run.ID, issue.ID); err != nil {
-		return issue, true, err
-	}
-	if s.ChatSessionID != "" && s.ChatOwnerID != 0 {
-		// A new conversation is saved only when its first turn ends;
-		// attributeConversationUsage links it then.
-		_, _ = h.repo.LinkAssistantSessionIssue(s.ChatOwnerID, s.ChatSessionID, issue.ID)
-	}
-	stored, ok := h.repo.Issue(issue.ID)
-	if !ok {
-		stored = issue
-	}
-	return stored, true, nil
+	return issue
 }
 
 // recordConversationMRs registers the MRs a conversation workspace submitted
