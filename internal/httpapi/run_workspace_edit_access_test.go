@@ -53,3 +53,28 @@ func TestWorkspaceEditAllowedCoversProjectRoles(t *testing.T) {
 		})
 	}
 }
+
+// TestWorkspaceEditAllowedGuestUserDeniedOnUnownedProject is a regression test
+// for the operator-precedence IDOR vulnerability. Guest/anonymous users with
+// ID 0 must NEVER gain workspace edit access, even on projects where
+// OwnerID == 0, because the matching IDs would let unauthenticated sessions
+// write files and execute commands in any unowned project's workspace.
+func TestWorkspaceEditAllowedGuestUserDeniedOnUnownedProject(t *testing.T) {
+	h, _ := workbenchFixture(t)
+	if err := h.repo.PutProject(domain.Project{ID: "unowned-guest", Name: "UnownedGuest"}); err != nil {
+		t.Fatal(err)
+	}
+	runs := &runsHandlers{deps: h.deps}
+	run := domain.Run{
+		ID:               "run-unowned-guest",
+		ExecutionContext:  domain.TelemetryContext{ProjectID: "unowned-guest"},
+	}
+	// Guest user has ID 0 — same as the unowned project's OwnerID.
+	// Before the fix, this returned true (the IDOR vulnerability).
+	var guestUserID int64 = 0
+	c, _ := workbenchContext(domain.User{ID: guestUserID}, http.MethodGet, "/", bytes.NewBuffer(nil))
+	if got := runs.workspaceEditAllowed(c.Request, run, guestUserID); got {
+		t.Fatalf("workspaceEditAllowed(guest, unowned) = true, want false: "+
+			"guest users (ID=0) must not gain access via OwnerID==0 match")
+	}
+}

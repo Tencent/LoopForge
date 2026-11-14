@@ -123,13 +123,16 @@ func nativeToolSettings() map[string]any {
 }
 
 func applyNativeToolSafety(argv []string, mode AgentToolMode) []string {
-	_ = mode
 	// --tools is a built-in allowlist. CodeBuddy also applies it to MCP tools,
 	// so listing Read/Grep/Glob or mcp__* globs hides submit_* and TAPD/工蜂.
 	argv = dropNativeArg(argv, "--tools")
-	if !slices.Contains(argv, "--disallowedTools") {
-		argv = appendNativeArgs(argv, "--disallowedTools", nativeDisallowedTools)
-	}
+	// Security fix: always enforce the full disallowed tools list regardless
+	// of whether --disallowedTools already exists in argv. A pre-existing
+	// value with a subset (e.g. just "Bash") would bypass critical safety
+	// controls for Write, Edit, MultiEdit, PowerShell, Monitor, WebFetch,
+	// WebSearch and other dangerous tools. Use replaceArgValue to
+	// unconditionally set the canonical safety list.
+	argv = replaceArgValue(argv, "--disallowedTools", nativeDisallowedTools)
 	if !slices.Contains(argv, "--strict-mcp-config") {
 		argv = appendNativeArgs(argv, "--strict-mcp-config")
 	}
